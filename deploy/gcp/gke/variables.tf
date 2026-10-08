@@ -76,11 +76,6 @@ variable "zonal_cluster" {
   description = "false: a regional cluster (control plane replicated across the region, nodes in every node_zones zone). true: a zonal cluster in the one zone of node_zones, which falls under GKE's free tier for the management fee and has a single-zone control plane. Changing it replaces the cluster."
   type        = bool
   default     = false
-
-  validation {
-    condition     = !var.zonal_cluster || length(var.node_zones) == 1
-    error_message = "zonal_cluster = true needs node_zones to name exactly one zone: that zone is the cluster's location."
-  }
 }
 
 variable "managed_prometheus" {

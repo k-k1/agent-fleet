@@ -123,6 +123,13 @@ resource "google_container_cluster" "main" {
     # never reads it back and an unset value upgrades nothing, so a diff would be noise.
     ignore_changes = [min_master_version]
 
+    # Not a variable validation: one that reads another variable needs Terraform 1.9,
+    # and this module runs on 1.6.
+    precondition {
+      condition     = !var.zonal_cluster || length(var.node_zones) == 1
+      error_message = "zonal_cluster = true needs node_zones to name exactly one zone: that zone is the cluster's location."
+    }
+
     # P1 / ADR 0106 decision 5: the PersistentVolume deletion-protection finalizer that
     # Destroy relies on. Checked on every plan of an existing cluster and after a create.
     postcondition {

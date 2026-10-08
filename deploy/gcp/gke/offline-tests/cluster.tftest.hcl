@@ -233,5 +233,5 @@ run "zonal_cluster_needs_exactly_one_zone" {
     zonal_cluster = true
   }
 
-  expect_failures = [var.zonal_cluster]
+  expect_failures = [google_container_cluster.main]
 }

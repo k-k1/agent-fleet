@@ -112,15 +112,17 @@ sets all of it:
 | `managed_prometheus` | `false` | on |
 
 **What it gives up.** Control-plane high availability: a zonal cluster's API server is
-unavailable during its upgrades and a zone outage, and running workspaces keep running but
-cannot be managed. Database high availability: Cloud SQL `ZONAL` has no standby, so a zone
+unavailable during its upgrades, when running workspaces keep running but cannot be managed;
+in a zone outage the nodes go too, so running workspaces stop with it. Database high availability: Cloud SQL `ZONAL` has no standby, so a zone
 outage or a maintenance restart takes the CP down until the instance returns (backups and
 point-in-time recovery stay on). Zone-failure tolerance of every kind: the CP, its disk, the
 workspaces' volumes and nodes are all in one zone. `zonal_cluster` replaces the cluster, so
 decide before the first apply; moving an existing deployment is a rebuild.
 
-**Estimated cost**, from the unit prices measured above (asia-northeast1, JPY, before
-credits), running with no workspace, per day:
+**Estimated cost**, from the unit prices measured above (asia-northeast1, JPY), running with
+no workspace, per day. The measured prices are before credits; the Small column assumes
+GKE's free tier (a monthly credit per billing account) is still unspent, so the management
+fee is 0. If it is used up by another zonal or Autopilot cluster, add ~¥377/day:
 
 | Item | Defaults | Small | Basis |
 |---|---:|---:|---|
