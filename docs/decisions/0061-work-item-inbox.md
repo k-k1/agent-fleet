@@ -424,13 +424,15 @@ of `GET /rest/api/3/project/search` (the projects the member may browse) and not
 The CP relays it as `GET /api/work-items/jira-projects`; the Console asks once a rendered text holds a
 Jira-shaped token, and a key of a listed project links in prose (guessed, like a GitHub number; inline code
 still needs a cached row). A click then opens the live single-issue read of decision 27.
-- **Bounded:** at most 10 pages of 50 (500 keys), in key order; `truncated` says the site has more, and those
-  keys simply stay text. Keys outside the shape the linker matches are dropped.
+- **Bounded:** at most 500 keys over at most 30 reads, in key order (each page continues from the values
+  actually received, since Jira may shorten a page); `truncated` says the list was not finished, and those keys
+  simply stay text. Keys outside the shape the linker matches are dropped, and the CP refuses an answer over 500
+  keys or with a malformed one.
 - **Cache lifetime:** the CP keeps the list in memory per membership (so a member is only ever handed their own
   projects) for 1 hour; a stopped workspace is never started for it and keeps serving the entry up to 24 hours;
   an Agent failure keeps the stale entry too. Older than that, never read, not connected, or an Agent from before
   this change: an empty list, which is today's behaviour. The Console re-asks after 10 minutes (the CP answers from
-  its cache) and not more than once a minute after a failure.
+  its cache) and not more than once a minute after a failure. The CP also folds concurrent reads of one membership into one Agent read and leaves the Agent alone for a minute after a failure. The Console drops its list the moment the tenant or account changes.
 - **Why not the database:** the list is cheap to re-read and a stale key costs a click that ends on the "af has
   no details" note, never a wrong ticket; a table would add a retention scope for no gain. A CP restart costs one read.
 - Not checked against a real Jira site (the tests use httptest fakes); a project key that is also a common word

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,13 +22,15 @@ func jiraProjectsEnv(t *testing.T, state, answer string, status int) (workItemsA
 			return
 		}
 		atomic.AddInt32(&hits, 1)
+		time.Sleep(60 * time.Millisecond) // long enough for concurrent callers to overlap
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(answer))
 	}))
 	t.Cleanup(srv.Close)
 	clock := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
-	jiraProjects = &jiraProjectsCache{m: map[string]jiraProjectsEntry{}, now: func() time.Time { return clock }}
-	t.Cleanup(func() { jiraProjects = &jiraProjectsCache{m: map[string]jiraProjectsEntry{}, now: time.Now} })
+	jiraProjects = newJiraProjectsCache()
+	jiraProjects.now = func() time.Time { return clock }
+	t.Cleanup(func() { jiraProjects = newJiraProjectsCache() })
 	res := func(mid string) *resolved {
 		return &resolved{rt: stubRuntime{endpoint: srv.URL, token: "tok", state: state}, mv: store.MembershipView{MembershipID: mid}}
 	}
@@ -101,11 +105,93 @@ func TestJiraProjectsAgentFailureKeepsTheStaleEntryOrAnswersEmpty(t *testing.T) 
 }
 
 func TestJiraProjectsCacheIsBounded(t *testing.T) {
-	c := &jiraProjectsCache{m: map[string]jiraProjectsEntry{}, now: time.Now}
+	c := newJiraProjectsCache()
 	for i := 0; i < jiraProjectsMax+50; i++ {
 		c.put(string(rune('a'+i%26))+strings.Repeat("x", i), jiraProjectsWire{})
 	}
 	if len(c.m) > jiraProjectsMax {
 		t.Fatalf("cache holds %d entries, cap %d", len(c.m), jiraProjectsMax)
+	}
+}
+
+func concurrently(n int, f func()) {
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); f() }()
+	}
+	wg.Wait()
+}
+
+func TestJiraProjectsConcurrentColdReadsShareOneAgentRead(t *testing.T) {
+	a, res, hits, _ := jiraProjectsEnv(t, "running", projAnswer, 200)
+	got := make([]string, 8)
+	var mu sync.Mutex
+	i := 0
+	concurrently(8, func() {
+		out := getJiraProjects(a, res("m1"))
+		mu.Lock()
+		got[i] = out
+		i++
+		mu.Unlock()
+	})
+	if *hits != 1 {
+		t.Fatalf("agent reads = %d, want 1 for 8 concurrent cold requests", *hits)
+	}
+	for _, g := range got {
+		if g != projAnswer {
+			t.Fatalf("a waiter got %s", g)
+		}
+	}
+	// Another membership is independent.
+	getJiraProjects(a, res("m2"))
+	if *hits != 2 {
+		t.Fatalf("agent reads = %d, want 2 after a second membership", *hits)
+	}
+}
+
+func TestJiraProjectsConcurrentStaleReadsShareOneAgentRead(t *testing.T) {
+	a, res, hits, clock := jiraProjectsEnv(t, "running", projAnswer, 200)
+	getJiraProjects(a, res("m1"))
+	*clock = clock.Add(2 * time.Hour)
+	concurrently(8, func() { getJiraProjects(a, res("m1")) })
+	if *hits != 2 {
+		t.Fatalf("agent reads = %d, want 1 initial + 1 shared re-read", *hits)
+	}
+}
+
+func TestJiraProjectsFailureBacksOffPerMembership(t *testing.T) {
+	a, res, hits, clock := jiraProjectsEnv(t, "running", `{"error":{"code":"provider_error"}}`, 502)
+	getJiraProjects(a, res("m1"))
+	getJiraProjects(a, res("m1"))
+	concurrently(4, func() { getJiraProjects(a, res("m1")) })
+	if *hits != 1 {
+		t.Fatalf("agent reads = %d, want 1 inside the backoff", *hits)
+	}
+	getJiraProjects(a, res("m2")) // someone else's failure is not mine
+	if *hits != 2 {
+		t.Fatalf("agent reads = %d, want 2 (m2 independent)", *hits)
+	}
+	*clock = clock.Add(jiraProjectsBackoff + time.Second)
+	getJiraProjects(a, res("m1"))
+	if *hits != 3 {
+		t.Fatalf("agent reads = %d, want a retry after the backoff", *hits)
+	}
+}
+
+func TestJiraProjectsRefuseAnOversizedOrMalformedAgentAnswer(t *testing.T) {
+	var keys []string
+	for i := 0; i <= jiraProjectsKeyCap; i++ {
+		keys = append(keys, fmt.Sprintf(`"K%03d"`, i))
+	}
+	big := `{"connected":true,"keys":[` + strings.Join(keys, ",") + `],"truncated":false}`
+	for name, answer := range map[string]string{"oversized": big, "malformed": `{"connected":true,"keys":["ok","x y"]}`} {
+		a, res, _, _ := jiraProjectsEnv(t, "running", answer, 200)
+		if got := getJiraProjects(a, res("m1")); got != `{"connected":false,"keys":[],"truncated":false}` {
+			t.Errorf("%s answer was kept: %.80s", name, got)
+		}
+		if _, ok := jiraProjects.get("m1"); ok {
+			t.Errorf("%s answer was cached", name)
+		}
 	}
 }

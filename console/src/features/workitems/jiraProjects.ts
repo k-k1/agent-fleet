@@ -13,6 +13,20 @@ interface JiraProjectsState {
 
 export const useJiraProjects = create<JiraProjectsState>(() => ({ keys: [], at: 0 }));
 
+/** The list belongs to one member of one tenant. The Console switches both without a reload, and
+ * core/store/tenant.ts calls this on every such switch (this module must not import that store: it
+ * reads localStorage at load, which every test that mocks the api client would trip over). It drops
+ * everything at once, and bumps the generation so an answer asked for under the previous owner is
+ * discarded when it lands. */
+let generation = 0;
+
+export function invalidateJiraProjects(): void {
+  generation++;
+  pending = null;
+  lastTry = 0;
+  useJiraProjects.setState({ keys: [], at: 0 });
+}
+
 /** The CP holds a list for an hour; asking more often than this only reaches its cache. */
 export const JIRA_PROJECTS_TTL_MS = 10 * 60 * 1000;
 /** A failed read is not retried sooner: every rendered message asks. */
@@ -30,22 +44,23 @@ export function ensureJiraProjects(): Promise<void> {
   if (pending) return pending;
   if (now - lastTry < RETRY_MS) return Promise.resolve();
   lastTry = now;
-  pending = api("api/work-items/jira-projects")
+  const gen = generation;
+  const mine: Promise<void> = api("api/work-items/jira-projects")
     .then((d: { keys?: unknown; error?: unknown } | null) => {
+      if (gen !== generation) return;
       if (!d || d.error || !Array.isArray(d.keys)) return;
       const keys = d.keys.filter((k): k is string => typeof k === "string" && KEY_RE.test(k));
       useJiraProjects.setState({ keys, at: Date.now() });
     })
     .catch(() => {})
     .finally(() => {
-      pending = null;
+      if (pending === mine) pending = null;
     });
-  return pending;
+  pending = mine;
+  return mine;
 }
 
-/** For tests: the store and the retry clock are module state and would leak between files' cases. */
+/** For tests: the store and the retry clock are module state and would leak between cases. */
 export function resetJiraProjects(): void {
-  useJiraProjects.setState({ keys: [], at: 0 });
-  pending = null;
-  lastTry = 0;
+  invalidateJiraProjects();
 }

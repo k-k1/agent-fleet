@@ -54,8 +54,8 @@ func TestJiraProjectKeysIsBounded(t *testing.T) {
 	if err != nil || !truncated {
 		t.Fatalf("truncated=%v err=%v", truncated, err)
 	}
-	if want := jiraProjectPages * jiraProjectPageSize; len(keys) != want || hits != jiraProjectPages {
-		t.Fatalf("keys=%d hits=%d, want %d keys in %d reads", len(keys), hits, want, jiraProjectPages)
+	if want := jiraProjectMaxKeys; len(keys) != want || hits != jiraProjectMaxKeys/jiraProjectPageSize {
+		t.Fatalf("keys=%d hits=%d, want %d keys in %d reads", len(keys), hits, want, jiraProjectMaxKeys/jiraProjectPageSize)
 	}
 }
 
@@ -95,5 +95,58 @@ func TestHandleJiraProjectsErrorCarriesNoUpstreamText(t *testing.T) {
 	handleWorkItemsJiraProjects(w, httptest.NewRequest("POST", "/work-items/jira-projects", nil))
 	if w.Code != http.StatusBadGateway || strings.Contains(w.Body.String(), "UPSTREAM_SENTINEL") {
 		t.Fatalf("got %d %s", w.Code, w.Body.String())
+	}
+}
+
+// Jira may cap a page below what was asked for; the walk must continue from what it received.
+func TestJiraProjectKeysFollowsAShortPage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start, _ := strconv.Atoi(r.URL.Query().Get("startAt"))
+		all := []string{"AA", "BB", "CC", "DD", "EE"}
+		end := start + 2 // the site's own maximum
+		if end > len(all) {
+			end = len(all)
+		}
+		var vals []string
+		for _, k := range all[start:end] {
+			vals = append(vals, `{"key":"`+k+`"}`)
+		}
+		// isLast is absent on purpose: total alone must end the walk.
+		fmt.Fprintf(w, `{"values":[%s],"total":%d}`, strings.Join(vals, ","), len(all))
+	}))
+	defer srv.Close()
+	keys, truncated, err := jiraProjectKeys(&secrets.JiraCreds{Site: srv.URL, Email: "a@example.com", Token: "t"})
+	if err != nil || truncated || strings.Join(keys, ",") != "AA,BB,CC,DD,EE" {
+		t.Fatalf("keys=%v truncated=%v err=%v", keys, truncated, err)
+	}
+}
+
+// A page past the cap, or the same page again, ends the walk as truncated instead of growing the
+// list or looping.
+func TestJiraProjectKeysEnforcesTheCapPerPage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var vals []string
+		for i := 0; i < jiraProjectMaxKeys+1; i++ {
+			vals = append(vals, fmt.Sprintf(`{"key":"Q%03d"}`, i))
+		}
+		fmt.Fprintf(w, `{"values":[%s],"isLast":true}`, strings.Join(vals, ","))
+	}))
+	defer srv.Close()
+	keys, truncated, err := jiraProjectKeys(&secrets.JiraCreds{Site: srv.URL, Email: "a@example.com", Token: "t"})
+	if err != nil || !truncated || len(keys) != jiraProjectMaxKeys {
+		t.Fatalf("keys=%d truncated=%v err=%v", len(keys), truncated, err)
+	}
+}
+
+func TestJiraProjectKeysStopsOnARepeatedPage(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		_, _ = w.Write([]byte(`{"values":[{"key":"AA"},{"key":"BB"}],"isLast":false}`))
+	}))
+	defer srv.Close()
+	keys, truncated, err := jiraProjectKeys(&secrets.JiraCreds{Site: srv.URL, Email: "a@example.com", Token: "t"})
+	if err != nil || !truncated || strings.Join(keys, ",") != "AA,BB" || hits != 2 {
+		t.Fatalf("keys=%v truncated=%v hits=%d err=%v", keys, truncated, hits, err)
 	}
 }

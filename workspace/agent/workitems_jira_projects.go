@@ -14,12 +14,13 @@ import (
 // told from UTF-8 and SHA-256 without a cached inbox row of the same project (docs/log/80 §80.25).
 //
 // Only the keys leave the Agent: no project name, id, lead or URL, and nothing of the credential.
-// The list is bounded — jiraProjectPages pages of jiraProjectPageSize — because a large site can
+// The list is bounded — jiraProjectMaxKeys keys over at most jiraProjectMaxReads reads — because a large site can
 // hold thousands of projects and the answer is cached and shipped to every browser. When the site
-// has more, `truncated` is true and the keys past the cap simply stay plain text.
+// has more (or the walk ends early), `truncated` is true and the keys past the cap simply stay plain text.
 const (
 	jiraProjectPageSize = 50
-	jiraProjectPages    = 10
+	jiraProjectMaxKeys  = 500
+	jiraProjectMaxReads = 30
 )
 
 // jiraProjectKeyRe is the project part of the key shape the Console links (workitems/refs.ts
@@ -61,14 +62,19 @@ func handleWorkItemsJiraProjects(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// jiraProjectKeys pages /project/search (which lists the projects the member may browse) up to the
-// cap, in key order so the cut is the same on every read.
+// jiraProjectKeys pages /project/search (which lists the projects the member may browse) in key
+// order, so the cut is the same on every read. Jira may answer with fewer values than asked for
+// (its own maximum is not promised), so the next page starts after the values actually received,
+// never at page*size. The work is bounded three ways: jiraProjectMaxKeys keys kept,
+// jiraProjectMaxReads requests, and a page that adds nothing new ends the walk. Any early end that
+// leaves the site's list unfinished is reported as truncated.
 func jiraProjectKeys(c *secrets.JiraCreds) (keys []string, truncated bool, err error) {
 	keys = []string{}
 	seen := map[string]bool{}
-	for page := 0; page < jiraProjectPages; page++ {
+	start := 0
+	for read := 0; read < jiraProjectMaxReads; read++ {
 		u := fmt.Sprintf("%s/rest/api/3/project/search?orderBy=key&maxResults=%d&startAt=%d",
-			jiraAPIBase(c), jiraProjectPageSize, page*jiraProjectPageSize)
+			jiraAPIBase(c), jiraProjectPageSize, start)
 		body, gerr := jiraGet(c, u)
 		if gerr != nil {
 			return nil, false, gerr
@@ -77,19 +83,37 @@ func jiraProjectKeys(c *secrets.JiraCreds) (keys []string, truncated bool, err e
 			Values []struct {
 				Key string `json:"key"`
 			} `json:"values"`
-			IsLast bool `json:"isLast"`
+			IsLast *bool `json:"isLast"`
+			Total  *int  `json:"total"`
 		}
 		if jerr := json.Unmarshal(body, &p); jerr != nil {
 			return nil, false, fmt.Errorf("jira project list: %w", jerr)
 		}
+		added := 0
 		for _, v := range p.Values {
-			if jiraProjectKeyRe.MatchString(v.Key) && !seen[v.Key] {
-				seen[v.Key] = true
-				keys = append(keys, v.Key)
+			if !jiraProjectKeyRe.MatchString(v.Key) || seen[v.Key] {
+				continue
 			}
+			if len(keys) >= jiraProjectMaxKeys {
+				return keys, true, nil
+			}
+			seen[v.Key] = true
+			keys = append(keys, v.Key)
+			added++
 		}
-		if p.IsLast || len(p.Values) == 0 {
+		start += len(p.Values)
+		last := len(p.Values) == 0 ||
+			(p.IsLast != nil && *p.IsLast) ||
+			(p.IsLast == nil && p.Total != nil && start >= *p.Total)
+		if last {
 			return keys, false, nil
+		}
+		if len(keys) >= jiraProjectMaxKeys {
+			return keys, true, nil // the list goes on and the budget is spent
+		}
+		if added == 0 {
+			// A repeated or empty-of-news page: going on would loop on the same answer.
+			return keys, true, nil
 		}
 	}
 	return keys, true, nil

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"regexp"
 	"sync"
 	"time"
 )
@@ -29,7 +30,14 @@ const (
 	jiraProjectsFresh = time.Hour
 	jiraProjectsStale = 24 * time.Hour
 	jiraProjectsMax   = 2000
+	// After a failed read the Agent is left alone this long (per membership): a 404 from an old
+	// Agent, a 429 or a 502 would otherwise be amplified by every tab, reload and direct call.
+	jiraProjectsBackoff = time.Minute
+	// The Agent keeps 500 keys; the CP holds no more than that per member whatever it is sent.
+	jiraProjectsKeyCap = 500
 )
+
+var jiraProjectKeyRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]{1,9}$`)
 
 type jiraProjectsWire struct {
 	Connected bool     `json:"connected"`
@@ -43,12 +51,52 @@ type jiraProjectsEntry struct {
 }
 
 type jiraProjectsCache struct {
-	mu  sync.Mutex
-	m   map[string]jiraProjectsEntry
-	now func() time.Time
+	mu       sync.Mutex
+	m        map[string]jiraProjectsEntry
+	failed   map[string]time.Time     // last failed Agent read per membership
+	inflight map[string]chan struct{} // one Agent read at a time per membership
+	now      func() time.Time
 }
 
-var jiraProjects = &jiraProjectsCache{m: map[string]jiraProjectsEntry{}, now: time.Now}
+func newJiraProjectsCache() *jiraProjectsCache {
+	return &jiraProjectsCache{m: map[string]jiraProjectsEntry{}, failed: map[string]time.Time{},
+		inflight: map[string]chan struct{}{}, now: time.Now}
+}
+
+var jiraProjects = newJiraProjectsCache()
+
+// begin claims the Agent read for a membership. The caller that gets lead=true must call finish;
+// the others get the channel that closes when the read is over and then read the cache again.
+// A membership inside its failure backoff gets neither: skip=true.
+func (c *jiraProjectsCache) begin(membership string) (lead, skip bool, wait <-chan struct{}) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if ch, ok := c.inflight[membership]; ok {
+		return false, false, ch
+	}
+	if at, ok := c.failed[membership]; ok && c.now().Sub(at) < jiraProjectsBackoff {
+		return false, true, nil
+	}
+	c.inflight[membership] = make(chan struct{})
+	return true, false, nil
+}
+
+func (c *jiraProjectsCache) finish(membership string, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if ok {
+		delete(c.failed, membership)
+	} else {
+		if len(c.failed) >= jiraProjectsMax {
+			c.failed = map[string]time.Time{} // a backoff lost early costs one extra read
+		}
+		c.failed[membership] = c.now()
+	}
+	if ch, found := c.inflight[membership]; found {
+		close(ch)
+		delete(c.inflight, membership)
+	}
+}
 
 func (c *jiraProjectsCache) get(membership string) (jiraProjectsEntry, bool) {
 	c.mu.Lock()
@@ -90,11 +138,27 @@ func (a workItemsAPI) jiraProjectsList(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 	if res.rt.State(r.Context()) == "running" {
-		if fresh, ok := fetchJiraProjects(r.Context(), res); ok {
-			jiraProjects.put(mid, fresh)
-			writeJSON(w, http.StatusOK, fresh)
-			return
+		lead, skip, wait := jiraProjects.begin(mid)
+		switch {
+		case lead:
+			fresh, ok := fetchJiraProjects(r.Context(), res)
+			if ok {
+				jiraProjects.put(mid, fresh)
+			}
+			jiraProjects.finish(mid, ok)
+			if ok {
+				writeJSON(w, http.StatusOK, fresh)
+				return
+			}
+		case !skip:
+			select {
+			case <-wait:
+			case <-r.Context().Done():
+			}
 		}
+		// Not the reader (or the read failed): whatever the cache holds now, which the reader may
+		// just have filled.
+		cached, have = jiraProjects.get(mid)
 	}
 	if have {
 		writeJSON(w, http.StatusOK, cached.wire)
@@ -122,6 +186,14 @@ func fetchJiraProjects(ctx context.Context, res *resolved) (jiraProjectsWire, bo
 	var out jiraProjectsWire
 	if resp.StatusCode != http.StatusOK || json.Unmarshal(body, &out) != nil {
 		return none, false
+	}
+	if len(out.Keys) > jiraProjectsKeyCap {
+		return none, false
+	}
+	for _, k := range out.Keys {
+		if !jiraProjectKeyRe.MatchString(k) {
+			return none, false
+		}
 	}
 	if out.Keys == nil {
 		out.Keys = []string{}
