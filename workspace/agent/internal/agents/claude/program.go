@@ -60,8 +60,8 @@ func envOr(key, def string) string {
 // silently.
 const nativePeerSettings = `{"permissions":{"deny":["ListAgents","SendMessage"]},"crossSessionInbound":"refuse"}`
 
-// nonessentialTrafficEnv is the image variable that turns off claude's feature-flag
-// evaluation, which Remote Control refuses to start without (measured on 2.1.293: with it set,
+// nonessentialTrafficEnv is the image variable that also turns off claude's feature-flag
+// evaluation, and Remote Control refuses to start while it is set (measured on 2.1.293: with it set,
 // `--remote-control` creates no session and only logs a [WARN] line, so the failure is silent;
 // unset, it connects). The other image variables (DISABLE_TELEMETRY, DISABLE_ERROR_REPORTING,
 // DISABLE_AUTOUPDATER) are left alone.
@@ -83,6 +83,31 @@ func launchCommand(cmd string) string {
 		return "env -u " + nonessentialTrafficEnv + " " + cmd
 	}
 	return cmd
+}
+
+// nativePeerSettingsNoAutoMemory is nativePeerSettings plus claude's own auto-memory switched off
+// (`autoMemoryEnabled:false`: claude neither loads MEMORY.md nor writes memory files). It is one
+// JSON object, not a second `--settings`, so no flag-merging behaviour is relied on.
+//
+// Why: while AF memory is on (ADR 0108 decision 6 step 2) claude would otherwise load its own
+// ~25 KB index and AF's `memory_index` both at start, and keep growing a second store that AF's
+// scan, revision check and attribution never see. Why a launch setting and not settings.json or
+// env: the flag layer beats the user's own `autoMemoryEnabled:true`, switching AF memory off
+// needs no cleanup (the next launch simply omits it), and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0`
+// would force auto-memory back on.
+const nativePeerSettingsNoAutoMemory = `{"permissions":{"deny":["ListAgents","SendMessage"]},"crossSessionInbound":"refuse","autoMemoryEnabled":false}`
+
+// AutoMemoryOff reports whether a launch should switch claude's auto-memory off. Package main
+// wires it to the Agent memory switch (importing ui-prefs here would be an import cycle). Unset
+// means "leave claude's memory alone".
+var AutoMemoryOff func() bool
+
+// launchSettings is the `--settings` JSON for a real session.
+func launchSettings() string {
+	if AutoMemoryOff != nil && AutoMemoryOff() {
+		return nativePeerSettingsNoAutoMemory
+	}
+	return nativePeerSettings
 }
 
 // buildProgram returns the shell command tmux should run for a session.
@@ -111,7 +136,7 @@ func buildProgram(sid, model, effort, mode, label, forkFrom string, bypass bool)
 	}
 	// Appended after AGENT_CLAUDE_FLAGS so it cannot be overridden: closing the channel is
 	// the point, so no environment variable is left that would disable it.
-	flags += " --settings " + session.ShellQuote(nativePeerSettings)
+	flags += " --settings " + session.ShellQuote(launchSettings())
 	if mode == "plan" {
 		flags += " --permission-mode plan"
 	}
