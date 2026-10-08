@@ -56,6 +56,8 @@ func buildMux() *http.ServeMux {
 	// Relayed by the CP like the comment above, and like it, only ever on a human's action —
 	// the timer-driven job is /work-items/fetch.
 	mux.HandleFunc("POST /work-items/detail", handleWorkItemsDetail)
+	// The Jira project keys the member can browse, for the mirror's ticket links (docs/log/80 §80.25).
+	mux.HandleFunc("POST /work-items/jira-projects", handleWorkItemsJiraProjects)
 	// The fleet's own inference engines (ADR 0071 decision 9): the CP is the only party
 	// that sees an engine's response, so it counts the tokens and posts the row here, where
 	// every other feature's consumption already lives. CP-called like the two above, so it

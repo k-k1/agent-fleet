@@ -22,6 +22,19 @@ vi.mock("./pathResolve.ts", () => ({
     }),
 }));
 
+// The Jira project list (jiraProjects.ts reads it through the shared api client).
+let jiraProjectsAnswer: unknown = { connected: true, keys: [], truncated: false };
+const jiraProjectsCalls = vi.fn();
+vi.mock("../../core/api/client.ts", async (orig) => ({
+  ...(await orig<typeof import("../../core/api/client.ts")>()),
+  api: async (path: string) => {
+    if (path !== "api/work-items/jira-projects") return { error: { message: "unexpected " + path } };
+    jiraProjectsCalls();
+    if (jiraProjectsAnswer instanceof Error) throw jiraProjectsAnswer;
+    return jiraProjectsAnswer;
+  },
+}));
+
 // The inbox read behind ensureWorkItems (the "cache not loaded yet" path).
 const workItemList = vi.fn();
 vi.mock("../workitems/api.ts", () => ({
@@ -34,6 +47,7 @@ const { useReposStore } = await import("../repos/store.ts");
 const { useWorkItemStore } = await import("../workitems/store.ts");
 const { useWorkItemModal } = await import("../workitems/modal.ts");
 const { useChatStore } = await import("../chat/store.ts");
+const { resetJiraProjects, useJiraProjects } = await import("../workitems/jiraProjects.ts");
 const { isPathCandidateCode } = await import("./parts/mdRefLinks.ts");
 
 const row = (provider: string, key: string, extra: Partial<WorkItem> = {}): WorkItem => ({
@@ -72,6 +86,10 @@ const click = async (a: Element, init: MouseEventInit = {}) =>
   });
 
 beforeEach(() => {
+  // Module-level cache and retry clock: a key left by one case would link in the next.
+  resetJiraProjects();
+  jiraProjectsCalls.mockReset();
+  jiraProjectsAnswer = { connected: true, keys: [], truncated: false };
   workItemList.mockReset();
   workItemList.mockResolvedValue(payload([]));
   useChatStore.setState({ convs: [], titles: {} });
@@ -347,5 +365,46 @@ describe("ticket references", () => {
     expect(links().map((a) => a.textContent)).toEqual(["G3M-12"]);
     await click(links()[0]);
     expect(useWorkItemModal.getState().detail?.item.url).toBe("https://jira.example.test/browse/G3M-12");
+  });
+
+  it("links a Jira key of a project with no cached row once the project list lands (#1899)", async () => {
+    jiraProjectsAnswer = { connected: true, keys: ["OPS", "bad key", 7], truncated: false };
+    await render("blocked on OPS-7 and WEB-1 (UTF-8, SHA-256)", null);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(jiraProjectsCalls).toHaveBeenCalledTimes(1);
+    expect(useJiraProjects.getState().keys).toEqual(["OPS"]);
+    expect(links().map((a) => a.textContent)).toEqual(["OPS-7"]);
+    await click(links()[0]);
+    // Not cached, so the modal opens the reference stand-in (the live read happens there).
+    expect(useWorkItemModal.getState().detail).toMatchObject({ reference: true, item: { provider: "jira", key: "OPS-7" } });
+  });
+
+  it("leaves Jira-shaped text alone when the list is empty, failed, or not asked for", async () => {
+    await render("OPS-7", null);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(links()).toHaveLength(0);
+
+    resetJiraProjects();
+    jiraProjectsAnswer = new Error("down");
+    await render("OPS-8", null);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(links()).toHaveLength(0);
+
+    // Text with no Jira-shaped token never costs the request.
+    resetJiraProjects();
+    jiraProjectsCalls.mockReset();
+    await render("nothing to see, #12", null);
+    expect(jiraProjectsCalls).not.toHaveBeenCalled();
+  });
+
+  it("does not ask for the list on a surface with ticket links off", async () => {
+    await render("OPS-7", null, false);
+    expect(jiraProjectsCalls).not.toHaveBeenCalled();
   });
 });

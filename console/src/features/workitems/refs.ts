@@ -29,6 +29,9 @@ export interface WorkItemRefContext {
   /** "owner/name" → the hosts it is cloned from in this workspace (see cloneHosts), so an
    * uncached `owner/name#N` about a Bitbucket repository is not guessed onto GitHub. */
   known: Map<string, Set<"github" | "bitbucket">>;
+  /** Project keys of the member's Jira connection (jiraProjects.ts). A key of one of them links
+   * even when no cached row shares its project. Absent = none known. */
+  jiraProjects?: ReadonlySet<string>;
 }
 
 // A bare or qualified issue number. The look-behind is what keeps `C#`, `&#123;`, `page#12`
@@ -45,6 +48,9 @@ export const JIRA_REF_SRC = String.raw`(?<![\w/\-])[A-Z][A-Z0-9_]{1,9}-[1-9]\d{0
 /** "Does this text mention anything ticket-shaped at all" — decides whether loading the cache is
  * worth a request. */
 export const WORK_ITEM_HINT_RE = new RegExp(`${ISSUE_REF_SRC}|${JIRA_REF_SRC}`);
+
+/** A Jira-shaped candidate anywhere in a text — decides whether the project list is worth a request. */
+export const JIRA_HINT_RE = new RegExp(JIRA_REF_SRC);
 
 const ISSUE_TOKEN = /^(?:([\w.-]+\/[\w.-]+))?#(\d+)$/;
 const JIRA_TOKEN = /^([A-Z][A-Z0-9_]+)-\d+$/;
@@ -89,10 +95,10 @@ export function originOf(repo: { provider?: string; remote?: string; remotePath?
 /** What classifyWorkItemRef's answers depend on beyond the token, as one comparable string: the
  * context origin and the cached keys. A rendered message re-runs its linkifier when this changes —
  * the repository list or the inbox arriving after the text did. */
-export function workItemRefInputs(origin: RefOrigin | null, items: WorkItem[]): string {
+export function workItemRefInputs(origin: RefOrigin | null, items: WorkItem[], jiraProjects: readonly string[] = []): string {
   // A set: the same ticket matched by two saved queries is one key, not a change.
   const keys = [...new Set(items.map((i) => `${i.provider}:${i.key}`))];
-  return [origin ? `${origin.provider}:${origin.path}` : "", keys.sort().join(",")].join("|");
+  return [origin ? `${origin.provider}:${origin.path}` : "", keys.sort().join(","), [...jiraProjects].sort().join(",")].join("|");
 }
 
 const cachedRow = (items: WorkItem[], provider: string, key: string) =>
@@ -145,7 +151,8 @@ export function classifyWorkItemRef(token: string, ctx: WorkItemRefContext, inCo
   const jira = token.match(JIRA_TOKEN);
   if (!jira) return null;
   if (cachedRow(ctx.items, "jira", token)) return { provider: "jira", key: token };
-  if (!inCode && ctx.items.some((i) => i.provider === "jira" && i.key.startsWith(`${jira[1]}-`))) {
+  // Prose only, like a GitHub number: in inline code a key is more often literal text.
+  if (!inCode && (ctx.jiraProjects?.has(jira[1]) || ctx.items.some((i) => i.provider === "jira" && i.key.startsWith(`${jira[1]}-`)))) {
     return { provider: "jira", key: token, guessed: true };
   }
   return null;

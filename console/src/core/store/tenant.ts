@@ -8,6 +8,7 @@
 import { create } from "zustand";
 import { api, getTenant, getUser, isTransientErr, setTenant, setUser } from "../api/client.ts";
 import type { Whoami, Tenant } from "../../types/app.ts";
+import { invalidateJiraProjects } from "../../features/workitems/jiraProjects.ts";
 import { confirmDirtyNavigation } from "../../features/editor/dirtyRegistry.ts";
 
 interface TenantStore {
@@ -209,3 +210,9 @@ export const useTenantStore = create<TenantStore>((set) => ({
     set({ tenant: slug });
   },
 }));
+
+// Per-member data cached outside this store must not outlive the member or tenant it was read for
+// (the Jira project keys: jiraProjects.ts).
+useTenantStore.subscribe((s, prev) => {
+  if (s.tenant !== prev.tenant || s.identityRev !== prev.identityRev) invalidateJiraProjects();
+});

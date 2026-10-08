@@ -12,8 +12,9 @@ import { useChatStore, ensureConvs } from "../chat/store.ts";
 import { openChat, openChatSplit } from "../chat/open.ts";
 import { useFilesStore } from "../files/store.ts";
 import { ensureWorkItems, useWorkItemStore } from "../workitems/store.ts";
+import { ensureJiraProjects, useJiraProjects } from "../workitems/jiraProjects.ts";
 import { useReposStore } from "../repos/store.ts";
-import { cloneHosts, cloneHostsInputs, originOf, WORK_ITEM_HINT_RE, workItemRefInputs } from "../workitems/refs.ts";
+import { cloneHosts, cloneHostsInputs, originOf, JIRA_HINT_RE, WORK_ITEM_HINT_RE, workItemRefInputs } from "../workitems/refs.ts";
 import { markRepairedTables, renderFrontMatter } from "./parts/mdFrontMatter.ts";
 import { renderEmoji } from "./parts/mdEmoji.ts";
 import { CONV_HINT_RE, linkifyPathRefs, linkifyRefs } from "./parts/mdRefLinks.ts";
@@ -120,7 +121,9 @@ export function MarkdownView({
   // The clones' hosts decide whether an uncached `owner/name#N` is guessed onto GitHub.
   const wiClones = useReposStore((s) => (workItemRefs ? cloneHostsInputs(cloneHosts(s.repos)) : ""));
   const wiCache = useWorkItemStore((s) => (workItemRefs ? workItemRefInputs(null, s.payload?.items || []) : ""));
-  const wiInputs = `${wiOrigin}#${wiClones}#${wiCache}`;
+  // The Jira project keys arrive on their own request (jiraProjects.ts); one landing re-runs the linkifier.
+  const wiJira = useJiraProjects((s) => (workItemRefs ? s.keys.join(",") : ""));
+  const wiInputs = `${wiOrigin}#${wiClones}#${wiCache}#${wiJira}`;
   const relink = useRef<{ run: () => void; inputs: string } | null>(null);
 
   useEffect(() => {
@@ -215,6 +218,9 @@ export function MarkdownView({
         if (alive) runLinkify();
       });
     }
+    // A Jira key of a project with no saved query: the project list comes on its own request, and
+    // landing changes wiInputs, which re-runs the linkifier.
+    if (workItemRefs && JIRA_HINT_RE.test(source ?? "")) void ensureJiraProjects();
 
     // Link the file paths written as inline code (`docs/log/65-drawio-viewer.md`) to the file
     // they name — but only on a surface that can actually open one. onOpenFile absent means
