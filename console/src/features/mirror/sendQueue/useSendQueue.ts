@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { DRAIN_SETTLE_MS, type QueuedSend } from "./queue.ts";
 import { useSendQueueStore, type Claim } from "./store.ts";
 
@@ -31,7 +31,8 @@ export function useSendQueue({
 }) {
   const items = useSendQueueStore((s) => s.bySession[session] ?? NONE);
   const paused = useSendQueueStore((s) => !!s.paused[session]);
-  const editing = useSendQueueStore((s) => s.editing[session] ?? null);
+  const editing = useSendQueueStore((s) => s.editing[session]);
+  const owner = useId();
   const gate = useSendQueueStore((s) => s.gate[session]);
   const [tick, setTick] = useState(0);
 
@@ -52,13 +53,19 @@ export function useSendQueue({
       return;
     }
     // Only the settle window is time-based; wake up when it lapses.
+    // Armed only while it can matter: something is held, nothing blocks but the window, and the
+    // window is still in the future (an expired one would re-arm this at 50Hz).
     const since = gate?.awaitingSince ?? null;
-    if (since !== null && !busy && canSend && !paused && !gate?.inflight) {
-      const h = setTimeout(() => setTick((n) => n + 1), Math.max(0, since + DRAIN_SETTLE_MS - now) + 20);
+    const left = since === null ? 0 : since + DRAIN_SETTLE_MS - now;
+    if (items.length && left > 0 && !busy && canSend && !paused && !gate?.inflight && !editing) {
+      const h = setTimeout(() => setTick((n) => n + 1), left + 20);
       return () => clearTimeout(h);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `run` is a per-render closure over session/sendItem; the sender of the render that fires is the latest
   }, [items, busy, canSend, paused, editing, gate, tick, session]);
+
+  // This instance's edit lock goes with it — on unmount and when it moves to another session.
+  useEffect(() => () => useSendQueueStore.getState().setEditing(session, owner, null), [session, owner]);
 
   return {
     items,
@@ -68,7 +75,7 @@ export function useSendQueue({
     remove: (id: string) => useSendQueueStore.getState().remove(session, id),
     move: (id: string, delta: -1 | 1) => useSendQueueStore.getState().move(session, id, delta),
     /** The row being edited, or null — set by the list so the drain stands still meanwhile. */
-    setEditing: (id: string | null) => useSendQueueStore.getState().setEditing(session, id),
+    setEditing: (id: string | null) => useSendQueueStore.getState().setEditing(session, owner, id),
     /** Send this item now, ahead of the others — whatever the session is doing. */
     sendNow: (id: string) => {
       const claim = useSendQueueStore.getState().claimItem(session, id);

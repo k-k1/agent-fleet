@@ -5,7 +5,7 @@ import type React from "react";
 import { useSendQueueStore } from "./store.ts";
 import { useSendQueue } from "./useSendQueue.ts";
 import { SendQueueList } from "./SendQueueList.tsx";
-import type { QueuedSend } from "./queue.ts";
+import { DRAIN_SETTLE_MS, type QueuedSend } from "./queue.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -166,13 +166,97 @@ describe("useSendQueue drain", () => {
     expect(send.mock.calls[0][0].text).toBe("new instruction");
   });
 
-  it("drops the edit lock when the list unmounts mid-edit", async () => {
-    add("s", "old");
-    const { rerender } = render(<Harness session="s" busy={true} send={vi.fn(async (_i: QueuedSend) => true)} list />);
+  it("drops an edit lock when its view unmounts, and when it moves to another session", async () => {
+    const send = vi.fn(async (_i: QueuedSend) => true);
+    add("a", "old-a"); add("b", "old-b");
+    const { rerender } = render(<Harness session="a" busy={true} send={send} list />);
     click(buttons(/Edit|編集/)[0]);
-    expect(useSendQueueStore.getState().editing.s).toBe(useSendQueueStore.getState().bySession.s![0].id);
-    rerender(<Harness session="s" busy={true} send={vi.fn(async (_i: QueuedSend) => true)} />);
-    expect(useSendQueueStore.getState().editing.s).toBeUndefined();
+    expect(Object.keys(useSendQueueStore.getState().editing.a ?? {}).length).toBe(1);
+    rerender(<Harness session="b" busy={true} send={send} list />);
+    expect(useSendQueueStore.getState().editing.a).toBeUndefined();
+    expect(host!.querySelector("textarea")).toBeNull();
+    click(buttons(/Edit|編集/)[0]);
+    act(() => root!.unmount());
+    root = null;
+    expect(useSendQueueStore.getState().editing.b).toBeUndefined();
+  });
+
+  it("keeps one view's edit lock when another view of the same session unmounts", async () => {
+    const send = vi.fn(async (_i: QueuedSend) => true);
+    add("s", "old");
+    const a = document.createElement("div");
+    document.body.appendChild(a);
+    const other = createRoot(a);
+    act(() => other.render(<Harness session="s" busy={true} send={send} />));
+    const { rerender } = render(<Harness session="s" busy={true} send={send} list />);
+    click(buttons(/Edit|編集/)[0]);
+    act(() => other.unmount());
+    a.remove();
+    rerender(<Harness session="s" busy={false} send={send} list />);
+    await flush();
+    expect(send).not.toHaveBeenCalled();
+    expect(host!.querySelector("textarea")).not.toBeNull();
+  });
+
+  it("a lock on a deleted row does not hold later rows", async () => {
+    const send = vi.fn(async (_i: QueuedSend) => true);
+    add("s", "old");
+    const { rerender } = render(<Harness session="s" busy={true} send={send} list />);
+    click(buttons(/Edit|編集/)[0]);
+    const id = useSendQueueStore.getState().bySession.s![0].id;
+    act(() => useSendQueueStore.getState().remove("s", id));
+    add("s", "later");
+    rerender(<Harness session="s" busy={false} send={send} list />);
+    await flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0].text).toBe("later");
+  });
+
+  it("send now opens the settle window: a stale idle poll after it does not release the next item", async () => {
+    const send = vi.fn(async (_i: QueuedSend) => true);
+    add("s", "one"); add("s", "two");
+    const { rerender } = render(<Harness session="s" busy={true} send={send} list />);
+    click(buttons(/Send now|今すぐ送る/)[0]);
+    await flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    rerender(<Harness session="s" busy={false} send={send} list />);
+    await flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    polledBusy("s");
+    rerender(<Harness session="s" busy={true} send={send} list />);
+    rerender(<Harness session="s" busy={false} send={send} list />);
+    await flush();
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  describe("settle timer", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it("arms nothing for an empty queue, an expired window or an open edit; one fallback otherwise", async () => {
+      const send = vi.fn(async (_i: QueuedSend) => true);
+      add("s", "last");
+      const { rerender } = render(<Harness session="s" busy={false} send={send} list />);
+      await flush();
+      expect(send).toHaveBeenCalledTimes(1); // the window is open, the queue empty
+      expect(vi.getTimerCount()).toBe(0);
+      add("s", "next");
+      rerender(<Harness session="s" busy={false} send={send} list />);
+      await flush();
+      expect(vi.getTimerCount()).toBe(1);
+      await act(async () => { vi.advanceTimersByTime(DRAIN_SETTLE_MS + 100); });
+      await flush();
+      expect(send).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+      // Expired window + open edit: still no timer loop.
+      add("s", "held");
+      rerender(<Harness session="s" busy={true} send={send} list />);
+      click(buttons(/Edit|編集/)[0]);
+      rerender(<Harness session="s" busy={false} send={send} list />);
+      await flush();
+      await act(async () => { vi.advanceTimersByTime(DRAIN_SETTLE_MS + 100); });
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 
   it("keeps each session's items across a switch and drains only the visible one", async () => {

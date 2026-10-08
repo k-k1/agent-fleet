@@ -104,6 +104,7 @@ export function MirrorComposer({
         />
       )}
       <SendQueueList
+        key={session}
         items={sendQueue.items}
         paused={sendQueue.paused}
         injects={injectsMidTurn(agent.id, managed)}

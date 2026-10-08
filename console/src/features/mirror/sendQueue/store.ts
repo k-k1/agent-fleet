@@ -27,9 +27,13 @@ interface SendQueueStore {
   remove(session: string, id: string): void;
   move(session: string, id: string, delta: -1 | 1): void;
   gate: Record<string, Gate>;
-  /** The queue row being edited, per session: nothing may drain while one is open. */
-  editing: Record<string, string>;
-  setEditing(session: string, id: string | null): void;
+  /**
+   * Rows open for editing, per session and per owner (one hook instance each): nothing may drain
+   * while one is open, and an owner only ever releases its own — two views of one session
+   * cannot unlock each other's edit.
+   */
+  editing: Record<string, Record<string, string>>;
+  setEditing(session: string, owner: string, id: string | null): void;
   /**
    * The drain's one synchronous step: if the head may leave now, take it out and lock the gate.
    * Check, take and lock happen in one store update, so no second hook instance, remount or
@@ -62,6 +66,12 @@ function put(s: SendQueueStore, session: string, items: QueuedSend[]): Partial<S
   return { bySession: by };
 }
 
+/** A lock counts only while its row still exists (a deleted or drained row cannot hold the queue forever). */
+function isEditing(s: SendQueueStore, session: string, id?: string): boolean {
+  const rows = new Set((s.bySession[session] ?? []).map((i) => i.id));
+  return Object.values(s.editing[session] ?? {}).some((r) => rows.has(r) && (id === undefined || r === id));
+}
+
 function claim(
   set: (f: (s: SendQueueStore) => Partial<SendQueueStore>) => void,
   get: () => SendQueueStore,
@@ -90,12 +100,16 @@ export const useSendQueueStore = create<SendQueueStore>((set, get) => ({
   move: (session, id, delta) => set((s) => put(s, session, moveItem(s.bySession[session] ?? [], id, delta))),
   gate: {},
   editing: {},
-  setEditing: (session, id) =>
+  setEditing: (session, owner, id) =>
     set((s) => {
-      if ((s.editing[session] ?? null) === id) return s;
+      const cur = s.editing[session] ?? {};
+      if ((cur[owner] ?? null) === id) return s;
+      const next = { ...cur };
+      if (id === null) delete next[owner];
+      else next[owner] = id;
       const editing = { ...s.editing };
-      if (id === null) delete editing[session];
-      else editing[session] = id;
+      if (Object.keys(next).length) editing[session] = next;
+      else delete editing[session];
       return { editing };
     }),
   claimHead: (session, now, busy, canSend) => {
@@ -106,13 +120,15 @@ export const useSendQueueStore = create<SendQueueStore>((set, get) => ({
       count: items.length, busy, canSend, paused: !!s.paused[session], inflight: g.inflight,
       awaitingSince: g.awaitingSince, now,
     });
-    if (!ok || s.editing[session]) return null;
+    if (!ok || isEditing(s, session)) return null;
     return claim(set, get, session, items[0].id, now);
   },
   claimItem: (session, id) => {
     const s = get();
-    if (s.gate[session]?.inflight || s.editing[session] === id) return null;
-    return claim(set, get, session, id, null);
+    if (s.gate[session]?.inflight || isEditing(s, session, id)) return null;
+    // A manual send starts the settle window too: a stale idle poll right after it must not
+    // release the next item before the turn it began has been seen.
+    return claim(set, get, session, id, Date.now());
   },
   release: (session, c, ok) =>
     set((s) => {

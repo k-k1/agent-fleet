@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr } from "../../../lib/i18n/index.ts";
 import type { QueuedSend } from "./queue.ts";
@@ -31,9 +31,9 @@ export function SendQueueList({
   /** The row now open for editing, or null. The drain stands still while one is open. */
   onEditing: (id: string | null) => void;
 }) {
-  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
-  // The list can vanish mid-edit (queue emptied, pane closed): never leave the lock behind.
-  useEffect(() => () => onEditing(null), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [edit, setEditing] = useState<{ id: string; text: string } | null>(null);
+  // An edit belongs to a row of THIS list: after a session switch or a deleted row it is void.
+  const editing = edit && items.some((i) => i.id === edit.id) ? edit : null;
   if (!items.length) return null;
   const open = (id: string, text: string) => {
     onEditing(id);
