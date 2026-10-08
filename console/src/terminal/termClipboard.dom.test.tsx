@@ -26,6 +26,9 @@ function mount() {
 let selLen = 0; // xterm fires only when the range changes, so grow it each time
 const userSelect = (term: any) => term.select(0, 0, ++selLen);
 
+// The copy is recorded one timer tick after the write resolves (see copySelection).
+const settle = () => new Promise<void>((r) => setTimeout(r, 10));
+
 const key = (code: string, o: KeyboardEventInit = {}) =>
   new KeyboardEvent("keydown", { code, cancelable: true, ...o });
 
@@ -109,7 +112,7 @@ describe("terminal clipboard keys", () => {
     const h: KeyHandler = term._core._customKeyEventHandler;
     term.element.dispatchEvent(new MouseEvent("mouseup", { button: 0 }));
     expect(writeText).toHaveBeenCalledWith("drag");
-    await Promise.resolve(); // let the write settle: a success is what marks it copied
+    await settle(); // let the write settle: a success is what marks it copied
     const intr = key("KeyC", { ctrlKey: true });
     expect(h(intr)).toBe(true);
     expect(intr.defaultPrevented).toBe(false);
@@ -129,8 +132,7 @@ describe("terminal clipboard keys", () => {
     const getSel = vi.spyOn(term, "getSelection").mockReturnValue("progress 10%");
     const h: KeyHandler = term._core._customKeyEventHandler;
     term.element.dispatchEvent(new MouseEvent("mouseup", { button: 0 }));
-    await Promise.resolve();
-    await Promise.resolve();
+    await settle();
     getSel.mockReturnValue("progress 11%"); // same cells, redrawn: no selection event
     const intr = key("KeyC", { ctrlKey: true });
     expect(h(intr)).toBe(true);
@@ -160,8 +162,7 @@ describe("terminal clipboard keys", () => {
       }
       expect(term.hasSelection()).toBe(true);
       await vi.waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
-      await Promise.resolve();
-      await Promise.resolve();
+      await settle();
       const h: KeyHandler = term._core._customKeyEventHandler;
       const intr = key("KeyC", { ctrlKey: true });
       expect(h(intr)).toBe(true);
@@ -169,6 +170,51 @@ describe("terminal clipboard keys", () => {
       expect(writeText).toHaveBeenCalledTimes(1);
     });
   }
+
+  it("Ctrl+C is ^C after the copied selection's rows scroll (scrollback trim) while the write is pending", async () => {
+    let resolveWrite!: () => void;
+    const writeText = vi.fn().mockReturnValue(new Promise<void>((r) => (resolveWrite = r)));
+    Object.defineProperty(navigator, "clipboard", { value: { writeText, readText: vi.fn() }, configurable: true });
+    setSetting("termCtrlCV", true);
+    const term: any = mount();
+    term.resize(20, 2);
+    term.options.scrollback = 1;
+    await new Promise<void>((r) => term.write("before\r\nselected", r));
+    term.select(0, 1, 8); // row 1: "selected"
+    term.element.dispatchEvent(new MouseEvent("mouseup", { button: 0, bubbles: true }));
+    const before = JSON.stringify(term.getSelectionPosition());
+    await new Promise<void>((r) => term.write("\r\nnext\r\nmore", r)); // trims scrollback, moves the rows
+    resolveWrite();
+    await settle();
+    expect(term.hasSelection()).toBe(true);
+    expect(JSON.stringify(term.getSelectionPosition())).not.toBe(before); // rows really moved
+    const intr = key("KeyC", { ctrlKey: true });
+    expect(term._core._customKeyEventHandler(intr)).toBe(true);
+    expect(intr.defaultPrevented).toBe(false);
+  });
+
+  it("a different selection made over the same cells while the write is pending is still copyable", async () => {
+    let resolveWrite!: () => void;
+    const writeText = vi
+      .fn()
+      .mockReturnValueOnce(new Promise<void>((r) => (resolveWrite = r)))
+      .mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText, readText: vi.fn() }, configurable: true });
+    setSetting("termCtrlCV", true);
+    const term: any = mount();
+    await new Promise<void>((r) => term.write("same cells", r));
+    userSelect(term);
+    term.element.dispatchEvent(new MouseEvent("mouseup", { button: 0, bubbles: true }));
+    await new Promise((r) => setTimeout(r, 0)); // end of the mouseup dispatch window
+    term.clearSelection();
+    await new Promise<void>((r) => term.write("\rSAME CELLS", r));
+    term.select(0, 0, selLen); // same coordinates as the first selection
+    resolveWrite();
+    await settle();
+    const copy = key("KeyC", { ctrlKey: true });
+    expect(term._core._customKeyEventHandler(copy)).toBe(false);
+    expect(copy.defaultPrevented).toBe(true);
+  });
 
   it("a refused auto-copy leaves Ctrl+C free to retry the copy", async () => {
     const writeText = vi.fn().mockRejectedValue(new Error("denied"));
@@ -197,8 +243,7 @@ describe("terminal clipboard keys", () => {
     vi.spyOn(term, "getSelection").mockReturnValue("drag");
     const h: KeyHandler = term._core._customKeyEventHandler;
     term.element.dispatchEvent(new MouseEvent("mouseup", { button: 0 }));
-    await Promise.resolve();
-    await Promise.resolve();
+    await settle();
     term.element.dispatchEvent(new MouseEvent("mouseup", { button: 0 }));
     await vi.waitFor(() => expect(toasts.length).toBe(1));
     const retry = key("KeyC", { ctrlKey: true });

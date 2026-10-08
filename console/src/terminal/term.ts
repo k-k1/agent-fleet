@@ -91,6 +91,12 @@ const copiedEpoch = new WeakMap<Terminal, number>();
 // Attempt counter per terminal: a slow earlier write that resolves after a newer attempt began
 // must not re-record its text.
 const copyGen = new WeakMap<Terminal, number>();
+interface CopyPending {
+  expect: boolean; // still inside the dispatch that started the copy
+  candidate: number | undefined; // selEpoch of the selection being copied
+  start: number | undefined; // selEpoch when the copy started
+}
+const copyPending = new WeakMap<Terminal, CopyPending>();
 function copySelection(term: Terminal, opts: { notify?: boolean; clear?: boolean } = {}) {
   const sel = term && term.getSelection();
   if (!sel) return;
@@ -98,24 +104,30 @@ function copySelection(term: Terminal, opts: { notify?: boolean; clear?: boolean
   const gen = (copyGen.get(term) ?? 0) + 1;
   copyGen.set(term, gen);
   copiedEpoch.delete(term);
-  // xterm confirms a mouse selection (and fires onSelectionChange) from a document mouseup
-  // listener, i.e. AFTER our term.element mouseup copy starts, so the epoch cannot be read
-  // here. Remember where the copied selection sits and bind the epoch on success instead,
-  // provided the user has not selected something else in the meantime.
-  const pos = JSON.stringify(term.getSelectionPosition() ?? null);
+  // xterm confirms a mouse selection (fires onSelectionChange) from a document mouseup listener,
+  // i.e. AFTER our term.element mouseup copy starts but within the same dispatch. The first
+  // selection event of that dispatch is the confirmation of the text being copied and fixes
+  // the candidate epoch; a timer ends the window (and defaults the candidate to the epoch at
+  // copy start when xterm confirmed earlier). Positions and text are never compared: output
+  // scrolling the selection or redrawing its cells fires no event, while any later selection
+  // event, even over the same cells, changes selEpoch and so voids the record.
+  const pend: CopyPending = { expect: true, candidate: undefined, start: selEpoch.get(term) };
+  copyPending.set(term, pend);
+  setTimeout(() => {
+    pend.expect = false;
+    pend.candidate ??= pend.start;
+  }, 0);
   if (opts.clear) term.clearSelection();
   if (!navigator.clipboard?.writeText) return clipFail("term.copy_failed");
   // Recorded only once the write succeeded: a refused auto-copy must leave the selection
   // copyable, so the user's explicit Ctrl+C retry copies instead of interrupting.
   navigator.clipboard.writeText(sel).then(
     () => {
-      const epoch = selEpoch.get(term);
-      if (
-        copyGen.get(term) === gen &&
-        epoch !== undefined &&
-        JSON.stringify(term.getSelectionPosition() ?? null) === pos
-      )
-        copiedEpoch.set(term, epoch);
+      // Run after the window-closing timer above (timers fire in order).
+      setTimeout(() => {
+        if (copyGen.get(term) === gen && pend.candidate !== undefined && selEpoch.get(term) === pend.candidate)
+          copiedEpoch.set(term, pend.candidate);
+      }, 0);
       if (opts.notify) toast(tr("term.copied"), { kind: "success", key: "term-clipboard", duration: 1500 });
     },
     () => clipFail("term.copy_failed"),
@@ -468,7 +480,12 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
     term.loadAddon(new WebLinksAddon((e, uri) => window.open(uri, "_blank", "noopener")));
   } catch {}
   term.open(el);
-  term.onSelectionChange(() => selEpoch.set(term, (selEpoch.get(term) ?? 0) + 1));
+  term.onSelectionChange(() => {
+    const n = (selEpoch.get(term) ?? 0) + 1;
+    selEpoch.set(term, n);
+    const pend = copyPending.get(term);
+    if (pend?.expect && pend.candidate === undefined) pend.candidate = n;
+  });
   // OSC 52: with `set-clipboard on`, tmux emits the just-copied selection as an
   // OSC 52 sequence to its outer terminal (us). xterm has no built-in OSC 52 handler,
   // so a plain mouse drag-select in the terminal (which tmux, in mouse mode, turns into
