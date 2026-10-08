@@ -644,6 +644,13 @@ ENV GIT_TERMINAL_PROMPT=0 \
 # is also why it is no longer here. Keep these vars anyway: they still do what the
 # paragraph above says about optional/background traffic. ADR 0041 決定1 is unchanged
 # (the native path stays off); only the mechanism moved.
+#
+# NONESSENTIAL_TRAFFIC also turns off feature-flag evaluation, and Remote Control will not
+# start while it is set (silent: the claude session runs, no Remote Control session is created).
+# So while the Console's Remote control toggle is on, the Agent removes this one variable
+# (`env -u`) from the claude processes it starts afterwards (agents/claude/program.go
+# `launchCommand`); the other three stay set, and with the toggle off the environment is
+# exactly this one. docs/log/58 §58.18 has the measurement.
 ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
     DISABLE_TELEMETRY=1 \
     DISABLE_ERROR_REPORTING=1

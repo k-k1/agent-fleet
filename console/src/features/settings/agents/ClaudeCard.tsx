@@ -201,6 +201,7 @@ export function ClaudeCard({
                 onChange={(v) => updateClaude({ remoteControlAtStartup: v })}
               />
             </SettingRow>
+            <p className="ps-note">{tr("agents.note_claude_remote_control")}</p>
             <SettingRow label={tr("agents.notifications")}>
               <OnOff
                 value={claude.agentPushNotifEnabled}

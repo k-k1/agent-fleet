@@ -322,6 +322,8 @@ export const settings = {
   "agents.muse_model_note":
     "Muse Code の一覧には、各モデルの「-contributor」版が並びます。モデルも料金も同じですが、そちらを選ぶと会話（セッション間のメッセージを含む）が Meta の製品改善に使われることがあります。Muse Code 自身の既定はこの版です。ここの「既定」は、その条件が付かない最新のモデルを Agent Fleet が選ぶという意味です。",
   "agents.remote_control": "リモートコントロール",
+  "agents.note_claude_remote_control":
+    "変更後に起動する Claude セッションから反映されます。このワークスペースの CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC が設定されていると、リモートコントロールは起動しません。オンの間は、以後に起動する Claude セッションをこの変数なしで起動するので、リリースノート・PR/MR の状態・利用可否の確認も、この変数では抑止されなくなります。テレメトリ・エラーレポート・自動更新は止めたままです。Claude の settings.json の env に同じ変数が書かれている場合や、組織が Trusted Devices を必須にしている場合は、接続できません。詳細はガイド（エージェント）を参照してください。",
   "agents.notifications": "通知",
   "agents.codex_auth_failed": "Codex の認証を開始できませんでした: {msg}",
   "agents.codex_device_disabled": "device code ログインが無効かもしれません",
