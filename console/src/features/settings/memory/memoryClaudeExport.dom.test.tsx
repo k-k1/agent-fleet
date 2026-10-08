@@ -154,4 +154,19 @@ describe("ClaudeExportPanel", () => {
     await flush();
     expect(apiJSON).toHaveBeenCalledTimes(1);
   });
+
+  it("names the files that keep a newer edit, and keeps naming them after the preview reloads", async () => {
+    apiJSON.mockResolvedValueOnce({
+      results: [{ name: "fresh", result: "skipped", reason: "changed_since_preview", kept: ".tmp-af-1-2" }],
+      index: "failed",
+      indexKept: ".tmp-af-3-4",
+    });
+    await mount();
+    await pick();
+    await act(async () => applyButton().click());
+    await flush();
+    const warn = host!.textContent ?? "";
+    expect(warn).toContain(".tmp-af-1-2");
+    expect(warn).toContain(".tmp-af-3-4");
+  });
 });

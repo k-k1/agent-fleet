@@ -160,7 +160,7 @@ func cmdExport(c *Client, args []string, out io.Writer) error {
 	if err := c.do("POST", "/agents/memory/claude-export?project="+queryEscape(id), req, &res); err != nil {
 		return err
 	}
-	done, skipped, failed := 0, 0, 0
+	done, skipped, failed, kept := 0, 0, 0, 0
 	for _, r := range res.Results {
 		switch {
 		case r.Result != "skipped":
@@ -171,20 +171,25 @@ func cmdExport(c *Client, args []string, out io.Writer) error {
 		default:
 			skipped++
 			fmt.Fprintf(out, "  skipped %s: %s\n", r.Name, r.Reason)
-			if r.Kept != "" {
-				fmt.Fprintf(out, "    your newer edit is kept as %s in claude's memory directory\n", r.Kept)
-			}
 		}
+		if r.Kept != "" {
+			kept++
+			fmt.Fprintf(out, "    your newer edit is kept as %s in claude's memory directory\n", r.Kept)
+		}
+	}
+	if res.IndexKept != "" {
+		kept++
+		fmt.Fprintf(out, "your newer MEMORY.md edit is kept as %s in claude's memory directory\n", res.IndexKept)
 	}
 	if res.Snapshot != "" {
 		fmt.Fprintf(out, "snapshot of claude's memory taken first (%s)\n", res.Snapshot[:min(len(res.Snapshot), 12)])
 	}
 	fmt.Fprintf(out, "done: %d written or removed, %d skipped, MEMORY.md %s\n", done, skipped, res.Index)
+	if kept > 0 {
+		return fmt.Errorf("%d newer edit(s) were kept under hidden names (listed above); move them back by hand", kept)
+	}
 	if failed > 0 {
 		return fmt.Errorf("%d file(s) could not be written", failed)
-	}
-	if res.IndexKept != "" {
-		fmt.Fprintf(out, "your newer MEMORY.md edit is kept as %s in claude's memory directory\n", res.IndexKept)
 	}
 	if res.Index == "failed" {
 		return fmt.Errorf("MEMORY.md could not be updated (it changed during the write-back or could not be written); preview again")

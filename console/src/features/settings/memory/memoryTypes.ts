@@ -195,6 +195,8 @@ export interface ClaudeExportResult {
   name: string;
   result: "written" | "updated" | "removed" | "skipped";
   reason?: string;
+  /** A hidden file in Claude's memory directory that holds a newer edit which could not be put back. */
+  kept?: string;
 }
 
 /** One memory in the Console's list (#1703): the pin is the member's, the count is the agents' use. */

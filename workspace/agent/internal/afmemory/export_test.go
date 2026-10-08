@@ -82,3 +82,27 @@ func TestExportUsageAndUnknownProject(t *testing.T) {
 		t.Errorf("export-sources: %d %s", code, out)
 	}
 }
+
+func TestExportKeptEditsAreAlwaysPrintedAndFail(t *testing.T) {
+	for name, body := range map[string]string{
+		"file kept, index written":    `{"results":[{"name":"a","result":"skipped","reason":"changed_since_preview","kept":".tmp-af-1-2"}],"index":"written"}`,
+		"write_failed and index kept": `{"results":[{"name":"b","result":"skipped","reason":"write_failed"}],"index":"failed","indexKept":".tmp-af-3-4"}`,
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method + " " + r.URL.Path {
+			case "GET /agents/memory/claude-export":
+				io.WriteString(w, `{"projects":[{"project":{"id":"demo-0123456789ab","display":"demo"},"count":1}]}`)
+			case "GET /agents/memory/claude-export/preview":
+				io.WriteString(w, `{"project":{"id":"demo-0123456789ab","display":"demo"},"slug":"-s","token":"t","counts":{},"items":[],"index":"rewrite"}`)
+			default:
+				io.WriteString(w, body)
+			}
+		}))
+		c := &Client{Base: srv.URL, HTTP: srv.Client()}
+		code, out, errs := run(c, "export", "--project", "demo")
+		srv.Close()
+		if code == 0 || !strings.Contains(out, ".tmp-af-") || !strings.Contains(errs, "kept") {
+			t.Errorf("%s: code %d out %q err %q", name, code, out, errs)
+		}
+	}
+}

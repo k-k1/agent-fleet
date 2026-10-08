@@ -42,6 +42,8 @@ export function ClaudeExportPanel({ reload }: { reload: number }) {
   const [overwrite, setOverwrite] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [again, setAgain] = useState(0);
+  // Hidden files that hold a newer edit the write-back could not put back; shown until the next apply.
+  const [kept, setKept] = useState<string[]>([]);
 
   const load = useCallback(async (signal: AbortSignal) => {
     const res = await api("api/agents/memory/claude-export");
@@ -90,6 +92,7 @@ export function ClaudeExportPanel({ reload }: { reload: number }) {
   const run = async () => {
     if (!preview) return;
     setBusy(true);
+    setKept([]);
     try {
       // The project id also goes in the query: the CP audit ledger reads the URL only.
       const res = await apiJSON("api/agents/memory/claude-export?project=" + encodeURIComponent(project), "POST", {
@@ -105,6 +108,10 @@ export function ClaudeExportPanel({ reload }: { reload: number }) {
       const done = results.filter((r) => r.result !== "skipped").length;
       const skipped = results.length - done;
       const indexFailed = res?.index === "failed";
+      setKept([
+        ...results.map((r) => r.kept ?? ""),
+        (res?.indexKept as string | undefined) ?? "",
+      ].filter(Boolean));
       toast(tr(skipped ? "mem.ce_done_skipped" : "mem.ce_done", { n: done, skipped }) + (indexFailed ? " " + tr("mem.ce_index_failed") : ""), {
         kind: skipped || indexFailed ? undefined : "success",
       });
@@ -194,6 +201,7 @@ export function ClaudeExportPanel({ reload }: { reload: number }) {
         <>
           <p className="muted ds-hint">{tr("mem.ce_to", { slug: preview.slug })}</p>
           {preview.switchOn && <p className="mem-warn">{tr("mem.ce_switch_on")}</p>}
+          {kept.length > 0 && <p className="mem-warn">{tr("mem.ce_kept", { files: kept.join(", ") })}</p>}
           {STATUSES.map(group)}
           {preview.userScope > 0 && <p className="muted ds-hint">{tr("mem.ce_user_scope", { n: preview.userScope })}</p>}
           {(preview.notForClaude ?? 0) > 0 && (
