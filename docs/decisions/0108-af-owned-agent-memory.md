@@ -249,3 +249,14 @@ copilot and kiro; saving the switch reconciles at once. lcpp's system prompt car
 the project's `memory_index` at the 4 KiB budget floor, per turn. cursor was not changed: the tool
 descriptions already say when to call (pinned by a test). Not done here: usage-based ranking (#1703).
 
+## Note (2026-10-08): usage ranking and pins (#1703)
+
+`memory_index` now ranks pinned first, then the type tier, then use count, then recency. A use is a
+`memory_read` or a returned search hit; the Console's list is not one. The count lives in a sidecar,
+`<scope dir>/.usage/<name>`, one byte appended per use (O_APPEND, so no read-modify-write and no lost
+use; capped at 4096; not committed, not exported). It is cleared when the memory is forgotten or
+re-created. A pin is `pinned: true` in the frontmatter, set only by the member from the Console
+(`POST /agents/memory/entries/pin`, op `pin`, audited as `memory.entry.pin`); it changes neither the
+revision nor `updated`, and an agent's save carries it forward. The byte budget still holds: pins
+fill the described part first, and pins that do not fit fall to the names-only tail and are counted
+in `pinnedOmitted`, which `memory_index` prints. Search relevance stays with #1558.

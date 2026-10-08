@@ -475,6 +475,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/entries/changes", memoryx.HandleAgentMemoryChanges)
 	mux.HandleFunc("GET /agents/memory/entries/diff", memoryx.HandleAgentMemoryChangeDiff)
 	mux.HandleFunc("POST /agents/memory/entries/revert", memoryx.HandleAgentMemoryRevert)
+	// The member's list of every memory, and the pin (#1703). Agents cannot pin: no MCP tool
+	// reaches the pin route.
+	mux.HandleFunc("GET /agents/memory/entries/list", memoryx.HandleAgentMemoryList)
+	mux.HandleFunc("POST /agents/memory/entries/pin", memoryx.HandleAgentMemoryPin)
 	// One-time import of claude's own auto-memory (ADR 0108 decision 6 step 1). Not
 	// /agents/memory/import: that is the bundle import of the 0022 history.
 	mux.HandleFunc("GET /agents/memory/claude-import", memoryx.HandleAgentMemoryClaudeSources)

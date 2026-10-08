@@ -20,9 +20,9 @@ const (
 	// so a small described budget does not also shrink the safety net of names.
 	agentMemIndexTailBudget = 8 << 10
 	// agentMemIndexTailOverhead is reserved out of the tail budget for what the formatter adds
-	// around the names: the explanatory header line and the "and N more" line. The mcpx test
+	// around the names: the explanatory header line, the "and N more" line and the pinned count. The mcpx test
 	// measures the real tail against the full budget.
-	agentMemIndexTailOverhead = 256
+	agentMemIndexTailOverhead = 320
 	// agentMemIndexTailScan bounds the quadratic grouping below; whatever lies past it is counted.
 	agentMemIndexTailScan = 2000
 	// agentMemIndexDescRunes is the description length in an index line only; memory_read and
@@ -95,14 +95,21 @@ func agentMemRankTier(e agentMemEntry) int {
 	return 1
 }
 
-// agentMemRank orders entries for the index: tier first, then newest first. Stable, so the
-// caller's scope order (project before user) breaks ties.
+// agentMemRank orders entries for the index: pinned first, then tier, then most used, then
+// newest. Stable, so the caller's scope order (project before user) breaks ties.
 func agentMemRank(es []agentMemEntry) {
 	sort.SliceStable(es, func(i, j int) bool {
-		if ti, tj := agentMemRankTier(es[i]), agentMemRankTier(es[j]); ti != tj {
+		a, b := es[i], es[j]
+		if a.Pinned != b.Pinned {
+			return a.Pinned
+		}
+		if ti, tj := agentMemRankTier(a), agentMemRankTier(b); ti != tj {
 			return ti < tj
 		}
-		return es[i].Updated > es[j].Updated
+		if a.Uses != b.Uses {
+			return a.Uses > b.Uses
+		}
+		return a.Updated > b.Updated
 	})
 }
 
@@ -153,12 +160,18 @@ func agentMemTailSize(groups []string) int {
 // agentMemBudgetIndex splits ranked entries into the described part (rendered lines within
 // budget, in rank order, stopping at the first that does not fit so rank is never skipped),
 // the grouped names of what follows (within the tail budget) and the count beyond that.
-func agentMemBudgetIndex(ranked []agentMemEntry, budget int) (described []agentMemEntry, more []string, omitted int) {
+//
+// Pins rank first, so they fill the described part before anything else. The budget still
+// holds: when the pins alone exceed it, the ones that do not fit fall to the names-only tail
+// like any other entry, and pinnedOmitted says how many (the member's cue to unpin some).
+// Measured on lines, not on a pin count, because one pinned memory can be as long as ten.
+func agentMemBudgetIndex(ranked []agentMemEntry, budget int) (described []agentMemEntry, more []string, omitted, pinnedOmitted int) {
 	budget = agentMemClampBudget(budget)
 	used, i := 0, 0
 	described = []agentMemEntry{}
 	for ; i < len(ranked); i++ {
 		e := ranked[i]
+		e.Pinned, e.Uses = false, 0 // ranking input, not part of the answer
 		e.Description = agentMemCutRunes(e.Description, agentMemIndexDescRunes)
 		n := len(agentMemIndexLine(e))
 		if used+n > budget {
@@ -169,7 +182,12 @@ func agentMemBudgetIndex(ranked []agentMemEntry, budget int) (described []agentM
 	}
 	rest := ranked[i:]
 	if len(rest) == 0 {
-		return described, nil, 0
+		return described, nil, 0, 0
+	}
+	for _, e := range rest {
+		if e.Pinned {
+			pinnedOmitted++
+		}
 	}
 	var names []string
 	seen := map[string]bool{}
@@ -192,7 +210,7 @@ func agentMemBudgetIndex(ranked []agentMemEntry, budget int) (described []agentM
 		more = cand
 		taken++
 	}
-	return described, more, len(rest) - taken
+	return described, more, len(rest) - taken, pinnedOmitted
 }
 
 // IndexJSONFor is memory_index's answer for a working copy and an agent kind, as the JSON the
