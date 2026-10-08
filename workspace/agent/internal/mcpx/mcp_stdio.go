@@ -526,6 +526,9 @@ var mcpAdvertised struct {
 	mu    sync.Mutex
 	names map[string]bool // nil until the first tools/list has been served
 	fp    string          // fingerprint of that same answer, for the watcher below
+	// props is the property set each advertised tool's schema declared in that answer; a call's
+	// argument keys are held to it (mcpCheckCallArgs).
+	props map[string]map[string]bool
 }
 
 // rememberAdvertised records what a tools/list answer actually contained.
@@ -538,7 +541,7 @@ func rememberAdvertised(tools []map[string]any) {
 	}
 	fp := mcpToolListFingerprint(tools)
 	mcpAdvertised.mu.Lock()
-	mcpAdvertised.names, mcpAdvertised.fp = names, fp
+	mcpAdvertised.names, mcpAdvertised.fp, mcpAdvertised.props = names, fp, advertisedProps(tools)
 	mcpAdvertised.mu.Unlock()
 }
 
@@ -2638,6 +2641,114 @@ var mcpStdioWriteTools = []map[string]any{
 	},
 }
 
+// mcpCallArgs is the union of every argument the union-decoded tools take. Each field's json
+// tag must be advertised by some tool schema and each advertised property of those tools must
+// have a field here (TestMCPArgsSchemaAndDecoderAgree).
+type mcpCallArgs struct {
+	Name string `json:"name"`
+	// Since is a pointer: an explicit since:0 (re-read from the start) has to be
+	// distinguished from an omitted one (continue from the previous cursor —
+	// mcpSessionOutput).
+	Since *int64 `json:"since"`
+	// Lines is peek_session_output's trailing-line count (the Agent clamps it).
+	Lines     int    `json:"lines"`
+	Prompt    string `json:"prompt"`
+	Assistant string `json:"assistant"`
+	// create_session args
+	Dir           string `json:"dir"`
+	Title         string `json:"title"`
+	Kind          string `json:"kind"`
+	Model         string `json:"model"`
+	Effort        string `json:"effort"`
+	InitialPrompt string `json:"initial_prompt"`
+	// Worktree is a POINTER because the default differs by surface: false for the
+	// operator, true for a session (ADR 0073 decision 7). A plain bool cannot tell
+	// "worktree=false, work right here" from "not mentioned".
+	Worktree *bool `json:"worktree"`
+	// AllowSharedWorkingCopy is a session's explicit opt-in to share its own working copy
+	// with the child (needs worktree=false; the Agent enforces which directory).
+	AllowSharedWorkingCopy bool   `json:"allow_shared_working_copy"`
+	Branch                 string `json:"branch"`
+	NewBranch              string `json:"new_branch"`
+	Subdir                 string `json:"subdir"`
+	// ReportBack asks a spawned child to send one intent=answer peer message home when it
+	// finishes (ADR 0073 decision 9). A pointer for the same reason as On: omitted means
+	// on, and a plain bool would silently turn the report off for every caller that did
+	// not think about it.
+	ReportBack *bool `json:"report_back"`
+	// SpendCapUSD is create_session's per-child budget (#1054). A pointer: omitted means the
+	// user's default, which the Agent applies; an explicit 0 means none.
+	SpendCapUSD *float64 `json:"spend_cap_usd"`
+	// answer_session_question args: 1-based choice numbers, in question order.
+	Choices []int `json:"choices"`
+	// respond_session_plan args
+	Decision string `json:"decision"`
+	Feedback string `json:"feedback"`
+	// set_chat_plan args (docs/log/33 stage 5, option D): the full work plan pinned to
+	// the conversation.
+	Plan string `json:"plan"`
+	// memo args (id in the path; the rest are forwarded verbatim via p.Args).
+	// ID doubles as the cleanup-archive id (restore/purge). Repo names the branch's repo.
+	ID   string `json:"id"`
+	Repo string `json:"repo"`
+	// agent-memory args (docs/log/39 P4). Rev/At pick the snapshot; All/Kinds/Projects
+	// are the restore scope. Limit/Path narrow the read tools.
+	// af_report (docs/log/51 Phase 3): the reporting session's name. Kept separate from
+	// Name because this tool carries "who I am", not "which session to observe".
+	// af_stop_after_turn (docs/log/85) uses the same field for the same reason.
+	Session string `json:"session"`
+	// On is af_stop_after_turn's arm / release. A POINTER because the zero value of the
+	// arming flag has to mean "arm": decoded into a plain bool, a call that omitted it
+	// would silently release the arm it was meant to set.
+	On       *bool    `json:"on"`
+	Rev      string   `json:"rev"`
+	At       string   `json:"at"`
+	Path     string   `json:"path"`
+	Limit    int      `json:"limit"`
+	All      bool     `json:"all"`
+	Kinds    []string `json:"kinds"`
+	Projects []string `json:"projects"`
+	// Chromium Attach View (docs/log/53). MCP is snake_case while the Agent REST is
+	// camelCase, so the conversion is explicit at this boundary. Neither a host nor a
+	// CDP WebSocket URL is accepted as input.
+	Port              int    `json:"port"`
+	TargetID          string `json:"target_id"`
+	ExpectedBrowserID string `json:"expected_browser_id"`
+	AttachmentID      string `json:"attachment_id"`
+	Label             string `json:"label"`
+	Message           string `json:"message"`
+	CompletionLabel   string `json:"completion_label"`
+	AllowCancel       *bool  `json:"allow_cancel"`
+	ControlMode       string `json:"control_mode"`
+	// send_to_peer_session args (docs/log/58 §58.14): the message kind. The Agent derives
+	// the reply policy from it, so this layer passes it through untouched.
+	Intent string `json:"intent"`
+	// generate_image args (ADR 0069). Op/Size/Background/Count are passed through as the
+	// caller wrote them: what a provider cannot honour is REPORTED in the result's
+	// warnings, so narrowing them here would hide exactly what the user needs to see.
+	Op             string   `json:"op"`
+	Provider       string   `json:"provider"`
+	Size           string   `json:"size"`
+	AspectRatio    string   `json:"aspect_ratio"`
+	Background     string   `json:"background"`
+	Count          int      `json:"count"`
+	Inputs         []string `json:"inputs"`
+	Mask           string   `json:"mask"`
+	Seed           *int64   `json:"seed"`
+	NegativePrompt string   `json:"negative_prompt"`
+	// Strength is a pointer so that 0 arrives at the Agent as the request it is and is
+	// refused there by value, instead of reading here as "not given" and becoming the default.
+	Strength *float64 `json:"strength"`
+	// Loras (ADR 0072 decision 5, phase P3). Passed on as written for the same reason as the
+	// rest: the Agent refuses an unknown name or a family that does not match the checkpoint
+	// BY NAME, which is a better answer than a silently shortened list.
+	Loras []imageGenLoraArg `json:"loras"`
+	// Params is the sampler overlay, and a POINTER for the same reason Strength is: an absent
+	// object and an empty one are not the same request, and which of the four a family reads
+	// is answered downstream in warnings rather than guessed at here.
+	Params *imageGenParamsArg `json:"params"`
+}
+
 func mcpStdioCall(req mcpReq) []byte {
 	var p struct {
 		Name string          `json:"name"`
@@ -2663,111 +2774,10 @@ func mcpStdioCall(req mcpReq) []byte {
 		// when the honest answer is that it named something this server never offered.
 		return mcpToolErr(req.ID, "このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: "+p.Name)
 	}
-	var a struct {
-		Name string `json:"name"`
-		// Since is a pointer: an explicit since:0 (re-read from the start) has to be
-		// distinguished from an omitted one (continue from the previous cursor —
-		// mcpSessionOutput).
-		Since *int64 `json:"since"`
-		// Lines is peek_session_output's trailing-line count (the Agent clamps it).
-		Lines     int    `json:"lines"`
-		Prompt    string `json:"prompt"`
-		Assistant string `json:"assistant"`
-		// create_session args
-		Dir           string `json:"dir"`
-		Title         string `json:"title"`
-		Kind          string `json:"kind"`
-		Model         string `json:"model"`
-		Effort        string `json:"effort"`
-		InitialPrompt string `json:"initial_prompt"`
-		// Worktree is a POINTER because the default differs by surface: false for the
-		// operator, true for a session (ADR 0073 decision 7). A plain bool cannot tell
-		// "worktree=false, work right here" from "not mentioned".
-		Worktree *bool `json:"worktree"`
-		// AllowSharedWorkingCopy is a session's explicit opt-in to share its own working copy
-		// with the child (needs worktree=false; the Agent enforces which directory).
-		AllowSharedWorkingCopy bool   `json:"allow_shared_working_copy"`
-		Branch                 string `json:"branch"`
-		NewBranch              string `json:"new_branch"`
-		Subdir                 string `json:"subdir"`
-		// ReportBack asks a spawned child to send one intent=answer peer message home when it
-		// finishes (ADR 0073 decision 9). A pointer for the same reason as On: omitted means
-		// on, and a plain bool would silently turn the report off for every caller that did
-		// not think about it.
-		ReportBack *bool `json:"report_back"`
-		// SpendCapUSD is create_session's per-child budget (#1054). A pointer: omitted means the
-		// user's default, which the Agent applies; an explicit 0 means none.
-		SpendCapUSD *float64 `json:"spend_cap_usd"`
-		// answer_session_question args: 1-based choice numbers, in question order.
-		Choices []int `json:"choices"`
-		// respond_session_plan args
-		Decision string `json:"decision"`
-		Feedback string `json:"feedback"`
-		// set_chat_plan args (docs/log/33 stage 5, option D): the full work plan pinned to
-		// the conversation.
-		Plan string `json:"plan"`
-		// memo args (id in the path; the rest are forwarded verbatim via p.Args).
-		// ID doubles as the cleanup-archive id (restore/purge). Repo names the branch's repo.
-		ID   string `json:"id"`
-		Repo string `json:"repo"`
-		// agent-memory args (docs/log/39 P4). Rev/At pick the snapshot; All/Kinds/Projects
-		// are the restore scope. Limit/Path narrow the read tools.
-		// af_report (docs/log/51 Phase 3): the reporting session's name. Kept separate from
-		// Name because this tool carries "who I am", not "which session to observe".
-		// af_stop_after_turn (docs/log/85) uses the same field for the same reason.
-		Session string `json:"session"`
-		// On is af_stop_after_turn's arm / release. A POINTER because the zero value of the
-		// arming flag has to mean "arm": decoded into a plain bool, a call that omitted it
-		// would silently release the arm it was meant to set.
-		On       *bool    `json:"on"`
-		Rev      string   `json:"rev"`
-		At       string   `json:"at"`
-		Path     string   `json:"path"`
-		Limit    int      `json:"limit"`
-		All      bool     `json:"all"`
-		Kinds    []string `json:"kinds"`
-		Projects []string `json:"projects"`
-		// Chromium Attach View (docs/log/53). MCP is snake_case while the Agent REST is
-		// camelCase, so the conversion is explicit at this boundary. Neither a host nor a
-		// CDP WebSocket URL is accepted as input.
-		Port              int    `json:"port"`
-		TargetID          string `json:"target_id"`
-		ExpectedBrowserID string `json:"expected_browser_id"`
-		AttachmentID      string `json:"attachment_id"`
-		Label             string `json:"label"`
-		Message           string `json:"message"`
-		CompletionLabel   string `json:"completion_label"`
-		AllowCancel       *bool  `json:"allow_cancel"`
-		ControlMode       string `json:"control_mode"`
-		// send_to_peer_session args (docs/log/58 §58.14): the message kind. The Agent derives
-		// the reply policy from it, so this layer passes it through untouched.
-		Intent string `json:"intent"`
-		// generate_image args (ADR 0069). Op/Size/Background/Count are passed through as the
-		// caller wrote them: what a provider cannot honour is REPORTED in the result's
-		// warnings, so narrowing them here would hide exactly what the user needs to see.
-		Op             string   `json:"op"`
-		Provider       string   `json:"provider"`
-		Size           string   `json:"size"`
-		AspectRatio    string   `json:"aspect_ratio"`
-		Background     string   `json:"background"`
-		Count          int      `json:"count"`
-		Inputs         []string `json:"inputs"`
-		Mask           string   `json:"mask"`
-		Seed           *int64   `json:"seed"`
-		NegativePrompt string   `json:"negative_prompt"`
-		// Strength is a pointer so that 0 arrives at the Agent as the request it is and is
-		// refused there by value, instead of reading here as "not given" and becoming the default.
-		Strength *float64 `json:"strength"`
-		// Loras (ADR 0072 decision 5, phase P3). Passed on as written for the same reason as the
-		// rest: the Agent refuses an unknown name or a family that does not match the checkpoint
-		// BY NAME, which is a better answer than a silently shortened list.
-		Loras []imageGenLoraArg `json:"loras"`
-		// Params is the sampler overlay, and a POINTER for the same reason Strength is: an absent
-		// object and an empty one are not the same request, and which of the four a family reads
-		// is answered downstream in warnings rather than guessed at here.
-		Params *imageGenParamsArg `json:"params"`
+	var a mcpCallArgs
+	if msg := mcpCheckCallArgs(p.Name, p.Args, &a); msg != "" {
+		return mcpToolErr(req.ID, msg)
 	}
-	_ = json.Unmarshal(p.Args, &a)
 
 	// The mutating Chromium attachment tools are refused on the call side too, not just in
 	// the advertised set: a read-only client that guesses a name and issues tools/call must
@@ -3328,6 +3338,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		stop()
 		if err != nil {
 			return mcpToolErr(req.ID, "セッションの作成に失敗しました: "+agentErrDetail(err))
+		}
+		if parent != "" && strings.TrimSpace(a.InitialPrompt) == "" {
+			out = withNoTaskWarning(out)
 		}
 		return mcpTextResult(req.ID, out)
 	case "send_to_session":

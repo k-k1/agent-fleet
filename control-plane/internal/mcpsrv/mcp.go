@@ -725,6 +725,11 @@ func (a API) mcpToolCall(ctx context.Context, prin *mcpPrincipal, req rpcRequest
 		return rpcErr(req.ID, -32602, "unknown or unauthorized tool: "+p.Name)
 	}
 
+	// Before anything runs: a refused call has no side effect.
+	if msg := unknownArgsError(*tool, p.Args); msg != "" {
+		return rpcOK(req.ID, toolError(msg))
+	}
+
 	var (
 		text string
 		err  error
