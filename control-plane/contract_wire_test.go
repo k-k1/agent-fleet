@@ -97,9 +97,12 @@ func cpContractFamilies() []contractFamily {
 			binding: ssmProfileBinding,
 			tsPath:  "../console/src/lib/settingsBundle.ts",
 			tsName:  "SsmProfileEntry",
-			tsKeys:  keySet("label", "startUrl", "ssoRegion", "accountId", "roleName", "region"),
-			tsOnly:  map[string]string{},
+			tsKeys:  keySet("label", "startUrl", "ssoRegion", "accountId", "roleName", "region", "kind", "source", "roleArn", "externalId", "sessionName", "durationSeconds"),
+			tsOnly: map[string]string{
+				"source": "Intended: a bundle names an assume-role profile's source by its label, because the destination assigns new ids (the Console turns it into sourceProfileId on import).",
+			},
 			goOnly: map[string]string{
+				"sourceProfileId": "Intended exemption: an id does not survive a bundle, so the entry carries the source's label as `source` instead.",
 				// A settings bundle is rebuilt at its destination, so leaving out the id
 				// and the creation time is the intended design ([[settings-export-import]]:
 				// import only ever adds).
@@ -220,6 +223,8 @@ var ssmHostBinding = map[string]string{
 var ssmProfileBinding = map[string]string{
 	"ID": "id", "Label": "label", "StartURL": "startUrl", "SSORegion": "ssoRegion",
 	"AccountID": "accountId", "RoleName": "roleName", "Region": "region", "CreatedAt": "createdAt",
+	"Kind": "kind", "SourceProfileID": "sourceProfileId", "RoleARN": "roleArn", "ExternalID": "externalId",
+	"SessionName": "sessionName", "DurationSeconds": "durationSeconds",
 }
 
 var gitOAuthBinding = map[string]string{

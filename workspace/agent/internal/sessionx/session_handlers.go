@@ -462,6 +462,13 @@ type CreateReq struct {
 	SSORegion    string `json:"sso_region"`
 	SSOAccountID string `json:"sso_account_id"`
 	SSORoleName  string `json:"sso_role_name"`
+	// Role chaining (issue #1109): when SSMRoleARN is set, the sso_* fields above describe
+	// the source profile SSMSourceProfile and SSMProfile assumes the role from it.
+	SSMSourceProfile   string `json:"ssm_source_profile"`
+	SSMRoleARN         string `json:"ssm_role_arn"`
+	SSMExternalID      string `json:"ssm_external_id"`
+	SSMRoleSessionName string `json:"ssm_role_session_name"`
+	SSMDurationSeconds int    `json:"ssm_duration_seconds"`
 	// SSMForceLogin: drop this profile's cached login and run `aws sso login` at launch
 	// (skip the cached-token short-circuit) so the user re-authenticates. One-shot.
 	SSMForceLogin bool `json:"ssm_force_login"`
@@ -1087,6 +1094,8 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 			Profile: req.SSMProfile, Target: req.SSMTarget, Document: req.SSMDocument,
 			Region: req.SSMRegion, StartURL: req.SSOStartURL, SSORegion: req.SSORegion,
 			AccountID: req.SSOAccountID, RoleName: req.SSORoleName,
+			RoleARN: req.SSMRoleARN, SourceProfile: req.SSMSourceProfile, ExternalID: req.SSMExternalID,
+			RoleSessionName: req.SSMRoleSessionName, DurationSeconds: req.SSMDurationSeconds,
 		}
 		if ssm.Region == "" {
 			ssm.Region = ssm.SSORegion

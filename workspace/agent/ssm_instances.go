@@ -16,6 +16,9 @@ import (
 
 type ssmInstancesReq struct {
 	Profile, Region, StartURL, SSORegion, AccountID, RoleName string
+	// Role chaining (issue #1109): see session.SSMMeta.
+	SourceProfile, RoleARN, ExternalID, RoleSessionName string
+	DurationSeconds                                     int
 }
 
 type ssmInstance struct {
@@ -41,7 +44,9 @@ func handleSSMInstances(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := sessionx.SsmConfigPath("discovery-" + req.Profile)
 	meta := session.SSMMeta{Profile: req.Profile, Region: req.Region, StartURL: req.StartURL,
-		SSORegion: req.SSORegion, AccountID: req.AccountID, RoleName: req.RoleName}
+		SSORegion: req.SSORegion, AccountID: req.AccountID, RoleName: req.RoleName,
+		RoleARN: req.RoleARN, SourceProfile: req.SourceProfile, ExternalID: req.ExternalID,
+		RoleSessionName: req.RoleSessionName, DurationSeconds: req.DurationSeconds}
 	if err := sessionx.WriteSSMConfig(cfg, meta); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "config_failed", err.Error())
 		return

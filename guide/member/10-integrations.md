@@ -293,6 +293,33 @@ choosing the **target host**.
 If authentication is needed, the `aws sso login` URL appears on a confirmation screen; approve it in another tab
 (never enter a code / URL you don't recognize).
 
+### Profile type: assume a role from another profile
+
+When an account is reached by a role that trusts your IAM Identity Center sign-in, you do not need long-lived keys
+in `~/.aws/credentials`. Add a profile of the type **"Assume a role from another profile"** in
+Settings > AWS profiles/SSM:
+
+| Field | Meaning |
+|---|---|
+| Source profile (`sourceProfileId`) | The SSO profile whose sign-in assumes the role. Required. It must be an SSO profile, never another assume-role profile. |
+| Role ARN (`roleArn`) | `arn:aws:iam::<account>:role/<name>`. Required. The profile's account is taken from it. |
+| External ID (`externalId`), Session name (`sessionName`), Duration (`durationSeconds`, 900-43200) | Optional assume-role parameters. |
+| Default region (`region`) | Optional. Falls back to the source profile's region. |
+
+Nothing secret is stored or exported. The profile is written into the managed block of `~/.aws/config` as
+`role_arn` + `source_profile = <the source's profile name>`, so `aws --profile <name>`, SDKs and `af-aws-exec` use it
+like any other Settings profile, and an SSM host can point at it too.
+
+- The target role's trust policy must allow your Identity Center role (`AWSReservedSSO_<permission set>_*`) in the
+  source account.
+- It has no sign-in of its own. **Log in** on its row signs in to the source profile, and its state follows the source's.
+  `af-aws-exec --profile <name> -- <command>` needs no `--account` (the role's account is checked against what AWS
+  reports); when the source's login is missing the Console is asked for it, under the source's name.
+- It is exported only while its source is exported. If you define the source's name in your own `~/.aws` files, or a
+  `[DEFAULT]` line breaks it, the chained profile is held back too (`af-aws-exec --list` says why), so the chain never
+  starts from keys of your own.
+- A source profile cannot be deleted, or turned into an assume-role profile, while another profile uses it.
+
 ### Using the profiles from the terminal, SDKs and build tools
 
 Your profiles are also written into **`~/.aws/config`**, so `aws --profile <name>`, the AWS SDKs and build tools

@@ -345,6 +345,9 @@ func HandleProfileLogout(w http.ResponseWriter, r *http.Request) {
 	case !ok:
 		httpx.WriteErr(w, http.StatusNotFound, "not_a_settings_profile", "no Settings profile with that name reached this workspace")
 		return
+	case sp.Chained():
+		httpx.WriteErr(w, http.StatusConflict, "chained_profile", fmt.Sprintf("this profile assumes a role from %q; log out of that profile", sp.SourceProfile))
+		return
 	case !slices.Contains(ExportedIn(ConfigPath()), name):
 		// The member's own ~/.aws may define an sso-session af-<name>; its token is theirs.
 		httpx.WriteErr(w, http.StatusConflict, "not_exported", "this profile is not in ~/.aws/config; `af-aws-exec --list` says why")

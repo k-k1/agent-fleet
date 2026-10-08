@@ -31,6 +31,27 @@ func nonSSOProfile(keys map[string]string) bool {
 	return role || process
 }
 
+// checkChainedIdentity refuses the ways a Settings role-chaining profile can mean something
+// other than what Settings says: the member's own definition of the name (which wins over
+// the managed block) assuming another role or starting from another source, and a pinned
+// account that is not the role's. It sets o.Account to the role's account when the caller
+// gave none.
+func checkChainedIdentity(sp Profile, keys, origin map[string]string, o *ExecOptions) error {
+	if scalar(keys["role_arn"]) != sp.RoleARN || scalar(keys["source_profile"]) != sp.SourceProfile {
+		return fmt.Errorf("profile %q in your own AWS config is not the Settings profile %q (role %s from source profile %q); "+
+			"rename one of them so the name means one role", o.Profile, sp.Label, orNone(sp.RoleARN), sp.SourceProfile)
+	}
+	acct, _, ok := roleARNParts(sp.RoleARN)
+	if !ok {
+		return fmt.Errorf("Settings profile %q has a role ARN that is not an IAM role ARN (%s)", sp.Label, where(origin["role_arn"]))
+	}
+	if o.Account != "" && o.Account != acct {
+		return fmt.Errorf("profile %q assumes a role in account %s, not the %s given with --account", o.Profile, acct, o.Account)
+	}
+	o.Account = acct
+	return nil
+}
+
 // maxSourceChain bounds the source_profile walk; botocore itself stops only at a loop.
 const maxSourceChain = 16
 
@@ -239,25 +260,55 @@ func planNonSSO(awsBin string, env []string, keys, origin map[string]string, ste
 	}
 
 	aws := awsRunner{bin: awsBin, env: ownFilesEnv(env)}
+	// Read before the check, not after (ADR 0102 decision 1).
+	snap := ReadCacheState(rootSession)
 	creds, err := exportLocked(aws, o.Profile, rootSession)
 	err = withheldProcessOutput(err, o.Profile)
 	if err != nil && ssoRoot != "" && loginNeeded(err.Error()) {
-		// The Console login (ADR 0102) is for Settings profiles run by name; here the
-		// member runs the login for the chain's SSO profile themselves.
+		// The member runs the login for the chain's SSO profile themselves, except when that
+		// profile is a Settings profile the files define as Settings does: then the Console
+		// login (ADR 0102) can be asked for it, under the source's name.
+		first := err
 		prefix := ""
 		if steered {
 			prefix = "AWS_CONFIG_FILE=~/.aws/config "
 		}
 		hint := fmt.Sprintf("%saws sso login --profile %s --use-device-code --no-browser", prefix, session.ShellQuote(ssoRoot))
-		if o.Login != "always" && (o.Login == "never" || !o.Interactive) {
-			return "", nil, nil, fmt.Errorf("%w for profile %q (the SSO profile %q its source_profile chain ends in): %v\nlog in with: %s",
-				ErrLoginRequired, o.Profile, ssoRoot, err, hint)
+		rootSSO, rootEligible := chainRootConsoleEligible(env, ssoRoot, o)
+		refused := func() error {
+			return fmt.Errorf("%w for profile %q (the SSO profile %q its source_profile chain ends in): %v\nlog in with: %s",
+				ErrLoginRequired, o.Profile, ssoRoot, first, hint)
 		}
-		if lerr := deviceLogin(awsBin, aws.env, ssoRoot, o.Stderr); lerr != nil {
-			return "", nil, nil, fmt.Errorf("aws sso login for profile %s: %w", ssoRoot, lerr)
+		terminal := func() error {
+			if lerr := deviceLogin(awsBin, aws.env, ssoRoot, o.Stderr); lerr != nil {
+				return fmt.Errorf("aws sso login for profile %s: %w", ssoRoot, lerr)
+			}
+			creds, err = exportLocked(aws, o.Profile, rootSession)
+			err = withheldProcessOutput(err, o.Profile)
+			return nil
 		}
-		creds, err = exportLocked(aws, o.Profile, rootSession)
-		err = withheldProcessOutput(err, o.Profile)
+		switch {
+		case o.Login == "always" || (o.Login != "never" && o.Interactive && !(o.TerminalConsole && rootEligible)):
+			if lerr := terminal(); lerr != nil {
+				return "", nil, nil, lerr
+			}
+		case rootEligible:
+			target := consoleTarget{Profile: ssoRoot, Session: rootSSO.Session, Check: func(a awsRunner) (processCreds, error) {
+				c, cerr := exportLocked(a, o.Profile, rootSession)
+				return c, withheldProcessOutput(cerr, o.Profile)
+			}}
+			creds, err = consoleLogin(aws, target, snap, o, first, hint)
+			if err != nil {
+				if !(o.TerminalConsole && errors.Is(err, errConsoleNotAsked)) {
+					return "", nil, nil, err
+				}
+				if lerr := terminal(); lerr != nil {
+					return "", nil, nil, lerr
+				}
+			}
+		default:
+			return "", nil, nil, refused()
+		}
 	}
 	if errors.Is(err, errNoSessionToken) {
 		return "", nil, nil, fmt.Errorf("profile %q resolves to long-lived keys, and af-aws-exec passes only temporary credentials "+
@@ -277,6 +328,29 @@ func planNonSSO(awsBin string, env []string, keys, origin map[string]string, ste
 		}
 		return nil
 	})
+}
+
+// chainRootConsoleEligible reports whether the SSO profile ssoRoot a chain ends in may be
+// logged in through the Console: a complete Settings SSO profile that the files define
+// exactly as Settings does, through its own af-<name> sso-session (consoleEligible's rule,
+// applied to the source instead of the profile run).
+func chainRootConsoleEligible(env []string, ssoRoot string, o ExecOptions) (ssoInfo, bool) {
+	if !o.ConsoleLogin || o.Login != "auto" || o.ConsoleWait <= 0 {
+		return ssoInfo{}, false
+	}
+	sp, listed := o.Settings[ssoRoot]
+	if !listed || sp.Chained() {
+		return ssoInfo{}, false
+	}
+	keys, origin, err := profileKeysFrom(env, ssoRoot)
+	if err != nil {
+		return ssoInfo{}, false
+	}
+	sso, err := resolveSSO(env, keys, origin)
+	if err != nil || !sameSSO(sp, sso) || sso.Session != "af-"+ssoRoot {
+		return ssoInfo{}, false
+	}
+	return sso, true
 }
 
 // withheldProcessOutput replaces an export error that carries a credential_process's

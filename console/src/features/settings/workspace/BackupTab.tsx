@@ -356,7 +356,11 @@ async function importSsm(
   let addedProfiles = 0;
   let failed = 0;
   for (const p of plan.profiles) {
-    const res = await rawJSON("api/ssm/profiles", "POST", p);
+    // A chained entry names its source by label; the id exists only now, and the plan puts
+    // sso entries first, so it is already in ids.
+    const { source, ...rest } = p;
+    const body = p.kind === "assume_role" ? { ...rest, sourceProfileId: ids.get((source || "").trim().toLowerCase()) } : p;
+    const res = await rawJSON("api/ssm/profiles", "POST", body);
     if (!res.ok) {
       failed++;
       continue;

@@ -191,6 +191,32 @@ describe("planSsmImport", () => {
   });
 });
 
+describe("assume-role profiles in a bundle (#1109)", () => {
+  const sso = { id: "s1", label: "main", startUrl: "https://c.awsapps.com/start", ssoRegion: "us-east-1", accountId: "1", roleName: "R", region: "" };
+  const chain = {
+    id: "c1", kind: "assume_role", label: "deploy", sourceProfileId: "s1", roleArn: "arn:aws:iam::210987654321:role/deploy",
+    accountId: "210987654321", externalId: "e1", sessionName: "af", durationSeconds: 1800, region: "",
+  };
+
+  it("exports the source by label and leaves an sso entry's keys as they were", () => {
+    const out = toSsmSection([sso, chain], []);
+    expect(Object.keys(out.profiles[0]).sort()).toEqual(["accountId", "label", "region", "roleName", "ssoRegion", "startUrl"]);
+    expect(out.profiles[1]).toMatchObject({ kind: "assume_role", label: "deploy", source: "main", roleArn: chain.roleArn, durationSeconds: 1800 });
+  });
+
+  it("plans the sso entries first and skips a chain whose source will not exist", () => {
+    const section = toSsmSection([chain, sso, { ...chain, id: "c2", label: "orphan", sourceProfileId: "zz" }], []);
+    const plan = planSsmImport(section, [], []);
+    expect(plan.profiles.map((p) => p.label)).toEqual(["main", "deploy"]);
+    expect(plan.skippedProfiles).toEqual([{ label: "orphan", reason: "invalid" }]);
+  });
+
+  it("does not take another chained profile as a source", () => {
+    const section = toSsmSection([sso, chain, { ...chain, id: "c3", label: "nested", sourceProfileId: "c1" }], []);
+    expect(planSsmImport(section, [], []).skippedProfiles).toEqual([{ label: "nested", reason: "invalid" }]);
+  });
+});
+
 describe("summarizeBundle / bundleFileName", () => {
   it("counts what the file carries", () => {
     const b = buildBundle(

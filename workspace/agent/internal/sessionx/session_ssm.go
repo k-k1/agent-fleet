@@ -1,6 +1,7 @@
 package sessionx
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -165,7 +166,68 @@ var (
 	ssmAccountRe = regexp.MustCompile(`^[0-9]{1,20}$`)
 	ssmRoleRe    = regexp.MustCompile(`^[A-Za-z0-9+=,.@_-]{1,64}$`)
 	ssmURLRe     = regexp.MustCompile(`^https://[!-~]+$`) // printable ASCII, no spaces/newlines
+
+	// Role chaining. The same shapes as the Control Plane's validateProfile: a value that
+	// passes holds no newline and so cannot add a key of its own to the config.
+	ssmRoleARNRe     = regexp.MustCompile(`^arn:aws[a-z-]*:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,512}$`)
+	ssmExternalIDRe  = regexp.MustCompile(`^[A-Za-z0-9+=,.@:/_-]{2,}$`)
+	ssmSessionNameRe = regexp.MustCompile(`^[A-Za-z0-9+=,.@_-]{2,64}$`)
 )
+
+// ValidateAssumeRole checks the role-chaining fields of s (RoleARN, SourceProfile,
+// ExternalID, RoleSessionName, DurationSeconds) plus the profile name and region. The source
+// must be a different profile name: botocore treats a profile naming itself as source as
+// "use my own static keys", which is not what a chained Settings profile means.
+func ValidateAssumeRole(s session.SSMMeta) error {
+	if !ssmProfileRe.MatchString(s.Profile) {
+		return errors.New("ssm meta: invalid profile")
+	}
+	if !ssmProfileRe.MatchString(s.SourceProfile) || s.SourceProfile == s.Profile {
+		return errors.New("ssm meta: invalid source profile")
+	}
+	if !ssmRoleARNRe.MatchString(s.RoleARN) || strings.HasSuffix(s.RoleARN, "/") || strings.Contains(s.RoleARN, "//") {
+		return errors.New("ssm meta: invalid role arn")
+	}
+	if s.ExternalID != "" && !(len(s.ExternalID) <= 1224 && ssmExternalIDRe.MatchString(s.ExternalID)) {
+		return errors.New("ssm meta: invalid external id")
+	}
+	if s.RoleSessionName != "" && !ssmSessionNameRe.MatchString(s.RoleSessionName) {
+		return errors.New("ssm meta: invalid role session name")
+	}
+	if s.DurationSeconds != 0 && (s.DurationSeconds < 900 || s.DurationSeconds > 43200) {
+		return errors.New("ssm meta: invalid duration")
+	}
+	if s.Region != "" && !ssmRegionRe.MatchString(s.Region) {
+		return errors.New("ssm meta: invalid region")
+	}
+	return nil
+}
+
+// RenderAssumeRoleProfile returns the [profile ...] section of s that assumes s.RoleARN from
+// the profile s.SourceProfile, validated. Nothing in it is a secret: the credentials of the
+// chain come from the source's Identity Center login at run time.
+func RenderAssumeRoleProfile(s session.SSMMeta) (string, error) {
+	if err := ValidateAssumeRole(s); err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "[profile %s]\n", s.Profile)
+	fmt.Fprintf(&b, "role_arn = %s\n", s.RoleARN)
+	fmt.Fprintf(&b, "source_profile = %s\n", s.SourceProfile)
+	if s.ExternalID != "" {
+		fmt.Fprintf(&b, "external_id = %s\n", s.ExternalID)
+	}
+	if s.RoleSessionName != "" {
+		fmt.Fprintf(&b, "role_session_name = %s\n", s.RoleSessionName)
+	}
+	if s.DurationSeconds != 0 {
+		fmt.Fprintf(&b, "duration_seconds = %d\n", s.DurationSeconds)
+	}
+	if s.Region != "" {
+		fmt.Fprintf(&b, "region = %s\n", s.Region)
+	}
+	return b.String(), nil
+}
 
 // validateSSMMeta rejects meta whose values could not have come from the Console
 // forms (INI/path injection defense — the Agent must not trust its callers).
@@ -215,6 +277,12 @@ func WriteSSMConfig(path string, s session.SSMMeta) error {
 // sso-session is named "af-<profile>" wherever it is written, so every file that
 // describes the same profile shares one cached SSO login.
 func RenderSSMConfig(s session.SSMMeta) (string, error) {
+	if s.RoleARN != "" {
+		return renderChained(s)
+	}
+	if s.SourceProfile != "" || s.ExternalID != "" || s.RoleSessionName != "" || s.DurationSeconds != 0 {
+		return "", errors.New("ssm meta: assume-role fields without a role arn")
+	}
 	if err := validateSSMMeta(s); err != nil {
 		return "", err
 	}
@@ -240,6 +308,31 @@ func RenderSSMConfig(s session.SSMMeta) (string, error) {
 		fmt.Fprintf(&b, "region = %s\n", region)
 	}
 	return b.String(), nil
+}
+
+// renderChained is RenderSSMConfig for a profile that assumes a role: the source sso profile
+// (named s.SourceProfile, with the sso-session "af-<source>" that the exported ~/.aws/config
+// uses too, so one cached login serves both) followed by the assume-role profile. The SSO
+// fields of s describe the source.
+func renderChained(s session.SSMMeta) (string, error) {
+	if err := ValidateAssumeRole(s); err != nil {
+		return "", err
+	}
+	src := session.SSMMeta{Profile: s.SourceProfile, StartURL: s.StartURL, SSORegion: s.SSORegion,
+		AccountID: s.AccountID, RoleName: s.RoleName}
+	srcINI, err := RenderSSMConfig(src)
+	if err != nil {
+		return "", err
+	}
+	chain := s
+	if chain.Region == "" {
+		chain.Region = s.SSORegion
+	}
+	chainINI, err := RenderAssumeRoleProfile(chain)
+	if err != nil {
+		return "", err
+	}
+	return srcINI + "\n" + chainINI, nil
 }
 
 // ssmForgetLogin drops the cached login of the profile the pane is about to use, so the
@@ -298,13 +391,21 @@ func buildSSMProgram(name string, s session.SSMMeta, force bool) (string, error)
 	// Phishing guard: the device-code grant is only safe when the user approves a code
 	// they themselves initiated. Warn right before the URL/code appears. force drops the
 	// cached-token short-circuit (logout+login) so the user can re-authenticate on demand.
+	// A role-chaining profile has no login of its own: the login (and the cache the forced
+	// re-login drops) is the source profile's, so those steps run under it and the session
+	// goes back to the chained profile for the check and the start-session.
+	loginAs, back := "", ""
+	if s.RoleARN != "" && s.SourceProfile != "" {
+		loginAs = fmt.Sprintf("export AWS_PROFILE=%s; ", session.ShellQuote(s.SourceProfile))
+		back = fmt.Sprintf("export AWS_PROFILE=%s; ", session.ShellQuote(s.Profile))
+	}
 	if force {
 		b.WriteString("echo '[Agent Fleet] 再ログインします（自分で開始したこのログインのみ承認してください）'; " +
-			ssmForgetLogin + "aws sso login --use-device-code --no-browser; ")
+			loginAs + ssmForgetLogin + "aws sso login --use-device-code --no-browser; " + back)
 	} else {
 		b.WriteString("aws sts get-caller-identity >/dev/null 2>&1 || { " +
 			"echo '[Agent Fleet] 自分で開始したこのログインのみ承認してください（身に覚えのないコード/URL は入力しない）'; " +
-			"aws sso login --use-device-code --no-browser; }; ")
+			loginAs + "aws sso login --use-device-code --no-browser; " + back + "}; ")
 	}
 	b.WriteString("exec aws ssm start-session")
 	fmt.Fprintf(&b, " --target %s", session.ShellQuote(s.Target))

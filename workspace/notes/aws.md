@@ -122,6 +122,12 @@ the ones that are not exported (the user's own definition wins, a name two label
 `default`). Choose by account and role, not by the name alone. If the task does not say which
 account, ask the user — do not guess from a name like `prod`.
 
+A Settings profile can also be a role assumed from another Settings profile (Settings > AWS
+profiles/SSM, type "Assume a role from another profile"; no keys involved). `--list` shows it with the
+role's account and `role assumed from <source>`; `af-aws-exec --profile <name> -- <command>` runs it
+without `--account`, and a missing login is requested in the Console under the *source* profile's name.
+A chained profile whose source is not exported is listed as "not exported" with the reason.
+
 Some deployments are not reached through SSO at all: a profile in the user's own `~/.aws` that
 assumes a role from a `source_profile` (or runs a `credential_process`). `--list` does not show
 those. Use one only when the user or a runbook names it, and always with `--account`; the same

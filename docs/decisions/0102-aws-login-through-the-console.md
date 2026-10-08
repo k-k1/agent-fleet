@@ -438,3 +438,22 @@ flows depending on who ran the command. Decision 6's first bullet is amended; de
   approve anyone's login.
 
 `af-gcloud-exec` follows the same rule (ADR 0107 note of this date).
+
+## Note — a role assumed from a Settings profile (2026-10-08)
+
+Settings > AWS profiles/SSM gained a profile kind `assume_role` (issue #1109): no portal of its own, it
+assumes a role from the login of another Settings SSO profile. Decisions 1 to 5 stand; what this note
+settles is where the Console login lands for such a profile.
+
+- **The login is the source's.** A chained profile has no sso-session. `af-aws-exec` that needs a login for it
+  files the request under the *source* profile's name and `af-<source>` sso-session, the same request the
+  source's own row and runs would join, and the member approves the source in the Console as before. The check
+  that the cache now works is the chain's credential export, so a login that lands but cannot assume the role
+  ends the run as a failure, not as a login still needed.
+- **Eligibility is the source's.** The Console is asked only when the source is a complete Settings profile
+  that the files define as Settings does (decision 1's rule, applied to the source). Otherwise the run behaves as
+  an own-`~/.aws` chain does: exit 3 with the `aws sso login --profile <source>` command.
+- **Rows.** The chained row's "Log in" opens the login for its source, its state follows the source's, and the
+  Agent refuses a login or logout addressed to the chained name (`chained_profile`, naming the source).
+- **Export.** A chained profile is exported only when its source is in the same managed block, because a
+  `source_profile` naming a profile the member defined themselves would start the chain from whatever that holds.

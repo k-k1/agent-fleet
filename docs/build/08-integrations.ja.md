@@ -321,6 +321,11 @@ Bedrock を呼ばない。
 - プロファイルは CP の行（`ssm_profile`、SSM の接続先は `ssm_host`。[06 §6.2](06-data.ja.md)）。
   ワークスペースは `GET /internal/aws-profiles`（`AF_AWS_PROFILES_TOKEN`）で取得し、
   `~/.aws/config` に管理ブロックとして書く。
+- プロファイルには種類があり、`sso` か `assume_role`（issue #1109）。後者はロール ARN、引き受け元の `sso` プロファイルの id、任意の
+  外部 ID・セッション名・有効期間を持ち、ポータルは持たない。管理ブロックには、その元が書き出されている間だけ `role_arn` +
+  `source_profile` として書く。ブリッジのワイヤはこれらの行にだけ `kind`・`roleArn`・`sourceProfile`・`externalId`・`sessionName`・
+  `durationSeconds` を載せ、`sso` の行には載せないので、`sso` プロファイルの書き出しは変わらない。ストアは、同じメンバーの `sso`
+  プロファイルでない元を拒み、連鎖を宙に浮かせる削除と種類の変更も拒む。
 - **SSM セッション**はワークスペース内で `aws sso login --use-device-code --no-browser`、続けて
   `aws ssm start-session` を実行する。Console は device code を
   `GET /api/sessions/{name}/ssm-login` でポーリングする。

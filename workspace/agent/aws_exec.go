@@ -82,7 +82,7 @@ func runAWSExec(args []string) {
 				"only profiles run with --account are allowed\n", serr)
 		}
 	}
-	o.Settings, o.Conflicts, o.DefaultClash = res.Settings, res.Conflicts, res.DefaultClash
+	o.Settings, o.Conflicts, o.DefaultClash, o.ChainBroken = res.Settings, res.Conflicts, res.DefaultClash, res.ChainBroken
 	if exe, err := os.Executable(); err == nil {
 		o.CredentialHelper = exe + " aws-env-credentials"
 	}
@@ -105,6 +105,9 @@ func runAWSExec(args []string) {
 			label := unverified
 			if sp, ok := res.Settings[n]; ok && unverified == "" {
 				label = "\t(" + strconv.Quote(sp.Label) + ")"
+				if sp.Chained() {
+					label = "\t(" + strconv.Quote(sp.Label) + ", role assumed from " + sp.SourceProfile + ")"
+				}
 			}
 			fmt.Printf("%s\t%s\t%s%s\n", n, acct, role, label)
 		}
@@ -127,6 +130,9 @@ func runAWSExec(args []string) {
 			fmt.Printf("%s\t(not exported: %s)\n", n, reason)
 		}
 		for n, reason := range res.Incomplete {
+			fmt.Printf("%s\t(not exported: %s)\n", n, reason)
+		}
+		for n, reason := range res.ChainBroken {
 			fmt.Printf("%s\t(not exported: %s)\n", n, reason)
 		}
 		for _, n := range res.SessionShadowed {

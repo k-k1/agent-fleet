@@ -563,11 +563,26 @@ type EngineModelStore interface {
 // It maps to one ~/.aws named profile; `aws sso login` authenticates it. Personal
 // scope. NON-SECRET: the CP never sees AWS credentials — the in-container aws CLI logs
 // in directly against StartURL and caches the token in the workspace home.
+//
+// Kind is SSMKindSSO (the default; "" reads as it) or SSMKindAssumeRole: a profile with no
+// portal of its own that assumes RoleARN from the login of the sso profile SourceProfileID
+// (issue #1109). ExternalID, SessionName and DurationSeconds are its optional assume-role
+// parameters. Also non-secret. An assume-role profile's AccountID is derived from RoleARN
+// by the CP, never entered apart from it.
 type SSMProfile struct {
 	ID, MembershipID, Label                  string
 	StartURL, SSORegion, AccountID, RoleName string
 	Region, CreatedAt                        string
+	Kind, SourceProfileID, RoleARN           string
+	ExternalID, SessionName                  string
+	DurationSeconds                          int
 }
+
+// The values of SSMProfile.Kind.
+const (
+	SSMKindSSO        = "sso"
+	SSMKindAssumeRole = "assume_role"
+)
 
 // SSMHost is a per-member bookmark for one SSM Session Manager target: which instance,
 // which run-as SSM document, an optional region override, and which profile to
@@ -1607,11 +1622,23 @@ type CloudCostStore interface {
 // member does not have.
 var ErrSSMProfileNotFound = errors.New("ssm profile not found")
 
+// ErrSSMSourceInvalid is Create/UpdateSSMProfile refusing an assume-role profile whose source is
+// not an sso profile of the same member: missing, someone else's, or itself an assume-role
+// profile, a chain the exported AWS config does not express.
+var ErrSSMSourceInvalid = errors.New("ssm profile source must be an sso profile of the same member")
+
 // SSMProfileInUseError is DeleteSSMProfile refusing a profile that hosts still reference.
 // Hosts lists them, ordered by alias, so the caller can name them.
-type SSMProfileInUseError struct{ Hosts []SSMHost }
+type SSMProfileInUseError struct {
+	Hosts []SSMHost
+	// Dependents are the assume-role profiles that take this one as their source (issue #1109).
+	Dependents []SSMProfile
+}
 
 func (e *SSMProfileInUseError) Error() string {
+	if len(e.Dependents) > 0 {
+		return fmt.Sprintf("ssm profile is used by %d host(s) and %d assume-role profile(s)", len(e.Hosts), len(e.Dependents))
+	}
 	return fmt.Sprintf("ssm profile is used by %d host(s)", len(e.Hosts))
 }
 

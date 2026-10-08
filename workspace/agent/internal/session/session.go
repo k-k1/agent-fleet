@@ -630,6 +630,14 @@ type SSMMeta struct {
 	SSORegion string `json:"ssoRegion"` // SSO region
 	AccountID string `json:"accountId"` // SSO account id
 	RoleName  string `json:"roleName"`  // SSO permission-set role name
+	// Role chaining (issue #1109). With RoleARN set, Profile assumes that role from
+	// SourceProfile and StartURL / SSORegion / AccountID / RoleName describe the SOURCE
+	// sso profile. All of them are non-secret.
+	RoleARN         string `json:"roleArn,omitempty"`
+	SourceProfile   string `json:"sourceProfile,omitempty"`
+	ExternalID      string `json:"externalId,omitempty"`
+	RoleSessionName string `json:"roleSessionName,omitempty"`
+	DurationSeconds int    `json:"durationSeconds,omitempty"`
 }
 
 // DriverKind normalizes Meta.Driver ("" → tui). Always branch through it: comparing raw

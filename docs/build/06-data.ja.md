@@ -109,7 +109,7 @@ updated: "2026-09"
 
 | テーブル | 役割 |
 |---|---|
-| `ssm_profile` / `ssm_host` | SSM ログインの 2 層：profile は共通の SSO 束（1 つの `~/.aws` named profile に対応）、host は個々のインスタンス。**AWS の秘密は保存しない**：短命の資格情報はコンテナの中で取得され、CP には届かない |
+| `ssm_profile` / `ssm_host` | SSM ログインの 2 層：profile は共通の SSO 束（`kind = assume_role` なら別プロファイルのサインインから引き受けるロール。1 つの `~/.aws` named profile に対応）、host は個々のインスタンス。**AWS の秘密は保存しない**：短命の資格情報はコンテナの中で取得され、CP には届かない |
 | `egress_daily` / `egress_allowlist` | egress 統制（[07 §7.8](07-security.ja.md)）：(day, host, allowed) ごとの日次集計と、全体またはテナント単位の版管理 allowlist（`active` \| `proposed` \| `retired`） |
 | `deployment_setting` | デプロイ全体の KV。egress モード、ブランディング、エンジンごとの設定、封印した Hugging Face と Civitai のトークン、claude 監査のカーソルを持つ。ここの値には compare-and-swap が無いので、書き手が 2 つあるものは表にする |
 | `git_repo` / `lfs_object` / `lfs_lock` | 内部 git プロバイダの台帳（[91](91-internal-git.ja.md)）。bare リポジトリは `<WS_DATA>/git/<tenant-slug>/<name>.git` のファイルで、LFS の実体はその横に content-addressed で置く。表はリポジトリ一覧、O(1) のクォータ集計、ロックのためにある。**アクセストークンは保存しない**：membership ごとの HMAC を都度導出する |
