@@ -20,7 +20,7 @@ When you open a stopped session, a **"Resume"** button appears after "Resumingâ€
 
 When the terminal has focus, **Ctrl+C with text selected copies it, and Ctrl+V pastes**, as in
 Cloud Shell. **With nothing selected, Ctrl+C is still the interrupt (SIGINT)**, so a running command
-can always be stopped. Copying clears the selection, and a selection that was already copied (auto-copy on release) does not count, so Ctrl+C right after a drag interrupts. If you would
+can always be stopped. Copying with Ctrl+C clears the selection, and a selection that was already copied (auto-copy on release) does not count, so Ctrl+C right after a drag interrupts. If you would
 rather send both keys to the program (Ctrl+V as character input), turn off **Ctrl+C / Ctrl+V copy and
 paste** under Settings > Display > Terminal; the other shortcuts below keep working.
 

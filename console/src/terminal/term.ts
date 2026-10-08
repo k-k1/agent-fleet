@@ -80,18 +80,20 @@ function setSession(it: Inst, name: string | null) {
 function clipFail(key: string) {
   toast(tr(key), { kind: "error", key: "term-clipboard" });
 }
-// The selection text last written to the clipboard, per terminal. Copy-on-select leaves the
+// The selection text last successfully written to the clipboard, per terminal. Copy-on-select leaves the
 // highlight in place, so without this a Ctrl+C meant as an interrupt would re-copy the stale
 // selection instead of reaching the PTY.
 const copiedSel = new WeakMap<Terminal, string>();
 function copySelection(term: Terminal, opts: { notify?: boolean; clear?: boolean } = {}) {
   const sel = term && term.getSelection();
   if (!sel) return;
-  copiedSel.set(term, sel);
   if (opts.clear) term.clearSelection();
-  if (!navigator.clipboard) return clipFail("term.copy_failed");
+  if (!navigator.clipboard?.writeText) return clipFail("term.copy_failed");
+  // Recorded only once the write succeeded: a refused auto-copy must leave the selection
+  // copyable, so the user's explicit Ctrl+C retry copies instead of interrupting.
   navigator.clipboard.writeText(sel).then(
     () => {
+      copiedSel.set(term, sel);
       if (opts.notify) toast(tr("term.copied"), { kind: "success", key: "term-clipboard", duration: 1500 });
     },
     () => clipFail("term.copy_failed"),

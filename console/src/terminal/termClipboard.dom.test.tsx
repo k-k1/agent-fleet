@@ -1,7 +1,7 @@
 // Wiring test for the terminal's clipboard keys: the key handler xterm calls must (a) copy and
 // clear on Ctrl+C with a selection, (b) leave Ctrl+C alone with none, (c) paste once on Ctrl+V,
-// and (d) toast when the clipboard refuses. Selection and clipboard are faked; a real browser
-// is covered separately by hand.
+// and (d) toast when the clipboard refuses. Selection and clipboard are faked, so real-browser selection and OS clipboard behaviour are
+// NOT covered here.
 import { describe, it, expect, afterEach, vi } from "vitest";
 
 const toasts: string[] = [];
@@ -90,7 +90,7 @@ describe("terminal clipboard keys", () => {
     expect(toasts.length).toBe(1);
   });
 
-  it("Ctrl+C after copy-on-select (same selection) reaches the PTY; a new selection copies", () => {
+  it("Ctrl+C after copy-on-select (same selection) reaches the PTY; a new selection copies", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText, readText: vi.fn() }, configurable: true });
     setSetting("termCtrlCV", true);
@@ -100,12 +100,29 @@ describe("terminal clipboard keys", () => {
     const h: KeyHandler = term._core._customKeyEventHandler;
     term.element.dispatchEvent(new MouseEvent("mouseup", { button: 0 }));
     expect(writeText).toHaveBeenCalledWith("drag");
+    await Promise.resolve(); // let the write settle: a success is what marks it copied
     const intr = key("KeyC", { ctrlKey: true });
     expect(h(intr)).toBe(true);
     expect(intr.defaultPrevented).toBe(false);
     getSel.mockReturnValue("other");
     expect(h(key("KeyC", { ctrlKey: true }))).toBe(false);
     expect(writeText).toHaveBeenLastCalledWith("other");
+  });
+
+  it("a refused auto-copy leaves Ctrl+C free to retry the copy", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    Object.defineProperty(navigator, "clipboard", { value: { writeText, readText: vi.fn() }, configurable: true });
+    setSetting("termCtrlCV", true);
+    const term: any = mount();
+    vi.spyOn(term, "hasSelection").mockReturnValue(true);
+    vi.spyOn(term, "getSelection").mockReturnValue("drag");
+    const h: KeyHandler = term._core._customKeyEventHandler;
+    term.element.dispatchEvent(new MouseEvent("mouseup", { button: 0 }));
+    await vi.waitFor(() => expect(toasts.length).toBe(1));
+    const retry = key("KeyC", { ctrlKey: true });
+    expect(h(retry)).toBe(false);
+    expect(retry.defaultPrevented).toBe(true);
+    expect(writeText).toHaveBeenCalledTimes(2);
   });
 
   it("OSC 52 copy toasts when the clipboard API is missing or refuses", async () => {
