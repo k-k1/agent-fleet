@@ -7,9 +7,11 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -234,6 +236,9 @@ func readFSFile(input string, service fsFileService) (map[string]any, *fsAPIErro
 		"binary": false, "truncated": false,
 		"editable": false, "editabilityReason": nil,
 	}
+	if path.browseRoot && inNestedGitRoot(path.display) {
+		resp["nestedRepo"] = true
+	}
 	tooLarge := snapshot.size > maxEditorFileBytes
 	hasNUL := bytes.IndexByte(snapshot.bytes, 0) >= 0
 	validUTF8 := utf8.Valid(snapshot.bytes)
@@ -270,6 +275,26 @@ func readFSFile(input string, service fsFileService) (map[string]any, *fsAPIErro
 		resp["revision"] = fileRevision(snapshot.bytes)
 	}
 	return resp, nil
+}
+
+// inNestedGitRoot reports whether a home-relative "repos/<name>/…" path sits inside a Git root
+// nested below the working copy <name> (a submodule, a vendored clone). The Console reads the
+// first segment as the file's repository, which is then the wrong one: it must not link the
+// file's `#N` against the outer origin. A .git entry is a directory in a clone and a file in a
+// worktree or submodule, so one Stat answers both.
+func inNestedGitRoot(display string) bool {
+	parts := strings.Split(filepath.ToSlash(display), "/")
+	if len(parts) < 4 || parts[0] != "repos" {
+		return false
+	}
+	// parts[1] is the working copy itself; the file name (last) cannot be a root.
+	for i := 2; i < len(parts)-1; i++ {
+		dir := filepath.Join(browseRoot(), "repos", filepath.Join(parts[1:i+1]...))
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func handleFSFile(w http.ResponseWriter, r *http.Request) {

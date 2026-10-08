@@ -772,6 +772,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
         <FileViewerShell
           hidden={!surfaces.source && !surfaces.preview}
           filePath={filePath}
+          nestedRepo={!!data?.nestedRepo}
           err={err}
           loaded={data != null}
           size={data?.size}

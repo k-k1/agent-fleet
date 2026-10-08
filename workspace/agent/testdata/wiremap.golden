@@ -60,7 +60,7 @@ fs.go handleFSNewFile x1 {path}
 fs.go handleFSRename x1 {path}
 fs.go handleFSTree x1 {entries,path,root}
 fs.go handleFSUpload x2 {conflicts,path,written}
-fs_file_api.go handleFSFile x1 {binary,content,editabilityReason,editable,lfs,path,revision,size,truncated} cond{binary,content,editabilityReason,editable,lfs,revision,truncated}
+fs_file_api.go handleFSFile x1 {binary,content,editabilityReason,editable,lfs,nestedRepo,path,revision,size,truncated} cond{binary,content,editabilityReason,editable,lfs,nestedRepo,revision,truncated}
 fs_git.go handleFSChanges x2 {changes}
 fs_resolve.go handleFSResolve x1 {resolved}
 fs_search.go handleFSSearch x1 {results,root,truncated}

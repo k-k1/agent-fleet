@@ -978,3 +978,45 @@ func TestFSFileGetMetaSharesErrorContract(t *testing.T) {
 		}
 	}
 }
+
+func TestFSFileMarksNestedGitRoot(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AF_BROWSE_ROOT", root)
+	write := func(rel, content string) {
+		t.Helper()
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("repos/outer/.git", "gitdir: x") // the working copy's own root is not "nested"
+	write("repos/outer/CHANGELOG.md", "#1\n")
+	write("repos/outer/vendor/inner/.git", "gitdir: y") // a submodule: .git is a file
+	write("repos/outer/vendor/inner/CHANGELOG.md", "#2\n")
+	write("repos/outer/vendor/inner/docs/a.md", "#3\n")
+	write("repos/outer/vendor/plain/a.md", "#4\n")
+	write("notes/a.md", "#5\n")
+
+	for rel, want := range map[string]bool{
+		"repos/outer/CHANGELOG.md":              false,
+		"repos/outer/vendor/inner/CHANGELOG.md": true,
+		"repos/outer/vendor/inner/docs/a.md":    true,
+		"repos/outer/vendor/plain/a.md":         false,
+		"notes/a.md":                            false,
+	} {
+		rec := httptest.NewRecorder()
+		handleFSFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(rel), nil))
+		var got struct {
+			NestedRepo bool `json:"nestedRepo"`
+		}
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
+			t.Fatalf("GET %q: status=%d body=%s", rel, rec.Code, rec.Body.String())
+		}
+		if got.NestedRepo != want {
+			t.Errorf("%s: nestedRepo=%v, want %v", rel, got.NestedRepo, want)
+		}
+	}
+}

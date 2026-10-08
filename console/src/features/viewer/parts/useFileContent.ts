@@ -21,6 +21,8 @@ export interface FileData {
   size?: number;
   truncated?: boolean;
   lfs?: boolean;
+  /** The file sits inside a Git root nested below its repos/<name> working copy (submodule, vendored clone). */
+  nestedRepo?: boolean;
   editable?: boolean;
   editabilityReason?: string | null;
   revision?: string;

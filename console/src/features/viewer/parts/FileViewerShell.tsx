@@ -19,6 +19,8 @@ import type { ScrollMemoryFactory } from "./useScrollMemory.ts";
 export interface FileViewerShellProps {
   hidden: boolean;
   filePath: string;
+  /** The file lives in a Git root nested inside its working copy: its repository is not the one the path names. */
+  nestedRepo: boolean;
   err: string;
   /** false = not read yet (renders the ellipsis placeholder). */
   loaded: boolean;
@@ -84,7 +86,7 @@ export function FileViewerShell(props: FileViewerShellProps) {
         <MarpView source={props.previewSource} />
       ) : props.preview === "normal" ? (
         <div className="md-scroll" ref={props.scrollMemory("preview")}>
-          <FileMarkdownView source={props.previewSource} filePath={filePath} onOpenFile={props.onOpenFile} onOpenDir={props.onOpenDir} />
+          <FileMarkdownView source={props.previewSource} filePath={filePath} nestedRepo={props.nestedRepo} onOpenFile={props.onOpenFile} onOpenDir={props.onOpenDir} />
         </div>
       ) : (
         <CodeView
