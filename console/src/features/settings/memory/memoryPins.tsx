@@ -1,6 +1,6 @@
 // MemoryPinsPanel — the member's pins on AF-owned agent memory (#1703). A pinned memory always
-// sits first in the described part of the index agents read at the start of work; agents have no
-// tool to pin, so this is the only place the choice is made. The use count beside each row is
+// sits first in the described part of the index agents read at the start of work; no MCP pin tool is
+// provided, so this panel is the normal way to choose pins. The use count beside each row is
 // what the index ranks the unpinned ones by.
 
 import { useCallback, useState } from "react";
