@@ -459,6 +459,7 @@ export const USAGE_SOURCES: UsageSource[] = [
     weekLabelKey: "wsbar.usage.muse.week",
     live: false,
     noteKey: "wsbar.usage.muse.note",
+    manageURL: "https://dev.meta.ai/usage",
   },
 ];
 
