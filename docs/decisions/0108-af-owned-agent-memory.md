@@ -336,10 +336,15 @@ thing: explicit, previewed (`GET /agents/memory/claude-export[/preview]`, `POST`
 - A file the import copied (#1921) carries no AF marker, so it is judged by the import's evidence:
   when its hash equals the memory's recorded `source_hash`, claude's file is the original, and it is
   `unchanged` while AF's copy is still the import's, `update` once AF's copy has moved on. Only a
-  file changed in claude after the import, or written by neither side, is a `conflict`. An update
-  keeps the `metadata` lines of the native file that AF does not own (claude's `node_type`,
-  `originSessionId`, `modified` appear in all 598 measured files); unknown top-level keys are not
-  carried over.
+  file changed in claude after the import, or written by neither side, is a `conflict`. "Moved on"
+  must be established from the history: when it cannot be judged (no history, a git error, a
+  missing blob) the file is a `conflict` (`import_history_unknown`), never an `update`, and the
+  import's refresh leaves such a memory alone. An update copies only the plain one-line
+  `key: value` lines directly under the native `metadata` (unquoted key and value, 4 KiB in total;
+  claude's `node_type`, `originSessionId` and `modified` appear in all 598 measured files), as
+  checked text that AF writes itself. A file with anything else there (a nested value, a quoted or
+  escaped key or value, too much) is not updated: it is a `conflict`
+  (`native_metadata_not_carried`), and an explicit overwrite does not write those lines either.
 - Import loop guard: the import reads a claude file whose `af_source` names the AF memory and whose
   text still hashes to `af_hash` as `unchanged`, although its mtime is newer than AF's update.
 - codex: deferred to #1683 (its memory workspace is rewritten by its own pipeline).

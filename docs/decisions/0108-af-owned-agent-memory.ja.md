@@ -294,9 +294,14 @@ revision も `updated` も変えず、エージェントの保存はピンを引
 - 取り込みがコピーしたファイル（#1921）には AF の印がないので、取り込みの証拠で判定する。ファイルの
   ハッシュがメモリに記録した `source_hash` と等しければ claude のファイルは元のままで、AF の写しが
   まだ取り込みのままなら `unchanged`、AF の写しが先へ進んでいれば `update`。取り込み後に claude で
-  変えたファイル、またはどちらも書いていないファイルだけが `conflict`。更新では、ネイティブの
-  ファイルの `metadata` のうち AF の持ち物でない行（claude の `node_type`・`originSessionId`・
-  `modified`。測った 598 ファイルすべてにある）を残す。未知のトップレベルのキーは引き継がない。
+  変えたファイル、またはどちらも書いていないファイルだけが `conflict`。「先へ進んだ」は履歴から
+  確かめられなければならない：判定できないとき（履歴がない、git のエラー、blob の欠落）は `update` に
+  せず `conflict`（`import_history_unknown`）とし、取り込みの更新し直しもそのメモリには触らない。
+  更新では、ネイティブの `metadata` の直下にある素朴な 1 行の `key: value`（キーも値も引用符なし、
+  合計 4 KiB まで。claude の `node_type`・`originSessionId`・`modified` は測った 598 ファイルすべてに
+  ある）だけを、検査済みの文字列として AF が自分で書き写す。それ以外（入れ子、引用符やエスケープ付きの
+  キー・値、大きすぎるもの）を含むファイルは更新せず `conflict`（`native_metadata_not_carried`）とし、
+  明示的な上書きでもその行は書かない。
 - 取り込みとの輪の防止：`af_source` が AF のメモリを指し、本文が `af_hash` のままのファイルは、
   mtime が AF の更新より新しくても取り込みは `unchanged` と読む。
 - codex：#1683 に回す（codex のメモリ領域は codex 自身のパイプラインが書き換えるため）。
