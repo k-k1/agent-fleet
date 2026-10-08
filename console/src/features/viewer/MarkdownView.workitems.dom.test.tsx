@@ -133,6 +133,17 @@ describe("ticket references", () => {
     expect(links().map((a) => a.textContent)).toEqual(["#956", "#167"]);
   });
 
+  it("links both ends of a range, and not a hyphen after a non-reference (#1909)", async () => {
+    await render("done in #573-#598; also octo/fleet#5-octo/fleet#9; but abc#1-#2 and foo-#12");
+    expect(links().map((a) => a.textContent)).toEqual(["#573", "#598", "octo/fleet#5", "octo/fleet#9"]);
+  });
+
+  it("keeps a range in inline code literal unless the inbox holds the ends, and a code block untouched", async () => {
+    await render("typed `#573-#598`, cached `#956-#1649`\n\n```\n#956-#1649\n```");
+    expect(links().map((a) => a.textContent)).toEqual(["#956", "#1649"]);
+    expect(host.querySelector("pre a")).toBeNull();
+  });
+
   it("opens a merged or closed ticket the inbox no longer holds as a reference with a tracker link", async () => {
     await render("merged in #1652");
     await click(links()[0]);

@@ -40,7 +40,13 @@ export interface WorkItemRefContext {
 // The number is taken whole, however long and even with a leading zero, so a run of digits is
 // never left over for the commit shape to claim (`#11223344`, `#00000000` are colours, not shas);
 // classifyWorkItemRef decides what it is.
-export const ISSUE_REF_SRC = String.raw`(?<![\w&#/.\-])(?:[A-Za-z0-9][\w.\-]*\/[\w.\-]+)?#\d+(?![\w#])`;
+//
+// The `-` in the look-behind keeps `foo-#12` off it, but a range `#573-#598` is two citations: the
+// second end is also accepted when a complete reference (itself passing the plain look-behind, so
+// `abc#1-#2` and a chain's third end stay text) sits right before the `-`.
+const ISSUE_REF_BODY = String.raw`(?:[A-Za-z0-9][\w.\-]*\/[\w.\-]+)?#\d+`;
+const ISSUE_REF_START = String.raw`(?<![\w&#/.\-])`;
+export const ISSUE_REF_SRC = String.raw`(?:${ISSUE_REF_START}|(?<=${ISSUE_REF_START}${ISSUE_REF_BODY}-))${ISSUE_REF_BODY}(?![\w#])`;
 // A Jira key. The shape alone also matches UTF-8, SHA-256, ISO-8601, GPT-4 and P2-1, so this is
 // only a candidate: classifyWorkItemRef links it only for a project the cache holds.
 export const JIRA_REF_SRC = String.raw`(?<![\w/\-])[A-Z][A-Z0-9_]{1,9}-[1-9]\d{0,6}(?![\w\-])`;
