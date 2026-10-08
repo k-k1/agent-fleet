@@ -69,6 +69,10 @@ export function useMirrorScroll() {
   // the view frozen 24–729px short of the target. The only exits are "the reader touched it"
   // and "follow was re-armed" (send, jump to latest).
   const restoreMarkRef = useRef<ScrollMark | null>(null);
+  // Bumped on every reader input (wheel / touch / key / pointer). A jump that has to page older
+  // history in first compares it with the value at the start: the reader taking over while the
+  // pages load means the jump no longer applies.
+  const inputSeqRef = useRef(0);
   const restoringRef = useRef(false);
   // The session this mirror shows, for the explicit-jump listener below (set by resetForSession).
   const sessionRef = useRef("");
@@ -124,23 +128,28 @@ export function useMirrorScroll() {
   // replaces the one being waited on; after it, the jump is a restore like any other — held
   // through late layout until the reader touches it — or, when the turn is outside the loaded
   // window, nothing (the view stays where the reader left it).
+  // Moves this mirror to mark (an explicit jump). false when the turn is not mounted.
+  const jumpTo = (mark: ScrollMark): boolean => {
+    restoreMarkRef.current = mark;
+    if (!didInitRef.current) return true; // the first settle restores it
+    const el = bodyRef.current;
+    if (el && applyMark(el, mark)) {
+      selfTopRef.current = el.scrollTop;
+      atBottomRef.current = false;
+      restoringRef.current = true;
+      prependAnchorRef.current = null;
+      setShowJump(true);
+      scheduleReplyTopSync();
+      return true;
+    }
+    endRestore();
+    return false;
+  };
+
   useEffect(
     () =>
       onJump((session, mark) => {
-        if (session !== sessionRef.current) return;
-        restoreMarkRef.current = mark;
-        if (!didInitRef.current) return;
-        const el = bodyRef.current;
-        if (el && applyMark(el, mark)) {
-          selfTopRef.current = el.scrollTop;
-          atBottomRef.current = false;
-          restoringRef.current = true;
-          prependAnchorRef.current = null;
-          setShowJump(true);
-          scheduleReplyTopSync();
-        } else {
-          endRestore();
-        }
+        if (session === sessionRef.current) jumpTo(mark);
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the refs are read live; subscribe once
     [],
@@ -200,6 +209,7 @@ export function useMirrorScroll() {
   // the keyboard path (Enter/Space on a <summary>) arm it before the reflow lands. A fold
   // that WE change (foldWork on completion) is content, not interaction, and is followed.
   const noteInteraction = () => {
+    inputSeqRef.current++;
     interactUntilRef.current = Date.now() + INTERACT_HOLD_MS;
     endRestoreOnInput(); // the reader touched it — their hand outranks the position restore
   };
@@ -253,6 +263,7 @@ export function useMirrorScroll() {
   // pointerdown to the element. That tugs against the restore until it folds, but re-grabbing
   // the scrollbar is enough.
   const endRestoreOnInput = () => {
+    inputSeqRef.current++;
     if (restoringRef.current) endRestore();
   };
 
@@ -604,6 +615,8 @@ export function useMirrorScroll() {
     capturePrependAnchor,
     applyPrependAdjust,
     noteInteraction,
+    inputSeqRef,
+    jumpTo,
     onBodyScroll,
     endRestoreOnInput,
     jumpToBottom,

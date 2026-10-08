@@ -57,6 +57,7 @@ export const mirror = {
   "mirror.adopt": "採用",
   "mirror.dismiss_suggestion": "この提案を今後表示しません",
   // 履歴ロード
+  "mirror.jump_unreachable": "その発言は遠すぎて直接移動できません。上へスクロールして以前の会話を読み込んでください。",
   "mirror.load_earlier": "以前の会話を読み込む",
   "mirror.jump_latest": "最新へ",
   "mirror.jump_reply_top": "返信を頭から",

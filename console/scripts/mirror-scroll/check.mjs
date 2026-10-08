@@ -94,6 +94,8 @@ const SCENARIOS = [
     name: "readup", turns: 60, images: 0, imgdelay: 0, mermaid: 0,
     mode: "readup", paging: true, pagesize: 60, split: true, asks: 40, longans: 12,
   },
+  // jump: 600 turns = 1200 jsonl lines, the tail window is 120 lines; the hit sits ~1000 lines back.
+  { name: "jump", turns: 600, images: 0, imgdelay: 0, mermaid: 0, mode: "jump", paging: true, pagesize: 120, hitIdx: 200 },
 ];
 
 class CDP {
@@ -792,11 +794,45 @@ async function runReadUp(cdp) {
   };
 }
 
+// jump: a past-session search hit (ADR 0110, #1663) older than the loaded tail window. Opens the
+// session, searches in the palette's conversations mode, presses Enter on the hit, and asserts the
+// view ends on that turn — paged in from behind the window — and stays there once the late height
+// has landed. Anchoring off, as in paging: it is what would hide a held position drifting.
+async function runJump(cdp, sc) {
+  if ((await cdp.ev(OPEN_SESSION)) !== "ok") throw new Error("could not find the session row in the left pane");
+  await sleep(9000);
+  await cdp.ev(KILL_ANCHOR);
+  const opened = await cdp.ev(PROBE);
+  const key = (type, key, modifiers = 0) =>
+    cdp.send("Input.dispatchKeyEvent", { type, key, code: key === "p" ? "KeyP" : key, modifiers, windowsVirtualKeyCode: key === "p" ? 80 : key === "Enter" ? 13 : 0 });
+  await key("rawKeyDown", "p", 2); // Ctrl+P
+  await key("keyUp", "p", 2);
+  await sleep(800);
+  const TALK = `(() => { const b = [...document.querySelectorAll(".cp-mode")].find((e) => /会話|Conversations/.test(e.textContent)); if (!b) return "none"; b.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })); return "ok"; })()`;
+  if ((await cdp.ev(TALK)) !== "ok") throw new Error("no conversations mode in the palette");
+  await cdp.send("Input.insertText", { text: "needle" });
+  await sleep(1500);
+  await key("rawKeyDown", "Enter");
+  await key("keyUp", "Enter");
+  await sleep(2500);
+  const landed = await cdp.ev(PROBE);
+  await sleep(9000);
+  const settled = await cdp.ev(PROBE);
+  const near = (p) => !!p?.anchor && p.anchor.idx <= sc.hitIdx && sc.hitIdx - p.anchor.idx <= 40;
+  const ok = opened.first > sc.hitIdx && near(landed) && near(settled) && settled.gap > 2 && settled.jump
+    && Math.abs(settled.anchor.off - landed.anchor.off) <= 8;
+  return {
+    ok,
+    note: `window ${opened.first}.. hit ${sc.hitIdx} -> turns ${opened.turns}→${settled.turns}  landed ${landed?.anchor?.idx}@${landed?.anchor?.off}px  settled ${settled?.anchor?.idx}@${settled?.anchor?.off}px gap=${settled?.gap} jump=${settled?.jump}`,
+  };
+}
+
 async function runScenario(sc, chrome) {
   const stub = spawn(process.execPath, [path.join(HERE, "stub.mjs"), "--port", String(PORT),
     "--turns", String(sc.turns), "--images", String(sc.images), "--imgdelay", String(sc.imgdelay),
     "--mermaid", String(sc.mermaid), "--shared", sc.shared ? "1" : "0",
     "--paging", sc.paging ? "1" : "0", "--pagesize", String(sc.pagesize || 400),
+    "--hit-idx", String(sc.hitIdx ?? -1), "--honor-limit", sc.hitIdx === undefined ? "0" : "1",
     "--working", sc.working ? "1" : "0", "--live", sc.live ? "1" : "0", "--late", sc.late || "0", "--split", sc.split ? "1" : "0", "--asks", String(sc.asks || 1), "--longans", String(sc.longans || 1)], { stdio: ["ignore", "ignore", "inherit"] });
   try {
     await fetchJSON(`${BASE}api/whoami`);
@@ -841,6 +877,7 @@ async function runScenario(sc, chrome) {
         : sc.mode === "complete" ? await runComplete(cdp, { expectBottom: !!sc.expectBottom, expectLive: !!sc.expectLive })
         : sc.mode === "paging" ? await runPaging(cdp)
         : sc.mode === "readup" ? await runReadUp(cdp)
+        : sc.mode === "jump" ? await runJump(cdp, sc)
         : await runLanding(cdp);
       results.push(r);
       console.log(`  [${sc.name} ${run + 1}/${RUNS}] ${r.ok ? "OK " : "NG "} ${r.note}`);

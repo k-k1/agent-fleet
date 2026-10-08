@@ -1,8 +1,11 @@
-import { useEffect, useLayoutEffect } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { api, parseDiscards, parseQueueItems } from "../../../core/api/client.ts";
 import type { CarriedInteraction } from "../../../core/api/client.ts";
 import type { Session } from "../../../types/session.ts";
+import { t as tr } from "../../../lib/i18n/index.ts";
+import { loadMark, onJump, type ScrollMark } from "../scrollMark.ts";
+import { reachTurn, type ReachOutcome } from "../reachTurn.ts";
 import { MIRROR_POLL_FAST, pollDelay } from "../pollCadence.ts";
 import { echoNeedsResync } from "../pendingEcho.ts";
 import { type InteractionAnswerWire, patchAnswers } from "../interactionAnswers.ts";
@@ -369,23 +372,35 @@ export function useOlderHistory({
   session,
   st,
   scroll,
+  toast,
 }: {
   session: string;
   st: MirrorState;
   scroll: ReturnType<typeof useMirrorScroll>;
+  toast: (msg: string) => void;
 }) {
-  const { turns, setTurns, firstLineRef, hasMore, setHasMore, setLoadingOlder, loadingOlderRef, topSentinelRef } = st;
+  const { turns, setTurns, firstLineRef, hasMore, setHasMore, setLoadingOlder, loadingOlderRef, topSentinelRef, loaded, stateSession } = st;
   const { bodyRef } = scroll;
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  // The first window of THIS session is held (not the previous session's state, on the commit where
+  // the prop changes). Read from effects and callbacks built earlier, hence a ref.
+  const windowHeldRef = useRef(false);
+  windowHeldRef.current = loaded && stateSession === session;
+  // A jump to a turn older than the window (palette hit, ADR 0110): waiting for the first window to
+  // load, then being paged to. `ready` is the mark to apply once the pages are mounted.
+  const wantRef = useRef<ScrollMark | null>(null);
+  const readyRef = useRef<ScrollMark | null>(null);
+  const [jumpGo, setJumpGo] = useState(0);
 
-  // Page older history in (P2): fetch the window before the oldest line we hold and
-  // prepend it. Guard via refs so overlapping triggers (button + observer) can't double it.
-  const loadOlder = async () => {
-    if (loadingOlderRef.current || firstLineRef.current <= 0) return;
-    loadingOlderRef.current = true;
-    setLoadingOlder(true);
+  // Fetch the page before the oldest line we hold and prepend it. false when it failed (or the
+  // session changed under it — the turns then belong to another transcript and are dropped).
+  const pageOnce = async (limit: number): Promise<boolean> => {
+    const s = session;
     try {
       const before = firstLineRef.current;
-      const d = await api(`api/sessions/${q(session)}/messages?before=${before}&limit=${WINDOW}`);
+      const d = await api(`api/sessions/${q(s)}/messages?before=${before}&limit=${limit}`);
+      if (s !== sessionRef.current) return false;
       if (d && !d.error && Array.isArray(d.messages)) {
         if (d.messages.length) {
           scroll.capturePrependAnchor(); // keep the viewport steady across the prepend
@@ -394,14 +409,81 @@ export function useOlderHistory({
         }
         if (typeof d.firstLine === "number") firstLineRef.current = d.firstLine;
         setHasMore(!!d.hasMore);
+        return true;
       }
     } catch {
       /* transient — the user can trigger again */
+    }
+    return false;
+  };
+
+  // Page older history in (P2). Guard via refs so overlapping triggers (button + observer + a
+  // jump) can't double it.
+  const loadOlder = async () => {
+    if (loadingOlderRef.current || firstLineRef.current <= 0) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    try {
+      await pageOnce(WINDOW);
     } finally {
       loadingOlderRef.current = false;
       setLoadingOlder(false);
     }
   };
+
+  // Bring the jump target's turn in. Runs once the first window is held; the mark is applied by
+  // the layout effect below, after the pages are committed to the DOM.
+  const reachWanted = async () => {
+    const mark = wantRef.current;
+    if (!mark || loadingOlderRef.current || !windowHeldRef.current) return;
+    wantRef.current = null;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    const seq = scroll.inputSeqRef.current;
+    const s = session;
+    let outcome: ReachOutcome;
+    try {
+      outcome = await reachTurn(mark.idx, {
+        firstLine: () => firstLineRef.current,
+        page: pageOnce,
+        cancelled: () => s !== sessionRef.current || scroll.inputSeqRef.current !== seq,
+      });
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+    }
+    if (outcome === "too-far" || outcome === "failed") toast(tr("mirror.jump_unreachable"));
+    if (outcome === "reached") {
+      readyRef.current = mark;
+      setJumpGo((n) => n + 1);
+    }
+  };
+
+  // A hit for the session shown here. Listens next to useMirrorScroll's own, which restores the
+  // turn when it is mounted and gives up quietly when it is not — the case handled here.
+  useEffect(() => {
+    const take = (m: ScrollMark | null) => {
+      if (!m || !m.near || m.atBottom) return;
+      wantRef.current = m;
+      void reachWanted();
+    };
+    take(loadMark(session));
+    return onJump((sess, m) => {
+      if (sess === session) take(m);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reachWanted reads live refs
+  }, [session]);
+  useEffect(() => {
+    void reachWanted();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, stateSession]);
+  useLayoutEffect(() => {
+    const mark = readyRef.current;
+    if (!mark) return;
+    readyRef.current = null;
+    if (!scroll.jumpTo(mark)) toast(tr("mirror.jump_unreachable"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpGo]);
 
   // Put the reader back on the turn they were reading across the prepend. The hold then stays
   // armed inside useMirrorScroll, because at this point the prepended turns have no content yet.

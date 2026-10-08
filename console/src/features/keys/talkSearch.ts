@@ -58,8 +58,8 @@ export type OpenHitOutcome = "opened" | "archived" | "missing";
  * Opens the session a hit belongs to, scrolled to the hit's turn.
  *
  * The jump rides the mirror's own position memory (scrollMark.requestJump): a mirror that mounts
- * the session restores the mark, and one already showing it is told to apply it. Its limit is the
- * mark's — a turn older than the loaded tail window is not reached.
+ * the session restores the mark, and one already showing it is told to apply it. A turn older than
+ * the loaded tail window is paged in first by the mirror (useOlderHistory, bounded).
  *
  * An archived session cannot be opened until it is restored, so the archive shelf opens instead;
  * the mark is left in place for when it is.
