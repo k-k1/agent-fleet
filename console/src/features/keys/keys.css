@@ -233,7 +233,9 @@
   color: var(--muted);
 }
 .cp-sess-where {
-  flex: none;
+  /* Shrinks (ellipsis inside) before the title loses its floor, so an indented row at a
+     narrow width does not push the state chip out of the row. */
+  flex: 0 1 auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -244,6 +246,7 @@
 }
 .cp-sess-repo,
 .cp-sess-wt {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -462,7 +465,7 @@
 .cp-sess-parent {
   flex: 0 1000 auto;
   min-width: 0;
-  max-width: 30%;
+  max-width: 22%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

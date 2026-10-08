@@ -25,6 +25,15 @@ const fetchMock = vi.fn(async () => new Response("{}", { status: 200, headers: {
 vi.stubGlobal("fetch", fetchMock);
 window.fetch = fetchMock as unknown as typeof window.fetch;
 
+const opened: string[] = [];
+vi.mock("../sessions/open.ts", async (orig) => ({
+  ...(await orig<typeof import("../sessions/open.ts")>()),
+  openSessionFromList: (s: { name: string }) => {
+    opened.push(s.name);
+    return true;
+  },
+}));
+
 import { CommandPalette } from "./CommandPalette.tsx";
 import { useKeysStore } from "./store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -380,6 +389,27 @@ describe("command palette — session families (#1887)", () => {
       // (The fuzzy filter also admits the stopped parent, which sorts last.)
       expect(titles().slice(0, 2)).toEqual(["newWaitingChild", "oldWorkingChild"]);
       expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("newWaitingChild");
+      opened.length = 0;
+      key("Enter");
+      expect(opened).toEqual(["newWaitingChild"]);
+    });
+
+    it("opens the filtered row on Enter, not the unfiltered row at the same index", () => {
+      mount();
+      type("WorkingChild");
+      opened.length = 0;
+      key("Enter");
+      expect(opened).toEqual(["oldWorkingChild"]);
+    });
+
+    it("opens the row the arrow keys landed on in the grouped list", () => {
+      mount();
+      key("ArrowDown");
+      key("ArrowDown");
+      opened.length = 0;
+      key("Enter");
+      // Visual order is parent, older child, newer child.
+      expect(opened).toEqual(["newWaitingChild"]);
     });
 
     it("finds the children by the parent's title, which is not its name", () => {
