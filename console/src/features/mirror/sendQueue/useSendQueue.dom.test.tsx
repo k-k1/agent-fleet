@@ -29,15 +29,24 @@ function typeInto(el: HTMLTextAreaElement, value: string) {
 const key = (el: Element, init: KeyboardEventInit) =>
   act(() => { el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init })); });
 
-function Harness({ session, busy, canSend = true, send }: { session: string; busy: boolean; canSend?: boolean; send: (i: QueuedSend) => Promise<boolean> }) {
+function Harness({ session, busy, canSend = true, send, list = false }: { session: string; busy: boolean; canSend?: boolean; send: (i: QueuedSend) => Promise<boolean>; list?: boolean }) {
   const q = useSendQueue({ session, busy, canSend, sendItem: send });
-  return <div data-testid="n">{q.items.map((i) => i.text).join("|")}</div>;
+  return (
+    <div>
+      <div data-testid="n">{q.items.map((i) => i.text).join("|")}</div>
+      {list && (
+        <SendQueueList items={q.items} paused={q.paused} injects={false} onEdit={q.edit} onRemove={q.remove} onMove={q.move} onSendNow={q.sendNow} onResume={q.resume} onEditing={q.setEditing} />
+      )}
+    </div>
+  );
 }
 const add = (s: string, t: string) => act(() => useSendQueueStore.getState().add(s, t, []));
 const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
+const polledBusy = (s: string) => act(() => useSendQueueStore.getState().observeBusy(s));
+const never = () => new Promise<boolean>(() => {});
 
 beforeEach(() => {
-  useSendQueueStore.setState({ bySession: {}, paused: {} });
+  useSendQueueStore.setState({ bySession: {}, paused: {}, gate: {}, editing: {} });
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -47,8 +56,8 @@ afterEach(() => {
 });
 
 describe("useSendQueue drain", () => {
-  it("sends the head once on idle and holds the rest while the session is busy", async () => {
-    const send = vi.fn(async () => true);
+  it("sends the head once on idle, then waits for the POLL to show busy before the next", async () => {
+    const send = vi.fn(async (_i: QueuedSend) => true);
     add("s", "one"); add("s", "two");
     const { rerender } = render(<Harness session="s" busy={true} send={send} />);
     expect(send).not.toHaveBeenCalled();
@@ -56,12 +65,12 @@ describe("useSendQueue drain", () => {
     await flush();
     expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0][0].text).toBe("one");
-    // Status polls idle again before the turn registered: the second item must NOT follow yet.
-    rerender(<Harness session="s" busy={false} canSend={false} send={send} />);
+    // sendPrompt's optimistic "working", then a stale idle poll: the real turn was never observed.
+    rerender(<Harness session="s" busy={true} canSend={false} send={send} />);
     rerender(<Harness session="s" busy={false} send={send} />);
     await flush();
     expect(send).toHaveBeenCalledTimes(1);
-    // Busy seen, then idle again: now the second goes, exactly once.
+    polledBusy("s");
     rerender(<Harness session="s" busy={true} send={send} />);
     rerender(<Harness session="s" busy={false} send={send} />);
     await flush();
@@ -70,8 +79,45 @@ describe("useSendQueue drain", () => {
     expect(text("n")).toBe("");
   });
 
+  it("sends one item in total when the same session is mounted twice", async () => {
+    const send = vi.fn((_i: QueuedSend) => never());
+    add("s", "one"); add("s", "two");
+    const a = document.createElement("div");
+    document.body.appendChild(a);
+    const second = createRoot(a);
+    act(() => second.render(<Harness session="s" busy={false} send={send} />));
+    render(<Harness session="s" busy={false} send={send} />);
+    await flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    act(() => second.unmount());
+    a.remove();
+  });
+
+  it("does not send the next item after a remount or a switch away and back while one is in flight", async () => {
+    const send = vi.fn((_i: QueuedSend) => never());
+    add("s", "one"); add("s", "two");
+    const { rerender } = render(<Harness key="1" session="s" busy={false} send={send} />);
+    await flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    rerender(<Harness key="2" session="s" busy={false} send={send} />);
+    rerender(<Harness key="2" session="other" busy={false} send={send} />);
+    rerender(<Harness key="3" session="s" busy={false} send={send} />);
+    await flush();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not release the second item within the settle window after a remount", async () => {
+    const send = vi.fn(async (_i: QueuedSend) => true);
+    add("s", "one"); add("s", "two");
+    const { rerender } = render(<Harness key="1" session="s" busy={false} send={send} />);
+    await flush();
+    rerender(<Harness key="2" session="s" busy={false} send={send} />);
+    await flush();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it("puts a refused item back at the head and pauses instead of retrying", async () => {
-    const send = vi.fn(async () => false);
+    const send = vi.fn(async (_i: QueuedSend) => false);
     add("s", "one"); add("s", "two");
     render(<Harness session="s" busy={false} send={send} />);
     await flush();
@@ -81,8 +127,22 @@ describe("useSendQueue drain", () => {
     expect(useSendQueueStore.getState().paused.s).toBe(true);
   });
 
+  it("pauses after a refused send now too, so the turn's end does not resend it", async () => {
+    const send = vi.fn(async (_i: QueuedSend) => false);
+    add("s", "one");
+    const { rerender } = render(<Harness session="s" busy={true} send={send} list />);
+    click(buttons(/Send now|今すぐ送る/)[0]);
+    await flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(text("n")).toBe("one");
+    expect(useSendQueueStore.getState().paused.s).toBe(true);
+    rerender(<Harness session="s" busy={false} send={send} list />);
+    await flush();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it("does not drain while paused by a stop", async () => {
-    const send = vi.fn(async () => true);
+    const send = vi.fn(async (_i: QueuedSend) => true);
     add("s", "one");
     act(() => useSendQueueStore.getState().pauseIfHolding("s"));
     render(<Harness session="s" busy={false} send={send} />);
@@ -90,8 +150,33 @@ describe("useSendQueue drain", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("holds the drain while a row is being edited, and sends the edited text after saving", async () => {
+    const send = vi.fn(async (_i: QueuedSend) => true);
+    add("s", "old");
+    const { rerender } = render(<Harness session="s" busy={true} send={send} list />);
+    click(buttons(/Edit|編集/)[0]);
+    typeInto(host!.querySelector("textarea")!, "new instruction");
+    rerender(<Harness session="s" busy={false} send={send} list />);
+    await flush();
+    expect(send).not.toHaveBeenCalled();
+    expect(host!.querySelector("textarea")!.value).toBe("new instruction");
+    key(host!.querySelector("textarea")!, { key: "Enter" });
+    await flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0].text).toBe("new instruction");
+  });
+
+  it("drops the edit lock when the list unmounts mid-edit", async () => {
+    add("s", "old");
+    const { rerender } = render(<Harness session="s" busy={true} send={vi.fn(async (_i: QueuedSend) => true)} list />);
+    click(buttons(/Edit|編集/)[0]);
+    expect(useSendQueueStore.getState().editing.s).toBe(useSendQueueStore.getState().bySession.s![0].id);
+    rerender(<Harness session="s" busy={true} send={vi.fn(async (_i: QueuedSend) => true)} />);
+    expect(useSendQueueStore.getState().editing.s).toBeUndefined();
+  });
+
   it("keeps each session's items across a switch and drains only the visible one", async () => {
-    const send = vi.fn(async () => true);
+    const send = vi.fn(async (_i: QueuedSend) => true);
     add("a", "for-a"); add("b", "for-b");
     const { rerender } = render(<Harness session="a" busy={true} send={send} />);
     rerender(<Harness session="b" busy={true} send={send} />);
@@ -106,8 +191,8 @@ describe("useSendQueue drain", () => {
   });
 
   it("uses the latest sender, not the one from the render that scheduled the effect", async () => {
-    const first = vi.fn(async () => true);
-    const second = vi.fn(async () => true);
+    const first = vi.fn(async (_i: QueuedSend) => true);
+    const second = vi.fn(async (_i: QueuedSend) => true);
     add("s", "one");
     const { rerender } = render(<Harness session="s" busy={true} send={first} />);
     rerender(<Harness session="s" busy={true} send={second} />);
@@ -121,7 +206,7 @@ describe("useSendQueue drain", () => {
 describe("SendQueueList", () => {
   const items: QueuedSend[] = [{ id: "a", text: "first", paths: [] }, { id: "b", text: "second", paths: ["/x"] }];
   const props = () => ({
-    items, paused: false, injects: false, onEdit: vi.fn(), onRemove: vi.fn(), onMove: vi.fn(), onSendNow: vi.fn(), onResume: vi.fn(),
+    items, paused: false, injects: false, onEdit: vi.fn(), onRemove: vi.fn(), onMove: vi.fn(), onSendNow: vi.fn(), onResume: vi.fn(), onEditing: vi.fn(),
   });
 
   it("wires reorder, send-now and delete to the right item", () => {

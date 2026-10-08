@@ -112,6 +112,7 @@ export function MirrorComposer({
         onMove={sendQueue.move}
         onSendNow={sendQueue.sendNow}
         onResume={sendQueue.resume}
+        onEditing={sendQueue.setEditing}
       />
       <AttachChips
         attachments={attachments}

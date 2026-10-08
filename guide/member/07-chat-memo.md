@@ -209,8 +209,9 @@ conversation yet.
 - **Edit, reorder, delete**: each row has up / down arrows, **Edit** (Enter saves, Shift+Enter
   adds a line, Esc cancels; Enter while an IME candidate is open does not save) and **Delete**.
   A message held with attachments keeps them (shown as "+N").
-- **Order of sending**: when the turn ends, the first row is sent, then the next one when that
-  turn ends, and so on. Items never go out two at a time.
+- **Order of sending**: when the turn ends, the first row is sent, then the next one once the agent
+  has visibly started that turn and it ends, and so on. Items never go out two at a time. While you
+  are editing a row, nothing is sent; it continues when you save or cancel.
 - **Send now** sends one row immediately, whatever the session is doing. On **codex** and **muse**
   (Managed) the agent takes it into the running turn; on every other agent it is accepted and
   handled after the running turn, exactly like a plain send during a turn.

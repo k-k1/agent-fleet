@@ -1,17 +1,20 @@
-import { useEffect, useRef, useState } from "react";
-import { DRAIN_SETTLE_MS, shouldDrain, type QueuedSend } from "./queue.ts";
-import { useSendQueueStore } from "./store.ts";
+import { useEffect, useState } from "react";
+import { DRAIN_SETTLE_MS, type QueuedSend } from "./queue.ts";
+import { useSendQueueStore, type Claim } from "./store.ts";
 
 const NONE: QueuedSend[] = [];
 
 /**
  * useSendQueue runs one session's pre-send queue: it hands the view the items and the operations,
- * and drains the head FIFO when the session goes idle.
+ * and drains the head FIFO when the session is idle.
  *
- * Exactly once: the head is TAKEN out of the store (read fresh, never from a render's closure)
- * before it is sent, and nothing else is released while a send is in flight or until the session
- * has been seen busy since (see DRAIN_SETTLE_MS). A failed send puts the item back where it
- * was and pauses the drain so the same refusal is not retried in a loop.
+ * Exactly once, and one at a time: the in-flight lock and the settle window live in the shared
+ * store, per session, and a claim checks them, takes the head and sets the lock in one store
+ * update — so two mounts of the same session, a remount, or a switch away and back cannot send a
+ * second item. The head is read fresh from the store, never from a render's closure. The settle
+ * window ends when the POLL shows the session busy (useTranscriptPoll), not on the optimistic
+ * "working" sendPrompt sets, or a stale idle poll right after the send would release the next
+ * item. A refused send puts the item back where it was and pauses the drain.
  */
 export function useSendQueue({
   session,
@@ -28,63 +31,34 @@ export function useSendQueue({
 }) {
   const items = useSendQueueStore((s) => s.bySession[session] ?? NONE);
   const paused = useSendQueueStore((s) => !!s.paused[session]);
-  const inflight = useRef(false);
-  const awaitingSince = useRef<number | null>(null);
-  // The effect below must call the sender of the LATEST render, not the one it was created in.
-  const sender = useRef(sendItem);
-  sender.current = sendItem;
+  const editing = useSendQueueStore((s) => s.editing[session] ?? null);
+  const gate = useSendQueueStore((s) => s.gate[session]);
   const [tick, setTick] = useState(0);
 
-  // A new session starts with a clean slate; another session's settle window means nothing here.
-  useEffect(() => {
-    awaitingSince.current = null;
-  }, [session]);
-  useEffect(() => {
-    if (busy) awaitingSince.current = null;
-  }, [busy]);
-
-  const dispatch = async (id: string, drained: boolean) => {
-    const st = useSendQueueStore.getState();
-    const taken = st.take(session, id);
-    if (!taken) return;
-    inflight.current = true;
-    if (drained) awaitingSince.current = Date.now();
+  const run = async (claim: Claim) => {
     let ok = false;
     try {
-      ok = await sender.current(taken.item);
+      ok = await sendItem(claim.item);
     } finally {
-      inflight.current = false;
-      if (!ok) {
-        const s = useSendQueueStore.getState();
-        s.restore(session, taken.item, taken.index);
-        if (drained) {
-          awaitingSince.current = null;
-          s.setPaused(session, true);
-        }
-      }
-      setTick((n) => n + 1);
+      useSendQueueStore.getState().release(session, claim, ok);
     }
   };
 
   useEffect(() => {
-    const head = useSendQueueStore.getState().bySession[session]?.[0];
-    if (!head) return;
-    const state = {
-      count: items.length, busy, canSend, paused, inflight: inflight.current,
-      awaitingSince: awaitingSince.current, now: Date.now(),
-    };
-    if (shouldDrain(state)) {
-      void dispatch(head.id, true);
+    const now = Date.now();
+    const claim = useSendQueueStore.getState().claimHead(session, now, busy, canSend);
+    if (claim) {
+      void run(claim);
       return;
     }
     // Only the settle window is time-based; wake up when it lapses.
-    const since = awaitingSince.current;
-    if (since !== null && !busy && canSend && !paused && !inflight.current) {
-      const h = setTimeout(() => setTick((n) => n + 1), Math.max(0, since + DRAIN_SETTLE_MS - state.now) + 20);
+    const since = gate?.awaitingSince ?? null;
+    if (since !== null && !busy && canSend && !paused && !gate?.inflight) {
+      const h = setTimeout(() => setTick((n) => n + 1), Math.max(0, since + DRAIN_SETTLE_MS - now) + 20);
       return () => clearTimeout(h);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- dispatch is a per-render closure over `session` only
-  }, [items, busy, canSend, paused, tick, session]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `run` is a per-render closure over session/sendItem; the sender of the render that fires is the latest
+  }, [items, busy, canSend, paused, editing, gate, tick, session]);
 
   return {
     items,
@@ -93,9 +67,12 @@ export function useSendQueue({
     edit: (id: string, text: string) => useSendQueueStore.getState().edit(session, id, text),
     remove: (id: string) => useSendQueueStore.getState().remove(session, id),
     move: (id: string, delta: -1 | 1) => useSendQueueStore.getState().move(session, id, delta),
+    /** The row being edited, or null — set by the list so the drain stands still meanwhile. */
+    setEditing: (id: string | null) => useSendQueueStore.getState().setEditing(session, id),
     /** Send this item now, ahead of the others — whatever the session is doing. */
     sendNow: (id: string) => {
-      if (!inflight.current) void dispatch(id, false);
+      const claim = useSendQueueStore.getState().claimItem(session, id);
+      if (claim) void run(claim);
     },
   };
 }

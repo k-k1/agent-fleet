@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr } from "../../../lib/i18n/index.ts";
 import type { QueuedSend } from "./queue.ts";
@@ -17,6 +17,7 @@ export function SendQueueList({
   onMove,
   onSendNow,
   onResume,
+  onEditing,
 }: {
   items: QueuedSend[];
   paused: boolean;
@@ -27,12 +28,24 @@ export function SendQueueList({
   onMove: (id: string, delta: -1 | 1) => void;
   onSendNow: (id: string) => void;
   onResume: () => void;
+  /** The row now open for editing, or null. The drain stands still while one is open. */
+  onEditing: (id: string | null) => void;
 }) {
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  // The list can vanish mid-edit (queue emptied, pane closed): never leave the lock behind.
+  useEffect(() => () => onEditing(null), []); // eslint-disable-line react-hooks/exhaustive-deps
   if (!items.length) return null;
+  const open = (id: string, text: string) => {
+    onEditing(id);
+    setEditing({ id, text });
+  };
+  const close = () => {
+    setEditing(null);
+    onEditing(null);
+  };
   const commit = () => {
     if (editing) onEdit(editing.id, editing.text);
-    setEditing(null);
+    close();
   };
   return (
     <div className="mirror-queue" role="group" aria-label={tr("mirror.queue_title", { n: items.length })}>
@@ -63,7 +76,7 @@ export function SendQueueList({
                   if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                   if (e.key === "Escape") {
                     e.preventDefault();
-                    setEditing(null);
+                    close();
                   } else if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     commit();
@@ -83,7 +96,7 @@ export function SendQueueList({
               <button type="button" className="ghost" disabled={i === items.length - 1} title={tr("mirror.queue_down")} aria-label={tr("mirror.queue_down")} onClick={() => onMove(it.id, 1)}>
                 <Icon name="arrow-down" />
               </button>
-              <button type="button" className="ghost" disabled={!it.text} title={tr("mirror.queue_edit")} aria-label={tr("mirror.queue_edit")} onClick={() => setEditing({ id: it.id, text: it.text })}>
+              <button type="button" className="ghost" disabled={!it.text} title={tr("mirror.queue_edit")} aria-label={tr("mirror.queue_edit")} onClick={() => open(it.id, it.text)}>
                 <Icon name="edit" />
               </button>
               <button

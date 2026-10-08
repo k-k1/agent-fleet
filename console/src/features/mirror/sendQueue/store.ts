@@ -2,7 +2,21 @@
 // the member switches panes or sessions inside the same page, and is gone on a reload — on
 // purpose: a held follow-up must not fire into a different moment than the one it was written for.
 import { create } from "zustand";
-import { editItem, enqueue, insertAt, moveItem, removeItem, type QueuedSend } from "./queue.ts";
+import { editItem, enqueue, insertAt, moveItem, removeItem, shouldDrain, type QueuedSend } from "./queue.ts";
+
+/** One session's send gate. Shared by every hook instance, so two mounts cannot both send. */
+export interface Gate {
+  /** A queue send is awaiting its answer. */
+  inflight: boolean;
+  /** When the last drain send left, until the POLL has shown the session busy since. */
+  awaitingSince: number | null;
+}
+const IDLE_GATE: Gate = { inflight: false, awaitingSince: null };
+
+export interface Claim {
+  item: QueuedSend;
+  index: number;
+}
 
 interface SendQueueStore {
   bySession: Record<string, QueuedSend[]>;
@@ -12,9 +26,22 @@ interface SendQueueStore {
   edit(session: string, id: string, text: string): void;
   remove(session: string, id: string): void;
   move(session: string, id: string, delta: -1 | 1): void;
-  /** Take the item out for sending; returns it with the place it held. */
-  take(session: string, id: string): { item: QueuedSend; index: number } | null;
-  restore(session: string, item: QueuedSend, index: number): void;
+  gate: Record<string, Gate>;
+  /** The queue row being edited, per session: nothing may drain while one is open. */
+  editing: Record<string, string>;
+  setEditing(session: string, id: string | null): void;
+  /**
+   * The drain's one synchronous step: if the head may leave now, take it out and lock the gate.
+   * Check, take and lock happen in one store update, so no second hook instance, remount or
+   * effect re-run can claim another item while this one is in flight.
+   */
+  claimHead(session: string, now: number, busy: boolean, canSend: boolean): Claim | null;
+  /** Same for "send now" on a chosen row; refused while a send is in flight or the row is being edited. */
+  claimItem(session: string, id: string): Claim | null;
+  /** The send answered. A refusal puts the item back in place and pauses the drain. */
+  release(session: string, claim: Claim, ok: boolean): void;
+  /** The poll showed the session busy: the turn we sent has really started. */
+  observeBusy(session: string): void;
   setPaused(session: string, paused: boolean): void;
   /** Pause only when something is held — a stale flag would otherwise hold the NEXT queue. */
   pauseIfHolding(session: string): void;
@@ -35,6 +62,24 @@ function put(s: SendQueueStore, session: string, items: QueuedSend[]): Partial<S
   return { bySession: by };
 }
 
+function claim(
+  set: (f: (s: SendQueueStore) => Partial<SendQueueStore>) => void,
+  get: () => SendQueueStore,
+  session: string,
+  id: string,
+  drainedAt: number | null,
+): Claim | null {
+  const items = get().bySession[session] ?? [];
+  const index = items.findIndex((i) => i.id === id);
+  if (index < 0) return null;
+  const item = items[index];
+  set((s) => ({
+    ...put(s, session, removeItem(s.bySession[session] ?? [], id)),
+    gate: { ...s.gate, [session]: { inflight: true, awaitingSince: drainedAt ?? s.gate[session]?.awaitingSince ?? null } },
+  }));
+  return { item, index };
+}
+
 export const useSendQueueStore = create<SendQueueStore>((set, get) => ({
   bySession: {},
   paused: {},
@@ -43,15 +88,45 @@ export const useSendQueueStore = create<SendQueueStore>((set, get) => ({
   edit: (session, id, text) => set((s) => put(s, session, editItem(s.bySession[session] ?? [], id, text))),
   remove: (session, id) => set((s) => put(s, session, removeItem(s.bySession[session] ?? [], id))),
   move: (session, id, delta) => set((s) => put(s, session, moveItem(s.bySession[session] ?? [], id, delta))),
-  take: (session, id) => {
-    const items = get().bySession[session] ?? [];
-    const index = items.findIndex((i) => i.id === id);
-    if (index < 0) return null;
-    const item = items[index];
-    set((s) => put(s, session, removeItem(s.bySession[session] ?? [], id)));
-    return { item, index };
+  gate: {},
+  editing: {},
+  setEditing: (session, id) =>
+    set((s) => {
+      if ((s.editing[session] ?? null) === id) return s;
+      const editing = { ...s.editing };
+      if (id === null) delete editing[session];
+      else editing[session] = id;
+      return { editing };
+    }),
+  claimHead: (session, now, busy, canSend) => {
+    const s = get();
+    const items = s.bySession[session] ?? [];
+    const g = s.gate[session] ?? IDLE_GATE;
+    const ok = shouldDrain({
+      count: items.length, busy, canSend, paused: !!s.paused[session], inflight: g.inflight,
+      awaitingSince: g.awaitingSince, now,
+    });
+    if (!ok || s.editing[session]) return null;
+    return claim(set, get, session, items[0].id, now);
   },
-  restore: (session, item, index) => set((s) => put(s, session, insertAt(s.bySession[session] ?? [], item, index))),
+  claimItem: (session, id) => {
+    const s = get();
+    if (s.gate[session]?.inflight || s.editing[session] === id) return null;
+    return claim(set, get, session, id, null);
+  },
+  release: (session, c, ok) =>
+    set((s) => {
+      const gate = { ...s.gate, [session]: { inflight: false, awaitingSince: ok ? (s.gate[session]?.awaitingSince ?? null) : null } };
+      if (ok) return { gate };
+      const back = put(s, session, insertAt(s.bySession[session] ?? [], c.item, c.index));
+      return { ...back, gate, paused: { ...s.paused, [session]: true } };
+    }),
+  observeBusy: (session) =>
+    set((s) => {
+      const g = s.gate[session];
+      if (!g || g.awaitingSince === null) return s;
+      return { gate: { ...s.gate, [session]: { ...g, awaitingSince: null } } };
+    }),
   pauseIfHolding: (session) => {
     if (get().bySession[session]?.length) get().setPaused(session, true);
   },
