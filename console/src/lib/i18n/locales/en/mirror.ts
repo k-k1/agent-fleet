@@ -418,7 +418,7 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "send.open_assistant": "Open in an assistant",
   "send.send_to_session": "Send to session",
   "mirror.queue_title": "Waiting to send ({n})",
-  "mirror.queue_add": "Hold in the send queue",
+  "mirror.queue_add": "Add to waiting list",
   "mirror.queue_add_hint": "Doesn't send into the running turn; holds it here and sends in order when the turn ends (Alt+Enter)",
   "mirror.queue_paused": "Auto-send is paused because you stopped the turn.",
   "mirror.queue_resume": "Resume",

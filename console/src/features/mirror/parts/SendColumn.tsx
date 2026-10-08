@@ -1,5 +1,6 @@
 import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr } from "../../../lib/i18n/index.ts";
+import { SplitSend } from "../sendQueue/SplitSend.tsx";
 
 /**
  * Right column: a small mode chip stacked over the send button. The chip is a
@@ -40,21 +41,13 @@ export function SendColumn({
           {modeLabel || "…"}
         </button>
       )}
-      {onQueue && (
-        <button
-          type="button"
-          className="ghost mirror-queue-add"
-          disabled={sendDisabled}
-          title={tr("mirror.queue_add_hint")}
-          aria-label={tr("mirror.queue_add")}
-          onClick={onQueue}
-        >
-          <Icon name="add" />
+      {onQueue ? (
+        <SplitSend disabled={sendDisabled} onSend={onSend} onQueue={onQueue} />
+      ) : (
+        <button type="button" className="btn primary mirror-send" disabled={sendDisabled} onClick={onSend} title={tr("chat.send")}>
+          <Icon name="send" />
         </button>
       )}
-      <button type="button" className="btn primary mirror-send" disabled={sendDisabled} onClick={onSend} title={tr("chat.send")}>
-        <Icon name="send" />
-      </button>
     </div>
   );
 }

@@ -68,3 +68,36 @@
     margin-left: auto;
   }
 }
+
+/* Split Send (#1083): Send plus an attached chevron while a turn runs. The send part gives up
+   some padding so the column keeps the width it has without the chevron. */
+.mirror-send-split {
+  display: flex;
+  align-items: stretch;
+}
+.mirror-send-split .mirror-send {
+  flex: 1 1 auto;
+  padding: 0 8px;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.mirror-send-more {
+  flex: none;
+  width: 20px;
+  height: 31px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid color-mix(in srgb, var(--on-accent) 40%, transparent);
+}
+.mirror-send-menu .ui-menu-item {
+  justify-content: space-between;
+}
+.mirror-send-menu-key {
+  font: inherit;
+  font-size: 11px;
+  color: var(--muted);
+}
