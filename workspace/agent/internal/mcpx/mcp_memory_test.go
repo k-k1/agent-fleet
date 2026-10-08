@@ -340,3 +340,28 @@ func TestMemoryToolDescriptionsCarryTheWhenToCallGuidance(t *testing.T) {
 		t.Errorf("memory_search no longer says when to call it: %q", desc["memory_search"])
 	}
 }
+
+// The authoring guidance is said in the save answer's text and in the tool description, and a
+// memory over it is still saved.
+func TestMemorySaveReturnsGuidanceWarnings(t *testing.T) {
+	memoryTestEnv(t)
+	r := callMemoryTool(t, "memory_save", map[string]any{
+		"name": "wordy", "description": strings.Repeat("d", 500), "body": strings.Repeat("b", 5000),
+	})
+	if r.IsError || !strings.Contains(r.Text, `"revision":1`) || !strings.Contains(r.Text, `"warnings":[`) ||
+		!strings.Contains(r.Text, "Saved, with guidance:") || !strings.Contains(r.Text, "500 characters") || !strings.Contains(r.Text, "4096 bytes") {
+		t.Fatalf("save = %+v", r)
+	}
+	r = callMemoryTool(t, "memory_save", map[string]any{"name": "tidy", "description": "short", "body": "b"})
+	if r.IsError || strings.Contains(r.Text, "warnings") || strings.Contains(r.Text, "guidance") {
+		t.Fatalf("a memory inside the guidance must carry no warning: %+v", r)
+	}
+	for _, tool := range mcpStdioMemoryTools() {
+		if tool["name"] == "memory_save" {
+			d := tool["description"].(string)
+			if !strings.Contains(d, "150 characters") || !strings.Contains(d, "4,096 bytes") {
+				t.Errorf("memory_save description lacks the authoring guidance: %s", d)
+			}
+		}
+	}
+}

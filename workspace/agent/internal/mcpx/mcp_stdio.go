@@ -1071,12 +1071,13 @@ func mcpStdioMemoryTools() []map[string]any {
 			"name": "memory_save",
 			"description": "Agent Fleet memory: create or update a memory every agent kind will read. It is published at once and recorded with your kind and session. " +
 				"Save what is not derivable from the code or git history: a non-obvious fact, a pitfall, a user preference. " +
-				"To update, pass the revision you read; a stale revision is refused, so read again and rewrite. Never include secrets: a body that looks like one is refused.",
+				"To update, pass the revision you read; a stale revision is refused, so read again and rewrite. Never include secrets: a body that looks like one is refused. " +
+				"Write one fact per memory with a description of about 150 characters (above 300 is flagged) and put the essentials in the first 4,096 bytes of the body, which is all claude's recall shows; a longer one is saved with a warning.",
 			"inputSchema": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
-					"name":        str("Short kebab-case slug, e.g. go-test-memory-cap"),
-					"description": str("One line used to decide relevance"),
+					"name":        str("Short slug of lower-case letters, digits, - _ and . (1-64, not starting with . or -), e.g. go-test-memory-cap"),
+					"description": str("One line used to decide relevance, about 150 characters"),
 					"body":        str("The memory itself, Markdown"),
 					"type":        map[string]any{"type": "string", "enum": []string{"user", "feedback", "project", "reference"}},
 					"kinds":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Only for these agent kinds (e.g. claude); omit when it applies to all"},

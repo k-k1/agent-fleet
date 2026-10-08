@@ -117,7 +117,7 @@ func mcpMemoryCall(id json.RawMessage, name string, raw json.RawMessage) []byte 
 		if err != nil {
 			return mcpToolErr(id, mcpMemoryErr(err))
 		}
-		return mcpTextResult(id, out)
+		return mcpTextResult(id, mcpMemoryFormatSave(out))
 	case mcpToolMemoryForget:
 		body, _ := json.Marshal(map[string]any{"session": owner, "scope": a.Scope, "name": a.Name, "revision": a.Revision})
 		out, err := agentDo(http.MethodPost, "/agents/memory/entries/forget", body)
@@ -127,6 +127,19 @@ func mcpMemoryCall(id json.RawMessage, name string, raw json.RawMessage) []byte 
 		return mcpTextResult(id, out)
 	}
 	return mcpToolErr(id, "unknown memory tool: "+name)
+}
+
+// mcpMemoryFormatSave is the Agent's save answer, with its authoring warnings said again in
+// plain text: the memory is saved either way, and the agent that wrote it is the one who can
+// shorten it.
+func mcpMemoryFormatSave(raw string) string {
+	var r struct {
+		Warnings []string `json:"warnings"`
+	}
+	if json.Unmarshal([]byte(raw), &r) != nil || len(r.Warnings) == 0 {
+		return raw
+	}
+	return raw + "\n\nSaved, with guidance:\n- " + strings.Join(r.Warnings, "\n- ")
 }
 
 // mcpMemoryErr turns the Agent's refusal into what the agent should do next. The Agent's

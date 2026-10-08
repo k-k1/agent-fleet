@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 )
@@ -147,7 +148,7 @@ func TestClaudeImportNestedTypeAndLongDescription(t *testing.T) {
 	e := newClaudeImportEnv(t)
 	e.file("typed", "short", "feedback", "the body")
 	e.file("badtype", "short", "bogus", "the body")
-	long := strings.Repeat("あ", 150) // 450 bytes
+	long := strings.Repeat("あ", 2100) // over the 2000-character limit
 	e.file("long-desc", long, "project", "tail")
 
 	pv := e.preview()
@@ -158,8 +159,8 @@ func TestClaudeImportNestedTypeAndLongDescription(t *testing.T) {
 		t.Errorf("an unknown type is dropped, not an error: %+v", it)
 	}
 	ld := e.item(pv, "long-desc")
-	if !ld.Shortened || len(ld.Description) > agentMemMaxDescription || !strings.HasSuffix(ld.Description, "…") {
-		t.Errorf("long-desc = %d bytes %q", len(ld.Description), ld.Description)
+	if !ld.Shortened || utf8.RuneCountInString(ld.Description) > agentMemMaxDescription || !strings.HasSuffix(ld.Description, "…") {
+		t.Errorf("long-desc = %d chars", utf8.RuneCountInString(ld.Description))
 	}
 
 	e.apply(time.Now(), "typed", "long-desc")
@@ -167,7 +168,7 @@ func TestClaudeImportNestedTypeAndLongDescription(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(got.Body, long+"\n\ntail") || len(got.Description) > agentMemMaxDescription {
+	if !strings.HasPrefix(got.Body, long+"\n\ntail") || utf8.RuneCountInString(got.Description) > agentMemMaxDescription {
 		t.Errorf("the full description must lead the body: %.40q", got.Body)
 	}
 	if got.AuthorKind != agentMemUnknown || got.AuthorSession != agentMemUnknown || got.Revision != 1 ||
@@ -192,12 +193,11 @@ func TestClaudeImportNestedTypeAndLongDescription(t *testing.T) {
 
 func TestClaudeImportInvalidReasons(t *testing.T) {
 	e := newClaudeImportEnv(t)
-	e.raw(e.slug, "Bad_Name.md", "---\ndescription: d\n---\nb\n")
+	e.raw(e.slug, "Bad Name.md", "---\ndescription: d\n---\nb\n")
 	e.raw(e.slug, "no-fm.md", "just text\n")
 	e.raw(e.slug, "no-desc.md", "---\nname: x\n---\nb\n")
 	e.raw(e.slug, "no-body.md", "---\ndescription: d\n---\n\n")
 	e.raw(e.slug, "nul.md", "---\ndescription: d\n---\nb\x00c\n")
-	e.raw(e.slug, "wide.md", "---\ndescription: d\n---\n"+strings.Repeat("x", agentMemMaxLine+10)+"\n")
 	e.raw(e.slug, "huge.md", "---\ndescription: d\n---\n"+strings.Repeat("line\n", agentMemMaxFile/5+10))
 	target := filepath.Join(e.home, "elsewhere.md")
 	memoryWrite(t, target, "---\ndescription: d\n---\nb\n")
@@ -206,8 +206,8 @@ func TestClaudeImportInvalidReasons(t *testing.T) {
 	}
 
 	pv := e.preview()
-	want := map[string]string{"Bad_Name": "bad_name", "no-fm": "no_frontmatter", "no-desc": "no_description",
-		"no-body": "no_body", "nul": "nul_byte", "wide": "line_too_long", "huge": "too_large", "link": "symlink"}
+	want := map[string]string{"Bad Name": "bad_name", "no-fm": "no_frontmatter", "no-desc": "no_description",
+		"no-body": "no_body", "nul": "nul_byte", "huge": "too_large", "link": "symlink"}
 	for name, reason := range want {
 		if it := e.item(pv, name); it.Status != claudeImportInvalid || it.Reason != reason {
 			t.Errorf("%s = %s/%s, want invalid/%s", name, it.Status, it.Reason, reason)

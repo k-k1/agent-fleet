@@ -37,7 +37,7 @@ const (
 var agentMemMember = agentMemCaller{Session: "console", Kind: "member"}
 
 var (
-	agentMemRepoPathRe = regexp.MustCompile(`^af/(user|projects/[a-z0-9._-]{1,80})/([a-z0-9][a-z0-9-]{0,63})\.md$`)
+	agentMemRepoPathRe = regexp.MustCompile(`^af/(user|projects/[a-z0-9._-]{1,80})/([a-z0-9_][a-z0-9._-]{0,63})\.md$`)
 	agentMemCommitRe   = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 	agentMemOps        = map[string]bool{"create": true, "update": true, "forget": true, "revert": true, "import": true, "pin": true}
 )
@@ -73,7 +73,7 @@ func agentMemCleanText(s string) bool { return len(agentMemScanText("", s)) == 0
 // agentMemParseRepoPath splits af/<scope dir>/<name>.md.
 func agentMemParseRepoPath(p string) (rel, scope, projectID, name string, ok bool) {
 	m := agentMemRepoPathRe.FindStringSubmatch(p)
-	if m == nil {
+	if m == nil || !agentMemValidName(m[2]) {
 		return "", "", "", "", false
 	}
 	rel = strings.TrimPrefix(p, agentMemRepoPrefix+"/")

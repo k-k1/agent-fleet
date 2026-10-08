@@ -273,7 +273,7 @@ func agentMemImportHistory(rel string) (map[string]bool, error) {
 		prefix := agentMemRepoPrefix + "/" + rel + "/"
 		for _, line := range strings.Split(out, "\n") {
 			if n, ok := strings.CutPrefix(line, prefix); ok {
-				if n, ok = strings.CutSuffix(n, ".md"); ok && agentMemNameRe.MatchString(n) {
+				if n, ok = strings.CutSuffix(n, ".md"); ok && agentMemValidName(n) {
 					seen[n] = true
 				}
 			}
@@ -299,14 +299,11 @@ func agentMemImportHistory(rel string) (map[string]bool, error) {
 
 // agentMemImportShorten cuts a description to the limit at a rune boundary, ending with "…".
 func agentMemImportShorten(s string) string {
-	if len(s) <= agentMemMaxDescription {
+	if utf8.RuneCountInString(s) <= agentMemMaxDescription {
 		return s
 	}
-	n := agentMemMaxDescription - len("…")
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
-	}
-	return strings.TrimRight(s[:n], " ") + "…"
+	cut := agentMemCutRunes(s, agentMemMaxDescription-1) // already ends with "…"
+	return strings.TrimRight(strings.TrimSuffix(cut, "…"), " ") + "…"
 }
 
 // agentMemImportShowable says whether a file name may be put in a response.
@@ -343,7 +340,7 @@ func agentMemImportEvaluate(mem *os.File, file, slug, rel string, history map[st
 		it.Status, it.Reason = claudeImportInvalid, reason
 		return it, false
 	}
-	if !agentMemNameRe.MatchString(stem) {
+	if !agentMemValidName(stem) {
 		return invalid("bad_name")
 	}
 	f, err := agentMemImportOpen(mem, file)
@@ -367,15 +364,12 @@ func agentMemImportEvaluate(mem *os.File, file, slug, rel string, history map[st
 	it.SourceHash = hex.EncodeToString(sum[:])
 	it.SourceModified = st.ModTime().UTC().Format(time.RFC3339)
 
-	// NUL and over-long lines are judged on the raw file: the scanner cannot vouch for either,
-	// and a parse would hide them.
+	// NUL is judged on the raw file: the scanner cannot vouch for binary, and a parse would hide it.
 	var findings []memorySecretFinding
 	for _, f := range agentMemScanText("file", string(raw)) {
 		switch f.Rule {
 		case "nul-byte":
 			return invalid("nul_byte")
-		case "line-too-long":
-			return invalid("line_too_long")
 		}
 		// A hit anywhere in the file counts, fields that are not imported included.
 		f.Path = "file"
@@ -400,7 +394,7 @@ func agentMemImportEvaluate(mem *os.File, file, slug, rel string, history map[st
 		typ = ""
 	}
 	full := desc
-	if len(desc) > agentMemMaxDescription {
+	if utf8.RuneCountInString(desc) > agentMemMaxDescription {
 		desc, it.Shortened = agentMemImportShorten(desc), true
 		body = full + "\n\n" + body
 	}
@@ -583,7 +577,7 @@ func agentMemImportApply(req agentMemImportReq, now time.Time) (agentMemImportAp
 	seen := map[string]bool{}
 	for _, ri := range req.Items {
 		res := agentMemImportResult{Name: ri.Name, Result: "skipped"}
-		if !agentMemNameRe.MatchString(ri.Name) || len(agentMemScanText("name", ri.Name)) > 0 {
+		if !agentMemValidName(ri.Name) || len(agentMemScanText("name", ri.Name)) > 0 {
 			// The name came from the request and is not echoed.
 			res.Name, res.Reason = "", "bad_name"
 			out.Results = append(out.Results, res)

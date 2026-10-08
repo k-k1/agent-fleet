@@ -55,8 +55,8 @@ const (
 )
 
 // claudeExportNativeNameRe is a native file stem that may be shown and linked from the index.
-// Claude's own files use underscores, which AF names do not.
-var claudeExportNativeNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
+// Claude's own files use underscores (project_x); AF names allow them too.
+var claudeExportNativeNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$`)
 
 // agentMemExportHash is what af_hash records: the description, type and body as written. The
 // import compares the same function over a native file to tell "still what AF wrote" from an edit.
@@ -959,7 +959,7 @@ func agentMemExportApply(req agentMemExportReq, now time.Time) (agentMemExportAp
 	}
 	over := map[string]bool{}
 	for _, n := range req.Overwrite {
-		if !agentMemNameRe.MatchString(n) && !claudeExportNativeNameRe.MatchString(n) {
+		if !agentMemValidName(n) && !claudeExportNativeNameRe.MatchString(n) {
 			return agentMemExportApplied{}, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "overwrite names a file that is not valid")
 		}
 		over[n] = true

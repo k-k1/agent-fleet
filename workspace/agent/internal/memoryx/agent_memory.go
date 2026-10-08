@@ -37,6 +37,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
@@ -52,21 +53,39 @@ const (
 	agentMemRepoPrefix = "af"
 	agentMemTombDir    = ".forgotten"
 
-	agentMemMaxBody        = 64 << 10
-	agentMemMaxFile        = 4 * agentMemMaxBody
-	agentMemMaxLine        = 4 << 10
-	agentMemMaxDescription = 300
-	agentMemMaxKinds       = 16
-	agentMemSearchDefault  = 20
-	agentMemSearchMax      = 50
-	agentMemSnippetLines   = 3
-	agentMemSnippetChars   = 200
+	// The store limits are what AF accepts, sized so nothing claude's or codex's own memory holds
+	// is refused (ADR 0108 decision 3). What is advised to authors is the warning tier below.
+	agentMemMaxBody = 200 << 10
+	// agentMemMaxFile bounds a stored file: body, frontmatter (description up to 4 bytes per
+	// character) and slack for hand edits.
+	agentMemMaxFile = agentMemMaxBody + 32<<10
+	// agentMemMaxDescription is counted in characters, not bytes: a Japanese description is 3
+	// bytes per character.
+	agentMemMaxDescription = 2000
+	// There is no per-line limit: the scanner runs every rule over the whole line (RE2 is
+	// linear), so a long line is vouched for like any other and the body bound is the only
+	// safety stop.
+
+	// Authoring guidance, returned as warnings and never as a refusal. The thresholds are
+	// claude's own: it lints a description above 300 characters (suggesting about 150) and
+	// shows other sessions only the first 4,096 bytes of a memory file in recall.
+	agentMemAdviseDescription = 150
+	agentMemWarnDescription   = 300
+	agentMemWarnBody          = 4096
+	agentMemMaxKinds          = 16
+	agentMemSearchDefault     = 20
+	agentMemSearchMax         = 50
+	agentMemSnippetLines      = 3
+	agentMemSnippetChars      = 200
 	// agentMemUnknown is what an author AF cannot establish is recorded as; never a guess.
 	agentMemUnknown = "unknown"
 )
 
 var (
-	agentMemNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
+	// agentMemNameRe is a safe single path segment: it has no "/" and cannot start with "." or
+	// "-", so ".forgotten" (the tombstone directory) is unreachable. Go has no look-ahead, so
+	// agentMemValidName also refuses "..".
+	agentMemNameRe = regexp.MustCompile(`^[a-z0-9_][a-z0-9._-]{0,63}$`)
 	agentMemKindRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 	// agentMemTypes are the memory types claude's auto-memory uses, so the import keeps them.
 	agentMemTypes = map[string]bool{"": true, "user": true, "feedback": true, "project": true, "reference": true}
@@ -75,6 +94,12 @@ var (
 	// commit, so a reader never sees a change that is about to be rolled back.
 	agentMemMu sync.RWMutex
 )
+
+// agentMemValidName says whether name may be a memory name and so a file name, a repo path and
+// a commit-message field.
+func agentMemValidName(name string) bool {
+	return agentMemNameRe.MatchString(name) && !strings.Contains(name, "..")
+}
 
 func agentMemDir() string { return filepath.Join(claude.ConfigDir(), "af-agent-memory") }
 
@@ -461,17 +486,11 @@ func agentMemParse(b []byte) (agentMemEntry, bool) {
 	return e, true
 }
 
-// agentMemScanText scans text the way a write is judged: NUL and over-long lines are refused
-// outright, because the scanner cannot vouch for them (it skips binary, and a reader is not
-// helped by a 4 KiB line in a memory).
+// agentMemScanText scans text the way a write is judged: NUL is refused outright, because the
+// scanner cannot vouch for binary (it skips it). Lines of any length are scanned whole.
 func agentMemScanText(path, text string) []memorySecretFinding {
 	if strings.IndexByte(text, 0) >= 0 {
 		return []memorySecretFinding{{Path: path, Rule: "nul-byte", Hint: "…"}}
-	}
-	for i, line := range strings.Split(text, "\n") {
-		if len(line) > agentMemMaxLine {
-			return []memorySecretFinding{{Path: path, Line: i + 1, Rule: "line-too-long", Hint: "…"}}
-		}
 	}
 	return memoryScanContent(path, []byte(text))
 }
@@ -535,7 +554,7 @@ func agentMemLoadDir(scope, rel string) ([]agentMemEntry, int, error) {
 	withheld := 0
 	for _, d := range ents {
 		name, ok := strings.CutSuffix(d.Name(), ".md")
-		if !ok || !d.Type().IsRegular() || !agentMemNameRe.MatchString(name) {
+		if !ok || !d.Type().IsRegular() || !agentMemValidName(name) {
 			continue
 		}
 		l, ok, err := agentMemLoadFile(filepath.Join(dir, d.Name()), scope, name)
@@ -762,7 +781,7 @@ func agentMemLoadOne(c agentMemCaller, scope, name string) (agentMemLoaded, bool
 // agentMemCheckName is the gate every name passes before it reaches a path: the slug rule, then
 // the secret scan, so a token-shaped name never gets as far as an error that quotes a path.
 func agentMemCheckName(name string) error {
-	if !agentMemNameRe.MatchString(name) {
+	if !agentMemValidName(name) {
 		return agentMemBadName()
 	}
 	if len(agentMemScanText("name", name)) > 0 {
@@ -772,7 +791,7 @@ func agentMemCheckName(name string) error {
 }
 
 func agentMemBadName() error {
-	return memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "name must be lower-case letters, digits and hyphens, at most 64")
+	return memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "name must be 1-64 characters of lower-case letters, digits, '-', '_' and '.'; it must not start with '.' or '-' or contain '..'")
 }
 
 // agentMemSaveReq is a create or update. Revision is the one the caller read: 0 creates, and
@@ -804,6 +823,23 @@ type agentMemWriteResult struct {
 	Commit   string `json:"commit,omitempty"`
 	Created  bool   `json:"created,omitempty"`
 	Deleted  bool   `json:"deleted,omitempty"`
+	// Warnings is authoring guidance; the save has succeeded either way.
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// agentMemSaveWarnings is the guidance a save returns: the limits claude itself lints or
+// truncates at. It never refuses; the store limits are agentMemMax*.
+func agentMemSaveWarnings(req agentMemSaveReq) []string {
+	var w []string
+	if n := utf8.RuneCountInString(req.Description); n > agentMemWarnDescription {
+		w = append(w, fmt.Sprintf("description is %d characters; keep it to about %d (one fact per memory, a one-line summary): claude lints a description above %d characters and recall matches on it as a summary",
+			n, agentMemAdviseDescription, agentMemWarnDescription))
+	}
+	if n := len(req.Body); n > agentMemWarnBody {
+		w = append(w, fmt.Sprintf("body is %d bytes; claude's recall shows only the first %d bytes (200 lines) of a memory, so put the essentials first or split it into one fact per memory",
+			n, agentMemWarnBody))
+	}
+	return w
 }
 
 // agentMemSecretErr carries the scan's findings to the REST layer. The agent gets the rule and
@@ -821,14 +857,14 @@ func agentMemValidate(req *agentMemSaveReq) error {
 	req.Type = strings.TrimSpace(req.Type)
 	req.Body = strings.TrimSpace(req.Body)
 	switch {
-	case !agentMemNameRe.MatchString(req.Name):
+	case !agentMemValidName(req.Name):
 		return agentMemBadName()
 	case req.Description == "":
 		return bad("description is required")
 	case strings.ContainsAny(req.Description, "\r\n"):
 		return bad("description must be one line")
-	case len(req.Description) > agentMemMaxDescription:
-		return bad(fmt.Sprintf("description is longer than %d bytes", agentMemMaxDescription))
+	case utf8.RuneCountInString(req.Description) > agentMemMaxDescription:
+		return bad(fmt.Sprintf("description is longer than %d characters", agentMemMaxDescription))
 	case !agentMemTypes[req.Type]:
 		return bad("type must be one of user, feedback, project, reference")
 	case req.Body == "":
@@ -1001,7 +1037,8 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 		agentMemRemoveTomb(rel, req.Name)
 		agentMemClearUsage(rel, req.Name)
 	}
-	return agentMemWriteResult{Name: e.Name, Scope: e.Scope, Revision: e.Revision, Commit: rev, Created: !exists}, nil
+	return agentMemWriteResult{Name: e.Name, Scope: e.Scope, Revision: e.Revision, Commit: rev, Created: !exists,
+		Warnings: agentMemSaveWarnings(req)}, nil
 }
 
 // agentMemForget removes a memory from what is published. Its text stays in history; purging
