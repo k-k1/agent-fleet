@@ -151,9 +151,10 @@ func cmdExport(c *Client, args []string, out io.Writer) error {
 		return nil
 	}
 	var res struct {
-		Results  []struct{ Name, Result, Reason string }
-		Snapshot string
-		Index    string
+		Results   []struct{ Name, Result, Reason, Kept string }
+		Snapshot  string
+		Index     string
+		IndexKept string
 	}
 	req := map[string]any{"project": id, "token": pv.Token, "overwrite": []string(over)}
 	if err := c.do("POST", "/agents/memory/claude-export?project="+queryEscape(id), req, &res); err != nil {
@@ -170,6 +171,9 @@ func cmdExport(c *Client, args []string, out io.Writer) error {
 		default:
 			skipped++
 			fmt.Fprintf(out, "  skipped %s: %s\n", r.Name, r.Reason)
+			if r.Kept != "" {
+				fmt.Fprintf(out, "    your newer edit is kept as %s in claude's memory directory\n", r.Kept)
+			}
 		}
 	}
 	if res.Snapshot != "" {
@@ -178,6 +182,9 @@ func cmdExport(c *Client, args []string, out io.Writer) error {
 	fmt.Fprintf(out, "done: %d written or removed, %d skipped, MEMORY.md %s\n", done, skipped, res.Index)
 	if failed > 0 {
 		return fmt.Errorf("%d file(s) could not be written", failed)
+	}
+	if res.IndexKept != "" {
+		fmt.Fprintf(out, "your newer MEMORY.md edit is kept as %s in claude's memory directory\n", res.IndexKept)
 	}
 	if res.Index == "failed" {
 		return fmt.Errorf("MEMORY.md could not be updated (it changed during the write-back or could not be written); preview again")

@@ -769,3 +769,59 @@ func TestClaudeExportCommitRaces(t *testing.T) {
 		t.Errorf("index = %s %q", out.Index, e3.read("MEMORY.md"))
 	}
 }
+
+// A second change that races the rollback is kept, not deleted, and reported with where it is.
+func TestClaudeExportDoubleRaceKeepsTheLatestEdit(t *testing.T) {
+	scan := func(dir string) string {
+		var all []string
+		ents, _ := os.ReadDir(dir)
+		for _, d := range ents {
+			b, _ := os.ReadFile(filepath.Join(dir, d.Name()))
+			all = append(all, string(b))
+		}
+		return strings.Join(all, "\n---file---\n")
+	}
+	e := newClaudeExportEnv(t)
+	e.save("one", "d", "project", "b")
+	e.apply()
+	e.save("one", "d", "project", "b2")
+	dir := e.memDir(e.slug)
+	e.setHook(func(stage string) {
+		switch stage {
+		case "after-stage:one.md":
+			memoryWrite(t, filepath.Join(dir, "one.md"), "---\nname: one\ndescription: d\n---\nedit A\n")
+		case "before-rollback:one.md":
+			memoryWrite(t, filepath.Join(dir, "one.md"), "---\nname: one\ndescription: d\n---\nedit B\n")
+		}
+	})
+	out := e.apply()
+	r := exportResult(out, "one")
+	if r.Result != "skipped" || r.Kept == "" {
+		t.Errorf("double race result = %+v", r)
+	}
+	if got := scan(dir); !strings.Contains(got, "edit A") || !strings.Contains(got, "edit B") {
+		t.Errorf("a member edit was lost:\n%s", got)
+	}
+	if r.Kept != "" {
+		if b, _ := os.ReadFile(filepath.Join(dir, r.Kept)); !strings.Contains(string(b), "edit") {
+			t.Errorf("kept file %q does not hold an edit", r.Kept)
+		}
+	}
+
+	e3 := newClaudeExportEnv(t)
+	e3.save("x", "d", "project", "b")
+	e3.raw(e3.slug, "MEMORY.md", "old\n")
+	dir3 := e3.memDir(e3.slug)
+	e3.setHook(func(stage string) {
+		switch stage {
+		case "after-stage:MEMORY.md":
+			memoryWrite(t, filepath.Join(dir3, "MEMORY.md"), "edit A\n")
+		case "before-rollback:MEMORY.md":
+			memoryWrite(t, filepath.Join(dir3, "MEMORY.md"), "edit B\n")
+		}
+	})
+	out = e3.apply()
+	if got := scan(dir3); out.Index != "failed" || out.IndexKept == "" || !strings.Contains(got, "edit A") || !strings.Contains(got, "edit B") {
+		t.Errorf("index double race: %+v\n%s", out, got)
+	}
+}

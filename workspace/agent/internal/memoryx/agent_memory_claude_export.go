@@ -764,6 +764,9 @@ type agentMemExportResult struct {
 	Name   string `json:"name"`
 	Result string `json:"result"` // written | updated | removed | skipped
 	Reason string `json:"reason,omitempty"`
+	// Kept names the hidden file in claude's memory directory that holds a member's edit which
+	// could not be put back where it was (a second change raced the first).
+	Kept string `json:"kept,omitempty"`
 }
 
 type agentMemExportApplied struct {
@@ -773,6 +776,8 @@ type agentMemExportApplied struct {
 	// Index is written | unchanged | skipped (left alone on purpose) | failed (it should have been
 	// written and was not, or changed under the apply).
 	Index string `json:"index"`
+	// IndexKept is Kept for MEMORY.md.
+	IndexKept string `json:"indexKept,omitempty"`
 }
 
 // agentMemExportTestHook is called at named points of an apply so a test can change the directory
@@ -797,6 +802,14 @@ const (
 
 // errAgentMemExportRaced: the leaf was not what the evaluation saw when the commit reached it.
 var errAgentMemExportRaced = errors.New("the file changed during the write-back")
+
+// agentMemExportKept: a member's file could not be put back where it was and is kept under a
+// hidden temp name in the same directory (the name is ours, never the member's text).
+type agentMemExportKept struct{ file string }
+
+func (k *agentMemExportKept) Error() string {
+	return "a file that changed during the write-back is kept as " + k.file
+}
 
 // renameat2 renames within the pinned directory with flags. RENAME_NOREPLACE never overwrites;
 // RENAME_EXCHANGE swaps two names atomically, which is how a racing file is kept, not replaced.
@@ -859,11 +872,17 @@ func agentMemExportPublishAt(mem *os.File, name string, data []byte, expectFH st
 		_ = syscall.Unlinkat(fd, tmp)
 		return nil
 	}
+	agentMemExportHook("before-rollback:" + name)
 	if err := agentMemExportRenameat2(mem, tmp, name, renameExchange); err != nil {
-		return err // the displaced file stays under its temp name rather than being deleted
+		return &agentMemExportKept{tmp} // the displaced file stays under its temp name rather than being deleted
 	}
-	_ = syscall.Unlinkat(fd, tmp)
-	return errAgentMemExportRaced
+	// What came out of the second swap is ours only if nobody wrote the name in between.
+	sum := sha256.Sum256(data)
+	if agentMemExportLeafIs(mem, tmp, hex.EncodeToString(sum[:])) {
+		_ = syscall.Unlinkat(fd, tmp)
+		return errAgentMemExportRaced
+	}
+	return &agentMemExportKept{tmp}
 }
 
 // agentMemExportRemoveAt removes name when it is still the file with hash expectFH: it is moved
@@ -882,7 +901,7 @@ func agentMemExportRemoveAt(mem *os.File, name, expectFH string) error {
 		return syscall.Unlinkat(fd, q)
 	}
 	if err := agentMemExportRenameat2(mem, q, name, renameNoReplace); err != nil {
-		return err // something new is at the name; the moved file stays under its temp name
+		return &agentMemExportKept{q} // something new is at the name; the moved file stays aside
 	}
 	return errAgentMemExportRaced
 }
@@ -1023,7 +1042,11 @@ func agentMemExportApply(req agentMemExportReq, now time.Time) (agentMemExportAp
 		default:
 			werr = agentMemExportPublishAt(mem, file, a.it.data, a.it.nativeFH)
 		}
-		if werr == errAgentMemExportRaced {
+		var kept *agentMemExportKept
+		if errors.As(werr, &kept) {
+			res.Result, res.Reason, res.Kept = "skipped", "changed_since_preview", kept.file
+			fail(a.it.Name, file)
+		} else if werr == errAgentMemExportRaced {
 			res.Result, res.Reason = "skipped", "changed_since_preview"
 			fail(a.it.Name, file)
 		} else if werr != nil {
@@ -1047,6 +1070,10 @@ func agentMemExportApply(req agentMemExportReq, now time.Time) (agentMemExportAp
 	default:
 		if err := agentMemExportPublishAt(mem, agentMemImportIndex, []byte(indexText), pv.indexOldFH); err != nil {
 			out.Index = "failed"
+			var kept *agentMemExportKept
+			if errors.As(err, &kept) {
+				out.IndexKept = kept.file
+			}
 			fmt.Fprintf(os.Stderr, "agent memory: export: %s\n", agentMemErrKind(err))
 		} else {
 			out.Index = "written"
