@@ -30,7 +30,7 @@
 // Focus: opening from a composer/input must not strand focus. We remember the opener and,
 // on a CANCEL (Esc / browser-back / backdrop), return focus to it. Running a command/opening
 // a file does NOT restore — it may move focus deliberately (e.g. focus a pane).
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Kbd } from "../../ui/Kbd.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { toast } from "../../ui/toast.ts";
@@ -57,6 +57,7 @@ import {
   openSessionTerminal,
   openSessionTerminalSplit,
 } from "../sessions/open.ts";
+import { layoutFamilies } from "../sessions/family.ts";
 import { sortSessionsByAttention, waitingAtFromNotifications } from "../sessions/order.ts";
 import { observedWaitingAt } from "../sessions/waiting.ts";
 import { useNotificationStore } from "../notifications/store.ts";
@@ -124,6 +125,11 @@ interface Item {
   /** Set on a row of the talk mode: the row renders the hit (kind icon, session, when, and the
    * matching text) instead of the plain title + sub pill. */
   hit?: SessionSearchHit;
+  /** Sessions mode: how deep the row sits under its family's root (0 = a root). Drawn as
+   * indentation only while the query is empty; a filtered list is flat. */
+  depth?: number;
+  /** Sessions mode: display name of the row's parent, when that parent is in the list. */
+  parentName?: string;
   /** The session a row stands for, in either mode — matched against a ticket-shaped query. */
   refOf?: Session;
   /** Set by the filter: the reference that found this row ("PR #1662", "PROJ-123"). */
@@ -300,7 +306,7 @@ function freezeOrder(list: Session[]): string[] {
 // One session → a palette row. The row carries the same handles the rail row does (kind
 // icon, display name, working copy, state chip): a list you jump FROM has to be
 // recognisable as the list you look AT, or the two disagree about which session is which.
-function sessionItem(s: Session, repos: Repo[], running: boolean): Item {
+function sessionItem(s: Session, repos: Repo[], running: boolean, depth: number, parentName?: string): Item {
   const folder = sessionFolder(s);
   const repo = repos.find((r) => r.name === folder);
   const { project, branch } = workingCopyLabel(folder, repo);
@@ -313,9 +319,12 @@ function sessionItem(s: Session, repos: Repo[], running: boolean): Item {
     sub: "",
     // Findable by name, id, location, kind or state. The raw state tokens (question,
     // working, ...) are mixed in too, so an English query hits regardless of UI language.
-    search: [name, s.name, project, wt, branch, kindLabel(s.kind), st.text, s.state || ""].join(" "),
+    // The parent's name too, so typing the parent's title lists its children as well.
+    search: [name, s.name, project, wt, branch, kindLabel(s.kind), st.text, s.state || "", parentName || ""].join(" "),
     keys: [],
     session: s,
+    depth,
+    parentName,
     refOf: s,
     // Enter opens in the active pane, Ctrl/⌘+Enter in a new one. The rules for how the
     // destination changes with running/stopped/missing-folder are shared with the left
@@ -332,7 +341,7 @@ function sessionItem(s: Session, repos: Repo[], running: boolean): Item {
 
 // The session row's body. Reads the repos store itself (like WorkingCopyLabel) so the
 // working-copy half stays correct when the repo list lands after the palette opened.
-function SessionRowBody({ s, refHit }: { s: Session; refHit?: string }) {
+function SessionRowBody({ s, refHit, parentName }: { s: Session; refHit?: string; parentName?: string }) {
   const folder = sessionFolder(s);
   const repo = useReposStore((st) => st.repos.find((r) => r.name === folder));
   const { project, branch } = workingCopyLabel(folder, repo);
@@ -346,6 +355,13 @@ function SessionRowBody({ s, refHit }: { s: Session; refHit?: string }) {
         <Icon name={kindIcon(s.kind)} />
       </span>
       <span className="cp-title">{displayName(s)}</span>
+      {/* Shown on a row that is not indented under its parent (a filtered list, or a
+          session born while open), so the child stays recognisable out of context. */}
+      {parentName && (
+        <span className="cp-sess-parent" title={t("keys.palette.child_of", { parent: parentName })}>
+          ↳ {parentName}
+        </span>
+      )}
       <span className="cp-sess-where">
         <span className="cp-sess-repo">{project || folder}</span>
         {/* Which worktree of that project — the rail gives a worktree row the same
@@ -544,14 +560,26 @@ export function CommandPalette() {
   //    the middle would cause exactly the row-swapping-under-the-cursor the freeze prevents.
   //  - A session in `order` that has left the list (stopped then archived/deleted) simply
   //    falls away.
-  const sessionItems = useMemo<Item[]>(() => {
-    if (!open) return [];
+  //  - `grouped` is the empty-query list (family blocks); `flat` is the frozen order itself,
+  //    which any query filters, so a search keeps the attention order.
+  const sessionLists = useMemo<{ flat: Item[]; grouped: Item[] }>(() => {
+    if (!open) return { flat: [], grouped: [] };
     void locale; // dep: state badges and kind names are built in the current language
     const rank = new Map(order.map((n, i) => [n, i]));
     const tail = order.length;
-    return [...sessions]
-      .sort((a, b) => (rank.get(a.name) ?? tail) - (rank.get(b.name) ?? tail) || a.name.localeCompare(b.name))
-      .map((s) => sessionItem(s, repos, running));
+    const sorted = [...sessions].sort(
+      (a, b) => (rank.get(a.name) ?? tail) - (rank.get(b.name) ?? tail) || a.name.localeCompare(b.name),
+    );
+    // Families ride on the frozen order: a block sits where its earliest member does. A
+    // session born while open is not in `order`, so it stays a root at the foot rather than
+    // slotting into a block and shifting the rows below it.
+    const rows = layoutFamilies(sorted, (s) => !order.length || rank.has(s.name));
+    const byName = new Map(sessions.map((s) => [s.name, s]));
+    const item = (s: Session, depth: number) => {
+      const p = s.originSession && s.originSession !== s.name ? byName.get(s.originSession) : undefined;
+      return sessionItem(s, repos, running, depth, p ? displayName(p) : undefined);
+    };
+    return { flat: sorted.map((s) => item(s, 0)), grouped: rows.map((r) => item(r.session, r.depth)) };
   }, [open, sessions, repos, order, running, locale]);
 
   const commandItems = useMemo<Item[]>(() => {
@@ -614,7 +642,9 @@ export function CommandPalette() {
     (mode === "talk" && talk === null && !!q.trim());
   const items =
     mode === "sessions"
-      ? sessionItems
+      ? q.trim()
+        ? sessionLists.flat
+        : sessionLists.grouped
       : mode === "command"
         ? commandItems
         : mode === "changed"
@@ -804,15 +834,20 @@ export function CommandPalette() {
                     : t("keys.palette.empty")}
             </div>
           ) : (
-            filtered.map((it, i) => (
+            filtered.map((it, i) => {
+              // Indent only the unfiltered list; any query flattens it (and shows the marker).
+              const nested = !q.trim() && (it.depth ?? 0) > 0;
+              return (
               <div
                 key={it.id}
+                style={nested ? ({ "--cp-depth": Math.min(it.depth ?? 0, 3) } as CSSProperties) : undefined}
                 ref={i === sel ? selRef : null}
                 className={
                   "cp-item" +
                   (i === sel ? " sel" : "") +
                   (it.session ? " cp-sess" : "") +
                   (it.session && !it.session.alive ? " cp-stopped" : "") +
+                  (nested ? " cp-nested" : "") +
                   (it.hit ? " cp-talk" : "")
                 }
                 onMouseMove={() => setSel(i)}
@@ -822,7 +857,7 @@ export function CommandPalette() {
                 }}
               >
                 {it.session ? (
-                  <SessionRowBody s={it.session} refHit={it.refHit} />
+                  <SessionRowBody s={it.session} refHit={it.refHit} parentName={nested ? undefined : it.parentName} />
                 ) : it.hit ? (
                   <TalkRowBody h={it.hit} />
                 ) : (
@@ -839,7 +874,8 @@ export function CommandPalette() {
                   </span>
                 )}
               </div>
-            ))
+              );
+            })
           )}
         </div>
         {mode === "talk" && talk && (talk.indexing || talk.indexed < talk.total) && (

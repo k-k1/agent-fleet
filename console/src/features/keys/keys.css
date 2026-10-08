@@ -233,7 +233,9 @@
   color: var(--muted);
 }
 .cp-sess-where {
-  flex: none;
+  /* Shrinks (ellipsis inside) before the title loses its floor, so an indented row at a
+     narrow width does not push the state chip out of the row. */
+  flex: 0 1 auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -244,6 +246,7 @@
 }
 .cp-sess-repo,
 .cp-sess-wt {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -440,4 +443,32 @@
   font-size: 12px;
   padding: 1px 10px;
   cursor: pointer;
+}
+/* ---- palette: session families ----
+   Unfiltered list: a child is indented under its parent with a tree guide; --cp-depth is
+   capped in the component. A filtered list is flat and the row carries "↳ parent" instead. */
+.cp-item.cp-nested {
+  padding-left: calc(10px + var(--cp-depth, 1) * 18px);
+  position: relative;
+}
+.cp-item.cp-nested::before {
+  content: "└";
+  position: absolute;
+  left: calc(var(--cp-depth, 1) * 18px - 6px);
+  color: var(--muted);
+}
+/* The marker is auxiliary: it shrinks first (high shrink factor) and the title keeps a
+   * floor, so a long parent name never pushes the child's own name out of the row. */
+.cp-item.cp-sess .cp-title {
+  min-width: 3em;
+}
+.cp-sess-parent {
+  flex: 0 1000 auto;
+  min-width: 0;
+  max-width: 22%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--muted);
 }

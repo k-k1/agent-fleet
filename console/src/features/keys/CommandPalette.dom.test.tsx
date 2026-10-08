@@ -25,6 +25,15 @@ const fetchMock = vi.fn(async () => new Response("{}", { status: 200, headers: {
 vi.stubGlobal("fetch", fetchMock);
 window.fetch = fetchMock as unknown as typeof window.fetch;
 
+const opened: string[] = [];
+vi.mock("../sessions/open.ts", async (orig) => ({
+  ...(await orig<typeof import("../sessions/open.ts")>()),
+  openSessionFromList: (s: { name: string }) => {
+    opened.push(s.name);
+    return true;
+  },
+}));
+
 import { CommandPalette } from "./CommandPalette.tsx";
 import { useKeysStore } from "./store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -266,5 +275,148 @@ describe("command palette — ticket references (#1665)", () => {
     mount();
     type("#166");
     expect(titles()).toEqual([]);
+  });
+});
+
+describe("command palette — session families (#1887)", () => {
+  const type = (text: string) => {
+    const input = document.querySelector<HTMLInputElement>(".cp-input")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+  const rowOf = (title: string) =>
+    [...document.querySelectorAll<HTMLElement>(".cp-item")].find((r) => r.querySelector(".cp-title")?.textContent === title)!;
+  const key = (k: string) =>
+    act(() => {
+      document.querySelector<HTMLInputElement>(".cp-input")!.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
+    });
+
+  beforeEach(() => {
+    // "chief" is stopped, its child "kidWaiting" waits, "kidIdle" runs; "loner" is unrelated.
+    act(() => {
+      useNotificationStore.setState({ items: [askedAt("kidWaiting", "2026-09-01T12:00:00Z")] });
+      useSessionsStore.setState({
+        sessions: [
+          session("loner", { state: "working" }),
+          session("kidIdle", { state: "working", originSession: "chief", origin: "session", createdAt: "2026-09-02T00:00:00Z" }),
+          session("chief", { alive: false }),
+          session("kidWaiting", { state: "question", originSession: "chief", origin: "session", createdAt: "2026-09-01T00:00:00Z" }),
+          session("orphan", { state: "working", originSession: "archivedGone" }),
+        ],
+      });
+    });
+  });
+
+  it("lays a family out as one block at its most urgent member, children indented under the parent", () => {
+    mount();
+    // chief is stopped, but its waiting child pulls the whole block to the top; the parent
+    // row still looks stopped.
+    expect(titles()).toEqual(["chief", "kidWaiting", "kidIdle", "loner", "orphan"]);
+    expect(rowOf("chief").className).toContain("cp-stopped");
+    expect(rowOf("chief").className).not.toContain("cp-nested");
+    expect(rowOf("kidWaiting").className).toContain("cp-nested");
+    expect(rowOf("kidIdle").className).toContain("cp-nested");
+    expect(rowOf("loner").className).not.toContain("cp-nested");
+    // A child whose parent is gone is a plain root: no indent, no marker.
+    expect(rowOf("orphan").className).not.toContain("cp-nested");
+    expect(rowOf("orphan").querySelector(".cp-sess-parent")).toBeNull();
+    // No marker on indented rows (the indent already says it).
+    expect(document.querySelector(".cp-sess-parent")).toBeNull();
+  });
+
+  it("moves the selection through the rows in visual order", () => {
+    mount();
+    key("ArrowDown");
+    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("kidWaiting");
+    key("ArrowDown");
+    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("kidIdle");
+  });
+
+  it("keeps a session born while open at the foot instead of slotting it into the block", () => {
+    mount();
+    act(() => {
+      useSessionsStore.getState().applyList([
+        ...useSessionsStore.getState().sessions,
+        session("newKid", { state: "working", originSession: "chief", createdAt: "2026-09-03T00:00:00Z" }),
+      ]);
+    });
+    expect(titles()).toEqual(["chief", "kidWaiting", "kidIdle", "loner", "orphan", "newKid"]);
+    // It is a root at the foot, so it carries the marker instead of an indent.
+    expect(rowOf("newKid").className).not.toContain("cp-nested");
+    expect(rowOf("newKid").querySelector(".cp-sess-parent")?.textContent).toContain("chief");
+  });
+
+  it("flattens under a query and marks a child with its parent", () => {
+    mount();
+    type("kid");
+    expect(titles()).toEqual(["kidWaiting", "kidIdle"]);
+    for (const k of ["kidWaiting", "kidIdle"]) {
+      expect(rowOf(k).className).not.toContain("cp-nested");
+      expect(rowOf(k).querySelector(".cp-sess-parent")?.textContent).toContain("chief");
+    }
+  });
+
+  it("lists a parent's children when its title is typed", () => {
+    mount();
+    type("chief");
+    expect(titles().sort()).toEqual(["chief", "kidIdle", "kidWaiting"]);
+  });
+
+  describe("with a parent whose title differs from its name", () => {
+    beforeEach(() => {
+      act(() => {
+        useNotificationStore.setState({ items: [askedAt("newWaitingChild", "2026-09-01T12:00:00Z")] });
+        useSessionsStore.setState({
+          sessions: [
+            session("stoppedParent", { alive: false, title: "Zanzibar orchestrator" }),
+            session("oldWorkingChild", { title: "oldWorkingChild", state: "working", originSession: "stoppedParent", createdAt: "2026-09-01T00:00:00Z" }),
+            session("newWaitingChild", { title: "newWaitingChild", state: "question", originSession: "stoppedParent", createdAt: "2026-09-02T00:00:00Z" }),
+          ],
+        });
+      });
+    });
+
+    it("keeps the attention order under a query, and Enter opens the row on top", () => {
+      mount();
+      // Empty query: family order (parent, older child, newer child).
+      expect(titles()).toEqual(["Zanzibar orchestrator", "oldWorkingChild", "newWaitingChild"]);
+      // A query matching only the children restores the frozen attention order: waiting first.
+      type("WorkingChild");
+      expect(titles()).toEqual(["oldWorkingChild"]);
+      type("Child");
+      // (The fuzzy filter also admits the stopped parent, which sorts last.)
+      expect(titles().slice(0, 2)).toEqual(["newWaitingChild", "oldWorkingChild"]);
+      expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("newWaitingChild");
+      opened.length = 0;
+      key("Enter");
+      expect(opened).toEqual(["newWaitingChild"]);
+    });
+
+    it("opens the filtered row on Enter, not the unfiltered row at the same index", () => {
+      mount();
+      type("WorkingChild");
+      opened.length = 0;
+      key("Enter");
+      expect(opened).toEqual(["oldWorkingChild"]);
+    });
+
+    it("opens the row the arrow keys landed on in the grouped list", () => {
+      mount();
+      key("ArrowDown");
+      key("ArrowDown");
+      opened.length = 0;
+      key("Enter");
+      // Visual order is parent, older child, newer child.
+      expect(opened).toEqual(["newWaitingChild"]);
+    });
+
+    it("finds the children by the parent's title, which is not its name", () => {
+      mount();
+      type("zanzibar");
+      expect(titles().sort()).toEqual(["Zanzibar orchestrator", "newWaitingChild", "oldWorkingChild"]);
+      expect(rowOf("newWaitingChild").querySelector(".cp-sess-parent")?.textContent).toContain("Zanzibar orchestrator");
+    });
   });
 });

@@ -555,6 +555,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "keys.palette.talk_archived": "This session is archived. Restore it from the archive, then open it from the list and it opens at that point",
   "keys.palette.talk_failed": "Could not search ({reason})",
   "keys.palette.talk_retry": "Retry",
+  "keys.palette.child_of": "A child of {parent}",
   "keys.palette.talk_archived_badge": "Archived",
   "keys.palette.talk_role_user": "You",
   "keys.palette.talk_role_agent": "Agent",

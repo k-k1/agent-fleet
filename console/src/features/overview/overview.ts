@@ -17,6 +17,7 @@
 //            child to stay adjacent, stopped children included, and a per-card stage would
 //            scatter a family across the group every time one member answered.
 import { sessionTier } from "../sessions/order.ts";
+import { childrenIndex, familyRows } from "../sessions/family.ts";
 import { sessionFolder } from "../../lib/project.ts";
 import { sessionInSet } from "../../lib/workingSets.ts";
 import { compareText } from "../../lib/intl.ts";
@@ -86,36 +87,16 @@ function repoGroupId(folder: string, byFolder: Map<string, Repo>): GroupId {
  *
  * `childrenOf` is keyed by parent name; a name that is not in this group is not a parent here
  * (a child started in ANOTHER repository is a root of its own group — a grid cannot show one
- * card under two headings, and the lineage spine colour already says they are related).
- * `seen` is what keeps a corrupted originSession cycle from recursing forever — the same
- * hazard sessionLineages guards (lib/project.ts). */
-function family(root: Session, childrenOf: Map<string, Session[]>, seen: Set<string>): Session[] {
-  if (seen.has(root.name)) return [];
-  seen.add(root.name);
-  const out = [root];
-  // Siblings oldest first: inside one family the order IS the spawn order, so a new child
-  // appends at the end instead of pushing its elders down. (Roots below go newest first —
-  // they are separate pieces of work, and that is the order the grid always had.)
-  const kids = [...(childrenOf.get(root.name) || [])].sort(
-    (a, b) => compareText(a.createdAt || "", b.createdAt || "") || compareText(a.name, b.name),
-  );
-  for (const k of kids) out.push(...family(k, childrenOf, seen));
-  return out;
-}
+ * card under two headings, and the lineage spine colour already says they are related). */
+const family = (root: Session, childrenOf: Map<string, Session[]>, seen: Set<string>): Session[] =>
+  familyRows(root, childrenOf, seen).map((r) => r.session);
 
 /** Lowest tier (= most in need of a person) among a family's members: the family's stage. */
 const familyTier = (members: Session[]): number => members.reduce((t, m) => Math.min(t, sessionTier(m)), 3);
 
 /** Order one group's sessions: families staged, each laid out parent → children. */
 export function orderByFamily(sessions: Session[]): Session[] {
-  const present = new Set(sessions.map((s) => s.name));
-  const childrenOf = new Map<string, Session[]>();
-  const roots: Session[] = [];
-  for (const s of sessions) {
-    const parent = s.originSession && present.has(s.originSession) && s.originSession !== s.name ? s.originSession : "";
-    if (parent) childrenOf.set(parent, [...(childrenOf.get(parent) || []), s]);
-    else roots.push(s);
-  }
+  const { childrenOf, roots } = childrenIndex(sessions);
   const seen = new Set<string>();
   const families = roots
     .map((r) => family(r, childrenOf, seen))
