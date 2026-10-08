@@ -600,9 +600,23 @@ af-gcloud-exec --profile <name> --project <project-id> -- kubectl get pods
   application default credentials, and nothing from the machine's own Google identity. `af-gcloud-exec` prints
   "profile … runs as <account> in project …; the token is valid for N more minutes" (`-q` leaves it out); the
   token itself is never printed.
-- The token lasts what remained when it was handed over: at least ten minutes, at most about an hour. It is
-  **not renewed during the command**, so a long `terraform apply` or a `kubectl` watch that outlives it fails.
-  Split long work into shorter runs.
+- The token lasts what remained when it was handed over: at least ten minutes, at most about an hour. While the
+  command runs, `af-gcloud-exec` stays running beside it and **renews the token file** about eight minutes before the
+  token ends. Every `gcloud`, `bq` or GKE auth plugin process the command starts after that reads the new token, so
+  a script that calls them again keeps working. A process that holds the token it read at its start keeps that one:
+  a single long-running `gcloud` (SDK 587.0.0 reads the file once), and a program that reads
+  `GOOGLE_OAUTH_ACCESS_TOKEN` once, such as **a long `terraform apply`**, fail when that token ends. A `kubectl`
+  watch or an open connection depends on the plugin being run again and the connection being made again (not
+  measured). Split such work into shorter runs.
+- If the token cannot be renewed (the login was revoked or has to be done again, a permission, the network),
+  `af-gcloud-exec` says so, keeps trying until the token ends, and then stops the command (SIGTERM, and SIGKILL
+  after 30 seconds if it does not end). The exit status is 3 when you have to log in again and 1 otherwise. If the
+  Console could be asked when the run started, a login request appears there as it does at the start; with
+  `--login`, `--no-login` or outside a workspace the message gives the command to run in your terminal, and a request
+  cancelled in the Console is reported as cancelled.
+- Stopping `af-gcloud-exec` sends SIGTERM to the command it started (the command may ignore it), and the same happens
+  when `af-gcloud-exec` is killed. Programs the command itself started are not reached. When `af-gcloud-exec` is
+  killed, the token file stays until its token has expired and a later run removes it.
 - The first run installs the Google Cloud SDK (one pinned version, with the GKE auth plugin) into your home: about
   85 MB to download and about 510 MB on disk, kept across stops and a Recreate. The first run of each gcloud
   command after that is a few seconds slower once. The **Toolchain** tab's table of tool versions then shows
@@ -618,7 +632,7 @@ af-gcloud-exec --profile <name> --project <project-id> -- kubectl get pods
 |---|---|
 | `gcloud`, including `gcloud storage` | yes |
 | `kubectl` against a GKE cluster | yes, through the GKE auth plugin |
-| Terraform's Google provider | yes, with the quota project |
+| Terraform's Google provider | yes, with the quota project; the token is not renewed during a run |
 | `bq` | yes. It comes with the SDK but is not on the path: run `~/.local/share/agent-fleet/google-cloud-sdk/bin/bq` |
 | `gsutil` | **no**. It ignores the token: without a gsutil (boto) configuration of your own it sends its requests without any login, so a public bucket answers; with one, it can act as whatever identity that configuration holds. Use `gcloud storage` |
 | Google's client libraries (Go, Python, Node, …) | only when the program hands them the token |

@@ -583,3 +583,47 @@ or `--no-login`: it files the request, waits up to ten minutes, and Ctrl-C ends 
 request. `--login` keeps the in-terminal sign-in (and is what the printed hint carries); outside a workspace, or
 when the request cannot be filed, the terminal sign-in runs as before. The paste rule is unchanged: the code
 field exists only in the Console window where the member pressed **Log in**.
+
+## Note — the token is renewed while the command runs (2026-10-08)
+
+Issue #1488. Decision 2's "It does not refresh during the command" no longer holds; the rest of the
+decision stands. Follow-up for what this cannot cover: #1879.
+
+- **The wrapper stays as the command's parent** instead of exec'ing into it, so that something can run
+  beside the command. It forwards SIGTERM, SIGHUP, SIGUSR1 and SIGUSR2, and SIGINT and SIGQUIT only when,
+  at the moment they arrive, it is not in the foreground group of a terminal (there the terminal already
+  delivers them, a second SIGINT makes Terraform abort, and `fg`/`bg` move the group). The command shares
+  the wrapper's process group and terminal. A command that stops itself (SIGSTOP) stops the wrapper too,
+  and SIGCONT to the wrapper continues it. The wrapper exits with the command's status, or dies of the
+  command's signal with the kernel's default action restored (Go's own default would turn SIGQUIT/SIGABRT
+  into a stack dump and SIGPIPE/SIGUSR1 into an ordinary exit). The guarantee is narrow: if the wrapper
+  dies of anything, SIGKILL included, the **direct child** is sent SIGTERM (`PR_SET_PDEATHSIG`), which
+  it may ignore; the child's own children are not reached, and a killed wrapper does not remove the token
+  file, which a later run sweeps. The renewer is a goroutine of the wrapper, so it cannot outlive it. The
+  token file is deleted when the command ends normally.
+- **What is renewed: the token file.** About eight minutes before the token ends the wrapper repeats the
+  run's own mint (`gcloud config config-helper --min-expiry 10m` under the root's lock, same
+  configuration, no `--lifetime`) and replaces the run directory's token file by rename (0600). A renewed
+  token therefore lives no longer and reaches no further than the first, and a renewal that signs in as a
+  different account than the run started with, or that lasts no longer than the token in use, is refused.
+  Measured on SDK 587.0.0 in this workspace: `gcloud config config-helper` with
+  `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE` returns the file's current content on each start (a changed file gave
+  the new value on the next process). The GKE auth plugin asks that same gcloud. So processes started
+  after a renewal get the new token; a single gcloud process keeps the one it read (`store.py`
+  `_LoadAccessTokenCredsFromFile` copies the file's content into an `AccessTokenCredentials` whose refresh
+  is a no-op), and a `kubectl` watch depends on the plugin being run again (not measured). Not measured
+  either: any of this against Google (no real login here).
+- **What is not renewed: `GOOGLE_OAUTH_ACCESS_TOKEN`.** An environment variable cannot change in a running
+  process, and Terraform's Google provider reads it once, so a `terraform apply` still fails when its first
+  token ends. The option that would cover it (a per-run `authorized_user` credential whose `token_uri` is a
+  loopback endpoint of the wrapper, with a per-run secret) is not built; a metadata-server shim was
+  rejected as wider (anything on the loopback could ask it). Both are in #1879, with longer
+  impersonated lifetimes (`--lifetime`).
+- **A renewal that fails** prints one warning, tries again every 30 seconds until the token ends, and
+  then stops the command (SIGTERM, SIGKILL after 30 seconds) with exit 3 when a login is needed and 1
+  otherwise. The whole renewal, a hung gcloud and a Console wait included, is cut off at the token's end,
+  and the login that the earlier tries met stays the reported reason. When the run could ask the Console at
+  its start, it asks once more, waiting no longer than the token's remaining life, so a login finished
+  meanwhile carries the command on; otherwise (`--login`, `--no-login`, no Console) the message carries the
+  terminal command. Stopping the command at the token's end can end one that no longer needed the token; the
+  alternative, leaving it running on a dead token, hides the cause.
