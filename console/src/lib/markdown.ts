@@ -477,97 +477,12 @@ function walkBlocks(tokens: Token[], pairing: TagPairing, escapes: (() => void)[
   }
 }
 
-// The pairing above imitates the HTML parser, and the parser has more states than it models:
-// raw text across blocks, <template>, a table with no cell, script's double escape. Rather than
-// chase them, the result is checked against the real parser. A sentinel element is put after the
-// whole document; if it ends up inside a formatting element, an opener nothing closed has
-// leaked, whatever the cause. The opener whose removal shortens that chain is turned into text,
-// one at a time, until the chain is empty or no single removal helps. The check runs only when
-// some formatting tag survived the pairing, and needs a DOM (it is skipped without one).
-const PROBE = '<span data-af-probe=""></span>';
-const MAX_PROBES = 64;
-
-// Formatting ancestors of the sentinel when `tokens` are rendered, i.e. how many open
-// formatting elements reach the end of the document.
-function leakDepth(tokens: Token[]): number {
-  const html = marked.parser(tokens) + PROBE;
-  const probe = new DOMParser().parseFromString(html, "text/html").querySelector("[data-af-probe]");
-  let depth = 0;
-  for (let e = probe?.parentElement; e; e = e.parentElement) if (FORMATTING_TAGS.has(e.localName)) depth++;
-  return depth;
-}
-
-// Every formatting opener still written as markup, with the means to make it text.
-function openers(tokens: Token[], found: (() => () => void)[] = []): (() => () => void)[] {
-  const inline = (list: Token[]): void => {
-    for (const t of list) {
-      if (t.type === "image") continue;
-      if (t.type === "html") {
-        const e = tagEvent(t.raw);
-        if (e?.open && FORMATTING_TAGS.has(e.name)) found.push(() => {
-          const before = { ...(t as Tokens.Generic) };
-          toText(t);
-          return () => Object.assign(t, before, { type: before.type });
-        });
-      } else if ("tokens" in t && Array.isArray(t.tokens)) inline(t.tokens);
-    }
-  };
-  for (const t of tokens) {
-    if (t.type === "html") {
-      const token = t as Tokens.HTML;
-      const run = new RegExp(HTML_RUN);
-      for (let m = run.exec(token.text); m; m = run.exec(token.text)) {
-        const e = tagEvent(m[0]);
-        if (!e?.open || !FORMATTING_TAGS.has(e.name)) continue;
-        const at = m.index;
-        found.push(() => {
-          const before = token.text;
-          token.text = before.slice(0, at) + "&lt;" + before.slice(at + 1);
-          return () => { token.text = before; };
-        });
-      }
-    } else if (t.type === "list") for (const item of (t as Tokens.List).items) openers(item.tokens, found);
-    else if (t.type === "blockquote") openers((t as Tokens.Blockquote).tokens, found);
-    else if (t.type === "table") {
-      const table = t as Tokens.Table;
-      for (const cell of [...table.header, ...table.rows.flat()]) inline(cell.tokens);
-    } else if ("tokens" in t && Array.isArray(t.tokens)) inline(t.tokens);
-  }
-  return found;
-}
-
-function verifyAgainstParser(tokens: Token[]): void {
-  if (typeof DOMParser === "undefined") return;
-  let candidates = openers(tokens);
-  if (candidates.length === 0) return;
-  let depth = leakDepth(tokens);
-  while (depth > 0 && candidates.length > 0) {
-    let best = -1;
-    let bestDepth = depth;
-    for (let i = 0; i < Math.min(candidates.length, MAX_PROBES); i++) {
-      const undo = candidates[i]();
-      const d = leakDepth(tokens);
-      undo();
-      if (d < bestDepth) {
-        best = i;
-        bestDepth = d;
-      }
-    }
-    if (best < 0) return;
-    candidates[best]();
-    depth = bestDepth;
-    // Escaping inside a block shifts the offsets of its later candidates: look again.
-    candidates = openers(tokens);
-  }
-}
-
 export function neutralizeStrayFormattingTags(tokens: Token[]): Token[] {
   const doc = new TagPairing();
   const escapes: (() => void)[] = [];
   walkBlocks(tokens, doc, escapes);
   doc.finish();
   for (const apply of escapes) apply();
-  verifyAgainstParser(tokens);
   return tokens;
 }
 
