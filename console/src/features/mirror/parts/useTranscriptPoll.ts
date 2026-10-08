@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useSendQueueStore } from "../sendQueue/store.ts";
 import type { RefObject } from "react";
 import { api, parseDiscards, parseQueueItems } from "../../../core/api/client.ts";
 import type { CarriedInteraction } from "../../../core/api/client.ts";
@@ -242,6 +243,8 @@ export function useTranscriptPoll({
                 });
               }
             }
+            // Only the poll — never sendPrompt's optimistic flip — proves a queued send's turn began.
+            if (d.status === "working" || d.backgroundBusy) useSendQueueStore.getState().observeBusy(session);
             if (d.status) {
               statusRef.current = d.status;
               setStatus(d.status);

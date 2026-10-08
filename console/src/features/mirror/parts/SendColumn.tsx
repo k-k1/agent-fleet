@@ -14,6 +14,7 @@ export function SendColumn({
   sendDisabled,
   onToggleMode,
   onSend,
+  onQueue,
 }: {
   showMode: boolean;
   isPlan: boolean;
@@ -23,6 +24,8 @@ export function SendColumn({
   sendDisabled: boolean;
   onToggleMode: () => void;
   onSend: () => void;
+  /** Present while a turn runs: hold the draft in the pre-send queue instead of sending. */
+  onQueue?: () => void;
 }) {
   return (
     <div className="mirror-send-col">
@@ -35,6 +38,18 @@ export function SendColumn({
           onClick={onToggleMode}
         >
           {modeLabel || "…"}
+        </button>
+      )}
+      {onQueue && (
+        <button
+          type="button"
+          className="ghost mirror-queue-add"
+          disabled={sendDisabled}
+          title={tr("mirror.queue_add_hint")}
+          aria-label={tr("mirror.queue_add")}
+          onClick={onQueue}
+        >
+          <Icon name="add" />
         </button>
       )}
       <button type="button" className="btn primary mirror-send" disabled={sendDisabled} onClick={onSend} title={tr("chat.send")}>

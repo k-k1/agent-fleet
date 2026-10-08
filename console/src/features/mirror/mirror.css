@@ -38,6 +38,7 @@
 @import "./parts/skills.css";
 @import "./parts/attachments.css";
 @import "./parts/input.css";
+@import "./sendQueue/sendQueue.css";
 @import "./parts/responsive.css";
 @import "./parts/head.css";
 @import "./parts/handoff.css";

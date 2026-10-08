@@ -74,6 +74,7 @@ import { useFinalizeHold } from "./parts/useFinalizeHold.ts";
 import { useTranscriptCaps } from "./parts/useTranscriptCaps.ts";
 import { MirrorPendingCards } from "./parts/MirrorPendingCards.tsx";
 import { MirrorComposer } from "./parts/MirrorComposer.tsx";
+import { useSendQueue } from "./sendQueue/useSendQueue.ts";
 import { MirrorOverlays } from "./parts/MirrorOverlays.tsx";
 
 const q = encodeURIComponent;
@@ -300,6 +301,14 @@ function MirrorViewBody({
   });
 
 
+  // Pre-send queue (#1083): drains when the session is idle and nothing blocks a send.
+  const sendQueue = useSendQueue({
+    session,
+    busy: st.busy,
+    canSend: alive && !readOnly && !composerLocked && !st.sending && running,
+    sendItem: input.sendQueued,
+  });
+
   const plan = usePlanActions({
     session,
     sessionMeta,
@@ -393,6 +402,7 @@ function MirrorViewBody({
     history,
     modSend,
     send,
+    queue: input.queueDraft,
     histSearch,
     skillPicker,
     suggest,
@@ -734,6 +744,7 @@ function MirrorViewBody({
           suggest={suggest}
           skillPicker={skillPicker}
           histSearch={histSearch}
+          sendQueue={sendQueue}
         />
       )}
       <MirrorOverlays

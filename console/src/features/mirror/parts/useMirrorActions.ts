@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useSendQueueStore } from "../sendQueue/store.ts";
 import {
   apiJSON,
   errText,
@@ -112,6 +113,7 @@ export function useMirrorActions({
     attachments?: string[],
     restoreText?: string,
     wire?: string,
+    restoreDraft = true,
   ): Promise<boolean> => {
     const t = (text || "").trim();
     // sendingRef (not the `sending` state alone) guards re-entrancy: two invocations
@@ -147,7 +149,8 @@ export function useMirrorActions({
       // clobbering anything the user has started retyping.
       applyEchoes((p) => p.filter((e) => e.id !== echoId));
       toast(res.message || tr("mirror.send_failed"));
-      setDraft((d) => d || restoreText || t);
+      // A held queue item goes back to the queue, not into the draft (restoreDraft=false).
+      if (restoreDraft) setDraft((d) => d || restoreText || t);
     }
     sendingRef.current = false;
     setSending(false);
@@ -244,6 +247,8 @@ export function useMirrorActions({
   // menu's "stop and discard the queue" (decision 3), which only a Managed session offers.
   const sendInterrupt = async (discardQueue = false) => {
     if (wsDown()) return; // WS stopped: no live turn to interrupt (also plan-reject / question-cancel)
+    // A stop must not be followed by the held follow-ups firing the moment the turn ends.
+    useSendQueueStore.getState().pauseIfHolding(session);
     // An explicit stop (also plan-reject / question-cancel) means the user does NOT expect
     // a reply to render, so disarm the idle→reply bridge — otherwise the spinner would
     // linger over an interrupted, reply-less turn until the grace lapsed.
