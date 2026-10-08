@@ -71,6 +71,19 @@ that is safe when what one session writes is read by every kind.
    An author AF cannot establish is recorded as unknown, never guessed. It is the shape claude's
    memory already uses, so an import is a copy plus fields, and a person can read the store without
    a tool.
+   Limits come in two tiers (#1921). What the **store accepts** is generous, so nothing claude's own
+   memory holds is refused: a name of lower-case letters, digits, `-`, `_` and `.`, 1–64 characters,
+   not starting with `.` or `-`, no `..`; a one-line description of up to 2,000 characters (counted
+   in characters, not bytes); a body of up to 200 KiB; no limit on a line's length. What the
+   **authoring guidance** asks for mirrors claude's own lints and only warns — the save still
+   succeeds and `memory_save` returns the warning: one fact per file, a description of about 150
+   characters (claude lints above 300 characters), and a body under 4,096 bytes, because claude's
+   recall shows another session only the first 4,096 bytes / 200 lines of a memory file. Measured
+   on 598 real claude memory files in 7 projects: 117 names use an underscore (the old pattern
+   refused them), 15 descriptions exceed 300 bytes (the longest is 1,800 characters), 2 bodies
+   exceed 64 KiB (the largest is 174,004 bytes), 136 files exceed 4,096 bytes. claude's synced
+   store caps a document at 102,400 bytes and a path at 1,024 bytes / 20 segments, but local files
+   have no cap, so the store limit follows the local data rather than the sync cap.
 4. **Every kind reads and writes through af MCP tools** — `memory_index`, `memory_search`,
    `memory_read`, `memory_save` (create or update), `memory_forget`. An update or forget carries
    the `revision` it was based on; a stale one is refused and the agent re-reads and writes again,
@@ -97,7 +110,7 @@ that is safe when what one session writes is read by every kind.
    gets the same answer:
    - The described part is limited to a byte budget of rendered lines (default 24 KiB; the
      optional `budget` argument is clamped to 4–64 KiB), in rank order: `feedback` and `user`
-     first, then the rest, newer first within a tier. A line carries the description cut to 80
+     first, then the rest, newer first within a tier. A line carries the description cut to 150
      characters; `memory_read` and `memory_search` keep the full text.
    - What did not fit is listed as names only, within a separate 8 KiB: names cut to 32 bytes
      with "…" (a prefix), grouped by first hyphen segment (`adr-{0072-…,0079-…}`). Past that, "and
@@ -107,6 +120,12 @@ that is safe when what one session writes is read by every kind.
      distributed block itself is not built yet and must carry the same wording within its cap.
    Measured on the 473 imported claude memories: 111 KB of full lines became 117 described
    lines (24.4 KB) plus a 8.2 KB tail naming 355 more; one was left to the count.
+   The cut was 80 characters, with no basis outside this budget (claude's own index guidance is a
+   line under about 200 characters), and #1921 re-measured it on the 473 imported memories of this
+   project (described lines / names in the tail, and how many descriptions the cut shortens):
+   80 → 114 / 359, 218 cut; 120 → 104 / 369, 53 cut; 150 → 103 / 370, 26 cut; 200 → 102 / 371,
+   2 cut. Going from 80 to 150 costs 11 described lines and spares 192 descriptions; past 150 the
+   line count barely moves, so 150 it is. The other projects fit whole at any of these values.
 6. **claude's own auto-memory: a one-time seed now, one memory later.**
    - Step 1: the member imports claude's existing memory for a project, as an explicit Console
      action or with `af-memory import`. It reads `<claude config>/projects/<slug>/memory/*.md`
@@ -119,7 +138,15 @@ that is safe when what one session writes is read by every kind.
      memory whose claude file is unchanged is skipped, one whose claude file is **newer** than the
      AF memory (and differs) is updated — this overwrites an edit made in AF after the import,
      which the member chose — and one that was ever forgotten or whose import was reverted is
-     **never brought back**. Applying needs the switch on (decision 4's setting); the preview and
+     **never brought back**. A claude description is imported whole, never cut, and the body is not
+     prefixed (#1921); a file is listed with its reason and not imported when its name is not a
+     valid name, its description exceeds 2,000 characters (`bad_description`) or its body exceeds
+     200 KiB (`too_large`). A memory that an earlier import saved with a shortened description (the
+     full text prepended to the body) is refreshed from claude's file (`refresh_shortened`) when
+     the recorded `source_hash` equals the claude file's hash and AF's copy has not been touched
+     since: the memory's latest commit in the history is the import and the file is byte-identical
+     to it. A save, a pin, a revert or a hand edit makes the copy differ, and then it is left alone.
+     Applying needs the switch on (decision 4's setting); the preview and
      the command's `--dry-run` work while it is off. There is no continuous sync: claude → AF on
      every trigger would resurrect memories forgotten in AF and overwrite AF edits with claude's
      older text.
@@ -170,7 +197,9 @@ that is safe when what one session writes is read by every kind.
    it back; and decision 7 tells every reader that a memory is evidence. The import and a restore
    are the member's own actions in the Console, and their preview is the confirmation. A review
    queue is built when #1559's automated review needs one, not before.
-9. **Secrets are stopped before they are stored.** Every candidate body — a save, an update, the
+9. **Secrets are stopped before they are stored.** A long line is not refused (#1921); the scanner
+   runs every rule over the whole line, so a value past 4 KiB is found as well as one at the start.
+   Every candidate body — a save, an update, the
    import, a restore, and anything claude's native writer produced (decision 6) — is scanned with the
    0022 rules (`memory_secrets.go`) before it is published. A hit in an agent's write is refused:
    the agent is told the rule and the line so it can rewrite the memory without the value, and
@@ -304,6 +333,18 @@ thing: explicit, previewed (`GET /agents/memory/claude-export[/preview]`, `POST`
   replaces the old one; the snapshot (`pre-export`, 0022) taken before the first write makes that
   undoable. If the snapshot fails nothing is written. Every write is a temp file renamed inside a
   directory handle opened without following symlinks (below the config root, which is resolved once because it is AF's own setting and may be a link).
+- A file the import copied (#1921) carries no AF marker, so it is judged by the import's evidence:
+  when its hash equals the memory's recorded `source_hash`, claude's file is the original, and it is
+  `unchanged` while AF's copy is still the import's, `update` once AF's copy has moved on. Only a
+  file changed in claude after the import, or written by neither side, is a `conflict`. "Moved on"
+  must be established from the history: when it cannot be judged (no history, a git error, a
+  missing blob) the file is a `conflict` (`import_history_unknown`), never an `update`, and the
+  import's refresh leaves such a memory alone. An update copies only the plain one-line
+  `key: value` lines directly under the native `metadata` (unquoted key and value, 4 KiB in total;
+  claude's `node_type`, `originSessionId` and `modified` appear in all 598 measured files), as
+  checked text that AF writes itself. A file with anything else there (a nested value, a quoted or
+  escaped key or value, too much) is not updated: it is a `conflict`
+  (`native_metadata_not_carried`), and an explicit overwrite does not write those lines either.
 - Import loop guard: the import reads a claude file whose `af_source` names the AF memory and whose
   text still hashes to `af_hash` as `unchanged`, although its mtime is newer than AF's update.
 - codex: deferred to #1683 (its memory workspace is rewritten by its own pipeline).

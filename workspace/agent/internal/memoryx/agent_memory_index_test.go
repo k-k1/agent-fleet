@@ -179,3 +179,23 @@ func TestAgentMemIndexLineIsPinned(t *testing.T) {
 		t.Fatalf("line = %q, want %q", got, want)
 	}
 }
+
+// An index line carries the description up to 150 characters, cut after that; the cut is what
+// the budget is measured on, so the constant is pinned by value.
+func TestAgentMemIndexDescriptionLength(t *testing.T) {
+	for _, tc := range []struct {
+		runes, want int
+	}{{149, 149}, {150, 150}, {151, 151}, {400, 151}} {
+		e := agentMemEntry{Name: "n", Scope: "user", Description: strings.Repeat("あ", tc.runes), Updated: "2026-10-09T00:00:00Z"}
+		desc, _, _, _ := agentMemBudgetIndex([]agentMemEntry{e}, 0)
+		if len(desc) != 1 {
+			t.Fatalf("%d runes: %d lines", tc.runes, len(desc))
+		}
+		if got := utf8.RuneCountInString(desc[0].Description); got != tc.want {
+			t.Errorf("%d-character description is %d characters in the index, want %d", tc.runes, got, tc.want)
+		}
+		if cut := tc.runes > 150; cut != strings.HasSuffix(desc[0].Description, "…") {
+			t.Errorf("%d characters: cut marker = %v", tc.runes, !cut)
+		}
+	}
+}

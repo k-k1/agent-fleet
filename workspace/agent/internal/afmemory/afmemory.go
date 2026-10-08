@@ -214,7 +214,6 @@ func cmdSources(c *Client, out io.Writer) error {
 type previewItem struct {
 	Name           string
 	Status, Reason string
-	Shortened      bool
 	SourceHash     string
 	SourceModified string
 	AFUpdated      string
@@ -263,11 +262,10 @@ func cmdImport(c *Client, args []string, out io.Writer) error {
 			case "new", "update":
 				todo = append(todo, it)
 				note := ""
-				if it.Shortened {
-					note = "  (description shortened)"
-				}
-				if st == "update" {
-					note += fmt.Sprintf("  (claude file %s is newer than AF %s)", it.SourceModified, it.AFUpdated)
+				if st == "update" && it.Reason == "refresh_shortened" {
+					note = "  (AF copy was imported with a cut description; refreshed from claude's file)"
+				} else if st == "update" {
+					note = fmt.Sprintf("  (claude file %s is newer than AF %s)", it.SourceModified, it.AFUpdated)
 				}
 				fmt.Fprintf(out, "  %s%s\n", it.Name, note)
 			case "secret":

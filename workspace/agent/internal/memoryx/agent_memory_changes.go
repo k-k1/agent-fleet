@@ -37,7 +37,7 @@ const (
 var agentMemMember = agentMemCaller{Session: "console", Kind: "member"}
 
 var (
-	agentMemRepoPathRe = regexp.MustCompile(`^af/(user|projects/[a-z0-9._-]{1,80})/([a-z0-9][a-z0-9-]{0,63})\.md$`)
+	agentMemRepoPathRe = regexp.MustCompile(`^af/(user|projects/[a-z0-9._-]{1,80})/([a-z0-9_][a-z0-9._-]{0,63})\.md$`)
 	agentMemCommitRe   = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 	agentMemOps        = map[string]bool{"create": true, "update": true, "forget": true, "revert": true, "import": true, "pin": true}
 )
@@ -73,7 +73,7 @@ func agentMemCleanText(s string) bool { return len(agentMemScanText("", s)) == 0
 // agentMemParseRepoPath splits af/<scope dir>/<name>.md.
 func agentMemParseRepoPath(p string) (rel, scope, projectID, name string, ok bool) {
 	m := agentMemRepoPathRe.FindStringSubmatch(p)
-	if m == nil {
+	if m == nil || !agentMemValidName(m[2]) {
 		return "", "", "", "", false
 	}
 	rel = strings.TrimPrefix(p, agentMemRepoPrefix+"/")
@@ -365,6 +365,44 @@ func agentMemLatestChange(rel string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// agentMemImportState is what the history says about the AF copy of rel ("projects/<id>/<name>.md",
+// whose bytes are current) relative to the import that created it.
+type agentMemImportState int
+
+const (
+	// agentMemImportUnknown: the history cannot say (no change recorded, a git error, a missing
+	// blob). It is never evidence that AF moved on, nor that it did not.
+	agentMemImportUnknown agentMemImportState = iota
+	// agentMemImportIntact: the newest published change is an import and the file is byte for
+	// byte its text; no AF save, pin or revert has touched the memory since.
+	agentMemImportIntact
+	// agentMemImportChanged: the newest change is not an import, or the file differs from the
+	// import's text (a hand edit).
+	agentMemImportChanged
+)
+
+func agentMemImportStateOf(rel string, current []byte) agentMemImportState {
+	commit, err := agentMemLatestChange(rel)
+	if err != nil || commit == "" {
+		return agentMemImportUnknown
+	}
+	msg, err := memoryGitRun("log", "-1", "--format=%B", commit)
+	if err != nil {
+		return agentMemImportUnknown
+	}
+	if agentMemTrailers(msg)["AF-Op"] != "import" {
+		return agentMemImportChanged
+	}
+	b, ok, err := agentMemBlob(commit, rel)
+	switch {
+	case err != nil || !ok:
+		return agentMemImportUnknown
+	case bytes.Equal(b, current):
+		return agentMemImportIntact
+	}
+	return agentMemImportChanged
 }
 
 // agentMemRevertReq undoes one published change, or (Forget) removes the memory as that change

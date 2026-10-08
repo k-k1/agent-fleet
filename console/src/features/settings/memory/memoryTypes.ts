@@ -134,7 +134,6 @@ export interface ClaudeImportItem {
   reason?: string;
   description?: string;
   type?: string;
-  shortened?: boolean;
   sourceHash?: string;
   sourceModified?: string;
   afUpdated?: string;

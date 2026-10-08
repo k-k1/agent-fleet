@@ -91,7 +91,7 @@ func agentMemLoadUsage(scopeRel string) map[string]int {
 	}
 	out := make(map[string]int, len(ents))
 	for _, d := range ents {
-		if !d.Type().IsRegular() || !agentMemNameRe.MatchString(d.Name()) {
+		if !d.Type().IsRegular() || !agentMemValidName(d.Name()) {
 			continue
 		}
 		if st, err := d.Info(); err == nil {

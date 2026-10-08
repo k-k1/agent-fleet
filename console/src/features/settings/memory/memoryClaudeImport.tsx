@@ -143,8 +143,10 @@ export function ClaudeImportPanel({ reload, onChanged }: { reload: number; onCha
           {items.map((i) => (
             <li key={i.name}>
               <span className="mem-af-name">{i.name}</span>
-              {i.shortened && <span className="muted"> · {tr("mem.ci_shortened")}</span>}
-              {st === "update" && i.sourceModified && i.afUpdated && (
+              {st === "update" && i.reason === "refresh_shortened" && (
+                <span className="muted"> · {tr("mem.ci_refresh_shortened")}</span>
+              )}
+              {st === "update" && i.reason !== "refresh_shortened" && i.sourceModified && i.afUpdated && (
                 <span className="muted">
                   {" · "}
                   {tr("mem.ci_update_times", {

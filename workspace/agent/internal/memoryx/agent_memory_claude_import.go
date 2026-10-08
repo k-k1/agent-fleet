@@ -42,6 +42,10 @@ const (
 	// agentMemImportIndex is claude's own index of its memory; it is not a memory.
 	agentMemImportIndex = "MEMORY.md"
 
+	// claudeImportRefresh is the Reason of an update that replaces a copy imported while long
+	// descriptions were cut; claude's file is not newer, AF's text is simply incomplete.
+	claudeImportRefresh = "refresh_shortened"
+
 	claudeImportNew       = "new"
 	claudeImportUpdate    = "update"
 	claudeImportUnchanged = "unchanged"
@@ -79,9 +83,7 @@ type agentMemImportItem struct {
 	Reason      string `json:"reason,omitempty"`
 	Description string `json:"description,omitempty"`
 	Type        string `json:"type,omitempty"`
-	// Shortened: the description was over the limit; the full text is the body's first paragraph.
-	Shortened  bool   `json:"shortened,omitempty"`
-	SourceHash string `json:"sourceHash,omitempty"`
+	SourceHash  string `json:"sourceHash,omitempty"`
 	// SourceModified is the claude file's mtime; AFUpdated is when the AF memory last changed.
 	SourceModified string                `json:"sourceModified,omitempty"`
 	AFUpdated      string                `json:"afUpdated,omitempty"`
@@ -273,7 +275,7 @@ func agentMemImportHistory(rel string) (map[string]bool, error) {
 		prefix := agentMemRepoPrefix + "/" + rel + "/"
 		for _, line := range strings.Split(out, "\n") {
 			if n, ok := strings.CutPrefix(line, prefix); ok {
-				if n, ok = strings.CutSuffix(n, ".md"); ok && agentMemNameRe.MatchString(n) {
+				if n, ok = strings.CutSuffix(n, ".md"); ok && agentMemValidName(n) {
 					seen[n] = true
 				}
 			}
@@ -297,16 +299,21 @@ func agentMemImportHistory(rel string) (map[string]bool, error) {
 	return seen, nil
 }
 
-// agentMemImportShorten cuts a description to the limit at a rune boundary, ending with "…".
-func agentMemImportShorten(s string) string {
-	if len(s) <= agentMemMaxDescription {
-		return s
+// agentMemImportLegacyShortened says whether live is an import made when a description over 300
+// bytes was cut and its full text put in front of the body: the cut text is derived from the
+// claude description and the body is that description, a blank line and the claude body. Both
+// have to match exactly, so an AF memory that merely looks similar is never taken for one.
+func agentMemImportLegacyShortened(live agentMemEntry, desc, body string) bool {
+	const oldMax = 300
+	if len(desc) <= oldMax {
+		return false
 	}
-	n := agentMemMaxDescription - len("…")
-	for n > 0 && !utf8.RuneStart(s[n]) {
+	n := oldMax - len("…")
+	for n > 0 && !utf8.RuneStart(desc[n]) {
 		n--
 	}
-	return strings.TrimRight(s[:n], " ") + "…"
+	cut := strings.TrimRight(desc[:n], " ") + "…"
+	return live.Description == cut && live.Body == desc+"\n\n"+body
 }
 
 // agentMemImportShowable says whether a file name may be put in a response.
@@ -343,7 +350,7 @@ func agentMemImportEvaluate(mem *os.File, file, slug, rel string, history map[st
 		it.Status, it.Reason = claudeImportInvalid, reason
 		return it, false
 	}
-	if !agentMemNameRe.MatchString(stem) {
+	if !agentMemValidName(stem) {
 		return invalid("bad_name")
 	}
 	f, err := agentMemImportOpen(mem, file)
@@ -367,15 +374,12 @@ func agentMemImportEvaluate(mem *os.File, file, slug, rel string, history map[st
 	it.SourceHash = hex.EncodeToString(sum[:])
 	it.SourceModified = st.ModTime().UTC().Format(time.RFC3339)
 
-	// NUL and over-long lines are judged on the raw file: the scanner cannot vouch for either,
-	// and a parse would hide them.
+	// NUL is judged on the raw file: the scanner cannot vouch for binary, and a parse would hide it.
 	var findings []memorySecretFinding
 	for _, f := range agentMemScanText("file", string(raw)) {
 		switch f.Rule {
 		case "nul-byte":
 			return invalid("nul_byte")
-		case "line-too-long":
-			return invalid("line_too_long")
 		}
 		// A hit anywhere in the file counts, fields that are not imported included.
 		f.Path = "file"
@@ -399,10 +403,11 @@ func agentMemImportEvaluate(mem *os.File, file, slug, rel string, history map[st
 	if !agentMemTypes[typ] {
 		typ = ""
 	}
-	full := desc
-	if len(desc) > agentMemMaxDescription {
-		desc, it.Shortened = agentMemImportShorten(desc), true
-		body = full + "\n\n" + body
+	if utf8.RuneCountInString(desc) > agentMemMaxDescription {
+		// Claude's own files stay far below this (the longest measured is 1,800 characters). It is
+		// refused rather than cut: a cut description is what made the write-back read a
+		// faithful import as a conflict.
+		return invalid("description_too_long")
 	}
 	if len(body) > agentMemMaxBody {
 		return invalid("too_large")
@@ -420,7 +425,7 @@ func agentMemImportEvaluate(mem *os.File, file, slug, rel string, history map[st
 		// Every decoded frontmatter field, the ones that are replaced or dropped included.
 		findings = append(findings, agentMemScanText("frontmatter", strings.Join(append([]string{
 			e.Name, e.AuthorKind, e.AuthorSession, e.Created, e.Updated, e.Source, e.SourceHash}, e.Kinds...), "\n"))...)
-		findings = append(findings, agentMemScanText("description", full)...)
+		findings = append(findings, agentMemScanText("description", desc)...)
 		findings = append(findings, agentMemScanText("body", body)...)
 		findings = append(findings, agentMemScanText("type", e.Type)...)
 	}
@@ -455,6 +460,10 @@ func agentMemImportEvaluate(mem *os.File, file, slug, rel string, history map[st
 		it.live, it.AFUpdated = &le, le.Updated
 		at, perr := time.Parse(time.RFC3339, le.Updated)
 		switch {
+		case le.SourceHash == it.SourceHash && agentMemImportLegacyShortened(le, desc, body) && agentMemImportStateFor(rel, stem) == agentMemImportIntact:
+			// Imported when long descriptions were cut. Claude's file is what was imported and AF
+			// has not touched the copy since, so the full text replaces the cut one.
+			it.Status, it.Reason = claudeImportUpdate, claudeImportRefresh
 		case le.SourceHash == it.SourceHash:
 			it.Status = claudeImportUnchanged
 		case agentMemExportWrittenBack(raw, rel, stem, e):
@@ -475,6 +484,16 @@ func agentMemImportEvaluate(mem *os.File, file, slug, rel string, history map[st
 		it.Status = claudeImportNew
 	}
 	return it, false
+}
+
+// agentMemImportStateFor reads the stored file of a memory and asks the history whether it is
+// still the import's own text.
+func agentMemImportStateFor(rel, name string) agentMemImportState {
+	raw, ok, err := agentMemReadFile(filepath.Join(agentMemDir(), filepath.FromSlash(rel), name+".md"))
+	if err != nil || !ok {
+		return agentMemImportUnknown
+	}
+	return agentMemImportStateOf(rel+"/"+name+".md", raw)
 }
 
 var claudeImportOrder = map[string]int{
@@ -583,7 +602,7 @@ func agentMemImportApply(req agentMemImportReq, now time.Time) (agentMemImportAp
 	seen := map[string]bool{}
 	for _, ri := range req.Items {
 		res := agentMemImportResult{Name: ri.Name, Result: "skipped"}
-		if !agentMemNameRe.MatchString(ri.Name) || len(agentMemScanText("name", ri.Name)) > 0 {
+		if !agentMemValidName(ri.Name) || len(agentMemScanText("name", ri.Name)) > 0 {
 			// The name came from the request and is not echoed.
 			res.Name, res.Reason = "", "bad_name"
 			out.Results = append(out.Results, res)
