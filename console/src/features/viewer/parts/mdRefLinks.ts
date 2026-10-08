@@ -11,6 +11,7 @@ import { openCommit } from "../../scm/open.ts";
 import { wireContextMenu } from "./linkContextMenu.ts";
 import { useReposStore } from "../../repos/store.ts";
 import { useWorkItemStore } from "../../workitems/store.ts";
+import { useJiraProjects } from "../../workitems/jiraProjects.ts";
 import { useWorkItemModal } from "../../workitems/modal.ts";
 import { dedupeWorkItems, sortWorkItems, type WorkItem } from "../../workitems/read.ts";
 import {
@@ -194,6 +195,7 @@ function workItemRefContext(repo: string | null): WorkItemRefContext {
     origin: repo ? originOf(repos.find((r) => r.name === repo)) : null,
     items: cachedWorkItems(),
     known: cloneHosts(repos),
+    jiraProjects: new Set(useJiraProjects.getState().keys),
   };
 }
 

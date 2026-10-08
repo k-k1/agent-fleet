@@ -9,6 +9,7 @@ English | [日本語](0061-work-item-inbox.ja.md)
   **2026-09-28: decision 25 added** — say when a query's page left matches out, and search the tracker on a press only (#1095). It departs narrowly from decision 14's line.
   **2026-10-05: decision 26 added** — a reference that is not in the inbox is read live too, GitHub only (#1697). It departs narrowly from decision 20.1's "no single-item read for an issue".
   **2026-10-08: decision 27 added** — the same read for a Jira key and a Bitbucket number that are not in the inbox (#1661). Follow-ups: #1661.
+  **2026-10-08: decision 28 added** — the Jira connection's project keys let a key link without a cached row of its project (#1899). Not checked against a real Jira site.
 - See also: [0031-mcp-registry.md](0031-mcp-registry.md) (MCP means "each CLI speaks it directly and af only distributes the definitions"; OAuth MCP is a non-goal) / [0036-working-sets.md](0036-working-sets.md) (the unit of "a piece of work") /
   [0055-idle-stop-and-carried-interactions.md](0055-idle-stop-and-carried-interactions.md) (do not keep it warm) / [0052-tenant-git-oauth.md](0052-tenant-git-oauth.md) (the CP passes secrets through and does not hold them) / [0059-repo-import-jobs.md](0059-repo-import-jobs.md) (the relationship between self-running work and the busy check)
 
@@ -415,6 +416,25 @@ steer the request elsewhere on the site. The panel says "Done" for a finished Ji
 
 Not done, tracked in #1661: Jira project keys the user can read but has no saved query for still do not
 link (the link decision is made from the cache before any read); and `#N` in Markdown files (DocView).
+
+**28 (#1899). A Jira key links when its project is on the member's connection, not only when the inbox holds a row of it.**
+Decision 27 left this open: the link decision was made from the cache alone, so a project the member reads
+but has no saved query for never linked. The Agent now answers `POST /work-items/jira-projects` with the keys
+of `GET /rest/api/3/project/search` (the projects the member may browse) and nothing else: no name, lead or URL.
+The CP relays it as `GET /api/work-items/jira-projects`; the Console asks once a rendered text holds a
+Jira-shaped token, and a key of a listed project links in prose (guessed, like a GitHub number; inline code
+still needs a cached row). A click then opens the live single-issue read of decision 27.
+- **Bounded:** at most 10 pages of 50 (500 keys), in key order; `truncated` says the site has more, and those
+  keys simply stay text. Keys outside the shape the linker matches are dropped.
+- **Cache lifetime:** the CP keeps the list in memory per membership (so a member is only ever handed their own
+  projects) for 1 hour; a stopped workspace is never started for it and keeps serving the entry up to 24 hours;
+  an Agent failure keeps the stale entry too. Older than that, never read, not connected, or an Agent from before
+  this change: an empty list, which is today's behaviour. The Console re-asks after 10 minutes (the CP answers from
+  its cache) and not more than once a minute after a failure.
+- **Why not the database:** the list is cheap to re-read and a stale key costs a click that ends on the "af has
+  no details" note, never a wrong ticket; a table would add a retention scope for no gain. A CP restart costs one read.
+- Not checked against a real Jira site (the tests use httptest fakes); a project key that is also a common word
+  (`SHA`, `UTF`) will link its `SHA-256` once the member's site has such a project.
 
 ## Options rejected
 

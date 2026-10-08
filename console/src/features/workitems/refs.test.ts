@@ -126,6 +126,17 @@ describe("classifyWorkItemRef", () => {
       expect(classifyWorkItemRef(tok, ctx({ items })), tok).toBeNull();
     }
   });
+
+  it("links a key of a project on the member's Jira connection without a cached row (#1899)", () => {
+    const jiraProjects = new Set(["OPS", "G3M"]);
+    expect(classifyWorkItemRef("OPS-7", ctx({ jiraProjects }))).toEqual({ provider: "jira", key: "OPS-7", guessed: true });
+    // Prose only, as for a cached project; and only the projects the connection lists.
+    expect(classifyWorkItemRef("OPS-7", ctx({ jiraProjects }), code)).toBeNull();
+    for (const tok of ["UTF-8", "SHA-256", "ADR-0061", "WEB-1"]) {
+      expect(classifyWorkItemRef(tok, ctx({ jiraProjects })), tok).toBeNull();
+    }
+    expect(classifyWorkItemRef("OPS-7", ctx({ jiraProjects: new Set() }))).toBeNull();
+  });
 });
 
 describe("WORK_ITEM_HINT_RE", () => {
