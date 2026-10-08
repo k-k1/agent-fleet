@@ -58,6 +58,9 @@ export interface Member {
   role: string;
   super_admin?: boolean;
   state?: string;
+  /** Whether a workspaces row exists, apart from the live `state` (which is "none" for a
+   *  surviving row on some runtimes). Absent from an older CP. */
+  has_workspace?: boolean;
   max_sessions?: number | null;
   mem_limit?: number | null; // per-workspace RAM cap in bytes (0/undefined = unset)
   cpu_limit?: number | null; // per-workspace CPU cap in Fargate units, 1024 = 1 vCPU (0/undefined = unset)

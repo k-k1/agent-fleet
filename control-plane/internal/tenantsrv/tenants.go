@@ -319,11 +319,19 @@ func (a Admin) ListMembers(w http.ResponseWriter, r *http.Request) {
 	add := func(list []store.MemberInfo, status string) {
 		for _, m := range list {
 			container, state := a.cp.WorkspaceStateByMembership(r.Context(), m.MembershipID)
+			wsRow, hasRow, wsErr := a.cp.Store().GetWorkspaceByMembership(r.Context(), m.MembershipID)
 			row := map[string]any{
 				"user_key": m.UserKey, "email": m.Email, "role": m.MemberRole,
 				"super_admin": m.IdentityRole == "super_admin",
 				"container":   container, "state": state,
 				"status": status,
+			}
+			// Row existence apart from the live state: state is "none" for a missing row but also
+			// when the runtime reports none (ecs-ec2 after Clean home, native when stopped), and
+			// DeleteMembership refuses on the row alone. Omitted when the lookup failed, so the
+			// Console falls back to offering Destroy workspace rather than a delete that can fail.
+			if wsErr == nil {
+				row["has_workspace"] = hasRow
 			}
 			// Why the CP itself stopped it (#1384): the member was notified, but a notification
 			// never reaches the admin, who would otherwise see plain "stopped".
@@ -336,7 +344,7 @@ func (a Admin) ListMembers(w http.ResponseWriter, r *http.Request) {
 			// what the reaper actually looks at (presence, pins, background work),
 			// and the screen you go to in order to investigate would give a
 			// different answer. Only meaningful for a running workspace.
-			if wsRow, ok, _ := a.cp.Store().GetWorkspaceByMembership(r.Context(), m.MembershipID); ok {
+			if hasRow {
 				if f, has := a.cp.IdleForecastFor(wsRow.ID); has && state == "running" {
 					row["idle"] = f
 				}

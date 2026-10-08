@@ -158,3 +158,25 @@ func TestMemberStatsCarriesTheAutoStopOnlyWhileDown(t *testing.T) {
 		}
 	}
 }
+
+// has_workspace reports the workspaces ROW, apart from the live state: a runtime that says
+// "none" for a row that still exists (ecs-ec2 after Clean home) must not read as "no
+// workspace", because DeleteMembership refuses on the row alone (#1888).
+func TestAdminMembersReportWorkspaceRowApartFromState(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, tn, mv, _ := networkFixture(t)
+	if got, ok := memberRows(t, mgr, "boss@acme.co.jp")["yamada-acme-co-jp"]["has_workspace"]; !ok || got != false {
+		t.Errorf("has_workspace without a row = %v (present %v), want false", got, ok)
+	}
+	ws := store.Workspace{ID: store.NewID(), TenantID: tn.ID, MembershipID: mv.MembershipID,
+		ContainerName: "af-yamada", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t",
+		State: "stopped", CreatedAt: store.NowTS()}
+	if err := st.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	mgr.rtFactory = stubFactory{rt: &deadlineStub{state: "none"}}
+	row := memberRows(t, mgr, "boss@acme.co.jp")["yamada-acme-co-jp"]
+	if row["state"] != "none" || row["has_workspace"] != true {
+		t.Fatalf("member row = %v, want state none with has_workspace true", row)
+	}
+}
