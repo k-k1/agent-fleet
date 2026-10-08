@@ -42,9 +42,10 @@ Your own ~/.config/gcloud is neither read nor changed.
   --version       print the version (the workspace-agent build it belongs to)
 
 The token lasts what remained when it was minted (at least 10 minutes). While the
-command runs, af-gcloud-exec renews the token file before it ends (gcloud and kubectl's
-GKE auth plugin read it on each start); GOOGLE_OAUTH_ACCESS_TOKEN cannot change, so a
-program that read it once (Terraform's Google provider) fails when that first token ends.
+command runs, af-gcloud-exec renews the token file before it ends: gcloud, bq and kubectl's
+GKE auth plugin processes started afterwards read the new one. A process that read the token
+at its start keeps it: GOOGLE_OAUTH_ACCESS_TOKEN cannot change (Terraform's Google provider
+fails when that first token ends), and one long gcloud reads the file once.
 A command whose token cannot be renewed is stopped when it ends: exit 3 if the login has
 to be done again, 1 otherwise.
 

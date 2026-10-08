@@ -602,13 +602,21 @@ af-gcloud-exec --profile <name> --project <project-id> -- kubectl get pods
   token itself is never printed.
 - The token lasts what remained when it was handed over: at least ten minutes, at most about an hour. While the
   command runs, `af-gcloud-exec` stays running beside it and **renews the token file** about eight minutes before the
-  token ends, so a long `gcloud`, `bq` or `kubectl` (through the GKE auth plugin) keeps working. A program that
-  reads the token only once, when it starts, cannot be renewed: **a long `terraform apply` still fails** when its
-  first token ends. Split such work into shorter runs.
+  token ends. Every `gcloud`, `bq` or GKE auth plugin process the command starts after that reads the new token, so
+  a script that calls them again keeps working. A process that holds the token it read at its start keeps that one:
+  a single long-running `gcloud` (SDK 587.0.0 reads the file once), and a program that reads
+  `GOOGLE_OAUTH_ACCESS_TOKEN` once, such as **a long `terraform apply`**, fail when that token ends. A `kubectl`
+  watch or an open connection depends on the plugin being run again and the connection being made again (not
+  measured). Split such work into shorter runs.
 - If the token cannot be renewed (the login was revoked or has to be done again, a permission, the network),
   `af-gcloud-exec` says so, keeps trying until the token ends, and then stops the command (SIGTERM, and SIGKILL
-  after 30 seconds if it does not end). The exit status is 3 when you have to log in again (the request appears in
-  the Console like a login at the start does) and 1 otherwise. Stopping `af-gcloud-exec` stops the command with it.
+  after 30 seconds if it does not end). The exit status is 3 when you have to log in again and 1 otherwise. If the
+  Console could be asked when the run started, a login request appears there as it does at the start; with
+  `--login`, `--no-login` or outside a workspace the message gives the command to run in your terminal, and a request
+  cancelled in the Console is reported as cancelled.
+- Stopping `af-gcloud-exec` sends SIGTERM to the command it started (the command may ignore it), and the same happens
+  when `af-gcloud-exec` is killed. Programs the command itself started are not reached. When `af-gcloud-exec` is
+  killed, the token file stays until its token has expired and a later run removes it.
 - The first run installs the Google Cloud SDK (one pinned version, with the GKE auth plugin) into your home: about
   85 MB to download and about 510 MB on disk, kept across stops and a Recreate. The first run of each gcloud
   command after that is a few seconds slower once. The **Toolchain** tab's table of tool versions then shows

@@ -41,15 +41,18 @@ af-gcloud-exec --profile <name> --project <id> -- <command> [args...]
   for N more minutes" shows who the command acts as. Check it. The token is never printed.
 - The token lasts what remained when it was minted (at least ten minutes, at most about an hour).
   While the command runs, `af-gcloud-exec` stays as its parent and renews the token file about eight
-  minutes before the token ends, so a long `gcloud`, `bq` or `kubectl` (through the GKE auth plugin)
-  keeps working: they read the file on each start. It does **not** reach a program that reads
-  `GOOGLE_OAUTH_ACCESS_TOKEN` once, at start: a long `terraform apply` still fails when its first token
-  ends (#1879). Split Terraform runs, or keep them under the token's life. A single gcloud process that
-  reads the file only once (not measured) has the same limit.
+  minutes before the token ends. Every `gcloud`, `bq` or GKE auth plugin process started after that
+  reads the new token. A process holding the token it read at start keeps it: one long gcloud process
+  (SDK 587.0.0 reads the file once), and a program that reads `GOOGLE_OAUTH_ACCESS_TOKEN` once, so a
+  long `terraform apply` still fails when its first token ends (#1879). A `kubectl` watch depends on
+  the plugin being run again and the connection re-made (not measured). Split such work.
 - If the renewal fails (the login is gone, revoked or needs reauthentication, a permission or the
   network), the run says so on stderr, keeps trying until the token ends, and then stops the command
-  (SIGTERM, SIGKILL after 30 s): exit 3 when the login has to be done again (the run asks the Console
-  like a start does; tell the user), 1 otherwise. Never rerun in a loop meanwhile.
+  (SIGTERM, SIGKILL after 30 s): exit 3 when a login is needed, 1 otherwise. When the run could ask the
+  Console at its start it asks again; with `--login`, `--no-login` or no Console, the message carries the
+  terminal command instead (give it to the user as-is). Never rerun in a loop meanwhile.
+- Killing `af-gcloud-exec` sends SIGTERM to the command it started (ignorable); programs that command
+  started are not reached, and the token file stays until a later run sweeps it.
 - The first run installs the pinned Google Cloud SDK (`workspace-agent install-gcloud`, which
   downloads about 85 MB once and takes about 510 MB). The first run of each gcloud command after
   that is a few seconds slower once: Python compiles what it imports on first use.
@@ -129,7 +132,7 @@ log in from a terminal (`af-gcloud-exec --profile … --project … --login -- t
 | What you see | Meaning | What to do |
 |---|---|---|
 | exit 3, "… the login was requested in the Agent Fleet Console and is waiting for the member to finish it there" | The profile has no login yet, it expired, or Google asks for reauthentication; the request is in the Console. Exit 3 is only ever a login. | Tell the user a Google Cloud login is waiting in the Console (the toast, or Settings > Google Cloud). Rerun once they say it is done; do not loop on reruns meanwhile. |
-| exit 3, "the token of profile … has ended and could not be renewed, so the command was stopped: …" | The command outlived its token and the login was gone. | As the first row: a login is waiting in the Console (or Settings > Google Cloud); rerun once the user says it is done. |
+| exit 3, "the token of profile … has ended and could not be renewed, so the command was stopped: …" | The command outlived its token and a login is needed. | If the message gives a terminal command, hand that exact command to the user; if it says the request is in the Console, as the first row. Rerun once the user says it is done. |
 | exit 3, "… cancelled in the Agent Fleet Console" | The user cancelled the request. New runs do not file another for about a minute. | Ask the user whether they want the login; do not rerun at once. |
 | exit 3, "Google Cloud login required … log in from a terminal with: af-gcloud-exec --profile … --project … --login -- true" | A login is needed and the Console could not be asked (outside a workspace, or `--no-login`). | You cannot log in for the user. Give them that exact command to run in their own terminal (in Claude Code: `!` at the prompt). It prints a Google sign-in URL; they sign in in their browser and paste the code back into **that** terminal. Rerun once they say it is done. |
 | exit 1, "is for project X, not Y; --project must be the profile's project" | Wrong profile for this project. | Recheck `--list`. Ask the user; do not switch `--project` to match. |

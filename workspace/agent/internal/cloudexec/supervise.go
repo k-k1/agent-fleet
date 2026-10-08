@@ -9,8 +9,10 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -50,12 +52,17 @@ type Outcome struct {
 // Supervise starts the command and returns when it has ended, with what the caller should
 // exit with. It keeps the exec'd command's behaviour as far as a parent can:
 //   - the command shares this process's group and terminal, so Ctrl-C and job control reach
-//     it as before; SIGINT/SIGQUIT are forwarded only when this process is not in the
-//     terminal's foreground group (a second SIGINT makes Terraform abort);
+//     it as before; SIGINT/SIGQUIT are forwarded only when, at the moment they arrive, this
+//     process is not in the terminal's foreground group (a second SIGINT makes Terraform
+//     abort, and fg/bg moves the group);
 //   - SIGTERM, SIGHUP, SIGUSR1 and SIGUSR2 are forwarded to the command;
+//   - a command that stops itself (SIGSTOP) stops this process too, so the caller's shell
+//     sees the job stopped, and SIGCONT here continues the command;
 //   - the command is sent SIGTERM if this process dies of anything, SIGKILL included
-//     (PR_SET_PDEATHSIG), so it never runs on without the Side beside it. Nothing of this
-//     process outlives the command: the Side is a goroutine of this process.
+//     (PR_SET_PDEATHSIG). That is the direct child only, and a child may ignore SIGTERM:
+//     its own children are not reached, and a killed wrapper does not remove the token
+//     file (a later run sweeps it). Nothing of this process outlives the command: the Side
+//     is a goroutine of this process.
 func Supervise(s Supervision) (Outcome, error) {
 	// Pdeathsig fires when the thread that started the command exits, so that thread is
 	// pinned for the rest of the process's life.
@@ -77,17 +84,17 @@ func Supervise(s Supervision) (Outcome, error) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM}
 
 	// Handlers go in before the command starts, so a signal in between is not lost.
-	sigs := make(chan os.Signal, 8)
-	forward := []os.Signal{syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1, syscall.SIGUSR2}
 	// SIGINT/SIGQUIT are caught either way, so this process outlives the Ctrl-C it shares
 	// with the command and reports the command's end.
-	forwardInterrupts := !foregroundOfTerminal()
-	signal.Notify(sigs, append(forward, syscall.SIGINT, syscall.SIGQUIT)...)
+	sigs := make(chan os.Signal, 8)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1, syscall.SIGUSR2,
+		syscall.SIGINT, syscall.SIGQUIT, syscall.SIGCONT)
 	defer signal.Stop(sigs)
 
 	if err := cmd.Start(); err != nil {
 		return Outcome{}, err
 	}
+	pid := cmd.Process.Pid
 
 	ctx, ended := context.WithCancel(context.Background())
 	defer ended()
@@ -109,22 +116,57 @@ func Supervise(s Supervision) (Outcome, error) {
 		close(sideDone)
 	}
 
-	waited := make(chan error, 1)
-	go func() { waited <- cmd.Wait() }()
+	// The command is reaped here, not by cmd.Wait, which would not report that it stopped.
+	events := make(chan unix.WaitStatus, 4)
+	go func() {
+		for {
+			var ws unix.WaitStatus
+			_, err := unix.Wait4(pid, &ws, unix.WUNTRACED|unix.WCONTINUED, nil)
+			if err == unix.EINTR {
+				continue
+			}
+			if err != nil {
+				// Not ours any more (reaped elsewhere): report it as gone.
+				ws = 0
+			}
+			events <- ws
+			if err != nil || ws.Exited() || ws.Signaled() {
+				return
+			}
+		}
+	}()
 
 	var stopped *Stop
 	var killTimer <-chan time.Time
-	var werr error
+	var ws unix.WaitStatus
 loop:
 	for {
 		select {
-		case werr = <-waited:
-			break loop
+		case ws = <-events:
+			switch {
+			case ws.Stopped():
+				// A stop the terminal delivered to the whole group has stopped this process
+				// already, and the command is running again when this is read.
+				if childStopped(pid) {
+					_ = syscall.Kill(syscall.Getpid(), syscall.SIGSTOP)
+					_ = cmd.Process.Signal(syscall.SIGCONT)
+				}
+			case ws.Continued():
+			default:
+				break loop
+			}
 		case sig := <-sigs:
-			if sig == syscall.SIGINT || sig == syscall.SIGQUIT {
-				if !forwardInterrupts {
+			switch sig {
+			case syscall.SIGINT, syscall.SIGQUIT:
+				if foregroundOfTerminal() {
 					continue
 				}
+			case syscall.SIGCONT:
+				// Continued after the command stopped itself and stopped this process.
+				if childStopped(pid) {
+					_ = cmd.Process.Signal(syscall.SIGCONT)
+				}
+				continue
 			}
 			_ = cmd.Process.Signal(sig)
 		case st := <-stopCh:
@@ -140,8 +182,6 @@ loop:
 	}
 	ended()
 	<-sideDone
-	// A Stop that arrived with the command's own exit still counts: the Side saw the
-	// refresh fail, and the command was ended because of it.
 	if stopped == nil {
 		select {
 		case st := <-stopCh:
@@ -153,28 +193,30 @@ loop:
 		default:
 		}
 	}
-
-	var out Outcome
-	var ee *exec.ExitError
-	switch {
-	case werr == nil:
-	case errors.As(werr, &ee):
-		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-			out.Signal = ws.Signal()
-			out.Code = 128 + int(ws.Signal())
-		} else {
-			out.Code = ee.ExitCode()
-		}
-	default:
-		return Outcome{}, werr
-	}
 	if stopped != nil {
 		if stopped.Msg != "" {
 			fmt.Fprintln(stderr, stopped.Msg)
 		}
 		return Outcome{Code: stopped.Code}, nil
 	}
-	return out, nil
+	switch {
+	case ws.Signaled():
+		return Outcome{Signal: syscall.Signal(ws.Signal()), Code: 128 + int(ws.Signal())}, nil
+	case ws.Exited():
+		return Outcome{Code: ws.ExitStatus()}, nil
+	}
+	return Outcome{}, errors.New("the command's status could not be read")
+}
+
+// childStopped reports whether the process is in the stopped state now.
+func childStopped(pid int) bool {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	// The state is the field after the last ")" (the command name may hold one).
+	i := strings.LastIndexByte(string(b), ')')
+	return i >= 0 && i+2 < len(b) && b[i+2] == 'T'
 }
 
 // foregroundOfTerminal reports whether this process's group is the foreground group of a
@@ -189,14 +231,32 @@ func foregroundOfTerminal() bool {
 	return false
 }
 
-// Exit ends this process with the outcome of a supervised command: the command's signal
-// is re-raised on this process (default action restored first) so the caller sees the same
-// death, otherwise its exit code.
+// kernelSigaction is the kernel's struct sigaction (Linux, amd64 and arm64).
+type kernelSigaction struct {
+	handler  uintptr
+	flags    uint64
+	restorer uintptr
+	mask     uint64
+}
+
+// defaultDisposition sets sig to the kernel's SIG_DFL. signal.Reset would only give back
+// Go's own default, which for SIGQUIT and SIGABRT is a goroutine dump and exit 2, and for
+// SIGPIPE or SIGUSR1 an ordinary exit.
+func defaultDisposition(sig syscall.Signal) {
+	var sa kernelSigaction
+	_, _, _ = syscall.RawSyscall6(syscall.SYS_RT_SIGACTION, uintptr(sig), uintptr(unsafe.Pointer(&sa)), 0, 8, 0, 0)
+}
+
+// Exit ends this process with the outcome of a supervised command: when the command died
+// of a signal, this process dies of the same one with the kernel's default action, so the
+// caller's wait status matches; otherwise it exits with the command's code.
 func (o Outcome) Exit() {
 	if o.Signal != 0 {
 		signal.Reset(o.Signal)
+		defaultDisposition(o.Signal)
+		_ = unix.PthreadSigmask(unix.SIG_UNBLOCK, &unix.Sigset_t{Val: [16]uint64{1 << (uint(o.Signal) - 1)}}, nil)
 		_ = syscall.Kill(syscall.Getpid(), o.Signal)
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(time.Second)
 	}
 	os.Exit(o.Code)
 }

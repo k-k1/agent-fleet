@@ -94,15 +94,41 @@ func (r *Refresher) Run(ctx context.Context, stop func(cloudexec.Stop)) {
 	}
 }
 
-// renew obtains and installs a token newer than cur, retrying until cur ends.
+// renew obtains and installs a token newer than cur, retrying until cur ends. The whole
+// of it, a hung gcloud and a Console wait included, is bounded by cur's end: nothing new
+// is started after it, and the reason the renewal failed (a login, say) is the one reported,
+// not the context error that ended the last try.
 func (r *Refresher) renew(ctx context.Context, cur Token) (Token, error) {
-	var last error
+	rctx, cancel := context.WithTimeout(ctx, max(cur.Expiry.Sub(r.now()), time.Millisecond))
+	defer cancel()
+	var last, reloginErr error
 	warned, asked := false, false
+	fail := func(err error) (Token, error) {
+		switch {
+		case reloginErr != nil && errors.Is(last, ErrLoginRequired):
+			return Token{}, reloginErr
+		case last != nil:
+			return Token{}, last
+		}
+		return Token{}, err
+	}
 	for {
-		tok, account, err := r.Mint(ctx, cur.Expiry)
-		if err != nil && errors.Is(err, ErrLoginRequired) && r.Relogin != nil && !asked && ctx.Err() == nil {
+		tok, account, err := r.Mint(rctx, cur.Expiry)
+		if err == nil && ctx.Err() == nil && rctx.Err() != nil {
+			// Arrived with the old token's end; the command has been left without one.
+			err = rctx.Err()
+		}
+		if err != nil && errors.Is(err, ErrLoginRequired) && r.Relogin != nil && !asked && rctx.Err() == nil {
 			asked = true
-			tok, account, err = r.Relogin(ctx, err, cur.Expiry)
+			var rerr error
+			tok, account, rerr = r.Relogin(rctx, err, cur.Expiry)
+			if rerr != nil {
+				reloginErr = rerr
+				last = err
+				err = rerr
+			} else {
+				err = nil
+			}
 		}
 		if err == nil {
 			err = r.install(cur, tok, account)
@@ -113,18 +139,25 @@ func (r *Refresher) renew(ctx context.Context, cur Token) (Token, error) {
 		if ctx.Err() != nil {
 			return Token{}, err
 		}
+		if rctx.Err() != nil {
+			// The token ended during this try: its error is the deadline's, not the cause.
+			return fail(errors.New("the token ended before it could be renewed"))
+		}
 		last = err
 		left := cur.Expiry.Sub(r.now())
 		if left <= 0 {
-			return Token{}, last
+			return fail(err)
 		}
 		if !warned && r.Stderr != nil {
 			warned = true
 			fmt.Fprintf(r.Stderr, "af-gcloud-exec: could not renew the token of profile %s (%v); trying again until it ends in %d minutes\n",
 				r.Profile, err, int(left/time.Minute))
 		}
-		if !r.wait(ctx, min(refreshRetry, left)) {
-			return Token{}, last
+		if !r.wait(rctx, min(refreshRetry, left)) {
+			if ctx.Err() != nil {
+				return Token{}, err
+			}
+			return fail(err)
 		}
 	}
 }
@@ -186,7 +219,13 @@ func newRefresher(gcloudBin string, agentEnv []string, p Profile, o ExecOptions,
 	// handler and ends with the command or the token.
 	ask := o
 	ask.Interactive, ask.TerminalConsole = false, false
-	if consoleEligible(ask) {
+	if !consoleEligible(ask) {
+		// Nobody was asked (--login, --no-login, or no Console): the member has to log in
+		// themselves, and the message says how.
+		r.Relogin = func(_ context.Context, first error, _ time.Time) (Token, string, error) {
+			return Token{}, "", fmt.Errorf("%w (no login was requested in the Agent Fleet Console)\nlog in from a terminal with: %s", first, hint)
+		}
+	} else {
 		r.Relogin = func(ctx context.Context, first error, deadline time.Time) (Token, string, error) {
 			ask.ConsoleWait = min(o.ConsoleWait, time.Until(deadline))
 			if ask.ConsoleWait <= 0 {

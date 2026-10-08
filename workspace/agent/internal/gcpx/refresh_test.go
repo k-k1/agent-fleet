@@ -23,6 +23,7 @@ type refreshRig struct {
 	file   string
 	stderr bytes.Buffer
 	mints  int
+	ctxs   map[int]context.Context
 	cancel context.CancelFunc
 	ctx    context.Context
 
@@ -35,7 +36,7 @@ type refreshRig struct {
 
 func newRefreshRig(t *testing.T) *refreshRig {
 	t.Helper()
-	rg := &refreshRig{t: t, now: time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)}
+	rg := &refreshRig{t: t, ctxs: map[int]context.Context{}, now: time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)}
 	rg.file = filepath.Join(t.TempDir(), "token")
 	first := Token{Value: "fake-token-0", Expiry: rg.now.Add(MinRemaining + time.Minute)}
 	if err := os.WriteFile(rg.file, []byte(first.Value), 0o600); err != nil {
@@ -57,6 +58,7 @@ func newRefreshRig(t *testing.T) *refreshRig {
 		},
 		Mint: func(ctx context.Context, deadline time.Time) (Token, string, error) {
 			rg.mints++
+			rg.ctxs[rg.mints] = ctx
 			b, _ := os.ReadFile(rg.file)
 			rg.seenFile = append(rg.seenFile, string(b))
 			return rg.onMint(rg.mints)
@@ -64,6 +66,9 @@ func newRefreshRig(t *testing.T) *refreshRig {
 	}
 	return rg
 }
+
+// ctxOf is the done channel of the context the n-th mint was given.
+func (rg *refreshRig) ctxOf(n int) <-chan struct{} { return rg.ctxs[n].Done() }
 
 func (rg *refreshRig) run() {
 	rg.t.Helper()
@@ -342,5 +347,68 @@ func TestPlanRunRefresherRenewsThroughTheRealMint(t *testing.T) {
 	pl.Refresher.RemoveToken()
 	if _, err := os.Stat(tokFile); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("token file after RemoveToken: %v", err)
+	}
+}
+
+// TestRefresherHungMintEndsWithTheToken: a gcloud that hangs on the last try is cut off when
+// the token ends, so the command does not run on past it, and the reason reported is the login
+// the earlier tries met, not the deadline.
+func TestRefresherHungMintEndsWithTheToken(t *testing.T) {
+	rg := newRefreshRig(t)
+	// The clock stands 150ms before the token ends when the renewal starts; the first try fails with a login
+	// and the second try hangs, so only its context can end it.
+	expiry := rg.r.Token.Expiry
+	waits := 0
+	rg.r.Wait = func(ctx context.Context, d time.Duration) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		if waits++; waits == 1 {
+			rg.now = expiry.Add(-150 * time.Millisecond)
+		} else {
+			rg.now = rg.now.Add(d)
+		}
+		return true
+	}
+	rg.onMint = func(n int) (Token, string, error) {
+		if n == 1 {
+			return Token{}, "", ErrLoginRequired
+		}
+		<-rg.ctxOf(n)
+		// A gcloud that finishes just as it is cut off still hands over a token.
+		return Token{Value: "fake-token-late", Expiry: rg.now.Add(time.Hour)}, "me@example.com", nil
+	}
+	rg.run()
+	if rg.content() == "fake-token-late" {
+		t.Fatal("a token that arrived after the old one ended was installed")
+	}
+	if len(rg.stopped) != 1 || rg.stopped[0].Code != cloudexec.ExitLoginRequired {
+		t.Fatalf("stops = %+v; want exit 3 (the login), not the deadline's exit 1", rg.stopped)
+	}
+	if rg.mints != 2 {
+		t.Fatalf("mints = %d; nothing new may start after the token ended", rg.mints)
+	}
+}
+
+// TestRefresherWithoutConsoleSaysHowToLogIn: a run that could not ask the Console (--login,
+// --no-login, no Console) ends a failed renewal with the terminal command, and does not claim
+// a request is waiting.
+func TestRefresherWithoutConsoleSaysHowToLogIn(t *testing.T) {
+	rg := newRefreshRig(t)
+	rg.onMint = func(int) (Token, string, error) { return Token{}, "", ErrLoginRequired }
+	p := Profile{Name: "prod", Project: "prod-project"}
+	built := newRefresher("/nonexistent/gcloud", nil, p, ExecOptions{Login: "never"}, rg.r.Token, rg.r.Account, rg.file,
+		"af-gcloud-exec --profile prod --project prod-project --login -- true", &rg.stderr)
+	if built.Relogin == nil {
+		t.Fatal("no Relogin: the final message loses the terminal command")
+	}
+	rg.r.Relogin = built.Relogin
+	rg.run()
+	if len(rg.stopped) != 1 || rg.stopped[0].Code != 3 {
+		t.Fatalf("stops = %+v", rg.stopped)
+	}
+	m := rg.stopped[0].Msg
+	if !strings.Contains(m, "--login -- true") || strings.Contains(m, "waiting") {
+		t.Fatalf("message = %q", m)
 	}
 }
