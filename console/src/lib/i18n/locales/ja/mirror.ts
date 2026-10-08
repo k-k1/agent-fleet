@@ -447,7 +447,7 @@ export const mirror = {
   "send.open_assistant": "アシスタントで開く",
   "send.send_to_session": "セッションに送信",
   "mirror.queue_title": "送信待ち（{n} 件）",
-  "mirror.queue_add": "送信待ちに入れる",
+  "mirror.queue_add": "送信待ちに追加",
   "mirror.queue_add_hint": "実行中のターンには送らず、ここに溜めます。ターンが終わると順に送られます（Alt+Enter）",
   "mirror.queue_paused": "停止したため自動送信を止めています。",
   "mirror.queue_resume": "再開",

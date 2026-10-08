@@ -202,7 +202,7 @@ turn; the other agents answer the question as declined and leave the queue alone
 ### Holding follow-ups before sending (send queue)
 
 While a turn runs, a plain send goes to the agent at once. To write several follow-ups and
-send them later, press the **"+" button above Send** (or **Alt+Enter**) instead: the message is
+send them later, use the **▾ on the right edge of the Send button** (it appears only while a turn runs) and choose **"Add to waiting list"**, or press **Alt+Enter**, instead: the message is
 held in a **Waiting to send** list above the input box and nothing reaches the agent or the
 conversation yet.
 
