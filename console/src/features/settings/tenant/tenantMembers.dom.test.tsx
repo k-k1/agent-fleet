@@ -47,7 +47,7 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
 async function mount(
-  member: typeof MEMBER & { state?: string; slot_class?: string; slot_class_effective?: string; slot_class_default?: string } = MEMBER,
+  member: typeof MEMBER & { state?: string; has_workspace?: boolean; slot_class?: string; slot_class_effective?: string; slot_class_default?: string } = MEMBER,
   onRemoved = () => {},
 ) {
   host = document.createElement("div");
@@ -138,7 +138,8 @@ describe("member limit editing", () => {
 });
 
 // Cleanup runs in three stages (docs/log/61 §61.18): remove the member, discard the workspace,
-// delete the row. Exactly one of them is on screen at a time; showing all three leaves the
+// delete the row. One stage is on screen at a time (both Destroy and Delete only when an older CP
+// omits has_workspace); showing all three leaves the
 // operator unable to tell which one is possible now without pressing it.
 describe("cleanup of a removed member", () => {
   it("offers only remove while the member is still present", async () => {
@@ -149,16 +150,40 @@ describe("cleanup of a removed member", () => {
   });
 
   it("offers only discard just after removal, while the workspace still exists", async () => {
-    await mount({ ...MEMBER, status: "removed", state: "stopped" });
+    await mount({ ...MEMBER, status: "removed", state: "stopped", has_workspace: true });
     expect(buttonWith("ワークスペースを破棄")).toBeTruthy();
     // Home and the cloud resources are still alive; deleting the row would leave nothing
     // pointing at them.
     expect(buttonWith("メンバーを完全に削除")).toBeFalsy();
   });
 
-  it("offers permanent deletion only once discarded (state=none), and sends DELETE", async () => {
+  it("offers discard, not deletion, when the runtime says none but the row survives (#1888)", async () => {
+    await mount({ ...MEMBER, status: "removed", state: "none", has_workspace: true });
+    expect(buttonWith("ワークスペースを破棄")).toBeTruthy();
+    expect(buttonWith("メンバーを完全に削除")).toBeFalsy();
+  });
+
+  it("closes the detail after a successful discard so the next open reflects the row", async () => {
     const onRemoved = vi.fn();
-    await mount({ ...MEMBER, status: "removed", state: "none" }, onRemoved);
+    await mount({ ...MEMBER, status: "removed", state: "none", has_workspace: true }, onRemoved);
+    await act(async () => buttonWith("ワークスペースを破棄")!.click());
+    const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).filter((b) =>
+      (b.textContent || "").includes("破棄"),
+    ).pop()!;
+    await act(async () => confirm.click());
+    expect(apiJSON.mock.calls.some((c) => c[0] === "api/admin/workspaces" && c[1] === "DELETE")).toBe(true);
+    expect(onRemoved).toHaveBeenCalled();
+  });
+
+  it("offers both when an older CP omits has_workspace", async () => {
+    await mount({ ...MEMBER, status: "removed", state: "none" });
+    expect(buttonWith("ワークスペースを破棄")).toBeTruthy();
+    expect(buttonWith("メンバーを完全に削除")).toBeTruthy();
+  });
+
+  it("offers permanent deletion only once the row is gone (has_workspace=false), and sends DELETE", async () => {
+    const onRemoved = vi.fn();
+    await mount({ ...MEMBER, status: "removed", state: "none", has_workspace: false }, onRemoved);
     expect(buttonWith("ワークスペースを破棄")).toBeFalsy();
 
     await act(async () => buttonWith("メンバーを完全に削除")!.click());
