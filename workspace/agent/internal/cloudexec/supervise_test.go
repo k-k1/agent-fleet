@@ -226,7 +226,9 @@ func TestSuperviseStopKillsACommandThatIgnoresSIGTERM(t *testing.T) {
 	}
 }
 
-func startHelper(t *testing.T, script string) *exec.Cmd {
+// startHelper starts the supervisor helper in dir (a core file, if the kernel writes one,
+// lands there; "" is this process's directory).
+func startHelper(t *testing.T, dir, script string) *exec.Cmd {
 	t.Helper()
 	self, err := os.Executable()
 	if err != nil {
@@ -234,6 +236,7 @@ func startHelper(t *testing.T, script string) *exec.Cmd {
 	}
 	cmd := exec.Command(self, "/bin/sh", "-c", script)
 	cmd.Env = append(os.Environ(), "AF_SUPERVISE_HELPER=1")
+	cmd.Dir = dir
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +275,7 @@ func exists(path string) bool { _, err := os.Stat(path); return err == nil }
 func TestSuperviseCommandDiesWithTheWrapper(t *testing.T) {
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "pid")
-	cmd := startHelper(t, `echo $$ > `+pidFile+`.tmp && mv `+pidFile+`.tmp `+pidFile+`; exec sleep 60`)
+	cmd := startHelper(t, "", `echo $$ > `+pidFile+`.tmp && mv `+pidFile+`.tmp `+pidFile+`; exec sleep 60`)
 	waitFor(t, "the command to start", func() bool { return exists(pidFile) })
 	b, _ := os.ReadFile(pidFile)
 	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
@@ -294,7 +297,7 @@ func TestSuperviseCommandDiesWithTheWrapper(t *testing.T) {
 func TestSuperviseForwardsSIGTERM(t *testing.T) {
 	dir := t.TempDir()
 	ready := filepath.Join(dir, "ready")
-	cmd := startHelper(t, `trap 'exit 9' TERM; touch `+ready+`; while :; do sleep 0.05; done`)
+	cmd := startHelper(t, "", `trap 'exit 9' TERM; touch `+ready+`; while :; do sleep 0.05; done`)
 	waitFor(t, "the command to be ready", func() bool { return exists(ready) })
 	_ = cmd.Process.Signal(syscall.SIGTERM)
 	err := waitBounded(t, cmd)
@@ -311,8 +314,7 @@ func TestSuperviseReRaisesTheCommandsSignal(t *testing.T) {
 	for _, sig := range []syscall.Signal{syscall.SIGHUP, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGABRT, syscall.SIGPIPE, syscall.SIGUSR1, syscall.SIGUSR2} {
 		t.Run(sig.String(), func(t *testing.T) {
 			dir := t.TempDir()
-			cmd := startHelper(t, `kill -`+strconv.Itoa(int(sig))+` $$`)
-			cmd.Dir = dir // a core file, if the kernel writes one, lands here
+			cmd := startHelper(t, dir, `kill -`+strconv.Itoa(int(sig))+` $$`)
 			err := waitBounded(t, cmd)
 			ee, ok := err.(*exec.ExitError)
 			if !ok {
@@ -336,7 +338,7 @@ func procState(pid int) string {
 // A command that stops itself stops the wrapper, so the shell sees the job stopped; SIGCONT
 // to the wrapper continues the command.
 func TestSuperviseStopsWithTheCommandAndContinuesIt(t *testing.T) {
-	cmd := startHelper(t, `kill -STOP $$; exit 5`)
+	cmd := startHelper(t, "", `kill -STOP $$; exit 5`)
 	waitFor(t, "the wrapper to stop with its command", func() bool { return procState(cmd.Process.Pid) == "T" })
 	_ = cmd.Process.Signal(syscall.SIGCONT)
 	err := waitBounded(t, cmd)

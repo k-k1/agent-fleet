@@ -355,7 +355,7 @@ func TestPlanRunRefresherRenewsThroughTheRealMint(t *testing.T) {
 // the earlier tries met, not the deadline.
 func TestRefresherHungMintEndsWithTheToken(t *testing.T) {
 	rg := newRefreshRig(t)
-	// The clock stands 150ms before the token ends when the renewal starts; the first try fails with a login
+	// The clock stands 200ms before the token ends when the renewal starts; the first try fails with a login
 	// and the second try hangs, so only its context can end it.
 	expiry := rg.r.Token.Expiry
 	waits := 0
@@ -364,9 +364,9 @@ func TestRefresherHungMintEndsWithTheToken(t *testing.T) {
 			return false
 		}
 		if waits++; waits == 1 {
-			rg.now = expiry.Add(-150 * time.Millisecond)
+			rg.now = expiry.Add(-200 * time.Millisecond)
 		} else {
-			rg.now = rg.now.Add(d)
+			rg.now = rg.now.Add(50 * time.Millisecond) // the retry pause, shortened
 		}
 		return true
 	}
@@ -410,5 +410,41 @@ func TestRefresherWithoutConsoleSaysHowToLogIn(t *testing.T) {
 	m := rg.stopped[0].Msg
 	if !strings.Contains(m, "--login -- true") || strings.Contains(m, "waiting") {
 		t.Fatalf("message = %q", m)
+	}
+}
+
+// TestRefresherStartsNothingAfterTheTokenEnded: a token whose end has passed is not renewed,
+// whatever the context timer says, and a gcloud that would succeed instantly is not asked.
+func TestRefresherStartsNothingAfterTheTokenEnded(t *testing.T) {
+	rg := newRefreshRig(t)
+	rg.onMint = func(int) (Token, string, error) {
+		return Token{Value: "fake-token-late", Expiry: rg.now.Add(time.Hour)}, "me@example.com", nil
+	}
+	rg.r.Token.Expiry = rg.now.Add(-time.Second)
+	rg.run()
+	if rg.mints != 0 || rg.content() != "fake-token-0" {
+		t.Fatalf("mints %d, file %q: a token was fetched after the old one ended", rg.mints, rg.content())
+	}
+	if len(rg.stopped) != 1 || rg.stopped[0].Code != cloudexec.ExitRefused {
+		t.Fatalf("stops = %+v", rg.stopped)
+	}
+}
+
+// TestRefresherSlowReloginKeepsTheLoginError: a login finished after the token ended is not
+// installed, and the run reports the login it needed (exit 3), not a deadline.
+func TestRefresherSlowReloginKeepsTheLoginError(t *testing.T) {
+	rg := newRefreshRig(t)
+	rg.onMint = func(int) (Token, string, error) { return Token{}, "", ErrLoginRequired }
+	expiry := rg.r.Token.Expiry
+	rg.r.Relogin = func(ctx context.Context, first error, deadline time.Time) (Token, string, error) {
+		rg.now = expiry.Add(time.Second) // the member finished the login late, by the clock
+		return Token{Value: "fake-token-late", Expiry: rg.now.Add(time.Hour)}, "me@example.com", nil
+	}
+	rg.run()
+	if rg.content() != "fake-token-0" {
+		t.Fatalf("file %q: the late token was installed", rg.content())
+	}
+	if len(rg.stopped) != 1 || rg.stopped[0].Code != cloudexec.ExitLoginRequired {
+		t.Fatalf("stops = %+v; want exit 3", rg.stopped)
 	}
 }

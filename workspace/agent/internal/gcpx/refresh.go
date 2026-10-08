@@ -112,23 +112,31 @@ func (r *Refresher) renew(ctx context.Context, cur Token) (Token, error) {
 		}
 		return Token{}, err
 	}
+	// The context timer can run late, so the clock is asked as well.
+	ended := func() bool { return rctx.Err() != nil || !r.now().Before(cur.Expiry) }
+	errEnded := errors.New("the token ended before it could be renewed")
 	for {
-		tok, account, err := r.Mint(rctx, cur.Expiry)
-		if err == nil && ctx.Err() == nil && rctx.Err() != nil {
-			// Arrived with the old token's end; the command has been left without one.
-			err = rctx.Err()
+		if ctx.Err() != nil {
+			return Token{}, ctx.Err()
 		}
-		if err != nil && errors.Is(err, ErrLoginRequired) && r.Relogin != nil && !asked && rctx.Err() == nil {
+		if ended() {
+			return fail(errEnded)
+		}
+		tok, account, err := r.Mint(rctx, cur.Expiry)
+		if err != nil && errors.Is(err, ErrLoginRequired) && r.Relogin != nil && !asked && !ended() {
 			asked = true
+			last = err
 			var rerr error
 			tok, account, rerr = r.Relogin(rctx, err, cur.Expiry)
 			if rerr != nil {
 				reloginErr = rerr
-				last = err
-				err = rerr
-			} else {
-				err = nil
 			}
+			err = rerr
+		}
+		if err == nil && ctx.Err() == nil && ended() {
+			// Arrived with the old token's end: the command has been left without one, and
+			// installing it would also hide the login this renewal needed.
+			err = errEnded
 		}
 		if err == nil {
 			err = r.install(cur, tok, account)
@@ -139,9 +147,9 @@ func (r *Refresher) renew(ctx context.Context, cur Token) (Token, error) {
 		if ctx.Err() != nil {
 			return Token{}, err
 		}
-		if rctx.Err() != nil {
+		if errors.Is(err, errEnded) || rctx.Err() != nil {
 			// The token ended during this try: its error is the deadline's, not the cause.
-			return fail(errors.New("the token ended before it could be renewed"))
+			return fail(errEnded)
 		}
 		last = err
 		left := cur.Expiry.Sub(r.now())
