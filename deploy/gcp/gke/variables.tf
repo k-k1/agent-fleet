@@ -72,6 +72,23 @@ variable "authorized_networks" {
 
 # --- cluster -------------------------------------------------------------------
 
+variable "zonal_cluster" {
+  description = "false: a regional cluster (control plane replicated across the region, nodes in every node_zones zone). true: a zonal cluster in the one zone of node_zones, which falls under GKE's free tier for the management fee and has a single-zone control plane. Changing it replaces the cluster."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.zonal_cluster || length(var.node_zones) == 1
+    error_message = "zonal_cluster = true needs node_zones to name exactly one zone: that zone is the cluster's location."
+  }
+}
+
+variable "managed_prometheus" {
+  description = "Google Cloud Managed Service for Prometheus collection. GKE Standard turns it on for new clusters; false drops its per-sample charge."
+  type        = bool
+  default     = true
+}
+
 variable "min_master_version" {
   description = "Lowest control-plane version accepted, as MAJOR.MINOR. 1.33 is where the PersistentVolume deletion-protection finalizer that Destroy relies on is stable (ADR 0106 decision 5). A check on every plan and apply, not the version the cluster is created at: that is the release channel's default."
   type        = string

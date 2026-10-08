@@ -14,9 +14,10 @@ locals {
 
 resource "google_container_cluster" "main" {
   name     = "${var.name_prefix}-gke"
-  location = var.region
+  location = var.zonal_cluster ? var.node_zones[0] : var.region
 
-  node_locations = var.node_zones
+  # A zonal cluster's own zone is its only node location.
+  node_locations = var.zonal_cluster ? null : var.node_zones
 
   # No min_master_version: GKE creates the cluster at that version, matched as a prefix
   # against what the channel offers today, so a floor written there fails the create once
@@ -85,6 +86,12 @@ resource "google_container_cluster" "main" {
   node_pool_defaults {
     node_config_defaults {
       insecure_kubelet_readonly_port_enabled = "FALSE"
+    }
+  }
+
+  monitoring_config {
+    managed_prometheus {
+      enabled = var.managed_prometheus
     }
   }
 

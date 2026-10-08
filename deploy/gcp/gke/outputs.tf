@@ -4,7 +4,7 @@ output "cluster_name" {
 
 output "get_credentials" {
   description = "Command that points kubectl at the cluster."
-  value       = "gcloud container clusters get-credentials ${google_container_cluster.main.name} --region ${var.region} --project ${var.project_id}${var.enable_private_endpoint ? " --internal-ip" : ""}"
+  value       = "gcloud container clusters get-credentials ${google_container_cluster.main.name} ${var.zonal_cluster ? "--zone ${var.node_zones[0]}" : "--region ${var.region}"} --project ${var.project_id}${var.enable_private_endpoint ? " --internal-ip" : ""}"
 }
 
 output "nat_address" {
