@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from "react";
 import { DRAIN_SETTLE_MS, type QueuedSend } from "./queue.ts";
-import { useSendQueueStore, type Claim } from "./store.ts";
+import { isEditing, useSendQueueStore, type Claim } from "./store.ts";
 
 const NONE: QueuedSend[] = [];
 
@@ -31,7 +31,8 @@ export function useSendQueue({
 }) {
   const items = useSendQueueStore((s) => s.bySession[session] ?? NONE);
   const paused = useSendQueueStore((s) => !!s.paused[session]);
-  const editing = useSendQueueStore((s) => s.editing[session]);
+  // Same test the claim uses (a lock on a vanished row does not count), so the timer and the drain agree.
+  const editing = useSendQueueStore((s) => isEditing(s, session));
   const owner = useId();
   const gate = useSendQueueStore((s) => s.gate[session]);
   const [tick, setTick] = useState(0);

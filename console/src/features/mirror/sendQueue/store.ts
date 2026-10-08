@@ -67,7 +67,7 @@ function put(s: SendQueueStore, session: string, items: QueuedSend[]): Partial<S
 }
 
 /** A lock counts only while its row still exists (a deleted or drained row cannot hold the queue forever). */
-function isEditing(s: SendQueueStore, session: string, id?: string): boolean {
+export function isEditing(s: SendQueueStore, session: string, id?: string): boolean {
   const rows = new Set((s.bySession[session] ?? []).map((i) => i.id));
   return Object.values(s.editing[session] ?? {}).some((r) => rows.has(r) && (id === undefined || r === id));
 }

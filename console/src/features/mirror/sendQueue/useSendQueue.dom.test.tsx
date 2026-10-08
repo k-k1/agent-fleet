@@ -181,6 +181,41 @@ describe("useSendQueue drain", () => {
     expect(useSendQueueStore.getState().editing.b).toBeUndefined();
   });
 
+  it("releases the edit lock when only the list unmounts while the hook stays mounted", async () => {
+    const send = vi.fn(async (_i: QueuedSend) => true);
+    add("s", "old");
+    const { rerender } = render(<Harness session="s" busy={true} send={send} list />);
+    click(buttons(/Edit|編集/)[0]);
+    rerender(<Harness session="s" busy={false} send={send} />);
+    await flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(useSendQueueStore.getState().editing.s).toBeUndefined();
+  });
+
+  it("falls back after the settle window when the locked row was removed", async () => {
+    vi.useFakeTimers();
+    try {
+      const send = vi.fn(async (_i: QueuedSend) => true);
+      add("s", "first");
+      const { rerender } = render(<Harness session="s" busy={false} send={send} list />);
+      await flush();
+      expect(send).toHaveBeenCalledTimes(1);
+      rerender(<Harness session="s" busy={true} send={send} list />);
+      add("s", "edited");
+      click(buttons(/Edit|編集/)[0]);
+      act(() => useSendQueueStore.getState().remove("s", useSendQueueStore.getState().bySession.s![0].id));
+      add("s", "next");
+      rerender(<Harness session="s" busy={false} send={send} list />);
+      await flush();
+      await act(async () => { vi.advanceTimersByTime(DRAIN_SETTLE_MS + 100); });
+      await flush();
+      expect(send).toHaveBeenCalledTimes(2);
+      expect(send.mock.calls[1][0].text).toBe("next");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps one view's edit lock when another view of the same session unmounts", async () => {
     const send = vi.fn(async (_i: QueuedSend) => true);
     add("s", "old");

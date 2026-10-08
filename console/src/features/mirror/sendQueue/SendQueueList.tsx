@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr } from "../../../lib/i18n/index.ts";
 import type { QueuedSend } from "./queue.ts";
@@ -32,6 +32,9 @@ export function SendQueueList({
   onEditing: (id: string | null) => void;
 }) {
   const [edit, setEditing] = useState<{ id: string; text: string } | null>(null);
+  // The list can disappear while the hook stays mounted (the composer is swapped out): release
+  // this view's lock then. onEditing is bound to the view's own owner, so no other view is unlocked.
+  useEffect(() => () => onEditing(null), []); // eslint-disable-line react-hooks/exhaustive-deps
   // An edit belongs to a row of THIS list: after a session switch or a deleted row it is void.
   const editing = edit && items.some((i) => i.id === edit.id) ? edit : null;
   if (!items.length) return null;
