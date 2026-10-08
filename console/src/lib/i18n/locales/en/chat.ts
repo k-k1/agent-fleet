@@ -93,7 +93,7 @@ export const chat: Record<keyof typeof jaChat, string> = {
   "chat.notice.agent_switched":
     "This conversation switched to “{agent}”. From here on {agent} answers. The history so far is handed over with your next message, so that first turn costs extra tokens. The model was re-resolved from the {agent} row in Settings > Assistant.",
   "chat.notice.plan_updated":
-    "Work plan updated. It is carried into every new session verbatim — never summarized.\n\n---\n\n{plan}",
+    "Work plan updated. It is carried into every new session verbatim, never summarized.\n\n---\n\n{plan}",
   "chat.plan.title": "Work plan",
   "chat.plan.toggle_tip": "Open the work plan (carried into new sessions verbatim, never summarized by compaction)",
   "chat.plan.edit": "Edit",

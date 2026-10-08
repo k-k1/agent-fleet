@@ -35,7 +35,7 @@ export const usage: Record<keyof typeof jaUsage, string> = {
   "usage.reload": "Reload",
   "usage.folding": "Catching up",
   "usage.folding_hint":
-    "Session consumption is being folded from the transcripts into the ledger. This view refreshes itself once that finishes — no need to press reload again.",
+    "Session consumption is being folded from the transcripts into the ledger. This view refreshes itself once that finishes, so there is no need to press reload again.",
   "usage.filters": "Filters:",
   "usage.filter_remove": "Remove this filter",
   "usage.filter_clear": "Clear all",
@@ -44,7 +44,7 @@ export const usage: Record<keyof typeof jaUsage, string> = {
   "usage.table_view": "Table",
   "usage.truncated": "Part of the range can't be restored",
   "usage.truncated_hint":
-    "Hourly buckets only exist while the raw log is retained. A period pruned after roll-up isn't shown here — that does not mean nothing was spent.",
+    "Hourly buckets only exist while the raw log is retained. A period pruned after roll-up isn't shown here, which does not mean nothing was spent.",
   "usage.total": "Total",
   "usage.col_bucket": "Period",
   "usage.col_calls": "Calls",
@@ -68,7 +68,7 @@ export const usage: Record<keyof typeof jaUsage, string> = {
     "Pictures made on the fleet's own image engine (tool.imagegen). Their cost is the tenant's GPU hour, not an API amount, so they add nothing to the estimate.",
   "usage.kpi_cost": "API-equivalent cost",
   "usage.kpi_cost_hint":
-    "An estimate: tokens × published API list prices (cache writes ×1.25, cache reads ×0.1). What this consumption would have cost through the API — on a flat subscription it is not what you are billed.",
+    "An estimate: tokens × published API list prices (cache writes ×1.25, cache reads ×0.1). What this consumption would have cost through the API; on a flat subscription it is not what you are billed.",
   "usage.cost_est_hint":
     "Estimated from tokens × the model's published API list price. Not a measured cost.",
   "usage.cost_measured": "Reported by the agent: {v} (claude auxiliary calls and opencode sessions only)",

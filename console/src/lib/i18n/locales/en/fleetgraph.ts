@@ -77,7 +77,7 @@ export const fleetgraph: Record<keyof typeof jaFleetgraph, string> = {
   "fgraph.death_reason": "Reason: {reason}",
   "fgraph.revive_at": "Resumed at {time}",
   // The newest run ended without a death event (ADR 0096 decision 12, LaneRun.cut).
-  "fgraph.run_cut": "Last observed at {time} — unknown after this",
+  "fgraph.run_cut": "Last observed at {time}; unknown after this",
 
   // The 3-tier retention boundary (CoverageMark).
   "fgraph.mark_activity_start": "No earlier activity bands or arrows are retained",
