@@ -181,3 +181,57 @@ run "rejects_a_pod_range_wider_than_its_rfc1918_block" {
 
   expect_failures = [google_compute_subnetwork.nodes]
 }
+
+# The small profile (README, "Small profile"): one zone, a zonal cluster, no managed
+# Prometheus, Cloud SQL ZONAL.
+run "small_profile_plans" {
+  command = plan
+
+  variables {
+    node_zones             = ["europe-west1-b"]
+    zonal_cluster          = true
+    system_machine_type    = "e2-medium"
+    workspace_machine_type = "n2-standard-4"
+    sql_availability_type  = "ZONAL"
+    managed_prometheus     = false
+  }
+
+  assert {
+    condition     = google_container_cluster.main.location == "europe-west1-b"
+    error_message = "a zonal cluster's location is its zone"
+  }
+
+  assert {
+    condition     = google_container_cluster.main.monitoring_config[0].managed_prometheus[0].enabled == false
+    error_message = "managed_prometheus = false must reach the cluster"
+  }
+
+  assert {
+    condition     = google_sql_database_instance.main.settings[0].availability_type == "ZONAL"
+    error_message = "sql_availability_type = ZONAL must reach the instance"
+  }
+}
+
+run "defaults_stay_regional" {
+  command = plan
+
+  assert {
+    condition     = google_container_cluster.main.location == "europe-west1"
+    error_message = "the default is a regional cluster"
+  }
+
+  assert {
+    condition     = google_container_cluster.main.monitoring_config[0].managed_prometheus[0].enabled == true
+    error_message = "managed Prometheus stays on by default"
+  }
+}
+
+run "zonal_cluster_needs_exactly_one_zone" {
+  command = plan
+
+  variables {
+    zonal_cluster = true
+  }
+
+  expect_failures = [google_container_cluster.main]
+}

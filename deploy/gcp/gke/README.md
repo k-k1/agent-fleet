@@ -86,10 +86,10 @@ is ~¥16,000/month, so the GKE defaults cost roughly four times as much idle. Th
 high-availability choices, not Kubernetes itself — Cloud SQL `REGIONAL`, a system node in each of two zones, the
 regional cluster's management fee (one zonal cluster per billing account falls under GKE's free
 tier) — and the workspace pool's whole-node billing, where ECS bills each workspace's own
-Fargate task (1 vCPU + 2 GB). Some of it is already a variable (`sql_availability_type`,
-`sql_tier`, `system_machine_type`, `node_zones`, `workspace_machine_type`; a workspace pod must
-still fit on one node); the cluster itself is always regional. A proposed small, zonal profile and
-its cost estimate are tracked in [#1728](https://github.com/k-k1/agent-fleet/issues/1728).
+Fargate task (1 vCPU + 2 GB). Most of it is a variable (`zonal_cluster`, `sql_availability_type`, `sql_tier`,
+`system_machine_type`, `node_zones`, `workspace_machine_type`, `managed_prometheus`; a
+workspace pod must still fit on one node). The [small profile](#small-profile) below sets them
+for a low standing cost.
 
 **Paused** means the CP scaled to 0, both node pools at 0 nodes and Cloud SQL stopped; the data
 is kept. What still bills is in the right-hand column: the management fee, the forwarding rule,
@@ -97,3 +97,52 @@ the Private Service Connect endpoint, the NAT address, the disks (the claims and
 and Cloud SQL's storage. Only deleting them stops those. The procedure, and its trap — the
 workspace pool has no taint, so a system pool at 0 lets the autoscaler start a workspace node
 for the cluster's own pods — is [#1639](https://github.com/k-k1/agent-fleet/issues/1639).
+
+## Small profile
+
+For a trial or a single team. The commented block at the end of `terraform.tfvars.example`
+sets all of it:
+
+| Setting | Value | Replaces |
+|---|---|---|
+| `node_zones`, `zonal_cluster` | one zone, `true` | a regional cluster with nodes in two zones |
+| `sql_availability_type`, `sql_tier` | `ZONAL`, `db-custom-1-3840` (the smallest dedicated-core tier Postgres offers) | `REGIONAL` |
+| `system_machine_type`, `system_node_count` | `e2-medium`, 1 | e2-standard-2 in each of two zones |
+| `workspace_machine_type` | `n2-standard-4` | n2-standard-8 |
+| `managed_prometheus` | `false` | on |
+
+**What it gives up.** Control-plane high availability: a zonal cluster's API server is
+unavailable during its upgrades, when running workspaces keep running but cannot be managed;
+in a zone outage the nodes go too, so running workspaces stop with it. Database high availability: Cloud SQL `ZONAL` has no standby, so a zone
+outage or a maintenance restart takes the CP down until the instance returns (backups and
+point-in-time recovery stay on). Zone-failure tolerance of every kind: the CP, its disk, the
+workspaces' volumes and nodes are all in one zone. `zonal_cluster` replaces the cluster, so
+decide before the first apply; moving an existing deployment is a rebuild.
+
+**Estimated cost**, from the unit prices measured above (asia-northeast1, JPY), running with
+no workspace, per day. The measured prices are before credits; the Small column assumes
+GKE's free tier (a monthly credit per billing account) is still unspent, so the management
+fee is 0. If it is used up by another zonal or Autopilot cluster, add ~¥377/day:
+
+| Item | Defaults | Small | Basis |
+|---|---:|---:|---|
+| System pool | 649 | ~162 | one e2-medium at half of an e2-standard-2 (list-price ratio) |
+| Cloud SQL vCPU + RAM | 663 | ~331 | `ZONAL` is half of `REGIONAL` |
+| GKE management fee | 377 | 0 | one zonal cluster per billing account is free; a second one pays |
+| Managed Prometheus samples | 58 | 0 | off |
+| Everything else | 393 | 393 | left unchanged: disks and SQL storage shrink a little, not counted |
+| **Total** | **~2,140** | **~890** | |
+
+That is about **¥27,000 per 30 days** against ¥64,000, and still roughly 1.7 times the ECS
+standing cost (~¥16,000 at the conversion above). Paused, the management fee goes too:
+about ¥220 per day. A workspace node on `n2-standard-4` is about **¥39/hour** (half of
+n2-standard-8, as the machine's core-hours and GiB-hours scale), and a workspace pod's
+limits must fit its ~4 vCPU / 16 GiB.
+
+**Not verified.** None of this was applied: it plans cleanly (`terraform validate` and the
+offline tests) but nothing was created. Whether kube-system plus the CP (requests 250m CPU,
+512 MiB) fit on one e2-medium (about 0.94 vCPU and 2.8 GiB allocatable, shared-core, burstable)
+is untested; if the CP stays `Pending`, use `e2-standard-2`, which costs about ¥160 a day more.
+The e2-medium and Cloud SQL figures are scaled from the measured ones, not billed. Shared-core
+Cloud SQL tiers (`db-g1-small`) are cheaper still and untried. The Network Intelligence Center
+charge (~¥23/day) has no variable here.

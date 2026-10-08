@@ -14,9 +14,10 @@ locals {
 
 resource "google_container_cluster" "main" {
   name     = "${var.name_prefix}-gke"
-  location = var.region
+  location = var.zonal_cluster ? var.node_zones[0] : var.region
 
-  node_locations = var.node_zones
+  # A zonal cluster's own zone is its only node location.
+  node_locations = var.zonal_cluster ? null : var.node_zones
 
   # No min_master_version: GKE creates the cluster at that version, matched as a prefix
   # against what the channel offers today, so a floor written there fails the create once
@@ -88,6 +89,12 @@ resource "google_container_cluster" "main" {
     }
   }
 
+  monitoring_config {
+    managed_prometheus {
+      enabled = var.managed_prometheus
+    }
+  }
+
   maintenance_policy {
     recurring_window {
       start_time = var.maintenance_window.start_time
@@ -115,6 +122,13 @@ resource "google_container_cluster" "main" {
     # Clusters created while min_master_version was set keep it in state; the provider
     # never reads it back and an unset value upgrades nothing, so a diff would be noise.
     ignore_changes = [min_master_version]
+
+    # Not a variable validation: one that reads another variable needs Terraform 1.9,
+    # and this module runs on 1.6.
+    precondition {
+      condition     = !var.zonal_cluster || length(var.node_zones) == 1
+      error_message = "zonal_cluster = true needs node_zones to name exactly one zone: that zone is the cluster's location."
+    }
 
     # P1 / ADR 0106 decision 5: the PersistentVolume deletion-protection finalizer that
     # Destroy relies on. Checked on every plan of an existing cluster and after a create.

@@ -17,3 +17,17 @@ artifact_registry_repository = {
   repository = "agent-fleet"
 }
 workspace_image = "europe-west1-docker.pkg.dev/example-project/agent-fleet/workspace:VERSION"
+
+# --- Small, low-cost profile (README, "Small profile") -----------------------------------
+# Well under half of the defaults' standing cost, for trials and a single team. It gives up
+# the control plane's and the database's high availability and survival of a zone failure.
+# Uncomment all of it, and replace node_zones above with one zone:
+#
+# node_zones             = ["europe-west1-b"]
+# zonal_cluster          = true            # replaces the cluster if changed later
+# system_machine_type    = "e2-medium"     # CP fit with kube-system not yet measured
+# system_node_count      = 1
+# workspace_machine_type = "n2-standard-4" # a workspace pod must still fit on one node
+# sql_availability_type  = "ZONAL"
+# sql_tier               = "db-custom-1-3840"
+# managed_prometheus     = false
