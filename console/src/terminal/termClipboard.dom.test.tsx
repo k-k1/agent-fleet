@@ -242,6 +242,29 @@ describe("terminal clipboard keys", () => {
     expect(term._core._customKeyEventHandler(copy)).toBe(false);
   });
 
+  for (const wait of [0, 250]) it(`a selection made while a keyboard copy's record timer is delayed is not absorbed as copied (Ctrl+C after ${wait} ms)`, async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText, readText: vi.fn() }, configurable: true });
+    setSetting("termCtrlCV", true);
+    const term: any = mount();
+    await new Promise<void>((r) => term.write("drag line", r));
+    term.select(0, 0, 4);
+    const h = term._core._customKeyEventHandler;
+    const real = globalThis.setTimeout;
+    const spy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: any, ms?: number, ...a: any[]) =>
+      real(fn, ms === 0 ? 100 : ms, ...a)) as any);
+    h(key("KeyC", { ctrlKey: true, shiftKey: true })); // keyboard copy of "drag"
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    await new Promise((r) => real(r, 10));
+    term.selectAll(); // a different selection while the record timer is pending
+    spy.mockRestore();
+    await new Promise((r) => real(r, wait)); // before, then after the record timer
+    const copy = key("KeyC", { ctrlKey: true });
+    expect(h(copy)).toBe(false);
+    expect(copy.defaultPrevented).toBe(true);
+    expect(writeText).toHaveBeenCalledTimes(2);
+  });
+
   it("a refused auto-copy leaves Ctrl+C free to retry the copy", async () => {
     const writeText = vi.fn().mockRejectedValue(new Error("denied"));
     Object.defineProperty(navigator, "clipboard", { value: { writeText, readText: vi.fn() }, configurable: true });

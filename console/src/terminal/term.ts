@@ -99,7 +99,7 @@ interface CopyPending {
   done: boolean; // settled: recorded, rejected as stale, or voided by a newer selection
 }
 const copyPending = new WeakMap<Terminal, CopyPending>();
-function copySelection(term: Terminal, opts: { notify?: boolean; clear?: boolean } = {}) {
+function copySelection(term: Terminal, opts: { notify?: boolean; clear?: boolean; fromMouseup?: boolean } = {}) {
   const sel = term && term.getSelection();
   if (!sel) return;
   // A new attempt voids any earlier success: it no longer says what the clipboard holds.
@@ -107,14 +107,24 @@ function copySelection(term: Terminal, opts: { notify?: boolean; clear?: boolean
   copyGen.set(term, gen);
   copiedEpoch.delete(term);
   // xterm confirms a mouse selection (fires onSelectionChange) from a document mouseup listener,
-  // after our term.element mouseup copy starts. The first selection event after the copy starts
+  // after our term.element mouseup copy starts. For a mouseup copy the first selection event after the copy starts
   // and before the timer below runs is taken as that confirmation and fixes the candidate epoch;
   // if none arrives the candidate is the epoch at copy start. Positions and text are never
   // compared: output scrolling the selection or redrawing its cells fires no event, while a
   // later selection event, even over the same cells, changes selEpoch and so voids the record.
   // Between the write succeeding and the record being written (timers can be throttled) the
   // key handler treats the selection as copied, so an interrupt is never lost to that gap.
-  const pend: CopyPending = { expect: true, candidate: undefined, start: selEpoch.get(term), succeeded: false, done: false };
+  // Only a mouseup copy has a confirmation still to come. A keyboard copy acts on a selection
+  // xterm already confirmed, so its candidate is fixed now; a later selection event (Cmd+A, a
+  // new drag) is then a different selection and voids the record instead of being absorbed.
+  const start = selEpoch.get(term);
+  const pend: CopyPending = {
+    expect: !!opts.fromMouseup,
+    candidate: opts.fromMouseup ? undefined : start,
+    start,
+    succeeded: false,
+    done: false,
+  };
   copyPending.set(term, pend);
   setTimeout(() => {
     pend.expect = false;
@@ -525,7 +535,7 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   // browser reserves Ctrl+Shift+C (DevTools) outside fullscreen.
   if (term.element) {
     term.element.addEventListener("mouseup", (ev) => {
-      if (ev.button === 0 && term.hasSelection()) copySelection(term);
+      if (ev.button === 0 && term.hasSelection()) copySelection(term, { fromMouseup: true });
     });
     term.element.addEventListener("contextmenu", (ev) => {
       ev.preventDefault();
