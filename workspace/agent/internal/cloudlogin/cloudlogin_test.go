@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -452,4 +454,64 @@ func TestLockOrCheckTimeoutIsATimeout(t *testing.T) {
 			}
 		}
 	})
+}
+
+// exitBeforeClose forces the race behind a spurious Submit failure: after the write lands it
+// holds Submit until the process has exited and cmd.Wait has closed the pipe, so Submit's
+// own Close always loses.
+type exitBeforeClose struct {
+	io.WriteCloser
+	exited <-chan struct{}
+}
+
+func (w exitBeforeClose) Write(p []byte) (int, error) {
+	n, err := w.WriteCloser.Write(p)
+	<-w.exited
+	return n, err
+}
+
+// A code the process read and acted on is delivered even when the process has exited, and
+// its pipe been closed, by the time Submit closes it.
+func TestSubmitSucceedsWhenTheProcessExitedBeforeTheClose(t *testing.T) {
+	s := newStore(t)
+	a, err := s.Start("k", "", "prod", Process{
+		Name: "test login", Path: "/bin/sh",
+		Args:    []string{"-c", `echo "Go to https://example.invalid/auth"; read code`},
+		Timeout: 10 * time.Second, Stdin: true,
+		Parse: func(o string) (string, string, error) {
+			if strings.Contains(o, "https://example.invalid/auth") {
+				return "https://example.invalid/auth", "", nil
+			}
+			return "", "", nil
+		},
+		Exited: func(err error) (bool, string) { return err == nil, "exited" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, a, PhaseAuthorize)
+	a.mu.Lock()
+	a.stdin = exitBeforeClose{WriteCloser: a.stdin, exited: a.done}
+	a.mu.Unlock()
+	if err := a.Submit("4/0AbCd"); err != nil {
+		t.Fatalf("submit after the process exited = %v", err)
+	}
+}
+
+// A write that fails means the code was not delivered; that stays an error.
+func TestSubmitKeepsAWriteError(t *testing.T) {
+	s := newStore(t)
+	a := s.Begin("k", "", "prod", nil)
+	a.authorize("https://example.invalid/auth", "")
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr.Close()
+	a.mu.Lock()
+	a.stdin = pw
+	a.mu.Unlock()
+	if err := a.Submit("x"); !errors.Is(err, syscall.EPIPE) {
+		t.Fatalf("submit to a pipe nobody reads = %v", err)
+	}
 }
