@@ -13,7 +13,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.tts_engine_unmanaged":
     "The engine on this deployment cannot be started from the Console; it is run externally.",
   "err.tts_wake_rate_limited":
-    "The engine has already been called. It takes about 70 seconds to arrive \u2014 wait a moment before trying again.",
+    "The engine has already been called. It takes about 70 seconds to arrive, so wait a moment before trying again.",
   "err.tts_text_too_long":
     "That is more text than one synthesis request may carry. Send it sentence by sentence.",
   "err.ip_not_allowed":
@@ -25,7 +25,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.sessions_running":
     "This working copy has running sessions. Switching would swap the files those sessions are using for another branch's and corrupt their work, so it's blocked here. Open the branch as a separate working copy instead.",
   "err.branch_in_use":
-    "Another working copy already has this branch checked out. git allows one working copy per branch — open that copy, or pick a different branch.",
+    "Another working copy already has this branch checked out. git allows one working copy per branch. Open that copy, or pick a different branch.",
   "err.sessions_running_delete":
     "This working copy has running sessions. Deleting would remove the working directory those sessions run in and leave them unable to continue, so stop those sessions first.",
   "err.worktree_dirty":
@@ -56,7 +56,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.branch_unmerged":
     "This branch is not fully merged, so it was not deleted. Merge or push it first.",
   "err.branch_not_in_head":
-    "This branch's commits are not in this working copy's current history. Deleting it on the remote too would leave them with nowhere to live — bring them in first.",
+    "This branch's commits are not in this working copy's current history. Deleting it on the remote too would leave them with nowhere to live, so bring them in first.",
   // ADR 0105: the /turn queue ops (remove / dismiss_discard / interrupt with discard_queue).
   "err.already_started": "It has already started, so it can't be taken back.",
   "err.not_queued": "It is no longer in the queue.",
@@ -65,9 +65,9 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.question_pending":
     "The agent is waiting for an answer to its question. Answer it from the question card before sending.",
   "err.plan_pending":
-    "The agent is waiting for a plan decision. Approve or reject it from the plan card (or in the terminal when there is none) before sending — typed text would be swallowed by the dialog and approve the plan.",
+    "The agent is waiting for a plan decision. Approve or reject it from the plan card (or in the terminal when there is none) before sending, because typed text would be swallowed by the dialog and approve the plan.",
   "err.permission_pending":
-    "The agent is waiting for a permission decision. Allow or deny it from the permission card (or in the terminal when there is none) before sending — typed text would be swallowed by the menu and allow it.",
+    "The agent is waiting for a permission decision. Allow or deny it from the permission card (or in the terminal when there is none) before sending, because typed text would be swallowed by the menu and allow it.",
   "err.interaction_pending":
     "The agent is showing an interactive prompt. Answer it from its card (or in the terminal when there is none) before sending.",
   "err.auth_expired":
@@ -105,7 +105,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.user_key_reserved": "This user key is a name the Control Plane uses for its own files, so it cannot be added to the default tenant.",
   "err.user_key_conflict": "This user key is already a tenant's directory, so it cannot be added to the default tenant. Ask an administrator.",
   "err.unknown_provider": "That sign-in method isn't enabled on this deployment.",
-  "err.self_removal": "You can't remove your last membership — it is the way back in. Ask another administrator.",
+  "err.self_removal": "You can't remove your last membership; it is the way back in. Ask another administrator.",
   "err.bad_share": "That share request is invalid.",
   "err.member_not_found": "That recipient isn't a member of this tenant. Pick one from the search results.",
   "err.share_self": "You can't share with yourself.",
@@ -171,19 +171,19 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.mcp_url_invalid": "That URL cannot be parsed.",
   "err.mcp_url_scheme": "The URL must be http or https.",
   "err.mcp_url_host": "The URL has no host.",
-  "err.mcp_url_credentials": "Do not embed credentials in the URL — use a header.",
+  "err.mcp_url_credentials": "Do not embed credentials in the URL. Use a header.",
   "err.mcp_http_no_command": "A remote server cannot carry a command, arguments or environment variables.",
   "err.mcp_env_name_invalid": "Invalid environment variable name.",
   "err.mcp_header_name_invalid": "Invalid header name.",
   "err.mcp_header_value_invalid": "A header value cannot contain a newline.",
   "err.mcp_kind_unknown": "Unknown agent kind.",
   "err.mcp_timeout_range": "The timeout must be between 1000 and 120000 ms.",
-  "err.mcp_headers_unreadable": "The stored headers cannot be decrypted — re-enter every header value.",
+  "err.mcp_headers_unreadable": "The stored headers cannot be decrypted. Re-enter every header value.",
   // Egress allowlist requests (docs/log/48 §9 / control-plane/egress_member.go)
   "err.egress_entry_invalid":
-    "An allowlist entry must be a host or a .suffix.example.com — no scheme, port or path.",
-  "err.egress_entry_too_broad": "A whole TLD (.com and the like) cannot be requested — name a domain.",
-  "err.egress_too_many_proposals": "Too many pending requests — ask an administrator to work through the queue.",
+    "An allowlist entry must be a host or a .suffix.example.com, with no scheme, port or path.",
+  "err.egress_entry_too_broad": "A whole TLD (.com and the like) cannot be requested. Name a domain.",
+  "err.egress_too_many_proposals": "Too many pending requests. Ask an administrator to work through the queue.",
   "err.mcp_tenant_bridge_off":
     "Tenant distribution is unavailable in this deployment (the CP public URL / token is unset).",
   "err.mcp_tenant_fetch_failed": "Could not fetch the tenant set.",
@@ -289,13 +289,13 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.engine_vae_unreadable": "The checkpoint's header could not be read, so whether it has a VAE is unknown.",
   "err.engine_no_source": "This row records no source page, so there is nothing to read a name or an example image from.",
   "err.engine_discover_unsupported": "This row is not an external ComfyUI row, so there is nothing to discover.",
-  "err.engine_discover_unreachable": "Could not reach that machine — it may be powered off or unreachable on the network.",
+  "err.engine_discover_unreachable": "Could not reach that machine. It may be powered off or unreachable on the network.",
   "err.gated_not_accepted": "That account has not accepted this repository's terms yet.",
   "err.civitai_login_required": "A Civitai token reached the task, and this deployment's account still cannot have this asset.",
   "err.civitai_gated_no_token": "That asset requires a logged-in account and this deployment has no Civitai token.",
   "err.bad_source": "The source is not a valid one.",
   "err.file_unknown": "The repository does not list that file.",
-  "err.no_checksum": "The source publishes no sha256 — take it in with an explicit url and sha256.",
+  "err.no_checksum": "The source publishes no sha256, so take it in with an explicit url and sha256.",
   "err.source_unreachable": "The source could not be reached.",
   "err.source_forbidden": "The source refused to be read from this deployment.",
   "err.source_error": "The source answered with something unexpected.",
@@ -314,13 +314,13 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.engine_comfy_managed": "The image engine is managed by this deployment's engine stack, which takes precedence over the panel.",
   "err.engine_comfy_unsupported": "This Control Plane has nowhere to keep a ComfyUI URL.",
   "err.engine_comfy_store_failed": "The ComfyUI settings could not be saved or read.",
-  "err.hf_token_unsupported": "This deployment's engine stack has nowhere to keep the token — update 60-engines.",
+  "err.hf_token_unsupported": "This deployment's engine stack has nowhere to keep the token. Update 60-engines.",
   "err.hf_token_empty": "The token is empty.",
   "err.hf_token_store_failed": "The token could not be saved.",
   "err.hf_token_put_failed": "The token could not be written into the deployment's secret.",
-  "err.civitai_token_unsupported": "This deployment's engine stack has nowhere to keep the token — update 60-engines.",
+  "err.civitai_token_unsupported": "This deployment's engine stack has nowhere to keep the token. Update 60-engines.",
   "err.engine_civitai_red_off": "This deployment does not offer the Civitai Red source.",
-  "err.engine_civitai_red_unavailable": "This deployment does not have Civitai Red — set AF_ENGINE_CIVITAI_RED on the Control Plane.",
+  "err.engine_civitai_red_unavailable": "This deployment does not have Civitai Red. Set AF_ENGINE_CIVITAI_RED on the Control Plane.",
   "err.civitai_token_empty": "The token is empty.",
   "err.civitai_token_store_failed": "The token could not be saved.",
   "err.civitai_token_put_failed": "The token could not be written into the deployment's secret.",
@@ -336,7 +336,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   // knob at all. Reusing bad_strength/bad_size's own text here would claim "out of range",
   // which is not what happened, hence the separate code.
   "err.bad_strength_family": "This checkpoint's family cannot vary how much of the input changes.",
-  "err.bad_size_family": "This checkpoint's family decides the output size from the input picture — there is no size to choose.",
+  "err.bad_size_family": "This checkpoint's family decides the output size from the input picture, so there is no size to choose.",
   "err.bad_count": "One job can sample at most 4 pictures together.",
   "err.bad_jobs": "The number of pictures is out of range.",
   "err.bad_seed_policy": "That is not a seed policy.",
