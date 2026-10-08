@@ -17,7 +17,7 @@ export const notifications: Record<keyof typeof jaNotifications, string> = {
   "notif.stop_after_turn.speech": "{name} stopped after finishing its turn, as asked.",
   "notif.spend_budget.title": "Stopped after its turn: budget reached",
   "notif.spend_budget.title_mid_turn": "Halted mid-turn: far past its budget",
-  "notif.spend_budget.body": "{name} — its estimated spend reached its budget of {cap}. Raise the budget to resume it",
+  "notif.spend_budget.body": "{name}: its estimated spend reached its budget of {cap}. Raise the budget to resume it",
   "notif.spend_budget.speech": "{name} stopped because it reached its spend budget.",
   "notif.carried.title": "Stopped with an unanswered {what}",
   "notif.carried.body": "{name} — answering from the card in the mirror resumes the session and delivers it",
