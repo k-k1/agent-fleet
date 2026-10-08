@@ -18,12 +18,12 @@ import { clearDirtyRegistryForTests, hasDirtyEditors } from "../editor/dirtyRegi
 const MARP = "---\nmarp: true\n---\n\n# Deck\n\nbody\n";
 const PLAIN_MD = "# Title\n\nalpha\nbeta\ngamma\n";
 
-let served: { content: string; editable: boolean } = { content: PLAIN_MD, editable: true };
+let served: { content: string; editable: boolean; nestedRepo?: boolean } = { content: PLAIN_MD, editable: true };
 
 vi.mock("../../core/api/client.ts", () => ({
   api: vi.fn(async (path: string) => {
     if (path.startsWith("api/fs/linemarks")) return { error: { message: "none" } };
-    const { content, editable } = served;
+    const { content, editable, nestedRepo } = served;
     return {
       path: "repos/x/doc.md",
       size: content.length,
@@ -32,6 +32,7 @@ vi.mock("../../core/api/client.ts", () => ({
       editable,
       editabilityReason: editable ? null : "read_only_root",
       content,
+      ...(nestedRepo ? { nestedRepo } : {}),
       ...(editable ? { revision: revisionOf(content) } : {}),
     };
   }),
@@ -343,11 +344,29 @@ describe("reuse of the existing rendering assets", () => {
     expect(lastPreview()).toMatchObject({
       source: PLAIN_MD,
       basePath: "repos/x/doc.md",
+      // `#N` is read against the working copy the file lives in (#1900).
+      repo: "x",
     });
     // The link handlers are what make relative links and mermaid-bearing docs
     // behave the same as in the read-only pane.
     expect(typeof lastPreview()!.onOpenFile).toBe("function");
     expect(typeof lastPreview()!.onOpenDir).toBe("function");
+  });
+
+  it("turns ticket links on from the file's repository, and off for a nested Git root", async () => {
+    const { useReposStore } = await import("../repos/store.ts");
+    useReposStore.setState({ repos: [{ name: "x", provider: "github", remote: "github.com", remotePath: "octo/x" }] });
+    await render({});
+    expect(lastPreview()).toMatchObject({ repo: "x", workItemRefs: true });
+
+    // The Agent saw a .git below repos/x on the way to the file: its origin is not x's.
+    served = { content: PLAIN_MD, editable: true, nestedRepo: true };
+    previewProps.length = 0;
+    await act(async () => root?.unmount());
+    root = createRoot(host);
+    await render({});
+    expect(lastPreview()).toMatchObject({ workItemRefs: false });
+    useReposStore.setState({ repos: [] });
   });
 });
 
