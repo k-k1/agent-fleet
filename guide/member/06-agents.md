@@ -1,6 +1,6 @@
 ---
 audience: "anyone choosing and connecting an agent"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 06. Agents — connecting one, and choosing between them
@@ -375,3 +375,55 @@ Instructions come in three layers, and this setting is the **middle** one.
 - There is a length limit: this text rides along in **every session's context, every time**, so
   shorter works better.
 - **Don't put secrets (API keys, tokens) here.** It is plain text that several agents read.
+
+## Bringing your personal Claude Code setup
+
+Two settings cover part of this: **⚙Settings → "Agent instructions"** is your global `CLAUDE.md`
+(see above) and **⚙Settings → "MCP servers"** covers MCP. Personal **hooks, skills and subagents**
+have no settings screen. In a Workspace they are plain files in Claude Code's configuration
+folder, `/var/lib/af/claude` (run `echo $CLAUDE_CONFIG_DIR` in a shell to confirm the path on your
+deployment). It is what `~/.claude` is on your own machine.
+
+| What | Where | Shared with the team? |
+|------|-------|-----------------------|
+| Hooks, skills and subagents the team should have | `.claude/` in the repository, committed | Yes |
+| Your own skills | `<configuration folder>/skills/<name>/SKILL.md` | No |
+| Your own subagents | `<configuration folder>/agents/<name>.md` | No |
+| Your own hooks | the `hooks` key of `<configuration folder>/settings.json` | No |
+
+- **It works, but it is a Claude Code feature you drive by hand.** Agent Fleet has no screen for
+  these files and does not check them. Checked on Claude Code 2.1.293 with a throwaway
+  configuration folder: a `SessionStart` hook ran, and the skill and the subagent showed up in the
+  session's list. A skill in `skills/` also appears in the session view's skill picker.
+  Try yours in a real session before relying on it. Claude reads these files **when a session
+  starts**, so a change applies to sessions you start afterwards.
+- **It survives.** The folder is on its own storage: Stop / Start, **Recreate** (which only deletes
+  `~/repos`) and a home clean-up do not touch it.
+- **Edit it from a shell or Terminal (CLI) session.** The Console's file browser hides this folder
+  (it also holds your login). Don't copy `.credentials.json` or `.claude.json` anywhere.
+  **Keep secrets out of `settings.json`, your hook commands and the committed `.claude/`**: no API
+  keys or tokens in `env` or in a command line. Sign-ins and credentials belong in
+  **⚙Settings → Connections**.
+- **Don't edit Fleet's own hook entries in `settings.json`.** The Agent adds hooks that feed the
+  Console (running / waiting for your answer, a pending question or plan, a permission prompt,
+  forwarded notifications). They are the entries whose command runs `session-status` or
+  `session-push-notification`. The RTK entry (`rtk hook claude`) is switched by
+  **⚙Settings → "Agents" → Claude → RTK**, not by editing. Without Fleet's entries the Console
+  stops showing state for that session. The Agent re-adds them when it starts.
+- **Your own hooks and other keys in `settings.json` are kept.** The Agent recognises its entries
+  by their command, so a hook of yours on the same tool matcher (for example `Bash`) stays, also
+  when you flip RTK on and off. Known limit: a command of yours that itself contains the word
+  `session-status` is mistaken for Fleet's, so don't use that word in your own hook commands.
+- **Write hooks for the Workspace, not for your laptop.** Depend only on what the image has
+  (bash, jq, node, python) or on what you installed under `~/.local`. A path into your own
+  machine does not exist here, and paths such as `/usr`, `/opt` and `/tmp` revert to the image, so keep scripts in your home.
+- **A hook that starts `claude -p` needs `env -u AF_SESSION_NAME`.** The child inherits the
+  session's identity and the same `settings.json`, with Fleet's status hooks. Those hooks then
+  report the child's activity as the parent session's, which can scramble its status. Start it as
+  `env -u AF_SESSION_NAME claude -p …`. The first half of this is read from the Agent's code; run
+  your own hook once and watch that the session's status stays right.
+
+The workspace policy file that tells **agents** not to read or touch `~/.claude` and the other
+agent state is written for the agents themselves. It does not forbid you from the above. You can
+ask an agent to add or edit your personal skills, subagents and hooks; credentials and Fleet's own
+hook entries stay off limits to it.
