@@ -56,6 +56,9 @@ func handleSSMInstances(w http.ResponseWriter, r *http.Request) {
 	cmd := exec.CommandContext(ctx, "aws", "ssm", "describe-instance-information",
 		"--filters", "Key=PingStatus,Values=Online", "--output", "json", "--no-cli-pager")
 	cmd.Env = append(os.Environ(), "AWS_CONFIG_FILE="+cfg, "AWS_PROFILE="+req.Profile)
+	if meta.RoleARN != "" {
+		cmd.Env = sessionx.ChainIsolatedEnv(os.Environ(), cfg, req.Profile)
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		msg := strings.TrimSpace(string(out))

@@ -706,6 +706,8 @@ describe("SsmTab assume-role profile", () => {
     await type(input("arn:aws:iam::123456789012:role/deploy"), "arn:aws:iam::210987654321:role/deploy");
     await type(input("3600"), "60");
     expect(save().disabled).toBe(true);
+    await type(input("3600"), "7200");
+    expect(save().disabled).toBe(true);
     await type(input("3600"), "3600");
     expect(save().disabled).toBe(false);
     await click(save());

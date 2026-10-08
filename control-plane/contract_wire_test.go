@@ -97,9 +97,10 @@ func cpContractFamilies() []contractFamily {
 			binding: ssmProfileBinding,
 			tsPath:  "../console/src/lib/settingsBundle.ts",
 			tsName:  "SsmProfileEntry",
-			tsKeys:  keySet("label", "startUrl", "ssoRegion", "accountId", "roleName", "region", "kind", "source", "roleArn", "externalId", "sessionName", "durationSeconds"),
+			tsKeys:  keySet("label", "startUrl", "ssoRegion", "accountId", "roleName", "region", "kind", "source", "sourceKey", "roleArn", "externalId", "sessionName", "durationSeconds"),
 			tsOnly: map[string]string{
-				"source": "Intended: a bundle names an assume-role profile's source by its label, because the destination assigns new ids (the Console turns it into sourceProfileId on import).",
+				"sourceKey": "Intended: the source's sign-in (portal, region, account, role) so an import joins the chain to the same sign-in, not just the same label.",
+				"source":    "Intended: a bundle names an assume-role profile's source by its label, because the destination assigns new ids (the Console turns it into sourceProfileId on import).",
 			},
 			goOnly: map[string]string{
 				"sourceProfileId": "Intended exemption: an id does not survive a bundle, so the entry carries the source's label as `source` instead.",

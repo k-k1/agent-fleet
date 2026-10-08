@@ -409,7 +409,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "ssm.f_external_id": "External ID",
   "ssm.f_session_name": "Session name",
   "ssm.f_duration": "Duration (seconds)",
-  "ssm.f_duration_hint": "Optional. 900 to 43200, within the role's maximum session duration.",
+  "ssm.f_duration_hint": "Optional. 900 to 3600: AWS limits a role assumed from another sign-in (role chaining) to one hour.",
   "ssm.f_optional": "Optional.",
   "ssm.meta_source": "Source profile",
   "ssm.source_missing": "(missing)",

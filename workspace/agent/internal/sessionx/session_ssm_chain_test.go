@@ -2,6 +2,7 @@ package sessionx
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -90,5 +91,44 @@ func TestBuildSSMProgramLogsInToTheSourceOfAChain(t *testing.T) {
 	plain, err := buildSSMProgram("plain", session.SSMMeta{Target: "i-0123456789abcdef0", Profile: "p1"}, false)
 	if err != nil || strings.Count(plain, "export AWS_PROFILE") != 1 {
 		t.Fatalf("plain program:\n%s %v", plain, err)
+	}
+}
+
+// A same-named section in ~/.aws/credentials, or credentials in the environment, would
+// override the role and source of the isolated config (measured with aws-cli 2.36.46), so a
+// chained SSM session and its discovery resolve from the isolated config alone.
+func TestChainIsolationDropsOtherCredentialChannels(t *testing.T) {
+	dirty := []string{"PATH=/bin", "AWS_ACCESS_KEY_ID=AKIA", "AWS_SESSION_TOKEN=t", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI=/x",
+		"AWS_ENDPOINT_URL_STS=http://evil", "AWS_SHARED_CREDENTIALS_FILE=/home/dev/.aws/credentials", "AWS_PROFILE=other", "AWS_REGION=eu-west-1"}
+	got := map[string]string{}
+	for _, kv := range ChainIsolatedEnv(dirty, "/cfg", "deploy") {
+		k, v, _ := strings.Cut(kv, "=")
+		got[k] = v
+	}
+	for _, k := range []string{"AWS_ACCESS_KEY_ID", "AWS_SESSION_TOKEN", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_ENDPOINT_URL_STS"} {
+		if _, ok := got[k]; ok {
+			t.Errorf("%s survived", k)
+		}
+	}
+	if got["AWS_SHARED_CREDENTIALS_FILE"] != os.DevNull || got["AWS_CONFIG_FILE"] != "/cfg" || got["AWS_PROFILE"] != "deploy" || got["AWS_REGION"] != "eu-west-1" {
+		t.Errorf("env = %v", got)
+	}
+
+	// The pane's program does the same, before the isolated config is named.
+	script := chainIsolationShell() + `echo "key=${AWS_ACCESS_KEY_ID-unset} ep=${AWS_ENDPOINT_URL_STS-unset} creds=$AWS_SHARED_CREDENTIALS_FILE"`
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Env = dirty
+	out, err := cmd.CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "key=unset ep=unset creds=/dev/null" {
+		t.Fatalf("shell isolation: %q %v", out, err)
+	}
+	t.Setenv("HOME", t.TempDir())
+	p, err := buildSSMProgram("iso", chainMeta(), false)
+	if err != nil || strings.Index(p, chainIsolationShell()) < 0 || strings.Index(p, chainIsolationShell()) > strings.Index(p, "export AWS_CONFIG_FILE=") {
+		t.Fatalf("program does not isolate before naming the config:\n%s %v", p, err)
+	}
+	plain, _ := buildSSMProgram("iso2", session.SSMMeta{Profile: "p", Target: "i-0123456789abcdef0", StartURL: "https://x.awsapps.com/start", SSORegion: "us-east-1"}, false)
+	if strings.Contains(plain, "AWS_SHARED_CREDENTIALS_FILE") {
+		t.Fatalf("an sso session's program changed:\n%s", plain)
 	}
 }

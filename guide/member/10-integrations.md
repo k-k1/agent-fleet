@@ -303,7 +303,7 @@ Settings > AWS profiles/SSM:
 |---|---|
 | Source profile (`sourceProfileId`) | The SSO profile whose sign-in assumes the role. Required. It must be an SSO profile, never another assume-role profile. |
 | Role ARN (`roleArn`) | `arn:aws:iam::<account>:role/<name>`. Required. The profile's account is taken from it. |
-| External ID (`externalId`), Session name (`sessionName`), Duration (`durationSeconds`, 900-43200) | Optional assume-role parameters. |
+| External ID (`externalId`), Session name (`sessionName`), Duration (`durationSeconds`, 900-3600: AWS limits a chained role to one hour) | Optional assume-role parameters. |
 | Default region (`region`) | Optional. Falls back to the source profile's region. |
 
 Nothing secret is stored or exported. The profile is written into the managed block of `~/.aws/config` as

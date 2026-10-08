@@ -56,6 +56,9 @@ type ExecOptions struct {
 	// ChainBroken is SyncResult.ChainBroken: role-chaining Settings profiles held back
 	// because their source is not exported, so the run can say why.
 	ChainBroken map[string]string
+	// Exported is SyncResult.Exported: the profiles this sync wrote to the managed block. A
+	// Settings role chain runs only when it and its source are both in it.
+	Exported []string
 
 	Stderr      io.Writer
 	Interactive bool // stdin and stderr are terminals
@@ -376,7 +379,7 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	if chained {
 		// A Settings role-chaining profile is known by its role, so the caller need not
 		// repeat the account; one that is given must still match.
-		if err := checkChainedIdentity(sp, keys, origin, &o); err != nil {
+		if err := checkChainedIdentity(env, sp, keys, origin, &o); err != nil {
 			return "", nil, nil, err
 		}
 	} else if err := checkIdentity(sso, o); err != nil {

@@ -1103,7 +1103,7 @@ func (a workspaceAPI) ssmInstances(w http.ResponseWriter, r *http.Request, res *
 		return
 	}
 	req := map[string]any{
-		"Profile": ssmProfileName(p.Label), "Region": p.Region, "StartURL": src.StartURL,
+		"Profile": ssmProfileName(p.Label), "Region": ssmProfileRegion(p, src), "StartURL": src.StartURL,
 		"SSORegion": src.SSORegion, "AccountID": src.AccountID, "RoleName": src.RoleName,
 	}
 	ssmChainJSON(p, src, req, [5]string{"SourceProfile", "RoleARN", "ExternalID", "RoleSessionName", "DurationSeconds"})

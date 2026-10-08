@@ -406,7 +406,7 @@ export const tools = {
   "ssm.f_external_id": "外部 ID",
   "ssm.f_session_name": "セッション名",
   "ssm.f_duration": "有効期間（秒）",
-  "ssm.f_duration_hint": "任意。900〜43200。ロールの最大セッション時間の範囲内。",
+  "ssm.f_duration_hint": "任意。900〜3600。別のサインインから引き受けるロール（ロールチェーン）は AWS の制限で 1 時間までです。",
   "ssm.f_optional": "任意。",
   "ssm.meta_source": "元のプロファイル",
   "ssm.source_missing": "（見つかりません）",

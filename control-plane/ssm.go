@@ -214,8 +214,8 @@ func validateProfile(mv store.MembershipView, in ssmProfileDTO) (store.SSMProfil
 	if p.SessionName != "" && !ssmSessionNameRe.MatchString(p.SessionName) {
 		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_session_name", "sessionName must be 2-64 characters of letters, digits and +=,.@_-"}
 	}
-	if in.DurationSeconds != 0 && (in.DurationSeconds < 900 || in.DurationSeconds > 43200) {
-		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_duration", "durationSeconds must be between 900 and 43200 (the role's maximum session duration may be lower)"}
+	if in.DurationSeconds != 0 && (in.DurationSeconds < 900 || in.DurationSeconds > 3600) {
+		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_duration", "durationSeconds must be between 900 and 3600 (a role assumed from an Identity Center sign-in is role chaining, which AWS limits to one hour)"}
 	}
 	p.DurationSeconds = in.DurationSeconds
 	if p.Region != "" && !ssmRegionOnlyRe.MatchString(p.Region) {
@@ -478,6 +478,17 @@ func ssmLoginSource(ctx context.Context, st store.SSMStore, p store.SSMProfile) 
 	return src, nil
 }
 
+// ssmProfileRegion is the region of p when no host overrides it: its own, and for an
+// assume-role profile the source's, then (at the Agent, as for an sso profile) the source's SSO
+// region. The managed block of ~/.aws/config resolves it the same way (awsx chainRegion), so a
+// chain reaches the same region from `aws`, an SDK and an SSM session.
+func ssmProfileRegion(p, src store.SSMProfile) string {
+	if p.Region != "" || ssmKindOf(p) != store.SSMKindAssumeRole {
+		return p.Region
+	}
+	return src.Region
+}
+
 // ssmChainJSON adds the assume-role coordinates of p to a request body bound for the Agent.
 // The sso_* / StartURL keys of that body describe the SOURCE profile (ssmLoginSource); these
 // say what to assume from it. No-op for an sso profile.
@@ -542,7 +553,7 @@ func (a workspaceAPI) rewriteSSMCreate(ctx context.Context, res *resolved, r *ht
 	// The instance region overrides the profile's default when set.
 	region := h.Region
 	if region == "" {
-		region = p.Region
+		region = ssmProfileRegion(p, src)
 	}
 	// Default session-name base = the host alias (e.g. "mng@g3prod-mon01"). The Agent
 	// appends " @MMDD-HHMM" when the client sent no title. Only when another registered

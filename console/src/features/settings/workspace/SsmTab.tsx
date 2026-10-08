@@ -11,6 +11,7 @@ import { Field, Meta } from "../parts/mcpForm.tsx";
 import { RegionSelect } from "../parts/RegionSelect.tsx";
 import { ProfileLoginModal, type LoginProfile } from "../../awslogin/ProfileLoginModal.tsx";
 import { useProfileLogout } from "../../awslogin/useProfileLogout.ts";
+import { validExternalId, validRoleArn, validSessionName } from "../../../lib/awsRoleChain.ts";
 import { useAwsLoginStore } from "../../awslogin/store.ts";
 
 // SsmTab manages the member's own AWS profiles and SSM hosts (docs/log/p3-ssm-session.md)
@@ -184,7 +185,6 @@ const emptyProfile: Record<string, string> = {
 // the login of another Settings profile. Field names are the CP's (ssmProfileDTO).
 const ASSUME_ROLE = "assume_role";
 const isChained = (p: any): boolean => p?.kind === ASSUME_ROLE;
-const ROLE_ARN_RE = /^arn:aws[a-z-]*:iam::\d{12}:role\/[A-Za-z0-9+=,.@_/-]{1,512}$/;
 
 // awsProfileName mirrors the CP's ssmProfileName (control-plane/ssm.go): the ~/.aws profile
 // name a label becomes. The workspace keys a profile's sign-in by it (sso-session af-<name>),
@@ -267,9 +267,9 @@ function ProfileSection({
   const setVal = (k: string) => (v: string) => setF((p) => ({ ...p, [k]: v }));
   const chainedForm = f.kind === ASSUME_ROLE;
   const duration = f.durationSeconds.trim();
-  const durationOk = duration === "" || (/^\d+$/.test(duration) && Number(duration) >= 900 && Number(duration) <= 43200);
+  const durationOk = duration === "" || (/^\d+$/.test(duration) && Number(duration) >= 900 && Number(duration) <= 3600);
   const valid = chainedForm
-    ? f.label.trim() && f.sourceProfileId && ROLE_ARN_RE.test(f.roleArn.trim()) && durationOk
+    ? f.label.trim() && f.sourceProfileId && validRoleArn(f.roleArn.trim()) && validExternalId(f.externalId.trim()) && validSessionName(f.sessionName.trim()) && durationOk
     : f.label.trim() && /^https:\/\//.test(f.startUrl.trim()) && f.ssoRegion.trim();
   // The profiles an assume-role profile can start from: SSO profiles, never another chained one.
   const sources = (profiles || []).filter((p) => !isChained(p) && p.id !== editing?.id);

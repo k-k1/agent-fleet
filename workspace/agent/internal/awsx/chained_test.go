@@ -174,7 +174,7 @@ func TestApplyHoldsBackAChainADEFAULTKeyBreaks(t *testing.T) {
 // chainOpts is a run of the chained profile: nothing at a terminal, the way an agent runs it.
 func chainOpts(stderr *bytes.Buffer) ExecOptions {
 	return ExecOptions{Profile: "deploy", Login: "never", Argv: []string{"true"}, Quiet: true, Stderr: stderr,
-		Settings: map[string]Profile{"src": chainSrc(), "deploy": chainProf()}}
+		Settings: map[string]Profile{"src": chainSrc(), "deploy": chainProf()}, Exported: []string{"src", "deploy"}}
 }
 
 func applyChain(t *testing.T) {
@@ -215,15 +215,34 @@ func TestPlanExecRunsAChainedSettingsProfileWithoutAnAccountFlag(t *testing.T) {
 func TestPlanExecRefusesAChainedNameTheMemberRedefined(t *testing.T) {
 	bin, state := chainHome(t)
 	os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600)
-	// The member's own definition of the name wins over Settings (it is not exported): same
-	// name, another role.
-	mine := "[profile deploy]\nrole_arn = arn:aws:iam::999999999999:role/other\nsource_profile = src\n"
+	// The member's own definitions win over Settings (Apply then exports neither): the same
+	// role and source_profile as Settings, but a [src] holding long-lived keys.
+	mine := "[profile deploy]\nrole_arn = " + chainRoleARN + "\nsource_profile = src\n"
 	os.WriteFile(ConfigPath(), []byte(mine), 0o600)
-	applyChain(t)
+	os.WriteFile(filepath.Join(filepath.Dir(ConfigPath()), "credentials"), []byte("[src]\naws_access_key_id = AKIAMINE\naws_secret_access_key = x\n"), 0o600)
+	res, err := Apply(ConfigPath(), []Profile{chainSrc(), chainProf()})
+	if err != nil {
+		t.Fatal(err)
+	}
 	var stderr bytes.Buffer
-	_, _, _, err := PlanExec(bin, workloadEnv, chainOpts(&stderr))
-	if err == nil || !strings.Contains(err.Error(), "rename one of them") {
+	o := chainOpts(&stderr)
+	o.Exported = res.Exported // what the sync really exported: nothing of the chain
+	if _, _, _, err := PlanExec(bin, workloadEnv, o); err == nil || !strings.Contains(err.Error(), "managed block") {
+		t.Fatalf("err = %v, want a refusal: the member's own chain is not a Settings chain", err)
+	}
+	// Even claiming both exported, the files are checked: keys under the source's name.
+	o.Exported = []string{"src", "deploy"}
+	if _, _, _, err := PlanExec(bin, workloadEnv, o); err == nil || !strings.Contains(err.Error(), "not the Settings profile") {
 		t.Fatalf("err = %v, want a refusal naming the clash", err)
+	}
+	// A source swapped for another SSO profile under the same name is refused too.
+	chainHome(t)
+	applyChain(t)
+	b, _ := os.ReadFile(ConfigPath())
+	swapped := strings.Replace(string(b), "sso_account_id = 123456789012", "sso_account_id = 999999999999", 1)
+	os.WriteFile(ConfigPath(), []byte(swapped), 0o600)
+	if _, _, _, err := PlanExec(bin, workloadEnv, chainOpts(&stderr)); err == nil || !strings.Contains(err.Error(), "not defined as Settings defines it") {
+		t.Fatalf("a swapped source: %v", err)
 	}
 }
 

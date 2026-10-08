@@ -82,7 +82,7 @@ func runAWSExec(args []string) {
 				"only profiles run with --account are allowed\n", serr)
 		}
 	}
-	o.Settings, o.Conflicts, o.DefaultClash, o.ChainBroken = res.Settings, res.Conflicts, res.DefaultClash, res.ChainBroken
+	o.Settings, o.Conflicts, o.DefaultClash, o.ChainBroken, o.Exported = res.Settings, res.Conflicts, res.DefaultClash, res.ChainBroken, res.Exported
 	if exe, err := os.Executable(); err == nil {
 		o.CredentialHelper = exe + " aws-env-credentials"
 	}

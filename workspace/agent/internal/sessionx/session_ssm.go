@@ -194,7 +194,7 @@ func ValidateAssumeRole(s session.SSMMeta) error {
 	if s.RoleSessionName != "" && !ssmSessionNameRe.MatchString(s.RoleSessionName) {
 		return errors.New("ssm meta: invalid role session name")
 	}
-	if s.DurationSeconds != 0 && (s.DurationSeconds < 900 || s.DurationSeconds > 43200) {
+	if s.DurationSeconds != 0 && (s.DurationSeconds < 900 || s.DurationSeconds > 3600) {
 		return errors.New("ssm meta: invalid duration")
 	}
 	if s.Region != "" && !ssmRegionRe.MatchString(s.Region) {
@@ -310,6 +310,41 @@ func RenderSSMConfig(s session.SSMMeta) (string, error) {
 	return b.String(), nil
 }
 
+// chainScrubVars are the environment variables through which an AWS client finds
+// credentials, a role or an endpoint other than the isolated config's: they take precedence
+// over AWS_PROFILE, so a role chain run beside them could be answered by the wrong identity.
+var chainScrubVars = []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_SECURITY_TOKEN",
+	"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_CONTAINER_CREDENTIALS_FULL_URI", "AWS_CONTAINER_AUTHORIZATION_TOKEN",
+	"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", "AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_ROLE_ARN", "AWS_ROLE_SESSION_NAME",
+	"AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "AWS_PROFILE", "AWS_DEFAULT_PROFILE"}
+
+// ChainIsolatedEnv is env for an aws call that must resolve a role chain from the isolated
+// config at cfg and nothing else: the shared credentials file is switched off (a same-named
+// section there overrides the config's role and source), every other credential channel and
+// endpoint override is dropped, and the profile is set.
+func ChainIsolatedEnv(env []string, cfg, profile string) []string {
+	out := make([]string, 0, len(env)+4)
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		drop := strings.HasPrefix(k, "AWS_ENDPOINT_URL") || k == "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS"
+		for _, v := range chainScrubVars {
+			drop = drop || k == v
+		}
+		if !drop {
+			out = append(out, kv)
+		}
+	}
+	return append(out, "AWS_CONFIG_FILE="+cfg, "AWS_SHARED_CREDENTIALS_FILE="+os.DevNull, "AWS_PROFILE="+profile,
+		"AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true")
+}
+
+// chainIsolationShell is ChainIsolatedEnv for the pane's shell.
+func chainIsolationShell() string {
+	return "unset " + strings.Join(chainScrubVars, " ") + "; " +
+		`for v in $(env | sed -n 's/^\(AWS_ENDPOINT_URL[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done; ` +
+		"export AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true; "
+}
+
 // renderChained is RenderSSMConfig for a profile that assumes a role: the source sso profile
 // (named s.SourceProfile, with the sso-session "af-<source>" that the exported ~/.aws/config
 // uses too, so one cached login serves both) followed by the assume-role profile. The SSO
@@ -376,6 +411,9 @@ func buildSSMProgram(name string, s session.SSMMeta, force bool) (string, error)
 		cfg := SsmConfigPath(name)
 		if err := WriteSSMConfig(cfg, s); err != nil {
 			return "", err
+		}
+		if s.RoleARN != "" {
+			b.WriteString(chainIsolationShell())
 		}
 		fmt.Fprintf(&b, "export AWS_CONFIG_FILE=%s; ", session.ShellQuote(cfg))
 	}

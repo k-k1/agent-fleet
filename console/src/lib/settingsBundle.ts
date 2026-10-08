@@ -25,6 +25,8 @@
 //      in is not worth the risk.
 
 export const BUNDLE_KIND = "agent-fleet-settings";
+import { validDuration, validExternalId, validRoleArn, validSessionName } from "./awsRoleChain.ts";
+
 export const BUNDLE_VERSION = 1;
 
 export type SectionKey = "prefs" | "ssm" | "gcpProfiles" | "instructions";
@@ -42,6 +44,9 @@ export interface SsmProfileEntry {
    *  assumes from, not its id (the destination assigns new ids). */
   kind?: "assume_role";
   source?: string;
+  /** The source's SSO coordinates (ssoKey), so an import joins the chain to the same sign-in
+   *  and never to another profile that happens to share the label. */
+  sourceKey?: string;
   roleArn?: string;
   externalId?: string;
   sessionName?: string;
@@ -116,9 +121,18 @@ export function exportablePrefs(
 /** Convert the CP DTOs (id references) into the bundle shape (display-name references). A
  *  host whose profile cannot be resolved keeps an empty profile, so the import side skips it
  *  with a reason. */
+/** Canonical identity of an SSO profile's sign-in: portal, SSO region, account and role. */
+export function ssoKey(p: any): string {
+  return [str(p?.startUrl).replace(/\/+$/, ""), str(p?.ssoRegion), str(p?.accountId), str(p?.roleName)].join("|");
+}
+
 export function toSsmSection(profiles: any[], hosts: any[]): SsmSection {
   const labelOf = new Map<string, string>();
-  for (const p of profiles || []) labelOf.set(String(p?.id ?? ""), str(p?.label));
+  const byId = new Map<string, any>();
+  for (const p of profiles || []) {
+    labelOf.set(String(p?.id ?? ""), str(p?.label));
+    byId.set(String(p?.id ?? ""), p);
+  }
   return {
     profiles: (profiles || []).map((p) =>
       p?.kind === "assume_role"
@@ -131,6 +145,7 @@ export function toSsmSection(profiles: any[], hosts: any[]): SsmSection {
             roleName: "",
             region: str(p?.region),
             source: labelOf.get(String(p?.sourceProfileId ?? "")) ?? "",
+            sourceKey: byId.has(String(p?.sourceProfileId ?? "")) ? ssoKey(byId.get(String(p.sourceProfileId))) : "",
             roleArn: str(p?.roleArn),
             externalId: str(p?.externalId),
             sessionName: str(p?.sessionName),
@@ -353,7 +368,12 @@ export function planSsmImport(
   // Names of the sso profiles a chained entry may name as its source: existing ones, plus the
   // ones this plan creates. Chained entries are handled after the sso ones so that order in the
   // file does not matter.
-  const ssoNames = new Set((existingProfiles || []).filter((p) => p?.kind !== "assume_role").map((p) => key(str(p?.label))));
+  // exact label -> sign-in of the sso profiles that exist or will exist after this import. A
+  // chain joins a source only by exact label AND the same sign-in: AWS profile names are
+  // case-sensitive, and a label that merely folds to the same lower-case string may be another
+  // account (the profile list itself folds case, so such an sso entry is "exists", not created).
+  const ssoByLabel = new Map<string, string>();
+  for (const p of existingProfiles || []) if (p?.kind !== "assume_role") ssoByLabel.set(str(p?.label), ssoKey(p));
   const entries = (section.profiles || []).map((raw) => ({
     raw,
     chained: raw?.kind === "assume_role",
@@ -370,6 +390,7 @@ export function planSsmImport(
     if (chained) {
       p.kind = "assume_role";
       p.source = str(raw?.source);
+      p.sourceKey = str(raw?.sourceKey);
       p.roleArn = str(raw?.roleArn);
       p.externalId = str(raw?.externalId);
       p.sessionName = str(raw?.sessionName);
@@ -379,7 +400,7 @@ export function planSsmImport(
     // Same minimum condition as CP's validateProfile. Without dropping these here the user
     // just sees a row of 400s and cannot tell how many entries were imported.
     const valid = chained
-      ? !!p.label && /^arn:aws[a-z-]*:iam::\d{12}:role\/\S+$/.test(p.roleArn || "") && ssoNames.has(key(p.source || ""))
+      ? !!p.label && validRoleArn(p.roleArn || "") && validExternalId(p.externalId || "") && validSessionName(p.sessionName || "") && (p.durationSeconds === undefined || validDuration(p.durationSeconds)) && !!p.sourceKey && ssoByLabel.get(p.source || "") === p.sourceKey
       : !!p.label && /^https:\/\/\S+$/.test(p.startUrl) && !!p.ssoRegion;
     if (!valid) {
       plan.skippedProfiles.push({ label: p.label, reason: "invalid" });
@@ -390,7 +411,7 @@ export function planSsmImport(
       continue;
     }
     willHave.add(key(p.label));
-    if (!chained) ssoNames.add(key(p.label));
+    if (!chained) ssoByLabel.set(p.label, ssoKey(p));
     plan.profiles.push(p);
   }
   const seenHost = new Set(haveHost);

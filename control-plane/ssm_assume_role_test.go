@@ -120,3 +120,21 @@ func TestAWSProfilesWireChained(t *testing.T) {
 		t.Errorf("wire =\n%s\nwant\n%s\n(a profile whose source is gone or is itself chained must not be exported)", b, want)
 	}
 }
+
+// The region of a chain is the host's, else its own, else its source's: the same order the
+// managed block uses, so `aws`, an SDK and an SSM session reach the same region.
+func TestSSMProfileRegionOfAChain(t *testing.T) {
+	src := store.SSMProfile{Kind: "sso", SSORegion: "us-east-1", Region: "eu-west-1"}
+	chain := store.SSMProfile{Kind: "assume_role"}
+	if got := ssmProfileRegion(chain, src); got != "eu-west-1" {
+		t.Errorf("chain without a region = %q, want the source's eu-west-1", got)
+	}
+	chain.Region = "ap-northeast-1"
+	if got := ssmProfileRegion(chain, src); got != "ap-northeast-1" {
+		t.Errorf("chain with a region = %q", got)
+	}
+	// An sso profile never borrows another's region.
+	if got := ssmProfileRegion(store.SSMProfile{Kind: "sso"}, src); got != "" {
+		t.Errorf("sso profile = %q", got)
+	}
+}

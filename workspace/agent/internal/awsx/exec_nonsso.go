@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -31,25 +32,96 @@ func nonSSOProfile(keys map[string]string) bool {
 	return role || process
 }
 
-// checkChainedIdentity refuses the ways a Settings role-chaining profile can mean something
-// other than what Settings says: the member's own definition of the name (which wins over
-// the managed block) assuming another role or starting from another source, and a pinned
-// account that is not the role's. It sets o.Account to the role's account when the caller
-// gave none.
-func checkChainedIdentity(sp Profile, keys, origin map[string]string, o *ExecOptions) error {
-	if scalar(keys["role_arn"]) != sp.RoleARN || scalar(keys["source_profile"]) != sp.SourceProfile {
-		return fmt.Errorf("profile %q in your own AWS config is not the Settings profile %q (role %s from source profile %q); "+
-			"rename one of them so the name means one role", o.Profile, sp.Label, orNone(sp.RoleARN), sp.SourceProfile)
+// checkChainedIdentity admits a Settings role-chaining profile only when the files hold
+// exactly what Settings says, for the profile AND its source, and both are in the managed
+// block this sync wrote. The member's own definition of either name wins over the block (and
+// Apply then does not export it), so string-matching role_arn and source_profile is not
+// enough: the source could be another SSO profile, or keys in ~/.aws/credentials, under the
+// same name. A profile that fails any check is not a Settings chain and falls to the #1107
+// rules (--account required) by the caller's error, never to a silent run.
+// It sets o.Account to the role's account when the caller gave none.
+func checkChainedIdentity(env []string, sp Profile, keys, origin map[string]string, o *ExecOptions) error {
+	mismatch := func(what string) error {
+		return fmt.Errorf("profile %q in your own AWS config is not the Settings profile %q (%s); "+
+			"rename one of them so the name means one role", o.Profile, sp.Label, what)
+	}
+	exported := map[string]bool{}
+	for _, n := range o.Exported {
+		exported[n] = true
+	}
+	if !exported[o.Profile] || !exported[sp.SourceProfile] {
+		return fmt.Errorf("profile %q is not in the managed block of ~/.aws/config together with its source profile %q (`af-aws-exec --list` says why); "+
+			"af-aws-exec runs a Settings role chain only from what Settings exported", o.Profile, sp.SourceProfile)
 	}
 	acct, _, ok := roleARNParts(sp.RoleARN)
 	if !ok {
 		return fmt.Errorf("Settings profile %q has a role ARN that is not an IAM role ARN (%s)", sp.Label, where(origin["role_arn"]))
+	}
+	want := map[string]string{"role_arn": sp.RoleARN, "source_profile": sp.SourceProfile}
+	if sp.ExternalID != "" {
+		want["external_id"] = sp.ExternalID
+	}
+	if sp.SessionName != "" {
+		want["role_session_name"] = sp.SessionName
+	}
+	if sp.DurationSeconds != 0 {
+		want["duration_seconds"] = strconv.Itoa(sp.DurationSeconds)
+	}
+	for k, v := range want {
+		if got, set := keys[k]; !set || scalar(got) != v {
+			return mismatch("its " + k + " differs")
+		}
+	}
+	for k := range keys {
+		switch k {
+		case "role_arn", "source_profile", "external_id", "role_session_name", "duration_seconds", "region":
+		default:
+			return mismatch("it sets " + k + " beyond what Settings writes")
+		}
+	}
+	srcSP, listed := o.Settings[sp.SourceProfile]
+	if !listed || srcSP.Chained() {
+		return mismatch("its source is not a Settings SSO profile")
+	}
+	srcKeys, srcOrigin, err := profileKeysFrom(env, sp.SourceProfile)
+	if err != nil {
+		return err
+	}
+	srcSSO, err := resolveSSO(env, srcKeys, srcOrigin)
+	if err != nil {
+		return fmt.Errorf("source profile %q: %w", sp.SourceProfile, err)
+	}
+	if !sameSSO(srcSP, srcSSO) || srcSSO.Session != "af-"+sp.SourceProfile || !nonSSOFree(srcKeys) {
+		return mismatch(fmt.Sprintf("source profile %q is not defined as Settings defines it", sp.SourceProfile))
+	}
+	// Neither name may also be a section of ~/.aws/credentials: the CLI merges it over the
+	// config's, which is how a keys-bearing [src] or a different [deploy] would take over.
+	_, creds := profileFiles(env)
+	if b, rerr := os.ReadFile(expandHome(creds)); rerr == nil {
+		names := credentialsNames(string(b))
+		if names[o.Profile] || names[sp.SourceProfile] {
+			return mismatch("~/.aws/credentials also defines it or its source")
+		}
+	} else if !errors.Is(rerr, os.ErrNotExist) {
+		return fmt.Errorf("cannot read ~/.aws/credentials: %w", rerr)
 	}
 	if o.Account != "" && o.Account != acct {
 		return fmt.Errorf("profile %q assumes a role in account %s, not the %s given with --account", o.Profile, acct, o.Account)
 	}
 	o.Account = acct
 	return nil
+}
+
+// nonSSOFree reports that an SSO profile's keys hold nothing that gives it a second way
+// to get credentials.
+func nonSSOFree(keys map[string]string) bool {
+	for _, k := range []string{"role_arn", "source_profile", "credential_process", "credential_source", "web_identity_token_file",
+		"aws_access_key_id", "aws_secret_access_key", "aws_session_token", "mfa_serial", "login_session"} {
+		if _, set := keys[k]; set {
+			return false
+		}
+	}
+	return true
 }
 
 // maxSourceChain bounds the source_profile walk; botocore itself stops only at a loop.
