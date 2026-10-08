@@ -323,6 +323,8 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.muse_model_note":
     "Muse Code lists a \"-contributor\" twin of each model. It is the same model at the same price, but Meta may use those conversations, including messages between sessions, to improve the product. It is Muse Code's own default; \"Default\" here means Agent Fleet picks the newest model without that clause.",
   "agents.remote_control": "Remote control",
+  "agents.note_claude_remote_control":
+    "Applies to Claude sessions started after you change it. Remote Control needs Claude's feature-flag check, which this workspace normally switches off. While this is on, Claude sessions started afterwards switch it back on; that also lets Claude fetch release notes and check PR/MR status and feature availability. Telemetry, error reports and auto-update stay off. See the guide (Agents) for details.",
   "agents.notifications": "Notifications",
   "agents.codex_auth_failed": "Failed to start Codex auth: {msg}",
   "agents.codex_device_disabled": "device-code login may be disabled",

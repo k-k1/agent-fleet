@@ -801,3 +801,47 @@ AF を通らないので封筒が無い）。`AnchorID` は付けない — `for
   積まれてから訂正が来る。
 - **「同期の戻り値が成功」を「届いた」と読むな。** この経路は成否を後から別チャネルで返す。
   自分の設計で配送保証を語るときも、**確認したのが受理か到達かを区別して書く**こと。
+
+## 58.18 Remote Control が NONESSENTIAL_TRAFFIC で起動しない — env 4 本の実測表（2026-10-08、#1254）
+
+Console の **リモートコントロール**（`remoteControlAtStartup`）をオンにしても、イメージの env のままでは
+Remote Control のセッションが作られない。claude 2.1.293 で `claude --remote-control <name>` を
+`--debug-file` 付きの対話起動で測った（空ディレクトリ、実際の Remote Control 接続は利用者のアカウントに
+セッションを登録するので、ここでは起動経路だけ）。
+
+- **イメージの env のまま**（`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`）: Remote Control のセッションは作られない。
+  debug ログに `[WARN]` が 1 行だけ出る:
+  `Remote Control requires feature-flag evaluation, which is disabled because CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC is set`
+  claude のセッション自体は動き続けるので、失敗は**黙って**起きる（`claude remote-control --help` は同じ文面で exit 1）。
+- **`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` だけ unset**（`DISABLE_TELEMETRY` / `DISABLE_ERROR_REPORTING` /
+  `DISABLE_AUTOUPDATER` は設定したまま）: 接続する。ログに `[remote-bridge] Created session …`、
+  `v2 transport connected`、ハートビート、TUI に `/remote-control is active`。`/exit` で
+  `Archive … status=200`。
+
+### 4 本の env が何を止めるか
+
+| env | 上流ドキュメント（`/docs/en/env-vars`、`/docs/en/data-usage`） | 実測 |
+|-----|------|------|
+| `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | 自動更新・テレメトリ・エラーレポート・`/feedback`・リリースノート・PR/MR ステータスバッジの確認・可用性確認（fast mode など）を止める。**feature flag の取得も止め、Remote Control を使えなくする**。`0` / `false` でも止まる（unset で解除） | 2.1.226: feature flag を止める（§58.12）。2.1.293: Remote Control の起動を止める（上の `[WARN]`）。**これだけを unset すると接続した** |
+| `DISABLE_TELEMETRY` | メトリクスを止める。`data-usage` は「`DISABLE_TELEMETRY` または `NONESSENTIAL_TRAFFIC` は feature flag 評価も止め、Remote Control を使えなくしうる。`DISABLE_ERROR_REPORTING` は止めない」と書く | 2.1.226: 単独で feature flag を止める（§58.12、ListAgents）。**2.1.293: これを設定したままでも Remote Control は接続した**（NONESSENTIAL だけ unset） |
+| `DISABLE_ERROR_REPORTING` | エラーレポートを止める。feature flag には触れない | 2.1.226: 無関係（§58.12） |
+| `DISABLE_AUTOUPDATER` | 自動更新を止める（今回は上流の表の該当行を読み直していない。名前どおりの用途として扱う） | 今回は測っていない |
+
+**食い違い**: 上流は `DISABLE_TELEMETRY` も feature flag 評価を止め Remote Control を使えなくしうると書くが、
+2.1.293 では `DISABLE_TELEMETRY=1` を設定したまま NONESSENTIAL だけ unset して Remote Control が接続した。
+つまり**この版の Remote Control の可否判定が見ているのは NONESSENTIAL だけ**に見える
+（§58.12 の ListAgents の判定とは別のゲート）。**ピンを上げるたびに測り直す**こと。
+
+### 決めたこと
+
+- Console のリモートコントロールがオンの間だけ、Agent が起こす claude プロセスから
+  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` を**取り除く**（`agents/claude/program.go` の
+  `launchCommand`、`env -u`）。変数は存在判定なので、`0` や空文字ではなく unset する。
+  `DISABLE_TELEMETRY` / `DISABLE_ERROR_REPORTING` / `DISABLE_AUTOUPDATER` は常に残す。
+  オフ（既定）のときの env はイメージのまま。Dockerfile の変数は消さない。
+- トグルは起動のたびに読む。効くのはその後に起動・再開するセッションからで、走行中のものは変わらない。
+- 戻るもの（上流の記述による）: feature flag の取得、リリースノート、PR/MR ステータスバッジ、可用性確認、
+  `/feedback`。メトリクス・エラーレポート・自動更新は上の 3 本が引き続き止める。
+- **わかっていないこと**: feature flag の取得が Anthropic へ何を送るか。
+- 実機の接続確認（トグルをオンにして Remote Control が張られること）は利用者が行う。
+  この変更の試験は起動 env までで、実セッションは作っていない。

@@ -322,6 +322,8 @@ export const settings = {
   "agents.muse_model_note":
     "Muse Code の一覧には、各モデルの「-contributor」版が並びます。モデルも料金も同じですが、そちらを選ぶと会話（セッション間のメッセージを含む）が Meta の製品改善に使われることがあります。Muse Code 自身の既定はこの版です。ここの「既定」は、その条件が付かない最新のモデルを Agent Fleet が選ぶという意味です。",
   "agents.remote_control": "リモートコントロール",
+  "agents.note_claude_remote_control":
+    "変更後に起動する Claude セッションから反映されます。リモートコントロールには Claude の機能フラグ確認が必要ですが、このワークスペースは通常それを止めています。オンの間は、以後に起動する Claude セッションでこの停止を外します。その結果、リリースノートの取得、PR/MR の状態や機能の利用可否の確認も行われます。テレメトリ・エラーレポート・自動更新は止めたままです。詳細はガイド（エージェント）を参照してください。",
   "agents.notifications": "通知",
   "agents.codex_auth_failed": "Codex の認証を開始できませんでした: {msg}",
   "agents.codex_device_disabled": "device code ログインが無効かもしれません",

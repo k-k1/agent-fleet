@@ -303,3 +303,12 @@ ID ではなく帰属名なので、設定・上限・回数制限・監査が�
 俯瞰図のアクティビティ台帳の `ev:"peek"` 行で監査する。この行は `/api/fleet-graph` のワイヤには
 載せない（Console の図は決まった種類のイベントだけを描くため、Console は変えていない）。Agent が
 持つメタはすべてその利用者 1 人のもので、ほかの利用者から共有されたセッションはここに来ない。
+
+## 追記（2026-10-08）— Remote Control のために env を 1 本だけ外す
+
+上の決定 1 は、イメージに `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` が設定されていることを前提にしている。
+設定は今もそのままで、決定は変わらない。変わったのは、Console の**リモートコントロール**のトグルがオンの間に
+起動する claude プロセスからは、この変数を 1 本だけ取り除くようにしたこと。Remote Control は feature flag の
+評価がないと起動しないため（#1254、実測は docs/log/58 §58.18）。`DISABLE_TELEMETRY` /
+`DISABLE_ERROR_REPORTING` / `DISABLE_AUTOUPDATER` はどの場合も残し、ネイティブ経路の遮断は env ではなく
+前の追記の起動設定が担う。

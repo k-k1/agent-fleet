@@ -338,3 +338,13 @@ interrupted, notified or state-healed; each read is audited by a log line and an
 in the fleet-graph activity ledger. The ledger line is not on the `/api/fleet-graph` wire: the
 Console's graph draws a fixed set of event kinds, so the Console is unchanged. Every meta the
 Agent holds belongs to its one user; sessions shared in from other users never reach it.
+
+## Addendum (2026-10-08) — Remote Control needs one of the two env vars released
+
+Decision 1 above rests on `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` being set in the image. It
+still is, and the decision is unchanged. What changed is that the Console's **Remote control**
+toggle now removes that one variable from the claude processes started while the toggle is on,
+because Remote Control will not start without feature-flag evaluation (#1254; measurements in
+docs/log/58 §58.18). `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING` and `DISABLE_AUTOUPDATER` are
+kept in every case, and the native peer channel stays closed by the launch settings of the
+previous addendum, not by env.

@@ -60,6 +60,28 @@ func envOr(key, def string) string {
 // silently.
 const nativePeerSettings = `{"permissions":{"deny":["ListAgents","SendMessage"]},"crossSessionInbound":"refuse"}`
 
+// nonessentialTrafficEnv is the image variable that turns off claude's feature-flag
+// evaluation, which Remote Control refuses to start without (measured on 2.1.293: with it set,
+// `--remote-control` creates no session and only logs a [WARN] line, so the failure is silent;
+// unset, it connects). The other image variables (DISABLE_TELEMETRY, DISABLE_ERROR_REPORTING,
+// DISABLE_AUTOUPDATER) are left alone.
+const nonessentialTrafficEnv = "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"
+
+// remoteControlOn reads the toggle the Console writes (settings.go). It is read at every launch,
+// so a change reaches sessions started afterwards and never one already running.
+func remoteControlOn() bool { return settingBool(readSettings(), "remoteControlAtStartup") }
+
+// launchCommand prefixes cmd so the claude process truly lacks nonessentialTrafficEnv while
+// Remote Control is on. The variable is presence-based, so it is removed rather than set to 0 or
+// empty; `tmux new-session -e` can only add variables, hence `env -u` in the pane program. Off
+// leaves the environment exactly as the image set it.
+func launchCommand(cmd string) string {
+	if remoteControlOn() {
+		return "env -u " + nonessentialTrafficEnv + " " + cmd
+	}
+	return cmd
+}
+
 // buildProgram returns the shell command tmux should run for a session.
 // AGENT_SESSION_CMD overrides claude entirely (e.g. "bash") for plumbing tests.
 // Otherwise it resumes when a session jsonl already exists, else starts new.
@@ -109,17 +131,17 @@ func buildProgram(sid, model, effort, mode, label, forkFrom string, bypass bool)
 		// Already materialized (normal session, or a fork after its first launch):
 		// resume our own jsonl. ForkFrom is intentionally ignored here so a restart
 		// never re-copies the source.
-		return fmt.Sprintf("claude --resume %s %s", session.ShellQuote(resume), flags)
+		return launchCommand(fmt.Sprintf("claude --resume %s %s", session.ShellQuote(resume), flags))
 	}
 	if forkFrom != "" {
 		// First launch of a fork: copy the source conversation into OUR sid via the
 		// official --fork-session, pinning the new id with --session-id so it lands
 		// exactly on our deterministic jsonl (verified: --session-id sets the fork's
 		// id). The source jsonl is left untouched.
-		return fmt.Sprintf("claude --resume %s --fork-session --session-id %s %s",
-			session.ShellQuote(forkFrom), session.ShellQuote(sid), flags)
+		return launchCommand(fmt.Sprintf("claude --resume %s --fork-session --session-id %s %s",
+			session.ShellQuote(forkFrom), session.ShellQuote(sid), flags))
 	}
-	return fmt.Sprintf("claude --session-id %s %s", session.ShellQuote(sid), flags)
+	return launchCommand(fmt.Sprintf("claude --session-id %s %s", session.ShellQuote(sid), flags))
 }
 
 // rawJSONLPaths returns the conversation log file(s) claude stores UNDER THAT EXACT
