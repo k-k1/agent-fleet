@@ -547,6 +547,7 @@ export const settings = {
   "keys.palette.talk_archived": "アーカイブ済みのセッションです。アーカイブから復元してから一覧で開くと、その位置で開きます",
   "keys.palette.talk_failed": "検索できませんでした（{reason}）",
   "keys.palette.talk_retry": "再試行",
+  "keys.palette.child_of": "{parent} の子セッション",
   "keys.palette.talk_archived_badge": "アーカイブ",
   "keys.palette.talk_role_user": "あなた",
   "keys.palette.talk_role_agent": "エージェント",

@@ -441,3 +441,26 @@
   padding: 1px 10px;
   cursor: pointer;
 }
+/* ---- palette: session families (#1887) ----
+   Unfiltered list: a child is indented under its parent with a tree guide; --cp-depth is
+   capped in the component. A filtered list is flat and the row carries "↳ parent" instead. */
+.cp-item.cp-nested {
+  padding-left: calc(10px + var(--cp-depth, 1) * 18px);
+  position: relative;
+}
+.cp-item.cp-nested::before {
+  content: "└";
+  position: absolute;
+  left: calc(var(--cp-depth, 1) * 18px - 6px);
+  color: var(--muted);
+}
+.cp-sess-parent {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--muted);
+}
