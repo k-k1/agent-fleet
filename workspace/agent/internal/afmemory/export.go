@@ -179,5 +179,8 @@ func cmdExport(c *Client, args []string, out io.Writer) error {
 	if failed > 0 {
 		return fmt.Errorf("%d file(s) could not be written", failed)
 	}
+	if res.Index == "failed" {
+		return fmt.Errorf("MEMORY.md could not be updated (it changed during the write-back or could not be written); preview again")
+	}
 	return nil
 }

@@ -57,6 +57,10 @@ var memoryTestRoutes = map[string]http.HandlerFunc{
 	"GET /agents/memory/claude-import":         HandleAgentMemoryClaudeSources,
 	"GET /agents/memory/claude-import/preview": HandleAgentMemoryClaudePreview,
 	"POST /agents/memory/claude-import":        HandleAgentMemoryClaudeApply,
+
+	"GET /agents/memory/claude-export":         HandleAgentMemoryClaudeExportSources,
+	"GET /agents/memory/claude-export/preview": HandleAgentMemoryClaudeExportPreview,
+	"POST /agents/memory/claude-export":        HandleAgentMemoryClaudeExportApply,
 }
 
 func buildMux() *http.ServeMux {

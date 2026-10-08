@@ -916,6 +916,7 @@ export const tools = {
   "mem.ce_apply": "書き戻す（{n} 件の変更）",
   "mem.ce_done": "{n} 件を書き戻しました",
   "mem.ce_done_skipped": "{n} 件を書き戻し、{skipped} 件は見送りました",
+  "mem.ce_index_failed": "MEMORY.md を更新できませんでした（書き戻し中に変わったか、書けませんでした）。プレビューし直してください。",
   "mem.ce_failed": "結果を確認できませんでした。プレビューを読み直しました。書き込まれた内容を確認してください。",
   "mem.af_revert": "この変更を元に戻す",
   "mem.af_forget": "このメモリを忘れさせる",

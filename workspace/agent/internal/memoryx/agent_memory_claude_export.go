@@ -58,7 +58,10 @@ var claudeExportNativeNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,
 // agentMemExportHash is what af_hash records: the description, type and body as written. The
 // import compares the same function over a native file to tell "still what AF wrote" from an edit.
 func agentMemExportHash(desc, typ, body string) string {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(desc) + "\x00" + strings.TrimSpace(typ) + "\x00" + strings.TrimSpace(body)))
+	// Only the blank lines around the body are ignored (the import and claude put one after the
+	// frontmatter); leading spaces are content, a code block in Markdown.
+	body = strings.TrimRight(strings.TrimLeft(body, "\r\n"), " \t\r\n")
+	sum := sha256.Sum256([]byte(desc + "\x00" + typ + "\x00" + body))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -175,12 +178,17 @@ type agentMemExportNative struct {
 	desc     string
 	parsed   bool
 	bad      string // why it cannot be judged: symlink | too_large | unreadable
+	absent   bool   // there is no such name in the directory
 }
 
 func agentMemExportReadNative(mem *os.File, file string) agentMemExportNative {
 	var n agentMemExportNative
 	f, err := agentMemImportOpen(mem, file)
 	if err != nil {
+		if err == syscall.ENOENT {
+			n.absent = true
+			return n
+		}
 		n.bad = "symlink"
 		return n
 	}
@@ -254,6 +262,9 @@ type agentMemExportPreview struct {
 	Truncated   bool   `json:"truncated,omitempty"`
 	byName      map[string]*agentMemExportItem
 	indexOld    []byte
+	indexOldFH  string // sha256 of the existing MEMORY.md, "" when there is none
+	indexNew    string
+	dirID       string
 }
 
 type agentMemExportSources struct {
@@ -289,10 +300,15 @@ func agentMemExportList() (agentMemExportSources, error) {
 			continue
 		}
 		es, _, err := agentMemLoadDir(agentMemScopeProject, "projects/"+d.Name())
-		if err != nil || len(es) == 0 {
+		if err != nil {
 			continue
 		}
 		p := agentMemProjectInfo(d.Name())
+		// A project whose last memory was forgotten still has files AF wrote, and removing them
+		// is a write-back like any other.
+		if len(es) == 0 && !agentMemExportHasOwnFiles(p) {
+			continue
+		}
 		row := agentMemExportSourceRow{Project: p, Count: len(es)}
 		if p.Root == "" {
 			row.Reason = "no_root"
@@ -303,8 +319,35 @@ func agentMemExportList() (agentMemExportSources, error) {
 	return out, nil
 }
 
-// agentMemExportOpenDir opens projects/<slug>/memory below the config dir one component at a
-// time with O_NOFOLLOW. With create, a missing component is made. A symlink anywhere is refused.
+// agentMemExportHasOwnFiles says whether claude's directory for p holds a file a write-back made.
+func agentMemExportHasOwnFiles(p *agentMemProject) bool {
+	if p.Root == "" {
+		return false
+	}
+	slug := claude.ProjectKey(p.Root)
+	if !claudeImportSlugRe.MatchString(slug) {
+		return false
+	}
+	mem, err := agentMemExportOpenExisting(slug)
+	if err != nil || mem == nil {
+		return false
+	}
+	defer mem.Close()
+	files, _ := agentMemImportFiles(mem)
+	for _, f := range files {
+		name := strings.TrimSuffix(f, ".md")
+		if n := agentMemExportReadNative(mem, f); n.bad == "" && !n.absent && agentMemExportOwn(n.source, p.ID, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// agentMemExportOpenDir opens projects/<slug>/memory below the config dir, every component with
+// O_NOFOLLOW, so a symlink inside claude's store can neither redirect a write nor be followed.
+// The config dir itself is resolved first: it is where the member put claude's store (it may be
+// a deliberate link onto other storage), not something inside it. With create, a missing
+// component below it is made; the handle that comes back is the one to keep using.
 func agentMemExportOpenDir(slug string, create bool) (*os.File, error) {
 	flags := syscall.O_RDONLY | syscall.O_DIRECTORY | syscall.O_NOFOLLOW | syscall.O_CLOEXEC
 	if create {
@@ -312,18 +355,26 @@ func agentMemExportOpenDir(slug string, create bool) (*os.File, error) {
 			return nil, err
 		}
 	}
-	fd, err := syscall.Open(filepath.Join(claude.ConfigDir(), "projects"), flags, 0)
-	if err == syscall.ENOENT && create {
-		if err = syscall.Mkdir(filepath.Join(claude.ConfigDir(), "projects"), 0o700); err == nil || err == syscall.EEXIST {
-			fd, err = syscall.Open(filepath.Join(claude.ConfigDir(), "projects"), flags, 0)
+	base, err := filepath.EvalSymlinks(claude.ConfigDir())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, syscall.ENOENT
 		}
+		return nil, err
 	}
+	fd, err := syscall.Open("/", flags, 0)
 	if err != nil {
 		return nil, err
 	}
-	for _, seg := range []string{slug, "memory"} {
+	below := 0
+	segs := append(strings.Split(strings.Trim(filepath.ToSlash(base), "/"), "/"), "projects", slug, "memory")
+	firstNew := len(segs) - 3
+	for i, seg := range segs {
+		if seg == "" {
+			continue
+		}
 		next, err := syscall.Openat(fd, seg, flags, 0)
-		if err == syscall.ENOENT && create {
+		if err == syscall.ENOENT && create && i >= firstNew {
 			if err = syscall.Mkdirat(fd, seg, 0o700); err == nil || err == syscall.EEXIST {
 				next, err = syscall.Openat(fd, seg, flags, 0)
 			}
@@ -333,8 +384,32 @@ func agentMemExportOpenDir(slug string, create bool) (*os.File, error) {
 			return nil, err
 		}
 		fd = next
+		below++
 	}
 	return os.NewFile(uintptr(fd), "memory"), nil
+}
+
+// agentMemExportDirID names a directory by device and inode, so a path that now leads to
+// another directory is told from the one that was evaluated.
+func agentMemExportDirID(d *os.File) string {
+	var st syscall.Stat_t
+	if d == nil || syscall.Fstat(int(d.Fd()), &st) != nil {
+		return "none"
+	}
+	return fmt.Sprintf("%d:%d", st.Dev, st.Ino)
+}
+
+// agentMemExportOpenExisting opens the memory directory for evaluation: nil when it does not exist.
+func agentMemExportOpenExisting(slug string) (*os.File, error) {
+	mem, err := agentMemExportOpenDir(slug, false)
+	if err == nil {
+		return mem, nil
+	}
+	if err == syscall.ENOENT || os.IsNotExist(err) {
+		return nil, nil
+	}
+	return nil, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
+		"claude's memory directory for this project is not a plain directory path (a symlink?)")
 }
 
 // agentMemExportTarget resolves a project id to its record and claude slug.
@@ -354,12 +429,10 @@ func agentMemExportTarget(projectID string) (*agentMemProject, string, error) {
 	return p, slug, nil
 }
 
-// agentMemExportBuild evaluates one project. Callers hold agentMemMu (read is enough).
-func agentMemExportBuild(projectID string) (*agentMemExportPreview, error) {
-	p, slug, err := agentMemExportTarget(projectID)
-	if err != nil {
-		return nil, err
-	}
+// agentMemExportBuild evaluates one project against the pinned native directory mem (nil when it
+// does not exist yet). Callers hold agentMemMu (read is enough).
+func agentMemExportBuild(projectID, slug string, mem *os.File) (*agentMemExportPreview, error) {
+	p := agentMemProjectInfo(projectID)
 	rel := "projects/" + projectID
 	es, withheld, err := agentMemLoadDir(agentMemScopeProject, rel)
 	if err != nil {
@@ -387,23 +460,32 @@ func agentMemExportBuild(projectID string) (*agentMemExportPreview, error) {
 		}
 	}
 
-	var mem *os.File
-	if m, err := agentMemExportOpenDir(slug, false); err == nil {
-		mem = m
-		defer mem.Close()
-		pv.NativeOK = true
-	} else if !os.IsNotExist(err) && err != syscall.ENOENT {
-		return nil, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
-			"claude's memory directory for this project is not a plain directory path (a symlink?)")
-	}
+	pv.NativeOK = mem != nil
+	pv.dirID = agentMemExportDirID(mem)
 	var nativeFiles []string
 	if mem != nil {
 		nativeFiles, pv.Truncated = agentMemImportFiles(mem)
 	}
+	// The AF names are looked up one by one, so the cap on the listing below can never make an
+	// existing file look absent.
 	natives := map[string]*agentMemExportNative{}
+	lookup := func(name string) *agentMemExportNative {
+		if mem == nil {
+			return nil
+		}
+		if n, ok := natives[name]; ok {
+			return n
+		}
+		n := agentMemExportReadNative(mem, name+".md")
+		if n.absent {
+			natives[name] = nil
+			return nil
+		}
+		natives[name] = &n
+		return &n
+	}
 	for _, f := range nativeFiles {
-		n := agentMemExportReadNative(mem, f)
-		natives[strings.TrimSuffix(f, ".md")] = &n
+		lookup(strings.TrimSuffix(f, ".md"))
 	}
 
 	afNames := map[string]bool{}
@@ -426,7 +508,7 @@ func agentMemExportBuild(projectID string) (*agentMemExportPreview, error) {
 			pv.add(it)
 			continue
 		}
-		n := natives[e.Name]
+		n := lookup(e.Name)
 		it.native = n
 		switch {
 		case n == nil:
@@ -436,7 +518,8 @@ func agentMemExportBuild(projectID string) (*agentMemExportPreview, error) {
 		case n.parsed && n.hash == hash:
 			it.Status = claudeExportUnchanged
 			it.nativeFH = n.fileHash
-		case n.parsed && agentMemExportOwn(n.source, projectID, e.Name) && n.afHash == n.hash:
+		case n.parsed && agentMemExportOwn(n.source, projectID, e.Name) && n.afHash == n.hash &&
+			e.Revision > agentMemExportRecordedRevision(n.source):
 			it.Status = claudeExportUpdate
 			it.nativeFH = n.fileHash
 		default:
@@ -444,6 +527,10 @@ func agentMemExportBuild(projectID string) (*agentMemExportPreview, error) {
 			it.Reason = "not_written_by_af"
 			if agentMemExportOwn(n.source, projectID, e.Name) {
 				it.Reason = "changed_since_write"
+				if n.afHash == n.hash {
+					// Untouched in claude, but AF is not newer: rolling it forward would be a revert.
+					it.Reason = "af_not_newer"
+				}
 			}
 		}
 		if n != nil {
@@ -453,8 +540,8 @@ func agentMemExportBuild(projectID string) (*agentMemExportPreview, error) {
 	}
 
 	names := make([]string, 0, len(natives))
-	for n := range natives {
-		if !afNames[n] {
+	for n, v := range natives {
+		if v != nil && !afNames[n] {
 			names = append(names, n)
 		}
 	}
@@ -515,7 +602,7 @@ func (pv *agentMemExportPreview) token() string {
 	for _, it := range pv.Items {
 		fmt.Fprintf(h, "%s|%s|%s|%x\n", it.Name, it.Status, it.nativeFH, sha256.Sum256(it.data))
 	}
-	fmt.Fprintf(h, "index|%s\n", pv.Index)
+	fmt.Fprintf(h, "index|%s|%s|%x|%x\n", pv.Slug, pv.dirID, sha256.Sum256(pv.indexOld), sha256.Sum256([]byte(pv.indexNew)))
 	return hex.EncodeToString(h.Sum(nil))
 }
 
@@ -563,11 +650,11 @@ func claudeExportBuildIndex(rows []claudeExportIndexRow) (text string, listed in
 // indexText renders MEMORY.md as it will be once the apply is done. AF's memories come first in
 // AF's ranking, then native files that stay, newest first. over names the conflicts that are
 // replaced with AF's text.
-func (pv *agentMemExportPreview) indexText(over map[string]bool) (text string, listed, total int) {
+func (pv *agentMemExportPreview) indexText(over, failed map[string]bool) (text string, listed, total int) {
 	var ranked []agentMemEntry
 	for i := range pv.Items {
 		it := &pv.Items[i]
-		if it.entry == nil {
+		if it.entry == nil || failed[it.Name] {
 			continue
 		}
 		switch it.Status {
@@ -592,7 +679,7 @@ func (pv *agentMemExportPreview) indexText(over map[string]bool) (text string, l
 		if seen[it.Name] || it.native == nil || it.native.bad != "" {
 			continue
 		}
-		if it.Status == claudeExportNativeOnly || it.Status == claudeExportConflict {
+		if it.Status == claudeExportNativeOnly || it.Status == claudeExportConflict || failed[it.Name] {
 			rest = append(rest, it)
 		}
 	}
@@ -610,20 +697,19 @@ func (pv *agentMemExportPreview) indexText(over map[string]bool) (text string, l
 
 // planIndex fills the preview's view of MEMORY.md (no override assumed).
 func (pv *agentMemExportPreview) planIndex(mem *os.File) {
-	var text string
-	var listed, total int
-	text, listed, total = pv.indexText(nil)
-	pv.IndexListed, pv.IndexMore = listed, total-listed
+	text, listed, total := pv.indexText(nil, nil)
+	pv.IndexListed, pv.IndexMore, pv.indexNew = listed, total-listed, text
 	pv.Index = "new"
 	if mem == nil {
 		return
 	}
 	old := agentMemExportReadNative(mem, agentMemImportIndex)
 	switch {
-	case old.bad == "symlink" && agentMemExportExists(mem, agentMemImportIndex):
-		pv.Index = "symlink"
-	case old.bad == "":
-		pv.indexOld = old.raw
+	case old.absent:
+	case old.bad != "":
+		pv.Index = "symlink" // not a plain file: left alone
+	default:
+		pv.indexOld, pv.indexOldFH = old.raw, old.fileHash
 		if string(old.raw) == text {
 			pv.Index = "unchanged"
 		} else {
@@ -646,7 +732,18 @@ func agentMemExportExists(mem *os.File, name string) bool {
 func agentMemExportPreviewFor(projectID string) (*agentMemExportPreview, error) {
 	agentMemMu.RLock()
 	defer agentMemMu.RUnlock()
-	return agentMemExportBuild(projectID)
+	_, slug, err := agentMemExportTarget(projectID)
+	if err != nil {
+		return nil, err
+	}
+	mem, err := agentMemExportOpenExisting(slug)
+	if err != nil {
+		return nil, err
+	}
+	if mem != nil {
+		defer mem.Close()
+	}
+	return agentMemExportBuild(projectID, slug, mem)
 }
 
 type agentMemExportReq struct {
@@ -666,13 +763,30 @@ type agentMemExportApplied struct {
 	Results []agentMemExportResult `json:"results"`
 	// Snapshot is the rev of the snapshot taken before writing ("" when nothing had changed).
 	Snapshot string `json:"snapshot,omitempty"`
-	Index    string `json:"index"` // written | unchanged | skipped
+	// Index is written | unchanged | skipped (left alone on purpose) | failed (it should have been
+	// written and was not, or changed under the apply).
+	Index string `json:"index"`
+}
+
+// agentMemExportTestHook is called at named points of an apply so a test can change the directory
+// between the evaluation and the writes. It is nil outside tests.
+var agentMemExportTestHook func(stage string)
+
+func agentMemExportHook(stage string) {
+	if agentMemExportTestHook != nil {
+		agentMemExportTestHook(stage)
+	}
+}
+
+// agentMemExportTempName is a fresh dot-name in the pinned directory.
+func agentMemExportTempName() string {
+	return fmt.Sprintf(".tmp-af-%d-%d", os.Getpid(), time.Now().UnixNano())
 }
 
 // agentMemExportWriteAt writes name in the pinned directory by temp file and rename.
 func agentMemExportWriteAt(mem *os.File, name string, data []byte) error {
 	fd := int(mem.Fd())
-	tmp := fmt.Sprintf(".tmp-af-%d-%d", os.Getpid(), time.Now().UnixNano())
+	tmp := agentMemExportTempName()
 	wfd, err := syscall.Openat(fd, tmp, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_EXCL|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0o600)
 	if err != nil {
 		return err
@@ -694,7 +808,38 @@ func agentMemExportWriteAt(mem *os.File, name string, data []byte) error {
 	return nil
 }
 
+// agentMemExportCreateAt creates name and fails when anything is already there, so a new file can
+// never replace one that appeared after the evaluation.
+func agentMemExportCreateAt(mem *os.File, name string, data []byte) error {
+	fd := int(mem.Fd())
+	wfd, err := syscall.Openat(fd, name, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_EXCL|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0o600)
+	if err != nil {
+		return err
+	}
+	f := os.NewFile(uintptr(wfd), "new")
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = syscall.Unlinkat(fd, name)
+	}
+	return err
+}
+
+// agentMemExportLeafIs says whether the leaf is still what the evaluation saw: absent when fh is
+// "", else a regular file whose content hashes to fh.
+func agentMemExportLeafIs(mem *os.File, file, fh string) bool {
+	n := agentMemExportReadNative(mem, file)
+	if fh == "" {
+		return n.absent
+	}
+	return !n.absent && n.bad == "" && n.fileHash == fh
+}
+
 // agentMemExportApply writes the previewed project back. The caller does not need the switch on.
+// The directory handle opened for the evaluation is the one written through, and every leaf is
+// checked against what the evaluation saw immediately before it is touched.
 func agentMemExportApply(req agentMemExportReq, now time.Time) (agentMemExportApplied, error) {
 	if len(req.Overwrite) > agentMemImportMaxFiles {
 		return agentMemExportApplied{}, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "too many names in overwrite")
@@ -704,13 +849,30 @@ func agentMemExportApply(req agentMemExportReq, now time.Time) (agentMemExportAp
 	memorySnapshotMu.Lock()
 	defer memorySnapshotMu.Unlock()
 
-	pv, err := agentMemExportBuild(req.Project)
+	_, slug, err := agentMemExportTarget(req.Project)
+	if err != nil {
+		return agentMemExportApplied{}, err
+	}
+	mem, err := agentMemExportOpenExisting(slug)
+	if err != nil {
+		return agentMemExportApplied{}, err
+	}
+	defer func() {
+		if mem != nil {
+			mem.Close()
+		}
+	}()
+	pv, err := agentMemExportBuild(req.Project, slug, mem)
 	if err != nil {
 		return agentMemExportApplied{}, err
 	}
 	if pv.Token != req.Token {
 		return agentMemExportApplied{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
 			"AF memory or claude's files changed since the preview; preview again")
+	}
+	if pv.Truncated {
+		return agentMemExportApplied{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
+			"claude's memory directory has too many files to write back safely")
 	}
 	over := map[string]bool{}
 	for _, n := range req.Overwrite {
@@ -746,7 +908,7 @@ func agentMemExportApply(req agentMemExportReq, now time.Time) (agentMemExportAp
 			}
 		}
 	}
-	indexText, _, _ := pv.indexText(over)
+	indexText, _, _ := pv.indexText(over, nil)
 	indexChange := pv.Index != "symlink" && (pv.Index == "new" || string(pv.indexOld) != indexText)
 	if len(todo) == 0 && !indexChange {
 		return out, nil
@@ -758,33 +920,68 @@ func agentMemExportApply(req agentMemExportReq, now time.Time) (agentMemExportAp
 		return agentMemExportApplied{}, err
 	}
 	out.Snapshot = snap.Rev
+	agentMemExportHook("after-snapshot")
 
-	mem, err := agentMemExportOpenDir(pv.Slug, true)
-	if err != nil {
+	if mem == nil {
+		// The directory did not exist at the evaluation; whatever is there now was not judged.
+		m, err := agentMemExportOpenDir(slug, true)
+		if err != nil {
+			return agentMemExportApplied{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
+				"claude's memory directory for this project cannot be opened without following a symlink")
+		}
+		mem = m
+		if ents, err := mem.ReadDir(-1); err != nil || len(ents) != 0 {
+			return agentMemExportApplied{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
+				"claude's memory directory appeared during the apply; preview again")
+		}
+	} else if again, err := agentMemExportOpenDir(slug, false); err != nil || agentMemExportDirID(again) != agentMemExportDirID(mem) {
+		if again != nil {
+			again.Close()
+		}
 		return agentMemExportApplied{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
-			"claude's memory directory for this project cannot be opened without following a symlink")
+			"claude's memory directory changed during the apply; preview again")
+	} else {
+		again.Close()
 	}
-	defer mem.Close()
+
+	agentMemExportHook("before-write")
+	failed := map[string]bool{}
 	for _, a := range todo {
 		res := agentMemExportResult{Name: a.it.Name, Result: a.kind}
+		file := a.it.Name + ".md"
 		var werr error
-		if a.kind == "removed" {
-			werr = syscall.Unlinkat(int(mem.Fd()), a.it.Name+".md")
-		} else {
-			werr = agentMemExportWriteAt(mem, a.it.Name+".md", a.it.data)
+		switch {
+		case !agentMemExportLeafIs(mem, file, a.it.nativeFH):
+			res.Result, res.Reason = "skipped", "changed_since_preview"
+			failed[a.it.Name] = true
+		case a.kind == "removed":
+			werr = syscall.Unlinkat(int(mem.Fd()), file)
+		case a.it.nativeFH == "":
+			werr = agentMemExportCreateAt(mem, file, a.it.data)
+		default:
+			werr = agentMemExportWriteAt(mem, file, a.it.data)
 		}
 		if werr != nil {
 			res.Result, res.Reason = "skipped", "write_failed"
+			failed[a.it.Name] = true
 			fmt.Fprintf(os.Stderr, "agent memory: export: %s\n", agentMemErrKind(werr))
 		}
 		out.Results = append(out.Results, res)
 	}
+	// MEMORY.md lists what is in the directory now, so a write that did not happen is not listed.
+	if len(failed) > 0 {
+		indexText, _, _ = pv.indexText(over, failed)
+	}
 	switch {
 	case pv.Index == "symlink":
 		out.Index = "skipped"
-	case indexChange:
+	case string(pv.indexOld) == indexText && pv.Index != "new":
+		out.Index = "unchanged"
+	case !agentMemExportLeafIs(mem, agentMemImportIndex, pv.indexOldFH):
+		out.Index = "failed"
+	default:
 		if err := agentMemExportWriteAt(mem, agentMemImportIndex, []byte(indexText)); err != nil {
-			out.Index = "skipped"
+			out.Index = "failed"
 			fmt.Fprintf(os.Stderr, "agent memory: export: %s\n", agentMemErrKind(err))
 		} else {
 			out.Index = "written"

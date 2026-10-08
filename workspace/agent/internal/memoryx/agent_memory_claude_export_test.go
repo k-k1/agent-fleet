@@ -442,3 +442,223 @@ func TestClaudeExportUserScopeAndKinds(t *testing.T) {
 		t.Errorf("user=%d notForClaude=%d", pv.UserScope, pv.NotForClaude)
 	}
 }
+
+func (e *claudeExportEnv) setHook(f func(stage string)) {
+	agentMemExportTestHook = f
+	e.t.Cleanup(func() { agentMemExportTestHook = nil })
+}
+
+// A name past the cap on the directory listing is still looked up by name: an existing member
+// file is a conflict, never "new", and a truncated directory is not written to at all.
+func TestClaudeExportListingCapDoesNotHideFiles(t *testing.T) {
+	e := newClaudeExportEnv(t)
+	e.save("target", "af", "project", "af body")
+	for i := 0; i < agentMemImportMaxFiles+50; i++ {
+		e.raw(e.slug, fmt.Sprintf("filler_%04d.md", i), "x\n")
+	}
+	e.raw(e.slug, "target.md", "---\nname: target\ndescription: theirs\n---\nmember\n")
+	pv := e.preview()
+	if !pv.Truncated || e.status(pv, "target") != claudeExportConflict {
+		t.Fatalf("truncated=%v status=%s", pv.Truncated, e.status(pv, "target"))
+	}
+	if _, err := e.applyErr("target"); agentMemCode(err) != errCodeMemoryConflict {
+		t.Errorf("apply on a truncated directory = %v", err)
+	}
+	if !strings.Contains(e.read("target.md"), "member") {
+		t.Error("member file replaced")
+	}
+}
+
+// The config dir is the member's own redirect and is resolved once; everything below it is
+// opened without following links.
+func TestClaudeExportConfigDirLinkResolvesInPlace(t *testing.T) {
+	e := newClaudeExportEnv(t)
+	cfg := filepath.Dir(filepath.Dir(filepath.Dir(e.memDir(e.slug))))
+	real := cfg + "-real"
+	if err := os.Rename(cfg, real); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, cfg); err != nil {
+		t.Fatal(err)
+	}
+	e.save("one", "d", "project", "b")
+	e.apply()
+	if _, err := os.Stat(filepath.Join(real, "projects", e.slug, "memory", "one.md")); err != nil {
+		t.Errorf("not written into the link's target: %v", err)
+	}
+}
+
+// The directory evaluated is the one written: swapping it for another after the snapshot is
+// refused, and swapping a leaf is caught right before it is touched.
+func TestClaudeExportDirectoryAndLeafSwapped(t *testing.T) {
+	e := newClaudeExportEnv(t)
+	e.save("one", "d", "project", "b")
+	e.raw(e.slug, "keep_me.md", "---\nname: keep_me\ndescription: d\n---\nb\n")
+	dir := e.memDir(e.slug)
+	// Parent swapped after the snapshot.
+	e.setHook(func(stage string) {
+		if stage != "after-snapshot" {
+			return
+		}
+		if err := os.Rename(dir, dir+"-moved"); err != nil {
+			t.Error(err)
+		}
+		memoryWrite(t, filepath.Join(dir, "one.md"), "member file\n")
+	})
+	if _, err := e.applyErr(); agentMemCode(err) != errCodeMemoryConflict {
+		t.Fatalf("swapped directory = %v", err)
+	}
+	if e.read("one.md") != "member file\n" {
+		t.Error("the swapped-in directory was written to")
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(dir+"-moved", dir); err != nil {
+		t.Fatal(err)
+	}
+	// A new file's leaf appears before the write.
+	e.setHook(func(stage string) {
+		if stage == "before-write" {
+			memoryWrite(t, filepath.Join(dir, "one.md"), "member file\n")
+		}
+	})
+	out := e.apply()
+	if r := exportResult(out, "one"); r.Result != "skipped" || r.Reason != "changed_since_preview" {
+		t.Errorf("new over an appeared file = %+v", r)
+	}
+	if e.read("one.md") != "member file\n" {
+		t.Error("a file that appeared was replaced")
+	}
+	// An update's leaf becomes a symlink before the write.
+	e.setHook(nil)
+	_ = os.Remove(filepath.Join(dir, "one.md"))
+	e.apply()
+	e.save("one", "d", "project", "b2")
+	target := filepath.Join(t.TempDir(), "t.md")
+	memoryWrite(t, target, "target\n")
+	e.setHook(func(stage string) {
+		if stage == "before-write" {
+			_ = os.Remove(filepath.Join(dir, "one.md"))
+			_ = os.Symlink(target, filepath.Join(dir, "one.md"))
+		}
+	})
+	out = e.apply()
+	if r := exportResult(out, "one"); r.Result != "skipped" {
+		t.Errorf("update over a symlink = %+v", r)
+	}
+	if b, _ := os.ReadFile(target); string(b) != "target\n" {
+		t.Error("symlink target written")
+	}
+}
+
+// A native file at a newer or equal revision is never rolled back by an older AF text.
+func TestClaudeExportDoesNotRollBack(t *testing.T) {
+	e := newClaudeExportEnv(t)
+	e.save("one", "d", "project", "v1")
+	e.save("one", "d", "project", "v2")
+	e.apply() // native @2
+	old := agentMemEntry{Name: "one", Scope: "project", Description: "d", Revision: 1, AuthorKind: "unknown",
+		AuthorSession: "unknown", Created: "2026-10-08T00:00:00Z", Updated: "2026-10-08T00:00:00Z", Body: "v1"}
+	if err := os.WriteFile(filepath.Join(agentMemDir(), "projects", e.pid, "one.md"), agentMemRender(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pv := e.preview()
+	if e.status(pv, "one") != claudeExportConflict || pv.byName["one"].Reason != "af_not_newer" {
+		t.Fatalf("item = %+v", pv.byName["one"])
+	}
+	e.apply()
+	if !strings.Contains(e.read("one.md"), "v2") {
+		t.Error("rolled back without being asked")
+	}
+}
+
+// Leading spaces are content: indenting a written-back body is a member edit, so it is a conflict,
+// blocks removal, and the import still sees it as a change.
+func TestClaudeExportIndentEditIsAnEdit(t *testing.T) {
+	e := newClaudeExportEnv(t)
+	e.save("one", "d", "project", "original")
+	e.apply()
+	e.raw(e.slug, "one.md", strings.Replace(e.read("one.md"), "\noriginal\n", "\n    original\n", 1))
+	e.save("one", "d", "project", "updated in af")
+	pv := e.preview()
+	if e.status(pv, "one") != claudeExportConflict || pv.byName["one"].Reason != "changed_since_write" {
+		t.Fatalf("item = %+v", pv.byName["one"])
+	}
+	if _, err := agentMemForget(e.c, agentMemForgetReq{Name: "one", Revision: 2}, e.now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if st := e.status(e.preview(), "one"); st != claudeExportConflict {
+		t.Errorf("forgotten + edited = %s, want conflict (never removed)", st)
+	}
+}
+
+// A MEMORY.md edited between preview and apply makes the preview stale.
+func TestClaudeExportIndexEditMakesTokenStale(t *testing.T) {
+	e := newClaudeExportEnv(t)
+	e.save("one", "d", "project", "b")
+	e.raw(e.slug, "MEMORY.md", "version A\n")
+	pv := e.preview()
+	e.raw(e.slug, "MEMORY.md", "version B, the member's\n")
+	if _, err := agentMemExportApply(agentMemExportReq{Project: e.pid, Token: pv.Token}, e.now); agentMemCode(err) != errCodeMemoryConflict {
+		t.Errorf("stale index token = %v", err)
+	}
+	if e.read("MEMORY.md") != "version B, the member's\n" {
+		t.Error("index overwritten")
+	}
+}
+
+// A write that did not happen is not listed in MEMORY.md, and an index that could not be written
+// is reported rather than passed off as success.
+func TestClaudeExportPartialFailureAndIndexFailure(t *testing.T) {
+	e := newClaudeExportEnv(t)
+	e.save("fresh", "d", "project", "b")
+	e.save("blocked", "d", "project", "b")
+	dir := e.memDir(e.slug)
+	e.setHook(func(stage string) {
+		if stage == "before-write" {
+			memoryMkdirAll(t, filepath.Join(dir, "blocked.md"))
+		}
+	})
+	out := e.apply()
+	if r := exportResult(out, "blocked"); r.Result != "skipped" {
+		t.Errorf("blocked = %+v", r)
+	}
+	idx := e.read("MEMORY.md")
+	if !strings.Contains(idx, "(fresh.md)") || strings.Contains(idx, "(blocked.md)") {
+		t.Errorf("index = %q", idx)
+	}
+
+	e.setHook(func(stage string) {
+		if stage == "before-write" {
+			memoryWrite(t, filepath.Join(dir, "MEMORY.md"), "member edit\n")
+		}
+	})
+	e.save("another", "d", "project", "b")
+	out = e.apply()
+	if out.Index != "failed" || e.read("MEMORY.md") != "member edit\n" {
+		t.Errorf("index = %s content %q", out.Index, e.read("MEMORY.md"))
+	}
+}
+
+// When the last memory is forgotten the project is still offered, so its written-back files can
+// be removed.
+func TestClaudeExportLastForgottenProjectStillListed(t *testing.T) {
+	e := newClaudeExportEnv(t)
+	e.save("only", "d", "project", "b")
+	e.apply()
+	if _, err := agentMemForget(e.c, agentMemForgetReq{Name: "only", Revision: 1}, e.now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	src, err := agentMemExportList()
+	if err != nil || len(src.Projects) != 1 || src.Projects[0].Project.ID != e.pid || src.Projects[0].Count != 0 {
+		t.Fatalf("sources = %+v %v", src, err)
+	}
+	e.apply()
+	if e.read("only.md") != "" {
+		t.Error("not removed")
+	}
+	if src, _ := agentMemExportList(); len(src.Projects) != 0 {
+		t.Errorf("still listed after removal: %+v", src)
+	}
+}

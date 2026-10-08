@@ -915,6 +915,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mem.ce_apply": "Write back ({n} changes)",
   "mem.ce_done": "Wrote back {n} memories",
   "mem.ce_done_skipped": "Wrote back {n} memories, skipped {skipped}",
+  "mem.ce_index_failed": "MEMORY.md could not be updated (it changed during the write-back or could not be written); preview again.",
   "mem.ce_failed": "Could not confirm the result. The preview has been re-read; check what was written.",
   "mem.af_revert": "Revert this change",
   "mem.af_forget": "Forget this memory",

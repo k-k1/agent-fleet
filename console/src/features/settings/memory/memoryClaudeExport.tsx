@@ -104,8 +104,9 @@ export function ClaudeExportPanel({ reload }: { reload: number }) {
       const results = (res?.results ?? []) as ClaudeExportResult[];
       const done = results.filter((r) => r.result !== "skipped").length;
       const skipped = results.length - done;
-      toast(tr(skipped ? "mem.ce_done_skipped" : "mem.ce_done", { n: done, skipped }), {
-        kind: skipped ? undefined : "success",
+      const indexFailed = res?.index === "failed";
+      toast(tr(skipped ? "mem.ce_done_skipped" : "mem.ce_done", { n: done, skipped }) + (indexFailed ? " " + tr("mem.ce_index_failed") : ""), {
+        kind: skipped || indexFailed ? undefined : "success",
       });
     } catch {
       // The request may or may not have reached the Agent: re-read what is there now.
