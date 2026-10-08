@@ -235,7 +235,7 @@ export const HTML_TAGS = new Set(
   ("a abbr acronym address area article aside audio b bdi bdo big blockquote br button canvas " +
     "caption center cite code col colgroup data datalist dd del details dfn dialog dir div dl " +
     "dt em fieldset figcaption figure font footer form h1 h2 h3 h4 h5 h6 header hgroup hr i " +
-    "img input ins kbd label legend li main map mark marquee math menu meter nav nobr ol " +
+    "img input ins kbd label legend li main map mark math menu meter nav nobr ol " +
     "optgroup option output p picture pre progress q rp rt ruby s samp search section select " +
     "slot small source span strike strong sub summary sup svg table tbody td textarea tfoot " +
     "th thead time tr track tt u ul var video wbr").split(" "),
@@ -268,9 +268,13 @@ const FORMATTING_TAGS = new Set("a b big code em font i nobr s small strike stro
 //   there closes nothing. (Only some reach the parser as elements — `<script>` is vetoed to text
 //   by HTML_TAGS above and DOMPurify drops it from a block — but a block is scanned whole.)
 // - Scope markers: a formatting element is not closed from inside a table cell, caption,
-//   marquee, object, applet or template — the parser's active-formatting list stops there.
+//   object, applet or template — the parser's active-formatting list stops there. A cell or
+//   caption only counts inside a <table> (the parser drops it elsewhere), and it ends at its
+//   own end tag or with the table: the end tags are optional.
+//   <marquee> is deliberately not honored as markup at all (see HTML_TAGS): it scrolls its text.
 const RAW_TEXT_TAGS = new Set("script style textarea title xmp iframe noembed noframes".split(" "));
-const SCOPE_TAGS = new Set("applet caption marquee object td template th".split(" "));
+const SCOPE_TAGS = new Set("applet caption object td template th".split(" "));
+const CELL_TAGS = new Set("caption td th".split(" "));
 
 interface TagEvent {
   name: string;
@@ -279,7 +283,7 @@ interface TagEvent {
 
 function tagEvent(raw: string): TagEvent | null {
   const name = TAG_NAME.exec(raw)?.[1].toLowerCase();
-  if (!name || !(FORMATTING_TAGS.has(name) || SCOPE_TAGS.has(name) || RAW_TEXT_TAGS.has(name))) return null;
+  if (!name || !(FORMATTING_TAGS.has(name) || SCOPE_TAGS.has(name) || RAW_TEXT_TAGS.has(name) || name === "table")) return null;
   return { name, open: !raw.startsWith("</") };
 }
 
@@ -304,7 +308,12 @@ class TagPairing {
       this.rawText = event.name;
       return;
     }
+    if (event.name === "table") {
+      this.tableTag(event, at);
+      return;
+    }
     if (SCOPE_TAGS.has(event.name)) {
+      if (CELL_TAGS.has(event.name) && !this.inTable()) return; // dropped by the parser, so no boundary
       if (event.open) this.open.push({ name: event.name, stray: () => {}, at, marker: true });
       else this.closeScope(event.name);
       return;
@@ -313,7 +322,10 @@ class TagPairing {
       this.open.push({ name: event.name, stray, at });
       return;
     }
-    for (let i = this.open.length - 1; i >= 0 && !this.open[i].marker; i--) {
+    for (let i = this.open.length - 1; i >= 0; i--) {
+      // A scope boundary stops the closer for good: it is not offered to the document either,
+      // because the parser would not let it out of the scope.
+      if (this.open[i].marker) return;
       if (this.open[i].name === event.name) {
         this.pairs.push({ name: event.name, from: this.open[i].at, to: at });
         this.open.splice(i, 1);
@@ -321,6 +333,22 @@ class TagPairing {
       }
     }
     this.orphans.push(event);
+  }
+
+  private inTable(): boolean {
+    return this.open.some((o) => o.name === "table");
+  }
+
+  // The end tag of a cell is optional, so a cell boundary is only known to be over when its
+  // table ends: `</table>` drops every boundary opened since `<table>`, and what was left open
+  // in there is stray. Rows and sections need no handling of their own for the same reason.
+  private tableTag(event: TagEvent, at: number): void {
+    if (event.open) {
+      this.open.push({ name: "table", stray: () => {}, at });
+      return;
+    }
+    const table = this.open.map((o) => o.name).lastIndexOf("table");
+    if (table >= 0) for (const o of this.open.splice(table)) o.stray();
   }
 
   // The end tag of a scope element: whatever was left open inside it is closed with it, and
