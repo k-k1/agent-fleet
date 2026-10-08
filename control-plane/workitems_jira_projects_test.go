@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -193,5 +194,43 @@ func TestJiraProjectsRefuseAnOversizedOrMalformedAgentAnswer(t *testing.T) {
 		if _, ok := jiraProjects.get("m1"); ok {
 			t.Errorf("%s answer was cached", name)
 		}
+	}
+}
+
+// gateRuntime holds the first State call until released, so the order "A misses the cache, B
+// completes a whole read, A continues" is decided by channels, not by timing.
+type gateRuntime struct {
+	stubRuntime
+	entered chan struct{}
+	release chan struct{}
+	first   int32
+}
+
+func (g *gateRuntime) State(ctx context.Context) string {
+	if atomic.AddInt32(&g.first, 1) == 1 {
+		close(g.entered)
+		<-g.release
+	}
+	return g.stubRuntime.State(ctx)
+}
+
+func TestJiraProjectsAReadFinishedWhileAnotherCallerWasInStateIsNotRepeated(t *testing.T) {
+	a, res, hits, _ := jiraProjectsEnv(t, "running", projAnswer, 200)
+	base := res("m1")
+	g := &gateRuntime{stubRuntime: base.rt.(stubRuntime), entered: make(chan struct{}), release: make(chan struct{})}
+	ra := &resolved{rt: g, mv: base.mv}
+
+	done := make(chan string)
+	go func() { done <- getJiraProjects(a, ra) }() // A: cache miss, parked inside State
+	<-g.entered
+	if got := getJiraProjects(a, res("m1")); got != projAnswer { // B: the whole read
+		t.Fatalf("B got %s", got)
+	}
+	close(g.release)
+	if got := <-done; got != projAnswer {
+		t.Fatalf("A got %s", got)
+	}
+	if *hits != 1 {
+		t.Fatalf("agent reads = %d, want 1", *hits)
 	}
 }

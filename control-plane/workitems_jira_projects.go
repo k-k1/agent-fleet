@@ -74,6 +74,11 @@ func (c *jiraProjectsCache) begin(membership string) (lead, skip bool, wait <-ch
 	if ch, ok := c.inflight[membership]; ok {
 		return false, false, ch
 	}
+	// Another request may have filled the entry between the caller's get and now (the State
+	// query in between is a runtime call and can be slow): reading again would be a second read.
+	if e, ok := c.m[membership]; ok && c.now().Sub(e.at) <= jiraProjectsFresh {
+		return false, true, nil
+	}
 	if at, ok := c.failed[membership]; ok && c.now().Sub(at) < jiraProjectsBackoff {
 		return false, true, nil
 	}

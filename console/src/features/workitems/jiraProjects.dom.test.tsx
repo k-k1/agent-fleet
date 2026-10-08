@@ -58,8 +58,12 @@ describe("jira project list ownership", () => {
     expect(apiCalls).toHaveBeenCalledTimes(2);
     await land(0, ["AAA"]); // A's answer arrives late
     expect(useJiraProjects.getState().keys).toEqual([]);
-    // A's settling must not have cleared B's pending request: asking again does not re-request.
+    // A's settling must not have cleared B's pending request. Past the retry window only the
+    // pending guard stops a third request, so move the clock beyond it.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 5 * 60 * 1000);
     void ensureJiraProjects();
+    vi.useRealTimers();
     expect(apiCalls).toHaveBeenCalledTimes(2);
     await land(1, ["BBB"]);
     expect(useJiraProjects.getState().keys).toEqual(["BBB"]);
