@@ -123,6 +123,20 @@ describe("command palette — sessions mode", () => {
     expect(stopped.className).toContain("cp-stopped");
   });
 
+  it("starts on the first row every time it reopens, not on the row picked last time (#1886)", () => {
+    mount();
+    const input = document.querySelector<HTMLInputElement>(".cp-input")!;
+    for (let n = 0; n < 3; n++) {
+      act(() => {
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+      });
+    }
+    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("stopped");
+    act(() => useKeysStore.getState().closePalette());
+    act(() => useKeysStore.getState().openPalette());
+    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("askedLast");
+  });
+
   it("still orders by attention when the list only arrives after it opened", () => {
     // The palette opened right after startup, before the first poll. The list is empty so
     // it opens in command mode and the sessions arrive later. Settling for name order just

@@ -426,6 +426,9 @@ export function CommandPalette() {
     openerRef.current = (document.activeElement as HTMLElement) ?? null;
     setQ("");
     setSel(0);
+    // The first render after a reopen still carries the previous opening's sel/order, and
+    // selTrack recorded that row; forget it, or the new list "restores" the old highlight.
+    selTrack.current.id = null;
     // Open in command mode only when the workspace has no sessions at all: greeting the
     // user with an empty session list just costs them one press of Tab.
     const live = useSessionsStore.getState().sessions;
