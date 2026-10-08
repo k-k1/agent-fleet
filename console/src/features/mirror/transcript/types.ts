@@ -141,6 +141,10 @@ export interface Group {
   // one from the previous render when their row ranges overlap, and the first row alone cannot
   // say that.
   endIdx?: number;
+  // The FIRST folded turn's idx as grouped, never re-stamped: `idx` above keeps the block's name
+  // while a backward page extends it at the front, so only this and endIdx say which rows it
+  // covers (rendered as data-turn-first / data-turn-last for a jump to a row inside the block).
+  firstIdx?: number;
   // The FIRST folded turn's anchor — branching "from this block" means branching before
   // everything it shows, so a merged block must not adopt a later turn's anchor.
   anchorId?: string;

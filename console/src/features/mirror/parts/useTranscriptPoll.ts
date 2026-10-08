@@ -389,6 +389,10 @@ export function useOlderHistory({
     lifeRef.current++;
     wantRef.current = null;
     readyRef.current = null;
+    // The previous session's fetch can no longer release these (its life is over), so the new
+    // session starts with the lock free. The poll's own reset does the same for the flag.
+    loadingOlderRef.current = false;
+    setLoadingOlder(false);
     return () => {
       lifeRef.current++;
     };
@@ -405,7 +409,11 @@ export function useOlderHistory({
   const wantRef = useRef<ScrollMark | null>(null);
   const readyRef = useRef<ScrollMark | null>(null);
   const jumpGenRef = useRef(0);
-  const runningRef = useRef(false);
+  // The life a jump run belongs to (0 = none). A run of an older life never blocks a new one.
+  const runningRef = useRef(0);
+  // The newest render's serveJumps. A fetch that outlived its session hands over through this one:
+  // its own closure still names the old session in every URL it builds.
+  const serveRef = useRef<() => Promise<void>>(async () => {});
   const [jumpGo, setJumpGo] = useState(0);
   // The oldest idx held, lowered by every page fetched (turnsRef lags a render behind a prepend).
   const oldestRef = useRef(Infinity);
@@ -438,10 +446,11 @@ export function useOlderHistory({
   // Page older history in (P2). The loading flag is the one lock for the button, the observer and
   // a jump; whoever releases it hands over to a jump that arrived meanwhile.
   const release = (life: number) => {
-    if (life !== lifeRef.current) return; // the session changed: the flag is the new one's now
-    loadingOlderRef.current = false;
-    setLoadingOlder(false);
-    void serveJumps();
+    if (life === lifeRef.current) {
+      loadingOlderRef.current = false; // else the session changed: the flag is the new one's now
+      setLoadingOlder(false);
+    }
+    void serveRef.current();
   };
   const loadOlder = async () => {
     if (loadingOlderRef.current || firstLineRef.current <= 0) return;
@@ -458,13 +467,13 @@ export function useOlderHistory({
   // Serve the newest jump, one at a time. A jump that arrives during a run supersedes it (the run
   // sees the generation move and stops between pages) and is served when the lock frees.
   const serveJumps = async () => {
-    if (runningRef.current || loadingOlderRef.current || !windowHeldRef.current) return;
+    if (runningRef.current === lifeRef.current || loadingOlderRef.current || !windowHeldRef.current) return;
     const mark = wantRef.current;
     if (!mark) return;
     wantRef.current = null;
     const gen = jumpGenRef.current;
     const life = lifeRef.current;
-    runningRef.current = true;
+    runningRef.current = life;
     loadingOlderRef.current = true;
     setLoadingOlder(true);
     const seq = scroll.inputSeqRef.current;
@@ -481,18 +490,22 @@ export function useOlderHistory({
         cancelled: () => stale() || scroll.inputSeqRef.current !== seq || scroll.placeMoved(place),
       });
       if (stale()) outcome = "cancelled";
-      else if (outcome === "reached" && (scroll.inputSeqRef.current !== seq || scroll.placeMoved(place))) outcome = "cancelled";
+      else if ((outcome === "reached" || outcome === "mounted") && (scroll.inputSeqRef.current !== seq || scroll.placeMoved(place))) outcome = "cancelled";
       if (outcome === "too-far") toast(tr("mirror.jump_unreachable"));
       else if (outcome === "failed") toast(tr("mirror.jump_failed"));
-      else if (outcome === "reached") {
+      else if (outcome === "reached" || outcome === "mounted") {
+        // "mounted" too: a hit that the page of ANOTHER fetch (the button's) brought in was not
+        // there when the mirror's own listener tried it.
         readyRef.current = mark;
         setJumpGo((n) => n + 1);
       }
     } finally {
-      runningRef.current = false;
+      if (runningRef.current === life) runningRef.current = 0;
       release(life);
     }
   };
+
+  serveRef.current = serveJumps;
 
   // A hit for the session shown here. Listens next to useMirrorScroll's own, which restores the
   // turn when it is mounted and gives up quietly when it is not — the case handled here.

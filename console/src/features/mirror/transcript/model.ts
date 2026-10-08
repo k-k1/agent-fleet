@@ -401,6 +401,7 @@ export function groupTurns(turns: Turn[]): Group[] {
         endTs: endOf(t) || undefined,
         idx: t.idx,
         endIdx: t.idx,
+        firstIdx: t.idx,
         anchorId: t.anchorId,
         origins: originsOf(t, parts),
         bodyRoot: turnKey(t) ? markRootKey(turnKey(t), BODY_PART) : "",

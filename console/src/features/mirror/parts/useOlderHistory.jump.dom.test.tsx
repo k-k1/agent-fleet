@@ -147,12 +147,37 @@ describe("useOlderHistory explicit jump", () => {
     expect(jumped).toHaveLength(0);
   });
 
+  it("serves the new session's jump although the old session's fetch is still in flight", async () => {
+    let release: (v: unknown) => void = () => {};
+    apiMock.mockImplementationOnce(() => new Promise((r) => { release = r; }));
+    mount({ session: "s" });
+    act(() => requestJump("s", { atBottom: false, idx: 300, offset: 0, near: true }));
+    act(() => root!.render(<Harness session="t" />));
+    act(() => requestJump("t", { atBottom: false, idx: 300, offset: 0, near: true }));
+    await flush();
+    await act(async () => release({ messages: [{ idx: 200 }], firstLine: 200, hasMore: true }));
+    await flush();
+    expect(apiMock.mock.calls.some((c) => String(c[0]).includes("sessions/t/"))).toBe(true);
+    expect(jumped).toHaveLength(1);
+  });
+
+  it("applies a jump whose hit the button's page brought in", async () => {
+    let release: (v: unknown) => void = () => {};
+    apiMock.mockImplementationOnce(() => new Promise((r) => { release = r; }));
+    mount({ session: "s" });
+    act(() => { void older!(); });
+    act(() => requestJump("s", { atBottom: false, idx: 300, offset: 0, near: true }));
+    await act(async () => release({ messages: [{ idx: 0 }], firstLine: 0, hasMore: false }));
+    await flush();
+    expect(jumped).toHaveLength(1);
+  });
+
   it("does nothing for a hit inside the window", async () => {
     mount({ session: "s" });
     act(() => requestJump("s", { atBottom: false, idx: 1200, offset: 0, near: true }));
     await flush();
     expect(apiMock).not.toHaveBeenCalled();
-    expect(jumped).toHaveLength(0);
+    expect(jumped).toHaveLength(1); // harmless repeat of what the scroller's own listener did
   });
 
   it("waits for the first window when the session is opened by the jump", async () => {

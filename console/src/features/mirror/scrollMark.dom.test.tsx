@@ -168,3 +168,22 @@ describe("applyMark with near", () => {
     expect(applyMark(el, { atBottom: false, idx: 2.5, offset: 0 })).toBe(false);
   });
 });
+
+describe("scrollTopForTurn near, a block extended at its front", () => {
+  it("lands in the block whose row range holds the hit, not an earlier-named block", () => {
+    const el = document.createElement("div");
+    Object.defineProperty(el, "clientHeight", { value: 100 });
+    Object.defineProperty(el, "scrollHeight", { value: 5000 });
+    el.getBoundingClientRect = () => new DOMRect(0, 0, 200, 100);
+    // Block named 1000 covers rows 250..999 (a backward page extended it); block 200 is earlier.
+    for (const b of [{ id: 200, first: 200, last: 240, top: 0 }, { id: 1000, first: 250, last: 999, top: 500 }]) {
+      const d = document.createElement("div");
+      d.setAttribute("data-turn-idx", String(b.id));
+      d.setAttribute("data-turn-first", String(b.first));
+      d.setAttribute("data-turn-last", String(b.last));
+      d.getBoundingClientRect = () => new DOMRect(0, b.top, 200, 100);
+      el.appendChild(d);
+    }
+    expect(scrollTopForTurn(el, 300, 0, true)).toBe(500);
+  });
+});

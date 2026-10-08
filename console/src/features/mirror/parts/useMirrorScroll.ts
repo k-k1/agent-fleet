@@ -271,11 +271,13 @@ export function useMirrorScroll() {
   // Where the reader is, in content terms, for a jump that waits on network pages. Input events
   // miss a native scrollbar drag (see endRestoreOnInput), and scrollTop drifts for innocent
   // reasons (prepends held by the anchor, browser anchoring), so the question is asked of the
-  // CONTENT: still following the end, or still on the same turn at about the same offset.
-  const placeSnapshot = () => ({ atBottom: atBottomRef.current, mark: captureMark(bodyRef.current, false) });
+  // CONTENT: still following the end, or still on the same turn at about the same offset. The
+  // reference is the first boundary BELOW the reader (prependMark), the one a backward page cannot
+  // move: the page extends the block they are in at its front.
+  const placeSnapshot = () => ({ atBottom: atBottomRef.current, mark: bodyRef.current ? prependMark(bodyRef.current) : null });
   const placeMoved = (snap: { atBottom: boolean; mark: ScrollMark | null }): boolean => {
     if (snap.atBottom || atBottomRef.current) return snap.atBottom !== atBottomRef.current;
-    const now = captureMark(bodyRef.current, false);
+    const now = bodyRef.current ? prependMark(bodyRef.current) : null;
     if (!snap.mark || !now) return false;
     return now.idx !== snap.mark.idx || Math.abs(now.offset - snap.mark.offset) > 48;
   };

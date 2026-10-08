@@ -9,6 +9,7 @@ import { useMirrorScroll } from "./useMirrorScroll.ts";
 import { clearMarks, requestJump } from "../scrollMark.ts";
 
 let api: ReturnType<typeof useMirrorScroll> | null = null;
+let shiftBelow = 0; // how far a backward page pushed everything below the extended first block
 
 function Harness() {
   const s = useMirrorScroll();
@@ -22,7 +23,7 @@ function Harness() {
     for (const t of [{ idx: 1, top: 0 }, { idx: 2, top: 200 }, { idx: 5, top: 600 }]) {
       const d = document.createElement("div");
       d.setAttribute("data-turn-idx", String(t.idx));
-      d.getBoundingClientRect = () => new DOMRect(0, t.top - el.scrollTop, 200, 100);
+      d.getBoundingClientRect = () => new DOMRect(0, t.top + (t.idx > 1 ? shiftBelow : 0) - el.scrollTop, 200, 100);
       el.appendChild(d);
     }
     s.resetForSession("shown");
@@ -46,6 +47,7 @@ afterEach(() => {
   host?.remove();
   clearMarks();
   api = null;
+  shiftBelow = 0;
 });
 
 describe("useMirrorScroll explicit jump", () => {
@@ -66,5 +68,18 @@ describe("useMirrorScroll explicit jump", () => {
     el.scrollTop = 300;
     act(() => requestJump("shown", { atBottom: false, idx: 0, offset: 0, near: true }));
     expect(el.scrollTop).toBe(300);
+  });
+
+  it("does not read a backward page extending the reader's block as the reader moving", () => {
+    mount();
+    const el = api!.bodyRef.current!;
+    el.scrollTop = 150; // inside turn 1, turn 2 below
+    api!.atBottomRef.current = false;
+    const snap = api!.placeSnapshot();
+    shiftBelow = 500; // the page lands at the FRONT of turn 1's block …
+    el.scrollTop = 650; // … and the prepend hold keeps the same content in view
+    expect(api!.placeMoved(snap)).toBe(false);
+    el.scrollTop = 900; // a real move (scrollbar drag)
+    expect(api!.placeMoved(snap)).toBe(true);
   });
 });
