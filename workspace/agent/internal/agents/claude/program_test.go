@@ -130,14 +130,17 @@ func TestBuildProgramSwitchesAutoMemoryOffWithAFMemory(t *testing.T) {
 	cfg := isolateSlot(t)
 	t.Cleanup(func() { AutoMemoryOff = nil })
 	const sid = "88888888-8888-4888-8888-888888888new"
-	writeSlotJSONL(t, cfg, "-tmp-repo", testSlotSID)
+	// Two independent resume slots: the plain one has its own jsonl and no ledger entry; the
+	// drifted one's ledger entry points at a different, live id.
+	const plainSlot = "b7000000-0000-5000-8000-0000000plain"
+	writeSlotJSONL(t, cfg, "-tmp-repo", plainSlot)
 	writeSlotJSONL(t, cfg, "-tmp-repo", testLiveSID)
 
 	shapes := map[string]func() string{
 		"new":    func() string { return buildProgram(sid, "", "", "", "", "", true) },
 		"plan":   func() string { return buildProgram(sid, "m", "e", "plan", "lbl", "", false) },
 		"fork":   func() string { return buildProgram(sid, "", "", "", "", "99999999-9999-4999-8999-999999999999", true) },
-		"resume": func() string { return buildProgram(testSlotSID, "", "", "", "", "", true) },
+		"resume": func() string { return buildProgram(plainSlot, "", "", "", "", "", true) },
 		"flags-env": func() string {
 			t.Setenv("AGENT_CLAUDE_FLAGS", "--verbose")
 			return buildProgram(sid, "", "", "", "", "", true)
@@ -148,10 +151,10 @@ func TestBuildProgramSwitchesAutoMemoryOffWithAFMemory(t *testing.T) {
 		},
 	}
 	// The resume shapes must really take the --resume branch, or they would test nothing.
-	for _, name := range []string{"resume", "drifted-resume"} {
+	for name, id := range map[string]string{"resume": plainSlot, "drifted-resume": testLiveSID} {
 		AutoMemoryOff = nil
-		if got := shapes[name](); !strings.Contains(got, "claude --resume ") {
-			t.Fatalf("%s: not a resume command: %q", name, got)
+		if got := shapes[name](); !strings.HasPrefix(got, "claude --resume '"+id+"' ") {
+			t.Fatalf("%s: want a resume of %s: %q", name, id, got)
 		}
 	}
 
@@ -179,7 +182,7 @@ func TestBuildProgramSwitchesAutoMemoryOffWithAFMemory(t *testing.T) {
 				t.Errorf("%s/%s: crossSessionInbound lost: %v", tc.label, name, m)
 			}
 			perms, _ := m["permissions"].(map[string]any)
-			if deny, _ := perms["deny"].([]any); len(deny) != 2 {
+			if deny, _ := perms["deny"].([]any); len(deny) != 2 || deny[0] != "ListAgents" || deny[1] != "SendMessage" {
 				t.Errorf("%s/%s: permissions.deny lost: %v", tc.label, name, m)
 			}
 		}
