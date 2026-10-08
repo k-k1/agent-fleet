@@ -53,6 +53,12 @@ type ExecOptions struct {
 	// DefaultClash is SyncResult.DefaultClash: Settings profiles held back because a
 	// [DEFAULT] line would make the CLI refuse them, so the run can say why.
 	DefaultClash map[string]string
+	// ChainBroken is SyncResult.ChainBroken: role-chaining Settings profiles held back
+	// because their source is not exported, so the run can say why.
+	ChainBroken map[string]string
+	// Exported is SyncResult.Exported: the profiles this sync wrote to the managed block. A
+	// Settings role chain runs only when it and its source are both in it.
+	Exported []string
 
 	Stderr      io.Writer
 	Interactive bool // stdin and stderr are terminals
@@ -344,7 +350,9 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	if err := checkAmbiguous(o); err != nil {
 		return "", nil, nil, err
 	}
-	if sp, ok := o.Settings[o.Profile]; ok {
+	sp, listed := o.Settings[o.Profile]
+	chained := listed && sp.Chained()
+	if listed && !chained {
 		if why := IncompleteReason(sp); why != "" {
 			return "", nil, nil, fmt.Errorf("profile %q is not exported: %s (Settings > AWS profiles/SSM)", o.Profile, why)
 		}
@@ -356,6 +364,9 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		return "", nil, nil, fmt.Errorf("profile %q is not exported: [DEFAULT] %s (in ~/.aws/config); remove that line from [DEFAULT]",
 			o.Profile, reason)
 	}
+	if why, ok := o.ChainBroken[o.Profile]; ok && len(keys) == 0 {
+		return "", nil, nil, fmt.Errorf("profile %q is not exported: %s", o.Profile, why)
+	}
 	if len(keys) == 0 {
 		return "", nil, nil, notDefined(env, o)
 	}
@@ -365,11 +376,19 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("profile %q: %w", o.Profile, err)
 	}
-	if err := checkIdentity(sso, o); err != nil {
+	chainINI := ""
+	if chained {
+		// A Settings role-chaining profile is known by its role, so the caller need not
+		// repeat the account; one that is given must still match.
+		var err error
+		if chainINI, err = checkChainedIdentity(env, sp, keys, origin, &o); err != nil {
+			return "", nil, nil, err
+		}
+	} else if err := checkIdentity(sso, o); err != nil {
 		return "", nil, nil, err
 	}
 	if nonSSOProfile(keys) {
-		return planNonSSO(awsBin, env, keys, origin, steered, o)
+		return planNonSSO(awsBin, env, keys, origin, steered, o, chainINI)
 	}
 	if err := checkSSOProfile(keys, o.Profile); err != nil {
 		return "", nil, nil, err
@@ -421,7 +440,7 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 				return "", nil, nil, err
 			}
 		case consoleEligible(sso, o):
-			if creds, err = consoleLogin(aws, sso, snap, o, err, hint); err != nil {
+			if creds, err = consoleLogin(aws, consoleTarget{Profile: o.Profile, Session: sso.Session, Check: func(a awsRunner) (processCreds, error) { return exportSSOCreds(a, sso.Session) }}, snap, o, err, hint); err != nil {
 				// At a terminal, a Console that cannot be asked at all is no reason to
 				// stop: the in-terminal login still works.
 				if !(o.TerminalConsole && errors.Is(err, errConsoleNotAsked)) {

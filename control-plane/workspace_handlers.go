@@ -1097,10 +1097,17 @@ func (a workspaceAPI) ssmInstances(w http.ResponseWriter, r *http.Request, res *
 			return
 		}
 	}
-	body, _ := json.Marshal(map[string]string{
-		"Profile": ssmProfileName(p.Label), "Region": p.Region, "StartURL": p.StartURL,
-		"SSORegion": p.SSORegion, "AccountID": p.AccountID, "RoleName": p.RoleName,
-	})
+	src, aerr := ssmLoginSource(r.Context(), a.mgr.store, p)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	req := map[string]any{
+		"Profile": ssmProfileName(p.Label), "Region": ssmProfileRegion(p, src), "StartURL": src.StartURL,
+		"SSORegion": src.SSORegion, "AccountID": src.AccountID, "RoleName": src.RoleName,
+	}
+	ssmChainJSON(p, src, req, [5]string{"SourceProfile", "RoleARN", "ExternalID", "RoleSessionName", "DurationSeconds"})
+	body, _ := json.Marshal(req)
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
 	r.Header.Set("Content-Length", strconv.Itoa(len(body)))

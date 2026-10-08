@@ -353,16 +353,26 @@ async function importSsm(
     Array.isArray(curHosts) ? curHosts : [],
   );
   const ids = profileIdByLabel(Array.isArray(curProfiles) ? curProfiles : []);
+  // Exact label -> id, for a chain's source (the plan already checked label and sign-in).
+  const exactIds = new Map<string, string>();
+  for (const x of Array.isArray(curProfiles) ? curProfiles : []) if (x?.kind !== "assume_role") exactIds.set(String(x.label), String(x.id));
   let addedProfiles = 0;
   let failed = 0;
   for (const p of plan.profiles) {
-    const res = await rawJSON("api/ssm/profiles", "POST", p);
+    // A chained entry names its source by label; the id exists only now, and the plan puts
+    // sso entries first, so it is already in ids.
+    const { source, sourceKey: _k, ...rest } = p;
+    const body = p.kind === "assume_role" ? { ...rest, sourceProfileId: exactIds.get(source || "") } : p;
+    const res = await rawJSON("api/ssm/profiles", "POST", body);
     if (!res.ok) {
       failed++;
       continue;
     }
     const created = await res.json().catch(() => null);
-    if (created?.id) ids.set(p.label.trim().toLowerCase(), created.id);
+    if (created?.id) {
+      ids.set(p.label.trim().toLowerCase(), created.id);
+      if (p.kind !== "assume_role") exactIds.set(p.label, created.id);
+    }
     addedProfiles++;
   }
   let addedHosts = 0;

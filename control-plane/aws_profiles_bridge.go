@@ -82,6 +82,17 @@ type awsProfileWire struct {
 	AccountID string `json:"accountId,omitempty"`
 	RoleName  string `json:"roleName,omitempty"`
 	Region    string `json:"region,omitempty"`
+	// Kind is "assume_role" for a profile that assumes RoleARN from the exported SSO profile
+	// SourceProfile (issue #1109), and absent for an sso profile, so the bytes an sso profile
+	// exports do not change. A chained profile has no portal: StartURL and SSORegion are empty
+	// and AccountID is the role ARN's. ExternalID, SessionName and DurationSeconds are
+	// optional assume-role parameters; none of them is a secret.
+	Kind            string `json:"kind,omitempty"`
+	RoleARN         string `json:"roleArn,omitempty"`
+	SourceProfile   string `json:"sourceProfile,omitempty"`
+	ExternalID      string `json:"externalId,omitempty"`
+	SessionName     string `json:"sessionName,omitempty"`
+	DurationSeconds int    `json:"durationSeconds,omitempty"`
 }
 
 // awsProfilesResponse is the body of GET /internal/aws-profiles.
@@ -135,7 +146,9 @@ type awsProfileConflict struct {
 // is reported instead so the member can rename one.
 func awsProfilesWire(rows []store.SSMProfile) ([]awsProfileWire, []awsProfileConflict) {
 	labels := map[string][]string{}
+	byID := make(map[string]store.SSMProfile, len(rows))
 	for _, p := range rows {
+		byID[p.ID] = p
 		n := ssmProfileName(p.Label)
 		labels[n] = append(labels[n], p.Label)
 	}
@@ -147,6 +160,21 @@ func awsProfilesWire(rows []store.SSMProfile) ([]awsProfileWire, []awsProfileCon
 			if ls[0] == p.Label {
 				conflicts = append(conflicts, awsProfileConflict{Name: name, Labels: ls})
 			}
+			continue
+		}
+		if ssmKindOf(p) == store.SSMKindAssumeRole {
+			// A source that is gone or is not an sso profile exports nothing: the Agent could
+			// not tell a typo from a chain it must refuse, so the chained profile is left out
+			// rather than written with a source_profile that names something else.
+			src, ok := byID[p.SourceProfileID]
+			if !ok || ssmKindOf(src) != store.SSMKindSSO {
+				continue
+			}
+			out = append(out, awsProfileWire{
+				Name: name, Label: p.Label, AccountID: p.AccountID, Region: p.Region,
+				Kind: store.SSMKindAssumeRole, RoleARN: p.RoleARN, SourceProfile: ssmProfileName(src.Label),
+				ExternalID: p.ExternalID, SessionName: p.SessionName, DurationSeconds: p.DurationSeconds,
+			})
 			continue
 		}
 		out = append(out, awsProfileWire{

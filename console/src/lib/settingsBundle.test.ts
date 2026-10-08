@@ -191,6 +191,67 @@ describe("planSsmImport", () => {
   });
 });
 
+describe("assume-role profiles in a bundle (#1109)", () => {
+  const sso = { id: "s1", label: "main", startUrl: "https://c.awsapps.com/start", ssoRegion: "us-east-1", accountId: "1", roleName: "R", region: "" };
+  const chain = {
+    id: "c1", kind: "assume_role", label: "deploy", sourceProfileId: "s1", roleArn: "arn:aws:iam::210987654321:role/deploy",
+    accountId: "210987654321", externalId: "e1", sessionName: "af", durationSeconds: 1800, region: "",
+  };
+
+  it("exports the source by label and leaves an sso entry's keys as they were", () => {
+    const out = toSsmSection([sso, chain], []);
+    expect(Object.keys(out.profiles[0]).sort()).toEqual(["accountId", "label", "region", "roleName", "ssoRegion", "startUrl"]);
+    expect(out.profiles[1]).toMatchObject({ kind: "assume_role", label: "deploy", source: "main", roleArn: chain.roleArn, durationSeconds: 1800 });
+  });
+
+  it("plans the sso entries first and skips a chain whose source will not exist", () => {
+    const section = toSsmSection([chain, sso, { ...chain, id: "c2", label: "orphan", sourceProfileId: "zz" }], []);
+    const plan = planSsmImport(section, [], []);
+    expect(plan.profiles.map((p) => p.label)).toEqual(["main", "deploy"]);
+    expect(plan.skippedProfiles).toEqual([{ label: "orphan", reason: "invalid" }]);
+  });
+
+  it("never joins a chain to a source that only shares the label up to case", () => {
+    const a = { ...sso, id: "a", label: "Prod", accountId: "111111111111" };
+    const b = { ...sso, id: "b", label: "prod", accountId: "222222222222" };
+    const section = toSsmSection([a, b, { ...chain, sourceProfileId: "b" }], []);
+    expect(section.profiles[2]).toMatchObject({ source: "prod", sourceKey: expect.stringContaining("222222222222") });
+    const plan = planSsmImport(section, [], []);
+    // b folds onto a and is not created, so the chain has no source rather than the wrong one.
+    expect(plan.profiles.map((p) => p.label)).toEqual(["Prod"]);
+    expect(plan.skippedProfiles).toEqual([
+      { label: "prod", reason: "exists" },
+      { label: "deploy", reason: "invalid" },
+    ]);
+  });
+
+  it("does not reconnect to an existing profile of the same label but another sign-in", () => {
+    const section = toSsmSection([sso, chain], []);
+    const elsewhere = { ...sso, id: "x", accountId: "999999999999" };
+    const plan = planSsmImport(section, [elsewhere], []);
+    expect(plan.profiles).toEqual([]);
+    expect(plan.skippedProfiles).toEqual([
+      { label: "main", reason: "exists" },
+      { label: "deploy", reason: "invalid" },
+    ]);
+    // The same sign-in under the same label does join.
+    expect(planSsmImport(section, [sso], []).profiles.map((p) => p.label)).toEqual(["deploy"]);
+  });
+
+  it("holds a chain to the same limits as the CP", () => {
+    const bad = (over: any) => planSsmImport(toSsmSection([sso, { ...chain, ...over }], []), [], []).skippedProfiles;
+    expect(bad({ durationSeconds: 7200 })).toEqual([{ label: "deploy", reason: "invalid" }]);
+    expect(bad({ roleArn: "arn:aws:iam::210987654321:role/deploy/" })).toEqual([{ label: "deploy", reason: "invalid" }]);
+    expect(bad({ externalId: "x" })).toEqual([{ label: "deploy", reason: "invalid" }]);
+    expect(bad({ sessionName: "a b" })).toEqual([{ label: "deploy", reason: "invalid" }]);
+  });
+
+  it("does not take another chained profile as a source", () => {
+    const section = toSsmSection([sso, chain, { ...chain, id: "c3", label: "nested", sourceProfileId: "c1" }], []);
+    expect(planSsmImport(section, [], []).skippedProfiles).toEqual([{ label: "nested", reason: "invalid" }]);
+  });
+});
+
 describe("summarizeBundle / bundleFileName", () => {
   it("counts what the file carries", () => {
     const b = buildBundle(

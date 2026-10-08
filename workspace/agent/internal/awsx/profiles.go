@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -55,7 +56,22 @@ type Profile struct {
 	AccountID string `json:"accountId,omitempty"`
 	RoleName  string `json:"roleName,omitempty"`
 	Region    string `json:"region,omitempty"`
+	// Kind is KindAssumeRole for a profile that assumes RoleARN from the exported SSO profile
+	// named SourceProfile (issue #1109), "" for an SSO profile. A chained profile has no portal,
+	// and AccountID is its role's. None of these holds a secret.
+	Kind            string `json:"kind,omitempty"`
+	RoleARN         string `json:"roleArn,omitempty"`
+	SourceProfile   string `json:"sourceProfile,omitempty"`
+	ExternalID      string `json:"externalId,omitempty"`
+	SessionName     string `json:"sessionName,omitempty"`
+	DurationSeconds int    `json:"durationSeconds,omitempty"`
 }
+
+// KindAssumeRole is Profile.Kind of a role-chaining profile.
+const KindAssumeRole = "assume_role"
+
+// Chained reports whether p assumes a role from another Settings profile.
+func (p Profile) Chained() bool { return p.Kind == KindAssumeRole }
 
 // SyncResult reports one sync for the log and for `af-aws-exec --list`.
 type SyncResult struct {
@@ -78,7 +94,12 @@ type SyncResult struct {
 	// would make the CLI refuse them or run them as another role, by name, with that
 	// line and what it does (a ready-to-print reason).
 	DefaultClash map[string]string
-	Changed      bool
+	// ChainBroken are role-chaining profiles not exported because the SSO profile they
+	// assume from is not in the managed block (it is shadowed, held back, not an SSO
+	// profile or gone), by name, with the reason. Exporting them anyway would point
+	// source_profile at whatever the member's own files define under that name.
+	ChainBroken map[string]string
+	Changed     bool
 	// Settings is every profile the CP sent, by name, so af-aws-exec can tell a name the
 	// member's own ~/.aws definition shadows from the Settings profile of that name.
 	Settings map[string]Profile
@@ -285,7 +306,18 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 		}
 	})
 	var body strings.Builder
+	// Role-chaining profiles come after the SSO profiles they assume from, once it is known
+	// which of those are exported.
+	var chained []Profile
+	byName := map[string]Profile{}
 	for _, p := range ps {
+		byName[p.Name] = p
+	}
+	for _, p := range ps {
+		if p.Chained() {
+			chained = append(chained, p)
+			continue
+		}
 		if profiles[p.Name] {
 			res.Shadowed = append(res.Shadowed, p.Name)
 			continue
@@ -325,6 +357,42 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 		body.WriteString(ini)
 		res.Exported = append(res.Exported, p.Name)
 	}
+	exportedSSO := map[string]bool{}
+	for _, n := range res.Exported {
+		exportedSSO[n] = true
+	}
+	for _, p := range chained {
+		if profiles[p.Name] {
+			res.Shadowed = append(res.Shadowed, p.Name)
+			continue
+		}
+		src, haveSrc := byName[p.SourceProfile]
+		if why := chainBrokenReason(p, src, haveSrc, exportedSSO); why != "" {
+			if res.ChainBroken == nil {
+				res.ChainBroken = map[string]string{}
+			}
+			res.ChainBroken[p.Name] = why
+			continue
+		}
+		ini, rerr := renderChained(p, src)
+		if rerr != nil {
+			if res.Invalid == nil {
+				res.Invalid = map[string]string{}
+			}
+			res.Invalid[p.Name] = InvalidReason(p, rerr)
+			continue
+		}
+		if why := defaultClashChained(defaults, p, chainRegion(p, src)); why != "" {
+			if res.DefaultClash == nil {
+				res.DefaultClash = map[string]string{}
+			}
+			res.DefaultClash[p.Name] = why
+			continue
+		}
+		body.WriteString("\n")
+		body.WriteString(ini)
+		res.Exported = append(res.Exported, p.Name)
+	}
 	if len(res.Exported) == 0 {
 		return user, res, nil
 	}
@@ -341,6 +409,85 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 	b.WriteString(body.String())
 	b.WriteString("\n" + blockEnd + "\n")
 	return b.String(), res, nil
+}
+
+// chainRegion is the region of a role-chaining profile: its own, else its source's (the SSO
+// region when the source names none), as an SSO profile falls back to its SSO region.
+func chainRegion(p, src Profile) string {
+	switch {
+	case p.Region != "":
+		return p.Region
+	case src.Region != "":
+		return src.Region
+	}
+	return src.SSORegion
+}
+
+func renderChained(p, src Profile) (string, error) {
+	return sessionx.RenderAssumeRoleProfile(session.SSMMeta{
+		Profile: p.Name, SourceProfile: p.SourceProfile, RoleARN: p.RoleARN, ExternalID: p.ExternalID,
+		RoleSessionName: p.SessionName, DurationSeconds: p.DurationSeconds, Region: chainRegion(p, src),
+	})
+}
+
+// chainBrokenReason says why the role-chaining profile p cannot be exported, or "". The
+// source must be a Settings SSO profile that this very render writes: a source that is
+// shadowed by the member's own definition of the name would hand the role chain to
+// whatever that definition holds, long-lived keys included.
+func chainBrokenReason(p, src Profile, haveSrc bool, exportedSSO map[string]bool) string {
+	switch {
+	case p.SourceProfile == "" || !haveSrc:
+		return fmt.Sprintf("its source profile %q is not a Settings profile; pick another in Settings > AWS profiles/SSM", p.SourceProfile)
+	case src.Chained():
+		return fmt.Sprintf("its source profile %q assumes a role itself; a source must be an SSO profile", p.SourceProfile)
+	case !exportedSSO[p.SourceProfile]:
+		return fmt.Sprintf("its source profile %q is not exported (`af-aws-exec --list` says why)", p.SourceProfile)
+	}
+	return ""
+}
+
+// defaultClashChained says why a [DEFAULT] line in ~/.aws/config would break the exported
+// role-chaining profile p, or "". [DEFAULT] lends its keys to every profile, so a second
+// way to get credentials there would give the name two meanings, and a value for a key the
+// block writes differently would change the role or its parameters.
+func defaultClashChained(defaults map[string]string, p Profile, region string) string {
+	written := map[string]string{"role_arn": p.RoleARN, "source_profile": p.SourceProfile}
+	if p.ExternalID != "" {
+		written["external_id"] = p.ExternalID
+	}
+	if p.SessionName != "" {
+		written["role_session_name"] = p.SessionName
+	}
+	if p.DurationSeconds != 0 {
+		written["duration_seconds"] = strconv.Itoa(p.DurationSeconds)
+	}
+	if region != "" {
+		written["region"] = region
+	}
+	keys := make([]string, 0, len(defaults))
+	for k := range defaults {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		switch {
+		case strings.HasPrefix(k, "sso_"), k == "credential_source", k == "credential_process", k == "web_identity_token_file",
+			k == "mfa_serial", k == "aws_access_key_id", k == "aws_secret_access_key", k == "aws_session_token":
+			// Never quote the value: for the key names above it may be a secret.
+			return fmt.Sprintf("%s is set in [DEFAULT], which would give this profile a second way to get credentials", k)
+		}
+		switch k {
+		case "external_id", "role_session_name", "duration_seconds":
+			if _, ok := written[k]; !ok {
+				// Settings leaves this parameter out, and [DEFAULT] would supply one.
+				return fmt.Sprintf("%s is set in [DEFAULT] but not in this profile's Settings", k)
+			}
+		}
+		if w, ok := written[k]; ok && defaults[k] != w {
+			return fmt.Sprintf("%s = %q differs from this profile's %q", k, defaults[k], w)
+		}
+	}
+	return ""
 }
 
 func renderProfile(p Profile) (string, error) {
@@ -368,6 +515,16 @@ var invalidFields = []struct {
 // sentence naming the Settings field, its value and what an AWS config can hold.
 func InvalidReason(p Profile, err error) string {
 	msg := err.Error()
+	if p.Chained() {
+		for _, f := range []struct{ field, words string }{
+			{"role arn", "the role ARN"}, {"external id", "the external ID"}, {"role session name", "the session name"},
+			{"duration", "the duration"}, {"region", "the region"}, {"source profile", "the source profile"}, {"profile", "the profile name (from the Settings label)"},
+		} {
+			if strings.HasSuffix(msg, "invalid "+f.field) {
+				return fmt.Sprintf("%s of this role-chaining profile is not a value an AWS config can hold; fix it in Settings > AWS profiles/SSM", f.words)
+			}
+		}
+	}
 	for _, f := range invalidFields {
 		switch {
 		case strings.HasSuffix(msg, "invalid "+f.field):
@@ -386,6 +543,9 @@ func InvalidReason(p Profile, err error) string {
 // one, the CLI fails ("configured to use SSO but is missing required configuration"),
 // which is no fallback but no use either.
 func IncompleteReason(p Profile) string {
+	if p.Chained() {
+		return ""
+	}
 	switch {
 	case p.AccountID == "" && p.RoleName == "":
 		return "no account and role in Settings; `aws --profile` would fall back to the workspace's own role"
@@ -525,6 +685,9 @@ func syncAndLog(why string) {
 	for n, reason := range res.DefaultClash {
 		log.Printf("aws profiles sync (%s): %q not exported: [DEFAULT] %s (in ~/.aws/config)", why, n, reason)
 	}
+	for n, reason := range res.ChainBroken {
+		log.Printf("aws profiles sync (%s): %q not exported: %s", why, n, reason)
+	}
 	for n, reason := range res.Invalid {
 		log.Printf("aws profiles sync (%s): %q not exported, a Settings value cannot be written to the AWS config (%s)", why, n, reason)
 	}
@@ -592,5 +755,11 @@ func CachedSettings() (map[string]Profile, []Conflict, bool) {
 // DescribeProfile returns the SSO account and role the member's AWS files give name.
 func DescribeProfile(name string) (account, role string) {
 	k, _ := profileKeys(nil, name)
+	if arn, ok := k["role_arn"]; ok && k["sso_account_id"] == "" {
+		// A role-chaining profile: the account and role are the ARN's.
+		if a, r, ok := roleARNParts(scalar(arn)); ok {
+			return a, r
+		}
+	}
 	return k["sso_account_id"], k["sso_role_name"]
 }

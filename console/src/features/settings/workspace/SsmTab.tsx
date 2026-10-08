@@ -11,6 +11,7 @@ import { Field, Meta } from "../parts/mcpForm.tsx";
 import { RegionSelect } from "../parts/RegionSelect.tsx";
 import { ProfileLoginModal, type LoginProfile } from "../../awslogin/ProfileLoginModal.tsx";
 import { useProfileLogout } from "../../awslogin/useProfileLogout.ts";
+import { validExternalId, validRoleArn, validSessionName } from "../../../lib/awsRoleChain.ts";
 import { useAwsLoginStore } from "../../awslogin/store.ts";
 
 // SsmTab manages the member's own AWS profiles and SSM hosts (docs/log/p3-ssm-session.md)
@@ -55,7 +56,7 @@ export async function deleteRow(path: string, toast: (msg: string) => void): Pro
   if (!res.ok) {
     const j = await res.json().catch(() => null);
     if (j?.error?.code === "ssm_profile_in_use" && Array.isArray(j.hosts)) {
-      toast(profileInUse(j.hosts));
+      toast(profileInUse(j.hosts, Array.isArray(j.profiles) ? j.profiles : []));
       return "in_use";
     }
     toast(t("ssm.delete_failed_http", { status: res.status, detail: failDetailOf(res, j) }));
@@ -64,7 +65,8 @@ export async function deleteRow(path: string, toast: (msg: string) => void): Pro
   return "ok";
 }
 
-function profileInUse(aliases: string[]): string {
+function profileInUse(aliases: string[], dependents: string[] = []): string {
+  if (dependents.length > 0) return t("ssm.profile_in_use_source", { n: dependents.length, profiles: dependents.join(", ") });
   return t("ssm.profile_in_use", { n: aliases.length, hosts: aliases.join(", ") });
 }
 
@@ -164,7 +166,25 @@ const STATE_KEYS: Record<string, { label: MsgKey; title: MsgKey }> = {
   none: { label: "ssm.state_none", title: "ssm.state_none_title" },
 };
 
-const emptyProfile: Record<string, string> = { label: "", startUrl: "", ssoRegion: "", accountId: "", roleName: "", region: "" };
+const emptyProfile: Record<string, string> = {
+  kind: "sso",
+  label: "",
+  startUrl: "",
+  ssoRegion: "",
+  accountId: "",
+  roleName: "",
+  region: "",
+  sourceProfileId: "",
+  roleArn: "",
+  externalId: "",
+  sessionName: "",
+  durationSeconds: "",
+};
+
+// The assume-role profile type (issue #1109): no portal of its own, it assumes a role from
+// the login of another Settings profile. Field names are the CP's (ssmProfileDTO).
+const ASSUME_ROLE = "assume_role";
+const isChained = (p: any): boolean => p?.kind === ASSUME_ROLE;
 
 // awsProfileName mirrors the CP's ssmProfileName (control-plane/ssm.go): the ~/.aws profile
 // name a label becomes. The workspace keys a profile's sign-in by it (sso-session af-<name>),
@@ -245,20 +265,35 @@ function ProfileSection({
   useEffect(loadStates, [loadStates]);
   const set = (k: string) => (e: FieldEvent) => setF((p) => ({ ...p, [k]: e.target.value }));
   const setVal = (k: string) => (v: string) => setF((p) => ({ ...p, [k]: v }));
-  const valid = f.label.trim() && /^https:\/\//.test(f.startUrl.trim()) && f.ssoRegion.trim();
+  const chainedForm = f.kind === ASSUME_ROLE;
+  const duration = f.durationSeconds.trim();
+  const durationOk = duration === "" || (/^\d+$/.test(duration) && Number(duration) >= 900 && Number(duration) <= 3600);
+  const valid = chainedForm
+    ? f.label.trim() && f.sourceProfileId && validRoleArn(f.roleArn.trim()) && validExternalId(f.externalId.trim()) && validSessionName(f.sessionName.trim()) && durationOk
+    : f.label.trim() && /^https:\/\//.test(f.startUrl.trim()) && f.ssoRegion.trim();
+  // The profiles an assume-role profile can start from: SSO profiles, never another chained one.
+  const sources = (profiles || []).filter((p) => !isChained(p) && p.id !== editing?.id);
   // Why a row cannot log in from here (null when it can; "" when a CP too old to send the
   // name leaves nothing to say). The Agent refuses the same rows; saying so up front beats
   // a failed press. The button is also off while a save or delete is out: a login begun
   // before the PUT lands signs in to the old portal, and its completion would clear the new
   // relogin mark.
-  const loginOff = (p: any): string | null =>
-    !p.name
+  const loginOff = (p: any): string | null => {
+    if (isChained(p)) {
+      // The login is the source profile's; the button logs in to that one.
+      const src = (profiles || []).find((x) => x.id === p.sourceProfileId);
+      return src && !isChained(src) ? loginOff(src) : tr("ssm.login_off_no_source");
+    }
+    return !p.name
       ? ""
       : p.nameCollides
         ? tr("ssm.login_off_collides", { name: p.name })
         : !p.accountId || !p.roleName
           ? tr("ssm.login_off_incomplete")
           : null;
+  };
+  // The profile whose login a row's button starts: the row itself, or a chain's source.
+  const loginTarget = (p: any): any => (isChained(p) ? (profiles || []).find((x) => x.id === p.sourceProfileId) || p : p);
 
   const close = () => {
     setOpen(false);
@@ -286,19 +321,34 @@ function ProfileSection({
     if (!valid) return;
     setBusy(true);
     try {
-      const body = {
-        label: f.label.trim(),
-        startUrl: f.startUrl.trim(),
-        ssoRegion: f.ssoRegion.trim(),
-        accountId: f.accountId.trim(),
-        roleName: f.roleName.trim(),
-        region: f.region.trim(),
-      };
+      const body: Record<string, unknown> = chainedForm
+        ? {
+            kind: ASSUME_ROLE,
+            label: f.label.trim(),
+            sourceProfileId: f.sourceProfileId,
+            roleArn: f.roleArn.trim(),
+            externalId: f.externalId.trim(),
+            sessionName: f.sessionName.trim(),
+            region: f.region.trim(),
+            ...(duration ? { durationSeconds: Number(duration) } : {}),
+          }
+        : {
+            label: f.label.trim(),
+            startUrl: f.startUrl.trim(),
+            ssoRegion: f.ssoRegion.trim(),
+            accountId: f.accountId.trim(),
+            roleName: f.roleName.trim(),
+            region: f.region.trim(),
+          };
       const ok = editing
         ? await postJSON(`api/ssm/profiles/${encodeURIComponent(editing.id)}`, "PUT", body, toast)
         : await postJSON("api/ssm/profiles", "POST", body, toast);
       if (!ok) return;
-      if (editing && (awsProfileName(String(editing.label || "")) !== awsProfileName(body.label) || authMoved(editing, body))) {
+      if (
+        editing &&
+        !chainedForm &&
+        (awsProfileName(String(editing.label || "")) !== awsProfileName(String(body.label)) || authMoved(editing, body as any))
+      ) {
         reloginNeeded.add(editing.id);
         setMarks((n) => n + 1);
       }
@@ -317,6 +367,11 @@ function ProfileSection({
     if (using.length > 0) {
       toast(profileInUse(using));
       reload();
+      return;
+    }
+    const dependents = (profiles || []).filter((x) => isChained(x) && x.sourceProfileId === id).map((x) => String(x.label));
+    if (dependents.length > 0) {
+      toast(profileInUse([], dependents));
       return;
     }
     const ok = await askConfirm({
@@ -346,11 +401,54 @@ function ProfileSection({
   // issued by the old one.
   const was = editing ? awsProfileName(String(editing.label || "")) : "";
   const now = awsProfileName(f.label);
-  const portalChanged = !!editing && authMoved(editing, { startUrl: f.startUrl.trim(), ssoRegion: f.ssoRegion.trim() });
+  const portalChanged = !!editing && !chainedForm && !isChained(editing) && authMoved(editing, { startUrl: f.startUrl.trim(), ssoRegion: f.ssoRegion.trim() });
+  const kindSelect = (
+    <Field label={tr("ssm.f_kind")} hint={tr("ssm.f_kind_hint")}>
+      <select className="cinput" value={f.kind || "sso"} onChange={set("kind")}>
+        <option value="sso">{tr("ssm.kind_sso")}</option>
+        <option value={ASSUME_ROLE}>{tr("ssm.kind_assume_role")}</option>
+      </select>
+    </Field>
+  );
+  const chainedFields = (
+    <FieldGroup>
+      {kindSelect}
+      <Field label={tr("ssm.f_label")} req hint={tr("ssm.f_label_hint")}>
+        <input ref={labelRef} className="cinput" placeholder="deploy-role" value={f.label} onChange={set("label")} autoFocus />
+      </Field>
+      <Field label={tr("ssm.f_source")} req wide hint={tr("ssm.f_source_hint")}>
+        <select className="cinput" value={f.sourceProfileId} onChange={set("sourceProfileId")}>
+          <option value="">{tr("ssm.select_profile")}</option>
+          {sources.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label={tr("ssm.f_role_arn")} req wide hint={tr("ssm.f_role_arn_hint")}>
+        <input className="cinput" placeholder="arn:aws:iam::123456789012:role/deploy" value={f.roleArn} onChange={set("roleArn")} />
+      </Field>
+      <Field label={tr("ssm.f_external_id")} hint={tr("ssm.f_optional")}>
+        <input className="cinput" value={f.externalId} onChange={set("externalId")} />
+      </Field>
+      <Field label={tr("ssm.f_session_name")} hint={tr("ssm.f_optional")}>
+        <input className="cinput" placeholder="agent-fleet" value={f.sessionName} onChange={set("sessionName")} />
+      </Field>
+      <Field label={tr("ssm.f_duration")} hint={tr("ssm.f_duration_hint")}>
+        <input className="cinput" inputMode="numeric" placeholder="3600" value={f.durationSeconds} onChange={set("durationSeconds")} />
+      </Field>
+      <Field label={tr("ssm.meta_default_region")} hint={tr("ssm.f_default_region_hint")}>
+        <RegionSelect value={f.region} onChange={setVal("region")} emptyLabel={tr("ssm.region_unset")} />
+      </Field>
+    </FieldGroup>
+  );
   const form = (
     <div className={"ssm-frm" + (editing ? " ssm-frm-edit" : "")}>
       <fieldset className="ssm-fieldset" disabled={busy}>
+        {chainedForm ? chainedFields : (
         <FieldGroup>
+          {kindSelect}
           <Field label={tr("ssm.f_label")} req hint={tr("ssm.f_label_hint")}>
             <input
               ref={labelRef}
@@ -393,6 +491,7 @@ function ProfileSection({
             <RegionSelect value={f.region} onChange={setVal("region")} emptyLabel={tr("ssm.region_unset")} />
           </Field>
         </FieldGroup>
+        )}
       </fieldset>
       {editing && (
         <div className="field-help ssm-edit-notes">
@@ -460,11 +559,14 @@ function ProfileSection({
                   className="ghost ssm-login"
                   title={loginOff(p) || tr("ssm.login_title")}
                   disabled={busy || loginOff(p) !== null}
-                  onClick={() => setLoginFor({ id: p.id, name: p.name, label: p.label, accountId: p.accountId, roleName: p.roleName })}
+                  onClick={() => {
+                    const t0 = loginTarget(p);
+                    setLoginFor({ id: t0.id, name: t0.name, label: t0.label, accountId: t0.accountId, roleName: t0.roleName });
+                  }}
                 >
                   {tr("ssm.login")}
                 </button>
-                {p.name && !reloginNeeded.has(p.id) && (states[p.name] === "signed_in" || states[p.name] === "renew") && (
+                {p.name && !isChained(p) && !reloginNeeded.has(p.id) && (states[p.name] === "signed_in" || states[p.name] === "renew") && (
                   <button
                     className="ghost ssm-logout"
                     title={tr("awslogin.logout_title")}
@@ -489,6 +591,17 @@ function ProfileSection({
               {editing?.id === p.id ? (
                 form
               ) : (
+                isChained(p) ? (
+                  <div className="ssm-meta">
+                    <Meta k={tr("ssm.meta_account")} v={p.accountId} />
+                    <Meta k={tr("ssm.meta_source")} v={(profiles || []).find((x) => x.id === p.sourceProfileId)?.label || tr("ssm.source_missing")} />
+                    <Meta k={tr("ssm.meta_default_region")} v={p.region} />
+                    <Meta k={tr("ssm.f_role_arn")} v={p.roleArn} wide />
+                    {p.externalId && <Meta k={tr("ssm.f_external_id")} v={p.externalId} />}
+                    {p.sessionName && <Meta k={tr("ssm.f_session_name")} v={p.sessionName} />}
+                    {p.durationSeconds ? <Meta k={tr("ssm.f_duration")} v={String(p.durationSeconds)} /> : null}
+                  </div>
+                ) : (
                 <div className="ssm-meta">
                   <Meta k={tr("ssm.meta_account")} v={p.accountId} />
                   <Meta k={tr("ssm.meta_role")} v={p.roleName} />
@@ -496,6 +609,7 @@ function ProfileSection({
                   <Meta k={tr("ssm.meta_sso_region")} v={p.ssoRegion} />
                   <Meta k="start URL" v={p.startUrl} wide />
                 </div>
+                )
               )}
             </li>
           ))}

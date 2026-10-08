@@ -47,6 +47,15 @@ type ssmProfileDTO struct {
 	RoleName  string `json:"roleName"`
 	Region    string `json:"region"`
 	CreatedAt string `json:"createdAt"`
+	// Kind is "sso" (own Identity Center login) or "assume_role" (role chaining from the sso
+	// profile SourceProfileID, issue #1109). The remaining fields belong to assume_role only;
+	// accountId is then derived from roleArn and never taken from the request.
+	Kind            string `json:"kind"`
+	SourceProfileID string `json:"sourceProfileId,omitempty"`
+	RoleARN         string `json:"roleArn,omitempty"`
+	ExternalID      string `json:"externalId,omitempty"`
+	SessionName     string `json:"sessionName,omitempty"`
+	DurationSeconds int    `json:"durationSeconds,omitempty"`
 }
 
 type ssmHostDTO struct {
@@ -61,7 +70,18 @@ type ssmHostDTO struct {
 
 func profileToDTO(p store.SSMProfile) ssmProfileDTO {
 	return ssmProfileDTO{ID: p.ID, Label: p.Label, StartURL: p.StartURL, SSORegion: p.SSORegion,
-		AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region, CreatedAt: p.CreatedAt}
+		AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region, CreatedAt: p.CreatedAt,
+		Kind: ssmKindOf(p), SourceProfileID: p.SourceProfileID, RoleARN: p.RoleARN,
+		ExternalID: p.ExternalID, SessionName: p.SessionName, DurationSeconds: p.DurationSeconds}
+}
+
+// ssmKindOf reads a row's kind with the empty string as sso (a row from a store that
+// predates the column).
+func ssmKindOf(p store.SSMProfile) string {
+	if p.Kind == "" {
+		return store.SSMKindSSO
+	}
+	return p.Kind
 }
 
 func hostToDTO(h store.SSMHost) ssmHostDTO {
@@ -114,8 +134,31 @@ type ssmProfileListDTO struct {
 	NameCollides bool   `json:"nameCollides,omitempty"`
 }
 
+// Allowlists for the assume-role fields. They are what an exported ~/.aws/config line may
+// hold, so a value that passes cannot carry a newline or a second key; the Agent checks the
+// same shapes again before it writes (sessionx.validateSSMMeta).
+var (
+	ssmRoleARNRe     = regexp.MustCompile(`^arn:aws[a-z-]*:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,512}$`)
+	ssmExternalIDRe  = regexp.MustCompile(`^[A-Za-z0-9+=,.@:/_-]{2,}$`)
+	ssmSessionNameRe = regexp.MustCompile(`^[A-Za-z0-9+=,.@_-]{2,64}$`)
+	ssmRegionOnlyRe  = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
+)
+
+// ssmRoleARNAccount returns the account of a valid role ARN ("" when arn is not one). The
+// role name (the last path segment) is at most 64 characters, as IAM allows.
+func ssmRoleARNAccount(arn string) string {
+	if !ssmRoleARNRe.MatchString(arn) || strings.HasSuffix(arn, "/") || strings.Contains(arn, "//") {
+		return ""
+	}
+	if i := strings.LastIndexByte(arn, '/'); len(arn)-i-1 > 64 {
+		return ""
+	}
+	return strings.Split(arn, ":")[4]
+}
+
 // validateProfile trims + checks a profile DTO. Returns a normalized SSMProfile
-// (id/created_at unset).
+// (id/created_at unset). Whether an assume-role profile's source exists, is the caller's and
+// is an sso profile is the store's call, made under the source's row lock.
 func validateProfile(mv store.MembershipView, in ssmProfileDTO) (store.SSMProfile, *apiError) {
 	p := store.SSMProfile{
 		MembershipID: mv.MembershipID,
@@ -125,17 +168,73 @@ func validateProfile(mv store.MembershipView, in ssmProfileDTO) (store.SSMProfil
 		AccountID:    strings.TrimSpace(in.AccountID),
 		RoleName:     strings.TrimSpace(in.RoleName),
 		Region:       strings.TrimSpace(in.Region),
+		Kind:         strings.TrimSpace(in.Kind),
 	}
 	if p.Label == "" {
 		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_label", "label is required"}
 	}
-	if !httpsURLRe.MatchString(p.StartURL) {
-		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_start_url", "startUrl must be an https:// URL"}
+	switch p.Kind {
+	case "", store.SSMKindSSO:
+		p.Kind = store.SSMKindSSO
+		if in.SourceProfileID != "" || in.RoleARN != "" || in.ExternalID != "" || in.SessionName != "" || in.DurationSeconds != 0 {
+			return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_kind", "sourceProfileId, roleArn, externalId, sessionName and durationSeconds belong to kind assume_role"}
+		}
+		if !httpsURLRe.MatchString(p.StartURL) {
+			return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_start_url", "startUrl must be an https:// URL"}
+		}
+		if p.SSORegion == "" {
+			return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_region", "ssoRegion is required"}
+		}
+		return p, nil
+	case store.SSMKindAssumeRole:
+	default:
+		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_kind", "kind must be sso or assume_role"}
 	}
-	if p.SSORegion == "" {
-		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_region", "ssoRegion is required"}
+	if p.StartURL != "" || p.SSORegion != "" || p.RoleName != "" {
+		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_kind", "an assume_role profile has no portal of its own: leave startUrl, ssoRegion and roleName empty"}
+	}
+	p.RoleARN = strings.TrimSpace(in.RoleARN)
+	acct := ssmRoleARNAccount(p.RoleARN)
+	if acct == "" {
+		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_role_arn", "roleArn must be an IAM role ARN (arn:aws:iam::<12-digit account>:role/<name>)"}
+	}
+	if p.AccountID != "" && p.AccountID != acct {
+		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_role_arn", "accountId differs from the account in roleArn; leave it empty"}
+	}
+	p.AccountID = acct
+	p.SourceProfileID = strings.TrimSpace(in.SourceProfileID)
+	if p.SourceProfileID == "" {
+		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_source", "sourceProfileId is required"}
+	}
+	p.ExternalID = strings.TrimSpace(in.ExternalID)
+	if p.ExternalID != "" && !(len(p.ExternalID) <= 1224 && ssmExternalIDRe.MatchString(p.ExternalID)) {
+		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_external_id", "externalId must be 2-1224 characters of letters, digits and +=,.@:/_-"}
+	}
+	p.SessionName = strings.TrimSpace(in.SessionName)
+	if p.SessionName != "" && !ssmSessionNameRe.MatchString(p.SessionName) {
+		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_session_name", "sessionName must be 2-64 characters of letters, digits and +=,.@_-"}
+	}
+	if in.DurationSeconds != 0 && (in.DurationSeconds < 900 || in.DurationSeconds > 3600) {
+		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_duration", "durationSeconds must be between 900 and 3600 (a role assumed from an Identity Center sign-in is role chaining, which AWS limits to one hour)"}
+	}
+	p.DurationSeconds = in.DurationSeconds
+	if p.Region != "" && !ssmRegionOnlyRe.MatchString(p.Region) {
+		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_region", "region must be lower-case letters, digits and -"}
 	}
 	return p, nil
+}
+
+// profileWriteErr maps a store error from CreateSSMProfile / UpdateSSMProfile.
+func profileWriteErr(w http.ResponseWriter, err error) {
+	var inUse *store.SSMProfileInUseError
+	switch {
+	case errors.Is(err, store.ErrSSMSourceInvalid):
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_source", "sourceProfileId must name one of your own sso profiles (not an assume_role profile)"})
+	case errors.As(err, &inUse):
+		writeJSON(w, http.StatusConflict, profileInUseBody(inUse.Hosts, inUse.Dependents))
+	default:
+		writeAPIErr(w, internalErr(err))
+	}
 }
 
 func (a ssmConfigAPI) createProfile(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
@@ -152,7 +251,7 @@ func (a ssmConfigAPI) createProfile(w http.ResponseWriter, r *http.Request, _ st
 	p.ID = store.NewID()
 	p.CreatedAt = store.NowTS()
 	if err := a.store.CreateSSMProfile(r.Context(), p); err != nil {
-		writeAPIErr(w, internalErr(err))
+		profileWriteErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, profileToDTO(p))
@@ -181,7 +280,7 @@ func (a ssmConfigAPI) updateProfile(w http.ResponseWriter, r *http.Request, _ st
 	p.ID = cur.ID
 	p.CreatedAt = cur.CreatedAt
 	if err := a.store.UpdateSSMProfile(r.Context(), p); err != nil {
-		writeAPIErr(w, internalErr(err))
+		profileWriteErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, profileToDTO(p))
@@ -191,7 +290,7 @@ func (a ssmConfigAPI) deleteProfile(w http.ResponseWriter, r *http.Request, _ st
 	err := a.store.DeleteSSMProfile(r.Context(), r.PathValue("id"), mv.MembershipID)
 	var inUse *store.SSMProfileInUseError
 	if errors.As(err, &inUse) {
-		writeJSON(w, http.StatusConflict, profileInUseBody(inUse.Hosts))
+		writeJSON(w, http.StatusConflict, profileInUseBody(inUse.Hosts, inUse.Dependents))
 		return
 	}
 	if err != nil {
@@ -201,14 +300,17 @@ func (a ssmConfigAPI) deleteProfile(w http.ResponseWriter, r *http.Request, _ st
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ssmProfileInUseResp is the 409 for deleting a profile that hosts still use. Written by
-// hand rather than through writeAPIErr because the Console names the hosts, and only the
+// ssmProfileInUseResp is the 409 for deleting a profile that hosts still use, or for turning
+// one that assume-role profiles use as their source into an assume-role profile itself. Written by
+// hand rather than through writeAPIErr because the Console names the users, and only the
 // server knows them at the moment of the refusal: its own list may be stale. `error` keeps
 // the shared {code, message} shape, so a caller that reads only that still gets a sentence.
 type ssmProfileInUseResp struct {
 	Error apiErrorBody `json:"error"`
 	// Hosts are the aliases of the hosts that reference the profile, ordered by alias.
 	Hosts []string `json:"hosts"`
+	// Profiles are the labels of the assume-role profiles that take it as their source.
+	Profiles []string `json:"profiles,omitempty"`
 }
 
 type apiErrorBody struct {
@@ -216,18 +318,28 @@ type apiErrorBody struct {
 	Message string `json:"message"`
 }
 
-func profileInUseBody(hosts []store.SSMHost) ssmProfileInUseResp {
+func profileInUseBody(hosts []store.SSMHost, dependents []store.SSMProfile) ssmProfileInUseResp {
 	aliases := make([]string, 0, len(hosts))
 	for _, h := range hosts {
 		aliases = append(aliases, h.Alias)
 	}
+	var labels []string
+	for _, d := range dependents {
+		labels = append(labels, d.Label)
+	}
+	msg := fmt.Sprintf("the profile is used by %d host(s): %s; point them at another profile or delete them first",
+		len(aliases), strings.Join(aliases, ", "))
+	if len(labels) > 0 {
+		msg = fmt.Sprintf("the profile is the source of %d assume-role profile(s): %s", len(labels), strings.Join(labels, ", "))
+		if len(aliases) > 0 {
+			msg += fmt.Sprintf(", and is used by %d host(s): %s", len(aliases), strings.Join(aliases, ", "))
+		}
+		msg += "; point them elsewhere or delete them first"
+	}
 	return ssmProfileInUseResp{
-		Error: apiErrorBody{
-			Code: "ssm_profile_in_use",
-			Message: fmt.Sprintf("the profile is used by %d host(s): %s; point them at another profile or delete them first",
-				len(aliases), strings.Join(aliases, ", ")),
-		},
-		Hosts: aliases,
+		Error:    apiErrorBody{Code: "ssm_profile_in_use", Message: msg},
+		Hosts:    aliases,
+		Profiles: labels,
 	}
 }
 
@@ -349,6 +461,48 @@ func ssmProfileName(label string) string {
 	return p
 }
 
+// ssmLoginSource returns the profile whose Identity Center login p runs on: p itself for an
+// sso profile, the source for an assume-role profile (nil source error when it is gone or no
+// longer an sso profile, which the store keeps from happening but a stale read could show).
+func ssmLoginSource(ctx context.Context, st store.SSMStore, p store.SSMProfile) (store.SSMProfile, *apiError) {
+	if ssmKindOf(p) != store.SSMKindAssumeRole {
+		return p, nil
+	}
+	src, ok, err := st.GetSSMProfile(ctx, p.SourceProfileID)
+	if err != nil {
+		return store.SSMProfile{}, internalErr(err)
+	}
+	if !ok || src.MembershipID != p.MembershipID || ssmKindOf(src) != store.SSMKindSSO {
+		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_profile", "the profile's source profile is missing; edit it in 設定 → SSM"}
+	}
+	return src, nil
+}
+
+// ssmProfileRegion is the region of p when no host overrides it: its own, and for an
+// assume-role profile the source's, then (at the Agent, as for an sso profile) the source's SSO
+// region. The managed block of ~/.aws/config resolves it the same way (awsx chainRegion), so a
+// chain reaches the same region from `aws`, an SDK and an SSM session.
+func ssmProfileRegion(p, src store.SSMProfile) string {
+	if p.Region != "" || ssmKindOf(p) != store.SSMKindAssumeRole {
+		return p.Region
+	}
+	return src.Region
+}
+
+// ssmChainJSON adds the assume-role coordinates of p to a request body bound for the Agent.
+// The sso_* / StartURL keys of that body describe the SOURCE profile (ssmLoginSource); these
+// say what to assume from it. No-op for an sso profile.
+func ssmChainJSON(p, src store.SSMProfile, m map[string]any, keys [5]string) {
+	if ssmKindOf(p) != store.SSMKindAssumeRole {
+		return
+	}
+	m[keys[0]] = ssmProfileName(src.Label)
+	m[keys[1]] = p.RoleARN
+	m[keys[2]] = p.ExternalID
+	m[keys[3]] = p.SessionName
+	m[keys[4]] = p.DurationSeconds
+}
+
 // rewriteSSMCreate resolves a kind=ssm create request's ssm_host_id server-side and
 // rewrites the request body so the Agent receives the full (non-secret) host + SSO
 // coordinates. The client only sends {name, kind:"ssm", ssm_host_id}; the host's
@@ -392,10 +546,14 @@ func (a workspaceAPI) rewriteSSMCreate(ctx context.Context, res *resolved, r *ht
 	if !pok || p.MembershipID != res.mv.MembershipID {
 		return &apiError{http.StatusBadRequest, "bad_profile", "host has no valid profile; edit it in 設定 → SSM"}
 	}
+	src, aerr := ssmLoginSource(ctx, a.mgr.store, p)
+	if aerr != nil {
+		return aerr
+	}
 	// The instance region overrides the profile's default when set.
 	region := h.Region
 	if region == "" {
-		region = p.Region
+		region = ssmProfileRegion(p, src)
 	}
 	// Default session-name base = the host alias (e.g. "mng@g3prod-mon01"). The Agent
 	// appends " @MMDD-HHMM" when the client sent no title. Only when another registered
@@ -426,12 +584,13 @@ func (a workspaceAPI) rewriteSSMCreate(ctx context.Context, res *resolved, r *ht
 		"ssm_target":      h.InstanceID,
 		"ssm_document":    h.DocumentName,
 		"ssm_region":      region,
-		"sso_start_url":   p.StartURL,
-		"sso_region":      p.SSORegion,
-		"sso_account_id":  p.AccountID,
-		"sso_role_name":   p.RoleName,
+		"sso_start_url":   src.StartURL,
+		"sso_region":      src.SSORegion,
+		"sso_account_id":  src.AccountID,
+		"sso_role_name":   src.RoleName,
 		"ssm_force_login": peek.SSMForceLogin,
 	}
+	ssmChainJSON(p, src, out, [5]string{"ssm_source_profile", "ssm_role_arn", "ssm_external_id", "ssm_role_session_name", "ssm_duration_seconds"})
 	nb, err := json.Marshal(out)
 	if err != nil {
 		return internalErr(err)

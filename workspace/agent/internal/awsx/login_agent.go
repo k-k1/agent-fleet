@@ -135,6 +135,10 @@ func HandleProfileLoginStart(w http.ResponseWriter, r *http.Request) {
 	case !ok:
 		httpx.WriteErr(w, http.StatusNotFound, "not_a_settings_profile", "no Settings profile with that name reached this workspace")
 		return
+	case sp.Chained():
+		// It has no login of its own: the login is its source profile's.
+		httpx.WriteErr(w, http.StatusConflict, "chained_profile", fmt.Sprintf("this profile assumes a role from %q; log in to that profile", sp.SourceProfile))
+		return
 	case res.Incomplete[name] != "":
 		httpx.WriteErr(w, http.StatusConflict, "incomplete_profile", res.Incomplete[name])
 		return
@@ -207,6 +211,14 @@ func HandleProfileLoginStates(w http.ResponseWriter, r *http.Request) {
 	out := []profileLoginStateWire{}
 	exported := ExportedIn(ConfigPath())
 	for name, sp := range loginSettings() {
+		if sp.Chained() {
+			// No login of its own: it follows its source, so a row never shows "not signed in"
+			// for a chain whose source is signed in.
+			p := profileLoginStateWire{Name: name, State: profileLoginState("af-"+sp.SourceProfile, now),
+				Label: sp.Label, AccountID: sp.AccountID, RoleName: roleNameOf(sp.RoleARN)}
+			out = append(out, p)
+			continue
+		}
 		p := profileLoginStateWire{Name: name, State: profileLoginState("af-"+name, now),
 			Label: sp.Label, AccountID: sp.AccountID, RoleName: sp.RoleName}
 		if end, ok := readSSOExpiry("af-"+name, now); ok {
@@ -359,4 +371,10 @@ func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*cloudlog
 		},
 		Cleanup: func() { os.RemoveAll(dir) },
 	})
+}
+
+// roleNameOf is the role name of an IAM role ARN, "" when arn is not one.
+func roleNameOf(arn string) string {
+	_, name, _ := roleARNParts(arn)
+	return name
 }

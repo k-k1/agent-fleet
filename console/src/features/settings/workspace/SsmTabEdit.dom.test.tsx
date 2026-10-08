@@ -669,3 +669,101 @@ describe("SsmTab region pickers", () => {
     expect(writes[0].body.region).toBe("");
   });
 });
+
+// The profile type "assume a role from another Settings profile" (issue #1109).
+describe("SsmTab assume-role profile", () => {
+  const deploy: Json = {
+    id: "p3",
+    kind: "assume_role",
+    name: "deploy",
+    label: "deploy",
+    accountId: "210987654321",
+    sourceProfileId: "p1",
+    roleArn: "arn:aws:iam::210987654321:role/deploy",
+    externalId: "ext-1",
+    sessionName: "af",
+    durationSeconds: 3600,
+    startUrl: "",
+    ssoRegion: "",
+    roleName: "",
+    region: "",
+  };
+  const kindSelect = () => host.querySelector<HTMLSelectElement>(".ssm-frm select")!;
+  const sourceSelect = () => Array.from(host.querySelectorAll<HTMLSelectElement>(".ssm-frm select")).find((s) => s.querySelector('option[value="p1"]'))!;
+
+  it("adds one through POST with its own fields and no portal", async () => {
+    await mount();
+    await click(btn(sections()[0], t("ssm.add_profile")));
+    await type(kindSelect(), "assume_role");
+    const save = () => btn(host.querySelector<HTMLElement>(".ssm-frm-foot")!, t("ssm.add_profile"));
+    expect(save().disabled).toBe(true);
+    await type(input("deploy-role"), "deploy");
+    // Only sso profiles are offered as a source.
+    expect(Array.from(sourceSelect().options).map((o) => o.value)).toEqual(["", "p1", "p2"]);
+    await type(sourceSelect(), "p1");
+    await type(input("arn:aws:iam::123456789012:role/deploy"), "not-an-arn");
+    expect(save().disabled).toBe(true);
+    await type(input("arn:aws:iam::123456789012:role/deploy"), "arn:aws:iam::210987654321:role/deploy");
+    await type(input("3600"), "60");
+    expect(save().disabled).toBe(true);
+    await type(input("3600"), "7200");
+    expect(save().disabled).toBe(true);
+    await type(input("3600"), "3600");
+    expect(save().disabled).toBe(false);
+    await click(save());
+    expect(writes).toEqual([
+      {
+        path: "api/ssm/profiles",
+        method: "POST",
+        body: {
+          kind: "assume_role",
+          label: "deploy",
+          sourceProfileId: "p1",
+          roleArn: "arn:aws:iam::210987654321:role/deploy",
+          externalId: "",
+          sessionName: "",
+          region: "",
+          durationSeconds: 3600,
+        },
+      },
+    ]);
+  });
+
+  it("shows the role and its source, logs in to the source and offers no logout of its own", async () => {
+    profiles = [prod, stg, deploy];
+    states = [{ name: "deploy", state: "signed_in" }];
+    await mount();
+    const row = rows(0)[2];
+    expect(row.textContent).toContain("arn:aws:iam::210987654321:role/deploy");
+    expect(row.textContent).toContain(t("ssm.meta_source"));
+    expect(Array.from(row.querySelectorAll("button")).some((b) => b.textContent?.trim() === t("awslogin.logout"))).toBe(false);
+    expect(btn(row, t("ssm.login")).disabled).toBe(false);
+  });
+
+  it("will not log in from a chain whose source is gone", async () => {
+    profiles = [{ ...deploy, sourceProfileId: "gone" }];
+    await mount();
+    expect(btn(rows(0)[0], t("ssm.login")).disabled).toBe(true);
+  });
+
+  it("refuses to delete a profile that an assume-role profile uses, before asking", async () => {
+    profiles = [prod, stg, deploy];
+    hosts = [];
+    await mount();
+    await click(btn(rows(0)[0], t("common.delete")));
+    expect(toasts).toEqual([t("ssm.profile_in_use_source", { n: 1, profiles: "deploy" })]);
+    expect(confirms).toEqual([]);
+  });
+
+  it("says so when the CP refuses the delete for a chain it had not loaded", async () => {
+    confirmAnswer = true;
+    delReply = {
+      ok: false,
+      status: 409,
+      body: { error: { code: "ssm_profile_in_use", message: "m" }, hosts: [], profiles: ["deploy"] },
+    };
+    await mount();
+    await click(btn(rows(0)[1], t("common.delete")));
+    expect(toasts).toEqual([t("ssm.profile_in_use_source", { n: 1, profiles: "deploy" })]);
+  });
+});

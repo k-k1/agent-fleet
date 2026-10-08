@@ -2646,12 +2646,14 @@ func scanWorkspace(row scanner) (Workspace, error) {
 
 // --- SSM login config (docs/log/p3-ssm-session.md) --------------------------
 
-const ssmProfileCols = `SELECT id, membership_id, label, start_url, sso_region, account_id, role_name, region, created_at FROM ssm_profile`
+const ssmProfileCols = `SELECT id, membership_id, label, start_url, sso_region, account_id, role_name, region, created_at,
+	kind, source_profile_id, role_arn, external_id, session_name, duration_seconds FROM ssm_profile`
 
 func scanSSMProfile(row scanner) (SSMProfile, error) {
 	var p SSMProfile
 	err := row.Scan(&p.ID, &p.MembershipID, &p.Label, &p.StartURL, &p.SSORegion,
-		&p.AccountID, &p.RoleName, &p.Region, &p.CreatedAt)
+		&p.AccountID, &p.RoleName, &p.Region, &p.CreatedAt,
+		&p.Kind, &p.SourceProfileID, &p.RoleARN, &p.ExternalID, &p.SessionName, &p.DurationSeconds)
 	return p, err
 }
 
@@ -2680,21 +2682,115 @@ func (s *SQL) GetSSMProfile(ctx context.Context, id string) (SSMProfile, bool, e
 	return p, err == nil, err
 }
 
-func (s *SQL) CreateSSMProfile(ctx context.Context, p SSMProfile) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO ssm_profile(id, membership_id, label, start_url, sso_region, account_id, role_name, region, created_at)
-		 VALUES(?,?,?,?,?,?,?,?,?)`,
-		p.ID, p.MembershipID, p.Label, p.StartURL, p.SSORegion, p.AccountID, p.RoleName, p.Region, p.CreatedAt)
-	return err
+// checkSSMSource, for an assume-role profile, takes the write lock of its source (lockSSMProfile)
+// and refuses with ErrSSMSourceInvalid unless that is an sso profile of the member's own and
+// not the profile itself. Under the lock the source cannot be deleted or turned into an
+// assume-role profile before this write commits.
+func checkSSMSource(ctx context.Context, tx *sqlTx, p SSMProfile) error {
+	if p.Kind != SSMKindAssumeRole {
+		return nil
+	}
+	if p.SourceProfileID == "" || p.SourceProfileID == p.ID {
+		return ErrSSMSourceInvalid
+	}
+	found, err := lockSSMProfile(ctx, tx, p.SourceProfileID, p.MembershipID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrSSMSourceInvalid
+	}
+	var kind string
+	if err := tx.QueryRowContext(ctx, `SELECT kind FROM ssm_profile WHERE id=?`, p.SourceProfileID).Scan(&kind); err != nil {
+		return err
+	}
+	if kind != SSMKindSSO {
+		return ErrSSMSourceInvalid
+	}
+	return nil
 }
 
+func (s *SQL) CreateSSMProfile(ctx context.Context, p SSMProfile) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := checkSSMSource(ctx, tx, p); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO ssm_profile(id, membership_id, label, start_url, sso_region, account_id, role_name, region, created_at,
+			kind, source_profile_id, role_arn, external_id, session_name, duration_seconds)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		p.ID, p.MembershipID, p.Label, p.StartURL, p.SSORegion, p.AccountID, p.RoleName, p.Region, p.CreatedAt,
+		ssmKindOrDefault(p.Kind), p.SourceProfileID, p.RoleARN, p.ExternalID, p.SessionName, p.DurationSeconds); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func ssmKindOrDefault(k string) string {
+	if k == "" {
+		return SSMKindSSO
+	}
+	return k
+}
+
+// UpdateSSMProfile writes the profile. Turning a profile that other assume-role profiles use
+// as their source into an assume-role profile itself is refused with *SSMProfileInUseError
+// (Dependents), for the same reason DeleteSSMProfile refuses: the chain would be two hops.
 func (s *SQL) UpdateSSMProfile(ctx context.Context, p SSMProfile) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := checkSSMSource(ctx, tx, p); err != nil {
+		return err
+	}
+	if p.Kind == SSMKindAssumeRole {
+		found, err := lockSSMProfile(ctx, tx, p.ID, p.MembershipID)
+		if err != nil || !found {
+			return err
+		}
+		deps, err := ssmDependents(ctx, tx, p.ID)
+		if err != nil {
+			return err
+		}
+		if len(deps) > 0 {
+			return &SSMProfileInUseError{Dependents: deps}
+		}
+	}
 	// membership_id in the WHERE so a member can only update their own row.
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE ssm_profile SET label=?, start_url=?, sso_region=?, account_id=?, role_name=?, region=?
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE ssm_profile SET label=?, start_url=?, sso_region=?, account_id=?, role_name=?, region=?,
+			kind=?, source_profile_id=?, role_arn=?, external_id=?, session_name=?, duration_seconds=?
 		   WHERE id=? AND membership_id=?`,
-		p.Label, p.StartURL, p.SSORegion, p.AccountID, p.RoleName, p.Region, p.ID, p.MembershipID)
-	return err
+		p.Label, p.StartURL, p.SSORegion, p.AccountID, p.RoleName, p.Region,
+		ssmKindOrDefault(p.Kind), p.SourceProfileID, p.RoleARN, p.ExternalID, p.SessionName, p.DurationSeconds,
+		p.ID, p.MembershipID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ssmDependents lists the assume-role profiles whose source is id, by label.
+func ssmDependents(ctx context.Context, q *sqlTx, id string) ([]SSMProfile, error) {
+	rows, err := q.QueryContext(ctx, ssmProfileCols+` WHERE source_profile_id=? AND kind=? ORDER BY label`, id, SSMKindAssumeRole)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SSMProfile
+	for rows.Next() {
+		p, err := scanSSMProfile(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 // lockSSMProfile takes the profile row's write lock for the rest of tx and reports whether
@@ -2743,8 +2839,12 @@ func (s *SQL) DeleteSSMProfile(ctx context.Context, id, membershipID string) err
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if len(using) > 0 {
-		return &SSMProfileInUseError{Hosts: using}
+	deps, err := ssmDependents(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if len(using) > 0 || len(deps) > 0 {
+		return &SSMProfileInUseError{Hosts: using, Dependents: deps}
 	}
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM ssm_profile WHERE id=? AND membership_id=?`, id, membershipID); err != nil {

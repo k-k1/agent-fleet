@@ -25,6 +25,8 @@
 //      in is not worth the risk.
 
 export const BUNDLE_KIND = "agent-fleet-settings";
+import { validDuration, validExternalId, validRoleArn, validSessionName } from "./awsRoleChain.ts";
+
 export const BUNDLE_VERSION = 1;
 
 export type SectionKey = "prefs" | "ssm" | "gcpProfiles" | "instructions";
@@ -37,6 +39,18 @@ export interface SsmProfileEntry {
   accountId: string;
   roleName: string;
   region: string;
+  /** Only on an assume-role profile (issue #1109); an sso entry carries none of these, so its
+   *  bytes are what they always were. `source` is the display name of the SSO profile it
+   *  assumes from, not its id (the destination assigns new ids). */
+  kind?: "assume_role";
+  source?: string;
+  /** The source's SSO coordinates (ssoKey), so an import joins the chain to the same sign-in
+   *  and never to another profile that happens to share the label. */
+  sourceKey?: string;
+  roleArn?: string;
+  externalId?: string;
+  sessionName?: string;
+  durationSeconds?: number;
 }
 
 export interface SsmHostEntry {
@@ -107,18 +121,45 @@ export function exportablePrefs(
 /** Convert the CP DTOs (id references) into the bundle shape (display-name references). A
  *  host whose profile cannot be resolved keeps an empty profile, so the import side skips it
  *  with a reason. */
+/** Canonical identity of an SSO profile's sign-in: portal, SSO region, account and role. */
+export function ssoKey(p: any): string {
+  return [str(p?.startUrl).replace(/\/+$/, ""), str(p?.ssoRegion), str(p?.accountId), str(p?.roleName)].join("|");
+}
+
 export function toSsmSection(profiles: any[], hosts: any[]): SsmSection {
   const labelOf = new Map<string, string>();
-  for (const p of profiles || []) labelOf.set(String(p?.id ?? ""), str(p?.label));
+  const byId = new Map<string, any>();
+  for (const p of profiles || []) {
+    labelOf.set(String(p?.id ?? ""), str(p?.label));
+    byId.set(String(p?.id ?? ""), p);
+  }
   return {
-    profiles: (profiles || []).map((p) => ({
-      label: str(p?.label),
-      startUrl: str(p?.startUrl),
-      ssoRegion: str(p?.ssoRegion),
-      accountId: str(p?.accountId),
-      roleName: str(p?.roleName),
-      region: str(p?.region),
-    })),
+    profiles: (profiles || []).map((p) =>
+      p?.kind === "assume_role"
+        ? {
+            kind: "assume_role" as const,
+            label: str(p?.label),
+            startUrl: "",
+            ssoRegion: "",
+            accountId: str(p?.accountId),
+            roleName: "",
+            region: str(p?.region),
+            source: labelOf.get(String(p?.sourceProfileId ?? "")) ?? "",
+            sourceKey: byId.has(String(p?.sourceProfileId ?? "")) ? ssoKey(byId.get(String(p.sourceProfileId))) : "",
+            roleArn: str(p?.roleArn),
+            externalId: str(p?.externalId),
+            sessionName: str(p?.sessionName),
+            ...(Number(p?.durationSeconds) > 0 ? { durationSeconds: Number(p.durationSeconds) } : {}),
+          }
+        : {
+            label: str(p?.label),
+            startUrl: str(p?.startUrl),
+            ssoRegion: str(p?.ssoRegion),
+            accountId: str(p?.accountId),
+            roleName: str(p?.roleName),
+            region: str(p?.region),
+          },
+    ),
     hosts: (hosts || []).map((h) => ({
       alias: str(h?.alias),
       profile: labelOf.get(String(h?.profileId ?? "")) ?? "",
@@ -324,7 +365,20 @@ export function planSsmImport(
   );
   // Profile names referenceable after the import = existing plus the ones about to be made.
   const willHave = new Set(haveProfile);
-  for (const raw of section.profiles || []) {
+  // Names of the sso profiles a chained entry may name as its source: existing ones, plus the
+  // ones this plan creates. Chained entries are handled after the sso ones so that order in the
+  // file does not matter.
+  // exact label -> sign-in of the sso profiles that exist or will exist after this import. A
+  // chain joins a source only by exact label AND the same sign-in: AWS profile names are
+  // case-sensitive, and a label that merely folds to the same lower-case string may be another
+  // account (the profile list itself folds case, so such an sso entry is "exists", not created).
+  const ssoByLabel = new Map<string, string>();
+  for (const p of existingProfiles || []) if (p?.kind !== "assume_role") ssoByLabel.set(str(p?.label), ssoKey(p));
+  const entries = (section.profiles || []).map((raw) => ({
+    raw,
+    chained: raw?.kind === "assume_role",
+  }));
+  for (const { raw, chained } of [...entries.filter((e) => !e.chained), ...entries.filter((e) => e.chained)]) {
     const p: SsmProfileEntry = {
       label: str(raw?.label),
       startUrl: str(raw?.startUrl),
@@ -333,9 +387,22 @@ export function planSsmImport(
       roleName: str(raw?.roleName),
       region: str(raw?.region),
     };
+    if (chained) {
+      p.kind = "assume_role";
+      p.source = str(raw?.source);
+      p.sourceKey = str(raw?.sourceKey);
+      p.roleArn = str(raw?.roleArn);
+      p.externalId = str(raw?.externalId);
+      p.sessionName = str(raw?.sessionName);
+      const d = Number(raw?.durationSeconds);
+      if (d > 0) p.durationSeconds = d;
+    }
     // Same minimum condition as CP's validateProfile. Without dropping these here the user
     // just sees a row of 400s and cannot tell how many entries were imported.
-    if (!p.label || !/^https:\/\/\S+$/.test(p.startUrl) || !p.ssoRegion) {
+    const valid = chained
+      ? !!p.label && validRoleArn(p.roleArn || "") && validExternalId(p.externalId || "") && validSessionName(p.sessionName || "") && (p.durationSeconds === undefined || validDuration(p.durationSeconds)) && !!p.sourceKey && ssoByLabel.get(p.source || "") === p.sourceKey
+      : !!p.label && /^https:\/\/\S+$/.test(p.startUrl) && !!p.ssoRegion;
+    if (!valid) {
       plan.skippedProfiles.push({ label: p.label, reason: "invalid" });
       continue;
     }
@@ -344,6 +411,7 @@ export function planSsmImport(
       continue;
     }
     willHave.add(key(p.label));
+    if (!chained) ssoByLabel.set(p.label, ssoKey(p));
     plan.profiles.push(p);
   }
   const seenHost = new Set(haveHost);

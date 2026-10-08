@@ -114,7 +114,7 @@ the engine table's key (`llm`, `image`).
 
 | Table | Role |
 |---|---|
-| `ssm_profile` / `ssm_host` | SSM login, in two layers: a profile is a shared SSO bundle mapped to one `~/.aws` named profile, and a host is one instance. **No AWS secret is ever stored**: the short-lived credentials are obtained inside the container and never reach the CP |
+| `ssm_profile` / `ssm_host` | SSM login, in two layers: a profile is a shared SSO bundle (or, with `kind = assume_role`, a role assumed from another profile's sign-in) mapped to one `~/.aws` named profile, and a host is one instance. **No AWS secret is ever stored**: the short-lived credentials are obtained inside the container and never reach the CP |
 | `egress_daily` / `egress_allowlist` | Egress control ([07 §7.8](07-security.md)): a daily aggregate per (day, host, allowed), and a versioned allowlist, global or per tenant (`active` \| `proposed` \| `retired`) |
 | `deployment_setting` | A deployment-wide key-value bag. It holds the egress mode, branding, per-engine settings, the sealed Hugging Face and Civitai tokens, and the claude-audit cursors. A value here has no compare-and-swap, so anything with two writers needs a table |
 | `git_repo` / `lfs_object` / `lfs_lock` | The internal git provider's ledger ([91](91-internal-git.md)). The bare repositories are files under `<WS_DATA>/git/<tenant-slug>/<name>.git`, and the LFS blobs are content-addressed beside them. The tables exist for the repository list, O(1) quota accounting and locks. **Access tokens are not stored**: a per-membership HMAC is derived each time |

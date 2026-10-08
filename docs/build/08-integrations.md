@@ -354,6 +354,13 @@ CP**):
 - The profiles are rows in the CP (`ssm_profile`, plus `ssm_host` for SSM targets;
   [06 §6.2](06-data.md)). The workspace fetches them from `GET /internal/aws-profiles`
   (`AF_AWS_PROFILES_TOKEN`) and writes a managed block into `~/.aws/config`.
+- A profile has a kind: `sso`, or `assume_role` (issue #1109), which holds a role ARN, the id of the
+  `sso` profile it assumes from and optional external ID, session name and duration, and no portal. The
+  managed block writes it as `role_arn` + `source_profile` only while that source is itself exported;
+  the bridge wire carries `kind`, `roleArn`, `sourceProfile`, `externalId`, `sessionName` and
+  `durationSeconds` for these and leaves them out for `sso` rows, so an `sso` profile's export is
+  unchanged. The store refuses a source that is not an `sso` profile of the same member and a delete
+  or kind change that would orphan a chain.
 - **An SSM session** runs `aws sso login --use-device-code --no-browser` and then
   `aws ssm start-session` inside the workspace; the Console polls
   `GET /api/sessions/{name}/ssm-login` for the device code.
