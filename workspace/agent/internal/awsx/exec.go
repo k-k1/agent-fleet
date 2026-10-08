@@ -376,17 +376,19 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("profile %q: %w", o.Profile, err)
 	}
+	chainINI := ""
 	if chained {
 		// A Settings role-chaining profile is known by its role, so the caller need not
 		// repeat the account; one that is given must still match.
-		if err := checkChainedIdentity(env, sp, keys, origin, &o); err != nil {
+		var err error
+		if chainINI, err = checkChainedIdentity(env, sp, keys, origin, &o); err != nil {
 			return "", nil, nil, err
 		}
 	} else if err := checkIdentity(sso, o); err != nil {
 		return "", nil, nil, err
 	}
 	if nonSSOProfile(keys) {
-		return planNonSSO(awsBin, env, keys, origin, steered, o)
+		return planNonSSO(awsBin, env, keys, origin, steered, o, chainINI)
 	}
 	if err := checkSSOProfile(keys, o.Profile); err != nil {
 		return "", nil, nil, err

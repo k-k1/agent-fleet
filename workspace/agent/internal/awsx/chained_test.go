@@ -359,3 +359,74 @@ func TestProfileLoginStateOfAChainFollowsItsSource(t *testing.T) {
 		t.Fatalf("source signed in: %v", s)
 	}
 }
+
+// The run resolves a config rebuilt from the checked Settings values, not the member's files
+// again: a source changed between the checks and the export (another tab's sync, a login
+// wait) cannot be swapped in, and the shared credentials file is off.
+func TestPlanExecResolvesAChainFromSettingsNotFromTheFilesAgain(t *testing.T) {
+	bin, state := chainHome(t)
+	applyChain(t)
+	os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600)
+	os.WriteFile(filepath.Join(state, "arn"), []byte("arn:aws:sts::210987654321:assumed-role/deploy/s"), 0o600)
+	// At the CLI's read boundary a writer moves the source to another account.
+	swap := "sed -i 's/sso_account_id = 123456789012/sso_account_id = 999999999999/' " + ConfigPath()
+	os.WriteFile(filepath.Join(state, "onExport"), []byte(swap+"\n"), 0o600)
+	var stderr bytes.Buffer
+	if _, _, _, err := PlanExec(bin, workloadEnv, chainOpts(&stderr)); err != nil {
+		t.Fatalf("%v\n%s", err, stderr.String())
+	}
+	if b, _ := os.ReadFile(ConfigPath()); !strings.Contains(string(b), "999999999999") {
+		t.Fatal("the simulated writer did not run")
+	}
+	cfg, _ := os.ReadFile(filepath.Join(state, "seenConfig.configure-export-credentials"))
+	for _, want := range []string{"sso_account_id = 123456789012", "source_profile = src", "role_arn = " + chainRoleARN, "[sso-session af-src]"} {
+		if !strings.Contains(string(cfg), want) {
+			t.Fatalf("the export did not resolve the Settings-built config (lacks %q):\n%s", want, cfg)
+		}
+	}
+	if strings.Contains(string(cfg), "999999999999") {
+		t.Fatalf("the export read the changed source:\n%s", cfg)
+	}
+	seen, _ := os.ReadFile(filepath.Join(state, "seenEnv.configure-export-credentials"))
+	if !strings.Contains(string(seen), "AWS_SHARED_CREDENTIALS_FILE=/dev/null") || strings.Contains(string(seen), ".aws/config") {
+		t.Fatalf("export env:\n%s", seen)
+	}
+}
+
+// An optional parameter Settings leaves out must not come from [DEFAULT] either, in the
+// block or at run time.
+func TestAChainWithoutOptionalParametersRejectsOnesFromDEFAULT(t *testing.T) {
+	plain := chainProf()
+	plain.ExternalID, plain.SessionName, plain.DurationSeconds = "", "", 0
+	for _, key := range []string{"external_id = inherited", "role_session_name = inherited", "duration_seconds = 7200"} {
+		t.Run(key, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config")
+			os.WriteFile(path, []byte("[DEFAULT]\n"+key+"\n"), 0o600)
+			res, err := Apply(path, []Profile{chainSrc(), plain})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, n := range res.Exported {
+				if n == "deploy" {
+					t.Fatalf("exported under a [DEFAULT] %s the Settings profile does not have", key)
+				}
+			}
+			if res.DefaultClash["deploy"] == "" {
+				t.Fatalf("no reason given: %+v", res)
+			}
+		})
+	}
+	// And at run time, when the line arrived after the block was written.
+	bin, state := chainHome(t)
+	if _, err := Apply(ConfigPath(), []Profile{chainSrc(), plain}); err != nil {
+		t.Fatal(err)
+	}
+	appendFile(t, ConfigPath(), "[DEFAULT]\nduration_seconds = 7200\n")
+	os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600)
+	var stderr bytes.Buffer
+	o := chainOpts(&stderr)
+	o.Settings = map[string]Profile{"src": chainSrc(), "deploy": plain}
+	if _, _, _, err := PlanExec(bin, workloadEnv, o); err == nil || !strings.Contains(err.Error(), "duration_seconds") {
+		t.Fatalf("err = %v, want a refusal naming duration_seconds", err)
+	}
+}

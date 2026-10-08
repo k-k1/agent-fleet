@@ -476,6 +476,13 @@ func defaultClashChained(defaults map[string]string, p Profile, region string) s
 			// Never quote the value: for the key names above it may be a secret.
 			return fmt.Sprintf("%s is set in [DEFAULT], which would give this profile a second way to get credentials", k)
 		}
+		switch k {
+		case "external_id", "role_session_name", "duration_seconds":
+			if _, ok := written[k]; !ok {
+				// Settings leaves this parameter out, and [DEFAULT] would supply one.
+				return fmt.Sprintf("%s is set in [DEFAULT] but not in this profile's Settings", k)
+			}
+		}
 		if w, ok := written[k]; ok && defaults[k] != w {
 			return fmt.Sprintf("%s = %q differs from this profile's %q", k, defaults[k], w)
 		}
