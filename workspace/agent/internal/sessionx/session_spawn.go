@@ -84,18 +84,18 @@ func reserveSpawnSlot(parent string) error {
 	return nil
 }
 
-// stoppedChildSlotNote says when a stopped child frees its slot on its own, for the refusal
+// stoppedChildSlotNote says when a stopped child drops out of the child count on its own, for the refusal
 // above. The period is spelled out because ADR 0073 refuses to have invisible limits, and read
 // from session.StoppedTTL rather than written as "7 days" because the user's setting and
 // AF_SESSION_STOPPED_TTL both move it. With auto-archive off there is no such moment, and
-// saying so is what stops the caller from waiting for a slot that will not come back.
+// saying so is what stops the caller from waiting for a place under the cap that will not come back.
 func stoppedChildSlotNote() string {
 	d, ok := session.StoppedTTL()
 	if !ok {
-		return "利用者の設定で自動アーカイブが止まっているため、停止したままの子も枠を持ち続けます。" +
+		return "利用者の設定で自動アーカイブが止まっているため、停止したままの子も上限の数に数えられ続けます。" +
 			"この設定は Console の 設定 > エージェント > セッション にあります"
 	}
-	return "停止したままの子は停止から " + stoppedTTLPhrase(d) + "で自動的にアーカイブされ、枠が空きます。" +
+	return "停止したままの子は停止から " + stoppedTTLPhrase(d) + "で自動的にアーカイブされ、上限の数から外れます。" +
 		"この期間は利用者が Console の 設定 > エージェント > セッション で変えられます"
 }
 
