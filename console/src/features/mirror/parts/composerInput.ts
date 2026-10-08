@@ -11,6 +11,8 @@ import { useTtsStore } from "../../../core/store/tts.ts";
 import type { useToast } from "../../../ui/ToastProvider.tsx";
 import { MEMO_DND_MIME } from "../../memo/dnd.ts";
 import { composerSend } from "../composerSend.ts";
+import type { QueuedSend } from "../sendQueue/queue.ts";
+import { useSendQueueStore } from "../sendQueue/store.ts";
 import type { MirrorActions } from "./useMirrorActions.ts";
 import type { MirrorState } from "./useMirrorState.ts";
 import type { useHistorySearch } from "./useHistorySearch.ts";
@@ -232,9 +234,35 @@ export function composerInput({
     if (!coarsePointer()) inputRef.current?.focus();
   };
 
+  // Hold the draft in the pre-send queue instead of sending it (#1083). Nothing reaches the
+  // wire or the transcript here; the attachments' uploaded paths travel with the item.
+  const queueDraft = () => {
+    if (composerLocked) return;
+    const text = draft.trim();
+    if (!text && !attachments.length) return;
+    useSendQueueStore.getState().add(session, text, attachments.map((a) => a.path));
+    setHistIdx(null);
+    setDraft("");
+    clearAttachments();
+    if (!coarsePointer()) inputRef.current?.focus();
+  };
+
+  // Send one held item. Same wire path as send() minus the draft: a refusal leaves the item in
+  // the queue (the caller puts it back), so the draft is never touched.
+  const sendQueued = async (item: QueuedSend): Promise<boolean> => {
+    if (composerLocked) return false;
+    const ts = useTtsStore.getState();
+    if (ts.active && ts.sessionName === session) ts.stop();
+    const line = signal?.line() || "";
+    const out = composerSend(item.text, item.paths, agent.id, managed, line);
+    const ok = await sendPrompt(out.echo, out.attachments, item.text, out.wire, false);
+    if (ok && line) signal?.sent();
+    return ok;
+  };
+
   return {
     addFiles, onPaste, removeAttachment, auqLocksComposer, decisionPending, composerLocked, onDragEnter,
-    onDragOver, onDragLeave, onDrop, send,
+    onDragOver, onDragLeave, onDrop, send, queueDraft, sendQueued,
   };
 }
 
@@ -248,6 +276,7 @@ export function composerKeys({
   history,
   modSend,
   send,
+  queue,
   histSearch,
   skillPicker,
   suggest,
@@ -257,6 +286,8 @@ export function composerKeys({
   history: string[];
   modSend: boolean;
   send: () => void;
+  /** Hold the draft in the pre-send queue (Alt+Enter while a turn runs). */
+  queue: () => void;
   histSearch: ReturnType<typeof useHistorySearch>;
   skillPicker: ReturnType<typeof useSkillPicker>;
   suggest: ReturnType<typeof useReplySuggest>;
@@ -313,6 +344,12 @@ export function composerKeys({
     }
     // Don't intercept Enter while an IME candidate window is open (JP/CJK input).
     if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    // Alt+Enter while a turn runs holds the draft instead of sending it. Past the IME guard above.
+    if (e.altKey && st.busy) {
+      e.preventDefault();
+      queue();
+      return;
+    }
     const mod = e.ctrlKey || e.metaKey;
     if (modSend) {
       // Ctrl/⌘+Enter submits; plain Enter falls through to insert a newline.

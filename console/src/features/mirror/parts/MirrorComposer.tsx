@@ -12,6 +12,9 @@ import { HistorySearchBar } from "./HistorySearchBar.tsx";
 import { SendColumn } from "./SendColumn.tsx";
 import { SkillButton, SkillList } from "./SkillList.tsx";
 import { SuggestRow } from "./SuggestRow.tsx";
+import { SendQueueList } from "../sendQueue/SendQueueList.tsx";
+import { injectsMidTurn } from "../sendQueue/queue.ts";
+import type { useSendQueue } from "../sendQueue/useSendQueue.ts";
 import type { composerInput } from "./composerInput.ts";
 import type { MirrorActions } from "./useMirrorActions.ts";
 import type { MirrorState } from "./useMirrorState.ts";
@@ -38,6 +41,7 @@ export function MirrorComposer({
   suggest,
   skillPicker,
   histSearch,
+  sendQueue,
 }: {
   session: string;
   settings: Settings;
@@ -56,6 +60,7 @@ export function MirrorComposer({
   suggest: ReturnType<typeof useReplySuggest>;
   skillPicker: ReturnType<typeof useSkillPicker>;
   histSearch: ReturnType<typeof useHistorySearch>;
+  sendQueue: ReturnType<typeof useSendQueue>;
 }) {
   const {
     pendingPlan, mode, setMode, lastNonPlanMode, draft, setDraft, sending, attachments, pasting, filePickRef,
@@ -98,6 +103,16 @@ export function MirrorComposer({
           onForget={suggest.forgetSuggestion}
         />
       )}
+      <SendQueueList
+        items={sendQueue.items}
+        paused={sendQueue.paused}
+        injects={injectsMidTurn(agent.id, managed)}
+        onEdit={sendQueue.edit}
+        onRemove={sendQueue.remove}
+        onMove={sendQueue.move}
+        onSendNow={sendQueue.sendNow}
+        onResume={sendQueue.resume}
+      />
       <AttachChips
         attachments={attachments}
         pasting={pasting}
@@ -235,6 +250,7 @@ export function MirrorComposer({
           else postKeys([agent.planCycleKey!]);
         }}
         onSend={() => send()}
+        onQueue={st.busy ? input.queueDraft : undefined}
       />
     </div>
   );

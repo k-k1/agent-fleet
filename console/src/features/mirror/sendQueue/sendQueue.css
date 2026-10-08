@@ -1,0 +1,70 @@
+/* Pre-send queue (#1083): follow-ups held above the composer input, full width. */
+.mirror-queue {
+  flex: 0 0 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 12px;
+}
+.mirror-queue-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 8px;
+  color: var(--muted);
+}
+.mirror-queue-paused {
+  color: var(--warn);
+}
+.mirror-queue-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mirror-queue-item {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 3px 8px;
+  border-top: 1px solid var(--border);
+}
+.mirror-queue-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--fg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 4.5em;
+  overflow: hidden;
+}
+.mirror-queue-files {
+  color: var(--muted);
+}
+.mirror-queue-edit {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+}
+.mirror-queue-acts {
+  flex: none;
+  display: flex;
+  gap: 2px;
+}
+.mirror-queue-acts button {
+  min-width: 28px;
+  min-height: 28px;
+}
+@media (max-width: 640px) {
+  /* Narrow screens: the actions drop under the text so a long follow-up keeps its width. */
+  .mirror-queue-item {
+    flex-wrap: wrap;
+  }
+  .mirror-queue-acts {
+    margin-left: auto;
+  }
+}

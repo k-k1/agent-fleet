@@ -199,6 +199,29 @@ there, because the queue lives inside the CLI.
 the same rules. **Cancelling a question** follows them on codex only, where cancelling stops the
 turn; the other agents answer the question as declined and leave the queue alone.
 
+### Holding follow-ups before sending (send queue)
+
+While a turn runs, a plain send goes to the agent at once. To write several follow-ups and
+send them later, press the **"+" button above Send** (or **Alt+Enter**) instead: the message is
+held in a **Waiting to send** list above the input box and nothing reaches the agent or the
+conversation yet.
+
+- **Edit, reorder, delete**: each row has up / down arrows, **Edit** (Enter saves, Shift+Enter
+  adds a line, Esc cancels; Enter while an IME candidate is open does not save) and **Delete**.
+  A message held with attachments keeps them (shown as "+N").
+- **Order of sending**: when the turn ends, the first row is sent, then the next one when that
+  turn ends, and so on. Items never go out two at a time.
+- **Send now** sends one row immediately, whatever the session is doing. On **codex** and **muse**
+  (Managed) the agent takes it into the running turn; on every other agent it is accepted and
+  handled after the running turn, exactly like a plain send during a turn.
+- **Stopping pauses it.** Pressing **Stop** (or rejecting a plan) holds the rest of the list, so the
+  stop is not followed by your queued messages; **Resume** in the list's header lets it go on.
+  A send the agent refuses also pauses the list, and the message stays at its place.
+- **It is per session and temporary.** The list stays when you switch panes or sessions in the
+  same page, and is cleared when you reload the page; it is never stored on the server. It sends
+  only while that session's chat is open. It is not the **Memo queue** below (saved, shared across
+  devices) and not the messages other sessions send to this one.
+
 ### Reusing something you sent earlier
 
 With the field empty, **↑↓** walk back through the prompts you sent in this conversation (on a
