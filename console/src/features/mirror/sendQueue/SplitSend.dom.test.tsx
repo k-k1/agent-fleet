@@ -90,4 +90,62 @@ describe("split Send", () => {
     act(() => root!.render(<SendColumn {...p} sendDisabled={true} />));
     expect(item()).toBeNull();
   });
+
+  describe("focus boundary and placement", () => {
+    const settle = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const sendBtn = () => host!.querySelector<HTMLButtonElement>(".mirror-send")!;
+    const menu = () => document.body.querySelector<HTMLElement>(".mirror-send-menu");
+
+    it("closes when focus moves from the menu to another control", async () => {
+      col();
+      click(more()!);
+      act(() => item()!.focus());
+      act(() => sendBtn().focus());
+      await settle();
+      expect(menu()).toBeNull();
+    });
+
+    it("closes when the item is blurred to nowhere, but not when focus goes item→chevron", async () => {
+      col();
+      click(more()!);
+      act(() => item()!.focus());
+      act(() => more()!.focus());
+      await settle();
+      expect(menu()).not.toBeNull();
+      act(() => item()!.focus());
+      act(() => item()!.blur());
+      await settle();
+      expect(menu()).toBeNull();
+    });
+
+    it("closes when focus leaves the chevron for another control", async () => {
+      col();
+      click(more()!);
+      act(() => more()!.focus());
+      act(() => sendBtn().focus());
+      await settle();
+      expect(menu()).toBeNull();
+    });
+
+    it("follows the chevron on resize and scroll while open, and stops after close", () => {
+      col();
+      let top = 700;
+      more()!.getBoundingClientRect = () => ({ left: 900, right: 920, top, bottom: top + 31, width: 20, height: 31, x: 900, y: top, toJSON() {} });
+      click(more()!);
+      const before = menu()!.style.top;
+      top = 200;
+      act(() => { window.dispatchEvent(new Event("resize")); });
+      const after = menu()!.style.top;
+      expect(after).not.toBe(before);
+      top = 400;
+      act(() => { document.body.dispatchEvent(new Event("scroll")); window.dispatchEvent(new Event("scroll")); });
+      expect(menu()!.style.top).not.toBe(after);
+      const el = menu()!;
+      click(more()!);
+      top = 100;
+      act(() => { window.dispatchEvent(new Event("resize")); });
+      expect(menu()).toBeNull();
+      expect(el.isConnected).toBe(false);
+    });
+  });
 });

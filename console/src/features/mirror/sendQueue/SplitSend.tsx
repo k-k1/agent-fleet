@@ -27,15 +27,56 @@ export function SplitSend({
   const refocus = useRef(false);
   useDismiss([moreRef, menuRef], open, () => setOpen(false));
   useMenuRoving(menuRef, open);
-  useLayoutEffect(() => {
+  const place = () => {
     const el = menuRef.current;
     const anchor = moreRef.current;
-    if (!open || !el || !anchor) return;
+    if (!el || !anchor) return;
     const a = anchor.getBoundingClientRect();
-    const fitsBelow = a.bottom + 2 + el.offsetHeight + 8 <= window.innerHeight;
+    // The visible bottom, not the layout one: a soft keyboard shrinks only the visual viewport.
+    const vv = window.visualViewport;
+    const bottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+    const fitsBelow = a.bottom + 2 + el.offsetHeight + 8 <= bottom;
     // Right-aligned to the chevron: the column sits at the right edge of the pane.
     placeFixed(el, a.right - el.offsetWidth, fitsBelow ? a.bottom + 2 : a.top - el.offsetHeight - 2);
+  };
+  useLayoutEffect(() => {
+    if (open) place();
   });
+  // Follow the anchor while the menu is open: a resize, any scroll (capture: an ancestor's too)
+  // or a visual-viewport change moves the chevron, and a fixed menu does not move with it.
+  const placeRef = useRef(place);
+  placeRef.current = place;
+  useEffect(() => {
+    if (!open) return;
+    const on = () => placeRef.current();
+    const vv = window.visualViewport;
+    window.addEventListener("resize", on);
+    window.addEventListener("scroll", on, true);
+    vv?.addEventListener("resize", on);
+    vv?.addEventListener("scroll", on);
+    return () => {
+      window.removeEventListener("resize", on);
+      window.removeEventListener("scroll", on, true);
+      vv?.removeEventListener("resize", on);
+      vv?.removeEventListener("scroll", on);
+    };
+  }, [open]);
+  // The menu and its chevron are one focus boundary: when focus has left both (to another
+  // control, out of the page, or nowhere) the menu goes. Read after the move has settled, since
+  // relatedTarget is null for a blur() and for focus leaving the page. A press on the chevron
+  // is the toggle's own business — Safari does not focus a button on click, so that press would
+  // otherwise close the menu here and reopen it on the click.
+  const pressingMore = useRef(false);
+  const openRef = useRef(open);
+  openRef.current = open;
+  const onFocusOut = () => {
+    queueMicrotask(() => {
+      if (!openRef.current || pressingMore.current) return;
+      const a = document.activeElement;
+      if (a && (menuRef.current?.contains(a) || a === moreRef.current)) return;
+      close(false);
+    });
+  };
   // A menu that closes by Esc or a pick hands focus back to the chevron; an outside press keeps
   // the focus wherever the press put it.
   const close = (back: boolean) => {
@@ -66,6 +107,11 @@ export function SplitSend({
         aria-label={tr("mirror.queue_add")}
         aria-haspopup="menu"
         aria-expanded={open}
+        onMouseDown={() => {
+          pressingMore.current = true;
+          setTimeout(() => (pressingMore.current = false), 0);
+        }}
+        onBlur={onFocusOut}
         onClick={() => setOpen((v) => !v)}
         onKeyDown={(e) => {
           if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -89,11 +135,7 @@ export function SplitSend({
                 close(true);
               }
             }}
-            onBlur={(e) => {
-              // Focus left the menu for somewhere that is not the chevron: put it away.
-              const to = e.relatedTarget as Node | null;
-              if (to && !menuRef.current?.contains(to) && to !== moreRef.current) close(false);
-            }}
+            onBlur={onFocusOut}
           >
             <li>
               <button
