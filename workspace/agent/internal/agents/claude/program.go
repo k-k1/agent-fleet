@@ -71,9 +71,12 @@ const nonessentialTrafficEnv = "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"
 // so a change reaches sessions started afterwards and never one already running.
 func remoteControlOn() bool { return settingBool(readSettings(), "remoteControlAtStartup") }
 
-// launchCommand prefixes cmd so the claude process truly lacks nonessentialTrafficEnv while
-// Remote Control is on. The variable is presence-based, so it is removed rather than set to 0 or
-// empty; `tmux new-session -e` can only add variables, hence `env -u` in the pane program. Off
+// launchCommand prefixes cmd so the claude process is exec'd without nonessentialTrafficEnv in its
+// inherited environment while Remote Control is on. The variable is presence-based, so it is
+// removed rather than set to 0 or empty; `tmux new-session -e` can only add variables, hence
+// `env -u` in the pane program. This does not reach claude's own settings.json `env` blocks
+// (user, project, local, managed): claude writes those entries into its environment after start,
+// so a copy there re-disables Remote Control and has to be removed from where it is set. Off
 // leaves the environment exactly as the image set it.
 func launchCommand(cmd string) string {
 	if remoteControlOn() {

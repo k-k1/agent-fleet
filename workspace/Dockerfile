@@ -646,7 +646,7 @@ ENV GIT_TERMINAL_PROMPT=0 \
 # (the native path stays off); only the mechanism moved.
 #
 # NONESSENTIAL_TRAFFIC also turns off feature-flag evaluation, and Remote Control will not
-# start without it (silent: the claude session runs, no Remote Control session is created).
+# start while it is set (silent: the claude session runs, no Remote Control session is created).
 # So while the Console's Remote control toggle is on, the Agent removes this one variable
 # (`env -u`) from the claude processes it starts afterwards (agents/claude/program.go
 # `launchCommand`); the other three stay set, and with the toggle off the environment is

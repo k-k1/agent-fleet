@@ -344,7 +344,7 @@ Agent holds belongs to its one user; sessions shared in from other users never r
 Decision 1 above rests on `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` being set in the image. It
 still is, and the decision is unchanged. What changed is that the Console's **Remote control**
 toggle now removes that one variable from the claude processes started while the toggle is on,
-because Remote Control will not start without feature-flag evaluation (#1254; measurements in
+because Remote Control will not start while that variable is set (#1254; measurements in
 docs/log/58 §58.18). `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING` and `DISABLE_AUTOUPDATER` are
 kept in every case, and the native peer channel stays closed by the launch settings of the
 previous addendum, not by env.
