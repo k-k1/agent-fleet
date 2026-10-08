@@ -53,6 +53,7 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.adopt": "Adopt",
   "mirror.dismiss_suggestion": "Don't show this suggestion again",
   "mirror.jump_unreachable": "That turn is too far back to jump to. Scroll up to load earlier conversation.",
+  "mirror.jump_failed": "Couldn't load the earlier conversation needed to reach that turn.",
   "mirror.load_earlier": "Load earlier conversation",
   "mirror.jump_latest": "Jump to latest",
   "mirror.jump_reply_top": "Start of reply",

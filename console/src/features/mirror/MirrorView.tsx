@@ -573,6 +573,8 @@ function MirrorViewBody({
         // a wheel.
         onWheelCapture={scroll.endRestoreOnInput}
         onTouchStartCapture={scroll.endRestoreOnInput}
+        onPointerDownCapture={scroll.noteReaderInput}
+        onKeyDownCapture={scroll.noteReaderInput}
       >
         {/* Wrapper whose height == the transcript's total height, so a ResizeObserver can
             re-pin a bottom-stuck view to the true bottom as late content lays out — that's

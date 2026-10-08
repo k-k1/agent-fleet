@@ -262,6 +262,24 @@ export function useMirrorScroll() {
   // The case this misses is dragging the native scrollbar, for which Chromium dispatches no
   // pointerdown to the element. That tugs against the restore until it folds, but re-grabbing
   // the scrollbar is enough.
+  // Reader input that must not end a restore (a key or pointer press anywhere in the body, the
+  // jump-to-latest button): it only tells a pending jump that the reader is in charge.
+  const noteReaderInput = () => {
+    inputSeqRef.current++;
+  };
+
+  // Where the reader is, in content terms, for a jump that waits on network pages. Input events
+  // miss a native scrollbar drag (see endRestoreOnInput), and scrollTop drifts for innocent
+  // reasons (prepends held by the anchor, browser anchoring), so the question is asked of the
+  // CONTENT: still following the end, or still on the same turn at about the same offset.
+  const placeSnapshot = () => ({ atBottom: atBottomRef.current, mark: captureMark(bodyRef.current, false) });
+  const placeMoved = (snap: { atBottom: boolean; mark: ScrollMark | null }): boolean => {
+    if (snap.atBottom || atBottomRef.current) return snap.atBottom !== atBottomRef.current;
+    const now = captureMark(bodyRef.current, false);
+    if (!snap.mark || !now) return false;
+    return now.idx !== snap.mark.idx || Math.abs(now.offset - snap.mark.offset) > 48;
+  };
+
   const endRestoreOnInput = () => {
     inputSeqRef.current++;
     if (restoringRef.current) endRestore();
@@ -616,6 +634,9 @@ export function useMirrorScroll() {
     applyPrependAdjust,
     noteInteraction,
     inputSeqRef,
+    noteReaderInput,
+    placeSnapshot,
+    placeMoved,
     jumpTo,
     onBodyScroll,
     endRestoreOnInput,

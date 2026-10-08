@@ -2,10 +2,12 @@
 // past-session search hit, ADR 0110) that the scroll mark cannot do: the mark only restores a turn
 // that is already on screen, and the mirror mounts the tail window alone.
 //
-// A turn's idx is its absolute position in the transcript (claude: the jsonl line number;
-// store-backed agents: the turn index) and `firstLine` is the same unit — the oldest position the
-// mirror holds — so "is the hit mounted" is `idx >= firstLine`, and one `before=firstLine&limit=N`
-// request covers N positions. No search over cursors is needed; the only question is how far to go.
+// A turn's idx is its position in the transcript, but NOT in the unit the paging cursor counts:
+// claude's idx is the jsonl line number, the cursor `firstLine` is the same line number, whereas a
+// store-backed agent pages by array position while its turns carry the source event's idx (sparse,
+// and never below the position). So reaching is judged on the oldest idx actually HELD, and the
+// cursor is only used to ask for a page. `before=firstLine&limit=N` is sized by the idx gap, which
+// is exact for claude and an over-estimate (bounded by the server's clamp) for the others.
 //
 // Bounded on purpose: every page is a request, and every mounted turn is DOM. Past the cap the jump
 // is given up with a message rather than walking a very long transcript on a click.
@@ -22,26 +24,31 @@ export const REACH_MARGIN = 50;
 export type ReachOutcome = "reached" | "mounted" | "too-far" | "failed" | "cancelled";
 
 export interface ReachDeps {
-  /** The oldest position held right now. */
-  firstLine: () => number;
-  /** Fetch and prepend the page of up to `limit` positions before firstLine; false when it failed. */
+  /** The oldest turn idx held right now (Infinity when none). */
+  oldestIdx: () => number;
+  /** True when the cursor is at the start of the transcript: nothing older exists. */
+  exhausted: () => boolean;
+  /** Fetch and prepend the page of up to `limit` positions before the cursor; false when it failed. */
   page: (limit: number) => Promise<boolean>;
-  /** True once the jump is moot (session switched, the reader took over). Checked between pages. */
+  /** True once the jump is moot (session switched, a newer jump, the reader took over). Checked between pages. */
   cancelled: () => boolean;
+  /** Reads the cursor, to refuse a page that did not move it. */
+  cursor: () => number;
 }
 
 /** Page back until `idx` (plus a margin) is held. "mounted" = it already was; nothing was fetched. */
 export async function reachTurn(idx: number, deps: ReachDeps): Promise<ReachOutcome> {
   const target = Math.max(0, idx - REACH_MARGIN);
-  if (deps.firstLine() <= target) return "mounted";
-  if (deps.firstLine() - target > REACH_MAX_LINES) return "too-far";
+  if (deps.oldestIdx() <= target || deps.exhausted()) return "mounted";
+  if (deps.oldestIdx() - target > REACH_MAX_LINES) return "too-far";
   for (let i = 0; i < REACH_MAX_PAGES; i++) {
     if (deps.cancelled()) return "cancelled";
-    const before = deps.firstLine();
-    if (before <= target) return "reached";
-    if (!(await deps.page(Math.min(REACH_PAGE_LINES, before - target)))) return deps.cancelled() ? "cancelled" : "failed";
-    if (deps.firstLine() >= before) return "failed"; // no progress: never loop on a stuck cursor
+    if (deps.oldestIdx() <= target || deps.exhausted()) return "reached";
+    const before = deps.cursor();
+    const gap = deps.oldestIdx() - target;
+    if (!(await deps.page(Math.min(REACH_PAGE_LINES, gap)))) return deps.cancelled() ? "cancelled" : "failed";
+    if (deps.cursor() >= before) return "failed"; // no progress: never loop on a stuck cursor
   }
   if (deps.cancelled()) return "cancelled";
-  return deps.firstLine() <= target ? "reached" : "failed";
+  return deps.oldestIdx() <= target || deps.exhausted() ? "reached" : "failed";
 }

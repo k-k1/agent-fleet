@@ -381,30 +381,48 @@ export function useOlderHistory({
 }) {
   const { turns, setTurns, firstLineRef, hasMore, setHasMore, setLoadingOlder, loadingOlderRef, topSentinelRef, loaded, stateSession } = st;
   const { bodyRef } = scroll;
-  const sessionRef = useRef(session);
-  sessionRef.current = session;
+  // Bumped whenever the transcript this hook serves changes under an async fetch (session switch,
+  // unmount): a page, a toast or a jump that started under an older value is dropped, and so is the
+  // right to release the shared loading flag.
+  const lifeRef = useRef(0);
+  useLayoutEffect(() => {
+    lifeRef.current++;
+    wantRef.current = null;
+    readyRef.current = null;
+    return () => {
+      lifeRef.current++;
+    };
+  }, [session]);
   // The first window of THIS session is held (not the previous session's state, on the commit where
   // the prop changes). Read from effects and callbacks built earlier, hence a ref.
   const windowHeldRef = useRef(false);
   windowHeldRef.current = loaded && stateSession === session;
-  // A jump to a turn older than the window (palette hit, ADR 0110): waiting for the first window to
-  // load, then being paged to. `ready` is the mark to apply once the pages are mounted.
+  const turnsRef = useRef(turns);
+  turnsRef.current = turns;
+  // The newest explicit jump (palette hit, ADR 0110) still to be served; `jumpGenRef` names it, so
+  // a run that started for an earlier one finds out and stands down. `ready` is the mark to apply
+  // once its pages are mounted.
   const wantRef = useRef<ScrollMark | null>(null);
   const readyRef = useRef<ScrollMark | null>(null);
+  const jumpGenRef = useRef(0);
+  const runningRef = useRef(false);
   const [jumpGo, setJumpGo] = useState(0);
+  // The oldest idx held, lowered by every page fetched (turnsRef lags a render behind a prepend).
+  const oldestRef = useRef(Infinity);
 
-  // Fetch the page before the oldest line we hold and prepend it. false when it failed (or the
-  // session changed under it — the turns then belong to another transcript and are dropped).
+  // Fetch the page before the oldest line we hold and prepend it. false when it failed or the
+  // transcript changed under it (the turns then belong to another one and are dropped).
   const pageOnce = async (limit: number): Promise<boolean> => {
-    const s = session;
+    const life = lifeRef.current;
     try {
       const before = firstLineRef.current;
-      const d = await api(`api/sessions/${q(s)}/messages?before=${before}&limit=${limit}`);
-      if (s !== sessionRef.current) return false;
+      const d = await api(`api/sessions/${q(session)}/messages?before=${before}&limit=${limit}`);
+      if (life !== lifeRef.current) return false;
       if (d && !d.error && Array.isArray(d.messages)) {
         if (d.messages.length) {
           scroll.capturePrependAnchor(); // keep the viewport steady across the prepend
           const older = d.messages;
+          for (const t of older) if (typeof t.idx === "number" && t.idx < oldestRef.current) oldestRef.current = t.idx;
           setTurns((t) => [...older, ...t]);
         }
         if (typeof d.firstLine === "number") firstLineRef.current = d.firstLine;
@@ -417,45 +435,62 @@ export function useOlderHistory({
     return false;
   };
 
-  // Page older history in (P2). Guard via refs so overlapping triggers (button + observer + a
-  // jump) can't double it.
+  // Page older history in (P2). The loading flag is the one lock for the button, the observer and
+  // a jump; whoever releases it hands over to a jump that arrived meanwhile.
+  const release = (life: number) => {
+    if (life !== lifeRef.current) return; // the session changed: the flag is the new one's now
+    loadingOlderRef.current = false;
+    setLoadingOlder(false);
+    void serveJumps();
+  };
   const loadOlder = async () => {
     if (loadingOlderRef.current || firstLineRef.current <= 0) return;
+    const life = lifeRef.current;
     loadingOlderRef.current = true;
     setLoadingOlder(true);
     try {
       await pageOnce(WINDOW);
     } finally {
-      loadingOlderRef.current = false;
-      setLoadingOlder(false);
+      release(life);
     }
   };
 
-  // Bring the jump target's turn in. Runs once the first window is held; the mark is applied by
-  // the layout effect below, after the pages are committed to the DOM.
-  const reachWanted = async () => {
+  // Serve the newest jump, one at a time. A jump that arrives during a run supersedes it (the run
+  // sees the generation move and stops between pages) and is served when the lock frees.
+  const serveJumps = async () => {
+    if (runningRef.current || loadingOlderRef.current || !windowHeldRef.current) return;
     const mark = wantRef.current;
-    if (!mark || loadingOlderRef.current || !windowHeldRef.current) return;
+    if (!mark) return;
     wantRef.current = null;
+    const gen = jumpGenRef.current;
+    const life = lifeRef.current;
+    runningRef.current = true;
     loadingOlderRef.current = true;
     setLoadingOlder(true);
     const seq = scroll.inputSeqRef.current;
-    const s = session;
-    let outcome: ReachOutcome;
+    const place = scroll.placeSnapshot();
+    oldestRef.current = Math.min(Infinity, ...turnsRef.current.map((t) => (typeof t.idx === "number" ? t.idx : Infinity)));
+    let outcome: ReachOutcome = "cancelled";
     try {
+      const stale = () => life !== lifeRef.current || gen !== jumpGenRef.current;
       outcome = await reachTurn(mark.idx, {
-        firstLine: () => firstLineRef.current,
+        oldestIdx: () => oldestRef.current,
+        exhausted: () => firstLineRef.current <= 0,
+        cursor: () => firstLineRef.current,
         page: pageOnce,
-        cancelled: () => s !== sessionRef.current || scroll.inputSeqRef.current !== seq,
+        cancelled: () => stale() || scroll.inputSeqRef.current !== seq || scroll.placeMoved(place),
       });
+      if (stale()) outcome = "cancelled";
+      else if (outcome === "reached" && (scroll.inputSeqRef.current !== seq || scroll.placeMoved(place))) outcome = "cancelled";
+      if (outcome === "too-far") toast(tr("mirror.jump_unreachable"));
+      else if (outcome === "failed") toast(tr("mirror.jump_failed"));
+      else if (outcome === "reached") {
+        readyRef.current = mark;
+        setJumpGo((n) => n + 1);
+      }
     } finally {
-      loadingOlderRef.current = false;
-      setLoadingOlder(false);
-    }
-    if (outcome === "too-far" || outcome === "failed") toast(tr("mirror.jump_unreachable"));
-    if (outcome === "reached") {
-      readyRef.current = mark;
-      setJumpGo((n) => n + 1);
+      runningRef.current = false;
+      release(life);
     }
   };
 
@@ -464,24 +499,25 @@ export function useOlderHistory({
   useEffect(() => {
     const take = (m: ScrollMark | null) => {
       if (!m || !m.near || m.atBottom) return;
+      jumpGenRef.current++; // supersedes a run in flight
       wantRef.current = m;
-      void reachWanted();
+      void serveJumps();
     };
     take(loadMark(session));
     return onJump((sess, m) => {
       if (sess === session) take(m);
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reachWanted reads live refs
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- serveJumps reads live refs
   }, [session]);
   useEffect(() => {
-    void reachWanted();
+    void serveJumps();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, stateSession]);
   useLayoutEffect(() => {
     const mark = readyRef.current;
     if (!mark) return;
     readyRef.current = null;
-    if (!scroll.jumpTo(mark)) toast(tr("mirror.jump_unreachable"));
+    if (!scroll.jumpTo(mark)) toast(tr("mirror.jump_failed"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jumpGo]);
 

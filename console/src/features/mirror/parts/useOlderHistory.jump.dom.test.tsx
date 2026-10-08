@@ -20,9 +20,12 @@ let jumped: unknown[] = [];
 let toasts: string[] = [];
 let inputSeq = { current: 0 };
 let turnsAtJump: number[] = [];
+let stride = 1; // idx per cursor position: 1 = claude, >1 = a store-backed agent's sparse idx
+let moved = false; // what scroll.placeMoved reports (the reader dragged the scrollbar)
+let older: (() => Promise<void>) | null = null;
 
 function Harness({ session, loaded = true, first = 1000 }: { session: string; loaded?: boolean; first?: number }) {
-  const [turns, setTurns] = useState<{ idx: number }[]>([{ idx: first }]);
+  const [turns, setTurns] = useState<{ idx: number }[]>([{ idx: first * stride }]);
   const [hasMore, setHasMore] = useState(first > 0);
   const [, setLoadingOlder] = useState(false);
   const firstLineRef = useRef(first);
@@ -33,11 +36,13 @@ function Harness({ session, loaded = true, first = 1000 }: { session: string; lo
   const scroll = {
     bodyRef,
     inputSeqRef: inputSeq,
+    placeSnapshot: () => ({ atBottom: false, mark: null }),
+    placeMoved: () => moved,
     capturePrependAnchor: () => {},
     applyPrependAdjust: () => {},
     jumpTo: (m: unknown) => { jumped.push(m); turnsAtJump.push(turns[0].idx); return true; },
   };
-  useOlderHistory({ session, st: st as never, scroll: scroll as never, toast: (m) => toasts.push(m) });
+  older = useOlderHistory({ session, st: st as never, scroll: scroll as never, toast: (m) => toasts.push(m) });
   return <div data-first={turns[0].idx} />;
 }
 
@@ -52,14 +57,14 @@ function mount(props: Parameters<typeof Harness>[0]) {
 
 beforeEach(() => {
   apiMock.mockReset();
-  jumped = []; toasts = []; turnsAtJump = [];
+  jumped = []; toasts = []; turnsAtJump = []; stride = 1; moved = false; older = null;
   inputSeq = { current: 0 };
   // The page before `before`: `limit` positions, the oldest at before-limit.
   apiMock.mockImplementation(async (url: string) => {
     const before = Number(/before=(\d+)/.exec(url)![1]);
     const limit = Number(/limit=(\d+)/.exec(url)![1]);
     const lo = Math.max(0, before - limit);
-    return { messages: [{ idx: lo }], firstLine: lo, hasMore: lo > 0 };
+    return { messages: [{ idx: lo * stride }], firstLine: lo, hasMore: lo > 0 };
   });
 });
 afterEach(() => {
@@ -78,6 +83,68 @@ describe("useOlderHistory explicit jump", () => {
     expect(jumped).toHaveLength(1);
     expect(turnsAtJump[0]).toBeLessThanOrEqual(250); // the jump saw the paged-in turns
     expect(toasts).toEqual([]);
+  });
+
+  it("reaches a hit by the oldest idx held when idx is sparse (cursor counts positions)", async () => {
+    stride = 10; // cursor 1000 = idx 10000: a hit at idx 3000 is far outside, although 3000 >= 1000
+    mount({ session: "s" });
+    act(() => requestJump("s", { atBottom: false, idx: 3000, offset: 0, near: true }));
+    await flush();
+    expect(apiMock).toHaveBeenCalled();
+    expect(jumped).toHaveLength(1);
+    expect(turnsAtJump[0]).toBeLessThanOrEqual(3000);
+  });
+
+  it("serves the newest of two jumps; the superseded one never lands", async () => {
+    const waits: ((v: unknown) => void)[] = [];
+    apiMock.mockImplementation((url: string) => new Promise((r) => {
+      const before = Number(/before=(\d+)/.exec(url)![1]);
+      const limit = Number(/limit=(\d+)/.exec(url)![1]);
+      const lo = Math.max(0, before - limit);
+      waits.push(() => r({ messages: [{ idx: lo }], firstLine: lo, hasMore: lo > 0 }));
+    }));
+    mount({ session: "s" });
+    act(() => requestJump("s", { atBottom: false, idx: 300, offset: 0, near: true })); // A
+    act(() => requestJump("s", { atBottom: false, idx: 100, offset: 0, near: true })); // B, while A loads
+    await act(async () => waits.shift()!(null));
+    await flush();
+    while (waits.length) { await act(async () => waits.shift()!(null)); await flush(); }
+    expect(jumped.map((m) => (m as { idx: number }).idx)).toEqual([100]);
+  });
+
+  it("serves a jump that arrived while the Load earlier button's page was in flight", async () => {
+    let release: (v: unknown) => void = () => {};
+    apiMock.mockImplementationOnce(() => new Promise((r) => { release = r; }));
+    mount({ session: "s" });
+    act(() => { void older!(); });
+    act(() => requestJump("s", { atBottom: false, idx: 300, offset: 0, near: true }));
+    expect(jumped).toHaveLength(0);
+    await act(async () => release({ messages: [{ idx: 600 }], firstLine: 600, hasMore: true }));
+    await flush();
+    expect(jumped).toHaveLength(1);
+  });
+
+  it("drops a jump when the session changes while its page loads", async () => {
+    let release: (v: unknown) => void = () => {};
+    apiMock.mockImplementationOnce(() => new Promise((r) => { release = r; }));
+    mount({ session: "s" });
+    act(() => requestJump("s", { atBottom: false, idx: 300, offset: 0, near: true }));
+    act(() => root!.render(<Harness session="t" />));
+    await act(async () => release({ messages: [{ idx: 200 }], firstLine: 200, hasMore: true }));
+    await flush();
+    expect(jumped).toHaveLength(0);
+    expect(toasts).toEqual([]);
+  });
+
+  it("drops the jump when the reader moved without any input event (scrollbar drag)", async () => {
+    let release: (v: unknown) => void = () => {};
+    apiMock.mockImplementationOnce(() => new Promise((r) => { release = r; }));
+    mount({ session: "s" });
+    act(() => requestJump("s", { atBottom: false, idx: 300, offset: 0, near: true }));
+    moved = true;
+    await act(async () => release({ messages: [{ idx: 250 }], firstLine: 250, hasMore: true }));
+    await flush();
+    expect(jumped).toHaveLength(0);
   });
 
   it("does nothing for a hit inside the window", async () => {
