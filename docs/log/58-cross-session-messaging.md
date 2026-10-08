@@ -846,7 +846,7 @@ Remote Control がこの条件（v2.1.283 以降・Trusted Devices 必須でな�
   `DISABLE_TELEMETRY` / `DISABLE_ERROR_REPORTING` / `DISABLE_AUTOUPDATER` は常に残す。
   オフ（既定）のときの env はイメージのまま。Dockerfile の変数は消さない。
 - 外すのは継承環境だけ。ユーザー・プロジェクト・ローカル・管理設定の `settings.json` の `env` に同じ変数が
-  あれば claude が起動後に設定し直すので、設定元から取り除く必要がある。利用者の設定ファイルは書き換えない。
+  あれば claude が起動後に設定し直すので、設定元から取り除く必要がある。トグルは、それらの設定ファイルの `env` に書かれた変数を削除・変更しない（トグル値自体はユーザー設定に保存する）。
   `remoteControlOn` はユーザー設定だけを読むので、プロジェクト側の `remoteControlAtStartup` の上書きとは
   食い違いうる。
 - トグルは起動のたびに読む。効くのはその後に起動・再開するセッションからで、走行中のものは変わらない。
