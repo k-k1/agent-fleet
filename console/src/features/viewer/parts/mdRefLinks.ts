@@ -142,8 +142,21 @@ export function linkifyRefs(
 
   for (const node of targets) {
     const text = node.nodeValue!;
-    re.lastIndex = 0;
-    let m = re.exec(text);
+    // A range `#573-#598` whose front end already became a link (or an earlier text node) leaves
+    // `-#598` here; the look-behind needs the front end to accept the back one, so it is matched
+    // with the neighbour's text in front and the matches inside that prefix are ignored.
+    const prev = node.previousSibling;
+    const prefix =
+      wiCtx && text.startsWith("-") && prev && (prev.nodeType === Node.TEXT_NODE || (prev as Element).matches?.("a.md-workitem-link"))
+        ? // One character before the neighbour too: it decides whether the neighbour is itself a
+          // valid front end (`#1-#2-#3` has no third end).
+          (prev.previousSibling?.textContent?.slice(-1) ?? "") + (prev.textContent ?? "")
+        : "";
+    const full = prefix + text;
+    const off = prefix.length;
+    re.lastIndex = off;
+    const nextMatch = () => re.exec(full);
+    let m = nextMatch();
     if (!m) continue;
 
     const out = document.createDocumentFragment();
@@ -165,7 +178,7 @@ export function linkifyRefs(
       }
       if (!a && /^[0-9a-f]{7,40}$/.test(token)) {
         // A hex run wedged between "/" or "-" is a path segment / UUID group, not a sha.
-        if (repo && !inPathLikeContext(text, m.index, m.index + token.length)) {
+        if (repo && !inPathLikeContext(full, m.index, m.index + token.length)) {
           a = makeCommitLink(token, repo, onError);
         }
       } else if (!a && /^s[a-z2-7]{6}$/.test(token)) {
@@ -174,11 +187,11 @@ export function linkifyRefs(
         if (exists) a = makeSessionLink(token, openSession, openSessionMenu);
       }
       if (a) {
-        if (m.index > last) out.appendChild(document.createTextNode(text.slice(last, m.index)));
+        if (m.index - off > last) out.appendChild(document.createTextNode(text.slice(last, m.index - off)));
         out.appendChild(a);
-        last = m.index + token.length;
+        last = m.index - off + token.length;
       }
-      m = re.exec(text);
+      m = nextMatch();
     } while (m);
 
     if (last === 0) continue; // nothing linkified in this node — leave it untouched

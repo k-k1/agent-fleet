@@ -1,7 +1,7 @@
 // The gates that decide whether a ticket-shaped token in prose becomes a link (#1659). The false
 // positives listed here are the reason each gate exists.
 import { describe, expect, it } from "vitest";
-import { classifyWorkItemRef, cloneHosts, originOf, resolveWorkItemRef, WORK_ITEM_HINT_RE, workItemRefInputs, type WorkItemRefContext } from "./refs.ts";
+import { classifyWorkItemRef, cloneHosts, ISSUE_REF_SRC, originOf, resolveWorkItemRef, WORK_ITEM_HINT_RE, workItemRefInputs, type WorkItemRefContext } from "./refs.ts";
 import type { WorkItem } from "./read.ts";
 
 const row = (provider: string, key: string, extra: Partial<WorkItem> = {}): WorkItem => ({
@@ -147,6 +147,32 @@ describe("WORK_ITEM_HINT_RE", () => {
     for (const s of ["| #1649 |", "（#956）", "see octo/fleet#3", "PROJ-9 done"]) {
       expect(WORK_ITEM_HINT_RE.test(s), s).toBe(true);
     }
+  });
+});
+
+describe("ISSUE_REF_SRC ranges (#1909)", () => {
+  const found = (text: string) => [...text.matchAll(new RegExp(ISSUE_REF_SRC, "g"))].map((m) => m[0]);
+
+  it("takes both ends of #N-#M, bare or qualified", () => {
+    expect(found("see #573-#598 done")).toEqual(["#573", "#598"]);
+    expect(found("(octo/fleet#5-octo/fleet#9)")).toEqual(["octo/fleet#5", "octo/fleet#9"]);
+    expect(found("octo/fleet#5-#9")).toEqual(["octo/fleet#5", "#9"]);
+  });
+
+  it("keeps every shape the look-behind rejected rejected", () => {
+    expect(found("C#12 &#123; page#12 foo-#12 a/b/c#1")).toEqual([]);
+    // The first token is not itself a reference, so the dash is a hyphen again.
+    expect(found("abc#1-#2")).toEqual([]);
+    expect(found("foo-#1-#2")).toEqual([]);
+    expect(found("x/y/z#1-#2")).toEqual([]);
+    // Only the second end of a range, not a third.
+    expect(found("#1-#2-#3")).toEqual(["#1", "#2"]);
+    expect(found("#1-x #2-")).toEqual(["#1", "#2"]);
+  });
+
+  it("leaves Jira keys alone", () => {
+    expect(found("PROJ-12")).toEqual([]);
+    expect(found("PROJ-#12")).toEqual([]);
   });
 });
 
