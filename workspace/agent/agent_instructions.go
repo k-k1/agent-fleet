@@ -190,6 +190,9 @@ const lcppMemoryBudget = 4 << 10
 
 func init() {
 	harness.MemoryPrompt = lcppMemoryPrompt
+	// claude's own auto-memory is off for launches while the Agent memory switch is on (ADR 0108
+	// decision 6 step 2); read at launch, so a running session keeps what it started with.
+	claude.AutoMemoryOff = uiprefs.AgentMemory
 }
 
 // lcppMemoryPrompt is harness.MemoryPrompt: while the Agent memory switch is on, the fixed

@@ -102,3 +102,49 @@ func TestBuildProgramBlocksNativePeerChannel(t *testing.T) {
 		t.Error("setting AGENT_CLAUDE_FLAGS makes the block disappear")
 	}
 }
+
+// TestBuildProgramSwitchesAutoMemoryOffWithAFMemory: while the Agent memory switch is on, every
+// launch shape (new, resume, fork) carries autoMemoryEnabled:false in its one --settings, and
+// with the switch off or unwired none does (ADR 0108 decision 6 step 2).
+func TestBuildProgramSwitchesAutoMemoryOffWithAFMemory(t *testing.T) {
+	os.Unsetenv("AGENT_SESSION_CMD")
+	t.Cleanup(func() { AutoMemoryOff = nil })
+	const sid = "88888888-8888-4888-8888-888888888new"
+
+	AutoMemoryOff = nil
+	if got := buildProgram(sid, "", "", "", "", "", true); strings.Contains(got, "autoMemoryEnabled") {
+		t.Errorf("unwired hook must leave claude's memory alone: %q", got)
+	}
+	AutoMemoryOff = func() bool { return false }
+	if got := buildProgram(sid, "", "", "", "", "", true); strings.Contains(got, "autoMemoryEnabled") {
+		t.Errorf("switch off must leave claude's memory alone: %q", got)
+	}
+
+	AutoMemoryOff = func() bool { return true }
+	for name, got := range map[string]string{
+		"new":       buildProgram(sid, "", "", "", "", "", true),
+		"plan":      buildProgram(sid, "m", "e", "plan", "lbl", "", false),
+		"fork":      buildProgram(sid, "", "", "", "", "99999999-9999-4999-8999-999999999999", true),
+		"flags-env": withFlags(t, sid),
+	} {
+		if !strings.Contains(got, "--settings '"+nativePeerSettingsNoAutoMemory+"'") {
+			t.Errorf("%s: auto-memory not switched off: %q", name, got)
+		}
+		if n := strings.Count(got, "--settings"); n != 1 {
+			t.Errorf("%s: want exactly one --settings, got %d: %q", name, n, got)
+		}
+	}
+
+	// The memory variant must keep every entry of the peer-channel block.
+	base := strings.TrimSuffix(nativePeerSettings, "}")
+	if !strings.HasPrefix(nativePeerSettingsNoAutoMemory, base) ||
+		!strings.Contains(nativePeerSettingsNoAutoMemory, `"autoMemoryEnabled":false`) ||
+		strings.Contains(nativePeerSettingsNoAutoMemory, "'") {
+		t.Errorf("memory variant drifted from the peer block: %s", nativePeerSettingsNoAutoMemory)
+	}
+}
+
+func withFlags(t *testing.T, sid string) string {
+	t.Setenv("AGENT_CLAUDE_FLAGS", "--verbose")
+	return buildProgram(sid, "", "", "", "", "", true)
+}

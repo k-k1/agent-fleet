@@ -306,3 +306,21 @@ func TestMuseConfigHomeIsCreatedPrivate(t *testing.T) {
 		t.Fatalf("muse config home mode = %v, want 0700", fi.Mode().Perm())
 	}
 }
+
+// ADR 0108 decision 6 step 2: claude's launch reads the Agent memory switch (the hook is wired in
+// package main because claude cannot import ui-prefs). Unwired, the switch would silently leave
+// claude on two memories.
+func TestClaudeAutoMemoryOffFollowsTheAgentMemorySwitch(t *testing.T) {
+	instrEnv(t)
+	if claude.AutoMemoryOff == nil {
+		t.Fatal("claude.AutoMemoryOff is not wired")
+	}
+	setAgentMemory(t, true)
+	if !claude.AutoMemoryOff() {
+		t.Error("switch on: claude's auto-memory should be off")
+	}
+	setAgentMemory(t, false)
+	if claude.AutoMemoryOff() {
+		t.Error("switch off: claude's auto-memory should be left alone")
+	}
+}

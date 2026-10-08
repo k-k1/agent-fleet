@@ -271,6 +271,14 @@ Version control over the memory an agent accumulates by itself (claude's auto-me
     working copy under `~/repos`; one with no match, or two, is listed but cannot be imported. Importing needs
     Agent Fleet memory to be on; the preview works either way. The imported memories show in the list as
     **imported**, with the author unknown, and each can be reverted like any other change.
+  - **Claude Code's own memory**: while "Let sessions use Agent Fleet memory" is on, Agent Fleet starts Claude
+    sessions with Claude Code's auto-memory switched off, so Claude does not load its own `MEMORY.md` (about
+    25 KB at the start of every session) and uses the af tools like every other kind; its own memory files
+    stay where they are, unread. Three things follow. Run **Import from Claude Code** once more *before* you
+    turn the switch on, because anything Claude saves natively afterwards is no longer read. Turning the
+    switch off again returns later Claude sessions to their own memory, but what was saved in Agent Fleet
+    memory does not appear there (one way only). And only Claude sessions *started* after the change are
+    affected; a running session keeps what it started with.
   - **From a terminal**: `af-memory import-sources`, `af-memory import --project <slug> --dry-run` (preview) and
     `af-memory import --project <slug>` (import); `af-memory changes` lists the latest changes. The import is
     gated by the same switch and the same secret scan as the Console.
