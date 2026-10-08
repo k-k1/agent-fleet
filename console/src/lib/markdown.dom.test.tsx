@@ -263,4 +263,35 @@ describe("a formatting tag that is never closed", () => {
     const el = render(marked, "<a download>\n\nUse <table><tr><td></a>\n\nSecond.");
     expect(leaks(el, "Second.")).toBe(false);
   });
+
+  // What the hand-written pairing cannot see, the parser check catches (#1876). The stock
+  // renderer is the positive control; the pairing alone is what the second assertion would
+  // show without the check.
+  it("catches leaks the pairing does not model, by asking the parser", () => {
+    for (const source of [
+      '<div><textarea>\n\n<div title="</textarea>"><a download></div>\n\nSecond.',
+      "<div><a download>outer<table><tr><td><template></td></a></template></td></tr></table></div>\n\nSecond.",
+      "<div><a download>x<table></a></table></div>\n\nSecond.",
+      "<div><a download>x<script><!--<script></script></a>--></script></div>\n\nSecond.",
+      "<div><a download>x<!--\n\n<div></a>--></div>\n\nSecond.",
+      "<div><a download>x<textarea></textarea\u00a0></a></textarea></div>\n\nSecond.",
+    ]) {
+      expect(leaks(render(STOCK, source), "Second."), source).toBe(true);
+      expect(leaks(render(marked, source), "Second."), source).toBe(false);
+    }
+  });
+
+  it("removes several strays from one block, whatever order it finds them in", () => {
+    const source = "<div><a download>x<b>y<i>z<table></a></b></i></table></div>\n\nSecond.";
+    expect(leaks(render(STOCK, source), "Second.")).toBe(true);
+    const el = render(marked, source);
+    expect(leaks(el, "Second.")).toBe(false);
+    expect(el.textContent).toContain("<a download>x<b>y<i>z");
+  });
+
+  it("leaves real anchors alone when it looks, even beside a stray one", () => {
+    const el = render(marked, '<div><a download>x<table></a></table> <a href="y">keep</a></div>\n\nSecond.');
+    expect(leaks(el, "Second.")).toBe(false);
+    expect(el.querySelector('a[href="y"]')?.textContent).toBe("keep");
+  });
 });
