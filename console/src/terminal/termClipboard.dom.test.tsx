@@ -89,4 +89,35 @@ describe("terminal clipboard keys", () => {
     expect(() => h(key("KeyV", { ctrlKey: true, shiftKey: true }))).not.toThrow();
     expect(toasts.length).toBe(1);
   });
+
+  it("Ctrl+C after copy-on-select (same selection) reaches the PTY; a new selection copies", () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText, readText: vi.fn() }, configurable: true });
+    setSetting("termCtrlCV", true);
+    const term: any = mount();
+    vi.spyOn(term, "hasSelection").mockReturnValue(true);
+    const getSel = vi.spyOn(term, "getSelection").mockReturnValue("drag");
+    const h: KeyHandler = term._core._customKeyEventHandler;
+    term.element.dispatchEvent(new MouseEvent("mouseup", { button: 0 }));
+    expect(writeText).toHaveBeenCalledWith("drag");
+    const intr = key("KeyC", { ctrlKey: true });
+    expect(h(intr)).toBe(true);
+    expect(intr.defaultPrevented).toBe(false);
+    getSel.mockReturnValue("other");
+    expect(h(key("KeyC", { ctrlKey: true }))).toBe(false);
+    expect(writeText).toHaveBeenLastCalledWith("other");
+  });
+
+  it("OSC 52 copy toasts when the clipboard API is missing or refuses", async () => {
+    const term: any = mount();
+    const osc = (b64: string) => new Promise<void>((r) => term.write(`\x1b]52;c;${b64}\x07`, r));
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    await osc("aGk=");
+    expect(toasts.length).toBe(1);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: vi.fn().mockRejectedValue(new Error("no")) }, configurable: true });
+    await osc("aGk=");
+    await vi.waitFor(() => expect(toasts.length).toBe(2));
+    await osc("?");
+    expect(toasts.length).toBe(2);
+  });
 });

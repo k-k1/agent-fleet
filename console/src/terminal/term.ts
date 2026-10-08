@@ -80,9 +80,14 @@ function setSession(it: Inst, name: string | null) {
 function clipFail(key: string) {
   toast(tr(key), { kind: "error", key: "term-clipboard" });
 }
+// The selection text last written to the clipboard, per terminal. Copy-on-select leaves the
+// highlight in place, so without this a Ctrl+C meant as an interrupt would re-copy the stale
+// selection instead of reaching the PTY.
+const copiedSel = new WeakMap<Terminal, string>();
 function copySelection(term: Terminal, opts: { notify?: boolean; clear?: boolean } = {}) {
   const sel = term && term.getSelection();
   if (!sel) return;
+  copiedSel.set(term, sel);
   if (opts.clear) term.clearSelection();
   if (!navigator.clipboard) return clipFail("term.copy_failed");
   navigator.clipboard.writeText(sel).then(
@@ -451,13 +456,18 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
       // data is "<targets>;<base64>" e.g. "c;SGVsbG8=". "?" is a read request — ignore.
       const semi = data.indexOf(";");
       const b64 = semi >= 0 ? data.slice(semi + 1) : data;
-      if (!b64 || b64 === "?" || !navigator.clipboard) return true;
+      if (!b64 || b64 === "?") return true;
       try {
         const bin = atob(b64);
         const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
         const text = new TextDecoder().decode(bytes);
-        if (text) navigator.clipboard.writeText(text).catch(() => clipFail("term.copy_failed"));
-      } catch {}
+        if (text) {
+          if (!navigator.clipboard?.writeText) clipFail("term.copy_failed");
+          else navigator.clipboard.writeText(text).catch(() => clipFail("term.copy_failed"));
+        }
+      } catch {
+        clipFail("term.copy_failed");
+      }
       return true; // handled — don't fall through to the OSC fallback
     });
   } catch {}
@@ -543,7 +553,11 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
     if (e.type !== "keydown") return true;
     // Clipboard shortcuts — return false so xterm does NOT also forward them to the PTY, and
     // preventDefault so the browser's own paste event cannot paste a second time.
-    const act = clipAction(e, term.hasSelection(), getSettings().termCtrlCV);
+    // Ctrl+C copies only a selection not yet on the clipboard (checked lazily: getSelection
+    // builds a string and this is the key hot path).
+    const sel = term.hasSelection();
+    const stale = sel && e.ctrlKey && e.code === "KeyC" && term.getSelection() === copiedSel.get(term);
+    const act = clipAction(e, sel, getSettings().termCtrlCV, stale);
     if (act) {
       if (act === "paste") pasteClipboard(term);
       else copySelection(term, { notify: true, clear: act === "copyClear" });

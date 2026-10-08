@@ -18,6 +18,9 @@ describe("clipAction", () => {
   it("Ctrl+C without a selection stays SIGINT", () => {
     expect(clipAction(ev("KeyC", { ctrlKey: true }), false, true)).toBeNull();
   });
+  it("Ctrl+C is an interrupt when the selection was already copied", () => {
+    expect(clipAction(ev("KeyC", { ctrlKey: true }), true, true, true)).toBeNull();
+  });
   it("Ctrl+C is left to the PTY when the setting is off", () => {
     expect(clipAction(ev("KeyC", { ctrlKey: true }), true, false)).toBeNull();
   });
