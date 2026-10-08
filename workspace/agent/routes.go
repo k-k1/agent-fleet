@@ -486,6 +486,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/claude-import", memoryx.HandleAgentMemoryClaudeSources)
 	mux.HandleFunc("GET /agents/memory/claude-import/preview", memoryx.HandleAgentMemoryClaudePreview)
 	mux.HandleFunc("POST /agents/memory/claude-import", memoryx.HandleAgentMemoryClaudeApply)
+	// The reverse, explicit and previewed: AF memory copied into claude's own (#1914).
+	mux.HandleFunc("GET /agents/memory/claude-export", memoryx.HandleAgentMemoryClaudeExportSources)
+	mux.HandleFunc("GET /agents/memory/claude-export/preview", memoryx.HandleAgentMemoryClaudeExportPreview)
+	mux.HandleFunc("POST /agents/memory/claude-export", memoryx.HandleAgentMemoryClaudeExportApply)
 
 	// Toolchain selection (node via nvm / java via pre-baked Temurin) — Console.
 	mux.HandleFunc("GET /env/toolchains", handleToolchainsGet)

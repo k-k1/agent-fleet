@@ -330,3 +330,9 @@
   color: var(--accent);
   border-color: var(--accent);
 }
+
+.mem-badge.ci-conflict,
+.mem-badge.ci-remove {
+  color: var(--warn, var(--err));
+  border-color: var(--warn, var(--err));
+}

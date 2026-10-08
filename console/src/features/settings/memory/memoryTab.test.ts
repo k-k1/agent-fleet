@@ -17,7 +17,7 @@ const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.met
 // memoryTransfer (export and import), so the family is concatenated and read as one tab body.
 // Add any new file here: forget one and the check that is supposed to watch for unregistered
 // REST paths silently stops covering it.
-const tab = ["./MemoryTab.tsx", "./memoryTypes.ts", "./memoryRestore.tsx", "./memoryTransfer.tsx", "./memoryChanges.tsx", "./memoryClaudeImport.tsx"]
+const tab = ["./MemoryTab.tsx", "./memoryTypes.ts", "./memoryRestore.tsx", "./memoryTransfer.tsx", "./memoryChanges.tsx", "./memoryClaudeImport.tsx", "./memoryClaudeExport.tsx"]
   .map(read)
   .join("\n");
 const dialog = read("../SettingsDialog.tsx");
@@ -90,6 +90,16 @@ describe("agent memory tab in the settings modal", () => {
     expect(agentRoutes).toContain('"POST /agents/memory/claude-import"');
   });
 
+  it("registers the claude-memory write-back (sources, preview, apply) on both sides", () => {
+    for (const p of ["api/agents/memory/claude-export", "api/agents/memory/claude-export/preview"]) {
+      expect(tab).toContain(p);
+      expect(cpRoutes).toContain("/" + p);
+      expect(agentRoutes).toContain(p.replace(/^api\//, "/"));
+    }
+    expect(cpRoutes).toContain('"POST /api/agents/memory/claude-export"');
+    expect(agentRoutes).toContain('"POST /agents/memory/claude-export"');
+  });
+
   it("registers import/apply on both sides too (it is the one path that goes missing alone)", () => {
     expect(tab).toContain("api/agents/memory/import/apply");
     expect(cpRoutes).toContain("/api/agents/memory/import/apply");
@@ -134,7 +144,7 @@ describe("agent memory tab in the settings modal", () => {
 
   it("covers every Agent AF-Trigger value with a trigger-badge key", () => {
     // One to one with the Agent constants (memory_snapshot.go); "-" becomes "_" in the key.
-    for (const trigger of ["auto", "manual", "pre-restore", "restore", "import", "agent-memory"]) {
+    for (const trigger of ["auto", "manual", "pre-restore", "restore", "import", "pre-export", "agent-memory"]) {
       const key = "mem.trigger_" + trigger.replace(/-/g, "_");
       expect(ja, `ja is missing ${key}`).toHaveProperty(key);
       expect(en, `en is missing ${key}`).toHaveProperty(key);

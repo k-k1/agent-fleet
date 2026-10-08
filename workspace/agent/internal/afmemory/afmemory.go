@@ -33,10 +33,21 @@ Usage:
   af-memory import --project <slug> --dry-run
                                              preview: what an import would do, nothing written
   af-memory import --project <slug>          import every new and updated memory
+  af-memory export-sources                   AF projects whose memory can be written back to claude
+  af-memory export --project <id|name> --dry-run
+                                             preview: what a write-back would do, nothing written
+  af-memory export --project <id|name> [--overwrite <name>]...
+                                             copy AF memory into claude's own memory (claude only)
   af-memory --help
 
 <slug> is a name from import-sources. The import needs "Agent Fleet memory" turned on in
 Settings > Agent memory; a file the secret scan flags is listed and skipped, never imported.
+
+export is the other direction, one-shot: new and changed AF memories become files in claude's
+memory directory for the project, MEMORY.md is regenerated, and claude's memory is snapshotted
+first (Settings > Agent memory can restore it). A file claude has that AF did not write, or that
+changed since, is a conflict and is kept unless you name it with --overwrite. It does not need the
+"Agent Fleet memory" switch.
 `
 
 // Client is the Agent REST as this command uses it.
@@ -77,6 +88,10 @@ func Main(c *Client, args []string, out, errw io.Writer) int {
 		err = cmdSources(c, out)
 	case "import":
 		err = cmdImport(c, args[1:], out)
+	case "export-sources":
+		err = cmdExportSources(c, out)
+	case "export":
+		err = cmdExport(c, args[1:], out)
 	default:
 		fmt.Fprint(errw, usage)
 		return 2

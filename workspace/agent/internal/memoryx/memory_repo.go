@@ -113,7 +113,7 @@ type memorySnapshotInfo struct {
 	Short    string             `json:"short"`
 	At       string             `json:"at"`       // RFC3339 (author date)
 	Subject  string             `json:"subject"`  // first line
-	Trigger  string             `json:"trigger"`  // auto | manual | pre-restore | restore | import
+	Trigger  string             `json:"trigger"`  // auto | manual | pre-restore | restore | import | pre-export
 	Kinds    []string           `json:"kinds"`    // kinds that changed (claude / codex)
 	Projects []memoryProjectRef `json:"projects"` // claude projects that changed
 	Files    int                `json:"files"`    // number of changed files

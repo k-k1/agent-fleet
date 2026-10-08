@@ -121,6 +121,8 @@ func memoryCommitMessage(trigger string, now time.Time, changed []string, projec
 		verb = "restore"
 	case memoryTriggerImport:
 		verb = "import"
+	case memoryTriggerPreExport:
+		verb = "pre-export"
 	}
 	var subject string
 	switch {

@@ -130,6 +130,12 @@ that is safe when what one session writes is read by every kind.
      check its revision and attribute it before it becomes a memory; if that cannot be guaranteed,
      the option is rejected.
      These setting and environment names come from the 2.1.288 binary; none is measured.
+   - Step 3 (#1914): the reverse copy, AF → claude's native memory, is allowed as an **explicit,
+     previewed, one-shot** action per project (Console "Write back to Claude Code", or
+     `af-memory export`), never continuous. It is safe because while AF memory is on claude's native
+     writer is off (#1734), so nothing writes there concurrently. Conflicts are never overwritten
+     silently, a snapshot of claude's memory (0022) is taken first, and codex is deferred to #1683.
+     See the note at the end.
 7. **A memory is evidence, not an order.** The read tools' descriptions say so, and say that a
    file, function or flag a memory names must be checked before it is relied on. A memory never
    overrides user instructions or the fleet policy.
@@ -261,3 +267,31 @@ every Agent route, a shell in the same workspace is not kept out, and the author
 revision nor `updated`, and an agent's save carries it forward. The byte budget still holds: pins
 fill the described part first, and pins that do not fit fall to the names-only tail and are counted
 in `pinnedOmitted`, which `memory_index` prints. Search relevance stays with #1558.
+
+## Note (2026-10-08): write-back to claude's native memory (#1914)
+
+Turning the switch off returns claude to its own memory, which lacks what was learned through AF
+meanwhile. `memoryx/agent_memory_claude_export.go` copies a project's AF memory into
+`<claude config>/projects/<slug>/memory/`, where the slug is the key of the project's main working
+copy (`project.json` `root`). Decision 6 rejected continuous claude → AF sync; this is a different
+thing: explicit, previewed (`GET /agents/memory/claude-export[/preview]`, `POST` audited as
+`memory.claude_export`), and it works with the switch on or off.
+
+- One file per project-scope memory, in claude's shape (`name`, `description`, `metadata.type`, body)
+  plus `metadata.af_source` (`<project id>/<name>@<revision>`) and `metadata.af_hash` (sha256 of
+  description, type and body as written). AF-only fields are not written. User-scope memories are
+  not written (claude has no user-wide memory directory); a memory limited to other agent kinds is
+  left out.
+- Statuses: `new`, `update` (a file AF wrote, unchanged since), `unchanged`, `conflict` (a file AF
+  did not write, or that changed since: kept unless the request names it; a symlink leaf is never
+  replaced), `native_only` (kept, never deleted), `remove` (a file AF wrote, unchanged, whose memory
+  was forgotten), `secret` (scanned again on the way out; no override). The apply carries the
+  preview's token and is refused when anything moved.
+- `MEMORY.md` is regenerated from AF's ranking (pins, type tier, uses, recency), then the files
+  that stay, newest first, within 200 lines and 24 KiB, with a closing "N more memories" line. It
+  replaces the old one; the snapshot (`pre-export`, 0022) taken before the first write makes that
+  undoable. If the snapshot fails nothing is written. Every write is a temp file renamed inside a
+  directory handle opened without following symlinks.
+- Import loop guard: the import reads a claude file whose `af_source` names the AF memory and whose
+  text still hashes to `af_hash` as `unchanged`, although its mtime is newer than AF's update.
+- codex: deferred to #1683 (its memory workspace is rewritten by its own pipeline).
