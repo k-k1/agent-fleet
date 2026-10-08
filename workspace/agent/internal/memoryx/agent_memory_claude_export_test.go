@@ -242,7 +242,7 @@ func TestClaudeExportScanFlagsSecretsMasked(t *testing.T) {
 	e := newClaudeExportEnv(t)
 	key := "ghp_" + strings.Repeat("q7Zx", 9)
 	en := agentMemEntry{Name: "k", Description: "key " + key, Body: "b", Revision: 1}
-	data, _ := agentMemExportRender(e.pid, en)
+	data, _ := agentMemExportRender(e.pid, en, nil)
 	f := agentMemExportScan(en, data)
 	if len(f) == 0 {
 		t.Fatal("the scan should flag the entry")

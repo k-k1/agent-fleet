@@ -266,8 +266,11 @@ Version control over the memory an agent accumulates by itself (claude's auto-me
     **newer in Claude** (will overwrite the Agent Fleet copy, even one you edited since; both times are shown),
     **unchanged**, **forgotten** (a memory you forgot, or whose import you reverted, is never brought back),
     **possible secrets** (skipped, with masked findings. Fix the Claude file and preview again; there is no
-    way to import it anyway) and **cannot import** (with the reason). A description over 300 bytes is
-    shortened and its full text becomes the first paragraph of the memory. A Claude project is matched to a
+    way to import it anyway) and **cannot import** (with the reason). Nothing is cut: names with
+    `_` or `.`, descriptions up to 2,000 characters, bodies up to 200 KiB and long lines are imported as they are;
+    only a file over 200 KiB (or one with binary content) cannot be imported. A memory an earlier version imported
+    with a cut description is shown as **newer in Claude** and refreshed from the Claude file, as long as you have
+    not edited the Agent Fleet copy since. A Claude project is matched to a
     working copy under `~/repos`; one with no match, or two, is listed but cannot be imported. Importing needs
     Agent Fleet memory to be on; the preview works either way. The imported memories show in the list as
     **imported**, with the author unknown, and each can be reverted like any other change.
@@ -288,8 +291,10 @@ Version control over the memory an agent accumulates by itself (claude's auto-me
     Agent Fleet in between; this copies it over (Claude Code only; codex is not covered). Pick a project and you see what
     would happen first: **new**, **newer in Agent Fleet** (updates a file written back earlier), **forgotten in
     Agent Fleet** (removes a file written back earlier), **conflict** (a Claude file Agent Fleet did not write, or
-    that you changed since: kept unless you tick it), **possible secrets** (skipped), **unchanged** and **only in
-    Claude** (never deleted). User-scope memories are not written. `MEMORY.md` is rebuilt within Claude's load
+    that you changed since: kept unless you tick it; a file that is still exactly the one imported counts as
+    **unchanged**, or as **newer in Agent Fleet** once you edited the memory here), **possible secrets** (skipped), **unchanged** and **only in
+    Claude** (never deleted). An update keeps the fields Claude recorded in the file's `metadata`
+    (such as `originSessionId`). User-scope memories are not written. `MEMORY.md` is rebuilt within Claude's load
     limit (200 lines, 24 KiB) and replaces the old one; Claude's memory is snapshotted first
     (trigger "pre-write-back"), so you can restore it from the history below. It works with the switch on or off;
     while it is on, end Claude Code sessions started before it was switched on first.

@@ -148,19 +148,22 @@ func TestClaudeImportNestedTypeAndLongDescription(t *testing.T) {
 	e := newClaudeImportEnv(t)
 	e.file("typed", "short", "feedback", "the body")
 	e.file("badtype", "short", "bogus", "the body")
-	long := strings.Repeat("あ", 2100) // over the 2000-character limit
+	long := strings.Repeat("あ", 1800) // the longest description measured on real files; 5,400 bytes
 	e.file("long-desc", long, "project", "tail")
+	e.file("too-long-desc", strings.Repeat("あ", 2001), "project", "tail")
 
 	pv := e.preview()
-	if it := e.item(pv, "typed"); it.Status != claudeImportNew || it.Type != "feedback" || it.Shortened {
+	if it := e.item(pv, "typed"); it.Status != claudeImportNew || it.Type != "feedback" {
 		t.Errorf("typed = %+v", it)
 	}
 	if it := e.item(pv, "badtype"); it.Status != claudeImportNew || it.Type != "" {
 		t.Errorf("an unknown type is dropped, not an error: %+v", it)
 	}
-	ld := e.item(pv, "long-desc")
-	if !ld.Shortened || utf8.RuneCountInString(ld.Description) > agentMemMaxDescription || !strings.HasSuffix(ld.Description, "…") {
-		t.Errorf("long-desc = %d chars", utf8.RuneCountInString(ld.Description))
+	if ld := e.item(pv, "long-desc"); ld.Status != claudeImportNew || ld.Description != long {
+		t.Errorf("long-desc = %s, %d chars: a long description is imported whole", ld.Status, utf8.RuneCountInString(ld.Description))
+	}
+	if it := e.item(pv, "too-long-desc"); it.Status != claudeImportInvalid || it.Reason != "bad_description" {
+		t.Errorf("a description over the store limit is listed, never cut: %+v", it)
 	}
 
 	e.apply(time.Now(), "typed", "long-desc")
@@ -168,8 +171,8 @@ func TestClaudeImportNestedTypeAndLongDescription(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(got.Body, long+"\n\ntail") || utf8.RuneCountInString(got.Description) > agentMemMaxDescription {
-		t.Errorf("the full description must lead the body: %.40q", got.Body)
+	if got.Body != "tail" || got.Description != long {
+		t.Errorf("imported text must be claude's own: body %.40q, %d chars", got.Body, utf8.RuneCountInString(got.Description))
 	}
 	if got.AuthorKind != agentMemUnknown || got.AuthorSession != agentMemUnknown || got.Revision != 1 ||
 		!strings.HasPrefix(got.Source, "claude:projects/"+e.slug+"/memory/") || got.SourceHash == "" || got.Type != "project" {

@@ -74,7 +74,11 @@ func agentMemExportSource(projectID, name string, rev int) string {
 
 // agentMemExportRender is the native file for one AF memory, in the shape claude writes
 // (nested metadata) with AF's provenance beside the type. AF-only fields are not written.
-func agentMemExportRender(projectID string, e agentMemEntry) (data []byte, hash string) {
+//
+// carry holds the lines of the metadata block the file being replaced had besides AF's own
+// (claude keeps node_type, originSessionId and modified there); they are written back as they
+// were so that an update does not drop what claude recorded.
+func agentMemExportRender(projectID string, e agentMemEntry, carry []string) (data []byte, hash string) {
 	hash = agentMemExportHash(e.Description, e.Type, e.Body)
 	body := strings.TrimRight(e.Body, "\n")
 	var b strings.Builder
@@ -87,6 +91,9 @@ func agentMemExportRender(projectID string, e agentMemEntry) (data []byte, hash 
 	}
 	b.WriteString("  af_source: " + q(agentMemExportSource(projectID, e.Name, e.Revision)) + "\n")
 	b.WriteString("  af_hash: " + q(hash) + "\n")
+	for _, l := range carry {
+		b.WriteString(l + "\n")
+	}
 	b.WriteString("---\n" + body + "\n")
 	return []byte(b.String()), hash
 }
@@ -96,6 +103,52 @@ func agentMemExportRender(projectID string, e agentMemEntry) (data []byte, hash 
 func agentMemExportScan(e agentMemEntry, data []byte) []memorySecretFinding {
 	return append(append(agentMemScanText("description", e.Description), agentMemScanText("body", e.Body)...),
 		agentMemScanText("file", string(data))...)
+}
+
+// agentMemExportCarry returns the lines of raw's `metadata:` block that a write-back keeps: every
+// entry except the keys AF renders itself (type, af_source, af_hash), with its deeper lines.
+func agentMemExportCarry(raw []byte) []string {
+	s := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	rest, ok := strings.CutPrefix(s, "---\n")
+	if !ok {
+		return nil
+	}
+	head, _, _ := strings.Cut(rest, "\n---")
+	var out []string
+	inMeta, keep := false, false
+	childIndent := -1
+	for _, line := range strings.Split(head, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		if indent == 0 {
+			k, v, _ := strings.Cut(line, ":")
+			inMeta = strings.TrimSpace(k) == "metadata" && strings.TrimSpace(v) == ""
+			childIndent = -1
+			continue
+		}
+		if !inMeta {
+			continue
+		}
+		if childIndent < 0 {
+			childIndent = indent
+		}
+		if indent <= childIndent {
+			k, _, _ := strings.Cut(strings.TrimSpace(line), ":")
+			switch strings.TrimSpace(k) {
+			case "type", "af_source", "af_hash":
+				keep = false
+			default:
+				keep = true
+			}
+		}
+		if keep {
+			// Re-indented to AF's own two spaces, so the block stays one shape.
+			out = append(out, "  "+strings.Repeat(" ", max(indent-childIndent, 0))+strings.TrimSpace(line))
+		}
+	}
+	return out
 }
 
 // agentMemExportMeta reads the provenance keys under `metadata:`.
@@ -495,7 +548,12 @@ func agentMemExportBuild(projectID, slug string, mem *os.File) (*agentMemExportP
 		afNames[e.Name] = true
 		it := agentMemExportItem{Name: e.Name, Description: e.Description, Type: e.Type, Revision: e.Revision,
 			AFUpdated: e.Updated, entry: &es[i]}
-		data, hash := agentMemExportRender(projectID, e)
+		n := lookup(e.Name)
+		var carry []string
+		if n != nil && n.raw != nil {
+			carry = agentMemExportCarry(n.raw)
+		}
+		data, hash := agentMemExportRender(projectID, e, carry)
 		it.data = data
 		if f := agentMemExportScan(e, data); len(f) > 0 {
 			it.Status, it.Findings = claudeExportSecret, f
@@ -505,7 +563,6 @@ func agentMemExportBuild(projectID, slug string, mem *os.File) (*agentMemExportP
 			pv.add(it)
 			continue
 		}
-		n := lookup(e.Name)
 		it.native = n
 		switch {
 		case n == nil:
@@ -515,6 +572,17 @@ func agentMemExportBuild(projectID, slug string, mem *os.File) (*agentMemExportP
 		case n.parsed && n.hash == hash:
 			it.Status = claudeExportUnchanged
 			it.nativeFH = n.fileHash
+		case n.parsed && n.source == "" && e.SourceHash != "" && n.fileHash == e.SourceHash:
+			// Claude's file is the very file this memory was imported from. If AF has not touched
+			// the memory since, claude's file is the original and there is nothing to write; if it
+			// has, AF's version is the newer one and replaces it. Only a file that differs from
+			// the import (edited in claude afterwards) or that neither side wrote is a conflict.
+			it.nativeFH = n.fileHash
+			if agentMemImportRefreshable(rel, e.Name) {
+				it.Status = claudeExportUnchanged
+			} else {
+				it.Status = claudeExportUpdate
+			}
 		case n.parsed && agentMemExportOwn(n.source, projectID, e.Name) && n.afHash == n.hash &&
 			e.Revision > agentMemExportRecordedRevision(n.source):
 			it.Status = claudeExportUpdate

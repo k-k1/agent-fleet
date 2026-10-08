@@ -856,7 +856,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mem.ci_status_forgotten": "Forgotten (skipped)",
   "mem.ci_status_secret": "Possible secrets (skipped)",
   "mem.ci_status_invalid": "Cannot import",
-  "mem.ci_shortened": "description shortened, the full text is the first paragraph",
+  "mem.ci_refresh_shortened": "the earlier import cut the description; the copy is refreshed from the Claude file",
   "mem.ci_update_times": "Claude file {claude}, Agent Fleet copy {af}",
   "mem.ci_withheld_sources": "{n} project(s) are not listed because their name looks like a secret.",
   "mem.ci_withheld_files": "{n} file(s) are not listed because their name looks like a secret.",

@@ -857,7 +857,7 @@ export const tools = {
   "mem.ci_status_forgotten": "忘れ済み（取り込まない）",
   "mem.ci_status_secret": "秘密情報の疑い（取り込まない）",
   "mem.ci_status_invalid": "取り込めない",
-  "mem.ci_shortened": "説明を短縮・全文は本文の先頭の段落",
+  "mem.ci_refresh_shortened": "以前の取り込みで説明が短縮されていました。Claude のファイルから更新します",
   "mem.ci_update_times": "Claude のファイル {claude}・Agent Fleet の写し {af}",
   "mem.ci_withheld_sources": "名前が秘密情報に見えるため {n} 件のプロジェクトを表示していません。",
   "mem.ci_withheld_files": "名前が秘密情報に見えるため {n} 件のファイルを表示していません。",

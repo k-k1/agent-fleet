@@ -367,6 +367,23 @@ func agentMemLatestChange(rel string) (string, error) {
 	return "", nil
 }
 
+// agentMemImportIntact says whether the AF copy of rel ("projects/<id>/<name>.md", whose bytes
+// are current) is still exactly what an import wrote: its newest published change is an import
+// and the file equals that change's text. It is the evidence that no AF save, pin or revert has
+// touched the memory since. When in doubt (no history, a git error) the answer is false.
+func agentMemImportIntact(rel string, current []byte) bool {
+	commit, err := agentMemLatestChange(rel)
+	if err != nil || commit == "" {
+		return false
+	}
+	msg, err := memoryGitRun("log", "-1", "--format=%B", commit)
+	if err != nil || agentMemTrailers(msg)["AF-Op"] != "import" {
+		return false
+	}
+	b, ok, err := agentMemBlob(commit, rel)
+	return err == nil && ok && bytes.Equal(b, current)
+}
+
 // agentMemRevertReq undoes one published change, or (Forget) removes the memory as that change
 // left it. Ack lets a body that fails the secret scan through; it covers this request only.
 type agentMemRevertReq struct {
