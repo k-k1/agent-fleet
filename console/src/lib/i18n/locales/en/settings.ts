@@ -36,6 +36,8 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "display.cjk_font_note":
     "Latin fonts do carry ①②③, Ⅰ and ㈱, so they are drawn as narrow half-width glyphs and look smaller than the kanji next to them. The font chosen here is used for those characters only. ■ ○ ★ follow it in prose but not in the terminal or in width-critical monospace (diffs, code blocks), because the CLI lays its output out counting them as one column. Choose \"Latin font\" to keep the previous look everywhere.",
   "display.terminal": "Terminal",
+  "display.term_ctrl_cv": "Ctrl+C / Ctrl+V copy and paste",
+  "display.term_ctrl_cv_note": "Ctrl+C copies the selection (with nothing selected it still interrupts the program) and Ctrl+V pastes. Turn off to send both keys to the program. Ctrl+Shift+C / Ctrl+Shift+V always work.",
   "display.font": "Font",
   "display.font_size": "Font size",
   "display.file_viewer": "File viewer",

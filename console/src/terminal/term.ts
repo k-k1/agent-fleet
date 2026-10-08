@@ -18,6 +18,8 @@ import { getSettings, subscribe as subscribeSettings, termFontStack } from "../l
 import { askConfirm } from "../ui/confirmBridge.ts";
 import { t as tr } from "../lib/i18n/index.ts";
 import { zoom } from "../app/viewport.ts";
+import { toast } from "../ui/toast.ts";
+import { clipAction } from "./clipKeys.ts";
 
 // One entry per pane. { term, fitAddon, ws, session, sessionListeners, ro }.
 // A placeholder (from an early onSession) may hold only session + sessionListeners,
@@ -68,13 +70,83 @@ function setSession(it: Inst, name: string | null) {
 }
 
 // Clipboard helpers. Browsers route Ctrl+C/Ctrl+V inside a focused terminal to the
-// PTY (SIGINT / literal ^V), NOT the system clipboard — so plain copy/paste never
-// worked. We wire explicit gestures (copy-on-select, Ctrl+Shift+C / Ctrl+Insert,
-// right/middle-click paste, Shift+Insert / Ctrl+Shift+V) to the async Clipboard API,
-// leaving Ctrl+C free to interrupt the foreground program.
-function copySelection(term: Terminal) {
+// PTY (SIGINT / literal ^V), NOT the system clipboard, so every clipboard gesture is wired
+// explicitly to the async Clipboard API: copy-on-select, Ctrl+Shift+C / Ctrl+Insert,
+// right/middle-click paste, Shift+Insert / Ctrl+Shift+V, and (setting termCtrlCV, see
+// clipKeys.ts) Ctrl+C with a selection / Ctrl+V. Plain Ctrl+C with nothing selected still
+// interrupts the foreground program.
+// A refused or unavailable clipboard (insecure context, denied permission, Safari outside a
+// gesture) toasts instead of failing silently; nothing here throws into the key handler.
+function clipFail(key: "term.copy_failed" | "term.paste_failed") {
+  toast(tr(key), { kind: "error", key: "term-clipboard" });
+}
+// Selection identity, per terminal, by change events rather than text: selEpoch counts
+// onSelectionChange (the user's drag / double-click / select), copiedEpoch is the epoch whose
+// copy last succeeded. Copy-on-select leaves the highlight in place, and a program may redraw
+// the selected cells (a progress line rewritten with \r) without any user action, so text
+// comparison would call that a new selection and swallow an interrupt. Rule: Ctrl+C copies
+// only a selection the user created since the last successful copy; anything doubtful is ^C.
+const selEpoch = new WeakMap<Terminal, number>();
+const copiedEpoch = new WeakMap<Terminal, number>();
+// Attempt counter per terminal: a slow earlier write that resolves after a newer attempt began
+// must not re-record its text.
+const copyGen = new WeakMap<Terminal, number>();
+interface CopyPending {
+  expect: boolean; // still inside the dispatch that started the copy
+  candidate: number | undefined; // selEpoch of the selection being copied
+  start: number | undefined; // selEpoch when the copy started
+  succeeded: boolean; // the write resolved, the record timer has not run yet
+  done: boolean; // settled: recorded, rejected as stale, or voided by a newer selection
+}
+const copyPending = new WeakMap<Terminal, CopyPending>();
+function copySelection(term: Terminal, opts: { notify?: boolean; clear?: boolean; fromMouseup?: boolean } = {}) {
   const sel = term && term.getSelection();
-  if (sel && navigator.clipboard) navigator.clipboard.writeText(sel).catch(() => {});
+  if (!sel) return;
+  // A new attempt voids any earlier success: it no longer says what the clipboard holds.
+  const gen = (copyGen.get(term) ?? 0) + 1;
+  copyGen.set(term, gen);
+  copiedEpoch.delete(term);
+  // xterm confirms a mouse selection (fires onSelectionChange) from a document mouseup listener,
+  // after our term.element mouseup copy starts. For a mouseup copy the first selection event after the copy starts
+  // and before the timer below runs is taken as that confirmation and fixes the candidate epoch;
+  // if none arrives the candidate is the epoch at copy start. Positions and text are never
+  // compared: output scrolling the selection or redrawing its cells fires no event, while a
+  // later selection event, even over the same cells, changes selEpoch and so voids the record.
+  // Between the write succeeding and the record being written (timers can be throttled) the
+  // key handler treats the selection as copied, so an interrupt is never lost to that gap.
+  // Only a mouseup copy has a confirmation still to come. A keyboard copy acts on a selection
+  // xterm already confirmed, so its candidate is fixed now; a later selection event (Cmd+A, a
+  // new drag) is then a different selection and voids the record instead of being absorbed.
+  const start = selEpoch.get(term);
+  const pend: CopyPending = {
+    expect: !!opts.fromMouseup,
+    candidate: opts.fromMouseup ? undefined : start,
+    start,
+    succeeded: false,
+    done: false,
+  };
+  copyPending.set(term, pend);
+  setTimeout(() => {
+    pend.expect = false;
+    pend.candidate ??= pend.start;
+  }, 0);
+  if (opts.clear) term.clearSelection();
+  if (!navigator.clipboard?.writeText) return clipFail("term.copy_failed");
+  // Recorded only once the write succeeded: a refused auto-copy must leave the selection
+  // copyable, so the user's explicit Ctrl+C retry copies instead of interrupting.
+  navigator.clipboard.writeText(sel).then(
+    () => {
+      if (copyGen.get(term) === gen) pend.succeeded = true;
+      // Run after the window-closing timer above (timers fire in order).
+      setTimeout(() => {
+        if (copyGen.get(term) === gen && pend.candidate !== undefined && selEpoch.get(term) === pend.candidate)
+          copiedEpoch.set(term, pend.candidate);
+        pend.done = true;
+      }, 0);
+      if (opts.notify) toast(tr("term.copied"), { kind: "success", key: "term-clipboard", duration: 1500 });
+    },
+    () => clipFail("term.copy_failed"),
+  );
 }
 // Warn before pasting risky content into the terminal. At a raw shell prompt a paste
 // that contains newlines runs line-by-line (each Enter executes), and a very large paste
@@ -83,7 +155,8 @@ function copySelection(term: Terminal) {
 // pastes straight through. Covers every paste gesture (they all funnel through here).
 const PASTE_WARN_CHARS = 1000;
 function pasteClipboard(term: Terminal) {
-  if (!term || !navigator.clipboard) return;
+  if (!term) return;
+  if (!navigator.clipboard?.readText) return clipFail("term.paste_failed");
   navigator.clipboard
     .readText()
     .then((t) => {
@@ -116,7 +189,7 @@ function pasteClipboard(term: Terminal) {
         if (ok) term.paste(t);
       });
     })
-    .catch(() => {});
+    .catch(() => clipFail("term.paste_failed"));
 }
 
 // Apply the current font family/size from settings to every live terminal, live,
@@ -422,6 +495,14 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
     term.loadAddon(new WebLinksAddon((e, uri) => window.open(uri, "_blank", "noopener")));
   } catch {}
   term.open(el);
+  term.onSelectionChange(() => {
+    const n = (selEpoch.get(term) ?? 0) + 1;
+    selEpoch.set(term, n);
+    const pend = copyPending.get(term);
+    if (!pend) return;
+    if (pend.expect && pend.candidate === undefined) pend.candidate = n;
+    else if (pend.candidate !== undefined && n !== pend.candidate) pend.done = true; // a newer selection
+  });
   // OSC 52: with `set-clipboard on`, tmux emits the just-copied selection as an
   // OSC 52 sequence to its outer terminal (us). xterm has no built-in OSC 52 handler,
   // so a plain mouse drag-select in the terminal (which tmux, in mouse mode, turns into
@@ -434,13 +515,18 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
       // data is "<targets>;<base64>" e.g. "c;SGVsbG8=". "?" is a read request — ignore.
       const semi = data.indexOf(";");
       const b64 = semi >= 0 ? data.slice(semi + 1) : data;
-      if (!b64 || b64 === "?" || !navigator.clipboard) return true;
+      if (!b64 || b64 === "?") return true;
       try {
         const bin = atob(b64);
         const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
         const text = new TextDecoder().decode(bytes);
-        if (text) navigator.clipboard.writeText(text).catch(() => {});
-      } catch {}
+        if (text) {
+          if (!navigator.clipboard?.writeText) clipFail("term.copy_failed");
+          else navigator.clipboard.writeText(text).catch(() => clipFail("term.copy_failed"));
+        }
+      } catch {
+        clipFail("term.copy_failed");
+      }
       return true; // handled — don't fall through to the OSC fallback
     });
   } catch {}
@@ -449,7 +535,7 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   // browser reserves Ctrl+Shift+C (DevTools) outside fullscreen.
   if (term.element) {
     term.element.addEventListener("mouseup", (ev) => {
-      if (ev.button === 0 && term.hasSelection()) copySelection(term);
+      if (ev.button === 0 && term.hasSelection()) copySelection(term, { fromMouseup: true });
     });
     term.element.addEventListener("contextmenu", (ev) => {
       ev.preventDefault();
@@ -519,43 +605,22 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   // The hard-reserved ones (Ctrl+W/T/N = close/new tab, Ctrl+Tab, Ctrl+digit, F11/F12)
   // ignore preventDefault outside a fullscreen Keyboard Lock, so they only reach the
   // shell in fullscreen — see the ⛶ toggle in TerminalView / the kb.lock KEYS below.
-  // Carve-outs (NO_GRAB): plain Ctrl+C/Ctrl+V stay SIGINT / ^V (and the mac ⌘ clipboard
-  // cases are handled above), and Ctrl +/-/0 keep browser zoom (no PTY meaning).
+  // Carve-outs (NO_GRAB): plain Ctrl+C/Ctrl+V reach the PTY unless clipAction claimed them
+  // (selection / setting), and the mac ⌘ clipboard cases are handled there too, and Ctrl +/-/0 keep browser zoom (no PTY meaning).
   const NO_GRAB = new Set(["KeyC", "KeyV", "Minus", "Equal", "Digit0", "NumpadAdd", "NumpadSubtract", "Numpad0"]);
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== "keydown") return true;
-    const mod = e.ctrlKey || e.metaKey;
-    // Clipboard shortcuts — return false so xterm does NOT also forward them to the
-    // PTY. Ctrl+C/V (without shift) are deliberately left alone (SIGINT / ^V).
-    if (mod && e.shiftKey && e.code === "KeyC") {
-      copySelection(term);
-      e.preventDefault();
-      return false;
-    }
-    if (mod && e.shiftKey && e.code === "KeyV") {
-      pasteClipboard(term);
-      e.preventDefault();
-      return false;
-    }
-    if (e.ctrlKey && !e.shiftKey && e.code === "Insert") {
-      copySelection(term);
-      e.preventDefault();
-      return false;
-    }
-    if (e.shiftKey && !e.ctrlKey && e.code === "Insert") {
-      pasteClipboard(term);
-      e.preventDefault();
-      return false;
-    }
-    // macOS conventions: ⌘C copies (only when there's a selection, else fall
-    // through), ⌘V pastes. (metaKey is Super on Win/Linux — harmless there.)
-    if (e.metaKey && !e.ctrlKey && !e.shiftKey && e.code === "KeyC" && term.hasSelection()) {
-      copySelection(term);
-      e.preventDefault();
-      return false;
-    }
-    if (e.metaKey && !e.ctrlKey && !e.shiftKey && e.code === "KeyV") {
-      pasteClipboard(term);
+    // Clipboard shortcuts — return false so xterm does NOT also forward them to the PTY, and
+    // preventDefault so the browser's own paste event cannot paste a second time.
+    // Ctrl+C copies only a selection the user made and that is not yet on the clipboard.
+    const sel = term.hasSelection();
+    const stale = sel && e.ctrlKey && e.code === "KeyC" && (selEpoch.get(term) === undefined ||
+        selEpoch.get(term) === copiedEpoch.get(term) ||
+        (copyPending.get(term)?.succeeded && !copyPending.get(term)?.done));
+    const act = clipAction(e, sel, getSettings().termCtrlCV, stale);
+    if (act) {
+      if (act === "paste") pasteClipboard(term);
+      else copySelection(term, { notify: true, clear: act === "copyClear" });
       e.preventDefault();
       return false;
     }
