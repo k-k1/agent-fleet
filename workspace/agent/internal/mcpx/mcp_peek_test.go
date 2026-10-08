@@ -29,7 +29,8 @@ func peekCall(t *testing.T, args map[string]any) (string, bool) {
 }
 
 // The reader the Agent judges is the session this server serves, never an argument: a
-// peek_from smuggled into the arguments must not replace it.
+// peek_from smuggled into the arguments is refused as an unknown key (it is not advertised), and
+// never reaches the Agent to replace the served session.
 func TestPeekSessionOutputNamesTheServedSessionAsReader(t *testing.T) {
 	withFleetSpawn(t, false)
 	mcpPeerMessagingEnabled = true
@@ -42,7 +43,11 @@ func TestPeekSessionOutputNamesTheServedSessionAsReader(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	t.Setenv("AGENT_ADDR", u.Host)
 
-	text, isErr := peekCall(t, map[string]any{"name": "peer2", "lines": 20, "since": 3, "peek_from": "someone-else"})
+	if text, isErr := peekCall(t, map[string]any{"name": "peer2", "peek_from": "someone-else"}); !isErr || !strings.Contains(text, `"peek_from"`) || got != nil {
+		t.Fatalf("smuggled peek_from = %q (isError=%v, reached the Agent=%v), want a refusal", text, isErr, got != nil)
+	}
+
+	text, isErr := peekCall(t, map[string]any{"name": "peer2", "lines": 20, "since": 3})
 	if isErr || !strings.Contains(text, "done: PR #9") {
 		t.Fatalf("peek result = %q (isError=%v)", text, isErr)
 	}

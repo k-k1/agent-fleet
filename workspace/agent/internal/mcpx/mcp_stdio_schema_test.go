@@ -14,13 +14,10 @@ import (
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-// TestMCPAdvertisedInputSchemasAreValid walks the same tool list the stdio server
-// advertises in every capability shape. The external compiler is deliberate: a
-// hand-written approximation would have accepted enum:null, which Anthropic rejects
-// before starting the Claude turn.
-func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
-	const expectedAdvertisedToolCount = 68
-
+// walkAdvertisedToolVariants calls visit with the tool list the server advertises in every
+// capability shape, so that a check over "every advertised tool" cannot miss a gated one.
+func walkAdvertisedToolVariants(t *testing.T, visit func(t *testing.T, tools []map[string]any)) {
+	t.Helper()
 	oldWrite, oldSelfReport := writeEnabled(), selfReportOnly()
 	oldChromium, oldPeer := sessionChromiumEnabled(), mcpPeerMessagingEnabled
 	oldImageGen, oldSource := mcpImageGenEnabled, mcpSourceSession
@@ -39,6 +36,15 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 	stubImageGenStatus(t, mcpImageGenStatus{
 		Enabled: true, Ready: true, Provider: "codex", Kind: "claude",
 		Ops: []string{"generate", "edit"},
+		// Every optional argument offered at once, so no property of generate_image is left
+		// undeclared in this walk (TestMCPArgsSchemaAndDecoderAgree relies on it).
+		Providers: []mcpImageGenProvider{
+			{ID: "codex", Ops: []string{"generate", "edit", "inpaint"}, AspectRatios: []string{"1:1"}, Seed: true, Negative: true, Strength: true,
+				Models: []mcpImageGenModel{{ID: "a"}, {ID: "b"}}, Loras: []mcpImageGenLora{{Name: "l"}},
+				Samplers: []string{"euler"}, Schedulers: []string{"karras"}},
+			{ID: "agy", Ops: []string{"generate"}},
+		},
+		AspectRatios: []string{"1:1"},
 	})
 
 	variants := []struct {
@@ -68,7 +74,6 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 		{name: "session-agent-memory", selfReport: true, agentMemory: true},
 	}
 
-	advertised := make(map[string]struct{})
 	for _, variant := range variants {
 		t.Run(variant.name, func(t *testing.T) {
 			setFlags(variant.write, variant.selfReport, variant.chromium)
@@ -79,20 +84,33 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 			if variant.studio {
 				bindStudioForTest(t, "slot01", true)
 			}
-			for _, tool := range mcpStdioToolList() {
-				name := tool["name"].(string)
-				advertised[name] = struct{}{}
-				schema, ok := tool["inputSchema"].(map[string]any)
-				if !ok {
-					t.Errorf("%s: inputSchema is not an object: %T", name, tool["inputSchema"])
-					continue
-				}
-				if err := validateMCPInputSchema(schema); err != nil {
-					t.Errorf("%s: invalid inputSchema: %v", name, err)
-				}
-			}
+			visit(t, mcpStdioToolList())
 		})
 	}
+}
+
+// TestMCPAdvertisedInputSchemasAreValid walks the same tool list the stdio server
+// advertises in every capability shape. The external compiler is deliberate: a
+// hand-written approximation would have accepted enum:null, which Anthropic rejects
+// before starting the Claude turn.
+func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
+	const expectedAdvertisedToolCount = 68
+
+	advertised := make(map[string]struct{})
+	walkAdvertisedToolVariants(t, func(t *testing.T, tools []map[string]any) {
+		for _, tool := range tools {
+			name := tool["name"].(string)
+			advertised[name] = struct{}{}
+			schema, ok := tool["inputSchema"].(map[string]any)
+			if !ok {
+				t.Errorf("%s: inputSchema is not an object: %T", name, tool["inputSchema"])
+				continue
+			}
+			if err := validateMCPInputSchema(schema); err != nil {
+				t.Errorf("%s: invalid inputSchema: %v", name, err)
+			}
+		}
+	})
 
 	declared, err := declaredMCPToolNames()
 	if err != nil {

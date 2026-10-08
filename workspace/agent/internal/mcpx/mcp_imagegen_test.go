@@ -600,7 +600,9 @@ func TestGenerateImageReturnsPathAndWarnings(t *testing.T) {
 	withImageGen(t, true)
 	var got map[string]any
 	stubAgentForImageGen(t,
-		mcpImageGenStatus{Enabled: true, Ready: true, Provider: "codex", Kind: "claude", Ops: []string{"generate"}},
+		mcpImageGenStatus{Enabled: true, Ready: true, Provider: "codex", Kind: "claude", Ops: []string{"generate"},
+			Providers: []mcpImageGenProvider{{ID: "codex", Ops: []string{"generate"},
+				Models: []mcpImageGenModel{{ID: "klein-4b"}, {ID: "other"}}}}},
 		func(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewDecoder(r.Body).Decode(&got)
 			_, _ = w.Write([]byte(`{"files":[{"path":"/home/u/.cache/agent-fleet/generated/sid/image-1.png","name":"image-1.png","mime":"image/png","bytes":848000,"width":1254,"height":1254}],"provider":"codex","model":"gpt-5.4-mini","warnings":["size=1024x1024 requested, 1254x1254 produced"]}`))
@@ -635,7 +637,8 @@ func TestGenerateImageForwardsLoras(t *testing.T) {
 	withImageGen(t, true)
 	var got map[string]any
 	stubAgentForImageGen(t,
-		mcpImageGenStatus{Enabled: true, Ready: true, Provider: "comfy", Kind: "claude", Ops: []string{"generate"}},
+		mcpImageGenStatus{Enabled: true, Ready: true, Provider: "comfy", Kind: "claude", Ops: []string{"generate"},
+			Providers: []mcpImageGenProvider{{ID: "comfy", Ops: []string{"generate"}, Loras: []mcpImageGenLora{{Name: "watercolor-v2"}}}}},
 		func(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewDecoder(r.Body).Decode(&got)
 			_, _ = w.Write([]byte(`{"files":[{"path":"/tmp/image-1.png","name":"image-1.png","mime":"image/png","bytes":1}],"provider":"comfy"}`))
@@ -670,7 +673,8 @@ func TestGenerateImageForwardsTheSeed(t *testing.T) {
 			withImageGen(t, true)
 			var got map[string]any
 			stubAgentForImageGen(t,
-				mcpImageGenStatus{Enabled: true, Ready: true, Provider: "comfy", Kind: "claude", Ops: []string{"generate"}},
+				mcpImageGenStatus{Enabled: true, Ready: true, Provider: "comfy", Kind: "claude", Ops: []string{"generate"},
+					Providers: []mcpImageGenProvider{{ID: "comfy", Ops: []string{"generate"}, Seed: true}}},
 				func(w http.ResponseWriter, r *http.Request) {
 					_ = json.NewDecoder(r.Body).Decode(&got)
 					_, _ = w.Write([]byte(`{"files":[{"path":"/tmp/i.png","name":"i.png","mime":"image/png","bytes":1}],"provider":"comfy"}`))
@@ -700,7 +704,8 @@ func TestGenerateImageForwardsTheStrength(t *testing.T) {
 			withImageGen(t, true)
 			var got map[string]any
 			stubAgentForImageGen(t,
-				mcpImageGenStatus{Enabled: true, Ready: true, Provider: "comfy", Kind: "claude", Ops: []string{"generate", "edit"}},
+				mcpImageGenStatus{Enabled: true, Ready: true, Provider: "comfy", Kind: "claude", Ops: []string{"generate", "edit"},
+					Providers: []mcpImageGenProvider{{ID: "comfy", Ops: []string{"generate", "edit"}, Strength: true}}},
 				func(w http.ResponseWriter, r *http.Request) {
 					_ = json.NewDecoder(r.Body).Decode(&got)
 					_, _ = w.Write([]byte(`{"files":[{"path":"/tmp/i.png","name":"i.png","mime":"image/png","bytes":1}],"provider":"comfy"}`))
@@ -839,7 +844,8 @@ func TestGenerateImageForwardsTheSamplerOverlay(t *testing.T) {
 			withImageGen(t, true)
 			var got map[string]any
 			stubAgentForImageGen(t,
-				mcpImageGenStatus{Enabled: true, Ready: true, Provider: "comfy", Kind: "claude", Ops: []string{"generate"}},
+				mcpImageGenStatus{Enabled: true, Ready: true, Provider: "comfy", Kind: "claude", Ops: []string{"generate"},
+					Providers: []mcpImageGenProvider{{ID: "comfy", Ops: []string{"generate"}, Samplers: []string{"dpmpp_2m", "euler_ancestral"}, Schedulers: []string{"karras"}}}},
 				func(w http.ResponseWriter, r *http.Request) {
 					_ = json.NewDecoder(r.Body).Decode(&got)
 					_, _ = w.Write([]byte(`{"files":[{"path":"/tmp/i.png","name":"i.png","mime":"image/png","bytes":1}],"provider":"comfy"}`))
