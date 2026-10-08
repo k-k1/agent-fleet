@@ -1,7 +1,8 @@
 // Package cloudexec is the provider-neutral skeleton of the cloud wrappers (af-aws-exec;
 // af-gcloud-exec of ADR 0107): the flag loop up to "--" with --help and --version, the
 // exit codes, the environment helpers a wrapper builds its child's environment with,
-// directories only this user can change, and the final syscall.Exec into the command.
+// directories only this user can change, and the final syscall.Exec into the command (or,
+// for a command that needs something beside it, Supervise).
 //
 // A backend (internal/awsx; internal/gcpx for ADR 0107) decides everything about
 // identity: which variables carry its credentials, what is scrubbed, and when a failure

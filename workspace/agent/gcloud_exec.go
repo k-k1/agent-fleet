@@ -41,8 +41,12 @@ Your own ~/.config/gcloud is neither read nor changed.
   -h, --help      print this help
   --version       print the version (the workspace-agent build it belongs to)
 
-The token lasts what remained when it was minted (at least 10 minutes); it is not
-refreshed during the command, so a command that outlives it fails.
+The token lasts what remained when it was minted (at least 10 minutes). While the
+command runs, af-gcloud-exec renews the token file before it ends (gcloud and kubectl's
+GKE auth plugin read it on each start); GOOGLE_OAUTH_ACCESS_TOKEN cannot change, so a
+program that read it once (Terraform's Google provider) fails when that first token ends.
+A command whose token cannot be renewed is stopped when it ends: exit 3 if the login has
+to be done again, 1 otherwise.
 
 Exit status: the command's own on success; 2 usage error; 3 login required but not
 started (--no-login, no Console
@@ -96,11 +100,18 @@ func runGCloudExec(args []string) {
 		o.ConsoleWait, o.TerminalConsole = consoleLoginWaitFor(name, o.Interactive)
 		o.Waiter = cloudlogin.Waiter{Session: name, Command: filepath.Base(o.Argv[0])}
 	}
-	prog, argv, env, err := gcpx.PlanExec(gcloudBin, os.Environ(), o)
+	plan, err := gcpx.PlanRun(gcloudBin, os.Environ(), o)
 	if err != nil {
 		gcloudExec.FailPlan(err, gcpx.ErrLoginRequired)
 	}
-	gcloudExec.Exec(prog, argv, env)
+	// The command runs as this process's child, not in its place, so the token file can be
+	// renewed while it lives; the token file goes when it ends.
+	out, err := cloudexec.Supervise(cloudexec.Supervision{Prog: plan.Prog, Argv: plan.Argv, Env: plan.Env, Side: plan.Refresher.Run})
+	plan.Refresher.RemoveToken()
+	if err != nil {
+		gcloudExec.Fail(cloudexec.ExitRefused, "run "+plan.Prog+": "+err.Error())
+	}
+	out.Exit()
 }
 
 func listGCPProfiles(settings map[string]gcpx.Profile, conflicts []gcpx.Conflict, invalid map[string]string) {

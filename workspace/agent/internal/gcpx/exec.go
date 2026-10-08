@@ -31,8 +31,8 @@ var ErrLoginRequired = errors.New("Google Cloud login required")
 // so the refresh that failed fails again after it.
 var errCredentialRejected = errors.New("the stored credential was rejected")
 
-// MinRemaining is the shortest token life a command is started with (decision 2): the
-// wrapper does not refresh during the command, so less would hand over a token about to end.
+// MinRemaining is the shortest token life a command is started with (decision 2): less
+// would hand over a token about to end, and a refresh could not be told from a cached token.
 const MinRemaining = 10 * time.Minute
 
 // ExecOptions is one `af-gcloud-exec` invocation.
@@ -93,34 +93,54 @@ func AgentEnv(environ []string, root string) []string {
 	)
 }
 
+// tokenFileName is the run directory's token file, the one CLOUDSDK_AUTH_ACCESS_TOKEN_FILE names.
+const tokenFileName = "token"
+
 // Token is one minted access token. Value is never printed.
 type Token struct {
 	Value  string
 	Expiry time.Time
 }
 
-// PlanExec mints a token for o.Profile and returns the program, argv and environment to
-// exec. The token leaves this process only in the returned environment and the run's
-// private token file; nothing here prints or logs it.
+// Plan is a command ready to run: the program, argv and environment, and the refresher
+// that keeps the run's token file current while the command lives.
+type Plan struct {
+	Prog      string
+	Argv, Env []string
+	Refresher *Refresher
+}
+
+// PlanExec is PlanRun without the refresher: the program, argv and environment to exec.
 func PlanExec(gcloudBin string, environ []string, o ExecOptions) (string, []string, []string, error) {
+	pl, err := PlanRun(gcloudBin, environ, o)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	return pl.Prog, pl.Argv, pl.Env, nil
+}
+
+// PlanRun mints a token for o.Profile and returns the command to run. The token leaves this
+// process only in the returned environment and the run's private token file; nothing here
+// prints or logs it.
+func PlanRun(gcloudBin string, environ []string, o ExecOptions) (Plan, error) {
 	if o.Profile == "" {
-		return "", nil, nil, errors.New("--profile is required")
+		return Plan{}, errors.New("--profile is required")
 	}
 	if o.Project == "" {
-		return "", nil, nil, errors.New("--project is required")
+		return Plan{}, errors.New("--project is required")
 	}
 	if len(o.Argv) == 0 {
-		return "", nil, nil, errors.New("no command given after --")
+		return Plan{}, errors.New("no command given after --")
 	}
 	p, err := pickProfile(o)
 	if err != nil {
-		return "", nil, nil, err
+		return Plan{}, err
 	}
 	// A Google user token is not bound to a project, so this checks that the caller and
 	// the profile agree on where the command points by default, not what the token can
 	// reach (decision 2).
 	if o.Project != p.Project {
-		return "", nil, nil, fmt.Errorf("profile %q is for project %q, not %q; --project must be the profile's project "+
+		return Plan{}, fmt.Errorf("profile %q is for project %q, not %q; --project must be the profile's project "+
 			"(see `af-gcloud-exec --list`)", p.Name, p.Project, o.Project)
 	}
 	stderr := o.Stderr
@@ -138,31 +158,31 @@ func PlanExec(gcloudBin string, environ []string, o ExecOptions) (string, []stri
 	// then shows as a change, and the Console wait checks again instead of filing.
 	snap := readLoginState(p.Name)
 	tok, account, err := mintLocked(gcloudBin, agentEnv, p, waiting)
+	hint := fmt.Sprintf("af-gcloud-exec --profile %s --project %s --login -- true", session.ShellQuote(p.Name), session.ShellQuote(p.Project))
 	if errors.Is(err, ErrLoginRequired) {
-		hint := fmt.Sprintf("af-gcloud-exec --profile %s --project %s --login -- true", session.ShellQuote(p.Name), session.ShellQuote(p.Project))
 		switch {
 		case o.Login == "always" || (o.Login != "never" && o.Interactive && !(o.TerminalConsole && consoleEligible(o))):
 			tok, account, err = loginAndMint(gcloudBin, agentEnv, p, stderr, waiting, errors.Is(err, errCredentialRejected))
 		case consoleEligible(o):
 			rejected := errors.Is(err, errCredentialRejected)
-			tok, account, err = consoleLogin(gcloudBin, agentEnv, p, snap, o, err, hint)
+			tok, account, err = consoleLogin(gcloudBin, agentEnv, p, snap, o, err, hint, nil)
 			if err != nil && o.TerminalConsole && errors.Is(err, errConsoleNotAsked) {
 				// A Console that cannot be asked at all is no reason to stop at a terminal.
 				tok, account, err = loginAndMint(gcloudBin, agentEnv, p, stderr, waiting, rejected)
 			}
 			if err != nil {
-				return "", nil, nil, fmt.Errorf("profile %q: %w", p.Name, err)
+				return Plan{}, fmt.Errorf("profile %q: %w", p.Name, err)
 			}
 		default:
-			return "", nil, nil, fmt.Errorf("profile %q: %w\nlog in from a terminal with: %s", p.Name, err, hint)
+			return Plan{}, fmt.Errorf("profile %q: %w\nlog in from a terminal with: %s", p.Name, err, hint)
 		}
 	}
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("profile %q: %w", p.Name, err)
+		return Plan{}, fmt.Errorf("profile %q: %w", p.Name, err)
 	}
 	left := tok.Expiry.Sub(now())
 	if left < MinRemaining {
-		return "", nil, nil, fmt.Errorf("profile %q: the token gcloud minted is valid for only %s, under the %s a command is started with; "+
+		return Plan{}, fmt.Errorf("profile %q: the token gcloud minted is valid for only %s, under the %s a command is started with; "+
 			"try again in a minute", p.Name, left.Round(time.Second), MinRemaining)
 	}
 	if !o.Quiet {
@@ -176,19 +196,21 @@ func PlanExec(gcloudBin string, environ []string, o ExecOptions) (string, []stri
 
 	prog, err := exec.LookPath(o.Argv[0])
 	if err != nil {
-		return "", nil, nil, err
+		return Plan{}, err
 	}
 	run, err := cloudexec.RunDir(ExecDir(), "run-")
 	if err != nil {
-		return "", nil, nil, err
+		return Plan{}, err
 	}
 	sweepRuns(filepath.Dir(run), run, now())
 	env, err := ChildEnv(environ, run, p, tok.Value)
 	if err != nil {
 		_ = os.RemoveAll(run)
-		return "", nil, nil, err
+		return Plan{}, err
 	}
-	return prog, o.Argv, env, nil
+	pl := Plan{Prog: prog, Argv: o.Argv, Env: env}
+	pl.Refresher = newRefresher(gcloudBin, agentEnv, p, o, tok, account, filepath.Join(run, tokenFileName), hint, stderr)
+	return pl, nil
 }
 
 // pickProfile finds o.Profile among the Settings profiles, or says why it cannot run.
@@ -490,7 +512,7 @@ func ChildEnv(environ []string, run string, p Profile, token string) ([]string, 
 	if err := os.Mkdir(cfg, 0o700); err != nil {
 		return nil, err
 	}
-	tokFile := filepath.Join(run, "token")
+	tokFile := filepath.Join(run, tokenFileName)
 	if err := os.WriteFile(tokFile, []byte(token), 0o600); err != nil {
 		return nil, err
 	}
@@ -522,10 +544,11 @@ func ChildEnv(environ []string, run string, p Profile, token string) ([]string, 
 	return cloudexec.SetEnv(cloudexec.Scrub(environ, dropGoogle), kvs...), nil
 }
 
-// runKeep is how long a run's directory outlives its start. The wrapper execs into the
-// command, so nothing removes the directory when the command ends; a later run sweeps it.
-// The token in it lasts at most an hour (no --lifetime is asked for), so after this the
-// directory holds nothing usable, while a command still running keeps its config root.
+// runKeep is how long a run's directory outlives its last token write. The supervisor
+// removes the token file when the command ends, but a wrapper that was killed leaves the
+// directory; a later run sweeps it. The token in it lasts at most an hour (no --lifetime is
+// asked for), so after this the directory holds nothing usable, while a command still
+// running keeps its config root.
 const runKeep = 12 * time.Hour
 
 // sweepRuns removes the run directories under dir older than runKeep, except keep.
@@ -539,7 +562,7 @@ func sweepRuns(dir, keep string, now time.Time) {
 		if !e.IsDir() || !strings.HasPrefix(e.Name(), "run-") || path == keep {
 			continue
 		}
-		if fi, err := os.Stat(filepath.Join(path, "token")); err == nil && now.Sub(fi.ModTime()) < runKeep {
+		if fi, err := os.Stat(filepath.Join(path, tokenFileName)); err == nil && now.Sub(fi.ModTime()) < runKeep {
 			continue
 		} else if err != nil {
 			if di, derr := e.Info(); derr != nil || now.Sub(di.ModTime()) < runKeep {

@@ -33,12 +33,15 @@ var errConsoleNotAsked = errors.New("the Console could not be asked")
 // consoleLogin files a login request for the Console and waits for the member (ADR 0107
 // decision 3, as ADR 0102 decisions 1 and 5). snap is the state the failed mint was made
 // against; first is its error.
-func consoleLogin(gcloudBin string, env []string, p Profile, snap LoginState, o ExecOptions, first error, hint string) (Token, string, error) {
+//
+// extraCancel, when not nil, also ends the wait (a run whose command exited meanwhile); it is
+// used when the wait has no Ctrl-C handler of its own.
+func consoleLogin(gcloudBin string, env []string, p Profile, snap LoginState, o ExecOptions, first error, hint string, extraCancel <-chan struct{}) (Token, string, error) {
 	stderr := o.Stderr
 	if stderr == nil {
 		stderr = io.Discard
 	}
-	var cancel <-chan struct{}
+	cancel := extraCancel
 	if o.TerminalConsole {
 		var stop func()
 		cancel, stop = cloudlogin.Interrupt()

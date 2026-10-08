@@ -580,8 +580,14 @@ af-gcloud-exec --profile <name> --project <project-id> -- kubectl get pods
 - コマンドが受け取るのは、プロファイルの短命な**アクセストークン**だけです。gcloud のログインも、アプリケーションの
   既定認証情報も、マシン自身の Google の身元も渡りません。`af-gcloud-exec` は「profile … runs as <account> in
   project …; the token is valid for N more minutes」と表示します（`-q` で省けます）。トークンそのものは表示しません。
-- トークンの寿命は、渡した時点の残りです。最短 10 分、最長でおよそ 1 時間です。**コマンドの途中では更新しない**ので、
-  それより長い `terraform apply` や `kubectl` の watch は途中で失敗します。長い作業は短い実行に分けてください。
+- トークンの寿命は、渡した時点の残りです。最短 10 分、最長でおよそ 1 時間です。コマンドの実行中は `af-gcloud-exec` が
+  横で動き続け、トークンが切れる約 8 分前に**トークンファイルを更新**します。そのため、長い `gcloud`、`bq`、`kubectl`
+  （GKE 認証プラグイン経由）は動き続けます。起動時に 1 度だけトークンを読むプログラムは更新できません。**長い
+  `terraform apply` は、最初のトークンが切れると失敗します**。そうした作業は短い実行に分けてください。
+- トークンを更新できないとき（ログインが取り消された、ログインし直しが必要、権限、ネットワーク）は、`af-gcloud-exec` が
+  その旨を表示し、トークンが切れるまで再試行を続け、切れたらコマンドを止めます（SIGTERM。終わらなければ 30 秒後に
+  SIGKILL）。終了ステータスは、ログインし直しが必要なら 3（起動時のログインと同じく Console に依頼が出ます）、それ以外は 1 です。
+  `af-gcloud-exec` を止めると、コマンドも一緒に止まります。
 - 最初の実行で、Google Cloud SDK（ピン留めした 1 つの版と GKE 認証プラグイン）をホームに入れます。ダウンロードは約 85 MB、
   ディスクは約 510 MB で、停止しても作り直しても残ります。その後は gcloud の各コマンドの初回だけ数秒遅くなります。入れた後は
   **ツールチェーン**タブのツールの版の表に gcloud が出ます。端末で素の `gcloud` を走らせると同じプログラムが動きますが、
@@ -597,7 +603,7 @@ af-gcloud-exec --profile <name> --project <project-id> -- kubectl get pods
 |---|---|
 | `gcloud`（`gcloud storage` を含む） | 使う |
 | GKE クラスタへの `kubectl` | 使う（GKE 認証プラグイン経由） |
-| Terraform の Google プロバイダ | 使う（割り当てプロジェクト付き） |
+| Terraform の Google プロバイダ | 使う（割り当てプロジェクト付き。実行中のトークン更新は届かない） |
 | `bq` | 使う。SDK に入っていますがパスは通っていません。`~/.local/share/agent-fleet/google-cloud-sdk/bin/bq` で走らせます |
 | `gsutil` | **使わない**。トークンを無視します。自分の gsutil（boto）の設定が無ければログイン無しで要求を送るので、公開バケットは応答します。設定があれば、その設定にある身元で動くことがあります。`gcloud storage` を使ってください |
 | Google のクライアントライブラリ（Go・Python・Node など） | プログラムがトークンを渡したときだけ |
