@@ -1,8 +1,11 @@
-import { useEffect, useLayoutEffect } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { api, parseDiscards, parseQueueItems } from "../../../core/api/client.ts";
 import type { CarriedInteraction } from "../../../core/api/client.ts";
 import type { Session } from "../../../types/session.ts";
+import { t as tr } from "../../../lib/i18n/index.ts";
+import { loadMark, onJump, type ScrollMark } from "../scrollMark.ts";
+import { reachTurn, type ReachOutcome } from "../reachTurn.ts";
 import { MIRROR_POLL_FAST, pollDelay } from "../pollCadence.ts";
 import { echoNeedsResync } from "../pendingEcho.ts";
 import { type InteractionAnswerWire, patchAnswers } from "../interactionAnswers.ts";
@@ -369,39 +372,174 @@ export function useOlderHistory({
   session,
   st,
   scroll,
+  toast,
 }: {
   session: string;
   st: MirrorState;
   scroll: ReturnType<typeof useMirrorScroll>;
+  toast: (msg: string) => void;
 }) {
-  const { turns, setTurns, firstLineRef, hasMore, setHasMore, setLoadingOlder, loadingOlderRef, topSentinelRef } = st;
+  const { turns, setTurns, firstLineRef, hasMore, setHasMore, setLoadingOlder, loadingOlderRef, topSentinelRef, loaded, stateSession } = st;
   const { bodyRef } = scroll;
+  // Bumped whenever the transcript this hook serves changes under an async fetch (session switch,
+  // unmount): a page, a toast or a jump that started under an older value is dropped, and so is the
+  // right to release the shared loading flag.
+  const lifeRef = useRef(0);
+  useLayoutEffect(() => {
+    lifeRef.current++;
+    wantRef.current = null;
+    readyRef.current = null;
+    // The previous session's fetch can no longer release these (its life is over), so the new
+    // session starts with the lock free. The poll's own reset does the same for the flag.
+    loadingOlderRef.current = false;
+    setLoadingOlder(false);
+    return () => {
+      lifeRef.current++;
+    };
+  }, [session]);
+  // The first window of THIS session is held (not the previous session's state, on the commit where
+  // the prop changes). Read from effects and callbacks built earlier, hence a ref.
+  const windowHeldRef = useRef(false);
+  windowHeldRef.current = loaded && stateSession === session;
+  const turnsRef = useRef(turns);
+  turnsRef.current = turns;
+  // The newest explicit jump (palette hit, ADR 0110) still to be served; `jumpGenRef` names it, so
+  // a run that started for an earlier one finds out and stands down. `ready` is the mark to apply
+  // once its pages are mounted.
+  const wantRef = useRef<ScrollMark | null>(null);
+  const readyRef = useRef<ScrollMark | null>(null);
+  // The reader's input count and place when the jump was ACCEPTED: input while it waits (for the
+  // first window, or for the lock) counts against it as much as input while its pages load.
+  const wantAtRef = useRef<{ seq: number; place: ReturnType<typeof scroll.placeSnapshot> } | null>(null);
+  const jumpGenRef = useRef(0);
+  // The life a jump run belongs to (0 = none). A run of an older life never blocks a new one.
+  const runningRef = useRef(0);
+  // The newest render's serveJumps. A fetch that outlived its session hands over through this one:
+  // its own closure still names the old session in every URL it builds.
+  const serveRef = useRef<() => Promise<void>>(async () => {});
+  const [jumpGo, setJumpGo] = useState(0);
+  // The oldest idx held, lowered by every page fetched (turnsRef lags a render behind a prepend).
+  const oldestRef = useRef(Infinity);
 
-  // Page older history in (P2): fetch the window before the oldest line we hold and
-  // prepend it. Guard via refs so overlapping triggers (button + observer) can't double it.
-  const loadOlder = async () => {
-    if (loadingOlderRef.current || firstLineRef.current <= 0) return;
-    loadingOlderRef.current = true;
-    setLoadingOlder(true);
+  // Fetch the page before the oldest line we hold and prepend it. false when it failed or the
+  // transcript changed under it (the turns then belong to another one and are dropped).
+  const pageOnce = async (limit: number): Promise<boolean> => {
+    const life = lifeRef.current;
     try {
       const before = firstLineRef.current;
-      const d = await api(`api/sessions/${q(session)}/messages?before=${before}&limit=${WINDOW}`);
+      const d = await api(`api/sessions/${q(session)}/messages?before=${before}&limit=${limit}`);
+      if (life !== lifeRef.current) return false;
       if (d && !d.error && Array.isArray(d.messages)) {
         if (d.messages.length) {
           scroll.capturePrependAnchor(); // keep the viewport steady across the prepend
           const older = d.messages;
+          for (const t of older) if (typeof t.idx === "number" && t.idx < oldestRef.current) oldestRef.current = t.idx;
           setTurns((t) => [...older, ...t]);
         }
         if (typeof d.firstLine === "number") firstLineRef.current = d.firstLine;
         setHasMore(!!d.hasMore);
+        return true;
       }
     } catch {
       /* transient — the user can trigger again */
-    } finally {
-      loadingOlderRef.current = false;
+    }
+    return false;
+  };
+
+  // Page older history in (P2). The loading flag is the one lock for the button, the observer and
+  // a jump; whoever releases it hands over to a jump that arrived meanwhile.
+  const release = (life: number) => {
+    if (life === lifeRef.current) {
+      loadingOlderRef.current = false; // else the session changed: the flag is the new one's now
       setLoadingOlder(false);
     }
+    void serveRef.current();
   };
+  const loadOlder = async () => {
+    if (loadingOlderRef.current || firstLineRef.current <= 0) return;
+    const life = lifeRef.current;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    try {
+      await pageOnce(WINDOW);
+    } finally {
+      release(life);
+    }
+  };
+
+  // Serve the newest jump, one at a time. A jump that arrives during a run supersedes it (the run
+  // sees the generation move and stops between pages) and is served when the lock frees.
+  const serveJumps = async () => {
+    if (runningRef.current === lifeRef.current || loadingOlderRef.current || !windowHeldRef.current) return;
+    const mark = wantRef.current;
+    if (!mark) return;
+    wantRef.current = null;
+    const at = wantAtRef.current;
+    wantAtRef.current = null;
+    const seq = at ? at.seq : scroll.inputSeqRef.current;
+    const place = at ? at.place : scroll.placeSnapshot();
+    if (scroll.inputSeqRef.current !== seq || scroll.placeMoved(place)) return; // the reader took over while it waited
+    const gen = jumpGenRef.current;
+    const life = lifeRef.current;
+    runningRef.current = life;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    oldestRef.current = Math.min(Infinity, ...turnsRef.current.map((t) => (typeof t.idx === "number" ? t.idx : Infinity)));
+    let outcome: ReachOutcome = "cancelled";
+    try {
+      const stale = () => life !== lifeRef.current || gen !== jumpGenRef.current;
+      outcome = await reachTurn(mark.idx, {
+        oldestIdx: () => oldestRef.current,
+        exhausted: () => firstLineRef.current <= 0,
+        cursor: () => firstLineRef.current,
+        page: pageOnce,
+        cancelled: () => stale() || scroll.inputSeqRef.current !== seq || scroll.placeMoved(place),
+      });
+      if (stale()) outcome = "cancelled";
+      else if ((outcome === "reached" || outcome === "mounted") && (scroll.inputSeqRef.current !== seq || scroll.placeMoved(place))) outcome = "cancelled";
+      if (outcome === "too-far") toast(tr("mirror.jump_unreachable"));
+      else if (outcome === "failed") toast(tr("mirror.jump_failed"));
+      else if (outcome === "reached" || outcome === "mounted") {
+        // "mounted" too: a hit that the page of ANOTHER fetch (the button's) brought in was not
+        // there when the mirror's own listener tried it.
+        readyRef.current = mark;
+        setJumpGo((n) => n + 1);
+      }
+    } finally {
+      if (runningRef.current === life) runningRef.current = 0;
+      release(life);
+    }
+  };
+
+  serveRef.current = serveJumps;
+
+  // A hit for the session shown here. Listens next to useMirrorScroll's own, which restores the
+  // turn when it is mounted and gives up quietly when it is not — the case handled here.
+  useEffect(() => {
+    const take = (m: ScrollMark | null) => {
+      if (!m || !m.near || m.atBottom) return;
+      jumpGenRef.current++; // supersedes a run in flight
+      wantRef.current = m;
+      wantAtRef.current = { seq: scroll.inputSeqRef.current, place: scroll.placeSnapshot() };
+      void serveJumps();
+    };
+    take(loadMark(session));
+    return onJump((sess, m) => {
+      if (sess === session) take(m);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- serveJumps reads live refs
+  }, [session]);
+  useEffect(() => {
+    void serveJumps();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, stateSession]);
+  useLayoutEffect(() => {
+    const mark = readyRef.current;
+    if (!mark) return;
+    readyRef.current = null;
+    if (!scroll.jumpTo(mark)) toast(tr("mirror.jump_failed"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpGo]);
 
   // Put the reader back on the turn they were reading across the prepend. The hold then stays
   // armed inside useMirrorScroll, because at this point the prepended turns have no content yet.

@@ -241,16 +241,19 @@ function messages(session, q) {
   // for earlyprose).
   const noRow = LATE && WORKING && (n === 0 || lateNow === null);
   const shown = noRow ? all.slice(0, -1) : all;
-  const window = (upto) => {
-    // The tail `PAGE` lines below `upto` (a jsonl line number), as whole turns.
-    const from = Math.max(0, upto - PAGE);
+  const window = (upto, lines = PAGE) => {
+    // The tail `lines` lines below `upto` (a jsonl line number), as whole turns.
+    const from = Math.max(0, upto - lines);
     const out = shown.filter((t) => t.idx - off >= from && t.idx - off < upto);
     return { messages: out, firstLine: off + from, hasMore: from > 0 };
   };
   const before = q.get("before");
   if (PAGING && before !== null) {
     // "Load earlier messages": the page ENDING at the oldest line held. No reset — it is prepended.
-    return { ...body, ...window(Number(before) - off) };
+    // The real server honours ?limit= (clamped to 50..4000): a jump to an old turn asks for one big
+    // page. Off by default so the other paging scenarios keep serving PAGE lines whatever is asked.
+    const asked = HONOR_LIMIT ? Number(q.get("limit")) || PAGE : PAGE;
+    return { ...body, ...window(Number(before) - off, Math.min(4000, Math.max(50, asked))) };
   }
   if (Number(q.get("since") || 0) !== 0) {
     // Incremental poll. An idle stub has nothing to add; a working one resends its live turn,
@@ -265,7 +268,14 @@ function messages(session, q) {
 }
 
 // ---- API surface -------------------------------------------------------------------
+// The one hit a past-session search (ADR 0110) answers with: session sk4rq2f, at --hit-idx.
+const HONOR_LIMIT = arg("honor-limit", "0") === "1";
+const HIT_IDX = Number(arg("hit-idx", -1));
 const exact = {
+  "/api/session-search": () => ({
+    hits: HIT_IDX < 0 ? [] : [{ session: "sk4rq2f", display: "hit", kind: "claude", idx: HIT_IDX, role: "assistant", snippet: "needle", score: 1 }],
+    indexing: false, indexed: 1, total: 1,
+  }),
   "/api/version": () => ({ version: "0.3.0", commit: "demo" }),
   "/api/whoami": () => ({ ...fx.USER, scheduler_enabled: true, role: "member" }),
   "/api/tenants": () => ({ tenants: [{ slug: "demo", name: "Demo Team", role: "member" }], super_admin: false }),

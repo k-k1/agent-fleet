@@ -397,6 +397,8 @@ function TranscriptTurnImpl({
         (chatProvider ? " from-chat" : "")
       }
       data-turn-idx={turn.idx}
+      data-turn-first={turn.firstIdx}
+      data-turn-last={turn.endIdx}
     >
       <div className="mirror-turn-head">
         <span className="mt-who">{who}</span>

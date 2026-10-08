@@ -117,6 +117,18 @@ export function scrollTopForTurn(el: HTMLElement | null, idx: number, offset = 0
   if (!el) return null;
   let turn = el.querySelector<HTMLElement>(`[data-turn-idx="${idx}"]`);
   if (!turn && near) {
+    // The block whose ROW RANGE holds idx: a block extended at its front by a backward page keeps
+    // its original name (blockIdentity.ts), so the nearest earlier name is not where the row is.
+    for (const t of Array.from(el.querySelectorAll<HTMLElement>("[data-turn-first]"))) {
+      const lo = Number(t.getAttribute("data-turn-first"));
+      const hi = Number(t.getAttribute("data-turn-last"));
+      if (Number.isFinite(lo) && Number.isFinite(hi) && lo <= idx && idx <= hi) {
+        turn = t;
+        break;
+      }
+    }
+  }
+  if (!turn && near) {
     let best = -Infinity;
     for (const t of Array.from(el.querySelectorAll<HTMLElement>("[data-turn-idx]"))) {
       const n = Number(t.getAttribute("data-turn-idx"));

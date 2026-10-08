@@ -246,7 +246,7 @@ function MirrorViewBody({
   }, [turns, pending, pendingPlan, pendingPerm, pendingApproval, status, bgBusy, finalizing, pendingSends, queuedPrompts, liveText]);
 
 
-  const loadOlder = useOlderHistory({ session, st, scroll });
+  const loadOlder = useOlderHistory({ session, st, scroll, toast });
 
   // Auto-grow the composer to fit its content (up to ~10 lines via the CSS max-height,
   // then it scrolls). Runs on every draft change, including the per-session draft restored
@@ -573,6 +573,8 @@ function MirrorViewBody({
         // a wheel.
         onWheelCapture={scroll.endRestoreOnInput}
         onTouchStartCapture={scroll.endRestoreOnInput}
+        onPointerDownCapture={scroll.noteReaderInput}
+        onKeyDownCapture={scroll.noteReaderInput}
       >
         {/* Wrapper whose height == the transcript's total height, so a ResizeObserver can
             re-pin a bottom-stuck view to the true bottom as late content lays out — that's

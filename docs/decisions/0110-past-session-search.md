@@ -158,3 +158,17 @@ transcript, 17,696 indexable turns, 15.3 MB of conversation text.
    more or less about when to.
 2. Whether a lone CJK character that ends a run (matched only as a prefix of the bigram it
    starts) is missed often enough to index unigrams as well.
+
+## Addendum (2026-10-08) — a hit older than the mirror's window (#1663)
+
+The jump rides the scroll mark, which restores only a turn that is already mounted, and the
+mirror mounts the last 400 positions. A hit further back now pages older history in first
+(`reachTurn.ts`). A turn's idx is not always in the unit of the paging cursor (`firstLine`):
+claude's is the jsonl line number for both, but a store-backed agent pages by array position
+while its turns keep the source event's idx. So "reached" is judged on the oldest idx actually
+held, and the cursor only asks for a page, sized by the idx gap (exact for claude, an
+over-estimate for the others); the Agent API is unchanged. It is bounded — at most 8,000 idx
+positions and 4 requests per jump, refused before any request beyond that, with a notice
+instead of a silent landing at the end — and it yields to the reader (input, or the content
+under the viewport moving, which also covers a scrollbar drag) and to a newer jump or a
+session switch.
