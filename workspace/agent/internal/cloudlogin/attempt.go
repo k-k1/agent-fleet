@@ -112,7 +112,10 @@ func (a *Attempt) Submit(code string) error {
 	stdin := a.stdin
 	a.mu.Unlock()
 	_, err := io.WriteString(stdin, code+"\n")
-	if cerr := stdin.Close(); err == nil {
+	cerr := stdin.Close()
+	if err == nil && !errors.Is(cerr, os.ErrClosed) {
+		// A process that read its code and exited has already had the pipe closed by
+		// cmd.Wait; that Close is not a delivery failure. A failed write is never masked.
 		err = cerr
 	}
 	return err
