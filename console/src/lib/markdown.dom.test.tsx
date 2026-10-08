@@ -190,4 +190,56 @@ describe("a formatting tag that is never closed", () => {
       expect(leaks(render(marked, source), "Second.")).toBe(false);
     }
   });
+
+  // Hand-written HTML whose end tags the pairing must read the way the HTML parser does.
+  it("does not take text inside a raw-text element for a closer", () => {
+    for (const source of [
+      '<div><a download>x<script>const s="</a>";</script></div>\n\nSecond.',
+      "<div><a download>x<textarea></a></textarea></div>\n\nSecond.",
+      "<div><a download>x<title></a></title></div>\n\nSecond.",
+      "Use <a download><textarea></a></textarea>\n\nSecond.",
+    ]) {
+      expect(leaks(render(STOCK, source), "Second."), source).toBe(true);
+      expect(leaks(render(marked, source), "Second."), source).toBe(false);
+    }
+  });
+
+  it("reads comments as the HTML tokenizer does", () => {
+    for (const source of [
+      "<div><!--><a download>x --></div>\n\nSecond.",
+      "<div><!---><a download>x --></div>\n\nSecond.",
+      "<div><a download>x<!-- fake </a> --!></div>\n\nSecond.",
+    ]) {
+      expect(leaks(render(marked, source), "Second."), source).toBe(false);
+    }
+  });
+
+  it("does not let a closer inside a cell, caption or marquee close an opener outside", () => {
+    for (const source of [
+      "<a download>\n\n<table><tr><td></a></td></tr></table>\n\nSecond.",
+      "<div><a download>x<marquee></a></marquee></div>\n\nSecond.",
+      "<div><a download>x<table><caption></a></caption></table></div>\n\nSecond.",
+    ]) {
+      expect(leaks(render(STOCK, source), "Second."), source).toBe(true);
+      expect(leaks(render(marked, source), "Second."), source).toBe(false);
+    }
+  });
+
+  it("resumes at the end tag of a raw-text element, whatever its body looks like", () => {
+    // The body opens a comment that never ends; the real closer after </textarea> still counts.
+    const el = render(marked, "<div><a href=\"x\">l<textarea><!-- </textarea> y</a></div>\n\nSecond.");
+    expect(el.querySelector("div > a[href]")).not.toBeNull();
+    expect(leaks(el, "Second.")).toBe(false);
+  });
+
+  it("keeps real pairs next to those states", () => {
+    for (const [source, selector] of [
+      ['<div><a href="x">l</a><textarea></a></textarea></div>', "div > a[href]"],
+      ['<table><tr><td><a href="x">l</a></td></tr></table>', "td a[href]"],
+      ['<div><!-- c --><a href="x">l</a></div>', "div > a[href]"],
+      ['<div><a href="x"><marquee>m</marquee>l</a></div>', "div > a[href]"],
+    ] as const) {
+      expect(render(marked, source).querySelector(selector), source).not.toBeNull();
+    }
+  });
 });

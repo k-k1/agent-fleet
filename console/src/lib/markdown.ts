@@ -263,31 +263,57 @@ export function isRenderedHtmlTag(raw: string): boolean {
 // alone on purpose — it would set `inLink` on `<a` before we could know.
 const FORMATTING_TAGS = new Set("a b big code em font i nobr s small strike strong tt u".split(" "));
 
+// Two more kinds of tag change what a closer means, so they are read as well:
+// - Raw-text and RCDATA elements: everything up to their own end tag is text, so a `</a>` in
+//   there closes nothing. (Only some reach the parser as elements — `<script>` is vetoed to text
+//   by HTML_TAGS above and DOMPurify drops it from a block — but a block is scanned whole.)
+// - Scope markers: a formatting element is not closed from inside a table cell, caption,
+//   marquee, object, applet or template — the parser's active-formatting list stops there.
+const RAW_TEXT_TAGS = new Set("script style textarea title xmp iframe noembed noframes".split(" "));
+const SCOPE_TAGS = new Set("applet caption marquee object td template th".split(" "));
+
 interface TagEvent {
   name: string;
   open: boolean;
 }
 
-function formattingEvent(raw: string): TagEvent | null {
+function tagEvent(raw: string): TagEvent | null {
   const name = TAG_NAME.exec(raw)?.[1].toLowerCase();
-  return name && FORMATTING_TAGS.has(name) ? { name, open: !raw.startsWith("</") } : null;
+  if (!name || !(FORMATTING_TAGS.has(name) || SCOPE_TAGS.has(name) || RAW_TEXT_TAGS.has(name))) return null;
+  return { name, open: !raw.startsWith("</") };
 }
 
-// Pairs each closer with the nearest unmatched opener of the same name; `finish` reports the
-// openers nothing closed. A closer with no opener is left alone, as the HTML parser does.
+// Pairs each closer with the nearest unmatched opener of the same name, never across a scope
+// marker, and ignores everything inside a raw-text element; `finish` reports the openers
+// nothing closed. A closer with no opener is left alone, as the HTML parser does.
 class TagPairing {
-  private open: { name: string; stray: () => void; at: number }[] = [];
+  private open: { name: string; stray: () => void; at: number; marker?: boolean }[] = [];
+  // Set while inside a raw-text element: the name whose end tag leaves it.
+  rawText: string | null = null;
   // Matched pairs by position, for the caller that needs to know what lies between them.
   readonly pairs: { name: string; from: number; to: number }[] = [];
   // Closers that found no opener here; a block opener elsewhere may own them.
   readonly orphans: TagEvent[] = [];
 
   push(event: TagEvent, stray: () => void, at = 0): void {
+    if (this.rawText) {
+      if (!event.open && event.name === this.rawText) this.rawText = null;
+      return;
+    }
+    if (event.open && RAW_TEXT_TAGS.has(event.name)) {
+      this.rawText = event.name;
+      return;
+    }
+    if (SCOPE_TAGS.has(event.name)) {
+      if (event.open) this.open.push({ name: event.name, stray: () => {}, at, marker: true });
+      else this.closeScope(event.name);
+      return;
+    }
     if (event.open) {
       this.open.push({ name: event.name, stray, at });
       return;
     }
-    for (let i = this.open.length - 1; i >= 0; i--) {
+    for (let i = this.open.length - 1; i >= 0 && !this.open[i].marker; i--) {
       if (this.open[i].name === event.name) {
         this.pairs.push({ name: event.name, from: this.open[i].at, to: at });
         this.open.splice(i, 1);
@@ -295,6 +321,14 @@ class TagPairing {
       }
     }
     this.orphans.push(event);
+  }
+
+  // The end tag of a scope element: whatever was left open inside it is closed with it, and
+  // still reported as stray.
+  private closeScope(name: string): void {
+    const at = this.open.map((o) => o.marker && o.name === name).lastIndexOf(true);
+    if (at < 0) return;
+    for (const o of this.open.splice(at)) o.stray();
   }
 
   finish(): void {
@@ -313,7 +347,7 @@ function collectInline(tokens: Token[], items: InlineItem[]): void {
     // An image's children become its alt attribute, never tags in the body.
     if (t.type === "image") continue;
     if (t.type === "html") {
-      const tag = formattingEvent(t.raw);
+      const tag = tagEvent(t.raw);
       if (tag) items.push({ tag, token: t });
     } else if (t.type === "link" && t.raw === t.text) {
       items.push({ url: t as Tokens.Link }); // a bare URL (GFM autolink extension)
@@ -358,17 +392,29 @@ function pairUnit(tokens: Token[], doc?: TagPairing): void {
   if (doc) for (const event of unit.orphans) doc.push(event, () => {});
 }
 
-// A comment (skipped) or a tag with quoted attributes, inside block-level raw HTML.
-const HTML_RUN = /<!--[\s\S]*?-->|<\/?[a-zA-Z][a-zA-Z0-9-]*(?:"[^"]*"|'[^']*'|[^'">])*>/g;
+// A comment (skipped) or a tag with quoted attributes, inside block-level raw HTML. A comment
+// ends as the HTML tokenizer ends it: `<!-->` and `<!--->` are complete, `--!>` also closes,
+// and an unclosed one runs to the end.
+const HTML_RUN = /<!--(?:-?>|[\s\S]*?--!?>|[\s\S]*$)|<\/?[a-zA-Z][a-zA-Z0-9-]*(?:"[^"]*"|'[^']*'|[^'">])*>/g;
 
 // Raw HTML blocks are paired across the whole document: `<a href>` alone on a line may be
 // closed by a later block. Strays are escaped once the document is done, right to left so
 // the earlier offsets stay valid.
 function pairBlockHtml(token: Tokens.HTML, pairing: TagPairing, escapes: (() => void)[]): void {
   const strays: number[] = [];
-  for (const m of token.text.matchAll(HTML_RUN)) {
-    const event = formattingEvent(m[0]);
-    if (event) pairing.push(event, () => strays.push(m.index));
+  const run = new RegExp(HTML_RUN);
+  for (let m = run.exec(token.text); m; m = run.exec(token.text)) {
+    const event = tagEvent(m[0]);
+    if (event) pairing.push(event, () => strays.push(m!.index));
+    // Inside a raw-text element nothing is a tag until its end tag; look for that, not for
+    // the next `<`.
+    if (pairing.rawText) {
+      const end = new RegExp(`</${pairing.rawText}(?=[\\s/>])`, "ig");
+      end.lastIndex = run.lastIndex;
+      const hit = end.exec(token.text);
+      if (!hit) break;
+      run.lastIndex = hit.index;
+    }
   }
   escapes.push(() => {
     let text = token.text;
