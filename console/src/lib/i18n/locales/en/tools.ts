@@ -23,7 +23,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mcp.test": "Test connection",
   "mcp.testing": "Testing…",
   "mcp.test_failed": "Connection failed",
-  "mcp.test_ok": "Connected: {name} {version} — {count} tools ({ms}ms)",
+  "mcp.test_ok": "Connected: {name} {version}, {count} tools ({ms}ms)",
   "mcp.test_revision": "Protocol revision: {rev}",
   "mcp.save_failed": "Failed to save: {msg}",
   "mcp.shadowed": "These personal registrations are unused because a tenant-distributed server has the same name: {names}",
@@ -56,7 +56,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mcp.f_transport_hint":
     "stdio launches a command inside your container. Remote supports Streamable HTTP only.",
   "mcp.f_command": "Command",
-  "mcp.f_command_hint": "The executable to run inside the workspace — a name on PATH or an absolute path.",
+  "mcp.f_command_hint": "The executable to run inside the workspace: a name on PATH or an absolute path.",
   "mcp.f_args": "Arguments",
   "mcp.f_args_hint": "One per line. An argument containing spaces still goes on a single line.",
   "mcp.f_env": "Environment variables",
@@ -98,7 +98,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mcp.tenant_refreshing": "Fetching…",
   "mcp.tenant_refresh_failed": "Could not fetch the tenant set: {msg}",
   "mcp.tenant_incomplete":
-    "{n} of the distributed servers could not be taken in — ask your tenant admin to check the configuration.",
+    "{n} of the distributed servers could not be taken in. Ask your tenant admin to check the configuration.",
   "mcp.tenant_user_secret_note":
     "Distributed by a tenant admin. The endpoint comes from the tenant, but you supply the credential yourself.",
   "mcp.enter_secrets": "Enter values",
@@ -106,7 +106,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
     "No credential entered, so nothing is handed over even while enabled. Set it from “Enter values”.",
   "mcp.secrets_intro":
     "Enter the header values {name} needs. They are stored encrypted in this workspace and never sent back to the tenant.",
-  "mcp.secrets_hint": "The header names are set by the tenant admin and cannot be changed — only the values.",
+  "mcp.secrets_hint": "The header names are set by the tenant admin and cannot be changed; only the values.",
   "mcp.secrets_none": "This server needs no values from you.",
 
   // --- environment (EnvTab: toolchains / versions / danger zone) ---
@@ -173,7 +173,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.preview_current_none": "None issued yet (starting the workspace issues one)",
   "env.preview_current_note": "This deployment previews on {domain}, so a URL looks like https://<random>-<port>.{domain}/. A new one is issued on every start, and it stops working when the workspace stops.",
   "env.preview_ports_label": "Exposed ports",
-  "env.preview_ports_note": "Comma-separated, up to {n} (default 3000, 8080). A port that is not listed has no preview subdomain — the list is what keeps services you did not mean to expose off the internet.",
+  "env.preview_ports_note": "Comma-separated, up to {n} (default 3000, 8080). A port that is not listed has no preview subdomain. The list is what keeps services you did not mean to expose off the internet.",
   "env.preview_fixed_label": "Keep the URL stable",
   "env.preview_fixed_note": "By default a new URL is issued on every start. Turn this on only when you register the URL as an external IdP redirect URI (Google / GitHub sign-in). The label stays random either way.",
   "env.preview_public_label": "Open without signing in",
@@ -225,11 +225,11 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.db_action_failed": "Failed: {msg}",
   "env.db_copied": "Copied",
   "env.db_purge_confirm_title": "Remove all data?",
-  "env.db_purge_confirm_body": "The server will be stopped and its data directory deleted, taking every database on this engine with it — including other working copies'. This cannot be undone.",
+  "env.db_purge_confirm_body": "The server will be stopped and its data directory deleted, taking every database on this engine with it, including other working copies'. This cannot be undone.",
   // --- Machine (features/settings/workspace/MachineTab.tsx — what it runs on) ---
   "machine.title": "This workspace's machine",
   "machine.load_failed": "Could not read the machine information.",
-  "machine.stopped_note": "Stopped — showing what the next start will use.",
+  "machine.stopped_note": "Stopped. Showing what the next start will use.",
   "machine.instance_type": "Instance type",
   "machine.arch": "Architecture",
   "machine.vcpu": "vCPU",
@@ -240,8 +240,8 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "machine.home_disk_fs": "Whole disk",
   "machine.src_measured": "measured",
   "machine.src_declared": "configured",
-  "machine.next_start_box": "The settings have changed — the next start will use {type}.",
-  "machine.next_start_size": "The settings have changed — the next start will use a different allocation.",
+  "machine.next_start_box": "The settings have changed. The next start will use {type}.",
+  "machine.next_start_size": "The settings have changed. The next start will use a different allocation.",
   "machine.note_own_box":
     "This instance is yours alone, so its vCPUs and memory are all yours (the memory limit is the instance's RAM less what is held back for its own daemons).",
   "machine.note_shared_host":
@@ -252,7 +252,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "machine.usage_cpu_of": "{pct}% / {max}%",
   "machine.usage_oom": "A process was killed for memory during this window (the container itself survived).",
   "machine.usage_note":
-    "One sample every 4 seconds, up to an hour. The chart keeps moving while a value is unchanged — the control plane is what guarantees it is unchanged — and breaks the line for any period it could not read.",
+    "One sample every 4 seconds, up to an hour. The chart keeps moving while a value is unchanged (the control plane is what guarantees it is unchanged) and breaks the line for any period it could not read.",
   "machine.disk_title": "Disk used by Agent Fleet",
   "machine.disk_failed": "Couldn't read the disk breakdown.",
   "machine.disk_cache": "Cache",
@@ -335,7 +335,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.recreate_confirm_body": "Tears down the container and creates a fresh one from the latest image.",
   "env.cleanhome_confirm_title": "Clean home?",
   "env.cleanhome_confirm_body":
-    "Deletes all of home except logins/connections and rebuilds from the latest image. A deeper reset than recreate — use it when home is broken and a recreate doesn't fix it.",
+    "Deletes all of home except logins/connections and rebuilds from the latest image. A deeper reset than recreate. Use it when home is broken and a recreate doesn't fix it.",
   "env.dz_keep_login": "Logins/connections (GitHub / Bitbucket / Claude) are kept",
   "env.dz_keep_home_1": " — home outside it (",
   "env.dz_keep_home_2": ", etc.) stays",
@@ -546,15 +546,15 @@ export const tools: Record<keyof typeof jaTools, string> = {
     "Positions the read-aloud audio in stereo to match the pane's horizontal position. It never pans fully to one side even at the edges, and audio not tied to a pane (notifications, file read-aloud) plays center.",
   "tts.lang": "Read-aloud language",
   "tts.note_lang":
-    "The language of the text being read. \u201cAuto\u201d follows the Console display language. With the engine on \u201cAuto\u201d, English routes to Polly and defaults to the Joanna voice. This is separate from the assistant's Reply language \u2014 setting the chat to English no longer changes the read-aloud voice.",
+    "The language of the text being read. \u201cAuto\u201d follows the Console display language. With the engine on \u201cAuto\u201d, English routes to Polly and defaults to the Joanna voice. This is separate from the assistant's Reply language: setting the chat to English no longer changes the read-aloud voice.",
   "tts.note_lang_no_polly":
-    "The language of the text being read. \u201cAuto\u201d follows the Console display language. This deployment has no Polly, so choosing English still reads with Zundamon (VOICEVOX) \u2014 English spellings are only pronounced when \u201cread English as kana\u201d is on. This is separate from the assistant's Reply language.",
+    "The language of the text being read. \u201cAuto\u201d follows the Console display language. This deployment has no Polly, so choosing English still reads with Zundamon (VOICEVOX), and English spellings are only pronounced when \u201cread English as kana\u201d is on. This is separate from the assistant's Reply language.",
   "tts.note_engine":
     "“Auto” reads Japanese with Zundamon (VOICEVOX) and switches to AWS Polly while the engine is down or for non-Japanese (returning to Zundamon from the next sentence). “Polly” always reads with Polly.",
   "tts.note_no_voicevox":
-    "This deployment has no VOICEVOX engine, so everything is read by AWS Polly. VOICEVOX-only settings — the Zundamon speaker, characters and emotional styles — are therefore not shown.",
+    "This deployment has no VOICEVOX engine, so everything is read by AWS Polly. VOICEVOX-only settings (the Zundamon speaker, characters and emotional styles) are therefore not shown.",
   "tts.warn_voicevox_missing":
-    "The voice engine is set to Zundamon, but this deployment has no VOICEVOX engine. Read-aloud will fail as long as it stays on this setting — switch to “Auto” or “Polly”.",
+    "The voice engine is set to Zundamon, but this deployment has no VOICEVOX engine. Read-aloud will fail as long as it stays on this setting, so switch to “Auto” or “Polly”.",
   "tts.note_zundamon_volume":
     "Zundamon is louder than the other characters, so you can lower it a bit to match the other voices and notification sounds. It applies only when reading in Zundamon's voice.",
   "tts.note_voice_per_session":
@@ -578,7 +578,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "tts.note_particle_pause":
     "Where a kanji follows right after を・は・で・に・と, it inserts a small pause the length of a comma (e.g. “神は細部に宿る” → “神は、細部に、宿る”). It's a “breath” shorter than the beat at a sentence break, making word boundaries easier to hear.",
   "tts.note_english_kana":
-    "Converts English words to katakana English and reads them “approximately” in Zundamon's voice (transliteration based on the CMU pronunciation dictionary — established Japanese katakana like コーヒー becomes a transliteration like カフィー instead). AWS services and dev terms (EC2→イーシーツー, Dao→ダオ, nginx, etc.) are corrected by a dedicated dictionary; general words not in it are read as spelled.",
+    "Converts English words to katakana English and reads them “approximately” in Zundamon's voice (transliteration based on the CMU pronunciation dictionary; established Japanese katakana like コーヒー becomes a transliteration like カフィー instead). AWS services and dev terms (EC2→イーシーツー, Dao→ダオ, nginx, etc.) are corrected by a dedicated dictionary; general words not in it are read as spelled.",
   "tts.userdict_placeholder": "spelling=reading (one per line)\ne.g. GPT-4=ジーピーティーフォー\n神=かみ",
   "tts.note_userdict":
     "Before reading, replaces each “spelling” in the text with the specified “reading”. English, Japanese, or symbols all work. One “spelling=reading” per line; lines starting with # are comments. Longer spellings take priority, and this is applied before “Read English in katakana”. If the admin has set a tenant-wide dictionary, it's applied too, and your entries here win for the same spelling.",
@@ -681,13 +681,13 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "git.bb_token_sub": "Atlassian email + API token.",
   "git.bb_email_ph": "Atlassian email",
   "git.bb_token_ph": "API token",
-  "git.bb_token_hint": "Create an API token \"with scopes\" and select Bitbucket in the app — a scopeless token is rejected by the Bitbucket API. Required scopes: ",
+  "git.bb_token_hint": "Create an API token \"with scopes\" and select Bitbucket in the app. A scopeless token is rejected by the Bitbucket API. Required scopes: ",
   "git.bb_token_hint_read": " (list & clone). To push as well, also add ",
   "git.bb_token_hint_write": ". Use your canonical Atlassian account email as the username.",
   "git.bb_token_hint_pr": " is optional — only for listing pull requests in the issue tracker rail, not for clone or push.",
   "git.bb_err_scopeless": "Bitbucket rejected the token. Create an API token \"with scopes\" (select Bitbucket) and use your Atlassian account email as the username.",
   "git.bb_err_no_repo_read": "The token is missing the read:repository:bitbucket scope. Recreate it with scopes.",
-  "git.bb_warn_no_write": "Connected — but pushing needs the write:repository:bitbucket scope, which this token doesn't have.",
+  "git.bb_warn_no_write": "Connected, but pushing needs the write:repository:bitbucket scope, which this token doesn't have.",
   "tracker.jira_connect_oauth": "Connect with OAuth",
   "tracker.jira_use_token": "Use an API token",
   "tracker.jira_oauth_unconfigured": "This tenant has no Jira OAuth app. Ask a tenant administrator to register one, or connect with an API token.",
@@ -759,7 +759,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "pmcp.summary_headers": "Headers",
   "pmcp.ignore_title": "Add {file} to the ignore list",
   "pmcp.ignore_where": "Add to",
-  "pmcp.ignore_exclude": ".git/info/exclude (default — not committed)",
+  "pmcp.ignore_exclude": ".git/info/exclude (default; not committed)",
   "pmcp.ignore_gitignore": ".gitignore (committed, shared with colleagues)",
   "pmcp.ignore_exclude_hint": "Affects only this working copy (shared with the parent clone and every worktree). Reversible.",
   "pmcp.ignore_gitignore_hint": "Affects the whole repository and every colleague. Has no effect on an already-tracked file.",
@@ -788,7 +788,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mem.auto_hint": "Taken a few minutes after the agents go idle. Nothing is recorded when nothing changed.",
   "mem.auto_locked": "Automatic snapshots are disabled for this environment by the operator (AF_MEMORY_SNAPSHOT).",
   "mem.reason_codex_memories_disabled": "Memories are off (Codex's own default)",
-  "mem.reason_codex_memories_pending": "Enabled — memories appear the next time Codex runs",
+  "mem.reason_codex_memories_pending": "Enabled. Memories appear the next time Codex runs",
   "mem.reason_absent": "Not found in this environment",
   "mem.codex_cost_hint":
     "Once enabled, Codex extracts and consolidates memories from your conversations in the background, spending tokens on an ongoing basis.",
@@ -895,7 +895,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mem.export_done": "Exported.",
   "mem.export_failed": "The export failed.",
   "mem.export_note":
-    "Memory can contain personal information. Review the contents before sharing — the exported file is not encrypted.",
+    "Memory can contain personal information. Review the contents before sharing. The exported file is not encrypted.",
   "mem.export_secret_title": "Possible secrets found",
   "mem.export_secret_body": "The export contains {n} item(s) that look like secrets.",
   "mem.export_secret_hint":
@@ -908,9 +908,9 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mem.import_summary": "{format} / {snapshots} snapshot(s) / latest {when}",
   "mem.import_none": "There is nothing this environment can import.",
   "mem.import_rejected": "{n} entry/entries were skipped as out of scope.",
-  "mem.import_unavailable": "Cannot import — this environment has no destination for: {kinds}",
+  "mem.import_unavailable": "Cannot import: this environment has no destination for: {kinds}",
   "mem.import_secrets": "The imported contents include {n} item(s) that look like secrets.",
-  "mem.import_secret_scan_failed": "The secret scan of the imported contents failed — this is NOT a confirmation that there are no secrets.",
+  "mem.import_secret_scan_failed": "The secret scan of the imported contents failed. This is NOT a confirmation that there are no secrets.",
   "mem.import_do": "Import",
   "mem.import_mode_label": "How to apply",
   "mem.import_mode_replace": "Replace only the selected scope (keep this environment's history)",
