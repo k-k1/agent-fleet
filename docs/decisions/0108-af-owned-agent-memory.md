@@ -291,7 +291,7 @@ thing: explicit, previewed (`GET /agents/memory/claude-export[/preview]`, `POST`
   that stay, newest first, within 200 lines and 24 KiB, with a closing "N more memories" line. It
   replaces the old one; the snapshot (`pre-export`, 0022) taken before the first write makes that
   undoable. If the snapshot fails nothing is written. Every write is a temp file renamed inside a
-  directory handle opened without following symlinks.
+  directory handle opened without following symlinks (below the config root, which is resolved once because it is AF's own setting and may be a link).
 - Import loop guard: the import reads a claude file whose `af_source` names the AF memory and whose
   text still hashes to `af_hash` as `unchanged`, although its mtime is newer than AF's update.
 - codex: deferred to #1683 (its memory workspace is rewritten by its own pipeline).

@@ -346,29 +346,33 @@ func agentMemExportHasOwnFiles(p *agentMemProject) bool {
 	return false
 }
 
-// agentMemExportOpenDir opens <config dir>/projects/<slug>/memory from the filesystem root, every
-// component with O_NOFOLLOW: a symlink anywhere on the path, the config dir and its ancestors
-// included, is refused rather than followed. With create, a missing component of
-// projects/<slug>/memory is made through the already verified parent. The handle that comes back
-// is the one to keep using.
+// agentMemExportOpenDir opens <config dir>/projects/<slug>/memory. The config dir is a value AF
+// itself sets, and may be a deliberate link onto other storage (or sit below one, as /var does on
+// macOS), so it is resolved once and opened as the root of the walk. Everything below it,
+// projects, the slug directory, memory, is opened with O_NOFOLLOW from the verified parent, so a
+// link inside claude's store is refused rather than followed. With create, a missing component
+// below the root is made through that parent. The handle that comes back is the one to keep using.
 func agentMemExportOpenDir(slug string, create bool) (*os.File, error) {
 	flags := syscall.O_RDONLY | syscall.O_DIRECTORY | syscall.O_NOFOLLOW | syscall.O_CLOEXEC
-	cfg := filepath.Clean(claude.ConfigDir())
-	if !filepath.IsAbs(cfg) {
-		return nil, syscall.EINVAL
+	if create {
+		if err := os.MkdirAll(claude.ConfigDir(), 0o700); err != nil {
+			return nil, err
+		}
 	}
-	fd, err := syscall.Open("/", flags, 0)
+	root, err := filepath.EvalSymlinks(claude.ConfigDir())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, syscall.ENOENT
+		}
+		return nil, err
+	}
+	fd, err := syscall.Open(root, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
 	}
-	segs := append(strings.Split(strings.Trim(filepath.ToSlash(cfg), "/"), "/"), "projects", slug, "memory")
-	firstNew := len(segs) - 3
-	for i, seg := range segs {
-		if seg == "" {
-			continue
-		}
+	for _, seg := range []string{"projects", slug, "memory"} {
 		next, err := syscall.Openat(fd, seg, flags, 0)
-		if err == syscall.ENOENT && create && i >= firstNew-1 {
+		if err == syscall.ENOENT && create {
 			if err = syscall.Mkdirat(fd, seg, 0o700); err == nil || err == syscall.EEXIST {
 				next, err = syscall.Openat(fd, seg, flags, 0)
 			}

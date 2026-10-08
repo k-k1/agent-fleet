@@ -469,8 +469,8 @@ func TestClaudeExportListingCapDoesNotHideFiles(t *testing.T) {
 	}
 }
 
-// A symlink anywhere on the path, the config dir included, is refused.
-func TestClaudeExportConfigDirLinkRefused(t *testing.T) {
+// The config root may itself be a link (it is AF's own setting); a link below it is refused.
+func TestClaudeExportConfigRootLinkAllowedInnerLinksRefused(t *testing.T) {
 	e := newClaudeExportEnv(t)
 	e.save("one", "d", "project", "b")
 	cfg := filepath.Dir(filepath.Dir(filepath.Dir(e.memDir(e.slug))))
@@ -481,14 +481,34 @@ func TestClaudeExportConfigDirLinkRefused(t *testing.T) {
 	if err := os.Symlink(real, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agentMemExportPreviewFor(e.pid); agentMemCode(err) != errCodeMemoryConflict {
-		t.Errorf("preview through a linked config dir = %v", err)
+	e.apply()
+	if _, err := os.Stat(filepath.Join(real, "projects", e.slug, "memory", "one.md")); err != nil {
+		t.Fatalf("not written through a linked config root: %v", err)
 	}
-	if _, err := agentMemExportApply(agentMemExportReq{Project: e.pid}, e.now); err == nil {
-		t.Error("apply through a linked config dir should refuse")
-	}
-	if _, err := os.Stat(filepath.Join(real, "projects", e.slug, "memory", "one.md")); err == nil {
-		t.Error("written through the link")
+	// projects/<slug> and memory as links are refused.
+	outside := t.TempDir()
+	for _, rel := range []string{filepath.Join("projects", e.slug, "memory"), filepath.Join("projects", e.slug), "projects"} {
+		p := filepath.Join(real, rel)
+		moved := p + "-moved"
+		if err := os.Rename(p, moved); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, p); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := agentMemExportPreviewFor(e.pid); agentMemCode(err) != errCodeMemoryConflict {
+			t.Errorf("%s as a link: preview = %v", rel, err)
+		}
+		if _, err := agentMemExportApply(agentMemExportReq{Project: e.pid}, e.now); err == nil {
+			t.Errorf("%s as a link: apply should refuse", rel)
+		}
+		if ents, _ := os.ReadDir(outside); len(ents) != 0 {
+			t.Errorf("%s as a link: wrote through it: %v", rel, ents)
+		}
+		_ = os.Remove(p)
+		if err := os.Rename(moved, p); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
