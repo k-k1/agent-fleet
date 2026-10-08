@@ -147,7 +147,7 @@ describe("ClaudeImportPanel", () => {
   it("says a refresh of a cut description is a refresh, and names the size limit that is left", async () => {
     const small = {
       ...previewBody,
-      counts: { update: 1, invalid: 1 },
+      counts: { update: 1, invalid: 3 },
       items: [
         {
           name: "was-cut",
@@ -158,6 +158,8 @@ describe("ClaudeImportPanel", () => {
           afUpdated: "2026-10-01T10:00:00Z",
         },
         { name: "huge", status: "invalid", reason: "too_large" },
+        { name: "wordy", status: "invalid", reason: "description_too_long" },
+        { name: "two-lines", status: "invalid", reason: "bad_description" },
       ],
     };
     api.mockImplementation((path: string) =>
@@ -170,6 +172,8 @@ describe("ClaudeImportPanel", () => {
     expect(text).not.toContain("Claude file 2026");
     expect(text).toContain("larger than 200 KiB");
     expect(text).not.toContain("shortened");
+    expect(text).toContain("description is longer than 2,000 characters");
+    expect(text).toContain("description spans more than one line");
   });
 
   it("disables the import and explains why while the switch is off", async () => {

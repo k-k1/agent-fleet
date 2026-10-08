@@ -148,7 +148,7 @@ func HandleAgentMemoryRead(w http.ResponseWriter, r *http.Request) {
 
 // HandleAgentMemorySave creates or updates a memory and publishes it at once.
 func HandleAgentMemorySave(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, agentMemMaxBody+64<<10)
+	r.Body = http.MaxBytesReader(w, r.Body, agentMemSaveMaxRequest)
 	var req agentMemSaveReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return

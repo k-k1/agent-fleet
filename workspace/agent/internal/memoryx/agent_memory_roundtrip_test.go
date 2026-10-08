@@ -248,3 +248,75 @@ func TestWriteBackOfEditedLegacyImportIsUpdate(t *testing.T) {
 		t.Errorf("update lost text or metadata:\n%s", out)
 	}
 }
+
+// nativeWithMeta is a claude file whose metadata block is the given raw lines.
+func nativeWithMeta(name, meta string) string {
+	return "---\nname: " + name + "\ndescription: d\nmetadata:\n  type: bogus\n" + meta + "---\n\nbody\n"
+}
+
+// A metadata block a write-back cannot copy faithfully is never copied: the update is a
+// conflict the member decides, and an explicit overwrite writes none of it. The escaped
+// secret is one the raw scan cannot see.
+func TestWriteBackDoesNotCarryUnsafeMetadata(t *testing.T) {
+	e := newClaudeExportEnv(t)
+	secret := `"\u0041KIA` + "ZXCVBNMLKJHGFDSA" + `"`
+	cases := map[string]string{
+		"escaped": "  node_type: " + secret + "\n",
+		"qkey":    "  \"af_hash\": forged\n  node_type: memory\n",
+		"nested":  "  details:\n    type: reference\n  node_type: memory\n",
+		"huge":    "  notes: " + strings.Repeat("n", 5<<10) + "\n",
+	}
+	var names []string
+	for n, meta := range cases {
+		e.raw(e.slug, n+".md", nativeWithMeta(n, meta))
+		names = append(names, n)
+	}
+	e.importAll(names...)
+	for _, n := range names {
+		e.save(n, "d", "project", "edited in AF")
+	}
+	pv := e.preview()
+	for _, n := range names {
+		if got := e.status(pv, n); got != claudeExportConflict || pv.byName[n].Reason != "native_metadata_not_carried" {
+			t.Errorf("%s = %s/%s, want conflict/native_metadata_not_carried", n, got, pv.byName[n].Reason)
+		}
+	}
+	e.apply(names...)
+	for _, n := range names {
+		out := e.read(n + ".md")
+		if !strings.Contains(out, "edited in AF") || strings.Contains(out, "u0041") || strings.Contains(out, "AKIA") || strings.Contains(out, "forged") ||
+			strings.Count(out, "af_hash") != 1 || strings.Count(out, "  type:") != 1 || strings.Contains(out, "details") {
+			t.Errorf("%s overwritten with unsafe metadata:\n%.400s", n, out)
+		}
+	}
+	// What was written reads back as unchanged: the AF text and its provenance agree.
+	pv = e.preview()
+	for _, n := range names {
+		if got := e.status(pv, n); got != claudeExportUnchanged {
+			t.Errorf("%s after the overwrite = %s (%s)", n, got, pv.byName[n].Reason)
+		}
+	}
+}
+
+// Not knowing whether AF moved on is not a reason to replace claude's original: with no import
+// history the native file that equals the recorded source_hash is a conflict, never an update.
+func TestWriteBackWithoutImportHistoryIsAConflict(t *testing.T) {
+	e := newClaudeExportEnv(t)
+	e.save("seed", "d", "project", "b") // brings project.json along
+	raw := nativeWithExtras("orphan", "orphan", "bogus", "claude original")
+	e.raw(e.slug, "orphan.md", raw)
+	sum := sha256.Sum256([]byte(raw))
+	// A store file that carries the import's source_hash but was never committed.
+	afFile := filepath.Join(agentMemDir(), "projects", e.pid, "orphan.md")
+	memoryMkdirAll(t, filepath.Dir(afFile))
+	memoryWrite(t, afFile, "---\nname: orphan\ndescription: orphan\ntype: project\nrevision: 2\nauthor_kind: member\nauthor_session: console\n"+
+		"created: \"2026-10-01T00:00:00Z\"\nupdated: \"2026-10-02T00:00:00Z\"\nsource_hash: \""+hex.EncodeToString(sum[:])+"\"\n---\nAF text\n")
+	pv := e.preview()
+	if got := e.status(pv, "orphan"); got != claudeExportConflict || pv.byName["orphan"].Reason != "import_history_unknown" {
+		t.Fatalf("orphan = %s/%s, want conflict/import_history_unknown", got, pv.byName["orphan"].Reason)
+	}
+	e.apply()
+	if !strings.Contains(e.read("orphan.md"), "claude original") {
+		t.Error("the native file was replaced without proof")
+	}
+}

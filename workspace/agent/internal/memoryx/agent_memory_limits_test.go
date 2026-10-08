@@ -1,6 +1,8 @@
 package memoryx
 
 import (
+	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,5 +181,28 @@ func TestAgentMemoryLongLinesAreScannedWhole(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "planted.md")); err != nil {
 		t.Errorf("withheld file must stay on disk: %v", err)
+	}
+}
+
+// The HTTP bound is on the JSON, the limit is on the decoded text: a body full of characters
+// that JSON escapes is still a body of at most 200 KiB.
+func TestAgentMemorySaveHandlerBodyLimitIsOnDecodedText(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	mux := buildMux()
+	post := func(name, text string) int {
+		body, _ := json.Marshal(agentMemSaveReq{Session: "claude-main", Name: name, Description: "d", Body: text})
+		return smokeDo(t, mux, http.MethodPost, "/agents/memory/entries", "", string(body)).Code
+	}
+	for name, text := range map[string]string{
+		"quotes":   strings.Repeat(`"`, 200<<10),
+		"controls": strings.Repeat("\x01", 200<<10),
+		"newlines": strings.Repeat("a\n", 100<<10),
+	} {
+		if code := post(name, text); code != http.StatusOK {
+			t.Errorf("%s at 200 KiB: status %d, want 200", name, code)
+		}
+	}
+	if code := post("over", strings.Repeat(`"`, 200<<10+1)); code != http.StatusRequestEntityTooLarge {
+		t.Errorf("200 KiB + 1: status %d, want 413", code)
 	}
 }

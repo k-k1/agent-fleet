@@ -407,7 +407,7 @@ func agentMemImportEvaluate(mem *os.File, file, slug, rel string, history map[st
 		// Claude's own files stay far below this (the longest measured is 1,800 characters). It is
 		// refused rather than cut: a cut description is what made the write-back read a
 		// faithful import as a conflict.
-		return invalid("bad_description")
+		return invalid("description_too_long")
 	}
 	if len(body) > agentMemMaxBody {
 		return invalid("too_large")
@@ -460,7 +460,7 @@ func agentMemImportEvaluate(mem *os.File, file, slug, rel string, history map[st
 		it.live, it.AFUpdated = &le, le.Updated
 		at, perr := time.Parse(time.RFC3339, le.Updated)
 		switch {
-		case le.SourceHash == it.SourceHash && agentMemImportLegacyShortened(le, desc, body) && agentMemImportRefreshable(rel, stem):
+		case le.SourceHash == it.SourceHash && agentMemImportLegacyShortened(le, desc, body) && agentMemImportStateFor(rel, stem) == agentMemImportIntact:
 			// Imported when long descriptions were cut. Claude's file is what was imported and AF
 			// has not touched the copy since, so the full text replaces the cut one.
 			it.Status, it.Reason = claudeImportUpdate, claudeImportRefresh
@@ -486,11 +486,14 @@ func agentMemImportEvaluate(mem *os.File, file, slug, rel string, history map[st
 	return it, false
 }
 
-// agentMemImportRefreshable reads the stored file of a memory and asks whether it is still the
-// import's own text.
-func agentMemImportRefreshable(rel, name string) bool {
+// agentMemImportStateFor reads the stored file of a memory and asks the history whether it is
+// still the import's own text.
+func agentMemImportStateFor(rel, name string) agentMemImportState {
 	raw, ok, err := agentMemReadFile(filepath.Join(agentMemDir(), filepath.FromSlash(rel), name+".md"))
-	return err == nil && ok && agentMemImportIntact(rel+"/"+name+".md", raw)
+	if err != nil || !ok {
+		return agentMemImportUnknown
+	}
+	return agentMemImportStateOf(rel+"/"+name+".md", raw)
 }
 
 var claudeImportOrder = map[string]int{

@@ -367,21 +367,42 @@ func agentMemLatestChange(rel string) (string, error) {
 	return "", nil
 }
 
-// agentMemImportIntact says whether the AF copy of rel ("projects/<id>/<name>.md", whose bytes
-// are current) is still exactly what an import wrote: its newest published change is an import
-// and the file equals that change's text. It is the evidence that no AF save, pin or revert has
-// touched the memory since. When in doubt (no history, a git error) the answer is false.
-func agentMemImportIntact(rel string, current []byte) bool {
+// agentMemImportState is what the history says about the AF copy of rel ("projects/<id>/<name>.md",
+// whose bytes are current) relative to the import that created it.
+type agentMemImportState int
+
+const (
+	// agentMemImportUnknown: the history cannot say (no change recorded, a git error, a missing
+	// blob). It is never evidence that AF moved on, nor that it did not.
+	agentMemImportUnknown agentMemImportState = iota
+	// agentMemImportIntact: the newest published change is an import and the file is byte for
+	// byte its text; no AF save, pin or revert has touched the memory since.
+	agentMemImportIntact
+	// agentMemImportChanged: the newest change is not an import, or the file differs from the
+	// import's text (a hand edit).
+	agentMemImportChanged
+)
+
+func agentMemImportStateOf(rel string, current []byte) agentMemImportState {
 	commit, err := agentMemLatestChange(rel)
 	if err != nil || commit == "" {
-		return false
+		return agentMemImportUnknown
 	}
 	msg, err := memoryGitRun("log", "-1", "--format=%B", commit)
-	if err != nil || agentMemTrailers(msg)["AF-Op"] != "import" {
-		return false
+	if err != nil {
+		return agentMemImportUnknown
+	}
+	if agentMemTrailers(msg)["AF-Op"] != "import" {
+		return agentMemImportChanged
 	}
 	b, ok, err := agentMemBlob(commit, rel)
-	return err == nil && ok && bytes.Equal(b, current)
+	switch {
+	case err != nil || !ok:
+		return agentMemImportUnknown
+	case bytes.Equal(b, current):
+		return agentMemImportIntact
+	}
+	return agentMemImportChanged
 }
 
 // agentMemRevertReq undoes one published change, or (Forget) removes the memory as that change

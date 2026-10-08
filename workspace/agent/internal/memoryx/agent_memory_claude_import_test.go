@@ -162,7 +162,7 @@ func TestClaudeImportNestedTypeAndLongDescription(t *testing.T) {
 	if ld := e.item(pv, "long-desc"); ld.Status != claudeImportNew || ld.Description != long {
 		t.Errorf("long-desc = %s, %d chars: a long description is imported whole", ld.Status, utf8.RuneCountInString(ld.Description))
 	}
-	if it := e.item(pv, "too-long-desc"); it.Status != claudeImportInvalid || it.Reason != "bad_description" {
+	if it := e.item(pv, "too-long-desc"); it.Status != claudeImportInvalid || it.Reason != "description_too_long" {
 		t.Errorf("a description over the store limit is listed, never cut: %+v", it)
 	}
 

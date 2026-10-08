@@ -105,18 +105,31 @@ func agentMemExportScan(e agentMemEntry, data []byte) []memorySecretFinding {
 		agentMemScanText("file", string(data))...)
 }
 
-// agentMemExportCarry returns the lines of raw's `metadata:` block that a write-back keeps: every
-// entry except the keys AF renders itself (type, af_source, af_hash), with its deeper lines.
-func agentMemExportCarry(raw []byte) []string {
+// agentMemExportCarryMax bounds what a write-back copies from the file it replaces, so a
+// rendered file stays well inside agentMemMaxFile whatever the native metadata held.
+const agentMemExportCarryMax = 4 << 10
+
+var agentMemExportCarryKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// agentMemExportCarry returns the entries of raw's `metadata:` block that a write-back keeps
+// (claude keeps node_type, originSessionId and modified there), and whether that was all of
+// them. Only a plain one-line `key: value` directly under metadata is carried, with an
+// unquoted key and value that contain no quote, backslash, escape or YAML structure: the text
+// that was scanned is then exactly the text written, and the key is exactly the key a reader
+// sees, so AF's own keys (type, af_source, af_hash) can never be doubled. Anything else (a
+// nested block, a quoted or escaped key or value, an oversized block) is reported as not
+// carried, never copied.
+func agentMemExportCarry(raw []byte) (lines []string, complete bool) {
 	s := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	rest, ok := strings.CutPrefix(s, "---\n")
 	if !ok {
-		return nil
+		return nil, true
 	}
 	head, _, _ := strings.Cut(rest, "\n---")
-	var out []string
-	inMeta, keep := false, false
+	complete = true
+	inMeta := false
 	childIndent := -1
+	size := 0
 	for _, line := range strings.Split(head, "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
@@ -134,21 +147,25 @@ func agentMemExportCarry(raw []byte) []string {
 		if childIndent < 0 {
 			childIndent = indent
 		}
-		if indent <= childIndent {
-			k, _, _ := strings.Cut(strings.TrimSpace(line), ":")
-			switch strings.TrimSpace(k) {
-			case "type", "af_source", "af_hash":
-				keep = false
-			default:
-				keep = true
-			}
-		}
-		if keep {
-			// Re-indented to AF's own two spaces, so the block stays one shape.
-			out = append(out, "  "+strings.Repeat(" ", max(indent-childIndent, 0))+strings.TrimSpace(line))
+		k, v, found := strings.Cut(strings.TrimSpace(line), ":")
+		v = strings.TrimSpace(v)
+		switch {
+		case indent != childIndent || strings.ContainsRune(line, '\t'):
+			complete = false // a nested line, or tab indentation
+		case !found || !agentMemExportCarryKeyRe.MatchString(k):
+			complete = false
+		case k == "type" || k == "af_source" || k == "af_hash":
+			// AF renders these itself.
+		case v == "" || strings.ContainsAny(v, "\"'\\{}[]|>&*!%@`#") || strings.HasPrefix(v, "- ") || strings.Contains(v, ": "):
+			complete = false
+		case size+len(k)+len(v) > agentMemExportCarryMax:
+			complete = false
+		default:
+			size += len(k) + len(v)
+			lines = append(lines, "  "+k+": "+v)
 		}
 	}
-	return out
+	return lines, complete
 }
 
 // agentMemExportMeta reads the provenance keys under `metadata:`.
@@ -550,8 +567,9 @@ func agentMemExportBuild(projectID, slug string, mem *os.File) (*agentMemExportP
 			AFUpdated: e.Updated, entry: &es[i]}
 		n := lookup(e.Name)
 		var carry []string
+		carryAll := true
 		if n != nil && n.raw != nil {
-			carry = agentMemExportCarry(n.raw)
+			carry, carryAll = agentMemExportCarry(n.raw)
 		}
 		data, hash := agentMemExportRender(projectID, e, carry)
 		it.data = data
@@ -578,10 +596,14 @@ func agentMemExportBuild(projectID, slug string, mem *os.File) (*agentMemExportP
 			// has, AF's version is the newer one and replaces it. Only a file that differs from
 			// the import (edited in claude afterwards) or that neither side wrote is a conflict.
 			it.nativeFH = n.fileHash
-			if agentMemImportRefreshable(rel, e.Name) {
+			switch agentMemImportStateFor(rel, e.Name) {
+			case agentMemImportIntact:
 				it.Status = claudeExportUnchanged
-			} else {
+			case agentMemImportChanged:
 				it.Status = claudeExportUpdate
+			default:
+				// Not knowing is not "AF moved on": an update would replace claude's original.
+				it.Status, it.Reason = claudeExportConflict, "import_history_unknown"
 			}
 		case n.parsed && agentMemExportOwn(n.source, projectID, e.Name) && n.afHash == n.hash &&
 			e.Revision > agentMemExportRecordedRevision(n.source):
@@ -597,6 +619,16 @@ func agentMemExportBuild(projectID, slug string, mem *os.File) (*agentMemExportP
 					it.Reason = "af_not_newer"
 				}
 			}
+		}
+		switch {
+		case len(data) > agentMemMaxFile && (it.Status == claudeExportNew || it.Status == claudeExportUpdate):
+			// AF must be able to read back what it writes.
+			it.Status, it.Reason, it.locked = claudeExportConflict, "too_large", true
+		case it.Status == claudeExportUpdate && !carryAll:
+			// The file holds metadata a write-back cannot copy faithfully (nested, quoted,
+			// escaped or oversized); replacing it would drop that silently. An explicit
+			// overwrite still goes through.
+			it.Status, it.Reason = claudeExportConflict, "native_metadata_not_carried"
 		}
 		if n != nil {
 			it.Modified = n.mtime.UTC().Format(time.RFC3339)

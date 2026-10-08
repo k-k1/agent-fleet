@@ -62,6 +62,11 @@ const (
 	// agentMemMaxDescription is counted in characters, not bytes: a Japanese description is 3
 	// bytes per character.
 	agentMemMaxDescription = 2000
+	// agentMemSaveMaxRequest bounds the JSON of a save: the body and description at the worst
+	// JSON escaping (6 bytes per control or quote-like character, 12 per astral one is covered
+	// by the description term) plus the other fields. The limits on the decoded values are what
+	// judge a save.
+	agentMemSaveMaxRequest = 6*agentMemMaxBody + 12*agentMemMaxDescription + 64<<10
 	// There is no per-line limit: the scanner runs every rule over the whole line (RE2 is
 	// linear), so a long line is vouched for like any other and the body bound is the only
 	// safety stop.
