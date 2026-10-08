@@ -144,6 +144,31 @@ describe("ticket references", () => {
     expect(host.querySelector("pre a")).toBeNull();
   });
 
+  it("links the back end of a range that reached the cache after the front end, in either order", async () => {
+    const only = (...keys: string[]) => payload(keys.map((k) => row("github", k)));
+    useWorkItemStore.setState({ payload: only("octo/fleet#956") });
+    await render("cached `#956-#1649`");
+    expect(links().map((a) => a.textContent)).toEqual(["#956"]);
+    await act(async () => useWorkItemStore.setState({ payload: only("octo/fleet#956", "octo/fleet#1649") }));
+    expect(links().map((a) => a.textContent)).toEqual(["#956", "#1649"]);
+
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    useWorkItemStore.setState({ payload: only("octo/fleet#1649") });
+    await render("cached `#956-#1649`");
+    expect(links().map((a) => a.textContent)).toEqual(["#1649"]);
+    await act(async () => useWorkItemStore.setState({ payload: only("octo/fleet#956", "octo/fleet#1649") }));
+    expect(links().map((a) => a.textContent)).toEqual(["#956", "#1649"]);
+  });
+
+  it("does not link a third end or double a link when the range is re-linked", async () => {
+    useWorkItemStore.setState({ payload: payload([956, 1649, 1650].map((n) => row("github", `octo/fleet#${n}`))) });
+    await render("cached `#956-#1649-#1650`");
+    expect(links().map((a) => a.textContent)).toEqual(["#956", "#1649"]);
+    await act(async () => useWorkItemStore.setState({ payload: payload([956, 1649, 1650, 1].map((n) => row("github", `octo/fleet#${n}`))) }));
+    expect(links().map((a) => a.textContent)).toEqual(["#956", "#1649"]);
+  });
+
   it("opens a merged or closed ticket the inbox no longer holds as a reference with a tracker link", async () => {
     await render("merged in #1652");
     await click(links()[0]);
