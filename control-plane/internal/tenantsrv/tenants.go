@@ -329,7 +329,7 @@ func (a Admin) ListMembers(w http.ResponseWriter, r *http.Request) {
 			// Row existence apart from the live state: state is "none" for a missing row but also
 			// when the runtime reports none (ecs-ec2 after Clean home, native when stopped), and
 			// DeleteMembership refuses on the row alone. Omitted when the lookup failed, so the
-			// Console falls back to offering Destroy workspace rather than a delete that can fail.
+			// Console falls back to offering both buttons.
 			if wsErr == nil {
 				row["has_workspace"] = hasRow
 			}

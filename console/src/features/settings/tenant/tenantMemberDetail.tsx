@@ -422,8 +422,9 @@ export function MemberView({
       // pending: removing the EFS home is a Fargate task; the outcome goes to the audit log.
       if (res?.pending) toast(tr("admin.destroy_started"));
       if (res?.leftovers?.length) toast(tr("admin.destroy_leftovers", { list: res.leftovers.join(", ") }));
-      onChanged();
-      poll();
+      // The detail holds a snapshot of the member (has_workspace included), so going back to the
+      // list and reloading is what lets the next open offer "Delete member for good".
+      onRemoved();
     } finally {
       setBusy(false);
     }
