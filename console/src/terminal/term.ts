@@ -84,16 +84,23 @@ function clipFail(key: string) {
 // highlight in place, so without this a Ctrl+C meant as an interrupt would re-copy the stale
 // selection instead of reaching the PTY.
 const copiedSel = new WeakMap<Terminal, string>();
+// Attempt counter per terminal: a slow earlier write that resolves after a newer attempt began
+// must not re-record its text.
+const copyGen = new WeakMap<Terminal, number>();
 function copySelection(term: Terminal, opts: { notify?: boolean; clear?: boolean } = {}) {
   const sel = term && term.getSelection();
   if (!sel) return;
+  // A new attempt voids any earlier success: it no longer says what the clipboard holds.
+  const gen = (copyGen.get(term) ?? 0) + 1;
+  copyGen.set(term, gen);
+  copiedSel.delete(term);
   if (opts.clear) term.clearSelection();
   if (!navigator.clipboard?.writeText) return clipFail("term.copy_failed");
   // Recorded only once the write succeeded: a refused auto-copy must leave the selection
   // copyable, so the user's explicit Ctrl+C retry copies instead of interrupting.
   navigator.clipboard.writeText(sel).then(
     () => {
-      copiedSel.set(term, sel);
+      if (copyGen.get(term) === gen) copiedSel.set(term, sel);
       if (opts.notify) toast(tr("term.copied"), { kind: "success", key: "term-clipboard", duration: 1500 });
     },
     () => clipFail("term.copy_failed"),

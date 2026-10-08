@@ -125,6 +125,24 @@ describe("terminal clipboard keys", () => {
     expect(writeText).toHaveBeenCalledTimes(2);
   });
 
+  it("an earlier successful copy of the same text does not survive a later refused auto-copy", async () => {
+    const writeText = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValue(new Error("denied"));
+    Object.defineProperty(navigator, "clipboard", { value: { writeText, readText: vi.fn() }, configurable: true });
+    setSetting("termCtrlCV", true);
+    const term: any = mount();
+    vi.spyOn(term, "hasSelection").mockReturnValue(true);
+    vi.spyOn(term, "getSelection").mockReturnValue("drag");
+    const h: KeyHandler = term._core._customKeyEventHandler;
+    term.element.dispatchEvent(new MouseEvent("mouseup", { button: 0 }));
+    await Promise.resolve();
+    await Promise.resolve();
+    term.element.dispatchEvent(new MouseEvent("mouseup", { button: 0 }));
+    await vi.waitFor(() => expect(toasts.length).toBe(1));
+    const retry = key("KeyC", { ctrlKey: true });
+    expect(h(retry)).toBe(false);
+    expect(writeText).toHaveBeenCalledTimes(3);
+  });
+
   it("OSC 52 copy toasts when the clipboard API is missing or refuses", async () => {
     const term: any = mount();
     const osc = (b64: string) => new Promise<void>((r) => term.write(`\x1b]52;c;${b64}\x07`, r));
