@@ -18,6 +18,8 @@ import { getSettings, subscribe as subscribeSettings, termFontStack } from "../l
 import { askConfirm } from "../ui/confirmBridge.ts";
 import { t as tr } from "../lib/i18n/index.ts";
 import { zoom } from "../app/viewport.ts";
+import { toast } from "../ui/toast.ts";
+import { clipAction } from "./clipKeys.ts";
 
 // One entry per pane. { term, fitAddon, ws, session, sessionListeners, ro }.
 // A placeholder (from an early onSession) may hold only session + sessionListeners,
@@ -68,13 +70,27 @@ function setSession(it: Inst, name: string | null) {
 }
 
 // Clipboard helpers. Browsers route Ctrl+C/Ctrl+V inside a focused terminal to the
-// PTY (SIGINT / literal ^V), NOT the system clipboard — so plain copy/paste never
-// worked. We wire explicit gestures (copy-on-select, Ctrl+Shift+C / Ctrl+Insert,
-// right/middle-click paste, Shift+Insert / Ctrl+Shift+V) to the async Clipboard API,
-// leaving Ctrl+C free to interrupt the foreground program.
-function copySelection(term: Terminal) {
+// PTY (SIGINT / literal ^V), NOT the system clipboard, so every clipboard gesture is wired
+// explicitly to the async Clipboard API: copy-on-select, Ctrl+Shift+C / Ctrl+Insert,
+// right/middle-click paste, Shift+Insert / Ctrl+Shift+V, and (setting termCtrlCV, see
+// clipKeys.ts) Ctrl+C with a selection / Ctrl+V. Plain Ctrl+C with nothing selected still
+// interrupts the foreground program.
+// A refused or unavailable clipboard (insecure context, denied permission, Safari outside a
+// gesture) toasts instead of failing silently; nothing here throws into the key handler.
+function clipFail(key: string) {
+  toast(tr(key), { kind: "error", key: "term-clipboard" });
+}
+function copySelection(term: Terminal, opts: { notify?: boolean; clear?: boolean } = {}) {
   const sel = term && term.getSelection();
-  if (sel && navigator.clipboard) navigator.clipboard.writeText(sel).catch(() => {});
+  if (!sel) return;
+  if (opts.clear) term.clearSelection();
+  if (!navigator.clipboard) return clipFail("term.copy_failed");
+  navigator.clipboard.writeText(sel).then(
+    () => {
+      if (opts.notify) toast(tr("term.copied"), { kind: "success", key: "term-clipboard", duration: 1500 });
+    },
+    () => clipFail("term.copy_failed"),
+  );
 }
 // Warn before pasting risky content into the terminal. At a raw shell prompt a paste
 // that contains newlines runs line-by-line (each Enter executes), and a very large paste
@@ -83,7 +99,8 @@ function copySelection(term: Terminal) {
 // pastes straight through. Covers every paste gesture (they all funnel through here).
 const PASTE_WARN_CHARS = 1000;
 function pasteClipboard(term: Terminal) {
-  if (!term || !navigator.clipboard) return;
+  if (!term) return;
+  if (!navigator.clipboard?.readText) return clipFail("term.paste_failed");
   navigator.clipboard
     .readText()
     .then((t) => {
@@ -116,7 +133,7 @@ function pasteClipboard(term: Terminal) {
         if (ok) term.paste(t);
       });
     })
-    .catch(() => {});
+    .catch(() => clipFail("term.paste_failed"));
 }
 
 // Apply the current font family/size from settings to every live terminal, live,
@@ -439,7 +456,7 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
         const bin = atob(b64);
         const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
         const text = new TextDecoder().decode(bytes);
-        if (text) navigator.clipboard.writeText(text).catch(() => {});
+        if (text) navigator.clipboard.writeText(text).catch(() => clipFail("term.copy_failed"));
       } catch {}
       return true; // handled — don't fall through to the OSC fallback
     });
@@ -519,43 +536,17 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   // The hard-reserved ones (Ctrl+W/T/N = close/new tab, Ctrl+Tab, Ctrl+digit, F11/F12)
   // ignore preventDefault outside a fullscreen Keyboard Lock, so they only reach the
   // shell in fullscreen — see the ⛶ toggle in TerminalView / the kb.lock KEYS below.
-  // Carve-outs (NO_GRAB): plain Ctrl+C/Ctrl+V stay SIGINT / ^V (and the mac ⌘ clipboard
-  // cases are handled above), and Ctrl +/-/0 keep browser zoom (no PTY meaning).
+  // Carve-outs (NO_GRAB): plain Ctrl+C/Ctrl+V reach the PTY unless clipAction claimed them
+  // (selection / setting), and the mac ⌘ clipboard cases are handled there too, and Ctrl +/-/0 keep browser zoom (no PTY meaning).
   const NO_GRAB = new Set(["KeyC", "KeyV", "Minus", "Equal", "Digit0", "NumpadAdd", "NumpadSubtract", "Numpad0"]);
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== "keydown") return true;
-    const mod = e.ctrlKey || e.metaKey;
-    // Clipboard shortcuts — return false so xterm does NOT also forward them to the
-    // PTY. Ctrl+C/V (without shift) are deliberately left alone (SIGINT / ^V).
-    if (mod && e.shiftKey && e.code === "KeyC") {
-      copySelection(term);
-      e.preventDefault();
-      return false;
-    }
-    if (mod && e.shiftKey && e.code === "KeyV") {
-      pasteClipboard(term);
-      e.preventDefault();
-      return false;
-    }
-    if (e.ctrlKey && !e.shiftKey && e.code === "Insert") {
-      copySelection(term);
-      e.preventDefault();
-      return false;
-    }
-    if (e.shiftKey && !e.ctrlKey && e.code === "Insert") {
-      pasteClipboard(term);
-      e.preventDefault();
-      return false;
-    }
-    // macOS conventions: ⌘C copies (only when there's a selection, else fall
-    // through), ⌘V pastes. (metaKey is Super on Win/Linux — harmless there.)
-    if (e.metaKey && !e.ctrlKey && !e.shiftKey && e.code === "KeyC" && term.hasSelection()) {
-      copySelection(term);
-      e.preventDefault();
-      return false;
-    }
-    if (e.metaKey && !e.ctrlKey && !e.shiftKey && e.code === "KeyV") {
-      pasteClipboard(term);
+    // Clipboard shortcuts — return false so xterm does NOT also forward them to the PTY, and
+    // preventDefault so the browser's own paste event cannot paste a second time.
+    const act = clipAction(e, term.hasSelection(), getSettings().termCtrlCV);
+    if (act) {
+      if (act === "paste") pasteClipboard(term);
+      else copySelection(term, { notify: true, clear: act === "copyClear" });
       e.preventDefault();
       return false;
     }

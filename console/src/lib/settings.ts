@@ -270,6 +270,9 @@ export type AgentLaunchDefaults = Record<string, AgentLaunchDefault>;
 export interface Settings {
   termFont: string;
   termSize: number;
+  /** Terminal: Ctrl+C copies when text is selected (else SIGINT) and Ctrl+V pastes, as in
+   * Cloud Shell. Off keeps both keys for the PTY (^C / ^V). */
+  termCtrlCV: boolean;
   /** CJK font: draws only the East Asian Width = Ambiguous characters (①②③ and the like)
    * with this font instead of the Latin code font (applyCjkFont / CJK_UNICODE_RANGE). One of
    * CJK_FONTS; CJK_FONT_AUTO leaves it to the OS, CJK_FONT_OFF keeps the Latin font. */
@@ -1141,6 +1144,7 @@ const DEFAULT_AGENT_LAUNCH: AgentLaunchDefaults = {
 const DEFAULTS: Settings = {
   termFont: "Source Code Pro",
   termSize: 13,
+  termCtrlCV: true,
   cjkFont: CJK_FONT_AUTO,
   viewerFont: "JetBrains Mono",
   viewerSize: 13,

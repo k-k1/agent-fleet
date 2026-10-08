@@ -299,8 +299,8 @@ Check its row in the **Schedules** section of the left pane.
 
 ### Ctrl+C doesn't work in the terminal / I can't copy-paste
 
-Working as intended. In the terminal, Ctrl+C is passed to the program as an interrupt (SIGINT). **Copy is
-automatic on select, or Ctrl+Shift+C; paste with right-click / middle-click / Ctrl+Shift+V**
+Working as intended. In the terminal, Ctrl+C with nothing selected is passed to the program as an interrupt (SIGINT); with a selection it copies. **Copy is
+automatic on select, or Ctrl+C with a selection / Ctrl+Shift+C; paste with right-click / middle-click / Ctrl+Shift+V**
 ([05](05-terminal.md)).
 
 ### App shortcuts such as the command palette don't work

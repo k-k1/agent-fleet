@@ -33,6 +33,8 @@ export const settings = {
   "display.cjk_font_note":
     "①②③ や Ⅰ ㈱ は欧文フォントも持っているため、そのままだと半角の細い字で描かれ、隣の漢字より小さく見えます。ここで選んだ和文フォントを、その範囲の文字にだけ優先して使います。■ ○ ★ は文章の表示だけが対象です。ターミナルと、ずれてはいけない等幅の表示（diff・コードブロック）では従来どおりです。CLI が半角として桁を数えて出力を組んでいるためです。「欧文優先」で全体を従来の見た目に戻せます。",
   "display.terminal": "ターミナル",
+  "display.term_ctrl_cv": "Ctrl+C / Ctrl+V でコピー・貼り付け",
+  "display.term_ctrl_cv_note": "選択中は Ctrl+C でコピー（未選択なら従来どおりプログラムを中断）、Ctrl+V で貼り付けます。オフにすると両方のキーをプログラムへ送ります。Ctrl+Shift+C / Ctrl+Shift+V は常に使えます。",
   "display.font": "フォント",
   "display.font_size": "文字サイズ",
   "display.file_viewer": "ファイルビューア",

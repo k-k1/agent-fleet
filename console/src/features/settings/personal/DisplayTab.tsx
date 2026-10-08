@@ -129,6 +129,10 @@ export function DisplayTab() {
         <Row label={tr("display.font_size")}>
           <Stepper value={s.termSize} onChange={(v) => setSetting("termSize", v)} />
         </Row>
+        <Row label={tr("display.term_ctrl_cv")}>
+          <OnOff value={s.termCtrlCV} onChange={(v) => setSetting("termCtrlCV", v)} />
+        </Row>
+        <p className="muted ds-note">{tr("display.term_ctrl_cv_note")}</p>
       </section>
 
       <section className="ds-group">
