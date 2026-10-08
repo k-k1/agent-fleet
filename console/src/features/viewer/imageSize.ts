@@ -45,6 +45,9 @@ let queue: {
   tenant: string;
   /** Only an answer about a known revision may be kept after it settles. */
   memo: boolean;
+  /** Mounted hooks still waiting on this ask; `pinned` once a plain `imageSize()` caller wants it. */
+  holders: number;
+  pinned: boolean;
   done: (v: ImageSize | null) => void;
 }[] = [];
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -108,17 +111,50 @@ export function knownImageSize(path: string, mtime?: number): ImageSize | null |
 
 /** Ask for one picture's size; batched with every other ask in the same short window. */
 export function imageSize(path: string, mtime?: number): Promise<ImageSize | null> {
+  return ask(path, mtime, true).p;
+}
+
+function ask(path: string, mtime: number | undefined, pin: boolean) {
   const scope = scopeOf();
   const key = keyOf(scope, path, mtime);
   const hit = known.get(key);
-  if (hit !== undefined) return Promise.resolve(hit);
+  if (hit !== undefined) return { key, p: Promise.resolve(hit) };
   const pending = waiting.get(key);
-  if (pending) return pending;
+  if (pending) {
+    const item = queue.find((q) => q.key === key);
+    if (item) {
+      if (pin) item.pinned = true;
+      else item.holders++;
+    }
+    return { key, p: pending };
+  }
   const memo = mtime !== undefined;
-  const p = new Promise<ImageSize | null>((done) => queue.push({ path, key, scope, tenant: getTenant(), memo, done }));
+  const p = new Promise<ImageSize | null>((done) =>
+    queue.push({ path, key, scope, tenant: getTenant(), memo, holders: pin ? 0 : 1, pinned: pin, done }),
+  );
   waiting.set(key, p);
   if (!timer && !inFlight) timer = setTimeout(flush, BATCH_WAIT_MS);
-  return p;
+  return { key, p };
+}
+
+/**
+ * A hook that no longer wants its answer. An ask nobody else holds and that is still waiting
+ * for its window is dropped, and an empty queue takes the window timer with it: otherwise the
+ * timer fires after the owner is gone (a test's jsdom torn down under it) for a request nobody
+ * reads. Once the request is in flight it is left alone.
+ */
+function release(key: string) {
+  const i = queue.findIndex((q) => q.key === key);
+  if (i < 0) return;
+  const item = queue[i];
+  if (item.pinned || --item.holders > 0) return;
+  queue.splice(i, 1);
+  waiting.delete(key);
+  item.done(null);
+  if (queue.length === 0 && timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
 }
 
 /** The size of `path`, asked for only while `enabled` (a card that has come near the viewport). */
@@ -131,9 +167,11 @@ export function useImageSize(path: string | null, mtime?: number, enabled = true
   useEffect(() => {
     if (!path || !enabled || cached !== undefined) return;
     let alive = true;
-    void imageSize(path, mtime).then((v) => alive && setGot({ key, v }));
+    const a = ask(path, mtime, false);
+    void a.p.then((v) => alive && setGot({ key, v }));
     return () => {
       alive = false;
+      release(a.key);
     };
   }, [key, path, mtime, enabled, cached]);
   if (cached !== undefined) return cached;
