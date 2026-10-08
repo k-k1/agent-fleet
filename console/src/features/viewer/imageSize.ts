@@ -45,6 +45,9 @@ let queue: {
   tenant: string;
   /** Only an answer about a known revision may be kept after it settles. */
   memo: boolean;
+  /** Mounted hooks still waiting on this ask; `pinned` once a plain `imageSize()` caller wants it. */
+  holders: number;
+  pinned: boolean;
   done: (v: ImageSize | null) => void;
 }[] = [];
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -108,17 +111,55 @@ export function knownImageSize(path: string, mtime?: number): ImageSize | null |
 
 /** Ask for one picture's size; batched with every other ask in the same short window. */
 export function imageSize(path: string, mtime?: number): Promise<ImageSize | null> {
+  return ask(path, mtime, true).p;
+}
+
+type Item = (typeof queue)[number];
+
+/** `item` is the queued ask this caller holds; null when it holds none (cached, or already in flight). */
+function ask(path: string, mtime: number | undefined, pin: boolean): { p: Promise<ImageSize | null>; item: Item | null } {
   const scope = scopeOf();
   const key = keyOf(scope, path, mtime);
   const hit = known.get(key);
-  if (hit !== undefined) return Promise.resolve(hit);
+  if (hit !== undefined) return { item: null, p: Promise.resolve(hit) };
   const pending = waiting.get(key);
-  if (pending) return pending;
+  if (pending) {
+    const item = queue.find((q) => q.key === key);
+    if (item) {
+      if (pin) item.pinned = true;
+      else item.holders++;
+    }
+    return { item: item ?? null, p: pending };
+  }
   const memo = mtime !== undefined;
-  const p = new Promise<ImageSize | null>((done) => queue.push({ path, key, scope, tenant: getTenant(), memo, done }));
+  let item!: Item;
+  const p = new Promise<ImageSize | null>((done) => {
+    item = { path, key, scope, tenant: getTenant(), memo, holders: pin ? 0 : 1, pinned: pin, done };
+    queue.push(item);
+  });
   waiting.set(key, p);
   if (!timer && !inFlight) timer = setTimeout(flush, BATCH_WAIT_MS);
-  return p;
+  return { item, p };
+}
+
+/**
+ * A hook that no longer wants its answer. An ask nobody else holds and that is still waiting
+ * for its window is dropped, and an empty queue takes the window timer with it: otherwise the
+ * timer fires after the owner is gone (a test's jsdom torn down under it) for a request nobody
+ * reads. Once the request is in flight it is left alone.
+ */
+function release(item: Item | null) {
+  // Only the ask this caller took hold of: a later ask under the same key (no mtime means
+  // every look asks again) belongs to someone else, and one already sent is not queued.
+  const i = item ? queue.indexOf(item) : -1;
+  if (!item || i < 0 || item.pinned || --item.holders > 0) return;
+  queue.splice(i, 1);
+  waiting.delete(item.key);
+  item.done(null);
+  if (queue.length === 0 && timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
 }
 
 /** The size of `path`, asked for only while `enabled` (a card that has come near the viewport). */
@@ -131,9 +172,11 @@ export function useImageSize(path: string | null, mtime?: number, enabled = true
   useEffect(() => {
     if (!path || !enabled || cached !== undefined) return;
     let alive = true;
-    void imageSize(path, mtime).then((v) => alive && setGot({ key, v }));
+    const a = ask(path, mtime, false);
+    void a.p.then((v) => alive && setGot({ key, v }));
     return () => {
       alive = false;
+      release(a.item);
     };
   }, [key, path, mtime, enabled, cached]);
   if (cached !== undefined) return cached;

@@ -185,4 +185,55 @@ describe("画像の W×H をまとめて聞く", () => {
     expect(await mountOnce()).toBe("640x480");
     host.remove();
   });
+
+  // The batch window's timer must not outlive the mounts that asked: a test (or a gallery
+  // scrolled away) that unmounts inside the 30 ms window would otherwise fire a request later,
+  // in the case of a torn-down jsdom as an unhandled "document is not defined".
+  describe("待っている間に外れた問い合わせ", () => {
+    const Probe = ({ path }: { path: string }) => {
+      const s = useImageSize(path);
+      return <span>{s ? `${s.w}x${s.h}` : "-"}</span>;
+    };
+    const settle = () => act(async () => void (await new Promise((r) => setTimeout(r, 80))));
+
+    it("窓が閉じる前に全員がアンマウントしたら、要求もタイマーも残らない", async () => {
+      const root = createRoot(document.createElement("div"));
+      await act(async () => root.render(<Probe path="gone.png" />));
+      await act(async () => root.unmount());
+      await settle();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("1 人でも残っていれば聞く。imageSize() の直接の呼び出しも消えない", async () => {
+      const a = createRoot(document.createElement("div"));
+      const b = createRoot(document.createElement("div"));
+      await act(async () => {
+        a.render(<Probe path="kept.png" />);
+        b.render(<Probe path="kept.png" />);
+      });
+      const direct = imageSize("pinned.png");
+      await act(async () => b.unmount());
+      await settle();
+      expect(await direct).toEqual({ w: 832, h: 1216 });
+      expect(bodies).toEqual([["kept.png", "pinned.png"]]);
+      await act(async () => a.unmount());
+    });
+
+    it("古い hook の後片付けは、同じキーの新しい問い合わせを取り消さない", async () => {
+      const hostA = document.createElement("div");
+      const hostB = document.createElement("div");
+      const a = createRoot(hostA);
+      const b = createRoot(hostB);
+      await act(async () => a.render(<Probe path="same.png" />));
+      await settle();
+      expect(hostA.textContent).toBe("832x1216");
+      dims = { w: 10, h: 20 };
+      await act(async () => b.render(<Probe path="same.png" />));
+      await act(async () => a.unmount());
+      await settle();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(hostB.textContent).toBe("10x20");
+      await act(async () => b.unmount());
+    });
+  });
 });

@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -100,5 +101,93 @@ func TestBuildProgramBlocksNativePeerChannel(t *testing.T) {
 	t.Setenv("AGENT_CLAUDE_FLAGS", "--verbose")
 	if !strings.Contains(buildProgram("77777777-7777-4777-8777-777777777new", "", "", "", "", "", true), "--settings '") {
 		t.Error("setting AGENT_CLAUDE_FLAGS makes the block disappear")
+	}
+}
+
+// launchSettingsOf decodes the one --settings argument of a built command line.
+func launchSettingsOf(t *testing.T, program string) map[string]any {
+	t.Helper()
+	if n := strings.Count(program, "--settings"); n != 1 {
+		t.Fatalf("want exactly one --settings, got %d: %q", n, program)
+	}
+	_, rest, _ := strings.Cut(program, "--settings '")
+	raw, _, ok := strings.Cut(rest, "'")
+	if !ok {
+		t.Fatalf("--settings argument is not single-quoted: %q", program)
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatalf("--settings is not valid JSON (%v): %s", err, raw)
+	}
+	return m
+}
+
+// TestBuildProgramSwitchesAutoMemoryOffWithAFMemory: while the Agent memory switch is on, every
+// launch shape (new, resume, drifted resume, fork) carries autoMemoryEnabled:false in its one
+// --settings, and with the switch off or unwired none does (ADR 0108 decision 6 step 2). The
+// JSON is decoded, so a malformed constant fails here rather than at claude's start.
+func TestBuildProgramSwitchesAutoMemoryOffWithAFMemory(t *testing.T) {
+	cfg := isolateSlot(t)
+	t.Cleanup(func() { AutoMemoryOff = nil })
+	const sid = "88888888-8888-4888-8888-888888888new"
+	// Two independent resume slots: the plain one has its own jsonl and no ledger entry; the
+	// drifted one's ledger entry points at a different, live id.
+	const plainSlot = "b7000000-0000-5000-8000-0000000plain"
+	writeSlotJSONL(t, cfg, "-tmp-repo", plainSlot)
+	writeSlotJSONL(t, cfg, "-tmp-repo", testLiveSID)
+
+	shapes := map[string]func() string{
+		"new":    func() string { return buildProgram(sid, "", "", "", "", "", true) },
+		"plan":   func() string { return buildProgram(sid, "m", "e", "plan", "lbl", "", false) },
+		"fork":   func() string { return buildProgram(sid, "", "", "", "", "99999999-9999-4999-8999-999999999999", true) },
+		"resume": func() string { return buildProgram(plainSlot, "", "", "", "", "", true) },
+		"flags-env": func() string {
+			t.Setenv("AGENT_CLAUDE_FLAGS", "--verbose")
+			return buildProgram(sid, "", "", "", "", "", true)
+		},
+		"drifted-resume": func() string {
+			sids.Write(testSlotSID, testLiveSID)
+			return buildProgram(testSlotSID, "", "", "", "", "", true)
+		},
+	}
+	// The resume shapes must really take the --resume branch, or they would test nothing.
+	for name, id := range map[string]string{"resume": plainSlot, "drifted-resume": testLiveSID} {
+		AutoMemoryOff = nil
+		if got := shapes[name](); !strings.HasPrefix(got, "claude --resume '"+id+"' ") {
+			t.Fatalf("%s: want a resume of %s: %q", name, id, got)
+		}
+	}
+
+	for _, tc := range []struct {
+		label string
+		hook  func() bool
+		off   bool
+	}{
+		{"unwired", nil, false},
+		{"switch off", func() bool { return false }, false},
+		{"switch on", func() bool { return true }, true},
+	} {
+		AutoMemoryOff = tc.hook
+		for name, build := range shapes {
+			m := launchSettingsOf(t, build())
+			v, has := m["autoMemoryEnabled"]
+			if tc.off && v != false {
+				t.Errorf("%s/%s: autoMemoryEnabled = %v, want false", tc.label, name, v)
+			}
+			if !tc.off && has {
+				t.Errorf("%s/%s: autoMemoryEnabled must be absent, got %v", tc.label, name, v)
+			}
+			// The peer-channel block survives in both variants.
+			if m["crossSessionInbound"] != "refuse" {
+				t.Errorf("%s/%s: crossSessionInbound lost: %v", tc.label, name, m)
+			}
+			perms, _ := m["permissions"].(map[string]any)
+			if deny, _ := perms["deny"].([]any); len(deny) != 2 || deny[0] != "ListAgents" || deny[1] != "SendMessage" {
+				t.Errorf("%s/%s: permissions.deny lost: %v", tc.label, name, m)
+			}
+		}
+	}
+	if strings.Contains(nativePeerSettingsNoAutoMemory, "'") {
+		t.Errorf("settings containing a single quote break under ShellQuote")
 	}
 }

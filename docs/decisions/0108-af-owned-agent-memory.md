@@ -123,13 +123,27 @@ that is safe when what one session writes is read by every kind.
      the command's `--dry-run` work while it is off. There is no continuous sync: claude → AF on
      every trigger would resurrect memories forgotten in AF and overwrite AF edits with claude's
      older text.
-   - Step 2 (decided after measuring): switch claude's auto-memory off (`autoMemoryEnabled` /
-     `CLAUDE_CODE_DISABLE_AUTO_MEMORY`) and let claude use the MCP tools like every other kind.
-     Pointing claude's native writer at the store (`autoMemoryDirectory`) is acceptable **only** if
-     what claude writes there is never published by being written: AF has to scan it (decision 9),
-     check its revision and attribute it before it becomes a memory; if that cannot be guaranteed,
-     the option is rejected.
-     These setting and environment names come from the 2.1.288 binary; none is measured.
+   - Step 2 (decided 2026-10-08, #1734): while the switch is on, every claude launch carries
+     `autoMemoryEnabled:false` in its one `--settings` JSON (the flag layer beats the member's own
+     settings; nothing is written to `settings.json`, so switching off needs no cleanup — the next
+     launch just omits it). claude then loads no `MEMORY.md` and writes no memory files, and uses the
+     MCP tools like every other kind. The environment variable is not used:
+     `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0` forces auto-memory back on.
+     Pointing claude's native writer at the store (`autoMemoryDirectory`) is **rejected**: claude
+     writes there with its file tools, so a memory would be published by being written, with no
+     scan (decision 9), revision check or attribution, and claude offers no way to hold the write.
+     Measured on the 2.1.293 binary (static; no live probe, which needs a claude login): auto-memory
+     off means neither read nor write; the directory setting moves both. Cost for this project:
+     claude loads 25,000 B of its 26,817 B `MEMORY.md` (about 12–14k tokens) plus about 3 KB of its
+     memory prompt at every start, while AF's guidance is 760 B and `memory_index` about 32 KB
+     (24 KB described plus 8 KB names), so both together cost about 30k tokens at start. Over two
+     weeks of 767 sessions claude made 52 native memory Writes and 15 Edits against 2
+     `memory_save` calls. Consequences: only launches after the change are affected; native
+     memories written after the last import are not read until the member imports again, so the
+     Console and the guide say to turn the switch on and import once more (applying needs the switch
+     on; preview works while off) before starting new claude sessions; switching off
+     returns claude to its own memory and what was saved in AF does not appear there (one way,
+     until the explicit write-back of step 3 fills the gap).
    - Step 3 (#1914): the reverse copy, AF → claude's native memory, is allowed as an **explicit,
      previewed, one-shot** action per project (Console "Write back to Claude Code", or
      `af-memory export`), never continuous. It is safe because while AF memory is on claude's native
@@ -216,15 +230,13 @@ that is safe when what one session writes is read by every kind.
   write tool, not after it.
 - The member carries no approval load; review is after the fact, through the change list, and
   #1559's automated review is meant to take most of it.
-- Two memories coexist for claude until step 2 of decision 6 is decided; claude pays for both
-  indexes in that time.
+- claude reads one memory, AF's, while the switch is on (decision 6 step 2); the native one is
+  untouched on disk and returns, without AF's memories, when the switch goes off.
 
 ## Open questions (decide after measuring)
 
-1. What `autoMemoryDirectory` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY` actually do on the shipped
-   Claude Code: whether the directory setting moves the index and the files, whether claude still
-   loads the index from there, and whether its writes there can be held back until AF has scanned
-   and attributed them.
+1. ~~What `autoMemoryDirectory` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY` do~~ — answered in decision 6
+   step 2 (#1734); still open: a live check that a new claude session loads no `MEMORY.md`.
 2. The size of the `memory_index` answer and how its entries are ranked (recency, `kinds`), and the
    cost of the coexistence period measured on a real project.
 3. Purging a secret from history: rewriting the 0022 history for one memory, and what that does to
@@ -242,7 +254,7 @@ that is safe when what one session writes is read by every kind.
 - **P1** — the store, the MCP tools with revisions, authorship and history, the secret scan, the
   Console change list with forget and rollback, the one-time claude seed.
 - **P2** — the distributed guidance block, and lcpp's per-session injection.
-- **P3** — decision 6 step 2 after measuring; tie-in with #1559 (automated review) and #1558
+- **P3** — decision 6 step 2, decided after measuring (#1734; the live check is open); tie-in with #1559 (automated review) and #1558
   (search).
 
 ## Note (2026-10-08): the guidance block (P2, #1733)
