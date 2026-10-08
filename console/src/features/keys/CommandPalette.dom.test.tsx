@@ -354,4 +354,39 @@ describe("command palette — session families (#1887)", () => {
     type("chief");
     expect(titles().sort()).toEqual(["chief", "kidIdle", "kidWaiting"]);
   });
+
+  describe("with a parent whose title differs from its name", () => {
+    beforeEach(() => {
+      act(() => {
+        useNotificationStore.setState({ items: [askedAt("newWaitingChild", "2026-09-01T12:00:00Z")] });
+        useSessionsStore.setState({
+          sessions: [
+            session("stoppedParent", { alive: false, title: "Zanzibar orchestrator" }),
+            session("oldWorkingChild", { title: "oldWorkingChild", state: "working", originSession: "stoppedParent", createdAt: "2026-09-01T00:00:00Z" }),
+            session("newWaitingChild", { title: "newWaitingChild", state: "question", originSession: "stoppedParent", createdAt: "2026-09-02T00:00:00Z" }),
+          ],
+        });
+      });
+    });
+
+    it("keeps the attention order under a query, and Enter opens the row on top", () => {
+      mount();
+      // Empty query: family order (parent, older child, newer child).
+      expect(titles()).toEqual(["Zanzibar orchestrator", "oldWorkingChild", "newWaitingChild"]);
+      // A query matching only the children restores the frozen attention order: waiting first.
+      type("WorkingChild");
+      expect(titles()).toEqual(["oldWorkingChild"]);
+      type("Child");
+      // (The fuzzy filter also admits the stopped parent, which sorts last.)
+      expect(titles().slice(0, 2)).toEqual(["newWaitingChild", "oldWorkingChild"]);
+      expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("newWaitingChild");
+    });
+
+    it("finds the children by the parent's title, which is not its name", () => {
+      mount();
+      type("zanzibar");
+      expect(titles().sort()).toEqual(["Zanzibar orchestrator", "newWaitingChild", "oldWorkingChild"]);
+      expect(rowOf("newWaitingChild").querySelector(".cp-sess-parent")?.textContent).toContain("Zanzibar orchestrator");
+    });
+  });
 });

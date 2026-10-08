@@ -560,8 +560,10 @@ export function CommandPalette() {
   //    the middle would cause exactly the row-swapping-under-the-cursor the freeze prevents.
   //  - A session in `order` that has left the list (stopped then archived/deleted) simply
   //    falls away.
-  const sessionItems = useMemo<Item[]>(() => {
-    if (!open) return [];
+  //  - `grouped` is the empty-query list (family blocks); `flat` is the frozen order itself,
+  //    which any query filters, so a search keeps the attention order.
+  const sessionLists = useMemo<{ flat: Item[]; grouped: Item[] }>(() => {
+    if (!open) return { flat: [], grouped: [] };
     void locale; // dep: state badges and kind names are built in the current language
     const rank = new Map(order.map((n, i) => [n, i]));
     const tail = order.length;
@@ -573,10 +575,11 @@ export function CommandPalette() {
     // slotting into a block and shifting the rows below it.
     const rows = layoutFamilies(sorted, (s) => !order.length || rank.has(s.name));
     const byName = new Map(sessions.map((s) => [s.name, s]));
-    return rows.map(({ session: s, depth }) => {
+    const item = (s: Session, depth: number) => {
       const p = s.originSession && s.originSession !== s.name ? byName.get(s.originSession) : undefined;
       return sessionItem(s, repos, running, depth, p ? displayName(p) : undefined);
-    });
+    };
+    return { flat: sorted.map((s) => item(s, 0)), grouped: rows.map((r) => item(r.session, r.depth)) };
   }, [open, sessions, repos, order, running, locale]);
 
   const commandItems = useMemo<Item[]>(() => {
@@ -639,7 +642,9 @@ export function CommandPalette() {
     (mode === "talk" && talk === null && !!q.trim());
   const items =
     mode === "sessions"
-      ? sessionItems
+      ? q.trim()
+        ? sessionLists.flat
+        : sessionLists.grouped
       : mode === "command"
         ? commandItems
         : mode === "changed"

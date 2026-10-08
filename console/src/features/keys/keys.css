@@ -441,7 +441,7 @@
   padding: 1px 10px;
   cursor: pointer;
 }
-/* ---- palette: session families (#1887) ----
+/* ---- palette: session families ----
    Unfiltered list: a child is indented under its parent with a tree guide; --cp-depth is
    capped in the component. A filtered list is flat and the row carries "↳ parent" instead. */
 .cp-item.cp-nested {
@@ -454,8 +454,13 @@
   left: calc(var(--cp-depth, 1) * 18px - 6px);
   color: var(--muted);
 }
+/* The marker is auxiliary: it shrinks first (high shrink factor) and the title keeps a
+   * floor, so a long parent name never pushes the child's own name out of the row. */
+.cp-item.cp-sess .cp-title {
+  min-width: 3em;
+}
 .cp-sess-parent {
-  flex: 0 1 auto;
+  flex: 0 1000 auto;
   min-width: 0;
   max-width: 30%;
   overflow: hidden;
