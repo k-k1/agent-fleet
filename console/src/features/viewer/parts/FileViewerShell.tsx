@@ -10,7 +10,7 @@ import { useT } from "../../../lib/i18n/index.ts";
 import { CodeView, type LineMarks } from "../CodeView.tsx";
 import { DocPreview } from "../DocPreview.tsx";
 import { ImageView } from "../ImageView.tsx";
-import { MarkdownView } from "../MarkdownView.tsx";
+import { FileMarkdownView } from "../FileMarkdownView.tsx";
 import { MarpView } from "../MarpView.tsx";
 import { PdfView } from "../PdfView.tsx";
 import type { FileSurfaces } from "../fileMode.ts";
@@ -84,7 +84,7 @@ export function FileViewerShell(props: FileViewerShellProps) {
         <MarpView source={props.previewSource} />
       ) : props.preview === "normal" ? (
         <div className="md-scroll" ref={props.scrollMemory("preview")}>
-          <MarkdownView source={props.previewSource} basePath={filePath} onOpenFile={props.onOpenFile} onOpenDir={props.onOpenDir} />
+          <FileMarkdownView source={props.previewSource} filePath={filePath} onOpenFile={props.onOpenFile} onOpenDir={props.onOpenDir} />
         </div>
       ) : (
         <CodeView

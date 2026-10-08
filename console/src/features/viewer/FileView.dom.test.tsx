@@ -343,6 +343,8 @@ describe("reuse of the existing rendering assets", () => {
     expect(lastPreview()).toMatchObject({
       source: PLAIN_MD,
       basePath: "repos/x/doc.md",
+      // `#N` is read against the working copy the file lives in (#1900).
+      repo: "x",
     });
     // The link handlers are what make relative links and mermaid-bearing docs
     // behave the same as in the read-only pane.
