@@ -11,7 +11,7 @@ export const assistant: Record<keyof typeof jaAssistant, string> = {
   //     Agent returns Japanese, but for builtins the Console catalog resolves display) ---
   "assistant.af.name": "Agent Fleet Assistant",
   "assistant.af.desc":
-    "Hi! I'll guide you through using Agent Fleet. I answer while checking real things — how to do something, and the current state of your workspace (running sessions and so on).",
+    "Hi! I'll guide you through using Agent Fleet. I answer by checking real things: how to do something, and the current state of your workspace (running sessions and so on).",
   "assistant.operator.name": "Fleet Operator",
   "assistant.operator.desc":
     "The fleet's command center. I watch running sessions and, when needed, send them instructions or spin up new sessions to move work forward (including starting a task from a handoff or brainstorm). I can also review, add to, and bulk-send the memo queue. I consult other assistants for specialized calls, and I confirm before acting.",
@@ -44,10 +44,10 @@ export const assistant: Record<keyof typeof jaAssistant, string> = {
   "assistant.auto_turn_delay": "Auto-reply bundling window",
   "assistant.auto_turn_delay_off": "Immediate",
   "assistant.note_auto_turn_delay":
-    "Instead of replying the moment a completion report arrives, reports from other sessions arriving within this window are processed together in one turn (each auto-reply re-reads the whole conversation, so fewer turns means fewer tokens). Report cards and notifications still arrive immediately — only the assistant's follow-up is deferred.",
+    "Instead of replying the moment a completion report arrives, reports from other sessions arriving within this window are processed together in one turn (each auto-reply re-reads the whole conversation, so fewer turns means fewer tokens). Report cards and notifications still arrive immediately; only the assistant's follow-up is deferred.",
   "assistant.quiet_completion": "Quiet completion reports",
   "assistant.note_quiet_completion":
-    "For successful completion reports, skip the automatic reply and only deliver the report card and a notification. The reports are handed to the assistant together with your next message. Interrupted, failed, and crashed reports — and questions / plan approvals — are still handled automatically.",
+    "For successful completion reports, skip the automatic reply and only deliver the report card and a notification. The reports are handed to the assistant together with your next message. Interrupted, failed and crashed reports, and questions / plan approvals, are still handled automatically.",
   "assistant.auto_pilot": "Auto-pilot (auto-handle questions & plans)",
   "assistant.note_auto_pilot":
     "When ON, if an instructed session stops at a multiple-choice question the operator answers with the session's recommendation automatically, and when it stops at plan approval the operator has another session review the plan, feeds back findings, and approves once clean. Every decision is shared in chat. Unclear questions and choices/plans involving destructive or irreversible operations still come to you first. Default OFF.",

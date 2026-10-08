@@ -19,11 +19,11 @@ export const aiassist: Record<keyof typeof jaAiassist, string> = {
 
   "aiassist.features": "Features that use AI assistance",
   "aiassist.note_features":
-    "Each can be turned off individually. A feature that is off hides its button entirely — you never press it only to be refused. Turning one off affects neither the others nor the assistant chat. Each feature can also have its own agent and model override — left unset, it follows the priority order and default model above.",
+    "Each can be turned off individually. A feature that is off hides its button entirely, so you never press it only to be refused. Turning one off affects neither the others nor the assistant chat. Each feature can also have its own agent and model override; left unset, it follows the priority order and default model above.",
   "aiassist.note_session_title":
     "After a few exchanges in a session with no title, the AI proposes a short title above the session chat. This setting also enables/disables the \"Ask AI\" button in a session's rename dialog.",
   "aiassist.note_chat_title":
-    "Enables/disables the \"Ask AI\" button in the assistant chat's rename dialog. Unlike sessions, a chat has no banner that proposes a title on its own — it generates only when you press the button.",
+    "Enables/disables the \"Ask AI\" button in the assistant chat's rename dialog. Unlike sessions, a chat has no banner that proposes a title on its own; it generates only when you press the button.",
   "aiassist.note_branch_name":
     "When creating a worktree or renaming a branch, suggests a short git-safe branch name from the conversation. A work-item launch whose title is not in English also gets an English slug for its branch name, once per title. It is a separate setting from \"Session title suggestion\".",
   "aiassist.note_reply_suggest_session":
@@ -33,9 +33,9 @@ export const aiassist: Record<keyof typeof jaAiassist, string> = {
   "aiassist.note_edit_suggest":
     "While editing a file in the File pane, proposes a replacement for the selection from your instruction (you review it before accepting or discarding). Turn it off and no suggestion is offered.",
   "aiassist.note_plan_update":
-    "Enables/disables the assistant chat's \"refresh\" button, which re-derives the work plan from the recent exchange. Separate from the automatic summary carry-forward (context compaction) — this is the button you press explicitly. Turn it off and the button is hidden.",
+    "Enables/disables the assistant chat's \"refresh\" button, which re-derives the work plan from the recent exchange. Separate from the automatic summary carry-forward (context compaction). This is the button you press explicitly. Turn it off and the button is hidden.",
   "aiassist.note_mirror_translate":
-    "Shows a \"Translate\" button on mirror answers that came back in another language. Tokens are spent only when you press it, and no session turn is used. A translation is kept until that session is deleted, so the same text with the same agent/model is free from the second press on. Changing this feature's agent or model means there is no translation yet for that combination, so the next press generates a fresh one (the earlier agent/model's translation is not lost — it comes back if you switch back).",
+    "Shows a \"Translate\" button on mirror answers that came back in another language. Tokens are spent only when you press it, and no session turn is used. A translation is kept until that session is deleted, so the same text with the same agent/model is free from the second press on. Changing this feature's agent or model means there is no translation yet for that combination, so the next press generates a fresh one (the earlier agent/model's translation is not lost; it comes back if you switch back).",
   "aiassist.mirror_auto_translate": "Translate automatically",
   "aiassist.note_mirror_auto_translate":
     "Presses that button for you the moment a turn finishes, for answers that arrive while you are watching that session. Off by default: this is the one translation setting that spends without being asked. Answers already on screen when you open a session are never translated on their own — the button is still there for them.",
