@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 )
@@ -189,4 +190,98 @@ func countCalls(h *ec2Harness, prefix string) int {
 func forgetStart(h *ec2Harness) {
 	h.ec2.setTag("vol-1", EC2TagClaim, "")
 	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+}
+
+// Review round 1 of #1946.
+
+// runWrap lets a test act around RunInstances.
+type runWrap struct {
+	ec2API
+	run func(context.Context, *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error)
+}
+
+func (r runWrap) RunInstances(c context.Context, in *ec2.RunInstancesInput, _ ...func(*ec2.Options)) (*ec2.RunInstancesOutput, error) {
+	return r.run(c, in)
+}
+
+// A Start that places a home after the sweeper chose a free outdated slot must not end up on an
+// instance the sweeper then terminates: the sweeper reserves the slot first, so placement skips it.
+func TestECSEC2SweeperReservesAFreeOutdatedSlotBeforeItReadsOccupancy(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.ltLatest = 5
+	h.ec2.addSlot("i-old", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.setInstanceTag("i-old", ec2TagLaunchTemplateID, "lt-1")
+	h.ec2.setInstanceTag("i-old", ec2TagLaunchTemplateVersion, "3")
+	h.ec2.addHomeVolume("vol-1", "M-1", h.rt.base.name, "ap-northeast-1a")
+	h.ci.registered["i-old"] = true
+	h.ec2.afterDescribeVolumes = func() {
+		h.ec2.afterDescribeVolumes = nil
+		// A Start arriving now: its candidate list is read after the sweeper's tag write.
+		slots, err := h.rt.freeSlots(ctx, "ap-northeast-1a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range slots {
+			if s.id == "i-old" {
+				h.ec2.attach("vol-1", "i-old", time.Now())
+			}
+		}
+	}
+	h.factory().sweepFreeSlots(ctx, nil)
+	if attachedInstance(h.ec2.volumes["vol-1"]) == "i-old" && len(terminatedInstances(h)) > 0 {
+		t.Fatalf("a home was placed on the outdated slot and the slot terminated: %v", h.ec2.calls)
+	}
+	if ec2TagValue(h.ec2.instances["i-old"].Tags, ec2TagSlotReplace) == "" {
+		t.Fatal("the sweeper did not reserve the outdated slot before acting on it")
+	}
+}
+
+func TestECSEC2PendingReplacementStaysProtectedWhenTheTemplateCannotBeRead(t *testing.T) {
+	h, _ := outdatedSlotHarness(t)
+	h.ec2.addSlot("i-new", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.setInstanceTag("i-new", ec2TagReplacesHome, "vol-1")
+	h.ec2.ltLatest = 0
+	out, err := h.ec2.DescribeInstances(context.Background(), &ec2.DescribeInstancesInput{InstanceIds: []string{"i-new"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := *h.rt
+	b := *h.rt.base
+	b.name = "af-ws-other"
+	other.base = &b
+	if !other.pendingReplacementsForOthers(context.Background(), out)["i-new"] {
+		t.Fatal("an unreadable template released the pending replacement to another workspace")
+	}
+}
+
+func TestECSEC2ReservationDuringAFailingAutomaticLaunchDoesNotFallBack(t *testing.T) {
+	h, _ := outdatedSlotHarness(t)
+	h.rt.ec2 = runWrap{ec2API: h.ec2, run: func(context.Context, *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
+		h.ec2.setInstanceTag("i-old", ec2TagSlotReplace, time.Now().UTC().Format(time.RFC3339))
+		return nil, errors.New("InsufficientInstanceCapacity")
+	}}
+	if err := h.rt.Start(context.Background()); err == nil {
+		t.Fatalf("Start fell back to a slot reserved meanwhile: %v", h.ec2.calls)
+	}
+	if callIndex(h, "StartInstances i-old") >= 0 {
+		t.Fatalf("the reserved slot was started: %v", h.ec2.calls)
+	}
+}
+
+func TestECSEC2LostLaunchResponseIsAdoptedNotOrphaned(t *testing.T) {
+	ctx := context.Background()
+	h, _ := outdatedSlotHarness(t)
+	h.rt.ec2 = runWrap{ec2API: h.ec2, run: func(c context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
+		if _, err := h.ec2.RunInstances(c, in); err != nil {
+			return nil, err
+		}
+		return nil, errors.New("response lost after acceptance")
+	}}
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-new1" {
+		t.Fatalf("claim = %q, want the launched-but-unanswered i-new1 adopted (calls %v)", got, h.ec2.calls)
+	}
 }

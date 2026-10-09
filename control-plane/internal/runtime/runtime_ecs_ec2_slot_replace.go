@@ -162,32 +162,45 @@ func (e *ecsEC2Runtime) replaceReservedSlot(ctx context.Context, vol *ec2types.V
 	if ltErr != nil {
 		log.Printf("ecs-ec2: reading the slot launch template before reusing a replacement: %v", ltErr)
 	}
-	for _, prev := range e.earlierReplacements(ctx, vol, oldID) {
-		running, verdict := e.adoptableReplacement(ctx, prev, az, volID, lt)
-		switch verdict {
-		case replacementAdopt:
-			if newID == "" {
-				log.Printf("ecs-ec2: reusing %s, the replacement an earlier start of %s launched", prev, e.base.name)
-				newID, wake = prev, !running
+	adoptEarlier := func() {
+		for _, prev := range e.earlierReplacements(ctx, vol, oldID) {
+			running, verdict := e.adoptableReplacement(ctx, prev, az, volID, lt)
+			switch verdict {
+			case replacementAdopt:
+				if newID == "" {
+					log.Printf("ecs-ec2: reusing %s, the replacement an earlier start of %s launched", prev, e.base.name)
+					newID, wake = prev, !running
+				}
+			case replacementRetire:
+				// Launched from an older template and never used: give its place under the cap
+				// back so the launch below can have it.
+				_ = e.terminateSlot(ctx, prev, "unused replacement for "+e.base.name+" from an older launch template")
 			}
-		case replacementRetire:
-			// Launched from an older template and never used: give its place under the cap
-			// back so the launch below can have it.
-			_ = e.terminateSlot(ctx, prev, "unused replacement for "+e.base.name+" from an older launch template")
 		}
 	}
+	adoptEarlier()
 	if newID == "" {
 		// An EBS volume never leaves its AZ, so the new slot has to be in the home's.
 		id, err := e.runSlot(ctx, az, e.pool.maxSlots+1, volID)
 		if err != nil {
 			if automatic {
+				// A launch whose answer was lost may still have produced a box (tagged
+				// af-replaces-home at launch). Falling back to the old slot would leave it with
+				// no Start to collect it, so use it now instead of orphaning it.
+				adoptEarlier()
+			}
+			switch {
+			case newID != "":
+			case automatic:
 				e.deferAutoReplace(oldID, err)
 				return ec2Placement{}, errAutoReplaceDeferred
+			default:
+				return ec2Placement{}, fmt.Errorf("slot %s is reserved for replacement and no new slot could be launched "+
+					"(the reservation stays; the old slot is not reused): %w", oldID, err)
 			}
-			return ec2Placement{}, fmt.Errorf("slot %s is reserved for replacement and no new slot could be launched "+
-				"(the reservation stays; the old slot is not reused): %w", oldID, err)
+		} else {
+			newID = id
 		}
-		newID = id
 	}
 	if err := e.claim(ctx, volID, newID); err != nil {
 		e.retireUnusedReplacement(ctx, newID, volID)
@@ -446,18 +459,21 @@ func (e *ecsEC2Runtime) pendingReplacementsForOthers(ctx context.Context, out *e
 		return all()
 	}
 	// Reserved, or below $Latest with automatic replacement on: either way the owner's next
-	// Start moves, so a replacement launched for it is spoken for.
+	// Start moves, so a replacement launched for it is spoken for. Unlike the rest of the
+	// automatic logic, a template that cannot be read counts as "retiring" here: the cost of
+	// guessing wrong is a slot skipped, the alternative a replacement handed to someone else.
 	var lt ec2LaunchTemplate
+	ltUnknown := false
 	if !e.pool.noAutoReplace {
 		var ltErr error
 		if lt, ltErr = describeLaunchTemplate(ctx, e.ec2, e.pool.launchTemplate); ltErr != nil {
-			lt = ec2LaunchTemplate{}
+			lt, ltUnknown = ec2LaunchTemplate{}, true
 		}
 	}
 	reserved := map[string]bool{}
 	for _, r := range insts.Reservations {
 		for _, inst := range r.Instances {
-			if e.pool.slotRetiring(inst, lt) {
+			if ltUnknown || e.pool.slotRetiring(inst, lt) {
 				reserved[aws.ToString(inst.InstanceId)] = true
 			}
 		}

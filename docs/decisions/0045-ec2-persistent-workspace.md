@@ -1748,4 +1748,5 @@ failing launch is not paid at every Start); a *reservation* keeps decision 33's 
 as `pool.slot_replace_auto`, and the Slots tab says an outdated slot "will be replaced at next start". Switch:
 the CP env `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS` (default on; `false` restores reservation-only). Not changed: a failure
 after the new slot is claimed (release, detach) still fails the Start and retries at the next, as for a reservation.
+Two fences: the sweeper writes the reservation tag on a free outdated slot *before* its occupancy re-read (so placement's `slotNowReserved` and the re-read meet, as for decision 33), and the fallback re-reads the old slot's reservation first (a reservation made while the launch was failing still fails the Start); a launch whose answer was lost is adopted through `af-replaces-home` rather than left behind.
 Code: `runtime_ecs_ec2_slot_replace.go` (`replaceReservedSlot(…, automatic)`, `slotRetiring`).

@@ -1606,4 +1606,5 @@ mount はホームが無いのを見てきれいに失敗する。#1603 の追�
 `pool.slot_replace_auto` として監査し、スロット画面には古いスロットが「次回起動で入れ替わる」と出す。スイッチは
 CP の環境変数 `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS`（既定 ON。`false` で予約のみに戻る）。変えていない点: 新しい
 スロットを確保したあとの失敗（解放・切り離し）は、予約と同じく起動を失敗させ、次の起動でやり直す。
+柵が 2 つある。スイーパーは空きの古いスロットに、占有の再読の*前*に予約タグを書く（配置側の `slotNowReserved` と再読が、決定 33 と同じく交わる）。戻す前には古いスロットの予約を読み直す（起動の失敗中に入った予約は、起動を失敗させる）。応答が失われた起動は、置き去りにせず `af-replaces-home` で拾って使う。
 コード: `runtime_ecs_ec2_slot_replace.go`（`replaceReservedSlot(…, automatic)`・`slotRetiring`）。

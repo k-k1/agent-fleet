@@ -1688,6 +1688,13 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 				if !errors.Is(err, errAutoReplaceDeferred) {
 					return p, err
 				}
+				// The slot may have been reserved while the launch was failing; the stale read
+				// above says otherwise, and a reservation never falls back. Unreadable counts
+				// as reserved.
+				if e.slotNowReserved(ctx, inst) {
+					return ec2Placement{}, fmt.Errorf("slot %s is reserved for replacement and no new slot could be launched "+
+						"(the reservation stays; the old slot is not reused): %w", inst, err)
+				}
 			}
 			if !matches {
 				log.Printf("ecs-ec2: %s now needs %s but its home is on %s; releasing that slot first",
@@ -5707,6 +5714,7 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 		idle      time.Duration
 		terminate bool
 		reserved  bool
+		outdated  bool // below $Latest only; reserved by the sweeper itself before it acts
 	}
 	var due []candidate
 	for _, r := range out.Reservations {
@@ -5725,7 +5733,7 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 			if f.pool.slotRetiring(inst, lt) {
 				// No grace: nobody should be placed on it, so waiting buys nothing. The fences
 				// below (fresh occupancy, ECS tasks, task ENIs) still apply.
-				due = append(due, candidate{id: id, terminate: true, reserved: slotReserved(inst)})
+				due = append(due, candidate{id: id, terminate: true, reserved: slotReserved(inst), outdated: !slotReserved(inst)})
 				continue
 			}
 			if timersOff {
@@ -5750,6 +5758,28 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 			}
 		}
 	}
+	if len(due) == 0 {
+		return
+	}
+	// A slot that is only below $Latest (nobody reserved it) is reserved HERE, before the
+	// occupancy re-read below: a placement that attaches to it checks the reservation before and
+	// after the attach (slotNowReserved), so either it sees this tag or the re-read sees it.
+	// Without the tag the sweeper and a Start meet with nothing between them, and a home attached
+	// after the re-read lives on an instance that is about to be terminated.
+	kept := due[:0]
+	for _, c := range due {
+		if c.outdated {
+			if _, err := f.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+				Resources: []string{c.id},
+				Tags:      []ec2types.Tag{{Key: aws.String(ec2TagSlotReplace), Value: aws.String(time.Now().UTC().Format(time.RFC3339))}},
+			}); err != nil {
+				log.Printf("ecs-ec2 sweep: could not reserve the outdated free slot %s (%v); leaving it", c.id, err)
+				continue
+			}
+		}
+		kept = append(kept, c)
+	}
+	due = kept
 	if len(due) == 0 {
 		return
 	}
@@ -5796,7 +5826,7 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 			why := fmt.Sprintf("free for %.0fm", c.idle.Minutes())
 			if c.reserved {
 				why = "free and reserved for replacement"
-			} else if c.idle == 0 {
+			} else if c.outdated {
 				why = "free and below the launch template's $Latest"
 			}
 			probe.terminateSlot(ctx, c.id, why)
