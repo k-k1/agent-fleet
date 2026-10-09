@@ -336,7 +336,7 @@ export function PoolView() {
         {outdated.length > 0 && (
           <div className="admin-hint warn-text pool-outdated">
             {tr("pool.outdated_hint", { n: String(outdated.length), latest: st.template_latest || "?" })}{" "}
-            <Button variant="ghost" onClick={() => { setBulkErr(""); setBulk(outdated); }}>
+            <Button small onClick={() => { setBulkErr(""); setBulk(outdated); }}>
               {tr("pool.reserve_bulk", { n: String(outdated.length) })}
             </Button>
           </div>
@@ -396,17 +396,19 @@ export function PoolView() {
                       </span>
                     )}
                   </td>
+                  {/* Row actions use a bordered variant: a ghost button reads as plain text in a
+                      table cell, so an unreserved row looked like a reserved one. */}
                   {/* Quarantine is the only state this screen can act on, and the button is
                       the only way the product has to stop paying for one (the sweeper's
                       terminate stage filters on af-role=slot and never collects it). */}
                   <td>
                     {s.quarantined ? (
-                      <Button variant="ghost" onClick={() => { setKillErr(""); setKilling(s); }}>
+                      <Button small variant="danger" onClick={() => { setKillErr(""); setKilling(s); }}>
                         {tr("pool.terminate")}
                       </Button>
                     ) : (
                       <Button
-                        variant="ghost"
+                        small
                         disabled={reserving === s.instance_id}
                         title={tr(s.replace_reserved ? "pool.reserve_cancel_title" : "pool.reserve_title")}
                         onClick={() => void setReserved(s, !s.replace_reserved)}

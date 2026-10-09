@@ -297,7 +297,7 @@ describe("the EC2 slot pool surface", () => {
     expect(buttonsIn(rowOf("i-bad")).map((b) => b.textContent)).toEqual(["終了"]);
     // A healthy slot must not carry it: it is not a general "delete this machine" control.
     // (Its only action is the replacement reservation.)
-    expect(buttonsIn(rowOf("i-hot")).map((b) => b.textContent)).toEqual(["次回起動で入れ替え"]);
+    expect(buttonsIn(rowOf("i-hot")).map((b) => b.textContent)).toEqual(["入れ替えを予約"]);
   });
 
   it("asks before terminating, and names the instance and why it was quarantined", async () => {
@@ -370,8 +370,21 @@ describe("replacement reservations", () => {
     expect(rowOf("i-hot")?.textContent).toContain("v9");
     expect(rowOf("i-hot")?.textContent).toContain("$Latest より古い");
     expect(rowOf("i-zzz")?.textContent).not.toContain("$Latest より古い");
-    expect(rowOf("i-done")?.textContent).toContain("次回起動で入れ替え");
-    expect(rowOf("i-done")?.querySelector("button")?.textContent).toBe("入れ替えを取り消す");
+    expect(rowOf("i-done")?.textContent).toContain("次回起動で入れ替え予定");
+    expect(rowOf("i-done")?.querySelector("button")?.textContent).toBe("予約の取消");
+  });
+
+  it("renders the slot actions as bordered buttons, and the button text differs from the state badge", async () => {
+    api.mockResolvedValue(TEMPLATES);
+    await mount();
+    const buttonsIn = (row: Element | null) => Array.from(row?.querySelectorAll("button") || []);
+    const bulkBtn = Array.from(host!.querySelectorAll("button")).find((b) => b.textContent?.includes("1 台すべて"));
+    for (const b of [bulkBtn, ...buttonsIn(rowOf("i-hot")), ...buttonsIn(rowOf("i-done"))]) {
+      expect(b?.className).not.toContain("ui-btn-ghost");
+    }
+    const badge = rowOf("i-done")?.querySelector(".pool-badge.reserved")?.textContent;
+    expect(badge).toBeTruthy();
+    expect(buttonsIn(rowOf("i-hot")).map((b) => b.textContent)).not.toContain(badge);
   });
 
   it("lists the affected slots and people before the bulk reservation, and sends exactly those", async () => {

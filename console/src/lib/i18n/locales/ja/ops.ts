@@ -133,10 +133,10 @@ export const ops = {
   "pool.outdated_title": "$Latest（v{latest}）より古い起動テンプレートのバージョンで起動されています。スロットはユーザーデータを起動時にしか読まないため、入れ替えるまで古いままです。",
   "pool.outdated_hint":
     "{n} 台のスロットが $Latest（v{latest}）より古い起動テンプレートで動いています。入れ替え予約すると、各ワークスペースの次回起動で新しいスロットへ移ります。実行中のセッションには触れません。",
-  "pool.reserved": "次回起動で入れ替え",
-  "pool.reserve": "次回起動で入れ替え",
+  "pool.reserved": "次回起動で入れ替え予定",
+  "pool.reserve": "入れ替えを予約",
   "pool.reserve_title": "このスロットを予約します。ワークスペースの次回起動で $Latest から起動した新しいスロットへ移ります（ホームはそのまま引き継ぎ）。空きスロットはスイーパーが終了します。",
-  "pool.reserve_cancel": "入れ替えを取り消す",
+  "pool.reserve_cancel": "予約の取消",
   "pool.reserve_cancel_title": "予約を取り消します。次回起動でもこのスロットを使い続けます。",
   "pool.reserve_failed": "{id} の予約を変更できませんでした: {msg}",
   "pool.reserve_bulk": "{n} 台すべてを入れ替え予約…",
