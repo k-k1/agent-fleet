@@ -25,6 +25,7 @@ the manifests, and day-2 operations — is the runbook,
 | `sql.tf` | Cloud SQL for Postgres, the database, the CP's IAM database user |
 | `lb.tf` | The global address, Certificate Manager, the DNS records |
 | `iam.tf` | Service accounts and grants, each to one principal on one resource |
+| `pause.sh` | Pause and resume without destroying: node pools to 0, Cloud SQL stopped ([runbook](../../kubernetes/README.md#pausing)) |
 | `outputs.tf` | Includes `kustomize_deployment`, the `deployment.yaml` for the overlay |
 | `offline-tests/` | `terraform test` against mocked providers: the version floor and the DNS cache setting of the cluster |
 
@@ -94,9 +95,10 @@ for a low standing cost.
 **Paused** means the CP scaled to 0, both node pools at 0 nodes and Cloud SQL stopped; the data
 is kept. What still bills is in the right-hand column: the management fee, the forwarding rule,
 the Private Service Connect endpoint, the NAT address, the disks (the claims and the CP's own)
-and Cloud SQL's storage. Only deleting them stops those. The procedure, and its trap — the
+and Cloud SQL's storage. Only deleting them stops those. `pause.sh` in this directory does it
+and `--up` undoes it ([runbook, "Pausing"](../../kubernetes/README.md#pausing)). Its trap — the
 workspace pool has no taint, so a system pool at 0 lets the autoscaler start a workspace node
-for the cluster's own pods — is [#1639](https://github.com/k-k1/agent-fleet/issues/1639).
+for the cluster's own pods — is why it resizes that pool to 0 itself.
 
 ## Small profile
 
