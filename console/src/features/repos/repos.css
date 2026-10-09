@@ -393,6 +393,44 @@
   align-items: center;
   gap: 6px;
 }
+/* Holds .repo-id plus, on a folded node, the session summary line under it. Takes over the
+   flexible slot .repo-id had; the chips and badges stay centred beside both lines. */
+.repo-lines {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.repo-lines > .repo-id {
+  flex: none;
+}
+/* With a summary line the name/branch drops to a small muted first line. */
+.repo-lines.peeked .repo-name {
+  font-size: 11px;
+  color: var(--muted);
+}
+.repo-peek {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+}
+.repo-peek.stopped {
+  opacity: 0.55;
+}
+.repo-peek-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-peek .sess-kic,
+.repo-peek .session-state {
+  flex: none;
+}
 .repo-name {
   flex: 0 1 auto;
   min-width: 3em;
@@ -552,7 +590,8 @@
   }
   /* auto basis (not 0%) so the name claims its content width on line 1 and the
      overflowing trailing items wrap below, instead of squeezing to nothing. */
-  .repo-id {
+  .repo-id,
+  .repo-lines {
     flex: 1 1 auto;
   }
   .launch-wrap {

@@ -1,6 +1,6 @@
-// Render test for the folded-node peek: a collapsed repo node keeps ONE row — its own newest
-// live session — plus a "+n" chip for the other live ones. Stopped sessions and descendant
-// worktrees' sessions never appear there (the tally badge already folds the latter in).
+// Render test for the folded-node summary: a collapsed repo node shows its own newest live
+// session on the repo row (else its newest stopped one, dimmed); the other live ones go to the
+// tally badge's tooltip. Descendant worktrees' sessions never appear there.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -52,8 +52,11 @@ async function render(): Promise<void> {
   });
 }
 
-const peekRows = () => [...host.querySelectorAll(".proj-node-peek li.sess-row .sess-l1")].map((e) => e.textContent);
-const more = () => host.querySelector(".proj-peek-more")?.textContent ?? null;
+const peekText = (name = "af") =>
+  nodeHead(name)?.querySelector(".repo-peek-title")?.textContent ?? null;
+const nodeHead = (name: string) =>
+  host.querySelector<HTMLElement>(`.proj-node-head:has([data-rail-repo="${name}"])`);
+const badge = () => host.querySelector<HTMLElement>(".repo-sess-badge");
 
 beforeEach(() => {
   localStorage.clear();
@@ -73,8 +76,8 @@ afterEach(() => {
   host.remove();
 });
 
-describe("folded node peek", () => {
-  it("shows the newest live session and counts the rest", async () => {
+describe("folded node summary", () => {
+  it("shows the newest live session and lists the others on the badge", async () => {
     useSessionsStore.setState({
       sessions: [
         sess("old", { repo: "af", createdAt: at(1) }),
@@ -84,87 +87,34 @@ describe("folded node peek", () => {
       ],
     });
     await render();
-    expect(peekRows()).toEqual(["new"]);
-    expect(more()).toBe("+2");
+    expect(peekText()).toBe("new");
+    expect(nodeHead("af")?.querySelector(".repo-peek.stopped")).toBeNull();
+    expect(badge()?.title).toContain("mid\nold");
   });
 
-  it("shows nothing when only stopped sessions or a descendant's live session exist", async () => {
+  it("falls back to the newest stopped session, dimmed, when none is live", async () => {
     useSessionsStore.setState({
       sessions: [
-        sess("dead", { repo: "af", createdAt: at(1), alive: false }),
-        sess("kid", { repo: "af@w", createdAt: at(2) }),
+        sess("older", { repo: "af", createdAt: at(1), alive: false }),
+        sess("newer", { repo: "af", createdAt: at(2), alive: false }),
       ],
     });
     await render();
-    expect(peekRows()).toEqual([]);
-    expect(more()).toBeNull();
+    expect(peekText()).toBe("newer");
+    expect(nodeHead("af")?.querySelector(".repo-peek.stopped")).not.toBeNull();
+  });
+
+  it("shows nothing for a node whose only live session is a descendant's", async () => {
+    useSessionsStore.setState({ sessions: [sess("kid", { repo: "af@w", createdAt: at(2) })] });
+    await render();
+    expect(peekText()).toBeNull();
   });
 
   it("is gone once the node is open (the rows are already on screen)", async () => {
     localStorage.setItem("af-proj-af", "1");
     useSessionsStore.setState({ sessions: [sess("a", { repo: "af", createdAt: at(1) })] });
     await render();
-    expect(host.querySelector(".proj-node-peek")).toBeNull();
+    expect(peekText()).toBeNull();
     expect(host.querySelectorAll("li.sess-row").length).toBe(1);
-  });
-
-  describe("keyboard focus", () => {
-    const focusPeek = () => {
-      const btn = host.querySelector<HTMLElement>(".proj-node-peek .sess-btn")!;
-      act(() => btn.focus());
-      expect(document.activeElement).toBe(btn);
-    };
-    const set = async (sessions: Session[]) => {
-      await act(async () => {
-        useSessionsStore.setState({ sessions });
-      });
-    };
-    const a = (extra: Partial<Session> = {}) => sess("a", { repo: "af", createdAt: at(1), ...extra });
-
-    it("follows a newer session that takes over the peek", async () => {
-      useSessionsStore.setState({ sessions: [a()] });
-      await render();
-      focusPeek();
-      await set([a(), sess("b", { repo: "af", createdAt: at(2) })]);
-      expect(document.activeElement?.closest(".sess-row")?.querySelector(".sess-l1")?.textContent).toBe("b");
-    });
-
-    it("follows the peek when its session stops and another live one remains", async () => {
-      useSessionsStore.setState({ sessions: [sess("b", { repo: "af", createdAt: at(2) }), a()] });
-      await render();
-      focusPeek();
-      await set([sess("b", { repo: "af", createdAt: at(2), alive: false }), a()]);
-      expect(document.activeElement?.closest(".sess-row")?.querySelector(".sess-l1")?.textContent).toBe("a");
-    });
-
-    it("falls back to the repo card when the last live session stops", async () => {
-      useSessionsStore.setState({ sessions: [a()] });
-      await render();
-      focusPeek();
-      await set([a({ alive: false })]);
-      expect(document.activeElement?.getAttribute("data-rail-repo")).toBe("af");
-    });
-
-    it("does not steal focus later once a restore to the repo card was consumed", async () => {
-      useSessionsStore.setState({ sessions: [a()] });
-      await render();
-      focusPeek();
-      await set([a({ alive: false })]);
-      expect(document.activeElement?.getAttribute("data-rail-repo")).toBe("af");
-      act(() => (document.activeElement as HTMLElement).blur());
-      expect(document.activeElement).toBe(document.body);
-      await set([a({ alive: false }), sess("c", { repo: "af", createdAt: at(5) })]);
-      expect(document.activeElement).toBe(document.body);
-    });
-
-    it("leaves focus alone when it was elsewhere", async () => {
-      useSessionsStore.setState({ sessions: [a()] });
-      await render();
-      const other = document.createElement("button");
-      host.appendChild(other);
-      act(() => other.focus());
-      await set([a({ alive: false })]);
-      expect(document.activeElement).toBe(other);
-    });
   });
 });

@@ -8,6 +8,9 @@
 import { createPortal } from "react-dom";
 import { Suspense, lazy, useLayoutEffect, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent } from "react";
+import { kindClass } from "../../lib/sessionkind.ts";
+import { displayName, stateInfo } from "../../lib/sessionview.ts";
+import type { Session } from "../../types/session.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
@@ -59,6 +62,10 @@ export interface RepoRowProps {
   /** At least one session this row currently HIDES carries an unseen notification. Only a
    * folded node passes it: while the sessions are on screen they wear their own dot. */
   unread?: boolean;
+  /** A folded node's own session summary, drawn as a second line under the name: the newest
+   * live session, else the newest stopped one (muted). `others` names the remaining live ones
+   * for the tally badge's tooltip. Display only — the row click still folds/unfolds. */
+  peek?: { s: Session; others: string[] };
   onOpen: (e?: RMouseEvent) => void;
   /** Plain click on the card toggles the node's fold (SCM moved to the right-click
    * menu). Ctrl/⌘/middle-click still opens Source Control in a split. */
@@ -102,7 +109,24 @@ export interface RepoRowProps {
   onFocusPane?: (id: string) => void;
 }
 
-export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, unread, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onGitflowInit, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0, onOpenArchived, onStopSessions, aliveCount = 0 }: RepoRowProps) {
+// The folded row's second line: kind icon (colour = agent), title, run state. A stopped session
+// is dimmed so it never reads as running.
+function RepoPeek({ s }: { s: Session }) {
+  const st = stateInfo(s);
+  return (
+    <span className={"repo-peek" + (s.alive ? "" : " stopped")} title={displayName(s)}>
+      <span className={"sess-kic kind-" + kindClass(s.kind)} title={kindLabel(s.kind)}>
+        <Icon name={kindIcon(s.kind)} />
+      </span>
+      <span className="repo-peek-title">{displayName(s)}</span>
+      <span className={"session-state mini " + st.cls} title={st.text}>
+        <Icon name={st.icon} spin={st.spin} />
+      </span>
+    </span>
+  );
+}
+
+export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, unread, peek, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onGitflowInit, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0, onOpenArchived, onStopSessions, aliveCount = 0 }: RepoRowProps) {
   // SVN working copies (docs/log/41) are flat: no branch/SCM view/worktree, so the card
   // never opens Source Control and the menu shows svn actions (update/cleanup) instead
   // of git ones (branch switch / FF / commit).
@@ -223,6 +247,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
               provider/remote is identical to the parent). Base clones: name, with
               the current branch inline in muted small type — the old second meta
               line (branch + provider) is gone; the provider lives in the tooltip. */}
+          <div className={"repo-lines" + (peek ? " peeked" : "")}>
           <span className="repo-id">
             <span className="repo-name" title={r.worktree ? tr("repo.dir_line", { dir: r.name }) : undefined}>
               {/* Folder-flavored icons (shared with the Files tree's top level):
@@ -245,6 +270,8 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
             {r.locked && <Icon name="lock" className="repo-lock" title={tr("repo.locked_hint")} />}
             {isShared && <Icon name="broadcast" className="repo-shared" title={tr("repo.shared_badge")} />}
           </span>
+          {peek && <RepoPeek s={peek.s} />}
+          </div>
           {(r.dirty || r.integration || ((r.ahead || r.behind) ?? 0) > 0) && (
             <span className="repo-state">
               {r.dirty && (
@@ -289,7 +316,13 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
           {/* Session tally: alive count (green) wins; otherwise stopped count in
               muted — so a folded project still shows what's running inside. */}
           {sess && sess.alive > 0 && (
-            <span className="repo-sess-badge run" title={tr("repo.sess_running", { n: sess.alive })}>
+            <span
+              className="repo-sess-badge run"
+              title={
+                tr("repo.sess_running", { n: sess.alive }) +
+                (peek && peek.others.length > 0 ? "\n" + tr("pj.peek_more", { names: peek.others.join("\n") }) : "")
+              }
+            >
               ●{sess.alive}
             </span>
           )}
