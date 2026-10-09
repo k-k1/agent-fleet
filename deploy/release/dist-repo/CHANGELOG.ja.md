@@ -3,6 +3,13 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.30.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.30.0) — 2026-10-09
+
+ターンの実行中に送る続きのプロンプトを、セッションごとの送信待ちに溜められるようになりました。フォルダを zip で
+ダウンロードでき、Console のターミナルでは Ctrl+C と Ctrl+V でコピーと貼り付けができます。Agent Fleet のメモリは、
+オンの間は claude 自身のメモリに代わって使われ、claude へ書き戻すこともできます。期限のある GitHub App と
+Google Cloud のトークンは自動で更新され、ecs-ec2 のワークスペースで Chromium が動くようになりました。
+
 ## [0.29.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.29.1) — 2026-10-07
 
 0.29.0 の修正版です。0.29.0 に入っている Claude Code の版で Agent Fleet 自身の MCP ツールが再び使えるようになり、
