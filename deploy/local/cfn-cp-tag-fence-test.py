@@ -340,6 +340,13 @@ INVENTORY = [
         on_existing("ec2:DeleteTags", "instance", QUARANTINED, {"af-membership": None, "af-tenant": None})]),
     ("internal/runtime/runtime_ecs_ec2.go", "markSlotFree", "CreateTags", 1, [
         on_existing("ec2:CreateTags", "instance", SLOT, {"af-slot-idle-since": T})]),
+    # The sweeper's fence on a free slot below $Latest, or on an orphaned replacement
+    # (af-replaces-home): Ec2TagPoolResources already allows any key but af-pool / af-role on a
+    # resource of this pool, so no template change is needed - this holds that it stays so.
+    ("internal/runtime/runtime_ecs_ec2.go", "sweepFreeSlots", "CreateTags", 1, [
+        on_existing("ec2:CreateTags", "instance", SLOT, {"af-slot-retire": T}),
+        on_existing("ec2:CreateTags", "instance", dict(SLOT, **{"af-replaces-home": "vol-home"}),
+                    {"af-slot-retire": T})]),
     ("internal/runtime/runtime_ecs_ec2.go", "clearSlotFree", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-slot-idle-since": None})]),
     ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "ReserveSlotReplacement", "CreateTags", 1, [
