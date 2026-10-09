@@ -232,9 +232,10 @@ for fast restarts wants 0, and one that wants the root-volume bill bounded picks
 pay 135s and the slot's root-volume caches. Must be ≥ `Ec2SlotSleepSec` to mean "sleep, then
 terminate"; a smaller value simply skips the sleeping stage.
 
-It is not the way to move retained slots onto a changed launch template: reserve them for
-replacement in the Console's Settings → Admin → Slots tab, and each workspace moves to a new
-slot at its next start (`deploy/aws/ecs/README.md`, "Moving retained slots onto new user data").
+It is not the way to move retained slots onto a changed launch template: a slot below `$Latest`
+is replaced at its workspace's next start by itself (switch: the CP env
+`AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS`, default on), and you can reserve slots for replacement in
+the Console's Settings → Admin → Slots tab to force it; each workspace moves to a new slot at its next start (`deploy/aws/ecs/README.md`, "Moving retained slots onto new user data").
 
 ### `Ec2HibernateAfterSec`
 

@@ -1637,7 +1637,22 @@ Until then the Agent's own isolation still holds for every SDK that honours
    `aws cloudformation deploy --stack-name <pool stack> --template-file cfn/40-ec2-pool.yaml
    --capabilities CAPABILITY_NAMED_IAM` (parameters keep their previous values). The CP
    launches slots from the template's `$Latest`, so only new slots change.
-2. **Reserve the old slots for replacement** in the Console: Settings → Admin → the Slots tab
+2. **Nothing to do for most slots: a slot below `$Latest` is replaced by itself.** When a
+   workspace starts and its home is on a slot launched from an older launch template version
+   (or another template), the Start treats the slot as reserved: the same move as step 3,
+   with no notice in the member's WS bar (the Start just takes a little longer). A free slot
+   below `$Latest` is terminated by the sweeper like a reserved one. The Slots tab marks such
+   a slot "older than $Latest · replaced at next start". Each automatic move is in the audit
+   log as `pool.slot_replace_auto` (actor `slot-auto-replace`; the detail names the workspace,
+   the old version, `$Latest` and the new slot). Two differences from a reservation: if no new
+   slot can be launched (capacity, quota) the Start **does not fail** — the workspace stays on
+   its old slot and the CP retries at a Start at least 10 minutes later — and a slot whose
+   version cannot be read is left alone. To switch it off (for example while a new template
+   is being validated) set `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS=false` on the Control Plane;
+   reservations then still work as below.
+   **Reserve the old slots for replacement** in the Console when a workspace must
+   never be put back on its old slot (a reservation never falls back: if no new slot can be
+   launched, that Start fails): Settings → Admin → the Slots tab
    (super_admin). Each slot shows the launch template version it was launched from and
    whether that is older than `$Latest`; "Reserve all N for replacement…" lists the slots
    and the workspaces on them before it reserves exactly those below `$Latest` (each one is
@@ -1645,8 +1660,8 @@ Until then the Agent's own isolation still holds for every SDK that honours
    `pool.slot_replace_reserve`). "Replace at next start" / "Cancel replacement" on a row does
    one slot. The reservation is a tag on the instance (`af-slot-replace`); it moves nobody
    by itself and touches no running session.
-3. **Users stop and start their workspaces** when it suits them. Their WS bar says the next
-   start moves to a new slot. That Start launches a new slot of the workspace's class from
+3. **Users stop and start their workspaces** when it suits them. For a reserved slot, their
+   WS bar says the next start moves to a new slot (not for an automatic move). That Start launches a new slot of the workspace's class from
    the template's `$Latest` first, then moves the home off the reserved slot through the
    same release the sweeper uses (unmount before detach; refused while a task runs) and
    terminates the old instance; the home volume is never deleted. If the new slot cannot

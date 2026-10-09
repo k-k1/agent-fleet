@@ -94,6 +94,8 @@ export type PoolStatus = {
   /** The slot launch template's $Latest version number; absent when the CP could not read it,
    *  in which case no slot is marked outdated. */
   template_latest?: string;
+  // Slots below $Latest are replaced at their workspace's next start without a reservation.
+  auto_replace_outdated?: boolean;
 };
 type Golden = {
   arch: string;
@@ -335,7 +337,7 @@ export function PoolView() {
             (user data is read at launch), and a stop→start goes back to the same slot. */}
         {outdated.length > 0 && (
           <div className="admin-hint warn-text pool-outdated">
-            {tr("pool.outdated_hint", { n: String(outdated.length), latest: st.template_latest || "?" })}{" "}
+            {tr(st.auto_replace_outdated ? "pool.outdated_auto_hint" : "pool.outdated_hint", { n: String(outdated.length), latest: st.template_latest || "?" })}{" "}
             <Button small onClick={() => { setBulkErr(""); setBulk(outdated); }}>
               {tr("pool.reserve_bulk", { n: String(outdated.length) })}
             </Button>
@@ -386,8 +388,11 @@ export function PoolView() {
                   <td>
                     {s.template_version ? <span className="mono">v{s.template_version}</span> : <span className="muted">–</span>}
                     {s.template_outdated && (
-                      <span className="pool-badge outdated" title={tr("pool.outdated_title", { latest: st.template_latest || "?" })}>
-                        {tr("pool.outdated")}
+                      <span
+                        className="pool-badge outdated"
+                        title={tr(st.auto_replace_outdated ? "pool.outdated_auto_title" : "pool.outdated_title", { latest: st.template_latest || "?" })}
+                      >
+                        {tr(st.auto_replace_outdated && !s.replace_reserved ? "pool.outdated_auto" : "pool.outdated")}
                       </span>
                     )}
                     {s.replace_reserved && (

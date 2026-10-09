@@ -116,6 +116,10 @@ type ecsEC2Runtime struct {
 	// leases serialises this workspace's home across CP replicas (HomeLeaseStore); nil
 	// leaves it to the process-local locks.
 	leases HomeLeaseStore
+	// tenantID, workspaceID and onAutoReplace let an automatic slot replacement reach the
+	// CP's audit log (recordAutoReplace); onAutoReplace nil = not recorded.
+	tenantID, workspaceID string
+	onAutoReplace         func(context.Context, SlotAutoReplace)
 	// replica separates the process-local maps of two CPs a test stands up in one
 	// process (localKey). Always empty in production.
 	replica string
@@ -420,6 +424,11 @@ type ecsContainerInstanceAPI interface {
 // the CP only ever says "run one of these, in this AZ, at this size".
 type ec2PoolConfig struct {
 	launchTemplate string // AF_ECS_EC2_LAUNCH_TEMPLATE (id or name)
+	// noAutoReplace is AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS=false: a slot below the launch
+	// template's $Latest is then replaced only when an operator reserves it (#1473). The zero
+	// value is the default — automatic replacement ON (#1934) — so a pool built without the
+	// env keeps the new behaviour.
+	noAutoReplace bool
 	// amiArm64 is AF_ECS_EC2_AMI_ARM64, required only when a declared class says
 	// arm64: the launch template pins the x86_64 ECS-optimized AMI, and an arm64
 	// instance type cannot boot it (docs/log/70 §70.8).
@@ -638,6 +647,8 @@ type ecsEC2Factory struct {
 	pool ec2PoolConfig
 	// leases is Config.HomeLeases, handed to every runtime the factory builds.
 	leases HomeLeaseStore
+	// onAutoReplace is Config.OnSlotAutoReplace.
+	onAutoReplace func(context.Context, SlotAutoReplace)
 
 	subnetMu sync.Mutex
 	subnetAZ map[string]string // subnet-id -> AZ, resolved once
@@ -674,6 +685,7 @@ func newECSEC2Factory(mcfg Config) (RuntimeFactory, error) {
 	pool := ec2PoolConfig{
 		launchTemplate: os.Getenv("AF_ECS_EC2_LAUNCH_TEMPLATE"),
 		amiArm64:       os.Getenv("AF_ECS_EC2_AMI_ARM64"),
+		noAutoReplace:  !envBoolDefault("AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS", true),
 		pool:           envOr("AF_ECS_EC2_POOL", base.cfg.cluster),
 		classes:        parseSlotClasses(envOr("AF_ECS_EC2_SLOT_TYPES", "m7i.large:8192,m7i.xlarge:16384,m7i.2xlarge:32768")),
 		defaultClass:   os.Getenv("AF_ECS_EC2_DEFAULT_SLOT_CLASS"),
@@ -722,6 +734,8 @@ func newECSEC2Factory(mcfg Config) (RuntimeFactory, error) {
 		// A factory with no store keeps the process-local locks; log it, because with two
 		// replicas that is the race #1601 closed.
 		leases: mcfg.HomeLeases,
+
+		onAutoReplace: mcfg.OnSlotAutoReplace,
 	}
 	if f.leases == nil {
 		log.Printf("ecs-ec2: no store for home leases; a home is serialised within this Control Plane only")
@@ -758,6 +772,8 @@ func (f *ecsEC2Factory) New(ws Workspace, secretKey string, extraEnv []string) R
 		now:          time.Now,
 		sleep:        sleepCtx,
 		leases:       f.leases,
+
+		tenantID: ws.TenantID, workspaceID: ws.ID, onAutoReplace: f.onAutoReplace,
 	}
 }
 
@@ -1604,20 +1620,33 @@ type ec2Placement struct {
 //
 // reserved is the other fact placeHome needs from the same read: an operator has reserved
 // this slot for replacement (ec2TagSlotReplace), so it may not be reused whatever its type.
-func (e *ecsEC2Runtime) slotTypeMatches(ctx context.Context, instanceID string) (matches, reserved bool, err error) {
+//
+// outdated is the third: automatic replacement is on and the slot is below the launch
+// template's $Latest (#1934). The template is read here, once per Start; unreadable means
+// "not outdated", so a failing DescribeLaunchTemplates can never move anybody.
+func (e *ecsEC2Runtime) slotTypeMatches(ctx context.Context, instanceID string) (matches, reserved, outdated bool, err error) {
 	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
 	if err != nil {
 		if isAWSNotFound(err) {
-			return false, false, nil
+			return false, false, false, nil
 		}
-		return false, false, fmt.Errorf("describe slot %s: %w", instanceID, err)
+		return false, false, false, fmt.Errorf("describe slot %s: %w", instanceID, err)
 	}
 	for _, r := range out.Reservations {
 		for _, inst := range r.Instances {
-			return string(inst.InstanceType) == e.instanceType, slotReserved(inst), nil
+			if !e.pool.noAutoReplace {
+				if lt, ltErr := describeLaunchTemplate(ctx, e.ec2, e.pool.launchTemplate); ltErr != nil {
+					log.Printf("ecs-ec2: reading the slot launch template for %s: %v", e.base.name, ltErr)
+				} else {
+					outdated = e.pool.slotOutdated(inst, lt)
+				}
+			}
+			// A sweeper fence on a slot a Start won anyway is the automatic move's cue too.
+			outdated = outdated || (!e.pool.noAutoReplace && slotRetireTagged(inst))
+			return string(inst.InstanceType) == e.instanceType, slotReserved(inst), outdated, nil
 		}
 	}
-	return false, false, nil
+	return false, false, false, nil
 }
 
 func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
@@ -1644,7 +1673,7 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 			// the saver class (m6i, x86_64) to arm (m8g, arm64) and their workspace
 			// could not start again. So the match is checked before the affinity is
 			// honoured, and a stale slot is released rather than reused.
-			matches, reserved, err := e.slotTypeMatches(ctx, inst)
+			matches, reserved, outdated, err := e.slotTypeMatches(ctx, inst)
 			if err != nil {
 				return ec2Placement{}, err
 			}
@@ -1652,7 +1681,22 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 				// Checked before the type: a reservation is the operator saying this box
 				// must not run anybody again, and a type mismatch would otherwise release
 				// the home and leave the reserved box free for nobody.
-				return e.replaceReservedSlot(ctx, vol, inst)
+				return e.replaceReservedSlot(ctx, vol, inst, false)
+			}
+			if matches && outdated {
+				// Below $Latest: the same move, unannounced. A new slot that cannot be had
+				// falls through to the slot the home is on and the next Start tries again.
+				p, err := e.replaceReservedSlot(ctx, vol, inst, true)
+				if !errors.Is(err, errAutoReplaceDeferred) {
+					return p, err
+				}
+				// The slot may have been reserved while the launch was failing; the stale read
+				// above says otherwise, and a reservation never falls back. Unreadable counts
+				// as reserved.
+				if e.slotNowReservedByOperator(ctx, inst) {
+					return ec2Placement{}, fmt.Errorf("slot %s is reserved for replacement and no new slot could be launched "+
+						"(the reservation stays; the old slot is not reused): %w", inst, err)
+				}
 			}
 			if !matches {
 				log.Printf("ecs-ec2: %s now needs %s but its home is on %s; releasing that slot first",
@@ -3302,7 +3346,7 @@ func (e *ecsEC2Runtime) makeRoom(ctx context.Context) (bool, error) {
 			// evictLongestIdle already had first refusal on this size — except a box reserved
 			// for replacement, which no placement may reuse and so blocks the cap exactly as
 			// a box of the wrong size does.
-			if string(inst.InstanceType) == e.instanceType && !slotReserved(inst) {
+			if string(inst.InstanceType) == e.instanceType && !slotExcluded(inst) {
 				continue
 			}
 			// Another home's pending replacement is spoken for, whatever its size.
@@ -5643,6 +5687,16 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 			busy[inst] = true
 		}
 	}
+	// A free slot below $Latest goes the way of a reserved one (#1934). Unreadable template =
+	// no slot is called outdated.
+	var lt ec2LaunchTemplate
+	if !f.pool.noAutoReplace {
+		var ltErr error
+		if lt, ltErr = f.launchTemplateLatest(ctx); ltErr != nil {
+			log.Printf("ecs-ec2 sweep: slot launch template unreadable; outdated free slots are left alone: %v", ltErr)
+			lt = ec2LaunchTemplate{}
+		}
+	}
 	out, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
 			tagFilter(EC2TagPool, f.pool.pool),
@@ -5662,6 +5716,8 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 		idle      time.Duration
 		terminate bool
 		reserved  bool
+		outdated  bool // below $Latest only; fenced by the sweeper itself before it acts
+		orphan    bool // a replacement launched for a home that never claimed it
 	}
 	var due []candidate
 	for _, r := range out.Reservations {
@@ -5677,10 +5733,20 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 				}
 				continue
 			}
-			if slotReserved(inst) {
-				// No grace: nobody can be placed on it, so waiting buys nothing. The fences
+			if f.pool.slotRetiring(inst, lt) {
+				// No grace: nobody should be placed on it, so waiting buys nothing. The fences
 				// below (fresh occupancy, ECS tasks, task ENIs) still apply.
-				due = append(due, candidate{id: id, terminate: true, reserved: true})
+				due = append(due, candidate{id: id, terminate: true, reserved: slotReserved(inst), outdated: !slotReserved(inst) && !slotRetireTagged(inst)})
+				continue
+			}
+			// A replacement (af-replaces-home) that no home claimed or holds, long after its
+			// launch: the Start that asked for it never got the answer (a lost RunInstances
+			// response, a CP that died) and nothing will come back for it. Retired whatever
+			// the timers say, or it bills and takes a place under the cap for good. Younger
+			// than that it may be a Start still in flight, which claimed it already (busy).
+			if ec2TagValue(inst.Tags, ec2TagReplacesHome) != "" && inst.LaunchTime != nil &&
+				now.Sub(*inst.LaunchTime) > f.orphanReplacementAfter() {
+				due = append(due, candidate{id: id, terminate: true, orphan: true})
 				continue
 			}
 			if timersOff {
@@ -5705,6 +5771,28 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 			}
 		}
 	}
+	if len(due) == 0 {
+		return
+	}
+	// A slot that is only below $Latest (nobody reserved it) is reserved HERE, before the
+	// occupancy re-read below: a placement that attaches to it checks the reservation before and
+	// after the attach (slotNowReserved), so either it sees this tag or the re-read sees it.
+	// Without the tag the sweeper and a Start meet with nothing between them, and a home attached
+	// after the re-read lives on an instance that is about to be terminated.
+	kept := due[:0]
+	for _, c := range due {
+		if c.outdated || c.orphan {
+			if _, err := f.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+				Resources: []string{c.id},
+				Tags:      []ec2types.Tag{{Key: aws.String(ec2TagSlotRetire), Value: aws.String(time.Now().UTC().Format(time.RFC3339))}},
+			}); err != nil {
+				log.Printf("ecs-ec2 sweep: could not fence the outdated free slot %s (%v); leaving it", c.id, err)
+				continue
+			}
+		}
+		kept = append(kept, c)
+	}
+	due = kept
 	if len(due) == 0 {
 		return
 	}
@@ -5751,6 +5839,10 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 			why := fmt.Sprintf("free for %.0fm", c.idle.Minutes())
 			if c.reserved {
 				why = "free and reserved for replacement"
+			} else if c.orphan {
+				why = "replacement that no home claimed"
+			} else if c.outdated {
+				why = "free and below the launch template's $Latest"
 			}
 			probe.terminateSlot(ctx, c.id, why)
 			continue
@@ -6231,6 +6323,9 @@ type EC2PoolStatus struct {
 	// TemplateLatest is the slot launch template's $Latest version number, "" when it could
 	// not be read — in which case no slot is reported outdated.
 	TemplateLatest string `json:"template_latest,omitempty"`
+	// AutoReplaceOutdated is whether a slot below TemplateLatest is replaced at its workspace's
+	// next Start without anyone reserving it (#1934; AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS).
+	AutoReplaceOutdated bool `json:"auto_replace_outdated,omitempty"`
 }
 
 // EC2GoldenView is one architecture's golden situation, including how far along a bake
@@ -6394,6 +6489,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 		log.Printf("ecs-ec2 pool status: container instances unreadable: %v", err)
 		registered = map[string]bool{}
 	}
+	st.AutoReplaceOutdated = !f.pool.noAutoReplace
 	lt, err := f.launchTemplateLatest(ctx)
 	if err != nil {
 		log.Printf("ecs-ec2 pool status: slot launch template unreadable: %v", err)
@@ -6567,4 +6663,14 @@ func hasHome(homes []ec2HomeView, workspace string) bool {
 		}
 	}
 	return false
+}
+
+// orphanReplacementAfter is how old an unclaimed replacement slot must be before the sweeper
+// retires it: twice the claim window, and never under ten minutes.
+func (f *ecsEC2Factory) orphanReplacementAfter() time.Duration {
+	d := 2 * f.pool.claimTTL
+	if d < 10*time.Minute {
+		d = 10 * time.Minute
+	}
+	return d
 }
