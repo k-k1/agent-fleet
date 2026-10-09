@@ -99,4 +99,10 @@ resource "google_service_networking_connection" "private_service_access" {
   network                 = google_compute_network.main.id
   service                 = "servicenetworking.googleapis.com"
   reserved_peering_ranges = [google_compute_global_address.private_service_access.name]
+
+  # Service Networking keeps reporting the connection in use for 40+ minutes after the
+  # Cloud SQL instance is deleted. REMOVE_PEERING deletes the peering from the VPC when
+  # the API refuses, so the network delete is not blocked. Not ABANDON: that leaves the
+  # peering in place, which blocks deleting the VPC.
+  deletion_policy = "REMOVE_PEERING"
 }

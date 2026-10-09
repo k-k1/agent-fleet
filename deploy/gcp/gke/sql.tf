@@ -45,6 +45,10 @@ resource "google_sql_database_instance" "main" {
 resource "google_sql_database" "agentfleet" {
   name     = "agentfleet"
   instance = google_sql_database_instance.main.name
+
+  # The CP's IAM user creates and owns this database on first start, so Terraform's
+  # DROP fails ("must be owner of database"). It goes away with the instance anyway.
+  deletion_policy = "ABANDON"
 }
 
 # The IAM database user bound to the CP's service account. It owns nothing yet: the
@@ -53,4 +57,8 @@ resource "google_sql_user" "cp" {
   name     = trimsuffix(google_service_account.cp.email, ".gserviceaccount.com")
   instance = google_sql_database_instance.main.name
   type     = "CLOUD_IAM_SERVICE_ACCOUNT"
+
+  # Owns the database (see above), so a DROP ROLE fails the same way; dropped with the
+  # instance.
+  deletion_policy = "ABANDON"
 }
