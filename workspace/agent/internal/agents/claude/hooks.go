@@ -43,6 +43,7 @@ const permToolMatcher = "Write|Edit|MultiEdit|NotebookEdit|Bash"
 //	PreToolUse(AskUserQuestion)  → question (claude is asking the user)
 //	PostToolUse(*)   → working   (every completed tool re-asserts working — heartbeat)
 //	PostToolUse(PushNotification) → session-push-notification (forward the message)
+//	PreModelSwitch   → allow     (skip claude's "Switch model?" cache-warning dialog)
 func EnsureStatusHooks() {
 	m := readSettings()
 	hooks := hooksMap(m)
@@ -120,11 +121,56 @@ func EnsureStatusHooks() {
 		})
 		changed = true
 	}
+	// PreModelSwitch → allow: without it /model can stop on claude's own "Switch model?"
+	// prompt-cache dialog, which nobody answers in an unattended or mirrored session.
+	if !preModelSwitchHasAF(hooks) {
+		list, _ := hooks["PreModelSwitch"].([]any)
+		hooks["PreModelSwitch"] = append(list, map[string]any{
+			"hooks": []any{map[string]any{"type": "command", "command": modelSwitchAllowCmd}},
+		})
+		changed = true
+	}
 
 	if changed {
 		m["hooks"] = hooks
 		_ = writeSettings(m)
 	}
+}
+
+// modelSwitchAllowCmd is the PreModelSwitch hook command: it prints the allow decision
+// and exits 0, which makes claude skip the interactive cache-miss confirm (deny or exit 2
+// would cancel the switch). A literal printf rather than a workspace-agent subcommand: if
+// settings.json outlived the agent that wrote it, an older agent rejects an unknown
+// subcommand with exit 2, and exit 2 on this event blocks every model switch.
+// Cause read from the claude 2.1.293/2.1.295 binaries, not confirmed by a live run: the
+// dialog appears only on a warm-cache switch, and a hook "allow" sets skipConfirm. The
+// effort-level dialog does not consult this hook.
+const modelSwitchAllowCmd = `printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreModelSwitch","permissionDecision":"allow"}}'`
+
+// preModelSwitchHasAF reports whether PreModelSwitch already carries OUR allow command;
+// a user's own entry on the event, or a model-scoped copy of our command, does not
+// count and is left alone.
+func preModelSwitchHasAF(hooks map[string]any) bool {
+	arr, _ := hooks["PreModelSwitch"].([]any)
+	for _, e := range arr {
+		em, _ := e.(map[string]any)
+		// A matcher narrows the event to some target models; only a matcher-less entry
+		// allows every switch, so a scoped copy of our command must not stand in for it.
+		if matcher, _ := em["matcher"].(string); matcher != "" {
+			continue
+		}
+		list, _ := em["hooks"].([]any)
+		for _, h := range list {
+			hm, _ := h.(map[string]any)
+			if typ, _ := hm["type"].(string); typ != "command" {
+				continue
+			}
+			if cmd, _ := hm["command"].(string); cmd == modelSwitchAllowCmd {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // postToolUseHasAF reports whether PostToolUse already carries OUR catch-all

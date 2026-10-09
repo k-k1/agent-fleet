@@ -312,6 +312,8 @@ codex・opencode を実例に使う。
 - `Stop` → idle
 - `PreToolUse` の matcher `AskUserQuestion` → question、`ExitPlanMode` → plan
 - `permission_prompt` の通知 → permission
+- `PreModelSwitch` → `permissionDecision: "allow"` を出力するだけの `printf`。`/model` が claude の「Switch model?」
+  キャッシュ警告ダイアログで止まらなくなる（#1920。バイナリ解析による推定で、実機では未確認）。effort 変更のダイアログはこのフックを通らないため対象外。
 - `MessageDisplay` → `message`（状態は変えない）。流れてくる返答を行ごとに記録する。保留中の質問カードが質問の上に出す文章と、
   ターンの実行中に `/messages?live=1` が返す「書いている途中の返答」の元になる（`status/livetext.go`、#1250）。
 

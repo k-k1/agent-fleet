@@ -361,6 +361,9 @@ flows are [08](08-integrations.md).
 - `Stop` → idle;
 - `PreToolUse` with matcher `AskUserQuestion` → question, and `ExitPlanMode` → plan;
 - the `permission_prompt` notification → permission;
+- `PreModelSwitch` → a literal `printf` that prints `permissionDecision: "allow"`, so `/model` never stops on
+  claude's "Switch model?" cache-warning dialog (#1920; read from the binary, not confirmed by a live run). The
+  effort-level dialog does not go through this hook and is not handled;
 - `MessageDisplay` → `message`, which leaves the state alone. It records the reply as it streams, line by
   line: the prose a pending question card shows above the question, and the reply still being written
   that `/messages?live=1` returns while a turn runs (`status/livetext.go`, #1250).

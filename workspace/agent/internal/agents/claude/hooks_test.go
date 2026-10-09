@@ -3,7 +3,9 @@ package claude
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -298,5 +300,95 @@ func TestPushHookIsNotASessionStatusState(t *testing.T) {
 	f := strings.Fields(pushHookCmd())
 	if len(f) != 2 || f[1] != PushHookSubcommand || f[1] == "session-status" {
 		t.Fatalf("pushHookCmd() = %q, want `<exe> %s` and nothing else", pushHookCmd(), PushHookSubcommand)
+	}
+}
+
+// modelSwitchEntries counts PreModelSwitch entries running our allow command, and the rest.
+func modelSwitchEntries(t *testing.T, dir string) (ours, others int) {
+	t.Helper()
+	arr, _ := readHooks(t, dir)["PreModelSwitch"].([]any)
+	for _, e := range arr {
+		if b, _ := json.Marshal(e); strings.Contains(string(b), "PreModelSwitch") && strings.Contains(string(b), `\"permissionDecision\":\"allow\"`) {
+			ours++
+		} else {
+			others++
+		}
+	}
+	return ours, others
+}
+
+// The allow hook is what keeps /model from stopping on claude's "Switch model?" dialog;
+// it is installed once however often the agent starts, and prints valid allow JSON.
+func TestEnsureStatusHooksInstallsModelSwitchAllowOnce(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+
+	EnsureStatusHooks()
+	EnsureStatusHooks()
+	if ours, _ := modelSwitchEntries(t, dir); ours != 1 {
+		t.Fatalf("PreModelSwitch allow installed %d times, want 1", ours)
+	}
+
+	out, err := exec.Command("sh", "-c", modelSwitchAllowCmd).Output()
+	if err != nil {
+		t.Fatalf("run hook command: %v", err)
+	}
+	var got struct {
+		Out struct {
+			Event    string `json:"hookEventName"`
+			Decision string `json:"permissionDecision"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("hook output %q is not JSON: %v", out, err)
+	}
+	if got.Out.Event != "PreModelSwitch" || got.Out.Decision != "allow" {
+		t.Errorf("hook output = %s, want PreModelSwitch allow", out)
+	}
+}
+
+// A user's own PreModelSwitch hook stays and does not stand in for ours.
+func TestEnsureStatusHooksModelSwitchKeepsUserEntry(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	seed := `{"hooks":{"PreModelSwitch":[{"hooks":[{"type":"command","command":"/home/dev/my-gate.sh"}]}]}}`
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	EnsureStatusHooks()
+	EnsureStatusHooks()
+	ours, others := modelSwitchEntries(t, dir)
+	if ours != 1 || others != 1 {
+		t.Fatalf("PreModelSwitch ours=%d others=%d, want 1 and 1", ours, others)
+	}
+}
+
+// A user's model-scoped copy of our command only allows that model, so it must not
+// stop the matcher-less entry from being installed (else /model to any other model
+// still stops on the dialog). The scoped entry is kept as is.
+func TestEnsureStatusHooksModelSwitchScopedCopyDoesNotReplaceGlobal(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	seed := `{"hooks":{"PreModelSwitch":[{"matcher":"claude-sonnet-5","hooks":[{"type":"command","command":` +
+		strconv.Quote(modelSwitchAllowCmd) + `}]}]}}`
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	EnsureStatusHooks()
+	EnsureStatusHooks()
+	arr, _ := readHooks(t, dir)["PreModelSwitch"].([]any)
+	var scoped, global int
+	for _, e := range arr {
+		em, _ := e.(map[string]any)
+		if m, _ := em["matcher"].(string); m == "claude-sonnet-5" {
+			scoped++
+		} else if m == "" {
+			global++
+		}
+	}
+	if scoped != 1 || global != 1 {
+		t.Fatalf("PreModelSwitch scoped=%d global=%d, want 1 and 1: %v", scoped, global, arr)
 	}
 }

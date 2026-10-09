@@ -413,7 +413,9 @@ deployment). It is what `~/.claude` is on your own machine.
 - **Don't edit Fleet's own hook entries in `settings.json`.** The Agent adds hooks that feed the
   Console (running / waiting for your answer, a pending question or plan, a permission prompt,
   forwarded notifications). They are the entries whose command runs `session-status` or
-  `session-push-notification`. The RTK entry (`rtk hook claude`) is switched by
+  `session-push-notification`, plus a `PreModelSwitch` entry that answers "allow" so `/model` does not stop
+  on claude's "Switch model?" cache warning (the next message then re-reads the whole history at
+  uncached prices). The RTK entry (`rtk hook claude`) is switched by
   **⚙Settings → "Agents" → Claude → RTK**, not by editing. Without Fleet's entries the Console
   stops showing state for that session. The Agent re-adds them when it starts.
 - **Your own hooks and other keys in `settings.json` are kept.** The Agent recognises its entries
