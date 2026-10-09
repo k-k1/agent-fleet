@@ -303,8 +303,12 @@ art as it serves it.
   `deploy/compose/.env.example`; for how it works, see
   `docs/build/09-deploy.md` §9.4. A Terminal claude, agy, codex, cursor, copilot, kiro or opencode session showing "working" keeps the
   Workspace awake only while it shows signs of life: if it has produced no output, state change or
-  running tool process for **1 hour**, it stops counting, so a hung session cannot hold the Workspace
-  open indefinitely. Managed sessions and the other kinds (muse, lcpp, shell, ssm) are not yet bounded this way, and background
+  running tool process for **1 hour**, it stops counting. That is a limit on time without any
+  change, not on total working time. For claude and agy a running tool process counts as life; for
+  codex, cursor, copilot, kiro and opencode only a pane repaint does (a spinner or elapsed-time
+  counter counts), so a silent tool under a pane that stays static for an hour can lapse, while a
+  stuck session whose spinner keeps animating keeps holding. Use the "do not auto-stop" pin for
+  long silent work on those kinds. Managed sessions and the other kinds (muse, lcpp, shell, ssm) are not yet bounded this way, and background
   work and the "do not auto-stop" pin are never subject to it.
 - **force-stop (brute force)**: `docker compose down` **does not stop user Workspaces** (they
   are outside compose management). To stop a specific Workspace for sure, a super_admin

@@ -2,7 +2,7 @@
 
 English | [日本語](0055-idle-stop-and-carried-interactions.ja.md)
 
-- Status: **adopted** (2026-08-24). Follow-ups: #1830 (bound the hold for managed sessions and the remaining kinds). The record of the investigation and the measurements is [docs/75](../log/75-idle-stop-and-pending-interactions.md).
+- Status: **adopted** (2026-08-24). Follow-ups: #1830 (bound the hold for managed sessions and the remaining kinds), #1942, #1943. The record of the investigation and the measurements is [docs/75](../log/75-idle-stop-and-pending-interactions.md).
 - See also: [0030-turn-abort-auto-resume.md](0030-turn-abort-auto-resume.md) (splitting live state by "the next move to prompt") /
   [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) (stopping = releasing a slot = cost) /
   [docs/history/p3-9-idle-stop.md](../log/p3-9-idle-stop.md) (the prototype of the two-tier arrangement)
@@ -251,3 +251,8 @@ measured per kind. Measured on the CLIs baked into the Workspace image (codex 0.
   holding. Follow-ups: #1942 (Managed), #1943 (muse / lcpp / shell / ssm).
 - Caveat: one model and one CLI version per kind; a CLI that stops repainting during a tool would
   lapse after an hour of silence. Re-measure when bumping a CLI version.
+- Trade-off: for these five kinds the one hour is time since the pane last changed, not total working
+  time, and a running tool process is not a sign of life. A silent tool under a pane that stays
+  static for an hour can lapse, and a stuck session whose spinner keeps animating is held
+  indefinitely (the safe side). The pane must also be captured successfully on the current poll; a
+  failed capture gives no answer rather than a stale age.

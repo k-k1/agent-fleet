@@ -139,12 +139,15 @@ func PaneChangedAt(name string) (time.Time, bool) {
 	return s.changed, true
 }
 
+// observeCapture reads the frame ObservePane records. Only tests replace it.
+var observeCapture = CapturePane
+
 // ObservePane records the session's current frame on the clock PaneChangedAt reads, for kinds
 // whose own state code never captures the pane. An unreadable pane records nothing (an empty
 // frame would read as a pane that stopped repainting); PaneChangedAt then goes silent after
 // paneSightingFresh. Reports whether a frame was recorded.
 func ObservePane(name string) bool {
-	frame := CapturePane(session.TmuxName(name))
+	frame := observeCapture(session.TmuxName(name))
 	if frame == "" {
 		return false
 	}

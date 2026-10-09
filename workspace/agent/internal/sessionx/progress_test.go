@@ -12,6 +12,7 @@ type progFixture struct {
 	tool, toolObserved   bool
 	trusted              bool
 	paneOnly             bool
+	observeFails         bool
 	observed             *[]string // names recorded on the pane clock
 }
 
@@ -26,10 +27,11 @@ func (f progFixture) probes(now time.Time, toolCalls *int) progressProbes {
 		now:      func() time.Time { return now },
 		trusted:  func(session.Meta) bool { return f.trusted },
 		paneOnly: func(session.Meta) bool { return f.paneOnly },
-		observePane: func(name string) {
+		observePane: func(name string) bool {
 			if f.observed != nil {
 				*f.observed = append(*f.observed, name)
 			}
+			return !f.observeFails
 		},
 		statusAt: func(string) (time.Time, bool) { return at(f.status) },
 		paneAt:   func(string) (time.Time, bool) { return at(f.pane) },
@@ -250,6 +252,12 @@ func TestProgressOfPaneOnlyKinds(t *testing.T) {
 			if !ok || !got.Equal(h2) || calls != 0 {
 				t.Errorf("frozen pane: progressOf = %v, %v, toolAlive calls %d; want %v, true, 0", got, ok, calls, h2)
 			}
+			// This poll's capture failed while the cached sighting is old: unknown, not lapsed.
+			f.pane, f.observeFails = &h2, true
+			if got, ok := progressOf(m, "working", f.probes(now, &calls)); ok {
+				t.Errorf("failed capture with a cached old sighting answered %v", got)
+			}
+			f.observeFails = false
 			// Pane never read: unknown, never "frozen".
 			f.pane = nil
 			if _, ok := progressOf(m, "working", f.probes(now, &calls)); ok {

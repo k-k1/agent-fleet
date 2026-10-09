@@ -84,7 +84,7 @@ type progressProbes struct {
 	// paneOnly: see progressPaneOnly. observePane records the pane's current frame on the
 	// idle-settle clock; the kinds that do not read their own pane need it before paneAt speaks.
 	paneOnly    func(m session.Meta) bool
-	observePane func(name string)
+	observePane func(name string) bool
 	statusAt    func(sid string) (time.Time, bool)
 	paneAt      func(name string) (time.Time, bool)
 	sourceAt    func(m session.Meta) (time.Time, bool)
@@ -97,7 +97,7 @@ var realProgressProbes = progressProbes{
 	now:         time.Now,
 	trusted:     progressTrusted,
 	paneOnly:    progressPaneOnly,
-	observePane: func(name string) { tmuxx.ObservePane(name) },
+	observePane: tmuxx.ObservePane,
 	statusAt:    status.StateAt,
 	paneAt:      tmuxx.PaneChangedAt,
 	sourceAt: func(m session.Meta) (time.Time, bool) {
@@ -129,8 +129,10 @@ func progressOf(m session.Meta, state string, p progressProbes) (time.Time, bool
 	}
 	now := p.now()
 	paneOnly := p.paneOnly(m)
-	if paneOnly {
-		p.observePane(m.Name)
+	// This poll's own read must succeed: PaneChangedAt still answers from a sighting up to a
+	// minute old, whose change time may already be past the lapse.
+	if paneOnly && !p.observePane(m.Name) {
+		return time.Time{}, false
 	}
 	paneAt, paneOK := p.paneAt(m.Name)
 	if !paneOK {
