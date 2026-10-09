@@ -5781,7 +5781,7 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 	// after the re-read lives on an instance that is about to be terminated.
 	kept := due[:0]
 	for _, c := range due {
-		if c.outdated {
+		if c.outdated || c.orphan {
 			if _, err := f.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 				Resources: []string{c.id},
 				Tags:      []ec2types.Tag{{Key: aws.String(ec2TagSlotRetire), Value: aws.String(time.Now().UTC().Format(time.RFC3339))}},

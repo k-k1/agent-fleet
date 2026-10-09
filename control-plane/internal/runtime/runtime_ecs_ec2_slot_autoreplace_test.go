@@ -370,3 +370,62 @@ func TestECSEC2OrphanReplacementIsCollectedBySweeperWithTimersOff(t *testing.T) 
 		t.Fatal("the slot the home is on was terminated")
 	}
 }
+
+// seedOrphan puts a current-version, unclaimed replacement for alice's home on the pool, old
+// enough for the sweeper to call it an orphan.
+func seedOrphan(h *ec2Harness) {
+	h.ec2.addSlot("i-new", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.setInstanceTag("i-new", ec2TagLaunchTemplateID, "lt-1")
+	h.ec2.setInstanceTag("i-new", ec2TagLaunchTemplateVersion, "5")
+	h.ec2.setInstanceTag("i-new", ec2TagReplacesHome, "vol-1")
+	old := time.Now().Add(-time.Hour)
+	h.ec2.instances["i-new"].LaunchTime = &old
+	h.ci.registered["i-new"] = true
+}
+
+// The owner adopts the orphan just after the sweeper's occupancy re-read: the sweeper's fence
+// is already on it, so the Start launches its own slot instead of moving onto a box about to be
+// terminated.
+func TestECSEC2OrphanRetirementDoesNotStrandAnOwnerStartingAfterTheReread(t *testing.T) {
+	ctx := context.Background()
+	h, _ := outdatedSlotHarness(t)
+	seedOrphan(h)
+	h.rt.pool.slotSleepAfter, h.rt.pool.slotTerminateAfter = 0, 0
+	h.ec2.afterDescribeVolumes = func() {
+		h.ec2.afterDescribeVolumes = nil
+		if err := h.rt.Start(ctx); err != nil {
+			t.Errorf("Start: %v", err)
+		}
+	}
+	h.factory().sweepFreeSlots(ctx, []ec2types.Volume{*h.ec2.volumes["vol-1"]})
+	claim := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim)
+	if claim == "" || h.ec2.instances[claim].State.Name == ec2types.InstanceStateNameTerminated {
+		t.Fatalf("the home's slot %q was terminated or never claimed: %v", claim, h.ec2.calls)
+	}
+}
+
+// The fence lands between the owner's adoption read and its claim: the Start must notice before it
+// moves the home off the old slot.
+func TestECSEC2AdoptedReplacementFencedBeforeTheClaimAbortsTheMove(t *testing.T) {
+	ctx := context.Background()
+	h, _ := outdatedSlotHarness(t)
+	seedOrphan(h)
+	h.rt.ec2 = describeWrap{ec2API: h.ec2, describe: func(c context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error, bool) {
+		if len(in.InstanceIds) == 1 && in.InstanceIds[0] == "i-new" && ec2TagValue(h.ec2.instances["i-new"].Tags, ec2TagSlotRetire) == "" {
+			out, err := h.ec2.DescribeInstances(c, in)
+			// The sweeper's tag lands right after the owner's read.
+			h.ec2.setInstanceTag("i-new", ec2TagSlotRetire, time.Now().UTC().Format(time.RFC3339))
+			return out, err, true
+		}
+		return nil, nil, false
+	}}
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if got := attachedInstance(h.ec2.volumes["vol-1"]); got != "i-old" {
+		t.Fatalf("home on %q, want it left on i-old (the move was aborted)", got)
+	}
+	if callIndex(h, "DetachVolume") >= 0 || callIndex(h, "TerminateInstances i-old") >= 0 {
+		t.Fatalf("the home left the old slot although its destination was fenced: %v", h.ec2.calls)
+	}
+}

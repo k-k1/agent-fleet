@@ -227,6 +227,18 @@ func (e *ecsEC2Runtime) replaceReservedSlot(ctx context.Context, vol *ec2types.V
 		}
 		return ec2Placement{}, fmt.Errorf("claim %s for the replacement slot %s: %w", volID, newID, err)
 	}
+	// The new slot may have been fenced (the sweeper retiring an orphan) or reserved between
+	// its adoption and the claim above. The claim now protects it from the sweeper's occupancy
+	// re-read, but a fence that landed first is a decision to terminate it: stop BEFORE the
+	// home leaves the old slot. Unreadable counts as fenced.
+	if e.slotNowReserved(ctx, newID) {
+		e.retireUnusedReplacement(ctx, newID, volID)
+		if automatic {
+			e.deferAutoReplace(oldID, errors.New("the replacement slot was fenced during the move"))
+			return ec2Placement{}, errAutoReplaceDeferred
+		}
+		return ec2Placement{}, fmt.Errorf("the replacement slot %s was reserved during the move (the reservation stays): try again", newID)
+	}
 	if err := e.moveHomeOff(ctx, oldID); err != nil {
 		e.retireUnusedReplacement(ctx, newID, volID)
 		return ec2Placement{}, fmt.Errorf("move the home off the reserved slot %s (the reservation stays): %w", oldID, err)
