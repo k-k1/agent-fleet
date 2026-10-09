@@ -107,4 +107,52 @@ describe("folded node peek", () => {
     expect(host.querySelector(".proj-node-peek")).toBeNull();
     expect(host.querySelectorAll("li.sess-row").length).toBe(1);
   });
+
+  describe("keyboard focus", () => {
+    const focusPeek = () => {
+      const btn = host.querySelector<HTMLElement>(".proj-node-peek .sess-btn")!;
+      act(() => btn.focus());
+      expect(document.activeElement).toBe(btn);
+    };
+    const set = async (sessions: Session[]) => {
+      await act(async () => {
+        useSessionsStore.setState({ sessions });
+      });
+    };
+    const a = (extra: Partial<Session> = {}) => sess("a", { repo: "af", createdAt: at(1), ...extra });
+
+    it("follows a newer session that takes over the peek", async () => {
+      useSessionsStore.setState({ sessions: [a()] });
+      await render();
+      focusPeek();
+      await set([a(), sess("b", { repo: "af", createdAt: at(2) })]);
+      expect(document.activeElement?.closest(".sess-row")?.querySelector(".sess-l1")?.textContent).toBe("b");
+    });
+
+    it("follows the peek when its session stops and another live one remains", async () => {
+      useSessionsStore.setState({ sessions: [sess("b", { repo: "af", createdAt: at(2) }), a()] });
+      await render();
+      focusPeek();
+      await set([sess("b", { repo: "af", createdAt: at(2), alive: false }), a()]);
+      expect(document.activeElement?.closest(".sess-row")?.querySelector(".sess-l1")?.textContent).toBe("a");
+    });
+
+    it("falls back to the repo card when the last live session stops", async () => {
+      useSessionsStore.setState({ sessions: [a()] });
+      await render();
+      focusPeek();
+      await set([a({ alive: false })]);
+      expect(document.activeElement?.getAttribute("data-rail-repo")).toBe("af");
+    });
+
+    it("leaves focus alone when it was elsewhere", async () => {
+      useSessionsStore.setState({ sessions: [a()] });
+      await render();
+      const other = document.createElement("button");
+      host.appendChild(other);
+      act(() => other.focus());
+      await set([a({ alive: false })]);
+      expect(document.activeElement).toBe(other);
+    });
+  });
 });

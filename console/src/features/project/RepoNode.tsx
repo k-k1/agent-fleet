@@ -10,7 +10,7 @@
 // child's) nest one level further, so a spawn chain reads as a chain. Indentation
 // stops at three levels — a handoff chain has no bound and the rail is narrow — and
 // past that the spine colour alone carries the relation.
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { CSSProperties } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -116,6 +116,23 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
   const live = open ? [] : mine.filter((s) => s.alive);
   const peek = live[0];
   const peekMore = live.slice(1);
+  // The peek row is replaced (a newer session arrives) or removed (the last live one stops) while
+  // it may hold keyboard focus; an unmounted row drops focus to <body> and the rail's arrow-key
+  // roving (useRailRoving only acts from a [data-rail-row]) goes dead. Remember that focus was
+  // inside it — unmount fires no blur, so the flag survives — and hand it to the new peek row,
+  // else to the repo card. Focus elsewhere is never moved.
+  const nodeRef = useRef<HTMLLIElement>(null);
+  const peekFocused = useRef(false);
+  const peekName = peek?.name;
+  useEffect(() => {
+    if (!peekFocused.current) return;
+    if (document.activeElement && document.activeElement !== document.body) return;
+    const li = nodeRef.current;
+    const target =
+      li?.querySelector<HTMLElement>(":scope > .proj-node-peek .sess-btn") ??
+      li?.querySelector<HTMLElement>(":scope > .proj-node-head [data-rail-repo]");
+    target?.focus();
+  }, [peekName]);
   // A root's header height sets where its worktrees' headers pin (project.css). Only roots:
   // deeper worktree headers do not pin, and a nested value would shadow the root's.
   const headRef = usePublishedHeight<HTMLDivElement>("--proj-base-head-h", depth === 0);
@@ -132,6 +149,7 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
   );
   return (
     <li
+      ref={nodeRef}
       className={
         "proj-node" +
         (open ? "" : " collapsed") +
@@ -165,7 +183,11 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
         </ul>
       </div>
       {peek && (
-        <div className="proj-node-body proj-node-peek">
+        <div
+          className="proj-node-body proj-node-peek"
+          onFocus={() => (peekFocused.current = true)}
+          onBlur={() => (peekFocused.current = false)}
+        >
           <ul className="sess-list proj-sub-list">{row(peek)}</ul>
           {peekMore.length > 0 && (
             <span
