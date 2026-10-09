@@ -891,6 +891,38 @@ container logs, and every pod's `/tmp` and ephemeral storage. Container logs are
 checked periodically, not enforced as it is written, so a fast writer can still fill the disk
 before it is evicted — the disk-pressure alert above is what tells you.
 
+### Pausing
+
+An idle deployment can sleep with its data kept. `deploy/gcp/gke/pause.sh` does it in the order
+that matters, in a shell whose kubectl points at this cluster (step 3):
+
+```bash
+deploy/gcp/gke/pause.sh --project "$PROJECT" --location "$REGION" --prefix "$PREFIX" --status
+deploy/gcp/gke/pause.sh --project "$PROJECT" --location "$REGION" --prefix "$PREFIX" --yes
+deploy/gcp/gke/pause.sh --project "$PROJECT" --location "$REGION" --prefix "$PREFIX" --up
+```
+
+`--location` is the cluster's zone for a zonal cluster (`zonal_cluster = true`). Down: the CP to
+0 replicas, the workspace pods gone, the workspace pool to 0 nodes, the system pool to 0, Cloud SQL
+stopped (activation policy `NEVER`; unlike RDS it does not restart itself after 7 days). `--up`
+reverses it: Cloud SQL, system pool, workspace pool autoscaling, CP. Without `--yes` it prints the
+plan; `--dry-run` echoes every write. A running workspace makes it refuse; `--stop-workspaces`
+scales them to 0 (their sessions end), `--keep-db` leaves Cloud SQL running.
+
+- The workspace pool has no taint: with the system pool at 0 the autoscaler would start a
+  workspace node for kube-system's pending pods. The script therefore switches that pool's
+  autoscaling off and resizes it to 0 itself. `terraform plan` shows the pool's autoscaling and
+  the system pool's size as drift while paused; `--up` closes it.
+- The node counts are read from the live pools and kept as annotations on the CP namespace
+  (`agent-fleet.io/pause-*`), which `--up` restores and removes. If the namespace was deleted,
+  `--up` needs `--system-nodes N` (and optionally `--workspace-min` / `--workspace-max`).
+- Still billing while paused, and only deletion stops them: the GKE management fee, the load
+  balancer's forwarding rule, the Private Service Connect endpoint, Cloud NAT and its reserved
+  address, persistent disks (every workspace's two claims, the CP's `af-cp-data`) and Cloud SQL
+  storage. Measured in [deploy/gcp/gke, "Cost"](../gcp/gke/README.md#cost).
+- Tested against stub `gcloud` / `kubectl` (`deploy/local/gke-pause-stub-test.sh`); it has not
+  yet been run on a real cluster.
+
 ### The bill
 
 Its shape follows [docs/build/09 §9.8](../../docs/build/09-deploy.md): a **floor** (the cluster

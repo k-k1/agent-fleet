@@ -288,6 +288,10 @@ jobs:
       # The engine fetch sidecar lives inside a CloudFormation Mappings entry, where nothing
       # type-checks it and the only feedback is a GPU box that comes up idle ten minutes
       # later. This pulls it out of the template and runs it (ADR 0072 P0).
+      # deploy/gcp/gke/pause.sh has no cluster to run against here; the order it takes things
+      # down in (the untainted workspace pool restarts a node otherwise) is pinned on stubs.
+      - name: GKE pause / resume order (real script, stub gcloud / kubectl)
+        run: ./deploy/local/gke-pause-stub-test.sh
       - name: engine fetch sidecar (real script, stub aws)
         run: ./deploy/local/engine-sidecar-test.sh
       # CloudFormation replaces every non-ASCII codepoint in a template with `?`, server-side
