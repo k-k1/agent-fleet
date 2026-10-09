@@ -306,6 +306,11 @@ func newECSFactory(mcfg Config) (RuntimeFactory, error) {
 func (e *ecsRuntime) Token() string { return e.token }
 func (e *ecsRuntime) Name() string  { return e.name }
 
+// BrowserUnavailable: Fargate offers no SYS_ADMIN and no user namespaces, so Chromium
+// has no sandbox to start in (browser_support.go). Only this adapter says so: ecs-ec2
+// holds an *ecsRuntime in a named field, not embedded, so the method does not reach it.
+func (e *ecsRuntime) BrowserUnavailable() string { return "ecs" }
+
 // Endpoint returns the Agent's internal Service Connect URL. The client alias the
 // workspace service advertises is its ContainerName, so the CP reaches it at
 // http://<name>:7700 from inside the same namespace/VPC.
@@ -748,6 +753,8 @@ func (e *ecsRuntime) registerTaskDef(ctx context.Context, homeAP, claudeAP strin
 		// Graceful-shutdown budget for the Agent's SIGTERM handler — the container
 		// stopTimeout minus a safety margin (see StopTimeout below).
 		{Name: aws.String("AGENT_STOP_GRACE_SEC"), Value: aws.String(strconv.Itoa(agentStopGraceSec()))},
+		// Fargate cannot add SYS_ADMIN, so Chromium has no sandbox (browser_support.go).
+		{Name: aws.String(BrowserUnavailableEnv), Value: aws.String(e.BrowserUnavailable())},
 	}
 	if e.cfg.sessionCmd != "" {
 		env = append(env, ecstypes.KeyValuePair{Name: aws.String("AGENT_SESSION_CMD"), Value: aws.String(e.cfg.sessionCmd)})

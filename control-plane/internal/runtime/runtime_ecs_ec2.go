@@ -3978,6 +3978,15 @@ func (e *ecsEC2Runtime) buildTaskDef(ctx context.Context, p ec2Placement, prep e
 		StopTimeout: aws.Int32(int32(stopGraceSec())),
 		LinuxParameters: &ecstypes.LinuxParameters{
 			InitProcessEnabled: aws.Bool(true),
+			// Chromium's setuid sandbox creates PID/network namespaces, and Docker's
+			// default bounding set omits SYS_ADMIN, so the root-owned chrome-sandbox
+			// cannot (same reason as the docker adapter's --cap-add). Without it
+			// Chromium dies at startup ("Zygote process exited prematurely") while
+			// browser features are still advertised. The workspace image strips
+			// setuid from every other executable, so chrome-sandbox is the only path
+			// that can acquire the capability. The slot's user.max_user_namespaces=0
+			// (deploy/aws/ecs/cfn/40-ec2-pool.yaml) keeps unprivileged userns closed.
+			Capabilities: &ecstypes.KernelCapabilities{Add: []string{"SYS_ADMIN"}},
 			Tmpfs: []ecstypes.Tmpfs{{
 				ContainerPath: aws.String("/tmp"),
 				Size:          e.pool.tmpfsMiB,

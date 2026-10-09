@@ -95,12 +95,14 @@ until it is running, then reconnect.
 ## Where there is no browser pane
 
 A deployment that runs workspaces on the `kubernetes` runtime (a preview, see
-[deployment targets](deploy-targets.md)) offers **no browser features at
+[deployment targets](deploy-targets.md)) or on `ecs` (Fargate) offers **no browser features at
 all**: no browser pane, no Chromium attachments for agents, no headless Chromium. A workspace pod
-there runs under the Pod Security `restricted` level, which sets NoNewPrivs (the setuid
-`chrome-sandbox` cannot elevate) and the runtime's default seccomp profile (no user namespaces),
-so Chromium's sandbox cannot start; running Chromium without its sandbox was decided against
-(ADR 0106, addendum 2026-10-04).
+on `kubernetes` runs under the Pod Security `restricted` level, which sets NoNewPrivs (the setuid
+`chrome-sandbox` cannot elevate) and the runtime's default seccomp profile (no user namespaces).
+A Fargate task cannot be given `SYS_ADMIN`, so the same default seccomp profile refuses the
+namespaces the setuid helper would create. Either way Chromium's sandbox cannot start; running
+Chromium without its sandbox was decided against (ADR 0106, addendum 2026-10-04). `ecs-ec2`,
+`docker` and `native` are not affected.
 
 What you see instead:
 

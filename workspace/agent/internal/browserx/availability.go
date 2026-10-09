@@ -15,8 +15,10 @@ import (
 // sets UnavailableEnv on the container. The Agent only obeys it, so the Console, the CP and
 // the Agent cannot disagree.
 //
-// The one runtime that declines is kubernetes (ADR 0106, addendum 2026-10-04). Measured in a
-// Pod Security `restricted` pod on GKE: NoNewPrivs=1, CapEff=0, Seccomp=2 and `unshare -U`
+// Two runtimes decline: kubernetes (ADR 0106, addendum 2026-10-04) and ecs (Fargate, which
+// cannot add SYS_ADMIN, so the setuid chrome-sandbox cannot create its namespaces and the
+// default seccomp profile refuses user namespaces). Measured in a Pod Security
+// `restricted` pod on GKE: NoNewPrivs=1, CapEff=0, Seccomp=2 and `unshare -U`
 // is refused, so neither the setuid chrome-sandbox nor the namespace sandbox can start and
 // Chromium exits during Target.setDiscoverTargets. Launching without the sandbox was
 // rejected, so nothing here may fall back to --no-sandbox.
@@ -46,8 +48,8 @@ func Unavailable() string { return unavailableRuntime() }
 // body. The CP's refusal (control-plane/browser.go) uses the same wording.
 func UnavailableMessage(runtimeID string) string {
 	return "Browser features are not available on this workspace runtime (" + runtimeID + "): " +
-		"Chromium's sandbox needs user namespaces or a setuid helper, which the runtime's " +
-		"restricted pod forbids. See ref/browser-pane.md in the user guide."
+		"Chromium's sandbox needs user namespaces or a setuid helper, which this runtime's " +
+		"restricted workspace container does not allow. See ref/browser-pane.md in the user guide."
 }
 
 // writeUnavailable answers a browser route on a workspace without browser features.

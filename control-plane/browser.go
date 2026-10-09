@@ -129,8 +129,8 @@ func browserRuntimeReady(w http.ResponseWriter, r *http.Request, rt runtime.Runt
 func browserUnavailableErr(runtimeID string) *apiError {
 	return &apiError{http.StatusConflict, "browser_unavailable",
 		"Browser features are not available on this workspace runtime (" + runtimeID + "): " +
-			"Chromium's sandbox needs user namespaces or a setuid helper, which the runtime's " +
-			"restricted pod forbids. See ref/browser-pane.md in the user guide."}
+			"Chromium's sandbox needs user namespaces or a setuid helper, which this runtime's " +
+			"restricted workspace container does not allow. See ref/browser-pane.md in the user guide."}
 }
 
 // socket bridges /ws/browser to the Agent while keeping browser-specific

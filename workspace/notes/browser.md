@@ -10,11 +10,12 @@ the user (the `attach_chromium` tools), or tell the user how to look at a web ap
 
 ## First: does this workspace have a browser at all?
 
-`echo "$AF_BROWSER_UNAVAILABLE"` — when it prints a runtime id (`kubernetes`), **this workspace
-has no browser features**: no headless Chromium, no `attach_chromium` hand-off, and the user has
-no browser pane (theirs is greyed out with the reason). The workspace pod runs under Pod Security
-`restricted`: NoNewPrivs stops the setuid `chrome-sandbox`, and the default seccomp profile
-refuses user namespaces (`unshare -U` → Operation not permitted), so a sandboxed `chromium`
+`echo "$AF_BROWSER_UNAVAILABLE"` — when it prints a runtime id (`kubernetes`, or `ecs` for Fargate),
+**this workspace has no browser features**: no headless Chromium, no `attach_chromium` hand-off,
+and the user has no browser pane (theirs is greyed out with the reason). On `kubernetes` the pod
+runs under Pod Security `restricted` (NoNewPrivs stops the setuid `chrome-sandbox`); on Fargate
+the task cannot be given `SYS_ADMIN`, so the setuid helper cannot create its namespaces. In both
+the default seccomp profile refuses user namespaces (`unshare -U` → Operation not permitted), so a sandboxed `chromium`
 dies at startup (`The setuid sandbox is not running as root` / `Zygote process exited
 prematurely`). Running it unsandboxed was decided against (ADR 0106, addendum 2026-10-04):
 **never add `--no-sandbox` or set `AF_CHROMIUM_NO_SANDBOX` to get past it**, and do not retry

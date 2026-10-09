@@ -17,6 +17,11 @@ type browserlessTestRuntime struct{ browserTestRuntime }
 
 func (browserlessTestRuntime) BrowserUnavailable() string { return "kubernetes" }
 
+// fargateTestRuntime answers the way the ecs (Fargate) adapter does.
+type fargateTestRuntime struct{ browserTestRuntime }
+
+func (fargateTestRuntime) BrowserUnavailable() string { return "ecs" }
+
 // The CP refuses every browser route itself, in any state and without calling the Agent,
 // so the answer does not depend on the image and a stopped workspace is not told to start.
 func TestBrowserRoutesRefuseOnBrowserlessRuntime(t *testing.T) {
@@ -62,6 +67,9 @@ func TestWorkspacePayloadBrowserUnavailable(t *testing.T) {
 		if m := a.workspacePayload(ctx, &resolved{rt: rt}, state); m["browserUnavailable"] != "kubernetes" {
 			t.Fatalf("%s: browserUnavailable = %v, want kubernetes", state, m["browserUnavailable"])
 		}
+	}
+	if m := a.workspacePayload(ctx, &resolved{rt: fargateTestRuntime{browserTestRuntime{state: "running"}}}, "running"); m["browserUnavailable"] != "ecs" {
+		t.Fatalf("fargate: browserUnavailable = %v, want ecs", m["browserUnavailable"])
 	}
 	m := a.workspacePayload(ctx, &resolved{rt: browserTestRuntime{state: "running"}}, "running")
 	if _, ok := m["browserUnavailable"]; ok {

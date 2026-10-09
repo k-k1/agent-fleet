@@ -315,11 +315,24 @@ func TestECSStartCreatesEverything(t *testing.T) {
 	if c0.LinuxParameters == nil || !aws.ToBool(c0.LinuxParameters.InitProcessEnabled) {
 		t.Errorf("InitProcessEnabled not set — SIGTERM would be suppressed for a PID-1 agent")
 	}
+	// Fargate cannot add SYS_ADMIN, so no capability is requested and the Agent is told
+	// the browser is unavailable.
+	if c0.LinuxParameters.Capabilities != nil {
+		t.Errorf("Fargate task must add no capability, got %+v", c0.LinuxParameters.Capabilities)
+	}
+	var browserEnv []string
 	agentGrace := ""
 	for _, kv := range c0.Environment {
+		if aws.ToString(kv.Name) == BrowserUnavailableEnv {
+			browserEnv = append(browserEnv, aws.ToString(kv.Value))
+		}
 		if aws.ToString(kv.Name) == "AGENT_STOP_GRACE_SEC" {
 			agentGrace = aws.ToString(kv.Value)
 		}
+	}
+	// Dropping the variable would let the Agent list browser tools the CP refuses.
+	if len(browserEnv) != 1 || browserEnv[0] != "ecs" {
+		t.Errorf("%s entries = %q, want exactly [ecs]", BrowserUnavailableEnv, browserEnv)
 	}
 	if agentGrace != "25" {
 		t.Errorf("AGENT_STOP_GRACE_SEC = %q, want 25 (grace - safety margin)", agentGrace)
