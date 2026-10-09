@@ -30,11 +30,13 @@ Codex CLI 0.162.1, a throwaway `CODEX_HOME` under the session's work directory (
   `phase2_workspace_diff.md` (a generated git-style diff of the workspace, "Read this file first
   and do not edit it"), `extensions/ad_hoc/instructions.md` (733 bytes, fixed text) and an empty
   `rollout_summaries/`. `memories_1.sqlite` sits next to `memories/`, not in it.
-- The run itself failed with `401 Unauthorized` against the model API: the throwaway home has no
-  credentials, and the real `~/.codex` is off limits. Phase 1 (extract from a finished rollout,
-  after an idle period) and phase 2 (the consolidation sub-agent) are model calls, so
-  `MEMORY.md`, `memory_summary.md`, `rollout_summaries/<slug>.md` and `skills/` were never written.
-  No real consolidated file was seen, and none is quoted or invented here.
+- The `codex exec` run failed with `401 Unauthorized` against the model API: the throwaway home
+  has no credentials, and the real `~/.codex` is off limits. Consolidation needs model calls
+  (phase 1 extracts from a finished rollout after an idle period; phase 2 is a sub-agent), so no
+  consolidated output could be obtained: `MEMORY.md`, `memory_summary.md`,
+  `rollout_summaries/<slug>.md` and `skills/` were never written. Whether either phase was started
+  is not known; only the 401 of the one run was observed. No real consolidated file was seen, and
+  none is quoted or invented here.
 
 **Taken from the codex binary's embedded prompt templates** (strings of the same 0.162.1 binary;
 what codex *instructs* its model to write, not output that was seen):
@@ -75,7 +77,8 @@ what codex *instructs* its model to write, not output that was seen):
 3. **Scope.** The `applies_to: cwd=` value is matched to a project the same way claude slugs are
    (`agentMemImportProjects`: a working copy under `~/repos`, worktrees folding into their main
    clone). A block with no match, or whose cwd is a family or a workflow, defaults to **user
-   scope**; the preview lets the member pick a project or user scope per block, and the request
+   scope** only as a proposal (see open question 7: user scope spreads the text to every
+   project); the preview lets the member pick a project or user scope per block, and the request
    carries the choice. Nothing is placed in a project the member did not see in the preview.
 4. **Same rules as the claude import**: preview first and apply re-evaluates under the locks; a
    block with a secret-scan hit is listed with masked findings and never imported; a name with a
@@ -87,11 +90,16 @@ what codex *instructs* its model to write, not output that was seen):
 
 ## Open questions (they need real output)
 
-1. **Name stability.** Codex re-titles and reorders blocks on each consolidation. If a title
-   changes, the derived name changes, and the old name's tombstone no longer protects the same
-   knowledge: a forgotten block could return under a new name. The proposal is to also tombstone
-   by `source_hash`, but whether a block's text is stable enough across consolidations for that to
-   help can only be measured over several real consolidations.
+1. **Name stability and resurrection.** Not observed: the prompt lets codex reorganise blocks on a
+   consolidation, so a title may change. If it does, the derived name changes, and the old name's
+   tombstone (kept by scope and name) no longer protects the same knowledge: a forgotten block
+   could return under a new name. `source_hash` cannot fix this. It is the sha256 of the whole
+   block including its heading (rule 4), so a changed title alone changes it; it stays what it is
+   in the claude import, the identity of the input for preview / apply change detection. Stopping
+   resurrection needs a separate, still undesigned stable ID or normalised fingerprint. Before
+   implementation there must be a test that a block with only its title changed, and one imported
+   into a different scope, is not brought back after it was forgotten. How much a block's text
+   changes across consolidations can only be measured on several real consolidations.
 2. **Whether `applies_to: cwd=` is usually a path.** The prompt allows "cwd family or workflow
    scope". The share of blocks that map to a project decides whether user scope should be the
    default or the exception.
@@ -103,6 +111,14 @@ what codex *instructs* its model to write, not output that was seen):
    prompt, and the member may have it only between phases.
 6. **Whether `external_agent_memory_import`** (under development in codex) replaces this: it is
    the reverse direction (claude → codex) and does not change the import described here.
+7. **Personal paths and spreading through user scope.** `cwd=` can contain a person's or a
+   customer's name, and the body is copied verbatim; the general secret scan does not reliably
+   catch either. Defaulting an unmatched block to user scope would hand that path and
+   project-specific text to every other project. This is a different risk from secrets. Before
+   implementation decide: the preview shows the body and `cwd` and the distribution scope, and
+   the member must choose a scope explicitly for an unmatched block; whether the path is removed,
+   the block refused, or the text anonymised (an anonymised body no longer matches the verbatim
+   contract, so `source_hash` must then say which bytes it covers).
 
 ## Consequences
 

@@ -353,7 +353,8 @@ thing: explicit, previewed (`GET /agents/memory/claude-export[/preview]`, `POST`
 
 Decision 6 step 1 for codex is not built. A throwaway `CODEX_HOME` with `memories` on produced only
 the empty scaffold (`raw_memories.md`, `phase2_workspace_diff.md`, `extensions/ad_hoc/`,
-`rollout_summaries/`); codex's two consolidation phases are model calls and failed with 401 without
-a login, so no real `MEMORY.md` was seen. The shape known from codex's own prompts, the proposed
+`rollout_summaries/`); the one `codex exec` run failed with 401 without a login, and consolidation
+needs model calls, so no consolidated output (`MEMORY.md`) was obtained. The shape inferred from the
+formats codex's own prompts ask its model to write (not observed output), the proposed
 split by `# Task Group:` block, scope, naming rules and the open questions are in
 [0112](0112-codex-memory-import.md). Nothing above is changed.
