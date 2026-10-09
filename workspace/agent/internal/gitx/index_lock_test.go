@@ -280,10 +280,10 @@ func TestStaleIndexLockRealWriterOutsideCwd(t *testing.T) {
 	}
 }
 
-// TestStaleIndexLockRealCommitWithRelativeIndex holds the lock the way a commit waiting on
-// its editor does (file closed), from a sibling directory through a relative GIT_INDEX_FILE,
-// and reads the real /proc.
-func TestStaleIndexLockRealCommitWithRelativeIndex(t *testing.T) {
+// TestStaleIndexLockRealCommitWithAlternateIndex holds the lock the way a commit waiting on
+// its editor does (file closed), from a sibling repository through GIT_INDEX_FILE spelled
+// relative and through a symlinked alias, and reads the real /proc.
+func TestStaleIndexLockRealCommitWithAlternateIndex(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -292,33 +292,52 @@ func TestStaleIndexLockRealCommitWithRelativeIndex(t *testing.T) {
 	}
 	base := t.TempDir()
 	target := filepath.Join(base, "target")
-	outside := filepath.Join(base, "outside")
 	gitInit(t, target)
-	gitInit(t, outside)
-	commitIntegrationFile(t, outside, "f")
-	writeFile(t, filepath.Join(outside, "f"), "changed")
-	cmd := exec.Command("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-a")
-	cmd.Dir = outside
-	cmd.Env = append(os.Environ(), "GIT_INDEX_FILE=../target/.git/index", "GIT_EDITOR=sleep 10 #")
-	if err := cmd.Start(); err != nil {
+	alias := filepath.Join(base, "alias")
+	if err := os.Symlink(target, alias); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-	lock := filepath.Join(target, ".git", "index.lock")
-	for i := 0; ; i++ {
-		if _, err := os.Stat(lock); err == nil {
-			break
-		}
-		if i > 300 {
-			t.Fatal("git never took the lock")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	old := time.Now().Add(-time.Hour)
-	if err := os.Chtimes(lock, old, old); err != nil {
-		t.Fatal(err)
-	}
-	if got := StaleIndexLock(target); got != "" {
-		t.Fatalf("StaleIndexLock = %q while a commit holds it through a relative GIT_INDEX_FILE", got)
+	for name, indexFile := range map[string]string{
+		"relative":         "../target/.git/index",
+		"absolute symlink": filepath.Join(alias, ".git", "index"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			outside := filepath.Join(t.TempDir(), "outside")
+			gitInit(t, outside)
+			commitIntegrationFile(t, outside, "f")
+			writeFile(t, filepath.Join(outside, "f"), "changed")
+			if indexFile[0] != '/' {
+				// The relative spelling is from a sibling of target.
+				sib := filepath.Join(base, "outside-"+name)
+				if err := os.Rename(outside, sib); err != nil {
+					t.Fatal(err)
+				}
+				outside = sib
+			}
+			cmd := exec.Command("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-a")
+			cmd.Dir = outside
+			cmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+indexFile, "GIT_EDITOR=sleep 10 #")
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			lock := filepath.Join(target, ".git", "index.lock")
+			t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait(); _ = os.Remove(lock) })
+			for i := 0; ; i++ {
+				if _, err := os.Stat(lock); err == nil {
+					break
+				}
+				if i > 300 {
+					t.Fatal("git never took the lock")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			old := time.Now().Add(-time.Hour)
+			if err := os.Chtimes(lock, old, old); err != nil {
+				t.Fatal(err)
+			}
+			if got := StaleIndexLock(target); got != "" {
+				t.Fatalf("StaleIndexLock = %q while a commit holds it through GIT_INDEX_FILE=%s", got, indexFile)
+			}
+		})
 	}
 }

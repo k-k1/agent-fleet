@@ -153,9 +153,10 @@ func procMayHold(pd string, lockFI os.FileInfo, marks []string) (held, gone bool
 }
 
 // argMentions checks one argv or environ entry. The value after "=" (GIT_INDEX_FILE=…,
-// --git-dir=…) and the entry itself are each taken as a path, a relative one resolved
-// against the process's cwd: GIT_INDEX_FILE=../app/.git/index from a sibling directory names
-// this index without spelling its absolute path.
+// --git-dir=…) and the entry itself are each taken as a path, a relative one joined to the
+// process's cwd, and matched both as written and with symlinks resolved: from a sibling
+// directory GIT_INDEX_FILE=../app/.git/index, and from anywhere /alias-of-app/.git/index,
+// name this index without spelling its canonical path.
 func argMentions(arg, cwd string, marks []string) bool {
 	vals := []string{arg}
 	if i := strings.IndexByte(arg, '='); i >= 0 {
@@ -169,10 +170,10 @@ func argMentions(arg, cwd string, marks []string) bool {
 			return true
 		}
 		if !filepath.IsAbs(v) {
-			j := filepath.Join(cwd, v)
-			if mentionsAny(j, marks) || mentionsAny(resolvedPath(j), marks) {
-				return true
-			}
+			v = filepath.Join(cwd, v)
+		}
+		if mentionsAny(filepath.Clean(v), marks) || mentionsAny(resolvedPath(v), marks) {
+			return true
 		}
 	}
 	return false
@@ -215,11 +216,19 @@ func mentionsAny(s string, marks []string) bool {
 	return false
 }
 
+// resolvedPath resolves symlinks in p. When p itself does not exist (an index.lock already
+// gone, a path git has yet to create) it resolves the deepest existing parent, so an alias
+// directory in front still resolves.
 func resolvedPath(p string) string {
+	p = filepath.Clean(p)
 	if r, err := filepath.EvalSymlinks(p); err == nil {
 		return r
 	}
-	return filepath.Clean(p)
+	parent := filepath.Dir(p)
+	if parent == p {
+		return p
+	}
+	return filepath.Join(resolvedPath(parent), filepath.Base(p))
 }
 
 func isPID(s string) bool {
