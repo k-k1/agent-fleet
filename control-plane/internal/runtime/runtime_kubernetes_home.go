@@ -230,11 +230,30 @@ func homeCleanCommand(home string) string {
 	}
 	slices.Sort(keep)
 	var not []string
+	var paths []string
 	for _, name := range keep {
 		not = append(not, "! -name "+shellQuote(name))
+		paths = append(paths, "-path "+shellQuote(home+"/"+name))
 	}
-	return fmt.Sprintf("find %s -mindepth 1 -maxdepth 1 %s -exec rm -rf --one-file-system -- {} +",
+	return fmt.Sprintf(`find %s -xdev \( %s \) -prune -o %s || true; find %s -mindepth 1 -maxdepth 1 %s -exec rm -rf --one-file-system -- {} +`,
+		shellQuote(home), strings.Join(paths, " -o "), homeWritableTest,
 		shellQuote(home), strings.Join(not, " "))
+}
+
+// homeWritableTest is the find expression that gives the owner read, write and search on every directory it
+// reaches that lacks any of them (0300 and 0600 included, not just 0555), so that rm can remove their contents: the wipes run as dev, and a read-only
+// directory (Go's module cache is mode 0555) is otherwise "Permission denied", which stops
+// the init container and with it the pod. chmod runs as find visits each directory, before
+// it reads it, so a directory without search permission opens too. find does not follow
+// symbolic links (no -L), so a link's target is never touched. It assumes no mount below
+// the target, which the wipes' volume mounts do not have.
+const homeWritableTest = `-type d ! -perm -u+rwx -exec chmod u+rwx {} \;`
+
+// homeReposCleanCommand removes the home's repos directory, a missing one included.
+func homeReposCleanCommand(home string) string {
+	repos := shellQuote(home + "/repos")
+	return "if [ -e " + repos + " ] || [ -L " + repos + " ]; then find " + repos + " -xdev " + homeWritableTest +
+		" || true; rm -rf --one-file-system -- " + repos + "; fi"
 }
 
 // homeRecordFuncs are the shell functions both scripts read and write the wipe record
@@ -265,7 +284,7 @@ func homeWipeScript(home, record string) string {
 		`dr=$(done_of repos)`,
 		`num "$dc" "the clean record"; num "$dr" "the repos record"; num "$AF_WIPE_CLEAN" AF_WIPE_CLEAN; num "$AF_WIPE_REPOS" AF_WIPE_REPOS`,
 		`if [ "$AF_WIPE_CLEAN" -gt "$dc" ]; then `+homeCleanCommand(home)+`; record clean "$AF_WIPE_CLEAN"; fi`,
-		`if [ "$AF_WIPE_REPOS" -gt "$dr" ]; then rm -rf --one-file-system -- `+shellQuote(home+"/repos")+`; record repos "$AF_WIPE_REPOS"; fi`,
+		`if [ "$AF_WIPE_REPOS" -gt "$dr" ]; then `+homeReposCleanCommand(home)+`; record repos "$AF_WIPE_REPOS"; fi`,
 	), "\n")
 }
 
