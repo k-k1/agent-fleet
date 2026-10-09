@@ -1093,6 +1093,13 @@ Three resources are set so the destroy does not trip over Google Cloud behaviour
   instead, so the VPC delete is not blocked. (`ABANDON` would leave the peering in place and block
   it.)
 
+`ABANDON` skips the API call whenever Terraform deletes the resource, not only in a full destroy.
+Removing the database or user from the configuration, destroying either alone, or renaming one
+(which replaces it) while the instance stays leaves the old database, its data and the old IAM
+database user in Cloud SQL, no longer managed by Terraform. To delete one on purpose, resolve its
+ownership and dependencies, set `deletion_policy = "DELETE"` and apply first, or clean up by hand
+(and `terraform import` if it should be managed again).
+
 A deployment created before these settings needs the `$TF apply` above to record them in state
 before `$TF destroy`. If the VPC delete is still refused because of the peering, delete it by hand
 and destroy again:
