@@ -1593,6 +1593,11 @@ they survive, and keep billing. The response and the audit entry list what was l
 - **Patching slots = updating this stack** (the AMI parameter resolves at update time)
   and letting the old slots go. That is the operational cost the EC2 launch type adds.
   The same holds for the user data (§Moving retained slots onto new user data).
+  **Kernel patch cadence:** a slot runs the kernel of the AMI it was launched from and is
+  never patched in place. Refresh the AMI (update this stack) on the cadence your security
+  policy sets for the kernel, then replace the old slots as below. The task adds
+  `SYS_ADMIN` (below), so a kernel fix for a namespace or netfilter bug matters here more
+  than on a stricter profile.
 - **Credentials still live on EFS.** The auth/identity set (`homeKeep`: `.config`,
   `.ssh`, `.git-credentials`, `.gitconfig`, `.claude`, `.claude.json`, `.codex` — under
   100 MiB) is kept on an EFS access point and symlinked into home by the entrypoint, so
@@ -1601,6 +1606,22 @@ they survive, and keep billing. The response and the audit entry list what was l
   this profile: home is already local EBS, so there is nothing to relocate off EFS.
 
 ### Moving retained slots onto new user data
+
+The workspace task adds `SYS_ADMIN` so Chromium's setuid `chrome-sandbox` can create its
+namespaces. Two slot settings in the user data go with it, and **both apply only to slots
+launched after the template carries them, so a slot launched earlier must be replaced
+(a new launch template version, then the steps below) before they hold**:
+
+- `user.max_user_namespaces=0` (persisted in `/etc/sysctl.d/99-af-userns.conf` and applied
+  before the ECS agent configures): no unprivileged user namespaces, so `SYS_ADMIN`
+  stays reachable only through the setuid helper. A task running on an old slot keeps
+  the default limit and can create user namespaces.
+- the home volume mounted `nosuid,nodev` by `af-mount`. An already mounted home keeps its
+  old options until it is unmounted and mounted again (a slot move does that).
+
+`kernel.unprivileged_bpf_disabled` (1) and `kernel.perf_event_paranoid` (2) were measured
+already strict on AL2023 and are not set. The task definition gains the capability on a
+workspace's next Start (a new revision); no slot change is needed for that part.
 
 `ECS_AWSVPC_BLOCK_IMDS=true` in the slot's `ecs.config` is what keeps a workspace task off the
 slot's instance profile (`SlotRole`) through IMDS; the launch template's hop limit does not,

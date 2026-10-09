@@ -3,6 +3,7 @@ package runtime
 import (
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -21,6 +22,31 @@ func TestSlotUserDataBlocksIMDSForTasks(t *testing.T) {
 	}
 	if !regexp.MustCompile(`(?m)^\s*ECS_AWSVPC_BLOCK_IMDS=true\s*$`).Match(ecsConfig[1]) {
 		t.Errorf("slot ecs.config does not set ECS_AWSVPC_BLOCK_IMDS=true:\n%s", ecsConfig[1])
+	}
+}
+
+// The ecs-ec2 task adds SYS_ADMIN for Chromium's setuid sandbox, so the slot must close
+// unprivileged user namespaces, and must do so before the ECS agent can start a task
+// (the sysctl comes ahead of the ecs.config write), and the home must be mounted
+// nosuid,nodev. The CP holds no copy of the mount options (it only calls af-mount), so
+// this is the one place they are pinned.
+func TestSlotUserDataHardensForSysAdmin(t *testing.T) {
+	b, err := os.ReadFile("../../../deploy/aws/ecs/cfn/40-ec2-pool.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ud := string(b)
+	persist := strings.Index(ud, "/etc/sysctl.d/99-af-userns.conf")
+	apply := strings.Index(ud, "sysctl -w user.max_user_namespaces=0")
+	ecsCfg := strings.Index(ud, "cat >> /etc/ecs/ecs.config")
+	if persist < 0 || apply < 0 || !strings.Contains(ud, "user.max_user_namespaces=0' > /etc/sysctl.d/") {
+		t.Fatal("slot user data does not persist and apply user.max_user_namespaces=0")
+	}
+	if ecsCfg < 0 || apply > ecsCfg {
+		t.Error("the userns sysctl must be applied before the ECS agent is configured")
+	}
+	if !regexp.MustCompile(`mount -o nouuid,nosuid,nodev "\$DEV" "\$MP"`).MatchString(ud) {
+		t.Error("af-mount must mount the home with nouuid,nosuid,nodev")
 	}
 }
 

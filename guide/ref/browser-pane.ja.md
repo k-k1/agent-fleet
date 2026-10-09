@@ -93,13 +93,14 @@ Workspace の停止／起動中に接続しようとすると専用の overlay �
 
 ## ブラウザペインが無い配備
 
-ワークスペースを `kubernetes` ランタイム（プレビュー。[配備形態](deploy-targets.ja.md)）で動かす配備には、**ブラウザ機能が一切ありません**。
+ワークスペースを `kubernetes` ランタイム（プレビュー。[配備形態](deploy-targets.ja.md)）または `ecs`（Fargate）で動かす配備には、**ブラウザ機能が一切ありません**。
 ブラウザペインも、エージェント向けの Chromium の接続も、ヘッドレス Chromium もありません。
-そこでのワークスペースの pod は Pod Security の `restricted` レベルで動き、NoNewPrivs が立つ
+`kubernetes` のワークスペースの pod は Pod Security の `restricted` レベルで動き、NoNewPrivs が立つ
 （setuid の `chrome-sandbox` が権限を上げられない）うえにランタイム既定の seccomp プロファイル
-（ユーザー名前空間を作れない）が掛かるため、Chromium のサンドボックスが起動できません。
-サンドボックス無しで Chromium を動かすことはしないと決めています
-（ADR 0106 の 2026-10-04 の追記）。
+（ユーザー名前空間を作れない）が掛かります。Fargate のタスクには `SYS_ADMIN` を足せないため、
+同じ既定の seccomp が、setuid ヘルパーの作る名前空間を断ります。どちらも Chromium のサンドボックスが
+起動できません。サンドボックス無しで Chromium を動かすことはしないと決めています
+（ADR 0106 の 2026-10-04 の追記）。`ecs-ec2`・`docker`・`native` は対象外です。
 
 代わりに見えるもの：
 

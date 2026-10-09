@@ -10,10 +10,13 @@
 //     browser routes and the af MCP browser tools refuse with browser_unavailable instead
 //     of launching a Chromium that cannot start.
 //
-// The kubernetes runtime is the only one that declines (ADR 0106, addendum 2026-10-04):
-// a Pod Security `restricted` pod runs with NoNewPrivs (the setuid chrome-sandbox cannot
-// elevate) under RuntimeDefault seccomp (no user namespaces), so a sandboxed Chromium
-// exits during startup. Relaxing the sandbox was rejected, so the runtime says so instead.
+// Two runtimes decline. kubernetes (ADR 0106, addendum 2026-10-04): a Pod Security
+// `restricted` pod runs with NoNewPrivs (the setuid chrome-sandbox cannot elevate) under
+// RuntimeDefault seccomp (no user namespaces), so a sandboxed Chromium exits during
+// startup. ecs (Fargate): no SYS_ADMIN can be added, so the same default seccomp profile
+// refuses namespaces and the setuid helper has no capability to use. ecs-ec2 is not
+// among them: it adds SYS_ADMIN, as the docker runtime does. Relaxing the sandbox was
+// rejected, so the runtime says so instead.
 package runtime
 
 // BrowserUnavailableEnv carries BrowserUnavailable into the workspace container. Its value

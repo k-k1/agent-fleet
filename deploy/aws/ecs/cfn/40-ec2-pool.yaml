@@ -198,6 +198,17 @@ Resources:
               # slot fail to boot for the NEXT user.
               exec > /var/log/af-userdata.log 2>&1
               set -x
+              # No unprivileged user namespaces on the slot. The workspace task adds
+              # SYS_ADMIN so Chromium can use the setuid chrome-sandbox, which creates its
+              # namespaces as root and does not need userns; closing them keeps every other
+              # process in the container from reaching the kernel's userns attack surface
+              # (measured: unshare -U fails with ENOSPC, browser-smoke still passes). Lift
+              # this if Chromium ever moves to a seccomp-profile sandbox instead. Applied
+              # first, before the ECS agent can start a task; the file persists it across
+              # reboots. kernel.unprivileged_bpf_disabled (1) and kernel.perf_event_paranoid
+              # (2) are already strict on AL2023 and are left alone.
+              echo 'user.max_user_namespaces=0' > /etc/sysctl.d/99-af-userns.conf
+              sysctl -w user.max_user_namespaces=0
               # ECS_AWSVPC_BLOCK_IMDS: a workspace task must not reach SlotRole through IMDS.
               # Nothing in the task uses IMDS (the Agent reads SMBIOS, not IMDS); the ECS and
               # SSM agents use the host network and keep it. Read at agent start = new slots only.
@@ -247,7 +258,10 @@ Resources:
               ;;
               esac
               mkdir -p "$MP"
-              mountpoint -q "$MP" || mount -o nouuid "$DEV" "$MP"
+              # nosuid,nodev: the home is member-writable, so nothing on it may act as a setuid
+              # binary or a device node (the container's only setuid path is chrome-sandbox
+              # in the image).
+              mountpoint -q "$MP" || mount -o nouuid,nosuid,nodev "$DEV" "$MP"
               # Take whatever room the volume has now. A home that was grown while it was
               # detached - or whose growfs did not land at the time - carries a filesystem
               # smaller than its device, and nothing else would ever notice: the member

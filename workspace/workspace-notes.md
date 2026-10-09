@@ -95,7 +95,7 @@ directory belongs to someone else.
   with `ls … | head -1`, `amd64` sorts before `arm64`): `notes/build.md`.
 
 ## Browsers
-- **`$AF_BROWSER_UNAVAILABLE` set (e.g. `kubernetes`) means no browser at all** — no headless
+- **`$AF_BROWSER_UNAVAILABLE` set (`kubernetes` or `ecs`, i.e. Fargate) means no browser at all** — no headless
   Chromium, no `attach_chromium`, no pane; never add `--no-sandbox`. `notes/browser.md` says what
   to do instead. The rest of this section applies only where it is empty.
 - Headless `chromium` is baked in (`/usr/bin/chromium`); no display, keep runs short and close

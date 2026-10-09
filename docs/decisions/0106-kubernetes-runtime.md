@@ -948,3 +948,14 @@ for every kind, and the assistant's), and the server leaves those tools out of `
 that names one anyway still answers `browser_unavailable`. The argv carries it rather than the
 variable because the variable does not reach every agent's MCP children: codex starts them
 default-deny and muse, cursor, kiro and copilot are handed an explicit environment.
+
+## Note (2026-10-09) — ecs-ec2 now adds `SYS_ADMIN` (#1927)
+
+The "No added capabilities on the cloud targets" line above no longer holds for ecs-ec2. The
+default seccomp profile of the slot's Docker refuses user namespaces without `SYS_ADMIN`, so
+Chromium died at startup on ecs-ec2 while browser features were still advertised. The ecs-ec2
+task definition now adds `SYS_ADMIN` to the agent container, as docker does, with the slot
+hardened to match (`user.max_user_namespaces=0`, home mounted `nosuid,nodev`; see
+[07 §7.2](../build/07-security.md)). Fargate cannot add it, so the ecs runtime now declares
+`BrowserUnavailable` as kubernetes does. This note does not change decision 7 or any other
+decision.

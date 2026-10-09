@@ -673,3 +673,13 @@ runbook の "The load balancer" も同じことを書いている。
 ## 注記（2026-10-04）— このランタイムでは af MCP サーバーがブラウザツールを一覧に出さない（#1614）
 
 7 つのブラウザツール（`list_chromium_targets` … `set_chromium_control_mode`）は af MCP サーバーの `tools/list` に残り、呼ばれて初めて断っていた。Agent は自分が構成するすべての `mcp-stdio`（全 kind のセッション側 af サーバーとアシスタントのもの）に `--browser-unavailable <runtime>` を渡し、サーバーはそれらのツールを `tools/list` から外す。それでも名前で呼ばれたときは `browser_unavailable` を返す。変数ではなく argv で渡すのは、変数がすべてのエージェントの MCP 子プロセスに届くわけではないからである（codex は既定で環境を渡さず、muse・cursor・kiro・copilot には明示した環境だけが渡る）。
+
+## 注記（2026-10-09）— ecs-ec2 が `SYS_ADMIN` を足すようになった（#1927）
+
+上の「クラウドの配備先では能力を足さない」の行は、ecs-ec2 についてはもう成り立たない。
+スロットの Docker の既定 seccomp プロファイルは `SYS_ADMIN` なしではユーザー名前空間を断るため、
+ecs-ec2 では Chromium が起動時に落ちるのにブラウザ機能は使えると案内されていた。ecs-ec2 の
+タスク定義は、docker と同じく agent コンテナに `SYS_ADMIN` を足す。スロット側も合わせて固める
+（`user.max_user_namespaces=0`、ホームを `nosuid,nodev` でマウント。[07 §7.2](../build/07-security.ja.md)）。
+Fargate は足せないので、ecs ランタイムは kubernetes と同じく `BrowserUnavailable` を名乗る。
+この注記は決定 7 など、どの決定も変えない。

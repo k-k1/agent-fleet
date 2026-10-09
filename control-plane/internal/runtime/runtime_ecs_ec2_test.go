@@ -1575,6 +1575,10 @@ func TestECSEC2TaskDefinitionShape(t *testing.T) {
 	if len(tmpfs) != 1 || aws.ToString(tmpfs[0].ContainerPath) != "/tmp" || tmpfs[0].Size != 2048 {
 		t.Errorf("/tmp must be a size-capped tmpfs, got %+v", tmpfs)
 	}
+	// Chromium's setuid sandbox needs SYS_ADMIN in the bounding set (docker parity).
+	if caps := c.LinuxParameters.Capabilities; caps == nil || len(caps.Add) != 1 || caps.Add[0] != "SYS_ADMIN" {
+		t.Errorf("ecs-ec2 container must add exactly SYS_ADMIN, got %+v", caps)
+	}
 	var home *ecstypes.Volume
 	for i := range td.Volumes {
 		if aws.ToString(td.Volumes[i].Name) == "home" {
@@ -1593,6 +1597,9 @@ func TestECSEC2TaskDefinitionShape(t *testing.T) {
 	}
 	if env["AF_WS_KEEP"] != ec2KeepPath {
 		t.Errorf("AF_WS_KEEP = %q, want %q", env["AF_WS_KEEP"], ec2KeepPath)
+	}
+	if v, ok := env[BrowserUnavailableEnv]; ok {
+		t.Errorf("%s = %q on ecs-ec2: the browser is available there", BrowserUnavailableEnv, v)
 	}
 }
 
