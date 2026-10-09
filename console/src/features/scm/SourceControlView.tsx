@@ -194,7 +194,7 @@ export function SourceControlView({ repo, path = "", headerActions }: { repo: st
   const doFF = async () => {
     const res = await postFastForward(`api/repos/${enc}/ff`);
     if (res && res.error) {
-      toast(tr("scm.ff_failed", { err: res.error.message || res.error }));
+      toast(tr("scm.ff_failed", { err: errText(res.error) }));
       return;
     }
     void refresh();

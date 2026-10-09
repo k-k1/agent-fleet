@@ -1,10 +1,16 @@
 package gitx
 
 import (
+	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -31,55 +37,136 @@ func indexLockPath(dir string) string {
 	return p
 }
 
-// StaleIndexLock returns the path of dir's index.lock when it is left over from a git that
-// no longer runs: old enough, and no git process has its cwd in this working copy. A git
-// killed while holding the lock (a container stop, an OOM kill) leaves it behind, and every
-// later write in the working copy then fails with "index.lock: File exists" until someone
-// removes it by hand. When in doubt this answers "", so a live git's lock is never touched.
+// StaleIndexLock returns the path of dir's index.lock when it is left over from a writer that
+// no longer runs. A git killed while holding the lock (a container stop, an OOM kill) leaves
+// it behind, and every later write in the working copy then fails with "index.lock: File
+// exists" until someone removes it by hand. When in doubt this answers "", so a live
+// writer's lock is never touched.
 func StaleIndexLock(dir string) string {
-	p := indexLockPath(dir)
-	if p == "" {
-		return ""
-	}
-	fi, err := os.Lstat(p)
-	if err != nil || !fi.Mode().IsRegular() || time.Since(fi.ModTime()) < indexLockStaleAfter {
-		return ""
-	}
-	if gitRunningIn(dir) {
-		return ""
-	}
+	p, _ := staleIndexLock(dir)
 	return p
 }
 
-// gitRunningIn reports whether a git process (git itself or a git-* helper) has its cwd at
-// or under dir. git chdirs to the working tree before it takes the index lock, so this is
-// where its holder shows up. A process whose cwd cannot be read counts as not there; the
-// age check above still guards against the lock of a git that has just started.
-func gitRunningIn(dir string) bool {
-	top := resolvedPath(dir)
+func staleIndexLock(dir string) (string, os.FileInfo) {
+	p := indexLockPath(dir)
+	if p == "" {
+		return "", nil
+	}
+	fi, err := os.Lstat(p)
+	if err != nil || !fi.Mode().IsRegular() || time.Since(fi.ModTime()) < indexLockStaleAfter {
+		return "", nil
+	}
+	if lockMayBeHeld(dir, p, fi) {
+		return "", nil
+	}
+	return p, fi
+}
+
+// lockMayBeHeld reports whether any process could be the lock's owner:
+//   - any process with the lock file open (git while it writes, and libgit2 / JGit writers,
+//     whose process name says nothing);
+//   - a git or git-* process whose cwd, command line or environment names the working copy
+//     or its git dir. git keeps holding the lock with the file closed (a commit waiting on
+//     its editor), and --git-dir / GIT_INDEX_FILE reach the index from any cwd.
+//
+// A process that vanished mid-scan is skipped; for what else counts when an entry cannot be
+// read, see procMayHold. This assumes every writer runs in this PID namespace: the working copies
+// belong to this workspace's container alone.
+func lockMayBeHeld(dir, lock string, lockFI os.FileInfo) bool {
+	marks := pathMarks(dir, filepath.Dir(lock))
 	ents, err := os.ReadDir(procRoot)
 	if err != nil {
 		return true
 	}
+	self := strconv.Itoa(os.Getpid())
 	for _, e := range ents {
-		if !isPID(e.Name()) {
+		if !isPID(e.Name()) || e.Name() == self {
 			continue
 		}
-		comm, err := os.ReadFile(filepath.Join(procRoot, e.Name(), "comm"))
-		if err != nil {
-			continue
-		}
-		name := strings.TrimSpace(string(comm))
-		if name != "git" && !strings.HasPrefix(name, "git-") {
-			continue
-		}
-		cwd, err := os.Readlink(filepath.Join(procRoot, e.Name(), "cwd"))
-		if err != nil {
-			continue
-		}
-		cwd = resolvedPath(cwd)
-		if cwd == top || strings.HasPrefix(cwd, top+string(filepath.Separator)) {
+		held, gone := procMayHold(filepath.Join(procRoot, e.Name()), lockFI, marks)
+		if held && !gone {
 			return true
+		}
+	}
+	return false
+}
+
+// procMayHold checks one /proc/<pid>. gone=true means the process exited while it was read.
+//
+// A process can hide its open files from its own user: tmux clients make themselves
+// non-dumpable, and the Console keeps one attached per open terminal, so refusing on every
+// unreadable fd list would refuse always. Such a process counts as a possible owner only
+// when its name is git's; a non-dumpable non-git writer is the gap this leaves.
+func procMayHold(pd string, lockFI os.FileInfo, marks []string) (held, gone bool) {
+	fds, err := os.ReadDir(filepath.Join(pd, "fd"))
+	fdsHidden := err != nil
+	if fdsHidden && procGone(err) {
+		return false, true
+	}
+	for _, fd := range fds {
+		if fi, err := os.Stat(filepath.Join(pd, "fd", fd.Name())); err == nil && os.SameFile(fi, lockFI) {
+			return true, false
+		}
+	}
+	comm, err := os.ReadFile(filepath.Join(pd, "comm"))
+	if err != nil {
+		return true, procGone(err)
+	}
+	name := strings.TrimSpace(string(comm))
+	if name != "git" && !strings.HasPrefix(name, "git-") {
+		return false, false
+	}
+	if fdsHidden {
+		return true, false
+	}
+	cwd, err := os.Readlink(filepath.Join(pd, "cwd"))
+	if err != nil {
+		return true, procGone(err)
+	}
+	for _, f := range []string{"cmdline", "environ"} {
+		b, err := os.ReadFile(filepath.Join(pd, f))
+		if err != nil {
+			return true, procGone(err)
+		}
+		if mentionsAny(string(b), marks) {
+			return true, false
+		}
+	}
+	return mentionsAny(cwd, marks) || mentionsAny(resolvedPath(cwd), marks), false
+}
+
+// procGone tells "the process exited while it was read" from "it cannot be observed".
+func procGone(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ESRCH)
+}
+
+// pathMarks is every spelling of the working copy and of the git dir that holds its index.
+func pathMarks(paths ...string) []string {
+	var out []string
+	for _, p := range paths {
+		for _, q := range []string{filepath.Clean(p), resolvedPath(p)} {
+			if !slices.Contains(out, q) {
+				out = append(out, q)
+			}
+		}
+	}
+	return out
+}
+
+// mentionsAny reports whether s names one of marks as a whole path or a path under it.
+// "/r/app" must not match "/r/app@wip-x", a sibling worktree with its own index.
+func mentionsAny(s string, marks []string) bool {
+	for _, m := range marks {
+		for i := 0; ; {
+			j := strings.Index(s[i:], m)
+			if j < 0 {
+				break
+			}
+			end := i + j + len(m)
+			if end == len(s) || strings.ContainsRune("/\x00\n=:", rune(s[end])) {
+				return true
+			}
+			i = i + j + 1
 		}
 	}
 	return false
@@ -104,12 +191,26 @@ func isPID(s string) bool {
 	return true
 }
 
-// removeStaleIndexLock deletes dir's index.lock only when StaleIndexLock still says it is
-// stale at this moment; the client's earlier answer is never trusted on its own.
+// staleLockMu serializes removals. Two confirmed retries racing on one lock would otherwise
+// both judge the old lock stale, and the later one could delete the lock the earlier one's
+// fast-forward has just taken.
+var staleLockMu sync.Mutex
+
+// removeStaleIndexLock deletes dir's index.lock only when it is stale at this moment; the
+// client's earlier answer is never trusted on its own. Right before the remove it checks
+// that the path still names the file it judged: while that file exists no git can take the
+// lock, so only another remover could have swapped it, and that is serialized here.
 func removeStaleIndexLock(dir string) {
-	if p := StaleIndexLock(dir); p != "" {
-		_ = os.Remove(p)
+	staleLockMu.Lock()
+	defer staleLockMu.Unlock()
+	p, fi := staleIndexLock(dir)
+	if p == "" {
+		return
 	}
+	if now, err := os.Lstat(p); err != nil || !os.SameFile(now, fi) || !now.ModTime().Equal(fi.ModTime()) {
+		return
+	}
+	_ = os.Remove(p)
 }
 
 // ffReq is the optional body of the fast-forward endpoints. RemoveStaleLock is the

@@ -14,22 +14,26 @@ import (
 )
 
 // fakeProc points procRoot at an empty tree for the test and returns a function that adds
-// a process named comm whose cwd is cwd.
-func fakeProc(t *testing.T) func(pid, comm, cwd string) {
+// a process named comm whose cwd is cwd, with no open files and an empty command line and
+// environment. The returned process dir can be edited further.
+func fakeProc(t *testing.T) func(pid, comm, cwd string) string {
 	t.Helper()
 	root := t.TempDir()
 	old := procRoot
 	procRoot = root
 	t.Cleanup(func() { procRoot = old })
-	return func(pid, comm, cwd string) {
+	return func(pid, comm, cwd string) string {
 		d := filepath.Join(root, pid)
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(d, "fd"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		writeFile(t, filepath.Join(d, "comm"), comm+"\n")
+		writeFile(t, filepath.Join(d, "cmdline"), comm+"\x00")
+		writeFile(t, filepath.Join(d, "environ"), "HOME=/nowhere\x00")
 		if err := os.Symlink(cwd, filepath.Join(d, "cwd")); err != nil {
 			t.Fatal(err)
 		}
+		return d
 	}
 }
 
@@ -76,6 +80,80 @@ func TestStaleIndexLock(t *testing.T) {
 	if got := StaleIndexLock(dir); got != "" {
 		t.Fatalf("old lock, git running in the working copy: StaleIndexLock = %q, want empty", got)
 	}
+}
+
+// TestStaleIndexLockSeesHoldersOutsideTheWorkingCopy covers owners the cwd alone misses, and
+// processes that cannot be observed.
+func TestStaleIndexLockSeesHoldersOutsideTheWorkingCopy(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := filepath.Join(t.TempDir(), "app")
+	gitInit(t, dir)
+	elsewhere := t.TempDir()
+	lock := leaveIndexLock(t, dir, time.Hour)
+
+	cases := map[string]func(add func(pid, comm, cwd string) string){
+		"git --git-dir from another cwd": func(add func(pid, comm, cwd string) string) {
+			d := add("300", "git", elsewhere)
+			writeFile(t, filepath.Join(d, "cmdline"), "git\x00--git-dir="+filepath.Join(dir, ".git")+"\x00update-index\x00")
+		},
+		"git with GIT_INDEX_FILE": func(add func(pid, comm, cwd string) string) {
+			d := add("301", "git", elsewhere)
+			writeFile(t, filepath.Join(d, "environ"), "GIT_INDEX_FILE="+filepath.Join(dir, ".git", "index")+"\x00")
+		},
+		"non-git writer with the lock open": func(add func(pid, comm, cwd string) string) {
+			d := add("302", "java", elsewhere)
+			if err := os.Symlink(lock, filepath.Join(d, "fd", "7")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"git whose cwd cannot be read": func(add func(pid, comm, cwd string) string) {
+			d := add("303", "git", elsewhere)
+			if err := os.Remove(filepath.Join(d, "cwd")); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(d, "cwd"), "") // readlink on a regular file: EINVAL, not "gone"
+		},
+		"git whose open files cannot be listed": func(add func(pid, comm, cwd string) string) {
+			d := add("304", "git", elsewhere)
+			if err := os.Remove(filepath.Join(d, "fd")); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(d, "fd"), "")
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			add := fakeProc(t)
+			add("1", "init", "/")
+			setup(add)
+			if got := StaleIndexLock(dir); got != "" {
+				t.Fatalf("StaleIndexLock = %q, want empty (the lock may be held)", got)
+			}
+		})
+	}
+
+	t.Run("non-git process with hidden open files does not count", func(t *testing.T) {
+		add := fakeProc(t)
+		d := add("306", "tmux: client", elsewhere)
+		if err := os.Remove(filepath.Join(d, "fd")); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(d, "fd"), "")
+		if got := StaleIndexLock(dir); got != lock {
+			t.Fatalf("StaleIndexLock = %q, want %q (a tmux client must not block recovery)", got, lock)
+		}
+	})
+
+	t.Run("sibling worktree path does not count", func(t *testing.T) {
+		add := fakeProc(t)
+		d := add("305", "git", elsewhere)
+		writeFile(t, filepath.Join(d, "cmdline"), "git\x00-C\x00"+dir+"@wip-x\x00status\x00")
+		if got := StaleIndexLock(dir); got != lock {
+			t.Fatalf("StaleIndexLock = %q, want %q", got, lock)
+		}
+	})
 }
 
 func TestGitEnvSkipsOptionalLocks(t *testing.T) {
@@ -148,5 +226,45 @@ func TestParentFFStaleIndexLock(t *testing.T) {
 	}
 	if head, _ := Run(worktree, "rev-parse", "HEAD"); head != want {
 		t.Fatalf("worktree HEAD = %s, want origin/main %s", head, want)
+	}
+}
+
+// TestStaleIndexLockRealWriterOutsideCwd runs a real git that holds the lock from another
+// cwd (update-index waiting on stdin) and reads the real /proc.
+func TestStaleIndexLockRealWriterOutsideCwd(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	if _, err := os.Stat("/proc/self/fd"); err != nil {
+		t.Skip("no /proc")
+	}
+	dir := filepath.Join(t.TempDir(), "app")
+	gitInit(t, dir)
+	cmd := exec.Command("git", "--git-dir="+filepath.Join(dir, ".git"), "--work-tree="+dir, "update-index", "--index-info")
+	cmd.Dir = t.TempDir()
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stdin.Close(); _ = cmd.Wait() })
+	lock := filepath.Join(dir, ".git", "index.lock")
+	for i := 0; ; i++ {
+		if _, err := os.Stat(lock); err == nil {
+			break
+		}
+		if i > 200 {
+			t.Fatal("git never took the lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(lock, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if got := StaleIndexLock(dir); got != "" {
+		t.Fatalf("StaleIndexLock = %q while a live git holds it", got)
 	}
 }
