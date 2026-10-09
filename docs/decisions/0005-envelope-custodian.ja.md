@@ -76,3 +76,27 @@ CP が Workspace 起動時に custodian で unwrap し、**Phase 2 と同じ経�
 残り: ワークスペースのランダムな DEK（既存の `secrets.enc` を暗号化し直す手段と組で。#1646）、旧形式の値（`wrapped_dek`・MCP ヘッダ・サインインのクライアントシークレット・エンジンのトークン・
 引き継ぎ・共有）をすべて KMS で封じ直す一回限りの rewrap コマンド（#1645）、テナントごとの KMS 鍵、Vault transit。
 KMS 鍵のローテーションは AWS の自動ローテーション（`EnableKeyRotation`）で、Control Plane 側は何も要らない。
+
+## 追記（2026-10-10）— 旧形式の値を封じ直す（#1645）
+
+2026-10-04 の追記はそのまま有効。`af-cp rewrap-keys`（`control-plane/rewrap_keys.go`）は、そこで後回しに
+した一回限りの書き直しである。Control Plane が `AF_KEY_CUSTODIAN=kms` になってから運用者が実行し、
+`kms1:` 接頭辞の無い値をすべて local の custodian で開いて KMS で封じ直す。形式での振り分けはそのままで、
+コマンドが変えるのは行がどちらの形式かだけ。
+
+- **範囲。** `store.sealedColumns` の 6 表（`wrapped_dek`・`mcp_server`・`tenant_idp`・`tenant_git_oauth`・
+  `session_share_proposal`・`session_handoff_offer`）と、エンジンのトークンの設定行 3 つ（Hugging Face・
+  Civitai・ComfyUI のレコード）。一覧の漏れは 2 つのテストで防ぐ。封じた値らしい列（`key_ref`・`*_enc`・
+  `ciphertext`）が一覧に無ければ落ちるものと、モジュール内の `Wrap` / `sealTenantSecret` の呼び出しが
+  対象に対応付いていなければ落ちるもの。封じずに保存された値（key ref が空）は数えるだけで触らない。
+- **行ごと・フェイルクローズ。** master 鍵で開き、KMS で封じ、データ鍵キャッシュを切った状態で新しい値を
+  KMS で開き直し、そのうえで古い値との比較付き更新で書く。KMS のエラー・`Decrypt` の拒否・読み戻しの
+  不一致では、その行を書く前に止まる。途中で変わった行は新しい値に任せる。したがってどの瞬間も各行は
+  2 つの形式のどちらかで、どちらも開ける。`--dry-run` は KMS を呼ばずに数える。
+- **`AF_MASTER_KEY` はやはり外せない。** ワークスペースの DEK（`HMAC(master, userKey)`）をこれから導く
+  （`wrapped_dek` は KMS に移るが、中の DEK は導けるので、資格情報ストアはまだ crypto-shred されない。#1646）。
+  ブリッジの署名鍵もすべてこれから導き、`kms` でこれが無いと Control Plane は起動時に止まる。rewrap で
+  得られるもの: 終了コード `0` になれば、KMS 鍵の無効化は切り替え前に保存された分も含めて custodian が
+  封じた値をすべて shred し、master 鍵ではもう開けない。
+
+実際の KMS 鍵では未検証で、テストはメモリ上の KMS を使う。実配備での最初の実行は `--dry-run` にすること。

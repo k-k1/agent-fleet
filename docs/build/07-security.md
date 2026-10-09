@@ -450,7 +450,8 @@ credentials as exposed and rotate them.
   with a fresh KMS data key, bound to the key ref by the encryption context, and fails closed
   when KMS does. The same custodian seals the tenant secrets above and the session handoff
   and share payloads. Values sealed before a switch to KMS are opened by the local custodian,
-  chosen by their format, never by a KMS failure.
+  chosen by their format, never by a KMS failure; `af-cp rewrap-keys` re-seals them under KMS
+  in one pass (2026-10-10 addendum, [operate/04](../../guide/operate/04-secure.md#re-sealing-values-stored-before-the-switch)).
 - ⚠️ **The honest limit**: with the local custodian the KEK derives from the master key, so
   the effective strength equals a single master key. With KMS, disabling the key shreds what
   was sealed after the switch — but the workspace DEK itself is still derived from the master

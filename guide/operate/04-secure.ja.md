@@ -79,8 +79,9 @@ Workspace の中では CLI エージェントが**任意コードを実行**し�
 
 - **`AF_MASTER_KEY` は引き続き必須。** 切り替え前に保存されたものはこの鍵で開き、ほかの鍵もこれから
   導かれます。これまでどおり保管してください。
-- **再暗号化はしない。** 切り替え前に保存された値は読めるままで、守りは master 鍵だけのまま。KMS が守るのは
-  切り替え後に保存されたものだけです。
+- **自動では再暗号化しない。** 切り替え前に保存された値は読めるままで、守りは master 鍵だけのまま。
+  `rewrap-keys`（[後述](#切り替え前に保存された値を封じ直す)）を実行するまで、KMS が守るのは切り替え後に
+  保存されたものだけです。
 - **メンバーが保存した資格情報は KMS では shred されない。** KMS に包まれるのは、切り替え後に鍵が初めて
   保存されるワークスペースだけです。すでに鍵を持つワークスペースは master 鍵で包まれたままで、再起動しても
   変わりません。いずれにしても鍵そのものは以前のストアを開けるよう今も `AF_MASTER_KEY` とメンバーから
@@ -94,6 +95,51 @@ Workspace の中では CLI エージェントが**任意コードを実行**し�
   `kms:EncryptionContext:af:key_ref` がそのテナントの ID のとき `kms:Decrypt` を拒否する文を鍵ポリシーに
   足します。鍵の管理者が戻せる失効であって、shred ではありません。
 - **KMS が封じた値があるうちは `local` に戻さない。** local の custodian はそれを、理由を示すエラーで拒否します。
+
+### 切り替え前に保存された値を封じ直す
+
+`af-cp rewrap-keys` は、切り替え前に Control Plane が master 鍵で封じた値をすべて KMS で封じ直します。
+対象は各ワークスペースの資格情報ストアの鍵を包んだもの、MCP 接続のヘッダ、サインインと Git OAuth の
+クライアントシークレット、セッションの引き継ぎと共有の提案、エンジンの Hugging Face・Civitai・ComfyUI の鍵です。
+実行後は、KMS 鍵を無効化するとこれらも読めなくなります。
+
+- Control Plane 自身が `AF_KEY_CUSTODIAN=kms` で動くようになって**から**、Control Plane と同じ環境
+  （同じ `AF_MASTER_KEY`・`AF_KMS_KEY_ID`・データベース設定・タスクロール）で実行します。`local` では
+  実行を拒否します。`local` のままの Control Plane は、このコマンドが書いた値を開けません。
+- まず `--dry-run` で。置き場所ごとに、KMS 済みの数・旧形式の数・封じずに保存された数（master 鍵の無い
+  Control Plane が書いたもの。コマンドは触らない）を表示します。何も変えず、KMS も呼びません。
+- `--dry-run` なしでは、値ごとに master 鍵で開き、KMS で封じ、KMS でもう一度開いて読み戻せることを確かめてから
+  書きます。1 行ずつで、その間に行が変わっていなければ書きます。Control Plane は動かしたままで構いません。
+  中断・KMS のエラー・`Decrypt` の拒否では、その時の行を書く前に止まります。どの行も旧形式か KMS 済みの
+  どちらかで、どちらも開けます。終了コードが `0` になるまで繰り返し実行してください。やることが無い実行は
+  何も変えません。
+- 終了コード `0`: 旧形式は残っていない。`1`: 開けない・書けない行があった、実行中に変わった行があった、
+  または途中で止まった。ログには置き場所と行の ID が出て、値は出ません。`2`: 設定の問題（`kms` でない、
+  master 鍵が無い、鍵 ID が無い、データベースが無い）。
+- `ecs` / `ecs-ec2` では、Control Plane のタスク定義をコマンドだけ差し替えて、Control Plane のサブネットと
+  セキュリティグループで一回限りのタスクとして動かします。出力は Control Plane のロググループに出ます:
+
+  ```bash
+  aws ecs run-task --cluster <cluster> --launch-type FARGATE \
+    --task-definition <Control Plane のタスク定義> \
+    --network-configuration 'awsvpcConfiguration={subnets=[<private subnet>],securityGroups=[<Control Plane のセキュリティグループ>]}' \
+    --overrides '{"containerOverrides":[{"name":"cp","command":["rewrap-keys","--dry-run"]}]}'
+  ```
+
+**実行後も `AF_MASTER_KEY` は外せず、変えてもいけません:**
+
+- 各ワークスペースの資格情報ストアの鍵は、今もこの鍵とメンバーから導かれます（`HMAC(master, userKey)`）。
+  コマンドが KMS に移すのはその鍵を*包んだ写し*なので、KMS 鍵を無効化すると Control Plane はその鍵で
+  ワークスペースを起動できなくなりますが、master 鍵を持つ人は今も鍵を導いて `secrets.enc` を開けます。
+  したがってメンバーが保存した資格情報は、まだ KMS では crypto-shred されません。それにはワークスペースごとの
+  ランダムな鍵が要ります（#1646）。
+- 初めて起動するワークスペースも、同じ導き方で鍵を得ます。
+- ワークスペースが Control Plane を呼び返すときのトークン（Git の資格情報、Git OAuth、メモ、スケジュール、
+  エンジン、ブランチ規則、AWS と Google Cloud のプロファイル、ドキュメント、MCP）は、この鍵から導いた鍵で
+  署名されます。
+- `AF_KEY_CUSTODIAN=kms` で `AF_MASTER_KEY` が無いと、Control Plane は起動を拒否します。
+
+コマンドで変わること: 封じ直した値は、master 鍵だけでは開けなくなります。導けてしまう資格情報ストアの鍵は除きます。
 
 ## egress 統制の運用
 
