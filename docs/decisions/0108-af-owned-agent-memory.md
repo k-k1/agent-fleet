@@ -348,3 +348,12 @@ thing: explicit, previewed (`GET /agents/memory/claude-export[/preview]`, `POST`
 - Import loop guard: the import reads a claude file whose `af_source` names the AF memory and whose
   text still hashes to `af_hash` as `unchanged`, although its mtime is newer than AF's update.
 - codex: deferred to #1683 (its memory workspace is rewritten by its own pipeline).
+
+## Note (2026-10-10): codex import measured as far as possible (#1683)
+
+Decision 6 step 1 for codex is not built. A throwaway `CODEX_HOME` with `memories` on produced only
+the empty scaffold (`raw_memories.md`, `phase2_workspace_diff.md`, `extensions/ad_hoc/`,
+`rollout_summaries/`); codex's two consolidation phases are model calls and failed with 401 without
+a login, so no real `MEMORY.md` was seen. The shape known from codex's own prompts, the proposed
+split by `# Task Group:` block, scope, naming rules and the open questions are in
+[0112](0112-codex-memory-import.md). Nothing above is changed.
