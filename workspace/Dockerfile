@@ -317,10 +317,10 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.295
+ARG CLAUDE_CODE_VERSION=2.1.296
 ARG OPENCODE_VERSION=1.18.35
-ARG CODEX_VERSION=0.162.0
-ARG COPILOT_VERSION=1.0.94
+ARG CODEX_VERSION=0.162.1
+ARG COPILOT_VERSION=1.0.95
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
