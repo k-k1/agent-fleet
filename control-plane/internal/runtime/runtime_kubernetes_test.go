@@ -30,6 +30,9 @@ type fakeKube struct {
 	replies map[string]fakeReply
 	seen    []string
 	auth    []string
+	// onRequest, when set, runs for every request before it is answered; it may block
+	// (until r.Context() is done, say) to hold a request in flight.
+	onRequest func(r *http.Request)
 }
 
 type fakeReply struct {
@@ -62,7 +65,11 @@ func (f *fakeKube) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.seen = append(f.seen, key)
 	f.auth = append(f.auth, r.Header.Get("Authorization"))
 	rep, ok := f.replies[key]
+	hook := f.onRequest
 	f.mu.Unlock()
+	if hook != nil {
+		hook(r)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	if !ok {
 		w.WriteHeader(http.StatusNotFound)
