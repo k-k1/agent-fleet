@@ -107,6 +107,10 @@ func TestSlotUserDataUsernsFailsClosed(t *testing.T) {
 		if err == nil || strings.Contains(out, "REACHED-NEXT-STAGE") {
 			t.Errorf("%s: the script went on (err=%v):\n%s", tc.name, err, out)
 		}
+		// The guard must already be loaded when the failing step runs.
+		if r, w := strings.Index(out, "systemctl daemon-reload"), strings.Index(out, "sysctl -w"); r < 0 || w < 0 || r > w {
+			t.Errorf("%s: daemon-reload must be recorded before sysctl -w:\n%s", tc.name, out)
+		}
 	}
 	// Persisting fails (the target directory cannot be written).
 	d := t.TempDir()

@@ -220,9 +220,11 @@ Resources:
               GUARD
               chmod +x /usr/local/sbin/af-require-no-userns
               printf '[Service]\nExecStartPre=/usr/local/sbin/af-require-no-userns\n' > /etc/systemd/system/ecs.service.d/10-af-userns.conf
+              # Load the drop-in before anything that can fail: ecs.service is already queued
+              # behind cloud-final, and only a reload puts the guard into that pending job.
+              systemctl daemon-reload
               echo 'user.max_user_namespaces=0' > /etc/sysctl.d/99-af-userns.conf
               sysctl -w user.max_user_namespaces=0
-              systemctl daemon-reload
               set +e
               # END userns
               # ECS_AWSVPC_BLOCK_IMDS: a workspace task must not reach SlotRole through IMDS.
