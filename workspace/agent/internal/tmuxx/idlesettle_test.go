@@ -178,3 +178,36 @@ func TestPaneChangedAt(t *testing.T) {
 		t.Fatal("a sighting no poll refreshed still spoke: a frozen clock would read as a frozen pane")
 	}
 }
+
+func TestObservePane(t *testing.T) {
+	now := withFakeClock(t)
+	orig := observeCapture
+	t.Cleanup(func() { observeCapture = orig })
+	frame := "a"
+	observeCapture = func(string) string { return frame }
+
+	if !ObservePane("n") {
+		t.Fatal("first read must record")
+	}
+	first := *now
+	if at, ok := PaneChangedAt("n"); !ok || !at.Equal(first) {
+		t.Fatalf("first: %v %v, want %v", at, ok, first)
+	}
+	*now = now.Add(10 * time.Second)
+	ObservePane("n") // unchanged frame keeps the clock
+	if at, _ := PaneChangedAt("n"); !at.Equal(first) {
+		t.Errorf("unchanged frame moved the clock to %v", at)
+	}
+	frame = "b"
+	*now = now.Add(10 * time.Second)
+	ObservePane("n")
+	if at, _ := PaneChangedAt("n"); !at.Equal(*now) {
+		t.Errorf("repaint did not move the clock: %v", at)
+	}
+	// A failed read records nothing and reports false.
+	frame = ""
+	*now = now.Add(5 * time.Second)
+	if ObservePane("n") {
+		t.Error("failed capture reported success")
+	}
+}

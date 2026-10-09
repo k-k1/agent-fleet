@@ -4,6 +4,8 @@ import (
 	"hash/fnv"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // The layer that decides, by time, whether a frame that looks like an idle prompt may be
@@ -135,4 +137,20 @@ func PaneChangedAt(name string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return s.changed, true
+}
+
+// observeCapture reads the frame ObservePane records. Only tests replace it.
+var observeCapture = CapturePane
+
+// ObservePane records the session's current frame on the clock PaneChangedAt reads, for kinds
+// whose own state code never captures the pane. An unreadable pane records nothing (an empty
+// frame would read as a pane that stopped repainting); PaneChangedAt then goes silent after
+// paneSightingFresh. Reports whether a frame was recorded.
+func ObservePane(name string) bool {
+	frame := observeCapture(session.TmuxName(name))
+	if frame == "" {
+		return false
+	}
+	observeFrame(name, frame)
+	return true
 }

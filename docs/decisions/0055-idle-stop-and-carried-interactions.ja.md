@@ -2,7 +2,7 @@
 
 [English](0055-idle-stop-and-carried-interactions.md) | 日本語
 
-- 状態: **採用**（2026-08-24）。検討・実測の記録は [docs/75](../log/75-idle-stop-and-pending-interactions.md)。後続: #1830（managed と残りの kind の上限）。
+- 状態: **採用**（2026-08-24）。検討・実測の記録は [docs/75](../log/75-idle-stop-and-pending-interactions.md)。後続: #1830（managed と残りの kind の上限）、#1942、#1943。
 - 関連: [0030-turn-abort-auto-resume.md](0030-turn-abort-auto-resume.ja.md)（live 状態を「促す次の一手」で分ける） /
   [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.ja.md)（停止＝スロット解放＝費用） /
   [docs/history/p3-9-idle-stop.md](../log/p3-9-idle-stop.md)（二段構えの原型）
@@ -205,3 +205,31 @@ Workspace が際限なく起き続けた（実測で約 21 時間、#1811）。�
   Agent は `stateSince`（近似: 状態を最初に観測した poll、または status ファイルの mtime の古い方。
   Agent 再起動で戻る）を報告し、`working` の `idleHolder` が `since` と `lapseAt`（経過秒の上限を
   CP の時計で換算）を持つ。
+
+## 追記（2026-10-09）— 上限をペイン信号のみの Terminal kind に広げる（#1830）
+
+2026-10-07 の追記は claude と agy 以外を、kind ごとの生存信号を実測するまで上限なしのままにした。
+Workspace イメージ同梱の CLI（codex 0.162、cursor-agent 2026.10.01、copilot 1.0.94、kiro-cli 2.24、
+opencode 1.18）を tmux ペインで動かし、無出力のツール `sleep 120` の間のフレームを 1 秒ごとに比較した:
+
+| kind | 無出力ツール中のペイン再描画 | ツールプロセス規則 |
+|---|---|---|
+| codex | 毎秒新しいフレーム（110 秒で 108 種、同一フレームの最長連続 0 秒） | 使えない: ペイン配下の `setsid()` 常駐ヘルパーが idle でもツールに見える |
+| cursor | 115 秒で 114 種、最長 0 秒 | 未計測（不要） |
+| copilot | 115 秒で 113 種、最長 0 秒 | 未計測（不要） |
+| kiro | 95 秒で 93 種、最長 0 秒（idle 時は 112 秒で 1 フレーム） | 未計測（不要） |
+| opencode | 115 秒で 113 種、最長 0 秒 | 未計測（不要） |
+
+- 決定: Terminal の codex・cursor・copilot・kiro・opencode も `progressAgeSec` を報告する。信号は
+  ペインの再描画。これらの kind は状態判定でペインを読まないため、Agent が自分でペインを idle-settle の
+  時計に記録する（busy 行・poll ごとに `capture-pane` 1 回）。ツールプロセスの探索は行わない。
+  1 時間の失効とそれ以外は変更なし。
+- 信号を実測できなかったため上限なしのまま: 全 kind の managed セッション（ペインが無く、ランタイムの
+  実行中ツールが見えない）と、Terminal の muse・lcpp・shell・ssm。従来どおり抱える。
+  後続: #1942（managed）、#1943（muse / lcpp / shell / ssm）。
+- 注意: kind ごとにモデルと CLI のバージョンは 1 つだけ。ツール実行中に再描画しなくなる CLI は、
+  1 時間無出力で失効する。CLI のバージョンを上げるときは再計測すること。
+- トレードオフ: この 5 kind の 1 時間は総作業時間ではなく「ペインが最後に変化してからの時間」で、
+  実行中のツールプロセスは生存信号に数えない。ペインが 1 時間静止したままの無出力ツールは失効し得て、
+  スピナーが動き続ける固まったセッションは無期限に抱える（安全側）。また現在の poll でペインを取得
+  できなかった場合は古い経過秒ではなく「回答なし」を返す。

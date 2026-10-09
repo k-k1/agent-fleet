@@ -11,6 +11,9 @@ type progFixture struct {
 	status, pane, source *time.Time
 	tool, toolObserved   bool
 	trusted              bool
+	paneOnly             bool
+	observeFails         bool
+	observed             *[]string // names recorded on the pane clock
 }
 
 func (f progFixture) probes(now time.Time, toolCalls *int) progressProbes {
@@ -23,6 +26,13 @@ func (f progFixture) probes(now time.Time, toolCalls *int) progressProbes {
 	return progressProbes{
 		now:      func() time.Time { return now },
 		trusted:  func(session.Meta) bool { return f.trusted },
+		paneOnly: func(session.Meta) bool { return f.paneOnly },
+		observePane: func(name string) bool {
+			if f.observed != nil {
+				*f.observed = append(*f.observed, name)
+			}
+			return !f.observeFails
+		},
 		statusAt: func(string) (time.Time, bool) { return at(f.status) },
 		paneAt:   func(string) (time.Time, bool) { return at(f.pane) },
 		sourceAt: func(session.Meta) (time.Time, bool) { return at(f.source) },
@@ -104,11 +114,19 @@ func TestProgressTrusted(t *testing.T) {
 		{session.Meta{Kind: ""}, true}, // an old row without a kind is claude
 		{session.Meta{Kind: session.KindAgy}, true},
 		{session.Meta{Kind: session.KindClaude, Driver: session.DriverManaged}, false},
-		{session.Meta{Kind: session.KindCodex}, false},
-		{session.Meta{Kind: session.KindCursor}, false},
-		{session.Meta{Kind: session.KindCopilot}, false},
-		{session.Meta{Kind: session.KindKiro}, false},
-		{session.Meta{Kind: session.KindOpencode}, false},
+		// Pane repaint measured through a 120 s silent tool (#1830).
+		{session.Meta{Kind: session.KindCodex}, true},
+		{session.Meta{Kind: session.KindCursor}, true},
+		{session.Meta{Kind: session.KindCopilot}, true},
+		{session.Meta{Kind: session.KindKiro}, true},
+		{session.Meta{Kind: session.KindOpencode}, true},
+		{session.Meta{Kind: session.KindCodex, Driver: session.DriverManaged}, false},
+		{session.Meta{Kind: session.KindOpencode, Driver: session.DriverManaged}, false},
+		// No measured signal: keep holding.
+		{session.Meta{Kind: session.KindMuse}, false},
+		{session.Meta{Kind: session.KindLcpp}, false},
+		{session.Meta{Kind: session.KindShell}, false},
+		{session.Meta{Kind: session.KindSSM}, false},
 	} {
 		if got := progressTrusted(tc.m); got != tc.want {
 			t.Errorf("%+v: trusted = %v, want %v", tc.m, got, tc.want)
@@ -203,5 +221,48 @@ func TestStateSinceKeepsAdoptedStartAndSkipsHooklessStatus(t *testing.T) {
 	now = t0.Add(time.Hour)
 	if got, _ := stateSinceOf(cur, "working", true, p); !got.Equal(now) {
 		t.Errorf("a new Terminal turn took the previous turn's status mtime: %v, want %v", got, now)
+	}
+}
+
+// Per pane-only kind: status and state source stale for hours, a long silent tool running (so
+// the pane keeps repainting). The row must read as live, and the tool-process probe must stay
+// out of it (codex's setsid() helpers would read as a tool forever).
+func TestProgressOfPaneOnlyKinds(t *testing.T) {
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	h5, h2, fresh := now.Add(-5*time.Hour), now.Add(-2*time.Hour), now.Add(-3*time.Second)
+	for _, kind := range []string{session.KindCodex, session.KindCursor, session.KindCopilot, session.KindKiro, session.KindOpencode} {
+		t.Run(kind, func(t *testing.T) {
+			m := session.Meta{Dir: "/d", Name: "n", Kind: kind}
+			if !progressTrusted(m) || !progressPaneOnly(m) {
+				t.Fatalf("%s must be a trusted pane-only kind", kind)
+			}
+			var observed []string
+			calls := 0
+			f := progFixture{trusted: true, paneOnly: true, status: &h5, source: &h5, pane: &fresh, tool: true, toolObserved: true, observed: &observed}
+			got, ok := progressOf(m, "working", f.probes(now, &calls))
+			if !ok || !got.Equal(fresh) {
+				t.Errorf("repainting pane under stale status/source: progressOf = %v, %v; want %v", got, ok, fresh)
+			}
+			if calls != 0 || len(observed) != 1 {
+				t.Errorf("toolAlive called %d times (want 0), pane observed %d times (want 1)", calls, len(observed))
+			}
+			// Frozen: nothing repaints. A live-looking tool process must not rescue it.
+			f.pane = &h2
+			got, ok = progressOf(m, "working", f.probes(now, &calls))
+			if !ok || !got.Equal(h2) || calls != 0 {
+				t.Errorf("frozen pane: progressOf = %v, %v, toolAlive calls %d; want %v, true, 0", got, ok, calls, h2)
+			}
+			// This poll's capture failed while the cached sighting is old: unknown, not lapsed.
+			f.pane, f.observeFails = &h2, true
+			if got, ok := progressOf(m, "working", f.probes(now, &calls)); ok {
+				t.Errorf("failed capture with a cached old sighting answered %v", got)
+			}
+			f.observeFails = false
+			// Pane never read: unknown, never "frozen".
+			f.pane = nil
+			if _, ok := progressOf(m, "working", f.probes(now, &calls)); ok {
+				t.Error("unreadable pane must give no answer")
+			}
+		})
 	}
 }
