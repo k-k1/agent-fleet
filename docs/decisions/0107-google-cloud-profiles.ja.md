@@ -528,7 +528,7 @@ Issue #1488。決定 2 の「コマンドの途中では更新しない」は成
 ## 補足 — トークンを 1 度しか読まないプログラム向けのループバック `token_uri`: 測定のみ、未実装（2026-10-09）
 
 Issue #1879。上の決定は変えない。何も作っていない。この補足は、コードを書く前にと Issue が求めた測定と、
-メンテナーの判断が要るトレードオフを記録する。
+トレードオフ、および末尾のメンテナーの判断を記録する。
 
 方法: `127.0.0.1` 上の偽トークンエンドポイント（リクエストを記録し `fake-access-N` を返す）と、合成の
 `authorized_user` ファイル（`client_id`・`client_secret`・`refresh_token` はすべて架空、`token_uri` は偽
@@ -540,14 +540,16 @@ Issue #1879。上の決定は変えない。何も作っていない。この補
 | 対象（バージョン） | `authorized_user` の `token_uri` に従うか |
 |---|---|
 | Go `golang.org/x/oauth2/google` 0.37.0 | **従う。** `FindDefaultCredentials` から `Token()` で、ファイルの client id・secret・refresh token を付けた `grant_type=refresh_token` が偽エンドポイントに届いた。 |
-| Go `cloud.google.com/go/auth` 0.24.0 | **従わない。** `https://oauth2.googleapis.com/token` に送ろうとした（名前空間内では接続失敗）。偽エンドポイントには何も届かない。 |
-| Python `google-auth` 2.61.0 | **従わない。** `from_authorized_user_info` が上書きする（`token_uri=_GOOGLE_OAUTH2_TOKEN_ENDPOINT,  # always overrides`）。更新は Google に向かった。 |
+| Go `cloud.google.com/go/auth` 0.24.0 | **従わない。** `https://oauth2.googleapis.com/token` に送ろうとした（名前空間内では接続失敗。送信は試みただけ）。偽エンドポイントには何も届かない。 |
+| Python `google-auth` 2.61.0 | **従わない。** `from_authorized_user_info` が上書きする（`token_uri=_GOOGLE_OAUTH2_TOKEN_ENDPOINT,  # always overrides`）。名前空間外の 1 回は Google の `https://oauth2.googleapis.com/token` に送り、`invalid_client` が返った。 |
 | Node `google-auth-library` 11.2.0 と 9.15.1 | **従わない。** 更新クライアントは固定の `oauth2TokenUrl` を使い、ファイルの値を読まない（11.2.0 は Google の名前解決に失敗、9.15.1 はソースで確認）。9.x は `@google-cloud/storage` 8.2.0 が同梱するもの。 |
 | Terraform Google プロバイダ 8.6.0（Terraform 1.16.4） | **従う。ただしラッパーが設定する変数では不可。** `GOOGLE_CREDENTIALS` にファイルを指定し `GOOGLE_OAUTH_ACCESS_TOKEN` なしだと、"Authenticating using configured Google JSON 'credentials'" と出力し、期限ごとに偽エンドポイントで更新した（`expires_in=1` で 25 秒に 6 リクエスト）。`GOOGLE_APPLICATION_CREDENTIALS` だけの場合は "Authenticating using DefaultClient" で、こちらも偽エンドポイントに尋ねた。どちらの場合も `GOOGLE_OAUTH_ACCESS_TOKEN` を併せて設定すると "Authenticating using configured Google JSON 'access_token'" となり、偽エンドポイントには一切尋ねない。 |
 
 プロバイダは起動時に固定の Google ホスト（`openidconnect.googleapis.com/v1/userinfo`）も呼ぶため、名前空間内では
 `plan` を最後まで実行できなかった。根拠はトークン要求と認証方式の出力であり、API 呼び出しを端から端まで通した
-ものではない。未測定: Google に対する上記のすべて。
+ものではない。Google に実際に届いたのはその Python の合成値 1 回だけ。Go と Node 11 は送信前に失敗し、Node 9.15.1 は実行せずソースで確認した。他の
+ライブラリが秘密を Google に「送る」というのは固定 URL からの推論で、Google のエラー（`invalid_client` を観測したのは Python のみ）も
+他では予想であり未測定。
 
 結論:
 
@@ -570,7 +572,7 @@ Issue #1879。上の決定は変えない。何も作っていない。この補
 - **Issue の案（`GOOGLE_APPLICATION_CREDENTIALS` に実行ごとの `authorized_user` ファイル）: 不採用。**
   5 つのうち 3 つ（Python、Node、`cloud.google.com/go/auth`）は `token_uri` を無視し、実行ごとのクライアント秘密と
   refresh token を Google に送る。Google では無意味な値だがワークスペースの外へ出るし、閉じた失敗が分かりにくい
-  `invalid_client` に変わる。
+  Google のエラー（`invalid_client` など。観測したのは Python のみ）に変わる見込み。
 - **(a) Terraform のみ（`GOOGLE_CREDENTIALS` とループバックのリスナー）: 当面は採らない。** 代償は、文書化された
   契約とクライアントライブラリの手順が頼る `GOOGLE_OAUTH_ACCESS_TOKEN` が子の環境から消えること、そして
   ワークスペースのどのプロセスからも届くループバックのリスナーが本体の秘密だけで守られること。分割実行の負担が
@@ -578,6 +580,7 @@ Issue #1879。上の決定は変えない。何も作っていない。この補
 - **(c) より長い偽装トークン（`--lifetime`）: 採らない。** サービスアカウントのトークン寿命を延ばす組織ポリシーが
   必要で、ワークスペースはそれを前提にできない。
 
-当面の運用: `terraform apply`（や `GOOGLE_OAUTH_ACCESS_TOKEN` を 1 度しか読まないプログラム）はトークンの寿命
-（最長でおよそ 1 時間）の中で終わらせる。それより長い作業は、トークンより短いコマンドに分け、それぞれ別の
-`af-gcloud-exec` 実行で行う。#1879 は (a) と (c) のために開いたままにする。
+当面の運用: `terraform apply`（や `GOOGLE_OAUTH_ACCESS_TOKEN` を 1 度しか読まないプログラム）は、各実行が開始時に
+表示する残り時間（「the token is valid for N more minutes」。最低 10 分、最長でおよそ 1 時間で、毎回新しい 1 時間とは限らない）の
+中で終わらせる。それより長い作業は、その残り時間より短いコマンドに分け、それぞれ別の `af-gcloud-exec` 実行で行う。
+[ガイド](../../guide/member/10-integrations.ja.md#google-cloud-で自分としてコマンドを実行するaf-gcloud-exec)も参照。#1879 は (a) と (c) のために開いたままにする。

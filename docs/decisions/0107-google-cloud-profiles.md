@@ -631,7 +631,7 @@ decision stands. Follow-up for what this cannot cover: #1879.
 ## Note — a loopback `token_uri` for programs that read the token once: measured, not built (2026-10-09)
 
 Issue #1879. The decisions above are not changed, and nothing is built. This note records the
-measurement the issue asked for before any code, and the trade-off that needs the maintainer's decision.
+measurement the issue asked for before any code, the trade-off, and the maintainer's decision (at the end).
 
 Setup: a fake token endpoint on `127.0.0.1` that logs each request and returns `fake-access-N`, a
 synthetic `authorized_user` file (`client_id`, `client_secret`, `refresh_token` all made up, `token_uri`
@@ -643,15 +643,17 @@ or user data was involved); every run below was inside the namespace.
 | Consumer (version) | Honours `token_uri` of an `authorized_user` file? |
 |---|---|
 | Go `golang.org/x/oauth2/google` 0.37.0 | **Yes.** `FindDefaultCredentials` then `Token()` posted `grant_type=refresh_token` with the file's client id, secret and refresh token to the fake. |
-| Go `cloud.google.com/go/auth` 0.24.0 | **No.** It posted to `https://oauth2.googleapis.com/token` (the dial failed in the namespace); the fake saw nothing. |
-| Python `google-auth` 2.61.0 | **No.** `Credentials.from_authorized_user_info` overwrites it (`token_uri=_GOOGLE_OAUTH2_TOKEN_ENDPOINT,  # always overrides`); the refresh went to Google. |
+| Go `cloud.google.com/go/auth` 0.24.0 | **No.** It attempted to POST to `https://oauth2.googleapis.com/token` (the dial failed in the namespace); the fake saw nothing. |
+| Python `google-auth` 2.61.0 | **No.** `Credentials.from_authorized_user_info` overwrites it (`token_uri=_GOOGLE_OAUTH2_TOKEN_ENDPOINT,  # always overrides`); the one run outside the namespace attempted `https://oauth2.googleapis.com/token` and got `invalid_client` from Google. |
 | Node `google-auth-library` 11.2.0 and 9.15.1 | **No.** The refresh client uses the fixed `oauth2TokenUrl`; the file's value is not read (11.2.0 failed resolving Google; 9.15.1 by source). 9.x is what `@google-cloud/storage` 8.2.0 bundles. |
 | Terraform Google provider 8.6.0 (Terraform 1.16.4) | **Yes, but not with the variable the wrapper sets.** With `GOOGLE_CREDENTIALS` naming the file and no `GOOGLE_OAUTH_ACCESS_TOKEN`, the provider logged "Authenticating using configured Google JSON 'credentials'" and refreshed through the fake once per expiry (`expires_in=1` gave six requests in 25 s). With `GOOGLE_APPLICATION_CREDENTIALS` alone it logged "Authenticating using DefaultClient" and also asked the fake. With `GOOGLE_OAUTH_ACCESS_TOKEN` set beside either, it logged "Authenticating using configured Google JSON 'access_token'" and never asked the fake. |
 
 The provider's own start-up also calls a fixed Google host (`openidconnect.googleapis.com/v1/userinfo`),
 which cannot succeed in the namespace, so a complete `plan` was not run; the evidence is the token
-requests and the authentication line, not an API call authorised end to end. Not measured: any of this
-against Google.
+requests and the authentication line, not an API call authorised end to end. What reached Google is only that one synthetic Python request; the Go and Node 11 attempts failed
+before sending, and Node 9.15.1 was read from source, not run. Where this note says a library "would send" the
+secret to Google, that is inferred from the fixed URL, and the Google error (`invalid_client` was observed
+only for Python) is expected, not measured, for the others.
 
 What follows:
 
@@ -677,7 +679,7 @@ Decision (the maintainer, 2026-10-10): **do not build; split the work.** The thr
 - **The issue's option (a per-run `authorized_user` file at `GOOGLE_APPLICATION_CREDENTIALS`): rejected.**
   Three of the five consumers (Python, Node, `cloud.google.com/go/auth`) ignore `token_uri` and would send
   the per-run client secret and refresh token to Google. They are useless there, but they leave the
-  workspace, and the fail-closed error becomes a confusing `invalid_client`.
+  workspace, and the fail-closed error would become a Google error such as `invalid_client` (observed for Python only).
 - **(a) Terraform only (`GOOGLE_CREDENTIALS` plus the loopback listener): not taken for now.** Its cost is
   that `GOOGLE_OAUTH_ACCESS_TOKEN` disappears from the child's environment, which the documented contract
   and the client-library recipes rely on, and that a listener on the loopback is reachable by any process
@@ -686,5 +688,7 @@ Decision (the maintainer, 2026-10-10): **do not build; split the work.** The thr
   allows longer service-account token lifetimes, which the workspace cannot assume.
 
 Guidance for now: a `terraform apply` (or any program that reads `GOOGLE_OAUTH_ACCESS_TOKEN` once) must
-finish within the token's life, at most about an hour; split longer work into commands shorter than that,
-each under its own `af-gcloud-exec` run. #1879 stays open for (a) and (c).
+finish within the token's remaining life, which each run prints at its start ("the token is valid for N more
+minutes": at least ten, at most about an hour, and not necessarily a fresh hour); split longer work into
+commands shorter than that, each under its own `af-gcloud-exec` run. See
+[the guide](../../guide/member/10-integrations.md#running-commands-in-google-cloud-as-you-af-gcloud-exec). #1879 stays open for (a) and (c).
