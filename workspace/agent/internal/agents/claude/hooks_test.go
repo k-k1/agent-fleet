@@ -3,6 +3,7 @@ package claude
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -298,5 +299,66 @@ func TestPushHookIsNotASessionStatusState(t *testing.T) {
 	f := strings.Fields(pushHookCmd())
 	if len(f) != 2 || f[1] != PushHookSubcommand || f[1] == "session-status" {
 		t.Fatalf("pushHookCmd() = %q, want `<exe> %s` and nothing else", pushHookCmd(), PushHookSubcommand)
+	}
+}
+
+// modelSwitchEntries counts PreModelSwitch entries running our allow command, and the rest.
+func modelSwitchEntries(t *testing.T, dir string) (ours, others int) {
+	t.Helper()
+	arr, _ := readHooks(t, dir)["PreModelSwitch"].([]any)
+	for _, e := range arr {
+		if b, _ := json.Marshal(e); strings.Contains(string(b), "PreModelSwitch") && strings.Contains(string(b), `\"permissionDecision\":\"allow\"`) {
+			ours++
+		} else {
+			others++
+		}
+	}
+	return ours, others
+}
+
+// The allow hook is what keeps /model from stopping on claude's "Switch model?" dialog;
+// it is installed once however often the agent starts, and prints valid allow JSON.
+func TestEnsureStatusHooksInstallsModelSwitchAllowOnce(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+
+	EnsureStatusHooks()
+	EnsureStatusHooks()
+	if ours, _ := modelSwitchEntries(t, dir); ours != 1 {
+		t.Fatalf("PreModelSwitch allow installed %d times, want 1", ours)
+	}
+
+	out, err := exec.Command("sh", "-c", modelSwitchAllowCmd).Output()
+	if err != nil {
+		t.Fatalf("run hook command: %v", err)
+	}
+	var got struct {
+		Out struct {
+			Event    string `json:"hookEventName"`
+			Decision string `json:"permissionDecision"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("hook output %q is not JSON: %v", out, err)
+	}
+	if got.Out.Event != "PreModelSwitch" || got.Out.Decision != "allow" {
+		t.Errorf("hook output = %s, want PreModelSwitch allow", out)
+	}
+}
+
+// A user's own PreModelSwitch hook stays and does not stand in for ours.
+func TestEnsureStatusHooksModelSwitchKeepsUserEntry(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	seed := `{"hooks":{"PreModelSwitch":[{"hooks":[{"type":"command","command":"/home/dev/my-gate.sh"}]}]}}`
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	EnsureStatusHooks()
+	EnsureStatusHooks()
+	ours, others := modelSwitchEntries(t, dir)
+	if ours != 1 || others != 1 {
+		t.Fatalf("PreModelSwitch ours=%d others=%d, want 1 and 1", ours, others)
 	}
 }
