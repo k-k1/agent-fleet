@@ -13,6 +13,44 @@
 
 ---
 
+## [0.30.0](0.30.0.ja.md) — 2026-10-09
+
+**CLI ピン** — Claude Code 2.1.295 / Codex 0.162.0 / Copilot 1.0.94 / Antigravity 1.3.2 / Muse Code 1.4.4-R5419.1
+
+**New / Improved**
+
+- **[コンポーザー]** 送信待ち：ターンの実行中に続きのプロンプトを溜め、1 件ずつ送る ([#1083](https://github.com/k-k1/agent-fleet/issues/1083))
+- **[ファイル]** ファイルのツリーとギャラリーからフォルダを zip でダウンロード ([#1829](https://github.com/k-k1/agent-fleet/issues/1829))
+- **[ターミナル]** Ctrl+C で選択範囲をコピーし Ctrl+V で貼り付け。設定 › 表示 でオフにできる ([#1708](https://github.com/k-k1/agent-fleet/issues/1708))
+- **[AWS]** 設定のプロファイルの種類「別のプロファイルからロールを引き受ける」 ([#1109](https://github.com/k-k1/agent-fleet/issues/1109))
+- **[メモリ管理]** Agent Fleet のメモリを Claude Code へ書き戻す ([#1914](https://github.com/k-k1/agent-fleet/issues/1914))
+- **[メモリ管理]** メモリのピン留め。`memory_index` はほかを読まれた回数で並べる ([#1703](https://github.com/k-k1/agent-fleet/issues/1703))
+- **[メモリ管理]** オンの間は Agent Fleet のメモリが claude 自身のメモリに代わる。全種類に使い方を伝え、取り込みで短くしない ([#1734](https://github.com/k-k1/agent-fleet/issues/1734), [#1733](https://github.com/k-k1/agent-fleet/issues/1733), [#1921](https://github.com/k-k1/agent-fleet/issues/1921))
+- **[MCP]** `create_session` が親自身の作業コピーで子を起動できる（`allow_shared_working_copy`） ([#1826](https://github.com/k-k1/agent-fleet/issues/1826))
+- **[左ペイン]** 畳んだリポジトリの行に、いちばん新しいセッションを表示 ([#1915](https://github.com/k-k1/agent-fleet/issues/1915))
+- **[コマンドパレット]** 子セッションを親の下にまとめて表示 ([#1887](https://github.com/k-k1/agent-fleet/issues/1887))
+- **[課題管理]** 接続先のどの Jira プロジェクトのキーもリンクになり、一覧にない Jira と Bitbucket の項目はその場で読み込み、Markdown ファイルのプレビューでも `#N` がリンクになる ([#1899](https://github.com/k-k1/agent-fleet/issues/1899), [#1661](https://github.com/k-k1/agent-fleet/issues/1661), [#1900](https://github.com/k-k1/agent-fleet/issues/1900), [#1909](https://github.com/k-k1/agent-fleet/issues/1909))
+- **[Git ホスティング]** 期限のある GitHub App のユーザートークンを自動で更新 ([#1676](https://github.com/k-k1/agent-fleet/issues/1676))
+- **[Google Cloud]** 設定と WS バーからログアウト。`af-gcloud-exec` は長いコマンドの間トークンを更新 ([#1850](https://github.com/k-k1/agent-fleet/issues/1850), [#1488](https://github.com/k-k1/agent-fleet/issues/1488))
+- **[AWS]** メンバーのターミナルで実行した `af-aws-exec` と `af-gcloud-exec` も Console にログインを頼む ([#1512](https://github.com/k-k1/agent-fleet/issues/1512))
+- **[課題管理]** GitHub の既定のクエリに種類を含める ([#1715](https://github.com/k-k1/agent-fleet/issues/1715))
+- **[利用量]** Muse Code の利用量メニューから Meta の利用量のページを開ける ([#1892](https://github.com/k-k1/agent-fleet/issues/1892))
+- **[i18n]** Console の残りの英語を平易にし、いくつかの説明を実際の動きに合わせた ([#1823](https://github.com/k-k1/agent-fleet/issues/1823))
+- **[ガイド]** 自分用の Claude Code のフック、スキル、エージェントの置き場所 ([#1780](https://github.com/k-k1/agent-fleet/issues/1780))
+
+**Fixed**
+
+- **[ecs-ec2]** ecs-ec2 のワークスペースで Chromium が動かなかった。Fargate ではブラウザの機能を押せない状態にする ([#1927](https://github.com/k-k1/agent-fleet/issues/1927))
+- **[エージェント]** 「リモートコントロール」をオンにしても claude のセッションがつながらなかった ([#1254](https://github.com/k-k1/agent-fleet/issues/1254))
+- **[リポジトリ]** 残った git の `index.lock` で fast-forward での取り込みがずっと失敗した ([#1930](https://github.com/k-k1/agent-fleet/issues/1930))
+- **[MCP]** 知らない引数を黙って無視した（`prompt` で何もしない子が起動した） ([#1905](https://github.com/k-k1/agent-fleet/issues/1905))
+- **[Markdown]** 閉じていない `<a>` などの書式のタグで、後に続く段落がすべてリンクになった ([#1846](https://github.com/k-k1/agent-fleet/issues/1846), [#1853](https://github.com/k-k1/agent-fleet/issues/1853), [#1876](https://github.com/k-k1/agent-fleet/issues/1876))
+- **[アイドル停止]** Antigravity がバックグラウンドで動かすコマンドがワークスペースを止めない理由にならなかった ([#1825](https://github.com/k-k1/agent-fleet/issues/1825))
+- **[コマンドパレット]** 開き直すと前の選択が残り、古い「会話」のヒットが末尾へ移動した ([#1886](https://github.com/k-k1/agent-fleet/issues/1886), [#1663](https://github.com/k-k1/agent-fleet/issues/1663))
+- **[メンバー]** ワークスペースが残っているのに「メンバーを完全に削除」が表示された ([#1888](https://github.com/k-k1/agent-fleet/issues/1888))
+- **[クラウドのログイン]** コードを送ると、届いていてもエラーになることがあった ([#1885](https://github.com/k-k1/agent-fleet/issues/1885))
+- **[WS バー]** スマートフォンで WS バーが画面より広くなった ([#1650](https://github.com/k-k1/agent-fleet/issues/1650))
+
 ## [0.29.1](0.29.1.ja.md) — 2026-10-07
 
 **Fixed**

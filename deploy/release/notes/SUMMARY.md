@@ -14,6 +14,44 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 
 ---
 
+## [0.30.0](0.30.0.md) — 2026-10-09
+
+**CLI pins** — Claude Code 2.1.295, Codex 0.162.0, Copilot 1.0.94, Antigravity 1.3.2, Muse Code 1.4.4-R5419.1
+
+**New / Improved**
+
+- **[composer]** Waiting to send: hold follow-up prompts while a turn runs and send them one at a time ([#1083](https://github.com/k-k1/agent-fleet/issues/1083))
+- **[files]** Download a folder as zip from the Files tree and the gallery ([#1829](https://github.com/k-k1/agent-fleet/issues/1829))
+- **[terminal]** Ctrl+C copies a selection and Ctrl+V pastes; can be turned off in Settings › Display ([#1708](https://github.com/k-k1/agent-fleet/issues/1708))
+- **[AWS]** Settings profile type "Assume a role from another profile" ([#1109](https://github.com/k-k1/agent-fleet/issues/1109))
+- **[agent memory]** Write Agent Fleet memory back to Claude Code ([#1914](https://github.com/k-k1/agent-fleet/issues/1914))
+- **[agent memory]** Pinned memories; `memory_index` ranks the rest by use ([#1703](https://github.com/k-k1/agent-fleet/issues/1703))
+- **[agent memory]** While on, Agent Fleet memory replaces claude's own memory; every kind gets the usage guidance; imports are no longer shortened ([#1734](https://github.com/k-k1/agent-fleet/issues/1734), [#1733](https://github.com/k-k1/agent-fleet/issues/1733), [#1921](https://github.com/k-k1/agent-fleet/issues/1921))
+- **[MCP]** `create_session` can start a child in the parent's own working copy (`allow_shared_working_copy`) ([#1826](https://github.com/k-k1/agent-fleet/issues/1826))
+- **[left pane]** A folded repository shows its newest session in its row ([#1915](https://github.com/k-k1/agent-fleet/issues/1915))
+- **[command palette]** Child sessions are grouped under their parent ([#1887](https://github.com/k-k1/agent-fleet/issues/1887))
+- **[work items]** Jira keys of any connected project link, Jira and Bitbucket items outside the inbox are read live, and `#N` links in a Markdown file's preview ([#1899](https://github.com/k-k1/agent-fleet/issues/1899), [#1661](https://github.com/k-k1/agent-fleet/issues/1661), [#1900](https://github.com/k-k1/agent-fleet/issues/1900), [#1909](https://github.com/k-k1/agent-fleet/issues/1909))
+- **[git hosting]** Expiring GitHub App user tokens renew themselves ([#1676](https://github.com/k-k1/agent-fleet/issues/1676))
+- **[Google Cloud]** Log out from Settings and the WS bar; `af-gcloud-exec` renews its token during long commands ([#1850](https://github.com/k-k1/agent-fleet/issues/1850), [#1488](https://github.com/k-k1/agent-fleet/issues/1488))
+- **[AWS]** `af-aws-exec` and `af-gcloud-exec` at a member's terminal ask the Console for the login ([#1512](https://github.com/k-k1/agent-fleet/issues/1512))
+- **[work items]** The default GitHub query names the type ([#1715](https://github.com/k-k1/agent-fleet/issues/1715))
+- **[usage]** The Muse Code usage menu links to Meta's usage page ([#1892](https://github.com/k-k1/agent-fleet/issues/1892))
+- **[i18n]** The rest of the Console's English is plainer; several notes match the Console's behaviour ([#1823](https://github.com/k-k1/agent-fleet/issues/1823))
+- **[guide]** Where members put their own Claude Code hooks, skills and agents ([#1780](https://github.com/k-k1/agent-fleet/issues/1780))
+
+**Fixed**
+
+- **[ecs-ec2]** Chromium failed on ecs-ec2 workspaces; Fargate now greys out the browser features ([#1927](https://github.com/k-k1/agent-fleet/issues/1927))
+- **[agents]** The Remote control toggle never connected claude sessions ([#1254](https://github.com/k-k1/agent-fleet/issues/1254))
+- **[repositories]** A leftover git `index.lock` blocked fast-forward for good ([#1930](https://github.com/k-k1/agent-fleet/issues/1930))
+- **[MCP]** Unknown arguments were silently ignored (`prompt` started an idle child) ([#1905](https://github.com/k-k1/agent-fleet/issues/1905))
+- **[Markdown]** An unclosed `<a>` or other formatting tag turned every following paragraph into a link ([#1846](https://github.com/k-k1/agent-fleet/issues/1846), [#1853](https://github.com/k-k1/agent-fleet/issues/1853), [#1876](https://github.com/k-k1/agent-fleet/issues/1876))
+- **[idle stop]** A command Antigravity ran in the background did not keep the workspace awake ([#1825](https://github.com/k-k1/agent-fleet/issues/1825))
+- **[command palette]** Reopening kept the old selection; an old Conversations hit landed at the end ([#1886](https://github.com/k-k1/agent-fleet/issues/1886), [#1663](https://github.com/k-k1/agent-fleet/issues/1663))
+- **[members]** "Delete this member" was offered while the workspace still existed ([#1888](https://github.com/k-k1/agent-fleet/issues/1888))
+- **[cloud login]** Submitting a login code could report an error although it was delivered ([#1885](https://github.com/k-k1/agent-fleet/issues/1885))
+- **[WS bar]** On a phone the WS bar could be wider than the screen ([#1650](https://github.com/k-k1/agent-fleet/issues/1650))
+
 ## [0.29.1](0.29.1.md) — 2026-10-07
 
 **Fixed**
