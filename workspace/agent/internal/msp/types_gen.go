@@ -8,7 +8,7 @@ import "encoding/json"
 // rendered from. A different fingerprint only says the bundle is behind the host;
 // whether these types can still speak to it is schemagen.Compare's question, asked of
 // the installed binary by fingerprint_test.go.
-const SchemaFingerprint = "sha256:4cb671082574037fc1070a136db7c0c8dc24e65e78cf3d209a10944ff9f9845f"
+const SchemaFingerprint = "sha256:7c94f153c41659cb3f1bd3c3e04438be254644cb2a97d65d48edc7449b74858a"
 
 // SchemaVersion is MSP's own version, carried in `initialize`.
 const SchemaVersion = 1
@@ -17,6 +17,8 @@ const SchemaVersion = 1
 const (
 	MethodApprovalDecide            = "approval/decide"
 	MethodApprovalListPending       = "approval/listPending"
+	MethodComputerUseSettingsRead   = "computerUseSettings/read"
+	MethodComputerUseSettingsUpdate = "computerUseSettings/update"
 	MethodFeedbackSubmit            = "feedback/submit"
 	MethodGoalClear                 = "goal/clear"
 	MethodGoalEdit                  = "goal/edit"
@@ -26,6 +28,7 @@ const (
 	MethodHookList                  = "hook/list"
 	MethodInitialize                = "initialize"
 	MethodItemReadOutput            = "item/readOutput"
+	MethodMediaUpload               = "media/upload"
 	MethodModelList                 = "model/list"
 	MethodPluginList                = "plugin/list"
 	MethodSessionCompact            = "session/compact"
@@ -37,9 +40,11 @@ const (
 	MethodSessionSetApprovalMode    = "session/setApprovalMode"
 	MethodSessionSetModel           = "session/setModel"
 	MethodSessionSetReasoningEffort = "session/setReasoningEffort"
+	MethodSessionSideChat           = "session/sideChat"
 	MethodSessionStart              = "session/start"
 	MethodSessionUserShell          = "session/userShell"
 	MethodSkillList                 = "skill/list"
+	MethodSkillSetActivation        = "skill/setActivation"
 	MethodSubagentClose             = "subagent/close"
 	MethodSubagentFollowupTask      = "subagent/followupTask"
 	MethodSubagentInterrupt         = "subagent/interrupt"
@@ -66,6 +71,7 @@ const (
 	MethodViewUnsubscribe           = "view/unsubscribe"
 	MethodWorkflowCancel            = "workflow/cancel"
 	MethodWorkflowChildControl      = "workflow/childControl"
+	MethodWorkflowPause             = "workflow/pause"
 )
 
 // Notification names on the wire.
@@ -125,6 +131,7 @@ const (
 	ErrCodeCancelled                   = -32014
 	ErrCodeCapabilityRequired          = -32010
 	ErrCodeCommandRejected             = -32030
+	ErrCodeComputerUseUnavailable      = -32033
 	ErrCodeForkBoundaryInvalid         = -32023
 	ErrCodeInputTooLarge               = -32002
 	ErrCodeInternal                    = -32603
@@ -142,6 +149,7 @@ const (
 	ErrCodeSessionNotLoaded            = -32024
 	ErrCodeSessionStreamMismatch       = -32025
 	ErrCodeSkillNotFound               = -32032
+	ErrCodeUploadNotFound              = -32038
 	ErrCodeUserInputAlreadySettled     = -32056
 	ErrCodeUserInputAnswerInvalid      = -32057
 	ErrCodeUserInputNotFound           = -32055
@@ -655,6 +663,62 @@ type ClientInfo struct {
 	Version string `json:"version"`
 }
 
+// CodeModeLanguage The language a Code Mode cell ran in (ADR 42727 D2). Open: values are lowercase VS Code
+// language identifiers, and only `javascript` (the V8 engine) is minted today.
+type CodeModeLanguage string
+
+const (
+	CodeModeLanguageJavascript CodeModeLanguage = "javascript"
+)
+
+// CodeModeLanguageValues are every CodeModeLanguage the bundle declares, in schema order.
+var CodeModeLanguageValues = []CodeModeLanguage{
+	CodeModeLanguageJavascript,
+}
+
+// CodeModeOutputSpan One public-output span inside the item's `visibleOutput` (ADR 42727 D3). Offsets index
+// the UTF-8 encoding of the **decoded** `visibleOutput` string, never the JSON-escaped
+// wire text; both ends fall on code-point boundaries; named and measured like
+// `item/readOutput`'s byte range.
+type CodeModeOutputSpan struct {
+	// Length of the span, in bytes.
+	LengthBytes int64 `json:"lengthBytes"`
+	// Start of the span, in bytes.
+	OffsetBytes int64 `json:"offsetBytes"`
+	// What the bytes are.
+	Stream CodeModeOutputStream `json:"stream"`
+}
+
+// CodeModeOutputStream What a Code Mode output span's bytes are (ADR 42727 D3). Open: each engine mints its own
+// values.
+type CodeModeOutputStream string
+
+const (
+	CodeModeOutputStreamTranscript CodeModeOutputStream = "transcript"
+)
+
+// CodeModeOutputStreamValues are every CodeModeOutputStream the bundle declares, in schema order.
+var CodeModeOutputStreamValues = []CodeModeOutputStream{
+	CodeModeOutputStreamTranscript,
+}
+
+// CodeModeReceipt Code Mode's `details` payload (ADR 42727 D2/D3). Every member is absent when it does not
+// apply, never `null`; an empty `outputSpans` list is never served.
+type CodeModeReceipt struct {
+	// `wait` only, when the producer resolved it: the `itemId` of the `execute` item that
+	// started the cell.
+	CellItemID *string `json:"cellItemId,omitempty"`
+	// `execute`, and `wait` when the producer resolved the originating execute: the language
+	// the cell ran in.
+	Language *CodeModeLanguage `json:"language,omitempty"`
+	// The public cell-output spans, ascending and non-overlapping; absent when there is no
+	// cell body or a hook rewrote the served body.
+	OutputSpans []CodeModeOutputSpan `json:"outputSpans,omitempty"`
+	// `execute` only: the top-level key of the item's `args` object whose value is the cell
+	// source. A pointer, never source bytes.
+	SourceArg *string `json:"sourceArg,omitempty"`
+}
+
 // CommandAcceptedResult The uniform SS3.1.2 command acknowledgement: admission only, never an outcome.
 // `session/compact` alone may answer `"noop"`; every other command answers `"accepted"`.
 type CommandAcceptedResult struct {
@@ -744,6 +808,65 @@ const (
 var CompactionTriggerValues = []CompactionTrigger{
 	CompactionTriggerManual,
 	CompactionTriggerAuto,
+}
+
+// ComputerUseBlockedApp One row of the Settings blocked-apps list.
+type ComputerUseBlockedApp struct {
+	// The app's bundle ID, or the family prefix when `prefix` is true.
+	BundleID string `json:"bundleId"`
+	// A built-in block, which Settings cannot remove (ADR 630 D18.8).
+	Locked bool `json:"locked"`
+	// A built-in family row: it blocks every bundle ID that starts with `bundleId`. Omitted
+	// means false; only locked rows are prefixes.
+	Prefix *bool `json:"prefix,omitempty"`
+}
+
+// ComputerUseChoice A capability dropdown's value (ADR 630 D18.4). **Open**: the read result carries it, so
+// an older client tolerates a value it does not know.
+type ComputerUseChoice string
+
+const (
+	ComputerUseChoiceAsk         ComputerUseChoice = "ask"
+	ComputerUseChoiceAlwaysAllow ComputerUseChoice = "alwaysAllow"
+)
+
+// ComputerUseChoiceValues are every ComputerUseChoice the bundle declares, in schema order.
+var ComputerUseChoiceValues = []ComputerUseChoice{
+	ComputerUseChoiceAsk,
+	ComputerUseChoiceAlwaysAllow,
+}
+
+// ComputerUseSettings `computerUseSettings/read` result, also answered by `computerUseSettings/update`.
+type ComputerUseSettings struct {
+	// The user's blocks in the order they were added, then the built-in blocks when
+	// `showBuiltIns` asked for them.
+	BlockedApps []ComputerUseBlockedApp `json:"blockedApps"`
+	// The computer-control dropdown, as it applies: `ask` while the stored blocked-apps list
+	// can't be read (ADR 630 D18.4).
+	ComputerControl ComputerUseChoice `json:"computerControl"`
+	// The screenshots dropdown, under the same rule.
+	Screenshots ComputerUseChoice `json:"screenshots"`
+}
+
+// ComputerUseSettingsReadParams `computerUseSettings/read` params.
+type ComputerUseSettingsReadParams struct {
+	// Also list the built-in blocks as locked rows (the D18.8 toggle). Omitted means false.
+	ShowBuiltIns *bool `json:"showBuiltIns,omitempty"`
+}
+
+// ComputerUseSettingsUpdateParams `computerUseSettings/update` params: a patch. Omitted members are left alone; the whole
+// patch applies or none of it does.
+type ComputerUseSettingsUpdateParams struct {
+	// Bundle IDs to add to the user's blocked apps. A built-in block is refused: it is already
+	// blocked.
+	BlockApps []string `json:"blockApps,omitempty"`
+	// The new computer-control dropdown value.
+	ComputerControl *ComputerUseChoice `json:"computerControl,omitempty"`
+	// The new screenshots dropdown value.
+	Screenshots *ComputerUseChoice `json:"screenshots,omitempty"`
+	// Bundle IDs to remove from the user's blocked apps. Only the user's own entries can be
+	// removed; a built-in block stays.
+	UnblockApps []string `json:"unblockApps,omitempty"`
 }
 
 // ContextPressureLevel Context pressure level (tdd SS4.6.6): hard threshold first, both inclusive `>=`. Open.
@@ -926,6 +1049,8 @@ type ErrorData struct {
 	SessionID *string `json:"sessionId,omitempty"`
 	// Winning settlement on `userInputAlreadySettled`.
 	Settlement *UserInputSettlementSummary `json:"settlement,omitempty"`
+	// The rejected upload id on `uploadNotFound` (`-32038`, SS3.33).
+	UploadID *string `json:"uploadId,omitempty"`
 	// User-input prompt identity on SS5.10 errors.
 	UserInputID *string `json:"userInputId,omitempty"`
 	// The blocked view position on `pageEventTooLarge` errors.
@@ -964,6 +1089,8 @@ const (
 	ErrorKindCommandRejected             ErrorKind = "commandRejected"
 	ErrorKindBackpressured               ErrorKind = "backpressured"
 	ErrorKindSkillNotFound               ErrorKind = "skillNotFound"
+	ErrorKindComputerUseUnavailable      ErrorKind = "computerUseUnavailable"
+	ErrorKindUploadNotFound              ErrorKind = "uploadNotFound"
 	ErrorKindViewTruncated               ErrorKind = "viewTruncated"
 	ErrorKindOutputUnavailable           ErrorKind = "outputUnavailable"
 	ErrorKindBoundaryPruned              ErrorKind = "boundaryPruned"
@@ -1006,6 +1133,8 @@ var ErrorKindValues = []ErrorKind{
 	ErrorKindCommandRejected,
 	ErrorKindBackpressured,
 	ErrorKindSkillNotFound,
+	ErrorKindComputerUseUnavailable,
+	ErrorKindUploadNotFound,
 	ErrorKindViewTruncated,
 	ErrorKindOutputUnavailable,
 	ErrorKindBoundaryPruned,
@@ -1348,6 +1477,7 @@ const (
 	HookEventNamePostToolBatch      HookEventName = "postToolBatch"
 	HookEventNameInterrupt          HookEventName = "interrupt"
 	HookEventNameSessionFork        HookEventName = "sessionFork"
+	HookEventNameToolUseStart       HookEventName = "toolUseStart"
 	HookEventNamePreLLMCall         HookEventName = "preLLMCall"
 	HookEventNamePostLLMCall        HookEventName = "postLLMCall"
 )
@@ -1371,6 +1501,7 @@ var HookEventNameValues = []HookEventName{
 	HookEventNamePostToolBatch,
 	HookEventNameInterrupt,
 	HookEventNameSessionFork,
+	HookEventNameToolUseStart,
 	HookEventNamePreLLMCall,
 	HookEventNamePostLLMCall,
 }
@@ -1509,6 +1640,10 @@ type Item struct {
 	Blocking *bool `json:"blocking,omitempty"`
 	// `toolCall`: the provider call id (`call_...`), opaque.
 	CallID *string `json:"callId,omitempty"`
+	// `workflow`: one `outputRef`-shaped link per recorded child spawn with an objective
+	// (`kind: "workflow_child_prompt"`), fetched via `item/readOutput` (tdd SS4.5.8/SS4.7.4,
+	// #45449).
+	ChildPromptRefs []OutputRef `json:"childPromptRefs,omitempty"`
 	// `subagent`/`reminderChild`: the child's own session id, readable via
 	// `session/read`/`view/page` — child transcript drill-down without a second protocol
 	// (tdd SS4.5.7).
@@ -1527,6 +1662,9 @@ type Item struct {
 	// `subagent`: camelCased `SubagentControlStatus` (open enum); `status` stays the generic
 	// item vocabulary.
 	ControlStatus *SubagentControlStatus `json:"controlStatus,omitempty"`
+	// `workflow`: the run-level declared-phase label — the last `Phase` detail-row label of
+	// the reconciled projection; terminal-only, absent while live (tdd SS4.5.8, #45449).
+	DeclaredPhase *string `json:"declaredPhase,omitempty"`
 	// `subagent`: nesting depth.
 	Depth *int64 `json:"depth,omitempty"`
 	// `userMessage`: presentation form (tdd SS3.2); absent when the client sent none.
@@ -1553,6 +1691,9 @@ type Item struct {
 	// kinds a client does not recognize; new kinds SHOULD carry it during their first release
 	// cycle (tdd SS4.10).
 	FallbackText *string `json:"fallbackText,omitempty"`
+	// `workflow`: the human terminal summary projected from the reconciled Launch envelope,
+	// bounded at the 64 KiB surface budget; terminal-only (tdd SS4.5.8, #45449).
+	FinalSummary *string `json:"finalSummary,omitempty"`
 	// `reminderChild`: the reminder generation.
 	GenerationID *int64 `json:"generationId,omitempty"`
 	// `hookRun`: the durable `hook_key` (tdd SS4.5.11).
@@ -1588,6 +1729,10 @@ type Item struct {
 	// `toolCall`: server-authored edit-family diff summary (#33025) — always beside
 	// `patchRef`; absent = no diff available (tdd SS4.5.5).
 	PatchSummary *PatchSummary `json:"patchSummary,omitempty"`
+	// `workflow`: `true` only while a durable pause fact is in force for the run's generation;
+	// absent otherwise, never `false` (tdd SS4.5.8, ADR 45437 D2; the fold sets it on pause
+	// commit and clears it on resume-commit supersession or the generation's terminal).
+	Paused *bool `json:"paused,omitempty"`
 	// `reasoning`: provider reasoning item id (e.g. `rs_...`), for provider-side correlation.
 	ProviderItemID *string `json:"providerItemId,omitempty"`
 	// `compaction`: noop/failure reason, verbatim (snake_case durable vocabulary, e.g.
@@ -1616,12 +1761,41 @@ type Item struct {
 	RunStatus *HookRunStatus `json:"runStatus,omitempty"`
 	// `workflow`: launched script identity.
 	ScriptID *string `json:"scriptId,omitempty"`
+	// `sideChat`: the side's own session id, readable via `session/read`/`view/page` —
+	// drill-down without a second protocol (tdd SS4.5.13; ADR 45435 D3).
+	SideSessionID *string `json:"sideSessionId,omitempty"`
 	// Open enum; terminal = anything other than `"inProgress"`. Unknown values MUST be treated
 	// as terminal-unknown and rendered generically (tdd SS4.4.1).
 	Status ItemStatus `json:"status"`
+	// `toolCall`: the latest external-attempt facet, field-for-field — countdown inputs the
+	// client renders the tick from; absent when the latest detail carries none (tdd SS4.5.5,
+	// #45448).
+	StatusAttempt *StatusAttempt `json:"statusAttempt,omitempty"`
+	// `toolCall`: the latest child-summary facet, field-for-field; absent when the latest
+	// detail carries none (tdd SS4.5.5, #45448).
+	StatusChildren *StatusChildren `json:"statusChildren,omitempty"`
+	// `toolCall`: the latest health facet, field-for-field; absent when the latest detail
+	// carries none (tdd SS4.5.5, #45448).
+	StatusHealth *StatusHealth `json:"statusHealth,omitempty"`
+	// `toolCall`: the task's visible latest-status line — the latest `Status` message
+	// through the shared detail normalization; absent when no status folded or nothing
+	// displayable remains (tdd SS4.5.5, #45448).
+	StatusLine *string `json:"statusLine,omitempty"`
+	// `toolCall`: the latest detail's phase row, verbatim; absent when the latest detail
+	// carries none (tdd SS4.5.5, #45448).
+	StatusPhase *string `json:"statusPhase,omitempty"`
+	// `toolCall`: the latest progress facet, field-for-field; absent when the latest detail
+	// carries none (tdd SS4.5.5, #45448).
+	StatusProgress *StatusProgress `json:"statusProgress,omitempty"`
+	// `toolCall`: the latest active-step facet, field-for-field; absent when the latest detail
+	// carries none (tdd SS4.5.5, #45448).
+	StatusStep *StatusStep `json:"statusStep,omitempty"`
 	// `userMessage`: `true` when injected mid-turn via `turn/steer` or `ifBusy: "steer"`;
 	// absent otherwise.
 	Steered *bool `json:"steered,omitempty"`
+	// `workflow`: display-only stop affordance — `true` while the run is open, `false` once
+	// settled; stopping rides `workflow/cancel` (tdd SS4.5.8, #45449). Authorizes nothing.
+	StopAvailable *bool `json:"stopAvailable,omitempty"`
 	// `compaction`: summarizer strategy (installed only).
 	StrategyID *string `json:"strategyId,omitempty"`
 	// `subagent`: durable child identity (`subagent_id`).
@@ -1640,6 +1814,9 @@ type Item struct {
 	// streamed via `item/delta` field `"text"`. `reasoning`: raw committed reasoning text
 	// where the provider exposes it (never streamed in v1, tdd SS4.5.4).
 	Text *string `json:"text,omitempty"`
+	// `workflow`: the run's launch token budget, set from the launch fact (tdd SS4.5.8,
+	// #45449); absent when the launch carried none.
+	TokenBudget *WorkflowTokenBudget `json:"tokenBudget,omitempty"`
 	// `compaction`: token budget snapshot after, when measured.
 	TokensAfter *int64 `json:"tokensAfter,omitempty"`
 	// `compaction`: token budget snapshot before, when measured.
@@ -1715,7 +1892,7 @@ type ItemDeltaParams struct {
 	ViewCursor string `json:"viewCursor"`
 }
 
-// ItemKind The ten v1 item kinds (tdd SS4.5.2–4.5.11). Open: a new kind is additive evolution,
+// ItemKind The eleven v1 item kinds (tdd SS4.5.2–4.5.13). Open: a new kind is additive evolution,
 // and clients MUST render unknown kinds generically (tdd SS4.10).
 type ItemKind string
 
@@ -1730,6 +1907,7 @@ const (
 	ItemKindReminderChild ItemKind = "reminderChild"
 	ItemKindCompaction    ItemKind = "compaction"
 	ItemKindHookRun       ItemKind = "hookRun"
+	ItemKindSideChat      ItemKind = "sideChat"
 )
 
 // ItemKindValues are every ItemKind the bundle declares, in schema order.
@@ -1744,6 +1922,7 @@ var ItemKindValues = []ItemKind{
 	ItemKindReminderChild,
 	ItemKindCompaction,
 	ItemKindHookRun,
+	ItemKindSideChat,
 }
 
 // ItemReadOutputEncoding The `item/readOutput` content encoding (tdd SS4.7.4). Closed: text media is ALWAYS
@@ -1879,6 +2058,34 @@ type LastTurn struct {
 	// The turn's id, as on its `turn/completed`; clients deduplicate a live `turn/completed`
 	// against this member by it (ADR 36635 D2).
 	TurnID string `json:"turnId"`
+}
+
+// MediaUploadParams `media/upload` params (tdd SS3.33, ADR 45443 D5): one chunk of a client-minted upload.
+// All members required.
+type MediaUploadParams struct {
+	// This chunk's bytes; each call's frame stays in the SS1.1 budget.
+	ChunkBase64 string `json:"chunkBase64"`
+	// The upload's chunk total; positive.
+	ChunkCount int64 `json:"chunkCount"`
+	// This chunk's 0-based position.
+	ChunkIndex int64 `json:"chunkIndex"`
+	// One per call; SS3.1.1 replay answers the recorded receipt.
+	CommandID string `json:"commandId"`
+	// `video/mp4` or `video/quicktime`, matching `VideoInput`.
+	MediaType string `json:"mediaType"`
+	// The session owning the video store.
+	SessionID string `json:"sessionId"`
+	// The assembled byte count; must equal the bytes the chunks deliver.
+	TotalBytes int64 `json:"totalBytes"`
+	// The client-minted upload id (UUIDv7), sent on every chunk.
+	UploadID string `json:"uploadId"`
+}
+
+// MediaUploadResult `media/upload` result (tdd SS3.33): echoes the client-minted id, on every chunk and
+// replay.
+type MediaUploadResult struct {
+	// The receipt the turn part references.
+	UploadID string `json:"uploadId"`
 }
 
 // MessageAttachment `userMessage` image attachment metadata (tdd SS4.5.2): metadata only — the durable
@@ -2459,6 +2666,9 @@ type Session struct {
 	ProviderID *string `json:"providerId,omitempty"`
 	// The session identity.
 	SessionID string `json:"sessionId"`
+	// `null` for root sessions and forks; side provenance otherwise (tdd SS2.4/SS2.5.7; ADR
+	// 45435 D2). A session carries at most one of `forkedFrom` and `sideFrom`.
+	SideFrom *SideProvenance `json:"sideFrom,omitempty"`
 	// Load state as this host knows it; `session/list` reports `notLoaded` for sessions loaded
 	// by *other* hosts (tdd SS2.4).
 	Status SessionStatus `json:"status"`
@@ -3105,6 +3315,29 @@ type SessionSetReasoningEffortResult struct {
 	Status CommandStatus `json:"status"`
 }
 
+// SessionSideChatParams `session/sideChat` params (tdd SS2.5.7; ADR 45435 D2).
+type SessionSideChatParams struct {
+	// The SS2.5 idempotency handle (UUIDv7).
+	CommandID string `json:"commandId"`
+	// The source main session.
+	SessionID string `json:"sessionId"`
+}
+
+// SessionSideChatResult `session/sideChat` result (tdd SS2.5.7; ADR 45435 D2): the `session/resume` envelope for
+// the **new** side session, whose `session.sideFrom` carries the provenance. The side
+// opens empty.
+type SessionSideChatResult struct {
+	// The served history (inline; SS2.5.7's empty-items half is #49416 — inherited turns
+	// surface until the boundary-aware fold lands).
+	History SessionHistory `json:"history"`
+	// The late-joiner pointer set.
+	PendingRequests []PendingRequestPointer `json:"pendingRequests"`
+	// The new side session, carrying `sideFrom` provenance.
+	Session Session `json:"session"`
+	// The new side session's view head.
+	ViewCursor string `json:"viewCursor"`
+}
+
 // SessionStartParams `session/start` params (tdd SS2.5.1).
 type SessionStartParams struct {
 	// The session's starting approval mode; server default when omitted or explicit `null` —
@@ -3150,13 +3383,13 @@ type SessionStartResult struct {
 }
 
 // SessionStartedParams `session/started` params (tdd SS2.6.1; enrolled by #33065): a session became newly
-// loaded on this host via `session/start` or `session/fork` (never `session/resume` —
-// Appendix C, OQ-F), broadcast to every initialized connection. The one member is the same
-// `$defs/Session` object the `session/start`/`session/fork` results carry, so the
-// broadcast and the result describe one fact through one type — the host builds the
-// broadcast payload as a `$defs/Session` — the fresh-start arm reuses the result's
-// `session` member, the start-replay arm builds the live attach snapshot — and the
-// emission is parity-gated against this type at the producer (`session-server`
+// loaded on this host via `session/start`, `session/fork`, or `session/sideChat` (never
+// `session/resume` — Appendix C, OQ-F), broadcast to every initialized connection. The
+// one member is the same `$defs/Session` object the `session/start`/`session/fork` results
+// carry, so the broadcast and the result describe one fact through one type — the host
+// builds the broadcast payload as a `$defs/Session` — the fresh-start arm reuses the
+// result's `session` member, the start-replay arm builds the live attach snapshot — and
+// the emission is parity-gated against this type at the producer (`session-server`
 // prod-assembly capture) and over the committed transcript corpus (conformance
 // `session_lifecycle_enrollment`).
 type SessionStartedParams struct {
@@ -3309,6 +3542,57 @@ type SessionViewHealthChangedParams struct {
 	SessionID string `json:"sessionId"`
 }
 
+// SideProvenance Side provenance folded from the durable side provenance (`SideChatProvenance`, tdd
+// SS2.4/SS2.5.7; ADR 45435 D2).
+type SideProvenance struct {
+	// The `commandId` of the `session/sideChat` that created it.
+	CommandID string `json:"commandId"`
+	// An **opaque provenance string** preserved verbatim from the durable side provenance
+	// (`source_cut_cursor`). Display-only — not one of the cursor families: clients MUST NOT
+	// parse it and no method accepts it (tdd SS2.4).
+	CutCursor string `json:"cutCursor"`
+	// The source main session this side was opened from.
+	SessionID string `json:"sessionId"`
+}
+
+// SkillActivationScope `skill/setActivation` activation target (tdd SS3.30.1). **Closed**: a client-selected
+// write vocabulary (ADR 45433 D2) — a write must fail a scope the host does not
+// implement rather than record activation against an unknown target. Contrast the open
+// read-side [`SkillSource`].
+type SkillActivationScope string
+
+const (
+	SkillActivationScopeUser    SkillActivationScope = "user"
+	SkillActivationScopeProject SkillActivationScope = "project"
+	SkillActivationScopeBundled SkillActivationScope = "bundled"
+	SkillActivationScopePlugin  SkillActivationScope = "plugin"
+)
+
+// SkillActivationScopeValues are every SkillActivationScope the bundle declares, in schema order.
+var SkillActivationScopeValues = []SkillActivationScope{
+	SkillActivationScopeUser,
+	SkillActivationScopeProject,
+	SkillActivationScopeBundled,
+	SkillActivationScopePlugin,
+}
+
+// SkillActivationState The three-state skill activation (tdd SS3.30.1, ADR 10512 — no new state). **Closed**:
+// a client-selected write vocabulary (ADR 45433 D2).
+type SkillActivationState string
+
+const (
+	SkillActivationStateOn                SkillActivationState = "on"
+	SkillActivationStateUserInvocableOnly SkillActivationState = "userInvocableOnly"
+	SkillActivationStateOff               SkillActivationState = "off"
+)
+
+// SkillActivationStateValues are every SkillActivationState the bundle declares, in schema order.
+var SkillActivationStateValues = []SkillActivationState{
+	SkillActivationStateOn,
+	SkillActivationStateUserInvocableOnly,
+	SkillActivationStateOff,
+}
+
 // SkillCatalogEntry One typed-invocable shortcut spelling (tdd SS3.22.1). A plugin skill may contribute two
 // rows: its bare-name winner and its qualified `<pluginId>:<skillId>` form.
 type SkillCatalogEntry struct {
@@ -3336,8 +3620,8 @@ type SkillChangedParams struct {
 	SessionID string `json:"sessionId"`
 }
 
-// SkillListParams `skill/list` params (tdd SS3.22.1). Per-session because skill scope follows the
-// session's workspace and plugin state.
+// SkillListParams `skill/list` params (tdd SS3.22.1, SS3.30.3). Per-session because skill scope follows
+// the session's workspace and plugin state.
 type SkillListParams struct {
 	// The target session.
 	SessionID string `json:"sessionId"`
@@ -3350,6 +3634,41 @@ type SkillListParams struct {
 type SkillListResult struct {
 	// The session's user-invocable skill rows.
 	Skills []SkillCatalogEntry `json:"skills"`
+}
+
+// SkillSetActivationParams `skill/setActivation` params (tdd SS3.30.1, #45433): turn one skill on or off in any
+// scope through the single `SkillsService::set_activation` seam.
+type SkillSetActivationParams struct {
+	// The activation to apply.
+	Activation SkillActivationState `json:"activation"`
+	// The SS3.1.1 idempotency handle (UUIDv7).
+	CommandID string `json:"commandId"`
+	// The activation target.
+	Scope SkillActivationScope `json:"scope"`
+	// Names one skill: a bare or plugin-qualified token from the session's full catalog (tdd
+	// SS3.30.3), the SS3.22.1 row vocabulary.
+	Selector string `json:"selector"`
+	// The target session.
+	SessionID string `json:"sessionId"`
+}
+
+// SkillSetActivationResult `skill/setActivation` result (tdd SS3.30.1, #45433): the ack envelope plus the applied
+// state.
+type SkillSetActivationResult struct {
+	// The applied activation.
+	Activation SkillActivationState `json:"activation"`
+	// Echoes the client's id.
+	CommandID string `json:"commandId"`
+	// The activation value in force for that `(selector, scope)` immediately before the write:
+	// the same value a full-catalog `skill/list` row would have carried in `activation` for
+	// it.
+	Previous SkillActivationState `json:"previous"`
+	// Echoes the applied write's scope.
+	Scope SkillActivationScope `json:"scope"`
+	// Echoes the applied write's selector.
+	Selector string `json:"selector"`
+	// Admission status.
+	Status CommandStatus `json:"status"`
 }
 
 // SkillSource A skill row's source scope (tdd SS3.22.1): the projection of the skills crate's
@@ -3453,6 +3772,97 @@ type SourceRange struct {
 	// task/approval/subagent-control records — whichever the fold actually consumed, tdd
 	// SS4.2).
 	Stream StreamRef `json:"stream"`
+}
+
+// StatusAttempt `toolCall.statusAttempt` (tdd SS4.5.5, #45448): the latest `TaskExternalAttemptDetail`,
+// field-for-field — countdown inputs the client renders the tick from, so no event spam.
+type StatusAttempt struct {
+	// The attempt number.
+	Attempt int64 `json:"attempt"`
+	// The error kind (durable vocabulary, verbatim), when recorded.
+	ErrorKind *string `json:"errorKind,omitempty"`
+	// The HTTP status, when recorded.
+	HTTPStatus *int64 `json:"httpStatus,omitempty"`
+	// The maximum attempts, when known.
+	MaxAttempts *int64 `json:"maxAttempts,omitempty"`
+	// The scheduled next attempt, when known.
+	NextAttempt *int64 `json:"nextAttempt,omitempty"`
+	// The operation (durable vocabulary, verbatim).
+	Operation string `json:"operation"`
+	// The retry delay in ms, when known.
+	RetryDelayMs *int64 `json:"retryDelayMs,omitempty"`
+	// The external system (durable vocabulary, verbatim).
+	System string `json:"system"`
+}
+
+// StatusChildren `toolCall.statusChildren` (tdd SS4.5.5, #45448): the latest `TaskChildSummaryDetail`,
+// field-for-field.
+type StatusChildren struct {
+	// Active children.
+	Active int64 `json:"active"`
+	// Cancelled children.
+	Cancelled int64 `json:"cancelled"`
+	// Completed children.
+	Completed int64 `json:"completed"`
+	// Failed children.
+	Failed int64 `json:"failed"`
+	// Total children, when known.
+	Total *int64 `json:"total,omitempty"`
+}
+
+// StatusHealth `toolCall.statusHealth` (tdd SS4.5.5, #45448): the latest `TaskHealthDetail`,
+// field-for-field.
+type StatusHealth struct {
+	// The health level (the durable `TaskHealthLevel` vocabulary verbatim).
+	Level StatusHealthLevel `json:"level"`
+	// The reason, when recorded.
+	Reason *string `json:"reason,omitempty"`
+}
+
+// StatusHealthLevel `toolCall.statusHealth.level` (tdd SS4.5.5, #45448): the durable `TaskHealthLevel`
+// vocabulary verbatim. Open — runtime vocabulary may grow additively, and clients MUST
+// render unknown levels generically.
+type StatusHealthLevel string
+
+const (
+	StatusHealthLevelOk       StatusHealthLevel = "ok"
+	StatusHealthLevelWaiting  StatusHealthLevel = "waiting"
+	StatusHealthLevelDegraded StatusHealthLevel = "degraded"
+	StatusHealthLevelRetrying StatusHealthLevel = "retrying"
+	StatusHealthLevelBlocked  StatusHealthLevel = "blocked"
+	StatusHealthLevelFailed   StatusHealthLevel = "failed"
+)
+
+// StatusHealthLevelValues are every StatusHealthLevel the bundle declares, in schema order.
+var StatusHealthLevelValues = []StatusHealthLevel{
+	StatusHealthLevelOk,
+	StatusHealthLevelWaiting,
+	StatusHealthLevelDegraded,
+	StatusHealthLevelRetrying,
+	StatusHealthLevelBlocked,
+	StatusHealthLevelFailed,
+}
+
+// StatusProgress `toolCall.statusProgress` (tdd SS4.5.5, #45448): the latest `TaskProgressDetail`,
+// field-for-field.
+type StatusProgress struct {
+	// Completed units.
+	Current int64 `json:"current"`
+	// Total units, when known.
+	Total *int64 `json:"total,omitempty"`
+	// Unit label, when recorded.
+	Unit *string `json:"unit,omitempty"`
+}
+
+// StatusStep `toolCall.statusStep` (tdd SS4.5.5, #45448): the latest `TaskActiveStepDetail`,
+// field-for-field.
+type StatusStep struct {
+	// The step index, when known.
+	Index *int64 `json:"index,omitempty"`
+	// The active step's label.
+	Label string `json:"label"`
+	// The step count, when known.
+	Total *int64 `json:"total,omitempty"`
 }
 
 // StreamRef One raw stream named by a [`SourceRange`] (tdd SS4.2).
@@ -3621,6 +4031,60 @@ type TaskCommandResult struct {
 	TaskID string `json:"taskId"`
 }
 
+// TaskListEntry One background-task inventory row (tdd SS3.31). The row is the stable contract: `kind`
+// and `status` stay open so a future state extends them without breaking clients.
+type TaskListEntry struct {
+	// Who backgrounded the task, mirroring the item field. **Additive-optional**: absent on
+	// pre-split records and registry-only rows, never inferred.
+	BackgroundInitiator *BackgroundInitiator `json:"backgroundInitiator,omitempty"`
+	// What the workload is: `"tool"` or `"tool.*"` for item rows (the recorded kind when the
+	// registry records one, else `"tool"`); the recorded registry kind string verbatim for
+	// registry-only rows. Open vocabulary — clients MUST ignore unknown kinds. A `String`,
+	// not an enum: registry kind strings are unbounded.
+	Kind string `json:"kind"`
+	// The host-known task start, RFC3339. **Additive-optional**: omitted, never guessed, when
+	// the host does not know it.
+	StartedAt *string `json:"startedAt,omitempty"`
+	// `"inProgress"` — the only value at this increment, since every listed row is
+	// non-terminal by construction.
+	Status TaskListStatus `json:"status"`
+	// The `toolCall` item's `itemId` for item rows; the runtime registry id for registry-only
+	// rows.
+	TaskID string `json:"taskId"`
+	// The short tool name on item-visible tool rows only; never a label, never arguments.
+	// **Additive-optional**: absent elsewhere.
+	Tool *string `json:"tool,omitempty"`
+}
+
+// TaskListParams `task/list` params (tdd SS3.31): the session whose background-task inventory to read. A
+// read-only query in the `skill/list` mold: no `commandId`, no durable record, no view
+// event.
+type TaskListParams struct {
+	// The target session.
+	SessionID string `json:"sessionId"`
+}
+
+// TaskListResult `task/list` result (tdd SS3.31): one row per running background workload in
+// `task/stopAll` reach, oldest first; empty when nothing is running.
+type TaskListResult struct {
+	// The session's live background-task rows.
+	Tasks []TaskListEntry `json:"tasks"`
+}
+
+// TaskListStatus A task row's status (tdd SS3.31). Open (server-produced result vocabulary, the #22785
+// enum-openness rule): a future state is additive, and clients MUST ignore unknown
+// statuses.
+type TaskListStatus string
+
+const (
+	TaskListStatusInProgress TaskListStatus = "inProgress"
+)
+
+// TaskListStatusValues are every TaskListStatus the bundle declares, in schema order.
+var TaskListStatusValues = []TaskListStatus{
+	TaskListStatusInProgress,
+}
+
 // TaskStopAllParams `task/stopAll` params (tdd §3.15): stop every stoppable background workload live at
 // admission.
 type TaskStopAllParams struct {
@@ -3720,9 +4184,11 @@ type ToolReceipt struct {
 type ToolReceiptOperation string
 
 const (
-	ToolReceiptOperationCreate ToolReceiptOperation = "create"
-	ToolReceiptOperationDelete ToolReceiptOperation = "delete"
-	ToolReceiptOperationList   ToolReceiptOperation = "list"
+	ToolReceiptOperationCreate  ToolReceiptOperation = "create"
+	ToolReceiptOperationDelete  ToolReceiptOperation = "delete"
+	ToolReceiptOperationList    ToolReceiptOperation = "list"
+	ToolReceiptOperationExecute ToolReceiptOperation = "execute"
+	ToolReceiptOperationWait    ToolReceiptOperation = "wait"
 )
 
 // ToolReceiptOperationValues are every ToolReceiptOperation the bundle declares, in schema order.
@@ -3730,6 +4196,8 @@ var ToolReceiptOperationValues = []ToolReceiptOperation{
 	ToolReceiptOperationCreate,
 	ToolReceiptOperationDelete,
 	ToolReceiptOperationList,
+	ToolReceiptOperationExecute,
+	ToolReceiptOperationWait,
 }
 
 // ToolReceiptOutcome What the operation did (ADR 43399 D1/D2). Open, and a **single shared vocabulary**: a
@@ -3744,6 +4212,11 @@ const (
 	ToolReceiptOutcomeMissing   ToolReceiptOutcome = "missing"
 	ToolReceiptOutcomeListed    ToolReceiptOutcome = "listed"
 	ToolReceiptOutcomeRejected  ToolReceiptOutcome = "rejected"
+	ToolReceiptOutcomeCompleted ToolReceiptOutcome = "completed"
+	ToolReceiptOutcomePending   ToolReceiptOutcome = "pending"
+	ToolReceiptOutcomeFailed    ToolReceiptOutcome = "failed"
+	ToolReceiptOutcomeTimedOut  ToolReceiptOutcome = "timedOut"
+	ToolReceiptOutcomeCancelled ToolReceiptOutcome = "cancelled"
 )
 
 // ToolReceiptOutcomeValues are every ToolReceiptOutcome the bundle declares, in schema order.
@@ -3754,6 +4227,11 @@ var ToolReceiptOutcomeValues = []ToolReceiptOutcome{
 	ToolReceiptOutcomeMissing,
 	ToolReceiptOutcomeListed,
 	ToolReceiptOutcomeRejected,
+	ToolReceiptOutcomeCompleted,
+	ToolReceiptOutcomePending,
+	ToolReceiptOutcomeFailed,
+	ToolReceiptOutcomeTimedOut,
+	ToolReceiptOutcomeCancelled,
 }
 
 // TraceContext Optional W3C trace context, on requests in both directions only — never on responses
@@ -3908,6 +4386,9 @@ type TurnInputPart struct {
 	Text *string `json:"text,omitempty"`
 	// The part type.
 	Type TurnInputPartType `json:"type"`
+	// The upload receipt, required on a `video` part (tdd SS3.2, SS3.33; ADR 45443 D5): the
+	// client-minted id `media/upload` echoed.
+	UploadID *string `json:"uploadId,omitempty"`
 	// Pixel width; must be provided together with `height` or not at all (tdd SS3.2).
 	// Published as a `dependentRequired` pair under #22785 E6c.
 	Width *int64 `json:"width,omitempty"`
@@ -3921,6 +4402,7 @@ const (
 	TurnInputPartTypeText  TurnInputPartType = "text"
 	TurnInputPartTypeImage TurnInputPartType = "image"
 	TurnInputPartTypeSkill TurnInputPartType = "skill"
+	TurnInputPartTypeVideo TurnInputPartType = "video"
 )
 
 // TurnInputPartTypeValues are every TurnInputPartType the bundle declares, in schema order.
@@ -3928,6 +4410,7 @@ var TurnInputPartTypeValues = []TurnInputPartType{
 	TurnInputPartTypeText,
 	TurnInputPartTypeImage,
 	TurnInputPartTypeSkill,
+	TurnInputPartTypeVideo,
 }
 
 // TurnInterruptParams `turn/interrupt` params (tdd SS3.4): the "user pressed stop" gesture, on the runtime's
@@ -3965,6 +4448,14 @@ type TurnInterruptResult struct {
 type TurnRef struct {
 	// The `commandId` of the submit that minted it.
 	CommandID string `json:"commandId"`
+	// `queuedTurns[]` only (#45455; ADR 45443 D7): the queued submit's presentation text, so a
+	// late joiner can render it without waiting for launch. A current host sets it on every
+	// entry it admits; absent means an older host (or a pre-feature restored entry). Never set
+	// on `activeTurn`: the running turn's text is its `userMessage` item.
+	DisplayText *string `json:"displayText,omitempty"`
+	// `queuedTurns[]` only: set when `displayText` was cut to the committed-surface budget,
+	// mirroring `userMessage.truncated` (tdd SS4.5.2). Absent unless `true`.
+	Truncated *bool `json:"truncated,omitempty"`
 	// The turn's id, pre-minted per tdd SS3.1.4.
 	TurnID string `json:"turnId"`
 }
@@ -4688,11 +5179,30 @@ type WorkflowChildControlParams struct {
 	WorkflowRunID string `json:"workflowRunId"`
 }
 
-// WorkflowControlResult The shared SS3.19/SS3.20 admission-only ack: deliberately bare `{commandId, status}` —
-// settlement arrives as the workflow item's view events, never through the ack.
+// WorkflowControlResult The shared SS3.19/SS3.20/SS3.32 admission-only ack: deliberately bare `{commandId,
+// status}` — settlement arrives as the workflow item's view events, never through the
+// ack.
 type WorkflowControlResult struct {
 	// Echoes the client's id.
 	CommandID string `json:"commandId"`
 	// Admission status.
 	Status CommandStatus `json:"status"`
+}
+
+// WorkflowPauseParams `workflow/pause` params (tdd SS3.32, ADR 45437 D2): pause a live workflow run, shaped
+// exactly like `workflow/cancel`.
+type WorkflowPauseParams struct {
+	// The SS3.1.1 idempotency handle (UUIDv7).
+	CommandID string `json:"commandId"`
+	// The target session.
+	SessionID string `json:"sessionId"`
+	// The run to pause, exactly as the `workflow` item names it (SS4.5.8); required,
+	// non-empty.
+	WorkflowRunID string `json:"workflowRunId"`
+}
+
+// WorkflowTokenBudget `workflow`: the run's launch token budget (tdd SS4.5.8, #45449).
+type WorkflowTokenBudget struct {
+	// The effective launch budget in tokens, verbatim from the launch fact.
+	Total int64 `json:"total"`
 }

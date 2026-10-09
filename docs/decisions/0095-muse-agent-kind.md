@@ -3099,3 +3099,15 @@ note predicted: `hook/list`, `plugin/list` and `hookRun` read as removed, and
 verified against the pin, passes the test; 1.4.2 fails it. No client code calls a removed method.
 The bundle and types are unchanged. The test now names the installed build and the pin when they
 differ, so the next stale home reads as "run `workspace-agent install-muse`".
+
+### Note 2026-10-09: bundle re-exported for 1.4.4-R5419.1 (#1919)
+
+1.4.4-R5419.1 grew `ToolReceiptOutcome` by `failed`. The compatibility check reads that as a break
+because the type is reachable from a message the client decodes, but nothing outside `types_gen.go`
+reads a `ToolReceipt`, so no code switches on it. The other differences are additions (new
+methods, error codes and types). Per P2-24 the answer is a re-export, so `internal/msp/schema`
+and `types_gen.go` now carry the 1.4.4 export (fingerprint `sha256:7c94f153…`, equal to the
+release manifest's `msp_schema_fingerprint`). The checker is unchanged.
+
+The same cost applies again: the 1.4.4 bundle is red against a 1.4.3 binary until `MUSE_VERSION`
+moves; measured: 1.4.4 green, 1.4.3 red. The pin bump is cli-pin-bump's.
