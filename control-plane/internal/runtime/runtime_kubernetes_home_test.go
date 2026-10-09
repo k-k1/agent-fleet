@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -1213,11 +1214,25 @@ func TestKubeEraseHomeWaitsForAnEvictedPodToStop(t *testing.T) {
 	f.set(podsPathX, 200, podListJSON())
 	f.set(homeClaimGetPath, 200, `{"metadata":{"name":"af-ws-x-home"},"spec":{"resources":{}}}`)
 	f.set("GET "+erasePodPath, 200, erasePodJSON("Failed", eraseRunning))
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	// The deadline is delivered by a signal, not a clock: after a few polls the next read of
+	// the erase pod expires the context while that request is in flight. A wall-clock
+	// deadline raced the poll and made the outcome depend on where it landed.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	var reads atomic.Int32
+	f.onRequest = func(r *http.Request) {
+		if r.Method+" "+r.URL.Path != "GET "+erasePodPath || reads.Add(1) < 4 {
+			return
+		}
+		cancel()
+		<-r.Context().Done()
+	}
 	err := rt.EraseHome(ctx)
 	if err == nil || !strings.Contains(err.Error(), "still running") {
 		t.Fatalf("EraseHome = %v, want still running", err)
+	}
+	if reads.Load() < 4 {
+		t.Fatalf("erase pod read %d times, want it polled before the deadline", reads.Load())
 	}
 	if f.saw("DELETE "+erasePodPath) || f.saw("POST /api/v1/namespaces/ns/pods") {
 		t.Fatalf("EraseHome deleted or replaced a pod that may still run: %v", f.seen)

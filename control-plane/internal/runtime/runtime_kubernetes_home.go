@@ -368,6 +368,11 @@ func (k *kubeRuntime) EraseHome(ctx context.Context) error {
 	for {
 		p, err := k.getErasePod(ctx)
 		if err != nil {
+			if ctx.Err() != nil {
+				// The deadline hit while the poll was in flight: same outcome as hitting it
+				// in the select below, and the caller needs to hear that the pod still runs.
+				return k.eraseStillRunning(ctx)
+			}
 			return fmt.Errorf("kubernetes erase %s: %w", k.base, err)
 		}
 		if p == nil {
@@ -385,10 +390,14 @@ func (k *kubeRuntime) EraseHome(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("kubernetes erase %s: %w; the erase pod %s is still running and the next erase waits for it", k.base, ctx.Err(), k.erasePodName())
+			return k.eraseStillRunning(ctx)
 		case <-time.After(kubeErasePoll):
 		}
 	}
+}
+
+func (k *kubeRuntime) eraseStillRunning(ctx context.Context) error {
+	return fmt.Errorf("kubernetes erase %s: %w; the erase pod %s is still running and the next erase waits for it", k.base, ctx.Err(), k.erasePodName())
 }
 
 func (k *kubeRuntime) podPath(name string) string { return k.nsPath("") + "/pods/" + name }
