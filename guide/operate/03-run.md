@@ -123,7 +123,7 @@ bar notice, and a free slot below `$Latest` is terminated by the sweeper. If no 
 launched (capacity, quota) the start still succeeds on the old slot and tries again at a later
 start. Each automatic move is in the audit log (`pool.slot_replace_auto`). The Slots tab shows
 **older than $Latest · replaced at next start** on these slots. Set
-`AF_ECS_EC2_AUTO_REPLACE_OUTDATED=false` on the Control Plane to turn this off. Reserve slots
+`AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS=false` on the Control Plane to turn this off. Reserve slots
 yourself when you want the move to happen regardless of capacity:
 
 1. **Settings → Admin → Slots** (super_admin). The **Template** column shows the launch template

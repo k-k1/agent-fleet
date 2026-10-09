@@ -108,7 +108,7 @@ air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/RE
 `$Latest` より古い空きスロットはスイーパーが終了します。新しいスロットを起動できないとき（容量・
 クォータ）も起動は古いスロットで成功し、後の起動でやり直します。自動の入れ替えは監査ログに残ります
 （`pool.slot_replace_auto`）。スロット画面には **$Latest より古い・次回起動で自動入れ替え** と出ます。
-止めたいときは Control Plane の `AF_ECS_EC2_AUTO_REPLACE_OUTDATED=false` を設定します。容量に関わらず
+止めたいときは Control Plane の `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS=false` を設定します。容量に関わらず
 移したいときは、次のように自分で予約します。
 
 1. **設定 → 管理 → スロット**（super_admin）。**テンプレート**列に各スロットを起動した起動テンプレートの

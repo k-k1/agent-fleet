@@ -1604,6 +1604,6 @@ mount はホームが無いのを見てきれいに失敗する。#1603 の追�
 起動できないときは、何も触らずに**古いスロットへ戻し**、そのワークスペースは 10 分間やり直さない（プロセス内の
 バックオフ。起動が失敗し続けても毎回の起動で払わない）。**予約**には決定 33 の「戻さない」を残す。入れ替えは
 `pool.slot_replace_auto` として監査し、スロット画面には古いスロットが「次回起動で入れ替わる」と出す。スイッチは
-CP の環境変数 `AF_ECS_EC2_AUTO_REPLACE_OUTDATED`（既定 ON。`false` で予約のみに戻る）。変えていない点: 新しい
+CP の環境変数 `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS`（既定 ON。`false` で予約のみに戻る）。変えていない点: 新しい
 スロットを確保したあとの失敗（解放・切り離し）は、予約と同じく起動を失敗させ、次の起動でやり直す。
 コード: `runtime_ecs_ec2_slot_replace.go`（`replaceReservedSlot(…, automatic)`・`slotRetiring`）。

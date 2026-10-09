@@ -1648,7 +1648,7 @@ Until then the Agent's own isolation still holds for every SDK that honours
    slot can be launched (capacity, quota) the Start **does not fail** — the workspace stays on
    its old slot and the CP retries at a Start at least 10 minutes later — and a slot whose
    version cannot be read is left alone. To switch it off (for example while a new template
-   is being validated) set `AF_ECS_EC2_AUTO_REPLACE_OUTDATED=false` on the Control Plane;
+   is being validated) set `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS=false` on the Control Plane;
    reservations then still work as below.
    **Reserve the old slots for replacement** in the Console when you want the move to happen
    regardless of capacity (a reservation never falls back to the old slot): Settings → Admin → the Slots tab

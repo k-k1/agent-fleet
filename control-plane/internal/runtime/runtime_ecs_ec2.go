@@ -424,7 +424,7 @@ type ecsContainerInstanceAPI interface {
 // the CP only ever says "run one of these, in this AZ, at this size".
 type ec2PoolConfig struct {
 	launchTemplate string // AF_ECS_EC2_LAUNCH_TEMPLATE (id or name)
-	// noAutoReplace is AF_ECS_EC2_AUTO_REPLACE_OUTDATED=false: a slot below the launch
+	// noAutoReplace is AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS=false: a slot below the launch
 	// template's $Latest is then replaced only when an operator reserves it (#1473). The zero
 	// value is the default — automatic replacement ON (#1934) — so a pool built without the
 	// env keeps the new behaviour.
@@ -685,7 +685,7 @@ func newECSEC2Factory(mcfg Config) (RuntimeFactory, error) {
 	pool := ec2PoolConfig{
 		launchTemplate: os.Getenv("AF_ECS_EC2_LAUNCH_TEMPLATE"),
 		amiArm64:       os.Getenv("AF_ECS_EC2_AMI_ARM64"),
-		noAutoReplace:  !envBoolDefault("AF_ECS_EC2_AUTO_REPLACE_OUTDATED", true),
+		noAutoReplace:  !envBoolDefault("AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS", true),
 		pool:           envOr("AF_ECS_EC2_POOL", base.cfg.cluster),
 		classes:        parseSlotClasses(envOr("AF_ECS_EC2_SLOT_TYPES", "m7i.large:8192,m7i.xlarge:16384,m7i.2xlarge:32768")),
 		defaultClass:   os.Getenv("AF_ECS_EC2_DEFAULT_SLOT_CLASS"),
@@ -6279,7 +6279,7 @@ type EC2PoolStatus struct {
 	// not be read — in which case no slot is reported outdated.
 	TemplateLatest string `json:"template_latest,omitempty"`
 	// AutoReplaceOutdated is whether a slot below TemplateLatest is replaced at its workspace's
-	// next Start without anyone reserving it (#1934; AF_ECS_EC2_AUTO_REPLACE_OUTDATED).
+	// next Start without anyone reserving it (#1934; AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS).
 	AutoReplaceOutdated bool `json:"auto_replace_outdated,omitempty"`
 }
 

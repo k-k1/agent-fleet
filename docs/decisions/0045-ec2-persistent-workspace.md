@@ -1746,6 +1746,6 @@ member (the WS bar pill is driven by the reservation tag alone, and the phase re
 with nothing touched, and the workspace is not retried for 10 minutes (an in-process back-off, so a persistently
 failing launch is not paid at every Start); a *reservation* keeps decision 33's no-fallback rule. The move is audited
 as `pool.slot_replace_auto`, and the Slots tab says an outdated slot "will be replaced at next start". Switch:
-the CP env `AF_ECS_EC2_AUTO_REPLACE_OUTDATED` (default on; `false` restores reservation-only). Not changed: a failure
+the CP env `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS` (default on; `false` restores reservation-only). Not changed: a failure
 after the new slot is claimed (release, detach) still fails the Start and retries at the next, as for a reservation.
 Code: `runtime_ecs_ec2_slot_replace.go` (`replaceReservedSlot(…, automatic)`, `slotRetiring`).
