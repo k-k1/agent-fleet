@@ -170,7 +170,7 @@ func argMentions(arg, cwd string, marks []string) bool {
 			return true
 		}
 		if !filepath.IsAbs(v) {
-			v = filepath.Join(cwd, v)
+			v = cwd + string(filepath.Separator) + v // not Join: it would fold "link/.." first
 		}
 		if mentionsAny(filepath.Clean(v), marks) || mentionsAny(resolvedPath(v), marks) {
 			return true
@@ -216,19 +216,24 @@ func mentionsAny(s string, marks []string) bool {
 	return false
 }
 
-// resolvedPath resolves symlinks in p. When p itself does not exist (an index.lock already
-// gone, a path git has yet to create) it resolves the deepest existing parent, so an alias
-// directory in front still resolves.
+// resolvedPath resolves symlinks in p the way the kernel walks it. When p itself does not
+// exist (an index.lock already gone, a path git has yet to create) it resolves the longest
+// leading part that does, and appends the rest. Nothing is cleaned before resolving:
+// "alias/.." means the parent of alias's target, and filepath.Clean would make it the
+// directory alias sits in.
 func resolvedPath(p string) string {
-	p = filepath.Clean(p)
-	if r, err := filepath.EvalSymlinks(p); err == nil {
-		return r
+	sep := string(filepath.Separator)
+	parts := strings.Split(p, sep)
+	for i := len(parts); i > 0; i-- {
+		head := strings.Join(parts[:i], sep)
+		if head == "" {
+			head = sep
+		}
+		if r, err := filepath.EvalSymlinks(head); err == nil {
+			return filepath.Join(append([]string{r}, parts[i:]...)...)
+		}
 	}
-	parent := filepath.Dir(p)
-	if parent == p {
-		return p
-	}
-	return filepath.Join(resolvedPath(parent), filepath.Base(p))
+	return filepath.Clean(p)
 }
 
 func isPID(s string) bool {

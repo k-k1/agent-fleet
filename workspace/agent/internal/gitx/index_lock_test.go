@@ -297,9 +297,20 @@ func TestStaleIndexLockRealCommitWithAlternateIndex(t *testing.T) {
 	if err := os.Symlink(target, alias); err != nil {
 		t.Fatal(err)
 	}
+	// links/deep -> base/deep, so links/deep/.. is base, not links.
+	if err := os.MkdirAll(filepath.Join(base, "deep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(base, "links"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(base, "deep"), filepath.Join(base, "links", "deep")); err != nil {
+		t.Fatal(err)
+	}
 	for name, indexFile := range map[string]string{
 		"relative":         "../target/.git/index",
 		"absolute symlink": filepath.Join(alias, ".git", "index"),
+		"symlink then ..":  filepath.Join(base, "links", "deep") + "/../target/.git/index",
 	} {
 		t.Run(name, func(t *testing.T) {
 			outside := filepath.Join(t.TempDir(), "outside")
@@ -339,5 +350,28 @@ func TestStaleIndexLockRealCommitWithAlternateIndex(t *testing.T) {
 				t.Fatalf("StaleIndexLock = %q while a commit holds it through GIT_INDEX_FILE=%s", got, indexFile)
 			}
 		})
+	}
+}
+
+func TestResolvedPathResolvesBeforeDotDot(t *testing.T) {
+	base := t.TempDir()
+	if r, err := filepath.EvalSymlinks(base); err == nil {
+		base = r
+	}
+	for _, d := range []string{"real/deep", "real/target", "links"} {
+		if err := os.MkdirAll(filepath.Join(base, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(base, "real", "deep"), filepath.Join(base, "links", "alias")); err != nil {
+		t.Fatal(err)
+	}
+	for p, want := range map[string]string{
+		base + "/links/alias/../target/.git/index": filepath.Join(base, "real", "target", ".git", "index"), // tail does not exist
+		base + "/links/alias/../target":            filepath.Join(base, "real", "target"),
+	} {
+		if got := resolvedPath(p); got != want {
+			t.Errorf("resolvedPath(%q) = %q, want %q", p, got, want)
+		}
 	}
 }
