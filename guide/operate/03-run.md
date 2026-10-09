@@ -124,7 +124,8 @@ launched (capacity, quota) the start still succeeds on the old slot and tries ag
 start. Each automatic move is in the audit log (`pool.slot_replace_auto`). The Slots tab shows
 **older than $Latest · replaced at next start** on these slots. Set
 `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS=false` on the Control Plane to turn this off. Reserve slots
-yourself when you want the move to happen regardless of capacity:
+yourself when a workspace must never be put back on its old slot (then a start that cannot launch
+a new slot fails instead):
 
 1. **Settings → Admin → Slots** (super_admin). The **Template** column shows the launch template
    version each slot was launched from, marked **older than $Latest** when it is.

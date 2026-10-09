@@ -1641,6 +1641,8 @@ func (e *ecsEC2Runtime) slotTypeMatches(ctx context.Context, instanceID string) 
 					outdated = e.pool.slotOutdated(inst, lt)
 				}
 			}
+			// A sweeper fence on a slot a Start won anyway is the automatic move's cue too.
+			outdated = outdated || (!e.pool.noAutoReplace && slotRetireTagged(inst))
 			return string(inst.InstanceType) == e.instanceType, slotReserved(inst), outdated, nil
 		}
 	}
@@ -1691,7 +1693,7 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 				// The slot may have been reserved while the launch was failing; the stale read
 				// above says otherwise, and a reservation never falls back. Unreadable counts
 				// as reserved.
-				if e.slotNowReserved(ctx, inst) {
+				if e.slotNowReservedByOperator(ctx, inst) {
 					return ec2Placement{}, fmt.Errorf("slot %s is reserved for replacement and no new slot could be launched "+
 						"(the reservation stays; the old slot is not reused): %w", inst, err)
 				}
@@ -3344,7 +3346,7 @@ func (e *ecsEC2Runtime) makeRoom(ctx context.Context) (bool, error) {
 			// evictLongestIdle already had first refusal on this size — except a box reserved
 			// for replacement, which no placement may reuse and so blocks the cap exactly as
 			// a box of the wrong size does.
-			if string(inst.InstanceType) == e.instanceType && !slotReserved(inst) {
+			if string(inst.InstanceType) == e.instanceType && !slotExcluded(inst) {
 				continue
 			}
 			// Another home's pending replacement is spoken for, whatever its size.
@@ -5714,7 +5716,8 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 		idle      time.Duration
 		terminate bool
 		reserved  bool
-		outdated  bool // below $Latest only; reserved by the sweeper itself before it acts
+		outdated  bool // below $Latest only; fenced by the sweeper itself before it acts
+		orphan    bool // a replacement launched for a home that never claimed it
 	}
 	var due []candidate
 	for _, r := range out.Reservations {
@@ -5733,7 +5736,17 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 			if f.pool.slotRetiring(inst, lt) {
 				// No grace: nobody should be placed on it, so waiting buys nothing. The fences
 				// below (fresh occupancy, ECS tasks, task ENIs) still apply.
-				due = append(due, candidate{id: id, terminate: true, reserved: slotReserved(inst), outdated: !slotReserved(inst)})
+				due = append(due, candidate{id: id, terminate: true, reserved: slotReserved(inst), outdated: !slotReserved(inst) && !slotRetireTagged(inst)})
+				continue
+			}
+			// A replacement (af-replaces-home) that no home claimed or holds, long after its
+			// launch: the Start that asked for it never got the answer (a lost RunInstances
+			// response, a CP that died) and nothing will come back for it. Retired whatever
+			// the timers say, or it bills and takes a place under the cap for good. Younger
+			// than that it may be a Start still in flight, which claimed it already (busy).
+			if ec2TagValue(inst.Tags, ec2TagReplacesHome) != "" && inst.LaunchTime != nil &&
+				now.Sub(*inst.LaunchTime) > f.orphanReplacementAfter() {
+				due = append(due, candidate{id: id, terminate: true, orphan: true})
 				continue
 			}
 			if timersOff {
@@ -5771,9 +5784,9 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 		if c.outdated {
 			if _, err := f.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 				Resources: []string{c.id},
-				Tags:      []ec2types.Tag{{Key: aws.String(ec2TagSlotReplace), Value: aws.String(time.Now().UTC().Format(time.RFC3339))}},
+				Tags:      []ec2types.Tag{{Key: aws.String(ec2TagSlotRetire), Value: aws.String(time.Now().UTC().Format(time.RFC3339))}},
 			}); err != nil {
-				log.Printf("ecs-ec2 sweep: could not reserve the outdated free slot %s (%v); leaving it", c.id, err)
+				log.Printf("ecs-ec2 sweep: could not fence the outdated free slot %s (%v); leaving it", c.id, err)
 				continue
 			}
 		}
@@ -5826,6 +5839,8 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 			why := fmt.Sprintf("free for %.0fm", c.idle.Minutes())
 			if c.reserved {
 				why = "free and reserved for replacement"
+			} else if c.orphan {
+				why = "replacement that no home claimed"
 			} else if c.outdated {
 				why = "free and below the launch template's $Latest"
 			}
@@ -6648,4 +6663,14 @@ func hasHome(homes []ec2HomeView, workspace string) bool {
 		}
 	}
 	return false
+}
+
+// orphanReplacementAfter is how old an unclaimed replacement slot must be before the sweeper
+// retires it: twice the claim window, and never under ten minutes.
+func (f *ecsEC2Factory) orphanReplacementAfter() time.Duration {
+	d := 2 * f.pool.claimTTL
+	if d < 10*time.Minute {
+		d = 10 * time.Minute
+	}
+	return d
 }

@@ -1650,8 +1650,9 @@ Until then the Agent's own isolation still holds for every SDK that honours
    version cannot be read is left alone. To switch it off (for example while a new template
    is being validated) set `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS=false` on the Control Plane;
    reservations then still work as below.
-   **Reserve the old slots for replacement** in the Console when you want the move to happen
-   regardless of capacity (a reservation never falls back to the old slot): Settings → Admin → the Slots tab
+   **Reserve the old slots for replacement** in the Console when a workspace must
+   never be put back on its old slot (a reservation never falls back: if no new slot can be
+   launched, that Start fails): Settings → Admin → the Slots tab
    (super_admin). Each slot shows the launch template version it was launched from and
    whether that is older than `$Latest`; "Reserve all N for replacement…" lists the slots
    and the workspaces on them before it reserves exactly those below `$Latest` (each one is

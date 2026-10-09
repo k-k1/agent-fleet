@@ -192,8 +192,6 @@ func forgetStart(h *ec2Harness) {
 	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 }
 
-// Review round 1 of #1946.
-
 // runWrap lets a test act around RunInstances.
 type runWrap struct {
 	ec2API
@@ -232,8 +230,8 @@ func TestECSEC2SweeperReservesAFreeOutdatedSlotBeforeItReadsOccupancy(t *testing
 	if attachedInstance(h.ec2.volumes["vol-1"]) == "i-old" && len(terminatedInstances(h)) > 0 {
 		t.Fatalf("a home was placed on the outdated slot and the slot terminated: %v", h.ec2.calls)
 	}
-	if ec2TagValue(h.ec2.instances["i-old"].Tags, ec2TagSlotReplace) == "" {
-		t.Fatal("the sweeper did not reserve the outdated slot before acting on it")
+	if ec2TagValue(h.ec2.instances["i-old"].Tags, ec2TagSlotRetire) == "" {
+		t.Fatal("the sweeper did not fence the outdated slot before acting on it")
 	}
 }
 
@@ -283,5 +281,92 @@ func TestECSEC2LostLaunchResponseIsAdoptedNotOrphaned(t *testing.T) {
 	}
 	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-new1" {
 		t.Fatalf("claim = %q, want the launched-but-unanswered i-new1 adopted (calls %v)", got, h.ec2.calls)
+	}
+}
+
+type describeWrap struct {
+	ec2API
+	describe func(context.Context, *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error, bool)
+}
+
+func (d describeWrap) DescribeInstances(c context.Context, in *ec2.DescribeInstancesInput, o ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
+	if out, err, handled := d.describe(c, in); handled {
+		return out, err
+	}
+	return d.ec2API.DescribeInstances(c, in, o...)
+}
+
+// The sweeper's fence is not a reservation: a Start that won the race keeps an automatic move —
+// no pill, and a capacity failure still falls back.
+func TestECSEC2SweeperFenceLeftOnARaceWinnerStaysAutomatic(t *testing.T) {
+	ctx := context.Background()
+	h, _ := outdatedSlotHarness(t)
+	// The sweeper believed i-old free (no homes passed); the re-read finds alice on it.
+	h.factory().sweepFreeSlots(ctx, nil)
+	if got := terminatedInstances(h); len(got) != 0 {
+		t.Fatalf("terminated %v although a home is on the slot", got)
+	}
+	if ec2TagValue(h.ec2.instances["i-old"].Tags, ec2TagSlotRetire) == "" {
+		t.Fatal("setup: the sweeper left no fence behind")
+	}
+	if ec2TagValue(h.ec2.instances["i-old"].Tags, ec2TagSlotReplace) != "" {
+		t.Fatal("the sweeper wrote an operator reservation")
+	}
+	if h.rt.SlotReplacePending(ctx) {
+		t.Fatal("the member is told about a move nobody reserved")
+	}
+	h.ec2.runErr["sub-1a"] = errors.New("InsufficientInstanceCapacity: none left")
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start failed instead of falling back: %v", err)
+	}
+	if got := attachedInstance(h.ec2.volumes["vol-1"]); got != "i-old" {
+		t.Fatalf("home on %q, want it left on i-old", got)
+	}
+}
+
+// A launch that succeeded but is not visible yet, whose answer was lost: the Start falls back,
+// and the sweeper still collects the replacement later whatever the timers say.
+func TestECSEC2OrphanReplacementIsCollectedBySweeperWithTimersOff(t *testing.T) {
+	ctx := context.Background()
+	h, _ := outdatedSlotHarness(t)
+	hidden := true
+	h.rt.ec2 = describeWrap{ec2API: runWrap{ec2API: h.ec2, run: func(c context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
+		if _, err := h.ec2.RunInstances(c, in); err != nil {
+			return nil, err
+		}
+		return nil, errors.New("response lost after acceptance")
+	}}, describe: func(c context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error, bool) {
+		for _, f := range in.Filters {
+			if hidden && strings.HasSuffix(aws.ToString(f.Name), ec2TagReplacesHome) {
+				return &ec2.DescribeInstancesOutput{}, nil, true
+			}
+		}
+		return nil, nil, false
+	}}
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	hidden = false
+	orphan := h.ec2.instances["i-new1"]
+	if orphan == nil {
+		t.Fatalf("setup: no launched box (%v)", h.ec2.calls)
+	}
+	h.rt.pool.slotSleepAfter, h.rt.pool.slotTerminateAfter = 0, 0
+	// Still young: it may belong to a Start in flight.
+	young := time.Now().Add(-time.Minute)
+	orphan.State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning}
+	orphan.LaunchTime = &young
+	h.factory().sweepFreeSlots(ctx, []ec2types.Volume{*h.ec2.volumes["vol-1"]})
+	if callIndex(h, "TerminateInstances i-new1") >= 0 {
+		t.Fatal("a young replacement was terminated")
+	}
+	old := time.Now().Add(-time.Hour)
+	orphan.LaunchTime = &old
+	h.factory().sweepFreeSlots(ctx, []ec2types.Volume{*h.ec2.volumes["vol-1"]})
+	if callIndex(h, "TerminateInstances i-new1") < 0 {
+		t.Fatalf("the orphaned replacement was never collected: %v", h.ec2.calls)
+	}
+	if callIndex(h, "TerminateInstances i-old") >= 0 {
+		t.Fatal("the slot the home is on was terminated")
 	}
 }

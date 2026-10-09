@@ -32,6 +32,12 @@ const (
 	// launch answered but whose Start never got further (a CP that died, a lost response)
 	// can still be found and reused instead of launching another box over the cap.
 	ec2TagReplacesHome = "af-replaces-home"
+	// ec2TagSlotRetire on a SLOT is the sweeper's own fence while it retires a free slot below
+	// $Latest: placement skips the slot like a reserved one, but it is NOT a reservation — the
+	// member sees no pill, and a Start that won the race and lives on it replaces it as an
+	// automatic move (capacity fallback included). Kept apart from ec2TagSlotReplace so a
+	// sweeper's decision can never read as an operator's.
+	ec2TagSlotRetire = "af-slot-retire"
 	// EC2 stamps these on every instance launched from a launch template, with the version
 	// NUMBER it resolved — never the literal "$Latest" the launch asked for.
 	ec2TagLaunchTemplateID      = "aws:ec2launchtemplate:id"
@@ -71,7 +77,18 @@ var (
 // out: an operator reserved it, or automatic replacement is on and it is below the launch
 // template's $Latest. A slot whose version cannot be judged is never retiring.
 func (p ec2PoolConfig) slotRetiring(inst ec2types.Instance, lt ec2LaunchTemplate) bool {
-	return slotReserved(inst) || p.slotOutdated(inst, lt)
+	return slotExcluded(inst) || p.slotOutdated(inst, lt)
+}
+
+// slotRetireTagged reports whether the sweeper fenced this slot off (ec2TagSlotRetire).
+func slotRetireTagged(inst ec2types.Instance) bool {
+	return ec2TagValue(inst.Tags, ec2TagSlotRetire) != ""
+}
+
+// slotExcluded is what placement must not hand to anybody new: reserved by an operator, or
+// fenced by the sweeper.
+func slotExcluded(inst ec2types.Instance) bool {
+	return slotReserved(inst) || slotRetireTagged(inst)
 }
 
 // slotOutdated is the automatic half of slotRetiring.
@@ -94,7 +111,7 @@ func withoutReservedSlots(out *ec2.DescribeInstancesOutput) *ec2.DescribeInstanc
 	for _, r := range out.Reservations {
 		var insts []ec2types.Instance
 		for _, inst := range r.Instances {
-			if !slotReserved(inst) {
+			if !slotExcluded(inst) {
 				insts = append(insts, inst)
 			}
 		}
@@ -368,7 +385,7 @@ func (e *ecsEC2Runtime) adoptableReplacement(ctx context.Context, id, az, volID 
 	for _, r := range out.Reservations {
 		for _, inst := range r.Instances {
 			if ec2TagValue(inst.Tags, EC2TagPool) != e.pool.pool || ec2TagValue(inst.Tags, EC2TagRole) != ec2RoleSlot ||
-				slotReserved(inst) || string(inst.InstanceType) != e.instanceType || inst.State == nil ||
+				slotExcluded(inst) || string(inst.InstanceType) != e.instanceType || inst.State == nil ||
 				inst.Placement == nil || aws.ToString(inst.Placement.AvailabilityZone) != az {
 				return false, replacementSkip
 			}
@@ -534,13 +551,23 @@ func (e *ecsEC2Runtime) clearReplacesHome(ctx context.Context, instanceID string
 // reservation sees the placement. An unreadable answer counts as reserved: the cost is one
 // candidate skipped, the alternative a member placed on a box an operator wants gone.
 func (e *ecsEC2Runtime) slotNowReserved(ctx context.Context, id string) bool {
+	return e.slotTagged(ctx, id, slotExcluded)
+}
+
+// slotNowReservedByOperator is slotNowReserved for an operator's reservation alone — the
+// sweeper's fence (ec2TagSlotRetire) does not forbid the automatic fallback.
+func (e *ecsEC2Runtime) slotNowReservedByOperator(ctx context.Context, id string) bool {
+	return e.slotTagged(ctx, id, slotReserved)
+}
+
+func (e *ecsEC2Runtime) slotTagged(ctx context.Context, id string, tagged func(ec2types.Instance) bool) bool {
 	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{id}})
 	if err != nil {
 		return true
 	}
 	for _, r := range out.Reservations {
 		for _, inst := range r.Instances {
-			return slotReserved(inst)
+			return tagged(inst)
 		}
 	}
 	return true
