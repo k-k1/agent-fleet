@@ -627,3 +627,52 @@ decision stands. Follow-up for what this cannot cover: #1879.
   meanwhile carries the command on; otherwise (`--login`, `--no-login`, no Console) the message carries the
   terminal command. Stopping the command at the token's end can end one that no longer needed the token; the
   alternative, leaving it running on a dead token, hides the cause.
+
+## Note — a loopback `token_uri` for programs that read the token once: measured, not built (2026-10-09)
+
+Issue #1879. The decisions above are not changed, and nothing is built. This note records the
+measurement the issue asked for before any code, and the trade-off that needs the maintainer's decision.
+
+Setup: a fake token endpoint on `127.0.0.1` that logs each request and returns `fake-access-N`, a
+synthetic `authorized_user` file (`client_id`, `client_secret`, `refresh_token` all made up, `token_uri`
+pointing at the fake), and each program run in a network namespace with only loopback
+(`unshare -rn`, `lo` brought up). One early Python run was started outside the namespace and sent its
+synthetic refresh request to Google's real token endpoint (answered `invalid_client`; no real credential
+or user data was involved); every run below was inside the namespace.
+
+| Consumer (version) | Honours `token_uri` of an `authorized_user` file? |
+|---|---|
+| Go `golang.org/x/oauth2/google` 0.37.0 | **Yes.** `FindDefaultCredentials` then `Token()` posted `grant_type=refresh_token` with the file's client id, secret and refresh token to the fake. |
+| Go `cloud.google.com/go/auth` 0.24.0 | **No.** It posted to `https://oauth2.googleapis.com/token` (the dial failed in the namespace); the fake saw nothing. |
+| Python `google-auth` 2.61.0 | **No.** `Credentials.from_authorized_user_info` overwrites it (`token_uri=_GOOGLE_OAUTH2_TOKEN_ENDPOINT,  # always overrides`); the refresh went to Google. |
+| Node `google-auth-library` 11.2.0 and 9.15.1 | **No.** The refresh client uses the fixed `oauth2TokenUrl`; the file's value is not read (11.2.0 failed resolving Google; 9.15.1 by source). 9.x is what `@google-cloud/storage` 8.2.0 bundles. |
+| Terraform Google provider 8.6.0 (Terraform 1.16.4) | **Yes, but not with the variable the wrapper sets.** With `GOOGLE_CREDENTIALS` naming the file and no `GOOGLE_OAUTH_ACCESS_TOKEN`, the provider logged "Authenticating using configured Google JSON 'credentials'" and refreshed through the fake once per expiry (`expires_in=1` gave six requests in 25 s). With `GOOGLE_APPLICATION_CREDENTIALS` alone it logged "Authenticating using DefaultClient" and also asked the fake. With `GOOGLE_OAUTH_ACCESS_TOKEN` set beside either, it logged "Authenticating using configured Google JSON 'access_token'" and never asked the fake. |
+
+The provider's own start-up also calls a fixed Google host (`openidconnect.googleapis.com/v1/userinfo`),
+which cannot succeed in the namespace, so a complete `plan` was not run; the evidence is the token
+requests and the authentication line, not an API call authorised end to end. Not measured: any of this
+against Google.
+
+What follows:
+
+- Only two of the five consumers follow `token_uri`, and one of those only when the variable that carries
+  the static token is absent. Python, Node and `cloud.google.com/go/auth` ignore it, so a per-run file at
+  `GOOGLE_APPLICATION_CREDENTIALS` would not make them work; it would turn today's "file not found"
+  failure into a refresh request to Google carrying the per-run client secret and refresh token (random
+  and useless there, but sent). The fail-closed rule of the 2026-10-02 note would still hold for them in
+  effect, with a more confusing error.
+- Terraform is the consumer that motivated the issue, and it can be reached without touching
+  `GOOGLE_APPLICATION_CREDENTIALS`: the wrapper would set `GOOGLE_CREDENTIALS` (the provider's own
+  variable) to the file and leave `GOOGLE_OAUTH_ACCESS_TOKEN` out. That is opt-in by construction (only
+  the provider reads that variable), but it removes `GOOGLE_OAUTH_ACCESS_TOKEN` from the child's
+  environment, which the af-gcp notes document as part of what a command gets, and which a program that
+  reads it explicitly (the three client-library recipes in the 2026-10-02 note) relies on.
+- The loopback listener is the same trade-off the issue names: any process in the workspace can connect,
+  and the secret in the request body is the only gate. It would bind `127.0.0.1` only, compare in constant
+  time, close with the command, and keep the secret in a 0600 file in the run directory, never in argv or
+  environment.
+
+Decision needed from the maintainer before building: whether to accept a loopback listener for Terraform
+alone (`GOOGLE_CREDENTIALS`, dropping `GOOGLE_OAUTH_ACCESS_TOKEN` from the child), or to leave Terraform
+split into commands shorter than the token, or to take the issue's other alternative (`--lifetime`, which
+needs an organisation policy).
