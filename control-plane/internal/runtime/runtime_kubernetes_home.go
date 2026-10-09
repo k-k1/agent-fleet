@@ -368,9 +368,11 @@ func (k *kubeRuntime) EraseHome(ctx context.Context) error {
 	for {
 		p, err := k.getErasePod(ctx)
 		if err != nil {
-			if ctx.Err() != nil {
-				// The deadline hit while the poll was in flight: same outcome as hitting it
-				// in the select below, and the caller needs to hear that the pod still runs.
+			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+				// The deadline cut the poll short: same outcome as hitting it in the select
+				// below, and the caller needs to hear that the pod still runs. Any other
+				// failure (a 403, a bad body) keeps its own error even if the deadline
+				// passed at the same moment.
 				return k.eraseStillRunning(ctx)
 			}
 			return fmt.Errorf("kubernetes erase %s: %w", k.base, err)

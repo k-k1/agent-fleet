@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -1236,5 +1237,47 @@ func TestKubeEraseHomeWaitsForAnEvictedPodToStop(t *testing.T) {
 	}
 	if f.saw("DELETE "+erasePodPath) || f.saw("POST /api/v1/namespaces/ns/pods") {
 		t.Fatalf("EraseHome deleted or replaced a pod that may still run: %v", f.seen)
+	}
+}
+
+type eraseRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f eraseRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// cancelOnRead is a response body that cancels the caller's context as it is read.
+type cancelOnRead struct {
+	io.Reader
+	cancel context.CancelFunc
+}
+
+func (b cancelOnRead) Read(p []byte) (int, error) { b.cancel(); return b.Reader.Read(p) }
+func (cancelOnRead) Close() error                 { return nil }
+
+// A poll that fails for a reason of its own keeps that error when the deadline passes in the
+// same moment: the Forbidden stays visible to errors.As and to the audit record.
+func TestKubeEraseHomeKeepsAPollErrorThatIsNotTheDeadline(t *testing.T) {
+	rt, f := fakeKubeRuntime(t)
+	f.set(stsPathX, 200, stsJSON(0, 6, 6, 0, "r", "2"))
+	f.set(podsPathX, 200, podListJSON())
+	f.set(homeClaimGetPath, 200, `{"metadata":{"name":"af-ws-x-home"},"spec":{"resources":{}}}`)
+	f.set("GET "+erasePodPath, 200, erasePodJSON("Failed", eraseRunning))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	forbidden := `{"kind":"Status","status":"Failure","reason":"Forbidden","message":"no","code":403}`
+	real := rt.c.hc.Transport
+	var reads atomic.Int32
+	rt.c.hc.Transport = eraseRoundTripper(func(r *http.Request) (*http.Response, error) {
+		if r.Method+" "+r.URL.Path != "GET "+erasePodPath || reads.Add(1) < 3 {
+			return real.RoundTrip(r)
+		}
+		return &http.Response{StatusCode: 403, Header: http.Header{}, Request: r,
+			Body: cancelOnRead{strings.NewReader(forbidden), cancel}}, nil
+	})
+	err := rt.EraseHome(ctx)
+	if kubeErrCode(err) != 403 {
+		t.Fatalf("EraseHome = %v, want the 403 kept", err)
+	}
+	if strings.Contains(err.Error(), "still running") {
+		t.Fatalf("EraseHome = %v, a Forbidden was reported as the deadline", err)
 	}
 }
