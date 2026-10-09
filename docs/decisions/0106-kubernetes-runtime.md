@@ -959,3 +959,13 @@ hardened to match (`user.max_user_namespaces=0`, home mounted `nosuid,nodev`; se
 [07 §7.2](../build/07-security.md)). Fargate cannot add it, so the ecs runtime now declares
 `BrowserUnavailable` as kubernetes does. This note does not change decision 7 or any other
 decision.
+
+## Note (2026-10-09) — the home wipes first make read-only directories writable (#1546)
+
+Decision 4 runs the home wipes as `dev`, and `rm -rf` cannot remove the contents of a
+directory without owner write, such as Go's module cache (mode 0555): Clean home failed with
+`Permission denied` and the init container stopped the pod. Both wipes (the Clean home of the
+init container and the erase pod, and the Recreate's `~/repos`) now run
+`find … -type d ! -perm -u+w -exec chmod u+rwx {} \;` over what they are about to remove, kept
+names excluded, without following links and within one filesystem. Decision 4 itself is
+unchanged.
