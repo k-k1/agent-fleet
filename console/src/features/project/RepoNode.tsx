@@ -10,7 +10,7 @@
 // child's) nest one level further, so a spawn chain reads as a chain. Indentation
 // stops at three levels — a handoff chain has no bound and the rail is narrow — and
 // past that the spine colour alone carries the relation.
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { CSSProperties } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -20,6 +20,7 @@ import { RepoRowConnected } from "../repos/RepoRowConnected.tsx";
 import { useRepoReveal } from "../repos/store.ts";
 import type { RepoRailContext } from "../repos/useRepoRail.ts";
 import type { Session } from "../../types/session.ts";
+import { displayName } from "../../lib/sessionview.ts";
 import { sessionsInFolder } from "../../lib/project.ts";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
@@ -108,6 +109,33 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
   const unread =
     !open &&
     [...mine, ...below.flatMap((f) => sessionsInFolder(sessions, f))].some((s) => unreadSessions.has(s.name));
+  // A folded node peeks at its own newest live session (a stopped one is not "running here") so
+  // the rail still says what is going on without unfolding. Own folder only: descendants stay
+  // behind the tally badge, and `mine` is already newest-first like the open list. Filtering
+  // forces every node open, so the peek never competes with the filtered rows.
+  const live = open ? [] : mine.filter((s) => s.alive);
+  const peek = live[0];
+  const peekMore = live.slice(1);
+  // The peek row is replaced (a newer session arrives) or removed (the last live one stops) while
+  // it may hold keyboard focus; an unmounted row drops focus to <body> and the rail's arrow-key
+  // roving (useRailRoving only acts from a [data-rail-row]) goes dead. Remember that focus was
+  // inside it — unmount fires no blur, so the flag survives — and hand it to the new peek row,
+  // else to the repo card. Focus elsewhere is never moved.
+  const nodeRef = useRef<HTMLLIElement>(null);
+  const peekFocused = useRef(false);
+  const peekName = peek?.name;
+  useEffect(() => {
+    if (!peekFocused.current) return;
+    if (document.activeElement && document.activeElement !== document.body) return;
+    // Consume the request: when focus goes to the repo card (outside the peek wrapper) no onBlur
+    // would ever clear it, and a stale true would steal focus on a later change.
+    peekFocused.current = false;
+    const li = nodeRef.current;
+    const target =
+      li?.querySelector<HTMLElement>(":scope > .proj-node-peek .sess-btn") ??
+      li?.querySelector<HTMLElement>(":scope > .proj-node-head [data-rail-repo]");
+    target?.focus();
+  }, [peekName]);
   // A root's header height sets where its worktrees' headers pin (project.css). Only roots:
   // deeper worktree headers do not pin, and a nested value would shadow the root's.
   const headRef = usePublishedHeight<HTMLDivElement>("--proj-base-head-h", depth === 0);
@@ -124,6 +152,7 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
   );
   return (
     <li
+      ref={nodeRef}
       className={
         "proj-node" +
         (open ? "" : " collapsed") +
@@ -156,6 +185,23 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
           />
         </ul>
       </div>
+      {peek && (
+        <div
+          className="proj-node-body proj-node-peek"
+          onFocus={() => (peekFocused.current = true)}
+          onBlur={() => (peekFocused.current = false)}
+        >
+          <ul className="sess-list proj-sub-list">{row(peek)}</ul>
+          {peekMore.length > 0 && (
+            <span
+              className="proj-peek-more"
+              title={tr("pj.peek_more", { names: peekMore.map(displayName).join("\n") })}
+            >
+              +{peekMore.length}
+            </span>
+          )}
+        </div>
+      )}
       {open && (
         <>
           {/* Sessions sit directly under the repo row — no sub-header, no empty

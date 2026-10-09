@@ -198,6 +198,7 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "pj.no_repos": "No repositories",
   "pj.no_repos_hint": "Cloned repositories appear here",
   "pj.collapse": "Collapse",
+  "pj.peek_more": "Also running:\n{names}",
   "pj.expand": "Expand",
   "pj.other_sessions": "Other sessions",
   "pj.tidy_other_sessions": "Tidy other sessions (archive; shell/ssm are deleted)",
