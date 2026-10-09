@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -360,5 +361,34 @@ func TestEnsureStatusHooksModelSwitchKeepsUserEntry(t *testing.T) {
 	ours, others := modelSwitchEntries(t, dir)
 	if ours != 1 || others != 1 {
 		t.Fatalf("PreModelSwitch ours=%d others=%d, want 1 and 1", ours, others)
+	}
+}
+
+// A user's model-scoped copy of our command only allows that model, so it must not
+// stop the matcher-less entry from being installed (else /model to any other model
+// still stops on the dialog). The scoped entry is kept as is.
+func TestEnsureStatusHooksModelSwitchScopedCopyDoesNotReplaceGlobal(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	seed := `{"hooks":{"PreModelSwitch":[{"matcher":"claude-sonnet-5","hooks":[{"type":"command","command":` +
+		strconv.Quote(modelSwitchAllowCmd) + `}]}]}}`
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	EnsureStatusHooks()
+	EnsureStatusHooks()
+	arr, _ := readHooks(t, dir)["PreModelSwitch"].([]any)
+	var scoped, global int
+	for _, e := range arr {
+		em, _ := e.(map[string]any)
+		if m, _ := em["matcher"].(string); m == "claude-sonnet-5" {
+			scoped++
+		} else if m == "" {
+			global++
+		}
+	}
+	if scoped != 1 || global != 1 {
+		t.Fatalf("PreModelSwitch scoped=%d global=%d, want 1 and 1: %v", scoped, global, arr)
 	}
 }

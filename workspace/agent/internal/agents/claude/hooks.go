@@ -148,14 +148,23 @@ func EnsureStatusHooks() {
 const modelSwitchAllowCmd = `printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreModelSwitch","permissionDecision":"allow"}}'`
 
 // preModelSwitchHasAF reports whether PreModelSwitch already carries OUR allow command;
-// a user's own entry on the event does not count and is left alone.
+// a user's own entry on the event, or a model-scoped copy of our command, does not
+// count and is left alone.
 func preModelSwitchHasAF(hooks map[string]any) bool {
 	arr, _ := hooks["PreModelSwitch"].([]any)
 	for _, e := range arr {
 		em, _ := e.(map[string]any)
+		// A matcher narrows the event to some target models; only a matcher-less entry
+		// allows every switch, so a scoped copy of our command must not stand in for it.
+		if matcher, _ := em["matcher"].(string); matcher != "" {
+			continue
+		}
 		list, _ := em["hooks"].([]any)
 		for _, h := range list {
 			hm, _ := h.(map[string]any)
+			if typ, _ := hm["type"].(string); typ != "command" {
+				continue
+			}
 			if cmd, _ := hm["command"].(string); cmd == modelSwitchAllowCmd {
 				return true
 			}
