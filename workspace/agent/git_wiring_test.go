@@ -114,6 +114,7 @@ func TestGitWiringIsLive(t *testing.T) {
 		"ErrCodeSessionsTrashFailed":   func(t *testing.T) { sameGitCode(t, w.ErrCodeSessionsTrashFailed, errCodeSessionsTrashFailed) },
 		"ErrCodeWorktreeArchiveFailed": func(t *testing.T) { sameGitCode(t, w.ErrCodeWorktreeArchiveFailed, errCodeWorktreeArchiveFailed) },
 		"ErrCodeWorktreeNestedRepo":    func(t *testing.T) { sameGitCode(t, w.ErrCodeWorktreeNestedRepo, errCodeWorktreeNestedRepo) },
+		"ErrCodeIndexLockStale":        func(t *testing.T) { sameGitCode(t, w.ErrCodeIndexLockStale, errCodeIndexLockStale) },
 	}
 
 	// Cross-check the set of checks against Deps' field set. A new field always fails

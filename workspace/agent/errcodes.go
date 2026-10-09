@@ -66,6 +66,9 @@ const (
 	// The chosen way back can only be taken on a new branch: the branch has moved since the
 	// delete, or HEAD was detached (issue #1042).
 	errCodeRecreateNeedsNewBranch = "recreate_needs_new_branch"
+	// A fast-forward failed on an index.lock no running git holds (gitx/index_lock.go). The
+	// payload carries `lock`, its path; the Console offers to remove it and retry.
+	errCodeIndexLockStale = "git_index_lock_stale"
 )
 
 // Stable codes for the user-facing errors (docs/log/28 P3). The backend message is a

@@ -1551,7 +1551,15 @@ func HandleRepoFF(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var req ffReq
+	_ = json.NewDecoder(r.Body).Decode(&req) // empty body is fine
+	if req.RemoveStaleLock {
+		removeStaleIndexLock(dir)
+	}
 	if out, err := Combined(dir, "pull", "--ff-only"); err != nil {
+		if writeIfStaleIndexLock(w, dir, out) {
+			return
+		}
 		httpx.WriteErr(w, http.StatusBadGateway, "ff_failed", out)
 		return
 	}
@@ -1598,7 +1606,15 @@ func HandleRepoParentFF(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "parent_not_found", "cannot resolve the parent working copy")
 		return
 	}
+	var req ffReq
+	_ = json.NewDecoder(r.Body).Decode(&req) // empty body is fine
+	if req.RemoveStaleLock {
+		removeStaleIndexLock(dir)
+	}
 	if err := fastForwardWorktreeFromParent(parent, dir); err != nil {
+		if writeIfStaleIndexLock(w, dir, err.Error()) {
+			return
+		}
 		httpx.WriteErr(w, http.StatusConflict, "parent_ff_not_possible", err.Error())
 		return
 	}

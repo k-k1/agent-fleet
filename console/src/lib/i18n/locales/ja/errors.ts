@@ -49,6 +49,8 @@ export const errors = {
     "ブランチが削除後に動いたか、削除時にブランチが無かったため、そのままでは戻せません。新しいブランチ名を付けて作り直してください。",
   "err.worktree_nested_repo":
     "この worktree の中に git 管理外のリポジトリ（中で clone したものなど）があり、その中身はごみ箱に残せません。先に移動か削除をしてください。worktree はそのままです。",
+  "err.git_index_lock_stale":
+    "古い git のロックファイル（index.lock）が残っているため実行できませんでした。動いている git は見つかりませんでした。",
   "err.session_resumed": "ごみ箱へ移している間にセッションが再開されたため、削除しませんでした。",
   "err.sessions_trash_failed":
     "作業コピーの shell/ssm セッションをごみ箱へ移せなかったため、作業コピーは削除していません（ディスクの空きを確認してください）。",

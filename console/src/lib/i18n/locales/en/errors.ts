@@ -50,6 +50,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
     "The branch has moved since the delete, or there was none, so it can't be put back as it was. Recreate it on a new branch name.",
   "err.worktree_nested_repo":
     "This worktree holds a repository git does not track (a clone inside it), whose contents the trash cannot keep. Move or delete it first; the worktree was left as it is.",
+  "err.git_index_lock_stale":
+    "A stale git lock file (index.lock) is left in this working copy, and no git was found running there.",
   "err.session_resumed": "The session was resumed while it was being moved to the trash, so it was not deleted.",
   "err.sessions_trash_failed":
     "Couldn't move this working copy's shell/ssm sessions to the trash, so the working copy was not deleted (check the free disk space).",

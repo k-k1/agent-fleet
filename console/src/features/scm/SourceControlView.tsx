@@ -18,6 +18,7 @@ import { placeFixed } from "../../lib/placeFixed.ts";
 import { BranchModal } from "../repos/BranchModal.tsx";
 import { wtFolder } from "../repos/BranchList.tsx";
 import { AheadBehind } from "../repos/AheadBehind.tsx";
+import { postFastForward } from "../repos/staleIndexLock.ts";
 import type { Branch } from "../repos/BranchList.tsx";
 import { CommitGraph } from "./CommitGraph.tsx";
 import { openCommit, openCommitSplit, openChanges, openRepoScm } from "./open.ts";
@@ -191,9 +192,9 @@ export function SourceControlView({ repo, path = "", headerActions }: { repo: st
   };
 
   const doFF = async () => {
-    const res = await apiJSON(`api/repos/${enc}/ff`, "POST", {});
+    const res = await postFastForward(`api/repos/${enc}/ff`);
     if (res && res.error) {
-      toast(tr("scm.ff_failed", { err: res.error.message || res.error }));
+      toast(tr("scm.ff_failed", { err: errText(res.error) }));
       return;
     }
     void refresh();
