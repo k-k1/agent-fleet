@@ -196,6 +196,7 @@ export const repos = {
   "pj.no_repos": "リポジトリがありません",
   "pj.no_repos_hint": "クローンするとここに並びます",
   "pj.collapse": "折りたたむ",
+  "pj.peek_more": "ほかに稼働中:\n{names}",
   "pj.expand": "展開",
   "pj.other_sessions": "その他のセッション",
   "pj.tidy_other_sessions": "その他のセッションを整理（アーカイブ退避・shell/ssm は削除）",
