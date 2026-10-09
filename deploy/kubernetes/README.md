@@ -905,16 +905,20 @@ deploy/gcp/gke/pause.sh --project "$PROJECT" --location "$REGION" --prefix "$PRE
 `--location` is the cluster's zone for a zonal cluster (`zonal_cluster = true`). Down: the CP to
 0 replicas, the workspace pods gone, the workspace pool to 0 nodes, the system pool to 0, Cloud SQL
 stopped (activation policy `NEVER`; unlike RDS it does not restart itself after 7 days). `--up`
-reverses it: Cloud SQL, system pool, workspace pool autoscaling, CP. Without `--yes` it prints the
-plan; `--dry-run` echoes every write. A running workspace makes it refuse; `--stop-workspaces`
+reverses it: Cloud SQL, system pool, workspace pool autoscaling, CP (`--up` starts at once, with
+no `--yes`). Without `--yes` a pause prints the plan; `--dry-run` echoes every write. It stops
+before any write when a read fails, or when the kubectl context's server and CA are not this
+cluster's (so `get-credentials` first; a DNS-endpoint context is refused). A running workspace makes it refuse; `--stop-workspaces`
 scales them to 0 (their sessions end), `--keep-db` leaves Cloud SQL running.
 
 - The workspace pool has no taint: with the system pool at 0 the autoscaler would start a
   workspace node for kube-system's pending pods. The script therefore switches that pool's
   autoscaling off and resizes it to 0 itself. `terraform plan` shows the pool's autoscaling and
   the system pool's size as drift while paused; `--up` closes it.
-- The node counts are read from the live pools and kept as annotations on the CP namespace
-  (`agent-fleet.io/pause-*`), which `--up` restores and removes. If the namespace was deleted,
+- The node counts (per zone) are read from the pools' instance groups and kept in one annotation
+  step on the CP namespace (`agent-fleet.io/pause-*`); an existing record is never overwritten, so
+  pausing again after an interruption keeps the original sizes. `--up` restores them in full,
+  finishing a half-done resize, and removes the record once the CP is back. If the namespace was deleted,
   `--up` needs `--system-nodes N` (and optionally `--workspace-min` / `--workspace-max`).
 - Still billing while paused, and only deletion stops them: the GKE management fee, the load
   balancer's forwarding rule, the Private Service Connect endpoint, Cloud NAT and its reserved

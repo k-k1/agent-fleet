@@ -31,10 +31,20 @@
 #   agent-fleet.io/pause-system-nodes   nodes per zone in the system pool
 #   agent-fleet.io/pause-workspace-min  the workspace pool's autoscaling minimum (per zone)
 #   agent-fleet.io/pause-workspace-max  and maximum
-# and removed by --up. A namespace survives `kubectl apply -k`; a running pool is never
-# overwritten with a zero (a second pause run keeps the first run's record). While paused,
+# and removed by --up once the CP is back. The sizes are the pools' managed instance group
+# sizes (what `resize` sets), not a count of registered nodes, which a half-finished resize
+# makes too small. A namespace survives `kubectl apply -k`; an existing record is never
+# overwritten, so a pause that is run again after an interruption keeps the original sizes
+# (--system-nodes replaces it on purpose). While paused,
 # `terraform plan` shows the workspace pool's autoscaling and the system pool's size as drift;
 # `--up` closes it. Without a record (the namespace was deleted), --up needs --system-nodes.
+#
+# ## Reads that decide a write
+#
+# "Could not read" is not "nothing there": a failed `get pods` must not pass as "no workspace
+# running". Every read that feeds a write returns its exit status and the script stops before
+# the first write; only --status prints `?` and carries on. The context is also checked
+# against the cluster's endpoint and CA, since its name alone says nothing about where it points.
 #
 # ## What keeps billing while paused
 #
@@ -92,6 +102,8 @@ for v in "$SYSTEM_NODES" "$WS_MIN" "$WS_MAX" "$WAIT"; do
   case "$v" in *[!0-9]*) echo "ERROR: counts and --wait must be whole numbers (got '$v')" >&2; exit 2 ;; esac
 done
 
+# Polling knobs for the tests; an operator has no reason to touch them.
+POLL="${AF_PAUSE_POLL:-10}"; READY_TIMEOUT="${AF_PAUSE_READY_TIMEOUT:-600}"
 CLUSTER="$PREFIX-gke"; SQL="$PREFIX-pg"; CP_NS="$PREFIX-cp"; WS_NS="$PREFIX-ws"
 WS_POOL=workspace; SYS_POOL=system
 CTX="gke_${PROJECT}_${LOCATION}_${CLUSTER}"
@@ -124,68 +136,133 @@ confirm() {
   return 0
 }
 
+err() { echo "ERROR: $*" >&2; }
+
+# verify_target — the context's name proves nothing (a copied or hand-edited kubeconfig entry
+# can carry the standard name and point at another cluster, while gcloud below addresses this
+# one). The cluster's CA and endpoint, as GKE reports them, must be the ones the context uses.
+verify_target() {
+  local ep pep ca srv kca host
+  ep="$("${GC[@]}" container clusters describe "$CLUSTER" --location "$LOCATION" --format='value(endpoint)')" || { err "cannot describe cluster $CLUSTER"; return 1; }
+  pep="$("${GC[@]}" container clusters describe "$CLUSTER" --location "$LOCATION" --format='value(privateClusterConfig.privateEndpoint)')" || return 1
+  ca="$("${GC[@]}" container clusters describe "$CLUSTER" --location "$LOCATION" --format='value(masterAuth.clusterCaCertificate)')" || return 1
+  srv="$("${K[@]}" config view --raw --minify -o jsonpath='{.clusters[0].cluster.server}')" || { err "kubectl context $CTX not found"; return 1; }
+  kca="$("${K[@]}" config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')" || return 1
+  host="${srv#*://}"; host="${host%%[:/]*}"
+  if [ -z "$ca" ] || [ "${ca//[[:space:]]/}" != "${kca//[[:space:]]/}" ] || { [ "$host" != "$ep" ] && [ "$host" != "$pep" ]; }; then
+    err "context $CTX does not point at cluster $CLUSTER (server '$srv' vs endpoint '$ep'; the CA must match too)."
+    err "Run: gcloud container clusters get-credentials $CLUSTER --project $PROJECT --location $LOCATION"
+    return 1
+  fi
+}
+verify_target || exit 1
 if ! "${K[@]}" get namespace "$CP_NS" >/dev/null 2>&1; then
-  echo "ERROR: kubectl cannot reach namespace $CP_NS in context $CTX." >&2
-  echo "       Run: gcloud container clusters get-credentials $CLUSTER --project $PROJECT --location $LOCATION" >&2
+  err "kubectl cannot reach namespace $CP_NS in context $CTX."
+  err "Run: gcloud container clusters get-credentials $CLUSTER --project $PROJECT --location $LOCATION"
   exit 1
 fi
 
-cp_replicas() { "${K[@]}" -n "$CP_NS" get deployment af-cp -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "?"; }
-cp_ready()    { "${K[@]}" -n "$CP_NS" get deployment af-cp -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true; }
-ws_pods()     { "${K[@]}" -n "$WS_NS" get pods -o name 2>/dev/null || true; }
-pool_nodes()  { "${K[@]}" get nodes -l "agent-fleet.io/pool=$1" -o name 2>/dev/null | grep -c . || true; }
-
-# pool_field <pool> <gcloud --format value expression>
-pool_field() {
+# Reads: stdout is the answer, a non-zero status is "could not read" (never an empty success).
+cp_replicas() {
+  local v
+  v="$("${K[@]}" -n "$CP_NS" get deployment af-cp -o jsonpath='{.spec.replicas}')" && [ -n "$v" ] || { err "cannot read deployment af-cp"; return 1; }
+  echo "$v"
+}
+cp_ready() { "${K[@]}" -n "$CP_NS" get deployment af-cp -o jsonpath='{.status.readyReplicas}'; }
+ws_pods() { "${K[@]}" -n "$WS_NS" get pods -o name || { err "cannot list pods in $WS_NS"; return 1; }; }
+pool_nodes() {
+  local out
+  out="$("${K[@]}" get nodes -l "agent-fleet.io/pool=$1" -o name)" || { err "cannot list $1 nodes"; return 1; }
+  if [ -z "$out" ]; then echo 0; else printf '%s\n' "$out" | wc -l | tr -d ' '; fi
+}
+pool_ready() {
+  local out
+  out="$("${K[@]}" get nodes -l "agent-fleet.io/pool=$1" -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}')" || return 1
+  printf '%s\n' "$out" | grep -c '^True$' || true
+}
+pool_field() {  # <pool> <gcloud value() expression>
   "${GC[@]}" container node-pools describe "$1" --cluster "$CLUSTER" --location "$LOCATION" \
-    --format="value($2)" 2>/dev/null || true
+    --format="value($2)" || { err "cannot describe node pool $1"; return 1; }
 }
-autoscaling_on() { [ "$(pool_field "$WS_POOL" autoscaling.enabled)" = True ]; }
-
-sql_policy() { "${GC[@]}" sql instances describe "$SQL" --format='value(settings.activationPolicy)' 2>/dev/null || true; }
-sql_state()  { "${GC[@]}" sql instances describe "$SQL" --format='value(state)' 2>/dev/null || true; }
-
-# recorded <name> — an annotation of the CP namespace, empty when absent.
-recorded() {
-  "${K[@]}" get namespace "$CP_NS" -o jsonpath="{.metadata.annotations.agent-fleet\\.io/pause-$1}" 2>/dev/null || true
+# pool_sizes <pool> — the managed instance groups' target size, one line per zone: the number
+# `resize --num-nodes` sets, and the one to restore. Registered nodes are not counted: a
+# half-finished resize leaves too few of them.
+pool_sizes() {
+  local urls u z n v
+  urls="$(pool_field "$1" instanceGroupUrls)" || return 1
+  [ -n "$urls" ] || { err "node pool $1 reports no instance groups"; return 1; }
+  for u in ${urls//;/ }; do
+    z="${u##*/zones/}"; z="${z%%/*}"; n="${u##*/}"
+    v="$("${GC[@]}" compute instance-groups managed describe "$n" --zone "$z" --format='value(targetSize)')" \
+      || { err "cannot read the size of $n"; return 1; }
+    case "$v" in ''|*[!0-9]*) err "unreadable size '$v' for $n"; return 1 ;; esac
+    echo "$v"
+  done
 }
-record() { run "${K[@]}" annotate namespace "$CP_NS" --overwrite "$ANN-$1=$2" >/dev/null; }
+ws_autoscaling() {
+  local v
+  v="$(pool_field "$WS_POOL" autoscaling.enabled)" || return 1
+  if [ "$v" = True ]; then echo 1; else echo 0; fi
+}
+sql_policy() {
+  local v
+  v="$("${GC[@]}" sql instances describe "$SQL" --format='value(settings.activationPolicy)')" || { err "cannot describe Cloud SQL $SQL"; return 1; }
+  case "$v" in ALWAYS|NEVER) echo "$v" ;; *) err "Cloud SQL $SQL: unexpected activation policy '$v'"; return 1 ;; esac
+}
+sql_state() { "${GC[@]}" sql instances describe "$SQL" --format='value(state)'; }
+recorded() {  # <name> — empty when absent
+  "${K[@]}" get namespace "$CP_NS" -o jsonpath="{.metadata.annotations.agent-fleet\\.io/pause-$1}" \
+    || { err "cannot read the pause record on $CP_NS"; return 1; }
+}
+all_equal() { local n="$1" x; shift; for x in "$@"; do [ "$x" = "$n" ] || return 1; done; }
+any_nonzero() { local x; for x in "$@"; do [ "$x" = 0 ] || return 0; done; return 1; }
 
-# wait_ws_gone — poll until the workspace namespace has no pod. `kubectl wait --for=delete`
-# with no pod left errors out on some versions, and one-shot erase pods count too.
+# wait_ws_gone — poll until the workspace namespace has no pod (one-shot erase pods count).
 wait_ws_gone() {
   local deadline left
   deadline=$(( $(date +%s) + WAIT ))
   while :; do
-    left="$(ws_pods | tr '\n' ' ')"
+    left="$(ws_pods)" || return 1
+    left="$(printf '%s' "$left" | tr '\n' ' ')"
     [ -z "${left// /}" ] && return 0
     if [ "$(date +%s)" -ge "$deadline" ]; then
-      echo "ERROR: workspace pods still present after ${WAIT}s: $left" >&2
+      err "workspace pods still present after ${WAIT}s: $left"
       return 1
     fi
-    sleep 10
+    sleep "$POLL"
+  done
+}
+# wait_ready <pool> <count> — until that many nodes are Ready (kubectl wait passes on fewer).
+wait_ready() {
+  local deadline got
+  deadline=$(( $(date +%s) + READY_TIMEOUT ))
+  while :; do
+    got="$(pool_ready "$1")" || return 1
+    [ "$got" -ge "$2" ] && return 0
+    if [ "$(date +%s)" -ge "$deadline" ]; then err "only $got of $2 $1 nodes Ready after ${READY_TIMEOUT}s"; return 1; fi
+    sleep "$POLL"
   done
 }
 
 status() {
-  local pods np sp
-  pods="$(ws_pods | wc -l | tr -d ' ')"
+  local t
+  try() { "$@" 2>/dev/null || echo '?'; }
   echo "==> $CLUSTER (project=$PROJECT location=$LOCATION)"
-  echo "    control plane      : desired=$(cp_replicas) ready=$(cp_ready)"
-  echo "    workspace pods     : $pods"
-  echo "    system nodes       : $(pool_nodes "$SYS_POOL")"
-  echo "    workspace nodes    : $(pool_nodes "$WS_POOL") (autoscaling: $(autoscaling_on && echo on || echo off))"
-  echo "    cloud sql ($SQL) : policy=$(sql_policy) state=$(sql_state)"
-  np="$(recorded system-nodes)"
-  if [ -n "$np" ]; then
-    echo "    pause record       : system nodes/zone=$np workspace min/max=$(recorded workspace-min)/$(recorded workspace-max)"
+  echo "    control plane      : desired=$(try cp_replicas) ready=$(try cp_ready)"
+  echo "    workspace pods     : $(try ws_pods | grep -c . || true)"
+  echo "    system nodes       : $(try pool_nodes "$SYS_POOL")"
+  echo "    workspace nodes    : $(try pool_nodes "$WS_POOL") (autoscaling: $(try ws_autoscaling | sed 's/^1$/on/;s/^0$/off/'))"
+  echo "    cloud sql ($SQL) : policy=$(try sql_policy) state=$(try sql_state)"
+  t="$(try recorded system-nodes)"
+  if [ -n "$t" ] && [ "$t" != '?' ]; then
+    echo "    pause record       : system nodes/zone=$t workspace min/max=$(try recorded workspace-min)/$(try recorded workspace-max)"
   fi
-  if [ "$(cp_replicas)" = 0 ]; then
-    [ "$(sql_policy)" != ALWAYS ] || {
+  if [ "$(try cp_replicas)" = 0 ]; then
+    [ "$(try sql_policy)" != ALWAYS ] || {
       echo ""; echo "    NOTE: Cloud SQL is running while the control plane is paused; pause.sh stops it."; }
-    sp="$(pool_nodes "$WS_POOL")"
-    [ "${sp:-0}" = 0 ] || {
-      echo ""; echo "    WARN: $sp workspace node(s) up with no control plane. If the system pool is at 0 the"
+    t="$(try pool_nodes "$WS_POOL")"
+    [ "$t" = 0 ] || [ "$t" = '?' ] || {
+      echo ""; echo "    WARN: $t workspace node(s) up with no control plane. If the system pool is at 0 the"
       echo "          autoscaler started them for kube-system; run pause.sh again."; }
   fi
   echo ""
@@ -202,29 +279,46 @@ case "$MODE" in
 
   up)
     echo "==> resuming $CLUSTER"
+    # All reads first: nothing is started on a guess.
+    pol="$(sql_policy)"
+    sysrec="$(recorded system-nodes)"; wsmin="$(recorded workspace-min)"; wsmax="$(recorded workspace-max)"
+    n="${SYSTEM_NODES:-$sysrec}"
+    sizes="$(pool_sizes "$SYS_POOL")"
+    mapfile -t sz <<< "$sizes"
+    AUTO="$(ws_autoscaling)"
+    if [ -z "$n" ]; then
+      if ! all_equal "${sz[0]}" "${sz[@]}"; then
+        err "system pool sizes differ per zone (${sz[*]}) and there is no pause record; pass --system-nodes <N>."
+        exit 1
+      fi
+      if [ "${sz[0]}" = 0 ]; then
+        err "no pause record on namespace $CP_NS; pass --system-nodes <N> (Terraform's system_node_count)."
+        exit 1
+      fi
+      n="${sz[0]}"
+    fi
+
     # Cloud SQL first: a CP that comes up before it answers 500 until it is reachable.
-    if [ "$(sql_policy)" = NEVER ]; then
+    if [ "$pol" = NEVER ]; then
       echo "==> starting Cloud SQL $SQL"
       run "${GC[@]}" sql instances patch "$SQL" --activation-policy=ALWAYS --quiet
     fi
 
-    if [ "$(pool_nodes "$SYS_POOL")" = 0 ]; then
-      n="${SYSTEM_NODES:-$(recorded system-nodes)}"
-      if [ -z "$n" ]; then
-        echo "ERROR: no pause record on namespace $CP_NS; pass --system-nodes <N> (Terraform's system_node_count)." >&2
-        exit 1
-      fi
+    # Whenever the pool is not at its recorded size, not only when it is empty: a resize that
+    # stopped halfway leaves some nodes and must be finished.
+    if ! all_equal "$n" "${sz[@]}"; then
       echo "==> system pool to $n node(s) per zone"
       run "${GC[@]}" container clusters resize "$CLUSTER" --node-pool "$SYS_POOL" --num-nodes "$n" \
         --location "$LOCATION" --quiet
-      if [ "$AF_DRY" != 1 ]; then
-        "${K[@]}" wait --for=condition=Ready node -l "agent-fleet.io/pool=$SYS_POOL" --timeout=600s
-      fi
+    fi
+    if [ "$AF_DRY" != 1 ]; then
+      echo "==> waiting for $(( n * ${#sz[@]} )) system node(s) to be Ready"
+      wait_ready "$SYS_POOL" $(( n * ${#sz[@]} ))
     fi
 
-    if ! autoscaling_on; then
-      mn="${WS_MIN:-$(recorded workspace-min)}"; mn="${mn:-0}"
-      mx="${WS_MAX:-$(recorded workspace-max)}"; mx="${mx:-4}"
+    if [ "$AUTO" = 0 ]; then
+      mn="${WS_MIN:-$wsmin}"; mn="${mn:-0}"
+      mx="${WS_MAX:-$wsmax}"; mx="${mx:-4}"
       echo "==> workspace pool autoscaling back on ($mn-$mx per zone)"
       run "${GC[@]}" container node-pools update "$WS_POOL" --cluster "$CLUSTER" --location "$LOCATION" \
         --enable-autoscaling --min-nodes "$mn" --max-nodes "$mx" --quiet
@@ -235,9 +329,10 @@ case "$MODE" in
     if [ "$AF_DRY" != 1 ]; then
       "${K[@]}" -n "$CP_NS" rollout status deployment/af-cp --timeout=600s
     fi
-    for a in system-nodes workspace-min workspace-max; do
-      [ -z "$(recorded "$a")" ] || run "${K[@]}" annotate namespace "$CP_NS" "$ANN-$a-" >/dev/null
-    done
+    # The record goes only now that everything it describes is back.
+    if [ -n "$sysrec$wsmin$wsmax" ]; then
+      run "${K[@]}" annotate namespace "$CP_NS" "$ANN-system-nodes-" "$ANN-workspace-min-" "$ANN-workspace-max-" >/dev/null
+    fi
     cat <<EOF
 
 ==> up: users start their own workspaces (each wakes a workspace node, about 2-5 min the first time)
@@ -246,7 +341,36 @@ EOF
 
   down)
     status
-    pods="$(ws_pods | tr '\n' ' ')"
+    # Every read that decides a write happens before the first write.
+    pods="$(ws_pods)"; pods="$(printf '%s' "$pods" | tr '\n' ' ')"
+    pol="$(sql_policy)"
+    sysrec="$(recorded system-nodes)"; wsmin="$(recorded workspace-min)"; wsmax="$(recorded workspace-max)"
+    sizes="$(pool_sizes "$SYS_POOL")"
+    mapfile -t sz <<< "$sizes"
+    AUTO="$(ws_autoscaling)"
+    rec=()
+    if [ -n "$SYSTEM_NODES" ]; then
+      rec+=("$ANN-system-nodes=$SYSTEM_NODES")
+    elif [ -z "$sysrec" ]; then
+      if any_nonzero "${sz[@]}"; then
+        if ! all_equal "${sz[0]}" "${sz[@]}"; then
+          err "system pool sizes differ per zone (${sz[*]}) and nothing is recorded; pass --system-nodes <N> to say what --up restores."
+          exit 1
+        fi
+        rec+=("$ANN-system-nodes=${sz[0]}")
+      else
+        echo "WARN: the system pool is already empty and nothing is recorded; --up will need --system-nodes." >&2
+      fi
+    fi
+    if [ "$AUTO" = 1 ] && { [ -z "$wsmin" ] || [ -z "$wsmax" ]; }; then
+      mn="$(pool_field "$WS_POOL" autoscaling.minNodeCount)"
+      mx="$(pool_field "$WS_POOL" autoscaling.maxNodeCount)"
+      mn="${mn:-0}"   # gcloud omits a zero
+      case "$mn" in *[!0-9]*) err "cannot read the workspace pool's autoscaling minimum ('$mn')"; exit 1 ;; esac
+      case "$mx" in ''|*[!0-9]*) err "cannot read the workspace pool's autoscaling maximum ('$mx')"; exit 1 ;; esac
+      rec+=("$ANN-workspace-min=$mn" "$ANN-workspace-max=$mx")
+    fi
+
     if ! confirm "pause $CLUSTER (the control plane stops responding${pods:+; running workspaces are stopped with --stop-workspaces})"; then
       echo ""
       dbstep=" -> Cloud SQL stopped"; [ "$KEEP_DB" != 1 ] || dbstep=""
@@ -254,26 +378,14 @@ EOF
       exit 0
     fi
     if [ -n "${pods// /}" ] && [ "$STOP_WS" != 1 ]; then
-      echo "ERROR: workspace pods are running: $pods" >&2
+      err "workspace pods are running: $pods"
       echo "       Stop them in the Console, or pass --stop-workspaces (their sessions end)." >&2
       exit 1
     fi
 
-    # Remember the sizes before touching anything. A pool already at 0 keeps the earlier record.
-    if [ -n "$SYSTEM_NODES" ]; then
-      record system-nodes "$SYSTEM_NODES"
-    else
-      total="$(pool_nodes "$SYS_POOL")"
-      if [ "${total:-0}" -gt 0 ]; then
-        zones="$(pool_field "$SYS_POOL" locations | tr ';' '\n' | grep -c . || true)"
-        [ "${zones:-0}" -ge 1 ] || zones=1
-        per=$(( total / zones )); [ "$per" -ge 1 ] || per=1
-        record system-nodes "$per"
-      fi
-    fi
-    if autoscaling_on; then
-      record workspace-min "$(pool_field "$WS_POOL" autoscaling.minNodeCount | sed 's/^$/0/')"
-      record workspace-max "$(pool_field "$WS_POOL" autoscaling.maxNodeCount)"
+    # One annotate: the record is complete or absent. An existing record is kept as it is.
+    if [ "${#rec[@]}" -gt 0 ]; then
+      run "${K[@]}" annotate namespace "$CP_NS" --overwrite "${rec[@]}" >/dev/null
     fi
 
     echo "==> stopping the control plane"
@@ -293,17 +405,19 @@ EOF
     fi
 
     # Autoscaling off before the system pool goes: see the header.
-    if autoscaling_on; then
+    if [ "$AUTO" = 1 ]; then
       echo "==> workspace pool: autoscaling off"
       run "${GC[@]}" container node-pools update "$WS_POOL" --cluster "$CLUSTER" --location "$LOCATION" \
         --no-enable-autoscaling --quiet
     fi
-    if [ "$(pool_nodes "$WS_POOL")" != 0 ]; then
+    wsizes="$(pool_sizes "$WS_POOL")"
+    mapfile -t wz <<< "$wsizes"
+    if any_nonzero "${wz[@]}"; then
       echo "==> workspace pool to 0"
       run "${GC[@]}" container clusters resize "$CLUSTER" --node-pool "$WS_POOL" --num-nodes 0 \
         --location "$LOCATION" --quiet
     fi
-    if [ "$(pool_nodes "$SYS_POOL")" != 0 ]; then
+    if any_nonzero "${sz[@]}"; then
       echo "==> system pool to 0"
       run "${GC[@]}" container clusters resize "$CLUSTER" --node-pool "$SYS_POOL" --num-nodes 0 \
         --location "$LOCATION" --quiet
@@ -313,7 +427,7 @@ EOF
     dbnote="Cloud SQL storage"
     if [ "$KEEP_DB" = 1 ]; then
       dbnote="Cloud SQL (kept running: --keep-db)"
-    elif [ "$(sql_policy)" = ALWAYS ]; then
+    elif [ "$pol" = ALWAYS ]; then
       echo "==> stopping Cloud SQL $SQL"
       run "${GC[@]}" sql instances patch "$SQL" --activation-policy=NEVER --quiet
     fi
