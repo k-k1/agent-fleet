@@ -307,7 +307,7 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "rp.upstream_ff_failed": "Couldn't fast-forward from {target}: {err}",
   "repo.stale_lock.title": "Remove the stale lock file?",
   "repo.stale_lock.body":
-    "A git that stopped earlier left a lock file behind, so the fast-forward can't run. No git is running in this working copy.\n\n{path}\n\nIt will be removed and the fast-forward retried.",
+    "A git that stopped earlier left a lock file behind, so the fast-forward can't run. No git was found running in this working copy. Make sure no other tool, such as an IDE, is working on this repository before removing it.\n\n{path}\n\nIt will be removed and the fast-forward retried.",
   "repo.stale_lock.remove": "Remove and retry",
   "rp.upstream_ff_success": "{name}: fast-forwarded from {target}",
   "rp.delete_workcopy_title": "Delete working copy",

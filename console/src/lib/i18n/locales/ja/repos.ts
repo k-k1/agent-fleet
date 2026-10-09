@@ -305,7 +305,7 @@ export const repos = {
   "rp.upstream_ff_failed": "{target} の fast-forward 取り込みに失敗しました: {err}",
   "repo.stale_lock.title": "古いロックファイルを削除しますか？",
   "repo.stale_lock.body":
-    "以前に止まった git が残したロックファイルがあり、fast-forward できません。この作業コピーで動いている git はありません。\n\n{path}\n\n削除してから fast-forward をやり直します。",
+    "以前に止まった git が残したロックファイルがあり、fast-forward できません。この作業コピーで動いている git は見つかりませんでした。IDE などほかのツールがこのリポジトリを操作中でないことを確かめてから削除してください。\n\n{path}\n\n削除してから fast-forward をやり直します。",
   "repo.stale_lock.remove": "削除してやり直す",
   "rp.upstream_ff_success": "{name}: {target} を fast-forward で取り込みました",
   "rp.delete_workcopy_title": "作業コピーを削除",

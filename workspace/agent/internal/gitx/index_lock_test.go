@@ -115,6 +115,17 @@ func TestStaleIndexLockSeesHoldersOutsideTheWorkingCopy(t *testing.T) {
 			}
 			writeFile(t, filepath.Join(d, "cwd"), "") // readlink on a regular file: EINVAL, not "gone"
 		},
+		"git with a relative GIT_INDEX_FILE": func(add func(pid, comm, cwd string) string) {
+			d := add("307", "git", filepath.Join(filepath.Dir(dir), "outside"))
+			writeFile(t, filepath.Join(d, "environ"), "GIT_INDEX_FILE=../app/.git/index\x00")
+		},
+		"non-git process with hidden open files": func(add func(pid, comm, cwd string) string) {
+			d := add("308", "java", elsewhere)
+			if err := os.Remove(filepath.Join(d, "fd")); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(d, "fd"), "")
+		},
 		"git whose open files cannot be listed": func(add func(pid, comm, cwd string) string) {
 			d := add("304", "git", elsewhere)
 			if err := os.Remove(filepath.Join(d, "fd")); err != nil {
@@ -266,5 +277,48 @@ func TestStaleIndexLockRealWriterOutsideCwd(t *testing.T) {
 	}
 	if got := StaleIndexLock(dir); got != "" {
 		t.Fatalf("StaleIndexLock = %q while a live git holds it", got)
+	}
+}
+
+// TestStaleIndexLockRealCommitWithRelativeIndex holds the lock the way a commit waiting on
+// its editor does (file closed), from a sibling directory through a relative GIT_INDEX_FILE,
+// and reads the real /proc.
+func TestStaleIndexLockRealCommitWithRelativeIndex(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	if _, err := os.Stat("/proc/self/fd"); err != nil {
+		t.Skip("no /proc")
+	}
+	base := t.TempDir()
+	target := filepath.Join(base, "target")
+	outside := filepath.Join(base, "outside")
+	gitInit(t, target)
+	gitInit(t, outside)
+	commitIntegrationFile(t, outside, "f")
+	writeFile(t, filepath.Join(outside, "f"), "changed")
+	cmd := exec.Command("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-a")
+	cmd.Dir = outside
+	cmd.Env = append(os.Environ(), "GIT_INDEX_FILE=../target/.git/index", "GIT_EDITOR=sleep 10 #")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	lock := filepath.Join(target, ".git", "index.lock")
+	for i := 0; ; i++ {
+		if _, err := os.Stat(lock); err == nil {
+			break
+		}
+		if i > 300 {
+			t.Fatal("git never took the lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(lock, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if got := StaleIndexLock(target); got != "" {
+		t.Fatalf("StaleIndexLock = %q while a commit holds it through a relative GIT_INDEX_FILE", got)
 	}
 }

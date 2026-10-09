@@ -66,12 +66,17 @@ func staleIndexLock(dir string) (string, os.FileInfo) {
 //   - any process with the lock file open (git while it writes, and libgit2 / JGit writers,
 //     whose process name says nothing);
 //   - a git or git-* process whose cwd, command line or environment names the working copy
-//     or its git dir. git keeps holding the lock with the file closed (a commit waiting on
-//     its editor), and --git-dir / GIT_INDEX_FILE reach the index from any cwd.
+//     or its git dir, relative paths resolved against its cwd. git keeps holding the lock
+//     with the file closed (a commit waiting on its editor), and --git-dir / GIT_INDEX_FILE
+//     reach the index from any cwd.
 //
 // A process that vanished mid-scan is skipped; for what else counts when an entry cannot be
-// read, see procMayHold. This assumes every writer runs in this PID namespace: the working copies
-// belong to this workspace's container alone.
+// read, see procMayHold.
+//
+// This is a safeguard, not proof. A non-git writer that holds the lock with the file closed
+// (JGit does between lock() and commit()) looks exactly like a leftover, and writers in
+// another PID namespace are not visible; the working copies belong to this workspace's
+// container. That is why the Console asks the user before anything is removed.
 func lockMayBeHeld(dir, lock string, lockFI os.FileInfo) bool {
 	marks := pathMarks(dir, filepath.Dir(lock))
 	ents, err := os.ReadDir(procRoot)
@@ -93,46 +98,84 @@ func lockMayBeHeld(dir, lock string, lockFI os.FileInfo) bool {
 
 // procMayHold checks one /proc/<pid>. gone=true means the process exited while it was read.
 //
-// A process can hide its open files from its own user: tmux clients make themselves
-// non-dumpable, and the Console keeps one attached per open terminal, so refusing on every
-// unreadable fd list would refuse always. Such a process counts as a possible owner only
-// when its name is git's; a non-dumpable non-git writer is the gap this leaves.
+// Any entry that cannot be read counts as a possible owner, with one exception: tmux clients
+// make themselves non-dumpable, which hides their open files from their own user, and the
+// Console keeps one attached per open terminal. Refusing on those would refuse always
+// (measured: two tmux clients blocked a real leftover lock), and a tmux client never writes
+// a git index.
 func procMayHold(pd string, lockFI os.FileInfo, marks []string) (held, gone bool) {
-	fds, err := os.ReadDir(filepath.Join(pd, "fd"))
-	fdsHidden := err != nil
-	if fdsHidden && procGone(err) {
-		return false, true
-	}
-	for _, fd := range fds {
-		if fi, err := os.Stat(filepath.Join(pd, "fd", fd.Name())); err == nil && os.SameFile(fi, lockFI) {
-			return true, false
-		}
-	}
 	comm, err := os.ReadFile(filepath.Join(pd, "comm"))
 	if err != nil {
 		return true, procGone(err)
 	}
 	name := strings.TrimSpace(string(comm))
+	fds, err := os.ReadDir(filepath.Join(pd, "fd"))
+	if err != nil {
+		if procGone(err) {
+			return false, true
+		}
+		return !strings.HasPrefix(name, "tmux"), false
+	}
+	for _, fd := range fds {
+		fi, err := os.Stat(filepath.Join(pd, "fd", fd.Name()))
+		if err != nil {
+			if procGone(err) {
+				continue // that fd was closed mid-scan
+			}
+			return true, false
+		}
+		if os.SameFile(fi, lockFI) {
+			return true, false
+		}
+	}
 	if name != "git" && !strings.HasPrefix(name, "git-") {
 		return false, false
-	}
-	if fdsHidden {
-		return true, false
 	}
 	cwd, err := os.Readlink(filepath.Join(pd, "cwd"))
 	if err != nil {
 		return true, procGone(err)
+	}
+	if mentionsAny(cwd, marks) || mentionsAny(resolvedPath(cwd), marks) {
+		return true, false
 	}
 	for _, f := range []string{"cmdline", "environ"} {
 		b, err := os.ReadFile(filepath.Join(pd, f))
 		if err != nil {
 			return true, procGone(err)
 		}
-		if mentionsAny(string(b), marks) {
-			return true, false
+		for _, arg := range strings.Split(string(b), "\x00") {
+			if argMentions(arg, cwd, marks) {
+				return true, false
+			}
 		}
 	}
-	return mentionsAny(cwd, marks) || mentionsAny(resolvedPath(cwd), marks), false
+	return false, false
+}
+
+// argMentions checks one argv or environ entry. The value after "=" (GIT_INDEX_FILE=…,
+// --git-dir=…) and the entry itself are each taken as a path, a relative one resolved
+// against the process's cwd: GIT_INDEX_FILE=../app/.git/index from a sibling directory names
+// this index without spelling its absolute path.
+func argMentions(arg, cwd string, marks []string) bool {
+	vals := []string{arg}
+	if i := strings.IndexByte(arg, '='); i >= 0 {
+		vals = append(vals, arg[i+1:])
+	}
+	for _, v := range vals {
+		if v == "" {
+			continue
+		}
+		if mentionsAny(v, marks) {
+			return true
+		}
+		if !filepath.IsAbs(v) {
+			j := filepath.Join(cwd, v)
+			if mentionsAny(j, marks) || mentionsAny(resolvedPath(j), marks) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // procGone tells "the process exited while it was read" from "it cannot be observed".
@@ -198,8 +241,10 @@ var staleLockMu sync.Mutex
 
 // removeStaleIndexLock deletes dir's index.lock only when it is stale at this moment; the
 // client's earlier answer is never trusted on its own. Right before the remove it checks
-// that the path still names the file it judged: while that file exists no git can take the
-// lock, so only another remover could have swapped it, and that is serialized here.
+// that the path still names the file it judged. While that file exists no git can take the
+// lock, so only a remover can swap it: removers inside this agent are serialized here, and
+// one outside it (a user's rm at the same instant) leaves the same window a manual removal
+// has. There is no conditional unlink to close it.
 func removeStaleIndexLock(dir string) {
 	staleLockMu.Lock()
 	defer staleLockMu.Unlock()
