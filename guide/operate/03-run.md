@@ -121,7 +121,7 @@ Console instead of terminating instances by hand:
    version each slot was launched from, marked **older than $Latest** when it is.
 2. **Reserve all N for replacement…** lists the slots below `$Latest` and the workspace on each,
    and reserves exactly those once you confirm. **Replace at next start** on a row reserves one
-   slot; **Cancel replacement** takes it back. Every reservation is in the audit log
+   slot (a reserved row then shows the label "replaced at next start"); **Cancel replacement** takes it back. Every reservation is in the audit log
    (`pool.slot_replace_reserve` / `pool.slot_replace_cancel`, with the workspace it moves).
 3. Nothing happens to a running workspace. Its member sees **Moves to a new slot** in the WS bar,
    and their next stop → start launches a new slot from `$Latest`, moves the home onto it and

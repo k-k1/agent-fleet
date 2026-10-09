@@ -300,6 +300,14 @@ describe("the EC2 slot pool surface", () => {
     expect(buttonsIn(rowOf("i-hot")).map((b) => b.textContent)).toEqual(["入れ替えを予約"]);
   });
 
+  it("renders the terminate button as a bordered danger button", async () => {
+    api.mockResolvedValue(QUARANTINED);
+    await mount();
+    const [kill] = buttonsIn(rowOf("i-bad"));
+    expect(kill.classList.contains("ui-btn-danger")).toBe(true);
+    expect(kill.classList.contains("ui-btn-sm")).toBe(true);
+  });
+
   it("asks before terminating, and names the instance and why it was quarantined", async () => {
     api.mockResolvedValue(QUARANTINED);
     await mount();
@@ -379,8 +387,15 @@ describe("replacement reservations", () => {
     await mount();
     const buttonsIn = (row: Element | null) => Array.from(row?.querySelectorAll("button") || []);
     const bulkBtn = Array.from(host!.querySelectorAll("button")).find((b) => b.textContent?.includes("1 台すべて"));
-    for (const b of [bulkBtn, ...buttonsIn(rowOf("i-hot")), ...buttonsIn(rowOf("i-done"))]) {
-      expect(b?.className).not.toContain("ui-btn-ghost");
+    const hot = buttonsIn(rowOf("i-hot"));
+    const done = buttonsIn(rowOf("i-done"));
+    expect(bulkBtn).toBeTruthy();
+    expect(hot).toHaveLength(1);
+    expect(done).toHaveLength(1);
+    for (const b of [bulkBtn!, ...hot, ...done]) {
+      expect(b.classList.contains("ui-btn")).toBe(true);
+      expect(b.classList.contains("ui-btn-default")).toBe(true);
+      expect(b.classList.contains("ui-btn-sm")).toBe(true);
     }
     const badge = rowOf("i-done")?.querySelector(".pool-badge.reserved")?.textContent;
     expect(badge).toBeTruthy();
