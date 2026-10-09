@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -115,7 +116,8 @@ func TestHomeWipeScriptCarriesOutEachGenerationOnce(t *testing.T) {
 
 // A read-only directory (Go's module cache is mode 0555) is removed by both wipes, one that
 // is not even searchable too, and a link to one outside the home is neither followed nor
-// changed (#1546).
+// changed; a directory whose owner write is set but whose read or search is missing is
+// opened as well (#1546).
 func TestHomeWipeScriptRemovesReadOnlyDirectories(t *testing.T) {
 	for _, c := range []struct {
 		name         string
@@ -125,51 +127,53 @@ func TestHomeWipeScriptRemovesReadOnlyDirectories(t *testing.T) {
 		{"Clean home", "1", "0", "go/pkg/mod/m@v1"},
 		{"Recreate", "0", "1", "repos/go/pkg/mod/m@v1"},
 	} {
-		t.Run(c.name, func(t *testing.T) {
-			home, record := homeFixture(t)
-			outside := filepath.Join(t.TempDir(), "outside")
-			if err := os.MkdirAll(outside, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Chmod(outside, 0o555); err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = os.Chmod(outside, 0o755) })
-			dir := filepath.Join(home, c.under)
-			if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(dir, "sub", "f.go"), []byte("x"), 0o444); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Symlink(outside, filepath.Join(dir, "out")); err != nil {
-				t.Fatal(err)
-			}
-			// Read-only from the cache entry up to the wipe's target; one level not searchable.
-			parts := strings.Split(c.under, "/")
-			dirs := []string{filepath.Join(dir, "sub")}
-			for i := len(parts); i >= 1; i-- {
-				dirs = append(dirs, filepath.Join(append([]string{home}, parts[:i]...)...))
-			}
-			for k, d := range dirs {
-				mode := os.FileMode(0o555)
-				if k == 0 {
-					mode = 0o000
-				}
-				if err := os.Chmod(d, mode); err != nil {
+		for _, subMode := range []os.FileMode{0o000, 0o300, 0o200, 0o600} {
+			t.Run(fmt.Sprintf("%s %04o", c.name, subMode), func(t *testing.T) {
+				home, record := homeFixture(t)
+				outside := filepath.Join(t.TempDir(), "outside")
+				if err := os.MkdirAll(outside, 0o755); err != nil {
 					t.Fatal(err)
 				}
-			}
-			if err := runScript(t, homeWipeScript(home, record), "AF_WIPE_CLEAN="+c.clean, "AF_WIPE_REPOS="+c.repos); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := os.Lstat(filepath.Join(home, parts[0])); !os.IsNotExist(err) {
-				t.Fatalf("%s is still there: %v", parts[0], err)
-			}
-			if fi, err := os.Stat(outside); err != nil || fi.Mode().Perm() != 0o555 {
-				t.Fatalf("the directory behind the link changed: %v, %v", fi, err)
-			}
-		})
+				if err := os.Chmod(outside, 0o555); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(outside, 0o755) })
+				dir := filepath.Join(home, c.under)
+				if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "sub", "f.go"), []byte("x"), 0o444); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, filepath.Join(dir, "out")); err != nil {
+					t.Fatal(err)
+				}
+				// Read-only from the cache entry up to the wipe's target; the innermost one lacks read and/or search with owner write possibly set.
+				parts := strings.Split(c.under, "/")
+				dirs := []string{filepath.Join(dir, "sub")}
+				for i := len(parts); i >= 1; i-- {
+					dirs = append(dirs, filepath.Join(append([]string{home}, parts[:i]...)...))
+				}
+				for k, d := range dirs {
+					mode := os.FileMode(0o555)
+					if k == 0 {
+						mode = subMode
+					}
+					if err := os.Chmod(d, mode); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := runScript(t, homeWipeScript(home, record), "AF_WIPE_CLEAN="+c.clean, "AF_WIPE_REPOS="+c.repos); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := os.Lstat(filepath.Join(home, parts[0])); !os.IsNotExist(err) {
+					t.Fatalf("%s is still there: %v", parts[0], err)
+				}
+				if fi, err := os.Stat(outside); err != nil || fi.Mode().Perm() != 0o555 {
+					t.Fatalf("the directory behind the link changed: %v, %v", fi, err)
+				}
+			})
+		}
 	}
 }
 

@@ -966,6 +966,6 @@ Decision 4 runs the home wipes as `dev`, and `rm -rf` cannot remove the contents
 directory without owner write, such as Go's module cache (mode 0555): Clean home failed with
 `Permission denied` and the init container stopped the pod. Both wipes (the Clean home of the
 init container and the erase pod, and the Recreate's `~/repos`) now run
-`find … -type d ! -perm -u+w -exec chmod u+rwx {} \;` over what they are about to remove, kept
+`find … -type d ! -perm -u+rwx -exec chmod u+rwx {} \;` over what they are about to remove, kept
 names excluded, without following links and within one filesystem. Decision 4 itself is
 unchanged.

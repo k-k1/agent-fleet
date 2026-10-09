@@ -240,13 +240,14 @@ func homeCleanCommand(home string) string {
 		shellQuote(home), strings.Join(not, " "))
 }
 
-// homeWritableTest is the find expression that gives the owner access to every directory it
-// reaches, so that rm can remove their contents: the wipes run as dev, and a read-only
+// homeWritableTest is the find expression that gives the owner read, write and search on every directory it
+// reaches that lacks any of them (0300 and 0600 included, not just 0555), so that rm can remove their contents: the wipes run as dev, and a read-only
 // directory (Go's module cache is mode 0555) is otherwise "Permission denied", which stops
 // the init container and with it the pod. chmod runs as find visits each directory, before
 // it reads it, so a directory without search permission opens too. find does not follow
-// symbolic links (no -L), so nothing outside the target is touched.
-const homeWritableTest = `-type d ! -perm -u+w -exec chmod u+rwx {} \;`
+// symbolic links (no -L), so a link's target is never touched. It assumes no mount below
+// the target, which the wipes' volume mounts do not have.
+const homeWritableTest = `-type d ! -perm -u+rwx -exec chmod u+rwx {} \;`
 
 // homeReposCleanCommand removes the home's repos directory, a missing one included.
 func homeReposCleanCommand(home string) string {
