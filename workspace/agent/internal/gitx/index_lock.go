@@ -216,25 +216,50 @@ func mentionsAny(s string, marks []string) bool {
 	return false
 }
 
-// resolvedPath resolves symlinks in p the way the kernel walks it. When p itself does not
-// exist (an index.lock already gone, a path git has yet to create) it resolves the longest
-// leading part that does, and appends the rest. Nothing is cleaned before resolving:
-// "alias/.." means the parent of alias's target, and filepath.Clean would make it the
-// directory alias sits in.
+// resolvedPath resolves symlinks in p the way the kernel walks it, one component at a time:
+// a link is followed even when what it points at does not exist yet (GIT_INDEX_FILE may name
+// a link to an index git has yet to create, and git takes the lock beside the target), and
+// ".." applies to the resolved directory, so "alias/.." is the parent of alias's target, not
+// the directory alias sits in. Components that do not exist are kept as written. A relative
+// p, or a chain of more than maxSymlinkHops links, is only cleaned.
 func resolvedPath(p string) string {
-	sep := string(filepath.Separator)
-	parts := strings.Split(p, sep)
-	for i := len(parts); i > 0; i-- {
-		head := strings.Join(parts[:i], sep)
-		if head == "" {
-			head = sep
-		}
-		if r, err := filepath.EvalSymlinks(head); err == nil {
-			return filepath.Join(append([]string{r}, parts[i:]...)...)
-		}
+	if !filepath.IsAbs(p) {
+		return filepath.Clean(p)
 	}
-	return filepath.Clean(p)
+	sep := string(filepath.Separator)
+	rest := strings.Split(p, sep)
+	cur := sep
+	hops := 0
+	for len(rest) > 0 {
+		c := rest[0]
+		rest = rest[1:]
+		switch c {
+		case "", ".":
+			continue
+		case "..":
+			cur = filepath.Dir(cur)
+			continue
+		}
+		next := filepath.Join(cur, c)
+		fi, err := os.Lstat(next)
+		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			cur = next
+			continue
+		}
+		target, err := os.Readlink(next)
+		if hops++; err != nil || hops > maxSymlinkHops {
+			return filepath.Clean(p)
+		}
+		if filepath.IsAbs(target) {
+			cur = sep
+		}
+		rest = append(strings.Split(target, sep), rest...)
+	}
+	return cur
 }
+
+// maxSymlinkHops matches Linux's MAXSYMLINKS: past it the kernel answers ELOOP.
+const maxSymlinkHops = 40
 
 func isPID(s string) bool {
 	if s == "" {

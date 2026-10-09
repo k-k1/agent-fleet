@@ -374,4 +374,78 @@ func TestResolvedPathResolvesBeforeDotDot(t *testing.T) {
 			t.Errorf("resolvedPath(%q) = %q, want %q", p, got, want)
 		}
 	}
+
+	// A link to a file that does not exist yet still resolves to its target.
+	dangling := filepath.Join(base, "index-alias")
+	if err := os.Symlink(filepath.Join(base, "real", "target", ".git", "index"), dangling); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := resolvedPath(dangling), filepath.Join(base, "real", "target", ".git", "index"); got != want {
+		t.Errorf("resolvedPath(dangling link) = %q, want %q", got, want)
+	}
+
+	// A relative link resolves from the link's directory.
+	if err := os.Symlink("../real/deep", filepath.Join(base, "links", "rel")); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := resolvedPath(base+"/links/rel/../target"), filepath.Join(base, "real", "target"); got != want {
+		t.Errorf("resolvedPath(relative link/..) = %q, want %q", got, want)
+	}
+
+	// A loop does not hang.
+	loop := filepath.Join(base, "loop")
+	if err := os.Symlink(loop, loop); err != nil {
+		t.Fatal(err)
+	}
+	_ = resolvedPath(loop + "/x")
+}
+
+// TestStaleIndexLockRealCommitThroughLinkToNewIndex holds the lock through GIT_INDEX_FILE
+// naming a link to an index that does not exist yet (a fresh repository): git follows the
+// link and locks beside the target.
+func TestStaleIndexLockRealCommitThroughLinkToNewIndex(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	if _, err := os.Stat("/proc/self/fd"); err != nil {
+		t.Skip("no /proc")
+	}
+	base := t.TempDir()
+	target := filepath.Join(base, "target")
+	runIntegrationGit(t, base, "init", "-q", target)
+	if _, err := os.Stat(filepath.Join(target, ".git", "index")); err == nil {
+		t.Fatal("a fresh repository already has an index; the case needs one that does not")
+	}
+	link := filepath.Join(base, "index-alias")
+	if err := os.Symlink(filepath.Join(target, ".git", "index"), link); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(base, "outside")
+	gitInit(t, outside)
+	commitIntegrationFile(t, outside, "f")
+	writeFile(t, filepath.Join(outside, "f"), "changed")
+	cmd := exec.Command("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-a")
+	cmd.Dir = outside
+	cmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+link, "GIT_EDITOR=sleep 10 #")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(target, ".git", "index.lock")
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	for i := 0; ; i++ {
+		if _, err := os.Stat(lock); err == nil {
+			break
+		}
+		if i > 300 {
+			t.Fatal("git never took the lock beside the link's target")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(lock, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if got := StaleIndexLock(target); got != "" {
+		t.Fatalf("StaleIndexLock = %q while a commit holds it through a link to a new index", got)
+	}
 }
