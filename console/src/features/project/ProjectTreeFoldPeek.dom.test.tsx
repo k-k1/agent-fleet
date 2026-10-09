@@ -145,6 +145,18 @@ describe("folded node peek", () => {
       expect(document.activeElement?.getAttribute("data-rail-repo")).toBe("af");
     });
 
+    it("does not steal focus later once a restore to the repo card was consumed", async () => {
+      useSessionsStore.setState({ sessions: [a()] });
+      await render();
+      focusPeek();
+      await set([a({ alive: false })]);
+      expect(document.activeElement?.getAttribute("data-rail-repo")).toBe("af");
+      act(() => (document.activeElement as HTMLElement).blur());
+      expect(document.activeElement).toBe(document.body);
+      await set([a({ alive: false }), sess("c", { repo: "af", createdAt: at(5) })]);
+      expect(document.activeElement).toBe(document.body);
+    });
+
     it("leaves focus alone when it was elsewhere", async () => {
       useSessionsStore.setState({ sessions: [a()] });
       await render();

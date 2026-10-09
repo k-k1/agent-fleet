@@ -127,6 +127,9 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
   useEffect(() => {
     if (!peekFocused.current) return;
     if (document.activeElement && document.activeElement !== document.body) return;
+    // Consume the request: when focus goes to the repo card (outside the peek wrapper) no onBlur
+    // would ever clear it, and a stale true would steal focus on a later change.
+    peekFocused.current = false;
     const li = nodeRef.current;
     const target =
       li?.querySelector<HTMLElement>(":scope > .proj-node-peek .sess-btn") ??
