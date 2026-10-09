@@ -27,10 +27,16 @@ import (
 // holds on, the behaviour before this field existed) unless the row is one whose live signals
 // are known to be observable:
 //   - only Terminal rows of kinds in progressTrusted: claude (the pane repaints its spinner
-//     and elapsed time for as long as a tool runs) and agy (measured, docs/log/32). Every other
-//     kind either never feeds the pane clock (codex, cursor, copilot, kiro) or has no pane at
-//     all (managed: the runtime's in-flight tool is not visible from here), so a long silent
+//     and elapsed time for as long as a tool runs), agy (measured, docs/log/32) and the
+//     pane-only kinds codex, cursor, copilot, kiro and opencode, whose pane was measured to
+//     repaint about once a second through a 120 s silent `sleep` (ADR 0055 addendum, #1830).
+//     Every other kind has no measured signal (muse, lcpp, shell, ssm) or has no pane at all
+//     (managed: the runtime's in-flight tool is not visible from here), so a long silent
 //     build there would look frozen;
+//   - the pane-only kinds do not keep the idle-settle clock themselves, so this file feeds it
+//     (one capture-pane per busy row per poll), and they skip the tool-process probe: codex
+//     keeps setsid() helper daemons under its pane that read as a tool even when idle, which
+//     would hold such a row forever;
 //   - the pane must have been read recently (PaneChangedAt), and when the cheaper signs are
 //     stale the process table must actually have been read (a tmux or /proc failure is not an
 //     idle pane);
@@ -55,26 +61,45 @@ func progressTrusted(m session.Meta) bool {
 	case session.KindClaude, session.KindAgy:
 		return true
 	}
+	return progressPaneOnly(m)
+}
+
+// progressPaneOnly: the kind's only measured live signal is the pane repaint, and nothing else
+// may stand in for it. Never true for a Managed row (no pane).
+func progressPaneOnly(m session.Meta) bool {
+	if m.DriverKind() == session.DriverManaged {
+		return false
+	}
+	switch NormalizeKind(m.Kind) {
+	case session.KindCodex, session.KindCursor, session.KindCopilot, session.KindKiro, session.KindOpencode:
+		return true
+	}
 	return false
 }
 
 // progressProbes are the world inputs of progressOf, injectable for tests.
 type progressProbes struct {
-	now      func() time.Time
-	trusted  func(m session.Meta) bool
-	statusAt func(sid string) (time.Time, bool)
-	paneAt   func(name string) (time.Time, bool)
-	sourceAt func(m session.Meta) (time.Time, bool)
+	now     func() time.Time
+	trusted func(m session.Meta) bool
+	// paneOnly: see progressPaneOnly. observePane records the pane's current frame on the
+	// idle-settle clock; the kinds that do not read their own pane need it before paneAt speaks.
+	paneOnly    func(m session.Meta) bool
+	observePane func(name string)
+	statusAt    func(sid string) (time.Time, bool)
+	paneAt      func(name string) (time.Time, bool)
+	sourceAt    func(m session.Meta) (time.Time, bool)
 	// toolAlive: a tool process runs under the pane; observed=false when the pane root or the
 	// process table could not be read.
 	toolAlive func(m session.Meta) (alive, observed bool)
 }
 
 var realProgressProbes = progressProbes{
-	now:      time.Now,
-	trusted:  progressTrusted,
-	statusAt: status.StateAt,
-	paneAt:   tmuxx.PaneChangedAt,
+	now:         time.Now,
+	trusted:     progressTrusted,
+	paneOnly:    progressPaneOnly,
+	observePane: func(name string) { tmuxx.ObservePane(name) },
+	statusAt:    status.StateAt,
+	paneAt:      tmuxx.PaneChangedAt,
 	sourceAt: func(m session.Meta) (time.Time, bool) {
 		if r, ok := AgentOf(m.Kind).(agents.ProgressReporter); ok {
 			return r.StateSourceModTime(m)
@@ -103,6 +128,10 @@ func progressOf(m session.Meta, state string, p progressProbes) (time.Time, bool
 		return time.Time{}, false
 	}
 	now := p.now()
+	paneOnly := p.paneOnly(m)
+	if paneOnly {
+		p.observePane(m.Name)
+	}
 	paneAt, paneOK := p.paneAt(m.Name)
 	if !paneOK {
 		return time.Time{}, false
@@ -122,7 +151,7 @@ func progressOf(m session.Meta, state string, p progressProbes) (time.Time, bool
 	take(p.statusAt(session.UUID(m.Dir, m.Name)))
 	take(p.sourceAt(m))
 	take(paneAt, true)
-	if newest.IsZero() || now.Sub(newest) >= progressFresh {
+	if !paneOnly && (newest.IsZero() || now.Sub(newest) >= progressFresh) {
 		alive, observed := p.toolAlive(m)
 		switch {
 		case alive:

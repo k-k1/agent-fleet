@@ -636,3 +636,7 @@ other kinds keep holding until a live signal is measured for them.
 `holdersOf` goes through the same `progressLapsed` predicate (decision 11); the pin and
 `backgroundBusy` come first and are exempt. See ADR 0055's 2026-10-07 addendum.
 Follow-ups: #1830.
+
+Note (2026-10-09): Terminal codex / cursor / copilot / kiro / opencode are now bounded too, on the
+pane repaint alone (measured through a 120 s silent tool; see ADR 0055's 2026-10-09 addendum).
+Still unbounded: Managed (#1942) and muse / lcpp / shell / ssm (#1943).

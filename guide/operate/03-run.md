@@ -301,10 +301,10 @@ art as it serves it.
   left open never keeps a Workspace warm. This is effective for
   saving resources. For the meaning of the env vars, see
   `deploy/compose/.env.example`; for how it works, see
-  `docs/build/09-deploy.md` §9.4. A Terminal claude or agy session showing "working" keeps the
+  `docs/build/09-deploy.md` §9.4. A Terminal claude, agy, codex, cursor, copilot, kiro or opencode session showing "working" keeps the
   Workspace awake only while it shows signs of life: if it has produced no output, state change or
   running tool process for **1 hour**, it stops counting, so a hung session cannot hold the Workspace
-  open indefinitely. Other kinds and managed sessions are not yet bounded this way, and background
+  open indefinitely. Managed sessions and the other kinds (muse, lcpp, shell, ssm) are not yet bounded this way, and background
   work and the "do not auto-stop" pin are never subject to it.
 - **force-stop (brute force)**: `docker compose down` **does not stop user Workspaces** (they
   are outside compose management). To stop a specific Workspace for sure, a super_admin

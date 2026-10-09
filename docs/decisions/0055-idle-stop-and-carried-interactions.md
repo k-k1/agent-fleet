@@ -226,3 +226,28 @@ bound inside `machineBusy`:
   lapse: the Agent reports `stateSince` (approximate: the first poll that saw the state, or the status
   file's mtime if older; resets on Agent restart), and `idleHolder` for `working` carries `since` and
   `lapseAt` (progress age bound, on the CP's clock).
+
+## Addendum (2026-10-09): the bound reaches the pane-only Terminal kinds (#1830)
+
+The 2026-10-07 addendum left every kind but claude and agy unbounded until a live signal was
+measured per kind. Measured on the CLIs baked into the Workspace image (codex 0.162, cursor-agent
+2026.10.01, copilot 1.0.94, kiro-cli 2.24, opencode 1.18), each in a tmux pane running a silent
+`sleep 120` tool, frames compared once a second:
+
+| Kind | Pane repaint through the silent tool | Tool-process rule |
+|---|---|---|
+| codex | a new frame every second (110 s: 108 distinct frames, longest identical run 0 s) | unusable: `setsid()` helper daemons under the pane read as a tool even when idle |
+| cursor | 114 distinct frames in 115 s, longest run 0 s | not measured, not needed |
+| copilot | 113 in 115 s, longest run 0 s | not measured, not needed |
+| kiro | 93 in 95 s, longest run 0 s (idle pane: 1 frame in 112 s) | not measured, not needed |
+| opencode | 113 in 115 s, longest run 0 s | not measured, not needed |
+
+- Decision: Terminal codex, cursor, copilot, kiro and opencode now report `progressAgeSec`. The pane
+  repaint is their signal; the Agent records the pane on the idle-settle clock itself (one
+  `capture-pane` per busy row per poll), since these kinds never read their pane for state. The
+  tool-process probe is skipped for them. The one-hour lapse and everything else above are unchanged.
+- Not bounded, because no signal was measured: Managed sessions of every kind (no pane; the
+  runtime's in-flight tool is not visible) and Terminal muse, lcpp, shell and ssm. They keep
+  holding. Follow-ups: #1942 (Managed), #1943 (muse / lcpp / shell / ssm).
+- Caveat: one model and one CLI version per kind; a CLI that stops repainting during a tool would
+  lapse after an hour of silence. Re-measure when bumping a CLI version.
