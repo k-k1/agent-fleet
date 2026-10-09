@@ -71,6 +71,9 @@ type Config struct {
 	// HomeLeases is the CP's store, through which ecs-ec2 serialises a workspace's home
 	// across CP replicas. nil serialises it within one process only.
 	HomeLeases HomeLeaseStore
+	// OnSlotAutoReplace is told when ecs-ec2 moved a home off a slot below the launch
+	// template's $Latest on its own (#1934), so the CP can audit it. nil = not recorded.
+	OnSlotAutoReplace func(context.Context, SlotAutoReplace)
 }
 
 // rootedDataDir is the adapters' way in. A nil RootDataDir means "the stored path is
@@ -173,6 +176,20 @@ const (
 func envOr(k, def string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
+	}
+	return def
+}
+
+// envBoolDefault reads a boolean env var; unset or unparsable gives def. Only an explicit
+// false/0/off/no turns a default-on switch off, so a typo cannot disable a safety behaviour.
+func envBoolDefault(k string, def bool) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(k))) {
+	case "":
+		return def
+	case "0", "false", "off", "no":
+		return false
+	case "1", "true", "on", "yes":
+		return true
 	}
 	return def
 }

@@ -1594,3 +1594,16 @@ mount はホームが無いのを見てきれいに失敗する。#1603 の追�
 コード: `control-plane/internal/runtime/runtime_ecs_ec2_home_lease.go`（`lockHome`・`startedSince`）、
 `runtime_ecs_ec2_home_mount.go`（`beginStart`・`unclaimIfOurs`）、`runtime_ecs_ec2.go`（`mountHome`・
 `releaseSlotSince`・`quarantineSlot`）、`control-plane/internal/store/store_cp_lease.go`。
+
+**注記（2026-10-09, #1934）: `$Latest` より古いスロットは、予約なしでそのワークスペースの次の起動で入れ替わる。**
+決定 33 の予約だけでは、リリースが載せる堅牢化（#1927 / #1929）は、予約し忘れたスロットに届かなかった。今は
+`placeHome` が、起動テンプレートの刻印が `$Latest` より古い（または別テンプレートの）スロットを予約済みと同じ
+ように扱い、同じ `replaceReservedSlot` で入れ替える（読めないものは古くないとみなす）。空きの古いスロットは、
+予約済みと同様にスイーパーが終了する。意図した違いは次のとおり。メンバーには**知らせない**（WS バーの表示は
+予約タグだけで決まり、フェーズは管理者のせいにする「slot: renewing」でなく「slot: creating」）。新しいスロットを
+起動できないときは、何も触らずに**古いスロットへ戻し**、そのワークスペースは 10 分間やり直さない（プロセス内の
+バックオフ。起動が失敗し続けても毎回の起動で払わない）。**予約**には決定 33 の「戻さない」を残す。入れ替えは
+`pool.slot_replace_auto` として監査し、スロット画面には古いスロットが「次回起動で入れ替わる」と出す。スイッチは
+CP の環境変数 `AF_ECS_EC2_AUTO_REPLACE_OUTDATED`（既定 ON。`false` で予約のみに戻る）。変えていない点: 新しい
+スロットを確保したあとの失敗（解放・切り離し）は、予約と同じく起動を失敗させ、次の起動でやり直す。
+コード: `runtime_ecs_ec2_slot_replace.go`（`replaceReservedSlot(…, automatic)`・`slotRetiring`）。

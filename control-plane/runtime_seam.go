@@ -14,6 +14,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"log"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
@@ -50,14 +52,15 @@ func awsConfigFor(ctx context.Context, region string) (aws.Config, error) {
 // against the empty one.
 func newRuntimeFactory(profile string, m *manager) (runtime.RuntimeFactory, error) {
 	return runtime.NewFactory(profile, runtime.Config{
-		Image:       m.image,
-		AgentHost:   m.agentHost,
-		Memory:      m.memory,
-		SessionCmd:  m.sessionCmd,
-		ExtraEnv:    m.extraEnv,
-		AuthMode:    m.authMode,
-		RootDataDir: func(ws runtime.Workspace) string { return m.rootedDataDir(store.Workspace(ws)) },
-		HomeLeases:  m.store,
+		Image:             m.image,
+		AgentHost:         m.agentHost,
+		Memory:            m.memory,
+		SessionCmd:        m.sessionCmd,
+		ExtraEnv:          m.extraEnv,
+		AuthMode:          m.authMode,
+		RootDataDir:       func(ws runtime.Workspace) string { return m.rootedDataDir(store.Workspace(ws)) },
+		HomeLeases:        m.store,
+		OnSlotAutoReplace: m.auditSlotAutoReplace,
 	})
 }
 
@@ -105,3 +108,16 @@ var _ hibernatingRuntime = runtime.Hibernating
 // is the point: the two declarations exist only until the store's own move lands, and a
 // silent divergence would hand a workspace the wrong home directory.
 var _ = func(ws store.Workspace) runtime.Workspace { return runtime.Workspace(ws) }
+
+// auditSlotAutoReplace records an automatic ecs-ec2 slot replacement (#1934). The move has
+// happened by now, so this is a record, not an intent: a failed write is logged and nothing
+// is undone.
+func (m *manager) auditSlotAutoReplace(ctx context.Context, ev runtime.SlotAutoReplace) {
+	detail := fmt.Sprintf("workspace=%s old_version=%s latest=%s new_slot=%s", ev.Workspace, ev.OldVersion, ev.Latest, ev.NewSlot)
+	if err := m.store.InsertAudit(ctx, store.AuditLog{
+		ID: store.NewID(), TenantID: ev.TenantID, ActorKind: "system", ActorID: "slot-auto-replace",
+		Action: "pool.slot_replace_auto", Target: ev.OldSlot, Detail: detail, At: store.NowTS(),
+	}); err != nil {
+		log.Printf("audit: automatic slot replacement of %s for %s not recorded: %v", ev.OldSlot, ev.Workspace, err)
+	}
+}

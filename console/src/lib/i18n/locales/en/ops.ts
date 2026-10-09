@@ -135,6 +135,11 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "pool.outdated_title": "Launched from an older launch template version than $Latest (v{latest}). A slot reads its user data only when it is launched, so it keeps the old one until it is replaced.",
   "pool.outdated_hint":
     "{n} slot(s) run an older launch template version than $Latest (v{latest}). Reserving them makes each workspace's next start move to a new slot; nobody's running session is touched.",
+  "pool.outdated_auto": "older than $Latest · replaced at next start",
+  "pool.outdated_auto_title":
+    "Launched from an older launch template version than $Latest (v{latest}). Its workspace moves to a new slot at its next start on its own; a free slot is retired by the sweeper. If no new slot can be launched, the start keeps this one and tries again later.",
+  "pool.outdated_auto_hint":
+    "{n} slot(s) run an older launch template version than $Latest (v{latest}). Each moves to a new slot at its workspace's next start without a reservation (the member sees nothing extra); reserving only forces the move even when no new slot can be launched.",
   "pool.reserved": "replaced at next start",
   "pool.reserve": "Replace at next start",
   "pool.reserve_title": "Reserve this slot: its workspace's next start moves to a new slot launched from $Latest (the home comes along). A free slot is retired by the sweeper.",

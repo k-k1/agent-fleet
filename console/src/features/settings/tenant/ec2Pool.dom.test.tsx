@@ -382,6 +382,15 @@ describe("replacement reservations", () => {
     expect(rowOf("i-done")?.querySelector("button")?.textContent).toBe("予約の取消");
   });
 
+  it("says an outdated slot is replaced at its next start when automatic replacement is on (#1934)", async () => {
+    api.mockResolvedValue({ ...TEMPLATES, auto_replace_outdated: true });
+    await mount();
+    expect(rowOf("i-hot")?.textContent).toContain("次回起動で自動入れ替え");
+    expect(host?.querySelector(".pool-outdated")?.textContent).toContain("予約しなくても");
+    // Already reserved: the reservation badge speaks, not the automatic one.
+    expect(rowOf("i-done")?.textContent).not.toContain("自動入れ替え");
+  });
+
   it("renders the slot actions as bordered buttons, and the button text differs from the state badge", async () => {
     api.mockResolvedValue(TEMPLATES);
     await mount();

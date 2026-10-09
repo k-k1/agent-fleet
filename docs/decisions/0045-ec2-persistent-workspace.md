@@ -1735,3 +1735,17 @@ home stays attached to the box, which is still stopped. Code:
 `control-plane/internal/runtime/runtime_ecs_ec2_home_lease.go` (`lockHome`, `startedSince`),
 `runtime_ecs_ec2_home_mount.go` (`beginStart`, `unclaimIfOurs`), `runtime_ecs_ec2.go` (`mountHome`,
 `releaseSlotSince`, `quarantineSlot`), `control-plane/internal/store/store_cp_lease.go`.
+
+**Note (2026-10-09, #1934): a slot below `$Latest` is replaced at its workspace's next Start without a reservation.**
+Decision 33's reservation left the hardening a release ships (#1927 / #1929) unreached on every slot nobody
+remembered to reserve. Now `placeHome` also treats a slot whose launch template stamp is below `$Latest` (or from
+another template; unreadable = not outdated) as reserved, through the same `replaceReservedSlot`, and the sweeper
+terminates a free one as it does a reserved one. Differences, all deliberate: the move is **not announced** to the
+member (the WS bar pill is driven by the reservation tag alone, and the phase reads "slot: creating", not
+"slot: renewing", which blames an administrator); a new slot that cannot be launched **falls back to the old slot**
+with nothing touched, and the workspace is not retried for 10 minutes (an in-process back-off, so a persistently
+failing launch is not paid at every Start); a *reservation* keeps decision 33's no-fallback rule. The move is audited
+as `pool.slot_replace_auto`, and the Slots tab says an outdated slot "will be replaced at next start". Switch:
+the CP env `AF_ECS_EC2_AUTO_REPLACE_OUTDATED` (default on; `false` restores reservation-only). Not changed: a failure
+after the new slot is claimed (release, detach) still fails the Start and retries at the next, as for a reservation.
+Code: `runtime_ecs_ec2_slot_replace.go` (`replaceReservedSlot(…, automatic)`, `slotRetiring`).

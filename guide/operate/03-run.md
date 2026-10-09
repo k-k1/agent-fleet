@@ -115,7 +115,16 @@ The commands are in the runbook's "Upgrade" section.
 A slot reads its user data only when it is launched, and a stopped workspace goes back to the
 same slot on its next Start, so a change to the slot launch template (a release's security
 setting, for example) does not reach the slots you already have. Replace them from the
-Console instead of terminating instances by hand:
+Console instead of terminating instances by hand.
+
+**Slots below `$Latest` are replaced automatically.** When a workspace starts and its home is on
+such a slot, that start moves it to a new slot exactly as a reservation does, but without the WS
+bar notice, and a free slot below `$Latest` is terminated by the sweeper. If no new slot can be
+launched (capacity, quota) the start still succeeds on the old slot and tries again at a later
+start. Each automatic move is in the audit log (`pool.slot_replace_auto`). The Slots tab shows
+**older than $Latest · replaced at next start** on these slots. Set
+`AF_ECS_EC2_AUTO_REPLACE_OUTDATED=false` on the Control Plane to turn this off. Reserve slots
+yourself when you want the move to happen regardless of capacity:
 
 1. **Settings → Admin → Slots** (super_admin). The **Template** column shows the launch template
    version each slot was launched from, marked **older than $Latest** when it is.

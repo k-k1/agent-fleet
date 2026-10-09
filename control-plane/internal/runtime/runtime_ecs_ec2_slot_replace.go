@@ -39,13 +39,49 @@ const (
 	// ec2PhaseSlotRenewing is the Start phase while a reserved slot is being replaced. Not
 	// "slot: replacing": that one is the lost-slot recovery, a different story for the member.
 	ec2PhaseSlotRenewing = "slot: renewing"
+	// autoReplaceBackoff is how long a failed automatic replacement leaves the workspace on
+	// its old slot before the next Start tries to launch again. A Start that cannot get a box
+	// would otherwise pay the failed RunInstances (and its wait) every time.
+	autoReplaceBackoff = 10 * time.Minute
 )
+
+// errAutoReplaceDeferred means an AUTOMATIC replacement could not get a new slot and touched
+// nothing: placeHome carries on with the slot the home is already on and the next Start tries
+// again. Never returned for a reservation, whose rule is that the Start fails instead.
+var errAutoReplaceDeferred = errors.New("automatic slot replacement deferred")
+
+// autoReplaceBlocked remembers, per workspace, the last failed automatic replacement.
+var autoReplaceBlocked = &TTLCache{m: map[string]TTLEntry{}}
+
+// SlotAutoReplace is what an automatic replacement did, for the audit log (the adapter has
+// no database; Config.OnSlotAutoReplace hands it to the CP).
+type SlotAutoReplace struct {
+	TenantID, WorkspaceID, Workspace string
+	OldSlot, NewSlot                 string
+	OldVersion, Latest               string
+}
 
 // Refusals of a reservation, kept apart from AWS failures for the HTTP layer (404/409 vs 500).
 var (
 	ErrSlotQuarantined = errors.New("slot is quarantined; it runs nobody and is removed by terminating it")
 	ErrSlotNotOutdated = errors.New("slot is not on an older launch template version")
 )
+
+// slotRetiring reports whether the sweeper and the replacement logic treat inst as on its way
+// out: an operator reserved it, or automatic replacement is on and it is below the launch
+// template's $Latest. A slot whose version cannot be judged is never retiring.
+func (p ec2PoolConfig) slotRetiring(inst ec2types.Instance, lt ec2LaunchTemplate) bool {
+	return slotReserved(inst) || p.slotOutdated(inst, lt)
+}
+
+// slotOutdated is the automatic half of slotRetiring.
+func (p ec2PoolConfig) slotOutdated(inst ec2types.Instance, lt ec2LaunchTemplate) bool {
+	if p.noAutoReplace {
+		return false
+	}
+	_, outdated, known := slotTemplateOutdated(inst.Tags, lt)
+	return known && outdated
+}
 
 // slotReserved reports whether an instance carries a replacement reservation.
 func slotReserved(inst ec2types.Instance) bool {
@@ -96,12 +132,28 @@ func withoutReservedSlots(out *ec2.DescribeInstancesOutput) *ec2.DescribeInstanc
 //
 // The pool cap is checked with the reserved box not counted, since it is on its way out:
 // otherwise a full pool could never replace anything.
-func (e *ecsEC2Runtime) replaceReservedSlot(ctx context.Context, vol *ec2types.Volume, oldID string) (ec2Placement, error) {
+//
+// automatic is the same move for a slot that is merely below the template's $Latest (nobody
+// reserved it). Steps 2–4 are identical; only step 1 differs: a new slot that cannot be had
+// returns errAutoReplaceDeferred with nothing touched, so a member's Start is not failed
+// for a hardening nobody asked them about. The explicit-reservation rule above is unchanged.
+func (e *ecsEC2Runtime) replaceReservedSlot(ctx context.Context, vol *ec2types.Volume, oldID string, automatic bool) (ec2Placement, error) {
 	volID := aws.ToString(vol.VolumeId)
 	az := aws.ToString(vol.AvailabilityZone)
-	log.Printf("ecs-ec2: slot %s under %s is reserved for replacement; moving the home to a new %s",
-		oldID, e.base.name, e.instanceType)
-	e.setPhase(ec2PhaseSlotRenewing)
+	if automatic {
+		if autoReplaceBlocked.get(e.base.name, autoReplaceBackoff, func() string { return "" }) != "" {
+			return ec2Placement{}, errAutoReplaceDeferred
+		}
+		log.Printf("ecs-ec2: slot %s under %s is below the launch template's $Latest; moving the home to a new %s",
+			oldID, e.base.name, e.instanceType)
+		// The member gets the ordinary "getting a machine ready" line: "retired by an
+		// administrator" would be false, and the WS bar pill (SlotReplacePending) stays off.
+		e.setPhase("slot: creating")
+	} else {
+		log.Printf("ecs-ec2: slot %s under %s is reserved for replacement; moving the home to a new %s",
+			oldID, e.base.name, e.instanceType)
+		e.setPhase(ec2PhaseSlotRenewing)
+	}
 	newID, wake := "", false
 	// An earlier replacement is only worth reusing if it is still what a launch now would
 	// give: the reservation's usual reason is a template change, and a box from the version
@@ -128,6 +180,10 @@ func (e *ecsEC2Runtime) replaceReservedSlot(ctx context.Context, vol *ec2types.V
 		// An EBS volume never leaves its AZ, so the new slot has to be in the home's.
 		id, err := e.runSlot(ctx, az, e.pool.maxSlots+1, volID)
 		if err != nil {
+			if automatic {
+				e.deferAutoReplace(oldID, err)
+				return ec2Placement{}, errAutoReplaceDeferred
+			}
 			return ec2Placement{}, fmt.Errorf("slot %s is reserved for replacement and no new slot could be launched "+
 				"(the reservation stays; the old slot is not reused): %w", oldID, err)
 		}
@@ -135,6 +191,10 @@ func (e *ecsEC2Runtime) replaceReservedSlot(ctx context.Context, vol *ec2types.V
 	}
 	if err := e.claim(ctx, volID, newID); err != nil {
 		e.retireUnusedReplacement(ctx, newID, volID)
+		if automatic {
+			e.deferAutoReplace(oldID, err)
+			return ec2Placement{}, errAutoReplaceDeferred
+		}
 		return ec2Placement{}, fmt.Errorf("claim %s for the replacement slot %s: %w", volID, newID, err)
 	}
 	if err := e.moveHomeOff(ctx, oldID); err != nil {
@@ -149,8 +209,38 @@ func (e *ecsEC2Runtime) replaceReservedSlot(ctx context.Context, vol *ec2types.V
 	}
 	e.clearDormancy(ctx, volID)
 	slotReplaceSeen.set(e.base.name, "")
+	if automatic {
+		e.recordAutoReplace(ctx, oldID, newID)
+	}
 	return ec2Placement{volumeID: volID, instanceID: newID, az: az, deferred: true, claimed: true, wake: wake,
 		wipe: homeWipeOf(vol), replacement: true}, nil
+}
+
+// deferAutoReplace backs the workspace off the replacement for autoReplaceBackoff.
+func (e *ecsEC2Runtime) deferAutoReplace(oldID string, cause error) {
+	log.Printf("ecs-ec2: could not replace the outdated slot %s for %s (%v); staying on it and retrying after %s",
+		oldID, e.base.name, cause, autoReplaceBackoff)
+	autoReplaceBlocked.set(e.base.name, "1")
+}
+
+// recordAutoReplace hands the finished move to the CP's audit log (best effort: the move is
+// done whether or not the record lands).
+func (e *ecsEC2Runtime) recordAutoReplace(ctx context.Context, oldID, newID string) {
+	if e.onAutoReplace == nil {
+		return
+	}
+	ev := SlotAutoReplace{TenantID: e.tenantID, WorkspaceID: e.workspaceID, Workspace: e.base.name, OldSlot: oldID, NewSlot: newID}
+	if out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{oldID}}); err == nil {
+		for _, r := range out.Reservations {
+			for _, i := range r.Instances {
+				ev.OldVersion = ec2TagValue(i.Tags, ec2TagLaunchTemplateVersion)
+			}
+		}
+	}
+	if lt, err := describeLaunchTemplate(ctx, e.ec2, e.pool.launchTemplate); err == nil {
+		ev.Latest = strconv.FormatInt(lt.latest, 10)
+	}
+	e.onAutoReplace(context.WithoutCancel(ctx), ev)
 }
 
 // moveHomeOff releases this workspace's home from oldID and confirms it is detached.
@@ -355,10 +445,19 @@ func (e *ecsEC2Runtime) pendingReplacementsForOthers(ctx context.Context, out *e
 	if err != nil {
 		return all()
 	}
+	// Reserved, or below $Latest with automatic replacement on: either way the owner's next
+	// Start moves, so a replacement launched for it is spoken for.
+	var lt ec2LaunchTemplate
+	if !e.pool.noAutoReplace {
+		var ltErr error
+		if lt, ltErr = describeLaunchTemplate(ctx, e.ec2, e.pool.launchTemplate); ltErr != nil {
+			lt = ec2LaunchTemplate{}
+		}
+	}
 	reserved := map[string]bool{}
 	for _, r := range insts.Reservations {
 		for _, inst := range r.Instances {
-			if slotReserved(inst) {
+			if e.pool.slotRetiring(inst, lt) {
 				reserved[aws.ToString(inst.InstanceId)] = true
 			}
 		}
