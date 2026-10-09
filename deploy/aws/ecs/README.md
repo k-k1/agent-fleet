@@ -1613,7 +1613,8 @@ launched after the template carries them, so a slot launched earlier must be rep
 (a new launch template version, then the steps below) before they hold**:
 
 - `user.max_user_namespaces=0` (persisted in `/etc/sysctl.d/99-af-userns.conf` and applied
-  before the ECS agent configures): no unprivileged user namespaces, so `SYS_ADMIN`
+  before the ECS agent configures; the user data stops on failure, and an `ecs.service`
+  drop-in refuses to start the ECS agent unless the value is 0, also after a reboot): no unprivileged user namespaces, so `SYS_ADMIN`
   stays reachable only through the setuid helper. A task running on an old slot keeps
   the default limit and can create user namespaces.
 - the home volume mounted `nosuid,nodev` by `af-mount`. An already mounted home keeps its
