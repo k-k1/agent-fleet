@@ -21,6 +21,7 @@ import { useSessionUI } from "../sessions/ui.ts";
 import { openSessionTerminal, openSessionTerminalSplit, openSessionChat, openSessionChatSplit } from "../sessions/open.ts";
 import { RepoRow } from "./RepoRow.tsx";
 import { parentFFFailedText, parentFFSuccessText } from "./parentSync.ts";
+import { postFastForward } from "./staleIndexLock.ts";
 import { useStartWork } from "./useStartWork.ts";
 import { SvnAuthModal } from "./SvnAuthModal.tsx";
 import { GitflowInitModal } from "./GitflowInitModal.tsx";
@@ -123,7 +124,7 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, peek, o
       onOpenFolder={() => useFilesStore.getState().revealInFiles("repos/" + r.name, { focus: true })}
       onOpenChanges={() => openTarget({ content: { kind: "changes", scmRepo: r.name } })}
       onFF={async () => {
-        const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/ff`, "POST", {});
+        const res = await postFastForward(`api/repos/${encodeURIComponent(r.name)}/ff`);
         if (res && res.error) {
           toast(tr("rp.ff_failed", { err: errText(res.error) }));
           return;
@@ -132,7 +133,7 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, peek, o
         toast(tr("rp.ff_success", { name: r.name }), { kind: "success" });
       }}
       onParentFF={r.worktree && r.integration?.relation === "contained" ? async () => {
-        const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/parent-ff`, "POST", {});
+        const res = await postFastForward(`api/repos/${encodeURIComponent(r.name)}/parent-ff`);
         if (res && res.error) {
           toast(parentFFFailedText(r, errText(res.error)));
           return;

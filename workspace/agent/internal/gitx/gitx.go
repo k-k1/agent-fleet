@@ -14,6 +14,13 @@ import (
 	"strings"
 )
 
+// gitEnv is added to every git the agent runs. GIT_OPTIONAL_LOCKS=0 keeps the background
+// `git status` polls from taking index.lock to refresh the index: a poll killed while
+// holding it (a container stop) leaves the lock behind, and every later write in that
+// working copy fails until it is removed. It also stops the polls from colliding
+// with the user's own commit. Locks a write needs are not optional and stay in force.
+var gitEnv = []string{"GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0"}
+
 // Cmd builds a git command rooted at dir (dir=="" inherits the cwd) with
 // terminal prompts disabled, so a missing credential fails instead of hanging.
 func Cmd(dir string, args ...string) *exec.Cmd {
@@ -21,7 +28,7 @@ func Cmd(dir string, args ...string) *exec.Cmd {
 		args = append([]string{"-C", dir}, args...)
 	}
 	cmd := exec.Command("git", args...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(os.Environ(), gitEnv...)
 	return cmd
 }
 
@@ -34,7 +41,7 @@ func CmdContext(ctx context.Context, dir string, args ...string) *exec.Cmd {
 		args = append([]string{"-C", dir}, args...)
 	}
 	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(os.Environ(), gitEnv...)
 	return cmd
 }
 

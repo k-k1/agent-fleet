@@ -120,6 +120,7 @@ func testDeps() Deps {
 		ErrCodeSessionsTrashFailed:   "gitx-test-sessions_trash_failed",
 		ErrCodeWorktreeArchiveFailed: "gitx-test-worktree_archive_failed",
 		ErrCodeWorktreeNestedRepo:    "gitx-test-worktree_nested_repo",
+		ErrCodeIndexLockStale:        "gitx-test-git_index_lock_stale",
 	}
 }
 
