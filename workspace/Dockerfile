@@ -320,7 +320,7 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 ARG CLAUDE_CODE_VERSION=2.1.295
 ARG OPENCODE_VERSION=1.18.35
 ARG CODEX_VERSION=0.162.0
-ARG COPILOT_VERSION=1.0.93
+ARG COPILOT_VERSION=1.0.94
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
@@ -346,10 +346,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.3.1
-ARG AGY_RELEASE_BUILD=4582356770750464
-ARG AGY_SHA256_X64=0e313b309ea58c71431ce86bb820936a3700e17e44eabce7bf2264617dc822db
-ARG AGY_SHA256_ARM64=f96efec99c8bda0d316867622e65f7920ba0c2b74a62d69fcd4ed13e0e84119d
+ARG AGY_VERSION=1.3.2
+ARG AGY_RELEASE_BUILD=5813501495738368
+ARG AGY_SHA256_X64=bf8504c72097c97de77d271b160bdb10b956031cf79cf95d96cb948df161c25f
+ARG AGY_SHA256_ARM64=f904ce9ca50ee7d2010bd8063a864ce37c31585c710af451bab66be6e4b59a74
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -455,9 +455,9 @@ ARG KIRO_SHA256_ARM64=c91fb5b7bec67acbbe0cdbc239f7a6b8e541f6bff2db32e418b0e3090f
 # MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 362,440,920 B / 323,360,856 B（1.4.1-R4503.1）。
 # ⚠️ 版文字列は `Muse Code 1.3.0 (1.3.0-R3401.1)`＝**括弧内のビルド id** がピンと突合する値。
 # agy の `tr -dc '0-9.'` 流儀だと `-R3401.1` が落ちて毎回不一致になる（install_muse.go）。
-ARG MUSE_VERSION=1.4.3-R5018.1
-ARG MUSE_SHA256_X64=e671790882bc88d65edb4ae0f713becf378ebf91011034ab75abebe3592dde4f
-ARG MUSE_SHA256_ARM64=6426c76a0081f20d60f6cad03308a147d79ce45758f1a89fd2713253cf475497
+ARG MUSE_VERSION=1.4.4-R5419.1
+ARG MUSE_SHA256_X64=cfc9d068441ff46036ad6bbf30dd794043b25b7efb69648c92c022ccf65f7d19
+ARG MUSE_SHA256_ARM64=bc1196793927baaf07535e9199d053ea3754b3bc658da1fec13d37f089cccd11
 # Postgres供給ピン（ADR 0086 P0 供給レーン）: Zonky embedded-postgres 17.11.0 jar のハッシュ。
 # sha256 は `curl -sfL <jar-url> | sha256sum` で確認した値。
 # 他メジャー（16/17/18）は install-postgres が Maven Central の .sha256 サイドカーで動的に取得する。
