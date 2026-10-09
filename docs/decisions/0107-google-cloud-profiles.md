@@ -672,7 +672,19 @@ What follows:
   time, close with the command, and keep the secret in a 0600 file in the run directory, never in argv or
   environment.
 
-Decision needed from the maintainer before building: whether to accept a loopback listener for Terraform
-alone (`GOOGLE_CREDENTIALS`, dropping `GOOGLE_OAUTH_ACCESS_TOKEN` from the child), or to leave Terraform
-split into commands shorter than the token, or to take the issue's other alternative (`--lifetime`, which
-needs an organisation policy).
+Decision (the maintainer, 2026-10-10): **do not build; split the work.** The three options were:
+
+- **The issue's option (a per-run `authorized_user` file at `GOOGLE_APPLICATION_CREDENTIALS`): rejected.**
+  Three of the five consumers (Python, Node, `cloud.google.com/go/auth`) ignore `token_uri` and would send
+  the per-run client secret and refresh token to Google. They are useless there, but they leave the
+  workspace, and the fail-closed error becomes a confusing `invalid_client`.
+- **(a) Terraform only (`GOOGLE_CREDENTIALS` plus the loopback listener): not taken for now.** Its cost is
+  that `GOOGLE_OAUTH_ACCESS_TOKEN` disappears from the child's environment, which the documented contract
+  and the client-library recipes rely on, and that a listener on the loopback is reachable by any process
+  of the workspace with a body secret as its only gate. Worth revisiting if split runs prove too costly.
+- **(c) Longer impersonated tokens (`--lifetime`): not taken.** It needs an organisation policy that
+  allows longer service-account token lifetimes, which the workspace cannot assume.
+
+Guidance for now: a `terraform apply` (or any program that reads `GOOGLE_OAUTH_ACCESS_TOKEN` once) must
+finish within the token's life, at most about an hour; split longer work into commands shorter than that,
+each under its own `af-gcloud-exec` run. #1879 stays open for (a) and (c).
