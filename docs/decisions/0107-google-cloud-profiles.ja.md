@@ -524,3 +524,63 @@ Issue #1488。決定 2 の「コマンドの途中では更新しない」は成
   ログインでコマンドは続く。尋ねられない実行（`--login`、`--no-login`、Console なし）では、端末で実行するコマンドを
   メッセージに載せる。トークンの終わりでコマンドを止めると、トークンをもう要らなかったコマンドまで止めることがある。
   死んだトークンのまま走らせ続けると原因が見えなくなるので、そちらは採らない。
+
+## 補足 — トークンを 1 度しか読まないプログラム向けのループバック `token_uri`: 測定のみ、未実装（2026-10-09）
+
+Issue #1879。上の決定は変えない。何も作っていない。この補足は、コードを書く前にと Issue が求めた測定と、
+トレードオフ、および末尾のメンテナーの判断を記録する。
+
+方法: `127.0.0.1` 上の偽トークンエンドポイント（リクエストを記録し `fake-access-N` を返す）と、合成の
+`authorized_user` ファイル（`client_id`・`client_secret`・`refresh_token` はすべて架空、`token_uri` は偽
+エンドポイント）を用意し、各プログラムをループバックだけのネットワーク名前空間（`unshare -rn`、`lo` を起動）で
+実行した。最初の Python の 1 回だけは名前空間の外で動かしてしまい、合成値の更新リクエストが Google の実際の
+トークンエンドポイントに送られた（`invalid_client` が返った。実際の認証情報やユーザーデータは無関係）。以下の
+実行はすべて名前空間の中。
+
+| 対象（バージョン） | `authorized_user` の `token_uri` に従うか |
+|---|---|
+| Go `golang.org/x/oauth2/google` 0.37.0 | **従う。** `FindDefaultCredentials` から `Token()` で、ファイルの client id・secret・refresh token を付けた `grant_type=refresh_token` が偽エンドポイントに届いた。 |
+| Go `cloud.google.com/go/auth` 0.24.0 | **従わない。** `https://oauth2.googleapis.com/token` に送ろうとした（名前空間内では接続失敗。送信は試みただけ）。偽エンドポイントには何も届かない。 |
+| Python `google-auth` 2.61.0 | **従わない。** `from_authorized_user_info` が上書きする（`token_uri=_GOOGLE_OAUTH2_TOKEN_ENDPOINT,  # always overrides`）。名前空間外の 1 回は Google の `https://oauth2.googleapis.com/token` に送り、`invalid_client` が返った。 |
+| Node `google-auth-library` 11.2.0 と 9.15.1 | **従わない。** 更新クライアントは固定の `oauth2TokenUrl` を使い、ファイルの値を読まない（11.2.0 は Google の名前解決に失敗、9.15.1 はソースで確認）。9.x は `@google-cloud/storage` 8.2.0 が同梱するもの。 |
+| Terraform Google プロバイダ 8.6.0（Terraform 1.16.4） | **従う。ただしラッパーが設定する変数では不可。** `GOOGLE_CREDENTIALS` にファイルを指定し `GOOGLE_OAUTH_ACCESS_TOKEN` なしだと、"Authenticating using configured Google JSON 'credentials'" と出力し、期限ごとに偽エンドポイントで更新した（`expires_in=1` で 25 秒に 6 リクエスト）。`GOOGLE_APPLICATION_CREDENTIALS` だけの場合は "Authenticating using DefaultClient" で、こちらも偽エンドポイントに尋ねた。どちらの場合も `GOOGLE_OAUTH_ACCESS_TOKEN` を併せて設定すると "Authenticating using configured Google JSON 'access_token'" となり、偽エンドポイントには一切尋ねない。 |
+
+プロバイダは起動時に固定の Google ホスト（`openidconnect.googleapis.com/v1/userinfo`）も呼ぶため、名前空間内では
+`plan` を最後まで実行できなかった。根拠はトークン要求と認証方式の出力であり、API 呼び出しを端から端まで通した
+ものではない。Google に実際に届いたのはその Python の合成値 1 回だけ。Go と Node 11 は送信前に失敗し、Node 9.15.1 は実行せずソースで確認した。他の
+ライブラリが秘密を Google に「送る」というのは固定 URL からの推論で、Google のエラー（`invalid_client` を観測したのは Python のみ）も
+他では予想であり未測定。
+
+結論:
+
+- `token_uri` に従うのは 5 つのうち 2 つで、うち 1 つは静的トークンを運ぶ変数がないときだけ。Python、Node、
+  `cloud.google.com/go/auth` は無視するので、`GOOGLE_APPLICATION_CREDENTIALS` に実行ごとのファイルを置いても
+  動くようにはならない。今の「ファイルが無い」という失敗が、実行ごとのクライアント秘密と refresh token（ランダムで
+  Google では無意味だが送られる）を載せた Google への更新要求に変わるだけ。10-02 の補足の「閉じた状態で失敗する」
+  規則は結果としては保たれるが、エラーは分かりにくくなる。
+- Issue のきっかけである Terraform には `GOOGLE_APPLICATION_CREDENTIALS` に触れずに届く。ラッパーが
+  `GOOGLE_CREDENTIALS`（プロバイダ自身の変数）にファイルを指定し、`GOOGLE_OAUTH_ACCESS_TOKEN` を入れない。
+  プロバイダしかその変数を読まないので構造的にオプトインだが、af-gcp のノートが「コマンドが受け取るもの」として
+  記している `GOOGLE_OAUTH_ACCESS_TOKEN` が子の環境から消える。10-02 の補足の 3 つのクライアントライブラリの手順
+  （その変数を明示的に読む）はそれに依存している。
+- ループバックのリスナーは Issue が挙げているトレードオフのまま: ワークスペースのどのプロセスも接続でき、
+  リクエスト本体の秘密だけが関門になる。`127.0.0.1` のみに bind し、定数時間で比較し、コマンドの終了で閉じ、
+  秘密は実行ディレクトリの 0600 のファイルに置いて argv や環境には出さない。
+
+判断（メンテナー、2026-10-10）: **作らない。作業を分ける。** 選択肢は次の 3 つだった。
+
+- **Issue の案（`GOOGLE_APPLICATION_CREDENTIALS` に実行ごとの `authorized_user` ファイル）: 不採用。**
+  5 つのうち 3 つ（Python、Node、`cloud.google.com/go/auth`）は `token_uri` を無視し、実行ごとのクライアント秘密と
+  refresh token を Google に送る。Google では無意味な値だがワークスペースの外へ出るし、閉じた失敗が分かりにくい
+  Google のエラー（`invalid_client` など。観測したのは Python のみ）に変わる見込み。
+- **(a) Terraform のみ（`GOOGLE_CREDENTIALS` とループバックのリスナー）: 当面は採らない。** 代償は、文書化された
+  契約とクライアントライブラリの手順が頼る `GOOGLE_OAUTH_ACCESS_TOKEN` が子の環境から消えること、そして
+  ワークスペースのどのプロセスからも届くループバックのリスナーが本体の秘密だけで守られること。分割実行の負担が
+  大きいと分かれば見直す。
+- **(c) より長い偽装トークン（`--lifetime`）: 採らない。** サービスアカウントのトークン寿命を延ばす組織ポリシーが
+  必要で、ワークスペースはそれを前提にできない。
+
+当面の運用: `terraform apply`（や `GOOGLE_OAUTH_ACCESS_TOKEN` を 1 度しか読まないプログラム）は、各実行が開始時に
+表示する残り時間（「the token is valid for N more minutes」。最低 10 分、最長でおよそ 1 時間で、毎回新しい 1 時間とは限らない）の
+中で終わらせる。それより長い作業は、その残り時間より短いコマンドに分け、それぞれ別の `af-gcloud-exec` 実行で行う。
+[ガイド](../../guide/member/10-integrations.ja.md#google-cloud-で自分としてコマンドを実行するaf-gcloud-exec)も参照。#1879 は (a) と (c) のために開いたままにする。
