@@ -217,21 +217,33 @@ Do the same in every new shell before the procedures under "Operating it".
 ### 4. The database, once
 
 The CP's database user is an IAM user with no password and, at first, no rights. Give it the
-database, as the built-in `postgres` user, through a Cloud SQL Auth Proxy:
+database, as the built-in `postgres` user, from a temporary pod inside the cluster:
 
 ```bash
 gcloud sql users set-password postgres --instance "$PREFIX-pg" --project "$PROJECT" --prompt-for-password
 DBUSER="$($TF output -raw cp_database_user)"
-cloud-sql-proxy --private-ip "$($TF output -raw cloud_sql_instance)" &   # from inside the VPC
-psql "host=127.0.0.1 user=postgres dbname=agentfleet" <<SQL
-GRANT "$DBUSER" TO postgres;
-ALTER DATABASE agentfleet OWNER TO "$DBUSER";
-ALTER SCHEMA public OWNER TO "$DBUSER";
-SQL
+DBHOST="$(gcloud sql instances describe "$PREFIX-pg" --project "$PROJECT" --format='value(ipAddresses[0].ipAddress)')"
+# The statements to paste into psql below (the pod knows nothing of $DBUSER):
+echo "GRANT \"$DBUSER\" TO postgres; ALTER DATABASE agentfleet OWNER TO \"$DBUSER\"; ALTER SCHEMA public OWNER TO \"$DBUSER\";"
+# The CP namespace does not exist yet (step 6 creates it); `default` does.
+kubectl -n default run psql-grant -it --rm --restart=Never --image=postgres:17-alpine \
+  --override-type=strategic \
+  --overrides='{"spec":{"securityContext":{"runAsNonRoot":true,"runAsUser":70,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"psql-grant","securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}' \
+  -- psql "host=$DBHOST user=postgres dbname=agentfleet sslmode=require" -W
 ```
 
-The instance has no public IP, so the proxy runs from a machine in the VPC (a short-lived VM,
-or Cloud Shell with a VPC connection). Keep the `postgres` password in your vault, not here.
+At the `Password:` prompt type the postgres password, paste the printed statements at the `psql`
+prompt and expect `GRANT ROLE`, `ALTER DATABASE` and `ALTER SCHEMA` back; any `ERROR` means the
+grant is not done. Then `\q`. (Interactive `psql` does not exit on a SQL error, so read the
+replies.) The password goes to `psql` over the pod's terminal only: it is in no command
+line, pod spec or API object. The pod is removed on exit (`--rm`); if the session dropped, delete
+it with `kubectl -n default delete pod psql-grant`.
+
+The instance has a private IP only, a workspace is outside the VPC, and `cloud-sql-proxy` is not
+installed there, so the grant runs from a pod on the cluster's nodes (a short-lived pod with a
+restricted security context, `postgres:17-alpine`). Keep the `postgres` password in your
+vault, not here. Only the working of a psql pod of this kind was confirmed on a real run; the exact
+command above (including `--override-type=strategic`) was not run as written.
 
 ### 5. The overlay
 
@@ -1104,6 +1116,21 @@ A deployment created before these settings needs the `$TF apply` above to record
 before `$TF destroy`. If the VPC delete is still refused because of the peering, delete it by hand
 and destroy again:
 `gcloud compute networks peerings delete servicenetworking-googleapis-com --network "$PREFIX-vpc" --project "$PROJECT"`.
+
+Things seen on a real teardown (one zonal cluster, small profile):
+
+- With the deletion policies above, the destroy skipped the database and user (0 s), removed the
+  Cloud SQL instance in about 2.5 minutes, and deleted the service networking connection, the
+  address range, the subnet and the VPC without the long stall and without a manual peering delete.
+- The first `$TF destroy` can fail once on `google_certificate_manager_certificate_map` ("already
+  being used by" a target HTTPS proxy). The Gateway controller removes that proxy asynchronously
+  after the cluster is gone; run `$TF destroy` again after a minute or so.
+- `kubectl delete -k` exits 1 with `NotFound` for the workspace namespace's network policies when
+  that namespace was deleted first. Nothing is left behind; it is harmless.
+- The KMS key ring and the key's name cannot be used again after a destroy: the key's versions
+  are only scheduled for destruction (30 days) and a key ring can never be deleted. Anyone who
+  re-creates a stack with the same `name_prefix` hits an "already exists" error on `kms.tf`; use
+  another prefix, or import the key ring and key into the new state.
 
 KMS keys are not deleted by Google Cloud, only their versions are scheduled for destruction. The
 snapshots of the CP's disk and the snapshot schedule outlive the destroy; delete them with

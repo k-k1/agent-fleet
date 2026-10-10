@@ -190,7 +190,7 @@ run "small_profile_plans" {
   variables {
     node_zones             = ["europe-west1-b"]
     zonal_cluster          = true
-    system_machine_type    = "e2-medium"
+    system_machine_type    = "e2-standard-2"
     workspace_machine_type = "n2-standard-4"
     sql_availability_type  = "ZONAL"
     managed_prometheus     = false
@@ -199,6 +199,13 @@ run "small_profile_plans" {
   assert {
     condition     = google_container_cluster.main.location == "europe-west1-b"
     error_message = "a zonal cluster's location is its zone"
+  }
+
+  # One e2-medium leaves the CP Pending next to kube-system (measured); the profile must not
+  # drift back to it.
+  assert {
+    condition     = google_container_node_pool.system.node_config[0].machine_type == "e2-standard-2"
+    error_message = "the small profile's system pool must be e2-standard-2"
   }
 
   assert {
