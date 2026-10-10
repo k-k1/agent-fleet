@@ -19,7 +19,7 @@ artifact_registry_repository = {
 workspace_image = "europe-west1-docker.pkg.dev/example-project/agent-fleet/workspace:VERSION"
 
 # --- Small, low-cost profile (README, "Small profile") -----------------------------------
-# Well under half of the defaults' standing cost, for trials and a single team. It gives up
+# About half of the defaults' standing cost, for trials and a single team. It gives up
 # the control plane's and the database's high availability and survival of a zone failure.
 # Uncomment all of it, and replace node_zones above with one zone:
 #

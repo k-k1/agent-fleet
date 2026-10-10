@@ -201,6 +201,13 @@ run "small_profile_plans" {
     error_message = "a zonal cluster's location is its zone"
   }
 
+  # One e2-medium leaves the CP Pending next to kube-system (measured); the profile must not
+  # drift back to it.
+  assert {
+    condition     = google_container_node_pool.system.node_config[0].machine_type == "e2-standard-2"
+    error_message = "the small profile's system pool must be e2-standard-2"
+  }
+
   assert {
     condition     = google_container_cluster.main.monitoring_config[0].managed_prometheus[0].enabled == false
     error_message = "managed_prometheus = false must reach the cluster"

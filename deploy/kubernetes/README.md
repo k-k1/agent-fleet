@@ -223,23 +223,27 @@ database, as the built-in `postgres` user, from a temporary pod inside the clust
 gcloud sql users set-password postgres --instance "$PREFIX-pg" --project "$PROJECT" --prompt-for-password
 DBUSER="$($TF output -raw cp_database_user)"
 DBHOST="$(gcloud sql instances describe "$PREFIX-pg" --project "$PROJECT" --format='value(ipAddresses[0].ipAddress)')"
-read -rs -p 'postgres password: ' PGPW; echo
-kubectl -n "$PREFIX-cp" run psql-grant --rm -i --restart=Never --image=postgres:17-alpine \
-  --env="PGPASSWORD=$PGPW" \
+# The statements to paste into psql below (the pod knows nothing of $DBUSER):
+echo "GRANT \"$DBUSER\" TO postgres; ALTER DATABASE agentfleet OWNER TO \"$DBUSER\"; ALTER SCHEMA public OWNER TO \"$DBUSER\";"
+# The CP namespace does not exist yet (step 6 creates it); `default` does.
+kubectl -n default run psql-grant -it --rm --restart=Never --image=postgres:17-alpine \
+  --override-type=strategic \
   --overrides='{"spec":{"securityContext":{"runAsNonRoot":true,"runAsUser":70,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"psql-grant","securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}' \
-  -- psql "host=$DBHOST user=postgres dbname=agentfleet sslmode=require" <<SQL
-GRANT "$DBUSER" TO postgres;
-ALTER DATABASE agentfleet OWNER TO "$DBUSER";
-ALTER SCHEMA public OWNER TO "$DBUSER";
-SQL
+  -- psql "host=$DBHOST user=postgres dbname=agentfleet sslmode=require" -W
 ```
 
+At the `Password:` prompt type the postgres password, paste the printed statements at the `psql`
+prompt and expect `GRANT ROLE`, `ALTER DATABASE` and `ALTER SCHEMA` back; any `ERROR` means the
+grant is not done. Then `\q`. (`ON_ERROR_STOP` does not apply to an interactive session, so
+read the replies.) The password goes to `psql` over the pod's terminal only: it is in no command
+line, pod spec or API object. The pod is removed on exit (`--rm`); if the session dropped, delete
+it with `kubectl -n default delete pod psql-grant`.
+
 The instance has a private IP only, a workspace is outside the VPC, and `cloud-sql-proxy` is not
-installed there, so the grant runs from a pod on the cluster's nodes (a short-lived pod in the CP
-namespace with a restricted security context, `postgres:17-alpine`; it is removed on exit, and
-the password is in its spec only meanwhile). Keep the `postgres` password in your
-vault, not here. Only the working of a pod of this kind was confirmed on a real run; the exact
-command above was not run as written.
+installed there, so the grant runs from a pod on the cluster's nodes (a short-lived pod with a
+restricted security context, `postgres:17-alpine`). Keep the `postgres` password in your
+vault, not here. Only the working of a psql pod of this kind was confirmed on a real run; the exact
+command above (including `--override-type=strategic`) was not run as written.
 
 ### 5. The overlay
 

@@ -147,7 +147,7 @@ claim stays `Pending` with it (`WaitForFirstConsumer`). That is why the profile 
 `e2-standard-2`. Changing `system_machine_type` on a running cluster is an in-place node pool
 update, about 6 minutes, after which the CP was healthy.
 
-**Not verified.** The profile was stood up once, on a zonal cluster (develop build
+**One zonal run; the cost estimates are unverified.** The profile was stood up once, on a zonal cluster (develop build
 0.30.1-dev-b130ad6b): the first apply took about 18 minutes and the CP was healthy about 14
 minutes after the overlay was applied. That run is the only evidence for the text above; the
 other zones, a regional variant of the profile and other regions are untried. The Cloud SQL
