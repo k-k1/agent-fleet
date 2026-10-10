@@ -196,7 +196,7 @@ Limits, stated plainly:
 ## Addendum (2026-10-10) — the home key's confirm step, part B (#1646)
 
 Part A stands. This adds the step that stops handing out the derived key once a home's store
-has moved. No migration: `home_dek.scheme` already allows `random`.
+has moved. Migration 0091 / pg 0076 adds `home_dek.confirm_epoch` (below).
 
 - **What confirms.** After a start that injected `AF_SECRET_KEY_NEXT`, the CP polls the new
   Agent's `/healthz` (15 minutes at most). Only a report that the Agent sealed under NEXT
@@ -205,17 +205,25 @@ has moved. No migration: `home_dek.scheme` already allows `random`.
   `AF_SECRET_KEY`, so an Agent of part A, or one that ignored a malformed NEXT, never
   confirms. The update is conditioned on the sealed key and on `migrating`, so a report about
   another key, or a second report, changes nothing. `unreadable` and `derived` are logged and
-  change nothing, and nothing is deleted.
+  change nothing, and nothing is deleted. The Agent reports `none` only after looking under the
+  store lock and finding no file; a lock it cannot take reads as `unreadable`.
+- **Whose report.** The endpoint does not identify the Agent: Service Connect can route to a
+  task still draining from an earlier start, and a native port can be another home's by now.
+  Each start of a home with a key carries a fresh nonce (`AF_HOME_KEY_START`, plain env, not a
+  secret), the Agent echoes it as `secrets_key_start`, and the CP waits past any report without
+  it. The poll does not follow redirects. A member who controls their own workspace can fake
+  the report; the only home that harms is their own.
+- **Remigrate fence.** `--remigrate` bumps `confirm_epoch`, and a confirm must carry the epoch
+  its start read. Without it a report taken before the remigrate would match membership, key
+  and scheme again and undo the remigrate from any replica.
 - **After it.** A `random` home starts with `AF_SECRET_KEY` = the home key, no NEXT, and no
   derived key (its `wrapped_dek` row is not even opened). On ECS that start deletes the
   `secret-key-next` parameter. A running container keeps both keys in its environment until
   it restarts.
 - **What has to hold across failures.** The confirm is idempotent and keyed on the stored
-  ciphertext: a CP that restarts during the wait leaves the home `migrating`, and a later
-  start confirms it. Concurrent starts are serialized per workspace as before, and replicas
-  racing to confirm hit the same conditional update. A report from an older task still
-  draining on ECS can only confirm if that task also sealed under the same home key, which is
-  the only key the home has.
+  ciphertext and epoch: a CP that restarts during the wait leaves the home `migrating`, and a
+  later start confirms it. Concurrent starts are serialized per workspace as before, and
+  replicas racing to confirm hit the same conditional update.
 - **Going back.** A CP of part A after a confirm hands out both keys again, which still opens
   the store. A CP from before part A cannot open it (members reconnect after the recovery the
   guide describes), and an Agent from before part A must not be started on a moved home (its

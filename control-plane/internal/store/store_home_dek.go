@@ -16,6 +16,8 @@ const (
 // custodian. Ciphertext is never logged.
 type HomeDEK struct {
 	MembershipID, Ciphertext, KeyRef, Scheme, CreatedAt, MigratedAt string
+	// ConfirmEpoch is bumped by every RemigrateHomeDEK; a confirm must name the one it read.
+	ConfirmEpoch int64
 }
 
 // HomeDEKCounts tallies home_dek against the workspaces: Migrating and Random are rows by
@@ -28,8 +30,8 @@ type HomeDEKCounts struct {
 func (s *SQL) GetHomeDEK(ctx context.Context, membershipID string) (HomeDEK, bool, error) {
 	d := HomeDEK{MembershipID: membershipID}
 	err := s.db.QueryRowContext(ctx,
-		`SELECT ciphertext, key_ref, scheme, created_at, migrated_at FROM home_dek WHERE membership_id=?`,
-		membershipID).Scan(&d.Ciphertext, &d.KeyRef, &d.Scheme, &d.CreatedAt, &d.MigratedAt)
+		`SELECT ciphertext, key_ref, scheme, created_at, migrated_at, confirm_epoch FROM home_dek WHERE membership_id=?`,
+		membershipID).Scan(&d.Ciphertext, &d.KeyRef, &d.Scheme, &d.CreatedAt, &d.MigratedAt, &d.ConfirmEpoch)
 	if errors.Is(err, sql.ErrNoRows) {
 		return HomeDEK{}, false, nil
 	}
@@ -75,12 +77,14 @@ func (s *SQL) CountHomeDEKs(ctx context.Context) (HomeDEKCounts, error) {
 	return c, err
 }
 
-// ConfirmHomeDEK is conditioned on the sealed key as well as the scheme, so a report about a
-// key that is not the stored one can never confirm the row.
-func (s *SQL) ConfirmHomeDEK(ctx context.Context, membershipID, ciphertext string) (bool, error) {
+// ConfirmHomeDEK is conditioned on the row the start read: the sealed key, the scheme and the
+// confirm epoch. A report about a key that is not the stored one, or one taken before a
+// remigrate, can never confirm it.
+func (s *SQL) ConfirmHomeDEK(ctx context.Context, read HomeDEK) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE home_dek SET scheme='random', migrated_at=? WHERE membership_id=? AND ciphertext=? AND scheme='migrating'`,
-		NowTS(), membershipID, ciphertext)
+		`UPDATE home_dek SET scheme='random', migrated_at=?
+		 WHERE membership_id=? AND ciphertext=? AND scheme='migrating' AND confirm_epoch=?`,
+		NowTS(), read.MembershipID, read.Ciphertext, read.ConfirmEpoch)
 	if err != nil {
 		return false, err
 	}
@@ -90,7 +94,8 @@ func (s *SQL) ConfirmHomeDEK(ctx context.Context, membershipID, ciphertext strin
 
 func (s *SQL) RemigrateHomeDEK(ctx context.Context, membershipID string) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE home_dek SET scheme='migrating', migrated_at='' WHERE membership_id=? AND scheme='random'`, membershipID)
+		`UPDATE home_dek SET scheme='migrating', migrated_at='', confirm_epoch=confirm_epoch+1
+		 WHERE membership_id=? AND scheme='random'`, membershipID)
 	if err != nil {
 		return false, err
 	}

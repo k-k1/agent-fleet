@@ -206,7 +206,7 @@ internal/sessionx/session_usage.go HandleSessionsUsage x1 {sessions}
 jdk_install_http.go handleJDKInstall x3 {error,java_available,java_installed,major,state}
 kiro_install_http.go handleKiroInstall x1 {error,installed,pin,state,updateAvailable,version} cond{installed,pin,updateAvailable,version}
 kiro_install_http.go handleKiroInstall x3 {state}
-main.go handleHealth x1 {ok,secrets_key,secrets_key_next}
+main.go handleHealth x1 {ok,secrets_key,secrets_key_next,secrets_key_start}
 memo_paste.go handleMemoImageGC x1 {removed}
 muse_install_http.go handleMuseInstall x1 {error,installed,pin,state,updateAvailable,version} cond{installed,pin,updateAvailable,version}
 muse_install_http.go handleMuseInstall x3 {state}

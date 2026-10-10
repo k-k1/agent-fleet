@@ -14,8 +14,8 @@ import (
 )
 
 // fakeAgentHealthz answers /healthz like the Agent: 503 for the first `down` calls (still
-// booting), then the report.
-func fakeAgentHealthz(t *testing.T, down int32, report map[string]any) (*httptest.Server, *atomic.Int32) {
+// booting), then report().
+func fakeAgentHealthz(t *testing.T, down int32, report func() map[string]any) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -27,7 +27,7 @@ func fakeAgentHealthz(t *testing.T, down int32, report map[string]any) (*httptes
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(report)
+		_ = json.NewEncoder(w).Encode(report())
 	}))
 	t.Cleanup(srv.Close)
 	return srv, &calls
@@ -114,8 +114,11 @@ func TestConfirmHomeDEKIsConditionedOnTheKey(t *testing.T) {
 // Agent's boot, confirms on its report, and the next start hands out the home's key alone.
 func TestStartConfirmsHomeDEKAndThenInjectsItAlone(t *testing.T) {
 	ctx := context.Background()
-	srv, calls := fakeAgentHealthz(t, 3, map[string]any{"ok": true, "secrets_key": "migrated", "secrets_key_next": true})
-	f := &keyRecordingFactory{endpoint: srv.URL}
+	f := &keyRecordingFactory{}
+	srv, calls := fakeAgentHealthz(t, 3, func() map[string]any {
+		return map[string]any{"ok": true, "secrets_key": "migrated", "secrets_key_next": true, "secrets_key_start": f.lastStartNonce()}
+	})
+	f.endpoint = srv.URL
 	st, mgr, victim, mv, memID := homeDEKFixture(t, f)
 	api := newWorkspaceAPI(mgr, false)
 	res, aerr := mgr.buildResolved(ctx, victim, mv)
@@ -156,8 +159,11 @@ func TestStartConfirmsHomeDEKAndThenInjectsItAlone(t *testing.T) {
 
 func TestStartKeepsMigratingOnAnUnreadableReport(t *testing.T) {
 	ctx := context.Background()
-	srv, calls := fakeAgentHealthz(t, 0, map[string]any{"ok": true, "secrets_key": "unreadable", "secrets_key_next": true})
-	f := &keyRecordingFactory{endpoint: srv.URL}
+	f := &keyRecordingFactory{}
+	srv, calls := fakeAgentHealthz(t, 0, func() map[string]any {
+		return map[string]any{"ok": true, "secrets_key": "unreadable", "secrets_key_next": true, "secrets_key_start": f.lastStartNonce()}
+	})
+	f.endpoint = srv.URL
 	st, mgr, victim, mv, memID := homeDEKFixture(t, f)
 	res, aerr := mgr.buildResolved(ctx, victim, mv)
 	if aerr != nil {
@@ -186,7 +192,7 @@ func TestConfirmedHomeStartsWithoutTheDerivedKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	d, _, _ := st.GetHomeDEK(ctx, memID)
-	if ok, err := st.ConfirmHomeDEK(ctx, memID, d.Ciphertext); err != nil || !ok {
+	if ok, err := st.ConfirmHomeDEK(ctx, d); err != nil || !ok {
 		t.Fatalf("confirm = %v, %v", ok, err)
 	}
 	if _, err := st.DB().ExecContext(ctx, `UPDATE wrapped_dek SET ciphertext='kms1:broken' WHERE workspace_id=?`, ws.ID); err != nil {
@@ -218,3 +224,84 @@ func TestConfirmedHomeStartsWithoutTheDerivedKey(t *testing.T) {
 type testingWriter struct{ b []byte }
 
 func (w *testingWriter) Write(p []byte) (int, error) { w.b = append(w.b, p...); return len(p), nil }
+
+// Only the Agent this start booted may confirm: a report carrying another start's nonce (a
+// task still draining on ECS, another home on a reused port, an image too old to echo it) is
+// waited past, and a redirect to another Agent is not followed.
+func TestStartIgnoresReportsFromOtherAgents(t *testing.T) {
+	ctx := context.Background()
+	good := map[string]any{"ok": true, "secrets_key": "migrated", "secrets_key_next": true}
+	for name, mk := range map[string]func(t *testing.T, f *keyRecordingFactory) string{
+		"another start's nonce": func(t *testing.T, f *keyRecordingFactory) string {
+			srv, _ := fakeAgentHealthz(t, 0, func() map[string]any {
+				r := map[string]any{"secrets_key_start": "an-earlier-start"}
+				for k, v := range good {
+					r[k] = v
+				}
+				return r
+			})
+			return srv.URL
+		},
+		"an image that does not echo it": func(t *testing.T, f *keyRecordingFactory) string {
+			srv, _ := fakeAgentHealthz(t, 0, func() map[string]any { return good })
+			return srv.URL
+		},
+		"a redirect to the right report": func(t *testing.T, f *keyRecordingFactory) string {
+			other, _ := fakeAgentHealthz(t, 0, func() map[string]any {
+				r := map[string]any{"secrets_key_start": f.lastStartNonce()}
+				for k, v := range good {
+					r[k] = v
+				}
+				return r
+			})
+			redir := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, other.URL+"/healthz", http.StatusFound)
+			}))
+			t.Cleanup(redir.Close)
+			return redir.URL
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &keyRecordingFactory{}
+			f.endpoint = mk(t, f)
+			st, mgr, victim, mv, memID := homeDEKFixture(t, f)
+			mgr.homeDEKConfirmBudget = 300 * time.Millisecond
+			res, aerr := mgr.buildResolved(ctx, victim, mv)
+			if aerr != nil {
+				t.Fatal(aerr)
+			}
+			if aerr := newWorkspaceAPI(mgr, false).ensureWorkspaceStarted(ctx, res); aerr != nil {
+				t.Fatal(aerr)
+			}
+			time.Sleep(500 * time.Millisecond) // past the budget
+			if got := homeScheme(t, st, memID); got != store.HomeDEKMigrating {
+				t.Fatalf("a report from another Agent confirmed the home (%s)", got)
+			}
+		})
+	}
+}
+
+// A report read before an operator put the home back to migrating cannot confirm it again,
+// although membership, key and scheme all match once more.
+func TestStaleReportAfterRemigrateDoesNotConfirm(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, _, _, memID := homeDEKFixture(t, &keyRecordingFactory{})
+	ws, _, _ := st.GetWorkspaceByMembership(ctx, memID)
+	if _, err := mgr.resolveDEK(ctx, ws, "leaver-acme-co-jp"); err != nil {
+		t.Fatal(err)
+	}
+	readByA, _, _ := st.GetHomeDEK(ctx, memID) // poll A's start
+	readByB := readByA                         // poll B's start, same row
+	mgr.applyHomeDEKReport(ctx, readByB, agentKeyReport{State: agentKeyMigrated, Next: true})
+	if got := homeScheme(t, st, memID); got != store.HomeDEKRandom {
+		t.Fatalf("precondition: B did not confirm (%s)", got)
+	}
+	var out testingWriter
+	if code := remigrateHomeDEK(ctx, st, memID, &out); code != 0 {
+		t.Fatalf("remigrate = %d", code)
+	}
+	mgr.applyHomeDEKReport(ctx, readByA, agentKeyReport{State: agentKeyMigrated, Next: true})
+	if got := homeScheme(t, st, memID); got != store.HomeDEKMigrating {
+		t.Fatalf("a report from before the remigrate confirmed the home again (%s)", got)
+	}
+}

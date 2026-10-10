@@ -188,8 +188,12 @@ boot. The `ecs` / `ecs-ec2` stacks do not expose it as a parameter yet.
   opens is not touched. The workspace's `/healthz` reports the outcome as `secrets_key`
   (`none`, `current`, `migrated`, `derived` when the re-seal failed, `unreadable`) and
   `secrets_key_next` (whether it sealed under the home's key), never a key.
-- **Confirming it.** After such a start the Control Plane waits for that report. When the
-  workspace sealed under the home's key and reports `migrated`, `current` or `none`, the
+- **Confirming it.** After such a start the Control Plane waits for that report, and only for
+  the one from the workspace that start launched: each start passes a fresh identifier
+  (`AF_HOME_KEY_START`, not a secret) that the workspace echoes as `secrets_key_start`, so an
+  answer from an earlier task or another workspace is ignored, and a redirect is not followed.
+  When the workspace sealed under the home's key and reports `migrated`, `current` or `none`
+  (`none` only when it could look and found no store), the
   Control Plane marks the home confirmed, and from the **next** start the workspace gets the
   home's key alone (as `AF_SECRET_KEY`) and no derived key; on `ecs` / `ecs-ec2` that start also
   deletes the `secret-key-next` parameter. A workspace that is already running keeps both keys

@@ -2,11 +2,17 @@ package main
 
 // The confirm step of the home key (ADR 0005 addendum 2026-10-10, part B). The CP cannot see a
 // home's secrets.enc, so it never decides by itself that a store has moved to the home's key:
-// it reads what the Agent reported at boot on /healthz, and only a report from an Agent that
-// had the home's key in use counts.
+// it reads what the Agent reported at boot on /healthz, and only a report from the Agent this
+// very start launched, with the home's key in use, counts. The endpoint alone does not say
+// which Agent answers: on ECS, Service Connect can route to a task still draining from an
+// earlier start, and a native port can already belong to another home. So every such start
+// carries a fresh nonce (homeKeyStartEnv) that its Agent echoes back, and any other answer is
+// waited past.
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -32,12 +38,34 @@ const (
 	homeDEKConfirmPollDefault   = 3 * time.Second
 )
 
+// homeKeyStartEnv names the per-start nonce the Agent echoes as secrets_key_start. It is an
+// identifier, not a secret: knowing it lets nobody open anything.
+const homeKeyStartEnv = "AF_HOME_KEY_START"
+
+// newHomeKeyStart returns a fresh nonce for one start.
+func newHomeKeyStart() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
 // agentKeyReport is the part of the Agent's /healthz the confirm step reads. Next says the
 // Agent sealed its store under AF_SECRET_KEY_NEXT; without it "current" only means the store
-// opens with AF_SECRET_KEY.
+// opens with AF_SECRET_KEY. Start is the nonce the Agent was booted with.
 type agentKeyReport struct {
 	State string `json:"secrets_key"`
 	Next  bool   `json:"secrets_key_next"`
+	Start string `json:"secrets_key_start"`
+}
+
+// homeKeyHealthzClient is healthzClient that never follows a redirect: a 3xx to another
+// Agent would otherwise have that Agent's report read as this one's.
+var homeKeyHealthzClient = &http.Client{
+	Timeout:       healthzClient.Timeout,
+	Transport:     healthzClient.Transport,
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
 // agentKeyState makes one /healthz call. ok is false while the Agent does not answer 200.
@@ -49,7 +77,7 @@ func agentKeyState(ctx context.Context, rt runtime.Runtime) (agentKeyReport, boo
 	if err != nil {
 		return agentKeyReport{}, false
 	}
-	resp, err := healthzClient.Do(req)
+	resp, err := homeKeyHealthzClient.Do(req)
 	if err != nil {
 		return agentKeyReport{}, false
 	}
@@ -64,10 +92,10 @@ func agentKeyState(ctx context.Context, rt runtime.Runtime) (agentKeyReport, boo
 	return r, true
 }
 
-// watchHomeDEK waits for the Agent the start just launched and acts on its key report. A
-// CP that restarts in the meantime loses the wait, and the home stays 'migrating': its next
-// start injects both keys again and is confirmed then.
-func (m *manager) watchHomeDEK(rt runtime.Runtime, home store.HomeDEK) {
+// watchHomeDEK waits for the Agent the start just launched (the one that echoes start) and
+// acts on its key report. A CP that restarts in the meantime loses the wait, and the home
+// stays 'migrating': its next start injects both keys again and is confirmed then.
+func (m *manager) watchHomeDEK(rt runtime.Runtime, home store.HomeDEK, start string) {
 	if rt.Endpoint() == "" {
 		return // nothing to ask; the next start tries again
 	}
@@ -81,13 +109,15 @@ func (m *manager) watchHomeDEK(rt runtime.Runtime, home store.HomeDEK) {
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	for {
-		if r, ok := agentKeyState(ctx, rt); ok {
+		// A report from any other Agent (an earlier start's task, another home on a reused
+		// port, an image too old to echo the nonce) is not this start's: wait past it.
+		if r, ok := agentKeyState(ctx, rt); ok && r.Start == start {
 			m.applyHomeDEKReport(ctx, home, r)
 			return
 		}
 		select {
 		case <-ctx.Done():
-			log.Printf("home key of membership %s: no report from the Agent within %s; it stays %s", home.MembershipID, budget, home.Scheme)
+			log.Printf("home key of membership %s: no report from the Agent this start launched within %s; it stays %s", home.MembershipID, budget, home.Scheme)
 			return
 		case <-time.After(poll):
 		}
@@ -112,7 +142,7 @@ func (m *manager) applyHomeDEKReport(ctx context.Context, home store.HomeDEK, r 
 	case !r.Next:
 		log.Printf("home key of membership %s: the Agent did not use the home's key; it stays migrating", home.MembershipID)
 	case r.State == agentKeyNone || r.State == agentKeyCurrent || r.State == agentKeyMigrated:
-		ok, err := m.store.ConfirmHomeDEK(ctx, home.MembershipID, home.Ciphertext)
+		ok, err := m.store.ConfirmHomeDEK(ctx, home)
 		switch {
 		case err != nil:
 			log.Printf("home key of membership %s: confirm: %v; it stays migrating", home.MembershipID, err)

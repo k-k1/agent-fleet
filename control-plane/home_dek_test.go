@@ -206,12 +206,27 @@ type keyRecordingFactory struct {
 	endpoint       string // what the built runtimes answer on ("" = nowhere)
 	mu             sync.Mutex
 	built, started []runtime.SecretKeys
+	env            [][]string // the extraEnv of each runtime built
 }
 
 type keyRecordingRuntime struct {
 	stubRuntime
 	f    *keyRecordingFactory
 	keys runtime.SecretKeys
+}
+
+// lastStartNonce is the AF_HOME_KEY_START of the last runtime built, "" if none.
+func (f *keyRecordingFactory) lastStartNonce() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.env) - 1; i >= 0; i-- {
+		for _, kv := range f.env[i] {
+			if v, ok := strings.CutPrefix(kv, homeKeyStartEnv+"="); ok {
+				return v
+			}
+		}
+	}
+	return ""
 }
 
 func (r *keyRecordingRuntime) Start(context.Context) error {
@@ -221,10 +236,11 @@ func (r *keyRecordingRuntime) Start(context.Context) error {
 	return nil
 }
 
-func (f *keyRecordingFactory) New(_ runtime.Workspace, keys runtime.SecretKeys, _ []string) runtime.Runtime {
+func (f *keyRecordingFactory) New(_ runtime.Workspace, keys runtime.SecretKeys, env []string) runtime.Runtime {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.built = append(f.built, keys)
+	f.env = append(f.env, env)
 	return &keyRecordingRuntime{stubRuntime: stubRuntime{state: "stopped", endpoint: f.endpoint}, f: f, keys: keys}
 }
 

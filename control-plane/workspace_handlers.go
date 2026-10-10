@@ -636,6 +636,13 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	if err != nil {
 		return internalErr(fmt.Errorf("credential-store keys for ws %s: %w", res.ws.ID, err))
 	}
+	var homeStart string
+	if home != nil {
+		if homeStart, err = newHomeKeyStart(); err != nil {
+			return internalErr(err)
+		}
+		extraEnv = append(append([]string(nil), extraEnv...), homeKeyStartEnv+"="+homeStart)
+	}
 	if armed := a.mgr.armPreviewForStart(ctx, res, keys, extraEnv); armed != nil {
 		rt = armed
 	} else if fresh := a.mgr.refreshGitTokenForStart(ctx, res, keys, extraEnv); fresh != nil {
@@ -670,7 +677,7 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 		f.CommitStart()
 	}
 	if home != nil {
-		go a.mgr.watchHomeDEK(rt, *home)
+		go a.mgr.watchHomeDEK(rt, *home, homeStart)
 	}
 	_ = a.mgr.store.SetWorkspaceState(ctx, res.ws.ID, "running")
 	// A start IS activity: reset the in-memory idle clock too (SetWorkspaceState

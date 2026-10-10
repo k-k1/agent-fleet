@@ -268,3 +268,33 @@ func TestNextKeyInUse(t *testing.T) {
 		}
 	}
 }
+
+// "none" is what lets the CP confirm a home, so a store that could not even be looked at must
+// never report it: a lock that cannot be taken reads as unreadable.
+func TestMigrateKeyLockFailureIsNotNone(t *testing.T) {
+	for name, withStore := range map[string]bool{"with a store": true, "without a store": false} {
+		t.Run(name, func(t *testing.T) {
+			derived := testKey(1)
+			if withStore {
+				seedStore(t, derived)
+			} else {
+				t.Setenv("HOME", t.TempDir())
+				if err := os.MkdirAll(filepath.Dir(Path()), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			keyEnv(t, derived, testKey(2))
+			// A directory where the lock file goes: OpenFile fails before any look at the store.
+			_ = os.Remove(Path() + ".lock") // seedStore left the real lock file
+			if err := os.Mkdir(Path()+".lock", 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if got := MigrateKey(); got != KeyStateUnreadable {
+				t.Fatalf("MigrateKey with the lock unavailable = %q, want %q", got, KeyStateUnreadable)
+			}
+			if withStore && !opensWith(t, derived) {
+				t.Fatal("the store changed although the lock was never taken")
+			}
+		})
+	}
+}

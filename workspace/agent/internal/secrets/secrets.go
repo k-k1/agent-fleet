@@ -512,15 +512,20 @@ const (
 // AF_SECRET_KEY, under the store lock, and reports where it stands. It never rewrites a store
 // it could not open: the CP cannot see this home, and a guess would destroy credentials.
 func MigrateKey() string {
-	state := KeyStateNone
+	// Unreadable until shown otherwise: "none" lets the CP confirm the home, so it is only
+	// ever the answer of a look made under the lock that found no store. A lock that cannot
+	// be taken (an I/O error, a file system without flock) must not read as "no store".
+	state := KeyStateUnreadable
 	storeMu.Lock()
 	defer storeMu.Unlock()
 	err := withFileLock(func() error {
 		if agentSecretKey() == nil {
+			state = KeyStateNone
 			return nil
 		}
 		ct, err := os.ReadFile(Path())
 		if os.IsNotExist(err) {
+			state = KeyStateNone
 			return nil
 		}
 		if err != nil {
