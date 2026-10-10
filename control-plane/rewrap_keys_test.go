@@ -294,7 +294,7 @@ func TestRewrapKeysUnreadableAndChangedRows(t *testing.T) {
 	local := newLocalCustodian(testMaster(t))
 	seeds, _ := seedLegacyRows(t, st, local)
 	// A value no master key opens: counted, left as it is, and the run goes on.
-	if _, err := st.DB().ExecContext(ctx, `UPDATE tenant_idp SET secret_enc='bm90LXNlYWxlZA==' WHERE id='I1'`); err != nil {
+	if _, err := st.DB().ExecContext(ctx, `UPDATE tenant_idp SET secret_enc='af-test-fixture-unsealed' WHERE id='I1'`); err != nil {
 		t.Fatal(err)
 	}
 	targets := rewrapTargets(st)

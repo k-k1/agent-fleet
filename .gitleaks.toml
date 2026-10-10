@@ -25,6 +25,9 @@ regexes = [
   # 秘密検出）。「秘密らしい値」を入力に取るテストなので、高エントロピーの固定値が
   # 要る。実在しないと分かる af-test-fixture- 接頭辞を自分で付けた値だけを外す。
   '''af-test-fixture-[0-9a-z]+''',
+  # control-plane/rewrap_keys_test.go before 85017c3cf: base64 of the literal "not-sealed",
+  # a stored value no master key opens. Later commits use an af-test-fixture- value instead.
+  '''bm90LXNlYWxlZA==''',
 ]
 
 [[allowlists]]
