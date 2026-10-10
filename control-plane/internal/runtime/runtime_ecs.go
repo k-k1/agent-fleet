@@ -738,6 +738,15 @@ func (e *ecsRuntime) putSecrets(ctx context.Context) ([]ecstypes.Secret, error) 
 	if err := put("AF_SECRET_KEY_NEXT", "secret-key-next", e.keys.Next); err != nil {
 		return nil, err
 	}
+	if e.keys.Next == "" && e.keys.Key != "" {
+		// A home confirmed on its own key starts without NEXT. The parameter its migrating
+		// starts wrote would otherwise stay in SSM, unreferenced, until Destroy. It holds the
+		// same key secret-key now does, so a failed delete is logged and the start goes on.
+		name := fmt.Sprintf("/af-ws/%s/secret-key-next", e.name)
+		if _, err := e.ssm.DeleteParameter(ctx, &ssm.DeleteParameterInput{Name: aws.String(name)}); err != nil && !isAWSNotFound(err) {
+			log.Printf("ecs %s: delete the unused parameter %s: %v", e.name, name, err)
+		}
+	}
 	return out, nil
 }
 

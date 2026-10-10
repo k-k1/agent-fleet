@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -10,12 +11,18 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// runHomeDEKStatus is `af-cp home-dek-status`: a read-only count of how far the homes are on
-// their own credential-store key (AF_WORKSPACE_DEK=random, dek.go). It needs no custodian and
-// opens nothing; exit 2 when the store cannot be read.
+// runHomeDEKStatus is `af-cp home-dek-status [--remigrate <membership-id>]`: a read-only count of
+// how far the homes are on their own credential-store key (AF_WORKSPACE_DEK=random, dek.go).
+// --remigrate puts one confirmed home back to 'migrating', so its next start hands out the
+// derived key beside the home's key again: the way back for a home restored from a copy made
+// before its store moved, which the home's key alone does not open. It needs no custodian and
+// opens nothing; exit 2 on usage or a store that cannot be read, 1 when --remigrate found no
+// confirmed home by that id.
 func runHomeDEKStatus(args []string) {
-	if len(args) != 0 {
-		fmt.Fprintln(os.Stderr, "usage: af-cp home-dek-status")
+	fs := flag.NewFlagSet("home-dek-status", flag.ContinueOnError)
+	remigrate := fs.String("remigrate", "", "membership id of a confirmed home to put back to migrating")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "usage: af-cp home-dek-status [--remigrate <membership-id>]")
 		os.Exit(2)
 	}
 	st, where, err := openRewrapStore()
@@ -25,10 +32,28 @@ func runHomeDEKStatus(args []string) {
 	}
 	defer st.Close()
 	log.Printf("home-dek-status: %s", where)
-	if err := printHomeDEKStatus(context.Background(), st, os.Stdout); err != nil {
+	ctx := context.Background()
+	if *remigrate != "" {
+		os.Exit(remigrateHomeDEK(ctx, st, *remigrate, os.Stdout))
+	}
+	if err := printHomeDEKStatus(ctx, st, os.Stdout); err != nil {
 		log.Printf("home-dek-status: %v", err)
 		os.Exit(2)
 	}
+}
+
+func remigrateHomeDEK(ctx context.Context, st *store.SQL, membershipID string, w io.Writer) int {
+	ok, err := st.RemigrateHomeDEK(ctx, membershipID)
+	switch {
+	case err != nil:
+		log.Printf("home-dek-status: remigrate: %v", err)
+		return 2
+	case !ok:
+		fmt.Fprintf(w, "no confirmed home key for membership %s; nothing changed\n", membershipID)
+		return 1
+	}
+	fmt.Fprintf(w, "membership %s is migrating again; restart its workspace to re-seal the store\n", membershipID)
+	return 0
 }
 
 func printHomeDEKStatus(ctx context.Context, st *store.SQL, w io.Writer) error {

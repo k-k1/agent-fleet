@@ -56,3 +56,49 @@ func TestCountHomeDEKs(t *testing.T) {
 		}
 	}
 }
+
+func TestConfirmAndRemigrateHomeDEK(t *testing.T) {
+	ctx := context.Background()
+	for name, st := range homeOpStores(t) {
+		ws := homeOpWorkspace(t, st)
+		if _, err := st.InsertHomeDEK(ctx, HomeDEK{MembershipID: ws.MembershipID, Ciphertext: "sealed", KeyRef: ws.TenantID}); err != nil {
+			t.Fatal(err)
+		}
+		read, _, _ := st.GetHomeDEK(ctx, ws.MembershipID)
+		other := read
+		other.Ciphertext = "other"
+		if ok, err := st.ConfirmHomeDEK(ctx, other); err != nil || ok {
+			t.Fatalf("%s: confirm of another key = %v, %v", name, ok, err)
+		}
+		if ok, err := st.ConfirmHomeDEK(ctx, read); err != nil || !ok {
+			t.Fatalf("%s: confirm = %v, %v", name, ok, err)
+		}
+		d, _, _ := st.GetHomeDEK(ctx, ws.MembershipID)
+		if d.Scheme != HomeDEKRandom || d.MigratedAt == "" {
+			t.Fatalf("%s: after confirm scheme %q migrated_at %q", name, d.Scheme, d.MigratedAt)
+		}
+		if ok, _ := st.ConfirmHomeDEK(ctx, read); ok {
+			t.Fatalf("%s: a second confirm claimed the row", name)
+		}
+		if ok, err := st.RemigrateHomeDEK(ctx, ws.MembershipID); err != nil || !ok {
+			t.Fatalf("%s: remigrate = %v, %v", name, ok, err)
+		}
+		after, _, _ := st.GetHomeDEK(ctx, ws.MembershipID)
+		if after.Scheme != HomeDEKMigrating || after.MigratedAt != "" || after.Ciphertext != "sealed" || after.ConfirmEpoch != read.ConfirmEpoch+1 {
+			t.Fatalf("%s: after remigrate %+v", name, after)
+		}
+		// The row read before the remigrate matches it again in key and scheme, not in epoch.
+		if ok, _ := st.ConfirmHomeDEK(ctx, read); ok {
+			t.Fatalf("%s: a confirm read before the remigrate claimed the row", name)
+		}
+		if ok, err := st.ConfirmHomeDEK(ctx, after); err != nil || !ok {
+			t.Fatalf("%s: confirm with the current epoch = %v, %v", name, ok, err)
+		}
+		if ok, _ := st.RemigrateHomeDEK(ctx, ws.MembershipID); !ok {
+			t.Fatalf("%s: remigrate again failed", name)
+		}
+		if ok, _ := st.RemigrateHomeDEK(ctx, ws.MembershipID); ok {
+			t.Fatalf("%s: remigrate of a migrating home claimed the row", name)
+		}
+	}
+}

@@ -116,11 +116,14 @@ func TestMigrateKeyNeverRewritesWhatItCannotOpen(t *testing.T) {
 }
 
 func TestMigrateKeyStates(t *testing.T) {
-	t.Run("no store", func(t *testing.T) {
+	t.Run("no store, no next key", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
-		keyEnv(t, testKey(1), testKey(2))
+		keyEnv(t, testKey(1), "")
 		if got := MigrateKey(); got != KeyStateNone {
 			t.Fatalf("MigrateKey = %q, want %q", got, KeyStateNone)
+		}
+		if _, err := os.Stat(Path()); !os.IsNotExist(err) {
+			t.Fatalf("a store was created without a next key (%v)", err)
 		}
 	})
 	t.Run("no next key", func(t *testing.T) {
@@ -249,5 +252,78 @@ func TestMigrateKeyWaitsForTheFileLock(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("MigrateKey did not finish once the lock was released")
+	}
+}
+
+func TestNextKeyInUse(t *testing.T) {
+	for _, tc := range []struct {
+		derived, next string
+		want          bool
+	}{
+		{testKey(1), testKey(2), true},
+		{testKey(1), "", false},
+		{testKey(1), "not-hex", false},
+		{"", testKey(2), false},
+	} {
+		keyEnv(t, tc.derived, tc.next)
+		if got := NextKeyInUse(); got != tc.want {
+			t.Errorf("NextKeyInUse(derived=%v, next=%q) = %v", tc.derived != "", tc.next, got)
+		}
+	}
+}
+
+// "none" is what lets the CP confirm a home, so a store that could not even be looked at must
+// never report it: a lock that cannot be taken reads as unreadable.
+func TestMigrateKeyLockFailureIsNotNone(t *testing.T) {
+	for name, withStore := range map[string]bool{"with a store": true, "without a store": false} {
+		t.Run(name, func(t *testing.T) {
+			derived := testKey(1)
+			if withStore {
+				seedStore(t, derived)
+			} else {
+				t.Setenv("HOME", t.TempDir())
+				if err := os.MkdirAll(filepath.Dir(Path()), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			keyEnv(t, derived, testKey(2))
+			// A directory where the lock file goes: OpenFile fails before any look at the store.
+			_ = os.Remove(Path() + ".lock") // seedStore left the real lock file
+			if err := os.Mkdir(Path()+".lock", 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if got := MigrateKey(); got != KeyStateUnreadable {
+				t.Fatalf("MigrateKey with the lock unavailable = %q, want %q", got, KeyStateUnreadable)
+			}
+			if withStore && !opensWith(t, derived) {
+				t.Fatal("the store changed although the lock was never taken")
+			}
+		})
+	}
+}
+
+// With no store yet and the home moving to its own key, the boot creates an empty store under
+// NEXT, so a writer that holds only the derived key (an earlier task still running, its git
+// helper) cannot create one under that key after the report.
+func TestMigrateKeyCreatesTheStoreUnderNext(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	derived, next := testKey(1), testKey(2)
+	keyEnv(t, derived, next)
+	if got := MigrateKey(); got != KeyStateCurrent {
+		t.Fatalf("MigrateKey with no store = %q, want %q", got, KeyStateCurrent)
+	}
+	if !opensWith(t, next) {
+		t.Fatal("the created store does not open with the home's key")
+	}
+	// The derived-only writer, after the report.
+	keyEnv(t, derived, "")
+	if err := Update(func(s *Data) error {
+		s.Git["git.example.com"] = GitEntry{User: "u", Token: "af-test-fixture-late"}
+		return nil
+	}); err == nil {
+		t.Fatal("a derived-only writer wrote the store")
+	}
+	if !opensWith(t, next) {
+		t.Fatal("the derived-only writer replaced the store")
 	}
 }

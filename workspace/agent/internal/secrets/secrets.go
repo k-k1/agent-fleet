@@ -465,6 +465,11 @@ func nextSecretKey() []byte {
 	return b
 }
 
+// NextKeyInUse reports whether the store is sealed under AF_SECRET_KEY_NEXT. The CP reads it
+// beside MigrateKey's state on /healthz: without it, "current" only says the store opens with
+// AF_SECRET_KEY, which is not the home's key while the home is migrating.
+func NextKeyInUse() bool { return nextSecretKey() != nil }
+
 // fallbackSecretKey is the key a store may still be sealed with while it moves to
 // AF_SECRET_KEY_NEXT: AF_SECRET_KEY. nil when there is no NEXT.
 func fallbackSecretKey() []byte {
@@ -496,10 +501,10 @@ func openStore(ct []byte) (plain []byte, usedFallback bool, err error) {
 // Key states MigrateKey reports (the Agent's /healthz secrets_key). They name a state, never
 // a key or its length.
 const (
-	KeyStateNone       = "none"       // no store yet, or no key (plaintext dev store)
+	KeyStateNone       = "none"       // no store yet and no NEXT, or no key (plaintext dev store)
 	KeyStateCurrent    = "current"    // the store opens with the sealing key
 	KeyStateMigrated   = "migrated"   // it opened with AF_SECRET_KEY and is now sealed under NEXT
-	KeyStateDerived    = "derived"    // it opened with AF_SECRET_KEY and the re-seal failed
+	KeyStateDerived    = "derived"    // the store could not be put under NEXT (re-seal or creation failed)
 	KeyStateUnreadable = "unreadable" // neither key opens it; nothing was rewritten
 )
 
@@ -507,15 +512,34 @@ const (
 // AF_SECRET_KEY, under the store lock, and reports where it stands. It never rewrites a store
 // it could not open: the CP cannot see this home, and a guess would destroy credentials.
 func MigrateKey() string {
-	state := KeyStateNone
+	// Unreadable until shown otherwise: "none" lets the CP confirm the home, so it is only
+	// ever the answer of a look made under the lock that found no store. A lock that cannot
+	// be taken (an I/O error, a file system without flock) must not read as "no store".
+	state := KeyStateUnreadable
 	storeMu.Lock()
 	defer storeMu.Unlock()
 	err := withFileLock(func() error {
 		if agentSecretKey() == nil {
+			state = KeyStateNone
 			return nil
 		}
 		ct, err := os.ReadFile(Path())
 		if os.IsNotExist(err) {
+			if nextSecretKey() == nil {
+				state = KeyStateNone
+				return nil
+			}
+			// No store yet, while the home moves to its own key: create an empty one under
+			// NEXT now. Left absent, a writer that holds only AF_SECRET_KEY (an earlier task
+			// still running beside this one, or its git helper) could create one under the
+			// derived key after this report, and a home confirmed on "no store" would then
+			// hold a store its key does not open. An existing store under NEXT is one that
+			// writer refuses to touch.
+			if err := (&Data{Git: map[string]GitEntry{}}).save(); err != nil {
+				state = KeyStateDerived
+				return fmt.Errorf("create the store under the home's key: %w", err)
+			}
+			state = KeyStateCurrent
 			return nil
 		}
 		if err != nil {

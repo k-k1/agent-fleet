@@ -25,20 +25,37 @@ func (m *manager) legacyDEK(userKey string) []byte {
 	return mac.Sum(nil)
 }
 
-// resolveDEK returns the credential-store keys to inject for a workspace's start: Key, the
-// derived DEK stored wrapped by the tenant KEK (docs/15 P3-3), and Next, the home's random
-// key once the deployment has turned it on (resolveHomeDEK). Zero in dev (no
-// master/custodian) so the Agent stores secrets in plaintext as before.
+// resolveDEK returns the credential-store keys to inject for a workspace's start
+// (resolveStartKeys).
 func (m *manager) resolveDEK(ctx context.Context, ws store.Workspace, userKey string) (runtime.SecretKeys, error) {
-	key, err := m.resolveWrappedDEK(ctx, ws, userKey)
-	if err != nil || key == "" {
-		return runtime.SecretKeys{}, err
+	keys, _, err := m.resolveStartKeys(ctx, ws, userKey)
+	return keys, err
+}
+
+// resolveStartKeys returns the keys a start injects, and the home's home_dek row when it has
+// one. Zero in dev (no master/custodian) so the Agent stores secrets in plaintext as before.
+//
+//   - no home key: Key is the derived DEK stored wrapped by the tenant KEK (docs/15 P3-3).
+//   - 'migrating': Key is the derived DEK and Next the home's key; the Agent re-seals the
+//     store under Next and the CP confirms it from /healthz (home_dek_confirm.go).
+//   - 'random': Key is the home's key and there is no Next. The derived key is not handed
+//     out any more; the confirmed store does not need it.
+func (m *manager) resolveStartKeys(ctx context.Context, ws store.Workspace, userKey string) (runtime.SecretKeys, *store.HomeDEK, error) {
+	if len(m.master32) == 0 || m.custodian == nil {
+		return runtime.SecretKeys{}, nil, nil
 	}
-	next, err := m.resolveHomeDEK(ctx, ws)
+	home, homeKey, err := m.resolveHomeDEK(ctx, ws)
 	if err != nil {
-		return runtime.SecretKeys{}, err
+		return runtime.SecretKeys{}, nil, err
 	}
-	return runtime.SecretKeys{Key: key, Next: next}, nil
+	if home != nil && home.Scheme == store.HomeDEKRandom {
+		return runtime.SecretKeys{Key: homeKey}, home, nil
+	}
+	key, err := m.resolveWrappedDEK(ctx, ws, userKey)
+	if err != nil {
+		return runtime.SecretKeys{}, nil, err
+	}
+	return runtime.SecretKeys{Key: key, Next: homeKey}, home, nil
 }
 
 // resolveWrappedDEK returns the hex derived DEK. On first use it mints the legacy DEK, wraps
@@ -69,36 +86,37 @@ func (m *manager) resolveWrappedDEK(ctx context.Context, ws store.Workspace, use
 	return hex.EncodeToString(dek), nil
 }
 
-// resolveHomeDEK returns the hex random key of the workspace's home (ADR 0005 addendum
-// 2026-10-10), minting it on the first start after AF_WORKSPACE_DEK=random. A home that has
+// resolveHomeDEK returns the home_dek row of the workspace's home and its hex key (ADR 0005
+// addendum 2026-10-10), minting it on the first start after AF_WORKSPACE_DEK=random; nil and
+// "" for a home without one. A home that has
 // one keeps using it whatever the flag says now, because its Agent may already have re-sealed
 // the store under it. Any custodian error fails the start: there is no fallback to the
 // derived key alone, which would leave a re-sealed store unopenable without saying why.
-func (m *manager) resolveHomeDEK(ctx context.Context, ws store.Workspace) (string, error) {
+func (m *manager) resolveHomeDEK(ctx context.Context, ws store.Workspace) (*store.HomeDEK, string, error) {
 	if ws.MembershipID == "" {
-		return "", nil
+		return nil, "", nil
 	}
 	d, ok, err := m.store.GetHomeDEK(ctx, ws.MembershipID)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	if !ok {
 		if !m.homeDEKRandom {
-			return "", nil
+			return nil, "", nil
 		}
 		if d, err = m.mintHomeDEK(ctx, ws); err != nil {
-			return "", err
+			return nil, "", err
 		}
 	}
 	key, err := m.custodian.Unwrap(ctx, d.KeyRef, d.Ciphertext)
 	if err != nil {
-		return "", fmt.Errorf("open the home's credential-store key: %w", err)
+		return nil, "", fmt.Errorf("open the home's credential-store key: %w", err)
 	}
 	defer clear(key)
 	if len(key) != 32 {
-		return "", errors.New("the home's credential-store key is malformed")
+		return nil, "", errors.New("the home's credential-store key is malformed")
 	}
-	return hex.EncodeToString(key), nil
+	return &d, hex.EncodeToString(key), nil
 }
 
 // mintHomeDEK seals a fresh random key for the home and stores it, or returns the one a

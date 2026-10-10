@@ -125,7 +125,8 @@ func serve() {
 	}
 	// Re-seal the credential store under the home's own key when the CP sent one, before
 	// anything below reads or writes the store.
-	secretsKeyState = secrets.MigrateKey()
+	secretsKeyState, secretsKeyNext = secrets.MigrateKey(), secrets.NextKeyInUse()
+	secretsKeyStart = os.Getenv("AF_HOME_KEY_START")
 	// Fold any pre-A3 plaintext credential files into the encrypted store.
 	migrateLegacySecrets()
 	// Seed the CP-injected internal git token (docs/reference/internal-git-provider)
@@ -329,11 +330,18 @@ func serve() {
 	}
 }
 
-// secretsKeyState is secrets.MigrateKey's answer at boot; set before the listener serves.
-var secretsKeyState = secrets.KeyStateNone
+// secretsKeyState is secrets.MigrateKey's answer at boot, secretsKeyNext whether the store is
+// sealed under AF_SECRET_KEY_NEXT, and secretsKeyStart the nonce of the CP start that booted
+// this Agent (AF_HOME_KEY_START), which ties the report to that start; all set before the
+// listener serves.
+var (
+	secretsKeyState = secrets.KeyStateUnreadable
+	secretsKeyNext  bool
+	secretsKeyStart string
+)
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "secrets_key": secretsKeyState})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "secrets_key": secretsKeyState, "secrets_key_next": secretsKeyNext, "secrets_key_start": secretsKeyStart})
 }
 
 // --- small helpers ---
