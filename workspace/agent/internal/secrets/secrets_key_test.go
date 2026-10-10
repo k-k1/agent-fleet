@@ -116,11 +116,14 @@ func TestMigrateKeyNeverRewritesWhatItCannotOpen(t *testing.T) {
 }
 
 func TestMigrateKeyStates(t *testing.T) {
-	t.Run("no store", func(t *testing.T) {
+	t.Run("no store, no next key", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
-		keyEnv(t, testKey(1), testKey(2))
+		keyEnv(t, testKey(1), "")
 		if got := MigrateKey(); got != KeyStateNone {
 			t.Fatalf("MigrateKey = %q, want %q", got, KeyStateNone)
+		}
+		if _, err := os.Stat(Path()); !os.IsNotExist(err) {
+			t.Fatalf("a store was created without a next key (%v)", err)
 		}
 	})
 	t.Run("no next key", func(t *testing.T) {
@@ -296,5 +299,31 @@ func TestMigrateKeyLockFailureIsNotNone(t *testing.T) {
 				t.Fatal("the store changed although the lock was never taken")
 			}
 		})
+	}
+}
+
+// With no store yet and the home moving to its own key, the boot creates an empty store under
+// NEXT, so a writer that holds only the derived key (an earlier task still running, its git
+// helper) cannot create one under that key after the report.
+func TestMigrateKeyCreatesTheStoreUnderNext(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	derived, next := testKey(1), testKey(2)
+	keyEnv(t, derived, next)
+	if got := MigrateKey(); got != KeyStateCurrent {
+		t.Fatalf("MigrateKey with no store = %q, want %q", got, KeyStateCurrent)
+	}
+	if !opensWith(t, next) {
+		t.Fatal("the created store does not open with the home's key")
+	}
+	// The derived-only writer, after the report.
+	keyEnv(t, derived, "")
+	if err := Update(func(s *Data) error {
+		s.Git["git.example.com"] = GitEntry{User: "u", Token: "af-test-fixture-late"}
+		return nil
+	}); err == nil {
+		t.Fatal("a derived-only writer wrote the store")
+	}
+	if !opensWith(t, next) {
+		t.Fatal("the derived-only writer replaced the store")
 	}
 }

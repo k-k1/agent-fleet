@@ -185,15 +185,16 @@ boot. The `ecs` / `ecs-ec2` stacks do not expose it as a parameter yet.
 - **Moving a store to it.** The first start after you turn it on mints the home's key, and the
   Control Plane passes it to the workspace beside the derived key. At boot the workspace opens
   `secrets.enc` with either one and re-seals it under the home's key. A store that neither key
-  opens is not touched. The workspace's `/healthz` reports the outcome as `secrets_key`
-  (`none`, `current`, `migrated`, `derived` when the re-seal failed, `unreadable`) and
+  opens is not touched. A home with no store yet gets an empty one under the home's key at
+  that boot, so that no writer holding only the derived key can create one under it later.
+  The workspace's `/healthz` reports the outcome as `secrets_key` (`none`, `current`,
+  `migrated`, `derived` when the store could not be put under the home's key, `unreadable`) and
   `secrets_key_next` (whether it sealed under the home's key), never a key.
 - **Confirming it.** After such a start the Control Plane waits for that report, and only for
   the one from the workspace that start launched: each start passes a fresh identifier
   (`AF_HOME_KEY_START`, not a secret) that the workspace echoes as `secrets_key_start`, so an
   answer from an earlier task or another workspace is ignored, and a redirect is not followed.
-  When the workspace sealed under the home's key and reports `migrated`, `current` or `none`
-  (`none` only when it could look and found no store), the
+  When the workspace sealed under the home's key and reports `migrated` or `current`, the
   Control Plane marks the home confirmed, and from the **next** start the workspace gets the
   home's key alone (as `AF_SECRET_KEY`) and no derived key; on `ecs` / `ecs-ec2` that start also
   deletes the `secret-key-next` parameter. A workspace that is already running keeps both keys

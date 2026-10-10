@@ -200,13 +200,18 @@ has moved. Migration 0091 / pg 0076 adds `home_dek.confirm_epoch` (below).
 
 - **What confirms.** After a start that injected `AF_SECRET_KEY_NEXT`, the CP polls the new
   Agent's `/healthz` (15 minutes at most). Only a report that the Agent sealed under NEXT
-  (`secrets_key_next: true`, added for this) and found `migrated`, `current` or `none` marks
+  (`secrets_key_next: true`, added for this) and found `migrated` or `current` marks
   the home `random`. Without that flag, `current` only says the store opens with
   `AF_SECRET_KEY`, so an Agent of part A, or one that ignored a malformed NEXT, never
   confirms. The update is conditioned on the sealed key and on `migrating`, so a report about
   another key, or a second report, changes nothing. `unreadable` and `derived` are logged and
-  change nothing, and nothing is deleted. The Agent reports `none` only after looking under the
-  store lock and finding no file; a lock it cannot take reads as `unreadable`.
+  change nothing, and nothing is deleted. `none` does not confirm: "no store at boot" says
+  nothing about a store a derived-key writer (an earlier task still running, its git helper)
+  could create afterwards. An Agent with NEXT therefore creates an empty store under NEXT
+  under the lock when there is none and reports `current`; a writer with the derived key alone
+  then finds a store it cannot open and refuses to write it (an Agent of part A or later; one
+  from before part A has no such guard, as above). A lock it cannot take reads as
+  `unreadable`.
 - **Whose report.** The endpoint does not identify the Agent: Service Connect can route to a
   task still draining from an earlier start, and a native port can be another home's by now.
   Each start of a home with a key carries a fresh nonce (`AF_HOME_KEY_START`, plain env, not a

@@ -161,11 +161,14 @@ migration 0091 / pg 0076 で `home_dek.confirm_epoch` を足す（後述）。
 
 - **何で確認するか。** `AF_SECRET_KEY_NEXT` を渡した起動の後、CP は新しい Agent の `/healthz` を（最大 15 分）
   ポーリングする。ホームを `random` にするのは、Agent が NEXT で封じた（このために足した `secrets_key_next: true`）
-  うえで `migrated`・`current`・`none` を返した報告だけ。このフラグが無ければ `current` は `AF_SECRET_KEY` で
+  うえで `migrated`・`current` を返した報告だけ。このフラグが無ければ `current` は `AF_SECRET_KEY` で
   開けるという意味でしかないので、パート A の Agent や、不正な NEXT を無視した Agent は確認しない。更新は封じた鍵と
   `migrating` を条件にするので、別の鍵についての報告や二度目の報告は何も変えない。`unreadable` と `derived` は
-  ログに残すだけで何も変えず、何も消さない。Agent が `none` を返すのは、ストアのロック下で見てファイルが無かった
-  ときだけで、取れないロックは `unreadable` になる。
+  ログに残すだけで何も変えず、何も消さない。`none` では確認しない。「起動時にストアが無かった」は、導いた鍵を
+  持つ書き手（まだ動いている以前のタスクや、その git の資格情報ヘルパー）が後から作るストアについて何も言わない。
+  そのため NEXT を持つ Agent は、ストアが無ければロック下で NEXT で封じた空のストアを作って `current` を返す。
+  導いた鍵しか持たない書き手は開けないストアを見つけ、書き込みを拒む（パート A 以降の Agent の場合。それより前の
+  Agent にはこの保護が無いのは前述のとおり）。取れないロックは `unreadable` になる。
 - **誰の報告か。** エンドポイントは Agent を特定しない。Service Connect は以前の起動のまだ止まりきっていない
   タスクに振り分けうるし、native のポートはもう別のホームのものかもしれない。鍵を持つホームの起動ごとに新しい
   nonce（`AF_HOME_KEY_START`、平の環境変数で秘密ではない）を渡し、Agent はそれを `secrets_key_start` として返し、

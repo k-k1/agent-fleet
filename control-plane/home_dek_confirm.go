@@ -125,7 +125,7 @@ func (m *manager) watchHomeDEK(rt runtime.Runtime, home store.HomeDEK, start str
 }
 
 // applyHomeDEKReport confirms a migrating home only on a report from an Agent that sealed
-// under the home's key and holds a readable (or no) store. Anything else changes nothing,
+// under the home's key and holds a store that opens with it. Anything else changes nothing,
 // and nothing is ever deleted here.
 func (m *manager) applyHomeDEKReport(ctx context.Context, home store.HomeDEK, r agentKeyReport) {
 	switch {
@@ -141,7 +141,10 @@ func (m *manager) applyHomeDEKReport(ctx context.Context, home store.HomeDEK, r 
 	case home.Scheme != store.HomeDEKMigrating:
 	case !r.Next:
 		log.Printf("home key of membership %s: the Agent did not use the home's key; it stays migrating", home.MembershipID)
-	case r.State == agentKeyNone || r.State == agentKeyCurrent || r.State == agentKeyMigrated:
+	// Not "none": an Agent with NEXT in use creates its store under NEXT when there is none
+	// and reports "current". "No store" at boot says nothing about a store a derived-key
+	// writer could create afterwards.
+	case r.State == agentKeyCurrent || r.State == agentKeyMigrated:
 		ok, err := m.store.ConfirmHomeDEK(ctx, home)
 		switch {
 		case err != nil:

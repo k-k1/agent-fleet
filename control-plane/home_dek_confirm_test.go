@@ -66,7 +66,8 @@ func TestApplyHomeDEKReport(t *testing.T) {
 	}{
 		{"migrated with next", agentKeyReport{State: agentKeyMigrated, Next: true}, true},
 		{"current with next", agentKeyReport{State: agentKeyCurrent, Next: true}, true},
-		{"no store with next", agentKeyReport{State: agentKeyNone, Next: true}, true},
+		// An Agent with NEXT never reports none (it creates the store); one that does is not trusted.
+		{"no store with next", agentKeyReport{State: agentKeyNone, Next: true}, false},
 		// "current" without NEXT in use only says the store opens with AF_SECRET_KEY.
 		{"current without next", agentKeyReport{State: agentKeyCurrent}, false},
 		{"unreadable", agentKeyReport{State: agentKeyUnreadable, Next: true}, false},
