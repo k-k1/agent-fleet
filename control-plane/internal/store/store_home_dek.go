@@ -64,11 +64,6 @@ func (s *SQL) InsertHomeDEK(ctx context.Context, d HomeDEK) (HomeDEK, error) {
 	return got, nil
 }
 
-func (s *SQL) DeleteHomeDEK(ctx context.Context, membershipID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM home_dek WHERE membership_id=?`, membershipID)
-	return err
-}
-
 func (s *SQL) CountHomeDEKs(ctx context.Context) (HomeDEKCounts, error) {
 	var c HomeDEKCounts
 	err := s.db.QueryRowContext(ctx, `SELECT

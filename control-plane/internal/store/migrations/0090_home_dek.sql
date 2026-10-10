@@ -2,7 +2,9 @@
 --
 -- Keyed by membership, not workspace: a home can outlive its workspace row (DeleteWorkspace
 -- drops wrapped_dek), and a random key that went with the row would make a kept home's
--- secrets.enc unreadable. The row is removed only when the home itself is destroyed.
+-- secrets.enc unreadable. Nothing deletes a row yet: an adapter's Destroy does not prove the
+-- whole home is gone (ecs without the home task removes only access points), and a key dropped
+-- while any of the home survives makes what survives unreadable.
 --
 -- ciphertext is the key sealed by the key custodian under key_ref (the tenant id), the
 -- envelope wrapped_dek uses. scheme is 'migrating' while the CP still injects the derived key

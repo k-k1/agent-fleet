@@ -156,53 +156,28 @@ func TestResolveDEKMintFailsClosed(t *testing.T) {
 	}
 }
 
-// recordingFinishStore records what finishHomeOperation asks the store to do.
-type recordingFinishStore struct {
-	store.Store
-	got store.HomeOperationFinish
-}
-
-func (r *recordingFinishStore) FinishHomeOperation(_ context.Context, _ string, f store.HomeOperationFinish) (bool, error) {
-	r.got = f
-	return false, nil
-}
-
-// A Destroy that left anything behind keeps the home key: what is left may be found again
-// by the member's next home, and dropping the key would make its store unreadable.
-func TestFinishDestroyForgetsHomeKeyOnlyWithoutLeftovers(t *testing.T) {
-	for _, tc := range []struct {
-		leftovers []string
-		want      bool
-	}{{nil, true}, {[]string{"efs:/home/m1"}, false}} {
-		rec := &recordingFinishStore{}
-		mgr := &manager{store: rec}
-		mgr.finishHomeOperation(store.HomeOperation{ID: "op", Kind: store.HomeOpDestroy}, nil, tc.leftovers)
-		if !rec.got.DeleteWorkspace || rec.got.DeleteHomeDEK != tc.want {
-			t.Errorf("leftovers %v: finish = %+v, want DeleteHomeDEK=%v", tc.leftovers, rec.got, tc.want)
-		}
-	}
-	rec := &recordingFinishStore{}
-	(&manager{store: rec}).finishHomeOperation(store.HomeOperation{ID: "op", Kind: store.HomeOpAdminErase}, nil, nil)
-	if rec.got.DeleteHomeDEK {
-		t.Error("an administrator's Clean home dropped the home key")
-	}
-}
-
-func TestForgetHomeDEKKeepsKeyWithLeftovers(t *testing.T) {
+// Destroy does not drop the home key. An adapter's Destroy does not prove the whole home is
+// gone (ecs without the home task removes the access points and leaves the EFS directories,
+// and a retry after a partial failure reports no leftovers), so a dropped key could make a
+// surviving secrets.enc unreadable.
+func TestDestroyKeepsHomeDEK(t *testing.T) {
 	ctx := context.Background()
-	st := ssmAPIStores(t)["sqlite"]
-	ws := homeDEKWorkspace(t, st, "W4")
-	if _, err := st.InsertHomeDEK(ctx, store.HomeDEK{MembershipID: ws.MembershipID, Ciphertext: "sealed", KeyRef: ws.TenantID}); err != nil {
-		t.Fatal(err)
-	}
-	mgr := &manager{store: st}
-	mgr.forgetHomeDEK(ctx, ws.MembershipID, []string{"efs:/home/m"})
-	if _, ok, _ := st.GetHomeDEK(ctx, ws.MembershipID); !ok {
-		t.Fatal("a destroy with leftovers dropped the home key")
-	}
-	mgr.forgetHomeDEK(ctx, ws.MembershipID, nil)
-	if _, ok, _ := st.GetHomeDEK(ctx, ws.MembershipID); ok {
-		t.Fatal("a complete destroy kept the home key")
+	for _, leftovers := range [][]string{nil, {"efs:fs-1/home/M-1"}} {
+		f := &destroyingFactory{leftovers: leftovers}
+		st, mgr, victim, tn := destroyFixture(t, f)
+		memID := membershipIDOf(t, st, victim, tn)
+		if _, err := st.InsertHomeDEK(ctx, store.HomeDEK{MembershipID: memID, Ciphertext: "sealed", KeyRef: tn.ID}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := mgr.destroyWorkspaceByMembership(ctx, memID); err != nil {
+			t.Fatalf("destroy (leftovers %v): %v", leftovers, err)
+		}
+		if f.destroyed != 1 {
+			t.Fatalf("precondition: Destroy ran %d times", f.destroyed)
+		}
+		if _, ok, err := st.GetHomeDEK(ctx, memID); err != nil || !ok {
+			t.Fatalf("destroy (leftovers %v) dropped the home key (ok=%v, err=%v)", leftovers, ok, err)
+		}
 	}
 }
 
@@ -221,6 +196,70 @@ func TestPrintHomeDEKStatus(t *testing.T) {
 	for _, want := range []string{"migrating: 1\n", "confirmed: 0\n", "no key of its own yet: 1\n"} {
 		if !strings.Contains(b.String(), want) {
 			t.Errorf("status lacks %q:\n%s", want, b.String())
+		}
+	}
+}
+
+// keyRecordingFactory records the keys of every runtime built and of every one started.
+type keyRecordingFactory struct {
+	built, started []runtime.SecretKeys
+}
+
+type keyRecordingRuntime struct {
+	stubRuntime
+	f    *keyRecordingFactory
+	keys runtime.SecretKeys
+}
+
+func (r *keyRecordingRuntime) Start(context.Context) error {
+	r.f.started = append(r.f.started, r.keys)
+	return nil
+}
+
+func (f *keyRecordingFactory) New(_ runtime.Workspace, keys runtime.SecretKeys, _ []string) runtime.Runtime {
+	f.built = append(f.built, keys)
+	return &keyRecordingRuntime{stubRuntime: stubRuntime{state: "stopped"}, f: f, keys: keys}
+}
+
+// The memoized runtime holds the keys it was built with. Every real start resolves them
+// again, so a KMS key disabled since the memo was built stops the start instead of the memo
+// starting the workspace on keys the custodian would no longer open.
+func TestStartResolvesKeysEveryTime(t *testing.T) {
+	ctx := context.Background()
+	for _, preview := range []string{"", "preview.example"} {
+		f := &keyRecordingFactory{}
+		st, mgr, victim, tn := destroyFixture(t, f)
+		memID := membershipIDOf(t, st, victim, tn)
+		mgr.previewDomain = preview
+		mgr.master32 = testMaster(t)
+		kf := newFakeKMS(t)
+		mgr.custodian = newKMSCustodian(kf, kf.keyID, newLocalCustodian(mgr.master32), 0)
+		mgr.homeDEKRandom = true
+		mv, _, _ := st.GetMembershipByID(ctx, memID)
+		res, aerr := mgr.buildResolved(ctx, victim, mv)
+		if aerr != nil {
+			t.Fatal(aerr)
+		}
+		if len(f.built) == 0 || f.built[0].Next == "" {
+			t.Fatalf("precondition: the memo was built without the home key")
+		}
+		kf.err = errors.New("DisabledException")
+		res, aerr = mgr.buildResolved(ctx, victim, mv) // the memo, no custodian call
+		if aerr != nil {
+			t.Fatalf("precondition: the memo should answer without KMS: %v", aerr)
+		}
+		if aerr := newWorkspaceAPI(mgr, false).ensureWorkspaceStarted(ctx, res); aerr == nil {
+			t.Fatalf("preview %q: started with KMS refusing the keys", preview)
+		}
+		if len(f.started) != 0 {
+			t.Fatalf("preview %q: a runtime was started (%d)", preview, len(f.started))
+		}
+		kf.err = nil
+		if aerr := newWorkspaceAPI(mgr, false).ensureWorkspaceStarted(ctx, res); aerr != nil {
+			t.Fatalf("preview %q: start with KMS back: %v", preview, aerr)
+		}
+		if len(f.started) != 1 || f.started[0] != f.built[0] {
+			t.Fatalf("preview %q: started keys differ from the home's keys", preview)
 		}
 	}
 }

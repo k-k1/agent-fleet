@@ -178,16 +178,26 @@ its credential store (`secrets.enc`), sealed by KMS. It is accepted only with
 boot. The `ecs` / `ecs-ec2` stacks do not expose it as a parameter yet.
 
 - **The key belongs to the home, not the workspace.** Deleting and re-creating a workspace over
-  a kept home keeps the key. It is removed only when Destroy removes the whole home; a Destroy
-  that reports something left behind keeps it.
+  a kept home keeps the key. Nothing removes it yet, Destroy included: not every runtime can
+  prove the whole home is gone, and a key dropped while part of it survives makes that part
+  unreadable.
 - **Moving a store to it.** The first start after you turn it on mints the home's key, and the
   Control Plane passes it to the workspace beside the derived key. At boot the workspace opens
   `secrets.enc` with either one and re-seals it under the home's key. A store that neither key
   opens is not touched. The workspace's `/healthz` reports the outcome as `secrets_key`
   (`none`, `current`, `migrated`, `derived` when the re-seal failed, `unreadable`), never a key.
 - **What it shreds.** Once a home's store has been re-sealed, disabling the KMS key makes it
-  unreadable: the Control Plane can no longer open the home's key, and the key derived from
-  `AF_MASTER_KEY` no longer opens the file.
+  unreadable *at rest*: the Control Plane can no longer open the home's key to start the
+  workspace, and the key derived from `AF_MASTER_KEY` no longer opens the file. Until then the
+  key is still in use where it was already handed out:
+  - a **running workspace** keeps it in its environment, and its Agent, git helper and MCP
+    servers go on reading and writing the store without asking KMS. Stop the workspace.
+  - the **runtime's own copy** used to start it: the container's environment on docker, the
+    Kubernetes Secret, and on `ecs` / `ecs-ec2` the per-workspace SSM SecureString parameters
+    (`secret-key`, `secret-key-next`), which are encrypted with the account's SSM key, not
+    the custodian key, and stay until the workspace is destroyed.
+  - the Control Plane's **data-key cache** (`AF_KMS_DATA_KEY_CACHE_TTL`, 5 minutes by default).
+  Every start asks the custodian again, so a disabled key stops the next start.
 - **What it does not.** A home that has not been started since you turned it on is still on the
   derived key, and is **not** shredded by disabling the KMS key. `af-cp home-dek-status` counts
   them (read-only). Copies of a home made before its store was re-sealed (ecs-ec2 snapshots,

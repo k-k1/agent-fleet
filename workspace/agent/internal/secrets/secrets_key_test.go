@@ -3,8 +3,12 @@ package secrets
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"os"
+	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
 )
@@ -139,4 +143,111 @@ func TestMigrateKeyStates(t *testing.T) {
 			t.Fatal("AF_SECRET_KEY_NEXT alone must not seal the store")
 		}
 	})
+}
+
+func storeBytes(t *testing.T) []byte {
+	t.Helper()
+	b, err := os.ReadFile(Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// A re-seal whose write fails or falls short must leave the old store in place and say so.
+func TestMigrateKeyKeepsStoreWhenTheWriteFails(t *testing.T) {
+	failWrite := func(f func(*os.File, []byte) (int, error)) func() {
+		prev := writeTemp
+		writeTemp = f
+		return func() { writeTemp = prev }
+	}
+	for name, arm := range map[string]func() func(){
+		"error": func() func() {
+			return failWrite(func(*os.File, []byte) (int, error) { return 0, errors.New("file too large") })
+		},
+		"short": func() func() { return failWrite(func(f *os.File, b []byte) (int, error) { return f.Write(b[:1]) }) },
+		"fsync": func() func() {
+			prev := syncTemp
+			syncTemp = func(*os.File) error { return errors.New("input/output error") }
+			return func() { syncTemp = prev }
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			derived := testKey(1)
+			seedStore(t, derived)
+			before := storeBytes(t)
+			keyEnv(t, derived, testKey(2))
+			defer arm()()
+			if got := MigrateKey(); got != KeyStateDerived {
+				t.Fatalf("MigrateKey = %q, want %q", got, KeyStateDerived)
+			}
+			if !bytes.Equal(storeBytes(t), before) {
+				t.Fatal("a failed re-seal replaced the store")
+			}
+			left, _ := filepath.Glob(filepath.Join(filepath.Dir(Path()), ".secrets-*"))
+			if len(left) != 0 {
+				t.Fatalf("temp files left behind: %v", left)
+			}
+		})
+	}
+}
+
+// Load on a store that does not open hands back an empty snapshot with an error; saving that
+// snapshot must not write it over the store.
+func TestSaveRefusesToOverwriteAnUnreadableStore(t *testing.T) {
+	seedStore(t, testKey(3))
+	before := storeBytes(t)
+	for name, next := range map[string]string{"with next": testKey(2), "without next": ""} {
+		t.Run(name, func(t *testing.T) {
+			keyEnv(t, testKey(1), next)
+			s, err := Load()
+			if err == nil {
+				t.Fatal("Load opened a store sealed under another key")
+			}
+			s.Git["git.example.com"] = GitEntry{User: "u", Token: "af-test-fixture-new"}
+			if err := s.Save(); err == nil {
+				t.Fatal("Save wrote over a store it could not open")
+			}
+			if !bytes.Equal(storeBytes(t), before) {
+				t.Fatal("the unreadable store was overwritten")
+			}
+		})
+	}
+}
+
+// The git cred helper is another process; the re-seal must wait for its flock, or a write it
+// makes under the old key could land between our read and our rename and be lost.
+func TestMigrateKeyWaitsForTheFileLock(t *testing.T) {
+	derived := testKey(1)
+	seedStore(t, derived)
+	keyEnv(t, derived, testKey(2))
+	f, err := os.OpenFile(Path()+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan string, 1)
+	go func() { done <- MigrateKey() }()
+	select {
+	case got := <-done:
+		t.Fatalf("MigrateKey returned %q while another process held the store lock", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if !opensWith(t, derived) {
+		t.Fatal("the store was rewritten while another process held the lock")
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-done:
+		if got != KeyStateMigrated {
+			t.Fatalf("MigrateKey after the lock = %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("MigrateKey did not finish once the lock was released")
+	}
 }

@@ -628,10 +628,23 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	// idea of where it lives" state. Where preview is disabled for the deployment, or no
 	// slug could be prepared, use rt as-is — not getting a preview is no reason to block
 	// the start.
-	if armed := a.mgr.armPreviewForStart(ctx, res, extraEnv); armed != nil {
+	//
+	// The credential-store keys are resolved here, for this start, and a failure fails it.
+	// The runtime handed in may be a memo built long ago, holding keys a since-disabled KMS
+	// key would no longer open; starting it would defeat the fail-closed rule in dek.go.
+	keys, err := a.mgr.resolveDEK(ctx, res.ws, res.ident.UserKey)
+	if err != nil {
+		return internalErr(fmt.Errorf("credential-store keys for ws %s: %w", res.ws.ID, err))
+	}
+	if armed := a.mgr.armPreviewForStart(ctx, res, keys, extraEnv); armed != nil {
 		rt = armed
-	} else if fresh := a.mgr.refreshGitTokenForStart(ctx, res, extraEnv); fresh != nil {
+	} else if fresh := a.mgr.refreshGitTokenForStart(ctx, res, keys, extraEnv); fresh != nil {
 		rt = fresh // armPreviewForStart built its env just now; this covers the other starts
+	} else if keys != noSecretKeys {
+		// Rebuilt with this start's keys. With no keys (no master key, dev) there is nothing a
+		// memo could hold stale, and the runtime handed in is started as it is.
+		ws := a.mgr.withResolvedSize(ctx, res.ws)
+		rt = a.mgr.runtimeFor(ws, keys, append(a.mgr.workspaceExtraEnv(ctx, ws), extraEnv...)...)
 	}
 	// The previous automatic stop stops describing this workspace once a new launch is
 	// attempted, whether or not it succeeds: a Start that fails (secrets, home, launch)

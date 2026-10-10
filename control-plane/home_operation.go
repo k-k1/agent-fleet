@@ -121,7 +121,6 @@ func (m *manager) finishHomeOperation(op store.HomeOperation, err error, leftove
 	}
 	if err == nil {
 		f.DeleteWorkspace = op.Kind == store.HomeOpDestroy
-		f.DeleteHomeDEK = f.DeleteWorkspace && len(leftovers) == 0
 		f.StopWorkspace = op.Kind == store.HomeOpAdminErase
 	} else if op.Kind == store.HomeOpMemberWipe {
 		f.AutoStop = homeWipeFailure(err.Error())

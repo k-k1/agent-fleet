@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
@@ -115,18 +114,6 @@ func (m *manager) mintHomeDEK(ctx context.Context, ws store.Workspace) (store.Ho
 		return store.HomeDEK{}, fmt.Errorf("seal the home's credential-store key: %w", err)
 	}
 	return m.store.InsertHomeDEK(ctx, store.HomeDEK{MembershipID: ws.MembershipID, Ciphertext: ct, KeyRef: ws.TenantID})
-}
-
-// forgetHomeDEK drops a destroyed home's key, only when Destroy reported nothing left
-// behind: a leftover directory may be found again by the member's next home. A failure
-// leaves an unused sealed key, never an unreadable store, so it is logged and not returned.
-func (m *manager) forgetHomeDEK(ctx context.Context, membershipID string, leftovers []string) {
-	if len(leftovers) > 0 {
-		return
-	}
-	if err := m.store.DeleteHomeDEK(ctx, membershipID); err != nil {
-		log.Printf("destroy: forget the home key of membership %s: %v", membershipID, err)
-	}
 }
 
 // homeDEKModeRandom parses AF_WORKSPACE_DEK. "random" is refused unless the custodian is kms:

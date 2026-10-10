@@ -346,7 +346,7 @@ func TestStartWithACurrentMemoIsNotRebuilt(t *testing.T) {
 	if aerr != nil {
 		t.Fatal(aerr)
 	}
-	if fresh := mgr.refreshGitTokenForStart(ctx, res, nil); fresh != nil {
+	if fresh := mgr.refreshGitTokenForStart(ctx, res, noSecretKeys, nil); fresh != nil {
 		t.Fatal("rebuilt a runtime whose token epoch is current")
 	}
 }

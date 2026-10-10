@@ -143,8 +143,10 @@ future" is taken up, opt-in. The derived DEK and every decision above stand.
 - **Per home, not per workspace.** `home_dek` (migration 0090 / pg 0075) holds one random key
   per membership, sealed by the custodian under the tenant key ref. `DeleteWorkspace` drops
   `wrapped_dek` while the home may be kept, so a random key that went with the workspace row
-  would shred a kept home by accident. The row goes only when a Destroy removed the whole home
-  (no leftovers); orphans are an unused sealed key, never an unreadable store.
+  would shred a kept home by accident. Nothing deletes a row yet, Destroy included: an adapter's
+  Destroy does not prove the whole home is gone (ecs without the home task removes only the
+  access points, and a retry after a partial failure then reports no leftovers). A kept row is
+  an unused sealed key, never an unreadable store.
 - **Opt-in, kms only.** `AF_WORKSPACE_DEK=random`, refused at boot unless
   `AF_KEY_CUSTODIAN=kms`: under the local custodian the key would be wrapped by a
   master-derived KEK and buy nothing. A home that has a key keeps getting it after the flag is
@@ -158,13 +160,20 @@ future" is taken up, opt-in. The derived DEK and every decision above stand.
   key, so a new CP with an old workspace image loses nothing until the store has moved.
   `/healthz` reports `secrets_key` (a state name, never a key or length).
 - **Fail closed.** A custodian that cannot seal or open the home's key fails the start; it is
-  never started on the derived key alone.
+  never started on the derived key alone. The keys are resolved again at every real start, not
+  taken from the memoized runtime.
 
 Limits, stated plainly:
 
 - Homes not started since the flag was turned on stay derived and are **not** shredded by
   disabling the KMS key; `af-cp home-dek-status` counts them. Snapshots and backups taken
   before a store moved hold the derived-key file.
+- Disabling the key shreds the store at rest only. A running workspace keeps the key in its
+  environment and goes on using the store; the runtime keeps its own copy to start it (docker
+  container env, Kubernetes Secret, ECS SSM SecureStrings under the account's SSM key, kept
+  until Destroy); the CP's data-key cache holds it for one TTL.
+- The Agent's `Save` now refuses to write over a store it cannot open (the same rule `Update`
+  already had), so a member whose store is unreadable cannot overwrite it until it is removed.
 - Part A does not stop injecting the derived key; it no longer opens a moved store, and the
   confirm step that marks a home `random` and stops it is part B.
 - Downgrading the CP or the workspace image after a store moved, or losing `home_dek`, leaves

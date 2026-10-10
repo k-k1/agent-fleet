@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -731,7 +732,14 @@ func (s *Data) Save() error {
 	storeMu.Lock()
 	defer storeMu.Unlock()
 	return withFileLock(func() error {
-		if cur, err := load(); err == nil && s.ghBaseSet {
+		cur, err := load()
+		if err != nil {
+			// The stored file exists and does not open (wrong or half-delivered key, a store
+			// the boot migration left unreadable): writing this snapshot over it would destroy
+			// every credential in it. Update refuses the same way.
+			return err
+		}
+		if s.ghBaseSet {
 			ep, ok := s.Git["github.com"]
 			ce, cok := cur.Git["github.com"]
 			if (ghSnap{ok, ep}).sameConn(s.ghBase) && !(ghSnap{cok, ce}).sameConn(s.ghBase) {
@@ -772,13 +780,37 @@ func (s *Data) save() error {
 			return err
 		}
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(p), ".secrets-*")
+	return writeFileDurably(p, b)
+}
+
+// writeTemp is the temp-file write, a seam for the tests that make it fail or fall short.
+var writeTemp = func(f *os.File, b []byte) (int, error) { return f.Write(b) }
+
+// syncTemp is the temp file's fsync, the same kind of seam.
+var syncTemp = func(f *os.File) error { return f.Sync() }
+
+// writeFileDurably replaces p with b so that a crash or a failed write leaves either the old
+// file or the complete new one: the temp file is written in full and fsynced before the
+// rename, and the directory is fsynced after it so the rename itself survives a host crash.
+// Any error before the rename leaves p as it was. Without the syncs a re-seal could report
+// success while the only copy of the store sat in an unflushed inode.
+func writeFileDurably(p string, b []byte) error {
+	dir := filepath.Dir(p)
+	tmp, err := os.CreateTemp(dir, ".secrets-*")
 	if err != nil {
 		return err
 	}
 	tmpName := tmp.Name()
-	if err := tmp.Chmod(0o600); err == nil {
-		_, err = tmp.Write(b)
+	err = tmp.Chmod(0o600)
+	if err == nil {
+		var n int
+		n, err = writeTemp(tmp, b)
+		if err == nil && n != len(b) {
+			err = io.ErrShortWrite
+		}
+	}
+	if err == nil {
+		err = syncTemp(tmp)
 	}
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
@@ -791,7 +823,12 @@ func (s *Data) save() error {
 		os.Remove(tmpName)
 		return err
 	}
-	return nil
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 func aesSeal(key, plaintext []byte) ([]byte, error) {

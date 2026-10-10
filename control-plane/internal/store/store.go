@@ -1409,8 +1409,6 @@ type DEKStore interface {
 	// InsertHomeDEK stores d unless the home already has a key, and returns the key the home
 	// has afterwards, which is the other writer's when two raced.
 	InsertHomeDEK(ctx context.Context, d HomeDEK) (HomeDEK, error)
-	// DeleteHomeDEK forgets a destroyed home's key.
-	DeleteHomeDEK(ctx context.Context, membershipID string) error
 	// CountHomeDEKs is the home_dek tally an operator checks the migration against.
 	CountHomeDEKs(ctx context.Context) (HomeDEKCounts, error)
 }

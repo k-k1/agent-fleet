@@ -429,18 +429,13 @@ func (m *manager) runtimeForUnattended(ctx context.Context, res *resolved) (runt
 // and the runtime buildResolved assembled does not yet know this start's slug. "The URL was
 // issued but the app inside the container does not know it" is exactly a half-broken state
 // for anything that reads its own public URL out of env, Next.js being the usual case.
-func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, extraEnv []string) runtime.Runtime {
+func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, keys runtime.SecretKeys, extraEnv []string) runtime.Runtime {
 	if m.previewDomain == "" {
 		return nil
 	}
 	slug, err := m.rotatePreviewSlug(ctx, res.ws)
 	if err != nil {
 		log.Printf("preview slug for ws %s: %v (starting without preview URLs)", res.ws.ID, err)
-		return nil
-	}
-	keys, err := m.resolveDEK(ctx, res.ws, res.ident.UserKey)
-	if err != nil {
-		log.Printf("preview arm: resolve DEK for ws %s: %v (starting without preview URLs)", res.ws.ID, err)
 		return nil
 	}
 	ws := res.ws
@@ -458,17 +453,12 @@ func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, extraEn
 // the lifecycle lease, right before Start. A rotation on another replica in the moment
 // between this check and Start still goes unseen (docs/build/91 §91.5). extraEnv is
 // carried over, as armPreviewForStart does.
-func (m *manager) refreshGitTokenForStart(ctx context.Context, res *resolved, extraEnv []string) runtime.Runtime {
+func (m *manager) refreshGitTokenForStart(ctx context.Context, res *resolved, keys runtime.SecretKeys, extraEnv []string) runtime.Runtime {
 	if m.internalGitHost == "" || res.ws.MembershipID == "" {
 		return nil
 	}
 	epoch, ok, err := m.store.GitTokenEpoch(ctx, res.ws.MembershipID)
 	if err != nil || !ok || epoch == res.gitEpoch {
-		return nil
-	}
-	keys, err := m.resolveDEK(ctx, res.ws, res.ident.UserKey)
-	if err != nil {
-		log.Printf("internal git: rebuild for ws %s: resolve DEK: %v (starting with the token it had)", res.ws.ID, err)
 		return nil
 	}
 	ws := res.ws
@@ -894,7 +884,6 @@ func (m *manager) beginDestroyWorkspace(ctx context.Context, membershipID string
 			if err = lease.checkpoint(ctx); err == nil {
 				if err = m.store.DeleteWorkspace(ctx, ws.ID); err == nil {
 					m.evictMembershipCache(membershipID)
-					m.forgetHomeDEK(ctx, membershipID, leftovers)
 				}
 			}
 		}
