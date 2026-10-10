@@ -126,13 +126,21 @@ those unreadable too.
   had no master key; the command leaves those alone). It changes nothing and does not call KMS.
 - Without `--dry-run` each value is opened with the master key, sealed by KMS, opened again
   through KMS to check it reads back, and only then written, one row at a time and only if the
-  row has not changed meanwhile. The Control Plane can keep running. Interrupting it, a KMS
-  error or a refused `Decrypt` stops it before the row it was on is written: every row is left
-  either in the old format or on KMS, and both open. Run it again until it exits `0`; a run
-  with nothing left to do changes nothing.
-- Exit `0`: nothing is left in the old format. `1`: a row could not be opened or written, or
-  changed while it ran, or the run stopped; the log names the place and the row id, never a
-  value. `2`: configuration (not `kms`, no master key, no key id, no database).
+  row has not changed meanwhile. Interrupting it, a KMS error or a refused `Decrypt` stops it
+  before the row it was on is written: every row is left either in the old format or on KMS,
+  and both open. After the rewrite it looks at every place again without changing anything,
+  and the exit code comes from that final check. Run it again until it exits `0`; a run with
+  nothing left to do changes nothing.
+- **Run it while no administrator is editing.** The Control Plane can keep running, but saving
+  a sign-in provider or Git OAuth app without retyping its secret, or the ComfyUI panel without
+  retyping its key, writes back the stored value as it was read; a save that read the old value
+  before the command rewrote it puts the old value back. The final check catches one that lands
+  during the run; one that lands after it does not. Confirm afterwards with `--dry-run`.
+- Exit `0` (with or without `--dry-run`): when the command last looked, nothing was in the old
+  format and every row could be read. `1`: something is still in the old format or could not
+  be read or written, or the run stopped; the log names the place and the row id, never a
+  value. A `--dry-run` therefore exits `1` before the rewrap and `0` after it. `2`:
+  configuration (not `kms`, no master key, no key id, no database).
 - On `ecs` / `ecs-ec2`, run it as a one-off task of the Control Plane's task definition with
   the command overridden, in the Control Plane's subnets and security group; the output is in
   the Control Plane's log group:

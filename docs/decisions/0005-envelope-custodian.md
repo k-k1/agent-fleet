@@ -116,12 +116,21 @@ which format a row is in.
   value. A KMS error, a refused `Decrypt` or a read-back mismatch stops the run before the row is
   written; a row that changed meanwhile is left to the newer value. Every row is therefore in
   one of the two formats at every moment, and both open. `--dry-run` counts without calling KMS.
+- **Exit `0` comes from a final read-only pass**, for `--dry-run` and a real run alike: no
+  legacy value and no unreadable row when the command last looked. It is not a lock. Control
+  Plane edits that carry a stored value forward (an IdP or Git OAuth app saved without its
+  secret, the ComfyUI panel saved without its key) write back what they read, so one that read a
+  legacy value before the swap can restore it; the final pass catches that during the run, not
+  after it. The guide therefore says to run it while no administrator is editing and to confirm
+  with `--dry-run`. Re-sealing in those edit paths instead was left out to keep the change to
+  the command.
 - **`AF_MASTER_KEY` can still not be dropped.** It derives the workspace DEK
   (`HMAC(master, userKey)`) — the command moves `wrapped_dek` to KMS, but the DEK inside is still
   derivable, so credential stores are still not crypto-shredded (#1646) — and every bridge
   signing key, and `kms` without it stops the Control Plane at boot. What the rewrap does buy:
-  once it exits `0`, disabling the KMS key shreds every custodian-sealed value, including the
-  ones stored before the switch, and the master key no longer opens them.
+  once a `--dry-run` exits `0` with no edit in flight, disabling the KMS key shreds every
+  custodian-sealed value, including the ones stored before the switch, and the master key no
+  longer opens them.
 
 Not verified against a real KMS key: the tests use an in-memory KMS. The first run on a real
 deployment should be a `--dry-run`.

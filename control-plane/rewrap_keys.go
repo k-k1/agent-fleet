@@ -269,9 +269,9 @@ func openRewrapStore() (*store.SQL, string, error) {
 	return st, "sqlite " + path, err
 }
 
-// runRewrapKeys is `af-cp rewrap-keys [--dry-run]`. Exit 0: no legacy value is left (or, with
-// --dry-run, the counts were printed). Exit 1: something was left or the run stopped; running
-// it again picks up where it left off. Exit 2: usage or configuration.
+// runRewrapKeys is `af-cp rewrap-keys [--dry-run]`. Exit 0, with or without --dry-run: the
+// last read-only look found no legacy and no unreadable value. Exit 1: something was left or
+// the run stopped; running it again picks up where it left off. Exit 2: usage or configuration.
 func runRewrapKeys(args []string) {
 	os.Exit(rewrapKeysMain(args, os.Stdout, log.Printf))
 }
@@ -310,31 +310,51 @@ func rewrapKeysMain(args []string, stdout io.Writer, logf func(string, ...any)) 
 	}
 	defer st.Close()
 	logf("rewrap-keys: %s, dry-run=%v", where, *dryRun)
-	counts, runErr := rewrapKeys(ctx, c, rewrapTargets(st), *dryRun, logf)
-	left := printRewrapCounts(stdout, counts, *dryRun)
-	if runErr != nil {
-		logf("rewrap-keys: %v; rows not yet reached are unchanged and still open as before, run again once the cause is fixed", runErr)
+	return rewrapRun(ctx, c, rewrapTargets(st), *dryRun, stdout, logf)
+}
+
+// rewrapRun runs the walk and decides the exit code. Exit 0 always rests on a read-only pass
+// made after any rewriting: a Control Plane edit that carries a stored value forward (an IdP
+// or Git OAuth app saved without retyping its secret, the ComfyUI panel saved without its
+// key) can write back a legacy value read before our swap, and only a fresh look sees it.
+// An edit still in flight after that pass can do the same, which is why the guide says to run
+// it when no administrator is editing and to confirm with --dry-run.
+func rewrapRun(ctx context.Context, c *kmsCustodian, targets []rewrapTarget, dryRun bool, stdout io.Writer, logf func(string, ...any)) int {
+	counts, err := rewrapKeys(ctx, c, targets, dryRun, logf)
+	printRewrapCounts(stdout, counts)
+	if err != nil {
+		logf("rewrap-keys: %v; rows not yet reached are unchanged and still open as before, run again once the cause is fixed", err)
 		return 1
 	}
-	if left > 0 {
-		logf("rewrap-keys: %d value(s) still need attention, see the lines above; run again to retry", left)
+	if !dryRun {
+		if counts, err = rewrapKeys(ctx, c, targets, true, logf); err != nil {
+			logf("rewrap-keys: final check: %v", err)
+			return 1
+		}
+		fmt.Fprintln(stdout, "final check:")
+		printRewrapCounts(stdout, counts)
+	}
+	if left := rewrapLeft(counts); left > 0 {
+		logf("rewrap-keys: %d value(s) are still in the old format or unreadable, see the lines above; run again", left)
 		return 1
 	}
 	return 0
 }
 
-// printRewrapCounts writes the per-target table and returns how many values still need
-// attention: legacy values not rewrapped, plus rows that could not be read.
-func printRewrapCounts(w io.Writer, counts []rewrapCounts, dryRun bool) int {
+// rewrapLeft counts, in the tally of a read-only pass, the values not yet on KMS: legacy ones
+// and rows that could not be read.
+func rewrapLeft(counts []rewrapCounts) int {
 	left := 0
+	for _, n := range counts {
+		left += n.Legacy + n.unreadable
+	}
+	return left
+}
+
+// printRewrapCounts writes the per-target table.
+func printRewrapCounts(w io.Writer, counts []rewrapCounts) {
 	fmt.Fprintf(w, "%-24s %8s %8s %10s %10s %8s %7s\n", "target", "kms", "legacy", "plaintext", "rewrapped", "changed", "failed")
 	for _, n := range counts {
 		fmt.Fprintf(w, "%-24s %8d %8d %10d %10d %8d %7d\n", n.Name, n.KMS, n.Legacy, n.Plaintext, n.Rewrapped, n.Changed, n.Failed)
-		if dryRun {
-			left += n.Failed
-		} else {
-			left += n.Legacy - n.Rewrapped + n.unreadable
-		}
 	}
-	return left
 }

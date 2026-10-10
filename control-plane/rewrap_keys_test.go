@@ -178,8 +178,10 @@ func TestRewrapKeysReSealsEveryTarget(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if left := printRewrapCounts(&bytes.Buffer{}, got, false); left != 0 {
-				t.Fatalf("left = %d after a clean run: %+v", left, got)
+			for _, n := range got {
+				if n.Rewrapped != 1 || n.Failed+n.Changed != 0 {
+					t.Fatalf("run %s = %+v, want one rewrapped value", n.Name, n)
+				}
 			}
 			// What is stored now opens with KMS alone: no local custodian behind it.
 			kmsOnly := newKMSCustodian(f, f.keyID, nil, 0)
@@ -329,7 +331,11 @@ func TestRewrapKeysUnreadableAndChangedRows(t *testing.T) {
 	if n := by["mcp_server"]; n.Rewrapped != 1 {
 		t.Errorf("the run did not go on past the failure: mcp_server = %+v", n)
 	}
-	if left := printRewrapCounts(&bytes.Buffer{}, got, false); left != 2 {
+	check, err := rewrapKeys(ctx, newKMSCustodian(f, f.keyID, local, 0), targets, true, discardLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left := rewrapLeft(check); left != 2 {
 		t.Errorf("left = %d, want 2 (the unreadable row and the changed one)", left)
 	}
 	// The log names rows, never values.
@@ -339,6 +345,50 @@ func TestRewrapKeysUnreadableAndChangedRows(t *testing.T) {
 				t.Errorf("log line carries a plaintext value: %s", l)
 			}
 		}
+	}
+}
+
+// The exit code is the contract an operator acts on: 0 only when a read-only look finds no
+// legacy value, for --dry-run as for a real run.
+func TestRewrapRunExitCode(t *testing.T) {
+	ctx := context.Background()
+	st := ssmAPIStores(t)["sqlite"]
+	local := newLocalCustodian(testMaster(t))
+	seedLegacyRows(t, st, local)
+	f := newFakeKMS(t)
+	c := newKMSCustodian(f, f.keyID, local, 0)
+	run := func(targets []rewrapTarget, dry bool) int {
+		return rewrapRun(ctx, c, targets, dry, &bytes.Buffer{}, discardLog)
+	}
+	if code := run(rewrapTargets(st), true); code != 1 {
+		t.Fatalf("dry run over legacy values = %d, want 1", code)
+	}
+
+	// A Control Plane edit that carries the stored secret forward (tenant_git_oauth_api.save
+	// with the secret left blank) read the legacy value before our swap and writes it back
+	// after it. The walk has moved on; only the final check can see the row went back.
+	targets := rewrapTargets(st)
+	for i, tg := range targets {
+		if tg.name != "tenant_git_oauth" {
+			continue
+		}
+		inner := tg.swap
+		targets[i].swap = func(ctx context.Context, id string, it rewrapItem, sealed string) (bool, error) {
+			ok, err := inner(ctx, id, it, sealed)
+			if _, werr := st.DB().ExecContext(ctx, `UPDATE tenant_git_oauth SET secret_enc=? WHERE id=?`, it.sealed, id); werr != nil {
+				t.Fatal(werr)
+			}
+			return ok, err
+		}
+	}
+	if code := run(targets, false); code != 1 {
+		t.Fatalf("run with a legacy value written back = %d, want 1", code)
+	}
+	if code := run(rewrapTargets(st), false); code != 0 {
+		t.Fatalf("second run = %d, want 0", code)
+	}
+	if code := run(rewrapTargets(st), true); code != 0 {
+		t.Fatalf("dry run with nothing left = %d, want 0", code)
 	}
 }
 
