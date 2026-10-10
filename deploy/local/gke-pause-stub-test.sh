@@ -7,7 +7,9 @@
 #
 #   - down: CP, workspaces, workspace pool, system pool, Cloud SQL. The fake autoscaler starts
 #     a workspace node when the system pool hits 0 while the workspace pool still autoscales
-#     (the pool has no taint), so a wrong order leaves a node billing.
+#     (the pool has no taint), so a wrong order leaves a node billing. It also adds one when the system pool hits 0 with
+#     autoscaling already off (the autoscaler lags), so the workspace pool must be re-read and
+#     emptied again after the system pool, and the pause must fail when it cannot.
 #   - sizes are per ZONE, as in `gcloud container clusters resize`; the suite runs on a
 #     two-zone (regional) and a one-zone (zonal) cluster
 #   - the sizes are read from the pools, kept in one annotate, never overwritten by a re-run,
@@ -43,7 +45,12 @@ case "$a" in
   *"sql instances describe"*"value(state)"*) echo RUNNABLE ;;
   *"sql instances patch"*"=NEVER"*) echo NEVER > "$S/sql_policy" ;;
   *"sql instances patch"*"=ALWAYS"*) echo ALWAYS > "$S/sql_policy" ;;
-  *"node-pools describe workspace"*"autoscaling.enabled"*) cat "$S/ws_auto" ;;
+  *"node-pools describe workspace"*"name,autoscaling.enabled"*)
+    v="$(cat "$S/ws_auto")"
+    # gcloud omits a false value: the name alone is a disabled pool. AF_STUB_AUTO_JUNK: garbage.
+    if [ -n "${AF_STUB_AUTO_JUNK:-}" ]; then printf 'workspace\t%s\n' "$AF_STUB_AUTO_JUNK"
+    elif [ "$v" = True ]; then printf 'workspace\tTrue\n'; else echo workspace; fi ;;
+  *"node-pools describe workspace"*"autoscaling.enabled"*) exit 98 ;;
   *"node-pools describe workspace"*"autoscaling.minNodeCount"*) v="$(cat "$S/ws_min")"; [ "$v" = 0 ] || echo "$v" ;;
   *"node-pools describe workspace"*"autoscaling.maxNodeCount"*) cat "$S/ws_max" ;;
   *"node-pools describe workspace"*"instanceGroupUrls"*) urls ws ;;
@@ -52,7 +59,10 @@ case "$a" in
   *"instance-groups managed describe ig-sys-b"*)
     if [ -f "$S/sys_nodes_b" ]; then cat "$S/sys_nodes_b"; else cat "$S/sys_nodes"; fi ;;
   *"instance-groups managed describe ig-sys-"*) cat "$S/sys_nodes" ;;
-  *"instance-groups managed describe ig-ws-"*) cat "$S/ws_nodes" ;;
+  *"instance-groups managed describe ig-ws-"*)
+    cat "$S/ws_nodes"
+    # AF_STUB_LATE: the autoscaler's node appears just after the first read that saw 0.
+    if [ -f "$S/ws_late" ]; then rm -f "$S/ws_late"; echo 1 > "$S/ws_nodes"; fi ;;
   *"node-pools update workspace"*"--no-enable-autoscaling"*) echo False > "$S/ws_auto" ;;
   *"node-pools update workspace"*"--enable-autoscaling"*)
     echo True > "$S/ws_auto"
@@ -62,12 +72,18 @@ case "$a" in
       shift
     done ;;
   *"clusters resize"*"--node-pool workspace"*)
-    set -- $a; while [ $# -gt 0 ]; do [ "$1" = --num-nodes ] && echo "$2" > "$S/ws_nodes"; shift; done ;;
+    set -- $a; while [ $# -gt 0 ]; do [ "$1" = --num-nodes ] && echo "$2" > "$S/ws_nodes"; shift; done
+    # AF_STUB_STUCK: the autoscaler keeps replacing the node while the system pool is empty.
+    if [ -n "${AF_STUB_STUCK:-}" ] && [ "$(cat "$S/sys_nodes")" = 0 ]; then echo 1 > "$S/ws_nodes"; fi ;;
   *"clusters resize"*"--node-pool system"*)
     set -- $a; while [ $# -gt 0 ]; do [ "$1" = --num-nodes ] && echo "$2" > "$S/sys_nodes"; shift; done
     rm -f "$S/sys_nodes_b"
-    # The trap: kube-system pods are pending, the untainted workspace pool autoscales.
-    if [ "$(cat "$S/sys_nodes")" = 0 ] && [ "$(cat "$S/ws_auto")" = True ]; then echo 1 > "$S/ws_nodes"; fi ;;
+    # The trap: kube-system pods are pending and the untainted workspace pool has a cluster
+    # autoscaler that adds a node once the system pool is empty -- even when autoscaling was
+    # already switched off, because it has not seen that yet (measured on a real cluster).
+    if [ "$(cat "$S/sys_nodes")" = 0 ]; then
+      if [ -n "${AF_STUB_LATE:-}" ]; then : > "$S/ws_late"; else echo 1 > "$S/ws_nodes"; fi
+    fi ;;
   *) echo "gcloud stub: unexpected: $a" >&2; exit 99 ;;
 esac
 STUBEOF
@@ -106,6 +122,7 @@ case "$a" in
   *"get deployment af-cp"*) cat "$S/cp_replicas" ;;
   *"get pods -o name"*) cat "$S/ws_pods" ;;
   *"get nodes -l agent-fleet.io/pool=system -o jsonpath"*) ready "$(sys_total)" ;;
+  *"get nodes -l agent-fleet.io/pool=workspace"*) [ -z "${AF_STUB_HIDE_NODES:-}" ] || exit 0; false ;;&
   *"get nodes -l agent-fleet.io/pool=workspace -o jsonpath"*) ready $(( $(cat "$S/ws_nodes") * nz )) ;;
   *"get nodes -l agent-fleet.io/pool=system"*) nodes "$(sys_total)" sys ;;
   *"get nodes -l agent-fleet.io/pool=workspace"*) nodes $(( $(cat "$S/ws_nodes") * nz )) ws ;;
@@ -119,11 +136,11 @@ chmod +x "$STUB/gcloud" "$STUB/kubectl"
 
 export AF_PAUSE_POLL=1 AF_PAUSE_READY_TIMEOUT=3 AF_STUB_STATE="$S" AF_STUB_LOG="$LOG"
 export PATH="$STUB:$PATH"
-unset AF_STUB_FAIL_ON AF_STUB_ENDPOINT AF_STUB_SERVER
+unset AF_STUB_FAIL_ON AF_STUB_ENDPOINT AF_STUB_SERVER AF_STUB_LATE AF_STUB_STUCK AF_STUB_AUTO_JUNK AF_STUB_HIDE_NODES
 
 SYS=2   # system nodes per zone while running
 reset() {  # a running deployment: autoscaled workspace pool, no record
-  rm -f "$S"/ann_* "$S/sys_nodes_b"; : > "$LOG"
+  rm -f "$S"/ann_* "$S/sys_nodes_b" "$S/ws_late"; : > "$LOG"
   echo 1 > "$S/cp_replicas"; echo "$SYS" > "$S/sys_nodes"; echo 0 > "$S/ws_nodes"
   echo True > "$S/ws_auto"; echo 0 > "$S/ws_min"; echo 3 > "$S/ws_max"
   echo ALWAYS > "$S/sql_policy"; : > "$S/ws_pods"
@@ -164,6 +181,29 @@ suite() {
   check "records the per-zone system size" '[ "$(cat "$S/ann_system-nodes")" = "$SYS" ]'
   check "records workspace autoscaling" '[ "$(cat "$S/ann_workspace-min")" = 0 ] && [ "$(cat "$S/ann_workspace-max")" = 3 ]'
   check "the record is written in one annotate" '[ "$(grep -c "annotate" "$LOG")" = 1 ]'
+
+  # --- 2b. the autoscaler adds a workspace node after the system pool hits 0
+  check "re-checks the workspace pool after the system pool is empty" '[ "$(grep -n -- "--node-pool workspace --num-nodes 0" "$LOG" | tail -1 | cut -d: -f1)" -gt "$(line "--node-pool system --num-nodes 0")" ]'
+  check "down says the pool came back and fixed it" 'grep -q "workspace pool is back" "$WORK/out"'
+  check "status after the pause says paused, no node up" 'pause --status; grep -q "state              : paused" "$WORK/out" && grep -q "workspace nodes    : 0" "$WORK/out"'
+  reset
+  AF_STUB_LATE=1 pause --yes && rc=0 || rc=$?
+  check "a node that appears after the first clean read is still removed" '[ "$rc" = 0 ] && [ "$(cat "$S/ws_nodes")" = 0 ] && [ "$(cat "$S/sys_nodes")" = 0 ]'
+  reset
+  AF_STUB_STUCK=1 AF_PAUSE_SETTLE_ROUNDS=3 pause --yes && rc=0 || rc=$?
+  check "a node that cannot be removed fails loudly, not 'paused'" '[ "$rc" != 0 ] && grep -q "did not stay at 0" "$WORK/out" && ! grep -q "==> paused" "$WORK/out"'
+  pause --status
+  check "status after a failed pause does not say paused" '! grep -q "state              : paused" "$WORK/out" && grep -q "NOT fully paused" "$WORK/out"'
+  # an empty / unknown autoscaling answer is not "off"
+  reset
+  AF_STUB_AUTO_JUNK=maybe pause --yes && rc=0 || rc=$?
+  check "an unknown autoscaling.enabled stops the pause before any write" '[ "$rc" != 0 ] && [ "$(writes)" = 0 ]'
+  # a VM that is starting is in the instance group but not yet a registered node
+  reset; echo 0 > "$S/cp_replicas"; echo 0 > "$S/sys_nodes"; echo 1 > "$S/ws_nodes"; echo False > "$S/ws_auto"
+  AF_STUB_HIDE_NODES=1 pause --status
+  check "status: instance group size 1 with no registered node is not paused" '! grep -q "state              : paused" "$WORK/out" && grep -q "NOT fully paused" "$WORK/out"'
+  reset
+  pause --yes && rc=0 || rc=$?   # leave the paused state the next steps expect
 
   # --- 3. a second pause changes nothing and keeps the record
   : > "$LOG"

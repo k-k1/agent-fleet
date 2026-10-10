@@ -103,7 +103,7 @@ for v in "$SYSTEM_NODES" "$WS_MIN" "$WS_MAX" "$WAIT"; do
 done
 
 # Polling knobs for the tests; an operator has no reason to touch them.
-POLL="${AF_PAUSE_POLL:-10}"; READY_TIMEOUT="${AF_PAUSE_READY_TIMEOUT:-600}"
+POLL="${AF_PAUSE_POLL:-10}"; SETTLE_ROUNDS="${AF_PAUSE_SETTLE_ROUNDS:-12}"; SETTLE_CLEAN=2; READY_TIMEOUT="${AF_PAUSE_READY_TIMEOUT:-600}"
 CLUSTER="$PREFIX-gke"; SQL="$PREFIX-pg"; CP_NS="$PREFIX-cp"; WS_NS="$PREFIX-ws"
 WS_POOL=workspace; SYS_POOL=system
 CTX="gke_${PROJECT}_${LOCATION}_${CLUSTER}"
@@ -199,10 +199,18 @@ pool_sizes() {
     echo "$v"
   done
 }
+# ws_autoscaling — 1 / 0. The pool's name is read with the flag: gcloud omits a false (or
+# unset) `enabled`, so an empty answer alone is "disabled" and "read nothing" at once.
 ws_autoscaling() {
-  local v
-  v="$(pool_field "$WS_POOL" autoscaling.enabled)" || return 1
-  if [ "$v" = True ]; then echo 1; else echo 0; fi
+  local out v
+  out="$(pool_field "$WS_POOL" name,autoscaling.enabled)" || return 1
+  case "$out" in "$WS_POOL"|"$WS_POOL"$'\t'*) ;; *) err "unreadable autoscaling state of node pool $WS_POOL ('$out')"; return 1 ;; esac
+  v="${out#"$WS_POOL"}"; v="${v//[[:space:]]/}"
+  case "$v" in
+    True) echo 1 ;;
+    ''|False) echo 0 ;;
+    *) err "unexpected autoscaling.enabled '$v' for node pool $WS_POOL"; return 1 ;;
+  esac
 }
 sql_policy() {
   local v
@@ -244,8 +252,52 @@ wait_ready() {
   done
 }
 
+# ws_pool_to_zero — resize the workspace pool to 0 when any zone is above it.
+ws_pool_to_zero() {
+  local wsizes
+  wsizes="$(pool_sizes "$WS_POOL")" || return 1
+  mapfile -t wz <<< "$wsizes"
+  if any_nonzero "${wz[@]}"; then
+    echo "==> workspace pool to 0"
+    run "${GC[@]}" container clusters resize "$CLUSTER" --node-pool "$WS_POOL" --num-nodes 0 \
+      --location "$LOCATION" --quiet
+  fi
+}
+# settle_ws_pool — after the system pool is at 0, the pool's autoscaler may still not see
+# autoscaling as off and start a node for the pending kube-system pods (measured on a real
+# cluster: 5-10 s after the resize). Re-read, switch autoscaling off again and resize to 0
+# again, until SETTLE_CLEAN consecutive reads find the pool empty with autoscaling off; fail
+# when SETTLE_ROUNDS reads are not enough, because a node left behind keeps billing.
+settle_ws_pool() {
+  local round clean=0 auto sizes
+  for ((round = 1; round <= SETTLE_ROUNDS; round++)); do
+    auto="$(ws_autoscaling)" || return 1
+    sizes="$(pool_sizes "$WS_POOL")" || return 1
+    mapfile -t wz <<< "$sizes"
+    if [ "$auto" = 0 ] && ! any_nonzero "${wz[@]}"; then
+      clean=$(( clean + 1 ))
+      [ "$clean" -lt "$SETTLE_CLEAN" ] || return 0
+    else
+      clean=0
+      echo "==> workspace pool is back (autoscaling=$auto, sizes ${wz[*]}); fixing it (round $round)"
+      if [ "$auto" = 1 ]; then
+        run "${GC[@]}" container node-pools update "$WS_POOL" --cluster "$CLUSTER" --location "$LOCATION" \
+          --no-enable-autoscaling --quiet
+      fi
+      if any_nonzero "${wz[@]}"; then
+        run "${GC[@]}" container clusters resize "$CLUSTER" --node-pool "$WS_POOL" --num-nodes 0 \
+          --location "$LOCATION" --quiet
+      fi
+    fi
+    sleep "$POLL"
+  done
+  err "the workspace pool did not stay at 0 after $SETTLE_ROUNDS checks; a workspace node may still be billing."
+  err "Run pause.sh again, or: gcloud container clusters resize $CLUSTER --node-pool $WS_POOL --num-nodes 0 --location $LOCATION"
+  return 1
+}
+
 status() {
-  local t
+  local t sn wn
   try() { "$@" 2>/dev/null || echo '?'; }
   echo "==> $CLUSTER (project=$PROJECT location=$LOCATION)"
   echo "    control plane      : desired=$(try cp_replicas) ready=$(try cp_ready)"
@@ -263,7 +315,16 @@ status() {
     t="$(try pool_nodes "$WS_POOL")"
     [ "$t" = 0 ] || [ "$t" = '?' ] || {
       echo ""; echo "    WARN: $t workspace node(s) up with no control plane. If the system pool is at 0 the"
-      echo "          autoscaler started them for kube-system; run pause.sh again."; }
+      echo "          autoscaler started them for kube-system; run pause.sh --yes again (it resizes the pool to 0)."; }
+  fi
+  # Registered nodes miss a VM that is still starting; the instance groups' target size does not.
+  sn="$(try pool_sizes "$SYS_POOL" | tr '\n' ' ')"; wn="$(try pool_sizes "$WS_POOL" | tr '\n' ' ')"
+  if [ "$(try cp_replicas)" = 0 ]; then
+    if [ "$(try pool_nodes "$SYS_POOL")$(try pool_nodes "$WS_POOL")" = 00 ] && [[ "$sn$wn" =~ ^[0\ ]+$ ]]; then
+      echo "    state              : paused (no node is up)"
+    else
+      echo "    state              : NOT fully paused (instance group sizes per zone: system=${sn% } workspace=${wn% })"
+    fi
   fi
   echo ""
   echo "    still billing while paused (only deletion stops these): the GKE management fee, the"
@@ -410,17 +471,17 @@ EOF
       run "${GC[@]}" container node-pools update "$WS_POOL" --cluster "$CLUSTER" --location "$LOCATION" \
         --no-enable-autoscaling --quiet
     fi
-    wsizes="$(pool_sizes "$WS_POOL")"
-    mapfile -t wz <<< "$wsizes"
-    if any_nonzero "${wz[@]}"; then
-      echo "==> workspace pool to 0"
-      run "${GC[@]}" container clusters resize "$CLUSTER" --node-pool "$WS_POOL" --num-nodes 0 \
-        --location "$LOCATION" --quiet
-    fi
+    ws_pool_to_zero
     if any_nonzero "${sz[@]}"; then
       echo "==> system pool to 0"
       run "${GC[@]}" container clusters resize "$CLUSTER" --node-pool "$SYS_POOL" --num-nodes 0 \
         --location "$LOCATION" --quiet
+    fi
+    # The system pool dropping to 0 is what makes the autoscaler add a workspace node, seconds
+    # after the resize returns: look again, and keep looking until the pool stays empty.
+    if [ "$AF_DRY" != 1 ]; then
+      echo "==> confirming the workspace pool stays at 0"
+      settle_ws_pool || exit 1
     fi
 
     # Last: the CP is gone, so nothing is connected to it.
