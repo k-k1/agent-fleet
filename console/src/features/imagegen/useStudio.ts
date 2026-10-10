@@ -51,6 +51,11 @@ const RETRY_MS = [2000, 5000, 15000, 30000];
 /** The first read of a studio, retried while the Agent restarts (a 502) rather than given up. */
 const FIRST_READ_RETRY_MS = 3000;
 
+// An edit whose last save failed as the pane went away. No timer may outlive the pane, so it waits
+// here, per studio, for the next mount to restore and resend it. `base` is the form the studio
+// had, so only the fields the member changed are put back over whatever the agent did meanwhile.
+const orphaned = new Map<string, { form: ImagegenDraft; base: ImagegenDraft }>();
+
 // Per-studio state that outlives the pane (a reopen, a reload): the edit-log position the pane
 // has seen and the outlines the member has not cleared yet (decision 6), and per (studio,
 // session) where the signal left off. In localStorage, keyed by the ids, so two studios or two
@@ -275,7 +280,10 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
   // The debounce, re-armed after a save that got no answer — so a failed save is not left
   // sitting dirty (which also holds the poll off) until the member happens to type again.
   function scheduleRetry() {
-    if (disposedRef.current) return;
+    if (disposedRef.current) {
+      if (dirtyRef.current && baseRef.current) orphaned.set(id, { form: formRef.current, base: formFromStudio(baseRef.current.draft) });
+      return;
+    }
     const wait = RETRY_MS[Math.min(retryRef.current, RETRY_MS.length - 1)];
     retryRef.current++;
     window.clearTimeout(timerRef.current);
@@ -332,6 +340,18 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
       timerRef.current = 0;
     };
   }, []);
+
+  // Put back an edit the previous pane could not save, once this pane has a studio to diff against.
+  useEffect(() => {
+    const o = orphaned.get(id);
+    if (!o || !studio || !baseRef.current) return;
+    orphaned.delete(id);
+    const mine: Partial<ImagegenDraft> = {};
+    for (const k of Object.keys(o.form) as (keyof ImagegenDraft)[]) {
+      if (o.form[k] !== o.base[k]) (mine as Record<string, unknown>)[k] = o.form[k];
+    }
+    if (Object.keys(mine).length) patchForm(mine);
+  }, [id, studio, patchForm]);
 
   // The agent's edits. Only with a session bound, only while shown, never over an unsent edit.
   const bound = !!studio?.session;

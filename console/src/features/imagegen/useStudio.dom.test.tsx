@@ -130,7 +130,7 @@ describe("useStudio: 保存", () => {
 });
 
 describe("useStudio: teardown", () => {
-  it("a save that fails after the pane unmounted schedules no retry", async () => {
+  it("a save that fails after the pane unmounted schedules no retry and the edit survives a reopen", async () => {
     await mount();
     let release!: () => void;
     patchGate = new Promise<void>((r) => (release = r));
@@ -146,7 +146,13 @@ describe("useStudio: teardown", () => {
     expect(vi.getTimerCount()).toBe(0);
     await tick(60000);
     expect(calls).toHaveLength(1);
-    root = createRoot(host); // afterEach unmounts again
+    // Reopening the pane puts the unsaved edit back and sends it: nothing typed is lost.
+    host.remove();
+    await mount();
+    await tick(600);
+    expect(st.form.prompt).toBe("mine");
+    expect(calls).toHaveLength(2);
+    expect(calls[1].body.draft).toEqual({ prompt: "mine" });
   });
 });
 
