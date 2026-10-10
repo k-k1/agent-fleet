@@ -305,3 +305,12 @@ revision も `updated` も変えず、エージェントの保存はピンを引
 - 取り込みとの輪の防止：`af_source` が AF のメモリを指し、本文が `af_hash` のままのファイルは、
   mtime が AF の更新より新しくても取り込みは `unchanged` と読む。
 - codex：#1683 に回す（codex のメモリ領域は codex 自身のパイプラインが書き換えるため）。
+
+## 注（2026-10-10）：codex の取り込みを測れるところまで測った（#1683）
+
+決定 6 の手順 1 の codex 分は未実装。`memories` を有効にした使い捨ての `CODEX_HOME` では、空の骨組み
+（`raw_memories.md`、`phase2_workspace_diff.md`、`extensions/ad_hoc/`、`rollout_summaries/`）しかできな
+かった。実行した `codex exec` 1 回はログインなしで 401 になり、統合にはモデル呼び出しが要るため、
+統合後の出力（`MEMORY.md`）は得られていない。codex 自身のプロンプトが書くよう求める形からの推定
+（観測した出力ではない）、`# Task Group:` ブロックでの分割案、スコープ、
+命名規則、未決事項は [0112](0112-codex-memory-import.ja.md) にある。上の決定は変えない。
