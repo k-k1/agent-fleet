@@ -9,12 +9,15 @@ import type { StudioPatch, StudioWire } from "./wire.ts";
 const calls: { body: StudioPatch; ifMatch: string }[] = [];
 let putAnswers: ((body: StudioPatch) => { status: number; studio?: StudioWire })[] = [];
 let current: StudioWire;
+// When set, patchStudio answers only after this resolves — a save still in flight.
+let patchGate: Promise<void> | null = null;
 
 vi.mock("./api.ts", () => ({
   getStudio: async () => current,
   patchStudio: async (_id: string, body: StudioPatch, ifMatch: string) => {
     calls.push({ body, ifMatch });
-    const next = putAnswers.shift();
+    const next = putAnswers.shift(); // taken at request time, so a gated save keeps its own answer
+    if (patchGate) await patchGate;
     if (next) return next(body);
     // Apply the merge patch the way the Agent does (params one level deep), so the answer
     // carries what was saved.
@@ -71,6 +74,7 @@ beforeEach(() => {
   localStorage.clear();
   calls.length = 0;
   putAnswers = [];
+  patchGate = null;
   current = {
     id: ID,
     title: "t",
@@ -123,6 +127,97 @@ describe("useStudio: 保存", () => {
     await tick(600);
     expect(calls[0].body.draft).toEqual({ params: { steps: 30, cfg: 7, sampler: null } });
   });
+});
+
+describe("useStudio: teardown", () => {
+  it("a save that fails after the pane unmounted schedules no retry and the edit survives a reopen", async () => {
+    await mount();
+    let release!: () => void;
+    patchGate = new Promise<void>((r) => (release = r));
+    putAnswers.push(() => ({ status: 0 }));
+    await act(async () => st.patchForm({ prompt: "mine" }));
+    await tick(600);
+    expect(calls).toHaveLength(1);
+    // The pane goes away with the save unanswered; the answer then arrives (no answer = status 0).
+    await act(async () => root.unmount());
+    release();
+    await tick(0);
+    // A retry armed now would fire after the environment is gone (`window` undefined).
+    expect(vi.getTimerCount()).toBe(0);
+    await tick(60000);
+    expect(calls).toHaveLength(1);
+    // Reopening the pane puts the unsaved edit back and sends it: nothing typed is lost.
+    host.remove();
+    await mount();
+    await tick(600);
+    expect(st.form.prompt).toBe("mine");
+    expect(calls).toHaveLength(2);
+    expect(calls[1].body.draft).toEqual({ prompt: "mine" });
+  });
+});
+
+describe("useStudio: a parked edit", () => {
+  it("restores only what the member changed, not fields the agent moved meanwhile", async () => {
+    await mount();
+    let release!: () => void;
+    patchGate = new Promise<void>((r) => (release = r));
+    putAnswers.push(() => ({ status: 0 }));
+    await act(async () => st.patchForm({ prompt: "mine" }));
+    await tick(600);
+    await act(async () => root.unmount());
+    release();
+    await tick(0);
+    patchGate = null;
+    current = { ...current, draft: { ...current.draft, inputs: ["agent.png"] }, updated_at: "v2" };
+    host.remove();
+    await mount();
+    await tick(600);
+    expect(calls[1].body.draft).toEqual({ prompt: "mine" });
+  });
+
+  it("a pane reopened before the old save failed still gets the edit back", async () => {
+    await mount();
+    let release!: () => void;
+    patchGate = new Promise<void>((r) => (release = r));
+    putAnswers.push(() => ({ status: 0 }));
+    await act(async () => st.patchForm({ prompt: "late" }));
+    await tick(600);
+    await act(async () => root.unmount());
+    host.remove();
+    await mount(); // its first read is done; the old save has not answered yet
+    release();
+    patchGate = null;
+    await tick(600);
+    expect(st.form.prompt).toBe("late");
+    expect(calls[calls.length - 1].body.draft).toEqual({ prompt: "late" });
+  });
+});
+
+describe("useStudio: a parked edit vs newer input", () => {
+  for (const saved of [false, true]) {
+    it(`an older failed save does not overwrite input typed after the reopen (new input ${saved ? "saved" : "still dirty"})`, async () => {
+      await mount();
+      let release!: () => void;
+      patchGate = new Promise<void>((r) => (release = r));
+      putAnswers.push(() => ({ status: 0 }));
+      await act(async () => st.patchForm({ prompt: "old" }));
+      await tick(600);
+      await act(async () => root.unmount());
+      host.remove();
+      const gate = patchGate;
+      patchGate = null;
+      await mount();
+      await act(async () => st.patchForm({ prompt: "new" }));
+      if (saved) await tick(600);
+      patchGate = gate;
+      release();
+      await tick(0);
+      await tick(600);
+      expect(st.form.prompt).toBe("new");
+      expect(current.draft.prompt).toBe(saved ? "new" : current.draft.prompt);
+      expect(calls.filter((c) => c.body.draft?.prompt === "old")).toHaveLength(1);
+    });
+  }
 });
 
 describe("useStudio: 縁取り（決定 6）", () => {
