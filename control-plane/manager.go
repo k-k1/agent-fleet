@@ -139,6 +139,9 @@ type manager struct {
 	// homeDEKRandom mints a random credential-store key for each home that has none
 	// (AF_WORKSPACE_DEK=random, dek.go). Off: homes without one keep the derived key alone.
 	homeDEKRandom bool
+	// homeDEKConfirmBudget / homeDEKConfirmPoll bound the wait for the Agent's key report
+	// after a start (home_dek_confirm.go); zero = the defaults.
+	homeDEKConfirmBudget, homeDEKConfirmPoll time.Duration
 
 	// git token signing without AF_MASTER_KEY (dev): a per-deployment random
 	// master persisted under dataRoot, lazily created (git_http.go gitSignKey).

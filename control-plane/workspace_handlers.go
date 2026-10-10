@@ -632,7 +632,7 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	// The credential-store keys are resolved here, for this start, and a failure fails it.
 	// The runtime handed in may be a memo built long ago, holding keys a since-disabled KMS
 	// key would no longer open; starting it would defeat the fail-closed rule in dek.go.
-	keys, err := a.mgr.resolveDEK(ctx, res.ws, res.ident.UserKey)
+	keys, home, err := a.mgr.resolveStartKeys(ctx, res.ws, res.ident.UserKey)
 	if err != nil {
 		return internalErr(fmt.Errorf("credential-store keys for ws %s: %w", res.ws.ID, err))
 	}
@@ -668,6 +668,9 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	}
 	if f, ok := rt.(runtime.StartFencer); ok {
 		f.CommitStart()
+	}
+	if home != nil {
+		go a.mgr.watchHomeDEK(rt, *home)
 	}
 	_ = a.mgr.store.SetWorkspaceState(ctx, res.ws.ID, "running")
 	// A start IS activity: reset the in-memory idle clock too (SetWorkspaceState

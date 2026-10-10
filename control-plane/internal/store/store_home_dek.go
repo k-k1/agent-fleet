@@ -74,3 +74,26 @@ func (s *SQL) CountHomeDEKs(ctx context.Context) (HomeDEKCounts, error) {
 		Scan(&c.Migrating, &c.Random, &c.WithoutKey)
 	return c, err
 }
+
+// ConfirmHomeDEK is conditioned on the sealed key as well as the scheme, so a report about a
+// key that is not the stored one can never confirm the row.
+func (s *SQL) ConfirmHomeDEK(ctx context.Context, membershipID, ciphertext string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE home_dek SET scheme='random', migrated_at=? WHERE membership_id=? AND ciphertext=? AND scheme='migrating'`,
+		NowTS(), membershipID, ciphertext)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+func (s *SQL) RemigrateHomeDEK(ctx context.Context, membershipID string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE home_dek SET scheme='migrating', migrated_at='' WHERE membership_id=? AND scheme='random'`, membershipID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}

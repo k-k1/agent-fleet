@@ -91,3 +91,24 @@ func TestECSSecretsCarryNextKey(t *testing.T) {
 		}
 	}
 }
+
+// A confirmed home starts without NEXT; the parameter its migrating starts wrote is deleted
+// rather than left in SSM until Destroy.
+func TestECSDropsTheUnusedNextKeyParameter(t *testing.T) {
+	fs := &fakeSSM{}
+	rt := newTestECS(&fakeECS{}, &fakeEFS{}, fs)
+	rt.keys = bothKeys
+	if _, err := rt.putSecrets(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rt.keys = SecretKeys{Key: "dek-next"}
+	if _, err := rt.putSecrets(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fs.values["/af-ws/af-ws-acme-alice/secret-key-next"]; ok {
+		t.Fatal("the next-key parameter stayed after a start without NEXT")
+	}
+	if fs.values["/af-ws/af-ws-acme-alice/secret-key"] != "dek-next" {
+		t.Fatal("AF_SECRET_KEY is not the home's key")
+	}
+}

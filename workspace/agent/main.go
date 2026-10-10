@@ -125,7 +125,7 @@ func serve() {
 	}
 	// Re-seal the credential store under the home's own key when the CP sent one, before
 	// anything below reads or writes the store.
-	secretsKeyState = secrets.MigrateKey()
+	secretsKeyState, secretsKeyNext = secrets.MigrateKey(), secrets.NextKeyInUse()
 	// Fold any pre-A3 plaintext credential files into the encrypted store.
 	migrateLegacySecrets()
 	// Seed the CP-injected internal git token (docs/reference/internal-git-provider)
@@ -329,11 +329,15 @@ func serve() {
 	}
 }
 
-// secretsKeyState is secrets.MigrateKey's answer at boot; set before the listener serves.
-var secretsKeyState = secrets.KeyStateNone
+// secretsKeyState is secrets.MigrateKey's answer at boot and secretsKeyNext whether the
+// store is sealed under AF_SECRET_KEY_NEXT; both set before the listener serves.
+var (
+	secretsKeyState = secrets.KeyStateNone
+	secretsKeyNext  bool
+)
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "secrets_key": secretsKeyState})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "secrets_key": secretsKeyState, "secrets_key_next": secretsKeyNext})
 }
 
 // --- small helpers ---

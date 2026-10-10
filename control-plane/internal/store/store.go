@@ -1409,6 +1409,13 @@ type DEKStore interface {
 	// InsertHomeDEK stores d unless the home already has a key, and returns the key the home
 	// has afterwards, which is the other writer's when two raced.
 	InsertHomeDEK(ctx context.Context, d HomeDEK) (HomeDEK, error)
+	// ConfirmHomeDEK marks a migrating home 'random' once its Agent reported the store sealed
+	// under the key whose sealed form is ciphertext; false when the row is not that row in
+	// that state any more.
+	ConfirmHomeDEK(ctx context.Context, membershipID, ciphertext string) (bool, error)
+	// RemigrateHomeDEK puts a confirmed home back to 'migrating', so the derived key is
+	// handed out beside its key again (a home restored from before its store moved).
+	RemigrateHomeDEK(ctx context.Context, membershipID string) (bool, error)
 	// CountHomeDEKs is the home_dek tally an operator checks the migration against.
 	CountHomeDEKs(ctx context.Context) (HomeDEKCounts, error)
 }

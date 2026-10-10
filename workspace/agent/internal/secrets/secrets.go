@@ -465,6 +465,11 @@ func nextSecretKey() []byte {
 	return b
 }
 
+// NextKeyInUse reports whether the store is sealed under AF_SECRET_KEY_NEXT. The CP reads it
+// beside MigrateKey's state on /healthz: without it, "current" only says the store opens with
+// AF_SECRET_KEY, which is not the home's key while the home is migrating.
+func NextKeyInUse() bool { return nextSecretKey() != nil }
+
 // fallbackSecretKey is the key a store may still be sealed with while it moves to
 // AF_SECRET_KEY_NEXT: AF_SECRET_KEY. nil when there is no NEXT.
 func fallbackSecretKey() []byte {

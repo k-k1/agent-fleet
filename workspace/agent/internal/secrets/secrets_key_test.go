@@ -251,3 +251,20 @@ func TestMigrateKeyWaitsForTheFileLock(t *testing.T) {
 		t.Fatal("MigrateKey did not finish once the lock was released")
 	}
 }
+
+func TestNextKeyInUse(t *testing.T) {
+	for _, tc := range []struct {
+		derived, next string
+		want          bool
+	}{
+		{testKey(1), testKey(2), true},
+		{testKey(1), "", false},
+		{testKey(1), "not-hex", false},
+		{"", testKey(2), false},
+	} {
+		keyEnv(t, tc.derived, tc.next)
+		if got := NextKeyInUse(); got != tc.want {
+			t.Errorf("NextKeyInUse(derived=%v, next=%q) = %v", tc.derived != "", tc.next, got)
+		}
+	}
+}

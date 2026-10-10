@@ -460,8 +460,8 @@ credentials as exposed and rotate them.
   a KMS-sealed key of its own, and a store that has moved to it no longer opens with the
   master-derived key; disabling the KMS key then stops the CP from unwrapping it, but copies
   already handed to the workspace and its runtime still open it, so a shred also needs those
-  removed (🚧: nothing does that automatically, the step that stops injecting the derived key
-  is still open, and homes not yet started stay derived). Vault is 📋
+  removed (🚧: nothing does that automatically, and homes not yet started stay derived). A
+  home is confirmed from the Agent's report and then no longer receives the derived key. Vault is 📋
   ([decisions/0005](../decisions/0005-envelope-custodian.md), 2026-10-04 and 2026-10-10 addenda).
 
 ## 7.7 Audit

@@ -56,3 +56,35 @@ func TestCountHomeDEKs(t *testing.T) {
 		}
 	}
 }
+
+func TestConfirmAndRemigrateHomeDEK(t *testing.T) {
+	ctx := context.Background()
+	for name, st := range homeOpStores(t) {
+		ws := homeOpWorkspace(t, st)
+		if _, err := st.InsertHomeDEK(ctx, HomeDEK{MembershipID: ws.MembershipID, Ciphertext: "sealed", KeyRef: ws.TenantID}); err != nil {
+			t.Fatal(err)
+		}
+		if ok, err := st.ConfirmHomeDEK(ctx, ws.MembershipID, "other"); err != nil || ok {
+			t.Fatalf("%s: confirm of another key = %v, %v", name, ok, err)
+		}
+		if ok, err := st.ConfirmHomeDEK(ctx, ws.MembershipID, "sealed"); err != nil || !ok {
+			t.Fatalf("%s: confirm = %v, %v", name, ok, err)
+		}
+		d, _, _ := st.GetHomeDEK(ctx, ws.MembershipID)
+		if d.Scheme != HomeDEKRandom || d.MigratedAt == "" {
+			t.Fatalf("%s: after confirm scheme %q migrated_at %q", name, d.Scheme, d.MigratedAt)
+		}
+		if ok, _ := st.ConfirmHomeDEK(ctx, ws.MembershipID, "sealed"); ok {
+			t.Fatalf("%s: a second confirm claimed the row", name)
+		}
+		if ok, err := st.RemigrateHomeDEK(ctx, ws.MembershipID); err != nil || !ok {
+			t.Fatalf("%s: remigrate = %v, %v", name, ok, err)
+		}
+		if d, _, _ := st.GetHomeDEK(ctx, ws.MembershipID); d.Scheme != HomeDEKMigrating || d.MigratedAt != "" || d.Ciphertext != "sealed" {
+			t.Fatalf("%s: after remigrate %+v", name, d)
+		}
+		if ok, _ := st.RemigrateHomeDEK(ctx, ws.MembershipID); ok {
+			t.Fatalf("%s: remigrate of a migrating home claimed the row", name)
+		}
+	}
+}

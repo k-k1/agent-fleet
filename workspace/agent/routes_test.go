@@ -80,11 +80,11 @@ func TestSmokeHealthzOpen(t *testing.T) {
 	}
 	// The CP reads the credential-store key state here (ADR 0005 addendum 2026-10-10). A
 	// state name only: never a key, a length or a prefix.
-	defer func(prev string) { secretsKeyState = prev }(secretsKeyState)
-	secretsKeyState = secrets.KeyStateMigrated
+	defer func(prev string, next bool) { secretsKeyState, secretsKeyNext = prev, next }(secretsKeyState, secretsKeyNext)
+	secretsKeyState, secretsKeyNext = secrets.KeyStateMigrated, true
 	w = smokeDo(t, h, "GET", "/healthz", "", "")
 	var got map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got["secrets_key"] != "migrated" || len(got) != 2 {
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got["secrets_key"] != "migrated" || got["secrets_key_next"] != true || len(got) != 3 {
 		t.Fatalf("healthz body = %s (%v)", w.Body.String(), err)
 	}
 }

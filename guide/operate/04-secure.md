@@ -186,7 +186,17 @@ boot. The `ecs` / `ecs-ec2` stacks do not expose it as a parameter yet.
   Control Plane passes it to the workspace beside the derived key. At boot the workspace opens
   `secrets.enc` with either one and re-seals it under the home's key. A store that neither key
   opens is not touched. The workspace's `/healthz` reports the outcome as `secrets_key`
-  (`none`, `current`, `migrated`, `derived` when the re-seal failed, `unreadable`), never a key.
+  (`none`, `current`, `migrated`, `derived` when the re-seal failed, `unreadable`) and
+  `secrets_key_next` (whether it sealed under the home's key), never a key.
+- **Confirming it.** After such a start the Control Plane waits for that report. When the
+  workspace sealed under the home's key and reports `migrated`, `current` or `none`, the
+  Control Plane marks the home confirmed, and from the **next** start the workspace gets the
+  home's key alone (as `AF_SECRET_KEY`) and no derived key; on `ecs` / `ecs-ec2` that start also
+  deletes the `secret-key-next` parameter. A workspace that is already running keeps both keys
+  in its environment until it is restarted. `unreadable` or `derived` leaves the home
+  migrating, is logged, and deletes nothing. If the Control Plane restarts while it waits, the
+  home simply stays migrating and is confirmed at a later start. `af-cp home-dek-status` counts
+  migrating and confirmed homes.
 - **What disabling the KMS key does, and what it does not.** Once a home's store has been
   re-sealed, the key derived from `AF_MASTER_KEY` no longer opens it, and once the Control
   Plane's data-key cache has expired (`AF_KMS_DATA_KEY_CACHE_TTL`, 5 minutes by default) the
@@ -209,16 +219,22 @@ boot. The `ecs` / `ecs-ec2` stacks do not expose it as a parameter yet.
 - **What it does not.** A home that has not been started since you turned it on is still on the
   derived key, and is **not** shredded by disabling the KMS key. `af-cp home-dek-status` counts
   them (read-only). Copies of a home made before its store was re-sealed (ecs-ec2 snapshots,
-  backups) still hold the old file, which the master key can open. In this version the derived
-  key is still passed to every workspace beside the home's key; it no longer opens a re-sealed
-  store, and a later change stops passing it.
+  backups) still hold the old file, which the master key can open. Until a home is confirmed,
+  the derived key is still passed beside the home's key; it no longer opens a re-sealed store.
+- **A copy restored from before the move.** On a confirmed home, a `secrets.enc` restored from
+  a snapshot or backup taken before its store moved is sealed under the derived key, which
+  that home no longer receives: the workspace reports `unreadable` and refuses to write over
+  it. Run `af-cp home-dek-status --remigrate <membership-id>` with the Control Plane's
+  environment, then restart the workspace: it gets both keys again and re-seals the restored
+  store.
 - **Turning it off does not undo it.** With `AF_WORKSPACE_DEK` unset again, homes that already
   have a key keep getting it, because their store may be sealed under it. After a store has
   been re-sealed, two kinds of going back differ:
   - **A Control Plane that does not know the home's key, or a lost `home_dek` table**, with the
     workspace image of this version: the store no longer opens, and the workspace refuses
     every write to it, reconnecting a credential included (this version never writes over a
-    store it cannot open).
+    store it cannot open). A Control Plane that knows the home's key but not the confirm step
+    is fine: it hands out both keys again, and the workspace opens the store with the home's.
   - **A workspace image from before this version: do not start one on a home that has
     moved.** Its Agent has no such guard: a save after a failed read can write an empty
     store over the re-sealed one, and the credentials are lost.

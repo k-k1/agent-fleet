@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
@@ -202,6 +203,8 @@ func TestPrintHomeDEKStatus(t *testing.T) {
 
 // keyRecordingFactory records the keys of every runtime built and of every one started.
 type keyRecordingFactory struct {
+	endpoint       string // what the built runtimes answer on ("" = nowhere)
+	mu             sync.Mutex
 	built, started []runtime.SecretKeys
 }
 
@@ -212,13 +215,17 @@ type keyRecordingRuntime struct {
 }
 
 func (r *keyRecordingRuntime) Start(context.Context) error {
+	r.f.mu.Lock()
+	defer r.f.mu.Unlock()
 	r.f.started = append(r.f.started, r.keys)
 	return nil
 }
 
 func (f *keyRecordingFactory) New(_ runtime.Workspace, keys runtime.SecretKeys, _ []string) runtime.Runtime {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.built = append(f.built, keys)
-	return &keyRecordingRuntime{stubRuntime: stubRuntime{state: "stopped"}, f: f, keys: keys}
+	return &keyRecordingRuntime{stubRuntime: stubRuntime{state: "stopped", endpoint: f.endpoint}, f: f, keys: keys}
 }
 
 // The memoized runtime holds the keys it was built with. Every real start resolves them
