@@ -156,6 +156,43 @@ describe("useStudio: teardown", () => {
   });
 });
 
+describe("useStudio: a parked edit", () => {
+  it("restores only what the member changed, not fields the agent moved meanwhile", async () => {
+    await mount();
+    let release!: () => void;
+    patchGate = new Promise<void>((r) => (release = r));
+    putAnswers.push(() => ({ status: 0 }));
+    await act(async () => st.patchForm({ prompt: "mine" }));
+    await tick(600);
+    await act(async () => root.unmount());
+    release();
+    await tick(0);
+    patchGate = null;
+    current = { ...current, draft: { ...current.draft, inputs: ["agent.png"] }, updated_at: "v2" };
+    host.remove();
+    await mount();
+    await tick(600);
+    expect(calls[1].body.draft).toEqual({ prompt: "mine" });
+  });
+
+  it("a pane reopened before the old save failed still gets the edit back", async () => {
+    await mount();
+    let release!: () => void;
+    patchGate = new Promise<void>((r) => (release = r));
+    putAnswers.push(() => ({ status: 0 }));
+    await act(async () => st.patchForm({ prompt: "late" }));
+    await tick(600);
+    await act(async () => root.unmount());
+    host.remove();
+    await mount(); // its first read is done; the old save has not answered yet
+    release();
+    patchGate = null;
+    await tick(600);
+    expect(st.form.prompt).toBe("late");
+    expect(calls[calls.length - 1].body.draft).toEqual({ prompt: "late" });
+  });
+});
+
 describe("useStudio: 縁取り（決定 6）", () => {
   it("エージェントの編集の縁取りは開き直しても残り、人が触ると消える", async () => {
     await mount();

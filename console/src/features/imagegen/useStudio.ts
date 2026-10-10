@@ -55,6 +55,11 @@ const FIRST_READ_RETRY_MS = 3000;
 // here, per studio, for the next mount to restore and resend it. `base` is the form the studio
 // had, so only the fields the member changed are put back over whatever the agent did meanwhile.
 const orphaned = new Map<string, { form: ImagegenDraft; base: ImagegenDraft }>();
+// A pane for the same studio may already be mounted when the old save finally fails (closed and
+// reopened inside the request); it is told, since the map itself triggers no render.
+const orphanListeners = new Set<(id: string) => void>();
+// formFromStudio returns fresh arrays every call, so fields are compared by content.
+const sameField = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b);
 
 // Per-studio state that outlives the pane (a reopen, a reload): the edit-log position the pane
 // has seen and the outlines the member has not cleared yet (decision 6), and per (studio,
@@ -281,7 +286,10 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
   // sitting dirty (which also holds the poll off) until the member happens to type again.
   function scheduleRetry() {
     if (disposedRef.current) {
-      if (dirtyRef.current && baseRef.current) orphaned.set(id, { form: formRef.current, base: formFromStudio(baseRef.current.draft) });
+      if (dirtyRef.current && baseRef.current) {
+        orphaned.set(id, { form: formRef.current, base: formFromStudio(baseRef.current.draft) });
+        orphanListeners.forEach((l) => l(id));
+      }
       return;
     }
     const wait = RETRY_MS[Math.min(retryRef.current, RETRY_MS.length - 1)];
@@ -342,16 +350,27 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
   }, []);
 
   // Put back an edit the previous pane could not save, once this pane has a studio to diff against.
+  // Fields this pane's member has already changed since are theirs and stay.
+  const [orphanTick, setOrphanTick] = useState(0);
+  useEffect(() => {
+    const l = (oid: string) => {
+      if (oid === id) setOrphanTick((t) => t + 1);
+    };
+    orphanListeners.add(l);
+    return () => void orphanListeners.delete(l);
+  }, [id]);
   useEffect(() => {
     const o = orphaned.get(id);
-    if (!o || !studio || !baseRef.current) return;
+    const base = baseRef.current;
+    if (!o || !studio || !base) return;
     orphaned.delete(id);
+    const fresh = formFromStudio(base.draft);
     const mine: Partial<ImagegenDraft> = {};
     for (const k of Object.keys(o.form) as (keyof ImagegenDraft)[]) {
-      if (o.form[k] !== o.base[k]) (mine as Record<string, unknown>)[k] = o.form[k];
+      if (!sameField(o.form[k], o.base[k]) && sameField(formRef.current[k], fresh[k])) (mine as Record<string, unknown>)[k] = o.form[k];
     }
     if (Object.keys(mine).length) patchForm(mine);
-  }, [id, studio, patchForm]);
+  }, [id, studio, patchForm, orphanTick]);
 
   // The agent's edits. Only with a session bound, only while shown, never over an unsent edit.
   const bound = !!studio?.session;
