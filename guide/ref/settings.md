@@ -87,7 +87,7 @@ else:
 | `DATA_DIR` | where all persistent state lives (the thing to back up) |
 | `AF_MASTER_KEY` | the root of at-rest encryption. Lose it and the stored credentials are unrecoverable |
 | `AF_KEY_CUSTODIAN` | who holds the at-rest keys: `local` (the default, derived from `AF_MASTER_KEY`) or `kms` (AWS KMS, with `AF_KMS_KEY_ID`; [operate/04](../operate/04-secure.md#keys-at-rest-on-aws-kms)). Rejected at boot if unknown or incomplete |
-| `AF_WORKSPACE_DEK` | `derived` (the default) or `random`: a KMS-sealed key of its own for each member's home, so disabling the KMS key also shreds credential stores that have moved to it. `random` needs `AF_KEY_CUSTODIAN=kms`; turning it off does not undo it ([operate/04](../operate/04-secure.md#a-key-of-its-own-for-each-home)) |
+| `AF_WORKSPACE_DEK` | `derived` (the default) or `random`: a KMS-sealed key of its own for each member's home, so a credential store that has moved to it no longer opens with a key derived from `AF_MASTER_KEY` and the Control Plane cannot unwrap it once the KMS key is disabled (copies already handed to the workspace and its runtime still open it). `random` needs `AF_KEY_CUSTODIAN=kms`; turning it off does not undo it ([operate/04](../operate/04-secure.md#a-key-of-its-own-for-each-home)) |
 | `SUPER_ADMIN_EMAILS` | who is a deployment administrator |
 | `PUBLIC_BASE_URL` | the address people reach, and what OAuth callbacks are built from |
 | `WS_MEMORY` | the default memory ceiling for a workspace |

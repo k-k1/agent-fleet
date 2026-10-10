@@ -84,7 +84,7 @@ Control Plane の起動前に設定します。注釈つきの一覧は
 | `DATA_DIR` | 永続する状態がすべてここにあるため、**バックアップすべき対象** |
 | `AF_MASTER_KEY` | at-rest 暗号の根。**失うと保存済みの資格情報は復元できない** |
 | `AF_KEY_CUSTODIAN` | 保存時の鍵を誰が持つか: `local`（既定。`AF_MASTER_KEY` から導く）か `kms`（AWS KMS。`AF_KMS_KEY_ID` と組で。[operate/04](../operate/04-secure.ja.md#aws-kms-で保存時の鍵を守る)）。未知の値や不足は起動時に拒否 |
-| `AF_WORKSPACE_DEK` | `derived`（既定）か `random`: メンバーのホームごとに KMS で封じた専用の鍵を持たせ、移し替えた資格情報ストアも KMS 鍵の無効化で shred されるようにする。`random` は `AF_KEY_CUSTODIAN=kms` が前提で、無効にしても元には戻らない（[operate/04](../operate/04-secure.ja.md#ホームごとに専用の鍵を持たせる)） |
+| `AF_WORKSPACE_DEK` | `derived`（既定）か `random`: メンバーのホームごとに KMS で封じた専用の鍵を持たせる。移し替えた資格情報ストアは `AF_MASTER_KEY` から導いた鍵では開けなくなり、KMS 鍵を無効化すると Control Plane は鍵を開けなくなる（ワークスペースとランタイムにすでに渡した写しでは今も開ける）。`random` は `AF_KEY_CUSTODIAN=kms` が前提で、無効にしても元には戻らない（[operate/04](../operate/04-secure.ja.md#ホームごとに専用の鍵を持たせる)） |
 | `SUPER_ADMIN_EMAILS` | 誰が配備管理者か |
 | `PUBLIC_BASE_URL` | 利用者が到達する URL。OAuth のコールバックもここから組み立てる |
 | `WS_MEMORY` | ワークスペースの既定メモリ上限 |

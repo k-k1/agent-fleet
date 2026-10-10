@@ -168,15 +168,23 @@ Limits, stated plainly:
 - Homes not started since the flag was turned on stay derived and are **not** shredded by
   disabling the KMS key; `af-cp home-dek-status` counts them. Snapshots and backups taken
   before a store moved hold the derived-key file.
-- Disabling the key shreds the store at rest only. A running workspace keeps the key in its
-  environment and goes on using the store; the runtime keeps its own copy to start it (docker
-  container env, Kubernetes Secret, ECS SSM SecureStrings under the account's SSM key, kept
-  until Destroy); the CP's data-key cache holds it for one TTL.
+- Disabling the key is not by itself a shred of a moved store. It means the master-derived
+  key no longer opens the store and, once the data-key cache has expired, the CP can no longer
+  unwrap the home key, so it refuses the next start (within the TTL a start can still
+  succeed). Copies of the home key already handed out still open the store, each under
+  something other than the custodian key: a running workspace's environment, and the
+  runtime's own copy, which outlives a stop (docker container env, the Kubernetes Secret, ECS
+  SSM SecureStrings under the account's SSM key). Shredding a home's store while keeping the
+  home needs those removed too; nothing does that automatically, and Destroy removes them only
+  with the home.
 - The Agent's `Save` now refuses to write over a store it cannot open (the same rule `Update`
   already had), so a member whose store is unreadable cannot overwrite it until it is removed.
 - Part A does not stop injecting the derived key; it no longer opens a moved store, and the
   confirm step that marks a home `random` and stops it is part B.
 - Downgrading the CP or the workspace image after a store moved, or losing `home_dek`, leaves
-  that store unreadable; members reconnect what they had stored.
+  that store unreadable, and the Agent then refuses every write to it, reconnecting included.
+  The guide says to restore the CP version, `home_dek` and the KMS key first, and only to give
+  the credentials up by stopping the workspace and moving the unreadable `secrets.enc` aside by
+  hand before members reconnect. Nothing removes or overwrites it automatically.
 - Verified by unit tests with fakes only. A kept home recreated on real ECS/EFS, and a
   downgrade, have not been run. The ECS stacks do not expose the flag yet.
