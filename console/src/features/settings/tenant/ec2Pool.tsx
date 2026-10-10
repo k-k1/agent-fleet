@@ -347,7 +347,7 @@ export function PoolView() {
         {slots.length === 0 ? (
           <p className="muted">{tr("pool.no_slots")}</p>
         ) : (
-          <div className="pool-table-scroll">
+          <div className="pool-table-scroll" role="region" tabIndex={0} aria-label={tr("pool.slots_title")}>
             <table className="admin-table pool-table">
               <thead>
                 <tr>
@@ -436,7 +436,7 @@ export function PoolView() {
         {homes.length === 0 ? (
           <p className="muted">{tr("pool.no_homes")}</p>
         ) : (
-          <div className="pool-table-scroll">
+          <div className="pool-table-scroll" role="region" tabIndex={0} aria-label={tr("pool.homes_title")}>
             <table className="admin-table pool-table">
               <thead>
                 <tr>

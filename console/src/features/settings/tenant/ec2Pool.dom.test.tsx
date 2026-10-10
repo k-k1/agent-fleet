@@ -80,7 +80,16 @@ describe("the EC2 slot pool surface", () => {
     await mount();
     const tables = host!.querySelectorAll("table.pool-table");
     expect(tables.length).toBe(2);
-    for (const t of tables) expect(t.parentElement?.classList.contains("pool-table-scroll")).toBe(true);
+    // The box is a keyboard stop (a scroll container is not focusable in every browser) and is
+    // named after the heading above it.
+    const titles = ["スロット", "home"];
+    tables.forEach((t, i) => {
+      const box = t.parentElement!;
+      expect(box.classList.contains("pool-table-scroll")).toBe(true);
+      expect(box.getAttribute("role")).toBe("region");
+      expect(box.getAttribute("tabindex")).toBe("0");
+      expect(box.getAttribute("aria-label")).toBe(titles[i]);
+    });
   });
 
   it("counts held, running and hibernating slots and says eviction happens once the cap is reached", async () => {
