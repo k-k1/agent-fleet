@@ -190,7 +190,7 @@ run "small_profile_plans" {
   variables {
     node_zones             = ["europe-west1-b"]
     zonal_cluster          = true
-    system_machine_type    = "e2-medium"
+    system_machine_type    = "e2-standard-2"
     workspace_machine_type = "n2-standard-4"
     sql_availability_type  = "ZONAL"
     managed_prometheus     = false

@@ -25,7 +25,7 @@ workspace_image = "europe-west1-docker.pkg.dev/example-project/agent-fleet/works
 #
 # node_zones             = ["europe-west1-b"]
 # zonal_cluster          = true            # replaces the cluster if changed later
-# system_machine_type    = "e2-medium"     # CP fit with kube-system not yet measured
+# system_machine_type    = "e2-standard-2" # e2-medium does not fit kube-system plus the CP
 # system_node_count      = 1
 # workspace_machine_type = "n2-standard-4" # a workspace pod must still fit on one node
 # sql_availability_type  = "ZONAL"

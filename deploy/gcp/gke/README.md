@@ -109,7 +109,7 @@ sets all of it:
 |---|---|---|
 | `node_zones`, `zonal_cluster` | one zone, `true` | a regional cluster with nodes in two zones |
 | `sql_availability_type`, `sql_tier` | `ZONAL`, `db-custom-1-3840` (the smallest dedicated-core tier Postgres offers) | `REGIONAL` |
-| `system_machine_type`, `system_node_count` | `e2-medium`, 1 | e2-standard-2 in each of two zones |
+| `system_machine_type`, `system_node_count` | `e2-standard-2`, 1 | e2-standard-2 in each of two zones |
 | `workspace_machine_type` | `n2-standard-4` | n2-standard-8 |
 | `managed_prometheus` | `false` | on |
 
@@ -128,23 +128,29 @@ fee is 0. If it is used up by another zonal or Autopilot cluster, add ~¥377/day
 
 | Item | Defaults | Small | Basis |
 |---|---:|---:|---|
-| System pool | 649 | ~162 | one e2-medium at half of an e2-standard-2 (list-price ratio) |
+| System pool | 649 | ~325 | one e2-standard-2 instead of two |
 | Cloud SQL vCPU + RAM | 663 | ~331 | `ZONAL` is half of `REGIONAL` |
 | GKE management fee | 377 | 0 | one zonal cluster per billing account is free; a second one pays |
 | Managed Prometheus samples | 58 | 0 | off |
 | Everything else | 393 | 393 | left unchanged: disks and SQL storage shrink a little, not counted |
-| **Total** | **~2,140** | **~890** | |
+| **Total** | **~2,140** | **~1,050** | |
 
-That is about **¥27,000 per 30 days** against ¥64,000, and still roughly 1.7 times the ECS
+That is about **¥31,500 per 30 days** against ¥64,000, and still roughly twice the ECS
 standing cost (~¥16,000 at the conversion above). Paused, the management fee goes too:
 about ¥220 per day. A workspace node on `n2-standard-4` is about **¥39/hour** (half of
 n2-standard-8, as the machine's core-hours and GiB-hours scale), and a workspace pod's
 limits must fit its ~4 vCPU / 16 GiB.
 
-**Not verified.** None of this was applied: it plans cleanly (`terraform validate` and the
-offline tests) but nothing was created. Whether kube-system plus the CP (requests 250m CPU,
-512 MiB) fit on one e2-medium (about 0.94 vCPU and 2.8 GiB allocatable, shared-core, burstable)
-is untested; if the CP stays `Pending`, use `e2-standard-2`, which costs about ¥160 a day more.
-The e2-medium and Cloud SQL figures are scaled from the measured ones, not billed. Shared-core
+**One e2-medium does not fit.** With a single e2-medium system node (about 0.94 vCPU
+allocatable) the CP stays `Pending` ("Insufficient cpu", kube-system already on the node) and its
+claim stays `Pending` with it (`WaitForFirstConsumer`). That is why the profile uses
+`e2-standard-2`. Changing `system_machine_type` on a running cluster is an in-place node pool
+update, about 6 minutes, after which the CP was healthy.
+
+**Not verified.** The profile was stood up once, on a zonal cluster (develop build
+0.30.1-dev-b130ad6b): the first apply took about 18 minutes and the CP was healthy about 14
+minutes after the overlay was applied. That run is the only evidence for the text above; the
+other zones, a regional variant of the profile and other regions are untried. The Cloud SQL
+and system pool figures are scaled from the measured ones, not billed. Shared-core
 Cloud SQL tiers (`db-g1-small`) are cheaper still and untried. The Network Intelligence Center
 charge (~¥23/day) has no variable here.
