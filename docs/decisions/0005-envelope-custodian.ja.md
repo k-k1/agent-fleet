@@ -3,7 +3,7 @@
 [English](0005-envelope-custodian.md) | 日本語
 
 - 状態: 確定（P3-3）
-- Follow-ups: #1645, #1646
+- Follow-ups: #1645, #1646, #1956
 - 関連: [history/p3-3-envelope-crypto](../log/p3-3-envelope-crypto.md) / [dev/07 §7.6 シークレット管理と封筒暗号](../build/07-security.ja.md#76-シークレット管理と封筒暗号)（旧 security §4.4） / [ロードマップ §12.3](../log/roadmap.md#123-tos-と分離の留意自社ホスト前提)
 
 ## 背景
@@ -117,7 +117,7 @@ KMS 鍵のローテーションは AWS の自動ローテーション（`EnableK
   `wrapped_dek` を消すので、ワークスペースの行と運命を共にするランダムな鍵では残したホームを誤って shred
   してしまう。今は Destroy も含めて何も行を消さない。アダプタの Destroy はホームが丸ごと消えたことを示さない
   （home task の無い ecs はアクセスポイントだけを消し、途中で失敗した後の再試行は残り物なしと報告する）。
-  残った行は使われない封じた鍵にとどまり、読めないストアにはならない。
+  残った行は使われない封じた鍵にとどまり、読めないストアにはならない。Follow-ups: #1956
 - **明示的に有効化・kms 限定。** `AF_WORKSPACE_DEK=random`。`AF_KEY_CUSTODIAN=kms` でなければ起動時に拒否する。
   local の custodian では鍵が master 由来の KEK で包まれ、得るものが無い。鍵を持つホームには、フラグを外した後も
   その鍵を渡し続ける。ストアがすでにそれで封じられているかもしれないからだ。

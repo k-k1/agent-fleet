@@ -3,7 +3,7 @@
 English | [日本語](0005-envelope-custodian.ja.md)
 
 - Status: decided (P3-3)
-- Follow-ups: #1645, #1646
+- Follow-ups: #1645, #1646, #1956
 - See also: [history/p3-3-envelope-crypto](../log/p3-3-envelope-crypto.md) / [build/07 §7.6 Secrets and envelope encryption](../build/07-security.md#76-secrets-and-envelope-encryption) (formerly security §4.4) / [Roadmap §12.3](../log/roadmap.md#123-tos-と分離の留意自社ホスト前提)
 
 ## Context
@@ -146,7 +146,7 @@ future" is taken up, opt-in. The derived DEK and every decision above stand.
   would shred a kept home by accident. Nothing deletes a row yet, Destroy included: an adapter's
   Destroy does not prove the whole home is gone (ecs without the home task removes only the
   access points, and a retry after a partial failure then reports no leftovers). A kept row is
-  an unused sealed key, never an unreadable store.
+  an unused sealed key, never an unreadable store. Follow-ups: #1956.
 - **Opt-in, kms only.** `AF_WORKSPACE_DEK=random`, refused at boot unless
   `AF_KEY_CUSTODIAN=kms`: under the local custodian the key would be wrapped by a
   master-derived KEK and buy nothing. A home that has a key keeps getting it after the flag is
