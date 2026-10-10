@@ -2,9 +2,10 @@
 
 English | [日本語](0111-member-collaboration.ja.md)
 
-- Status: **proposed** (2026-10-07). Nothing is built. Three rounds of design review by a second model
-  are folded in.
+- Status: **accepted** (2026-10-10). Nothing is built. Proposed 2026-10-07 after three rounds of design
+  review by a second model. The open questions are settled in the addendum at the end.
 - Tracking: #1840
+- Follow-ups: #1960, #1961, #1962
 - Related: [0057](0057-member-handoff.md) (handover between members: execution never crosses) /
   [0041](0041-cross-session-messaging.md) (peer messaging, permission laundering, live governance) /
   [0020](0020-chat-bridge.md) (Slack / Discord bridge) / [0108](0108-af-owned-agent-memory.md)
@@ -429,6 +430,8 @@ Dependencies, per feature:
 
 ## Open questions
 
+Settled on 2026-10-10: see the addendum below.
+
 - Retention defaults (proposal: DMs 90 days from creation, requests 90 days from their final state;
   long-open marking after 14 days).
 - Admin read or export of bodies: none, or audited and visible to the participants.
@@ -437,3 +440,48 @@ Dependencies, per feature:
   at all (a tenant-level switch).
 - Expected tenant size (a handful, or dozens), which sizes the roster, rate limits and rooms.
 - The stale threshold for the board, and the long-open threshold for requests.
+
+## Addendum (2026-10-10) — the open questions, settled
+
+Decisions 1–14 stand. This settles the open questions above.
+
+1. **No admin read or export of message bodies.** The audit log without bodies (decision 9) is the
+   record admins get. A member who knows colleagues' messages might be read writes fewer of them,
+   which defeats the feature. Read access can be added later. Taking it back once members have
+   learned it exists cannot. That the CP operator can technically decrypt is still stated, as
+   decision 9 says. If a tenant needs body access for compliance, it comes as a tenant setting that
+   is audited and visible to the participants. That would amend this ADR.
+2. **Retention: DMs 90 days from creation, requests 90 days from their final state.** A request
+   is marked long-open after 14 days. Both are fixed, not tenant-configurable.
+   - The notification center's seven days are too short to follow a request.
+   - Ninety days reaches a quarterly look back at which request became which PR.
+   - Fourteen days is a two-week iteration. A request untouched for that long is in practice
+     abandoned.
+   - A configurable period widens what the purge has to be tested against, so it waits for a request.
+3. **One publication setting per tenant membership.** A member of several tenants sets each
+   separately. The tenant is the unit of trust, and the data is already held per membership. What is
+   published to one tenant must never reach another. The board shows the member which tenants they
+   publish to, because one provider account can appear in more than one.
+4. **A tenant-level switch for the limit board, on by default.** Each member is still hidden by
+   default (decision 6). An admin can turn the board off for the tenant, for organisations whose
+   policy does not want remaining quota shown at all. A tenant default of off would make the board
+   double opt-in, and in practice unused. The product does not ask which subscription contracts
+   members hold. The guide states decision 7 and leaves that judgement to the tenant.
+5. **Target size: 2–30 members, with limits that still hold at about 100.** Initial limits:
+   - 20 recipients per item;
+   - 30 sends per hour per sender;
+   - 10 pending items per sender → recipient pair.
+
+   The board and requests work within a team whose members know each other. Beyond a few dozen,
+   claim races and announcements change character. That is also why rooms stay in P3.
+6. **Stale after 60 minutes. Long-open after 14 days.**
+   - Within one window, use only grows, so an older observation from before the reset time is still
+     a correct lower bound. The board shows it as "at least X% (N min ago)" and marks it stale after
+     60 minutes, about a fifth of a five-hour window.
+   - Past the reset time, it loses even that meaning and reads "reset not yet observed", as
+     decision 6 says.
+
+Follow-up issues:
+- P0: #1960 — the inbox acceptance conditions, and ADR 0057's two-account handover run.
+- P1-A: #1961 — the inbox, DMs, requests and recipes.
+- P1-B: #1962 — the limit board.
