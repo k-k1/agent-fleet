@@ -621,8 +621,9 @@ long as it is symmetric, in this account, and its policy lets the account's IAM 
 An alias ARN is refused by the pattern on purpose: IAM matches a key's calls against the key
 ARN, so a grant on an alias would allow nothing.
 
-⚠️ `AF_MASTER_KEY` stays required: values stored before the switch are not re-encrypted and
-open with it. Do not clear this parameter again while KMS-sealed values exist; the local
+⚠️ `AF_MASTER_KEY` stays required: values stored before the switch open with it until
+`af-cp rewrap-keys` re-seals them, and it still derives the workspace DEKs and the signing keys
+after that. Do not clear this parameter again while KMS-sealed values exist; the local
 custodian refuses them. The operator's side is `guide/operate/04-secure.md`, "Keys at rest on
 AWS KMS".
 

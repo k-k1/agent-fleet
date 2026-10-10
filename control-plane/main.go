@@ -7,7 +7,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"log"
@@ -107,6 +106,12 @@ func main() {
 		runEFSHomeOp()
 		return
 	}
+	// Subcommand: `control-plane rewrap-keys [--dry-run]` re-seals the values stored before the
+	// switch to the KMS custodian (rewrap_keys.go). It reads the CP's own environment.
+	if len(os.Args) > 1 && os.Args[1] == "rewrap-keys" {
+		runRewrapKeys(os.Args[2:])
+		return
+	}
 
 	portBase, _ := strconv.Atoi(envx.Or("WS_AGENT_PORT", "7700"))
 	mgr := &manager{
@@ -139,8 +144,7 @@ func main() {
 	// subkeys are derived from its SHA-256 and injected as AF_SECRET_KEY. Unset
 	// => no encryption (dev: Agent stores secrets as plaintext JSON).
 	if mk := os.Getenv("AF_MASTER_KEY"); mk != "" {
-		sum := sha256.Sum256([]byte(mk))
-		mgr.master32 = sum[:]
+		mgr.master32 = masterDigest(mk)
 	}
 	// Envelope key custodian (ADR 0005): local by default, KMS on AWS. A misconfigured
 	// kms stops the CP here rather than starting one that cannot open what it stored.

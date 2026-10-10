@@ -89,8 +89,9 @@ What to know before you switch:
 
 - **`AF_MASTER_KEY` stays required.** It still opens everything stored before the switch, and
   other keys are derived from it. Keep it exactly as before.
-- **Nothing is re-encrypted.** Values stored before the switch stay readable and stay protected
-  by the master key alone; only what is stored afterwards is protected by KMS.
+- **Nothing is re-encrypted on its own.** Values stored before the switch stay readable and stay
+  protected by the master key alone; only what is stored afterwards is protected by KMS, until
+  you run `rewrap-keys` ([below](#re-sealing-values-stored-before-the-switch)).
 - **Members' stored credentials are not shredded by KMS.** Only a workspace whose key is stored
   for the first time after the switch has it wrapped by KMS; a workspace that already had one
   keeps the master-key wrapping, and restarting it changes nothing. Either way the key itself is
@@ -107,6 +108,66 @@ What to know before you switch:
   revocation an administrator of the key can undo, not a shred.
 - **Do not switch back to `local`** while values sealed by KMS exist: the local custodian refuses
   them with an error that says so.
+
+### Re-sealing values stored before the switch
+
+`af-cp rewrap-keys` re-seals, under KMS, every value the Control Plane sealed with the master
+key before the switch: the wrapped key of each workspace's credential store, MCP connection
+headers, sign-in and Git OAuth client secrets, session handoffs and share proposals, and the
+Hugging Face, Civitai and ComfyUI keys of the engines. Afterwards disabling the KMS key makes
+those unreadable too.
+
+- Run it **after** the Control Plane itself runs with `AF_KEY_CUSTODIAN=kms`, with the Control
+  Plane's own environment: the same `AF_MASTER_KEY`, `AF_KMS_KEY_ID`, database settings and
+  task role. It refuses to run under `local`. A Control Plane still on `local` cannot open what
+  the command writes.
+- Start with `--dry-run`: it prints, for each place, how many values are already on KMS, how
+  many are in the old format, and how many are stored unsealed (written by a Control Plane that
+  had no master key; the command leaves those alone). It changes nothing and does not call KMS.
+- Without `--dry-run` each value is opened with the master key, sealed by KMS, opened again
+  through KMS to check it reads back, and only then written, one row at a time and only if the
+  row has not changed meanwhile. Interrupting it, a KMS error or a refused `Decrypt` stops it
+  before the row it was on is written: every row is left either in the old format or on KMS,
+  and both open. After the rewrite it looks at every place again without changing anything,
+  and the exit code comes from that final check. Run it again until it exits `0`; a run with
+  nothing left to do changes nothing.
+- **Run it while no administrator is editing.** The Control Plane can keep running, but saving
+  a sign-in provider or Git OAuth app without retyping its secret, or the ComfyUI panel without
+  retyping its key, writes back the stored value as it was read; a save that read the old value
+  before the command rewrote it puts the old value back. The final check catches one that lands
+  during the run; one that lands after it does not. Confirm afterwards with `--dry-run`.
+- Exit `0` (with or without `--dry-run`): when the command last looked, nothing was in the old
+  format and every row could be read. `1`: something is still in the old format or could not
+  be read or written, or the run stopped; the log names the place and the row id, never a
+  value. A `--dry-run` therefore exits `1` before the rewrap and `0` after it. `2`:
+  configuration (not `kms`, no master key, no key id, no database).
+- On `ecs` / `ecs-ec2`, run it as a one-off task of the Control Plane's task definition with
+  the command overridden, in the Control Plane's subnets and security group; the output is in
+  the Control Plane's log group:
+
+  ```bash
+  aws ecs run-task --cluster <cluster> --launch-type FARGATE \
+    --task-definition <the Control Plane task definition> \
+    --network-configuration 'awsvpcConfiguration={subnets=[<private subnet>],securityGroups=[<Control Plane security group>]}' \
+    --overrides '{"containerOverrides":[{"name":"cp","command":["rewrap-keys","--dry-run"]}]}'
+  ```
+
+**`AF_MASTER_KEY` still cannot be dropped afterwards**, and must not change:
+
+- The key of each workspace's credential store is still derived from it and the member
+  (`HMAC(master, userKey)`). The command moves the *wrapped copy* of that key to KMS, so with
+  the KMS key disabled the Control Plane can no longer start the workspace with it, but anyone
+  holding the master key can still derive it and open `secrets.enc`. Members' stored
+  credentials are therefore still not crypto-shredded by KMS; that needs a random key per
+  workspace (#1646).
+- A workspace started for the first time still gets its key from the same derivation.
+- The tokens that workspaces use to call back into the Control Plane (Git credentials, Git
+  OAuth, memos, schedules, engines, branch rules, AWS and Google Cloud profiles, documents, MCP)
+  are signed with keys derived from it.
+- The Control Plane refuses to start with `AF_KEY_CUSTODIAN=kms` and no `AF_MASTER_KEY`.
+
+What the command does change: the master key alone no longer opens the values it re-sealed,
+apart from the credential-store keys, which it can still derive.
 
 ## Operating egress control
 

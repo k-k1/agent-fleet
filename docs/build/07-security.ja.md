@@ -379,7 +379,8 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
   導出する。`kmsCustodian`（`AF_KEY_CUSTODIAN=kms`、AWS）は値ごとに KMS の新しいデータ鍵で封じ、
   暗号化コンテキストで key ref に結び付け、KMS が失敗すれば失敗する（フェイルクローズ）。同じ custodian が
   上のテナントの秘密と、セッションの引き継ぎ・共有のペイロードも封印する。KMS へ切り替える前に封じた値は
-  形式で見分けて local の custodian が開き、KMS の失敗で振り分けることは無い。
+  形式で見分けて local の custodian が開き、KMS の失敗で振り分けることは無い。`af-cp rewrap-keys` が
+  それを一度に KMS で封じ直す（2026-10-10 追記、[operate/04](../../guide/operate/04-secure.ja.md#切り替え前に保存された値を封じ直す)）。
 - ⚠️ **正直な限界**: local の custodian では KEK がマスター鍵由来で、実効強度は単一のマスター鍵と同等。
   KMS では鍵の無効化で切り替え後に封じたものが shred されるが、ワークスペースの DEK 自体は今もマスター鍵と
   ユーザーキーから導出する（封筒保存より前に書かれたストアを開けるため）ので、メンバーの資格情報ストアは

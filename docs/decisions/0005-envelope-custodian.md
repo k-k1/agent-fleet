@@ -95,3 +95,42 @@ Remaining: random DEKs for workspaces, with a way to re-encrypt an existing `sec
 headers, sign-in client secrets, engine tokens, handoffs, shares) under KMS (#1645);
 per-tenant KMS keys; Vault transit. KMS key rotation is AWS's automatic rotation (`EnableKeyRotation`), which
 needs nothing from the Control Plane.
+
+## Addendum (2026-10-10) — re-sealing legacy values (#1645)
+
+The 2026-10-04 addendum stands. `af-cp rewrap-keys` (`control-plane/rewrap_keys.go`) is the
+one-shot rewrite it left for later: an operator runs it once the Control Plane is on
+`AF_KEY_CUSTODIAN=kms`, and every value without the `kms1:` prefix is opened by the local
+custodian and sealed again by KMS. Format dispatch stays as it is: the command only changes
+which format a row is in.
+
+- **Scope.** The six tables in `store.sealedColumns` (`wrapped_dek`, `mcp_server`,
+  `tenant_idp`, `tenant_git_oauth`, `session_share_proposal`, `session_handoff_offer`) and the
+  three settings rows of the engine tokens (Hugging Face, Civitai, the ComfyUI record). Two
+  tests keep the list complete: one fails on a schema column that looks sealed (`key_ref`,
+  `*_enc`, `ciphertext`) and is not listed, the other on any `Wrap` / `sealTenantSecret` call in
+  the module that is not mapped to a target. Values stored unsealed (empty key ref) are counted
+  and left alone.
+- **Per row, fail closed.** Open with the master key, seal with KMS, open the new value through
+  KMS with the data-key cache off, and only then write it with a compare-and-swap on the old
+  value. A KMS error, a refused `Decrypt` or a read-back mismatch stops the run before the row is
+  written; a row that changed meanwhile is left to the newer value. Every row is therefore in
+  one of the two formats at every moment, and both open. `--dry-run` counts without calling KMS.
+- **Exit `0` comes from a final read-only pass**, for `--dry-run` and a real run alike: no
+  legacy value and no unreadable row when the command last looked. It is not a lock. Control
+  Plane edits that carry a stored value forward (an IdP or Git OAuth app saved without its
+  secret, the ComfyUI panel saved without its key) write back what they read, so one that read a
+  legacy value before the swap can restore it; the final pass catches that during the run, not
+  after it. The guide therefore says to run it while no administrator is editing and to confirm
+  with `--dry-run`. Re-sealing in those edit paths instead was left out to keep the change to
+  the command.
+- **`AF_MASTER_KEY` can still not be dropped.** It derives the workspace DEK
+  (`HMAC(master, userKey)`) — the command moves `wrapped_dek` to KMS, but the DEK inside is still
+  derivable, so credential stores are still not crypto-shredded (#1646) — and every bridge
+  signing key, and `kms` without it stops the Control Plane at boot. What the rewrap does buy:
+  once a `--dry-run` exits `0` with no edit in flight, disabling the KMS key shreds every
+  custodian-sealed value, including the ones stored before the switch, and the master key no
+  longer opens them.
+
+Not verified against a real KMS key: the tests use an in-memory KMS. The first run on a real
+deployment should be a `--dry-run`.
