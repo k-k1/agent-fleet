@@ -61,7 +61,7 @@ func TestECSEC2LiveStartDeployments(t *testing.T) {
 
 	name := "af-ec2c-d" + os.Getenv("AF_ECS_EC2_LIVE_SUFFIX")
 	ws := Workspace{ContainerName: name, MembershipID: "m-d1", AgentToken: "tok-d1"}
-	u := f.New(ws, "", nil).(*ecsEC2Runtime)
+	u := f.New(ws, SecretKeys{}, nil).(*ecsEC2Runtime)
 
 	// A second task shows up ~40s after the first, so "converged" is not far enough to
 	// look: every round watches on past that before counting.
@@ -130,7 +130,7 @@ func TestECSEC2LiveStartDeployments(t *testing.T) {
 	// the case that used to cost 40 seconds. A different env is the smallest honest
 	// change (image, settings and slot all reach the fingerprint the same way). ---
 	lastTaskDef.Delete(name)
-	changed := f.New(ws, "", []string{"AF_LIVE_DEPLOY_PROBE=1"}).(*ecsEC2Runtime)
+	changed := f.New(ws, SecretKeys{}, []string{"AF_LIVE_DEPLOY_PROBE=1"}).(*ecsEC2Runtime)
 	u = changed
 	revsBefore := d.revisions(name)
 	from = time.Now()
@@ -202,7 +202,7 @@ func TestECSFargateLiveStartDeployments(t *testing.T) {
 	d := &liveDeploy{t: t, ctx: ctx, ecs: ecs.NewFromConfig(ac), cluster: f.cfg.cluster}
 
 	name := "af-ec2c-fg" + os.Getenv("AF_ECS_EC2_LIVE_SUFFIX")
-	rt := f.New(Workspace{ContainerName: name, MembershipID: "m-fg1", AgentToken: "tok-fg1"}, "", nil)
+	rt := f.New(Workspace{ContainerName: name, MembershipID: "m-fg1", AgentToken: "tok-fg1"}, SecretKeys{}, nil)
 
 	waitFor := func(want string, budget time.Duration) {
 		t.Helper()
@@ -311,7 +311,7 @@ func TestECSEC2LiveDeploymentConfig(t *testing.T) {
 
 	name := "af-ec2c-dc" + os.Getenv("AF_ECS_EC2_LIVE_SUFFIX")
 	ws := Workspace{ContainerName: name, MembershipID: "m-dc1", AgentToken: "tok-dc1"}
-	u := f.New(ws, "", nil).(*ecsEC2Runtime)
+	u := f.New(ws, SecretKeys{}, nil).(*ecsEC2Runtime)
 
 	// A second task shows up ~40s after the first, so "converged" is not far enough to
 	// look: every round watches past that before counting.
@@ -420,7 +420,7 @@ func TestECSEC2LiveDeploymentConfig(t *testing.T) {
 		d.settle(name, 3*time.Minute)
 		d.logDeployments(name, fmt.Sprintf("★%d: what the product is about to Start from", round))
 		lastTaskDef.Delete(name)
-		changed := f.New(ws, "", []string{"AF_LIVE_DC_PROBE=" + probe}).(*ecsEC2Runtime)
+		changed := f.New(ws, SecretKeys{}, []string{"AF_LIVE_DC_PROBE=" + probe}).(*ecsEC2Runtime)
 		u = changed
 		revsBefore := d.revisions(name)
 		w := d.watch(name)
@@ -533,7 +533,7 @@ func TestECSEC2LivePreUpgradeService(t *testing.T) {
 
 	name := "af-ec2c-oz" + os.Getenv("AF_ECS_EC2_LIVE_SUFFIX")
 	ws := Workspace{ContainerName: name, MembershipID: "m-oz1", AgentToken: "tok-oz1"}
-	u := f.New(ws, "", nil).(*ecsEC2Runtime)
+	u := f.New(ws, SecretKeys{}, nil).(*ecsEC2Runtime)
 	defer func() {
 		if err := u.Stop(ctx); err != nil {
 			t.Logf("cleanup Stop: %v", err)

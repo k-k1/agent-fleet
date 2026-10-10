@@ -67,7 +67,7 @@ func (a adminAPI) allSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, ws := range wss {
 			mi := byMembership[ws.MembershipID]
-			rt := a.mgr.runtimeFor(ws, "")
+			rt := a.mgr.runtimeFor(ws, noSecretKeys)
 			state := rt.State(ctx)
 			for _, s := range a.mgr.sessionsForOverview(ctx, ws, rt, state) {
 				out = append(out, adminSessionRow{

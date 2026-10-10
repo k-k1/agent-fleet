@@ -55,7 +55,7 @@ type nativeRuntime struct {
 	dataDir    string
 	agentPort  string
 	token      string
-	secretKey  string
+	keys       SecretKeys
 	sessionCmd string
 	extraEnv   []string
 	spawnMu    sync.Mutex
@@ -166,7 +166,7 @@ func newNativeFactory(mcfg Config) (RuntimeFactory, error) {
 	}, nil
 }
 
-func (f *nativeFactory) New(ws Workspace, secretKey string, extraEnv []string) Runtime {
+func (f *nativeFactory) New(ws Workspace, keys SecretKeys, extraEnv []string) Runtime {
 	env := append(append([]string(nil), f.extraEnv...), extraEnv...)
 	return &nativeRuntime{
 		agentBin:   f.agentBin,
@@ -176,7 +176,7 @@ func (f *nativeFactory) New(ws Workspace, secretKey string, extraEnv []string) R
 		dataDir:    f.rootDataDir(ws),
 		agentPort:  ws.AgentPort,
 		token:      ws.AgentToken,
-		secretKey:  secretKey,
+		keys:       keys,
 		sessionCmd: f.sessionCmd,
 		extraEnv:   env,
 	}
@@ -643,8 +643,8 @@ func (n *nativeRuntime) overlayWorkspaceEnv(env map[string]string) {
 	if n.token != "" {
 		env["AGENT_TOKEN"] = n.token
 	}
-	if n.secretKey != "" {
-		env["AF_SECRET_KEY"] = n.secretKey
+	for _, kv := range n.keys.envPairs() {
+		env[kv[0]] = kv[1]
 	}
 	if n.sessionCmd != "" {
 		env["AGENT_SESSION_CMD"] = n.sessionCmd

@@ -155,7 +155,7 @@ func (a previewHostAPI) serve(w http.ResponseWriter, r *http.Request, ph preview
 		http.Error(w, "bad preview path", http.StatusBadRequest)
 		return
 	}
-	rt := a.mgr.runtimeFor(ws, "")
+	rt := a.mgr.runtimeFor(ws, noSecretKeys)
 	opts := previewRelayOptions{
 		port:           ph.port,
 		path:           r.URL.Path,

@@ -15,7 +15,7 @@ func TestMachineProfileNamesTheRungPlacementWillUse(t *testing.T) {
 	f.pool.homeGiB = 60
 	f.pool.hostReserveMiB = 1536
 
-	rt, ok := f.New(Workspace{MembershipID: "M-1", MemBytes: 9 * 1024 * mib, SlotClass: "arm"}, "dek", nil).(*ecsEC2Runtime)
+	rt, ok := f.New(Workspace{MembershipID: "M-1", MemBytes: 9 * 1024 * mib, SlotClass: "arm"}, SecretKeys{Key: "dek"}, nil).(*ecsEC2Runtime)
 	if !ok {
 		t.Fatal("ecs-ec2 factory did not return an ecsEC2Runtime")
 	}
@@ -54,7 +54,7 @@ func TestMachineProfileNamesNoClassOnASingleLadder(t *testing.T) {
 	f.pool.classes = parseSlotClasses("m7i.large:8192:2")
 	f.pool.defaultClass = "default"
 
-	m := f.New(Workspace{MembershipID: "M-1"}, "dek", nil).(*ecsEC2Runtime).MachineProfile()
+	m := f.New(Workspace{MembershipID: "M-1"}, SecretKeys{Key: "dek"}, nil).(*ecsEC2Runtime).MachineProfile()
 	if m.ClassID != "" || m.ClassLabel != "" {
 		t.Errorf("class = %q/%q, want both empty on a single unnamed ladder", m.ClassID, m.ClassLabel)
 	}

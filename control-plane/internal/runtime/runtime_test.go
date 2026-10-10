@@ -61,18 +61,18 @@ func TestFactoryMemoryOverride(t *testing.T) {
 	m := Config{Image: "img", AgentHost: "127.0.0.1", Memory: "1g", RootDataDir: StaticRootDataDir("/srv/data", "")}
 
 	dockerF, _ := NewFactory("local", m)
-	if d := dockerF.New(Workspace{ContainerName: "c", MemBytes: 2 * gib}, "", nil).(*dockerRuntime); d.memory != "2147483648" {
+	if d := dockerF.New(Workspace{ContainerName: "c", MemBytes: 2 * gib}, SecretKeys{}, nil).(*dockerRuntime); d.memory != "2147483648" {
 		t.Errorf("docker override: memory=%q, want 2147483648", d.memory)
 	}
-	if d := dockerF.New(Workspace{ContainerName: "c"}, "", nil).(*dockerRuntime); d.memory != "1g" {
+	if d := dockerF.New(Workspace{ContainerName: "c"}, SecretKeys{}, nil).(*dockerRuntime); d.memory != "1g" {
 		t.Errorf("docker default: memory=%q, want 1g", d.memory)
 	}
 
 	ecsF, _ := NewFactory("ecs", m) // cfg defaults: cpu 1024 / memory 2048
-	if e := ecsF.New(Workspace{ContainerName: "c", MemBytes: 10 * gib}, "", nil).(*ecsRuntime); e.cpu != "2048" || e.memory != "10240" {
+	if e := ecsF.New(Workspace{ContainerName: "c", MemBytes: 10 * gib}, SecretKeys{}, nil).(*ecsRuntime); e.cpu != "2048" || e.memory != "10240" {
 		t.Errorf("ecs override: cpu=%q memory=%q, want 2048/10240", e.cpu, e.memory)
 	}
-	if e := ecsF.New(Workspace{ContainerName: "c"}, "", nil).(*ecsRuntime); e.cpu != "1024" || e.memory != "2048" {
+	if e := ecsF.New(Workspace{ContainerName: "c"}, SecretKeys{}, nil).(*ecsRuntime); e.cpu != "1024" || e.memory != "2048" {
 		t.Errorf("ecs default: cpu=%q memory=%q, want 1024/2048", e.cpu, e.memory)
 	}
 }
@@ -85,27 +85,27 @@ func TestFactoryCPUAndDiskOverride(t *testing.T) {
 	m := Config{Image: "img", AgentHost: "127.0.0.1", Memory: "1g", RootDataDir: StaticRootDataDir("/srv/data", "")}
 
 	dockerF, _ := NewFactory("local", m)
-	if d := dockerF.New(Workspace{ContainerName: "c", CPUUnits: 2048}, "", nil).(*dockerRuntime); d.cpus != "2" {
+	if d := dockerF.New(Workspace{ContainerName: "c", CPUUnits: 2048}, SecretKeys{}, nil).(*dockerRuntime); d.cpus != "2" {
 		t.Errorf("docker cpus=%q, want 2", d.cpus)
 	}
-	if d := dockerF.New(Workspace{ContainerName: "c", CPUUnits: 512}, "", nil).(*dockerRuntime); d.cpus != "0.5" {
+	if d := dockerF.New(Workspace{ContainerName: "c", CPUUnits: 512}, SecretKeys{}, nil).(*dockerRuntime); d.cpus != "0.5" {
 		t.Errorf("docker cpus=%q, want 0.5", d.cpus)
 	}
 	// Unset must stay unset: an empty --cpus is "every core", the pre-P1 behaviour.
-	if d := dockerF.New(Workspace{ContainerName: "c"}, "", nil).(*dockerRuntime); d.cpus != "" {
+	if d := dockerF.New(Workspace{ContainerName: "c"}, SecretKeys{}, nil).(*dockerRuntime); d.cpus != "" {
 		t.Errorf("docker default cpus=%q, want empty", d.cpus)
 	}
 
 	ecsF, _ := NewFactory("ecs", m) // cfg defaults: cpu 1024 / memory 2048
 	// CPU alone still yields a VALID pair: 4 vCPU cannot run with the 2048 default.
-	e := ecsF.New(Workspace{ContainerName: "c", CPUUnits: 4096}, "", nil).(*ecsRuntime)
+	e := ecsF.New(Workspace{ContainerName: "c", CPUUnits: 4096}, SecretKeys{}, nil).(*ecsRuntime)
 	if e.cpu != "4096" || e.memory != "8192" {
 		t.Errorf("ecs cpu-only: cpu=%q memory=%q, want 4096/8192", e.cpu, e.memory)
 	}
 	// Disk: the deployment default must land ABOVE the entrypoint's arming threshold
 	// (AF_WS_SCRATCH_MIN_GB, 30 GiB), or the cache relocation of ADR 0044 decision 3 never
 	// runs — which is exactly what shipping 0 here did.
-	if e := ecsF.New(Workspace{ContainerName: "c"}, "", nil).(*ecsRuntime); int(e.diskGiB) != ecsDefaultWorkDiskGiB || e.ebsGiB != 0 {
+	if e := ecsF.New(Workspace{ContainerName: "c"}, SecretKeys{}, nil).(*ecsRuntime); int(e.diskGiB) != ecsDefaultWorkDiskGiB || e.ebsGiB != 0 {
 		t.Errorf("ecs disk default: ephemeral=%d ebs=%d, want %d/0", e.diskGiB, e.ebsGiB, ecsDefaultWorkDiskGiB)
 	}
 	if ecsDefaultWorkDiskGiB <= 30 {
@@ -114,13 +114,13 @@ func TestFactoryCPUAndDiskOverride(t *testing.T) {
 	// An explicit 0 is still "free tier": a deployment can opt out of paying for disk.
 	t.Setenv("AF_ECS_WS_DISK_GB", "0")
 	ecsFree, _ := NewFactory("ecs", m)
-	if e := ecsFree.New(Workspace{ContainerName: "c"}, "", nil).(*ecsRuntime); e.diskGiB != 0 || e.ebsGiB != 0 {
+	if e := ecsFree.New(Workspace{ContainerName: "c"}, SecretKeys{}, nil).(*ecsRuntime); e.diskGiB != 0 || e.ebsGiB != 0 {
 		t.Errorf("ecs disk opt-out: ephemeral=%d ebs=%d, want 0/0", e.diskGiB, e.ebsGiB)
 	}
-	if e := ecsF.New(Workspace{ContainerName: "c", DiskGB: 60}, "", nil).(*ecsRuntime); e.diskGiB != 60 || e.ebsGiB != 0 {
+	if e := ecsF.New(Workspace{ContainerName: "c", DiskGB: 60}, SecretKeys{}, nil).(*ecsRuntime); e.diskGiB != 60 || e.ebsGiB != 0 {
 		t.Errorf("ecs disk 60: ephemeral=%d ebs=%d, want 60/0", e.diskGiB, e.ebsGiB)
 	}
-	if e := ecsF.New(Workspace{ContainerName: "c", DiskGB: 500}, "", nil).(*ecsRuntime); e.diskGiB != 0 || e.ebsGiB != 500 {
+	if e := ecsF.New(Workspace{ContainerName: "c", DiskGB: 500}, SecretKeys{}, nil).(*ecsRuntime); e.diskGiB != 0 || e.ebsGiB != 500 {
 		t.Errorf("ecs disk 500: ephemeral=%d ebs=%d, want 0/500", e.diskGiB, e.ebsGiB)
 	}
 }
@@ -151,7 +151,7 @@ func TestStopGraceSec(t *testing.T) {
 	}
 }
 
-// dockerFactory.New must thread the Workspace record and the per-call secretKey
+// dockerFactory.New must thread the Workspace record and the per-call keys
 // into the concrete dockerRuntime, and re-root the data dir via the manager's
 // closure — otherwise a restored/moved deployment would mount the wrong home.
 func TestDockerFactoryNew(t *testing.T) {
@@ -167,9 +167,9 @@ func TestDockerFactoryNew(t *testing.T) {
 		TenantID: "T-acme", ContainerName: "af-ws-acme-alice", Network: "af-net-acme-alice",
 		DataDir: "/old/root/acme/alice", AgentPort: "7731", AgentToken: "tok-xyz",
 	}
-	rt, ok := f.New(ws, "dek-hex", []string{"AF_AGENT_SELF_UPDATE_ALLOWED=1"}).(*dockerRuntime)
+	rt, ok := f.New(ws, SecretKeys{Key: "dek-hex"}, []string{"AF_AGENT_SELF_UPDATE_ALLOWED=1"}).(*dockerRuntime)
 	if !ok {
-		t.Fatalf("New returned %T, want *dockerRuntime", f.New(ws, "dek-hex", nil))
+		t.Fatalf("New returned %T, want *dockerRuntime", f.New(ws, SecretKeys{Key: "dek-hex"}, nil))
 	}
 	// Per-workspace extraEnv is appended after the (empty here) template env.
 	if len(rt.extraEnv) == 0 || rt.extraEnv[len(rt.extraEnv)-1] != "AF_AGENT_SELF_UPDATE_ALLOWED=1" {
@@ -178,8 +178,8 @@ func TestDockerFactoryNew(t *testing.T) {
 	if rt.name != ws.ContainerName || rt.network != ws.Network {
 		t.Errorf("name/network = %q/%q, want %q/%q", rt.name, rt.network, ws.ContainerName, ws.Network)
 	}
-	if rt.agentPort != ws.AgentPort || rt.token != ws.AgentToken || rt.secretKey != "dek-hex" {
-		t.Errorf("port/token/secretKey = %q/%q/%q, want %q/%q/dek-hex", rt.agentPort, rt.token, rt.secretKey, ws.AgentPort, ws.AgentToken)
+	if rt.agentPort != ws.AgentPort || rt.token != ws.AgentToken || rt.keys.Key != "dek-hex" {
+		t.Errorf("port/token/key = %q/%q/%q, want %q/%q/dek-hex", rt.agentPort, rt.token, rt.keys.Key, ws.AgentPort, ws.AgentToken)
 	}
 	if rt.image != "img:1" || rt.memory != "2g" || rt.agentHost != "127.0.0.1" {
 		t.Errorf("template fields not carried: image=%q memory=%q host=%q", rt.image, rt.memory, rt.agentHost)

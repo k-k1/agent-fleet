@@ -647,7 +647,9 @@ func jsonQuote(s string) string {
 
 type stubFactory struct{ rt runtime.Runtime }
 
-func (f stubFactory) New(runtime.Workspace, string, []string) runtime.Runtime { return f.rt }
+func (f stubFactory) New(runtime.Workspace, runtime.SecretKeys, []string) runtime.Runtime {
+	return f.rt
+}
 
 // The wiring, not the decision: a STOPPED workspace never reaches tiers 1–2 (they return
 // on anything that is not running), so tier 3 has to be reached from the other side of

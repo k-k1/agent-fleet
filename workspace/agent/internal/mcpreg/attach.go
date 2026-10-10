@@ -261,7 +261,7 @@ func builtinEnvVars(d ServerDef) []string {
 		// advertised tool set is still the boundary.
 		return []string{"AGENT_TOKEN", "AGENT_ADDR", "AF_SESSION_NAME", "AF_CP_BASE_URL", "AF_CP_INTERNAL_URL", "AF_MEMO_TOKEN"}
 	}
-	return []string{"AF_SECRET_KEY"}
+	return []string{"AF_SECRET_KEY", "AF_SECRET_KEY_NEXT"}
 }
 
 // ForwardEnvNames is extraEnvVars for callers outside this package: the variables a host that

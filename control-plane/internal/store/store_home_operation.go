@@ -99,6 +99,10 @@ type HomeOperationFinish struct {
 	// DeleteWorkspace removes the workspace row and everything keyed to it (a Destroy
 	// that succeeded), as DeleteWorkspace does.
 	DeleteWorkspace bool
+	// DeleteHomeDEK also forgets the home's random key (store_home_dek.go). Only for a Destroy
+	// that removed the whole home: a key dropped while any of the home survives makes what
+	// survives unreadable.
+	DeleteHomeDEK bool
 	// StopWorkspace records the workspace as stopped (an administrator's Clean home that
 	// succeeded), as SetWorkspaceState does.
 	StopWorkspace bool
@@ -250,6 +254,12 @@ func (s *SQL) FinishHomeOperation(ctx context.Context, id string, f HomeOperatio
 			`INSERT INTO audit_log(id, tenant_id, actor_kind, actor_id, action, target, detail, at, http_status)
 			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			a.ID, a.TenantID, a.ActorKind, a.ActorID, a.Action, a.Target, a.Detail, a.At, a.HTTPStatus); err != nil {
+			return false, err
+		}
+	}
+	if f.DeleteHomeDEK {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM home_dek WHERE membership_id IN (SELECT membership_id FROM workspace WHERE id=?)`, wsID); err != nil {
 			return false, err
 		}
 	}

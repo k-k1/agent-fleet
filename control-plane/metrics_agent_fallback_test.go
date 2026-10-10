@@ -31,7 +31,7 @@ type agentStatsFactory struct {
 	state    string
 }
 
-func (f agentStatsFactory) New(runtime.Workspace, string, []string) runtime.Runtime {
+func (f agentStatsFactory) New(runtime.Workspace, runtime.SecretKeys, []string) runtime.Runtime {
 	return agentStatsRuntime{stubRuntime: stubRuntime{endpoint: f.endpoint}, state: f.state}
 }
 

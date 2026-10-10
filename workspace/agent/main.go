@@ -33,6 +33,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/statemig"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -122,6 +123,9 @@ func serve() {
 			log.Printf("state: migration: %v", err)
 		}
 	}
+	// Re-seal the credential store under the home's own key when the CP sent one, before
+	// anything below reads or writes the store.
+	secretsKeyState = secrets.MigrateKey()
 	// Fold any pre-A3 plaintext credential files into the encrypted store.
 	migrateLegacySecrets()
 	// Seed the CP-injected internal git token (docs/reference/internal-git-provider)
@@ -325,8 +329,11 @@ func serve() {
 	}
 }
 
+// secretsKeyState is secrets.MigrateKey's answer at boot; set before the listener serves.
+var secretsKeyState = secrets.KeyStateNone
+
 func handleHealth(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "secrets_key": secretsKeyState})
 }
 
 // --- small helpers ---

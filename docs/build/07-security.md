@@ -456,8 +456,10 @@ credentials as exposed and rotate them.
   the effective strength equals a single master key. With KMS, disabling the key shreds what
   was sealed after the switch — but the workspace DEK itself is still derived from the master
   key and the user key (so that stores written before envelope storage still open), so
-  members' credential stores are not shredded by it. A random DEK per workspace and Vault
-  are 📋 ([decisions/0005](../decisions/0005-envelope-custodian.md), 2026-10-04 addendum).
+  members' credential stores are not shredded by it — unless `AF_WORKSPACE_DEK=random` has given
+  the home a KMS-sealed key of its own and its store has moved to it (🚧: the step that stops
+  injecting the derived key is still open; homes not yet started stay derived). Vault is 📋
+  ([decisions/0005](../decisions/0005-envelope-custodian.md), 2026-10-04 and 2026-10-10 addenda).
 
 ## 7.7 Audit
 

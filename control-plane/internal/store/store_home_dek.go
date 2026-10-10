@@ -1,0 +1,81 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+)
+
+// Home DEK schemes (migrations/0090_home_dek.sql).
+const (
+	HomeDEKMigrating = "migrating"
+	HomeDEKRandom    = "random"
+)
+
+// HomeDEK is the random credential-store key of one member's home, sealed by the key
+// custodian. Ciphertext is never logged.
+type HomeDEK struct {
+	MembershipID, Ciphertext, KeyRef, Scheme, CreatedAt, MigratedAt string
+}
+
+// HomeDEKCounts tallies home_dek against the workspaces: Migrating and Random are rows by
+// scheme, WithoutKey the workspaces whose home has no row yet (never started since the
+// deployment turned the random key on, or it is off).
+type HomeDEKCounts struct {
+	Migrating, Random, WithoutKey int
+}
+
+func (s *SQL) GetHomeDEK(ctx context.Context, membershipID string) (HomeDEK, bool, error) {
+	d := HomeDEK{MembershipID: membershipID}
+	err := s.db.QueryRowContext(ctx,
+		`SELECT ciphertext, key_ref, scheme, created_at, migrated_at FROM home_dek WHERE membership_id=?`,
+		membershipID).Scan(&d.Ciphertext, &d.KeyRef, &d.Scheme, &d.CreatedAt, &d.MigratedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return HomeDEK{}, false, nil
+	}
+	if err != nil {
+		return HomeDEK{}, false, err
+	}
+	return d, true, nil
+}
+
+// InsertHomeDEK never replaces a stored key: the home's store may already be sealed under it,
+// and overwriting it would make that store unreadable.
+func (s *SQL) InsertHomeDEK(ctx context.Context, d HomeDEK) (HomeDEK, error) {
+	if d.Scheme == "" {
+		d.Scheme = HomeDEKMigrating
+	}
+	if d.CreatedAt == "" {
+		d.CreatedAt = NowTS()
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO home_dek(membership_id, ciphertext, key_ref, scheme, created_at)
+		 VALUES(?, ?, ?, ?, ?) ON CONFLICT(membership_id) DO NOTHING`,
+		d.MembershipID, d.Ciphertext, d.KeyRef, d.Scheme, d.CreatedAt); err != nil {
+		return HomeDEK{}, err
+	}
+	got, ok, err := s.GetHomeDEK(ctx, d.MembershipID)
+	if err != nil {
+		return HomeDEK{}, err
+	}
+	if !ok {
+		return HomeDEK{}, errors.New("store: home_dek row vanished right after its insert")
+	}
+	return got, nil
+}
+
+func (s *SQL) DeleteHomeDEK(ctx context.Context, membershipID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM home_dek WHERE membership_id=?`, membershipID)
+	return err
+}
+
+func (s *SQL) CountHomeDEKs(ctx context.Context) (HomeDEKCounts, error) {
+	var c HomeDEKCounts
+	err := s.db.QueryRowContext(ctx, `SELECT
+		(SELECT COUNT(*) FROM home_dek WHERE scheme='migrating'),
+		(SELECT COUNT(*) FROM home_dek WHERE scheme='random'),
+		(SELECT COUNT(*) FROM workspace w WHERE NOT EXISTS
+			(SELECT 1 FROM home_dek h WHERE h.membership_id = w.membership_id))`).
+		Scan(&c.Migrating, &c.Random, &c.WithoutKey)
+	return c, err
+}

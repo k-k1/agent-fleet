@@ -384,8 +384,9 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
 - ⚠️ **正直な限界**: local の custodian では KEK がマスター鍵由来で、実効強度は単一のマスター鍵と同等。
   KMS では鍵の無効化で切り替え後に封じたものが shred されるが、ワークスペースの DEK 自体は今もマスター鍵と
   ユーザーキーから導出する（封筒保存より前に書かれたストアを開けるため）ので、メンバーの資格情報ストアは
-  それでは shred されない。ワークスペースごとのランダムな DEK と Vault は 📋
-  （[decisions/0005](../decisions/0005-envelope-custodian.ja.md) の 2026-10-04 追記）。
+  それでは shred されない。ただし `AF_WORKSPACE_DEK=random` でホームが KMS で封じた専用の鍵を持ち、ストアが
+  それに移ったものは別（🚧: 導いた鍵を渡すのをやめる手順はまだ。まだ起動していないホームは導いた鍵のまま）。
+  Vault は 📋（[decisions/0005](../decisions/0005-envelope-custodian.ja.md) の 2026-10-04・2026-10-10 追記）。
 
 ## 7.7 監査
 

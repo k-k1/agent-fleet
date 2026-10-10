@@ -24,8 +24,8 @@ type dockerRuntime struct {
 	dataDir    string // host path; <dataDir>/home is bind-mounted to ~ in the container
 	agentHost  string
 	agentPort  string
-	token      string // CP↔Agent shared secret (injected as AGENT_TOKEN; docs/07 §7.5)
-	secretKey  string // per-user at-rest key (injected as AF_SECRET_KEY; A3)
+	token      string     // CP↔Agent shared secret (injected as AGENT_TOKEN; docs/07 §7.5)
+	keys       SecretKeys // credential-store keys (AF_SECRET_KEY[_NEXT]; A3)
 	memory     string
 	sessionCmd string
 	extraEnv   []string // KEY=VAL passed to the workspace container (e.g. CLAUDE_INSTALL=0)
@@ -54,7 +54,7 @@ type dockerFactory struct {
 	rootDataDir func(Workspace) string
 }
 
-func (f *dockerFactory) New(ws Workspace, secretKey string, extraEnv []string) Runtime {
+func (f *dockerFactory) New(ws Workspace, keys SecretKeys, extraEnv []string) Runtime {
 	// Shared template env first, then the per-workspace extras (copied so we never
 	// mutate the factory's slice).
 	env := append(append([]string(nil), f.extraEnv...), extraEnv...)
@@ -80,7 +80,7 @@ func (f *dockerFactory) New(ws Workspace, secretKey string, extraEnv []string) R
 		agentHost:  f.agentHost,
 		agentPort:  ws.AgentPort,
 		token:      ws.AgentToken,
-		secretKey:  secretKey,
+		keys:       keys,
 		memory:     memory,
 		cpus:       cpus,
 		sessionCmd: f.sessionCmd,
@@ -330,7 +330,7 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 	// AGENT_TOKEN / AF_SECRET_KEY (the DEK) passed as argv `-e` would be readable in
 	// /proc/<pid>/cmdline, so they go through a 0600 temporary --env-file instead,
 	// removed once docker run has returned.
-	if d.token != "" || d.secretKey != "" {
+	if d.token != "" || len(d.keys.envPairs()) > 0 {
 		ef, err := d.writeSecretEnvFile()
 		if err != nil {
 			return err
@@ -389,8 +389,8 @@ func (d *dockerRuntime) writeSecretEnvFile() (string, error) {
 	if d.token != "" {
 		b.WriteString("AGENT_TOKEN=" + d.token + "\n")
 	}
-	if d.secretKey != "" {
-		b.WriteString("AF_SECRET_KEY=" + d.secretKey + "\n")
+	for _, kv := range d.keys.envPairs() {
+		b.WriteString(kv[0] + "=" + kv[1] + "\n")
 	}
 	if _, err := f.WriteString(b.String()); err != nil {
 		f.Close()

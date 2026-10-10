@@ -274,7 +274,7 @@ func fakeKubeRuntime(t *testing.T) (*kubeRuntime, *fakeKube) {
 		cfg: &kubeConfig{namespace: "ns", image: "reg.example/ws:1", homeGiB: 10, stateGiB: 1, serviceAccount: "default"},
 		c:   c, pins: fakePinner{}, poll: 10 * time.Millisecond, stopMargin: 100 * time.Millisecond,
 	}
-	return fac.New(Workspace{ContainerName: "af-ws-x"}, "", nil).(*kubeRuntime), f
+	return fac.New(Workspace{ContainerName: "af-ws-x"}, SecretKeys{}, nil).(*kubeRuntime), f
 }
 
 const (
@@ -382,7 +382,7 @@ func TestKubePodTemplateIsRestrictedAndCarriesNoSecret(t *testing.T) {
 		serviceAccount: "default", templateEnv: []string{"WS_ENV_TOKEN=template-secret"},
 		nodeSelector: map[string]string{"pool": "ws"}, pullSecret: "regcred"}}
 	rt := f.New(Workspace{ContainerName: "af-ws-x", AgentToken: "agent-token-value", MemBytes: 3 * gib, CPUUnits: 512},
-		"dek-value", []string{"AF_MINTED=minted-value"}).(*kubeRuntime)
+		SecretKeys{Key: "dek-value"}, []string{"AF_MINTED=minted-value"}).(*kubeRuntime)
 	tmpl := rt.podTemplate("img:1@sha256:"+strings.Repeat("0", 64), 7, time.Unix(0, 0))
 	raw, _ := json.Marshal(tmpl)
 	for _, s := range []string{"agent-token-value", "dek-value", "minted-value", "template-secret"} {
@@ -540,7 +540,7 @@ func TestKubeSecretEnvBypassesTheProxyForTheCP(t *testing.T) {
 	f := &kubeFactory{cfg: &kubeConfig{namespace: "ns", image: "img:1", templateEnv: []string{
 		"HTTPS_PROXY=http://cp:3128", "https_proxy=http://cp:3128",
 		"NO_PROXY=localhost,127.0.0.1,::1", "no_proxy=localhost,127.0.0.1,::1"}}}
-	rt := f.New(Workspace{ContainerName: "af-ws-x"}, "", []string{"AF_CP_INTERNAL_URL=http://af-cp-internal.af-cp.svc:8098"}).(*kubeRuntime)
+	rt := f.New(Workspace{ContainerName: "af-ws-x"}, SecretKeys{}, []string{"AF_CP_INTERNAL_URL=http://af-cp-internal.af-cp.svc:8098"}).(*kubeRuntime)
 	env := rt.secretEnv()
 	for _, k := range []string{"NO_PROXY", "no_proxy"} {
 		if env[k] != "localhost,127.0.0.1,::1,af-cp-internal.af-cp.svc" {
@@ -549,13 +549,13 @@ func TestKubeSecretEnvBypassesTheProxyForTheCP(t *testing.T) {
 	}
 	// No proxy, nothing to bypass: NO_PROXY is left as the deployment set it.
 	f.cfg.templateEnv = nil
-	rt = f.New(Workspace{ContainerName: "af-ws-x"}, "", []string{"AF_CP_INTERNAL_URL=http://af-cp-internal.af-cp.svc:8098"}).(*kubeRuntime)
+	rt = f.New(Workspace{ContainerName: "af-ws-x"}, SecretKeys{}, []string{"AF_CP_INTERNAL_URL=http://af-cp-internal.af-cp.svc:8098"}).(*kubeRuntime)
 	if env := rt.secretEnv(); env["NO_PROXY"] != "" || env["no_proxy"] != "" {
 		t.Errorf("NO_PROXY set without a proxy: %v", env)
 	}
 	// A proxy without NO_PROXY gets one.
 	f.cfg.templateEnv = []string{"HTTP_PROXY=http://cp:3128"}
-	rt = f.New(Workspace{ContainerName: "af-ws-x"}, "", []string{"AF_CP_INTERNAL_URL=http://af-cp-internal.af-cp.svc:8098"}).(*kubeRuntime)
+	rt = f.New(Workspace{ContainerName: "af-ws-x"}, SecretKeys{}, []string{"AF_CP_INTERNAL_URL=http://af-cp-internal.af-cp.svc:8098"}).(*kubeRuntime)
 	if env := rt.secretEnv(); env["NO_PROXY"] != "af-cp-internal.af-cp.svc" {
 		t.Errorf("NO_PROXY = %q", env["NO_PROXY"])
 	}

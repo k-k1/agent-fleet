@@ -314,7 +314,7 @@ func TestKubeWipeHomeMarksTheStatefulSet(t *testing.T) {
 // shape as the agent, with the generations the marks hold.
 func TestKubeAddHomeWipe(t *testing.T) {
 	f := &kubeFactory{cfg: &kubeConfig{namespace: "ns", image: "img:1", serviceAccount: "default"}}
-	rt := f.New(Workspace{ContainerName: "af-ws-x"}, "", nil).(*kubeRuntime)
+	rt := f.New(Workspace{ContainerName: "af-ws-x"}, SecretKeys{}, nil).(*kubeRuntime)
 	tmpl := rt.podTemplate("img:1@sha256:"+strings.Repeat("0", 64), 2, testEpoch)
 	rt.addHomeWipe(&tmpl, map[string]string{})
 	if len(tmpl.Spec.InitContainers) != 1 || tmpl.Spec.InitContainers[0].Name != kubeLayoutContainer {
@@ -939,7 +939,7 @@ func TestKubeRollbackScriptResumes(t *testing.T) {
 // alone mounts the claim's root; the agent never sees the root.
 func TestKubePodMountsTheHomeThroughTheLayout(t *testing.T) {
 	f := &kubeFactory{cfg: &kubeConfig{namespace: "ns", image: "img:1", serviceAccount: "default"}}
-	rt := f.New(Workspace{ContainerName: "af-ws-x"}, "", nil).(*kubeRuntime)
+	rt := f.New(Workspace{ContainerName: "af-ws-x"}, SecretKeys{}, nil).(*kubeRuntime)
 	tmpl := rt.podTemplate("img:1@sha256:"+strings.Repeat("0", 64), 2, testEpoch)
 	rt.addHomeWipe(&tmpl, map[string]string{kubeAnnWipePrefix + "repos": "1"})
 	homeMounts := func(c kContainer) []kVolumeMount {

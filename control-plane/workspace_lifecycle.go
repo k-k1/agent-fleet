@@ -139,7 +139,7 @@ func (m *manager) countRunningInTenant(ctx context.Context, tenantID string) (in
 	}
 	n := 0
 	for _, ws := range wss {
-		switch m.runtimeFor(ws, "").State(ctx) {
+		switch m.runtimeFor(ws, noSecretKeys).State(ctx) {
 		case "running", "starting":
 			n++
 		}
@@ -154,7 +154,7 @@ func (m *manager) workspaceStateByMembership(ctx context.Context, membershipID s
 	if err != nil || !ok {
 		return "", "none"
 	}
-	return ws.ContainerName, m.runtimeFor(ws, "").State(ctx)
+	return ws.ContainerName, m.runtimeFor(ws, noSecretKeys).State(ctx)
 }
 
 // stopWorkspaceByMembership force-stops a member's workspace (admin action).
@@ -178,7 +178,7 @@ func (m *manager) stopWorkspaceByMembershipIf(ctx context.Context, membershipID 
 		return err
 	}
 	defer lease.Close()
-	rt := m.runtimeFor(ws, "")
+	rt := m.runtimeFor(ws, noSecretKeys)
 	releaseFence, err := m.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
 	if err != nil {
 		return err
@@ -265,7 +265,7 @@ func (m *manager) beginCleanHome(ctx context.Context, membershipID string, audit
 		}
 		return func() error { return nil }, err
 	}
-	rt := m.runtimeFor(ws, "")
+	rt := m.runtimeFor(ws, noSecretKeys)
 	if !runtime.CanEraseHome(rt) {
 		return nil, runtime.ErrHomeWipeUnsupported
 	}
@@ -356,7 +356,7 @@ func (m *manager) homeBackupsByMembership(ctx context.Context, membershipID stri
 	if !found {
 		return runtime.HomeBackups{}, m.homeOperations().Backups, nil
 	}
-	return runtime.HomeBackupsOf(ctx, m.runtimeFor(ws, ""))
+	return runtime.HomeBackupsOf(ctx, m.runtimeFor(ws, noSecretKeys))
 }
 
 // deleteHomeBackupsByMembership deletes those copies and returns how many went. It takes
@@ -373,7 +373,7 @@ func (m *manager) deleteHomeBackupsByMembership(ctx context.Context, membershipI
 	if !found {
 		return 0, m.homeOperations().Backups, nil
 	}
-	return runtime.DeleteHomeBackups(ctx, m.runtimeFor(ws, ""))
+	return runtime.DeleteHomeBackups(ctx, m.runtimeFor(ws, noSecretKeys))
 }
 
 // homeOperations says which home operations this deployment's runtime performs; the
@@ -411,13 +411,13 @@ func (m *manager) homeOperations() runtime.HomeOperations {
 // this one start differs, and every later call (state/exec/endpoint) is unaffected by
 // container env.
 func (m *manager) runtimeForUnattended(ctx context.Context, res *resolved) (runtime.Runtime, error) {
-	dekHex, err := m.resolveDEK(ctx, res.ws, res.ident.UserKey)
+	keys, err := m.resolveDEK(ctx, res.ws, res.ident.UserKey)
 	if err != nil {
 		return nil, err
 	}
 	ws := m.withResolvedSize(ctx, res.ws)
 	env := append(m.workspaceExtraEnv(ctx, ws), runtime.UnattendedStartEnv)
-	return m.runtimeFor(ws, dekHex, env...), nil
+	return m.runtimeFor(ws, keys, env...), nil
 }
 
 // armPreviewForStart mints the preview slug for the container start that is about to
@@ -438,7 +438,7 @@ func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, extraEn
 		log.Printf("preview slug for ws %s: %v (starting without preview URLs)", res.ws.ID, err)
 		return nil
 	}
-	dekHex, err := m.resolveDEK(ctx, res.ws, res.ident.UserKey)
+	keys, err := m.resolveDEK(ctx, res.ws, res.ident.UserKey)
 	if err != nil {
 		log.Printf("preview arm: resolve DEK for ws %s: %v (starting without preview URLs)", res.ws.ID, err)
 		return nil
@@ -446,7 +446,7 @@ func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, extraEn
 	ws := res.ws
 	ws.PreviewSlug = slug
 	ws = m.withResolvedSize(ctx, ws)
-	return m.runtimeFor(ws, dekHex, append(m.workspaceExtraEnv(ctx, ws), extraEnv...)...)
+	return m.runtimeFor(ws, keys, append(m.workspaceExtraEnv(ctx, ws), extraEnv...)...)
 }
 
 // refreshGitTokenForStart returns a runtime rebuilt with the current internal git token
@@ -466,7 +466,7 @@ func (m *manager) refreshGitTokenForStart(ctx context.Context, res *resolved, ex
 	if err != nil || !ok || epoch == res.gitEpoch {
 		return nil
 	}
-	dekHex, err := m.resolveDEK(ctx, res.ws, res.ident.UserKey)
+	keys, err := m.resolveDEK(ctx, res.ws, res.ident.UserKey)
 	if err != nil {
 		log.Printf("internal git: rebuild for ws %s: resolve DEK: %v (starting with the token it had)", res.ws.ID, err)
 		return nil
@@ -475,7 +475,7 @@ func (m *manager) refreshGitTokenForStart(ctx context.Context, res *resolved, ex
 	ws = m.withResolvedSize(ctx, ws)
 	// Next resolve rebuilds the memo too, so the stale env is not kept for later starts.
 	m.evictMembershipCache(res.ws.MembershipID)
-	return m.runtimeFor(ws, dekHex, append(m.workspaceExtraEnv(ctx, ws), extraEnv...)...)
+	return m.runtimeFor(ws, keys, append(m.workspaceExtraEnv(ctx, ws), extraEnv...)...)
 }
 
 // rotatePreviewSlug decides which slug THIS start runs under and persists it.
@@ -845,7 +845,7 @@ func (m *manager) beginDestroyWorkspace(ctx context.Context, membershipID string
 		lock.Unlock()
 		return nil, err
 	}
-	rt := m.runtimeFor(ws, "")
+	rt := m.runtimeFor(ws, noSecretKeys)
 	releaseFence, err := m.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
 	if err != nil {
 		lease.Close()
@@ -894,6 +894,7 @@ func (m *manager) beginDestroyWorkspace(ctx context.Context, membershipID string
 			if err = lease.checkpoint(ctx); err == nil {
 				if err = m.store.DeleteWorkspace(ctx, ws.ID); err == nil {
 					m.evictMembershipCache(membershipID)
+					m.forgetHomeDEK(ctx, membershipID, leftovers)
 				}
 			}
 		}

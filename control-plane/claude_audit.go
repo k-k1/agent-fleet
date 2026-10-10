@@ -122,7 +122,7 @@ func (a *claudeAuditor) sweep(ctx context.Context) {
 		}
 		for _, ws := range wss {
 			liveWS[ws.ID] = true
-			rt := a.mgr.runtimeFor(ws, "")
+			rt := a.mgr.runtimeFor(ws, noSecretKeys)
 			if rt.State(ctx) != "running" {
 				continue
 			}

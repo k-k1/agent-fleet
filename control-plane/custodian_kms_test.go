@@ -357,21 +357,21 @@ func TestResolveDEKAfterSwitchToKMS(t *testing.T) {
 			mgr := p3Manager(t, st)
 			mgr.master32 = testMaster(t)
 			mgr.custodian = newLocalCustodian(mgr.master32)
-			before, err := mgr.resolveDEK(ctx, oldWS, "a-acme-co-jp")
+			before, err := mgr.resolveWrappedDEK(ctx, oldWS, "a-acme-co-jp")
 			if err != nil || before == "" {
 				t.Fatalf("local resolveDEK = %q, %v", before, err)
 			}
 
 			f := newFakeKMS(t)
 			mgr.custodian = newKMSCustodian(f, f.keyID, newLocalCustodian(mgr.master32), 0)
-			after, err := mgr.resolveDEK(ctx, oldWS, "a-acme-co-jp")
+			after, err := mgr.resolveWrappedDEK(ctx, oldWS, "a-acme-co-jp")
 			if err != nil || after != before {
 				t.Fatalf("after the switch resolveDEK = %q, %v; want the stored %q", after, err, before)
 			}
 
 			// A workspace created after the switch is wrapped by KMS.
 			newWS := mk("W-new", "b-acme-co-jp")
-			dek, err := mgr.resolveDEK(ctx, newWS, "b-acme-co-jp")
+			dek, err := mgr.resolveWrappedDEK(ctx, newWS, "b-acme-co-jp")
 			if err != nil {
 				t.Fatal(err)
 			}

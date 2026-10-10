@@ -35,7 +35,7 @@ type destroyingFactory struct {
 	err       error
 }
 
-func (f *destroyingFactory) New(runtime.Workspace, string, []string) runtime.Runtime {
+func (f *destroyingFactory) New(runtime.Workspace, runtime.SecretKeys, []string) runtime.Runtime {
 	return destroyingRuntime{destroyed: &f.destroyed, leftovers: f.leftovers, err: f.err}
 }
 

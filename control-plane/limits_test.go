@@ -34,12 +34,16 @@ func TestParseLimitsTerminalHistoryRetention(t *testing.T) {
 // rather than one that passes vacuously.
 type poolFactory struct{ max int }
 
-func (f *poolFactory) New(runtime.Workspace, string, []string) runtime.Runtime { return nil }
-func (f *poolFactory) MaxSlots() int                                           { return f.max }
+func (f *poolFactory) New(runtime.Workspace, runtime.SecretKeys, []string) runtime.Runtime {
+	return nil
+}
+func (f *poolFactory) MaxSlots() int { return f.max }
 
 type poollessFactory struct{}
 
-func (f *poollessFactory) New(runtime.Workspace, string, []string) runtime.Runtime { return nil }
+func (f *poollessFactory) New(runtime.Workspace, runtime.SecretKeys, []string) runtime.Runtime {
+	return nil
+}
 
 func budgetFixture(t *testing.T, max int, quotas map[string]int) (*store.SQL, *manager) {
 	t.Helper()

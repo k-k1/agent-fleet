@@ -747,8 +747,8 @@ func newECSEC2Factory(mcfg Config) (RuntimeFactory, error) {
 	return f, nil
 }
 
-func (f *ecsEC2Factory) New(ws Workspace, secretKey string, extraEnv []string) Runtime {
-	base, ok := f.base.New(ws, secretKey, extraEnv).(*ecsRuntime)
+func (f *ecsEC2Factory) New(ws Workspace, keys SecretKeys, extraEnv []string) Runtime {
+	base, ok := f.base.New(ws, keys, extraEnv).(*ecsRuntime)
 	if !ok { // unreachable: ecsFactory.New always returns *ecsRuntime
 		panic("ecs-ec2: base factory did not return *ecsRuntime")
 	}
@@ -6064,7 +6064,7 @@ func (f *ecsEC2Factory) runtimeForVolume(vol *ec2types.Volume) *ecsEC2Runtime {
 	if membership == "" || name == "" {
 		return nil
 	}
-	rt, ok := f.New(Workspace{ContainerName: name, MembershipID: membership}, "", nil).(*ecsEC2Runtime)
+	rt, ok := f.New(Workspace{ContainerName: name, MembershipID: membership}, SecretKeys{}, nil).(*ecsEC2Runtime)
 	if !ok {
 		return nil
 	}

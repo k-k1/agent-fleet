@@ -96,7 +96,9 @@ func (r *reachableHomeRuntime) DeleteHomeBackups(context.Context) (int, error) {
 // fixedRuntimeFactory hands out the same runtime for every workspace.
 type fixedRuntimeFactory struct{ rt runtime.Runtime }
 
-func (f fixedRuntimeFactory) New(runtime.Workspace, string, []string) runtime.Runtime { return f.rt }
+func (f fixedRuntimeFactory) New(runtime.Workspace, runtime.SecretKeys, []string) runtime.Runtime {
+	return f.rt
+}
 
 func wipeResolved(t *testing.T, rt runtime.Runtime) (*manager, *resolved) {
 	t.Helper()

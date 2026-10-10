@@ -81,7 +81,7 @@ func TestEnsureWorkspaceReadyAnswersStartingInsteadOfFailing(t *testing.T) {
 // noPoolFactory is a runtime that has no pool — every profile but ecs-ec2.
 type noPoolFactory struct{}
 
-func (noPoolFactory) New(runtime.Workspace, string, []string) runtime.Runtime { return nil }
+func (noPoolFactory) New(runtime.Workspace, runtime.SecretKeys, []string) runtime.Runtime { return nil }
 
 // fakePoolFactory answers PoolStatus with a canned reply, standing in for the ecs-ec2
 // adapter. The adapter's own half of the answer is tested in internal/runtime; what is
@@ -97,7 +97,9 @@ type fakePoolFactory struct {
 	maxSlots int
 }
 
-func (fakePoolFactory) New(runtime.Workspace, string, []string) runtime.Runtime { return nil }
+func (fakePoolFactory) New(runtime.Workspace, runtime.SecretKeys, []string) runtime.Runtime {
+	return nil
+}
 
 func (f fakePoolFactory) MaxSlots() int { return f.maxSlots }
 

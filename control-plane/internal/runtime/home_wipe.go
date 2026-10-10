@@ -263,7 +263,7 @@ type HomeOperations struct {
 // workspace. That is safe because every factory's New only assembles a value; none of
 // them talks to Docker or AWS.
 func HomeOperationsOf(f RuntimeFactory) HomeOperations {
-	rt := f.New(Workspace{}, "", nil)
+	rt := f.New(Workspace{}, SecretKeys{}, nil)
 	_, backups := rt.(homeBackupKeeper)
 	return HomeOperations{Wipe: CanWipeHome(rt), Erase: CanEraseHome(rt), Backups: backups,
 		Background: HomeWipeInBackground(rt), DestroyBackground: DestroyInBackground(rt)}

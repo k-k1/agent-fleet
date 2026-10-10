@@ -269,7 +269,7 @@ func (r *envRecordingRuntime) Start(context.Context) error {
 	return nil
 }
 
-func (f *envRecordingFactory) New(_ runtime.Workspace, _ string, env []string) runtime.Runtime {
+func (f *envRecordingFactory) New(_ runtime.Workspace, _ runtime.SecretKeys, env []string) runtime.Runtime {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.built = append(f.built, env)

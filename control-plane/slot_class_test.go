@@ -25,7 +25,9 @@ import (
 // asks it for this profile (sizingProfiler).
 type sizingOnlyFactory struct{ sizing runtime.WorkspaceSizing }
 
-func (sizingOnlyFactory) New(runtime.Workspace, string, []string) runtime.Runtime { return nil }
+func (sizingOnlyFactory) New(runtime.Workspace, runtime.SecretKeys, []string) runtime.Runtime {
+	return nil
+}
 
 func (f sizingOnlyFactory) SizingProfile() runtime.WorkspaceSizing { return f.sizing }
 

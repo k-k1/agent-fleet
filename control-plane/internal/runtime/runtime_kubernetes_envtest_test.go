@@ -568,7 +568,7 @@ func (n kubeNode) run(rt *kubeRuntime) kPod {
 
 func newKubeTestRuntime(f *kubeFactory, name string) *kubeRuntime {
 	return f.New(Workspace{ContainerName: name, AgentToken: "agent-token-value", MemBytes: 2 * gib, CPUUnits: 1024},
-		"dek-value", []string{"AF_MINTED_TOKEN=minted-value"}).(*kubeRuntime)
+		SecretKeys{Key: "dek-value"}, []string{"AF_MINTED_TOKEN=minted-value"}).(*kubeRuntime)
 }
 
 // --- the cases ---

@@ -161,7 +161,7 @@ func TestCodexOverridesApproveAndTimeoutAndBuiltinStoreKey(t *testing.T) {
 		`mcp_servers.a.startup_timeout_sec=20.0`,
 		// The builtin's mcp-run wrapper opens the encrypted store, so it needs the
 		// store key: codex's MCP child env is default-deny beyond a core set.
-		`mcp_servers.pagerduty.env_vars=["AF_SECRET_KEY"]`,
+		`mcp_servers.pagerduty.env_vars=["AF_SECRET_KEY","AF_SECRET_KEY_NEXT"]`,
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("codex args missing %q: %s", want, joined)

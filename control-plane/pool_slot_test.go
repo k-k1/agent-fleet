@@ -26,7 +26,7 @@ type slotPoolFactory struct {
 	asked  []string
 }
 
-func (f *slotPoolFactory) New(runtime.Workspace, string, []string) runtime.Runtime {
+func (f *slotPoolFactory) New(runtime.Workspace, runtime.SecretKeys, []string) runtime.Runtime {
 	return stubRuntime{}
 }
 

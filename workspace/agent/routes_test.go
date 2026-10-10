@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // docs/log/23 P0-2: smoke tests over the real route table (buildMux) + the real
@@ -76,6 +77,15 @@ func TestSmokeHealthzOpen(t *testing.T) {
 	w := smokeDo(t, h, "GET", "/healthz", "", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("healthz: %d %s", w.Code, w.Body.String())
+	}
+	// The CP reads the credential-store key state here (ADR 0005 addendum 2026-10-10). A
+	// state name only: never a key, a length or a prefix.
+	defer func(prev string) { secretsKeyState = prev }(secretsKeyState)
+	secretsKeyState = secrets.KeyStateMigrated
+	w = smokeDo(t, h, "GET", "/healthz", "", "")
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got["secrets_key"] != "migrated" || len(got) != 2 {
+		t.Fatalf("healthz body = %s (%v)", w.Body.String(), err)
 	}
 }
 

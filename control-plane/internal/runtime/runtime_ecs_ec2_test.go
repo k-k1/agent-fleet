@@ -3039,8 +3039,9 @@ func TestECSEC2DestroyFoldsEveryResourceItCreated(t *testing.T) {
 	if len(h.efs.aps) != 1 || aws.ToString(h.efs.aps[0].AccessPointId) != "fsap-other" {
 		t.Errorf("wrong access points deleted, left = %v", h.efs.aps)
 	}
-	if len(h.ssm.deletes) != 2 {
-		t.Errorf("both SSM secrets must be deleted, got %v", h.ssm.deletes)
+	// agent-token, secret-key and secret-key-next (the home's own key, when it had one).
+	if len(h.ssm.deletes) != 3 {
+		t.Errorf("all three SSM secrets must be deleted, got %v", h.ssm.deletes)
 	}
 	// The EFS directories are the one thing that cannot be removed from the API. They
 	// come back as leftovers so the caller can record them rather than believe the data
