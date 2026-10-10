@@ -16,7 +16,7 @@ type capturingFactory struct {
 	got    *runtime.Workspace
 }
 
-func (f capturingFactory) New(ws runtime.Workspace, _ string, _ []string) runtime.Runtime {
+func (f capturingFactory) New(ws runtime.Workspace, _ runtime.SecretKeys, _ []string) runtime.Runtime {
 	*f.got = ws
 	return resizableStub{}
 }

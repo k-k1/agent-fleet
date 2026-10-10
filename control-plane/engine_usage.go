@@ -431,7 +431,7 @@ var notifyEngineCatalogChanged = func(ctx context.Context, mgr *manager, key str
 			if ws.State != "running" {
 				continue
 			}
-			rt := mgr.runtimeFor(ws, "")
+			rt := mgr.runtimeFor(ws, noSecretKeys)
 			if rt == nil || rt.Endpoint() == "" {
 				continue
 			}
@@ -478,7 +478,7 @@ var notifyEngineCatalogChangedForTenant = func(ctx context.Context, mgr *manager
 		if ws.State != "running" {
 			continue
 		}
-		rt := mgr.runtimeFor(ws, "")
+		rt := mgr.runtimeFor(ws, noSecretKeys)
 		if rt == nil || rt.Endpoint() == "" {
 			continue
 		}

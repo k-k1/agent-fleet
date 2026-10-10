@@ -93,8 +93,8 @@ type ecsRuntime struct {
 	// creates. Read by nothing but the bill (docs/log/67, ADR 0048 decision 3); empty is a
 	// valid value and simply means the resource carries no tenant tag.
 	tenantSlug string
-	token      string // CP↔Agent bearer (Workspace.AgentToken)
-	secretKey  string // per-workspace at-rest DEK (hex); "" in dev
+	token      string     // CP↔Agent bearer (Workspace.AgentToken)
+	keys       SecretKeys // credential-store keys (hex); zero in dev
 	extraEnv   []string
 	// cpu / memory are the Fargate task size for THIS workspace: the cfg defaults, or
 	// a size snapped up to hold the per-workspace RAM/CPU caps (fargateSize) when one
@@ -162,7 +162,7 @@ type ecsFactory struct {
 	tasks ecsTaskAPI
 }
 
-func (f *ecsFactory) New(ws Workspace, secretKey string, extraEnv []string) Runtime {
+func (f *ecsFactory) New(ws Workspace, keys SecretKeys, extraEnv []string) Runtime {
 	// Default to the deployment task size; when a per-workspace RAM or CPU cap is set,
 	// snap onto the smallest VALID Fargate (cpu, memory) pair that holds both — Fargate
 	// only accepts specific combinations, so a memory bump may raise CPU and a CPU bump
@@ -196,7 +196,7 @@ func (f *ecsFactory) New(ws Workspace, secretKey string, extraEnv []string) Runt
 		membershipID: ws.MembershipID,
 		tenantSlug:   ws.TenantSlug,
 		token:        ws.AgentToken,
-		secretKey:    secretKey,
+		keys:         keys,
 		extraEnv:     extraEnv,
 		cpu:          cpu,
 		memory:       memory,
@@ -547,7 +547,7 @@ func (e *ecsRuntime) destroySharedResources(ctx context.Context) ([]string, erro
 			return nil, fmt.Errorf("delete access point %s: %w", aws.ToString(ap.AccessPointId), err)
 		}
 	}
-	for _, suffix := range []string{"agent-token", "secret-key"} {
+	for _, suffix := range []string{"agent-token", "secret-key", "secret-key-next"} {
 		name := fmt.Sprintf("/af-ws/%s/%s", e.name, suffix)
 		if _, err := e.ssm.DeleteParameter(ctx, &ssm.DeleteParameterInput{
 			Name: aws.String(name),
@@ -732,7 +732,10 @@ func (e *ecsRuntime) putSecrets(ctx context.Context) ([]ecstypes.Secret, error) 
 	if err := put("AGENT_TOKEN", "agent-token", e.token); err != nil {
 		return nil, err
 	}
-	if err := put("AF_SECRET_KEY", "secret-key", e.secretKey); err != nil {
+	if err := put("AF_SECRET_KEY", "secret-key", e.keys.Key); err != nil {
+		return nil, err
+	}
+	if err := put("AF_SECRET_KEY_NEXT", "secret-key-next", e.keys.Next); err != nil {
 		return nil, err
 	}
 	return out, nil

@@ -112,6 +112,12 @@ func main() {
 		runRewrapKeys(os.Args[2:])
 		return
 	}
+	// Subcommand: `control-plane home-dek-status` counts the homes on their own credential-store
+	// key (home_dek_status.go). Read-only.
+	if len(os.Args) > 1 && os.Args[1] == "home-dek-status" {
+		runHomeDEKStatus(os.Args[2:])
+		return
+	}
 
 	portBase, _ := strconv.Atoi(envx.Or("WS_AGENT_PORT", "7700"))
 	mgr := &manager{
@@ -157,6 +163,14 @@ func main() {
 		if c != nil {
 			mgr.custodian = c
 			log.Printf("key custodian: %s", kind)
+		}
+		random, err := homeDEKModeRandom(os.Getenv("AF_WORKSPACE_DEK"), kind)
+		if err != nil {
+			log.Fatalf("workspace DEK: %v", err)
+		}
+		mgr.homeDEKRandom = random && c != nil
+		if mgr.homeDEKRandom {
+			log.Printf("workspace DEK: random per home")
 		}
 	}
 	if mgr.plaintextSecrets() {

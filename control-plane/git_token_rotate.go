@@ -133,7 +133,7 @@ func (m *manager) pushGitToken(ctx context.Context, wsID, membershipID string) s
 		log.Printf("internal git: rotated token for %s not pushed: %v", membershipID, err)
 		return gitTokenPushFailed
 	}
-	rt := m.runtimeFor(ws, "")
+	rt := m.runtimeFor(ws, noSecretKeys)
 	if rt == nil || rt.Endpoint() == "" {
 		return gitTokenPushFailed
 	}

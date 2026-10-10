@@ -3,7 +3,7 @@
 English | [日本語](0005-envelope-custodian.ja.md)
 
 - Status: decided (P3-3)
-- Follow-ups: #1645, #1646
+- Follow-ups: #1645, #1646, #1956
 - See also: [history/p3-3-envelope-crypto](../log/p3-3-envelope-crypto.md) / [build/07 §7.6 Secrets and envelope encryption](../build/07-security.md#76-secrets-and-envelope-encryption) (formerly security §4.4) / [Roadmap §12.3](../log/roadmap.md#123-tos-と分離の留意自社ホスト前提)
 
 ## Context
@@ -134,3 +134,61 @@ which format a row is in.
 
 Not verified against a real KMS key: the tests use an in-memory KMS. The first run on a real
 deployment should be a `--dry-run`.
+
+## Addendum (2026-10-10) — a random credential-store key per home, part A (#1646)
+
+The decision's "a `wrapped_dek` structure that lets the DEK be rotated to a random one in
+future" is taken up, opt-in. The derived DEK and every decision above stand.
+
+- **Per home, not per workspace.** `home_dek` (migration 0090 / pg 0075) holds one random key
+  per membership, sealed by the custodian under the tenant key ref. `DeleteWorkspace` drops
+  `wrapped_dek` while the home may be kept, so a random key that went with the workspace row
+  would shred a kept home by accident. Nothing deletes a row yet, Destroy included: an adapter's
+  Destroy does not prove the whole home is gone (ecs without the home task removes only the
+  access points, and a retry after a partial failure then reports no leftovers). A kept row is
+  an unused sealed key, never an unreadable store. Follow-ups: #1956.
+- **Opt-in, kms only.** `AF_WORKSPACE_DEK=random`, refused at boot unless
+  `AF_KEY_CUSTODIAN=kms`: under the local custodian the key would be wrapped by a
+  master-derived KEK and buy nothing. A home that has a key keeps getting it after the flag is
+  turned off, because its store may already be sealed under it.
+- **Migration without guessing.** The CP cannot see a kept home's `secrets.enc`, so it does not
+  decide which key a store uses. While a home is `migrating` it injects both: `AF_SECRET_KEY`
+  stays the derived key and `AF_SECRET_KEY_NEXT` is the home's key, through each runtime's
+  secret channel. The Agent opens with either, re-seals under NEXT at boot (temp file + rename
+  under the store lock), and never rewrites a store neither key opens. The naming is chosen
+  for version skew: an Agent that predates NEXT ignores it and keeps the store on the derived
+  key, so a new CP with an old workspace image loses nothing until the store has moved.
+  `/healthz` reports `secrets_key` (a state name, never a key or length).
+- **Fail closed.** A custodian that cannot seal or open the home's key fails the start; it is
+  never started on the derived key alone. The keys are resolved again at every real start, not
+  taken from the memoized runtime.
+
+Limits, stated plainly:
+
+- Homes not started since the flag was turned on stay derived and are **not** shredded by
+  disabling the KMS key; `af-cp home-dek-status` counts them. Snapshots and backups taken
+  before a store moved hold the derived-key file.
+- Disabling the key is not by itself a shred of a moved store. It means the master-derived
+  key no longer opens the store and, once the data-key cache has expired, the CP can no longer
+  unwrap the home key, so it refuses the next start (within the TTL a start can still
+  succeed). Copies of the home key already handed out still open the store, each under
+  something other than the custodian key: a running workspace's environment, and the
+  runtime's own copy, which outlives a stop (docker container env, the Kubernetes Secret, ECS
+  SSM SecureStrings under the account's SSM key). Shredding a home's store while keeping the
+  home needs those removed too; nothing does that automatically. Destroy is not that
+  procedure: it removes them and tries to remove the home, and on ecs without the home task it
+  leaves the home's EFS directories.
+- The Agent's `Save` now refuses to write over a store it cannot open (the same rule `Update`
+  already had), so a member whose store is unreadable cannot overwrite it until it is removed.
+- Part A does not stop injecting the derived key; it no longer opens a moved store, and the
+  confirm step that marks a home `random` and stops it is part B.
+- After a store moved, going back to a CP without the home key, or losing `home_dek`, leaves
+  it unreadable; an Agent of this version then refuses every write to it, reconnecting
+  included. An Agent from before this version has no such guard (its `Save` writes after a
+  failed read), so a workspace image from before this version must not be started on a moved
+  home: it can write an empty store over it. The guide says to restore the CP version,
+  `home_dek` and the KMS key before any workspace starts there, and only to give the
+  credentials up by stopping the workspace and moving the unreadable `secrets.enc` aside by
+  hand. Nothing removes or overwrites it automatically.
+- Verified by unit tests with fakes only. A kept home recreated on real ECS/EFS, and a
+  downgrade, have not been run. The ECS stacks do not expose the flag yet.

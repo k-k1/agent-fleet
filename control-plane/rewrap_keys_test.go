@@ -81,6 +81,10 @@ func seedLegacyRows(t *testing.T, st *store.SQL, local *localCustodian) (map[str
 	if err := st.PutWrappedDEK(ctx, ws.ID, put("wrapped_dek", ws.ID, tn.ID, dek), tn.ID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := st.InsertHomeDEK(ctx, store.HomeDEK{MembershipID: owner,
+		Ciphertext: put("home_dek", owner, tn.ID, bytes.Repeat([]byte{7}, 32)), KeyRef: tn.ID}); err != nil {
+		t.Fatal(err)
+	}
 	exec(`INSERT INTO mcp_server(id, tenant_id, name, headers_enc, key_ref, created_at, updated_at) VALUES('M1', ?, 'a', ?, ?, ?, ?)`,
 		tn.ID, put("mcp_server", "M1", tn.ID, []byte(`{"Authorization":"Bearer x"}`)), tn.ID, now, now)
 	exec(`INSERT INTO mcp_server(id, tenant_id, name, headers_enc, key_ref, created_at, updated_at) VALUES('M2', ?, 'b', '{"X":"plain"}', '', ?, ?)`,
@@ -209,7 +213,7 @@ func TestRewrapKeysReSealsEveryTarget(t *testing.T) {
 			mgr := p3Manager(t, st)
 			mgr.master32 = testMaster(t)
 			mgr.custodian = kmsOnly
-			if dek, err := mgr.resolveDEK(ctx, ws, "a-acme-co-jp"); err != nil || dek != hex.EncodeToString(seeds["wrapped_dek"].plain) {
+			if dek, err := mgr.resolveWrappedDEK(ctx, ws, "a-acme-co-jp"); err != nil || dek != hex.EncodeToString(seeds["wrapped_dek"].plain) {
 				t.Errorf("resolveDEK after rewrap = %v; want the stored DEK", err)
 			}
 			if tok, aerr := newEngineHfTokensForTest(st, mgr).plaintext(ctx); aerr != nil || tok != "hf_tok" {
@@ -432,7 +436,8 @@ func TestRewrapKeysMainConfig(t *testing.T) {
 // "" marks a call that stores nothing itself: the shared sealer, whose callers are listed, and
 // the command's own re-seal.
 var rewrapSealSites = map[string]string{
-	"dek.go:resolveDEK":                         "wrapped_dek",
+	"dek.go:resolveWrappedDEK":                  "wrapped_dek",
+	"dek.go:mintHomeDEK":                        "home_dek",
 	"internal/mcpsrv/mcp_server.go:sealHeaders": "mcp_server",
 	"session_share.go:sealProposal":             "session_share_proposal",
 	"session_handoff.go:seal":                   "session_handoff_offer",

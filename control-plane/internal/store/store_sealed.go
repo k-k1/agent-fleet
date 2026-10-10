@@ -27,6 +27,7 @@ type SealedColumn struct {
 // These names are interpolated into SQL; they come from this literal only, never from input.
 var sealedColumns = []SealedColumn{
 	{Table: "wrapped_dek", ID: "workspace_id", Value: "ciphertext", KeyRef: "key_ref"},
+	{Table: "home_dek", ID: "membership_id", Value: "ciphertext", KeyRef: "key_ref"},
 	{Table: "mcp_server", ID: "id", Value: "headers_enc", KeyRef: "key_ref"},
 	{Table: "tenant_idp", ID: "id", Value: "secret_enc", KeyRef: "key_ref"},
 	{Table: "tenant_git_oauth", ID: "id", Value: "secret_enc", KeyRef: "key_ref"},

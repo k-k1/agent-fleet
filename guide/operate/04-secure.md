@@ -96,7 +96,9 @@ What to know before you switch:
   for the first time after the switch has it wrapped by KMS; a workspace that already had one
   keeps the master-key wrapping, and restarting it changes nothing. Either way the key itself is
   still derived from `AF_MASTER_KEY` and the member, so that stores written before keep opening,
-  and anyone with the master key can still derive it. Protect the master key as before.
+  and anyone with the master key can still derive it. Protect the master key as before. A key
+  of its own for each home takes the master key out of that path, though not every copy of
+  the key ([below](#a-key-of-its-own-for-each-home)).
 - **No fallback.** If KMS cannot be reached or refuses, sealing and opening fail with an error
   that names KMS. The Control Plane never quietly uses the master key for a value KMS sealed.
 - **Opened keys are cached in memory for 5 minutes** (`AF_KMS_DATA_KEY_CACHE_TTL`, `0` turns it
@@ -158,8 +160,8 @@ those unreadable too.
   (`HMAC(master, userKey)`). The command moves the *wrapped copy* of that key to KMS, so with
   the KMS key disabled the Control Plane can no longer start the workspace with it, but anyone
   holding the master key can still derive it and open `secrets.enc`. Members' stored
-  credentials are therefore still not crypto-shredded by KMS; that needs a random key per
-  workspace (#1646).
+  credentials are therefore still not crypto-shredded by KMS. A key of its own for each home
+  changes that only in part ([next section](#a-key-of-its-own-for-each-home)).
 - A workspace started for the first time still gets its key from the same derivation.
 - The tokens that workspaces use to call back into the Control Plane (Git credentials, Git
   OAuth, memos, schedules, engines, branch rules, AWS and Google Cloud profiles, documents, MCP)
@@ -168,6 +170,68 @@ those unreadable too.
 
 What the command does change: the master key alone no longer opens the values it re-sealed,
 apart from the credential-store keys, which it can still derive.
+
+### A key of its own for each home
+
+With `AF_WORKSPACE_DEK=random` the Control Plane gives each member's home a random key for
+its credential store (`secrets.enc`), sealed by KMS. It is accepted only with
+`AF_KEY_CUSTODIAN=kms`; any other combination, or another value, stops the Control Plane at
+boot. The `ecs` / `ecs-ec2` stacks do not expose it as a parameter yet.
+
+- **The key belongs to the home, not the workspace.** Deleting and re-creating a workspace over
+  a kept home keeps the key. Nothing removes it yet, Destroy included: not every runtime can
+  prove the whole home is gone, and a key dropped while part of it survives makes that part
+  unreadable.
+- **Moving a store to it.** The first start after you turn it on mints the home's key, and the
+  Control Plane passes it to the workspace beside the derived key. At boot the workspace opens
+  `secrets.enc` with either one and re-seals it under the home's key. A store that neither key
+  opens is not touched. The workspace's `/healthz` reports the outcome as `secrets_key`
+  (`none`, `current`, `migrated`, `derived` when the re-seal failed, `unreadable`), never a key.
+- **What disabling the KMS key does, and what it does not.** Once a home's store has been
+  re-sealed, the key derived from `AF_MASTER_KEY` no longer opens it, and once the Control
+  Plane's data-key cache has expired (`AF_KMS_DATA_KEY_CACHE_TTL`, 5 minutes by default) the
+  Control Plane can no longer unwrap the home's key, so it refuses the next start. Within that
+  TTL a start can still succeed. **That alone is not crypto-shredding**: copies of the home's
+  key already handed out still open the store, each protected by something other than the
+  custodian key:
+  - a **running workspace** keeps it in its environment, and its Agent, git helper and MCP
+    servers go on reading and writing the store without asking KMS;
+  - the **runtime's own copy** used to start it, which outlives a stop: the container's
+    environment on docker, the Kubernetes Secret, and on `ecs` / `ecs-ec2` the per-workspace
+    SSM SecureString parameters (`secret-key`, `secret-key-next`), encrypted with the
+    account's SSM key.
+
+  To shred a home's store while keeping the home, disable the key **and** stop the workspace
+  **and** remove those runtime copies yourself. Nothing here does that automatically. Destroy
+  is not that procedure: it removes the runtime copies and tries to remove the home as well,
+  and on an `ecs` stack without the home task it removes only the access points and leaves
+  the home's EFS directories behind.
+- **What it does not.** A home that has not been started since you turned it on is still on the
+  derived key, and is **not** shredded by disabling the KMS key. `af-cp home-dek-status` counts
+  them (read-only). Copies of a home made before its store was re-sealed (ecs-ec2 snapshots,
+  backups) still hold the old file, which the master key can open. In this version the derived
+  key is still passed to every workspace beside the home's key; it no longer opens a re-sealed
+  store, and a later change stops passing it.
+- **Turning it off does not undo it.** With `AF_WORKSPACE_DEK` unset again, homes that already
+  have a key keep getting it, because their store may be sealed under it. After a store has
+  been re-sealed, two kinds of going back differ:
+  - **A Control Plane that does not know the home's key, or a lost `home_dek` table**, with the
+    workspace image of this version: the store no longer opens, and the workspace refuses
+    every write to it, reconnecting a credential included (this version never writes over a
+    store it cannot open).
+  - **A workspace image from before this version: do not start one on a home that has
+    moved.** Its Agent has no such guard: a save after a failed read can write an empty
+    store over the re-sealed one, and the credentials are lost.
+
+  To recover, first restore what opens the store, before any workspace starts on that home:
+  the Control Plane version, its `home_dek` rows and the KMS key. Only if the stored
+  credentials are to be given up, stop the workspace, move the unreadable `secrets.enc` out of
+  the member's agent configuration directory (`~/.config/agent-fleet/`) yourself, and have the
+  member reconnect. A workspace image older than the Control Plane loses nothing as long as
+  the store has not been re-sealed yet: it ignores the home's key and keeps using the derived
+  one.
+- **No fallback.** If KMS cannot seal or open a home's key, the workspace does not start. It is
+  never started on the derived key alone.
 
 ## Operating egress control
 

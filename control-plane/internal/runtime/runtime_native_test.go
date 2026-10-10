@@ -378,7 +378,7 @@ func TestNativeRootfsLifecycle(t *testing.T) {
 		AgentPort:     freeLoopbackPort(t),
 		AgentToken:    "tok-rootfs",
 	}
-	rt := f.New(ws, "dek-rootfs", nil)
+	rt := f.New(ws, SecretKeys{Key: "dek-rootfs"}, nil)
 	ctx := context.Background()
 	t.Cleanup(func() { _ = rt.Stop(ctx) })
 
@@ -477,7 +477,7 @@ func TestNativeRuntimeLifecycle(t *testing.T) {
 		AgentPort:     freeLoopbackPort(t),
 		AgentToken:    "tok-native",
 	}
-	rt := f.New(ws, "dek-native", []string{"AF_AGENT_SELF_UPDATE_ALLOWED=1"})
+	rt := f.New(ws, SecretKeys{Key: "dek-native"}, []string{"AF_AGENT_SELF_UPDATE_ALLOWED=1"})
 	ctx := context.Background()
 	t.Cleanup(func() { _ = rt.Stop(ctx) })
 

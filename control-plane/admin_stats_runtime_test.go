@@ -22,7 +22,7 @@ type stateOnlyRuntime struct {
 
 func (r stateOnlyRuntime) State(context.Context) string { return r.state }
 
-func (f stateOnlyFactory) New(runtime.Workspace, string, []string) runtime.Runtime {
+func (f stateOnlyFactory) New(runtime.Workspace, runtime.SecretKeys, []string) runtime.Runtime {
 	return stateOnlyRuntime{state: f.state}
 }
 

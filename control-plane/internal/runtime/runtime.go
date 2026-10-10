@@ -150,12 +150,34 @@ var (
 // Docker adapter for the ECS adapter (P3-7) is a one-line profile switch in
 // main.go — no concrete type ever leaks into the backend-agnostic core.
 //
-// secretKey is the per-workspace at-rest DEK (injected as AF_SECRET_KEY on Start).
-// Pass "" for state/stop/read-only calls that never touch secrets. extraEnv carries
+// keys is the credential-store key set injected on Start (SecretKeys). Pass the zero value
+// for state/stop/read-only calls that never touch secrets. extraEnv carries
 // per-workspace KEY=VAL env appended after the shared template env (e.g. the
 // per-tenant AF_AGENT_SELF_UPDATE_ALLOWED gate); nil for state/stop-only calls.
 type RuntimeFactory interface {
-	New(ws Workspace, secretKey string, extraEnv []string) Runtime
+	New(ws Workspace, keys SecretKeys, extraEnv []string) Runtime
+}
+
+// SecretKeys is the credential-store key set a Start injects through each adapter's secret
+// channel (never argv or plain task env). Key is AF_SECRET_KEY, the key the store is sealed
+// with today. Next, set only while the member's home moves to its own random key
+// (ADR 0005 addendum 2026-10-10), is AF_SECRET_KEY_NEXT: an Agent that knows it opens the
+// store with either and re-seals it under Next, and an Agent that does not ignores it and
+// keeps using Key, so a workspace image older than the CP loses nothing.
+type SecretKeys struct {
+	Key, Next string
+}
+
+// envPairs lists the variables to inject, empty ones left out.
+func (k SecretKeys) envPairs() [][2]string {
+	var out [][2]string
+	if k.Key != "" {
+		out = append(out, [2]string{"AF_SECRET_KEY", k.Key})
+	}
+	if k.Next != "" {
+		out = append(out, [2]string{"AF_SECRET_KEY_NEXT", k.Next})
+	}
+	return out
 }
 
 var _ RuntimeFactory = (*dockerFactory)(nil)

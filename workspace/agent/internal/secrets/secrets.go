@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -422,9 +423,19 @@ type Data struct {
 	InternalGitEpoch int64 `json:"internalGitEpoch,omitempty"`
 }
 
-// agentSecretKey returns the 32-byte per-user key from AF_SECRET_KEY (hex), or
-// nil when unset/invalid (dev: store is plaintext JSON).
+// agentSecretKey returns the 32-byte key the store is sealed with: AF_SECRET_KEY_NEXT when the
+// CP injected one (the home's own random key, ADR 0005 addendum 2026-10-10), else
+// AF_SECRET_KEY. nil when neither is set or AF_SECRET_KEY is invalid (dev: store is
+// plaintext JSON).
 func agentSecretKey() []byte {
+	if k := nextSecretKey(); k != nil {
+		return k
+	}
+	return derivedSecretKey()
+}
+
+// derivedSecretKey is AF_SECRET_KEY (hex), the key the CP derives for the member.
+func derivedSecretKey() []byte {
 	h := os.Getenv("AF_SECRET_KEY")
 	if h == "" {
 		return nil
@@ -435,6 +446,109 @@ func agentSecretKey() []byte {
 		return nil
 	}
 	return b
+}
+
+// nextSecretKey is AF_SECRET_KEY_NEXT (hex), or nil. It counts only beside a valid
+// AF_SECRET_KEY: the CP always sends both, and sealing under NEXT alone would leave a store
+// the derived key cannot open if this env were ever half-delivered. A malformed value is
+// ignored, so the store stays under AF_SECRET_KEY as before.
+func nextSecretKey() []byte {
+	h := os.Getenv("AF_SECRET_KEY_NEXT")
+	if h == "" || derivedSecretKey() == nil {
+		return nil
+	}
+	b, err := hex.DecodeString(strings.TrimSpace(h))
+	if err != nil || len(b) != 32 {
+		log.Printf("WARNING: AF_SECRET_KEY_NEXT is set but not 32-byte hex — ignored, the store stays under AF_SECRET_KEY")
+		return nil
+	}
+	return b
+}
+
+// fallbackSecretKey is the key a store may still be sealed with while it moves to
+// AF_SECRET_KEY_NEXT: AF_SECRET_KEY. nil when there is no NEXT.
+func fallbackSecretKey() []byte {
+	if nextSecretKey() == nil {
+		return nil
+	}
+	return derivedSecretKey()
+}
+
+// openStore decrypts the stored bytes with the sealing key, else with the fallback key.
+// usedFallback reports the second, which means the store still has to be re-sealed.
+func openStore(ct []byte) (plain []byte, usedFallback bool, err error) {
+	key := agentSecretKey()
+	if key == nil {
+		return ct, false, nil
+	}
+	plain, err = aesOpen(key, ct)
+	if err == nil {
+		return plain, false, nil
+	}
+	if fb := fallbackSecretKey(); fb != nil {
+		if p, ferr := aesOpen(fb, ct); ferr == nil {
+			return p, true, nil
+		}
+	}
+	return nil, false, err
+}
+
+// Key states MigrateKey reports (the Agent's /healthz secrets_key). They name a state, never
+// a key or its length.
+const (
+	KeyStateNone       = "none"       // no store yet, or no key (plaintext dev store)
+	KeyStateCurrent    = "current"    // the store opens with the sealing key
+	KeyStateMigrated   = "migrated"   // it opened with AF_SECRET_KEY and is now sealed under NEXT
+	KeyStateDerived    = "derived"    // it opened with AF_SECRET_KEY and the re-seal failed
+	KeyStateUnreadable = "unreadable" // neither key opens it; nothing was rewritten
+)
+
+// MigrateKey re-seals the store under AF_SECRET_KEY_NEXT when it is still sealed with
+// AF_SECRET_KEY, under the store lock, and reports where it stands. It never rewrites a store
+// it could not open: the CP cannot see this home, and a guess would destroy credentials.
+func MigrateKey() string {
+	state := KeyStateNone
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	err := withFileLock(func() error {
+		if agentSecretKey() == nil {
+			return nil
+		}
+		ct, err := os.ReadFile(Path())
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			state = KeyStateUnreadable
+			return err
+		}
+		_, usedFallback, err := openStore(ct)
+		switch {
+		case err != nil:
+			state = KeyStateUnreadable
+			return fmt.Errorf("decrypt secrets: %w", err)
+		case !usedFallback:
+			state = KeyStateCurrent
+			return nil
+		}
+		s, err := load()
+		if err != nil {
+			state = KeyStateDerived
+			return err
+		}
+		if err := s.save(); err != nil {
+			state = KeyStateDerived
+			return fmt.Errorf("re-seal secrets: %w", err)
+		}
+		state = KeyStateMigrated
+		return nil
+	})
+	if err != nil {
+		log.Printf("secrets: credential-store key: %s: %v", state, err)
+	} else if state == KeyStateMigrated {
+		log.Printf("secrets: credential store re-sealed under the home's own key")
+	}
+	return state
 }
 
 // Path is the on-disk location of the store (encrypted or plaintext by key presence).
@@ -581,10 +695,8 @@ func load() (*Data, error) {
 		}
 		return s, err
 	}
-	if key := agentSecretKey(); key != nil {
-		if b, err = aesOpen(key, b); err != nil {
-			return s, fmt.Errorf("decrypt secrets: %w", err)
-		}
+	if b, _, err = openStore(b); err != nil {
+		return s, fmt.Errorf("decrypt secrets: %w", err)
 	}
 	if err := json.Unmarshal(b, s); err != nil {
 		return s, err
@@ -620,7 +732,14 @@ func (s *Data) Save() error {
 	storeMu.Lock()
 	defer storeMu.Unlock()
 	return withFileLock(func() error {
-		if cur, err := load(); err == nil && s.ghBaseSet {
+		cur, err := load()
+		if err != nil {
+			// The stored file exists and does not open (wrong or half-delivered key, a store
+			// the boot migration left unreadable): writing this snapshot over it would destroy
+			// every credential in it. Update refuses the same way.
+			return err
+		}
+		if s.ghBaseSet {
 			ep, ok := s.Git["github.com"]
 			ce, cok := cur.Git["github.com"]
 			if (ghSnap{ok, ep}).sameConn(s.ghBase) && !(ghSnap{cok, ce}).sameConn(s.ghBase) {
@@ -661,13 +780,37 @@ func (s *Data) save() error {
 			return err
 		}
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(p), ".secrets-*")
+	return writeFileDurably(p, b)
+}
+
+// writeTemp is the temp-file write, a seam for the tests that make it fail or fall short.
+var writeTemp = func(f *os.File, b []byte) (int, error) { return f.Write(b) }
+
+// syncTemp is the temp file's fsync, the same kind of seam.
+var syncTemp = func(f *os.File) error { return f.Sync() }
+
+// writeFileDurably replaces p with b so that a crash or a failed write leaves either the old
+// file or the complete new one: the temp file is written in full and fsynced before the
+// rename, and the directory is fsynced after it so the rename itself survives a host crash.
+// Any error before the rename leaves p as it was. Without the syncs a re-seal could report
+// success while the only copy of the store sat in an unflushed inode.
+func writeFileDurably(p string, b []byte) error {
+	dir := filepath.Dir(p)
+	tmp, err := os.CreateTemp(dir, ".secrets-*")
 	if err != nil {
 		return err
 	}
 	tmpName := tmp.Name()
-	if err := tmp.Chmod(0o600); err == nil {
-		_, err = tmp.Write(b)
+	err = tmp.Chmod(0o600)
+	if err == nil {
+		var n int
+		n, err = writeTemp(tmp, b)
+		if err == nil && n != len(b) {
+			err = io.ErrShortWrite
+		}
+	}
+	if err == nil {
+		err = syncTemp(tmp)
 	}
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
@@ -680,7 +823,12 @@ func (s *Data) save() error {
 		os.Remove(tmpName)
 		return err
 	}
-	return nil
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 func aesSeal(key, plaintext []byte) ([]byte, error) {

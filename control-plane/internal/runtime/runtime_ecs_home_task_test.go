@@ -480,7 +480,7 @@ func TestECSEC2DestroyRemovesTheEFSDirectoriesThroughTheTask(t *testing.T) {
 	if ops := HomeOperationsOf(f); ops.Background || !ops.DestroyBackground {
 		t.Errorf("ecs-ec2 home operations = %+v, want only Destroy in the background", ops)
 	}
-	built := f.New(Workspace{ContainerName: "af-ws-acme-alice", MembershipID: "M-1"}, "", nil).(*ecsEC2Runtime)
+	built := f.New(Workspace{ContainerName: "af-ws-acme-alice", MembershipID: "M-1"}, SecretKeys{}, nil).(*ecsEC2Runtime)
 	if !built.base.homePortsReady() {
 		t.Fatal("the ecs-ec2 runtime's base dropped the stack's home task; its EFS directories would stay")
 	}

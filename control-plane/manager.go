@@ -136,6 +136,9 @@ type manager struct {
 	// custodian wraps/unwraps per-workspace DEKs; nil in dev (no encryption).
 	master32  []byte
 	custodian KeyCustodian
+	// homeDEKRandom mints a random credential-store key for each home that has none
+	// (AF_WORKSPACE_DEK=random, dek.go). Off: homes without one keep the derived key alone.
+	homeDEKRandom bool
 
 	// git token signing without AF_MASTER_KEY (dev): a per-deployment random
 	// master persisted under dataRoot, lazily created (git_http.go gitSignKey).
@@ -242,11 +245,14 @@ func (m *manager) rootedDataDir(ws store.Workspace) string {
 // factory (Docker locally, ECS on AWS). It is the one construction call the rest
 // of the CP uses; the state/stop-only sites below also route through it (secretKey
 // "") so no concrete adapter leaks into manager.
-func (m *manager) runtimeFor(ws store.Workspace, secretKey string, extraEnv ...string) runtime.Runtime {
+// noSecretKeys is runtimeFor's key set for the calls that never start a workspace.
+var noSecretKeys = runtime.SecretKeys{}
+
+func (m *manager) runtimeFor(ws store.Workspace, keys runtime.SecretKeys, extraEnv ...string) runtime.Runtime {
 	// The conversion is the seam: the adapters declare their own copy of this record
 	// (internal/runtime/deps.go) so they need not import the store while it is being
 	// moved in parallel. Field-for-field identical, so a divergence stops compiling here.
-	return m.rtFactory.New(runtime.Workspace(ws), secretKey, extraEnv)
+	return m.rtFactory.New(runtime.Workspace(ws), keys, extraEnv)
 }
 
 // evictTenantCache drops the memoized runtimes for a tenant so they are rebuilt

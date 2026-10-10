@@ -62,7 +62,7 @@ func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	rt := a.mgr.runtimeFor(ws, "")
+	rt := a.mgr.runtimeFor(ws, noSecretKeys)
 	// running / mem / CPU are left to the runtime-neutral composition (workspaceStats
 	// in metrics.go): the host's cgroup where a deployment can read it, otherwise (ECS
 	// in general) the value the Agent read from its own cgroup. State() is consulted
@@ -111,7 +111,7 @@ func (a adminAPI) memberSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	rt := a.mgr.runtimeFor(ws, "")
+	rt := a.mgr.runtimeFor(ws, noSecretKeys)
 	if rt.State(ctx) == "running" {
 		if list, err := a.mgr.agentSessions(ctx, rt); err == nil {
 			rows := make([]store.SessionRow, 0, len(list))

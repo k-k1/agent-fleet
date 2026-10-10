@@ -141,8 +141,8 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 	// names: AF_ECS_EC2_LIVE_SUFFIX=b.
 	sfx := os.Getenv("AF_ECS_EC2_LIVE_SUFFIX")
 	name1, name2 := "af-ec2c-u1"+sfx, "af-ec2c-u2"+sfx
-	u1 := f.New(Workspace{ContainerName: name1, MembershipID: "m-u1", AgentToken: "tok-u1"}, "", nil).(*ecsEC2Runtime)
-	u2 := f.New(Workspace{ContainerName: name2, MembershipID: "m-u2", AgentToken: "tok-u2"}, "", nil).(*ecsEC2Runtime)
+	u1 := f.New(Workspace{ContainerName: name1, MembershipID: "m-u1", AgentToken: "tok-u1"}, SecretKeys{}, nil).(*ecsEC2Runtime)
+	u2 := f.New(Workspace{ContainerName: name2, MembershipID: "m-u2", AgentToken: "tok-u2"}, SecretKeys{}, nil).(*ecsEC2Runtime)
 
 	// --- 1. first start. Whether this is a true cold start depends on what a previous run
 	// left behind, so record it: a home that already exists skips CreateVolume + mkfs +
@@ -376,7 +376,7 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 	// start, and an eviction in the middle of it would measure something else.
 	f.pool.maxSlots = 2
 	u1.pool.maxSlots, u2.pool.maxSlots = 2, 2
-	u3 := f.New(Workspace{ContainerName: "af-ec2c-u3" + sfx, MembershipID: "m-u3", AgentToken: "tok-u3"}, "", nil).(*ecsEC2Runtime)
+	u3 := f.New(Workspace{ContainerName: "af-ec2c-u3" + sfx, MembershipID: "m-u3", AgentToken: "tok-u3"}, SecretKeys{}, nil).(*ecsEC2Runtime)
 	u3.pool.maxSlots = 2
 	t7 := time.Now()
 	if err := u3.Start(ctx); err != nil {
@@ -743,7 +743,7 @@ func TestECSEC2LiveScale(t *testing.T) {
 	}
 	sfx := os.Getenv("AF_ECS_EC2_LIVE_SUFFIX")
 	newUser := func(n string) *ecsEC2Runtime {
-		return f.New(Workspace{ContainerName: "af-ec2c-" + n + sfx, MembershipID: "m-" + n, AgentToken: "tok-" + n}, "", nil).(*ecsEC2Runtime)
+		return f.New(Workspace{ContainerName: "af-ec2c-" + n + sfx, MembershipID: "m-" + n, AgentToken: "tok-" + n}, SecretKeys{}, nil).(*ecsEC2Runtime)
 	}
 
 	// --- 1. three users start AT THE SAME TIME. The interesting outcome is not that they
@@ -1064,7 +1064,7 @@ func TestECSEC2LiveKeep(t *testing.T) {
 	live := &liveEC2{t: t, ctx: ctx, ec2: ec2.NewFromConfig(ac), ecs: ecs.NewFromConfig(ac), ssm: ssm.NewFromConfig(ac), cluster: f.base.cfg.cluster}
 
 	sfx := os.Getenv("AF_ECS_EC2_LIVE_SUFFIX")
-	u := f.New(Workspace{ContainerName: "af-ec2c-keep" + sfx, MembershipID: "m-keep", AgentToken: "tok-keep"}, "", nil).(*ecsEC2Runtime)
+	u := f.New(Workspace{ContainerName: "af-ec2c-keep" + sfx, MembershipID: "m-keep", AgentToken: "tok-keep"}, SecretKeys{}, nil).(*ecsEC2Runtime)
 	if err := u.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)
 	}

@@ -107,7 +107,7 @@ func (u *usageSampler) sample(ctx context.Context) {
 		}
 		for _, ws := range wss {
 			found[ws.ID] = true
-			rt := u.mgr.runtimeFor(ws, "")
+			rt := u.mgr.runtimeFor(ws, noSecretKeys)
 			state := rt.State(ctx)
 			if u.deadline.observe(ws, rt, state, time.Now()) {
 				overdue = append(overdue, overdueStart{rt, ws})

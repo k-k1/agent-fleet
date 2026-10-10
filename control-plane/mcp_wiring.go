@@ -36,7 +36,7 @@ func (d cpDeps) StopWorkspaceByMembership(ctx context.Context, mid string) error
 }
 
 func (d cpDeps) RuntimeFor(ws store.Workspace, secretKey string, extraEnv ...string) runtime.Runtime {
-	return d.m.runtimeFor(ws, secretKey, extraEnv...)
+	return d.m.runtimeFor(ws, runtime.SecretKeys{Key: secretKey}, extraEnv...)
 }
 
 func (d cpDeps) WorkspaceStateByMembership(ctx context.Context, mid string) (string, string) {

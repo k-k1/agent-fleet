@@ -183,7 +183,7 @@ func destroyRuntime(t *testing.T, c *destroyCluster) *kubeRuntime {
 	}
 	f := &kubeFactory{cfg: &kubeConfig{namespace: "ns", image: "img:1"}, c: cl, pins: fakePinner{},
 		poll: 10 * time.Millisecond, stopMargin: 100 * time.Millisecond}
-	return f.New(Workspace{ContainerName: "af-ws-x"}, "", nil).(*kubeRuntime)
+	return f.New(Workspace{ContainerName: "af-ws-x"}, SecretKeys{}, nil).(*kubeRuntime)
 }
 
 func shortDestroyBudget(t *testing.T) {

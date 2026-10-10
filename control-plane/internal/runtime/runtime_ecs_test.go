@@ -250,7 +250,7 @@ func newTestECS(fe *fakeECS, ff *fakeEFS, fs *fakeSSM) *ecsRuntime {
 			posixUID: 1000, posixGID: 1000, startTimeout: time.Second,
 		},
 		ecs: fe, efs: ff, ssm: fs,
-		name: "af-ws-acme-alice", membershipID: "M-1", token: "tok", secretKey: "dek",
+		name: "af-ws-acme-alice", membershipID: "M-1", token: "tok", keys: SecretKeys{Key: "dek"},
 		waitReady: func(context.Context, string, time.Duration) error { return nil },
 	}
 }
@@ -593,7 +593,7 @@ func TestECSRunningTasks(t *testing.T) {
 func TestECSSecretsSkippedWhenEmpty(t *testing.T) {
 	fs := &fakeSSM{}
 	rt := newTestECS(&fakeECS{}, &fakeEFS{}, fs)
-	rt.token, rt.secretKey = "", "" // dev: no token / no DEK
+	rt.token, rt.keys = "", SecretKeys{} // dev: no token / no DEK
 	if err := rt.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -642,8 +642,9 @@ func TestECSDestroyRemovesServiceAccessPointsAndSecrets(t *testing.T) {
 	if len(ff.aps) != 1 || aws.ToString(ff.aps[0].AccessPointId) != "fsap-other" {
 		t.Errorf("another membership's access point was touched, left = %d", len(ff.aps))
 	}
-	if len(fs.deletes) != 2 {
-		t.Errorf("both SSM secrets must go, got %d", len(fs.deletes))
+	// agent-token, secret-key and secret-key-next (the home's own key, when it had one).
+	if len(fs.deletes) != 3 {
+		t.Errorf("all three SSM secrets must go, got %d", len(fs.deletes))
 	}
 	for _, want := range []string{"efs:fs-1/home/M-1", "efs:fs-1/claude-config/M-1"} {
 		found := false

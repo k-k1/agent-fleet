@@ -263,7 +263,7 @@ func (l *kubeLive) gone(args ...string) bool {
 
 func (l *kubeLive) runtime(f *kubeFactory, name string) *kubeRuntime {
 	return f.New(Workspace{ContainerName: name, AgentToken: l.tokens[name], MemBytes: 2 * gib, CPUUnits: 512},
-		randHexT(16), nil).(*kubeRuntime)
+		SecretKeys{Key: randHexT(16)}, nil).(*kubeRuntime)
 }
 
 // --- the harness's own eyes: kubectl as the ambient identity ---

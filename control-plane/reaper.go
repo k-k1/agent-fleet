@@ -529,7 +529,7 @@ func (c tierClocks) anyOn() bool {
 }
 
 func (rp *reaper) sweepWorkspace(ctx context.Context, ws store.Workspace, cl tierClocks, live map[string]bool) {
-	rt := rp.mgr.runtimeFor(ws, "") // secretKey unused for read/halt calls
+	rt := rp.mgr.runtimeFor(ws, noSecretKeys) // secretKey unused for read/halt calls
 	// Tier 4 first, and outside every state test below: a backup is not about whether
 	// anybody is using this workspace. It takes no locks and changes nothing — a snapshot
 	// of a volume is invisible to the volume — so there is no fence to wait behind either.

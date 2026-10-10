@@ -232,7 +232,7 @@ func parseDockerBytes(s string) (int64, error) {
 	return n * mult, nil
 }
 
-func (f *kubeFactory) New(ws Workspace, secretKey string, extraEnv []string) Runtime {
+func (f *kubeFactory) New(ws Workspace, keys SecretKeys, extraEnv []string) Runtime {
 	mem := f.cfg.defaultMemBytes
 	if ws.MemBytes > 0 {
 		mem = ws.MemBytes
@@ -255,7 +255,7 @@ func (f *kubeFactory) New(ws Workspace, secretKey string, extraEnv []string) Run
 		wsName:     ws.ContainerName,
 		base:       kubeObjectName(ws.ContainerName),
 		token:      ws.AgentToken,
-		secretKey:  secretKey,
+		keys:       keys,
 		extraEnv:   append([]string(nil), extraEnv...),
 		memBytes:   mem,
 		cpuMilli:   cpuMilli,
@@ -303,7 +303,7 @@ type kubeRuntime struct {
 	wsName     string // the CP's name for the workspace (Workspace.ContainerName)
 	base       string // the Kubernetes name of the StatefulSet and the Service
 	token      string
-	secretKey  string
+	keys       SecretKeys
 	extraEnv   []string
 	memBytes   int64
 	cpuMilli   int64
@@ -736,8 +736,8 @@ func (k *kubeRuntime) secretEnv() map[string]string {
 	if k.token != "" {
 		env["AGENT_TOKEN"] = k.token
 	}
-	if k.secretKey != "" {
-		env["AF_SECRET_KEY"] = k.secretKey
+	for _, kv := range k.keys.envPairs() {
+		env[kv[0]] = kv[1]
 	}
 	return env
 }

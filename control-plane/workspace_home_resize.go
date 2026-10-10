@@ -46,7 +46,7 @@ func (m *manager) resizeHomeByMembership(ctx context.Context, membershipID strin
 	// adapter's homeGiB() falls back to the deployment default, and the resize would push
 	// every member back to 50 GiB instead of to what was just saved.
 	ws = m.withResolvedSize(ctx, ws)
-	rt := m.runtimeFor(ws, "")
+	rt := m.runtimeFor(ws, noSecretKeys)
 	hr, ok := rt.(homeResizer)
 	if !ok {
 		return runtime.HomeResize{}, nil

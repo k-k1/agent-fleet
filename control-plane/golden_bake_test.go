@@ -231,7 +231,7 @@ type fakeGoldenFactory struct {
 	image string
 }
 
-func (f *fakeGoldenFactory) New(ws runtime.Workspace, _ string, _ []string) runtime.Runtime {
+func (f *fakeGoldenFactory) New(ws runtime.Workspace, _ runtime.SecretKeys, _ []string) runtime.Runtime {
 	if rt, ok := f.rts[ws.ContainerName]; ok {
 		return rt
 	}
@@ -245,7 +245,9 @@ func (f *fakeGoldenFactory) WorkspaceImage() string { return f.image }
 // interface — the capability goldenBakerFor gates on.
 type poolCapableFactory struct{ *fakeGoldenPool }
 
-func (*poolCapableFactory) New(runtime.Workspace, string, []string) runtime.Runtime { return nil }
+func (*poolCapableFactory) New(runtime.Workspace, runtime.SecretKeys, []string) runtime.Runtime {
+	return nil
+}
 
 // --- fixture ----------------------------------------------------------------------
 

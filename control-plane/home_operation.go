@@ -242,7 +242,7 @@ func (m *manager) resumeHomeOperation(ctx context.Context, op store.HomeOperatio
 		return
 	}
 	defer lease.Close()
-	rt := m.runtimeFor(ws, "")
+	rt := m.runtimeFor(ws, noSecretKeys)
 	releaseFence, err := m.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
 	if err != nil {
 		log.Printf("home operation %s: fence: %v", op.ID, err)

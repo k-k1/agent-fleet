@@ -1404,6 +1404,13 @@ type QuotaStore interface {
 type DEKStore interface {
 	GetWrappedDEK(ctx context.Context, workspaceID string) (ciphertext, keyRef string, ok bool, err error)
 	PutWrappedDEK(ctx context.Context, workspaceID, ciphertext, keyRef string) error
+	// GetHomeDEK reads the random key of a member's home (store_home_dek.go).
+	GetHomeDEK(ctx context.Context, membershipID string) (HomeDEK, bool, error)
+	// InsertHomeDEK stores d unless the home already has a key, and returns the key the home
+	// has afterwards, which is the other writer's when two raced.
+	InsertHomeDEK(ctx context.Context, d HomeDEK) (HomeDEK, error)
+	// CountHomeDEKs is the home_dek tally an operator checks the migration against.
+	CountHomeDEKs(ctx context.Context) (HomeDEKCounts, error)
 }
 
 // SessionIndexStore mirrors the Agent's session list: ReplaceSessions swaps the

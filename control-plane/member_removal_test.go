@@ -174,7 +174,7 @@ type stopRecordingFactory struct {
 	hold    chan struct{} // nil: Stop returns at once
 }
 
-func (f *stopRecordingFactory) New(ws runtime.Workspace, _ string, _ []string) runtime.Runtime {
+func (f *stopRecordingFactory) New(ws runtime.Workspace, _ runtime.SecretKeys, _ []string) runtime.Runtime {
 	return stopRecordingRuntime{f: f, name: ws.ContainerName}
 }
 
