@@ -1082,6 +1082,31 @@ deployment:
    $TF destroy
    ```
 
+Three resources are set so the destroy does not trip over Google Cloud behaviour:
+
+- `google_sql_database.agentfleet` and `google_sql_user.cp` have `deletion_policy = "ABANDON"`.
+  The CP's database user owns the database it creates on first start, so Terraform cannot drop
+  either; both are removed with the Cloud SQL instance, and nothing is left of them.
+- `google_service_networking_connection.private_service_access` has
+  `deletion_policy = "REMOVE_PEERING"`: Service Networking keeps reporting the connection in use
+  for a long time after the instance is gone, and this removes the VPC peering from the network
+  instead, so the VPC delete is not blocked. (`ABANDON` would leave the peering in place and block
+  it.)
+
+`ABANDON` skips the API call whenever Terraform deletes the resource, not only in a full destroy.
+Removing the database or user from the configuration, destroying either alone, or renaming one
+(which replaces it) while the instance stays leaves the old database, its data and the old IAM
+database user in Cloud SQL, no longer managed by Terraform. To delete one on purpose, resolve its
+ownership and dependencies, set `deletion_policy = "DELETE"` and apply first, or clean up by hand
+(and `terraform import` if it should be managed again).
+
+A deployment created before these settings needs the `$TF apply` above to record them in state
+before `$TF destroy`. If the VPC delete is still refused because of the peering, delete it by hand
+and destroy again:
+`gcloud compute networks peerings delete servicenetworking-googleapis-com --network "$PREFIX-vpc" --project "$PROJECT"`.
+
 KMS keys are not deleted by Google Cloud, only their versions are scheduled for destruction. The
 snapshots of the CP's disk and the snapshot schedule outlive the destroy; delete them with
 `gcloud compute snapshots delete` and `gcloud compute resource-policies delete` once unwanted.
+Those are the only manual leftovers: the database and user go with the instance, and the reserved
+private-service-access address range is a Terraform resource that the destroy deletes.

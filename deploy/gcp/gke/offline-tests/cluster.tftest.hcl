@@ -235,3 +235,19 @@ run "zonal_cluster_needs_exactly_one_zone" {
 
   expect_failures = [google_container_cluster.main]
 }
+
+# `terraform destroy` must not trip over the CP-owned database or Service Networking's
+# lingering "in use" (#1732); the runbook's "Tearing down" describes these.
+run "destroy_policies_are_set" {
+  command = plan
+
+  assert {
+    condition     = google_sql_database.agentfleet.deletion_policy == "ABANDON" && google_sql_user.cp.deletion_policy == "ABANDON"
+    error_message = "the database and its IAM user go with the instance, not by DROP"
+  }
+
+  assert {
+    condition     = google_service_networking_connection.private_service_access.deletion_policy == "REMOVE_PEERING"
+    error_message = "ABANDON would leave the peering and block the VPC delete"
+  }
+}
