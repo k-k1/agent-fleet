@@ -139,6 +139,9 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
   const timerRef = useRef(0);
   const inflightRef = useRef<Promise<void> | null>(null);
   const retryRef = useRef(0);
+  // Set once the pane is gone. The final flush on unmount may still be in flight; its failure must
+  // not re-arm a retry, which would fire after the window (the jsdom environment in tests) is torn down.
+  const disposedRef = useRef(false);
   // -1 = no baseline yet: the first read is the baseline unless this studio was seen before.
   const seenSeqRef = useRef(id ? (readJSON<Seen>(seenKey(id))?.seq ?? -1) : -1);
 
@@ -272,6 +275,7 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
   // The debounce, re-armed after a save that got no answer — so a failed save is not left
   // sitting dirty (which also holds the poll off) until the member happens to type again.
   function scheduleRetry() {
+    if (disposedRef.current) return;
     const wait = RETRY_MS[Math.min(retryRef.current, RETRY_MS.length - 1)];
     retryRef.current++;
     window.clearTimeout(timerRef.current);
@@ -317,6 +321,17 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
     },
     [flush],
   );
+
+  // Declared with no dependencies: the cleanup above re-runs whenever `flush` changes, this one
+  // runs only when the pane goes. (Re-armed on setup so a StrictMode remount works.)
+  useEffect(() => {
+    disposedRef.current = false;
+    return () => {
+      disposedRef.current = true;
+      window.clearTimeout(timerRef.current);
+      timerRef.current = 0;
+    };
+  }, []);
 
   // The agent's edits. Only with a session bound, only while shown, never over an unsent edit.
   const bound = !!studio?.session;

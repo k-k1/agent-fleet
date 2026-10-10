@@ -9,11 +9,14 @@ import type { StudioPatch, StudioWire } from "./wire.ts";
 const calls: { body: StudioPatch; ifMatch: string }[] = [];
 let putAnswers: ((body: StudioPatch) => { status: number; studio?: StudioWire })[] = [];
 let current: StudioWire;
+// When set, patchStudio answers only after this resolves — a save still in flight.
+let patchGate: Promise<void> | null = null;
 
 vi.mock("./api.ts", () => ({
   getStudio: async () => current,
   patchStudio: async (_id: string, body: StudioPatch, ifMatch: string) => {
     calls.push({ body, ifMatch });
+    if (patchGate) await patchGate;
     const next = putAnswers.shift();
     if (next) return next(body);
     // Apply the merge patch the way the Agent does (params one level deep), so the answer
@@ -71,6 +74,7 @@ beforeEach(() => {
   localStorage.clear();
   calls.length = 0;
   putAnswers = [];
+  patchGate = null;
   current = {
     id: ID,
     title: "t",
@@ -122,6 +126,27 @@ describe("useStudio: 保存", () => {
     await act(async () => st.patchForm({ sampler: "" }));
     await tick(600);
     expect(calls[0].body.draft).toEqual({ params: { steps: 30, cfg: 7, sampler: null } });
+  });
+});
+
+describe("useStudio: teardown", () => {
+  it("a save that fails after the pane unmounted schedules no retry", async () => {
+    await mount();
+    let release!: () => void;
+    patchGate = new Promise<void>((r) => (release = r));
+    putAnswers.push(() => ({ status: 0 }));
+    await act(async () => st.patchForm({ prompt: "mine" }));
+    await tick(600);
+    expect(calls).toHaveLength(1);
+    // The pane goes away with the save unanswered; the answer then arrives (no answer = status 0).
+    await act(async () => root.unmount());
+    release();
+    await tick(0);
+    // A retry armed now would fire after the environment is gone (`window` undefined).
+    expect(vi.getTimerCount()).toBe(0);
+    await tick(60000);
+    expect(calls).toHaveLength(1);
+    root = createRoot(host); // afterEach unmounts again
   });
 });
 
