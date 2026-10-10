@@ -347,85 +347,87 @@ export function PoolView() {
         {slots.length === 0 ? (
           <p className="muted">{tr("pool.no_slots")}</p>
         ) : (
-          <table className="admin-table pool-table">
-            <thead>
-              <tr>
-                <th>{tr("pool.col_instance")}</th>
-                <th>{tr("pool.col_type")}</th>
-                <th>{tr("pool.col_state")}</th>
-                <th>{tr("pool.col_occupant")}</th>
-                <th>{tr("pool.col_dormant")}</th>
-                <th>{tr("pool.col_template")}</th>
-                {/* The action column: empty for every row but a quarantined one, and the
-                    backup column this header used to carry belongs to the HOMES table —
-                    slots have no spare copy, so it labelled a cell that was never rendered. */}
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {slots.map((s) => (
-                <tr key={s.instance_id}>
-                  <td className="mono">{s.instance_id}</td>
-                  <td className="mono">{s.instance_type}<span className="muted"> {s.az}</span></td>
-                  <td>
-                    <span className={"state-dot " + (s.quarantined ? "off" : s.state === "running" ? "on" : "off")} />
-                    {s.quarantined ? (
-                      <span className="warn-text" title={s.quarantine_reason || ""}>{tr("pool.state_quarantined")}</span>
-                    ) : s.state === "stopped" ? (
-                      tr("pool.state_asleep")
-                    ) : (
-                      s.state
-                    )}
-                    {!s.quarantined && s.state === "running" && !s.registered && (
-                      <span className="muted"> {tr("pool.not_registered")}</span>
-                    )}
-                  </td>
-                  <td className="mono">
-                    {s.workspace || <span className="muted">{tr("pool.free_slot")}</span>}
-                    {bakeWS.has(s.workspace) && <span className="pool-badge bake">{tr("pool.bake_owner")}</span>}
-                  </td>
-                  <td>{s.workspace ? fmtIdle(s.idle_minutes, tr) : "–"}</td>
-                  <td>
-                    {s.template_version ? <span className="mono">v{s.template_version}</span> : <span className="muted">–</span>}
-                    {s.template_outdated && (
-                      <span
-                        className="pool-badge outdated"
-                        title={tr(st.auto_replace_outdated ? "pool.outdated_auto_title" : "pool.outdated_title", { latest: st.template_latest || "?" })}
-                      >
-                        {tr(st.auto_replace_outdated && !s.replace_reserved ? "pool.outdated_auto" : "pool.outdated")}
-                      </span>
-                    )}
-                    {s.replace_reserved && (
-                      <span className="pool-badge reserved" title={s.replace_reserved_at || ""}>
-                        {tr("pool.reserved")}
-                      </span>
-                    )}
-                  </td>
-                  {/* Row actions use a bordered variant: a ghost button reads as plain text in a
-                      table cell, so an unreserved row looked like a reserved one. */}
-                  {/* Quarantine is the only state this screen can act on, and the button is
-                      the only way the product has to stop paying for one (the sweeper's
-                      terminate stage filters on af-role=slot and never collects it). */}
-                  <td>
-                    {s.quarantined ? (
-                      <Button small variant="danger" onClick={() => { setKillErr(""); setKilling(s); }}>
-                        {tr("pool.terminate")}
-                      </Button>
-                    ) : (
-                      <Button
-                        small
-                        disabled={reserving === s.instance_id}
-                        title={tr(s.replace_reserved ? "pool.reserve_cancel_title" : "pool.reserve_title")}
-                        onClick={() => void setReserved(s, !s.replace_reserved)}
-                      >
-                        {tr(s.replace_reserved ? "pool.reserve_cancel" : "pool.reserve")}
-                      </Button>
-                    )}
-                  </td>
+          <div className="pool-table-scroll">
+            <table className="admin-table pool-table">
+              <thead>
+                <tr>
+                  <th>{tr("pool.col_instance")}</th>
+                  <th>{tr("pool.col_type")}</th>
+                  <th>{tr("pool.col_state")}</th>
+                  <th>{tr("pool.col_occupant")}</th>
+                  <th>{tr("pool.col_dormant")}</th>
+                  <th>{tr("pool.col_template")}</th>
+                  {/* The action column: empty for every row but a quarantined one, and the
+                      backup column this header used to carry belongs to the HOMES table —
+                      slots have no spare copy, so it labelled a cell that was never rendered. */}
+                  <th />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {slots.map((s) => (
+                  <tr key={s.instance_id}>
+                    <td className="mono">{s.instance_id}</td>
+                    <td className="mono">{s.instance_type}<span className="muted"> {s.az}</span></td>
+                    <td>
+                      <span className={"state-dot " + (s.quarantined ? "off" : s.state === "running" ? "on" : "off")} />
+                      {s.quarantined ? (
+                        <span className="warn-text" title={s.quarantine_reason || ""}>{tr("pool.state_quarantined")}</span>
+                      ) : s.state === "stopped" ? (
+                        tr("pool.state_asleep")
+                      ) : (
+                        s.state
+                      )}
+                      {!s.quarantined && s.state === "running" && !s.registered && (
+                        <span className="muted"> {tr("pool.not_registered")}</span>
+                      )}
+                    </td>
+                    <td className="mono">
+                      {s.workspace || <span className="muted">{tr("pool.free_slot")}</span>}
+                      {bakeWS.has(s.workspace) && <span className="pool-badge bake">{tr("pool.bake_owner")}</span>}
+                    </td>
+                    <td>{s.workspace ? fmtIdle(s.idle_minutes, tr) : "–"}</td>
+                    <td>
+                      {s.template_version ? <span className="mono">v{s.template_version}</span> : <span className="muted">–</span>}
+                      {s.template_outdated && (
+                        <span
+                          className="pool-badge outdated"
+                          title={tr(st.auto_replace_outdated ? "pool.outdated_auto_title" : "pool.outdated_title", { latest: st.template_latest || "?" })}
+                        >
+                          {tr(st.auto_replace_outdated && !s.replace_reserved ? "pool.outdated_auto" : "pool.outdated")}
+                        </span>
+                      )}
+                      {s.replace_reserved && (
+                        <span className="pool-badge reserved" title={s.replace_reserved_at || ""}>
+                          {tr("pool.reserved")}
+                        </span>
+                      )}
+                    </td>
+                    {/* Row actions use a bordered variant: a ghost button reads as plain text in a
+                        table cell, so an unreserved row looked like a reserved one. */}
+                    {/* Quarantine is the only state this screen can act on, and the button is
+                        the only way the product has to stop paying for one (the sweeper's
+                        terminate stage filters on af-role=slot and never collects it). */}
+                    <td>
+                      {s.quarantined ? (
+                        <Button small variant="danger" onClick={() => { setKillErr(""); setKilling(s); }}>
+                          {tr("pool.terminate")}
+                        </Button>
+                      ) : (
+                        <Button
+                          small
+                          disabled={reserving === s.instance_id}
+                          title={tr(s.replace_reserved ? "pool.reserve_cancel_title" : "pool.reserve_title")}
+                          onClick={() => void setReserved(s, !s.replace_reserved)}
+                        >
+                          {tr(s.replace_reserved ? "pool.reserve_cancel" : "pool.reserve")}
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 
@@ -434,56 +436,58 @@ export function PoolView() {
         {homes.length === 0 ? (
           <p className="muted">{tr("pool.no_homes")}</p>
         ) : (
-          <table className="admin-table pool-table">
-            <thead>
-              <tr>
-                <th>{tr("pool.col_workspace")}</th>
-                <th>{tr("pool.col_volume")}</th>
-                <th>{tr("pool.col_where")}</th>
-                <th>{tr("pool.col_dormant")}</th>
-                <th>{tr("pool.col_backup")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {homes.map((h) => (
-                <tr key={h.volume_id || h.workspace}>
-                  <td className="mono">
-                    {h.workspace}
-                    {bakeWS.has(h.workspace) && <span className="pool-badge bake">{tr("pool.bake_owner")}</span>}
-                  </td>
-                  <td className="mono">
-                    {h.volume_id ? `${h.volume_id} (${h.size_gib} GiB)` : <span className="muted">{tr("pool.no_volume")}</span>}
-                  </td>
-                  <td>
-                    {h.snapshot_id && !h.volume_id ? (
-                      <span className="pool-badge hib"><Icon name="archive" /> {tr("pool.hibernated")}</span>
-                    ) : h.hibernating ? (
-                      <span className="pool-badge hib"><Icon name="archive" /> {tr("pool.hibernating", { state: h.snapshot_state || "…" })}</span>
-                    ) : h.attached_to ? (
-                      <span className="mono">{h.attached_to}</span>
-                    ) : (
-                      <span className="muted">{tr("pool.detached")}</span>
-                    )}
-                  </td>
-                  <td>{h.volume_id && h.idle_minutes > 0 ? fmtIdle(h.idle_minutes, tr) : "–"}</td>
-                  {/* "No backup" and "taken a moment ago" are opposite answers and must not
-                      collapse into the same blank cell. An evacuated home is itself the
-                      snapshot, so it is out of scope here. */}
-                  <td>
-                    {!h.volume_id ? (
-                      "–"
-                    ) : (h.backup_age_minutes ?? -1) >= 0 ? (
-                      <span title={tr("pool.backup_count", { n: h.backups ?? 0 })}>
-                        {fmtIdle(h.backup_age_minutes ?? 0, tr)}
-                      </span>
-                    ) : (
-                      <span className="warn-text">{tr("pool.backup_none")}</span>
-                    )}
-                  </td>
+          <div className="pool-table-scroll">
+            <table className="admin-table pool-table">
+              <thead>
+                <tr>
+                  <th>{tr("pool.col_workspace")}</th>
+                  <th>{tr("pool.col_volume")}</th>
+                  <th>{tr("pool.col_where")}</th>
+                  <th>{tr("pool.col_dormant")}</th>
+                  <th>{tr("pool.col_backup")}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {homes.map((h) => (
+                  <tr key={h.volume_id || h.workspace}>
+                    <td className="mono">
+                      {h.workspace}
+                      {bakeWS.has(h.workspace) && <span className="pool-badge bake">{tr("pool.bake_owner")}</span>}
+                    </td>
+                    <td className="mono">
+                      {h.volume_id ? `${h.volume_id} (${h.size_gib} GiB)` : <span className="muted">{tr("pool.no_volume")}</span>}
+                    </td>
+                    <td>
+                      {h.snapshot_id && !h.volume_id ? (
+                        <span className="pool-badge hib"><Icon name="archive" /> {tr("pool.hibernated")}</span>
+                      ) : h.hibernating ? (
+                        <span className="pool-badge hib"><Icon name="archive" /> {tr("pool.hibernating", { state: h.snapshot_state || "…" })}</span>
+                      ) : h.attached_to ? (
+                        <span className="mono">{h.attached_to}</span>
+                      ) : (
+                        <span className="muted">{tr("pool.detached")}</span>
+                      )}
+                    </td>
+                    <td>{h.volume_id && h.idle_minutes > 0 ? fmtIdle(h.idle_minutes, tr) : "–"}</td>
+                    {/* "No backup" and "taken a moment ago" are opposite answers and must not
+                        collapse into the same blank cell. An evacuated home is itself the
+                        snapshot, so it is out of scope here. */}
+                    <td>
+                      {!h.volume_id ? (
+                        "–"
+                      ) : (h.backup_age_minutes ?? -1) >= 0 ? (
+                        <span title={tr("pool.backup_count", { n: h.backups ?? 0 })}>
+                          {fmtIdle(h.backup_age_minutes ?? 0, tr)}
+                        </span>
+                      ) : (
+                        <span className="warn-text">{tr("pool.backup_none")}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 
