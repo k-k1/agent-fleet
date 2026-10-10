@@ -152,6 +152,10 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
   // Set once the pane is gone. The final flush on unmount may still be in flight; its failure must
   // not re-arm a retry, which would fire after the window (the jsdom environment in tests) is torn down.
   const disposedRef = useRef(false);
+  // Form fields this pane's member has edited (a restored edit does not count): a parked edit from
+  // an older pane never overwrites them, whether or not their save has landed yet.
+  const touchedRef = useRef(new Set<string>());
+  const restoringRef = useRef(false);
   // -1 = no baseline yet: the first read is the baseline unless this studio was seen before.
   const seenSeqRef = useRef(id ? (readJSON<Seen>(seenKey(id))?.seq ?? -1) : -1);
 
@@ -316,6 +320,7 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
     (p: Partial<ImagegenDraft>) => {
       // The ref moves now, not on the next render: a press right after a patch (a result card's
       // "again with this seed") flushes before React has rendered, and must send the new value.
+      if (!restoringRef.current) for (const k of Object.keys(p)) touchedRef.current.add(k);
       const next = { ...formRef.current, ...p };
       formRef.current = next;
       setForm(next);
@@ -350,7 +355,7 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
   }, []);
 
   // Put back an edit the previous pane could not save, once this pane has a studio to diff against.
-  // Fields this pane's member has already changed since are theirs and stay.
+  // Fields this pane's member has edited since are theirs and stay.
   const [orphanTick, setOrphanTick] = useState(0);
   useEffect(() => {
     const l = (oid: string) => {
@@ -364,12 +369,14 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
     const base = baseRef.current;
     if (!o || !studio || !base) return;
     orphaned.delete(id);
-    const fresh = formFromStudio(base.draft);
     const mine: Partial<ImagegenDraft> = {};
     for (const k of Object.keys(o.form) as (keyof ImagegenDraft)[]) {
-      if (!sameField(o.form[k], o.base[k]) && sameField(formRef.current[k], fresh[k])) (mine as Record<string, unknown>)[k] = o.form[k];
+      if (!sameField(o.form[k], o.base[k]) && !touchedRef.current.has(k)) (mine as Record<string, unknown>)[k] = o.form[k];
     }
-    if (Object.keys(mine).length) patchForm(mine);
+    if (!Object.keys(mine).length) return;
+    restoringRef.current = true;
+    patchForm(mine);
+    restoringRef.current = false;
   }, [id, studio, patchForm, orphanTick]);
 
   // The agent's edits. Only with a session bound, only while shown, never over an unsent edit.

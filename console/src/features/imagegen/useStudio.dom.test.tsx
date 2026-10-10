@@ -16,8 +16,8 @@ vi.mock("./api.ts", () => ({
   getStudio: async () => current,
   patchStudio: async (_id: string, body: StudioPatch, ifMatch: string) => {
     calls.push({ body, ifMatch });
+    const next = putAnswers.shift(); // taken at request time, so a gated save keeps its own answer
     if (patchGate) await patchGate;
-    const next = putAnswers.shift();
     if (next) return next(body);
     // Apply the merge patch the way the Agent does (params one level deep), so the answer
     // carries what was saved.
@@ -191,6 +191,33 @@ describe("useStudio: a parked edit", () => {
     expect(st.form.prompt).toBe("late");
     expect(calls[calls.length - 1].body.draft).toEqual({ prompt: "late" });
   });
+});
+
+describe("useStudio: a parked edit vs newer input", () => {
+  for (const saved of [false, true]) {
+    it(`an older failed save does not overwrite input typed after the reopen (new input ${saved ? "saved" : "still dirty"})`, async () => {
+      await mount();
+      let release!: () => void;
+      patchGate = new Promise<void>((r) => (release = r));
+      putAnswers.push(() => ({ status: 0 }));
+      await act(async () => st.patchForm({ prompt: "old" }));
+      await tick(600);
+      await act(async () => root.unmount());
+      host.remove();
+      const gate = patchGate;
+      patchGate = null;
+      await mount();
+      await act(async () => st.patchForm({ prompt: "new" }));
+      if (saved) await tick(600);
+      patchGate = gate;
+      release();
+      await tick(0);
+      await tick(600);
+      expect(st.form.prompt).toBe("new");
+      expect(current.draft.prompt).toBe(saved ? "new" : current.draft.prompt);
+      expect(calls.filter((c) => c.body.draft?.prompt === "old")).toHaveLength(1);
+    });
+  }
 });
 
 describe("useStudio: 縁取り（決定 6）", () => {
