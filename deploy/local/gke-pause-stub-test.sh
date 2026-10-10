@@ -45,7 +45,12 @@ case "$a" in
   *"sql instances describe"*"value(state)"*) echo RUNNABLE ;;
   *"sql instances patch"*"=NEVER"*) echo NEVER > "$S/sql_policy" ;;
   *"sql instances patch"*"=ALWAYS"*) echo ALWAYS > "$S/sql_policy" ;;
-  *"node-pools describe workspace"*"autoscaling.enabled"*) cat "$S/ws_auto" ;;
+  *"node-pools describe workspace"*"name,autoscaling.enabled"*)
+    v="$(cat "$S/ws_auto")"
+    # gcloud omits a false value: the name alone is a disabled pool. AF_STUB_AUTO_JUNK: garbage.
+    if [ -n "${AF_STUB_AUTO_JUNK:-}" ]; then printf 'workspace\t%s\n' "$AF_STUB_AUTO_JUNK"
+    elif [ "$v" = True ]; then printf 'workspace\tTrue\n'; else echo workspace; fi ;;
+  *"node-pools describe workspace"*"autoscaling.enabled"*) exit 98 ;;
   *"node-pools describe workspace"*"autoscaling.minNodeCount"*) v="$(cat "$S/ws_min")"; [ "$v" = 0 ] || echo "$v" ;;
   *"node-pools describe workspace"*"autoscaling.maxNodeCount"*) cat "$S/ws_max" ;;
   *"node-pools describe workspace"*"instanceGroupUrls"*) urls ws ;;
@@ -117,6 +122,7 @@ case "$a" in
   *"get deployment af-cp"*) cat "$S/cp_replicas" ;;
   *"get pods -o name"*) cat "$S/ws_pods" ;;
   *"get nodes -l agent-fleet.io/pool=system -o jsonpath"*) ready "$(sys_total)" ;;
+  *"get nodes -l agent-fleet.io/pool=workspace"*) [ -z "${AF_STUB_HIDE_NODES:-}" ] || exit 0; false ;;&
   *"get nodes -l agent-fleet.io/pool=workspace -o jsonpath"*) ready $(( $(cat "$S/ws_nodes") * nz )) ;;
   *"get nodes -l agent-fleet.io/pool=system"*) nodes "$(sys_total)" sys ;;
   *"get nodes -l agent-fleet.io/pool=workspace"*) nodes $(( $(cat "$S/ws_nodes") * nz )) ws ;;
@@ -130,7 +136,7 @@ chmod +x "$STUB/gcloud" "$STUB/kubectl"
 
 export AF_PAUSE_POLL=1 AF_PAUSE_READY_TIMEOUT=3 AF_STUB_STATE="$S" AF_STUB_LOG="$LOG"
 export PATH="$STUB:$PATH"
-unset AF_STUB_FAIL_ON AF_STUB_ENDPOINT AF_STUB_SERVER AF_STUB_LATE AF_STUB_STUCK
+unset AF_STUB_FAIL_ON AF_STUB_ENDPOINT AF_STUB_SERVER AF_STUB_LATE AF_STUB_STUCK AF_STUB_AUTO_JUNK AF_STUB_HIDE_NODES
 
 SYS=2   # system nodes per zone while running
 reset() {  # a running deployment: autoscaled workspace pool, no record
@@ -188,6 +194,14 @@ suite() {
   check "a node that cannot be removed fails loudly, not 'paused'" '[ "$rc" != 0 ] && grep -q "did not stay at 0" "$WORK/out" && ! grep -q "==> paused" "$WORK/out"'
   pause --status
   check "status after a failed pause does not say paused" '! grep -q "state              : paused" "$WORK/out" && grep -q "NOT fully paused" "$WORK/out"'
+  # an empty / unknown autoscaling answer is not "off"
+  reset
+  AF_STUB_AUTO_JUNK=maybe pause --yes && rc=0 || rc=$?
+  check "an unknown autoscaling.enabled stops the pause before any write" '[ "$rc" != 0 ] && [ "$(writes)" = 0 ]'
+  # a VM that is starting is in the instance group but not yet a registered node
+  reset; echo 0 > "$S/cp_replicas"; echo 0 > "$S/sys_nodes"; echo 1 > "$S/ws_nodes"; echo False > "$S/ws_auto"
+  AF_STUB_HIDE_NODES=1 pause --status
+  check "status: instance group size 1 with no registered node is not paused" '! grep -q "state              : paused" "$WORK/out" && grep -q "NOT fully paused" "$WORK/out"'
   reset
   pause --yes && rc=0 || rc=$?   # leave the paused state the next steps expect
 

@@ -199,10 +199,18 @@ pool_sizes() {
     echo "$v"
   done
 }
+# ws_autoscaling — 1 / 0. The pool's name is read with the flag: gcloud omits a false (or
+# unset) `enabled`, so an empty answer alone is "disabled" and "read nothing" at once.
 ws_autoscaling() {
-  local v
-  v="$(pool_field "$WS_POOL" autoscaling.enabled)" || return 1
-  if [ "$v" = True ]; then echo 1; else echo 0; fi
+  local out v
+  out="$(pool_field "$WS_POOL" name,autoscaling.enabled)" || return 1
+  case "$out" in "$WS_POOL"|"$WS_POOL"$'\t'*) ;; *) err "unreadable autoscaling state of node pool $WS_POOL ('$out')"; return 1 ;; esac
+  v="${out#"$WS_POOL"}"; v="${v//[[:space:]]/}"
+  case "$v" in
+    True) echo 1 ;;
+    ''|False) echo 0 ;;
+    *) err "unexpected autoscaling.enabled '$v' for node pool $WS_POOL"; return 1 ;;
+  esac
 }
 sql_policy() {
   local v
@@ -309,11 +317,14 @@ status() {
       echo ""; echo "    WARN: $t workspace node(s) up with no control plane. If the system pool is at 0 the"
       echo "          autoscaler started them for kube-system; run pause.sh --yes again (it resizes the pool to 0)."; }
   fi
-  sn="$(try pool_nodes "$SYS_POOL")"; wn="$(try pool_nodes "$WS_POOL")"
-  if [ "$(try cp_replicas)" = 0 ] && [ "$sn" = 0 ] && [ "$wn" = 0 ]; then
-    echo "    state              : paused (no node is up)"
-  elif [ "$(try cp_replicas)" = 0 ]; then
-    echo "    state              : NOT fully paused (nodes still up: system=$sn workspace=$wn)"
+  # Registered nodes miss a VM that is still starting; the instance groups' target size does not.
+  sn="$(try pool_sizes "$SYS_POOL" | tr '\n' ' ')"; wn="$(try pool_sizes "$WS_POOL" | tr '\n' ' ')"
+  if [ "$(try cp_replicas)" = 0 ]; then
+    if [ "$(try pool_nodes "$SYS_POOL")$(try pool_nodes "$WS_POOL")" = 00 ] && [[ "$sn$wn" =~ ^[0\ ]+$ ]]; then
+      echo "    state              : paused (no node is up)"
+    else
+      echo "    state              : NOT fully paused (instance group sizes per zone: system=${sn% } workspace=${wn% })"
+    fi
   fi
   echo ""
   echo "    still billing while paused (only deletion stops these): the GKE management fee, the"
