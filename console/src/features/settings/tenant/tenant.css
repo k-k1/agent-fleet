@@ -637,6 +637,19 @@
   white-space: nowrap;
 }
 
+/* The pool tables scroll inside their own box. Without it the table's min-content width pushes
+   past the panel and the whole settings pane scrolls sideways at phone width, clipping the
+   panel's text and tiles (measured at 400px: table wider than the dialog). Cells never wrap,
+   so a workspace name is not split one token per line; a table wider than the box scrolls. */
+.pool-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.pool-table td {
+  white-space: nowrap;
+}
+
 .admin-table td {
   padding: 6px 8px;
   border-bottom: 1px solid var(--border2);
