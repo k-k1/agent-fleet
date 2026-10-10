@@ -234,8 +234,8 @@ kubectl -n default run psql-grant -it --rm --restart=Never --image=postgres:17-a
 
 At the `Password:` prompt type the postgres password, paste the printed statements at the `psql`
 prompt and expect `GRANT ROLE`, `ALTER DATABASE` and `ALTER SCHEMA` back; any `ERROR` means the
-grant is not done. Then `\q`. (`ON_ERROR_STOP` does not apply to an interactive session, so
-read the replies.) The password goes to `psql` over the pod's terminal only: it is in no command
+grant is not done. Then `\q`. (Interactive `psql` does not exit on a SQL error, so read the
+replies.) The password goes to `psql` over the pod's terminal only: it is in no command
 line, pod spec or API object. The pod is removed on exit (`--rm`); if the session dropped, delete
 it with `kubectl -n default delete pod psql-grant`.
 
