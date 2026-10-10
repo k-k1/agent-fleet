@@ -202,8 +202,10 @@ boot. The `ecs` / `ecs-ec2` stacks do not expose it as a parameter yet.
     account's SSM key.
 
   To shred a home's store while keeping the home, disable the key **and** stop the workspace
-  **and** remove those runtime copies yourself. Nothing here does that automatically; Destroy
-  removes the runtime copies, but it removes the home too.
+  **and** remove those runtime copies yourself. Nothing here does that automatically. Destroy
+  is not that procedure: it removes the runtime copies and tries to remove the home as well,
+  and on an `ecs` stack without the home task it removes only the access points and leaves
+  the home's EFS directories behind.
 - **What it does not.** A home that has not been started since you turned it on is still on the
   derived key, and is **not** shredded by disabling the KMS key. `af-cp home-dek-status` counts
   them (read-only). Copies of a home made before its store was re-sealed (ecs-ec2 snapshots,
@@ -211,16 +213,23 @@ boot. The `ecs` / `ecs-ec2` stacks do not expose it as a parameter yet.
   key is still passed to every workspace beside the home's key; it no longer opens a re-sealed
   store, and a later change stops passing it.
 - **Turning it off does not undo it.** With `AF_WORKSPACE_DEK` unset again, homes that already
-  have a key keep getting it, because their store may be sealed under it. Going back to a
-  Control Plane or a workspace image that does not know the home's key, or deleting the
-  `home_dek` table, leaves every re-sealed store unreadable, and the workspace then refuses
-  every write to it as well, reconnecting a credential included (it never writes over a store
-  it cannot open). First restore what opens it: the Control Plane version, its `home_dek`
-  rows and the KMS key. Only if the stored credentials are to be given up, stop the workspace,
-  move the unreadable `secrets.enc` out of the member's agent configuration directory
-  (`~/.config/agent-fleet/`) yourself, and have the member reconnect. A workspace image older
-  than the Control Plane ignores the home's key and keeps using the derived one, so it loses
-  nothing before its store is re-sealed.
+  have a key keep getting it, because their store may be sealed under it. After a store has
+  been re-sealed, two kinds of going back differ:
+  - **A Control Plane that does not know the home's key, or a lost `home_dek` table**, with the
+    workspace image of this version: the store no longer opens, and the workspace refuses
+    every write to it, reconnecting a credential included (this version never writes over a
+    store it cannot open).
+  - **A workspace image from before this version: do not start one on a home that has
+    moved.** Its Agent has no such guard: a save after a failed read can write an empty
+    store over the re-sealed one, and the credentials are lost.
+
+  To recover, first restore what opens the store, before any workspace starts on that home:
+  the Control Plane version, its `home_dek` rows and the KMS key. Only if the stored
+  credentials are to be given up, stop the workspace, move the unreadable `secrets.enc` out of
+  the member's agent configuration directory (`~/.config/agent-fleet/`) yourself, and have the
+  member reconnect. A workspace image older than the Control Plane loses nothing as long as
+  the store has not been re-sealed yet: it ignores the home's key and keeps using the derived
+  one.
 - **No fallback.** If KMS cannot seal or open a home's key, the workspace does not start. It is
   never started on the derived key alone.
 

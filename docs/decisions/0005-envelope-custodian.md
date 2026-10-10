@@ -175,16 +175,20 @@ Limits, stated plainly:
   something other than the custodian key: a running workspace's environment, and the
   runtime's own copy, which outlives a stop (docker container env, the Kubernetes Secret, ECS
   SSM SecureStrings under the account's SSM key). Shredding a home's store while keeping the
-  home needs those removed too; nothing does that automatically, and Destroy removes them only
-  with the home.
+  home needs those removed too; nothing does that automatically. Destroy is not that
+  procedure: it removes them and tries to remove the home, and on ecs without the home task it
+  leaves the home's EFS directories.
 - The Agent's `Save` now refuses to write over a store it cannot open (the same rule `Update`
   already had), so a member whose store is unreadable cannot overwrite it until it is removed.
 - Part A does not stop injecting the derived key; it no longer opens a moved store, and the
   confirm step that marks a home `random` and stops it is part B.
-- Downgrading the CP or the workspace image after a store moved, or losing `home_dek`, leaves
-  that store unreadable, and the Agent then refuses every write to it, reconnecting included.
-  The guide says to restore the CP version, `home_dek` and the KMS key first, and only to give
-  the credentials up by stopping the workspace and moving the unreadable `secrets.enc` aside by
-  hand before members reconnect. Nothing removes or overwrites it automatically.
+- After a store moved, going back to a CP without the home key, or losing `home_dek`, leaves
+  it unreadable; an Agent of this version then refuses every write to it, reconnecting
+  included. An Agent from before this version has no such guard (its `Save` writes after a
+  failed read), so a workspace image from before this version must not be started on a moved
+  home: it can write an empty store over it. The guide says to restore the CP version,
+  `home_dek` and the KMS key before any workspace starts there, and only to give the
+  credentials up by stopping the workspace and moving the unreadable `secrets.enc` aside by
+  hand. Nothing removes or overwrites it automatically.
 - Verified by unit tests with fakes only. A kept home recreated on real ECS/EFS, and a
   downgrade, have not been run. The ECS stacks do not expose the flag yet.
