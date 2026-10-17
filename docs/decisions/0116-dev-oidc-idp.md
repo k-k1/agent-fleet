@@ -369,3 +369,19 @@ what to do next, from a ja / en table that follows `Accept-Language`; this repla
 - A store failure on consent (500) says the sign-in is unavailable; every other consent refusal says the
   confirmation is no longer valid. A wrong method on `authorize` or `consent` is a page; on `token`, `userinfo`
   and `jwks` it stays the plain 405 / OAuth JSON, and the bare 404 while the IdP is not offered is unchanged.
+
+## Note (2026-10-18): loopback redirects are supported while the workspace is stopped (#2301)
+
+Sign-in to `http://localhost:<port>/…` and `http://127.0.0.1:<port>/…` is a supported use of the IdP, also
+while the member's workspace is stopped, so that an app on the member's **own machine** can use it. The
+allow-list has always admitted these hosts for the owner (and tenant-share viewers) without a preview slug,
+and `authorize`, `consent`, `token` and `userinfo` read the client from the store and never ask whether the
+workspace is running. A redirect to the preview host still needs the current slug and is refused while the
+workspace is stopped. Nothing changes in behaviour; `dev_idp_stopped_test.go` pins it, and a check that
+refuses clients of stopped workspaces would fail those tests.
+
+- The price: the client secret leaves the container. It lives only in `AF_DEV_IDP_CLIENT_SECRET`, so an app
+  on the member's machine holds a copy. Rotating the secret (`POST /api/env/ws-settings/dev-idp/rotate`) is
+  how copied secrets are revoked; the old pair stops working at once.
+- The IdP cannot tell the browser pane's loopback from the member's machine; both are the same redirect.
+- Member-facing guidance is #2302.
