@@ -36,13 +36,16 @@ func optInHome(t *testing.T) string {
 
 // stubTerminalSlots replaces terminalSlots for the test. The restore waits for the reconciles the
 // code under test started in the background (goReconcile): they read terminalSlots, and restoring
-// it under them is a data race.
+// it under them is a data race. The same goes for the idle watchers (idleWatch) an earlier test's
+// Supervisor armed: they poll terminalSlots on a timer, so they are ended before every write.
 func stubTerminalSlots(t *testing.T, fn func() []session.Meta) {
 	t.Helper()
+	idleWatch.stop()
 	old := terminalSlots
 	terminalSlots = fn
 	t.Cleanup(func() {
 		reconcileInflight.Wait()
+		idleWatch.stop()
 		terminalSlots = old
 	})
 }
@@ -715,4 +718,23 @@ func freePortForTest(t *testing.T) string {
 	}
 	defer l.Close()
 	return strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
+}
+
+// A Supervisor an earlier test armed leaves its zero-demand watcher polling terminalSlots; the next
+// stubTerminalSlots must end it before writing the var, or -race reports the write against the
+// watcher's read (seen as TestRetiringAnAdoptedDaemonDrainsItsBusyTerminals failing after
+// TestEnsureStartsServeWithPassword).
+func TestStubbingTerminalSlotsEndsLeftoverIdleWatchers(t *testing.T) {
+	prev := agents.IdleTickForTest(time.Millisecond)
+	t.Cleanup(func() { idleWatch.stop(); agents.IdleTickForTest(prev) })
+	t.Setenv(idleGraceEnv, "600")
+	s := &Supervisor{}
+	s.mu.Lock()
+	s.armIdleWatchLocked()
+	s.mu.Unlock()
+	time.Sleep(20 * time.Millisecond) // several ticks: the watcher is reading terminalSlots
+	t.Run("stub", func(t *testing.T) {
+		stubTerminalSlots(t, func() []session.Meta { return nil })
+		time.Sleep(20 * time.Millisecond)
+	})
 }

@@ -404,8 +404,45 @@ func (s *Supervisor) armIdleWatchLocked() {
 		return
 	}
 	s.watching = true
-	go agents.WatchIdle("opencode serve", dependents, s.stopIfIdle,
-		agents.IdleGrace(idleGraceEnv, defaultIdleGrace))
+	idleWatch.start(func(quit <-chan struct{}) {
+		agents.WatchIdleUntil(quit, "opencode serve", dependents, s.stopIfIdle,
+			agents.IdleGrace(idleGraceEnv, defaultIdleGrace))
+	})
+}
+
+// idleWatch tracks the zero-demand watchers so a test can end them (stop) before it swaps a
+// global they read, such as terminalSlots; production never calls stop.
+var idleWatch idleWatchers
+
+type idleWatchers struct {
+	mu   sync.Mutex
+	quit chan struct{}
+	wg   sync.WaitGroup
+}
+
+func (w *idleWatchers) start(run func(quit <-chan struct{})) {
+	w.mu.Lock()
+	if w.quit == nil {
+		w.quit = make(chan struct{})
+	}
+	quit := w.quit
+	w.wg.Add(1)
+	w.mu.Unlock()
+	go func() {
+		defer w.wg.Done()
+		run(quit)
+	}()
+}
+
+// stop ends every watcher started so far and waits for them to return.
+func (w *idleWatchers) stop() {
+	w.mu.Lock()
+	if w.quit != nil {
+		close(w.quit)
+		w.quit = nil
+	}
+	w.mu.Unlock()
+	w.wg.Wait()
 }
 
 // stopIfIdle re-checks zero demand INSIDE THE LOCK before folding the daemon up. A Resume
