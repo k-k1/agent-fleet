@@ -821,3 +821,223 @@ button.mv-path:focus-visible {
 .pv-add-strip > span {
   flex: 1 1 200px;
 }
+
+/* Dev OIDC IdP (ADR 0116, #2304): credentials table, warning callout, app configuration
+   examples. Narrow screens use the 760px phone breakpoint (lib/device MOBILE_QUERY). */
+.dip-creds {
+  margin-top: 10px;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 0 14px;
+}
+
+.dip-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) auto;
+  grid-template-areas: "k v b";
+  align-items: center;
+  gap: 4px 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border2);
+}
+
+.dip-row:first-child {
+  border-top: 0;
+}
+
+.dip-k {
+  grid-area: k;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.dip-v {
+  grid-area: v;
+  min-width: 0;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.dip-b {
+  grid-area: b;
+  justify-self: end;
+}
+
+.dip-callout {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+
+.dip-callout .codicon {
+  color: var(--warn);
+  margin-top: 2px;
+}
+
+.dip-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border2);
+  margin-bottom: 10px;
+}
+
+.dip-tab {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 7px 12px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.dip-tab.active {
+  color: var(--fg);
+  border-bottom-color: var(--topbar-accent, var(--accent));
+}
+
+.dip-opts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-bottom: 10px;
+  font-size: 12.5px;
+}
+
+.dip-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dip-opt-k {
+  color: var(--muted);
+}
+
+.dip-opt select {
+  font-size: 12px;
+}
+
+.dip-variant-select {
+  display: none;
+}
+
+.dip-code {
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.dip-codebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border2);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.dip-file {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-family: var(--mono, ui-monospace, monospace);
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.dip-copy {
+  margin-left: auto;
+}
+
+/* Code scrolls sideways instead of wrapping: a wrapped YAML or Go line stops being copyable by eye. */
+.dip-pre {
+  margin: 0;
+  padding: 10px 14px;
+  overflow-x: auto;
+  font: 12.5px/1.6 var(--mono, ui-monospace, monospace);
+}
+
+.dip-line {
+  display: block;
+  white-space: pre;
+}
+
+.dip-cmt {
+  color: var(--muted);
+}
+
+/* Lines the "include preview settings" option adds. */
+.dip-mark {
+  background: color-mix(in srgb, var(--topbar-accent, var(--accent)) 14%, transparent);
+  margin: 0 -14px;
+  padding: 0 14px;
+}
+
+.dip-notes {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.dip-notes li {
+  display: flex;
+  gap: 8px;
+  margin: 5px 0;
+}
+
+.dip-notes .codicon {
+  margin-top: 2px;
+}
+
+.dip-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  /* Label and button on the first line, the value full width on the second. */
+  .dip-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "k b"
+      "v v";
+  }
+
+  .dip-variant-seg {
+    display: none;
+  }
+
+  .dip-variant-select {
+    display: inline-block;
+  }
+
+  /* The file name (with Copy beside it) and its activation each get a line. */
+  .dip-file {
+    flex: 1 1 0;
+  }
+
+  .dip-act {
+    flex: 1 0 100%;
+    order: 3;
+  }
+}

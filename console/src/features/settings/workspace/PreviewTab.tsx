@@ -21,6 +21,7 @@ import { api, apiJSON, errText } from "../../../core/api/client.ts";
 import { OnOff, Row } from "../parts/controls.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Button } from "../../../ui/Button.tsx";
+import { DevIdpSection } from "./DevIdpSection.tsx";
 import { useSettingsUI } from "../store.ts";
 import { previewInfoFrom, previewScopeUnchanged, previewToken, usePreviewStore } from "../../preview/previewState.ts";
 
@@ -330,59 +331,13 @@ function PreviewSection({
       <p className="muted ds-note">{tr("env.preview_reissue_note")}</p>
       {/* Only where the operator turned the IdP on: a switch that every PUT would refuse
           must not be offered. */}
-      {au.devIdpAvailable && <DevIdpSection au={au} rotate={rotateDevIdp} />}
+      {au.devIdpAvailable && (
+        <>
+          <DevIdpSection au={au} rotate={rotateDevIdp} />
+          <PersonaEditor />
+        </>
+      )}
     </section>
-  );
-}
-
-// The dev OIDC IdP (ADR 0116): the values the container gets, and the rotate action. There is no
-// per-workspace switch. It lives here because its whole purpose is signing in on
-// a preview URL. The client secret is deliberately absent: the API never returns it.
-function DevIdpSection({ au, rotate }: { au: any; rotate: () => void }) {
-  const tr = useT();
-  const toast = useToast();
-  // "Copied" only after the clipboard accepted it: the API is absent outside secure contexts
-  // and writeText rejects when permission is denied.
-  const copy = async (text: string) => {
-    try {
-      if (!navigator.clipboard) throw new Error("no clipboard");
-      await navigator.clipboard.writeText(text);
-      toast(tr("env.devidp_copied"));
-    } catch {
-      toast(tr("common.copy_failed"));
-    }
-  };
-  const issuer: string = au.devIdpIssuer || "";
-  const values: Array<[string, string]> = [
-    [tr("env.devidp_issuer"), issuer],
-    [tr("env.devidp_discovery"), issuer ? `${issuer}/.well-known/openid-configuration` : ""],
-    [tr("env.devidp_client_id"), au.devIdpClientId || ""],
-  ];
-  return (
-    <>
-      <h4 className="ds-title">{tr("env.devidp_title")}</h4>
-      <p className="muted ds-note">{tr("env.devidp_note")}</p>
-      {values
-          .filter(([, v]) => v)
-          .map(([label, v]) => (
-            <Row key={label} label={label}>
-              <code className="ds-note">{v}</code>{" "}
-              <button className="ghost" onClick={() => copy(v)} aria-label={`${tr("env.devidp_copy")}: ${label}`}>
-                {tr("env.devidp_copy")}
-              </button>
-            </Row>
-          ))}
-      <p className="muted ds-note">{tr("env.devidp_secret_note")}</p>
-      <Row label={tr("env.devidp_rotate_label")}>
-        <button className="ghost" onClick={rotate}>
-          {tr("env.devidp_rotate")}
-        </button>
-      </Row>
-      <p className="muted ds-note">{tr("env.devidp_warn_prod")}</p>
-      <p className="muted ds-note">{tr("env.devidp_warn_rotate")}</p>
-      <p className="muted ds-note">{tr("env.devidp_warn_env")}</p>
-      <PersonaEditor />
-    </>
   );
 }
 

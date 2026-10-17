@@ -301,7 +301,7 @@ describe("development OIDC IdP", () => {
     expect(text()).toContain("afdev_abc");
     expect(text()).toContain("AF_DEV_IDP_CLIENT_SECRET");
     const { t } = await import("../../../lib/i18n/index.ts");
-    const copies = [...host!.querySelectorAll("button")].filter((b) => b.textContent === t("env.devidp_copy"));
+    const copies = [...host!.querySelectorAll<HTMLButtonElement>(".dip-creds button")].filter((b) => b.textContent === t("env.devidp_copy"));
     expect(copies).toHaveLength(3);
     await act(async () => copies[2].click());
     expect(write).toHaveBeenCalledWith("afdev_abc");
@@ -313,9 +313,7 @@ describe("development OIDC IdP", () => {
     await mount(<PreviewTab />);
     const { t } = await import("../../../lib/i18n/index.ts");
     expect(text()).toContain("afdev_abc");
-    expect(text()).toContain(t("env.devidp_warn_prod"));
-    expect(text()).toContain(t("env.devidp_warn_rotate"));
-    expect(text()).toContain(t("env.devidp_warn_env"));
+    expect(text()).toContain(t("env.devidp_warn"));
   });
 
   it("rotates the secret on request, shows the new client id and says a restart is needed", async () => {
