@@ -233,6 +233,13 @@ because it validates tenant definitions with no workspace to ask. Never edit it 
 cd workspace/agent && go test -run TestKindCatalogSnapshot -update-kind-catalog .
 ```
 
+**Rolling out a new kind: Agent first.** `TestKindCatalogSnapshot` fails in CI when the
+snapshot was not regenerated, but it cannot see a rollout in which the Control Plane is
+older than the Workspace image. The CP refuses a create whose kind is not in its snapshot
+(`bad_kind`, `agentkinds.CheckCreateKind`), so a CP that is still on the old snapshot
+refuses the new kind until it is updated, even though the new Agent would accept it.
+Deploy the Agent image first, or both together, and expect the refusal in between.
+
 **Required — every kind:**
 
 - [ ] `Kind*` constant in `internal/session/session.go` and an `agentRegistry` entry; the

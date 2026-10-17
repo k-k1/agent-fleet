@@ -213,6 +213,12 @@ dispatch するなら `RED_KINDS` も）に種別を足し、`cli-drift.yml` の
 cd workspace/agent && go test -run TestKindCatalogSnapshot -update-kind-catalog .
 ```
 
+**新しい種別の配備は Agent が先。** スナップショットの作り直し忘れは `TestKindCatalogSnapshot` が
+CI で止めますが、Control Plane が Workspace イメージより古い配備の途中までは見えません。CP は
+スナップショットに無い種別の作成を `bad_kind` で断る（`agentkinds.CheckCreateKind`）ので、
+スナップショットが古い CP は、新しい Agent なら受け付ける種別でも、更新されるまで断ります。
+Agent のイメージを先に、または同時に配備し、その間は断られることを見込んでください。
+
 **必須 — どの種別でも:**
 
 - [ ] `internal/session/session.go` の `Kind*` 定数と `agentRegistry` の登録。キーは `Kind()` と
