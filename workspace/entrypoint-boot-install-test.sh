@@ -33,6 +33,7 @@ echo amd64
 S
 cat >"$T/bin/curl" <<'S'
 #!/bin/sh
+[ -z "${STUB_CURL_FAIL:-}" ] || exit 22
 out=""; while [ $# -gt 0 ]; do [ "$1" = -o ] && out="$2"; shift; done
 [ -n "$out" ] || exit 0
 case "$out" in *checksums.txt) echo "x  rtk-oss-x86_64-unknown-linux-musl.tar.gz" >"$out" ;; *) echo data >"$out" ;; esac
@@ -47,8 +48,8 @@ cat >"$T/bin/tar" <<'S'
 dest=.; for a in "$@"; do case "$a" in -C) next=1 ;; *) [ "${next:-}" = 1 ] && dest="$a" && next=0 ;; esac; done
 case "$*" in
   *agy.tgz*) printf '#!/bin/sh\necho 9.9.9\n' >antigravity ;;
-  *rtk-oss*) printf '#!/bin/sh\necho rtk 1.2.3\n' >rtk ;;
-  *) printf '#!/bin/sh\necho c\n' >"$dest/cursor-agent"; chmod +x "$dest/cursor-agent" ;;
+  *rtk-oss*) if [ -n "${STUB_RTK_BAD:-}" ]; then printf '#!/bin/sh\nexit 1\n' >rtk; else printf '#!/bin/sh\necho rtk 1.2.3\n' >rtk; fi ;;
+  *) : >"$dest/index.js"; printf '#!/bin/sh\n[ -f "$(dirname "$(readlink -f "$0")")/index.js" ] || exit 1\necho c\n' >"$dest/cursor-agent"; chmod +x "$dest/cursor-agent" ;;
 esac
 [ -z "${STUB_TAR_FAIL:-}" ] || exit 1
 S
@@ -61,16 +62,22 @@ if [ -n "${STUB_INSTALL_FAIL:-}" ]; then
 fi
 exec /usr/bin/install "$@"
 S
+cat >"$T/bin/mktemp" <<'S'
+#!/bin/sh
+[ -z "${STUB_MKTEMP_FAIL:-}" ] || exit 1
+exec /usr/bin/mktemp "$@"
+S
 chmod +x "$T"/bin/*
+mkdir "$T/cwd"
 
 fails=0
 fail() { echo "FAIL: $1" >&2; echo "--- output ---" >&2; cat "$T/out" >&2; fails=$((fails+1)); }
 # run_block [VAR=val ...] — one start. SKIP=1 means no repin, so only absence/breakage triggers.
 run_block() {
-  env -i PATH="$T/bin:/usr/bin:/bin:$(dirname "$(command -v node)")" HOME="$T/home" AF_AGENT_SELF_UPDATE_SKIP=1 "$@" \
+  cd "$T/cwd" && env -i PATH="$T/bin:/usr/bin:/bin:$(dirname "$(command -v node)")" HOME="$T/home" AF_AGENT_SELF_UPDATE_SKIP=1 "$@" \
     bash -c 'set -e; export PATH="$HOME/.local/bin:$PATH"; source "$1"' _ "$BLOCK" >"$T/out" 2>&1
 }
-reset() { rm -rf "$T/home/.local/bin/"{agy,.agy.version,rtk,cursor-agent} "$T/home/.local/share"; }
+reset() { rm -rf "$T/home/.local/bin/"{agy,.agy.version,rtk,cursor-agent} "$T/home/.local/share" "$T"/cwd/* "${T:?}"/home/*; }
 has() { grep -q -- "$1" "$T/out"; }
 
 reset; run_block STUB_INSTALL_FAIL=1
@@ -107,5 +114,46 @@ has 'boot-install cursor' && fail "cursor: success logged after a failed unpack"
 run_block
 has 'boot-install cursor 2026.1.1-abc' || fail "cursor: next start did not install"
 [ -x "$T/home/.local/bin/cursor-agent" ] || fail "cursor: link not runnable after reinstall"
+
+
+# cursor: a tree from an older ENOSPC (execute bit set, contents cut) at the pinned path.
+# Reinstalled whatever the repin setting, and the reinstalled one runs.
+mk_cursor_tree() { # mk_cursor_tree <cursor-agent body>
+  local d="$T/home/.local/share/cursor-agent/versions/2026.1.1-abc"
+  rm -rf "$T/home/.local/share" "$T/home/.local/bin/cursor-agent"; mkdir -p "$d"
+  printf '%s\n' "$1" >"$d/cursor-agent"; chmod +x "$d/cursor-agent"
+  ln -s "$d/cursor-agent" "$T/home/.local/bin/cursor-agent"
+}
+for skip in 1 0; do
+  mk_cursor_tree '#!/bi'
+  run_block AF_AGENT_SELF_UPDATE_SKIP=$skip
+  has 'boot-install cursor 2026.1.1-abc' || fail "cursor: truncated executable tree not reinstalled (skip=$skip)"
+  "$T/home/.local/bin/cursor-agent" --disable-auto-update --version >/dev/null 2>&1 || fail "cursor: reinstalled tree does not run (skip=$skip)"
+  # A bundle whose dependency file is missing.
+  mk_cursor_tree '#!/bin/sh
+[ -f "$(dirname "$(readlink -f "$0")")/index.js" ] || exit 1
+echo c'
+  run_block AF_AGENT_SELF_UPDATE_SKIP=$skip
+  has 'boot-install cursor 2026.1.1-abc' || fail "cursor: tree missing its bundle not reinstalled (skip=$skip)"
+  [ -f "$T/home/.local/share/cursor-agent/versions/2026.1.1-abc/index.js" ] || fail "cursor: bundle file still missing (skip=$skip)"
+done
+run_block
+has 'cursor already present' || fail "cursor: healthy tree was reinstalled"
+
+# rtk: a candidate that cannot run must not replace a working copy, and must not log success.
+reset; printf '#!/bin/sh\necho rtk 0.0.1\n' >"$T/home/.local/bin/rtk"; chmod +x "$T/home/.local/bin/rtk"
+run_block STUB_RTK_BAD=1 AF_AGENT_SELF_UPDATE_SKIP=0
+has 'WARN: rtk boot-install failed' || fail "rtk: no WARN for a candidate that does not run"
+has 'boot-install rtk 1.2.3' && fail "rtk: success logged for a candidate that does not run"
+grep -q 0.0.1 "$T/home/.local/bin/rtk" || fail "rtk: the working copy was displaced"
+[ -z "$(find "$T/home/.local/bin" -name "*af-new*")" ] || fail "rtk: temp candidate left behind"
+
+# mktemp / download failures stop the block before anything is written outside a temp dir.
+for what in STUB_MKTEMP_FAIL STUB_CURL_FAIL; do
+  reset; run_block $what=1
+  for n in agy rtk cursor; do has "WARN: $n boot-install failed" || fail "$n: no WARN with $what"; done
+  [ -z "$(find "$T/cwd" "$T/home" -maxdepth 1 -type f)" ] || fail "files written outside .local with $what"
+  [ -e "$T/home/.local/bin/agy" ] || [ -e "$T/home/.local/bin/.agy.version" ] && fail "agy installed or marked with $what"
+done
 
 [ "$fails" = 0 ] && echo "ok: entrypoint boot-install failure handling" || exit 1

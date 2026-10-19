@@ -329,16 +329,29 @@ fi
 VJ=/usr/local/share/agent-fleet/versions.json
 vj_pin() { node -e 'try{process.stdout.write(String(require(process.argv[1])[process.argv[2]]||""))}catch{}' "$VJ" "$1" 2>/dev/null; }
 cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
-# install_atomic <src> <dest> — `install -m 0755` through a sibling temp name and a rename, so a
-# failure part-way (ENOSPC leaves a truncated file) never leaves anything at <dest>: cli_present
-# would count a truncated binary as installed and skip it on every later start.
+# install_atomic <src> <dest> [verify] — `install -m 0755` through a sibling temp name and a
+# rename, so a failure part-way (ENOSPC leaves a truncated file) never leaves anything at <dest>:
+# cli_present would count a truncated binary as installed and skip it on every later start.
+# With "verify" the candidate must answer --version before it replaces <dest>, so a binary that
+# cannot run here never displaces a working copy.
 install_atomic() {
-  local tmp="$2.af-new.$$"
+  local tmp="$2.af-new.$$" err
   mkdir -p "$(dirname "$2")" || return 1
-  if install -m 0755 "$1" "$tmp" && mv -f "$tmp" "$2"; then return 0; fi
+  if install -m 0755 "$1" "$tmp"; then
+    if [ "${3:-}" = verify ] && ! err="$(timeout 30 "$tmp" --version 2>&1)"; then
+      echo "[entrypoint] $(basename "$2") does not run in this environment, keeping the current copy: $err" >&2
+      rm -f "$tmp"
+      return 1
+    fi
+    mv -f "$tmp" "$2" && return 0
+  fi
   rm -f "$tmp"
   return 1
 }
+# cursor_runs <cursor-agent path> — the bundle answers --version (a tree unpacked only in part
+# has the execute bit and still fails here). Slow (starts Node), so only asked of a tree that
+# is about to be trusted.
+cursor_runs() { timeout 30 "$1" --disable-auto-update --version >/dev/null 2>&1; }
 # bin_broken <path> — an installed ~/.local binary that does not answer --version. It counts as
 # not present: the boot-install reinstalls it whatever the repin setting says. Plain start only;
 # agy needs agy_effective_version's env mask.
@@ -514,24 +527,18 @@ if [ "$LEAN_CLIS" = 1 ]; then
         *) echo "unsupported arch: $arch" >&2; exit 1 ;;
       esac
       base="https://github.com/rtk-ai/rtk/releases/download/v${rver}"
-      tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-      cd "$tmp"
+      tmp="$(mktemp -d)" || exit 1; trap 'rm -rf "$tmp"' EXIT
+      cd "$tmp" || exit 1
       # --retry: a transient blip on first boot otherwise leaves rtk uninstalled
       # until the next start (observed on the WSL2 gate — docs/log/35 §35.9-9).
-      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/${asset}" -o "${asset}"
-      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/checksums.txt" -o checksums.txt
+      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/${asset}" -o "${asset}" || exit 1
+      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/checksums.txt" -o checksums.txt || exit 1
       grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null || exit 1
       tar xzf "${asset}" || exit 1
-      install_atomic rtk "$HOME/.local/bin/rtk" || exit 1
-      # Keep it only after running it: a matching checksum says nothing about whether the
-      # binary's runtime libraries match this image (the arm64 release is a gnu build that
-      # needs a recent glibc — docs/log/70 §70.9.2). A binary that fails --version is not
-      # left on PATH, where it would fail only when used.
-      if ! err="$("$HOME/.local/bin/rtk" --version 2>&1)"; then
-        rm -f "$HOME/.local/bin/rtk"
-        echo "[entrypoint] rtk はこの環境では動かないため導入しません: $err"
-        exit 0
-      fi
+      # A matching checksum says nothing about whether the binary's runtime libraries match this
+      # image (the arm64 release is a gnu build that needs a recent glibc — docs/log/70 §70.9.2),
+      # so the candidate is run before it replaces anything.
+      install_atomic rtk "$HOME/.local/bin/rtk" verify || exit 1
     ) && echo "[entrypoint] boot-install rtk $(vj_pin rtk)" \
       || echo "[entrypoint] WARN: rtk boot-install failed (retrying next start)"
   elif cli_present rtk; then
@@ -564,9 +571,9 @@ if [ "$LEAN_CLIS" = 1 ]; then
         arm64 | aarch64) asset="linux-arm/cli_linux_arm64.tar.gz" ;;
         *) echo "unsupported arch: $arch" >&2; exit 1 ;;
       esac
-      tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-      cd "$tmp"
-      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "https://storage.googleapis.com/antigravity-public/antigravity-cli/${aver}-${abuild}/${asset}" -o agy.tgz
+      tmp="$(mktemp -d)" || exit 1; trap 'rm -rf "$tmp"' EXIT
+      cd "$tmp" || exit 1
+      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "https://storage.googleapis.com/antigravity-public/antigravity-cli/${aver}-${abuild}/${asset}" -o agy.tgz || exit 1
       echo "${asha}  agy.tgz" | sha256sum -c - >/dev/null || exit 1
       tar -xzf agy.tgz antigravity || exit 1
       install_atomic antigravity "$HOME/.local/bin/agy" || exit 1
@@ -586,8 +593,8 @@ if [ "$LEAN_CLIS" = 1 ]; then
   if [ -n "$(vj_pin cursor)" ] && [ -n "$(vj_pin cursor_sha256)" ]; then
     if ! cli_present cursor-agent; then
       CUR_NEED=1
-    elif [ ! -x "$HOME/.local/bin/cursor-agent" ] && [ -e "$HOME/.local/bin/cursor-agent" ]; then
-      # Present but not runnable (a tree that was unpacked only in part).
+    elif ! cursor_runs "$HOME/.local/bin/cursor-agent"; then
+      # Present but the bundle does not answer (a tree unpacked only in part keeps its execute bit).
       CUR_NEED=1
     elif [ "$REPIN" = 1 ] && [ -L "$HOME/.local/bin/cursor-agent" ]; then
       # Read the current version from the symlink target's versions/<version>/ (cursor-agent
@@ -604,16 +611,16 @@ if [ "$LEAN_CLIS" = 1 ]; then
       # On repin: the self-update (upstream install.sh) only adds the new version in another
       # directory, so the pinned version's tree usually still exists — if so, skip the
       # ~100 MB re-download and just repoint the symlink.
-      if [ ! -x "$dir/cursor-agent" ]; then
+      if ! cursor_runs "$dir/cursor-agent"; then
         arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
         case "$arch" in
           amd64 | x86_64) casset="x64" ;;
           arm64 | aarch64) casset="arm64" ;;
           *) echo "unsupported arch: $arch" >&2; exit 1 ;;
         esac
-        tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+        tmp="$(mktemp -d)" || exit 1; trap 'rm -rf "$tmp"' EXIT
         curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
-          "https://downloads.cursor.com/lab/${cver}/linux/${casset}/agent-cli-package.tar.gz" -o "$tmp/cursor.tgz"
+          "https://downloads.cursor.com/lab/${cver}/linux/${casset}/agent-cli-package.tar.gz" -o "$tmp/cursor.tgz" || exit 1
         echo "${csha}  $tmp/cursor.tgz" | sha256sum -c - >/dev/null || exit 1
         # Unpack beside the final name and rename: a tar that dies part-way (ENOSPC) must not
         # leave a tree at $dir whose cursor-agent is already executable.
@@ -623,6 +630,8 @@ if [ "$LEAN_CLIS" = 1 ]; then
         tar --strip-components=1 -xzf "$tmp/cursor.tgz" -C "$stage" || { rm -rf "$stage"; exit 1; }
         rm -rf "$dir"
         mv "$stage" "$dir" || { rm -rf "$stage" "$dir"; exit 1; }
+        # Run it where it will live; the previous link is still untouched if it does not.
+        cursor_runs "$dir/cursor-agent" || { rm -rf "$dir"; exit 1; }
       fi
       mkdir -p "$HOME/.local/bin" || exit 1
       ln -sf "$dir/cursor-agent" "$HOME/.local/bin/cursor-agent" || exit 1
@@ -775,8 +784,8 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
      && [ "$(agy_effective_version)" = "$agy_latest" ]; then
     echo "[entrypoint] agy already latest ($agy_latest); skip"
   else
-    agy_tmp="$(mktemp -d)"
-    if curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir "$agy_tmp" >/dev/null 2>&1 \
+    agy_tmp="$(mktemp -d)" || agy_tmp=""
+    if [ -n "$agy_tmp" ] && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir "$agy_tmp" >/dev/null 2>&1 \
        && [ -x "$agy_tmp/agy" ]; then
       if ! install_atomic "$agy_tmp/agy" "$HOME/.local/bin/agy"; then
         echo "[entrypoint] WARN: agy update failed (install, using previous version)"
@@ -790,7 +799,7 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
     else
       echo "[entrypoint] WARN: agy update failed (using $([ -x "$HOME/.local/bin/agy" ] && echo previous || echo baked) version)"
     fi
-    rm -rf "$agy_tmp"
+    [ -z "$agy_tmp" ] || rm -rf "$agy_tmp"
   fi
   # rtk follows the same opt-in to latest. A baked /usr/local/bin/rtk (BAKE_AGENT_CLIS=1 and
   # BAKE_RTK=1) is root-owned and cannot be overwritten, so the latest release goes into
@@ -813,13 +822,13 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
       *) echo "unsupported arch: $arch" >&2; exit 1 ;;
     esac
     base="https://github.com/rtk-ai/rtk/releases/latest/download"
-    tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-    cd "$tmp"
-    curl -fsSL "${base}/${asset}" -o "${asset}"
-    curl -fsSL "${base}/checksums.txt" -o checksums.txt
+    tmp="$(mktemp -d)" || exit 1; trap 'rm -rf "$tmp"' EXIT
+    cd "$tmp" || exit 1
+    curl -fsSL "${base}/${asset}" -o "${asset}" || exit 1
+    curl -fsSL "${base}/checksums.txt" -o checksums.txt || exit 1
     grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null || exit 1
     tar xzf "${asset}" || exit 1
-    install_atomic rtk "$HOME/.local/bin/rtk" || exit 1
+    install_atomic rtk "$HOME/.local/bin/rtk" verify || exit 1
   ) && echo "[entrypoint] rtk updated: $("$HOME/.local/bin/rtk" --version 2>/dev/null | head -1)" \
     || echo "[entrypoint] WARN: rtk update failed (using baked version)"
   fi
