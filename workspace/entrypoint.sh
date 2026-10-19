@@ -329,6 +329,20 @@ fi
 VJ=/usr/local/share/agent-fleet/versions.json
 vj_pin() { node -e 'try{process.stdout.write(String(require(process.argv[1])[process.argv[2]]||""))}catch{}' "$VJ" "$1" 2>/dev/null; }
 cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
+# install_atomic <src> <dest> — `install -m 0755` through a sibling temp name and a rename, so a
+# failure part-way (ENOSPC leaves a truncated file) never leaves anything at <dest>: cli_present
+# would count a truncated binary as installed and skip it on every later start.
+install_atomic() {
+  local tmp="$2.af-new.$$"
+  mkdir -p "$(dirname "$2")" || return 1
+  if install -m 0755 "$1" "$tmp" && mv -f "$tmp" "$2"; then return 0; fi
+  rm -f "$tmp"
+  return 1
+}
+# bin_broken <path> — an installed ~/.local binary that does not answer --version. It counts as
+# not present: the boot-install reinstalls it whatever the repin setting says. Plain start only;
+# agy needs agy_effective_version's env mask.
+bin_broken() { [ -e "$1" ] && ! timeout 30 "$1" --version >/dev/null 2>&1; }
 # opencode's npm package follows the major of its pin: opencode-ai (1.x) or @opencode/cli (2.x).
 # Both claim the `opencode` bin, so they never coexist in one prefix (see the pair loop below).
 oc_pkg() { case "${1%%.*}" in ''|*[!0-9]*|0|1) echo opencode-ai ;; *) echo @opencode/cli ;; esac; }
@@ -409,7 +423,10 @@ agy_effective_version() {
   else
     v="$(OPENSSL_ia32cap='~0x4000000000000000' timeout 30 "$bin" --version 2>/dev/null | head -1 | tr -dc '0-9.')"
   fi
-  [ -n "$v" ] || v="$(cat "$HOME/.local/bin/.agy.version" 2>/dev/null)"
+  # The marker answers only when there is no binary to ask. A binary that exists but does not
+  # answer is broken (truncated by a full disk, say), and the marker, which says what AF wrote
+  # there, must not vouch for it.
+  [ -n "$v" ] || [ -e "$bin" ] || v="$(cat "$HOME/.local/bin/.agy.version" 2>/dev/null)"
   printf '%s' "$v"
 }
 # Lean detection: claude is not baked and versions.json has a pin for it → lean variant.
@@ -479,6 +496,8 @@ if [ "$LEAN_CLIS" = 1 ]; then
   if [ -n "$(vj_pin rtk)" ]; then
     if ! cli_present rtk; then
       RTK_NEED=1
+    elif bin_broken "$HOME/.local/bin/rtk"; then
+      RTK_NEED=1
     elif [ "$REPIN" = 1 ] && [ -x "$HOME/.local/bin/rtk" ]; then
       rtk_cur="$("$HOME/.local/bin/rtk" --version 2>/dev/null | head -1 | awk '{print $2}')"
       if [ -n "$rtk_cur" ] && [ "$rtk_cur" != "$(vj_pin rtk)" ]; then RTK_NEED=1; fi
@@ -502,8 +521,8 @@ if [ "$LEAN_CLIS" = 1 ]; then
       curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/${asset}" -o "${asset}"
       curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/checksums.txt" -o checksums.txt
       grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null || exit 1
-      tar xzf "${asset}"
-      install -D -m 0755 rtk "$HOME/.local/bin/rtk"
+      tar xzf "${asset}" || exit 1
+      install_atomic rtk "$HOME/.local/bin/rtk" || exit 1
       # Keep it only after running it: a matching checksum says nothing about whether the
       # binary's runtime libraries match this image (the arm64 release is a gnu build that
       # needs a recent glibc — docs/log/70 §70.9.2). A binary that fails --version is not
@@ -526,6 +545,10 @@ if [ "$LEAN_CLIS" = 1 ]; then
   if [ -n "$(vj_pin agy)" ] && [ -n "$(vj_pin agy_build)" ] && [ -n "$(vj_pin agy_sha256)" ]; then
     if ! cli_present agy; then
       AGY_NEED=1
+    elif [ -e "$HOME/.local/bin/agy" ] && [ -z "$(agy_effective_version)" ]; then
+      # Present but it does not answer --version (agy needs agy_effective_version's env mask,
+      # so bin_broken would misjudge it).
+      AGY_NEED=1
     elif [ "$REPIN" = 1 ] && [ -x "$HOME/.local/bin/agy" ] \
          && [ "$(agy_effective_version)" != "$(vj_pin agy)" ]; then
       AGY_NEED=1
@@ -545,9 +568,11 @@ if [ "$LEAN_CLIS" = 1 ]; then
       cd "$tmp"
       curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "https://storage.googleapis.com/antigravity-public/antigravity-cli/${aver}-${abuild}/${asset}" -o agy.tgz
       echo "${asha}  agy.tgz" | sha256sum -c - >/dev/null || exit 1
-      tar -xzf agy.tgz antigravity
-      install -D -m 0755 antigravity "$HOME/.local/bin/agy"
-      printf '%s\n' "$aver" > "$HOME/.local/bin/.agy.version"
+      tar -xzf agy.tgz antigravity || exit 1
+      install_atomic antigravity "$HOME/.local/bin/agy" || exit 1
+      # The marker is written last and only after the binary landed whole.
+      printf '%s\n' "$aver" > "$HOME/.local/bin/.agy.version" \
+        || { rm -f "$HOME/.local/bin/.agy.version"; exit 1; }
     ) && echo "[entrypoint] boot-install agy $(vj_pin agy)" \
       || echo "[entrypoint] WARN: agy boot-install failed (retrying next start)"
   elif cli_present agy; then
@@ -560,6 +585,9 @@ if [ "$LEAN_CLIS" = 1 ]; then
   CUR_NEED=0
   if [ -n "$(vj_pin cursor)" ] && [ -n "$(vj_pin cursor_sha256)" ]; then
     if ! cli_present cursor-agent; then
+      CUR_NEED=1
+    elif [ ! -x "$HOME/.local/bin/cursor-agent" ] && [ -e "$HOME/.local/bin/cursor-agent" ]; then
+      # Present but not runnable (a tree that was unpacked only in part).
       CUR_NEED=1
     elif [ "$REPIN" = 1 ] && [ -L "$HOME/.local/bin/cursor-agent" ]; then
       # Read the current version from the symlink target's versions/<version>/ (cursor-agent
@@ -587,13 +615,19 @@ if [ "$LEAN_CLIS" = 1 ]; then
         curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
           "https://downloads.cursor.com/lab/${cver}/linux/${casset}/agent-cli-package.tar.gz" -o "$tmp/cursor.tgz"
         echo "${csha}  $tmp/cursor.tgz" | sha256sum -c - >/dev/null || exit 1
-        rm -rf "$dir"; mkdir -p "$dir"
-        tar --strip-components=1 -xzf "$tmp/cursor.tgz" -C "$dir"
+        # Unpack beside the final name and rename: a tar that dies part-way (ENOSPC) must not
+        # leave a tree at $dir whose cursor-agent is already executable.
+        stage="${dir}.af-new.$$"
+        rm -rf "$stage"
+        mkdir -p "$stage" || exit 1
+        tar --strip-components=1 -xzf "$tmp/cursor.tgz" -C "$stage" || { rm -rf "$stage"; exit 1; }
+        rm -rf "$dir"
+        mv "$stage" "$dir" || { rm -rf "$stage" "$dir"; exit 1; }
       fi
-      mkdir -p "$HOME/.local/bin"
-      ln -sf "$dir/cursor-agent" "$HOME/.local/bin/cursor-agent"
+      mkdir -p "$HOME/.local/bin" || exit 1
+      ln -sf "$dir/cursor-agent" "$HOME/.local/bin/cursor-agent" || exit 1
       # If the self-update install.sh left an `agent` alias, point it at the same version.
-      if [ -L "$HOME/.local/bin/agent" ]; then ln -sf "$dir/cursor-agent" "$HOME/.local/bin/agent"; fi
+      if [ -L "$HOME/.local/bin/agent" ]; then ln -sf "$dir/cursor-agent" "$HOME/.local/bin/agent" || exit 1; fi
     ) && echo "[entrypoint] boot-install cursor $(vj_pin cursor)" \
       || echo "[entrypoint] WARN: cursor boot-install failed (retrying next start)"
   elif cli_present cursor-agent; then
@@ -744,9 +778,15 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
     agy_tmp="$(mktemp -d)"
     if curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir "$agy_tmp" >/dev/null 2>&1 \
        && [ -x "$agy_tmp/agy" ]; then
-      install -D -m 0755 "$agy_tmp/agy" "$HOME/.local/bin/agy"
-      if [ -n "$agy_latest" ]; then printf '%s\n' "$agy_latest" > "$AGY_MARK"; else rm -f "$AGY_MARK"; fi
-      echo "[entrypoint] agy updated: ${agy_latest:-latest}"
+      if ! install_atomic "$agy_tmp/agy" "$HOME/.local/bin/agy"; then
+        echo "[entrypoint] WARN: agy update failed (install, using previous version)"
+      elif [ -z "$agy_latest" ]; then
+        rm -f "$AGY_MARK"; echo "[entrypoint] agy updated: latest"
+      elif printf '%s\n' "$agy_latest" > "$AGY_MARK"; then
+        echo "[entrypoint] agy updated: $agy_latest"
+      else
+        rm -f "$AGY_MARK"; echo "[entrypoint] agy updated: $agy_latest"
+      fi
     else
       echo "[entrypoint] WARN: agy update failed (using $([ -x "$HOME/.local/bin/agy" ] && echo previous || echo baked) version)"
     fi
@@ -778,8 +818,8 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
     curl -fsSL "${base}/${asset}" -o "${asset}"
     curl -fsSL "${base}/checksums.txt" -o checksums.txt
     grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null || exit 1
-    tar xzf "${asset}"
-    install -D -m 0755 rtk "$HOME/.local/bin/rtk"
+    tar xzf "${asset}" || exit 1
+    install_atomic rtk "$HOME/.local/bin/rtk" || exit 1
   ) && echo "[entrypoint] rtk updated: $("$HOME/.local/bin/rtk" --version 2>/dev/null | head -1)" \
     || echo "[entrypoint] WARN: rtk update failed (using baked version)"
   fi
