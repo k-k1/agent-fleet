@@ -49,7 +49,10 @@ dest=.; for a in "$@"; do case "$a" in -C) next=1 ;; *) [ "${next:-}" = 1 ] && d
 case "$*" in
   *agy.tgz*) printf '#!/bin/sh\necho 9.9.9\n' >antigravity ;;
   *rtk-oss*) if [ -n "${STUB_RTK_BAD:-}" ]; then printf '#!/bin/sh\nexit 1\n' >rtk; else printf '#!/bin/sh\necho rtk 1.2.3\n' >rtk; fi ;;
-  *) : >"$dest/index.js"; printf '#!/bin/sh\n[ -f "$(dirname "$(readlink -f "$0")")/index.js" ] || exit 1\necho c\n' >"$dest/cursor-agent"; chmod +x "$dest/cursor-agent" ;;
+  *) : >"$dest/index.js"
+     if [ -n "${STUB_CURSOR_BAD:-}" ]; then printf '#!/bin/sh\nexit 1\n' >"$dest/cursor-agent"
+     else printf '#!/bin/sh\n[ -f "$(dirname "$(readlink -f "$0")")/index.js" ] || exit 1\necho c\n' >"$dest/cursor-agent"; fi
+     chmod +x "$dest/cursor-agent" ;;
 esac
 [ -z "${STUB_TAR_FAIL:-}" ] || exit 1
 S
@@ -139,6 +142,15 @@ echo c'
 done
 run_block
 has 'cursor already present' || fail "cursor: healthy tree was reinstalled"
+
+# cursor: the existing tree (here: one whose check fails) survives a candidate that cannot run.
+mk_cursor_tree '#!/bi'
+d="$T/home/.local/share/cursor-agent/versions/2026.1.1-abc"; echo keep >"$d/keep.txt"
+run_block STUB_CURSOR_BAD=1
+has 'WARN: cursor boot-install failed' || fail "cursor: no WARN for a candidate that does not run"
+[ -f "$d/keep.txt" ] || fail "cursor: the existing tree was not restored"
+[ "$(readlink "$T/home/.local/bin/cursor-agent")" = "$d/cursor-agent" ] || fail "cursor: link moved"
+[ -z "$(find "$T/home/.local/share" -name '*af-*')" ] || fail "cursor: staging/aside dir left behind"
 
 # rtk: a candidate that cannot run must not replace a working copy, and must not log success.
 reset; printf '#!/bin/sh\necho rtk 0.0.1\n' >"$T/home/.local/bin/rtk"; chmod +x "$T/home/.local/bin/rtk"

@@ -628,10 +628,18 @@ if [ "$LEAN_CLIS" = 1 ]; then
         rm -rf "$stage"
         mkdir -p "$stage" || exit 1
         tar --strip-components=1 -xzf "$tmp/cursor.tgz" -C "$stage" || { rm -rf "$stage"; exit 1; }
-        rm -rf "$dir"
-        mv "$stage" "$dir" || { rm -rf "$stage" "$dir"; exit 1; }
-        # Run it where it will live; the previous link is still untouched if it does not.
-        cursor_runs "$dir/cursor-agent" || { rm -rf "$dir"; exit 1; }
+        # The tree being replaced is moved aside, not deleted: the candidate must run at its final
+        # path, and when it does not (or the old one only timed out under load) the working copy
+        # is put back.
+        old="${dir}.af-old.$$"
+        rm -rf "$old"
+        if [ -e "$dir" ]; then mv "$dir" "$old" || { rm -rf "$stage"; exit 1; }; fi
+        if ! mv "$stage" "$dir" || ! cursor_runs "$dir/cursor-agent"; then
+          rm -rf "$stage" "$dir"
+          if [ -e "$old" ]; then mv "$old" "$dir" || true; fi
+          exit 1
+        fi
+        rm -rf "$old"
       fi
       mkdir -p "$HOME/.local/bin" || exit 1
       ln -sf "$dir/cursor-agent" "$HOME/.local/bin/cursor-agent" || exit 1
