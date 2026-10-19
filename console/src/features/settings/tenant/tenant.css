@@ -327,9 +327,11 @@
 }
 
 /* Hover changes the border, not the fill: on dark --hover-bg the stopped badge's --muted falls
-   to 4.29:1, under the 4.5:1 its 11 px text needs. */
-.member-card:hover {
+   to 4.29:1, and on the modal's --btn-h to 3.21:1, under the 4.5:1 its 11 px text needs. The
+   :not(:disabled) outranks the modal's own button:hover rule, which would repaint the fill. */
+.member-card:hover:not(:disabled) {
   border-color: var(--accent);
+  background: var(--bg);
 }
 
 /* Needs attention: a warning edge on the left, so the cards sorted to the top read as a group
@@ -384,6 +386,14 @@
   display: none;
 }
 
+/* On a row .mr-idle stays on one line; in a card a holder with its session and age is wider
+   than a phone column, so it wraps instead of pushing the grid sideways. */
+.mc-foot .mr-idle {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .mc-attn {
   display: inline-flex;
   align-items: center;
@@ -394,7 +404,9 @@
 }
 
 /* The state badge: a word, an icon whose shape differs per state, and a colour. Text colours
-   are the theme's status tokens, each at least 4.7:1 on the card's --bg in both themes. */
+   are the theme's status tokens, each at least 4.7:1 on the card's --bg in both themes. Never
+   --accent: inside the settings modal it is the user's top-bar colour (light + green measured
+   2.55:1 on white), so Starting takes --fg and its spinning icon carries the difference. */
 .member-state {
   display: inline-flex;
   align-items: center;
@@ -418,7 +430,7 @@
 }
 
 .member-state.ms-starting {
-  color: var(--accent);
+  color: var(--fg);
 }
 
 .member-state.ms-auto_stopped {

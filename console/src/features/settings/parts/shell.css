@@ -651,6 +651,10 @@
    colours could not be told apart: light --ok and --muted2 measured 1.13:1 against each other
    (WCAG 1.4.11 asks 3:1). The ring and the fill each clear 3:1 against the panel surfaces. */
 .state-dot {
+  /* inline-block: in a table cell or a paragraph a bare span ignores width/height, and the
+     border alone drew a 2 x 16 px bar. */
+  display: inline-block;
+  vertical-align: middle;
   box-sizing: border-box;
   width: 8px;
   height: 8px;
