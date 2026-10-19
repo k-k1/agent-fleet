@@ -257,47 +257,180 @@
 }
 
 /* member rows (tenant detail) */
-.member-rows {
+/* The roster: one card per member, about three to a row on a desktop and one on a phone.
+   min(100%, …) keeps a single column from overflowing a 390 px screen. */
+.member-summary {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
-.member-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 6px;
-  background: none;
-  border: none;
-  border-bottom: 1px solid var(--border2);
-  cursor: pointer;
-  text-align: left;
-  width: 100%;
-  color: var(--fg);
-}
-
-.member-row:hover {
-  background: var(--hover-bg);
-}
-
-.mr-key {
-  font-size: 13px;
+.ms-attention {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.member-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+/* Wraps rather than scrolls: .ui-seg clips its overflow, and on a phone the five filters do
+   not fit one line. */
+.member-filter {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+}
+
+.member-filter .seg-btn {
+  padding: 4px 10px;
+}
+
+.member-filter .seg-count {
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+.member-search {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.member-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: 8px;
+}
+
+.member-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: var(--fg);
+}
+
+/* Hover changes the border, not the fill: on dark --hover-bg the stopped badge's --muted falls
+   to 4.29:1, under the 4.5:1 its 11 px text needs. */
+.member-card:hover {
+  border-color: var(--accent);
+}
+
+/* Needs attention: a warning edge on the left, so the cards sorted to the top read as a group
+   without colouring the whole card. */
+.member-card.attn {
+  border-left: 3px solid var(--warn);
+  padding-left: 10px;
+}
+
+.mc-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.mc-name {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.mc-title,
+.mc-key {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mc-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mc-key {
+  font-size: 11px;
+}
+
+.mc-meta,
+.mc-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.mc-meta .mr-go {
+  margin-left: auto;
+}
+
+.mc-foot:empty {
+  display: none;
+}
+
+.mc-attn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--warn);
+}
+
+/* The state badge: a word, an icon whose shape differs per state, and a colour. Text colours
+   are the theme's status tokens, each at least 4.7:1 on the card's --bg in both themes. */
+.member-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border: 1px solid currentColor;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.member-state .codicon {
+  font-size: 12px;
+}
+
+.member-state.ms-running {
+  color: var(--ok);
+}
+
+.member-state.ms-starting {
+  color: var(--accent);
+}
+
+.member-state.ms-auto_stopped {
+  color: var(--warn);
+}
+
+.member-state.ms-removed {
+  color: var(--err);
 }
 
 .mr-star {
   color: var(--warn);
-  font-size: 12px;
-}
-
-.mr-email {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 12px;
 }
 
@@ -480,7 +613,7 @@
 }
 
 /* Size and limits: the current values on one line, with the control that changes them at
-   the end of it. The summary is the SAME chips the roster row draws (MemberSizeChips), so
+   the end of it. The summary is the SAME chips the roster card draws (MemberSizeChips), so
    the two screens cannot come to describe one member differently. */
 .ws-size-now {
   display: flex;
@@ -540,21 +673,6 @@
 
   .res-tiles {
     grid-template-columns: 1fr 1fr;
-  }
-
-  /* member row: let the email/role wrap under the key instead of overflowing */
-  .member-row {
-    flex-wrap: wrap;
-    row-gap: 2px;
-  }
-
-  .mr-email {
-    flex-basis: 100%;
-    order: 5;
-  }
-
-  .mr-go {
-    margin-left: auto;
   }
 
   /* session row: wrap to two lines on narrow screens */
@@ -761,7 +879,7 @@
   font-size: 13px;
 }
 
-/* Auto-stop outlook (docs/log/75 P4). Quiet on a roster row, but the reason it will not stop
+/* Auto-stop outlook (docs/log/75 P4). Quiet on a roster card, but the reason it will not stop
    (.hold) gets the warning colour: "stops in 20 minutes" and "will not stop" mean opposite
    things to an operator, and at the same quietness the row still costing money is missed. */
 .mr-idle {

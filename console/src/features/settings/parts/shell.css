@@ -647,20 +647,27 @@
   color: var(--ok);
 }
 
+/* Running is a filled dot, anything else a hollow ring. Shape is the cue, because two filled
+   colours could not be told apart: light --ok and --muted2 measured 1.13:1 against each other
+   (WCAG 1.4.11 asks 3:1). The ring and the fill each clear 3:1 against the panel surfaces. */
 .state-dot {
+  box-sizing: border-box;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: var(--muted2);
+  border: 1.5px solid var(--muted2);
+  background: transparent;
 }
 
 .state-dot.on {
+  border-color: var(--ok);
   background: var(--ok);
 }
 
 .state-dot.off {
-  background: var(--muted2);
+  border-color: var(--muted2);
+  background: transparent;
 }
 
 /* Text label beside a state dot (admin member header) so running/stopped is unambiguous. */
@@ -678,9 +685,9 @@
   color: var(--muted2);
 }
 
-/* What a member is sized to, on the roster row. Small and quiet: the row's subject is
+/* What a member is sized to, on the roster card. Small and quiet: the card's subject is
    the person, and these are the facts about them — never the other way round. They sit
-   before .mr-go so the chevron stays pinned to the right edge. */
+   in the card's footer, below the person. */
 .mr-size {
   font-size: 11px;
   white-space: nowrap;

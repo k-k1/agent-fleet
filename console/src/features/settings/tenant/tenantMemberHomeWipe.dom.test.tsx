@@ -217,7 +217,7 @@ describe("member detail: backups of a home that still exists", () => {
     expect(buttonWith("削除する")).toBeUndefined();
   });
 
-  // The roster row is a snapshot: a home cleaned here, or started again elsewhere, is only
+  // The roster card is a snapshot: a home cleaned here, or started again elsewhere, is only
   // known to the CP. Opening the dialog asks again, and the warning follows the answer.
   it("asks the CP again when the dialog opens", async () => {
     whoami = { home_erase: true, home_backups: true };
