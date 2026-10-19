@@ -323,6 +323,12 @@ fi
 deploy_stack() {  # deploy_stack <stack> <template> <slug> [capability...]
   local stack="$1" tpl="$2" slug="$3"; shift 3
   af_read_params "$slug"
+  # A capture taken while pause.sh had the NAT gateway deleted records NatEnabled=false. A
+  # stand-up builds the deployment for use, so the gateway is always on (the template of a
+  # release that predates the parameter does not declare it, hence the grep).
+  if [ "$slug" = 00-network ] && grep -q '^  NatEnabled:' "$CFN_DIR/$tpl"; then
+    af_param_override NatEnabled true
+  fi
   local caps=()
   [ $# -gt 0 ] && caps=(--capabilities "$@")
   echo "==> deploy $stack ($slug)"

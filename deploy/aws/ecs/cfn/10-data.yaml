@@ -82,8 +82,17 @@ Parameters:
       create = a KMS key for the Control Plane's key custodian (ADR 0005), output as
       CustodianKmsKeyArn for 30-ingress. none (default) = the local custodian, or a key
       you manage yourself. See cfn/PARAMETERS.md.
+  RdsRestopOnForcedStart:
+    Type: String
+    Default: "true"
+    AllowedValues: [ "true", "false" ]
+    Description: >-
+      true = stop the RDS instance again when AWS starts it by itself after 7 stopped days
+      (RDS-EVENT-0154), but only while pause.sh's af-paused tag is on it. AWS cannot be
+      told not to start it; this is the only way to keep a long pause cheap.
 
 Conditions:
+  RestopOn: !Equals [ !Ref RdsRestopOnForcedStart, "true" ]
   IsRetain: !Equals [ !Ref Persistence, retain ]
   CreateCustodianKey: !Equals [ !Ref CustodianKmsKey, create ]
   IsProvisionedTp: !Equals [ !Ref EfsThroughputMode, provisioned ]
@@ -252,6 +261,98 @@ Resources:
       DeletionProtection: !If [ IsRetain, true, false ]
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-db" } ]
 
+  # Re-stop of a long-paused database. AWS starts any RDS instance that has been stopped for
+  # 7 days and sends RDS-EVENT-0154; nothing here can prevent that, so the event is caught and
+  # the instance stopped again (the 7-day clock restarts). It acts ONLY while the instance
+  # carries af-paused=true, which pause.sh sets when it stops the database and removes before
+  # it starts it again: without that, an operator who ran `pause.sh --up` while the forced
+  # start was in flight would have the database stopped under a running Control Plane.
+  # Re-checked on every poll, so removing the tag mid-wait also cancels the stop.
+  RestopRole:
+    Type: AWS::IAM::Role
+    Condition: RestopOn
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: "sts:AssumeRole" }
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: restop-own-db-only
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ "rds:DescribeDBInstances", "rds:ListTagsForResource", "rds:StopDBInstance" ]
+                Resource: !Sub "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:db:${Db}"
+  RestopFunction:
+    Type: AWS::Lambda::Function
+    Condition: RestopOn
+    Properties:
+      Description: !Sub "af-${AWS::StackName} stop the paused database again after RDS's 7-day forced start"
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt RestopRole.Arn
+      Timeout: 900
+      MemorySize: 128
+      Environment:
+        Variables: { DB_ID: !Ref Db }
+      Code:
+        ZipFile: |
+          import os
+          import time
+          import boto3
+
+          rds = boto3.client("rds")
+          DB = os.environ["DB_ID"]
+
+
+          def handler(event, context):
+              while True:
+                  i = rds.describe_db_instances(DBInstanceIdentifier=DB)["DBInstances"][0]
+                  tags = rds.list_tags_for_resource(ResourceName=i["DBInstanceArn"])["TagList"]
+                  if {t["Key"]: t["Value"] for t in tags}.get("af-paused") != "true":
+                      print("not paused by pause.sh, leaving it running")
+                      return "skipped"
+                  st = i["DBInstanceStatus"]
+                  if st in ("stopped", "stopping"):
+                      return "already " + st
+                  if st == "available":
+                      rds.stop_db_instance(DBInstanceIdentifier=DB)
+                      print("stopping " + DB)
+                      return "stopping"
+                  if context.get_remaining_time_in_millis() < 60000:
+                      raise RuntimeError("still " + st + ", giving up for a retry")
+                  time.sleep(20)
+  RestopLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: RestopOn
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${RestopFunction}"
+      RetentionInDays: 30
+  RestopRule:
+    Type: AWS::Events::Rule
+    Condition: RestopOn
+    Properties:
+      Description: RDS started the database by itself after 7 stopped days (RDS-EVENT-0154)
+      EventPattern:
+        source: [ aws.rds ]
+        detail-type: [ "RDS DB Instance Event" ]
+        detail:
+          EventID: [ RDS-EVENT-0154 ]
+          SourceIdentifier: [ !Ref Db ]
+      Targets:
+        - { Id: restop, Arn: !GetAtt RestopFunction.Arn }
+  RestopPermission:
+    Type: AWS::Lambda::Permission
+    Condition: RestopOn
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref RestopFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RestopRule.Arn
+
   # The key custodian's KMS key (ADR 0005, control-plane/custodian_kms.go). It lives with
   # the data it protects: every data key in the database is unreadable without it, so it
   # follows Persistence like RDS, and a deleted one is only scheduled (30 days to cancel).
@@ -300,6 +401,10 @@ Resources:
       TargetKeyId: !Ref CustodianKey
 
 Outputs:
+  RdsRestopFunction:
+    Condition: RestopOn
+    Description: Lambda that stops the paused database again after RDS's 7-day forced start.
+    Value: !Ref RestopFunction
   EfsId:
     Value: !Ref FileSystem
     Export: { Name: !Sub "${AWS::StackName}-EfsId" }

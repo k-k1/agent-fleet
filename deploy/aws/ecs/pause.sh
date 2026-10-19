@@ -11,15 +11,20 @@
 # rebuild and the ECR goes with it (20-platform's ECR is `EmptyOnDelete: true`). Scaling
 # down makes the round trip in minutes and leaves home and the database's contents untouched.
 #
-# The saving is limited, though. The slots, the engines' GPU boxes, the CP's Fargate and the
-# RDS instance's compute go away; NAT / ALB / EFS and RDS storage stay, because AWS has no
-# "stop" for a NAT gateway or a load balancer, only delete (measured before RDS was stopped
-# here: roughly $5.5 a day, $2.6 while paused). For "as close to $0 as possible", use
-# teardown.sh.
+# The saving is limited, though. The slots, the engines' GPU boxes, the CP's Fargate, the
+# RDS instance's compute and the NAT gateway go away; ALB / EFS and RDS storage stay, because
+# AWS has no "stop" for a load balancer, only delete (measured before RDS was stopped here:
+# roughly $5.5 a day, $2.6 while paused). For "as close to $0 as possible", use teardown.sh.
+#
+# A NAT gateway has no "stop" either, so it is deleted through 00-network's NatEnabled
+# parameter (never by hand: the stack would keep a dead physical id) and created again on
+# `--up`. The egress address is retained by that stack, so the source IP does not change.
 #
 # RDS has a trap of its own: AWS starts a stopped instance again by itself after 7 days, and
-# says so only in an RDS event. `--status` flags a database that is running while the CP is
-# not, and running this script again stops it (and restarts the 7-day clock).
+# says so only in an RDS event (RDS-EVENT-0154). 10-data's re-stop Lambda catches that event
+# and stops the instance again, but only while it carries the af-paused tag set here. Without
+# that stack, `--status` flags a database that is running while the CP is not, and running
+# this script again stops it (and restarts the 7-day clock).
 #
 # ## The order matters
 #
@@ -34,8 +39,10 @@
 # The engines' GPU boxes are the same trap at ten times the price ($1.17/hour for a g6.xlarge):
 # the CP's controller is the only thing that ends one (ADR 0077), so it is waited for too, and
 # once the CP is down a final sweep terminates any box that is still alive — after that moment
-# nothing else ever will. The database goes last on the way down and first on the way up: a CP
-# that starts before it answers 500 until it is reachable.
+# nothing else ever will. The database goes next to last on the way down and second on the way
+# up: a CP that starts before it answers 500 until it is reachable. The NAT gateway is the very
+# last to go (the sweep and the sleeping slots may still need to reach out) and the very first
+# to come back (the CP's own image pull and logs go through it).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -44,7 +51,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat >&2 <<'EOF'
-usage: pause.sh --profile <p> --region <r> [--up|--status] [--fast] [--keep-db] [--yes] [--dry-run]
+usage: pause.sh --profile <p> --region <r> [--up|--status] [--fast] [--keep-db] [--keep-nat] [--yes] [--dry-run]
   --profile  aws cli profile (this is how a deployment is addressed)
   --region   region of the deployment
   --stack    ingress stack name (default af-ecs-ingress)
@@ -52,12 +59,13 @@ usage: pause.sh --profile <p> --region <r> [--up|--status] [--fast] [--keep-db] 
   --status   print what is running and what still bills; change nothing
   --fast     stop the slots and end the engines' GPU boxes directly instead of waiting for the CP
   --keep-db  leave the RDS instance running (it is stopped by default)
+  --keep-nat leave the NAT gateway in place (it is deleted by default; --up recreates it)
   --yes      actually do it (without this, --down only prints the plan)
   --dry-run  print the writes without making them
 EOF
 }
 
-PROFILE=""; REGION=""; STACK="af-ecs-ingress"; MODE=down; FAST=0; KEEP_DB=0; AF_YES=0; AF_DRY=0
+PROFILE=""; REGION=""; STACK="af-ecs-ingress"; MODE=down; FAST=0; KEEP_DB=0; KEEP_NAT=0; AF_YES=0; AF_DRY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile) PROFILE="${2:?--profile needs a value}"; shift ;;
@@ -67,6 +75,7 @@ while [ $# -gt 0 ]; do
     --status)  MODE=status ;;
     --fast)    FAST=1 ;;
     --keep-db) KEEP_DB=1 ;;
+    --keep-nat) KEEP_NAT=1 ;;
     --yes)     AF_YES=1 ;;
     --dry-run) AF_DRY=1 ;;
     -h|--help) usage; exit 0 ;;
@@ -197,12 +206,49 @@ db_wait_for() {
   done
 }
 
+# db_tag <set|clear> — the af-paused marker 10-data's re-stop Lambda looks for. Tagging an
+# instance is allowed in every state, stopped included.
+db_tag() {
+  [ -n "$DB_ID" ] || return 0
+  local arn
+  arn="$("${AWS[@]}" rds describe-db-instances --db-instance-identifier "$DB_ID" \
+    --query 'DBInstances[0].DBInstanceArn' --output text 2>/dev/null || true)"
+  case "$arn" in ""|None) echo "WARN: no ARN for $DB_ID, af-paused tag not changed"; return 0 ;; esac
+  case "$1" in
+    set)   af_run "${AWS[@]}" rds add-tags-to-resource --resource-name "$arn" --tags Key=af-paused,Value=true >/dev/null ;;
+    clear) af_run "${AWS[@]}" rds remove-tags-from-resource --resource-name "$arn" --tag-keys af-paused >/dev/null ;;
+  esac
+}
+
+# nat_enabled — what 00-network's NatEnabled is on the live stack: true, false, or empty when
+# there is no such stack. A stack older than the parameter has no NatEnabled and has its NAT.
+nat_enabled() {
+  af_stack_exists "$AF_STACK_NETWORK" || return 0
+  local v
+  v="$(af_stack_param "$AF_STACK_NETWORK" NatEnabled)"
+  echo "${v:-true}"
+}
+
+# nat_set <true|false> — move the NAT gateway through the stack that owns it. Every other
+# parameter keeps its live value (`deploy` leaves what it is not given at UsePreviousValue).
+# The wait is the point: on `--up` nothing may start until the route exists again.
+nat_set() {
+  if [ "$AF_DRY" = 1 ]; then
+    echo "DRY: cloudformation deploy --stack-name $AF_STACK_NETWORK --template-file $HERE/cfn/00-network.yaml --parameter-overrides NatEnabled=$1"
+    return 0
+  fi
+  af_cfn_deploy "$AF_STACK_NETWORK" "$HERE/cfn/00-network.yaml" \
+    --parameter-overrides "NatEnabled=$1" --no-fail-on-empty-changeset
+}
+
 status() {
-  local running stopped ws boxes helpers db cp
+  local running stopped ws boxes helpers db cp nat restop
   running="$(slots pending running | tr '\t' ' ')"; stopped="$(slots stopping stopped | tr '\t' ' ')"
   ws="$(ws_services | tr '\n' ' ')"
   boxes="$(engine_boxes | tr '\t' ' ')"; helpers="$(helpers_up)"
   db="$(db_status)"; cp="$(cp_counts | tr '\t' '/')"
+  nat="$(nat_enabled)"
+  restop=""; af_stack_exists "$AF_STACK_DATA" && restop="$(af_stack_output "$AF_STACK_DATA" RdsRestopFunction)"
   echo "==> $AF_FQDN (profile=$AF_PROFILE region=$AF_REGION)"
   echo "    control plane : desired/running = $cp"
   echo "    workspaces up : ${ws:-(none)}"
@@ -211,11 +257,13 @@ status() {
   echo "    engine boxes  : ${boxes:-(none)}"
   echo "    engine / tts services up : ${helpers:-(none)}"
   [ -z "$DB_ID" ] || echo "    database      : $DB_ID ${db:-?}"
+  [ -z "$nat" ] || echo "    nat gateway   : $([ "$nat" = true ] && echo present || echo deleted)"
   # A paused CP with a running database is almost always RDS's own 7-day restart.
   if [ -n "$DB_ID" ] && [ "${cp%%/*}" = 0 ] && [ "$db" = available ]; then
     echo ""
     echo "    WARN: the database is running while the control plane is paused. AWS restarts a"
     echo "          stopped instance after 7 days; run pause.sh again to stop it."
+    [ -z "$restop" ] || echo "          (10-data's re-stop Lambda $restop only acts on a database tagged af-paused.)"
   fi
   if [ "${cp%%/*}" = 0 ] && [ -n "${boxes// /}" ]; then
     echo ""
@@ -223,8 +271,9 @@ status() {
     echo "          run pause.sh again (it terminates them), or --up to hand them back to the CP."
   fi
   echo ""
-  echo "    fixed cost that remains while paused: NAT / ALB / EFS / RDS storage plus home's EBS"
-  echo "    (AWS cannot stop a NAT gateway or a load balancer, only delete them)"
+  echo "    fixed cost that remains while paused: ALB / EFS / RDS storage plus home's EBS"
+  [ "$nat" = true ] && echo "    and the NAT gateway (pause.sh deletes it unless --keep-nat)"
+  echo "    (AWS cannot stop a load balancer, only delete it)"
 }
 
 case "$MODE" in
@@ -235,7 +284,15 @@ case "$MODE" in
 
   up)
     echo "==> resuming $AF_FQDN"
-    # The database first: a CP that comes up before it answers 500 until it is reachable.
+    # The NAT first: the CP's image pull, logs and secrets all go through it.
+    if [ "$(nat_enabled)" = false ]; then
+      echo "==> recreating the NAT gateway (same egress address; typically 1-2 min)"
+      nat_set true
+    fi
+    # The database next: a CP that comes up before it answers 500 until it is reachable.
+    # The tag comes off before anything else touches it, so the re-stop Lambda cannot stop
+    # the database under the CP that is about to start.
+    db_tag clear
     db="$(db_status)"
     case "$db" in
       "") ;;
@@ -279,7 +336,8 @@ EOF
     if ! af_confirm "scale $AF_FQDN down (running Workspaces are stopped, so their sessions die)"; then
       echo ""
       dbstep=""; [ -z "$DB_ID" ] || [ "$KEEP_DB" = 1 ] || dbstep=" -> database stopped"
-      echo "plan: ${ws:-(no Workspace to stop)} -> slots asleep, engines idle -> CP desired 0 -> leftover engines ended$dbstep"
+      natstep=""; [ "$KEEP_NAT" = 1 ] || [ "$(nat_enabled)" != true ] || natstep=" -> NAT gateway deleted"
+      echo "plan: ${ws:-(no Workspace to stop)} -> slots asleep, engines idle -> CP desired 0 -> leftover engines ended$dbstep$natstep"
       exit 0
     fi
 
@@ -356,16 +414,32 @@ EOF
     if [ -n "$DB_ID" ]; then
       if [ "$KEEP_DB" = 1 ]; then
         dbnote="RDS (kept running: --keep-db)"
-      elif [ "$(db_status)" = available ]; then
-        echo "==> stopping the database $DB_ID (AWS starts it again by itself after 7 days)"
-        af_run "${AWS[@]}" rds stop-db-instance --db-instance-identifier "$DB_ID" >/dev/null
+      else
+        # Tagged before the stop, so a forced start can never beat the tag.
+        db_tag set
+        if [ "$(db_status)" = available ]; then
+          echo "==> stopping the database $DB_ID (AWS starts it again by itself after 7 days)"
+          af_run "${AWS[@]}" rds stop-db-instance --db-instance-identifier "$DB_ID" >/dev/null
+        fi
+      fi
+    fi
+
+    # The NAT last: a failure here leaves a paused deployment that still bills the gateway,
+    # not a running database.
+    natnote=""
+    if [ "$(nat_enabled)" = true ]; then
+      if [ "$KEEP_NAT" = 1 ]; then
+        natnote="NAT (kept: --keep-nat)"
+      else
+        echo "==> deleting the NAT gateway through $AF_STACK_NETWORK (the egress address is kept)"
+        nat_set false
       fi
     fi
     cat <<EOF
 
 ==> paused: $AF_FQDN stops responding
     resume:  deploy/aws/ecs/pause.sh --profile $AF_PROFILE --region $AF_REGION --up
-    remaining cost: NAT / ALB / EFS / $dbnote plus home's EBS. For close to zero, use teardown.sh.
+    remaining cost: ${natnote:+$natnote / }ALB / EFS / $dbnote plus home's EBS. For close to zero, use teardown.sh.
 EOF
     ;;
 esac

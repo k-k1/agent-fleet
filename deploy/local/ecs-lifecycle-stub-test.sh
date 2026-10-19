@@ -203,6 +203,9 @@ case "$args" in
   *"t-network"*"Outputs[].join"*)    printf 'NatEipAllocationId=eipalloc-REAL\nVpcId=vpc-1\n' ;;
   *"Parameters[].join"*)             printf 'Fqdn=af.example.test\n' ;;
   *"Outputs[].join"*)                printf '\n' ;;
+  # pause.sh: whether 00-network's NAT gateway is on, and whether 10-data carries the re-stop Lambda.
+  *"ParameterKey=='NatEnabled'"*) echo "${STUB_NAT_ENABLED:-true}" ;;
+  *"Outputs[?OutputKey=='RdsRestopFunction']"*) echo "${STUB_RESTOP:-}" ;;
   *"ParameterKey=='Fqdn'"*) echo "af.example.test" ;;
   *"ParameterKey=='NetworkStackName'"*) echo "t-network" ;;
   *"--profile p5"*"ParameterKey=='DataStackName'"*) echo "t-data-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ;;
@@ -291,6 +294,7 @@ case "$args" in
   *"ecs list-clusters"*) echo "" ;;
   *"rds describe-db-snapshots"*) echo "t-data-snapshot-db-xyz" ;;
   # pause.sh reads one instance's status; teardown's listing below must keep answering "gone".
+  *"rds describe-db-instances --db-instance-identifier"*"DBInstanceArn"*) echo "arn:aws:rds:ap-northeast-1:123456789012:db:t-db" ;;
   *"rds describe-db-instances --db-instance-identifier"*"DBInstanceStatus"*) echo "${STUB_DB_STATUS:-available}" ;;
   *"rds describe-db-instances"*) echo "" ;;
   *"efs describe-file-systems"*) echo "" ;;   # checking after deletion, so empty
@@ -1510,6 +1514,70 @@ STUB_ENGINES_LIVE=1 STUB_ENGINE_BOXES=1 STUB_ENGINE_SVC_UP=1 \
   "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --fast > "$WORK/out4g" </dev/null
 hasnt "update-service"; hasnt "terminate-instances"; hasnt "stop-instances"; hasnt "stop-db-instance"
 grep -q "database stopped" "$WORK/out4g" || fail "the plan did not mention the database step"
+grep -q "NAT gateway deleted" "$WORK/out4g" || fail "the plan did not mention the NAT step"
+hasnt "cloudformation deploy"; hasnt "add-tags-to-resource"
+
+NAT_DEL="cloudformation deploy --stack-name t-network"
+
+echo "== case 4h: the NAT gateway goes LAST (after the CP, the sweep and the database), through the stack =="
+: > "$LOG"
+"$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4h" </dev/null
+order "$CP_DOWN" "rds add-tags-to-resource"
+order "rds add-tags-to-resource" "rds stop-db-instance --db-instance-identifier t-db"   # tagged before it can be force-started
+order "rds stop-db-instance --db-instance-identifier t-db" "$NAT_DEL"
+has "NatEnabled=false"
+has "rds add-tags-to-resource --resource-name arn:aws:rds:ap-northeast-1:123456789012:db:t-db --tags Key=af-paused,Value=true"
+hasnt "delete-nat-gateway"   # never by hand: the stack would keep a dead physical id
+: > "$LOG"
+STUB_DB_STATUS=stopped \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4h2" </dev/null
+has "rds add-tags-to-resource"   # a database that is already stopped is tagged all the same
+
+echo "== case 4i: --keep-nat, and a NAT that is already gone, leave the network stack alone =="
+: > "$LOG"
+"$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --fast --keep-nat > "$WORK/out4i" </dev/null
+hasnt "$NAT_DEL"
+grep -q "NAT (kept" "$WORK/out4i" || fail "--keep-nat did not say the gateway is still billing"
+: > "$LOG"
+STUB_NAT_ENABLED=false \
+  "$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4i2" </dev/null
+hasnt "$NAT_DEL"
+: > "$LOG"
+"$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --fast --dry-run --yes > "$WORK/out4i3" </dev/null
+hasnt "cloudformation deploy"
+grep -q "DRY: cloudformation deploy --stack-name t-network .*NatEnabled=false" "$WORK/out4i3" || fail "dry-run did not print the NAT step"
+
+echo "== case 4j: --up brings the NAT back FIRST, and takes the tag off before it starts the database =="
+: > "$LOG"
+STUB_NAT_ENABLED=false STUB_DB_STATUS=stopped \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4j" </dev/null
+order "$NAT_DEL" "rds remove-tags-from-resource"
+order "rds remove-tags-from-resource" "rds start-db-instance --db-instance-identifier t-db"
+order "rds start-db-instance --db-instance-identifier t-db" "$CP_UP"
+has "NatEnabled=true"
+has "--tag-keys af-paused"
+: > "$LOG"
+"$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4j2" </dev/null
+hasnt "$NAT_DEL"   # the gateway is already there: nothing to recreate
+
+echo "== case 4k: --status shows the NAT, and names the re-stop Lambda when the stack has one =="
+: > "$LOG"
+STUB_NAT_ENABLED=false STUB_RESTOP=t-data-RestopFunction-1 \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4k" </dev/null
+grep -q "nat gateway   : deleted" "$WORK/out4k" || fail "status did not say the NAT is deleted"
+grep -q "re-stop Lambda t-data-RestopFunction-1" "$WORK/out4k" || fail "status did not name the re-stop Lambda"
+hasnt "cloudformation deploy"; hasnt "add-tags-to-resource"
+
+echo "== case 4l: a capture taken while paused (NatEnabled=false) still stands up WITH a NAT =="
+STATE6="$AF_DEPLOY_STATE_DIR/p6.ap-northeast-1.t-ingress"
+mkdir -p "$STATE6/params"
+cp -a "$STATE/params/." "$STATE6/params/"
+cp "$STATE/env" "$STATE6/env"
+echo "NatEnabled=false" >> "$STATE6/params/00-network"
+: > "$LOG"
+"$ECS/standup.sh" --profile p6 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4l" </dev/null
+grep -q "NatEnabled=true" "$WORK/out4l" || fail "standup did not force NatEnabled=true"
+if grep -q "NatEnabled=false" "$WORK/out4l"; then fail "standup passed the captured NatEnabled=false on"; fi
 
 echo "== case 5: nothing prints a secret-looking parameter =="
 : > "$LOG"
