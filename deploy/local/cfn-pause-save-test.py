@@ -27,6 +27,7 @@ import contextlib
 import copy
 import io
 import os
+import re
 import sys
 import types
 
@@ -74,7 +75,7 @@ def refs_to(node, name):
 class Ctx:
     """The fake boto3 the Lambda runs against, scripted by a list of (status, tags)."""
     def __init__(self, steps):
-        self.steps, self.i, self.stopped, self.slept = steps, 0, 0, 0
+        self.steps, self.i, self.stopped, self.slept, self.stop_error = steps, 0, 0, 0, ""
 
     def client(self, _svc):
         ctx = self
@@ -90,12 +91,15 @@ class Ctx:
                 return {"TagList": [{"Key": k, "Value": v} for k, v in tags.items()]}
 
             def stop_db_instance(self, DBInstanceIdentifier):
+                if ctx.stop_error:
+                    raise RuntimeError(ctx.stop_error)
                 ctx.stopped += 1
         return RDS()
 
 
-def run_lambda(code, steps, remaining_ms=900000):
+def run_lambda(code, steps, remaining_ms=900000, stop_error=""):
     ctx = Ctx(steps)
+    ctx.stop_error = stop_error
     boto3 = types.ModuleType("boto3")
     boto3.client = ctx.client
     sys.modules["boto3"] = boto3
@@ -138,6 +142,8 @@ def check(net, data, pause_src):
         f.append("00-network: NatEip is no longer retained (the egress IP would change on resume)")
     if "NatEipAllocationId" not in net["Outputs"]:
         f.append("00-network: NatEipAllocationId output is gone")
+    if conds.get("NatOn") != {"!Equals": [{"!Ref": "NatEnabled"}, "true"]}:
+        f.append("00-network: NatOn is not exactly NatEnabled == true (%s)" % conds.get("NatOn"))
     p = net["Parameters"].get("NatEnabled", {})
     if p.get("Default") != "true" or p.get("AllowedValues") != ["true", "false"]:
         f.append("00-network: NatEnabled must default to true and allow only true/false")
@@ -145,8 +151,12 @@ def check(net, data, pause_src):
     # --- 10-data
     dres = data["Resources"]
     rule = dres["RestopRule"]["Properties"]["EventPattern"]
-    if rule.get("source") != ["aws.rds"] or rule["detail"].get("EventID") != ["RDS-EVENT-0154"]:
-        f.append("10-data: the rule does not match aws.rds RDS-EVENT-0154")
+    if rule.get("source") != ["aws.rds"] or \
+            sorted(rule["detail"].get("EventID") or []) != ["RDS-EVENT-0088", "RDS-EVENT-0154"]:
+        f.append("10-data: the rule does not match aws.rds RDS-EVENT-0154 and RDS-EVENT-0088")
+    if data.get("Conditions", {}).get("RestopOn") != \
+            {"!Equals": [{"!Ref": "RdsRestopOnForcedStart"}, "true"]}:
+        f.append("10-data: RestopOn is not exactly RdsRestopOnForcedStart == true")
     if rule["detail"].get("SourceIdentifier") != [{"!Ref": "Db"}]:
         f.append("10-data: the rule is not limited to this database")
     stmts = [s for pol in dres["RestopRole"]["Properties"]["Policies"]
@@ -184,6 +194,12 @@ def check(net, data, pause_src):
     out, c = run_lambda(code, [("starting", P), ("available", {})])
     if c.stopped:
         f.append("lambda: kept going after the tag was removed mid-wait")
+    out, c = run_lambda(code, [("available", P), ("available", {})])
+    if c.stopped or out != "skipped":
+        f.append("lambda: stopped although the tag went between the check and the stop (%s)" % out)
+    out, c = run_lambda(code, [("available", P)], stop_error="InvalidDBInstanceStateFault: stopping")
+    if c.stopped or out != "already stopping":
+        f.append("lambda: a stop refused as already in progress was not treated as done (%s)" % out)
     out, c = run_lambda(code, [("starting", P)], remaining_ms=30000)
     if c.stopped or not str(out).startswith("raised:"):
         f.append("lambda: did not give up (to be retried) when out of time (%s)" % out)
@@ -229,9 +245,24 @@ def main():
         d["Resources"]["RestopRule"]["Properties"]["EventPattern"]["detail"]["EventID"] = ["RDS-EVENT-0153"]
     def m_act(n, d, s):
         d["Resources"]["RestopRole"]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"][0]["Action"].append("rds:DeleteDBInstance")
+    def m_nat_inverted(n, d, s):
+        n["Conditions"]["NatOn"] = {"!Equals": [{"!Ref": "NatEnabled"}, "false"]}
+    def m_nat_always(n, d, s):
+        n["Conditions"]["NatOn"] = {"!Equals": ["true", "true"]}
+    def m_restop_inverted(n, d, s):
+        d["Conditions"]["RestopOn"] = {"!Equals": [{"!Ref": "RdsRestopOnForcedStart"}, "false"]}
+    def m_no_0088(n, d, s):
+        d["Resources"]["RestopRule"]["Properties"]["EventPattern"]["detail"]["EventID"] = ["RDS-EVENT-0154"]
+    def m_no_recheck(n, d, s):
+        c = code_of(d)
+        c["ZipFile"] = re.sub(r'\n( +)if not paused\(i\["DBInstanceArn"\]\):\n +return "skipped"\n( +)try:',
+                              r'\n\2try:', c["ZipFile"])
+    def m_no_swallow(n, d, s):
+        c = code_of(d)
+        c["ZipFile"] = c["ZipFile"].replace('if "InvalidDBInstanceState" not in str(e):', 'if True:')
     def m_notag(n, d, s):
         c = code_of(d)
-        c["ZipFile"] = c["ZipFile"].replace('.get("af-paused") != "true"', '.get("af-paused") == "never"')
+        c["ZipFile"] = c["ZipFile"].replace('.get("af-paused") == "true"', '.get("af-paused") != "never"')
     def m_nowait(n, d, s):
         c = code_of(d)
         c["ZipFile"] = c["ZipFile"].replace('if st == "available":', 'if st in ("available", "starting"):')
@@ -245,8 +276,14 @@ def main():
     for label, fn, want in (
         ("route unconditional", m_route, "PrivateDefaultRoute is not behind NatOn"),
         ("EIP not retained", m_eip, "no longer retained"),
-        ("wrong event", m_event, "RDS-EVENT-0154"),
+        ("wrong event", m_event, "RDS-EVENT-0088"),
         ("wider role", m_act, "role's actions"),
+        ("NatOn inverted", m_nat_inverted, "NatOn is not exactly"),
+        ("NatOn always true", m_nat_always, "NatOn is not exactly"),
+        ("RestopOn inverted", m_restop_inverted, "RestopOn is not exactly"),
+        ("0088 dropped", m_no_0088, "RDS-EVENT-0088"),
+        ("no re-check before stop", m_no_recheck, "between the check and the stop"),
+        ("in-progress stop raised", m_no_swallow, "already in progress"),
         ("tag ignored", m_notag, "without the af-paused tag"),
         ("starting not waited for", m_nowait, "did not wait"),
         ("stopping a stopped one", m_stopped, "alone"),

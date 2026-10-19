@@ -213,7 +213,9 @@ db_tag() {
   local arn
   arn="$("${AWS[@]}" rds describe-db-instances --db-instance-identifier "$DB_ID" \
     --query 'DBInstances[0].DBInstanceArn' --output text 2>/dev/null || true)"
-  case "$arn" in ""|None) echo "WARN: no ARN for $DB_ID, af-paused tag not changed"; return 0 ;; esac
+  # A tag that was not changed is a database nobody re-stops (set) or one the Lambda may
+  # stop under a running CP (clear): never report it as done.
+  case "$arn" in ""|None) echo "ERROR: could not read the ARN of $DB_ID, af-paused tag not changed" >&2; return 1 ;; esac
   case "$1" in
     set)   af_run "${AWS[@]}" rds add-tags-to-resource --resource-name "$arn" --tags Key=af-paused,Value=true >/dev/null ;;
     clear) af_run "${AWS[@]}" rds remove-tags-from-resource --resource-name "$arn" --tag-keys af-paused >/dev/null ;;
@@ -291,8 +293,12 @@ case "$MODE" in
     fi
     # The database next: a CP that comes up before it answers 500 until it is reachable.
     # The tag comes off before anything else touches it, so the re-stop Lambda cannot stop
-    # the database under the CP that is about to start.
+    # the database under the CP that is about to start. A stop the Lambda issued just before
+    # the tag went is already in flight and cannot be recalled, so wait for it to land and
+    # read the status only afterwards (a database found stopping is started again below).
+    # The 20 s is a margin over two RDS API calls, not a derived bound.
     db_tag clear
+    [ -z "$DB_ID" ] || [ "$AF_DRY" = 1 ] || sleep "${AF_TAG_GRACE_SEC:-20}"
     db="$(db_status)"
     case "$db" in
       "") ;;
@@ -410,13 +416,17 @@ EOF
     fi
 
     # The database last: the CP is gone, so nothing is connected to it.
+    tagfail=0
     dbnote="RDS storage"
     if [ -n "$DB_ID" ]; then
       if [ "$KEEP_DB" = 1 ]; then
         dbnote="RDS (kept running: --keep-db)"
+        # Kept on purpose, so a marker left by an earlier pause must not stop it again.
+        db_tag clear || tagfail=1
       else
-        # Tagged before the stop, so a forced start can never beat the tag.
-        db_tag set
+        # Tagged before the stop, so a forced start can never beat the tag. A failed tag still
+        # stops the database (the bill comes first) and fails the run at the end.
+        db_tag set || tagfail=1
         if [ "$(db_status)" = available ]; then
           echo "==> stopping the database $DB_ID (AWS starts it again by itself after 7 days)"
           af_run "${AWS[@]}" rds stop-db-instance --db-instance-identifier "$DB_ID" >/dev/null
@@ -441,5 +451,10 @@ EOF
     resume:  deploy/aws/ecs/pause.sh --profile $AF_PROFILE --region $AF_REGION --up
     remaining cost: ${natnote:+$natnote / }ALB / EFS / $dbnote plus home's EBS. For close to zero, use teardown.sh.
 EOF
+    if [ "$tagfail" = 1 ]; then
+      echo "ERROR: the af-paused tag on $DB_ID was not updated (see above). Paused, but the database will" >&2
+      echo "       not be stopped again if AWS starts it after 7 days. Run pause.sh again." >&2
+      exit 1
+    fi
     ;;
 esac

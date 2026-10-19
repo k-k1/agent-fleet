@@ -2016,11 +2016,17 @@ hardcoded default gets wrong (one names its pool stack `af-ecs-pool`, another
     `true`.
   - 🔴 **AWS starts a stopped RDS instance again after 7 days** (event `RDS-EVENT-0154`) and
     cannot be told not to. `10-data` (`RdsRestopOnForcedStart`, default `true`) therefore carries
-    an EventBridge rule and a small Lambda that stop it again, which restarts the clock. They act
-    only on an instance tagged `af-paused=true`: `pause.sh` sets the tag before it stops the
-    database and removes it before `--up` starts it, so a `--up` that races the forced start
-    is never undone. The deployment needs a `10-data` deploy once to get them; `--status` names
-    the Lambda when it exists, and still warns about a running database under a paused CP.
+    an EventBridge rule (`RDS-EVENT-0154` forced start, and `RDS-EVENT-0088` started, which covers
+    a start longer than the Lambda's ~46 minutes of waiting and retries) and a small Lambda that
+    stop it again, which restarts the clock. They act only on an instance tagged `af-paused=true`
+    — the tag means "paused", so remove it (or run `--up`) to keep the database up on purpose.
+    `pause.sh` sets the tag before it stops the database and removes it at the start of `--up`
+    (also with `--keep-db`); a tag it cannot write fails the run (the database is still stopped).
+    A stop the Lambda issued just before the tag went cannot be recalled, so `--up` waits 20 s
+    (`AF_TAG_GRACE_SEC`) after clearing the tag and only then reads the database status; a
+    database found stopping is started again. The deployment needs a `10-data` deploy once to
+    get them; `--status` names the Lambda when it exists, and still warns about a running
+    database under a paused CP.
     The database is a plain RDS PostgreSQL instance; an Aurora cluster would need
     `RDS-EVENT-0153` and the cluster calls, which nothing here has.
 

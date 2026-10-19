@@ -95,6 +95,8 @@ sed -e 's/^AF_PERSISTENCE=delete$/AF_PERSISTENCE=retain/' \
     -e 's/^AF_STACK_DATA=t-data$/AF_STACK_DATA=t-data-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/' "$STATE/env" > "$STATE5/env"
 echo "Persistence=retain" > "$STATE5/params/10-data"
 
+export AF_TAG_GRACE_SEC=0   # pause.sh --up waits this long after clearing the af-paused tag
+
 # --- fake aws. Answers queries in the same shape the real one does ----------
 cat > "$STUB/aws" <<'FAKE'
 #!/usr/bin/env bash
@@ -294,7 +296,9 @@ case "$args" in
   *"ecs list-clusters"*) echo "" ;;
   *"rds describe-db-snapshots"*) echo "t-data-snapshot-db-xyz" ;;
   # pause.sh reads one instance's status; teardown's listing below must keep answering "gone".
-  *"rds describe-db-instances --db-instance-identifier"*"DBInstanceArn"*) echo "arn:aws:rds:ap-northeast-1:123456789012:db:t-db" ;;
+  *"rds describe-db-instances --db-instance-identifier"*"DBInstanceArn"*)
+    [ "${STUB_DB_ARN_FAIL:-0}" = 1 ] && exit 254
+    echo "arn:aws:rds:ap-northeast-1:123456789012:db:t-db" ;;
   *"rds describe-db-instances --db-instance-identifier"*"DBInstanceStatus"*) echo "${STUB_DB_STATUS:-available}" ;;
   *"rds describe-db-instances"*) echo "" ;;
   *"efs describe-file-systems"*) echo "" ;;   # checking after deletion, so empty
@@ -1578,6 +1582,31 @@ echo "NatEnabled=false" >> "$STATE6/params/00-network"
 "$ECS/standup.sh" --profile p6 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4l" </dev/null
 grep -q "NatEnabled=true" "$WORK/out4l" || fail "standup did not force NatEnabled=true"
 if grep -q "NatEnabled=false" "$WORK/out4l"; then fail "standup passed the captured NatEnabled=false on"; fi
+
+echo "== case 4m: a tag that cannot be written is an error, not a quiet success =="
+: > "$LOG"
+if STUB_DB_ARN_FAIL=1 "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4m" 2>&1 </dev/null; then
+  fail "pause exited 0 although the af-paused tag could not be set"
+fi
+has "rds stop-db-instance --db-instance-identifier t-db"   # the bill comes first
+has "$NAT_DEL"                                            # and the rest of the pause still ran
+grep -q "not be stopped again" "$WORK/out4m" || fail "the failure did not say what is now unprotected"
+: > "$LOG"
+if STUB_DB_ARN_FAIL=1 STUB_DB_STATUS=stopped "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4m2" 2>&1 </dev/null; then
+  fail "--up exited 0 although the af-paused tag could not be removed"
+fi
+hasnt "rds start-db-instance"
+hasnt "$CP_UP"
+
+echo "== case 4n: --keep-db takes an old af-paused marker off; --up reads the status only after the tag is gone =="
+: > "$LOG"
+"$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast --keep-db > "$WORK/out4n" </dev/null
+has "rds remove-tags-from-resource"
+hasnt "rds add-tags-to-resource"
+hasnt "rds stop-db-instance"
+: > "$LOG"
+"$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4n2" </dev/null
+order "rds remove-tags-from-resource" "DBInstanceStatus"
 
 echo "== case 5: nothing prints a secret-looking parameter =="
 : > "$LOG"

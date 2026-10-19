@@ -267,7 +267,13 @@ Resources:
   # carries af-paused=true, which pause.sh sets when it stops the database and removes before
   # it starts it again: without that, an operator who ran `pause.sh --up` while the forced
   # start was in flight would have the database stopped under a running Control Plane.
-  # Re-checked on every poll, so removing the tag mid-wait also cancels the stop.
+  # Re-checked on every poll and once more right before the stop, so removing the tag
+  # mid-wait also cancels it; what is left (a stop already in flight when the tag goes) is
+  # closed on the pause.sh side, which waits before it reads the status.
+  # RDS-EVENT-0088 (started) is caught too: the wait below is bounded by the Lambda timeout
+  # and its two async retries (about 46 minutes), and a start that takes longer would
+  # otherwise be missed. The tag means "paused": a tagged instance is stopped whenever it
+  # is seen running, so remove the tag (or run pause.sh --up) to keep one up on purpose.
   RestopRole:
     Type: AWS::IAM::Role
     Condition: RestopOn
@@ -308,18 +314,29 @@ Resources:
           DB = os.environ["DB_ID"]
 
 
+          def paused(arn):
+              tags = rds.list_tags_for_resource(ResourceName=arn)["TagList"]
+              return {t["Key"]: t["Value"] for t in tags}.get("af-paused") == "true"
+
+
           def handler(event, context):
               while True:
                   i = rds.describe_db_instances(DBInstanceIdentifier=DB)["DBInstances"][0]
-                  tags = rds.list_tags_for_resource(ResourceName=i["DBInstanceArn"])["TagList"]
-                  if {t["Key"]: t["Value"] for t in tags}.get("af-paused") != "true":
+                  if not paused(i["DBInstanceArn"]):
                       print("not paused by pause.sh, leaving it running")
                       return "skipped"
                   st = i["DBInstanceStatus"]
                   if st in ("stopped", "stopping"):
                       return "already " + st
                   if st == "available":
-                      rds.stop_db_instance(DBInstanceIdentifier=DB)
+                      if not paused(i["DBInstanceArn"]):
+                          return "skipped"
+                      try:
+                          rds.stop_db_instance(DBInstanceIdentifier=DB)
+                      except Exception as e:
+                          if "InvalidDBInstanceState" not in str(e):
+                              raise
+                          return "already stopping"
                       print("stopping " + DB)
                       return "stopping"
                   if context.get_remaining_time_in_millis() < 60000:
@@ -335,12 +352,12 @@ Resources:
     Type: AWS::Events::Rule
     Condition: RestopOn
     Properties:
-      Description: RDS started the database by itself after 7 stopped days (RDS-EVENT-0154)
+      Description: RDS started the database by itself after 7 stopped days (RDS-EVENT-0154), or it finished starting (RDS-EVENT-0088)
       EventPattern:
         source: [ aws.rds ]
         detail-type: [ "RDS DB Instance Event" ]
         detail:
-          EventID: [ RDS-EVENT-0154 ]
+          EventID: [ RDS-EVENT-0154, RDS-EVENT-0088 ]
           SourceIdentifier: [ !Ref Db ]
       Targets:
         - { Id: restop, Arn: !GetAtt RestopFunction.Arn }
