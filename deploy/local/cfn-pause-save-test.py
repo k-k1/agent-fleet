@@ -77,6 +77,7 @@ class Ctx:
     def __init__(self, steps):
         self.steps, self.i, self.stopped, self.slept, self.stop_error = steps, 0, 0, 0, ""
         self.stop_cfg = None
+        self.tag_cfgs = []
 
     def client(self, _svc, config=None):
         ctx = self
@@ -89,6 +90,7 @@ class Ctx:
                 return {"DBInstances": [{"DBInstanceStatus": st, "DBInstanceArn": "arn:db"}]}
 
             def list_tags_for_resource(self, ResourceName):
+                ctx.tag_cfgs.append(self.cfg)
                 _, tags = ctx.steps[min(ctx.i, len(ctx.steps) - 1)]
                 ctx.i += 1  # one poll = one describe + one list
                 return {"TagList": [{"Key": k, "Value": v} for k, v in tags.items()]}
@@ -218,10 +220,12 @@ def check(net, data, pause_src):
     # puts between clearing the tag and reading the status.
     m = re.search(r"AF_TAG_GRACE_SEC:-(\d+)", pause_src)
     out, c = run_lambda(code, [("available", P)])
-    cfg = c.stop_cfg or {}
-    worst = cfg.get("connect_timeout", 60) + cfg.get("read_timeout", 60)
-    if (cfg.get("retries") or {}).get("max_attempts", 99) != 0 or not m or worst >= int(m.group(1)):
-        f.append("lambda: the stop call is not bounded below pause.sh's wait (%s vs %s)" % (cfg, m and m.group(1)))
+    # Both the last tag read before the stop and the stop itself.
+    for what, cfg in (("stop call", c.stop_cfg), ("last tag read", c.tag_cfgs[-1] if c.tag_cfgs else None)):
+        cfg = cfg or {}
+        worst = cfg.get("connect_timeout", 60) + cfg.get("read_timeout", 60)
+        if (cfg.get("retries") or {}).get("max_attempts", 99) != 0 or not m or worst >= int(m.group(1)):
+            f.append("lambda: the %s is not bounded below pause.sh's wait (%s vs %s)" % (what, cfg, m and m.group(1)))
     out, c = run_lambda(code, [("starting", P)], remaining_ms=30000)
     if c.stopped or not str(out).startswith("raised:"):
         f.append("lambda: did not give up (to be retried) when out of time (%s)" % out)
@@ -277,13 +281,16 @@ def main():
         d["Resources"]["RestopRule"]["Properties"]["EventPattern"]["detail"]["EventID"] = ["RDS-EVENT-0154"]
     def m_no_recheck(n, d, s):
         c = code_of(d)
-        c["ZipFile"] = c["ZipFile"].replace('st == "available" and paused(i["DBInstanceArn"])', 'st == "available"')
+        c["ZipFile"] = c["ZipFile"].replace('st == "available" and paused(i["DBInstanceArn"], rds_fast)', 'st == "available"')
     def m_no_swallow(n, d, s):
         c = code_of(d)
         c["ZipFile"] = c["ZipFile"].replace('print("stop refused, polling again: " + str(e))', 'return "already stopping"')
     def m_unbounded(n, d, s):
         c = code_of(d)
-        c["ZipFile"] = c["ZipFile"].replace("rds_stop.stop_db_instance", "rds.stop_db_instance")
+        c["ZipFile"] = c["ZipFile"].replace("rds_fast.stop_db_instance", "rds.stop_db_instance")
+    def m_tag_unbounded(n, d, s):
+        c = code_of(d)
+        c["ZipFile"] = c["ZipFile"].replace('paused(i["DBInstanceArn"], rds_fast)', 'paused(i["DBInstanceArn"])')
     def m_retries(n, d, s):
         c = code_of(d)
         c["ZipFile"] = c["ZipFile"].replace('"max_attempts": 0', '"max_attempts": 10')
@@ -314,6 +321,7 @@ def main():
         ("no re-check before stop", m_no_recheck, "between the check and the stop"),
         ("refused stop taken as done", m_no_swallow, "refused in a non-stopping state"),
         ("stop on the unbounded client", m_unbounded, "not bounded"),
+        ("last tag read on the unbounded client", m_tag_unbounded, "last tag read is not bounded"),
         ("SDK retries on the stop", m_retries, "not bounded"),
         ("--up wait shorter than the bound", m_grace, "not bounded"),
         ("tag ignored", m_notag, "without the af-paused tag"),

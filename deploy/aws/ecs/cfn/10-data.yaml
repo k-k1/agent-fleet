@@ -268,11 +268,14 @@ Resources:
   # it starts it again: without that, an operator who ran `pause.sh --up` while the forced
   # start was in flight would have the database stopped under a running Control Plane.
   # Re-checked on every poll and once more right before the stop, so removing the tag
-  # mid-wait also cancels it. What is left is a stop already on its way when the tag goes;
-  # RDS has no compare-and-stop, so it is bounded instead: the stop call runs on a client with
-  # 3 s connect / 5 s read timeouts and no SDK retries (8 s from the last tag check to the
-  # call's end, success or not), and pause.sh --up waits longer than that after clearing the
-  # tag before it reads the status.
+  # mid-wait also cancels it. RDS has no compare-and-stop, so what is left is bounded, not
+  # excluded: the last tag read and the stop call both run on a client with 3 s connect /
+  # 5 s read timeouts and no SDK retries, and pause.sh --up waits longer than that after
+  # clearing the tag before it reads the status, then reads it again once the CP is up and
+  # fails if the database is not available. A timeout limits how long the caller waits, not
+  # whether a request already sent takes effect, so a stop whose response was lost can still
+  # land after --up; the final check turns that into a loud failure, and running --up again
+  # starts the database.
   # RDS-EVENT-0088 (started) is caught too: the wait below is bounded by the Lambda timeout
   # and its two async retries (about 46 minutes), and a start that takes longer would
   # otherwise be missed. The tag means "paused": a tagged instance is stopped whenever it
@@ -315,14 +318,14 @@ Resources:
           from botocore.config import Config
 
           rds = boto3.client("rds")
-          # The stop call is the one that must not arrive late (see the template comment).
-          rds_stop = boto3.client("rds", config=Config(
+          # The last tag read and the stop must not arrive late (see the template comment).
+          rds_fast = boto3.client("rds", config=Config(
               connect_timeout=3, read_timeout=5, retries={"max_attempts": 0}))
           DB = os.environ["DB_ID"]
 
 
-          def paused(arn):
-              tags = rds.list_tags_for_resource(ResourceName=arn)["TagList"]
+          def paused(arn, client=rds):
+              tags = client.list_tags_for_resource(ResourceName=arn)["TagList"]
               return {t["Key"]: t["Value"] for t in tags}.get("af-paused") == "true"
 
 
@@ -335,9 +338,9 @@ Resources:
                   st = i["DBInstanceStatus"]
                   if st in ("stopped", "stopping"):
                       return "already " + st
-                  if st == "available" and paused(i["DBInstanceArn"]):
+                  if st == "available" and paused(i["DBInstanceArn"], rds_fast):
                       try:
-                          rds_stop.stop_db_instance(DBInstanceIdentifier=DB)
+                          rds_fast.stop_db_instance(DBInstanceIdentifier=DB)
                           print("stopping " + DB)
                           return "stopping"
                       except Exception as e:

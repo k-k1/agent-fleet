@@ -2022,9 +2022,13 @@ hardcoded default gets wrong (one names its pool stack `af-ecs-pool`, another
     — the tag means "paused", so remove it (or run `--up`) to keep the database up on purpose.
     `pause.sh` sets the tag before it stops the database and removes it at the start of `--up`
     (also with `--keep-db`); a tag it cannot write fails the run (the database is still stopped).
-    A stop the Lambda issued just before the tag went cannot be recalled, so `--up` waits 20 s
-    (`AF_TAG_GRACE_SEC`) after clearing the tag and only then reads the database status; a
-    database found stopping is started again. The deployment needs a `10-data` deploy once to
+    RDS has no compare-and-stop, so the race with `--up` is bounded, not excluded: the Lambda's last
+    tag read and its stop call use 3 s connect / 5 s read timeouts and no SDK retries, `--up` waits
+    20 s (`AF_TAG_GRACE_SEC`) after clearing the tag before it reads the database status (a database
+    found stopping is started again), and reads it once more after the CP is up, failing when it is
+    not available. A timeout limits how long the caller waits, not whether a request already sent
+    takes effect, so a stop whose response was lost can still land after `--up`; that shows up as the
+    failure above, and running `--up` again starts the database. The deployment needs a `10-data` deploy once to
     get them; `--status` names the Lambda when it exists, and still warns about a running
     database under a paused CP.
     The database is a plain RDS PostgreSQL instance; an Aurora cluster would need
