@@ -76,11 +76,14 @@ class Ctx:
     """The fake boto3 the Lambda runs against, scripted by a list of (status, tags)."""
     def __init__(self, steps):
         self.steps, self.i, self.stopped, self.slept, self.stop_error = steps, 0, 0, 0, ""
+        self.stop_cfg = None
 
-    def client(self, _svc):
+    def client(self, _svc, config=None):
         ctx = self
 
         class RDS:
+            cfg = config
+
             def describe_db_instances(self, DBInstanceIdentifier):
                 st, _ = ctx.steps[min(ctx.i, len(ctx.steps) - 1)]
                 return {"DBInstances": [{"DBInstanceStatus": st, "DBInstanceArn": "arn:db"}]}
@@ -91,6 +94,7 @@ class Ctx:
                 return {"TagList": [{"Key": k, "Value": v} for k, v in tags.items()]}
 
             def stop_db_instance(self, DBInstanceIdentifier):
+                ctx.stop_cfg = self.cfg
                 if ctx.stop_error:
                     raise RuntimeError(ctx.stop_error)
                 ctx.stopped += 1
@@ -103,6 +107,11 @@ def run_lambda(code, steps, remaining_ms=900000, stop_error=""):
     boto3 = types.ModuleType("boto3")
     boto3.client = ctx.client
     sys.modules["boto3"] = boto3
+    # botocore.config.Config, recording what the Lambda asks for.
+    botocore, bconfig = types.ModuleType("botocore"), types.ModuleType("botocore.config")
+    bconfig.Config = lambda **kw: kw
+    botocore.config = bconfig
+    sys.modules["botocore"], sys.modules["botocore.config"] = botocore, bconfig
     os.environ["DB_ID"] = "db-1"
     mod = {"__name__": "restop"}
     real_sleep = __import__("time").sleep
@@ -197,9 +206,22 @@ def check(net, data, pause_src):
     out, c = run_lambda(code, [("available", P), ("available", {})])
     if c.stopped or out != "skipped":
         f.append("lambda: stopped although the tag went between the check and the stop (%s)" % out)
-    out, c = run_lambda(code, [("available", P)], stop_error="InvalidDBInstanceStateFault: stopping")
+    # A refused stop is not "already stopping": only a state seen to be stopping ends it.
+    err = "InvalidDBInstanceStateFault: DB instance is backing-up"
+    out, c = run_lambda(code, [("available", P)], stop_error=err)
+    if c.stopped or not str(out).startswith("raised:"):
+        f.append("lambda: a stop refused in a non-stopping state was treated as done (%s)" % out)
+    out, c = run_lambda(code, [("available", P), ("available", P), ("stopping", P)], stop_error=err)
     if c.stopped or out != "already stopping":
-        f.append("lambda: a stop refused as already in progress was not treated as done (%s)" % out)
+        f.append("lambda: did not settle on 'already stopping' after a refused stop (%s)" % out)
+    # The stop call is bounded: its worst case must be shorter than the wait pause.sh --up
+    # puts between clearing the tag and reading the status.
+    m = re.search(r"AF_TAG_GRACE_SEC:-(\d+)", pause_src)
+    out, c = run_lambda(code, [("available", P)])
+    cfg = c.stop_cfg or {}
+    worst = cfg.get("connect_timeout", 60) + cfg.get("read_timeout", 60)
+    if (cfg.get("retries") or {}).get("max_attempts", 99) != 0 or not m or worst >= int(m.group(1)):
+        f.append("lambda: the stop call is not bounded below pause.sh's wait (%s vs %s)" % (cfg, m and m.group(1)))
     out, c = run_lambda(code, [("starting", P)], remaining_ms=30000)
     if c.stopped or not str(out).startswith("raised:"):
         f.append("lambda: did not give up (to be retried) when out of time (%s)" % out)
@@ -255,17 +277,24 @@ def main():
         d["Resources"]["RestopRule"]["Properties"]["EventPattern"]["detail"]["EventID"] = ["RDS-EVENT-0154"]
     def m_no_recheck(n, d, s):
         c = code_of(d)
-        c["ZipFile"] = re.sub(r'\n( +)if not paused\(i\["DBInstanceArn"\]\):\n +return "skipped"\n( +)try:',
-                              r'\n\2try:', c["ZipFile"])
+        c["ZipFile"] = c["ZipFile"].replace('st == "available" and paused(i["DBInstanceArn"])', 'st == "available"')
     def m_no_swallow(n, d, s):
         c = code_of(d)
-        c["ZipFile"] = c["ZipFile"].replace('if "InvalidDBInstanceState" not in str(e):', 'if True:')
+        c["ZipFile"] = c["ZipFile"].replace('print("stop refused, polling again: " + str(e))', 'return "already stopping"')
+    def m_unbounded(n, d, s):
+        c = code_of(d)
+        c["ZipFile"] = c["ZipFile"].replace("rds_stop.stop_db_instance", "rds.stop_db_instance")
+    def m_retries(n, d, s):
+        c = code_of(d)
+        c["ZipFile"] = c["ZipFile"].replace('"max_attempts": 0', '"max_attempts": 10')
+    def m_grace(n, d, s):
+        return n, d, s.replace("AF_TAG_GRACE_SEC:-20", "AF_TAG_GRACE_SEC:-5")
     def m_notag(n, d, s):
         c = code_of(d)
         c["ZipFile"] = c["ZipFile"].replace('.get("af-paused") == "true"', '.get("af-paused") != "never"')
     def m_nowait(n, d, s):
         c = code_of(d)
-        c["ZipFile"] = c["ZipFile"].replace('if st == "available":', 'if st in ("available", "starting"):')
+        c["ZipFile"] = c["ZipFile"].replace('st == "available" and', 'st in ("available", "starting") and')
     def m_stopped(n, d, s):
         c = code_of(d)
         c["ZipFile"] = c["ZipFile"].replace('if st in ("stopped", "stopping"):', 'if False:')
@@ -283,7 +312,10 @@ def main():
         ("RestopOn inverted", m_restop_inverted, "RestopOn is not exactly"),
         ("0088 dropped", m_no_0088, "RDS-EVENT-0088"),
         ("no re-check before stop", m_no_recheck, "between the check and the stop"),
-        ("in-progress stop raised", m_no_swallow, "already in progress"),
+        ("refused stop taken as done", m_no_swallow, "refused in a non-stopping state"),
+        ("stop on the unbounded client", m_unbounded, "not bounded"),
+        ("SDK retries on the stop", m_retries, "not bounded"),
+        ("--up wait shorter than the bound", m_grace, "not bounded"),
         ("tag ignored", m_notag, "without the af-paused tag"),
         ("starting not waited for", m_nowait, "did not wait"),
         ("stopping a stopped one", m_stopped, "alone"),

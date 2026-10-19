@@ -268,8 +268,11 @@ Resources:
   # it starts it again: without that, an operator who ran `pause.sh --up` while the forced
   # start was in flight would have the database stopped under a running Control Plane.
   # Re-checked on every poll and once more right before the stop, so removing the tag
-  # mid-wait also cancels it; what is left (a stop already in flight when the tag goes) is
-  # closed on the pause.sh side, which waits before it reads the status.
+  # mid-wait also cancels it. What is left is a stop already on its way when the tag goes;
+  # RDS has no compare-and-stop, so it is bounded instead: the stop call runs on a client with
+  # 3 s connect / 5 s read timeouts and no SDK retries (8 s from the last tag check to the
+  # call's end, success or not), and pause.sh --up waits longer than that after clearing the
+  # tag before it reads the status.
   # RDS-EVENT-0088 (started) is caught too: the wait below is bounded by the Lambda timeout
   # and its two async retries (about 46 minutes), and a start that takes longer would
   # otherwise be missed. The tag means "paused": a tagged instance is stopped whenever it
@@ -309,8 +312,12 @@ Resources:
           import os
           import time
           import boto3
+          from botocore.config import Config
 
           rds = boto3.client("rds")
+          # The stop call is the one that must not arrive late (see the template comment).
+          rds_stop = boto3.client("rds", config=Config(
+              connect_timeout=3, read_timeout=5, retries={"max_attempts": 0}))
           DB = os.environ["DB_ID"]
 
 
@@ -328,17 +335,17 @@ Resources:
                   st = i["DBInstanceStatus"]
                   if st in ("stopped", "stopping"):
                       return "already " + st
-                  if st == "available":
-                      if not paused(i["DBInstanceArn"]):
-                          return "skipped"
+                  if st == "available" and paused(i["DBInstanceArn"]):
                       try:
-                          rds.stop_db_instance(DBInstanceIdentifier=DB)
+                          rds_stop.stop_db_instance(DBInstanceIdentifier=DB)
+                          print("stopping " + DB)
+                          return "stopping"
                       except Exception as e:
+                          # Not a code for "already stopping": the state may be backing-up
+                          # or modifying. Look again; the next pass settles it.
                           if "InvalidDBInstanceState" not in str(e):
                               raise
-                          return "already stopping"
-                      print("stopping " + DB)
-                      return "stopping"
+                          print("stop refused, polling again: " + str(e))
                   if context.get_remaining_time_in_millis() < 60000:
                       raise RuntimeError("still " + st + ", giving up for a retry")
                   time.sleep(20)

@@ -299,7 +299,14 @@ case "$args" in
   *"rds describe-db-instances --db-instance-identifier"*"DBInstanceArn"*)
     [ "${STUB_DB_ARN_FAIL:-0}" = 1 ] && exit 254
     echo "arn:aws:rds:ap-northeast-1:123456789012:db:t-db" ;;
-  *"rds describe-db-instances --db-instance-identifier"*"DBInstanceStatus"*) echo "${STUB_DB_STATUS:-available}" ;;
+  # A database that was stopped answers 'available' once a start has been issued (the log is
+  # the fake's clock): pause.sh --up reads it again after the CP is up.
+  *"rds describe-db-instances --db-instance-identifier"*"DBInstanceStatus"*)
+    if [ "${STUB_DB_STATUS:-available}" = stopped ] && grep -q "rds start-db-instance" "$STUB_LOG"; then
+      echo available
+    else
+      echo "${STUB_DB_STATUS:-available}"
+    fi ;;
   *"rds describe-db-instances"*) echo "" ;;
   *"efs describe-file-systems"*) echo "" ;;   # checking after deletion, so empty
   # One vault a retain period left, found by the "<data stack>-efs-" prefix whatever the
@@ -1590,6 +1597,7 @@ if STUB_DB_ARN_FAIL=1 "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --sta
 fi
 has "rds stop-db-instance --db-instance-identifier t-db"   # the bill comes first
 has "$NAT_DEL"                                            # and the rest of the pause still ran
+grep -q "was not set" "$WORK/out4m" || fail "the failure did not say the tag was not set"
 grep -q "not be stopped again" "$WORK/out4m" || fail "the failure did not say what is now unprotected"
 : > "$LOG"
 if STUB_DB_ARN_FAIL=1 STUB_DB_STATUS=stopped "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4m2" 2>&1 </dev/null; then
@@ -1597,6 +1605,17 @@ if STUB_DB_ARN_FAIL=1 STUB_DB_STATUS=stopped "$ECS/pause.sh" --profile p2 --regi
 fi
 hasnt "rds start-db-instance"
 hasnt "$CP_UP"
+: > "$LOG"
+if STUB_DB_ARN_FAIL=1 "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast --keep-db > "$WORK/out4m3" 2>&1 </dev/null; then
+  fail "--keep-db exited 0 although the af-paused tag could not be removed"
+fi
+grep -q "was not removed" "$WORK/out4m3" || fail "the clear failure did not say the tag was not removed"
+grep -q -- "pause.sh --keep-db again" "$WORK/out4m3" || fail "the clear failure did not keep --keep-db in the rerun hint"
+echo "== case 4m4: --up fails loudly when the database is not available once the CP is up =="
+: > "$LOG"
+if STUB_DB_STATUS=backing-up "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4m4" 2>&1 </dev/null; then
+  fail "--up exited 0 with the database not available"
+fi
 
 echo "== case 4n: --keep-db takes an old af-paused marker off; --up reads the status only after the tag is gone =="
 : > "$LOG"

@@ -294,9 +294,10 @@ case "$MODE" in
     # The database next: a CP that comes up before it answers 500 until it is reachable.
     # The tag comes off before anything else touches it, so the re-stop Lambda cannot stop
     # the database under the CP that is about to start. A stop the Lambda issued just before
-    # the tag went is already in flight and cannot be recalled, so wait for it to land and
+    # the tag went is already on its way and cannot be recalled, so wait for it to land and
     # read the status only afterwards (a database found stopping is started again below).
-    # The 20 s is a margin over two RDS API calls, not a derived bound.
+    # The wait must exceed the Lambda's stop call, which 10-data bounds at 8 s (connect 3 +
+    # read 5, no SDK retries). After the CP is up the status is read once more.
     db_tag clear
     [ -z "$DB_ID" ] || [ "$AF_DRY" = 1 ] || sleep "${AF_TAG_GRACE_SEC:-20}"
     db="$(db_status)"
@@ -327,6 +328,11 @@ case "$MODE" in
     if [ "$AF_DRY" != 1 ]; then
       echo "==> waiting for $CP_SERVICE"
       "${AWS[@]}" ecs wait services-stable --cluster "$CLUSTER" --services "$CP_SERVICE"
+    fi
+    if [ -n "$DB_ID" ] && [ "$AF_DRY" != 1 ] && [ "$(db_status)" != available ]; then
+      echo "ERROR: the control plane is up but $DB_ID is '$(db_status)' (a re-stop landed late?)." >&2
+      echo "       Run pause.sh --up again: it starts the database, then the control plane." >&2
+      exit 1
     fi
     cat <<EOF
 
@@ -416,17 +422,17 @@ EOF
     fi
 
     # The database last: the CP is gone, so nothing is connected to it.
-    tagfail=0
+    tagfail=""
     dbnote="RDS storage"
     if [ -n "$DB_ID" ]; then
       if [ "$KEEP_DB" = 1 ]; then
         dbnote="RDS (kept running: --keep-db)"
         # Kept on purpose, so a marker left by an earlier pause must not stop it again.
-        db_tag clear || tagfail=1
+        db_tag clear || tagfail="clear"
       else
         # Tagged before the stop, so a forced start can never beat the tag. A failed tag still
         # stops the database (the bill comes first) and fails the run at the end.
-        db_tag set || tagfail=1
+        db_tag set || tagfail="set"
         if [ "$(db_status)" = available ]; then
           echo "==> stopping the database $DB_ID (AWS starts it again by itself after 7 days)"
           af_run "${AWS[@]}" rds stop-db-instance --db-instance-identifier "$DB_ID" >/dev/null
@@ -451,10 +457,15 @@ EOF
     resume:  deploy/aws/ecs/pause.sh --profile $AF_PROFILE --region $AF_REGION --up
     remaining cost: ${natnote:+$natnote / }ALB / EFS / $dbnote plus home's EBS. For close to zero, use teardown.sh.
 EOF
-    if [ "$tagfail" = 1 ]; then
-      echo "ERROR: the af-paused tag on $DB_ID was not updated (see above). Paused, but the database will" >&2
-      echo "       not be stopped again if AWS starts it after 7 days. Run pause.sh again." >&2
-      exit 1
-    fi
+    case "$tagfail" in
+      set)
+        echo "ERROR: the af-paused tag on $DB_ID was not set (see above). Paused, but the database will" >&2
+        echo "       not be stopped again if AWS starts it after 7 days. Run pause.sh again." >&2
+        exit 1 ;;
+      clear)
+        echo "ERROR: the af-paused tag on $DB_ID was not removed (see above). It stays running (--keep-db)" >&2
+        echo "       but the re-stop Lambda may stop it. Run pause.sh --keep-db again, or remove the tag." >&2
+        exit 1 ;;
+    esac
     ;;
 esac
