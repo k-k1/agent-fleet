@@ -159,6 +159,9 @@ type toolReport struct {
 	// tools, gh among them, resolving through a wrapper is normal: anything outside home
 	// counts as coming from the image.
 	Overridden bool `json:"overridden"`
+	// BootInstall is what this start's boot-install did for the tool (entrypoint.sh); absent
+	// when it did not run for it or the Agent has no record.
+	BootInstall *bootInstall `json:"bootInstall,omitempty"`
 }
 
 var toolVerCache struct {
@@ -366,6 +369,7 @@ func collectToolVersions() []toolReport {
 	defer cancel()
 	pins := readBuildPins()
 	home := homeDir()
+	boot := readBootInstallStatus()
 	out := make([]toolReport, len(toolSpecs))
 	var wg sync.WaitGroup
 	for i, spec := range toolSpecs {
@@ -374,6 +378,9 @@ func collectToolVersions() []toolReport {
 			defer wg.Done()
 			tp := newToolProbe(ctx, spec, home)
 			r := toolReport{Name: spec.Name, Pin: pins[spec.Pin]}
+			if bi, ok := boot[spec.Name]; ok {
+				r.BootInstall = &bi
+			}
 			effPath := ""
 			if p, err := exec.LookPath(spec.Cmd); err == nil {
 				// Judge a symlink (~/.local/bin/claude → somewhere under share) by its target.

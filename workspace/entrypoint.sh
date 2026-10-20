@@ -329,6 +329,36 @@ fi
 VJ=/usr/local/share/agent-fleet/versions.json
 vj_pin() { node -e 'try{process.stdout.write(String(require(process.argv[1])[process.argv[2]]||""))}catch{}' "$VJ" "$1" 2>/dev/null; }
 cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
+# Boot-install outcome per CLI, read by the Agent (boot_install_status.go) for Settings >
+# Toolchains. One line per CLI: <tool>\t<ok|skipped|failed>\t<reason>. It lives in /tmp rather
+# than home because the failure it reports is usually a full home, where a status file in home
+# could not be written. A later line for a tool wins. Never fatal: a status that cannot be
+# written is a missing status, not a failed start.
+BI_STATUS="${BI_STATUS:-/tmp/af-boot-install.tsv}"
+BI_ERR="$(mktemp 2>/dev/null || echo /dev/null)"
+bi_note() { printf '%s\t%s\t%s\n' "$1" "$2" "${3:-}" >> "$BI_STATUS" 2>/dev/null || true; }
+# bi_reason — the reason class of the failure whose stderr is in $BI_ERR. no_space is tested
+# first: a full disk also breaks downloads and checksums, and is the one the member can fix.
+bi_reason() {
+  if grep -qiE 'no space left|ENOSPC|quota exceeded' "$BI_ERR" 2>/dev/null; then echo no_space
+  elif grep -qiE 'did NOT match|checksum|FAILED' "$BI_ERR" 2>/dev/null; then echo checksum
+  elif grep -qiE 'curl: \(|could not resolve|connection|timed out|ETIMEDOUT|ENOTFOUND|ECONNRE|EAI_AGAIN|network|registry' "$BI_ERR" 2>/dev/null; then echo network
+  else echo other; fi
+}
+# bi_failed <tool...> — record a failed block (stderr already echoed by the caller).
+bi_failed() { local r t; r="$(bi_reason)"; for t in "$@"; do bi_note "$t" failed "$r"; done; }
+# bi_room <mb> <tool...> — whether home has <mb> MiB free (true when df cannot tell). When it
+# has not, the install is skipped and what is installed stays: a half-run install is how a full
+# home turned into "every agent broke at once".
+bi_room() {
+  local need="$1" free t; shift
+  free="$(df -Pm "$HOME" 2>/dev/null | awk 'NR==2{print $4}')"
+  case "$free" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$free" -ge "$need" ] && return 0
+  echo "[entrypoint] WARN: only ${free} MiB free in home, ${need} MiB needed for $*; skipping (keeping what is installed)"
+  for t in "$@"; do bi_note "$t" failed no_space; done
+  return 1
+}
 # opencode's npm package follows the major of its pin: opencode-ai (1.x) or @opencode/cli (2.x).
 # Both claim the `opencode` bin, so they never coexist in one prefix (see the pair loop below).
 oc_pkg() { case "${1%%.*}" in ''|*[!0-9]*|0|1) echo opencode-ai ;; *) echo @opencode/cli ;; esac; }
@@ -376,7 +406,7 @@ oc_install_swap() {
       if [ -L "$l" ]; then case "$(readlink "$l")" in *"/$OC_OTHER/"*) mv "$l" "$bak/bin/$b" ;; esac; fi
     done
   fi
-  if npm install -g --prefix "$pfx" "$@" >/dev/null 2>&1; then rm -rf "$bak"; return 0; fi
+  if npm install -g --prefix "$pfx" "$@" >/dev/null 2>>"${BI_ERR:-/dev/null}"; then rm -rf "$bak"; return 0; fi
   oc_swap_restore "$pfx"
   return 1
 }
@@ -424,6 +454,12 @@ if [ "$LEAN_CLIS" = 1 ]; then
   # via cli_present=true and start immediately. That is by design, not a sign that the CLIs
   # are baked into the rootfs (docs/log/35 §35.7.2-8).
   echo "[entrypoint] lean variant: ensuring pinned agent CLIs under ~/.local (versions.json)"
+  : > "$BI_STATUS" 2>/dev/null || true
+  # Old copilot / cursor versions are the biggest thing a full home can give back, and the
+  # Agent's own pass runs only after the installs below, too late to make room for them.
+  if command -v workspace-agent >/dev/null 2>&1; then
+    workspace-agent prune-cli-versions || echo "[entrypoint] WARN: prune-cli-versions failed (continuing)"
+  fi
   # Repin: on a start where the self-update opt-in is OFF, put ~/.local back on the
   # versions.json pin even if an earlier ON moved it ahead. This gives lean the same
   # semantics as the baked variant's "turn it OFF and Stop→Start to return to the baked
@@ -446,30 +482,44 @@ if [ "$LEAN_CLIS" = 1 ]; then
   npm_cur() {
     NPM_LS="$NPM_LS" node -e 'try{const d=JSON.parse(process.env.NPM_LS).dependencies||{};process.stdout.write(((d[process.argv[1]]||{}).version)||"")}catch{}' "$1" 2>/dev/null
   }
-  NPM_BOOT=""
+  NPM_BOOT=""; NPM_BOOT_CLIS=""
+  npm_want() { NPM_BOOT="$NPM_BOOT ${pkg}@${ver}"; NPM_BOOT_CLIS="$NPM_BOOT_CLIS $cli"; }
   for pair in "claude=@anthropic-ai/claude-code" "opencode=$OC_PKG" \
               "codex=@openai/codex" "copilot=@github/copilot"; do
     cli="${pair%%=*}"; pkg="${pair#*=}"; ver="$(vj_pin "$cli")"
     [ -n "$ver" ] || continue
+    if cli_present "$cli"; then bi_note "$cli" skipped; fi
     if ! cli_present "$cli"; then
-      NPM_BOOT="$NPM_BOOT ${pkg}@${ver}"
+      npm_want
     elif [ "$cli" = opencode ] && [ "$REPIN" = 1 ] && [ -e "$HOME/.local/bin/opencode" ] \
          && [ -z "$(npm_cur "$pkg")" ] && [ -n "$(npm_cur "$OC_OTHER")" ]; then
       # The copy in ~/.local is the other major's package (the pin crossed 1 <-> 2). It owns
       # the `opencode` bin, so npm would refuse to link the new one: oc_install_swap moves it aside.
-      NPM_BOOT="$NPM_BOOT ${pkg}@${ver}"
+      npm_want
     elif [ "$REPIN" = 1 ] && [ -e "$HOME/.local/bin/$cli" ]; then
       # Move a drifted copy back to the pin. Installs npm does not manage (no version) are left alone.
       cur="$(npm_cur "$pkg")"
-      if [ -n "$cur" ] && [ "$cur" != "$ver" ]; then NPM_BOOT="$NPM_BOOT ${pkg}@${ver}"; fi
+      if [ -n "$cur" ] && [ "$cur" != "$ver" ]; then npm_want; fi
     fi
   done
   if [ -n "$NPM_BOOT" ]; then
     echo "[entrypoint] boot-install (pinned):$NPM_BOOT ..."
     # shellcheck disable=SC2086
-    oc_install_swap "$HOME/.local" $NPM_BOOT \
-      && echo "[entrypoint] boot-install ok" \
-      || echo "[entrypoint] WARN: npm boot-install failed (retrying next start)"
+    # 300 MiB per package: the tarball plus its unpacked tree, with room for npm's rollback copy.
+    # shellcheck disable=SC2086
+    if bi_room $(( $(echo $NPM_BOOT | wc -w) * 300 )) $NPM_BOOT_CLIS; then
+      : > "$BI_ERR" 2>/dev/null || true
+      # shellcheck disable=SC2086
+      if oc_install_swap "$HOME/.local" $NPM_BOOT; then
+        echo "[entrypoint] boot-install ok"
+        for c in $NPM_BOOT_CLIS; do bi_note "$c" ok; done
+      else
+        cat "$BI_ERR" >&2 2>/dev/null || true
+        echo "[entrypoint] WARN: npm boot-install failed (retrying next start)"
+        # shellcheck disable=SC2086
+        bi_failed $NPM_BOOT_CLIS
+      fi
+    fi
   else
     echo "[entrypoint] boot-install: npm CLIs already present in ~/.local (skip)"
   fi
@@ -513,9 +563,10 @@ if [ "$LEAN_CLIS" = 1 ]; then
         echo "[entrypoint] rtk はこの環境では動かないため導入しません: $err"
         exit 0
       fi
-    ) && echo "[entrypoint] boot-install rtk $(vj_pin rtk)" \
-      || echo "[entrypoint] WARN: rtk boot-install failed (retrying next start)"
+    ) 2>"$BI_ERR" && { echo "[entrypoint] boot-install rtk $(vj_pin rtk)"; bi_note rtk ok; } \
+      || { cat "$BI_ERR" >&2; echo "[entrypoint] WARN: rtk boot-install failed (retrying next start)"; bi_failed rtk; }
   elif cli_present rtk; then
+    bi_note rtk skipped
     echo "[entrypoint] boot-install: rtk already present (skip)"
   fi
   # agy: the pinned immutable GCS object named by the official installer manifest, fetched
@@ -531,6 +582,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
       AGY_NEED=1
     fi
   fi
+  if [ "$AGY_NEED" = 1 ] && ! bi_room 400 agy; then AGY_NEED=2; fi
   if [ "$AGY_NEED" = 1 ]; then
     (
       set -e
@@ -548,9 +600,12 @@ if [ "$LEAN_CLIS" = 1 ]; then
       tar -xzf agy.tgz antigravity
       install -D -m 0755 antigravity "$HOME/.local/bin/agy"
       printf '%s\n' "$aver" > "$HOME/.local/bin/.agy.version"
-    ) && echo "[entrypoint] boot-install agy $(vj_pin agy)" \
-      || echo "[entrypoint] WARN: agy boot-install failed (retrying next start)"
+    ) 2>"$BI_ERR" && { echo "[entrypoint] boot-install agy $(vj_pin agy)"; bi_note agy ok; } \
+      || { cat "$BI_ERR" >&2; echo "[entrypoint] WARN: agy boot-install failed (retrying next start)"; bi_failed agy; }
+  elif [ "$AGY_NEED" = 2 ]; then
+    :
   elif cli_present agy; then
+    bi_note agy skipped
     echo "[entrypoint] boot-install: agy already present (skip)"
   fi
   # cursor (kind="cursor", docs/log/40): unpack the versioned tarball's Node.js bundle into
@@ -568,6 +623,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
       if [ -n "$cur_ver" ] && [ "$cur_ver" != "$(vj_pin cursor)" ]; then CUR_NEED=1; fi
     fi
   fi
+  if [ "$CUR_NEED" = 1 ] && ! bi_room 400 cursor; then CUR_NEED=2; fi
   if [ "$CUR_NEED" = 1 ]; then
     (
       set -e
@@ -594,9 +650,12 @@ if [ "$LEAN_CLIS" = 1 ]; then
       ln -sf "$dir/cursor-agent" "$HOME/.local/bin/cursor-agent"
       # If the self-update install.sh left an `agent` alias, point it at the same version.
       if [ -L "$HOME/.local/bin/agent" ]; then ln -sf "$dir/cursor-agent" "$HOME/.local/bin/agent"; fi
-    ) && echo "[entrypoint] boot-install cursor $(vj_pin cursor)" \
-      || echo "[entrypoint] WARN: cursor boot-install failed (retrying next start)"
+    ) 2>"$BI_ERR" && { echo "[entrypoint] boot-install cursor $(vj_pin cursor)"; bi_note cursor ok; } \
+      || { cat "$BI_ERR" >&2; echo "[entrypoint] WARN: cursor boot-install failed (retrying next start)"; bi_failed cursor; }
+  elif [ "$CUR_NEED" = 2 ]; then
+    :
   elif cli_present cursor-agent; then
+    bi_note cursor skipped
     echo "[entrypoint] boot-install: cursor already present (skip)"
   fi
 fi
