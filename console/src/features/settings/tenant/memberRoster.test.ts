@@ -97,6 +97,23 @@ describe("sortMembers by last active", () => {
 const GIB = 1024 ** 3;
 const withDisk = (used: number, total?: number) => m({ disk: { used, total } });
 
+describe("default attention order", () => {
+  it("leads with a full disk, whatever order the members arrive in", () => {
+    const err = m({ user_key: "zed", disk: { used: 96 * GIB, total: 100 * GIB } });
+    const warn = m({ user_key: "alice", disk: { used: 90 * GIB, total: 100 * GIB } });
+    const stopped = m({ user_key: "carol", state: "stopped", auto_stop: AUTO_STOP });
+    const calm = m({ user_key: "bob" });
+    const orders = [
+      [calm, warn, stopped, err],
+      [err, stopped, calm, warn],
+      [warn, calm, err, stopped],
+    ];
+    for (const list of orders) {
+      expect(sortMembers(list, "attention", NOW).map((x) => x.user_key)).toEqual(["zed", "alice", "carol", "bob"]);
+    }
+  });
+});
+
 describe("disk level and attention", () => {
   it("warns at 85 %, errors at 95 % or under 2 GiB free", () => {
     expect(diskLevel(withDisk(84 * GIB, 100 * GIB))).toBe("ok");

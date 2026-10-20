@@ -141,7 +141,12 @@ export function sortMembers(list: Member[], sort: RosterSort, now = Date.now()):
       return tb - ta || byName(a, b);
     });
   }
-  const rank = (m: Member) => (attentionReasons(m, now).length > 0 ? 0 : 1);
+  // A full disk first (the acceptance rule: a member at >= 95 % leads the default order), then
+  // every other reason, then the rest.
+  const rank = (m: Member) => {
+    const r = attentionReasons(m, now);
+    return r.includes("disk_error") ? 0 : r.length > 0 ? 1 : 2;
+  };
   return out.sort((a, b) => rank(a) - rank(b) || byName(a, b));
 }
 

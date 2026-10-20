@@ -424,6 +424,11 @@ func (c *diskUsageCache) put(key string, bytes uint64, now time.Time) {
 
 var diskUsages = &diskUsageCache{m: map[string]diskSample{}}
 
+// runDU is the du invocation, a variable so a test can make it slow.
+var runDU = func(ctx context.Context, home string) ([]byte, error) {
+	return exec.CommandContext(ctx, "du", "-sb", home).Output()
+}
+
 // dirDiskUsage returns the byte size of <dataDir>/home via `du -sb`, cached for
 // diskTTL per dataDir. Reports !ok when du fails (path gone, etc.).
 func dirDiskUsage(ctx context.Context, dataDir string) (uint64, bool) {
@@ -433,7 +438,7 @@ func dirDiskUsage(ctx context.Context, dataDir string) (uint64, bool) {
 		return v, true
 	}
 
-	out, err := exec.CommandContext(ctx, "du", "-sb", home).Output()
+	out, err := runDU(ctx, home)
 	if err != nil {
 		return 0, false
 	}

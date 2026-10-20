@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -130,15 +131,15 @@ func TestSampleKeepsTheLastDiskReadingWhenTheAgentCannotBeRead(t *testing.T) {
 // A slow sweep's older reading must not replace a newer one.
 func TestPutWorkspaceDiskRefusesAnOlderReading(t *testing.T) {
 	ctx := context.Background()
-	st := p3Store(t)
-	newer := store.WorkspaceDisk{WorkspaceID: "W", Used: 2, Total: 10, ObservedAt: "2026-10-20T10:05:00Z"}
-	older := store.WorkspaceDisk{WorkspaceID: "W", Used: 1, Total: 10, ObservedAt: "2026-10-20T10:00:00Z"}
+	st, _, _, _, wsRow := usageHourFixture(t)
+	newer := store.WorkspaceDisk{WorkspaceID: wsRow.ID, Used: 2, Total: 10, ObservedAt: "2026-10-20T10:05:00Z"}
+	older := store.WorkspaceDisk{WorkspaceID: wsRow.ID, Used: 1, Total: 10, ObservedAt: "2026-10-20T10:00:00Z"}
 	for _, d := range []store.WorkspaceDisk{newer, older} {
 		if err := st.PutWorkspaceDisk(ctx, d); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got, _, _ := st.GetWorkspaceDisk(ctx, "W"); got != newer {
+	if got, _, _ := st.GetWorkspaceDisk(ctx, wsRow.ID); got != newer {
 		t.Errorf("stored %+v, want the newer reading %+v", got, newer)
 	}
 }
@@ -167,5 +168,180 @@ func TestAdminMembersCarryTheStoredDiskReading(t *testing.T) {
 	}
 	if _, has := disk["total"]; has {
 		t.Errorf("total present without a denominator: %v", disk)
+	}
+}
+
+// limitFailStore fails the quota read only.
+type limitFailStore struct{ store.Store }
+
+func (limitFailStore) GetUserLimit(context.Context, string) (store.UserLimit, bool, error) {
+	return store.UserLimit{}, false, errors.New("db busy")
+}
+
+// A du that worked but a quota read that failed must not store total=0 over the last good
+// denominator: a full disk would read as "no quota".
+func TestSampleKeepsTheLastDiskReadingWhenTheQuotaCannotBeRead(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, _, _, ws := usageHourFixture(t)
+	mgr.dataRoot = t.TempDir()
+	home := filepath.Join(mgr.rootedDataDir(ws), "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	diskUsages.m = map[string]diskSample{}
+	old := store.WorkspaceDisk{WorkspaceID: ws.ID, Used: 5, Total: 10 * gib, ObservedAt: "2026-10-01T00:00:00Z"}
+	if err := st.PutWorkspaceDisk(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	mgr.store = limitFailStore{st}
+	srv := diskAgent(t, `{}`)
+	mgr.rtFactory = sizedFactory{stubFactory{rt: stubRuntime{endpoint: srv.URL}}, runtime.DiskMeaningQuota}
+
+	newUsageSampler(mgr, 5*time.Minute).sample(ctx)
+
+	if d, _, _ := st.GetWorkspaceDisk(ctx, ws.ID); d != old {
+		t.Errorf("disk = %+v, want the earlier reading %+v", d, old)
+	}
+}
+
+// A du that never returns is cut off per workspace: the earlier reading stays and the rest of
+// the sweep (usage row, heartbeat) still happens.
+func TestSampleCutsOffASlowDuAndFinishesTheSweep(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, _, mem, ws := usageHourFixture(t)
+	mgr.dataRoot = t.TempDir()
+	diskUsages.m = map[string]diskSample{}
+	old := store.WorkspaceDisk{WorkspaceID: ws.ID, Used: 5, Total: 10, ObservedAt: "2026-10-01T00:00:00Z"}
+	if err := st.PutWorkspaceDisk(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	prevDU, prevTO := runDU, usageDiskTimeout
+	t.Cleanup(func() { runDU, usageDiskTimeout = prevDU, prevTO })
+	runDU = func(ctx context.Context, _ string) ([]byte, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	usageDiskTimeout = 50 * time.Millisecond
+	srv := diskAgent(t, `{}`)
+	mgr.rtFactory = sizedFactory{stubFactory{rt: stubRuntime{endpoint: srv.URL}}, runtime.DiskMeaningQuota}
+
+	done := make(chan struct{})
+	go func() {
+		newUsageSampler(mgr, 5*time.Minute).sample(ctx)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the sweep is stuck behind du")
+	}
+	if d, _, _ := st.GetWorkspaceDisk(ctx, ws.ID); d != old {
+		t.Errorf("disk = %+v, want the earlier reading", d)
+	}
+	rows, _ := st.ListUsageHourly(ctx, "", "2000-01-01T00", "2999-01-01T00")
+	var member, beat bool
+	for _, r := range rows {
+		member = member || r.MembershipID == mem.ID
+		beat = beat || r.MembershipID == ""
+	}
+	if !member || !beat {
+		t.Errorf("sweep did not finish: member row %v, heartbeat %v", member, beat)
+	}
+}
+
+// Withdrawn after a wipe: the old figure is gone, and a reading that began before the wipe and
+// lands after it does not bring it back; a reading taken after the wipe does.
+func TestClearWorkspaceDiskWithdrawsTheReadingAndRefusesOlderOnes(t *testing.T) {
+	ctx := context.Background()
+	st, _, _, _, ws := usageHourFixture(t)
+	before := time.Now().Add(-time.Minute)
+	if err := st.PutWorkspaceDisk(ctx, store.WorkspaceDisk{WorkspaceID: ws.ID, Used: 9, Total: 10, ObservedAt: store.DiskObservedAt(before)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ClearWorkspaceDisk(ctx, ws.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := st.GetWorkspaceDisk(ctx, ws.ID); ok {
+		t.Fatal("reading survived the clear")
+	}
+	if err := st.PutWorkspaceDisk(ctx, store.WorkspaceDisk{WorkspaceID: ws.ID, Used: 9, Total: 10, ObservedAt: store.DiskObservedAt(before)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := st.GetWorkspaceDisk(ctx, ws.ID); ok {
+		t.Fatal("a reading taken before the wipe came back")
+	}
+	if err := st.PutWorkspaceDisk(ctx, store.WorkspaceDisk{WorkspaceID: ws.ID, Used: 1, Total: 10, ObservedAt: store.DiskObservedAt(time.Now().Add(time.Second))}); err != nil {
+		t.Fatal(err)
+	}
+	if d, ok, _ := st.GetWorkspaceDisk(ctx, ws.ID); !ok || d.Used != 1 {
+		t.Errorf("a later reading was refused: %+v ok=%v", d, ok)
+	}
+}
+
+// Both admin Clean home and the member's wipe withdraw the reading.
+func TestHomeWipesWithdrawTheDiskReading(t *testing.T) {
+	ctx := context.Background()
+	seed := func(t *testing.T, st store.Store, wsID string) {
+		t.Helper()
+		if err := st.PutWorkspaceDisk(ctx, store.WorkspaceDisk{WorkspaceID: wsID, Used: 9, Total: 10,
+			ObservedAt: store.DiskObservedAt(time.Now().Add(-time.Hour))}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Run("admin Clean home", func(t *testing.T) {
+		st, ws, mgr := reaperLifecycleFixture(t)
+		seed(t, st, ws.ID)
+		mgr.rtFactory = fixedRuntimeFactory{&reachableHomeRuntime{unreachableHomeRuntime: unreachableHomeRuntime{rec: &wipeRecorder{}, state: "running"}}}
+		if err := mgr.cleanHomeByMembership(ctx, ws.MembershipID); err != nil {
+			t.Fatal(err)
+		}
+		if d, ok, _ := st.GetWorkspaceDisk(ctx, ws.ID); ok {
+			t.Errorf("reading kept after Clean home: %+v", d)
+		}
+	})
+	t.Run("member Clean home", func(t *testing.T) {
+		mgr, res := wipeResolved(t, &reachableHomeRuntime{unreachableHomeRuntime: unreachableHomeRuntime{rec: &wipeRecorder{}, state: "running"}})
+		seed(t, mgr.store, res.ws.ID)
+		if w := callMemberWipe(newWorkspaceAPI(mgr, false), "clean-home", res); w.Code != http.StatusOK {
+			t.Fatalf("clean-home = %d %s", w.Code, w.Body.String())
+		}
+		if d, ok, _ := mgr.store.GetWorkspaceDisk(ctx, res.ws.ID); ok {
+			t.Errorf("reading kept after the member's wipe: %+v", d)
+		}
+	})
+}
+
+// A sweep still waiting on the Agent when the workspace is destroyed must not recreate the row.
+func TestSampleDoesNotResurrectTheDiskRowOfADestroyedWorkspace(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, _, _, ws := usageHourFixture(t)
+	arrived := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sessions":
+			_, _ = w.Write([]byte(`{"sessions":[]}`))
+		case "/workspace/stats":
+			close(arrived)
+			<-release
+			_, _ = w.Write([]byte(`{"disk_used":9,"disk_total":10}`))
+		}
+	}))
+	defer srv.Close()
+	mgr.rtFactory = sizedFactory{stubFactory{rt: stubRuntime{endpoint: srv.URL}}, runtime.DiskMeaningHome}
+	done := make(chan struct{})
+	go func() {
+		newUsageSampler(mgr, 5*time.Minute).sample(ctx)
+		close(done)
+	}()
+	<-arrived
+	if err := st.DeleteWorkspace(ctx, ws.ID); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	<-done
+	var n int
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM workspace_disk WHERE workspace_id=?`, ws.ID).Scan(&n); err != nil || n != 0 {
+		t.Errorf("workspace_disk rows for the destroyed workspace = %d (err %v), want 0", n, err)
 	}
 }

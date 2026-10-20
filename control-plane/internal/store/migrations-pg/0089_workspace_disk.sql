@@ -4,5 +4,6 @@ CREATE TABLE IF NOT EXISTS workspace_disk(
   workspace_id TEXT PRIMARY KEY,
   used         BIGINT NOT NULL,
   total        BIGINT NOT NULL DEFAULT 0,
-  observed_at  TEXT NOT NULL
+  observed_at  TEXT NOT NULL,
+  cleared      INTEGER NOT NULL DEFAULT 0
 )

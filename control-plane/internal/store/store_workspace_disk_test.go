@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
 )
@@ -23,6 +24,29 @@ func TestPostgresWorkspaceDiskKeepsTheNewerReading(t *testing.T) {
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
+	tn, err := st.EnsureDefaultTenant(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := st.UpsertIdentity(ctx, "d@example.com", "d-example-com", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mem, err := st.EnsureMembership(ctx, id.ID, tn.ID, "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateWorkspace(ctx, Workspace{ID: "W", TenantID: tn.ID, MembershipID: mem.ID,
+		ContainerName: "af-w", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "stopped", CreatedAt: NowTS()}); err != nil {
+		t.Fatal(err)
+	}
+	// A reading for a workspace that does not exist is not stored.
+	if err := st.PutWorkspaceDisk(ctx, WorkspaceDisk{WorkspaceID: "ghost", Used: 1, ObservedAt: DiskObservedAt(time.Now())}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := st.GetWorkspaceDisk(ctx, "ghost"); ok {
+		t.Fatal("stored a reading for a workspace that does not exist")
+	}
 	if _, ok, err := st.GetWorkspaceDisk(ctx, "W"); ok || err != nil {
 		t.Fatalf("unmeasured: ok=%v err=%v", ok, err)
 	}
@@ -35,5 +59,11 @@ func TestPostgresWorkspaceDiskKeepsTheNewerReading(t *testing.T) {
 	}
 	if got, _, _ := st.GetWorkspaceDisk(ctx, "W"); got != newer {
 		t.Errorf("stored %+v, want %+v", got, newer)
+	}
+	if err := st.ClearWorkspaceDisk(ctx, "W"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := st.GetWorkspaceDisk(ctx, "W"); ok {
+		t.Error("reading survived the clear")
 	}
 }

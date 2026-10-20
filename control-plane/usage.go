@@ -35,6 +35,13 @@ const usageHourFmt = "2006-01-02T15"
 // quickly is recorded as "running, sessions unmeasured" instead.
 const usageSessionTimeout = 10 * time.Second
 
+// usageDiskTimeout bounds ONE workspace's host-side du inside a sweep, for the same reason as
+// usageSessionTimeout: du over a huge or slow home would otherwise hold the whole sequential
+// sweep, and every later member's usage, mirror and the heartbeat with it. Longer than the
+// Agent read because walking a tree is slower than answering a statfs. A variable so a test can
+// shrink it.
+var usageDiskTimeout = 30 * time.Second
+
 // usageHourlyRetentionDays caps how far back the hourly buckets are kept. They are 24x
 // the rows of usage_daily and answer a question nobody asks about last spring; the daily
 // ledger, which does get asked, is never pruned.
@@ -200,7 +207,7 @@ func (u *usageSampler) counters(ctx context.Context, ws store.Workspace, rt runt
 // its age) stays on the card.
 func (u *usageSampler) recordDisk(ctx context.Context, ws store.Workspace, rt runtime.Runtime, agentUp bool) {
 	var used, total uint64
-	taken := time.Now().UTC()
+	taken := time.Now()
 	switch u.mgr.workspaceSizing().DiskMeaning {
 	case runtime.DiskMeaningHome:
 		if !agentUp {
@@ -219,19 +226,29 @@ func (u *usageSampler) recordDisk(ctx context.Context, ws store.Workspace, rt ru
 		}
 		used, total = du, dt
 	case runtime.DiskMeaningQuota:
-		du, ok := dirDiskUsage(ctx, u.mgr.rootedDataDir(ws))
+		dctx, cancel := context.WithTimeout(ctx, usageDiskTimeout)
+		defer cancel()
+		du, ok := dirDiskUsage(dctx, u.mgr.rootedDataDir(ws))
 		if !ok {
 			return
 		}
 		used = du
-		if ul, ok, _ := u.mgr.store.GetUserLimit(ctx, ws.MembershipID); ok && ul.DiskGB > 0 {
+		// "No limit set" (ok=false) and "could not read the limit" (err) are different: storing
+		// total=0 for the second would erase the last good denominator and make a full disk look
+		// like one with no quota. On an error the whole reading is dropped.
+		ul, hasLimit, err := u.mgr.store.GetUserLimit(ctx, ws.MembershipID)
+		if err != nil {
+			log.Printf("showback: disk quota (%s): %v", ws.ContainerName, err)
+			return
+		}
+		if hasLimit && ul.DiskGB > 0 {
 			total = uint64(ul.DiskGB) * gib
 		}
 	default:
 		return
 	}
 	if err := u.mgr.store.PutWorkspaceDisk(ctx, store.WorkspaceDisk{
-		WorkspaceID: ws.ID, Used: used, Total: total, ObservedAt: taken.Format(time.RFC3339),
+		WorkspaceID: ws.ID, Used: used, Total: total, ObservedAt: store.DiskObservedAt(taken),
 	}); err != nil {
 		log.Printf("showback: record disk (%s): %v", ws.ContainerName, err)
 	}

@@ -92,7 +92,8 @@ describe("member cards", () => {
 
   it("puts the member who needs attention first and counts them", async () => {
     await mount();
-    expect(titles()[0]).toBe("carol@x.com");
+    // gina's disk is at 95 %: a full disk leads, then the other reasons (carol's auto-stop).
+    expect(titles().slice(0, 2)).toEqual(["gina@x.com", "carol@x.com"]);
     expect(cards()[0].classList.contains("attn")).toBe(true);
     const summary = document.querySelector(".member-summary")?.textContent || "";
     expect(summary).toContain("2 of 8 running");
@@ -120,7 +121,7 @@ describe("member cards", () => {
   it("opens the member detail from a card", async () => {
     await mount();
     await act(async () => cards()[0].click());
-    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ user_key: "u-carol" }));
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ user_key: "u-gina" }));
   });
 
   it("shows sessions against the limit with the numbers as text, and last active on a stopped card", async () => {
