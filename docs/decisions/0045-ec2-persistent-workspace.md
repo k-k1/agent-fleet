@@ -1753,7 +1753,7 @@ Code: `runtime_ecs_ec2_slot_replace.go` (`replaceReservedSlot(…, automatic)`, 
 
 **Note (2026-10-20, #2383): a full home is now visible, and the boot-install no longer starts what cannot fit.** The
 entrypoint records each CLI's boot-install outcome (ok / skipped / failed with a reason class `no_space` / `network` /
-`checksum` / `other`) in `/tmp/af-boot-install.tsv` (not in home: a full home could not hold it), the Agent serves it on
+`checksum` / `other`) in `/tmp/af-boot-<uid>/install.tsv` (a private directory; not in home: a full home could not hold it), the Agent serves it on
 `/env/tool-versions` as `bootInstall`, and Settings › Toolchains shows "install failed: <reason>" instead of `—`. On a
 dedicated box the CP marks the stats frame `home_own`, and the Console raises one notice per crossing of less than 2 GiB
 free or over 90% (re-armed above 3 GiB free and under 85%). The entrypoint prunes old CLI versions

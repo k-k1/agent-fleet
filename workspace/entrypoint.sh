@@ -330,18 +330,38 @@ VJ=/usr/local/share/agent-fleet/versions.json
 vj_pin() { node -e 'try{process.stdout.write(String(require(process.argv[1])[process.argv[2]]||""))}catch{}' "$VJ" "$1" 2>/dev/null; }
 cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
 # Boot-install outcome per CLI, read by the Agent (boot_install_status.go) for Settings >
-# Toolchains. One line per CLI: <tool>\t<ok|skipped|failed>\t<reason>. It lives in /tmp rather
+# Toolchains. One line per CLI: <tool>\t<ok|skipped|failed>\t<reason>. It lives under /tmp rather
 # than home because the failure it reports is usually a full home, where a status file in home
-# could not be written. A later line for a tool wins. Never fatal: a status that cannot be
-# written is a missing status, not a failed start.
-BI_STATUS="${BI_STATUS:-/tmp/af-boot-install.tsv}"
-BI_ERR="$(mktemp 2>/dev/null || echo /dev/null)"
+# could not be written. /tmp is shared, so the files sit in a private directory of ours that is
+# checked before use (a real directory, not a symlink, owned by this user); a directory that fails
+# the check is not used and recording is switched off, which reads as "unknown", never "ok". The
+# previous start's files are removed first, so a start that cannot write never serves old results.
+# A later line for a tool wins. Never fatal: a status that cannot be written is a missing status.
+BI_DIR="${BI_DIR:-/tmp/af-boot-$(id -u)}"
+mkdir -m 700 "$BI_DIR" 2>/dev/null || true
+if [ -d "$BI_DIR" ] && [ ! -L "$BI_DIR" ] && [ -O "$BI_DIR" ]; then
+  rm -f "$BI_DIR/install.tsv" "$BI_DIR/install.err" 2>/dev/null || true
+  BI_STATUS="$BI_DIR/install.tsv"
+  # stderr of the block being run, truncated for each block, so nothing piles up across starts
+  # (this script ends in exec: no trap would ever clean up). If it cannot be created the redirect
+  # `2>"$BI_ERR"` would fail the block itself, hence the /dev/null fallback.
+  BI_ERR="$BI_DIR/install.err"
+  # noclobber: create, never follow or truncate something that appeared in between.
+  (set -C; : > "$BI_STATUS") 2>/dev/null || BI_STATUS=/dev/null
+  (set -C; : > "$BI_ERR") 2>/dev/null || BI_ERR=/dev/null
+else
+  BI_STATUS=/dev/null
+  BI_ERR=/dev/null
+fi
+# Set by bi_room when an install was skipped for lack of space: everything later in this start
+# that would download or install (the claude fallback, the self-update opt-in) honours it too.
+BI_LOW_SPACE=0
 bi_note() { printf '%s\t%s\t%s\n' "$1" "$2" "${3:-}" >> "$BI_STATUS" 2>/dev/null || true; }
 # bi_reason — the reason class of the failure whose stderr is in $BI_ERR. no_space is tested
 # first: a full disk also breaks downloads and checksums, and is the one the member can fix.
 bi_reason() {
   if grep -qiE 'no space left|ENOSPC|quota exceeded' "$BI_ERR" 2>/dev/null; then echo no_space
-  elif grep -qiE 'did NOT match|checksum|FAILED' "$BI_ERR" 2>/dev/null; then echo checksum
+  elif grep -qiE 'did NOT match|computed checksum|: FAILED( |$)|EINTEGRITY|integrity (check|checksum) failed' "$BI_ERR" 2>/dev/null; then echo checksum
   elif grep -qiE 'curl: \(|could not resolve|connection|timed out|ETIMEDOUT|ENOTFOUND|ECONNRE|EAI_AGAIN|network|registry' "$BI_ERR" 2>/dev/null; then echo network
   else echo other; fi
 }
@@ -355,6 +375,7 @@ bi_room() {
   free="$(df -Pm "$HOME" 2>/dev/null | awk 'NR==2{print $4}')"
   case "$free" in ''|*[!0-9]*) return 0 ;; esac
   [ "$free" -ge "$need" ] && return 0
+  BI_LOW_SPACE=1
   echo "[entrypoint] WARN: only ${free} MiB free in home, ${need} MiB needed for $*; skipping (keeping what is installed)"
   for t in "$@"; do bi_note "$t" failed no_space; done
   return 1
@@ -484,7 +505,6 @@ if [ "$LEAN_CLIS" = 1 ]; then
   # via cli_present=true and start immediately. That is by design, not a sign that the CLIs
   # are baked into the rootfs (docs/log/35 §35.7.2-8).
   echo "[entrypoint] lean variant: ensuring pinned agent CLIs under ~/.local (versions.json)"
-  : > "$BI_STATUS" 2>/dev/null || true
   # Old copilot / cursor versions are the biggest thing a full home can give back, and the
   # Agent's own pass runs only after the installs below, too late to make room for them.
   if command -v workspace-agent >/dev/null 2>&1; then
@@ -566,6 +586,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
       if [ -n "$rtk_cur" ] && [ "$rtk_cur" != "$(vj_pin rtk)" ]; then RTK_NEED=1; fi
     fi
   fi
+  if [ "$RTK_NEED" = 1 ] && ! bi_room 150 rtk; then RTK_NEED=2; fi
   if [ "$RTK_NEED" = 1 ]; then
     (
       set -e
@@ -591,6 +612,8 @@ if [ "$LEAN_CLIS" = 1 ]; then
       install_atomic rtk "$HOME/.local/bin/rtk" verify || exit 1
     ) 2>"$BI_ERR" && { echo "[entrypoint] boot-install rtk $(vj_pin rtk)"; bi_note rtk ok; } \
       || { cat "$BI_ERR" >&2; echo "[entrypoint] WARN: rtk boot-install failed (retrying next start)"; bi_failed rtk; }
+  elif [ "$RTK_NEED" = 2 ]; then
+    :
   elif cli_present rtk; then
     bi_note rtk skipped
     echo "[entrypoint] boot-install: rtk already present (skip)"
@@ -658,7 +681,11 @@ if [ "$LEAN_CLIS" = 1 ]; then
       if [ -n "$cur_ver" ] && [ "$cur_ver" != "$(vj_pin cursor)" ]; then CUR_NEED=1; fi
     fi
   fi
-  if [ "$CUR_NEED" = 1 ] && ! bi_room 400 cursor; then CUR_NEED=2; fi
+  # Space is needed only when the pinned tree has to be downloaded; relinking to a healthy one
+  # (a repin after the self-update moved ahead) writes nothing.
+  if [ "$CUR_NEED" = 1 ] \
+     && ! cursor_runs "$HOME/.local/share/cursor-agent/versions/$(vj_pin cursor)/cursor-agent" \
+     && ! bi_room 400 cursor; then CUR_NEED=2; fi
   if [ "$CUR_NEED" = 1 ]; then
     (
       set -e
@@ -747,6 +774,8 @@ if [ "${CLAUDE_INSTALL:-1}" = "1" ]; then
         # → version-pinned, no self-update.
         : ;;
     esac
+  elif [ "$BI_LOW_SPACE" = 1 ]; then
+    echo "[entrypoint] WARN: not installing the Claude CLI: home is nearly full (retrying next start)"
   else
     echo "[entrypoint] installing latest Claude CLI ..."
     curl -fsSL https://claude.ai/install.sh | bash || echo "[entrypoint] WARN: claude install failed (continuing)"
@@ -796,6 +825,8 @@ fi
 # would churn a 1.3 GB uninstall→reinstall next time. Hence the separate branch.
 if [ "${AF_AGENT_SELF_UPDATE_SKIP:-0}" = "1" ]; then
   echo "[entrypoint] agent self-update: skipped for this boot (unattended start) — keeping installed versions"
+elif [ "$BI_LOW_SPACE" = 1 ] && [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-0}" = "1" ]; then
+  echo "[entrypoint] agent self-update: skipped for this boot (home is nearly full) — keeping installed versions"
 elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-0}" = "1" ]; then
   echo "[entrypoint] agent self-update: checking versions (member opt-in, operator-allowed) ..."
   # Always target ~/.local (a baked /usr/local pin is immutable; only the PATH-first

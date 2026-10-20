@@ -3,7 +3,9 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestReadBootInstallStatus(t *testing.T) {
@@ -47,5 +49,80 @@ func TestReadBootInstallStatusMissingIsUnknown(t *testing.T) {
 	t.Cleanup(func() { bootInstallStatusPath = old })
 	if got := readBootInstallStatus(); got != nil {
 		t.Fatalf("a missing file must read as unknown (nil), got %v", got)
+	}
+}
+
+func TestReadBootInstallStatusRefusesWhatTheEntrypointDidNotWrite(t *testing.T) {
+	dir := t.TempDir()
+	good := "claude\tfailed\tno_space\n"
+	old := bootInstallStatusPath
+	t.Cleanup(func() { bootInstallStatusPath = old })
+
+	write := func(name string, data []byte) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	bootInstallStatusPath = write("ok.tsv", []byte(good))
+	if got := readBootInstallStatus(); got["claude"].Reason != "no_space" {
+		t.Fatalf("baseline: %v", got)
+	}
+
+	// Larger than any real file: unknown, not truncated-and-parsed.
+	big := []byte(good)
+	for len(big) <= bootInstallMaxBytes {
+		big = append(big, []byte("codex\tok\t\n")...)
+	}
+	bootInstallStatusPath = write("big.tsv", big)
+	if got := readBootInstallStatus(); got != nil {
+		t.Errorf("an oversized file must read as unknown, got %d entries", len(got))
+	}
+
+	// A symlink to a fine file is not followed.
+	target := write("target.tsv", []byte(good))
+	link := filepath.Join(dir, "link.tsv")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	bootInstallStatusPath = link
+	if got := readBootInstallStatus(); got != nil {
+		t.Errorf("a symlink must read as unknown, got %v", got)
+	}
+
+	// A FIFO must neither block the reader nor be read.
+	fifo := filepath.Join(dir, "fifo.tsv")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skip("no FIFOs here:", err)
+	}
+	bootInstallStatusPath = fifo
+	done := make(chan map[string]bootInstall, 1)
+	go func() { done <- readBootInstallStatus() }()
+	select {
+	case got := <-done:
+		if got != nil {
+			t.Errorf("a FIFO must read as unknown, got %v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reading a FIFO blocked")
+	}
+
+	// A directory that is itself a symlink is not trusted either.
+	realDir := filepath.Join(dir, "real")
+	if err := os.Mkdir(realDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(realDir, "install.tsv"), []byte(good), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkDir := filepath.Join(dir, "linkdir")
+	if err := os.Symlink(realDir, linkDir); err != nil {
+		t.Fatal(err)
+	}
+	bootInstallStatusPath = filepath.Join(linkDir, "install.tsv")
+	if got := readBootInstallStatus(); got != nil {
+		t.Errorf("a symlinked directory must read as unknown, got %v", got)
 	}
 }
