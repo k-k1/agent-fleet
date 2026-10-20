@@ -439,3 +439,9 @@ func SpawnCreateRefusal(parent, kind string) *SpawnRefusal {
 	}
 	return spawnKindRefusal(kind)
 }
+
+// KindStartRefusal is set by package main: it answers a refusal for a create whose kind's CLI
+// failed to install at this workspace's start and is still not there. It lives behind a hook
+// because the status file belongs to the entrypoint and is read in package main
+// (boot_install_status.go). nil means nothing is known, and a create then proceeds.
+var KindStartRefusal func(kind string) *SpawnRefusal

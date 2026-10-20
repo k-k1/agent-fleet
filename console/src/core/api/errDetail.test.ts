@@ -50,4 +50,14 @@ describe("errDetail", () => {
   it("passes a plain string through unchanged", () => {
     expect(client.errDetail("plain")).toBe("plain");
   });
+
+  // The refusal of a start whose CLI did not install carries its own localized sentence; the
+  // server's English message after it would say the same thing twice.
+  it("shows the localized cli_install text alone", () => {
+    const e = { code: "cli_install_no_space", message: "codex could not be installed when this workspace started because the home disk is full." };
+    const got = client.errDetail(e);
+    expect(got).toBe(client.errText(e));
+    expect(got).not.toContain("codex could not");
+    expect(got.length).toBeGreaterThan(20);
+  });
 });

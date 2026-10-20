@@ -714,6 +714,15 @@ func createSession(w http.ResponseWriter, r *http.Request, req CreateReq) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_kind", err.Error())
 		return
 	}
+	// A kind whose CLI failed to install at start and is still absent cannot launch: say why
+	// (typically a full home) instead of the generic launch failure further down. Ahead of the
+	// idempotency claim, like the kind check: a refused create leaves no ledger entry.
+	if KindStartRefusal != nil {
+		if ref := KindStartRefusal(NormalizeKind(req.Kind)); ref != nil {
+			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+			return
+		}
+	}
 	// A create raised by another SESSION (ADR 0073) carries the parent's name, and the whole
 	// spawn regime hangs off it. Resolved here; the refusals run further down.
 	spawnParent := ""

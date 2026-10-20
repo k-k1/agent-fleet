@@ -16,11 +16,16 @@ package main
 // it describes: one boot's outcome. A missing or unreadable file means "unknown", never "ok".
 
 import (
+	"fmt"
 	"io"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
 // bootInstallStatusPath is a var only so tests can point it at a temp file. Empty (the normal
@@ -145,3 +150,61 @@ func validBootTool(s string) bool {
 	}
 	return true
 }
+
+// --- Refusing a start whose CLI did not install ---
+
+// bootInstallRefusalMsg is the English text of each reason. The Console shows its own wording
+// for the code (err.cli_install_<reason>); this one reaches callers that have no catalog
+// (create_session, the scheduler).
+var bootInstallRefusalMsg = map[string]string{
+	"no_space": "the home disk is full",
+	"network":  "a network error occurred",
+	"checksum": "the download did not match its checksum",
+	"other":    "an error occurred (see the workspace log)",
+}
+
+// bakedBinDir is where the image bakes CLIs; a var only so tests can point it elsewhere.
+var bakedBinDir = "/usr/local/bin"
+
+// cliPresent reports whether kind's CLI can be run now. It looks at the real binary, as the
+// entrypoint's own cli_present does plus PATH, and not only at the status file: the failure
+// recorded at start goes stale the moment the CLI is installed by hand or by a later start.
+func cliPresent(cmd string) bool {
+	if _, err := exec.LookPath(cmd); err == nil {
+		return true
+	}
+	if fi, err := os.Stat(filepath.Join(bakedBinDir, cmd)); err == nil && fi.Mode().IsRegular() {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(homeDir(), ".local", "bin", cmd))
+	return err == nil
+}
+
+// cliInstallRefusal refuses a create for kind only when this start's boot-install recorded
+// that kind's CLI as failed AND the CLI is not present now. Everything else proceeds: a
+// kind with no boot-installed CLI, "ok" / "skipped", an unknown or absent status, a failure
+// recorded for another tool, and a stale failure whose CLI has since appeared.
+func cliInstallRefusal(kind string) *sessionx.SpawnRefusal {
+	for _, spec := range toolSpecs {
+		if spec.Name != kind {
+			continue
+		}
+		bi, ok := readBootInstallStatus()[kind]
+		if !ok || bi.Status != "failed" || cliPresent(spec.Cmd) {
+			return nil
+		}
+		reason := bi.Reason
+		if _, known := bootInstallRefusalMsg[reason]; !known {
+			reason = "other"
+		}
+		return &sessionx.SpawnRefusal{
+			Status: http.StatusConflict,
+			Code:   "cli_install_" + reason,
+			Message: fmt.Sprintf("%s could not be installed when this workspace started because %s. Free some space and restart the workspace to try again.",
+				kind, bootInstallRefusalMsg[reason]),
+		}
+	}
+	return nil
+}
+
+func init() { sessionx.KindStartRefusal = cliInstallRefusal }

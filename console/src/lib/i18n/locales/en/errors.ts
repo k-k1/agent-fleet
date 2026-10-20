@@ -91,6 +91,10 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.member_origin_unavailable": "The workspace's agent just started or needs a restart. Try again in a minute.",
   "err.too_many_uploads": "Another memory import is already running. Try again when it finishes.",
   "err.upload_timeout": "The upload stalled or took too long. Try again.",
+  "err.cli_install_no_space": "This agent's CLI could not be installed when the workspace started because the home disk is full. Free some space, then restart the workspace.",
+  "err.cli_install_network": "This agent's CLI could not be installed when the workspace started because of a network error. Restart the workspace to try again.",
+  "err.cli_install_checksum": "This agent's CLI could not be installed when the workspace started because the download did not match its checksum. Restart the workspace to try again.",
+  "err.cli_install_other": "This agent's CLI could not be installed when the workspace started. See Settings › Toolchains and the workspace log.",
   "err.runtime_failed": "Couldn't start the agent. Wait a moment and try again.",
   // The line above is for failures that waiting fixes. A shared daemon that was not
   // started because the CLI is not signed in never fixes itself, so it gets its own
