@@ -180,9 +180,10 @@ run_block
 reset; mkdir -p "$T/bidir"; echo "claude\tfailed\tno_space" >"$T/bidir/install.tsv"
 run_block STUB_FREE_MB=9000
 [ "$(st claude)" != "claude failed no_space" ] || fail "the previous start's result was served"
-reset; mkdir -p "$T/real"; ln -s "$T/real" "$T/linkdir"
+reset; mkdir -p "$T/real"; chmod 0755 "$T/real"; ln -s "$T/real" "$T/linkdir"
 BI_DIR_OVERRIDE="$T/linkdir" run_block
 [ -z "$(ls -A "$T/real")" ] || fail "a symlinked status directory was used"
+[ "$(stat -c %a "$T/real")" = 755 ] || fail "a refused symlinked directory had its target chmod'ed"
 has 'boot-install agy' || fail "a rejected status directory broke the install"
 
 # 5. The prune runs before the installs, once.

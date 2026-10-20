@@ -339,8 +339,9 @@ cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
 # A later line for a tool wins. Never fatal: a status that cannot be written is a missing status.
 BI_DIR="${BI_DIR:-/tmp/af-boot-$(id -u)}"
 mkdir -m 700 "$BI_DIR" 2>/dev/null || true
-chmod 700 "$BI_DIR" 2>/dev/null || true
-if [ -d "$BI_DIR" ] && [ ! -L "$BI_DIR" ] && [ -O "$BI_DIR" ] && [ "$(stat -c %a "$BI_DIR" 2>/dev/null)" = 700 ]; then
+# Type and owner first: chmod follows a symlink, and a directory we refuse must stay untouched.
+if [ -d "$BI_DIR" ] && [ ! -L "$BI_DIR" ] && [ -O "$BI_DIR" ] \
+   && chmod 700 "$BI_DIR" 2>/dev/null && [ "$(stat -c %a "$BI_DIR" 2>/dev/null)" = 700 ]; then
   rm -f "$BI_DIR/install.tsv" "$BI_DIR/install.err" 2>/dev/null || true
   BI_STATUS="$BI_DIR/install.tsv"
   # stderr of the block being run, truncated for each block, so nothing piles up across starts
