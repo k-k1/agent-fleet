@@ -260,3 +260,35 @@ describe("CommandPalette memory mode", () => {
     expect(document.querySelector(".cp-talk-indexing")?.textContent).toMatch(/2/);
   });
 });
+
+describe("CommandPalette memory mode — reverse chord (#2412)", () => {
+  const reverse = () =>
+    act(() => {
+      input().dispatchEvent(
+        new KeyboardEvent("keydown", { code: "KeyP", key: "p", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }),
+      );
+    });
+  const activeLabel = () => document.querySelector(".cp-mode.on")?.textContent;
+
+  it("wraps from the first mode to the memory mode and steps back through it while the switch is on", async () => {
+    await mount();
+    act(() => useKeysStore.getState().openPalette());
+    const labels = tabs().map((b) => b.textContent);
+    expect(labels.at(-1)).toMatch(/^(メモリ|Memory)$/);
+    reverse();
+    expect(activeLabel()).toBe(labels.at(-1));
+    reverse();
+    expect(activeLabel()).toBe(labels.at(-2));
+  });
+
+  it("skips the memory mode when the switch is off, exactly as Tab does", async () => {
+    setSetting("agentMemory", false);
+    await mount();
+    act(() => useKeysStore.getState().openPalette());
+    expect(memoryTab()).toBeUndefined();
+    const labels = tabs().map((b) => b.textContent);
+    reverse();
+    expect(activeLabel()).toBe(labels.at(-1));
+    expect(activeLabel()).not.toMatch(/^(メモリ|Memory)$/);
+  });
+});
