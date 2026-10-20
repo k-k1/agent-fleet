@@ -251,3 +251,24 @@ describe("CommandPalette conversations mode", () => {
     expect(snippets()).toEqual(["back"]);
   });
 });
+
+describe("CommandPalette conversations mode — PageDown on an empty list (#2412)", () => {
+  it("leaves the first hit selected when PageDown was pressed before the hits arrived", async () => {
+    // PageDown while the search has no rows must not park the selection at -1: the hits that
+    // land later would have no highlighted row and Enter would do nothing.
+    searchBody = { hits: [], indexing: true, indexed: 0, total: 9 };
+    await typeQuery("alpha");
+    act(() => {
+      input().dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
+    });
+    // The same query is asked again while indexing; the hits land without any new typing.
+    searchBody = { hits: [hit("fixer", 3, "alpha beta")], indexing: false, indexed: 9, total: 9 };
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 3300));
+    });
+    expect(snippets()).toHaveLength(1);
+    expect(document.querySelector(".cp-item.sel")).not.toBeNull();
+    pressEnter();
+    expect(opened.map((o) => o.name)).toEqual(["fixer"]);
+  }, 10_000);
+});
