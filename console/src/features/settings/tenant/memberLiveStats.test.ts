@@ -21,7 +21,7 @@ describe("LivePoller", () => {
   it("fetches a wanted member once, then again after the interval", async () => {
     const load = vi.fn(async () => R);
     const got = vi.fn();
-    const p = new LivePoller(load, got, false, { interval: 15000, max: 3 });
+    const p = new LivePoller(load, got, false, { interval: 15000, max: 3, dwell: 0 });
     p.setWanted(["a"]);
     await flush();
     expect(load).toHaveBeenCalledTimes(1);
@@ -40,7 +40,7 @@ describe("LivePoller", () => {
       pending.push(d);
       return d.p;
     });
-    const p = new LivePoller(load, vi.fn(), false, { interval: 1000, max: 3 });
+    const p = new LivePoller(load, vi.fn(), false, { interval: 1000, max: 3, dwell: 0 });
     p.setWanted(["a", "b", "c", "d", "e"]);
     await flush();
     expect(load).toHaveBeenCalledTimes(3);
@@ -55,7 +55,7 @@ describe("LivePoller", () => {
 
   it("does not fetch when scrolled back within the interval, and drops unwanted members", async () => {
     const load = vi.fn(async () => R);
-    const p = new LivePoller(load, vi.fn(), false, { interval: 15000, max: 3 });
+    const p = new LivePoller(load, vi.fn(), false, { interval: 15000, max: 3, dwell: 0 });
     p.setWanted(["a"]);
     await flush();
     p.setWanted([]);
@@ -73,7 +73,7 @@ describe("LivePoller", () => {
 
   it("pauses while hidden and resumes with one catch-up fetch", async () => {
     const load = vi.fn(async () => R);
-    const p = new LivePoller(load, vi.fn(), true, { interval: 1000, max: 3 });
+    const p = new LivePoller(load, vi.fn(), true, { interval: 1000, max: 3, dwell: 0 });
     p.setWanted(["a"]);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(load).not.toHaveBeenCalled();
@@ -91,7 +91,7 @@ describe("LivePoller", () => {
       throw new Error("x");
     });
     const got = vi.fn();
-    const p = new LivePoller(load, got, false, { interval: 1000, max: 3 });
+    const p = new LivePoller(load, got, false, { interval: 1000, max: 3, dwell: 0 });
     p.setWanted(["a"]);
     await flush();
     expect(load).toHaveBeenCalledTimes(1);
@@ -109,7 +109,7 @@ describe("LivePoller", () => {
     const d = deferred();
     const got = vi.fn();
     const load = vi.fn(() => d.p);
-    const p = new LivePoller(load, got, false);
+    const p = new LivePoller(load, got, false, { interval: 15000, max: 3, dwell: 0 });
     p.setWanted(["a"]);
     await flush();
     p.stop();
@@ -117,6 +117,67 @@ describe("LivePoller", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(got).not.toHaveBeenCalled();
     expect(load).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("LivePoller dwell and abort", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  const opts = { interval: 15000, max: 3, dwell: 300 };
+  // A load that stays pending and records its signal.
+  function slowLoad() {
+    const signals: AbortSignal[] = [];
+    const load = vi.fn((_k: string, s: AbortSignal) => {
+      signals.push(s);
+      return new Promise<LiveReading | null>(() => {});
+    });
+    return { load, signals };
+  }
+
+  it("counts the dwell per member, so churn elsewhere cannot postpone a long-visible card", async () => {
+    const load = vi.fn(async (_k: string) => R);
+    const p = new LivePoller(load, vi.fn(), false, opts);
+    p.setWanted(["a"]);
+    for (let i = 0; i < 6; i++) {
+      await vi.advanceTimersByTimeAsync(100);
+      p.setWanted(i % 2 ? ["a"] : ["a", "x" + i]); // others flicker in and out
+    }
+    const keys = load.mock.calls.map((c) => c[0]);
+    expect(keys).toContain("a");
+    expect(keys.filter((k) => k !== "a")).toEqual([]); // none of the flickering ones stayed 300 ms
+    p.stop();
+  });
+
+  it("applies removal at once: a hidden member is not started when a slot frees", async () => {
+    const pending: ((r: LiveReading) => void)[] = [];
+    const load = vi.fn(
+      (_k: string) => new Promise<LiveReading | null>((res) => pending.push(res)),
+    );
+    const p = new LivePoller(load, vi.fn(), false, { ...opts, dwell: 0 });
+    p.setWanted(["a", "b", "c", "d"]);
+    await flush();
+    expect(load).toHaveBeenCalledTimes(3);
+    p.setWanted([]); // the filter hides everyone
+    pending[0](R); // a finished a moment later
+    await flush();
+    expect(load).toHaveBeenCalledTimes(3);
+    p.stop();
+  });
+
+  it("aborts the request of a member that is removed, on pause and on stop, without backing off", async () => {
+    const { load, signals } = slowLoad();
+    const p = new LivePoller(load, vi.fn(), false, { ...opts, dwell: 0 });
+    p.setWanted(["a", "b", "c"]);
+    await flush();
+    p.setWanted(["a", "b"]);
+    expect(signals.map((s) => s.aborted)).toEqual([false, false, true]);
+    p.setPaused(true);
+    expect(signals.map((s) => s.aborted)).toEqual([false, false, true].map(() => true));
+    p.setPaused(false); // aborted is not a failure: both are due again at once
+    await flush();
+    expect(load).toHaveBeenCalledTimes(5);
+    p.stop();
+    expect(signals.slice(3).every((s) => s.aborted)).toBe(true);
   });
 });
 

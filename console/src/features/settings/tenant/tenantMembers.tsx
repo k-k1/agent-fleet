@@ -276,7 +276,7 @@ function MemberCard({
       </span>
       <MemberSessions m={m} />
       <MemberDisk m={m} now={now} />
-      {running && <MemberLive live={live} />}
+      {running && <MemberLive live={live} cpuCores={sizing.cpu_effective && m.cpu_limit ? m.cpu_limit / 1024 : 0} />}
       <span className="mc-foot">
         <MemberIdleChip idle={m.idle} state={m.state} />
         <MemberAutoStopChip autoStop={m.auto_stop} />
@@ -391,7 +391,7 @@ function MemberDisk({ m, now }: { m: Member; now: number }) {
 // is on screen. Each bar sits beside its numbers; until the first reading a muted placeholder holds
 // the space so the card does not jump. A memory total is absent when the runtime reports no cap,
 // and then the used figure stands alone without a bar.
-function MemberLive({ live }: { live?: LiveReading }) {
+function MemberLive({ live, cpuCores }: { live?: LiveReading; cpuCores: number }) {
   const tr = useT();
   if (!live) return <span className="mc-live muted">{tr("admin.roster_live_wait")}</span>;
   const memRatio = live.mem_max ? live.mem_used / live.mem_max : null;
@@ -403,11 +403,22 @@ function MemberLive({ live }: { live?: LiveReading }) {
           total: fmtGiB(live.mem_max!),
           pct: String(Math.round(memRatio * 100)),
         });
-  const cpuText = live.cpu_pct == null ? "" : tr("admin.roster_cpu_gauge", { pct: String(Math.round(live.cpu_pct)) });
+  // cpu_pct is 100 per busy core, not a share of the member's limit. The bar needs a known
+  // effective limit (cpu_effective); without one only the number is shown, labelled with its unit.
+  const cpuRatio = live.cpu_pct == null || cpuCores <= 0 ? null : live.cpu_pct / (cpuCores * 100);
+  const cpuText =
+    live.cpu_pct == null
+      ? ""
+      : cpuRatio === null
+        ? tr("admin.roster_cpu_cores", { pct: String(Math.round(live.cpu_pct)) })
+        : tr("admin.roster_cpu_gauge", {
+            pct: String(Math.round(cpuRatio * 100)),
+            n: String(Math.round(cpuCores * 100) / 100),
+          });
   return (
     <span className="mc-live">
       <LiveRow label={tr("admin.roster_mem_label")} text={memText} ratio={memRatio} />
-      {cpuText && <LiveRow label={tr("admin.roster_cpu_label")} text={cpuText} ratio={live.cpu_pct! / 100} />}
+      {cpuText && <LiveRow label={tr("admin.roster_cpu_label")} text={cpuText} ratio={cpuRatio} />}
     </span>
   );
 }

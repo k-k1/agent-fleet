@@ -14,46 +14,67 @@ export type LiveReading = { mem_used: number; mem_max?: number; cpu_pct?: number
 
 export const LIVE_INTERVAL_MS = 15_000;
 export const LIVE_MAX_CONCURRENT = 3;
-// A card must stay wanted this long before it is fetched: scrolling fast past thirty cards would
+// A card must stay wanted this long (per member) before it is fetched: scrolling fast past thirty cards would
 // otherwise queue a request for each one that flashed through the viewport (measured: 27 of 30
 // running cards fetched during one fast pass).
 export const LIVE_DWELL_MS = 300;
 // After n consecutive failures the next try waits interval × 2^n, n capped here (15 s → 2 min).
 const MAX_BACKOFF_DOUBLINGS = 3;
 
-type Entry = { nextAt: number; failures: number; inflight: boolean };
+type Entry = { nextAt: number; failures: number; ctl?: AbortController };
+
+type Opts = { interval: number; max: number; dwell: number };
 
 export class LivePoller {
   private entries = new Map<string, Entry>();
-  private wanted = new Set<string>();
+  // member → when it became wanted (continuously); a member is fetched only after `dwell` of that.
+  private wanted = new Map<string, number>();
   private inflight = 0;
   private paused: boolean;
   private stopped = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
-    private load: (key: string) => Promise<LiveReading | null>,
+    private load: (key: string, signal: AbortSignal) => Promise<LiveReading | null>,
     private onReading: (key: string, r: LiveReading | null) => void,
     paused: boolean,
-    private opts = { interval: LIVE_INTERVAL_MS, max: LIVE_MAX_CONCURRENT },
+    private opts: Opts = { interval: LIVE_INTERVAL_MS, max: LIVE_MAX_CONCURRENT, dwell: LIVE_DWELL_MS },
   ) {
     this.paused = paused;
   }
 
+  // Removal is immediate (and aborts that member's request); only an addition waits out the dwell.
   setWanted(keys: Iterable<string>) {
-    this.wanted = new Set(keys);
+    const now = Date.now();
+    const next = new Map<string, number>();
+    for (const k of keys) next.set(k, this.wanted.get(k) ?? now);
+    for (const k of this.wanted.keys()) if (!next.has(k)) this.abort(k);
+    this.wanted = next;
     this.pump();
   }
 
   setPaused(p: boolean) {
     this.paused = p;
-    if (p) this.clearTimer();
-    else this.pump();
+    if (p) {
+      this.clearTimer();
+      for (const k of this.entries.keys()) this.abort(k);
+    } else this.pump();
   }
 
   stop() {
     this.stopped = true;
     this.clearTimer();
+    for (const k of this.entries.keys()) this.abort(k);
+  }
+
+  // Cancel the member's request in flight, if any. An abort is not a failure: no back-off, and the
+  // slot it held is free at once.
+  private abort(key: string) {
+    const e = this.entries.get(key);
+    if (!e?.ctl) return;
+    e.ctl.abort();
+    e.ctl = undefined;
+    this.inflight--;
   }
 
   private clearTimer() {
@@ -69,31 +90,33 @@ export class LivePoller {
     if (this.stopped || this.paused) return;
     const now = Date.now();
     let wake = Infinity;
-    for (const key of this.wanted) {
+    for (const [key, since] of this.wanted) {
       let e = this.entries.get(key);
-      if (!e) this.entries.set(key, (e = { nextAt: 0, failures: 0, inflight: false }));
-      if (e.inflight) continue;
-      if (e.nextAt <= now && this.inflight < this.opts.max) this.start(key, e);
-      else if (e.nextAt > now) wake = Math.min(wake, e.nextAt);
+      if (!e) this.entries.set(key, (e = { nextAt: 0, failures: 0 }));
+      if (e.ctl) continue;
+      const due = Math.max(e.nextAt, since + this.opts.dwell);
+      if (due <= now && this.inflight < this.opts.max) this.start(key, e);
+      else if (due > now) wake = Math.min(wake, due);
     }
     // Members left over because the cap was full are picked up by pump() when a request ends.
     if (wake !== Infinity) this.timer = setTimeout(() => this.pump(), Math.max(0, wake - now));
   }
 
   private start(key: string, e: Entry) {
-    e.inflight = true;
+    const ctl = new AbortController();
+    e.ctl = ctl;
     this.inflight++;
     const done = (r: LiveReading | null, ok: boolean) => {
-      e.inflight = false;
+      if (e.ctl !== ctl) return; // aborted: already accounted for
+      e.ctl = undefined;
       this.inflight--;
       e.failures = ok ? 0 : e.failures + 1;
-      const wait = this.opts.interval * 2 ** Math.min(e.failures, MAX_BACKOFF_DOUBLINGS);
-      e.nextAt = Date.now() + wait;
+      e.nextAt = Date.now() + this.opts.interval * 2 ** Math.min(e.failures, MAX_BACKOFF_DOUBLINGS);
       if (this.stopped) return;
       if (ok) this.onReading(key, r);
       this.pump();
     };
-    this.load(key).then(
+    this.load(key, ctl.signal).then(
       (r) => done(r, true),
       () => done(null, false),
     );
@@ -120,8 +143,8 @@ export function useLiveStats(slug: string, wanted: string[]): Record<string, Liv
   useEffect(() => {
     setReadings({});
     const p = new LivePoller(
-      async (key) => {
-        const s = await api(`api/admin/tenants/${encodeURIComponent(slug)}/members/${encodeURIComponent(key)}/stats?disk=0`);
+      async (key, signal) => {
+        const s = await api(`api/admin/tenants/${encodeURIComponent(slug)}/members/${encodeURIComponent(key)}/stats?disk=0`, { signal });
         if (s?.error) throw new Error("stats failed"); // counts as a failure: back off, keep the last reading
         return parseReading(s);
       },
@@ -151,8 +174,7 @@ export function useLiveStats(slug: string, wanted: string[]): Record<string, Liv
 
   // Declared after the effect above so a strict-mode remount re-creates the poller first.
   useEffect(() => {
-    const t = setTimeout(() => poller.current?.setWanted(wantedKey ? wantedKey.split("\n") : []), LIVE_DWELL_MS);
-    return () => clearTimeout(t);
+    poller.current?.setWanted(wantedKey ? wantedKey.split("\n") : []);
   }, [slug, wantedKey]);
 
   return readings;

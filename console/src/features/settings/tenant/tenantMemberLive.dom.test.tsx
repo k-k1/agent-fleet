@@ -46,10 +46,12 @@ async function show(t: string, v: boolean) {
 
 const ROSTER = [
   { user_key: "u-alice", email: "alice@x.com", role: "member", state: "running", status: "active" },
-  { user_key: "u-bob", email: "bob@x.com", role: "member", state: "running", status: "active" },
+  { user_key: "u-bob", email: "bob@x.com", role: "member", state: "running", status: "active", cpu_limit: 4096 },
   { user_key: "u-carol", email: "carol@x.com", role: "member", state: "stopped", status: "active" },
 ];
 const STATS = { running: true, mem_used: 2 * 1024 ** 3, mem_max: 8 * 1024 ** 3, cpu_pct: 12.4 };
+// cpu_pct is 100 per busy core: bob (4 vCPU limit) uses one core, alice (no limit) two.
+const statsFor = (p: string) => (p.includes("u-bob") ? { ...STATS, cpu_pct: 100 } : p.includes("u-alice") ? { ...STATS, cpu_pct: 200 } : STATS);
 const statsCalls = () => api.mock.calls.map((c) => c[0] as string).filter((p) => p.includes("/stats"));
 
 let root: Root | null = null;
@@ -58,9 +60,9 @@ let host: HTMLDivElement | null = null;
 async function mount() {
   api.mockImplementation((p: string) =>
     p === "api/admin/workspace-sizing"
-      ? Promise.resolve({})
+      ? Promise.resolve({ runtime: "docker", cpu_effective: true })
       : p.includes("/stats")
-        ? Promise.resolve(STATS)
+        ? Promise.resolve(statsFor(p))
         : Promise.resolve({ members: ROSTER }),
   );
   host = document.createElement("div");
@@ -111,9 +113,9 @@ describe("live memory / CPU on roster cards", () => {
     expect(statsCalls()).toEqual(["api/admin/tenants/acme/members/u-alice/stats?disk=0"]);
     const alice = document.querySelector(".member-card")!;
     expect(alice.querySelector(".mc-live")?.textContent).toContain("Memory 2.0 / 8.0 GiB (25%)");
-    expect(alice.querySelector(".mc-live")?.textContent).toContain("CPU 12%");
-    // Every bar has its number beside it.
-    expect(alice.querySelectorAll(".mc-live [role=progressbar]").length).toBe(2);
+    // No effective CPU limit known: the raw figure with its unit, and no bar to mislead.
+    expect(alice.querySelector(".mc-live")?.textContent).toContain("CPU 200% (100% = 1 core)");
+    expect(alice.querySelectorAll(".mc-live [role=progressbar]").length).toBe(1);
     // Stopped card: nothing, no placeholder.
     const carol = [...document.querySelectorAll(".member-card")].find((c) => c.textContent?.includes("carol"))!;
     expect(carol.querySelector(".mc-live")).toBeNull();
@@ -130,6 +132,40 @@ describe("live memory / CPU on roster cards", () => {
       await vi.advanceTimersByTimeAsync(60_000);
     });
     expect(statsCalls()).toEqual([]);
+  });
+
+  it("scales the CPU bar to the effective limit, not to one core", async () => {
+    await mount();
+    await show("bob@x.com", true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(LIVE_DWELL_MS);
+    });
+    const bob = [...document.querySelectorAll(".member-card")].find((c) => c.textContent?.includes("bob"))!;
+    expect(bob.querySelector(".mc-live")?.textContent).toContain("CPU 25% of 4 vCPU limit");
+    const bars = bob.querySelectorAll(".mc-live [role=progressbar]");
+    expect(bars).toHaveLength(2);
+    expect(bars[1].getAttribute("aria-valuenow")).toBe("25");
+  });
+
+  it("aborts a slow request on unmount and the remounted panel starts clean", async () => {
+    const signals: AbortSignal[] = [];
+    await mount();
+    api.mockImplementation((p: string, init?: RequestInit) => {
+      if (p.includes("/stats")) {
+        signals.push(init!.signal!);
+        return new Promise(() => {});
+      }
+      return Promise.resolve(p === "api/admin/workspace-sizing" ? {} : { members: ROSTER });
+    });
+    await show("alice@x.com", true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(LIVE_DWELL_MS);
+    });
+    expect(signals).toHaveLength(1);
+    expect(signals[0].aborted).toBe(false);
+    act(() => root!.unmount());
+    root = null;
+    expect(signals[0].aborted).toBe(true);
   });
 
   it("keeps the placeholder text until the first reading lands", async () => {
