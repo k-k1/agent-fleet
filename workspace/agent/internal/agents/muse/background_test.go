@@ -317,3 +317,11 @@ func TestNoBackgroundBusyWithoutALiveHost(t *testing.T) {
 		t.Error("an unknown session reads busy")
 	}
 }
+
+// A `leave` close (muse 1.4.11) is an orderly unload like `idle`: it clears the session's
+// background work and is not a failure. The reason is open and the handler must not branch on it.
+func TestSessionClosedLeaveClearsItsOwnSession(t *testing.T) {
+	h, host, m := bgSession(t)
+	host.Notify(msp.NotificationSessionClosed, msp.SessionClosedParams{SessionID: h.sid, Reason: msp.SessionClosedReasonLeave})
+	waitBg(t, m.Name, false)
+}

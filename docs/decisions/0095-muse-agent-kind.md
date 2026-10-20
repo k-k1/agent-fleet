@@ -3159,3 +3159,22 @@ needs a real turn; until that is measured the session.jsonl reader (#1696) stays
 
 The same cost applies again: the 1.4.8 bundle is red against a 1.4.7 binary until `MUSE_VERSION`
 moves; measured: 1.4.8 green, 1.4.7 red. The pin bump is cli-pin-bump's.
+
+### Note 2026-10-20 — bundle bumped to 1.4.11-R6667.1 (#2394)
+
+`internal/msp/schema` and `types_gen.go` now carry the 1.4.11 export (fingerprint
+`sha256:f282ad16…`, equal to the release manifest's `msp_schema_fingerprint`). The contract's
+three breaks were new values in open enums: `ItemKind` gained `damagedRange` and
+`scheduledFire`, `SessionClosedReason` gained `leave`. Enums are bare strings, so nothing failed
+to decode; the question was only what the client does with them.
+
+- `leave` (a `session/leave` unload) is handled like `idle`: `session/closed` clears the session's
+  background work and the reason is never branched on, so it is neither an error nor a crash.
+- `scheduledFire` and `damagedRange` take the generic item path (ADR rule: unknown kinds render,
+  never vanish). Neither carries `label`/`fallbackText` by contract, so the mirror derives a
+  one-line summary from the typed members (`damagedRange`: records missing, unreadable lines;
+  `scheduledFire`: job id). A damaged log range is otherwise invisible.
+- The additive `session/leave`, recovery and monitor-inbox surface is generated but unused.
+
+The same cost applies again: the 1.4.11 bundle is red against a 1.4.10 binary until
+`MUSE_VERSION` moves; measured: 1.4.11 green, 1.4.10 red. The pin bump is cli-pin-bump's.
