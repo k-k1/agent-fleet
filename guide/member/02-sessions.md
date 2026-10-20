@@ -670,8 +670,9 @@ The dialog shows, before you confirm:
 
 - **The agents it can move to.** The same agent is never offered (it draws on the same account's
   quota); to continue in the same kind, use **"Branch here"** above where the kind supports it.
-  Agents that cannot read the file, or are not connected, are listed with the reason. Where the
-  workspace bar shows an agent's usage (claude, codex, muse), its current usage is shown too.
+  Agents that cannot read the file, or are not connected, are listed with the reason. Kiro can
+  receive a move; Cursor is not offered yet, because its reading of the file has not been
+  verified through the Managed driver. Where the workspace bar shows an agent's usage (claude, codex, muse), its current usage is shown too.
 - **Uncommitted changes** in the working copy. The move never commits, stashes or discards them;
   the new session takes them over as they are, so tidy them first if you need to.
 - Instructions still queued, messages from other sessions not yet delivered (both go into the

@@ -36,18 +36,18 @@ import (
 )
 
 // moveTargetKinds are the kinds a move may target: each can read a file outside its working
-// folder, which is where the handover lives (decision 9).
+// folder without a prompt, which is where the handover lives (decision 9). Kiro joined after it
+// read a file under ~/.af-work/ in its default permission mode, Managed, with no approval.
 var moveTargetKinds = []string{
 	session.KindClaude, session.KindCodex, session.KindOpencode,
-	session.KindCopilot, session.KindAgy, session.KindMuse,
+	session.KindCopilot, session.KindAgy, session.KindMuse, session.KindKiro,
 }
 
-// moveUnmeasuredTargets are kinds the ADR asks to measure first: whether cursor (plan mode) and
-// kiro (its default permission mode) read the file without a prompt the user did not expect.
-// Nobody has run that measurement (#2252), so they stay off until moveUnmeasuredAllowed flips.
-var moveUnmeasuredTargets = []string{session.KindCursor, session.KindKiro}
-
-const moveUnmeasuredAllowed = false
+// moveUnmeasuredTargets stay off until the read has been measured through the real driver.
+// Cursor read the file in plan mode through the bare CLI, but the Managed driver path (trust
+// handling, flags) has not run: its only attempt hit a plan limit on the first turn. Moving it
+// into moveTargetKinds is the whole change once that measurement exists.
+var moveUnmeasuredTargets = []string{session.KindCursor}
 
 // Reasons a kind is not offered as a target, as the preview reports them.
 const (
@@ -67,9 +67,6 @@ func moveTargetReason(source, target string) string {
 	case slices.Contains(moveTargetKinds, target):
 		return ""
 	case slices.Contains(moveUnmeasuredTargets, target):
-		if moveUnmeasuredAllowed {
-			return ""
-		}
 		return moveTargetNotMeasured
 	case target == session.KindLcpp:
 		return moveTargetCannotRead

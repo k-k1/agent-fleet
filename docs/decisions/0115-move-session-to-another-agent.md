@@ -452,3 +452,16 @@ it is not yet.
   (least used first), then kinds with no usage source or reading, then those at 100% in a window.
   The first of them is the default until the user chooses. The usage is the same three sources as
   the WS bar; a kind without one is judged neither way and stays selectable and unmarked.
+
+## Addendum (2026-10-20) — kiro is a target, cursor stays off (#2252)
+
+- **Measured.** Kiro, Managed, default permission mode (kiro-cli 2.32.0, claude-haiku-4.5): a
+  first-turn message naming a file under `~/.af-work/<its own name>/`, outside its working
+  folder, made it read the file and return the file's random token, with no approval prompt.
+  Cursor through the bare CLI (`cursor-agent -p --plan --trust --model auto`, 2026.10.18): it read
+  a file outside its cwd under `~/.af-work/` and returned the token, with no approval.
+- **Not measured.** Kiro Terminal (TUI). Cursor Managed: the driver run answered "Upgrade your
+  plan to continue" on its first turn (account plan), so the driver's trust handling and flags are
+  unmeasured. Cursor Terminal.
+- **Decision.** Kiro is now a move target. Cursor stays off, reported as `not_measured`, until it
+  can be measured through the Managed driver. Follow-ups: #2252.
