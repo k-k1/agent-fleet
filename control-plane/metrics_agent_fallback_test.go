@@ -53,7 +53,12 @@ func statsAgent(t *testing.T, status int, body string) *httptest.Server {
 
 func memberStatsJSON(t *testing.T, mgr *manager) map[string]any {
 	t.Helper()
-	r := httptest.NewRequest(http.MethodGet, "/api/admin/tenants/sales/members/leaver-acme-co-jp/stats", nil)
+	return memberStatsJSONAt(t, mgr, "")
+}
+
+func memberStatsJSONAt(t *testing.T, mgr *manager, query string) map[string]any {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodGet, "/api/admin/tenants/sales/members/leaver-acme-co-jp/stats"+query, nil)
 	r.SetPathValue("slug", "sales")
 	r.SetPathValue("key", "leaver-acme-co-jp")
 	r.Header.Set("X-Forwarded-Email", "boss@acme.co.jp")
@@ -198,5 +203,38 @@ func TestWorkspaceStatsMarksAMembersOwnHomeVolume(t *testing.T) {
 		if out["disk_used"] == nil {
 			t.Errorf("%s: disk_used missing, the agent path did not run", c.name)
 		}
+	}
+}
+
+// The roster cards poll /stats for mem/CPU only; ?disk=0 must skip the host-side du they
+// would otherwise trigger per card per poll, while the member detail (no parameter) still
+// gets the du figure.
+func TestMemberStatsDiskOptOutSkipsDU(t *testing.T) {
+	srv := statsAgent(t, http.StatusOK, `{"mem_used":100,"mem_max":200,"cpu_pct":3}`)
+	_, mgr, _, _ := destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
+	mgr.dataRoot = t.TempDir()
+	diskUsages.m = map[string]diskSample{}
+	prevDU := runDU
+	t.Cleanup(func() { runDU = prevDU; diskUsages.m = map[string]diskSample{} })
+	calls := 0
+	runDU = func(context.Context, string) ([]byte, error) {
+		calls++
+		return []byte("4096\tx"), nil
+	}
+
+	out := memberStatsJSONAt(t, mgr, "?disk=0")
+	if calls != 0 {
+		t.Errorf("du ran %d times with ?disk=0, want 0", calls)
+	}
+	if _, ok := out["disk_used"]; ok {
+		t.Errorf("disk_used = %v with ?disk=0, want absent", out["disk_used"])
+	}
+	if out["mem_used"] != float64(100) || out["cpu_pct"] != float64(3) {
+		t.Errorf("mem/cpu = %v/%v, want 100/3 regardless of the opt-out", out["mem_used"], out["cpu_pct"])
+	}
+
+	out = memberStatsJSON(t, mgr)
+	if calls != 1 || out["disk_used"] != float64(4096) {
+		t.Errorf("without the parameter: du calls=%d disk_used=%v, want 1 and 4096", calls, out["disk_used"])
 	}
 }
