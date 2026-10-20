@@ -28,7 +28,9 @@ import {
   linkifyPreviewCode,
   livePortsKey,
   markPortLiveness,
+  syncCodePreviewLinks,
 } from "./parts/mdPreviewLinks.ts";
+import type { PreviewLinkWiring } from "./parts/mdPreviewLinks.ts";
 import { usePortLinkMenu } from "../preview/portLinkContext.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 
@@ -156,6 +158,7 @@ export function MarkdownView({
   // The Jira project keys arrive on their own request (jiraProjects.ts); one landing re-runs the linkifier.
   const wiJira = useJiraProjects((s) => (workItemRefs ? s.keys.join(",") : ""));
   const wiInputs = `${wiOrigin}#${wiClones}#${wiCache}#${wiJira}`;
+  const previewWiringRef = useRef<PreviewLinkWiring | undefined>(undefined);
   const relink = useRef<{ run: () => void; inputs: string } | null>(null);
 
   useEffect(() => {
@@ -213,8 +216,9 @@ export function MarkdownView({
       previewWiring,
     );
     // Before the linkifiers: they skip anchors, so a loopback URL in backticks is claimed here.
+    previewWiringRef.current = previewWiring;
     if (previewWiring) {
-      linkifyPreviewCode(el, previewWiring);
+      linkifyPreviewCode(el, previewWiring, portsKeyRef.current);
       if (hasPreviewLinks(el)) {
         ensurePreviewInfo();
         markPortLiveness(el, portsKeyRef.current);
@@ -357,10 +361,18 @@ export function MarkdownView({
     r.run();
   }, [wiInputs]);
 
-  // Reactive without a re-parse: only the dimming of the links already rendered is redone.
+  // Reactive without a re-parse: only the links already rendered are redone (inline code wrapped
+  // or unwrapped by its port, the rest dimmed).
   useEffect(() => {
-    if (ref.current && previewLinks) markPortLiveness(ref.current, portsKey);
-  }, [portsKey, previewLinks]);
+    const el = ref.current;
+    const w = previewWiringRef.current;
+    if (!el || !w || !previewLinks || streaming) return;
+    syncCodePreviewLinks(el, portsKey, w);
+    if (hasPreviewLinks(el)) {
+      ensurePreviewInfo();
+      markPortLiveness(el, portsKey);
+    }
+  }, [portsKey, previewLinks, streaming]);
 
   return (
     <div

@@ -78,10 +78,17 @@ export function wirePreviewLink(a: HTMLAnchorElement, target: { port: number; pa
   });
 }
 
+/** The ports in a `livePortsKey`, or null while the session list has not loaded. */
+function livePorts(key: string): Set<number> | null {
+  return key ? new Set(key.slice(2).split(",").filter(Boolean).map(Number)) : null;
+}
+
 /** Link inline code that is exactly a loopback URL (`http://localhost:5173/`, how agents usually
  *  write one). The `<code>` is wrapped, not rewritten, so its text is untouched. Fenced blocks
- *  and code already inside a link are skipped. */
-export function linkifyPreviewCode(el: HTMLElement, w: PreviewLinkWiring) {
+ *  and code already inside a link are skipped. With `liveKey` (a `livePortsKey`), code naming a
+ *  port that is known not to be listened on is left as plain code; "" or absent decides nothing. */
+export function linkifyPreviewCode(el: HTMLElement, w: PreviewLinkWiring, liveKey = "") {
+  const live = livePorts(liveKey);
   el.querySelectorAll<HTMLElement>("code").forEach((code) => {
     if (code.closest("pre,a") || code.childElementCount) return;
     const text = (code.textContent || "").trim();
@@ -91,8 +98,10 @@ export function linkifyPreviewCode(el: HTMLElement, w: PreviewLinkWiring) {
     if (URL_STOP.test(text)) return;
     const target = loopbackTarget(text);
     if (!target) return;
+    if (live && !live.has(target.port)) return;
     const a = document.createElement("a");
     a.setAttribute("href", text);
+    a.dataset.pvCode = "";
     code.replaceWith(a);
     a.append(code);
     wirePreviewLink(a, target, w);
@@ -108,10 +117,31 @@ export function livePortsKey(sessions: Session[], loaded: boolean): string {
   return "p:" + [...ports].sort((a, b) => a - b).join(",");
 }
 
+/** Bring the inline-code links in line with the live ports: unwrap the ones whose port is known
+ *  idle, wrap the plain code whose port is (now) listened on. Only once the session list has
+ *  loaded (`key` non-empty); before that every loopback code stays linked, never decided on a
+ *  guess. Idempotent, so a session-list update that changes nothing here touches no node.
+ *  A server started outside any session's process tree is not in the list, so its code is
+ *  not linked (bare autolinks still are, dimmed). */
+export function syncCodePreviewLinks(el: HTMLElement, key: string, w: PreviewLinkWiring) {
+  const live = livePorts(key);
+  if (live) {
+    el.querySelectorAll<HTMLAnchorElement>("a[data-pv-code]").forEach((a) => {
+      if (live.has(Number(a.dataset.pvPort))) return;
+      const code = a.firstElementChild;
+      // The listeners die with the anchor; a menu or long press pending on it is guarded by
+      // isConnected in wirePreviewLink.
+      if (code) a.replaceWith(code);
+    });
+  }
+  linkifyPreviewCode(el, w, key);
+}
+
 /** Dim the preview links whose port nobody listens on, without touching the rest of the DOM.
- *  The link still opens: the server may have been started outside a session's process tree. */
+ *  A bare autolink still opens (the server may have been started outside a session's process
+ *  tree); inline code is unlinked instead, see syncCodePreviewLinks. */
 export function markPortLiveness(el: HTMLElement, key: string) {
-  const live = key ? new Set(key.slice(2).split(",").filter(Boolean).map(Number)) : null;
+  const live = livePorts(key);
   el.querySelectorAll<HTMLAnchorElement>("a[data-pv-port]").forEach((a) => {
     const idle = !!live && !live.has(Number(a.dataset.pvPort));
     a.classList.toggle("pv-idle", idle);

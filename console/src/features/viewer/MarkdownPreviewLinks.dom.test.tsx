@@ -259,4 +259,53 @@ describe("MarkdownView previewLinks", () => {
     await click(pv()[1]);
     expect(openTarget).toHaveBeenCalled();
   });
+
+  describe("inline code of an idle port (#2426)", () => {
+    const code = "`http://localhost:8080/` `http://localhost:9090/`";
+    const setSessions = (ports: number[] | null) =>
+      act(async () => {
+        useSessionsStore.setState(ports === null ? { loaded: false, sessions: [] } : { loaded: true, sessions: [{ name: "s", alive: true, ports } as never] });
+      });
+    const linked = () => pv().map((a) => a.dataset.pvPort);
+    const codes = () => [...host.querySelectorAll("code")].map((c) => c.textContent);
+
+    it("links every loopback code while the session list has not loaded", async () => {
+      await render(code, { previewLinks: true });
+      expect(linked()).toEqual(["8080", "9090"]);
+    });
+
+    it("leaves code of an absent port plain once loaded, and links the listened one", async () => {
+      await setSessions([8080]);
+      await render(code, { previewLinks: true });
+      expect(linked()).toEqual(["8080"]);
+      expect(codes()).toEqual(["http://localhost:8080/", "http://localhost:9090/"]);
+      expect(host.querySelector("code")!.closest("a")).not.toBeNull();
+      expect(host.querySelectorAll("code")[1].closest("a")).toBeNull();
+    });
+
+    it("unwraps when the list loads later, relinks when the port appears, unwraps when it goes", async () => {
+      await render(code, { previewLinks: true });
+      expect(linked()).toEqual(["8080", "9090"]);
+      await setSessions([8080]);
+      expect(linked()).toEqual(["8080"]);
+      const first = pv()[0];
+      await setSessions([8080, 9090]);
+      expect(linked()).toEqual(["8080", "9090"]);
+      expect(pv()[0]).toBe(first); // untouched by the update
+      expect(host.querySelectorAll("a a")).toHaveLength(0);
+      await setSessions([]);
+      expect(linked()).toEqual([]);
+      expect(codes()).toEqual(["http://localhost:8080/", "http://localhost:9090/"]);
+      await setSessions([9090]);
+      await click(pv()[0]);
+      expect(openTarget).toHaveBeenCalledTimes(1); // the relinked anchor is wired once
+    });
+
+    it("keeps a bare autolink, only dimmed", async () => {
+      await setSessions([]);
+      await render("http://localhost:8080/", { previewLinks: true });
+      expect(pv()).toHaveLength(1);
+      expect(pv()[0].classList.contains("pv-idle")).toBe(true);
+    });
+  });
 });
