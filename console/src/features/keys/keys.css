@@ -102,8 +102,8 @@
   padding-top: 12vh;
 }
 .cp-panel {
-  /* Wide enough for the six mode tabs plus the switch hint on one line in Japanese (~670px of
-     labels at 640 made each tab wrap inside itself), with room left for the session rows. */
+  /* Wide enough for the mode tabs on one line in Japanese (~670px of labels at 640 made each tab
+     wrap inside itself), with room left for the session rows. The switch hint has its own line. */
   width: min(760px, 94vw);
   background: var(--panel);
   border: 1px solid var(--border);
@@ -159,13 +159,15 @@
   background: var(--active-bg);
   border-color: var(--border2);
 }
+/* The switch hint sits on its own line under the tabs, outside the scrolling row: every added tab
+   or hint word used to widen the row past the panel and push the hint out of reach. It wraps
+   instead of scrolling, so it stays readable at any panel width and in either language. */
 .cp-mode-hint {
-  margin-left: auto;
-  padding-left: 8px;
+  flex: none;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border2);
   font-size: 11px;
   color: var(--muted);
-  flex: none;
-  white-space: nowrap;
 }
 .cp-list {
   overflow: auto;
