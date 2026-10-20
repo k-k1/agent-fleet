@@ -72,6 +72,9 @@ type MCPOAuthStore interface {
 	// ConsumeMCPOAuthToken spends a row of the given kind exactly once, however many callers
 	// race for it: one conditional UPDATE decides, and its RowsAffected is the whole guarantee.
 	ConsumeMCPOAuthToken(ctx context.Context, hash, kind string, now int64) (MCPOAuthToken, MCPOAuthSpend, error)
+	// MarkMCPOAuthCodeReplayed records on the code row that it was presented again, so a grant
+	// being minted from it at this moment can see that and take itself down (state = replayed).
+	MarkMCPOAuthCodeReplayed(ctx context.Context, hash string) error
 	GetMCPOAuthTokenByHash(ctx context.Context, hash string, now int64) (MCPOAuthToken, bool, error)
 	// GetMCPOAuthAccess resolves a live access token whose grant is live, unexpired and not idle.
 	GetMCPOAuthAccess(ctx context.Context, hash string, now int64) (MCPOAuthAccess, bool, error)
@@ -99,6 +102,10 @@ func (s *SQL) CreateMCPOAuthClient(ctx context.Context, c MCPOAuthClient, max in
 		return err
 	}
 	defer tx.Rollback()
+	// Serialises registrations across connections and Control Planes; see mcp_oauth_lock.
+	if _, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_lock SET id=id WHERE id='client_cap'`); err != nil {
+		return err
+	}
 	var n int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM mcp_oauth_client`).Scan(&n); err != nil {
 		return err
@@ -187,6 +194,11 @@ func (s *SQL) ConsumeMCPOAuthToken(ctx context.Context, hash, kind string, now i
 		return t, MCPOAuthSpendOK, nil
 	}
 	return t, MCPOAuthSpendReplayed, nil
+}
+
+func (s *SQL) MarkMCPOAuthCodeReplayed(ctx context.Context, hash string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE mcp_oauth_token SET state='replayed' WHERE hash=? AND kind=?`, hash, MCPOAuthCode)
+	return err
 }
 
 func (s *SQL) GetMCPOAuthTokenByHash(ctx context.Context, hash string, now int64) (MCPOAuthToken, bool, error) {

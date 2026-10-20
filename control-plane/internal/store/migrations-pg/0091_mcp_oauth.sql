@@ -15,6 +15,13 @@ CREATE TABLE IF NOT EXISTS mcp_oauth_client(
   created_at    BIGINT NOT NULL
 );
 
+-- One row, locked by CreateMCPOAuthClient so that the registration cap holds across Control
+-- Planes (a count taken without it is stale by the time the insert runs under READ COMMITTED).
+CREATE TABLE IF NOT EXISTS mcp_oauth_lock(
+  id TEXT PRIMARY KEY
+);
+INSERT INTO mcp_oauth_lock(id) VALUES('client_cap') ON CONFLICT DO NOTHING;
+
 -- A grant is what the member sees and revokes. code_hash names the authorization code it was
 -- minted from, so replaying that code can take the grant down.
 CREATE TABLE IF NOT EXISTS mcp_oauth_grant(

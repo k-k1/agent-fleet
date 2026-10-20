@@ -90,6 +90,7 @@ func newMCPOAuthAPI(cfg config) *mcpOAuthAPI {
 	if envx.Or("AF_MCP_ENABLED", "") == "true" && envx.Or("AF_MCP_OAUTH", "") == "1" && strings.HasPrefix(base, "https://") {
 		a.issuer, a.resource = base+mcpOAuthPath, base+"/mcp"
 	}
+	m.mcpOAuthServed.Store(a.issuer != "")
 	return a
 }
 
@@ -279,7 +280,9 @@ func (a *mcpOAuthAPI) redirectRegistered(registered []string, requested string) 
 			continue
 		}
 		gu, err := url.Parse(reg)
-		if err == nil && gu.Hostname() == ru.Hostname() && gu.Path == ru.Path && gu.RawQuery == ru.RawQuery {
+		// Only the port may differ: the path is compared as written (encoded), not decoded.
+		if err == nil && gu.Hostname() == ru.Hostname() && gu.EscapedPath() == ru.EscapedPath() &&
+			gu.RawQuery == ru.RawQuery && gu.ForceQuery == ru.ForceQuery {
 			return true
 		}
 	}
@@ -479,8 +482,10 @@ func fetchCIMDWith(ctx context.Context, rawURL string, control func(network, add
 	client := &http.Client{
 		Timeout: cimdFetchLimit,
 		Transport: &http.Transport{
-			Proxy:       nil,
-			DialContext: (&net.Dialer{Timeout: cimdFetchLimit, Control: control}).DialContext,
+			Proxy: nil,
+			// A one-shot client: without this the connection and its goroutines outlive the fetch.
+			DisableKeepAlives: true,
+			DialContext:       (&net.Dialer{Timeout: cimdFetchLimit, Control: control}).DialContext,
 		},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}

@@ -98,6 +98,16 @@ func (a *mcpOAuthAPI) audit(ctx context.Context, tenantID, identityID, action, t
 	})
 }
 
+// auditGrant writes a grant-scoped audit row under the grant's own tenant, so the tenant's
+// administrators see revocations as well as issuance.
+func (a *mcpOAuthAPI) auditGrant(ctx context.Context, grantID, identityID, detail string) error {
+	tenant := ""
+	if g, ok, err := a.mgr.store.GetMCPOAuthGrant(ctx, grantID); err == nil && ok {
+		tenant = g.TenantID
+	}
+	return a.audit(ctx, tenant, identityID, "mcp.oauth.grant", grantID, detail)
+}
+
 func (a *mcpOAuthAPI) exchangeCode(w http.ResponseWriter, r *http.Request, clientID string) {
 	ctx := r.Context()
 	if r.PostForm.Get("resource") != a.resource {
@@ -119,13 +129,7 @@ func (a *mcpOAuthAPI) exchangeCode(w http.ResponseWriter, r *http.Request, clien
 	case store.MCPOAuthSpendReplayed:
 		// A spent code presented again: whoever holds the tokens it produced may not be who was
 		// meant to (RFC 6749 §4.1.2), so the grant it minted goes down.
-		if ids, err := a.mgr.store.RevokeMCPOAuthGrantsByCode(ctx, codeHash, "authorization code replayed", now.Unix()); err != nil {
-			log.Printf("mcp oauth: revoke on replay: %v", err)
-		} else {
-			for _, id := range ids {
-				_ = a.audit(ctx, "", c.IdentityID, "mcp.oauth.grant", id, "reuse-revoked reason=code-replay")
-			}
-		}
+		a.revokeForReplay(ctx, codeHash, c.IdentityID, now.Unix())
 		mcpTokenErr(w, http.StatusBadRequest, "invalid_grant", "the code was already used")
 		return
 	}
@@ -184,7 +188,28 @@ func (a *mcpOAuthAPI) exchangeCode(w http.ResponseWriter, r *http.Request, clien
 		mcpTokenErr(w, http.StatusInternalServerError, "server_error", "could not create the grant")
 		return
 	}
+	// Insert first, look second: a replay that marked the code before this point is seen here,
+	// and one that marks it later finds the grant and revokes it. Neither order leaves a live token.
+	if cur, ok, err := a.mgr.store.GetMCPOAuthTokenByHash(ctx, codeHash, now.Unix()); err != nil || (ok && cur.State == "replayed") {
+		a.revokeForReplay(ctx, codeHash, g.IdentityID, now.Unix())
+		mcpTokenErr(w, http.StatusBadRequest, "invalid_grant", "the code was already used")
+		return
+	}
 	a.issueTokens(w, r, g, g.Scope, "issued")
+}
+
+// revokeForReplay takes down every grant minted from a code that was presented again.
+func (a *mcpOAuthAPI) revokeForReplay(ctx context.Context, codeHash, identityID string, now int64) {
+	if err := a.mgr.store.MarkMCPOAuthCodeReplayed(ctx, codeHash); err != nil {
+		log.Printf("mcp oauth: mark replay: %v", err)
+	}
+	ids, err := a.mgr.store.RevokeMCPOAuthGrantsByCode(ctx, codeHash, "authorization code replayed", now)
+	if err != nil {
+		log.Printf("mcp oauth: revoke on replay: %v", err)
+	}
+	for _, id := range ids {
+		_ = a.auditGrant(ctx, id, identityID, "reuse-revoked reason=code-replay")
+	}
 }
 
 // issueTokens mints a fresh access and refresh token for a live grant and answers with them.
@@ -280,7 +305,7 @@ func (a *mcpOAuthAPI) refresh(w http.ResponseWriter, r *http.Request, clientID s
 	case store.MCPOAuthSpendReplayed:
 		// A spent refresh token presented again means two parties hold it (OAuth 2.1 §4.3.1):
 		// the whole grant goes, so neither keeps working.
-		if err := a.audit(ctx, g.TenantID, t.IdentityID, "mcp.oauth.grant", t.GrantID, "reuse-revoked reason=refresh-reuse"); err != nil {
+		if err := a.auditGrant(ctx, t.GrantID, t.IdentityID, "reuse-revoked reason=refresh-reuse"); err != nil {
 			log.Printf("mcp oauth: audit: %v", err)
 		}
 		if _, err := a.mgr.store.RevokeMCPOAuthGrant(ctx, t.GrantID, "refresh token reused", now.Unix()); err != nil {
@@ -309,7 +334,7 @@ func (a *mcpOAuthAPI) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if found && t.ClientID == clientID && t.GrantID != "" && (t.Kind == store.MCPOAuthAccessKind || t.Kind == store.MCPOAuthRefresh) {
-		if err := a.audit(ctx, "", t.IdentityID, "mcp.oauth.grant", t.GrantID, "revoked by client"); err != nil {
+		if err := a.auditGrant(ctx, t.GrantID, t.IdentityID, "revoked by client"); err != nil {
 			log.Printf("mcp oauth: audit: %v", err)
 			mcpTokenErr(w, http.StatusInternalServerError, "server_error", "audit unavailable")
 			return

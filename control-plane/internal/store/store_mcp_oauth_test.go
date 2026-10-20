@@ -129,3 +129,42 @@ func TestMCPOAuthClientCapAndPrune(t *testing.T) {
 		}
 	}
 }
+
+// The registration cap holds under concurrent registrations on every dialect.
+func TestMCPOAuthClientCapHoldsUnderConcurrency(t *testing.T) {
+	ctx := context.Background()
+	for name, st := range homeOpStores(t) {
+		if name == "postgres" {
+			// Widen the window between the count and the insert so unserialised registrations overlap.
+			for _, q := range []string{
+				`CREATE FUNCTION mcp_oauth_slow() RETURNS trigger AS $$ BEGIN PERFORM pg_sleep(0.3); RETURN NEW; END $$ LANGUAGE plpgsql`,
+				`CREATE TRIGGER mcp_oauth_slow BEFORE INSERT ON mcp_oauth_client FOR EACH ROW EXECUTE FUNCTION mcp_oauth_slow()`,
+			} {
+				if _, err := st.db.ExecContext(ctx, q); err != nil {
+					t.Fatalf("postgres: %v", err)
+				}
+			}
+		}
+		var ok, capped, other atomic.Int32
+		var wg sync.WaitGroup
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "c" + string(rune('a'+i)), RedirectURIs: "[]"}, 1)
+				switch {
+				case err == nil:
+					ok.Add(1)
+				case errors.Is(err, ErrMCPOAuthClientCap):
+					capped.Add(1)
+				default:
+					other.Add(1)
+				}
+			}(i)
+		}
+		wg.Wait()
+		if ok.Load() != 1 || capped.Load() != 7 || other.Load() != 0 {
+			t.Errorf("%s: ok=%d capped=%d other=%d, want 1/7/0", name, ok.Load(), capped.Load(), other.Load())
+		}
+	}
+}

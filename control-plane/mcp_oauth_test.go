@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -1208,4 +1209,144 @@ type noAuditStore struct{ store.Store }
 
 func (noAuditStore) InsertAudit(context.Context, store.AuditLog) error {
 	return errors.New("ledger down")
+}
+
+// grantHold runs a hook just before the grant row is written, to interleave a second request.
+type grantHold struct {
+	store.Store
+	once sync.Once
+	hook func()
+}
+
+func (g *grantHold) CreateMCPOAuthGrant(ctx context.Context, gr store.MCPOAuthGrant) error {
+	g.once.Do(g.hook)
+	return g.Store.CreateMCPOAuthGrant(ctx, gr)
+}
+
+func TestMCPOAuthReplayDuringTheFirstRedemptionLeavesNoLiveToken(t *testing.T) {
+	e := newMCPOAuthEnv(t)
+	id := e.registerClient(loopbackCB)
+	verifier, challenge := pkcePair()
+	tkt := e.ticketFrom(e.authorize(e.authQuery(id, loopbackCB, challenge)))
+	code := locationQuery(t, e.consent(tkt, url.Values{"membership": {e.membershipID()}, "scope": {"write"}})).Get("code")
+	form := url.Values{"grant_type": {"authorization_code"}, "client_id": {id}, "code": {code},
+		"redirect_uri": {loopbackCB}, "code_verifier": {verifier}, "resource": {testResource}}
+	// The replay arrives after the first redemption spent the code and before its grant exists.
+	e.mgr.store = &grantHold{Store: e.mgr.store, hook: func() {
+		if rec := e.post(mcpOAuthToken, form); rec.Code != http.StatusBadRequest {
+			t.Errorf("the replay: %d %s", rec.Code, rec.Body)
+		}
+	}}
+	rec := e.post(mcpOAuthToken, form)
+	if rec.Code == http.StatusOK {
+		if e.mcpCall(jsonField(t, rec, "access_token"), "tools/list").Code == http.StatusOK {
+			t.Fatal("a token issued by the first redemption is live after the code was replayed")
+		}
+	}
+}
+
+func TestMCPOAuthLoopbackMatchIgnoresOnlyThePort(t *testing.T) {
+	e := newMCPOAuthEnv(t)
+	for _, c := range []struct {
+		reg, req string
+		want     bool
+	}{
+		{"http://127.0.0.1/a%2Fb", "http://127.0.0.1:4567/a%2Fb", true},
+		{"http://127.0.0.1/a%2Fb", "http://127.0.0.1:4567/a/b", false},
+		{"http://127.0.0.1/a", "http://127.0.0.1:4567/%61", false},
+		{"http://127.0.0.1/a", "http://127.0.0.1:4567/a?", false},
+		{"http://127.0.0.1/a", "http://127.0.0.1:4567/a?x=1", false},
+		{"http://127.0.0.1/a?x=1", "http://127.0.0.1:4567/a?x=1", true},
+	} {
+		if got := e.api.redirectRegistered([]string{c.reg}, c.req); got != c.want {
+			t.Errorf("registered %q, requested %q = %v, want %v", c.reg, c.req, got, c.want)
+		}
+	}
+}
+
+func TestMCPOAuthRevocationsAreAuditedUnderTheGrantsTenant(t *testing.T) {
+	e := newMCPOAuthEnv(t)
+	id := e.registerClient(loopbackCB)
+	ctx := context.Background()
+	count := func(detail string) int {
+		rows, _ := e.mgr.store.ListAuditByTenant(ctx, e.tenA.ID, 200)
+		n := 0
+		for _, a := range rows {
+			if a.Action == "mcp.oauth.grant" && strings.Contains(a.Detail, detail) {
+				n++
+			}
+		}
+		return n
+	}
+	tk := e.connect(id, loopbackCB, "read")
+	e.post(mcpOAuthRevoke, url.Values{"client_id": {id}, "token": {tk.Access}})
+	tk = e.connect(id, loopbackCB, "read")
+	e.post(mcpOAuthToken, url.Values{"grant_type": {"authorization_code"}, "client_id": {id}, "code": {tk.Code},
+		"redirect_uri": {loopbackCB}, "code_verifier": {tk.Verifier}, "resource": {testResource}})
+	tk = e.connect(id, loopbackCB, "read")
+	e.refresh(id, tk.Refresh)
+	e.refresh(id, tk.Refresh)
+	for _, d := range []string{"revoked by client", "reason=code-replay", "reason=refresh-reuse"} {
+		if n := count(d); n != 1 {
+			t.Errorf("%d %q rows in the tenant's audit, want 1", n, d)
+		}
+	}
+}
+
+func TestMCPOAuthDisabledAuthorizeIs404BehindTheAuthGateToo(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		cfg := oauthTestConfig(t)
+		cfg.mgr.publicBaseURL = testBase
+		cfg.mgr.store = brandTestStore(t)
+		if !on {
+			t.Setenv("AF_MCP_OAUTH", "")
+		} else {
+			t.Setenv("AF_MCP_OAUTH", "1")
+			t.Setenv("AF_MCP_ENABLED", "true")
+		}
+		mux := http.NewServeMux()
+		newMCPOAuthAPI(cfg).mount(mux)
+		gate := cfg.authGate(mux)
+		for _, path := range []string{mcpOAuthAuthorize, mcpOAuthConsent} {
+			req := httptest.NewRequest("GET", testBase+path, nil)
+			req.Header.Set("Accept", "text/html")
+			rec := httptest.NewRecorder()
+			gate.ServeHTTP(rec, req)
+			want := http.StatusFound // served: a signed-out visitor is sent to log in
+			if !on {
+				want = http.StatusNotFound
+			}
+			if rec.Code != want {
+				t.Errorf("enabled=%v GET %s through authGate = %d, want %d", on, path, rec.Code, want)
+			}
+		}
+	}
+}
+
+func TestFetchCIMDDocumentLeavesNoConnectionBehind(t *testing.T) {
+	var open atomic.Int32
+	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{}`)) }))
+	ts.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		switch s {
+		case http.StateNew:
+			open.Add(1)
+		case http.StateClosed, http.StateHijacked:
+			open.Add(-1)
+		}
+	}
+	ts.Start()
+	defer ts.Close()
+	allow := func(string, string, syscall.RawConn) error { return nil }
+	for i := 0; i < 4; i++ {
+		if _, _, err := fetchCIMDWith(context.Background(), ts.URL, allow); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for open.Load() != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := open.Load(); n != 0 {
+		t.Errorf("%d connections left open after four fetches", n)
+	}
 }

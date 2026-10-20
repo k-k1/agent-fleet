@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
@@ -24,6 +25,9 @@ type manager struct {
 	memberConns memberConnRegistry
 	// removalStops: workspace ids with a removed-member sweep stop in flight.
 	removalStops sync.Map
+	// mcpOAuthServed: the /mcp authorization server is on (set once at route registration),
+	// which authGate reads to answer 404 instead of a login redirect while it is off.
+	mcpOAuthServed atomic.Bool
 
 	// mu guards ONLY the in-memory maps below (runtime/lock/activity caches) — it is
 	// never held across store/docker I/O (docs/log/23 P2-W2). The I/O of a first resolve
