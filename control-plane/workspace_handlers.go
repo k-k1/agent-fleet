@@ -964,6 +964,25 @@ type sessionWire struct {
 	MovedTo string `json:"movedTo,omitempty"`
 }
 
+// sessionRows turns the Agent's session list into DB mirror rows. Every writer of the
+// mirror goes through it: ReplaceSessions swaps the whole set, so a writer that leaves
+// out Carried or Studio erases them for the next reader (the stopped-workspace list).
+func sessionRows(list []sessionWire) []store.SessionRow {
+	rows := make([]store.SessionRow, 0, len(list))
+	for _, s := range list {
+		state := "stopped"
+		if s.Alive {
+			state = "running"
+		}
+		rows = append(rows, store.SessionRow{
+			Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
+			Label: s.Label, CreatedAt: s.CreatedAt, State: state,
+			Carried: s.Carried, Studio: s.Studio,
+		})
+	}
+	return rows
+}
+
 func fmtStarted(createdAt string) string {
 	if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
 		return t.Local().Format("01/02 15:04")
@@ -978,20 +997,9 @@ func fmtStarted(createdAt string) string {
 // sessions. Shared by the REST handler and the /api/events push channel.
 func (a workspaceAPI) sessionsPayload(ctx context.Context, res *resolved) map[string]any {
 	if res.rt.State(ctx) == "running" {
+		readStart := time.Now()
 		if list, err := a.mgr.agentSessions(ctx, res.rt); err == nil {
-			rows := make([]store.SessionRow, 0, len(list))
-			for _, s := range list {
-				state := "stopped"
-				if s.Alive {
-					state = "running"
-				}
-				rows = append(rows, store.SessionRow{
-					Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
-					Label: s.Label, CreatedAt: s.CreatedAt, State: state,
-					Carried: s.Carried, Studio: s.Studio,
-				})
-			}
-			_ = a.mgr.store.ReplaceSessions(ctx, res.ws.ID, rows)
+			_ = a.mgr.mirrorSessions(ctx, res.ws.ID, readStart, list)
 			return map[string]any{"sessions": a.applyInboxOrigins(ctx, res.mv, list)}
 		}
 		// Agent unreachable (e.g. mid-start): fall through to the DB mirror.

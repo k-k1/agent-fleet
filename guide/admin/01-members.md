@@ -21,11 +21,16 @@ sets the caps; see [02-limits.md](02-limits.md)).
 **Roster**: one card per member. Each card shows the email address with the internal identifier
 (`user_key`) under it, the role (`member` / `tenant_admin`), and a state badge that says in words
 whether the workspace is Running, Starting, Stopped, Never started, Stopped automatically (the
-Control Plane stopped it) or Removed. Below that are the auto-stop outlook and the machine size.
-Clicking a card takes you to the member detail.
+Control Plane stopped it) or Removed. Below that are the sessions figure ("3 live / 5 total", with
+the limit and a thin bar next to the numbers when the member has a session limit, and how long ago
+that count was taken), the auto-stop outlook and the machine size. A stopped card also says when
+the member was last active. The session counts come from the Control Plane's copy of each
+workspace's session list, which it refreshes about every five minutes for every running workspace
+(`AF_USAGE_SAMPLE_INTERVAL`), so they can lag what the member sees; the roster does not ask any
+workspace. Clicking a card takes you to the member detail.
 
 Above the cards are the counts (running out of total, and how many need attention), a filter
-(All / Running / Needs attention / Stopped / Removed), a sort (needs attention first, or by name)
+(All / Running / Needs attention / Stopped / Removed), a sort (needs attention first, by name, or by last active, with members who have no activity recorded last)
 and a search over name and email. A member **needs attention** when the Control Plane stopped
 their workspace, or when a session is still holding it open past its deadline; those cards have a
 warning edge and come first.
