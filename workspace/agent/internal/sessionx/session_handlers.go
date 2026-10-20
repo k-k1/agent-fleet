@@ -785,6 +785,16 @@ func createSession(w http.ResponseWriter, r *http.Request, req CreateReq) {
 	// slot is this create's claim on one of the parent's child slots. Empty for every route
 	// that is not a spawn, and then every method is a plain meta write.
 	slot := &spawnSlot{}
+	// A kind whose CLI failed to install at start and is still absent cannot launch: say why
+	// (typically a full home) instead of the generic launch failure further down. After the
+	// idempotency claim, like the spawn refusals below and for the same reason: the answer
+	// depends on state that changes, so a retry of a create that already succeeded must replay
+	// its session (the ledger answered above), and a durable key must end as refused through
+	// the outcome writer and the deferred fail.
+	if ref := startRefusal(req.Kind); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
 	// The spawn refusals (ADR 0073) run AFTER the idempotency claim and before any side effect
 	// (clone / worktree), so a refused spawn leaves nothing behind.
 	//
@@ -1503,6 +1513,12 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeForkUnsupportedKind, "this session type does not support forking")
 		return
 	}
+	// The fork launches a new process of this kind: refuse it, with the reason, while its CLI is
+	// missing, before anything is created.
+	if ref := startRefusal(src.Kind); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
 	// "Does point-forking exist at all" depends only on the request, so answer it before
 	// looking at the conversation's state. Later on, an `at` sent to an unsupported kind
 	// would come back with an unrelated reason such as "no conversation to fork yet",
@@ -1938,6 +1954,12 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	m, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	// Before the old identity is archived and killed: a recreate whose CLI is missing would only
+	// fail after destroying the running session.
+	if ref := startRefusal(m.Kind); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 		return
 	}
 	// Archive the old identity: kill its tmux, clear the live status cache, hide it from

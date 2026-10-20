@@ -92,7 +92,7 @@ func injectManagedPrompt(lease *lifegate.Lease, meta session.Meta, prompt string
 	if !ok {
 		return fmt.Errorf("managed driver unavailable for kind %s", meta.Kind)
 	}
-	h, err := d.Resume(meta)
+	h, err := resumeManaged(d, meta)
 	if err != nil {
 		return err
 	}

@@ -267,6 +267,9 @@ func HandleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if err := ensureSessionTmux(lease, name, false); err != nil {
+		if writeStartRefusal(w, err) {
+			return
+		}
 		if !writeCodexReleasingErr(w, err) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
 		}
@@ -342,7 +345,7 @@ func sendManagedPrompt(m session.Meta, prompt string) error {
 	if !ok {
 		return fmt.Errorf("managed driver はこの kind ではまだ利用できません: %s", m.Kind)
 	}
-	h, err := d.Resume(m)
+	h, err := resumeManaged(d, m)
 	if err != nil {
 		return err
 	}

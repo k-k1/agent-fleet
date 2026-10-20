@@ -159,7 +159,7 @@ func answerManagedQuestion(meta session.Meta, pi bridge.ParsedInteraction, en bo
 	if !ok {
 		return Fb(en, "このセッションは Console で回答してください", "Answer this session from the Console"), nil
 	}
-	h, err := d.Resume(meta)
+	h, err := resumeManaged(d, meta)
 	if err != nil {
 		return "", err
 	}

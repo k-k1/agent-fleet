@@ -143,7 +143,7 @@ func HandleSessionAnswerQuestion(w http.ResponseWriter, r *http.Request) {
 				"managed driver はこの kind ではまだ利用できません")
 			return
 		}
-		h, err := d.Resume(meta)
+		h, err := resumeManaged(d, meta)
 		if err != nil {
 			writeRuntimeErr(w, err)
 			return

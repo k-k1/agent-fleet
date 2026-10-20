@@ -169,6 +169,9 @@ export const errText = (error: ApiError | string | null | undefined): string => 
 // if this is dropped. Not appended when it repeats the same text.
 export const errDetail = (error: ApiError | string | null | undefined): string => {
   const head = errText(error);
+  // The cli_install_* wording already says what and why; the server's English sentence would
+  // only repeat it in the wrong language.
+  if (error && typeof error === "object" && error.code?.startsWith("cli_install_")) return head;
   const detail = error && typeof error === "object" ? (error.message ?? "").trim() : "";
   return detail && detail !== head ? head + ": " + detail : head;
 };

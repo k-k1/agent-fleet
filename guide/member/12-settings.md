@@ -811,7 +811,7 @@ administrator's to set.
 ### Toolchain
 
 Timezone, Node.js / Java / Go versions, the table of effective tool versions (a CLI whose install at the workspace's start failed shows
-"install failed" with the reason, typically a full home disk, and is tried again at the next start), **agent CLI updates** (off by
+"install failed" with the reason, typically a full home disk, and is tried again at the next start; starting a session of that agent is refused with the same reason until the CLI is installed, while other agents start as usual), **agent CLI updates** (off by
 default), and applying an Agent Fleet update.
 → [10 Going further](10-integrations.md#environment-settings-and-recreating-the-workspace)
 

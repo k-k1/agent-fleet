@@ -65,6 +65,9 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := ensureSessionTmux(lease, name, force); err != nil {
+		if writeStartRefusal(w, err) {
+			return
+		}
 		if !writeCodexReleasingErr(w, err) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
 		}
