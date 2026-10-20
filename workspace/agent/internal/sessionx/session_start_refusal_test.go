@@ -184,3 +184,29 @@ func TestManagedInputIsRefusedBeforeResume(t *testing.T) {
 		t.Errorf("carried answer = %d %s, want 409 cli_install_no_space", w.Code, w.Body)
 	}
 }
+
+// A driver switch relaunches the CLI too, in both directions: refused before the old runtime is
+// stopped, and the meta stays on the old driver.
+func TestDriverSwitchIsRefusedBeforeStoppingAnything(t *testing.T) {
+	home := writebackEnv(t)
+	refuseKind(t, session.KindCodex)
+	launched := false
+	useLockingDriver(t, session.KindCodex, &lockingDriver{onResume: func() { launched = true }})
+	for _, tc := range []struct{ name, from, to string }{
+		{"swtui1", session.DriverTUI, session.DriverManaged},
+		{"swman1", session.DriverManaged, session.DriverTUI},
+	} {
+		from := tc.from
+		if from == session.DriverTUI {
+			from = ""
+		}
+		session.WriteMeta(session.Meta{Name: tc.name, Dir: home, Kind: session.KindCodex, Driver: from})
+		w := callHandler(HandleSessionDriver, http.MethodPost, tc.name, `{"driver":"`+tc.to+`"}`)
+		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "cli_install_no_space") || launched {
+			t.Errorf("%s -> %s = %d %s (launched=%v), want 409 cli_install_no_space and no launch", tc.from, tc.to, w.Code, w.Body, launched)
+		}
+		if m, _ := session.ReadMeta(tc.name); m.DriverKind() != tc.from {
+			t.Errorf("%s: the meta moved to %q", tc.name, m.DriverKind())
+		}
+	}
+}
