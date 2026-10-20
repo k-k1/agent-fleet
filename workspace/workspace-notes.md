@@ -149,8 +149,15 @@ directory belongs to someone else.
   pre-authenticated for every agent kind and renews an OAuth token on each call, while an MCP
   connector serves one CLI and its expired login needs a session restart. `jira issue view KEY-1`,
   `jira issue list -p KEY`, `jira issue create -p KEY`, `jira issue comment add KEY-1 "…"`,
-  `jira issue move KEY-1 "In Progress"`; boards, sprints and epics after one
-  `jira init --project KEY --board NAME`. Never paste a token, run `jira init` with your own
+  `jira issue move KEY-1 "In Progress"`. Pass `-p KEY` unless `jira init` set a default project
+  (`issue create` then fetches the project's issue types through createmeta, classic scopes, when
+  the config has none);
+  boards, sprints and epics need one `jira init --project KEY --board NAME` (exact name from
+  `jira board list -p KEY`; with OAuth it needs the Jira Software scopes, a 401 means they are
+  missing: tell the user a tenant administrator adds the scopes to the Atlassian app and ticks the
+  Jira Software option on the tenant's Jira card, then the member reconnects Jira; do not keep
+  retrying `jira init` or switch to an MCP tool). When the wrapper prints "no issue types"
+  instead, `issue create` could not get them: run `jira init`. Never paste a token, run `jira init` with your own
   `--server`, or add `--debug` (it gets no credential).
 - The clock is the workspace's local timezone (`date`), not UTC. Outbound network may be
   restricted; an unreachable host is not necessarily an error.

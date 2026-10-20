@@ -188,8 +188,8 @@ test("tenant admin: Admin disappears, and members and operations are reachable f
   // Members: list -> detail -> back. The levels stack inside the body; the rail stays on
   // members.
   await modal.locator(".settings-rail-item", { hasText: "メンバー" }).first().click();
-  await expect(modal.locator(".member-row")).toHaveCount(2);
-  await modal.locator(".member-row").first().click();
+  await expect(modal.locator(".member-card")).toHaveCount(2);
+  await modal.locator(".member-card").first().click();
   await expect(modal.locator(".member-detail")).toBeVisible();
   // The whole offboarding set belongs to tenant_admin (docs/log/61 §61.10.6, decision 26).
   await expect(modal.locator(".member-detail button", { hasText: "メンバーを外す" })).toHaveCount(1);
@@ -198,7 +198,7 @@ test("tenant admin: Admin disappears, and members and operations are reachable f
   await expect(modal.locator(".member-detail button", { hasText: "テナント管理者にする" })).toHaveCount(0);
   await modal.locator(".tenant-drill .admin-back").click();
   await expect(modal.locator(".member-detail")).toHaveCount(0);
-  await expect(modal.locator(".member-row")).toHaveCount(2);
+  await expect(modal.locator(".member-card")).toHaveCount(2);
 
   // Operations: this screen never spans tenants, so no tenant picker is shown.
   await modal.locator(".settings-rail-item", { hasText: "セッション" }).click();

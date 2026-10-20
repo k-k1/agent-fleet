@@ -69,6 +69,19 @@ const (
 	eraProbeTimeout = 2 * time.Second
 )
 
+// sessionBoundRequests is how many tools/list calls carry the session id of a stateful
+// legacy-era HTTP server. With two instances behind a balancer, 6 calls miss with
+// probability (1/2)^6; each pays its own TCP/TLS handshake, so keep it inside
+// defaultProbeTimeout.
+const sessionBoundRequests = 6
+
+// affinityBudget caps the extra session-bound requests (all but the first tools/list).
+const affinityBudget = 5 * time.Second
+
+// errSessionRejected is the verdict for a server that refuses the session id it just issued
+// (several instances, in-memory sessions, no affinity).
+const errSessionRejected = "サーバーが、自ら発行したセッション ID を拒否しました。複数インスタンスで動作していて、セッションの親和性（同じセッションを同じインスタンスへ振り分ける設定）がない可能性があります。サーバーをステートレスにするか、同じセッションのリクエストを必ず同じインスタンスへ振り分けてください"
+
 // errProbeTimeout distinguishes "no answer in time" from "the process died", so the
 // era probe can fall back on the former and fail fast on the latter.
 var errProbeTimeout = errors.New("タイムアウトしました")
@@ -402,15 +415,25 @@ type httpExchange struct {
 }
 
 func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
+	// No cookie jar, on purpose: Claude Code never sends cookies back on MCP requests, so a
+	// probe honouring load-balancer cookie stickiness would pass where real sessions fail.
 	client := &http.Client{}
+	// Session-bound requests each open a new connection. A load balancer pins a kept-alive
+	// connection to one target, so reusing it hides the instance that does not know the
+	// session (measured: 10 presses of the test passed against two instances; new
+	// connections were rejected about half the time).
+	freshTransport := http.DefaultTransport.(*http.Transport).Clone()
+	freshTransport.DisableKeepAlives = true
+	fresh := &http.Client{Transport: freshTransport}
 	session := "" // legacy era only: 2026-07-28 removed Mcp-Session-Id entirely
 
+	reqCtx := ctx
 	post := func(m rpcMsg, stateless bool) (httpExchange, error) {
 		b, err := json.Marshal(m)
 		if err != nil {
 			return httpExchange{}, err
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.URL, bytes.NewReader(b))
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, d.URL, bytes.NewReader(b))
 		if err != nil {
 			return httpExchange{}, err
 		}
@@ -432,7 +455,11 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 		for k, v := range d.Headers {
 			req.Header.Set(k, v)
 		}
-		resp, err := client.Do(req)
+		c := client
+		if session != "" && !stateless {
+			c = fresh
+		}
+		resp, err := c.Do(req)
 		if err != nil {
 			return httpExchange{}, err
 		}
@@ -446,6 +473,9 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 			return ex, nil // notification ack, or empty 200
 		}
 		ex.msg, err = decodeHTTPPayload(resp.Header.Get("Content-Type"), body)
+		if err != nil && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
+			err = nil // a plain-text error body: callers report the status and body tail instead
+		}
 		return ex, err
 	}
 
@@ -471,6 +501,9 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 		if err != nil {
 			return ProbeResult{Error: err.Error(), Detail: tail(ex.raw)}
 		}
+		if ex.status < 200 || ex.status >= 300 {
+			return ProbeResult{Error: fmt.Sprintf("HTTP %d", ex.status), Detail: tail(ex.raw)}
+		}
 		if ex.msg.Error != nil {
 			return ProbeResult{Error: fmt.Sprintf("tools/list が拒否されました: %s", ex.msg.Error.Message), Detail: tail(ex.raw)}
 		}
@@ -492,22 +525,105 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 	}
 	var ir legacyInitResult
 	_ = json.Unmarshal(ex.msg.Result, &ir)
-	if _, err = post(rpcMsg{JSONRPC: "2.0", Method: "notifications/initialized"}, false); err != nil {
+	// A server that issued a session id is stateful. Several session-bound requests, not
+	// one: behind a load balancer without affinity a single request reaches the issuing
+	// instance with probability 1/N and the test would pass by luck.
+	stateful := session != ""
+	failStatus := func(ex httpExchange) ProbeResult {
+		if stateful && sessionRejected(ex) {
+			return ProbeResult{
+				Error:  errSessionRejected,
+				Detail: fmt.Sprintf("HTTP %d: %s", ex.status, tail(ex.raw)),
+			}
+		}
+		return ProbeResult{Error: fmt.Sprintf("HTTP %d", ex.status), Detail: tail(ex.raw)}
+	}
+	ex, err = post(rpcMsg{JSONRPC: "2.0", Method: "notifications/initialized"}, false)
+	if err != nil {
 		return ProbeResult{Error: err.Error()}
 	}
+	if ex.status < 200 || ex.status >= 300 {
+		return failStatus(ex)
+	}
+	// The first tools/list is the real check and its answer is the result.
 	ex, err = post(rpcMsg{JSONRPC: "2.0", ID: 4, Method: "tools/list", Params: map[string]any{}}, false)
 	if err != nil {
 		return ProbeResult{Error: err.Error(), Detail: tail(ex.raw)}
 	}
 	if ex.status < 200 || ex.status >= 300 {
-		return ProbeResult{Error: fmt.Sprintf("HTTP %d", ex.status), Detail: tail(ex.raw)}
+		return failStatus(ex)
 	}
 	if ex.msg.Error != nil {
 		return ProbeResult{Error: fmt.Sprintf("tools/list が拒否されました: %s", ex.msg.Error.Message), Detail: tail(ex.raw)}
 	}
+	first := ex
+	if stateful {
+		// Affinity diagnosis on its own, smaller budget. Only a session rejection fails the
+		// test; a timeout, a 429 or any other trouble here is inconclusive, so a healthy
+		// but slow or rate-limited server is not reported as unreachable.
+		var cancel context.CancelFunc
+		reqCtx, cancel = context.WithTimeout(ctx, affinityBudget)
+		defer cancel()
+		for i := 1; i < sessionBoundRequests; i++ {
+			ex, err = post(rpcMsg{JSONRPC: "2.0", ID: 4 + i, Method: "tools/list", Params: map[string]any{}}, false)
+			if err != nil || ex.status < 200 || ex.status >= 300 {
+				if err == nil && sessionRejected(ex) {
+					return failStatus(ex)
+				}
+				break
+			}
+		}
+	}
+	ex = first
 	res := okResult(ir.ServerInfo, ex.msg.Result)
 	res.Revision = ProtocolVersionLegacy
 	return res
+}
+
+// sessionRejected reports whether ex is a server refusing a session id it issued: 404, or
+// a 400 whose body says the session is unknown.
+func sessionRejected(ex httpExchange) bool {
+	switch ex.status {
+	case http.StatusNotFound:
+		return true
+	case http.StatusBadRequest:
+		// Judge the error text only: a body that merely echoes a sessionId next to an
+		// unrelated complaint is not an unknown session.
+		msg := strings.ToLower(errorText(ex.raw))
+		if !strings.Contains(msg, "session") {
+			return false
+		}
+		for _, w := range []string{"not found", "unknown", "invalid", "expired", "no such", "not exist"} {
+			if strings.Contains(msg, w) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// errorText extracts the human-readable error message(s) from a response body: the
+// message-like fields of a JSON object (also under "error"), or the whole body when it
+// is not JSON.
+func errorText(raw string) string {
+	var obj map[string]any
+	if json.Unmarshal([]byte(strings.TrimSpace(raw)), &obj) != nil {
+		return raw
+	}
+	var parts []string
+	var collect func(m map[string]any)
+	collect = func(m map[string]any) {
+		for _, k := range []string{"message", "localizedMessage", "detail", "error", "error_description"} {
+			switch v := m[k].(type) {
+			case string:
+				parts = append(parts, v)
+			case map[string]any:
+				collect(v)
+			}
+		}
+	}
+	collect(obj)
+	return strings.Join(parts, " ")
 }
 
 // decodeHTTPPayload handles both shapes a Streamable HTTP server may answer with:

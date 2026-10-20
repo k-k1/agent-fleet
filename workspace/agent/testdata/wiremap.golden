@@ -43,9 +43,9 @@ connections.go handlePutGrafanaConn x1 {connected,url}
 connections.go handlePutLcppConn x1 {connected,enabled,model,model_count,reachable,url} cond{connected,model,model_count,reachable,url}
 connections.go handlePutPagerDutyConn x1 {connected,host} cond{host}
 connections_jira.go handleDeleteJiraConn x1 {disconnected}
-connections_jira.go handleJiraOAuthStore x1 {account,authKind,cloudId,connected,email,site,sites} cond{account,cloudId,email,sites}
-connections_jira.go handlePutJiraConn x1 {account,authKind,cloudId,connected,email,site,sites} cond{account,cloudId,email,sites}
-connections_jira.go handlePutJiraSite x1 {account,authKind,cloudId,connected,email,site,sites} cond{account,cloudId,email,sites}
+connections_jira.go handleJiraOAuthStore x1 {account,authKind,cloudId,connected,email,site,sites,softwareScopes} cond{account,cloudId,email,sites,softwareScopes}
+connections_jira.go handlePutJiraConn x1 {account,authKind,cloudId,connected,email,site,sites,softwareScopes} cond{account,cloudId,email,sites,softwareScopes}
+connections_jira.go handlePutJiraSite x1 {account,authKind,cloudId,connected,email,site,sites,softwareScopes} cond{account,cloudId,email,sites,softwareScopes}
 connections_slack.go handleDeleteSlackConn x1 {disconnected}
 connections_slack.go handlePutSlackConn x1 {botName,channelId,connected,events,fullText,mirrorInput,mode,notify,operator,receive,teamName,test,testError,threads,userId} cond{botName,channelId,fullText,mirrorInput,mode,operator,receive,teamName,test,testError,threads,userId}
 connections_slack.go handleSlackChannels x1 {channels,resolvedUserId} cond{resolvedUserId}

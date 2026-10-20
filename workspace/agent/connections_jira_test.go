@@ -295,8 +295,8 @@ func TestJiraOAuthStoreResolvesSitesAndPicksOne(t *testing.T) {
 		authSeen = r.Header.Get("Authorization")
 		switch r.URL.Path {
 		case "/oauth/token/accessible-resources":
-			_, _ = w.Write([]byte(`[{"id":"cid-1","url":"https://one.atlassian.net/","name":"One"},
-			                        {"id":"cid-2","url":"https://two.atlassian.net","name":"Two"}]`))
+			_, _ = w.Write([]byte(`[{"id":"cid-1","url":"https://one.atlassian.net/","name":"One","scopes":["read:jira-work","read:board-scope:jira-software"]},
+			                        {"id":"cid-2","url":"https://two.atlassian.net","name":"Two","scopes":["read:jira-work"]}]`))
 		case "/ex/jira/cid-1/rest/api/3/myself":
 			_, _ = w.Write([]byte(`{"displayName":"山田 太郎","emailAddress":"taro@example.com"}`))
 		case "/ex/jira/cid-2/rest/api/3/myself":
@@ -341,6 +341,12 @@ func TestJiraOAuthStoreResolvesSitesAndPicksOne(t *testing.T) {
 		t.Errorf("expiry not stamped: %d", s.Jira.Expiry)
 	}
 
+	// The scopes accessible-resources reported are kept per site, and the status names the
+	// current site's verdict.
+	if st := jiraStatus(s); st["softwareScopes"] != "granted" {
+		t.Errorf("softwareScopes = %v, want granted", st["softwareScopes"])
+	}
+
 	// Switching sites — only to one the authorization covers.
 	w = httptest.NewRecorder()
 	handlePutJiraSite(w, httptest.NewRequest("PUT", "/connections/jira/site", strings.NewReader(`{"cloudId":"cid-2"}`)))
@@ -350,6 +356,9 @@ func TestJiraOAuthStoreResolvesSitesAndPicksOne(t *testing.T) {
 	s, _ = secrets.Load()
 	if s.Jira.CloudID != "cid-2" || s.Jira.Site != "https://two.atlassian.net" {
 		t.Errorf("after switch = %q / %q", s.Jira.CloudID, s.Jira.Site)
+	}
+	if st := jiraStatus(s); st["softwareScopes"] != "missing" {
+		t.Errorf("softwareScopes on the second site = %v, want missing", st["softwareScopes"])
 	}
 	if s.Jira.Account != "Taro on Two" {
 		t.Errorf("account not re-resolved for the new site: %q", s.Jira.Account)
@@ -412,10 +421,17 @@ func TestJiraStatusHidesSecretsAndNamesTheAuthKind(t *testing.T) {
 	if _, ok := st["email"]; ok {
 		t.Errorf("oauth status carries an email field: %v", st)
 	}
+	// No recorded scopes (this store) and API-token connections: unknown, so no verdict at all.
+	if _, ok := st["softwareScopes"]; ok {
+		t.Errorf("unrecorded scopes produced a verdict: %v", st)
+	}
 	// A legacy store (no authKind) keeps working, treated as the token path.
 	old := &secrets.Data{Jira: &secrets.JiraCreds{Site: "https://x", Email: "a@example.com", Token: "t"}}
 	if got := jiraStatus(old)["authKind"]; got != "token" {
 		t.Errorf("legacy store authKind = %v, want token", got)
+	}
+	if _, ok := jiraStatus(old)["softwareScopes"]; ok {
+		t.Errorf("API-token connection carries a scope verdict")
 	}
 }
 

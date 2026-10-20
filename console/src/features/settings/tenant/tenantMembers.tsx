@@ -16,10 +16,22 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 // Cloud cost in the member detail (docs/log/67 §67.15). On a deployment without billing the
 // component renders nothing itself, so no condition is kept here.
 import { useT } from "../../../lib/i18n/index.ts";
+import type { MsgKey } from "../../../lib/i18n/index.ts";
 import { elapsedShort, remainingShort } from "../../../lib/sessionview.ts";
 import { fmtGbHint, ladderFor, memberClassID, slotFor, slotMemLabel, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
 import type { Member, MemberAutoStop, MemberIdle, WsSizing } from "../parts/adminShared.ts";
 import { startDeadlineBody } from "../../notifications/wording.ts";
+import {
+  attentionReasons,
+  matchesFilter,
+  matchesQuery,
+  memberTitle,
+  ROSTER_FILTERS,
+  rosterCounts,
+  rosterState,
+  sortMembers,
+} from "./memberRoster.ts";
+import type { RosterFilter, RosterSort, RosterState } from "./memberRoster.ts";
 
 // MembersPanel — the roster and "add member", as one component so the tenant settings modal
 // and the admin modal use the same implementation.
@@ -73,26 +85,160 @@ export function MembersPanel({
       ) : members.length === 0 ? (
         <p className="muted">{tr("admin.no_members")}</p>
       ) : (
-        <div className="member-rows">
-          {members.map((m) => (
-            <button key={m.user_key} className="member-row" onClick={() => onOpenMember(m)}>
-              <span className={"state-dot " + (m.state === "running" ? "on" : "off")} title={m.state} />
-              <span className="mr-key mono">
-                {m.user_key}
-                {m.super_admin && <Icon name="star-full" className="mr-star" title="super_admin" />}
-              </span>
-              <span className="mr-email muted">{m.email || ""}</span>
-              <span className="mr-role">{m.status === "removed" ? tr("admin.member_removed") : m.role}</span>
-              <MemberSizeChips m={m} sizing={sizing} />
-              <MemberIdleChip idle={m.idle} state={m.state} />
-              <MemberAutoStopChip autoStop={m.auto_stop} />
-              <Icon name="chevron-right" className="mr-go" />
-            </button>
-          ))}
-        </div>
+        <MemberGrid members={members} sizing={sizing} onOpenMember={onOpenMember} />
       )}
       <AddMember slug={slug} isSuper={isSuper} onAdded={loadMembers} />
     </section>
+  );
+}
+
+const FILTER_LABEL: Record<RosterFilter, MsgKey> = {
+  all: "admin.roster_filter_all",
+  running: "admin.roster_filter_running",
+  attention: "admin.roster_filter_attention",
+  stopped: "admin.roster_filter_stopped",
+  removed: "admin.roster_filter_removed",
+};
+
+// MemberGrid — counts, filter, sort and search over the roster, then one card per member.
+// Everything works on the single GET …/members response: tenants have dozens of members, and a
+// card that fetched its own stats would fan out one Agent call each on every render.
+function MemberGrid({
+  members,
+  sizing,
+  onOpenMember,
+}: {
+  members: Member[];
+  sizing: WsSizing;
+  onOpenMember: (m: Member) => void;
+}) {
+  const tr = useT();
+  const [filter, setFilter] = useState<RosterFilter>("all");
+  const [sort, setSort] = useState<RosterSort>("attention");
+  const [query, setQuery] = useState("");
+  const now = Date.now();
+  const counts = rosterCounts(members, now);
+  const shown = sortMembers(
+    members.filter((m) => matchesFilter(m, filter, now) && matchesQuery(m, query)),
+    sort,
+    now,
+  );
+  return (
+    <>
+      <p className="member-summary">
+        <span>{tr("admin.roster_summary", { running: String(counts.running), total: String(counts.total) })}</span>
+        {counts.attention > 0 && (
+          <span className="ms-attention">
+            <Icon name="warning" />
+            {tr("admin.roster_summary_attention", { n: String(counts.attention) })}
+          </span>
+        )}
+      </p>
+      <div className="member-tools">
+        <div className="ui-seg member-filter" role="group" aria-label={tr("admin.roster_filter_label")}>
+          {ROSTER_FILTERS.map((f) => (
+            <button
+              key={f}
+              type="button"
+              className={"seg-btn" + (f === filter ? " active" : "")}
+              aria-pressed={f === filter}
+              onClick={() => setFilter(f)}
+            >
+              <span>
+                {tr(FILTER_LABEL[f])} <span className="seg-count">{counts.byFilter[f]}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+        <select aria-label={tr("admin.roster_sort_label")} value={sort} onChange={(e) => setSort(e.target.value as RosterSort)}>
+          <option value="attention">{tr("admin.roster_sort_attention")}</option>
+          <option value="name">{tr("admin.roster_sort_name")}</option>
+        </select>
+        <input
+          type="search"
+          className="member-search"
+          aria-label={tr("admin.roster_search_ph")}
+          placeholder={tr("admin.roster_search_ph")}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      </div>
+      {shown.length === 0 ? (
+        <p className="muted">{tr("admin.roster_no_match")}</p>
+      ) : (
+        <div className="member-grid">
+          {shown.map((m) => (
+            <MemberCard key={m.user_key} m={m} sizing={sizing} now={now} onOpen={() => onOpenMember(m)} />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function MemberCard({ m, sizing, now, onOpen }: { m: Member; sizing: WsSizing; now: number; onOpen: () => void }) {
+  const tr = useT();
+  const reasons = attentionReasons(m, now);
+  const title = memberTitle(m);
+  return (
+    <button type="button" className={"member-card" + (reasons.length ? " attn" : "")} onClick={onOpen}>
+      <span className="mc-head">
+        <span className="mc-name">
+          <span className="mc-title" title={title}>
+            {title}
+          </span>
+          {m.email && (
+            <span className="mc-key mono muted" title={m.user_key}>
+              {m.user_key}
+            </span>
+          )}
+        </span>
+        <MemberStateBadge state={rosterState(m)} />
+      </span>
+      <span className="mc-meta">
+        <span className="mr-role">{m.status === "removed" ? tr("admin.member_removed") : m.role}</span>
+        {m.super_admin && <Icon name="star-full" className="mr-star" title="super_admin" />}
+        {reasons.length > 0 && (
+          <span
+            className="mc-attn"
+            title={reasons.map((r) => tr(r === "auto_stop" ? "admin.roster_attn_auto_stop" : "admin.roster_attn_hold_lapsed")).join(" / ")}
+          >
+            <Icon name="warning" />
+            {tr("admin.roster_attention")}
+          </span>
+        )}
+        <Icon name="chevron-right" className="mr-go" />
+      </span>
+      <span className="mc-foot">
+        <MemberIdleChip idle={m.idle} state={m.state} />
+        <MemberAutoStopChip autoStop={m.auto_stop} />
+        <MemberSizeChips m={m} sizing={sizing} />
+      </span>
+    </button>
+  );
+}
+
+const STATE_VIEW: Record<RosterState, { icon: string; label: MsgKey }> = {
+  running: { icon: "pass-filled", label: "admin.roster_state_running" },
+  starting: { icon: "sync", label: "admin.roster_state_starting" },
+  stopped: { icon: "circle-large-outline", label: "admin.roster_state_stopped" },
+  never: { icon: "circle-slash", label: "admin.roster_state_never" },
+  auto_stopped: { icon: "warning", label: "admin.roster_state_auto_stopped" },
+  removed: { icon: "trash", label: "admin.roster_state_removed" },
+};
+
+// MemberStateBadge — the workspace state as a word with an icon. The 8 px dot it replaces was
+// colour alone, and in the light theme running (--ok) and stopped (--muted2) measured 1.13:1
+// against each other, so both read as "dark dot". The word carries the meaning; the icon shape
+// and the colour only reinforce it, which is what keeps it readable in greyscale.
+function MemberStateBadge({ state }: { state: RosterState }) {
+  const tr = useT();
+  const v = STATE_VIEW[state];
+  return (
+    <span className={"member-state ms-" + state}>
+      <Icon name={v.icon} spin={state === "starting"} />
+      {tr(v.label)}
+    </span>
   );
 }
 
@@ -129,7 +275,7 @@ function MemberIdleChip({ idle, state }: { idle?: MemberIdle; state?: string }) 
               : h.kind === "imagejob"
                 ? tr("admin.idle_hold_imagejob")
                 : tr("admin.idle_hold_watching");
-    // Beyond the first, only a count: a roster row must stay one line. Details are in the
+    // Beyond the first, only a count: a roster card keeps it to one line. Details are in the
     // member detail view.
     const more = holders.length > 1 ? tr("admin.idle_hold_more", { n: String(holders.length - 1) }) : "";
     return (

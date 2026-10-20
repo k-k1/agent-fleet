@@ -635,7 +635,7 @@ type WorkItemQuery struct {
 // WorkItem is one cached row of a query's result. ★ Non-secret metadata ONLY: the
 // description, comments and attachments of a ticket are customer data and stay out of
 // the CP (ADR 0061 decision 2) — they are read inside the session, where the Workspace
-// is running and `gh` / the Jira MCP can fetch them. Kind is "issue" or "pr"; State is
+// is running and `gh` / the `jira` CLI can fetch them. Kind is "issue" or "pr"; State is
 // normalised to open / in_progress / done / other; Repo is "owner/name" when the
 // provider has one (it seeds the launch target).
 type WorkItem struct {

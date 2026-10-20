@@ -250,8 +250,33 @@ Jira は git でなく作業項目インボックス
   - 設定を指定しないときは管理ディレクトリの `config.yml` を使い、なければ
     `JIRA_CONFIG_FILE` を `~/.cache/agent-fleet/jira/config.yml`（中身は
     `installation: Cloud` だけ）に向ける。`issue view` や `issue list -p KEY` はこれで動く。
-    `issue create`・`sprint list`・エピック系は、`jira init` だけが書く課題タイプ・ボード・
-    エピック用フィールドが要る。
+    `sprint list`・エピック系は、`jira init` だけが書くボード・エピック用フィールドが要る。
+  - **`jira init` なしの `issue create`**: jira-cli は `issue.types` を設定からしか読まず
+    （v1.7.0 の `setIssueTypes`）、唯一の書き手である `jira init` は最初に Agile のボード API を
+    呼ぶ（Jira Software スコープのない OAuth では 401）。そこで `issue create` のとき、実効の設定が
+    生成されたものか管理ディレクトリのもの（`-c` で指定したものは環境変数より優先されるので除く）
+    で `types:` キーを持たなければ、ラッパーが `workspace-agent jira-issue-types KEY` を実行する
+    （KEY は `-p` のどの書き方でも、なければ設定の `project.key`）。ヘルパーは自分が持つトークンで
+    `/rest/api/2/issue/createmeta?projectKeys=KEY`（クラシックの `read:jira-work`）を呼び、
+    秘密を含まない `issue.types` のブロックだけを出力する。ラッパーはそれを
+    `~/.cache/agent-fleet/jira/derived/issue-types-<サーバーのハッシュ>-KEY.yml` に保存し（同じ接続の
+    次回の取得失敗時だけ再利用）、`derived/config-KEY-<内容のハッシュ>.yml`（元の設定にそのブロックを
+    足したもの）を `JIRA_CONFIG_FILE` に指定する。名前は内容で決まるので、別の元設定での並行実行が
+    ファイルを共有することはない。元の設定を丸ごとコピーするため、ディレクトリは 0700、ファイルは
+    0600 にする。すでに `types:` がある設定は触らない。単純な block 形式でない設定（先頭行が 0 桁目、
+    0 桁目の行はすべて引用符なしの `key:`、`issue` キーなし、`---` / `...` なし）も、追記では
+    結合できないので触らない。失敗したときは、その
+    設定のまま jira を動かし、標準エラーに `jira init` を促す 1 行のヒントを出す（401 の原因が
+    Jira Software スコープの不足のこともあると添える）。課題タイプと単純な `project.key` を持つ管理設定は
+    そのプロジェクト専用として扱う。`issue create -p B` の B がそのキーと異なる（大文字小文字を
+    区別しない、`-c` なし）ときは、同じ仕組み（キャッシュ・命名・権限・GC）で `config-B-<ハッシュ>.yml`
+    を作る。ただし元設定の 0 桁目の `issue:` ブロックを先に取り除いてから B の課題タイプを足す。
+    このブロックには jira-cli が create で送る `fields.custom` も含まれ、A のカスタムフィールドを
+    B に送ってはならないので、B では捨てる（ボードやエピックなど他のキーは残す）。取り除くのは、
+    裸の `issue:` 行（大文字小文字は問わない）がちょうど 1 つで、YAML のアンカー・エイリアス・`<<` を含まず、`--parent` / `-P` も指定されていないときだけ（取り除くとエイリアスが未定義になりうる。親課題はプロジェクトの種別により `fields.parent` かエピックリンクのカスタムフィールドで送られ、その種別を表す `project.type` / `epic.*` は元のプロジェクトのものしかない）。そうでないとき、または取得に
+    失敗してキャッシュもないときは、元の設定のまま jira を動かし、
+    `jira init -c ~/.config/agent-fleet/jira/<名前>.yml --project B --board "<名前>"` を案内する
+    ヒントを出す。`project.key` を単純に読めない設定や `-p` なしの実行は、そのまま使う。
 - **利用者自身の設定が勝つ**: 明示の `JIRA_API_TOKEN` か `JIRA_SERVER`、自分で `--server` /
   `--login` / `--installation` / `--auth-type` を渡した `jira init`、または管理ディレクトリの
   外の設定（どの書き方の `-c` でも、`JIRA_CONFIG_FILE` でも、jira 自身の既定の
@@ -270,13 +295,24 @@ Jira は git でなく作業項目インボックス
 **知っておくべき制限:**
 
 - **OAuth のスコープ**: ボード・スプリント・エピックと `jira init` は `/rest/agile/1.0` を
-  呼び、そこはクラシックスコープを受け付けない。テナントの Jira アプリに
+  呼び、そこはクラシックスコープを受け付けない（`issue create` は不要。上記）。テナントの Jira アプリに
   read:board-scope:jira-software / read:project:jira / read・write:sprint:jira-software /
   read・write:epic:jira-software / read:issue-details:jira / read:jql:jira の許可が必要。
   そのうえで管理者がアプリの `jira_software` スコープグループ（`tenant_git_oauth.scope_groups`）
   にチェックを入れて初めて、認可 URL がそれらを求める。アプリにないスコープを求める認可は
-  Atlassian に拒否されるため。接続済みのメンバーは接続し直すと受け取れる。API トークン接続は
+  Atlassian に拒否されるため。実測（2026-10-19）: この拒否は Atlassian 側の「Something went
+  wrong」の行き止まりページで、callback へのリダイレクトがない。af が捕まえて Software スコープ
+  抜きでやり直せる `error=invalid_scope` は返らないので、テナントのオプションは外せない。
+  接続済みのメンバーは接続し直すと受け取れる。API トークン接続は
   アカウントができることを何でもできる。
+  不足を見えるようにする: Agent は現在のサイトについて accessible-resources が返すスコープを
+  保持し（`JiraSite.Scopes`）、`softwareScopes`（`granted` / `missing`、不明なら省略: API トークン、
+  または取得失敗）を導く。この項目より前のストアは、次の `jira-cred` か Jira 取得のときに
+  accessible-resources から補完する（時間制限と間隔制限があり、スコープ未記録のサイトにだけ書く）
+  ので、警告を見るために再接続する必要はない。設定の Jira カードは `missing` で「ボード・スプリント・
+  エピック: 利用できません」を出し、`workspace-agent jira-cred` は `software=missing` を出力する。
+  wrapper はこれを受けて `board`・`sprint`・`epic`・`init` で同じ 1 行を stderr に書き、そのまま
+  jira を実行する。
 - **OAuth のリンク**: jira-cli はブラウザ用 URL をサーバーから組み立てるので、OAuth では
   サイトではなく `api.atlassian.com/ex/jira/...` を指す。
 - **版の固定**: Dockerfile の `JIRA_CLI_VERSION`（v1.7.0、最新リリース）。tarball はリリースの

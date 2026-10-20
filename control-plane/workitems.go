@@ -58,7 +58,7 @@ type workItemsAPI struct {
 func newWorkItemsAPI(m *manager) workItemsAPI { return workItemsAPI{memberAuth{m}, m.store} }
 
 // workItemDTO is the wire shape of one cached row. Note what is absent: body, comments,
-// attachments. Those are read inside the session with `gh` / the Jira MCP.
+// attachments. Those are read inside the session with `gh` / the `jira` CLI.
 type workItemDTO struct {
 	ID       string   `json:"id"`
 	QueryID  string   `json:"queryId"`

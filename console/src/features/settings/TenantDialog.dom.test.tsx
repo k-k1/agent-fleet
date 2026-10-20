@@ -169,7 +169,7 @@ describe("TenantDialog", () => {
     respond(false);
     await mount("members");
     expect(api).toHaveBeenCalledWith("api/admin/tenants/acme/members");
-    const row = document.querySelector<HTMLButtonElement>(".member-row");
+    const row = document.querySelector<HTMLButtonElement>(".member-card");
     expect(row).toBeTruthy();
     expect(document.querySelector(".tenant-drill")).toBeNull(); // no breadcrumb at the list level
 
@@ -192,7 +192,7 @@ describe("TenantDialog", () => {
       crumb!.click();
     });
     expect(document.querySelector(".member-detail")).toBeNull();
-    expect(document.querySelector(".member-row")).toBeTruthy();
+    expect(document.querySelector(".member-card")).toBeTruthy();
   });
 
   it("keeps the operations surface to one tenant (no tenant picker)", async () => {

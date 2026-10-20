@@ -270,6 +270,24 @@ Work through ⚙ Settings → MCP servers in this order
 7. On an egress-restricted deployment the host may still be **awaiting approval** (the card
    shows the request flow).
 
+**Connection test passes (or now fails with "The server rejected the session id it had just
+issued"), but the session reports `Session not found`.** The server keeps MCP sessions in
+memory (a stateful Streamable HTTP server) and runs as **several instances without session
+affinity**: `initialize` lands on one instance, which issues the session id, and the next
+request lands on another that has never heard of it. Agent Fleet can't fix the server. The
+Connection test now sends several session-bound requests and reports this case itself; an
+older build could pass it by luck.
+
+- Make the server **stateless** (for example a stateless Streamable HTTP mode), or run a
+  **single instance**, or route every request carrying the same `Mcp-Session-Id` to the same
+  instance (session-id-aware routing).
+- A Connection test over one reused connection can look fine while real clients, which open several parallel connections, fail: the balancer keeps a reused connection on one instance. That is why the test opens a **new connection for each session-bound check**.
+- **Load-balancer cookie stickiness doesn't help**: Claude Code doesn't send cookies back on
+  MCP requests, so the balancer never sees its sticky cookie again.
+- If an unknown session gets **HTTP 404**, Claude Code re-initializes by itself. If it gets
+  **HTTP 400**, it does not recover: **restart the session** once the server is fixed.
+  (Measured on Claude Code 2.1.303 against a local repro server.)
+
 ### An agent stopped with "your login has expired"
 
 The error in the chat view offers **"Re-authenticate"**. Connect again from there and **that

@@ -13,6 +13,23 @@
 
 ---
 
+## [0.32.1](0.32.1.ja.md) — 2026-10-19
+
+**CLI ピン** — Claude Code 2.1.303
+
+**New / Improved**
+
+- **[メモリ管理]** テナント管理者が外部からの Agent Fleet メモリ利用を止められる。既定は許可 ([#2318](https://github.com/k-k1/agent-fleet/issues/2318))
+- **[課題管理]** Jira カードが Jira Software のスコープ不足を表示する ([#2372](https://github.com/k-k1/agent-fleet/issues/2372), [#2377](https://github.com/k-k1/agent-fleet/issues/2377))
+
+**Fixed**
+
+- **[メモリ管理]** メモリの提案がオンにしたとたん自動で動いていた。自動のレビューは別スイッチ（既定オフ）に ([#2358](https://github.com/k-k1/agent-fleet/issues/2358), [#2356](https://github.com/k-k1/agent-fleet/issues/2356))
+- **[opencode]** 止めたセッションの会話履歴が空だった ([#2379](https://github.com/k-k1/agent-fleet/issues/2379))
+- **[ワークスペース]** `jira init` なしでは `jira issue create -p KEY` が失敗し、別プロジェクトの課題タイプを使っていた ([#2369](https://github.com/k-k1/agent-fleet/issues/2369), [#2373](https://github.com/k-k1/agent-fleet/issues/2373))
+- **[課題管理]** Jira の作業項目の最初のプロンプトが `jira` CLI でなく Jira MCP サーバーを指していた ([#2367](https://github.com/k-k1/agent-fleet/issues/2367))
+- **[MCP]** ロードバランサーの後ろでセッションを失うサーバーでも接続テストが成功していた ([#2368](https://github.com/k-k1/agent-fleet/issues/2368))
+
 ## [0.32.0](0.32.0.ja.md) — 2026-10-18
 
 **CLI ピン** — Claude Code 2.1.302 / Codex 0.163.0 / Copilot 1.0.98 / Antigravity 1.4.2 / Cursor 2026.10.16-e3cb207 / Kiro 2.32.0 / OpenCode 2.0.32 / Muse Code 1.4.10-R6427.1

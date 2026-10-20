@@ -35,6 +35,15 @@ Parameters:
       registered value never has to change. !! Changing it on a live stack REPLACES
       the NAT gateway: egress drops for the duration and the source IP becomes the
       new address.
+  NatEnabled:
+    Type: String
+    Default: "true"
+    AllowedValues: [ "true", "false" ]
+    Description: >-
+      "false" deletes the NAT gateway and the private default route (pause.sh does this
+      while a deployment sleeps: a NAT gateway bills by the hour and has no stop). The
+      egress address survives - see NatEip - so "true" brings the same source IP back.
+      Nothing in a private subnet can reach ECR, logs or the internet while it is false.
 
 Mappings:
   Subnets:
@@ -46,6 +55,7 @@ Mappings:
 Conditions:
   # No allocation handed in -> the stack owns the address (and retains it, below).
   CreateNatEip: !Equals [ !Ref NatEipAllocationId, "" ]
+  NatOn: !Equals [ !Ref NatEnabled, "true" ]
 
 Resources:
   Vpc:
@@ -135,6 +145,7 @@ Resources:
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-nat-eip" } ]
   Nat:
     Type: AWS::EC2::NatGateway
+    Condition: NatOn
     Properties:
       AllocationId: !If [ CreateNatEip, !GetAtt NatEip.AllocationId, !Ref NatEipAllocationId ]
       SubnetId: !Ref PublicSubnet0
@@ -146,6 +157,7 @@ Resources:
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-private-rt" } ]
   PrivateDefaultRoute:
     Type: AWS::EC2::Route
+    Condition: NatOn
     Properties:
       RouteTableId: !Ref PrivateRt
       DestinationCidrBlock: 0.0.0.0/0

@@ -43,8 +43,10 @@ func dbPath() string {
 
 // openRO opens the store read-only (WAL auto-detected; busy_timeout so a
 // concurrent opencode write can't wedge us). ok=false when the db is absent/unopenable.
-func openRO() (*sql.DB, bool) {
-	p := dbPath()
+func openRO() (*sql.DB, bool) { return openRODB(dbPath()) }
+
+// openRODB is openRO on the store at p.
+func openRODB(p string) (*sql.DB, bool) {
 	if _, err := os.Stat(p); err != nil {
 		return nil, false
 	}

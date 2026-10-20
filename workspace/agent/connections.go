@@ -49,6 +49,7 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
+	jiraBackfillForStatus(s)
 	github := gitConnStatus(s, "github.com")
 	ghConnected, _ := github["connected"].(bool)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{

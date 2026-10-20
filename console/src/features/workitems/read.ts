@@ -612,7 +612,7 @@ export function sanitizeBranch(raw: string): string {
  *
  * The body is NOT included by default. A ticket description is written by third
  * parties, so pasting it in by default is opening an injection path by default; instead
- * we say where it is and let the agent fetch it with `gh` / the Jira MCP. `withBody`
+ * we say where it is and let the agent fetch it with the `gh` / `jira` CLIs. `withBody`
  * (the dialog's opt-in checkbox) wraps whatever the caller managed to fetch in a quoted
  * block that states plainly it is data, not instructions.
  *
@@ -650,7 +650,7 @@ function readLine(item: WorkItem): string {
     case "github":
       return t("wi.prompt_read_github", { key: shortKey(item.key).replace("#", "") });
     case "jira":
-      return t("wi.prompt_read_jira");
+      return t("wi.prompt_read_jira", { key: shortKey(item.key) });
     default:
       // Bitbucket lands here. There is no in-session tool equivalent to `gh`, so the URL is all
       // this can point at (docs/log/80 §80.19.5). The point is not to name a tool that is absent.

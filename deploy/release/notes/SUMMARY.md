@@ -14,6 +14,23 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 
 ---
 
+## [0.32.1](0.32.1.md) — 2026-10-19
+
+**CLI pins** — Claude Code 2.1.303
+
+**New / Improved**
+
+- **[agent memory]** Tenant admins can block external access to Agent Fleet memory; allowed by default ([#2318](https://github.com/k-k1/agent-fleet/issues/2318))
+- **[issue tracker]** The Jira card says when the connection lacks the Jira Software scopes ([#2372](https://github.com/k-k1/agent-fleet/issues/2372), [#2377](https://github.com/k-k1/agent-fleet/issues/2377))
+
+**Fixed**
+
+- **[agent memory]** Memory suggestions ran automatically once turned on; automatic review is now a separate switch, off by default ([#2358](https://github.com/k-k1/agent-fleet/issues/2358), [#2356](https://github.com/k-k1/agent-fleet/issues/2356))
+- **[opencode]** A stopped session's conversation history was empty ([#2379](https://github.com/k-k1/agent-fleet/issues/2379))
+- **[workspace]** `jira issue create -p KEY` failed without `jira init` and reused another project's issue types ([#2369](https://github.com/k-k1/agent-fleet/issues/2369), [#2373](https://github.com/k-k1/agent-fleet/issues/2373))
+- **[work items]** A Jira work item's first prompt pointed at a Jira MCP server instead of the `jira` CLI ([#2367](https://github.com/k-k1/agent-fleet/issues/2367))
+- **[MCP]** The connection test passed for servers that lose sessions behind a load balancer ([#2368](https://github.com/k-k1/agent-fleet/issues/2368))
+
 ## [0.32.0](0.32.0.md) — 2026-10-18
 
 **CLI pins** — Claude Code 2.1.302, Codex 0.163.0, Copilot 1.0.98, Antigravity 1.4.2, Cursor 2026.10.16-e3cb207, Kiro 2.32.0, OpenCode 2.0.32, Muse Code 1.4.10-R6427.1

@@ -204,6 +204,14 @@ var subcommands = []subcommand{
 		run:     runJiraCred,
 	},
 	{
+		// The project's issue types for `jira issue create`, which reads them from the config
+		// only. See jira_issue_types.go.
+		name:    "jira-issue-types",
+		summary: "Jira project issue types as a jira config fragment",
+		hidden:  true,
+		run:     runJiraIssueTypes,
+	},
+	{
 		// Transparent SVN auth: the PATH shim at /usr/local/bin/svn re-enters this binary,
 		// which fills in the credential and execs the real svn — so the process svn's caller
 		// sees is still svn. See svn_wrapper.go.

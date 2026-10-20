@@ -3,6 +3,12 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.32.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.32.1) — 2026-10-19
+
+A fix release for 0.32.0: memory suggestions no longer run in the background unless you ask for it,
+stopped opencode sessions show their history again, and the bundled Jira CLI creates issues without
+`jira init`.
+
 ## [0.32.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.32.0) — 2026-10-18
 
 A session can move to another agent, carrying its conversation and working state, and offers the

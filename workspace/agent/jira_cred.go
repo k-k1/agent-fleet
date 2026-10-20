@@ -39,6 +39,8 @@ func runJiraCred(_ []string) { jiraCredGet(os.Stdout) }
 //	        for OAuth, whose tokens the site's own host refuses
 //	auth=   basic | bearer, in jira-cli's auth_type vocabulary
 //	login=  the account email; absent when an OAuth account hides it
+//	software= "missing" when the OAuth authorization is known to lack the Jira Software scopes
+//	        (boards, sprints, epics); absent when granted or unknown (API token, old store)
 //	token=  last, so a reader that stops early has not taken the secret
 func jiraCredGet(w io.Writer) {
 	ctx, cancel := context.WithTimeout(context.Background(), jiraCredStoreWait)
@@ -62,12 +64,18 @@ func jiraCredGet(w io.Writer) {
 		}
 		auth, login, token = "bearer", c.Login, c.AccessToken
 	}
+	if c.AuthKind == "oauth" {
+		jiraBackfillScopes(&c)
+	}
 	if token == "" || strings.ContainsAny(token+login+c.Site, "\r\n") {
 		return
 	}
 	fmt.Fprintf(w, "site=%s\nserver=%s\nauth=%s\n", c.Site, jiraAPIBase(&c), auth)
 	if login != "" {
 		fmt.Fprintf(w, "login=%s\n", login)
+	}
+	if jiraSoftwareScopes(&c) == "missing" {
+		fmt.Fprint(w, "software=missing\n")
 	}
 	fmt.Fprintf(w, "token=%s\n", token)
 }

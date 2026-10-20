@@ -773,6 +773,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "tracker.jira_via_oauth": "OAuth",
   "tracker.jira_via_token": "API token",
   "tracker.jira_site": "Site",
+  "tracker.jira_software_missing": "Boards, sprints and epics: not available. This connection lacks the Jira Software scopes. Ask the tenant administrator to add them to the Atlassian app and tick the Jira Software option on the tenant's Jira card, then reconnect Jira.",
   "tracker.intro": "Connections that feed the “Issue tracker” rail on the left. GitHub issues and PRs reuse the Git connection (Settings › Git), so only Jira appears here. Credentials are stored encrypted inside the workspace and never reach the Control Plane.",
 
   // === Project settings modal (docs/log/56 P0 + docs/log/57, features/repos/ProjectModal.tsx) ===

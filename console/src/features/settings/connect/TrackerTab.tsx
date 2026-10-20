@@ -192,6 +192,11 @@ function JiraCard({ st, reload, oauthAvailable }: { st: any; reload: () => void;
               </select>
             </label>
           )}
+          {/* Only an OAuth connection the Agent knows lacks the scopes says "missing"; an API
+              token or an unrecorded authorization carries no verdict and shows nothing. */}
+          {st.authKind === "oauth" && st.softwareScopes === "missing" && (
+            <Hint>{tr("tracker.jira_software_missing")}</Hint>
+          )}
         </div>
       ) : mode === "waiting" ? (
         <div className="p-body">

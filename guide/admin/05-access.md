@@ -121,7 +121,10 @@ To register one:
 > looks like the first row but is a different scope, and af does not ask for it.
 > **Then** tick *The app also grants the Jira Software scopes* on the Jira card and save.
 > In that order: Atlassian refuses an authorization that asks for a scope the app does not
-> have, so ticking first stops every member from connecting. Members who are already
+> have, so ticking first stops every member from connecting. (Measured: the refusal is a
+> dead-end page on Atlassian's side with no redirect back to af, so af cannot fall back to the
+> basic scopes.) A member whose Jira card says "Boards, sprints and epics: not available" is
+> connected without these scopes. Members who are already
 > connected get the new scopes when they reconnect Jira.
 
 The secret is **encrypted on save and never shown again**. When you edit the

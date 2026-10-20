@@ -67,12 +67,12 @@ afterEach(() => {
 });
 
 describe("a start the Control Plane stopped", () => {
-  it("is flagged on the roster row, with the member's own wording as its title", async () => {
+  it("is flagged on the roster card, with the member's own wording as its title", async () => {
     api.mockImplementation((p: string) =>
       p === "api/admin/workspace-sizing" ? Promise.resolve({}) : Promise.resolve({ members: [STOPPED, PLAIN] }),
     );
     await render(<MembersPanel slug="acme" isSuper={false} onOpenMember={() => {}} />);
-    const rows = document.querySelectorAll(".member-row");
+    const rows = document.querySelectorAll(".member-card");
     const chip = rows[0].querySelector(".mr-idle.hold");
     expect(chip?.textContent).toBe(en["noti.kind_start_deadline"]);
     // Same function, same words: the admin and the member must not read one stop two ways.
@@ -121,7 +121,7 @@ describe("a start the Control Plane stopped", () => {
       p === "api/admin/workspace-sizing" ? Promise.resolve({}) : Promise.resolve({ members: [wiped] }),
     );
     await render(<MembersPanel slug="acme" isSuper={false} onOpenMember={() => {}} />);
-    const chip = document.querySelector(".member-row .mr-idle.hold");
+    const chip = document.querySelector(".member-card .mr-idle.hold");
     expect(chip?.textContent).toBe(en["admin.auto_stop_home_wipe"]);
     expect(chip?.getAttribute("title")).toBe(why);
   });

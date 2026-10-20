@@ -23,7 +23,7 @@ import (
 // tokens. CP posts the queries here, we resolve them against the provider and hand back
 // NON-SECRET rows (key / title / state / url / assignee / labels). The token never
 // leaves the container and no description or comment is returned — those are read inside
-// the session, where the agent can use `gh` or the Jira MCP.
+// the session, where the agent can use `gh` or the `jira` CLI.
 //
 // Deliberately NOT via the `gh` CLI (ADR 0061 decision 3). This process is the very
 // credential helper that hands `gh` its GH_TOKEN, so shelling out would be a round trip
