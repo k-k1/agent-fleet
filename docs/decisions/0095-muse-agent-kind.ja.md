@@ -2873,3 +2873,19 @@ optional なメンバー 7 つが明示的に nullable になった（`Session.s
 
 同じ代償がある。1.4.8 のバンドルは `MUSE_VERSION` を動かすまで 1.4.7 のバイナリに対して赤になる。
 実測: 1.4.8 緑・1.4.7 赤。ピンの更新は cli-pin-bump の仕事。
+
+### 注記 2026-10-20 — バンドルを 1.4.11-R6667.1 に更新（#2394）
+
+`internal/msp/schema` と `types_gen.go` は 1.4.11 の export（fingerprint `sha256:f282ad16…`、
+リリース manifest の `msp_schema_fingerprint` と一致）を持つ。契約が報告した 3 件の破壊は
+open enum への値追加: `ItemKind` に `damagedRange` と `scheduledFire`、`SessionClosedReason` に
+`leave`。enum は素の文字列なのでデコードは失敗しない。問題はクライアントがどう扱うかだけだった。
+
+- `leave` は `idle` と同じ扱い。`session/closed` でセッションのバックグラウンド作業を消し、
+  理由では分岐しないので、エラーにもクラッシュにもならない。
+- `scheduledFire` / `damagedRange` は汎用 item 経路（未知の kind は描画し、消さない）。契約上
+  `label`/`fallbackText` を持たないため、型付きメンバーから 1 行の要約を作る。
+- 追加の `session/leave`・recovery・monitor inbox は生成されるが未使用。
+
+同じ代償: 1.4.11 のバンドルは `MUSE_VERSION` が動くまで 1.4.10 のバイナリに対して赤。
+実測: 1.4.11 緑・1.4.10 赤。ピンの更新は cli-pin-bump の仕事。

@@ -766,3 +766,33 @@ func TestUnknownItemKindRendersWithFallbackText(t *testing.T) {
 		t.Errorf("part = %+v", p)
 	}
 }
+
+// The two kinds muse 1.4.11 added carry their facts in typed members, not in label or
+// fallbackText. A damagedRange must say what the log lost; it is the only trace of it.
+func TestDamagedRangeAndScheduledFireItemsRenderTheirFacts(t *testing.T) {
+	dr := item(msp.ItemKindDamagedRange, "d-1", 1)
+	dr.Status = msp.ItemStatusCompleted
+	dr.DamagedRange = &msp.DamagedRange{MissingRecords: 3, UnreadableLines: 2, ReadableAfterAt: "2026-10-20T00:00:00Z"}
+
+	sf := item(msp.ItemKindScheduledFire, "s-1", 1)
+	sf.Status = msp.ItemStatusCompleted
+	sf.JobID = sp("job-7")
+
+	turns := turnsFromItems([]msp.Item{dr, sf})
+	if len(turns) != 1 || len(turns[0].Parts) != 2 {
+		t.Fatalf("items were dropped or split: %+v", turns)
+	}
+	p := turns[0].Parts
+	if p[0].Tool != "damagedRange" || p[0].Info != "session log damaged: 3 records missing, 2 unreadable lines" || p[0].Output != "" {
+		t.Errorf("damagedRange = %+v", p[0])
+	}
+	if p[1].Tool != "scheduledFire" || p[1].Info != "scheduled job job-7" {
+		t.Errorf("scheduledFire = %+v", p[1])
+	}
+
+	// The host's own one-liner still wins over the derived summary.
+	dr.FallbackText = sp("log damaged")
+	if got := turnsFromItems([]msp.Item{dr})[0].Parts[0].Info; got != "log damaged" {
+		t.Errorf("fallbackText overridden: %q", got)
+	}
+}
