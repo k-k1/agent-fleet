@@ -505,9 +505,9 @@ ARG KIRO_SHA256_ARM64=219a047427ca2b43681f4788104df5e784eda030d98abeec1c732aac90
 # MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 362,440,920 B / 323,360,856 B（1.4.1-R4503.1）。
 # ⚠️ 版文字列は `Muse Code 1.3.0 (1.3.0-R3401.1)`＝**括弧内のビルド id** がピンと突合する値。
 # agy の `tr -dc '0-9.'` 流儀だと `-R3401.1` が落ちて毎回不一致になる（install_muse.go）。
-ARG MUSE_VERSION=1.4.10-R6427.1
-ARG MUSE_SHA256_X64=decefc0fb33c48ee43419c3e72ac2dbc781743868611074c7292807f5960dfcf
-ARG MUSE_SHA256_ARM64=2e5afa5e8560c1565185249af2d27b3e97aaf351d3d32275b8e410be702dce35
+ARG MUSE_VERSION=1.4.11-R6667.1
+ARG MUSE_SHA256_X64=6fda12a6a4f236528dafa707384cf6395fe859b1438ef77c7be26ed9d7976839
+ARG MUSE_SHA256_ARM64=b1ce49b4d988a1d6b1d76994d6c7a0eae912c8ed2c1cf67ac89434c017c8232e
 # Postgres供給ピン（ADR 0086 P0 供給レーン）: Zonky embedded-postgres 17.11.0 jar のハッシュ。
 # sha256 は `curl -sfL <jar-url> | sha256sum` で確認した値。
 # 他メジャー（16/17/18）は install-postgres が Maven Central の .sha256 サイドカーで動的に取得する。
