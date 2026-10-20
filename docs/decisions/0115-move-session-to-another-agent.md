@@ -2,8 +2,8 @@
 
 English | [日本語](0115-move-session-to-another-agent.ja.md)
 
-- Status: **proposed** (2026-10-15). Nothing is implemented.
-  Follow-ups: #2236, #2252, #2254
+- Status: **accepted** (2026-10-20; proposed 2026-10-15). P2a and P2b are built and were used once
+  on a live fleet; see the implementation record at the end. Follow-ups: #2233, #2252
 - Tracking: #2182. Builds on #2183 (the shared Markdown renderer, `transcript.Markdown`).
 - See also: [0039](0039-fork-at-message.md) (fork) /
   [0049](0049-session-changed-files.md) (the changed-files list) /
@@ -452,3 +452,20 @@ it is not yet.
   (least used first), then kinds with no usage source or reading, then those at 100% in a window.
   The first of them is the default until the user chooses. The usage is the same three sources as
   the WS bar; a kind without one is judged neither way and stays selectable and unmarked.
+
+## Addendum (2026-10-20) — implementation record and the first live check (#2182)
+
+- **Built.** P2a and P2b are merged: #2234 (the handover builder), #2237 (the source's lifecycle
+  gate), #2250 (the other Managed pumps take the gate too), #2253 (handover files in the trash),
+  #2255 (the move endpoint), #2260 (the Console dialog and the session-row wire) and #2264 (the
+  limit-banner trigger). The change that appends this note also renders the inputs a stop discarded
+  under "where it stopped" and writes the file's own headings and labels in the display language
+  (the Agent's saved language, as the Markdown export reads it); #2233 stays open for the
+  read-only tool lists, which need measured data.
+- **Checked live.** The owner moved a claude session to opencode on a real Agent and Console. The
+  target read the handover file from its first prompt and continued; the source stopped and showed
+  where it went, with "resume here anyway"; the picker showed the usage marks. No problem was
+  reported.
+- **Not yet checked live:** the rollback and recovery paths; a source that really hit its limit and
+  was moved from the banner; a chain A→B→C; trashing and restoring a target; cursor and kiro as
+  targets (#2252).
