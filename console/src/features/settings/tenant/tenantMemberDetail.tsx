@@ -225,10 +225,10 @@ export function MemberView({
   // value as the denominator makes the ratio a lie — where a measurement exists, it is the
   // truth (docs/log/63 §63.9).
   const diskTotal = stats?.disk_total ?? stats?.disk_quota ?? null;
-  // What the last start's install said: the live poll while it runs (a clean start reports
-  // nothing, so the roster's older failure must not shine through), the roster's stored copy
-  // while stopped. Neither is a flag when it is absent.
-  const bootFailed = bootFailures(running ? stats?.boot_install_failed : member.boot_failed);
+  // What the last start's install said, from the poll alone: the CP answers with the running
+  // workspace's own report or, while stopped, the stored outcome. The roster snapshot in
+  // `member` is fixed at click time and must never decide it.
+  const bootFailed = bootFailures(stats?.boot_failed);
   const fmtGiB = (b: number) => (b / 1024 ** 3).toFixed(1);
   const diskRatio = diskTotal && stats?.disk_used != null ? stats.disk_used / diskTotal : null;
 

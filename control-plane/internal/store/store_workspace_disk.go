@@ -15,10 +15,6 @@ type WorkspaceDisk struct {
 	// ObservedAt is when the reading was TAKEN (RFC 3339, UTC), not when it was stored: the
 	// roster shows its age on a stopped card, and a stopped workspace is not measured again.
 	ObservedAt string
-	// BootFailed is the JSON object of tool to reason for the CLIs whose install failed on the
-	// last start ("" when none was reported). It is stored as text so the struct stays
-	// comparable and the roster passes it on without this package knowing the tool names.
-	BootFailed string
 }
 
 // WorkspaceDiskStore keeps one row per workspace, so the member roster can show a disk gauge
@@ -43,13 +39,13 @@ func DiskObservedAt(t time.Time) string { return t.UTC().Format("2006-01-02T15:0
 // if it is not older than what is there, which includes a ClearWorkspaceDisk mark.
 func (s *SQL) PutWorkspaceDisk(ctx context.Context, d WorkspaceDisk) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO workspace_disk(workspace_id, used, total, observed_at, cleared, boot_failed)
-		 SELECT CAST(? AS TEXT), CAST(? AS BIGINT), CAST(? AS BIGINT), CAST(? AS TEXT), 0, CAST(? AS TEXT)
+		`INSERT INTO workspace_disk(workspace_id, used, total, observed_at, cleared)
+		 SELECT CAST(? AS TEXT), CAST(? AS BIGINT), CAST(? AS BIGINT), CAST(? AS TEXT), 0
 		 WHERE EXISTS (SELECT 1 FROM workspace WHERE id=?)
 		 ON CONFLICT(workspace_id) DO UPDATE SET used=excluded.used, total=excluded.total,
-		   observed_at=excluded.observed_at, cleared=0, boot_failed=excluded.boot_failed
+		   observed_at=excluded.observed_at, cleared=0
 		 WHERE excluded.observed_at >= workspace_disk.observed_at`,
-		d.WorkspaceID, int64(d.Used), int64(d.Total), d.ObservedAt, d.BootFailed, d.WorkspaceID)
+		d.WorkspaceID, int64(d.Used), int64(d.Total), d.ObservedAt, d.WorkspaceID)
 	return err
 }
 
@@ -57,12 +53,23 @@ func (s *SQL) PutWorkspaceDisk(ctx context.Context, d WorkspaceDisk) error {
 // describes files that are gone. The row is kept as a mark stamped now, so a reading that began
 // before the wipe and lands after it is refused rather than bringing the old figure back.
 func (s *SQL) ClearWorkspaceDisk(ctx context.Context, workspaceID string) error {
+	now := DiskObservedAt(time.Now())
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO workspace_disk(workspace_id, used, total, observed_at, cleared, boot_failed)
-		 SELECT CAST(? AS TEXT), 0, 0, CAST(? AS TEXT), 1, ''
+		`INSERT INTO workspace_disk(workspace_id, used, total, observed_at, cleared)
+		 SELECT CAST(? AS TEXT), 0, 0, CAST(? AS TEXT), 1
 		 WHERE EXISTS (SELECT 1 FROM workspace WHERE id=?)
-		 ON CONFLICT(workspace_id) DO UPDATE SET used=0, total=0, observed_at=excluded.observed_at, cleared=1, boot_failed=''`,
-		workspaceID, DiskObservedAt(time.Now()), workspaceID)
+		 ON CONFLICT(workspace_id) DO UPDATE SET used=0, total=0, observed_at=excluded.observed_at, cleared=1`,
+		workspaceID, now, workspaceID)
+	if err != nil {
+		return err
+	}
+	// The last start's install outcome describes the wiped home too: the next start installs again.
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO workspace_boot_install(workspace_id, failed, observed_at)
+		 SELECT CAST(? AS TEXT), '', CAST(? AS TEXT)
+		 WHERE EXISTS (SELECT 1 FROM workspace WHERE id=?)
+		 ON CONFLICT(workspace_id) DO UPDATE SET failed='', observed_at=excluded.observed_at`,
+		workspaceID, now, workspaceID)
 	return err
 }
 
@@ -70,8 +77,8 @@ func (s *SQL) GetWorkspaceDisk(ctx context.Context, workspaceID string) (Workspa
 	d := WorkspaceDisk{WorkspaceID: workspaceID}
 	var used, total, cleared int64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT used, total, observed_at, cleared, boot_failed FROM workspace_disk WHERE workspace_id=?`, workspaceID,
-	).Scan(&used, &total, &d.ObservedAt, &cleared, &d.BootFailed)
+		`SELECT used, total, observed_at, cleared FROM workspace_disk WHERE workspace_id=?`, workspaceID,
+	).Scan(&used, &total, &d.ObservedAt, &cleared)
 	if err == sql.ErrNoRows || (err == nil && cleared != 0) {
 		return WorkspaceDisk{}, false, nil
 	}

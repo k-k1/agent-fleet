@@ -252,17 +252,23 @@ func (u *usageSampler) recordDisks(ctx context.Context, jobs []diskJob) {
 // its age) stays on the card.
 func (u *usageSampler) recordDisk(ctx context.Context, ws store.Workspace, rt runtime.Runtime, agentUp bool) {
 	var used, total uint64
-	var bootFailed string
 	taken := time.Now()
+	// One Agent call serves the install outcome (every runtime) and the home statfs. The outcome
+	// is recorded whether or not a disk reading follows: a disk that cannot be read must neither
+	// drop a new failure nor keep an old one, and a clean answer withdraws it.
+	var st map[string]any
+	if agentUp {
+		sctx, cancel := context.WithTimeout(ctx, usageSessionTimeout)
+		s, err := u.mgr.agentStats(sctx, rt)
+		cancel()
+		if err == nil {
+			st = s
+			u.recordBootFailed(ctx, ws, s, taken)
+		}
+	}
 	switch u.mgr.workspaceSizing().DiskMeaning {
 	case runtime.DiskMeaningHome:
-		if !agentUp {
-			return
-		}
-		sctx, cancel := context.WithTimeout(ctx, usageSessionTimeout)
-		defer cancel()
-		st, err := u.mgr.agentStats(sctx, rt)
-		if err != nil {
+		if st == nil {
 			return
 		}
 		du, ok1 := st["disk_used"].(uint64)
@@ -271,13 +277,6 @@ func (u *usageSampler) recordDisk(ctx context.Context, ws store.Workspace, rt ru
 			return
 		}
 		used, total = du, dt
-		// The same call says which CLIs failed to install on this start; the roster flags it
-		// from the DB, so a stopped workspace keeps showing its last start's outcome.
-		if bf, ok := st["boot_install_failed"].(map[string]string); ok && len(bf) > 0 {
-			if b, err := json.Marshal(bf); err == nil {
-				bootFailed = string(b)
-			}
-		}
 	case runtime.DiskMeaningQuota:
 		dctx, cancel := context.WithTimeout(ctx, usageDiskTimeout)
 		defer cancel()
@@ -301,7 +300,7 @@ func (u *usageSampler) recordDisk(ctx context.Context, ws store.Workspace, rt ru
 		return
 	}
 	if err := u.mgr.store.PutWorkspaceDisk(ctx, store.WorkspaceDisk{
-		WorkspaceID: ws.ID, Used: used, Total: total, ObservedAt: store.DiskObservedAt(taken), BootFailed: bootFailed,
+		WorkspaceID: ws.ID, Used: used, Total: total, ObservedAt: store.DiskObservedAt(taken),
 	}); err != nil {
 		log.Printf("showback: record disk (%s): %v", ws.ContainerName, err)
 	}
@@ -492,4 +491,21 @@ func writeUsageCSV(w http.ResponseWriter, rows []store.UsageRow) {
 		})
 	}
 	cw.Flush()
+}
+
+// recordBootFailed stores which CLIs failed to install on this start, from an answered stats
+// call. An Agent that reports none withdraws an earlier failure.
+func (u *usageSampler) recordBootFailed(ctx context.Context, ws store.Workspace, st map[string]any, at time.Time) {
+	bf, _ := st["boot_install_failed"].(map[string]string)
+	failed := ""
+	if len(bf) > 0 {
+		b, err := json.Marshal(bf)
+		if err != nil {
+			return
+		}
+		failed = string(b)
+	}
+	if err := u.mgr.store.PutWorkspaceBootFailed(ctx, ws.ID, failed, store.DiskObservedAt(at)); err != nil {
+		log.Printf("showback: record boot install (%s): %v", ws.ContainerName, err)
+	}
 }

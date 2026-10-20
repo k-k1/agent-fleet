@@ -989,6 +989,7 @@ type Store interface {
 	DevIdPStore
 	MemberUIStateStore
 	WorkspaceDiskStore
+	WorkspaceBootStore
 	TenantMemberDefaultsStore
 	HomeOperationStore
 	CPLeaseStore

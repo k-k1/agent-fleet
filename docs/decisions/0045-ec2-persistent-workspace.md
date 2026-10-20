@@ -1764,11 +1764,13 @@ link behind; a real ENOSPC during the rollback itself was not reproduced. Not do
 refusing a session start with the reason (Follow-ups: #2398).
 
 **Note (2026-10-20, #2398 part 1): the tenant admin now sees a full home and a failed boot-install.** The Agent adds
-`boot_install_failed` (tool to reason, failures only; absent when none failed or the status file is unknown) to
-`/workspace/stats`, which the CP already polls: one stat and one read of at most 8 KiB, nothing from home, no new
-per-member call. The usage sampler stores it beside the disk reading (`workspace_disk.boot_failed`, forward-compatible
-column), so the DB-only member list flags a start whose install failed (and a stopped card keeps the last start's
-outcome), while the member detail reads it from its own stats poll when the workspace runs. The detail also flags a home
-over the member notice's threshold (same numbers and hysteresis as `homeDiskPressure.ts`), only where `home_own` is
-true. An unreachable or stopped workspace reports nothing and so never flags. The list's existing disk gauge keeps its
-own 85% / 95% levels. No admin notification. Refusing a session start with the reason is still open (Follow-ups: #2398).
+`boot_install_failed` (tool to reason, failures only, bounded to short CLI-name-shaped keys) to `/workspace/stats`, which
+the CP already polls: one stat and one read of at most 8 KiB, nothing from home, no new per-member call. The CP bounds
+the body it reads, keeps only valid names and the four reasons, and the usage sampler stores the outcome in its own table
+`workspace_boot_install`, independent of the disk reading, so it is recorded (and withdrawn by a clean answer) on every
+runtime, including those whose disk is not measured. The DB-only member list flags a start whose install failed, and a
+stopped card keeps the last start's outcome. The member detail's poll serves the running workspace's own report, else the
+stored outcome (local docker never asks the Agent on that path), and the Console renders only that. The detail also flags
+a home over the member notice's threshold (same numbers and hysteresis as `homeDiskPressure.ts`), only where `home_own`
+is true and the workspace runs. The list's existing disk gauge keeps its own 85% / 95% levels. No admin notification.
+Refusing a session start with the reason is still open (Follow-ups: #2398).

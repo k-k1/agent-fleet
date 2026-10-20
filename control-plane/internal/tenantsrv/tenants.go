@@ -387,10 +387,13 @@ func (a Admin) ListMembers(w http.ResponseWriter, r *http.Request) {
 						disk["total"] = d.Total
 					}
 					row["disk"] = disk
-					// The CLIs whose install failed on the last start, tool to reason. Omitted
-					// when none was reported or the Agent did not say: never a false flag.
+				}
+				// The CLIs whose install failed on the last start, tool to reason, kept apart
+				// from the disk reading so a runtime with no measured disk still flags it.
+				// Omitted when none was reported or the Agent did not say: never a false flag.
+				if raw, err := a.cp.Store().GetWorkspaceBootFailed(r.Context(), wsRow.ID); err == nil && raw != "" {
 					var bf map[string]string
-					if d.BootFailed != "" && json.Unmarshal([]byte(d.BootFailed), &bf) == nil && len(bf) > 0 {
+					if json.Unmarshal([]byte(raw), &bf) == nil && len(bf) > 0 {
 						row["boot_failed"] = bf
 					}
 				}

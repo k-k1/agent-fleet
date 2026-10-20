@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -76,14 +77,14 @@ func TestWorkspaceStatsBootInstallFailed(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := filepath.Join(dir, "s.tsv")
-	body := "claude\tfailed\tno_space\ncodex\tok\t\nrtk\tskipped\n"
+	body := "claude\tfailed\tno_space\ncodex\tok\t\nrtk\tskipped\n../etc/x\tfailed\tother\n" + strings.Repeat("a", 40) + "\tfailed\tother\n"
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	bootInstallStatusPath = p
 	got, _ := stats()["boot_install_failed"].(map[string]any)
 	if len(got) != 1 || got["claude"] != "no_space" {
-		t.Errorf("boot_install_failed = %v, want only claude=no_space", got)
+		t.Errorf("boot_install_failed = %v, want only claude=no_space (a path-like or over-long tool name is dropped)", got)
 	}
 
 	if err := os.WriteFile(p, []byte("codex\tok\t\nrtk\tskipped\n"), 0o600); err != nil {

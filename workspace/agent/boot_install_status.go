@@ -115,10 +115,13 @@ func readBootInstallStatus() map[string]bootInstall {
 // bootInstallFailed is the failed subset of readBootInstallStatus, tool to reason. nil when
 // nothing failed and when the file is unknown: "skipped" and "ok" are never reported, and an
 // unreadable file must not look like a failure.
+//
+// The tool name comes from a file the member's own user can write, so only a short CLI-name-shaped
+// one is passed on, and at most bootInstallMaxTools of them: the CP stores and serves this.
 func bootInstallFailed() map[string]string {
 	var out map[string]string
 	for tool, bi := range readBootInstallStatus() {
-		if bi.Status != "failed" {
+		if bi.Status != "failed" || !validBootTool(tool) || len(out) >= bootInstallMaxTools {
 			continue
 		}
 		if out == nil {
@@ -127,4 +130,18 @@ func bootInstallFailed() map[string]string {
 		out[tool] = bi.Reason
 	}
 	return out
+}
+
+const bootInstallMaxTools = 16
+
+func validBootTool(s string) bool {
+	if s == "" || len(s) > 32 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.') {
+			return false
+		}
+	}
+	return true
 }

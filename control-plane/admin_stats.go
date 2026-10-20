@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"sync"
 	"time"
@@ -79,6 +80,22 @@ func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 		if as := store.CurrentAutoStop(ctx, a.mgr.store, mem.ID, state()); as != nil {
 			out["auto_stop"] = as
 		}
+	}
+	// Which CLIs failed to install on the last start. A running workspace the Agent answered
+	// for is authoritative (a clean start reports none); otherwise (stopped, unreachable, or a
+	// local docker deployment where the host-side read never asks the Agent) it is the sampler's
+	// stored outcome. The list stays out of the response when empty, and the detail renders only
+	// this key, so a stale snapshot on the client can never decide it.
+	live, answered := out["boot_install_failed"].(map[string]string)
+	delete(out, "boot_install_failed")
+	if !answered {
+		live = nil
+		if raw, err := a.mgr.store.GetWorkspaceBootFailed(ctx, ws.ID); err == nil && raw != "" {
+			_ = json.Unmarshal([]byte(raw), &live)
+		}
+	}
+	if len(live) > 0 {
+		out["boot_failed"] = live
 	}
 	// Disk prefers the host-side du. Where CP and Workspace share a host, that is the
 	// size of the home tree itself — the only figure readable while the container is

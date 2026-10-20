@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -50,6 +51,47 @@ var healthzClient = &http.Client{Timeout: 5 * time.Second, Transport: newAgentTr
 // cannot be read in a few seconds is simply "not measurable this tick".
 var agentStatsClient = &http.Client{Timeout: 5 * time.Second, Transport: newAgentTransport()}
 
+// agentStatsMaxBytes bounds the stats body the CP will read.
+const agentStatsMaxBytes = 64 << 10
+
+// Bounds on the boot-install failures taken from an Agent. The Agent writes a closed set, but
+// the status file is the member's own and the CP persists and serves what it is given, so the
+// CP accepts only a short CLI-name-shaped key, one of the four reasons, and a handful of entries.
+const bootFailedMaxTools = 16
+
+var bootFailedReasons = map[string]bool{"no_space": true, "network": true, "checksum": true, "other": true}
+
+func validBootTool(s string) bool {
+	if s == "" || len(s) > 32 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+// sanitizeBootFailed keeps the valid entries of in (an unknown reason reads as "other") and
+// never returns nil.
+func sanitizeBootFailed(in map[string]string) map[string]string {
+	out := map[string]string{}
+	for tool, reason := range in {
+		if len(out) >= bootFailedMaxTools {
+			break
+		}
+		if !validBootTool(tool) {
+			continue
+		}
+		if !bootFailedReasons[reason] {
+			reason = "other"
+		}
+		out[tool] = reason
+	}
+	return out
+}
+
 // agentStats asks the Agent for the workspace's own resource gauges — the only
 // source that works on a runtime the CP cannot see into (every ECS profile: no
 // docker binary, no cgroup for that workspace on the CP's host). The Agent reads
@@ -78,6 +120,8 @@ func (m *manager) agentStats(ctx context.Context, rt runtime.Runtime) (map[strin
 		// CP newer than the image it launched must degrade, not lie.
 		return nil, fmt.Errorf("agent /workspace/stats: %s", resp.Status)
 	}
+	// A stats body is a few hundred bytes. The cap keeps a misbehaving Agent from making the CP
+	// buffer an arbitrary response for a poll it runs on every member.
 	var body struct {
 		MemUsed      *uint64  `json:"mem_used"`
 		MemMax       *uint64  `json:"mem_max"`
@@ -88,7 +132,7 @@ func (m *manager) agentStats(ctx context.Context, rt runtime.Runtime) (map[strin
 		// Only failures, tool to reason; absent when none or unknown (Agent boot_install_status.go).
 		BootInstallFailed map[string]string `json:"boot_install_failed"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, agentStatsMaxBytes)).Decode(&body); err != nil {
 		return nil, err
 	}
 	out := map[string]any{}
@@ -113,9 +157,9 @@ func (m *manager) agentStats(ctx context.Context, rt runtime.Runtime) (map[strin
 	if body.DiskTotal != nil {
 		out["disk_total"] = *body.DiskTotal
 	}
-	if len(body.BootInstallFailed) > 0 {
-		out["boot_install_failed"] = body.BootInstallFailed
-	}
+	// Always present once the Agent has answered, possibly empty: "answered and nothing failed"
+	// must be told apart from "not asked", or a stored failure would outlive a clean start.
+	out["boot_install_failed"] = sanitizeBootFailed(body.BootInstallFailed)
 	return out, nil
 }
 
