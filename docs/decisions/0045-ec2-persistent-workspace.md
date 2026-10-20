@@ -1761,4 +1761,4 @@ free or over 90% (re-armed above 3 GiB free and under 85%). The entrypoint prune
 home has under 300 MiB per package free. Measured with local tarballs: a failed `npm install -g` that replaces one
 package and fails another rolls the replaced one back (the old version stays) but leaves the failing package's `bin`
 link behind; a real ENOSPC during the rollback itself was not reproduced. Not done: flagging the member to the tenant admin,
-refusing a session start with the reason (Follow-ups: see the PR).
+refusing a session start with the reason (Follow-ups: #2398).
