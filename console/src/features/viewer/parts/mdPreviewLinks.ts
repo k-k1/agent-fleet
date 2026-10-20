@@ -10,6 +10,7 @@
 // `https:` loopback URL stays an ordinary link.
 import { previewURL } from "../../../core/api/client.ts";
 import { t } from "../../../lib/i18n/index.ts";
+import { URL_STOP } from "../../../lib/markdown.ts";
 import { targetFromURL } from "../../browser/target.ts";
 import { activate, ensurePreviewInfo as ensureInfo } from "../../preview/previewLinkRuntime.ts";
 import type { OpenPortLinkMenu } from "../../preview/portLinkContext.ts";
@@ -84,6 +85,10 @@ export function linkifyPreviewCode(el: HTMLElement, w: PreviewLinkWiring) {
   el.querySelectorAll<HTMLElement>("code").forEach((code) => {
     if (code.closest("pre,a") || code.childElementCount) return;
     const text = (code.textContent || "").trim();
+    // Bare autolinks end at a non-ASCII punctuation/symbol (URL_STOP); a code span has no end to
+    // cut at, so one holding such a character (`http://127.0.0.1:8080/…`) is an elided URL, not a
+    // real one, and linking it would open a 404.
+    if (URL_STOP.test(text)) return;
     const target = loopbackTarget(text);
     if (!target) return;
     const a = document.createElement("a");

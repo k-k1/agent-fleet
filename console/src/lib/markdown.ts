@@ -543,7 +543,7 @@ export function asciiPunctuationRule(rule: RegExp): RegExp {
 // ASCII range: marked's own backpedal still decides where `…/x).` ends. An author who really
 // means a URL with a fullwidth character in it still has `<…>` and `[text](url)`, which are
 // read by other rules entirely.
-const URL_STOP = /(?![\x00-\x7f])[\p{P}\p{S}]/u;
+export const URL_STOP = /(?![\x00-\x7f])[\p{P}\p{S}]/u;
 
 type Rules = Tokenizer["rules"];
 const CJK_FRIENDLY_RULES = ["emStrongLDelim", "emStrongRDelimAst", "delLDelim", "delRDelim"] as const;
