@@ -66,6 +66,9 @@ type HandoverInput struct {
 	// Queued and QueuedItems are the instructions that never reached the transcript.
 	Queued      []string
 	QueuedItems []agents.QueueItem
+	// Discards are the inputs a stop threw away and the driver kept for return (ADR 0105
+	// decision 4): like the queue they never reached the transcript.
+	Discards []agents.Discard
 	// PeerMessages is the source's pending peer spool (agents.PendingPeers).
 	PeerMessages []agents.PendingPeer
 	// CutOffByLimit is true when the last turn was cut off by the usage limit.
@@ -126,6 +129,7 @@ type HandoverStopped struct {
 	LastAssistant string
 	Question      []transcript.Question
 	Queued        []HandoverQueued
+	Discarded     []HandoverDiscard
 	Peers         []HandoverPeer
 	CutOff        bool
 }
@@ -133,6 +137,13 @@ type HandoverStopped struct {
 type HandoverQueued struct {
 	Text, Origin string
 	Attachments  []string
+}
+
+// HandoverDiscard is one discarding stop: why, when (RFC 3339 as the driver recorded it) and
+// the inputs it threw away.
+type HandoverDiscard struct {
+	Reason, At string
+	Items      []HandoverQueued
 }
 
 type HandoverPeer struct{ From, Intent, Body string }
@@ -189,17 +200,30 @@ func handoverStopped(in HandoverInput, kept []transcript.Turn) HandoverStopped {
 	seen := map[string]bool{}
 	for _, q := range in.QueuedItems {
 		seen[q.Text] = true
-		s.Queued = append(s.Queued, HandoverQueued{Text: q.Text, Origin: originLabel(q.Origin), Attachments: q.Attachments})
+		s.Queued = append(s.Queued, handoverQueuedOf(q))
 	}
 	for _, q := range in.Queued {
 		if !seen[q] {
 			s.Queued = append(s.Queued, HandoverQueued{Text: q})
 		}
 	}
+	for _, d := range in.Discards {
+		hd := HandoverDiscard{Reason: d.Reason, At: d.At}
+		for _, q := range d.Items {
+			hd.Items = append(hd.Items, handoverQueuedOf(q))
+		}
+		if len(hd.Items) > 0 {
+			s.Discarded = append(s.Discarded, hd)
+		}
+	}
 	for _, p := range in.PeerMessages {
 		s.Peers = append(s.Peers, HandoverPeer{From: p.From, Intent: p.Intent, Body: p.Message})
 	}
 	return s
+}
+
+func handoverQueuedOf(q agents.QueueItem) HandoverQueued {
+	return HandoverQueued{Text: q.Text, Origin: originLabel(q.Origin), Attachments: q.Attachments}
 }
 
 func originLabel(o agents.Origin) string {
@@ -449,47 +473,47 @@ func firstParagraph(s string) (string, bool) {
 
 func renderHandover(h Handover, lang string) string {
 	sc := bridge.ScrubSecrets
+	l := handoverLabelsFor(lang)
 	var b strings.Builder
 	hd := h.Header
-	fmt.Fprintf(&b, "# Handover: %s\n\n", oneLineText(sc(h.Title)))
+	fmt.Fprintf(&b, "# "+l.Title+"\n\n", oneLineText(sc(h.Title)))
 	bullet := func(label, v string) {
 		if v != "" {
 			fmt.Fprintf(&b, "- %s: %s\n", label, oneLineText(sc(v)))
 		}
 	}
-	bullet("Source session", hd.Source)
-	bullet("Agent", strings.TrimSpace(hd.Kind+" "+hd.Model))
-	bullet("Working folder", hd.Dir)
-	bullet("Branch", hd.Branch)
+	bullet(l.Source, hd.Source)
+	bullet(l.Agent, strings.TrimSpace(hd.Kind+" "+hd.Model))
+	bullet(l.Folder, hd.Dir)
+	bullet(l.Branch, hd.Branch)
 	if !hd.MovedAt.IsZero() {
 		at := hd.MovedAt
 		if hd.Loc != nil {
 			at = at.In(hd.Loc)
 		}
-		bullet("Moved", at.Format("2006-01-02 15:04 MST"))
+		bullet(l.Moved, at.Format("2006-01-02 15:04 MST"))
 	}
 	for _, f := range hd.Earlier {
-		bullet("Earlier history (same folder as this file)", f)
+		bullet(l.Earlier, f)
 	}
 	for _, f := range hd.Instructions {
-		bullet("Project instructions the source's agent followed and yours does not load (read it yourself)", f)
+		bullet(l.Instructions, f)
 	}
-	b.WriteString("\nThis file is the whole record of the source session: work from it, " +
-		"and do not open the source's own session files or its CLI's state directories.\n\n")
+	b.WriteString("\n" + l.Intro + "\n\n")
 
 	st := h.Stopped
-	b.WriteString("# Where it stopped\n\n")
+	b.WriteString("# " + l.Stopped + "\n\n")
 	if st.CutOff {
-		b.WriteString("The last turn was cut off by the agent's usage limit.\n\n")
+		b.WriteString(l.CutOff + "\n\n")
 	}
 	if st.LastUser != "" {
-		b.WriteString("**Last user message:**\n\n" + transcript.Fenced("", sc(st.LastUser)))
+		b.WriteString("**" + l.LastUser + "**\n\n" + transcript.Fenced("", sc(st.LastUser)))
 	}
 	if st.LastAssistant != "" {
-		b.WriteString("**Last assistant text:**\n\n" + transcript.Fenced("", sc(st.LastAssistant)))
+		b.WriteString("**" + l.LastAssistant + "**\n\n" + transcript.Fenced("", sc(st.LastAssistant)))
 	}
 	for _, q := range st.Question {
-		b.WriteString("**Unanswered question:** " + oneLineText(sc(q.Question)) + "\n\n")
+		b.WriteString("**" + l.Question + "** " + oneLineText(sc(q.Question)) + "\n\n")
 		for _, o := range q.Options {
 			b.WriteString("- " + oneLineText(sc(o.Label)))
 			if o.Description != "" {
@@ -501,45 +525,63 @@ func renderHandover(h Handover, lang string) string {
 			b.WriteString("\n")
 		}
 	}
-	if len(st.Queued) > 0 {
-		b.WriteString("**Instructions queued but never delivered:**\n\n")
-		for _, q := range st.Queued {
+	queuedItems := func(items []HandoverQueued) {
+		for _, q := range items {
 			head := "- "
 			if q.Origin != "" {
 				head += "(" + oneLineText(sc(q.Origin)) + ") "
 			}
 			b.WriteString(head + "\n\n" + transcript.Fenced("", sc(q.Text)))
 			for _, a := range q.Attachments {
-				b.WriteString("  attachment: `" + oneLineText(sc(a)) + "`\n")
+				b.WriteString("  " + l.QueuedAttachment + ": `" + oneLineText(sc(a)) + "`\n")
 			}
 		}
 	}
+	if len(st.Queued) > 0 {
+		b.WriteString("**" + l.Queued + "**\n\n")
+		queuedItems(st.Queued)
+	}
+	if len(st.Discarded) > 0 {
+		b.WriteString("**" + l.Discarded + "**\n\n")
+		for _, d := range st.Discarded {
+			reason := l.DiscardReasons[d.Reason]
+			if reason == "" {
+				reason = d.Reason
+			}
+			head := reason
+			if d.At != "" {
+				head += ", " + d.At
+			}
+			b.WriteString("_" + oneLineText(sc(head)) + "_\n\n")
+			queuedItems(d.Items)
+		}
+	}
 	if len(st.Peers) > 0 {
-		b.WriteString("**Peer messages waiting for the source:**\n\n")
+		b.WriteString("**" + l.Peers + "**\n\n")
 		for _, p := range st.Peers {
-			fmt.Fprintf(&b, "- from %s (intent: %s)\n\n%s", oneLineText(sc(p.From)), oneLineText(sc(p.Intent)),
+			fmt.Fprintf(&b, "- "+l.PeerFrom+"\n\n%s", oneLineText(sc(p.From)), oneLineText(sc(p.Intent)),
 				transcript.Fenced("", sc(p.Body)))
 		}
 	}
 
-	b.WriteString("# Working copy\n\n")
+	b.WriteString("# " + l.WorkingCopy + "\n\n")
 	if !h.Git.Available {
-		b.WriteString("(not a git working copy, or git could not be read)\n\n")
+		b.WriteString(l.NotGit + "\n\n")
 	} else {
 		section := func(label, body string) {
 			if strings.TrimSpace(body) == "" {
-				body = "(none)"
+				body = l.None
 			}
 			b.WriteString("**" + label + ":**\n\n" + transcript.Fenced("", sc(body)))
 		}
 		section("git status --porcelain", h.Git.Status)
 		section("git diff --stat", h.Git.DiffStat)
-		section("Commits ahead of upstream", h.Git.Ahead)
+		section(l.CommitsAhead, h.Git.Ahead)
 	}
 
-	b.WriteString("# Changed files\n\n")
+	b.WriteString("# " + l.Changed + "\n\n")
 	if len(h.Changed) == 0 {
-		b.WriteString("(none recorded)\n\n")
+		b.WriteString(l.NoneRecorded + "\n\n")
 	}
 	for _, f := range h.Changed {
 		line := fmt.Sprintf("- `%s` — %s", oneLineText(sc(f.Path)), f.Verb)
@@ -547,10 +589,10 @@ func renderHandover(h Handover, lang string) string {
 			line += fmt.Sprintf(" (+%d/-%d)", f.Added, f.Removed)
 		}
 		if f.Count > 1 {
-			line += fmt.Sprintf(", %d edits", f.Count)
+			line += fmt.Sprintf(l.EditsFmt, f.Count)
 		}
 		if f.Sidechain {
-			line += ", by a subagent only"
+			line += l.SubagentOnly
 		}
 		b.WriteString(line + "\n")
 	}
@@ -558,21 +600,21 @@ func renderHandover(h Handover, lang string) string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString("# Open threads\n\n")
+	b.WriteString("# " + l.Threads + "\n\n")
 	if len(h.Threads.Children) == 0 && len(h.Threads.Proposals) == 0 {
-		b.WriteString("(none)\n\n")
+		b.WriteString(l.None + "\n\n")
 	}
 	for _, c := range h.Threads.Children {
-		fmt.Fprintf(&b, "- child session `%s`: %s\n", oneLineText(sc(c.Name)), oneLineText(sc(c.State)))
+		fmt.Fprintf(&b, l.ChildFmt, oneLineText(sc(c.Name)), oneLineText(sc(c.State)))
 	}
 	for _, p := range h.Threads.Proposals {
-		fmt.Fprintf(&b, "- pending handoff proposal: `%s`\n", oneLineText(sc(p)))
+		fmt.Fprintf(&b, l.ProposalFmt, oneLineText(sc(p)))
 	}
 	if len(h.Threads.Children)+len(h.Threads.Proposals) > 0 {
-		b.WriteString("\nThese still belong to the source session; their reports go to the source, not here.\n\n")
+		b.WriteString("\n" + l.ThreadsNote + "\n\n")
 	}
 
-	b.WriteString("# Conversation\n\n")
+	b.WriteString("# " + l.Conversation + "\n\n")
 	// ToolsFull throughout: ToolsNames would also drop compaction summaries, delegation
 	// prompts and results and option previews. What each tool call keeps was already decided
 	// on the value.

@@ -49,6 +49,7 @@ type moveRun struct {
 func moveRunEnv(t *testing.T, name string) *moveRun {
 	t.Helper()
 	d, m := moveEnv(t, name)
+	setLocale(t, "en") // the file's scaffolding follows the display language; the asserts read English
 	r := &moveRun{d: d, src: m, turns: []transcript.Turn{
 		{Role: "user", Text: "fix the flaky login test", Parts: []transcript.Part{{Kind: "text", Text: "fix the flaky login test"}}},
 		{Role: "assistant", Parts: []transcript.Part{{Kind: "text", Text: "Found the race in the fixture."}}},
