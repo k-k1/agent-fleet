@@ -405,6 +405,21 @@ type diskSample struct {
 type diskUsageCache struct {
 	mu sync.Mutex
 	m  map[string]diskSample
+	// forgotten is when a key's home was last wiped: a du that STARTED before that moment is
+	// measuring files that are gone, so its result is not cached when it lands.
+	forgotten map[string]time.Time
+}
+
+// forget drops the cached size of a home that was just wiped and refuses to cache any du
+// still in flight from before the wipe.
+func (c *diskUsageCache) forget(key string, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.m, key)
+	if c.forgotten == nil {
+		c.forgotten = map[string]time.Time{}
+	}
+	c.forgotten[key] = now
 }
 
 func (c *diskUsageCache) get(key string, now time.Time) (uint64, bool) {
@@ -419,6 +434,9 @@ func (c *diskUsageCache) get(key string, now time.Time) (uint64, bool) {
 func (c *diskUsageCache) put(key string, bytes uint64, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if f, ok := c.forgotten[key]; ok && now.Before(f) {
+		return
+	}
 	c.m[key] = diskSample{bytes: bytes, at: now}
 }
 

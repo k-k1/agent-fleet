@@ -308,7 +308,7 @@ func (m *manager) beginCleanHome(ctx context.Context, membershipID string, audit
 	}
 	return func() error {
 		defer release()
-		err := m.eraseHome(lease.Context(), ws.ID, rt)
+		err := m.eraseHome(lease.Context(), ws, rt)
 		if record != nil {
 			m.finishHomeOperation(*record, err, nil)
 			return err

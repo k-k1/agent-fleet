@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // sessionMirrorGate orders the writers of the session mirror. Each of them reads the
@@ -60,23 +61,27 @@ func (m *manager) mirrorSessions(ctx context.Context, wsID string, readStart tim
 // eraseHome and wipeHome are runtime.EraseHome / WipeHome plus the withdrawal of the last disk
 // reading: after a successful wipe the roster card must not keep a "full disk" for files that
 // are gone (an admin Clean home does not restart, so no later sample would replace it).
-func (m *manager) eraseHome(ctx context.Context, wsID string, rt runtime.Runtime) error {
+func (m *manager) eraseHome(ctx context.Context, ws store.Workspace, rt runtime.Runtime) error {
 	err := runtime.EraseHome(ctx, rt)
 	if err == nil {
-		m.clearDiskReading(wsID)
+		m.clearDiskReading(ws)
 	}
 	return err
 }
 
-func (m *manager) wipeHome(ctx context.Context, wsID string, rt runtime.Runtime, what runtime.HomeWipe) error {
+func (m *manager) wipeHome(ctx context.Context, ws store.Workspace, rt runtime.Runtime, what runtime.HomeWipe) error {
 	err := runtime.WipeHome(ctx, rt, what)
 	if err == nil {
-		m.clearDiskReading(wsID)
+		m.clearDiskReading(ws)
 	}
 	return err
 }
 
-func (m *manager) clearDiskReading(wsID string) {
+func (m *manager) clearDiskReading(ws store.Workspace) {
+	// The cached du goes too: a sample within its 60 s TTL would otherwise read the old size and,
+	// stamped after the wipe, outrank the cleared mark.
+	diskUsages.forget(m.rootedDataDir(ws)+"/home", time.Now())
+	wsID := ws.ID
 	// Not the caller's context: the wipe has happened, and a cancelled lease must not leave the
 	// stale figure behind.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

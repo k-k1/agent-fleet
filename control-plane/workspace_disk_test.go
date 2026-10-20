@@ -345,3 +345,56 @@ func TestSampleDoesNotResurrectTheDiskRowOfADestroyedWorkspace(t *testing.T) {
 		t.Errorf("workspace_disk rows for the destroyed workspace = %d (err %v), want 0", n, err)
 	}
 }
+
+// du results are cached for a minute. A wipe must drop the cached size of that home, or the next
+// sample reads the old figure and, stamped after the wipe, outranks the cleared mark.
+func TestWipeDropsTheCachedDuSoTheNextSampleSeesAnEmptyHome(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, _, _, ws := usageHourFixture(t)
+	mgr.dataRoot = t.TempDir()
+	diskUsages.m = map[string]diskSample{}
+	home := filepath.Join(mgr.rootedDataDir(ws), "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	blob := filepath.Join(home, "blob")
+	if err := os.WriteFile(blob, make([]byte, 200000), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srv := diskAgent(t, `{}`)
+	rt := &reachableHomeRuntime{unreachableHomeRuntime: unreachableHomeRuntime{rec: &wipeRecorder{}, state: "running"}}
+	mgr.rtFactory = sizedFactory{stubFactory{rt: stubRuntime{endpoint: srv.URL}}, runtime.DiskMeaningQuota}
+	sampler := newUsageSampler(mgr, 5*time.Minute)
+
+	sampler.sample(ctx) // fills the du cache with the full size
+	if d, _, _ := st.GetWorkspaceDisk(ctx, ws.ID); d.Used < 200000 {
+		t.Fatalf("setup: used = %d", d.Used)
+	}
+	if err := os.Remove(blob); err != nil { // what the wipe did to the files
+		t.Fatal(err)
+	}
+	if err := mgr.eraseHome(ctx, ws, rt); err != nil {
+		t.Fatal(err)
+	}
+	sampler.sample(ctx)
+
+	d, ok, _ := st.GetWorkspaceDisk(ctx, ws.ID)
+	if !ok || d.Used >= 200000 {
+		t.Errorf("after the wipe: %+v ok=%v, want the emptied size", d, ok)
+	}
+}
+
+// A du that began before the wipe must not refill the cache when it finishes after it.
+func TestDuCacheRefusesAResultThatStartedBeforeTheWipe(t *testing.T) {
+	c := &diskUsageCache{m: map[string]diskSample{}}
+	start := time.Now()
+	c.forget("h", start.Add(time.Second))
+	c.put("h", 999, start)
+	if _, ok := c.get("h", start.Add(2*time.Second)); ok {
+		t.Error("a pre-wipe du result was cached")
+	}
+	c.put("h", 1, start.Add(2*time.Second))
+	if v, ok := c.get("h", start.Add(3*time.Second)); !ok || v != 1 {
+		t.Errorf("a post-wipe result was refused: %d %v", v, ok)
+	}
+}
