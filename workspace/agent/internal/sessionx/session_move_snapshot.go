@@ -39,7 +39,7 @@ var readMoveSource = func(m session.Meta) HandoverInput {
 	} else if td, ok := AgentOf(m.Kind).Transcript(m); ok {
 		// td.Path is deliberately dropped: the file carries no path into a CLI store (decision 15).
 		in.Turns, in.Pending = td.Turns, td.Pending
-		in.Queued, in.QueuedItems = td.Queued, td.QueuedItems
+		in.Queued, in.QueuedItems, in.Discards = td.Queued, td.QueuedItems, td.Discards
 		for _, t := range td.Turns {
 			edits = append(edits, transcript.FileEditsInTurn(t)...)
 		}

@@ -139,6 +139,7 @@ updated: "2026-09"
 | `af-db.sh`・`af-aws-exec.sh`・`af-scratch.sh`・`af-arch-repair.sh` | `PATH` 上の `af-*` コマンド。最初の 2 つは `workspace-agent` を exec するだけ |
 | `gh-auth-wrapper.sh`・`bkt-auth-wrapper.sh`・`jira-auth-wrapper.sh`・`svn-auth-wrapper.sh` | 本物より前に `gh`・`bkt`・`jira`・`svn` として置かれ、いずれも Console で保存した資格情報を使えるようにする（`bkt-auth-wrapper-test.sh` と `jira-auth-wrapper-test.sh` がそれぞれのラッパーを固定する） |
 | `entrypoint-boot-install-test.sh` | `entrypoint.sh` の lean boot-install 節をスタブ相手に実行し、rtk／agy／cursor の導入が途中で失敗したら WARN を出し、マーカーを書かず、次回起動で再導入されることを固定する |
+| `entrypoint-boot-status-test.sh` | 同じ節を実行し、Agent が返す CLI ごとのステータスファイルとその理由の分類、空き容量不足時のスキップ、インストール前に走る prune を固定する |
 | `jvm.Dockerfile` | 共有 JDK ディレクトリを作る（`deploy/local/provision-jvm.sh`）|
 | `opencode-plugin/`・`tmux.conf` | opencode のプラグインと tmux の設定 |
 | `.dockerignore` | ⚠️ `**/*.md` を除外したうえで、ビルドに要るものを戻している。**イメージや agent バイナリが embed する markdown を足す前に読むこと** |
