@@ -17,12 +17,15 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 // component renders nothing itself, so no condition is kept here.
 import { useT } from "../../../lib/i18n/index.ts";
 import type { MsgKey } from "../../../lib/i18n/index.ts";
+import { relTime } from "../../../lib/intl.ts";
 import { elapsedShort, remainingShort } from "../../../lib/sessionview.ts";
 import { fmtGbHint, ladderFor, memberClassID, slotFor, slotMemLabel, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
 import type { Member, MemberAutoStop, MemberIdle, WsSizing } from "../parts/adminShared.ts";
 import { startDeadlineBody } from "../../notifications/wording.ts";
 import {
   attentionReasons,
+  diskLevel,
+  diskRatio,
   matchesFilter,
   matchesQuery,
   memberTitle,
@@ -31,7 +34,7 @@ import {
   rosterState,
   sortMembers,
 } from "./memberRoster.ts";
-import type { RosterFilter, RosterSort, RosterState } from "./memberRoster.ts";
+import type { AttentionReason, RosterFilter, RosterSort, RosterState } from "./memberRoster.ts";
 
 // MembersPanel — the roster and "add member", as one component so the tenant settings modal
 // and the admin modal use the same implementation.
@@ -153,6 +156,8 @@ function MemberGrid({
         <select aria-label={tr("admin.roster_sort_label")} value={sort} onChange={(e) => setSort(e.target.value as RosterSort)}>
           <option value="attention">{tr("admin.roster_sort_attention")}</option>
           <option value="name">{tr("admin.roster_sort_name")}</option>
+          <option value="disk">{tr("admin.roster_sort_disk")}</option>
+          <option value="last_active">{tr("admin.roster_sort_last_active")}</option>
         </select>
         <input
           type="search"
@@ -201,7 +206,7 @@ function MemberCard({ m, sizing, now, onOpen }: { m: Member; sizing: WsSizing; n
         {reasons.length > 0 && (
           <span
             className="mc-attn"
-            title={reasons.map((r) => tr(r === "auto_stop" ? "admin.roster_attn_auto_stop" : "admin.roster_attn_hold_lapsed")).join(" / ")}
+            title={reasons.map((r) => tr(ATTN_LABEL[r])).join(" / ")}
           >
             <Icon name="warning" />
             {tr("admin.roster_attention")}
@@ -209,12 +214,115 @@ function MemberCard({ m, sizing, now, onOpen }: { m: Member; sizing: WsSizing; n
         )}
         <Icon name="chevron-right" className="mr-go" />
       </span>
+      <MemberSessions m={m} />
+      <MemberDisk m={m} now={now} />
       <span className="mc-foot">
         <MemberIdleChip idle={m.idle} state={m.state} />
         <MemberAutoStopChip autoStop={m.auto_stop} />
         <MemberSizeChips m={m} sizing={sizing} />
       </span>
     </button>
+  );
+}
+
+// MemberSessions — sessions against max_sessions and, on a stopped card, when the member was last
+// active. The bar is always beside its numbers: a bar alone cannot be read by anyone who cannot
+// tell its colours apart. The figures are the CP's mirror (refreshed by the usage sampler), so the
+// mirror's age is shown with them instead of passing a five-minute-old count off as live.
+function MemberSessions({ m }: { m: Member }) {
+  const tr = useT();
+  const s = m.sessions;
+  const max = m.max_sessions && m.max_sessions > 0 ? m.max_sessions : 0;
+  const stopped = m.state !== "running" && m.state !== "starting";
+  const ago = stopped && m.last_active_at ? relTime(m.last_active_at) : "";
+  if (!s && !ago) return null;
+  const text = s
+    ? tr(max ? "admin.roster_sessions_max" : "admin.roster_sessions", {
+        live: String(s.live),
+        total: String(s.total),
+        max: String(max),
+      })
+    : "";
+  const pct = s && max ? Math.min(100, Math.round((s.live / max) * 100)) : 0;
+  return (
+    <span className="mc-sessions">
+      {s && (
+        <span className="mc-sess-row">
+          {max > 0 && (
+            <span
+              className={"mc-bar" + (s.live >= max ? " full" : "")}
+              role="progressbar"
+              aria-label={tr("admin.roster_sessions_label")}
+              aria-valuemin={0}
+              aria-valuemax={max}
+              aria-valuenow={Math.min(s.live, max)}
+              aria-valuetext={text}
+            >
+              <span className="mc-bar-fill" style={{ width: pct + "%" }} />
+            </span>
+          )}
+          <span className="mc-sess-text">{text}</span>
+          {s.observed_at && (
+            <span className="muted" title={new Date(s.observed_at).toLocaleString()}>
+              {tr("admin.roster_observed", { ago: relTime(s.observed_at) })}
+            </span>
+          )}
+        </span>
+      )}
+      {ago && <span className="muted mc-last-active">{tr("admin.roster_last_active", { ago })}</span>}
+    </span>
+  );
+}
+
+const ATTN_LABEL: Record<AttentionReason, MsgKey> = {
+  auto_stop: "admin.roster_attn_auto_stop",
+  hold_lapsed: "admin.roster_attn_hold_lapsed",
+  disk_warn: "admin.roster_attn_disk_warn",
+  disk_error: "admin.roster_attn_disk_error",
+};
+
+const fmtGiB = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);
+
+// MemberDisk — the last home-disk reading as a gauge WITH its numbers in text, never a bar alone.
+// Without a total (no quota set) it is the used figure alone. On a stopped card the reading is the
+// last one taken while it ran, so its age is shown; a running one is at most one sample old.
+// Levels come from diskLevel (the #2383 thresholds); the warning icon keeps a non-ok level
+// readable without colour.
+function MemberDisk({ m, now }: { m: Member; now: number }) {
+  const tr = useT();
+  const d = m.disk;
+  if (!d || !Number.isFinite(d.used)) return null;
+  const level = diskLevel(m);
+  const ratio = diskRatio(m);
+  const text =
+    ratio === null
+      ? tr("admin.roster_disk_used", { used: fmtGiB(d.used) })
+      : tr("admin.roster_disk_gauge", {
+          used: fmtGiB(d.used),
+          total: fmtGiB(d.total!),
+          pct: String(Math.round(ratio * 100)),
+        });
+  const stopped = m.state !== "running" && m.state !== "starting";
+  const ago = stopped && d.observed_at ? relTime(d.observed_at, now) : "";
+  return (
+    <span className={"mc-disk" + (level && level !== "ok" ? " " + level : "")}>
+      {level && level !== "ok" && <Icon name="warning" />}
+      {ratio !== null && (
+        <span
+          className="mc-bar"
+          role="progressbar"
+          aria-label={tr("admin.roster_disk_label")}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.min(100, Math.round(ratio * 100))}
+          aria-valuetext={text}
+        >
+          <span className="mc-bar-fill" style={{ width: Math.min(100, ratio * 100) + "%" }} />
+        </span>
+      )}
+      <span className="mc-disk-text">{text}</span>
+      {ago && <span className="muted">{tr("admin.roster_observed", { ago })}</span>}
+    </span>
   );
 }
 

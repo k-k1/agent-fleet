@@ -373,6 +373,13 @@ func workspaceStats(ctx context.Context, m *manager, rt runtime.Runtime, state f
 	if total, ok := out["oom_kill_total"].(uint64); ok && oomKills.observe(rt.Name(), total, time.Now()) {
 		out["oom_recent"] = true
 	}
+	// home_own: disk_used / disk_total describe this member's own volume (an EBS home), so a
+	// threshold on them means something. Everywhere else they are a statfs of the whole host or
+	// a shared EFS, where "your home is nearly full" would blame the member for other people's
+	// bytes. Absent means "do not warn", never "fine".
+	if mp, ok := rt.(machineProfiler); ok && mp.MachineProfile().Dedicated {
+		out["home_own"] = true
+	}
 	return out
 }
 
@@ -405,6 +412,21 @@ type diskSample struct {
 type diskUsageCache struct {
 	mu sync.Mutex
 	m  map[string]diskSample
+	// forgotten is when a key's home was last wiped: a du that STARTED before that moment is
+	// measuring files that are gone, so its result is not cached when it lands.
+	forgotten map[string]time.Time
+}
+
+// forget drops the cached size of a home that was just wiped and refuses to cache any du
+// still in flight from before the wipe.
+func (c *diskUsageCache) forget(key string, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.m, key)
+	if c.forgotten == nil {
+		c.forgotten = map[string]time.Time{}
+	}
+	c.forgotten[key] = now
 }
 
 func (c *diskUsageCache) get(key string, now time.Time) (uint64, bool) {
@@ -419,10 +441,18 @@ func (c *diskUsageCache) get(key string, now time.Time) (uint64, bool) {
 func (c *diskUsageCache) put(key string, bytes uint64, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if f, ok := c.forgotten[key]; ok && now.Before(f) {
+		return
+	}
 	c.m[key] = diskSample{bytes: bytes, at: now}
 }
 
 var diskUsages = &diskUsageCache{m: map[string]diskSample{}}
+
+// runDU is the du invocation, a variable so a test can make it slow.
+var runDU = func(ctx context.Context, home string) ([]byte, error) {
+	return exec.CommandContext(ctx, "du", "-sb", home).Output()
+}
 
 // dirDiskUsage returns the byte size of <dataDir>/home via `du -sb`, cached for
 // diskTTL per dataDir. Reports !ok when du fails (path gone, etc.).
@@ -433,7 +463,7 @@ func dirDiskUsage(ctx context.Context, dataDir string) (uint64, bool) {
 		return v, true
 	}
 
-	out, err := exec.CommandContext(ctx, "du", "-sb", home).Output()
+	out, err := runDU(ctx, home)
 	if err != nil {
 		return 0, false
 	}

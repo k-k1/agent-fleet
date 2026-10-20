@@ -404,7 +404,7 @@ export const sessions = {
   "move.reason.same_kind": "同じエージェントです。同じアカウントの利用枠を使うため、別の種類を選んでください",
   "move.reason.same_kind_fork": "同じエージェントです。同じ種類で続けるなら、会話の発言から「ここから分岐」を使ってください（履歴をそのまま引き継げます）",
   "move.reason.cannot_read_file": "作業フォルダの外にある引き継ぎファイルを読めません",
-  "move.reason.not_measured": "引き継ぎファイルを確認なしで読めるか未検証のため、まだ選べません",
+  "move.reason.not_measured": "マネージドドライバー経由で引き継ぎファイルを読めるか未検証のため、まだ選べません",
   "move.reason.not_an_agent": "会話を読めるエージェントではありません",
   "move.reason.not_connected": "未接続です（設定 › 接続でログインしてください）",
   "move.warn.managed_cursor_mirror_empty": "マネージドの Cursor は停止すると会話の表示が空になります。移したあとは、引き継ぎファイルが唯一の記録です。",

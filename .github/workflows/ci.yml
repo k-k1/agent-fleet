@@ -272,6 +272,8 @@ jobs:
           ./deploy/local/keep-relocate-test.sh
           bash -n workspace/entrypoint-boot-install-test.sh
           ./workspace/entrypoint-boot-install-test.sh
+          bash -n workspace/entrypoint-boot-status-test.sh
+          ./workspace/entrypoint-boot-status-test.sh
       # The bkt wrapper is the one place a Bitbucket token meets an exec: what the real binary is
       # given, that nothing reaches argv or output, and that every helper failure leaves bkt
       # running without injected auth are pinned against stub git / workspace-agent / bkt.

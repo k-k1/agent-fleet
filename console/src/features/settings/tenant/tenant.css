@@ -394,6 +394,64 @@
   overflow-wrap: anywhere;
 }
 
+/* Sessions: the bar is decoration for the text beside it, which always carries the numbers.
+   Colours are the theme's tokens (the fill is --fg, not --accent: see the state badge). */
+.mc-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+}
+
+.mc-sess-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+}
+
+.mc-disk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  font-size: 11px;
+}
+
+.mc-disk.warn {
+  color: var(--warn);
+}
+
+.mc-disk.error {
+  color: var(--err);
+}
+
+.mc-disk.warn .mc-bar-fill {
+  background: var(--warn);
+}
+
+.mc-disk.error .mc-bar-fill {
+  background: var(--err);
+}
+
+.mc-bar {
+  flex: 0 0 64px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border2);
+  overflow: hidden;
+}
+
+.mc-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--fg);
+}
+
+.mc-bar.full .mc-bar-fill {
+  background: var(--warn);
+}
+
 .mc-attn {
   display: inline-flex;
   align-items: center;

@@ -396,7 +396,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "move.reason.same_kind": "The same agent. It draws on the same account's quota, so pick another kind",
   "move.reason.same_kind_fork": "The same agent. To continue in this kind, use “Branch here” on a message in the conversation, which carries the history as it is",
   "move.reason.cannot_read_file": "Cannot read the handover file outside its working folder",
-  "move.reason.not_measured": "Not offered yet: not verified to read the handover file without a prompt",
+  "move.reason.not_measured": "Not offered yet: not yet verified to read the handover file through the Managed driver",
   "move.reason.not_an_agent": "Not an agent that reads a conversation",
   "move.reason.not_connected": "Not connected (log in under Settings › Connections)",
   "move.warn.managed_cursor_mirror_empty": "A Managed Cursor session's conversation view is empty once it stops. After the move, the handover file is the only record.",

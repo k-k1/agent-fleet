@@ -143,6 +143,14 @@ var subcommands = []subcommand{
 		run:     runInstallMuse,
 	},
 	{
+		// Removes superseded copilot / cursor versions from home. The entrypoint runs it ahead of
+		// the boot-install when free space is short; the Agent runs the same pass at its own boot.
+		name:    "prune-cli-versions",
+		summary: "remove old copilot and cursor versions left in home",
+		hidden:  true,
+		run:     runPruneCLIVersions,
+	},
+	{
 		// Opt-in to opencode 2 beside the pinned 1.x: a private npm prefix, ~200 MB, never
 		// on PATH. opencode-major switches af's launches to it.
 		name:     "install-opencode2",

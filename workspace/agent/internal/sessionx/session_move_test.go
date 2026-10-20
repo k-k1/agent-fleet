@@ -49,6 +49,7 @@ type moveRun struct {
 func moveRunEnv(t *testing.T, name string) *moveRun {
 	t.Helper()
 	d, m := moveEnv(t, name)
+	setLocale(t, "en") // the file's scaffolding follows the display language; the asserts read English
 	r := &moveRun{d: d, src: m, turns: []transcript.Turn{
 		{Role: "user", Text: "fix the flaky login test", Parts: []transcript.Part{{Kind: "text", Text: "fix the flaky login test"}}},
 		{Role: "assistant", Parts: []transcript.Part{{Kind: "text", Text: "Found the race in the fixture."}}},
@@ -335,6 +336,21 @@ func TestMoveRefusesAStoppedManagedCursorSource(t *testing.T) {
 	}
 }
 
+// Kiro read the handover file with no approval prompt, so it is a target; cursor stays refused
+// until it has been measured through the Managed driver.
+func TestMoveAcceptsKiroAndRefusesCursor(t *testing.T) {
+	r := moveRunEnv(t, "mvkiro")
+	a := mustMove(t, "mvkiro", session.KindKiro)
+	if len(r.creates) != 1 || r.creates[0].Kind != session.KindKiro || r.creates[0].name != a.Target.Name {
+		t.Fatalf("creates = %+v, answer target %q", r.creates, a.Target.Name)
+	}
+	r2 := moveRunEnv(t, "mvcurtgt")
+	rec := postMove(t, "mvcurtgt", "", `{"kind":"cursor"}`)
+	if e := decodeMove(t, rec); rec.Code != http.StatusBadRequest || e.Error.Code != "move_target_unsupported" || len(r2.creates) != 0 {
+		t.Fatalf("cursor: got %d %s, creates %+v", rec.Code, rec.Body.String(), r2.creates)
+	}
+}
+
 // Only another kind that can read the file is a target (decisions 5 and 9).
 func TestMoveRefusesTargetsThatCannotTakeIt(t *testing.T) {
 	r := moveRunEnv(t, "mvkind")
@@ -342,7 +358,6 @@ func TestMoveRefusesTargetsThatCannotTakeIt(t *testing.T) {
 		{session.KindCodex, "move_same_kind"},
 		{session.KindLcpp, "move_target_unsupported"},
 		{session.KindCursor, "move_target_unsupported"},
-		{session.KindKiro, "move_target_unsupported"},
 		{session.KindShell, "move_target_unsupported"},
 		{"nosuchkind", "bad_kind"},
 	}
@@ -539,7 +554,7 @@ func TestMovePreviewTellsTheDialogWhatMoves(t *testing.T) {
 		reasons[tg.Kind] = tg.Reason
 	}
 	want := map[string]string{session.KindClaude: "", session.KindCodex: moveTargetSameKind,
-		session.KindLcpp: moveTargetCannotRead, session.KindCursor: moveTargetNotMeasured, session.KindKiro: moveTargetNotMeasured}
+		session.KindLcpp: moveTargetCannotRead, session.KindCursor: moveTargetNotMeasured, session.KindKiro: ""}
 	for k, v := range want {
 		if got, ok := reasons[k]; !ok || got != v {
 			t.Errorf("target %s: reason %q (listed %v), want %q", k, got, ok, v)

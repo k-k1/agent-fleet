@@ -396,10 +396,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.4.2
-ARG AGY_RELEASE_BUILD=4835981233356800
-ARG AGY_SHA256_X64=6395837ac0e193dd3fe50f1228e1c4aea345ca99636d54404ab7e74397d4091c
-ARG AGY_SHA256_ARM64=08dd4a2ca52d531fef1dfae4ec2fbafcd56342bfa694c8193a60da2b26fb1898
+ARG AGY_VERSION=1.4.3
+ARG AGY_RELEASE_BUILD=4577820882632704
+ARG AGY_SHA256_X64=319b2cb3240d244930bd077033b466941fd7ba6f0881d783eee801dbd2fb9371
+ARG AGY_SHA256_ARM64=045aa7112f574ef97f8320a65d30a555c4ce9bdd5e3d56d40fce7e262ca98cda
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -443,9 +443,9 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 # setTimeout(...).unref() で走るが `disableAutoUpdate || channel==="static"` でスキップ）。
 # 焼き込みでは AF が起動フラグ `--disable-auto-update`（全経路）＋ entrypoint の
 # cli-config.json `channel:"static"` 再固定の二重で封じる（詳細 docs/log/40 Track B）。
-ARG CURSOR_VERSION=2026.10.16-e3cb207
-ARG CURSOR_SHA256_X64=3aa3f48cd7a3909a98c9b3f2a4085f0c021088bf826690b22c61f424c843e552
-ARG CURSOR_SHA256_ARM64=4cf077f150eb8d1e270bf1dea69700184c39a4847fe192d523f5bb34d4b62597
+ARG CURSOR_VERSION=2026.10.19-6bbf2c4
+ARG CURSOR_SHA256_X64=cf80cc18d8b33bf33e762353977ca1868cfc45290c92c0ffdcef83bb8b37b44f
+ARG CURSOR_SHA256_ARM64=71a90f12a8b8183a71442b7ed4037bddc1a0f88114ec4fb9ec92782acb8e7d84
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -505,9 +505,9 @@ ARG KIRO_SHA256_ARM64=219a047427ca2b43681f4788104df5e784eda030d98abeec1c732aac90
 # MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 362,440,920 B / 323,360,856 B（1.4.1-R4503.1）。
 # ⚠️ 版文字列は `Muse Code 1.3.0 (1.3.0-R3401.1)`＝**括弧内のビルド id** がピンと突合する値。
 # agy の `tr -dc '0-9.'` 流儀だと `-R3401.1` が落ちて毎回不一致になる（install_muse.go）。
-ARG MUSE_VERSION=1.4.10-R6427.1
-ARG MUSE_SHA256_X64=decefc0fb33c48ee43419c3e72ac2dbc781743868611074c7292807f5960dfcf
-ARG MUSE_SHA256_ARM64=2e5afa5e8560c1565185249af2d27b3e97aaf351d3d32275b8e410be702dce35
+ARG MUSE_VERSION=1.4.11-R6667.1
+ARG MUSE_SHA256_X64=6fda12a6a4f236528dafa707384cf6395fe859b1438ef77c7be26ed9d7976839
+ARG MUSE_SHA256_ARM64=b1ce49b4d988a1d6b1d76994d6c7a0eae912c8ed2c1cf67ac89434c017c8232e
 # Postgres供給ピン（ADR 0086 P0 供給レーン）: Zonky embedded-postgres 17.11.0 jar のハッシュ。
 # sha256 は `curl -sfL <jar-url> | sha256sum` で確認した値。
 # 他メジャー（16/17/18）は install-postgres が Maven Central の .sha256 サイドカーで動的に取得する。

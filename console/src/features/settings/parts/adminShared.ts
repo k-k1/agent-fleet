@@ -92,6 +92,18 @@ export interface Member {
    *  still down after that stop. The member got a notification; this is the admin's only
    *  view of it short of the CP log. */
   auto_stop?: MemberAutoStop;
+  /** The CP's session mirror for this workspace (#2388): live = sessions the Agent reported
+   *  alive at the last refresh (0 while stopped), total = every mirrored session. observed_at is
+   *  when the mirror was last written, absent when it holds no rows. A DB read, not an Agent
+   *  call, so it can be minutes old. Absent from an older CP and for a member with no workspace. */
+  sessions?: { live: number; total: number; observed_at?: string };
+  /** workspaces.last_active_at (RFC 3339), absent when never set. */
+  last_active_at?: string;
+  /** The last home-disk reading the usage sampler took (#2388): used bytes, total bytes when the
+   *  reading has a denominator (absent for a deployment with no disk quota), and when it was
+   *  taken. Absent where nothing is measured (Fargate's working disk) and before the first
+   *  sample. A stopped workspace keeps its last reading, so observed_at is its age. */
+  disk?: { used: number; total?: number; observed_at?: string };
 }
 
 /** GET …/members auto_stop (store.WorkspaceAutoStop). kind is "start-deadline" (phase: the last

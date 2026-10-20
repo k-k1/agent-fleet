@@ -350,6 +350,45 @@ func (a Admin) ListMembers(w http.ResponseWriter, r *http.Request) {
 					row["idle"] = f
 				}
 			}
+			// Sessions and last activity, from the DB alone: the usage sampler keeps the session
+			// mirror fresh for every running workspace, so this handler makes no Agent or
+			// runtime call per member (a 30-member page stays one request). live is counted only
+			// while the workspace runs: a stopped one keeps its last mirrored "running" rows,
+			// which are not alive. observed_at is the mirror's own write time (the rows'
+			// last_seen); omitted when the mirror holds no rows, which says nothing about age.
+			if hasRow {
+				if wsRow.LastActiveAt != "" {
+					row["last_active_at"] = wsRow.LastActiveAt
+				}
+				if ss, err := a.cp.Store().ListSessions(r.Context(), wsRow.ID); err == nil {
+					live, observed := 0, ""
+					for _, s := range ss {
+						if state == "running" && s.State == "running" {
+							live++
+						}
+						if s.LastSeen > observed {
+							observed = s.LastSeen
+						}
+					}
+					sess := map[string]any{"live": live, "total": len(ss)}
+					if observed != "" {
+						sess["observed_at"] = observed
+					}
+					row["sessions"] = sess
+				}
+			}
+			// The last home-disk reading, from the DB (written by the usage sampler). Omitted when
+			// the workspace was never measured — Fargate's working disk, or not sampled yet —
+			// and total is omitted when the reading has no denominator.
+			if hasRow {
+				if d, ok, err := a.cp.Store().GetWorkspaceDisk(r.Context(), wsRow.ID); err == nil && ok {
+					disk := map[string]any{"used": d.Used, "observed_at": d.ObservedAt}
+					if d.Total > 0 {
+						disk["total"] = d.Total
+					}
+					row["disk"] = disk
+				}
+			}
 			// The class the member's next start lands on (user → tenant default →
 			// deployment default), for every row including those with no stored limits:
 			// the stored slot_class alone cannot show a member who follows the tenant

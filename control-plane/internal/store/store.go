@@ -988,6 +988,7 @@ type Store interface {
 	PreviewTempPortStore
 	DevIdPStore
 	MemberUIStateStore
+	WorkspaceDiskStore
 	TenantMemberDefaultsStore
 	HomeOperationStore
 	CPLeaseStore

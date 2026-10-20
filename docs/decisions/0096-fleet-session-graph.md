@@ -642,3 +642,12 @@ when there is room, a new pane on Ctrl/⌘ or the middle button.
 - **P3 (outside this ADR)**: filtering by conversation id (absorbing 0027's "one conversation's round
   trips"), a cross-tenant administrators' overview, and revisiting whether a standing sweep should close the
   observation gap.
+
+## Note 2026-10-20: the stalled-tree nudge (#2397)
+
+The Agent's stalled-tree watch (`workspace/agent/internal/sessionx/stalled_tree.go`) appends one
+`ev:"stall"` activity line (`to` = the nudged parent, `excerpt` = the idle children) when it injects its
+notice. Like `peek` it is ledger-only: `toDTOActivity` has no case for it, so the frozen DTO and
+`console/src/types/fleetgraph.ts` are unchanged. The graph still shows the nudge, as the ordinary `instruct`
+arrow from `agent` (source `notice`) that the delivery records. Drawing the stall as its own mark would be a
+contract change to the frozen types and is not decided here.

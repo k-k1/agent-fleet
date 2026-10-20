@@ -11,6 +11,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 func hoUser(text string) transcript.Turn {
@@ -359,7 +360,7 @@ func TestHandoverSizeCutsOldestAssistantTextsFirst(t *testing.T) {
 	if len(md) > handoverSizeTarget {
 		t.Fatalf("size %d over the target %d", len(md), handoverSizeTarget)
 	}
-	if cut.Cut == 0 || !strings.Contains(md, handoverCutMarker) {
+	if cut.Cut == 0 || !strings.Contains(md, handoverLabelsEn.CutMarker) {
 		t.Fatalf("nothing was cut or the marker is missing (cut=%d)", cut.Cut)
 	}
 	// Oldest first: the first answer is cut, the newest three turns are whole.
@@ -394,7 +395,7 @@ func TestHandoverSizeNeverCutsWhatItMustKeep(t *testing.T) {
 	if len(md) <= handoverSizeTarget {
 		t.Fatalf("test setup: %d bytes should exceed the target", len(md))
 	}
-	if cut.Cut != 0 || strings.Contains(md, handoverCutMarker) {
+	if cut.Cut != 0 || strings.Contains(md, handoverLabelsEn.CutMarker) {
 		t.Errorf("everything is inside the last 3 turns; nothing may be cut (cut=%d)", cut.Cut)
 	}
 	if !strings.Contains(md, big[:1000]) || !strings.Contains(md, "RECENT filler") {
@@ -595,5 +596,198 @@ func TestHandoverSizeCutSkipsFencesInsideLists(t *testing.T) {
 	}
 	if !strings.Contains(md, listed) {
 		t.Error("a text with fences inside a list was cut")
+	}
+}
+
+func hoDiscards() []agents.Discard {
+	return []agents.Discard{
+		{ID: "d1", At: "2026-10-16T09:00:00Z", Reason: agents.DiscardSecondStop, Items: []agents.QueueItem{
+			{ID: "a", Text: "DISCARDED-A\nsecond line", Origin: agents.Origin{Kind: "peer", From: "boss"}, Attachments: []string{"/w/shot.png"}},
+			{ID: "b", Text: "DISCARDED-B"},
+		}},
+		{ID: "d2", At: "2026-10-16T09:05:00Z", Reason: agents.DiscardFirstStop},
+		{ID: "d3", At: "2026-10-16T09:06:00Z", Reason: "from_the_future", Items: []agents.QueueItem{{ID: "c", Text: "DISCARDED-C"}}},
+	}
+}
+
+func TestHandoverDiscardsOnTheValue(t *testing.T) {
+	h := hoBuild(t, []transcript.Turn{hoUser("go"), hoAsst(hoText("ok"))}, func(in *HandoverInput) {
+		in.Discards = hoDiscards()
+	})
+	d := h.Stopped.Discarded
+	if len(d) != 2 {
+		t.Fatalf("discarded = %+v (a discard with no item says nothing and is left out)", d)
+	}
+	if d[0].Reason != agents.DiscardSecondStop || d[0].At != "2026-10-16T09:00:00Z" || len(d[0].Items) != 2 {
+		t.Errorf("first discard = %+v", d[0])
+	}
+	if it := d[0].Items[0]; it.Text != "DISCARDED-A\nsecond line" || it.Origin != "peer from boss" || len(it.Attachments) != 1 {
+		t.Errorf("an item keeps its text verbatim, origin and attachments: %+v", it)
+	}
+	if len(h.Stopped.Queued) != 0 {
+		t.Errorf("a discarded input must not read as a queued one: %+v", h.Stopped.Queued)
+	}
+}
+
+func TestHandoverDiscardsRenderedInBothLanguages(t *testing.T) {
+	tok := "ghp_" + strings.Repeat("A1b2C3d4", 5)
+	h := hoBuild(t, []transcript.Turn{hoUser("go"), hoAsst(hoText("ok"))}, func(in *HandoverInput) {
+		in.Discards = append(hoDiscards(), agents.Discard{ID: "d4", At: "2026-10-16T09:07:00Z",
+			Reason: agents.DiscardQueue, Items: []agents.QueueItem{{ID: "s", Text: "use " + tok}}})
+	})
+	for _, c := range []struct {
+		lang, head string
+		reasons    []string
+	}{
+		{"en", "Inputs a stop threw away", []string{"second stop, 2026-10-16T09:00:00Z", "from_the_future", "queue discarded"}},
+		{"ja", "停止で破棄された入力", []string{"2 回目の停止, 2026-10-16T09:00:00Z", "from_the_future", "キューの破棄"}},
+	} {
+		md, _ := RenderHandover(h, c.lang)
+		stopped := md[strings.Index(md, "\n# "):]
+		for _, w := range append([]string{c.head, "DISCARDED-A\nsecond line", "DISCARDED-B", "DISCARDED-C", "(peer from boss)", "`/w/shot.png`"}, c.reasons...) {
+			if !strings.Contains(stopped, w) {
+				t.Errorf("%s: markdown lacks %q:\n%s", c.lang, w, md)
+			}
+		}
+		if strings.Contains(md, tok) {
+			t.Errorf("%s: a token in a discarded input reached the file", c.lang)
+		}
+		// They sit under "where it stopped", before the working copy.
+		if i, j := strings.Index(md, "DISCARDED-A"), strings.Index(md, "\n# "+handoverLabelsFor(c.lang).WorkingCopy); i < 0 || j < 0 || i > j {
+			t.Errorf("%s: discards at %d, working copy at %d", c.lang, i, j)
+		}
+	}
+}
+
+// The scaffolding is written by renderHandover, not taken from the conversation: every
+// heading and fixed label follows the language, and none of the other language's survives.
+func TestHandoverScaffoldingFollowsTheLanguage(t *testing.T) {
+	h := hoBuild(t, []transcript.Turn{hoUser("go"), hoAsst(hoText("ok"))}, func(in *HandoverInput) {
+		in.CutOffByLimit = true
+		in.Queued = []string{"q"}
+		in.Discards = hoDiscards()
+		in.PeerMessages = []agents.PendingPeer{{From: "boss", Intent: "question", Message: "PEER"}}
+		in.Git = HandoverGit{Available: true}
+		in.ChangedFiles = []transcript.FileTouch{{Path: "a.go", Verb: "edit", Count: 2, Sidechain: true}}
+		in.Children = []HandoverChild{{Name: "kid", State: "working"}}
+		in.Proposals = []string{"p1"}
+		in.Earlier = []string{"handover-first.md"}
+		in.Instructions = []string{"CLAUDE.md"}
+	})
+	en, _ := RenderHandover(h, "en")
+	ja, _ := RenderHandover(h, "ja")
+	for _, w := range []string{"# Handover: Fix the thing", "- Source session: src", "# Where it stopped", "# Working copy", "# Changed files",
+		"# Open threads", "# Conversation", "**Last user message:**", "**Instructions queued but never delivered:**",
+		"**Peer messages waiting for the source:**", "- from boss (intent: question)", "**Commits ahead of upstream:**", "(none)",
+		"2 edits, by a subagent only", "child session `kid`", "- Moved: 2026-10-16 09:30 UTC"} {
+		if !strings.Contains(en, w) {
+			t.Errorf("en lacks %q", w)
+		}
+	}
+	for _, w := range []string{"# 引き継ぎ: Fix the thing", "- 元のセッション: src", "# 中断した時点", "# 作業コピー", "# 変更されたファイル",
+		"# 未完了のスレッド", "# 会話", "**最後のユーザー発言:**", "**キューに入ったまま届かなかった指示:**",
+		"**元のセッション宛てに待っているピアのメッセージ:**", "- 送信元 boss（意図: question）", "**upstream より先のコミット:**", "（なし）",
+		"2 回編集、サブエージェントのみ", "子セッション `kid`", "- 移行日時: 2026-10-16 09:30 UTC"} {
+		if !strings.Contains(ja, w) {
+			t.Errorf("ja lacks %q", w)
+		}
+	}
+	for _, w := range []string{"Where it stopped", "Working copy", "Changed files", "Open threads", "Last user message", "queued but never delivered", "Peer messages", "Source session", "usage limit"} {
+		if strings.Contains(ja, w) {
+			t.Errorf("ja still carries the English scaffolding %q", w)
+		}
+	}
+	for _, w := range []string{"中断した時点", "作業コピー", "未完了のスレッド", "最後のユーザー発言", "元のセッション", "利用上限"} {
+		if strings.Contains(en, w) {
+			t.Errorf("en carries Japanese scaffolding %q", w)
+		}
+	}
+	// Both stay the same file in every other respect: the conversation text is untouched.
+	for _, md := range []string{en, ja} {
+		for _, w := range []string{"DISCARDED-A", "PEER", "\ngo\n", "ok"} {
+			if !strings.Contains(md, w) {
+				t.Errorf("markdown lacks the verbatim %q", w)
+			}
+		}
+	}
+}
+
+// setLocale saves the Console display language where the Agent reads it (uiprefs.Locale).
+func setLocale(t *testing.T, locale string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(uiprefs.Path()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := uiprefs.WriteAtomic([]byte(`{"locale":"` + locale + `"}`)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An empty lang is the Agent's own known display language, the one the Markdown export uses.
+func TestRenderHandoverDefaultsToTheAgentsLocale(t *testing.T) {
+	withTempHome(t)
+	h := hoBuild(t, []transcript.Turn{hoUser("go"), hoAsst(hoText("ok"))}, nil)
+	if md, _ := RenderHandover(h, ""); !strings.Contains(md, "# 中断した時点") {
+		t.Errorf("no locale saved must read as Japanese, the default:\n%s", md)
+	}
+	setLocale(t, "en")
+	if md, _ := RenderHandover(h, ""); !strings.Contains(md, "# Where it stopped") {
+		t.Errorf("locale en must read as English:\n%s", md)
+	}
+}
+
+// The move's snapshot hands the kind's discards on: dropping them there would leave the
+// builder's input empty while its own tests stay green.
+func TestReadMoveSourceCarriesDiscards(t *testing.T) {
+	withTempHome(t)
+	prev := agentRegistry[session.KindLcpp]
+	agentRegistry[session.KindLcpp] = discardingAgent{Agent: prev}
+	t.Cleanup(func() { agentRegistry[session.KindLcpp] = prev })
+	in := readMoveSource(session.Meta{Name: "mvdisc", Kind: session.KindLcpp, Dir: t.TempDir()})
+	if len(in.Discards) != 3 || in.Discards[0].Items[0].Text != "DISCARDED-A\nsecond line" {
+		t.Fatalf("snapshot discards = %+v", in.Discards)
+	}
+}
+
+type discardingAgent struct{ agents.Agent }
+
+func (discardingAgent) Transcript(session.Meta) (agents.TranscriptData, bool) {
+	return agents.TranscriptData{Turns: []transcript.Turn{hoUser("go"), hoAsst(hoText("ok"))}, Discards: hoDiscards()}, true
+}
+
+// An unknown language reads as English in the scaffolding and in the conversation's labels alike.
+func TestRenderHandoverUnknownLanguageIsEnglish(t *testing.T) {
+	h := hoBuild(t, []transcript.Turn{hoUser("go"), hoAsst(hoText("ok"))}, nil)
+	md, _ := RenderHandover(h, "fr")
+	want, _ := RenderHandover(h, "en")
+	if md != want {
+		t.Errorf("fr differs from en:\n%s", md)
+	}
+	if strings.Contains(md, "中断した時点") {
+		t.Error("an unknown language fell to Japanese")
+	}
+}
+
+// The size cut's marker is the generator's sentence, so it follows the language too.
+func TestHandoverCutMarkerFollowsTheLanguage(t *testing.T) {
+	var turns []transcript.Turn
+	for i := 0; i < 12; i++ {
+		tag := string(rune('A' + i))
+		turns = append(turns, hoUser("ask "+tag), hoAsst(hoText(longText("ANS-"+tag, 40<<10))))
+	}
+	h := hoBuild(t, turns, nil)
+	ja, cut := RenderHandover(h, "ja")
+	if cut.Cut == 0 {
+		t.Fatal("nothing was cut")
+	}
+	if handoverLabelsJa.CutMarker == "" || handoverLabelsEn.CutMarker == "" {
+		t.Fatal("a language has no cut marker")
+	}
+	if !strings.Contains(ja, handoverLabelsJa.CutMarker) || strings.Contains(ja, "cut for size") {
+		t.Errorf("ja marker: ja present=%v, english present=%v", strings.Contains(ja, handoverLabelsJa.CutMarker), strings.Contains(ja, "cut for size"))
+	}
+	en, _ := RenderHandover(h, "en")
+	if !strings.Contains(en, handoverLabelsEn.CutMarker) || strings.Contains(en, "サイズのため省略") {
+		t.Error("en marker wrong")
 	}
 }
