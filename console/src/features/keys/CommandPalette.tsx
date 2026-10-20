@@ -659,10 +659,12 @@ export function CommandPalette() {
   }, [memoryLive, q, memRetry]);
   const memoryItems = useMemo<Item[]>(() => {
     const query = q.trim().toLowerCase();
-    if (!memList || !query) return [];
+    // A list read while the workspace ran outlives it: rows hidden behind the stopped message must
+    // not stay runnable, or Enter would open one.
+    if (!running || !memList || !query) return [];
     const snippets = new Map(memHits.map((h) => [keyOf(h), h.snippets?.[0]]));
     return matchMemories(memList.entries, memHits, query).map((m) => memoryItem(m, snippets.get(keyOf(m))));
-  }, [memList, memHits, q, locale]);
+  }, [memList, memHits, q, running, locale]);
 
   // The session list, ordered by the `order` frozen when the palette opened.
   //  - A session missing from `order` (born while open) goes to the foot. Slotting it into

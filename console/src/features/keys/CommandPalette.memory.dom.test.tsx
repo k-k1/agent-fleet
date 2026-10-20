@@ -215,6 +215,19 @@ describe("CommandPalette memory mode", () => {
     expect(asked).toEqual([]);
   });
 
+  it("does not keep rows runnable once the workspace stops under them", async () => {
+    await mount();
+    await openMemoryMode();
+    await typeQuery("build-cmd");
+    expect(names()).toEqual(["build-cmd"]);
+    await act(async () => useWorkspaceStore.setState({ state: "stopped" }));
+    expect(rows()).toHaveLength(0);
+    expect(listText()).toMatch(/only be searched while it is running|起動中のみ検索できます/);
+    pressEnter();
+    expect(useSettingsUI.getState().settingsOpen).toBe(false);
+    expect(useSettingsUI.getState().settingsTarget).toBeNull();
+  });
+
   it("reports an unreadable list and a failed body search with their reason, never as no match", async () => {
     failList = true;
     await mount();
