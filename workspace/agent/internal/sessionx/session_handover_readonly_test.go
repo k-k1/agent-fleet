@@ -14,7 +14,7 @@ import (
 var wantReadOnly = map[string][]string{
 	session.KindClaude:   {"Read", "Grep", "Glob", "LS", "NotebookRead", "WebFetch", "WebSearch", "ToolSearch"},
 	session.KindCodex:    {"view_image"},
-	session.KindOpencode: {"read", "glob", "grep", "list", "webfetch"},
+	session.KindOpencode: {"read", "glob", "grep", "list", "webfetch", "websearch"},
 	session.KindCursor:   {"Read", "Grep"},
 	session.KindKiro:     {"fsRead", "read"},
 	session.KindAgy:      {"VIEW_FILE", "LIST_DIRECTORY"},
@@ -71,6 +71,7 @@ func TestHandoverDropsListedKeepsUnlistedToolCalls(t *testing.T) {
 		{session.KindClaude, []string{"Read", "LS", "ToolSearch"}, []string{"Bash", "Skill", "mcp__x__unknown"}},
 		{session.KindMuse, []string{"read_file"}, []string{"bash", "mcp__x__send"}},
 		{session.KindCodex, []string{"view_image"}, []string{"exec_command", "apply_patch"}},
+		{session.KindOpencode, []string{"websearch", "webfetch"}, []string{"shell", "execute", "write"}},
 	}
 	for _, c := range cases {
 		var parts []transcript.Part
