@@ -469,3 +469,25 @@ it is not yet.
 - **Not yet checked live:** the rollback and recovery paths; a source that really hit its limit and
   was moved from the banner; a chain A→B→C; trashing and restoring a target; cursor and kiro as
   targets (#2252).
+
+## Addendum (2026-10-20) — kiro is a target, cursor stays off (#2252)
+
+- **Measured.** Kiro, Managed, default permission mode (kiro-cli 2.32.0, claude-haiku-4.5): a
+  first-turn message naming a file under `~/.af-work/<its own name>/`, outside its working
+  folder, made it read the file and return the file's random token, with no approval prompt.
+  Cursor through the bare CLI (`cursor-agent -p --plan --trust --model auto`, 2026.10.18): it read
+  a file outside its cwd under `~/.af-work/` and returned the token, with no approval.
+- **Not measured.** Kiro Terminal (TUI). Cursor Managed: the driver run answered "Upgrade your
+  plan to continue" on its first turn (account plan), so the driver's trust handling and flags are
+  unmeasured. Cursor Terminal.
+- **Inference, not measurement: kiro Terminal.** The target list is per kind, so a move to kiro
+  may also start the Terminal driver. Managed was measured in the default mode; the exact
+  permission flag (whether `--trust-all-tools` was passed) was not independently recorded, so
+  the result is not tied to the "skip permission confirmation" setting being off. With that
+  setting off, both kiro drivers drop `--trust-all-tools`, and whether either reads an outside
+  file unprompted then is unmeasured. The Terminal chat is only expected to behave like Managed
+  because the two share kiro's tool permissions; that is inference, not a run. If it does prompt,
+  the prompt appears in the target's own view for the user to answer; the first prompt waits
+  there.
+- **Decision.** Kiro is now a move target. Cursor stays off, reported as `not_measured`, until it
+  can be measured through the Managed driver. Follow-ups: #2252.
