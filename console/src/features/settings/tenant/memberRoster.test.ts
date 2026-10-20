@@ -1,6 +1,6 @@
 // The roster's state words, "needs attention" and the filter / sort / search (#2385 phase 1).
 import { describe, it, expect } from "vitest";
-import { attentionReasons, diskLevel, matchesFilter, matchesQuery, rosterCounts, rosterState, sortMembers } from "./memberRoster.ts";
+import { attentionReasons, bootFailures, diskLevel, nextMemberHomePressure, matchesFilter, matchesQuery, rosterCounts, rosterState, sortMembers } from "./memberRoster.ts";
 import type { Member } from "../parts/adminShared.ts";
 
 const NOW = Date.parse("2026-10-20T12:00:00Z");
@@ -145,5 +145,44 @@ describe("disk level and attention", () => {
       m({ user_key: "warn", disk: { used: 90 * GIB, total: 100 * GIB } }),
     ];
     expect(sortMembers(list, "disk", NOW).map((x) => x.user_key)).toEqual(["err", "warn", "ok", "none", "used-only"]);
+  });
+});
+
+describe("boot-install failure", () => {
+  it("flags a member whose last start failed an install, never one with nothing reported", () => {
+    expect(attentionReasons(m({ state: "stopped", boot_failed: { claude: "no_space" } }), NOW)).toEqual(["boot_install"]);
+    expect(attentionReasons(m({ state: "stopped", boot_failed: {} }), NOW)).toEqual([]);
+    expect(attentionReasons(m({ state: "stopped" }), NOW)).toEqual([]);
+  });
+
+  it("lists the failures by tool", () => {
+    expect(bootFailures({ rtk: "network", claude: "no_space" })).toEqual([
+      ["claude", "no_space"],
+      ["rtk", "network"],
+    ]);
+    expect(bootFailures(undefined)).toEqual([]);
+  });
+});
+
+describe("nextMemberHomePressure", () => {
+  const GIB = 1024 ** 3;
+  const own = (used: number, total = 100 * GIB) => ({ home_own: true, disk_used: used, disk_total: total });
+
+  it("never flags where the disk is not the member's own volume", () => {
+    expect(nextMemberHomePressure(false, { home_own: false, disk_used: 99 * GIB, disk_total: 100 * GIB })).toBe(false);
+    expect(nextMemberHomePressure(true, { disk_used: 99 * GIB, disk_total: 100 * GIB })).toBe(false);
+  });
+
+  it("raises past the member-notice threshold and re-arms only with headroom", () => {
+    expect(nextMemberHomePressure(false, own(80 * GIB))).toBe(false);
+    expect(nextMemberHomePressure(false, own(91 * GIB))).toBe(true);
+    expect(nextMemberHomePressure(true, own(88 * GIB))).toBe(true); // between the two lines: stays
+    expect(nextMemberHomePressure(true, own(60 * GIB))).toBe(false);
+  });
+
+  it("changes nothing without a reading (a stopped or unreachable workspace)", () => {
+    expect(nextMemberHomePressure(true, { home_own: true })).toBe(true);
+    expect(nextMemberHomePressure(false, { home_own: true })).toBe(false);
+    expect(nextMemberHomePressure(false, null)).toBe(false);
   });
 });

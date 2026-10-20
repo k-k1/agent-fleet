@@ -17,9 +17,15 @@ import (
 // An axis that could not be read is omitted key and all. The CP forwards only the keys it
 // got back, so "cannot measure" stays a "-" in the Console tile - it is never drawn as 0.
 //
+// boot_install_failed rides here so the admin member list and detail can flag a start whose
+// CLI install failed without a second per-member call: reading the status file is one stat and
+// one read of at most 8 KiB, and nothing is read from home.
+//
 // The only caller is the CP (`/api/workspace/stats`, the stats stream on `/api/events`, and
 // the admin member detail). It does not need adding to the control-plane proxy allowlist for
 // direct Console calls: both CP entry points call this themselves.
 func handleWorkspaceStats(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, resources.Read())
+	s := resources.Read()
+	s.BootInstallFailed = bootInstallFailed()
+	httpx.WriteJSON(w, http.StatusOK, s)
 }

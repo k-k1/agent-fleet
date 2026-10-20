@@ -279,6 +279,7 @@ const ATTN_LABEL: Record<AttentionReason, MsgKey> = {
   hold_lapsed: "admin.roster_attn_hold_lapsed",
   disk_warn: "admin.roster_attn_disk_warn",
   disk_error: "admin.roster_attn_disk_error",
+  boot_install: "admin.roster_attn_boot_install",
 };
 
 const fmtGiB = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);

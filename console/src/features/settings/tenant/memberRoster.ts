@@ -5,6 +5,7 @@
 // Everything here reads what the Control Plane sent; nothing derives idle or auto-stop on its
 // own (the MemberIdleChip rule). The one clock comparison, a "working" hold past its lapseAt,
 // only asks whether the reaper's own deadline has gone by.
+import { nextHomeDiskPressure } from "../../../core/store/homeDiskPressure.ts";
 import type { Member } from "../parts/adminShared.ts";
 
 /** What the card's state badge says. One word per value, never colour alone (WCAG 1.4.1). */
@@ -24,7 +25,7 @@ export function rosterState(m: Member): RosterState {
   return "stopped";
 }
 
-export type AttentionReason = "auto_stop" | "hold_lapsed" | "disk_warn" | "disk_error";
+export type AttentionReason = "auto_stop" | "hold_lapsed" | "disk_warn" | "disk_error" | "boot_install";
 
 const GIB = 1024 ** 3;
 /** The thresholds #2383 uses for the boot-time disk check: warn at 85 %, error at 95 % or with
@@ -51,8 +52,27 @@ export function diskRatio(m: Member): number | null {
   return d && d.total && d.total > 0 ? d.used / d.total : null;
 }
 
-/** Why this member needs the admin, empty when nothing does. Disk and boot-install reasons
- *  arrive with the data that carries them (#2385 phase 2). */
+/** The CLIs that failed to install at the last start, as [tool, reason] sorted by tool; empty
+ *  when none failed or the Agent did not say. */
+export function bootFailures(failed?: Record<string, string> | null): [string, string][] {
+  return Object.entries(failed ?? {}).sort(([a], [b]) => a.localeCompare(b));
+}
+
+/** The member detail's "home is full" flag after one stats poll. The numbers are the ones the
+ *  member's own notice uses (homeDiskPressure.ts, hysteresis included), and it is raised only
+ *  where home_own says disk_used / disk_total describe this member's own volume: elsewhere they
+ *  are a whole host or a shared filesystem and the member is not the one who filled it. A
+ *  stopped or unreadable workspace carries no reading and changes nothing. */
+export function nextMemberHomePressure(
+  prev: boolean,
+  s: { home_own?: boolean; disk_used?: number; disk_total?: number } | null | undefined,
+): boolean {
+  if (!s?.home_own) return false;
+  if (s.disk_used == null || s.disk_total == null) return prev;
+  return nextHomeDiskPressure(prev, s.disk_used, s.disk_total);
+}
+
+/** Why this member needs the admin, empty when nothing does. */
 export function attentionReasons(m: Member, now = Date.now()): AttentionReason[] {
   const out: AttentionReason[] = [];
   if (m.auto_stop) out.push("auto_stop");
@@ -67,6 +87,8 @@ export function attentionReasons(m: Member, now = Date.now()): AttentionReason[]
   const dl = diskLevel(m);
   if (dl === "error") out.push("disk_error");
   else if (dl === "warn") out.push("disk_warn");
+  if (bootFailures(m.boot_failed).length > 0) out.push("boot_install");
+  
   return out;
 }
 

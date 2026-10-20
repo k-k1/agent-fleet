@@ -54,3 +54,47 @@ func TestWorkspaceStatsWireKeys(t *testing.T) {
 		t.Errorf("cpu_pct = %v, want the key absent when unreadable", v)
 	}
 }
+
+// The admin member views flag a start whose CLI install failed from this key alone, so it
+// must carry only failures: ok / skipped CLIs and an unreadable status file leave it out.
+func TestWorkspaceStatsBootInstallFailed(t *testing.T) {
+	t.Setenv("AF_CGROUP_DIR", t.TempDir())
+	stats := func() map[string]any {
+		w := httptest.NewRecorder()
+		handleWorkspaceStats(w, httptest.NewRequest(http.MethodGet, "/workspace/stats", nil))
+		var out map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	old := bootInstallStatusPath
+	t.Cleanup(func() { bootInstallStatusPath = old })
+
+	dir := filepath.Join(t.TempDir(), "bi")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "s.tsv")
+	body := "claude\tfailed\tno_space\ncodex\tok\t\nrtk\tskipped\n"
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bootInstallStatusPath = p
+	got, _ := stats()["boot_install_failed"].(map[string]any)
+	if len(got) != 1 || got["claude"] != "no_space" {
+		t.Errorf("boot_install_failed = %v, want only claude=no_space", got)
+	}
+
+	if err := os.WriteFile(p, []byte("codex\tok\t\nrtk\tskipped\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := stats()["boot_install_failed"]; ok {
+		t.Errorf("no failure: boot_install_failed = %v, want the key absent", v)
+	}
+
+	bootInstallStatusPath = filepath.Join(dir, "missing.tsv")
+	if v, ok := stats()["boot_install_failed"]; ok {
+		t.Errorf("unknown status: boot_install_failed = %v, want the key absent", v)
+	}
+}

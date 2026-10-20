@@ -85,6 +85,8 @@ func (m *manager) agentStats(ctx context.Context, rt runtime.Runtime) (map[strin
 		OOMKillTotal *uint64  `json:"oom_kill_total"`
 		DiskUsed     *uint64  `json:"disk_used"`
 		DiskTotal    *uint64  `json:"disk_total"`
+		// Only failures, tool to reason; absent when none or unknown (Agent boot_install_status.go).
+		BootInstallFailed map[string]string `json:"boot_install_failed"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return nil, err
@@ -110,6 +112,9 @@ func (m *manager) agentStats(ctx context.Context, rt runtime.Runtime) (map[strin
 	}
 	if body.DiskTotal != nil {
 		out["disk_total"] = *body.DiskTotal
+	}
+	if len(body.BootInstallFailed) > 0 {
+		out["boot_install_failed"] = body.BootInstallFailed
 	}
 	return out, nil
 }

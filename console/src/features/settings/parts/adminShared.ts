@@ -104,6 +104,10 @@ export interface Member {
    *  taken. Absent where nothing is measured (Fargate's working disk) and before the first
    *  sample. A stopped workspace keeps its last reading, so observed_at is its age. */
   disk?: { used: number; total?: number; observed_at?: string };
+  /** The CLIs whose install failed at the workspace's last start, tool to reason (no_space,
+   *  network, checksum, other). Absent when none failed or the Agent did not say, which is
+   *  never a failure. Taken with the disk reading, so a stopped card keeps the last start's. */
+  boot_failed?: Record<string, string>;
 }
 
 /** GET …/members auto_stop (store.WorkspaceAutoStop). kind is "start-deadline" (phase: the last

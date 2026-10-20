@@ -111,3 +111,20 @@ func readBootInstallStatus() map[string]bootInstall {
 	}
 	return out
 }
+
+// bootInstallFailed is the failed subset of readBootInstallStatus, tool to reason. nil when
+// nothing failed and when the file is unknown: "skipped" and "ok" are never reported, and an
+// unreadable file must not look like a failure.
+func bootInstallFailed() map[string]string {
+	var out map[string]string
+	for tool, bi := range readBootInstallStatus() {
+		if bi.Status != "failed" {
+			continue
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[tool] = bi.Reason
+	}
+	return out
+}

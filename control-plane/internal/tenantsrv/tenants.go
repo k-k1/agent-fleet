@@ -387,6 +387,12 @@ func (a Admin) ListMembers(w http.ResponseWriter, r *http.Request) {
 						disk["total"] = d.Total
 					}
 					row["disk"] = disk
+					// The CLIs whose install failed on the last start, tool to reason. Omitted
+					// when none was reported or the Agent did not say: never a false flag.
+					var bf map[string]string
+					if d.BootFailed != "" && json.Unmarshal([]byte(d.BootFailed), &bf) == nil && len(bf) > 0 {
+						row["boot_failed"] = bf
+					}
 				}
 			}
 			// The class the member's next start lands on (user → tenant default →

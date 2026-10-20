@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -251,6 +252,7 @@ func (u *usageSampler) recordDisks(ctx context.Context, jobs []diskJob) {
 // its age) stays on the card.
 func (u *usageSampler) recordDisk(ctx context.Context, ws store.Workspace, rt runtime.Runtime, agentUp bool) {
 	var used, total uint64
+	var bootFailed string
 	taken := time.Now()
 	switch u.mgr.workspaceSizing().DiskMeaning {
 	case runtime.DiskMeaningHome:
@@ -269,6 +271,13 @@ func (u *usageSampler) recordDisk(ctx context.Context, ws store.Workspace, rt ru
 			return
 		}
 		used, total = du, dt
+		// The same call says which CLIs failed to install on this start; the roster flags it
+		// from the DB, so a stopped workspace keeps showing its last start's outcome.
+		if bf, ok := st["boot_install_failed"].(map[string]string); ok && len(bf) > 0 {
+			if b, err := json.Marshal(bf); err == nil {
+				bootFailed = string(b)
+			}
+		}
 	case runtime.DiskMeaningQuota:
 		dctx, cancel := context.WithTimeout(ctx, usageDiskTimeout)
 		defer cancel()
@@ -292,7 +301,7 @@ func (u *usageSampler) recordDisk(ctx context.Context, ws store.Workspace, rt ru
 		return
 	}
 	if err := u.mgr.store.PutWorkspaceDisk(ctx, store.WorkspaceDisk{
-		WorkspaceID: ws.ID, Used: used, Total: total, ObservedAt: store.DiskObservedAt(taken),
+		WorkspaceID: ws.ID, Used: used, Total: total, ObservedAt: store.DiskObservedAt(taken), BootFailed: bootFailed,
 	}); err != nil {
 		log.Printf("showback: record disk (%s): %v", ws.ContainerName, err)
 	}

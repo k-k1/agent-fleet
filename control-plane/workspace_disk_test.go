@@ -442,3 +442,57 @@ func TestSlowDiskReadDoesNotDelayUsageAccounting(t *testing.T) {
 		t.Errorf("sweep took %v: the disk budget did not bound it", time.Since(started))
 	}
 }
+
+// The Agent's list of failed boot-installs is stored with the disk reading and served on the
+// roster; a later clean reading withdraws it, and a stopped workspace keeps the last one.
+func TestSampleStoresFailedBootInstallsAndTheRosterServesThem(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, tn, mv, _ := networkFixture(t)
+	ws := store.Workspace{ID: store.NewID(), TenantID: tn.ID, MembershipID: mv.MembershipID,
+		ContainerName: "af-yamada", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t",
+		State: "running", CreatedAt: store.NowTS()}
+	if err := st.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	row := func() map[string]any { return memberRows(t, mgr, "boss@acme.co.jp")["yamada-acme-co-jp"] }
+
+	failed := diskAgent(t, `{"disk_used":9000,"disk_total":10000,"boot_install_failed":{"claude":"no_space"}}`)
+	mgr.rtFactory = sizedFactory{stubFactory{rt: stubRuntime{endpoint: failed.URL, state: "running"}}, runtime.DiskMeaningHome}
+	newUsageSampler(mgr, 5*time.Minute).sample(ctx)
+	bf, _ := row()["boot_failed"].(map[string]any)
+	if len(bf) != 1 || bf["claude"] != "no_space" {
+		t.Fatalf("boot_failed = %v, want claude=no_space", row()["boot_failed"])
+	}
+
+	// Stopped: nothing is sampled, the last start's outcome stays on the card.
+	mgr.rtFactory = sizedFactory{stubFactory{rt: stubRuntime{state: "stopped"}}, runtime.DiskMeaningHome}
+	newUsageSampler(mgr, 5*time.Minute).sample(ctx)
+	if _, ok := row()["boot_failed"]; !ok {
+		t.Error("boot_failed dropped for a stopped workspace")
+	}
+
+	clean := diskAgent(t, `{"disk_used":1000,"disk_total":10000}`)
+	mgr.rtFactory = sizedFactory{stubFactory{rt: stubRuntime{endpoint: clean.URL, state: "running"}}, runtime.DiskMeaningHome}
+	time.Sleep(2 * time.Millisecond) // observed_at is microsecond-resolution and must not go backwards
+	newUsageSampler(mgr, 5*time.Minute).sample(ctx)
+	if v, ok := row()["boot_failed"]; ok {
+		t.Errorf("boot_failed = %v after a clean start, want it withdrawn", v)
+	}
+}
+
+// Member detail polls memberStats: the Agent's failed list must pass through the CP, and an
+// Agent that reports none (or an older one) must leave the key out.
+func TestMemberStatsForwardsFailedBootInstalls(t *testing.T) {
+	srv := statsAgent(t, http.StatusOK, `{"mem_used":100,"boot_install_failed":{"claude":"no_space"}}`)
+	_, mgr, _, _ := destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
+	bf, _ := memberStatsJSON(t, mgr)["boot_install_failed"].(map[string]any)
+	if len(bf) != 1 || bf["claude"] != "no_space" {
+		t.Errorf("boot_install_failed = %v, want claude=no_space", bf)
+	}
+
+	none := statsAgent(t, http.StatusOK, `{"mem_used":100}`)
+	_, mgr2, _, _ := destroyFixture(t, agentStatsFactory{endpoint: none.URL, state: "running"})
+	if v, ok := memberStatsJSON(t, mgr2)["boot_install_failed"]; ok {
+		t.Errorf("boot_install_failed = %v, want the key absent", v)
+	}
+}

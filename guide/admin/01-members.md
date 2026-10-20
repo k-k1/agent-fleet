@@ -31,7 +31,12 @@ an error at 95 % or when less than 2 GiB is left, and either puts the member und
 attention**. Without a disk quota (local, native) only the used size is shown. On ECS Fargate the
 working disk is wiped on every stop, so there is no gauge, only the configured size. The gauge is the
 last reading the Control Plane took while the workspace ran (about every five minutes); on a stopped
-card it says how old that reading is. The session counts come from the Control Plane's copy of each
+card it says how old that reading is. A member whose last start could not install a CLI (a full home is the usual cause) also goes
+under **Needs attention**; the card's tooltip says why, and a stopped card keeps the last start's outcome.
+In the member detail, the **"Size and limits"** card shows the same reason per CLI, and, where the home is the
+member's own volume (ECS on EC2, Kubernetes), a notice when the home is nearly full (the same threshold the
+member's own notice uses). A workspace that is stopped or cannot be reached shows no flag, never a false one.
+The session counts come from the Control Plane's copy of each
 workspace's session list, which it refreshes about every five minutes for every running workspace
 (`AF_USAGE_SAMPLE_INTERVAL`), so they can lag what the member sees; the roster does not ask any
 workspace. Clicking a card takes you to the member detail.
