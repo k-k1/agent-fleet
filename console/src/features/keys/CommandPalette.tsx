@@ -937,8 +937,8 @@ export function CommandPalette() {
               {t(MODE_LABEL[m])}
             </button>
           ))}
-          <span className="cp-mode-hint">{t("keys.palette.mode_hint")}</span>
         </div>
+        <div className="cp-mode-hint">{t("keys.palette.mode_hint")}</div>
         <div className="cp-list" ref={listRef}>
           {mode === "file" && !q.trim() ? (
             <div className="cp-empty">{t("keys.palette.file_hint")}</div>

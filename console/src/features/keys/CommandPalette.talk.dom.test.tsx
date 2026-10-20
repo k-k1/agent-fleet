@@ -123,6 +123,16 @@ afterEach(() => {
 });
 
 describe("CommandPalette mode tabs", () => {
+  // The hint lives on its own line: inside the scrolling tab row it was pushed out of reach by
+  // every added tab (#2421).
+  it("keeps the mode-switch hint outside the scrolling tab row", () => {
+    const row = document.querySelector(".cp-modes")!;
+    const hint = document.querySelector(".cp-mode-hint")!;
+    expect(hint.textContent).toBeTruthy();
+    expect(row.contains(hint)).toBe(false);
+    expect(row.parentElement).toBe(hint.parentElement);
+  });
+
   // On a narrow screen the tab row scrolls sideways and Tab switching keeps focus in the input,
   // so the palette itself has to bring the selected tab into view.
   it("scrolls the selected tab into view when the mode changes", () => {
