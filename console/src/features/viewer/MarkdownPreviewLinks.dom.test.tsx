@@ -301,6 +301,19 @@ describe("MarkdownView previewLinks", () => {
       expect(openTarget).toHaveBeenCalledTimes(1); // the relinked anchor is wired once
     });
 
+    it("keeps the whole URL one link when its path holds a session slug and the port appears later", async () => {
+      useSessionsStore.setState({ loaded: true, sessions: [{ name: "sukbq4s", alive: true, ports: [] } as never] });
+      await render("`http://localhost:8080/sukbq4s`", { previewLinks: true });
+      expect(links()).toHaveLength(0);
+      expect(host.querySelector("code")!.childElementCount).toBe(0);
+      await act(async () => {
+        useSessionsStore.setState({ sessions: [{ name: "sukbq4s", alive: true, ports: [8080] } as never] });
+      });
+      expect(pv()).toHaveLength(1);
+      expect(pv()[0].textContent).toBe("http://localhost:8080/sukbq4s");
+      expect(links()).toHaveLength(1);
+    });
+
     it("keeps a bare autolink, only dimmed", async () => {
       await setSessions([]);
       await render("http://localhost:8080/", { previewLinks: true });

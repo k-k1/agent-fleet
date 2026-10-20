@@ -134,6 +134,8 @@ export function linkifyRefs(
       if (n.parentElement?.closest("pre,a")) return NodeFilter.FILTER_REJECT;
       // …except when that inline code is a path: it belongs to linkifyPathRefs whole.
       const code = n.parentElement?.closest("code");
+      // A loopback URL in code belongs to the preview linker (mdPreviewLinks.ts), linked or not.
+      if (code && "pvUrl" in code.dataset) return NodeFilter.FILTER_REJECT;
       if (code && isPathCandidateCode(code) && !ticketCode(code)) return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
     },

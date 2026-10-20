@@ -98,6 +98,9 @@ export function linkifyPreviewCode(el: HTMLElement, w: PreviewLinkWiring, liveKe
     if (URL_STOP.test(text)) return;
     const target = loopbackTarget(text);
     if (!target) return;
+    // Claimed whether or not it is linked now: the ref linkifiers must not carve a slug out of the
+    // URL's path while the code is plain, or it could never become one link when the port appears.
+    code.dataset.pvUrl = "";
     if (live && !live.has(target.port)) return;
     const a = document.createElement("a");
     a.setAttribute("href", text);
