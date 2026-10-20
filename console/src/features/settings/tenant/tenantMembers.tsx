@@ -239,7 +239,7 @@ function MemberSessions({ m }: { m: Member }) {
         max: String(max),
       })
     : "";
-  const pct = max ? Math.min(100, Math.round((s!.live / max) * 100)) : 0;
+  const pct = s && max ? Math.min(100, Math.round((s.live / max) * 100)) : 0;
   return (
     <span className="mc-sessions">
       {s && (

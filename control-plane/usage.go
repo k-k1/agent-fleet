@@ -149,6 +149,7 @@ func (u *usageSampler) counters(ctx context.Context, ws store.Workspace, rt runt
 	c := store.UsageHourCounters{Samples: 1, RunningSecs: secs}
 	sctx, cancel := context.WithTimeout(ctx, usageSessionTimeout)
 	defer cancel()
+	readStart := time.Now()
 	env, err := u.mgr.agentSessionsEnv(sctx, rt)
 	if err != nil {
 		return c
@@ -157,7 +158,7 @@ func (u *usageSampler) counters(ctx context.Context, ws store.Workspace, rt runt
 	// sample already paid for: the member roster reads sessions and their age from the
 	// mirror, and the list handlers only refresh it for a workspace someone opens. Only a
 	// successful read gets here, so an unreachable Agent leaves the mirror as it was.
-	if err := u.mgr.store.ReplaceSessions(ctx, ws.ID, sessionRows(env.Sessions)); err != nil {
+	if err := u.mgr.mirrorSessions(ctx, ws.ID, readStart, env.Sessions); err != nil {
 		log.Printf("showback: mirror sessions (%s): %v", ws.ContainerName, err)
 	}
 	alive, busy := 0, 0

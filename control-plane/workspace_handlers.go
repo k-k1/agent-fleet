@@ -997,8 +997,9 @@ func fmtStarted(createdAt string) string {
 // sessions. Shared by the REST handler and the /api/events push channel.
 func (a workspaceAPI) sessionsPayload(ctx context.Context, res *resolved) map[string]any {
 	if res.rt.State(ctx) == "running" {
+		readStart := time.Now()
 		if list, err := a.mgr.agentSessions(ctx, res.rt); err == nil {
-			_ = a.mgr.store.ReplaceSessions(ctx, res.ws.ID, sessionRows(list))
+			_ = a.mgr.mirrorSessions(ctx, res.ws.ID, readStart, list)
 			return map[string]any{"sessions": a.applyInboxOrigins(ctx, res.mv, list)}
 		}
 		// Agent unreachable (e.g. mid-start): fall through to the DB mirror.

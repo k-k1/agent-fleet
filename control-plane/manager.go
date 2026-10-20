@@ -65,6 +65,9 @@ type manager struct {
 	// which is also the honest answer to "why is the heatmap empty".
 	usageInterval time.Duration
 
+	// sessionMirror orders the writers of the DB session mirror (session_mirror.go).
+	sessionMirror sessionMirrorGate
+
 	// autoBakeGolden is AF_ECS_EC2_GOLDEN_AUTOBAKE, recorded at boot for the pool
 	// screen. It is the one thing about the golden that is NOT visible in AWS, and
 	// without it "no golden, nothing under way" cannot be told apart from "no golden,

@@ -30,6 +30,11 @@ const ROSTER = [
     last_active_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
     sessions: { live: 0, total: 4, observed_at: new Date(Date.now() - 3 * 3600_000).toISOString() },
   },
+  {
+    // The CP omits sessions when the mirror read failed; last_active_at and a limit remain.
+    user_key: "u-frank", email: "frank@x.com", role: "member", state: "stopped", status: "active", max_sessions: 3,
+    last_active_at: new Date(Date.now() - 86400_000).toISOString(),
+  },
   { user_key: "u-carol", email: "carol@x.com", role: "member", state: "stopped", status: "active", auto_stop: AUTO_STOP },
   { user_key: "u-dave", email: "dave@x.com", role: "member", state: "none", status: "active", has_workspace: false },
   { user_key: "u-erin", email: "erin@x.com", role: "member", state: "stopped", status: "removed" },
@@ -85,7 +90,7 @@ describe("member cards", () => {
     expect(titles()[0]).toBe("carol@x.com");
     expect(cards()[0].classList.contains("attn")).toBe(true);
     const summary = document.querySelector(".member-summary")?.textContent || "";
-    expect(summary).toContain("1 of 5 running");
+    expect(summary).toContain("1 of 6 running");
     expect(summary).toContain("1 need attention");
   });
 
@@ -126,6 +131,10 @@ describe("member cards", () => {
     expect(bob.querySelector(".mc-sess-text")?.textContent).toBe("0 live / 4 total");
     expect(bob.querySelector(".mc-bar")).toBeNull(); // no limit set: no bar, the numbers remain
     expect(bob.querySelector(".mc-last-active")?.textContent).toMatch(/^Last active /);
+    // No sessions but a limit and a last-active time: still renders, without a bar.
+    const frank = card("frank@x.com");
+    expect(frank.querySelector(".mc-bar")).toBeNull();
+    expect(frank.querySelector(".mc-last-active")?.textContent).toMatch(/^Last active /);
     // A member with no mirror and no activity gets no line at all.
     expect(card("dave@x.com").querySelector(".mc-sessions")).toBeNull();
   });

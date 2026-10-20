@@ -101,3 +101,38 @@ func TestAdminMembersCarrySessionsAndLastActiveFromTheDB(t *testing.T) {
 		t.Errorf("stopped sessions = %v, want live 0 / total 3", sess)
 	}
 }
+
+// A slow read A (started first) that answers after a newer read B was written must not roll
+// the mirror back to the older list, and must not stamp it "fresh" either.
+func TestSampleDoesNotOverwriteANewerMirrorWriteWithASlowOlderRead(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, _, _, ws := usageHourFixture(t)
+	arrived := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(arrived)
+		<-release
+		_, _ = w.Write([]byte(`{"sessions":[{"name":"old","alive":true,"kind":"claude"}]}`))
+	}))
+	defer srv.Close()
+	mgr.rtFactory = stubFactory{rt: stubRuntime{endpoint: srv.URL}}
+
+	done := make(chan struct{})
+	go func() {
+		newUsageSampler(mgr, 5*time.Minute).sample(ctx)
+		close(done)
+	}()
+	<-arrived // A is in flight, its read already started
+
+	// B: a list handler reads and writes after A started.
+	if err := mgr.mirrorSessions(ctx, ws.ID, time.Now(), []sessionWire{{Name: "new", Kind: "claude", Carried: "question"}}); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	<-done
+
+	rows, _ := st.ListSessions(ctx, ws.ID)
+	if len(rows) != 1 || rows[0].Name != "new" || rows[0].Carried != "question" {
+		t.Errorf("mirror = %+v, want only the newer row \"new\"", rows)
+	}
+}

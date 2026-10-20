@@ -1,0 +1,55 @@
+package main
+
+import (
+	"context"
+	"sync"
+	"time"
+)
+
+// sessionMirrorGate orders the writers of the session mirror. Each of them reads the
+// Agent's list and then replaces the workspace's rows wholesale, so a read that started
+// earlier but answered later would roll back a newer one: a deleted session reappears,
+// and a new one (or a fresher Carried / Studio) vanishes while last_seen reads "just now".
+// A write is therefore accepted only if its read STARTED no earlier than the read behind
+// the write already applied. Process-local: it orders this Control Plane's writers, which
+// is all of them while one instance serves a deployment.
+type sessionMirrorGate struct {
+	mu      sync.Mutex
+	entries map[string]*mirrorEntry
+}
+
+type mirrorEntry struct {
+	mu      sync.Mutex
+	applied time.Time // start of the read behind the last accepted write
+}
+
+func (g *sessionMirrorGate) entry(wsID string) *mirrorEntry {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.entries == nil {
+		g.entries = map[string]*mirrorEntry{}
+	}
+	e := g.entries[wsID]
+	if e == nil {
+		e = &mirrorEntry{}
+		g.entries[wsID] = e
+	}
+	return e
+}
+
+// mirrorSessions writes list into the mirror unless a read that started later has already
+// been written. readStart is taken BEFORE the Agent request is sent. A rejected write is
+// not an error: the mirror already holds something newer.
+func (m *manager) mirrorSessions(ctx context.Context, wsID string, readStart time.Time, list []sessionWire) error {
+	e := m.sessionMirror.entry(wsID)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if readStart.Before(e.applied) {
+		return nil
+	}
+	if err := m.store.ReplaceSessions(ctx, wsID, sessionRows(list)); err != nil {
+		return err
+	}
+	e.applied = readStart
+	return nil
+}
