@@ -445,3 +445,18 @@ func SpawnCreateRefusal(parent, kind string) *SpawnRefusal {
 // because the status file belongs to the entrypoint and is read in package main
 // (boot_install_status.go). nil means nothing is known, and a create then proceeds.
 var KindStartRefusal func(kind string) *SpawnRefusal
+
+// startRefusal is the refusal for starting a process of kind (empty and unknown fold to claude,
+// as a create does), nil when the hook is unset or has none.
+func startRefusal(kind string) *SpawnRefusal {
+	if KindStartRefusal == nil {
+		return nil
+	}
+	return KindStartRefusal(NormalizeKind(kind))
+}
+
+// StartRefusalError carries a refusal out of ensureSessionTmux, whose callers otherwise see only
+// an error string, so HandleStartSession can answer with the code instead of start_failed.
+type StartRefusalError struct{ Ref *SpawnRefusal }
+
+func (e *StartRefusalError) Error() string { return e.Ref.Message }

@@ -1776,10 +1776,11 @@ a home over the member notice's threshold (same numbers and hysteresis as `homeD
 is true and the workspace runs. The list's existing disk gauge keeps its own 85% / 95% levels. No admin notification.
 Refusing a session start with the reason is still open (Follow-ups: #2398).
 
-**Note (2026-10-20, #2398 part 2): a session start for a kind whose CLI did not install is refused with the reason.** The Agent's
-create handler asks `cliInstallRefusal` (boot_install_status.go) before the idempotency claim: it refuses only when this
-start's status file records the kind's tool as `failed` *and* the binary is not present now (PATH, the baked directory or
-`~/.local/bin`, so a stale failure stops blocking as soon as the CLI appears). `skipped`, `ok`, an unknown or absent status,
+**Note (2026-10-20, #2398 part 2): a session start for a kind whose CLI did not install is refused with the reason.** The Agent asks
+`cliInstallRefusal` (boot_install_status.go) wherever it would launch the CLI: create (after the idempotency claim, so a retry still replays
+its session and a durable key ends as refused), `/start` of a stored session, fork and recreate (before the old session is archived). It refuses only when this
+start's status file records the kind's tool as `failed` *and* the binary is not present now (an executable regular file on PATH, in the baked directory or
+`~/.local/bin`, or an operator override of the launch such as `AGENT_<KIND>_CMD` / `_BIN`, so a stale failure stops blocking as soon as the CLI appears). `skipped`, `ok`, an unknown or absent status,
 another tool's failure and kinds with no boot-installed CLI all proceed. The answer is 409 with code
 `cli_install_<no_space|network|checksum|other>` and an English message naming the kind and the reason; the Console maps the code
 to its own en/ja text (`err.cli_install_*`, shown without the English message), so the sentence follows the viewer's language,

@@ -1628,9 +1628,9 @@ stat 1 回と最大 8 KiB の read だけで、home には触れず、メンバ�
 （`homeDiskPressure.ts`）で home の使用率超過も旗立てするが、`home_own` が true で稼働中のときだけ。一覧の既存のディスクゲージは従来の 85% / 95% のまま。
 管理者への通知は付けない。理由つきのセッション開始拒否は未対応（フォローアップ: #2398）。
 
-**注記（2026-10-20, #2398 後半）: CLI のインストールに失敗した kind のセッション開始は、理由を示して拒否される。** Agent の create ハンドラは、
-冪等性の確保より前に `cliInstallRefusal`（boot_install_status.go）を呼ぶ。拒否するのは、今回の起動のステータスファイルでその kind のツールが
-`failed` と記録されており、**かつ** いまバイナリが無いときだけ（PATH・焼き込みディレクトリ・`~/.local/bin` を見るので、CLI が現れた時点で古い失敗は
+**注記（2026-10-20, #2398 後半）: CLI のインストールに失敗した kind のセッション開始は、理由を示して拒否される。** Agent は CLI を起動する場所で
+`cliInstallRefusal`（boot_install_status.go）を呼ぶ: create（冪等性の確保の後。再送は従来どおりセッションを返し、durable キーは拒否で確定する）、保存済みセッションの `/start`、fork、recreate（古いセッションをアーカイブする前）。拒否するのは、今回の起動のステータスファイルでその kind のツールが
+`failed` と記録されており、**かつ** いまバイナリが無いときだけ（PATH・焼き込みディレクトリ・`~/.local/bin` の実行可能な通常ファイル、または `AGENT_<KIND>_CMD` / `_BIN` のような起動の上書きを見るので、CLI が現れた時点で古い失敗は
 止めなくなる）。`skipped`・`ok`・状態の不明/なし・別ツールの失敗・boot-install の対象でない kind はそのまま開始できる。応答は 409 で、コードは
 `cli_install_<no_space|network|checksum|other>`、メッセージは kind と理由を挙げた英文。Console はコードを自前の en/ja 文言（`err.cli_install_*`、
 英文は付けない）に対応づけるので、文は閲覧者の言語に従い、create_session とスケジューラには英文が届く。新しい状態の取得元は足さない

@@ -25,6 +25,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
@@ -153,9 +154,9 @@ func validBootTool(s string) bool {
 
 // --- Refusing a start whose CLI did not install ---
 
-// bootInstallRefusalMsg is the English text of each reason. The Console shows its own wording
-// for the code (err.cli_install_<reason>); this one reaches callers that have no catalog
-// (create_session, the scheduler).
+// bootInstallRefusalMsg is the English cause of each reason, and bootInstallRefusalHint what the
+// caller can do about it. The Console shows its own wording for the code (err.cli_install_<reason>);
+// these reach callers that have no catalog (create_session, the scheduler).
 var bootInstallRefusalMsg = map[string]string{
 	"no_space": "the home disk is full",
 	"network":  "a network error occurred",
@@ -163,24 +164,64 @@ var bootInstallRefusalMsg = map[string]string{
 	"other":    "an error occurred (see the workspace log)",
 }
 
+var bootInstallRefusalHint = map[string]string{
+	"no_space": "Free some space and restart the workspace to try again.",
+	"network":  "Restart the workspace to try again.",
+	"checksum": "Restart the workspace to try again.",
+	"other":    "See Settings > Toolchains and the workspace log.",
+}
+
 // bakedBinDir is where the image bakes CLIs; a var only so tests can point it elsewhere.
 var bakedBinDir = "/usr/local/bin"
 
-// cliPresent reports whether kind's CLI can be run now. It looks at the real binary, as the
-// entrypoint's own cli_present does plus PATH, and not only at the status file: the failure
-// recorded at start goes stale the moment the CLI is installed by hand or by a later start.
-func cliPresent(cmd string) bool {
+// execFile reports whether path (symlinks followed) is a regular file someone can execute: a
+// partial install can leave a directory or a 0600 file behind, and neither launches.
+func execFile(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o111 != 0
+}
+
+// launchOverridden reports whether the operator pointed this kind's launch somewhere else. The
+// agents read these variables themselves (internal/agents/*/program.go), and a launch that does
+// not use the installed CLI is not made impossible by that CLI's failed install, so none of them
+// is second-guessed here: a CMD override runs verbatim, a BIN override is honoured when it
+// resolves to a real binary.
+func launchOverridden(kind string) bool {
+	up := strings.ToUpper(kind)
+	if os.Getenv("AGENT_"+up+"_CMD") != "" {
+		return true
+	}
+	if kind == "claude" && os.Getenv("AGENT_SESSION_CMD") != "" {
+		return true
+	}
+	if bin := os.Getenv("AGENT_" + up + "_BIN"); bin != "" {
+		if strings.Contains(bin, "/") {
+			return execFile(bin)
+		}
+		_, err := exec.LookPath(bin)
+		return err == nil
+	}
+	return false
+}
+
+// cliPresent reports whether kind's CLI can be run now. It looks at what a launch would run, not
+// only at the status file: the failure recorded at start goes stale the moment the CLI is
+// installed by hand or by a later start. The default binary is looked up where the entrypoint's own
+// cli_present does plus PATH; an override of the launch and the opencode 2 opt-in binary count too.
+func cliPresent(kind, cmd string) bool {
+	if launchOverridden(kind) {
+		return true
+	}
+	if kind == "opencode" && opencode.WantsV2() && opencode.V2Binary() != "" {
+		return true
+	}
 	if _, err := exec.LookPath(cmd); err == nil {
 		return true
 	}
-	if fi, err := os.Stat(filepath.Join(bakedBinDir, cmd)); err == nil && fi.Mode().IsRegular() {
-		return true
-	}
-	_, err := os.Stat(filepath.Join(homeDir(), ".local", "bin", cmd))
-	return err == nil
+	return execFile(filepath.Join(bakedBinDir, cmd)) || execFile(filepath.Join(homeDir(), ".local", "bin", cmd))
 }
 
-// cliInstallRefusal refuses a create for kind only when this start's boot-install recorded
+// cliInstallRefusal refuses a start of kind only when this start's boot-install recorded
 // that kind's CLI as failed AND the CLI is not present now. Everything else proceeds: a
 // kind with no boot-installed CLI, "ok" / "skipped", an unknown or absent status, a failure
 // recorded for another tool, and a stale failure whose CLI has since appeared.
@@ -190,7 +231,7 @@ func cliInstallRefusal(kind string) *sessionx.SpawnRefusal {
 			continue
 		}
 		bi, ok := readBootInstallStatus()[kind]
-		if !ok || bi.Status != "failed" || cliPresent(spec.Cmd) {
+		if !ok || bi.Status != "failed" || cliPresent(kind, spec.Cmd) {
 			return nil
 		}
 		reason := bi.Reason
@@ -200,8 +241,8 @@ func cliInstallRefusal(kind string) *sessionx.SpawnRefusal {
 		return &sessionx.SpawnRefusal{
 			Status: http.StatusConflict,
 			Code:   "cli_install_" + reason,
-			Message: fmt.Sprintf("%s could not be installed when this workspace started because %s. Free some space and restart the workspace to try again.",
-				kind, bootInstallRefusalMsg[reason]),
+			Message: fmt.Sprintf("%s could not be installed when this workspace started because %s. %s",
+				kind, bootInstallRefusalMsg[reason], bootInstallRefusalHint[reason]),
 		}
 	}
 	return nil

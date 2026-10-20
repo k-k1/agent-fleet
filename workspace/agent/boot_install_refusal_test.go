@@ -122,3 +122,60 @@ func TestCreateSessionRefusesAKindWhoseCLIFailedToInstall(t *testing.T) {
 		t.Fatalf("%d %s, want 409 cli_install_no_space", w.Code, w.Body.String())
 	}
 }
+
+// Presence follows what a launch would run, not the fixed default name.
+func TestCLIInstallRefusalFollowsTheLaunchResolution(t *testing.T) {
+	home := isolateCLIs(t)
+	writeBootStatus(t, "cursor\tfailed\tno_space\ncopilot\tfailed\tnetwork\nclaude\tfailed\tother\n")
+
+	// A working alternative binary chosen through the launch's own override.
+	alt := filepath.Join(t.TempDir(), "my-cursor")
+	if err := os.WriteFile(alt, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENT_CURSOR_BIN", alt)
+	if ref := cliInstallRefusal("cursor"); ref != nil {
+		t.Errorf("cursor refused though AGENT_CURSOR_BIN names a working binary: %+v", ref)
+	}
+	t.Setenv("AGENT_CURSOR_BIN", filepath.Join(t.TempDir(), "missing"))
+	if ref := cliInstallRefusal("cursor"); ref == nil {
+		t.Error("cursor not refused with an AGENT_CURSOR_BIN that points nowhere")
+	}
+	t.Setenv("AGENT_COPILOT_CMD", "echo hi")
+	if ref := cliInstallRefusal("copilot"); ref != nil {
+		t.Errorf("copilot refused though AGENT_COPILOT_CMD replaces the launch: %+v", ref)
+	}
+	t.Setenv("AGENT_SESSION_CMD", "bash")
+	if ref := cliInstallRefusal("claude"); ref != nil {
+		t.Errorf("claude refused though AGENT_SESSION_CMD replaces the launch: %+v", ref)
+	}
+	t.Setenv("AGENT_SESSION_CMD", "")
+
+	// Leftovers of a partial install are not a CLI: a directory, a file that is not executable.
+	bin := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(filepath.Join(bin, "claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if ref := cliInstallRefusal("claude"); ref == nil {
+		t.Error("a directory named claude counted as the CLI")
+	}
+	if err := os.WriteFile(filepath.Join(bin, "cursor-agent"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENT_CURSOR_BIN", "")
+	if ref := cliInstallRefusal("cursor"); ref == nil {
+		t.Error("a 0600 leftover counted as the CLI")
+	}
+}
+
+// The English hint matches the cause: only a full home asks for space.
+func TestCLIInstallRefusalHintMatchesTheCause(t *testing.T) {
+	isolateCLIs(t)
+	for reason, wantFree := range map[string]bool{"no_space": true, "network": false, "checksum": false, "other": false} {
+		writeBootStatus(t, "codex\tfailed\t"+reason+"\n")
+		ref := cliInstallRefusal("codex")
+		if ref == nil || strings.Contains(ref.Message, "Free some space") != wantFree {
+			t.Errorf("%s: message %q, want free-space hint = %v", reason, ref.Message, wantFree)
+		}
+	}
+}

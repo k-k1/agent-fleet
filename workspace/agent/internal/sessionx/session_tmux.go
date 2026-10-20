@@ -111,6 +111,11 @@ func ensureSessionTmux(lease *lifegate.Lease, name string, ssmForce bool) error 
 		if !dok {
 			return fmt.Errorf("no driver for session %s (kind %q)", name, m.Kind)
 		}
+		// Only a start that would launch a process is refused; an already-alive session
+		// returned above and stays idempotent.
+		if ref := startRefusal(m.Kind); ref != nil {
+			return &StartRefusalError{ref}
+		}
 		if _, err := mcpx.StartManagedSession(d, m); err != nil {
 			log.Printf("managed resume %s: %v", name, err)
 			return err
@@ -135,6 +140,9 @@ func ensureSessionTmux(lease *lifegate.Lease, name string, ssmForce bool) error 
 	}
 	if !ok {
 		return fmt.Errorf("no meta for session %s", name)
+	}
+	if ref := startRefusal(m.Kind); ref != nil {
+		return &StartRefusalError{ref}
 	}
 	recallSettings(&m)
 	if err := startSessionTmux(m, ssmForce); err != nil {
