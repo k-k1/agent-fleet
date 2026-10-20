@@ -6,6 +6,7 @@ import { browserAttachmentIdFromLink } from "../../../layout/browserAttachmentAc
 import { openBrowserAttachment } from "../../browser/attachmentAction.ts";
 import type { OpenPathLinkMenu } from "../PathLinkMenu.tsx";
 import { wireContextMenu } from "./linkContextMenu.ts";
+import { loopbackTarget, wirePreviewLink, type PreviewLinkWiring } from "./mdPreviewLinks.ts";
 
 // resolveRelPath turns a repo-relative Markdown href/src into a home-relative fs path.
 // marked percent-encodes non-ASCII (Japanese becomes %E6…), so decode first or the path won't
@@ -73,6 +74,7 @@ export function wireLinks(
   onOpenDir?: (path: string) => void,
   onError?: (message: string) => void,
   openMenu?: OpenPathLinkMenu,
+  preview?: PreviewLinkWiring,
 ) {
   el.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((a) => {
     const href = a.getAttribute("href") || "";
@@ -105,6 +107,14 @@ export function wireLinks(
         e.preventDefault();
         void openBrowserAttachment(attachmentId);
       });
+      return;
+    }
+
+    // A server of the workspace, on a surface that opts in: the preview of that port, not the
+    // reader's own machine. After the two branches above, which own their hrefs.
+    const loopback = preview ? loopbackTarget(href) : null;
+    if (preview && loopback) {
+      wirePreviewLink(a, loopback, preview);
       return;
     }
 

@@ -45,6 +45,11 @@ export interface TranscriptCaps {
    */
   workItemRefs?: boolean;
   /**
+   * Open a loopback URL (`http://localhost:5173/`) in the workspace's preview of that port.
+   * Absent → an ordinary external link: a recipient's machine is not the owner's workspace.
+   */
+  previewLinks?: boolean;
+  /**
    * Fetch a pasted image's bytes by transcript name. Absent → no thumbnails
    * (the shared DTO drops attachment paths, and the bytes live in the owner's
    * Workspace, so there is nothing a recipient could fetch).

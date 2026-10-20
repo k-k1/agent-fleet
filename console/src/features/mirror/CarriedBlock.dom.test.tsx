@@ -14,6 +14,8 @@ import { createRoot, type Root } from "react-dom/client";
 const sessionCarriedAnswer = vi.fn(async () => ({ ok: true }));
 const apiJSON = vi.fn(async () => ({}));
 vi.mock("../../core/api/client.ts", () => ({
+  // Read when the preview stores load (MarkdownView links loopback URLs to the workspace preview).
+  getTenant: () => "",
   sessionCarriedAnswer: (...args: unknown[]) => sessionCarriedAnswer(...(args as [])),
   apiJSON: (...args: unknown[]) => apiJSON(...(args as [])),
   errText: (e: { message?: string }) => e?.message || "",

@@ -50,6 +50,11 @@ func (a adminAPI) resolveMember(r *http.Request, slug, key string) (mem store.Me
 // returns a member's live Workspace resource usage: mem/CPU from cgroup and disk
 // from `du` on the home tree, plus the disk quota if one is set. Disk is reported
 // even while the container is stopped (the home path persists on the host).
+//
+// ?disk=0 skips the host-side du. The roster cards poll this for mem/CPU only and already
+// show the usage sampler's disk reading, so a du per card per poll would be cost for
+// nothing; absent (the member detail) keeps the full answer. Disk figures the Agent itself
+// returned (ECS statfs) are not removed: they cost nothing extra here.
 func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := a.tenantAdminFor(w, r, r.PathValue("slug")); !ok {
 		return
@@ -115,8 +120,10 @@ func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 	// stopped, which taking stock of stopped workspaces needs. On ECS the path is not on
 	// the CP at all, so out already carries the disk_used / disk_total the Agent
 	// returned from statfs (the persistent home's own EBS volume).
-	if used, ok := dirDiskUsage(ctx, a.mgr.rootedDataDir(ws)); ok {
-		out["disk_used"] = used
+	if r.URL.Query().Get("disk") != "0" {
+		if used, ok := dirDiskUsage(ctx, a.mgr.rootedDataDir(ws)); ok {
+			out["disk_used"] = used
+		}
 	}
 	if ul, ok, _ := a.mgr.store.GetUserLimit(ctx, mem.ID); ok && ul.DiskGB > 0 {
 		out["disk_quota"] = uint64(ul.DiskGB) * gib

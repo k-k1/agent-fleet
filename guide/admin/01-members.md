@@ -39,8 +39,12 @@ member's own notice uses). The home-nearly-full notice needs a running workspace
 boot-install flag unless a failure was actually recorded.
 The session counts come from the Control Plane's copy of each
 workspace's session list, which it refreshes about every five minutes for every running workspace
-(`AF_USAGE_SAMPLE_INTERVAL`), so they can lag what the member sees; the roster does not ask any
-workspace. Clicking a card takes you to the member detail.
+(`AF_USAGE_SAMPLE_INTERVAL`), so they can lag what the member sees. The one exception is a
+**running** card: while it is on screen (and the browser tab is in the foreground) it also shows live
+memory and CPU, for example "Memory 2.0 / 8.0 GiB (25%)" and "CPU 25% of 4 vCPU limit", read from that member's
+workspace about every 15 seconds, at most three at a time, and a card shows "Live usage: reading…"
+until its first reading. The CPU bar is a share of the member's CPU limit where the runtime enforces one; otherwise only the figure is shown, as "CPU 200% (100% = 1 core)". Cards scrolled out of view, hidden by the filter, or stopped are not asked,
+and nothing is asked while the Members page is closed. Clicking a card takes you to the member detail.
 
 Above the cards are the counts (running out of total, and how many need attention), a filter
 (All / Running / Needs attention / Stopped / Removed), a sort (needs attention first, by name, or by last active, with members who have no activity recorded last, or by disk usage, fullest first)

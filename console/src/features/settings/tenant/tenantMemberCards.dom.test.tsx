@@ -163,8 +163,18 @@ describe("member cards", () => {
   });
 
   // Thirty cards must not mean thirty Agent calls: the page reads one roster response.
+  // An observer that never reports a card on screen: nothing is visible yet, so nothing is fetched
+  // (tenantMemberLive.dom.test.tsx covers the cards that do become visible).
   it("makes no per-member calls", async () => {
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
     await mount();
     expect(api.mock.calls.map((c) => c[0]).sort()).toEqual(["api/admin/tenants/acme/members", "api/admin/workspace-sizing"]);
+    vi.unstubAllGlobals();
   });
 });

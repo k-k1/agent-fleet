@@ -56,6 +56,7 @@ import type { Assistant } from "../../types/assistant.ts";
 import type { SessionKind } from "../../types/session.ts";
 import { SessionLinkMenuHost } from "../sessions/SessionLinkMenu.tsx";
 import { PathLinkMenuHost } from "../viewer/PathLinkMenu.tsx";
+import { PortLinkMenuHost } from "../preview/PortLinkMenu.tsx";
 
 // ChatView renders one assistant-chat conversation (docs/log/19) — a headless-CLI LLM
 // chat/translation thread. Unlike the terminal panes it never mounts xterm; it's a
@@ -85,7 +86,9 @@ export function ChatView(props: ChatViewProps) {
   return (
     <SessionLinkMenuHost>
       <PathLinkMenuHost>
-        <ChatViewBody {...props} />
+        <PortLinkMenuHost>
+          <ChatViewBody {...props} />
+        </PortLinkMenuHost>
       </PathLinkMenuHost>
     </SessionLinkMenuHost>
   );

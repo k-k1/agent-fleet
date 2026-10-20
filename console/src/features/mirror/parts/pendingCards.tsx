@@ -63,6 +63,7 @@ export function PlanPendingCard({
       <PlanBlock
         plan={plan}
         session={session}
+        previewLinks
         pending
         sending={sending}
         onOpen={onOpen}
@@ -228,7 +229,7 @@ export function QuestionCard({
   const lead = tx?.lead ?? pendingText;
   return (
     <PendingTurn agentName={agentName} note={tr("mirror.questioning")}>
-      {lead && <MarkdownView source={lead} repo={repo} onOpenFile={onOpenFile} workItemRefs />}
+      {lead && <MarkdownView source={lead} repo={repo} onOpenFile={onOpenFile} workItemRefs previewLinks />}
       <PendingQuestions
         key={"pq-" + (questions[0]?.question || "")}
         questions={questions}
@@ -280,7 +281,7 @@ export function LiveReplyCard({
   return (
     <PendingTurn agentName={agentName} note={tr("mirror.writing")}>
       <div ref={host} className={typewriter ? "mirror-live typewriter" : "mirror-live"}>
-        <MarkdownView source={shown} repo={repo} onOpenFile={onOpenFile} streaming={typewriter} workItemRefs />
+        <MarkdownView source={shown} repo={repo} onOpenFile={onOpenFile} streaming={typewriter} workItemRefs previewLinks />
       </div>
     </PendingTurn>
   );

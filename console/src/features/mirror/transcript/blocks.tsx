@@ -198,6 +198,7 @@ export function CompactBlock({
   repo,
   onOpenFile,
   workItemRefs,
+  previewLinks,
 }: {
   turn: Group;
   before?: number;
@@ -205,6 +206,7 @@ export function CompactBlock({
   repo?: string | null;
   onOpenFile?: (path: string, line?: number, column?: number) => void;
   workItemRefs?: boolean;
+  previewLinks?: boolean;
 }) {
   // Show the reduction only once both sides are real: `after` is 0 until the first
   // post-compaction turn's usage lands, so the effect appears a beat after compaction finishes.
@@ -243,7 +245,7 @@ export function CompactBlock({
             </div>
           </div>
         )}
-        <MarkdownView source={turn.text} baseDir={turn.cwd} repo={repo} onOpenFile={onOpenFile} workItemRefs={workItemRefs} />
+        <MarkdownView source={turn.text} baseDir={turn.cwd} repo={repo} onOpenFile={onOpenFile} workItemRefs={workItemRefs} previewLinks={previewLinks} />
       </div>
     </details>
   );
@@ -268,6 +270,7 @@ export function ThinkingBlock({
   repo,
   onOpenFile,
   workItemRefs,
+  previewLinks,
 }: {
   text?: string;
   defaultOpen: boolean;
@@ -275,6 +278,7 @@ export function ThinkingBlock({
   repo?: string | null;
   onOpenFile?: (path: string, line?: number, column?: number) => void;
   workItemRefs?: boolean;
+  previewLinks?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const head = useRef<HTMLButtonElement>(null);
@@ -301,7 +305,7 @@ export function ThinkingBlock({
       </button>
       <DisclosureContent open={open} className="mirror-thinking-body">
         <div ref={body}>
-          <MarkdownView source={text} baseDir={baseDir} repo={repo} onOpenFile={onOpenFile} workItemRefs={workItemRefs} />
+          <MarkdownView source={text} baseDir={baseDir} repo={repo} onOpenFile={onOpenFile} workItemRefs={workItemRefs} previewLinks={previewLinks} />
         </div>
         {long && (
           <DisclosureFoot
@@ -1067,10 +1071,13 @@ export function PlanBlock({
   onSendComments,
   sendDisabled,
   sending,
+  previewLinks,
 }: {
   plan?: string;
   /** Keys the bundle of comments (the same planKey the review surface uses). */
   session?: string;
+  /** Loopback URLs in the plan open the workspace preview: an owner surface only. */
+  previewLinks?: boolean;
   pending?: boolean;
   answered?: boolean;
   outcome?: string;
@@ -1234,7 +1241,7 @@ export function PlanBlock({
       </div>
       {inline && expanded && (
         <div className="mt-plan-body">
-          <MarkdownView source={plan} />
+          <MarkdownView source={plan} previewLinks={previewLinks} />
         </div>
       )}
     </div>

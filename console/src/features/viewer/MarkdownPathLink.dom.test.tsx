@@ -15,6 +15,8 @@ vi.mock("../../ui/ToastProvider.tsx", () => ({
 let resolved: Record<string, { path: string; type: string }> = {};
 const asked: { cwd: string; refs: string[] }[] = [];
 vi.mock("../../core/api/client.ts", () => ({
+  // Read when the preview stores load (MarkdownView links loopback URLs to the workspace preview).
+  getTenant: () => "",
   api: vi.fn(async () => ({})),
   apiJSON: vi.fn(async (_path: string, _method: string, body: { cwd: string; refs: string[] }) => {
     asked.push(body);

@@ -65,6 +65,7 @@ import { targetLang } from "./translate.ts";
 import { useTranslate } from "./useTranslate.ts";
 import { SessionLinkMenuHost } from "../sessions/SessionLinkMenu.tsx";
 import { PathLinkMenuHost } from "../viewer/PathLinkMenu.tsx";
+import { PortLinkMenuHost } from "../preview/PortLinkMenu.tsx";
 import { useMirrorState } from "./parts/useMirrorState.ts";
 import { useOlderHistory, useTranscriptPoll } from "./parts/useTranscriptPoll.ts";
 import { useMirrorActions } from "./parts/useMirrorActions.ts";
@@ -99,7 +100,9 @@ export function MirrorView(props: Parameters<typeof MirrorViewBody>[0]) {
   return (
     <SessionLinkMenuHost>
       <PathLinkMenuHost>
-        <MirrorViewBody {...props} />
+        <PortLinkMenuHost>
+          <MirrorViewBody {...props} />
+        </PortLinkMenuHost>
       </PathLinkMenuHost>
     </SessionLinkMenuHost>
   );

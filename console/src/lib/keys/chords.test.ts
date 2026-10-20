@@ -6,6 +6,7 @@ import {
   canonical,
   eventChordString,
   eventKeyChordString,
+  reverseChord,
   shouldIgnore,
 } from "./chords.ts";
 
@@ -92,5 +93,19 @@ describe("shouldIgnore", () => {
     expect(shouldIgnore(ev("KeyK", { keyCode: 229 } as Partial<KeyboardEvent>))).toBe(true);
     expect(shouldIgnore(ev("KeyK", { repeat: true } as Partial<KeyboardEvent>))).toBe(true);
     expect(shouldIgnore(ev("KeyK"))).toBe(false);
+  });
+});
+
+describe("reverseChord", () => {
+  it("adds shift to the bound chord, in canonical order", () => {
+    expect(reverseChord("mod+p")).toBe("mod+shift+p");
+    expect(reverseChord("alt+o")).toBe("alt+shift+o");
+    expect(reverseChord("mod+alt+k")).toBe("mod+alt+shift+k");
+    expect(reverseChord(canonical("Ctrl+P"))).toBe("mod+shift+p");
+  });
+  it("yields no reverse chord when there is nothing to derive from", () => {
+    expect(reverseChord("")).toBe("");
+    expect(reverseChord("mod+shift+p")).toBe("");
+    expect(reverseChord("shift+f2")).toBe("");
   });
 });
