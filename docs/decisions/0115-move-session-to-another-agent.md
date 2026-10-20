@@ -481,10 +481,13 @@ it is not yet.
   plan to continue" on its first turn (account plan), so the driver's trust handling and flags are
   unmeasured. Cursor Terminal.
 - **Inference, not measurement: kiro Terminal.** The target list is per kind, so a move to kiro
-  may also start the Terminal driver. Both kiro drivers drop `--trust-all-tools` when the
-  "skip permission confirmation" setting is off, and Managed was measured in that default mode
-  with no prompt, so the Terminal chat is expected to read the file the same way. That rests on
-  the two drivers sharing kiro's tool permissions, not on a run. If it does prompt, the prompt
-  appears in the target's own view for the user to answer; the first prompt waits there.
+  may also start the Terminal driver. Managed was measured in the default mode; the exact
+  permission flag (whether `--trust-all-tools` was passed) was not independently recorded, so
+  the result is not tied to the "skip permission confirmation" setting being off. With that
+  setting off, both kiro drivers drop `--trust-all-tools`, and whether either reads an outside
+  file unprompted then is unmeasured. The Terminal chat is only expected to behave like Managed
+  because the two share kiro's tool permissions; that is inference, not a run. If it does prompt,
+  the prompt appears in the target's own view for the user to answer; the first prompt waits
+  there.
 - **Decision.** Kiro is now a move target. Cursor stays off, reported as `not_measured`, until it
   can be measured through the Managed driver. Follow-ups: #2252.
