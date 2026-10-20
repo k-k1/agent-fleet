@@ -483,7 +483,7 @@ export function MemberView({
         {member.email && <span className="mh-email muted">{member.email}</span>}
       </header>
 
-      {/* Auto-stop outlook (docs/log/75 P4). A roster row fits only one holder, so the detail
+      {/* Auto-stop outlook (docs/log/75 P4). A roster card fits only one holder, so the detail
           lists them all: "s5 is running" and "s3 is pinned" call for different next moves from
           the operator (wait, or ask for the pin to be released). */}
       <MemberIdleDetail idle={member.idle} state={member.state} />

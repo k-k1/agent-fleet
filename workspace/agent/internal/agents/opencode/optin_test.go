@@ -233,7 +233,27 @@ func sleepArgs(t *testing.T, tokens ...string) *exec.Cmd {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	awaitExec(t, cmd, tokens)
 	return cmd
+}
+
+// awaitExec waits until /proc shows the started process with its final argv. Start returns once
+// the child has passed the point where its close-on-exec descriptors are dropped, but the kernel
+// fills in the new argv range a moment later; a /proc/<pid>/cmdline read in that window is empty,
+// so isRecordedServe says "not the daemon" and the code under test, which asks it, wrongly sees no
+// daemon to stop (measured: 1 in ~300 runs under CPU load, the 5 s timeout of issue 2354).
+func awaitExec(t *testing.T, cmd *exec.Cmd, tokens []string) {
+	t.Helper()
+	want := strings.Join(tokens, "\x00") + "\x00"
+	path := "/proc/" + strconv.Itoa(cmd.Process.Pid) + "/cmdline"
+	var got []byte
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		got, _ = os.ReadFile(path)
+		if strings.HasSuffix(string(got), want) {
+			return
+		}
+	}
+	t.Fatalf("%s never showed the argv tail %q after Start; last read %q", path, want, got)
 }
 
 func exitedBySignal(t *testing.T, cmd *exec.Cmd, sig syscall.Signal) bool {

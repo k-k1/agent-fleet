@@ -1,4 +1,4 @@
-// The roster row states what each member is running on (docs/log/70 §70.14.7).
+// The roster card states what each member is running on (docs/log/70 §70.14.7).
 //
 // A slot runtime shows the instance, everything else shows the numbers, because they are
 // different claims: on ecs-ec2 the memory figure is not a cap but a request that selects the
@@ -84,7 +84,7 @@ async function mountRoster(sizing: unknown) {
   });
 }
 
-const rowText = (i: number) => (document.querySelectorAll(".member-row")[i]?.textContent || "").replace(/\s+/g, " ");
+const rowText = (i: number) => (document.querySelectorAll(".member-card")[i]?.textContent || "").replace(/\s+/g, " ");
 
 afterEach(() => {
   act(() => root?.unmount());
@@ -116,7 +116,7 @@ describe("member roster shows the size actually in effect", () => {
     await mountRoster(SIZING_CLASSES);
     // The only vCPU allowed on the row is the instance's spec; a bare "2 vCPU" derived from
     // cpu_limit=2048 must not appear.
-    const sizes = Array.from(document.querySelectorAll(".member-row .mr-size")).map((e) => e.textContent || "");
+    const sizes = Array.from(document.querySelectorAll(".member-card .mr-size")).map((e) => e.textContent || "");
     expect(sizes.some((t) => t === "2 vCPU")).toBe(false);
     expect(sizes.some((t) => t.includes("2 vCPU / 8 GiB"))).toBe(true);
   });
