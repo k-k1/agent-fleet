@@ -131,6 +131,12 @@ describe("MarkdownView previewLinks", () => {
     expect(host.querySelectorAll("a a")).toHaveLength(0);
   });
 
+  it("does not link inline code whose URL holds non-ASCII punctuation, but still links letters", async () => {
+    await render("`http://127.0.0.1:8080/…` `http://localhost:3000/（例）` `http://localhost:5173/` `http://127.0.0.1:8080/日本語/page.html`", { previewLinks: true });
+    expect(pv().map((a) => a.querySelector("code")?.textContent)).toEqual(["http://localhost:5173/", "http://127.0.0.1:8080/日本語/page.html"]);
+    expect(host.querySelectorAll("code")).toHaveLength(4);
+  });
+
   it("leaves the attachment action link to its own branch", async () => {
     await render("[b](/open/browser-attachment/abc)", { previewLinks: true });
     expect(host.querySelector("a.action-link")).not.toBeNull();
