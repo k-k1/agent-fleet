@@ -21,10 +21,10 @@ import { useBrowserUnavailable } from "../browser/availability.ts";
 import { browserTarget } from "../browser/target.ts";
 import { useSettingsUI } from "../settings/store.ts";
 import { copyableURL, portTargets, subdomainHost, subdomainOpenURL, type PortTarget } from "./portTargets.ts";
-import { useCurrentPreviewInfo, usePreviewStore } from "./previewState.ts";
+import { currentPreviewInfo, useCurrentPreviewInfo, usePreviewStore } from "./previewState.ts";
 
 /** What the shared state says about this port, kept fresh while a control is on screen. */
-function usePortState(port: number, running: boolean) {
+export function usePortState(port: number, running: boolean) {
   const info = useCurrentPreviewInfo();
   const browserUnavailable = useBrowserUnavailable();
   // Read when nothing valid for this tenant is held (first control on screen, tenant switch);
@@ -35,24 +35,28 @@ function usePortState(port: number, running: boolean) {
   return { info, browserUnavailable, targets: portTargets({ port, running, browserUnavailable, info }) };
 }
 
-/** Open `port` in one target. `inNew` puts a browser pane in a new layout tab. */
+/** Open `port` in one target. `inNew` puts a browser pane in a new layout tab. Reads the stores
+ *  at call time, so a Markdown link (no hook, built outside React) opens exactly as the chip. */
+export function openPort(target: PortTarget, port: number, path: string, inNew = false) {
+  const info = currentPreviewInfo();
+  if (target === "subdomain" && info) {
+    window.open(subdomainOpenURL(info, port, path), "_blank", "noopener");
+  } else if (target === "pane") {
+    const bt = browserTarget(port, path);
+    if (!bt) return;
+    const t = { content: { kind: "browser" as const, ...bt } };
+    const layout = useLayoutStore.getState();
+    if (inNew) layout.openTargetInNew(t, true);
+    else layout.openTarget(t);
+  } else {
+    window.open(previewURL(port, path), "_blank", "noopener");
+  }
+}
+
 function useOpenPort(port: number, path: string) {
-  const openTarget = useLayoutStore((st) => st.openTarget);
-  const openTargetInNew = useLayoutStore((st) => st.openTargetInNew);
-  const info = useCurrentPreviewInfo();
-  return (target: PortTarget, inNew = false) => {
-    if (target === "subdomain" && info) {
-      window.open(subdomainOpenURL(info, port, path), "_blank", "noopener");
-    } else if (target === "pane") {
-      const bt = browserTarget(port, path);
-      if (!bt) return;
-      const t = { content: { kind: "browser" as const, ...bt } };
-      if (inNew) openTargetInNew(t, true);
-      else openTarget(t);
-    } else {
-      window.open(previewURL(port, path), "_blank", "noopener");
-    }
-  };
+  // Subscribed so a change of the held info re-renders the control that depends on it.
+  useCurrentPreviewInfo();
+  return (target: PortTarget, inNew = false) => openPort(target, port, path, inNew);
 }
 
 /** What Enter in a port field does: the default target, if any. */
@@ -108,7 +112,7 @@ export function PortOpen({
 
 type Targets = ReturnType<typeof portTargets>;
 type Info = ReturnType<typeof usePortState>["info"];
-interface Inner {
+export interface Inner {
   port: number;
   info: Info;
   targets: Targets;
@@ -199,7 +203,9 @@ function PortChip({ port, info, targets, go }: Inner) {
   );
 }
 
-function PortMenu({
+/** The menu of one port: every target, Copy URL, Expose / preview settings. `anchor` is the
+ *  element a press on which is not "outside" (the chip); a menu opened from a link has none. */
+export function PortMenu({
   port,
   info,
   targets,
@@ -207,11 +213,11 @@ function PortMenu({
   at,
   anchor,
   onClose,
-}: Inner & { at: { x: number; y: number }; anchor: React.RefObject<HTMLElement | null>; onClose: () => void }) {
+}: Inner & { at: { x: number; y: number }; anchor?: React.RefObject<HTMLElement | null>; onClose: () => void }) {
   const tr = useT();
   const ref = useRef<HTMLDivElement>(null);
   const openSettings = useSettingsUI((s) => s.openSettings);
-  useDismiss([ref, anchor], true, onClose);
+  useDismiss(anchor ? [ref, anchor] : ref, true, onClose);
   const pick = (t: PortTarget) => {
     go(t);
     onClose();

@@ -103,7 +103,7 @@ export function DocPreview({ src, format, size, basePath, onOpenFile, onOpenDir,
         <Icon name="info" /> {tr("view.doc.simple_preview_note")}
       </p>
       <div className="md-scroll" ref={scrollMemory}>
-        <MarkdownView source={state.markdown} basePath={basePath} onOpenFile={onOpenFile} onOpenDir={onOpenDir} />
+        <MarkdownView source={state.markdown} previewLinks basePath={basePath} onOpenFile={onOpenFile} onOpenDir={onOpenDir} />
       </div>
     </div>
   );

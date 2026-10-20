@@ -11,6 +11,7 @@ import { CodeView, type LineMarks } from "../CodeView.tsx";
 import { DocPreview } from "../DocPreview.tsx";
 import { ImageView } from "../ImageView.tsx";
 import { PathLinkMenuHost } from "../PathLinkMenu.tsx";
+import { PortLinkMenuHost } from "../../preview/PortLinkMenu.tsx";
 import { FileMarkdownView } from "../FileMarkdownView.tsx";
 import { MarpView } from "../MarpView.tsx";
 import { PdfView } from "../PdfView.tsx";
@@ -73,6 +74,7 @@ export function FileViewerShell(props: FileViewerShellProps) {
         // The host lives here, not in DocPreview: doc:check bundles DocPreview alone, and the
         // menu's imports (settings.ts reads import.meta.env) do not exist in that bundle.
         <PathLinkMenuHost>
+          <PortLinkMenuHost>
           <DocPreview
             src={downloadURL(filePath)}
             format={props.docFmt}
@@ -82,6 +84,7 @@ export function FileViewerShell(props: FileViewerShellProps) {
             onOpenDir={props.onOpenDir}
             scrollMemory={props.scrollMemory("doc")}
           />
+          </PortLinkMenuHost>
         </PathLinkMenuHost>
       ) : props.binary ? (
         <pre className="filebody muted">({tr("view.binary")}, {humanSize(props.size)})</pre>

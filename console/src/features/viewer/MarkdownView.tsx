@@ -22,6 +22,15 @@ import { CONV_HINT_RE, linkifyPathRefs, linkifyRefs } from "./parts/mdRefLinks.t
 import { setupStickyHeadings } from "./parts/mdStickyHeadings.ts";
 import { addCopyButton, addQuoteCopyButton } from "./parts/mdCopyButtons.ts";
 import { wireImages, wireLinks } from "./parts/mdLinks.ts";
+import {
+  ensurePreviewInfo,
+  hasPreviewLinks,
+  linkifyPreviewCode,
+  livePortsKey,
+  markPortLiveness,
+} from "./parts/mdPreviewLinks.ts";
+import { usePortLinkMenu } from "../preview/portLinkContext.ts";
+import { useSessionsStore } from "../sessions/store.ts";
 
 // MarkdownView renders Markdown to sanitized HTML, highlights fenced code blocks,
 // turns ```mermaid blocks into rendered diagrams (lazy-loaded), and wires links:
@@ -69,6 +78,11 @@ export interface MarkdownViewProps {
   // inbox knows) to the work item detail modal (#1659). Opt-in: on by the mirror and the
   // assistant chat, never on a shared session (the viewer has not the sharer's inbox).
   workItemRefs?: boolean;
+  // Open a loopback URL (`http://localhost:5173/…`) in the workspace's preview of that port
+  // instead of the reader's own machine. Opt-in: on for the owner's surfaces (mirror, chat,
+  // document viewers), never on a shared session, where the viewer has no access to the owner's
+  // workspace. Deliberately not tied to onOpenFile: plan blocks pass none and are owner surfaces.
+  previewLinks?: boolean;
 }
 
 export function MarkdownView({
@@ -85,6 +99,7 @@ export function MarkdownView({
   markRoot,
   markKind,
   workItemRefs = false,
+  previewLinks = false,
 }: MarkdownViewProps) {
   const ref = useRef<HTMLDivElement>(null);
   const toast = useToast();
@@ -117,6 +132,16 @@ export function MarkdownView({
   openPathMenuRef.current = openPathMenu;
   // The shared view passes no onOpenFile: no menu and no suppressed native menu there.
   const hasPathMenu = openPathMenu !== null && !!onOpenFile;
+  // Port links likewise (PortLinkMenuHost), independent of onOpenFile.
+  const openPortMenu = usePortLinkMenu();
+  const openPortMenuRef = useRef(openPortMenu);
+  openPortMenuRef.current = openPortMenu;
+  const hasPortMenu = previewLinks && openPortMenu !== null;
+  // Which ports are listened on decides the dimming of a preview link. A string, so only a real
+  // change re-renders; applied to the links already in the DOM, never by re-parsing.
+  const portsKey = useSessionsStore((s) => (previewLinks ? livePortsKey(s.sessions, s.loaded) : ""));
+  const portsKeyRef = useRef(portsKey);
+  portsKeyRef.current = portsKey;
 
   // What a ticket link's classification depends on besides the text (#1659). The repository list
   // and the inbox can both land after the message rendered (a deep link, a push adding a Jira
@@ -171,6 +196,12 @@ export function MarkdownView({
       if (!h.id) h.id = slug(h.textContent || "");
     });
 
+    const previewWiring = previewLinks
+      ? {
+          onError: (message: string) => toast(message),
+          openMenu: hasPortMenu ? (port: number, path: string, x: number, y: number) => openPortMenuRef.current?.(port, path, x, y) : undefined,
+        }
+      : undefined;
     wireLinks(
       el,
       basePath,
@@ -179,7 +210,16 @@ export function MarkdownView({
       (p) => onOpenDirRef.current?.(p),
       (message) => toast(message),
       hasPathMenu ? (target, x, y) => openPathMenuRef.current?.(target, x, y) : undefined,
+      previewWiring,
     );
+    // Before the linkifiers: they skip anchors, so a loopback URL in backticks is claimed here.
+    if (previewWiring) {
+      linkifyPreviewCode(el, previewWiring);
+      if (hasPreviewLinks(el)) {
+        ensurePreviewInfo();
+        markPortLiveness(el, portsKeyRef.current);
+      }
+    }
     wireImages(el, basePath);
 
     // Auto-link bare git commit hashes (→ commit pane), session slugs (→ that
@@ -307,7 +347,7 @@ export function MarkdownView({
       stickyCleanup();
     };
     // wiInputs is read for the relink bookkeeping only: a change to it is the effect below.
-  }, [source, basePath, baseDir, repo, breaks, streaming, theme, codeWrapDefault, toast, hasSessionMenu, hasPathMenu, workItemRefs]);
+  }, [source, basePath, baseDir, repo, breaks, streaming, theme, codeWrapDefault, toast, hasSessionMenu, hasPathMenu, workItemRefs, previewLinks, hasPortMenu]);
 
   // Idempotent: existing anchors are skipped, and the links already there re-classify on click.
   useEffect(() => {
@@ -316,6 +356,11 @@ export function MarkdownView({
     r.inputs = wiInputs;
     r.run();
   }, [wiInputs]);
+
+  // Reactive without a re-parse: only the dimming of the links already rendered is redone.
+  useEffect(() => {
+    if (ref.current && previewLinks) markPortLiveness(ref.current, portsKey);
+  }, [portsKey, previewLinks]);
 
   return (
     <div

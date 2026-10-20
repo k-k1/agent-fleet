@@ -137,6 +137,12 @@ export function useCurrentPreviewInfo(): PreviewInfo | null {
   return usePreviewStore((s) => (s.scope === currentScope() ? s.info : null));
 }
 
+/** The non-hook form of useCurrentPreviewInfo, for a handler that decides at click time. */
+export function currentPreviewInfo(): PreviewInfo | null {
+  const s = usePreviewStore.getState();
+  return s.scope === currentScope() ? s.info : null;
+}
+
 // A workspace that stops, restarts or is replaced issues a new slug, and a tenant or identity
 // switch moves to other workspaces: drop what was read, and read again if one is running.
 // One subscription here rather than one per control.

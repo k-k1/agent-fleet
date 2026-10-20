@@ -8,6 +8,10 @@ import { createRoot, type Root } from "react-dom/client";
 
 import { PlanBlock } from "./blocks.tsx";
 
+// The expanded plan renders MarkdownView, which wants a toast; one identity, like the real provider.
+const toast = () => {};
+vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => toast }));
+
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
@@ -60,5 +64,23 @@ describe("PlanBlock review button", () => {
     expect(btn.disabled).toBe(true);
     act(() => btn.click());
     expect(onReview).not.toHaveBeenCalled();
+  });
+});
+
+describe("PlanBlock loopback links", () => {
+  const plan = "# Plan\n\nServe it at http://localhost:8080/index.html";
+  const expand = () => act(() => host!.querySelector<HTMLButtonElement>(".mt-plan-open")!.click());
+
+  it("opens the workspace preview only on an owner surface (previewLinks)", () => {
+    const el = mount({ plan, previewLinks: true });
+    expand();
+    expect(el.querySelector("a.preview-link")).not.toBeNull();
+  });
+
+  it("keeps an ordinary external link where previewLinks is off (the shared view)", () => {
+    const el = mount({ plan });
+    expand();
+    expect(el.querySelector("a.preview-link")).toBeNull();
+    expect(el.querySelector("a.ext-link")?.getAttribute("href")).toBe("http://localhost:8080/index.html");
   });
 });
