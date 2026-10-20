@@ -778,7 +778,13 @@ export function CommandPalette() {
             } else if (e.key === "ArrowUp") {
               e.preventDefault();
               setSel((s) => Math.max(s - 1, 0));
-            } else if (e.key === "PageDown" || e.key === "PageUp") {
+            } else if (
+              (e.key === "PageDown" || e.key === "PageUp") &&
+              !e.ctrlKey &&
+              !e.metaKey &&
+              !e.altKey
+            ) {
+              // Plain keys only: a modified Page key belongs to the browser / OS.
               // Focus stays in the input, so the browser never scrolls the list itself: move
               // the selection by the number of rows that fit, and the keep-visible effect
               // scrolls. Row height comes from the selected row (rows are uniform enough).
@@ -786,7 +792,7 @@ export function CommandPalette() {
               const rowH = selRef.current?.offsetHeight ?? 0;
               const page = rowH > 0 ? Math.max(1, Math.floor((listRef.current?.clientHeight ?? 0) / rowH)) : 1;
               setSel((s) =>
-                e.key === "PageDown" ? Math.min(s + page, filtered.length - 1) : Math.max(s - page, 0),
+                e.key === "PageDown" ? Math.min(s + page, Math.max(0, filtered.length - 1)) : Math.max(s - page, 0),
               );
             } else if (e.key === "Enter") {
               e.preventDefault();

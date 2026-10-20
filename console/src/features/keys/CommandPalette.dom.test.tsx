@@ -547,6 +547,15 @@ describe("command palette — reverse mode chord and paging (#2412)", () => {
       expect(selIndex()).toBe(1);
     });
 
+    it("leaves modified Page keys to the browser / OS", () => {
+      mount();
+      for (const mod of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }]) {
+        const ev = pressCancelable({ key: "PageDown", ...mod });
+        expect(ev.defaultPrevented).toBe(false);
+      }
+      expect(selIndex()).toBe(0);
+    });
+
     it("does nothing while an IME composition is in progress", () => {
       mount();
       const ev = pressCancelable({ key: "PageDown", isComposing: true });
