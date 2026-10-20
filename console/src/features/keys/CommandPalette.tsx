@@ -46,7 +46,7 @@ import { openSessionSearchHit, searchSessions, type SessionSearchHit, type Sessi
 import { useLayoutStore } from "../../layout/store.ts";
 import { useKeysStore } from "./store.ts";
 import { useEffectiveCommands, boundChord, APP_LEADER, APP_PALETTE } from "./bindings.ts";
-import { eventChordString } from "../../lib/keys/chords.ts";
+import { eventChordString, reverseChord } from "../../lib/keys/chords.ts";
 import { cmdLabel, cmdSearch } from "./labels.ts";
 import { buildContext } from "./dispatcher.ts";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -424,6 +424,7 @@ export function CommandPalette() {
   const openerRef = useRef<HTMLElement | null>(null);
   const selRef = useRef<HTMLDivElement | null>(null);
   const modeTabRef = useRef<HTMLButtonElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
   const close = () => useKeysStore.getState().closePalette();
   // Cancel = close without running anything → hand focus back to whoever opened us.
@@ -758,11 +759,16 @@ export function CommandPalette() {
             if (e.nativeEvent.isComposing) return;
             // Mode cycling: Tab / Shift+Tab, or re-pressing the palette chord (Ctrl/⌘+P by
             // default — boundChord so a rebind keeps working; preventDefault also stops the
-            // browser's print dialog on Ctrl+P).
+            // browser's print dialog on Ctrl+P). The chord plus Shift goes backwards; a bound
+            // chord that already has Shift has no reverse twin (reverseChord → "").
             const palChord = boundChord(APP_PALETTE);
+            const revChord = reverseChord(palChord);
             if (e.key === "Tab") {
               e.preventDefault();
               cycleMode(e.shiftKey ? -1 : 1);
+            } else if (revChord && eventChordString(e.nativeEvent) === revChord) {
+              e.preventDefault();
+              cycleMode(-1);
             } else if (palChord && eventChordString(e.nativeEvent) === palChord) {
               e.preventDefault();
               cycleMode(1);
@@ -772,6 +778,16 @@ export function CommandPalette() {
             } else if (e.key === "ArrowUp") {
               e.preventDefault();
               setSel((s) => Math.max(s - 1, 0));
+            } else if (e.key === "PageDown" || e.key === "PageUp") {
+              // Focus stays in the input, so the browser never scrolls the list itself: move
+              // the selection by the number of rows that fit, and the keep-visible effect
+              // scrolls. Row height comes from the selected row (rows are uniform enough).
+              e.preventDefault();
+              const rowH = selRef.current?.offsetHeight ?? 0;
+              const page = rowH > 0 ? Math.max(1, Math.floor((listRef.current?.clientHeight ?? 0) / rowH)) : 1;
+              setSel((s) =>
+                e.key === "PageDown" ? Math.min(s + page, filtered.length - 1) : Math.max(s - page, 0),
+              );
             } else if (e.key === "Enter") {
               e.preventDefault();
               // A failed conversation search has no row to run; Enter retries it instead, so the
@@ -800,7 +816,7 @@ export function CommandPalette() {
           ))}
           <span className="cp-mode-hint">{t("keys.palette.mode_hint")}</span>
         </div>
-        <div className="cp-list">
+        <div className="cp-list" ref={listRef}>
           {mode === "file" && !q.trim() ? (
             <div className="cp-empty">{t("keys.palette.file_hint")}</div>
           ) : mode === "talk" && !q.trim() ? (

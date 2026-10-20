@@ -551,7 +551,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "keys.palette.placeholder_sessions": "Search sessions…",
   "keys.palette.sessions_empty": "No sessions yet",
   "keys.palette.mode_file": "Files",
-  "keys.palette.mode_hint": "Tab / Ctrl+P to switch",
+  "keys.palette.mode_hint": "Tab / Ctrl+P to switch (Shift: back) · PgUp / PgDn to page",
   "keys.palette.changed_loading": "Loading…",
   "keys.palette.changed_empty": "No changed files",
   "keys.palette.file_hint": "Type to search files",

@@ -71,8 +71,8 @@ status badge. The order is the order you most likely want:
 The order is fixed at the moment you open the palette, so a session that changes state while
 you are reading does not move under your cursor; only its badge follows.
 
-- **↑ ↓ / Enter**: pick a result and run / open it. For sessions, files and changed files, **Ctrl+Enter** (macOS: **⌘Enter**) opens them in another pane.
-- **Tab**, or **Ctrl+P / ⌘P** again: switches the search scope between "Sessions", "Commands", "Changed files", "Files" and "Conversations".
+- **↑ ↓ / Enter**: pick a result and run / open it. **PageUp / PageDown** move the highlight by one screenful of rows (stopping at the first and last row). For sessions, files and changed files, **Ctrl+Enter** (macOS: **⌘Enter**) opens them in another pane.
+- **Tab**, or **Ctrl+P / ⌘P** again: switches the search scope between "Sessions", "Commands", "Changed files", "Files" and "Conversations". **Shift+Tab**, or **Ctrl+Shift+P / ⌘⇧P**, goes back one scope instead, and wraps from the first to the last. The reverse chord is your palette key plus Shift (rebind the palette key to Alt+O and it is Alt+Shift+O); if your palette key already includes Shift there is no reverse chord, and Shift+Tab is the way back. Scopes that are not offered (for example "Session changes" without an active session) are skipped in both directions. Some browsers keep Ctrl+Shift+P for themselves (for example a private window in Firefox) and do not let a page cancel it; the palette only gets the key when the browser passes it on, so use Shift+Tab there.
 - **Esc**: closes it and returns to where you were working before opening it.
 
 **"Conversations"** searches what was said in every session of this workspace (any agent kind,

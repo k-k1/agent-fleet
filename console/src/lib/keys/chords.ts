@@ -109,6 +109,16 @@ export function parseChord(s: string): Chord {
 // registry can store "Mod+Shift+K" and still match by equality.
 export const canonical = (s: string): string => formatChord(parseChord(s));
 
+// reverseChord derives the "go backwards" twin of a forward chord: the same chord with Shift
+// added. "" when there is none to derive — the chord is unbound, or already uses Shift, and
+// guessing another modifier could collide with a binding the user chose on purpose.
+export function reverseChord(bound: string): string {
+  if (!bound) return "";
+  const c = parseChord(bound);
+  if (c.shift || !c.key) return "";
+  return formatChord({ ...c, shift: true });
+}
+
 // eventChordString: the live event's canonical chord, or null if it was modifier-only.
 export function eventChordString(e: KeyboardEvent): string | null {
   const c = eventToChord(e);
