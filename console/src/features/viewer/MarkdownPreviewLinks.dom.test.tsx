@@ -19,7 +19,7 @@ const { useLayoutStore } = await import("../../layout/store.ts");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { previewURL } = await import("../../core/api/client.ts");
-const { loopbackTarget, loadPreviewRuntime } = await import("./parts/mdPreviewLinks.ts");
+const { loopbackTarget } = await import("./parts/mdPreviewLinks.ts");
 const { t } = await import("../../lib/i18n/index.ts");
 
 let host: HTMLDivElement;
@@ -35,8 +35,7 @@ const render = async (source: string, props: Record<string, unknown> = {}, withH
   await act(async () => {
     root.render(withHost ? <PortLinkMenuHost>{view}</PortLinkMenuHost> : view);
   });
-  // The click-time half loads on demand; it has settled long before a real click.
-  await act(async () => void (await loadPreviewRuntime()));
+
 };
 const links = () => [...host.querySelectorAll<HTMLAnchorElement>("a")];
 const pv = () => [...host.querySelectorAll<HTMLAnchorElement>("a.preview-link")];
@@ -149,6 +148,29 @@ describe("MarkdownView previewLinks", () => {
     });
     expect(ev.defaultPrevented).toBe(true);
     expect(open).toHaveBeenCalledWith(previewURL(8080, "/a?b=1"), "_blank", "noopener");
+  });
+
+  it("opens synchronously inside the click handler (popup blockers), for subdomain and lightweight", async () => {
+    await render("http://localhost:8080/a", { previewLinks: true });
+    // lightweight: no browser pane, no domain
+    useWorkspaceStore.setState({ browserUnavailable: "kubernetes" });
+    act(() => {
+      pv()[0].dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      expect(open).toHaveBeenCalledTimes(1);
+    });
+    usePreviewStore.setState({
+      scope: currentScope(),
+      info: { domain: "pv.example.com", urls: { "8080": "https://abc-8080.pv.example.com" }, ports: [8080], tempPorts: [], public: false, tenantShare: false, maxPorts: 8 },
+    });
+    act(() => {
+      pv()[0].dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      expect(open).toHaveBeenLastCalledWith("https://abc-8080.pv.example.com/a", "_blank", "noopener");
+    });
+    act(() => {
+      pv()[0].dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }));
+      expect(openTargetInNew).toHaveBeenCalledTimes(0); // pane unavailable: the default opens instead
+      expect(open).toHaveBeenCalledTimes(3);
+    });
   });
 
   it("opens the pane on a plain click by default, and a new layout tab on Ctrl/⌘ and middle click", async () => {

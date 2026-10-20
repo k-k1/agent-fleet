@@ -17,6 +17,8 @@ let listing: { name: string; type: string }[] = [];
 let gate: Promise<void> | null = null;
 let resolved: Record<string, { path: string; type: string }> = {};
 vi.mock("../../core/api/client.ts", () => ({
+  // Read when the preview stores load (MarkdownView links loopback URLs to the workspace preview).
+  getTenant: () => "",
   api: vi.fn(async () => {
     if (gate) await gate;
     return { entries: listing };

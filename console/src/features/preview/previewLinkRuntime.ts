@@ -1,5 +1,5 @@
-// The click-time half of the Markdown preview links (viewer/parts/mdPreviewLinks.ts). Loaded on
-// demand from there; see the note on loadPreviewRuntime.
+// The click-time half of the Markdown preview links (viewer/parts/mdPreviewLinks.ts). Called
+// synchronously from the click handler: nothing here may await before window.open.
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { t } from "../../lib/i18n/index.ts";
 import { openPort } from "./PortOpen.tsx";

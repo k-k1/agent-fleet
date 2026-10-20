@@ -11,19 +11,11 @@
 import { previewURL } from "../../../core/api/client.ts";
 import { t } from "../../../lib/i18n/index.ts";
 import { targetFromURL } from "../../browser/target.ts";
+import { activate, ensurePreviewInfo as ensureInfo } from "../../preview/previewLinkRuntime.ts";
 import type { OpenPortLinkMenu } from "../../preview/portLinkContext.ts";
 import { rowPorts } from "../../sessions/sessionLinks.ts";
 import type { Session } from "../../../types/session.ts";
 import { wireContextMenu } from "./linkContextMenu.ts";
-
-// The click-time behaviour (stores, window.open, the layout) lives in preview/previewLinkRuntime.ts
-// and is loaded on the first preview link a document holds: MarkdownView is imported by almost
-// every surface, and this keeps the preview and workspace stores out of their module graph.
-// The load starts when the link is wired, so it has long settled by the time anyone clicks.
-let runtime: Promise<typeof import("../../preview/previewLinkRuntime.ts")> | null = null;
-export function loadPreviewRuntime() {
-  return (runtime ??= import("../../preview/previewLinkRuntime.ts"));
-}
 
 export interface PreviewLinkWiring {
   onError: (message: string) => void;
@@ -57,7 +49,6 @@ export function hasPreviewLinks(el: HTMLElement): boolean {
 export function wirePreviewLink(a: HTMLAnchorElement, target: { port: number; path: string }, w: PreviewLinkWiring) {
   if (a.dataset.pvPort) return;
   const { port, path } = target;
-  void loadPreviewRuntime();
   const original = a.getAttribute("href") || "";
   a.dataset.pvPort = String(port);
   a.classList.add("preview-link");
@@ -76,12 +67,13 @@ export function wirePreviewLink(a: HTMLAnchorElement, target: { port: number; pa
     e.preventDefault();
     if (menu?.clickSwallowed()) return; // the lift of the long press that opened the menu
     const m = e as MouseEvent;
-    void loadPreviewRuntime().then((r) => r.activate(port, path, m.ctrlKey || m.metaKey, w.onError));
+    // Synchronous on purpose: window.open must run inside the click (popup blockers).
+    activate(port, path, m.ctrlKey || m.metaKey, w.onError);
   });
   a.addEventListener("auxclick", (e) => {
     if ((e as MouseEvent).button !== 1) return;
     e.preventDefault();
-    void loadPreviewRuntime().then((r) => r.activate(port, path, true, w.onError));
+    activate(port, path, true, w.onError);
   });
 }
 
@@ -125,6 +117,4 @@ export function markPortLiveness(el: HTMLElement, key: string) {
 
 /** First preview link in a document and nothing held for this scope → read the preview state so
  *  the first click can already use the subdomain. */
-export function ensurePreviewInfo() {
-  void loadPreviewRuntime().then((r) => r.ensurePreviewInfo());
-}
+export const ensurePreviewInfo = ensureInfo;

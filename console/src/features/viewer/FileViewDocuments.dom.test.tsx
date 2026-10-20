@@ -11,6 +11,8 @@ import { createRoot, type Root } from "react-dom/client";
 let served: Record<string, unknown> = {};
 
 vi.mock("../../core/api/client.ts", () => ({
+  // Read when the preview stores load (MarkdownView links loopback URLs to the workspace preview).
+  getTenant: () => "",
   api: vi.fn(async (path: string) => {
     if (path.startsWith("api/fs/linemarks")) return { error: { message: "none" } };
     return served;
