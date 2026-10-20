@@ -11,6 +11,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { MarkdownView } from "./MarkdownView.tsx";
 import { PathLinkMenuHost } from "./PathLinkMenu.tsx";
+import { PortLinkMenuHost } from "../preview/PortLinkMenu.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { SelectionFloat } from "../../ui/SelectionFloat.tsx";
 import { ViewHead } from "../../ui/ViewHead.tsx";
@@ -181,8 +182,10 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
       </ViewHead>
       <div className="md-scroll" ref={bodyRef} onMouseUp={() => capture()}>
         <PathLinkMenuHost>
+          <PortLinkMenuHost>
           <MarkdownView
             source={content || ""}
+            previewLinks
             onOpenFile={(path, line, column, openInNew) => {
               const target = { content: { kind: "file" as const, filePath: path, targetLine: line, targetColumn: column } };
               if (openInNew) openTargetInNew(target, true);
@@ -191,6 +194,7 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
             // The click navigates there, so the file tree takes keyboard focus along with it.
             onOpenDir={(path) => revealInFiles(path, { focus: true })}
           />
+          </PortLinkMenuHost>
         </PathLinkMenuHost>
       </div>
 

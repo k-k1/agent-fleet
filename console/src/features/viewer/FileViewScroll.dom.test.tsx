@@ -15,6 +15,8 @@ import { clearScrollPos } from "./scrollMemory.ts";
 const CODE = Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join("\n");
 
 vi.mock("../../core/api/client.ts", () => ({
+  // Read when the preview stores load (MarkdownView links loopback URLs to the workspace preview).
+  getTenant: () => "",
   api: vi.fn(async (path: string) => {
     if (path.startsWith("api/fs/linemarks")) return { error: { message: "none" } };
     const filePath = decodeURIComponent(path.split("path=")[1] || "");

@@ -307,6 +307,7 @@ function TranscriptTurnImpl({
           onOpen={caps.openPlan ? () => caps.openPlan!(item.p.plan || "") : undefined}
           onSendComments={caps.sendPlanComments ? () => caps.sendPlanComments!(item.p.plan || "") : undefined}
           sendDisabled={caps.planSendDisabled}
+          previewLinks={caps.previewLinks}
         />
       ) : item.p.kind === "userfile" ? (
         liftFiles ? null : renderUserFile(item.p, base + item.i)
@@ -321,6 +322,7 @@ function TranscriptTurnImpl({
           repo={caps.repo}
           onOpenFile={caps.openFile}
           workItemRefs={caps.workItemRefs}
+          previewLinks={caps.previewLinks}
         />
       ) : item.p.kind === "delegation" ? (
         <DelegationCard key={base + item.i} p={item.p} agentName={agentName} />
@@ -351,6 +353,7 @@ function TranscriptTurnImpl({
               repo={caps.repo}
               onOpenFile={caps.openFile}
               workItemRefs={caps.workItemRefs}
+          previewLinks={caps.previewLinks}
               // Marks are counted within this one part (docs/log/69 §69.3). The root comes from
               // the source turn rather than the block, so it points at the same place even when
               // a recipient's tail window differs.
@@ -529,6 +532,7 @@ function TranscriptTurnImpl({
                     repo={caps.repo}
                     onOpenFile={caps.openFile}
                     workItemRefs={caps.workItemRefs}
+          previewLinks={caps.previewLinks}
                     // A user bubble renders the block's text rather than its parts, so the root
                     // is empty on a block that folded two or more turns (see groupTurns).
                     markRoot={caps.marks ? turn.bodyRoot : undefined}

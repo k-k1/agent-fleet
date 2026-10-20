@@ -115,7 +115,7 @@ export function CarriedBlock({
         )}
         {carried.kind === "plan" && (
           <>
-            <PlanBlock plan={carried.plan} session={session} onOpen={carried.plan && onOpenPlan ? () => onOpenPlan(carried.plan!) : undefined} />
+            <PlanBlock plan={carried.plan} session={session} previewLinks onOpen={carried.plan && onOpenPlan ? () => onOpenPlan(carried.plan!) : undefined} />
             <textarea
               className="mq-freetext"
               rows={2}

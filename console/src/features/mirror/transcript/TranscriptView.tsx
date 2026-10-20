@@ -98,6 +98,7 @@ export function TranscriptView({
           repo={caps.repo}
           onOpenFile={caps.openFile}
           workItemRefs={caps.workItemRefs}
+          previewLinks={caps.previewLinks}
         />
       ) : (
         <TranscriptTurn

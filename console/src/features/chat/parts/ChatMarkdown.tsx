@@ -94,6 +94,7 @@ export function ChatMarkdown({ source, breaks, streaming }: { source: string; br
       // Only the qualified form and Jira keys can link here: the chat has no repository for a
       // bare #N to belong to.
       workItemRefs
+      previewLinks
     />
   );
 }

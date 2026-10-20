@@ -142,7 +142,7 @@ export function ChatPlan({ conversationId, plan, updatedAt, disabled, onUpdated,
         />
       ) : plan ? (
         <div className="cp-body">
-          <MarkdownView source={plan} />
+          <MarkdownView source={plan} previewLinks />
         </div>
       ) : (
         <p className="cp-empty muted">{tr("chat.plan.empty")}</p>
