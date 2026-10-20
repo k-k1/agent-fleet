@@ -16,6 +16,8 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
 import { MemoriesMasterDetail, resetMemoriesSession } from "./memoryMasterDetail.tsx";
 import { ConfirmProvider } from "../../../ui/ConfirmProvider.tsx";
 import { ToastProvider } from "../../../ui/ToastProvider.tsx";
+import { useSettingsUI } from "../store.ts";
+import { memoryTarget } from "./memorySearch.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -998,5 +1000,36 @@ describe("MemoriesMasterDetail master-detail", () => {
     await pickRow(1);
     await chip("mem.md_f_pinned");
     expect(root_().getAttribute("data-pane")).toBe("list");
+  });
+});
+
+// The command palette names one memory through openSettings' target (#2407): the view picks it
+// once its list has landed, whatever scope and filter were left on screen, and takes the request.
+describe("MemoriesMasterDetail settings target", () => {
+  const picked = () => document.body.querySelector("[aria-current=true]");
+
+  it("picks the memory a target names, resetting the scope and filter that would hide it", async () => {
+    await setValue(select(), "user");
+    await chip("mem.md_f_pinned");
+    expect(listRows()).toHaveLength(1);
+    await act(async () => useSettingsUI.setState({ settingsTarget: memoryTarget(entries[1]) }));
+    await flush();
+    expect(select().value).toBe("all");
+    expect(picked()?.textContent).toContain("build-cmd");
+    expect(useSettingsUI.getState().settingsTarget).toBeNull();
+  });
+
+  it("drops a target that is not listed, leaving the view as it was", async () => {
+    await act(async () => useSettingsUI.setState({ settingsTarget: memoryTarget({ ...entries[0], name: "gone" }) }));
+    await flush();
+    expect(picked()).toBeNull();
+    expect(useSettingsUI.getState().settingsTarget).toBeNull();
+  });
+
+  it("leaves a target that names something else for its owner", async () => {
+    await act(async () => useSettingsUI.setState({ settingsTarget: "codex" }));
+    await flush();
+    expect(useSettingsUI.getState().settingsTarget).toBe("codex");
+    useSettingsUI.setState({ settingsTarget: null });
   });
 });

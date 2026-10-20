@@ -72,7 +72,7 @@ The order is fixed at the moment you open the palette, so a session that changes
 you are reading does not move under your cursor; only its badge follows.
 
 - **↑ ↓ / Enter**: pick a result and run / open it. **PageUp / PageDown** move the highlight by one screenful of rows (stopping at the first and last row). For sessions, files and changed files, **Ctrl+Enter** (macOS: **⌘Enter**) opens them in another pane.
-- **Tab**, or **Ctrl+P / ⌘P** again: switches the search scope between "Sessions", "Commands", "Changed files", "Files" and "Conversations". **Shift+Tab**, or **Ctrl+Shift+P / ⌘⇧P**, goes back one scope instead, and wraps from the first to the last. The reverse chord is your palette key plus Shift (rebind the palette key to Alt+O and it is Alt+Shift+O); if your palette key already includes Shift there is no reverse chord, and Shift+Tab is the way back. Scopes that are not offered (for example "Session changes" without an active session) are skipped in both directions. Some browsers keep Ctrl+Shift+P for themselves (for example a private window in Firefox) and do not let a page cancel it; the palette only gets the key when the browser passes it on, so use Shift+Tab there.
+- **Tab**, or **Ctrl+P / ⌘P** again: switches the search scope between "Sessions", "Commands", "Changed files", "Files", "Conversations" and, while Agent memory is on, "Memory". **Shift+Tab**, or **Ctrl+Shift+P / ⌘⇧P**, goes back one scope instead, and wraps from the first to the last. The reverse chord is your palette key plus Shift (rebind the palette key to Alt+O and it is Alt+Shift+O); if your palette key already includes Shift there is no reverse chord, and Shift+Tab is the way back. Scopes that are not offered (for example "Session changes" without an active session) are skipped in both directions. Some browsers keep Ctrl+Shift+P for themselves (for example a private window in Firefox) and do not let a page cancel it; the palette only gets the key when the browser passes it on, so use Shift+Tab there.
 - **Esc**: closes it and returns to where you were working before opening it.
 
 **"Conversations"** searches what was said in every session of this workspace (any agent kind,
@@ -83,6 +83,13 @@ tool output or the agent's thinking. A hit in an archived session opens the arch
 and it opens at the same turn. The first search after an update can take a minute or
 two to cover every session; the palette says "Building the index" until it has.
 A turn older than the part of the conversation the mirror loads lands at the end instead. If the
+search itself fails, the palette says why and offers to retry, rather than reporting no match.
+
+**"Memory"** searches the memories agents saved in Agent Fleet's own agent memory
+([Settings → Agent memory](12-settings.md)); it appears only while that switch is on. Names and descriptions match as you
+type, and the text of each memory is searched a moment later; a hit that matched in the text shows the matching line.
+**Enter** opens Settings → Agent memory → Memories with that memory selected. The workspace has to be running (the
+memory lives inside it), and a memory withheld by the secret scan is only counted, never listed. If the
 search itself fails, the palette says why and offers to retry, rather than reporting no match.
 
 When the terminal has focus and **"Terminal input priority"** is turned on in settings, Ctrl+P is

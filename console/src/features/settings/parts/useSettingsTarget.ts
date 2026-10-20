@@ -1,5 +1,6 @@
 import { useEffect, type RefObject } from "react";
 import { useSettingsUI } from "../store.ts";
+import { parseMemoryTarget } from "../memory/memorySearch.ts";
 
 const FLASH_CLASS = "p-card-flash";
 const FLASH_MS = 1800;
@@ -14,7 +15,10 @@ const FLASH_MS = 1800;
 // `ready` must stay false while the target's element may still be about to mount (async load),
 // otherwise the request is consumed too early and the scroll is lost.
 export function useSettingsTarget(root: RefObject<HTMLElement | null>, ready: boolean): void {
-  const target = useSettingsUI((s) => s.settingsTarget);
+  const raw = useSettingsUI((s) => s.settingsTarget);
+  // A memory request is addressed to Agent memory. While Settings switches sections this section is
+  // still mounted for a render, and taking the request would drop it before its owner mounts.
+  const target = parseMemoryTarget(raw) ? null : raw;
   const clear = useSettingsUI((s) => s.clearSettingsTarget);
   useEffect(() => {
     if (!target || !ready) return;
