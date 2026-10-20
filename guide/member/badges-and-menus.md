@@ -175,7 +175,7 @@ item is in the gallery's folder menu; a touch long-press on a folder row opens t
 **"Open in gallery"** (from an image it opens the parent folder's gallery with that image enlarged; see
 [04](04-files.md#image-gallery)). A file that sits in a folder (not directly in home) also shows **"Open the folder"**
 (shows the parent folder in the file list) and, unless it is an image, **"Open folder in gallery"**. The same
-items are in the menu of a file link in a reply or document. A path an agent writes as `$AF_WORK_DIR/…` in a
+items are in the menu of a file link in a reply or document. A path an agent writes as `$AF_WORK_DIR/…` in a Terminal (CLI)
 session's chat is linked too, when the file exists in that session's scratch folder. To hand a file to a session or an assistant, open the
 file and use "Send" in the viewer.
 
