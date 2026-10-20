@@ -82,7 +82,7 @@ fail() { echo "FAIL: $1" >&2; echo "--- output ---" >&2; cat "$T/out" >&2; echo 
 run_block() {
   cd "$T/cwd" && env -i PATH="$T/bin:/usr/bin:/bin:$(dirname "$(command -v node)")" HOME="$T/home" TMPDIR="$T/tmp" STUB_DIR="$T" \
     BI_DIR="${BI_DIR_OVERRIDE:-$T/bidir}" AF_AGENT_SELF_UPDATE_SKIP=1 "$@" \
-    bash -c 'set -e; export PATH="$HOME/.local/bin:$PATH"; source "$1"' _ "$BLOCK" >"$T/out" 2>&1
+    bash -c 'set -e; export PATH="$HOME/.local/bin:$PATH"; source "$1"; echo "AF_BOOT_INSTALL_STATUS=${AF_BOOT_INSTALL_STATUS-unset}"' _ "$BLOCK" >"$T/out" 2>&1
 }
 reset() { rm -rf "$T/bidir" "$T/home/.local/bin/"{agy,.agy.version,rtk,cursor-agent,claude} "$T/home/.local/share" "$T/npm.calls" "$T/agent.calls" "$T/curl.calls"; }
 has() { grep -q -- "$1" "$T/out"; }
@@ -130,6 +130,28 @@ reset; printf '#!/bin/sh\necho 0.9\n' >"$T/home/.local/bin/claude"; chmod +x "$T
 run_block STUB_FREE_MB=100 AF_AGENT_SELF_UPDATE_SKIP=0 AF_AGENT_SELF_UPDATE_ALLOWED=1 AF_AGENT_SELF_UPDATE=1
 [ ! -e "$T/curl.calls" ] && [ ! -e "$T/npm.calls" ] || fail "low space + self-update opt-in: an install path still ran"
 has 'self-update: skipped for this boot (home is nearly full)' || fail "low space: self-update opt-in not held back"
+
+# 4e. Every CLI already installed, little space, self-update opt-in ON: the update must not run
+# either (the boot-install had nothing to do, so only its own space check can stop it).
+reset; run_block
+rm -f "$T/curl.calls" "$T/npm.calls"
+run_block STUB_FREE_MB=100 AF_AGENT_SELF_UPDATE_SKIP=0 AF_AGENT_SELF_UPDATE_ALLOWED=1 AF_AGENT_SELF_UPDATE=1
+[ ! -e "$T/curl.calls" ] && [ ! -e "$T/npm.calls" ] || fail "installed + low space + opt-in: an update still ran: $(cat "$T/curl.calls" "$T/npm.calls" 2>/dev/null)"
+has 'self-update: skipped for this boot (home is nearly full)' || fail "installed + low space: self-update not held back"
+run_block AF_AGENT_SELF_UPDATE_SKIP=0 AF_AGENT_SELF_UPDATE_ALLOWED=1 AF_AGENT_SELF_UPDATE=1
+has 'self-update: checking versions' || fail "plenty of space: the opt-in did not run"
+
+# 4f. The status directory must be private. One that is ours but group/other writable is
+# tightened to 0700 (or recording is off); the Agent is told the file only when it was recorded.
+reset; mkdir -m 0777 "$T/bidir"; chmod 0777 "$T/bidir"
+run_block
+[ "$(stat -c %a "$T/bidir")" = 700 ] || fail "a world-writable status directory was kept"
+has "AF_BOOT_INSTALL_STATUS=$T/bidir/install.tsv" || fail "the Agent was not told where the file is"
+# Old results that cannot be cleared: recording is off and the Agent gets no path.
+reset; mkdir -p "$T/bidir/install.tsv"; : >"$T/bidir/install.tsv/blocker"
+run_block
+has 'AF_BOOT_INSTALL_STATUS=unset' || fail "recording could not start but the Agent was still pointed at a file"
+has 'boot-install agy' || fail "recording off broke the install"
 
 # Reason classes from the stderr of real-looking failures.
 reason() { printf '%s\n' "$1" >"$T/err.txt"; BI_ERR="$T/err.txt" bash -c 'source <(sed -n "/^bi_reason()/,/^}/p" "$1"); bi_reason' _ "$BLOCK_SRC"; }

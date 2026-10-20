@@ -16,7 +16,6 @@ package main
 // it describes: one boot's outcome. A missing or unreadable file means "unknown", never "ok".
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -24,9 +23,20 @@ import (
 	"syscall"
 )
 
-// bootInstallStatusPath is a var only so tests can point it at a temp file. The directory is the
-// entrypoint's BI_DIR.
-var bootInstallStatusPath = fmt.Sprintf("/tmp/af-boot-%d/install.tsv", os.Getuid())
+// bootInstallStatusPath is a var only so tests can point it at a temp file. Empty (the normal
+// case) means the entrypoint's AF_BOOT_INSTALL_STATUS: the entrypoint sets it only when it could
+// record this start, so a start that could not never reads an earlier start's file.
+var bootInstallStatusPath = ""
+
+func bootInstallPath() string {
+	if bootInstallStatusPath != "" {
+		return bootInstallStatusPath
+	}
+	return os.Getenv("AF_BOOT_INSTALL_STATUS")
+}
+
+// privateEnough: nobody but the owner may write it, so another user cannot swap the contents.
+func privateEnough(fi os.FileInfo) bool { return fi.Mode().Perm()&0o022 == 0 }
 
 // bootInstallMaxBytes bounds the read: a handful of CLIs need a few hundred bytes. Anything
 // larger is not what the entrypoint wrote.
@@ -44,8 +54,11 @@ func ownedBy(fi os.FileInfo) bool {
 // block: O_NONBLOCK keeps a FIFO from stalling the open, and the type is checked on the open
 // descriptor, not on the name.
 func readBootInstallFile(path string) ([]byte, bool) {
+	if path == "" {
+		return nil, false
+	}
 	dir, err := os.Lstat(filepath.Dir(path))
-	if err != nil || !dir.IsDir() || !ownedBy(dir) {
+	if err != nil || !dir.IsDir() || !ownedBy(dir) || !privateEnough(dir) {
 		return nil, false
 	}
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
@@ -54,7 +67,7 @@ func readBootInstallFile(path string) ([]byte, bool) {
 	}
 	defer f.Close()
 	fi, err := f.Stat()
-	if err != nil || !fi.Mode().IsRegular() || !ownedBy(fi) || fi.Size() > bootInstallMaxBytes {
+	if err != nil || !fi.Mode().IsRegular() || !ownedBy(fi) || !privateEnough(fi) || fi.Size() > bootInstallMaxBytes {
 		return nil, false
 	}
 	// The file can still grow between the stat and the read: cap the read itself.
@@ -77,7 +90,7 @@ var bootInstallReasons = map[string]bool{"no_space": true, "network": true, "che
 // readBootInstallStatus parses the file; unknown statuses and reasons are dropped rather than
 // passed on, so the Console only ever sees the closed set it has strings for.
 func readBootInstallStatus() map[string]bootInstall {
-	b, ok := readBootInstallFile(bootInstallStatusPath)
+	b, ok := readBootInstallFile(bootInstallPath())
 	if !ok {
 		return nil
 	}

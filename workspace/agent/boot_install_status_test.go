@@ -43,6 +43,46 @@ func TestReadBootInstallStatus(t *testing.T) {
 	}
 }
 
+func TestReadBootInstallStatusFollowsTheEntrypointsEnv(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "install.tsv")
+	if err := os.WriteFile(p, []byte("claude\tfailed\tno_space\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := bootInstallStatusPath
+	bootInstallStatusPath = ""
+	t.Cleanup(func() { bootInstallStatusPath = old })
+
+	t.Setenv("AF_BOOT_INSTALL_STATUS", "")
+	if got := readBootInstallStatus(); got != nil {
+		t.Fatalf("no env means the entrypoint recorded nothing; an old file must not be read, got %v", got)
+	}
+	t.Setenv("AF_BOOT_INSTALL_STATUS", p)
+	if got := readBootInstallStatus(); got["claude"].Reason != "no_space" {
+		t.Fatalf("with the env set the file is read, got %v", got)
+	}
+
+	// A directory or file others can write is not private: refused.
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if got := readBootInstallStatus(); got != nil {
+		t.Errorf("a world-writable directory must read as unknown, got %v", got)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if got := readBootInstallStatus(); got != nil {
+		t.Errorf("a world-writable file must read as unknown, got %v", got)
+	}
+}
+
 func TestReadBootInstallStatusMissingIsUnknown(t *testing.T) {
 	old := bootInstallStatusPath
 	bootInstallStatusPath = filepath.Join(t.TempDir(), "absent")

@@ -339,7 +339,8 @@ cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
 # A later line for a tool wins. Never fatal: a status that cannot be written is a missing status.
 BI_DIR="${BI_DIR:-/tmp/af-boot-$(id -u)}"
 mkdir -m 700 "$BI_DIR" 2>/dev/null || true
-if [ -d "$BI_DIR" ] && [ ! -L "$BI_DIR" ] && [ -O "$BI_DIR" ]; then
+chmod 700 "$BI_DIR" 2>/dev/null || true
+if [ -d "$BI_DIR" ] && [ ! -L "$BI_DIR" ] && [ -O "$BI_DIR" ] && [ "$(stat -c %a "$BI_DIR" 2>/dev/null)" = 700 ]; then
   rm -f "$BI_DIR/install.tsv" "$BI_DIR/install.err" 2>/dev/null || true
   BI_STATUS="$BI_DIR/install.tsv"
   # stderr of the block being run, truncated for each block, so nothing piles up across starts
@@ -353,6 +354,9 @@ else
   BI_STATUS=/dev/null
   BI_ERR=/dev/null
 fi
+# The Agent is told where this start's file is (it execs from here, so it inherits this), and
+# gets nothing when recording is off: it must not fall back to a file an earlier start left.
+if [ "$BI_STATUS" != /dev/null ]; then export AF_BOOT_INSTALL_STATUS="$BI_STATUS"; else unset AF_BOOT_INSTALL_STATUS; fi
 # Set by bi_room when an install was skipped for lack of space: everything later in this start
 # that would download or install (the claude fallback, the self-update opt-in) honours it too.
 BI_LOW_SPACE=0
@@ -371,13 +375,20 @@ bi_failed() { local r t; r="$(bi_reason)"; for t in "$@"; do bi_note "$t" failed
 # has not, the install is skipped and what is installed stays: a half-run install is how a full
 # home turned into "every agent broke at once".
 bi_room() {
-  local need="$1" free t; shift
+  local need="$1" t; shift
+  bi_free_ok "$need" "$*" && return 0
+  for t in "$@"; do bi_note "$t" failed no_space; done
+  return 1
+}
+# bi_free_ok <mb> <what> — the check alone, for callers that have no per-CLI outcome to record
+# (the self-update opt-in). A low result also sets BI_LOW_SPACE for the rest of this start.
+bi_free_ok() {
+  local need="$1" free
   free="$(df -Pm "$HOME" 2>/dev/null | awk 'NR==2{print $4}')"
   case "$free" in ''|*[!0-9]*) return 0 ;; esac
   [ "$free" -ge "$need" ] && return 0
   BI_LOW_SPACE=1
-  echo "[entrypoint] WARN: only ${free} MiB free in home, ${need} MiB needed for $*; skipping (keeping what is installed)"
-  for t in "$@"; do bi_note "$t" failed no_space; done
+  echo "[entrypoint] WARN: only ${free} MiB free in home, ${need} MiB needed for ${2:-installs}; skipping (keeping what is installed)"
   return 1
 }
 # install_atomic <src> <dest> [verify] — `install -m 0755` through a sibling temp name and a
@@ -825,7 +836,8 @@ fi
 # would churn a 1.3 GB uninstall→reinstall next time. Hence the separate branch.
 if [ "${AF_AGENT_SELF_UPDATE_SKIP:-0}" = "1" ]; then
   echo "[entrypoint] agent self-update: skipped for this boot (unattended start) — keeping installed versions"
-elif [ "$BI_LOW_SPACE" = 1 ] && [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-0}" = "1" ]; then
+elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-0}" = "1" ] \
+     && { [ "$BI_LOW_SPACE" = 1 ] || ! bi_free_ok 1200 "the self-update"; }; then
   echo "[entrypoint] agent self-update: skipped for this boot (home is nearly full) — keeping installed versions"
 elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-0}" = "1" ]; then
   echo "[entrypoint] agent self-update: checking versions (member opt-in, operator-allowed) ..."
