@@ -122,10 +122,13 @@ func (u *usageSampler) sample(ctx context.Context) {
 			if err := u.mgr.store.AddUsage(ctx, ws.MembershipID, ws.TenantID, day, secs); err != nil {
 				log.Printf("showback: add usage (%s): %v", ws.ContainerName, err)
 			}
-			if err := u.mgr.store.AddUsageHour(ctx, ws.MembershipID, ws.TenantID, hour,
-				u.counters(ctx, ws, rt, secs, backgroundHoldMax(parseLimits(t.Limits), u.backgroundDef))); err != nil {
+			c := u.counters(ctx, ws, rt, secs, backgroundHoldMax(parseLimits(t.Limits), u.backgroundDef))
+			if err := u.mgr.store.AddUsageHour(ctx, ws.MembershipID, ws.TenantID, hour, c); err != nil {
 				log.Printf("showback: add hourly usage (%s): %v", ws.ContainerName, err)
 			}
+			// MeasuredSecs == 0 means the Agent did not answer the sessions read a moment ago;
+			// asking it again for the disk would only spend a second timeout on the same wedge.
+			u.recordDisk(ctx, ws, rt, c.MeasuredSecs > 0)
 		}
 	}
 	u.deadline.dispatch(ctx, overdue)
@@ -183,6 +186,55 @@ func (u *usageSampler) counters(ctx context.Context, ws store.Workspace, rt runt
 	c.MaxSessions = alive
 	c.MaxBusy = busy
 	return c
+}
+
+// recordDisk stores the home-disk reading the roster gauges from, for one running workspace.
+// What a reading means depends on the runtime (WorkspaceSizing.DiskMeaning):
+//   - home (ecs-ec2, kubernetes): the Agent's statfs of the member's own volume, used and total.
+//   - quota (local, native): the host-side size of the home tree against the member's disk
+//     quota; total is 0 when no quota is set, so the figure is "used" alone.
+//   - work (ecs Fargate): nothing is recorded. The working disk is wiped on stop and statfs
+//     of it says nothing about the member's data; the roster shows the configured size.
+//
+// A reading that cannot be taken is skipped, never stored as zero, so the last real one (and
+// its age) stays on the card.
+func (u *usageSampler) recordDisk(ctx context.Context, ws store.Workspace, rt runtime.Runtime, agentUp bool) {
+	var used, total uint64
+	taken := time.Now().UTC()
+	switch u.mgr.workspaceSizing().DiskMeaning {
+	case runtime.DiskMeaningHome:
+		if !agentUp {
+			return
+		}
+		sctx, cancel := context.WithTimeout(ctx, usageSessionTimeout)
+		defer cancel()
+		st, err := u.mgr.agentStats(sctx, rt)
+		if err != nil {
+			return
+		}
+		du, ok1 := st["disk_used"].(uint64)
+		dt, ok2 := st["disk_total"].(uint64)
+		if !ok1 || !ok2 || dt == 0 {
+			return
+		}
+		used, total = du, dt
+	case runtime.DiskMeaningQuota:
+		du, ok := dirDiskUsage(ctx, u.mgr.rootedDataDir(ws))
+		if !ok {
+			return
+		}
+		used = du
+		if ul, ok, _ := u.mgr.store.GetUserLimit(ctx, ws.MembershipID); ok && ul.DiskGB > 0 {
+			total = uint64(ul.DiskGB) * gib
+		}
+	default:
+		return
+	}
+	if err := u.mgr.store.PutWorkspaceDisk(ctx, store.WorkspaceDisk{
+		WorkspaceID: ws.ID, Used: used, Total: total, ObservedAt: taken.Format(time.RFC3339),
+	}); err != nil {
+		log.Printf("showback: record disk (%s): %v", ws.ContainerName, err)
+	}
 }
 
 // prune drops hourly buckets past the retention window, once an hour rather than on

@@ -24,6 +24,8 @@ import type { Member, MemberAutoStop, MemberIdle, WsSizing } from "../parts/admi
 import { startDeadlineBody } from "../../notifications/wording.ts";
 import {
   attentionReasons,
+  diskLevel,
+  diskRatio,
   matchesFilter,
   matchesQuery,
   memberTitle,
@@ -32,7 +34,7 @@ import {
   rosterState,
   sortMembers,
 } from "./memberRoster.ts";
-import type { RosterFilter, RosterSort, RosterState } from "./memberRoster.ts";
+import type { AttentionReason, RosterFilter, RosterSort, RosterState } from "./memberRoster.ts";
 
 // MembersPanel — the roster and "add member", as one component so the tenant settings modal
 // and the admin modal use the same implementation.
@@ -154,6 +156,7 @@ function MemberGrid({
         <select aria-label={tr("admin.roster_sort_label")} value={sort} onChange={(e) => setSort(e.target.value as RosterSort)}>
           <option value="attention">{tr("admin.roster_sort_attention")}</option>
           <option value="name">{tr("admin.roster_sort_name")}</option>
+          <option value="disk">{tr("admin.roster_sort_disk")}</option>
           <option value="last_active">{tr("admin.roster_sort_last_active")}</option>
         </select>
         <input
@@ -203,7 +206,7 @@ function MemberCard({ m, sizing, now, onOpen }: { m: Member; sizing: WsSizing; n
         {reasons.length > 0 && (
           <span
             className="mc-attn"
-            title={reasons.map((r) => tr(r === "auto_stop" ? "admin.roster_attn_auto_stop" : "admin.roster_attn_hold_lapsed")).join(" / ")}
+            title={reasons.map((r) => tr(ATTN_LABEL[r])).join(" / ")}
           >
             <Icon name="warning" />
             {tr("admin.roster_attention")}
@@ -212,6 +215,7 @@ function MemberCard({ m, sizing, now, onOpen }: { m: Member; sizing: WsSizing; n
         <Icon name="chevron-right" className="mr-go" />
       </span>
       <MemberSessions m={m} />
+      <MemberDisk m={m} now={now} />
       <span className="mc-foot">
         <MemberIdleChip idle={m.idle} state={m.state} />
         <MemberAutoStopChip autoStop={m.auto_stop} />
@@ -266,6 +270,58 @@ function MemberSessions({ m }: { m: Member }) {
         </span>
       )}
       {ago && <span className="muted mc-last-active">{tr("admin.roster_last_active", { ago })}</span>}
+    </span>
+  );
+}
+
+const ATTN_LABEL: Record<AttentionReason, MsgKey> = {
+  auto_stop: "admin.roster_attn_auto_stop",
+  hold_lapsed: "admin.roster_attn_hold_lapsed",
+  disk_warn: "admin.roster_attn_disk_warn",
+  disk_error: "admin.roster_attn_disk_error",
+};
+
+const fmtGiB = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);
+
+// MemberDisk — the last home-disk reading as a gauge WITH its numbers in text, never a bar alone.
+// Without a total (no quota set) it is the used figure alone. On a stopped card the reading is the
+// last one taken while it ran, so its age is shown; a running one is at most one sample old.
+// Levels come from diskLevel (the #2383 thresholds); the warning icon keeps a non-ok level
+// readable without colour.
+function MemberDisk({ m, now }: { m: Member; now: number }) {
+  const tr = useT();
+  const d = m.disk;
+  if (!d || !Number.isFinite(d.used)) return null;
+  const level = diskLevel(m);
+  const ratio = diskRatio(m);
+  const text =
+    ratio === null
+      ? tr("admin.roster_disk_used", { used: fmtGiB(d.used) })
+      : tr("admin.roster_disk_gauge", {
+          used: fmtGiB(d.used),
+          total: fmtGiB(d.total!),
+          pct: String(Math.round(ratio * 100)),
+        });
+  const stopped = m.state !== "running" && m.state !== "starting";
+  const ago = stopped && d.observed_at ? relTime(d.observed_at, now) : "";
+  return (
+    <span className={"mc-disk" + (level && level !== "ok" ? " " + level : "")}>
+      {level && level !== "ok" && <Icon name="warning" />}
+      {ratio !== null && (
+        <span
+          className="mc-bar"
+          role="progressbar"
+          aria-label={tr("admin.roster_disk_label")}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.min(100, Math.round(ratio * 100))}
+          aria-valuetext={text}
+        >
+          <span className="mc-bar-fill" style={{ width: Math.min(100, ratio * 100) + "%" }} />
+        </span>
+      )}
+      <span className="mc-disk-text">{text}</span>
+      {ago && <span className="muted">{tr("admin.roster_observed", { ago })}</span>}
     </span>
   );
 }

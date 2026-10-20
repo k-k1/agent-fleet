@@ -24,13 +24,20 @@ whether the workspace is Running, Starting, Stopped, Never started, Stopped auto
 Control Plane stopped it) or Removed. Below that are the sessions figure ("3 live / 5 total", with
 the limit and a thin bar next to the numbers when the member has a session limit, and how long ago
 that count was taken), the auto-stop outlook and the machine size. A stopped card also says when
-the member was last active. The session counts come from the Control Plane's copy of each
+the member was last active. Where the home is the member's own volume (ECS on EC2, Kubernetes) or
+the deployment can read the home folder's size (local, native), the card also has a disk gauge with
+its numbers in text, for example "Disk 19.0 / 20.0 GiB (95%)". It turns to a warning at 85 % and to
+an error at 95 % or when less than 2 GiB is left, and either puts the member under **Needs
+attention**. Without a disk quota (local, native) only the used size is shown. On ECS Fargate the
+working disk is wiped on every stop, so there is no gauge, only the configured size. The gauge is the
+last reading the Control Plane took while the workspace ran (about every five minutes); on a stopped
+card it says how old that reading is. The session counts come from the Control Plane's copy of each
 workspace's session list, which it refreshes about every five minutes for every running workspace
 (`AF_USAGE_SAMPLE_INTERVAL`), so they can lag what the member sees; the roster does not ask any
 workspace. Clicking a card takes you to the member detail.
 
 Above the cards are the counts (running out of total, and how many need attention), a filter
-(All / Running / Needs attention / Stopped / Removed), a sort (needs attention first, by name, or by last active, with members who have no activity recorded last)
+(All / Running / Needs attention / Stopped / Removed), a sort (needs attention first, by name, or by last active, with members who have no activity recorded last, or by disk usage, fullest first)
 and a search over name and email. A member **needs attention** when the Control Plane stopped
 their workspace, or when a session is still holding it open past its deadline; those cards have a
 warning edge and come first.

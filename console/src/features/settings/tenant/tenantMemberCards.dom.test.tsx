@@ -35,6 +35,11 @@ const ROSTER = [
     user_key: "u-frank", email: "frank@x.com", role: "member", state: "stopped", status: "active", max_sessions: 3,
     last_active_at: new Date(Date.now() - 86400_000).toISOString(),
   },
+  {
+    user_key: "u-gina", email: "gina@x.com", role: "member", state: "stopped", status: "active",
+    disk: { used: 19 * 1024 ** 3, total: 20 * 1024 ** 3, observed_at: new Date(Date.now() - 2 * 86400_000).toISOString() },
+  },
+  { user_key: "u-hank", email: "hank@x.com", role: "member", state: "running", status: "active", disk: { used: 3 * 1024 ** 3 } },
   { user_key: "u-carol", email: "carol@x.com", role: "member", state: "stopped", status: "active", auto_stop: AUTO_STOP },
   { user_key: "u-dave", email: "dave@x.com", role: "member", state: "none", status: "active", has_workspace: false },
   { user_key: "u-erin", email: "erin@x.com", role: "member", state: "stopped", status: "removed" },
@@ -90,8 +95,8 @@ describe("member cards", () => {
     expect(titles()[0]).toBe("carol@x.com");
     expect(cards()[0].classList.contains("attn")).toBe(true);
     const summary = document.querySelector(".member-summary")?.textContent || "";
-    expect(summary).toContain("1 of 6 running");
-    expect(summary).toContain("1 need attention");
+    expect(summary).toContain("2 of 8 running");
+    expect(summary).toContain("2 need attention");
   });
 
   it("filters and searches", async () => {
@@ -137,6 +142,23 @@ describe("member cards", () => {
     expect(frank.querySelector(".mc-last-active")?.textContent).toMatch(/^Last active /);
     // A member with no mirror and no activity gets no line at all.
     expect(card("dave@x.com").querySelector(".mc-sessions")).toBeNull();
+  });
+
+  it("draws the disk as a gauge with its numbers, its age on a stopped card, and tolerates missing fields", async () => {
+    await mount();
+    const card = (t: string) => cards().find((c) => c.querySelector(".mc-title")?.textContent === t)!;
+    const gina = card("gina@x.com");
+    expect(gina.querySelector(".mc-disk-text")?.textContent).toBe("Disk 19.0 / 20.0 GiB (95%)");
+    expect(gina.querySelector(".mc-disk")?.classList.contains("error")).toBe(true);
+    expect(gina.querySelector(".mc-disk")?.textContent).toContain("as of");
+    expect(gina.classList.contains("attn")).toBe(true);
+    // No total (no quota): the used figure alone, no bar, no level.
+    const hank = card("hank@x.com");
+    expect(hank.querySelector(".mc-disk-text")?.textContent).toBe("Disk 3.0 GiB used");
+    expect(hank.querySelector(".mc-disk .mc-bar")).toBeNull();
+    expect(hank.classList.contains("attn")).toBe(false);
+    // Never measured: no disk line.
+    expect(card("dave@x.com").querySelector(".mc-disk")).toBeNull();
   });
 
   // Thirty cards must not mean thirty Agent calls: the page reads one roster response.
