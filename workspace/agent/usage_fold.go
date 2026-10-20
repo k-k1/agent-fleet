@@ -262,8 +262,9 @@ func usageTriggerFromTurnSource(src string) string {
 		return usagex.TriggerBridge
 	case sessionx.TurnSourceSchedule, sessionx.TurnSourceScheduleManual:
 		return usagex.TriggerSchedule
-	case sessionx.TurnSourceAutoResume:
-		// auto-resume after an abort (docs/log/47 §4-6) is self-repair consumption
+	case sessionx.TurnSourceAutoResume, sessionx.TurnSourceNotice:
+		// auto-resume after an abort (docs/log/47 §4-6) is self-repair consumption; the
+		// stalled-tree notice is the Agent's own nudge, not a person's turn, in the same way
 		return usagex.TriggerRecovery
 	}
 	return usagex.TriggerUser

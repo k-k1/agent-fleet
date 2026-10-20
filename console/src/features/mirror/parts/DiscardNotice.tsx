@@ -25,6 +25,8 @@ export function originLabel(o: TurnOrigin | undefined): string {
       return tr("mirror.from_schedule_manual");
     case "auto-resume":
       return tr("mirror.from_auto_resume");
+    case "notice":
+      return tr("mirror.from_notice");
     default:
       return o?.kind || "?";
   }

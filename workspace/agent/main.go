@@ -323,6 +323,10 @@ func serve() {
 	// the user as a report when it gives up.
 	sessionx.StartAbortResumeWatch()
 
+	// Nudge a parent session once when it and all its live children have sat idle with nothing
+	// in flight (stalled_tree.go). Its own loop: it must work while nobody has a screen open.
+	sessionx.StartStalledTreeWatch()
+
 	// Self-hosted inference engines (ADR 0071 P0): ask the CP which engines this deployment
 	// runs and declare them in opencode's config, so `llamacpp/<model>` is in the launch
 	// menu. In the background because it is a call out over the public hairpin and nothing
