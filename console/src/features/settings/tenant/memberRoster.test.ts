@@ -1,6 +1,6 @@
 // The roster's state words, "needs attention" and the filter / sort / search (#2385 phase 1).
 import { describe, it, expect } from "vitest";
-import { attentionReasons, bootFailures, diskLevel, nextMemberHomePressure, matchesFilter, matchesQuery, rosterCounts, rosterState, sortMembers } from "./memberRoster.ts";
+import { attentionReasons, bootFailures, diskLevel, homeFullFigures, nextMemberHomePressure, matchesFilter, matchesQuery, rosterCounts, rosterState, sortMembers } from "./memberRoster.ts";
 import type { Member } from "../parts/adminShared.ts";
 
 const NOW = Date.parse("2026-10-20T12:00:00Z");
@@ -184,5 +184,30 @@ describe("nextMemberHomePressure", () => {
     expect(nextMemberHomePressure(true, { home_own: true })).toBe(true);
     expect(nextMemberHomePressure(false, { home_own: true })).toBe(false);
     expect(nextMemberHomePressure(false, null)).toBe(false);
+  });
+});
+
+describe("homeFullFigures", () => {
+  const GIB = 1024 ** 3;
+  it("gives the numbers only when the poll carries both", () => {
+    expect(homeFullFigures({ disk_used: 99 * GIB, disk_total: 100 * GIB })).toEqual({ used: 99 * GIB, total: 100 * GIB });
+    expect(homeFullFigures({ disk_total: 100 * GIB })).toBeNull();
+    expect(homeFullFigures({ disk_used: 5 })).toBeNull();
+    expect(homeFullFigures({ disk_used: 5, disk_total: 0 })).toBeNull();
+    expect(homeFullFigures(null)).toBeNull();
+  });
+
+  // 99% -> a poll with no statfs -> recovery: the flag holds through the gap, the notice has no
+  // figures to print during it, and both clear once the headroom is back.
+  it("holds the flag through a missing reading without printing NaN", () => {
+    const own = (used: number) => ({ home_own: true, disk_used: used * GIB, disk_total: 100 * GIB });
+    let flag = nextMemberHomePressure(false, own(99));
+    expect(flag).toBe(true);
+    const gap = { home_own: true };
+    flag = nextMemberHomePressure(flag, gap);
+    expect(flag).toBe(true);
+    expect(homeFullFigures(gap)).toBeNull();
+    flag = nextMemberHomePressure(flag, own(50));
+    expect(flag).toBe(false);
   });
 });

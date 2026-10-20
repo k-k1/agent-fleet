@@ -602,3 +602,29 @@ func storeBoot(t *testing.T, st *store.SQL, failed string) {
 		t.Fatal(err)
 	}
 }
+
+// Transitions inside one fixture and between two sweeps: what the detail poll saw is stored, so
+// a stop before the next sweep does not bring the previous start's outcome back.
+func TestMemberStatsRemembersTheOutcomeItSawAcrossAStop(t *testing.T) {
+	run := func(t *testing.T, stored, live string, wantAfterStop bool) {
+		st, mgr, _, _ := destroyFixture(t, agentStatsFactory{state: "stopped"})
+		if stored != "" {
+			storeBoot(t, st, stored)
+			time.Sleep(2 * time.Millisecond)
+		}
+		srv := statsAgent(t, http.StatusOK, live)
+		mgr.rtFactory = agentStatsFactory{endpoint: srv.URL, state: "running"}
+		memberStatsJSON(t, mgr) // the running poll
+		mgr.rtFactory = agentStatsFactory{state: "stopped"}
+		_, has := memberStatsJSON(t, mgr)["boot_failed"]
+		if has != wantAfterStop {
+			t.Errorf("after stop boot_failed present = %v, want %v", has, wantAfterStop)
+		}
+	}
+	t.Run("failed stored, clean live, stopped", func(t *testing.T) {
+		run(t, `{"claude":"no_space"}`, `{"mem_used":1}`, false)
+	})
+	t.Run("clean stored, failed live, stopped", func(t *testing.T) {
+		run(t, "", `{"mem_used":1,"boot_install_failed":{"claude":"no_space"}}`, true)
+	})
+}

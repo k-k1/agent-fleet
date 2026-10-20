@@ -1769,7 +1769,8 @@ the CP already polls: one stat and one read of at most 8 KiB, nothing from home,
 the body it reads, keeps only valid names and the four reasons, and the usage sampler stores the outcome in its own table
 `workspace_boot_install`, independent of the disk reading, so it is recorded (and withdrawn by a clean answer) on every
 runtime, including those whose disk is not measured. The DB-only member list flags a start whose install failed, and a
-stopped card keeps the last start's outcome. The member detail's poll serves the running workspace's own report, else the
+stopped card keeps the last start's outcome. The member detail's poll serves the running workspace's own report (and stores it, stamped with when the read began, so a stop
+before the next sweep keeps what was seen; the record is the last start observed, and a start that began and ended between two reads is not seen), else the
 stored outcome (local docker never asks the Agent on that path), and the Console renders only that. The detail also flags
 a home over the member notice's threshold (same numbers and hysteresis as `homeDiskPressure.ts`), only where `home_own`
 is true and the workspace runs. The list's existing disk gauge keeps its own 85% / 95% levels. No admin notification.

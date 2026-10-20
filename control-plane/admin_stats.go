@@ -72,6 +72,7 @@ func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 	// seconds, and this laziness is what keeps a docker deployment from running
 	// `docker inspect` twice on every poll.
 	state := sync.OnceValue(func() string { return rt.State(ctx) })
+	readStart := time.Now()
 	out := workspaceStats(ctx, a.mgr, rt, state)
 	// The member detail is opened from a roster snapshot and polls only this, so the
 	// automatic-stop reason rides here: read from the snapshot, it outlived the restart
@@ -88,7 +89,19 @@ func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 	// this key, so a stale snapshot on the client can never decide it.
 	live, answered := out["boot_install_failed"].(map[string]string)
 	delete(out, "boot_install_failed")
-	if !answered {
+	if answered {
+		// Persist what was just seen, stamped with when the read began, so a stop before the
+		// next sweep falls back to this outcome and not to an older one, and an older sweep
+		// that lands later is refused by the same ordering guard. The record is "the last
+		// start observed"; a start that began and ended between two reads is not seen at all.
+		raw := ""
+		if len(live) > 0 {
+			if b, err := json.Marshal(live); err == nil {
+				raw = string(b)
+			}
+		}
+		_ = a.mgr.store.PutWorkspaceBootFailed(ctx, ws.ID, raw, store.DiskObservedAt(readStart))
+	} else {
 		live = nil
 		if raw, err := a.mgr.store.GetWorkspaceBootFailed(ctx, ws.ID); err == nil && raw != "" {
 			_ = json.Unmarshal([]byte(raw), &live)

@@ -72,6 +72,18 @@ export function nextMemberHomePressure(
   return nextHomeDiskPressure(prev, s.disk_used, s.disk_total);
 }
 
+/** The numbers the home-full notice prints, only when the current poll carries both: the flag
+ *  keeps its state across a poll without a reading, but a notice with no figures to show must not
+ *  print "NaN GiB". */
+export function homeFullFigures(
+  s: { home_own?: boolean; disk_used?: number; disk_total?: number } | null | undefined,
+): { used: number; total: number } | null {
+  const used = s?.disk_used;
+  const total = s?.disk_total;
+  if (typeof used !== "number" || typeof total !== "number" || !Number.isFinite(used) || !(total > 0)) return null;
+  return { used, total };
+}
+
 /** Why this member needs the admin, empty when nothing does. */
 export function attentionReasons(m: Member, now = Date.now()): AttentionReason[] {
   const out: AttentionReason[] = [];
@@ -88,7 +100,6 @@ export function attentionReasons(m: Member, now = Date.now()): AttentionReason[]
   if (dl === "error") out.push("disk_error");
   else if (dl === "warn") out.push("disk_warn");
   if (bootFailures(m.boot_failed).length > 0) out.push("boot_install");
-  
   return out;
 }
 

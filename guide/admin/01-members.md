@@ -32,7 +32,7 @@ attention**. Without a disk quota (local, native) only the used size is shown. O
 working disk is wiped on every stop, so there is no gauge, only the configured size. The gauge is the
 last reading the Control Plane took while the workspace ran (about every five minutes); on a stopped
 card it says how old that reading is. A member whose last start could not install a CLI (a full home is the usual cause) also goes
-under **Needs attention**; the card's tooltip says a CLI failed to install (the per-CLI reason is in the member detail), and a stopped card keeps the last start's outcome.
+under **Needs attention**; the card's tooltip says a CLI failed to install (the per-CLI reason is in the member detail), and a stopped card keeps the last start the Control Plane observed (a start that began and ended between two readings is not seen).
 In the member detail, the **"Size and limits"** card shows the same reason per CLI, and, where the home is the
 member's own volume (ECS on EC2, Kubernetes), a notice when the home is nearly full (the same threshold the
 member's own notice uses). The home-nearly-full notice needs a running workspace; a stopped or unreachable one shows no such notice, and no

@@ -29,7 +29,7 @@ import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
 import type { HomeResize, Member, WsSizing, WsSlot } from "../parts/adminShared.ts";
 import { fmtG, fmtPct, fmtGbHint, ladderFor, memberClassID, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
 import { bootReasonKey } from "../../../core/store/bootInstallReason.ts";
-import { bootFailures, nextMemberHomePressure } from "./memberRoster.ts";
+import { bootFailures, homeFullFigures, nextMemberHomePressure } from "./memberRoster.ts";
 import { MemberAutoStopDetail, MemberIdleDetail, MemberSizeChips } from "./tenantMembers.tsx";
 import { MemberEngineAccessPanel } from "./tenantEngineAccess.tsx";
 
@@ -229,6 +229,7 @@ export function MemberView({
   // workspace's own report or, while stopped, the stored outcome. The roster snapshot in
   // `member` is fixed at click time and must never decide it.
   const bootFailed = bootFailures(stats?.boot_failed);
+  const homeFigures = homeFullFigures(stats);
   const fmtGiB = (b: number) => (b / 1024 ** 3).toFixed(1);
   const diskRatio = diskTotal && stats?.disk_used != null ? stats.disk_used / diskTotal : null;
 
@@ -569,10 +570,10 @@ export function MemberView({
         </div>
         {/* Next to the size it is about: a full home or a failed install explains why a member
             "with enough disk" cannot start a CLI. Text and icon, never colour alone. */}
-        {homeFull && running && (
+        {homeFull && running && homeFigures && (
           <p className="ws-size-flag" role="status">
             <Icon name="warning" />
-            {tr("admin.ws_home_full", { used: fmtGiB(stats.disk_used), total: fmtGiB(stats.disk_total) })}
+            {tr("admin.ws_home_full", { used: fmtGiB(homeFigures.used), total: fmtGiB(homeFigures.total) })}
           </p>
         )}
         {bootFailed.length > 0 && (
