@@ -3,7 +3,7 @@ package sessionx
 // The handover file's own words: headings, bullet labels and fixed sentences written by
 // renderHandover. The conversation text and the conversation's labels are not here (the latter
 // follow the same lang through transcript.MarkdownOptions.Lang). The language is the one the
-// export uses: uiprefs.Locale(), "en" or anything else meaning Japanese.
+// export uses: uiprefs.Locale(), "ja" or "en"; RenderHandover maps anything else to "en".
 
 type handoverLabels struct {
 	Title, Source, Agent, Folder, Branch, Moved, Earlier, Instructions string
@@ -22,6 +22,9 @@ type handoverLabels struct {
 	Threads, ChildFmt, ProposalFmt, ThreadsNote string
 
 	Conversation string
+	// CutMarker ends an assistant text the size rule shortened, so the target knows the rest
+	// existed.
+	CutMarker string
 }
 
 var handoverLabelsEn = handoverLabels{
@@ -66,6 +69,7 @@ var handoverLabelsEn = handoverLabels{
 	ChildFmt:     "- child session `%s`: %s\n",
 	ProposalFmt:  "- pending handoff proposal: `%s`\n",
 	ThreadsNote:  "These still belong to the source session; their reports go to the source, not here.",
+	CutMarker:    "_[… cut for size: the rest of this message is not in this file]_",
 	Conversation: "Conversation",
 }
 
@@ -112,11 +116,12 @@ var handoverLabelsJa = handoverLabels{
 	ProposalFmt:  "- 保留中の引き継ぎ提案: `%s`\n",
 	ThreadsNote:  "これらは引き続き元のセッションのものです。報告は元のセッションに届き、こちらには届きません。",
 	Conversation: "会話",
+	CutMarker:    "_[… サイズのため省略: このメッセージの残りはこのファイルにありません]_",
 }
 
 func handoverLabelsFor(lang string) handoverLabels {
-	if lang == "en" {
-		return handoverLabelsEn
+	if lang == "ja" {
+		return handoverLabelsJa
 	}
-	return handoverLabelsJa
+	return handoverLabelsEn
 }

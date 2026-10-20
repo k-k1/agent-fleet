@@ -359,9 +359,6 @@ func filterTurn(t transcript.Turn, readOnly []string, inRecent bool) transcript.
 
 // --- rendering -----------------------------------------------------------------------
 
-// handoverCutMarker ends a shortened assistant text, so the target knows the rest existed.
-const handoverCutMarker = "_[… cut for size: the rest of this message is not in this file]_"
-
 // RenderHandover lays the value out as the Markdown the target reads. When the result passes
 // handoverSizeTarget it cuts the oldest assistant texts (outside the recent turns) to their
 // first paragraph, one turn at a time, and returns the value as cut. User messages, the
@@ -371,6 +368,12 @@ func RenderHandover(h Handover, lang string) (string, Handover) {
 	if lang == "" {
 		lang = uiprefs.Locale()
 	}
+	// One normalised language for both renderers: transcript.Markdown reads anything but "en"
+	// as Japanese, while an unknown locale must read as English.
+	if lang != "en" && lang != "ja" {
+		lang = "en"
+	}
+	marker := handoverLabelsFor(lang).CutMarker
 	md := renderHandover(h, lang)
 	if len(md) <= handoverSizeTarget {
 		return md, h
@@ -399,7 +402,7 @@ func RenderHandover(h Handover, lang string) (string, Handover) {
 				continue
 			}
 			if short, ok := firstParagraph(p.Text); ok {
-				parts[j].Text = short + "\n\n" + handoverCutMarker
+				parts[j].Text = short + "\n\n" + marker
 				cut++
 			}
 		}

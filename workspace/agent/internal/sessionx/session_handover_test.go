@@ -360,7 +360,7 @@ func TestHandoverSizeCutsOldestAssistantTextsFirst(t *testing.T) {
 	if len(md) > handoverSizeTarget {
 		t.Fatalf("size %d over the target %d", len(md), handoverSizeTarget)
 	}
-	if cut.Cut == 0 || !strings.Contains(md, handoverCutMarker) {
+	if cut.Cut == 0 || !strings.Contains(md, handoverLabelsEn.CutMarker) {
 		t.Fatalf("nothing was cut or the marker is missing (cut=%d)", cut.Cut)
 	}
 	// Oldest first: the first answer is cut, the newest three turns are whole.
@@ -395,7 +395,7 @@ func TestHandoverSizeNeverCutsWhatItMustKeep(t *testing.T) {
 	if len(md) <= handoverSizeTarget {
 		t.Fatalf("test setup: %d bytes should exceed the target", len(md))
 	}
-	if cut.Cut != 0 || strings.Contains(md, handoverCutMarker) {
+	if cut.Cut != 0 || strings.Contains(md, handoverLabelsEn.CutMarker) {
 		t.Errorf("everything is inside the last 3 turns; nothing may be cut (cut=%d)", cut.Cut)
 	}
 	if !strings.Contains(md, big[:1000]) || !strings.Contains(md, "RECENT filler") {
@@ -753,4 +753,41 @@ type discardingAgent struct{ agents.Agent }
 
 func (discardingAgent) Transcript(session.Meta) (agents.TranscriptData, bool) {
 	return agents.TranscriptData{Turns: []transcript.Turn{hoUser("go"), hoAsst(hoText("ok"))}, Discards: hoDiscards()}, true
+}
+
+// An unknown language reads as English in the scaffolding and in the conversation's labels alike.
+func TestRenderHandoverUnknownLanguageIsEnglish(t *testing.T) {
+	h := hoBuild(t, []transcript.Turn{hoUser("go"), hoAsst(hoText("ok"))}, nil)
+	md, _ := RenderHandover(h, "fr")
+	want, _ := RenderHandover(h, "en")
+	if md != want {
+		t.Errorf("fr differs from en:\n%s", md)
+	}
+	if strings.Contains(md, "中断した時点") {
+		t.Error("an unknown language fell to Japanese")
+	}
+}
+
+// The size cut's marker is the generator's sentence, so it follows the language too.
+func TestHandoverCutMarkerFollowsTheLanguage(t *testing.T) {
+	var turns []transcript.Turn
+	for i := 0; i < 12; i++ {
+		tag := string(rune('A' + i))
+		turns = append(turns, hoUser("ask "+tag), hoAsst(hoText(longText("ANS-"+tag, 40<<10))))
+	}
+	h := hoBuild(t, turns, nil)
+	ja, cut := RenderHandover(h, "ja")
+	if cut.Cut == 0 {
+		t.Fatal("nothing was cut")
+	}
+	if handoverLabelsJa.CutMarker == "" || handoverLabelsEn.CutMarker == "" {
+		t.Fatal("a language has no cut marker")
+	}
+	if !strings.Contains(ja, handoverLabelsJa.CutMarker) || strings.Contains(ja, "cut for size") {
+		t.Errorf("ja marker: ja present=%v, english present=%v", strings.Contains(ja, handoverLabelsJa.CutMarker), strings.Contains(ja, "cut for size"))
+	}
+	en, _ := RenderHandover(h, "en")
+	if !strings.Contains(en, handoverLabelsEn.CutMarker) || strings.Contains(en, "サイズのため省略") {
+		t.Error("en marker wrong")
+	}
 }
