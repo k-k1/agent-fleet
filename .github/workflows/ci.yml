@@ -342,6 +342,11 @@ jobs:
       # only, and a widened grant decrypts with keys the CP has no business with.
       - name: CP role KMS custodian grant (template vs Go)
         run: python3 ./deploy/local/cfn-cp-kms-scope-test.py
+      # pause.sh deletes the NAT gateway through 00-network's NatEnabled and re-stops a long-paused
+      # database through 10-data's Lambda; a gateway outside its condition, or a Lambda that stops
+      # an instance pause.sh did not tag, only shows on a real deployment.
+      - name: pause.sh NAT toggle and RDS re-stop (templates + Lambda, offline)
+        run: python3 ./deploy/local/cfn-pause-save-test.py
       # AF_WORKSPACE_DEK=random is refused by the CP without the kms custodian; the template
       # must fail the same combination when the stack operation runs (execute-time guard), and
       # the env var must stay unset without a key, so the CP never crash-loops on it.
