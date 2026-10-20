@@ -38,7 +38,41 @@ const mcpSessionOutputTailBytes = 32 << 10
 // endpoint plus its tool registry/impls, converted receiver-only from config. Auth is
 // a Bearer PAT (authMCP), never the session gateway; everything it needs hangs off the
 // CP seam (store + runtime resolution — see deps.go).
-type API struct{ cp CP }
+type API struct {
+	cp    CP
+	oauth oauthChallenge
+}
+
+// oauthChallenge is set when the CP serves an OAuth authorization server for /mcp (ADR 0118):
+// resource is the audience a token must be bound to, metadataURL the RFC 9728 document the 401
+// points clients at. Both empty means PAT only.
+type oauthChallenge struct{ resource, metadataURL string }
+
+// WithOAuth returns the handler set accepting OAuth access tokens bound to resource, and
+// answering 401 with the protected-resource-metadata challenge.
+func (a API) WithOAuth(resource, metadataURL string) API {
+	a.oauth = oauthChallenge{resource: resource, metadataURL: metadataURL}
+	return a
+}
+
+// oauthAccessPrefix marks an OAuth access token (control-plane/mcp_oauth_token.go).
+const oauthAccessPrefix = "afmcp_at_"
+
+// oauthIdle is how far a use of a token pushes its grant's idle deadline (ADR 0118 decision 5).
+const oauthIdle = 30 * 24 * time.Hour
+
+// challenge is the WWW-Authenticate value of a 401: bare Bearer while OAuth is off, otherwise
+// the RFC 9728 pointer and the scope a first request should ask for.
+func (a API) challenge(presented bool) string {
+	if a.oauth.metadataURL == "" {
+		return "Bearer"
+	}
+	c := `Bearer resource_metadata="` + a.oauth.metadataURL + `", scope="read"`
+	if presented {
+		c += `, error="invalid_token"`
+	}
+	return c
+}
 
 // New builds the /mcp handler set over the CP seam. The CP's own wiring is
 // control-plane/mcp_wiring.go.
@@ -55,7 +89,7 @@ func New(cp CP) API {
 		panic("mcpsrv: the CP's scope ladder does not rank " + scopeRead + " below " + scopeWrite +
 			" — pat.go's scope names changed and this package's copy did not follow")
 	}
-	return API{cp}
+	return API{cp: cp}
 }
 
 // The two scope tiers the tool table declares as a minimum. They are the PAT wire
@@ -116,7 +150,9 @@ func (a API) HandleMCP(w http.ResponseWriter, r *http.Request) {
 	}
 	prin, aerr := a.authMCP(r)
 	if aerr != nil {
-		w.Header().Set("WWW-Authenticate", "Bearer")
+		if aerr.Status == http.StatusUnauthorized {
+			w.Header().Set("WWW-Authenticate", a.challenge(strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")) != ""))
+		}
 		writeAPIErr(w, aerr)
 		return
 	}
@@ -195,6 +231,9 @@ func (a API) authMCP(r *http.Request) (*mcpPrincipal, *APIError) {
 	if tok == "" || tok == auth { // no/!Bearer prefix
 		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "missing bearer token"}
 	}
+	if a.oauth.resource != "" && strings.HasPrefix(tok, oauthAccessPrefix) {
+		return a.authOAuth(r, tok)
+	}
 	p, ok, err := a.cp.Store().GetPATByHash(r.Context(), a.cp.HashPAT(tok))
 	if err != nil {
 		return nil, internalErr(err)
@@ -209,6 +248,26 @@ func (a API) authMCP(r *http.Request) (*mcpPrincipal, *APIError) {
 	}
 	_ = a.cp.Store().TouchPAT(r.Context(), p.ID) // best-effort last-used
 	return &mcpPrincipal{patID: p.ID, identityID: p.IdentityID, membershipID: p.MembershipID, scope: p.Scope}, nil
+}
+
+// authOAuth resolves an OAuth access token to the same principal a PAT gives, with the grant id
+// where the PAT id was. The token must be bound to this endpoint: a token the issuer minted for
+// anything else is refused here even though it is otherwise valid.
+func (a API) authOAuth(r *http.Request, tok string) (*mcpPrincipal, *APIError) {
+	now := time.Now()
+	g, ok, err := a.cp.Store().GetMCPOAuthAccess(r.Context(), a.cp.HashPAT(tok), now.Unix())
+	if err != nil {
+		return nil, internalErr(err)
+	}
+	if !ok || g.Resource != a.oauth.resource {
+		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid token"}
+	}
+	_ = a.cp.Store().TouchMCPOAuthGrant(r.Context(), g.GrantID, now.Unix(), int64(oauthIdle.Seconds())) // best-effort, like TouchPAT
+	scope := scopeRead
+	if strings.Contains(" "+g.Scope+" ", " "+scopeWrite+" ") {
+		scope = scopeWrite
+	}
+	return &mcpPrincipal{patID: g.GrantID, identityID: g.IdentityID, membershipID: g.MembershipID, scope: scope}, nil
 }
 
 func (a API) dispatchMCP(ctx context.Context, prin *mcpPrincipal, req rpcRequest) *rpcResponse {

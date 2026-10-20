@@ -229,3 +229,12 @@ and a revoke button.
 - Open: whether ChatGPT and claude.ai always send the `scope` from the 401 challenge or request
   every `scopes_supported` entry. Decision 4 handles both (the member narrows), but the default
   shown on the consent page follows whichever they do.
+- 2026-10-21, implementation of decisions 1-5 and the deployment flag (#2433). No decision changed;
+  the points the text left open were settled as follows. The trusted-client list is
+  `AF_MCP_OAUTH_TRUSTED_HOSTS` (exact host names, `none` for loopback only). `resource` is required
+  on `authorize` and on the `authorization_code` request and checked when present on a refresh. A
+  grant's access token carries its own scope, so a refresh may narrow it below the grant's. A
+  second use of a spent refresh token revokes the grant even when it is a concurrent duplicate
+  (one request wins, the rest revoke): there is no grace window. A CIMD host is checked again at
+  `token` but the document is not refetched there. Not built here, as the Consequences already
+  say: the tenant switch and the connected-apps list (#2434); live-client runs (#2435).

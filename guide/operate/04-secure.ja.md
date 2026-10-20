@@ -295,6 +295,38 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
   `memory.entry.forget`、実行者は `mcp`、対象はプロジェクト ID）。テナント管理者はテナント全体でこれをブロックでき
   （[管理 08](../admin/08-external-memory.ja.md)）、`AF_MCP_ENABLED` はエンドポイント全体を止めます。
 
+### リモート MCP クライアント向けのサインイン（OAuth）
+
+既定では `/mcp` は Personal Access Token だけを受け付けます。`AF_MCP_OAUTH=1` を設定すると、Control Plane が `/mcp` 用の OAuth 2.1
+認可サーバーにもなり（ADR 0118）、claude.ai・ChatGPT・Claude Code・Codex は
+トークンを貼り付ける代わりに、メンバーが Console にサインインして接続できます。CI などの OAuth を使えないクライアント向けに PAT は引き続き使えます。
+
+| 設定 | 意味 |
+|---|---|
+| `AF_MCP_OAUTH=1` | サーバーを有効にします。`AF_MCP_ENABLED=true` と `https` の `PUBLIC_BASE_URL` も必要です。どれか欠けていると、以下のパスはすべて 404、`/mcp` は従来どおりの素の 401 になり、クライアントはトークンを求める動作に戻ります |
+| `AF_MCP_OAUTH_TRUSTED_HOSTS` | サインインのリダイレクト先になれる／クライアントメタデータを配信できるホスト名のカンマ区切り。既定は `claude.ai,claude.com,chatgpt.com`。外すとそのベンダーは使えなくなり、社内クライアントなら追加します（ホスト名の完全一致、`https` のみ）。`none` でループバックのクライアントだけになります |
+
+- **提供されるパス**（issuer は `{PUBLIC_BASE_URL}/mcp-oauth`）: `/.well-known/oauth-protected-resource/mcp`、
+  `/.well-known/oauth-authorization-server/mcp-oauth`、`/mcp-oauth/authorize`、`/mcp-oauth/consent`、
+  `/mcp-oauth/token`、`/mcp-oauth/register`、`/mcp-oauth/revoke`。`/mcp` の 401 には
+  `WWW-Authenticate: Bearer resource_metadata="…", scope="read"` が付きます。
+- **ingress。** ホスト型クライアントは `/mcp` とトークンエンドポイントを**ベンダーのサーバーから**呼ぶので、Control Plane はこれらのパスでインターネットから
+  到達できる必要があります。VPN の内側や ALB の ingress CIDR を絞った配備では、コマンドライン（ループバック）のクライアントだけが使えます。これは仕様であり不具合ではありません。
+  `AUTH=oauth` と `AUTH=dev` では Console 自身のセッションゲートが、探索・`token`・`register`・`revoke` を素通しにし、`authorize` と `consent` はゲートの内側に置きます。
+  **`AUTH=proxy`** ではゲートウェイ側で同じ設定が必要です。`/mcp-oauth/authorize` と `/mcp-oauth/consent` はゲートウェイを**通し**（メンバーの
+  識別ヘッダーはそこで付きます）、残りの 5 パスと `/mcp` はゲートウェイを**迂回**させます。
+- **クライアントになれるもの。** 登録は誰でもできますが（動的クライアント登録は送信元ごとのレート制限と総数の上限があり、グラントが一度も生まれない登録は 30 日で削除されます）、
+  登録で決められるのはコードの*送り先*だけなので、リダイレクトはループバックか、信頼リスト上のホストの `https` アドレスで、表記も正規形
+  （大文字・末尾のドット・明示ポート・ユーザー情報・フラグメントなし）に限ります。メタデータ文書の URL でクライアントを示す場合は、その URL が同じリストにあるときだけ取得し、
+  リダイレクトは追わず、短いタイムアウトとサイズ上限を課し、公開アドレス以外には接続しません。
+- **トークン。** アクセストークンは不透明で 1 時間有効、`{PUBLIC_BASE_URL}/mcp` に結び付きます。リフレッシュトークンは使うたびに更新され、使用済みのものが
+  再提示されると接続全体が取り消されます。接続は 30 日間使われないか、90 日たつと終わります。保存されるのはハッシュだけで、PAT の行ではないため 20 個の PAT 上限には数えません。
+- **監査。** `mcp.oauth.grant`（作成・取り消し・再利用による取り消し）と `mcp.oauth.token`（発行のたび）は、応答を返す前に書き込まれます。接続を使った呼び出しは、
+  接続 ID を実行者として `mcp` で記録されます。監査ストアが止まっているときはトークンを発行しません。
+- **スコープ。** `read` と `write` だけです。`admin:dangerous` は、メンバーのロールにかかわらず OAuth では付与されません。
+- **テナントのネットワーク制限**は確認（同意）の段階、つまりブラウザの前にいる人に適用されます。ベンダーのサーバーから来る `/mcp` とトークンエンドポイントには、PAT と同じく適用されません
+  （ADR 0047）。
+
 ## ワークスペース内ブラウザの引き渡し
 
 エージェントは、ワークスペース内で自分が起動した Chromium のページを Console のペインとして

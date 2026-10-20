@@ -346,6 +346,38 @@ next instruction". Issue the token for this in **⚙ Settings → the "MCP token
 Tokens you no longer need can be **revoked** ("Revoke") on the same screen (once revoked, connections using
 that token are rejected from the next attempt).
 
+## Connecting a remote MCP client by signing in (OAuth)
+
+Where your administrator has turned it on, claude.ai, ChatGPT, Claude Code and Codex can connect to your workspace
+**without a token**: you sign in to the Console, look at what the app asks for, and allow it. If the deployment has
+not turned it on, the client asks for a token as before and the section above applies.
+
+1. In the client, add a custom connector / remote MCP server whose address is `https://<your Console address>/mcp`.
+   For claude.ai and ChatGPT that is the same address you would have used with a token; leave any client ID and
+   secret fields empty.
+2. The client sends you to the Console. Sign in if you are not already, and the **consent page** opens. It shows:
+   - **Where you are sent back to**, in large type: `claude.ai`, `chatgpt.com`, or "this computer itself" for a
+     command-line client. Allow only what you started yourself.
+   - **The app name**, marked as declared by the app itself. It is free text the app chose, so it proves nothing;
+     trust the address above it.
+   - **The tenant** to connect, one choice per tenant you belong to. The connection is fixed to it, as a token is.
+   - **The scope**: `read` (see sessions and output) or `write` (read, plus act). You can choose less than the app
+     asked for. `admin:dangerous` is never granted this way; use a token for that.
+3. Press **Allow** (or **Cancel**, which tells the app you declined). The client is connected. It keeps itself
+   signed in with a short-lived access token (1 hour) that it renews on its own; you are not asked again.
+
+A connection ends when it has not been used for **30 days**, or **90 days** after you allowed it, whichever comes
+first; the app then asks you to sign in and allow it again. Using the connection from a different tenant, or after
+you left a tenant, is rejected from the next call. Everything the connection does is checked against your role at
+that moment, exactly as with a token, and appears in the audit log as coming from MCP.
+
+Only addresses on the deployment's approved list can receive the sign-in: `claude.ai`, `claude.com` and
+`chatgpt.com` by default, plus a command-line client on your own computer (`127.0.0.1`, `localhost`). A client whose
+callback is anywhere else is refused with an error page and is never sent your code.
+
+> The list of connected apps and a button to revoke each one are coming separately. Until then an app that you want
+> cut off can be disconnected from the app's own side, or ask your administrator.
+
 ## Using Agent Fleet memory from an external agent
 
 The same MCP token can also let your own Claude Code / Claude Desktop use the memory Agent Fleet keeps (see

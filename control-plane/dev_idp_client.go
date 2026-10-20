@@ -191,11 +191,8 @@ func devIdPScopedClaims(all devIdPProfile, scope string) devIdPProfile {
 // :443, userinfo or a fragment are refused rather than normalised, because every normalisation
 // is a chance for this check and the browser to disagree.
 func (m *manager) devIdPRedirectAllowed(ctx context.Context, ws store.Workspace, st wsSettings, membershipID, raw string) bool {
-	if raw == "" || strings.ContainsAny(raw, "\\#\r\n\t ") {
-		return false
-	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Opaque != "" || u.User != nil || u.Host == "" || u.Fragment != "" {
+	u, ok := parseCanonicalRedirect(raw)
+	if !ok {
 		return false
 	}
 	if !previewViewerAllowed(ctx, m, ws, st, membershipID) {
@@ -217,6 +214,20 @@ func (m *manager) devIdPRedirectAllowed(ctx context.Context, ws store.Workspace,
 		return u.Host == previewHostname(ph.slug, ph.port, m.previewDomain) && previewPortAllowed(st, ph.port)
 	}
 	return false
+}
+
+// parseCanonicalRedirect is the first cut every redirect_uri ACL makes (the dev IdP's and the
+// /mcp authorization server's): backslash, fragment, userinfo, whitespace and opaque forms are
+// refused outright. The callers then compare the host as written, never a normalised form.
+func parseCanonicalRedirect(raw string) (*url.URL, bool) {
+	if raw == "" || strings.ContainsAny(raw, "\\#\r\n\t ") {
+		return nil, false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Opaque != "" || u.User != nil || u.Host == "" || u.Fragment != "" {
+		return nil, false
+	}
+	return u, true
 }
 
 func devIdPProfileJSON(p devIdPProfile) string {
