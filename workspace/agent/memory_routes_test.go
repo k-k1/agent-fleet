@@ -81,6 +81,7 @@ func TestMemberWriteRoutesRequireTheMark(t *testing.T) {
 		"/agents/memory/entries/project-move",
 		"/agents/memory/snapshots",
 		"/agents/memory/import/apply",
+		"/agents/memory-review/run",
 		"/agents/memory-review/proposals/list",
 		"/agents/memory-review/proposals/approve",
 		"/agents/memory-review/proposals/reject",
