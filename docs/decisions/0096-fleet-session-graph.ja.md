@@ -604,3 +604,11 @@ SCM のコミットグラフ（`lib/gitgraph.ts` / `features/scm/CommitGraph.tsx
   （`go test` / `tsc` / `vitest` / `vite build` / `i18n:lint`）＋ headless Chromium での描画実測。
 - **P3（この ADR の外）**: 会話 id による絞り込み（0027 の「1 会話の往復」の吸収）、テナント横断の
   管理者向け俯瞰、観測の穴を埋める常設掃引の要否の再検討。
+
+## 追記 2026-10-20: 停滞ツリーへの通知（#2397）
+
+Agent の停滞ツリー監視（`workspace/agent/internal/sessionx/stalled_tree.go`）は、親へ通知を注入するとき
+`ev:"stall"` の activity 行を 1 本追記する（`to` = 通知した親、`excerpt` = 待機中の子）。`peek` と同じく
+台帳のみで、`toDTOActivity` に case を持たないため、凍結済みの DTO と `console/src/types/fleetgraph.ts` は
+変わらない。グラフ上では、配信が記録する通常の `instruct` 矢印（`agent` 発・source `notice`）として見える。
+stall を独立したマークとして描くのは凍結型の契約変更になるため、ここでは決めない。

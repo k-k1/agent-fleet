@@ -70,6 +70,7 @@ const (
 	OriginDiscord        = "discord"
 	OriginSlack          = "slack"
 	OriginAutoResume     = "auto-resume"
+	OriginNotice         = "notice"
 )
 
 // Origin says where a TurnInput came from.
