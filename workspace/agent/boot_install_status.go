@@ -212,8 +212,11 @@ func cliPresent(kind, cmd string) bool {
 	if launchOverridden(kind) {
 		return true
 	}
-	if kind == "opencode" && opencode.WantsV2() && opencode.V2Binary() != "" {
-		return true
+	// opencode launches the private opt-in binary only while opencode.UseV2 says so (chosen,
+	// installed and the PATH one still 1.x); otherwise the PATH one is what runs, and a private
+	// install left behind by an earlier choice must not stand in for it.
+	if kind == "opencode" && opencode.UseV2() {
+		return execFile(opencode.V2Binary())
 	}
 	if _, err := exec.LookPath(cmd); err == nil {
 		return true

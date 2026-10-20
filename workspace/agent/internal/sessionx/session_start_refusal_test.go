@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 // refuseKind installs a KindStartRefusal that refuses exactly kind with the code the Agent uses
@@ -145,5 +146,41 @@ func TestStartOfAStoredTerminalSessionIsRefused(t *testing.T) {
 	w := callHandler(HandleStartSession, http.MethodPost, name, "")
 	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "cli_install_no_space") {
 		t.Fatalf("start = %d %s, want 409 cli_install_no_space", w.Code, w.Body)
+	}
+}
+
+// Managed input of every kind (turn, input, carried answer) starts the runtime itself through
+// Resume, without ensureSessionTmux: a stopped session whose CLI did not install is refused with
+// the code there too, and the driver is never asked to start.
+func TestManagedInputIsRefusedBeforeResume(t *testing.T) {
+	home := writebackEnv(t)
+	refuseKind(t, session.KindCodex)
+	launched := false
+	useLockingDriver(t, session.KindCodex, &lockingDriver{onResume: func() { launched = true }})
+	const name = "mgrefuse1"
+	session.WriteMeta(session.Meta{Name: name, Dir: home, Kind: session.KindCodex, Driver: session.DriverManaged})
+
+	for _, tc := range []struct {
+		route string
+		h     http.HandlerFunc
+		body  string
+	}{
+		{"turn", HandleSessionTurn, `{"op":"start","prompt":"hi"}`},
+		{"input", HandleSessionInput, `{"prompt":"hi"}`},
+	} {
+		w := callHandler(tc.h, http.MethodPost, name, tc.body)
+		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "cli_install_no_space") || launched {
+			t.Errorf("%s = %d %s (launched=%v), want 409 cli_install_no_space and no launch", tc.route, w.Code, w.Body, launched)
+		}
+	}
+
+	// A carried answer on a stopped session goes through ensureSessionTmux; its typed refusal
+	// must reach the answer as the code, not start_failed.
+	if !status.PutCarried(session.UUID(home, name), status.Carried{Kind: "permission", Permission: "Bash · ls"}, "halt") {
+		t.Fatal("carried not stored")
+	}
+	w := callHandler(HandleSessionCarriedAnswer, http.MethodPost, name, `{"decision":"continue"}`)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "cli_install_no_space") {
+		t.Errorf("carried answer = %d %s, want 409 cli_install_no_space", w.Code, w.Body)
 	}
 }

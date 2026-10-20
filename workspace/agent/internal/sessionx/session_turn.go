@@ -175,7 +175,7 @@ func handleManagedTurn(lease *lifegate.Lease, w http.ResponseWriter, meta sessio
 		handleQueueEdit(w, d, meta, req)
 		return
 	}
-	h, err := d.Resume(meta)
+	h, err := resumeManaged(d, meta)
 	if err != nil {
 		writeRuntimeErr(w, err)
 		return
@@ -241,7 +241,7 @@ func handleQueueEdit(w http.ResponseWriter, d agents.Driver, meta session.Meta, 
 		h, _ = lh.LiveHandle(meta)
 	} else {
 		var err error
-		if h, err = d.Resume(meta); err != nil {
+		if h, err = resumeManaged(d, meta); err != nil {
 			writeRuntimeErr(w, err)
 			return
 		}
@@ -330,7 +330,7 @@ func HandleSessionRespond(w http.ResponseWriter, r *http.Request) {
 				"managed driver はこの kind ではまだ利用できません")
 			return
 		}
-		h, err := d.Resume(meta)
+		h, err := resumeManaged(d, meta)
 		if err != nil {
 			writeRuntimeErr(w, err)
 			return
@@ -410,7 +410,7 @@ func HandleSessionSettingsGet(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	h, err := d.Resume(meta)
+	h, err := resumeManaged(d, meta)
 	if err != nil {
 		writeRuntimeErr(w, err)
 		return
@@ -478,7 +478,7 @@ func HandleSessionSettings(w http.ResponseWriter, r *http.Request) {
 			"managed driver はこの kind ではまだ利用できません")
 		return
 	}
-	h, err := d.Resume(meta)
+	h, err := resumeManaged(d, meta)
 	if err != nil {
 		writeRuntimeErr(w, err)
 		return

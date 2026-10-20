@@ -757,7 +757,7 @@ func handleManagedInputPrompt(lease *lifegate.Lease, w http.ResponseWriter, meta
 			"managed driver はこの kind ではまだ利用できません")
 		return
 	}
-	h, err := d.Resume(meta)
+	h, err := resumeManaged(d, meta)
 	if err != nil {
 		writeRuntimeErr(w, err)
 		return

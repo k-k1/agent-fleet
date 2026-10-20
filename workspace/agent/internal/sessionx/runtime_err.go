@@ -30,6 +30,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // writeRuntimeErr turns a managed-runtime launch failure into an HTTP response. Gate-derived
@@ -37,6 +38,9 @@ import (
 // else stays 502 + runtime_failed. Both carry err.Error() as the message: a generic code cannot
 // express the "why", so the Console shows it alongside via errDetail().
 func writeRuntimeErr(w http.ResponseWriter, err error) {
+	if writeStartRefusal(w, err) {
+		return
+	}
 	if errors.Is(err, errDriverSwitching) {
 		httpx.WriteErr(w, http.StatusConflict, errCodeDriverSwitching, err.Error())
 		return
@@ -57,4 +61,27 @@ func runtimeErrMessage(err error) string {
 		msg += "\n\n--- stderr (tail) ---\n" + tail
 	}
 	return msg
+}
+
+// resumeManaged is d.Resume for a launch the Agent makes on a caller's behalf: a session that is
+// already alive keeps the idempotent Resume, and one that would be started is refused, with the
+// reason, when its CLI failed to install. Every managed input path (turn, input, answer, bridge,
+// carried) goes through it, so the refusal is not only on the explicit start endpoints.
+func resumeManaged(d agents.Driver, m session.Meta) (agents.ThreadHandle, error) {
+	if !ManagedAlive(m) {
+		if ref := startRefusal(m.Kind); ref != nil {
+			return nil, &StartRefusalError{ref}
+		}
+	}
+	return d.Resume(m)
+}
+
+// writeStartRefusal answers err with its typed code when it is a StartRefusalError.
+func writeStartRefusal(w http.ResponseWriter, err error) bool {
+	var refusal *StartRefusalError
+	if !errors.As(err, &refusal) {
+		return false
+	}
+	httpx.WriteErr(w, refusal.Ref.Status, refusal.Ref.Code, refusal.Ref.Message)
+	return true
 }
