@@ -796,3 +796,15 @@ func TestDamagedRangeAndScheduledFireItemsRenderTheirFacts(t *testing.T) {
 		t.Errorf("fallbackText overridden: %q", got)
 	}
 }
+
+// jobId is an unbounded string on the wire; the derived summary obeys the same one-line,
+// 80-rune Info limit as every other summary.
+func TestScheduledFireSummaryIsClipped(t *testing.T) {
+	sf := item(msp.ItemKindScheduledFire, "s-2", 1)
+	sf.Status = msp.ItemStatusCompleted
+	sf.JobID = sp(strings.Repeat("j", 1000) + "\nsecond line")
+	got := turnsFromItems([]msp.Item{sf})[0].Parts[0].Info
+	if strings.Contains(got, "\n") || len([]rune(got)) > 81 {
+		t.Errorf("Info not clipped: %d runes, newline=%v", len([]rune(got)), strings.Contains(got, "\n"))
+	}
+}

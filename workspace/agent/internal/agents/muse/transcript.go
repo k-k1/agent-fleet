@@ -429,7 +429,7 @@ func genericPart(it msp.Item) transcript.Part {
 		p.Info = string(*it.Event)
 	}
 	if p.Info == "" {
-		p.Info = kindSummary(it)
+		p.Info = transcript.Clip(kindSummary(it))
 	}
 	if it.Status != msp.ItemStatusCompleted {
 		p.Output = failureText(it)
