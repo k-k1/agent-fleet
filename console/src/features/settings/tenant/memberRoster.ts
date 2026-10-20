@@ -43,7 +43,7 @@ export function attentionReasons(m: Member, now = Date.now()): AttentionReason[]
 }
 
 export type RosterFilter = "all" | "running" | "attention" | "stopped" | "removed";
-export type RosterSort = "attention" | "name";
+export type RosterSort = "attention" | "name" | "last_active";
 
 export const ROSTER_FILTERS: RosterFilter[] = ["all", "running", "attention", "stopped", "removed"];
 
@@ -78,9 +78,28 @@ export function matchesQuery(m: Member, q: string): boolean {
 const byName = (a: Member, b: Member) =>
   memberTitle(a).localeCompare(memberTitle(b)) || a.user_key.localeCompare(b.user_key);
 
+/** last_active_at as epoch ms, null when absent or unparsable. */
+export function lastActiveMs(m: Member): number | null {
+  if (!m.last_active_at) return null;
+  const t = Date.parse(m.last_active_at);
+  return Number.isFinite(t) ? t : null;
+}
+
 export function sortMembers(list: Member[], sort: RosterSort, now = Date.now()): Member[] {
   const out = [...list];
   if (sort === "name") return out.sort(byName);
+  if (sort === "last_active") {
+    // Most recent first; a member with no value goes last rather than first, where a missing
+    // date would read as "never active" at the top of the list.
+    return out.sort((a, b) => {
+      const ta = lastActiveMs(a);
+      const tb = lastActiveMs(b);
+      if (ta === null && tb === null) return byName(a, b);
+      if (ta === null) return 1;
+      if (tb === null) return -1;
+      return tb - ta || byName(a, b);
+    });
+  }
   const rank = (m: Member) => (attentionReasons(m, now).length > 0 ? 0 : 1);
   return out.sort((a, b) => rank(a) - rank(b) || byName(a, b));
 }

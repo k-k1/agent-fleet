@@ -123,7 +123,7 @@ func (u *usageSampler) sample(ctx context.Context) {
 				log.Printf("showback: add usage (%s): %v", ws.ContainerName, err)
 			}
 			if err := u.mgr.store.AddUsageHour(ctx, ws.MembershipID, ws.TenantID, hour,
-				u.counters(ctx, rt, secs, backgroundHoldMax(parseLimits(t.Limits), u.backgroundDef))); err != nil {
+				u.counters(ctx, ws, rt, secs, backgroundHoldMax(parseLimits(t.Limits), u.backgroundDef))); err != nil {
 				log.Printf("showback: add hourly usage (%s): %v", ws.ContainerName, err)
 			}
 		}
@@ -145,13 +145,20 @@ func (u *usageSampler) sample(ctx context.Context) {
 // A workspace mid-start, or one whose Agent is wedged, is exactly the case where the
 // count is unknown, and "0 sessions" would draw a cold cell over a busy hour — the same
 // 0-vs-unmeasured confusion the usage ledger keeps re-teaching.
-func (u *usageSampler) counters(ctx context.Context, rt runtime.Runtime, secs int, bgMax time.Duration) store.UsageHourCounters {
+func (u *usageSampler) counters(ctx context.Context, ws store.Workspace, rt runtime.Runtime, secs int, bgMax time.Duration) store.UsageHourCounters {
 	c := store.UsageHourCounters{Samples: 1, RunningSecs: secs}
 	sctx, cancel := context.WithTimeout(ctx, usageSessionTimeout)
 	defer cancel()
 	env, err := u.mgr.agentSessionsEnv(sctx, rt)
 	if err != nil {
 		return c
+	}
+	// Keep the session mirror fresh for every running workspace, from the envelope this
+	// sample already paid for: the member roster reads sessions and their age from the
+	// mirror, and the list handlers only refresh it for a workspace someone opens. Only a
+	// successful read gets here, so an unreachable Agent leaves the mirror as it was.
+	if err := u.mgr.store.ReplaceSessions(ctx, ws.ID, sessionRows(env.Sessions)); err != nil {
+		log.Printf("showback: mirror sessions (%s): %v", ws.ContainerName, err)
 	}
 	alive, busy := 0, 0
 	for _, s := range env.Sessions {

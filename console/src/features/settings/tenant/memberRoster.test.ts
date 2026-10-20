@@ -81,3 +81,15 @@ describe("filter, search and sort", () => {
     expect(list.filter((x) => matchesQuery(x, "")).length).toBe(5);
   });
 });
+
+describe("sortMembers by last active", () => {
+  it("puts the most recent first and members with no value last", () => {
+    const list = [
+      m({ user_key: "none", email: "a@x.com" }),
+      m({ user_key: "old", email: "b@x.com", last_active_at: "2026-10-01T00:00:00Z" }),
+      m({ user_key: "bad", email: "c@x.com", last_active_at: "not a date" }),
+      m({ user_key: "new", email: "d@x.com", last_active_at: "2026-10-19T00:00:00Z" }),
+    ];
+    expect(sortMembers(list, "last_active", NOW).map((x) => x.user_key)).toEqual(["new", "old", "none", "bad"]);
+  });
+});

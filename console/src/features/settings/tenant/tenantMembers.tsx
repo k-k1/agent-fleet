@@ -17,6 +17,7 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 // component renders nothing itself, so no condition is kept here.
 import { useT } from "../../../lib/i18n/index.ts";
 import type { MsgKey } from "../../../lib/i18n/index.ts";
+import { relTime } from "../../../lib/intl.ts";
 import { elapsedShort, remainingShort } from "../../../lib/sessionview.ts";
 import { fmtGbHint, ladderFor, memberClassID, slotFor, slotMemLabel, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
 import type { Member, MemberAutoStop, MemberIdle, WsSizing } from "../parts/adminShared.ts";
@@ -153,6 +154,7 @@ function MemberGrid({
         <select aria-label={tr("admin.roster_sort_label")} value={sort} onChange={(e) => setSort(e.target.value as RosterSort)}>
           <option value="attention">{tr("admin.roster_sort_attention")}</option>
           <option value="name">{tr("admin.roster_sort_name")}</option>
+          <option value="last_active">{tr("admin.roster_sort_last_active")}</option>
         </select>
         <input
           type="search"
@@ -209,12 +211,62 @@ function MemberCard({ m, sizing, now, onOpen }: { m: Member; sizing: WsSizing; n
         )}
         <Icon name="chevron-right" className="mr-go" />
       </span>
+      <MemberSessions m={m} />
       <span className="mc-foot">
         <MemberIdleChip idle={m.idle} state={m.state} />
         <MemberAutoStopChip autoStop={m.auto_stop} />
         <MemberSizeChips m={m} sizing={sizing} />
       </span>
     </button>
+  );
+}
+
+// MemberSessions — sessions against max_sessions and, on a stopped card, when the member was last
+// active. The bar is always beside its numbers: a bar alone cannot be read by anyone who cannot
+// tell its colours apart. The figures are the CP's mirror (refreshed by the usage sampler), so the
+// mirror's age is shown with them instead of passing a five-minute-old count off as live.
+function MemberSessions({ m }: { m: Member }) {
+  const tr = useT();
+  const s = m.sessions;
+  const max = m.max_sessions && m.max_sessions > 0 ? m.max_sessions : 0;
+  const stopped = m.state !== "running" && m.state !== "starting";
+  const ago = stopped && m.last_active_at ? relTime(m.last_active_at) : "";
+  if (!s && !ago) return null;
+  const text = s
+    ? tr(max ? "admin.roster_sessions_max" : "admin.roster_sessions", {
+        live: String(s.live),
+        total: String(s.total),
+        max: String(max),
+      })
+    : "";
+  const pct = max ? Math.min(100, Math.round((s!.live / max) * 100)) : 0;
+  return (
+    <span className="mc-sessions">
+      {s && (
+        <span className="mc-sess-row">
+          {max > 0 && (
+            <span
+              className={"mc-bar" + (s.live >= max ? " full" : "")}
+              role="progressbar"
+              aria-label={tr("admin.roster_sessions_label")}
+              aria-valuemin={0}
+              aria-valuemax={max}
+              aria-valuenow={Math.min(s.live, max)}
+              aria-valuetext={text}
+            >
+              <span className="mc-bar-fill" style={{ width: pct + "%" }} />
+            </span>
+          )}
+          <span className="mc-sess-text">{text}</span>
+          {s.observed_at && (
+            <span className="muted" title={new Date(s.observed_at).toLocaleString()}>
+              {tr("admin.roster_observed", { ago: relTime(s.observed_at) })}
+            </span>
+          )}
+        </span>
+      )}
+      {ago && <span className="muted mc-last-active">{tr("admin.roster_last_active", { ago })}</span>}
+    </span>
   );
 }
 

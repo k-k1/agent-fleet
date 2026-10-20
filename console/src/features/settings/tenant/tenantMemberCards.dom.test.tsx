@@ -20,8 +20,16 @@ import { en } from "../../../lib/i18n/locales/en.ts";
 
 const AUTO_STOP = { kind: "start-deadline", phase: "x", limit_minutes: 30, stopped_at: "2026-10-01T10:00:00Z" };
 const ROSTER = [
-  { user_key: "u-alice", email: "alice@x.com", role: "member", state: "running", status: "active" },
-  { user_key: "u-bob", email: "bob@x.com", role: "member", state: "stopped", status: "active" },
+  {
+    user_key: "u-alice", email: "alice@x.com", role: "member", state: "running", status: "active", max_sessions: 4,
+    last_active_at: new Date().toISOString(),
+    sessions: { live: 3, total: 5, observed_at: new Date(Date.now() - 2 * 60_000).toISOString() },
+  },
+  {
+    user_key: "u-bob", email: "bob@x.com", role: "member", state: "stopped", status: "active",
+    last_active_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+    sessions: { live: 0, total: 4, observed_at: new Date(Date.now() - 3 * 3600_000).toISOString() },
+  },
   { user_key: "u-carol", email: "carol@x.com", role: "member", state: "stopped", status: "active", auto_stop: AUTO_STOP },
   { user_key: "u-dave", email: "dave@x.com", role: "member", state: "none", status: "active", has_workspace: false },
   { user_key: "u-erin", email: "erin@x.com", role: "member", state: "stopped", status: "removed" },
@@ -103,6 +111,23 @@ describe("member cards", () => {
     await mount();
     await act(async () => cards()[0].click());
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ user_key: "u-carol" }));
+  });
+
+  it("shows sessions against the limit with the numbers as text, and last active on a stopped card", async () => {
+    await mount();
+    const card = (t: string) => cards().find((c) => c.querySelector(".mc-title")?.textContent === t)!;
+    const alice = card("alice@x.com");
+    expect(alice.querySelector(".mc-sess-text")?.textContent).toBe("3 live / 5 total (limit 4)");
+    const bar = alice.querySelector<HTMLElement>(".mc-bar")!;
+    expect(bar.getAttribute("aria-valuenow")).toBe("3");
+    expect(bar.getAttribute("aria-valuemax")).toBe("4");
+    expect(alice.textContent).not.toContain("Last active");
+    const bob = card("bob@x.com");
+    expect(bob.querySelector(".mc-sess-text")?.textContent).toBe("0 live / 4 total");
+    expect(bob.querySelector(".mc-bar")).toBeNull(); // no limit set: no bar, the numbers remain
+    expect(bob.querySelector(".mc-last-active")?.textContent).toMatch(/^Last active /);
+    // A member with no mirror and no activity gets no line at all.
+    expect(card("dave@x.com").querySelector(".mc-sessions")).toBeNull();
   });
 
   // Thirty cards must not mean thirty Agent calls: the page reads one roster response.

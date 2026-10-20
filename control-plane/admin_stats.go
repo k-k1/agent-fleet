@@ -114,18 +114,7 @@ func (a adminAPI) memberSessions(w http.ResponseWriter, r *http.Request) {
 	rt := a.mgr.runtimeFor(ws, noSecretKeys)
 	if rt.State(ctx) == "running" {
 		if list, err := a.mgr.agentSessions(ctx, rt); err == nil {
-			rows := make([]store.SessionRow, 0, len(list))
-			for _, s := range list {
-				state := "stopped"
-				if s.Alive {
-					state = "running"
-				}
-				rows = append(rows, store.SessionRow{
-					Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
-					Label: s.Label, CreatedAt: s.CreatedAt, State: state,
-				})
-			}
-			_ = a.mgr.store.ReplaceSessions(ctx, ws.ID, rows)
+			_ = a.mgr.store.ReplaceSessions(ctx, ws.ID, sessionRows(list))
 			writeJSON(w, http.StatusOK, map[string]any{"sessions": list})
 			return
 		}
