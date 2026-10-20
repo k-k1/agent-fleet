@@ -3,7 +3,7 @@
 // that must NOT cost a request, and a real path (Japanese names, a worktree "@" directory,
 // a line suffix, a trailing slash) that must survive to the existence check.
 import { describe, it, expect } from "vitest";
-import { pathRefCandidate } from "./pathref.ts";
+import { pathRefCandidate, sessionWorkDir } from "./pathref.ts";
 
 describe("pathRefCandidate", () => {
   it("accepts paths an agent actually cites", () => {
@@ -67,5 +67,36 @@ describe("pathRefCandidate", () => {
 
   it("rejects an absurdly long token instead of resolving it", () => {
     expect(pathRefCandidate("a/".repeat(400) + "b.md")).toBeNull();
+  });
+});
+
+describe("$AF_WORK_DIR", () => {
+  const wd = sessionWorkDir("sukbq4s");
+
+  it("expands the exact variable as the first segment, with a line suffix kept", () => {
+    expect(wd).toBe("~/.af-work/sukbq4s");
+    expect(pathRefCandidate("$AF_WORK_DIR/shots/x.png", wd)).toEqual({ ref: "~/.af-work/sukbq4s/shots/x.png" });
+    expect(pathRefCandidate("$AF_WORK_DIR", wd)).toEqual({ ref: "~/.af-work/sukbq4s" });
+    expect(pathRefCandidate("$AF_WORK_DIR/", wd)).toEqual({ ref: "~/.af-work/sukbq4s" });
+    expect(pathRefCandidate("$AF_WORK_DIR/a.ts:7", wd)).toEqual({ ref: "~/.af-work/sukbq4s/a.ts", line: 7 });
+  });
+
+  it("stays plain without a session", () => {
+    expect(pathRefCandidate("$AF_WORK_DIR/shots/x.png")).toBeNull();
+    expect(pathRefCandidate("$AF_WORK_DIR", sessionWorkDir(""))).toBeNull();
+  });
+
+  it("is not general shell expansion", () => {
+    expect(pathRefCandidate("$AF_WORK_DIRS/x.png", wd)).toBeNull();
+    expect(pathRefCandidate("${AF_WORK_DIR}/x.png", wd)).toBeNull();
+    expect(pathRefCandidate("a/$AF_WORK_DIR/x.png", wd)).toBeNull();
+    expect(pathRefCandidate("$HOME/x.png", wd)).toBeNull();
+    expect(pathRefCandidate("$AF_WORK_DIR/$X/y.png", wd)).toBeNull();
+  });
+
+  it("refuses a session name that is not one path segment", () => {
+    expect(sessionWorkDir("a/b")).toBe("");
+    expect(sessionWorkDir("..")).toBe("");
+    expect(sessionWorkDir(undefined)).toBe("");
   });
 });

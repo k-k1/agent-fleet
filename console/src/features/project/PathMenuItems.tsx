@@ -14,6 +14,7 @@ import { imageFormat } from "../../lib/filemeta.ts";
 import { downloadFolderZip } from "../files/folderZip.ts";
 import { chatCreate } from "../chat/api.ts";
 import { openChat } from "../chat/open.ts";
+import { useFilesStore } from "../files/store.ts";
 import { openGallery } from "../gallery/open.ts";
 
 const baseName = (p: string) => p.split("/").pop() || p;
@@ -91,11 +92,21 @@ export function PathMenuItems({ path, type, runMenu, closeMenu, afterCopy }: Pat
   // in the gallery. A file opens its parent folder focused on itself.
   const showGallery = !outside && (type === "dir" || !!imageFormat(path));
   const galleryDir = type === "dir" ? path : parentOf(path);
+  // The containing folder of a file, for the two "folder" items. Empty for a file directly in
+  // home: that folder is the whole tree, nothing worth opening.
+  const folder = isFile && !outside ? parentOf(path) : "";
+  // A non-image file has no "Open in gallery" of its own; its folder's gallery is offered
+  // instead (an image already opens that folder, focused on itself).
+  const showFolderGallery = !!folder && !showGallery;
   const openGalleryFromMenu = (e: RMouseEvent) => {
     // Modifier / middle click lands in another pane, the same rule the tree rows follow.
     const newPane = e.ctrlKey || e.metaKey || e.button === 1;
     const focus = isFile ? path : undefined;
     runMenu(() => openGallery(galleryDir, { focus, newPane }));
+  };
+  const openFolderGalleryFromMenu = (e: RMouseEvent) => {
+    const newPane = e.ctrlKey || e.metaKey || e.button === 1;
+    runMenu(() => openGallery(folder, { newPane }));
   };
 
   return (
@@ -117,6 +128,30 @@ export function PathMenuItems({ path, type, runMenu, closeMenu, afterCopy }: Pat
         </button>
       </li>
       {afterCopy}
+      {folder && (
+        <li>
+          <button
+            type="button"
+            className="ui-menu-item"
+            onClick={() => runMenu(() => useFilesStore.getState().revealInFiles(folder, { focus: true }))}
+          >
+            <Icon name="folder" /> {tr("gallery.open_folder")}
+          </button>
+        </li>
+      )}
+      {showFolderGallery && (
+        <li>
+          <button
+            type="button"
+            className="ui-menu-item"
+            onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+            onAuxClick={(e) => e.button === 1 && openFolderGalleryFromMenu(e)}
+            onClick={openFolderGalleryFromMenu}
+          >
+            <Icon name="file-media" /> {tr("proj.open_folder_gallery")}
+          </button>
+        </li>
+      )}
       {showGallery && (
         <li>
           <button

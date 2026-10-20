@@ -64,6 +64,8 @@ import { MarkStrip } from "./transcript/MarkStrip.tsx";
 import { targetLang } from "./translate.ts";
 import { useTranslate } from "./useTranslate.ts";
 import { SessionLinkMenuHost } from "../sessions/SessionLinkMenu.tsx";
+import { SessionWorkDirProvider } from "../viewer/workDirContext.ts";
+import { sessionWorkDir } from "../../lib/pathref.ts";
 import { PathLinkMenuHost } from "../viewer/PathLinkMenu.tsx";
 import { PortLinkMenuHost } from "../preview/PortLinkMenu.tsx";
 import { useMirrorState } from "./parts/useMirrorState.ts";
@@ -98,13 +100,15 @@ export function MirrorView(props: Parameters<typeof MirrorViewBody>[0]) {
   // Session slugs in the transcript open the session context menu (SessionLinkMenu.tsx), file
   // and folder links the path menu (PathLinkMenu.tsx).
   return (
-    <SessionLinkMenuHost>
-      <PathLinkMenuHost>
-        <PortLinkMenuHost>
-          <MirrorViewBody {...props} />
-        </PortLinkMenuHost>
-      </PathLinkMenuHost>
-    </SessionLinkMenuHost>
+    <SessionWorkDirProvider value={sessionWorkDir(props.session)}>
+      <SessionLinkMenuHost>
+        <PathLinkMenuHost>
+          <PortLinkMenuHost>
+            <MirrorViewBody {...props} />
+          </PortLinkMenuHost>
+        </PathLinkMenuHost>
+      </SessionLinkMenuHost>
+    </SessionWorkDirProvider>
   );
 }
 

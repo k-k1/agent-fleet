@@ -39,6 +39,11 @@ vi.mock("../files/store.ts", () => ({
   },
 }));
 
+const galleries: { path: string; focus?: string; newPane?: boolean }[] = [];
+vi.mock("../gallery/open.ts", () => ({
+  openGallery: (path: string, o: { focus?: string; newPane?: boolean } = {}) => galleries.push({ path, ...o }),
+}));
+
 const { MarkdownView } = await import("./MarkdownView.tsx");
 const { PathLinkMenuHost } = await import("./PathLinkMenu.tsx");
 const { clearPathRefCache } = await import("./pathResolve.ts");
@@ -89,6 +94,7 @@ beforeEach(() => {
   toasts.length = 0;
   opened.length = 0;
   revealed.length = 0;
+  galleries.length = 0;
   listing = [];
   gate = null;
   resolved = {};
@@ -182,6 +188,63 @@ describe("inline-code path link menu", () => {
     expect(labels()).toEqual(
       expect.arrayContaining(["Open in pane", "Open in new pane", "Show in Files", "Copy the name", "Copy the relative path", "Download"]),
     );
+  });
+
+  const item = (text: string) => [...menuEl()!.querySelectorAll("button")].find((b) => b.textContent?.includes(text))!;
+
+  it("offers Open folder and Open folder in gallery for a non-image file", async () => {
+    resolved["docs/a.md"] = { path: "repos/x/docs/a.md", type: "file" };
+    await render("see `docs/a.md`");
+    await contextMenu(pathLink());
+    expect(labels()).toEqual(expect.arrayContaining(["Open the folder", "Open folder in gallery"]));
+    await act(async () => item("Open the folder").click());
+    expect(revealed).toEqual(["repos/x/docs"]);
+    await contextMenu(pathLink());
+    await act(async () => item("Open folder in gallery").click());
+    // No image to focus: the folder itself, in the current pane.
+    expect(galleries).toEqual([{ path: "repos/x/docs", newPane: false }]);
+  });
+
+  it("opens the folder gallery in a new pane on Ctrl-click", async () => {
+    resolved["docs/a.md"] = { path: "repos/x/docs/a.md", type: "file" };
+    await render("see `docs/a.md`");
+    await contextMenu(pathLink());
+    await act(async () => {
+      item("Open folder in gallery").dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true }));
+    });
+    expect(galleries).toEqual([{ path: "repos/x/docs", newPane: true }]);
+  });
+
+  it("keeps the focused gallery item for an image instead of a second folder item", async () => {
+    resolved["docs/p.png"] = { path: "repos/x/docs/p.png", type: "file" };
+    await render("see `docs/p.png`");
+    await contextMenu(pathLink());
+    expect(labels()).toContain("Open in gallery");
+    expect(labels()).not.toContain("Open folder in gallery");
+    expect(labels()).toContain("Open the folder");
+  });
+
+  it("offers no folder items for a file directly in home or outside it, nor for a folder", async () => {
+    resolved["a.md"] = { path: "a.md", type: "file" };
+    await render("see `a.md`");
+    await contextMenu(pathLink());
+    expect(labels()).not.toContain("Open the folder");
+    expect(labels()).not.toContain("Open folder in gallery");
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    resolved["/scratch/out.txt"] = { path: "/scratch/out.txt", type: "file" };
+    await render("see `/scratch/out.txt`");
+    await contextMenu(pathLink());
+    expect(labels()).not.toContain("Open the folder");
+    expect(labels()).not.toContain("Open folder in gallery");
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    listing = [{ name: "docs", type: "dir" }];
+    await render("[docs](docs)");
+    await contextMenu(repoLink());
+    expect(labels()).not.toContain("Open the folder");
   });
 
   it("limits a path outside home to open, copy path and download", async () => {
