@@ -172,6 +172,21 @@ function HostUpdateSection() {
   );
 }
 
+// bootReasonKey maps the Agent's closed set of boot-install failure reasons to their strings;
+// anything unknown reads as "other".
+function bootReasonKey(reason?: string) {
+  switch (reason) {
+    case "no_space":
+      return "env.boot_reason_no_space" as const;
+    case "network":
+      return "env.boot_reason_network" as const;
+    case "checksum":
+      return "env.boot_reason_checksum" as const;
+    default:
+      return "env.boot_reason_other" as const;
+  }
+}
+
 // ToolVersions is a read-only section showing the bundled tools (claude / opencode /
 // codex / rtk / gh / go / node / python) from three angles: effective (what PATH
 // resolves), baked into the image, and a ~/.local override. ~/.local/bin comes first on
@@ -246,6 +261,13 @@ function ToolVersions({ running, cliRelease }: { running: boolean; cliRelease?: 
                 <td className="tool-ver-name">{t.name}</td>
                 <td>
                   {cell(t.effective)}
+                  {/* What the start-time install said, so a bare "—" is not read as "this kind is
+                      not offered" when the install failed (typically a full home). */}
+                  {t.bootInstall?.status === "failed" && (
+                    <span className="tool-ver-pin is-behind" title={tr("env.boot_failed_title")}>
+                      {tr("env.boot_failed", { reason: tr(bootReasonKey(t.bootInstall.reason)) })}
+                    </span>
+                  )}
                   {t.overridden && (
                     <span className="tool-ver-badge" title={tr("env.override_title")}>
                       override
