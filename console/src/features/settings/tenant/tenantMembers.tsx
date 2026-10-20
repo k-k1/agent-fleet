@@ -8,7 +8,7 @@
 // isSuper only decides whether to show the operations that mean something to a deployment
 // admin alone (granting and revoking the role). PUT /api/admin/membership-role is fixed at
 // withSuperAdmin, so hiding the button here is presentation only.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { api, rawJSON } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -35,6 +35,8 @@ import {
   sortMembers,
 } from "./memberRoster.ts";
 import type { AttentionReason, RosterFilter, RosterSort, RosterState } from "./memberRoster.ts";
+import { useLiveStats } from "./memberLiveStats.ts";
+import type { LiveReading } from "./memberLiveStats.ts";
 
 // MembersPanel — the roster and "add member", as one component so the tenant settings modal
 // and the admin modal use the same implementation.
@@ -88,7 +90,7 @@ export function MembersPanel({
       ) : members.length === 0 ? (
         <p className="muted">{tr("admin.no_members")}</p>
       ) : (
-        <MemberGrid members={members} sizing={sizing} onOpenMember={onOpenMember} />
+        <MemberGrid slug={slug} members={members} sizing={sizing} onOpenMember={onOpenMember} />
       )}
       <AddMember slug={slug} isSuper={isSuper} onAdded={loadMembers} />
     </section>
@@ -107,10 +109,12 @@ const FILTER_LABEL: Record<RosterFilter, MsgKey> = {
 // Everything works on the single GET …/members response: tenants have dozens of members, and a
 // card that fetched its own stats would fan out one Agent call each on every render.
 function MemberGrid({
+  slug,
   members,
   sizing,
   onOpenMember,
 }: {
+  slug: string;
   members: Member[];
   sizing: WsSizing;
   onOpenMember: (m: Member) => void;
@@ -119,12 +123,28 @@ function MemberGrid({
   const [filter, setFilter] = useState<RosterFilter>("all");
   const [sort, setSort] = useState<RosterSort>("attention");
   const [query, setQuery] = useState("");
+  // Live memory / CPU only for cards that are running AND on screen (IntersectionObserver in
+  // each card); a card the filter hides or scrolls away unobserves itself and drops out.
+  const [onScreen, setOnScreen] = useState<ReadonlySet<string>>(new Set());
+  const setVisible = useCallback((key: string, v: boolean) => {
+    setOnScreen((prev) => {
+      if (prev.has(key) === v) return prev;
+      const next = new Set(prev);
+      if (v) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }, []);
   const now = Date.now();
   const counts = rosterCounts(members, now);
   const shown = sortMembers(
     members.filter((m) => matchesFilter(m, filter, now) && matchesQuery(m, query)),
     sort,
     now,
+  );
+  const live = useLiveStats(
+    slug,
+    shown.filter((m) => m.state === "running" && onScreen.has(m.user_key)).map((m) => m.user_key),
   );
   return (
     <>
@@ -173,7 +193,15 @@ function MemberGrid({
       ) : (
         <div className="member-grid">
           {shown.map((m) => (
-            <MemberCard key={m.user_key} m={m} sizing={sizing} now={now} onOpen={() => onOpenMember(m)} />
+            <MemberCard
+              key={m.user_key}
+              m={m}
+              sizing={sizing}
+              now={now}
+              live={live[m.user_key]}
+              onVisible={setVisible}
+              onOpen={() => onOpenMember(m)}
+            />
           ))}
         </div>
       )}
@@ -181,12 +209,44 @@ function MemberGrid({
   );
 }
 
-function MemberCard({ m, sizing, now, onOpen }: { m: Member; sizing: WsSizing; now: number; onOpen: () => void }) {
+function MemberCard({
+  m,
+  sizing,
+  now,
+  live,
+  onVisible,
+  onOpen,
+}: {
+  m: Member;
+  sizing: WsSizing;
+  now: number;
+  live?: LiveReading;
+  onVisible: (key: string, v: boolean) => void;
+  onOpen: () => void;
+}) {
   const tr = useT();
+  const ref = useRef<HTMLButtonElement>(null);
+  const running = m.state === "running";
+  // Report on-screen-ness only for running cards; without IntersectionObserver the card is never
+  // reported, so nothing is polled (the safe direction).
+  useEffect(() => {
+    const el = ref.current;
+    if (!running || !el || typeof IntersectionObserver === "undefined") return;
+    const key = m.user_key;
+    const io = new IntersectionObserver((entries) => {
+      const last = entries[entries.length - 1];
+      if (last) onVisible(key, last.isIntersecting);
+    });
+    io.observe(el);
+    return () => {
+      io.disconnect();
+      onVisible(key, false);
+    };
+  }, [running, m.user_key, onVisible]);
   const reasons = attentionReasons(m, now);
   const title = memberTitle(m);
   return (
-    <button type="button" className={"member-card" + (reasons.length ? " attn" : "")} onClick={onOpen}>
+    <button ref={ref} type="button" className={"member-card" + (reasons.length ? " attn" : "")} onClick={onOpen}>
       <span className="mc-head">
         <span className="mc-name">
           <span className="mc-title" title={title}>
@@ -216,6 +276,7 @@ function MemberCard({ m, sizing, now, onOpen }: { m: Member; sizing: WsSizing; n
       </span>
       <MemberSessions m={m} />
       <MemberDisk m={m} now={now} />
+      {running && <MemberLive live={live} />}
       <span className="mc-foot">
         <MemberIdleChip idle={m.idle} state={m.state} />
         <MemberAutoStopChip autoStop={m.auto_stop} />
@@ -322,6 +383,53 @@ function MemberDisk({ m, now }: { m: Member; now: number }) {
       )}
       <span className="mc-disk-text">{text}</span>
       {ago && <span className="muted">{tr("admin.roster_observed", { ago })}</span>}
+    </span>
+  );
+}
+
+// MemberLive — live memory and CPU of a running card, read from the member's /stats while the card
+// is on screen. Each bar sits beside its numbers; until the first reading a muted placeholder holds
+// the space so the card does not jump. A memory total is absent when the runtime reports no cap,
+// and then the used figure stands alone without a bar.
+function MemberLive({ live }: { live?: LiveReading }) {
+  const tr = useT();
+  if (!live) return <span className="mc-live muted">{tr("admin.roster_live_wait")}</span>;
+  const memRatio = live.mem_max ? live.mem_used / live.mem_max : null;
+  const memText =
+    memRatio === null
+      ? tr("admin.roster_mem_used", { used: fmtGiB(live.mem_used) })
+      : tr("admin.roster_mem_gauge", {
+          used: fmtGiB(live.mem_used),
+          total: fmtGiB(live.mem_max!),
+          pct: String(Math.round(memRatio * 100)),
+        });
+  const cpuText = live.cpu_pct == null ? "" : tr("admin.roster_cpu_gauge", { pct: String(Math.round(live.cpu_pct)) });
+  return (
+    <span className="mc-live">
+      <LiveRow label={tr("admin.roster_mem_label")} text={memText} ratio={memRatio} />
+      {cpuText && <LiveRow label={tr("admin.roster_cpu_label")} text={cpuText} ratio={live.cpu_pct! / 100} />}
+    </span>
+  );
+}
+
+function LiveRow({ label, text, ratio }: { label: string; text: string; ratio: number | null }) {
+  const pct = ratio === null ? 0 : Math.max(0, Math.min(100, Math.round(ratio * 100)));
+  return (
+    <span className="mc-live-row">
+      {ratio !== null && (
+        <span
+          className="mc-bar"
+          role="progressbar"
+          aria-label={label}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={pct}
+          aria-valuetext={text}
+        >
+          <span className="mc-bar-fill" style={{ width: pct + "%" }} />
+        </span>
+      )}
+      <span className="mc-live-text">{text}</span>
     </span>
   );
 }

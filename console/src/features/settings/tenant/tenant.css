@@ -987,3 +987,17 @@
 .usage-intro {
   margin: 0 0 12px;
 }
+
+.mc-live {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+}
+
+.mc-live-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+}
