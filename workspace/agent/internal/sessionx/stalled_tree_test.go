@@ -364,6 +364,43 @@ func TestStalledTree_MessageClaimedBetweenReadingAndSendingBlocksTheNotice(t *te
 	}
 }
 
+// The last look reads the tree afresh: a turn that ran and ended, background work that began, or
+// a child that appeared after the tick leaves every member ready and idle, and only the new
+// reading shows it. stalledTreeReady runs inside the last look, so it plays that moment.
+func TestStalledTree_LastLookReadsTheTreeAgain(t *testing.T) {
+	cases := map[string]func(f *stalledFixture){
+		"turn ended meanwhile": func(f *stalledFixture) { f.turn["kid1"] = "2026-10-20T09:14:59Z" },
+		"background began":     func(f *stalledFixture) { f.bg["kid2"] = true },
+		"child added":          func(f *stalledFixture) { f.session("kid3", "parent", "idle") },
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newStalledFixture(t)
+			f.tree()
+			armed := true
+			stalledTreeReady = func(session.Meta) bool {
+				if armed {
+					armed = false
+					change(f)
+				}
+				return true
+			}
+			f.tickAt(0)
+			f.tickAt(mins(15)) // deadline: the last look sees the change and restarts the period
+			f.tickAt(mins(29))
+			if len(f.sent) != 0 {
+				t.Fatalf("notified although the tree changed at the last look: %v", f.sent)
+			}
+			f.bg["kid2"] = false
+			f.tickAt(mins(30))
+			f.tickAt(mins(45))
+			if len(f.sent) != 1 {
+				t.Fatalf("want one notice after a fresh quiet period, got %d", len(f.sent))
+			}
+		})
+	}
+}
+
 func TestStalledTree_DisabledByEnv(t *testing.T) {
 	f := newStalledFixture(t)
 	t.Setenv(stalledTreeEnv, "0")

@@ -348,7 +348,15 @@ func stalledTreeStillQuiet(t stalledTree) bool {
 			return false
 		}
 	}
-	return !peersInFlight(t.names())
+	// The same reading the tick takes, again: membership, every state and last turn end must be
+	// what the quiet period was counted on. A short turn that began and ended since the tick
+	// leaves the member ready and idle again, and only its turn end shows it.
+	for _, fresh := range collectStalledTrees() {
+		if fresh.Root == t.Root {
+			return fresh.quiet() && fresh.signature(false) == t.signature(false)
+		}
+	}
+	return false
 }
 
 func stalledTreeRestart(root string, now time.Time) {
