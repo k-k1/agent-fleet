@@ -464,7 +464,7 @@ func (a workspaceAPI) memberHomeWipeStop(r *http.Request, res *resolved, lease *
 // through it, and an outcome still unknown is left to the reconciler. Nothing is returned
 // for the caller to record.
 func (a workspaceAPI) memberHomeWipeFinish(ctx context.Context, res *resolved, lease *workspaceLifecycleLeaseGuard, what runtime.HomeWipe, unqueue func(), record *store.HomeOperation, lock ...*sync.Mutex) *apiError {
-	err := runtime.WipeHome(lease.Context(), res.rt, what)
+	err := a.mgr.wipeHome(lease.Context(), res.ws, res.rt, what)
 	if record != nil {
 		// The clearing mark reads as `starting`, which Start would take for a launch
 		// already under way.

@@ -410,6 +410,30 @@
   gap: 2px 8px;
 }
 
+.mc-disk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  font-size: 11px;
+}
+
+.mc-disk.warn {
+  color: var(--warn);
+}
+
+.mc-disk.error {
+  color: var(--err);
+}
+
+.mc-disk.warn .mc-bar-fill {
+  background: var(--warn);
+}
+
+.mc-disk.error .mc-bar-fill {
+  background: var(--err);
+}
+
 .mc-bar {
   flex: 0 0 64px;
   height: 4px;

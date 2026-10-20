@@ -24,7 +24,32 @@ export function rosterState(m: Member): RosterState {
   return "stopped";
 }
 
-export type AttentionReason = "auto_stop" | "hold_lapsed";
+export type AttentionReason = "auto_stop" | "hold_lapsed" | "disk_warn" | "disk_error";
+
+const GIB = 1024 ** 3;
+/** The thresholds #2383 uses for the boot-time disk check: warn at 85 %, error at 95 % or with
+ *  less than 2 GiB left. */
+export const DISK_WARN_RATIO = 0.85;
+export const DISK_ERROR_RATIO = 0.95;
+export const DISK_ERROR_FREE = 2 * GIB;
+
+export type DiskLevel = "ok" | "warn" | "error";
+
+/** The gauge's colour class, null when there is nothing to judge against (no reading, or a
+ *  reading with no total such as a local deployment with no disk quota). */
+export function diskLevel(m: Member): DiskLevel | null {
+  const d = m.disk;
+  if (!d || !d.total || d.total <= 0 || !Number.isFinite(d.used)) return null;
+  const ratio = d.used / d.total;
+  if (ratio >= DISK_ERROR_RATIO || d.total - d.used < DISK_ERROR_FREE) return "error";
+  if (ratio >= DISK_WARN_RATIO) return "warn";
+  return "ok";
+}
+
+export function diskRatio(m: Member): number | null {
+  const d = m.disk;
+  return d && d.total && d.total > 0 ? d.used / d.total : null;
+}
 
 /** Why this member needs the admin, empty when nothing does. Disk and boot-install reasons
  *  arrive with the data that carries them (#2385 phase 2). */
@@ -39,11 +64,14 @@ export function attentionReasons(m: Member, now = Date.now()): AttentionReason[]
     });
     if (lapsed) out.push("hold_lapsed");
   }
+  const dl = diskLevel(m);
+  if (dl === "error") out.push("disk_error");
+  else if (dl === "warn") out.push("disk_warn");
   return out;
 }
 
 export type RosterFilter = "all" | "running" | "attention" | "stopped" | "removed";
-export type RosterSort = "attention" | "name" | "last_active";
+export type RosterSort = "attention" | "name" | "last_active" | "disk";
 
 export const ROSTER_FILTERS: RosterFilter[] = ["all", "running", "attention", "stopped", "removed"];
 
@@ -88,6 +116,19 @@ export function lastActiveMs(m: Member): number | null {
 export function sortMembers(list: Member[], sort: RosterSort, now = Date.now()): Member[] {
   const out = [...list];
   if (sort === "name") return out.sort(byName);
+  if (sort === "disk") {
+    // Fullest first: error before warn before ok, then by ratio. A member with no ratio (never
+    // measured, or no total) goes last — a missing figure is not an empty disk.
+    const rank = (m: Member) => ({ error: 0, warn: 1, ok: 2 })[diskLevel(m) ?? "ok"];
+    return out.sort((a, b) => {
+      const ra = diskRatio(a);
+      const rb = diskRatio(b);
+      if (ra === null && rb === null) return byName(a, b);
+      if (ra === null) return 1;
+      if (rb === null) return -1;
+      return rank(a) - rank(b) || rb - ra || byName(a, b);
+    });
+  }
   if (sort === "last_active") {
     // Most recent first; a member with no value goes last rather than first, where a missing
     // date would read as "never active" at the top of the list.
@@ -100,7 +141,12 @@ export function sortMembers(list: Member[], sort: RosterSort, now = Date.now()):
       return tb - ta || byName(a, b);
     });
   }
-  const rank = (m: Member) => (attentionReasons(m, now).length > 0 ? 0 : 1);
+  // A full disk first (the acceptance rule: a member at >= 95 % leads the default order), then
+  // every other reason, then the rest.
+  const rank = (m: Member) => {
+    const r = attentionReasons(m, now);
+    return r.includes("disk_error") ? 0 : r.length > 0 ? 1 : 2;
+  };
   return out.sort((a, b) => rank(a) - rank(b) || byName(a, b));
 }
 

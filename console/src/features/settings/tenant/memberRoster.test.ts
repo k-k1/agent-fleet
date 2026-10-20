@@ -1,6 +1,6 @@
 // The roster's state words, "needs attention" and the filter / sort / search (#2385 phase 1).
 import { describe, it, expect } from "vitest";
-import { attentionReasons, matchesFilter, matchesQuery, rosterCounts, rosterState, sortMembers } from "./memberRoster.ts";
+import { attentionReasons, diskLevel, matchesFilter, matchesQuery, rosterCounts, rosterState, sortMembers } from "./memberRoster.ts";
 import type { Member } from "../parts/adminShared.ts";
 
 const NOW = Date.parse("2026-10-20T12:00:00Z");
@@ -91,5 +91,59 @@ describe("sortMembers by last active", () => {
       m({ user_key: "new", email: "d@x.com", last_active_at: "2026-10-19T00:00:00Z" }),
     ];
     expect(sortMembers(list, "last_active", NOW).map((x) => x.user_key)).toEqual(["new", "old", "none", "bad"]);
+  });
+});
+
+const GIB = 1024 ** 3;
+const withDisk = (used: number, total?: number) => m({ disk: { used, total } });
+
+describe("default attention order", () => {
+  it("leads with a full disk, whatever order the members arrive in", () => {
+    const err = m({ user_key: "zed", disk: { used: 96 * GIB, total: 100 * GIB } });
+    const warn = m({ user_key: "alice", disk: { used: 90 * GIB, total: 100 * GIB } });
+    const stopped = m({ user_key: "carol", state: "stopped", auto_stop: AUTO_STOP });
+    const calm = m({ user_key: "bob" });
+    const orders = [
+      [calm, warn, stopped, err],
+      [err, stopped, calm, warn],
+      [warn, calm, err, stopped],
+    ];
+    for (const list of orders) {
+      expect(sortMembers(list, "attention", NOW).map((x) => x.user_key)).toEqual(["zed", "alice", "carol", "bob"]);
+    }
+  });
+});
+
+describe("disk level and attention", () => {
+  it("warns at 85 %, errors at 95 % or under 2 GiB free", () => {
+    expect(diskLevel(withDisk(84 * GIB, 100 * GIB))).toBe("ok");
+    expect(diskLevel(withDisk(85 * GIB, 100 * GIB))).toBe("warn");
+    expect(diskLevel(withDisk(95 * GIB, 100 * GIB))).toBe("error");
+    // 50 % used but only 1.5 GiB left of 3 GiB.
+    expect(diskLevel(withDisk(1.5 * GIB, 3 * GIB))).toBe("error");
+    expect(diskLevel(withDisk(98 * GIB, 100 * GIB))).toBe("error");
+  });
+
+  it("judges nothing without a reading or a total", () => {
+    expect(diskLevel(m({}))).toBeNull();
+    expect(diskLevel(withDisk(500 * GIB))).toBeNull();
+    expect(diskLevel(withDisk(500 * GIB, 0))).toBeNull();
+    expect(attentionReasons(withDisk(500 * GIB), NOW)).toEqual([]);
+  });
+
+  it("adds a disk reason to needs-attention, stopped members included", () => {
+    expect(attentionReasons(m({ state: "stopped", disk: { used: 96 * GIB, total: 100 * GIB } }), NOW)).toEqual(["disk_error"]);
+    expect(attentionReasons(withDisk(90 * GIB, 100 * GIB), NOW)).toEqual(["disk_warn"]);
+  });
+
+  it("sorts the fullest first and members with no ratio last", () => {
+    const list = [
+      m({ user_key: "none" }),
+      m({ user_key: "ok", disk: { used: 10 * GIB, total: 100 * GIB } }),
+      m({ user_key: "used-only", disk: { used: 90 * GIB } }),
+      m({ user_key: "err", disk: { used: 96 * GIB, total: 100 * GIB } }),
+      m({ user_key: "warn", disk: { used: 90 * GIB, total: 100 * GIB } }),
+    ];
+    expect(sortMembers(list, "disk", NOW).map((x) => x.user_key)).toEqual(["err", "warn", "ok", "none", "used-only"]);
   });
 });
