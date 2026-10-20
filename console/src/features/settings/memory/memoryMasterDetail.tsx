@@ -30,6 +30,8 @@ import { useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { PurgeHistoryDialog, type PurgeTarget } from "./memoryPurge.tsx";
 import { MemoryHistory, useAllChanges } from "./memoryHistory.tsx";
+import { useSettingsUI } from "../store.ts";
+import { keyOf, matchMemories, parseMemoryTarget, scopeKey } from "./memorySearch.ts";
 import type { MemoryBody, MemoryChange, MemoryListed, MemorySearchHit, SecretFinding } from "./memoryTypes.ts";
 
 const TYPES = ["user", "feedback", "project", "reference"] as const;
@@ -48,10 +50,6 @@ const FILTERS = [
   ["forgotten", "mem.md_f_forgotten"],
 ] as const;
 
-// "user" or "project:<id>": one browsable scope.
-const scopeKey = (m: { scope: string; project?: { id: string } }) =>
-  m.scope === "user" ? "user" : "project:" + (m.project?.id ?? "");
-const keyOf = (m: { scope: string; project?: { id: string }; name: string }) => scopeKey(m) + "/" + m.name;
 
 /** The memory the detail pane shows. A forgotten one has no body to read, only its last change. */
 interface Selected {
@@ -254,18 +252,7 @@ export function MemoriesMasterDetail({
   // brings its matching lines. Order: listed matches as listed, then body-only hits in rank order.
   const snippets = new Map(hits.map((h) => [keyOf(h), h.snippets ?? []]));
   const inScope = (rows ?? []).filter((m) => scope === ALL || scopeKey(m) === scope);
-  const byField = (m: MemoryListed) =>
-    `${m.name}\n${m.description}\n${m.type ?? ""}\n${m.authorKind}\n${m.authorSession}`.toLowerCase().includes(q);
-  const fieldRows = inScope.filter(byField);
-  const seen = new Set(fieldRows.map(keyOf));
-  const byKey = new Map(inScope.map((m) => [keyOf(m), m]));
-  const bodyRows = hits.flatMap((h) => {
-    const m = byKey.get(keyOf(h));
-    if (!m || seen.has(keyOf(h))) return [];
-    seen.add(keyOf(h));
-    return [m];
-  });
-  const matched = q ? [...fieldRows, ...bodyRows] : inScope;
+  const matched = matchMemories(inScope, hits, q);
   const shown = filter === "pinned" ? matched.filter((m) => m.pinned) : matched;
   // The answer may be for the scope shown before a switch while the new one is still loading: a row of
   // another scope must never be on screen, since its Unforget writes that scope.
@@ -351,6 +338,25 @@ export function MemoriesMasterDetail({
     setMenuOpen(false);
     setSel(selFrom(m, gone));
   };
+  // A memory the command palette asked for (openSettings target). Taken once the list has landed:
+  // one that is not listed (forgotten since, or withheld by the secret scan) is dropped, leaving
+  // the view as it was, and the request never lingers to fire on a later mount.
+  const asked = useSettingsUI((st) => st.settingsTarget);
+  const clearAsked = useSettingsUI((st) => st.clearSettingsTarget);
+  useEffect(() => {
+    const want = parseMemoryTarget(asked);
+    if (!want || rows === null) return;
+    clearAsked();
+    const m = rows.find((r) => keyOf(r) === keyOf({ scope: want.scope, project: { id: want.project }, name: want.name }));
+    if (!m) return;
+    focusPane.current = true;
+    setDraft(null);
+    setMenuOpen(false);
+    setQuery("");
+    setScope(ALL);
+    setFilter("all");
+    setSel(selFrom(m, false));
+  }, [asked, rows, clearAsked]);
   const back = () => {
     if (paneKey) focusRow.current = key;
     setDraft(null);
