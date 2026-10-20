@@ -398,3 +398,47 @@ func TestDuCacheRefusesAResultThatStartedBeforeTheWipe(t *testing.T) {
 		t.Errorf("a post-wipe result was refused: %d %v", v, ok)
 	}
 }
+
+// A disk read that blocks must not hold up the accounting: when du is first entered, every
+// running workspace's usage row and the heartbeat are already written.
+func TestSlowDiskReadDoesNotDelayUsageAccounting(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, tn, _, _ := usageHourFixture(t)
+	id2, _ := st.UpsertIdentity(ctx, "x@acme.co.jp", "x-acme-co-jp", "")
+	mem2, err := st.EnsureMembership(ctx, id2.ID, tn.ID, "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateWorkspace(ctx, store.Workspace{ID: "W-2", TenantID: tn.ID, MembershipID: mem2.ID,
+		ContainerName: "af-ws-sales-x", DataDir: "/srv/data/sales/x", AgentPort: "7732", AgentToken: "tok",
+		State: "running", CreatedAt: store.NowTS()}); err != nil {
+		t.Fatal(err)
+	}
+	mgr.dataRoot = t.TempDir()
+	diskUsages.m = map[string]diskSample{}
+	prevDU := runDU
+	t.Cleanup(func() { runDU = prevDU })
+	var rowsAtFirstDU = -1
+	runDU = func(c context.Context, _ string) ([]byte, error) {
+		if rowsAtFirstDU < 0 {
+			rows, _ := st.ListUsageHourly(ctx, "", "2000-01-01T00", "2999-01-01T00")
+			rowsAtFirstDU = len(rows) // two members + the heartbeat when nothing waited on du
+		}
+		<-c.Done()
+		return nil, c.Err()
+	}
+	srv := diskAgent(t, `{}`)
+	mgr.rtFactory = sizedFactory{stubFactory{rt: stubRuntime{endpoint: srv.URL}}, runtime.DiskMeaningQuota}
+
+	u := newUsageSampler(mgr, 5*time.Minute)
+	u.diskBudget = 300 * time.Millisecond
+	started := time.Now()
+	u.sample(ctx)
+
+	if rowsAtFirstDU != 3 {
+		t.Errorf("rows written before the first du = %d, want 3 (both workspaces + heartbeat)", rowsAtFirstDU)
+	}
+	if time.Since(started) > 5*time.Second {
+		t.Errorf("sweep took %v: the disk budget did not bound it", time.Since(started))
+	}
+}

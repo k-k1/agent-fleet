@@ -60,6 +60,11 @@ type usageSampler struct {
 	// backgroundDef is the deployment default of background_hold_max, so the heatmap reads a
 	// lapsed background row as the reaper does (0 = unbounded).
 	backgroundDef time.Duration
+	// diskBudget caps one sweep's disk reads; 0 = half the interval. A field so a test can
+	// shrink it.
+	diskBudget time.Duration
+	// diskNext is where the next sweep starts reading disks (see recordDisks).
+	diskNext int
 }
 
 func newUsageSampler(mgr *manager, interval time.Duration) *usageSampler {
@@ -106,6 +111,12 @@ func (u *usageSampler) sample(ctx context.Context) {
 	// "unknown", so writing it after a partial walk would paint grey over workspaces
 	// this pass never reached — a confident answer produced by a failure.
 	complete := true
+	// The disk gauge is cosmetic and its reads are slow (du up to usageDiskTimeout, a statfs
+	// call up to usageSessionTimeout, per workspace), while everything else here is accounting.
+	// Collected in the walk, read once the usage rows, deadline dispatch, heartbeat and prune
+	// are done, so a slow home delays none of them.
+	var disks []diskJob
+	defer func() { u.recordDisks(ctx, disks) }()
 	found := map[string]bool{}
 	var overdue []overdueStart
 	for _, t := range tenants {
@@ -133,9 +144,10 @@ func (u *usageSampler) sample(ctx context.Context) {
 			if err := u.mgr.store.AddUsageHour(ctx, ws.MembershipID, ws.TenantID, hour, c); err != nil {
 				log.Printf("showback: add hourly usage (%s): %v", ws.ContainerName, err)
 			}
-			// MeasuredSecs == 0 means the Agent did not answer the sessions read a moment ago;
-			// asking it again for the disk would only spend a second timeout on the same wedge.
-			u.recordDisk(ctx, ws, rt, c.MeasuredSecs > 0)
+			// The disk read is deferred to after the accounting (see recordDisks). MeasuredSecs == 0
+			// means the Agent did not answer the sessions read a moment ago; asking it again for
+			// the disk would only spend a second timeout on the same wedge.
+			disks = append(disks, diskJob{ws, rt, c.MeasuredSecs > 0})
 		}
 	}
 	u.deadline.dispatch(ctx, overdue)
@@ -193,6 +205,38 @@ func (u *usageSampler) counters(ctx context.Context, ws store.Workspace, rt runt
 	c.MaxSessions = alive
 	c.MaxBusy = busy
 	return c
+}
+
+// diskJob is one running workspace whose disk is read after the accounting.
+type diskJob struct {
+	ws      store.Workspace
+	rt      runtime.Runtime
+	agentUp bool
+}
+
+// recordDisks reads the collected workspaces' disks within an overall budget (half the sampling
+// interval unless diskBudget says otherwise). Workspaces left when it runs out are skipped, not
+// stored as anything: their last reading and its age stay. The next sweep starts where this one
+// stopped, so a slow head of the list cannot starve the tail of readings for good.
+func (u *usageSampler) recordDisks(ctx context.Context, jobs []diskJob) {
+	if len(jobs) == 0 {
+		return
+	}
+	budget := u.diskBudget
+	if budget <= 0 {
+		budget = u.interval / 2
+	}
+	bctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	start := u.diskNext % len(jobs)
+	for i := 0; i < len(jobs); i++ {
+		if bctx.Err() != nil {
+			return
+		}
+		j := jobs[(start+i)%len(jobs)]
+		u.recordDisk(bctx, j.ws, j.rt, j.agentUp)
+		u.diskNext = start + i + 1
+	}
 }
 
 // recordDisk stores the home-disk reading the roster gauges from, for one running workspace.
