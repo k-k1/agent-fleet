@@ -42,7 +42,7 @@ async function mountRoster(members: unknown[]) {
   });
 }
 
-const rowText = (i: number) => (document.querySelectorAll(".member-row")[i]?.textContent || "").replace(/\s+/g, " ");
+const rowText = (i: number) => (document.querySelectorAll(".member-card")[i]?.textContent || "").replace(/\s+/g, " ");
 
 afterEach(() => {
   act(() => root?.unmount());
