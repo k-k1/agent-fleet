@@ -246,6 +246,13 @@ function ToolVersions({ running, cliRelease }: { running: boolean; cliRelease?: 
                 <td className="tool-ver-name">{t.name}</td>
                 <td>
                   {cell(t.effective)}
+                  {/* What the start-time install said, so a bare "—" is not read as "this kind is
+                      not offered" when the install failed (typically a full home). */}
+                  {t.bootInstall?.status === "failed" && (
+                    <span className="tool-ver-pin is-behind" title={tr("env.boot_failed_title")}>
+                      {tr("env.boot_failed", { reason: tr("env.boot_reason_" + (t.bootInstall.reason || "other")) })}
+                    </span>
+                  )}
                   {t.overridden && (
                     <span className="tool-ver-badge" title={tr("env.override_title")}>
                       override

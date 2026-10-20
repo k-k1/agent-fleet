@@ -779,7 +779,9 @@ administrator's to set.
 - **Usage**: a moving chart of memory and vCPU (one sample every 4 seconds, up to an hour) plus the
   home disk's usage. **The disk figure is only yours on an instance of your own**; on a shared host it is
   the whole filesystem home sits on (labelled so, and never coloured as a warning), because other
-  members fill it too. **The ceilings are the rows above** (this workspace's memory limit and its core
+  members fill it too. On an instance of your own a notice appears once when free space drops below
+  about 2 GiB (or usage passes 90%), and again only after the disk has had real headroom (above about
+  3 GiB free and under 85%) and filled up again. **The ceilings are the rows above** (this workspace's memory limit and its core
   count), so "70% of what?" is answered on the same screen. The chart keeps moving while a value is
   unchanged (the control plane is what guarantees it is unchanged) but **breaks the line for any period
   it could not read**, and it says so when a process was killed for memory during the window.
@@ -808,7 +810,8 @@ administrator's to set.
 
 ### Toolchain
 
-Timezone, Node.js / Java / Go versions, the table of effective tool versions, **agent CLI updates** (off by
+Timezone, Node.js / Java / Go versions, the table of effective tool versions (a CLI whose install at the workspace's start failed shows
+"install failed" with the reason, typically a full home disk, and is tried again at the next start), **agent CLI updates** (off by
 default), and applying an Agent Fleet update.
 → [10 Going further](10-integrations.md#environment-settings-and-recreating-the-workspace)
 

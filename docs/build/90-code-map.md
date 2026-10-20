@@ -150,6 +150,7 @@ How the image is built, and what is baked or installed on demand, is
 | `af-db.sh`, `af-aws-exec.sh`, `af-scratch.sh`, `af-arch-repair.sh` | The `af-*` commands on `PATH`. The first two only exec `workspace-agent` |
 | `gh-auth-wrapper.sh`, `bkt-auth-wrapper.sh`, `jira-auth-wrapper.sh`, `svn-auth-wrapper.sh` | Installed as `gh`, `bkt`, `jira` and `svn` ahead of the real binaries, so all four find the credentials saved through the Console (`bkt-auth-wrapper-test.sh` and `jira-auth-wrapper-test.sh` pin their wrappers) |
 | `entrypoint-boot-install-test.sh` | Runs the lean boot-install section of `entrypoint.sh` against stubs and pins that a half-failed rtk / agy / cursor install logs WARN, writes no marker and is reinstalled next start |
+| `entrypoint-boot-status-test.sh` | Runs the same section and pins the per-CLI status file the Agent serves, its reason classes, the free-space skip and the prune that runs before the installs |
 | `jvm.Dockerfile` | Builds the shared JDK directory (`deploy/local/provision-jvm.sh`) |
 | `opencode-plugin/`, `tmux.conf` | The opencode plugin and the tmux configuration |
 | `.dockerignore` | ⚠️ It excludes `**/*.md` and then re-includes the ones the build needs. **Read it before adding a markdown file the image or the agent binary embeds** |

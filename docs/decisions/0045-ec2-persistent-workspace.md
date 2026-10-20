@@ -1750,3 +1750,15 @@ the CP env `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS` (default on; `false` restore
 after the new slot is claimed (release, detach) still fails the Start and retries at the next, as for a reservation.
 Two fences: the sweeper writes its own `af-slot-retire` tag (not the operator's `af-slot-replace`, so a Start that wins the race stays an automatic move: no pill, capacity fallback) on a free outdated slot *before* its occupancy re-read (so placement's `slotNowReserved` and the re-read meet, as for decision 33), and it retires any `af-replaces-home` slot that no home claimed ten minutes after its launch, so a lost launch answer cannot leave a box behind, and the fallback re-reads the old slot's reservation first (a reservation made while the launch was failing still fails the Start); a launch whose answer was lost is adopted through `af-replaces-home` rather than left behind.
 Code: `runtime_ecs_ec2_slot_replace.go` (`replaceReservedSlot(…, automatic)`, `slotRetiring`).
+
+**Note (2026-10-20, #2383): a full home is now visible, and the boot-install no longer starts what cannot fit.** The
+entrypoint records each CLI's boot-install outcome (ok / skipped / failed with a reason class `no_space` / `network` /
+`checksum` / `other`) in `/tmp/af-boot-install.tsv` (not in home: a full home could not hold it), the Agent serves it on
+`/env/tool-versions` as `bootInstall`, and Settings › Toolchains shows "install failed: <reason>" instead of `—`. On a
+dedicated box the CP marks the stats frame `home_own`, and the Console raises one notice per crossing of less than 2 GiB
+free or over 90% (re-armed above 3 GiB free and under 85%). The entrypoint prunes old CLI versions
+(`workspace-agent prune-cli-versions`) before installing, and skips the npm install, keeping what is installed, when
+home has under 300 MiB per package free. Measured with local tarballs: a failed `npm install -g` that replaces one
+package and fails another rolls the replaced one back (the old version stays) but leaves the failing package's `bin`
+link behind; a real ENOSPC during the rollback itself was not reproduced. Not done: flagging the member to the tenant admin,
+refusing a session start with the reason (Follow-ups: see the PR).

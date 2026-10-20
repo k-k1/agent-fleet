@@ -373,6 +373,13 @@ func workspaceStats(ctx context.Context, m *manager, rt runtime.Runtime, state f
 	if total, ok := out["oom_kill_total"].(uint64); ok && oomKills.observe(rt.Name(), total, time.Now()) {
 		out["oom_recent"] = true
 	}
+	// home_own: disk_used / disk_total describe this member's own volume (an EBS home), so a
+	// threshold on them means something. Everywhere else they are a statfs of the whole host or
+	// a shared EFS, where "your home is nearly full" would blame the member for other people's
+	// bytes. Absent means "do not warn", never "fine".
+	if mp, ok := rt.(machineProfiler); ok && mp.MachineProfile().Dedicated {
+		out["home_own"] = true
+	}
 	return out
 }
 

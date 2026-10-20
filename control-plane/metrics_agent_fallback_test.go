@@ -160,3 +160,43 @@ func TestStoppedWorkspaceIsNotProbed(t *testing.T) {
 		t.Errorf("running = %v, want false", out["running"])
 	}
 }
+
+// dedicatedStatsRuntime declares a box of the member's own, the way the EC2 slot pool does.
+type dedicatedStatsRuntime struct {
+	agentStatsRuntime
+	dedicated bool
+}
+
+func (r dedicatedStatsRuntime) MachineProfile() runtime.WorkspaceMachine {
+	return runtime.WorkspaceMachine{Dedicated: r.dedicated}
+}
+
+// home_own is what lets the Console warn about a nearly full home: only a member's own volume
+// makes disk_used / disk_total theirs. A shared host (no MachineProfile) and a profile that
+// declares no dedicated box must both leave it out.
+func TestWorkspaceStatsMarksAMembersOwnHomeVolume(t *testing.T) {
+	srv := statsAgent(t, http.StatusOK, `{"mem_used":1,"disk_used":95,"disk_total":100}`)
+	_, mgr, _, _ := destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
+	base := agentStatsRuntime{stubRuntime: stubRuntime{endpoint: srv.URL}, state: "running"}
+	running := func() string { return "running" }
+
+	cases := []struct {
+		name string
+		rt   runtime.Runtime
+		want bool
+	}{
+		{"dedicated ec2 box", dedicatedStatsRuntime{base, true}, true},
+		{"profile without a dedicated box", dedicatedStatsRuntime{base, false}, false},
+		{"no machine profile (docker / fargate)", base, false},
+	}
+	for _, c := range cases {
+		out := workspaceStats(context.Background(), mgr, c.rt, running)
+		got, present := out["home_own"].(bool)
+		if present != c.want || got != c.want {
+			t.Errorf("%s: home_own = %v (present=%v), want %v", c.name, out["home_own"], present, c.want)
+		}
+		if out["disk_used"] == nil {
+			t.Errorf("%s: disk_used missing, the agent path did not run", c.name)
+		}
+	}
+}

@@ -1608,3 +1608,12 @@ CP の環境変数 `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS`（既定 ON。`false
 スロットを確保したあとの失敗（解放・切り離し）は、予約と同じく起動を失敗させ、次の起動でやり直す。
 柵が 2 つある。スイーパーは空きの古いスロットに、占有の再読の*前*に専用の `af-slot-retire` タグ（管理者の `af-slot-replace` ではない。競り勝った起動は自動の入れ替えのままで、pill も出ず、容量不足なら戻る）を書く（配置側の `slotNowReserved` と再読が、決定 33 と同じく交わる）。どのホームも確保せず起動から 10 分たった `af-replaces-home` のスロットも退役させるので、起動の応答が失われても置き去りにならない。戻す前には古いスロットの予約を読み直す（起動の失敗中に入った予約は、起動を失敗させる）。応答が失われた起動は、置き去りにせず `af-replaces-home` で拾って使う。
 コード: `runtime_ecs_ec2_slot_replace.go`（`replaceReservedSlot(…, automatic)`・`slotRetiring`）。
+
+**注記（2026-10-20, #2383）: home がいっぱいなことが見えるようになり、boot-install は入りきらないものを始めなくなった。** entrypoint は CLI ごとの
+boot-install 結果（ok / skipped / failed と理由 `no_space` / `network` / `checksum` / `other`）を `/tmp/af-boot-install.tsv` に書く（home には置かない。
+満杯の home には書けないため）。Agent は `/env/tool-versions` の `bootInstall` として返し、設定 › ツールチェーンは `—` の代わりに「インストール失敗: <理由>」を
+出す。専有ボックスでは CP が stats フレームに `home_own` を付け、Console は空き 2 GiB 未満または使用率 90% 超を超えるたびに通知を 1 回出す（空き 3 GiB 超かつ
+85% 未満で再武装）。entrypoint はインストールの前に古い CLI バージョンを削除し（`workspace-agent prune-cli-versions`）、パッケージ 1 つあたり 300 MiB の空きが
+ないときは npm インストールを行わず、入っているものを残す。ローカル tarball で実測: 1 つを置き換え 1 つが失敗する `npm install -g` は、置き換えたものを
+ロールバックして旧版を残すが、失敗したパッケージの `bin` リンクが残る。ロールバック自体の本物の ENOSPC は再現していない。未対応: テナント管理者への
+フラグ表示、理由つきのセッション開始拒否（フォローアップは PR を参照）。
