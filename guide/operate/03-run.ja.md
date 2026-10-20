@@ -330,7 +330,10 @@ Control Plane が配信時に同梱の画像を塗り替えるので、環境ご
   「今から使う」が明確な操作（セッションの作成・fork・再開、持ち越し質問への回答、SSM ノード探索）
   のときだけ自動で起こします。**ターミナルを開いても起動しませんし、閲覧や Console のリロードでも
   起動しません**（「停止しています。起動してください」を返します）。開きっぱなしのタブが Workspace を
-  温め続けることはありません。
+  温め続けることはありません。バックグラウンド作業（アイドルのセッションが起動した開発サーバや
+  `run_in_background` のタスク）が Workspace を抱える時間は最大 **2 時間**です
+  （`AF_BACKGROUND_HOLD_MAX`、テナント単位は `background_hold_max`。`0` で無制限）。超えると
+  Workspace を起こし続ける理由から外れます。本当に長いジョブを残すには「自動停止しない」ピンを使います。
   資源の節約に有効です。env の意味は `deploy/compose/.env.example`、仕組みは
   `docs/build/09-deploy.ja.md` §9.4。ターミナルの claude / agy / codex / cursor / copilot / kiro / opencode セッションが「作業中」と表示されて
   Workspace を起こし続けるのは、生きている兆候がある間だけです。出力・状態の変化・実行中の
@@ -338,7 +341,12 @@ Control Plane が配信時に同梱の画像を塗り替えるので、環境ご
   無い時間」の上限です。claude と agy は実行中のツールプロセスも生存とみなしますが、codex・cursor・
   copilot・kiro・opencode はペインの再描画だけが生存信号です（スピナーや経過時間の更新も含む）。
   そのため、ペインが 1 時間静止したままの無出力ツールは失効し得て、逆にスピナーが動き続ける固まった
-  セッションは抱え続けます。これらの kind で長い無出力作業をするときは「自動停止しない」ピンを使ってください。managed セッションと他の kind（muse・lcpp・shell・ssm）はまだこの上限の対象外で、
+  セッションは抱え続けます。これらの kind で長い無出力作業をするときは「自動停止しない」ピンを使ってください。managed の cursor・kiro・codex・opencode セッションも、ランタイム自身の生存信号（そのセッションに関する最後のメッセージ、
+  または実行中のツール。未完了のツール呼び出し／item、cursor と kiro はランタイムの下のツールプロセスも）で同じように上限がかかります。
+  実測は cursor-agent 2026.10.16・kiro-cli 2.31.0・codex 0.163.0・opencode 2.0.32 のローカル shell ツールです。
+  Agent が何が動いているか判断できないとき（再起動・再接続・プロセス表の読み取り失敗）は抱え続けます。
+  opencode 1.x と managed の muse・lcpp・copilot はこの上限の対象外です（ADR 0055 の 2026-10-17 追記を参照）。
+  shell と ssm は「作業中」にならず、muse と lcpp にはターミナル方式が無いので、これらの kind に上限をかける対象はありません。
   バックグラウンド作業と「自動停止しない」ピンは常に対象外です。
 - **force-stop（力業）**: `docker compose down` では**ユーザーの Workspace は止まりません**（compose
   管理外）。特定の Workspace を確実に止めたいときは、super_admin が Console の Admin パネルから

@@ -218,6 +218,10 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// on both is checked mid-handler by tenantAdminFor.
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/network", adm.tenantNetwork)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/network", adm.setTenantNetwork)
+	// The tenant-wide switch for AF memory used from outside Agent Fleet through /mcp (#2318).
+	// tenant_admin, checked mid-handler by tenantAdminFor like the network rule above.
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/external-memory", adm.tenantExternalMemory)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/external-memory", adm.setTenantExternalMemory)
 	// The tenant's DEFAULT machine class (docs/log/70). tenant_admin for the same reason
 	// as the network rule above — it reaches nothing outside this tenant, and the set
 	// it may choose from is bounded by allowed_slot_classes, which only a super_admin
@@ -923,6 +927,8 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/user-notes/preview", rest)
 	// codex / opencode model catalogs (launch model picker) — proxied to the Agent.
 	mux.HandleFunc("GET /api/agents/{kind}/models", rest)
+	// The Agent's kind catalog (#1077) — proxied to the Agent.
+	mux.HandleFunc("GET /api/agents/kinds", rest)
 	// Agent memory version control (docs/log/39 / ADR 0022 P1-P3) — a relay for work that
 	// completes inside the Agent. The last segment differs from {kind}/models, so the
 	// patterns do not collide.
@@ -941,6 +947,18 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/agents/memory/entries/revert", rest)
 	mux.HandleFunc("GET /api/agents/memory/entries/list", rest)
 	mux.HandleFunc("POST /api/agents/memory/entries/pin", rest)
+	// The background memory review (ADR 0117): the member's "Review now" for one session, and the
+	// review's status. The CP signs the run (member_origin.go) and audits it (proxy.go).
+	mux.HandleFunc("GET /api/agents/memory-review", rest)
+	mux.HandleFunc("POST /api/agents/memory-review/run", rest)
+	// The member's decisions on the queue the review fills (approve, reject, reject all, undo a
+	// run) are signed and audited; the list is signed too (it returns unpublished text) and not
+	// audited (it changes nothing).
+	mux.HandleFunc("POST /api/agents/memory-review/proposals/list", rest)
+	mux.HandleFunc("POST /api/agents/memory-review/proposals/approve", rest)
+	mux.HandleFunc("POST /api/agents/memory-review/proposals/reject", rest)
+	mux.HandleFunc("POST /api/agents/memory-review/proposals/reject-all", rest)
+	mux.HandleFunc("POST /api/agents/memory-review/runs/revert", rest)
 	// The member's create/edit (#1997). The CP signs it, pin and revert (member_origin.go).
 	mux.HandleFunc("POST /api/agents/memory/entries/member-save", rest)
 	mux.HandleFunc("GET /api/agents/memory/entries/member-read", rest)

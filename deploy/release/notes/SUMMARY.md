@@ -14,6 +14,62 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 
 ---
 
+## [0.32.1](0.32.1.md) — 2026-10-19
+
+**CLI pins** — Claude Code 2.1.303
+
+**New / Improved**
+
+- **[agent memory]** Tenant admins can block external access to Agent Fleet memory; allowed by default ([#2318](https://github.com/k-k1/agent-fleet/issues/2318))
+- **[issue tracker]** The Jira card says when the connection lacks the Jira Software scopes ([#2372](https://github.com/k-k1/agent-fleet/issues/2372), [#2377](https://github.com/k-k1/agent-fleet/issues/2377))
+
+**Fixed**
+
+- **[agent memory]** Memory suggestions ran automatically once turned on; automatic review is now a separate switch, off by default ([#2358](https://github.com/k-k1/agent-fleet/issues/2358), [#2356](https://github.com/k-k1/agent-fleet/issues/2356))
+- **[opencode]** A stopped session's conversation history was empty ([#2379](https://github.com/k-k1/agent-fleet/issues/2379))
+- **[workspace]** `jira issue create -p KEY` failed without `jira init` and reused another project's issue types ([#2369](https://github.com/k-k1/agent-fleet/issues/2369), [#2373](https://github.com/k-k1/agent-fleet/issues/2373))
+- **[work items]** A Jira work item's first prompt pointed at a Jira MCP server instead of the `jira` CLI ([#2367](https://github.com/k-k1/agent-fleet/issues/2367))
+- **[MCP]** The connection test passed for servers that lose sessions behind a load balancer ([#2368](https://github.com/k-k1/agent-fleet/issues/2368))
+
+## [0.32.0](0.32.0.md) — 2026-10-18
+
+**CLI pins** — Claude Code 2.1.302, Codex 0.163.0, Copilot 1.0.98, Antigravity 1.4.2, Cursor 2026.10.16-e3cb207, Kiro 2.32.0, OpenCode 2.0.32, Muse Code 1.4.10-R6427.1
+
+**New / Improved**
+
+- **[sessions]** Move a session to another agent with a handover file; a usage-limit band offers the move ([#2182](https://github.com/k-k1/agent-fleet/issues/2182), [#2254](https://github.com/k-k1/agent-fleet/issues/2254))
+- **[sessions]** Export a conversation as Markdown: conversation only, tool names, or tool output ([#2183](https://github.com/k-k1/agent-fleet/issues/2183), [#2202](https://github.com/k-k1/agent-fleet/issues/2202))
+- **[preview]** Development sign-in (dev OIDC IdP) for apps on preview hosts, with copy-ready app configuration and test personas; on by default ([#2218](https://github.com/k-k1/agent-fleet/issues/2218), [#2222](https://github.com/k-k1/agent-fleet/issues/2222), [#2223](https://github.com/k-k1/agent-fleet/issues/2223), [#2228](https://github.com/k-k1/agent-fleet/issues/2228), [#2304](https://github.com/k-k1/agent-fleet/issues/2304))
+- **[workspace]** The Jira CLI `jira` is bundled and signs in through the Jira connection ([#2178](https://github.com/k-k1/agent-fleet/issues/2178))
+- **[agent memory]** Experimental: finished sessions suggest memories, approved under Changes › Proposed; off by default ([#1559](https://github.com/k-k1/agent-fleet/issues/1559), [#2320](https://github.com/k-k1/agent-fleet/issues/2320), [#2321](https://github.com/k-k1/agent-fleet/issues/2321))
+- **[agent memory]** Agents outside Agent Fleet can use Agent Fleet memory through `/mcp`; off by default ([#1988](https://github.com/k-k1/agent-fleet/issues/1988), [#2329](https://github.com/k-k1/agent-fleet/issues/2329))
+- **[agent memory]** Settings split into Agent memory and Memory snapshots, list-and-detail memories, one Import & export page ([#2324](https://github.com/k-k1/agent-fleet/issues/2324))
+- **[opencode]** The image moves to opencode 2 (2.0.32); conversations carry over ([#2105](https://github.com/k-k1/agent-fleet/issues/2105), [#2134](https://github.com/k-k1/agent-fleet/issues/2134), [#2133](https://github.com/k-k1/agent-fleet/issues/2133))
+- **[plans]** Review a revised plan again in the same reviewer; review a carried plan in another session ([#2219](https://github.com/k-k1/agent-fleet/issues/2219), [#2211](https://github.com/k-k1/agent-fleet/issues/2211))
+- **[agents]** An expired Claude login in the assistant chat offers Re-authenticate and Retry; Re-authenticate opens the agent's card ([#2180](https://github.com/k-k1/agent-fleet/issues/2180), [#2177](https://github.com/k-k1/agent-fleet/issues/2177))
+- **[agents]** claude resumes sooner after giving up on a held login-refresh lock ([#2231](https://github.com/k-k1/agent-fleet/issues/2231))
+- **[idle stop]** Background work holds a workspace for at most 2 hours (`background_hold_max`); a Managed cursor, kiro, codex or opencode turn silent for an hour stops holding it (a running tool or an unobservable turn still holds) ([#2338](https://github.com/k-k1/agent-fleet/issues/2338), [#1942](https://github.com/k-k1/agent-fleet/issues/1942))
+- **[kiro]** Terminal approval prompts are read from kiro's recorder ([#2285](https://github.com/k-k1/agent-fleet/issues/2285))
+- **[cursor]** Terminal sessions record per-turn token usage ([#2286](https://github.com/k-k1/agent-fleet/issues/2286))
+- **[sessions]** The session menu is grouped into sections ([#2189](https://github.com/k-k1/agent-fleet/issues/2189))
+- **[agents]** claude helper calls no longer start your MCP servers ([#2334](https://github.com/k-k1/agent-fleet/issues/2334))
+
+**Fixed**
+
+- **[session-to-session messages]** Long or multi-line messages to a busy claude Terminal session were truncated; queued or rejected messages were reported as delivered ([#2195](https://github.com/k-k1/agent-fleet/issues/2195), [#2288](https://github.com/k-k1/agent-fleet/issues/2288), [#2299](https://github.com/k-k1/agent-fleet/issues/2299))
+- **[agent kinds]** `create_session` with a misspelled kind started a claude session ([#2297](https://github.com/k-k1/agent-fleet/issues/2297))
+- **[worktrees]** Switching to a remote branch went wrong when two remotes had the same branch name ([#2268](https://github.com/k-k1/agent-fleet/issues/2268))
+- **[idle stop]** A background shell running a `workspace-agent` command did not keep the workspace awake ([#2351](https://github.com/k-k1/agent-fleet/issues/2351))
+- **[usage]** Usage chips showed a window past its reset as near its cap ([#2184](https://github.com/k-k1/agent-fleet/issues/2184))
+- **[worktrees]** Delete working copy hid "Stop the running sessions first" for copies with unpushed or uncommitted work ([#2201](https://github.com/k-k1/agent-fleet/issues/2201))
+- **[console]** The project list emptied on a failed load; the active session row hid its state chip ([#2191](https://github.com/k-k1/agent-fleet/issues/2191), [#2192](https://github.com/k-k1/agent-fleet/issues/2192))
+- **[preview]** On a phone the WS bar's port preview buttons spilled out of the popover ([#2308](https://github.com/k-k1/agent-fleet/issues/2308))
+- **[native]** The user guide did not open on a native install without a rootfs ([#2315](https://github.com/k-k1/agent-fleet/issues/2315))
+- **[preview]** Malformed host names under the preview domain reached the Console instead of 404 ([#2240](https://github.com/k-k1/agent-fleet/issues/2240))
+- **[agent memory]** Snapshot history stayed on "Loading…" or read a failed load as empty; it now offers Retry ([#2344](https://github.com/k-k1/agent-fleet/issues/2344), [#2347](https://github.com/k-k1/agent-fleet/issues/2347), [#2349](https://github.com/k-k1/agent-fleet/issues/2349))
+- **[settings › toolchains]** `bkt` was missing ([#2179](https://github.com/k-k1/agent-fleet/issues/2179))
+- **[ECS]** The missing-EFS-backup warning stayed after a backup plan was added ([#2063](https://github.com/k-k1/agent-fleet/issues/2063), [#2066](https://github.com/k-k1/agent-fleet/issues/2066))
+
 ## [0.31.0](0.31.0.md) — 2026-10-14
 
 **CLI pins** — Claude Code 2.1.300, Codex 0.162.1, Copilot 1.0.97, Antigravity 1.3.5, Cursor 2026.10.12-d47ca18, Kiro 2.31.0, OpenCode 1.19.0, Muse Code 1.4.8-R6256.1

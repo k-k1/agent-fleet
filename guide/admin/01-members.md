@@ -18,9 +18,17 @@ name, its member count, the number of workspaces currently running ("N running")
 tenant-wide limits ("Limits — Workspace: X / Session: Y"). This is **read-only** (a super_admin
 sets the caps; see [02-limits.md](02-limits.md)).
 
-**Roster**: each member row shows a dot indicating running state, the internal identifier
-(`user_key`), the email address, and the role (`member` / `tenant_admin`). Clicking a row takes you
-to the member detail.
+**Roster**: one card per member. Each card shows the email address with the internal identifier
+(`user_key`) under it, the role (`member` / `tenant_admin`), and a state badge that says in words
+whether the workspace is Running, Starting, Stopped, Never started, Stopped automatically (the
+Control Plane stopped it) or Removed. Below that are the auto-stop outlook and the machine size.
+Clicking a card takes you to the member detail.
+
+Above the cards are the counts (running out of total, and how many need attention), a filter
+(All / Running / Needs attention / Stopped / Removed), a sort (needs attention first, or by name)
+and a search over name and email. A member **needs attention** when the Control Plane stopped
+their workspace, or when a session is still holding it open past its deadline; those cards have a
+warning edge and come first.
 
 **Member detail**: the screen that gathers that member's workspace resources, running sessions,
 and the various operations. Resources and sessions, force-stop, and limit settings are covered in
@@ -36,7 +44,7 @@ At the very bottom of the roster there is an **"Add member"** form.
    derived form (lowercase letters and digits separated by single hyphens, at most 40
    characters) because it becomes the name of the member's home directory; anything else is
    refused with a message that suggests the accepted form. Keys the server generated itself, as
-   shown in member rows, are accepted even when they run past 40 characters.
+   shown on the member cards, are accepted even when they run past 40 characters.
 2. As tenant_admin, you can only add **`member` (regular members)**. The role selector is shown
    only to super_admin. If you want to make someone an administrator, ask a super_admin as
    described below.
@@ -49,7 +57,7 @@ Point the newly added person to [member/](../member/README.md) in this guide.
 ### How email addresses relate to internal identifiers
 
 Members are identified internally by a **user_key** (a short identifier derived from the email).
-That is the monospace string you see in member rows and session lists. Normally you don't need to
+That is the monospace string you see on member cards and in session lists. Normally you don't need to
 think about it, since entering an email determines the key automatically, but in audit logs and the
 sessions overview the internal identifier is what is shown, so knowing the mapping of
 "this identifier = this person" makes them easier to read. Even for the same person, membership

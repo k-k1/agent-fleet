@@ -13,6 +13,62 @@
 
 ---
 
+## [0.32.1](0.32.1.ja.md) — 2026-10-19
+
+**CLI ピン** — Claude Code 2.1.303
+
+**New / Improved**
+
+- **[メモリ管理]** テナント管理者が外部からの Agent Fleet メモリ利用を止められる。既定は許可 ([#2318](https://github.com/k-k1/agent-fleet/issues/2318))
+- **[課題管理]** Jira カードが Jira Software のスコープ不足を表示する ([#2372](https://github.com/k-k1/agent-fleet/issues/2372), [#2377](https://github.com/k-k1/agent-fleet/issues/2377))
+
+**Fixed**
+
+- **[メモリ管理]** メモリの提案がオンにしたとたん自動で動いていた。自動のレビューは別スイッチ（既定オフ）に ([#2358](https://github.com/k-k1/agent-fleet/issues/2358), [#2356](https://github.com/k-k1/agent-fleet/issues/2356))
+- **[opencode]** 止めたセッションの会話履歴が空だった ([#2379](https://github.com/k-k1/agent-fleet/issues/2379))
+- **[ワークスペース]** `jira init` なしでは `jira issue create -p KEY` が失敗し、別プロジェクトの課題タイプを使っていた ([#2369](https://github.com/k-k1/agent-fleet/issues/2369), [#2373](https://github.com/k-k1/agent-fleet/issues/2373))
+- **[課題管理]** Jira の作業項目の最初のプロンプトが `jira` CLI でなく Jira MCP サーバーを指していた ([#2367](https://github.com/k-k1/agent-fleet/issues/2367))
+- **[MCP]** ロードバランサーの後ろでセッションを失うサーバーでも接続テストが成功していた ([#2368](https://github.com/k-k1/agent-fleet/issues/2368))
+
+## [0.32.0](0.32.0.ja.md) — 2026-10-18
+
+**CLI ピン** — Claude Code 2.1.302 / Codex 0.163.0 / Copilot 1.0.98 / Antigravity 1.4.2 / Cursor 2026.10.16-e3cb207 / Kiro 2.32.0 / OpenCode 2.0.32 / Muse Code 1.4.10-R6427.1
+
+**New / Improved**
+
+- **[セッション]** 引き継ぎファイルを付けてセッションを別のエージェントへ移す。利用上限の帯から移動を勧める ([#2182](https://github.com/k-k1/agent-fleet/issues/2182), [#2254](https://github.com/k-k1/agent-fleet/issues/2254))
+- **[セッション]** 会話を Markdown で書き出す：会話のみ・ツール名つき・ツールの出力つき ([#2183](https://github.com/k-k1/agent-fleet/issues/2183), [#2202](https://github.com/k-k1/agent-fleet/issues/2202))
+- **[プレビュー]** プレビュー用ホストのアプリ向け開発用ログイン（開発用 OIDC IdP）。設定例とテスト用ペルソナつき、既定でオン ([#2218](https://github.com/k-k1/agent-fleet/issues/2218), [#2222](https://github.com/k-k1/agent-fleet/issues/2222), [#2223](https://github.com/k-k1/agent-fleet/issues/2223), [#2228](https://github.com/k-k1/agent-fleet/issues/2228), [#2304](https://github.com/k-k1/agent-fleet/issues/2304))
+- **[ワークスペース]** Jira CLI `jira` を同梱し、Jira 接続でサインインする ([#2178](https://github.com/k-k1/agent-fleet/issues/2178))
+- **[メモリ管理]** 実験的：終わったセッションからメモリを提案し、変更 › 提案で承認する。既定はオフ ([#1559](https://github.com/k-k1/agent-fleet/issues/1559), [#2320](https://github.com/k-k1/agent-fleet/issues/2320), [#2321](https://github.com/k-k1/agent-fleet/issues/2321))
+- **[メモリ管理]** Agent Fleet の外のエージェントが `/mcp` で Agent Fleet メモリを使える。既定はオフ ([#1988](https://github.com/k-k1/agent-fleet/issues/1988), [#2329](https://github.com/k-k1/agent-fleet/issues/2329))
+- **[メモリ管理]** 設定をエージェントメモリとメモリのスナップショットに分け、メモリは一覧と詳細、取り込み・書き出しは 1 ページに ([#2324](https://github.com/k-k1/agent-fleet/issues/2324))
+- **[opencode]** イメージが opencode 2（2.0.32）になる。会話は引き継がれる ([#2105](https://github.com/k-k1/agent-fleet/issues/2105), [#2134](https://github.com/k-k1/agent-fleet/issues/2134), [#2133](https://github.com/k-k1/agent-fleet/issues/2133))
+- **[プラン]** 修正した計画を同じレビュー役で再レビューする。持ち越された計画も別セッションでレビューできる ([#2219](https://github.com/k-k1/agent-fleet/issues/2219), [#2211](https://github.com/k-k1/agent-fleet/issues/2211))
+- **[エージェント]** アシスタントのチャットで Claude のログイン切れに再認証と再試行を出し、再認証はそのエージェントのカードを開く ([#2180](https://github.com/k-k1/agent-fleet/issues/2180), [#2177](https://github.com/k-k1/agent-fleet/issues/2177))
+- **[エージェント]** ログイン更新のロック待ちをあきらめた claude がすぐ再開する ([#2231](https://github.com/k-k1/agent-fleet/issues/2231))
+- **[アイドル停止]** バックグラウンド作業がワークスペースを起こしておくのは最長 2 時間（`background_hold_max`）。マネージドの cursor・kiro・codex・opencode のターンも 1 時間動きがなければ起こし続けない（ツール実行中・観測不能時は除く） ([#2338](https://github.com/k-k1/agent-fleet/issues/2338), [#1942](https://github.com/k-k1/agent-fleet/issues/1942))
+- **[kiro]** ターミナルの承認待ちを kiro の記録ファイルから読む ([#2285](https://github.com/k-k1/agent-fleet/issues/2285))
+- **[cursor]** ターミナルセッションがターンごとのトークン使用量を記録する ([#2286](https://github.com/k-k1/agent-fleet/issues/2286))
+- **[セッション]** セッションメニューを区切りごとにまとめた ([#2189](https://github.com/k-k1/agent-fleet/issues/2189))
+- **[エージェント]** claude での補助呼び出しがあなたの MCP サーバーを起動しない ([#2334](https://github.com/k-k1/agent-fleet/issues/2334))
+
+**Fixed**
+
+- **[セッション間メッセージ]** 作業中の claude ターミナルセッションへの長い・複数行のメッセージが切れていた。キュー待ち・拒否されたメッセージを「届いた」と答えていた ([#2195](https://github.com/k-k1/agent-fleet/issues/2195), [#2288](https://github.com/k-k1/agent-fleet/issues/2288), [#2299](https://github.com/k-k1/agent-fleet/issues/2299))
+- **[エージェント種別]** `create_session` で種類を書き間違えると claude のセッションが始まっていた ([#2297](https://github.com/k-k1/agent-fleet/issues/2297))
+- **[ワークツリー]** 2 つのリモートに同名のブランチがあるとリモートブランチへの切り替えがおかしくなっていた ([#2268](https://github.com/k-k1/agent-fleet/issues/2268))
+- **[アイドル停止]** `workspace-agent` コマンドを動かすバックグラウンドシェルがワークスペースを起こしておく作業に数えられていなかった ([#2351](https://github.com/k-k1/agent-fleet/issues/2351))
+- **[利用量]** リセット時刻を過ぎた枠を上限間近と表示していた ([#2184](https://github.com/k-k1/agent-fleet/issues/2184))
+- **[ワークツリー]** 作業コピーの削除で、未プッシュ・未コミットの作業があると「先に実行中のセッションを止める」が出なかった ([#2201](https://github.com/k-k1/agent-fleet/issues/2201))
+- **[Console]** 読み込みに失敗するとプロジェクト一覧が空になっていた。選択中のセッション行が状態チップを隠していた ([#2191](https://github.com/k-k1/agent-fleet/issues/2191), [#2192](https://github.com/k-k1/agent-fleet/issues/2192))
+- **[プレビュー]** スマートフォンで WS バーのポートプレビューのボタンがポップオーバーからはみ出していた ([#2308](https://github.com/k-k1/agent-fleet/issues/2308))
+- **[ネイティブ]** rootfs を使わないネイティブ環境で利用ガイドが開かなかった ([#2315](https://github.com/k-k1/agent-fleet/issues/2315))
+- **[プレビュー]** プレビュー用ドメイン配下の不正なホスト名が 404 にならず Console へ届いていた ([#2240](https://github.com/k-k1/agent-fleet/issues/2240))
+- **[メモリ管理]** スナップショットの履歴が「読み込み中…」のままになったり、読み込み失敗を空と表示したりしていた。今は再試行を出す ([#2344](https://github.com/k-k1/agent-fleet/issues/2344), [#2347](https://github.com/k-k1/agent-fleet/issues/2347), [#2349](https://github.com/k-k1/agent-fleet/issues/2349))
+- **[設定/ツールチェーン]** `bkt` が出ていなかった ([#2179](https://github.com/k-k1/agent-fleet/issues/2179))
+- **[ECS]** バックアッププランを追加しても EFS バックアップの警告が消えなかった ([#2063](https://github.com/k-k1/agent-fleet/issues/2063), [#2066](https://github.com/k-k1/agent-fleet/issues/2066))
+
 ## [0.31.0](0.31.0.ja.md) — 2026-10-14
 
 **CLI ピン** — Claude Code 2.1.300 / Codex 0.162.1 / Copilot 1.0.97 / Antigravity 1.3.5 / Cursor 2026.10.12-d47ca18 / Kiro 2.31.0 / OpenCode 1.19.0 / Muse Code 1.4.8-R6256.1

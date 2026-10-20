@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -172,13 +173,14 @@ func (a API) HandleMCP(w http.ResponseWriter, r *http.Request) {
 func (a API) dispatchMCPHTTP(r *http.Request, prin *mcpPrincipal, req rpcRequest) (*rpcResponse, int) {
 	p := parseParamsMeta(req.Params)
 	era := eraOf(p)
+	ctx := withMCPCall(r.Context(), mcpCallInfo{patID: prin.patID, client: mcpClientName(r, p)})
 	if !era.Stateless {
-		return a.dispatchMCP(r.Context(), prin, req), http.StatusOK
+		return a.dispatchMCP(ctx, prin, req), http.StatusOK
 	}
 	if resp, status := validateStateless(r, req, p, era); resp != nil {
 		return resp, status
 	}
-	resp := a.dispatchMCP(r.Context(), prin, req)
+	resp := a.dispatchMCP(ctx, prin, req)
 	if resp != nil && resp.Error != nil && resp.Error.Code == rpcMethodNotFound {
 		return resp, http.StatusNotFound
 	}
@@ -551,12 +553,15 @@ func memberTools() []mcpTool {
 			},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
 				kind := argStr(args, "kind")
+				// Refused here, with the Workspace untouched, rather than left to the Agent.
+				if err := agentkinds.CheckCreateKind(kind); err != nil {
+					return "", err
+				}
 				driver := ""
-				// Kinds where tui vs managed is a real choice and an MCP caller (which cannot
-				// drive a pane) wants managed. lcpp and muse are absent on purpose: they have no
-				// tui route (Caps().ManagedOnly), and the Agent's create handler defaults an
-				// empty driver to managed for them (sessionx/session_handlers.go).
-				if kind == "codex" || kind == "opencode" || kind == "copilot" || kind == "cursor" || kind == "kiro" {
+				// An MCP caller cannot drive a pane, so it asks for managed wherever the Agent's
+				// registry says that is the default (the kind catalog snapshot). The match is
+				// exact; an alternate spelling never reaches this point (refused above).
+				if mcpManagedDefaultKinds[kind] {
 					driver = "managed"
 				}
 				body, _ := json.Marshal(map[string]any{
@@ -684,6 +689,15 @@ func (a API) toolsFor(ctx context.Context, prin *mcpPrincipal) []mcpTool {
 	for _, t := range memberTools() {
 		if a.cp.ScopeRank(prin.scope) >= a.cp.ScopeRank(t.minScope) {
 			out = append(out, t)
+		}
+	}
+	// mcpToolCall picks its tool out of this same list, so withholding the memory tools here
+	// is what refuses a call by name as well.
+	if a.tenantAllowsExternalMemory(ctx, prin) {
+		for _, t := range memoryTools() {
+			if a.cp.ScopeRank(prin.scope) >= a.cp.ScopeRank(t.minScope) {
+				out = append(out, t)
+			}
 		}
 	}
 	if ac, _ := a.adminPrincipal(ctx, prin); ac != nil && ac.isAdmin {

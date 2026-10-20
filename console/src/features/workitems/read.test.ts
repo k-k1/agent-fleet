@@ -423,11 +423,13 @@ describe("sessionsForItem", () => {
 });
 
 describe("promptForItem — how to read the body, per provider", () => {
-  it("points Jira at the MCP, not at gh", () => {
+  it("points Jira at the jira CLI with the item key, not at gh or the MCP", () => {
     const p = promptForItem(item({ provider: "jira", key: "PROJ-123", url: "https://x.atlassian.net/browse/PROJ-123" }));
     expect(p).toContain("PROJ-123");
     expect(p).toContain("https://x.atlassian.net/browse/PROJ-123");
     expect(p).not.toContain("gh issue view");
+    expect(p).toContain("`jira issue view PROJ-123`");
+    expect(p).not.toContain("MCP");
   });
 
   it("always gives the URL and a generic read line, even for an unknown provider", () => {

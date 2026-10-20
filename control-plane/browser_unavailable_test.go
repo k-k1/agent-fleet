@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 // browserlessTestRuntime is a running workspace whose runtime withholds browser features,
@@ -74,5 +76,31 @@ func TestWorkspacePayloadBrowserUnavailable(t *testing.T) {
 	m := a.workspacePayload(ctx, &resolved{rt: browserTestRuntime{state: "running"}}, "running")
 	if _, ok := m["browserUnavailable"]; ok {
 		t.Fatalf("a runtime with browser features carries browserUnavailable = %v", m["browserUnavailable"])
+	}
+}
+
+type docsRootTestRuntime struct {
+	browserTestRuntime
+	root string
+}
+
+func (r docsRootTestRuntime) DocsRoot() string { return r.root }
+
+// A runtime that serves the guide from a non-default root says so; every other payload
+// keeps its shape and the Console falls back to the fixed path.
+func TestWorkspacePayloadDocsRoot(t *testing.T) {
+	a := workspaceAPI{}
+	ctx := context.Background()
+	rt := docsRootTestRuntime{browserTestRuntime{state: "running"}, "/data/ws/docs"}
+	if m := a.workspacePayload(ctx, &resolved{rt: rt}, "running"); m["docsRoot"] != "/data/ws/docs" {
+		t.Fatalf("docsRoot = %v, want /data/ws/docs", m["docsRoot"])
+	}
+	for name, r := range map[string]runtime.Runtime{
+		"no staged root": docsRootTestRuntime{browserTestRuntime{state: "running"}, ""},
+		"no DocsRoot":    browserTestRuntime{state: "running"},
+	} {
+		if m := a.workspacePayload(ctx, &resolved{rt: r}, "running"); m["docsRoot"] != nil {
+			t.Fatalf("%s: docsRoot = %v, want absent", name, m["docsRoot"])
+		}
 	}
 }

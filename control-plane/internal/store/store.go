@@ -635,7 +635,7 @@ type WorkItemQuery struct {
 // WorkItem is one cached row of a query's result. ★ Non-secret metadata ONLY: the
 // description, comments and attachments of a ticket are customer data and stay out of
 // the CP (ADR 0061 decision 2) — they are read inside the session, where the Workspace
-// is running and `gh` / the Jira MCP can fetch them. Kind is "issue" or "pr"; State is
+// is running and `gh` / the `jira` CLI can fetch them. Kind is "issue" or "pr"; State is
 // normalised to open / in_progress / done / other; Repo is "owner/name" when the
 // provider has one (it seeds the launch target).
 type WorkItem struct {
@@ -1070,6 +1070,10 @@ type TenantStore interface {
 	// this one is the tenant_admin's. "" = no restriction.
 	GetTenantAllowedCIDRs(ctx context.Context, tenantID string) (string, error)
 	SetTenantAllowedCIDRs(ctx context.Context, tenantID, cidrs string) error
+	// GetTenantExternalMemory / SetTenantExternalMemory: the tenant-wide switch for AF memory
+	// reached through /mcp from outside Agent Fleet (#2318). Unknown tenant = error.
+	GetTenantExternalMemory(ctx context.Context, tenantID string) (bool, error)
+	SetTenantExternalMemory(ctx context.Context, tenantID string, enabled bool) error
 }
 
 // TenantIdP is one tenant-defined login provider (docs/log/61 §61.11, migration 0040).

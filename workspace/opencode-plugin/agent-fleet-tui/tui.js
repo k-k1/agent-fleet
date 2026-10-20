@@ -126,8 +126,13 @@ export default {
       }
     };
 
+    // One tick at a time: the re-send awaits one `workspace-agent` process per session, which can
+    // outlast SERVER_POLL_MS, and a second tick would still see the old pid and send the same
+    // environments again.
+    let ticking = false;
     const serverTick = async () => {
-      if (stopped) return;
+      if (stopped || ticking) return;
+      ticking = true;
       try {
         const info = await ctx.client.server.info();
         if (info && info.pid) {
@@ -144,6 +149,8 @@ export default {
         }
       } catch {
         /* the server is away; the TUI retries and so do we */
+      } finally {
+        ticking = false;
       }
     };
 

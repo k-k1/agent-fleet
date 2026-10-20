@@ -12,8 +12,8 @@ import { useT } from "../../../lib/i18n/index.ts";
 // name rule, the masked round-trip and the "remote only" shape are pinned by
 // mcpWire.test.ts rather than by this component.
 import {
-  MCP_KINDS,
   NAME_RE,
+  useMcpKinds,
   bodyOfTenant,
   emptyTenantForm,
   tenantFormOf,
@@ -237,6 +237,7 @@ function McpAdminForm({
   const tr = useT();
   const patch = (part: Partial<TenantForm>) => setForm({ ...form, ...part });
   const valid = tenantFormValid(form);
+  const kinds = useMcpKinds();
   const nameBad = form.name.trim() !== "" && !NAME_RE.test(form.name.trim());
 
   return (
@@ -307,7 +308,7 @@ function McpAdminForm({
           </Field>
           <Field label={tr("mcp.f_kinds")} wide hint={tr("mcp.f_kinds_hint")}>
             <CheckRow>
-              {MCP_KINDS.map((k) => (
+              {kinds.map((k) => (
                 <Check
                   key={k}
                   checked={form.kinds.includes(k)}

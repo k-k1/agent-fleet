@@ -3,6 +3,18 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.32.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.32.1) — 2026-10-19
+
+0.32.0 の修正リリースです。メモリの提案は頼まない限りバックグラウンドで動かなくなり、止めた opencode セッションの
+履歴が再び表示され、同梱の Jira CLI は `jira init` なしで課題を作れるようになりました。
+
+## [0.32.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.32.0) — 2026-10-18
+
+セッションを、会話と作業の状態ごと別のエージェントへ移せるようになり、利用上限に達したときにはその移動を勧めます。
+Google でサインインするアプリがプレビュー用ホストで開発用ログインを使えるようになり、ワークスペースには Jira CLI が
+同梱され、opencode は opencode 2 になりました。エージェントメモリには、終わったセッションからメモリを提案する
+実験的なレビューが加わり、Agent Fleet の外のエージェントからも使えるようになりました。
+
 ## [0.31.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.31.0) — 2026-10-14
 
 テナントのメンバー同士が新しい受信箱でメッセージや依頼を送り合えるようになり、利用枠の状況を利用枠ボードで

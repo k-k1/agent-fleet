@@ -67,6 +67,7 @@ func (agentImpl) Caps() agents.Caps {
 		CanTranscript: true,
 		CanFork:       true,
 		CanForkAt:     true,
+		MCPClient:     agents.TriYes,
 	}
 }
 

@@ -90,13 +90,32 @@ func progressLapsed(s sessionWire) bool {
 	return time.Duration(s.ProgressAgeSec)*time.Second > busyProgressLapse
 }
 
-// sessionActivity classifies one live session row.
+// backgroundLapsed reports whether a BackgroundBusy row has been busy longer than bgMax.
+//
+// A process-tree detector cannot tell a dev server's wrapper shell from a job, and neither
+// does CPU time, so the only bound on "background work holds the Workspace" is how long the
+// period has lasted (#2338). Like progressLapsed it reads the age the Agent computed on its own
+// clock. Absent age (an older Agent) holds, and bgMax <= 0 disables the bound. The keep-awake
+// pin is decided before this and is never subject to it.
+//
+// The reaper (sessionActivityAt) and the forecast (holdersOf) both go through here.
+func backgroundLapsed(s sessionWire, bgMax time.Duration) bool {
+	if bgMax <= 0 || s.BackgroundAgeSec <= 0 {
+		return false
+	}
+	return time.Duration(s.BackgroundAgeSec)*time.Second > bgMax
+}
+
+// sessionActivity classifies one live session row. bgMax is the tenant's effective
+// background_hold_max (<= 0 = unbounded).
 //
 // A row that is not alive is activityUnknown: neither foldable, nor a reason to stay awake.
-func sessionActivity(s sessionWire) activity { return sessionActivityAt(s, time.Now()) }
+func sessionActivity(s sessionWire, bgMax time.Duration) activity {
+	return sessionActivityAt(s, time.Now(), bgMax)
+}
 
 // sessionActivityAt is sessionActivity at a given instant, so the progress bound is testable.
-func sessionActivityAt(s sessionWire, now time.Time) activity {
+func sessionActivityAt(s sessionWire, now time.Time, bgMax time.Duration) activity {
 	if !s.Alive {
 		return activityUnknown
 	}
@@ -112,6 +131,10 @@ func sessionActivityAt(s sessionWire, now time.Time) activity {
 	// state S (the Agent's WireLive sets it). Checked first on the machineBusy side — the
 	// reaper never looked at it and halted / stopped running background work with it.
 	if s.BackgroundBusy {
+		if backgroundLapsed(s, bgMax) {
+			// Same treatment as a lapsed working row: not holding, not foldable (#2338).
+			return activityUnknown
+		}
 		return activityMachineBusy
 	}
 	if busyState(s.State) {
@@ -147,15 +170,15 @@ func sessionActivityAt(s sessionWire, now time.Time) activity {
 // That folding loses nothing is guaranteed by carry-over (docs/log/75 §75.6): a pending
 // question/plan/permission is moved to carried just before the halt, and answering it from
 // the Console resumes the session and delivers it.
-func holdsWorkspace(s sessionWire) bool {
-	return sessionActivity(s) == activityMachineBusy
+func holdsWorkspace(s sessionWire, bgMax time.Duration) bool {
+	return sessionActivity(s, bgMax) == activityMachineBusy
 }
 
 // tier1Reapable reports whether tier 1 (session halt) may take this row: foldable, i.e.
 // neither machineBusy nor unknown. Which timeout applies is decided by the caller from the
 // classification (idleWait: session_idle_timeout, humanWait: interaction_idle_timeout).
-func tier1Reapable(s sessionWire) bool {
-	a := sessionActivity(s)
+func tier1Reapable(s sessionWire, bgMax time.Duration) bool {
+	a := sessionActivity(s, bgMax)
 	return a == activityIdleWait || a == activityHumanWait
 }
 

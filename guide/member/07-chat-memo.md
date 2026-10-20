@@ -193,7 +193,12 @@ is best effort, and the message can take a first step before it stops.
 **Terminal (CLI)** sessions keep the CLI's own behaviour: Stop sends Esc and the CLI decides. In
 the measured versions, claude and codex sent the queued message on the first Esc, and a second
 Esc stopped it; OpenCode kept it in its history. The discard action and the notice are not offered
-there, because the queue lives inside the CLI.
+there, because the queue lives inside the CLI. A message another session sends to a claude Terminal
+session in the middle of a turn is reported to the sender as queued, not delivered: claude keeps it
+in memory only, so ending the pane before the turn ends (stopping, archiving or recreating the session) loses it.
+A message to a cursor Terminal session whose CLI refuses it at submit (for example a model the plan
+cannot use) is reported the same way, with the CLI's error text: the message stays in the input box
+and nothing runs it, so the sender is told not to resend.
 
 **Rejecting a plan** and **having another session review the plan** send the same stop, and follow
 the same rules. **Cancelling a question** follows them on codex only, where cancelling stops the

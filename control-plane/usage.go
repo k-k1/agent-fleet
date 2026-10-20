@@ -50,10 +50,13 @@ type usageSampler struct {
 	// tenant's workspaces and each one's State() — and a second ticker repeating it is the
 	// cost usage.go avoids for the hourly bucket too. nil = no deadline.
 	deadline *startDeadline
+	// backgroundDef is the deployment default of background_hold_max, so the heatmap reads a
+	// lapsed background row as the reaper does (0 = unbounded).
+	backgroundDef time.Duration
 }
 
 func newUsageSampler(mgr *manager, interval time.Duration) *usageSampler {
-	return &usageSampler{mgr: mgr, interval: interval}
+	return &usageSampler{mgr: mgr, interval: interval, backgroundDef: defaultBackgroundHoldMax}
 }
 
 func (u *usageSampler) run(ctx context.Context) {
@@ -120,7 +123,7 @@ func (u *usageSampler) sample(ctx context.Context) {
 				log.Printf("showback: add usage (%s): %v", ws.ContainerName, err)
 			}
 			if err := u.mgr.store.AddUsageHour(ctx, ws.MembershipID, ws.TenantID, hour,
-				u.counters(ctx, rt, secs)); err != nil {
+				u.counters(ctx, rt, secs, backgroundHoldMax(parseLimits(t.Limits), u.backgroundDef))); err != nil {
 				log.Printf("showback: add hourly usage (%s): %v", ws.ContainerName, err)
 			}
 		}
@@ -142,7 +145,7 @@ func (u *usageSampler) sample(ctx context.Context) {
 // A workspace mid-start, or one whose Agent is wedged, is exactly the case where the
 // count is unknown, and "0 sessions" would draw a cold cell over a busy hour — the same
 // 0-vs-unmeasured confusion the usage ledger keeps re-teaching.
-func (u *usageSampler) counters(ctx context.Context, rt runtime.Runtime, secs int) store.UsageHourCounters {
+func (u *usageSampler) counters(ctx context.Context, rt runtime.Runtime, secs int, bgMax time.Duration) store.UsageHourCounters {
 	c := store.UsageHourCounters{Samples: 1, RunningSecs: secs}
 	sctx, cancel := context.WithTimeout(ctx, usageSessionTimeout)
 	defer cancel()
@@ -162,7 +165,7 @@ func (u *usageSampler) counters(ctx context.Context, rt runtime.Runtime, secs in
 		// predicate here leaves one of the two stale the next time a state is added. A
 		// keepAwake pin counting as machineBusy is intended — a pin left dark all weekend
 		// is exactly the waste this screen exists to show.
-		if sessionActivity(s) == activityMachineBusy {
+		if sessionActivity(s, bgMax) == activityMachineBusy {
 			busy++
 		}
 	}

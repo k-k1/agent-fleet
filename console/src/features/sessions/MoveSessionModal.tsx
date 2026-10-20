@@ -22,6 +22,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { ModelPicker } from "../../ui/ModelPicker.tsx";
 import { errText } from "../../core/api/client.ts";
 import { agentOf } from "../../agents/registry.ts";
+import { useKindCatalogVersion } from "../../agents/kindCatalog.ts";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { getSettings, agentLaunchDefault } from "../../lib/settings.ts";
@@ -246,13 +247,16 @@ function MoveForm({
     setKind(picks[0] ?? "");
   }, [picks, kind, fromLimit]);
   const [model, setModel] = useState("");
-  const [driver, setDriver] = useState("");
+  // null = untouched: follows the kind's default, including one that arrives with the kind catalog.
+  useKindCatalogVersion();
+  const [driverPick, setDriverPick] = useState<string | null>(null);
+  const driver = driverPick ?? (kind && agentOf(kind).managedDriver ? "managed" : "");
   // Model and driver default the way the new-session dialog defaults them for this working
   // copy: the per-repo memory, then the user's per-kind default; managed wherever it exists.
   useEffect(() => {
     if (!kind) return;
     setModel(resolveModel(kind, session.repo || "", agentLaunchDefault(getSettings(), kind).model));
-    setDriver(agentOf(kind).managedDriver ? "managed" : "");
+    setDriverPick(null);
   }, [kind, session.repo]);
 
   const notOffered = preview.targets.filter((t) => !offered.includes(t.kind));
@@ -331,10 +335,10 @@ function MoveForm({
         <div className="ui-field">
           <span className="ui-field-label">{tr("launch.field.driver")}</span>
           <div className="ui-seg">
-            <button type="button" className={"seg-btn" + (driver === "managed" ? " active" : "")} onClick={() => setDriver("managed")}>
+            <button type="button" className={"seg-btn" + (driver === "managed" ? " active" : "")} onClick={() => setDriverPick("managed")}>
               <Icon name="server-process" /> {tr("launch.driver_managed")}
             </button>
-            <button type="button" className={"seg-btn" + (driver !== "managed" ? " active" : "")} onClick={() => setDriver("")}>
+            <button type="button" className={"seg-btn" + (driver !== "managed" ? " active" : "")} onClick={() => setDriverPick("")}>
               <Icon name="terminal" /> {tr("launch.driver_terminal")}
             </button>
           </div>

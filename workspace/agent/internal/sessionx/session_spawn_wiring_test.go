@@ -58,6 +58,11 @@ func spawnServer(t *testing.T) *spawnEnv {
 		t.Skip("tmux not available")
 	}
 	testguard.IsolateTmux(t)
+	// The ledger is process-wide; a key a previous run (-count=N) finished replays its answer
+	// (200) instead of creating (201).
+	prevLedger := createLedger
+	createLedger = &createSessionLedger{m: map[string]*createLedgerEntry{}}
+	t.Cleanup(func() { createLedger = prevLedger })
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))

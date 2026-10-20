@@ -20,6 +20,7 @@ import type { Member, Tenant } from "../parts/adminShared.ts";
 import { TenantLoginRules, TenantLoginRulesView } from "./tenantLoginRules.tsx";
 import { TenantSignInMethods } from "./tenantSignInMethods.tsx";
 import { PoolBudgetHint, type PoolBudget } from "./ec2Pool.tsx";
+import { TenantExternalMemoryView } from "./tenantExternalMemory.tsx";
 import { TenantNetworkView } from "./tenantNetwork.tsx";
 import { TenantLimitBoardView } from "../../limits/TenantLimitBoardView.tsx";
 import { TenantBranchRulesView } from "./tenantBranchRules.tsx";
@@ -62,6 +63,8 @@ export function tenantScopeGroups(opts: { cost: boolean; engines?: boolean }): S
     ["branch-rules", "tenant.tab_branch_rules"],
     // Defaults for members' Console (ADR 0114 decision 8): the agent the first-run card names.
     ["member-defaults", "tenant.tab_member_defaults"],
+    // Whether members may use Agent Fleet memory from outside Agent Fleet (#2318).
+    ["external-memory", "tenant.tab_external_memory"],
     // The reduced engine panel (ADR 0072 open question 11). Created only where the operator
     // granted this tenant `allow_engine_ingest` — like the cost item above, the item does not
     // exist rather than existing and being hidden, because the CP answers 403 without the
@@ -167,6 +170,8 @@ export function TenantLimits({
   // A clock used only while waiting on a human decision (question, plan approval, permission).
   // Empty means: follow the session-halt timeout above.
   const [interIdle, setInterIdle] = useState(tenant?.interaction_idle_timeout || "");
+  // How long background work (a dev server, run_in_background) may hold the Workspace awake.
+  const [bgHold, setBgHold] = useState(tenant?.background_hold_max || "");
   const [homeHib, setHomeHib] = useState(tenant?.home_hibernate_after || "");
   const [homeBackup, setHomeBackup] = useState(tenant?.home_backup_every || "");
   const [allowUpd, setAllowUpd] = useState(!!tenant?.allow_agent_self_update);
@@ -189,6 +194,7 @@ export function TenantLimits({
     setSessIdle(tenant?.session_idle_timeout || "");
     setWsIdle(tenant?.ws_idle_timeout || "");
     setInterIdle(tenant?.interaction_idle_timeout || "");
+    setBgHold(tenant?.background_hold_max || "");
     setHomeHib(tenant?.home_hibernate_after || "");
     setHomeBackup(tenant?.home_backup_every || "");
     setAllowUpd(!!tenant?.allow_agent_self_update);
@@ -208,6 +214,7 @@ export function TenantLimits({
       session_idle_timeout: sessIdle.trim(),
       ws_idle_timeout: wsIdle.trim(),
       interaction_idle_timeout: interIdle.trim(),
+      background_hold_max: bgHold.trim(),
       home_hibernate_after: homeHib.trim(),
       home_backup_every: homeBackup.trim(),
       allow_agent_self_update: allowUpd,
@@ -283,6 +290,10 @@ export function TenantLimits({
           <label className="admin-fld">
             <span className="af-cap">{tr("admin.interaction_halt")}</span>
             <input type="text" placeholder={tr("admin.interaction_ph")} value={interIdle} onChange={(e) => setInterIdle(e.target.value)} />
+          </label>
+          <label className="admin-fld">
+            <span className="af-cap">{tr("admin.background_hold")}</span>
+            <input type="text" placeholder={tr("admin.background_hold_ph")} value={bgHold} onChange={(e) => setBgHold(e.target.value)} />
           </label>
           <label className="admin-fld">
             <span className="af-cap">{tr("admin.ws_stop")}</span>
@@ -559,6 +570,7 @@ export function TenantScopeBody({
   if (section === "mcp") return <McpAdminView key={slug} tenants={one} />;
   if (section === "branch-rules") return <TenantBranchRulesView key={slug} slug={slug} />;
   if (section === "member-defaults") return <TenantMemberDefaultsPanel key={slug} slug={slug} />;
+  if (section === "external-memory") return <TenantExternalMemoryView key={slug} slug={slug} />;
   // tenant is passed because this view carries two toggles, "accept" and "show as a button"
   // (docs/log/61 §61.17.5). Only a super_admin can flip them, and the rules PUT stays fixed at
   // withSuperAdmin (decision 19). onChanged reloads the four columns.

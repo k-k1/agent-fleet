@@ -4,6 +4,7 @@ import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Row } from "../parts/controls.tsx";
+import { TokenCapabilities } from "./TokenCapabilities.tsx";
 
 // TokensTab issues and revokes Personal Access Tokens for the MCP endpoint
 // (docs/decisions/0006, P3-6). A token carries the issuer's identity+membership;
@@ -174,6 +175,8 @@ export function TokensTab() {
         <code>Authorization: Bearer &lt;token&gt;</code>
         {tr("tokens.mcp_endpoint_mid2")}
       </p>
+
+      <TokenCapabilities />
 
       {err && <p className="muted pad">{err}</p>}
       {tokens && tokens.length > 0 && (

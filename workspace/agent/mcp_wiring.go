@@ -4,7 +4,7 @@ package main
 // lives here are not aliases but the two things that can only sit on the main side:
 //
 //   - The storage for "the four that cannot be copies" (below).
-//   - `mcpx.Configure`, which wires the 19 reverse mcpx → main dependencies as function
+//   - `mcpx.Configure`, which wires the 20 reverse mcpx → main dependencies as function
 //     values. mcpx cannot import main, so this is the only way (internal/mcpx/deps.go).
 
 import (
@@ -51,6 +51,9 @@ func init() {
 		ShellCreateTarget: sessionx.ShellCreateTarget,
 		ShellSendTarget:   sessionx.ShellSendTarget,
 		SessionIsShell:    sessionx.SessionIsShell,
+
+		ManagedDefaultKind: sessionx.ManagedDefaultKind,
+		ValidateCreateKind: sessionx.ValidateCreateKind,
 
 		ReadUIPrefs:                uiprefs.Read,
 		EnsureClaudeSettingsWiring: sessionx.EnsureClaudeSettingsWiring,

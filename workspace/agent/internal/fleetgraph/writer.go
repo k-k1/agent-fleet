@@ -141,6 +141,20 @@ func RecordPeek(from, to string) {
 	})
 }
 
+// RecordStall appends the Agent's stalled-tree nudge to root (the parent whose whole subtree
+// went quiet). Like a peek it stays in the ledger only: toDTOActivity has no "stall" case, so
+// the frozen fleet-graph wire is unchanged. The nudge is still visible on the graph as the
+// ordinary instruct arrow from "agent" that the delivery records. detail names the idle
+// children and how long (display-only, truncated like an excerpt).
+func RecordStall(root, detail string) {
+	if root == "" {
+		return
+	}
+	appendLine(&activityMu, activityPath(utcDay(clockNow())), activityLine{
+		Ev: "stall", Ts: stampNow(), To: root, Excerpt: truncateExcerpt(detail),
+	})
+}
+
 // --- Live-state observation (ADR 0096 decision 3) ---------------------------------------
 
 // stateMu guards lastState AND serialises the state-line append that follows a change, so

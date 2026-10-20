@@ -168,12 +168,19 @@ func newNativeFactory(mcfg Config) (RuntimeFactory, error) {
 
 func (f *nativeFactory) New(ws Workspace, keys SecretKeys, extraEnv []string) Runtime {
 	env := append(append([]string(nil), f.extraEnv...), extraEnv...)
+	// Resolved against the CP's cwd once: the agent starts with cmd.Dir=home, so a relative
+	// data dir (WS_DATA=./data) would mean a different place to it than to the CP, and
+	// DocsRoot is handed to the Console as an absolute path.
+	dataDir := f.rootDataDir(ws)
+	if abs, err := filepath.Abs(dataDir); err == nil {
+		dataDir = abs
+	}
 	return &nativeRuntime{
 		agentBin:   f.agentBin,
 		rootfs:     f.rootfs,
 		jvmDir:     f.jvmDir,
 		name:       ws.ContainerName,
-		dataDir:    f.rootDataDir(ws),
+		dataDir:    dataDir,
 		agentPort:  ws.AgentPort,
 		token:      ws.AgentToken,
 		keys:       keys,
@@ -261,6 +268,41 @@ func (n *nativeRuntime) startingMarker() agentStartingMarker {
 // own environment carries deployment secrets (AF_MASTER_KEY, oauth secrets, DB
 // URLs) that must never leak into a workspace process that runs arbitrary user
 // sessions.
+// DocsRoot is the path the agent serves the user guide from when it is not the image's
+// fixed one, i.e. the AGENT_DOCS_DIR the traditional (host-agent) launch ends up with: the
+// staged <dataDir>/docs, unless a deployment override (WS_ENV, per-workspace env) replaces
+// it; an empty override means the agent's default. The value is the agent's own canonical
+// root (cleaned; a relative override is taken from the agent's cwd, home). Empty in rootfs
+// mode (the docs are ro-bound onto the fixed path) and before anything is staged. The workspace
+// payload hands it to the Console so the guide opens at a path the agent's file API allows.
+func (n *nativeRuntime) DocsRoot() string {
+	if n.rootfs != "" {
+		return ""
+	}
+	env := map[string]string{}
+	n.setDocsEnv(env)
+	n.overlayWorkspaceEnv(env)
+	root := env["AGENT_DOCS_DIR"]
+	if root == "" {
+		return ""
+	}
+	// The agent cleans the root and resolves a relative one against its cwd (home), and its
+	// file API rejects a non-canonical query path, so hand over the same spelling.
+	if !filepath.IsAbs(root) {
+		root = filepath.Join(n.dataDir, "home", root)
+	}
+	return filepath.Clean(root)
+}
+
+// setDocsEnv is the CP's own AGENT_DOCS_DIR, before the deployment overlay: the staged
+// guide (stageWorkspaceDocs); the agent's fixed container path is overridden via
+// AGENT_DOCS_DIR (agent fs.go — NOT the CP-side AF_DOCS_DIR, which names the staging source).
+func (n *nativeRuntime) setDocsEnv(env map[string]string) {
+	if docs := filepath.Join(n.dataDir, "docs"); isDirPath(docs) {
+		env["AGENT_DOCS_DIR"] = docs
+	}
+}
+
 // mountsStagedDocs: native ro-binds (or points AGENT_DOCS_DIR at) <dataDir>/docs, so it
 // needs the same per-start staging as docker (runtime.go DocsMounter).
 func (n *nativeRuntime) mountsStagedDocs() {}
@@ -627,12 +669,7 @@ func (n *nativeRuntime) processEnv(home, claudeCfg string) []string {
 	if tz := os.Getenv("TZ"); tz != "" {
 		env["TZ"] = tz
 	}
-	// The user guide staged by the CP (stageWorkspaceDocs); the agent's fixed
-	// container path is overridden via AGENT_DOCS_DIR (agent fs.go — NOT the
-	// CP-side AF_DOCS_DIR, which names the staging source).
-	if docs := filepath.Join(n.dataDir, "docs"); isDirPath(docs) {
-		env["AGENT_DOCS_DIR"] = docs
-	}
+	n.setDocsEnv(env)
 	n.overlayWorkspaceEnv(env)
 	return flattenEnv(env)
 }

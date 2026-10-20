@@ -37,6 +37,26 @@ env:
   AF_REGISTRY: agent-fleet
 
 jobs:
+  # Warn only: lists the open cli-drift issues so whoever cuts a release sees them
+  # (#2267). Drift is the steady state, so this never fails the run. Its own job so
+  # `issues: read` is granted here and nowhere else.
+  cli-drift-warning:
+    if: "!contains(github.event.head_commit.message, '[native-only]') && !contains(github.event.head_commit.message, '[ecs-only]') && !contains(github.event.head_commit.message, '[dist-only]')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: open cli-drift issues (warning only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: deploy/release/cli-drift-warn.sh
+
   # Gates (a)+(b): build A+D via the release path, verify the lean B
   # (BAKE_AGENT_CLIS=0) contents (e2e-smoke lean mode) and live-run boot-install.
   # The full "sessions actually work" check (real CP + real auth) stays a host-side
@@ -420,7 +440,7 @@ jobs:
                    deploy/release/dist-repo/install-compose.sh \
                    deploy/release/notes-body.sh deploy/release/gen-changelog.sh \
                    deploy/release/scan-forbidden.sh \
-                   deploy/release/republish-dist.sh \
+                   deploy/release/republish-dist.sh deploy/release/cli-drift-warn.sh \
                    deploy/local/dist-stub-test.sh deploy/local/republish-stub-test.sh; do
             bash -n "$f"
           done
@@ -428,8 +448,9 @@ jobs:
             deploy/release/dist-repo/install-compose.sh \
             deploy/release/notes-body.sh deploy/release/gen-changelog.sh \
             deploy/release/scan-forbidden.sh \
-            deploy/release/republish-dist.sh \
-            deploy/local/dist-stub-test.sh deploy/local/republish-stub-test.sh
+            deploy/release/republish-dist.sh deploy/release/cli-drift-warn.sh \
+            deploy/local/dist-stub-test.sh deploy/local/republish-stub-test.sh \
+            deploy/local/cli-drift-warn-stub-test.sh
 
       - name: publish/install stub run (call-sequence + file:// flow)
         run: deploy/local/dist-stub-test.sh

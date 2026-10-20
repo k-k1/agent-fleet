@@ -148,6 +148,10 @@ type JiraSite struct {
 	CloudID string `json:"cloudId"`
 	URL     string `json:"url"`
 	Name    string `json:"name"`
+	// Scopes is what accessible-resources reported as granted for this site at connect time
+	// (scopes do not change on a refresh). Empty means unknown, e.g. a connection stored before
+	// this field existed; it never means "none granted".
+	Scopes []string `json:"scopes,omitempty"`
 }
 
 type GrafanaCreds struct {

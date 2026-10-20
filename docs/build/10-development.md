@@ -63,7 +63,7 @@ manifest `versions.json` on the default lean image — is
 3. **Commit and push** — a small diff, with a message that follows
    [CONTRIBUTING](../../CONTRIBUTING.md#commits--prs).
 4. **Wait for the end-to-end workflow to go green.** `e2e.yml` does **not** run on a
-   push (only on PRs to main, a nightly cron and manual dispatch), so start it on your
+   push (only on PRs to main that change the image inputs, a nightly cron and manual dispatch), so start it on your
    branch yourself: `gh workflow run e2e.yml --ref <branch>`. It builds the image with
    the CLIs baked in (`BAKE_AGENT_CLIS=1`) and verifies L1 (**the installed versions
    equal the pins**, for the tools §10.3 names), L2 (fleet connectivity) and L3 (Console UI). **Do not proceed
@@ -74,6 +74,16 @@ manifest `versions.json` on the default lean image — is
    is L4, a headless claude turn. On `codex-contract.yml`, it is Tier 2 (the workflow
    records roughly 45k tokens per run, measured). Neither draws the TUI, so state
    detection is the contract workflows' job, not L4's.
+   The cursor, copilot and kiro contracts also end with a `caps drift probes` step: the
+   interrupt, fork-at and model-override probes (`workspace/agent/caps_probe.go`) hold each
+   kind's declared `Caps` against what the real CLI does. They derive the expectation from
+   `Caps()` and fail as `DRIFT` in either direction (declared but broken, or declared
+   `false` but working). The step is **advisory** for now: a DRIFT or probe error does not
+   fail the job and writes no red-contract row or watcher `red` marker; it raises a
+   `::warning::` annotation, a job summary and an advisory row in the kind's update issue
+   (`cli-contract-report.sh advisory`, which keeps that issue open while the pin is current).
+   A later passing run clears the row. Declare a cap `false` only after a probe has seen it
+   fail. See "Promoting the caps drift probes" below.
 6. **Reflect it on the host** with `run-dev.sh`. The image smoke test (L1) runs right
    after the build. On the default lean image it checks that `versions.json` carries
    the new pins and that no CLI is baked in; with `BAKE_AGENT_CLIS=1` it also checks
@@ -87,6 +97,20 @@ manifest `versions.json` on the default lean image — is
    Home and repositories survive.
 8. **(Optional) confirm** from **Settings → Toolchains → Tool versions**, which shows
    the effective, image and pinned versions side by side.
+
+**Promoting the caps drift probes to blocking.** The probe logic has not yet run against
+real CLIs, and a false positive (strict model-name matching, the Escape racing a turn that
+ends by itself) would write the watcher's `red` marker, which for copilot stops it
+re-dispatching that version. So the `caps drift probes` step of `cursor-`, `copilot-` and
+`kiro-contract.yml` runs with `continue-on-error`. The one switch is the repository
+variable `CAPS_PROBES_BLOCKING`: set it to `true` (Settings → Variables, or
+`gh variable set CAPS_PROBES_BLOCKING --body true`) and a DRIFT fails the job and is
+reported as a red contract like any other. Unset it to go back. Before promoting, dispatch
+each of the three workflows with `cli_version=latest` and record, per kind: that the
+probes pass on a healthy CLI; the observed outcome of each probe against the declared
+`Caps()` (a DRIFT you confirm by hand is a real finding, not a reason to wait); and that two
+runs in a row give the same result, which shows the Escape race and the model-name match are
+stable. Put the run URLs and outcomes in the PR or issue that flips the variable.
 
 Two notes:
 
@@ -339,6 +363,10 @@ npm --prefix console run build
   it on the packaging branch (see
   [deploy/release/notes](../../deploy/release/notes/README.md)).
 
+  Both `release-gate.yml` and `publish-dist.yml` also list the open `cli-drift` issues as
+  warnings and in the job summary (`deploy/release/cli-drift-warn.sh`). It only warns: drift is
+  the steady state, so it never fails a release, and a failed listing is itself a warning.
+
 ### End to end: image smoke, fleet, UI, real API
 
 Four layers. **L1** is the image smoke test (§10.3, seconds). **L2** is `e2e/` (a Go
@@ -385,8 +413,12 @@ cd e2e && WS_IMAGE=agent-fleet/workspace:dev go test -v -tags e2e -timeout 15m .
 cd console-e2e && npm ci && npx playwright test
 ```
 
-- `e2e.yml` runs on PRs to main (relevant paths), a nightly cron against main, and
-  manual dispatch — **never on a push**. Its jobs are `e2e` (L1 → L2) and `ui-e2e`
+- `e2e.yml` runs on PRs to main that change the Workspace image inputs (`workspace/`,
+  minus test-only files) or the harness (`e2e/`, `console-e2e/`, `deploy/local/e2e-smoke.sh`,
+  the workflow itself), a nightly cron against main, and manual dispatch — **never on a
+  push**. A PR touching only `control-plane/` or `console/` does not run it (L2/L3 build
+  those from source, so they are not image inputs); such a break is caught by the
+  nightly run, with `ci.yml` as the PR-time guard. Its jobs are `e2e` (L1 → L2) and `ui-e2e`
   (L3, which uploads traces and the CP log on failure), in parallel, and `live-smoke`
   (L4), only on dispatch with `live`. Its image build passes no platform argument, so
   it covers **amd64 only**: the arm64 assets (the per-arch sha256 pins for agy, cursor,

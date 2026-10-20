@@ -324,6 +324,9 @@ export const mirror = {
   "mirror.from_auto_resume": "自動再開",
   "mirror.from_auto_resume_title":
     "ターンが中断（接続断・一時的なレート制限など）したため、Agent が続きを実行するために自動で送ったプロンプトです。あなたもアシスタントも入力していません。",
+  "mirror.from_notice": "停滞通知",
+  "mirror.from_notice_title":
+    "このセッションと配下の子セッションがすべて待機状態のまま、やり取り中のメッセージもない状態が続いたため、Agent が自動で送った確認です。あなたもアシスタントも入力していません。",
   "mirror.from_chat": "{provider} から",
   "mirror.from_chat_title": "チャット（{provider} など）から返信で送られた入力です。コンソールで入力したものではありません。",
   "mirror.from_peer": "別のセッションから",

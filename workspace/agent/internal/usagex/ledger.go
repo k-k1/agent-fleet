@@ -39,6 +39,7 @@ const (
 	FeatureSuggestChat      = "suggest.chat"       // the chat's ✨ reply suggestions
 	FeatureSuggestEdit      = "suggest.edit"       // the editor's ✨ AI edit suggestion (docs/log/44 Phase 4)
 	FeatureTranslate        = "translate.mirror"   // the mirror's per-answer translation (docs/log/97)
+	FeatureMemoryReview     = "memory.review"      // the background memory review's helper call (ADR 0117)
 	FeatureSession          = "session"            // the interactive session itself (folded in from the transcript)
 	FeatureToolImagegen     = "tool.imagegen"      // the image generation tool (ADR 0069)
 	// FeatureEngineLLM is one call to the fleet's OWN llama.cpp engine, routed through the
@@ -125,6 +126,11 @@ type Record struct {
 	// Absent on every other feature — never write a 0 to mean "no images".
 	Images int `json:"images,omitempty"`
 	Pixels int `json:"pixels,omitempty"`
+	// TokensOnly marks a row that adds tokens to a turn another row already counts as a call
+	// (cursor's stop hook beside the transcript fold's row for the same turn). The aggregation
+	// sums its tokens and never counts it as a call, so the two writers cannot double the call
+	// count.
+	TokensOnly bool `json:"tokens_only,omitempty"`
 }
 
 // Spend is the headline metric. cache_read is excluded to match the definition

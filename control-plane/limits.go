@@ -64,6 +64,12 @@ type tenantLimits struct {
 	// the pending payload is carried forward, and answering it from the Console resumes
 	// the session and delivers the answer (docs/log/75 §75.6).
 	InteractionIdleTimeout string `json:"interaction_idle_timeout,omitempty"`
+	// BackgroundHoldMax bounds how long one idle-with-background-work period (a
+	// run_in_background task, a dev server's wrapper shell) may keep the Workspace awake
+	// (#2338). Past it the row stops holding and tier 1 does not fold it either; the
+	// keep-awake pin is never subject to it. "" => deployment default
+	// (AF_BACKGROUND_HOLD_MAX, 2h), "0" => unbounded for this tenant.
+	BackgroundHoldMax string `json:"background_hold_max,omitempty"`
 	// HomeHibernateAfter is the third step of the same series and the only one that
 	// touches the user's data: a home nobody has opened for this long is snapshotted and
 	// its volume deleted, and the next Start restores it (ADR 0045 decision 13-2,
@@ -152,6 +158,18 @@ func interactionTimeout(lim tenantLimits, sessTO time.Duration, sessOn bool, def
 		return sessTO, sessOn
 	}
 	return idleTimeout("", def)
+}
+
+// defaultBackgroundHoldMax is the deployment default of background_hold_max.
+const defaultBackgroundHoldMax = 2 * time.Hour
+
+// backgroundHoldMax resolves the tenant's background-hold bound; 0 means unbounded.
+func backgroundHoldMax(lim tenantLimits, def time.Duration) time.Duration {
+	d, on := idleTimeout(lim.BackgroundHoldMax, def)
+	if !on {
+		return 0
+	}
+	return d
 }
 
 // idleTimeout resolves a tenant idle-timeout field to a duration and whether idle-stop

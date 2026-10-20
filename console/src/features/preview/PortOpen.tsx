@@ -287,7 +287,8 @@ function PortButtons({ port, info, targets, go }: Inner) {
         ? tr(`portopen.unavailable.${targets.state[t] as Exclude<Targets["state"][PortTarget], "">}`)
         : undefined;
   const openSettings = useSettingsUI((s) => s.openSettings);
-  const rest = TARGET_ORDER.filter((t) => t !== targets.def);
+  // With no default the placeholder below stands in for "light"; listing it again doubles the button.
+  const rest = TARGET_ORDER.filter((t) => t !== (targets.def || "light"));
   const label = (t: PortTarget) =>
     tr(t === "subdomain" ? "portopen.btn.subdomain" : t === "pane" ? "wsbar.preview.open_pane" : "wsbar.preview.open_light");
   return (

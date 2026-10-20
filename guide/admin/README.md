@@ -30,6 +30,7 @@ administrators are also working members: for everyday development read
 5. [Who may sign in, and from where](05-access.md): sign-in methods, login rules, allowed networks, your own OAuth apps
 6. [Branch naming rules](06-branch-rules.md): the team's default branch names and where branches start
 7. [Member defaults](07-member-defaults.md): the agent new members are pointed at
+8. [Memory from outside Agent Fleet](08-external-memory.md): allow or block members using their memory from an external agent
 
 ## Getting in
 

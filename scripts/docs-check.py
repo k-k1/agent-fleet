@@ -662,7 +662,7 @@ def source_kinds() -> set[str]:
 
 
 def source_caps() -> dict[str, set[str]]:
-    """kind -> the set of field names its Caps() sets to true.
+    """kind -> the set of field names its Caps() sets to true (a Tri field: to agents.TriYes).
 
     Only the body of the Caps() method under workspace/agent/internal/agents/<kind>/ is
     read. That is the implementation's source of truth for what a kind can do, and the
@@ -686,21 +686,21 @@ def source_caps() -> dict[str, set[str]]:
                 # struct literal, so that is both sufficient and free of false hits.
                 end = body.find("\n}", m.end())
                 blk = body[m.end() : end if end > 0 else len(body)]
-                fields |= set(re.findall(r"(\w+)\s*:\s*true", blk))
+                fields |= set(re.findall(r"(\w+)\s*:\s*(?:true|agents\.TriYes)\b", blk))
         if fields:
             out[kind] = fields
     return out
 
 
 def source_caps_fields() -> list[str]:
-    """Field names of the agents.Caps struct, in declaration order."""
+    """Field names of the agents.Caps struct (bool and Tri), in declaration order."""
     path = os.path.join(ROOT, "workspace", "agent", "internal", "agents", "agents.go")
     if not os.path.exists(path):
         return []
     m = re.search(r"^type Caps struct \{\n(.*?)^\}", read(path), re.M | re.S)
     if not m:
         return []
-    return re.findall(r"^\s*([A-Z]\w*)\s+bool\b", m.group(1), re.M)
+    return re.findall(r"^\s*([A-Z]\w*)\s+(?:bool|Tri)\b", m.group(1), re.M)
 
 
 # Rows of ref/agents.md that restate a Caps() field: (row label, field, negated). A negated
@@ -714,12 +714,15 @@ CAPS_ROWS = (
     ("Copy the conversation into a new session", "CanFork", False),
     ("Fork from a past message", "CanForkAt", False),
     ("Choosing to skip permission prompts", "PermissionChoice", False),
+    ("Receives integration (MCP) servers", "MCPClient", False),
 )
 
 # Caps fields with no row in the table, and why. Every field must be either in CAPS_ROWS or
 # here, so a field added later cannot be left out of the check without a stated reason.
 CAPS_UNMAPPED = {
     "UsesLabel": "claude's --name display label, an implementation detail with no member-facing row",
+    "ManagedDefault": "the driver an MCP or scheduled create asks for; 'Managed execution' is"
+    " whether that driver exists, not which one is the default",
 }
 
 

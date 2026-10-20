@@ -597,6 +597,17 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			confirmBase = deliveryBaseline(m)
 		}
 	}
+	cursorTUI := confirmMeta.Name != "" && isCursorTerminal(confirmMeta)
+	// An earlier prompt cursor handed back (or a half-typed one) is still in the composer, and
+	// a paste lands after it: two instructions run as one. Refuse rather than clear it, which
+	// would lose the earlier request.
+	if cursorTUI && cursor.TerminalDraft(confirmMeta) {
+		httpx.WriteErr(w, http.StatusConflict, "composer_not_empty",
+			"the cursor session's input box still holds unsent text (a prompt its CLI refused, "+
+				"or a draft); sending now would append to it and run both as one prompt. "+
+				"Clear or send that text in the pane (or fix what made the CLI refuse it), then send again.")
+		return
+	}
 	// Record the mirror badge's origin BEFORE typing (see recordInjection's comment). After
 	// delivery, a poll landing in the gap between the user row appearing in the transcript
 	// and the record being written pins that turn on the user's screen with no origin. peer
@@ -612,8 +623,14 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rememberCodexTUIMode(name, body.Prompt, nil)
-	if body.Confirm && confirmMeta.Name != "" {
-		if err := confirmPromptDelivery(confirmMeta, pane, body.Prompt, confirmBase); err != nil {
+	held, heldReason := false, ""
+	if cursorTUI {
+		// cursor has no turn log to confirm against (the JSONL is written when a turn ends), so
+		// the only thing to catch is a prompt the TUI hands back at submit.
+		held, heldReason = confirmCursorSubmit(confirmMeta, body.Prompt)
+	} else if body.Confirm && confirmMeta.Name != "" {
+		var err error
+		if held, err = confirmPromptDelivery(confirmMeta, pane, body.Prompt, confirmBase); err != nil {
 			// Never dress an unconfirmed delivery up as success: the caller (the CP
 			// scheduler / the operator MCP) records and notifies it as an error instead
 			// of manufacturing a false "fired" (docs/log/38, delivery confirmation).
@@ -658,7 +675,19 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			fleetgraph.RecordInstruct("user", name, "", p)
 		}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
+	resp := map[string]any{"sent": name}
+	if held {
+		// Same key and meaning as the managed path below: claude has only queued the prompt
+		// behind a running turn (in memory, lost on a pane kill), so the sender must not
+		// read this as "started a turn".
+		resp["held"] = true
+		if heldReason != "" {
+			// A cursor prompt the TUI refused is not queued behind a turn: it sits in the
+			// composer and nothing will run it. The sender has to hear why.
+			resp["held_reason"] = heldReason
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // inputMirrors counts the detached Discord/Slack mirror goroutines. In production nobody
@@ -1081,7 +1110,8 @@ func typeInitialPrompt(name, prompt string) string {
 	// HTTP — log it if it stays unconfirmed. Unlike the reuse sender's confirm, this stays
 	// best-effort.
 	if metaOK && base.logs != nil {
-		if err := confirmPromptDelivery(meta, pane, prompt, base); err != nil {
+		// A queued initial prompt (held) still counts: the CLI has it and runs it next.
+		if _, err := confirmPromptDelivery(meta, pane, prompt, base); err != nil {
 			log.Printf("initial prompt delivery UNCONFIRMED for %s: %v", name, err)
 			return session.InitialPromptUnknown
 		}

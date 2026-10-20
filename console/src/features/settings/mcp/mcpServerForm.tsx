@@ -2,7 +2,7 @@ import { useState } from "react";
 import { agentOf } from "../../../agents/registry.ts";
 import { useT, t } from "../../../lib/i18n/index.ts";
 import type { Form, KV, McpServer, ProbeResult } from "./mcpWire.ts";
-import { MCP_KINDS, MASKED, NAME_RE, formValid, toKV } from "./mcpWire.ts";
+import { MASKED, NAME_RE, formValid, toKV, useMcpKinds } from "./mcpWire.ts";
 import { Field, KVEditor } from "../parts/mcpForm.tsx";
 import { EgressNote } from "./EgressNote.tsx";
 import type { EgressCheck } from "./egressCheck.ts";
@@ -95,6 +95,7 @@ export function ServerForm({
   const [testing, setTesting] = useState(false);
   const patch = (part: Partial<Form>) => setForm({ ...form, ...part });
   const valid = formValid(form);
+  const kinds = useMcpKinds();
   const nameBad = form.name.trim() !== "" && !NAME_RE.test(form.name.trim());
 
   const toggleKind = (k: string) =>
@@ -220,7 +221,7 @@ export function ServerForm({
           </Field>
           <Field label={tr("mcp.f_kinds")} wide hint={tr("mcp.f_kinds_hint")}>
             <div className="mcp-checks">
-              {MCP_KINDS.map((k) => (
+              {kinds.map((k) => (
                 <label key={k} className="mcp-check">
                   <input type="checkbox" checked={form.kinds.includes(k)} onChange={() => toggleKind(k)} />
                   {agentOf(k).label}

@@ -53,11 +53,27 @@ const (
 // that is not here never carries a mark, so adding a member route to the Agent without adding it
 // here leaves it refused rather than open.
 var memberOriginRoutes = map[string]bool{
+	// Every settings write is signed, because some settings are the member's alone: turning the
+	// memory review on (ADR 0117) sends other sessions' conversations to a model provider, and a
+	// session holds the same AGENT_TOKEN the relay uses. The Agent asks for the mark only on a
+	// write that arms such a setting (workspace/agent/ui_prefs.go); the rest ignore it.
+	"PUT /api/env/ui-prefs": true,
+	// "Review now" for one session (ADR 0117): it spends tokens and sends an excerpt to a model
+	// provider, so a session's own AGENT_TOKEN must not be able to start it.
+	"POST /api/agents/memory-review/run":           true,
 	"POST /api/agents/memory/entries/pin":          true,
 	"POST /api/agents/memory/entries/revert":       true,
 	"POST /api/agents/memory/entries/member-save":  true,
 	"POST /api/agents/memory/entries/purge":        true,
 	"POST /api/agents/memory/entries/project-move": true,
+	// The member's decisions on what the review proposed (ADR 0117 decision 6): approving
+	// publishes into every kind's memory, and the list returns text nobody has published, so a
+	// session's own AGENT_TOKEN must not be able to do either.
+	"POST /api/agents/memory-review/proposals/list":       true,
+	"POST /api/agents/memory-review/proposals/approve":    true,
+	"POST /api/agents/memory-review/proposals/reject":     true,
+	"POST /api/agents/memory-review/proposals/reject-all": true,
+	"POST /api/agents/memory-review/runs/revert":          true,
 	// Importing AF memory out of a bundle (#1983).
 	"POST /api/agents/memory/af-import": true,
 	// The member's part in what the Agent memory switch does by itself with claude's native

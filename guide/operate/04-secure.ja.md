@@ -290,6 +290,10 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
   Claude Desktop からワークスペースを遠隔操作できます。エンドポイントは `/mcp`（Bearer 認証）で、
   配備側では機能フラグ（`AF_MCP_ENABLED`）と、ingress で `/mcp` を通すかどうかが効きます。
   スコープ（read / write / admin:dangerous）と有効期限は利用者が選び、失効も本人が行えます。
+  この入口から、メンバーは自分のエージェントに自分の Agent Fleet メモリを使わせることもできます。メンバーごとの別設定で、
+  既定はオフです（メンバー編 設定 > エージェントメモリ > 設定）。外からの保存と忘却は監査されます（`memory.entry.save` /
+  `memory.entry.forget`、実行者は `mcp`、対象はプロジェクト ID）。テナント管理者はテナント全体でこれをブロックでき
+  （[管理 08](../admin/08-external-memory.ja.md)）、`AF_MCP_ENABLED` はエンドポイント全体を止めます。
 
 ## ワークスペース内ブラウザの引き渡し
 

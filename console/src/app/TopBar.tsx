@@ -3,14 +3,14 @@
 // App) and openSettings/openAdmin (→ features/settings/store).
 import { useEffect, useRef, useState } from "react";
 import { useTenantStore } from "../core/store/tenant.ts";
-import { useLayoutStore } from "../layout/store.ts";
 import { useTtsStore, toggleTtsPlayback } from "../core/store/tts.ts";
 import { useSettingsUI } from "../features/settings/store.ts";
 import { useHostUpdate } from "../features/settings/hostUpdate.ts";
 import { useDeploymentVersion, imageLabel } from "../features/settings/deploymentVersion.ts";
 import { rel, clearLocalState } from "../core/api/client.ts";
 import { useSettings, setSetting, THEMES, SURFACE_TARGETS, LOCALES, PANE_LAYOUTS } from "../lib/settings.ts";
-import { useT, getLocale } from "../lib/i18n/index.ts";
+import { useT } from "../lib/i18n/index.ts";
+import { openGuidePage } from "../lib/guideDocs.ts";
 import { useIsMobile, isStandalonePWA } from "../lib/device.ts";
 import { buildInfo, buildLabel } from "../lib/version.ts";
 import { useBrandStore } from "../lib/brand.ts";
@@ -148,13 +148,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   // starts at the shelves (member/, admin/, …) — there is no docs/ level in it. The
   // tree's own README branches by reader, which is what someone clicking "User guide"
   // wants; every container has it (ADR 0064: the guide is not cut by role).
-  const openUserGuide = () =>
-    useLayoutStore.getState().openTargetInNew({
-      content: {
-        kind: "file",
-        filePath: `/usr/local/share/agent-fleet/docs/README${getLocale() === "ja" ? ".ja" : ""}.md`,
-      },
-    }, true);
+  const openUserGuide = () => openGuidePage("README");
   const run = (fn: () => void) => {
     setMenuOpen(false);
     fn();

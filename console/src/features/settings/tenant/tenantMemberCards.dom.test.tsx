@@ -1,0 +1,113 @@
+// The member roster as cards (#2385 phase 1): a state badge with a word, needs-attention first,
+// filter and search, and still one GET …/members for the whole page.
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+
+const api = vi.fn();
+vi.mock("../../../core/api/client.ts", () => ({
+  api: (...args: unknown[]) => api(...args),
+  apiJSON: vi.fn(),
+  rawJSON: () => Promise.resolve(new Response("")),
+  errText: (e: { message?: string }) => e?.message || "",
+  rel: (p: string) => p,
+}));
+vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
+
+import { MembersPanel } from "./tenantMembers.tsx";
+import { setLocale } from "../../../lib/i18n/index.ts";
+import { en } from "../../../lib/i18n/locales/en.ts";
+
+const AUTO_STOP = { kind: "start-deadline", phase: "x", limit_minutes: 30, stopped_at: "2026-10-01T10:00:00Z" };
+const ROSTER = [
+  { user_key: "u-alice", email: "alice@x.com", role: "member", state: "running", status: "active" },
+  { user_key: "u-bob", email: "bob@x.com", role: "member", state: "stopped", status: "active" },
+  { user_key: "u-carol", email: "carol@x.com", role: "member", state: "stopped", status: "active", auto_stop: AUTO_STOP },
+  { user_key: "u-dave", email: "dave@x.com", role: "member", state: "none", status: "active", has_workspace: false },
+  { user_key: "u-erin", email: "erin@x.com", role: "member", state: "stopped", status: "removed" },
+];
+
+let root: Root | null = null;
+let host: HTMLDivElement | null = null;
+const onOpen = vi.fn();
+
+async function mount() {
+  api.mockImplementation((p: string) =>
+    p === "api/admin/workspace-sizing" ? Promise.resolve({}) : Promise.resolve({ members: ROSTER }),
+  );
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  await act(async () => {
+    root!.render(<MembersPanel slug="acme" isSuper={false} onOpenMember={onOpen} />);
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
+const cards = () => Array.from(document.querySelectorAll<HTMLButtonElement>(".member-card"));
+const titles = () => cards().map((c) => c.querySelector(".mc-title")?.textContent);
+const badge = (c: Element) => c.querySelector(".member-state")?.textContent;
+
+beforeEach(() => setLocale("en"));
+
+afterEach(() => {
+  act(() => root?.unmount());
+  host?.remove();
+  root = null;
+  host = null;
+  vi.clearAllMocks();
+  setLocale("ja");
+});
+
+describe("member cards", () => {
+  it("says each state in words, not by colour alone", async () => {
+    await mount();
+    const byTitle = new Map(cards().map((c) => [c.querySelector(".mc-title")?.textContent, badge(c)]));
+    expect(byTitle.get("alice@x.com")).toBe(en["admin.roster_state_running"]);
+    expect(byTitle.get("bob@x.com")).toBe(en["admin.roster_state_stopped"]);
+    expect(byTitle.get("carol@x.com")).toBe(en["admin.roster_state_auto_stopped"]);
+    expect(byTitle.get("dave@x.com")).toBe(en["admin.roster_state_never"]);
+    expect(byTitle.get("erin@x.com")).toBe(en["admin.roster_state_removed"]);
+  });
+
+  it("puts the member who needs attention first and counts them", async () => {
+    await mount();
+    expect(titles()[0]).toBe("carol@x.com");
+    expect(cards()[0].classList.contains("attn")).toBe(true);
+    const summary = document.querySelector(".member-summary")?.textContent || "";
+    expect(summary).toContain("1 of 5 running");
+    expect(summary).toContain("1 need attention");
+  });
+
+  it("filters and searches", async () => {
+    await mount();
+    const filter = (label: string) =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>(".member-filter .seg-btn")).find((b) =>
+        b.textContent?.startsWith(label),
+      )!;
+    await act(async () => filter(en["admin.roster_filter_removed"]).click());
+    expect(titles()).toEqual(["erin@x.com"]);
+    await act(async () => filter(en["admin.roster_filter_all"]).click());
+    const search = document.querySelector<HTMLInputElement>(".member-search")!;
+    await act(async () => {
+      // React tracks the value through the native setter; assigning .value alone is ignored.
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "u-bo");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(titles()).toEqual(["bob@x.com"]);
+  });
+
+  it("opens the member detail from a card", async () => {
+    await mount();
+    await act(async () => cards()[0].click());
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ user_key: "u-carol" }));
+  });
+
+  // Thirty cards must not mean thirty Agent calls: the page reads one roster response.
+  it("makes no per-member calls", async () => {
+    await mount();
+    expect(api.mock.calls.map((c) => c[0]).sort()).toEqual(["api/admin/tenants/acme/members", "api/admin/workspace-sizing"]);
+  });
+});

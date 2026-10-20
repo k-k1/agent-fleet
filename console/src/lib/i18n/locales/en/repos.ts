@@ -456,6 +456,7 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "scm.ref_tag": "Tag {name}",
   "scm.show_detail": "Show details",
   "scm.switch_branch_to": "Switch branch: {name}",
+  "scm.switch_remote_branch_to": "Switch to remote branch: {name}",
   "scm.start_work_on": "Start work on {name}…",
   "scm.open_branch_worktree": "{name} is in use by {folder}; open it",
   "scm.checkout_detached": "Check out (detached HEAD)",

@@ -889,6 +889,12 @@ func isPeerTool(name string) bool {
 const peerQueuedNote = "相手は作業中です。メッセージは相手の今のターンが終わったあと、次のターンとして届きます" +
 	"（まだ読まれていません）。再送しないでください。"
 
+// peerRejectedNote rides on a send_to_peer_session result whose message the peer's terminal
+// refused at submit (held_reason): it sits in the peer's input box and nothing will run it.
+// "Do not resend" holds here too, since a resend would be typed after the first copy.
+const peerRejectedNote = "相手の端末が送信を受け付けませんでした（理由は reason）。メッセージは相手の入力欄に残っているだけで、" +
+	"実行されていません（読まれていません）。再送しないでください。相手の利用者が原因を直す必要があります。"
+
 // peerBlockedNote is peerQueuedNote for a peer waiting on its user's decision (blocked_on).
 const peerBlockedNote = "相手は利用者の回答（質問・プラン承認・権限確認）を待っています。メッセージは回答のあと、" +
 	"そのターンが終わってから届きます（まだ読まれていません）。再送しないでください。"
@@ -2903,8 +2909,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		// A peer waiting on its user's answer queues it too (blocked_on, #1031): it is delivered
 		// after the answer, once that turn ends.
 		var sent struct {
-			Held      bool   `json:"held"`
-			BlockedOn string `json:"blocked_on"`
+			Held       bool   `json:"held"`
+			HeldReason string `json:"held_reason"`
+			BlockedOn  string `json:"blocked_on"`
 		}
 		_ = json.Unmarshal([]byte(out), &sent)
 		queued := sent.Held || sent.BlockedOn != ""
@@ -2914,6 +2921,10 @@ func mcpStdioCall(req mcpReq) []byte {
 			result["queued"] = true
 			result["blocked_on"] = sent.BlockedOn
 			result["note"] = peerBlockedNote
+		case sent.Held && sent.HeldReason != "":
+			result["queued"] = true
+			result["reason"] = sent.HeldReason
+			result["note"] = peerRejectedNote
 		case sent.Held:
 			result["queued"] = true
 			result["note"] = peerQueuedNote
@@ -3246,6 +3257,11 @@ func mcpStdioCall(req mcpReq) []byte {
 		if !writeEnabled() && !mcpFleetSpawnEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはセッションの作成を許可されていません")
 		}
+		// Before the shell approval gate, the effort check and the idempotency key: an unknown
+		// kind is refused here rather than after those have treated it as something it is not.
+		if err := validateCreateKind(a.Kind); err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
 		// Who is launching decides the provenance, the idempotency scope, the report route and
 		// the worktree default. Everything below branches on this one answer (ADR 0073).
 		parent := ""
@@ -3266,17 +3282,12 @@ func mcpStdioCall(req mcpReq) []byte {
 			}
 		}
 		driver := ""
-		// This list is "kinds where tui vs managed is a REAL choice, and MCP wants to bias
-		// toward managed" (an MCP caller has no way to drive a tui pane). claude and agy are
-		// deliberately absent: both have managedDriver:false (no managed route exists at all,
-		// so there is no choice to bias). lcpp and muse are absent for the mirror-image reason —
-		// neither has a tui route at all (ADR 0093 決定 2, ADR 0095 decision 2), so there is
-		// equally no choice to bias for them: the
-		// Agent's own create handler already defaults an unspecified driver to managed for any
-		// Caps().ManagedOnly kind (session_handlers.go's driver == "" && ManagedOnly branch),
-		// unconditionally, regardless of what this list contains. Adding lcpp here would be a
-		// no-op, not a fix.
-		if a.Kind == "codex" || a.Kind == "opencode" || a.Kind == "copilot" || a.Kind == "cursor" || a.Kind == "kiro" {
+		// An MCP caller has no way to drive a tui pane, so it asks for managed wherever the
+		// registry says that is the default (sessionx.ManagedDefaultKind). claude and agy are
+		// absent because no managed route exists for them. lcpp and muse have no tui route
+		// at all; the Agent's create handler defaults them to managed anyway, so naming it
+		// here is the same launch spelled out.
+		if managedDefaultKind(a.Kind) {
 			driver = "managed"
 		}
 		// The worktree default differs by surface: the operator's is false (a person can say

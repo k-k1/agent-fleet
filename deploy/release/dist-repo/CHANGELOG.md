@@ -3,6 +3,20 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.32.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.32.1) — 2026-10-19
+
+A fix release for 0.32.0: memory suggestions no longer run in the background unless you ask for it,
+stopped opencode sessions show their history again, and the bundled Jira CLI creates issues without
+`jira init`.
+
+## [0.32.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.32.0) — 2026-10-18
+
+A session can move to another agent, carrying its conversation and working state, and offers the
+move when it hits a usage limit. Apps that sign in with Google can sign in on a preview host through a
+development sign-in, the workspace bundles a Jira CLI, and opencode is now opencode 2. Agent memory
+gets an experimental review that suggests memories from finished sessions, and can be used from
+agents outside Agent Fleet.
+
 ## [0.31.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.31.0) — 2026-10-14
 
 Members of a tenant can send each other messages and requests through a new inbox, opt in to

@@ -391,6 +391,20 @@ func ReconcileManaged(reason string) {
 // reconcileAll is the supervisor-facing wrapper (serve.go, after a daemon death or restart).
 func reconcileAll(reason string) { ReconcileManaged(reason) }
 
+// reconcileInflight counts the reconciles started by goReconcile. Tests wait on it so a
+// reconcile that outlives the code that triggered it cannot read a package var after the test
+// has restored it; production never waits.
+var reconcileInflight sync.WaitGroup
+
+// goReconcile runs reconcileAll in the background, tracked by reconcileInflight.
+func goReconcile(reason string) {
+	reconcileInflight.Add(1)
+	go func() {
+		defer reconcileInflight.Done()
+		reconcileAll(reason)
+	}()
+}
+
 // --- thread handle -----------------------------------------------------------
 
 type threadHandle struct {
@@ -444,6 +458,13 @@ type threadHandle struct {
 	// client's turn, which a retry status must never be attributed to.
 	turnSent bool
 	events   chan agents.Event
+
+	// act stamps every message the runtime sends for this handle, for the busy-row progress bound
+	// (ManagedProgress).
+	act agents.Activity
+	// tools holds the tool calls the runtime reported started and not finished: a silent tool
+	// sends nothing while it runs, so this is the only trace of it (progress_managed.go).
+	tools agents.InFlight
 }
 
 // tq returns the handle's queue, creating it on first use. Caller holds h.mu.
@@ -502,6 +523,7 @@ func (h *threadHandle) currentState() agents.TurnState {
 // blocked turn call (if any) unblocks with a transport error and keeps unknown until
 // reconcile resolves it.
 func (h *threadHandle) runtimeLost() {
+	h.tools.Unknown()
 	h.mu.Lock()
 	h.alive = false
 	h.compacting = false
@@ -1382,6 +1404,7 @@ func handleServeEvent(data []byte) {
 		}
 		ev.Type, ev.Properties = inner.Type, inner.Properties
 	}
+	noteProgress(ev.Type, ev.Properties)
 	switch ev.Type {
 	case "question.asked":
 		var q serveQuestion

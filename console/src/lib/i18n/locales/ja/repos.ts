@@ -453,6 +453,7 @@ export const repos = {
   "scm.ref_tag": "タグ {name}",
   "scm.show_detail": "詳細を表示",
   "scm.switch_branch_to": "ブランチ切替: {name}",
+  "scm.switch_remote_branch_to": "リモートブランチへ切替: {name}",
   "scm.start_work_on": "{name} で作業を始める…",
   "scm.open_branch_worktree": "{name} は {folder} で作業中 — 開く",
   "scm.checkout_detached": "チェックアウト（detached HEAD）",

@@ -13,11 +13,12 @@ import { en } from "../../../lib/i18n/locales/en.ts";
 //   3. every i18n key it uses exists in both ja and en (including the dynamic mem.trigger_*)
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 // Because this check reads source text, it depends on how many files the tab is split into.
-// The memory tab is MemoryTab (shell, root overview, history) / memoryRestore (restore) /
+// The two memory entries are MemoryTab (Agent memory shell) with its views/ and the panels they
+// mount, and MemorySnapshotsTab (root overview, history) / memoryRestore (restore) /
 // memoryTransfer (export and import), so the family is concatenated and read as one tab body.
 // Add any new file here: forget one and the check that is supposed to watch for unregistered
 // REST paths silently stops covering it.
-const tab = ["./MemoryTab.tsx", "./memoryTypes.ts", "./memoryRestore.tsx", "./memoryTransfer.tsx", "./memoryChanges.tsx", "./memoryClaudeImport.tsx", "./memoryMuseImport.tsx", "./memoryClaudeExport.tsx", "./memoryProjectMove.tsx"]
+const tab = ["./MemoryTab.tsx", "./MemorySnapshotsTab.tsx", "./views/AgentMemoryStatus.tsx", "./memoryTypes.ts", "./memoryRestore.tsx", "./memoryTransfer.tsx", "./memoryChanges.tsx", "./memoryClaudeImport.tsx", "./memoryMuseImport.tsx", "./memoryClaudeExport.tsx", "./memoryProjectMove.tsx"]
   .map(read)
   .join("\n");
 const dialog = read("../SettingsDialog.tsx");
@@ -28,6 +29,8 @@ describe("agent memory tab in the settings modal", () => {
   it("is registered in both the rail and the render branch", () => {
     expect(dialog).toContain('["memory", "set.tab_memory"]');
     expect(dialog).toContain('{section === "memory" && <MemoryTab />}');
+    expect(dialog).toContain('["memorysnapshots", "set.tab_memory_snapshots"]');
+    expect(dialog).toContain('{section === "memorysnapshots" && <MemorySnapshotsTab />}');
     // Which group it sits in is settingsRail.dom.test.tsx's business; what matters here is
     // that a rail entry and a render branch exist together (one without the other is a tab
     // you can click that stays blank).
@@ -50,6 +53,8 @@ describe("agent memory tab in the settings modal", () => {
         // ADR 0108: entries/changes and entries/revert (the regex stops at "entries"; both full
         // paths are checked below).
         "api/agents/memory/entries",
+        // The status header reads the sync state (the regex stops at the hyphen of auto-sync).
+        "api/agents/memory/auto",
         // The claude-memory import (the regex stops at the hyphen; full paths are checked below).
         "api/agents/memory/claude",
         // The muse project-memory import (#1991; same regex stop).

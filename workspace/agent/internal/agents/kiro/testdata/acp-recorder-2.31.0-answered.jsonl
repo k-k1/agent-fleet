@@ -1,0 +1,2 @@
+{"ts":5,"dir":"out","msg":{"jsonrpc":"2.0","id":"217c1a80-aaaa","result":{"_meta":{"provenance":"human"},"outcome":{"outcome":"selected","optionId":"allow_once","_meta":{"provenance":"human"}}}}}
+{"ts":6,"dir":"in","msg":{"jsonrpc":"2.0","result":{"stopReason":"end_turn"},"id":3}}

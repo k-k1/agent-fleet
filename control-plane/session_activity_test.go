@@ -37,7 +37,7 @@ func TestSessionActivityClassification(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := sessionActivity(c.in); got != c.want {
+			if got := sessionActivity(c.in, 0); got != c.want {
 				t.Errorf("sessionActivity(%+v) = %v, want %v", c.in, got, c.want)
 			}
 		})
@@ -70,10 +70,10 @@ func TestHoldsWorkspace(t *testing.T) {
 	}
 	for _, c := range cases {
 		s := sessionWire{Alive: true, State: c.state, BackgroundBusy: c.bg}
-		if got := holdsWorkspace(s); got != c.want {
+		if got := holdsWorkspace(s, 0); got != c.want {
 			t.Errorf("holdsWorkspace(state=%q bg=%v) = %v, want %v", c.state, c.bg, got, c.want)
 		}
-		if dead := (sessionWire{State: c.state, BackgroundBusy: c.bg}); holdsWorkspace(dead) {
+		if dead := (sessionWire{State: c.state, BackgroundBusy: c.bg}); holdsWorkspace(dead, 0) {
 			t.Errorf("holdsWorkspace(dead state=%q) = true, want false", c.state)
 		}
 	}
@@ -91,16 +91,16 @@ func TestTier1Reapable(t *testing.T) {
 	for _, st := range []string{stateWorking, stateCompacting, stateIdle, stateQuestion, statePlan,
 		statePermission, stateBlocked, stateAuth, stateLimited, stateSpendLimit, ""} {
 		s := sessionWire{Alive: true, State: st}
-		if got := tier1Reapable(s); got != reapable[st] {
+		if got := tier1Reapable(s, 0); got != reapable[st] {
 			t.Errorf("tier1Reapable(%q) = %v, want %v", st, got, reapable[st])
 		}
 	}
 	// An idle row holding background work is not folded (D3).
-	if tier1Reapable(sessionWire{Alive: true, State: stateIdle, BackgroundBusy: true}) {
+	if tier1Reapable(sessionWire{Alive: true, State: stateIdle, BackgroundBusy: true}, 0) {
 		t.Error("tier1Reapable(idle+backgroundBusy) = true, want false: it kills background work that is running")
 	}
-	if tier1Reapable(sessionWire{State: stateIdle}) {
-		t.Error("tier1Reapable(dead) = true, want false")
+	if tier1Reapable(sessionWire{State: stateIdle}, 0) {
+		t.Error("tier1Reapable(dead, 0) = true, want false")
 	}
 }
 
@@ -169,29 +169,29 @@ func TestKeepAwakePin(t *testing.T) {
 
 	// A shell (empty state) is protected too — the reason the pin exists.
 	shell := sessionWire{Alive: true, Kind: "shell", KeepAwakeUntil: future}
-	if got := sessionActivity(shell); got != activityMachineBusy {
+	if got := sessionActivity(shell, 0); got != activityMachineBusy {
 		t.Errorf("pinned shell = %v, want machineBusy", got)
 	}
-	if !holdsWorkspace(shell) {
+	if !holdsWorkspace(shell, 0) {
 		t.Error("a pinned shell is not holding the workspace")
 	}
-	if tier1Reapable(shell) {
+	if tier1Reapable(shell, 0) {
 		t.Error("tier 1 was about to fold a pinned row")
 	}
 	// An idle claude is protected the same way (a long unattended run one wants left alone).
-	if !holdsWorkspace(sessionWire{Alive: true, Kind: "claude", State: stateIdle, KeepAwakeUntil: future}) {
+	if !holdsWorkspace(sessionWire{Alive: true, Kind: "claude", State: stateIdle, KeepAwakeUntil: future}, 0) {
 		t.Error("a pinned idle session is not protected")
 	}
 	// An expired pin does not hold — this is what keeps a forgotten pin from billing forever.
-	if holdsWorkspace(sessionWire{Alive: true, Kind: "shell", KeepAwakeUntil: past}) {
+	if holdsWorkspace(sessionWire{Alive: true, Kind: "shell", KeepAwakeUntil: past}, 0) {
 		t.Error("an expired pin is still in force")
 	}
 	// A pin on a dead session does not hold the container.
-	if holdsWorkspace(sessionWire{Kind: "shell", KeepAwakeUntil: future}) {
+	if holdsWorkspace(sessionWire{Kind: "shell", KeepAwakeUntil: future}, 0) {
 		t.Error("a pin on a stopped session held the workspace")
 	}
 	// An unreadable value falls to "not pinned" rather than to billing on in silence.
-	if holdsWorkspace(sessionWire{Alive: true, Kind: "shell", KeepAwakeUntil: "いつまでも"}) {
+	if holdsWorkspace(sessionWire{Alive: true, Kind: "shell", KeepAwakeUntil: "いつまでも"}, 0) {
 		t.Error("an unreadable deadline took effect as a pin")
 	}
 	if keepAwake("", time.Now()) {

@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console and CP read. Generated - do not edit by hand.
 # Update: cd workspace/agent && go test -run TestWireShapeGolden -update-wire-golden .
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 142
+# count: 156
 Repo.ahead number
 Repo.behind number
 Repo.branch string
@@ -34,6 +34,18 @@ RepoStatus.staged number
 RepoStatus.unborn bool,omitempty
 RepoStatus.unstaged number
 RepoStatus.untracked number
+kindCatalog.kinds[].caps.canFork bool
+kindCatalog.kinds[].caps.canForkAt bool
+kindCatalog.kinds[].caps.canTranscript bool
+kindCatalog.kinds[].caps.permissionChoice bool
+kindCatalog.kinds[].caps.usesLabel bool
+kindCatalog.kinds[].instructionDelivery string,omitempty
+kindCatalog.kinds[].instructions string
+kindCatalog.kinds[].instructionsReason string,omitempty
+kindCatalog.kinds[].kind string
+kindCatalog.kinds[].managedDefault bool
+kindCatalog.kinds[].managedOnly bool
+kindCatalog.kinds[].mcpClient string
 notice.Event.createdAt string
 notice.Event.displayName string
 notice.Event.id string
@@ -83,8 +95,10 @@ session.CatalogResponse.sessions[].workingCopyId string,omitempty
 session.Session.alive bool
 session.Session.archived bool,omitempty
 session.Session.authOkAt string,omitempty
+session.Session.backgroundAgeSec number,omitempty
 session.Session.backgroundBusy bool
 session.Session.backgroundBusyReason string,omitempty
+session.Session.backgroundSince string,omitempty
 session.Session.branch string,omitempty
 session.Session.branchDrift bool,omitempty
 session.Session.carried string,omitempty

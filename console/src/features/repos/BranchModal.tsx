@@ -54,11 +54,14 @@ export function BranchModal({ repoName, onClose, onChecked, onOpenWorktree, onSt
     };
   }, [repoName]);
 
-  const checkout = async (name: string) => {
+  const checkout = async (name: string, b?: Branch) => {
     if (busy) return;
     setBusy(name);
     try {
-      const res = await apiJSON(`api/repos/${encodeURIComponent(repoName)}/checkout`, "POST", { branch: name });
+      const res = await apiJSON(`api/repos/${encodeURIComponent(repoName)}/checkout`, "POST", {
+        branch: name,
+        ...(b?.remote && b.remote_name ? { remote: b.remote_name } : {}),
+      });
       if (res && res.error) {
         toast(tr("rp.checkout_failed", { err: errText(res.error) }));
         return;

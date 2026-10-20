@@ -358,7 +358,11 @@ art as it serves it.
   now" actions: creating, forking or resuming a session, answering a carried question, the
   SSM node lookup. **Opening a terminal does not start it, and neither does reading or
   reloading the Console**: those answer "the workspace is stopped — start it first", so a tab
-  left open never keeps a Workspace warm. This is effective for
+  left open never keeps a Workspace warm. Background work (a dev server or a
+  `run_in_background` task started by an idle session) holds the Workspace for at most
+  **2 hours** (`AF_BACKGROUND_HOLD_MAX`, per tenant `background_hold_max`; `0` = unbounded);
+  after that it no longer keeps the Workspace awake, and the "do not auto-stop" pin is the way to
+  keep a genuinely long job. This is effective for
   saving resources. For the meaning of the env vars, see
   `deploy/compose/.env.example`; for how it works, see
   `docs/build/09-deploy.md` §9.4. A Terminal claude, agy, codex, cursor, copilot, kiro or opencode session showing "working" keeps the
@@ -368,7 +372,9 @@ art as it serves it.
   codex, cursor, copilot, kiro and opencode only a pane repaint does (a spinner or elapsed-time
   counter counts), so a silent tool under a pane that stays static for an hour can lapse, while a
   stuck session whose spinner keeps animating keeps holding. Use the "do not auto-stop" pin for
-  long silent work on those kinds. Managed sessions and the other kinds (muse, lcpp, shell, ssm) are not yet bounded this way, and background
+  long silent work on those kinds. A Managed cursor, kiro, codex or opencode session is bounded the same way, on the runtime's own sign of life: its last message for that session, or a running tool (an open tool call or item, or for cursor and kiro a tool process under the runtime). It was measured on cursor-agent 2026.10.16, kiro-cli 2.31.0, codex 0.163.0 and opencode 2.0.32 with a local shell tool;
+  whenever the Agent cannot tell what is running (a restart, a reconnect, a failed process-table read) the session keeps holding. opencode 1.x and Managed muse, lcpp and copilot are not bounded this way (see ADR 0055, 2026-10-17 addendum).
+  shell and ssm sessions never show "working", and muse and lcpp have no Terminal mode, so there is nothing of those kinds to bound. Background
   work and the "do not auto-stop" pin are never subject to it.
 - **force-stop (brute force)**: `docker compose down` **does not stop user Workspaces** (they
   are outside compose management). To stop a specific Workspace for sure, a super_admin

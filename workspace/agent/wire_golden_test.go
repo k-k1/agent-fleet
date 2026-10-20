@@ -71,6 +71,9 @@ func wireGoldenTypes() []struct {
 		{"resources.Machine", reflect.TypeOf(resources.Machine{})},
 		// GET /notifications — one entry of the notification centre.
 		{"notice.Event", reflect.TypeOf(notice.Event{})},
+		// GET /agents/kinds — the kind catalog the CP embeds a snapshot of and the Console will
+		// derive its kind lists from.
+		{"kindCatalog", reflect.TypeOf(kindCatalogWire{})},
 	}
 }
 

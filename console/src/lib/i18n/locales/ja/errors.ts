@@ -263,7 +263,7 @@ export const errors = {
   "err.memory_not_found": "そのメモリはありません",
   "err.memory_conflict": "メモリが先に更新されています。読み直してからやり直してください",
   "err.memory_no_project": "このセッションには作業コピーが無いため、プロジェクトのメモリを使えません",
-  "err.memory_disabled": "Agent Fleet のメモリは設定でオフになっています（設定 → エージェントメモリ）",
+  "err.memory_disabled": "Agent Fleet のメモリは設定でオフになっています（設定 → エージェントメモリ → 設定）",
   "err.tenant_idp_link_claim_required":
     "この配備には、同じ発行元のサインイン方法がすでにあります。この発行元はアプリ登録ごとに同じ人へ違う subject を割り当てるため、" +
     "「同一アカウントの見分け方」を指定しないと、すでにこの配備を使っている人が全員サインインできなくなります（メールアドレス重複として拒否されます）。",

@@ -250,6 +250,10 @@ func HandleRepoLog(w http.ResponseWriter, r *http.Request) {
 type graphRef struct {
 	Name string `json:"name"`
 	Type string `json:"type"` // head | remote | tag
+	// Remote and Branch split a remote ref's Name on the configured remote names
+	// (a remote name may itself contain slashes); empty for other types.
+	Remote string `json:"remote,omitempty"`
+	Branch string `json:"branch,omitempty"`
 }
 
 // graphCommit is one node in the commit-graph DAG: its sha + parents (for lane layout),
@@ -341,6 +345,7 @@ func HandleRepoGraph(w http.ResponseWriter, r *http.Request) {
 	}
 	commits := []graphCommit{}
 	current := ""
+	remotes := remoteNames(dir)
 	for _, line := range strings.Split(out, "\n") {
 		p := strings.Split(line, "\x1f")
 		if len(p) != 7 {
@@ -351,6 +356,11 @@ func HandleRepoGraph(w http.ResponseWriter, r *http.Request) {
 			parents = strings.Fields(s)
 		}
 		refs, cur := parseDecorate(p[6])
+		for i := range refs {
+			if refs[i].Type == "remote" {
+				refs[i].Remote, refs[i].Branch, _ = splitRemoteRef(remotes, refs[i].Name)
+			}
+		}
 		if cur != "" {
 			current = cur
 		}

@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1414,12 +1415,16 @@ func HandleRepoStatus(w http.ResponseWriter, r *http.Request) {
 
 // BranchInfo describes one checkout target for the branch-switch modal.
 type BranchInfo struct {
-	Name    string `json:"name"`    // checkout name (remote prefix stripped → DWIM tracking)
-	Remote  bool   `json:"remote"`  // remote-only (no local branch of this name)
-	Unix    int64  `json:"unix"`    // last-commit time, for newest-first sorting
-	Date    string `json:"date"`    // last-commit ISO date (display/tooltip)
-	Subject string `json:"subject"` // last-commit subject
-	Current bool   `json:"current"` // currently checked out
+	Name   string `json:"name"`   // checkout name (remote prefix stripped → DWIM tracking)
+	Remote bool   `json:"remote"` // remote-only (no local branch of this name)
+	// RemoteName is the remote a remote-only entry was taken from (the one whose
+	// tip Unix/Subject describe). Clients echo it back on checkout so a branch that
+	// exists on two remotes tracks the one the picker showed.
+	RemoteName string `json:"remote_name,omitempty"`
+	Unix       int64  `json:"unix"`    // last-commit time, for newest-first sorting
+	Date       string `json:"date"`    // last-commit ISO date (display/tooltip)
+	Subject    string `json:"subject"` // last-commit subject
+	Current    bool   `json:"current"` // currently checked out
 	// WorktreePath is the OTHER working copy that already has this branch checked
 	// out ("" = free). git permits a branch in one worktree only, so the pickers
 	// disable these rows and offer to open that copy instead (see WorktreeBranches).
@@ -1445,18 +1450,29 @@ func HandleRepoBranches(w http.ResponseWriter, r *http.Request) {
 func gitBranchInfos(dir, current string) []BranchInfo {
 	occupied := WorktreeBranches(dir)
 	const sep = "\x1f" // unit separator: absent from ref names, dates, and subjects
+	// Full refnames: %(refname:short) abbreviates refs/remotes/origin/HEAD to "origin",
+	// which no HEAD check on the short form can catch.
 	format := strings.Join([]string{
-		"%(refname:short)", "%(committerdate:unix)", "%(committerdate:iso8601)", "%(contents:subject)",
+		"%(refname)", "%(committerdate:unix)", "%(committerdate:iso8601)", "%(contents:subject)",
 	}, sep)
 	infos := []BranchInfo{}
 	seen := map[string]bool{}
-	// Local first so a local branch wins over its remote duplicate.
+	rank := remoteRank(dir, current)
+	remotes := remoteNames(dir)
+	// Local first so a local branch wins over its remote duplicate; remotes are
+	// then ordered so origin wins over a same-named branch on another remote.
 	for _, ns := range []string{"refs/heads", "refs/remotes"} {
 		out, err := Run(dir, "for-each-ref", "--format="+format, ns)
 		if err != nil {
 			continue
 		}
 		isRemote := ns == "refs/remotes"
+		type entry struct {
+			remote string
+			f      []string
+			name   string
+		}
+		var entries []entry
 		for _, line := range strings.Split(out, "\n") {
 			if line == "" {
 				continue
@@ -1465,23 +1481,27 @@ func gitBranchInfos(dir, current string) []BranchInfo {
 			if len(f) < 4 {
 				continue
 			}
-			name := f[0]
-			if isRemote {
-				if i := strings.IndexByte(name, '/'); i >= 0 {
-					name = name[i+1:] // origin/foo -> foo
-				}
-				if name == "HEAD" || name == "" {
-					continue // skip the remote's symbolic HEAD
-				}
-			}
-			if seen[name] {
+			rest := strings.TrimPrefix(f[0], ns+"/")
+			if !isRemote {
+				entries = append(entries, entry{f: f, name: rest})
 				continue
 			}
-			seen[name] = true
-			unix, _ := strconv.ParseInt(f[1], 10, 64)
+			remote, name, ok := splitRemoteRef(remotes, rest)
+			if !ok || name == "HEAD" {
+				continue // refs/remotes/<remote>/HEAD, or a ref under no configured remote: not a branch
+			}
+			entries = append(entries, entry{remote: remote, f: f, name: name})
+		}
+		sort.SliceStable(entries, func(i, j int) bool { return rank(entries[i].remote) < rank(entries[j].remote) })
+		for _, e := range entries {
+			if seen[e.name] {
+				continue
+			}
+			seen[e.name] = true
+			unix, _ := strconv.ParseInt(e.f[1], 10, 64)
 			infos = append(infos, BranchInfo{
-				Name: name, Remote: isRemote, Unix: unix, Date: f[2], Subject: f[3],
-				Current: name == current, WorktreePath: occupied[name],
+				Name: e.name, Remote: isRemote, RemoteName: e.remote, Unix: unix, Date: e.f[2], Subject: e.f[3],
+				Current: e.name == current, WorktreePath: occupied[e.name],
 			})
 		}
 	}
@@ -1489,8 +1509,81 @@ func gitBranchInfos(dir, current string) []BranchInfo {
 	return infos
 }
 
+// remoteRank orders remotes for picking between same-named branches: origin, then
+// the remote the current branch tracks, then everything else (stable, so
+// for-each-ref's alphabetical order breaks the tie).
+func remoteRank(dir, current string) func(remote string) int {
+	upstream := ""
+	if current != "" {
+		if out, err := Run(dir, "config", "--get", "branch."+current+".remote"); err == nil {
+			upstream = strings.TrimSpace(out)
+		}
+	}
+	return func(remote string) int {
+		switch remote {
+		case "":
+			return 0 // local entries: single group
+		case "origin":
+			return 0
+		case upstream:
+			return 1
+		}
+		return 2
+	}
+}
+
+func refExists(dir, ref string) bool {
+	_, err := Run(dir, "rev-parse", "--verify", "--quiet", ref)
+	return err == nil
+}
+
+// remoteNames lists the configured remotes (`git remote`). A remote name may
+// contain slashes, so refs/remotes/<...> cannot be split without it.
+func remoteNames(dir string) []string {
+	out, err := Run(dir, "remote")
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(out)
+}
+
+// splitRemoteRef splits the part of a refs/remotes/ name into configured remote
+// and branch. Remote names can contain slashes (`team/upstream`) and so can
+// branch names, so the longest matching remote wins.
+func splitRemoteRef(remotes []string, rest string) (remote, branch string, ok bool) {
+	for _, r := range remotes {
+		if b, found := strings.CutPrefix(rest, r+"/"); found && b != "" && len(r) > len(remote) {
+			remote, branch, ok = r, b, true
+		}
+	}
+	return remote, branch, ok
+}
+
+// remotesWithBranch lists the configured remotes that have a remote-tracking ref
+// for name, best first (see remoteRank).
+func remotesWithBranch(dir, name, current string) []string {
+	out, err := Run(dir, "for-each-ref", "--format=%(refname)", "refs/remotes")
+	if err != nil {
+		return nil
+	}
+	configured := remoteNames(dir)
+	var remotes []string
+	for _, ref := range strings.Split(out, "\n") {
+		remote, b, ok := splitRemoteRef(configured, strings.TrimPrefix(ref, "refs/remotes/"))
+		if ok && b == name && !slices.Contains(remotes, remote) {
+			remotes = append(remotes, remote)
+		}
+	}
+	rank := remoteRank(dir, current)
+	sort.SliceStable(remotes, func(i, j int) bool { return rank(remotes[i]) < rank(remotes[j]) })
+	return remotes
+}
+
 type checkoutReq struct {
 	Branch string `json:"branch"`
+	// Remote (optional) names the remote to track when Branch exists only as a
+	// remote-tracking branch. Absent from older clients: the agent then picks one.
+	Remote string `json:"remote,omitempty"`
 	Ref    string `json:"ref"`
 	Create bool   `json:"create"`
 }
@@ -1550,6 +1643,26 @@ func HandleRepoCheckout(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		args = []string{"checkout", ref}
+		// A picked branch (not a free-form ref: tags and HEAD keep plain `git checkout`)
+		// with no local ref is created from a remote-tracking one. Bare-name DWIM fails
+		// (exit 128) when two remotes have it, so track one explicitly — by full ref,
+		// since `origin/main` is ambiguous when a local branch or tag has that name,
+		// and with -b, since --track alone names the branch after what follows the
+		// remote (`upstream/main` for a remote called `team/upstream`).
+		if strings.TrimSpace(req.Branch) != "" && !refExists(dir, "refs/heads/"+ref) {
+			st, _ := GitStatus(dir)
+			remotes := remotesWithBranch(dir, ref, st.Branch)
+			remote := strings.TrimSpace(req.Remote)
+			if remote != "" && !slices.Contains(remotes, remote) {
+				remote = ""
+			}
+			if remote == "" && len(remotes) > 1 {
+				remote = remotes[0]
+			}
+			if remote != "" {
+				args = []string{"checkout", "-b", ref, "--track", "refs/remotes/" + remote + "/" + ref}
+			}
+		}
 	}
 	if out, err := Combined(dir, args...); err != nil {
 		httpx.WriteErr(w, http.StatusBadGateway, "checkout_failed", fmt.Sprintf("%v: %s", err, out))

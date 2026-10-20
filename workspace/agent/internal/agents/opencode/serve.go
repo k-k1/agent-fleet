@@ -404,8 +404,45 @@ func (s *Supervisor) armIdleWatchLocked() {
 		return
 	}
 	s.watching = true
-	go agents.WatchIdle("opencode serve", dependents, s.stopIfIdle,
-		agents.IdleGrace(idleGraceEnv, defaultIdleGrace))
+	idleWatch.start(func(quit <-chan struct{}) {
+		agents.WatchIdleUntil(quit, "opencode serve", dependents, s.stopIfIdle,
+			agents.IdleGrace(idleGraceEnv, defaultIdleGrace))
+	})
+}
+
+// idleWatch tracks the zero-demand watchers so a test can end them (stop) before it swaps a
+// global they read, such as terminalSlots; production never calls stop.
+var idleWatch idleWatchers
+
+type idleWatchers struct {
+	mu   sync.Mutex
+	quit chan struct{}
+	wg   sync.WaitGroup
+}
+
+func (w *idleWatchers) start(run func(quit <-chan struct{})) {
+	w.mu.Lock()
+	if w.quit == nil {
+		w.quit = make(chan struct{})
+	}
+	quit := w.quit
+	w.wg.Add(1)
+	w.mu.Unlock()
+	go func() {
+		defer w.wg.Done()
+		run(quit)
+	}()
+}
+
+// stop ends every watcher started so far and waits for them to return.
+func (w *idleWatchers) stop() {
+	w.mu.Lock()
+	if w.quit != nil {
+		close(w.quit)
+		w.quit = nil
+	}
+	w.mu.Unlock()
+	w.wg.Wait()
 }
 
 // stopIfIdle re-checks zero demand INSIDE THE LOCK before folding the daemon up. A Resume
@@ -528,7 +565,7 @@ func (s *Supervisor) waitDaemon(cmd *exec.Cmd, tail *agents.StderrTail, gen int)
 		})
 		h.runtimeLost()
 	}
-	go reconcileAll("daemon death")
+	goReconcile("daemon death")
 }
 
 // Restart is the path that applies an auth or config change (§7): generation++ → drain →
@@ -567,7 +604,7 @@ func (s *Supervisor) Restart(reason string) (replaced bool) {
 	}
 	stopProcess(cmd, addr)
 	s.finishTeardown(cmd)
-	go reconcileAll("restart: " + reason)
+	goReconcile("restart: " + reason)
 	ClearPendingRestart()
 	return true
 }
@@ -748,7 +785,7 @@ func (s *Supervisor) monitorEvents(addr string, gen int) {
 				for _, h := range liveHandles() {
 					h.runtimeLost()
 				}
-				go reconcileAll("adopted daemon lost")
+				goReconcile("adopted daemon lost")
 			}
 			return
 		}
@@ -762,6 +799,17 @@ var sseClient = &http.Client{Transport: authTransport{}}
 
 // streamEvents reads one SSE connection until it breaks. Returns the read error.
 func (s *Supervisor) streamEvents(addr string, gen int) error {
+	// Whatever ends this stream (EOF, a failed or refused reconnect, a hang) leaves a window
+	// in which the daemon can start a tool nobody hears about, so the in-flight sets stop being
+	// trusted the moment the stream is gone, not when the next one connects. A superseded
+	// generation's monitor must not touch the handles of the current one.
+	defer func() {
+		if s.Generation() == gen {
+			for _, h := range liveHandles() {
+				h.tools.Unknown()
+			}
+		}
+	}()
 	req, err := http.NewRequest("GET", eventURL(addr), nil)
 	if err != nil {
 		return err
@@ -774,6 +822,11 @@ func (s *Supervisor) streamEvents(addr string, gen int) error {
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		return fmt.Errorf("event stream: HTTP %d", res.StatusCode) // a 401 must not read as a clean EOF
+	}
+	// Events are not replayed across a reconnect, so a tool call announced during the gap is
+	// invisible: the in-flight sets are unknown until a turn boundary shows up on this stream.
+	for _, h := range liveHandles() {
+		h.tools.Unknown()
 	}
 	sc := bufio.NewScanner(res.Body)
 	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)

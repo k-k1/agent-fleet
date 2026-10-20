@@ -233,6 +233,13 @@ type Session struct {
 	// BackgroundBusy, this only chooses its wording, so an unknown
 	// (or dropped) value falls back to the generic "running in background".
 	BackgroundBusyReason string `json:"backgroundBusyReason,omitempty"`
+	// BackgroundSince (RFC3339) is when the current BackgroundBusy period began: the first poll
+	// that observed it, in memory (resets when the Agent restarts or the flag goes false).
+	// BackgroundAgeSec is its age on the Workspace's own clock, which is what the Control Plane
+	// compares with background_hold_max so that clock skew cannot lapse a row (#2338). Absent =
+	// not background-busy, or an older Agent: the CP then keeps holding.
+	BackgroundSince  string `json:"backgroundSince,omitempty"`
+	BackgroundAgeSec int    `json:"backgroundAgeSec,omitempty"`
 	// ProgressAt (RFC3339) is the newest sign that a working / compacting row is still doing
 	// something: its state file, the kind's own state source, a pane repaint, or a live tool
 	// process (now). The Control Plane stops letting a busy row hold the Workspace awake once

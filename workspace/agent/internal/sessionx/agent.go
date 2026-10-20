@@ -1,6 +1,9 @@
 package sessionx
 
 import (
+	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -56,6 +59,19 @@ func AgentOf(kind string) agents.Agent {
 	return agentRegistry[session.KindClaude]
 }
 
+// RegisteredKinds lists every kind in the registry, sorted. It is the source the kind
+// catalog (GET /agents/kinds) and the drift guards iterate: a hand-kept list of kinds is
+// exactly what drifted before. AgentOf's claude fallback is not a kind, so an unknown or
+// alternate spelling never appears here.
+func RegisteredKinds() []string {
+	kinds := make([]string, 0, len(agentRegistry))
+	for k := range agentRegistry {
+		kinds = append(kinds, k)
+	}
+	sort.Strings(kinds)
+	return kinds
+}
+
 // NormalizeKind maps a create request's kind onto a registered one, defaulting the
 // unknown/empty/"claude" cases to claude (the historical create whitelist).
 func NormalizeKind(kind string) string {
@@ -63,6 +79,39 @@ func NormalizeKind(kind string) string {
 		return kind
 	}
 	return session.KindClaude
+}
+
+// ValidateCreateKind is the create paths' gate: an empty kind means claude (the documented
+// default), a registered kind passes, and anything else is refused with the accepted list.
+// Matching is exact — "Codex", " codex" and "kiro-cli" are errors, never rewritten.
+//
+// It is separate from NormalizeKind on purpose. NormalizeKind is the READ-side fallback (a
+// stored session with an empty or legacy kind must keep rendering as claude), and folding an
+// unknown kind to claude at create time starts a different agent, model and billing route than
+// the caller asked for, reporting only "kind":"claude" afterwards.
+func ValidateCreateKind(kind string) error {
+	if kind == "" {
+		return nil
+	}
+	if _, ok := agentRegistry[kind]; ok {
+		return nil
+	}
+	return fmt.Errorf("unknown kind %q; accepted kinds: %s (empty means claude)", kind, strings.Join(RegisteredKinds(), ", "))
+}
+
+// ManagedDefaultKind reports whether a caller that cannot drive a pane (MCP create_session,
+// the scheduler) should ask for the managed driver when it names none: the registry's
+// Caps().ManagedDefault, plus every ManagedOnly kind, which has nothing else. The match is
+// exact and never goes through NormalizeKind — an alternate spelling ("Codex", "kiro-cli")
+// is not a registered kind and gets no driver, exactly like the hand list this replaced.
+// It feeds the kind catalog's managedDefault and the in-container create_session.
+func ManagedDefaultKind(kind string) bool {
+	a, ok := agentRegistry[kind]
+	if !ok {
+		return false
+	}
+	c := a.Caps()
+	return c.ManagedOnly || c.ManagedDefault
 }
 
 // --- shared live-state helpers -------------------------------------------------

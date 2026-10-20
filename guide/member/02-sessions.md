@@ -169,7 +169,7 @@ synced in bulk.
 
 Clicking a row opens its details: state, kind, provider, assignee, repository, labels, when it last
 moved, and a link to the original page. **The description is not shown here.** A body is read inside
-the session, where `gh` and the Jira MCP server can fetch it, and the list has to work while the
+the session, where `gh` and the `jira` CLI can fetch it, and the list has to work while the
 workspace is stopped.
 
 - Pick the **repository** and **where to work** (a new worktree, the base copy itself, or an

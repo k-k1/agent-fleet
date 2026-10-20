@@ -420,7 +420,9 @@ type reaper struct {
 	wsDef          time.Duration
 	hibDef         time.Duration
 	backupDef      time.Duration
-	bootTime       time.Time
+	// backgroundDef is the deployment default of background_hold_max (0 = unbounded).
+	backgroundDef time.Duration
+	bootTime      time.Time
 
 	// idleSince tracks, per live claude session, when it was first observed
 	// idle-and-unattached. Reset when it goes busy/attached/away. Reaper is the
@@ -428,7 +430,7 @@ type reaper struct {
 	idleSince map[string]time.Time // workspaceID|session -> first idle
 }
 
-func newReaper(mgr *manager, interval, sessionDef, interactionDef, wsDef, hibDef, backupDef time.Duration) *reaper {
+func newReaper(mgr *manager, interval, sessionDef, interactionDef, wsDef, hibDef, backupDef, backgroundDef time.Duration) *reaper {
 	return &reaper{
 		mgr:            mgr,
 		interval:       interval,
@@ -437,6 +439,7 @@ func newReaper(mgr *manager, interval, sessionDef, interactionDef, wsDef, hibDef
 		wsDef:          wsDef,
 		hibDef:         hibDef,
 		backupDef:      backupDef,
+		backgroundDef:  backgroundDef,
 		bootTime:       time.Now(),
 		idleSince:      map[string]time.Time{},
 	}
@@ -473,6 +476,7 @@ func (rp *reaper) sweep(ctx context.Context) {
 		cl.ws, cl.wsOn = idleTimeout(lim.WSIdleTimeout, rp.wsDef)
 		cl.hibernate, cl.hibernateOn = idleTimeout(lim.HomeHibernateAfter, rp.hibDef)
 		cl.backup, cl.backupOn = idleTimeout(lim.HomeBackupEvery, rp.backupDef)
+		cl.bgMax = backgroundHoldMax(lim, rp.backgroundDef)
 		if !cl.anyOn() {
 			continue // nothing enabled for this tenant
 		}
@@ -504,6 +508,9 @@ type tierClocks struct {
 	ws          time.Duration // tier2
 	hibernate   time.Duration // tier3
 	backup      time.Duration // tier4 (the only one that is not idleness — a period)
+	// bgMax is background_hold_max, not a tier: how long background work may hold the
+	// Workspace (0 = unbounded). Rides here so every activity test in a sweep sees one value.
+	bgMax time.Duration
 
 	sessionOn     bool
 	interactionOn bool
@@ -515,7 +522,7 @@ type tierClocks struct {
 // tier1For picks the clock for one session from its activity class. Anything
 // that must not be folded away comes back on=false.
 func (c tierClocks) tier1For(s sessionWire) (time.Duration, bool) {
-	switch sessionActivity(s) {
+	switch sessionActivity(s, c.bgMax) {
 	case activityIdleWait:
 		return c.session, c.sessionOn
 	case activityHumanWait:
@@ -573,7 +580,7 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws store.Workspace, cl tie
 	// recoverable. An image job is the same case: the queue dies with the container.
 	busy := env.jobsRunning()
 	for _, s := range sessions {
-		if holdsWorkspace(s) {
+		if holdsWorkspace(s, cl.bgMax) {
 			busy = true
 		}
 		// How long before folding depends on the class: a turn that simply ended
@@ -585,7 +592,7 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws store.Workspace, cl tie
 		// running job, so they are out of tier 1 (to protect one, use the "never
 		// auto-stop" pin). Everything else — agent sessions, claude and managed
 		// (codex / opencode / …) alike — has a resumable halt and may be folded.
-		if !on || !tier1Foldable(s.Kind) || !tier1Reapable(s) {
+		if !on || !tier1Foldable(s.Kind) || !tier1Reapable(s, cl.bgMax) {
 			continue
 		}
 		key := ws.ID + "|" + s.Name
@@ -617,7 +624,7 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws store.Workspace, cl tie
 	rp.mgr.putIdleForecast(ws.ID, idleForecast{
 		Enabled:    cl.wsOn,
 		StopAt:     base.Add(cl.ws),
-		Holders:    holdersOf(sessions, watched, now, env.RepoJobs, env.ImageJobs),
+		Holders:    holdersOf(sessions, watched, now, env.RepoJobs, env.ImageJobs, cl.bgMax),
 		ObservedAt: now,
 	})
 	if !cl.wsOn {
@@ -627,7 +634,7 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws store.Workspace, cl tie
 		return // being watched or actively working
 	}
 	if now.Sub(base) >= cl.ws {
-		rp.stopWorkspace(ctx, rt, ws, cl.ws)
+		rp.stopWorkspace(ctx, rt, ws, cl.ws, cl.bgMax)
 	}
 }
 
@@ -670,7 +677,7 @@ func (rp *reaper) haltSession(ctx context.Context, rt runtime.Runtime, ws store.
 // fence as explicit/admin stops. The idle reaper runs independently in every CP
 // replica, so a direct Runtime.Stop could otherwise cross an approved shared
 // operation or another holder's recreate/clean/start.
-func (rp *reaper) stopWorkspace(ctx context.Context, rt runtime.Runtime, ws store.Workspace, wsTO time.Duration) {
+func (rp *reaper) stopWorkspace(ctx context.Context, rt runtime.Runtime, ws store.Workspace, wsTO, bgMax time.Duration) {
 	lock := rp.mgr.startLockFor(ws.ID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -709,7 +716,7 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt runtime.Runtime, ws stor
 		log.Printf("idle-stop: refresh sessions %s: %v", ws.ContainerName, err)
 		return
 	}
-	if env.holdsWorkspace() {
+	if env.holdsWorkspace(bgMax) {
 		return
 	}
 	_, lastSeen, seen := rp.mgr.conns.snapshot(ws.ID)
@@ -757,7 +764,7 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt runtime.Runtime, ws stor
 	// The drain can take seconds, and work can start inside the workspace meanwhile without
 	// passing through the CP (an agent pressing Generate in a studio). Ask the Agent once more
 	// right before the irreversible Stop.
-	if env, err := rp.mgr.agentSessionsEnv(lease.Context(), rt); err != nil || env.holdsWorkspace() {
+	if env, err := rp.mgr.agentSessionsEnv(lease.Context(), rt); err != nil || env.holdsWorkspace(bgMax) {
 		return
 	}
 	if err := rt.Stop(lease.Context()); err != nil {

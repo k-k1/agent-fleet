@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
 import { useWorkspaceStore } from "../../../core/store/workspace.ts";
+import { PreviewSection } from "./memoryWizard.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { Button } from "../../../ui/Button.tsx";
@@ -216,8 +217,7 @@ export function AutoSyncPanel() {
       {(run?.unmapped ?? 0) > 0 && <p className="muted ds-note">{tr("mem.as_unmapped", { n: run?.unmapped ?? 0 })}</p>}
       {(run?.noRoot ?? 0) > 0 && <p className="muted ds-note">{tr("mem.as_no_root", { n: run?.noRoot ?? 0 })}</p>}
       {rows.length > 0 && (
-        <details className="mem-ci-group" open>
-          <summary>{tr("mem.as_rows", { n: rows.length + (run?.rowsCut ?? 0) })}</summary>
+        <PreviewSection summary={tr("mem.as_rows", { n: rows.length + (run?.rowsCut ?? 0) })} open>
           <ul className="mem-ci-items">
             {rows.map((r, i) => (
               <li key={r.project + "/" + r.name + i}>
@@ -231,7 +231,7 @@ export function AutoSyncPanel() {
             ))}
           </ul>
           {(run?.rowsCut ?? 0) > 0 && <p className="muted">{tr("mem.as_rows_cut", { n: run?.rowsCut ?? 0 })}</p>}
-        </details>
+        </PreviewSection>
       )}
     </div>
   );

@@ -1625,15 +1625,46 @@ func headlessPrompt(persona string, knowledge []string, prompt string) string {
 // --ephemeral analog (print-mode only, no transcript written, no resume): a one-shot
 // never resumes, so don't pile per-call jsonl into Claude's projects tree.
 //
-// --tools MUST stay last: it is variadic, so a following positional would be eaten.
+// --strict-mcp-config with an empty --mcp-config pins "no MCP server" in the argv itself.
+// --tools "" does not do that (measured on claude 2.1.302 with a throwaway
+// CLAUDE_CONFIG_DIR: user, project and local servers still appear in the init event's
+// mcp_servers). Today chatClaudeCmd's --setting-sources "" happens to hide those file-based
+// servers, but that is a side effect of a flag another caller owns; account-level connectors
+// and plugin servers are not covered by it. A one-shot may read third-party text (a
+// transcript, a pull request), so tool-less has to hold whatever the member has configured.
+//
+// --no-chrome is needed on top: Claude in Chrome (CLAUDE_CODE_ENABLE_CFC=1 in the inherited
+// environment) is added as a dynamic MCP server that strict mode does not remove; measured on
+// 2.1.302, it connects with 22 browser tools until this flag is passed.
+//
+// --mcp-config and --tools are both variadic, so each must be followed by a flag, and --tools
+// MUST stay last: a following positional would be eaten.
 func claudeOneShotArgs(persona, model string) []string {
-	args := []string{"-p", "--no-session-persistence", "--output-format", "json",
-		"--system-prompt", persona}
+	return claudeOneShotArgsFormat(persona, model, false)
+}
+
+// claudeOneShotArgsFormat is claudeOneShotArgs with the output format chosen. stream is the
+// deny-all route's (chat_denyall.go): stream-json carries the init event that lists the
+// tools and MCP servers the run actually has, and needs --verbose in print mode.
+func claudeOneShotArgsFormat(persona, model string, stream bool) []string {
+	format := "json"
+	if stream {
+		format = "stream-json"
+	}
+	args := []string{"-p", "--no-session-persistence", "--output-format", format}
+	if stream {
+		args = append(args, "--verbose")
+	}
+	args = append(args, "--system-prompt", persona)
 	if model != "" {
 		args = append(args, "--model", model)
 	}
+	args = append(args, "--strict-mcp-config", "--mcp-config", claudeEmptyMCPConfig, "--no-chrome")
 	return append(args, "--tools", "")
 }
+
+// claudeEmptyMCPConfig is the inline --mcp-config value that declares no servers.
+const claudeEmptyMCPConfig = `{"mcpServers":{}}`
 
 // claudeOneShotEnv is applied on top of chatClaudeCmd's env for one-shots only — a chat
 // turn still reasons, so the thinking budget is cut here and nowhere else.
@@ -2285,8 +2316,7 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 		claudeModel = selected
 	}
 	call.Kind, call.ModelReq = session.KindClaude, claudeModel
-	cmd := chatClaudeCmd(ctx, claudeOneShotArgs(persona, claudeModel)...)
-	cmd.Env = append(cmd.Env, claudeOneShotEnv...)
+	cmd := claudeOneShotCmd(ctx, claudeOneShotArgs(persona, claudeModel))
 	cmd.Stdin = strings.NewReader(prompt)
 	out, err := cmd.Output()
 	var r claudeResult

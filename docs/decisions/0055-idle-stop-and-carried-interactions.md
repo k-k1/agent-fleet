@@ -256,3 +256,83 @@ measured per kind. Measured on the CLIs baked into the Workspace image (codex 0.
   static for an hour can lapse, and a stuck session whose spinner keeps animating is held
   indefinitely (the safe side). The pane must also be captured successfully on the current poll; a
   failed capture gives no answer rather than a stale age.
+
+## Note (2026-10-17): muse, lcpp, shell and ssm have no Terminal row to bound (#1943)
+
+The 2026-10-09 addendum left Terminal muse, lcpp, shell and ssm unmeasured. Read from the code, none
+of them can be a busy Terminal row, so there is no pane or tool signal to measure:
+
+- shell and ssm: `shellAgent.WireLive` / `ssmAgent.WireLive` (`sessionx/agent_shell_ssm.go`) return
+  `LiveInfo{Resumable: true}`, so the listed `State` is always empty. The optimistic "working" mark
+  that `/input` writes (`markSessionWorking`, not kind-gated) is never read back for them. A row
+  that cannot be busy does not hold a Workspace on the busy path.
+- muse and lcpp: `Caps.ManagedOnly` and an unconditional `BuildLaunch` refusal (ADR 0093 decision 2,
+  ADR 0095); a create defaults to Managed and a switch to Terminal is refused
+  (`session_handlers.go`, `session_driver.go`). They are only ever Managed rows, which is #1942.
+  Nothing was measured: lcpp needs a local LLM, and a muse pane does not exist to repaint.
+
+`progressTrusted` is unchanged, and stays false for all four, so the fail-safe is the existing
+behaviour. Tests pin the premises (`progress_untrusted_kinds_test.go`): shell/ssm list no busy state
+even with a stored "working" mark, muse/lcpp stay managed-only, and a stale-everything row with a
+long silent tool gets no progress answer for any of the four. Re-open this note if a Terminal route
+or a busy state is ever added to one of them: it then needs its own measurement.
+
+## Addendum (2026-10-17): the bound reaches Managed cursor, kiro, codex and opencode (#1942)
+
+A Managed session has no pane, so the signals of the two addenda above do not exist for it. The
+runtimes were driven through the Agent's own Managed drivers (the real spawn / Resume / Send path,
+a throwaway HOME where the CLI allows it, the model asked to run a silent `sleep 120`), sampling
+once every 5 s:
+
+| Kind (version) | Does the runtime message stay fresh? | Signal that does | Observed |
+|---|---|---|---|
+| cursor (cursor-agent 2026.10.16) | no: 22 ACP notifications at t=5 s, the next at t=125 s | a tool process under the ACP child, a session leader of its own (`procx.ToolProcessIn`) | present in all 24 samples from t=5 s to t=120 s, absent before and after |
+| kiro (kiro-cli 2.31.0) | no: 3 notifications in total, the last 112 s before the tool ended | a process under the runtime in the runtime's own process group, not a session leader (`procx.GroupToolIn`); the leader rule reads false throughout | present in all 24 samples during the sleep, absent before and after |
+| codex (0.163.0) | yes: the model polls the running command, so a thread item started / completed pair arrives every 30-35 s | the last notification that names the session's thread, and the items started and not completed (the command's own item opened at its start and closed after the sleep) | no gap above 40 s |
+| opencode (2.0.32) | no: nothing for the whole 120 s, the server-wide stream included (it has no heartbeat) | the pair `session.tool.called` ... `session.tool.success`, keyed by call id | the call is open for the whole sleep |
+
+- Decision: Managed cursor, kiro, codex and opencode now report `progressAgeSec`. The Agent takes the
+  newest of the status file's mtime and the driver's own sign (`agents.ManagedProgressReporter`): the
+  last message from the runtime for this session, or "now" while the signal above says a tool
+  runs. No live handle, or a runtime never heard from, gives no answer and keeps holding. The
+  one-hour lapse and the CP side are unchanged.
+- "Could not observe" is never "no tool". The process table must contain the runtime's child (a
+  failed /proc read or a missing child gives no answer). cursor and kiro also track the protocol's
+  open tool calls (`tool_call` until `completed` / `failed`), because a tool that is an MCP server's
+  or runs inside a resident helper leaves nothing in the process table. codex tracks open items and
+  opencode open tool calls. Each of these sets is unknown after a new connection, a replay, an adopted
+  daemon or a lost runtime, and stays unknown (the row keeps holding) until a turn boundary is seen on
+  the live stream; opencode also restores a call from its `session.tool.progress` event.
+- codex and opencode share one daemon across sessions, so a tool process cannot be attributed from
+  the process table; they use the event stream instead. opencode's signal exists on 2.x only: 1.x
+  is not stamped and keeps holding. A tool call whose end event is lost is dropped when its step
+  or execution ends, so it cannot pin a row beyond the turn.
+- Not bounded, because no signal was measured: Managed muse (not logged in on the measuring
+  Workspace), lcpp (in-process engine, no runtime to message) and copilot (no Copilot login). They
+  keep holding. Terminal muse / lcpp / shell / ssm stay with #1943. #1942 stays open for them.
+- Caveats: one model and one CLI version per kind. Only the local shell tool was measured for cursor
+  and kiro; their open-call tracking follows the protocol and was not measured against an external
+  MCP tool. A hung tool is
+  indistinguishable from a long one for cursor, kiro and opencode, so it holds for as long as it
+  lives (the safe side). Re-measure when bumping a CLI version.
+
+## Addendum (2026-10-18): background work gets an upper bound on holding the container (#2338)
+
+The 2026-10-07 addendum exempted `backgroundBusy` from the progress lapse, and left it with no bound at all. The
+detectors cannot tell a job from a server: a dev server's wrapper shell (`bash -> npm -> vite`, the Gradle client JVM)
+stays alive for as long as the server runs, and CPU time cannot separate it either (an idle Spring Boot app keeps
+consuming some). So a session that started `npm run dev` and went idle held its Workspace until someone stopped it.
+
+- Decision: the Agent reports `backgroundSince` (the first poll that observed `backgroundBusy`, in memory, cleared when
+  it goes false) and `backgroundAgeSec` (its age on the Agent's clock), for every kind that reports `backgroundBusy`.
+  The CP relays both and classifies a `backgroundBusy` row older than `background_hold_max` as `activityUnknown`, like a
+  lapsed working row: it no longer holds the Workspace, and tier 1 does not fold it (so no row is halted that was not
+  halted before). The keep-awake pin is still checked first and is never subject to the bound; it is the way to keep a
+  genuinely long job.
+- `background_hold_max` is a per-tenant limit (`""` = deployment default `AF_BACKGROUND_HOLD_MAX`, 2h; `0` = unbounded).
+  An absent age (an older Agent) holds, as before. The idle clock and presence are unchanged, so a server somebody is
+  using stays up.
+- The forecast's `background` holder carries `since` and `lapseAt` and goes through the same `backgroundLapsed`
+  predicate as the reaper (decision 11); the heatmap sampler uses it too.
+- An Agent restart restarts the period: each restart resets the bound, so repeated restarts more frequent than the bound can keep extending the hold.
+- Not done: a member-facing badge, and carrying "the background task ended by idle stop" into the session on resume.

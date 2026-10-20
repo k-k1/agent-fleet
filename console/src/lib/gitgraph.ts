@@ -7,6 +7,10 @@
 export interface GraphRef {
   name: string;
   type: "head" | "remote" | "tag";
+  /** Remote refs only: `name` split on the configured remote names (a remote name
+   * can contain slashes, so the client cannot split it itself). */
+  remote?: string;
+  branch?: string;
 }
 
 export interface GraphCommit {

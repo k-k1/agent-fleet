@@ -143,3 +143,72 @@ func TestAgentMemoryDefaultsOff(t *testing.T) {
 		}
 	}
 }
+
+// The memory review (ADR 0117) is a string setting with two values and an off default; anything
+// else, including "auto" which only exists from phase P3, reads as off. It also needs AF memory
+// itself: the review proposes into that store and the memory switch must keep governing it.
+func TestMemoryReviewReadsOffUnlessProposeAndNeedsAgentMemory(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		prefs   map[string]any
+		mode    string
+		enabled bool
+	}{
+		{"missing", map[string]any{}, "off", false},
+		{"propose without memory", map[string]any{"memoryReview": "propose"}, "propose", false},
+		{"propose with memory", map[string]any{"memoryReview": "propose", "agentMemory": true}, "propose", true},
+		{"off with memory", map[string]any{"memoryReview": "off", "agentMemory": true}, "off", false},
+		{"auto is not a value yet", map[string]any{"memoryReview": "auto", "agentMemory": true}, "off", false},
+		{"wrong type", map[string]any{"memoryReview": true, "agentMemory": true}, "off", false},
+		{"propose with memory false", map[string]any{"memoryReview": "propose", "agentMemory": false}, "propose", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writePrefs(t, tc.prefs)
+			if got := MemoryReview(); got != tc.mode {
+				t.Errorf("MemoryReview = %q, want %q", got, tc.mode)
+			}
+			if got := MemoryReviewEnabled(); got != tc.enabled {
+				t.Errorf("MemoryReviewEnabled = %v, want %v", got, tc.enabled)
+			}
+		})
+	}
+}
+
+// Automatic review (ADR 0117 decision 1) is its own boolean, off unless a real true, and on top of
+// the review being enabled: the manual path never reads it.
+func TestMemoryReviewAutoIsOffByDefaultAndNeedsTheReview(t *testing.T) {
+	on := map[string]any{"memoryReview": "propose", "agentMemory": true}
+	with := func(extra map[string]any) map[string]any {
+		m := map[string]any{}
+		for k, v := range on {
+			m[k] = v
+		}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+	for _, tc := range []struct {
+		name         string
+		prefs        map[string]any
+		auto, active bool
+	}{
+		{"missing", map[string]any{}, false, false},
+		{"review on, switch missing", on, false, false},
+		{"review on, switch off", with(map[string]any{"memoryReviewAuto": false}), false, false},
+		{"review on, switch on", with(map[string]any{"memoryReviewAuto": true}), true, true},
+		{"switch on, review off", map[string]any{"memoryReviewAuto": true, "agentMemory": true}, true, false},
+		{"switch on, memory off", map[string]any{"memoryReviewAuto": true, "memoryReview": "propose"}, true, false},
+		{"wrong type", with(map[string]any{"memoryReviewAuto": "true"}), false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writePrefs(t, tc.prefs)
+			if got := MemoryReviewAuto(); got != tc.auto {
+				t.Errorf("MemoryReviewAuto = %v, want %v", got, tc.auto)
+			}
+			if got := MemoryReviewAutoEnabled(); got != tc.active {
+				t.Errorf("MemoryReviewAutoEnabled = %v, want %v", got, tc.active)
+			}
+		})
+	}
+}

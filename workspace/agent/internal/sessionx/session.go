@@ -175,6 +175,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		}
 	}
 	fillStateSince(&s, m, realSinceProbes)
+	fillBackgroundSince(&s, time.Now())
 	if alive {
 		fillProgress(&s, m, realProgressProbes)
 	}

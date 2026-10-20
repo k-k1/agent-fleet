@@ -632,6 +632,11 @@ type threadHandle struct {
 	// it as a synthetic trailing error turn until clearLastError runs at the next turn start.
 
 	bg bgCache // the thread's background terminals, for BackgroundWork (background.go)
+
+	// act stamps every message the runtime sends for this handle, for the busy-row progress bound
+	// (ManagedProgress). items holds the items (tool calls, messages) started and not completed.
+	act   agents.Activity
+	items agents.InFlight
 }
 
 // tq returns the handle's queue, creating it on first use. Caller holds h.mu.
@@ -684,6 +689,7 @@ func (h *threadHandle) setState(st agents.TurnState) {
 // runtimeLost drops the handle to unknown (§6-1: the honest state on disconnect). The pump's
 // wait (if any) unblocks via turnEnd and keeps unknown until reconcile resolves it.
 func (h *threadHandle) runtimeLost() {
+	h.items.Unknown()
 	h.mu.Lock()
 	h.alive = false
 	h.state = agents.TurnUnknown
@@ -1389,6 +1395,29 @@ func deliverUserInputRequest(c *appClient, reqID json.RawMessage, p userInputReq
 // appclient.go's readLoop). This is where the turn state machine (§4) is decided; the
 // pump receives the terminal state through turnEnd.
 func dispatchNotification(msg rpcMsg) {
+	// Any notification naming a thread is a sign of life for its handle. The account-wide ones
+	// (rate limits, MCP startup) name none and must not keep every session looking alive.
+	var named struct {
+		ThreadID string `json:"threadId"`
+		Item     struct {
+			ID string `json:"id"`
+		} `json:"item"`
+	}
+	if json.Unmarshal(msg.Params, &named) == nil {
+		if h := handleByTid(named.ThreadID); h != nil {
+			h.act.Touch()
+			switch msg.Method {
+			case "turn/started", "turn/completed":
+				// A turn boundary seen on this connection: nothing from before it is still
+				// running, and the in-flight set is trustworthy again.
+				h.items.Reset()
+			case "item/started":
+				h.items.Add(named.Item.ID)
+			case "item/completed":
+				h.items.Done(named.Item.ID)
+			}
+		}
+	}
 	switch msg.Method {
 	case "turn/started":
 		var p struct {

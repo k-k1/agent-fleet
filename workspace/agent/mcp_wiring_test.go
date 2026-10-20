@@ -63,6 +63,8 @@ func TestMCPWiringIsLive(t *testing.T) {
 		"ShellCreateTarget":          func(t *testing.T) { sameFunc(t, w.ShellCreateTarget, sessionx.ShellCreateTarget) },
 		"ShellSendTarget":            func(t *testing.T) { sameFunc(t, w.ShellSendTarget, sessionx.ShellSendTarget) },
 		"SessionIsShell":             func(t *testing.T) { sameFunc(t, w.SessionIsShell, sessionx.SessionIsShell) },
+		"ManagedDefaultKind":         func(t *testing.T) { sameFunc(t, w.ManagedDefaultKind, sessionx.ManagedDefaultKind) },
+		"ValidateCreateKind":         func(t *testing.T) { sameFunc(t, w.ValidateCreateKind, sessionx.ValidateCreateKind) },
 		"ReadUIPrefs":                func(t *testing.T) { sameFunc(t, w.ReadUIPrefs, uiprefs.Read) },
 		"EnsureClaudeSettingsWiring": func(t *testing.T) { sameFunc(t, w.EnsureClaudeSettingsWiring, sessionx.EnsureClaudeSettingsWiring) },
 		"RepoAnyDirFromPath":         func(t *testing.T) { sameFunc(t, w.RepoAnyDirFromPath, gitx.RepoAnyDirFromPath) },

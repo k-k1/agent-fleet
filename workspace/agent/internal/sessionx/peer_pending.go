@@ -492,3 +492,24 @@ func ResumePendingPeers() {
 		}
 	}
 }
+
+// pendingInflightTouches reports whether a claimed pending message, already out of the spool and
+// on its way through /input, is addressed to or sent by a session in members. During that window
+// the spool reads empty, so the stalled-tree watch has to look here too.
+func pendingInflightTouches(members map[string]bool) bool {
+	pendingTargetsMu.Lock()
+	targets := make(map[string]*pendingTarget, len(pendingTargets))
+	for n, t := range pendingTargets {
+		targets[n] = t
+	}
+	pendingTargetsMu.Unlock()
+	for n, t := range targets {
+		t.mu.Lock()
+		in := t.inflight
+		t.mu.Unlock()
+		if in != nil && (members[n] || members[in.From]) {
+			return true
+		}
+	}
+	return false
+}

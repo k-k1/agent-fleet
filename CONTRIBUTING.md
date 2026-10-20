@@ -67,7 +67,8 @@ build) runs on **pull requests targeting `main` and every push to it**. PR check
 verify changes before they reach the trunk; push checks verify the integrated
 result. The repository is public, so its runners are free. `e2e.yml` and the
 contract workflows do spend an external LLM quota, so those stay concentrated on
-pull requests that touch their paths, their nightly / weekly cron over `main`, and
+pull requests that touch their paths (for `e2e.yml`, the Workspace image inputs
+under `workspace/` and the e2e harness — not `control-plane/` or `console/`), their nightly / weekly cron over `main`, and
 manual dispatch (several contract workflows run on dispatch only).
 Either way, the local run above is still the per-commit check — hosted CI is the
 safety net, not the first line. See `docs/log/35-packaging.md` for the billing

@@ -466,6 +466,12 @@ type threadHandle struct {
 	ctxPct    float64 // latest contextUsagePercentage (0–100)
 	credits   float64 // accumulated meteringUsage (in-memory, for this handle's lifetime)
 	hasUsage  bool    // whether metadata arrived at least once (no context shown until it does)
+
+	// act stamps every message the runtime sends for this handle, for the busy-row progress bound
+	// (ManagedProgress).
+	act agents.Activity
+	// calls holds the ACP tool calls reported open and not finished (noteToolCall).
+	calls agents.InFlight
 }
 
 // bypassNow reports the resolved "skip permission confirmation" choice (docs/log/76). Resume
@@ -614,6 +620,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 
 	h.mu.Lock()
 	h.cmd, h.stdin, h.cl, h.sid, h.alive = cmd, stdin, cl, sid, true
+	h.calls.Unknown()              // a new connection: calls open on the old one (or in a replay) are not known
 	h.exited = exited              // this child's exit signal (for DropHandleWait's bounded wait)
 	h.state = agents.TurnCompleted // the child is brand new — no turn is running
 	h.model = modelID
@@ -978,6 +985,7 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 	h.buf.addUserTurn(t.In.Prompt)
 	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
 	written := false
+	h.calls.Reset() // a turn boundary on a live connection: nothing from before it is open
 	res, err := cl.callWritten("session/prompt", map[string]any{
 		"sessionId": sid,
 		"prompt":    []map[string]any{{"type": "text", "text": t.In.Prompt}},
@@ -988,6 +996,7 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 		lease.Release()
 		h.received(t, cl, sid)
 	}) // no timeout — a turn runs as long as it runs
+	h.calls.Reset()
 	h.buf.flushAsst() // close the open assistant turn: ACP has no turn_ended notification
 	h.mu.Lock()
 	interrupted := h.stopping
@@ -1214,6 +1223,7 @@ func (h *threadHandle) Snapshot() (agents.ThreadSnapshot, error) {
 // (metadata / subagent / commands / retry_warning) arrive here too, but v1 A2 does not use
 // them (wiring live usage into the UI is a later track — see the top of driver.go).
 func (h *threadHandle) onNotify(method string, params json.RawMessage) {
+	h.act.Touch()
 	if method == "_kiro.dev/metadata" {
 		h.onMetadata(params) // Track D: live context% / credits
 		return
@@ -1249,8 +1259,10 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 	case "agent_thought_chunk":
 		h.buf.thoughtChunk(u.Content.Text)
 	case "tool_call":
+		h.noteToolCall(u.SessionUpdate, u.ToolCallID, u.Status)
 		h.buf.toolCall(u.ToolCallID, u.Title, toolInfo(u.RawInput))
 	case "tool_call_update":
+		h.noteToolCall(u.SessionUpdate, u.ToolCallID, u.Status)
 		if out := toolOutput(u.RawOutput); out != "" {
 			h.buf.toolOutput(u.ToolCallID, out)
 		}
@@ -1358,6 +1370,7 @@ func toolOutput(raw json.RawMessage) string {
 // Respond → cl.respond. It does not happen under --trust-all-tools, but a plan launch can
 // reach it.
 func (h *threadHandle) onServerRequest(cl *acpClient, id json.RawMessage, method string, params json.RawMessage) {
+	h.act.Touch()
 	if method != "session/request_permission" {
 		// An unanswered server-initiated request wedges the turn, so reply with an error.
 		_ = cl.write(map[string]any{

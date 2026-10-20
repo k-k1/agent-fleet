@@ -21,7 +21,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
@@ -253,6 +255,24 @@ func chatAutoTurnModel() string {
 	return sessionx.VisibleModel(session.KindClaude, strings.TrimSpace(v))
 }
 
+// memoryReviewNeedsMark says whether replacing the prefs `before` with `after` would arm the
+// background memory review: the mode becomes "propose", AF memory is switched on while the mode
+// already is, or automatic review is switched on (memoryReviewAuto). Every way into the enabled
+// state (uiprefs.MemoryReviewEnabled) or into the automatic loop (uiprefs.MemoryReviewAutoEnabled)
+// is one of these. Turning anything off, or any write that leaves it as it was, needs nothing.
+func memoryReviewNeedsMark(before, after map[string]any) bool {
+	mode := func(m map[string]any) string { s, _ := m["memoryReview"].(string); return s }
+	memory := func(m map[string]any) bool { b, _ := m["agentMemory"].(bool); return b }
+	auto := func(m map[string]any) bool { b, _ := m["memoryReviewAuto"].(bool); return b }
+	if auto(after) && !auto(before) {
+		return true
+	}
+	if mode(after) != "propose" {
+		return false
+	}
+	return mode(before) != "propose" || (memory(after) && !memory(before))
+}
+
 func handleGetUIPrefs(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, uiprefs.Read())
 }
@@ -271,6 +291,14 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	var obj map[string]any
 	if json.Unmarshal(body, &obj) != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_json", "body must be a JSON object")
+		return
+	}
+	// Turning the memory review on sends other sessions' conversations to a model provider, so it
+	// is the member's decision and not a session's: AGENT_TOKEN, which every session's shell
+	// holds, can read and write these prefs, and the review's own member-origin route would be a
+	// door beside an open window. A write that would switch the review on therefore needs the
+	// Control Plane's mark (ADR 0113), which the CP puts on every relayed prefs write.
+	if memoryReviewNeedsMark(uiprefs.Read(), obj) && !memberorigin.RequireBody(w, r, body) {
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(uiprefs.Path()), 0o700); err != nil {
@@ -295,7 +323,10 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	fleetSpawnBefore := uiprefs.FleetSpawn()
 	sessionSearchBefore := uiprefs.SessionSearch()
 	agentMemoryBefore := uiprefs.AgentMemory()
-	if err := uiprefs.WriteAtomic(body); err != nil {
+	memoryReviewAutoBefore := uiprefs.MemoryReviewAutoEnabled()
+	// Serialized with the review's claim and dispatch, so that once an "off" is written no further
+	// window is claimed and no call is started (ADR 0117 note, #2358).
+	if err := memreview.WithSwitchWrite(func() error { return uiprefs.WriteAtomic(body) }); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
@@ -319,6 +350,11 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	}
 	// The memory guidance block follows the same switch (ADR 0108 decision 5): written while it
 	// is on, removed when it goes off. Sessions already running have read their instructions.
+	// Turning automatic review on starts looking at once instead of at the next wake-up. Turning the
+	// review on alone arms nothing in the loop; it is the separate switch that does.
+	if !memoryReviewAutoBefore && uiprefs.MemoryReviewAutoEnabled() && memreview.DefaultLoop != nil {
+		memreview.DefaultLoop.Wake()
+	}
 	if uiprefs.AgentMemory() != agentMemoryBefore {
 		reconcileAgentInstructions()
 		// The import (on) or write-back (off) of claude's native memory follows the switch

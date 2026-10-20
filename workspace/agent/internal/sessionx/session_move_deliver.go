@@ -19,6 +19,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -31,6 +32,10 @@ type moveDelivery struct {
 	File   string `json:"file"`
 	Prompt string `json:"prompt"`
 }
+
+// moveDeliverInflight counts the background deliveries /deliver started; tests wait on it so a
+// delivery cannot outlive the test (and its HOME). Production never waits.
+var moveDeliverInflight sync.WaitGroup
 
 var moveDeliveries = fstore.JSON[moveDelivery](paths.AgentStateDir, "session-move-delivery", ".json")
 
@@ -144,8 +149,12 @@ func HandleSessionMoveDeliver(w http.ResponseWriter, r *http.Request) {
 		// eats them, or the Enter, without a trace. So the create's own delivery runs, in the
 		// background as on create (its readiness wait can take a minute), and the record stays
 		// until it reports delivered.
+		moveDeliverInflight.Add(1)
 		go func() {
+			defer moveDeliverInflight.Done()
 			state := typeMoveDelivery(name, d.Prompt)
+			// Settle first: the record is the retry handle until the state says delivered is on
+			// disk (ADR 0115).
 			settleInitialPrompt(name, state)
 			if state == session.InitialPromptDelivered {
 				moveDeliveries.Remove(name)

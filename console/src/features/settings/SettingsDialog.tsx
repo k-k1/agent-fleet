@@ -54,6 +54,7 @@ import { BackupTab } from "./workspace/BackupTab.tsx";
 import { NotificationsTab } from "./personal/NotificationsTab.tsx";
 import { LimitBoardView } from "../limits/LimitBoardView.tsx";
 import { MemoryTab } from "./memory/MemoryTab.tsx";
+import { MemorySnapshotsTab } from "./memory/MemorySnapshotsTab.tsx";
 // The usage tab is a thin wrapper around the features/usage view, kept independent of the modal
 // so the same view can be promoted to a pane unchanged (docs/log/46 §5).
 import { UsageView } from "../usage/UsageView.tsx";
@@ -91,6 +92,9 @@ export const GROUPS: { key: string; label: string; items: [string, string][] }[]
       // and one accumulated by the agent. That its bytes live in the workspace does not
       // place it — the instructions are stored Agent-side too.
       ["memory", "set.tab_memory"],
+      // Two objects, two entries (#2324): "memory" is Agent Fleet's own shared memory (ADR 0108),
+      // this one is the version control of each kind's native memory (ADR 0022).
+      ["memorysnapshots", "set.tab_memory_snapshots"],
     ],
   },
   {
@@ -154,7 +158,10 @@ export function SettingsDialog() {
   // Ignored by the desktop two-pane layout (CSS).
   // A request with a scroll target opens straight into its section: the target lives inside
   // the detail view, and scrolling to an element under display:none does nothing.
-  const [entered, setEntered] = useState(() => useSettingsUI.getState().settingsTarget !== null);
+  const [entered, setEntered] = useState(() => {
+    const st = useSettingsUI.getState();
+    return st.settingsTarget !== null || st.settingsView !== null;
+  });
   // A detail view gets its own history layer above Modal's close layer. Therefore the
   // first device/browser back returns to this list and the second closes the modal.
   useBackClose(() => setEntered(false), mobileMatches() && entered);
@@ -174,6 +181,18 @@ export function SettingsDialog() {
       setEntered(true);
     }
   }, [settingsSection]);
+
+  // A request naming a view of a section ("memory:settings") opens that section's detail on a
+  // phone even when the section is already the current one, where the effect above sees no change.
+  const settingsView = useSettingsUI((s) => s.settingsView);
+  const mountedSettingsView = useRef(false);
+  useEffect(() => {
+    if (!mountedSettingsView.current) {
+      mountedSettingsView.current = true;
+      return;
+    }
+    if (settingsView) setEntered(true);
+  }, [settingsView]);
 
   // Remember the last-opened section (localStorage) so reopening lands here; the store's
   // openSettings() restores it on the next open (first-ever open defaults to Display).
@@ -251,6 +270,7 @@ export function SettingsDialog() {
                 runtime, so even a deployment with no AWS bill knows when it was running. */}
             {section === "uptime" && <MyUptimeView />}
             {section === "memory" && <MemoryTab />}
+            {section === "memorysnapshots" && <MemorySnapshotsTab />}
             {section === "machine" && <MachineTab />}
             {section === "env" && <EnvTab />}
             {section === "database" && <DatabaseTab />}

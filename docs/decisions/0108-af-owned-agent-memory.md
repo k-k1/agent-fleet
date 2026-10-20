@@ -826,3 +826,80 @@ It does not touch the generic paths, which keep skipping `af/`.
   (`bundle:<import id>:<scope dir>/<name>@<source revision>`) and `source_hash`, and in two commit trailers
   (`AF-Bundle-Import`, `AF-Bundle-Source`), so each import is an `import` change by the member in the changes
   list and can be reverted there. The bundle's history is not imported; it stays under `refs/imports` until pruned.
+
+## Note (2026-10-18): the member's own agent outside Agent Fleet reaches the store through `/mcp` (#1988)
+
+Decision 4 puts the tools on the af server inside the workspace. A member also runs agents outside it
+(Claude Code or Desktop on their own machine) and holds a PAT for the CP's `/mcp`. This note adds that door;
+no decision above changes.
+
+- **Tools.** `memory_projects`, `memory_index`, `memory_search`, `memory_read` (read-scoped PAT) and
+  `memory_save`, `memory_forget` (write-scoped PAT), in `control-plane/internal/mcpsrv/mcp_memory.go`. Each proxies to
+  the Agent's `/agents/memory/external/*` routes, which reuse the tools' own read, search, save and forget: the
+  revision check (decision 4), the secret scan (decision 9) and the one-commit publish are unchanged.
+- **Caller and project.** An outside caller has no session, so it passes the project id itself (from
+  `memory_projects`) and the author kind is recorded as `external`, the session as unknown. A project must already
+  hold memory, as for the Console: there is no working copy to take a new project's root from. The client's
+  self-declared MCP `clientInfo` (else the User-Agent) is sanitised and kept as an `AF-External-Client` commit
+  trailer, for information only; nothing is decided by it. A memory limited to certain `kinds` is not shown to
+  `external`. Reads count as uses (#1703).
+- **Opt-in.** One per-member ui-pref, `externalMemory`: `off` (default), `read`, `write`. It is separate from
+  `agentMemory`: either can be on without the other. `write` is a second, deliberate step above `read`, because a
+  write from outside is read by every kind inside (decision 8's risk, with a writer outside the workspace) and
+  read text reaches an outside model beyond the workspace's egress controls. The Agent enforces it on every call,
+  so a PAT cannot outrun the setting. The tools are listed by PAT scope only: the CP does not hold the setting and
+  a stopped workspace cannot be asked, so a refusal names the Console setting to change.
+- **Audit.** The Agent has no channel to the CP's ledger, but these calls pass through the CP, so a successful
+  external save and forget is recorded as `memory.entry.save` / `memory.entry.forget` with actor kind `mcp`, the
+  PAT id, and the project id as the target when it has the shape of one. The memory name is free text and is
+  never copied. This does not change decision 8 for writes made inside the workspace, which stay unaudited at the CP.
+- **Stopped workspace.** The tools answer that the workspace is not running and must be started in the Console.
+  Starting it for a tool call is a separate question.
+- **Limits.** The new Agent routes answer anything holding `AGENT_TOKEN`, as the tools' routes do (decision 8); the
+  setting, not a signature, is what gates them. They do not carry the member-origin mark
+  ([0113](0113-member-origin-mark.md)), which is for the Console's own requests. There is no tenant-level admin
+  switch; `AF_MCP_ENABLED` still turns `/mcp` off for a whole deployment. Follow-ups: #2318.
+
+## Note (2026-10-18): Settings shows two memory entries, not one (#2324)
+
+The Settings tab "Agent memory" had grown into one scroll of thirteen panels that held two different objects: the
+native-memory snapshots of [0022](0022-agent-memory-management.md) and the shared memory of this ADR. This note
+records the structure the maintainer chose; the decisions above are unchanged and no API or Agent behaviour moved.
+
+- **Two adjacent rail entries.** "Agent memory" (`set.tab_memory`, ja エージェントメモリ) is this ADR's memory;
+  "Memory snapshots" (`set.tab_memory_snapshots`, ja メモリのスナップショット) is 0022's version control. Each has one
+  status header and a small view-nav whose last view is remembered per entry. `openSettings("memory:changes")`
+  names a view; `err.memory_disabled` and the Agent-settings pointer now say Settings > Agent memory > Settings.
+- **Agent memory** has the views Memories (browse and pins, merged later), Changes, Import & export and Settings
+  (the sessions' switch with the auto-sync status, and the outside-client setting). Only Settings works while the
+  workspace is stopped, because both switches are ui-prefs (#1735).
+- **Memory snapshots** has History (with "Restore this point"), Targets and Export / import. **The codex memories
+  toggle stays in Targets**: it is a setting of codex's own memory, which is what 0022 versions.
+- The views are standalone components behind the nav, so they can be mounted in a first-class Memory view later
+  (the maintainer's option C, once an approval queue exists) without a rewrite.
+- The forgotten-memory action will be labelled "Unforget" (ja 忘却を取り消す) instead of "Restore", so "Restore this
+  point" belongs to snapshots alone. That label change is a later step and not part of this one.
+
+Follow-ups: #2324.
+
+Update (2026-10-18, #2324 PR 4): the label landed as "Unforget" (`mem.br_unforget`, ja 忘却を取り消す). The same pass
+hid the `agent memory` rows in Memory snapshots > History behind "Show Agent Fleet memory writes", since Agent memory >
+Changes lists those writes already.
+
+Update (2026-10-18, #2324): the view-nav is always a tablist. The phone-width select is gone; at narrow widths the tabs stay on one row and scroll sideways, with arrow-key, Home and End navigation.
+
+## Note (2026-10-19): a tenant-level switch for outside access (#2318)
+
+Decision 2 left "a tenant-level admin switch can disable the feature" open, and the limits paragraph above says there is
+none. This note records the one that was added; the decisions above are unchanged and the member-level setting is not
+redesigned.
+
+- **Storage.** `tenant.external_memory` (migration 0103 SQLite, 0088 Postgres), `1` by default so every existing tenant
+  behaves as before, and the member's `externalMemory` setting still starts off.
+- **Enforcement at the CP.** `/mcp` does not list the six memory tools when the tenant's switch is off, and
+  `mcpToolCall` resolves tools from the same list, so a call by name is refused as an unknown tool. The switch is read
+  live per request from the tenant behind the PAT's membership; when it cannot be read the tools are withheld. The
+  Agent's own check of the member setting is unchanged.
+- **Admin surface.** `GET`/`PUT /api/admin/tenants/{slug}/external-memory` for the tenant administrator, shown in tenant
+  settings as "External memory access" and audited as `tenant.external_memory` (`enabled=true|false`). Guide:
+  `admin/08-external-memory`.

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -148,6 +149,11 @@ func validateScheduleDTO(mv store.MembershipView, in scheduleDTO) (store.Schedul
 		Rotation: strings.TrimSpace(in.Rotation), MissingTargetPolicy: strings.TrimSpace(in.MissingTargetPolicy),
 		Report: in.Report, StopAfterRun: in.StopAfterRun, Silent: in.Silent,
 	}
+	// Checked on the raw value: the trim above would turn " codex" into a registered kind, and
+	// the create paths take a kind exactly or not at all (the stored row is then exact too).
+	if aerr := checkScheduleKind(in.AgentKind, in.SessionMode); aerr != nil {
+		return store.Schedule{}, aerr
+	}
 	targets, aerr := normalizeScheduleTargets(in.DeliverTo)
 	if aerr != nil {
 		return store.Schedule{}, aerr
@@ -161,6 +167,19 @@ func validateScheduleDTO(mv store.MembershipView, in scheduleDTO) (store.Schedul
 		return store.Schedule{}, aerr
 	}
 	return s, nil
+}
+
+// checkScheduleKind refuses an unregistered agent_kind as typed. An assistant fire ignores
+// agent_kind, so it is not validated there; otherwise it is the kind every fire creates, and an
+// unregistered spelling would only fail at fire time (it used to run claude silently).
+func checkScheduleKind(kind, sessionMode string) *apiError {
+	if strings.TrimSpace(sessionMode) == "assistant" {
+		return nil
+	}
+	if err := agentkinds.CheckCreateKind(kind); err != nil {
+		return &apiError{http.StatusBadRequest, "bad_kind", err.Error()}
+	}
+	return nil
 }
 
 // validateScheduleFields checks the enums + spec/tz shared by create and update.
@@ -644,6 +663,21 @@ type schedulePatch struct {
 // spec/tz) changed, so the caller knows to recompute next_run. A malformed deliver_to is
 // the one field it rejects itself, since only it is normalized on the way in.
 func (p schedulePatch) apply(sch *store.Schedule) (specChanged bool, aerr *apiError) {
+	// Re-checked when either half of the (mode, kind) pair changes: an assistant schedule may
+	// hold any agent_kind, and switching it to new/reuse makes that kind live. A raw patched
+	// kind wins over the stored one; an edit touching neither is left alone.
+	if p.AgentKind != nil || p.SessionMode != nil {
+		kind, mode := sch.AgentKind, sch.SessionMode
+		if p.AgentKind != nil {
+			kind = *p.AgentKind
+		}
+		if p.SessionMode != nil {
+			mode = *p.SessionMode
+		}
+		if aerr := checkScheduleKind(kind, mode); aerr != nil {
+			return false, aerr
+		}
+	}
 	set := func(dst *string, v *string) {
 		if v != nil {
 			*dst = strings.TrimSpace(*v)

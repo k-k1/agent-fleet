@@ -24,6 +24,9 @@ export interface Tenant {
   /** tier1 timeout used only while waiting on a human decision (docs/log/75).
    *  Empty = follow session_idle_timeout. */
   interaction_idle_timeout?: string;
+  /** How long one stretch of background work may hold the Workspace awake (#2338).
+   *  Empty = deploy default (2h), "0" = unbounded. */
+  background_hold_max?: string;
   // How long a home may sit unopened before it is put away as a snapshot (ecs-ec2 only;
   // "" = deploy default, "0" = never). ADR 0045 decision 13-2.
   home_hibernate_after?: string;
@@ -115,7 +118,8 @@ export interface MemberIdle {
     session?: string;
     until?: string;
     /** kind "working": when the session's busy state began (approximate), and when the hold
-     *  stops counting if nothing moves. lapseAt is absent for an Agent that reports no progress. */
+     *  stops counting if nothing moves. lapseAt is absent for an Agent that reports no progress.
+     *  kind "background": since / lapseAt likewise, lapseAt absent when the bound is off. */
     since?: string;
     lapseAt?: string;
   }>;

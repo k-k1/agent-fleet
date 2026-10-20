@@ -53,6 +53,9 @@ type agentMemChangeView struct {
 	AuthorKind    string           `json:"authorKind"`
 	AuthorSession string           `json:"authorSession"`
 	RevertOf      string           `json:"revertOf,omitempty"`
+	// ReviewRun is the background review's run that published the change (ADR 0117), the id
+	// "revert this run" takes. Only a well-formed id of a change authored by the review is shown.
+	ReviewRun string `json:"reviewRun,omitempty"`
 	// Latest is the newest change of this memory in the list, the only one a revert or forget
 	// may start from. Live says the memory exists now. Revertible says the history holds a
 	// text on at least one side of the change (a forget of a file never committed has none).
@@ -266,6 +269,9 @@ func agentMemChangeFrom(commit, at, body string) (v agentMemChangeView, rel, pid
 		Commit: commit, At: at, Op: tr["AF-Op"], Scope: scope, Name: name,
 		AuthorKind: tr["AF-Author-Kind"], AuthorSession: tr["AF-Author-Session"], RevertOf: tr["AF-Revert-Of"],
 		PurgedBefore: tr[agentMemPurgedTrailer] != "",
+	}
+	if run := tr[reviewRunTrailer]; reviewIDRe.MatchString(run) && tr["AF-Author-Kind"] == ReviewAuthorKind {
+		v.ReviewRun = run
 	}
 	return v, rel, pid, true
 }
@@ -516,6 +522,10 @@ func agentMemRevert(req agentMemRevertReq, now time.Time) (agentMemWriteResult, 
 			}
 			return agentMemWriteResult{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict, "the memory is already gone")
 		}
+		base, err := forgetIntent(scopeDir, name)
+		if err != nil {
+			return agentMemWriteResult{}, err
+		}
 		if err := agentMemWriteTomb(scopeDir, name, floor); err != nil {
 			return agentMemWriteResult{}, err
 		}
@@ -528,6 +538,7 @@ func agentMemRevert(req agentMemRevertReq, now time.Time) (agentMemWriteResult, 
 			return agentMemWriteResult{}, err
 		}
 		agentMemClearUsage(scopeDir, name)
+		forgetDone(scopeDir, name, base)
 		return agentMemWriteResult{Name: name, Scope: scope, Revision: agentMemRevOf(live, liveOK), Commit: rev, Deleted: true}, nil
 	}
 

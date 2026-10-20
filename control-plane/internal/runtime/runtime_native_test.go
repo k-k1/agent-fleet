@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -590,5 +591,67 @@ func TestNativeBootPhase(t *testing.T) {
 			t.Fatalf("BootPhase not cleared after mirror stopped (got %q)", n.BootPhase())
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// The traditional launch serves the guide from the staged <dataDir>/docs (AGENT_DOCS_DIR);
+// rootfs mode ro-binds it onto the fixed path, so it names no other root.
+func TestNativeDocsRoot(t *testing.T) {
+	dir := t.TempDir()
+	n := &nativeRuntime{name: "af-ws-docs", dataDir: dir}
+	if got := n.DocsRoot(); got != "" {
+		t.Fatalf("DocsRoot before staging = %q, want empty", got)
+	}
+	docs := filepath.Join(dir, "docs")
+	if err := os.MkdirAll(docs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := n.DocsRoot(); got != docs {
+		t.Fatalf("DocsRoot = %q, want %q", got, docs)
+	}
+	if !slices.Contains(n.processEnv(dir, dir), "AGENT_DOCS_DIR="+docs) {
+		t.Error("AGENT_DOCS_DIR does not match DocsRoot")
+	}
+	// A deployment override wins in the env, so it must win in the payload too; an empty one
+	// is the agent default, a relative one is taken from the agent's cwd (home), and dot / double-slash spellings are cleaned.
+	for _, c := range []struct{ override, want string }{
+		{"AGENT_DOCS_DIR=/opt/manual", "/opt/manual"},
+		{"AGENT_DOCS_DIR=", ""},
+		{"AGENT_DOCS_DIR=rel/docs", filepath.Join(dir, "home", "rel", "docs")},
+		{"AGENT_DOCS_DIR=/opt/manual/../manual", "/opt/manual"},
+		{"AGENT_DOCS_DIR=/opt//manual/./", "/opt/manual"},
+	} {
+		n.extraEnv = []string{"AGENT_DOCS_DIR=/first", c.override}
+		if got := n.DocsRoot(); got != c.want {
+			t.Errorf("override %q: DocsRoot = %q, want %q", c.override, got, c.want)
+		}
+		var env string
+		for _, kv := range n.processEnv(dir, dir) {
+			if strings.HasPrefix(kv, "AGENT_DOCS_DIR=") {
+				env = strings.TrimPrefix(kv, "AGENT_DOCS_DIR=")
+			}
+		}
+		// The launch env keeps the raw override; the agent canonicalises it the same way.
+		if !filepath.IsAbs(env) {
+			env = filepath.Join(dir, "home", env)
+		}
+		if c.want != "" && filepath.Clean(env) != c.want {
+			t.Errorf("override %q: AGENT_DOCS_DIR = %q, want %q", c.override, env, c.want)
+		}
+	}
+	n.extraEnv = nil
+	n.rootfs = t.TempDir()
+	if got := n.DocsRoot(); got != "" {
+		t.Fatalf("rootfs mode DocsRoot = %q, want empty", got)
+	}
+}
+
+// A relative WS_DATA is resolved against the CP's cwd, so the staged docs root the Console
+// is given is absolute.
+func TestNativeFactoryAbsolutizesDataDir(t *testing.T) {
+	f := &nativeFactory{rootDataDir: func(Workspace) string { return "data/ws1" }}
+	n := f.New(Workspace{}, SecretKeys{}, nil).(*nativeRuntime)
+	if !filepath.IsAbs(n.dataDir) || !strings.HasSuffix(n.dataDir, "data/ws1") {
+		t.Fatalf("dataDir = %q, want an absolute path ending in data/ws1", n.dataDir)
 	}
 }

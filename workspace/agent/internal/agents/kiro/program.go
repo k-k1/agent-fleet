@@ -138,7 +138,7 @@ const defaultFlags = "chat --agent-engine v2 --trust-all-tools"
 // approval". Only --trust-all-tools is removed — chat.disableTrustAllConfirmation
 // (suppressing the first-run dangerous-mode dialog, pinned by ensureSettings) is a
 // different axis and stays.
-func buildProgram(model, effort, mode, resumeID string, bypass bool) string {
+func buildProgram(model, effort, mode, resumeID string, bypass bool, recordPath string) string {
 	if override := os.Getenv("AGENT_KIRO_CMD"); override != "" {
 		return override
 	}
@@ -158,6 +158,11 @@ func buildProgram(model, effort, mode, resumeID string, bypass bool) string {
 		flags += " --resume-id " + session.ShellQuote(resumeID)
 	}
 	core := strings.TrimSpace(bin() + " " + flags)
+	// The recorder is read once at TUI start, so it can only be switched on in the launch
+	// env. Prefixing core (not the install guard) keeps the variable out of install-kiro.
+	if recordPath != "" {
+		core = "KIRO_ACP_RECORD_PATH=" + session.ShellQuote(recordPath) + " " + core
+	}
 	// On-demand first-use install (docs/log/43 Track B / §4-2). kiro's ~855MB bundle is
 	// NOT baked or boot-installed for everyone; it lands in the user's ~/.local the
 	// first time they actually launch kiro. tmux runs the pane program via /bin/sh,

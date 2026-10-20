@@ -3,6 +3,8 @@
 #
 #   cli-contract-report.sh failure <kind> <version>                 a contract finished red
 #   cli-contract-report.sh success <kind>                           it passed again
+#   cli-contract-report.sh advisory <kind> <version> [detail]       advisory finding, no marker
+#   cli-contract-report.sh advisory-clear <kind>                    the advisory check passed
 #   cli-contract-report.sh fragments <kind> <version> <fragment>... upstream message fragments gone
 #   cli-contract-report.sh fragments-clear <kind>                   none are gone any more
 #   cli-contract-report.sh streak <workflow> <n>                    N red runs in a row?
@@ -25,6 +27,11 @@
 #                   cli-pin-bump.sh: the new release no longer contains text Agent Fleet matches
 #                   on. Not a failed contract, so it writes no `red` marker and `success` leaves
 #                   it; replaced by the newest check, removed by `fragments-clear` or `prune`.
+#   `caps` rows:    `<!-- cli-contract-caps <kind> -->`, from the advisory caps drift probes. A
+#                   finding to look at, not a failed contract: it writes no `red` marker and
+#                   leaves the watcher alone, so a false positive costs a row and nothing else.
+#                   `success` leaves it; replaced by the newest finding, removed by
+#                   `advisory-clear` or `prune`.
 #   `streak` rows:  `<!-- cli-contract-streak <workflow> -->`, removed once the workflow's
 #                   newest run is no longer red.
 #
@@ -177,6 +184,27 @@ case "$cmd" in
       "$SYNC" sync "$kind" || echo "::warning::could not update the $kind issue's next step"
     fi
     ;;
+  advisory)
+    kind="${2:?kind}"; version="${3:-unknown}"; detail="${4:-caps drift probes}"
+    [[ "$kind" =~ ^[a-z0-9-]+$ ]] || { echo "invalid kind: $kind" >&2; exit 2; }
+    [[ "$version" =~ ^[0-9A-Za-z._+-]+$ ]] || version=unknown
+    case "$detail" in *'`'*|*'<!--'*|*$'\n'*) detail="caps drift probes" ;; esac
+    row="- \`$kind\` \`$version\` — advisory, no gate: \`$detail\` reported DRIFT or a probe error — [run]($RUN_URL) <!-- cli-contract-caps $kind -->"
+    add_row() { grep -v "<!-- cli-contract-caps $kind -->" "$1" || true; printf '%s\n' "$row"; }
+    # Same rule as `failure`: a row for an unknown version goes only into an open issue.
+    if [ "$version" = unknown ]; then mutate "$kind" add_row -; else mutate "$kind" add_row "$kind CLI: caps probes drifted on $version"; fi
+    # Deliberately no `red` marker: this must never hold back the watcher.
+    KNOWN_ISSUE="$MUTATED_NUM" "$SYNC" sync "$kind" || echo "::warning::could not update the $kind issue's next step"
+    ;;
+  advisory-clear)
+    kind="${2:?kind}"
+    [[ "$kind" =~ ^[a-z0-9-]+$ ]] || { echo "invalid kind: $kind" >&2; exit 2; }
+    drop_row() { grep -v "<!-- cli-contract-caps $kind -->" "$1" || true; }
+    mutate "$kind" drop_row
+    if [ -n "$(issue_number "$kind")" ]; then
+      "$SYNC" sync "$kind" || echo "::warning::could not update the $kind issue's next step"
+    fi
+    ;;
   fragments)
     kind="${2:?kind}"; version="${3:?version}"; shift 3
     [ "$#" -gt 0 ] || { echo "fragments needs at least one fragment" >&2; exit 2; }
@@ -227,7 +255,7 @@ case "$cmd" in
     prune_rows() {
       local line k v upper cur
       while IFS= read -r line; do
-        k="$(sed -n 's/.*<!-- cli-contract-\(failure\|fragments\) \([a-z0-9-]*\) -->.*/\2/p' <<< "$line")"
+        k="$(sed -n 's/.*<!-- cli-contract-\(failure\|fragments\|caps\) \([a-z0-9-]*\) -->.*/\2/p' <<< "$line")"
         if [ -n "$k" ]; then
           v="$(sed -n 's/^- `[a-z0-9-]*` `\([^`]*\)`.*/\1/p' <<< "$line")"
           upper="$(printf '%s' "$k" | tr '[:lower:]-' '[:upper:]_')"
@@ -256,7 +284,7 @@ case "$cmd" in
     gh issue view "$num" --json body --jq .body | rows_of | grep -q .
     ;;
   *)
-    echo "usage: $0 failure <kind> <version> | success <kind> | fragments <kind> <version> <fragment>... | fragments-clear <kind> | streak <workflow> <n> | prune | carry <issue> <file> | active <kind>" >&2
+    echo "usage: $0 failure <kind> <version> | success <kind> | advisory <kind> <version> [detail] | advisory-clear <kind> | fragments <kind> <version> <fragment>... | fragments-clear <kind> | streak <workflow> <n> | prune | carry <issue> <file> | active <kind>" >&2
     exit 2
     ;;
 esac

@@ -204,6 +204,7 @@ type Limits struct {
 	SessionIdleTimeout           string
 	WSIdleTimeout                string
 	InteractionIdleTimeout       string
+	BackgroundHoldMax            string
 	HomeHibernateAfter           string
 	HomeBackupEvery              string
 	AllowAgentSelfUpdate         bool

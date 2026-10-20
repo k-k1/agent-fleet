@@ -371,6 +371,11 @@ type threadHandle struct {
 	events       chan agents.Event
 
 	buf transcriptBuf // transcript built from ACP session/update (guarded by its own lock)
+
+	// act stamps every message the child sends, for the busy-row progress bound (progress.go).
+	act agents.Activity
+	// calls holds the ACP tool calls reported open and not finished (noteToolCall).
+	calls agents.InFlight
 }
 
 // bypassNow reports the resolved "skip permission prompts" choice (docs/log/76). Resume writes
@@ -496,6 +501,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 
 	h.mu.Lock()
 	h.cmd, h.cl, h.sid, h.alive = cmd, cl, sid, true
+	h.calls.Unknown()              // a new connection: calls open on the old one (or in a replay) are not known
 	h.state = agents.TurnCompleted // the child is brand new, so no turn is running
 	h.model = modelID              // ACP currentModelId (Auto is default[]) for the model badge
 	h.inter, h.permID, h.permOpts = nil, nil, nil
@@ -802,6 +808,7 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 	h.buf.addUserTurn(t.In.Prompt)
 	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
 	written := false
+	h.calls.Reset() // a turn boundary on a live connection: nothing from before it is open
 	res, err := cl.callWritten("session/prompt", map[string]any{
 		"sessionId": sid,
 		"prompt":    []map[string]any{{"type": "text", "text": t.In.Prompt}},
@@ -812,6 +819,7 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 		lease.Release()
 		h.received(t, cl, sid)
 	}) // no timeout — a turn runs as long as it runs
+	h.calls.Reset()
 	h.buf.flushAsst() // close the open assistant turn: ACP has no turn_ended notification
 	h.mu.Lock()
 	interrupted := h.stopping
@@ -1056,6 +1064,7 @@ func (h *threadHandle) Snapshot() (agents.ThreadSnapshot, error) {
 // MUST be fast (no RPC, no h.mu) — it only appends to the transcript buffer (tmu)
 // and, for current_mode_update, records the mode under h.mu.
 func (h *threadHandle) onNotify(method string, params json.RawMessage) {
+	h.act.Touch()
 	if method != "session/update" {
 		return
 	}
@@ -1113,6 +1122,7 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 	case "agent_thought_chunk":
 		h.buf.thoughtChunk(u.Content.Text)
 	case "tool_call":
+		h.noteToolCall(u.SessionUpdate, u.ToolCallID, u.Status)
 		file, verb, edits := "", "", []transcript.Edit(nil)
 		switch u.Kind {
 		case "edit", "move":
@@ -1139,6 +1149,7 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 		}
 		h.buf.toolCall(u.ToolCallID, u.Title, toolInfo(u.RawInput), file, verb, edits)
 	case "tool_call_update":
+		h.noteToolCall(u.SessionUpdate, u.ToolCallID, u.Status)
 		if out := toolOutput(u.RawOutput); out != "" {
 			h.buf.toolOutput(u.ToolCallID, out)
 		}
@@ -1208,6 +1219,7 @@ func toolOutput(raw json.RawMessage) string {
 // MUST NOT block: record the Interaction and return; the answer goes back later via
 // Respond -> cl.respond. It does not happen under --force, but plan mode can reach it.
 func (h *threadHandle) onServerRequest(cl *acpClient, id json.RawMessage, method string, params json.RawMessage) {
+	h.act.Touch()
 	if method != "session/request_permission" {
 		// An unknown server-initiated request wedges the turn if it goes unanswered, so
 		// return an error.

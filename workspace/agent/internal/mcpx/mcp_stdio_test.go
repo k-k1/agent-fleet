@@ -1100,6 +1100,17 @@ func TestSendToPeerSessionReportsQueuedAsNotDelivered(t *testing.T) {
 		t.Errorf("note = %q, want peerBlockedNote", note)
 	}
 
+	// A cursor terminal that handed the prompt back at submit: not delivered, the TUI's error
+	// as the reason, and the note says the message sits unread in the input box.
+	answer = `{"sent":"child1","held":true,"held_reason":"Error: Named models unavailable"}`
+	got = send()
+	if got["delivered"] != false || got["queued"] != true || got["reason"] != "Error: Named models unavailable" {
+		t.Errorf("send the peer's terminal refused = %v, want delivered=false queued=true with the reason", got)
+	}
+	if note, _ := got["note"].(string); note != peerRejectedNote {
+		t.Errorf("note = %q, want peerRejectedNote", note)
+	}
+
 	answer = `{"sent":"child1"}`
 	got = send()
 	if got["delivered"] != true {

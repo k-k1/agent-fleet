@@ -65,9 +65,50 @@ afterEach(() => {
 describe("AiAssistTab per-feature cards", () => {
   it("renders one card per feature, under the usage view's own label", async () => {
     await render();
-    for (const f of AI_ASSIST_FEATURES) {
+    for (const f of AI_ASSIST_FEATURES.filter((x) => !x.visible)) {
       expect(cardFor(f.id)).toBeTruthy();
     }
+  });
+
+  // ADR 0117: the memory review is switched on under Agent memory, so its card only appears once it
+  // is on, carries no switch of its own, and says plainly when no agent can run it.
+  describe("the memory review card", () => {
+    const label = () => t(AI_ASSIST_FEATURES.find((f) => f.id === "memory.review")!.labelKey);
+    const has = () => [...host.querySelectorAll(".ds-label")].some((el) => el.textContent === label());
+
+    it("is absent while the review is off, and there is no control that turns it on here", async () => {
+      setSetting("memoryReview", "off");
+      await render();
+      expect(has()).toBe(false);
+    });
+
+    it("appears when on, with agent pins and no switch", async () => {
+      setSetting("memoryReview", "propose");
+      await render();
+      expect(has()).toBe(true);
+      const card = cardFor("memory.review");
+      expect(card.textContent).toContain(t("aiassist.feature_agent"));
+      expect(card.textContent).toContain(t("aiassist.set_in_memory_settings"));
+      // OnOff draws two buttons labelled on / off; this card draws neither.
+      expect(card.textContent).not.toContain(t("common.on"));
+      expect(card.textContent).not.toContain(t("common.off"));
+    });
+
+    it("says so when the Agent reports that no agent can run it deny-all", async () => {
+      apiMock.mockImplementation((p: string) =>
+        Promise.resolve(
+          p === "api/ai-assist/resolution"
+            ? { features: [{ feature: "memory.review", enabled: true, source: "unavailable" }] }
+            : {},
+        ),
+      );
+      setSetting("memoryReview", "propose");
+      await render();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(cardFor("memory.review").textContent).toContain(t("aiassist.currently_using_denied"));
+    });
   });
 
   // 103-impl-review 重大2: useAiAssistResolution used to be called INSIDE AiFeatureCard, so 8

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -225,5 +226,30 @@ func TestAwaitAgentReadyToleratesSlowBoot(t *testing.T) {
 	}
 	if calls < 3 {
 		t.Fatalf("expected retries until ready, got %d calls", calls)
+	}
+}
+
+// injectDriver follows the kind catalog snapshot, and only exact kind names: the Agent falls an
+// unknown spelling back to claude, so a variant must not ride as a managed request.
+func TestInjectDriverFollowsTheCatalog(t *testing.T) {
+	for _, e := range agentkinds.All() {
+		want := ""
+		if e.ManagedDefault {
+			want = "managed"
+		}
+		if got := injectDriver(e.Kind); got != want {
+			t.Errorf("injectDriver(%q) = %q, want %q", e.Kind, got, want)
+		}
+	}
+	for _, k := range []string{"codex", "opencode", "copilot", "cursor", "kiro", "lcpp", "muse"} {
+		if got := injectDriver(k); got != "managed" {
+			t.Errorf("injectDriver(%q) = %q, want managed", k, got)
+		}
+	}
+	for _, k := range []string{"", "claude", "agy", "shell", "ssm", "Codex", "CODEX", " codex", "codex ",
+		"kiro-cli", "cursor-agent", "github-copilot", "llamacpp", "llama.cpp", "Muse", "open-code", "antigravity"} {
+		if got := injectDriver(k); got != "" {
+			t.Errorf("injectDriver(%q) = %q, want none", k, got)
+		}
 	}
 }

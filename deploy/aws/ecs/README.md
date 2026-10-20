@@ -1999,16 +1999,40 @@ hardcoded default gets wrong (one names its pool stack `af-ecs-pool`, another
 ./standup.sh     --profile <p> --region <r> [--yes]    # build it back
 ```
 
-- **`pause.sh` stops everything AWS lets you stop, in the one order that strands nothing.**
+- **`pause.sh` stops or deletes everything that bills by the hour, in the one order that strands nothing.**
   Workspaces, then the slots and the engines' GPU boxes (waited for, or ended directly with
   `--fast`), then the CP, then a sweep that terminates any engine box still alive — once the
   CP is gone nothing else ever will, and a g6.xlarge left up is ~$28 a day. The RDS instance
-  is stopped last (`--keep-db` leaves it) and started first on `--up`, before the CP.
-  What stays: NAT, ALB, EFS, RDS storage and the homes' EBS — AWS has no "stop" for a NAT
-  gateway or a load balancer, only delete.
-  🔴 **AWS starts a stopped RDS instance again after 7 days.** `--status` warns when the
-  database is running under a paused CP; running `pause.sh` again stops it and restarts the
-  clock.
+  is stopped next (`--keep-db` leaves it) and started first on `--up`, before the CP. The NAT
+  gateway goes last (`--keep-nat` leaves it) and comes back first on `--up`, because the CP's
+  own image pull and logs go through it.
+  - **The NAT gateway has no "stop", so it is deleted — through `00-network`'s `NatEnabled`
+    parameter, never with `delete-nat-gateway`** (the stack would keep a dead physical id and the
+    next update would fail). `pause.sh` runs `cloudformation deploy` of `cfn/00-network.yaml`
+    with `NatEnabled=false` / `true`; every other parameter keeps its live value. A round trip
+    is 1–2 minutes each way and the egress IP is unchanged, because `NatEip` is retained.
+    Nothing in a private subnet reaches ECR, logs or the internet while the gateway is gone.
+    A capture taken while paused records `NatEnabled=false`; `standup.sh` overrides it to
+    `true`.
+  - 🔴 **AWS starts a stopped RDS instance again after 7 days** (event `RDS-EVENT-0154`) and
+    cannot be told not to. `10-data` (`RdsRestopOnForcedStart`, default `true`) therefore carries
+    an EventBridge rule (`RDS-EVENT-0154` forced start, and `RDS-EVENT-0088` started, which covers
+    a start longer than the Lambda's ~46 minutes of waiting and retries) and a small Lambda that
+    stop it again, which restarts the clock. They act only on an instance tagged `af-paused=true`
+    — the tag means "paused", so remove it (or run `--up`) to keep the database up on purpose.
+    `pause.sh` sets the tag before it stops the database and removes it at the start of `--up`
+    (also with `--keep-db`); a tag it cannot write fails the run (the database is still stopped).
+    RDS has no compare-and-stop, so the race with `--up` is bounded, not excluded: the Lambda's last
+    tag read and its stop call use 3 s connect / 5 s read timeouts and no SDK retries, `--up` waits
+    20 s (`AF_TAG_GRACE_SEC`) after clearing the tag before it reads the database status (a database
+    found stopping is started again), and reads it once more after the CP is up, failing when it is
+    not available. A timeout limits how long the caller waits, not whether a request already sent
+    takes effect, so a stop whose response was lost can still land after `--up`; that shows up as the
+    failure above, and running `--up` again starts the database. The deployment needs a `10-data` deploy once to
+    get them; `--status` names the Lambda when it exists, and still warns about a running
+    database under a paused CP.
+    The database is a plain RDS PostgreSQL instance; an Aurora cluster would need
+    `RDS-EVENT-0153` and the cluster calls, which nothing here has.
 
 - **`capture-env.sh` first, always.** It writes the parameters each stack was deployed
   with to `~/.config/agent-fleet/deploy/<profile>.<region>/` (outside the repository —

@@ -238,6 +238,31 @@ client; turning it on again issues a **new** client id and secret (that is how y
 switch takes effect immediately for the endpoints, but a running container keeps the values it started with
 until the next start.
 
+##### Using it from an app on your own machine
+
+An app running on your own PC at `http://localhost:<port>` can sign in through the same IdP, **also while the
+workspace is stopped** (ADR 0116).
+
+1. In a workspace terminal, read the three values: `printenv AF_DEV_IDP_ISSUER AF_DEV_IDP_CLIENT_ID AF_DEV_IDP_CLIENT_SECRET`. Settings › Preview subdomains shows the issuer and client id too; the secret exists
+   only in the container, so start the workspace once to read it. Set the three as environment variables on your
+   machine.
+2. Make the app's callback `http://localhost:<port>/<callback path>` (`127.0.0.1` works too, any port).
+3. In the browser on that machine, stay signed in to the Console. The sign-in needs no other login.
+
+- **Treat the secret like a password**: keep it out of git, chat and screenshots. Settings › Preview subdomains ›
+  "Issue a new secret…" revokes every copy at once; the workspace then needs a restart to get the new one, and
+  your machine needs the new value.
+- **It does not work while** the deployment is paused, the IdP is switched off in the Admin modal, or the
+  deployment has no preview domain (the issuer then answers 404).
+- **A redirect to the preview URL still needs the workspace running**; only `localhost` / `127.0.0.1` is
+  accepted while it is stopped.
+- **One configuration for both places**: Settings › Preview subdomains › "App configuration examples" generates
+  the snippets, with a variant that reads the environment variables. The idea is a fallback: use the dev issuer
+  only when the variables exist. Spring Boot: put it in the `devidp` profile
+  (`SPRING_PROFILES_ACTIVE=devidp`, recommended: the production configuration never names the dev issuer).
+  Auth.js: `process.env.AF_DEV_IDP_ISSUER ? { issuer, clientId, clientSecret } : {}`, as in the example above.
+  Never put the dev issuer into the production configuration.
+
 ### Examples by setup
 
 | Setup | Example input | Which to open with |
@@ -320,6 +345,30 @@ next instruction". Issue the token for this in **⚙ Settings → the "MCP token
 
 Tokens you no longer need can be **revoked** ("Revoke") on the same screen (once revoked, connections using
 that token are rejected from the next attempt).
+
+## Using Agent Fleet memory from an external agent
+
+The same MCP token can also let your own Claude Code / Claude Desktop use the memory Agent Fleet keeps (see
+[Agent memory](12-settings.md#agent-memory)). Two things have to be true: the token's scope, and **⚙ Settings → Agent
+memory → "Use Agent Fleet memory from outside Agent Fleet"** (`Off` by default; `Read only` or `Read and write`).
+The "MCP tokens" tab lists what the token can do and links to that setting; the setting has a "How to connect"
+link back.
+
+- **Your tenant administrator can block it.** If they have, the memory tools are not offered at all, whatever your
+  setting and scope say ([admin 08](../admin/08-external-memory.md)).
+- **Tools**: `memory_projects`, `memory_index`, `memory_search` and `memory_read` need a read (or higher) token;
+  `memory_save` and `memory_forget` need a write token and "Read and write". The setting and the scope both have
+  to allow a call: the narrower one wins.
+- **Asking the agent**: just say it in plain words in your local client, e.g. "search my Agent Fleet memory for how
+  we run the integration tests" or "save to Agent Fleet memory that this repo's lint step needs `make gen` first".
+  The agent picks the project with `memory_projects` (a project must already hold memory; new projects are
+  started from inside the workspace) and writes facts, not secrets: text that looks like one is refused.
+- **What is recorded**: a save shows in the Agent memory list as written by author kind `external`, and the
+  commit message carries an `AF-External-Client: <name>` trailer with the client's self-declared name (for
+  information only). Each external save and forget is also written to the audit log as `memory.entry.save` /
+  `memory.entry.forget`, with the project id and never the memory's name. You can revert or forget any of it from
+  the Agent memory list.
+- **A stopped workspace** answers that it must be started first; start it in the Console and ask again.
 
 ## Connecting Discord / Slack (chat bridge)
 

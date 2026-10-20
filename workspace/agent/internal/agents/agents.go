@@ -104,6 +104,33 @@ type Caps struct {
 	// terminal route like every other kind today" — leave it unset unless a kind truly has no
 	// pane program, or these three places start behaving differently for it.
 	ManagedOnly bool
+	// ManagedDefault marks a kind where tui vs managed is a real choice and a caller that
+	// cannot drive a pane (MCP create_session, the scheduler) should get managed when it names
+	// no driver. A ManagedOnly kind needs no flag: it has nothing else.
+	ManagedDefault bool
+	// MCPClient says whether the kind's sessions receive af's MCP servers, and so whether an
+	// MCP definition may be scoped to it (mcpreg.ServedKinds, the CP's admin validation). The
+	// zero value reads "unverified", never "no": a kind that has not said is not refused
+	// quietly — the catalog test fails instead.
+	MCPClient Tri
+}
+
+// Tri is a capability answer that keeps "not measured" apart from "measured: no". The zero
+// value is TriUnverified, so a field a kind never set cannot be read as "unsupported".
+type Tri string
+
+const (
+	TriUnverified Tri = ""
+	TriYes        Tri = "yes"
+	TriNo         Tri = "no"
+)
+
+// Wire is the value the kind catalog serves: "yes" / "no" / "unverified".
+func (t Tri) Wire() string {
+	if t == TriUnverified {
+		return "unverified"
+	}
+	return string(t)
 }
 
 // LaunchOpts carries the per-launch inputs that aren't in session.Meta.
@@ -178,6 +205,33 @@ type Agent interface {
 // ended and the caller must skip its own kill.
 type GracefulStopper interface {
 	GracefulStop(m session.Meta) bool
+}
+
+// ManagedRuntime is an optional Agent capability: the kind keeps Managed runtime handles, keyed
+// by session name, and sessionx reaches them only through this. Every kind with a Managed route
+// (Caps().ManagedOnly / ManagedDefault, or a managedDrivers entry) must implement it — a kind
+// that does not reads as stopped and idle, and stop / halt / archive leave its runtime running
+// (sessionx's TestManagedRuntimeFollowsCaps).
+type ManagedRuntime interface {
+	ManagedRuntime() ManagedRuntimeOps
+}
+
+// ManagedRuntimeOps are the kind package's own handle functions. They are function values
+// rather than methods so a test can pin, by identity, which package each kind dispatches to.
+// Every field is required.
+type ManagedRuntimeOps struct {
+	// Alive: a live runtime handle exists (the Managed counterpart of tmux has-session).
+	Alive func(name string) bool
+	// Busy: a turn is running or queued — the refusal condition for an exclusive driver switch.
+	Busy func(name string) bool
+	// InFlight: the handle holds an entry it took from its queue and has not settled; input
+	// still queued does not count.
+	InFlight func(name string) bool
+	// Drop aborts the running turn and forgets the handle; the conversation's own store stays,
+	// so a resume reconnects to it.
+	Drop func(name string)
+	// RemoveLedger drops the ClientMessageID ledger, and the slot's identity with it.
+	RemoveLedger func(name string)
 }
 
 // ModelChoice is one launch-time model option for the Console's model picker:

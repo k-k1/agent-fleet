@@ -24,19 +24,42 @@ import (
 // no prompt after it is lost by cursor itself), `mode` the moment shift+tab changes it, and
 // a resume without `--model` / `--plan` restores both — while passing them wins.
 func (agentImpl) RecallSettings(m session.Meta) agents.RecalledSettings {
-	chatID := sids.Read(session.UUID(m.Dir, m.Name))
-	if chatID == "" {
-		return agents.RecalledSettings{}
-	}
-	hits, _ := filepath.Glob(filepath.Join(Home(), "chats", "*", chatID, "store.db"))
-	if len(hits) == 0 {
-		return agents.RecalledSettings{}
-	}
-	st, ok := readChatMeta(hits[0])
+	st, ok := storedChatMeta(m)
 	if !ok {
 		return agents.RecalledSettings{}
 	}
 	return recallFrom(st, m.Model, cachedModelIDs())
+}
+
+// RecordedModel is the model id store.db holds for the chat, as written ("default" read as
+// "auto"), or "" when nothing is recorded. Unlike RecallSettings it is not mapped through the
+// catalog or the meta, so a contract can compare what cursor itself kept with what was
+// requested.
+func (agentImpl) RecordedModel(m session.Meta) string {
+	st, ok := storedChatMeta(m)
+	if !ok {
+		return ""
+	}
+	return recordedModelOf(st)
+}
+
+func recordedModelOf(st chatMeta) string {
+	if st.LastUsedModel == "default" {
+		return "auto"
+	}
+	return st.LastUsedModel
+}
+
+func storedChatMeta(m session.Meta) (chatMeta, bool) {
+	chatID := sids.Read(session.UUID(m.Dir, m.Name))
+	if chatID == "" {
+		return chatMeta{}, false
+	}
+	hits, _ := filepath.Glob(filepath.Join(Home(), "chats", "*", chatID, "store.db"))
+	if len(hits) == 0 {
+		return chatMeta{}, false
+	}
+	return readChatMeta(hits[0])
 }
 
 // chatMeta is the part of store.db's meta row this reads. The row also holds the chat's

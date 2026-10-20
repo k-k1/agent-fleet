@@ -45,6 +45,14 @@ func TestClaudeOneShotArgs(t *testing.T) {
 	if strings.Contains(joined, "--disallowedTools") || strings.Contains(joined, "--dangerously-skip-permissions") {
 		t.Fatalf("with no tools, neither disallow nor permission-skip is needed: %q", joined)
 	}
+	// No MCP server of any scope: --tools "" does not cover them (see claudeOneShotArgs).
+	if !hasArg(args, "--strict-mcp-config") || !hasFlagValue(args, "--mcp-config", `{"mcpServers":{}}`) {
+		t.Fatalf("a one-shot must pin an empty strict MCP config: %q", joined)
+	}
+	// Claude in Chrome joins as a dynamic MCP server that strict mode does not remove.
+	if !hasArg(args, "--no-chrome") {
+		t.Fatalf("--no-chrome is missing: %q", joined)
+	}
 	// Leave no transcript: a one-shot call is never resumed.
 	if !hasArg(args, "--no-session-persistence") {
 		t.Fatalf("--no-session-persistence is missing: %q", joined)

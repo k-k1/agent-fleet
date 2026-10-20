@@ -35,8 +35,12 @@ export interface AiAssistFeatureDef {
   labelKey: MsgKey;
   /** i18n key for the settings tab's longer description of what the feature does. */
   noteKey: MsgKey;
-  /** The Settings key this feature's ON/OFF toggle reads and writes. */
-  enabledKey: BooleanSettingsKey;
+  /** The Settings key this feature's ON/OFF toggle reads and writes. Omitted for a feature whose
+   *  switch lives elsewhere (the memory review is turned on under Agent memory): its card then has
+   *  no switch of its own and only appears while the feature is on. */
+  enabledKey?: BooleanSettingsKey;
+  /** Whether the card is shown at all; omitted means always. */
+  visible?: (s: Settings) => boolean;
 }
 
 // Display order (§103.7's card list) — not otherwise significant.
@@ -98,5 +102,15 @@ export const AI_ASSIST_FEATURES: AiAssistFeatureDef[] = [
     labelKey: "usage.val.feature.translate.mirror",
     noteKey: "aiassist.note_mirror_translate",
     enabledKey: "mirrorTranslateEnabled",
+  },
+  {
+    // ADR 0117. The member turns the review on under Agent memory, so this card is only the place
+    // to pin its agent and model, and it appears once the review is on. It runs deny-all (no tools,
+    // no MCP): an agent that cannot be run that way is skipped, never run with its defaults.
+    id: "memory.review",
+    tier: "short",
+    labelKey: "usage.val.feature.memory.review",
+    noteKey: "aiassist.note_memory_review",
+    visible: (s) => s.memoryReview !== "off",
   },
 ];

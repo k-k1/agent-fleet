@@ -16,6 +16,8 @@ const SETTINGS_SECTION_KEY = "af-settings-section";
 const TENANT_SECTION_KEY = "af-tenant-section";
 const TENANT_SLUG_KEY = "af-tenant-slug";
 const ADMIN_PLACE_KEY = "af-admin-place";
+const SECTION_VIEWS_KEY = "af-settings-views";
+const SNAPSHOTS_SHOW_AF_KEY = "af-snapshots-show-af";
 
 function readKey(key: string): string {
   try {
@@ -35,6 +37,32 @@ function writeKey(key: string, value: string): void {
 const lastSection = (): string => readKey(SETTINGS_SECTION_KEY);
 export function rememberSettingsSection(section: string): void {
   writeKey(SETTINGS_SECTION_KEY, section);
+}
+
+/** The view last left open inside a section that has a view-nav (memory, memorysnapshots),
+ *  per section; "" = none stored. Readers validate it against the views the section has. */
+export function lastSectionView(section: string): string {
+  try {
+    const v = JSON.parse(readKey(SECTION_VIEWS_KEY) || "null");
+    return v && typeof v === "object" && typeof v[section] === "string" ? v[section] : "";
+  } catch {
+    return "";
+  }
+}
+export function rememberSectionView(section: string, view: string): void {
+  try {
+    const v = JSON.parse(readKey(SECTION_VIEWS_KEY) || "null");
+    writeKey(SECTION_VIEWS_KEY, JSON.stringify({ ...(v && typeof v === "object" ? v : {}), [section]: view }));
+  } catch {
+    writeKey(SECTION_VIEWS_KEY, JSON.stringify({ [section]: view }));
+  }
+}
+
+/** Whether Memory snapshots > History lists the rows Agent Fleet's own memory writes leave
+ *  (trigger "agent-memory"). Hidden unless the member turned it on. */
+export const lastSnapshotsShowAf = (): boolean => readKey(SNAPSHOTS_SHOW_AF_KEY) === "1";
+export function rememberSnapshotsShowAf(on: boolean): void {
+  writeKey(SNAPSHOTS_SHOW_AF_KEY, on ? "1" : "0");
 }
 
 const lastTenantSection = (): string => readKey(TENANT_SECTION_KEY);
@@ -95,8 +123,12 @@ interface SettingsUIStore {
    *  the `data-settings-target` it carries (an agent kind for Settings > Agents). The section
    *  that owns it consumes it once its content exists (useSettingsTarget); null = nothing asked. */
   settingsTarget: string | null;
+  /** The view inside the opened section that a "section:view" request named (memory:changes).
+   *  The section's view-nav consumes it once; null = nothing asked, so the remembered view wins. */
+  settingsView: string | null;
   openSettings(section?: string, opts?: { addPort?: number; target?: string }): void;
   clearSettingsTarget(): void;
+  clearSettingsView(): void;
   clearPreviewAddPort(): void;
   closeSettings(): void;
   openAdmin(): void;
@@ -120,8 +152,12 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
   guideOpen: false,
   previewAddPort: null,
   settingsTarget: null,
+  settingsView: null,
 
   openSettings(section?: string, opts?: { addPort?: number; target?: string }) {
+    // "section:view" names a view of a section that has a view-nav (memory:changes).
+    const [sec, view] = (section ?? "").split(":");
+    section = sec;
     // "connections" is a legacy alias for the merged agents tab (the old connections
     // tab was folded into it), so any caller asking for connections lands there.
     // No explicit section → restore the last-opened one (localStorage), else display.
@@ -130,17 +166,21 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
       settingsOpen: true,
       previewAddPort: opts?.addPort ?? null,
       settingsTarget: opts?.target ?? null,
+      settingsView: view || null,
     });
   },
   clearSettingsTarget() {
     set({ settingsTarget: null });
+  },
+  clearSettingsView() {
+    set({ settingsView: null });
   },
   clearPreviewAddPort() {
     set({ previewAddPort: null });
   },
   closeSettings() {
     // Close-on-back is handled by ui/Modal (useBackClose); just drop the flag.
-    set({ settingsOpen: false, previewAddPort: null, settingsTarget: null });
+    set({ settingsOpen: false, previewAddPort: null, settingsTarget: null, settingsView: null });
   },
 
   // The admin modal rides on the same ui/Modal as the personal settings, so close-on-back is

@@ -46,7 +46,7 @@ func (agentImpl) Kind() string { return session.KindKiro }
 // No fork (kiro has no non-interactive fork) and no display label. The chat mirror
 // IS supported: transcript.go reads the v2 JSONL that the TUI appends live.
 func (agentImpl) Caps() agents.Caps {
-	return agents.Caps{CanTranscript: true, PermissionChoice: true}
+	return agents.Caps{CanTranscript: true, PermissionChoice: true, ManagedDefault: true, MCPClient: agents.TriYes}
 }
 
 func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
@@ -58,7 +58,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// grab an unrelated newest session in the same cwd, so we read the cache directly
 	// (discovery is post-launch only — see resolveSid).
 	resumeID := sids.Read(session.UUID(m.Dir, m.Name))
-	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, m.Mode, resumeID, agents.BypassPermissions(m)), Cwd: m.CWD()}, nil
+	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, m.Mode, resumeID, agents.BypassPermissions(m), prepareRecorder(m.Name)), Cwd: m.CWD()}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {

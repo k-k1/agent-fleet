@@ -4,6 +4,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
@@ -470,6 +471,9 @@ func buildMux() *http.ServeMux {
 	// Live model catalogs (codex: `codex debug models` / opencode: `opencode models`)
 	// for the Console's launch model picker.
 	mux.HandleFunc("GET /agents/{kind}/models", handleAgentModels)
+	// The kind catalog (#1077): every registered kind with its caps, for the CP and Console
+	// to derive their kind lists from.
+	mux.HandleFunc("GET /agents/kinds", handleAgentKinds)
 	// Agent memory version control (docs/log/39 / ADR 0022 P1-P3): snapshots claude/codex
 	// memory md into a bare repo, giving history, diffs, rollback to a chosen point and
 	// transfer between environments.
@@ -497,12 +501,38 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/entries/read", memoryx.HandleAgentMemoryRead)
 	mux.HandleFunc("POST /agents/memory/entries", memoryx.HandleAgentMemorySave)
 	mux.HandleFunc("POST /agents/memory/entries/forget", memoryx.HandleAgentMemoryForget)
+	// The same five operations for a client outside Agent Fleet (#1988), reached only through the
+	// CP's /mcp. They name the project themselves and answer to the externalMemory setting.
+	mux.HandleFunc("GET /agents/memory/external/projects", memoryx.HandleAgentMemoryExternalProjects)
+	mux.HandleFunc("GET /agents/memory/external/entries", memoryx.HandleAgentMemoryExternalIndex)
+	mux.HandleFunc("GET /agents/memory/external/search", memoryx.HandleAgentMemoryExternalSearch)
+	mux.HandleFunc("GET /agents/memory/external/read", memoryx.HandleAgentMemoryExternalRead)
+	mux.HandleFunc("POST /agents/memory/external/entries", memoryx.HandleAgentMemoryExternalSave)
+	mux.HandleFunc("POST /agents/memory/external/forget", memoryx.HandleAgentMemoryExternalForget)
 	// The member's after-the-fact view of those writes (ADR 0108 decision 8). These are for the
 	// Console, so control-plane/routes.go relays them. The member writes (revert, pin,
 	// member-save) answer only a request carrying the CP's member-origin mark (ADR 0113).
 	mux.HandleFunc("GET /agents/memory/entries/changes", memoryx.HandleAgentMemoryChanges)
 	mux.HandleFunc("GET /agents/memory/entries/diff", memoryx.HandleAgentMemoryChangeDiff)
 	mux.Handle("POST /agents/memory/entries/revert", memberorigin.Require(memoryx.MemberWriteMaxRequest, http.HandlerFunc(memoryx.HandleAgentMemoryRevert)))
+	// The background memory review (ADR 0117): the member's "Review now" for a session, which
+	// spends tokens and sends an excerpt to a model provider, so it answers only a member-origin
+	// mark; and its status, which reads only counts and states. Outside /agents/memory/ on
+	// purpose: these are not memory tools and no MCP tool reaches them.
+	mux.Handle("POST /agents/memory-review/run", memberorigin.Require(memreview.RunMaxRequest, http.HandlerFunc(memreview.HandleRun)))
+	mux.HandleFunc("GET /agents/memory-review", memreview.HandleStatus)
+	// What the member does with the queue the review fills. Every route answers only the mark,
+	// the list too: it returns text the model drew from other sessions' conversations that the
+	// member has not published (it is a POST because the mark signs JSON requests).
+	for route, h := range map[string]http.HandlerFunc{
+		"POST /agents/memory-review/proposals/list":       memreview.HandleProposals,
+		"POST /agents/memory-review/proposals/approve":    memreview.HandleApprove,
+		"POST /agents/memory-review/proposals/reject":     memreview.HandleReject,
+		"POST /agents/memory-review/proposals/reject-all": memreview.HandleRejectAll,
+		"POST /agents/memory-review/runs/revert":          memreview.HandleRevertRun,
+	} {
+		mux.Handle(route, memberorigin.Require(memreview.DecideMaxRequest, h))
+	}
 	// The member's list of every memory, and the pin (#1703). No MCP tool
 	// reaches the pin route.
 	mux.HandleFunc("GET /agents/memory/entries/list", memoryx.HandleAgentMemoryList)

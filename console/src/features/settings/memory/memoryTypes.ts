@@ -99,6 +99,9 @@ export interface MemoryChange {
   authorKind: string;
   authorSession: string;
   revertOf?: string;
+  /** The background review's run that published the change (ADR 0117): the id "revert this run"
+   *  takes. Absent for any other author. */
+  reviewRun?: string;
   latest: boolean;
   live: boolean;
   /** The history holds the memory's text on at least one side of this change. A forget of a
@@ -427,4 +430,64 @@ export interface AutoSyncPreview {
   apply: number;
   unmapped?: number;
   noRoot?: number;
+}
+
+/** The background memory review's status (ADR 0117): counts and states, never text. `pending` is
+ *  the queue length, stale proposals included. */
+export interface ReviewStatus {
+  mode: string;
+  enabled: boolean;
+  pending: number;
+  releasePending?: number;
+}
+
+/** The live memory a proposal is about. */
+export interface ProposalCurrent {
+  revision: number;
+  type?: string;
+  description?: string;
+  body?: string;
+  withheld?: boolean;
+}
+
+/** One proposal of the background review waiting for the member's decision. `withheld` means it
+ *  matches a secret rule now: its name, text and diff are not sent, and it can still be rejected.
+ *  `stale` proposals cannot be approved: `staleReason` says why (changed | forgotten | secret |
+ *  invalid). `diff` is a unified diff from the live text to the proposed one. */
+export interface MemoryProposal {
+  id: string;
+  runId: string;
+  session: string;
+  op: "create" | "update" | "forget" | string;
+  scope: string;
+  projectId?: string;
+  project?: string;
+  name: string;
+  type?: string;
+  description?: string;
+  body?: string;
+  reason: string;
+  evidence: number[];
+  baseRevision?: number;
+  created: string;
+  withheld?: boolean;
+  state: "pending" | "stale" | string;
+  staleReason?: string;
+  current?: ProposalCurrent;
+  diff: string;
+}
+
+/** What "revert this run" did to one commit of the run. */
+export interface RunRevertItem {
+  commit: string;
+  op: string;
+  scope: string;
+  projectId?: string;
+  name: string;
+  result: "reverted" | "already" | "conflict" | "failed" | string;
+  reason?: "edited" | "blocked" | string;
+}
+export interface RunRevertReport {
+  run: string;
+  items: RunRevertItem[];
 }

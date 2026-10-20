@@ -238,6 +238,20 @@ describe("the shared view folds exactly as the mirror does", () => {
 // yields a momentary idle, and working goes true before an operator / scheduled / peer prompt
 // reaches the transcript. Swinging the work trace open and shut on each flap jumps the body's
 // height under a reader. Folding is one-way, and open/closed belongs to the reader.
+describe("a stalled-tree notice is badged, not shown as typed input", () => {
+  const turn = (source?: string): Turn[] => [
+    { role: "user", text: "[agent-fleet:notice kind=stalled-tree reply=none] idle", idx: 1, ts: "2026-10-20T10:00:00Z", source },
+  ];
+  it("shows the notice badge for source=notice", () => {
+    const el = render(turn("notice"), OWNER);
+    expect(el.querySelector(".mt-op")?.textContent).toContain(tr("mirror.from_notice"));
+  });
+  it("shows no badge for a plain user turn", () => {
+    const el = render(turn(undefined), OWNER);
+    expect(el.querySelector(".mt-op")).toBeNull();
+  });
+});
+
 describe("folding the work trace never flaps back", () => {
   const WORK_TURN: Turn[] = [
     { role: "user", text: "調べて", idx: 1, ts: "2026-08-22T10:00:00Z" },

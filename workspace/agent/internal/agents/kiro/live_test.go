@@ -68,7 +68,7 @@ func TestLiveTUIRoundTrip(t *testing.T) {
 	}
 	defer tmuxx.Cmd("kill-session", "-t", tn).Run()
 
-	prog := buildProgram("", "", "", "", true) // fresh, auto model, default posture
+	prog := buildProgram("", "", "", "", true, "") // fresh, auto model, default posture
 	_ = tmuxx.Cmd("send-keys", "-t", tn, "cd "+dir+" && "+prog, "Enter").Run()
 
 	// Wait for the composer (idle footer) to draw.

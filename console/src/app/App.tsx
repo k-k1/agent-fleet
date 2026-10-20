@@ -30,6 +30,7 @@ import { AwsLoginHost } from "../features/awslogin/AwsLoginHost.tsx";
 import { useAwsLoginStore } from "../features/awslogin/store.ts";
 import { useGcpLoginStore } from "../features/gcplogin/store.ts";
 import { clearCachedConns } from "../features/repos/connsCache.ts";
+import { loadKindCatalogAfter, resetKindCatalog, syncKindCatalogTenant } from "../agents/kindCatalogLoad.ts";
 import { GcpLoginHost } from "../features/gcplogin/GcpLoginHost.tsx";
 import { AuthExpiredModal } from "../features/auth/AuthExpiredModal.tsx";
 import { ProviderRequiredModal } from "../features/auth/ProviderRequiredModal.tsx";
@@ -327,7 +328,10 @@ export function App() {
     const stopNotificationPoll = startNotificationPolling();
     const unNotificationRead = wireNotificationReadOnVisibleSessions();
     void (async () => {
-      await useTenantStore.getState().init();
+      // Kind facts (managed-only, managed default, MCP client), asked once the tenant is settled
+      // and only if this effect is still live (its cleanup has already reset the catalog). The
+      // static fallback answers until it lands, and a failure retries itself.
+      await loadKindCatalogAfter(useTenantStore.getState().init(), () => alive);
       // The local settings copy records whose server copy it was merged with; until whoami has
       // answered the user is "", which ui-prefs treats as an unknown owner.
       setPrefsOwnerSource(() => (getUser() ? `${getTenant()}|${getUser()}` : ""));
@@ -344,6 +348,7 @@ export function App() {
     consumeSessionDeepLink();
     return () => {
       alive = false;
+      resetKindCatalog(); // stops a pending retry
       unAttention();
       document.removeEventListener("visibilitychange", onPrefsVisible);
       window.removeEventListener("focus", refreshPrefs);
@@ -366,6 +371,12 @@ export function App() {
       unNotificationRead();
     };
   }, []);
+
+  // The kind catalog follows the tenant on its own: this must not share the effect below, which
+  // skips its first run after boot and so misses a tenant that settled late during boot.
+  useEffect(() => {
+    if (booted) syncKindCatalogTenant();
+  }, [booted, tenant]);
 
   // Per-tenant sync: on boot completion AND on tenant switch — restore that
   // tenant's saved layout and refetch tenant-scoped data.

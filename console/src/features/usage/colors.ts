@@ -47,6 +47,8 @@ export const OTHER_KEY = "__other__";
  *   than `title.session` / `suggest.session`, which fire automatically per session.
  * - `suggest.edit` / `translate.mirror` are manual only, and `branch.suggest` is manual plus one
  *   short call per non-English work-item title.
+ * - `memory.review` (ADR 0117) is opt-in and capped per day, so it takes no slot of its own and
+ *   shows as part of "other"; its catalogue label still names it everywhere the keys are listed.
  *
  * The table is only acceptable because the folded part stays visible, which the UI guarantees
  * three ways: "other" always appears in the legend when anything folded (even for a single

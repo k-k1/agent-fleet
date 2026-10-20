@@ -337,6 +337,10 @@ func main() {
 	// than a billing policy — how long until a stop actually happens is still
 	// ws_idle_timeout. Resolved outside the if below: presence means the same thing on a
 	// deployment where the reaper does not run.
+	// Upper bound on one stretch of background work holding a Workspace awake (#2338); "0"
+	// turns the bound off, hence intervalOff. Read outside the reaper block because the usage
+	// sampler classifies rows by it too.
+	bgDef := intervalOff(os.Getenv("AF_BACKGROUND_HOLD_MAX"), defaultBackgroundHoldMax)
 	presenceGrace = intervalOff(os.Getenv("AF_PRESENCE_IDLE_TIMEOUT"), presenceGrace)
 	if iv := intervalOff(os.Getenv("AF_IDLE_SWEEP_INTERVAL"), time.Minute); iv > 0 {
 		// intervalOff, not parseDurationOr: now that the default is non-zero, "0" has to
@@ -359,7 +363,7 @@ func main() {
 		// somewhere its AZ is not. Also 0 = off — a backup is cheap but not free, and a
 		// deployment that has not thought about retention should not be paying for it.
 		backupDef := time.Duration(runtime.EnvInt("AF_ECS_EC2_BACKUP_EVERY_SEC", 0)) * time.Second
-		go newReaper(mgr, iv, sessDef, interDef, wsDef, hibDef, backupDef).run(context.Background())
+		go newReaper(mgr, iv, sessDef, interDef, wsDef, hibDef, backupDef, bgDef).run(context.Background())
 	}
 	// Not behind AF_IDLE_SWEEP_INTERVAL: switching idle-stop off must not leave a removed
 	// member's workspace running (member_removal.go).
@@ -397,6 +401,7 @@ func main() {
 		// zero here would make every cell read as "ran the whole hour" (docs/log/83).
 		mgr.usageInterval = iv
 		sampler := newUsageSampler(mgr, iv)
+		sampler.backgroundDef = bgDef
 		// The ceiling on `starting` (start_deadline.go). 30 minutes is several times the
 		// slowest launch that does converge — a Fargate cold pull, an ecs-ec2 slot built
 		// from nothing — and only a launch that cannot converge reaches it. "0" = off.

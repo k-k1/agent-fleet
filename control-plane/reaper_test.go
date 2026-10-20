@@ -119,7 +119,7 @@ func TestReaperStopUsesLifecycleLeaseAndRuntimeFence(t *testing.T) {
 		t.Fatalf("acquire share lease: acquired=%v err=%v", acquired, err)
 	}
 	blockedRT := newReaperFenceRuntime(t)
-	rp.stopWorkspace(ctx, blockedRT, ws, time.Second)
+	rp.stopWorkspace(ctx, blockedRT, ws, time.Second, 0)
 	if blockedRT.stops.Load() != 0 {
 		t.Fatal("reaper stopped workspace while share owner lease was active")
 	}
@@ -137,7 +137,7 @@ func TestReaperStopUsesLifecycleLeaseAndRuntimeFence(t *testing.T) {
 	rt := newReaperFenceRuntime(t)
 	done := make(chan struct{})
 	go func() {
-		rp.stopWorkspace(ctx, rt, ws, time.Second)
+		rp.stopWorkspace(ctx, rt, ws, time.Second, 0)
 		close(done)
 	}()
 	select {
@@ -167,7 +167,7 @@ func TestReaperStopWaitsForLocalWorkspaceOperation(t *testing.T) {
 	lock.Lock() // same-CP shared approval/recreate owns this before its side effect
 	done := make(chan struct{})
 	go func() {
-		rp.stopWorkspace(context.Background(), rt, ws, time.Second)
+		rp.stopWorkspace(context.Background(), rt, ws, time.Second, 0)
 		close(done)
 	}()
 	select {
@@ -234,7 +234,7 @@ func TestReaperRevalidatesActivityAfterFenceWait(t *testing.T) {
 				// bootTime), so it is idle under any timeout, while activity stamped during the
 				// fence wait stays fresh under this one however long a loaded host takes to
 				// reach the re-check (1 s went red under load).
-				rp.stopWorkspace(context.Background(), rt, ws, time.Hour)
+				rp.stopWorkspace(context.Background(), rt, ws, time.Hour, 0)
 				close(done)
 			}()
 			select {
@@ -286,7 +286,7 @@ func TestReaperObservesActivityFromAnotherControlPlane(t *testing.T) {
 
 			rt := newReaperFenceRuntime(t)
 			close(rt.fenceRelease) // no lifecycle conflict; test shared activity only
-			(&reaper{mgr: managerB}).stopWorkspace(context.Background(), rt, ws, time.Minute)
+			(&reaper{mgr: managerB}).stopWorkspace(context.Background(), rt, ws, time.Minute, 0)
 			if rt.stops.Load() != 0 {
 				t.Fatal("reaper stopped activity served by another CP replica")
 			}
@@ -722,7 +722,7 @@ func TestReaperStopRechecksAfterOutboxDrain(t *testing.T) {
 	rt := newReaperFenceRuntime(t)
 	close(rt.fenceRelease)
 	rt.jobOnDrain.Store(true)
-	(&reaper{mgr: mgr}).stopWorkspace(context.Background(), rt, ws, time.Second)
+	(&reaper{mgr: mgr}).stopWorkspace(context.Background(), rt, ws, time.Second, 0)
 	if n := rt.stops.Load(); n != 0 {
 		t.Fatalf("Stop calls = %d after an image job was queued during the drain, want 0", n)
 	}

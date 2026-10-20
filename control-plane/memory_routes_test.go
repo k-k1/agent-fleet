@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -31,6 +32,13 @@ func TestMemoryRoutesProxiedByCP(t *testing.T) {
 		{"POST", "/api/agents/memory/entries/revert", "POST /api/agents/memory/entries/revert"},
 		{"GET", "/api/agents/memory/entries/list", "GET /api/agents/memory/entries/list"},
 		{"POST", "/api/agents/memory/entries/pin", "POST /api/agents/memory/entries/pin"},
+		{"GET", "/api/agents/memory-review", "GET /api/agents/memory-review"},
+		{"POST", "/api/agents/memory-review/run", "POST /api/agents/memory-review/run"},
+		{"POST", "/api/agents/memory-review/proposals/list", "POST /api/agents/memory-review/proposals/list"},
+		{"POST", "/api/agents/memory-review/proposals/approve", "POST /api/agents/memory-review/proposals/approve"},
+		{"POST", "/api/agents/memory-review/proposals/reject", "POST /api/agents/memory-review/proposals/reject"},
+		{"POST", "/api/agents/memory-review/proposals/reject-all", "POST /api/agents/memory-review/proposals/reject-all"},
+		{"POST", "/api/agents/memory-review/runs/revert", "POST /api/agents/memory-review/runs/revert"},
 		{"POST", "/api/agents/memory/entries/member-save", "POST /api/agents/memory/entries/member-save"},
 		{"GET", "/api/agents/memory/entries/purge-preview", "GET /api/agents/memory/entries/purge-preview"},
 		{"POST", "/api/agents/memory/entries/purge", "POST /api/agents/memory/entries/purge"},
@@ -112,6 +120,32 @@ func TestMemorySnapshotIsAudited(t *testing.T) {
 	action, target, ok = auditActionTarget(req)
 	if !ok || action != "memory.entry.pin" || target != "agent-fleet-0123456789ab" {
 		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.entry.pin/agent-fleet-0123456789ab", action, target, ok)
+	}
+	// "Review now" is audited with a session-name-shaped hint only.
+	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory-review/run?session=my_session-1", nil)
+	if action, target, ok = auditActionTarget(req); !ok || action != "memory.review.run" || target != "my_session-1" {
+		t.Fatalf("auditActionTarget(review run) = (%q, %q, ok=%v)", action, target, ok)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory-review/run?session=%2Fhome%2Fdev+secret", nil)
+	if action, target, ok = auditActionTarget(req); !ok || action != "memory.review.run" || target != "" {
+		t.Fatalf("auditActionTarget(review run, odd hint) = (%q, %q, ok=%v)", action, target, ok)
+	}
+	// The member's decisions on the review's queue are audited with an id-shaped hint only (a
+	// proposal or run id); anything else, text included, is dropped.
+	for _, c := range []struct{ path, action, want string }{
+		{"/api/agents/memory-review/proposals/approve?id=0123456789abcdef0123", "memory.review.approve", "0123456789abcdef0123"},
+		{"/api/agents/memory-review/proposals/approve?id=my+secret+text", "memory.review.approve", ""},
+		{"/api/agents/memory-review/proposals/reject?id=0123456789abcdef0123", "memory.review.reject", "0123456789abcdef0123"},
+		{"/api/agents/memory-review/proposals/reject?id=0123456789ABCDEF0123", "memory.review.reject", ""},
+		{"/api/agents/memory-review/proposals/reject-all?run=0123456789abcdef0123", "memory.review.reject_all", "0123456789abcdef0123"},
+		{"/api/agents/memory-review/proposals/reject-all", "memory.review.reject_all", ""},
+		{"/api/agents/memory-review/runs/revert?run=0123456789abcdef0123", "memory.review.revert_run", "0123456789abcdef0123"},
+		{"/api/agents/memory-review/runs/revert?run=%2Fhome%2Fdev", "memory.review.revert_run", ""},
+	} {
+		req = httptest.NewRequest(http.MethodPost, c.path, nil)
+		if action, target, ok = auditActionTarget(req); !ok || action != c.action || target != c.want {
+			t.Fatalf("auditActionTarget(%s) = (%q, %q, ok=%v), want %s/%q", c.path, action, target, ok, c.action, c.want)
+		}
 	}
 	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory/entries/pin", nil)
 	if action, target, ok = auditActionTarget(req); !ok || action != "memory.entry.pin" || target != "" {
@@ -231,5 +265,57 @@ func TestMemoryImportRelayLogDoesNotQuoteQuery(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), secret) {
 		t.Errorf("the query reached the CP log: %s", logs.String())
+	}
+}
+
+// An approval that published the memory but could not clear the proposal from the queue answers 500
+// decision_incomplete. The commit exists, so the CP audits the approval anyway (the member may never
+// retry); any other failure is not audited, and the response reaches the caller untouched.
+func TestReviewApprovalPublishedButNotClearedIsAudited(t *testing.T) {
+	const id = "0123456789abcdef0123"
+	cases := []struct {
+		name, body string
+		status     int
+		wantAudit  bool
+		wantDetail string
+	}{
+		{"published, queue not cleared", `{"error":{"code":"decision_incomplete","message":"published, but removing it failed"}}`, 500, true, "published_queue_not_cleared"},
+		{"another failure", `{"error":{"code":"internal","message":"the proposal could not be published"}}`, 500, false, ""},
+		{"stale", `{"error":{"code":"proposal_stale","message":"x"}}`, 409, false, ""},
+		{"approved", `{"commit":"abc","revision":1}`, 200, true, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			proxy, res, st, cleanup := newFSProxyTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/agents/memory-review/proposals/approve" || r.Header.Get("X-AF-Member-Origin") == "" {
+					t.Errorf("upstream request = %s, mark %q", r.URL.Path, r.Header.Get("X-AF-Member-Origin"))
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(c.status)
+				_, _ = w.Write([]byte(c.body))
+			}))
+			defer cleanup()
+			req := httptest.NewRequest(http.MethodPost, "/api/agents/memory-review/proposals/approve?id="+id, strings.NewReader(`{"id":"`+id+`"}`))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			proxy.rest(rec, req, res)
+			if rec.Code != c.status || rec.Body.String() != c.body {
+				t.Fatalf("response = %d %s", rec.Code, rec.Body.String())
+			}
+			rows, err := st.ListAuditByTenant(context.Background(), res.ws.TenantID, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !c.wantAudit {
+				if len(rows) != 0 {
+					t.Fatalf("audited: %+v", rows)
+				}
+				return
+			}
+			if len(rows) != 1 || rows[0].Action != "memory.review.approve" || rows[0].Target != id ||
+				rows[0].Detail != c.wantDetail || rows[0].HTTPStatus != c.status {
+				t.Fatalf("audit = %+v", rows)
+			}
+		})
 	}
 }

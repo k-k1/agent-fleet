@@ -85,6 +85,13 @@ workspace node bills at the hourly rate above (~¥39/hour for `n2-standard-4`), 
 pays roughly ¥8 for it; with nodes in two zones, twice that. `kubectl get nodes -L agent-fleet.io/pool`
 shows whether it has gone.
 
+The delay is not a fixed 12 minutes. On a later stand-up the node was still there after 20
+minutes and after 70, because about 15 `kube-system` pods (`kube-dns`, `metrics-server`,
+`konnectivity-agent` and others) had been scheduled onto it while the system pool was still
+coming up, and the autoscaler did not move them. The first workspace pod was scheduled onto
+that node. Treat it as standing cost for the length of a trial, not as ¥8; `pause.sh` takes
+the pool to 0 explicitly.
+
 Not measured: egress (negligible in the test), Cloud Logging volume under real use, and the
 growth of the CP disk's snapshots.
 

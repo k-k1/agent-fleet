@@ -164,7 +164,7 @@ class CapsRowTests(unittest.TestCase):
         "package agents\n\ntype Caps struct {\n"
         "\tCanFork       bool // fork\n\tCanTranscript bool\n\tUsesLabel     bool\n"
         "\t// PermissionChoice doc.\n\tPermissionChoice bool\n\tCanForkAt bool\n"
-        "\tManagedOnly bool\n}\n"
+        "\tManagedOnly bool\n\tManagedDefault bool\n\tMCPClient Tri\n}\n"
     )
     ROWS = (
         ("Terminal (CLI) execution", "✓", "—⁹", "✓"),
@@ -172,6 +172,7 @@ class CapsRowTests(unittest.TestCase):
         ("Copy the conversation into a new session", "✓", "✓", "—"),
         ("Fork from a past message", "✓", "—", "—"),
         ("Choosing to skip permission prompts", "—", "✓", "—"),
+        ("Receives integration (MCP) servers", "✓", "—", "—"),
     )
 
     def setUp(self):
@@ -181,8 +182,9 @@ class CapsRowTests(unittest.TestCase):
         agents = self.root / "workspace/agent/internal/agents"
         self.struct = agents / "agents.go"
         for kind, caps in (
-            ("alpha", "CanTranscript: true, CanFork: true, CanForkAt: true"),
-            ("beta", "ManagedOnly: true, CanTranscript: true, CanFork: true, PermissionChoice: true"),
+            ("alpha", "CanTranscript: true, CanFork: true, CanForkAt: true, MCPClient: agents.TriYes"),
+            ("beta", "ManagedOnly: true, CanTranscript: true, CanFork: true, PermissionChoice: true,"
+             " MCPClient: agents.TriNo"),
         ):
             (agents / kind).mkdir(parents=True)
             (agents / kind / f"{kind}.go").write_text(
@@ -233,10 +235,38 @@ class CapsRowTests(unittest.TestCase):
         self.struct.write_text(self.CAPS_STRUCT.replace("\tManagedOnly bool\n", "\tManagedOnly bool\n\tCanSing bool\n"))
         self.assertIn("field CanSing is neither mapped", self.errors())
 
+    def test_unmapped_tri_field_is_an_error(self):
+        self.struct.write_text(self.CAPS_STRUCT.replace("\tMCPClient Tri\n", "\tMCPClient Tri\n\tCanSing Tri\n"))
+        self.assertIn("field CanSing is neither mapped", self.errors())
+
+    def write_beta_mcp(self, value):
+        """Rewrite beta's Caps() with MCPClient set to value ("" = left out)."""
+        caps = "ManagedOnly: true, CanTranscript: true, CanFork: true, PermissionChoice: true"
+        if value:
+            caps += f", MCPClient: {value}"
+        (self.root / "workspace/agent/internal/agents/beta/beta.go").write_text(
+            f"package beta\n\nfunc (agentImpl) Caps() agents.Caps {{\n\treturn agents.Caps{{{caps}}}\n}}\n"
+        )
+
+    def test_tri_field_counts_only_yes(self):
+        # no, unverified and unset all read as "not marked"; only TriYes is a ✓.
+        for value in ("agents.TriNo", "agents.TriUnverified", ""):
+            with self.subTest(value=value):
+                self.write_beta_mcp(value)
+                self.assertEqual(self.errors(), "")
+        self.write_beta_mcp("agents.TriYes")
+        self.assertIn("'Receives integration (MCP) servers' disagrees", self.errors())
+
+    def test_tri_prefix_is_not_yes(self):
+        # A longer constant that merely starts with TriYes must not count as yes.
+        self.write_beta_mcp("agents.TriYesButNotMeasured")
+        self.assertEqual(self.errors(), "")
+
     def test_real_struct_fields_are_all_accounted_for(self):
         patch.stopall()
         fields = check.source_caps_fields()
         self.assertIn("ManagedOnly", fields)
+        self.assertIn("MCPClient", fields)
         mapped = {field for _, field, _ in check.CAPS_ROWS} | set(check.CAPS_UNMAPPED)
         self.assertEqual(sorted(set(fields) - mapped), [])
 

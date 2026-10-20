@@ -21,6 +21,7 @@ import { AheadBehind } from "../repos/AheadBehind.tsx";
 import { postFastForward } from "../repos/staleIndexLock.ts";
 import type { Branch } from "../repos/BranchList.tsx";
 import { CommitGraph } from "./CommitGraph.tsx";
+import { remoteSwitchTargets } from "./remoteSwitch.ts";
 import { openCommit, openCommitSplit, openChanges, openRepoScm } from "./open.ts";
 import { useReposStore, useLaunchTarget } from "../repos/store.ts";
 import { useFilesStore } from "../files/store.ts";
@@ -228,9 +229,9 @@ export function SourceControlView({ repo, path = "", headerActions }: { repo: st
     if (launchBase) openLaunch(launchBase, name);
   };
 
-  const switchBranch = async (name: string) => {
+  const switchBranch = async (name: string, remote?: string) => {
     setMenu(null);
-    const res = await apiJSON(`api/repos/${enc}/checkout`, "POST", { branch: name });
+    const res = await apiJSON(`api/repos/${enc}/checkout`, "POST", { branch: name, ...(remote ? { remote } : {}) });
     if (res && res.error) {
       toast(tr("scm.branch_switch_failed", { err: errText(res.error) }));
       return;
@@ -409,6 +410,14 @@ export function SourceControlView({ repo, path = "", headerActions }: { repo: st
               </button>
             </li>
           ))}
+          {!path &&
+            remoteSwitchTargets(menu.commit.refs).map((t) => (
+              <li key={"remote:" + t.ref}>
+                <button type="button" className="ui-menu-item" onClick={() => void switchBranch(t.branch, t.remote)}>
+                  <Icon name="cloud" /> {tr("scm.switch_remote_branch_to", { name: t.ref })}
+                </button>
+              </li>
+            ))}
           {!path && <li>
             <button
               type="button"

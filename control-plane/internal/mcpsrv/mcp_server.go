@@ -30,6 +30,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -67,20 +68,17 @@ var mcpNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}$`)
 // distributing one would silently shadow the af tools in every member's container.
 var mcpReservedNames = map[string]bool{"af": true, "agent-fleet": true}
 
-// mcpKnownKinds mirrors mcpreg.knownKinds — the agent kinds that run an MCP client.
-var mcpKnownKinds = map[string]bool{
-	"claude": true, "codex": true, "opencode": true,
-	"cursor": true, "kiro": true, "agy": true, "copilot": true,
-	// muse takes its servers on the WIRE rather than in a config file (ADR 0095 decision 11),
-	// which changes nothing here: this list is "does the kind run an MCP client at all", and
-	// leaving it out meant an admin could not scope a tenant server to muse — the definition
-	// was refused at :232 with the kind unknown.
-	"muse": true,
-	// lcpp resolves ServerDefs itself, in-process, at the start of every turn (ADR 0093
-	// decision 6, 段2 の MCP wiring) rather than through a config file or the wire — a third
-	// shape, same non-effect on this list.
-	"lcpp": true,
-}
+// mcpKnownKinds are the agent kinds that run an MCP client, derived from the Agent's kind
+// catalog snapshot (internal/agentkinds) rather than kept as a copy: the hand-kept copy is
+// what left muse and lcpp refused here while the Agent accepted them (#1075).
+var mcpKnownKinds = agentkinds.MCPClientKinds()
+
+// mcpManagedDefaultKinds are the kinds create_session starts on the managed driver when the
+// caller names none, derived from the same snapshot. lcpp and muse (managed-only) are in it:
+// the Agent defaults them to managed anyway, so naming it changes nothing there. An older Agent that does not
+// register them folds the kind to claude: an empty driver would have launched a claude TUI,
+// managed is refused (driver_unsupported) — a refusal is the right answer to a kind it cannot run.
+var mcpManagedDefaultKinds = agentkinds.ManagedDefaultKinds()
 
 // mcpServerStore is the narrow store view this feature needs: the definitions plus the
 // audit ledger (every admin mutation is recorded, docs/log/48 §9).

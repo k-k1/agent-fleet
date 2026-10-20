@@ -80,3 +80,41 @@ func TestToolProcessIn(t *testing.T) {
 		t.Fatal("unknown root read as a tool process")
 	}
 }
+
+// The shape measured on kiro-cli 2.31.0 (managed, `sleep 120`): the runtime and its kiro-cli-chat
+// child lead one group, the shell tool joins that group without a session of its own, and the
+// MCP helper leads a group of its own.
+func TestGroupToolIn(t *testing.T) {
+	const root = 100
+	idle := func() map[int]Info {
+		return map[int]Info{
+			root: {PPID: 1, State: 'S', Comm: "kiro-cli", Pgrp: root, Sid: 50},
+			101:  {PPID: root, State: 'S', Comm: "kiro-cli-chat", Pgrp: root, Sid: 50},
+			102:  {PPID: 101, State: 'S', Comm: "workspace-agent", Pgrp: 102, Sid: 50},
+		}
+	}
+	if GroupToolIn(root, idle(), "kiro-cli") {
+		t.Fatal("the runtime and its MCP helper alone read as a tool")
+	}
+	if ToolProcessIn(root, withSleep(idle())) {
+		t.Fatal("test shape is wrong: the tool must not be a session leader")
+	}
+	tab := withSleep(idle())
+	if !GroupToolIn(root, tab, "kiro-cli") {
+		t.Fatal("a shell tool in the runtime's group was not seen")
+	}
+	z := tab[103]
+	z.State = 'Z'
+	tab[103] = z
+	if GroupToolIn(root, tab, "kiro-cli") {
+		t.Fatal("a zombie tool counted as running")
+	}
+	if GroupToolIn(999, tab, "kiro-cli") {
+		t.Fatal("unknown root read as a tool process")
+	}
+}
+
+func withSleep(tab map[int]Info) map[int]Info {
+	tab[103] = Info{PPID: 101, State: 'S', Comm: "sleep", Pgrp: 100, Sid: 50}
+	return tab
+}

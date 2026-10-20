@@ -39,6 +39,9 @@ const (
 	// an interruption: a "continue" that neither the user nor the operator sent is the worst
 	// thing to find unattributed in the mirror.
 	TurnSourceAutoResume = "auto-resume"
+	// TurnSourceNotice is the Agent's stalled-tree notice to a parent session (stalled_tree.go):
+	// an automated message, not anyone's instruction, so it must not read as typed input.
+	TurnSourceNotice = "notice"
 	// turnSourcePeer is another SESSION's message (docs/log/58 / ADR 0041). It needs its own
 	// badge for the same reason as auto-resume, only more urgently: when an instruction that
 	// neither the user nor the operator sent appears in the mirror, without this badge there is
@@ -196,7 +199,7 @@ func fleetGraphActorFor(source, reportTo, spawnParent string) string {
 		return "bridge:slack"
 	case TurnSourceSpawn:
 		return spawnParent // the parent session — a real lane, not a special ActorId spelling
-	case TurnSourceAutoResume:
+	case TurnSourceAutoResume, TurnSourceNotice:
 		return "agent" // AF's own nudge, never the user (docs/log/47 §4-6)
 	default:
 		return ""

@@ -243,8 +243,13 @@ it with `kubectl -n default delete pod psql-grant`.
 command above cannot run there. The alternative keeps the password out of argv and out of the
 pod spec by reading it from a Secret: store the password in a temporary Secret, run a
 non-interactive pod that takes `PGPASSWORD` from it and the statements from `-c`, then delete
-both. The variant below is **not verified as written**; only the interactive pod above has been
-run.
+both. The variant below ran as written on a stand-up of the small zonal profile (`GRANT ROLE`,
+`ALTER DATABASE`, `ALTER SCHEMA` came back, and the trap removed the pod and the Secret); the one
+change was the `read` line, replaced by a generated password. The first line of the interactive
+block, `gcloud sql users set-password … --prompt-for-password`, needs a terminal too: without one
+set the password with `--password` (it is in that one `gcloud` call's argument list for a moment),
+and set a new random value afterwards. The interactive `-it … -W` form was not run on that
+stand-up.
 
 ```bash
 PWDIR="$(mktemp -d)"; chmod 700 "$PWDIR"
@@ -383,18 +388,20 @@ kubectl -n "$PREFIX-cp" get gateway af-cp     # PROGRAMMED True, ADDRESS = lb_ad
 curl -sS https://<fqdn>/readyz
 ```
 
-**Wait for the Gateway to be `PROGRAMMED True` before judging `/readyz`.** A rollout that is
-done does not mean the load balancer is: on a second stand-up it took about 5 more minutes
-after the CP was ready before `/readyz` returned 200, and `curl` printed `000` (no connection)
-in the meantime, although DNS already pointed at the new address. Poll the Gateway, then
-retry the request:
+**Poll `/readyz` itself; `PROGRAMMED True` is not enough.** A rollout that is done does not mean
+the load balancer is: on two stand-ups it took about 5 to 6 more minutes after the CP was ready
+before `/readyz` returned 200, and `curl` printed `000` (no connection) in the meantime, although
+DNS already pointed at the new address. On the latest one the Gateway turned `PROGRAMMED True`
+about 2 minutes after the CP was ready and `/readyz` still answered `000` for about 4 minutes
+after that. Retry the request until it answers:
 
 ```bash
-kubectl -n "$PREFIX-cp" wait --for=condition=Programmed gateway/af-cp --timeout=15m
+until [ "$(curl -sS -m 10 -o /dev/null -w '%{http_code}' https://<fqdn>/readyz)" = 200 ]; do sleep 30; done
 ```
 
-The `wait` command is **not verified as written** (the observation above is from the
-`get gateway` column); `kubectl -n "$PREFIX-cp" get gateway af-cp -w` shows the same state.
+`kubectl -n "$PREFIX-cp" get gateway af-cp -w` shows the Gateway's own state. A
+`kubectl wait --for=condition=Programmed gateway/af-cp` was not run, and would stop too early for
+the same reason.
 
 What the CP's account may do — every line must answer as shown:
 
@@ -1195,7 +1202,9 @@ Things seen on a real teardown (one zonal cluster, small profile):
   address range, the subnet and the VPC without the long stall and without a manual peering delete.
 - The first `$TF destroy` can fail once on `google_certificate_manager_certificate_map` ("already
   being used by" a target HTTPS proxy). The Gateway controller removes that proxy asynchronously
-  after the cluster is gone; run `$TF destroy` again after a minute or so.
+  after the cluster is gone; run `$TF destroy` again after a minute or so. It depends on timing:
+  of three teardowns it failed on one, and the others finished in a single run. `terraform init`
+  can also fail once with "connection reset by peer" while downloading a provider; run it again.
 - `kubectl delete -k` exits 1 with `NotFound` for the workspace namespace's network policies when
   that namespace was deleted first. Nothing is left behind; it is harmless.
 - The KMS key ring and the key's name cannot be used again after a destroy: the key's versions

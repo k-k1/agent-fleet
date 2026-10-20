@@ -70,6 +70,11 @@ var Entries = []string{
 	// A move target's first prompt until it is known to have arrived (session_move_deliver.go).
 	// Introduced directly under AgentStateDir.
 	"session-move-delivery",
+	// Per-session kiro ACP recorder files (agents/kiro recorder.go). Recreated at every
+	// launch, so nothing is lost by leaving it behind; listed because the drift test
+	// requires every store under AgentStateDir to be named. Introduced directly under
+	// AgentStateDir.
+	"kiro-acp",
 	"session-report",
 	"session-resume",
 	"session-translations",
@@ -124,6 +129,7 @@ var Entries = []string{
 	"agy-hook",
 	"agy-launch",
 	"agy-hooks.lock",
+	"cursor-hooks.lock",
 	"codex-msgledger",
 	"opencode-msgledger",
 	"copilot-msgledger",

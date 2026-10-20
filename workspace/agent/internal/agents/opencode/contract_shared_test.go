@@ -409,21 +409,19 @@ func TestContractSharedServeTerminalSessions(t *testing.T) {
 			t.Errorf("requests carried tokens other than the per-session ones: %v", seen)
 		}
 	}
-	// The status plugin reported each turn under the sid of the slot it ran in.
-	{
-		b, _ := os.ReadFile(statusLog)
-		for _, n := range names {
-			sid := session.UUID(work, n)
-			for _, st := range []string{"working", "idle"} {
-				if !strings.Contains(string(b), "session-status "+st+" "+sid+"\n") {
-					t.Errorf("no %q report for %s in:\n%s", st, n, b)
-				}
-			}
+	// The status plugin reported each turn under the sid of the slot it ran in. The idle report
+	// trails the shell output under CI load, so wait for it rather than reading the log once.
+	for _, n := range names {
+		sid := session.UUID(work, n)
+		read := func() string { b, _ := os.ReadFile(statusLog); return string(b) }
+		if miss, last := awaitStatusReports(read, sid, []string{"working", "idle"}, statusWaitTimeout, 100*time.Millisecond); len(miss) > 0 {
+			t.Errorf("no %v report for %s within %v in:\n%s", miss, n, statusWaitTimeout, last)
 		}
 	}
 	for _, n := range names {
-		if LiveState(session.Meta{Name: n, Dir: work, Kind: session.KindOpencode, Driver: session.DriverTUI}) != "idle" {
-			t.Errorf("%s reads %q after its turn", n, LiveState(session.Meta{Name: n, Dir: work, Kind: session.KindOpencode, Driver: session.DriverTUI}))
+		m := session.Meta{Name: n, Dir: work, Kind: session.KindOpencode, Driver: session.DriverTUI}
+		if !pollUntil(statusWaitTimeout, 100*time.Millisecond, func() bool { return LiveState(m) == "idle" }) {
+			t.Errorf("%s reads %q after its turn (waited %v)", n, LiveState(m), statusWaitTimeout)
 		}
 	}
 

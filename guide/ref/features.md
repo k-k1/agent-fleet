@@ -96,7 +96,8 @@ explains them.
 |---|---|---|
 | Agent connections | member | Agents |
 | Instructions to agents | member | Agent instructions |
-| Agent memory management | member | Agent memory |
+| Agent Fleet shared memory management | member | Agent memory |
+| Version history of agents' own memory | member | Memory snapshots |
 | Git hosting connections | member | Git hosting |
 | Internal repositories | member | Internal repos |
 | AWS profiles and SSM | member | AWS profiles/SSM |

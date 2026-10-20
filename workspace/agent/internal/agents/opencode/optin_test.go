@@ -34,6 +34,22 @@ func optInHome(t *testing.T) string {
 	return home
 }
 
+// stubTerminalSlots replaces terminalSlots for the test. The restore waits for the reconciles the
+// code under test started in the background (goReconcile): they read terminalSlots, and restoring
+// it under them is a data race. The same goes for the idle watchers (idleWatch) an earlier test's
+// Supervisor armed: they poll terminalSlots on a timer, so they are ended before every write.
+func stubTerminalSlots(t *testing.T, fn func() []session.Meta) {
+	t.Helper()
+	idleWatch.stop()
+	old := terminalSlots
+	terminalSlots = fn
+	t.Cleanup(func() {
+		reconcileInflight.Wait()
+		idleWatch.stop()
+		terminalSlots = old
+	})
+}
+
 // installFakeV2 lays out the private prefix the way `install-opencode2` leaves it.
 func installFakeV2(t *testing.T) string {
 	t.Helper()
@@ -217,7 +233,27 @@ func sleepArgs(t *testing.T, tokens ...string) *exec.Cmd {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	awaitExec(t, cmd, tokens)
 	return cmd
+}
+
+// awaitExec waits until /proc shows the started process with its final argv. Start returns once
+// the child has passed the point where its close-on-exec descriptors are dropped, but the kernel
+// fills in the new argv range a moment later; a /proc/<pid>/cmdline read in that window is empty,
+// so isRecordedServe says "not the daemon" and the code under test, which asks it, wrongly sees no
+// daemon to stop (measured: 1 in ~300 runs under CPU load, the 5 s timeout of issue 2354).
+func awaitExec(t *testing.T, cmd *exec.Cmd, tokens []string) {
+	t.Helper()
+	want := strings.Join(tokens, "\x00") + "\x00"
+	path := "/proc/" + strconv.Itoa(cmd.Process.Pid) + "/cmdline"
+	var got []byte
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		got, _ = os.ReadFile(path)
+		if strings.HasSuffix(string(got), want) {
+			return
+		}
+	}
+	t.Fatalf("%s never showed the argv tail %q after Start; last read %q", path, want, got)
 }
 
 func exitedBySignal(t *testing.T, cmd *exec.Cmd, sig syscall.Signal) bool {
@@ -527,14 +563,12 @@ func TestDrainSeesABusyV2PaneAfterTheSwitchWentToV1(t *testing.T) {
 	markSlotMode(sid, modeShared)
 	sids.Write(sid, "ses_busy")
 	t.Cleanup(func() { slotModes.Remove(sid); sids.Remove(sid) })
-	oldSlots := terminalSlots
-	terminalSlots = func() []session.Meta {
+	stubTerminalSlots(t, func() []session.Meta {
 		if sharedSlot(m) {
 			return []session.Meta{m}
 		}
 		return nil
-	}
-	t.Cleanup(func() { terminalSlots = oldSlots })
+	})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":{"ses_busy":{"type":"running"}}}`))
@@ -618,9 +652,7 @@ func TestRetiringAnAdoptedDaemonDrainsItsBusyTerminals(t *testing.T) {
 	markSlotMode(sid, modeShared)
 	sids.Write(sid, "ses_busy")
 	t.Cleanup(func() { slotModes.Remove(sid); sids.Remove(sid) })
-	oldSlots := terminalSlots
-	terminalSlots = func() []session.Meta { return []session.Meta{m} }
-	t.Cleanup(func() { terminalSlots = oldSlots })
+	stubTerminalSlots(t, func() []session.Meta { return []session.Meta{m} })
 
 	s := &Supervisor{} // not up: the Agent just restarted
 	if err := s.retireAdopted(srv.URL); err != nil {
@@ -706,4 +738,23 @@ func freePortForTest(t *testing.T) string {
 	}
 	defer l.Close()
 	return strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
+}
+
+// A Supervisor an earlier test armed leaves its zero-demand watcher polling terminalSlots; the next
+// stubTerminalSlots must end it before writing the var, or -race reports the write against the
+// watcher's read (seen as TestRetiringAnAdoptedDaemonDrainsItsBusyTerminals failing after
+// TestEnsureStartsServeWithPassword).
+func TestStubbingTerminalSlotsEndsLeftoverIdleWatchers(t *testing.T) {
+	prev := agents.IdleTickForTest(time.Millisecond)
+	t.Cleanup(func() { idleWatch.stop(); agents.IdleTickForTest(prev) })
+	t.Setenv(idleGraceEnv, "600")
+	s := &Supervisor{}
+	s.mu.Lock()
+	s.armIdleWatchLocked()
+	s.mu.Unlock()
+	time.Sleep(20 * time.Millisecond) // several ticks: the watcher is reading terminalSlots
+	t.Run("stub", func(t *testing.T) {
+		stubTerminalSlots(t, func() []session.Meta { return nil })
+		time.Sleep(20 * time.Millisecond)
+	})
 }

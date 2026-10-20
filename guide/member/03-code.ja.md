@@ -54,11 +54,24 @@ Jira を接続していれば（設定の**課題管理**）、Jira CLI の `jir
 できます: `jira issue view PROJ-1`、`jira issue list -p PROJ`、`jira issue create -p PROJ`、
 `jira issue comment add PROJ-1 "…"`、`jira issue move PROJ-1 "In Progress"`。
 
+- **課題の作成**: `jira issue create -p PROJ …` は `jira init` なしで使えます。設定に課題タイプが
+  ないとき、ラッパーが Jira からそのプロジェクトの課題タイプを読み（既定のスコープだけで足ります）、
+  それを加えた設定のコピーを生成して `jira` に渡します。対象はラッパーが生成した設定と
+  `~/.config/agent-fleet/jira/` の中の設定だけで、`-p`（またはその設定の既定プロジェクト）が
+  必要です。取得できないときは 1 行のヒントを出し、`jira` は `invalid issue types in config` で
+  失敗します。その場合は次の `jira init` を実行してください（正確なボード名は `jira board list -p PROJ` で
+  分かります）。`jira init` が書いた設定の課題タイプはそのプロジェクト専用です（チーム管理
+  プロジェクトでは ID がプロジェクトごとに違います）。そこで `-p` に別のプロジェクトを指定すると、
+  ラッパーはそのプロジェクトの課題タイプを入れ、設定のカスタムフィールド（最初のプロジェクトのもの
+  なので）を除いたコピーを `jira` に渡します。課題タイプを読めないときは設定をそのまま使い、
+  `jira init -c ~/.config/agent-fleet/jira/<名前>.yml --project PROJ --board "PROJ board"` で
+  そのプロジェクト専用の設定を作るよう、ヒントで案内します。別プロジェクトへの `--parent` 付きの作成は、
+  設定からそのプロジェクトの種別が分からないため、常にこの案内になります。
 - **プロジェクト・ボード・スプリント・エピック**: 一度 `jira init --project PROJ --board "PROJ board"`
   を実行してください（前の設定を置き換えるときは `--force` を付けます）。既定のプロジェクト・
-  ボード・課題タイプ・エピック用フィールドが書き込まれ、`jira issue create`・`jira sprint list`・
-  エピック系のコマンドが使えるようになります。質問はされません。実行しない場合は、コマンド
-  ごとに `-p PROJ` を付けてください。2 つ目のボードは
+  ボード・課題タイプ・エピック用フィールドが書き込まれ、`jira sprint list`・エピック系のコマンドが
+  使えるようになります。質問はされません。実行しない場合は、コマンドごとに `-p PROJ` を
+  付けてください。2 つ目のボードは
   `jira init -c ~/.config/agent-fleet/jira/other-board.yml --project PROJ --board "Other board"`
   で作り、`jira -c ~/.config/agent-fleet/jira/other-board.yml …` で使います。接続が使われるのは
   `~/.config/agent-fleet/jira/` の中の設定だけです。
@@ -67,8 +80,11 @@ Jira を接続していれば（設定の**課題管理**）、Jira CLI の `jir
 - **変更できる範囲**は接続の権限どおりです。CLI はあなたとして Jira に書き込むので、課題の
   作成・編集・遷移にはそれが許されたアカウントが必要です。
 - **OAuth でボード・スプリント・エピックを使う**には、テナントの Jira アプリに Jira Software の
-  スコープが要ります。テナント管理者が有効にしたあと、あなたが一度 **Jira を接続し直して**
-  ください。それまでは、これらのコマンドと `jira init` は認可エラーになります。また、CLI が
+  スコープが要ります。
+  テナント管理者が有効にしたあと、あなたが一度 **Jira を接続し直して**
+  ください。それまでは、これらのコマンドと `jira init` は認可エラーになります。設定 > 課題管理の
+  Jira カードに「ボード・スプリント・エピック: 利用できません」と出て、`jira` もそれらの
+  コマンドの前に同じ説明を表示します。また、CLI が
   表示するリンクはサイトではなく `api.atlassian.com` を指します。
 - **Jira Data Center**（またはほかの Jira）は設定画面からは接続できません。自分で設定して
   ください（自分の `--server` を付けた `jira init`、`~/.config/agent-fleet/jira/` の外の設定、

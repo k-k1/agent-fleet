@@ -346,7 +346,11 @@ an operator.
   from Claude Code / Claude Desktop on their own machine. The endpoint is `/mcp` (Bearer auth);
   on the deployment side it depends on the feature flag (`AF_MCP_ENABLED`) and on whether the
   ingress passes `/mcp`. The scope (read / write / admin:dangerous) and the expiry are the user's
-  choice, and they can revoke it themselves.
+  choice, and they can revoke it themselves. Over that door a member can also let their own agent
+  use their Agent Fleet memory; it is a separate per-member setting, off by default (member guide,
+  Settings > Agent memory > Settings). External saves and forgets are audited (`memory.entry.save` /
+  `memory.entry.forget`, actor `mcp`, target the project id). A tenant administrator can block it for the
+  whole tenant ([admin 08](../admin/08-external-memory.md)); `AF_MCP_ENABLED` turns the whole endpoint off.
 
 ## Handing over the in-workspace browser
 

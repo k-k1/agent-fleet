@@ -15,7 +15,6 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // ServerDef is one registered MCP server. Alias, not a new type: handlers decode
@@ -54,19 +53,19 @@ var nameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}$`)
 // configs. Letting a user register one of these would silently shadow the af tools.
 var reservedNames = map[string]bool{"af": true, "agent-fleet": true}
 
-var knownKinds = map[string]bool{
-	session.KindClaude: true, session.KindCodex: true, session.KindOpencode: true,
-	session.KindCursor: true, session.KindKiro: true, session.KindAgy: true,
-	session.KindCopilot: true,
-	// muse takes its servers on the wire rather than from a config file (ADR 0095 decision
-	// 11), which changes nothing here: this list is about which kinds a DEFINITION may name.
-	session.KindMuse: true,
-	// lcpp resolves ServerDefs itself, in-process, at the start of every turn
-	// (internal/agents/lcpp's own mcp.go calls ForSession directly) rather than through a
-	// materializer or the wire — a third shape, but the same non-effect on this list (ADR 0093
-	// decision 6, 段2 の MCP wiring).
-	session.KindLcpp: true,
-}
+// knownKinds are the kinds a definition may name: exactly the kinds that receive af's MCP
+// servers (ServedKinds), so the two cannot disagree. mcpreg cannot read the kind registry's
+// Caps.MCPClient itself (it sits below the kind packages: agents → transcript → mcpreg), so
+// sessionx's TestMCPClientKindsMatchRegistry holds this list to the registry instead. The
+// CP's admin validation derives its copy from the kind catalog snapshot
+// (control-plane/internal/agentkinds).
+var knownKinds = func() map[string]bool {
+	m := make(map[string]bool, len(ServedKinds))
+	for _, k := range ServedKinds {
+		m[k] = true
+	}
+	return m
+}()
 
 // ValidationError marks a refusal caused by the definition itself — the caller sent
 // something unusable, so it maps to a 400. Typed rather than string-sniffed so a

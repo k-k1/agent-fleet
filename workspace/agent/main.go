@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net"
 	"net/http"
@@ -33,6 +34,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/statemig"
@@ -299,6 +301,14 @@ func serve() {
 	// The Agent memory switch's import / write-back of claude's native memory (#1972). Level
 	// triggered: starting it is what resumes a run a restart interrupted.
 	memoryx.AutoSyncStart()
+	// The background memory review (ADR 0117): level triggered like the loop above, so starting it
+	// is also what resumes a review a restart interrupted. It does nothing while the memory
+	// review is off.
+	memreview.DefaultLoop = memreview.NewLoop(sessionx.MemoryReviewSource{})
+	memoryx.SetForgetHooks(memreview.ForgetHooks())
+	memreview.OnQueued = notifyMemoryReview
+	memreview.ResolveBackend, memreview.WarmBackend = chatx.ResolveDenyAllCached, chatx.WarmDenyAllKind
+	memreview.DefaultLoop.Start(context.Background())
 
 	// Automatic recovery of a claude session stopped by a rate limit (docs/log/47 §4-4):
 	// dismiss the menu on its default ("wait for the reset") and hand the CP a one-shot
@@ -312,6 +322,10 @@ func serve() {
 	// for sessions with no assistant conversation too, and only reaches the assistant or
 	// the user as a report when it gives up.
 	sessionx.StartAbortResumeWatch()
+
+	// Nudge a parent session once when it and all its live children have sat idle with nothing
+	// in flight (stalled_tree.go). Its own loop: it must work while nobody has a screen open.
+	sessionx.StartStalledTreeWatch()
 
 	// Self-hosted inference engines (ADR 0071 P0): ask the CP which engines this deployment
 	// runs and declare them in opencode's config, so `llamacpp/<model>` is in the launch

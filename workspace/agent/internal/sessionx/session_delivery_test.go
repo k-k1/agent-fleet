@@ -4,8 +4,13 @@ package sessionx
 // what decides between re-sending Enter and retyping the whole prompt.
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 func TestPromptDraftVisible(t *testing.T) {
@@ -109,5 +114,48 @@ func TestPromptDraftVisibleIgnoresScrollback(t *testing.T) {
 	captured := "❯ /scout\n● done\n──────── [AF] 定時 ──\n❯ \n────────\n  ⏵⏵ bypass permissions on\n"
 	if promptDraftVisible(captured, "/scout") {
 		t.Fatal("an earlier submission above an empty composer must not read as a draft")
+	}
+}
+
+// A prompt typed into a busy claude is only enqueued (in memory, lost on a pane kill). The
+// confirmation must say so (held) instead of calling it a started turn, must not self-heal by
+// retyping, and must still end as started once the replayed user line appears.
+func TestConfirmPromptDeliveryReportsQueuedAsHeld(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	m := session.Meta{Name: "held_claude", Dir: t.TempDir(), Kind: session.KindClaude}
+	proj := filepath.Join(cfg, "projects", "-held")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(proj, session.UUID(m.Dir, m.Name)+".jsonl")
+	if err := os.WriteFile(log, []byte(`{"type":"assistant","message":{"content":[]}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const prompt = "please look at PR 2288 when you are free"
+	base := deliveryBaseline(m)
+	if base.logs == nil {
+		t.Fatal("claude has a verification baseline")
+	}
+	appendLine := func(v map[string]any) {
+		b, _ := json.Marshal(v)
+		f, err := os.OpenFile(log, os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		f.Write(append(b, '\n'))
+	}
+	appendLine(map[string]any{"type": "queue-operation", "operation": "enqueue", "content": prompt})
+
+	held, err := confirmPromptDelivery(m, "no-such-pane", prompt, base)
+	if err != nil || !held {
+		t.Fatalf("enqueue only: held=%v err=%v, want held=true", held, err)
+	}
+
+	appendLine(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": prompt}})
+	held, err = confirmPromptDelivery(m, "no-such-pane", prompt, base)
+	if err != nil || held {
+		t.Fatalf("enqueue then user line: held=%v err=%v, want delivered", held, err)
 	}
 }

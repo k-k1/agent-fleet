@@ -12,7 +12,7 @@ import (
 type shellAgent struct{ agents.NoGenericTranscript }
 
 func (shellAgent) Kind() string      { return session.KindShell }
-func (shellAgent) Caps() agents.Caps { return agents.Caps{} }
+func (shellAgent) Caps() agents.Caps { return agents.Caps{MCPClient: agents.TriNo} }
 
 func (shellAgent) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
 	// A shell falls back to home if its recorded dir is gone.
@@ -34,7 +34,7 @@ func (shellAgent) ClearResume(string) {}
 type ssmAgent struct{ agents.NoGenericTranscript }
 
 func (ssmAgent) Kind() string      { return session.KindSSM }
-func (ssmAgent) Caps() agents.Caps { return agents.Caps{} }
+func (ssmAgent) Caps() agents.Caps { return agents.Caps{MCPClient: agents.TriNo} }
 
 func (ssmAgent) BuildLaunch(m session.Meta, opts agents.LaunchOpts) (agents.LaunchPlan, error) {
 	// An SSM session logs into the operator's OWN AWS via `aws sso login` (the

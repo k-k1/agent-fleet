@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -80,6 +81,11 @@ func TestMemberWriteRoutesRequireTheMark(t *testing.T) {
 		"/agents/memory/entries/project-move",
 		"/agents/memory/snapshots",
 		"/agents/memory/import/apply",
+		"/agents/memory-review/proposals/list",
+		"/agents/memory-review/proposals/approve",
+		"/agents/memory-review/proposals/reject",
+		"/agents/memory-review/proposals/reject-all",
+		"/agents/memory-review/runs/revert",
 	} {
 		req := httptest.NewRequest(http.MethodPost, p, strings.NewReader(`{}`))
 		req.Header.Set("Authorization", "Bearer agent-token")
@@ -106,11 +112,22 @@ func TestMemberWriteRoutesAdmitAMarkedRequest(t *testing.T) {
 		"/agents/memory/entries/project-move",
 		"/agents/memory/import/apply",
 		"/agents/memory/snapshots",
+		"/agents/memory-review/proposals/list",
+		"/agents/memory-review/proposals/approve",
+		"/agents/memory-review/proposals/reject",
+		"/agents/memory-review/proposals/reject-all",
+		"/agents/memory-review/runs/revert",
 	} {
-		req := httptest.NewRequest(http.MethodPost, p, strings.NewReader(`{}`))
+		// reject-all with an empty body would reject the whole queue; a malformed run id is
+		// the validation error that proves the request got past the mark without touching it.
+		body := `{}`
+		if p == "/agents/memory-review/proposals/reject-all" {
+			body = `{"run":"nope"}`
+		}
+		req := httptest.NewRequest(http.MethodPost, p, strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer agent-token")
 		req.Header.Set("Content-Type", "application/json")
-		s.Sign(req, []byte(`{}`))
+		s.Sign(req, []byte(body))
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, req)
 		// A snapshot of an empty body is no validation error: it may succeed or fail on the
@@ -121,7 +138,12 @@ func TestMemberWriteRoutesAdmitAMarkedRequest(t *testing.T) {
 			}
 			continue
 		}
-		if w.Code != http.StatusBadRequest || strings.Contains(w.Body.String(), "member_origin") {
+		// The queue list takes no input: it answers 200 past the mark.
+		want := http.StatusBadRequest
+		if p == "/agents/memory-review/proposals/list" {
+			want = http.StatusOK
+		}
+		if w.Code != want || strings.Contains(w.Body.String(), "member_origin") {
 			t.Errorf("%s with a mark: %d %s", p, w.Code, w.Body)
 		}
 	}
@@ -180,7 +202,7 @@ func TestMemberOriginRoutesAgreeWithTheControlPlane(t *testing.T) {
 	var agent []string
 	for _, line := range strings.Split(string(golden), "\n") {
 		method, path, ok := strings.Cut(strings.TrimSpace(line), " ")
-		if !ok || method != http.MethodPost || !strings.HasPrefix(path, "/agents/memory/") {
+		if !ok || method != http.MethodPost || !(strings.HasPrefix(path, "/agents/memory/") || strings.HasPrefix(path, "/agents/memory-review/")) {
 			continue
 		}
 		req := httptest.NewRequest(method, path, strings.NewReader("not json"))
@@ -191,6 +213,9 @@ func TestMemberOriginRoutesAgreeWithTheControlPlane(t *testing.T) {
 			agent = append(agent, method+" "+path)
 		}
 	}
+	// A conditional requirement is not a route that always wants a mark: the settings write asks
+	// for one only when it arms the memory review (TestAPrefsWriteThatArmsTheMemoryReview...).
+	cp = slices.DeleteFunc(cp, func(r string) bool { return r == "PUT /env/ui-prefs" })
 	sort.Strings(cp)
 	sort.Strings(agent)
 	if strings.Join(cp, "\n") != strings.Join(agent, "\n") {

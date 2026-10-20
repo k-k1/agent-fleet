@@ -469,15 +469,15 @@ func TestRestoreTerminalEnvsPutsEveryLiveSlot(t *testing.T) {
 	sids.Write(session.UUID(a.Dir, a.Name), "ses_a")
 	sids.Write(session.UUID(b.Dir, b.Name), "ses_b")
 	t.Cleanup(func() { sids.Remove(session.UUID(a.Dir, a.Name)); sids.Remove(session.UUID(b.Dir, b.Name)) })
-	oldSlots, oldEnv := terminalSlots, paneEnv
-	terminalSlots = func() []session.Meta { return []session.Meta{a, b} }
+	stubTerminalSlots(t, func() []session.Meta { return []session.Meta{a, b} })
+	oldEnv := paneEnv
 	paneEnv = func(name string) (map[string]string, bool) {
 		if name == "b" {
 			return nil, false // its pane is gone: skipped, not fatal
 		}
 		return map[string]string{"AF_SESSION_NAME": name}, true
 	}
-	t.Cleanup(func() { terminalSlots, paneEnv = oldSlots, oldEnv })
+	t.Cleanup(func() { paneEnv = oldEnv })
 
 	restoreTerminalEnvs(d.srv.URL)
 	if d.envs["ses_a"]["AF_SESSION_NAME"] != "a" {
@@ -580,10 +580,9 @@ func TestTerminalSlotsAreDependentsAndDrained(t *testing.T) {
 	a := terminalMeta(t, "busy")
 	sids.Write(session.UUID(a.Dir, a.Name), "ses_busy")
 	t.Cleanup(func() { sids.Remove(session.UUID(a.Dir, a.Name)) })
-	oldSlots := terminalSlots
-	terminalSlots = func() []session.Meta { return []session.Meta{a} }
+	stubTerminalSlots(t, func() []session.Meta { return []session.Meta{a} })
 	markSlotMode(session.UUID(a.Dir, a.Name), modeShared)
-	t.Cleanup(func() { terminalSlots = oldSlots; slotModes.Remove(session.UUID(a.Dir, a.Name)) })
+	t.Cleanup(func() { slotModes.Remove(session.UUID(a.Dir, a.Name)) })
 
 	base := dependents()
 	if base < 1 {
@@ -663,9 +662,7 @@ func TestV2TargetForTerminalFollowsTheLaunchMode(t *testing.T) {
 	if !sharedSlot(m) {
 		t.Error("a pane keeps its launch mode")
 	}
-	oldSlots := terminalSlots
-	terminalSlots = func() []session.Meta { return []session.Meta{m} }
-	t.Cleanup(func() { terminalSlots = oldSlots })
+	stubTerminalSlots(t, func() []session.Meta { return []session.Meta{m} })
 	if !sharedDaemonWanted() {
 		t.Error("a daemon with a shared pane must keep starting the shared way after the switch is flipped")
 	}

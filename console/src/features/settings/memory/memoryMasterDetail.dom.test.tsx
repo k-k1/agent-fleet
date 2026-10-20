@@ -1,5 +1,5 @@
-// The memory browser (#1985): rows with author / uses / pin, search, body view, forget and
-// restore through the existing revert route (commit in the query for the audit), and the save form
+// The Memories master-detail (#1985, #2324): rows with author / uses / pin, search, filter chips, the
+// detail pane with body, forget and unforget through the existing revert route (commit in the query for the audit), and the save form
 // (#1997) with its secret refusal. Withheld memories are a count, never a name.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
@@ -13,13 +13,16 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
   apiJSON: (...args: unknown[]) => apiJSON(...args),
 }));
 
-import { MemoryBrowserPanel } from "./memoryBrowser.tsx";
+import { MemoriesMasterDetail, resetMemoriesSession } from "./memoryMasterDetail.tsx";
 import { ConfirmProvider } from "../../../ui/ConfirmProvider.tsx";
 import { ToastProvider } from "../../../ui/ToastProvider.tsx";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let readKinds: string[] = [];
+const onChanged = vi.fn();
+const onOpenChanges = vi.fn();
+const { t } = await import("../../../lib/i18n/index.ts");
 
 const project = { id: "app-0123456789ab", root: "/r/app", vcs: "git", display: "app" };
 const entries = [
@@ -104,6 +107,11 @@ const text = (label: string) =>
   Array.from(document.body.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent === label);
 // The memory list proper; the forgotten list below it reuses the row class.
 const listRows = () => Array.from(document.body.querySelectorAll(".mem-br-list")[0].querySelectorAll(".mem-br-row"));
+const calls0 = (prefix: string) => api.mock.calls.filter((c) => String(c[0]).startsWith(prefix));
+const btn = (key: Parameters<typeof t>[0]) => text(t(key));
+// Pick the i-th row of the live list (its select button, not an action).
+const pickRow = (i: number) => click(listRows()[i].querySelector(".mem-md-pick"));
+const chip = (key: Parameters<typeof t>[0]) => click(btn(key));
 const select = () => document.body.querySelector<HTMLSelectElement>(".mem-br-bar select")!;
 async function setValue(el: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement, v: string) {
   const proto = Object.getPrototypeOf(el);
@@ -146,7 +154,7 @@ beforeEach(async () => {
     root!.render(
       <ToastProvider>
         <ConfirmProvider>
-          <MemoryBrowserPanel reload={0} onChanged={() => {}} />
+          <MemoriesMasterDetail reload={0} onChanged={onChanged} onOpenChanges={onOpenChanges} />
         </ConfirmProvider>
       </ToastProvider>,
     );
@@ -161,10 +169,13 @@ afterEach(() => {
   host = null;
   api.mockReset();
   apiJSON.mockReset();
+  onChanged.mockReset();
+  onOpenChanges.mockReset();
+  resetMemoriesSession();
   document.body.innerHTML = "";
 });
 
-describe("MemoryBrowserPanel", () => {
+describe("MemoriesMasterDetail", () => {
   it("opens on all scopes, tagging each row with its scope or project", () => {
     expect(select().value).toBe("all");
     const rows = listRows();
@@ -240,7 +251,7 @@ describe("MemoryBrowserPanel", () => {
       root!.render(
         <ToastProvider>
           <ConfirmProvider>
-            <MemoryBrowserPanel reload={0} onChanged={() => {}} />
+            <MemoriesMasterDetail reload={0} onChanged={onChanged} onOpenChanges={onOpenChanges} />
           </ConfirmProvider>
         </ToastProvider>,
       );
@@ -299,7 +310,7 @@ describe("MemoryBrowserPanel", () => {
   });
 
   it("shows a body from the member-read route", async () => {
-    await click(text("View") ?? text("表示"));
+    await pickRow(0);
     expect(api).toHaveBeenCalledWith(
       "api/agents/memory/entries/member-read?scope=user&project=&name=rules",
     );
@@ -309,7 +320,8 @@ describe("MemoryBrowserPanel", () => {
   it("forgets from the list through the revert route on the memory's newest change", async () => {
     await setValue(select(), "project:" + project.id);
     expect(listRows()[0].textContent).toContain("build-cmd");
-    await click(listRows()[0].querySelectorAll("button")[1]);
+    await pickRow(0);
+    await click(btn("mem.af_forget"));
     await click(confirmButton());
     expect(apiJSON).toHaveBeenCalledWith("api/agents/memory/entries/revert?commit=livecommit1", "POST", {
       commit: "livecommit1",
@@ -332,13 +344,14 @@ describe("MemoryBrowserPanel", () => {
       root!.render(
         <ToastProvider>
           <ConfirmProvider>
-            <MemoryBrowserPanel reload={0} onChanged={() => {}} />
+            <MemoriesMasterDetail reload={0} onChanged={onChanged} onOpenChanges={onOpenChanges} />
           </ConfirmProvider>
         </ToastProvider>,
       );
     });
     await flush();
-    const forgetBtn = listRows()[0].querySelectorAll("button")[1];
+    await pickRow(0);
+    const forgetBtn = btn("mem.af_forget")!;
     expect(forgetBtn.disabled).toBe(false);
     await click(forgetBtn);
     expect(api).toHaveBeenCalledWith("api/agents/memory/entries/member-latest?scope=user&project=&name=rules");
@@ -364,21 +377,25 @@ describe("MemoryBrowserPanel", () => {
       root!.render(
         <ToastProvider>
           <ConfirmProvider>
-            <MemoryBrowserPanel reload={0} onChanged={() => {}} />
+            <MemoriesMasterDetail reload={0} onChanged={onChanged} onOpenChanges={onOpenChanges} />
           </ConfirmProvider>
         </ToastProvider>,
       );
     });
     await flush();
-    await click(listRows()[0].querySelectorAll("button")[1]);
+    await pickRow(0);
+    await click(btn("mem.af_forget"));
     expect(confirmButton()).toBeNull();
     expect(apiJSON).not.toHaveBeenCalled();
   });
 
-  it("restores a forgotten memory through the revert route", async () => {
+  it("unforgets a forgotten memory through the revert route", async () => {
     await setValue(select(), "project:" + project.id);
+    await chip("mem.md_f_forgotten");
     expect(document.body.textContent).toContain("old-note");
     const restore = Array.from(document.body.querySelectorAll<HTMLButtonElement>(".mem-br-row button")).at(-1);
+    expect(restore?.textContent).toBe(t("mem.br_unforget"));
+    expect(restore?.textContent).toMatch(/^(Unforget|忘却を取り消す)$/);
     await click(restore);
     expect(apiJSON).toHaveBeenCalledWith("api/agents/memory/entries/revert?commit=abcdef1234", "POST", {
       commit: "abcdef1234",
@@ -387,8 +404,22 @@ describe("MemoryBrowserPanel", () => {
     });
   });
 
+  it("says Unforget in the toasts, and names the Changes view's Revert this change when the text trips the scan", async () => {
+    await setValue(select(), "project:" + project.id);
+    await chip("mem.md_f_forgotten");
+    const unforget = () => Array.from(document.body.querySelectorAll<HTMLButtonElement>(".mem-br-row button")).at(-1);
+    apiJSON.mockResolvedValueOnce({ error: { code: "memory_secret_detected", message: "x" } });
+    await click(unforget());
+    expect(document.body.textContent).toContain(t("mem.br_unforget_secret"));
+    expect(t("mem.br_unforget_secret")).toContain(t("mem.af_revert"));
+    apiJSON.mockResolvedValueOnce({});
+    await click(unforget());
+    expect(document.body.textContent).toContain(t("mem.br_unforgotten", { name: "old-note" }));
+  });
+
   it("opens the purge dialog for a forgotten memory and asks for its preview, calling no write", async () => {
     await setValue(select(), "project:" + project.id);
+    await chip("mem.md_f_forgotten");
     const purge = Array.from(document.body.querySelectorAll<HTMLButtonElement>(".mem-br-row button")).at(-2);
     expect(purge?.textContent).toMatch(/Purge history|履歴から消去/);
     await click(purge);
@@ -397,7 +428,7 @@ describe("MemoryBrowserPanel", () => {
   });
 
   it("saves an edit at the revision it read, and shows secret findings without saving", async () => {
-    await click(text("View") ?? text("表示"));
+    await pickRow(0);
     await click(text("Edit") ?? text("編集"));
     const body = document.body.querySelector<HTMLTextAreaElement>("textarea")!;
     await setValue(body, "new text");
@@ -447,7 +478,7 @@ describe("MemoryBrowserPanel", () => {
   });
 
   it("saves an edit to the scope it was opened in, even if the selector moved", async () => {
-    await click(text("View") ?? text("表示"));
+    await pickRow(0);
     await click(text("Edit") ?? text("編集"));
     await setValue(select(), "project:" + project.id);
     await click(document.body.querySelector<HTMLButtonElement>('button[type="submit"]'));
@@ -460,7 +491,7 @@ describe("MemoryBrowserPanel", () => {
 
   it("keeps the kinds of the memory when its body is edited", async () => {
     readKinds = ["claude"];
-    await click(text("View") ?? text("表示"));
+    await pickRow(0);
     await click(text("Edit") ?? text("編集"));
     await click(document.body.querySelector<HTMLButtonElement>('button[type="submit"]'));
     expect(apiJSON).toHaveBeenCalledWith(
@@ -472,7 +503,9 @@ describe("MemoryBrowserPanel", () => {
 
   it("asks for the forgotten memories of the scope on screen, not the recent changes", async () => {
     expect(api).toHaveBeenCalledWith("api/agents/memory/entries/member-forgotten");
-    expect(api).not.toHaveBeenCalledWith(expect.stringContaining("entries/changes"));
+    // The only changes read is the per-memory history's own page, never what the forgotten list is built from.
+    expect(calls0("api/agents/memory/entries/changes").map((c) => c[0])).toEqual(["api/agents/memory/entries/changes?limit=300"]);
+    await chip("mem.md_f_forgotten");
     await setValue(select(), "user");
     expect(api).toHaveBeenCalledWith("api/agents/memory/entries/member-forgotten?scope=user");
     expect(document.body.textContent).not.toContain("old-note");
@@ -496,12 +529,13 @@ describe("MemoryBrowserPanel", () => {
       root!.render(
         <ToastProvider>
           <ConfirmProvider>
-            <MemoryBrowserPanel reload={0} onChanged={() => {}} />
+            <MemoriesMasterDetail reload={0} onChanged={onChanged} onOpenChanges={onOpenChanges} />
           </ConfirmProvider>
         </ToastProvider>,
       );
     });
     await flush();
+    await chip("mem.md_f_forgotten");
     const warns = Array.from(document.body.querySelectorAll(".mem-warn")).map((e) => e.textContent ?? "");
     expect(warns.some((w) => w.includes("3"))).toBe(true);
     expect(warns.some((w) => w.includes("1"))).toBe(true);
@@ -525,7 +559,7 @@ describe("MemoryBrowserPanel", () => {
       root!.render(
         <ToastProvider>
           <ConfirmProvider>
-            <MemoryBrowserPanel reload={0} onChanged={() => {}} />
+            <MemoriesMasterDetail reload={0} onChanged={onChanged} onOpenChanges={onOpenChanges} />
           </ConfirmProvider>
         </ToastProvider>,
       );
@@ -551,12 +585,13 @@ describe("MemoryBrowserPanel", () => {
       root!.render(
         <ToastProvider>
           <ConfirmProvider>
-            <MemoryBrowserPanel reload={0} onChanged={() => {}} />
+            <MemoriesMasterDetail reload={0} onChanged={onChanged} onOpenChanges={onOpenChanges} />
           </ConfirmProvider>
         </ToastProvider>,
       );
     });
     await flush();
+    await chip("mem.md_f_forgotten");
     const warns = Array.from(document.body.querySelectorAll(".mem-warn")).map((e) => e.textContent ?? "");
     expect(warns.some((w) => w.includes("minimum") || w.includes("最小値"))).toBe(true);
     expect(warns.some((w) => w.includes("Only the newest") || w.includes("新しい順"))).toBe(false);
@@ -579,20 +614,389 @@ describe("MemoryBrowserPanel", () => {
       root!.render(
         <ToastProvider>
           <ConfirmProvider>
-            <MemoryBrowserPanel reload={0} onChanged={() => {}} />
+            <MemoriesMasterDetail reload={0} onChanged={onChanged} onOpenChanges={onOpenChanges} />
           </ConfirmProvider>
         </ToastProvider>,
       );
     });
     await flush();
+    await chip("mem.md_f_forgotten");
     expect(document.body.textContent).toContain("old-note");
     await setValue(select(), "user");
     expect(api).toHaveBeenCalledWith("api/agents/memory/entries/member-forgotten?scope=user");
-    // The user scope's answer is still pending: the project's row and its Restore are gone already.
+    // The user scope's answer is still pending: the project's row and its Unforget are gone already.
     expect(document.body.textContent).not.toContain("old-note");
-    expect(text("Restore") ?? text("復元")).toBeUndefined();
+    expect(text(t("mem.br_unforget"))).toBeUndefined();
     await act(async () => release({ forgotten: [], projects: [project] }));
     await flush();
     expect(document.body.textContent).not.toContain("old-note");
+  });
+});
+
+// The master-detail itself (#2324): chips, the detail pane, pin, history, overflow purge, edit in
+// the pane, the phone flow, keyboard, and the refresh after each write.
+describe("MemoriesMasterDetail master-detail", () => {
+  const history = [
+    { ...changes[1], commit: "h3", op: "update", at: "2026-10-05T00:00:00Z" },
+    { ...changes[1], commit: "h2", op: "create", at: "2026-10-01T00:00:00Z" },
+    { ...changes[0], commit: "other1" },
+  ];
+  const calls = (prefix: string) => api.mock.calls.filter((c) => String(c[0]).startsWith(prefix));
+  const detail = () => document.body.querySelector<HTMLElement>(".mem-md-detail")!;
+  const root_ = () => document.body.querySelector<HTMLElement>(".mem-md")!;
+  const withChanges = () => {
+    const base = api.getMockImplementation()!;
+    api.mockImplementation(async (url: string) => {
+      if (url.startsWith("api/agents/memory/entries/changes")) return { changes: history };
+      if (url.startsWith("api/agents/memory/entries/diff")) return { diff: "diff --git a/x b/x\n+added line\n" };
+      return base(url);
+    });
+  };
+  const remount = async () => {
+    await act(async () => root!.unmount());
+    root = createRoot(host!);
+    await act(async () => {
+      root!.render(
+        <ToastProvider>
+          <ConfirmProvider>
+            <MemoriesMasterDetail reload={0} onChanged={onChanged} onOpenChanges={onOpenChanges} />
+          </ConfirmProvider>
+        </ToastProvider>,
+      );
+    });
+    await flush();
+  };
+
+  it("filters with the chips: All and Pinned list live memories, Forgotten lists the forgotten ones", async () => {
+    expect(listRows().map((r) => r.querySelector(".mem-af-name")!.textContent)).toEqual(["rules", "build-cmd"]);
+    expect(btn("mem.md_f_all")!.getAttribute("aria-pressed")).toBe("true");
+    await chip("mem.md_f_pinned");
+    expect(btn("mem.md_f_pinned")!.getAttribute("aria-pressed")).toBe("true");
+    expect(listRows().map((r) => r.querySelector(".mem-af-name")!.textContent)).toEqual(["rules"]);
+    expect(listRows()[0].querySelector(".mem-md-pinned")).toBeTruthy();
+    await chip("mem.md_f_forgotten");
+    expect(document.body.querySelector(".mem-br-list")!.textContent).toContain("old-note");
+    expect(document.body.querySelector(".mem-br-list")!.textContent).not.toContain("rules");
+    await chip("mem.md_f_all");
+    expect(document.body.querySelector(".mem-br-list")!.textContent).not.toContain("old-note");
+  });
+
+  it("marks a pinned row in the list even under All", () => {
+    expect(listRows()[0].querySelector(".mem-md-pinned")).toBeTruthy();
+    expect(listRows()[1].querySelector(".mem-md-pinned")).toBeNull();
+  });
+
+  it("shows the body and metadata of the picked memory in the detail pane, not below the list", async () => {
+    expect(root_().getAttribute("data-pane")).toBe("list");
+    await pickRow(0);
+    expect(root_().getAttribute("data-pane")).toBe("detail");
+    expect(detail().querySelector("h5")!.textContent).toBe("rules");
+    expect(detail().querySelector(".mem-br-body")!.textContent).toBe("always run the tests");
+    const meta = detail().querySelector(".mem-md-meta")!.textContent!;
+    expect(meta).toContain("claude · claude-main");
+    expect(meta).toContain("7");
+    expect(meta).toContain("feedback");
+    expect(document.body.querySelector(".mem-md-list")!.contains(document.body.querySelector(".mem-br-body"))).toBe(false);
+    expect(listRows()[0].querySelector(".mem-md-pick")!.getAttribute("aria-current")).toBe("true");
+  });
+
+  it("moves focus to the detail heading on pick", async () => {
+    await pickRow(0);
+    expect(document.activeElement).toBe(detail().querySelector("h5"));
+  });
+
+  it("toggles the pin from the detail pane for the right scope and project, and refreshes", async () => {
+    await pickRow(1);
+    const pin = btn("mem.pin_pin")!;
+    expect(pin.getAttribute("aria-pressed")).toBe("false");
+    const listCalls = calls("api/agents/memory/entries/list").length;
+    await click(pin);
+    expect(apiJSON).toHaveBeenCalledWith("api/agents/memory/entries/pin?project=app-0123456789ab", "POST", {
+      scope: "project",
+      project: "app-0123456789ab",
+      name: "build-cmd",
+      pinned: true,
+    });
+    expect(onChanged).toHaveBeenCalled();
+    expect(calls("api/agents/memory/entries/list").length).toBeGreaterThan(listCalls);
+  });
+
+  it("unpins a user-scope memory without a project", async () => {
+    await pickRow(0);
+    expect(btn("mem.pin_unpin")!.getAttribute("aria-pressed")).toBe("true");
+    await click(btn("mem.pin_unpin"));
+    expect(apiJSON).toHaveBeenCalledWith("api/agents/memory/entries/pin", "POST", {
+      scope: "user",
+      project: "",
+      name: "rules",
+      pinned: false,
+    });
+  });
+
+  it("lists this memory's own changes and shows an entry's diff with the Changes diff view", async () => {
+    withChanges();
+    await remount();
+    await pickRow(0);
+    const items = Array.from(detail().querySelectorAll(".mem-md-hist-list button"));
+    // Only "rules" (user scope) entries, not the other memory's.
+    expect(items).toHaveLength(2);
+    expect(calls("api/agents/memory/entries/changes")[0][0]).toBe("api/agents/memory/entries/changes?limit=300");
+    expect(detail().querySelector(".mem-md-history .mem-diff")).toBeNull();
+    await click(items[0]);
+    expect(api).toHaveBeenCalledWith("api/agents/memory/entries/diff?commit=h3");
+    expect(detail().querySelector(".mem-md-history .mem-diff")!.textContent).toContain("added line");
+    await click(btn("mem.md_hist_all"));
+    expect(onOpenChanges).toHaveBeenCalledTimes(1);
+  });
+
+  it("says when the history may be cut by the page limit", async () => {
+    const full = Array.from({ length: 300 }, (_, i) => ({ ...changes[1], commit: "c" + i }));
+    const base = api.getMockImplementation()!;
+    api.mockImplementation(async (url: string) =>
+      url.startsWith("api/agents/memory/entries/changes") ? { changes: full } : base(url),
+    );
+    await remount();
+    await pickRow(0);
+    expect(detail().querySelector(".mem-md-history")!.textContent).toContain("300");
+    expect(detail().querySelectorAll(".mem-md-hist-list button")).toHaveLength(300);
+  });
+
+  it("purges from the overflow menu through the existing purge dialog", async () => {
+    await pickRow(0);
+    expect(btn("mem.pg_button")).toBeUndefined();
+    await click(detail().querySelector('[aria-haspopup="menu"]'));
+    const item = document.body.querySelector<HTMLElement>('[role="menuitem"]')!;
+    expect(item.textContent).toBe(t("mem.pg_button"));
+    await click(item);
+    expect(api).toHaveBeenCalledWith(expect.stringContaining("api/agents/memory/entries/purge-preview?scope=user"));
+    expect(apiJSON).not.toHaveBeenCalled();
+  });
+
+  it("edits in the detail pane and keeps the memory picked after the save, refreshing everything", async () => {
+    await pickRow(0);
+    await click(btn("mem.br_edit"));
+    expect(detail().querySelector("form")).toBeTruthy();
+    expect(document.body.querySelector(".mem-md-list form")).toBeNull();
+    expect(document.activeElement).toBe(detail().querySelector("h5"));
+    await setValue(detail().querySelector("textarea")!, "changed");
+    const reads = calls("api/agents/memory/entries/member-read").length;
+    const lists = calls("api/agents/memory/entries/list").length;
+    await click(detail().querySelector('button[type="submit"]'));
+    expect(detail().querySelector("form")).toBeNull();
+    expect(detail().querySelector("h5")!.textContent).toBe("rules");
+    expect(onChanged).toHaveBeenCalled();
+    expect(calls("api/agents/memory/entries/list").length).toBeGreaterThan(lists);
+    expect(calls("api/agents/memory/entries/member-read").length).toBeGreaterThan(reads);
+  });
+
+  it("opens New in the detail pane and picks the new memory once saved", async () => {
+    await click(btn("mem.br_new"));
+    expect(root_().getAttribute("data-pane")).toBe("detail");
+    expect(detail().querySelector("form")).toBeTruthy();
+    const inputs = detail().querySelectorAll<HTMLInputElement>("form input");
+    await setValue(inputs[0], "fresh");
+    const base = api.getMockImplementation()!;
+    // The re-read list does not contain it yet: the pick must survive until it does.
+    api.mockImplementation(async (url: string) =>
+      url.startsWith("api/agents/memory/entries/member-read") ? { ...entries[0], name: "fresh", body: "b" } : base(url),
+    );
+    await click(detail().querySelector('button[type="submit"]'));
+    expect(detail().querySelector("h5")!.textContent).toBe("fresh");
+  });
+
+  it("refreshes the list, the forgotten list and the status after forgetting, and leaves the detail", async () => {
+    await pickRow(0);
+    const lists = calls("api/agents/memory/entries/list").length;
+    const gones = calls("api/agents/memory/entries/member-forgotten").length;
+    await click(btn("mem.af_forget"));
+    await click(confirmButton());
+    expect(apiJSON).toHaveBeenCalled();
+    expect(onChanged).toHaveBeenCalled();
+    expect(calls("api/agents/memory/entries/list").length).toBeGreaterThan(lists);
+    expect(calls("api/agents/memory/entries/member-forgotten").length).toBeGreaterThan(gones);
+    expect(root_().getAttribute("data-pane")).toBe("list");
+    expect(detail().querySelector(".mem-br-body")).toBeNull();
+  });
+
+  it("unforgets from the detail pane of a forgotten memory and refreshes", async () => {
+    await setValue(select(), "project:" + project.id);
+    await chip("mem.md_f_forgotten");
+    await click(document.body.querySelector(".mem-md-pick"));
+    expect(detail().querySelector("h5")!.textContent).toBe("old-note");
+    const lists = calls("api/agents/memory/entries/list").length;
+    expect(detail().querySelector(".mem-br-actions button")!.textContent).toBe(t("mem.br_unforget"));
+    await click(detail().querySelector(".mem-br-actions button"));
+    expect(apiJSON).toHaveBeenCalledWith("api/agents/memory/entries/revert?commit=abcdef1234", "POST", {
+      commit: "abcdef1234",
+      forget: false,
+      ack: false,
+    });
+    expect(onChanged).toHaveBeenCalled();
+    expect(calls("api/agents/memory/entries/list").length).toBeGreaterThan(lists);
+    expect(root_().getAttribute("data-pane")).toBe("list");
+  });
+
+  it("refreshes the list, the detail and the status after a purge", async () => {
+    const base = api.getMockImplementation()!;
+    api.mockImplementation(async (url: string) =>
+      url.startsWith("api/agents/memory/entries/purge-preview")
+        ? { scope: "user", name: "rules", live: true, keepsCurrent: true, nothing: false, changes: [], changesTotal: 2, snapshots: 0, refs: [], findings: [], plan: "p1" }
+        : base(url),
+    );
+    await pickRow(0);
+    await click(detail().querySelector('[aria-haspopup="menu"]'));
+    await click(document.body.querySelector('[role="menuitem"]'));
+    await setValue(document.body.querySelector<HTMLInputElement>(".mem-purge input")!, "rules");
+    const lists = calls("api/agents/memory/entries/list").length;
+    const reads = calls("api/agents/memory/entries/member-read").length;
+    await click(Array.from(document.body.querySelectorAll<HTMLButtonElement>(".mem-purge button")).find((b) => b.textContent === t("mem.pg_run")));
+    expect(apiJSON).toHaveBeenCalledWith("api/agents/memory/entries/purge", "POST", expect.objectContaining({ name: "rules", plan: "p1" }));
+    expect(onChanged).toHaveBeenCalled();
+    expect(calls("api/agents/memory/entries/list").length).toBeGreaterThan(lists);
+    expect(calls("api/agents/memory/entries/member-read").length).toBeGreaterThan(reads);
+  });
+
+  it("drops the detail when the scope changes away from the picked memory", async () => {
+    await pickRow(0);
+    expect(root_().getAttribute("data-pane")).toBe("detail");
+    await setValue(select(), "project:" + project.id);
+    expect(root_().getAttribute("data-pane")).toBe("list");
+    expect(detail().querySelector(".mem-br-body")).toBeNull();
+  });
+
+  it("drops the detail when the picked memory disappears from the list", async () => {
+    await pickRow(0);
+    const base = api.getMockImplementation()!;
+    api.mockImplementation(async (url: string) =>
+      url.startsWith("api/agents/memory/entries/list") ? { entries: [entries[1]] } : base(url),
+    );
+    await act(async () => root!.render(
+      <ToastProvider>
+        <ConfirmProvider>
+          <MemoriesMasterDetail reload={1} onChanged={onChanged} />
+        </ConfirmProvider>
+      </ToastProvider>,
+    ));
+    await flush();
+    expect(root_().getAttribute("data-pane")).toBe("list");
+  });
+
+  it("goes list -> detail -> back on a phone, and Back focuses the row it came from", async () => {
+    await pickRow(1);
+    expect(root_().getAttribute("data-pane")).toBe("detail");
+    await click(detail().querySelector(".mem-md-back"));
+    expect(root_().getAttribute("data-pane")).toBe("list");
+    expect(document.activeElement).toBe(listRows()[1].querySelector(".mem-md-pick"));
+  });
+
+  it("returns to the list on Escape in the detail pane, without closing the dialog", async () => {
+    await pickRow(0);
+    const outer = vi.fn();
+    document.addEventListener("keydown", outer);
+    await act(async () => {
+      detail().querySelector("h5")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    document.removeEventListener("keydown", outer);
+    expect(root_().getAttribute("data-pane")).toBe("list");
+    expect(outer).not.toHaveBeenCalled();
+  });
+
+  it("keeps an open edit form on Escape", async () => {
+    await pickRow(0);
+    await click(btn("mem.br_edit"));
+    await act(async () => {
+      detail().querySelector("textarea")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(detail().querySelector("form")).toBeTruthy();
+  });
+
+  it("remembers the scope, filter and pick across a remount of the view, not beyond a reset", async () => {
+    await chip("mem.md_f_pinned");
+    await pickRow(0);
+    await remount();
+    expect(btn("mem.md_f_pinned")!.getAttribute("aria-pressed")).toBe("true");
+    expect(root_().getAttribute("data-pane")).toBe("detail");
+    expect(detail().querySelector("h5")!.textContent).toBe("rules");
+    resetMemoriesSession();
+    await remount();
+    expect(btn("mem.md_f_all")!.getAttribute("aria-pressed")).toBe("true");
+    expect(root_().getAttribute("data-pane")).toBe("list");
+  });
+
+  it("drops an opened diff when a purge removes that entry from the history", async () => {
+    withChanges();
+    const base = api.getMockImplementation()!;
+    let purged = false;
+    api.mockImplementation(async (url: string) => {
+      if (url.startsWith("api/agents/memory/entries/changes") && purged) return { changes: [history[0]] };
+      if (url.startsWith("api/agents/memory/entries/purge-preview"))
+        return { scope: "user", name: "rules", live: true, keepsCurrent: true, nothing: false, changes: [], changesTotal: 1, snapshots: 0, refs: [], findings: [], plan: "p1" };
+      return base(url);
+    });
+    apiJSON.mockImplementation(async () => {
+      purged = true;
+      return {};
+    });
+    await remount();
+    await pickRow(0);
+    await click(detail().querySelectorAll(".mem-md-hist-list button")[1]);
+    expect(detail().querySelector(".mem-md-history .mem-diff")).toBeTruthy();
+    await click(detail().querySelector('[aria-haspopup="menu"]'));
+    await click(document.body.querySelector('[role="menuitem"]'));
+    await setValue(document.body.querySelector<HTMLInputElement>(".mem-purge input")!, "rules");
+    await click(Array.from(document.body.querySelectorAll<HTMLButtonElement>(".mem-purge button")).find((b) => b.textContent === t("mem.pg_run")));
+    expect(detail().querySelectorAll(".mem-md-hist-list button")).toHaveLength(1);
+    expect(detail().querySelector(".mem-md-history .mem-diff")).toBeNull();
+  });
+
+  it("keeps a project scope across a remount, even while the lists are still loading", async () => {
+    await setValue(select(), "project:" + project.id);
+    const base = api.getMockImplementation()!;
+    let release: (v: unknown) => void = () => {};
+    api.mockImplementation(async (url: string) =>
+      url.startsWith("api/agents/memory/entries/list")
+        ? new Promise((r) => {
+            release = r;
+          })
+        : base(url),
+    );
+    await remount();
+    // The project is not a candidate until the list arrives; the scope must not fall back meanwhile.
+    await act(async () => release({ entries }));
+    await flush();
+    expect(select().value).toBe("project:" + project.id);
+  });
+
+  it("reads the changes once however many memories are picked, and again after a write", async () => {
+    withChanges();
+    await remount();
+    const n = () => calls("api/agents/memory/entries/changes").length;
+    const start = n();
+    await pickRow(0);
+    await pickRow(1);
+    await pickRow(0);
+    expect(n()).toBe(start);
+    await click(btn("mem.pin_unpin"));
+    expect(n()).toBeGreaterThan(start);
+  });
+
+  it("drops a pick that the Pinned chip no longer lists after it is unpinned", async () => {
+    await chip("mem.md_f_pinned");
+    await pickRow(0);
+    const base = api.getMockImplementation()!;
+    api.mockImplementation(async (url: string) =>
+      url.startsWith("api/agents/memory/entries/list")
+        ? { entries: [{ ...entries[0], pinned: false }, entries[1]] }
+        : base(url),
+    );
+    await click(btn("mem.pin_unpin"));
+    expect(root_().getAttribute("data-pane")).toBe("list");
+    expect(listRows()).toHaveLength(0);
+  });
+
+  it("clears an unpinned pick when switching to the Pinned chip", async () => {
+    await pickRow(1);
+    await chip("mem.md_f_pinned");
+    expect(root_().getAttribute("data-pane")).toBe("list");
   });
 });

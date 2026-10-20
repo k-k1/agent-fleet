@@ -21,6 +21,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
+import { useKindCatalogVersion } from "../../agents/kindCatalog.ts";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
@@ -221,7 +222,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
     setEffort(resolveEffort(k, repo, d.effort));
     setStartMode(resolveStartMode(k, repo, d.startMode));
     setSkipPerm(undefined);
-    setDriver(agentOf(k).managedDriver ? "managed" : "");
+    setDriverPick(null);
   }, [kinds, kind, settings, repo]);
   const tr = useT();
   // Shared per-kind priority chain (repoLast.ts resolveModel); re-resolved on a kind
@@ -236,7 +237,11 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
   const [skipPerm, setSkipPerm] = useState<boolean | undefined>(undefined);
   // Driver (docs/log/27 P2/P3): a kind that supports managed defaults to managed (§9.2).
   // CLI (TUI) is an explicit user choice — it costs one TUI process' memory per session.
-  const [driver, setDriver] = useState(agentOf(initialKind).managedDriver ? "managed" : "");
+  // null = untouched: the driver follows the kind's default, which can change under an open dialog
+  // when the kind catalog lands after it. Only a click on the toggle pins a value.
+  useKindCatalogVersion();
+  const [driverPick, setDriverPick] = useState<string | null>(null);
+  const driver = driverPick ?? (agentOf(kind).managedDriver ? "managed" : "");
   // The first prompt is written back to localStorage per repository (launchDraft). It survives
   // closing the dialog and is dropped only once a launch succeeded. initialPrompt (the seed
   // from a handoff, a memo send or a work item) outranks the draft.
@@ -615,7 +620,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
                     setEffort(resolveEffort(k, repo, defaults.effort));
                     setStartMode(resolveStartMode(k, repo, defaults.startMode));
                     setSkipPerm(undefined);
-                    setDriver(a.managedDriver ? "managed" : "");
+                    setDriverPick(null);
                   }}
                 >
                   <Icon name={a.icon} className="seg-ic" />
@@ -969,7 +974,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
                 <button
                   type="button"
                   className={"seg-btn" + (driver === "managed" ? " active" : "")}
-                  onClick={() => setDriver("managed")}
+                  onClick={() => setDriverPick("managed")}
                 >
                   <Icon name="server-process" /> {tr("launch.driver_managed")}
                   <span className="seg-sub">{tr("launch.driver_managed_sub")}</span>
@@ -977,7 +982,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
                 <button
                   type="button"
                   className={"seg-btn" + (driver !== "managed" ? " active" : "")}
-                  onClick={() => setDriver("")}
+                  onClick={() => setDriverPick("")}
                 >
                   <Icon name="terminal" /> {tr("launch.driver_terminal")}
                   <span className="seg-sub">

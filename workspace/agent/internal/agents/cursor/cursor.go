@@ -19,6 +19,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -42,7 +43,7 @@ func (agentImpl) Kind() string { return session.KindCursor }
 // supported: transcript.go reads the Claude Code-compatible JSONL, which cursor
 // appends live in the TUI/-p routes.
 func (agentImpl) Caps() agents.Caps {
-	return agents.Caps{CanTranscript: true, PermissionChoice: true}
+	return agents.Caps{CanTranscript: true, PermissionChoice: true, ManagedDefault: true, MCPClient: agents.TriYes}
 }
 
 func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
@@ -59,6 +60,12 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 			return agents.LaunchPlan{}, fmt.Errorf("チャット ID を採番できません: %w", err)
 		}
 		sids.Write(session.UUID(m.Dir, m.Name), chatID)
+	}
+	// The stop hook is where a Terminal turn's tokens come from (hooks.go). The command embeds
+	// this binary's path, so re-assert the entry before cursor reads it; a failure only costs the
+	// usage numbers, never the launch.
+	if err := EnsureHooks(); err != nil {
+		log.Printf("cursor: stop hook not installed, usage stays unmeasured: %v", err)
 	}
 	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Mode, chatID, agents.BypassPermissions(m)), Cwd: m.CWD()}, nil
 }

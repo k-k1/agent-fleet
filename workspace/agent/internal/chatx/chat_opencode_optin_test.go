@@ -41,6 +41,12 @@ func TestOpencodeChatFollowsTheOptIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// The opt-in only exists next to a 1.x on PATH. Without a manifest beside the stub, the major
+	// falls back to the host image's pin and a 2.x image makes the whole opt-in inert.
+	if err := os.WriteFile(filepath.Join(home, "package.json"), []byte(`{"name":"opencode-ai","version":"1.19.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(opencode.SetBinaryForTest(filepath.Join(bin, "opencode")))
 
 	send := func() string {
 		c := &ChatConversation{ID: "c1"}

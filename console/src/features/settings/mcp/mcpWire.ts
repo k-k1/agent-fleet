@@ -4,11 +4,31 @@
 // "the transport decides which half is sent", the CLI-narrowest name charset — are
 // pinned by unit tests instead of only by a running browser.
 
-// The agent kinds a definition may be scoped to. Mirrors mcpreg.knownKinds (Go); the
-// non-agent session kinds (shell / ssm) run no MCP client, so they are not offered.
+import { catalogKinds, kindFacts, useKindCatalogVersion } from "../../../agents/kindCatalog.ts";
+
+// The agent kinds a definition may be scoped to when no kind catalog has been loaded: the
+// fallback for mcpKinds(), in display order. The kind catalog (GET /api/agents/kinds) is the
+// source once it arrives; kindCatalog.test.ts holds this list equal to the build-time snapshot,
+// and the Go test TestMcpKnownKindsMirrorConsole reads this line as text. The non-agent session
+// kinds (shell / ssm) run no MCP client, so they are not offered.
 // How a kind RECEIVES its servers is not this list's business: every kind here but muse gets a
 // native config file written for it, and muse takes them on the wire at session start.
 export const MCP_KINDS = ["claude", "codex", "opencode", "cursor", "kiro", "copilot", "agy", "muse", "lcpp"] as const;
+
+// The kinds a definition may be scoped to now: those the kind catalog says take MCP servers
+// ("unverified" counts as no — the Agent refuses a kind it has not verified). Kinds this list
+// already knows keep its order; a kind only the catalog knows follows, in the catalog's order.
+export function mcpKinds(): string[] {
+  const seen = new Set<string>(MCP_KINDS);
+  const all = [...MCP_KINDS, ...catalogKinds().filter((k) => !seen.has(k))];
+  return all.filter((k) => kindFacts(k)?.mcpClient === "yes");
+}
+
+// Same list, re-read when the catalog arrives while a form is already on screen.
+export function useMcpKinds(): string[] {
+  useKindCatalogVersion();
+  return mcpKinds();
+}
 
 // The stand-in the agent sends for every stored secret value. Sending it back
 // unchanged keeps the stored value (mcpreg.MergeSecrets), so the Console can edit a

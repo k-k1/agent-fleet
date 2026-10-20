@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -234,6 +235,15 @@ func (a workspaceAPI) workspacePayload(ctx context.Context, res *resolved, state
 	// than offer a pane that fails. Absent on every runtime that has them.
 	if why := runtime.BrowserUnavailable(rt); why != "" {
 		m["browserUnavailable"] = why
+	}
+	// Where this runtime serves the user guide from when that is not the image's fixed path
+	// (native without a rootfs stages it under the data dir, and the agent refuses any other
+	// path). Emitted only then, so every other runtime keeps the Console's fixed path. It is
+	// the owner's own data dir: native is single-user (AUTH=dev) and the payload is theirs.
+	if dr, ok := rt.(interface{ DocsRoot() string }); ok {
+		if root := dr.DocsRoot(); root != "" {
+			m["docsRoot"] = root
+		}
 	}
 	// An administrator has reserved the slot this workspace's home is on for replacement
 	// (ecs-ec2, #1473): the next start moves it to a new slot and takes longer. Emitted only
@@ -792,6 +802,12 @@ type sessionWire struct {
 	// "shell"), which only picks the badge's wording. Dropping it here would not hide the
 	// badge, just silently pin every session to the generic "running in background" wording.
 	BackgroundBusyReason string `json:"backgroundBusyReason,omitempty"`
+	// BackgroundSince / BackgroundAgeSec pass through when the current background-busy period
+	// began (RFC3339) and its age on the Agent's clock, the value the reaper compares with
+	// background_hold_max. Dropped here, a dev server's wrapper shell holds the Workspace
+	// forever (#2338). Not persisted to the DB mirror.
+	BackgroundSince  string `json:"backgroundSince,omitempty"`
+	BackgroundAgeSec int    `json:"backgroundAgeSec,omitempty"`
 	// ProgressAt passes through the Agent's last sign of progress for a busy row (RFC3339).
 	// Dropped here, the reaper never sees it and a frozen "working" row holds the Workspace
 	// forever. Not persisted to the DB mirror (a stopped workspace has no busy row).
@@ -1054,6 +1070,12 @@ func (a workspaceAPI) sessionCreate(w http.ResponseWriter, r *http.Request, res 
 // (inbox_launch.go): any earlier, and a workspace start can outlast the claim.
 func (a workspaceAPI) sessionCreateThen(w http.ResponseWriter, r *http.Request, res *resolved, before func(context.Context) *apiError) {
 	ctx := r.Context()
+	// Before anything with a side effect (the SSM rewrite, a cold Workspace's start, the quota
+	// count): an unregistered kind would only be refused by the Agent after all of that.
+	if err := agentkinds.CheckCreateKind(peekSessionKind(r)); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_kind", err.Error()})
+		return
+	}
 	// SSM sessions (docs/log/p3-ssm-session.md): resolve the host bookmark
 	// server-side and rewrite the body with the (non-secret) instance/document/SSO
 	// coordinates before proxying — the client only sends ssm_host_id.

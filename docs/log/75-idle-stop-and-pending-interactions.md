@@ -642,6 +642,11 @@ pane repaint alone (measured through a 120 s silent tool; see ADR 0055's 2026-10
 Still unbounded: Managed (#1942) and muse / lcpp / shell / ssm (#1943).
 Follow-ups: #1942, #1943.
 
+Note (2026-10-17): Terminal muse / lcpp / shell / ssm turned out to have no busy Terminal row to bound
+(ADR 0055's 2026-10-17 note, #1943). Managed cursor / kiro / codex / opencode are now bounded on each
+runtime's own sign of life (measured through a 120 s silent tool; ADR 0055's 2026-10-17 addendum).
+Still unbounded: Managed muse / lcpp / copilot (#1942).
+
 Note (2026-10-16): a carried plan can now be reviewed in another session (#2211). `Carried`
 keeps the plan file path (`planFile`) when promoted, because `status.Remove` drops the
 session's path record; `GET /sessions/{name}/plan-file` falls back to the carried plan,

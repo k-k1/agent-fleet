@@ -71,7 +71,7 @@ func TestLimitSnapshotNeverAffectsTheEnvelope(t *testing.T) {
 			if !reflect.DeepEqual(env.Sessions, plain.Sessions) || env.RepoJobs != 1 || env.ImageJobs != 2 {
 				t.Fatalf("envelope changed: %+v", env)
 			}
-			if env.holdsWorkspace() != plain.holdsWorkspace() || env.jobsRunning() != plain.jobsRunning() {
+			if env.holdsWorkspace(0) != plain.holdsWorkspace(0) || env.jobsRunning() != plain.jobsRunning() {
 				t.Fatal("the snapshot changed a busy decision")
 			}
 			got := parseLimitSnapshot(env.Limits, limitNow)

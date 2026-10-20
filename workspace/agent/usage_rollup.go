@@ -240,9 +240,12 @@ func aggregateUsageRows(rows []usagex.Record, seen map[string]bool) map[usageKey
 		a.Images += r.Images
 		a.Pixels += r.Pixels
 		a.CostUSD += r.CostUSD
-		if r.Call == "" {
+		switch {
+		case r.TokensOnly:
+			// its call is already counted by the row that owns the turn
+		case r.Call == "":
 			a.Calls++ // a row with no call id counts as one call in itself
-		} else if rep[r.Call] == i && !seen[r.Call] {
+		case rep[r.Call] == i && !seen[r.Call]:
 			seen[r.Call] = true
 			a.Calls++ // only that call's representative row counts as one
 		}

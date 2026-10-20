@@ -70,7 +70,7 @@ export function AiAssistTab() {
       <section className="ds-group">
         <h4 className="ds-title">{tr("aiassist.features")}</h4>
         <p className="muted ds-note">{tr("aiassist.note_features")}</p>
-        {AI_ASSIST_FEATURES.map((f) => (
+        {AI_ASSIST_FEATURES.filter((f) => !f.visible || f.visible(s)).map((f) => (
           <AiFeatureCard key={f.id} f={f} row={resolution?.[f.id]} />
         ))}
       </section>
@@ -81,7 +81,8 @@ export function AiAssistTab() {
 function AiFeatureCard({ f, row }: { f: AiAssistFeatureDef; row: AiAssistResolutionRow | undefined }) {
   const tr = useT();
   const s = useSettings();
-  const enabled = !!s[f.enabledKey];
+  // A feature with no switch of its own is on whenever its card is shown (AiAssistFeatureDef.visible).
+  const enabled = f.enabledKey ? !!s[f.enabledKey] : true;
   const pin = s.aiFeatureAgents?.[f.id] || "";
 
   // Y (the model name — decision 5): the Agent only ever answers X (kind); the Console draws Y
@@ -105,7 +106,11 @@ function AiFeatureCard({ f, row }: { f: AiAssistFeatureDef; row: AiAssistResolut
   return (
     <div className="ds-subgroup ai-feature-card">
       <Row label={tr(f.labelKey)}>
-        <OnOff value={enabled} onChange={(v) => setSetting(f.enabledKey, v)} />
+        {f.enabledKey ? (
+          <OnOff value={enabled} onChange={(v) => setSetting(f.enabledKey!, v)} />
+        ) : (
+          <span className="muted">{tr("aiassist.set_in_memory_settings")}</span>
+        )}
       </Row>
       <p className="muted ds-note">{tr(f.noteKey)}</p>
       {/* A feature turned off shows no agent/model row (docs/log/103 §103.7): a picker left
@@ -161,7 +166,9 @@ function AiFeatureCard({ f, row }: { f: AiAssistFeatureDef; row: AiAssistResolut
           <p className="muted ds-note ai-feature-current">
             {row?.kind
               ? tr("aiassist.currently_using", { agent: agentOf(row.kind).assistantName, model: modelLabel })
-              : tr("aiassist.currently_using_unknown")}
+              : row?.source === "unavailable"
+                ? tr("aiassist.currently_using_denied")
+                : tr("aiassist.currently_using_unknown")}
           </p>
           {/* Auto-fire (docs/log/97 §97.12) is its own axis, deliberately untouched by this
               round (§103.11): "press it for me" is a different question from "which agent/

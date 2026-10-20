@@ -32,7 +32,8 @@ func (agentImpl) Kind() string { return session.KindClaude }
 // condition — whether a launch route can carry a fork point is answered per kind by
 // ResolveForkAt.
 func (agentImpl) Caps() agents.Caps {
-	return agents.Caps{CanFork: true, CanForkAt: true, CanTranscript: true, UsesLabel: true, PermissionChoice: true}
+	return agents.Caps{CanFork: true, CanForkAt: true, CanTranscript: true, UsesLabel: true, PermissionChoice: true,
+		MCPClient: agents.TriYes}
 }
 
 // ForkSource resolves this session's conversation id as the fork source, refusing when

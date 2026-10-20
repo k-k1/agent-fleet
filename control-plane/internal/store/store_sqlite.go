@@ -479,6 +479,25 @@ func (s *SQL) GetTenantAllowedCIDRs(ctx context.Context, tenantID string) (strin
 	return cidrs, err
 }
 
+// SetTenantExternalMemory writes the tenant-wide switch for AF memory reached from outside
+// Agent Fleet through /mcp (#2318).
+func (s *SQL) SetTenantExternalMemory(ctx context.Context, tenantID string, enabled bool) error {
+	v := 0
+	if enabled {
+		v = 1
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE tenant SET external_memory=? WHERE id=?`, v, tenantID)
+	return err
+}
+
+// GetTenantExternalMemory reads it. An unknown tenant is an error, never "enabled": the caller
+// that gates on it must fail closed.
+func (s *SQL) GetTenantExternalMemory(ctx context.Context, tenantID string) (bool, error) {
+	var v int
+	err := s.db.QueryRowContext(ctx, `SELECT external_memory FROM tenant WHERE id=?`, tenantID).Scan(&v)
+	return v != 0, err
+}
+
 // ListTenantLoginRules loads every tenant's rules in one query, already split into
 // slices — the shape the entry-gate cache and the auto-join resolution want.
 func (s *SQL) ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules, error) {

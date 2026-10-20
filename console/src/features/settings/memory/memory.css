@@ -276,7 +276,69 @@
   color: var(--err);
 }
 
+/* The view-nav and status header the two memory entries share (viewNav.tsx). Tabs at desktop
+   widths. The tabs stay one row at every width and scroll sideways when the labels do not fit,
+   so a long label set never wraps into a ragged block. */
+.mem-status {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.mem-status-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.mem-status-warn {
+  margin: 6px 0 0;
+}
+
+.mem-badge.mem-on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.mem-viewnav-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  border-bottom: 1px solid var(--border);
+}
+
+.mem-viewnav-tab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  padding: 6px 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  flex: none;
+}
+
+.mem-viewnav-tab.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
+.mem-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 @media (max-width: 760px) {
+  .mem-viewnav-tab {
+    padding: 6px 8px;
+    min-height: 40px;
+  }
+
   /* Two panes do not work at a narrow width (phone, tablet portrait), so stack them. */
   .mem-body {
       grid-template-columns: 1fr;
@@ -402,6 +464,167 @@
 .mem-br-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Memories master-detail (#2324). */
+.mem-md-cols {
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.mem-md-list,
+.mem-md-detail {
+  min-width: 0;
+}
+
+/* The list column is narrow: the scope select takes a row of its own, search and New share the next. */
+.mem-md-list .mem-br-bar {
+  flex-wrap: wrap;
+}
+
+.mem-md-list .mem-br-bar select {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.mem-md-list .mem-br-bar input[type="search"] {
+  flex: 1 1 120px;
+}
+
+.mem-md-chips {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.mem-md-chip.active,
+.mem-md-pick.active {
+  border-color: var(--accent);
+}
+
+.mem-md-row {
+  padding: 0;
+  gap: 0;
+  flex-wrap: nowrap;
+}
+
+.mem-md-row > button:not(.mem-md-pick) {
+  margin: 4px 4px 4px 0;
+  flex: none;
+}
+
+.mem-md-pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 8px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0;
+}
+
+.mem-md-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.mem-md-pinned {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.mem-md-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mem-md-detail h5 {
+  margin: 0;
+}
+
+.mem-md-detail h5:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.mem-md-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 4px 0;
+  font-size: 12px;
+}
+
+.mem-md-meta dt {
+  color: var(--muted, inherit);
+}
+
+.mem-md-meta dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mem-md-history {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mem-md-hist-list {
+  max-height: 200px;
+}
+
+.mem-md-link {
+  align-self: flex-start;
+}
+
+.mem-md-menu {
+  position: relative;
+}
+
+.mem-md-menu-list {
+  position: absolute;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  margin-top: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+.mem-md-back {
+  display: none;
+  margin-bottom: 8px;
+}
+
+@media (max-width: 760px) {
+  /* List and detail are two screens; the Back button is the way between them. */
+  .mem-md-cols {
+    grid-template-columns: 1fr;
+  }
+
+  .mem-md[data-pane="list"] .mem-md-detail,
+  .mem-md[data-pane="detail"] .mem-md-list {
+    display: none;
+  }
+
+  .mem-md-back {
+    display: inline-block;
+  }
 }
 
 /* Move memories of a project that no longer exists (#1984). */
@@ -425,4 +648,106 @@
 .mem-badge.pm-collision {
   color: var(--warn);
   border-color: var(--warn);
+}
+
+/* The shared wizard frame and the Import & export hub. */
+.mem-wiz-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 4px 0 8px;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.mem-wiz-step.current {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.mem-wiz-step.done {
+  color: var(--accent);
+}
+
+.mem-wiz-result {
+  margin: 8px 0 0;
+}
+
+.mem-wiz-foot {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.mem-ie-group-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.mem-ie-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.mem-ie-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.mem-ie-card h4,
+.mem-ie-card p {
+  margin: 0;
+}
+
+/* The count beside a view's label (proposals waiting for a decision). */
+.mem-viewnav-count {
+  display: inline-block;
+  margin-left: 6px;
+  min-width: 1.4em;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 0.8em;
+  line-height: 1.5;
+  text-align: center;
+}
+
+/* The review's proposals (Changes > Proposed). */
+.mem-changes-sub {
+  margin-bottom: 8px;
+}
+
+.mem-prop-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.mem-prop-why {
+  margin: 8px 0 0;
+}
+
+.mem-prop-bulk {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.mem-run-report {
+  margin: 8px 0;
+}
+
+.mem-run-report ul {
+  margin: 4px 0 0;
+  padding-left: 1.2em;
 }

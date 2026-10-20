@@ -1,0 +1,30 @@
+
+
+  Cursor Agent
+  v2026.10.16-e3cb207
+  Tip: Hit shift+tab to enable Plan Mode for large or complex changes.
+
+
+  say hello in one word
+
+
+ ⠀⠞ Composing
+    Tip: Hit shift+tab to enable Plan Mode for large or complex changes.
+
+
+  → Add a follow-up                                                                 ctrl+c to stop
+
+
+  Composer 2.5 Fast
+  ~/proj
+
+
+
+
+
+
+
+
+
+
+

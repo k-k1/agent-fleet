@@ -146,6 +146,14 @@ func (a adminAPI) setTenantNetwork(w http.ResponseWriter, r *http.Request) {
 	a.srv().SetTenantNetwork(w, r)
 }
 
+func (a adminAPI) tenantExternalMemory(w http.ResponseWriter, r *http.Request) {
+	a.srv().TenantExternalMemory(w, r)
+}
+
+func (a adminAPI) setTenantExternalMemory(w http.ResponseWriter, r *http.Request) {
+	a.srv().SetTenantExternalMemory(w, r)
+}
+
 func (a adminAPI) tenantSlotClass(w http.ResponseWriter, r *http.Request) {
 	a.srv().TenantSlotClass(w, r)
 }
@@ -373,6 +381,7 @@ func tenantLimitsOut(l tenantLimits) tenantsrv.Limits {
 		SessionIdleTimeout:           l.SessionIdleTimeout,
 		WSIdleTimeout:                l.WSIdleTimeout,
 		InteractionIdleTimeout:       l.InteractionIdleTimeout,
+		BackgroundHoldMax:            l.BackgroundHoldMax,
 		HomeHibernateAfter:           l.HomeHibernateAfter,
 		HomeBackupEvery:              l.HomeBackupEvery,
 		AllowAgentSelfUpdate:         l.AllowAgentSelfUpdate,
@@ -397,6 +406,7 @@ func tenantLimitsIn(l tenantsrv.Limits) tenantLimits {
 		SessionIdleTimeout:           l.SessionIdleTimeout,
 		WSIdleTimeout:                l.WSIdleTimeout,
 		InteractionIdleTimeout:       l.InteractionIdleTimeout,
+		BackgroundHoldMax:            l.BackgroundHoldMax,
 		HomeHibernateAfter:           l.HomeHibernateAfter,
 		HomeBackupEvery:              l.HomeBackupEvery,
 		AllowAgentSelfUpdate:         l.AllowAgentSelfUpdate,

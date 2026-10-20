@@ -148,6 +148,7 @@ func (a Admin) ListTenants(w http.ResponseWriter, r *http.Request, ident store.I
 			"slot_class":            lim.SlotClass,
 			"session_idle_timeout":  lim.SessionIdleTimeout, "ws_idle_timeout": lim.WSIdleTimeout,
 			"interaction_idle_timeout":        lim.InteractionIdleTimeout,
+			"background_hold_max":             lim.BackgroundHoldMax,
 			"home_hibernate_after":            lim.HomeHibernateAfter,
 			"home_backup_every":               lim.HomeBackupEvery,
 			"allow_agent_self_update":         lim.AllowAgentSelfUpdate,
@@ -1407,7 +1408,10 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		// auth (docs/log/75 §75.5). "" => the tenant's session_idle_timeout, and the
 		// deployment default if that is unset too.
 		InteractionIdleTimeout string `json:"interaction_idle_timeout"`
-		WSIdleTimeout          string `json:"ws_idle_timeout"`
+		// How long one stretch of background work may hold the Workspace awake (#2338).
+		// "" => deployment default (2h), "0" => unbounded.
+		BackgroundHoldMax string `json:"background_hold_max"`
+		WSIdleTimeout     string `json:"ws_idle_timeout"`
 		// Tier-3 home hibernation (ecs-ec2 only): "" => deployment default, "0" => never.
 		HomeHibernateAfter string `json:"home_hibernate_after"`
 		// Tier-4 home backup (ecs-ec2 only): the tenant's RPO. Same resolution.
@@ -1456,7 +1460,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		}
 	}
 	// Reject unparseable durations up front (empty stays empty = use default).
-	for _, v := range []string{body.SessionIdleTimeout, body.InteractionIdleTimeout, body.WSIdleTimeout, body.HomeHibernateAfter, body.HomeBackupEvery} {
+	for _, v := range []string{body.SessionIdleTimeout, body.InteractionIdleTimeout, body.BackgroundHoldMax, body.WSIdleTimeout, body.HomeHibernateAfter, body.HomeBackupEvery} {
 		if v != "" {
 			if _, err := time.ParseDuration(v); err != nil {
 				writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_duration", "invalid idle timeout: " + v})
@@ -1492,6 +1496,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		SlotClass:                    a.tenantLimitsFor(r, t.ID).SlotClass,
 		SessionIdleTimeout:           body.SessionIdleTimeout,
 		InteractionIdleTimeout:       body.InteractionIdleTimeout,
+		BackgroundHoldMax:            body.BackgroundHoldMax,
 		WSIdleTimeout:                body.WSIdleTimeout,
 		HomeHibernateAfter:           body.HomeHibernateAfter,
 		HomeBackupEvery:              body.HomeBackupEvery,
@@ -1543,6 +1548,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		"allowed_slot_classes":  body.AllowedSlotClasses,
 		"session_idle_timeout":  body.SessionIdleTimeout, "ws_idle_timeout": body.WSIdleTimeout,
 		"interaction_idle_timeout":        body.InteractionIdleTimeout,
+		"background_hold_max":             body.BackgroundHoldMax,
 		"home_hibernate_after":            body.HomeHibernateAfter,
 		"home_backup_every":               body.HomeBackupEvery,
 		"allow_agent_self_update":         body.AllowAgentSelfUpdate,

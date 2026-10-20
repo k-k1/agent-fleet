@@ -39,7 +39,7 @@ func (agentImpl) Kind() string { return session.KindOpencode }
 // takes a messageID (docs/log/55). That route only exists on the managed driver, so the
 // handler refuses a point fork for a CLI-route session rather than silently widening it.
 func (agentImpl) Caps() agents.Caps {
-	return agents.Caps{CanTranscript: true, CanFork: true, CanForkAt: true}
+	return agents.Caps{CanTranscript: true, CanFork: true, CanForkAt: true, ManagedDefault: true, MCPClient: agents.TriYes}
 }
 
 // ForkSource resolves this session's current opencode conversation as the fork

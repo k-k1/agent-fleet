@@ -89,6 +89,27 @@ type instrTarget struct {
 // display order.
 var instrSupportedKinds = []string{"claude", "codex", "opencode", "copilot", "agy", "kiro", "lcpp", "muse"}
 
+// instrDeliveryOf is how a supported kind receives the body (the deliveryX constants), ""
+// for a kind outside instrSupportedKinds. Shared by the instructions screen and the kind
+// catalog so the two cannot answer differently.
+func instrDeliveryOf(kind string) string {
+	switch kind {
+	case "claude", "copilot", "kiro":
+		return deliveryFile
+	case "codex", "agy", "muse":
+		return deliveryCompose
+	case "opencode":
+		// opencode 2 does not apply the config's `instructions` array.
+		if opencode.UserInstructionsInAgentsMD() {
+			return deliveryCompose
+		}
+		return deliveryConfig
+	case "lcpp":
+		return deliveryPrompt
+	}
+	return ""
+}
+
 // instrUnsupported are the kinds it cannot reach, with the reason (measured, docs/log/60
 // §60.3).
 var instrUnsupported = []struct{ kind, reason string }{
@@ -229,43 +250,42 @@ func instrState() instrStateWire {
 	for _, kind := range instrSupportedKinds {
 		t := instrTarget{Kind: kind, Supported: true, On: st.TargetOn(kind), Error: instrErrs[kind]}
 		want := st.Body(kind) != ""
+		t.Delivery = instrDeliveryOf(kind)
 		switch kind {
 		case "claude":
-			t.Delivery, t.Path = deliveryFile, claude.UserInstructionsPath()
+			t.Path = claude.UserInstructionsPath()
 			t.Applied = fileHasBlock(t.Path, "user-notes") == want
 		case "codex":
-			t.Delivery, t.Path = deliveryCompose, codex.AgentsPath()
+			t.Path = codex.AgentsPath()
 			t.Applied = fileHasBlock(t.Path, "user-notes") == want
 		case "opencode":
-			if opencode.UserInstructionsInAgentsMD() {
-				// opencode 2 does not apply the config's `instructions` array.
-				t.Delivery, t.Path = deliveryCompose, opencode.AgentsPath()
+			if t.Delivery == deliveryCompose {
+				t.Path = opencode.AgentsPath()
 				t.Applied = fileHasBlock(t.Path, "user-notes") == want
 				break
 			}
-			t.Delivery, t.Path = deliveryConfig, instrOpencodeFile()
+			t.Path = instrOpencodeFile()
 			t.Applied = fileExists(t.Path) == want && opencodeRefers(t.Path) == want
 		case "copilot":
-			t.Delivery, t.Path = deliveryFile, copilot.UserInstructionsPath()
+			t.Path = copilot.UserInstructionsPath()
 			t.Applied = fileExists(t.Path) == want
 		case "agy":
-			t.Delivery, t.Path = deliveryCompose, agy.AgentsPath()
+			t.Path = agy.AgentsPath()
 			t.Applied = fileHasBlock(t.Path, "user-notes") == want
 		case "kiro":
-			t.Delivery, t.Path = deliveryFile, kiro.UserInstructionsPath()
+			t.Path = kiro.UserInstructionsPath()
 			t.Applied = fileExists(t.Path) == want
 		case "lcpp":
 			// Nothing on disk to measure: the harness re-reads the saved state at the start of
 			// every turn, so what is saved is what the next turn sends — running sessions
 			// included.
-			t.Delivery = deliveryPrompt
 			t.Applied = true
 		case "muse":
 			// The same shape as codex and agy: one AGENTS.md shared with the fleet policy, so
 			// the measurement has to be the BLOCK's presence. `fileExists` would report
 			// "applied" for a file that holds only the fleet block, or only the member's own
 			// text (ADR 0095 decision 12).
-			t.Delivery, t.Path = deliveryCompose, muse.AgentsPath()
+			t.Path = muse.AgentsPath()
 			t.Applied = fileHasBlock(t.Path, "user-notes") == want
 		}
 		targets = append(targets, t)

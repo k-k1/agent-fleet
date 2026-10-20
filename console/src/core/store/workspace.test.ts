@@ -32,6 +32,14 @@ describe("workspace store applyPush", () => {
     useWorkspaceStore.setState({ state: "running", bootPhase: "" });
   });
 
+  it("adopts docsRoot from a push and clears it when absent", () => {
+    useWorkspaceStore.setState({ state: "running", docsRoot: "" });
+    useWorkspaceStore.getState().applyPush({ state: "running", docsRoot: "/data/ws/docs" });
+    expect(useWorkspaceStore.getState().docsRoot).toBe("/data/ws/docs");
+    useWorkspaceStore.getState().applyPush({ state: "running" });
+    expect(useWorkspaceStore.getState().docsRoot).toBe("");
+  });
+
   it("adopts browserUnavailable from a push, even mid-transition, and clears it when absent", () => {
     useWorkspaceStore.setState({ state: "starting…", browserUnavailable: "" });
     useWorkspaceStore.getState().applyPush({ state: "running", browserUnavailable: "kubernetes" });

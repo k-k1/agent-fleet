@@ -471,8 +471,12 @@ const now = Date.now();
     // a new server process lost every environment: this pane's sessions get theirs again.
     const putEnvs = () => readFileSync(agentLog, "utf8").split("\n").filter((l) => l.startsWith("opencode-put-env paneP"));
     w.pid = 200;
-    await until(() => putEnvs().length >= 2, "environments re-sent after a pid change");
+    await until(() => new Set(putEnvs()).size >= 2, "environments re-sent after a pid change");
     assert.deepEqual(new Set(putEnvs()), new Set(["opencode-put-env paneP ses_free", "opencode-put-env paneP ses_mine"]), "only sessions this pane won are re-sent, through the Agent that checks they are still its own");
+    // The fake Agent answers slower than the server poll, so a tick that did not wait for the one
+    // before it would send each environment again.
+    await sleep(500);
+    assert.equal(putEnvs().length, 2, "one pid change re-sends each environment once");
     stop();
   } finally {
     for (const [k, v] of [["AF_OPENCODE_SHARED", saved.shared], ["AF_SESSION_SID", saved.sid], ["AF_SESSION_NAME", saved.name], ["OPENCODE_SERVER_PASSWORD", saved.pw]]) {

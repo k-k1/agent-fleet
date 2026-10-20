@@ -86,6 +86,21 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			// Only a commit id is copied into the ledger: the hint is free text the Agent never
 			// reads, so anything else is recorded as an empty target.
 			return "memory.entry.revert", auditCommitHint(q.Get("commit")), true
+		case p == "/api/agents/memory-review/run":
+			// ADR 0117: the member starts a review of one session now. The Console repeats the
+			// session name in the query; only a name-shaped value is recorded, never a body.
+			return "memory.review.run", auditSessionNameHint(q.Get("session")), true
+		case p == "/api/agents/memory-review/proposals/approve":
+			// ADR 0117: the member publishes one proposed memory. The Console repeats the proposal
+			// id in the query; only an id-shaped value is recorded, never text.
+			return "memory.review.approve", auditReviewIDHint(q.Get("id")), true
+		case p == "/api/agents/memory-review/proposals/reject":
+			return "memory.review.reject", auditReviewIDHint(q.Get("id")), true
+		case p == "/api/agents/memory-review/proposals/reject-all":
+			// The hint is the run whose proposals are rejected, empty for all of them.
+			return "memory.review.reject_all", auditReviewIDHint(q.Get("run")), true
+		case p == "/api/agents/memory-review/runs/revert":
+			return "memory.review.revert_run", auditReviewIDHint(q.Get("run")), true
 		case p == "/api/agents/memory/entries/pin":
 			// #1703: the member pins or unpins a memory. The Console repeats the project id in the query;
 			// only an id-shaped value is recorded, never the free-text memory name.
@@ -296,9 +311,14 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 
 	var bufferedResponse []byte
 	var fsPutOutcome string
-	if r.Method == http.MethodPut && r.URL.Path == "/api/fs/file" {
-		// PUT errors are deliberately small JSON envelopes. Read only a bounded
-		// prefix before the audit decision so write_state_unknown cannot be lost,
+	// Two error envelopes decide the audit: a file write that may have landed, and an approved
+	// review proposal that was published although clearing it from the queue failed (the commit
+	// exists, so the approval must be on record even if the member never retries).
+	reviewApprove := r.Method == http.MethodPost && r.URL.Path == "/api/agents/memory-review/proposals/approve" &&
+		resp.StatusCode == http.StatusInternalServerError
+	if (r.Method == http.MethodPut && r.URL.Path == "/api/fs/file") || reviewApprove {
+		// These errors are deliberately small JSON envelopes. Read only a bounded
+		// prefix before the audit decision so the outcome cannot be lost,
 		// while still forwarding an unexpectedly larger upstream response.
 		bufferedResponse, _ = io.ReadAll(io.LimitReader(resp.Body, (64<<10)+1))
 		if len(bufferedResponse) <= 64<<10 {
@@ -312,15 +332,19 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 			}
 		}
 	}
+	reviewPublishedUncleared := reviewApprove && fsPutOutcome == reviewDecisionIncompleteCode
 
 	// M1 audit (docs/log/20): record a successful change operation. actor/tenant come from
 	// the resolved request; best-effort with a detached context so a client disconnect
 	// during the body copy below can't cancel the write.
 	if action, target, ok := auditActionTarget(r); ok &&
 		((resp.StatusCode >= 200 && resp.StatusCode < 300) ||
-			(resp.StatusCode == http.StatusInternalServerError && fsPutOutcome == errCodeFSWriteStateUnknown)) {
+			(resp.StatusCode == http.StatusInternalServerError && fsPutOutcome == errCodeFSWriteStateUnknown) ||
+			reviewPublishedUncleared) {
 		detail := ""
-		if fsPutOutcome == errCodeFSWriteStateUnknown {
+		if reviewPublishedUncleared {
+			detail = "published_queue_not_cleared"
+		} else if fsPutOutcome == errCodeFSWriteStateUnknown {
 			detail = "write_state_unknown"
 		} else if strings.HasPrefix(action, "gcp.login.") {
 			// ADR 0107 decision 3: the audit says the call came through the relay; the
@@ -591,6 +615,31 @@ var agentMemProjectIDRe = regexp.MustCompile(`^[a-z0-9._-]{1,40}-[0-9a-f]{12}$`)
 // auditProjectHint keeps a project-id-shaped audit hint and drops anything else.
 func auditProjectHint(s string) string {
 	if agentMemProjectIDRe.MatchString(s) {
+		return s
+	}
+	return ""
+}
+
+// reviewDecisionIncompleteCode is the Agent's answer to an approval that published the memory but
+// could not clear the proposal from its queue (workspace/agent/internal/memreview). It is the
+// Agent's code, not one the CP emits, so it is not an errcodes.go entry.
+const reviewDecisionIncompleteCode = "decision_incomplete"
+
+var auditSessionNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,40}$`)
+
+// auditSessionNameHint keeps a session-name-shaped audit hint and drops anything else.
+func auditSessionNameHint(s string) string {
+	if auditSessionNameRe.MatchString(s) {
+		return s
+	}
+	return ""
+}
+
+var auditReviewIDRe = regexp.MustCompile(`^[0-9a-f]{20}$`)
+
+// auditReviewIDHint keeps a review proposal or run id (20 hex characters) and drops anything else.
+func auditReviewIDHint(s string) string {
+	if auditReviewIDRe.MatchString(s) {
 		return s
 	}
 	return ""

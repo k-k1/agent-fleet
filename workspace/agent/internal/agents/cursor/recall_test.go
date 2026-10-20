@@ -59,3 +59,23 @@ func TestReadChatMeta(t *testing.T) {
 		t.Error("a missing store.db read as ok")
 	}
 }
+
+// RecordedModel must keep answering where RecallSettings cannot: a base id the catalog does
+// not list verbatim makes recallFrom drop the model, but the store still holds it, which is
+// what a contract compares against the model it asked for.
+func TestRecordedModelSurvivesWhereRecallDropsTheFlag(t *testing.T) {
+	st := chatMeta{LastUsedModel: "gemini-3.7-flash"}
+	catalog := map[string]bool{"gemini-3.7-flash-high": true}
+	if r := recallFrom(st, "", catalog); !r.ClearModel || r.Model != "" {
+		t.Fatalf("premise: recallFrom = %+v, want ClearModel with no model", r)
+	}
+	if got := recordedModelOf(st); got != "gemini-3.7-flash" {
+		t.Errorf("recordedModelOf = %q, want the stored base id", got)
+	}
+	if got := recordedModelOf(chatMeta{LastUsedModel: "default"}); got != "auto" {
+		t.Errorf("default read as %q, want auto", got)
+	}
+	if got := recordedModelOf(chatMeta{}); got != "" {
+		t.Errorf("nothing stored read as %q", got)
+	}
+}

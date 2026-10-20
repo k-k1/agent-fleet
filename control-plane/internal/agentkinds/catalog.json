@@ -1,0 +1,159 @@
+{
+  "kinds": [
+    {
+      "kind": "agy",
+      "managedOnly": false,
+      "managedDefault": false,
+      "mcpClient": "yes",
+      "instructions": "yes",
+      "caps": {
+        "canFork": false,
+        "canForkAt": false,
+        "canTranscript": true,
+        "usesLabel": false,
+        "permissionChoice": true
+      }
+    },
+    {
+      "kind": "claude",
+      "managedOnly": false,
+      "managedDefault": false,
+      "mcpClient": "yes",
+      "instructions": "yes",
+      "caps": {
+        "canFork": true,
+        "canForkAt": true,
+        "canTranscript": true,
+        "usesLabel": true,
+        "permissionChoice": true
+      }
+    },
+    {
+      "kind": "codex",
+      "managedOnly": false,
+      "managedDefault": true,
+      "mcpClient": "yes",
+      "instructions": "yes",
+      "caps": {
+        "canFork": true,
+        "canForkAt": true,
+        "canTranscript": true,
+        "usesLabel": false,
+        "permissionChoice": false
+      }
+    },
+    {
+      "kind": "copilot",
+      "managedOnly": false,
+      "managedDefault": true,
+      "mcpClient": "yes",
+      "instructions": "yes",
+      "caps": {
+        "canFork": true,
+        "canForkAt": true,
+        "canTranscript": true,
+        "usesLabel": false,
+        "permissionChoice": true
+      }
+    },
+    {
+      "kind": "cursor",
+      "managedOnly": false,
+      "managedDefault": true,
+      "mcpClient": "yes",
+      "instructions": "no",
+      "caps": {
+        "canFork": false,
+        "canForkAt": false,
+        "canTranscript": true,
+        "usesLabel": false,
+        "permissionChoice": true
+      },
+      "instructionsReason": "no_user_scope"
+    },
+    {
+      "kind": "kiro",
+      "managedOnly": false,
+      "managedDefault": true,
+      "mcpClient": "yes",
+      "instructions": "yes",
+      "caps": {
+        "canFork": false,
+        "canForkAt": false,
+        "canTranscript": true,
+        "usesLabel": false,
+        "permissionChoice": true
+      }
+    },
+    {
+      "kind": "lcpp",
+      "managedOnly": true,
+      "managedDefault": true,
+      "mcpClient": "yes",
+      "instructions": "yes",
+      "caps": {
+        "canFork": true,
+        "canForkAt": true,
+        "canTranscript": true,
+        "usesLabel": false,
+        "permissionChoice": true
+      }
+    },
+    {
+      "kind": "muse",
+      "managedOnly": true,
+      "managedDefault": true,
+      "mcpClient": "yes",
+      "instructions": "yes",
+      "caps": {
+        "canFork": true,
+        "canForkAt": true,
+        "canTranscript": true,
+        "usesLabel": false,
+        "permissionChoice": false
+      }
+    },
+    {
+      "kind": "opencode",
+      "managedOnly": false,
+      "managedDefault": true,
+      "mcpClient": "yes",
+      "instructions": "yes",
+      "caps": {
+        "canFork": true,
+        "canForkAt": true,
+        "canTranscript": true,
+        "usesLabel": false,
+        "permissionChoice": false
+      }
+    },
+    {
+      "kind": "shell",
+      "managedOnly": false,
+      "managedDefault": false,
+      "mcpClient": "no",
+      "instructions": "unverified",
+      "caps": {
+        "canFork": false,
+        "canForkAt": false,
+        "canTranscript": false,
+        "usesLabel": false,
+        "permissionChoice": false
+      }
+    },
+    {
+      "kind": "ssm",
+      "managedOnly": false,
+      "managedDefault": false,
+      "mcpClient": "no",
+      "instructions": "unverified",
+      "caps": {
+        "canFork": false,
+        "canForkAt": false,
+        "canTranscript": false,
+        "usesLabel": false,
+        "permissionChoice": false
+      }
+    }
+  ]
+}

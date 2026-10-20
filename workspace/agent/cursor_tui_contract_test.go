@@ -47,5 +47,5 @@ func TestCursorTUIMirrorContract(t *testing.T) {
 	}
 	t.Setenv("HOME", home)
 
-	runTUIMirrorContract(t, tuiMirrorContractSpec{kind: session.KindCursor, agent: cursor.New()})
+	runTUIMirrorContract(t, tuiMirrorContractSpec{kind: session.KindCursor, agent: cursor.New(), models: cursor.Models})
 }

@@ -11,6 +11,7 @@ import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { Button } from "../../../ui/Button.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
+import { WizardFrame, GroupedPreview, type WizardStep } from "./memoryWizard.tsx";
 import type { MoveCollision, MoveItem, MovePreview, MoveResultItem, MoveStatus, ProjectRow } from "./memoryTypes.ts";
 
 /** The Agent's per-request cap (agentMemMoveBatch). */
@@ -22,7 +23,7 @@ const POLICIES: ["skip" | "rename", "mem.pm_policy_skip" | "mem.pm_policy_rename
 ];
 const STATUSES: MoveStatus[] = ["move", "same", "rename", "collision", "skip"];
 
-export function ProjectMovePanel({ reload, onChanged }: { reload: number; onChanged: () => void }) {
+export function ProjectMovePanel({ reload, onChanged, onClose }: { reload: number; onChanged: () => void; onClose?: () => void }) {
   const tr = useT();
   const toast = useToast();
   const [rows, setRows] = useState<ProjectRow[] | null>(null);
@@ -35,6 +36,12 @@ export function ProjectMovePanel({ reload, onChanged }: { reload: number; onChan
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [again, setAgain] = useState(0);
+  const [result, setResult] = useState<string | null>(null);
+  // The outcome is both toasted and kept in the frame until the choice changes.
+  const notify = (msg: string, opts?: { kind?: "success" }) => {
+    toast(msg, opts);
+    setResult(msg);
+  };
 
   const load = useCallback(async (signal: AbortSignal) => {
     const res = await api("api/agents/memory/entries/projects");
@@ -66,6 +73,7 @@ export function ProjectMovePanel({ reload, onChanged }: { reload: number; onChan
 
   const choose = (f: string, t: string, p: MoveCollision | "") => {
     setFrom(f);
+    setResult(null);
     setTo(t);
     setPolicy(p);
     void loadPreview(f, t, p);
@@ -111,7 +119,7 @@ export function ProjectMovePanel({ reload, onChanged }: { reload: number; onChan
           const stopped = results.find((r) => r.name === res.stopped);
           // Only a partial one has its copy in both projects; a failed one was never written.
           const key = stopped?.result === "partial" ? "mem.pm_stopped" : "mem.pm_stopped_failed";
-          toast(
+          notify(
             res.stopped
               ? tr(key, { n: counts.moved, name: res.stopped, pending, error: errDetail(res.error) })
               : errDetail(res.error),
@@ -120,12 +128,12 @@ export function ProjectMovePanel({ reload, onChanged }: { reload: number; onChan
         }
         setProgress({ done: Math.min(at + MOVE_BATCH, todo.length), total: todo.length });
       }
-      toast(tr(counts.skipped ? "mem.pm_done_skipped" : "mem.pm_done", { n: counts.moved, skipped: counts.skipped }), {
+      notify(tr(counts.skipped ? "mem.pm_done_skipped" : "mem.pm_done", { n: counts.moved, skipped: counts.skipped }), {
         kind: counts.skipped ? undefined : "success",
       });
     } catch {
       // The request may or may not have reached the Agent: re-read what is there now.
-      toast(tr("mem.pm_failed"));
+      notify(tr("mem.pm_failed"));
     } finally {
       setBusy(false);
       setProgress(null);
@@ -142,35 +150,10 @@ export function ProjectMovePanel({ reload, onChanged }: { reload: number; onChan
     collision: tr("mem.pm_status_collision"),
     skip: tr("mem.pm_status_skip"),
   };
-  const group = (st: MoveStatus) => {
-    const items = (preview?.items ?? []).filter((i) => i.status === st);
-    if (items.length === 0) return null;
-    return (
-      <details key={st} open={st !== "same"} className="mem-ci-group">
-        <summary>
-          <span className={"mem-badge pm-" + st}>{statusLabel[st]}</span> {items.length}
-        </summary>
-        <ul className="mem-ci-items">
-          {items.map((i) => (
-            <li key={i.name}>
-              <span className="mem-af-name">{i.name}</span>
-              {i.newName && (
-                <span className="muted">
-                  {" → "}
-                  <span className="mem-af-name">{i.newName}</span>
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
-      </details>
-    );
-  };
+  const step: WizardStep = busy ? "apply" : result ? "result" : preview ? "confirm" : from && to ? "preview" : "source";
 
   return (
-    <div className="mem-ci">
-      <h4>{tr("mem.pm_title")}</h4>
-      <p className="muted ds-hint">{tr("mem.pm_intro")}</p>
+    <WizardFrame title={tr("mem.pm_title")} intro={tr("mem.pm_intro")} step={step} busy={busy} result={result} onClose={onClose}>
       {loadErr && <p className="mem-warn">{loadErr}</p>}
       {rows === null ? (
         <p className="muted">{tr("common.loading")}</p>
@@ -234,7 +217,26 @@ export function ProjectMovePanel({ reload, onChanged }: { reload: number; onChan
               ))}
             </fieldset>
           )}
-          {STATUSES.map(group)}
+          <GroupedPreview
+            items={preview.items ?? []}
+            order={STATUSES}
+            statusOf={(i) => i.status}
+            label={(st) => statusLabel[st as MoveStatus]}
+            badge={(st) => "pm-" + st}
+            open={(st) => st !== "same"}
+            keyOf={(i) => i.name}
+            renderItem={(i) => (
+              <>
+                <span className="mem-af-name">{i.name}</span>
+                {i.newName && (
+                  <span className="muted">
+                    {" → "}
+                    <span className="mem-af-name">{i.newName}</span>
+                  </span>
+                )}
+              </>
+            )}
+          />
           {(preview.withheld ?? 0) > 0 && <p className="mem-warn">{tr("mem.pm_withheld", { n: preview.withheld ?? 0 })}</p>}
           <p className="muted ds-hint">{tr("mem.pm_undo")}</p>
           <div className="mem-ci-actions">
@@ -249,6 +251,6 @@ export function ProjectMovePanel({ reload, onChanged }: { reload: number; onChan
           </div>
         </>
       )}
-    </div>
+    </WizardFrame>
   );
 }

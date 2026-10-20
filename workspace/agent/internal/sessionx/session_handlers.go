@@ -21,10 +21,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/lcpp"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
@@ -49,26 +45,22 @@ import (
 // catalog (docs/log/109).
 var LcppLiveModels func(ctx context.Context) []agents.ModelChoice
 
+// managedRuntimeOf resolves a kind's Managed runtime (agents.ManagedRuntime). The match is
+// exact: no NormalizeKind and no AgentOf claude fallback, so an unknown or alternate spelling has
+// no runtime and every question below answers false / does nothing.
+func managedRuntimeOf(kind string) (agents.ManagedRuntimeOps, bool) {
+	r, ok := agentRegistry[kind].(agents.ManagedRuntime)
+	if !ok {
+		return agents.ManagedRuntimeOps{}, false
+	}
+	return r.ManagedRuntime(), true
+}
+
 // ManagedAlive reports a managed session's liveness — the runtime-handle
 // counterpart of tmuxx.HasSession (docs/log/27 P2/P3; each kind implements it in its own package).
 func ManagedAlive(m session.Meta) bool {
-	switch m.Kind {
-	case session.KindOpencode:
-		return opencode.ManagedAlive(m.Name)
-	case session.KindCodex:
-		return codex.ManagedAlive(m.Name)
-	case session.KindCopilot:
-		return copilot.ManagedAlive(m.Name)
-	case session.KindCursor:
-		return cursor.ManagedAlive(m.Name)
-	case session.KindKiro:
-		return kiro.ManagedAlive(m.Name)
-	case session.KindLcpp:
-		return lcpp.ManagedAlive(m.Name)
-	case session.KindMuse:
-		return muse.ManagedAlive(m.Name)
-	}
-	return false
+	rt, ok := managedRuntimeOf(m.Kind)
+	return ok && rt.Alive(m.Name)
 }
 
 // managedBusy reports a managed session has a turn running or queued — the refusal
@@ -76,46 +68,16 @@ func ManagedAlive(m session.Meta) bool {
 // stop -> drain -> resume, and never happens while busy, which leaves the drain to the
 // user waiting for idle).
 func managedBusy(m session.Meta) bool {
-	switch m.Kind {
-	case session.KindOpencode:
-		return opencode.ManagedBusy(m.Name)
-	case session.KindCodex:
-		return codex.ManagedBusy(m.Name)
-	case session.KindCopilot:
-		return copilot.ManagedBusy(m.Name)
-	case session.KindCursor:
-		return cursor.ManagedBusy(m.Name)
-	case session.KindKiro:
-		return kiro.ManagedBusy(m.Name)
-	case session.KindLcpp:
-		return lcpp.ManagedBusy(m.Name)
-	case session.KindMuse:
-		return muse.ManagedBusy(m.Name)
-	}
-	return false
+	rt, ok := managedRuntimeOf(m.Kind)
+	return ok && rt.Busy(m.Name)
 }
 
 // managedInFlight reports that a managed session's handle holds an entry it took from its queue
 // and has not settled (the drivers' ManagedInFlight). Unlike managedBusy, input still queued
 // does not count.
 func managedInFlight(m session.Meta) bool {
-	switch m.Kind {
-	case session.KindOpencode:
-		return opencode.ManagedInFlight(m.Name)
-	case session.KindCodex:
-		return codex.ManagedInFlight(m.Name)
-	case session.KindCopilot:
-		return copilot.ManagedInFlight(m.Name)
-	case session.KindCursor:
-		return cursor.ManagedInFlight(m.Name)
-	case session.KindKiro:
-		return kiro.ManagedInFlight(m.Name)
-	case session.KindLcpp:
-		return lcpp.ManagedInFlight(m.Name)
-	case session.KindMuse:
-		return muse.ManagedInFlight(m.Name)
-	}
-	return false
+	rt, ok := managedRuntimeOf(m.Kind)
+	return ok && rt.InFlight(m.Name)
 }
 
 // dropManagedRuntime detaches a managed session from its runtime — the equivalent of the
@@ -123,21 +85,8 @@ func managedInFlight(m session.Meta) bool {
 // forget the handle. The conversation's source of truth (SQLite / rollout) stays intact,
 // so a resume reconnects to it.
 func dropManagedRuntime(m session.Meta) {
-	switch m.Kind {
-	case session.KindOpencode:
-		opencode.DropHandle(m.Name)
-	case session.KindCodex:
-		codex.DropHandle(m.Name)
-	case session.KindCopilot:
-		copilot.DropHandle(m.Name)
-	case session.KindCursor:
-		cursor.DropHandle(m.Name)
-	case session.KindKiro:
-		kiro.DropHandle(m.Name)
-	case session.KindLcpp:
-		lcpp.DropHandle(m.Name)
-	case session.KindMuse:
-		muse.DropHandle(m.Name)
+	if rt, ok := managedRuntimeOf(m.Kind); ok {
+		rt.Drop(m.Name)
 	}
 }
 
@@ -145,21 +94,8 @@ func dropManagedRuntime(m session.Meta) {
 // it. Only purging a trash archive calls it (through RemoveManagedLedger): halt, archive and
 // the trash itself keep it, because each of those can still be resumed.
 func removeManagedLedger(m session.Meta) {
-	switch m.Kind {
-	case session.KindOpencode:
-		opencode.RemoveLedger(m.Name)
-	case session.KindCodex:
-		codex.RemoveLedger(m.Name)
-	case session.KindCopilot:
-		copilot.RemoveLedger(m.Name)
-	case session.KindCursor:
-		cursor.RemoveLedger(m.Name)
-	case session.KindKiro:
-		kiro.RemoveLedger(m.Name)
-	case session.KindLcpp:
-		lcpp.RemoveLedger(m.Name)
-	case session.KindMuse:
-		muse.RemoveLedger(m.Name)
+	if rt, ok := managedRuntimeOf(m.Kind); ok {
+		rt.RemoveLedger(m.Name)
 	}
 	agents.DropHeld(m.Name, agents.DropTrashed)
 	dropPendingPeers(m.Name, "purged from the trash")
@@ -290,6 +226,9 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 		sessions = append(sessions, wireSession(m, false))
 	}
 	pruneOverviewFacts(func(name string) bool { _, ok := metas[name]; return ok })
+	// An archived or deleted session is never wired again, so its background period would
+	// otherwise stay in the map for the life of the Agent.
+	pruneBackgroundSince(func(name string) bool { m, ok := metas[name]; return ok && !m.Archived })
 	// Surface ORPHAN sessions: a live claude_* tmux session with no meta. These are
 	// invisible to the meta-driven list above, so the auto-namer would reuse their
 	// name and HandleCreateSession then fails with "session already running" — a
@@ -769,6 +708,12 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 // createSession is the create after its body is decoded, so a move can create its target
 // in-process with the name it booked (CreateReq.name).
 func createSession(w http.ResponseWriter, r *http.Request, req CreateReq) {
+	// First of all, ahead of the idempotency claim: a refused kind must leave no ledger entry,
+	// and every guard below goes through NormalizeKind, which would turn it into claude.
+	if err := ValidateCreateKind(req.Kind); err != nil {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_kind", err.Error())
+		return
+	}
 	// A create raised by another SESSION (ADR 0073) carries the parent's name, and the whole
 	// spawn regime hangs off it. Resolved here; the refusals run further down.
 	spawnParent := ""

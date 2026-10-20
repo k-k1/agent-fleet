@@ -122,3 +122,27 @@ func SweepPendingTemp(name string) {
 		}
 	}
 }
+
+// QueuedPeerTouches reports whether any held or pending input is addressed to, or was sent by, a
+// session in members. The stalled-tree watch reads it as "something is still in flight".
+// held-peer entries from a non-peer origin (operator, schedule) have no sender and count only for
+// their target.
+func QueuedPeerTouches(members map[string]bool) bool {
+	for _, sub := range []string{heldSubdir, pendingSubdir} {
+		ents, err := os.ReadDir(filepath.Join(heldBase(), sub))
+		if err != nil {
+			continue
+		}
+		for _, e := range ents {
+			if !e.IsDir() || !heldName(e.Name()) {
+				continue
+			}
+			for _, hp := range loadSpool(sub, e.Name()) {
+				if members[e.Name()] || hp.From != "" && members[hp.From] {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}

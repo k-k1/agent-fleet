@@ -483,6 +483,8 @@ button.wu-manage {
 }
 .pv-actions {
   justify-content: flex-end;
+  /* Up to three buttons: on a phone-width popover they must wrap, not spill past its edge. */
+  flex-wrap: wrap;
 }
 /* The preview-subdomain row (docs/log/81): the left button is the port, the right one
    copies. The hostname itself goes in title so the popover does not widen. */

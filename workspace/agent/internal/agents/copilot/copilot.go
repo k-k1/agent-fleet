@@ -44,7 +44,8 @@ func (agentImpl) Kind() string { return session.KindCopilot }
 // truncating events.jsonl (forkat.go) - events.jsonl is the restore source (measured,
 // docs/log/55 §55.5). No display label.
 func (agentImpl) Caps() agents.Caps {
-	return agents.Caps{CanTranscript: true, CanFork: true, CanForkAt: true, PermissionChoice: true}
+	return agents.Caps{CanTranscript: true, CanFork: true, CanForkAt: true, PermissionChoice: true,
+		ManagedDefault: true, MCPClient: agents.TriYes}
 }
 
 // ForkSource resolves this session's copilot session id as the fork source, refusing when

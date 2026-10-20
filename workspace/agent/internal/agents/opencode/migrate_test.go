@@ -52,6 +52,19 @@ type fakeMigration struct {
 	done    atomic.Bool
 }
 
+func (f *fakeMigration) recordImport(dbp string) error {
+	db, err := sql.Open("sqlite", "file:"+dbp+"?_pragma=busy_timeout(10000)")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if _, err := db.Exec(`create table if not exists kv (key text primary key, value text, a int, b int)`); err != nil {
+		return err
+	}
+	_, err = db.Exec(`insert or replace into kv values ('migration.v1-v2','{"phase":"completed"}',1,1)`)
+	return err
+}
+
 func useFakeMigration(t *testing.T, dbp string, f *fakeMigration) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -68,12 +81,16 @@ func useFakeMigration(t *testing.T, dbp string, f *fakeMigration) {
 			_, _ = w.Write([]byte(f.final))
 			return
 		}
-		f.done.Store(true)
-		if db, err := sql.Open("sqlite", "file:"+dbp); err == nil {
-			_, _ = db.Exec(`create table if not exists kv (key text primary key, value text, a int, b int)`)
-			_, _ = db.Exec(`insert or replace into kv values ('migration.v1-v2','{"phase":"completed"}',1,1)`)
-			db.Close()
+		// Record the import before answering "completed", as the real one does. The write waits
+		// out a reader (needsMigration of another caller holds a shared lock for a moment) and a
+		// failure fails the request: a dropped write left the database reading as not imported,
+		// so the next caller started a second import (SQLITE_BUSY, measured under -race).
+		if err := f.recordImport(dbp); err != nil {
+			t.Errorf("fake import could not record completion: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
+		f.done.Store(true)
 		_, _ = w.Write([]byte(`{"status":"completed"}`))
 	}))
 	t.Cleanup(srv.Close)
@@ -243,5 +260,36 @@ func TestEnsureMigratedFailsFastWhenTheServerExits(t *testing.T) {
 	start := time.Now()
 	if err := EnsureMigrated(spec2); err == nil || time.Since(start) > 5*time.Second {
 		t.Fatalf("err %v after %v, want an immediate failure", err, time.Since(start))
+	}
+}
+
+// A reader on the database while the import records its completion (another caller's
+// needsMigration, for instance) must delay the record, not drop it: a dropped record read as
+// "not imported" and started a second import.
+func TestEnsureMigratedRecordsCompletionDespiteAReader(t *testing.T) {
+	optInHome(t)
+	db := specDBPath(spec2)
+	seedDB(t, db, 1, false)
+	rd, err := sql.Open("sqlite", "file:"+db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rd.Close()
+	tx, err := rd.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := tx.QueryRow(`select count(*) from session`).Scan(&n); err != nil { // takes the shared lock
+		t.Fatal(err)
+	}
+	go func() { time.Sleep(700 * time.Millisecond); _ = tx.Rollback() }()
+	f := &fakeMigration{}
+	useFakeMigration(t, db, f)
+	if err := EnsureMigrated(spec2); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureMigrated(spec2); err != nil || f.started.Load() != 1 {
+		t.Fatalf("second call: err %v started %d; the completion must have been recorded", err, f.started.Load())
 	}
 }

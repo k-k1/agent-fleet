@@ -47,6 +47,7 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 
 const { LaunchModal } = await import("./LaunchModal.tsx");
+const { parseKindCatalog, setKindCatalog } = await import("../../agents/kindCatalog.ts");
 const { resetAttachDraftDB } = await import("../../lib/attachDraft.ts");
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 
@@ -483,6 +484,32 @@ describe("LaunchModal driver choice — terminalDriver gate", () => {
     await expand("More");
     expect(buttons().find((b) => b.textContent?.includes("Terminal (CLI)"))).toBeUndefined();
     expect(buttons().find((b) => b.textContent?.includes("Managed (recommended)"))).toBeUndefined();
+  });
+});
+
+// The kind catalog can land after the dialog is open. Facts it changes must show up without a
+// reopen, and an untouched driver follows the new default instead of the one at mount.
+describe("LaunchModal driver choice — catalog arriving late", () => {
+  const claudeManaged = () =>
+    parseKindCatalog({ kinds: [{ kind: "claude", managedOnly: false, managedDefault: true, mcpClient: "yes" }] });
+  afterEach(() => act(() => setKindCatalog(null)));
+
+  it("offers the choice and defaults an untouched driver to Managed", async () => {
+    await render(["claude"]);
+    await expand("More");
+    expect(buttons().find((b) => b.textContent?.includes("Managed (recommended)"))).toBeUndefined();
+    await act(async () => setKindCatalog(claudeManaged()));
+    expect(byText("Managed (recommended)").classList.contains("active")).toBe(true);
+    expect(byText("Terminal (CLI)").classList.contains("active")).toBe(false);
+  });
+
+  it("leaves a driver the user picked alone", async () => {
+    await act(async () => setKindCatalog(claudeManaged()));
+    await render(["claude"]);
+    await expand("More");
+    await click(byText("Terminal (CLI)"));
+    await act(async () => setKindCatalog(parseKindCatalog({ kinds: [{ kind: "claude", managedOnly: false, managedDefault: true, mcpClient: "yes" }, { kind: "x", managedOnly: false, managedDefault: false, mcpClient: "no" }] })));
+    expect(byText("Terminal (CLI)").classList.contains("active")).toBe(true);
   });
 });
 
