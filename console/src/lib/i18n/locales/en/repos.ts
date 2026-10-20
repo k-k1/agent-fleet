@@ -130,6 +130,7 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "proj.copy_rel_path": "Copy the relative path",
   "proj.open_reader": "Open in reader",
   "proj.open_gallery": "Open in gallery",
+  "proj.open_folder_gallery": "Open folder in gallery",
   "proj.download": "Download",
   "proj.download_zip": "Download as zip",
   "proj.download_zip_title": ".git and node_modules inside the folder are left out",

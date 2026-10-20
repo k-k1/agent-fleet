@@ -148,11 +148,12 @@ the original from **Download** in the info bar.
 A pane that lays the images in a folder out as cards, so you can compare them without opening one
 at a time and see at a glance what a folder actually holds.
 
-**Five ways in**, each of them one item in a menu that is already there:
+**Six ways in**, each of them one item in a menu that is already there:
 
 - **Right-click a folder** in the file tree → "Open in gallery"
 - **Right-click an image file** in the file tree → "Open in gallery" (its parent folder opens with
-  that image enlarged; the item does not appear for non-image files)
+  that image enlarged)
+- **Right-click any other file** → "Open folder in gallery" (its parent folder, no image focused)
 - **"Gallery"** in the image viewer's header
 - **"Open folder"** in the enlarged view of a shared-file card in the mirror
 - **"Generated images (N)"** in a session's context menu (below)

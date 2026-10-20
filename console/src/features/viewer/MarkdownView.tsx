@@ -32,6 +32,7 @@ import {
 } from "./parts/mdPreviewLinks.ts";
 import type { PreviewLinkWiring } from "./parts/mdPreviewLinks.ts";
 import { usePortLinkMenu } from "../preview/portLinkContext.ts";
+import { useSessionWorkDir } from "./workDirContext.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 
 // MarkdownView renders Markdown to sanitized HTML, highlights fenced code blocks,
@@ -132,6 +133,7 @@ export function MarkdownView({
   const openPathMenu = usePathLinkMenu();
   const openPathMenuRef = useRef(openPathMenu);
   openPathMenuRef.current = openPathMenu;
+  const workDir = useSessionWorkDir();
   // The shared view passes no onOpenFile: no menu and no suppressed native menu there.
   const hasPathMenu = openPathMenu !== null && !!onOpenFile;
   // Port links likewise (PortLinkMenuHost), independent of onOpenFile.
@@ -251,6 +253,7 @@ export function MarkdownView({
         },
         hasSessionMenu ? (name, x, y) => openSessionMenuRef.current?.(name, x, y) : undefined,
         workItemRefs,
+        workDir,
       );
     runLinkify();
     relink.current = { run: runLinkify, inputs: wiInputs };
@@ -297,6 +300,7 @@ export function MarkdownView({
             : useFilesStore.getState().revealInFiles(p, { focus: true }),
         (message) => toast(message),
         hasPathMenu ? (target, x, y) => openPathMenuRef.current?.(target, x, y) : undefined,
+        workDir,
       );
     }
 
@@ -351,7 +355,7 @@ export function MarkdownView({
       stickyCleanup();
     };
     // wiInputs is read for the relink bookkeeping only: a change to it is the effect below.
-  }, [source, basePath, baseDir, repo, breaks, streaming, theme, codeWrapDefault, toast, hasSessionMenu, hasPathMenu, workItemRefs, previewLinks, hasPortMenu]);
+  }, [source, basePath, baseDir, repo, breaks, streaming, theme, codeWrapDefault, toast, hasSessionMenu, hasPathMenu, workDir, workItemRefs, previewLinks, hasPortMenu]);
 
   // Idempotent: existing anchors are skipped, and the links already there re-classify on click.
   useEffect(() => {

@@ -39,6 +39,20 @@ const EXT_RE = /\.[A-Za-z][A-Za-z0-9_+-]{0,11}$/;
 // with. Split off here: the agent resolves the path, the pane needs the line.
 const LINE_SUFFIX = /:(\d+)(?::(\d+))?$/;
 
+// `$AF_WORK_DIR` as the whole token or as the first segment — the exact name, not a prefix of
+// a longer one (`$AF_WORK_DIRS`) and not `${AF_WORK_DIR}`. It is the session's throwaway
+// directory, which only the session's own surface can name (see sessionWorkDir).
+const WORK_DIR_PREFIX = /^\$AF_WORK_DIR(?=\/|:\d|$)/;
+
+/**
+ * sessionWorkDir is the home-relative form of a session's $AF_WORK_DIR (the Agent creates
+ * ~/.af-work/<name> at launch, paths.SessionWorkDir), or "" for a name that cannot be one.
+ */
+export function sessionWorkDir(name: string | null | undefined): string {
+  if (!name || name === "." || name === ".." || name.includes("/")) return "";
+  return "~/.af-work/" + name;
+}
+
 export interface PathRef {
   /** The path to resolve: no line suffix, no trailing slash. */
   ref: string;
@@ -50,10 +64,19 @@ export interface PathRef {
  * pathRefCandidate returns the path reference a piece of inline code carries, or null when
  * the token is not worth resolving. A trailing "/" (a directory, as agents write them) is
  * dropped — fs paths carry none, and the resolver reports file vs directory anyway.
+ * `workDir` (sessionWorkDir) is what a leading `$AF_WORK_DIR` expands to; the returned ref
+ * already carries the expansion.
  */
-export function pathRefCandidate(raw: string | null | undefined): PathRef | null {
-  const text = (raw ?? "").trim();
+export function pathRefCandidate(raw: string | null | undefined, workDir?: string): PathRef | null {
+  let text = (raw ?? "").trim();
   if (!text || text.length > MAX_REF_LEN) return null;
+  // The one variable an agent reply names a path with. Without a session to expand it against
+  // the token stays plain code, like every other `$…`.
+  const wd = text.match(WORK_DIR_PREFIX);
+  if (wd) {
+    if (!workDir) return null;
+    text = workDir + text.slice(wd[0].length);
+  }
   if (CODEY.test(text)) return null;
   if (isExternalUrl(text)) return null;
 

@@ -128,6 +128,7 @@ export const repos = {
   "proj.copy_rel_path": "相対パスをコピー",
   "proj.open_reader": "朗読で開く",
   "proj.open_gallery": "ギャラリーで開く",
+  "proj.open_folder_gallery": "フォルダをギャラリーで開く",
   "proj.download": "ダウンロード",
   "proj.download_zip": "zip でダウンロード",
   "proj.download_zip_title": "フォルダ内の .git と node_modules は含めません",

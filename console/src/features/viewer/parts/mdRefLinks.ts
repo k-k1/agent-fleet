@@ -92,10 +92,10 @@ const inPathLikeContext = (text: string, start: number, end: number) =>
 // isPathCandidateCode reports whether an inline <code> is the kind of token linkifyPathRefs
 // will try to resolve. Kept in one place so the two passes agree on what a path is: this
 // pass skips exactly what that one claims.
-export function isPathCandidateCode(code: HTMLElement): boolean {
+export function isPathCandidateCode(code: HTMLElement, workDir?: string): boolean {
   if (code.closest("pre,a")) return false;
   if (code.childElementCount) return false;
-  return pathRefCandidate(code.textContent) !== null;
+  return pathRefCandidate(code.textContent, workDir) !== null;
 }
 
 export function linkifyRefs(
@@ -109,6 +109,8 @@ export function linkifyRefs(
   // Ticket references → the work item detail modal (#1659). Off unless the surface asks: a
   // shared session's viewer has neither the sharer's connections nor their inbox cache.
   workItemRefs = false,
+  // Home-relative $AF_WORK_DIR of the session this text belongs to (sessionWorkDir), "" when none.
+  workDir = "",
 ) {
   const wiCtx = workItemRefs ? workItemRefContext(repo) : null;
   const re = wiCtx ? REF_RE_WI : REF_RE;
@@ -136,7 +138,7 @@ export function linkifyRefs(
       const code = n.parentElement?.closest("code");
       // A loopback URL in code belongs to the preview linker (mdPreviewLinks.ts), linked or not.
       if (code && "pvUrl" in code.dataset) return NodeFilter.FILTER_REJECT;
-      if (code && isPathCandidateCode(code) && !ticketCode(code)) return NodeFilter.FILTER_REJECT;
+      if (code && isPathCandidateCode(code, workDir) && !ticketCode(code)) return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
     },
   });
@@ -460,13 +462,14 @@ export async function linkifyPathRefs(
   onOpenDir: (path: string) => void,
   onError: (message: string) => void,
   openMenu?: OpenPathLinkMenu,
+  workDir = "",
 ) {
   const candidates: { code: HTMLElement; ref: PathRef }[] = [];
   el.querySelectorAll<HTMLElement>("code").forEach((code) => {
     if (candidates.length >= MAX_REFS_PER_DOC) return;
     if (code.dataset.pathLink) return; // already processed (the effect can link twice)
-    if (!isPathCandidateCode(code)) return; // fenced source, inside a link, or not path-shaped
-    const ref = pathRefCandidate(code.textContent);
+    if (!isPathCandidateCode(code, workDir)) return; // fenced source, inside a link, or not path-shaped
+    const ref = pathRefCandidate(code.textContent, workDir);
     if (ref) candidates.push({ code, ref });
   });
   if (!candidates.length) return;
@@ -488,7 +491,7 @@ export async function linkifyPathRefs(
     // Asked again after the await: the ticket linkifier may have run meanwhile (the inbox or the
     // repository list arrived) and put a link of its own in this <code>. Wrapping that one would
     // nest two anchors, and a click would open both.
-    if (!code.isConnected || code.dataset.pathLink || !isPathCandidateCode(code)) continue;
+    if (!code.isConnected || code.dataset.pathLink || !isPathCandidateCode(code, workDir)) continue;
     code.dataset.pathLink = "1";
     const a = makePathLink(cwd, ref, hit, onOpenFile, onOpenDir, onError, openMenu);
     while (code.firstChild) a.appendChild(code.firstChild);
