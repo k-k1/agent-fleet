@@ -122,7 +122,13 @@ func (t stalledTree) quiet() bool {
 			return false
 		}
 	}
-	return len(t.Members) > 1 && !agents.QueuedPeerTouches(t.names())
+	return len(t.Members) > 1 && !peersInFlight(t.names())
+}
+
+// peersInFlight reports a peer message held or queued on disk, or claimed from the pending spool
+// and still being delivered, to or from a member.
+func peersInFlight(members map[string]bool) bool {
+	return agents.QueuedPeerTouches(members) || pendingInflightTouches(members)
 }
 
 type stalledEpisode struct {
@@ -210,21 +216,21 @@ func stalledTreeTick(now time.Time) {
 	if after <= 0 {
 		return
 	}
-	trees, metas := collectStalledTrees()
+	trees := collectStalledTrees()
 	roots := map[string]bool{}
 	for _, t := range trees {
 		roots[t.Root] = true
 		if !stalledTreeStep(t, now, after) {
 			continue
 		}
-		stalledTreeNudge(t, metas[t.Root], now, after)
+		stalledTreeNudge(t, now, after)
 	}
 	stalledTreePrune(roots)
 }
 
 // collectStalledTrees groups the live sessions into trees. Only members of a tree are read
 // through wireSession; a session with no parent and no child costs one liveness check.
-func collectStalledTrees() ([]stalledTree, map[string]session.Meta) {
+func collectStalledTrees() []stalledTree {
 	metas := map[string]session.Meta{}
 	kids := map[string][]string{}
 	for _, m := range session.ListMetas() {
@@ -276,7 +282,7 @@ func collectStalledTrees() ([]stalledTree, map[string]session.Meta) {
 			out = append(out, t)
 		}
 	}
-	return out, metas
+	return out
 }
 
 func observeStalledMember(m session.Meta, child bool, t *stalledTree) stalledMember {
@@ -304,18 +310,21 @@ func stalledTreeNotice(children []string, quiet time.Duration) string {
 		"If the work is finished, ignore this.", strings.Join(children, ", "), mins)
 }
 
-func stalledTreeNudge(t stalledTree, root session.Meta, now time.Time, after time.Duration) {
-	// The root is re-read at the last moment: injectSessionPrompt rejects a question or a
-	// permission dialog, but not a turn that started since the tick's reading.
-	if !stalledTreeReady(root) {
-		stalledTreeRetryLater(t.Root, now)
+func stalledTreeNudge(t stalledTree, now time.Time, after time.Duration) {
+	// The tick's reading can be stale by the time it reaches the deadline: a state is polled, and
+	// a child may have taken an input or started a Managed turn since. Everything is read again,
+	// from the metas and the live handles, immediately before sending; any change restarts the
+	// quiet period instead of being retried.
+	if !stalledTreeStillQuiet(t) {
+		stalledTreeRestart(t.Root, now)
 		return
 	}
+	root, _ := session.ReadMeta(t.Root)
 	prompt := stalledTreeNotice(t.Children, after)
 	// Recorded before the send so the mirror badges the turn from its first poll (see
 	// recordInjection).
 	recordInjection(t.Root, prompt, TurnSourceNotice)
-	if err := stalledTreeInject(t.Root, prompt, agents.Origin{Kind: agents.OriginNotice}); err != nil {
+	if err := stalledTreeInject(root.Name, prompt, agents.Origin{Kind: agents.OriginNotice}); err != nil {
 		stalledTreeRetryLater(t.Root, now)
 		log.Printf("stalled-tree: could not deliver the notice to %s: %v", t.Root, err)
 		return
@@ -324,4 +333,28 @@ func stalledTreeNudge(t stalledTree, root session.Meta, now time.Time, after tim
 	recordFleetGraphInstruct(t.Root, TurnSourceNotice, "", "", prompt)
 	fleetgraph.RecordStall(t.Root, fmt.Sprintf("%s idle %d min", strings.Join(t.Children, ", "), int(after/time.Minute)))
 	log.Printf("stalled-tree: nudged %s (children %s idle for %s)", t.Root, strings.Join(t.Children, ", "), after)
+}
+
+// stalledTreeStillQuiet is the last look before a send: every member is still alive and not
+// archived, can take input right now (idle, no pending question, no initial prompt still being
+// delivered), runs nothing in the background, and no peer message is in flight around the tree.
+func stalledTreeStillQuiet(t stalledTree) bool {
+	for _, mem := range t.Members {
+		m, ok := session.ReadMeta(mem.Name)
+		if !ok || m.Archived || !stalledTreeAlive(m) {
+			return false
+		}
+		if m.InitialPromptState == session.InitialPromptPending || stalledTreeBusy(m) || !stalledTreeReady(m) {
+			return false
+		}
+	}
+	return !peersInFlight(t.names())
+}
+
+func stalledTreeRestart(root string, now time.Time) {
+	stalledMu.Lock()
+	defer stalledMu.Unlock()
+	if ep := stalledEpisodes[root]; ep != nil {
+		ep.since = now
+	}
 }

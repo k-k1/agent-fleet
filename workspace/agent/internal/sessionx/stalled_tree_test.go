@@ -258,20 +258,109 @@ func TestStalledTree_FailedDeliveryRetriesLaterAndNeverRepeatsOnSuccess(t *testi
 	}
 }
 
-func TestStalledTree_RootNotReadyDefersWithoutFiring(t *testing.T) {
+func TestStalledTree_LastLookRestartsTheQuietPeriod(t *testing.T) {
+	// The tick's reading says quiet, but a member took work since: the final look must catch it
+	// and restart the clock rather than send, or retry on the next tick.
+	cases := map[string]func(f *stalledFixture, name string, on bool){
+		"root not ready": func(f *stalledFixture, _ string, on bool) { stalledTreeReady = func(session.Meta) bool { return !on } },
+		"child not ready": func(f *stalledFixture, _ string, on bool) {
+			stalledTreeReady = func(m session.Meta) bool { return !(on && m.Name == "kid1") }
+		},
+		"child managed busy": func(f *stalledFixture, _ string, on bool) {
+			stalledTreeBusy = func(m session.Meta) bool { return on && m.Name == "kid2" }
+		},
+		"child initial prompt pending": func(f *stalledFixture, _ string, on bool) {
+			m, _ := session.ReadMeta("kid1")
+			m.InitialPromptState = ""
+			if on {
+				m.InitialPromptState = session.InitialPromptPending
+			}
+			session.WriteMeta(m)
+		},
+		"claimed peer in flight": func(f *stalledFixture, _ string, on bool) {
+			// What deliverPendingPeer does between taking the message off the spool and the
+			// /input answer: the file is gone and the message sits on the target's inflight slot.
+			tg := pendingTargetOf("outsider")
+			tg.mu.Lock()
+			defer tg.mu.Unlock()
+			if on {
+				tg.inflight = &agents.PendingPeer{ID: "p", From: "kid2"}
+			} else {
+				tg.inflight = nil
+			}
+		},
+		"claimed peer in flight to a member": func(f *stalledFixture, _ string, on bool) {
+			tg := pendingTargetOf("kid1")
+			tg.mu.Lock()
+			defer tg.mu.Unlock()
+			if on {
+				tg.inflight = &agents.PendingPeer{ID: "p", From: "outsider"}
+			} else {
+				tg.inflight = nil
+			}
+		},
+	}
+	for name, set := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newStalledFixture(t)
+			f.tree()
+			set(f, name, true)
+			f.tickAt(0)
+			f.tickAt(mins(15)) // deadline reached: the last look refuses
+			f.tickAt(mins(29)) // and the clock restarted at 15
+			if len(f.sent) != 0 {
+				t.Fatalf("sent although the last look found work: %v", f.sent)
+			}
+			set(f, name, false)
+			f.tickAt(mins(30))
+			f.tickAt(mins(45))
+			if len(f.sent) != 1 {
+				t.Fatalf("want one notice once the work cleared and 15 quiet minutes passed, got %d", len(f.sent))
+			}
+		})
+	}
+}
+
+// A message claimed off the spool AFTER the tick read the tree but before the send: only the last
+// look can see it. stalledTreeReady is called by the last look alone, so it plays the delivery
+// loop taking the message at that moment.
+func TestStalledTree_MessageClaimedBetweenReadingAndSendingBlocksTheNotice(t *testing.T) {
 	f := newStalledFixture(t)
 	f.tree()
-	ready := false
-	stalledTreeReady = func(session.Meta) bool { return ready }
+	claimed := true
+	stalledTreeReady = func(session.Meta) bool {
+		tg := pendingTargetOf("outsider")
+		tg.mu.Lock()
+		defer tg.mu.Unlock()
+		if claimed {
+			tg.inflight = &agents.PendingPeer{ID: "p", From: "kid1"}
+		} else {
+			tg.inflight = nil
+		}
+		return true
+	}
 	f.tickAt(0)
 	f.tickAt(mins(15))
 	if len(f.sent) != 0 {
-		t.Fatal("sent into a root that is not ready")
+		t.Fatalf("notified while a message from a member was being delivered: %v", f.sent)
 	}
-	ready = true
-	f.tickAt(mins(21))
+	claimed = false
+	clearInflight := func() {
+		tg := pendingTargetOf("outsider")
+		tg.mu.Lock()
+		tg.inflight = nil
+		tg.mu.Unlock()
+	}
+	clearInflight() // the delivery finished; the clock restarted at 15
+	t.Cleanup(clearInflight)
+	f.tickAt(mins(16))
+	f.tickAt(mins(29))
+	if len(f.sent) != 0 {
+		t.Fatalf("fired inside the restarted quiet period: %v", f.sent)
+	}
+	f.tickAt(mins(30))
 	if len(f.sent) != 1 {
-		t.Fatalf("want the deferred notice once the root is ready, got %d", len(f.sent))
+		t.Fatalf("want one notice after the restarted period, got %d", len(f.sent))
 	}
 }
 
