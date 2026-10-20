@@ -36,17 +36,17 @@ import (
 )
 
 // moveTargetKinds are the kinds a move may target: each can read a file outside its working
-// folder without a prompt, which is where the handover lives (decision 9). Kiro joined after it
-// read a file under ~/.af-work/ in its default permission mode, Managed, with no approval.
+// folder without a prompt, which is where the handover lives (decision 9; the measurements are
+// in its 2026-10-20 addendum). The list is per kind, not per driver: a driver measured for a kind
+// speaks for both of its drivers unless the addendum says otherwise.
 var moveTargetKinds = []string{
 	session.KindClaude, session.KindCodex, session.KindOpencode,
 	session.KindCopilot, session.KindAgy, session.KindMuse, session.KindKiro,
 }
 
-// moveUnmeasuredTargets stay off until the read has been measured through the real driver.
-// Cursor read the file in plan mode through the bare CLI, but the Managed driver path (trust
-// handling, flags) has not run: its only attempt hit a plan limit on the first turn. Moving it
-// into moveTargetKinds is the whole change once that measurement exists.
+// moveUnmeasuredTargets stay off until the read has been measured through the real driver; the
+// bare CLI's result does not cover the driver's trust handling and flags. Moving a kind into
+// moveTargetKinds is the whole change once that measurement exists.
 var moveUnmeasuredTargets = []string{session.KindCursor}
 
 // Reasons a kind is not offered as a target, as the preview reports them.

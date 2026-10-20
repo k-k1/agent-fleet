@@ -480,5 +480,11 @@ it is not yet.
 - **Not measured.** Kiro Terminal (TUI). Cursor Managed: the driver run answered "Upgrade your
   plan to continue" on its first turn (account plan), so the driver's trust handling and flags are
   unmeasured. Cursor Terminal.
+- **Inference, not measurement: kiro Terminal.** The target list is per kind, so a move to kiro
+  may also start the Terminal driver. Both kiro drivers drop `--trust-all-tools` when the
+  "skip permission confirmation" setting is off, and Managed was measured in that default mode
+  with no prompt, so the Terminal chat is expected to read the file the same way. That rests on
+  the two drivers sharing kiro's tool permissions, not on a run. If it does prompt, the prompt
+  appears in the target's own view for the user to answer; the first prompt waits there.
 - **Decision.** Kiro is now a move target. Cursor stays off, reported as `not_measured`, until it
   can be measured through the Managed driver. Follow-ups: #2252.
