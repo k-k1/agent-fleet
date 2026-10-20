@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -441,4 +443,188 @@ func TestSlowDiskReadDoesNotDelayUsageAccounting(t *testing.T) {
 	if time.Since(started) > 5*time.Second {
 		t.Errorf("sweep took %v: the disk budget did not bound it", time.Since(started))
 	}
+}
+
+// The Agent's list of failed boot-installs is stored with the disk reading and served on the
+// roster; a later clean reading withdraws it, and a stopped workspace keeps the last one.
+func TestSampleStoresFailedBootInstallsAndTheRosterServesThem(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, tn, mv, _ := networkFixture(t)
+	ws := store.Workspace{ID: store.NewID(), TenantID: tn.ID, MembershipID: mv.MembershipID,
+		ContainerName: "af-yamada", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t",
+		State: "running", CreatedAt: store.NowTS()}
+	if err := st.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	row := func() map[string]any { return memberRows(t, mgr, "boss@acme.co.jp")["yamada-acme-co-jp"] }
+
+	failed := diskAgent(t, `{"disk_used":9000,"disk_total":10000,"boot_install_failed":{"claude":"no_space"}}`)
+	mgr.rtFactory = sizedFactory{stubFactory{rt: stubRuntime{endpoint: failed.URL, state: "running"}}, runtime.DiskMeaningHome}
+	newUsageSampler(mgr, 5*time.Minute).sample(ctx)
+	bf, _ := row()["boot_failed"].(map[string]any)
+	if len(bf) != 1 || bf["claude"] != "no_space" {
+		t.Fatalf("boot_failed = %v, want claude=no_space", row()["boot_failed"])
+	}
+
+	// Stopped: nothing is sampled, the last start's outcome stays on the card.
+	mgr.rtFactory = sizedFactory{stubFactory{rt: stubRuntime{state: "stopped"}}, runtime.DiskMeaningHome}
+	newUsageSampler(mgr, 5*time.Minute).sample(ctx)
+	if _, ok := row()["boot_failed"]; !ok {
+		t.Error("boot_failed dropped for a stopped workspace")
+	}
+
+	clean := diskAgent(t, `{"disk_used":1000,"disk_total":10000}`)
+	mgr.rtFactory = sizedFactory{stubFactory{rt: stubRuntime{endpoint: clean.URL, state: "running"}}, runtime.DiskMeaningHome}
+	time.Sleep(2 * time.Millisecond) // observed_at is microsecond-resolution and must not go backwards
+	newUsageSampler(mgr, 5*time.Minute).sample(ctx)
+	if v, ok := row()["boot_failed"]; ok {
+		t.Errorf("boot_failed = %v after a clean start, want it withdrawn", v)
+	}
+}
+
+// The outcome is independent of the disk reading: a runtime whose disk is not measured (a
+// working disk) or whose statfs cannot be read still records a new failure and a clean start.
+func TestSampleRecordsBootOutcomeWithoutADiskReading(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, _, _, ws := usageHourFixture(t)
+	failed := diskAgent(t, `{"boot_install_failed":{"claude":"network"}}`)
+	mgr.rtFactory = sizedFactory{stubFactory{rt: stubRuntime{endpoint: failed.URL}}, runtime.DiskMeaningWork}
+	newUsageSampler(mgr, 5*time.Minute).sample(ctx)
+	if raw, _ := st.GetWorkspaceBootFailed(ctx, ws.ID); raw != `{"claude":"network"}` {
+		t.Fatalf("stored = %q, want the claude failure", raw)
+	}
+	if _, ok, _ := st.GetWorkspaceDisk(ctx, ws.ID); ok {
+		t.Error("a disk row was made for a runtime with no measured disk")
+	}
+
+	// Home runtime whose statfs is missing: the clean answer still withdraws the failure.
+	clean := diskAgent(t, `{}`)
+	mgr.rtFactory = sizedFactory{stubFactory{rt: stubRuntime{endpoint: clean.URL}}, runtime.DiskMeaningHome}
+	time.Sleep(2 * time.Millisecond)
+	newUsageSampler(mgr, 5*time.Minute).sample(ctx)
+	if raw, _ := st.GetWorkspaceBootFailed(ctx, ws.ID); raw != "" {
+		t.Errorf("stored = %q after a clean answer, want it withdrawn", raw)
+	}
+}
+
+// A wiped home withdraws the install outcome, and an older outcome cannot come back.
+func TestClearWorkspaceDiskWithdrawsTheBootOutcome(t *testing.T) {
+	ctx := context.Background()
+	st, _, _, _, ws := usageHourFixture(t)
+	if err := st.PutWorkspaceBootFailed(ctx, ws.ID, `{"claude":"no_space"}`, "2026-10-20T10:00:00.000000Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ClearWorkspaceDisk(ctx, ws.ID); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := st.GetWorkspaceBootFailed(ctx, ws.ID); raw != "" {
+		t.Errorf("stored = %q after the wipe", raw)
+	}
+	if err := st.PutWorkspaceBootFailed(ctx, ws.ID, `{"claude":"no_space"}`, "2026-10-20T10:00:01.000000Z"); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := st.GetWorkspaceBootFailed(ctx, ws.ID); raw != "" {
+		t.Errorf("an outcome older than the wipe came back: %q", raw)
+	}
+}
+
+// What the Agent says is untrusted: only CLI-name-shaped keys, the four reasons, a few entries.
+func TestSanitizeBootFailed(t *testing.T) {
+	long := strings.Repeat("a", 33)
+	in := map[string]string{
+		"claude":   "no_space",
+		"../etc":   "no_space",
+		long:       "network",
+		"<b>x</b>": "other",
+		"codex":    "<script>alert(1)</script>",
+		"":         "other",
+	}
+	got := sanitizeBootFailed(in)
+	if len(got) != 2 || got["claude"] != "no_space" || got["codex"] != "other" {
+		t.Errorf("got %v, want claude=no_space and codex=other only", got)
+	}
+	many := map[string]string{}
+	for i := 0; i < 100; i++ {
+		many[fmt.Sprintf("t%d", i)] = "other"
+	}
+	if n := len(sanitizeBootFailed(many)); n != bootFailedMaxTools {
+		t.Errorf("kept %d entries, want %d", n, bootFailedMaxTools)
+	}
+}
+
+// A response far larger than any stats body is cut off rather than buffered whole: the decode
+// then fails and the poll leaves the axes unmeasured.
+func TestAgentStatsRefusesAnOversizedBody(t *testing.T) {
+	big := `{"mem_used":1,"boot_install_failed":{"x":"` + strings.Repeat("a", 200<<10) + `"}}`
+	srv := statsAgent(t, http.StatusOK, big)
+	_, mgr, _, _ := destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
+	if v, ok := memberStatsJSON(t, mgr)["mem_used"]; ok {
+		t.Errorf("mem_used = %v from an oversized body, want it unmeasured", v)
+	}
+}
+
+// Member detail polls memberStats: a running workspace's own answer decides (including a clean
+// one over a stale stored failure), and otherwise the stored outcome is served, which is what a
+// stopped workspace and a local docker deployment (no Agent read) have.
+func TestMemberStatsBootFailed(t *testing.T) {
+	srv := statsAgent(t, http.StatusOK, `{"mem_used":100,"boot_install_failed":{"claude":"no_space"}}`)
+	_, mgr, _, _ := destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
+	out := memberStatsJSON(t, mgr)
+	bf, _ := out["boot_failed"].(map[string]any)
+	if len(bf) != 1 || bf["claude"] != "no_space" {
+		t.Errorf("boot_failed = %v, want claude=no_space", out["boot_failed"])
+	}
+	if _, ok := out["boot_install_failed"]; ok {
+		t.Error("the raw Agent key leaked into the admin response")
+	}
+
+	// Clean live answer over a stored failure: not flagged.
+	clean := statsAgent(t, http.StatusOK, `{"mem_used":100}`)
+	st, mgr2, _, _ := destroyFixture(t, agentStatsFactory{endpoint: clean.URL, state: "running"})
+	storeBoot(t, st, `{"claude":"no_space"}`)
+	if v, ok := memberStatsJSON(t, mgr2)["boot_failed"]; ok {
+		t.Errorf("boot_failed = %v over a clean live answer, want absent", v)
+	}
+
+	// Stopped: nothing live, the stored outcome is served.
+	st3, mgr3, _, _ := destroyFixture(t, agentStatsFactory{state: "stopped"})
+	storeBoot(t, st3, `{"claude":"no_space"}`)
+	bf, _ = memberStatsJSON(t, mgr3)["boot_failed"].(map[string]any)
+	if bf["claude"] != "no_space" {
+		t.Errorf("stopped: boot_failed = %v, want the stored failure", bf)
+	}
+}
+
+// storeBoot records a stored install outcome for destroyFixture's workspace.
+func storeBoot(t *testing.T, st *store.SQL, failed string) {
+	t.Helper()
+	if err := st.PutWorkspaceBootFailed(context.Background(), "W-1", failed, store.DiskObservedAt(time.Now())); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Transitions inside one fixture and between two sweeps: what the detail poll saw is stored, so
+// a stop before the next sweep does not bring the previous start's outcome back.
+func TestMemberStatsRemembersTheOutcomeItSawAcrossAStop(t *testing.T) {
+	run := func(t *testing.T, stored, live string, wantAfterStop bool) {
+		st, mgr, _, _ := destroyFixture(t, agentStatsFactory{state: "stopped"})
+		if stored != "" {
+			storeBoot(t, st, stored)
+			time.Sleep(2 * time.Millisecond)
+		}
+		srv := statsAgent(t, http.StatusOK, live)
+		mgr.rtFactory = agentStatsFactory{endpoint: srv.URL, state: "running"}
+		memberStatsJSON(t, mgr) // the running poll
+		mgr.rtFactory = agentStatsFactory{state: "stopped"}
+		_, has := memberStatsJSON(t, mgr)["boot_failed"]
+		if has != wantAfterStop {
+			t.Errorf("after stop boot_failed present = %v, want %v", has, wantAfterStop)
+		}
+	}
+	t.Run("failed stored, clean live, stopped", func(t *testing.T) {
+		run(t, `{"claude":"no_space"}`, `{"mem_used":1}`, false)
+	})
+	t.Run("clean stored, failed live, stopped", func(t *testing.T) {
+		run(t, "", `{"mem_used":1,"boot_install_failed":{"claude":"no_space"}}`, true)
+	})
 }

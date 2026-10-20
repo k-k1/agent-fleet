@@ -8,6 +8,7 @@ import { OnOff, Row } from "../parts/controls.tsx";
 import { useHostUpdate } from "../hostUpdate.ts";
 import { usePolling } from "../parts/usePolling.ts";
 import { useT } from "../../../lib/i18n/index.ts";
+import { bootReasonKey } from "../../../core/store/bootInstallReason.ts";
 import { pinDrift } from "../../../lib/pinDrift.ts";
 import { relTime } from "../../../lib/intl.ts";
 import { watcherHealth, type CLIRelease } from "../cliRelease.ts";
@@ -170,21 +171,6 @@ function HostUpdateSection() {
       )}
     </section>
   );
-}
-
-// bootReasonKey maps the Agent's closed set of boot-install failure reasons to their strings;
-// anything unknown reads as "other".
-function bootReasonKey(reason?: string) {
-  switch (reason) {
-    case "no_space":
-      return "env.boot_reason_no_space" as const;
-    case "network":
-      return "env.boot_reason_network" as const;
-    case "checksum":
-      return "env.boot_reason_checksum" as const;
-    default:
-      return "env.boot_reason_other" as const;
-  }
 }
 
 // ToolVersions is a read-only section showing the bundled tools (claude / opencode /

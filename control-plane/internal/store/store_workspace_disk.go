@@ -53,12 +53,23 @@ func (s *SQL) PutWorkspaceDisk(ctx context.Context, d WorkspaceDisk) error {
 // describes files that are gone. The row is kept as a mark stamped now, so a reading that began
 // before the wipe and lands after it is refused rather than bringing the old figure back.
 func (s *SQL) ClearWorkspaceDisk(ctx context.Context, workspaceID string) error {
+	now := DiskObservedAt(time.Now())
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO workspace_disk(workspace_id, used, total, observed_at, cleared)
 		 SELECT CAST(? AS TEXT), 0, 0, CAST(? AS TEXT), 1
 		 WHERE EXISTS (SELECT 1 FROM workspace WHERE id=?)
 		 ON CONFLICT(workspace_id) DO UPDATE SET used=0, total=0, observed_at=excluded.observed_at, cleared=1`,
-		workspaceID, DiskObservedAt(time.Now()), workspaceID)
+		workspaceID, now, workspaceID)
+	if err != nil {
+		return err
+	}
+	// The last start's install outcome describes the wiped home too: the next start installs again.
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO workspace_boot_install(workspace_id, failed, observed_at)
+		 SELECT CAST(? AS TEXT), '', CAST(? AS TEXT)
+		 WHERE EXISTS (SELECT 1 FROM workspace WHERE id=?)
+		 ON CONFLICT(workspace_id) DO UPDATE SET failed='', observed_at=excluded.observed_at`,
+		workspaceID, now, workspaceID)
 	return err
 }
 

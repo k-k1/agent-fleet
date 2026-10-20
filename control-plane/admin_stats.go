@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"sync"
 	"time"
@@ -76,6 +77,7 @@ func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 	// seconds, and this laziness is what keeps a docker deployment from running
 	// `docker inspect` twice on every poll.
 	state := sync.OnceValue(func() string { return rt.State(ctx) })
+	readStart := time.Now()
 	out := workspaceStats(ctx, a.mgr, rt, state)
 	// The member detail is opened from a roster snapshot and polls only this, so the
 	// automatic-stop reason rides here: read from the snapshot, it outlived the restart
@@ -84,6 +86,34 @@ func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 		if as := store.CurrentAutoStop(ctx, a.mgr.store, mem.ID, state()); as != nil {
 			out["auto_stop"] = as
 		}
+	}
+	// Which CLIs failed to install on the last start. A running workspace the Agent answered
+	// for is authoritative (a clean start reports none); otherwise (stopped, unreachable, or a
+	// local docker deployment where the host-side read never asks the Agent) it is the sampler's
+	// stored outcome. The list stays out of the response when empty, and the detail renders only
+	// this key, so a stale snapshot on the client can never decide it.
+	live, answered := out["boot_install_failed"].(map[string]string)
+	delete(out, "boot_install_failed")
+	if answered {
+		// Persist what was just seen, stamped with when the read began, so a stop before the
+		// next sweep falls back to this outcome and not to an older one, and an older sweep
+		// that lands later is refused by the same ordering guard. The record is "the last
+		// start observed"; a start that began and ended between two reads is not seen at all.
+		raw := ""
+		if len(live) > 0 {
+			if b, err := json.Marshal(live); err == nil {
+				raw = string(b)
+			}
+		}
+		_ = a.mgr.store.PutWorkspaceBootFailed(ctx, ws.ID, raw, store.DiskObservedAt(readStart))
+	} else {
+		live = nil
+		if raw, err := a.mgr.store.GetWorkspaceBootFailed(ctx, ws.ID); err == nil && raw != "" {
+			_ = json.Unmarshal([]byte(raw), &live)
+		}
+	}
+	if len(live) > 0 {
+		out["boot_failed"] = live
 	}
 	// Disk prefers the host-side du. Where CP and Workspace share a host, that is the
 	// size of the home tree itself — the only figure readable while the container is

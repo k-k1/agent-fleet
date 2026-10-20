@@ -28,6 +28,8 @@ import { useTenantStore } from "../../../core/store/tenant.ts";
 import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
 import type { HomeResize, Member, WsSizing, WsSlot } from "../parts/adminShared.ts";
 import { fmtG, fmtPct, fmtGbHint, ladderFor, memberClassID, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
+import { bootReasonKey } from "../../../core/store/bootInstallReason.ts";
+import { bootFailures, homeFullFigures, nextMemberHomePressure } from "./memberRoster.ts";
 import { MemberAutoStopDetail, MemberIdleDetail, MemberSizeChips } from "./tenantMembers.tsx";
 import { MemberEngineAccessPanel } from "./tenantEngineAccess.tsx";
 
@@ -163,6 +165,8 @@ export function MemberView({
     void loadBackups();
   }, [loadBackups]);
 
+  // The home-full flag keeps its hysteresis across polls (see nextMemberHomePressure).
+  const [homeFull, setHomeFull] = useState(false);
   const poll = useCallback(async () => {
     try {
       const [s, ss] = await Promise.all([api(`${base}/stats`), api(`${base}/sessions`)]);
@@ -171,6 +175,7 @@ export function MemberView({
       if (stSer !== statsSer.current) {
         statsSer.current = stSer;
         setStats(st);
+        setHomeFull((prev) => nextMemberHomePressure(prev, st));
       }
       const list = ss && ss.sessions ? ss.sessions : [];
       const ssSer = JSON.stringify(list);
@@ -203,6 +208,7 @@ export function MemberView({
     statsSer.current = "";
     sessSer.current = "";
     setStats(null);
+    setHomeFull(false);
     setSessions(null);
     poll();
     timer.current = setInterval(() => {
@@ -219,6 +225,12 @@ export function MemberView({
   // value as the denominator makes the ratio a lie — where a measurement exists, it is the
   // truth (docs/log/63 §63.9).
   const diskTotal = stats?.disk_total ?? stats?.disk_quota ?? null;
+  // What the last start's install said, from the poll alone: the CP answers with the running
+  // workspace's own report or, while stopped, the stored outcome. The roster snapshot in
+  // `member` is fixed at click time and must never decide it.
+  const bootFailed = bootFailures(stats?.boot_failed);
+  const homeFigures = homeFullFigures(stats);
+  const fmtGiB = (b: number) => (b / 1024 ** 3).toFixed(1);
   const diskRatio = diskTotal && stats?.disk_used != null ? stats.disk_used / diskTotal : null;
 
   // --- how to describe the three size axes on THIS runtime (ADR 0045 decision 21) ------
@@ -556,6 +568,22 @@ export function MemberView({
             </button>
           )}
         </div>
+        {/* Next to the size it is about: a full home or a failed install explains why a member
+            "with enough disk" cannot start a CLI. Text and icon, never colour alone. */}
+        {homeFull && running && homeFigures && (
+          <p className="ws-size-flag" role="status">
+            <Icon name="warning" />
+            {tr("admin.ws_home_full", { used: fmtGiB(homeFigures.used), total: fmtGiB(homeFigures.total) })}
+          </p>
+        )}
+        {bootFailed.length > 0 && (
+          <p className="ws-size-flag" role="status">
+            <Icon name="warning" />
+            {tr("admin.ws_boot_failed", {
+              list: bootFailed.map(([tool, reason]) => `${tool} (${tr(bootReasonKey(reason))})`).join(", "),
+            })}
+          </p>
+        )}
         {limitOpen && (
           <div className="limit-edit">
             {/* Which KIND of machine, above the numbers — it changes what the numbers

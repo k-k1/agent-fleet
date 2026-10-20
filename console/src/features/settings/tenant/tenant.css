@@ -988,6 +988,14 @@
   margin: 0 0 12px;
 }
 
+.ws-size-flag {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 0 0;
+  color: var(--warn);
+}
+
 .mc-live {
   display: flex;
   flex-direction: column;

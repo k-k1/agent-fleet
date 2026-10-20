@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -252,15 +253,22 @@ func (u *usageSampler) recordDisks(ctx context.Context, jobs []diskJob) {
 func (u *usageSampler) recordDisk(ctx context.Context, ws store.Workspace, rt runtime.Runtime, agentUp bool) {
 	var used, total uint64
 	taken := time.Now()
+	// One Agent call serves the install outcome (every runtime) and the home statfs. The outcome
+	// is recorded whether or not a disk reading follows: a disk that cannot be read must neither
+	// drop a new failure nor keep an old one, and a clean answer withdraws it.
+	var st map[string]any
+	if agentUp {
+		sctx, cancel := context.WithTimeout(ctx, usageSessionTimeout)
+		s, err := u.mgr.agentStats(sctx, rt)
+		cancel()
+		if err == nil {
+			st = s
+			u.recordBootFailed(ctx, ws, s, taken)
+		}
+	}
 	switch u.mgr.workspaceSizing().DiskMeaning {
 	case runtime.DiskMeaningHome:
-		if !agentUp {
-			return
-		}
-		sctx, cancel := context.WithTimeout(ctx, usageSessionTimeout)
-		defer cancel()
-		st, err := u.mgr.agentStats(sctx, rt)
-		if err != nil {
+		if st == nil {
 			return
 		}
 		du, ok1 := st["disk_used"].(uint64)
@@ -483,4 +491,21 @@ func writeUsageCSV(w http.ResponseWriter, rows []store.UsageRow) {
 		})
 	}
 	cw.Flush()
+}
+
+// recordBootFailed stores which CLIs failed to install on this start, from an answered stats
+// call. An Agent that reports none withdraws an earlier failure.
+func (u *usageSampler) recordBootFailed(ctx context.Context, ws store.Workspace, st map[string]any, at time.Time) {
+	bf, _ := st["boot_install_failed"].(map[string]string)
+	failed := ""
+	if len(bf) > 0 {
+		b, err := json.Marshal(bf)
+		if err != nil {
+			return
+		}
+		failed = string(b)
+	}
+	if err := u.mgr.store.PutWorkspaceBootFailed(ctx, ws.ID, failed, store.DiskObservedAt(at)); err != nil {
+		log.Printf("showback: record boot install (%s): %v", ws.ContainerName, err)
+	}
 }
