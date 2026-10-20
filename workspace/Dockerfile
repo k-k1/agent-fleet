@@ -396,10 +396,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.4.2
-ARG AGY_RELEASE_BUILD=4835981233356800
-ARG AGY_SHA256_X64=6395837ac0e193dd3fe50f1228e1c4aea345ca99636d54404ab7e74397d4091c
-ARG AGY_SHA256_ARM64=08dd4a2ca52d531fef1dfae4ec2fbafcd56342bfa694c8193a60da2b26fb1898
+ARG AGY_VERSION=1.4.3
+ARG AGY_RELEASE_BUILD=4577820882632704
+ARG AGY_SHA256_X64=319b2cb3240d244930bd077033b466941fd7ba6f0881d783eee801dbd2fb9371
+ARG AGY_SHA256_ARM64=045aa7112f574ef97f8320a65d30a555c4ce9bdd5e3d56d40fce7e262ca98cda
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -443,9 +443,9 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 # setTimeout(...).unref() で走るが `disableAutoUpdate || channel==="static"` でスキップ）。
 # 焼き込みでは AF が起動フラグ `--disable-auto-update`（全経路）＋ entrypoint の
 # cli-config.json `channel:"static"` 再固定の二重で封じる（詳細 docs/log/40 Track B）。
-ARG CURSOR_VERSION=2026.10.16-e3cb207
-ARG CURSOR_SHA256_X64=3aa3f48cd7a3909a98c9b3f2a4085f0c021088bf826690b22c61f424c843e552
-ARG CURSOR_SHA256_ARM64=4cf077f150eb8d1e270bf1dea69700184c39a4847fe192d523f5bb34d4b62597
+ARG CURSOR_VERSION=2026.10.19-6bbf2c4
+ARG CURSOR_SHA256_X64=cf80cc18d8b33bf33e762353977ca1868cfc45290c92c0ffdcef83bb8b37b44f
+ARG CURSOR_SHA256_ARM64=71a90f12a8b8183a71442b7ed4037bddc1a0f88114ec4fb9ec92782acb8e7d84
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
