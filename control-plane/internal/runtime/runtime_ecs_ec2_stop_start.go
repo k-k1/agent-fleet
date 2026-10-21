@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -12,6 +13,9 @@ import (
 // work is dropped without cleanup: the claim and the phase are no longer this Start's to
 // remove, and the Stop has already cleared them.
 var errStartSuperseded = errors.New("start superseded by a newer start or a stop")
+
+// errStartCountUnknown: the Start count could not be read, so ownership is unknown.
+var errStartCountUnknown = errors.New("start count unreadable")
 
 // abortStarts is what Stop does to a Start that is still converging in the background: it
 // moves the Start count on, so every step that checks it (startSuperseded, underStart)
@@ -49,7 +53,7 @@ func (e *ecsEC2Runtime) underStart(ctx context.Context, p ec2Placement, raise fu
 	defer unlock()
 	moved, err := e.startedSince(lctx, p.gen)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errStartCountUnknown, err)
 	}
 	if moved {
 		return errStartSuperseded
@@ -71,11 +75,43 @@ func (e *ecsEC2Runtime) dropClaimOnStop(ctx context.Context) {
 	log.Printf("ecs-ec2: stop dropped the claim of a converging start on %s", e.base.name)
 }
 
-// unclaimUnlessSuperseded drops this Start's claim on a failure path, unless a Stop or a
-// newer Start has overtaken it: the claim then belongs to them.
-func (e *ecsEC2Runtime) unclaimUnlessSuperseded(ctx context.Context, p ec2Placement) {
-	if e.startSuperseded(ctx, p) {
-		return
+// ifOwned runs fn (one AWS call, or a short run of them) only while this Start has not
+// been overtaken, with the check and fn under the same lock abortStarts takes: a Stop
+// either lands before the check (fn is skipped, false) or after fn (it wins afterwards).
+// Destructive steps of a failed launch go through it, because the slot or home they act on
+// may already be a newer Start's. A lock that cannot be taken runs fn unguarded, as those
+// steps did before: skipping a quarantine would leave a broken slot in the pool.
+func (e *ecsEC2Runtime) ifOwned(ctx context.Context, p ec2Placement, fn func(context.Context)) bool {
+	err := e.underStart(ctx, p, func(c context.Context) error {
+		fn(c)
+		return nil
+	})
+	if errors.Is(err, errStartSuperseded) {
+		return false
 	}
-	e.unclaim(ctx, p.volumeID)
+	if errors.Is(err, errStartCountUnknown) {
+		return false
+	}
+	if err != nil {
+		log.Printf("ecs-ec2: could not take the claim lock to check ownership of %s: %v", e.base.name, err)
+		fn(ctx)
+	}
+	return true
+}
+
+// ifOwnedStrict is ifOwned for steps that must not run on a doubt (dropping a claim or a
+// dormancy mark): an unreadable count or an untaken lock keeps them from running, and the
+// claim expires on its own.
+func (e *ecsEC2Runtime) ifOwnedStrict(ctx context.Context, p ec2Placement, fn func(context.Context)) bool {
+	return e.underStart(ctx, p, func(c context.Context) error {
+		fn(c)
+		return nil
+	}) == nil
+}
+
+// unclaimUnlessSuperseded drops this Start's claim on a failure path, unless a Stop or a
+// newer Start has overtaken it: the claim then belongs to them. The check and the delete
+// share one lock, so a delete in flight cannot land on a claim written after it.
+func (e *ecsEC2Runtime) unclaimUnlessSuperseded(ctx context.Context, p ec2Placement) {
+	e.ifOwnedStrict(ctx, p, func(c context.Context) { e.unclaim(c, p.volumeID) })
 }

@@ -2127,16 +2127,15 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 // now, so drop the claim and make sure the home is not counted as dormant while its task
 // runs.
 func (e *ecsEC2Runtime) finishLaunch(ctx context.Context, p ec2Placement) {
-	if e.startSuperseded(ctx, p) {
-		// A Stop (or a newer Start) came in after the service was raised: the claim and the
-		// dormancy marks are theirs now.
-		return
-	}
 	if p.replacement {
 		e.clearReplacesHome(ctx, p.instanceID)
 	}
-	e.unclaim(ctx, p.volumeID)
-	e.clearDormancy(ctx, p.volumeID)
+	// A Stop (or a newer Start) after the service was raised owns the claim and the
+	// dormancy marks now; the check and the deletes share one short lock.
+	e.ifOwnedStrict(ctx, p, func(c context.Context) {
+		e.unclaim(c, p.volumeID)
+		e.clearDormancy(c, p.volumeID)
+	})
 	e.base.watchReady(ctx)
 }
 
@@ -2166,7 +2165,11 @@ func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, caus
 	// launch's context ending, and the stop below must still be sent.
 	ctx, cancelAll := context.WithTimeout(context.WithoutCancel(ctx), quarantineCleanupBudget)
 	defer cancelAll()
-	e.markQuarantined(ctx, p.instanceID, cause)
+	// Every step that acts on the slot or its home runs through ifOwned: a Stop and a new
+	// Start may have taken the slot since the mount failed, and the rest is theirs.
+	if !e.ifOwned(ctx, p, func(c context.Context) { e.markQuarantined(c, p.instanceID, cause) }) {
+		return
+	}
 	if p.volumeID != "" {
 		// A failed af-mount may still have mounted the home (it fails after the mount when
 		// the new filesystem cannot be written), so unmount before the detach. Bounded and
@@ -2179,27 +2182,35 @@ func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, caus
 		if err != nil {
 			log.Printf("ecs-ec2: leaving %s attached to the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
 		} else {
-			uctx, cancel := context.WithTimeout(lctx, quarantineUmountBudget)
-			if err := e.umountHome(uctx, p.instanceID); err != nil {
-				log.Printf("ecs-ec2: unmounting %s on the quarantined slot %s before the detach: %v", p.volumeID, p.instanceID, err)
-			}
-			cancel()
-			if err := homeGuardOf(lctx).check(); err != nil {
-				log.Printf("ecs-ec2: leaving %s attached to the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
-			} else if _, err := e.ec2.DetachVolume(lctx, &ec2.DetachVolumeInput{
-				VolumeId:   aws.String(p.volumeID),
-				InstanceId: aws.String(p.instanceID),
-			}); err != nil {
-				log.Printf("ecs-ec2: detaching %s from the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
-			}
+			owned := e.ifOwned(lctx, p, func(c context.Context) {
+				uctx, cancel := context.WithTimeout(c, quarantineUmountBudget)
+				if err := e.umountHome(uctx, p.instanceID); err != nil {
+					log.Printf("ecs-ec2: unmounting %s on the quarantined slot %s before the detach: %v", p.volumeID, p.instanceID, err)
+				}
+				cancel()
+				if err := homeGuardOf(lctx).check(); err != nil {
+					log.Printf("ecs-ec2: leaving %s attached to the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
+				} else if _, err := e.ec2.DetachVolume(lctx, &ec2.DetachVolumeInput{
+					VolumeId:   aws.String(p.volumeID),
+					InstanceId: aws.String(p.instanceID),
+				}); err != nil {
+					log.Printf("ecs-ec2: detaching %s from the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
+				}
+			})
 			unlock()
+			if !owned {
+				cancelLock()
+				return
+			}
 		}
 		cancelLock()
-		e.unclaim(ctx, p.volumeID)
+		e.unclaimUnlessSuperseded(ctx, p)
 	}
-	if _, err := e.ec2.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: []string{p.instanceID}}); err != nil {
-		log.Printf("ecs-ec2: stopping the quarantined slot %s: %v", p.instanceID, err)
-	}
+	e.ifOwned(ctx, p, func(c context.Context) {
+		if _, err := e.ec2.StopInstances(c, &ec2.StopInstancesInput{InstanceIds: []string{p.instanceID}}); err != nil {
+			log.Printf("ecs-ec2: stopping the quarantined slot %s: %v", p.instanceID, err)
+		}
+	})
 }
 
 // markQuarantined is step 1 of both quarantine paths: the single tag write that takes a
@@ -2269,8 +2280,15 @@ func (e *ecsEC2Runtime) markQuarantined(ctx context.Context, instanceID string, 
 func (e *ecsEC2Runtime) abandonLostSlot(ctx context.Context, p ec2Placement, cause error) {
 	log.Printf("ecs-ec2: ABANDONING slot %s — it is running but the cluster cannot reach it, so %s is being moved off it: %v",
 		p.instanceID, e.base.name, cause)
-	e.markQuarantined(ctx, p.instanceID, cause)
-	e.deregisterSlot(ctx, p.instanceID)
+	// Each step that acts on the slot or its home runs through ifOwned (the waits between
+	// them do not): a Stop and a new Start can land during the minutes this takes, and the
+	// new Start may be using this very slot.
+	if !e.ifOwned(ctx, p, func(c context.Context) {
+		e.markQuarantined(c, p.instanceID, cause)
+		e.deregisterSlot(c, p.instanceID)
+	}) {
+		return
+	}
 	if err := e.waitTaskENIsGone(ctx, p.instanceID); err != nil {
 		// Not fatal, but it changes what we may do next: stopping now is the multi-ENI
 		// trap, so leave the box running and let the operator (or the sweeper, once ECS
@@ -2280,12 +2298,16 @@ func (e *ecsEC2Runtime) abandonLostSlot(ctx context.Context, p ec2Placement, cau
 		e.forceDetachHome(ctx, p)
 		return
 	}
-	if _, err := e.ec2.StopInstances(ctx, &ec2.StopInstancesInput{
-		InstanceIds: []string{p.instanceID},
-		// A graceful stop asks the OS to shut down; that is precisely what is broken.
-		Force: aws.Bool(true),
-	}); err != nil {
-		log.Printf("ecs-ec2: force-stopping the lost slot %s: %v", p.instanceID, err)
+	if !e.ifOwned(ctx, p, func(c context.Context) {
+		if _, err := e.ec2.StopInstances(c, &ec2.StopInstancesInput{
+			InstanceIds: []string{p.instanceID},
+			// A graceful stop asks the OS to shut down; that is precisely what is broken.
+			Force: aws.Bool(true),
+		}); err != nil {
+			log.Printf("ecs-ec2: force-stopping the lost slot %s: %v", p.instanceID, err)
+		}
+	}) {
+		return
 	}
 	if err := e.waitInstanceStopped(ctx, p.instanceID); err != nil {
 		log.Printf("ecs-ec2: lost slot %s did not stop (%v); forcing the home off it", p.instanceID, err)
@@ -2295,11 +2317,17 @@ func (e *ecsEC2Runtime) abandonLostSlot(ctx context.Context, p ec2Placement, cau
 	// The box is off: an ordinary detach now, which is the one that cannot corrupt
 	// anything — nothing is holding the filesystem open any more.
 	if p.volumeID != "" {
-		if _, err := e.ec2.DetachVolume(ctx, &ec2.DetachVolumeInput{
-			VolumeId:   aws.String(p.volumeID),
-			InstanceId: aws.String(p.instanceID),
-		}); err != nil {
-			log.Printf("ecs-ec2: detaching %s from the stopped lost slot %s: %v", p.volumeID, p.instanceID, err)
+		var detachErr error
+		if !e.ifOwned(ctx, p, func(c context.Context) {
+			_, detachErr = e.ec2.DetachVolume(c, &ec2.DetachVolumeInput{
+				VolumeId:   aws.String(p.volumeID),
+				InstanceId: aws.String(p.instanceID),
+			})
+		}) {
+			return
+		}
+		if detachErr != nil {
+			log.Printf("ecs-ec2: detaching %s from the stopped lost slot %s: %v", p.volumeID, p.instanceID, detachErr)
 			e.forceDetachHome(ctx, p)
 		}
 	}
@@ -2313,13 +2341,15 @@ func (e *ecsEC2Runtime) forceDetachHome(ctx context.Context, p ec2Placement) {
 	if p.volumeID == "" {
 		return
 	}
-	if _, err := e.ec2.DetachVolume(ctx, &ec2.DetachVolumeInput{
-		VolumeId:   aws.String(p.volumeID),
-		InstanceId: aws.String(p.instanceID),
-		Force:      aws.Bool(true),
-	}); err != nil {
-		log.Printf("ecs-ec2: force-detaching %s from the lost slot %s: %v", p.volumeID, p.instanceID, err)
-	}
+	e.ifOwned(ctx, p, func(c context.Context) {
+		if _, err := e.ec2.DetachVolume(c, &ec2.DetachVolumeInput{
+			VolumeId:   aws.String(p.volumeID),
+			InstanceId: aws.String(p.instanceID),
+			Force:      aws.Bool(true),
+		}); err != nil {
+			log.Printf("ecs-ec2: force-detaching %s from the lost slot %s: %v", p.volumeID, p.instanceID, err)
+		}
+	})
 }
 
 // waitTaskENIsGone polls until ECS has taken its task ENIs off the instance. Same check
