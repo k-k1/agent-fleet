@@ -561,6 +561,80 @@ func TestMCPOAuthCIMDDocumentMustNameItself(t *testing.T) {
 	}
 }
 
+// The fixture preserves ChatGPT's published document, including its preferred method
+// and its supported-method list: the preference alone does not rule out a public client.
+func TestMCPOAuthCIMDChatGPT(t *testing.T) {
+	body, err := os.ReadFile("testdata/chatgpt-oauth-client.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const id = "https://chatgpt.com/oauth/client.json"
+	const cb = "https://chatgpt.com/connector_platform_oauth_redirect"
+	for _, tc := range []struct {
+		name     string
+		mutate   func(map[string]any)
+		accepted bool
+	}{
+		{"published document", nil, true},
+		{"none default", func(d map[string]any) { d["token_endpoint_auth_method"] = "none" }, true},
+		{"omitted default", func(d map[string]any) { delete(d, "token_endpoint_auth_method") }, true},
+		{"empty default", func(d map[string]any) { d["token_endpoint_auth_method"] = "" }, true},
+		{"private key only", func(d map[string]any) { d["token_endpoint_auth_methods_supported"] = []string{"private_key_jwt"} }, false},
+		{"no supported list", func(d map[string]any) { delete(d, "token_endpoint_auth_methods_supported") }, false},
+		{"secret despite none support", func(d map[string]any) { d["client_secret"] = "s" }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newMCPOAuthEnv(t)
+			doc := body
+			if tc.mutate != nil {
+				var d map[string]any
+				if err := json.Unmarshal(body, &d); err != nil {
+					t.Fatal(err)
+				}
+				tc.mutate(d)
+				doc, err = json.Marshal(d)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			e.docs[id] = string(doc)
+			client, err := e.api.loadCIMD(context.Background(), id)
+			if !tc.accepted {
+				if !errors.Is(err, errMCPClientUnknown) {
+					t.Fatalf("loadCIMD: %v, want unknown client", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !client.CIMD || client.ID != id || client.Name != "ChatGPT" || len(client.Redirects) != 1 || client.Redirects[0] != cb {
+				t.Fatalf("unexpected client: %+v", client)
+			}
+			_, challenge := pkcePair()
+			q := e.authQuery(id, cb, challenge)
+			q.Del("code_challenge")
+			if rec := e.authorize(q); rec.Code != http.StatusFound || locationQuery(t, rec).Get("error") != "invalid_request" {
+				t.Fatalf("missing PKCE: %d %s", rec.Code, rec.Body)
+			}
+			tk := e.connect(id, cb, "read")
+			for _, assertion := range []string{"signed.assertion.jwt", ""} {
+				rec := e.post(mcpOAuthToken, url.Values{
+					"grant_type": {"refresh_token"}, "client_id": {id}, "refresh_token": {tk.Refresh},
+					"client_assertion":      {assertion},
+					"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
+				})
+				if rec.Code != http.StatusUnauthorized || jsonField(t, rec, "error") != "invalid_client" {
+					t.Fatalf("client assertion: %d %s", rec.Code, rec.Body)
+				}
+			}
+			if rec := e.refresh(id, tk.Refresh); rec.Code != http.StatusOK {
+				t.Fatalf("public refresh after rejected assertions: %d %s", rec.Code, rec.Body)
+			}
+		})
+	}
+}
+
 func TestCIMDCacheIsBounded(t *testing.T) {
 	c := newCIMDCache(3)
 	now := time.Now()
