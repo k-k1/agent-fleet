@@ -1160,7 +1160,7 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 		e.clearBlockedPhase()
 		return "running"
 	case s.DesiredCount >= 1:
-		e.notePlacementBlocked(s)
+		e.notePlacementBlocked(ctx, s)
 		return "starting"
 	default:
 		return "stopped"
@@ -1181,8 +1181,12 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 // AWS — so it is written from here or not at all.
 //
 // No extra API call: the events come from the DescribeServices the caller already made.
-func (e *ecsEC2Runtime) notePlacementBlocked(s ecstypes.Service) {
+func (e *ecsEC2Runtime) notePlacementBlocked(ctx context.Context, s ecstypes.Service) {
 	why := ecsPlacementBlocked(s, time.Now())
+	if why == "" {
+		// ECS says nothing about a start waiting on the previous task's stop.
+		why = e.stuckStoppingReason(ctx, s)
+	}
 	if why == "" {
 		// Only the blocked phase goes: a task placed after the wall was named leaves State()
 		// at `starting` until the rollout completes, and keeping "Waiting will not help" up

@@ -801,6 +801,22 @@ type fakeContainerInstances struct {
 	// a value means somebody else's box shares the cluster — an ADR 0071 engine on
 	// Managed Instances.
 	capacityProvider map[string]string
+	// stopping are the service's tasks that were asked to stop and have not reported it.
+	stopping  []ecstypes.Task
+	taskCalls int
+}
+
+func (f *fakeContainerInstances) ListTasks(_ context.Context, _ *ecs.ListTasksInput, _ ...func(*ecs.Options)) (*ecs.ListTasksOutput, error) {
+	f.taskCalls++
+	out := &ecs.ListTasksOutput{}
+	for _, t := range f.stopping {
+		out.TaskArns = append(out.TaskArns, aws.ToString(t.TaskArn))
+	}
+	return out, nil
+}
+
+func (f *fakeContainerInstances) DescribeTasks(_ context.Context, _ *ecs.DescribeTasksInput, _ ...func(*ecs.Options)) (*ecs.DescribeTasksOutput, error) {
+	return &ecs.DescribeTasksOutput{Tasks: f.stopping}, nil
 }
 
 func (f *fakeContainerInstances) ListContainerInstances(_ context.Context, _ *ecs.ListContainerInstancesInput, _ ...func(*ecs.Options)) (*ecs.ListContainerInstancesOutput, error) {
@@ -880,6 +896,7 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 	lastTaskDef.Delete("af-ws-acme-alice")
 	startGen.Delete("af-ws-acme-alice")
 	startPhase.Delete("af-ws-acme-alice")
+	stuckStoppingCache.Delete("af-ws-acme-alice")
 	h := &ec2Harness{
 		ec2:  newFakeEC2(),
 		ecs:  &fakeECS{},
@@ -4882,7 +4899,7 @@ func TestECSEC2BlockedPhaseIsSetAndCleared(t *testing.T) {
 	defer h.rt.setPhase("")
 
 	// Aged past placementBlockedGrace: a fresh event is the pool growing, not a wall.
-	h.rt.notePlacementBlocked(svcWithEvents(1, 0, now.Add(-10*time.Minute),
+	h.rt.notePlacementBlocked(context.Background(), svcWithEvents(1, 0, now.Add(-10*time.Minute),
 		placeEvent(now.Add(-placementBlockedGrace-time.Minute), unplaceable)))
 	ph := h.rt.BootPhase()
 	if !strings.HasPrefix(ph, blockedPhasePrefix) || !strings.Contains(ph, "missing an attribute") {
@@ -5544,5 +5561,110 @@ func TestECSEC2StopDuringTheSizeChangeReleaseEndsIt(t *testing.T) {
 				t.Errorf("State = %q, want stopped", got)
 			}
 		})
+	}
+}
+
+// stuckStoppingHarness is a workspace whose service wants a task (desired 1, nothing
+// running or pending, no placement event) while its previous task is still STOPPING on a
+// slot that has stopped.
+func stuckStoppingHarness(t *testing.T, stoppingFor time.Duration, agentConnected bool) *ec2Harness {
+	t.Helper()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-new", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-new", time.Now())
+	h.ci.registered["i-new"] = true
+	h.ec2.addSlot("i-old", "ap-northeast-1a", "m7i.large", false, false)
+	h.ci.registered["i-old"] = agentConnected
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1}
+	h.ci.stopping = []ecstypes.Task{{
+		TaskArn:              aws.String("arn:task/old"),
+		LastStatus:           aws.String("STOPPING"),
+		DesiredStatus:        aws.String("STOPPED"),
+		ContainerInstanceArn: aws.String("arn:ci/i-old"),
+		StoppingAt:           aws.Time(time.Now().Add(-stoppingFor)),
+	}}
+	return h
+}
+
+// ECS gives no service event for a start waiting on the previous task's stop, so without
+// this the Console shows an endless `starting`.
+func TestECSEC2StuckStoppingTaskIsSurfacedAsABlockedPhase(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+
+	if got := h.rt.State(ctx); got != "starting" {
+		t.Fatalf("State = %q, want starting", got)
+	}
+	ph := h.rt.BootPhase()
+	for _, want := range []string{blockedPhasePrefix, "STOPPING", "agent disconnected", "i-old"} {
+		if !strings.Contains(ph, want) {
+			t.Fatalf("phase %q does not mention %q", ph, want)
+		}
+	}
+}
+
+func TestECSEC2StuckStoppingNamesTheStateOfTheStoppedSlot(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	h.ec2.instances["i-old"].State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameStopped}
+
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); !strings.Contains(ph, "instance state: stopped") {
+		t.Fatalf("phase %q does not say the slot is stopped", ph)
+	}
+}
+
+// Not provably stuck means silence: a young stop is a normal one, and a connected agent
+// will report it by itself.
+func TestECSEC2StuckStoppingStaysQuietWhenNotProvablyStuck(t *testing.T) {
+	ctx := context.Background()
+	for name, h := range map[string]*ec2Harness{
+		"young stop":      stuckStoppingHarness(t, 20*time.Second, false),
+		"agent connected": stuckStoppingHarness(t, 10*time.Minute, true),
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer h.rt.setPhase("")
+			if got := h.rt.State(ctx); got != "starting" {
+				t.Fatalf("State = %q, want starting", got)
+			}
+			if ph := h.rt.BootPhase(); ph != "" {
+				t.Fatalf("phase %q reported for a stop that is not stuck", ph)
+			}
+		})
+	}
+}
+
+// The reason goes away with the cause, and the polls in between do not hit ECS every time.
+func TestECSEC2StuckStoppingClearsOnceTheTaskIsGoneAndIsRateLimited(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	clock := time.Now()
+	h.rt.now = func() time.Time { return clock }
+
+	h.rt.State(ctx)
+	h.rt.State(ctx)
+	if h.ci.taskCalls != 1 {
+		t.Fatalf("ListTasks called %d times for two polls, want 1", h.ci.taskCalls)
+	}
+	h.ci.stopping = nil
+	clock = clock.Add(stuckStoppingEvery + time.Second)
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); ph != "" {
+		t.Fatalf("phase %q outlived the stuck task", ph)
+	}
+}
+
+// A running task is not the case this is about, and must not cost the extra calls.
+func TestECSEC2StuckStoppingIsNotLookedForOnAPlacedTask(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+	h.rt.State(ctx)
+	if h.ci.taskCalls != 0 {
+		t.Fatalf("ListTasks called %d times for a running service", h.ci.taskCalls)
 	}
 }
