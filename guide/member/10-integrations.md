@@ -144,7 +144,52 @@ What you use depends on who you want to show it to. **Each step opens it wider.*
   returning 404 immediately. ⚠️ **Pressing it while the workspace is stopped does nothing**, because
   there is no issued URL to discard (the next start gets a new one anyway).
 
-#### Signing in with Google on a preview URL (development OIDC IdP)
+To sign in with Google on a preview URL, see [Signing in with Google on a preview URL](#signing-in-with-google-on-a-preview-url-development-oidc-idp) below.
+
+### Examples by setup
+
+| Setup | Example input | Which to open with |
+|------|--------|----------------|
+| **Node / Vite** | `5173` + `/` | Uses HMR (WebSocket), so **browser pane**. |
+| **Spring Boot** | `8080` + `/` or `/actuator/health` | Screens involving redirects, absolute `/assets/*`, and cookies: **browser pane**. Just a one-time look at the health JSON: lightweight preview. |
+| **API only** | `8080` + `/api/health` | One-time JSON / status checks: **lightweight preview**. SSE, auth cookies, redirects, and interactive checks: **browser pane**. |
+| **Frontend + API (multiple ports)** | frontend `5173` / API `8080` | **Preview subdomains are the best fit if you have them** (each port gets its own URL). Otherwise open the frontend's `5173` in a **browser pane**; fetch / WebSocket / SSE to another port (`8080`) works from there (as in a normal browser, CORS configuration is required). |
+| **React 3000 + Spring Boot 8080** | `3000` / `8080` | Preview subdomains serve both at the root. Routing the API through the dev server's proxy onto `/api` is the least trouble, and the same configuration then works on your own PC too. |
+
+> **Spring Boot links / redirects**: to have them resolve correctly, set
+> `server.forward-headers-strategy=framework` (or `native`) on the app side.
+
+### Status display and recovery
+
+When the browser pane fails to render properly, a status appears in the pane.
+
+| Status | Meaning | What to do |
+|------|------|------|
+| `target-unreachable` | The browser started, but the connection to that port/path hasn't been established yet. **Waiting for the dev server to start** is also this state. | Check the port number, the path, and whether the server is listening; once it's up, press **"Reload"**. If it persists, press **"Reconnect"**. |
+| `disconnected` | Communication with the pane (WebSocket) was lost. This is not necessarily a browser crash. | Check that the workspace is running and connectivity is back, then press **"Reconnect"**. |
+| `crashed` | The browser inside the workspace terminated abnormally and cannot continue that display. | Reopen with **"Reconnect"**. If it keeps happening, check the workspace's memory usage and the target app ([11](11-troubleshooting.md)). |
+
+If you try to open it while the workspace is stopped or starting, a dedicated notice appears. Reopen once the
+workspace is running.
+
+### Limits and transience (good to know)
+
+- You can have at most **2 open per workspace**, the display size is at most **1600×1200**, and rendering is at
+  most **12fps**. It is not suited to video playback or high-frame-rate checks.
+- If you **switch the pane to another view / send it to the back**, rendering stops and the Page is kept for
+  about **60 seconds**. Return quickly and the same state continues; after a while it is recreated from the
+  saved port/path.
+- On a **workspace Stop → Start** or a Console reload, browser panes that were on display are **automatically
+  recreated** from the same port/path, but cookies and half-typed input do not come back.
+- This is **not a general-purpose browser for opening external URLs** (it is localhost-only; there is no host
+  field, only a port and path). Nor is it a **full replacement for browser devtools** with DOM / Network /
+  Sources. The pane's "Console" lets you view and copy that page's `error` / `warn` logs and the like
+  (up to 200 entries; not stored persistently).
+
+> **On a smartphone**, the action bar has no "Preview" button: tap **⋯** at its right end instead; the port
+> and path fields and "Open in pane" are in the popover it opens.
+
+## Signing in with Google on a preview URL (development OIDC IdP)
 
 Google accepts only redirect URIs registered on its OAuth client, and a preview URL changes at every start.
 Where the deployment turns it on, the Control Plane can stand in for Google **during development**: a sign-in
@@ -238,7 +283,7 @@ client; turning it on again issues a **new** client id and secret (that is how y
 switch takes effect immediately for the endpoints, but a running container keeps the values it started with
 until the next start.
 
-##### Using it from an app on your own machine
+### Using it from an app on your own machine
 
 An app running on your own PC at `http://localhost:<port>` can sign in through the same IdP, **also while the
 workspace is stopped** (ADR 0116).
@@ -262,49 +307,6 @@ workspace is stopped** (ADR 0116).
   (`SPRING_PROFILES_ACTIVE=devidp`, recommended: the production configuration never names the dev issuer).
   Auth.js: `process.env.AF_DEV_IDP_ISSUER ? { issuer, clientId, clientSecret } : {}`, as in the example above.
   Never put the dev issuer into the production configuration.
-
-### Examples by setup
-
-| Setup | Example input | Which to open with |
-|------|--------|----------------|
-| **Node / Vite** | `5173` + `/` | Uses HMR (WebSocket), so **browser pane**. |
-| **Spring Boot** | `8080` + `/` or `/actuator/health` | Screens involving redirects, absolute `/assets/*`, and cookies: **browser pane**. Just a one-time look at the health JSON: lightweight preview. |
-| **API only** | `8080` + `/api/health` | One-time JSON / status checks: **lightweight preview**. SSE, auth cookies, redirects, and interactive checks: **browser pane**. |
-| **Frontend + API (multiple ports)** | frontend `5173` / API `8080` | **Preview subdomains are the best fit if you have them** (each port gets its own URL). Otherwise open the frontend's `5173` in a **browser pane**; fetch / WebSocket / SSE to another port (`8080`) works from there (as in a normal browser, CORS configuration is required). |
-| **React 3000 + Spring Boot 8080** | `3000` / `8080` | Preview subdomains serve both at the root. Routing the API through the dev server's proxy onto `/api` is the least trouble, and the same configuration then works on your own PC too. |
-
-> **Spring Boot links / redirects**: to have them resolve correctly, set
-> `server.forward-headers-strategy=framework` (or `native`) on the app side.
-
-### Status display and recovery
-
-When the browser pane fails to render properly, a status appears in the pane.
-
-| Status | Meaning | What to do |
-|------|------|------|
-| `target-unreachable` | The browser started, but the connection to that port/path hasn't been established yet. **Waiting for the dev server to start** is also this state. | Check the port number, the path, and whether the server is listening; once it's up, press **"Reload"**. If it persists, press **"Reconnect"**. |
-| `disconnected` | Communication with the pane (WebSocket) was lost. This is not necessarily a browser crash. | Check that the workspace is running and connectivity is back, then press **"Reconnect"**. |
-| `crashed` | The browser inside the workspace terminated abnormally and cannot continue that display. | Reopen with **"Reconnect"**. If it keeps happening, check the workspace's memory usage and the target app ([11](11-troubleshooting.md)). |
-
-If you try to open it while the workspace is stopped or starting, a dedicated notice appears. Reopen once the
-workspace is running.
-
-### Limits and transience (good to know)
-
-- You can have at most **2 open per workspace**, the display size is at most **1600×1200**, and rendering is at
-  most **12fps**. It is not suited to video playback or high-frame-rate checks.
-- If you **switch the pane to another view / send it to the back**, rendering stops and the Page is kept for
-  about **60 seconds**. Return quickly and the same state continues; after a while it is recreated from the
-  saved port/path.
-- On a **workspace Stop → Start** or a Console reload, browser panes that were on display are **automatically
-  recreated** from the same port/path, but cookies and half-typed input do not come back.
-- This is **not a general-purpose browser for opening external URLs** (it is localhost-only; there is no host
-  field, only a port and path). Nor is it a **full replacement for browser devtools** with DOM / Network /
-  Sources. The pane's "Console" lets you view and copy that page's `error` / `warn` logs and the like
-  (up to 200 entries; not stored persistently).
-
-> **On a smartphone**, the action bar has no "Preview" button: tap **⋯** at its right end instead; the port
-> and path fields and "Open in pane" are in the popover it opens.
 
 ## Operating a browser the agent opened
 

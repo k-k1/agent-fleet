@@ -198,6 +198,8 @@ together with `CustodianKmsKeyArn`; only the Control Plane task definition chang
   by disabling the KMS key. A key whose home is destroyed is removed only when the runtime
   proves the home gone (next item).
 
+#### How the home's key behaves
+
 - **The key belongs to the home, not the workspace.** Deleting and re-creating a workspace over
   a kept home keeps the key. A key is removed in one case: Destroy finished, a workspace row no
   longer names the home, and the runtime **proves** the whole home is gone. A key dropped while
@@ -242,6 +244,9 @@ together with `CustodianKmsKeyArn`; only the Control Plane task definition chang
   migrating, is logged, and deletes nothing. If the Control Plane restarts while it waits, the
   home simply stays migrating and is confirmed at a later start. `af-cp home-dek-status` counts
   migrating and confirmed homes.
+
+#### Disabling the KMS key, restoring a copy, turning it off
+
 - **What disabling the KMS key does, and what it does not.** Once a home's store has been
   re-sealed, the key derived from `AF_MASTER_KEY` no longer opens it, and once the Control
   Plane's data-key cache has expired (`AF_KMS_DATA_KEY_CACHE_TTL`, 5 minutes by default) the
