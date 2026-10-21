@@ -1635,3 +1635,5 @@ stat 1 回と最大 8 KiB の read だけで、home には触れず、メンバ�
 `cli_install_<no_space|network|checksum|other>`、メッセージは kind と理由を挙げた英文。Console はコードを自前の en/ja 文言（`err.cli_install_*`、
 英文は付けない）に対応づけるので、文は閲覧者の言語に従い、create_session とスケジューラには英文が届く。新しい状態の取得元は足さない
 （`/env/tool-versions` が返すのと同じファイル）。実際に home が満杯の環境では未確認。
+
+**注記（2026-10-21、#2448）：Stop は、バックグラウンドで収束中の Start より優先される。** `Stop` はまずワークスペースの Start カウントを進め（`abortStarts`、`homeLockClaim` 配下）、そのあと desiredCount を 0 にし、phase と claim を消すので、`State()` はすぐ `stopped` を返す。バックグラウンド側（`converge`/`launch`）は各ステップの境目でそのカウントを確認し、desiredCount を上げる呼び出しの直前には同じロックのもとで確認する（`raiseService`）。追い越された Start は claim にも phase にも触れず静かに終わる（`errStartSuperseded`）。home は通常の Stop と同じくアタッチ・マウントされたまま残る。対象外：`placeHome` の最中に Stop が入ると、その呼び出しが書いた claim が TTL まで残ることがある。実 AWS では未検証。

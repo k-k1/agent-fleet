@@ -1,6 +1,6 @@
 // The roster's state words, "needs attention" and the filter / sort / search (#2385 phase 1).
 import { describe, it, expect } from "vitest";
-import { attentionReasons, bootFailures, diskLevel, homeFullFigures, nextMemberHomePressure, matchesFilter, matchesQuery, rosterCounts, rosterState, sortMembers } from "./memberRoster.ts";
+import { attentionReasons, bootFailures, diskLevel, homeFullFigures, memberStopAvailable, nextMemberHomePressure, matchesFilter, matchesQuery, rosterCounts, rosterState, sortMembers } from "./memberRoster.ts";
 import type { Member } from "../parts/adminShared.ts";
 
 const NOW = Date.parse("2026-10-20T12:00:00Z");
@@ -209,5 +209,15 @@ describe("homeFullFigures", () => {
     expect(homeFullFigures(gap)).toBeNull();
     flag = nextMemberHomePressure(flag, own(50));
     expect(flag).toBe(false);
+  });
+});
+
+describe("memberStopAvailable", () => {
+  it("offers Force-stop for running and for starting, not for stopped or unread", () => {
+    expect(memberStopAvailable({ running: true })).toBe(true);
+    expect(memberStopAvailable({ running: false, starting: true })).toBe(true);
+    expect(memberStopAvailable({ running: false })).toBe(false);
+    expect(memberStopAvailable({})).toBe(false);
+    expect(memberStopAvailable(null)).toBe(false);
   });
 });

@@ -1367,6 +1367,9 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 			e.setPhase("slot: replacing")
 			e.bg(ctx, func(c context.Context) {
 				defer e.setPhase("")
+				if e.startSuperseded(c, place) {
+					return
+				}
 				next, perr := e.placeHome(c)
 				next.gen = place.gen
 				if perr == nil {
@@ -1409,6 +1412,11 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 // (umount before detach) still lives in releaseSlot, which is now reached only by
 // eviction, Destroy and drift repair.
 func (e *ecsEC2Runtime) Stop(ctx context.Context) error {
+	// First: a Start still converging in the background must find itself overtaken before
+	// desiredCount is touched, or it raises the count again after the scale-to-zero below.
+	if err := e.abortStarts(ctx); err != nil {
+		return err
+	}
 	if _, ok, err := e.base.describeService(ctx); err != nil {
 		return err
 	} else if ok {
@@ -1424,6 +1432,10 @@ func (e *ecsEC2Runtime) Stop(ctx context.Context) error {
 	// running/starting, and the Console keeps its starting dialog open while any phase is
 	// reported — so a stopped workspace would sit behind "cannot be placed" for good.
 	e.clearBlockedPhase()
+	// A Start overtaken above no longer owns the claim or the phase; clearing them here is
+	// what makes State() read stopped now rather than when the claim expires.
+	e.setPhase("")
+	e.dropClaimOnStop(ctx)
 	// Record when the dormancy started. If this write is lost (CP restart mid-Stop) the
 	// sweeper stamps it the first time it sees an idle attachment, so the worst case is
 	// that the slot sleeps one sweep later.
@@ -1926,6 +1938,9 @@ func (e *ecsEC2Runtime) finishStart(ctx context.Context, p ec2Placement, prep ec
 // one. Giving up after two leaves the workspace `stopped` with the reason in the log —
 // a state the user can retry from, and the operator can read.
 func (e *ecsEC2Runtime) converge(ctx context.Context, p ec2Placement, prep ec2Prep, retries int) {
+	if e.startSuperseded(ctx, p) {
+		return
+	}
 	if p.wake {
 		e.setPhase("slot: waking")
 		if err := e.wakeSlot(ctx, p.instanceID); err != nil {
@@ -1939,6 +1954,9 @@ func (e *ecsEC2Runtime) converge(ctx context.Context, p ec2Placement, prep ec2Pr
 			log.Printf("ecs-ec2 start: slot %s for %s never came up: %v", p.instanceID, e.base.name, err)
 			return
 		}
+		if e.startSuperseded(ctx, p) {
+			return
+		}
 		e.setPhase("home: attaching")
 		if err := e.attachHome(ctx, p.volumeID, p.instanceID); err != nil {
 			log.Printf("ecs-ec2 start: attaching %s to the new slot %s failed: %v", p.volumeID, p.instanceID, err)
@@ -1949,11 +1967,18 @@ func (e *ecsEC2Runtime) converge(ctx context.Context, p ec2Placement, prep ec2Pr
 	if err == nil {
 		return
 	}
+	if errors.Is(err, errStartSuperseded) {
+		log.Printf("ecs-ec2 start: %s was stopped while it converged on slot %s; leaving it stopped", e.base.name, p.instanceID)
+		return
+	}
 	if errors.Is(err, errSlotLost) && retries > 0 {
 		// abandonLostSlot has already detached the home and taken the box out of the
 		// pool, so placeHome now sees an ordinary homeless home and puts it somewhere
 		// healthy — including growing the pool if that is what it takes.
 		log.Printf("ecs-ec2 start: slot %s is not coming back; re-placing %s", p.instanceID, e.base.name)
+		if e.startSuperseded(ctx, p) {
+			return
+		}
 		e.setPhase("slot: replacing")
 		next, perr := e.placeHome(ctx)
 		next.gen = p.gen
@@ -2014,6 +2039,9 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 	// old single call, which is a slower Start rather than a broken one.
 	prepared := !reused && e.pointServiceAt(ctx, taskDefArn, p)
 
+	if e.startSuperseded(ctx, p) {
+		return errStartSuperseded
+	}
 	e.setPhase("slot: joining the cluster")
 	if err := e.waitSlotRegistered(ctx, p.instanceID); err != nil {
 		if errors.Is(err, errSlotLost) {
@@ -2024,6 +2052,9 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 			return err
 		}
 		return fmt.Errorf("slot %s not registered with the cluster: %w", p.instanceID, err)
+	}
+	if e.startSuperseded(ctx, p) {
+		return errStartSuperseded
 	}
 	e.setPhase("home: mounting")
 	if err := e.mountHome(ctx, p); err != nil {
@@ -2056,6 +2087,9 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 	e.tagSlotOwner(ctx, p.instanceID)
 	// …and it is no longer free, so its free-pool clock stops. Same moment, opposite tag.
 	e.clearSlotFree(ctx, p.instanceID)
+	if e.startSuperseded(ctx, p) {
+		return errStartSuperseded
+	}
 	e.setPhase("task: starting")
 	if prepared {
 		// No wait here any more, and that is the whole point of ec2SingleTaskDeployment:
@@ -2065,10 +2099,16 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 		//   maximumPercent 200 → 2 tasks, the FIRST from the old revision (2 of 2)
 		//   maximumPercent 100 → 1 task, always the new revision  (2 of 2)
 		// Before that this spot waited 53-55s for the old deployment to leave ACTIVE.
-		if err := e.scaleUpService(ctx); err != nil {
-			return fmt.Errorf("service: %w", err)
-		}
-	} else if err := e.upsertService(ctx, taskDefArn, p, !reused); err != nil {
+		err = e.raiseService(ctx, p, e.scaleUpService)
+	} else {
+		err = e.raiseService(ctx, p, func(c context.Context) error {
+			return e.upsertService(c, taskDefArn, p, !reused)
+		})
+	}
+	if errors.Is(err, errStartSuperseded) {
+		return err
+	}
+	if err != nil {
 		return fmt.Errorf("service: %w", err)
 	}
 	e.finishLaunch(ctx, p)
