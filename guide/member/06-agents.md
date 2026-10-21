@@ -189,9 +189,11 @@ serve keeps the configuration it started with. When a change needs applying, the
 and offers **"Restart opencode serve to apply"**. A restart waits for opencode sessions to
 finish answering and cuts short any that do not, so press it when nothing is mid-turn.
 
-- **Only `AGENTS.md` is read.** opencode 2 does not fall back to `CLAUDE.md`, so a repository
+A few things work differently from the other agents:
+
+- **Only `AGENTS.md` is read.** opencode does not fall back to `CLAUDE.md`, so a repository
   that has only a `CLAUDE.md` gives opencode nothing. Put what opencode should follow in the
-  repository's `AGENTS.md`. Your own **Agent instructions** still reach opencode: Agent Fleet
+  repository's `AGENTS.md`. Your own **Agent instructions** do reach opencode: Agent Fleet
   writes them into a marked block of opencode's global `AGENTS.md`, and the row in
   **⚙Settings → "Agent instructions"** shows that this is where they went and whether they are
   in effect. Leave that block alone; it is rewritten when you save.
@@ -199,8 +201,8 @@ finish answering and cuts short any that do not, so press it when nothing is mid
   opencode server Agent Fleet runs (it starts it when needed), instead of starting a private
   one, which saves about 150-250 MB of memory per additional Terminal session (measured with
   idle sessions). Every session stays separate: its own conversation, its own environment and
-  its own status. If that server cannot be had (it fails to start, or opencode is switched off
-  for the Workspace), the session starts with a private server instead, on its own. An
+  its own status. If that server cannot be had (it fails to start, or an administrator has
+  turned it off for the Workspace), the session starts with a private server instead, on its own. An
   administrator can also force a private server per session
   ([operate/03](../operate/03-run.md#opencode-2-terminal-sessions-and-the-shared-server)).
   A session keeps the mode it was launched in.
@@ -213,8 +215,8 @@ finish answering and cuts short any that do not, so press it when nothing is mid
   private server shows the card too, but a form with several questions or multiple-choice fields
   has to be answered in the terminal view (for a single question the card's buttons press the
   keys). A form that is waiting is lost if the opencode server restarts.
-- **No ToDo list.** opencode 2 has no todo tool, so the session never shows a ToDo list.
-  This is how opencode 2 works, not a lost connection.
+- **No ToDo list.** The session view never shows a ToDo list for opencode. That is expected,
+  not a lost connection.
 
 **Behavior** also lets you choose how opencode's thinking (chain-of-thought) is shown.
 
@@ -222,12 +224,13 @@ finish answering and cuts short any that do not, so press it when nothing is mid
 
 ### When the provider returns an error
 
-opencode keeps retrying a provider error such as a rate limit or an overloaded service. While it
-does, the session view shows a band with the attempt and the provider's message ("The provider
+opencode retries a provider error such as a rate limit or an overloaded service. While it does,
+a Managed session's view shows a band with the attempt and the provider's message ("The provider
 returned an error and the agent is retrying (attempt N): …") instead of a plain working state. It
-goes away when the answer starts or the turn ends, and you can stop the turn at any time.
+goes away when the answer starts or the turn ends, and you can stop the turn at any time. A
+Terminal (CLI) session has no such band; the terminal shows what opencode itself prints.
 
-Errors that no retry can fix (a region or privacy setting, an exhausted quota or billing balance,
+In a Managed session, errors that no retry can fix (a region or privacy setting, an exhausted quota or billing balance,
 a bad API key) end the turn as **failed** with the provider's message, and the band then reads
 "The provider returned an error that retrying cannot fix, so the turn was stopped: …" until your
 next input. For a "requires Global regions" message, change the privacy / region setting of the
@@ -236,16 +239,13 @@ billing, top up the account; for a key, replace it on the agent's card ([11](11-
 
 ### How opencode 2 differs
 
-opencode in Agent Fleet is **opencode 2**. What follows is what is different from opencode 1,
-which earlier releases ran; the rest of this section is unchanged. If your administrator has
-re-pinned the image to opencode 1, none of the points below applies.
-
-- **Your earlier conversations carry over.** The first time opencode 2 starts on a workspace
-  that used opencode 1, it converts opencode's database in place and imports the existing
-  sessions once, with the same session ids, so a conversation you started before the upgrade
-  resumes in Managed and Terminal (CLI) sessions alike. Conversations you start under opencode 2
-  are not visible to opencode 1, so going back later loses them (your administrator has the
-  details in [operate/03](../operate/03-run.md#going-back-to-opencode-1)).
+The image runs opencode 2. A workspace that used opencode 1 keeps its conversations: the
+first time opencode 2 starts there, it converts opencode's database in place and imports the
+existing sessions once, with the same session ids, so they resume in Managed and Terminal (CLI)
+sessions alike. Conversations started under opencode 2 are not visible to opencode 1, so going
+back later loses them. If your administrator has pinned the image back to opencode 1, the
+`AGENTS.md`, shared-server, question-form and ToDo points above do not apply
+([operate/03](../operate/03-run.md#going-back-to-opencode-1)).
 
 ## GitHub Copilot
 
@@ -432,7 +432,7 @@ Instructions come in three layers, and this setting is the **middle** one.
 - It applies to **sessions started from now on**. Running sessions keep what they read at start.
   lcpp is the exception: it has no file to write, so its row says it is added to the system
   prompt every turn, and a running lcpp session picks up a change on its next turn.
-- It can be delivered to claude / codex / opencode / GitHub Copilot / agy / Kiro / lcpp / muse (opencode 2 takes it through an `AGENTS.md` block; see [OpenCode](#opencode)).
+- It can be delivered to claude / codex / opencode / GitHub Copilot / agy / Kiro / lcpp / muse (opencode takes it through an `AGENTS.md` block; see [OpenCode](#opencode)).
   **Cursor is the only one that can't take it**, and it still appears in the list with the reason
   (Cursor keeps User Rules in your Cursor account, with no local per-user place for instructions).
 - Each row shows **where it goes** (the file it was written to, or for lcpp the system prompt) and **whether it is actually in effect**. When
