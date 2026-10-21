@@ -658,6 +658,89 @@ apitok
 run -- sprint list
 grep -q 'not available' "$T/err" && fail "software notice: shown for an API token"
 
+# 14. Assignee lookup needs a project: `issue assign KEY-N` with no -p and a config of ours
+#     without project.key gets `-p KEY`; every other case leaves argv alone.
+args_of() { sed -n 's/^ARG=//p' "$T/jira.seen" | tr '\n' ' '; }
+reset
+oauth
+run -- issue assign G3-1199 someone@example.com
+[ "$(args_of)" = "-p G3 issue assign G3-1199 someone@example.com " ] || fail "assign: argv '$(args_of)'"
+expect assign TOKEN fake-oauth-tok
+no_leak assign fake-oauth-tok
+run -- issues assign G3-1199 x
+[ "$(args_of)" = "-p G3 issues assign G3-1199 x " ] || fail "assign unassign: argv '$(args_of)'"
+run -- issue assign G3-1199 OTHER-5
+[ "$(args_of)" = "-p G3 issue assign G3-1199 OTHER-5 " ] || fail "assign key-like assignee: argv '$(args_of)'"
+for form in "-p NOPE" "--project NOPE" "-pNOPE" "--project=NOPE" "-p=NOPE"; do
+  # shellcheck disable=SC2086
+  run -- issue assign $form G3-1 me
+  [ "$(args_of)" = "issue assign $form G3-1 me " ] || [ "$(args_of)" = "issue assign ${form% *} ${form#* } G3-1 me " ] || fail "assign explicit '$form': argv '$(args_of)'"
+done
+run -- issue assign -p "" G3-1 me
+[ "$(args_of)" = "issue assign -p  G3-1 me " ] || fail "assign empty -p: argv '$(args_of)'"
+for bad in G3 G3- -1 3G-1 G-3-1 "G3-1x" me; do
+  run -- issue assign "$bad" me
+  [ "$(args_of)" = "issue assign $bad me " ] || fail "assign bad key '$bad': argv '$(args_of)'"
+done
+run -- issue assign
+[ "$(args_of)" = "issue assign " ] || fail "assign no args: argv '$(args_of)'"
+run -- issue assign -- G3-1 me
+[ "$(args_of)" = "-p G3 issue assign -- G3-1 me " ] || fail "assign after --: argv '$(args_of)'"
+run -- issue assign -c "$MANAGED/x.yml" G3-1 me
+[ "$(args_of)" = "-p G3 issue assign -c $MANAGED/x.yml G3-1 me " ] || [ "$(args_of)" = "issue assign -c $MANAGED/x.yml G3-1 me " ] || fail "assign -c: argv '$(args_of)'"
+# Other subcommands are untouched, and -a gets the hint only where no project exists.
+run -- issue view G3-1
+[ "$(args_of)" = "issue view G3-1 " ] || fail "view: argv '$(args_of)'"
+for c in edit move; do
+  run -- issue $c G3-1 -a me
+  [ "$(args_of)" = "issue $c G3-1 -a me " ] || fail "$c -a: argv changed '$(args_of)'"
+  grep -q 'pass -p KEY or run jira init --project KEY --board NAME' "$T/err" || fail "$c -a: no hint"
+  expect "$c -a" TOKEN fake-oauth-tok
+done
+run -- issue edit G3-1 --assignee=me
+grep -q 'assignee lookup needs a project' "$T/err" || fail "edit --assignee=: no hint"
+run -- issue edit G3-1 -s summary
+grep -q 'assignee lookup' "$T/err" && fail "edit without -a: hint shown"
+run -- issue edit -p G3 G3-1 -a me
+grep -q 'assignee lookup' "$T/err" && fail "edit -a with -p: hint shown"
+# A config with project.key is left alone.
+reset
+oauth
+config "$MANAGED/config.yml" "installation: Cloud
+project:
+  key: AAC"
+run -- issue assign G3-1 me
+[ "$(args_of)" = "issue assign G3-1 me " ] || fail "assign with project.key: argv '$(args_of)'"
+run -- issue edit G3-1 -a me
+grep -q 'assignee lookup' "$T/err" && fail "edit with project.key: hint shown"
+# A project we cannot parse is not overridden either.
+config "$MANAGED/config.yml" "installation: Cloud
+project: {key: AAC}"
+run -- issue assign G3-1 me
+[ "$(args_of)" = "issue assign G3-1 me " ] || fail "assign flow-style project: argv '$(args_of)'"
+# A managed config without a project is ours: injected.
+config "$MANAGED/config.yml" "installation: Cloud"
+run -- issue assign G3-1 me
+[ "$(args_of)" = "-p G3 issue assign G3-1 me " ] || fail "assign managed no project: argv '$(args_of)'"
+# User-owned configs exec unchanged, nothing injected and no token.
+reset
+oauth
+config "$DEFCFG" "installation: Cloud"
+run -- issue assign G3-1 me
+[ "$(args_of)" = "issue assign G3-1 me " ] || fail "assign user default config: argv '$(args_of)'"
+expect assign-user TOKEN '<unset>'
+reset
+oauth
+config "$T/other.yml" "installation: Cloud"
+run -- -c "$T/other.yml" issue assign G3-1 me
+[ "$(args_of)" = "-c $T/other.yml issue assign G3-1 me " ] || fail "assign -c elsewhere: argv '$(args_of)'"
+run JIRA_API_TOKEN=mine -- issue assign G3-1 me
+[ "$(args_of)" = "issue assign G3-1 me " ] || fail "assign own token: argv '$(args_of)'"
+# No credential: argv still untouched.
+reset
+run -- issue assign G3-1 me
+[ "$(args_of)" = "issue assign G3-1 me " ] || fail "assign no credential: argv '$(args_of)'"
+
 # 12. The helper runs before the export, so it never sees a token in its environment.
 reset
 oauth

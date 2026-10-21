@@ -67,6 +67,13 @@ Jira を接続していれば（設定の**課題管理**）、Jira CLI の `jir
   `jira init -c ~/.config/agent-fleet/jira/<名前>.yml --project PROJ --board "PROJ board"` で
   そのプロジェクト専用の設定を作るよう、ヒントで案内します。別プロジェクトへの `--parent` 付きの作成は、
   設定からそのプロジェクトの種別が分からないため、常にこの案内になります。
+- **担当者の指定**: 担当者の検索（`jira issue assign`、および `issue edit`・`create`・`move` の
+  `-a` / `--assignee`）は、設定の既定プロジェクトか `-p` のプロジェクトを対象にするため、
+  プロジェクトが必要です。既定プロジェクトがない（まだ `jira init` していない）ときは、
+  `jira issue assign PROJ-1 <ユーザー>` が課題キーの接頭辞からプロジェクトを補います。
+  ほかのコマンドは 1 行のヒントを出します: `-p PROJ` を付けるか、
+  `jira init --project PROJ --board "PROJ board"` を実行してください。明示した `-p` や、
+  プロジェクトを持つ設定は上書きしません。
 - **プロジェクト・ボード・スプリント・エピック**: 一度 `jira init --project PROJ --board "PROJ board"`
   を実行してください（前の設定を置き換えるときは `--force` を付けます）。既定のプロジェクト・
   ボード・課題タイプ・エピック用フィールドが書き込まれ、`jira sprint list`・エピック系のコマンドが

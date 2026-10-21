@@ -66,6 +66,12 @@ session. You can view, list, create, edit, comment on and transition issues:
   the config as it is and a hint names `jira init -c ~/.config/agent-fleet/jira/<name>.yml
   --project PROJ --board "PROJ board"`, which gives that project a config of its own. Creating with `--parent` for another project always
   takes that route, because the config cannot say what kind of project it is.
+- **Assigning**: looking up an assignee (`jira issue assign`, and `-a` / `--assignee` of
+  `issue edit`, `create` and `move`) searches users in the configured or `-p` project, so it
+  needs a project. With no default project (no `jira init` yet), `jira issue assign PROJ-1 <user>`
+  takes the project from the issue key's prefix for you. The other commands print a one-line hint:
+  pass `-p PROJ` or run `jira init --project PROJ --board "PROJ board"`. An explicit `-p` and a
+  config with a project are never overridden.
 - **Project, board, sprints and epics**: run `jira init --project PROJ --board "PROJ board"` once
   (add `--force` to replace an earlier setup). It writes your default project, board, issue types
   and epic fields, which `jira sprint list` and the epic commands need, and it asks no questions.
