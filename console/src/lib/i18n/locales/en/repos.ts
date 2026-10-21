@@ -131,6 +131,8 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "proj.open_reader": "Open in reader",
   "proj.open_gallery": "Open in gallery",
   "proj.open_folder_gallery": "Open folder in gallery",
+  "proj.open_shell_here": "Open shell here",
+  "proj.shell_title": "shell · {name}",
   "proj.download": "Download",
   "proj.download_zip": "Download as zip",
   "proj.download_zip_title": ".git and node_modules inside the folder are left out",

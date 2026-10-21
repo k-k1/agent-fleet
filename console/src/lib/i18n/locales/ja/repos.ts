@@ -129,6 +129,8 @@ export const repos = {
   "proj.open_reader": "朗読で開く",
   "proj.open_gallery": "ギャラリーで開く",
   "proj.open_folder_gallery": "フォルダをギャラリーで開く",
+  "proj.open_shell_here": "ここでシェルを開く",
+  "proj.shell_title": "shell · {name}",
   "proj.download": "ダウンロード",
   "proj.download_zip": "zip でダウンロード",
   "proj.download_zip_title": "フォルダ内の .git と node_modules は含めません",
