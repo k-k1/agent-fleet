@@ -162,6 +162,17 @@ func (f *fakeEC2) attach(volID, instID string, at time.Time) {
 	}
 }
 
+func (f *fakeEC2) detach(volID string) {
+	v := f.volumes[volID]
+	for _, a := range v.Attachments {
+		if inst := f.instances[aws.ToString(a.InstanceId)]; inst != nil {
+			inst.BlockDeviceMappings = nil
+		}
+	}
+	v.Attachments = nil
+	v.State = ec2types.VolumeStateAvailable
+}
+
 func (f *fakeEC2) setTag(volID, key, value string) {
 	v := f.volumes[volID]
 	for i := range v.Tags {
@@ -5305,5 +5316,103 @@ func TestECSEC2SizeChangeReleaseFailureLeavesABlockedReason(t *testing.T) {
 	}
 	if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "i-old" {
 		t.Fatalf("home moved to %q although the umount failed", inst)
+	}
+}
+
+// sizeChangeHome is a home on an xlarge slot for a workspace that now needs a large one,
+// with a right-sized slot free to take it.
+func sizeChangeHome(t *testing.T) *ec2Harness {
+	t.Helper()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-old", "ap-northeast-1a", "m7i.xlarge", true, false)
+	h.ci.registered["i-old"] = true
+	h.ec2.addSlot("i-new", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-new"] = true
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.attach("vol-1", "i-old", time.Now().Add(-time.Hour))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	return h
+}
+
+// The claim TTL (5 minutes) is shorter than the background budget (10), so a Start can
+// begin while an older one is still releasing. Once the home is off the old slot, the old
+// half must not re-place it, claim over the newer Start, or write its phase.
+func TestECSEC2SizeChangeOvertakenByANewerStartLeavesItAlone(t *testing.T) {
+	ctx := context.Background()
+	h := sizeChangeHome(t)
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// Meanwhile the claim lapsed and the home came off the old slot...
+	h.ec2.detach("vol-1")
+	// ...and a newer Start began and wrote its claim and phase.
+	if _, err := h.rt.beginStart(ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.rt.setPhase("new start owns this phase")
+	h.ec2.setTag("vol-1", EC2TagClaim, "i-newer")
+	h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
+	callsBefore := len(h.ec2.calls)
+
+	h.runDeferred(ctx)
+
+	for _, c := range h.ec2.calls[callsBefore:] {
+		if strings.HasPrefix(c, "AttachVolume") {
+			t.Fatalf("the overtaken Start drove the home: %q", c)
+		}
+	}
+	if got := h.rt.BootPhase(); got != "new start owns this phase" {
+		t.Errorf("phase = %q, the newer Start's phase was overwritten or cleared", got)
+	}
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-newer" {
+		t.Errorf("claim = %q, the newer Start's claim was overwritten", got)
+	}
+}
+
+// A failed release that was overtaken is the newer Start's business: it must not paint
+// that Start's screen as a failure, nor bring back a blocked phase a Stop has cleared.
+func TestECSEC2SizeChangeOvertakenFailureWritesNoBlockedPhase(t *testing.T) {
+	ctx := context.Background()
+	h := sizeChangeHome(t)
+	h.ssmc.fail["af-umount"] = true
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// A Stop (or a newer Start) ran after this one and left no phase.
+	if _, err := h.rt.beginStart(ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.rt.setPhase("")
+
+	h.runDeferred(ctx)
+
+	if got := h.rt.BootPhase(); got != "" {
+		t.Errorf("phase = %q, an overtaken release wrote it", got)
+	}
+}
+
+// Overtaken in the middle of the release (a Stop during the umount): nothing is re-placed.
+func TestECSEC2SizeChangeOvertakenDuringTheReleaseIsNotReplaced(t *testing.T) {
+	ctx := context.Background()
+	h := sizeChangeHome(t)
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	h.ssmc.onSend = func(cmd string) {
+		if strings.HasPrefix(cmd, "af-umount") {
+			if _, err := h.rt.beginStart(ctx); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	callsBefore := len(h.ec2.calls)
+	h.runDeferred(ctx)
+	for _, c := range h.ec2.calls[callsBefore:] {
+		if strings.HasPrefix(c, "AttachVolume") || strings.HasPrefix(c, "DetachVolume") {
+			t.Fatalf("overtaken release went on: %q", c)
+		}
+	}
+	if got := h.rt.BootPhase(); strings.HasPrefix(got, blockedPhasePrefix) {
+		t.Errorf("phase = %q, overtaken release reported a failure", got)
 	}
 }

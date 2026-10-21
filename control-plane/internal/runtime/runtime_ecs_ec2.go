@@ -1921,39 +1921,91 @@ func (e *ecsEC2Runtime) finishStart(ctx context.Context, p ec2Placement, prep ec
 	// Whatever happens — converged, failed, or gave up — the workspace is no longer
 	// mid-provisioning, and the Console's dialog keys off exactly this. A blocked phase is
 	// the exception: it is the reason the start gave up, and nothing else would say it.
-	defer e.clearProgressPhase()
+	defer e.clearProgressPhase(ctx, p.gen)
 	e.converge(ctx, p, prep, 1)
 }
 
-// clearProgressPhase drops the phase unless it is a blocked one, which a failed start
-// leaves behind on purpose (State() or Stop clears it).
-func (e *ecsEC2Runtime) clearProgressPhase() {
-	v, ok := startPhase.Load(e.base.name)
-	if !ok {
-		return
+// ifCurrentStart runs f only while no Start (or anything else that counts as one) has begun
+// since gen, and answers whether it did. The check and f run under homeLockClaim, which
+// beginStart also takes to bump the count: a newer Start's phase and claim therefore cannot
+// be written over by an older background half that checked a moment too early. gen 0 means
+// no Start made the placement, so there is nothing to be overtaken by. An unreadable count
+// or a lock that cannot be had answers false, which only ever skips a write.
+func (e *ecsEC2Runtime) ifCurrentStart(ctx context.Context, gen int64, f func()) bool {
+	if gen == 0 {
+		f()
+		return true
 	}
-	if s, _ := v.(string); !strings.HasPrefix(s, blockedPhasePrefix) {
-		startPhase.CompareAndDelete(e.base.name, v)
+	// Detached from ctx: the budget that ended the background work is no reason to leave a
+	// phase behind, but a stuck lease must not hang the caller either.
+	lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	lctx, unlock, err := e.lockHome(lctx, homeLockClaim)
+	if err != nil {
+		return false
 	}
+	defer unlock()
+	if moved, err := e.startedSince(lctx, gen); err != nil || moved {
+		return false
+	}
+	f()
+	return true
+}
+
+// clearProgressPhase drops the phase when this Start still owns it, unless it is a blocked
+// one, which a failed start leaves behind on purpose (State() or Stop clears it).
+func (e *ecsEC2Runtime) clearProgressPhase(ctx context.Context, gen int64) {
+	e.ifCurrentStart(ctx, gen, func() {
+		v, ok := startPhase.Load(e.base.name)
+		if !ok {
+			return
+		}
+		if s, _ := v.(string); !strings.HasPrefix(s, blockedPhasePrefix) {
+			startPhase.CompareAndDelete(e.base.name, v)
+		}
+	})
+}
+
+// superseded reports whether a later Start has begun since p's. A Stop that counts as a
+// Start lands here too. An unreadable count is "superseded": this half then does nothing
+// further, and the claim expires on its own.
+func (e *ecsEC2Runtime) superseded(ctx context.Context, p ec2Placement) bool {
+	if p.gen == 0 {
+		return false
+	}
+	moved, err := e.startedSince(ctx, p.gen)
+	return err != nil || moved
 }
 
 // releaseAndReplace is the background half of a size/class change: take the home off the
 // slot it no longer fits, then place it like any homeless home. ok is false when the
-// start stopped here; the reason is then the blocked phase, because a bare `starting`
-// that never ends, or a silent `stopped`, tells the member nothing.
+// start stopped here. A real failure leaves the blocked phase as its reason, because a
+// bare `starting` that never ends, or a silent `stopped`, tells the member nothing.
 //
-// The release is anchored to the Start count of the Start that asked for it (p.gen), so a
-// later Start makes it leave the home alone rather than detach what that Start is mounting.
+// A later Start (or Stop) that overtakes this one ends it silently, touching neither phase
+// nor claim: they are the newer Start's now. The claim TTL is shorter than the background
+// budget, so this does happen. It is checked on entry, after the release, and again before
+// and after the re-placement; the last one cannot undo an attach, which the newer Start
+// adopts like any attachment.
 func (e *ecsEC2Runtime) releaseAndReplace(ctx context.Context, p ec2Placement) (ec2Placement, bool) {
 	fail := func(why string, err error) (ec2Placement, bool) {
+		if e.superseded(ctx, p) {
+			return ec2Placement{}, false
+		}
 		log.Printf("ecs-ec2 start: %s for %s: %v", why, e.base.name, err)
 		e.unclaimIfOurs(ctx, p)
-		e.setPhase(blockedPhasePrefix + why + ": " + err.Error())
+		e.ifCurrentStart(ctx, p.gen, func() { e.setPhase(blockedPhasePrefix + why + ": " + err.Error()) })
 		return ec2Placement{}, false
 	}
-	e.setPhase("slot: releasing")
+	if e.superseded(ctx, p) {
+		return ec2Placement{}, false
+	}
+	e.ifCurrentStart(ctx, p.gen, func() { e.setPhase("slot: releasing") })
 	if err := e.releaseSlotSince(ctx, p.gen); err != nil {
 		return fail("the old slot could not be released after a size/class change", err)
+	}
+	if e.superseded(ctx, p) {
+		return ec2Placement{}, false
 	}
 	next, err := e.placeHome(ctx)
 	if err == nil {
@@ -1968,6 +2020,9 @@ func (e *ecsEC2Runtime) releaseAndReplace(ctx context.Context, p ec2Placement) (
 		return fail("could not place the home after releasing the old slot", err)
 	}
 	next.gen = p.gen
+	if e.superseded(ctx, p) {
+		return ec2Placement{}, false
+	}
 	return next, true
 }
 
