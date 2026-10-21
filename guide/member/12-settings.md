@@ -833,8 +833,9 @@ creating, deleting and resetting a database by name, a shell already connected t
 Settings for opening the app you are building at `https://<random>-<port>.<domain>/`. **The tab is only
 there on a deployment that issues preview subdomains** (elsewhere no URL would ever be minted, whatever
 you set here). Which ports are exposed, pinning the URL, sharing it with your tenant, opening it without a
-login, and re-issuing the URL all live here. Where the operator has enabled the development OIDC IdP, the
-switch for it is here too (with the issuer, discovery URL and client id to copy).
+login, and re-issuing the URL all live here. Where the deployment offers the development OIDC IdP, the tab
+also shows its Issuer, Discovery URL and Client ID with **Copy** buttons (the client secret is not shown),
+**Issue a new secret…**, **App configuration examples** and **Test personas**.
 → [10 Going further](10-integrations.md#preview-subdomains-only-where-they-are-issued)
 
 ### Internal repositories

@@ -87,9 +87,14 @@ https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com/   → port 8080 (e.g. Spring B
   issued, and a menu behind the chip's `⋯` (or right-click, or long-press) offers browser pane, subdomain and
   lightweight preview side by side. This opening is **yours only**, public mode and tenant sharing included, and
   it ends when that server stops: a different process that later takes the port is not reachable until you open
-  it again. It needs the port to answer plain HTTP (a database, SSH or an HTTPS-only dev server is refused with
-  the reason), and it does not set `AF_PREVIEW_URL_<port>`; list the port (the menu's **Expose this port…**)
-  when the app has to know its public URL or when someone else should see it.
+  it again. It also ends when the workspace stops or restarts and when you press "Discard and mint a new one",
+  because it belongs to the URL of that start. At most **16** ports can be open this way per workspace; past
+  that the page says "Too many temporarily opened ports" until a server stops or you list the port. It needs
+  the port to answer plain HTTP (a database, SSH or an HTTPS-only dev server is refused with the reason), and
+  it does not set `AF_PREVIEW_URL_<port>`. The development OIDC IdP does not accept a sign-in callback on such
+  a port either ([below](#signing-in-with-google-on-a-preview-url-development-oidc-idp)). List the port (the
+  menu's **Expose this port…**) when the app has to know its public URL, signs in through that IdP, or someone
+  else should see it.
 
 #### What the app has to get right
 
@@ -203,9 +208,9 @@ client secret); no code, and nothing to register in the Google Cloud console.
   per-workspace switch**: wherever the IdP is offered, the values below reach every workspace at every start
   and sign-in simply works. Settings › Preview subdomains shows the issuer, the discovery URL and the client id
   with copy buttons. The client secret is not shown there: read `AF_DEV_IDP_CLIENT_SECRET` inside the
-  container. The client id and secret stay the same across restarts; "Issue a new secret" replaces them (the
-  old pair stops working at once, and the new one reaches the container at its next start, so stop and start the
-  workspace). A production configuration must never trust this issuer.
+  container. The client id and secret stay the same across restarts; **"Issue a new secret…"** replaces both
+  (the old pair stops working at once, and the new one reaches the container at its next start, so stop and
+  start the workspace). A production configuration must never trust this issuer.
 
 - **What you get**: `AF_DEV_IDP_ISSUER`, `AF_DEV_IDP_WELL_KNOWN` (the discovery URL), `AF_DEV_IDP_CLIENT_ID` and
   `AF_DEV_IDP_CLIENT_SECRET` inside the container, next to `AF_PREVIEW_URL_*`. The client is **yours alone**: its
@@ -216,8 +221,16 @@ client secret); no code, and nothing to register in the Google Cloud console.
   opening your shared preview ([above](#showing-it-to-someone-else-three-steps)) signs in as themselves.
 - **Where it may send the browser back to**: only your **current** preview URL on a **listed port**, and
   `http://localhost:<port>` / `http://127.0.0.1:<port>` (so the browser pane works too). Anything else, including
-  the URL from before a restart, gets an error page and is never redirected to. Set the app's own URL from
+  the URL from before a restart and a port you opened for yourself without listing it, gets an error page and is
+  never redirected to. Set the app's own URL from
   `AF_PREVIEW_URL_<port>` (for example `AUTH_URL`) so the callback it sends is exactly that.
+
+Settings › Preview subdomains › **"App configuration examples"** writes the configuration for you, for Spring
+Boot, Auth.js, Go, Better Auth or plain environment lines. Pick the **Form** (for Spring Boot "dev profile
+(recommended)", "One file with defaults" or "Environment only"; for Auth.js v5 or next-auth v4), the **Port**
+(one of your listed ports), whether to **Include preview settings**, and whether the **Values** reference
+environment variables or are filled in. The client secret is always an environment reference. The two
+examples below show the idea.
 
 **Auth.js (NextAuth)**, v5: point the Google provider at the dev issuer when the variables exist.
 
@@ -274,14 +287,19 @@ With `server.forward-headers-strategy=framework` (above) Spring builds the callb
 **Test personas.** To try role checks (admin, viewer, …) define personas under Settings › Preview subdomains ›
 "Test personas". Once the workspace has one, the sign-in shows a confirmation page where you pick yourself or a
 persona. A persona's address is always `<handle>@example.test` and its `sub` starts with `persona:`, so it can
-never be a real member; the token audit names the persona. A sign-in with `prompt=none` still passes silently as
-yourself, and a workspace with no persona never sees the page.
+never be a real member; the token audit names the persona. A workspace holds at most 20 personas, and a handle
+is 1 to 32 characters of `a-z`, `0-9`, `.`, `_` and `-`, starting with a letter or digit. The page accepts one
+answer, within 5 minutes; **Cancel** sends the app back an `access_denied` error. A sign-in with `prompt=none`
+still passes silently as yourself, and a workspace with no persona never sees the page.
 
 Good to know: tokens last 10 minutes and the sign-in code 60 seconds. **Only sign-in is replaced**: you do not
-get Google API access tokens (Calendar, Drive, …), and there is no `picture`. Turning the option off removes the
-client; turning it on again issues a **new** client id and secret (that is how you rotate the secret). The
-switch takes effect immediately for the endpoints, but a running container keeps the values it started with
-until the next start.
+get Google API access tokens (Calendar, Drive, …), and there is no `picture`. The sign-in request may not
+carry `prompt` other than `none`, `max_age`, or a `response_mode` other than `query`; the app gets an
+`invalid_request` error back (some Google examples add `prompt: "consent"`, so drop it for the dev issuer).
+The signing key changes every 30 days and the old one stays in the JWKS for 24 hours, so let the library fetch
+keys from the discovery URL rather than pinning one. To rotate the credentials, use "Issue a new secret…"
+(above): it takes effect immediately for the endpoints, but a running container keeps the values it started
+with until the next start.
 
 ### Using it from an app on your own machine
 
@@ -295,10 +313,10 @@ workspace is stopped** (ADR 0116).
 3. In the browser on that machine, stay signed in to the Console. The sign-in needs no other login.
 
 - **Treat the secret like a password**: keep it out of git, chat and screenshots. Settings › Preview subdomains ›
-  "Issue a new secret…" revokes every copy at once; the workspace then needs a restart to get the new one, and
-  your machine needs the new value.
-- **It does not work while** the deployment is paused, the IdP is switched off in the Admin modal, or the
-  deployment has no preview domain (the issuer then answers 404).
+  "Issue a new secret…" revokes every copy at once. It issues a new client id as well as a new secret: the
+  workspace needs a restart to get them, and your machine needs both new values.
+- **It does not work while** the IdP is switched off for the deployment (in the Admin modal or with
+  `AF_DEV_IDP=0`), or on a deployment without a preview domain (the issuer then answers 404).
 - **A redirect to the preview URL still needs the workspace running**; only `localhost` / `127.0.0.1` is
   accepted while it is stopped.
 - **One configuration for both places**: Settings › Preview subdomains › "App configuration examples" generates

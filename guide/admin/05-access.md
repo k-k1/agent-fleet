@@ -17,6 +17,9 @@ read-only for you, and one is yours to register but somebody else's to approve.
 | **Allowed networks** | yours |
 | **Integration OAuth apps** | yours |
 
+The last section, development sign-in, is not one of them: it is a deployment-wide switch
+that only a super_admin sees.
+
 ## Allowed networks
 
 By default your tenant is reachable from anywhere the deployment itself is reachable
@@ -174,7 +177,8 @@ The **Dev sign-in** section of the Admin modal switches the Control Plane's deve
 appear in your tenant settings. There is no per-workspace switch: while it is on (and preview subdomains exist) every workspace's
 client is served.
 
-- The section shows the issuer, how many workspaces hold a client (one is created at every workspace start, opted in or not), and the one rule that matters:
+- The section shows the issuer, how many workspaces hold a client (one is created when a workspace starts while
+  the IdP is offered, and kept from then on), and the one rule that matters:
   **a production app must never trust this issuer**, because it signs in as any member without a
   password.
 - Turning it off takes effect without a restart (another Control Plane replica follows within a few
