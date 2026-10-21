@@ -39,6 +39,7 @@ import (
 // CP is everything tenantsrv needs from the control plane. The implementation is
 // control-plane/tenant_wiring.go's adapter over *manager.
 type CP interface {
+	MCPOAuthServed() bool
 	// --- Data ------------------------------------------------------------------
 	// Store is the CP metadata store. The tenant/admin handlers span most sub-stores
 	// (tenant / identity / membership / workspace / quota / git / audit), so there is

@@ -41,6 +41,14 @@ Two more things worth knowing:
 - It applies to your tenant. Someone who also belongs to another tenant reaches that
   one under its own rules.
 
+## MCP OAuth
+
+Under **Tenant settings → Allowed networks**, the **MCP OAuth** panel controls whether external apps may connect to this tenant through OAuth. It appears only when the deployment serves MCP OAuth. The tenant setting is enabled by default; a tenant administrator or deployment administrator can change it.
+
+Clear **Allow apps to connect through MCP OAuth**, choose **Save**, and confirm. Existing OAuth grants for this tenant are revoked and audited immediately. The tenant disappears from consent choices, code exchange and refresh fail, and its OAuth access tokens stop working at `/mcp`. Other tenants and Personal Access Tokens are unaffected.
+
+Enabling the switch again permits new connections; it does not restore revoked connections. Members reconnect from their apps. They can also revoke individual connections in **Settings → Connections → MCP tokens → Connected apps**.
+
 ## Integration OAuth apps
 
 Members can always connect GitHub or Bitbucket by pasting a token. Registering your

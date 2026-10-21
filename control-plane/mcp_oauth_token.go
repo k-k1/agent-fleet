@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
@@ -161,7 +162,15 @@ func (a *mcpOAuthAPI) exchangeCode(w http.ResponseWriter, r *http.Request, clien
 			mv = &ms[i]
 		}
 	}
-	if mv == nil {
+	enabled := false
+	if mv != nil {
+		enabled, err = a.mgr.store.GetTenantMCPOAuth(ctx, mv.TenantID)
+	}
+	if err != nil {
+		mcpTokenErr(w, http.StatusInternalServerError, "server_error", "could not check tenant")
+		return
+	}
+	if mv == nil || !enabled || c.State == "tenant-disabled" {
 		mcpTokenErr(w, http.StatusBadRequest, "invalid_grant", "the membership is no longer active")
 		return
 	}
@@ -184,6 +193,10 @@ func (a *mcpOAuthAPI) exchangeCode(w http.ResponseWriter, r *http.Request, clien
 		return
 	}
 	if err := a.mgr.store.CreateMCPOAuthGrant(ctx, g); err != nil {
+		if errors.Is(err, store.ErrMCPOAuthDisabled) {
+			mcpTokenErr(w, http.StatusBadRequest, "invalid_grant", "the tenant disabled this connection")
+			return
+		}
 		log.Printf("mcp oauth: create grant: %v", err)
 		mcpTokenErr(w, http.StatusInternalServerError, "server_error", "could not create the grant")
 		return
@@ -242,6 +255,19 @@ func (a *mcpOAuthAPI) issueTokens(w http.ResponseWriter, r *http.Request, g stor
 			return
 		}
 	}
+	// Read after inserting: disabling before this point is observed here; disabling
+	// afterwards revokes the stored grant. The revocation survives re-enabling.
+	enabled, gateErr := a.mgr.store.GetTenantMCPOAuth(ctx, g.TenantID)
+	current, found, readErr := a.mgr.store.GetMCPOAuthGrant(ctx, g.ID)
+	if gateErr != nil || readErr != nil {
+		mcpTokenErr(w, http.StatusInternalServerError, "server_error", "could not check tenant")
+		return
+	}
+	if !enabled || !found || current.RevokedReason == "tenant-disabled" {
+		mcpTokenErr(w, http.StatusBadRequest, "invalid_grant", "the connection has ended")
+		return
+	}
+
 	_ = a.mgr.store.TouchMCPOAuthGrant(ctx, g.ID, now.Unix(), int64(mcpOAuthIdleTTL.Seconds()))
 	noStore(w)
 	writeJSON(w, http.StatusOK, mcpTokenResponse{
@@ -276,7 +302,16 @@ func (a *mcpOAuthAPI) refresh(w http.ResponseWriter, r *http.Request, clientID s
 		mcpTokenErr(w, http.StatusInternalServerError, "server_error", "could not read the grant")
 		return
 	}
-	if !ok || g.RevokedAt != 0 || g.AbsExpiresAt <= now.Unix() || g.IdleExpiresAt <= now.Unix() {
+	if !ok {
+		mcpTokenErr(w, http.StatusBadRequest, "invalid_grant", "the connection has ended")
+		return
+	}
+	enabled, gateErr := a.mgr.store.GetTenantMCPOAuth(ctx, g.TenantID)
+	if gateErr != nil {
+		mcpTokenErr(w, http.StatusInternalServerError, "server_error", "could not check tenant")
+		return
+	}
+	if !enabled || g.RevokedAt != 0 || g.AbsExpiresAt <= now.Unix() || g.IdleExpiresAt <= now.Unix() {
 		mcpTokenErr(w, http.StatusBadRequest, "invalid_grant", "the connection has ended")
 		return
 	}

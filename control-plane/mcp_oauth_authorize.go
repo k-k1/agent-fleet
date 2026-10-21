@@ -114,11 +114,22 @@ func (a *mcpOAuthAPI) eligibleMemberships(r *http.Request) (store.Identity, []st
 	if aerr != nil {
 		return store.Identity{}, nil, aerr
 	}
+	disabled := 0
 	var out []store.MembershipView
 	for _, mv := range ms {
-		if m.checkTenantProvider(ctx, mv) == nil && m.checkTenantIP(ctx, ident, mv) == nil {
+		enabled, err := m.store.GetTenantMCPOAuth(ctx, mv.TenantID)
+		if err != nil {
+			return store.Identity{}, nil, internalErr(err)
+		}
+		if !enabled {
+			disabled++
+		}
+		if enabled && m.checkTenantProvider(ctx, mv) == nil && m.checkTenantIP(ctx, ident, mv) == nil {
 			out = append(out, mv)
 		}
+	}
+	if len(out) == 0 && disabled > 0 {
+		return ident, nil, &apiError{http.StatusForbidden, "mcp_oauth_disabled", "no tenant allows MCP OAuth"}
 	}
 	return ident, out, nil
 }
@@ -182,6 +193,10 @@ func (a *mcpOAuthAPI) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	ident, ms, aerr := a.eligibleMemberships(r)
 	if aerr != nil {
+		if aerr.code == "mcp_oauth_disabled" {
+			a.errPage(w, r, http.StatusForbidden, mcpErrRefused, "")
+			return
+		}
 		if aerr.status == http.StatusUnauthorized {
 			writeAPIErr(w, aerr)
 			return

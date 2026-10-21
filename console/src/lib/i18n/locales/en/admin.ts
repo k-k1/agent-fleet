@@ -7,6 +7,14 @@
 import type { admin as jaAdmin } from "../ja/admin.ts";
 
 export const admin: Record<keyof typeof jaAdmin, string> = {
+  "tenant.mcp_oauth_title": "MCP OAuth",
+  "tenant.mcp_oauth_allow": "Allow apps to connect through MCP OAuth",
+  "tenant.mcp_oauth_hint": "Enabled by default. Turning this off revokes all existing OAuth connections for this tenant and blocks new ones. Personal Access Tokens are unaffected. Turning it on again requires apps to reconnect.",
+  "tenant.mcp_oauth_disable_title": "Disable MCP OAuth?",
+  "tenant.mcp_oauth_disable_body": "All OAuth app connections for this tenant will be revoked. This cannot be undone by enabling the switch again.",
+  "tenant.mcp_oauth_load_failed": "Could not load the MCP OAuth setting.",
+  "tenant.mcp_oauth_save_failed": "Could not save the MCP OAuth setting.",
+
   // --- admin (AdminTab; super_admin / tenant_admin) ---
   "admin.title": "Admin",
   "admin.forbidden": "You don't have permission (super_admin only).",

@@ -218,6 +218,8 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// on both is checked mid-handler by tenantAdminFor.
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/network", adm.tenantNetwork)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/network", adm.setTenantNetwork)
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/mcp-oauth", adm.tenantMCPOAuth)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/mcp-oauth", adm.setTenantMCPOAuth)
 	// The tenant-wide switch for AF memory used from outside Agent Fleet through /mcp (#2318).
 	// tenant_admin, checked mid-handler by tenantAdminFor like the network rule above.
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/external-memory", adm.tenantExternalMemory)
@@ -317,6 +319,9 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 // Personal Access Tokens (Console-issued) for the MCP endpoint (docs/0006).
 func registerPATRoutes(mux *http.ServeMux, cfg config) {
 	pat := newPATAPI(cfg.mgr)
+	apps := mcpConnectedAPI{memberAuth{cfg.mgr}}
+	mux.HandleFunc("GET /api/mcp-oauth/grants", apps.withIdentity(apps.list))
+	mux.HandleFunc("DELETE /api/mcp-oauth/grants/{id}", apps.withIdentity(apps.revoke))
 	mux.HandleFunc("GET /api/pat", pat.withIdentity(pat.list))
 	mux.HandleFunc("POST /api/pat", pat.withIdentity(pat.create))
 	mux.HandleFunc("DELETE /api/pat/{id}", pat.withIdentity(pat.revoke))
