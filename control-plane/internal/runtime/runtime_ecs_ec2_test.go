@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -801,6 +802,64 @@ type fakeContainerInstances struct {
 	// a value means somebody else's box shares the cluster — an ADR 0071 engine on
 	// Managed Instances.
 	capacityProvider map[string]string
+	// stopping are the service's tasks that were asked to stop and have not reported it.
+	stopping  []ecstypes.Task
+	taskCalls int
+	// taskPageSize splits ListTasks into pages of this many ARNs (0: one page).
+	taskPageSize int
+	// onList / onDescribeTasks run at the start of ListTasks / DescribeTasks.
+	onList, onDescribeTasks func()
+	// taskFailures are returned by DescribeTasks as Failures.
+	taskFailures []ecstypes.Failure
+	// describeErr is returned (once) by DescribeContainerInstances.
+	describeErr error
+	// missing instances come back as a MISSING failure, the way a deregistered one does.
+	missing map[string]bool
+	// status overrides the container instance status (ACTIVE otherwise).
+	status map[string]string
+	// badTaskCalls records ListTasks calls that did not ask for this service's stopped tasks.
+	badTaskCalls []string
+}
+
+func (f *fakeContainerInstances) ListTasks(_ context.Context, in *ecs.ListTasksInput, _ ...func(*ecs.Options)) (*ecs.ListTasksOutput, error) {
+	f.taskCalls++
+	if f.onList != nil {
+		f.onList()
+	}
+	if aws.ToString(in.ServiceName) != "af-ws-acme-alice" || in.DesiredStatus != ecstypes.DesiredStatusStopped {
+		f.badTaskCalls = append(f.badTaskCalls, aws.ToString(in.ServiceName)+"/"+string(in.DesiredStatus))
+	}
+	start := 0
+	if in.NextToken != nil {
+		start, _ = strconv.Atoi(*in.NextToken)
+	}
+	end := len(f.stopping)
+	if f.taskPageSize > 0 && start+f.taskPageSize < end {
+		end = start + f.taskPageSize
+	}
+	out := &ecs.ListTasksOutput{}
+	for _, t := range f.stopping[start:end] {
+		out.TaskArns = append(out.TaskArns, aws.ToString(t.TaskArn))
+	}
+	if end < len(f.stopping) {
+		out.NextToken = aws.String(strconv.Itoa(end))
+	}
+	return out, nil
+}
+
+func (f *fakeContainerInstances) DescribeTasks(_ context.Context, in *ecs.DescribeTasksInput, _ ...func(*ecs.Options)) (*ecs.DescribeTasksOutput, error) {
+	if f.onDescribeTasks != nil {
+		f.onDescribeTasks()
+	}
+	out := &ecs.DescribeTasksOutput{Failures: f.taskFailures}
+	for _, arn := range in.Tasks {
+		for _, t := range f.stopping {
+			if aws.ToString(t.TaskArn) == arn {
+				out.Tasks = append(out.Tasks, t)
+			}
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeContainerInstances) ListContainerInstances(_ context.Context, _ *ecs.ListContainerInstancesInput, _ ...func(*ecs.Options)) (*ecs.ListContainerInstancesOutput, error) {
@@ -812,13 +871,21 @@ func (f *fakeContainerInstances) ListContainerInstances(_ context.Context, _ *ec
 }
 
 func (f *fakeContainerInstances) DescribeContainerInstances(_ context.Context, in *ecs.DescribeContainerInstancesInput, _ ...func(*ecs.Options)) (*ecs.DescribeContainerInstancesOutput, error) {
+	if err := f.describeErr; err != nil {
+		f.describeErr = nil
+		return nil, err
+	}
 	out := &ecs.DescribeContainerInstancesOutput{}
 	for _, arn := range in.ContainerInstances {
 		id := strings.TrimPrefix(arn, "arn:ci/")
+		if f.missing[id] {
+			out.Failures = append(out.Failures, ecstypes.Failure{Arn: aws.String(arn), Reason: aws.String("MISSING")})
+			continue
+		}
 		ci := ecstypes.ContainerInstance{
 			ContainerInstanceArn: aws.String(arn),
 			Ec2InstanceId:        aws.String(id),
-			Status:               aws.String("ACTIVE"),
+			Status:               aws.String(cmp.Or(f.status[id], "ACTIVE")),
 			AgentConnected:       f.registered[id],
 			RunningTasksCount:    f.tasks[id],
 		}
@@ -880,6 +947,7 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 	lastTaskDef.Delete("af-ws-acme-alice")
 	startGen.Delete("af-ws-acme-alice")
 	startPhase.Delete("af-ws-acme-alice")
+	stuckStoppingCache.Delete("af-ws-acme-alice")
 	h := &ec2Harness{
 		ec2:  newFakeEC2(),
 		ecs:  &fakeECS{},
@@ -4882,8 +4950,12 @@ func TestECSEC2BlockedPhaseIsSetAndCleared(t *testing.T) {
 	defer h.rt.setPhase("")
 
 	// Aged past placementBlockedGrace: a fresh event is the pool growing, not a wall.
-	h.rt.notePlacementBlocked(svcWithEvents(1, 0, now.Add(-10*time.Minute),
-		placeEvent(now.Add(-placementBlockedGrace-time.Minute), unplaceable)))
+	gen, err := h.rt.startGenNow(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.rt.notePlacementBlocked(context.Background(), svcWithEvents(1, 0, now.Add(-10*time.Minute),
+		placeEvent(now.Add(-placementBlockedGrace-time.Minute), unplaceable)), gen, true)
 	ph := h.rt.BootPhase()
 	if !strings.HasPrefix(ph, blockedPhasePrefix) || !strings.Contains(ph, "missing an attribute") {
 		t.Fatalf("phase does not carry the reason: %q", ph)
@@ -5545,5 +5617,240 @@ func TestECSEC2StopDuringTheSizeChangeReleaseEndsIt(t *testing.T) {
 				t.Errorf("State = %q, want stopped", got)
 			}
 		})
+	}
+}
+
+// stuckStoppingHarness is a workspace whose service wants a task (desired 1, nothing
+// running or pending, no placement event) while its previous task is still STOPPING on a
+// slot that has stopped.
+func stuckStoppingHarness(t *testing.T, stoppingFor time.Duration, agentConnected bool) *ec2Harness {
+	t.Helper()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-new", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-new", time.Now())
+	h.ci.registered["i-new"] = true
+	h.ec2.addSlot("i-old", "ap-northeast-1a", "m7i.large", false, false)
+	h.ci.registered["i-old"] = agentConnected
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1}
+	h.ci.stopping = []ecstypes.Task{{
+		TaskArn:              aws.String("arn:task/old"),
+		LastStatus:           aws.String("STOPPING"),
+		DesiredStatus:        aws.String("STOPPED"),
+		ContainerInstanceArn: aws.String("arn:ci/i-old"),
+		StoppingAt:           aws.Time(time.Now().Add(-stoppingFor)),
+	}}
+	return h
+}
+
+// ECS gives no service event for a start waiting on the previous task's stop, so without
+// this the Console shows an endless `starting`.
+func TestECSEC2StuckStoppingTaskIsSurfacedAsABlockedPhase(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+
+	if got := h.rt.State(ctx); got != "starting" {
+		t.Fatalf("State = %q, want starting", got)
+	}
+	ph := h.rt.BootPhase()
+	for _, want := range []string{blockedPhasePrefix, "STOPPING", "agent disconnected", "i-old"} {
+		if !strings.Contains(ph, want) {
+			t.Fatalf("phase %q does not mention %q", ph, want)
+		}
+	}
+}
+
+func TestECSEC2StuckStoppingNamesTheStateOfTheStoppedSlot(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	h.ec2.instances["i-old"].State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameStopped}
+
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); !strings.Contains(ph, "instance state: stopped") {
+		t.Fatalf("phase %q does not say the slot is stopped", ph)
+	}
+}
+
+// Not provably stuck means silence: a young stop is a normal one, and a connected agent
+// will report it by itself.
+func TestECSEC2StuckStoppingStaysQuietWhenNotProvablyStuck(t *testing.T) {
+	ctx := context.Background()
+	for name, h := range map[string]*ec2Harness{
+		"young stop":      stuckStoppingHarness(t, 20*time.Second, false),
+		"agent connected": stuckStoppingHarness(t, 10*time.Minute, true),
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer h.rt.setPhase("")
+			if got := h.rt.State(ctx); got != "starting" {
+				t.Fatalf("State = %q, want starting", got)
+			}
+			if ph := h.rt.BootPhase(); ph != "" {
+				t.Fatalf("phase %q reported for a stop that is not stuck", ph)
+			}
+		})
+	}
+}
+
+// The reason goes away with the cause, and the polls in between do not hit ECS every time.
+func TestECSEC2StuckStoppingClearsOnceTheTaskIsGoneAndIsRateLimited(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	clock := time.Now()
+	h.rt.now = func() time.Time { return clock }
+
+	h.rt.State(ctx)
+	h.rt.State(ctx)
+	if h.ci.taskCalls != 1 {
+		t.Fatalf("ListTasks called %d times for two polls, want 1", h.ci.taskCalls)
+	}
+	h.ci.stopping = nil
+	clock = clock.Add(stuckStoppingEvery + time.Second)
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); ph != "" {
+		t.Fatalf("phase %q outlived the stuck task", ph)
+	}
+}
+
+// A running task is not the case this is about, and must not cost the extra calls.
+func TestECSEC2StuckStoppingIsNotLookedForOnAPlacedTask(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+	h.rt.State(ctx)
+	if h.ci.taskCalls != 0 {
+		t.Fatalf("ListTasks called %d times for a running service", h.ci.taskCalls)
+	}
+}
+
+// The diagnosis waits on several AWS calls. A Stop that completes meanwhile has already
+// cleared the phase; the stale answer must not bring the blocked reason back.
+func TestECSEC2StuckStoppingDoesNotResurrectAPhaseAStopCleared(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	h.ci.onDescribeTasks = func() {
+		h.ci.onDescribeTasks = nil
+		if err := h.rt.Stop(ctx); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+	}
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); ph != "" {
+		t.Fatalf("phase %q came back after a Stop", ph)
+	}
+	if got := h.rt.State(ctx); got != "stopped" {
+		t.Fatalf("State = %q, want stopped", got)
+	}
+}
+
+// The other direction: an empty answer from an old poll must not clear the reason a newer
+// Start has written since.
+func TestECSEC2StuckStoppingEmptyAnswerDoesNotClearANewerStartsReason(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	h.ci.stopping = nil
+	h.ci.onList = func() {
+		h.ci.onList = nil
+		if err := h.rt.Stop(ctx); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+		if _, err := h.rt.beginStart(ctx); err != nil {
+			t.Error(err)
+		}
+		h.rt.setPhase(blockedPhasePrefix + "the newer start's own reason")
+	}
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); !strings.Contains(ph, "newer start's own reason") {
+		t.Fatalf("phase = %q, the older poll cleared the newer Start's reason", ph)
+	}
+}
+
+// The stuck task is not promised to be on the first page of ListTasks.
+func TestECSEC2StuckStoppingReadsEveryPage(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	stuck := h.ci.stopping[0]
+	h.ci.stopping = []ecstypes.Task{
+		{TaskArn: aws.String("arn:task/done"), LastStatus: aws.String("STOPPED")},
+		stuck,
+	}
+	h.ci.taskPageSize = 1
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); !strings.Contains(ph, "STOPPING") {
+		t.Fatalf("phase %q: the stuck task on page two was missed", ph)
+	}
+	if len(h.ci.badTaskCalls) != 0 {
+		t.Fatalf("ListTasks asked for the wrong tasks: %v", h.ci.badTaskCalls)
+	}
+}
+
+// A lookup that failed says nothing about the task: it must be asked again at the next poll,
+// not cached as "nothing is stuck".
+func TestECSEC2StuckStoppingRetriesAfterAFailedLookup(t *testing.T) {
+	ctx := context.Background()
+	for name, arm := range map[string]func(h *ec2Harness){
+		"container instance lookup fails": func(h *ec2Harness) { h.ci.describeErr = errors.New("throttled") },
+		"task read fails": func(h *ec2Harness) {
+			h.ci.taskFailures = []ecstypes.Failure{{Arn: aws.String("arn:task/old"), Reason: aws.String("ThrottlingException")}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := stuckStoppingHarness(t, 10*time.Minute, false)
+			defer h.rt.setPhase("")
+			arm(h)
+			h.rt.State(ctx)
+			if ph := h.rt.BootPhase(); ph != "" {
+				t.Fatalf("phase %q from a failed lookup", ph)
+			}
+			h.ci.taskFailures = nil
+			h.rt.State(ctx)
+			if ph := h.rt.BootPhase(); !strings.Contains(ph, "STOPPING") {
+				t.Fatalf("phase = %q: the failure was cached as a healthy answer", ph)
+			}
+		})
+	}
+}
+
+// A failed lookup also must not clear a reason that was already standing.
+func TestECSEC2StuckStoppingFailedLookupKeepsTheStandingReason(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	clock := time.Now()
+	h.rt.now = func() time.Time { return clock }
+	h.rt.State(ctx)
+	clock = clock.Add(stuckStoppingEvery + time.Second)
+	h.ci.describeErr = errors.New("throttled")
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); !strings.Contains(ph, "STOPPING") {
+		t.Fatalf("phase = %q, a failed lookup cleared the standing reason", ph)
+	}
+}
+
+func TestECSEC2StuckStoppingNamesAnUnregisteredSlot(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	h.ci.missing = map[string]bool{"i-old": true}
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); !strings.Contains(ph, "no longer registered") {
+		t.Fatalf("phase %q does not say the slot is unregistered", ph)
+	}
+}
+
+// DRAINING only stops new placements; a connected agent still reports the stop.
+func TestECSEC2StuckStoppingStaysQuietOnAConnectedDrainingInstance(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, true)
+	defer h.rt.setPhase("")
+	h.ci.status = map[string]string{"i-old": "DRAINING"}
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); ph != "" {
+		t.Fatalf("phase %q reported for a draining instance whose agent is connected", ph)
 	}
 }

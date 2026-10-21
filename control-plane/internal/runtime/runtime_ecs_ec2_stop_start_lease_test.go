@@ -107,3 +107,41 @@ func TestECSEC2UnderStartDoesNotRaiseAfterItsLeaseExpired(t *testing.T) {
 		t.Errorf("old Start raised desiredCount after its lease expired and Stop returned: %d (error %v)", got, err)
 	}
 }
+
+// ifGenCurrent reads the count under a claim lease; a lease that ran out while the answer
+// was in flight must not let a stale phase write through after another replica's Stop.
+func TestECSEC2GenCurrentDoesNotWriteAfterItsLeaseExpired(t *testing.T) {
+	ctx := context.Background()
+	h, a, b, st := twoReplicas(t)
+	homeOnSlot(h)
+	var skew atomic.Int64
+	a.now = func() time.Time { return time.Now().Add(time.Duration(skew.Load())) }
+	w := &countHookStore{HomeLeaseStore: st}
+	a.leases = w
+	gen, err := a.startGenNow(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.setPhase("")
+	stopped := false
+	w.hook = func(c context.Context) {
+		skew.Store(int64(2 * homeLeaseTTL))
+		if !errors.Is(homeGuardOf(c).check(), errHomeLockLost) {
+			t.Fatal("positive control: lease did not expire")
+		}
+		st.mu.Lock()
+		delete(st.leases, homeLockClaim+a.base.name)
+		st.mu.Unlock()
+		if err := b.Stop(ctx); err != nil {
+			t.Fatal(err)
+		}
+		stopped = true
+	}
+	ran := a.ifGenCurrent(ctx, gen, func() { a.setPhase(blockedPhasePrefix + "stale") })
+	if !stopped {
+		t.Fatal("positive control: Stop never ran")
+	}
+	if ran || a.BootPhase() != "" {
+		t.Errorf("a stale diagnosis wrote after its lease expired and Stop returned: ran=%v phase=%q", ran, a.BootPhase())
+	}
+}
