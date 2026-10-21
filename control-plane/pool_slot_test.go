@@ -148,7 +148,7 @@ func callForceStop(adm adminAPI, id, email, body string) *httptest.ResponseRecor
 func TestForceStopPoolSlotAuditsWhatTheAdapterDid(t *testing.T) {
 	f := &forceStopFactory{res: runtime.SlotForceStop{
 		InstanceID: "i-wedge", Workspace: "af-ws-x", PreviousState: "running",
-		CancelledCommands: 2, Quarantined: true,
+		CancelledCommands: 2,
 	}}
 	st, adm := poolSlotFixture(t, f)
 	w := callForceStop(adm, "i-wedge", "boss@acme.co.jp", "")
@@ -162,7 +162,7 @@ func TestForceStopPoolSlotAuditsWhatTheAdapterDid(t *testing.T) {
 	var found bool
 	for _, a := range rows {
 		if a.Action == "pool.slot_force_stop" && a.Target == "i-wedge" && a.HTTPStatus == http.StatusOK &&
-			strings.Contains(a.Detail, "workspace=af-ws-x") && strings.Contains(a.Detail, "cancelled=2") && strings.Contains(a.Detail, "quarantined=true") {
+			strings.Contains(a.Detail, "workspace=af-ws-x") && strings.Contains(a.Detail, "cancelled=2") {
 			found = true
 		}
 	}
@@ -193,6 +193,7 @@ func TestForceStopPoolSlotPassesTheAdaptersRefusalsThrough(t *testing.T) {
 	}{
 		{runtime.ErrSlotNotFound, http.StatusNotFound, "no_such_slot"},
 		{runtime.ErrSlotNotRunning, http.StatusConflict, "slot_not_running"},
+		{runtime.ErrSlotQuarantined, http.StatusConflict, "slot_quarantined"},
 		{runtime.ErrSlotHealthy, http.StatusConflict, "slot_healthy"},
 	} {
 		st, adm := poolSlotFixture(t, &forceStopFactory{fsErr: tc.err})

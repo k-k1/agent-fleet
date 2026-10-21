@@ -202,9 +202,6 @@ func TestECSEC2CleanupInFlightLeavesTheRestartsSlotAlone(t *testing.T) {
 			t.Fatal(err)
 		}
 		h.ci.registered["i-hot"] = true
-		// A Start never reuses a quarantined slot (slotTypeMatches), so to exercise the
-		// ownership fence the slot is put back in service the way a replacement of it would be.
-		h.ec2.setInstanceTag("i-hot", EC2TagRole, ec2RoleSlot)
 		if err := h.rt.Start(ctx); err != nil {
 			t.Fatal(err)
 		}

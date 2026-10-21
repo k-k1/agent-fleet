@@ -157,7 +157,6 @@ func withoutReservedSlots(out *ec2.DescribeInstancesOutput) *ec2.DescribeInstanc
 func (e *ecsEC2Runtime) replaceReservedSlot(ctx context.Context, vol *ec2types.Volume, oldID string, automatic bool) (ec2Placement, error) {
 	volID := aws.ToString(vol.VolumeId)
 	az := aws.ToString(vol.AvailabilityZone)
-	gen, _ := e.startGenNow(ctx)
 	if automatic {
 		if autoReplaceBlocked.get(e.base.name, autoReplaceBackoff, func() string { return "" }) != "" {
 			return ec2Placement{}, errAutoReplaceDeferred
@@ -232,16 +231,6 @@ func (e *ecsEC2Runtime) replaceReservedSlot(ctx context.Context, vol *ec2types.V
 	// its adoption and the claim above. The claim now protects it from the sweeper's occupancy
 	// re-read, but a fence that landed first is a decision to terminate it: stop BEFORE the
 	// home leaves the old slot. Unreadable counts as fenced.
-	// A quarantined replacement is evidence an operator is about to read, not an unused box:
-	// only this claim is dropped, never the instance (retireUnusedReplacement terminates).
-	if e.slotNowQuarantined(ctx, newID) {
-		e.dropClaimIfCurrent(ctx, gen, volID)
-		if automatic {
-			e.deferAutoReplace(oldID, errors.New("the replacement slot was quarantined during the move"))
-			return ec2Placement{}, errAutoReplaceDeferred
-		}
-		return ec2Placement{}, fmt.Errorf("the replacement slot %s was quarantined during the move (the reservation stays): try again", newID)
-	}
 	if e.slotNowReserved(ctx, newID) {
 		e.retireUnusedReplacement(ctx, newID, volID)
 		if automatic {
@@ -574,32 +563,7 @@ func (e *ecsEC2Runtime) clearReplacesHome(ctx context.Context, instanceID string
 // reservation sees the placement. An unreadable answer counts as reserved: the cost is one
 // candidate skipped, the alternative a member placed on a box an operator wants gone.
 func (e *ecsEC2Runtime) slotNowReserved(ctx context.Context, id string) bool {
-	// Quarantine is the same kind of fence: ForceStopSlot writes the tag and only then reads
-	// who holds the slot, so a placement that read its candidates earlier either sees the tag
-	// here or is found by that read.
-	return e.slotTagged(ctx, id, func(inst ec2types.Instance) bool {
-		return slotExcluded(inst) || ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined
-	})
-}
-
-// dropClaimIfCurrent removes this placement's claim on the home unless a Stop and a newer
-// Start have taken the Start count on since gen: that claim is then the newer Start's, and
-// deleting it by volume id alone would strand it. The check and the delete share the claim
-// lock (unclaimUnlessSuperseded). gen 0 is no Start's placement, so the delete is plain.
-func (e *ecsEC2Runtime) dropClaimIfCurrent(ctx context.Context, gen int64, volID string) {
-	if gen == 0 {
-		e.unclaim(ctx, volID)
-		return
-	}
-	e.unclaimUnlessSuperseded(ctx, ec2Placement{volumeID: volID, gen: gen})
-}
-
-// slotNowQuarantined is the quarantine half of slotNowReserved alone; unreadable counts as
-// quarantined, for the same reason.
-func (e *ecsEC2Runtime) slotNowQuarantined(ctx context.Context, id string) bool {
-	return e.slotTagged(ctx, id, func(inst ec2types.Instance) bool {
-		return ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined
-	})
+	return e.slotTagged(ctx, id, slotExcluded)
 }
 
 // slotNowReservedByOperator is slotNowReserved for an operator's reservation alone — the

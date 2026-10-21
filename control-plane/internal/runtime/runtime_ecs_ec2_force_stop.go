@@ -59,8 +59,6 @@ type SlotForceStop struct {
 	CancelledCommands int  `json:"cancelled_commands"`
 	// CancelFailed counts commands that were listed but could not be cancelled.
 	CancelFailed int `json:"cancel_failed"`
-	// Quarantined is whether the af-role tag is now `quarantined`.
-	Quarantined bool `json:"quarantined"`
 	// Forced: this StopInstances carried Force. ForceAfterSec is the delay before the
 	// background re-stop with Force, 0 when none is pending.
 	Forced        bool `json:"forced"`
@@ -69,36 +67,31 @@ type SlotForceStop struct {
 	StoppingTask string `json:"stopping_task,omitempty"`
 }
 
-// ForceStopSlot stops a slot that is wedged but not quarantined — running, status checks
-// ok, yet its ECS agent and SSM no longer answer — because an operator said so.
+// ForceStopSlot stops a slot that is wedged — running, status checks ok, yet its ECS agent
+// and SSM no longer answer — because an operator said so.
 //
 // What it does, in this order, and why:
 //
 //  1. Refuse a slot that answers on both agents (ErrSlotHealthy) unless overrideHealthy:
 //     a workspace may be running on it. An unreadable health signal refuses too, unless
-//     overridden: "when in doubt, do not stop it".
-//  2. Quarantine the box (markQuarantined) FIRST, because the tag is the fence against a
-//     Start choosing this slot meanwhile. Decision: quarantine, not just stop. The box
-//     failed in a way nobody has diagnosed, so it keeps its evidence and is never offered
-//     again (ADR 0045 decisions 20 and 23); an operator terminates it from the pool screen
-//     when done. placeHome treats a quarantined box as a mismatch, reserved or not, so the
-//     member's next Start releases the home from it (releaseSlot skips the umount for a
-//     stopped box) and places it elsewhere.
-//  3. End the occupant's Start with the runtime's own Stop (abortStarts under the claim
-//     lock, desiredCount 0, the claim dropped), reading the occupant after the fence. A
-//     Start that chose the slot before the tag is overtaken; one after it saw the
-//     quarantine. The member sees `stopped`.
-//  4. Cancel the CP's own pending SSM commands (slotVolumeCommandComment). A queued
-//     umount or mount holds the home's mount lock for as long as the command lives and no
-//     agent will ever finish it; cancelling is what lets the lock holder see it end.
-//  5. StopInstances. Graceful first, because a wedged box may still have the home mounted
+//     overridden: "when in doubt, do not stop it". A quarantined slot is refused
+//     (ErrSlotQuarantined): it is already out of service.
+//  2. End the occupant's Start with the runtime's own Stop (abortStarts under the claim
+//     lock, desiredCount 0, the claim dropped). A member who is mid-Start on this slot is
+//     overtaken rather than finding the box gone, and sees `stopped`.
+//  3. Cancel the CP's own pending SSM commands (slotVolumeCommandComment). A queued umount
+//     or mount holds the home's mount lock for as long as the command lives and no agent
+//     will ever finish it; cancelling is what lets the lock holder see it end.
+//  4. StopInstances. Graceful first, because a wedged box may still have the home mounted
 //     and Force is a power cut with no unmount; a background re-stop with Force follows
-//     after slotForceStopGrace if the box is not stopped by then. A slot already
+//     after slotForceStopGrace if the same stop has not finished. A slot already
 //     `stopping` (the operator pressing again) is forced at once.
 //
-// The ECS container instance is NOT deregistered: a task still STOPPING on the slot is
-// cleared by starting the instance once so its agent reports, and that stays a human
-// decision (StoppingTask reports it).
+// The slot is NOT quarantined and the home stays where it is: the member's next Start wakes
+// this same slot through the ordinary path (the home is attached, the instance is stopped).
+// The reboot clears whatever thrashed, and the slot's ECS agent reconnects and reports a
+// task still STOPPING on it (#2447). Keeping a box as evidence is quarantine's job, and
+// routing dark slots there is #2450. The ECS container instance is not deregistered.
 func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, overrideHealthy bool) (SlotForceStop, error) {
 	res := SlotForceStop{InstanceID: instanceID}
 	cmds, ok := f.ssmc.(ssmSlotCommands)
@@ -129,7 +122,11 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 		return res, ErrSlotNotFound
 	}
 	role := ec2TagValue(inst.Tags, EC2TagRole)
-	if role != ec2RoleSlot && role != ec2RoleQuarantined {
+	switch role {
+	case ec2RoleSlot:
+	case ec2RoleQuarantined:
+		return res, ErrSlotQuarantined
+	default:
 		return res, ErrSlotNotFound // an engine box or something else in the pool tag
 	}
 	if inst.State != nil {
@@ -140,12 +137,11 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 	}
 	probe := f.probeRuntime()
 
-	// 1. health. A quarantined box is already out of the pool, so the gate is for the
-	// working role only.
+	// 1. health.
 	registered, regErr := probe.registeredSlots(ctx)
 	online, ssmErr := ssmOnline(ctx, cmds, instanceID)
 	res.AgentConnected, res.SSMOnline = registered[instanceID], online
-	if role == ec2RoleSlot && !overrideHealthy {
+	if !overrideHealthy {
 		if regErr != nil || ssmErr != nil {
 			return res, fmt.Errorf("could not tell whether the slot is wedged (ECS: %v, SSM: %v); retry, or override", regErr, ssmErr)
 		}
@@ -153,24 +149,10 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 			return res, ErrSlotHealthy
 		}
 	}
-	res.OverrodeHealthy = overrideHealthy && role == ec2RoleSlot &&
+	res.OverrodeHealthy = overrideHealthy &&
 		(regErr != nil || ssmErr != nil || (res.AgentConnected && res.SSMOnline))
 
-	// 2. quarantine FIRST: it is the fence. A Start choosing a slot after this tag sees a
-	// mismatch and releases the home; one that chose it before has claimed the home, which the
-	// read below finds, and the Stop that follows overtakes it. Nothing has been touched yet
-	// if the tag cannot be written.
-	if role == ec2RoleSlot {
-		cause := fmt.Errorf("force-stopped by an operator (ecs agent connected=%v, ssm online=%v)", res.AgentConnected, res.SSMOnline)
-		res.Quarantined = probe.markQuarantined(ctx, instanceID, cause) == nil
-		if !res.Quarantined {
-			return res, fmt.Errorf("could not quarantine %s; nothing was changed", instanceID)
-		}
-	} else {
-		res.Quarantined = true
-	}
-
-	// 3. the occupant, read AFTER the fence (see slotHolder's note on write-then-read).
+	// 2. the occupant.
 	var occupant *ecsEC2Runtime
 	if holder, err := probe.slotHolder(ctx, instanceID, ""); err != nil {
 		return res, fmt.Errorf("find the home on %s: %w", instanceID, err)
@@ -188,20 +170,20 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 		instanceID, res.PreviousState, res.AgentConnected, res.SSMOnline, res.OverrodeHealthy, res.Workspace)
 	if occupant != nil {
 		if err := occupant.Stop(ctx); err != nil {
-			// The slot is quarantined but not stopped; pressing the button again retries.
-			return res, fmt.Errorf("the slot is quarantined, but ending the start of %s failed: %w", res.Workspace, err)
+			// Nothing destructive has happened yet, so failing here leaves the slot as it was.
+			return res, fmt.Errorf("end the start of %s before stopping its slot: %w", res.Workspace, err)
 		}
 	}
 
-	// 4. the CP's own pending commands.
+	// 3. the CP's own pending commands.
 	res.CancelledCommands, res.CancelFailed = cancelSlotVolumeCommands(ctx, cmds, instanceID)
 
-	// 5. stop.
+	// 4. stop.
 	res.Forced = inst.State.Name == ec2types.InstanceStateNameStopping
 	if _, err := f.ec2.StopInstances(ctx, &ec2.StopInstancesInput{
 		InstanceIds: []string{instanceID}, Force: aws.Bool(res.Forced),
 	}); err != nil {
-		return res, fmt.Errorf("stop %s (it is quarantined and its commands are cancelled): %w", instanceID, err)
+		return res, fmt.Errorf("stop %s (its commands are already cancelled): %w", instanceID, err)
 	}
 	if !res.Forced {
 		res.ForceAfterSec = int(slotForceStopGrace.Seconds())

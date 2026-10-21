@@ -1715,16 +1715,6 @@ func (e *ecsEC2Runtime) slotTypeMatches(ctx context.Context, instanceID string) 
 			}
 			// A sweeper fence on a slot a Start won anyway is the automatic move's cue too.
 			outdated = outdated || (!e.pool.noAutoReplace && slotRetireTagged(inst))
-			// A quarantined box is never reused, whatever its type or marks: an operator
-			// force-stopped it (ForceStopSlot) or a launch quarantined it without managing to
-			// detach the home. It is a plain mismatch, and "reserved" and "outdated" are
-			// withheld on purpose: either would send the Start through replaceReservedSlot,
-			// which TERMINATES the old box and destroys the evidence quarantine keeps. The
-			// mismatch takes the background release instead, which moves the home off it (the
-			// slot's SendCommand grant requires af-role=slot, so waking it could not work).
-			if ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined {
-				return false, false, false, nil
-			}
 			return string(inst.InstanceType) == e.instanceType, slotReserved(inst), outdated, nil
 		}
 	}
@@ -1732,10 +1722,6 @@ func (e *ecsEC2Runtime) slotTypeMatches(ctx context.Context, instanceID string) 
 }
 
 func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
-	// The Start count at entry stands for the Start's own generation (the caller stamps it on
-	// the placement only afterwards): a cleanup of this placement's claim is skipped when a
-	// Stop and a newer Start have moved it on (dropClaimIfCurrent).
-	gen, _ := e.startGenNow(ctx)
 	vol, err := e.homeVolume(ctx)
 	if err != nil {
 		return ec2Placement{}, fmt.Errorf("describe home volume: %w", err)
@@ -1992,14 +1978,6 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	volID := aws.ToString(vol.VolumeId)
 	if err := e.claim(ctx, volID, inst); err != nil {
 		return ec2Placement{}, fmt.Errorf("claim %s for %s: %w", volID, inst, err)
-	}
-	// The same two-sided fence as the attach paths above: ForceStopSlot writes the
-	// quarantine tag and only then reads who holds the slot, so a force-stop that landed
-	// before this claim is seen here, and one after it finds the claim. Nothing is attached
-	// yet, so stepping off is dropping the claim; the quarantined box is kept as evidence.
-	if e.slotNowQuarantined(ctx, inst) {
-		e.dropClaimIfCurrent(ctx, gen, volID)
-		return ec2Placement{}, fmt.Errorf("the new slot %s was quarantined while it was being set up; start again", inst)
 	}
 	return ec2Placement{volumeID: volID, instanceID: inst, az: azFilter, deferred: true, claimed: true, wipe: homeWipeOf(vol)}, nil
 }
@@ -2421,30 +2399,28 @@ func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, caus
 // markQuarantined is step 1 of both quarantine paths: the single tag write that takes a
 // box out of the world, plus the owner tags that must not keep billing somebody for it.
 // Split out because abandonLostSlot has to do it in a different ORDER from the rest.
-func (e *ecsEC2Runtime) markQuarantined(ctx context.Context, instanceID string, cause error) error {
+func (e *ecsEC2Runtime) markQuarantined(ctx context.Context, instanceID string, cause error) {
 	reason := cause.Error()
 	if len(reason) > 200 {
 		reason = reason[:200]
 	}
-	_, tagErr := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 		Resources: []string{instanceID},
 		Tags: []ec2types.Tag{
 			{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleQuarantined)},
 			{Key: aws.String(ec2TagQuarantineReason), Value: aws.String(reason)},
 			{Key: aws.String(ec2TagQuarantineAt), Value: aws.String(e.now().UTC().Format(time.RFC3339))},
 		},
-	})
-	if tagErr != nil {
+	}); err != nil {
 		// This is the step that stops the bleeding; say so loudly when it fails, because
 		// nothing else here prevents the next user from landing on the same box.
-		log.Printf("ecs-ec2: could not quarantine slot %s (it will be offered again): %v", instanceID, tagErr)
+		log.Printf("ecs-ec2: could not quarantine slot %s (it will be offered again): %v", instanceID, err)
 	}
 	// A quarantined box is nobody's. On the mount-failure path it reaches here before
 	// launch stamps the owner, so normally there is nothing to remove — but a previous
 	// tenancy whose release failed would otherwise keep billing a person for a box they
 	// can no longer use.
 	e.untagSlotOwner(ctx, instanceID)
-	return tagErr
 }
 
 // abandonLostSlot is quarantineSlot for a box whose OPERATING SYSTEM is gone rather than
@@ -4572,14 +4548,6 @@ func (e *ecsEC2Runtime) releaseSlotSince(ctx context.Context, gen int64) error {
 	}
 	if err := e.waitTasksGone(ctx); err != nil {
 		return err
-	}
-	// A box still shutting down (an operator's force-stop, ForceStopSlot) has its home
-	// mounted until the shutdown finishes: detaching now is the unclean detach the umount
-	// rule exists to prevent, and the instance is not `running`, so the umount below skips.
-	if e.slotStateName(ctx, instanceID) == string(ec2types.InstanceStateNameStopping) {
-		if err := e.waitInstanceStopped(ctx, instanceID); err != nil {
-			return fmt.Errorf("waiting for %s to finish stopping before its home is released: %w", instanceID, err)
-		}
 	}
 	if moved, err := e.startedSince(ctx, gen); err != nil {
 		return err

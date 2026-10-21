@@ -154,14 +154,14 @@ func orDash(s string) string {
 }
 
 // ForceStopPoolSlot (POST /api/admin/ec2-pool/slots/{id}/force-stop, optional body
-// {"override_healthy": true}) stops a wedged slot and quarantines it (#2449). super_admin
+// {"override_healthy": true}) stops a wedged slot (#2449). super_admin
 // only: slots are shared across tenants, so no tenant_admin owns one.
 //
 // The adapter decides, from AWS, what may be stopped. Its refusals are answers rather than
 // faults: an id that is not a slot of this pool (404), a slot that is already stopped (409),
-// and a slot whose agents both answer (409 slot_healthy — the Console asks again with the
+// a quarantined slot (409 slot_quarantined), and a slot whose agents both answer (409 slot_healthy — the Console asks again with the
 // override once the operator has confirmed). Whatever the adapter managed before failing is
-// kept in the audit line, since the slot may be quarantined with its stop still unsent.
+// kept in the audit line, since the occupant's Start may be ended with the stop still unsent.
 func (a Admin) ForceStopPoolSlot(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
@@ -193,9 +193,9 @@ func (a Admin) ForceStopPoolSlot(w http.ResponseWriter, r *http.Request, ident s
 		refuseIrreversible(w, r, in, &APIError{http.StatusNotFound, "no_pool", "this runtime has no slot pool"})
 		return
 	}
-	detail := fmt.Sprintf("workspace=%s state=%s agent_connected=%t ssm_online=%t override=%t cancelled=%d cancel_failed=%d quarantined=%t forced=%t",
+	detail := fmt.Sprintf("workspace=%s state=%s agent_connected=%t ssm_online=%t override=%t cancelled=%d cancel_failed=%d forced=%t",
 		orDash(res.Workspace), orDash(res.PreviousState), res.AgentConnected, res.SSMOnline, body.OverrideHealthy,
-		res.CancelledCommands, res.CancelFailed, res.Quarantined, res.Forced)
+		res.CancelledCommands, res.CancelFailed, res.Forced)
 	var aerr *APIError
 	switch {
 	case err == nil:
@@ -203,6 +203,8 @@ func (a Admin) ForceStopPoolSlot(w http.ResponseWriter, r *http.Request, ident s
 		aerr = &APIError{http.StatusNotFound, "no_such_slot", err.Error()}
 	case errors.Is(err, runtime.ErrSlotNotRunning):
 		aerr = &APIError{http.StatusConflict, "slot_not_running", err.Error()}
+	case errors.Is(err, runtime.ErrSlotQuarantined):
+		aerr = &APIError{http.StatusConflict, "slot_quarantined", err.Error()}
 	case errors.Is(err, runtime.ErrSlotHealthy):
 		aerr = &APIError{http.StatusConflict, "slot_healthy", err.Error()}
 	default:

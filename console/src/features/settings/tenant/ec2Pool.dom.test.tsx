@@ -503,7 +503,7 @@ describe("replacement reservations", () => {
       const row = rowOf("i-dark");
       expect(row?.textContent).toContain("STOPPING");
       expect(row?.textContent).toContain("42");
-      expect(row?.querySelector(".pool-badge")?.getAttribute("title")).toContain("一度起動");
+      expect(row?.querySelector(".pool-badge")?.getAttribute("title")).toContain("インスタンスを起動");
     });
 
     it("asks first, naming the occupant, then posts and keeps the result on screen", async () => {
@@ -520,30 +520,13 @@ describe("replacement reservations", () => {
       expect(host!.querySelector("[role=status]")?.textContent).toContain("3 分");
     });
 
-    it("keeps Stop (force) on the quarantined, still-stopping row after the first press", async () => {
-      api.mockResolvedValue(WEDGED);
-      apiJSON.mockResolvedValue({ instance_id: "i-wedge", cancelled_commands: 0, cancel_failed: 0, forced: false, force_after_sec: 180 });
-      await mount();
-      await act(async () => buttonsIn(rowOf("i-wedge")).find((b) => b.textContent === "停止（強制）")!.click());
-      const actions = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
-      await act(async () => actions[actions.length - 1].click());
-      // The next poll: the server has quarantined it and the instance is stopping.
+    it("keeps Stop (force) on a slot that is still stopping, for the second press", async () => {
       api.mockResolvedValue({
-        ...WEDGED,
-        slots: WEDGED.slots.map((s) => (s.instance_id === "i-wedge" ? { ...s, state: "stopping", quarantined: true, quarantine_reason: "force-stopped by an operator" } : s)),
+        ...POOL,
+        slots: [...POOL.slots, { instance_id: "i-going", instance_type: "m7i.large", az: "ap-northeast-1a", state: "stopping", registered: false, workspace: "af-ws-acme-dave", idle_minutes: 0 }],
       });
-      // Re-mount to take the new picture without waiting on the 10s timer.
-      await act(async () => root!.unmount());
-      host!.remove();
       await mount();
-      const labels = buttonsIn(rowOf("i-wedge")).map((b) => b.textContent);
-      expect(labels).toContain("停止（強制）");
-      expect(labels).toContain("終了");
-      apiJSON.mockClear();
-      await act(async () => buttonsIn(rowOf("i-wedge")).find((b) => b.textContent === "停止（強制）")!.click());
-      const again = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
-      await act(async () => again[again.length - 1].click());
-      expect(apiJSON).toHaveBeenCalledWith("api/admin/ec2-pool/slots/i-wedge/force-stop", "POST", {});
+      expect(buttonsIn(rowOf("i-going")).map((b) => b.textContent)).toContain("停止（強制）");
     });
 
     it("keeps the server's refusal in the dialog", async () => {
