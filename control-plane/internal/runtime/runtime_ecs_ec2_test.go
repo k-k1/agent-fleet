@@ -5334,8 +5334,9 @@ func TestECSEC2SizeChangeReleaseFailureLeavesABlockedReason(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	h.runDeferred(ctx)
-	if got := h.rt.BootPhase(); !strings.HasPrefix(got, blockedPhasePrefix) || !strings.Contains(got, "released") {
-		t.Fatalf("BootPhase = %q, want a blocked reason naming the failed release", got)
+	if got := h.rt.BootPhase(); !strings.HasPrefix(got, blockedPhasePrefix) || !strings.Contains(got, "released") ||
+		!strings.Contains(got, "Failed") || !strings.Contains(got, "boom") {
+		t.Fatalf("BootPhase = %q, want a blocked reason naming the failed release and its cause", got)
 	}
 	if got := h.rt.State(ctx); got == "starting" {
 		t.Fatalf("State = %q: the claim outlived the failed background release", got)
