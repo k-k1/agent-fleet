@@ -398,8 +398,12 @@ force-stop します。ホスト全体をメンテナンスで完全に落とす
 Workspace をすべて止めても、配備の床の費用は残ります。Control Plane、データベース、NAT ゲートウェイ、
 ロードバランサの分です。しばらく誰も使わないときのために、AWS と GKE の配備にはそれぞれ `pause.sh`
 があり、時間課金のものを止めるか消して、データは残します。`--up` で配備を戻します。できるだけ 0 に
-近づけたいなら、配備を削除します（AWS は `teardown.sh`、GKE は `terraform destroy`）。この場合はデータも
-消えます。
+近づけたいなら、配備を削除します（AWS は `teardown.sh`、GKE は `terraform destroy`）。削除で何が残るかは
+配備によって違います。AWS で `Persistence=retain` の配備は、`--purge-retained` を付けない限り、データベースの
+最終スナップショット、EFS のファイルシステムとそのバックアップボールトを残します（そのストレージの費用も
+続きます）。GKE では先に削除保護を外す必要があり、Control Plane のディスクのスナップショットは削除のあとも
+残ります。何が消えて何が残るかは、runbook の「Teardown」（[AWS](../../deploy/aws/ecs/README.md#teardown)）と
+「Tearing down」（[GKE](../../deploy/kubernetes/README.md#tearing-down)）にあります。
 
 2 つのスクリプトの使い方は同じです。`--yes` を付けない一時停止は計画を表示するだけで、`--dry-run` は
 書き込みを実行せずに表示し、`--status` は動いているものと課金が続くものを表示するだけで何も変えません。

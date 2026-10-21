@@ -31,7 +31,9 @@ deployment" is the most expensive kind of documentation error here.
 > the shell and its tmux session keep running. That was measured with a forced cut, not by
 > waiting out a day. What it costs on GKE, measured: [The bill](../../deploy/kubernetes/README.md#the-bill).
 > For a trial or one team, `deploy/gcp/gke` has a small zonal profile (one zone, no database
-> standby) at about half the default floor, an estimate from the measured prices rather than a bill.
+> standby) at about half the default floor if the billing account's GKE free credit is still unspent
+> (about two thirds if another cluster already uses it). That is an estimate from the measured prices,
+> not a bill; the figures and their assumptions are in `deploy/gcp/gke/README.md`, "Small profile".
 
 `docker` also answers to `local`, `ecs` to `aws`, `native` to `wsl`, and `kubernetes` to `k8s`. Anything else
 is rejected at boot rather than quietly defaulting. `ecs` and `ecs-ec2` are separate

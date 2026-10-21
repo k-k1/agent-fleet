@@ -118,8 +118,8 @@ assistant chat, the document viewer), it turns these into links:
 - **Loopback URLs** (`http://127.0.0.1:<port>/…`, `http://localhost:…`, `http://0.0.0.0:…`) name a
   server in your workspace, not on your own machine, so a click opens that port of the workspace
   the way the session row's port chip does ([the chip](badges-and-menus.md#session-display)).
-  Ctrl / middle-click opens a browser pane in a new tab, and a right-click or long-press opens the
-  chip's menu. When no running session listens on the port the link is dimmed but still opens;
+  Ctrl / ⌘ / middle-click opens it in a new tab: in a browser pane where the deployment has one,
+  otherwise in the default target. A right-click or long-press opens the chip's menu. When no running session listens on the port the link is dimmed but still opens;
   a URL in backticks is a link only while one does. An `https:` loopback URL stays an ordinary
   link, and so does a URL in backticks holding a non-ASCII punctuation mark or symbol (such as an
   elided `…`). When the workspace is stopped, the click says the port cannot be opened.

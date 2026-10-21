@@ -430,7 +430,12 @@ Stopping every Workspace leaves the deployment's floor billing: the Control Plan
 the NAT gateway, the load balancer. For a stretch nobody uses it, the AWS and GKE deployments each
 have a `pause.sh` that stops or removes what bills by the hour and keeps the data; `--up` brings
 the deployment back. To get as close to zero as possible, tear it down instead (`teardown.sh` on AWS,
-`terraform destroy` on GKE), which takes the data with it.
+`terraform destroy` on GKE). What a teardown keeps depends on the deployment: on AWS a
+`Persistence=retain` deployment keeps the database's final snapshot, the EFS file system and its
+backup vault (and their storage cost) unless you pass `--purge-retained`; on GKE the deletion
+protections have to be lifted first, and the snapshots of the Control Plane's disk outlive the
+destroy. The runbooks' "Teardown" ([AWS](../../deploy/aws/ecs/README.md#teardown)) and "Tearing down"
+([GKE](../../deploy/kubernetes/README.md#tearing-down)) list what goes and what stays.
 
 Both scripts work the same way: without `--yes` a pause only prints its plan, `--dry-run` prints
 every write without making it, and `--status` shows what is running and what still bills, changing
