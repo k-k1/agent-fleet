@@ -23,6 +23,8 @@ echo "$*" >>"$STUB_DIR/agent.calls"
 [ -z "${JIRA_API_TOKEN-}" ] || echo leaked >"$STUB_DIR/agent.leak"
 case "$1" in
   jira-cred) [ -f "$STUB_DIR/agent.out" ] || exit 1; cat "$STUB_DIR/agent.out" ;;
+  jira-comment) printf '%s\n' "$@" >"$STUB_DIR/comment.argv"; cat >"$STUB_DIR/comment.stdin"
+    [ ! -f "$STUB_DIR/comment.exit" ] || exit "$(cat "$STUB_DIR/comment.exit")"; echo "stub: comment done" ;;
   jira-issue-types) [ -f "$STUB_DIR/types.out" ] || exit 1; cat "$STUB_DIR/types.out" ;;
   *) exit 2 ;;
 esac
@@ -56,7 +58,7 @@ run() {
   shift
   rm -f "$T/jira.seen" "$T/agent.calls" "$T/agent.leak"
   env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" \
-    "${envs[@]}" bash "$WRAPPER" "$@" >"$T/out" 2>"$T/err"
+    "${envs[@]}" bash "$WRAPPER" "$@" >"$T/out" 2>"$T/err" </dev/null
   rc=$?
 }
 seen() { sed -n "s/^$1=//p" "$T/jira.seen"; }
@@ -751,6 +753,58 @@ run JIRA_API_TOKEN=mine -- issue assign G3-1 me
 reset
 run -- issue assign G3-1 me
 [ "$(args_of)" = "issue assign G3-1 me " ] || fail "assign no credential: argv '$(args_of)'"
+
+# 13. `issue comment edit|delete` is not a jira-cli command: for a config of ours it goes to the
+#     Agent's jira-comment with the original argv, stdin intact, the real jira never started, and
+#     no token anywhere (the wrapper does not even ask for one).
+reset
+oauth
+rm -f "$T/comment.argv" "$T/comment.stdin" "$T/jira.seen"
+printf 'new *body*\n' | env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" \
+  bash "$WRAPPER" issue comment edit K-1 10001 >"$T/out" 2>"$T/err"
+rc=$?
+[ "$rc" = 0 ] || fail "comment edit: exit $rc"
+[ "$(tr '\n' ' ' <"$T/comment.argv")" = "jira-comment issue comment edit K-1 10001 " ] || fail "comment edit: argv '$(tr '\n' ' ' <"$T/comment.argv")'"
+[ "$(cat "$T/comment.stdin")" = 'new *body*' ] || fail "comment edit: stdin not passed through"
+[ ! -f "$T/jira.seen" ] || fail "comment edit: the real jira ran"
+no_leak comment-edit fake-oauth-tok
+reset
+oauth
+run -- issues comment delete K-1 10001
+[ "$rc" = 0 ] && [ ! -f "$T/jira.seen" ] || fail "comment delete: rc=$rc or real jira ran"
+[ "$(tr '\n' ' ' <"$T/comment.argv")" = "jira-comment issues comment delete K-1 10001 " ] || fail "comment delete: argv"
+# An exit status of the Agent is the command's.
+echo 1 >"$T/comment.exit"
+run -- issue comment delete K-1 10001
+[ "$rc" = 1 ] || fail "comment delete: Agent status not kept ($rc)"
+rm -f "$T/comment.exit"
+# A debug run is refused (it would print the Authorization header), never forwarded.
+rm -f "$T/comment.argv"
+run -- --debug issue comment edit K-1 10001 -b x
+[ "$rc" = 1 ] && [ ! -f "$T/comment.argv" ] && [ ! -f "$T/jira.seen" ] || fail "comment debug: rc=$rc, forwarded or ran"
+grep -q 'not available in a debug run' "$T/err" || fail "comment debug: no explanation"
+run JIRA_DEBUG=true -- issue comment edit K-1 10001 -b x
+[ "$rc" = 1 ] && [ ! -f "$T/comment.argv" ] || fail "comment JIRA_DEBUG: rc=$rc or forwarded"
+# The user's own setup falls through to the real jira exactly as for any other command.
+for setup in default other token server; do
+  reset
+  oauth
+  rm -f "$T/comment.argv"
+  case "$setup" in
+    default) config "$DEFCFG" "installation: Cloud"; run -- issue comment edit K-1 10001 -b x ;;
+    other) config "$T/other.yml" "installation: Cloud"; run -- -c "$T/other.yml" issue comment edit K-1 10001 -b x ;;
+    token) run JIRA_API_TOKEN=mine -- issue comment edit K-1 10001 -b x ;;
+    server) run JIRA_SERVER=https://elsewhere.example -- issue comment edit K-1 10001 -b x ;;
+  esac
+  [ -f "$T/jira.seen" ] && [ ! -f "$T/comment.argv" ] || fail "comment $setup: not passed to the real jira"
+  [ "$(seen TOKEN)" != fake-oauth-tok ] || fail "comment $setup: connection token injected"
+done
+# Other comment subcommands are untouched.
+reset
+oauth
+run -- issue comment add K-1 hi
+[ -f "$T/jira.seen" ] && [ ! -f "$T/comment.argv" ] || fail "comment add was intercepted"
+expect comment-add TOKEN fake-oauth-tok
 
 # 12. The helper runs before the export, so it never sees a token in its environment.
 reset
