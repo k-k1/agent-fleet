@@ -1043,6 +1043,7 @@ export const admin = {
   "admin.stop_ws_title": "{key} のワークスペースを停止",
   "admin.stop_confirm": "停止する",
   "admin.stop_body": "このメンバーの {slug} のワークスペースコンテナを停止します。",
+  "admin.stop_body_starting": "このメンバーの {slug} のワークスペースはまだ起動中です。停止すると起動を取りやめます。ホームは残り、メンバーはもう一度起動できます。",
   "admin.rotate_git_title": "{key} の git トークンを再発行",
   "admin.rotate_git_confirm": "再発行する",
   "admin.rotate_git_body": "このメンバーがテナントの内部 git リポジトリにアクセスするためのトークンを新しく発行し、今のトークンはすぐに使えなくなります。トークンがワークスペースの外に漏れたおそれがあるときに使います。",

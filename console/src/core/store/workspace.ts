@@ -216,10 +216,13 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     // poll skips mid-stop — otherwise a second click re-issues the stop / a poll
     // clobbers the state during the multi-second docker stop.
     set({ state: "stopping…" });
+    // A refusal comes back as {error} JSON (another lifecycle operation holds the workspace):
+    // say so, or the confirmation closes and the state just returns to what it was.
     try {
-      await api("api/workspace/stop", { method: "POST" });
+      const r = await api("api/workspace/stop", { method: "POST" });
+      if (r?.error) toast(errText(r.error) || t("wsbar.stop_failed"), { kind: "error" });
     } catch {
-      /* settled by the refresh below */
+      toast(t("wsbar.stop_failed"), { kind: "error" }); // no answer: the refresh below shows the real state
     }
     await get().refresh();
   },

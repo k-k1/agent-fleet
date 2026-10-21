@@ -1639,3 +1639,5 @@ stat 1 回と最大 8 KiB の read だけで、home には触れず、メンバ�
 **2026-10-21 追記（決定 28、#2451）:** `auto` のホスト予約は、全ラングで一律 2048 MiB になった
 （8 GiB ラングの 1/5 では実メモリの余裕が約 1230 MiB しか残らず、常駐デーモンの実測 1.2〜1.4 GiB に対して足りず、
 実機でスラッシングした）。`off`、明示の `<n>` は変わらない。
+
+**注記（2026-10-21、#2448）：Stop は、バックグラウンドで収束中の Start より優先される。** `Stop` はまずワークスペースの Start カウントを進め（`abortStarts`、`homeLockClaim` 配下）、そのあと desiredCount を 0 にし、phase と claim を消すので、`State()` はすぐ `stopped` を返す。バックグラウンド側（`converge`/`launch`）は各ステップの境目でそのカウントを確認し、desiredCount を上げる呼び出しの直前には同じロックのもとで確認する（`underStart`）。追い越された Start は claim にも phase にも触れず静かに終わる（`errStartSuperseded`）。home は通常の Stop と同じくアタッチ・マウントされたまま残る。対象外：`placeHome` の最中に Stop が入ると、その呼び出しが書いた claim が TTL まで残ることがある。実 AWS では未検証。

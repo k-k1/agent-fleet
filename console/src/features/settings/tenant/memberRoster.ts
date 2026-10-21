@@ -58,6 +58,13 @@ export function bootFailures(failed?: Record<string, string> | null): [string, s
   return Object.entries(failed ?? {}).sort(([a], [b]) => a.localeCompare(b));
 }
 
+/** Whether the administrator's Force-stop is offered, from the stats poll: a running workspace,
+ *  or one the CP reports as starting. A start that never converges has no other exit, so
+ *  "starting" must not grey the button out. An unread poll (null) offers nothing. */
+export function memberStopAvailable(stats: { running?: boolean; starting?: boolean } | null | undefined): boolean {
+  return !!stats && (stats.running === true || stats.starting === true);
+}
+
 /** The member detail's "home is full" flag after one stats poll. The numbers are the ones the
  *  member's own notice uses (homeDiskPressure.ts, hysteresis included), and it is raised only
  *  where home_own says disk_used / disk_total describe this member's own volume: elsewhere they

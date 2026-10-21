@@ -114,6 +114,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "wsbar.state_title.no_tenant_admin":
     "You do not belong to any tenant yet, so there is no workspace. Add yourself as a member from Admin → Tenants.",
   "wsbar.start_failed": "Could not start the workspace",
+  "wsbar.stop_failed": "Could not stop the workspace",
   "wsbar.start_here": "Start",
   "wsbar.start_here.running": "Start (chat / repository / clone / shell)",
   "wsbar.start_here.queued": "Starting — opens when ready",

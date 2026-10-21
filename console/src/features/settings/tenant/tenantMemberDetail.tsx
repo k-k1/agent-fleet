@@ -29,7 +29,7 @@ import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
 import type { HomeResize, Member, WsSizing, WsSlot } from "../parts/adminShared.ts";
 import { fmtG, fmtPct, fmtGbHint, ladderFor, memberClassID, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
 import { bootReasonKey } from "../../../core/store/bootInstallReason.ts";
-import { bootFailures, homeFullFigures, nextMemberHomePressure } from "./memberRoster.ts";
+import { bootFailures, homeFullFigures, memberStopAvailable, nextMemberHomePressure } from "./memberRoster.ts";
 import { MemberAutoStopDetail, MemberIdleDetail, MemberSizeChips } from "./tenantMembers.tsx";
 import { MemberEngineAccessPanel } from "./tenantEngineAccess.tsx";
 
@@ -285,7 +285,16 @@ export function MemberView({
   const stop = async () => {
     setBusy(true);
     try {
-      await apiJSON("api/admin/stop-workspace", "POST", { tenant_slug: slug, user_key: key });
+      const res = await apiJSON("api/admin/stop-workspace", "POST", { tenant_slug: slug, user_key: key }).catch(
+        () => ({ error: { code: "network" } }),
+      );
+      // A refusal (another lifecycle operation holds the workspace) stopped nothing: say so
+      // and keep the dialog, rather than closing it as if the workspace were stopping.
+      if (res?.error) {
+        toast(errText(res.error));
+        poll();
+        return;
+      }
       setConfirmStop(false);
       poll();
       onChanged();
@@ -791,7 +800,10 @@ export function MemberView({
             rule. Painting a pause the same red as wiping a home is what teaches people
             to read past the red. */}
         <div className="member-actions">
-          <button disabled={!running} onClick={() => setConfirmStop(true)}>
+          {/* Enabled while "starting" too: a start that never converges (an unplaceable task, a
+              slot that never registers) has no other exit, and the CP stops a converging start
+              cleanly on every runtime. */}
+          <button disabled={!memberStopAvailable(stats)} onClick={() => setConfirmStop(true)}>
             <Icon name="debug-stop" /> {tr("admin.force_stop_ws")}
           </button>
           <button disabled={busy} onClick={() => setConfirmRotate(true)}>
@@ -849,7 +861,7 @@ export function MemberView({
           onCancel={() => setConfirmStop(false)}
           onConfirm={stop}
         >
-          <p>{tr("admin.stop_body", { slug })}</p>
+          <p>{tr(running ? "admin.stop_body" : "admin.stop_body_starting", { slug })}</p>
         </ConfirmDialog>
       )}
       {confirmRotate && (

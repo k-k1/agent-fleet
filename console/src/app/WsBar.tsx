@@ -1800,7 +1800,7 @@ export function WsBar() {
           refresh. Disabled mid-transition (starting…/stopping…), where it shows a
           spinner instead of the glyph. */}
       <Button
-        className={"ws-power " + (running ? "on" : "off") + (staleShown ? " stale" : "")}
+        className={"ws-power " + (running ? "on" : powerStops ? "starting" : "off") + (staleShown ? " stale" : "")}
         onClick={onToggle}
         disabled={inFlight}
         title={
@@ -1810,9 +1810,11 @@ export function WsBar() {
         }
         aria-label={powerStops ? tr("wsbar.stop_ws") : tr("wsbar.start_ws")}
       >
-        {busy ? (
+        {inFlight ? (
           <Icon name="loading" spin />
         ) : (
+          // A server-reported "starting" keeps the glyph (amber, see .ws-power.starting): a
+          // spinner there read as "wait", hiding that the button cancels a wedged start.
           // Inline SVG power symbol — the Unicode ⏻ (U+23FB) is missing from many
           // mobile system fonts (renders blank on phones), so draw it instead. Inherits
           // currentColor, so the state/hover color classes still apply.
