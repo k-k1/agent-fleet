@@ -219,7 +219,7 @@ INVENTORY = [
         request("ec2:StartInstances", [ec2("instance", "i-slot", SLOT)])]),
     ("internal/runtime/runtime_ecs_ec2.go", "quarantineSlot", "StopInstances", 1, [
         request("ec2:StopInstances", [ec2("instance", "i-slot", SLOT)]),
-        request("ec2:StopInstances", [ec2("instance", "i-slot", SLOT)])]),
+        request("ec2:StopInstances", [ec2("instance", "i-slot", QUARANTINED)])]),
     ("internal/runtime/runtime_ecs_ec2.go", "quarantineSlot", "DetachVolume", 1, [
         request("ec2:DetachVolume", [ec2("instance", "i-slot", SLOT), ec2("volume", "vol-home", HOME)])]),
     # ForceStopSlot stops a working slot (it refuses a quarantined one); forceStopAfterGrace

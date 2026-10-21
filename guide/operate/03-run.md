@@ -187,8 +187,11 @@ tasks yet)**, and gives it **Stop (force)** (super_admin).
    instance has not stopped after 3 minutes the Control Plane repeats it with Force, and pressing the
    button again while the instance is `stopping` forces it at once. A timer never acts on an instance
    that has been started again since.
-3. **The slot is not quarantined and the home stays on it.** The member's next Start wakes this same
-   stopped slot through the ordinary path. The reboot clears whatever thrashed, and the slot's ECS agent
+3. **The slot is not quarantined and the home stays on it.** Once the slot row shows asleep
+   (stopped), the member's next Start wakes this same slot through the ordinary path. **Wait for
+   that**: a Start made while the instance is still `stopping` gives up waiting after about two minutes
+   and leaves the workspace on "starting" until its claim expires; if that happens, stop the workspace
+   and start it again. The reboot clears whatever thrashed, and the slot's ECS agent
    reconnects and reports a task that was still `STOPPING` on it. Keeping a box as evidence is what
    quarantine is for, and routing dark slots there is a separate change (#2450).
 4. The result is on the page after the call (commands cancelled, whether Force was used) and in the audit

@@ -129,10 +129,11 @@ type CP interface {
 	// onlyOutdated refuses a slot that is not below the launch template's $Latest. ok=false
 	// where there is no pool.
 	ReserveSlotReplacement(ctx context.Context, instanceID string, reserve, onlyOutdated bool) (res runtime.SlotReservation, ok bool, err error)
-	// ForceStopSlot stops one wedged slot on an operator's word and quarantines it
-	// (#2449); overrideHealthy lets it stop a slot whose agents still answer. ok=false
+	// ForceStopSlot stops one wedged slot on an operator's word (#2449); the slot stays in
+	// service. overrideHealthy lets it stop a slot whose agents still answer. ok=false
 	// where there is no pool. The result is returned alongside an error too, because a
-	// partial run (quarantined, stop refused) is what the audit entry has to say.
+	// partial run (occupant's Start ended, cancel done, stop refused) is what the audit
+	// entry has to say.
 	ForceStopSlot(ctx context.Context, instanceID string, overrideHealthy bool) (res runtime.SlotForceStop, ok bool, err error)
 	WorkspaceSizing() runtime.WorkspaceSizing
 

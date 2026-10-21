@@ -942,7 +942,7 @@ type runtimeSlotForceStopper interface {
 	ForceStopSlot(ctx context.Context, instanceID string, overrideHealthy bool) (runtime.SlotForceStop, error)
 }
 
-// forceStopSlot stops and quarantines one wedged slot; ok=false on every runtime with no pool.
+// forceStopSlot stops one wedged slot (it stays in service); ok=false on every runtime with no pool.
 func (m *manager) forceStopSlot(ctx context.Context, instanceID string, overrideHealthy bool) (runtime.SlotForceStop, bool, error) {
 	p, ok := m.rtFactory.(runtimeSlotForceStopper)
 	if !ok {

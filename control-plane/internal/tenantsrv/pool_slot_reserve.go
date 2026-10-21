@@ -159,8 +159,8 @@ func orDash(s string) string {
 //
 // The adapter decides, from AWS, what may be stopped. Its refusals are answers rather than
 // faults: an id that is not a slot of this pool (404), a slot that is already stopped (409),
-// a quarantined slot (409 slot_quarantined), and a slot whose agents both answer (409 slot_healthy — the Console asks again with the
-// override once the operator has confirmed). Whatever the adapter managed before failing is
+// a quarantined slot (409 slot_quarantined), and a slot whose agents both answer (409 slot_healthy — only an API caller sets the
+// override; the Console never does). Whatever the adapter managed before failing is
 // kept in the audit line, since the occupant's Start may be ended with the stop still unsent.
 func (a Admin) ForceStopPoolSlot(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	id := strings.TrimSpace(r.PathValue("id"))

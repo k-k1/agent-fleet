@@ -133,13 +133,13 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "pool.force_stop": "Stop (force)",
   "pool.force_stop_title": "Stop slot {id} (force)?",
   "pool.force_stop_body":
-    "For a slot that is running but wedged: its ECS agent is not connected and SSM is not answering. This ends the start in progress on it, cancels the commands the Control Plane has queued on it, and stops the instance (a normal shutdown first, then Force if it has not stopped). The slot stays in the pool and the home stays on it: the member's next Start wakes this same slot, and the reboot clears whatever thrashed. The member on it (if any) sees the workspace as stopped.",
+    "For a slot that is running but wedged: its ECS agent is not connected and SSM is not answering. This ends the start in progress on it, cancels the commands the Control Plane has queued on it, and stops the instance (a normal shutdown first, then Force if it has not stopped). The slot stays in the pool and the home stays on it: the member's next Start wakes this same slot, and the reboot clears whatever thrashed. The member on it (if any) sees the workspace as stopped; ask them to start it only once this row shows asleep.",
   "pool.force_stop_occupant": "Occupant: {ws}",
   "pool.force_stop_failed": "Could not stop it: {msg}",
   "pool.force_stop_done":
     "Stop sent to {id}: {cancelled} pending command(s) cancelled{failed}. {how}",
   "pool.force_stop_cancel_failed": " ({n} could not be cancelled)",
-  "pool.force_stop_graceful": "The stop is graceful first and is repeated with Force after {min} minutes if the instance has not stopped; pressing the button again while it is stopping forces it at once.",
+  "pool.force_stop_graceful": "The stop is graceful first and is repeated with Force after {min} minutes if the instance has not stopped; pressing the button again while it is stopping forces it at once. Wait until the slot row shows asleep (stopped) before the member starts the workspace; a start made earlier can time out waiting for the instance and leave the workspace on “starting” until its claim expires, in which case stop the workspace and start it again.",
   "pool.force_stop_forced": "The stop was sent with Force (the instance was already stopping).",
   "pool.stopping_task": "task {status} {min} min",
   "pool.stopping_task_title":
