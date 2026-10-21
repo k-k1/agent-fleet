@@ -12,7 +12,11 @@ package agy
 //     bound (hookLiveState), and every consumer falls back to the DB / brain paths when no
 //     usable record exists.
 //   - The command's stdout must be a JSON object, and the command must never fail or block agy:
-//     every error is swallowed and "{}" is printed.
+//     every error is swallowed and "{}" is printed. PreToolUse is the exception: agy 1.4.4 reads
+//     "{}" there as an empty decision and denies the tool call with an empty reason, so every
+//     tool call of the session fails (measured by running a tool, #2470). Its reply is empty,
+//     which agy takes as no opinion; "{"decision":"allow"}" would also run the tool but speaks
+//     for the permission check, and a "hookSpecificOutput" key is an unknown field there.
 //   - hooks.json is shared with the user: only the entry named hookName is ours.
 
 import (
@@ -114,7 +118,11 @@ func hookStateFor(event string, in hookInput) string {
 // a failing hook must not disturb the agy turn it observes. Input that does not decode, or that
 // names no conversation, records nothing.
 func RunHook(args []string) {
-	defer fmt.Fprintln(os.Stdout, "{}")
+	defer func() {
+		if out := neutralOutput(args); out != "" {
+			fmt.Fprintln(os.Stdout, out)
+		}
+	}()
 	if len(args) == 0 {
 		return
 	}
@@ -123,6 +131,15 @@ func RunHook(args []string) {
 		return
 	}
 	recordHook(os.Getenv(agents.SessionNameEnvVar), os.Getenv(launchEnvVar), args[0], in, time.Now())
+}
+
+// neutralOutput is the stdout that lets agy go on: "{}" for every event but PreToolUse, which
+// prints nothing (see the invariants above).
+func neutralOutput(args []string) string {
+	if len(args) > 0 && args[0] == "PreToolUse" {
+		return ""
+	}
+	return "{}"
 }
 
 // recordHook stores the event for the slot named by the launch env. The conversation of a
@@ -273,7 +290,11 @@ func hookEntry(exe string) map[string]any {
 // current. Run at every launch because the command embeds this binary's path, which a rebuilt
 // or relocated agent invalidates. A file that is not plain JSON, or a symlink that resolves to
 // nothing, is left alone (the error says why) and the slot runs on the DB path. The caller logs.
-func EnsureHooks() error { return ensureHooksAt(hooksPath(), paths.ExePath()) }
+func EnsureHooks() error { return EnsureHooksFor(paths.ExePath()) }
+
+// EnsureHooksFor is EnsureHooks with the hook command pointing at exe, for the contract test
+// that drives a real agy through a stub handler.
+func EnsureHooksFor(exe string) error { return ensureHooksAt(hooksPath(), exe) }
 
 // ensureHooksMaxTries bounds the re-read loop when the user saves the file between our read
 // and our rename.
