@@ -5214,3 +5214,96 @@ func TestECSEC2ResizeHomeWaitsForTheModificationBeforeGrowingTheFilesystem(t *te
 		t.Fatalf("grew the filesystem while the modification was still pending: %v", h.ssmc.commands)
 	}
 }
+
+// A size/class change releases the old slot, and that is waitTasksGone + an SSM umount +
+// a detach + waitDeviceFree: never a seconds-only path. On a slot whose agents have
+// stopped answering it outlasted the ingress timeout on every retry. The fake SSM below
+// never completes, so a Start that still releases inline cannot return at all.
+func TestECSEC2SizeChangeStartDoesNotReleaseOnTheRequestThread(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-old", "ap-northeast-1a", "m7i.xlarge", true, false)
+	h.ci.registered["i-old"] = true
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.attach("vol-1", "i-old", time.Now().Add(-time.Hour))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	// the member now needs m7i.large (h.rt.instanceType); the slot is an xlarge
+
+	wedged := make(chan struct{})
+	defer close(wedged)
+	h.ssmc.onSend = func(string) { <-wedged }
+
+	done := make(chan error, 1)
+	go func() { done <- h.rt.Start(ctx) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start is stuck behind the old slot's umount: the release runs on the request thread")
+	}
+	if len(h.deferred) != 1 {
+		t.Fatalf("deferred %d background steps, want 1", len(h.deferred))
+	}
+	if got := h.rt.State(ctx); got != "starting" {
+		t.Fatalf("State = %q, want starting off the claim", got)
+	}
+	for _, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "DetachVolume") || strings.HasPrefix(c, "SSM ") {
+			t.Fatalf("Start touched the old slot on the request thread: %q", c)
+		}
+	}
+}
+
+// The background half: the old slot is released and the home lands on a slot of the right
+// size, with no second Start.
+func TestECSEC2SizeChangeStartConvergesInTheBackground(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-old", "ap-northeast-1a", "m7i.xlarge", true, false)
+	h.ci.registered["i-old"] = true
+	h.ec2.addSlot("i-new", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-new"] = true
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.attach("vol-1", "i-old", time.Now().Add(-time.Hour))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	h.runDeferred(ctx)
+	if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "i-new" {
+		t.Fatalf("home is on %q, want i-new", inst)
+	}
+	if got := h.rt.BootPhase(); got != "" {
+		t.Errorf("phase %q survived a converged start", got)
+	}
+}
+
+// A release that fails in the background must say why. Left alone it would be a `starting`
+// that expires into a `stopped` with no reason anywhere the member can read.
+func TestECSEC2SizeChangeReleaseFailureLeavesABlockedReason(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-old", "ap-northeast-1a", "m7i.xlarge", true, false)
+	h.ci.registered["i-old"] = true
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.attach("vol-1", "i-old", time.Now().Add(-time.Hour))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	h.ssmc.fail["af-umount"] = true
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	h.runDeferred(ctx)
+	if got := h.rt.BootPhase(); !strings.HasPrefix(got, blockedPhasePrefix) || !strings.Contains(got, "released") {
+		t.Fatalf("BootPhase = %q, want a blocked reason naming the failed release", got)
+	}
+	if got := h.rt.State(ctx); got == "starting" {
+		t.Fatalf("State = %q: the claim outlived the failed background release", got)
+	}
+	if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "i-old" {
+		t.Fatalf("home moved to %q although the umount failed", inst)
+	}
+}
