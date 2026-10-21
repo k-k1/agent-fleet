@@ -646,7 +646,7 @@ the new session starts from, and in what happens to the original.
 | Who prepares the context | The fleet operator writes a summary, and you review it | Nobody: the conversation is copied as it is | The Workspace writes the conversation to a handover file; no AI summarises it |
 | Target agent | Any connected agent | The same agent | Another kind of agent only |
 | The original session | Stays as it is | Stays as it is | Stops and takes no more input |
-| What carries over | Key points, unfinished tasks, changed files, next steps | The conversation up to that message, word for word | The conversation, where it stopped, the working copy's state, queued instructions; the new session works in the same working copy |
+| What carries over | Key points, unfinished tasks, changed files, next steps | By default the conversation before that message, word for word, with the message left as a draft; **Continue after it** also carries that message and its reply | The conversation, where it stopped, the working copy's state, queued instructions; the new session works in the same working copy |
 
 ### Handing a conversation off (handoff)
 

@@ -313,7 +313,10 @@ card says "Not available on this host (…)" and agy is not offered.
 - **States**: Working / Question / Awaiting permission / Ready. agy ends its turn soon after a
   command it ran with `run_command` starts, and leaves the command running. While such a command
   runs, the row reads **"Ready · running in background"**, and the session does not count as
-  idle, so an idle stop does not cut a build short. A turn that agy never closes (the CLI died
+  idle. That background work keeps the Workspace awake for at most 2 hours by default (the
+  deployment can change the bound); after that the Workspace can stop as idle while the command
+  still runs. For a longer build, use **Keep awake**
+  ([09](09-collaboration.md#keeping-a-session-awake)). A turn that agy never closes (the CLI died
   mid-turn) stops reading Working after an hour with no change, unless one of its commands is
   still running.
 - **Agent Fleet adds a hook entry to agy's configuration.** To know which conversation a session
