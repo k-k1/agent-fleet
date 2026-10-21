@@ -52,15 +52,23 @@ node console/scripts/shots/capture.mjs --locale en
 
 ## Features-page stills
 
-Three scenes are for the features page on agent-fleet.org rather than the README: the file
-viewer (`files` — a Markdown note with its Mermaid diagram beside a draw.io diagram), the
-work-item inbox (`workitems` — CI and conflict marks, and a pull request's detail panel) and the
-image-generation studio (`imagegen`). They land in `docs/img/` like the README shots and ship the
-same way:
+Seven scenes are for the features page on agent-fleet.org rather than the README:
+
+| Scene | Shows |
+|---|---|
+| `files` | the file viewer: a Markdown note with its Mermaid diagram beside a draw.io diagram |
+| `workitems` | the work-item inbox: CI and conflict marks, and a pull request's detail panel |
+| `imagegen` | the image-generation studio |
+| `memory` | Settings › Agent memory: memories written by sessions of several kinds, one opened |
+| `inbox` | the member inbox: a request waiting, one taken with its session, a message |
+| `sessionmenu` | the session menu: move, handoff, share and the three Markdown exports |
+| `move` | the dialog that moves a session to another agent, with the work that goes along |
+
+They land in `docs/img/` like the README shots and ship the same way:
 
 ```bash
-node console/scripts/shots/capture.mjs --locale en --only files,workitems,imagegen
-node console/scripts/shots/capture.mjs --locale ja --only files,workitems,imagegen
+node console/scripts/shots/capture.mjs --locale en --only files,workitems,imagegen,memory,inbox,sessionmenu,move
+node console/scripts/shots/capture.mjs --locale ja --only files,workitems,imagegen,memory,inbox,sessionmenu,move
 ```
 
 The site takes them from a release of the distribution repository, so a change here reaches the

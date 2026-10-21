@@ -125,7 +125,15 @@ const exact = {
   "/api/memos": () => fx.memos(LOCALE),
   "/api/memo-categories": () => fx.memoCategories(LOCALE),
   "/api/schedules": () => fx.schedules(LOCALE),
-  "/api/env/ui-prefs": () => ({}),
+  // agentMemory on: the memory scene's status header reads it, and nothing else on screen changes
+  // with it (the palette gains a mode, the session menu's review entry also needs memoryReview).
+  "/api/env/ui-prefs": () => ({ agentMemory: true }),
+  // Agent memory (ADR 0108) for the memory scene: the list, one body, the change log.
+  "/api/agents/memory/entries/list": () => fx.memoryList(LOCALE),
+  "/api/agents/memory/entries/member-read": (q) => fx.memoryRead(LOCALE, q.get("name") || ""),
+  "/api/agents/memory/entries/member-forgotten": () => ({ forgotten: [], projects: [], withheld: 0 }),
+  "/api/agents/memory/entries/changes": (q) => fx.memoryChanges(LOCALE, Number(q.get("limit") || 0)),
+  "/api/agents/memory/auto-sync": () => ({ want: true, settled: true, phase: "idle" }),
   "/api/update/status": () => ({ current: "0.3.0", latest: "0.3.0" }),
   "/api/usage": () => ({ agents: fx.usage(LOCALE) }),
   // Cloud cost (docs/log/67). The whole tab is hidden unless profile.available is true, so
@@ -238,6 +246,12 @@ const exact = {
 };
 
 const re = [
+  // The move dialog's preview (ADR 0115) for the move scene.
+  [/^\/api\/sessions\/([^/]+)\/move\/preview$/, (m) => fx.movePreview(LOCALE, m[1])],
+  // The model picker of a target kind: invented ids, so no real third-party model is named.
+  [/^\/api\/agents\/(codex|opencode|copilot|kiro)\/models$/, () => ({
+    models: [{ id: "demo-coder-large", label: "demo-coder-large" }, { id: "demo-coder-fast", label: "demo-coder-fast" }],
+  })],
   [
     /^\/api\/sessions\/([^/]+)\/messages$/,
     (m) => {
@@ -476,6 +490,7 @@ const server = http.createServer((req, res) => {
 });
 
 function inboxFixture() {
+  const ja = LOCALE === "ja";
   const ago = (h) => new Date(Date.now() - h * 3600e3).toISOString().replace(/\.\d+Z$/, "Z");
   const person = (k) => ({ userKey: k.replace(/[@.]/g, "-"), email: k, removed: false });
   const base = { recipients: [], assignee: null, assignedToMe: false, canClaim: false, longOpen: false,
@@ -485,18 +500,18 @@ function inboxFixture() {
     items: [
       { ...base, id: "i1", kind: "request", state: "open", role: "recipient", delivery: "unread", canClaim: true, unseen: true,
         sender: person("hanako@example.com"), recipients: [{ ...person("taro@example.com"), delivery: "", eligible: false }],
-        body: "Could someone look at the flaky login test on main?\nIt fails about one run in five since yesterday.",
+        body: ja ? "main のログインのテストが不安定です。どなたか見てもらえますか？\n昨日から 5 回に 1 回くらい落ちます。" : "Could someone look at the flaky login test on main?\nIt fails about one run in five since yesterday.",
         createdAt: ago(2), updatedAt: ago(2), seq: 7 },
       { ...base, id: "i2", kind: "request", state: "claimed", role: "recipient", delivery: "read", assignedToMe: true,
         assignee: person("taro@example.com"), sender: person("jiro@example.com"),
-        body: "Please bump the Go toolchain in the CP image.", createdAt: ago(30), updatedAt: ago(5), seq: 6,
-        session: { name: "cp-go-bump", dir: "/home/dev/repos/agent-fleet", branch: "chore/go-bump", launchedAt: ago(5), by: person("taro@example.com") } },
+        body: ja ? "返金 API のタイムアウトを 10 秒から 30 秒に延ばしてください。" : "Please raise the refund API timeout from 10 s to 30 s.", createdAt: ago(30), updatedAt: ago(5), seq: 6,
+        session: { name: "sr7fq2m", dir: "/home/dev/repos/payments-api", branch: "fix/refund-timeout", launchedAt: ago(5), by: person("taro@example.com") } },
       { ...base, id: "i3", kind: "dm", state: "", role: "recipient", delivery: "unread", unseen: true,
-        sender: person("hanako@example.com"), body: "Thanks for the review yesterday!", createdAt: ago(1), updatedAt: ago(1), seq: 5 },
+        sender: person("hanako@example.com"), body: ja ? "昨日のレビュー、ありがとうございました！" : "Thanks for the review yesterday!", createdAt: ago(1), updatedAt: ago(1), seq: 5 },
       { ...base, id: "i4", kind: "request", state: "open", role: "sender", delivery: "read", longOpen: true,
         sender: person("taro@example.com"),
         recipients: [{ ...person("hanako@example.com"), delivery: "declined", eligible: false }, { ...person("jiro@example.com"), delivery: "read", eligible: true }],
-        body: "Can someone own the release notes this week?", createdAt: ago(24 * 15), updatedAt: ago(48), seq: 3 },
+        body: ja ? "今週のリリースノート、どなたか担当してもらえますか？" : "Can someone own the release notes this week?", createdAt: ago(24 * 15), updatedAt: ago(48), seq: 3 },
     ],
   };
 }

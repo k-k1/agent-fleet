@@ -2082,3 +2082,88 @@ export function sessionSearch(locale, q) {
     total: 44,
   };
 }
+
+// Agent Fleet's own memory (ADR 0108), for the "memory" scene: memories every agent kind shares,
+// written by sessions of several kinds and one by the member, in the user scope and two projects.
+// MemoryListed / MemoryBody / MemoryChange in console/src/features/settings/memory/memoryTypes.ts.
+const MEM_PROJECTS = {
+  webshop: { id: "p-webshop", root: "/home/dev/repos/webshop", vcs: "git", display: "webshop", remote: "github.com/acme/webshop" },
+  payments: { id: "p-payments", root: "/home/dev/repos/payments-api", vcs: "git", display: "payments-api", remote: "bitbucket.org/acme/payments-api" },
+};
+function memoryRows(locale) {
+  const ago = (h) => new Date(Date.now() - h * 3600e3).toISOString().replace(/\.\d+Z$/, "Z");
+  const m = (name, scope, project, type, ja, en, h, kind, session, uses, pinned = false, body = ["", ""]) => ({
+    name, scope, ...(project ? { project: MEM_PROJECTS[project] } : {}), type,
+    description: L(locale, ja, en), updated: ago(h), pinned, uses, revision: 1 + (uses % 4),
+    authorKind: kind, authorSession: session, body: L(locale, body[0], body[1]), created: ago(h + 48),
+  });
+  return [
+    m("checkout-tests-need-stripe-mock", "project", "webshop", "feedback",
+      "決済のテストは Stripe のモックを起動してから流す", "Start the payment mock before running the checkout tests",
+      3, "claude", "sk4rq2f", 14, true, [
+        "決済まわりのテストは `make mock-pay` でモックを起動してから `npm test -- checkout` を流す。\n\nモック無しだと 30 秒のタイムアウトで全件赤になり、テストが壊れたように見える（実測: 42 件中 42 件）。\n\nCI は `services:` でモックを立てているので、ローカルだけの手順。",
+        "Run `make mock-pay` before `npm test -- checkout`.\n\nWithout the mock every checkout test fails on a 30 s timeout, which looks like a broken suite (measured: 42 of 42 red).\n\nCI starts the mock as a service, so this is a local step only.",
+      ]),
+    m("release-branch-naming", "project", "webshop", "project",
+      "リリースブランチは release/<年>.<週> で切る", "Release branches are release/<year>.<week>",
+      26, "codex", "sc9lm3d", 6),
+    m("refund-api-is-idempotent", "project", "payments", "project",
+      "返金 API は Idempotency-Key 必須。再送で二重返金しない", "The refund API needs an Idempotency-Key; a retry never refunds twice",
+      50, "copilot", "sq3hn7v", 9),
+    m("ledger-migrations-review", "project", "payments", "feedback",
+      "台帳のマイグレーションは必ず別セッションにレビューさせる", "Ledger migrations always get a review from another session",
+      74, "member", "", 4),
+    m("prefers-small-prs", "user", null, "user",
+      "PR は 400 行以内に分けると喜ばれる", "Keep pull requests under about 400 lines",
+      100, "opencode", "so5nw6k", 21, true),
+    m("answer-in-japanese", "user", null, "user",
+      "説明は日本語、コミットとコメントは英語", "Explanations in Japanese, commits and comments in English",
+      200, "member", "", 33),
+  ];
+}
+export function memoryList(locale) {
+  return { entries: memoryRows(locale).map(({ body, created, ...row }) => row), withheld: 0 };
+}
+export function memoryRead(locale, name) {
+  const row = memoryRows(locale).find((r) => r.name === name);
+  return row ? { ...row, kinds: ["claude", "codex", "copilot", "opencode"] } : { error: { code: "not_found" } };
+}
+export function memoryChanges(locale, limit) {
+  const rows = memoryRows(locale).sort((a, b) => b.updated.localeCompare(a.updated));
+  const changes = rows.map((r, i) => ({
+    commit: (i + 1).toString(16).padStart(2, "0") + "c4e9a1b7d3f2",
+    at: r.updated, op: i % 3 === 1 ? "update" : "save", scope: r.scope,
+    ...(r.project ? { project: r.project } : {}), name: r.name,
+    authorKind: r.authorKind, authorSession: r.authorSession,
+    latest: true, live: true, revertible: true,
+  }));
+  return { changes: changes.slice(0, limit || changes.length) };
+}
+
+// Moving a session to another agent (ADR 0115), for the "move" scene: the preview the dialog reads
+// for the Claude session in the webshop worktree. Uncommitted work and a queued follow-up travel
+// with it. MovePreview in console/src/features/sessions/move.ts.
+export function movePreview(locale, name) {
+  return {
+    source: name,
+    kind: "claude",
+    state: "idle",
+    targets: [
+      { kind: "codex", eligible: true },
+      { kind: "copilot", eligible: true },
+      { kind: "opencode", eligible: true },
+      { kind: "kiro", eligible: true },
+      { kind: "claude", eligible: false, reason: "same_kind" },
+      { kind: "shell", eligible: false, reason: "not_an_agent" },
+    ],
+    git: {
+      available: true,
+      dirty: true,
+      status: " M src/checkout/validate.ts\n M src/checkout/validate.test.ts\n?? src/checkout/errors.ts",
+      diffStat: " src/checkout/validate.test.ts | 34 ++++++++++\n src/checkout/validate.ts      | 18 ++++--\n 2 files changed, 47 insertions(+), 5 deletions(-)",
+      ahead: "5c1b9f4 " + L(locale, "合計 0 円の注文を弾く", "Reject orders whose total is zero"),
+    },
+    queued: [{ text: L(locale, "エラー文言はデザインのメモに合わせて", "Match the error wording to the design note"), origin: "memo" }],
+    sizeBytes: 48213,
+  };
+}
