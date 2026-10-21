@@ -103,11 +103,13 @@ What can happen to an offer:
 - A notification for an offer that is no longer open says it is gone and opens nothing.
 - The offer is reserved when the recipient presses launch, not when the dialog opens. If the
   sender withdrew it, or another window is already launching it, nothing starts and a message
-  says why. While a launch holds it, the sender cannot withdraw it and it does not expire; a
-  launch that never reached the recipient's workspace stops holding it after 10 minutes.
-- If the launch gets no answer, the offer stays reserved for the recipient: **press launch
-  again to check** whether the session started. When it is not in your workspace, **Not in my
-  workspace — give it back** returns the offer, but it does not cancel the earlier launch.
+  says why. While a launch holds it, the sender cannot withdraw it and it does not expire. A
+  launch that stops before the Control Plane confirms it for sending to the workspace stops
+  holding the offer after 10 minutes.
+- Once the launch is confirmed, an unanswered result keeps the offer reserved for the
+  recipient: **press launch again to check** whether the session started. Ten minutes after the
+  confirmation, if there is still no outcome, **Not in my workspace — give it back** appears.
+  It returns the offer, but it does not cancel the earlier launch.
 
 ## Asking a teammate: the inbox
 
