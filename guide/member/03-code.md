@@ -79,12 +79,31 @@ session. You can view, list, create, edit, comment on and transition issues:
   `jira init -c ~/.config/agent-fleet/jira/other-board.yml --project PROJ --board "Other board"`
   and then use `jira -c ~/.config/agent-fleet/jira/other-board.yml …`. Your connection is used
   only with configs in `~/.config/agent-fleet/jira/`.
+- **Markdown in comments and descriptions**: the CLI converts Markdown to Jira markup, and until the
+  first piece of markup (a heading, a list, bold, a link) a list, heading,
+  code block or quote that follows a plain paragraph is glued onto it (two paragraphs in a row are
+  fine). A paragraph, a blank line and a list are sent as:
+
+  ```
+  Intro.          →  Intro.* a
+  (blank line)
+  - a
+  ```
+
+  Open the body with a heading or a list, or put inline markup (bold, a link, `code`) in the first
+  paragraph, and always leave a blank line before a list. Agents are told this too.
+- **Using an Atlassian MCP tool instead**: `jira` is the default because it works for every agent and
+  renews the token itself, while an MCP connector serves one agent and needs a session restart when
+  its login expires. To prefer the MCP route, say so in **⚙Settings → "Agent instructions"**, for
+  example: "For Jira, use the Atlassian MCP tool instead of the `jira` CLI." Agents that have the
+  connector follow it; the others keep using `jira`. Without such a line, an agent uses an MCP tool
+  only for what the CLI cannot do.
 - **Editing and deleting comments**: `jira issue comment edit PROJ-1 10001 -b "…"` and
   `jira issue comment delete PROJ-1 10001`. `jira` itself has only `comment add`; these two are
   added by Agent Fleet. `edit` takes the new text from `-b`, `-T FILE` (`-` reads stdin) or a pipe,
   and sends it as Markdown converted for Jira, so it is also how a garbled comment (see above) is
   repaired. Find the comment ID with `jira issue view PROJ-1 --raw` (`fields.comment.comments[].id`).
-  Jira lets you change only your own comments (a comment by someone else answers 403), and agents
+  Jira usually lets you change only your own comments (someone else's answers 403 unless your account may manage all comments), and agents
   are told to edit or delete only a comment they posted in that session or one you named. They
   work with your saved connection only: not with `--debug`, `JIRA_API_TOKEN` or a config of your
   own, where plain `jira` answers that it has no such command.

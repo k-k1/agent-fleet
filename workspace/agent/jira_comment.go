@@ -111,14 +111,13 @@ func jiraCommentRun(c *secrets.JiraCreds, args []string, stdin io.Reader, stdout
 		fmt.Fprintln(stderr, "jira:", err)
 		return 2
 	}
-	var payload []byte
+	var md string
 	if a.verb == "edit" {
-		md, err := jiraCommentBody(a, stdin)
-		if err != nil {
+		var err error
+		if md, err = jiraCommentBody(a, stdin); err != nil {
 			fmt.Fprintln(stderr, "jira:", err)
 			return 2
 		}
-		payload, _ = json.Marshal(map[string]any{"body": jiraMarkdownADF(md)})
 	} else if a.body != nil || a.template != "" {
 		fmt.Fprintln(stderr, "jira: comment delete takes no body")
 		return 2
@@ -131,11 +130,37 @@ func jiraCommentRun(c *secrets.JiraCreds, args []string, stdin io.Reader, stdout
 		fmt.Fprintln(stderr, "jira: no Jira site selected for the connection")
 		return 1
 	}
-	method := "PUT"
-	if a.verb == "delete" {
-		method = "DELETE"
-	}
+	method := "DELETE"
+	var payload []byte
 	u := jiraAPIBase(c) + "/rest/api/3/issue/" + a.key + "/comment/" + a.id
+	if a.verb == "edit" {
+		method = "PUT"
+		// Jira does not say what an omitted visibility does on update, so the comment's own
+		// restriction (role / group, or a JSM internal flag) is read first and sent back as it was.
+		// The read also fails early, and in the same words, for a missing comment.
+		raw, status, err := jiraCommentCall(c, "GET", u+"?expand=properties", nil)
+		if err != nil {
+			fmt.Fprintln(stderr, "jira:", err)
+			return 1
+		}
+		if status != http.StatusOK {
+			fmt.Fprintln(stderr, "jira:", jiraCommentFailure(a, status, raw))
+			return 1
+		}
+		var cur struct {
+			Visibility json.RawMessage   `json:"visibility"`
+			Properties []json.RawMessage `json:"properties"`
+		}
+		_ = json.Unmarshal(raw, &cur)
+		body := map[string]any{"body": jiraMarkdownADF(md)}
+		if v := strings.TrimSpace(string(cur.Visibility)); v != "" && v != "null" {
+			body["visibility"] = cur.Visibility
+		}
+		if len(cur.Properties) > 0 {
+			body["properties"] = cur.Properties
+		}
+		payload, _ = json.Marshal(body)
+	}
 	raw, status, err := jiraCommentCall(c, method, u, payload)
 	if err != nil {
 		fmt.Fprintln(stderr, "jira:", err)

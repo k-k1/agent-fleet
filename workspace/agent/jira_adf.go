@@ -3,7 +3,7 @@ package main
 // Markdown to Atlassian Document Format, for `workspace-agent jira-comment edit`.
 //
 // jira-cli sends bodies as v2 wiki markup through a converter that glues a list, heading, code
-// block or quote onto a plain paragraph before it (#2476). An edit is how such a comment gets
+// block or quote onto a plain paragraph before it. An edit is how such a comment gets
 // repaired, so its body goes through goldmark and REST v3 instead, and the paragraph-then-list
 // case comes out as a paragraph followed by a bulletList.
 //
@@ -15,8 +15,21 @@ import (
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/extension"
+	east "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 )
+
+// jiraMarkdown parses what jira-cli's own converter accepted, tables aside: strikethrough and
+// bare URLs. A table degrades to text.
+var jiraMarkdown = goldmark.New(goldmark.WithExtensions(extension.Strikethrough, extension.Linkify))
+
+// adfUnescape resolves what the source still holds raw (a backslash escape, a character
+// reference): goldmark's renderer does it, but this reads the segments directly.
+func adfUnescape(b []byte) string {
+	return string(util.ResolveEntityNames(util.ResolveNumericReferences(util.UnescapePunctuations(b))))
+}
 
 type adfNode = map[string]any
 
@@ -24,7 +37,7 @@ type adfNode = map[string]any
 // document: Jira answers 400 for one.
 func jiraMarkdownADF(md string) adfNode {
 	src := []byte(strings.ReplaceAll(md, "\r\n", "\n"))
-	root := goldmark.DefaultParser().Parse(text.NewReader(src))
+	root := jiraMarkdown.Parser().Parse(text.NewReader(src))
 	content := adfBlocks(root, src)
 	if len(content) == 0 {
 		content = []any{adfNode{"type": "paragraph", "content": []any{adfNode{"type": "text", "text": " "}}}}
@@ -140,7 +153,7 @@ func adfInlines(n ast.Node, src []byte, marks []adfNode) []any {
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 		switch v := c.(type) {
 		case *ast.Text:
-			textNode(string(v.Segment.Value(src)), marks)
+			textNode(adfUnescape(v.Segment.Value(src)), marks)
 			if v.HardLineBreak() || v.SoftLineBreak() {
 				out = append(out, adfNode{"type": "hardBreak"})
 			}
@@ -148,6 +161,8 @@ func adfInlines(n ast.Node, src []byte, marks []adfNode) []any {
 			textNode(string(v.Value), marks)
 		case *ast.CodeSpan:
 			textNode(adfPlainText(v, src), append(append([]adfNode{}, marks...), adfNode{"type": "code"}))
+		case *east.Strikethrough:
+			out = append(out, adfInlines(v, src, append(append([]adfNode{}, marks...), adfNode{"type": "strike"}))...)
 		case *ast.Emphasis:
 			kind := "em"
 			if v.Level >= 2 {
@@ -155,7 +170,7 @@ func adfInlines(n ast.Node, src []byte, marks []adfNode) []any {
 			}
 			out = append(out, adfInlines(v, src, append(append([]adfNode{}, marks...), adfNode{"type": kind}))...)
 		case *ast.Link:
-			m := adfNode{"type": "link", "attrs": adfNode{"href": string(v.Destination)}}
+			m := adfNode{"type": "link", "attrs": adfNode{"href": adfUnescape(v.Destination)}}
 			out = append(out, adfInlines(v, src, append(append([]adfNode{}, marks...), m))...)
 		case *ast.AutoLink:
 			u := string(v.URL(src))
@@ -163,9 +178,9 @@ func adfInlines(n ast.Node, src []byte, marks []adfNode) []any {
 		case *ast.Image:
 			alt := adfPlainText(v, src)
 			if alt == "" {
-				alt = string(v.Destination)
+				alt = adfUnescape(v.Destination)
 			}
-			textNode(alt, append(append([]adfNode{}, marks...), adfNode{"type": "link", "attrs": adfNode{"href": string(v.Destination)}}))
+			textNode(alt, append(append([]adfNode{}, marks...), adfNode{"type": "link", "attrs": adfNode{"href": adfUnescape(v.Destination)}}))
 		case *ast.RawHTML:
 			for i := 0; i < v.Segments.Len(); i++ {
 				seg := v.Segments.At(i)

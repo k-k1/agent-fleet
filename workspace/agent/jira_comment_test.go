@@ -51,13 +51,13 @@ func TestJiraCommentEditSendsADF(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("rc=%d err=%q", rc, errs)
 	}
-	if len(*calls) != 1 || (*calls)[0].method != "PUT" || (*calls)[0].path != "/rest/api/3/issue/T-1/comment/10001" {
+	if len(*calls) != 2 || (*calls)[0].method != "GET" || (*calls)[1].method != "PUT" || (*calls)[1].path != "/rest/api/3/issue/T-1/comment/10001" {
 		t.Fatalf("calls = %+v", *calls)
 	}
-	if !strings.HasPrefix((*calls)[0].auth, "Basic ") {
-		t.Errorf("auth header %q", (*calls)[0].auth)
+	if !strings.HasPrefix((*calls)[1].auth, "Basic ") {
+		t.Errorf("auth header %q", (*calls)[1].auth)
 	}
-	body := (*calls)[0].body["body"].(map[string]any)
+	body := (*calls)[1].body["body"].(map[string]any)
 	if body["type"] != "doc" || body["version"] != float64(1) {
 		t.Errorf("not an ADF doc: %v", body)
 	}
@@ -97,7 +97,7 @@ func TestJiraMarkdownADFConstructs(t *testing.T) {
 func TestJiraMarkdownADFFallbacks(t *testing.T) {
 	// A table has no goldmark core node; it must come through as text, never panic or vanish.
 	raw, _ := json.Marshal(jiraMarkdownADF("| a | b |\n|---|---|\n| 1 | 2 |\n"))
-	if !strings.Contains(string(raw), "| a | b |") {
+	if !strings.Contains(string(raw), "| a | b") || !strings.Contains(string(raw), "|---|---|") {
 		t.Errorf("table text lost: %s", raw)
 	}
 	// Code mark next to strong: ADF refuses the pair, so only code stays.
@@ -151,7 +151,7 @@ func TestJiraCommentBodySources(t *testing.T) {
 	if rc, _, e := runComment(c, "from dash", "issue", "comment", "edit", "T-1", "5", "-T", "-"); rc != 0 {
 		t.Fatalf("-T -: %s", e)
 	}
-	if len(*calls) != 2 {
+	if len(*calls) != 4 { // a read and a write per edit
 		t.Fatalf("calls = %d", len(*calls))
 	}
 	if rc, _, e := runComment(c, "", "issue", "comment", "edit", "T-1", "5"); rc != 2 || !strings.Contains(e, "empty") {
@@ -182,5 +182,40 @@ func TestParseJiraCommentArgsRejects(t *testing.T) {
 func TestJiraCommentNoConnection(t *testing.T) {
 	if rc, _, e := runComment(nil, "", "issue", "comment", "delete", "T-1", "5"); rc != 1 || !strings.Contains(e, "no Jira connection") {
 		t.Errorf("rc=%d %q", rc, e)
+	}
+}
+
+// An edit hands the comment's visibility and properties back as they were.
+func TestJiraCommentEditKeepsVisibility(t *testing.T) {
+	c, calls := commentStub(t, 200, `{"id":"5","visibility":{"type":"role","value":"Administrators"},"properties":[{"key":"sd.public.comment","value":{"internal":true}}]}`)
+	if rc, _, e := runComment(c, "", "issue", "comment", "edit", "T-1", "5", "-b", "x"); rc != 0 {
+		t.Fatal(e)
+	}
+	put := (*calls)[1]
+	if v, _ := put.body["visibility"].(map[string]any); v["value"] != "Administrators" {
+		t.Errorf("visibility not kept: %v", put.body)
+	}
+	if p, _ := put.body["properties"].([]any); len(p) != 1 {
+		t.Errorf("properties not kept: %v", put.body)
+	}
+	// A public comment sends neither.
+	c, calls = commentStub(t, 200, `{"id":"5","visibility":null}`)
+	runComment(c, "", "issue", "comment", "edit", "T-1", "5", "-b", "x")
+	if _, ok := (*calls)[1].body["visibility"]; ok {
+		t.Errorf("visibility invented: %v", (*calls)[1].body)
+	}
+}
+
+// Escapes and character references are resolved, in text and in link targets.
+func TestJiraMarkdownADFUnescapesAndExtensions(t *testing.T) {
+	raw, _ := json.Marshal(jiraMarkdownADF(`a \*not em\* &amp; &copy; [l](http://x.y/a\_b) ~~s~~ https://e.example`))
+	s := string(raw)
+	for _, want := range []string{`a *not em* \u0026 © `, `http://x.y/a_b`, `"type":"strike"`, `"href":"https://e.example"`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %s in %s", want, s)
+		}
+	}
+	if strings.Contains(s, `\\`) || strings.Contains(s, "&amp;") {
+		t.Errorf("raw escape left: %s", s)
 	}
 }
