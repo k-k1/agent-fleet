@@ -289,9 +289,6 @@ func (a *mcpOAuthAPI) askConsent(w http.ResponseWriter, r *http.Request, req mcp
 		Loopback: a.classifyRedirect(req.redirectURI) == redirectLoopback,
 		CanWrite: req.level >= scopeRank(scopeWrite), Scope: scopeRead,
 	}
-	if data.CanWrite {
-		data.Scope = scopeWrite
-	}
 	for _, mv := range ms {
 		label := mv.TenantName
 		if label == "" {

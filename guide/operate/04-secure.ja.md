@@ -309,7 +309,8 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
 - **提供されるパス**（issuer は `{PUBLIC_BASE_URL}/mcp-oauth`）: `/.well-known/oauth-protected-resource/mcp`、
   `/.well-known/oauth-authorization-server/mcp-oauth`、`/mcp-oauth/authorize`、`/mcp-oauth/consent`、
   `/mcp-oauth/token`、`/mcp-oauth/register`、`/mcp-oauth/revoke`。`/mcp` の 401 には
-  `WWW-Authenticate: Bearer resource_metadata="…", scope="read"` が付きます。
+  `WWW-Authenticate: Bearer resource_metadata="…"` が付きます（提示されたトークンが無効な場合は `, error="invalid_token"` が付きます）。
+  スコープはクライアントが要求し、同意ページは `read` を初期選択して、要求された場合だけ `write` を表示します。
 - **ingress。** ホスト型クライアントは `/mcp` とトークンエンドポイントを**ベンダーのサーバーから**呼ぶので、Control Plane はこれらのパスでインターネットから
   到達できる必要があります。VPN の内側や ALB の ingress CIDR を絞った配備では、コマンドライン（ループバック）のクライアントだけが使えます。これは仕様であり不具合ではありません。
   `AUTH=oauth` と `AUTH=dev` では Console 自身のセッションゲートが、探索・`token`・`register`・`revoke` を素通しにし、`authorize` と `consent` はゲートの内側に置きます。

@@ -62,12 +62,13 @@ const oauthAccessPrefix = "afmcp_at_"
 const oauthIdle = 30 * 24 * time.Hour
 
 // challenge is the WWW-Authenticate value of a 401: bare Bearer while OAuth is off, otherwise
-// the RFC 9728 pointer and the scope a first request should ask for.
+// the RFC 9728 pointer. Omitting scope lets clients request the advertised scopes
+// instead of pinning their first grant to read before the member can choose.
 func (a API) challenge(presented bool) string {
 	if a.oauth.metadataURL == "" {
 		return "Bearer"
 	}
-	c := `Bearer resource_metadata="` + a.oauth.metadataURL + `", scope="read"`
+	c := `Bearer resource_metadata="` + a.oauth.metadataURL + `"`
 	if presented {
 		c += `, error="invalid_token"`
 	}

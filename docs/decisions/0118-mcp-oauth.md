@@ -257,3 +257,16 @@ and a revoke button.
   `private_key_jwt` against the document's `jwks_uri`, remains possible if a client
   requires it. The published ChatGPT document is covered by a fixed test fixture;
   a live ChatGPT connection remains unverified and tracked by #2435.
+
+- 2026-10-21, #2455: chose option 1: omit `scope` from the `/mcp` 401 challenge,
+  keeping `resource_metadata` and the invalid-token error when applicable. This settles
+  the open question above: the #2435 live run found that claude.ai sends the challenged
+  scope, while ChatGPT requests every `scopes_supported` entry. Advertising `scope="read"`
+  therefore prevented claude.ai from ever asking for write tools. Without a challenged
+  scope, clients can request the advertised scopes; the consent page always starts at
+  `read` and offers `write` only when requested, requiring an explicit member choice.
+  The token response reports the granted scope, never a wider scope than requested;
+  `admin:dangerous` remains unavailable. This refines decisions 1 and 4 without changing
+  insufficient-scope handling. `prompt=none` still requires an existing grant covering
+  the entire requested scope: a read grant cannot silently approve a read+write request.
+  Live verification of the changed hosted-client flow remains tracked by #2435.

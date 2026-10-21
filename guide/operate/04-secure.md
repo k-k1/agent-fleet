@@ -367,7 +367,8 @@ working for CI and clients without OAuth.
 - **What is served** (issuer `{PUBLIC_BASE_URL}/mcp-oauth`): `/.well-known/oauth-protected-resource/mcp`,
   `/.well-known/oauth-authorization-server/mcp-oauth`, `/mcp-oauth/authorize`, `/mcp-oauth/consent`,
   `/mcp-oauth/token`, `/mcp-oauth/register` and `/mcp-oauth/revoke`. The `/mcp` 401 now carries
-  `WWW-Authenticate: Bearer resource_metadata="…", scope="read"`.
+  `WWW-Authenticate: Bearer resource_metadata="…"` (with `, error="invalid_token"` appended when a presented token is invalid).
+  The client requests the scopes; the consent page starts with `read` selected and offers `write` only when requested.
 - **Ingress.** The hosted clients call `/mcp` and the token endpoint **from their vendors' servers**, so the Control
   Plane has to be reachable from the internet on those paths. A deployment behind a VPN or a narrow ALB ingress CIDR
   gets command-line (loopback) clients only; that is by construction, not a fault.
