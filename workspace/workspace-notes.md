@@ -148,8 +148,9 @@ directory belongs to someone else.
 - **Jira: the `jira` CLI is the default.** With a Jira connection it is
   pre-authenticated for every agent kind and renews an OAuth token on each call, while an MCP
   connector serves one CLI and its expired login needs a session restart. If the user's Agent
-  instructions prefer an Atlassian MCP tool for Jira, follow them; otherwise use an MCP tool, when
-  one is connected, only for an operation the CLI cannot do. `jira issue view KEY-1`,
+  instructions (or the user in the conversation) prefer an Atlassian MCP tool for Jira, follow them; otherwise use an MCP tool, when
+  one is connected, only for an operation the CLI cannot do. A CLI call that fails (401/403, an expired or missing
+  connection, a missing scope) is not "cannot do": report it, do not switch to MCP. `jira issue view KEY-1`,
   `jira issue list -p KEY`, `jira issue create -p KEY`, `jira issue comment add KEY-1 "…"`,
   `jira issue move KEY-1 "In Progress"`. Pass `-p KEY` unless `jira init` set a default project
   (`issue create` then fetches the project's issue types through createmeta, classic scopes, when
@@ -162,8 +163,9 @@ directory belongs to someone else.
   instead, `issue create` could not get them: run `jira init`. Never paste a token, run `jira init` with your own
   `--server`, or add `--debug` (it gets no credential).
   Markdown bodies (`comment add`, `edit -b`): open with a heading or a list, or put inline markup
-  (bold, a link) in the first paragraph, and always leave a blank line before a list — until the
-  first markup the CLI drops every block break (`Intro.` + list is sent as `Intro.* a`).
+  (bold, a link, `code`) in the first paragraph, and always leave a blank line before a list — until the
+  first markup the CLI glues a list, heading, code block or quote onto the paragraph before it
+  (`Intro.`, blank line, `- a` is sent as `Intro.* a`).
 - The clock is the workspace's local timezone (`date`), not UTC. Outbound network may be
   restricted; an unreachable host is not necessarily an error.
 - **AWS: the default credential chain is not the user.** A bare `aws` / SDK / build-tool call
