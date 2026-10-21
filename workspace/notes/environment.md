@@ -77,10 +77,15 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
   creates when a Terminal (CLI) session launches and removes when the session is deleted (not
   archived, not restored). Managed sessions do not get the variable yet (issue #978); there use
   `mkdir -p ~/.af-work/"$(basename "$(git rev-parse --show-toplevel)")"` and remove it when the
-  task is done. One directory
+  task is done (an unmarked directory is kept at boot but offered for deletion in Settings >
+  Machine). One directory
   per session means the owner is obvious and one `rm -rf` cleans up; files dropped straight into
   `~` were measured at 190+ unowned directories in one home. Not `/tmp` (shared by every session,
   wiped on restart) and not `~/.cache`, which is for tools' own caches.
+  **`~/.af-work` is throwaway, never a place for files to keep** — tell members to keep their own
+  files elsewhere (`~/repos`, or a folder of their own in home). The boot prune removes only
+  orphaned directories the Agent marked (`.af-session-workdir`), logs each path, and leaves
+  unmarked ones for the member to remove from Settings > Machine.
 - **Reclaiming cache space** (all regenerable; the next build or install is slower once):
   `go clean -cache` (`~/.cache/go-build`), `npm cache clean --force` (`~/.npm/_cacache` — npm
   never evicts), `uv cache prune`. Do it only when no other session is mid-build — check
