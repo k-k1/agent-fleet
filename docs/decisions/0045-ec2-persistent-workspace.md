@@ -1787,6 +1787,6 @@ to its own en/ja text (`err.cli_install_*`, shown without the English message), 
 and create_session / the scheduler get the English message. No new status source: the same file `/env/tool-versions` serves.
 Not verified on a real full home.
 
-**2026-10-21 note (decision 28, #2451):** the `auto` host reserve is now a flat 2048 MiB for rungs of 8192 MiB and below
+**2026-10-21 note (decision 28, #2451):** the `auto` host reserve is now a flat 2048 MiB at every rung
 (a fifth of an 8 GiB rung left ~1230 MiB of real headroom against daemons measured at 1.2-1.4 GiB, and a box thrashed).
-Larger rungs, `off` and explicit `<n>` are unchanged.
+`off` and explicit `<n>` are unchanged.

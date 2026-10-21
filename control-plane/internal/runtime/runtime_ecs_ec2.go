@@ -581,7 +581,7 @@ type ec2PoolConfig struct {
 	// the box's own daemons cannot be starved by it (AF_ECS_EC2_HOST_RESERVE_MB).
 	// See workspaceMemCapMiB for what it buys and how the default was sized.
 	//
-	//	unset / "auto"  → -1 < 0: a fifth of the rung, clamped (the default)
+	//	unset / "auto"  → -1 < 0: a flat 2 GiB (the default)
 	//	"off"           → the sentinel below: no cap at all, the pre-2026-08 behaviour
 	//	<n>             → exactly n MiB
 	hostReserveMiB int64
@@ -592,18 +592,16 @@ const (
 	// Negative rather than 0 because 0 is a meaningful answer ("reserve nothing, cap at
 	// the full rung"), and an operator's explicit off has to be distinguishable from it.
 	ec2HostReserveOff = -1
-	// The auto reserve's bounds. Floor: the daemons were measured at ~869 MiB idle and
-	// ~1.2-1.4 GiB with a workspace and its Service Connect sidecars running, and the
-	// rung overstates the real MemTotal by ~5% on top. Ceiling: that cost does not grow
-	// with the box, so a big rung should not donate more than a small one.
-	ec2HostReserveFloorMiB = 1024
-	ec2HostReserveCeilMiB  = 2048
-	// Up to this rung the reserve is the ceiling outright. A fifth of 8192 leaves only
-	// ~1230 MiB of real headroom against daemons measured at 1.2-1.4 GiB, and a box
-	// that size thrashed (ECS and SSM agents went dark) with the cap in effect.
-	ec2HostReserveSmallRungMaxMiB = 8192
-	// ec2MinWorkspaceMemMiB is the least a capped workspace may be left with. Below it
-	// the rung is simply too small to share, and the cap is dropped rather than applied.
+	// The auto reserve, flat at every rung. The daemons were measured at ~1.2-1.4 GiB
+	// with a workspace and its Service Connect sidecars running, and the rung overstates
+	// the real MemTotal by ~5% on top; a fifth of an 8 GiB rung left ~1230 MiB and a box
+	// thrashed (ECS and SSM agents went dark). Flat, because a proportional reserve
+	// shrinks again just above 8 GiB, and the daemons' cost does not grow with the box.
+	ec2HostReserveAutoMiB = 2048
+	// ec2MinWorkspaceMemMiB is the soft reservation buildTaskDef sets; a capped workspace
+	// must be left with MORE than it, because ECS rejects Memory <= MemoryReservation.
+	// At or below it the rung is simply too small to share, and the cap is dropped
+	// rather than applied.
 	ec2MinWorkspaceMemMiB = 512
 )
 
@@ -875,7 +873,7 @@ func (p ec2PoolConfig) rungFor(classID string, memBytes int64) (ec2Slot, ec2Slot
 // ⚠️ Derived from the LADDER's declared MiB, not from what the box really has, and the
 // two differ by more than you would guess: an "8192 MiB" m7i.large reports MemTotal
 // 7784 MiB (measured). The reserve therefore has to absorb that ~5% as well as the
-// daemons, which is why the default is a fifth rather than the ~1.2-1.4 GiB the daemons
+// daemons, which is why the default is 2 GiB rather than the ~1.2-1.4 GiB the daemons
 // were measured at:
 //
 //	nominal 8192 → reserve 2048 → cap 6144 MiB, real headroom 7784-6144 = 1640 MiB ✅
@@ -887,9 +885,7 @@ func (p ec2PoolConfig) rungFor(classID string, memBytes int64) (ec2Slot, ec2Slot
 // the slot is known to be registered, so using it would mean reordering launch() for
 // an accuracy this reserve already covers.
 //
-// Clamped at both ends. The floor keeps a small rung from being left with nothing for
-// its daemons; the ceiling stops a large rung from donating gigabytes it does not need
-// — the daemons cost the same on every size.
+// The auto reserve is flat: the daemons cost the same on every size.
 // parseHostReserveMiB reads AF_ECS_EC2_HOST_RESERVE_MB. Anything unrecognised is
 // "auto" rather than an error: this knob decides how much RAM a workspace gets, and a
 // typo must not be the reason a deployment stops capping (or stops starting).
@@ -914,13 +910,10 @@ func (p ec2PoolConfig) workspaceMemCapMiB(slotMemMiB int64) int64 {
 	}
 	reserve := p.hostReserveMiB
 	if reserve == 0 { // "auto"
-		reserve = min(max(slotMemMiB/5, ec2HostReserveFloorMiB), ec2HostReserveCeilMiB)
-		if slotMemMiB <= ec2HostReserveSmallRungMaxMiB {
-			reserve = ec2HostReserveCeilMiB
-		}
+		reserve = ec2HostReserveAutoMiB
 	}
 	cap := slotMemMiB - reserve
-	if cap < ec2MinWorkspaceMemMiB {
+	if cap <= ec2MinWorkspaceMemMiB {
 		// A rung too small to leave both a workspace and its daemons room. Capping it
 		// to something unusable would break the deployment; say so and leave it alone.
 		log.Printf("ecs-ec2: slot rung %d MiB is too small to reserve %d MiB for the host; leaving the workspace uncapped",

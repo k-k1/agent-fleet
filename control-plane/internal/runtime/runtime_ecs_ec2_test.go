@@ -4970,15 +4970,16 @@ func TestECSEC2WorkspaceMemCap(t *testing.T) {
 		// daemons need. A fifth of the rung left 7784-6554 = 1230 MiB and a box thrashed
 		// (#2451); a flat 2 GiB leaves 1640.
 		{"m7i.large lands at 6 GiB", auto, 8192, 6144},
-		{"a rung just over 8 GiB still gets a fifth, clamped", auto, 9216, 7373},
-		{"the small-rung reserve starts where a fifth reaches 2 GiB", auto, 10240, 8192},
-		// The ceiling: the daemons cost the same on a big box, so it must not donate
-		// proportionally more (a fifth of 32768 would be 6.5 GiB thrown away).
-		{"a large rung is clamped to 2 GiB of reserve", auto, 32768, 30720},
-		// A fifth of a small rung would not house the daemons at all.
+		{"just over 8 GiB keeps the same reserve", auto, 8193, 6145},
+		{"9 GiB keeps the same reserve", auto, 9216, 7168},
+		{"10239 keeps the same reserve", auto, 10239, 8191},
+		{"10 GiB", auto, 10240, 8192},
+		// The reserve must never shrink as the rung grows.
+		{"a large rung gets the same 2 GiB", auto, 32768, 30720},
 		{"a small rung gets the full 2 GiB reserve", auto, 4096, 2048},
-		{"the smallest usable rung keeps the minimum workspace", auto, 2560, 512},
-		{"one MiB less and the guard drops the cap", auto, 2559, 0},
+		// buildTaskDef sets MemoryReservation=512 and ECS needs Memory > that.
+		{"the smallest capped rung leaves more than the soft reservation", auto, 2561, 513},
+		{"a cap equal to the soft reservation is dropped", auto, 2560, 0},
 		{"explicit reserve is honoured", ec2PoolConfig{hostReserveMiB: 1536}, 8192, 6656},
 		{"off means uncapped", ec2PoolConfig{hostReserveMiB: ec2HostReserveOff}, 8192, 0},
 		// Capping a rung this small would leave a workspace that cannot run; better to
@@ -4991,6 +4992,18 @@ func TestECSEC2WorkspaceMemCap(t *testing.T) {
 				t.Errorf("workspaceMemCapMiB(%d) = %d, want %d", tc.rung, got, tc.want)
 			}
 		})
+	}
+}
+
+// ECS rejects a task definition whose hard Memory is not above MemoryReservation (512),
+// so no rung may come out capped at or below it, auto or explicit.
+func TestECSEC2WorkspaceMemCapStaysAboveSoftReservation(t *testing.T) {
+	for _, pool := range []ec2PoolConfig{{hostReserveMiB: 0}, {hostReserveMiB: 1024}, {hostReserveMiB: 0}} {
+		for rung := int64(1); rung <= 4096; rung++ {
+			if c := pool.workspaceMemCapMiB(rung); c != 0 && c <= 512 {
+				t.Fatalf("reserve %d, rung %d: cap %d is not above the 512 MiB soft reservation", pool.hostReserveMiB, rung, c)
+			}
+		}
 	}
 }
 
@@ -5033,8 +5046,8 @@ func TestECSEC2TaskDefinitionCarriesTheMemoryCap(t *testing.T) {
 	}
 	// The soft reservation is what ECS schedules on and must stay BELOW the hard cap;
 	// a reservation above the limit is a task definition ECS rejects outright.
-	if res := aws.ToInt32(c.MemoryReservation); res > limit {
-		t.Errorf("MemoryReservation %d exceeds the hard limit %d", res, limit)
+	if res := aws.ToInt32(c.MemoryReservation); res >= limit {
+		t.Errorf("MemoryReservation %d is not below the hard limit %d", res, limit)
 	}
 }
 

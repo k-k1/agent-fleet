@@ -1357,7 +1357,7 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 | `Ec2SlotTerminateAfterSec` | `AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC` | `0` (off) | The next step on the same clock: past it the instance is **terminated** and its root volume goes too. `0` means instances are kept forever, so retained roots grow to `Ec2MaxSlots` — see below. `14400` (4h) recommended |
 | `Ec2HomeGiB` | `AF_ECS_EC2_HOME_GB` | `50` | Per-user home volume (gp3) |
 | `Ec2HibernateAfterSec` | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0` (off) | **Default** for how long a home may sit unopened before it is snapshotted and its volume deleted. A tenant overrides it from the Console. Nothing is destroyed — the snapshot completes before the volume goes, and the next start restores it. See below |
-| `Ec2HostReserveMb` | `AF_ECS_EC2_HOST_RESERVE_MB` | `auto` | How much of a slot is held back from the workspace so the instance's own daemons cannot be starved by it. `auto` = a fifth of the rung, clamped to 1–2 GiB, except that rungs of 8 GiB and below always reserve 2 GiB (an 8 GiB slot's workspace gets 6 GiB; a fifth left too little and a box thrashed). `off` = uncapped (what every deployment did before 0.12.5, and what melted one). See below |
+| `Ec2HostReserveMb` | `AF_ECS_EC2_HOST_RESERVE_MB` | `auto` | How much of a slot is held back from the workspace so the instance's own daemons cannot be starved by it. `auto` = a flat 2 GiB at every rung (an 8 GiB slot's workspace gets 6 GiB; a fifth of the rung left too little and a box thrashed). `off` = uncapped (what every deployment did before 0.12.5, and what melted one). See below |
 | — | `AF_ECS_EC2_SLOT_LOST_AFTER_SEC` | `300` | How long a slot may be EC2-`running` while the cluster cannot reach its agent before the CP gives up on it and rebuilds the workspace elsewhere. `0` = wait as long as the caller allows |
 | — | `AF_ECS_EC2_GOLDEN_AUTOBAKE` | `1` (on) | Keep the golden snapshot in step with the workspace image without anyone re-baking by hand (ADR 0045 decision 9-1). Set `0` and it becomes your job on every release |
 | — | `AF_ECS_EC2_GOLDEN_BAKE_SEC` | `60` | How often the baker looks. It advances one step per look, so this is also how fast a bake progresses |
@@ -1366,7 +1366,7 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 workspace's: dockerd, containerd, the ECS agent, SSM and the EFS stunnel live on the same
 instance, and the rung overstates what the machine has (an "8192 MiB" m7i.large reports 7784).
 So the container is capped at the rung less a reserve, and the Console prints the number
-the workspace can actually spend with the instance beside it — `6.4 GiB (of 8 GiB)`.
+the workspace can actually spend with the instance beside it — `6 GiB (of 8 GiB)`.
 
 ⚠️ **Turning it off is not free.** Uncapped, one workspace taking several GB of anonymous
 memory can push the instance into refault thrash: with no swap the kernel throws away page
