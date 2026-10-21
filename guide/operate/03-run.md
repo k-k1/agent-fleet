@@ -154,6 +154,16 @@ a new slot fails instead):
 `deploy/aws/ecs/README.md`, "Moving retained slots onto new user data", has the details and how
 to verify the result.
 
+**Memory protection for the management plane.** The slot user data gives the ECS agent, the SSM
+agent, docker and containerd a systemd `MemoryMin` (192 / 192 / 256 / 128 MiB, 768 MiB in total,
+also set on `system.slice` so the floor counts) and lowers the OOM score of the first two. Under
+memory pressure the kernel then reclaims the workspace container's pages first, so a
+memory-hungry workspace is much less likely to leave a slot whose agents stop answering while
+EC2 still reports it healthy. The total sits inside the host reserve (`AF_ECS_EC2_HOST_RESERVE_MB`, at
+least 1024 MiB by default); if you set the reserve below 768, the protection is larger than the
+reserve. This is a launch template change: it creates a new `$Latest`, and existing slots pick
+it up only through the replacement above. It needs cgroup v2 (the Amazon Linux 2023 default).
+
 ## Installing into an air-gapped network
 
 You can install onto a host with no external network access. Since

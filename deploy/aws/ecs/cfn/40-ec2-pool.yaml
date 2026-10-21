@@ -227,6 +227,35 @@ Resources:
               sysctl -w user.max_user_namespaces=0
               set +e
               # END userns
+              # Memory protection for the management plane. Under memory pressure the kernel
+              # reclaims the ECS agent's and SSM agent's pages along with everything else; both
+              # stop answering while the box stays "ok" to EC2, and the CP can then neither stop
+              # the task, unmount the home nor tell the slot is wedged. memory.min is a hard
+              # floor for reclaim, so the workspace container's own cgroup (/ecs/<task>, a
+              # sibling of system.slice, capped by the host reserve) absorbs the pressure instead.
+              # The per-unit figures sum to 768 MiB, which must stay within the smallest host
+              # reserve (ec2HostReserveFloorMiB, 1024 MiB in runtime_ecs_ec2.go): protecting
+              # more than the reserve would just move the starvation onto the workspace. A
+              # child's memory.min only counts up to its parent's, hence system.slice carries the
+              # sum. cgroup v2 is the AL2023 default and DefaultMemoryAccounting is on, so the
+              # memory controller is enabled for system.slice as soon as these are set; the
+              # read-back below logs that to /var/log/af-userdata.log. OOMScoreAdjust covers the
+              # global OOM killer, which memory.min does not. Best effort: a failure here must
+              # not stop the slot from joining the cluster.
+              # BEGIN memmin
+              mkdir -p /etc/systemd/system/system.slice.d
+              printf '[Slice]\nMemoryMin=768M\n' > /etc/systemd/system/system.slice.d/20-af-memmin.conf
+              for spec in ecs:192M:-900 amazon-ssm-agent:192M:-900 docker:256M:0 containerd:128M:0; do
+                unit=$(echo "$spec" | cut -d: -f1); min=$(echo "$spec" | cut -d: -f2); oom=$(echo "$spec" | cut -d: -f3)
+                mkdir -p "/etc/systemd/system/$unit.service.d"
+                printf '[Service]\nMemoryMin=%s\n' "$min" > "/etc/systemd/system/$unit.service.d/20-af-memmin.conf"
+                [ "$oom" = 0 ] || printf 'OOMScoreAdjust=%s\n' "$oom" >> "/etc/systemd/system/$unit.service.d/20-af-memmin.conf"
+              done
+              # daemon-reload also applies the cgroup settings to units that are already
+              # running (the SSM agent is), and loads them before ecs.service starts.
+              systemctl daemon-reload
+              cat /sys/fs/cgroup/cgroup.controllers /sys/fs/cgroup/system.slice/memory.min /sys/fs/cgroup/system.slice/amazon-ssm-agent.service/memory.min || true
+              # END memmin
               # ECS_AWSVPC_BLOCK_IMDS: a workspace task must not reach SlotRole through IMDS.
               # Nothing in the task uses IMDS (the Agent reads SMBIOS, not IMDS); the ECS and
               # SSM agents use the host network and keep it. Read at agent start = new slots only.

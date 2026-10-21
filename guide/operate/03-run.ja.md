@@ -138,6 +138,15 @@ air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/RE
 詳細と結果の確かめ方は `deploy/aws/ecs/README.md` の「Moving retained slots onto new user data」に
 あります。
 
+**管理プレーンのメモリ保護。** スロットのユーザーデータは、ECS エージェント・SSM エージェント・
+docker・containerd に systemd の `MemoryMin`（192 / 192 / 256 / 128 MiB、合計 768 MiB。下限が効くよう
+`system.slice` にも同じ合計を設定）を与え、前の 2 つの OOM スコアを下げます。メモリが逼迫すると
+カーネルは先にワークスペースコンテナのページを回収するため、メモリを使い切るワークスペースのせいで、
+EC2 は正常のままエージェントだけが応答しなくなるスロットは生じにくくなります。合計はホスト予約
+（`AF_ECS_EC2_HOST_RESERVE_MB`、既定では 1024 MiB 以上）に収まります。予約を 768 未満にすると、
+保護量が予約を上回ります。これは起動テンプレートの変更なので新しい `$Latest` が作られ、今あるスロットには
+上の入れ替えを通してのみ届きます。cgroup v2（Amazon Linux 2023 の既定）が前提です。
+
 ## 閉域網（air-gap）へのインストール
 
 外部ネットワークに出られないホストにも入れられます。ただし

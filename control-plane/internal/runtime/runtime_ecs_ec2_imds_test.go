@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -186,5 +187,52 @@ func TestSingleVMBlocksIMDSForBridgeContainers(t *testing.T) {
 	}
 	if !regexp.MustCompile(`(?m)^\s+MetadataOptions:\s*\{\s*HttpTokens:\s*required,\s*HttpPutResponseHopLimit:\s*1\s*\}`).Match(b) {
 		t.Error("ec2-single instance must declare MetadataOptions { HttpTokens: required, HttpPutResponseHopLimit: 1 }")
+	}
+}
+
+// The management plane (ECS agent, SSM agent, docker, containerd) is given memory.min so
+// that memory pressure reclaims the workspace's pages instead of theirs. The protected
+// total has to fit inside the smallest host reserve, or the protection just moves the
+// starvation onto the workspace, and system.slice has to carry the sum for a child's
+// floor to count. Runs the user-data section with /etc/systemd/system redirected.
+func TestSlotUserDataProtectsManagementPlaneMemory(t *testing.T) {
+	dir := t.TempDir()
+	section := strings.ReplaceAll(slotScript(t, "memmin"), "/etc/systemd/system", dir)
+	section = strings.ReplaceAll(section, "/sys/fs/cgroup", dir+"/cg")
+	out, err := runSlotShell(t, dir, "set -eu\n"+section, map[string]string{"systemctl": "exit 0"})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "systemctl daemon-reload") {
+		t.Errorf("no daemon-reload after writing the drop-ins:\n%s", out)
+	}
+	mib := func(path, key string) int {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(dir, path))
+		if err != nil {
+			t.Fatalf("drop-in %s missing: %v", path, err)
+		}
+		m := regexp.MustCompile(`(?m)^` + key + `=(\d+)M$`).FindSubmatch(b)
+		if m == nil {
+			t.Fatalf("%s has no %s=<n>M:\n%s", path, key, b)
+		}
+		n, _ := strconv.Atoi(string(m[1]))
+		return n
+	}
+	sum := 0
+	for _, u := range []string{"ecs", "amazon-ssm-agent", "docker", "containerd"} {
+		sum += mib(u+".service.d/20-af-memmin.conf", "MemoryMin")
+	}
+	if got := mib("system.slice.d/20-af-memmin.conf", "MemoryMin"); got != sum {
+		t.Errorf("system.slice MemoryMin=%dM, want the per-unit sum %dM", got, sum)
+	}
+	if sum > ec2HostReserveFloorMiB {
+		t.Errorf("protected %d MiB exceeds the host reserve floor %d MiB", sum, ec2HostReserveFloorMiB)
+	}
+	for _, u := range []string{"ecs", "amazon-ssm-agent"} {
+		b, _ := os.ReadFile(filepath.Join(dir, u+".service.d/20-af-memmin.conf"))
+		if !strings.Contains(string(b), "OOMScoreAdjust=-900") {
+			t.Errorf("%s lacks OOMScoreAdjust=-900:\n%s", u, b)
+		}
 	}
 }
