@@ -110,7 +110,7 @@ Parameters:
     Default: auto
     Description: >-
       How much of a slot is held back from the workspace so the box's own daemons cannot be
-      starved. auto = a fifth of the rung, clamped to 1-2 GiB; off = uncapped (what melted a
+      starved. auto = a fifth of the rung, clamped to 1-2 GiB, but a flat 2 GiB at 8 GiB rungs and below; off = uncapped (what melted a
       live slot on 2026-08-27); a number = that many MiB. PARAMETERS.md.
   Ec2SlotSleepSec:
     Type: String

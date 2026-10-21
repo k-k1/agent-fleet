@@ -169,8 +169,11 @@ clear error at the cap instead of growing the bill.
 How much of a slot is held back from the WORKSPACE so the instance's own daemons (dockerd,
 containerd, the ECS agent, SSM, the EFS stunnel) cannot be starved by it.
 
-- `auto` = a fifth of the rung, clamped to 1-2 GiB: an 8 GiB slot's workspace is capped at
-  6.4 GiB, and the Console prints that number with the instance beside it.
+- `auto` = a fifth of the rung, clamped to 1-2 GiB, except that rungs of 8 GiB and below
+  always reserve 2 GiB: an 8 GiB slot's workspace is capped at 6 GiB, and the Console prints
+  that number with the instance beside it. A fifth (1.6 GiB) left an 8 GiB box about 1.2 GiB
+  of real memory (the rung overstates MemTotal by ~5%), no more than its daemons use, and one
+  thrashed with the ECS and SSM agents going dark (#2451).
 - `off` = uncapped, which is what every deployment did before this existed — and what melted
   a live slot on 2026-08-27 (docs/log/64 §64.40): one workspace took enough anonymous memory
   that the kernel evicted all page cache, every daemon spent hours re-reading its own

@@ -598,6 +598,10 @@ const (
 	// with the box, so a big rung should not donate more than a small one.
 	ec2HostReserveFloorMiB = 1024
 	ec2HostReserveCeilMiB  = 2048
+	// Up to this rung the reserve is the ceiling outright. A fifth of 8192 leaves only
+	// ~1230 MiB of real headroom against daemons measured at 1.2-1.4 GiB, and a box
+	// that size thrashed (ECS and SSM agents went dark) with the cap in effect.
+	ec2HostReserveSmallRungMaxMiB = 8192
 	// ec2MinWorkspaceMemMiB is the least a capped workspace may be left with. Below it
 	// the rung is simply too small to share, and the cap is dropped rather than applied.
 	ec2MinWorkspaceMemMiB = 512
@@ -874,7 +878,8 @@ func (p ec2PoolConfig) rungFor(classID string, memBytes int64) (ec2Slot, ec2Slot
 // daemons, which is why the default is a fifth rather than the ~1.2-1.4 GiB the daemons
 // were measured at:
 //
-//	nominal 8192 → reserve 1638 → cap 6554 MiB, real headroom 7784-6554 = 1230 MiB ✅
+//	nominal 8192 → reserve 2048 → cap 6144 MiB, real headroom 7784-6144 = 1640 MiB ✅
+//	nominal 8192 → reserve 1638 → cap 6554 MiB, real headroom 7784-6554 = 1230 MiB ✗ (thrashed)
 //	nominal 8192 → reserve 1024 → cap 7168 MiB, real headroom 7784-7168 =  616 MiB ✗
 //
 // Reading the true figure is possible (DescribeContainerInstances reports the
@@ -910,6 +915,9 @@ func (p ec2PoolConfig) workspaceMemCapMiB(slotMemMiB int64) int64 {
 	reserve := p.hostReserveMiB
 	if reserve == 0 { // "auto"
 		reserve = min(max(slotMemMiB/5, ec2HostReserveFloorMiB), ec2HostReserveCeilMiB)
+		if slotMemMiB <= ec2HostReserveSmallRungMaxMiB {
+			reserve = ec2HostReserveCeilMiB
+		}
 	}
 	cap := slotMemMiB - reserve
 	if cap < ec2MinWorkspaceMemMiB {
