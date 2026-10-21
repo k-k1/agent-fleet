@@ -14,6 +14,9 @@ import (
 // remove, and the Stop has already cleared them.
 var errStartSuperseded = errors.New("start superseded by a newer start or a stop")
 
+// errStartLockUnavailable: the claim lock was never taken, so nothing was checked.
+var errStartLockUnavailable = errors.New("claim lock unavailable")
+
 // errStartCountUnknown: the Start count could not be read, so ownership is unknown.
 var errStartCountUnknown = errors.New("start count unreadable")
 
@@ -48,7 +51,7 @@ func (e *ecsEC2Runtime) underStart(ctx context.Context, p ec2Placement, raise fu
 	}
 	lctx, unlock, err := e.lockHome(ctx, homeLockClaim)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errStartLockUnavailable, err)
 	}
 	defer unlock()
 	moved, err := e.startedSince(lctx, p.gen)
@@ -58,7 +61,13 @@ func (e *ecsEC2Runtime) underStart(ctx context.Context, p ec2Placement, raise fu
 	if moved {
 		return errStartSuperseded
 	}
-	return raise(lctx)
+	// The count was read under a lease that may have run out since (a paused process, a slow
+	// answer): another replica's Stop can then have completed while the count still reads
+	// as ours. The clock decides, not the timer callback (homeLockGuard).
+	if err := homeGuardOf(lctx).check(); err != nil {
+		return err
+	}
+	return homeGuardOf(lctx).outcome(raise(lctx))
 }
 
 // dropClaimOnStop removes the claim a converging Start put on the home, so State() reads
@@ -92,11 +101,14 @@ func (e *ecsEC2Runtime) ifOwned(ctx context.Context, p ec2Placement, fn func(con
 	if errors.Is(err, errStartCountUnknown) {
 		return false
 	}
-	if err != nil {
+	if errors.Is(err, errStartLockUnavailable) {
 		log.Printf("ecs-ec2: could not take the claim lock to check ownership of %s: %v", e.base.name, err)
 		fn(ctx)
+		return true
 	}
-	return true
+	// A lease lost after it was taken is not "could not lock": ownership is unknown, so the
+	// step is skipped.
+	return err == nil
 }
 
 // ifOwnedStrict is ifOwned for steps that must not run on a doubt (dropping a claim or a

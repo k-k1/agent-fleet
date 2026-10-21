@@ -2188,9 +2188,14 @@ func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, caus
 					log.Printf("ecs-ec2: unmounting %s on the quarantined slot %s before the detach: %v", p.volumeID, p.instanceID, err)
 				}
 				cancel()
+				// Both locks: the mount lock keeps releases and mounts out, the claim lock (c)
+				// is what a Stop on another replica waits on. Losing either leaves the home
+				// attached for whoever holds the operation now.
 				if err := homeGuardOf(lctx).check(); err != nil {
 					log.Printf("ecs-ec2: leaving %s attached to the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
-				} else if _, err := e.ec2.DetachVolume(lctx, &ec2.DetachVolumeInput{
+				} else if err := homeGuardOf(c).check(); err != nil {
+					log.Printf("ecs-ec2: leaving %s attached to the quarantined slot %s (claim lock): %v", p.volumeID, p.instanceID, err)
+				} else if _, err := e.ec2.DetachVolume(c, &ec2.DetachVolumeInput{
 					VolumeId:   aws.String(p.volumeID),
 					InstanceId: aws.String(p.instanceID),
 				}); err != nil {
