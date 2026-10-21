@@ -420,7 +420,7 @@ runs on to **twice** the budget, the session is halted at once, mid-turn, and th
 - **What the figure is.** An estimate at list price from the session's own transcript, or the
   CLI's own reported cost where it gives one (opencode); **not your bill**. On a subscription plan
   it is the API-equivalent figure. A model with no price cannot be estimated, so a budget has no
-  effect on it (the dialog says so); kinds that record no token counts (Kiro, Cursor, Antigravity)
+  effect on it (the dialog says so); kinds whose transcript carries no token counts (Kiro, Cursor, Antigravity)
   and the self-hosted engine ($0) are never stopped by one. A fork starts from $0: the history it
   copied is not charged to it.
 
@@ -488,8 +488,8 @@ archive, as before, and the archive always takes a snapshot of the copy too. Res
 puts the live log at the log's path only if it is complete and newer than the copy, otherwise the
 copy; the other is kept next to it as `.backup.archived` or `.superseded.archived`. If a log
 cannot be read, other than because it just vanished, the delete is refused.) **"Start a new
-conversation"** keeps the copy aside (`claude-transcripts/<id>.superseded.<number>`) instead of
-restoring it. The copy is made while the session is stopped, so
+conversation"** sets the session's whole backup folder aside
+(`claude-transcripts/<id>.superseded.<number>`) instead of restoring from it. The copy is made while the session is stopped, so
 a log that disappears before the first copy (a session stopped only seconds ago, or one that
 last ran before this feature) cannot be recovered this way.
 
@@ -807,6 +807,14 @@ message travels over the channel of the next section, so it arrives only while *
 between sessions"** is on as well. With it off, the parent checks its children's state and
 output itself.
 
+One automated check does reach the parent: when a running parent and all its live children have
+been idle for 15 minutes, with no background work and no message between sessions queued or in
+flight, the parent gets **one notice** naming the idle children, so it can see whether one of
+them is waiting on another. The chat view badges it **"Stalled-tree notice"**. A question, a plan
+or permission prompt, or a usage-limit wait is not idle, so it never triggers the notice. It is
+sent once per quiet spell, and again only after one of the children has changed state. The
+deployment can change the 15 minutes or turn the notice off.
+
 **Children outlive their parent.** Nothing stops them when the parent finishes, so before its
 last turn the parent is told to list the children it leaves behind and their state. Read that
 list: only you can delete a child, and each one is a whole agent, holding memory on your
@@ -849,6 +857,10 @@ one ("tell the session next door what we just did").
   stopping the session or the workspace, or the Agent restarting: the message waits on disk and
   becomes the session's first turn when it next starts, stamped with the time it was queued.
   Archiving or deleting the session, or switching it to Terminal (CLI), drops it.
+  A **Terminal (CLI)** claude session in the middle of a turn holds the message in its own input
+  queue: the sender is told it is queued, and it is lost if the pane ends before the turn does.
+  A Terminal cursor session that refuses the message leaves it unsent in its input box (the
+  sender is told why), and a message to one whose input box still holds unsent text is refused.
 - **A session waiting on your answer gets it after you answer.** While a session shows a
   question, a plan to approve or a permission prompt, a message sent to it waits instead of
   being refused (typed into the dialog, it would pick an answer for you). Its chat view says how
