@@ -804,19 +804,59 @@ type fakeContainerInstances struct {
 	// stopping are the service's tasks that were asked to stop and have not reported it.
 	stopping  []ecstypes.Task
 	taskCalls int
+	// taskPageSize splits ListTasks into pages of this many ARNs (0: one page).
+	taskPageSize int
+	// onList / onDescribeTasks run at the start of ListTasks / DescribeTasks.
+	onList, onDescribeTasks func()
+	// taskFailures are returned by DescribeTasks as Failures.
+	taskFailures []ecstypes.Failure
+	// describeErr is returned (once) by DescribeContainerInstances.
+	describeErr error
+	// missing instances come back as a MISSING failure, the way a deregistered one does.
+	missing map[string]bool
+	// badTaskCalls records ListTasks calls that did not ask for this service's stopped tasks.
+	badTaskCalls []string
 }
 
-func (f *fakeContainerInstances) ListTasks(_ context.Context, _ *ecs.ListTasksInput, _ ...func(*ecs.Options)) (*ecs.ListTasksOutput, error) {
+func (f *fakeContainerInstances) ListTasks(_ context.Context, in *ecs.ListTasksInput, _ ...func(*ecs.Options)) (*ecs.ListTasksOutput, error) {
 	f.taskCalls++
+	if f.onList != nil {
+		f.onList()
+	}
+	if aws.ToString(in.ServiceName) != "af-ws-acme-alice" || in.DesiredStatus != ecstypes.DesiredStatusStopped {
+		f.badTaskCalls = append(f.badTaskCalls, aws.ToString(in.ServiceName)+"/"+string(in.DesiredStatus))
+	}
+	start := 0
+	if in.NextToken != nil {
+		start, _ = strconv.Atoi(*in.NextToken)
+	}
+	end := len(f.stopping)
+	if f.taskPageSize > 0 && start+f.taskPageSize < end {
+		end = start + f.taskPageSize
+	}
 	out := &ecs.ListTasksOutput{}
-	for _, t := range f.stopping {
+	for _, t := range f.stopping[start:end] {
 		out.TaskArns = append(out.TaskArns, aws.ToString(t.TaskArn))
+	}
+	if end < len(f.stopping) {
+		out.NextToken = aws.String(strconv.Itoa(end))
 	}
 	return out, nil
 }
 
-func (f *fakeContainerInstances) DescribeTasks(_ context.Context, _ *ecs.DescribeTasksInput, _ ...func(*ecs.Options)) (*ecs.DescribeTasksOutput, error) {
-	return &ecs.DescribeTasksOutput{Tasks: f.stopping}, nil
+func (f *fakeContainerInstances) DescribeTasks(_ context.Context, in *ecs.DescribeTasksInput, _ ...func(*ecs.Options)) (*ecs.DescribeTasksOutput, error) {
+	if f.onDescribeTasks != nil {
+		f.onDescribeTasks()
+	}
+	out := &ecs.DescribeTasksOutput{Failures: f.taskFailures}
+	for _, arn := range in.Tasks {
+		for _, t := range f.stopping {
+			if aws.ToString(t.TaskArn) == arn {
+				out.Tasks = append(out.Tasks, t)
+			}
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeContainerInstances) ListContainerInstances(_ context.Context, _ *ecs.ListContainerInstancesInput, _ ...func(*ecs.Options)) (*ecs.ListContainerInstancesOutput, error) {
@@ -828,9 +868,17 @@ func (f *fakeContainerInstances) ListContainerInstances(_ context.Context, _ *ec
 }
 
 func (f *fakeContainerInstances) DescribeContainerInstances(_ context.Context, in *ecs.DescribeContainerInstancesInput, _ ...func(*ecs.Options)) (*ecs.DescribeContainerInstancesOutput, error) {
+	if err := f.describeErr; err != nil {
+		f.describeErr = nil
+		return nil, err
+	}
 	out := &ecs.DescribeContainerInstancesOutput{}
 	for _, arn := range in.ContainerInstances {
 		id := strings.TrimPrefix(arn, "arn:ci/")
+		if f.missing[id] {
+			out.Failures = append(out.Failures, ecstypes.Failure{Arn: aws.String(arn), Reason: aws.String("MISSING")})
+			continue
+		}
 		ci := ecstypes.ContainerInstance{
 			ContainerInstanceArn: aws.String(arn),
 			Ec2InstanceId:        aws.String(id),
@@ -4899,8 +4947,12 @@ func TestECSEC2BlockedPhaseIsSetAndCleared(t *testing.T) {
 	defer h.rt.setPhase("")
 
 	// Aged past placementBlockedGrace: a fresh event is the pool growing, not a wall.
+	gen, err := h.rt.startGenNow(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 	h.rt.notePlacementBlocked(context.Background(), svcWithEvents(1, 0, now.Add(-10*time.Minute),
-		placeEvent(now.Add(-placementBlockedGrace-time.Minute), unplaceable)))
+		placeEvent(now.Add(-placementBlockedGrace-time.Minute), unplaceable)), gen, true)
 	ph := h.rt.BootPhase()
 	if !strings.HasPrefix(ph, blockedPhasePrefix) || !strings.Contains(ph, "missing an attribute") {
 		t.Fatalf("phase does not carry the reason: %q", ph)
@@ -5666,5 +5718,123 @@ func TestECSEC2StuckStoppingIsNotLookedForOnAPlacedTask(t *testing.T) {
 	h.rt.State(ctx)
 	if h.ci.taskCalls != 0 {
 		t.Fatalf("ListTasks called %d times for a running service", h.ci.taskCalls)
+	}
+}
+
+// The diagnosis waits on several AWS calls. A Stop that completes meanwhile has already
+// cleared the phase; the stale answer must not bring the blocked reason back.
+func TestECSEC2StuckStoppingDoesNotResurrectAPhaseAStopCleared(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	h.ci.onDescribeTasks = func() {
+		h.ci.onDescribeTasks = nil
+		if err := h.rt.Stop(ctx); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+	}
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); ph != "" {
+		t.Fatalf("phase %q came back after a Stop", ph)
+	}
+	if got := h.rt.State(ctx); got != "stopped" {
+		t.Fatalf("State = %q, want stopped", got)
+	}
+}
+
+// The other direction: an empty answer from an old poll must not clear the reason a newer
+// Start has written since.
+func TestECSEC2StuckStoppingEmptyAnswerDoesNotClearANewerStartsReason(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	h.ci.stopping = nil
+	h.ci.onList = func() {
+		h.ci.onList = nil
+		if err := h.rt.Stop(ctx); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+		if _, err := h.rt.beginStart(ctx); err != nil {
+			t.Error(err)
+		}
+		h.rt.setPhase(blockedPhasePrefix + "the newer start's own reason")
+	}
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); !strings.Contains(ph, "newer start's own reason") {
+		t.Fatalf("phase = %q, the older poll cleared the newer Start's reason", ph)
+	}
+}
+
+// The stuck task is not promised to be on the first page of ListTasks.
+func TestECSEC2StuckStoppingReadsEveryPage(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	stuck := h.ci.stopping[0]
+	h.ci.stopping = []ecstypes.Task{
+		{TaskArn: aws.String("arn:task/done"), LastStatus: aws.String("STOPPED")},
+		stuck,
+	}
+	h.ci.taskPageSize = 1
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); !strings.Contains(ph, "STOPPING") {
+		t.Fatalf("phase %q: the stuck task on page two was missed", ph)
+	}
+	if len(h.ci.badTaskCalls) != 0 {
+		t.Fatalf("ListTasks asked for the wrong tasks: %v", h.ci.badTaskCalls)
+	}
+}
+
+// A lookup that failed says nothing about the task: it must be asked again at the next poll,
+// not cached as "nothing is stuck".
+func TestECSEC2StuckStoppingRetriesAfterAFailedLookup(t *testing.T) {
+	ctx := context.Background()
+	for name, arm := range map[string]func(h *ec2Harness){
+		"container instance lookup fails": func(h *ec2Harness) { h.ci.describeErr = errors.New("throttled") },
+		"task read fails": func(h *ec2Harness) {
+			h.ci.taskFailures = []ecstypes.Failure{{Arn: aws.String("arn:task/old"), Reason: aws.String("ThrottlingException")}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := stuckStoppingHarness(t, 10*time.Minute, false)
+			defer h.rt.setPhase("")
+			arm(h)
+			h.rt.State(ctx)
+			if ph := h.rt.BootPhase(); ph != "" {
+				t.Fatalf("phase %q from a failed lookup", ph)
+			}
+			h.ci.taskFailures = nil
+			h.rt.State(ctx)
+			if ph := h.rt.BootPhase(); !strings.Contains(ph, "STOPPING") {
+				t.Fatalf("phase = %q: the failure was cached as a healthy answer", ph)
+			}
+		})
+	}
+}
+
+// A failed lookup also must not clear a reason that was already standing.
+func TestECSEC2StuckStoppingFailedLookupKeepsTheStandingReason(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	clock := time.Now()
+	h.rt.now = func() time.Time { return clock }
+	h.rt.State(ctx)
+	clock = clock.Add(stuckStoppingEvery + time.Second)
+	h.ci.describeErr = errors.New("throttled")
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); !strings.Contains(ph, "STOPPING") {
+		t.Fatalf("phase = %q, a failed lookup cleared the standing reason", ph)
+	}
+}
+
+func TestECSEC2StuckStoppingNamesAnUnregisteredSlot(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	h.ci.missing = map[string]bool{"i-old": true}
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); !strings.Contains(ph, "no longer registered") {
+		t.Fatalf("phase %q does not say the slot is unregistered", ph)
 	}
 }

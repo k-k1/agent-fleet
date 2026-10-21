@@ -1137,6 +1137,9 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 	if attachedInstance(vol) == "" {
 		return "stopped"
 	}
+	// Taken BEFORE the service is read: the diagnosis below can wait on several AWS calls,
+	// and what it finds describes this Start count, not a later one (notePlacementBlocked).
+	gen, genErr := e.startGenNow(ctx)
 	s, ok, err := e.base.describeService(ctx)
 	if err != nil {
 		log.Printf("ecs-ec2 state: describe service %s: %v", e.base.name, err)
@@ -1160,7 +1163,7 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 		e.clearBlockedPhase()
 		return "running"
 	case s.DesiredCount >= 1:
-		e.notePlacementBlocked(ctx, s)
+		e.notePlacementBlocked(ctx, s, gen, genErr == nil)
 		return "starting"
 	default:
 		return "stopped"
@@ -1180,12 +1183,28 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 // the read path can reach the events — BootPhase() takes no context and cannot call
 // AWS — so it is written from here or not at all.
 //
-// No extra API call: the events come from the DescribeServices the caller already made.
-func (e *ecsEC2Runtime) notePlacementBlocked(ctx context.Context, s ecstypes.Service) {
+// The ECS events come from the DescribeServices the caller already made. Looking for a
+// previous task stuck in STOPPING (stuckStoppingReason) costs more calls, so it only runs
+// when the events have nothing to say, and at most every stuckStoppingEvery.
+//
+// gen is the Start count read before that DescribeServices. Everything this decides is a
+// snapshot, and a Stop or newer Start can land while the lookups are in flight: writing or
+// clearing a phase then would undo the Stop's clear or erase the newer Start's reason. The
+// check and the write share homeLockClaim with abortStarts/beginStart, and are not applied
+// to the lookups themselves, so a Stop never waits on AWS here. Gen 0 is a real count (no
+// Start yet on this process), not "unchecked". An unreadable count (genOK false) writes
+// nothing.
+func (e *ecsEC2Runtime) notePlacementBlocked(ctx context.Context, s ecstypes.Service, gen int64, genOK bool) {
 	why := ecsPlacementBlocked(s, time.Now())
 	if why == "" {
 		// ECS says nothing about a start waiting on the previous task's stop.
-		why = e.stuckStoppingReason(ctx, s)
+		var known bool
+		if why, known = e.stuckStoppingReason(ctx, s); !known {
+			return // a failed lookup says nothing either way: leave the phase as it is
+		}
+	}
+	if !genOK {
+		return
 	}
 	if why == "" {
 		// Only the blocked phase goes: a task placed after the wall was named leaves State()
@@ -1193,15 +1212,37 @@ func (e *ecsEC2Runtime) notePlacementBlocked(ctx context.Context, s ecstypes.Ser
 		// for that stretch is the bug this answer exists to prevent. Any other phase is an
 		// ordinary Start writing its progress ("slot: creating", "home: attaching"), and
 		// this poll must not wipe that.
-		e.clearBlockedPhase()
+		if !strings.HasPrefix(e.BootPhase(), blockedPhasePrefix) {
+			return
+		}
+		e.ifGenCurrent(ctx, gen, e.clearBlockedPhase)
 		return
 	}
 	phase := blockedPhasePrefix + why
 	if e.BootPhase() == phase {
 		return // already said, and this runs every 4s
 	}
-	e.setPhase(phase)
-	log.Printf("ecs-ec2: %s cannot be placed and will stay `starting` until this is fixed or the start deadline stops it: %s", e.base.name, why)
+	if e.ifGenCurrent(ctx, gen, func() { e.setPhase(phase) }) {
+		log.Printf("ecs-ec2: %s cannot be placed and will stay `starting` until this is fixed or the start deadline stops it: %s", e.base.name, why)
+	}
+}
+
+// ifGenCurrent runs f only while the Start count still reads gen, under the lock that
+// moves it. It does not treat gen 0 specially (unlike ifOwnedStrict); a count that cannot
+// be read or a lock that cannot be had skips f.
+func (e *ecsEC2Runtime) ifGenCurrent(ctx context.Context, gen int64, f func()) bool {
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	lctx, unlock, err := e.lockHome(dctx, homeLockClaim)
+	if err != nil {
+		return false
+	}
+	defer unlock()
+	if moved, err := e.startedSince(lctx, gen); err != nil || moved {
+		return false
+	}
+	f()
+	return true
 }
 
 // clearBlockedPhase removes a blocked phase once nothing blocks the task any more. Scoped
