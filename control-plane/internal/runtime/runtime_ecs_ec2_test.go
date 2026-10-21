@@ -4998,7 +4998,7 @@ func TestECSEC2WorkspaceMemCap(t *testing.T) {
 // ECS rejects a task definition whose hard Memory is not above MemoryReservation (512),
 // so no rung may come out capped at or below it, auto or explicit.
 func TestECSEC2WorkspaceMemCapStaysAboveSoftReservation(t *testing.T) {
-	for _, pool := range []ec2PoolConfig{{hostReserveMiB: 0}, {hostReserveMiB: 1024}, {hostReserveMiB: 0}} {
+	for _, pool := range []ec2PoolConfig{{hostReserveMiB: 0}, {hostReserveMiB: 1024}} {
 		for rung := int64(1); rung <= 4096; rung++ {
 			if c := pool.workspaceMemCapMiB(rung); c != 0 && c <= 512 {
 				t.Fatalf("reserve %d, rung %d: cap %d is not above the 512 MiB soft reservation", pool.hostReserveMiB, rung, c)

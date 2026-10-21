@@ -592,12 +592,12 @@ const (
 	// Negative rather than 0 because 0 is a meaningful answer ("reserve nothing, cap at
 	// the full rung"), and an operator's explicit off has to be distinguishable from it.
 	ec2HostReserveOff = -1
-	// The auto reserve, flat at every rung. The daemons were measured at ~1.2-1.4 GiB
+	// The auto reserve (and so its floor), flat at every rung. The daemons were measured at ~1.2-1.4 GiB
 	// with a workspace and its Service Connect sidecars running, and the rung overstates
 	// the real MemTotal by ~5% on top; a fifth of an 8 GiB rung left ~1230 MiB and a box
 	// thrashed (ECS and SSM agents went dark). Flat, because a proportional reserve
 	// shrinks again just above 8 GiB, and the daemons' cost does not grow with the box.
-	ec2HostReserveAutoMiB = 2048
+	ec2HostReserveFloorMiB = 2048
 	// ec2MinWorkspaceMemMiB is the soft reservation buildTaskDef sets; a capped workspace
 	// must be left with MORE than it, because ECS rejects Memory <= MemoryReservation.
 	// At or below it the rung is simply too small to share, and the cap is dropped
@@ -910,7 +910,7 @@ func (p ec2PoolConfig) workspaceMemCapMiB(slotMemMiB int64) int64 {
 	}
 	reserve := p.hostReserveMiB
 	if reserve == 0 { // "auto"
-		reserve = ec2HostReserveAutoMiB
+		reserve = ec2HostReserveFloorMiB
 	}
 	cap := slotMemMiB - reserve
 	if cap <= ec2MinWorkspaceMemMiB {
