@@ -805,7 +805,12 @@ administrator's to set.
   them each time it starts; this section is for a workspace that runs for weeks without a restart.
   **"Measure"** counts what would go now, and **"Delete"** removes one kind right away, without a
   confirmation, because unlike a tool cache nothing gets slower afterwards. Anything in use by a
-  process or changed within the last hour is kept.
+  process or changed within the last hour is kept. The Agent log names every folder it removes.
+  **`~/.af-work` is a throwaway area, not a place for files you want to keep.** At startup the Agent
+  removes only the session folders it created itself (they carry a hidden `.af-session-workdir` marker).
+  A folder you made there by hand, or one created before the marker existed, is never removed at
+  startup; it is counted here and goes only when you press **"Delete"**. Keep anything you care about
+  elsewhere, for example under `~/repos` or a folder of your own in your home directory.
 - The **Machine and usage** link in the WS bar's **Resources** popover opens this screen directly.
 
 ### Toolchain

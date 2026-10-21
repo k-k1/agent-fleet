@@ -11,7 +11,8 @@ package main
 //   - chromium: throwaway profiles (scoped_dir*) that `chromium --headless` without
 //     --user-data-dir makes and removes only on a clean exit; a killed run leaves ~84M.
 //   - af-work: ~/.af-work/<name> whose name is no session (live or in the trash) and no
-//     working copy's directory name (Managed sessions key it by working copy).
+//     working copy's directory name (Managed sessions key it by working copy). Boot removes
+//     only the ones the Agent marked as its own; the rest wait for the button.
 //   - node: patches the entrypoint's per-boot install superseded; nodeBinFor always takes
 //     the highest patch of a major, so the older ones are never run again.
 //   - kiro: kas/<version>-<hash> of kiro versions other than the installed one and the pin.
@@ -41,6 +42,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -64,6 +66,9 @@ type leftover struct {
 	root, name string
 	// extra names siblings in root removed after the directory (kiro's <dir>.lock).
 	extra []string
+	// needsConfirm = the boot pass leaves it alone and only the Settings button removes it:
+	// the directory is not provably ours (af-work without the Agent's marker).
+	needsConfirm bool
 }
 
 func (l leftover) path() string { return filepath.Join(l.root, l.name) }
@@ -160,12 +165,16 @@ type leftoverRemoved struct {
 	Failed string `json:"failed,omitempty"`
 }
 
-// prune removes this kind's leftovers and says what went. The caller holds
-// leftoverMu.
-func (k leftoverKind) prune(home string, pins map[string]string) (leftoverRemoved, error) {
+// prune removes this kind's leftovers and says what went. boot is the unattended pass: it
+// skips what needsConfirm, which only the button (boot=false) removes. Every removal is
+// logged by path, so a loss can be explained per directory. The caller holds leftoverMu.
+func (k leftoverKind) prune(home string, pins map[string]string, boot bool) (leftoverRemoved, error) {
 	res := leftoverRemoved{Kind: k.Name}
 	var firstErr error
 	for _, l := range k.pruneable(home, pins) {
+		if boot && l.needsConfirm {
+			continue
+		}
 		budget := toolCacheMaxEntries
 		bytes, _ := leftoverSize(l, &budget)
 		if err := removeLeftover(l.path()); err != nil {
@@ -178,6 +187,7 @@ func (k leftoverKind) prune(home string, pins map[string]string) (leftoverRemove
 		for _, x := range l.extra {
 			_ = os.Remove(filepath.Join(l.root, x))
 		}
+		log.Printf("leftovers: removed %s (%d KiB)", l.path(), bytes>>10)
 		res.Count++
 		res.Bytes += bytes
 	}
@@ -207,7 +217,7 @@ func pruneLeftoversAtBoot() {
 	leftoverMu.Lock()
 	defer leftoverMu.Unlock()
 	for _, k := range leftoverKinds {
-		r, _ := k.prune(homeDir(), pins)
+		r, _ := k.prune(homeDir(), pins, true)
 		if r.Count > 0 {
 			log.Printf("leftovers: removed %d %s (%d MiB)", r.Count, r.Kind, r.Bytes>>20)
 		}
@@ -299,6 +309,10 @@ func afWorkRoots(home string) []string { return []string{filepath.Join(home, ".a
 // afWorkLeftovers takes the directories no session and no working copy is named after.
 // Deleting a session removes its directory already (removeSessionSideFiles); what is left
 // predates that, or was keyed by a working copy that is gone.
+//
+// Only a directory carrying paths.SessionWorkDirMarker (written where the Agent creates it)
+// is removed at boot; any other is a candidate for the Settings button alone, because members
+// put their own folders there and a restart must not delete them silently.
 func afWorkLeftovers(_ string, roots []string, _ map[string]string) []leftover {
 	known, ok := afWorkKnownNames()
 	if !ok {
@@ -316,7 +330,8 @@ func afWorkLeftovers(_ string, roots []string, _ map[string]string) []leftover {
 		ents, _ := os.ReadDir(root)
 		for _, e := range ents {
 			if e.IsDir() && !known[e.Name()] {
-				out = append(out, leftover{root: root, name: e.Name()})
+				_, err := os.Lstat(filepath.Join(root, e.Name(), paths.SessionWorkDirMarker))
+				out = append(out, leftover{root: root, name: e.Name(), needsConfirm: err != nil})
 			}
 		}
 	}
@@ -590,7 +605,7 @@ func handleDeleteLeftovers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	leftoverMu.Lock()
-	res, err := k.prune(homeDir(), pins)
+	res, err := k.prune(homeDir(), pins, false)
 	leftoverMu.Unlock()
 	if err != nil && res.Count == 0 {
 		httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
