@@ -14,8 +14,8 @@ be running).
 
 Six major CLI coding agents are compared in the table below. Two more run Managed only:
 **Muse Code** (muse, [below](#muse-code)) and the fleet's own llama.cpp engine
-(**lcpp**, [below](#lcpp)). The experimental Antigravity (agy) slot is covered in
-[10](10-integrations.md). All of them have a column in the
+(**lcpp**, [below](#lcpp)). The experimental Antigravity (agy) slot has
+[its own section](#antigravity-agy). All of them have a column in the
 [feature matrix](../ref/agents.md). Connection changes take effect
 immediately; behavior settings apply **from each agent's new sessions**.
 
@@ -291,6 +291,43 @@ email. Connecting with an API key is not supported.
   live **context gauge**.
 - The image paste, Plan mode, and the WS-bar usage chip are not supported for kiro, and it
   can't be used as the left-pane assistant chat.
+
+## Antigravity (agy)
+
+**agy** (the Antigravity CLI) is an experimental slot. Its card says "Experimental slot
+(small quota, shared with the Antigravity IDE / Jules)", and the launch menu offers it as
+"Launch Antigravity (experimental)".
+
+On the **Antigravity** card in the "Agents" tab, press **"Connect via OAuth"**. A Google sign-in
+opens in a new tab. Approve it, then paste the displayed code and press "Done", as for
+claude. Once connected, the card shows the account email and plan. The other auth method, GCP
+project, is listed as "coming soon" and can't be picked yet. On a host where agy cannot run, the
+card says "Not available on this host (…)" and agy is not offered.
+
+- **Terminal (CLI) only.** There is no Managed execution for agy.
+- The model choices at launch are the account's live list. The reasoning effort is part of the
+  model name, so there is no separate picker. Image paste works; Plan mode and the context
+  gauge are not available. The WS bar shows its usage (5-hour and weekly).
+- **States**: Working / Question / Awaiting permission / Ready. agy ends its turn soon after a
+  command it ran with `run_command` starts, and leaves the command running. While such a command
+  runs, the row reads **"Ready · running in background"**, and the session does not count as
+  idle, so an idle stop does not cut a build short. A turn that agy never closes (the CLI died
+  mid-turn) stops reading Working after an hour with no change, unless one of its commands is
+  still running.
+- **Agent Fleet adds a hook entry to agy's configuration.** To know which conversation a session
+  holds and whether it is working, it adds an entry named `agent-fleet` to
+  `~/.gemini/config/hooks.json` and writes it again at every launch. Entries under other names
+  in that file are kept. When the hook has not reported, the state is read from agy's
+  conversation database instead. Each launch also marks the working folder as trusted, so agy
+  does not stop on its trust prompt, and keeps agy's telemetry setting off.
+- **Image generation.** "Antigravity (agy)" is one of the image routes a session can use
+  ([02](02-sessions.md#having-a-session-generate-an-image)). It goes through agy's own
+  image-generator subagent and makes one picture per call. An edit takes up to 3 reference
+  images (the Codex route takes 5); they are copied into the run's own folder, and that folder
+  is the only place the run may read. When the signed-in account is not offered image
+  generation, the call fails with "the signed-in Antigravity/Gemini account is not offered image
+  generation (agy says: …)".
+- RTK works by instruction only, as best effort ([RTK](#rtk-token-savings)).
 
 ## Muse Code
 
