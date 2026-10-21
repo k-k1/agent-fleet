@@ -28,3 +28,21 @@ func TestWriteHandoverFileMarksOnlyWhatItCreated(t *testing.T) {
 		t.Fatalf("existing dir was marked: %v", err)
 	}
 }
+
+// A target folder that already exists is not marked by the chain copy either.
+func TestCopyHandoverChainLeavesExistingTargetUnmarked(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if _, err := WriteHandoverFile("bsrc", "asrc", "md"); err != nil {
+		t.Fatal(err)
+	}
+	own := paths.SessionWorkDir("mywork")
+	if err := os.MkdirAll(own, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CopyHandoverChain("bsrc", "mywork"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(own, paths.SessionWorkDirMarker)); !os.IsNotExist(err) {
+		t.Fatalf("existing dir was marked: %v", err)
+	}
+}

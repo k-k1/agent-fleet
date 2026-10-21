@@ -439,6 +439,10 @@ func TestWriteHandoverFileAndChain(t *testing.T) {
 	if want := filepath.Join(home, ".af-work", "c", "handover-b.md"); path != want {
 		t.Errorf("path = %s, want %s", path, want)
 	}
+	// The chain copy made C's directory before the record was written: still the Agent's own.
+	if _, err := os.Stat(filepath.Join(paths.SessionWorkDir("c"), paths.SessionWorkDirMarker)); err != nil {
+		t.Errorf("c not marked: %v", err)
+	}
 	// Deleting A and B's directories takes nothing C needs.
 	_ = os.RemoveAll(paths.SessionWorkDir("a"))
 	_ = os.RemoveAll(paths.SessionWorkDir("b"))

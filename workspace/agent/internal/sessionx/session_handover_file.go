@@ -114,9 +114,19 @@ func CopyHandoverChain(source, target string) ([]string, error) {
 		return nil, err
 	}
 	var copied []string
+	madeDir := false
 	for _, n := range names {
 		if n == HandoverFileName(target) || n == HandoverFileName(source) {
 			continue
+		}
+		if len(copied) == 0 {
+			// The first copy makes target's directory (a Managed target has no launch to do
+			// it): through the shared helper, so it is marked as the Agent's own.
+			_, created, err := paths.MakeSessionWorkDirCreated(target)
+			if err != nil {
+				return copied, err
+			}
+			madeDir = created
 		}
 		b, err := os.ReadFile(filepath.Join(srcDir, n))
 		if err != nil {
@@ -126,6 +136,11 @@ func CopyHandoverChain(source, target string) ([]string, error) {
 			return copied, err
 		}
 		copied = append(copied, n)
+	}
+	if madeDir {
+		if err := syncDir(filepath.Dir(dstDir)); err != nil {
+			return copied, err
+		}
 	}
 	return copied, nil
 }
