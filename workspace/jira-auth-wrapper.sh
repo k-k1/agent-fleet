@@ -274,8 +274,20 @@ fi
 # key given. With neither, Jira answers a bare 400 that reads as "assignee not found".
 # `issue assign KEY-N` therefore gets `-p KEY` from the key's prefix; the commands that only take
 # -a/--assignee get a hint. Only an effective config of ours (the user-owned ones exec'd above)
-# and only when it has no `project:` entry at all, readable or not: a project we cannot parse
-# must not be overridden.
+# and only when it provably has no `project:` key (no_project_plain): a project we cannot parse
+# must not be overridden. The -a hint is a heuristic: a value-taking flag's value that looks like
+# -a/--assignee (`-s '--assignee=x'`) is not told apart, which costs one extra hint line.
+# True only when the file provably has no project: the same plain block layout `appendable`
+# demands (first real line at column 0, every column-0 line a bare `key:`, so no flow mapping,
+# JSON, quoted or explicit keys, tags or document marks) and none of those keys is `project`.
+# Anything else may hide one, and an inferred project must never replace the config's own.
+no_project_plain() {
+  local first
+  first="$(sed -n '/^[[:space:]]*\(#.*\)\{0,1\}$/d;p;q' "$1" 2>/dev/null)"
+  case "$first" in "" | [[:space:]]*) return 1 ;; esac
+  grep -Ev '^([[:space:]]|#|$)' "$1" 2>/dev/null | grep -Evq '^[A-Za-z_][A-Za-z0-9_-]*:([[:space:]]|$)' && return 1
+  ! grep -Eiq '^project[[:space:]]*:' "$1" 2>/dev/null
+}
 scan_assign_args() {
   local a
   npos=0 ikey="" haveproj="" hasasg="" dd="" pv=""
@@ -300,7 +312,7 @@ if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && [ -z "$proj" ]; then
     scan_assign_args "$@"
     eff="${cfg_argv:-${JIRA_CONFIG_FILE:-}}"
     if [ -z "$haveproj" ] && [ -n "$eff" ] && [ -r "$eff" ] &&
-      ! grep -Eiq '^[[:space:]]*[^[:alnum:]]?project[^[:alnum:]]?[[:space:]]*:' "$eff" 2>/dev/null; then
+      no_project_plain "$eff"; then
       if [ "$sub2" = assign ]; then
         case "$ikey" in
           [A-Za-z]*-[0-9]*)

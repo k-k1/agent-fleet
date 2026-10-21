@@ -718,6 +718,17 @@ config "$MANAGED/config.yml" "installation: Cloud
 project: {key: AAC}"
 run -- issue assign G3-1 me
 [ "$(args_of)" = "issue assign G3-1 me " ] || fail "assign flow-style project: argv '$(args_of)'"
+for flow in 'installation: Cloud
+project: {key: AAC}' '{installation: Cloud, project: {key: AAC}}' '{"installation": "Cloud", "project": {"key": "AAC"}}' '"project":
+  key: AAC' '? project
+: {key: AAC}' '---
+installation: Cloud
+project:
+  key: AAC' 'project : {key: AAC}'; do
+  config "$MANAGED/config.yml" "$flow"
+  run -- issue assign G3-1 me
+  [ "$(args_of)" = "issue assign G3-1 me " ] || fail "assign ambiguous project ($flow): argv '$(args_of)'"
+done
 # A managed config without a project is ours: injected.
 config "$MANAGED/config.yml" "installation: Cloud"
 run -- issue assign G3-1 me
