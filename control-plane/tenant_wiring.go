@@ -424,3 +424,11 @@ func tenantAPIError(e *apiError) *tenantsrv.APIError {
 	}
 	return &tenantsrv.APIError{Status: e.status, Code: e.code, Message: e.message}
 }
+
+func (a adminAPI) tenantMCPOAuth(w http.ResponseWriter, r *http.Request) {
+	a.srv().TenantMCPOAuth(w, r)
+}
+func (a adminAPI) setTenantMCPOAuth(w http.ResponseWriter, r *http.Request) {
+	a.srv().SetTenantMCPOAuth(w, r)
+}
+func (d cpTenant) MCPOAuthServed() bool { return d.m.mcpOAuthServed.Load() }

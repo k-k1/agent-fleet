@@ -375,8 +375,11 @@ Only addresses on the deployment's approved list can receive the sign-in: `claud
 `chatgpt.com` by default, plus a command-line client on your own computer (`127.0.0.1`, `localhost`). A client whose
 callback is anywhere else is refused with an error page and is never sent your code.
 
-> The list of connected apps and a button to revoke each one are coming separately. Until then an app that you want
-> cut off can be disconnected from the app's own side, or ask your administrator.
+### Connected apps
+
+Open **Settings → Connections → MCP tokens** and look below your Personal Access Tokens for **Connected apps**. Each OAuth connection shows the app name (self-declared, unverified), redirect host, tenant, scope, connection date and last use. Choose **Revoke** and confirm to end that connection immediately, including its refresh token. Reconnect from the app if you want to use it again. The section appears only when this deployment serves MCP OAuth.
+
+Your tenant administrator can disable MCP OAuth for the tenant. This revokes its existing OAuth connections and prevents new ones. Personal Access Tokens continue to work.
 
 ## Using Agent Fleet memory from an external agent
 

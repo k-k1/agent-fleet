@@ -238,3 +238,9 @@ and a revoke button.
   (one request wins, the rest revoke): there is no grace window. A CIMD host is checked again at
   `token` but the document is not refetched there. Not built here, as the Consequences already
   say: the tenant switch and the connected-apps list (#2434); live-client runs (#2435).
+
+- 2026-10-21, #2434: implemented decisions 6 and 7: connected apps beside PATs and a
+  tenant-admin MCP OAuth switch beside source networks. Disabling atomically audits and revokes
+  tenant grants, marks outstanding codes, and serializes with grant creation on the tenant row.
+  Token issuance checks the tenant and revocation mark after insertion; re-enabling cannot
+  resurrect a connection interrupted by disabling. Live-client runs remain tracked by #2435.

@@ -168,3 +168,162 @@ func TestMCPOAuthClientCapHoldsUnderConcurrency(t *testing.T) {
 		}
 	}
 }
+
+func TestMCPOAuthTenantDisablePersistsRevocation(t *testing.T) {
+	ctx := context.Background()
+	for name, st := range homeOpStores(t) {
+		tn, err := st.EnsureDefaultTenant(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		other, err := st.CreateTenant(ctx, "other", "Other")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ident, err := st.UpsertIdentity(ctx, "", "owner", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		member, err := st.EnsureMembership(ctx, ident.ID, tn.ID, "member")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if on, err := st.GetTenantMCPOAuth(ctx, tn.ID); err != nil || !on {
+			t.Fatalf("%s default: %v %v", name, on, err)
+		}
+		code := MCPOAuthToken{Hash: "code", Kind: MCPOAuthCode, IdentityID: ident.ID, MembershipID: member.ID, ExpiresAt: 2000}
+		if err := st.InsertMCPOAuthToken(ctx, code); err != nil {
+			t.Fatal(err)
+		}
+		grant := MCPOAuthGrant{ID: "grant", IdentityID: ident.ID, MembershipID: member.ID, TenantID: tn.ID, CodeHash: "code", CreatedAt: 1, IdleExpiresAt: 2000, AbsExpiresAt: 3000}
+		if err := st.CreateMCPOAuthGrant(ctx, grant); err != nil {
+			t.Fatal(err)
+		}
+		at := MCPOAuthToken{Hash: "access", Kind: MCPOAuthAccessKind, GrantID: grant.ID, ExpiresAt: 2000}
+		if err := st.InsertMCPOAuthToken(ctx, at); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SetTenantMCPOAuth(ctx, tn.ID, false, ident.ID, 1000); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok, err := st.GetMCPOAuthAccess(ctx, "access", 1001); err != nil || ok {
+			t.Fatalf("%s disabled access: %v %v", name, ok, err)
+		}
+		if on, err := st.GetTenantMCPOAuth(ctx, other.ID); err != nil || !on {
+			t.Fatalf("%s other tenant: %v %v", name, on, err)
+		}
+		var count int
+		if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action='mcp.oauth.grant' AND target='grant' AND detail='revoked reason=tenant-disabled' AND tenant_id=? AND actor_id=?`, tn.ID, ident.ID).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("%s audit: %d %v", name, count, err)
+		}
+		if err := st.SetTenantMCPOAuth(ctx, tn.ID, true, ident.ID, 1002); err != nil {
+			t.Fatal(err)
+		}
+		// An access/refresh insert already in flight may finish after disabling and re-enabling.
+		at.Hash = "late-access"
+		if err := st.InsertMCPOAuthToken(ctx, at); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok, err := st.GetMCPOAuthAccess(ctx, at.Hash, 1003); err != nil || ok {
+			t.Fatalf("%s late access: %v %v", name, ok, err)
+		}
+		// A code exchange that read the code before disabling must also see the durable mark.
+		grant.ID = "late-grant"
+		if err := st.CreateMCPOAuthGrant(ctx, grant); !errors.Is(err, ErrMCPOAuthDisabled) {
+			t.Fatalf("%s late grant: %v", name, err)
+		}
+		code.Hash = "new-code"
+		if err := st.InsertMCPOAuthToken(ctx, code); err != nil {
+			t.Fatal(err)
+		}
+		grant.CodeHash = code.Hash
+		if err := st.CreateMCPOAuthGrant(ctx, grant); err != nil {
+			t.Fatalf("%s new connection: %v", name, err)
+		}
+
+		// Access resolution independently enforces policy, even without a revocation sweep.
+		at.Hash, at.GrantID = "new-access", grant.ID
+		if err := st.InsertMCPOAuthToken(ctx, at); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.db.ExecContext(ctx, `UPDATE tenant SET mcp_oauth_disabled=1 WHERE id=?`, tn.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok, err := st.GetMCPOAuthAccess(ctx, at.Hash, 1003); err != nil || ok {
+			t.Fatalf("%s policy gate: %v %v", name, ok, err)
+		}
+		if _, err := st.db.ExecContext(ctx, `UPDATE tenant SET mcp_oauth_disabled=0 WHERE id=?`, tn.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok, err := st.GetMCPOAuthAccess(ctx, at.Hash, 1003); err != nil || !ok {
+			t.Fatalf("%s live access: %v %v", name, ok, err)
+		}
+
+		// A failed audit rolls the policy and revocations back together.
+		if _, err := st.db.ExecContext(ctx, `DROP TABLE audit_log`); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SetTenantMCPOAuth(ctx, tn.ID, false, ident.ID, 1004); err == nil {
+			t.Fatalf("%s disable succeeded without audit", name)
+		}
+		if on, err := st.GetTenantMCPOAuth(ctx, tn.ID); err != nil || !on {
+			t.Fatalf("%s partial policy change: %v %v", name, on, err)
+		}
+	}
+}
+
+func TestMCPOAuthOwnedRevokeAuditsOnce(t *testing.T) {
+	ctx := context.Background()
+	for name, st := range homeOpStores(t) {
+		g := MCPOAuthGrant{ID: "owned", IdentityID: "owner", TenantID: "tenant", IdleExpiresAt: 2000, AbsExpiresAt: 3000}
+		if err := st.CreateMCPOAuthGrant(ctx, g); err != nil {
+			t.Fatal(err)
+		}
+		if changed, err := st.RevokeMCPOAuthGrantOf(ctx, g.ID, "other", "revoked by member", 1000); err != nil || changed {
+			t.Fatalf("%s foreign: %v %v", name, changed, err)
+		}
+		var wins atomic.Int32
+		var wg sync.WaitGroup
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				changed, err := st.RevokeMCPOAuthGrantOf(ctx, g.ID, "owner", "revoked by member", 1000)
+				if err != nil {
+					t.Errorf("%s revoke: %v", name, err)
+				}
+				if changed {
+					wins.Add(1)
+				}
+			}()
+		}
+		wg.Wait()
+		rows, err := st.ListAuditByTenant(ctx, g.TenantID, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if wins.Load() != 1 || len(rows) != 1 || rows[0].ActorID != "owner" || rows[0].Detail != "revoked by member" {
+			t.Fatalf("%s wins=%d audit=%+v", name, wins.Load(), rows)
+		}
+	}
+}
+
+func TestMCPOAuthOwnedRevokeRollsBackWithoutAudit(t *testing.T) {
+	ctx := context.Background()
+	for name, st := range homeOpStores(t) {
+		g := MCPOAuthGrant{ID: "owned", IdentityID: "owner", IdleExpiresAt: 2000, AbsExpiresAt: 3000}
+		if err := st.CreateMCPOAuthGrant(ctx, g); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.db.ExecContext(ctx, `DROP TABLE audit_log`); err != nil {
+			t.Fatal(err)
+		}
+		if changed, err := st.RevokeMCPOAuthGrantOf(ctx, g.ID, "owner", "revoked by member", 1000); err == nil || changed {
+			t.Fatalf("%s revoke without audit: %v %v", name, changed, err)
+		}
+		got, _, err := st.GetMCPOAuthGrant(ctx, g.ID)
+		if err != nil || got.RevokedAt != 0 {
+			t.Fatalf("%s partial revocation: %+v %v", name, got, err)
+		}
+	}
+}

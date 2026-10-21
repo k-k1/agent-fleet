@@ -7,6 +7,20 @@
 import type { settings as jaSettings } from "../ja/settings.ts";
 
 export const settings: Record<keyof typeof jaSettings, string> = {
+  "tokens.apps_title": "Connected apps",
+  "tokens.apps_intro": "Apps connected to MCP through OAuth. Revoking a connection immediately ends its access.",
+  "tokens.apps_client": "App",
+  "tokens.apps_redirect": "Redirect host",
+  "tokens.apps_tenant": "Tenant",
+  "tokens.apps_created": "Connected",
+  "tokens.apps_self_declared": "Self-declared name (unverified)",
+  "tokens.apps_never_used": "Never used",
+  "tokens.apps_empty": "No connected apps.",
+  "tokens.apps_revoke_title": "Revoke app connection?",
+  "tokens.apps_revoke_body": "Revoke the connection for {name}? The app must connect again to regain access.",
+  "tokens.apps_load_failed": "Could not load connected apps.",
+  "tokens.apps_revoke_failed": "Could not revoke the connection. Try again.",
+
   "settings.language": "Language",
   // The pre-invitation landing (docs/log/61 §61.10.2 · P7-2). ★ Written as the normal
   // first step on an invite-run deployment, not as a failure — and it must show the

@@ -22,6 +22,7 @@ import { TenantSignInMethods } from "./tenantSignInMethods.tsx";
 import { PoolBudgetHint, type PoolBudget } from "./ec2Pool.tsx";
 import { TenantExternalMemoryView } from "./tenantExternalMemory.tsx";
 import { TenantNetworkView } from "./tenantNetwork.tsx";
+import { TenantMCPOAuthView } from "./tenantMCPOAuth.tsx";
 import { TenantLimitBoardView } from "../../limits/TenantLimitBoardView.tsx";
 import { TenantBranchRulesView } from "./tenantBranchRules.tsx";
 import { TenantMemberDefaultsPanel } from "./tenantMemberDefaults.tsx";
@@ -514,7 +515,14 @@ export function TenantScopeBody({
       <TenantLoginRulesView slug={slug} tenant={tenant} />
     );
   }
-  if (section === "network") return <TenantNetworkView key={slug} slug={slug} />;
+  if (section === "network") {
+    return (
+      <>
+        <TenantNetworkView key={slug} slug={slug} />
+        <TenantMCPOAuthView key={`oauth-${slug}`} slug={slug} />
+      </>
+    );
+  }
   if (section === "limit-board") return <TenantLimitBoardView key={slug} slug={slug} />;
   if (section === "engine-access") return <TenantEngineAccessView key={slug} slug={slug} />;
   // The reduced engine panel, which since the panel was split in two is the MODELS screen and

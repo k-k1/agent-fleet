@@ -4,6 +4,8 @@ import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Row } from "../parts/controls.tsx";
+import { fmtDate } from "./tokenDate.ts";
+import { ConnectedApps } from "./ConnectedApps.tsx";
 import { TokenCapabilities } from "./TokenCapabilities.tsx";
 
 // TokensTab issues and revokes Personal Access Tokens for the MCP endpoint
@@ -211,15 +213,8 @@ export function TokensTab() {
           </tbody>
         </table>
       )}
+      <ConnectedApps />
     </div>
   );
-}
-
-function fmtDate(s: string | undefined): string {
-  if (!s) return "";
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 

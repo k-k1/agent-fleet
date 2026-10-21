@@ -5,6 +5,20 @@
 // 1 ファイルで、フロントの並列セッションが全員ここへ追記＝毎回確実に衝突していた。
 // ja が正本。新しいキーはここに足し、同じキーを ../en/ の同名ファイルにも足す。
 export const settings = {
+  "tokens.apps_title": "接続済みアプリ",
+  "tokens.apps_intro": "OAuth で MCP に接続したアプリです。取り消すと、その接続のアクセスはすぐに終了します。",
+  "tokens.apps_client": "アプリ",
+  "tokens.apps_redirect": "戻り先ホスト",
+  "tokens.apps_tenant": "テナント",
+  "tokens.apps_created": "接続日",
+  "tokens.apps_self_declared": "自己申告の名前（未確認）",
+  "tokens.apps_never_used": "未使用",
+  "tokens.apps_empty": "接続済みアプリはありません。",
+  "tokens.apps_revoke_title": "アプリの接続を取り消しますか？",
+  "tokens.apps_revoke_body": "{name} の接続を取り消しますか？再びアクセスするには、アプリから接続し直す必要があります。",
+  "tokens.apps_load_failed": "接続済みアプリを読み込めませんでした。",
+  "tokens.apps_revoke_failed": "接続を取り消せませんでした。もう一度お試しください。",
+
   "settings.language": "言語",
   // 招待前の着地面（docs/log/61 §61.10.2・P7-2）。★ 失敗ではなく、招待制デプロイの正常な
   // 最初の一歩として書く。管理者に伝えるべき「自分のアドレス」を必ず読ませる。

@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
 # ANY = registered without a method. Taken with every routeSwitch on (routes_golden_test.go).
-# count: 704
+# count: 708
 ANY /
 ANY /.well-known/oauth-authorization-server/mcp-oauth
 ANY /.well-known/oauth-protected-resource/mcp
@@ -97,6 +97,8 @@ GET /api/admin/tenants/{slug}/limit-board
 PUT /api/admin/tenants/{slug}/limit-board
 PUT /api/admin/tenants/{slug}/limits
 PUT /api/admin/tenants/{slug}/login
+GET /api/admin/tenants/{slug}/mcp-oauth
+PUT /api/admin/tenants/{slug}/mcp-oauth
 GET /api/admin/tenants/{slug}/member-defaults
 PUT /api/admin/tenants/{slug}/member-defaults
 GET /api/admin/tenants/{slug}/members
@@ -411,6 +413,8 @@ GET /api/internal-git/repos/{name}/tree
 GET /api/limit-board
 GET /api/limit-board/me
 PUT /api/limit-board/me
+GET /api/mcp-oauth/grants
+DELETE /api/mcp-oauth/grants/{id}
 GET /api/mcp-servers
 POST /api/mcp-servers
 POST /api/mcp-servers/tenant-refresh

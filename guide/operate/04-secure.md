@@ -387,6 +387,10 @@ working for CI and clients without OAuth.
 - **Audit.** `mcp.oauth.grant` (created, revoked, reuse-revoked) and `mcp.oauth.token` (each issuance) are written before
   the response leaves; a call made with a connection is recorded as `mcp` with the connection's id as the actor. If the
   audit store is down no token is issued.
+  Tenant policy changes are recorded as `tenant.mcp_oauth` (`enabled=true/false`). Member revocations use
+  `mcp.oauth.grant` with `revoked by member`; tenant disablement uses `revoked reason=tenant-disabled` for each
+  connection it ends. A code exchange refused during disablement appends `refused reason=tenant-disabled`
+  to distinguish its earlier audit-before-issue `created` attempt from an actual connection.
 - **Scope.** `read` and `write` only. `admin:dangerous` is never granted over OAuth, whatever the member's role.
 - **Tenant network restriction** applies to the consent step (the person in the browser), not to `/mcp` and the token
   endpoint, which come from the vendors' servers, as with PATs (ADR 0047).

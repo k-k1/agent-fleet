@@ -5,6 +5,14 @@
 // 1 ファイルで、フロントの並列セッションが全員ここへ追記＝毎回確実に衝突していた。
 // ja が正本。新しいキーはここに足し、同じキーを ../en/ の同名ファイルにも足す。
 export const admin = {
+  "tenant.mcp_oauth_title": "MCP OAuth",
+  "tenant.mcp_oauth_allow": "MCP OAuth によるアプリの接続を許可する",
+  "tenant.mcp_oauth_hint": "既定で有効です。無効にすると、このテナントの OAuth 接続はすべて取り消され、新規接続も拒否されます。Personal Access Token には影響しません。再度有効にしても、アプリの再接続が必要です。",
+  "tenant.mcp_oauth_disable_title": "MCP OAuth を無効にしますか？",
+  "tenant.mcp_oauth_disable_body": "このテナントの OAuth アプリ接続をすべて取り消します。再度有効にしても、接続は復元されません。",
+  "tenant.mcp_oauth_load_failed": "MCP OAuth 設定を読み込めませんでした。",
+  "tenant.mcp_oauth_save_failed": "MCP OAuth 設定を保存できませんでした。",
+
   // --- 管理（features/settings/AdminTab.tsx。super_admin / tenant_admin）---
   "admin.title": "管理",
   "admin.forbidden": "権限がありません（super_admin のみ）。",
