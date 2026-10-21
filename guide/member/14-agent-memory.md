@@ -165,12 +165,6 @@ export** once it has finished.
   teammates' text into the memory your sessions read. Agent Fleet does not write back into Muse. Applying
   needs the switch on; the preview works while it is off.
 
-- **From a terminal**: `af-memory import-sources`, `af-memory import --project <slug> --dry-run` (preview) and
-  `af-memory import --project <slug>` (import); `af-memory changes` lists the latest changes. For muse:
-  `af-memory muse-import-sources`, `af-memory muse-import --dir <name> [--scope project|personal_project] [--dry-run]`
-  and `af-memory muse-import --scope personal --into-user [--dry-run]`. The imports are
-  gated by the same switch and the same secret scan as the Console.
-
 - **Agent Fleet memory in this bundle**: brings in the Agent Fleet memory a memory bundle carries. Restoring a
   bundle in Memory snapshots never writes it (the restore has no secret scan). **Start** asks for a bundle file
   as the wizard's source (a tar.gz holds none and is turned away), then previews it and imports it on its own.
@@ -187,6 +181,7 @@ export** once it has finished.
   commit (`AF-Bundle-Import`, `AF-Bundle-Source`), so each import shows in Agent memory > Changes and can be
   reverted there. It works with the switch on or off, answers only your own request, and is recorded in the
   audit log.
+
 - **Write back to Claude Code**: the other direction, by hand and for one project at a
   time. Turning the switch off already writes every project back by itself (see above); use this to
   resolve a conflict it left, or after switching Claude Code's memory back on anyway. It copies what was
@@ -218,6 +213,12 @@ export** once it has finished.
   until you confirm. With two such working copies of the repository there is no suggestion; pick the target
   yourself. Agent Fleet remembers the remote of each project, without any password or token from the URL;
   a project whose working copy was already gone has none and is never suggested. For ssh addresses only the large hosting services (GitHub, GitLab, Bitbucket, Codeberg) are recognised; on any other server only https addresses are compared.
+
+- **From a terminal**: `af-memory import-sources`, `af-memory import --project <slug> --dry-run` (preview) and
+  `af-memory import --project <slug>` (import); `af-memory changes` lists the latest changes. For muse:
+  `af-memory muse-import-sources`, `af-memory muse-import --dir <name> [--scope project|personal_project] [--dry-run]`
+  and `af-memory muse-import --scope personal --into-user [--dry-run]`. The imports are
+  gated by the same switch and the same secret scan as the Console.
 
 - **From a terminal**: `af-memory export-sources`, `af-memory export --project <id|name> --dry-run` (preview) and
   `af-memory export --project <id|name> [--overwrite <name>]...` (write back).

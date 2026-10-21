@@ -112,11 +112,6 @@ Agent Fleet 自身の共有メモリです。どの種類のエージェント�
   メモリへ写るためです。Agent Fleet から muse への書き戻しはしません。取り込みの実行にはスイッチのオンが必要で、
   プレビューはオフでも使えます。
 
-- **ターミナルから**：`af-memory import-sources`、`af-memory import --project <slug> --dry-run`（プレビュー）、
-  `af-memory import --project <slug>`（取り込み）。`af-memory changes` で最新の変更を一覧できます。
-  muse 向けは `af-memory muse-import-sources`、`af-memory muse-import --dir <name> [--scope project|personal_project] [--dry-run]`、
-  `af-memory muse-import --scope personal --into-user [--dry-run]` です。スイッチと秘密検査は Console と同じです。
-
 - **このバンドルの Agent Fleet のメモリ**：メモリのバンドルに入っている Agent Fleet のメモリを取り込みます。メモリのスナップショットでバンドルを復元しても書き込まれません
   （復元には秘密情報の検査がないため）。**開始**を押すと、手順の最初にバンドルのファイルを選びます（tar.gz には入っていないので受け付けません）。そのあと、プレビューと取り込みを単独で行えます。バンドルの各プロジェクトは、ここのプロジェクトと識別子で対応づけ、
   違う場合（パスが違う）は、リポジトリのアドレスが同じプロジェクトがここにちょうど 1 つあるときだけ対応づけます。対応が
@@ -128,6 +123,7 @@ Agent Fleet 自身の共有メモリです。どの種類のエージェント�
   日時（取り込んだ時刻）、ピン留め。出所はメモリの source（`bundle:<取り込み ID>:<プロジェクト>/<名前>@<バンドルのリビジョン>`）と
   コミット（`AF-Bundle-Import`、`AF-Bundle-Source`）に記録するので、取り込みはエージェントメモリの「変更」の表示に出て、そこで元に戻せます。スイッチの
   オン／オフを問わず使え、あなた自身の操作にだけ応じ、監査ログに記録されます。
+
 - **Claude Code へ書き戻す**：逆向きの操作で、手動で 1 プロジェクトずつ行います。
   スイッチをオフにすると全プロジェクトの書き戻しは自動で行われます（上記）。ここは、それが残した競合を解消するときや、
   ネイティブメモリをオンに戻したあとに使います。Agent Fleet 経由で学んだ内容を Claude Code のメモリへ写します
@@ -155,6 +151,11 @@ Agent Fleet 自身の共有メモリです。どの種類のエージェント�
   ボタンは 2 つの選択欄を埋めてプレビューを出すだけで、確定するまで何も移動しません。同じリポジトリの作業コピーが 2 つあるときは
   提案しないので、移動先は自分で選んでください。Agent Fleet はプロジェクトごとに remote を覚えますが、URL 内のパスワードやトークンは
   保存しません。作業コピーがすでになくなっていたプロジェクトには remote の記録がなく、提案されません。ssh のアドレスは大手のホスティング（GitHub、GitLab、Bitbucket、Codeberg）だけを同一視し、それ以外のサーバーでは https のアドレスだけを比べます。
+
+- **ターミナルから**：`af-memory import-sources`、`af-memory import --project <slug> --dry-run`（プレビュー）、
+  `af-memory import --project <slug>`（取り込み）。`af-memory changes` で最新の変更を一覧できます。
+  muse 向けは `af-memory muse-import-sources`、`af-memory muse-import --dir <name> [--scope project|personal_project] [--dry-run]`、
+  `af-memory muse-import --scope personal --into-user [--dry-run]` です。スイッチと秘密検査は Console と同じです。
 
 - **ターミナルから**：`af-memory export-sources`、`af-memory export --project <id|名前> --dry-run`（プレビュー）、
   `af-memory export --project <id|名前> [--overwrite <名前>]...`（書き戻し）。
