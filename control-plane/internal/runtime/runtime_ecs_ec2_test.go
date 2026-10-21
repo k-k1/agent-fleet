@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -814,6 +815,8 @@ type fakeContainerInstances struct {
 	describeErr error
 	// missing instances come back as a MISSING failure, the way a deregistered one does.
 	missing map[string]bool
+	// status overrides the container instance status (ACTIVE otherwise).
+	status map[string]string
 	// badTaskCalls records ListTasks calls that did not ask for this service's stopped tasks.
 	badTaskCalls []string
 }
@@ -882,7 +885,7 @@ func (f *fakeContainerInstances) DescribeContainerInstances(_ context.Context, i
 		ci := ecstypes.ContainerInstance{
 			ContainerInstanceArn: aws.String(arn),
 			Ec2InstanceId:        aws.String(id),
-			Status:               aws.String("ACTIVE"),
+			Status:               aws.String(cmp.Or(f.status[id], "ACTIVE")),
 			AgentConnected:       f.registered[id],
 			RunningTasksCount:    f.tasks[id],
 		}
@@ -5836,5 +5839,17 @@ func TestECSEC2StuckStoppingNamesAnUnregisteredSlot(t *testing.T) {
 	h.rt.State(ctx)
 	if ph := h.rt.BootPhase(); !strings.Contains(ph, "no longer registered") {
 		t.Fatalf("phase %q does not say the slot is unregistered", ph)
+	}
+}
+
+// DRAINING only stops new placements; a connected agent still reports the stop.
+func TestECSEC2StuckStoppingStaysQuietOnAConnectedDrainingInstance(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, true)
+	defer h.rt.setPhase("")
+	h.ci.status = map[string]string{"i-old": "DRAINING"}
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); ph != "" {
+		t.Fatalf("phase %q reported for a draining instance whose agent is connected", ph)
 	}
 }

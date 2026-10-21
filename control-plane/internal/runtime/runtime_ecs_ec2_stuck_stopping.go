@@ -145,12 +145,15 @@ func (e *ecsEC2Runtime) slotCannotFinishStop(ctx context.Context, t ecstypes.Tas
 	switch {
 	case len(out.ContainerInstances) > 0:
 		ci := out.ContainerInstances[0]
-		if ci.AgentConnected && aws.ToString(ci.Status) == "ACTIVE" {
+		// A connected agent reports stops, whatever the instance is doing otherwise: DRAINING
+		// only stops new placements. Only an explicit INACTIVE, or no connection, is evidence.
+		status := aws.ToString(ci.Status)
+		if ci.AgentConnected && status != "INACTIVE" {
 			return "", nil
 		}
 		slot = aws.ToString(ci.Ec2InstanceId)
 		how = "has its ECS agent disconnected"
-		if aws.ToString(ci.Status) != "ACTIVE" {
+		if status == "INACTIVE" {
 			how = "is no longer an active container instance"
 		}
 	case len(out.Failures) > 0 && aws.ToString(out.Failures[0].Reason) == "MISSING":

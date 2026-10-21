@@ -1241,6 +1241,12 @@ func (e *ecsEC2Runtime) ifGenCurrent(ctx context.Context, gen int64, f func()) b
 	if moved, err := e.startedSince(lctx, gen); err != nil || moved {
 		return false
 	}
+	// The count may have been read under a lease that has run out since (a paused process, a
+	// slow answer): another replica's Stop can then have completed while the count still
+	// reads as ours. The clock decides, not the timer callback (homeLockGuard).
+	if homeGuardOf(lctx).check() != nil || lctx.Err() != nil {
+		return false
+	}
 	f()
 	return true
 }
