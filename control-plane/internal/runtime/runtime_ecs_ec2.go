@@ -1615,6 +1615,10 @@ type ec2Placement struct {
 	// replacement marks a slot launched or adopted to replace a reserved one; a successful
 	// launch clears its af-replaces-home link (clearReplacesHome).
 	replacement bool
+	// releaseFrom is the slot the home is still attached to although it no longer fits the
+	// workspace's size or class. The placement is a promise, not a place: converge releases
+	// that slot and then places the home again. Always deferred.
+	releaseFrom string
 	// gen is the Start count (startGen) of the Start this placement belongs to, taken when
 	// that Start began; 0 when no Start made it. A launch may drop its claim only while
 	// no later Start exists (unclaimIfOurs).
@@ -1712,18 +1716,23 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 				}
 			}
 			if !matches {
-				log.Printf("ecs-ec2: %s now needs %s but its home is on %s; releasing that slot first",
+				// Never released here: this runs on the request thread, and releasing is
+				// waitTasksGone + umount over SSM + detach + waitDeviceFree, none of it
+				// bounded in seconds. On a slot whose agents have stopped answering it
+				// outlasts the ingress timeout on EVERY retry. The claim keeps State() at
+				// `starting` while converge releases and re-places in the background.
+				log.Printf("ecs-ec2: %s now needs %s but its home is on %s; releasing that slot in the background",
 					e.base.name, e.instanceType, inst)
-				if err := e.releaseSlot(ctx); err != nil {
-					return ec2Placement{}, fmt.Errorf("release the slot after a size/class change: %w", err)
+				volID := aws.ToString(vol.VolumeId)
+				claimErr := e.claim(ctx, volID, inst)
+				if claimErr != nil {
+					log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, claimErr)
 				}
-				// Re-read and fall through: the volume is detached now, so the code below
-				// places it like any other homeless home. Note it keeps its AZ — an EBS
-				// volume can never leave the one it was created in — so the search below
-				// is correctly restricted to that AZ.
-				if vol, err = e.homeVolume(ctx); err != nil {
-					return ec2Placement{}, fmt.Errorf("describe home volume after release: %w", err)
-				}
+				e.clearDormancy(ctx, volID)
+				return ec2Placement{
+					volumeID: volID, instanceID: inst, az: aws.ToString(vol.AvailabilityZone),
+					deferred: true, releaseFrom: inst, wipe: homeWipeOf(vol), claimErr: claimErr,
+				}, nil
 			} else {
 				// The home is still on a slot — the normal case now that Stop leaves it
 				// there (lazy release). This is both the affinity ("the same user gets the
@@ -1923,9 +1932,108 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 // restart in the middle costs a retry, not a wedged workspace.
 func (e *ecsEC2Runtime) finishStart(ctx context.Context, p ec2Placement, prep ec2Prep) {
 	// Whatever happens — converged, failed, or gave up — the workspace is no longer
-	// mid-provisioning, and the Console's dialog keys off exactly this.
-	defer e.setPhase("")
+	// mid-provisioning, and the Console's dialog keys off exactly this. A blocked phase is
+	// the exception: it is the reason the start gave up, and nothing else would say it.
+	defer e.clearProgressPhase(ctx, p.gen)
 	e.converge(ctx, p, prep, 1)
+}
+
+// ifCurrentStart runs f only while no Stop or newer Start has overtaken the Start that
+// made the placement (gen), and answers whether it did. It is ifOwnedStrict on a context
+// detached from ctx: the check and f share homeLockClaim with abortStarts/beginStart, so a
+// Stop either lands before the check (f is skipped) or after f (it wins afterwards), and the
+// background budget that ended the work is no reason to skip a write that explains why.
+// An unreadable count or a lock that cannot be had answers false. gen 0 means no Start made
+// the placement, so f runs.
+func (e *ecsEC2Runtime) ifCurrentStart(ctx context.Context, gen int64, f func()) bool {
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	return e.ifOwnedStrict(dctx, ec2Placement{gen: gen}, func(context.Context) { f() })
+}
+
+// clearProgressPhase drops the phase when this Start still owns it, unless it is a blocked
+// one, which a failed start leaves behind on purpose (State() or Stop clears it).
+func (e *ecsEC2Runtime) clearProgressPhase(ctx context.Context, gen int64) {
+	e.ifCurrentStart(ctx, gen, func() {
+		v, ok := startPhase.Load(e.base.name)
+		if !ok {
+			return
+		}
+		if s, _ := v.(string); !strings.HasPrefix(s, blockedPhasePrefix) {
+			startPhase.CompareAndDelete(e.base.name, v)
+		}
+	})
+}
+
+// superseded reports whether a later Start has begun since p's. A Stop that counts as a
+// Start lands here too. An unreadable count is "superseded": this half then does nothing
+// further, and the claim expires on its own.
+func (e *ecsEC2Runtime) superseded(ctx context.Context, p ec2Placement) bool {
+	if p.gen == 0 {
+		return false
+	}
+	moved, err := e.startedSince(ctx, p.gen)
+	return err != nil || moved
+}
+
+// releaseAndReplace is the background half of a size/class change: take the home off the
+// slot it no longer fits, then place it like any homeless home. ok is false when the
+// start stopped here. A real failure leaves the blocked phase as its reason, because a
+// bare `starting` that never ends, or a silent `stopped`, tells the member nothing.
+//
+// A later Start (or Stop) that overtakes this one ends it silently, touching neither phase
+// nor claim: they are the newer Start's now. The claim TTL is shorter than the background
+// budget, so this does happen. It is checked on entry, after the release, and again before
+// and after the re-placement; the last one cannot undo an attach, which the newer Start
+// adopts like any attachment.
+func (e *ecsEC2Runtime) releaseAndReplace(ctx context.Context, p ec2Placement) (ec2Placement, bool) {
+	fail := func(why string, err error) (ec2Placement, bool) {
+		// Ownership is asked on a detached context (ifCurrentStart): a failure is most often
+		// the background budget running out, and reading the Start count on that expired
+		// context fails too, which would read as "overtaken" and drop the one reason there is.
+		// Reason and claim go together under one ownership check: a Stop that lands after
+		// it clears both itself, and one that landed before leaves both alone.
+		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		e.ifOwnedStrict(dctx, p, func(c context.Context) {
+			log.Printf("ecs-ec2 start: %s for %s: %v", why, e.base.name, err)
+			// The error can quote a whole slot script; the member reads this line.
+			detail := err.Error()
+			if len(detail) > 300 {
+				detail = detail[:300] + "…"
+			}
+			e.setPhase(blockedPhasePrefix + why + ": " + detail)
+			e.unclaim(c, p.volumeID)
+		})
+		return ec2Placement{}, false
+	}
+	if e.superseded(ctx, p) {
+		return ec2Placement{}, false
+	}
+	e.ifCurrentStart(ctx, p.gen, func() { e.setPhase("slot: releasing") })
+	if err := e.releaseSlotSince(ctx, p.gen); err != nil {
+		return fail("the old slot could not be released after a size/class change", err)
+	}
+	if e.superseded(ctx, p) {
+		return ec2Placement{}, false
+	}
+	next, err := e.placeHome(ctx)
+	if err == nil {
+		err = next.claimErr
+	}
+	if err == nil && next.releaseFrom != "" {
+		// The release reported success and the home is still on a mismatched slot (it was
+		// re-mounted for a newer Start). Looping here would release it again forever.
+		err = fmt.Errorf("home is still attached to %s", next.releaseFrom)
+	}
+	if err != nil {
+		return fail("could not place the home after releasing the old slot", err)
+	}
+	next.gen = p.gen
+	if e.superseded(ctx, p) {
+		return ec2Placement{}, false
+	}
+	return next, true
 }
 
 // converge is finishStart's body, plus one budgeted retry for the single failure a Start
@@ -1939,6 +2047,13 @@ func (e *ecsEC2Runtime) finishStart(ctx context.Context, p ec2Placement, prep ec
 // one. Giving up after two leaves the workspace `stopped` with the reason in the log —
 // a state the user can retry from, and the operator can read.
 func (e *ecsEC2Runtime) converge(ctx context.Context, p ec2Placement, prep ec2Prep, retries int) {
+	if p.releaseFrom != "" {
+		next, ok := e.releaseAndReplace(ctx, p)
+		if !ok {
+			return
+		}
+		p = next
+	}
 	if e.startSuperseded(ctx, p) {
 		return
 	}

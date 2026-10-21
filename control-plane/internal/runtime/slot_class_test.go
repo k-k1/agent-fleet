@@ -302,11 +302,24 @@ func TestPlaceHomeReleasesASlotOfTheWrongType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("placeHome: %v", err)
 	}
-	if p.instanceID == "i-old" {
+	// The release itself is the background's: placeHome only promises it.
+	if !p.deferred || p.releaseFrom != "i-old" {
+		t.Fatalf("placeHome = %+v, want a deferred placement that releases i-old", p)
+	}
+	gen, err := h.rt.beginStart(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.gen = gen
+	next, ok := h.rt.releaseAndReplace(ctx, p)
+	if !ok {
+		t.Fatalf("releaseAndReplace gave up: %q", h.rt.BootPhase())
+	}
+	if next.instanceID == "i-old" {
 		t.Fatalf("reused the m6i slot for an arm64 workspace — ECS would refuse to place the task forever")
 	}
-	if p.instanceID != "i-arm" {
-		t.Fatalf("placed on %q, want the free m8g slot", p.instanceID)
+	if next.instanceID != "i-arm" {
+		t.Fatalf("placed on %q, want the free m8g slot", next.instanceID)
 	}
 }
 

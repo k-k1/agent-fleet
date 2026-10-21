@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -160,6 +161,17 @@ func (f *fakeEC2) attach(volID, instID string, at time.Time) {
 	if inst := f.instances[instID]; inst != nil {
 		inst.BlockDeviceMappings = []ec2types.InstanceBlockDeviceMapping{{DeviceName: aws.String(ec2HomeDevice)}}
 	}
+}
+
+func (f *fakeEC2) detach(volID string) {
+	v := f.volumes[volID]
+	for _, a := range v.Attachments {
+		if inst := f.instances[aws.ToString(a.InstanceId)]; inst != nil {
+			inst.BlockDeviceMappings = nil
+		}
+	}
+	v.Attachments = nil
+	v.State = ec2types.VolumeStateAvailable
 }
 
 func (f *fakeEC2) setTag(volID, key, value string) {
@@ -717,6 +729,8 @@ type fakeSSMCmd struct {
 	// onSend, when set, is called with each command as it is sent, so a test can look at
 	// the rest of the fake world at that moment.
 	onSend func(cmd string)
+	// status, when set and non-empty for a command, is the invocation status reported for it.
+	status func(cmd string) string
 }
 
 func (f *fakeSSMCmd) SendCommand(_ context.Context, in *ssm.SendCommandInput, _ ...func(*ssm.Options)) (*ssm.SendCommandOutput, error) {
@@ -753,6 +767,11 @@ func (f *fakeSSMCmd) GetCommandInvocation(_ context.Context, in *ssm.GetCommandI
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	cmd := aws.ToString(in.CommandId)
+	if f.status != nil {
+		if st := f.status(cmd); st != "" {
+			return &ssm.GetCommandInvocationOutput{Status: ssmtypes.CommandInvocationStatus(st)}, nil
+		}
+	}
 	for sub := range f.fail {
 		if strings.Contains(cmd, sub) {
 			return &ssm.GetCommandInvocationOutput{Status: "Failed", StandardErrorContent: aws.String("boom")}, nil
@@ -5230,5 +5249,300 @@ func TestECSEC2ResizeHomeWaitsForTheModificationBeforeGrowingTheFilesystem(t *te
 	h.runDeferred(ctx)
 	if len(h.ssmc.commands) != 0 {
 		t.Fatalf("grew the filesystem while the modification was still pending: %v", h.ssmc.commands)
+	}
+}
+
+// A size/class change releases the old slot, and that is waitTasksGone + an SSM umount +
+// a detach + waitDeviceFree: never a seconds-only path. On a slot whose agents have
+// stopped answering it outlasted the ingress timeout on every retry. The fake SSM below
+// never completes, so a Start that still releases inline cannot return at all.
+func TestECSEC2SizeChangeStartDoesNotReleaseOnTheRequestThread(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-old", "ap-northeast-1a", "m7i.xlarge", true, false)
+	h.ci.registered["i-old"] = true
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.attach("vol-1", "i-old", time.Now().Add(-time.Hour))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	// the member now needs m7i.large (h.rt.instanceType); the slot is an xlarge
+
+	wedged := make(chan struct{})
+	defer close(wedged)
+	h.ssmc.onSend = func(string) { <-wedged }
+
+	done := make(chan error, 1)
+	go func() { done <- h.rt.Start(ctx) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start is stuck behind the old slot's umount: the release runs on the request thread")
+	}
+	if len(h.deferred) != 1 {
+		t.Fatalf("deferred %d background steps, want 1", len(h.deferred))
+	}
+	if got := h.rt.State(ctx); got != "starting" {
+		t.Fatalf("State = %q, want starting off the claim", got)
+	}
+	for _, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "DetachVolume") || strings.HasPrefix(c, "SSM ") {
+			t.Fatalf("Start touched the old slot on the request thread: %q", c)
+		}
+	}
+}
+
+// The background half: the old slot is released and the home lands on a slot of the right
+// size, with no second Start.
+func TestECSEC2SizeChangeStartConvergesInTheBackground(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-old", "ap-northeast-1a", "m7i.xlarge", true, false)
+	h.ci.registered["i-old"] = true
+	h.ec2.addSlot("i-new", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-new"] = true
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.attach("vol-1", "i-old", time.Now().Add(-time.Hour))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	h.runDeferred(ctx)
+	if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "i-new" {
+		t.Fatalf("home is on %q, want i-new", inst)
+	}
+	if got := h.rt.BootPhase(); got != "" {
+		t.Errorf("phase %q survived a converged start", got)
+	}
+}
+
+// A release that fails in the background must say why. Left alone it would be a `starting`
+// that expires into a `stopped` with no reason anywhere the member can read.
+func TestECSEC2SizeChangeReleaseFailureLeavesABlockedReason(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-old", "ap-northeast-1a", "m7i.xlarge", true, false)
+	h.ci.registered["i-old"] = true
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.attach("vol-1", "i-old", time.Now().Add(-time.Hour))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	h.ssmc.fail["af-umount"] = true
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	h.runDeferred(ctx)
+	if got := h.rt.BootPhase(); !strings.HasPrefix(got, blockedPhasePrefix) || !strings.Contains(got, "released") {
+		t.Fatalf("BootPhase = %q, want a blocked reason naming the failed release", got)
+	}
+	if got := h.rt.State(ctx); got == "starting" {
+		t.Fatalf("State = %q: the claim outlived the failed background release", got)
+	}
+	if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "i-old" {
+		t.Fatalf("home moved to %q although the umount failed", inst)
+	}
+}
+
+// sizeChangeHome is a home on an xlarge slot for a workspace that now needs a large one,
+// with a right-sized slot free to take it.
+func sizeChangeHome(t *testing.T) *ec2Harness {
+	t.Helper()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-old", "ap-northeast-1a", "m7i.xlarge", true, false)
+	h.ci.registered["i-old"] = true
+	h.ec2.addSlot("i-new", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-new"] = true
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.attach("vol-1", "i-old", time.Now().Add(-time.Hour))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	return h
+}
+
+// The claim TTL (5 minutes) is shorter than the background budget (10), so a Start can
+// begin while an older one is still releasing. Once the home is off the old slot, the old
+// half must not re-place it, claim over the newer Start, or write its phase.
+func TestECSEC2SizeChangeOvertakenByANewerStartLeavesItAlone(t *testing.T) {
+	ctx := context.Background()
+	h := sizeChangeHome(t)
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// Meanwhile the claim lapsed and the home came off the old slot...
+	h.ec2.detach("vol-1")
+	// ...and a newer Start began and wrote its claim and phase.
+	if _, err := h.rt.beginStart(ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.rt.setPhase("new start owns this phase")
+	h.ec2.setTag("vol-1", EC2TagClaim, "i-newer")
+	h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
+	callsBefore := len(h.ec2.calls)
+
+	h.runDeferred(ctx)
+
+	for _, c := range h.ec2.calls[callsBefore:] {
+		if strings.HasPrefix(c, "AttachVolume") {
+			t.Fatalf("the overtaken Start drove the home: %q", c)
+		}
+	}
+	if got := h.rt.BootPhase(); got != "new start owns this phase" {
+		t.Errorf("phase = %q, the newer Start's phase was overwritten or cleared", got)
+	}
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-newer" {
+		t.Errorf("claim = %q, the newer Start's claim was overwritten", got)
+	}
+}
+
+// A failed release that was overtaken is the newer Start's business: it must not paint
+// that Start's screen as a failure, nor bring back a blocked phase a Stop has cleared.
+func TestECSEC2SizeChangeOvertakenFailureWritesNoBlockedPhase(t *testing.T) {
+	ctx := context.Background()
+	h := sizeChangeHome(t)
+	h.ssmc.fail["af-umount"] = true
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// A Stop (or a newer Start) ran after this one and left no phase.
+	if _, err := h.rt.beginStart(ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.rt.setPhase("")
+
+	h.runDeferred(ctx)
+
+	if got := h.rt.BootPhase(); got != "" {
+		t.Errorf("phase = %q, an overtaken release wrote it", got)
+	}
+}
+
+// Overtaken in the middle of the release (a Stop during the umount): nothing is re-placed.
+func TestECSEC2SizeChangeOvertakenDuringTheReleaseIsNotReplaced(t *testing.T) {
+	ctx := context.Background()
+	h := sizeChangeHome(t)
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	h.ssmc.onSend = func(cmd string) {
+		if strings.HasPrefix(cmd, "af-umount") {
+			if _, err := h.rt.beginStart(ctx); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	callsBefore := len(h.ec2.calls)
+	h.runDeferred(ctx)
+	for _, c := range h.ec2.calls[callsBefore:] {
+		if strings.HasPrefix(c, "AttachVolume") || strings.HasPrefix(c, "DetachVolume") {
+			t.Fatalf("overtaken release went on: %q", c)
+		}
+	}
+	if got := h.rt.BootPhase(); strings.HasPrefix(got, blockedPhasePrefix) {
+		t.Errorf("phase = %q, overtaken release reported a failure", got)
+	}
+}
+
+// The production way a wedged release ends: the umount sits Pending until the background
+// budget runs out. With a store, reading the Start count on that expired context fails, and
+// that used to read as "overtaken" — leaving no reason at all and a plain `stopped`.
+func TestECSEC2SizeChangeDeadlineKeepsABlockedReasonWithAStore(t *testing.T) {
+	ctx := context.Background()
+	h := sizeChangeHome(t)
+	h.rt.leases = newFakeLeaseStore()
+	h.rt.replica = "R/"
+	h.rt.leasePoll = 2 * time.Millisecond
+	h.rt.sleep = sleepCtx
+	t.Cleanup(func() {
+		startGen.Delete("R/af-ws-acme-alice")
+		homeMountLocks.Delete("R/af-ws-acme-alice")
+		claimGenLocks.Delete("R/af-ws-acme-alice")
+	})
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	bg, expire := context.WithCancel(ctx)
+	defer expire()
+	var polls atomic.Int32
+	h.ssmc.status = func(cmd string) string {
+		if !strings.HasPrefix(cmd, "af-umount") {
+			return ""
+		}
+		if polls.Add(1) == 1 {
+			expire() // the background budget ends while the umount is still Pending
+			return "Pending"
+		}
+		return "Success"
+	}
+	pending := h.deferred
+	h.deferred = nil
+	for _, fn := range pending {
+		fn(bg)
+	}
+	if polls.Load() == 0 {
+		t.Fatal("the release never reached the umount, so the deadline path was not exercised")
+	}
+	if got := h.rt.BootPhase(); !strings.HasPrefix(got, blockedPhasePrefix) {
+		t.Fatalf("BootPhase = %q, want a blocked reason after the budget ran out", got)
+	}
+	if got := h.rt.State(ctx); got == "starting" {
+		t.Errorf("State = %q, the claim outlived the failed release", got)
+	}
+}
+
+// A Stop that lands while the background release is in flight (the umount is slow, then
+// either fails or succeeds) ends the Start: no re-placement, no service scale-up, and no
+// blocked reason resurrected after the Stop cleared the screen.
+func TestECSEC2StopDuringTheSizeChangeReleaseEndsIt(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		umountFail bool
+	}{{"umount fails after the stop", true}, {"umount succeeds after the stop", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			h := sizeChangeHome(t)
+			if err := h.rt.Start(ctx); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			stopped := false
+			h.ssmc.onSend = func(cmd string) {
+				if strings.HasPrefix(cmd, "af-umount") && !stopped {
+					stopped = true
+					if err := h.rt.Stop(ctx); err != nil {
+						t.Errorf("Stop: %v", err)
+					}
+					if tc.umountFail {
+						h.ssmc.fail["af-umount"] = true
+					}
+				}
+			}
+			updatesBefore, createsBefore := len(h.ecs.updateCalls), len(h.ecs.createCalls)
+			callsBefore := len(h.ec2.calls)
+
+			h.runDeferred(ctx)
+
+			if !stopped {
+				t.Fatal("the release never reached the umount, so the Stop did not land mid-release")
+			}
+			for _, c := range h.ec2.calls[callsBefore:] {
+				if strings.HasPrefix(c, "AttachVolume") {
+					t.Fatalf("a stopped Start re-placed the home: %q", c)
+				}
+			}
+			for _, u := range h.ecs.updateCalls[updatesBefore:] {
+				if aws.ToInt32(u.DesiredCount) >= 1 {
+					t.Fatalf("a stopped Start raised desiredCount: %+v", u)
+				}
+			}
+			if len(h.ecs.createCalls) != createsBefore {
+				t.Fatal("a stopped Start created the service")
+			}
+			if got := h.rt.BootPhase(); got != "" {
+				t.Errorf("phase = %q after a Stop, want none", got)
+			}
+			if got := h.rt.State(ctx); got != "stopped" {
+				t.Errorf("State = %q, want stopped", got)
+			}
+		})
 	}
 }
