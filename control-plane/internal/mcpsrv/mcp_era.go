@@ -14,6 +14,7 @@ package mcpsrv
 // `_meta` carries a protocolVersion.
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -196,14 +197,63 @@ func quoteHdr(s string) string {
 	return `"` + s + `"`
 }
 
+// ServerIdentity is what the CP knows about itself that serverInfo reports.
+type ServerIdentity struct {
+	// Version is the CP build version ("dev" for an unstamped build).
+	Version string
+	// BrandLabel is the deployment's brand label; empty when none is configured.
+	BrandLabel string
+	// PublicBaseURL is PUBLIC_BASE_URL without a trailing slash; empty when unset.
+	PublicBaseURL string
+}
+
+// mcpServerDescription is the human-readable summary shown next to the server's name.
+const mcpServerDescription = "Operations MCP for Agent Fleet: observe and steer your own sessions, and manage workspaces as an administrator."
+
+// serverInfo builds the Implementation object (name, title, version, description, icons,
+// websiteUrl). Icons and websiteUrl are absolute URLs on PUBLIC_BASE_URL and are left out
+// unless that is https: a client fetching them from a plain-http or relative origin would
+// either be refused or have nothing to resolve against. name stays the programmatic id.
+func serverInfo(id ServerIdentity) map[string]any {
+	title := "Agent Fleet"
+	if id.BrandLabel != "" {
+		title += " · " + id.BrandLabel
+	}
+	version := id.Version
+	if version == "" {
+		version = "dev"
+	}
+	info := map[string]any{
+		"name":        "agent-fleet",
+		"title":       title,
+		"version":     version,
+		"description": mcpServerDescription,
+	}
+	if base := strings.TrimRight(id.PublicBaseURL, "/"); strings.HasPrefix(base, "https://") {
+		info["websiteUrl"] = base
+		info["icons"] = []map[string]any{
+			{"src": base + "/brand/icon-192.png", "mimeType": "image/png", "sizes": []string{"192x192"}},
+			{"src": base + "/brand/icon-512.png", "mimeType": "image/png", "sizes": []string{"512x512"}},
+		}
+	}
+	return info
+}
+
+// identity is the CP's self-description; zero when no CP is wired (unit tests).
+func (a API) identity(ctx context.Context) ServerIdentity {
+	if a.cp == nil {
+		return ServerIdentity{}
+	}
+	return a.cp.ServerIdentity(ctx)
+}
+
 // mcpDiscoverResult answers server/discover. Servers MUST implement it; it is also
 // what a stdio client probes with to decide which era to speak.
 //
 // serverInfo is emitted BOTH top-level (SEP-2575's DiscoverResult schema) and under
 // `_meta` (the draft docs' example) because the two disagree and extra fields are
 // harmless — a client reading either shape finds it.
-func mcpDiscoverResult(name, version, instructions string) map[string]any {
-	info := map[string]any{"name": name, "version": version}
+func mcpDiscoverResult(info map[string]any, instructions string) map[string]any {
 	res := map[string]any{
 		"resultType":        "complete",
 		"supportedVersions": mcpSupportedVersions,
