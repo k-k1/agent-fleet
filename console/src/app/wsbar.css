@@ -86,6 +86,10 @@
   color: var(--ok);
   border-color: var(--ok);
 }
+.ws-power.starting:not(:disabled) {
+  color: var(--warn);
+  border-color: var(--warn);
+}
 .ws-power.off:not(:disabled) {
   color: var(--muted2);
 }

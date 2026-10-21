@@ -115,6 +115,20 @@ describe("WS bar", () => {
     expect(down.disabled).toBe(false);
   });
 
+  it("keeps the power button a clickable Stop (not a spinner) while the server reports starting", async () => {
+    await mountBar();
+    act(() => useWorkspaceStore.setState({ state: "starting" }));
+    const power = host!.querySelector<HTMLButtonElement>(".ws-power")!;
+    expect(power.getAttribute("aria-label")).toBe(t("wsbar.stop_ws"));
+    expect(power.disabled).toBe(false);
+    expect(power.classList.contains("starting")).toBe(true);
+    expect(power.querySelector(".ws-power-glyph")).not.toBeNull();
+    // The optimistic transition (one request in flight) is the only spinner state.
+    act(() => useWorkspaceStore.setState({ state: "stopping…" }));
+    expect(power.disabled).toBe(true);
+    expect(power.querySelector(".ws-power-glyph")).toBeNull();
+  });
+
   it("keeps the AWS chip's login/logout as ghost buttons, logout off while it runs", async () => {
     await mountBar();
     await click(".ws-aws:not(.ws-gcp) .ws-aws-btn");

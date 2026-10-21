@@ -1052,6 +1052,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.stop_ws_title": "Stop {key}'s workspace",
   "admin.stop_confirm": "Stop",
   "admin.stop_body": "This stops this member's {slug} workspace container.",
+  "admin.stop_body_starting": "This member's {slug} workspace is still starting. Stopping cancels that start; the home is kept and the member can start it again.",
   "admin.rotate_git_title": "Rotate {key}'s git token",
   "admin.rotate_git_confirm": "Rotate",
   "admin.rotate_git_body": "Issues a new token for this member's access to the tenant's internal git repositories, and the current token stops working immediately. Use it when the token may have leaked out of the workspace.",

@@ -1786,3 +1786,9 @@ another tool's failure and kinds with no boot-installed CLI all proceed. The ans
 to its own en/ja text (`err.cli_install_*`, shown without the English message), so the sentence follows the viewer's language,
 and create_session / the scheduler get the English message. No new status source: the same file `/env/tool-versions` serves.
 Not verified on a real full home.
+
+**2026-10-21 note (decision 28, #2451):** the `auto` host reserve is now a flat 2048 MiB at every rung
+(a fifth of an 8 GiB rung left ~1230 MiB of real headroom against daemons measured at 1.2-1.4 GiB, and a box thrashed).
+`off` and explicit `<n>` are unchanged.
+
+**Note (2026-10-21, #2448): Stop overtakes a Start that is still converging in the background.** `Stop` first moves the workspace's Start count on (`abortStarts`, under `homeLockClaim`), then scales to zero, clears the phase and drops the claim, so `State()` reads `stopped` at once. The background half (`converge`/`launch`) checks that count at each step boundary and, immediately before the call that raises desiredCount, under the same lock (`underStart`); an overtaken Start ends quietly without touching the claim or phase (`errStartSuperseded`). The home is left attached and mounted as after any Stop. Not covered: a Stop that lands inside `placeHome` itself can leave that call's fresh claim until its TTL. Not verified against live AWS.

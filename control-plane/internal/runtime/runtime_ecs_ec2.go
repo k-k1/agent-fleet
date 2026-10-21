@@ -581,7 +581,7 @@ type ec2PoolConfig struct {
 	// the box's own daemons cannot be starved by it (AF_ECS_EC2_HOST_RESERVE_MB).
 	// See workspaceMemCapMiB for what it buys and how the default was sized.
 	//
-	//	unset / "auto"  → -1 < 0: a fifth of the rung, clamped (the default)
+	//	unset / "auto"  → -1 < 0: a flat 2 GiB (the default)
 	//	"off"           → the sentinel below: no cap at all, the pre-2026-08 behaviour
 	//	<n>             → exactly n MiB
 	hostReserveMiB int64
@@ -592,14 +592,16 @@ const (
 	// Negative rather than 0 because 0 is a meaningful answer ("reserve nothing, cap at
 	// the full rung"), and an operator's explicit off has to be distinguishable from it.
 	ec2HostReserveOff = -1
-	// The auto reserve's bounds. Floor: the daemons were measured at ~869 MiB idle and
-	// ~1.2-1.4 GiB with a workspace and its Service Connect sidecars running, and the
-	// rung overstates the real MemTotal by ~5% on top. Ceiling: that cost does not grow
-	// with the box, so a big rung should not donate more than a small one.
-	ec2HostReserveFloorMiB = 1024
-	ec2HostReserveCeilMiB  = 2048
-	// ec2MinWorkspaceMemMiB is the least a capped workspace may be left with. Below it
-	// the rung is simply too small to share, and the cap is dropped rather than applied.
+	// The auto reserve (and so its floor), flat at every rung. The daemons were measured at ~1.2-1.4 GiB
+	// with a workspace and its Service Connect sidecars running, and the rung overstates
+	// the real MemTotal by ~5% on top; a fifth of an 8 GiB rung left ~1230 MiB and a box
+	// thrashed (ECS and SSM agents went dark). Flat, because a proportional reserve
+	// shrinks again just above 8 GiB, and the daemons' cost does not grow with the box.
+	ec2HostReserveFloorMiB = 2048
+	// ec2MinWorkspaceMemMiB is the soft reservation buildTaskDef sets; a capped workspace
+	// must be left with MORE than it, because ECS rejects Memory <= MemoryReservation.
+	// At or below it the rung is simply too small to share, and the cap is dropped
+	// rather than applied.
 	ec2MinWorkspaceMemMiB = 512
 )
 
@@ -871,10 +873,11 @@ func (p ec2PoolConfig) rungFor(classID string, memBytes int64) (ec2Slot, ec2Slot
 // ⚠️ Derived from the LADDER's declared MiB, not from what the box really has, and the
 // two differ by more than you would guess: an "8192 MiB" m7i.large reports MemTotal
 // 7784 MiB (measured). The reserve therefore has to absorb that ~5% as well as the
-// daemons, which is why the default is a fifth rather than the ~1.2-1.4 GiB the daemons
+// daemons, which is why the default is 2 GiB rather than the ~1.2-1.4 GiB the daemons
 // were measured at:
 //
-//	nominal 8192 → reserve 1638 → cap 6554 MiB, real headroom 7784-6554 = 1230 MiB ✅
+//	nominal 8192 → reserve 2048 → cap 6144 MiB, real headroom 7784-6144 = 1640 MiB ✅
+//	nominal 8192 → reserve 1638 → cap 6554 MiB, real headroom 7784-6554 = 1230 MiB ✗ (thrashed)
 //	nominal 8192 → reserve 1024 → cap 7168 MiB, real headroom 7784-7168 =  616 MiB ✗
 //
 // Reading the true figure is possible (DescribeContainerInstances reports the
@@ -882,9 +885,7 @@ func (p ec2PoolConfig) rungFor(classID string, memBytes int64) (ec2Slot, ec2Slot
 // the slot is known to be registered, so using it would mean reordering launch() for
 // an accuracy this reserve already covers.
 //
-// Clamped at both ends. The floor keeps a small rung from being left with nothing for
-// its daemons; the ceiling stops a large rung from donating gigabytes it does not need
-// — the daemons cost the same on every size.
+// The auto reserve is flat: the daemons cost the same on every size.
 // parseHostReserveMiB reads AF_ECS_EC2_HOST_RESERVE_MB. Anything unrecognised is
 // "auto" rather than an error: this knob decides how much RAM a workspace gets, and a
 // typo must not be the reason a deployment stops capping (or stops starting).
@@ -909,10 +910,10 @@ func (p ec2PoolConfig) workspaceMemCapMiB(slotMemMiB int64) int64 {
 	}
 	reserve := p.hostReserveMiB
 	if reserve == 0 { // "auto"
-		reserve = min(max(slotMemMiB/5, ec2HostReserveFloorMiB), ec2HostReserveCeilMiB)
+		reserve = ec2HostReserveFloorMiB
 	}
 	cap := slotMemMiB - reserve
-	if cap < ec2MinWorkspaceMemMiB {
+	if cap <= ec2MinWorkspaceMemMiB {
 		// A rung too small to leave both a workspace and its daemons room. Capping it
 		// to something unusable would break the deployment; say so and leave it alone.
 		log.Printf("ecs-ec2: slot rung %d MiB is too small to reserve %d MiB for the host; leaving the workspace uncapped",
@@ -1367,6 +1368,9 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 			e.setPhase("slot: replacing")
 			e.bg(ctx, func(c context.Context) {
 				defer e.setPhase("")
+				if e.startSuperseded(c, place) {
+					return
+				}
 				next, perr := e.placeHome(c)
 				next.gen = place.gen
 				if perr == nil {
@@ -1409,6 +1413,11 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 // (umount before detach) still lives in releaseSlot, which is now reached only by
 // eviction, Destroy and drift repair.
 func (e *ecsEC2Runtime) Stop(ctx context.Context) error {
+	// First: a Start still converging in the background must find itself overtaken before
+	// desiredCount is touched, or it raises the count again after the scale-to-zero below.
+	if err := e.abortStarts(ctx); err != nil {
+		return err
+	}
 	if _, ok, err := e.base.describeService(ctx); err != nil {
 		return err
 	} else if ok {
@@ -1424,6 +1433,10 @@ func (e *ecsEC2Runtime) Stop(ctx context.Context) error {
 	// running/starting, and the Console keeps its starting dialog open while any phase is
 	// reported — so a stopped workspace would sit behind "cannot be placed" for good.
 	e.clearBlockedPhase()
+	// A Start overtaken above no longer owns the claim or the phase; clearing them here is
+	// what makes State() read stopped now rather than when the claim expires.
+	e.setPhase("")
+	e.dropClaimOnStop(ctx)
 	// Record when the dormancy started. If this write is lost (CP restart mid-Stop) the
 	// sweeper stamps it the first time it sees an idle attachment, so the worst case is
 	// that the slot sleeps one sweep later.
@@ -1925,31 +1938,17 @@ func (e *ecsEC2Runtime) finishStart(ctx context.Context, p ec2Placement, prep ec
 	e.converge(ctx, p, prep, 1)
 }
 
-// ifCurrentStart runs f only while no Start (or anything else that counts as one) has begun
-// since gen, and answers whether it did. The check and f run under homeLockClaim, which
-// beginStart also takes to bump the count: a newer Start's phase and claim therefore cannot
-// be written over by an older background half that checked a moment too early. gen 0 means
-// no Start made the placement, so there is nothing to be overtaken by. An unreadable count
-// or a lock that cannot be had answers false, which only ever skips a write.
+// ifCurrentStart runs f only while no Stop or newer Start has overtaken the Start that
+// made the placement (gen), and answers whether it did. It is ifOwnedStrict on a context
+// detached from ctx: the check and f share homeLockClaim with abortStarts/beginStart, so a
+// Stop either lands before the check (f is skipped) or after f (it wins afterwards), and the
+// background budget that ended the work is no reason to skip a write that explains why.
+// An unreadable count or a lock that cannot be had answers false. gen 0 means no Start made
+// the placement, so f runs.
 func (e *ecsEC2Runtime) ifCurrentStart(ctx context.Context, gen int64, f func()) bool {
-	if gen == 0 {
-		f()
-		return true
-	}
-	// Detached from ctx: the budget that ended the background work is no reason to leave a
-	// phase behind, but a stuck lease must not hang the caller either.
-	lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
-	lctx, unlock, err := e.lockHome(lctx, homeLockClaim)
-	if err != nil {
-		return false
-	}
-	defer unlock()
-	if moved, err := e.startedSince(lctx, gen); err != nil || moved {
-		return false
-	}
-	f()
-	return true
+	return e.ifOwnedStrict(dctx, ec2Placement{gen: gen}, func(context.Context) { f() })
 }
 
 // clearProgressPhase drops the phase when this Start still owns it, unless it is a blocked
@@ -1992,15 +1991,20 @@ func (e *ecsEC2Runtime) releaseAndReplace(ctx context.Context, p ec2Placement) (
 		// Ownership is asked on a detached context (ifCurrentStart): a failure is most often
 		// the background budget running out, and reading the Start count on that expired
 		// context fails too, which would read as "overtaken" and drop the one reason there is.
-		owned := e.ifCurrentStart(ctx, p.gen, func() {
+		// Reason and claim go together under one ownership check: a Stop that lands after
+		// it clears both itself, and one that landed before leaves both alone.
+		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		e.ifOwnedStrict(dctx, p, func(c context.Context) {
 			log.Printf("ecs-ec2 start: %s for %s: %v", why, e.base.name, err)
-			e.setPhase(blockedPhasePrefix + why + ": " + err.Error())
+			// The error can quote a whole slot script; the member reads this line.
+			detail := err.Error()
+			if len(detail) > 300 {
+				detail = detail[:300] + "…"
+			}
+			e.setPhase(blockedPhasePrefix + why + ": " + detail)
+			e.unclaim(c, p.volumeID)
 		})
-		if owned {
-			dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-			defer cancel()
-			e.unclaimIfOurs(dctx, p)
-		}
 		return ec2Placement{}, false
 	}
 	if e.superseded(ctx, p) {
@@ -2050,6 +2054,9 @@ func (e *ecsEC2Runtime) converge(ctx context.Context, p ec2Placement, prep ec2Pr
 		}
 		p = next
 	}
+	if e.startSuperseded(ctx, p) {
+		return
+	}
 	if p.wake {
 		e.setPhase("slot: waking")
 		if err := e.wakeSlot(ctx, p.instanceID); err != nil {
@@ -2063,6 +2070,9 @@ func (e *ecsEC2Runtime) converge(ctx context.Context, p ec2Placement, prep ec2Pr
 			log.Printf("ecs-ec2 start: slot %s for %s never came up: %v", p.instanceID, e.base.name, err)
 			return
 		}
+		if e.startSuperseded(ctx, p) {
+			return
+		}
 		e.setPhase("home: attaching")
 		if err := e.attachHome(ctx, p.volumeID, p.instanceID); err != nil {
 			log.Printf("ecs-ec2 start: attaching %s to the new slot %s failed: %v", p.volumeID, p.instanceID, err)
@@ -2073,11 +2083,18 @@ func (e *ecsEC2Runtime) converge(ctx context.Context, p ec2Placement, prep ec2Pr
 	if err == nil {
 		return
 	}
+	if errors.Is(err, errStartSuperseded) {
+		log.Printf("ecs-ec2 start: %s was stopped while it converged on slot %s; leaving it stopped", e.base.name, p.instanceID)
+		return
+	}
 	if errors.Is(err, errSlotLost) && retries > 0 {
 		// abandonLostSlot has already detached the home and taken the box out of the
 		// pool, so placeHome now sees an ordinary homeless home and puts it somewhere
 		// healthy — including growing the pool if that is what it takes.
 		log.Printf("ecs-ec2 start: slot %s is not coming back; re-placing %s", p.instanceID, e.base.name)
+		if e.startSuperseded(ctx, p) {
+			return
+		}
 		e.setPhase("slot: replacing")
 		next, perr := e.placeHome(ctx)
 		next.gen = p.gen
@@ -2086,7 +2103,7 @@ func (e *ecsEC2Runtime) converge(ctx context.Context, p ec2Placement, prep ec2Pr
 		}
 		if perr != nil {
 			log.Printf("ecs-ec2 start: re-placing %s after losing slot %s: %v", e.base.name, p.instanceID, perr)
-			e.unclaim(ctx, p.volumeID)
+			e.unclaimUnlessSuperseded(ctx, p)
 			return
 		}
 		e.converge(ctx, next, prep, retries-1)
@@ -2097,7 +2114,7 @@ func (e *ecsEC2Runtime) converge(ctx context.Context, p ec2Placement, prep ec2Pr
 		// Out of retries: the claim abandonLostSlot deliberately kept alive has no
 		// replacement coming, so drop it now instead of pinning the workspace at
 		// `starting` until it expires.
-		e.unclaim(ctx, p.volumeID)
+		e.unclaimUnlessSuperseded(ctx, p)
 	}
 }
 
@@ -2138,16 +2155,27 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 	// old single call, which is a slower Start rather than a broken one.
 	prepared := !reused && e.pointServiceAt(ctx, taskDefArn, p)
 
+	if e.startSuperseded(ctx, p) {
+		return errStartSuperseded
+	}
 	e.setPhase("slot: joining the cluster")
 	if err := e.waitSlotRegistered(ctx, p.instanceID); err != nil {
 		if errors.Is(err, errSlotLost) {
 			// The box is up and the cluster cannot reach it: no amount of waiting fixes
 			// that. Get the home off it and out of the blast radius, then tell the caller
 			// to try a different slot rather than reporting a failed Start.
+			if e.startSuperseded(ctx, p) {
+				// The wait outlived a Stop (and maybe a newer Start on this very slot): the
+				// slot is not this Start's to tear down.
+				return errStartSuperseded
+			}
 			e.abandonLostSlot(ctx, p, err)
 			return err
 		}
 		return fmt.Errorf("slot %s not registered with the cluster: %w", p.instanceID, err)
+	}
+	if e.startSuperseded(ctx, p) {
+		return errStartSuperseded
 	}
 	e.setPhase("home: mounting")
 	if err := e.mountHome(ctx, p); err != nil {
@@ -2162,6 +2190,9 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 		// A slot that cannot mount is not a slow slot, it is a broken one, and leaving it
 		// in the pool means the next Start picks it too (measured: it did, for every user
 		// that followed). Take it out of the world before returning.
+		if e.startSuperseded(ctx, p) {
+			return errStartSuperseded
+		}
 		e.quarantineSlot(ctx, p, err)
 		return fmt.Errorf("mount home on %s: %w", p.instanceID, err)
 	}
@@ -2170,7 +2201,7 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 			// The mark is still on the home, so the next Start tries again; until then the
 			// workspace does not start with what the member asked to have removed. Dropping
 			// the claim lets State() say `stopped` now rather than when the claim expires.
-			e.unclaim(ctx, p.volumeID)
+			e.unclaimUnlessSuperseded(ctx, p)
 			return fmt.Errorf("clear home on %s: %w", p.instanceID, err)
 		}
 	}
@@ -2180,6 +2211,9 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 	e.tagSlotOwner(ctx, p.instanceID)
 	// …and it is no longer free, so its free-pool clock stops. Same moment, opposite tag.
 	e.clearSlotFree(ctx, p.instanceID)
+	if e.startSuperseded(ctx, p) {
+		return errStartSuperseded
+	}
 	e.setPhase("task: starting")
 	if prepared {
 		// No wait here any more, and that is the whole point of ec2SingleTaskDeployment:
@@ -2189,10 +2223,16 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 		//   maximumPercent 200 → 2 tasks, the FIRST from the old revision (2 of 2)
 		//   maximumPercent 100 → 1 task, always the new revision  (2 of 2)
 		// Before that this spot waited 53-55s for the old deployment to leave ACTIVE.
-		if err := e.scaleUpService(ctx); err != nil {
-			return fmt.Errorf("service: %w", err)
-		}
-	} else if err := e.upsertService(ctx, taskDefArn, p, !reused); err != nil {
+		err = e.underStart(ctx, p, e.scaleUpService)
+	} else {
+		err = e.underStart(ctx, p, func(c context.Context) error {
+			return e.upsertService(c, taskDefArn, p, !reused)
+		})
+	}
+	if errors.Is(err, errStartSuperseded) {
+		return err
+	}
+	if err != nil {
 		return fmt.Errorf("service: %w", err)
 	}
 	e.finishLaunch(ctx, p)
@@ -2206,8 +2246,12 @@ func (e *ecsEC2Runtime) finishLaunch(ctx context.Context, p ec2Placement) {
 	if p.replacement {
 		e.clearReplacesHome(ctx, p.instanceID)
 	}
-	e.unclaim(ctx, p.volumeID)
-	e.clearDormancy(ctx, p.volumeID)
+	// A Stop (or a newer Start) after the service was raised owns the claim and the
+	// dormancy marks now; the check and the deletes share one short lock.
+	e.ifOwnedStrict(ctx, p, func(c context.Context) {
+		e.unclaim(c, p.volumeID)
+		e.clearDormancy(c, p.volumeID)
+	})
 	e.base.watchReady(ctx)
 }
 
@@ -2237,7 +2281,11 @@ func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, caus
 	// launch's context ending, and the stop below must still be sent.
 	ctx, cancelAll := context.WithTimeout(context.WithoutCancel(ctx), quarantineCleanupBudget)
 	defer cancelAll()
-	e.markQuarantined(ctx, p.instanceID, cause)
+	// Every step that acts on the slot or its home runs through ifOwned: a Stop and a new
+	// Start may have taken the slot since the mount failed, and the rest is theirs.
+	if !e.ifOwned(ctx, p, func(c context.Context) { e.markQuarantined(c, p.instanceID, cause) }) {
+		return
+	}
 	if p.volumeID != "" {
 		// A failed af-mount may still have mounted the home (it fails after the mount when
 		// the new filesystem cannot be written), so unmount before the detach. Bounded and
@@ -2250,27 +2298,40 @@ func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, caus
 		if err != nil {
 			log.Printf("ecs-ec2: leaving %s attached to the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
 		} else {
-			uctx, cancel := context.WithTimeout(lctx, quarantineUmountBudget)
-			if err := e.umountHome(uctx, p.instanceID); err != nil {
-				log.Printf("ecs-ec2: unmounting %s on the quarantined slot %s before the detach: %v", p.volumeID, p.instanceID, err)
-			}
-			cancel()
-			if err := homeGuardOf(lctx).check(); err != nil {
-				log.Printf("ecs-ec2: leaving %s attached to the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
-			} else if _, err := e.ec2.DetachVolume(lctx, &ec2.DetachVolumeInput{
-				VolumeId:   aws.String(p.volumeID),
-				InstanceId: aws.String(p.instanceID),
-			}); err != nil {
-				log.Printf("ecs-ec2: detaching %s from the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
-			}
+			owned := e.ifOwned(lctx, p, func(c context.Context) {
+				uctx, cancel := context.WithTimeout(c, quarantineUmountBudget)
+				if err := e.umountHome(uctx, p.instanceID); err != nil {
+					log.Printf("ecs-ec2: unmounting %s on the quarantined slot %s before the detach: %v", p.volumeID, p.instanceID, err)
+				}
+				cancel()
+				// Both locks: the mount lock keeps releases and mounts out, the claim lock (c)
+				// is what a Stop on another replica waits on. Losing either leaves the home
+				// attached for whoever holds the operation now.
+				if err := homeGuardOf(lctx).check(); err != nil {
+					log.Printf("ecs-ec2: leaving %s attached to the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
+				} else if err := homeGuardOf(c).check(); err != nil {
+					log.Printf("ecs-ec2: leaving %s attached to the quarantined slot %s (claim lock): %v", p.volumeID, p.instanceID, err)
+				} else if _, err := e.ec2.DetachVolume(c, &ec2.DetachVolumeInput{
+					VolumeId:   aws.String(p.volumeID),
+					InstanceId: aws.String(p.instanceID),
+				}); err != nil {
+					log.Printf("ecs-ec2: detaching %s from the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
+				}
+			})
 			unlock()
+			if !owned {
+				cancelLock()
+				return
+			}
 		}
 		cancelLock()
-		e.unclaim(ctx, p.volumeID)
+		e.unclaimUnlessSuperseded(ctx, p)
 	}
-	if _, err := e.ec2.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: []string{p.instanceID}}); err != nil {
-		log.Printf("ecs-ec2: stopping the quarantined slot %s: %v", p.instanceID, err)
-	}
+	e.ifOwned(ctx, p, func(c context.Context) {
+		if _, err := e.ec2.StopInstances(c, &ec2.StopInstancesInput{InstanceIds: []string{p.instanceID}}); err != nil {
+			log.Printf("ecs-ec2: stopping the quarantined slot %s: %v", p.instanceID, err)
+		}
+	})
 }
 
 // markQuarantined is step 1 of both quarantine paths: the single tag write that takes a
@@ -2340,8 +2401,15 @@ func (e *ecsEC2Runtime) markQuarantined(ctx context.Context, instanceID string, 
 func (e *ecsEC2Runtime) abandonLostSlot(ctx context.Context, p ec2Placement, cause error) {
 	log.Printf("ecs-ec2: ABANDONING slot %s — it is running but the cluster cannot reach it, so %s is being moved off it: %v",
 		p.instanceID, e.base.name, cause)
-	e.markQuarantined(ctx, p.instanceID, cause)
-	e.deregisterSlot(ctx, p.instanceID)
+	// Each step that acts on the slot or its home runs through ifOwned (the waits between
+	// them do not): a Stop and a new Start can land during the minutes this takes, and the
+	// new Start may be using this very slot.
+	if !e.ifOwned(ctx, p, func(c context.Context) {
+		e.markQuarantined(c, p.instanceID, cause)
+		e.deregisterSlot(c, p.instanceID)
+	}) {
+		return
+	}
 	if err := e.waitTaskENIsGone(ctx, p.instanceID); err != nil {
 		// Not fatal, but it changes what we may do next: stopping now is the multi-ENI
 		// trap, so leave the box running and let the operator (or the sweeper, once ECS
@@ -2351,12 +2419,16 @@ func (e *ecsEC2Runtime) abandonLostSlot(ctx context.Context, p ec2Placement, cau
 		e.forceDetachHome(ctx, p)
 		return
 	}
-	if _, err := e.ec2.StopInstances(ctx, &ec2.StopInstancesInput{
-		InstanceIds: []string{p.instanceID},
-		// A graceful stop asks the OS to shut down; that is precisely what is broken.
-		Force: aws.Bool(true),
-	}); err != nil {
-		log.Printf("ecs-ec2: force-stopping the lost slot %s: %v", p.instanceID, err)
+	if !e.ifOwned(ctx, p, func(c context.Context) {
+		if _, err := e.ec2.StopInstances(c, &ec2.StopInstancesInput{
+			InstanceIds: []string{p.instanceID},
+			// A graceful stop asks the OS to shut down; that is precisely what is broken.
+			Force: aws.Bool(true),
+		}); err != nil {
+			log.Printf("ecs-ec2: force-stopping the lost slot %s: %v", p.instanceID, err)
+		}
+	}) {
+		return
 	}
 	if err := e.waitInstanceStopped(ctx, p.instanceID); err != nil {
 		log.Printf("ecs-ec2: lost slot %s did not stop (%v); forcing the home off it", p.instanceID, err)
@@ -2366,11 +2438,17 @@ func (e *ecsEC2Runtime) abandonLostSlot(ctx context.Context, p ec2Placement, cau
 	// The box is off: an ordinary detach now, which is the one that cannot corrupt
 	// anything — nothing is holding the filesystem open any more.
 	if p.volumeID != "" {
-		if _, err := e.ec2.DetachVolume(ctx, &ec2.DetachVolumeInput{
-			VolumeId:   aws.String(p.volumeID),
-			InstanceId: aws.String(p.instanceID),
-		}); err != nil {
-			log.Printf("ecs-ec2: detaching %s from the stopped lost slot %s: %v", p.volumeID, p.instanceID, err)
+		var detachErr error
+		if !e.ifOwned(ctx, p, func(c context.Context) {
+			_, detachErr = e.ec2.DetachVolume(c, &ec2.DetachVolumeInput{
+				VolumeId:   aws.String(p.volumeID),
+				InstanceId: aws.String(p.instanceID),
+			})
+		}) {
+			return
+		}
+		if detachErr != nil {
+			log.Printf("ecs-ec2: detaching %s from the stopped lost slot %s: %v", p.volumeID, p.instanceID, detachErr)
 			e.forceDetachHome(ctx, p)
 		}
 	}
@@ -2384,13 +2462,15 @@ func (e *ecsEC2Runtime) forceDetachHome(ctx context.Context, p ec2Placement) {
 	if p.volumeID == "" {
 		return
 	}
-	if _, err := e.ec2.DetachVolume(ctx, &ec2.DetachVolumeInput{
-		VolumeId:   aws.String(p.volumeID),
-		InstanceId: aws.String(p.instanceID),
-		Force:      aws.Bool(true),
-	}); err != nil {
-		log.Printf("ecs-ec2: force-detaching %s from the lost slot %s: %v", p.volumeID, p.instanceID, err)
-	}
+	e.ifOwned(ctx, p, func(c context.Context) {
+		if _, err := e.ec2.DetachVolume(c, &ec2.DetachVolumeInput{
+			VolumeId:   aws.String(p.volumeID),
+			InstanceId: aws.String(p.instanceID),
+			Force:      aws.Bool(true),
+		}); err != nil {
+			log.Printf("ecs-ec2: force-detaching %s from the lost slot %s: %v", p.volumeID, p.instanceID, err)
+		}
+	})
 }
 
 // waitTaskENIsGone polls until ECS has taken its task ENIs off the instance. Same check
@@ -4269,14 +4349,21 @@ func (e *ecsEC2Runtime) pointServiceAt(ctx context.Context, taskDefArn string, p
 	if err != nil {
 		return false
 	}
-	if _, err := e.base.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
-		Cluster:                     aws.String(e.base.cfg.cluster),
-		Service:                     aws.String(e.base.name),
-		TaskDefinition:              aws.String(taskDefArn),
-		NetworkConfiguration:        netCfg,
-		DeploymentConfiguration:     ec2SingleTaskDeployment,
-		AvailabilityZoneRebalancing: ec2NoAZRebalancing,
-	}); err != nil {
+	// Under the same lock as the scale-up: an overtaken Start must not move a service that
+	// a Stop or a newer Start has since taken over (it would put the old revision back).
+	if err := e.underStart(ctx, p, func(c context.Context) error {
+		_, err := e.base.ecs.UpdateService(c, &ecs.UpdateServiceInput{
+			Cluster:                     aws.String(e.base.cfg.cluster),
+			Service:                     aws.String(e.base.name),
+			TaskDefinition:              aws.String(taskDefArn),
+			NetworkConfiguration:        netCfg,
+			DeploymentConfiguration:     ec2SingleTaskDeployment,
+			AvailabilityZoneRebalancing: ec2NoAZRebalancing,
+		})
+		return err
+	}); errors.Is(err, errStartSuperseded) {
+		return false
+	} else if err != nil {
 		log.Printf("ecs-ec2 start: could not pre-point %s at %s (falling back to the slower single update): %v",
 			e.base.name, taskDefArn, err)
 		return false

@@ -246,8 +246,9 @@ what is running and whether resources are under pressure.
 ## Force-stopping a workspace
 
 When you want to stop a runaway session, or an environment left occupying resources, use
-**"Force-stop the workspace"** in the "Operations" section of the member detail (it can only be
-pressed while the workspace is running). After a confirmation dialog, that member's workspace
+**"Force-stop the workspace"** in the "Operations" section of the member detail (it can be
+pressed while the workspace is running or still starting; on a start that never finishes, it
+cancels that start). After a confirmation dialog, that member's workspace
 container stops. **The work (home) is not lost.** The member can start it again from the Console.
 It is strictly a "pause for now" operation, not destructive.
 

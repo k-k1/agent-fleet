@@ -4986,13 +4986,19 @@ func TestECSEC2WorkspaceMemCap(t *testing.T) {
 	}{
 		// ⚠️ The load-bearing case. An "8192 MiB" m7i.large really reports MemTotal 7784
 		// (measured), so the reserve has to cover that ~5% AND the ~1.2-1.4 GiB the
-		// daemons need. A fifth of the rung leaves 7784-6553 = 1231 MiB of real headroom.
-		{"m7i.large lands at 6.4 GiB", auto, 8192, 6554},
-		// The ceiling: the daemons cost the same on a big box, so it must not donate
-		// proportionally more (a fifth of 32768 would be 6.5 GiB thrown away).
-		{"a large rung is clamped to 2 GiB of reserve", auto, 32768, 30720},
-		// The floor: a fifth of a small rung would not house the daemons at all.
-		{"a small rung gets the 1 GiB floor", auto, 4096, 3072},
+		// daemons need. A fifth of the rung left 7784-6554 = 1230 MiB and a box thrashed
+		// (#2451); a flat 2 GiB leaves 1640.
+		{"m7i.large lands at 6 GiB", auto, 8192, 6144},
+		{"just over 8 GiB keeps the same reserve", auto, 8193, 6145},
+		{"9 GiB keeps the same reserve", auto, 9216, 7168},
+		{"10239 keeps the same reserve", auto, 10239, 8191},
+		{"10 GiB", auto, 10240, 8192},
+		// The reserve must never shrink as the rung grows.
+		{"a large rung gets the same 2 GiB", auto, 32768, 30720},
+		{"a small rung gets the full 2 GiB reserve", auto, 4096, 2048},
+		// buildTaskDef sets MemoryReservation=512 and ECS needs Memory > that.
+		{"the smallest capped rung leaves more than the soft reservation", auto, 2561, 513},
+		{"a cap equal to the soft reservation is dropped", auto, 2560, 0},
 		{"explicit reserve is honoured", ec2PoolConfig{hostReserveMiB: 1536}, 8192, 6656},
 		{"off means uncapped", ec2PoolConfig{hostReserveMiB: ec2HostReserveOff}, 8192, 0},
 		// Capping a rung this small would leave a workspace that cannot run; better to
@@ -5005,6 +5011,18 @@ func TestECSEC2WorkspaceMemCap(t *testing.T) {
 				t.Errorf("workspaceMemCapMiB(%d) = %d, want %d", tc.rung, got, tc.want)
 			}
 		})
+	}
+}
+
+// ECS rejects a task definition whose hard Memory is not above MemoryReservation (512),
+// so no rung may come out capped at or below it, auto or explicit.
+func TestECSEC2WorkspaceMemCapStaysAboveSoftReservation(t *testing.T) {
+	for _, pool := range []ec2PoolConfig{{hostReserveMiB: 0}, {hostReserveMiB: 1024}} {
+		for rung := int64(1); rung <= 4096; rung++ {
+			if c := pool.workspaceMemCapMiB(rung); c != 0 && c <= 512 {
+				t.Fatalf("reserve %d, rung %d: cap %d is not above the 512 MiB soft reservation", pool.hostReserveMiB, rung, c)
+			}
+		}
 	}
 }
 
@@ -5042,13 +5060,13 @@ func TestECSEC2TaskDefinitionCarriesTheMemoryCap(t *testing.T) {
 	}
 	c := h.ecs.regCalls[0].ContainerDefinitions[0]
 	limit := aws.ToInt32(c.Memory)
-	if limit != 6554 {
-		t.Errorf("container Memory = %d MiB, want 6554", limit)
+	if limit != 6144 {
+		t.Errorf("container Memory = %d MiB, want 6144", limit)
 	}
 	// The soft reservation is what ECS schedules on and must stay BELOW the hard cap;
 	// a reservation above the limit is a task definition ECS rejects outright.
-	if res := aws.ToInt32(c.MemoryReservation); res > limit {
-		t.Errorf("MemoryReservation %d exceeds the hard limit %d", res, limit)
+	if res := aws.ToInt32(c.MemoryReservation); res >= limit {
+		t.Errorf("MemoryReservation %d is not below the hard limit %d", res, limit)
 	}
 }
 
@@ -5469,5 +5487,62 @@ func TestECSEC2SizeChangeDeadlineKeepsABlockedReasonWithAStore(t *testing.T) {
 	}
 	if got := h.rt.State(ctx); got == "starting" {
 		t.Errorf("State = %q, the claim outlived the failed release", got)
+	}
+}
+
+// A Stop that lands while the background release is in flight (the umount is slow, then
+// either fails or succeeds) ends the Start: no re-placement, no service scale-up, and no
+// blocked reason resurrected after the Stop cleared the screen.
+func TestECSEC2StopDuringTheSizeChangeReleaseEndsIt(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		umountFail bool
+	}{{"umount fails after the stop", true}, {"umount succeeds after the stop", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			h := sizeChangeHome(t)
+			if err := h.rt.Start(ctx); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			stopped := false
+			h.ssmc.onSend = func(cmd string) {
+				if strings.HasPrefix(cmd, "af-umount") && !stopped {
+					stopped = true
+					if err := h.rt.Stop(ctx); err != nil {
+						t.Errorf("Stop: %v", err)
+					}
+					if tc.umountFail {
+						h.ssmc.fail["af-umount"] = true
+					}
+				}
+			}
+			updatesBefore, createsBefore := len(h.ecs.updateCalls), len(h.ecs.createCalls)
+			callsBefore := len(h.ec2.calls)
+
+			h.runDeferred(ctx)
+
+			if !stopped {
+				t.Fatal("the release never reached the umount, so the Stop did not land mid-release")
+			}
+			for _, c := range h.ec2.calls[callsBefore:] {
+				if strings.HasPrefix(c, "AttachVolume") {
+					t.Fatalf("a stopped Start re-placed the home: %q", c)
+				}
+			}
+			for _, u := range h.ecs.updateCalls[updatesBefore:] {
+				if aws.ToInt32(u.DesiredCount) >= 1 {
+					t.Fatalf("a stopped Start raised desiredCount: %+v", u)
+				}
+			}
+			if len(h.ecs.createCalls) != createsBefore {
+				t.Fatal("a stopped Start created the service")
+			}
+			if got := h.rt.BootPhase(); got != "" {
+				t.Errorf("phase = %q after a Stop, want none", got)
+			}
+			if got := h.rt.State(ctx); got != "stopped" {
+				t.Errorf("State = %q, want stopped", got)
+			}
+		})
 	}
 }
