@@ -79,6 +79,35 @@ export interface Registry {
 export const needsMemberSecrets = (s: McpServer): boolean =>
   s.origin === "tenant" && !!s.userSecret && Object.values(s.headers || {}).some((v) => v === "");
 
+// What the connection test learned from an OAuth-protected server (agent: mcpreg.OAuthReport,
+// ADR 0119). `problems[].code` is a stable wire code; the Console words each one itself.
+export interface OAuthServer {
+  issuer: string;
+  metadataUrl?: string;
+  valid: boolean;
+  registration: string[]; // "cimd" | "dcr"; empty = neither
+  s256: boolean;
+  issParam: boolean;
+  scopesSupported?: string[];
+}
+
+export interface OAuthProblem {
+  code: string;
+  issuer?: string;
+  detail?: string;
+}
+
+export interface OAuthReport {
+  required: boolean;
+  resource?: string;
+  metadataUrl?: string;
+  challengedScope?: string;
+  scopesSupported?: string[];
+  servers?: OAuthServer[];
+  selected?: string;
+  problems?: OAuthProblem[];
+}
+
 export interface ProbeResult {
   ok: boolean;
   serverName?: string;
@@ -89,8 +118,14 @@ export interface ProbeResult {
   supportedVersions?: string[];
   error?: string;
   detail?: string;
+  oauth?: OAuthReport;
   elapsedMs: number;
 }
+
+// isOAuthRequired: the test reached an OAuth-protected server. It is not a failure — the
+// server answered, and wants a sign-in this phase cannot do yet — so the Console shows it
+// apart from a red error.
+export const isOAuthRequired = (p: ProbeResult): boolean => !p.ok && p.oauth?.required === true;
 
 export interface KV {
   k: string;

@@ -82,6 +82,10 @@ const affinityBudget = 5 * time.Second
 // (several instances, in-memory sessions, no affinity).
 const errSessionRejected = "サーバーが、自ら発行したセッション ID を拒否しました。複数インスタンスで動作していて、セッションの親和性（同じセッションを同じインスタンスへ振り分ける設定）がない可能性があります。サーバーをステートレスにするか、同じセッションのリクエストを必ず同じインスタンスへ振り分けてください"
 
+// errOAuthRequired is the Error of a recognised OAuth-protected server. The Console keys off
+// ProbeResult.OAuth, not this text; it is what an older Console shows.
+const errOAuthRequired = "OAuth によるサインインが必要なサーバーです（サインインにはまだ対応していません）"
+
 // errProbeTimeout distinguishes "no answer in time" from "the process died", so the
 // era probe can fall back on the former and fail fast on the latter.
 var errProbeTimeout = errors.New("タイムアウトしました")
@@ -102,8 +106,11 @@ type ProbeResult struct {
 	Error             string   `json:"error,omitempty"`
 	// Detail carries the server's stderr / response body tail on failure. Truncated,
 	// and shown verbatim to the user — a broken command usually explains itself there.
-	Detail    string `json:"detail,omitempty"`
-	ElapsedMS int64  `json:"elapsedMs"`
+	Detail string `json:"detail,omitempty"`
+	// OAuth is set when the server answered 401 as an OAuth-protected resource. OK stays
+	// false (nothing was listed), but the Console shows the report instead of a failure.
+	OAuth     *OAuthReport `json:"oauth,omitempty"`
+	ElapsedMS int64        `json:"elapsedMs"`
 }
 
 type rpcMsg struct {
@@ -412,6 +419,7 @@ type httpExchange struct {
 	msg    rpcMsg
 	status int
 	raw    string
+	header http.Header
 }
 
 func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
@@ -468,7 +476,7 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 			session = sid
 		}
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxProbeBody))
-		ex := httpExchange{status: resp.StatusCode, raw: string(body)}
+		ex := httpExchange{status: resp.StatusCode, raw: string(body), header: resp.Header}
 		if resp.StatusCode == http.StatusAccepted || len(bytes.TrimSpace(body)) == 0 {
 			return ex, nil // notification ack, or empty 200
 		}
@@ -485,6 +493,11 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 	ex, err := post(statelessReq(1, "server/discover"), true)
 	if err != nil && ex.status == 0 {
 		return ProbeResult{Error: err.Error(), Detail: tail(ex.raw)}
+	}
+	if ex.status == http.StatusUnauthorized {
+		if rep, ok := probeOAuth(ctx, d.URL, ex.header); ok {
+			return ProbeResult{Error: errOAuthRequired, OAuth: &rep}
+		}
 	}
 	statelessServer := ex.msg.Error == nil && len(ex.msg.Result) > 0
 	if !statelessServer && isModernErr(ex.msg.Error) && !isLegacyEraSignal(ex.msg.Error) {
