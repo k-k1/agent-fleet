@@ -174,6 +174,9 @@ func adfInlines(n ast.Node, src []byte, marks []adfNode) []any {
 			out = append(out, adfInlines(v, src, append(append([]adfNode{}, marks...), m))...)
 		case *ast.AutoLink:
 			u := string(v.URL(src))
+			if v.AutoLinkType == ast.AutoLinkEmail && !strings.HasPrefix(strings.ToLower(u), "mailto:") {
+				u = "mailto:" + u
+			}
 			textNode(string(v.Label(src)), append(append([]adfNode{}, marks...), adfNode{"type": "link", "attrs": adfNode{"href": u}}))
 		case *ast.Image:
 			alt := adfPlainText(v, src)

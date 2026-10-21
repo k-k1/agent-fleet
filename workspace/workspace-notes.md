@@ -162,7 +162,7 @@ directory belongs to someone else.
   retrying `jira init`, and do not switch to an MCP tool for it). When the wrapper prints "no issue types"
   instead, `issue create` could not get them: run `jira init`. Never paste a token, run `jira init` with your own
   `--server`, or add `--debug` (it gets no credential).
-  Markdown bodies (`comment add`, `edit -b`): open with a heading or a list, or put inline markup
+  Markdown bodies (`comment add`, `issue create` / `issue edit -b`): open with a heading or a list, or put inline markup
   (bold, a link, `code`) in the first paragraph, and always leave a blank line before a list — until the
   first markup the CLI glues a list, heading, code block or quote onto the paragraph before it
   (`Intro.`, blank line, `- a` is sent as `Intro.* a`). A comment already garbled is repaired with

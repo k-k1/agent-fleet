@@ -219,3 +219,12 @@ func TestJiraMarkdownADFUnescapesAndExtensions(t *testing.T) {
 		t.Errorf("raw escape left: %s", s)
 	}
 }
+
+func TestJiraMarkdownADFEmailLink(t *testing.T) {
+	for _, md := range []string{"write x@y.example now", "write <x@y.example> now"} {
+		raw, _ := json.Marshal(jiraMarkdownADF(md))
+		if !strings.Contains(string(raw), `"href":"mailto:x@y.example"`) {
+			t.Errorf("%q: %s", md, raw)
+		}
+	}
+}
