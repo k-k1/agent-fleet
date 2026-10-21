@@ -66,17 +66,24 @@ needs the file's owner, and the file is root's in the container; the Agent is ui
 Where each runtime stands. This is what the code and the documented defaults say, **not measured on
 each** except where marked:
 
-| Runtime | cgroup v2 + readable `memory.pressure` in the container | What the Agent does |
+| Runtime | cgroup v2 + `memory.pressure` that is the container's own (verified, see below) | What the Agent does |
 |---|---|---|
-| `ecs-ec2` | expected (AL2023 is cgroup v2 by default; the container gets its own cgroup namespace). **Measure on a real slot** (decision 8) | full ladder |
-| `ecs` (Fargate) | **unknown.** Platform kernel and PSI exposure are not documented to us | measure; ladder only if the file reads |
+| `ecs-ec2` | expected (AL2023 is cgroup v2 by default; the container gets its own cgroup namespace). **Measure on a real slot** (decision 8) | full ladder where verified |
+| `ecs` (Fargate) | **unknown.** Platform kernel and PSI exposure are not documented to us | measure; ladder only if verified |
 | `docker` | on a cgroup v2 host with PSI enabled. A development Workspace on the fleet host read `memory.pressure`, `memory.events` and `memory.max` as uid 1000 on 2026-10-22 | full ladder |
-| `kubernetes` | depends on the node (cgroup v2, `psi` not disabled). The container's cgroup is the pod's limit | full ladder where it reads |
-| `native` | the Agent runs on someone's own machine: Linux with cgroup v2 may; other OSes cannot | stages 1–2 only, from usage; see below |
+| `kubernetes` | depends on the node (cgroup v2, `psi` not disabled). The memory limit is set on the container's resources (`runtime_kubernetes.go`), so the container's own cgroup is the one that carries it | full ladder where verified |
+| `native` | the Agent runs on someone's own machine: a readable `/sys/fs/cgroup` there is not necessarily a cgroup of its own, and other OSes have none | **warn only** (stage 1), never refuse or stop |
 
-Where PSI cannot be read, and where the cgroup is v1 (the Agent already falls back to the v1 usage
+Where PSI cannot be read or verified, and where the cgroup is v1 (the Agent already falls back to the v1 usage
 files, which have no pressure):
 
+- **Verified means resolved, not merely readable.** A readable file is not proof that it describes this
+  container: it depends on the daemon's cgroup-namespace setting (docker) and on whether the machine gave
+  the Agent a cgroup of its own (`native`). At start the Agent resolves its own cgroup from
+  `/proc/self/cgroup`, checks it against `mountinfo` (the cgroup2 mount's root and the path it reads), and
+  accepts it only if the directory it reads is that cgroup (or, under a private cgroup namespace, the
+  namespace root) and `memory.max` agrees with the limit the runtime was asked to set. Anything it cannot
+  verify is treated as "no PSI" below: measure and warn only.
 - The Agent reports `mem_pressure` **absent**, not zero — the same rule as every other Stats axis.
 - Only **stage 1 (warn)** may run, from the working-set ratio and the major-fault rate, and it says so
   ("pressure cannot be measured here; this is a usage estimate").
@@ -85,13 +92,26 @@ files, which have no pressure):
   feature off. When in doubt, do nothing.
 - `/proc/pressure/memory` (the box-wide file) is **never** used for a container: it is not namespaced,
   so on a shared docker host it is other members' pressure. It is read only on `native`, where
-  the box is the member's.
+  the box is the member's, and there it feeds the warn stage only.
 
 Alternatives not taken:
 
-- **`systemd-oomd`, `earlyoom` or `oomd`.** They need root, systemd as a manager, or the host's
-  `/proc/meminfo` (which inside a container is the box's, not the cgroup's). None is available to uid
-  1000 without root or Docker.
+- **A PSI responder outside the Agent.** Three places could run one, and they differ:
+  1. *Inside the container, as the Agent (this record).* Portable to every runtime, knows sessions, can
+     announce, hold and resume. Its weakness is the one the incident showed: it shares the thrashing
+     cgroup.
+  2. *On the `ecs-ec2` host, as `systemd-oomd` or a similar root daemon.* Escapes that weakness, and it
+     is the strongest alternative. It is not taken now because it acts on the whole container cgroup (the
+     unit it can stop is every session at once, with no choice of victim, no announced grace, no resume
+     semantics), it exists only on one runtime, and its pressure limits would still need the numbers
+     phase 0 produces. Its role as the *protector* of the Agent is left to open question 3.
+  3. *Delegated sub-cgroups, one per session, with `memory.high` and a kill on each.* Would make
+     attribution exact and `memory.high` meaningful per session. It needs root setup at launch on every
+     runtime, the no-internal-processes rule (a cgroup with children cannot hold processes itself, which
+     reshapes how the Agent and tmux are placed), and cannot split a shared-daemon session's threads
+     from the daemon's. Too large a change for a design whose thresholds are not yet known.
+  `earlyoom` reads the host's `/proc/meminfo`, which inside a container is the box's and not the
+  cgroup's.
 - **The kernel OOM killer (`memory.oom.group`).** It is the failure being avoided: it did not fire in
   the incident, and when it does it picks by `oom_score`, not by what the member can resume.
 - **Deciding in the Control Plane from `mem_used`.** The CP sees only the Stats tick, no pressure, and
@@ -110,17 +130,30 @@ not member settings.
 | 0 ok | — | — | — |
 | 1 warn | `some avg10` ≥ 10 for 60 s, or working set ≥ 85% of `max` for 120 s | `some avg10` < 5 and working set < 80% for 120 s | Console notice with the figures |
 | 2 refuse | `some avg10` ≥ 25 for 30 s, or `full avg10` ≥ 5 for 30 s | `some avg10` < 12 and `full avg10` < 2 for 120 s | new sessions and resumes are refused with a clear error |
-| 3 stop | `full avg10` ≥ 15 for 60 s **and** `avg60` of `full` ≥ 8 **and** working set ≥ 90% **and** anonymous memory is ≥ 60% of the working set | stage 2's exit | after an announced grace (below), halt the chosen session |
+| 3 stop | `full avg10` ≥ 15 for 60 s **and** `avg60` of `full` ≥ 8 **and** working set ≥ 90% **and** anonymous plus shared memory is ≥ 60% of the working set | stage 2's exit | after an announced grace (below), halt the chosen session |
 
 How a short build spike is not mistaken for a thrash:
 
-- **Sustained windows are counted in samples, not read once.** A compiler's 20-second burst moves
-  `avg10` and barely moves `avg60`; stage 3 needs both.
-- **Stage 3 needs the working set to be mostly anonymous memory.** A cache-heavy scan makes pressure
-  without a shortage; an anonymous-dominated working set at the cap is a shortage.
-- **An announced grace before acting.** On entering stage 3 the Agent posts the notice ("session X will
-  be stopped in 30 s unless memory frees up"), waits 30 s, and re-checks: if the box has dropped below
-  stage 3's exit, nothing is stopped. This is also what lets the member free memory themselves.
+- **"Sustained for W seconds" is defined on timestamps.** The predicate must hold at every sample in
+  the last W seconds, and consecutive samples must be at most 10 s apart (twice the interval). A missed
+  or late sample **resets** the window for going up a stage and **defers** a pending stop; it never
+  counts as pressure and never as relief. This is testable with a fake clock.
+- **A compiler's 20-second burst moves `avg10` and barely moves `avg60`;** stage 3 needs both.
+- **Stage 3 requires the working set to be mostly anonymous or shared-memory pages** (`anon + shmem` ≥
+  60% of it). This is a conservative scope for the one destructive action, not a claim that
+  file-dominated pressure is harmless: an active file working set that no longer fits can thrash for
+  real (sustained `full`, rising `workingset_refault_file`) with a low anonymous share, and halting a
+  session may not help it. That shape stays at stage 2, is logged as "file-dominated, not handled", and
+  is something phase 0 must measure (decision 8). `shmem` is counted with anonymous memory because
+  without swap it cannot be dropped.
+- **An announced grace, then a fresh decision.** On entering stage 3 the Agent posts the notice
+  ("session X will be stopped in 30 s unless memory frees up") and waits 30 s. The stop then runs only
+  if a sample taken **after** the grace, no older than 10 s, still satisfies **every stage 3 entry
+  predicate** (instantaneous values, not the 60 s window), the chosen victim is the same session, and
+  its estimated reclaim (decision 3) is above zero. Otherwise nothing is stopped and the stage stays at
+  2. Stage 2's exit hysteresis (120 s) governs only when the *refusal* is lifted; it is not the
+  condition for cancelling a halt. A stale sample never authorises a halt: if the sampler is late, the
+  stop waits, while the refusal is kept.
 - **One stop at a time, with a cooldown.** After a stop the Agent waits 120 s for the figures to
   settle before it may choose again; a stop that freed nothing measurable is logged as such and is not
   retried on the same session.
@@ -142,11 +175,11 @@ the row stays, the session reads "stopped", and it resumes through the same path
 one. A stop that cannot be resumed is not offered. The halt records `stopped_reason: memory_pressure`
 in the session's meta so the Console can say why.
 
-**Measuring a session cheaply.** Nothing is measured while the box is at stage 0. From stage 1 on,
-the Agent walks `/proc` once per sample (the `procx` snapshot already does this at most every 750 ms)
+**Measuring a session cheaply.** In the enforcing path nothing per-process is measured at stage 0; from
+stage 1 on (and in phase 0's own slow sampler, decision 8) the Agent walks `/proc` once per sample (the `procx` snapshot already does this at most every 750 ms)
 and, for each process, reads `RssAnon` and `RssShmem` from `/proc/<pid>/status`. It does not use RSS: it
 double-counts shared and file-backed pages, which are exactly what the kernel can drop. At the moment of
-choosing, the top few candidates are re-measured with `Pss_Anon` from `/proc/<pid>/smaps_rollup`, which
+choosing, the top few candidates are re-measured with `Pss_Anon` + `Pss_Shmem` from `/proc/<pid>/smaps_rollup`, which
 divides shared pages fairly between their users and costs milliseconds per process, not per sample.
 
 **Attributing a process to a session.** First by the process tree under the session's tmux pane
@@ -157,14 +190,37 @@ cannot be attributed is reported as "other" with its command name, never charged
 
 | Process | Eligible? |
 |---|---|
-| agent sessions (`claude`, `codex`, `opencode`, …) and everything they started: builds, test runs, dev servers, headless Chromium | **Yes**, as the session's footprint; the halt kills the tmux session and so its tree |
+| agent sessions (`claude`, `codex`, `opencode`, …) and everything they started: builds, test runs, dev servers, headless Chromium | **Yes**, as the session's footprint, but only the part a halt is **guaranteed** to free counts toward the expected reclaim (see "What a halt frees") |
 | `shell` sessions | **Only if** the shell's footprint is above twice the largest agent session's. A halt kills a shell's live jobs, which are not durable (the reaper's idle tier skips shells for the same reason), so a shell is chosen when it is clearly the cause and not as a tie-break |
-| Managed sessions | **By their own children only.** Managed sessions share one runtime daemon, and halting one drops its handle but leaves the daemon's memory in place (`haltSession`). A Managed session is ranked by the processes attributable to it, with the daemon's baseline excluded; one with nothing attributable is last |
+| sessions by process model (`ProcessModel` in `agents/driver.go`) | `tui`: the tmux pane's tree, as above. `per-session-child` (copilot, cursor, kiro, muse): the child **with its own body** counts, and `DropHandle` stops it. `shared-daemon` (codex, opencode): ranked by the processes attributable to the session only, with the daemon's baseline excluded; whether `DropHandle` (codex also unsubscribes the thread) returns memory from the daemon is **not measured**. `in-process` (lcpp): its memory is inside the Agent and cannot be attributed, so it is **never chosen on memory grounds**; the safe side. Each model gets its own reclaim check in phase 0/3 |
 | orphaned headless Chromium (its session is gone) | **First, before any session**, as a stage 3 pre-step: it costs the member nothing |
 | `af-db` servers | **Never stopped automatically.** They hold data a stop would interrupt. They are listed as consumers in the notice, with the member's own `af-db stop` as the offered action |
 | the workspace Agent, the tmux server, and whatever the Agent runs for the Console (preview and port proxies, the terminal bridge) | **Never.** Stopping any of them ends every session at once |
 
-Choice among agent sessions: the largest `Pss_Anon` footprint, except that **a session in the middle
+**What a halt frees.** `HandleHaltSession` is guaranteed to remove the tmux session's tree, nothing more:
+a child that called `setsid`, daemonised or was disowned survives `kill-session`, and so does a process
+that `AF_SESSION_NAME` attributes to the session but that was reparented (`procx.ToolProcessIn` exists
+because some CLIs start their tools in a session of their own). So the expected reclaim is the footprint
+of the guaranteed part, and a pressure halt carries an **additional contract** for the rest: after the
+halt the Agent signals the processes it attributed to the session, only those whose identity it
+re-verifies (same uid, same pid **and start time**, still carrying the session's marker, not in the
+protected set below), `SIGTERM` then `SIGKILL` after a short wait, and then re-measures to confirm they
+are gone. A process whose identity cannot be re-verified is left alone and reported as "still running,
+could not be attributed with confidence". The reclaim is logged as *freed* only from the re-measurement.
+`procx.Info` has no start time today; the identity check needs it added.
+
+**Unknown is not zero.** Every per-process reading (`status`, `smaps_rollup`, `environ`) can fail:
+`smaps_rollup` and `environ` are guarded by a ptrace read check, so a process of another uid, or a
+non-dumpable or sandboxed one, may be unreadable though the same-uid case usually works. Each
+measurement therefore carries known / partial / unknown. A partial sum is never compared as a full
+footprint, and a session with unknown processes is not ranked below one without; if the top
+candidates include one, the stop is deferred (and logged) instead of choosing among the readable.
+Unreadable or unattributable is **never** evidence that a process is an orphan: Chromium is treated as
+orphaned only when its environment was read and names no live session. At start the Agent runs a
+positive control (a same-uid process reads fine) and a negative control (a denied read is recognised as
+denial), and enforcement is off if either does not behave; phase 0 records the same check.
+
+Choice among agent sessions: the largest `Pss_Anon` + `Pss_Shmem` footprint, except that **a session in the middle
 of a turn is passed over for an idle one whose footprint is within 25% of it** (halting mid-turn
 aborts the turn; the transcript is durable, the turn in flight is not). The notice names the session,
 its footprint, and what was consuming it.
@@ -250,8 +306,8 @@ reclaimed. Two cheap measures are in scope, and the rest is an open question:
 
 - the Agent starts session processes with a **higher `oom_score_adj`** (raising it needs no privilege),
   so that if the kernel's OOM killer does fire it chooses a session before the Agent;
-- the sampler's decisions to refuse and to stop are made from the **last good sample**, so a read that
-  stalls does not cancel an action already warranted.
+- the refusal is **held** while the sampler is late (it is cheap and reversible), but a stop is never
+  authorised from a stale sample (decision 2).
 
 What neither does is protect the Agent from reclaim. That needs a place to run it that the container's
 pressure does not reach (open question 3), and it is why this record talks about "before the box
@@ -279,17 +335,39 @@ thrashes" and does not claim to prevent it.
 
 What phase 0 records, per runtime and per size, kept as a time series (not only the latest):
 
-1. `some`/`full` `avg10`/`avg60`/`total` and the working set, to place the thresholds against what a
+1. **How it is collected.** In `measure` mode the Agent runs a per-session sampler **independent of the
+   stage**, every 60 s: `status` for every process, `smaps_rollup` for at most the top 5 by
+   `RssAnon + RssShmem` per sample (it walks page tables and briefly holds the mmap lock, so it is capped
+   and skipped while `full avg10` is at stage 2 level). A session's *baseline* is the median of its footprint
+   while idle (no turn, no child beyond the CLI); the box's baseline is the Agent plus unattributed
+   processes. The series is kept in the Agent's state directory as a capped file (about 7 days at this
+   rate, a few MB) and downsampled beyond that; the Stats axis carries only the latest value.
+2. `some`/`full` `avg10`/`avg60`/`total` and the working set, to place the thresholds against what a
    healthy busy box looks like (a large build; N sessions; chromium).
-2. The refault rate against PSI, to confirm it is a usable second signal.
-3. Per-session `Pss_Anon` over a session's life, by session kind, to get the p75 behind the sizing
+3. The refault rate against PSI, to confirm it is a usable second signal, and the anonymous / file /
+   shmem split under real load (the incident's was never recorded).
+4. Per-session `Pss_Anon` over a session's life, by session kind, to get the p75 behind the sizing
    guideline and the "twice the largest agent" rule for shells.
-4. The Agent's own latency (a loopback request) against PSI, to find the pressure at which the Agent
+5. The Agent's own latency (a loopback request) against PSI, to find the pressure at which the Agent
    itself becomes unresponsive — the number that decides whether the ladder can act in time.
 
-Phase 3 does not start before one slot has been pushed past stage 3 on purpose (a synthetic anonymous
-allocator in a test session) and the ladder's whole sequence observed, including the resume of the
-session it stopped.
+Phase 3 does not start before one slot has been pushed past stage 3 on purpose and the ladder's whole
+sequence observed, including the resume of the session it stopped. The load is not only a synthetic
+anonymous allocator (which cannot show the file-dominated blind spot). Acceptance runs:
+
+- anonymous allocator; a mixed file + anonymous load with rising refaults; long Go, npm and Gradle builds
+  (must not stop anything, or must show why); a short spike with recovery; a missing sample during the
+  grace;
+- a session whose child `setsid`-detaches, and one whose child is reparented: the memory of both is
+  **freed** after the halt (the reclaim contract of decision 3), verified by re-measurement;
+- a `shared-daemon`, a `per-session-child` and an `in-process` session, each checked for what the halt
+  returns;
+- the Agent's latency and any missing samples recorded during the run, as the evidence that the halt
+  came in time. That the Agent is starved under the worst load is a known limit (open question 3), not a
+  blocker, but the evidence must be on record.
+
+The cases the ladder does not catch (file-dominated thrash, in-process sessions, unreadable processes,
+a stuck Agent) are listed in the phase 3 record, not hidden.
 
 ## Open questions
 
@@ -306,8 +384,9 @@ These are not decisions and have no owner yet.
    Agent set by the slot's boot script (`ecs-ec2` only); running the Agent outside the capped container
    cgroup; a CP-side dead-man's check that stops a workspace whose Agent has been silent beyond N
    minutes while ECS says HEALTHY (the second member's case).
-4. **Managed sessions** share one daemon. Is there any action that frees its memory short of restarting
-   the daemon, and is restarting it acceptable?
+4. **`shared-daemon` sessions** (codex, opencode) share one daemon. How much does `DropHandle` really
+   return, and is there any action that frees more short of restarting the daemon (is restarting it
+   acceptable)? And what is the right treatment of `in-process` sessions, whose memory is the Agent's own?
 5. **Is the `AF_SESSION_NAME` environment marker present on every process a session starts**,
    including Managed sessions' tool processes? It decides whether
    attribution beyond the process tree works.
@@ -327,8 +406,9 @@ These are not decisions and have no owner yet.
 - **Good:** the incident has a visible early state, a clear error instead of a silent wedge, and — once
   phase 3 is on — a bounded response that leaves a resumable session. Nothing here changes a
   runtime adapter, the cap, or the host reserve.
-- **Good:** phase 0 alone produces the data the sizing view and every threshold need, at the cost of
-  one small goroutine, and nothing user-visible.
+- **Good:** phase 0 alone produces the data the sizing view and every threshold need, with nothing
+  user-visible. It is not free: a 60 s walk of `/proc` and a capped number of `smaps_rollup` reads, whose
+  cost on a box with many processes is itself something phase 0 measures first.
 - **Bad, accepted:** until Open question 3 is answered the ladder is a best-effort responder on a box
   whose responder can be starved. It improves the common case (a slowly rising load that PSI shows for
   minutes) and cannot help the case in which the Agent is already stuck.
