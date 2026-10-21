@@ -15,8 +15,8 @@ Two features keep what agents learn. **Agent memory** is Agent Fleet's own memor
 Agent Fleet's own shared memory: the memory every kind of agent reads and writes with the af tools
 `memory_index` / `memory_search` / `memory_read` / `memory_save` / `memory_forget`. It is per project (a worktree shares its
 repository's), plus one user-wide scope, so what one agent learns survives a switch of kind, a handoff and a child of
-another kind. **It is off by default.** The version history of the memory the agents keep in their own files is the next
-entry, [Memory snapshots](#memory-snapshots).
+another kind. **It is off by default.** Turn it on in the [Settings](#settings) view. The version history of the memory the agents keep in their own files is
+[Memory snapshots](#memory-snapshots), further down.
 
 The page opens with one status line: whether it is on, how many memories in how many projects, when it last changed,
 and a warning, with a link to Settings, when the background sync with Claude Code needs you. Under it are four views:
@@ -30,8 +30,9 @@ Home and End move between them.
 - **List and detail**: the left side lists the memories of **All scopes** (the default: the user-wide scope and every
   project together, each row tagged with where it lives) or of one scope (**User-wide**, which every project receives,
   or one project), with their author, last update, how often agents read them and a **pinned** marker. The chips
-  **All**, **Pinned** and **Forgotten** narrow it. Search matches the name, description, type and author at once and,
-  after a short pause, the body, ranked like the agents' `memory_search`; searching is not a use and does not change how
+  **All**, **Pinned** and **Forgotten** narrow it. Search looks for what you typed, as one piece of text, in the name,
+  description, type, author and author session at once; after a short pause it also searches the bodies, and
+  memories only the body search found are listed after those, ranked like the agents' `memory_search`; searching is not a use and does not change how
   often a memory is read. Pick a row and the right side shows that memory: its text, scope, type, author, last update
   and how often agents read it, with **Edit**, **Pin** / **Unpin**, **Forget this memory** and, under **More actions**
   (⋯), **Purge history…**. **New memory** (in the scope on screen; the user-wide scope while all scopes are shown) and
@@ -42,8 +43,9 @@ Home and End move between them.
 
 - **Pinned memories**: **Pin** one in the detail pane and it is always listed first in the index agents read when they
   start work, ahead of everything else; **Unpin** takes it back. The **Pinned** chip lists them. The rest
-  of the index is ordered by kind (feedback and user memories first), then by how often agents read it (a
-  read or a search hit that was returned counts), then by recency. Pins share the index's size limit: if
+  of the index is ordered by type (feedback and user memories first), then by how often agents read it (a
+  read or a search hit that was returned counts), then by recency. Pins share the index's size limit (about 24 KiB of
+  described lines, where each description is cut to 150 characters; `memory_read` returns the full text): if
   the pinned ones alone do not fit, the last of them drop to the names-only list and the agent is told so,
   so pin only what every session needs. `memory_search` ranks its hits too: more of the query's words first,
   then a match in the name before the description before the body, then pins, reads and recency; if no
@@ -53,9 +55,11 @@ Home and End move between them.
 - **Forget, Unforget and history**: **Forget this memory** removes it from every agent's view. The **Forgotten** chip
   lists the ones you can **Unforget**, on the row or in the detail pane (the text comes back as it was before; if it now
   looks like a secret, use **Revert this change** on its forget entry in the Changes view, where you can confirm). Both are the same revert and forget as in
-  the Changes view, recorded as made by you and undoable. Forget works on any listed memory: its newest change is looked
-  up when you press it, however old. **Forgotten** lists every memory forgotten in the scope you have selected (all scopes
-  by default), however long ago, up to 300 at a time (pick one scope to see the rest). With a very large number of
+  the Changes view, recorded as made by you and undoable. Forget works on any listed memory whose history holds a change: its newest
+  change is looked up when you press it, however old. A memory file that was put in place by hand, with no change
+  in the history, cannot be forgotten from here. **Forgotten** lists every memory forgotten in the scope you have selected (all scopes
+  by default), however long ago, up to 300 at a time. With all scopes shown, picking one scope shows more of
+  it; one scope also shows only its newest 300. With a very large number of
   forgotten memories (over about 2000) the oldest are not checked: the list says so, may then be missing some, and the
   hidden count is a minimum. **History of this memory**, at the bottom of the detail pane, lists that memory's own
   changes; pick one to see its diff, as in the Changes view. It is read from the newest 300 changes of all memories, so
@@ -63,9 +67,8 @@ Home and End move between them.
   view. Saves are the same revision check and secret scan as an agent's save, recorded as written by you and undoable from
   the Changes view. A memory can be written into a project only once that project holds memory. An edit keeps the kinds
   the memory was limited to. The Control Plane signs pin, revert, forget and save, and the workspace accepts
-  them only with that signature, so a session in the workspace cannot make them as you. A workspace started
-  before this was available refuses them until you restart it, and for about half a minute after a
-  workspace starts they ask you to try again in a minute.
+  them only with that signature, so a session in the workspace cannot make them as you. For about half a
+  minute after a workspace starts they ask you to try again in a minute.
 
 - **Purge history…**: **Forget** only hides a memory; its earlier text stays in the history and in every export.
   **Purge history…** (under **More actions** in a memory's detail pane, and in a forgotten memory's row and detail pane) deletes a memory's past revisions from this
@@ -89,12 +92,14 @@ Home and End move between them.
 
 ### Changes
 
-The list shows every change (when, which agent and session, what), newest first. On a memory's newest change
+The list shows the newest 100 changes (when, which agent and session, what), newest first;
+`af-memory changes --limit N` lists up to 300 from a terminal. On a memory's newest change
 you can **revert it** (the earlier text comes back) or **forget the memory**; either is recorded as a new
 change, so it can be undone too. If the text you bring back looks like a secret, you are shown the masked
 findings and asked to confirm.
 
-While **Have finished sessions suggest memories** is on, or while suggestions are still waiting, the view has two
+While **Have finished sessions suggest memories** is on (it takes effect only while "Let sessions use Agent Fleet
+memory" is on too), or while suggestions are still waiting, the view has two
 parts: **Published** (the list above) and **Proposed**, with the number of suggestions waiting beside it. The same
 number sits beside **Changes** in the view bar, and a notification ("N memory suggestions are waiting for your
 approval", under the **Other notices** row of the notification settings) opens this view. If any are waiting, the view opens
@@ -176,14 +181,14 @@ export** once it has finished.
   only the history remembers it), **possible secret, skipped** (every part of the file is scanned, with no
   override) or **cannot be imported**. Only the latest text comes across, with the agent limits it had; the
   bundle's history does not. What is **reset**: the revision (each memory starts at the next number here),
-  the author (unknown, as for the Claude import), the dates (the time of the import) and the pin; the origin
+  the author (unknown, as for the Claude import), the dates (the time of the import), the pin and how often it was read; the origin
   is recorded in the memory's source (`bundle:<import id>:<project>/<name>@<bundle revision>`) and in the
   commit (`AF-Bundle-Import`, `AF-Bundle-Source`), so each import shows in Agent memory > Changes and can be
   reverted there. It works with the switch on or off, answers only your own request, and is recorded in the
   audit log.
 
 - **Write back to Claude Code**: the other direction, by hand and for one project at a
-  time. Turning the switch off already writes every project back by itself (see above); use this to
+  time. Turning the switch off already writes every project back by itself (see [Settings](#settings)); use this to
   resolve a conflict it left, or after switching Claude Code's memory back on anyway. It copies what was
   learned through Agent Fleet into Claude Code's memory (Claude Code only; codex is not covered). Pick a project and you see what
   would happen first: **new**, **newer in Agent Fleet** (updates a file written back earlier), **forgotten in
@@ -191,7 +196,7 @@ export** once it has finished.
   that you changed since: kept unless you tick it; a file that is still exactly the one imported counts as
   **unchanged**, or as **newer in Agent Fleet** once you edited the memory here), **possible secrets** (skipped), **unchanged** and **only in
   Claude** (never deleted). An update keeps the fields Claude recorded in the file's `metadata`
-  (such as `originSessionId`); a file whose metadata cannot be copied as is shows as a conflict instead. User-scope memories are not written. `MEMORY.md` is rebuilt within Claude's load
+  (such as `originSessionId`); a file whose metadata cannot be copied as is shows as a conflict instead. User-scope memories, and memories limited to other agent kinds, are not written. `MEMORY.md` is rebuilt within Claude's load
   limit (200 lines, 24 KiB) and replaces the old one; Claude's memory is snapshotted first
   (trigger "pre-write-back"), so you can restore it from Memory snapshots > History. It works with the switch on or off;
   while it is on, end Claude Code sessions started before it was switched on first.
@@ -203,7 +208,7 @@ export** once it has finished.
   listed) with their memory counts. Pick one and the project that replaces it (any project that has memories or a
   working copy under `~/repos`) and read the preview before confirming. A memory whose name is already taken in
   the target is **never overwritten**: you choose to leave those where they are or to move them under a new name
-  (`<name>-moved`); one whose text is identical to the target's copy only has the old copy removed. A memory that
+  (`<name>-moved`, then `<name>-moved-2`, `<name>-moved-3` and so on); one whose text is identical to the target's copy only has the old copy removed. A memory that
   changed since the preview, or whose file looks like it contains a secret, stays in the old project. Each memory
   becomes two entries in the Changes view, one in each project, so you can revert either there. If the
   move is interrupted, run it again: nothing is lost and it finishes where it stopped. This works with the
@@ -215,7 +220,7 @@ export** once it has finished.
   a project whose working copy was already gone has none and is never suggested. For ssh addresses only the large hosting services (GitHub, GitLab, Bitbucket, Codeberg) are recognised; on any other server only https addresses are compared.
 
 - **From a terminal**: `af-memory import-sources`, `af-memory import --project <slug> --dry-run` (preview) and
-  `af-memory import --project <slug>` (import); `af-memory changes` lists the latest changes. For muse:
+  `af-memory import --project <slug>` (import); `af-memory changes [--limit N]` lists the latest changes (30 unless you say otherwise). For muse:
   `af-memory muse-import-sources`, `af-memory muse-import --dir <name> [--scope project|personal_project] [--dry-run]`
   and `af-memory muse-import --scope personal --into-user [--dry-run]`. The imports are
   gated by the same switch and the same secret scan as the Console.
@@ -235,9 +240,11 @@ the tool descriptions. A save is shared at once, **without your approval**; text
 refused.
 
 - **Claude Code's own memory**: the switch carries it across by itself. Flipping "Let sessions use Agent Fleet
-  memory" first shows what will happen, from a preview ("Import 474 memories from 6 projects; 1 skipped
-  (secret)" on the way in, "Write back 473 memories to Claude Code; 0 conflicts" on the way out), and only
-  then flips. **On**: Agent Fleet imports every Claude project it can match to a working copy under `~/repos`
+  memory" first asks you to confirm, with counts from a preview. On the way in, **Turn on Agent Fleet memory?** says
+  how many memories from how many projects are imported now and how many Claude files are skipped as possible
+  secrets (**Turn on and import**). On the way out, **Turn off Agent Fleet memory?** says how many memories are
+  written back, after a snapshot of Claude's memory and without overwriting anything (**Turn off and write back**).
+  While the workspace is stopped there are no counts yet, and the import or write-back runs when it starts. **On**: Agent Fleet imports every Claude project it can match to a working copy under `~/repos`
   in the background, and starts new Claude sessions with Claude Code's auto-memory switched off, so Claude
   does not load its own `MEMORY.md` (about 25 KB at the start of every session) and uses the af tools like
   every other kind. The automatic import is stricter than **Import from Claude Code** (under Import & export): a Claude file
@@ -267,20 +274,10 @@ refused.
   session keeps what it started with.
 
 - **From outside Agent Fleet** (setting "Use Agent Fleet memory from outside Agent Fleet", **off by default**
-  and independent of the switch above): lets your own agent on another machine (Claude Code or Claude Desktop
-  with an MCP token, see Operate > Secure) use this memory through the Control Plane's `/mcp`. Choose **Read
-  only** to allow `memory_projects` (lists project ids), `memory_index`, `memory_search` and `memory_read`
-  with a read-scoped token, or **Read and write** to also allow `memory_save` and `memory_forget` with a
-  write-scoped token. A project is named by the `project` argument (from `memory_projects`); a project must
-  already hold memory, and new projects are started from inside the workspace. Saves go through the same
-  revision check, secret scan and limits, and show in the Memories view as written by `external` (the client's
-  self-declared name is kept in the commit message for information only). Each external save and forget is
-  also recorded in the audit log with the project id (never the memory's name). The memory text reaches that
-  client's model, outside the workspace's egress controls: the secret scan stops credentials, not customer
-  names or internal context. The workspace has to be running; a stopped one answers that it must be started
-  first. The setting is a per-member one, and a deployment that does not serve `/mcp` (`AF_MCP_ENABLED`)
-  has no outside access at all.
-  How to ask for it, and what is recorded, is in [Using Agent Fleet memory from an external agent](#using-agent-fleet-memory-from-an-external-agent).
+  and independent of the switch above; **Read only** or **Read and write**): lets your own Claude Code or Claude
+  Desktop on another machine use this memory through the Control Plane's `/mcp` with an MCP token. The setting is
+  your own; your tenant administrator can still block it for the whole tenant. What it allows, and what is
+  recorded, is in [Using Agent Fleet memory from an external agent](#using-agent-fleet-memory-from-an-external-agent).
 
 - **Have finished sessions suggest memories** (setting "Have finished sessions suggest memories", **off by default**;
   it also needs the switch above): choosing **Propose** turns the review on, which by itself does nothing in the
@@ -290,9 +287,10 @@ refused.
   the provider of the agent chosen for this feature under **AI assistance**, which can be a different provider from the
   session's own; it spends tokens (at most 250 calls a day, one at a time), and it does not run while the workspace is
   stopped. **Nothing reaches memory without your approval**: up to 100 proposals wait under
-  [Changes › Proposed](#changes), where you approve or reject them. When the setting is on, a **Memory review** card
-  appears under AI assistance, where you can pin the agent and model. Only agents that can be run with their tools
-  switched off can do the review; if the one you pin cannot, the review does not run rather than falling back to another
+  [Changes › Proposed](#changes), where you approve or reject them. When the setting is on, a **Background memory review**
+  card appears under AI assistance, where you can pin the agent and model. Only agents that can be run with their
+  tools switched off can do the review, and today that is claude alone; when none is available here, the setting
+  says so and the review waits; if the one you pin cannot, the review does not run rather than falling back to another
   provider.
 - **Also suggest automatically** (setting "Also suggest automatically", **off by default**, separate from the one
   above; it works only while **Propose** is chosen): with it on, finished sessions are reviewed in the background
@@ -314,8 +312,8 @@ The view you leave open is remembered. It needs the running workspace.
 
 ### History
 
-- **History**: newest first, with the time and the trigger (automatic / manual / pre-restore / pre-write-back / restore /
-  import). You can also jump to a point in time by date. The snapshots that Agent Fleet memory writes leave
+- **History**: newest first, with the time and the trigger (auto / manual / pre-restore / pre-write-back / restore /
+  import / agent memory). You can also jump to a point in time by date. The snapshots that Agent Fleet memory writes leave
   (trigger "agent memory") are hidden, because Agent memory > Changes already lists those writes: a line "Agent Fleet memory
   writes hidden: N" stands in for each run of them, with a link to Changes, and **Show Agent Fleet memory writes**
   lists them (the choice is remembered on this device). A date jump that lands on one shows it, and its diff and
@@ -328,7 +326,9 @@ The view you leave open is remembered. It needs the running workspace.
 ### Targets
 
 - **Targets**: what can be versioned, with file count, size and the last snapshot. codex has memory disabled by
-  default, so enable it here if you want it.
+  default, so enable it here if you want it. Turning on Agent memory switches codex's memory off once; if you
+  turn it on here after that, it stays on beside Agent memory and is left on when Agent memory is turned off
+  (see [Settings](#settings)).
 - **Automatic snapshots**: taken a few minutes after an agent stops (nothing is stored if nothing changed).
   "Snapshot now" takes one by hand. On some deployments the operator has disabled automatic snapshots.
 
@@ -344,8 +344,9 @@ The view you leave open is remembered. It needs the running workspace.
 ## Using Agent Fleet memory from an external agent
 
 The same MCP token can also let your own Claude Code / Claude Desktop use the memory Agent Fleet keeps (see
-[Agent memory](#agent-memory)). Two things have to be true: the token's scope, and **⚙ Settings → Agent
-memory → "Use Agent Fleet memory from outside Agent Fleet"** (`Off` by default; `Read only` or `Read and write`).
+[Agent memory](#agent-memory); how to make a token and connect a client is in
+[10 Going further](10-integrations.md#driving-your-workspace-from-an-external-claude-mcp)). Two things have to be true: the token's scope, and **⚙ Settings → Agent
+memory → Settings → "Use Agent Fleet memory from outside Agent Fleet"** (`Off` by default; `Read only` or `Read and write`).
 The "MCP tokens" tab lists what the token can do and links to that setting; the setting has a "How to connect"
 link back.
 
@@ -363,4 +364,8 @@ link back.
   information only). Each external save and forget is also written to the audit log as `memory.entry.save` /
   `memory.entry.forget`, with the project id and never the memory's name. You can revert or forget any of it from
   the Agent memory list.
+- **What leaves the workspace**: the memory text reaches that client's model, outside the workspace's egress
+  controls. The secret scan stops credentials, not customer names or internal context.
+- **Saves** go through the same revision check, secret scan and limits as an agent's save inside the workspace.
 - **A stopped workspace** answers that it must be started first; start it in the Console and ask again.
+- A deployment that does not serve `/mcp` (`AF_MCP_ENABLED`) has no outside access at all.
