@@ -635,7 +635,9 @@ moved or copied. Only **what you see** changes.
   members).
 - From the keyboard, the leader key **`w` → `w`** cycles through the groups.
 
-## Handing a conversation off (handoff)
+## Continuing elsewhere — handoff, branch, move
+
+### Handing a conversation off (handoff)
 
 From the **⋯** menu of a running claude, codex, cursor, copilot, kiro, agy, opencode, or muse session, choose
 **"Hand off to another agent…"** and pick the **target agent** in the handoff modal that
@@ -689,7 +691,7 @@ same name) and **"Cancel the move"**. When the new session's first prompt is not
 arrived, the dialog offers to resend it; resending may deliver it twice. The workspace has to be
 running.
 
-### Saving a conversation as Markdown
+## Saving a conversation as Markdown
 
 The **⋯** menu of any session that has a conversation offers **"Export as Markdown"** with three
 choices: **"Conversation only (no tools)"** keeps what you and the agent said, asked and planned
