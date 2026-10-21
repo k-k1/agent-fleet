@@ -291,18 +291,21 @@ func TestSlotUserDataProtectsManagementPlaneMemory(t *testing.T) {
 	// Run the protector against a fake /proc and cgroup tree in which the agent lives in
 	// its own docker scope, apart from ecs.service and the SSM agent.
 	fake := filepath.Join(dir, "fake")
-	for pid, cg := range map[string]string{
-		"100": "/system.slice/ecs.service",
-		"200": "/system.slice/docker-abc.scope",
-		"300": "/system.slice/amazon-ssm-agent.service",
-	} {
-		for _, d := range []string{filepath.Join(fake, "proc", pid), filepath.Join(fake, "cg", cg)} {
-			if err := os.MkdirAll(d, 0o755); err != nil {
-				t.Fatal(err)
-			}
+	procs := map[string][]string{ // cgroup -> pids, first is what docker / systemd report
+		"/system.slice/ecs.service":              {"100"},
+		"/system.slice/docker-abc.scope":         {"200", "201"}, // init + the real agent
+		"/system.slice/amazon-ssm-agent.service": {"300", "301"}, // parent + existing worker
+	}
+	for cg, pids := range procs {
+		if err := os.MkdirAll(filepath.Join(fake, "cg", cg), 0o755); err != nil {
+			t.Fatal(err)
 		}
-		os.WriteFile(filepath.Join(fake, "proc", pid, "cgroup"), []byte("0::"+cg+"\n"), 0o644)
-		os.WriteFile(filepath.Join(fake, "proc", pid, "oom_score_adj"), []byte("0\n"), 0o644)
+		os.WriteFile(filepath.Join(fake, "cg", cg, "cgroup.procs"), []byte(strings.Join(pids, "\n")+"\n"), 0o644)
+		for _, pid := range pids {
+			os.MkdirAll(filepath.Join(fake, "proc", pid), 0o755)
+			os.WriteFile(filepath.Join(fake, "proc", pid, "cgroup"), []byte("0::"+cg+"\n"), 0o644)
+			os.WriteFile(filepath.Join(fake, "proc", pid, "oom_score_adj"), []byte("0\n"), 0o644)
+		}
 	}
 	pc := exec.Command("bash", filepath.Join(dir, "sbin/af-protect-mgmt"), "--once")
 	pc.Env = append(os.Environ(), "AF_CGROUP_ROOT="+fake+"/cg", "AF_PROC="+fake+"/proc",
@@ -323,12 +326,15 @@ func TestSlotUserDataProtectsManagementPlaneMemory(t *testing.T) {
 	if g, want := got("cg/system.slice/docker-abc.scope/memory.min"), strconv.Itoa(agent*1024*1024); g != want {
 		t.Errorf("agent scope memory.min=%q, want %q", g, want)
 	}
+	if got("proc/100/oom_score_adj") != "0" {
+		t.Error("ecs.service's own process was touched by the helper")
+	}
 	if got("cg/system.slice/ecs.service/memory.min") != "" {
 		t.Error("memory.min was written to ecs.service's cgroup, not the agent's scope")
 	}
-	for _, pid := range []string{"200", "300"} {
+	for _, pid := range []string{"200", "201", "300", "301"} {
 		if g := got("proc/" + pid + "/oom_score_adj"); g != "-900" {
-			t.Errorf("pid %s oom_score_adj=%q, want -900 on the live process", pid, g)
+			t.Errorf("pid %s oom_score_adj=%q, want -900 on every process of the cgroup", pid, g)
 		}
 	}
 }

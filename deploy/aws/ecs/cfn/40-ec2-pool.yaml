@@ -265,14 +265,21 @@ Resources:
               CG=$AF_CGROUP_ROOT; [ -n "$CG" ] || CG=/sys/fs/cgroup
               PROCFS=$AF_PROC; [ -n "$PROCFS" ] || PROCFS=/proc
               # protect <pid> <memory.min bytes or empty> <oom_score_adj>
-              protect() {
-                pid=$1
-                { [ -n "$pid" ] && [ "$pid" != 0 ] && [ -r "$PROCFS/$pid/cgroup" ]; } || return 0
-                cg=$(sed -n 's/^0:://p' "$PROCFS/$pid/cgroup")
-                { [ -z "$2" ] || [ -z "$cg" ] || echo "$2" > "$CG$cg/memory.min"; } || echo "memory.min for pid $pid failed" >&2
-                echo "$3" > "$PROCFS/$pid/oom_score_adj" || echo "oom_score_adj for pid $pid failed" >&2
-              }
-              apply() {
+# The pid only names the cgroup. docker's State.Pid is the container's init (tini) and
+# the SSM unit's MainPID is its parent, while the real agent and ssm-agent-worker are
+# children that already exist and do not inherit a later change, so every process
+# listed in that cgroup gets the oom_score_adj.
+protect() {
+  pid=$1
+  { [ -n "$pid" ] && [ "$pid" != 0 ] && [ -r "$PROCFS/$pid/cgroup" ]; } || return 0
+  cg=$(sed -n 's/^0:://p' "$PROCFS/$pid/cgroup")
+  [ -n "$cg" ] || return 0
+  { [ -z "$2" ] || echo "$2" > "$CG$cg/memory.min"; } || echo "memory.min for $cg failed" >&2
+  for p in $(cat "$CG$cg/cgroup.procs" 2>/dev/null) $pid; do
+    echo "$3" > "$PROCFS/$p/oom_score_adj" || echo "oom_score_adj for pid $p failed" >&2
+  done
+}
+apply() {
                 protect "$(docker inspect -f '{{.State.Pid}}' ecs-agent 2>/dev/null)" $((AGENT_MIN_MIB * 1024 * 1024)) -900
                 protect "$(systemctl show -p MainPID --value amazon-ssm-agent.service 2>/dev/null)" "" -900
               }
