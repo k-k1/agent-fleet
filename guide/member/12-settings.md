@@ -206,7 +206,8 @@ the assistant conversation: they share an implementation, but they surface somew
   to right now. For muse, both are the newest model that is neither a `-contributor` one nor one you hid;
   if there is none (or muse's model list cannot be read), the assistance is not generated rather than run on
   its contributor default.
-- **Features that use AI assistance**: one card per feature (8 in total). Turning one off hides its button
+- **Features that use AI assistance**: one card per feature (8, plus **Background memory review** while memory
+  suggestions are on). Turning one off hides its button
   entirely and folds away that card's agent/model rows.
   - **Session title suggestion**: the banner that proposes a title, plus "Ask AI" in a session's rename dialog.
   - **Chat title suggestion**: "Ask AI" in the assistant's rename dialog. A chat has no banner of its own.
@@ -227,6 +228,9 @@ the assistant conversation: they share an implementation, but they surface somew
     Only answers that **arrive while you are watching that session** qualify; answers already on screen when
     you open it are never translated on their own, and the button is still there for them. This is the one
     translation setting that spends without being asked.
+  - **Background memory review**: shown only while memory suggestions are on; it has no switch of its own, only
+    the agent and model the review uses. Only claude can run it today
+    ([14 Agent memory](14-agent-memory.md#settings)).
 
   Each card can also be pinned to its own agent, separate from the priority order above (default: "auto —
   priority order"). Once pinned to one agent, that card can also pick that agent's own model: left on "auto"

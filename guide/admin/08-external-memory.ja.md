@@ -29,4 +29,4 @@ updated: "2026-10"
 スイッチを読めないとき（ストアが使えないなど）は、ツールを出さない側に倒します。
 
 変更は [監査ログ](03-audit-usage.ja.md) に `tenant.external_memory` として、`enabled=true` または `enabled=false` つきで残ります。
-変更できるのはテナント管理者だけです。配備全体で `/mcp` エンドポイントを止めるのは運用者の `AF_MCP_ENABLED` で、別のスイッチです。
+変更できるのはテナント管理者と super_admin だけです。配備全体で `/mcp` エンドポイントを止めるのは運用者の `AF_MCP_ENABLED` で、別のスイッチです。

@@ -435,6 +435,10 @@ Instructions come in three layers, and this setting is the **middle** one.
 - There is a length limit: this text rides along in **every session's context, every time**, so
   shorter works better.
 - **Don't put secrets (API keys, tokens) here.** It is plain text that several agents read.
+- While Agent memory is on, Agent Fleet also writes a short fixed note on its memory tools into the same
+  instruction file, beside your text (copilot and Kiro get a file of their own; lcpp gets it in the system
+  prompt). It never contains memories, and turning Agent memory off removes it without touching your text
+  ([14 Agent memory](14-agent-memory.md#settings)).
 
 ## Bringing your personal Claude Code setup
 

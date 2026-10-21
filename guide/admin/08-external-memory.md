@@ -35,5 +35,5 @@ If you cannot read the switch (for example the store is unavailable), the tools 
 rather than offered.
 
 Changing it is recorded in the [audit log](03-audit-usage.md) as `tenant.external_memory`, with
-`enabled=true` or `enabled=false`. Only a tenant administrator can change it. Turning off the
+`enabled=true` or `enabled=false`. Only a tenant administrator or a super_admin can change it. Turning off the
 whole `/mcp` endpoint for a deployment is the operator's `AF_MCP_ENABLED`, a different switch.
