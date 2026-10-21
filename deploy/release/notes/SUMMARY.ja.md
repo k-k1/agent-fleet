@@ -13,6 +13,28 @@
 
 ---
 
+## [0.33.0](0.33.0.ja.md) — 2026-10-21
+
+**CLI ピン** — Claude Code 2.1.305 / Copilot 1.0.101 / Antigravity 1.4.3 / Cursor 2026.10.19-6bbf2c4 / OpenCode 2.1.1 / Muse Code 1.4.11-R6667.1
+
+**New / Improved**
+
+- **[メンバー]** メンバー画面をメンバーごとのカードに：状態バッジ・絞り込み・並べ替え・検索・セッション数・最終アクティブ・home ディスク・メモリと CPU ([#2385](https://github.com/k-k1/agent-fleet/issues/2385), [#2388](https://github.com/k-k1/agent-fleet/issues/2388), [#2389](https://github.com/k-k1/agent-fleet/issues/2389))
+- **[ワークスペース]** home ディスクの空き不足と CLI のインストール失敗をメンバーとテナント管理者に示し、その種類の開始は理由を添えて断る ([#2383](https://github.com/k-k1/agent-fleet/issues/2383), [#2398](https://github.com/k-k1/agent-fleet/issues/2398))
+- **[コマンドパレット]** メモリ モードでエージェントメモリを検索する ([#2407](https://github.com/k-k1/agent-fleet/issues/2407))
+- **[コマンドパレット]** パレットのキー＋Shift でモードを逆順に、PageUp/PageDown でページ移動。モードのヒントは別の行に ([#2412](https://github.com/k-k1/agent-fleet/issues/2412), [#2421](https://github.com/k-k1/agent-fleet/issues/2421))
+- **[プレビュー]** Markdown 中のループバック URL をそのポートのワークスペースプレビューで開く ([#2414](https://github.com/k-k1/agent-fleet/issues/2414), [#2419](https://github.com/k-k1/agent-fleet/issues/2419), [#2426](https://github.com/k-k1/agent-fleet/issues/2426))
+- **[セッション間メッセージ]** セッションツリー全体が 15 分アイドルなら親に一度だけ通知する ([#2397](https://github.com/k-k1/agent-fleet/issues/2397))
+- **[ミラー]** ターミナルの返答の `$AF_WORK_DIR` のパスをリンクに。ファイルのメニューからフォルダやフォルダのギャラリーを開く ([#2429](https://github.com/k-k1/agent-fleet/issues/2429))
+- **[セッション]** kiro を移動先に選べる ([#2252](https://github.com/k-k1/agent-fleet/issues/2252))
+- **[引き継ぎ]** 引き継ぎファイルを Console の言語で書き、捨てた入力を載せ、古い読み取り専用の呼び出しを省く ([#2233](https://github.com/k-k1/agent-fleet/issues/2233))
+- **[muse]** Muse Code 1.4.11 と新しい種類の記録に対応 ([#2394](https://github.com/k-k1/agent-fleet/issues/2394))
+- **[ECS]** `pause.sh` が休止中は NAT ゲートウェイを削除し、休止中の RDS インスタンスを止めたままにする ([#2386](https://github.com/k-k1/agent-fleet/issues/2386))
+
+**Fixed**
+
+- **[ワークスペース]** 起動時の CLI のインストールが途中で失敗しても成功と記録され、壊れたバイナリが残っていた ([#2384](https://github.com/k-k1/agent-fleet/issues/2384))
+
 ## [0.32.1](0.32.1.ja.md) — 2026-10-19
 
 **CLI ピン** — Claude Code 2.1.303

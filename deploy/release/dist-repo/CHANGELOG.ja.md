@@ -3,6 +3,13 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.33.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.33.0) — 2026-10-21
+
+テナントのメンバー画面が、メンバーごとのカードで稼働中のセッション・最終アクティブ・home ディスク・メモリと CPU を
+示すようになりました。home ディスクの空き不足や CLI のインストール失敗は、壊れたセッションとしてではなく、メンバーと
+テナント管理者に知らされます。コマンドパレットでエージェントメモリを検索でき、Markdown 中のループバック URL は
+ワークスペースのプレビューで開きます。
+
 ## [0.32.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.32.1) — 2026-10-19
 
 0.32.0 の修正リリースです。メモリの提案は頼まない限りバックグラウンドで動かなくなり、止めた opencode セッションの
