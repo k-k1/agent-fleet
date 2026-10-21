@@ -28,6 +28,10 @@
 #   A managed config that has types holds one project's (IDs are per project in team-managed
 #   projects): `-p` naming another project gets a derived config with that project's types and
 #   without the base's `issue` block, custom fields included.
+# - Assignee lookup (`issue assign`, and -a/--assignee of edit / create / move) searches users in
+#   the configured or -p project, not the issue key's. A config of ours without project.key makes
+#   Jira answer a bare 400, so `issue assign KEY-N` gets `-p KEY` from the key's prefix; the other
+#   commands only get a one-line hint. An explicit -p, or any `project:` entry in the config, wins.
 # - Fails closed: any helper error leaves jira running with no injected auth.
 # - The token only ever lives in this shell's variables and, at the very end, in the exec'd
 #   jira's environment: never argv, never a file, never printed. xtrace and allexport are
@@ -35,7 +39,7 @@
 #   otherwise the assignments below would be echoed, or exported to every helper.
 set +xa
 unset cred tok server auth login cfg sub sub2 proj cfg_argv own_init debug prev conf managed gen
-unset parent eff key cdir types derived yaml hint basekey soft
+unset parent eff key cdir types derived yaml hint basekey soft npos ikey haveproj hasasg dd pv
 
 real="${AF_JIRA_REAL:-/usr/local/libexec/jira}"
 
@@ -264,6 +268,63 @@ if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && [ "$sub2" = create ]; then
       fi
     fi
   fi
+fi
+
+# Assignee lookup searches users in the configured / -p project, not the project of the issue
+# key given. With neither, Jira answers a bare 400 that reads as "assignee not found".
+# `issue assign KEY-N` therefore gets `-p KEY` from the key's prefix; the commands that only take
+# -a/--assignee get a hint. Only an effective config of ours (the user-owned ones exec'd above)
+# and only when it provably has no `project:` key (no_project_plain): a project we cannot parse
+# must not be overridden. The -a hint is a heuristic: a value-taking flag's value that looks like
+# -a/--assignee (`-s '--assignee=x'`) is not told apart, which costs one extra hint line.
+# True only when the file provably has no project: the same plain block layout `appendable`
+# demands (first real line at column 0, every column-0 line a bare `key:`, so no flow mapping,
+# JSON, quoted or explicit keys, tags or document marks) and none of those keys is `project`.
+# Anything else may hide one, and an inferred project must never replace the config's own.
+no_project_plain() {
+  local first
+  first="$(sed -n '/^[[:space:]]*\(#.*\)\{0,1\}$/d;p;q' "$1" 2>/dev/null)"
+  case "$first" in "" | [[:space:]]*) return 1 ;; esac
+  grep -Ev '^([[:space:]]|#|$)' "$1" 2>/dev/null | grep -Evq '^[A-Za-z_][A-Za-z0-9_-]*:([[:space:]]|$)' && return 1
+  ! grep -Eiq '^project[[:space:]]*:' "$1" 2>/dev/null
+}
+scan_assign_args() {
+  local a
+  npos=0 ikey="" haveproj="" hasasg="" dd="" pv=""
+  for a in "$@"; do
+    if [ -n "$pv" ]; then pv=""; continue; fi
+    if [ -z "$dd" ]; then
+      case "$a" in
+        --) dd=1; continue ;;
+        -c | --config) pv=1; continue ;;
+        -p | --project) haveproj=1; pv=1; continue ;;
+        -p?* | --project=*) haveproj=1; continue ;;
+        -a | --assignee | -a?* | --assignee=*) hasasg=1; continue ;;
+        -*) continue ;;
+      esac
+    fi
+    npos=$((npos + 1))
+    [ "$npos" -ne 3 ] || ikey="$a"
+  done
+}
+if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && [ -z "$proj" ]; then
+  case "$sub2" in assign | edit | create | move)
+    scan_assign_args "$@"
+    eff="${cfg_argv:-${JIRA_CONFIG_FILE:-}}"
+    if [ -z "$haveproj" ] && [ -n "$eff" ] && [ -r "$eff" ] &&
+      no_project_plain "$eff"; then
+      if [ "$sub2" = assign ]; then
+        case "$ikey" in
+          [A-Za-z]*-[0-9]*)
+            case "${ikey%-*}" in *[!A-Za-z0-9_]*) ;; *)
+              case "${ikey##*-}" in "" | *[!0-9]*) ;; *) set -- -p "${ikey%-*}" "$@" ;; esac ;;
+            esac ;;
+        esac
+      elif [ -n "$hasasg" ]; then
+        echo "jira: assignee lookup needs a project; pass -p KEY or run jira init --project KEY --board NAME" >&2
+      fi
+    fi ;;
+  esac
 fi
 
 if [ "$sub" = init ]; then
