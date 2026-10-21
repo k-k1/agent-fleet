@@ -35,10 +35,11 @@ never warned about.
 **Logging out of one profile.** A row that is signed in (or renews on use) has **Log out**, both here and in the
 popover of the WS bar's AWS badge. After you confirm, the workspace ends that profile's login with AWS and deletes
 its cached login and role credentials; your other profiles stay signed in. Credentials a running command already
-received stay valid until they expire (AWS cannot recall them), so stop that command if it matters. If AWS cannot
-be reached or refuses (it does when the access token has already expired, as for a **Renews on use** row), the
-workspace is signed out all the same and the Console says so; the login may then stay valid at AWS
-until it ends. Do not use `aws sso logout` for this: it signs out every profile at once, whatever `--profile` says.
+received stay valid until they expire (AWS cannot recall them), so stop that command if it matters. An expired
+access token (a **Renews on use** row) is renewed first so that the logout reaches AWS; if AWS refuses the renewal,
+the login had already ended there and the logout is a normal one. If AWS cannot be reached or refuses the logout
+itself, or the login has nothing to renew it with, the workspace is signed out all the same and the Console says
+so; the login may then stay valid at AWS until it ends. Do not use `aws sso logout` for this: it signs out every profile at once, whatever `--profile` says.
 
 Every profile and host row has **Edit**, which opens the same form filled in and saves it in place. Edit rather
 than delete and re-add: a host refers to its profile by an internal ID, so a re-added profile is a new one.
@@ -78,12 +79,18 @@ like any other Settings profile, and an SSM host can point at it too.
 - The target role's trust policy must allow your Identity Center role (`AWSReservedSSO_<permission set>_*`) in the
   source account.
 - It has no sign-in of its own. **Log in** on its row signs in to the source profile, and its state follows the source's.
+  Its row has no **Log out**; logging out of the source ends it. In the popover of the WS bar's AWS badge it reads
+  **"Follows <source>'s login"**, or **Source unavailable** when the source is missing or not exported. The badge
+  counts logins, so its count of signed-in profiles (such as "1/3") leaves chained profiles out.
   `af-aws-exec --profile <name> -- <command>` needs no `--account` (the role's account is checked against what AWS
   reports); when the source's login is missing the Console is asked for it, under the source's name.
 - It is exported only while its source is exported. If you define the source's name in your own `~/.aws` files, or a
   `[DEFAULT]` line breaks it, the chained profile is held back too (`af-aws-exec --list` says why), so the chain never
   starts from keys of your own.
 - A source profile cannot be deleted, or turned into an assume-role profile, while another profile uses it.
+- Settings export carries the chained profile with its source's label. Import adds it only when a profile with
+  exactly that label and the same sign-in (start URL, SSO region, account and role) exists or is in the same file;
+  otherwise it is skipped.
 
 ### Using the profiles from the terminal, SDKs and build tools
 
@@ -542,6 +549,8 @@ the change, within about five minutes.
 | "gcloud could not mint a token: …" | Not a login problem: no permission (also on the service account to impersonate), an API not enabled, or the network. The message says which. |
 | "the token gcloud minted is valid for only …" | gcloud could not hand out a token with ten minutes left. Try again in a minute. |
 | "this deployment does not export Google Cloud profiles" | Your deployment does not offer Google Cloud profiles. |
+| "could not renew the token of profile … trying again until it ends in N minutes" | The token the command is using could not be renewed yet. The run keeps trying; if the token ends first, the command is stopped. |
+| "the profile's login is now X, not Y, which the command started as; run it again" | Someone logged the profile in as another account during the run. Run the command again. |
 | "the profile changed in Settings while this run started; run it again" | Run it again; check `--list` if the account or project now differs. |
 | "waiting for another af-gcloud-exec or a profile sync …" | A login in a terminal, or another run, is using the workspace's gcloud store. It continues when that ends. |
 

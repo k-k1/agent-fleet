@@ -3,11 +3,12 @@ audience: "anyone connecting the workspace to something outside it"
 updated: "2026-10"
 ---
 
-# 10. Going further — browser pane / lightweight preview, external integrations, other hosts, environment settings
+# 10. Going further — browser pane / lightweight preview, external integrations, environment settings
 
 English | [日本語](10-integrations.ja.md)
 
-It's fine to read only the parts you need, when you need them.
+It's fine to read only the parts you need, when you need them. AWS, SSM hosts and Google Cloud are in
+[15 Cloud accounts](15-cloud-accounts.md).
 
 ## Viewing a web app you started — browser pane and lightweight preview
 
@@ -435,6 +436,23 @@ replies.
   before executing.
 - **Just want to silence notifications**: under Personal → the "Notifications" tab, **Service notifications**
   lets you turn off delivery without disconnecting.
+
+## CLIs that are already signed in
+
+These commands in a session or terminal use a connection you made in Settings, for every agent. You never log
+them in from the terminal, and an expiring token is renewed on use.
+
+| Command | Signed in by | Details |
+|---|---|---|
+| `git` | **Git hosting** (GitHub, Bitbucket) | [03](03-code.md#connect-a-git-provider) |
+| `gh` | **Git hosting**, GitHub | [03](03-code.md#use-gh-and-bkt-in-a-session) |
+| `bkt` | **Git hosting**, Bitbucket Cloud (bitbucket.org) | [03](03-code.md#use-gh-and-bkt-in-a-session) |
+| `jira` | **Issue tracker**, Jira | [03](03-code.md#use-jira-in-a-session) |
+| `af-aws-exec --profile <name> -- <command>` | **AWS profiles/SSM**, after **Log in** on the profile | [15](15-cloud-accounts.md#using-the-profiles-from-the-terminal-sdks-and-build-tools) |
+| `af-gcloud-exec --profile <name> -- <command>` | **Google Cloud**, after **Log in** on the profile | [15](15-cloud-accounts.md#running-a-command-as-a-profile) |
+
+Agents are told to use `jira` and `bkt` rather than a Jira, Bitbucket or Atlassian MCP server. The CLIs renew
+the login on every call, while an MCP connector's expired login needs the session restarted.
 
 ## Logging in to another in-house host (SSM)
 
