@@ -16,6 +16,8 @@ import { chatCreate } from "../chat/api.ts";
 import { openChat } from "../chat/open.ts";
 import { useFilesStore } from "../files/store.ts";
 import { openGallery } from "../gallery/open.ts";
+import { useStartWork } from "../repos/useStartWork.ts";
+import { kindIcon } from "../../lib/sessionkind.ts";
 
 const baseName = (p: string) => p.split("/").pop() || p;
 const parentOf = (p: string) => {
@@ -81,6 +83,7 @@ export function PathMenuItems({ path, type, runMenu, closeMenu, afterCopy }: Pat
   const toast = useToast();
   const copyText = usePathCopy();
   const openVerbChat = useVerbChat();
+  const startWork = useStartWork();
   const openTarget = useLayoutStore((s) => s.openTarget);
   // Outside home (scratch, the staged docs mount) only what works there is offered: the reader,
   // the gallery, translate / summarize and the folder zip all address home-relative paths.
@@ -104,6 +107,16 @@ export function PathMenuItems({ path, type, runMenu, closeMenu, afterCopy }: Pat
     const focus = isFile ? path : undefined;
     runMenu(() => openGallery(galleryDir, { focus, newPane }));
   };
+  // A plain shell whose cwd is the folder itself. The Agent resolves a relative `dir` against
+  // home and takes an absolute one as is, so the same call serves the home tree and a place
+  // outside it; no repo is named, so repoLast / prompt-history bookkeeping is skipped.
+  const openShellHere = () =>
+    runMenu(() => {
+      void startWork(
+        { dir: path, repo: "" },
+        { kind: "shell", driver: "", model: "", effort: "", startMode: "normal", prompt: "", title: tr("proj.shell_title", { name: baseName(path) }), images: [], worktree: false, subdir: "", base: "", newBranch: "" },
+      );
+    });
   const openFolderGalleryFromMenu = (e: RMouseEvent) => {
     const newPane = e.ctrlKey || e.metaKey || e.button === 1;
     runMenu(() => openGallery(folder, { newPane }));
@@ -136,6 +149,13 @@ export function PathMenuItems({ path, type, runMenu, closeMenu, afterCopy }: Pat
             onClick={() => runMenu(() => useFilesStore.getState().revealInFiles(folder, { focus: true }))}
           >
             <Icon name="folder" /> {tr("gallery.open_folder")}
+          </button>
+        </li>
+      )}
+      {type === "dir" && (
+        <li>
+          <button type="button" className="ui-menu-item" onClick={openShellHere}>
+            <Icon name={kindIcon("shell")} /> {tr("proj.open_shell_here")}
           </button>
         </li>
       )}
