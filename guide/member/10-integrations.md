@@ -328,7 +328,13 @@ exist on a deployment that runs workspaces on Kubernetes (a preview runtime) or 
 - You can reopen an attachment from **Preview** in the workspace action bar, under **Attached
   browsers**. If the same Chromium has other tabs, **Switch to another tab** moves between them.
 
-## Driving your workspace from an external Claude (MCP)
+## Using your workspace from an external agent (MCP)
+
+Your workspace answers MCP at one address, `https://<your Console address>/mcp`. An MCP client on your own
+computer connects there and works with your sessions, and with Agent Fleet memory if you allow it. Every call is
+checked against your role at that moment.
+
+### Driving your workspace from an external Claude (MCP)
 
 From Claude Code / Claude Desktop on your local PC you can **remotely drive** sessions in your workspace.
 Think "from my own Claude while I'm out, check on the session running in the company workspace and send it the
@@ -346,7 +352,7 @@ next instruction". Issue the token for this in **⚙ Settings → the "MCP token
 Tokens you no longer need can be **revoked** ("Revoke") on the same screen (once revoked, connections using
 that token are rejected from the next attempt).
 
-## Connecting a remote MCP client by signing in (OAuth)
+### Connecting a remote MCP client by signing in (OAuth)
 
 Where your administrator has turned it on, claude.ai, ChatGPT, Claude Code and Codex can connect to your workspace
 **without a token**: you sign in to the Console, look at what the app asks for, and allow it. If the deployment has
@@ -376,13 +382,13 @@ Only addresses on the deployment's approved list can receive the sign-in: `claud
 `chatgpt.com` by default, plus a command-line client on your own computer (`127.0.0.1`, `localhost`). A client whose
 callback is anywhere else is refused with an error page and is never sent your code.
 
-### Connected apps
+#### Connected apps
 
 Open **Settings → Connections → MCP tokens** and look below your Personal Access Tokens for **Connected apps**. Each OAuth connection shows the app name (self-declared, unverified), redirect host, tenant, scope, connection date and last use. Choose **Revoke** and confirm to end that connection immediately, including its refresh token. Reconnect from the app if you want to use it again. The section appears only when this deployment serves MCP OAuth.
 
 Your tenant administrator can disable MCP OAuth for the tenant. This revokes its existing OAuth connections and prevents new ones. Personal Access Tokens continue to work.
 
-## Using Agent Fleet memory from an external agent
+### Using Agent Fleet memory from an external agent
 
 The same MCP token can also let your own Claude Code / Claude Desktop use the memory Agent Fleet keeps (see
 [Agent memory](12-settings.md#agent-memory)). Two things have to be true: the token's scope, and **⚙ Settings → Agent
