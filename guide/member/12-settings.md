@@ -678,7 +678,7 @@ The same token can use your Agent Fleet memory too; the tab lists what it can do
 Your AWS profiles (shared settings), which `af-aws-exec` and SSM sessions sign in with, and SSM hosts (individual)
 for logging in to another in-house host. Each profile row has **Log in** to sign in to IAM Identity Center from the
 Console, and a signed-in row has **Log out** to end that profile's login only.
-→ [10 Going further](10-integrations.md#logging-in-to-another-in-house-host-ssm)
+→ [15 Cloud accounts](15-cloud-accounts.md#logging-in-to-another-in-house-host-ssm)
 
 ### Google Cloud
 
@@ -692,7 +692,7 @@ you paste the verification code Google shows into that same window, and only int
 A logged-in row says **"Logged in as <account>"** and offers **Log in again**, which signs in afresh for a login you
 know was revoked, and **Log out**, which deletes the workspace's login for that account (every profile using the
 account is logged out with it; nothing changes at Google). The WS bar's Google Cloud badge lists the same logins.
-→ [10 Going further](10-integrations.md#running-commands-in-google-cloud-as-you-af-gcloud-exec)
+→ [15 Cloud accounts](15-cloud-accounts.md#running-commands-in-google-cloud-as-you-af-gcloud-exec)
 
 ---
 
