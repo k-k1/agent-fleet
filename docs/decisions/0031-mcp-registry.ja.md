@@ -5,6 +5,7 @@
 - 状態: **採用・P0〜P4 実装済み**（レジストリ型 / 合成 / user CRUD / 接続テスト / Console タブ /
   アシスタント配線 / claude・codex のセッション materialize / **テナント配布**）。
   設計は [docs/48](../log/48-mcp-registry.md)。
+  状態の更新（2026-10-22）: 登録したリモートサーバーの OAuth 対応を [0119](0119-mcp-client-oauth.ja.md) で提案した。採用されれば、却下した「af が MCP のプロキシになる」案を OAuth のサーバーに限って見直す。
 - 関連: [history/19](../log/19-assistant-chat.md)（アシスタント）/ [0020](0020-chat-bridge.ja.md)（同型の CP ブリッジ）/
   docs/25（一般化の対象となる組み込み ops 連携）/ docs/20（egress allowlist）
 
