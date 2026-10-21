@@ -245,6 +245,19 @@ and a revoke button.
   Token issuance checks the tenant and revocation mark after insertion; re-enabling cannot
   resurrect a connection interrupted by disabling. Live-client runs remain tracked by #2435.
 
+- 2026-10-21, #2457: chose option A for ChatGPT's CIMD document. Its preferred
+  `token_endpoint_auth_method` is `private_key_jwt`, but its
+  `token_endpoint_auth_methods_supported` includes `none`. Accept a document when the
+  preferred method is empty or `none`, or the supported list contains `none`; continue
+  refusing a client secret. Our authorization server advertises only `none`, so ChatGPT
+  must use that common method. The client remains public with mandatory S256 PKCE;
+  `/token` still rejects `client_assertion`, Basic authentication and `client_secret`
+  rather than silently ignoring authentication. This clarifies decision 2 without
+  implementing private-key authentication or changing DCR. Option B, verifying
+  `private_key_jwt` against the document's `jwks_uri`, remains possible if a client
+  requires it. The published ChatGPT document is covered by a fixed test fixture;
+  a live ChatGPT connection remains unverified and tracked by #2435.
+
 - 2026-10-21, #2455: chose option 1: omit `scope` from the `/mcp` 401 challenge,
   keeping `resource_metadata` and the invalid-token error when applicable. This settles
   the open question above: the #2435 live run found that claude.ai sends the challenged

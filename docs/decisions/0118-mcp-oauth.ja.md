@@ -228,6 +228,17 @@ CI などのヘッドレスな呼び出しと、OAuth を持たないクライ�
   設定と失効印を確認し、再度有効にしても無効化で中断した接続は復活しない。
   実クライアントでの確認は引き続き #2435 で扱う。
 
+- 2026-10-21、#2457: ChatGPT の CIMD 文書への対応は選択肢 A を採用した。文書の既定の
+  `token_endpoint_auth_method` は `private_key_jwt` だが、
+  `token_endpoint_auth_methods_supported` に `none` も含まれる。既定の方式が空または `none`、
+  あるいは対応方式の一覧に `none` がある文書を受け付け、クライアントシークレットは引き続き拒否する。
+  認可サーバーが広告する方式は `none` だけなので、ChatGPT は共通するこの方式を使う必要がある。
+  クライアントは公開のままで S256 PKCE を必須とし、`/token` では `client_assertion`、Basic 認証、
+  `client_secret` を黙って無視せず拒否する。これは決定 2 の明確化であり、秘密鍵による認証の実装や
+  DCR の変更ではない。文書の `jwks_uri` を使って `private_key_jwt` を検証する選択肢 B は、
+  必要とするクライアントが現れた場合に引き続き採れる。公開されている ChatGPT 文書は固定 fixture の
+  テストで確認するが、ChatGPT の実接続は未検証で、引き続き #2435 で扱う。
+
 - 2026-10-21、#2455: 選択肢 1 を採用し、`/mcp` の 401 チャレンジから `scope` を外す。
   `resource_metadata` と、該当する場合の invalid-token エラーは残す。これで上記の未確定点は解決した。
   #2435 の実機確認では、claude.ai はチャレンジのスコープを送り、ChatGPT は `scopes_supported` の
