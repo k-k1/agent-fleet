@@ -118,6 +118,7 @@ export const sessions = {
   "wsbar.state_title.no_tenant_admin":
     "どのテナントにも所属していないため、ワークスペースがまだありません。管理 → テナント一覧 から、自分をメンバーとして追加してください。",
   "wsbar.start_failed": "ワークスペースを起動できませんでした",
+  "wsbar.stop_failed": "ワークスペースを停止できませんでした",
   // 「はじめる」／分割／全て閉じる
   "wsbar.start_here": "はじめる",
   "wsbar.start_here.running": "はじめる（チャット / リポジトリ / クローン / shell）",

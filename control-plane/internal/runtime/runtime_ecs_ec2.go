@@ -1987,7 +1987,7 @@ func (e *ecsEC2Runtime) converge(ctx context.Context, p ec2Placement, prep ec2Pr
 		}
 		if perr != nil {
 			log.Printf("ecs-ec2 start: re-placing %s after losing slot %s: %v", e.base.name, p.instanceID, perr)
-			e.unclaim(ctx, p.volumeID)
+			e.unclaimUnlessSuperseded(ctx, p)
 			return
 		}
 		e.converge(ctx, next, prep, retries-1)
@@ -1998,7 +1998,7 @@ func (e *ecsEC2Runtime) converge(ctx context.Context, p ec2Placement, prep ec2Pr
 		// Out of retries: the claim abandonLostSlot deliberately kept alive has no
 		// replacement coming, so drop it now instead of pinning the workspace at
 		// `starting` until it expires.
-		e.unclaim(ctx, p.volumeID)
+		e.unclaimUnlessSuperseded(ctx, p)
 	}
 }
 
@@ -2048,6 +2048,11 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 			// The box is up and the cluster cannot reach it: no amount of waiting fixes
 			// that. Get the home off it and out of the blast radius, then tell the caller
 			// to try a different slot rather than reporting a failed Start.
+			if e.startSuperseded(ctx, p) {
+				// The wait outlived a Stop (and maybe a newer Start on this very slot): the
+				// slot is not this Start's to tear down.
+				return errStartSuperseded
+			}
 			e.abandonLostSlot(ctx, p, err)
 			return err
 		}
@@ -2069,6 +2074,9 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 		// A slot that cannot mount is not a slow slot, it is a broken one, and leaving it
 		// in the pool means the next Start picks it too (measured: it did, for every user
 		// that followed). Take it out of the world before returning.
+		if e.startSuperseded(ctx, p) {
+			return errStartSuperseded
+		}
 		e.quarantineSlot(ctx, p, err)
 		return fmt.Errorf("mount home on %s: %w", p.instanceID, err)
 	}
@@ -2077,7 +2085,7 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 			// The mark is still on the home, so the next Start tries again; until then the
 			// workspace does not start with what the member asked to have removed. Dropping
 			// the claim lets State() say `stopped` now rather than when the claim expires.
-			e.unclaim(ctx, p.volumeID)
+			e.unclaimUnlessSuperseded(ctx, p)
 			return fmt.Errorf("clear home on %s: %w", p.instanceID, err)
 		}
 	}
@@ -2099,9 +2107,9 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 		//   maximumPercent 200 → 2 tasks, the FIRST from the old revision (2 of 2)
 		//   maximumPercent 100 → 1 task, always the new revision  (2 of 2)
 		// Before that this spot waited 53-55s for the old deployment to leave ACTIVE.
-		err = e.raiseService(ctx, p, e.scaleUpService)
+		err = e.underStart(ctx, p, e.scaleUpService)
 	} else {
-		err = e.raiseService(ctx, p, func(c context.Context) error {
+		err = e.underStart(ctx, p, func(c context.Context) error {
 			return e.upsertService(c, taskDefArn, p, !reused)
 		})
 	}
@@ -2119,6 +2127,11 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 // now, so drop the claim and make sure the home is not counted as dormant while its task
 // runs.
 func (e *ecsEC2Runtime) finishLaunch(ctx context.Context, p ec2Placement) {
+	if e.startSuperseded(ctx, p) {
+		// A Stop (or a newer Start) came in after the service was raised: the claim and the
+		// dormancy marks are theirs now.
+		return
+	}
 	if p.replacement {
 		e.clearReplacesHome(ctx, p.instanceID)
 	}
@@ -4185,14 +4198,21 @@ func (e *ecsEC2Runtime) pointServiceAt(ctx context.Context, taskDefArn string, p
 	if err != nil {
 		return false
 	}
-	if _, err := e.base.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
-		Cluster:                     aws.String(e.base.cfg.cluster),
-		Service:                     aws.String(e.base.name),
-		TaskDefinition:              aws.String(taskDefArn),
-		NetworkConfiguration:        netCfg,
-		DeploymentConfiguration:     ec2SingleTaskDeployment,
-		AvailabilityZoneRebalancing: ec2NoAZRebalancing,
-	}); err != nil {
+	// Under the same lock as the scale-up: an overtaken Start must not move a service that
+	// a Stop or a newer Start has since taken over (it would put the old revision back).
+	if err := e.underStart(ctx, p, func(c context.Context) error {
+		_, err := e.base.ecs.UpdateService(c, &ecs.UpdateServiceInput{
+			Cluster:                     aws.String(e.base.cfg.cluster),
+			Service:                     aws.String(e.base.name),
+			TaskDefinition:              aws.String(taskDefArn),
+			NetworkConfiguration:        netCfg,
+			DeploymentConfiguration:     ec2SingleTaskDeployment,
+			AvailabilityZoneRebalancing: ec2NoAZRebalancing,
+		})
+		return err
+	}); errors.Is(err, errStartSuperseded) {
+		return false
+	} else if err != nil {
 		log.Printf("ecs-ec2 start: could not pre-point %s at %s (falling back to the slower single update): %v",
 			e.base.name, taskDefArn, err)
 		return false
