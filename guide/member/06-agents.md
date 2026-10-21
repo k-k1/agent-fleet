@@ -100,7 +100,7 @@ The WS-bar usage chip needs an account-level limit to show: opencode
 
 ## Default model for the assistant chat
 
-**Default model for the assistant chat**: each assistant can pin its own model, and
+Each assistant can pin its own model, and
 claude's default is settable deployment-wide via `AF_CHAT_MODEL`. Fast, low-cost tiers are
 the defaults because the assistant is conversational: claude → Sonnet 5 · codex → the newest
 Luna it lists (`gpt-6-luna` at the time of writing) · opencode → `opencode-go/glm-5.2` when the account lists it, otherwise `opencode/nemotron-3-ultra-free` · agy → Gemini 3.5 Flash ·

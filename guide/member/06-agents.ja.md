@@ -97,7 +97,7 @@ WSバーの使用量チップは、アカウント単位の利用枠（使える
 
 ## アシスタントチャットの既定モデル
 
-**アシスタントチャットの既定モデル**：各アシスタントで個別にモデルを指定でき、claude の
+各アシスタントで個別にモデルを指定でき、claude の
 既定は配備全体で `AF_CHAT_MODEL` でも変更できます。会話用途のため高速・低コストの
 ティアを既定にしています: claude → Sonnet 5 · codex → 一覧にある最新の Luna（執筆時点で `gpt-6-luna`） · opencode →
 一覧にあれば `opencode-go/glm-5.2`、無ければ `opencode/nemotron-3-ultra-free` · agy → Gemini 3.5 Flash · cursor → Cursor 自身の既定
