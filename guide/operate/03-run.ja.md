@@ -226,7 +226,7 @@ opencode）には、agent が起動のたびに各トピックファイルを `a
 ## opencode 2：ターミナルセッションと共有サーバー
 
 opencode 2 では、ターミナル（CLI）セッションは Workspace Agent が動かす 1 つの opencode
-サーバーにつながります（[member/06](../member/06-agents.ja.md#opencode-2-での違い)）。代わりに
+サーバーにつながります（[member/06](../member/06-agents.ja.md#opencode)）。代わりに
 ターミナルセッションごとの専用サーバーに固定したいとき（1 セッションあたりメモリがおよそ
 150〜250 MB 多くなります。アイドル状態で計測）は、次を環境に入れて Workspace Agent を
 起動します。
