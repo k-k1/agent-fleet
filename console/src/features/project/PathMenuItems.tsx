@@ -16,6 +16,8 @@ import { chatCreate } from "../chat/api.ts";
 import { openChat } from "../chat/open.ts";
 import { useFilesStore } from "../files/store.ts";
 import { openGallery } from "../gallery/open.ts";
+import { useReposStore } from "../repos/store.ts";
+import { shellLaunchTarget } from "./shellTarget.ts";
 import { useStartWork } from "../repos/useStartWork.ts";
 import { kindIcon } from "../../lib/sessionkind.ts";
 
@@ -107,15 +109,17 @@ export function PathMenuItems({ path, type, runMenu, closeMenu, afterCopy }: Pat
     const focus = isFile ? path : undefined;
     runMenu(() => openGallery(galleryDir, { focus, newPane }));
   };
-  // A plain shell whose cwd is the folder itself. The Agent resolves a relative `dir` against
-  // home and takes an absolute one as is, so the same call serves the home tree and a place
-  // outside it; no repo is named, so repoLast / prompt-history bookkeeping is skipped.
+  // A plain shell whose cwd is the folder (target rules: shellTarget.ts). A launch outside a
+  // working copy is added to the active working set here, because useStartWork only does that
+  // for a home session.
   const openShellHere = () =>
     runMenu(() => {
-      void startWork(
-        { dir: path, repo: "" },
-        { kind: "shell", driver: "", model: "", effort: "", startMode: "normal", prompt: "", title: tr("proj.shell_title", { name: baseName(path) }), images: [], worktree: false, subdir: "", base: "", newBranch: "" },
-      );
+      const { dir, subdir, inCopy } = shellLaunchTarget(path, useReposStore.getState().repos.map((r) => r.name));
+      void startWork({ dir, repo: "" }, { kind: "shell", driver: "", model: "", effort: "", startMode: "normal", prompt: "", title: tr("proj.shell_title", { name: baseName(path) }), images: [], worktree: false, subdir, base: "", newBranch: "" })
+        .then((r) => {
+          if (r.ok && r.name && !inCopy) autoAddToActiveWorkingSet("sessions", r.name);
+        })
+        .catch(() => toast(tr("rp.launch_failed", { err: tr("err.network") })));
     });
   const openFolderGalleryFromMenu = (e: RMouseEvent) => {
     const newPane = e.ctrlKey || e.metaKey || e.button === 1;

@@ -29,11 +29,18 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 
 const started: { target: { dir: string; repo: string }; opts: { kind: string; title: string; worktree: boolean; subdir: string } }[] = [];
+let startResult: "ok" | "reject" = "ok";
 vi.mock("../repos/useStartWork.ts", () => ({
   useStartWork: () => async (target: { dir: string; repo: string }, opts: never) => {
     started.push({ target, opts });
-    return { ok: true };
+    if (startResult === "reject") throw new Error("network");
+    return { ok: true, name: "s-new" };
   },
+}));
+const addedToSet: [string, string][] = [];
+vi.mock("../../lib/workingSetsStore.ts", async (orig) => ({
+  ...(await orig<object>()),
+  autoAddToActiveWorkingSet: (kind: string, id: string) => addedToSet.push([kind, id]),
 }));
 
 const { ProjectFiles } = await import("./ProjectFiles.tsx");
@@ -73,6 +80,8 @@ async function menuFor(path: string): Promise<HTMLButtonElement | null> {
 
 beforeEach(() => {
   started.length = 0;
+  addedToSet.length = 0;
+  startResult = "ok";
   useWorkspaceStore.setState({ state: "running" });
   useFilesStore.setState({ reveal: { path: null, n: 0, focus: false } });
   useReposStore.setState({ repos: [] });
@@ -106,18 +115,41 @@ afterEach(() => {
 });
 
 
+async function clickShell(path: string): Promise<void> {
+  await render();
+  const item = await menuFor(path);
+  expect(item).not.toBeNull();
+  await act(async () => {
+    item!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
 describe("左ペインの右クリック「ここでシェルを開く」", () => {
-  it("フォルダには出て、そのフォルダを dir にしたシェルを起動する", async () => {
-    await render();
-    const item = await menuFor("repos/shots");
-    expect(item).not.toBeNull();
-    await act(async () => {
-      item!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
+  it("作業コピー内のフォルダは、コピーを dir にして起動し、グループへは足さない", async () => {
+    useReposStore.setState({ repos: [{ name: "shots" }] });
+    await clickShell("repos/shots");
     expect(started).toHaveLength(1);
     expect(started[0].target).toEqual({ dir: "repos/shots", repo: "" });
     expect(started[0].opts).toMatchObject({ kind: "shell", worktree: false, subdir: "" });
     expect(started[0].opts.title).toContain("shots");
+    expect(addedToSet).toEqual([]);
+  });
+
+  it("作業コピーに属さないフォルダは、そのパスを dir にして起動し、選択中のグループへ足す", async () => {
+    await clickShell("repos/docs");
+    expect(started[0].target).toEqual({ dir: "repos/docs", repo: "" });
+    expect(started[0].opts.subdir).toBe("");
+    expect(addedToSet).toEqual([["sessions", "s-new"]]);
+  });
+
+  it("起動が例外で落ちても未処理にせず、失敗を通知する", async () => {
+    startResult = "reject";
+    await clickShell("repos/docs");
+    expect(document.body.textContent).toContain("Launch failed");
+    expect(addedToSet).toEqual([]);
   });
 
   it("ファイルには出ない", async () => {
