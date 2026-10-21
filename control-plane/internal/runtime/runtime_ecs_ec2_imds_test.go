@@ -238,6 +238,23 @@ func TestDropInMiBRejectsBrokenDropIns(t *testing.T) {
 }
 
 func TestSlotUserDataProtectsManagementPlaneMemory(t *testing.T) {
+	// slotScript trims every line, so a line that fell out of the YAML block scalar
+	// (and would break the whole template) is invisible to it: check the raw indent.
+	raw, err := os.ReadFile("../../../deploy/aws/ecs/cfn/40-ec2-pool.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := false
+	for i, l := range strings.Split(string(raw), "\n") {
+		switch tl := strings.TrimSpace(l); {
+		case tl == "# BEGIN memmin":
+			in = true
+		case tl == "# END memmin":
+			in = false
+		case in && tl != "" && !strings.HasPrefix(l, strings.Repeat(" ", 14)):
+			t.Errorf("40-ec2-pool.yaml:%d leaves the UserData block scalar: %q", i+1, l)
+		}
+	}
 	dir := t.TempDir()
 	section := slotScript(t, "memmin")
 	section = strings.ReplaceAll(section, "/etc/systemd/system", dir+"/systemd")
