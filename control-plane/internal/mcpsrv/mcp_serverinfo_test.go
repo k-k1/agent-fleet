@@ -70,3 +70,35 @@ func TestMCPServerInfoWithoutHTTPSBaseHasNoIcons(t *testing.T) {
 		}
 	}
 }
+
+// PUBLIC_BASE_URL is operator-typed: only its https origin may reach the icon URLs.
+func TestMCPServerInfoNormalisesBaseURL(t *testing.T) {
+	cases := map[string]string{
+		"https://af.example.test/":         "https://af.example.test",
+		"https://af.example.test:8443":     "https://af.example.test:8443",
+		"https://af.example.test/console/": "https://af.example.test",
+		"https://af.example.test?x=1":      "https://af.example.test",
+		"https://af.example.test/#frag":    "https://af.example.test",
+		"https:///missing-host":            "",
+		"https://user:pw@af.example.test":  "",
+		"ftp://af.example.test":            "",
+		"not a url":                        "",
+	}
+	for in, want := range cases {
+		info := serverInfo(ServerIdentity{PublicBaseURL: in})
+		got, _ := info["websiteUrl"].(string)
+		if got != want {
+			t.Errorf("%q: websiteUrl = %q, want %q", in, got, want)
+		}
+		if want == "" {
+			if _, ok := info["icons"]; ok {
+				t.Errorf("%q: icons must be omitted", in)
+			}
+			continue
+		}
+		icons := info["icons"].([]map[string]any)
+		if icons[1]["src"] != want+"/brand/icon-512.png" {
+			t.Errorf("%q: icon src = %v", in, icons[1]["src"])
+		}
+	}
+}

@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -229,7 +230,7 @@ func serverInfo(id ServerIdentity) map[string]any {
 		"version":     version,
 		"description": mcpServerDescription,
 	}
-	if base := strings.TrimRight(id.PublicBaseURL, "/"); strings.HasPrefix(base, "https://") {
+	if base := httpsOrigin(id.PublicBaseURL); base != "" {
 		info["websiteUrl"] = base
 		info["icons"] = []map[string]any{
 			{"src": base + "/brand/icon-192.png", "mimeType": "image/png", "sizes": []string{"192x192"}},
@@ -237,6 +238,18 @@ func serverInfo(id ServerIdentity) map[string]any {
 		}
 	}
 	return info
+}
+
+// httpsOrigin reduces PUBLIC_BASE_URL to "https://host[:port]", or "" when it is not a
+// usable https origin (other scheme, no host, userinfo, unparsable). The brand routes sit
+// at the origin root, so a path, query or fragment in the setting is dropped rather than
+// concatenated into the icon URLs.
+func httpsOrigin(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil {
+		return ""
+	}
+	return "https://" + u.Host
 }
 
 // identity is the CP's self-description; zero when no CP is wired (unit tests).
