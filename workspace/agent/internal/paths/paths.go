@@ -5,6 +5,7 @@
 package paths
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -253,4 +254,34 @@ func SessionWorkDir(name string) string {
 		return ""
 	}
 	return filepath.Join(HomeDir(), ".af-work", name)
+}
+
+// SessionWorkDirMarker is the empty file the Agent leaves in every directory it creates under
+// ~/.af-work. The boot prune removes an orphaned directory only when it carries this file; a
+// folder a member made there by hand has none and stays until they remove it from Settings >
+// Machine. Directories made before the marker existed have none either, so they are kept at
+// boot too.
+const SessionWorkDirMarker = ".af-session-workdir"
+
+// MarkSessionWorkDir writes the marker into an existing directory.
+func MarkSessionWorkDir(dir string) error {
+	f, err := os.OpenFile(filepath.Join(dir, SessionWorkDirMarker), os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+// MakeSessionWorkDir creates SessionWorkDir(name) and marks it as the Agent's own, also when
+// it already exists, so a session started before the marker existed is marked on its next
+// launch. "" and an error for a name that could escape ~/.af-work.
+func MakeSessionWorkDir(name string) (string, error) {
+	wd := SessionWorkDir(name)
+	if wd == "" {
+		return "", errors.New("bad session work dir name")
+	}
+	if err := os.MkdirAll(wd, 0o700); err != nil {
+		return "", err
+	}
+	return wd, MarkSessionWorkDir(wd)
 }

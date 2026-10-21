@@ -1,15 +1,19 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
@@ -33,14 +37,19 @@ func isolateLeftovers(t *testing.T) (home, proc string) {
 	return home, proc
 }
 
-func pruneKind(t *testing.T, name string) leftoverRemoved {
+// pruneKind is the Settings button; pruneKindBoot the unattended boot pass.
+func pruneKind(t *testing.T, name string) leftoverRemoved { return pruneKindAs(t, name, false) }
+
+func pruneKindBoot(t *testing.T, name string) leftoverRemoved { return pruneKindAs(t, name, true) }
+
+func pruneKindAs(t *testing.T, name string, boot bool) leftoverRemoved {
 	t.Helper()
 	k, ok := findLeftoverKind(name)
 	if !ok {
 		t.Fatalf("no kind %s", name)
 	}
 	pins, _ := workspacePins()
-	r, err := k.prune(homeDir(), pins)
+	r, err := k.prune(homeDir(), pins, boot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,5 +412,44 @@ func TestDeleteLeftoversReportsAPartialFailure(t *testing.T) {
 	// Nothing went: an error.
 	if rec := del(); rec.Code != http.StatusInternalServerError {
 		t.Fatalf("all failed = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A folder a member made under ~/.af-work has no marker: boot keeps it, the button removes it.
+// A directory the Agent made (marked) still goes at boot, and each removal is logged by path.
+func TestLeftoversAfWorkBootRemovesOnlyMarkedOrphans(t *testing.T) {
+	home, _ := isolateLeftovers(t)
+	work := filepath.Join(home, ".af-work")
+	writeSized(t, filepath.Join(work, "mywork", "notes.txt"), 10)
+	writeSized(t, filepath.Join(work, "sgone01", "x"), 10)
+	writeSized(t, filepath.Join(work, "sgone01", paths.SessionWorkDirMarker), 0)
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	r := pruneKindBoot(t, "af-work")
+
+	assertEntries(t, work, "mywork")
+	if r.Count != 1 || !strings.Contains(logs.String(), filepath.Join(work, "sgone01")) {
+		t.Fatalf("removed = %+v, log = %q", r, logs.String())
+	}
+
+	// The survey lists the unmarked one as a candidate, and the button takes it.
+	rec := httptest.NewRecorder()
+	handleLeftoverUsage(rec, httptest.NewRequest("GET", "/cleanup/leftovers", nil))
+	var u leftoverUsage
+	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range u.Kinds {
+		if row.Kind == "af-work" && row.Count != 1 {
+			t.Fatalf("survey af-work = %+v", row)
+		}
+	}
+	logs.Reset()
+	pruneKind(t, "af-work")
+	assertEntries(t, work)
+	if !strings.Contains(logs.String(), filepath.Join(work, "mywork")) {
+		t.Fatalf("button removal not logged: %q", logs.String())
 	}
 }

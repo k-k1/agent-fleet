@@ -36,7 +36,13 @@ func WriteHandoverFile(target, source, md string) (string, error) {
 		return "", fmt.Errorf("handover: bad target name %q", target)
 	}
 	dest := filepath.Join(dir, HandoverFileName(source))
-	return dest, writeFileSynced(dest, []byte(md))
+	if err := writeFileSynced(dest, []byte(md)); err != nil {
+		return dest, err
+	}
+	// A managed target's directory is made by this write, not at launch; mark it as the
+	// Agent's own. Best effort: unmarked only means the boot prune keeps it.
+	_ = paths.MarkSessionWorkDir(dir)
+	return dest, nil
 }
 
 // ListHandoverFiles names the handover files in a session's own directory, sorted. Those are
@@ -205,6 +211,9 @@ func RemoveHandoverFiles(target string, names []string) error {
 	}
 	if len(errs) > 0 {
 		return errors.Join(errs...)
+	}
+	if ents, err := os.ReadDir(dir); err == nil && len(ents) == 1 && ents[0].Name() == paths.SessionWorkDirMarker {
+		_ = os.Remove(filepath.Join(dir, paths.SessionWorkDirMarker))
 	}
 	_ = os.Remove(dir) // fails, harmlessly, when anything else is in it
 	return nil
