@@ -295,6 +295,13 @@ those variables in for one `exec`:
     fetch fails with nothing cached, jira runs on the base and a hint names
     `jira init -c ~/.config/agent-fleet/jira/<name>.yml --project B --board "<name>"`. A config
     whose `project.key` cannot be read plainly, or that has no `-p`, is used as is.
+- **`issue comment edit|delete KEY ID`** (jira-cli has only `comment add`): for a config of ours
+  the wrapper `exec`s `workspace-agent jira-comment` with its own argv, before it asks for the
+  credential, so the token never passes through the shell. The helper does `PUT` / `DELETE` on
+  `/rest/api/3/issue/KEY/comment/ID` (`write:jira-work`), with the body as Markdown converted to
+  ADF (`jira_adf.go`, goldmark) rather than through jira-cli's wiki converter (#2476), so an edit
+  repairs a garbled comment. A `--debug` run is refused. The user's own setup (next bullet) is
+  exec'd unchanged, where jira answers that it has no such command.
 - **The user's own setup wins**: an explicit `JIRA_API_TOKEN` or `JIRA_SERVER`, a `jira init`
   given its own `--server` / `--login` / `--installation` / `--auth-type`, or any config outside
   the managed directory (`-c` in any spelling, `JIRA_CONFIG_FILE`, or jira's own default

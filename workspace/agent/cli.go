@@ -220,6 +220,14 @@ var subcommands = []subcommand{
 		run:     runJiraIssueTypes,
 	},
 	{
+		// `jira issue comment edit|delete`, which jira-cli lacks, for the PATH wrapper at
+		// /usr/local/bin/jira. See jira_comment.go.
+		name:    "jira-comment",
+		summary: "Jira comment edit / delete for the jira wrapper",
+		hidden:  true,
+		run:     runJiraComment,
+	},
+	{
 		// Transparent SVN auth: the PATH shim at /usr/local/bin/svn re-enters this binary,
 		// which fills in the credential and execs the real svn — so the process svn's caller
 		// sees is still svn. See svn_wrapper.go.

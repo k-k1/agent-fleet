@@ -277,6 +277,13 @@ Jira は git でなく作業項目インボックス
     失敗してキャッシュもないときは、元の設定のまま jira を動かし、
     `jira init -c ~/.config/agent-fleet/jira/<名前>.yml --project B --board "<名前>"` を案内する
     ヒントを出す。`project.key` を単純に読めない設定や `-p` なしの実行は、そのまま使う。
+- **`issue comment edit|delete KEY ID`**（jira-cli にあるのは `comment add` だけ）: 当方の設定なら、
+  ラッパーは資格情報を取りに行く前に、自分の argv のまま `workspace-agent jira-comment` へ `exec`
+  する。トークンがシェルを通ることはない。ヘルパーは `/rest/api/3/issue/KEY/comment/ID` に
+  `PUT` / `DELETE` を送り（`write:jira-work`）、本文は Markdown を ADF に変換して送る
+  （`jira_adf.go`、goldmark）。jira-cli の wiki 変換は通さない（#2476）ので、編集で崩れたコメントを
+  直せる。`--debug` の実行は断る。利用者自身の設定（次の項目）はそのまま `exec` し、jira が
+  「そのコマンドはない」と答える。
 - **利用者自身の設定が勝つ**: 明示の `JIRA_API_TOKEN` か `JIRA_SERVER`、自分で `--server` /
   `--login` / `--installation` / `--auth-type` を渡した `jira init`、または管理ディレクトリの
   外の設定（どの書き方の `-c` でも、`JIRA_CONFIG_FILE` でも、jira 自身の既定の

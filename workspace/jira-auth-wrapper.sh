@@ -32,13 +32,17 @@
 #   the configured or -p project, not the issue key's. A config of ours without project.key makes
 #   Jira answer a bare 400, so `issue assign KEY-N` gets `-p KEY` from the key's prefix; the other
 #   commands only get a one-line hint. An explicit -p, or any `project:` entry in the config, wins.
+# - `issue comment edit|delete KEY ID` does not exist in jira-cli. For a config of ours it goes to
+#   `workspace-agent jira-comment`, which holds the token itself and calls REST v3 (the body is
+#   Markdown converted to ADF there); the wrapper never sees the token for it. A user-owned
+#   config or an explicit token never gets here: those exec jira unchanged, as for everything else.
 # - Fails closed: any helper error leaves jira running with no injected auth.
 # - The token only ever lives in this shell's variables and, at the very end, in the exec'd
 #   jira's environment: never argv, never a file, never printed. xtrace and allexport are
 #   switched off first, and the variables are unset so none inherits an export attribute:
 #   otherwise the assignments below would be echoed, or exported to every helper.
 set +xa
-unset cred tok server auth login cfg sub sub2 proj cfg_argv own_init debug prev conf managed gen
+unset comment_cmd cred tok server auth login cfg sub sub2 sub3 proj cfg_argv own_init debug prev conf managed gen
 unset parent eff key cdir types derived yaml hint basekey soft npos ikey haveproj hasasg dd pv
 
 real="${AF_JIRA_REAL:-/usr/local/libexec/jira}"
@@ -56,7 +60,7 @@ fi
 # The config jira will read, the subcommand (and the word after it), the project, and whether
 # this is a debug run, from argv. Cobra takes the last -c, in any of -c X, -cX, -c=X, --config X,
 # --config=X; -p / --project the same way.
-cfg="" sub="" sub2="" proj="" own_init="" debug="" prev="" parent=""
+cfg="" sub="" sub2="" sub3="" proj="" own_init="" debug="" prev="" parent=""
 for a in "$@"; do
   case "$prev" in
     -c | --config) cfg="$a"; prev=""; continue ;;
@@ -76,7 +80,7 @@ for a in "$@"; do
     --server | --server=* | --login | --login=* | --installation | --installation=* | --auth-type | --auth-type=*)
       own_init=1 ;;
     -*) ;;
-    *) if [ -z "$sub" ]; then sub="$a"; elif [ -z "$sub2" ]; then sub2="$a"; fi ;;
+    *) if [ -z "$sub" ]; then sub="$a"; elif [ -z "$sub2" ]; then sub2="$a"; elif [ -z "$sub3" ]; then sub3="$a"; fi ;;
   esac
 done
 case "$sub" in initialize | configure | config | setup) sub=init ;; esac
@@ -114,9 +118,23 @@ else
   fi
   [ -s "$gen" ] && export JIRA_CONFIG_FILE="$gen"
 fi
+comment_cmd=""
+if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && [ "$sub2" = comment ] &&
+  { [ "$sub3" = edit ] || [ "$sub3" = delete ]; }; then
+  comment_cmd=1
+fi
 if [ -n "$debug" ]; then
+  if [ -n "$comment_cmd" ]; then
+    echo "jira: comment $sub3 is not available in a debug run (it would print the Authorization header)" >&2
+    exit 1
+  fi
   echo "jira: debug output prints the Authorization header, so this run gets no credential from the connection" >&2
   exec "$real" "$@"
+fi
+
+# Not a jira-cli command: the Agent makes the call with its own copy of the credential.
+if [ -n "$comment_cmd" ]; then
+  exec workspace-agent jira-comment "$@"
 fi
 
 # First value of a `key=value` line in the helper's answer on stdin.

@@ -162,10 +162,17 @@ directory belongs to someone else.
   retrying `jira init`, and do not switch to an MCP tool for it). When the wrapper prints "no issue types"
   instead, `issue create` could not get them: run `jira init`. Never paste a token, run `jira init` with your own
   `--server`, or add `--debug` (it gets no credential).
-  Markdown bodies (`comment add`, `edit -b`): open with a heading or a list, or put inline markup
+  Markdown bodies (`comment add`, `issue create` / `issue edit -b`): open with a heading or a list, or put inline markup
   (bold, a link, `code`) in the first paragraph, and always leave a blank line before a list — until the
   first markup the CLI glues a list, heading, code block or quote onto the paragraph before it
-  (`Intro.`, blank line, `- a` is sent as `Intro.* a`).
+  (`Intro.`, blank line, `- a` is sent as `Intro.* a`). A comment already garbled is repaired with
+  `jira issue comment edit` (next bullet).
+- **Jira comments: `jira issue comment edit KEY ID` and `delete KEY ID`** exist only through the
+  wrapper (jira-cli has none); edit takes `-b`, `-T FILE` (`-` = stdin) or piped stdin and sends
+  the Markdown as ADF (no glue bug). Find ID with
+  `jira issue view KEY --raw` (`.fields.comment.comments[].id`). Edit or delete only a comment you
+  posted in this session or one the user named. They refuse a `--debug` run and a config of the
+  user's own (jira then says it has no such command).
 - The clock is the workspace's local timezone (`date`), not UTC. Outbound network may be
   restricted; an unreachable host is not necessarily an error.
 - **AWS: the default credential chain is not the user.** A bare `aws` / SDK / build-tool call
