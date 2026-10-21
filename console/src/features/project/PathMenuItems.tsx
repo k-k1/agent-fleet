@@ -17,7 +17,7 @@ import { openChat } from "../chat/open.ts";
 import { useFilesStore } from "../files/store.ts";
 import { openGallery } from "../gallery/open.ts";
 import { useReposStore } from "../repos/store.ts";
-import { shellLaunchTarget } from "./shellTarget.ts";
+import { needsRepoList, shellLaunchTarget } from "./shellTarget.ts";
 import { useStartWork } from "../repos/useStartWork.ts";
 import { kindIcon } from "../../lib/sessionkind.ts";
 
@@ -114,12 +114,19 @@ export function PathMenuItems({ path, type, runMenu, closeMenu, afterCopy }: Pat
   // for a home session.
   const openShellHere = () =>
     runMenu(() => {
-      const { dir, subdir, inCopy } = shellLaunchTarget(path, useReposStore.getState().repos.map((r) => r.name));
-      void startWork({ dir, repo: "" }, { kind: "shell", driver: "", model: "", effort: "", startMode: "normal", prompt: "", title: tr("proj.shell_title", { name: baseName(path) }), images: [], worktree: false, subdir, base: "", newBranch: "" })
-        .then((r) => {
-          if (r.ok && r.name && !inCopy) autoAddToActiveWorkingSet("sessions", r.name);
-        })
-        .catch(() => toast(tr("rp.launch_failed", { err: tr("err.network") })));
+      void (async () => {
+        // An unread list is not "no working copies": launching on it would file a folder of a
+        // working copy as a plain path, with the wrong Meta.Repo for good. Read it first.
+        const store = useReposStore.getState();
+        if (needsRepoList(path) && store.loadState !== "ok") await store.refresh();
+        if (needsRepoList(path) && useReposStore.getState().loadState !== "ok") {
+          toast(tr("rp.launch_failed", { err: tr("err.network") }));
+          return;
+        }
+        const { dir, subdir, inCopy } = shellLaunchTarget(path, useReposStore.getState().repos.map((r) => r.name));
+        const r = await startWork({ dir, repo: "" }, { kind: "shell", driver: "", model: "", effort: "", startMode: "normal", prompt: "", title: tr("proj.shell_title", { name: baseName(path) }), images: [], worktree: false, subdir, base: "", newBranch: "" });
+        if (r.ok && r.name && !inCopy) autoAddToActiveWorkingSet("sessions", r.name);
+      })().catch(() => toast(tr("rp.launch_failed", { err: tr("err.network") })));
     });
   const openFolderGalleryFromMenu = (e: RMouseEvent) => {
     const newPane = e.ctrlKey || e.metaKey || e.button === 1;

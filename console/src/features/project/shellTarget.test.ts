@@ -14,6 +14,10 @@ describe("shellLaunchTarget", () => {
     expect(shellLaunchTarget("repos/scratch/x", names)).toEqual({ dir: "repos/scratch/x", subdir: "", inCopy: false });
     expect(shellLaunchTarget("notes", names)).toEqual({ dir: "notes", subdir: "", inCopy: false });
   });
+  it("spells a subdir that starts with ~ as ./~ so the Agent does not read a home expansion", () => {
+    expect(shellLaunchTarget("repos/app/~backup/x", names).subdir).toBe("./~backup/x");
+    expect(shellLaunchTarget("repos/app/a/~b", names).subdir).toBe("a/~b");
+  });
   it("launches an absolute path by path, even when it looks like a working copy", () => {
     expect(shellLaunchTarget("/repos/app/x", names)).toEqual({ dir: "/repos/app/x", subdir: "", inCopy: false });
   });

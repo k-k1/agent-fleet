@@ -84,7 +84,7 @@ beforeEach(() => {
   startResult = "ok";
   useWorkspaceStore.setState({ state: "running" });
   useFilesStore.setState({ reveal: { path: null, n: 0, focus: false } });
-  useReposStore.setState({ repos: [] });
+  useReposStore.setState({ repos: [], loadState: "ok" });
   served = {
     repos: [
       // Two entries so the folder is not folded away into a passthrough row.
@@ -129,7 +129,7 @@ async function clickShell(path: string): Promise<void> {
 
 describe("左ペインの右クリック「ここでシェルを開く」", () => {
   it("作業コピー内のフォルダは、コピーを dir にして起動し、グループへは足さない", async () => {
-    useReposStore.setState({ repos: [{ name: "shots" }] });
+    useReposStore.setState({ repos: [{ name: "shots" }], loadState: "ok" });
     await clickShell("repos/shots");
     expect(started).toHaveLength(1);
     expect(started[0].target).toEqual({ dir: "repos/shots", repo: "" });
@@ -150,6 +150,13 @@ describe("左ペインの右クリック「ここでシェルを開く」", () =
     await clickShell("repos/docs");
     expect(document.body.textContent).toContain("Launch failed");
     expect(addedToSet).toEqual([]);
+  });
+
+  it("作業コピー一覧が未取得なら、コピー外と決め打ちせず起動しないで通知する", async () => {
+    useReposStore.setState({ repos: [], loadState: "unreachable" });
+    await clickShell("repos/docs");
+    expect(started).toHaveLength(0);
+    expect(document.body.textContent).toContain("Launch failed");
   });
 
   it("ファイルには出ない", async () => {
