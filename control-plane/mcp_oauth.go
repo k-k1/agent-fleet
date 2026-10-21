@@ -26,6 +26,7 @@ import (
 	"net/netip"
 	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -348,11 +349,12 @@ func (a *mcpOAuthAPI) vettedRedirects(uris []string) []string {
 }
 
 type cimdDocument struct {
-	ClientID     string   `json:"client_id"`
-	ClientName   string   `json:"client_name"`
-	RedirectURIs []string `json:"redirect_uris"`
-	AuthMethod   string   `json:"token_endpoint_auth_method"`
-	ClientSecret string   `json:"client_secret"`
+	ClientID             string   `json:"client_id"`
+	ClientName           string   `json:"client_name"`
+	RedirectURIs         []string `json:"redirect_uris"`
+	AuthMethod           string   `json:"token_endpoint_auth_method"`
+	AuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
+	ClientSecret         string   `json:"client_secret"`
 }
 
 const (
@@ -381,9 +383,11 @@ func (a *mcpOAuthAPI) loadCIMD(ctx context.Context, id string) (mcpClient, error
 	if len(body) > cimdMaxBody {
 		return mcpClient{}, errMCPClientUnknown
 	}
+	// A preferred method can differ from the common method: ChatGPT supports none
+	// even though its document prefers private_key_jwt. Tokens still require none.
 	var doc cimdDocument
 	if json.Unmarshal(body, &doc) != nil || doc.ClientID != id || doc.ClientSecret != "" ||
-		(doc.AuthMethod != "" && doc.AuthMethod != "none") {
+		(doc.AuthMethod != "" && doc.AuthMethod != "none" && !slices.Contains(doc.AuthMethodsSupported, "none")) {
 		return mcpClient{}, errMCPClientUnknown
 	}
 	if len(doc.RedirectURIs) > mcpOAuthMaxRedirects {
