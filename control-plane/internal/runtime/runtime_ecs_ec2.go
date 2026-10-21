@@ -1989,12 +1989,18 @@ func (e *ecsEC2Runtime) superseded(ctx context.Context, p ec2Placement) bool {
 // adopts like any attachment.
 func (e *ecsEC2Runtime) releaseAndReplace(ctx context.Context, p ec2Placement) (ec2Placement, bool) {
 	fail := func(why string, err error) (ec2Placement, bool) {
-		if e.superseded(ctx, p) {
-			return ec2Placement{}, false
+		// Ownership is asked on a detached context (ifCurrentStart): a failure is most often
+		// the background budget running out, and reading the Start count on that expired
+		// context fails too, which would read as "overtaken" and drop the one reason there is.
+		owned := e.ifCurrentStart(ctx, p.gen, func() {
+			log.Printf("ecs-ec2 start: %s for %s: %v", why, e.base.name, err)
+			e.setPhase(blockedPhasePrefix + why + ": " + err.Error())
+		})
+		if owned {
+			dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			e.unclaimIfOurs(dctx, p)
 		}
-		log.Printf("ecs-ec2 start: %s for %s: %v", why, e.base.name, err)
-		e.unclaimIfOurs(ctx, p)
-		e.ifCurrentStart(ctx, p.gen, func() { e.setPhase(blockedPhasePrefix + why + ": " + err.Error()) })
 		return ec2Placement{}, false
 	}
 	if e.superseded(ctx, p) {

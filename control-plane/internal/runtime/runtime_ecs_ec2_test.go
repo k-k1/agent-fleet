@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -728,6 +729,8 @@ type fakeSSMCmd struct {
 	// onSend, when set, is called with each command as it is sent, so a test can look at
 	// the rest of the fake world at that moment.
 	onSend func(cmd string)
+	// status, when set and non-empty for a command, is the invocation status reported for it.
+	status func(cmd string) string
 }
 
 func (f *fakeSSMCmd) SendCommand(_ context.Context, in *ssm.SendCommandInput, _ ...func(*ssm.Options)) (*ssm.SendCommandOutput, error) {
@@ -764,6 +767,11 @@ func (f *fakeSSMCmd) GetCommandInvocation(_ context.Context, in *ssm.GetCommandI
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	cmd := aws.ToString(in.CommandId)
+	if f.status != nil {
+		if st := f.status(cmd); st != "" {
+			return &ssm.GetCommandInvocationOutput{Status: ssmtypes.CommandInvocationStatus(st)}, nil
+		}
+	}
 	for sub := range f.fail {
 		if strings.Contains(cmd, sub) {
 			return &ssm.GetCommandInvocationOutput{Status: "Failed", StandardErrorContent: aws.String("boom")}, nil
@@ -5414,5 +5422,52 @@ func TestECSEC2SizeChangeOvertakenDuringTheReleaseIsNotReplaced(t *testing.T) {
 	}
 	if got := h.rt.BootPhase(); strings.HasPrefix(got, blockedPhasePrefix) {
 		t.Errorf("phase = %q, overtaken release reported a failure", got)
+	}
+}
+
+// The production way a wedged release ends: the umount sits Pending until the background
+// budget runs out. With a store, reading the Start count on that expired context fails, and
+// that used to read as "overtaken" — leaving no reason at all and a plain `stopped`.
+func TestECSEC2SizeChangeDeadlineKeepsABlockedReasonWithAStore(t *testing.T) {
+	ctx := context.Background()
+	h := sizeChangeHome(t)
+	h.rt.leases = newFakeLeaseStore()
+	h.rt.replica = "R/"
+	h.rt.leasePoll = 2 * time.Millisecond
+	h.rt.sleep = sleepCtx
+	t.Cleanup(func() {
+		startGen.Delete("R/af-ws-acme-alice")
+		homeMountLocks.Delete("R/af-ws-acme-alice")
+		claimGenLocks.Delete("R/af-ws-acme-alice")
+	})
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	bg, expire := context.WithCancel(ctx)
+	defer expire()
+	var polls atomic.Int32
+	h.ssmc.status = func(cmd string) string {
+		if !strings.HasPrefix(cmd, "af-umount") {
+			return ""
+		}
+		if polls.Add(1) == 1 {
+			expire() // the background budget ends while the umount is still Pending
+			return "Pending"
+		}
+		return "Success"
+	}
+	pending := h.deferred
+	h.deferred = nil
+	for _, fn := range pending {
+		fn(bg)
+	}
+	if polls.Load() == 0 {
+		t.Fatal("the release never reached the umount, so the deadline path was not exercised")
+	}
+	if got := h.rt.BootPhase(); !strings.HasPrefix(got, blockedPhasePrefix) {
+		t.Fatalf("BootPhase = %q, want a blocked reason after the budget ran out", got)
+	}
+	if got := h.rt.State(ctx); got == "starting" {
+		t.Errorf("State = %q, the claim outlived the failed release", got)
 	}
 }
