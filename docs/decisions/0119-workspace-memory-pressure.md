@@ -53,7 +53,7 @@ per sample, every 5 seconds:
 | File | What is taken | Used for |
 |---|---|---|
 | `memory.pressure` | `some` and `full`: `avg10`, `avg60`, and the `total` microsecond counters | **the trigger** |
-| `memory.stat` | `anon`, `file`, `inactive_file`, `workingset_refault_file` | the working set, and the refault rate as a second thrash signal |
+| `memory.stat` | `anon`, `file`, `shmem`, `inactive_file`, `workingset_refault_file` | the working set, and the refault rate as a second thrash signal |
 | `memory.current`, `memory.max` | working set = `current − inactive_file`, against `max` | corroboration, and the member-facing "N of M" |
 | `memory.events` | deltas of `high`, `max`, `oom`, `oom_kill` | evidence (a `max` event means allocations hit the limit and had to reclaim) |
 
@@ -216,7 +216,7 @@ measurement therefore carries known / partial / unknown. A partial sum is never 
 footprint, and a session with unknown processes is not ranked below one without; if the top
 candidates include one, the stop is deferred (and logged) instead of choosing among the readable.
 Unreadable or unattributable is **never** evidence that a process is an orphan: Chromium is treated as
-orphaned only when its environment was read and names no live session. At start the Agent runs a
+orphaned only when a non-empty, valid `AF_SESSION_NAME` was positively read from its environment, that name is a stopped or deleted session, and it is not the Chromium the Agent keeps for the member's own viewing or otherwise protected. No marker, an empty or unknown one, or an unreadable environment (a browser the member started by hand) is "other" and is left alone. At start the Agent runs a
 positive control (a same-uid process reads fine) and a negative control (a denied read is recognised as
 denial), and enforcement is off if either does not behave; phase 0 records the same check.
 
@@ -284,7 +284,7 @@ runway before the cap.* How it composes with the existing numbers if adopted:
 **Operator and audit.**
 
 - One Agent log line per stage transition and per stop, with the figures that triggered it (`some` and
-  `full` `avg10`/`avg60`, working set, `max`, the chosen session and its `Pss_Anon`).
+  `full` `avg10`/`avg60`, working set, `max`, the chosen session and its footprint, `Pss_Anon` + `Pss_Shmem`).
 - The CP records stage transitions and automatic stops in the audit log, under actions of their own
   (no reuse of the member-initiated halt's action), so "who stopped this session" has the answer
   "the memory ladder".
@@ -336,9 +336,9 @@ thrashes" and does not claim to prevent it.
 What phase 0 records, per runtime and per size, kept as a time series (not only the latest):
 
 1. **How it is collected.** In `measure` mode the Agent runs a per-session sampler **independent of the
-   stage**, every 60 s: `status` for every process, `smaps_rollup` for at most the top 5 by
-   `RssAnon + RssShmem` per sample (it walks page tables and briefly holds the mmap lock, so it is capped
-   and skipped while `full avg10` is at stage 2 level). A session's *baseline* is the median of its footprint
+   stage**, every 60 s: `status` for every process, `smaps_rollup` for the processes of a
+   **budgeted set of sessions** per sample (at most 5 sessions, 50 processes; it walks page tables and briefly holds the mmap lock, so it is capped
+   and skipped while `full avg10` is at stage 2 level). Sessions are picked round-robin within each kind, so a small session is measured as surely as a large one; a chosen session is measured as one observation over **all** its attributed processes, and if the budget runs out part-way the observation is recorded as missing, never as partial. Coverage (sessions measured / sessions alive, per kind) and missing observations are recorded with the series. A session's *baseline* is the median of its footprint
    while idle (no turn, no child beyond the CLI); the box's baseline is the Agent plus unattributed
    processes. The series is kept in the Agent's state directory as a capped file (about 7 days at this
    rate, a few MB) and downsampled beyond that; the Stats axis carries only the latest value.
@@ -346,8 +346,8 @@ What phase 0 records, per runtime and per size, kept as a time series (not only 
    healthy busy box looks like (a large build; N sessions; chromium).
 3. The refault rate against PSI, to confirm it is a usable second signal, and the anonymous / file /
    shmem split under real load (the incident's was never recorded).
-4. Per-session `Pss_Anon` over a session's life, by session kind, to get the p75 behind the sizing
-   guideline and the "twice the largest agent" rule for shells.
+4. Per-session footprint (`Pss_Anon` + `Pss_Shmem`, stored separately, summed on use; this is the one figure the sizing guideline, the log lines and the victim ranking all use) over a session's life, by session kind, to get the p75 behind the sizing
+   guideline and the "twice the largest agent" rule for shells. No sizing number is shown until a kind has enough complete observations; how many, and how the p75 is estimated, phase 0 fixes, not this record.
 5. The Agent's own latency (a loopback request) against PSI, to find the pressure at which the Agent
    itself becomes unresponsive — the number that decides whether the ladder can act in time.
 
