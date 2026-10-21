@@ -1715,13 +1715,17 @@ func (e *ecsEC2Runtime) slotTypeMatches(ctx context.Context, instanceID string) 
 			}
 			// A sweeper fence on a slot a Start won anyway is the automatic move's cue too.
 			outdated = outdated || (!e.pool.noAutoReplace && slotRetireTagged(inst))
-			// A quarantined box is never reused, whatever its type: an operator force-stopped it
-			// (ForceStopSlot) or a launch quarantined it without managing to detach the home.
-			// Counting it as a mismatch sends the Start through the background release, which
-			// moves the home off it instead of waking a box the CP may not even command (the
-			// slot's SendCommand grant requires af-role=slot).
-			quarantined := ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined
-			return !quarantined && string(inst.InstanceType) == e.instanceType, slotReserved(inst), outdated, nil
+			// A quarantined box is never reused, whatever its type or marks: an operator
+			// force-stopped it (ForceStopSlot) or a launch quarantined it without managing to
+			// detach the home. It is a plain mismatch, and "reserved" and "outdated" are
+			// withheld on purpose: either would send the Start through replaceReservedSlot,
+			// which TERMINATES the old box and destroys the evidence quarantine keeps. The
+			// mismatch takes the background release instead, which moves the home off it (the
+			// slot's SendCommand grant requires af-role=slot, so waking it could not work).
+			if ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined {
+				return false, false, false, nil
+			}
+			return string(inst.InstanceType) == e.instanceType, slotReserved(inst), outdated, nil
 		}
 	}
 	return false, false, false, nil

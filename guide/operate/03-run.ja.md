@@ -165,6 +165,10 @@ SSM エージェントのプロセスにも効きます）。下限が効くよ�
    （home のロックを握り続ける未実行の umount / mount）を取り消し、スロットを **隔離** して、インスタンスを停止します。
    停止はまず通常のシャットダウンなので、カーネルが home をアンマウントできます。3 分たっても止まらなければ Control Plane が
    Force 付きでやり直し、`stopping` 中にもう一度押すとすぐ Force で送ります。
+   これには Control Plane のロールに `ssm:ListCommands` / `ssm:CancelCommand` /
+   `ssm:DescribeInstanceInformation`（`20-platform` の `SsmSlotForceStop`）が必要です。
+   **ボタンを使う前に `20-platform` スタックを更新してください。** 古いままだと健全性の確認が
+   AccessDenied になり、操作を実行できません。
 3. スロットは **隔離されたまま** です。二度と配置されず、スイーパーも回収しません（ADR 0045 決定 20・23）。root ボリュームと
    タグは証拠として残るので、調べ終えたら同じ行の **終了** で消してください。メンバーの次の Start は、home が隔離スロットに
    あることを見つけて切り離し（停止中のインスタンスでは umount は不要）、別のスロットに置き直します。

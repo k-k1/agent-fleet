@@ -77,16 +77,17 @@ type SlotForceStop struct {
 //  1. Refuse a slot that answers on both agents (ErrSlotHealthy) unless overrideHealthy:
 //     a workspace may be running on it. An unreadable health signal refuses too, unless
 //     overridden: "when in doubt, do not stop it".
-//  2. End the occupant's Start with the runtime's own Stop (abortStarts under the claim
-//     lock, desiredCount 0, the claim dropped). A member who is mid-Start on this slot
-//     then finds that Start overtaken, rather than the box vanishing under it, and sees
-//     `stopped`; their next Start places the home again.
-//  3. Quarantine the box (markQuarantined). Decision: yes. The box failed in a way nobody
-//     has diagnosed, so it keeps its evidence and is never offered again (ADR 0045
-//     decisions 20 and 23); an operator terminates it from the pool screen when done.
-//     Nothing is lost by it: placeHome treats a quarantined box as a mismatch, so the
+//  2. Quarantine the box (markQuarantined) FIRST, because the tag is the fence against a
+//     Start choosing this slot meanwhile. Decision: quarantine, not just stop. The box
+//     failed in a way nobody has diagnosed, so it keeps its evidence and is never offered
+//     again (ADR 0045 decisions 20 and 23); an operator terminates it from the pool screen
+//     when done. placeHome treats a quarantined box as a mismatch, reserved or not, so the
 //     member's next Start releases the home from it (releaseSlot skips the umount for a
 //     stopped box) and places it elsewhere.
+//  3. End the occupant's Start with the runtime's own Stop (abortStarts under the claim
+//     lock, desiredCount 0, the claim dropped), reading the occupant after the fence. A
+//     Start that chose the slot before the tag is overtaken; one after it saw the
+//     quarantine. The member sees `stopped`.
 //  4. Cancel the CP's own pending SSM commands (slotVolumeCommandComment). A queued
 //     umount or mount holds the home's mount lock for as long as the command lives and no
 //     agent will ever finish it; cancelling is what lets the lock holder see it end.
@@ -155,7 +156,21 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 	res.OverrodeHealthy = overrideHealthy && role == ec2RoleSlot &&
 		(regErr != nil || ssmErr != nil || (res.AgentConnected && res.SSMOnline))
 
-	// 2. the occupant.
+	// 2. quarantine FIRST: it is the fence. A Start choosing a slot after this tag sees a
+	// mismatch and releases the home; one that chose it before has claimed the home, which the
+	// read below finds, and the Stop that follows overtakes it. Nothing has been touched yet
+	// if the tag cannot be written.
+	if role == ec2RoleSlot {
+		cause := fmt.Errorf("force-stopped by an operator (ecs agent connected=%v, ssm online=%v)", res.AgentConnected, res.SSMOnline)
+		res.Quarantined = probe.markQuarantined(ctx, instanceID, cause) == nil
+		if !res.Quarantined {
+			return res, fmt.Errorf("could not quarantine %s; nothing was changed", instanceID)
+		}
+	} else {
+		res.Quarantined = true
+	}
+
+	// 3. the occupant, read AFTER the fence (see slotHolder's note on write-then-read).
 	var occupant *ecsEC2Runtime
 	if holder, err := probe.slotHolder(ctx, instanceID, ""); err != nil {
 		return res, fmt.Errorf("find the home on %s: %w", instanceID, err)
@@ -173,20 +188,9 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 		instanceID, res.PreviousState, res.AgentConnected, res.SSMOnline, res.OverrodeHealthy, res.Workspace)
 	if occupant != nil {
 		if err := occupant.Stop(ctx); err != nil {
-			// Nothing destructive has happened yet, so failing here leaves the slot as it was.
-			return res, fmt.Errorf("end the start of %s before stopping its slot: %w", res.Workspace, err)
+			// The slot is quarantined but not stopped; pressing the button again retries.
+			return res, fmt.Errorf("the slot is quarantined, but ending the start of %s failed: %w", res.Workspace, err)
 		}
-	}
-
-	// 3. quarantine.
-	if role == ec2RoleSlot {
-		cause := fmt.Errorf("force-stopped by an operator (ecs agent connected=%v, ssm online=%v)", res.AgentConnected, res.SSMOnline)
-		res.Quarantined = probe.markQuarantined(ctx, instanceID, cause) == nil
-		if !res.Quarantined {
-			return res, fmt.Errorf("could not quarantine %s; nothing was stopped (the slot is unchanged apart from its occupant's start)", instanceID)
-		}
-	} else {
-		res.Quarantined = true
 	}
 
 	// 4. the CP's own pending commands.
@@ -201,7 +205,8 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 	}
 	if !res.Forced {
 		res.ForceAfterSec = int(slotForceStopGrace.Seconds())
-		probe.bg(ctx, func(c context.Context) { probe.forceStopAfterGrace(c, instanceID) })
+		launched := aws.ToTime(inst.LaunchTime)
+		probe.bg(ctx, func(c context.Context) { probe.forceStopAfterGrace(c, instanceID, launched) })
 	}
 	res.StoppingTask, _ = probe.stoppingTaskOn(ctx, instanceID)
 	log.Printf("ecs-ec2: force-stop of slot %s sent (forced=%v, cancelled %d commands, %d failed, stopping task %q)",
@@ -209,18 +214,30 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 	return res, nil
 }
 
-// forceStopAfterGrace repeats the stop with Force when the graceful one has not finished.
-func (e *ecsEC2Runtime) forceStopAfterGrace(ctx context.Context, instanceID string) {
+// forceStopAfterGrace repeats the stop with Force when THIS stop has not finished. It acts
+// only on an instance still `stopping` from the same launch (LaunchTime moves on every
+// start): one that finished stopping and was started again since, for example by an operator
+// clearing a STOPPING task, must never be power-cut by a stale timer.
+func (e *ecsEC2Runtime) forceStopAfterGrace(ctx context.Context, instanceID string, launched time.Time) {
 	if err := e.sleep(ctx, slotForceStopGrace); err != nil {
 		return
 	}
-	switch e.slotStateName(ctx, instanceID) {
-	case "stopped", "terminated", "shutting-down", "gone", "unknown":
+	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+	if err != nil {
 		return // unknown: leave it, the operator's second press forces
 	}
-	log.Printf("ecs-ec2: slot %s did not stop within %s; stopping it with Force", instanceID, slotForceStopGrace)
-	if _, err := e.ec2.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: []string{instanceID}, Force: aws.Bool(true)}); err != nil {
-		log.Printf("ecs-ec2: force-stopping slot %s: %v", instanceID, err)
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			if aws.ToString(inst.InstanceId) != instanceID || inst.State == nil ||
+				inst.State.Name != ec2types.InstanceStateNameStopping || !aws.ToTime(inst.LaunchTime).Equal(launched) {
+				return
+			}
+			log.Printf("ecs-ec2: slot %s did not stop within %s; stopping it with Force", instanceID, slotForceStopGrace)
+			if _, err := e.ec2.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: []string{instanceID}, Force: aws.Bool(true)}); err != nil {
+				log.Printf("ecs-ec2: force-stopping slot %s: %v", instanceID, err)
+			}
+			return
+		}
 	}
 }
 

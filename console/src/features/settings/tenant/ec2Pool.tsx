@@ -468,9 +468,18 @@ export function PoolView() {
                         terminate stage filters on af-role=slot and never collects it). */}
                     <td>
                       {s.quarantined ? (
+                        <>
+                        {/* A force-stop quarantines the slot, and a second press while it is still
+                            stopping forces it at once, so the button outlives the first press. */}
+                        {(s.state === "running" || s.state === "pending" || s.state === "stopping") && (
+                          <Button small variant="danger" onClick={() => { setStopErr(""); setStopping(s); }}>
+                            {tr("pool.force_stop")}
+                          </Button>
+                        )}
                         <Button small variant="danger" onClick={() => { setKillErr(""); setKilling(s); }}>
                           {tr("pool.terminate")}
                         </Button>
+                        </>
                       ) : (
                         <>
                         {/* Only for a slot that is up but whose agent is not connected: that is

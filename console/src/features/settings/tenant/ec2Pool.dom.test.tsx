@@ -520,6 +520,31 @@ describe("replacement reservations", () => {
       expect(host!.querySelector("[role=status]")?.textContent).toContain("3 分");
     });
 
+    it("keeps Stop (force) on the quarantined, still-stopping row after the first press", async () => {
+      api.mockResolvedValue(WEDGED);
+      apiJSON.mockResolvedValue({ instance_id: "i-wedge", cancelled_commands: 0, cancel_failed: 0, forced: false, force_after_sec: 180 });
+      await mount();
+      await act(async () => buttonsIn(rowOf("i-wedge")).find((b) => b.textContent === "停止（強制）")!.click());
+      const actions = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
+      await act(async () => actions[actions.length - 1].click());
+      // The next poll: the server has quarantined it and the instance is stopping.
+      api.mockResolvedValue({
+        ...WEDGED,
+        slots: WEDGED.slots.map((s) => (s.instance_id === "i-wedge" ? { ...s, state: "stopping", quarantined: true, quarantine_reason: "force-stopped by an operator" } : s)),
+      });
+      // Re-mount to take the new picture without waiting on the 10s timer.
+      host!.remove();
+      await mount();
+      const labels = buttonsIn(rowOf("i-wedge")).map((b) => b.textContent);
+      expect(labels).toContain("停止（強制）");
+      expect(labels).toContain("終了");
+      apiJSON.mockClear();
+      await act(async () => buttonsIn(rowOf("i-wedge")).find((b) => b.textContent === "停止（強制）")!.click());
+      const again = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
+      await act(async () => again[again.length - 1].click());
+      expect(apiJSON).toHaveBeenCalledWith("api/admin/ec2-pool/slots/i-wedge/force-stop", "POST", {});
+    });
+
     it("keeps the server's refusal in the dialog", async () => {
       api.mockResolvedValue(WEDGED);
       apiJSON.mockResolvedValue({ error: { code: "slot_healthy", message: "slot is healthy" } });

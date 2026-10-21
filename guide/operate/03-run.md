@@ -187,6 +187,10 @@ a row as running with **(not accepting tasks yet)**, and gives it **Stop (force)
    normal shutdown first, so the kernel can unmount the home; if the instance has not stopped after
    3 minutes the Control Plane repeats it with Force, and pressing the button again while the instance is
    `stopping` forces it at once.
+   The Control Plane role needs `ssm:ListCommands`, `ssm:CancelCommand` and
+   `ssm:DescribeInstanceInformation` for this (statement `SsmSlotForceStop` in `20-platform`):
+   **update the `20-platform` stack before using the button**, or the health check fails with
+   AccessDenied and the action cannot run.
 3. The slot **stays quarantined**: it is never offered again and the sweeper never collects it
    (ADR 0045 decisions 20, 23), so its root volume and tags remain as evidence. **Terminate** it
    from the same row when you are done. The member's next Start finds the home on a quarantined

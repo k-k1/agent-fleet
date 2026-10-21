@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
@@ -212,5 +213,103 @@ func TestReleaseSlotWaitsForAStoppingSlot(t *testing.T) {
 	}
 	if attachedInstance(h.ec2.volumes["vol-1"]) != "" {
 		t.Fatal("the home is still attached to the stopped slot")
+	}
+}
+
+// The delayed Force belongs to the stop that scheduled it. An instance that finished
+// stopping and was started again (an operator clearing a STOPPING task, say) must not be
+// power-cut three minutes later.
+func TestForceStopEscalationLeavesARevivedInstanceAlone(t *testing.T) {
+	for _, state := range []ec2types.InstanceStateName{
+		ec2types.InstanceStateNameRunning, ec2types.InstanceStateNameStopped, ec2types.InstanceStateNamePending,
+		ec2types.InstanceStateNameStopping, // a later stop, from a later launch
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			ctx := context.Background()
+			h := wedgedSlot(t)
+			launch := time.Now().Add(-time.Hour)
+			h.ec2.instances["i-wedge"].LaunchTime = &launch
+			if _, err := h.factory().ForceStopSlot(ctx, "i-wedge", false); err != nil {
+				t.Fatal(err)
+			}
+			// It stopped within seconds, and somebody started it again.
+			relaunch := time.Now()
+			h.ec2.instances["i-wedge"].LaunchTime = &relaunch
+			h.ec2.instances["i-wedge"].State = &ec2types.InstanceState{Name: state}
+			h.runDeferred(ctx)
+			if got := h.ec2.stopForce; len(got) != 1 {
+				t.Fatalf("stops %v: the stale timer stopped the %s instance again", got, state)
+			}
+		})
+	}
+}
+
+// A quarantined slot that also carries a replacement reservation must not reach
+// replaceReservedSlot, which terminates the old box and with it the evidence.
+func TestForceStoppedReservedSlotIsReleasedNotTerminated(t *testing.T) {
+	ctx := context.Background()
+	h := reservedSlotHarness(t, true)
+	h.ci.registered["i-old"] = false
+	h.ssmc.online = map[string]bool{"i-old": false}
+	if _, err := h.factory().ForceStopSlot(ctx, "i-old", false); err != nil {
+		t.Fatal(err)
+	}
+	matches, reserved, outdated, err := h.rt.slotTypeMatches(ctx, "i-old")
+	if err != nil || matches || reserved || outdated {
+		t.Fatalf("quarantined slot read as matches=%v reserved=%v outdated=%v err=%v; want all false", matches, reserved, outdated, err)
+	}
+	_ = h.rt.Start(ctx)
+	if i := callIndex(h, "TerminateInstances"); i >= 0 {
+		t.Fatalf("a Start terminated the quarantined slot: %v", h.ec2.calls)
+	}
+}
+
+// ec2AfterQuarantine runs fire once, right after the quarantine tag lands.
+type ec2AfterQuarantine struct {
+	ec2API
+	fire func()
+}
+
+func (w *ec2AfterQuarantine) CreateTags(ctx context.Context, in *ec2.CreateTagsInput, opt ...func(*ec2.Options)) (*ec2.CreateTagsOutput, error) {
+	out, err := w.ec2API.CreateTags(ctx, in, opt...)
+	for _, tag := range in.Tags {
+		if aws.ToString(tag.Key) == EC2TagRole && aws.ToString(tag.Value) == ec2RoleQuarantined && w.fire != nil {
+			f := w.fire
+			w.fire = nil
+			f()
+		}
+	}
+	return out, err
+}
+
+// A member's Start that lands between the quarantine fence and the occupant's Stop either
+// sees the quarantine or is overtaken by the Stop: it must not outlive the force-stop with
+// its claim on the stopped slot.
+func TestForceStopOvertakesAStartThatRacesTheFence(t *testing.T) {
+	ctx := context.Background()
+	h := memberWipeHarness(t)
+	h.ci.registered["i-hot"] = false
+	h.ssmc.online = map[string]bool{"i-hot": false}
+	gen, err := h.rt.startGenNow(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := h.factory()
+	f.ec2 = &ec2AfterQuarantine{ec2API: h.ec2, fire: func() {
+		if err := h.rt.Start(ctx); err != nil {
+			t.Errorf("racing Start: %v", err)
+		}
+	}}
+	if _, err := f.ForceStopSlot(ctx, "i-hot", false); err != nil {
+		t.Fatal(err)
+	}
+	if moved, err := h.rt.startedSince(ctx, gen); err != nil || !moved {
+		t.Fatalf("start count did not move (moved=%v err=%v)", moved, err)
+	}
+	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim) != "" {
+		t.Fatal("the racing Start's claim survived the force-stop")
+	}
+	if scaledUp(h) && h.ecs.services["af-ws-acme-alice"].DesiredCount != 0 {
+		t.Fatal("the service was left at desired 1 on the stopped slot")
 	}
 }
