@@ -1976,6 +1976,18 @@ func (e *ecsEC2Runtime) superseded(ctx context.Context, p ec2Placement) bool {
 	return err != nil || moved
 }
 
+// clipMiddle shortens s to about max runes, keeping both ends. A slot command's error is
+// "<the whole quoted script> on <instance>: <status>: <stderr>", so the cause is at the end
+// and the operation at the start; cutting only the tail would keep the least useful part.
+func clipMiddle(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	head := max / 3
+	return string(r[:head]) + " … " + string(r[len(r)-(max-head):])
+}
+
 // releaseAndReplace is the background half of a size/class change: take the home off the
 // slot it no longer fits, then place it like any homeless home. ok is false when the
 // start stopped here. A real failure leaves the blocked phase as its reason, because a
@@ -1997,12 +2009,7 @@ func (e *ecsEC2Runtime) releaseAndReplace(ctx context.Context, p ec2Placement) (
 		defer cancel()
 		e.ifOwnedStrict(dctx, p, func(c context.Context) {
 			log.Printf("ecs-ec2 start: %s for %s: %v", why, e.base.name, err)
-			// The error can quote a whole slot script; the member reads this line.
-			detail := err.Error()
-			if len(detail) > 300 {
-				detail = detail[:300] + "…"
-			}
-			e.setPhase(blockedPhasePrefix + why + ": " + detail)
+			e.setPhase(blockedPhasePrefix + why + ": " + clipMiddle(err.Error(), 300))
 			e.unclaim(c, p.volumeID)
 		})
 		return ec2Placement{}, false
