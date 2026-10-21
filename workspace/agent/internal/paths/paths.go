@@ -6,6 +6,7 @@ package paths
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -272,15 +273,22 @@ func MarkSessionWorkDir(dir string) error {
 	return f.Close()
 }
 
-// MakeSessionWorkDir creates SessionWorkDir(name) and marks it as the Agent's own, also when
-// it already exists, so a session started before the marker existed is marked on its next
-// launch. "" and an error for a name that could escape ~/.af-work.
+// MakeSessionWorkDir creates SessionWorkDir(name) and marks it as the Agent's own, but only
+// when this call created it: an existing directory (a member's own folder of the same name,
+// a symlink, one from before the marker) is returned as it is and never promoted to
+// Agent-owned. "" and an error for a name that could escape ~/.af-work.
 func MakeSessionWorkDir(name string) (string, error) {
 	wd := SessionWorkDir(name)
 	if wd == "" {
 		return "", errors.New("bad session work dir name")
 	}
-	if err := os.MkdirAll(wd, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(wd), 0o700); err != nil {
+		return "", err
+	}
+	if err := os.Mkdir(wd, 0o700); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return wd, nil
+		}
 		return "", err
 	}
 	return wd, MarkSessionWorkDir(wd)

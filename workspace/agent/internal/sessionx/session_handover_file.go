@@ -36,12 +36,17 @@ func WriteHandoverFile(target, source, md string) (string, error) {
 		return "", fmt.Errorf("handover: bad target name %q", target)
 	}
 	dest := filepath.Join(dir, HandoverFileName(source))
+	_, statErr := os.Lstat(dir)
+	madeHere := errors.Is(statErr, fs.ErrNotExist)
 	if err := writeFileSynced(dest, []byte(md)); err != nil {
 		return dest, err
 	}
 	// A managed target's directory is made by this write, not at launch; mark it as the
-	// Agent's own. Best effort: unmarked only means the boot prune keeps it.
-	_ = paths.MarkSessionWorkDir(dir)
+	// Agent's own only when this call made it. Best effort: unmarked only means the boot
+	// prune keeps it.
+	if madeHere && requireRealDir(dir) == nil {
+		_ = paths.MarkSessionWorkDir(dir)
+	}
 	return dest, nil
 }
 

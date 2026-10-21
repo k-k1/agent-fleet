@@ -441,10 +441,20 @@ func TestLeftoversAfWorkBootRemovesOnlyMarkedOrphans(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
 		t.Fatal(err)
 	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("survey status = %d", rec.Code)
+	}
+	found := false
 	for _, row := range u.Kinds {
-		if row.Kind == "af-work" && row.Count != 1 {
-			t.Fatalf("survey af-work = %+v", row)
+		if row.Kind == "af-work" {
+			found = true
+			if row.Count != 1 {
+				t.Fatalf("survey af-work = %+v", row)
+			}
 		}
+	}
+	if !found {
+		t.Fatalf("survey has no af-work row: %+v", u)
 	}
 	logs.Reset()
 	pruneKind(t, "af-work")
