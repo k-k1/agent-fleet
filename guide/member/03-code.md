@@ -79,6 +79,25 @@ session. You can view, list, create, edit, comment on and transition issues:
   `jira init -c ~/.config/agent-fleet/jira/other-board.yml --project PROJ --board "Other board"`
   and then use `jira -c ~/.config/agent-fleet/jira/other-board.yml …`. Your connection is used
   only with configs in `~/.config/agent-fleet/jira/`.
+- **Markdown in comments and descriptions**: the CLI converts Markdown to Jira markup, and until the
+  first piece of markup (a heading, a list, bold, a link) a list, heading,
+  code block or quote that follows a plain paragraph is glued onto it (two paragraphs in a row are
+  fine). A paragraph, a blank line and a list are sent as:
+
+  ```
+  Intro.          →  Intro.* a
+  (blank line)
+  - a
+  ```
+
+  Open the body with a heading or a list, or put inline markup (bold, a link, `code`) in the first
+  paragraph, and always leave a blank line before a list. Agents are told this too.
+- **Using an Atlassian MCP tool instead**: `jira` is the default because it works for every agent and
+  renews the token itself, while an MCP connector serves one agent and needs a session restart when
+  its login expires. To prefer the MCP route, say so in **⚙Settings → "Agent instructions"**, for
+  example: "For Jira, use the Atlassian MCP tool instead of the `jira` CLI." Agents that have the
+  connector follow it; the others keep using `jira`. Without such a line, an agent uses an MCP tool
+  only for what the CLI cannot do.
 - **`--debug` runs without your connection**: jira's debug output prints the authorization
   header, so the wrapper does not hand the token to a debug run.
 - **What it can change** is what your connection can. The CLI writes to Jira as you, so creating,
