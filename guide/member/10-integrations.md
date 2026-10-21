@@ -451,8 +451,10 @@ them in from the terminal, and an expiring token is renewed on use.
 | `af-aws-exec --profile <name> -- <command>` | **AWS profiles/SSM**, after **Log in** on the profile | [15](15-cloud-accounts.md#using-the-profiles-from-the-terminal-sdks-and-build-tools) |
 | `af-gcloud-exec --profile <name> -- <command>` | **Google Cloud**, after **Log in** on the profile | [15](15-cloud-accounts.md#running-a-command-as-a-profile) |
 
-Agents are told to use `jira` and `bkt` rather than a Jira, Bitbucket or Atlassian MCP server. The CLIs renew
-the login on every call, while an MCP connector's expired login needs the session restarted.
+Agents are told to use `bkt` rather than a Bitbucket or Atlassian MCP server, and `jira` by default for Jira. The
+CLIs read your saved connection on every call and renew it when it is about to expire, while an MCP connector's
+expired login needs the session restarted. To have agents prefer an Atlassian MCP tool for Jira, see
+[03](03-code.md#use-jira-in-a-session) ("Using an Atlassian MCP tool instead").
 
 ## Logging in to another in-house host (SSM)
 

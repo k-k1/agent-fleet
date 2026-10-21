@@ -36,10 +36,10 @@ never warned about.
 popover of the WS bar's AWS badge. After you confirm, the workspace ends that profile's login with AWS and deletes
 its cached login and role credentials; your other profiles stay signed in. Credentials a running command already
 received stay valid until they expire (AWS cannot recall them), so stop that command if it matters. An expired
-access token (a **Renews on use** row) is renewed first so that the logout reaches AWS; if AWS refuses the renewal,
-the login had already ended there and the logout is a normal one. If AWS cannot be reached or refuses the logout
-itself, or the login has nothing to renew it with, the workspace is signed out all the same and the Console says
-so; the login may then stay valid at AWS until it ends. Do not use `aws sso logout` for this: it signs out every profile at once, whatever `--profile` says.
+access token (a **Renews on use** row) is renewed first so that the logout reaches AWS; if AWS answers that the
+login has already ended, the logout is a normal one. If AWS cannot be reached, the renewal fails for any other
+reason, AWS refuses the logout itself, or the login has nothing to renew it with, the workspace is signed out all the
+same and the Console says so; the login may then stay valid at AWS until it ends. Do not use `aws sso logout` for this: it signs out every profile at once, whatever `--profile` says.
 
 Every profile and host row has **Edit**, which opens the same form filled in and saves it in place. Edit rather
 than delete and re-add: a host refers to its profile by an internal ID, so a re-added profile is a new one.

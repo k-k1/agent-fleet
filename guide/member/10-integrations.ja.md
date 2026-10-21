@@ -428,8 +428,10 @@ Console にサインインし、アプリが求める内容を確認して許可
 | `af-aws-exec --profile <名前> -- <コマンド>` | **AWS プロファイル/SSM**。プロファイルの**ログイン**のあと | [15](15-cloud-accounts.ja.md#プロファイルを端末sdkビルドツールから使う) |
 | `af-gcloud-exec --profile <名前> -- <コマンド>` | **Google Cloud**。プロファイルの**ログイン**のあと | [15](15-cloud-accounts.ja.md#プロファイルとしてコマンドを実行する) |
 
-エージェントには、Jira・Bitbucket・Atlassian の MCP サーバーではなく `jira` と `bkt` を使うよう伝えてあります。
-CLI は呼び出しのたびにログインを更新しますが、MCP コネクタはログインが切れるとセッションの再起動が必要になるためです。
+エージェントには、Bitbucket では Bitbucket や Atlassian の MCP サーバーではなく `bkt` を、Jira では既定で `jira` を使うよう
+伝えてあります。CLI は呼び出しのたびに保存済みの接続を読み、期限が近ければ更新しますが、MCP コネクタはログインが切れると
+セッションの再起動が必要になるためです。Jira で Atlassian MCP ツールを優先させたいときは
+[03](03-code.ja.md#セッションで-jira-を使う)（「代わりに Atlassian MCP ツールを使う」）を見てください。
 
 ## 社内の別ホストに入る（SSM）
 
