@@ -114,7 +114,7 @@ func hookStateFor(event string, in hookInput) string {
 	return ""
 }
 
-// RunHook is `workspace-agent agy-hook <Event>`. It always prints "{}" and returns normally:
+// RunHook is `workspace-agent agy-hook <Event>`. It returns normally and prints "{}", or nothing for PreToolUse (see the invariants above):
 // a failing hook must not disturb the agy turn it observes. Input that does not decode, or that
 // names no conversation, records nothing.
 func RunHook(args []string) {

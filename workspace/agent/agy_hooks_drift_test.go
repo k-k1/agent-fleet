@@ -16,14 +16,17 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 func TestDriftAgyToolHooks(t *testing.T) {
@@ -52,7 +55,7 @@ func TestDriftAgyToolHooks(t *testing.T) {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
 	stub := filepath.Join(work, "stub-hook.sh")
-	script := "#!/bin/sh\necho \"$2\" >> '" + events + "'\nexec '" + bin + "' \"$@\"\n"
+	script := "#!/bin/sh\necho \"$2\" >> " + session.ShellQuote(events) + "\nexec " + session.ShellQuote(bin) + " \"$@\"\n"
 	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -63,19 +66,19 @@ func TestDriftAgyToolHooks(t *testing.T) {
 	}
 
 	ran := filepath.Join(work, "tool-ran")
-	cmd := exec.Command("agy", "--dangerously-skip-permissions", "--print",
-		"Run exactly this shell command and nothing else: touch '"+ran+"'. Then reply with the word done.")
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "agy", "--dangerously-skip-permissions", "--print",
+		"Run exactly this shell command and nothing else, then reply with the word done:\n\n```\ntouch "+session.ShellQuote(ran)+"\n```")
 	cmd.Dir = work
 	cmd.Env = agy.Env(os.Environ())
-	done := make(chan struct{})
-	var out []byte
-	var runErr error
-	go func() { out, runErr = cmd.CombinedOutput(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(4 * time.Minute):
-		_ = cmd.Process.Kill()
-		<-done
+	// A child that outlives agy would keep the output pipe open: kill the whole group and cap
+	// the wait for the pipe.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 10 * time.Second
+	out, runErr := cmd.CombinedOutput()
+	if ctx.Err() != nil {
 		t.Fatalf("agy did not finish within 4m: %s", out)
 	}
 	t.Logf("agy exit: %v\noutput: %s", runErr, out)
