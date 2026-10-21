@@ -290,6 +290,21 @@ func TestHookRejectsForeignInput(t *testing.T) {
 	}
 }
 
+// agy 1.4.4 denies every tool call when the PreToolUse hook prints "{}" (#2470); the other
+// events keep it and must stay a JSON object.
+func TestNeutralOutputPerEvent(t *testing.T) {
+	if got := neutralOutput([]string{"PreToolUse"}); got != "" {
+		t.Errorf("PreToolUse output = %q, want empty", got)
+	}
+	for _, args := range [][]string{{"Stop"}, {"SessionStart"}, {"PreInvocation"}, nil} {
+		got := neutralOutput(args)
+		var obj map[string]any
+		if got != "{}" || json.Unmarshal([]byte(got), &obj) != nil {
+			t.Errorf("neutralOutput(%v) = %q, want {}", args, got)
+		}
+	}
+}
+
 func TestRunHookMalformedStdinRecordsNothing(t *testing.T) {
 	m, sid := hookFixture(t, "slot-bad")
 	recordGen(m.Name, "PreInvocation", hookInput{ConversationID: "c"}, time.Now())
