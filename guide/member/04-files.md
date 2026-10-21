@@ -1,6 +1,6 @@
 ---
 audience: "anyone reading or editing files in the Console"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 04. Files — tree, viewer, Markdown/slides
@@ -16,11 +16,11 @@ working copy, folding the others keeps things tidy.
 - **compact folders**: levels whose only content is a single subfolder are collapsed into one row like `a/b/c` (no wasted rows for deep single-child hierarchies; the same convention as VS Code).
 - **Tree / Changes**: on repository nodes you can switch the display between "Tree" and "Changes" (changed files only). Changed files get "Untracked", "Added", "Modified", "Renamed", and "Deleted" badges.
 
-Right-clicking a file or folder offers "New file", "New folder", "Copy the name",
-"Copy the relative path", "Rename", and "Delete". Files also show "Open in reader" and
-"Download"; folders also show **"Download as zip"** (below). Deleting a folder removes its
-contents too, so a confirmation is shown.
-See [Icons, badges, and menus](badges-and-menus.md) for when each item appears.
+Right-clicking a file or folder opens its menu: "New file", "New folder", copying its name or
+path, "Rename" and "Delete", plus opening it in the reader or the gallery, "Download" (for a
+folder, **"Download as zip"**, below) and handing a file to an assistant to translate or
+summarize. Deleting a folder removes its contents too, so a confirmation is shown.
+[Icons, badges, and menus](badges-and-menus.md#files-folders) lists every item and when it appears.
 
 ### Download a folder as zip
 
@@ -35,7 +35,7 @@ and its sub-folders (empty ones too) and Unicode names intact.
   (credential and agent-state folders), and symbolic links, hard-linked files (more than one name
   for the same file) and special files (the toast counts them). The menu item's tooltip names
   the first two before you press.
-- **Too large is refused, not cut short.** Past 20,000 files, 4,000 folders, 32 levels, 512 MB
+- **Too large is refused, not cut short.** Past 20,000 files, 4,000 folders, 32 levels, 512 MiB
   or 45 seconds of reading ([limits](../ref/limits.md#fixed-in-the-product)) you normally get a
   message naming the limit and no download starts. Select a smaller folder. The check cannot see
   what only reading finds (a full disk, an I/O error, a file that grows, a slow volume running
@@ -94,11 +94,41 @@ For `.md` files, the toggle at the top switches between **"Preview"** and **"Sou
 In the preview, Mermaid code blocks are rendered as diagrams. Each code block gets a
 "Copy this code" button.
 
-Links behave as follows.
+Links follow [Links in rendered Markdown](#links-in-rendered-markdown); in the preview a relative
+link is read from the file's own folder, and a `#heading` anchor scrolls within the page.
 
-- **External URLs**: open in a new tab.
-- **Relative links within the repository**: open that file in the viewer / show the folder in **Files**.
-- **`#heading` anchors**: scroll within the page.
+### Links in rendered Markdown
+
+Wherever the Console renders Markdown (a file's preview, an agent's reply in the conversation, the
+assistant chat, the document viewer), it turns these into links:
+
+- **External URLs** open in a new tab.
+- **A path to a file or folder in your workspace**, as a Markdown link (`[text](src/app.ts)`) or in
+  backticks (`` `src/app.ts` ``): a file opens in the viewer, a folder shows in **Files**.
+- **`$AF_WORK_DIR/…`** in a reply of a Terminal (CLI) session means that session's scratch folder
+  (`~/.af-work/<session>`), and it is linked when the file or folder exists there. It stays plain
+  text in a Managed session, in the chat and in the document viewer.
+- **Ticket numbers** (`#956`, `owner/name#956`, a Jira key, and both ends of a range such as
+  `#573-#598`) open the ticket's details, by the rules in
+  [02 Sessions](02-sessions.md#from-a-ticket-number-in-the-conversation). In a file's preview a
+  `#956` is read against the working copy the file is in: only for a file under `~/repos/<name>/`
+  whose origin is on github.com or bitbucket.org. A file in a Git repository nested inside the
+  copy (a submodule, a vendored clone) or outside `~/repos` gets no ticket links at all, and the
+  document viewer does not link ticket numbers.
+- **Loopback URLs** (`http://127.0.0.1:<port>/…`, `http://localhost:…`, `http://0.0.0.0:…`) name a
+  server in your workspace, not on your own machine, so a click opens that port of the workspace
+  the way the session row's port chip does ([the chip](badges-and-menus.md#session-display)).
+  Ctrl / middle-click opens a browser pane in a new tab, and a right-click or long-press opens the
+  chip's menu. When no running session listens on the port the link is dimmed but still opens;
+  a URL in backticks is a link only while one does. An `https:` loopback URL stays an ordinary
+  link, and so does a URL in backticks holding a non-ASCII punctuation mark or symbol (such as an
+  elided `…`). When the workspace is stopped, the click says the port cannot be opened.
+- **Right-click** (or long-press, or the Menu key) on a file or folder link opens a menu with
+  "Open in pane", "Open in new pane", "Show in Files" and the Files menu's items that change
+  nothing ([menus](badges-and-menus.md#file-and-folder-links-in-replies-and-documents)).
+
+Someone reading a shared session gets none of this: paths and ticket numbers stay plain text, and
+URLs are ordinary links.
 
 ### Marp slides
 

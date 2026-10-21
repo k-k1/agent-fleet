@@ -1,6 +1,6 @@
 ---
 audience: "anyone using the terminal, panes, or a preview of a running app"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 05. Terminal — working the black screen, copy & paste, shortcuts, phones
@@ -66,7 +66,7 @@ keyboard alone. You can change this key in Settings →
 ### Sessions
 
 It opens on **"Sessions"**, the list of your sessions with their working copy, worktree and
-status badge. The order is the order you most likely want:
+status badge (on **"Commands"** when the workspace has no sessions at all). The order is the order you most likely want:
 
 1. sessions **waiting for you** (a question, a plan to approve, a permission prompt), the one
    that started waiting most recently at the top;
@@ -77,10 +77,17 @@ status badge. The order is the order you most likely want:
 The order is fixed at the moment you open the palette, so a session that changes state while
 you are reading does not move under your cursor; only its badge follows.
 
+With nothing typed, a session started by another session is listed under it, indented, and the
+whole family sits where its most urgent member would: a stopped parent comes up with a child that
+is waiting for you. Children follow in the order they were started. A session started while the
+palette is open stays at the foot until you open the palette again. Once you type, the list is
+flat again and a child's row names its parent (**↳** and the parent's title); typing the parent's
+title also finds its children.
+
 ### Keys inside the palette
 
 - **↑ ↓ / Enter**: pick a result and run / open it. **PageUp / PageDown** move the highlight by one screenful of rows (stopping at the first and last row). For sessions, files and changed files, **Ctrl+Enter** (macOS: **⌘Enter**) opens them in another pane.
-- **Tab**, or **Ctrl+P / ⌘P** again: switches the search scope between "Sessions", "Commands", "Changed files", "Files", "Conversations" and, while Agent memory is on, "Memory". **Shift+Tab**, or **Ctrl+Shift+P / ⌘⇧P**, goes back one scope instead, and wraps from the first to the last. The reverse chord is your palette key plus Shift (rebind the palette key to Alt+O and it is Alt+Shift+O); if your palette key already includes Shift there is no reverse chord, and Shift+Tab is the way back. Scopes that are not offered (for example "Session changes" without an active session) are skipped in both directions. Some browsers keep Ctrl+Shift+P for themselves (for example a private window in Firefox) and do not let a page cancel it; the palette only gets the key when the browser passes it on, so use Shift+Tab there.
+- **Tab**, or **Ctrl+P / ⌘P** again: switches the search scope between "Sessions", "Commands", "Changed files", "Files", "Conversations", "Memory" (while Agent memory is on) and "Session changes" (the files changed by the session in the active pane, when that agent has a conversation the Console can read). **Shift+Tab**, or **Ctrl+Shift+P / ⌘⇧P**, goes back one scope instead, and wraps from the first to the last. The reverse chord is your palette key plus Shift (rebind the palette key to Alt+O and it is Alt+Shift+O); if your palette key already includes Shift there is no reverse chord, and Shift+Tab is the way back. Scopes that are not offered (for example "Session changes" without an active session) are skipped in both directions. Some browsers keep Ctrl+Shift+P for themselves (for example a private window in Firefox) and do not let a page cancel it; the palette only gets the key when the browser passes it on, so use Shift+Tab there.
 - **Esc**: closes it and returns to where you were working before opening it.
 
 When the terminal has focus and **"Terminal input priority"** is turned on in settings, Ctrl+P is
@@ -96,7 +103,10 @@ characters) and each hit shows the session, who said it and when, and the matchi
 tool output or the agent's thinking. A hit in an archived session opens the archive: restore it there, then open it from the list
 and it opens at the same turn. The first search after an update can take a minute or
 two to cover every session; the palette says "Building the index" until it has.
-A turn older than the part of the conversation the mirror loads lands at the end instead. If the
+A turn older than the part of the conversation the mirror has loaded is fetched first: the mirror
+loads earlier conversation until it reaches the turn, up to 8,000 positions back in at most four
+requests. Further back than that, a notice says the turn is too far back to jump to, and
+scrolling up loads it. Switching session or scrolling yourself while it loads stops the jump. If the
 search itself fails, the palette says why and offers to retry, rather than reporting no match.
 
 ### Memory
@@ -161,6 +171,9 @@ On phones, the left pane is hidden to make the most of the screen.
 - **Scrolling back through past output**: **swipe vertically with one finger** on the terminal to go back through past output (drag down for older lines, up for newer). In apps that use the whole terminal, like vim, this becomes that app's own scrolling.
 - **Stepping through the running sessions**: **swipe right** for the running session one row below the current one in the left pane, and **swipe left** for the one above, wrapping around at either end. The order is the left pane's, including worktrees nested under the session that started them; shell and SSM sessions are skipped. Each switch briefly shows where you landed, as in "2/3 session name". While a working set is selected, the rotation stays inside that set. **A right swipe that starts at the very left edge** still pulls out the left pane, as before; start away from the edge when you mean to move down a row. A left swipe with the left pane open still closes it. Over a text field, the browser pane, or anything that scrolls sideways (a code block, say), that surface keeps the gesture and no switch happens.
 
+- **The workspace action bar**: on a narrow screen the buttons that no longer fit move into its
+  **⋯** menu, keeping their labels there: first **Home**, **Sessions** and **Images**, then also
+  **Split down** and **Close all**.
 - **Notifications (toasts)**: on a phone they sit just below the bars at the top, never over the composer, and a tap outside dismisses them. Ones with a button, such as **Update** or an AWS login, close only with their ×.
 
 (Phones are for "checking progress and quick replies". For involved editing, a PC is recommended.)
@@ -168,7 +181,8 @@ On phones, the left pane is hidden to make the most of the screen.
 ## Changing the font and size
 
 Adjust the terminal's appearance in **⚙ Settings → the "Display" tab**. Under "Terminal" you can
-change the **Font** and **Font size** (9–28px).
+change the **Font** and **Font size** (9–28px), and turn **Ctrl+C / Ctrl+V copy and paste** off
+or on ([Copy & paste](#copy-paste)).
 
 These settings are **saved on the server** and managed per user. On your office PC, your home PC,
 or a login from another browser, the same font and size **follow you**.
