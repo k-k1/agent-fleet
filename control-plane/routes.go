@@ -329,8 +329,9 @@ func registerPATRoutes(mux *http.ServeMux, cfg config) {
 func registerMCPRoutes(mux *http.ServeMux, cfg config) {
 	exemptExact("/mcp")
 	exemptPrefix("/mcp/")
+	oauth := registerMCPOAuthRoutes(mux, cfg)
 	if envx.Or("AF_MCP_ENABLED", "") == "true" {
-		mux.HandleFunc("/mcp", mcpsrv.New(cpDeps{cfg.mgr}).HandleMCP)
+		mux.HandleFunc("/mcp", oauth.withOAuth(mcpsrv.New(cpDeps{cfg.mgr})).HandleMCP)
 		log.Printf("MCP endpoint enabled at /mcp")
 	}
 }

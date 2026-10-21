@@ -352,6 +352,45 @@ an operator.
   `memory.entry.forget`, actor `mcp`, target the project id). A tenant administrator can block it for the
   whole tenant ([admin 08](../admin/08-external-memory.md)); `AF_MCP_ENABLED` turns the whole endpoint off.
 
+### Sign-in for remote MCP clients (OAuth)
+
+By default `/mcp` accepts a Personal Access Token and nothing else. With `AF_MCP_OAUTH=1` the Control Plane is also
+an OAuth 2.1 authorization server for `/mcp` (ADR 0118), so claude.ai,
+ChatGPT, Claude Code and Codex connect by signing the member in to the Console instead of pasting a token. PATs keep
+working for CI and clients without OAuth.
+
+| Setting | Meaning |
+|---|---|
+| `AF_MCP_OAUTH=1` | turns the server on. Needs `AF_MCP_ENABLED=true` and an `https` `PUBLIC_BASE_URL`; with any of the three missing every path below answers 404 and `/mcp` keeps its bare 401, so clients fall back to asking for a token |
+| `AF_MCP_OAUTH_TRUSTED_HOSTS` | comma-separated host names that may receive the sign-in redirect and serve client metadata. Default `claude.ai,claude.com,chatgpt.com`. Remove one to stop that vendor, add one for an in-house client (exact host, `https` only); `none` leaves loopback clients only |
+
+- **What is served** (issuer `{PUBLIC_BASE_URL}/mcp-oauth`): `/.well-known/oauth-protected-resource/mcp`,
+  `/.well-known/oauth-authorization-server/mcp-oauth`, `/mcp-oauth/authorize`, `/mcp-oauth/consent`,
+  `/mcp-oauth/token`, `/mcp-oauth/register` and `/mcp-oauth/revoke`. The `/mcp` 401 now carries
+  `WWW-Authenticate: Bearer resource_metadata="…", scope="read"`.
+- **Ingress.** The hosted clients call `/mcp` and the token endpoint **from their vendors' servers**, so the Control
+  Plane has to be reachable from the internet on those paths. A deployment behind a VPN or a narrow ALB ingress CIDR
+  gets command-line (loopback) clients only; that is by construction, not a fault.
+  Under `AUTH=oauth` or `AUTH=dev` the Console's own session gate already lets the discovery, `token`, `register`
+  and `revoke` paths through and keeps `authorize` and `consent` behind it. Under **`AUTH=proxy`** the gateway has
+  to do the same: `/mcp-oauth/authorize` and `/mcp-oauth/consent` must pass **through** it (the member's identity header comes from
+  there), and the other five paths plus `/mcp` must **bypass** it.
+- **Who may be a client.** Registration is open (dynamic client registration is rate-limited per source, capped in
+  number, and a registration that never produces a grant is deleted after 30 days) but a registration only chooses
+  where a code is *sent*, so a redirect must be loopback or an `https` address on the trusted list, spelled
+  canonically (no upper case, trailing dot, explicit port, user info or fragment). A client identified by a metadata
+  document URL is fetched only when that URL is on the same list, without following redirects, with a short timeout
+  and a size cap, and never to a non-public address.
+- **Tokens.** Access tokens are opaque, last one hour and are bound to `{PUBLIC_BASE_URL}/mcp`; refresh tokens rotate on
+  every use and presenting a used one revokes the whole connection. A connection ends after 30 idle days or 90 days.
+  Only hashes are stored. They are not PAT rows and do not count toward the 20-token PAT limit.
+- **Audit.** `mcp.oauth.grant` (created, revoked, reuse-revoked) and `mcp.oauth.token` (each issuance) are written before
+  the response leaves; a call made with a connection is recorded as `mcp` with the connection's id as the actor. If the
+  audit store is down no token is issued.
+- **Scope.** `read` and `write` only. `admin:dangerous` is never granted over OAuth, whatever the member's role.
+- **Tenant network restriction** applies to the consent step (the person in the browser), not to `/mcp` and the token
+  endpoint, which come from the vendors' servers, as with PATs (ADR 0047).
+
 ## Handing over the in-workspace browser
 
 An agent can hand a page from the Chromium it started inside the workspace to the user as a
