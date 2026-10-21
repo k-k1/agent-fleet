@@ -227,6 +227,80 @@ Resources:
               sysctl -w user.max_user_namespaces=0
               set +e
               # END userns
+              # Memory protection for the management plane. Under memory pressure the kernel
+              # reclaims the ECS agent's and SSM agent's pages along with everything else; both
+              # stop answering while the box stays "ok" to EC2, and the CP can then neither stop
+              # the task, unmount the home nor tell the slot is wedged. memory.min is a hard
+              # floor for reclaim, so the workspace's own cgroup absorbs the pressure instead.
+              # The ECS agent is NOT a child of ecs.service: ecs-init (the unit's process) creates
+              # it as a docker container, in its own docker-<id>.scope, and re-creates it without
+              # touching the unit. A drop-in on ecs.service therefore only reaches the small
+              # supervisor; af-protect-mgmt (below) finds the agent's live scope and pid and
+              # protects those, and keeps doing so across agent restarts. The same loop sets the
+              # SSM agent's oom_score_adj on the process that is already running at first boot,
+              # which a unit setting (applied only when a process starts) cannot do.
+              # Budget (MiB): ecs-init 64 + agent 192 + SSM 192 + docker 256 + containerd 128 =
+              # 832, carried by system.slice (a child's floor only counts up to its parent's). It
+              # must stay within the smallest host reserve (ec2HostReserveFloorMiB, 1024 in
+              # runtime_ecs_ec2.go) or the protection just moves the starvation onto the workspace.
+              # cgroup v2 is the AL2023 default and
+              # DefaultMemoryAccounting is on, so the memory controller reaches system.slice and
+              # its children once these are set. OOMScoreAdjust covers the global OOM killer,
+              # which memory.min does not. Best effort: a failure here must not stop the slot
+              # from joining the cluster.
+              # BEGIN memmin
+              mkdir -p /etc/systemd/system/system.slice.d /usr/local/sbin
+              printf '[Slice]\nMemoryMin=832M\n' > /etc/systemd/system/system.slice.d/20-af-memmin.conf
+              for spec in ecs:64M:-900 amazon-ssm-agent:192M:-900 docker:256M:0 containerd:128M:0; do
+                unit=$(echo "$spec" | cut -d: -f1); min=$(echo "$spec" | cut -d: -f2); oom=$(echo "$spec" | cut -d: -f3)
+                mkdir -p "/etc/systemd/system/$unit.service.d"
+                printf '[Service]\nMemoryMin=%s\n' "$min" > "/etc/systemd/system/$unit.service.d/20-af-memmin.conf"
+                [ "$oom" = 0 ] || printf 'OOMScoreAdjust=%s\n' "$oom" >> "/etc/systemd/system/$unit.service.d/20-af-memmin.conf"
+              done
+              cat > /usr/local/sbin/af-protect-mgmt <<'PROTECT'
+              #!/bin/bash
+              # af-protect-mgmt [--once]: protect the ECS agent container and the running SSM agent.
+              AGENT_MIN_MIB=192
+              CG=$AF_CGROUP_ROOT; [ -n "$CG" ] || CG=/sys/fs/cgroup
+              PROCFS=$AF_PROC; [ -n "$PROCFS" ] || PROCFS=/proc
+              # protect <pid> <memory.min bytes or empty> <oom_score_adj>
+              # The pid only names the cgroup. docker's State.Pid is the container's init (tini) and
+              # the SSM unit's MainPID is its parent, while the real agent and ssm-agent-worker are
+              # children that already exist and do not inherit a later change, so every process
+              # listed in that cgroup gets the oom_score_adj.
+              protect() {
+                pid=$1
+                { [ -n "$pid" ] && [ "$pid" != 0 ] && [ -r "$PROCFS/$pid/cgroup" ]; } || return 0
+                cg=$(sed -n 's/^0:://p' "$PROCFS/$pid/cgroup")
+                [ -n "$cg" ] || return 0
+                { [ -z "$2" ] || echo "$2" > "$CG$cg/memory.min"; } || echo "memory.min for $cg failed" >&2
+                for p in $(cat "$CG$cg/cgroup.procs" 2>/dev/null) $pid; do
+                  echo "$3" > "$PROCFS/$p/oom_score_adj" || echo "oom_score_adj for pid $p failed" >&2
+                done
+              }
+              apply() {
+                protect "$(docker inspect -f '{{.State.Pid}}' ecs-agent 2>/dev/null)" $((AGENT_MIN_MIB * 1024 * 1024)) -900
+                protect "$(systemctl show -p MainPID --value amazon-ssm-agent.service 2>/dev/null)" "" -900
+              }
+              if [ "$1" = --once ]; then apply; exit 0; fi
+              while :; do apply; sleep 30; done
+              PROTECT
+              chmod +x /usr/local/sbin/af-protect-mgmt
+              cat > /etc/systemd/system/af-protect-mgmt.service <<'UNIT'
+              [Unit]
+              Description=agent-fleet: protect the ECS and SSM agents from memory reclaim
+              After=docker.service
+              [Service]
+              ExecStart=/usr/local/sbin/af-protect-mgmt
+              Restart=always
+              [Install]
+              WantedBy=multi-user.target
+              UNIT
+              # Every drop-in is written before this reload, which loads them ahead of ecs.service
+              # and applies the cgroup settings to units that are already running.
+              systemctl daemon-reload
+              systemctl enable --now af-protect-mgmt.service || true
+              # END memmin
               # ECS_AWSVPC_BLOCK_IMDS: a workspace task must not reach SlotRole through IMDS.
               # Nothing in the task uses IMDS (the Agent reads SMBIOS, not IMDS); the ECS and
               # SSM agents use the host network and keep it. Read at agent start = new slots only.
