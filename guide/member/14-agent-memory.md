@@ -299,8 +299,7 @@ refused.
   happened while the workspace was stopped, are covered by **"Suggest memories now"**. The cost is the same tokens as
   above (the 250 calls a day are shared with the manual button), spent with nobody watching. Turning it off stops new
   reviews right away: a call already running is allowed to finish, and the proposals it brings still wait for your
-  approval, but nothing further is started and a failed call is not retried. People who had **Propose** on before this
-  setting existed start with it off and must turn it on to keep the background review.
+  approval, but nothing further is started and a failed call is not retried.
 
 ## Memory snapshots
 
