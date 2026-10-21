@@ -4,7 +4,7 @@
 // (the rail's new file / rename / delete / SVN log, the link menu's open / reveal).
 import type { MouseEvent as RMouseEvent, ReactNode } from "react";
 import { useCallback } from "react";
-import { downloadURL } from "../../core/api/client.ts";
+import { downloadURL, getTenant } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -114,18 +114,23 @@ export function PathMenuItems({ path, type, runMenu, closeMenu, afterCopy }: Pat
   // for a home session.
   const openShellHere = () =>
     runMenu(() => {
+      // The tenant the click was made in: a switch while the list or the create is in flight must
+      // not carry this path into the other tenant's workspace (the fetch wrapper stamps the
+      // CURRENT tenant on each request) or its working sets.
+      const tenant = getTenant();
       void (async () => {
         // An unread list is not "no working copies": launching on it would file a folder of a
         // working copy as a plain path, with the wrong Meta.Repo for good. Read it first.
         const store = useReposStore.getState();
         if (needsRepoList(path) && store.loadState !== "ok") await store.refresh();
+        if (getTenant() !== tenant) return;
         if (needsRepoList(path) && useReposStore.getState().loadState !== "ok") {
           toast(tr("rp.launch_failed", { err: tr("err.network") }));
           return;
         }
         const { dir, subdir, inCopy } = shellLaunchTarget(path, useReposStore.getState().repos.map((r) => r.name));
         const r = await startWork({ dir, repo: "" }, { kind: "shell", driver: "", model: "", effort: "", startMode: "normal", prompt: "", title: tr("proj.shell_title", { name: baseName(path) }), images: [], worktree: false, subdir, base: "", newBranch: "" });
-        if (r.ok && r.name && !inCopy) autoAddToActiveWorkingSet("sessions", r.name);
+        if (r.ok && r.name && !inCopy && getTenant() === tenant) autoAddToActiveWorkingSet("sessions", r.name);
       })().catch(() => toast(tr("rp.launch_failed", { err: tr("err.network") })));
     });
   const openFolderGalleryFromMenu = (e: RMouseEvent) => {

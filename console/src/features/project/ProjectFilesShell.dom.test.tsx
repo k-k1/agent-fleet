@@ -10,10 +10,11 @@ interface Entry {
   type: string;
 }
 
+let tenantNow = "";
 let served: Record<string, Entry[]> = {};
 
 vi.mock("../../core/api/client.ts", () => ({
-  getTenant: () => "",
+  getTenant: () => tenantNow,
   api: vi.fn(async (url: string) => {
     const p = decodeURIComponent(new URL(url, "http://x/").searchParams.get("path") || "");
     return { entries: served[p] || [] };
@@ -29,11 +30,12 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 
 const started: { target: { dir: string; repo: string }; opts: { kind: string; title: string; worktree: boolean; subdir: string } }[] = [];
-let startResult: "ok" | "reject" = "ok";
+let startResult: "ok" | "reject" | "switch" = "ok";
 vi.mock("../repos/useStartWork.ts", () => ({
   useStartWork: () => async (target: { dir: string; repo: string }, opts: never) => {
     started.push({ target, opts });
     if (startResult === "reject") throw new Error("network");
+    if (startResult === "switch") tenantNow = "other";
     return { ok: true, name: "s-new" };
   },
 }));
@@ -82,6 +84,7 @@ beforeEach(() => {
   started.length = 0;
   addedToSet.length = 0;
   startResult = "ok";
+  tenantNow = "";
   useWorkspaceStore.setState({ state: "running" });
   useFilesStore.setState({ reveal: { path: null, n: 0, focus: false } });
   useReposStore.setState({ repos: [], loadState: "ok" });
@@ -157,6 +160,34 @@ describe("左ペインの右クリック「ここでシェルを開く」", () =
     await clickShell("repos/docs");
     expect(started).toHaveLength(0);
     expect(document.body.textContent).toContain("Launch failed");
+  });
+
+  it("一覧の取得待ち中にテナントを切り替えたら、別テナントへは起動しない", async () => {
+    useReposStore.setState({ repos: [], loadState: "unreachable" });
+    const real = useReposStore.getState().refresh;
+    useReposStore.setState({
+      refresh: async () => {
+        tenantNow = "other";
+        useReposStore.setState({ loadState: "ok" });
+        return true;
+      },
+    });
+    try {
+      await clickShell("repos/docs");
+    } finally {
+      useReposStore.setState({ refresh: real });
+    }
+    expect(started).toHaveLength(0);
+  });
+
+  it("作成の応答待ち中にテナントを切り替えたら、別テナントのグループへは足さない", async () => {
+    await clickShell("repos/docs");
+    expect(addedToSet).toHaveLength(1);
+    addedToSet.length = 0;
+    startResult = "switch";
+    await clickShell("repos/docs");
+    expect(started).toHaveLength(2);
+    expect(addedToSet).toEqual([]);
   });
 
   it("ファイルには出ない", async () => {
