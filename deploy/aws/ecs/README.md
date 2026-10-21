@@ -1522,6 +1522,22 @@ in the product that deletes a machine on request. It accepts a box of this pool 
 a working slot included, which leaves through `Ec2SlotTerminateAfterSec` instead. The
 quarantine reason goes into the audit log before the instance (and its tags) disappear.
 
+**A wedged slot that is not quarantined** (running, status checks `ok`, `agentConnected=false`,
+SSM silent, a home still attached) is stopped with **Stop (force)** on the same row
+(`POST /api/admin/ec2-pool/slots/{id}/force-stop`, super_admin, audit `pool.slot_force_stop`; #2449). It
+refuses a slot whose ECS agent is connected and SSM online unless the body says
+`{"override_healthy": true}`; ends the occupant's Start (the runtime's own Stop); quarantines the
+slot; cancels the CP's own pending SSM commands (those commented `agent-fleet slot volume`);
+and calls `StopInstances` gracefully, repeating it with `Force` after 3 minutes (or at once on a
+second press while `stopping`). Graceful first because a wedged box may still have the home mounted and
+Force is a power cut; the bounded wait is what keeps a box that never answers ACPI from sitting in
+`stopping`. The member's next Start sees a quarantined slot as a mismatch and releases the home from
+it (no umount on a stopped instance). Needs `ssm:ListCommands`, `ssm:CancelCommand` and
+`ssm:DescribeInstanceInformation` on the CP task role (`20-platform`, `SsmSlotForceStop`; apply that
+stack before using the button). A task still STOPPING on a slot whose agent is
+disconnected is shown on the row: start the instance once from the EC2 console so its agent reports
+it, then stop it again; nothing automates that. Not verified against a live AWS account.
+
 **Golden snapshot: skip boot-install for new users.** A brand-new home pays boot-install
 (4 CLIs 41s + rtk 1s + agy 6s = 48s) and a cold npm cache. Bake one home that has already
 paid it and every later user starts from that copy (ADR 0045 decision 9).

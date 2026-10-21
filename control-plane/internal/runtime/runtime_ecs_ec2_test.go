@@ -90,6 +90,10 @@ type fakeEC2 struct {
 	onAttach             func(instID string)
 	// terminateErr makes TerminateInstances fail without terminating anything.
 	terminateErr error
+	// stopForce records the Force flag of each StopInstances; stopHold leaves the instance
+	// in `stopping` instead of `stopped`, the way a wedged box answers a graceful stop.
+	stopForce []bool
+	stopHold  bool
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -675,8 +679,12 @@ func (f *fakeEC2) StopInstances(_ context.Context, in *ec2.StopInstancesInput, _
 	defer f.mu.Unlock()
 	for _, id := range in.InstanceIds {
 		f.log("StopInstances %s", id)
+		f.stopForce = append(f.stopForce, aws.ToBool(in.Force))
 		if i := f.instances[id]; i != nil {
 			i.State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameStopped}
+			if f.stopHold && !aws.ToBool(in.Force) {
+				i.State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameStopping}
+			}
 		}
 	}
 	return &ec2.StopInstancesOutput{}, nil
@@ -732,6 +740,50 @@ type fakeSSMCmd struct {
 	onSend func(cmd string)
 	// status, when set and non-empty for a command, is the invocation status reported for it.
 	status func(cmd string) string
+	// unfinished are the commands ListCommands reports as Pending; cancelled collects the
+	// ids CancelCommand was given. online is the SSM ping state per instance (absent =
+	// not listed), and infoErr makes DescribeInstanceInformation fail.
+	unfinished []ssmtypes.Command
+	cancelled  []string
+	online     map[string]bool
+	infoErr    error
+}
+
+func (f *fakeSSMCmd) ListCommands(_ context.Context, in *ssm.ListCommandsInput, _ ...func(*ssm.Options)) (*ssm.ListCommandsOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := &ssm.ListCommandsOutput{}
+	if len(in.Filters) == 1 && aws.ToString(in.Filters[0].Value) == "Pending" {
+		out.Commands = append(out.Commands, f.unfinished...)
+	}
+	return out, nil
+}
+
+func (f *fakeSSMCmd) CancelCommand(_ context.Context, in *ssm.CancelCommandInput, _ ...func(*ssm.Options)) (*ssm.CancelCommandOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cancelled = append(f.cancelled, aws.ToString(in.CommandId))
+	return &ssm.CancelCommandOutput{}, nil
+}
+
+func (f *fakeSSMCmd) DescribeInstanceInformation(_ context.Context, in *ssm.DescribeInstanceInformationInput, _ ...func(*ssm.Options)) (*ssm.DescribeInstanceInformationOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.infoErr != nil {
+		return nil, f.infoErr
+	}
+	out := &ssm.DescribeInstanceInformationOutput{}
+	for _, id := range in.Filters[0].Values {
+		if on, listed := f.online[id]; listed {
+			ping := ssmtypes.PingStatusConnectionLost
+			if on {
+				ping = ssmtypes.PingStatusOnline
+			}
+			out.InstanceInformationList = append(out.InstanceInformationList,
+				ssmtypes.InstanceInformation{InstanceId: aws.String(id), PingStatus: ping})
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeSSMCmd) SendCommand(_ context.Context, in *ssm.SendCommandInput, _ ...func(*ssm.Options)) (*ssm.SendCommandOutput, error) {
@@ -825,6 +877,16 @@ func (f *fakeContainerInstances) ListTasks(_ context.Context, in *ecs.ListTasksI
 	f.taskCalls++
 	if f.onList != nil {
 		f.onList()
+	}
+	if in.ContainerInstance != nil {
+		// The tasks of one container instance, which is how the pool screen asks.
+		out := &ecs.ListTasksOutput{}
+		for _, t := range f.stopping {
+			if aws.ToString(t.ContainerInstanceArn) == aws.ToString(in.ContainerInstance) {
+				out.TaskArns = append(out.TaskArns, aws.ToString(t.TaskArn))
+			}
+		}
+		return out, nil
 	}
 	if aws.ToString(in.ServiceName) != "af-ws-acme-alice" || in.DesiredStatus != ecstypes.DesiredStatusStopped {
 		f.badTaskCalls = append(f.badTaskCalls, aws.ToString(in.ServiceName)+"/"+string(in.DesiredStatus))
@@ -1003,6 +1065,8 @@ func (h *ec2Harness) factory() *ecsEC2Factory {
 	return &ecsEC2Factory{
 		base: &ecsFactory{cfg: h.rt.base.cfg, ecs: h.ecs, efs: h.efs, ssm: h.ssm},
 		ec2:  h.ec2, ssmc: h.ssmc, ci: h.ci, pool: h.rt.pool,
+		bg:    h.rt.bg,
+		sleep: h.rt.sleep,
 	}
 }
 

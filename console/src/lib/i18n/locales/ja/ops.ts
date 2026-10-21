@@ -128,6 +128,20 @@ export const ops = {
     "インスタンスと root ボリュームを削除します。取り消せません。中を調べたいことが残っていれば、先に済ませてください。",
   "pool.terminate_reason": "隔離理由: {reason}",
   "pool.terminate_failed": "終了できませんでした: {msg}",
+  "pool.force_stop": "停止（強制）",
+  "pool.force_stop_title": "スロット {id} を強制停止しますか",
+  "pool.force_stop_body":
+    "起動中なのに動かなくなったスロット（ECS エージェントが未接続で、SSM も応答しない）向けです。Control Plane が積んだコマンドを取り消し、インスタンスを停止し、以後だれも配置されないよう隔離します。載っているメンバーのワークスペースは停止に見え、次の Start で home が別のスロットへ移ります。インスタンスと root ボリュームは、終了するまで証拠として残ります。",
+  "pool.force_stop_occupant": "利用者: {ws}",
+  "pool.force_stop_failed": "停止できませんでした: {msg}",
+  "pool.force_stop_done":
+    "{id} に停止を送りました。未実行のコマンド {cancelled} 件を取り消し{failed}、隔離しました。{how}",
+  "pool.force_stop_cancel_failed": "（{n} 件は取り消せず）",
+  "pool.force_stop_graceful": "まず通常の停止を送り、{min} 分たっても止まらなければ Force 付きでもう一度送ります。停止処理中にもう一度押すと、すぐ Force で送ります。",
+  "pool.force_stop_forced": "Force 付きで停止を送りました（すでに停止処理中だったため）。",
+  "pool.stopping_task": "タスク {status} {min} 分",
+  "pool.stopping_task_title":
+    "このスロットのワークスペースのタスクが、エージェントが停止を報告できないため ECS 上で {status} のままで、メンバーの次の Start がそれを待ちます。解消するには EC2 コンソールでこのインスタンスを一度起動し、エージェントに報告させます。Control Plane はこれを自動では行いません。管理ガイドのプールの節を参照してください。",
   "pool.col_template": "テンプレート",
   "pool.outdated": "$Latest より古い",
   "pool.outdated_title": "$Latest（v{latest}）より古い起動テンプレートのバージョンで起動されています。スロットはユーザーデータを起動時にしか読まないため、入れ替えるまで古いままです。",

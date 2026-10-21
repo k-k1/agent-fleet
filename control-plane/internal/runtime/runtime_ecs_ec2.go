@@ -651,6 +651,10 @@ type ecsEC2Factory struct {
 	leases HomeLeaseStore
 	// onAutoReplace is Config.OnSlotAutoReplace.
 	onAutoReplace func(context.Context, SlotAutoReplace)
+	// bg / sleep replace the probe runtime's background runner and sleeper when set; only
+	// tests do, to drive ForceStopSlot's delayed re-stop without waiting for it.
+	bg    func(context.Context, func(context.Context))
+	sleep func(context.Context, time.Duration) error
 
 	subnetMu sync.Mutex
 	subnetAZ map[string]string // subnet-id -> AZ, resolved once
@@ -1711,7 +1715,13 @@ func (e *ecsEC2Runtime) slotTypeMatches(ctx context.Context, instanceID string) 
 			}
 			// A sweeper fence on a slot a Start won anyway is the automatic move's cue too.
 			outdated = outdated || (!e.pool.noAutoReplace && slotRetireTagged(inst))
-			return string(inst.InstanceType) == e.instanceType, slotReserved(inst), outdated, nil
+			// A quarantined box is never reused, whatever its type: an operator force-stopped it
+			// (ForceStopSlot) or a launch quarantined it without managing to detach the home.
+			// Counting it as a mismatch sends the Start through the background release, which
+			// moves the home off it instead of waking a box the CP may not even command (the
+			// slot's SendCommand grant requires af-role=slot).
+			quarantined := ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined
+			return !quarantined && string(inst.InstanceType) == e.instanceType, slotReserved(inst), outdated, nil
 		}
 	}
 	return false, false, false, nil
@@ -2395,28 +2405,30 @@ func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, caus
 // markQuarantined is step 1 of both quarantine paths: the single tag write that takes a
 // box out of the world, plus the owner tags that must not keep billing somebody for it.
 // Split out because abandonLostSlot has to do it in a different ORDER from the rest.
-func (e *ecsEC2Runtime) markQuarantined(ctx context.Context, instanceID string, cause error) {
+func (e *ecsEC2Runtime) markQuarantined(ctx context.Context, instanceID string, cause error) error {
 	reason := cause.Error()
 	if len(reason) > 200 {
 		reason = reason[:200]
 	}
-	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+	_, tagErr := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 		Resources: []string{instanceID},
 		Tags: []ec2types.Tag{
 			{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleQuarantined)},
 			{Key: aws.String(ec2TagQuarantineReason), Value: aws.String(reason)},
 			{Key: aws.String(ec2TagQuarantineAt), Value: aws.String(e.now().UTC().Format(time.RFC3339))},
 		},
-	}); err != nil {
+	})
+	if tagErr != nil {
 		// This is the step that stops the bleeding; say so loudly when it fails, because
 		// nothing else here prevents the next user from landing on the same box.
-		log.Printf("ecs-ec2: could not quarantine slot %s (it will be offered again): %v", instanceID, err)
+		log.Printf("ecs-ec2: could not quarantine slot %s (it will be offered again): %v", instanceID, tagErr)
 	}
 	// A quarantined box is nobody's. On the mount-failure path it reaches here before
 	// launch stamps the owner, so normally there is nothing to remove — but a previous
 	// tenancy whose release failed would otherwise keep billing a person for a box they
 	// can no longer use.
 	e.untagSlotOwner(ctx, instanceID)
+	return tagErr
 }
 
 // abandonLostSlot is quarantineSlot for a box whose OPERATING SYSTEM is gone rather than
@@ -4009,7 +4021,7 @@ func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command strin
 			DocumentName: aws.String("AWS-RunShellScript"),
 			InstanceIds:  []string{instanceID},
 			Parameters:   map[string][]string{"commands": {command}},
-			Comment:      aws.String("agent-fleet slot volume"),
+			Comment:      aws.String(slotVolumeCommandComment),
 		})
 		if err == nil && out.Command != nil {
 			cmdID = aws.ToString(out.Command.CommandId)
@@ -4544,6 +4556,14 @@ func (e *ecsEC2Runtime) releaseSlotSince(ctx context.Context, gen int64) error {
 	}
 	if err := e.waitTasksGone(ctx); err != nil {
 		return err
+	}
+	// A box still shutting down (an operator's force-stop, ForceStopSlot) has its home
+	// mounted until the shutdown finishes: detaching now is the unclean detach the umount
+	// rule exists to prevent, and the instance is not `running`, so the umount below skips.
+	if e.slotStateName(ctx, instanceID) == string(ec2types.InstanceStateNameStopping) {
+		if err := e.waitInstanceStopped(ctx, instanceID); err != nil {
+			return fmt.Errorf("waiting for %s to finish stopping before its home is released: %w", instanceID, err)
+		}
 	}
 	if moved, err := e.startedSince(ctx, gen); err != nil {
 		return err
@@ -6316,6 +6336,17 @@ func (e *ecsEC2Runtime) slotTaskCounts(ctx context.Context) (map[string]int, err
 // probeRuntime is a throwaway ecsEC2Runtime used purely as the library for pool-wide tag
 // queries. It is bound to no workspace, so only the pool-wide calls are valid on it.
 func (f *ecsEC2Factory) probeRuntime() *ecsEC2Runtime {
+	rt := f.newProbeRuntime()
+	if f.bg != nil {
+		rt.bg = f.bg
+	}
+	if f.sleep != nil {
+		rt.sleep = f.sleep
+	}
+	return rt
+}
+
+func (f *ecsEC2Factory) newProbeRuntime() *ecsEC2Runtime {
 	return &ecsEC2Runtime{
 		base: &ecsRuntime{cfg: f.base.cfg, ecs: f.base.ecs}, ci: f.ci, ec2: f.ec2, pool: f.pool,
 		bg: backgroundWithin(f.pool.waitBudget), now: time.Now, sleep: sleepCtx,
@@ -6523,6 +6554,12 @@ type ec2SlotView struct {
 	// ReplaceReserved: its workspace's next Start moves to a new slot (#1473).
 	ReplaceReserved   bool   `json:"replace_reserved,omitempty"`
 	ReplaceReservedAt string `json:"replace_reserved_at,omitempty"`
+	// StoppingTask is the ECS status of a task asked to stop on this slot that its agent has
+	// not reported (STOPPING, …), only read for a slot whose agent is not connected. The
+	// clean-up is to start the instance once so the agent reports; the screen says so and
+	// nothing automates it.
+	StoppingTask        string `json:"stopping_task,omitempty"`
+	StoppingTaskMinutes int    `json:"stopping_task_minutes,omitempty"`
 }
 
 type ec2HomeView struct {
@@ -6791,6 +6828,29 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 			s.ReplaceReservedAt = ec2TagValue(inst.Tags, ec2TagSlotReplace)
 			s.ReplaceReserved = s.ReplaceReservedAt != ""
 			st.Slots = append(st.Slots, s)
+		}
+	}
+	// A task still STOPPING on a slot whose agent is not connected is what blocks the next
+	// Start of its workspace (#2447); read only for those slots, so a healthy pool costs
+	// nothing. Unreadable is silence, not an error: the screen opens when things are broken.
+	var dark []string
+	for _, s := range st.Slots {
+		if !s.Registered {
+			dark = append(dark, s.InstanceID)
+		}
+	}
+	if len(dark) > 0 {
+		stopping, err := probe.stoppingTasksOn(ctx, dark)
+		if err != nil {
+			log.Printf("ecs-ec2 pool status: tasks stopping on slots unreadable: %v", err)
+		}
+		for i := range st.Slots {
+			if t, ok := stopping[st.Slots[i].InstanceID]; ok {
+				st.Slots[i].StoppingTask = t.status
+				if !t.since.IsZero() {
+					st.Slots[i].StoppingTaskMinutes = int(now.Sub(t.since).Minutes())
+				}
+			}
 		}
 	}
 	sort.SliceStable(st.Slots, func(i, j int) bool { return st.Slots[i].InstanceID < st.Slots[j].InstanceID })

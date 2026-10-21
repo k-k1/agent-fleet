@@ -17,6 +17,7 @@ GET /api/admin/dev-idp
 PUT /api/admin/dev-idp
 GET /api/admin/ec2-pool
 POST /api/admin/ec2-pool/reserve-outdated
+POST /api/admin/ec2-pool/slots/{id}/force-stop
 DELETE /api/admin/ec2-pool/slots/{id}
 DELETE /api/admin/ec2-pool/slots/{id}/replace
 PUT /api/admin/ec2-pool/slots/{id}/replace

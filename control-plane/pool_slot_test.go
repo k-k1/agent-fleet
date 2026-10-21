@@ -117,3 +117,117 @@ func TestTerminatePoolSlotOnARuntimeWithNoPool(t *testing.T) {
 		t.Fatalf("terminate on a poolless runtime = %d %s, want 404", w.Code, w.Body.String())
 	}
 }
+
+// POST /api/admin/ec2-pool/slots/{id}/force-stop (#2449) stops a machine because somebody
+// asked. What is pinned: the override is the operator's explicit word and reaches the adapter
+// only when the body says so, the adapter's refusals are answers (404/409) and not faults, and
+// what the adapter did lands in the audit line even when the call failed half way.
+
+type forceStopFactory struct {
+	slotPoolFactory
+	res      runtime.SlotForceStop
+	fsErr    error
+	override []bool
+}
+
+func (f *forceStopFactory) ForceStopSlot(_ context.Context, id string, override bool) (runtime.SlotForceStop, error) {
+	f.asked = append(f.asked, id)
+	f.override = append(f.override, override)
+	return f.res, f.fsErr
+}
+
+func callForceStop(adm adminAPI, id, email, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(http.MethodPost, "/api/admin/ec2-pool/slots/"+id+"/force-stop", strings.NewReader(body))
+	r.SetPathValue("id", id)
+	r.Header.Set("X-Forwarded-Email", email)
+	w := httptest.NewRecorder()
+	adm.withSuperAdmin(adm.forceStopPoolSlot)(w, r)
+	return w
+}
+
+func TestForceStopPoolSlotAuditsWhatTheAdapterDid(t *testing.T) {
+	f := &forceStopFactory{res: runtime.SlotForceStop{
+		InstanceID: "i-wedge", Workspace: "af-ws-x", PreviousState: "running",
+		CancelledCommands: 2, Quarantined: true,
+	}}
+	st, adm := poolSlotFixture(t, f)
+	w := callForceStop(adm, "i-wedge", "boss@acme.co.jp", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"cancelled_commands":2`) {
+		t.Fatalf("force-stop = %d %s", w.Code, w.Body.String())
+	}
+	if len(f.override) != 1 || f.override[0] {
+		t.Fatalf("override without a body = %v, want false", f.override)
+	}
+	rows, _ := st.ListAuditByTenant(context.Background(), "", 10)
+	var found bool
+	for _, a := range rows {
+		if a.Action == "pool.slot_force_stop" && a.Target == "i-wedge" && a.HTTPStatus == http.StatusOK &&
+			strings.Contains(a.Detail, "workspace=af-ws-x") && strings.Contains(a.Detail, "cancelled=2") && strings.Contains(a.Detail, "quarantined=true") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no audit row for the force-stop: %+v", rows)
+	}
+}
+
+func TestForceStopPoolSlotOverrideComesOnlyFromTheBody(t *testing.T) {
+	f := &forceStopFactory{}
+	_, adm := poolSlotFixture(t, f)
+	if w := callForceStop(adm, "i-a", "boss@acme.co.jp", `{"override_healthy":true}`); w.Code != http.StatusOK {
+		t.Fatalf("override = %d %s", w.Code, w.Body.String())
+	}
+	if w := callForceStop(adm, "i-a", "boss@acme.co.jp", `{not json`); w.Code != http.StatusBadRequest {
+		t.Fatalf("bad body = %d, want 400", w.Code)
+	}
+	if len(f.override) != 1 || !f.override[0] {
+		t.Fatalf("adapter calls = %v, want one with override", f.override)
+	}
+}
+
+func TestForceStopPoolSlotPassesTheAdaptersRefusalsThrough(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want int
+		code string
+	}{
+		{runtime.ErrSlotNotFound, http.StatusNotFound, "no_such_slot"},
+		{runtime.ErrSlotNotRunning, http.StatusConflict, "slot_not_running"},
+		{runtime.ErrSlotHealthy, http.StatusConflict, "slot_healthy"},
+	} {
+		st, adm := poolSlotFixture(t, &forceStopFactory{fsErr: tc.err})
+		w := callForceStop(adm, "i-x", "boss@acme.co.jp", "")
+		if w.Code != tc.want || !strings.Contains(w.Body.String(), tc.code) {
+			t.Fatalf("%v: = %d %s, want %d %s", tc.err, w.Code, w.Body.String(), tc.want, tc.code)
+		}
+		rows, _ := st.ListAuditByTenant(context.Background(), "", 10)
+		for _, a := range rows {
+			if a.Action == "pool.slot_force_stop" && (a.HTTPStatus != tc.want || !strings.HasPrefix(a.Detail, "error "+tc.code)) {
+				t.Fatalf("a refused force-stop was audited as %+v", a)
+			}
+		}
+	}
+}
+
+func TestForceStopPoolSlotIsSuperAdminOnly(t *testing.T) {
+	f := &forceStopFactory{}
+	st, adm := poolSlotFixture(t, f)
+	if _, err := st.UpsertIdentity(context.Background(), "ta@acme.co.jp", "ta-acme-co-jp", "member"); err != nil {
+		t.Fatal(err)
+	}
+	for _, email := range []string{"ta@acme.co.jp", "stranger@example.com"} {
+		if w := callForceStop(adm, "i-x", email, ""); w.Code != http.StatusForbidden && w.Code != http.StatusUnauthorized {
+			t.Fatalf("%s got %d, want 401/403", email, w.Code)
+		}
+	}
+	if len(f.asked) != 0 {
+		t.Fatalf("a non-super-admin reached the adapter: %v", f.asked)
+	}
+}
+
+func TestForceStopPoolSlotOnARuntimeWithNoPool(t *testing.T) {
+	_, adm := poolSlotFixture(t, &destroyingFactory{})
+	if w := callForceStop(adm, "i-x", "boss@acme.co.jp", ""); w.Code != http.StatusNotFound {
+		t.Fatalf("force-stop on a poolless runtime = %d, want 404", w.Code)
+	}
+}

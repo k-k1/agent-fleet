@@ -634,6 +634,16 @@ Resources:
                 Effect: Allow
                 Action: ssm:GetCommandInvocation
                 Resource: "*"
+              # The pool screen's "Stop slot (force)" (#2449): find the slot's unfinished CP
+              # commands and cancel them, and tell a wedged slot (SSM offline) from a healthy
+              # one. None of the three has a resource type to scope; none can run a command.
+              - Sid: SsmSlotForceStop
+                Effect: Allow
+                Action:
+                  - ssm:ListCommands
+                  - ssm:CancelCommand
+                  - ssm:DescribeInstanceInformation
+                Resource: "*"
               # iam:PassRole for the slot role is NOT here: 40-ec2-pool attaches it to this
               # role (CpSlotLaunchManagedPolicy), naming its own SlotRole. A pattern here such as
               # role/af-*-slot also matched every other deployment's slot role in the account,

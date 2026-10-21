@@ -283,6 +283,9 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// and the bulk form for every slot below the launch template's $Latest.
 	mux.HandleFunc("PUT /api/admin/ec2-pool/slots/{id}/replace", adm.withSuperAdmin(adm.reservePoolSlot))
 	mux.HandleFunc("DELETE /api/admin/ec2-pool/slots/{id}/replace", adm.withSuperAdmin(adm.reservePoolSlot))
+	// Stop a wedged slot that is NOT quarantined (agents dark, instance running) and
+	// quarantine it (#2449); a healthy slot is refused unless the body overrides it.
+	mux.HandleFunc("POST /api/admin/ec2-pool/slots/{id}/force-stop", adm.withSuperAdmin(adm.forceStopPoolSlot))
 	mux.HandleFunc("POST /api/admin/ec2-pool/reserve-outdated", adm.withSuperAdmin(adm.reserveOutdatedPoolSlots))
 	mux.HandleFunc("GET /api/admin/workspace-sizing", adm.withIdentity(adm.workspaceSizingProfile)) // what mem/CPU/disk MEAN on this runtime (ADR 0045 decision 21)
 	mux.HandleFunc("GET /api/admin/usage", adm.usage)                                               // showback: occupancy per tenant/member (json|csv)
