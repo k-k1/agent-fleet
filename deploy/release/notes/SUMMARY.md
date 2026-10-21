@@ -14,6 +14,28 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 
 ---
 
+## [0.33.0](0.33.0.md) — 2026-10-21
+
+**CLI pins** — Claude Code 2.1.305, Copilot 1.0.101, Antigravity 1.4.3, Cursor 2026.10.19-6bbf2c4, OpenCode 2.1.1, Muse Code 1.4.11-R6667.1
+
+**New / Improved**
+
+- **[members]** Members page as one card per member: state badge, filter, sort, search, sessions, last active, home disk, live memory and CPU ([#2385](https://github.com/k-k1/agent-fleet/issues/2385), [#2388](https://github.com/k-k1/agent-fleet/issues/2388), [#2389](https://github.com/k-k1/agent-fleet/issues/2389))
+- **[workspace]** A full home disk and failed CLI installs are shown to the member and the tenant admin; a start of that kind is refused with the reason ([#2383](https://github.com/k-k1/agent-fleet/issues/2383), [#2398](https://github.com/k-k1/agent-fleet/issues/2398))
+- **[command palette]** Memory mode searches Agent memory ([#2407](https://github.com/k-k1/agent-fleet/issues/2407))
+- **[command palette]** Shift with the palette chord cycles modes backwards; PageUp/PageDown page; the mode hint has its own line ([#2412](https://github.com/k-k1/agent-fleet/issues/2412), [#2421](https://github.com/k-k1/agent-fleet/issues/2421))
+- **[preview]** Loopback URLs in Markdown open the workspace preview of that port ([#2414](https://github.com/k-k1/agent-fleet/issues/2414), [#2419](https://github.com/k-k1/agent-fleet/issues/2419), [#2426](https://github.com/k-k1/agent-fleet/issues/2426))
+- **[session-to-session messages]** A parent gets one notice when its whole session tree has been idle for 15 minutes ([#2397](https://github.com/k-k1/agent-fleet/issues/2397))
+- **[mirror]** `$AF_WORK_DIR` paths in Terminal replies are links; file menus open the folder or the folder in the gallery ([#2429](https://github.com/k-k1/agent-fleet/issues/2429))
+- **[sessions]** kiro can be a move target ([#2252](https://github.com/k-k1/agent-fleet/issues/2252))
+- **[handoff]** Handover file in the Console language, with discarded inputs and fewer old read-only calls ([#2233](https://github.com/k-k1/agent-fleet/issues/2233))
+- **[muse]** Muse Code 1.4.11 and its new record kinds ([#2394](https://github.com/k-k1/agent-fleet/issues/2394))
+- **[ECS]** `pause.sh` deletes the NAT gateway while paused and keeps a paused RDS instance stopped ([#2386](https://github.com/k-k1/agent-fleet/issues/2386))
+
+**Fixed**
+
+- **[workspace]** A half-failed CLI install at start was logged as successful and the broken binary kept ([#2384](https://github.com/k-k1/agent-fleet/issues/2384))
+
 ## [0.32.1](0.32.1.md) — 2026-10-19
 
 **CLI pins** — Claude Code 2.1.303
