@@ -212,8 +212,10 @@ together with `CustodianKmsKeyArn`; only the Control Plane task definition chang
   removes; an access point rooted elsewhere is kept and reported, not deleted), never afterwards, and never from "no leftovers"
   (`ecs` without the home task removes only the access points, and a retry then reports none).
   A key still `migrating` is never removed this way, and a runtime that cannot prove it keeps
-  the key. Once that crypto-shredding happens, the key's ciphertext is gone with the row, so
-  copies of the store that survive elsewhere (snapshots, backups) are unreadable too.
+  the key. Once the row is deleted, the store and any copy of it sealed under that key (a
+  snapshot, a backup) no longer open, unless a database backup that still holds the
+  `home_dek` row is restored while the KMS key is enabled. Copies made before the store moved
+  are on the derived key ([below](#disabling-the-kms-key-restoring-a-copy-turning-it-off)).
 - **Orphaned keys.** Keys that were kept (a `migrating` probe of a golden bake, a runtime that
   could not prove it, a destroy by an older Control Plane) are listed by
   `af-cp home-dek-status --orphans` (read-only; keys no workspace row names). A listed key is a
@@ -221,8 +223,10 @@ together with `CustodianKmsKeyArn`; only the Control Plane task definition chang
   that the home is gone (the EFS directories, the EBS volume and snapshots, the cluster
   claims, or the data directory), remove it with
   `af-cp home-dek-status --remove-orphan <membership-id> --force`. `--force` is your statement
-  that the home is gone, because that command has no runtime to check with; it still refuses
-  a key a workspace row names. A key removed while the home exists makes its `secrets.enc`
+  that the home is gone, because that command has no runtime to check with. It still refuses
+  a key a workspace row names, and refuses while a workspace operation on that membership is
+  in progress. It exits `0` when it removed the key, `1` when it removed nothing, and `2`
+  when the database fails. A key removed while the home exists makes its `secrets.enc`
   unreadable for good.
 - **Moving a store to it.** The first start after you turn it on mints the home's key, and the
   Control Plane passes it to the workspace beside the derived key. At boot the workspace opens
@@ -241,9 +245,11 @@ together with `CustodianKmsKeyArn`; only the Control Plane task definition chang
   home's key alone (as `AF_SECRET_KEY`) and no derived key; on `ecs` / `ecs-ec2` that start also
   deletes the `secret-key-next` parameter. A workspace that is already running keeps both keys
   in its environment until it is restarted. `unreadable` or `derived` leaves the home
-  migrating, is logged, and deletes nothing. If the Control Plane restarts while it waits, the
-  home simply stays migrating and is confirmed at a later start. `af-cp home-dek-status` counts
-  migrating and confirmed homes.
+  migrating, is logged, and deletes nothing. The wait asks every 3 seconds for at most 15
+  minutes; if that runs out, or the Control Plane restarts while it waits, the home stays
+  migrating and is confirmed at a later start. `af-cp home-dek-status` counts migrating and
+  confirmed homes; on `ecs` / `ecs-ec2` run it as a one-off task like `rewrap-keys` above, with
+  `"command":["home-dek-status"]`.
 
 #### Disabling the KMS key, restoring a copy, turning it off
 
@@ -276,18 +282,18 @@ together with `CustodianKmsKeyArn`; only the Control Plane task definition chang
   that home no longer receives: the workspace reports `unreadable` and refuses to write over
   it. Run `af-cp home-dek-status --remigrate <membership-id>` with the Control Plane's
   environment, then restart the workspace: it gets both keys again and re-seals the restored
-  store.
+  store. The command exits `1` when the membership has no confirmed home key, `2` when the
+  database fails.
 - **Turning it off does not undo it.** With `AF_WORKSPACE_DEK` unset again, homes that already
   have a key keep getting it, because their store may be sealed under it. After a store has
   been re-sealed, two kinds of going back differ:
-  - **A Control Plane that does not know the home's key, or a lost `home_dek` table**, with the
-    workspace image of this version: the store no longer opens, and the workspace refuses
-    every write to it, reconnecting a credential included (this version never writes over a
-    store it cannot open). A Control Plane that knows the home's key but not the confirm step
-    is fine: it hands out both keys again, and the workspace opens the store with the home's.
-  - **A workspace image from before this version: do not start one on a home that has
-    moved.** Its Agent has no such guard: a save after a failed read can write an empty
-    store over the re-sealed one, and the credentials are lost.
+  - **A Control Plane that does not know the home's key, or a lost `home_dek` table**, with a
+    workspace image of v0.31.0 or later: the store no longer opens, and the workspace refuses
+    every write to it, reconnecting a credential included (that image never writes over a
+    store it cannot open).
+  - **A workspace image older than v0.31.0: do not start one on a home that has moved.**
+    Its Agent has no such guard: a save after a failed read can write an empty store over the
+    re-sealed one, and the credentials are lost.
 
   To recover, first restore what opens the store, before any workspace starts on that home:
   the Control Plane version, its `home_dek` rows and the KMS key. Only if the stored
