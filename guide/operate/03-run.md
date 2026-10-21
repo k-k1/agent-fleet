@@ -1,7 +1,7 @@
 ---
 audience: "someone keeping a running deployment healthy"
 source_of_truth: "the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 03. Day-to-Day Operations
@@ -119,8 +119,14 @@ The commands are in the runbook's "Upgrade" section.
   clears at the first `update.sh` run that confirms the data stack has its backup. Never filled
   means no banner. If `update.sh` cannot read or evaluate the data stack it keeps the previous
   verdict, so an existing banner stays until a run confirms the fix.
+  **On `ecs-ec2`, a release that changes the slot launch template** reaches the slots you already
+  have only when they are replaced ([below](#ecs-ec2-replacing-slots-after-a-launch-template-change)).
 
 ## ecs-ec2 slot pool
+
+On `ecs-ec2` a workspace runs as a task on an EC2 slot taken from a pool, and its home is an EBS
+volume that stays with its slot between starts. A super_admin manages the slots under
+**Settings → Admin → Slots**.
 
 ### ecs-ec2: replacing slots after a launch template change
 
@@ -132,8 +138,8 @@ Console instead of terminating instances by hand.
 **Slots below `$Latest` are replaced automatically.** When a workspace starts and its home is on
 such a slot, that start moves it to a new slot exactly as a reservation does, but without the WS
 bar notice, and a free slot below `$Latest` is terminated by the sweeper. If no new slot can be
-launched (capacity, quota) the start still succeeds on the old slot and tries again at a later
-start. Each automatic move is in the audit log (`pool.slot_replace_auto`). The Slots tab shows
+launched (capacity, quota) the start still succeeds on the old slot, and starts within the next
+10 minutes stay on it without trying again. Each automatic move is in the audit log (`pool.slot_replace_auto`). The Slots tab shows
 **older than $Latest · replaced at next start** on these slots. Set
 `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS=false` on the Control Plane to turn this off. Reserve slots
 yourself when a workspace must never be put back on its old slot (then a start that cannot launch
@@ -375,7 +381,9 @@ An idle claude session is halted after **1 hour**
 and a Workspace with nothing running is stopped after **2 hours**. That is the default;
 `AF_SESSION_IDLE_TIMEOUT` / `AF_INTERACTION_IDLE_TIMEOUT` (a session parked on a question or an approval) / `AF_WS_IDLE_TIMEOUT` / `AF_PRESENCE_IDLE_TIMEOUT` (how long a terminal with no typing still counts as someone being there; 30m) change it (per-tenant overrides are in the
 Admin UI: a tenant setting `0` opts that tenant out, and `0` in the env turns it off for the
-whole deployment). This is effective for
+whole deployment). A tenant's values are the four fields under **Idle auto-stop** in its limits
+(**Session halt after**, **Halt when awaiting a decision**, **Max hold by background work**,
+**Workspace stop after**); an empty field follows the deployment default. This is effective for
 saving resources. For the meaning of the env vars, see
 `deploy/compose/.env.example`; for how it works, see
 `docs/build/09-deploy.md` §9.4.
@@ -415,3 +423,40 @@ force-stops it from the Admin panel in the Console. When the whole host must be 
 down for maintenance, after stopping the CP/Caddy you also need to `docker stop` the remaining
 `af-ws-*` containers separately (this also comes up in the troubleshooting chapter,
 [06](06-diagnose.md)).
+
+## Pausing an idle deployment
+
+Stopping every Workspace leaves the deployment's floor billing: the Control Plane, the database,
+the NAT gateway, the load balancer. For a stretch nobody uses it, the AWS and GKE deployments each
+have a `pause.sh` that stops or removes what bills by the hour and keeps the data; `--up` brings
+the deployment back. To get as close to zero as possible, tear it down instead (`teardown.sh` on AWS,
+`terraform destroy` on GKE), which takes the data with it.
+
+Both scripts work the same way: without `--yes` a pause only prints its plan, `--dry-run` prints
+every write without making it, and `--status` shows what is running and what still bills, changing
+nothing. `--keep-db` leaves the database running.
+
+- **AWS (`ecs` / `ecs-ec2`)**: `deploy/aws/ecs/pause.sh --profile <p> --region <r>`. It stops the
+  running Workspaces (their sessions end), waits for the Control Plane to put the slots to sleep and
+  end the engines' GPU instances (`--fast` does it directly), stops the Control Plane, stops the RDS
+  instance and deletes the NAT gateway (`--keep-nat` keeps it). The gateway is deleted through the
+  network stack's `NatEnabled` parameter, never by hand (the stack would keep pointing at the deleted gateway), and the egress address is kept, so the
+  source IP is the same after `--up`. Nothing in a private subnet reaches out while it is gone. AWS
+  starts a stopped RDS instance again by itself after 7 days; the data stack's re-stop function
+  (`RdsRestopOnForcedStart`, on by default) stops it again while the instance carries the pause tag,
+  and an older data stack gets it with one deploy of that stack. `--up` brings back the NAT gateway,
+  the database and the Control Plane; members start their own Workspaces. The load balancer, EFS and
+  the database's storage keep billing.
+- **GKE (`kubernetes`)**: `deploy/gcp/gke/pause.sh --project <p> --location <region or zone> --prefix <name_prefix>`,
+  in a shell whose kubectl points at the cluster; it refuses a context whose server and CA are not
+  that cluster's. A running Workspace makes it refuse, unless `--stop-workspaces` stops them. It
+  scales the Control Plane to 0, empties the workspace pool and the system pool, and stops Cloud SQL,
+  which, unlike RDS, does not start itself again. The node counts are recorded on the Control Plane's
+  namespace and `--up` restores them; until then `terraform plan` reports the pools as drift. The GKE
+  management fee, the load balancer's forwarding rule, the Private Service Connect endpoint, Cloud NAT
+  and its address, the persistent disks and Cloud SQL's storage keep billing (measured in
+  `deploy/gcp/gke/README.md`, "Cost").
+
+The order each script follows and why, and what to check afterwards, are in the runbooks:
+[deploy/aws/ecs/README.md, "Lifecycle scripts"](../../deploy/aws/ecs/README.md#lifecycle-scripts-stand-up--pause--tear-down)
+and [deploy/kubernetes/README.md, "Pausing"](../../deploy/kubernetes/README.md#pausing).

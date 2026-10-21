@@ -1,7 +1,7 @@
 ---
 audience: "動いている配備を保つ人"
 source_of_truth: "`deploy/` 配下のスクリプト（記述がスクリプトと食い違ったら、このページのバグ）"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 03. 日常運用
@@ -106,8 +106,14 @@ air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/RE
   アップが入ったあとの`update.sh` が確認できた時点でバナーは消えます。`update.sh` がデータスタックを読めな
   かった場合は以前の判定を保持するので、既存のバナーは修復を確認できた実行まで残ります。
   一度も記録されていない環境ではバナーは出ません。
+  **`ecs-ec2` で、リリースがスロットの起動テンプレートを変えたとき**は、今あるスロットには入れ替えた
+  ときにしか届きません（[下記](#ecs-ec2-起動テンプレートを変えたあとのスロットの入れ替え)）。
 
 ## ecs-ec2 スロットプール
+
+`ecs-ec2` では、ワークスペースはプールから取った EC2 スロット上のタスクとして動き、ホームは停止中も
+そのスロットに付いたままの EBS ボリュームです。スロットは super_admin が
+**設定 → 管理 → スロット** で管理します。
 
 ### ecs-ec2: 起動テンプレートを変えたあとのスロットの入れ替え
 
@@ -118,7 +124,8 @@ air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/RE
 **`$Latest` より古いスロットは自動で入れ替わります。** ワークスペースの起動時にホームがそのような
 スロットにあると、その起動で予約と同じ手順で新しいスロットへ移ります（WS バーへの表示はありません）。
 `$Latest` より古い空きスロットはスイーパーが終了します。新しいスロットを起動できないとき（容量・
-クォータ）も起動は古いスロットで成功し、後の起動でやり直します。自動の入れ替えは監査ログに残ります
+クォータ）も起動は古いスロットで成功し、その後 10 分以内の起動はやり直さずに古いスロットのまま
+動きます。自動の入れ替えは監査ログに残ります
 （`pool.slot_replace_auto`）。スロット画面には **$Latest より古い・次回起動で自動入れ替え** と出ます。
 止めたいときは Control Plane の `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS=false` を設定します。古いスロットへ戻すことを
 禁じたいときは、次のように自分で予約します（その場合、新しいスロットを起動できなければ起動は失敗します）。
@@ -346,6 +353,8 @@ usage のサンプルごと（5 分）なので、停止は最大 1 サンプル
 何も動いていない Workspace を **2 時間**で停止します。**これが既定**で、
 `AF_SESSION_IDLE_TIMEOUT` / `AF_INTERACTION_IDLE_TIMEOUT`（質問や承認待ちで止まっているセッション）/ `AF_WS_IDLE_TIMEOUT` / `AF_PRESENCE_IDLE_TIMEOUT`（打鍵の無い端末を在席と数える猶予・既定 30 分）で変えられます（テナント単位の上書きは Admin UI。
 テナントが `0` を入れればそのテナントだけ無効、env に `0` を入れれば配備全体で無効）。
+テナントの値は、上限の **アイドル自動停止** にある 4 つの欄（**セッション停止まで**・**判断待ちの halt まで**・
+**バックグラウンド作業で保持する上限**・**ワークスペース停止まで**）で、空欄は配備の既定に従います。
 資源の節約に有効です。env の意味は `deploy/compose/.env.example`、仕組みは
 `docs/build/09-deploy.ja.md` §9.4。
 
@@ -383,3 +392,38 @@ shell と ssm は「作業中」にならず、muse と lcpp にはターミナ�
 force-stop します。ホスト全体をメンテナンスで完全に落とす必要があるときは、CP/Caddy を止めた
 うえで、残る `af-ws-*` コンテナを別途 `docker stop` する必要があります（この点は障害対応の
 [06](06-diagnose.ja.md) でも触れます）。
+
+## 使わない間の配備を一時停止する
+
+Workspace をすべて止めても、配備の床の費用は残ります。Control Plane、データベース、NAT ゲートウェイ、
+ロードバランサの分です。しばらく誰も使わないときのために、AWS と GKE の配備にはそれぞれ `pause.sh`
+があり、時間課金のものを止めるか消して、データは残します。`--up` で配備を戻します。できるだけ 0 に
+近づけたいなら、配備を削除します（AWS は `teardown.sh`、GKE は `terraform destroy`）。この場合はデータも
+消えます。
+
+2 つのスクリプトの使い方は同じです。`--yes` を付けない一時停止は計画を表示するだけで、`--dry-run` は
+書き込みを実行せずに表示し、`--status` は動いているものと課金が続くものを表示するだけで何も変えません。
+`--keep-db` を付けるとデータベースを動かしたままにします。
+
+- **AWS（`ecs` / `ecs-ec2`）**: `deploy/aws/ecs/pause.sh --profile <p> --region <r>`。動いている
+  Workspace を止め（そのセッションは終わります）、Control Plane がスロットを眠らせてエンジンの GPU
+  マシンを終えるのを待ち（`--fast` なら直接止めます）、Control Plane を止め、RDS インスタンスを止めて
+  NAT ゲートウェイを削除します（`--keep-nat` で残します）。ゲートウェイの削除はネットワークスタックの
+  `NatEnabled` パラメータで行います（手で消すと、スタックは消えたゲートウェイを指したままになります）。送信元アドレスは残すので、`--up` のあとも送信元 IP は変わりません。
+  ゲートウェイが無い間、プライベートサブネットからは外へ出られません。AWS は止めた RDS インスタンスを
+  7 日後に自動で起動します。データスタックの再停止の仕組み（`RdsRestopOnForcedStart`、既定で有効）が、
+  一時停止のタグが付いている間はもう一度止めます。古いデータスタックには、そのスタックを 1 回デプロイ
+  すると入ります。`--up` は NAT ゲートウェイ、データベース、Control Plane を戻し、Workspace はメンバーが
+  自分で起動します。ロードバランサ、EFS、データベースのストレージは課金が続きます。
+- **GKE（`kubernetes`）**: `deploy/gcp/gke/pause.sh --project <p> --location <リージョンまたはゾーン> --prefix <name_prefix>`。
+  kubectl がそのクラスタを指すシェルで実行します。コンテキストのサーバーと CA がそのクラスタのもの
+  でなければ実行を拒みます。Workspace が動いていると拒み、`--stop-workspaces` を付ければそれを止めます。
+  Control Plane を 0 にし、workspace プールと system プールを空にして、Cloud SQL を止めます。Cloud SQL は
+  RDS と違い、自分で起動し直しません。ノード数は Control Plane の名前空間に記録し、`--up` で元に戻します。
+  それまでの間、`terraform plan` はプールの差分を報告します。GKE の管理手数料、ロードバランサの転送
+  ルール、Private Service Connect のエンドポイント、Cloud NAT とそのアドレス、永続ディスク、Cloud SQL の
+  ストレージは課金が続きます（実測は `deploy/gcp/gke/README.md` の「Cost」）。
+
+それぞれのスクリプトが従う順序とその理由、終わったあとに確かめることは runbook にあります。
+[deploy/aws/ecs/README.md の「Lifecycle scripts」](../../deploy/aws/ecs/README.md#lifecycle-scripts-stand-up--pause--tear-down)
+と [deploy/kubernetes/README.md の「Pausing」](../../deploy/kubernetes/README.md#pausing) を参照してください。

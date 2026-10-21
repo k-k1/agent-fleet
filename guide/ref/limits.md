@@ -1,7 +1,7 @@
 ---
 audience: "everyone; most often a member asking \"why did it stop?\" and an administrator asking \"what should I set?\""
 source_of_truth: "this table for the fixed values; the limit's own screen for anything a tenant or deployment sets"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # Limits and defaults
@@ -26,11 +26,13 @@ These do not vary by deployment.
 | Browser pane: hidden page retention | 60 seconds | After that the page is released and rebuilt from the saved port and path on return |
 | Browser pane: console messages kept | 200 | Oldest are dropped; this is not a persistent log |
 | Folder zip download: files / folders / depth | 20,000 / 4,000 / 32 levels | Refused with 413 and a message naming the limit; nothing is truncated (ADR 0111) |
-| Folder zip download: bytes read | 512 MB | Counted on the bytes actually read, not the listing, so a file that grows mid-build is caught; refused with 413 |
+| Folder zip download: bytes read | 512 MiB | Counted on the bytes actually read, not the listing, so a file that grows mid-build is caught; refused with 413 |
 | Folder zip download: entries looked at / summed name length | 100,000 / 4 MiB | Refused with 413 |
 | Folder zip download: reading time | 45 s | Refused with 413 (below the load balancer's 60 s idle timeout, because nothing is sent until the archive is built). Cooperative: checked between reads and after the last one, so a call already stuck on a hung volume holds the build slot until it returns |
 | Folder zip download: transfer time | 15 min | The connection is closed; a stalled client cannot hold the one build slot longer |
 | Folder zip download: concurrent builds | 1 per workspace | A second press waits up to 2 s, then 503 "busy"; each build holds a temp file of up to the byte limit on the home volume |
+| A "working" session with no sign of life | 1 hour | It stops keeping the Workspace awake; the time counts from the last output, state change or (for some kinds) running tool, not from the start of the turn ([operate/03](../operate/03-run.md#what-keeps-a-workspace-awake)) |
+| Jumping to an older turn from a search hit | 8,000 transcript positions back, in at most 4 requests | The turn is not reached; a notice says it is too far back, and scrolling up loads it |
 
 > **Why the title limit is worth naming.** It used to differ per layer: a handoff
 > proposal accepted 512 bytes, showed it on the card and in the launch dialog and let
@@ -41,8 +43,7 @@ These do not vary by deployment.
 
 ## Set by the deployment
 
-Defaults come from `deploy/compose/.env.example`,
-which stays the source of truth.
+Defaults are the Control Plane's own; `deploy/compose/.env.example` annotates most of them.
 
 | Limit | Default | Set by |
 |---|---|---|
@@ -54,6 +55,13 @@ which stays the source of truth.
 | Stopped session kept in the list | 7 days | Each user's **Settings → Agents → Session** (1 / 3 / 7 / 14 / 30 days, or off); `AF_SESSION_STOPPED_TTL` is the deployment default for users who leave it at Default; after that it moves to the archive, never deleted, and its working copy stays; a session locked against deletion stays in the list |
 | Cloud-cost window | 7 days | `AF_CLOUD_COST_WINDOW_DAYS` |
 | Idle sweep | on | `AF_IDLE_SWEEP_INTERVAL`: **`0` switches the reaper off entirely**, so nothing is ever stopped for being idle |
+| Idle session halted after | 1 hour | `AF_SESSION_IDLE_TIMEOUT`; `0` turns it off |
+| Session waiting on a decision (question, approval) halted after | the session value | `AF_INTERACTION_IDLE_TIMEOUT` |
+| Idle Workspace stopped after | 2 hours | `AF_WS_IDLE_TIMEOUT`; `0` turns it off |
+| Background work keeps a Workspace awake for | 2 hours | `AF_BACKGROUND_HOLD_MAX`; `0` = unbounded |
+| A terminal with no typing still counts as someone there for | 30 minutes | `AF_PRESENCE_IDLE_TIMEOUT` |
+| A Workspace still starting is stopped after | 30 minutes | `AF_WORKSPACE_START_DEADLINE`; `0` turns it off ([operate/03](../operate/03-run.md#a-start-that-never-finishes)) |
+| Home and state volumes (kubernetes) | 50 GiB and 5 GiB | `AF_K8S_HOME_GIB`, `AF_K8S_STATE_GIB` |
 
 The self-hosted engines' own auto-stop is not in this table: **Stop after** is set per role under
 Admin → Inference engines, and a saved value wins over the engine stack's default from the
@@ -68,7 +76,8 @@ Read the screen rather than this page.
 - Workspaces per tenant, and sessions per member
 - Workspace size (CPU, memory, disk) where the target supports it;
   see [deploy-targets.md](deploy-targets.md)
-- Idle auto-stop threshold
+- Idle auto-stop: session halt, halt when awaiting a decision, the background-work hold and the
+  Workspace stop, each empty for the deployment default above or `0` for off (unbounded for the hold)
 - Whether the tenant's administrators may take engine models in (off unless granted), and whether
   the tenant may use the self-hosted engines at all, per role (llm / image): allowed unless
   switched off

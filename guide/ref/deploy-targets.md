@@ -22,11 +22,16 @@ deployment" is the most expensive kind of documentation error here.
 
 > **Preview.** The `kubernetes` runtime is a preview: it has been accepted on a GKE Standard
 > cluster but is not yet supported for production. Known limits: there are no browser features
-> on this runtime (no browser pane, no headless Chromium), and on GKE the region's SSD disk quota
-> has to hold the deployment before you start ([Preconditions](../../deploy/kubernetes/README.md#preconditions)). Still being
-> measured: how the load balancer's 24-hour WebSocket cut affects day-long sessions
-> ([7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)). What it costs on
-> GKE, measured: [The bill](../../deploy/kubernetes/README.md#the-bill).
+> on this runtime (no browser pane, no headless Chromium), a home lives in one zone and is not
+> backed up, and on GKE the region's SSD disk quota has to hold the deployment before you start
+> ([Preconditions](../../deploy/kubernetes/README.md#preconditions)). The load balancer closes an
+> active WebSocket after 24 hours whatever its timeout says
+> ([7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)). After a cut the
+> terminal pane shows `[disconnected]` and reattaches when you click it or come back to the tab;
+> the shell and its tmux session keep running. That was measured with a forced cut, not by
+> waiting out a day. What it costs on GKE, measured: [The bill](../../deploy/kubernetes/README.md#the-bill).
+> For a trial or one team, `deploy/gcp/gke` has a small zonal profile (one zone, no database
+> standby) at about half the default floor, an estimate from the measured prices rather than a bill.
 
 `docker` also answers to `local`, `ecs` to `aws`, `native` to `wsl`, and `kubernetes` to `k8s`. Anything else
 is rejected at boot rather than quietly defaulting. `ecs` and `ecs-ec2` are separate
@@ -155,8 +160,8 @@ every target.
 
 ## Where the procedure lives
 
-Until [operate/](../operate/README.md) is written, the runbooks are still in the
-repository next to what they operate:
+The commands are in the runbooks, kept next to what they operate;
+[operate/](../operate/README.md) explains what happens and what to watch out for:
 
 | Target | Runbook |
 |---|---|

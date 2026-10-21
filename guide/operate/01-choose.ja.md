@@ -54,13 +54,9 @@ updated: "2026-10"
 
 ## Kubernetes を選ぶとき、選ばないとき
 
-> **プレビュー。** `kubernetes` ランタイムはプレビューです。GKE Standard クラスタで受け入れを確かめて
-> いますが、本番での利用はまだサポートしていません。既知の制約：このランタイムにはブラウザ機能が
-> ありません（ブラウザペインもヘッドレス Chromium もなし）。GKE では、始める前にリージョンの SSD
-> ディスク割り当てが配備に足りている必要があります（[Preconditions](../../deploy/kubernetes/README.md#preconditions)）。まだ測って
-> いるもの：ロードバランサが WebSocket を 24 時間で切ることが 1 日続くセッションにどう響くか
-> （[7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)）。GKE で実測した費用は
-> [The bill](../../deploy/kubernetes/README.md#the-bill) にあります。
+> **プレビュー。** `kubernetes` ランタイムはプレビューで、本番での利用はまだサポートしていません。
+> 既知の制約、ロードバランサが接続を切ったときのターミナルの動き、費用は
+> [配備形態](../ref/deploy-targets.ja.md) に 1 か所だけまとめています。
 
 **kubernetes** を選ぶのは、組織がすでに Kubernetes クラスタでものを動かしているとき、または
 Google Cloud で、AWS の ECS がくれるもの（ワークスペース毎の Pod、クラスタによる隔離、動いている
