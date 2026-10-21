@@ -6,6 +6,7 @@ package paths
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -275,21 +276,32 @@ func MarkSessionWorkDir(dir string) error {
 
 // MakeSessionWorkDir creates SessionWorkDir(name) and marks it as the Agent's own, but only
 // when this call created it: an existing directory (a member's own folder of the same name,
-// a symlink, one from before the marker) is returned as it is and never promoted to
-// Agent-owned. "" and an error for a name that could escape ~/.af-work.
+// a symlink to a directory, one from before the marker) is returned as it is and never
+// promoted to Agent-owned. An existing path that is not a directory is an error. "" and an
+// error for a name that could escape ~/.af-work.
 func MakeSessionWorkDir(name string) (string, error) {
-	wd := SessionWorkDir(name)
+	wd, _, err := MakeSessionWorkDirCreated(name)
+	return wd, err
+}
+
+// MakeSessionWorkDirCreated is MakeSessionWorkDir that also says whether this call made the
+// directory. Ownership is decided by the final os.Mkdir succeeding, never by a check before it.
+func MakeSessionWorkDirCreated(name string) (wd string, created bool, err error) {
+	wd = SessionWorkDir(name)
 	if wd == "" {
-		return "", errors.New("bad session work dir name")
+		return "", false, errors.New("bad session work dir name")
 	}
 	if err := os.MkdirAll(filepath.Dir(wd), 0o700); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if err := os.Mkdir(wd, 0o700); err != nil {
-		if errors.Is(err, fs.ErrExist) {
-			return wd, nil
+		if !errors.Is(err, fs.ErrExist) {
+			return "", false, err
 		}
-		return "", err
+		if info, serr := os.Stat(wd); serr != nil || !info.IsDir() {
+			return "", false, fmt.Errorf("%s exists and is not a directory", wd)
+		}
+		return wd, false, nil
 	}
-	return wd, MarkSessionWorkDir(wd)
+	return wd, true, MarkSessionWorkDir(wd)
 }
