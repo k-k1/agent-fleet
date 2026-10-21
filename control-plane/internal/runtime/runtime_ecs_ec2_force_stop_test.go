@@ -258,7 +258,9 @@ func TestForceStoppedReservedSlotIsReleasedNotTerminated(t *testing.T) {
 	if err != nil || matches || reserved || outdated {
 		t.Fatalf("quarantined slot read as matches=%v reserved=%v outdated=%v err=%v; want all false", matches, reserved, outdated, err)
 	}
-	_ = h.rt.Start(ctx)
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start after the force-stop: %v", err)
+	}
 	if i := callIndex(h, "TerminateInstances"); i >= 0 {
 		t.Fatalf("a Start terminated the quarantined slot: %v", h.ec2.calls)
 	}
@@ -311,5 +313,44 @@ func TestForceStopOvertakesAStartThatRacesTheFence(t *testing.T) {
 	}
 	if scaledUp(h) && h.ecs.services["af-ws-acme-alice"].DesiredCount != 0 {
 		t.Fatal("the service was left at desired 1 on the stopped slot")
+	}
+}
+
+// ec2BeforeAttach runs fire once, just before the first AttachVolume.
+type ec2BeforeAttach struct {
+	ec2API
+	fire func()
+}
+
+func (w *ec2BeforeAttach) AttachVolume(ctx context.Context, in *ec2.AttachVolumeInput, opt ...func(*ec2.Options)) (*ec2.AttachVolumeOutput, error) {
+	if f := w.fire; f != nil {
+		w.fire = nil
+		f()
+	}
+	return w.ec2API.AttachVolume(ctx, in, opt...)
+}
+
+// A placement that listed its free slots before the force-stop and attaches after it must
+// notice the quarantine on its post-attach re-check and step off, as it does for a
+// reservation, instead of living on as a Start on a stopped slot.
+func TestForceStopFencesAPlacementThatListedTheSlotEarlier(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-wedge", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ci.registered["i-wedge"] = false
+	h.ssmc.online = map[string]bool{"i-wedge": false}
+	f := h.factory()
+	h.rt.ec2 = &ec2BeforeAttach{ec2API: h.ec2, fire: func() {
+		if _, err := f.ForceStopSlot(ctx, "i-wedge", false); err != nil {
+			t.Errorf("ForceStopSlot: %v", err)
+		}
+	}}
+	_ = h.rt.Start(ctx)
+	if v := h.ec2.volumes["vol-1"]; v != nil && attachedInstance(v) == "i-wedge" {
+		t.Fatalf("the home stayed on the force-stopped slot: %v", v.Attachments)
+	}
+	if v := h.ec2.volumes["vol-1"]; v != nil && ec2TagValue(v.Tags, EC2TagClaim) == "i-wedge" {
+		t.Fatal("a claim on the force-stopped slot survived")
 	}
 }

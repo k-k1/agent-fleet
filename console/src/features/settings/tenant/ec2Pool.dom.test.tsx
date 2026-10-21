@@ -533,6 +533,7 @@ describe("replacement reservations", () => {
         slots: WEDGED.slots.map((s) => (s.instance_id === "i-wedge" ? { ...s, state: "stopping", quarantined: true, quarantine_reason: "force-stopped by an operator" } : s)),
       });
       // Re-mount to take the new picture without waiting on the 10s timer.
+      await act(async () => root!.unmount());
       host!.remove();
       await mount();
       const labels = buttonsIn(rowOf("i-wedge")).map((b) => b.textContent);

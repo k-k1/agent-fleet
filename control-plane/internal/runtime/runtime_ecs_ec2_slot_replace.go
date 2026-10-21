@@ -563,7 +563,12 @@ func (e *ecsEC2Runtime) clearReplacesHome(ctx context.Context, instanceID string
 // reservation sees the placement. An unreadable answer counts as reserved: the cost is one
 // candidate skipped, the alternative a member placed on a box an operator wants gone.
 func (e *ecsEC2Runtime) slotNowReserved(ctx context.Context, id string) bool {
-	return e.slotTagged(ctx, id, slotExcluded)
+	// Quarantine is the same kind of fence: ForceStopSlot writes the tag and only then reads
+	// who holds the slot, so a placement that read its candidates earlier either sees the tag
+	// here or is found by that read.
+	return e.slotTagged(ctx, id, func(inst ec2types.Instance) bool {
+		return slotExcluded(inst) || ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined
+	})
 }
 
 // slotNowReservedByOperator is slotNowReserved for an operator's reservation alone — the
