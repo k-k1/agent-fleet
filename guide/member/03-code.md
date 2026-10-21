@@ -79,6 +79,15 @@ session. You can view, list, create, edit, comment on and transition issues:
   `jira init -c ~/.config/agent-fleet/jira/other-board.yml --project PROJ --board "Other board"`
   and then use `jira -c ~/.config/agent-fleet/jira/other-board.yml …`. Your connection is used
   only with configs in `~/.config/agent-fleet/jira/`.
+- **Editing and deleting comments**: `jira issue comment edit PROJ-1 10001 -b "…"` and
+  `jira issue comment delete PROJ-1 10001`. `jira` itself has only `comment add`; these two are
+  added by Agent Fleet. `edit` takes the new text from `-b`, `-T FILE` (`-` reads stdin) or a pipe,
+  and sends it as Markdown converted for Jira, so it is also how a garbled comment (see above) is
+  repaired. Find the comment ID with `jira issue view PROJ-1 --raw` (`fields.comment.comments[].id`).
+  Jira lets you change only your own comments (a comment by someone else answers 403), and agents
+  are told to edit or delete only a comment they posted in that session or one you named. They
+  work with your saved connection only: not with `--debug`, `JIRA_API_TOKEN` or a config of your
+  own, where plain `jira` answers that it has no such command.
 - **`--debug` runs without your connection**: jira's debug output prints the authorization
   header, so the wrapper does not hand the token to a debug run.
 - **What it can change** is what your connection can. The CLI writes to Jira as you, so creating,

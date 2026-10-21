@@ -159,6 +159,12 @@ directory belongs to someone else.
   retrying `jira init` or switch to an MCP tool). When the wrapper prints "no issue types"
   instead, `issue create` could not get them: run `jira init`. Never paste a token, run `jira init` with your own
   `--server`, or add `--debug` (it gets no credential).
+- **Jira comments: `jira issue comment edit KEY ID` and `delete KEY ID`** exist only through the
+  wrapper (jira-cli has none); edit takes `-b`, `-T FILE` (`-` = stdin) or piped stdin and sends
+  the Markdown as ADF, so it also repairs a `comment add` the Markdown bug garbled. Find ID with
+  `jira issue view KEY --raw` (`.fields.comment.comments[].id`). Edit or delete only a comment you
+  posted in this session or one the user named. They refuse a `--debug` run and a config of the
+  user's own (jira then says it has no such command).
 - The clock is the workspace's local timezone (`date`), not UTC. Outbound network may be
   restricted; an unreachable host is not necessarily an error.
 - **AWS: the default credential chain is not the user.** A bare `aws` / SDK / build-tool call

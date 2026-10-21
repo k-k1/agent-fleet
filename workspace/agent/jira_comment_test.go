@@ -1,0 +1,186 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
+)
+
+type commentCall struct {
+	method, path, auth string
+	body               map[string]any
+}
+
+// commentStub answers every call with status and records it.
+func commentStub(t *testing.T, status int, reply string) (*secrets.JiraCreds, *[]commentCall) {
+	t.Helper()
+	var calls []commentCall
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		cc := commentCall{method: r.Method, path: r.URL.Path, auth: r.Header.Get("Authorization")}
+		if len(raw) > 0 {
+			_ = json.Unmarshal(raw, &cc.body)
+		}
+		calls = append(calls, cc)
+		w.WriteHeader(status)
+		io.WriteString(w, reply)
+	}))
+	t.Cleanup(srv.Close)
+	return &secrets.JiraCreds{Site: srv.URL, Email: "me@example.com", Token: "fake-api-tok"}, &calls
+}
+
+func runComment(c *secrets.JiraCreds, stdin string, args ...string) (int, string, string) {
+	var out, errb bytes.Buffer
+	var in io.Reader
+	if stdin != "" {
+		in = strings.NewReader(stdin)
+	}
+	rc := jiraCommentRun(c, args, in, &out, &errb)
+	return rc, out.String(), errb.String()
+}
+
+func TestJiraCommentEditSendsADF(t *testing.T) {
+	c, calls := commentStub(t, 200, `{"id":"10001"}`)
+	rc, out, errs := runComment(c, "", "issue", "comment", "edit", "-p", "T", "T-1", "10001", "-b", "Intro.\n\n- a\n- b")
+	if rc != 0 {
+		t.Fatalf("rc=%d err=%q", rc, errs)
+	}
+	if len(*calls) != 1 || (*calls)[0].method != "PUT" || (*calls)[0].path != "/rest/api/3/issue/T-1/comment/10001" {
+		t.Fatalf("calls = %+v", *calls)
+	}
+	if !strings.HasPrefix((*calls)[0].auth, "Basic ") {
+		t.Errorf("auth header %q", (*calls)[0].auth)
+	}
+	body := (*calls)[0].body["body"].(map[string]any)
+	if body["type"] != "doc" || body["version"] != float64(1) {
+		t.Errorf("not an ADF doc: %v", body)
+	}
+	if strings.Contains(out+errs, "fake-api-tok") {
+		t.Errorf("token in output")
+	}
+}
+
+// The #2476 case: a paragraph followed by a list must stay two blocks.
+func TestJiraMarkdownADFParagraphThenList(t *testing.T) {
+	doc := jiraMarkdownADF("Intro.\n\n- a\n- b\n")
+	got, _ := json.Marshal(doc["content"])
+	want := `[{"content":[{"text":"Intro.","type":"text"}],"type":"paragraph"},` +
+		`{"content":[{"content":[{"content":[{"text":"a","type":"text"}],"type":"paragraph"}],"type":"listItem"},` +
+		`{"content":[{"content":[{"text":"b","type":"text"}],"type":"paragraph"}],"type":"listItem"}],"type":"bulletList"}]`
+	if string(got) != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+}
+
+func TestJiraMarkdownADFConstructs(t *testing.T) {
+	md := "# H\n\n1. one\n   - nested\n2. two\n\n> quote\n\n---\n\n```go\nx := 1\n```\n\n" +
+		"**b** *i* `c` [l](http://x.y) end  \nnext\n"
+	raw, _ := json.Marshal(jiraMarkdownADF(md))
+	s := string(raw)
+	for _, want := range []string{
+		`"type":"heading"`, `"level":1`, `"type":"orderedList"`, `"type":"bulletList"`,
+		`"type":"blockquote"`, `"type":"rule"`, `"type":"codeBlock"`, `"language":"go"`, `"text":"x := 1"`,
+		`"type":"strong"`, `"type":"em"`, `"type":"code"`, `"href":"http://x.y"`, `"type":"hardBreak"`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %s in %s", want, s)
+		}
+	}
+}
+
+func TestJiraMarkdownADFFallbacks(t *testing.T) {
+	// A table has no goldmark core node; it must come through as text, never panic or vanish.
+	raw, _ := json.Marshal(jiraMarkdownADF("| a | b |\n|---|---|\n| 1 | 2 |\n"))
+	if !strings.Contains(string(raw), "| a | b |") {
+		t.Errorf("table text lost: %s", raw)
+	}
+	// Code mark next to strong: ADF refuses the pair, so only code stays.
+	raw, _ = json.Marshal(jiraMarkdownADF("**`x`**"))
+	if strings.Contains(string(raw), `"strong"`) {
+		t.Errorf("strong kept beside code: %s", raw)
+	}
+	// Whitespace-only body still yields a non-empty doc.
+	if c, _ := jiraMarkdownADF("  \n")["content"].([]any); len(c) == 0 {
+		t.Errorf("empty doc")
+	}
+}
+
+func TestJiraCommentDelete(t *testing.T) {
+	c, calls := commentStub(t, 204, "")
+	rc, out, errs := runComment(c, "", "issue", "comment", "delete", "T-1", "10001")
+	if rc != 0 || !strings.Contains(out, "deleted") {
+		t.Fatalf("rc=%d out=%q err=%q", rc, out, errs)
+	}
+	if (*calls)[0].method != "DELETE" || (*calls)[0].path != "/rest/api/3/issue/T-1/comment/10001" {
+		t.Errorf("calls = %+v", *calls)
+	}
+}
+
+func TestJiraCommentRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		want   string
+	}{
+		{403, "only the comment's author"},
+		{404, "there is no comment 10001 on T-1"},
+		{401, "re-connect Jira"},
+		{400, "bad adf"},
+	} {
+		c, _ := commentStub(t, tc.status, `{"errorMessages":["bad adf"]}`)
+		rc, _, errs := runComment(c, "", "issue", "comment", "edit", "T-1", "10001", "-b", "x")
+		if rc != 1 || !strings.Contains(errs, tc.want) {
+			t.Errorf("%d: rc=%d err=%q, want %q", tc.status, rc, errs, tc.want)
+		}
+		if strings.Count(strings.TrimSpace(errs), "\n") != 0 || strings.Contains(errs, "fake-api-tok") {
+			t.Errorf("%d: not one clean line: %q", tc.status, errs)
+		}
+	}
+}
+
+func TestJiraCommentBodySources(t *testing.T) {
+	c, calls := commentStub(t, 200, "{}")
+	if rc, _, e := runComment(c, "from stdin", "issue", "comment", "edit", "T-1", "5"); rc != 0 {
+		t.Fatalf("piped stdin: %s", e)
+	}
+	if rc, _, e := runComment(c, "from dash", "issue", "comment", "edit", "T-1", "5", "-T", "-"); rc != 0 {
+		t.Fatalf("-T -: %s", e)
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("calls = %d", len(*calls))
+	}
+	if rc, _, e := runComment(c, "", "issue", "comment", "edit", "T-1", "5"); rc != 2 || !strings.Contains(e, "empty") {
+		t.Errorf("no body: rc=%d %q", rc, e)
+	}
+	if rc, _, _ := runComment(c, "", "issue", "comment", "delete", "T-1", "5", "-b", "x"); rc != 2 {
+		t.Errorf("delete with a body: rc=%d", rc)
+	}
+}
+
+func TestParseJiraCommentArgsRejects(t *testing.T) {
+	for _, args := range [][]string{
+		{"issue", "comment", "edit", "T-1"},
+		{"issue", "comment", "add", "T-1", "5"},
+		{"issue", "comment", "edit", "../x", "5"},
+		{"issue", "comment", "edit", "T-1", "5/../6"},
+		{"issue", "comment", "edit", "T-1", "5", "-b"},
+	} {
+		if _, err := parseJiraCommentArgs(args); err == nil {
+			t.Errorf("accepted %v", args)
+		}
+	}
+	if a, err := parseJiraCommentArgs([]string{"issues", "comment", "edit", "-c", "/x.yml", "T-1", "5", "--body=hi", "--no-input"}); err != nil || a.body == nil || *a.body != "hi" || a.key != "T-1" {
+		t.Errorf("a=%+v err=%v", a, err)
+	}
+}
+
+func TestJiraCommentNoConnection(t *testing.T) {
+	if rc, _, e := runComment(nil, "", "issue", "comment", "delete", "T-1", "5"); rc != 1 || !strings.Contains(e, "no Jira connection") {
+		t.Errorf("rc=%d %q", rc, e)
+	}
+}

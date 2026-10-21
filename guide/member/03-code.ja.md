@@ -82,6 +82,15 @@ Jira を接続していれば（設定の**課題管理**）、Jira CLI の `jir
   `jira init -c ~/.config/agent-fleet/jira/other-board.yml --project PROJ --board "Other board"`
   で作り、`jira -c ~/.config/agent-fleet/jira/other-board.yml …` で使います。接続が使われるのは
   `~/.config/agent-fleet/jira/` の中の設定だけです。
+- **コメントの編集と削除**: `jira issue comment edit PROJ-1 10001 -b "…"` と
+  `jira issue comment delete PROJ-1 10001`。`jira` 本体にあるのは `comment add` だけで、この 2 つは
+  Agent Fleet が足したものです。`edit` は新しい本文を `-b`、`-T FILE`（`-` は標準入力）またはパイプで
+  受け取り、Markdown を Jira 用に変換して送るので、崩れたコメント（上記）の直しにも使えます。
+  コメント ID は `jira issue view PROJ-1 --raw` の `fields.comment.comments[].id` で分かります。
+  Jira で変更できるのは自分のコメントだけです（他人のものは 403）。エージェントには、そのセッションで
+  自分が投稿したコメントか、あなたが指名したコメントだけを編集・削除するよう伝えてあります。
+  使えるのは保存済みの接続だけで、`--debug`、`JIRA_API_TOKEN`、自分で用意した設定では
+  `jira` 本体が「そのコマンドはない」と答えます。
 - **`--debug` では接続を使いません**: jira のデバッグ出力は認可ヘッダーまで表示するので、
   ラッパーはデバッグ実行にトークンを渡しません。
 - **変更できる範囲**は接続の権限どおりです。CLI はあなたとして Jira に書き込むので、課題の
