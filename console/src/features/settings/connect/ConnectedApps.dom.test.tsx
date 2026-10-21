@@ -11,7 +11,8 @@ import { ConnectedApps } from "./ConnectedApps.tsx";
 import { TenantMCPOAuthView } from "../tenant/tenantMCPOAuth.tsx";
 
 let host: HTMLDivElement, root: Root;
-const grant = { id: "grant/1", client_name: "Example App", redirect_host: "chatgpt.com", tenant: "team", scope: "read write", created_at: 1700000000, last_used_at: 0 };
+// PAT dates use local time, so the fixture must stay on the same local calendar day.
+const grant = { id: "grant/1", client_name: "Example App", redirect_host: "chatgpt.com", tenant: "team", scope: "read write", created_at: new Date(2023, 10, 14, 12).getTime() / 1000, last_used_at: 0 };
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.clearAllMocks();
@@ -32,7 +33,7 @@ describe("connected apps", () => {
   it("shows display fields and confirms before revoking an encoded grant id", async () => {
     api.mockResolvedValue({ enabled: true, grants: [grant] });
     await mount(<ConnectedApps />);
-    for (const text of ["Connected apps", "Example App", "Self-declared name (unverified)", "chatgpt.com", "team", "read write", "Never used"]) expect(host.textContent).toContain(text);
+    for (const text of ["Connected apps", "Example App", "Self-declared name (unverified)", "chatgpt.com", "team", "read write", "2023-11-14", "Never used"]) expect(host.textContent).toContain(text);
     confirm.mockResolvedValueOnce(false);
     await click(host.querySelector("button")!); expect(raw).not.toHaveBeenCalled();
     await click(host.querySelector("button")!);
@@ -45,6 +46,27 @@ describe("connected apps", () => {
     await mount(<ConnectedApps />); await click(host.querySelector("button")!);
     expect(toast).toHaveBeenCalledWith("Could not revoke the connection. Try again.");
     expect(host.textContent).toContain("Example App");
+  });
+  it("reloads an already-ended connection after a revoke returns 404", async () => {
+    api.mockResolvedValueOnce({ enabled: true, grants: [grant] }).mockResolvedValueOnce({ enabled: true, grants: [] });
+    raw.mockResolvedValue({ ok: false, status: 404 });
+    await mount(<ConnectedApps />);
+    await click(host.querySelector("button")!);
+    expect(api).toHaveBeenCalledTimes(2);
+    expect(host.textContent).not.toContain("Example App");
+    expect(host.textContent).toContain("No connected apps.");
+    expect(toast).not.toHaveBeenCalled();
+  });
+  it("keeps dates consistent with PATs in Japanese even with an en-US browser", async () => {
+    setLocale("ja");
+    const browserDate = vi.spyOn(Date.prototype, "toLocaleDateString").mockReturnValue("11/14/2023");
+    try {
+      api.mockResolvedValue({ enabled: true, grants: [{ ...grant, last_used_at: grant.created_at }] });
+      await mount(<ConnectedApps />);
+      const cells = Array.from(host.querySelectorAll("tbody td")).map((cell) => cell.textContent);
+      expect(cells.slice(4, 6)).toEqual(["2023-11-14", "2023-11-14"]);
+      expect(browserDate).not.toHaveBeenCalled();
+    } finally { browserDate.mockRestore(); }
   });
   it("renders Japanese labels and empty state", async () => {
     setLocale("ja"); api.mockResolvedValue({ enabled: true, grants: [] });

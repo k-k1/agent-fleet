@@ -6,11 +6,14 @@ import (
 	"time"
 )
 
+// tenantMCPOAuthWire is the policy and deployment capability read by the Console's
+// console/src/features/settings/tenant/tenantMCPOAuth.tsx.
 type tenantMCPOAuthWire struct {
 	Enabled bool `json:"enabled"`
 	Served  bool `json:"served"`
 }
 
+// TenantMCPOAuth returns policy to the tenant admin or a deployment admin.
 func (a Admin) TenantMCPOAuth(w http.ResponseWriter, r *http.Request) {
 	_, t, ok := a.cp.TenantAdminFor(w, r, r.PathValue("slug"))
 	if !ok {
@@ -24,6 +27,7 @@ func (a Admin) TenantMCPOAuth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tenantMCPOAuthWire{enabled, a.cp.MCPOAuthServed()})
 }
 
+// SetTenantMCPOAuth changes policy and audits revocations in the same transaction.
 func (a Admin) SetTenantMCPOAuth(w http.ResponseWriter, r *http.Request) {
 	ident, t, ok := a.cp.TenantAdminFor(w, r, r.PathValue("slug"))
 	if !ok {

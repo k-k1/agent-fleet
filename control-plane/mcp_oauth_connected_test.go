@@ -156,6 +156,19 @@ func TestMCPOAuthTenantDisableDuringCodeExchange(t *testing.T) {
 	if w.Code != 400 || jsonField(t, w, "error") != "invalid_grant" {
 		t.Fatalf("in-flight exchange: %d %s", w.Code, w.Body)
 	}
+	rows, err := original.ListAuditByTenant(context.Background(), e.tenA.ID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundRefusal := false
+	for _, row := range rows {
+		if row.Action == "mcp.oauth.grant" && row.Detail == "refused reason=tenant-disabled" {
+			foundRefusal = true
+		}
+	}
+	if !foundRefusal {
+		t.Fatal("disabled grant creation lacks refusal audit")
+	}
 }
 
 func TestMCPOAuthTenantAdminScope(t *testing.T) {
@@ -226,5 +239,37 @@ func TestMCPOAuthTenantGateMemberAndSuperAdmin(t *testing.T) {
 	}
 	if enabled, err := st.GetTenantMCPOAuth(ctx, tn.ID); err != nil || enabled {
 		t.Fatalf("super admin save: %v %v", enabled, err)
+	}
+}
+
+type ownedRevokeHold struct {
+	store.Store
+	hook func()
+}
+
+func (s ownedRevokeHold) RevokeMCPOAuthGrantOf(ctx context.Context, id, identity, reason string, now int64) (bool, error) {
+	s.hook()
+	return s.Store.RevokeMCPOAuthGrantOf(ctx, id, identity, reason, now)
+}
+
+func TestMCPOAuthConnectedRevokeRaceReturnsNotFound(t *testing.T) {
+	e := newMCPOAuthEnv(t)
+	registerPATRoutes(e.mux, config{mgr: e.mgr})
+	client := e.registerClient(loopbackCB)
+	e.connect(client, loopbackCB, "read")
+	original := e.mgr.store
+	grants, err := original.ListMCPOAuthGrantsByIdentity(context.Background(), e.ident.ID, e.now().Unix())
+	if err != nil || len(grants) != 1 {
+		t.Fatal("missing grant", err)
+	}
+	g := grants[0]
+	e.mgr.store = ownedRevokeHold{Store: original, hook: func() {
+		if _, err := original.RevokeMCPOAuthGrantOf(context.Background(), g.ID, e.ident.ID, "revoked by member", e.now().Unix()); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	w := e.do("DELETE", "/api/mcp-oauth/grants/"+g.ID, "", nil)
+	if w.Code != 404 {
+		t.Fatalf("raced revoke: %d %s", w.Code, w.Body)
 	}
 }

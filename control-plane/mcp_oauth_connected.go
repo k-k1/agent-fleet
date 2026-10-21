@@ -7,6 +7,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
+// mcpConnectedAPI exposes display-only connection metadata and owner-scoped revocation.
 type mcpConnectedAPI struct{ memberAuth }
 
 // Only display fields cross the API boundary; store grants also carry code hashes.
@@ -51,21 +52,13 @@ func (a mcpConnectedAPI) list(w http.ResponseWriter, r *http.Request, ident stor
 func (a mcpConnectedAPI) revoke(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	noStore(w)
 	id := r.PathValue("id")
-	g, ok, err := a.mgr.store.GetMCPOAuthGrant(r.Context(), id)
+	revoked, err := a.mgr.store.RevokeMCPOAuthGrantOf(r.Context(), id, ident.ID, "revoked by member", time.Now().Unix())
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	if !ok || g.IdentityID != ident.ID || g.RevokedAt != 0 {
+	if !revoked {
 		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "unknown connection"})
-		return
-	}
-	if err := a.mgr.store.InsertAudit(r.Context(), store.AuditLog{ID: store.NewID(), TenantID: g.TenantID, ActorKind: "user", ActorID: ident.ID, Action: "mcp.oauth.grant", Target: id, Detail: "revoked by member", At: store.NowTS()}); err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
-	if _, err := a.mgr.store.RevokeMCPOAuthGrantOf(r.Context(), id, ident.ID, "revoked by member", time.Now().Unix()); err != nil {
-		writeAPIErr(w, internalErr(err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

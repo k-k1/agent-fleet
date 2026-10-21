@@ -98,8 +98,8 @@ type MCPOAuthStore interface {
 	// ListMCPOAuthGrantsByIdentity returns the identity's live grants, newest first (the seam
 	// for a connected-apps list).
 	ListMCPOAuthGrantsByIdentity(ctx context.Context, identityID string, now int64) ([]MCPOAuthGrant, error)
-	// RevokeMCPOAuthGrantOf is RevokeMCPOAuthGrant scoped to the owner, for a member revoking
-	// their own connection.
+	// RevokeMCPOAuthGrantOf atomically revokes and audits the owner's connection.
+	// A losing concurrent request returns false without an audit row.
 	RevokeMCPOAuthGrantOf(ctx context.Context, id, identityID, reason string, now int64) (bool, error)
 }
 
@@ -250,7 +250,8 @@ func (s *SQL) CreateMCPOAuthGrant(ctx context.Context, g MCPOAuthGrant) error {
 		return err
 	}
 	defer tx.Rollback()
-	// The tenant row serializes grant creation with disabling, across CP instances.
+	// Every grant creation writes the tenant row, even unchanged, to take PostgreSQL's
+	// row lock and serialize with disabling across CP instances (SQLite takes a write lock).
 	if _, err = tx.ExecContext(ctx, `UPDATE tenant SET mcp_oauth_disabled=mcp_oauth_disabled WHERE id=?`, g.TenantID); err != nil {
 		return err
 	}
@@ -300,7 +301,31 @@ func (s *SQL) RevokeMCPOAuthGrant(ctx context.Context, id, reason string, now in
 }
 
 func (s *SQL) RevokeMCPOAuthGrantOf(ctx context.Context, id, identityID, reason string, now int64) (bool, error) {
-	return s.revokeMCPOAuthGrant(ctx, `id=? AND identity_id=?`, []any{id, identityID}, reason, now)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_grant SET revoked_at=?, revoked_reason=? WHERE id=? AND identity_id=? AND revoked_at=0`, now, reason, id, identityID)
+	if err != nil {
+		return false, err
+	}
+	changed, err := res.RowsAffected()
+	if err != nil || changed == 0 {
+		return false, err
+	}
+	// The mutation stays invisible until the audit commits with it; a failed audit rolls it back.
+	if _, err = tx.ExecContext(ctx, `INSERT INTO audit_log(id, tenant_id, actor_kind, actor_id, action, target, detail, at)
+   SELECT ?, tenant_id, 'user', ?, 'mcp.oauth.grant', id, ?, ? FROM mcp_oauth_grant WHERE id=? AND identity_id=?`, NewID(), identityID, reason, NowTS(), id, identityID); err != nil {
+		return false, err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM mcp_oauth_token WHERE grant_id=?`, id); err != nil {
+		return false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *SQL) revokeMCPOAuthGrant(ctx context.Context, where string, args []any, reason string, now int64) (bool, error) {
@@ -367,6 +392,7 @@ func (s *SQL) ListMCPOAuthGrantsByIdentity(ctx context.Context, identityID strin
 	return out, rows.Err()
 }
 
+// GetTenantMCPOAuth reads the tenant's OAuth policy without caching, including on token issuance.
 func (s *SQL) GetTenantMCPOAuth(ctx context.Context, tenantID string) (bool, error) {
 	var disabled int
 	err := s.db.QueryRowContext(ctx, `SELECT mcp_oauth_disabled FROM tenant WHERE id=?`, tenantID).Scan(&disabled)

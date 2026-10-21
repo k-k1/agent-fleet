@@ -56,7 +56,7 @@ export function TenantMCPOAuthView({ slug }: { slug: string }) {
   if (error) return <p role="alert" className="muted pad">{error}</p>;
   if (!view || !view.served) return null;
   return (
-    <section className="admin-panel">
+    <section className="admin-panel" style={{ marginTop: 12 }}>
       <div className="admin-fgroup">
         <h4>{tr("tenant.mcp_oauth_title")}</h4>
         <label className="admin-check">

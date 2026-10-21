@@ -271,3 +271,59 @@ func TestMCPOAuthTenantDisablePersistsRevocation(t *testing.T) {
 		}
 	}
 }
+
+func TestMCPOAuthOwnedRevokeAuditsOnce(t *testing.T) {
+	ctx := context.Background()
+	for name, st := range homeOpStores(t) {
+		g := MCPOAuthGrant{ID: "owned", IdentityID: "owner", TenantID: "tenant", IdleExpiresAt: 2000, AbsExpiresAt: 3000}
+		if err := st.CreateMCPOAuthGrant(ctx, g); err != nil {
+			t.Fatal(err)
+		}
+		if changed, err := st.RevokeMCPOAuthGrantOf(ctx, g.ID, "other", "revoked by member", 1000); err != nil || changed {
+			t.Fatalf("%s foreign: %v %v", name, changed, err)
+		}
+		var wins atomic.Int32
+		var wg sync.WaitGroup
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				changed, err := st.RevokeMCPOAuthGrantOf(ctx, g.ID, "owner", "revoked by member", 1000)
+				if err != nil {
+					t.Errorf("%s revoke: %v", name, err)
+				}
+				if changed {
+					wins.Add(1)
+				}
+			}()
+		}
+		wg.Wait()
+		rows, err := st.ListAuditByTenant(ctx, g.TenantID, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if wins.Load() != 1 || len(rows) != 1 || rows[0].ActorID != "owner" || rows[0].Detail != "revoked by member" {
+			t.Fatalf("%s wins=%d audit=%+v", name, wins.Load(), rows)
+		}
+	}
+}
+
+func TestMCPOAuthOwnedRevokeRollsBackWithoutAudit(t *testing.T) {
+	ctx := context.Background()
+	for name, st := range homeOpStores(t) {
+		g := MCPOAuthGrant{ID: "owned", IdentityID: "owner", IdleExpiresAt: 2000, AbsExpiresAt: 3000}
+		if err := st.CreateMCPOAuthGrant(ctx, g); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.db.ExecContext(ctx, `DROP TABLE audit_log`); err != nil {
+			t.Fatal(err)
+		}
+		if changed, err := st.RevokeMCPOAuthGrantOf(ctx, g.ID, "owner", "revoked by member", 1000); err == nil || changed {
+			t.Fatalf("%s revoke without audit: %v %v", name, changed, err)
+		}
+		got, _, err := st.GetMCPOAuthGrant(ctx, g.ID)
+		if err != nil || got.RevokedAt != 0 {
+			t.Fatalf("%s partial revocation: %+v %v", name, got, err)
+		}
+	}
+}

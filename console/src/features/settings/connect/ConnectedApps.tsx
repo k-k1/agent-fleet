@@ -3,6 +3,7 @@ import { api, raw, errText } from "../../../core/api/client.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
+import { fmtDate } from "./tokenDate.ts";
 
 interface Grant {
   id: string;
@@ -48,7 +49,7 @@ export function ConnectedApps() {
     setBusy(g.id);
     try {
       const res = await raw(`api/mcp-oauth/grants/${encodeURIComponent(g.id)}`, { method: "DELETE" });
-      if (!res.ok) {
+      if (!res.ok && res.status !== 404) {
         toast(tr("tokens.apps_revoke_failed"));
         return;
       }
@@ -61,7 +62,7 @@ export function ConnectedApps() {
   };
   if (view && !view.enabled) return null;
   if (!view) return error ? <p role="alert" className="muted">{error}</p> : null;
-  const date = (ts: number) => ts ? new Date(ts * 1000).toLocaleDateString() : tr("tokens.apps_never_used");
+  const date = (ts: number) => ts ? fmtDate(new Date(ts * 1000).toISOString()) : tr("tokens.apps_never_used");
   return (
     <section>
       <h3>{tr("tokens.apps_title")}</h3>
