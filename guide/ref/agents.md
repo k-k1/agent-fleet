@@ -1,7 +1,7 @@
 ---
 audience: "everyone"
 source_of_truth: "this table; the columns and the marked rows are checked against the code"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # Agents — what each kind can do
@@ -111,7 +111,10 @@ layer, and takes effect from the next turn, running sessions included.
 | opencode | Working / Question / Ready |
 | copilot | Working / Awaiting permission / Ready |
 | cursor | Working / Awaiting permission / Plan ready / Ready |
-| kiro | Working / Awaiting permission / Ready |
+| kiro | Working / Question / Ready |
+| agy | Working / Question / Awaiting permission / Ready |
+| lcpp | Working / Ready |
+| muse | Working / Question / Ready |
 
 On a Terminal (CLI) session, cursor stops for a command approval only when **Tool
 permissions** asks for approval or the session started in plan mode, and for a build
@@ -119,9 +122,45 @@ decision only in a plan launch. The mirror shows the state but draws no card for
 answer in the terminal. Text sent from anywhere while it waits is refused, because the
 menu would take its Enter as "run" or "build".
 
+kiro shows a tool approval it is waiting for as **Question**, not as Awaiting permission.
+lcpp's tool approvals and its questions appear as cards in the mirror while the state
+stays Working. muse asks for no tool approvals (footnote 13), so it never shows Awaiting
+permission.
+
+After a usage limit stops a turn, claude, codex under Managed and muse show **Waiting for
+limit reset** with the time, and resume by themselves once the limit resets. When a turn
+has ended but work it started is still running, claude, codex under Managed, agy and muse
+show **Ready · running in background**.
+
 `shell` and `ssm` have no conversation and therefore no state model and no
-notifications. agy's states are not separately documented; treat its mirror as
-best-effort.
+notifications.
+
+## Moving a session to another agent
+
+A move ([02 Sessions](../member/02-sessions.md#moving-a-session-to-another-agent-move))
+has two sides, and a kind can be on one without the other.
+
+| Kind | As the source | As the target |
+|---|:--:|:--:|
+| claude | ✓ | ✓ |
+| codex | ✓ | ✓ |
+| opencode | ✓ | ✓ |
+| copilot | ✓ | ✓ |
+| cursor | ✓ (not a stopped Managed session) | — (not yet verified) |
+| kiro | ✓ | ✓ |
+| agy | ✓ | ✓ |
+| lcpp | ✓ | — (cannot read the handover file) |
+| muse | ✓ | ✓ |
+| shell / ssm | — | — |
+
+- **A stopped Managed cursor session cannot be moved.** Its conversation lived only in the
+  running agent, so nothing is left to write the handover file from.
+- **cursor is not offered as a target** until reading the handover file through its Managed
+  driver has been verified.
+- **lcpp is not offered as a target** because its file tools refuse paths outside the working
+  folder, and the handover file lives outside it.
+- A move always goes to another kind. To continue in the same kind, fork the session where the
+  kind can fork. shell and ssm have no conversation to hand over.
 
 ## Choosing one
 
@@ -171,13 +210,14 @@ Managed.
 ## muse: what Agent Fleet does not see
 
 Muse Code brings its own versions of things Agent Fleet also does. They keep working
-inside a muse session, and Agent Fleet has no view of them, so if you use them, expect
-that no Agent Fleet screen will show what happened.
+inside a muse session, and Agent Fleet sees little or nothing of them, so if you use them,
+expect the Console to tell you less than Muse Code itself would.
 
 - **Runs a muse session schedules for itself.** A muse session can put a prompt on its
   own timer and run it later without you. Those are Muse Code's jobs, not Agent Fleet's:
   they do not appear in the Console's scheduled runs, Agent Fleet cannot cancel one, and
-  only the session itself can list or delete them: ask it to. They fire while that
+  only the session itself can list or delete them: ask it to. When one fires, the mirror
+  shows a one-line `scheduledFire` row for it, so you can see that it ran. They fire while that
   session is running, and a repeating one expires by itself after seven days. Agent Fleet
   cannot switch the feature off, either: Muse Code has no setting for it, and its one
   control that would remove those tools removes every integration (MCP) tool along with

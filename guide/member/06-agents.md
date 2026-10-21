@@ -23,7 +23,7 @@ immediately; behavior settings apply **from each agent's new sessions**.
 |--|--------|-------|----------|---------|--------|------|
 | Authentication | OAuth connection (paste a code) | ChatGPT subscription / API key | Provider API keys (env) | Rides the GitHub connection (no separate sign-in) | Sign in with a Cursor account (browser approval only) | Device-flow sign-in (Builder ID / Google / GitHub; browser approval only) |
 | Model choice at launch | Yes | Yes | Yes | Yes (plan-dependent; Free is Auto only) | Yes (tied to the account) | Yes (named models even on Free) |
-| States | Working / Question / Plan ready / Awaiting permission / Ready | Working / Question / Plan ready / Ready | Working / Question / Ready | Working / Awaiting permission / Ready | Working / Awaiting permission / Plan ready / Ready | Working / Awaiting permission / Ready |
+| States | Working / Question / Plan ready / Awaiting permission / Ready | Working / Question / Plan ready / Ready | Working / Question / Ready | Working / Awaiting permission / Ready | Working / Awaiting permission / Plan ready / Ready | Working / Question / Ready |
 | Chat view & history | Yes | Yes | Yes | Yes | Live: yes (simplified tool output). Stopped: no history under Managed | Yes (readable history even under Managed) |
 | Plan mode | Yes | Yes | Yes | Set at launch + switchable from managed settings | Yes | Not supported |
 | Execution method | Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) |
@@ -64,14 +64,11 @@ new session ([02](02-sessions.md)).
 > credentials, and lean on the approval gates (shell-command confirmation, chat-bridge
 > approve / deny). See also [08 Fleet operator](08-organising.md).
 
-**lcpp** and **muse**
-have no Terminal (CLI) route; sessions of either kind default to Managed. **muse**
-requires on-demand installation (~299 MB) and a sign-in before it appears in the launch
-menu. 🔴 A muse session asks for no tool approvals: every tool call is allowed before any
-approval is considered, giving it the same reach over this workspace as `shell` (read the
-autonomous execution note above with that in mind). **shell** is a raw shell and **ssm**
-is a remote login over AWS SSM; both are terminal-only with no conversation, state model,
-or notifications.
+**shell** is a raw shell and **ssm** is a remote login over AWS SSM; both are terminal-only
+with no conversation, state model, or notifications. A muse session asks for no tool
+approvals, so read the note above as applying to it the way it applies to `shell`
+([Muse Code](#muse-code)). The states every kind shows, the other agents included, are listed in
+the [Agents reference](../ref/agents.md#states-shown-in-the-mirror).
 
 ## Feature matrix (all agent kinds)
 
@@ -270,6 +267,11 @@ supported.
   (fetched live). You can't change the model after a session has started.
 - The usage chip, context gauge, and image paste are not supported for cursor.
   Check your plan's remaining quota on the Cursor dashboard.
+- In a Terminal (CLI) session, each finished turn's token counts reach ⚙Settings →
+  "Agent usage" through a `stop` entry Agent Fleet adds to `~/.cursor/hooks.json`. Other
+  entries in that file are kept. The counts are cursor's own report, so they are marked
+  partial, and a turn on Auto is recorded under the model name `default`. A Managed cursor
+  session's turns are not counted this way.
 
 ## Kiro
 
@@ -353,6 +355,9 @@ In a running muse session the **`/`** button beside the input lists the session'
 Muse Code's bundled ones, plugin skills, yours under `~/.config/muse/skills`, and the working
 copy's `.agents/skills/`. Picking one runs it
 ([07](07-chat-memo.md#calling-a-skill-or-a-command)).
+
+When a usage limit stops a muse turn, the row shows "Waiting for limit reset" with the time,
+and the session resumes by itself once the limit resets, as claude does.
 
 > 🔴 **A muse session asks for no tool approvals.** Every tool call is allowed before any
 > approval is considered: the sandbox cannot be built inside this Workspace container.
