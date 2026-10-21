@@ -43,6 +43,10 @@ type CP interface {
 	// TokenSignMaster is the master the AF_MCP_TOKEN signing key is derived from.
 	TokenSignMaster() []byte
 
+	// ServerIdentity is the build version, brand label and public origin that
+	// serverInfo reports. The brand label can change at runtime, hence the context.
+	ServerIdentity(ctx context.Context) ServerIdentity
+
 	// --- Resolution / lifecycle (manager's methods) -----------------------------
 	RuntimeFor(ws store.Workspace, secretKey string, extraEnv ...string) runtime.Runtime
 	ResolveByMembership(ctx context.Context, identityID, membershipID string) (*Resolved, *APIError)
