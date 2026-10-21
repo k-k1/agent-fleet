@@ -52,7 +52,11 @@ even when they're displayed wrapped. No need to copy a long URL and paste it bac
   **Ctrl+= / Ctrl+-**.
 - When the file tree has focus: **↑ ↓ ← → / Enter** to move and open/close, **Ctrl+↑ ↓** to jump between folders, **Shift+↑ ↓** to scroll the viewer ([04 Files](04-files.md)).
 
-### Command palette
+In fullscreen, keys the browser would normally intercept (Ctrl+W to close, etc.) are
+automatically locked so they reach the terminal. Esc is not locked, so you can always leave
+fullscreen with Esc.
+
+## Command palette
 
 **Ctrl+P** (macOS: **⌘P**) opens the **command palette**, an entry point for searching
 sessions, in-screen actions, and repositories by name, and running or navigating with the
@@ -95,10 +99,6 @@ search itself fails, the palette says why and offers to retry, rather than repor
 When the terminal has focus and **"Terminal input priority"** is turned on in settings, Ctrl+P is
 passed to the terminal. In that case, open it with the default **Ctrl+K → ;** (macOS: **⌘K → ;**).
 **?** shows a list of the other shortcuts as well.
-
-In fullscreen, keys the browser would normally intercept (Ctrl+W to close, etc.) are
-automatically locked so they reach the terminal. Esc is not locked, so you can always leave
-fullscreen with Esc.
 
 ## Arranging multiple views (panes)
 

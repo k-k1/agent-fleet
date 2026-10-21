@@ -120,6 +120,8 @@ The commands are in the runbook's "Upgrade" section.
   means no banner. If `update.sh` cannot read or evaluate the data stack it keeps the previous
   verdict, so an existing banner stays until a run confirms the fix.
 
+## ecs-ec2 slot pool
+
 ### ecs-ec2: replacing slots after a launch template change
 
 A slot reads its user data only when it is launched, and a stopped workspace goes back to the
@@ -154,7 +156,9 @@ a new slot fails instead):
 `deploy/aws/ecs/README.md`, "Moving retained slots onto new user data", has the details and how
 to verify the result.
 
-**Memory protection for the management plane.** The slot user data gives the SSM agent, docker
+### ecs-ec2: memory protection for the management plane
+
+The slot user data gives the SSM agent, docker
 and containerd a systemd `MemoryMin` (192 / 256 / 128 MiB), and a small helper service
 (`af-protect-mgmt`) finds the ECS agent, which runs as a docker container rather than under
 `ecs.service`, and gives its scope a 192 MiB `memory.min`. The helper re-applies this every 30
@@ -349,50 +353,65 @@ art as it serves it.
 
 ## Idle stop and force-stop
 
-- **A start that never finishes is stopped**: a Workspace that has been starting for
-  **30 minutes** with no task running (on ECS, typically a task the cluster refuses to
-  place) is stopped, so it no longer holds capacity and the user can press **Start** again
-  once the cause is fixed. The 30 minutes count from its last Start, or from when the
-  Control Plane first saw it starting if that is later (after a Control Plane restart, for
-  instance), and it is checked once per usage sample (5 minutes), so the stop comes up to
-  one sample late. The member gets a notification in the Console's notification center saying
-  the start was stopped, with the last start phase (on `ecs-ec2`, why the task could not be
-  placed), the tenant's admins see the same reason on that member's roster row and member
-  detail until the next start, and the Control Plane log says so too (`start-deadline: stopped …`). `AF_WORKSPACE_START_DEADLINE` changes the limit and `0` turns it off; on
-  `ecs-ec2` it is never shorter than the pool's own launch budget (`AF_ECS_EC2_CLAIM_TTL_SEC`,
-  `AF_ECS_EC2_WAIT_SEC`). It runs on the usage sampler, so `AF_USAGE_SAMPLE_INTERVAL=0` turns
-  it off too.
+### A start that never finishes
 
-- **Automatic idle stop (scale-to-zero)**: an idle claude session is halted after **1 hour**
-  and a Workspace with nothing running is stopped after **2 hours**. That is the default;
-  `AF_SESSION_IDLE_TIMEOUT` / `AF_INTERACTION_IDLE_TIMEOUT` (a session parked on a question or an approval) / `AF_WS_IDLE_TIMEOUT` / `AF_PRESENCE_IDLE_TIMEOUT` (how long a terminal with no typing still counts as someone being there; 30m) change it (per-tenant overrides are in the
-  Admin UI: a tenant setting `0` opts that tenant out, and `0` in the env turns it off for the
-  whole deployment). A stopped Workspace comes back when the user presses **Start**, and
-  `AF_AUTOSTART` (on by default) additionally starts it for the deliberate "I am using this
-  now" actions: creating, forking or resuming a session, answering a carried question, the
-  SSM node lookup. **Opening a terminal does not start it, and neither does reading or
-  reloading the Console**: those answer "the workspace is stopped — start it first", so a tab
-  left open never keeps a Workspace warm. Background work (a dev server or a
-  `run_in_background` task started by an idle session) holds the Workspace for at most
-  **2 hours** (`AF_BACKGROUND_HOLD_MAX`, per tenant `background_hold_max`; `0` = unbounded);
-  after that it no longer keeps the Workspace awake, and the "do not auto-stop" pin is the way to
-  keep a genuinely long job. This is effective for
-  saving resources. For the meaning of the env vars, see
-  `deploy/compose/.env.example`; for how it works, see
-  `docs/build/09-deploy.md` §9.4. A Terminal claude, agy, codex, cursor, copilot, kiro or opencode session showing "working" keeps the
-  Workspace awake only while it shows signs of life: if it has produced no output, state change or
-  running tool process for **1 hour**, it stops counting. That is a limit on time without any
-  change, not on total working time. For claude and agy a running tool process counts as life; for
-  codex, cursor, copilot, kiro and opencode only a pane repaint does (a spinner or elapsed-time
-  counter counts), so a silent tool under a pane that stays static for an hour can lapse, while a
-  stuck session whose spinner keeps animating keeps holding. Use the "do not auto-stop" pin for
-  long silent work on those kinds. A Managed cursor, kiro, codex or opencode session is bounded the same way, on the runtime's own sign of life: its last message for that session, or a running tool (an open tool call or item, or for cursor and kiro a tool process under the runtime). It was measured on cursor-agent 2026.10.16, kiro-cli 2.31.0, codex 0.163.0 and opencode 2.0.32 with a local shell tool;
-  whenever the Agent cannot tell what is running (a restart, a reconnect, a failed process-table read) the session keeps holding. opencode 1.x and Managed muse, lcpp and copilot are not bounded this way (see ADR 0055, 2026-10-17 addendum).
-  shell and ssm sessions never show "working", and muse and lcpp have no Terminal mode, so there is nothing of those kinds to bound. Background
-  work and the "do not auto-stop" pin are never subject to it.
-- **force-stop (brute force)**: `docker compose down` **does not stop user Workspaces** (they
-  are outside compose management). To stop a specific Workspace for sure, a super_admin
-  force-stops it from the Admin panel in the Console. When the whole host must be brought fully
-  down for maintenance, after stopping the CP/Caddy you also need to `docker stop` the remaining
-  `af-ws-*` containers separately (this also comes up in the troubleshooting chapter,
-  [06](06-diagnose.md)).
+**A start that never finishes is stopped**: a Workspace that has been starting for
+**30 minutes** with no task running (on ECS, typically a task the cluster refuses to
+place) is stopped, so it no longer holds capacity and the user can press **Start** again
+once the cause is fixed. The 30 minutes count from its last Start, or from when the
+Control Plane first saw it starting if that is later (after a Control Plane restart, for
+instance), and it is checked once per usage sample (5 minutes), so the stop comes up to
+one sample late. The member gets a notification in the Console's notification center saying
+the start was stopped, with the last start phase (on `ecs-ec2`, why the task could not be
+placed), the tenant's admins see the same reason on that member's roster row and member
+detail until the next start, and the Control Plane log says so too (`start-deadline: stopped …`). `AF_WORKSPACE_START_DEADLINE` changes the limit and `0` turns it off; on
+`ecs-ec2` it is never shorter than the pool's own launch budget (`AF_ECS_EC2_CLAIM_TTL_SEC`,
+`AF_ECS_EC2_WAIT_SEC`). It runs on the usage sampler, so `AF_USAGE_SAMPLE_INTERVAL=0` turns
+it off too.
+
+### Automatic idle stop (scale-to-zero)
+
+An idle claude session is halted after **1 hour**
+and a Workspace with nothing running is stopped after **2 hours**. That is the default;
+`AF_SESSION_IDLE_TIMEOUT` / `AF_INTERACTION_IDLE_TIMEOUT` (a session parked on a question or an approval) / `AF_WS_IDLE_TIMEOUT` / `AF_PRESENCE_IDLE_TIMEOUT` (how long a terminal with no typing still counts as someone being there; 30m) change it (per-tenant overrides are in the
+Admin UI: a tenant setting `0` opts that tenant out, and `0` in the env turns it off for the
+whole deployment). This is effective for
+saving resources. For the meaning of the env vars, see
+`deploy/compose/.env.example`; for how it works, see
+`docs/build/09-deploy.md` §9.4.
+
+A stopped Workspace comes back when the user presses **Start**, and
+`AF_AUTOSTART` (on by default) additionally starts it for the deliberate "I am using this
+now" actions: creating, forking or resuming a session, answering a carried question, the
+SSM node lookup. **Opening a terminal does not start it, and neither does reading or
+reloading the Console**: those answer "the workspace is stopped — start it first", so a tab
+left open never keeps a Workspace warm.
+
+### What keeps a Workspace awake
+
+Background work (a dev server or a
+`run_in_background` task started by an idle session) holds the Workspace for at most
+**2 hours** (`AF_BACKGROUND_HOLD_MAX`, per tenant `background_hold_max`; `0` = unbounded);
+after that it no longer keeps the Workspace awake, and the "do not auto-stop" pin is the way to
+keep a genuinely long job.
+
+A Terminal claude, agy, codex, cursor, copilot, kiro or opencode session showing "working" keeps the
+Workspace awake only while it shows signs of life: if it has produced no output, state change or
+running tool process for **1 hour**, it stops counting. That is a limit on time without any
+change, not on total working time. For claude and agy a running tool process counts as life; for
+codex, cursor, copilot, kiro and opencode only a pane repaint does (a spinner or elapsed-time
+counter counts), so a silent tool under a pane that stays static for an hour can lapse, while a
+stuck session whose spinner keeps animating keeps holding. Use the "do not auto-stop" pin for
+long silent work on those kinds. A Managed cursor, kiro, codex or opencode session is bounded the same way, on the runtime's own sign of life: its last message for that session, or a running tool (an open tool call or item, or for cursor and kiro a tool process under the runtime). It was measured on cursor-agent 2026.10.16, kiro-cli 2.31.0, codex 0.163.0 and opencode 2.0.32 with a local shell tool;
+whenever the Agent cannot tell what is running (a restart, a reconnect, a failed process-table read) the session keeps holding. opencode 1.x and Managed muse, lcpp and copilot are not bounded this way (see ADR 0055, 2026-10-17 addendum).
+shell and ssm sessions never show "working", and muse and lcpp have no Terminal mode, so there is nothing of those kinds to bound. Background
+work and the "do not auto-stop" pin are never subject to it.
+
+### Force-stop (brute force)
+
+`docker compose down` **does not stop user Workspaces** (they
+are outside compose management). To stop a specific Workspace for sure, a super_admin
+force-stops it from the Admin panel in the Console. When the whole host must be brought fully
+down for maintenance, after stopping the CP/Caddy you also need to `docker stop` the remaining
+`af-ws-*` containers separately (this also comes up in the troubleshooting chapter,
+[06](06-diagnose.md)).

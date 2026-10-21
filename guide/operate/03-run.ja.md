@@ -107,6 +107,8 @@ air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/RE
   かった場合は以前の判定を保持するので、既存のバナーは修復を確認できた実行まで残ります。
   一度も記録されていない環境ではバナーは出ません。
 
+## ecs-ec2 スロットプール
+
 ### ecs-ec2: 起動テンプレートを変えたあとのスロットの入れ替え
 
 スロットはユーザーデータを起動時にしか読まず、停止したワークスペースは次の起動で同じスロットに
@@ -138,7 +140,9 @@ air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/RE
 詳細と結果の確かめ方は `deploy/aws/ecs/README.md` の「Moving retained slots onto new user data」に
 あります。
 
-**管理プレーンのメモリ保護。** スロットのユーザーデータは、SSM エージェント・docker・containerd に
+### ecs-ec2: 管理プレーンのメモリ保護
+
+スロットのユーザーデータは、SSM エージェント・docker・containerd に
 systemd の `MemoryMin`（192 / 256 / 128 MiB）を与えます。ECS エージェントは `ecs.service` の子ではなく
 docker コンテナとして動くため、小さな補助サービス（`af-protect-mgmt`）がそのスコープを探して
 192 MiB の `memory.min` を設定します。補助サービスは 30 秒ごとに再適用するのでエージェントの
@@ -324,44 +328,58 @@ Control Plane が配信時に同梱の画像を塗り替えるので、環境ご
 
 ## アイドル停止と force-stop
 
-- **終わらない起動は停止されます**: タスクが動かないまま **30 分**起動中の Workspace
-  （ECS なら、たいていクラスターがタスクを配置できない場合）を停止し、容量を占有し続けないようにします。
-  原因を直せばユーザーはもう一度 **「起動」** を押せます。30 分は最後の起動から数えます。Control Plane
-  がそれより後に初めて起動中と見た場合（Control Plane の再起動後など）はその時点から数えます。判定は
-  usage のサンプルごと（5 分）なので、停止は最大 1 サンプル分遅れます。メンバーには Console の通知センターに
-  起動を止めた旨の通知が最後の起動フェーズ（`ecs-ec2` ならタスクを配置できない理由）付きで届き、テナントの
-  管理者にも次の起動まで同じ理由がメンバーの名簿の行とメンバー詳細に出ます。Control Plane のログにも残ります（`start-deadline: stopped …`）。`AF_WORKSPACE_START_DEADLINE` で上限を変え、
-  `0` で無効。`ecs-ec2` ではプール自身の起動予算（`AF_ECS_EC2_CLAIM_TTL_SEC`・`AF_ECS_EC2_WAIT_SEC`）
-  より短くはなりません。usage サンプラーの上で動くため、`AF_USAGE_SAMPLE_INTERVAL=0` でも無効になります。
+### 終わらない起動
 
-- **アイドル自動停止（scale-to-zero）**: 使われていない claude セッションを **1 時間**で停止し、
-  何も動いていない Workspace を **2 時間**で停止します。**これが既定**で、
-  `AF_SESSION_IDLE_TIMEOUT` / `AF_INTERACTION_IDLE_TIMEOUT`（質問や承認待ちで止まっているセッション）/ `AF_WS_IDLE_TIMEOUT` / `AF_PRESENCE_IDLE_TIMEOUT`（打鍵の無い端末を在席と数える猶予・既定 30 分）で変えられます（テナント単位の上書きは Admin UI。
-  テナントが `0` を入れればそのテナントだけ無効、env に `0` を入れれば配備全体で無効）。
-  停止した Workspace は、ユーザーが **「起動」を押せば**戻ります。加えて `AF_AUTOSTART`（既定 on）が、
-  「今から使う」が明確な操作（セッションの作成・fork・再開、持ち越し質問への回答、SSM ノード探索）
-  のときだけ自動で起こします。**ターミナルを開いても起動しませんし、閲覧や Console のリロードでも
-  起動しません**（「停止しています。起動してください」を返します）。開きっぱなしのタブが Workspace を
-  温め続けることはありません。バックグラウンド作業（アイドルのセッションが起動した開発サーバや
-  `run_in_background` のタスク）が Workspace を抱える時間は最大 **2 時間**です
-  （`AF_BACKGROUND_HOLD_MAX`、テナント単位は `background_hold_max`。`0` で無制限）。超えると
-  Workspace を起こし続ける理由から外れます。本当に長いジョブを残すには「自動停止しない」ピンを使います。
-  資源の節約に有効です。env の意味は `deploy/compose/.env.example`、仕組みは
-  `docs/build/09-deploy.ja.md` §9.4。ターミナルの claude / agy / codex / cursor / copilot / kiro / opencode セッションが「作業中」と表示されて
-  Workspace を起こし続けるのは、生きている兆候がある間だけです。出力・状態の変化・実行中の
-  ツールプロセスのいずれも **1 時間**無ければ数えなくなります。これは総作業時間ではなく「変化が
-  無い時間」の上限です。claude と agy は実行中のツールプロセスも生存とみなしますが、codex・cursor・
-  copilot・kiro・opencode はペインの再描画だけが生存信号です（スピナーや経過時間の更新も含む）。
-  そのため、ペインが 1 時間静止したままの無出力ツールは失効し得て、逆にスピナーが動き続ける固まった
-  セッションは抱え続けます。これらの kind で長い無出力作業をするときは「自動停止しない」ピンを使ってください。managed の cursor・kiro・codex・opencode セッションも、ランタイム自身の生存信号（そのセッションに関する最後のメッセージ、
-  または実行中のツール。未完了のツール呼び出し／item、cursor と kiro はランタイムの下のツールプロセスも）で同じように上限がかかります。
-  実測は cursor-agent 2026.10.16・kiro-cli 2.31.0・codex 0.163.0・opencode 2.0.32 のローカル shell ツールです。
-  Agent が何が動いているか判断できないとき（再起動・再接続・プロセス表の読み取り失敗）は抱え続けます。
-  opencode 1.x と managed の muse・lcpp・copilot はこの上限の対象外です（ADR 0055 の 2026-10-17 追記を参照）。
-  shell と ssm は「作業中」にならず、muse と lcpp にはターミナル方式が無いので、これらの kind に上限をかける対象はありません。
-  バックグラウンド作業と「自動停止しない」ピンは常に対象外です。
-- **force-stop（力業）**: `docker compose down` では**ユーザーの Workspace は止まりません**（compose
-  管理外）。特定の Workspace を確実に止めたいときは、super_admin が Console の Admin パネルから
-  force-stop します。ホスト全体をメンテナンスで完全に落とす必要があるときは、CP/Caddy を止めた
-  うえで、残る `af-ws-*` コンテナを別途 `docker stop` する必要があります（この点は障害対応の
-  [06](06-diagnose.ja.md) でも触れます）。
+**終わらない起動は停止されます**: タスクが動かないまま **30 分**起動中の Workspace
+（ECS なら、たいていクラスターがタスクを配置できない場合）を停止し、容量を占有し続けないようにします。
+原因を直せばユーザーはもう一度 **「起動」** を押せます。30 分は最後の起動から数えます。Control Plane
+がそれより後に初めて起動中と見た場合（Control Plane の再起動後など）はその時点から数えます。判定は
+usage のサンプルごと（5 分）なので、停止は最大 1 サンプル分遅れます。メンバーには Console の通知センターに
+起動を止めた旨の通知が最後の起動フェーズ（`ecs-ec2` ならタスクを配置できない理由）付きで届き、テナントの
+管理者にも次の起動まで同じ理由がメンバーの名簿の行とメンバー詳細に出ます。Control Plane のログにも残ります（`start-deadline: stopped …`）。`AF_WORKSPACE_START_DEADLINE` で上限を変え、
+`0` で無効。`ecs-ec2` ではプール自身の起動予算（`AF_ECS_EC2_CLAIM_TTL_SEC`・`AF_ECS_EC2_WAIT_SEC`）
+より短くはなりません。usage サンプラーの上で動くため、`AF_USAGE_SAMPLE_INTERVAL=0` でも無効になります。
+
+### アイドル自動停止（scale-to-zero）
+
+使われていない claude セッションを **1 時間**で停止し、
+何も動いていない Workspace を **2 時間**で停止します。**これが既定**で、
+`AF_SESSION_IDLE_TIMEOUT` / `AF_INTERACTION_IDLE_TIMEOUT`（質問や承認待ちで止まっているセッション）/ `AF_WS_IDLE_TIMEOUT` / `AF_PRESENCE_IDLE_TIMEOUT`（打鍵の無い端末を在席と数える猶予・既定 30 分）で変えられます（テナント単位の上書きは Admin UI。
+テナントが `0` を入れればそのテナントだけ無効、env に `0` を入れれば配備全体で無効）。
+資源の節約に有効です。env の意味は `deploy/compose/.env.example`、仕組みは
+`docs/build/09-deploy.ja.md` §9.4。
+
+停止した Workspace は、ユーザーが **「起動」を押せば**戻ります。加えて `AF_AUTOSTART`（既定 on）が、
+「今から使う」が明確な操作（セッションの作成・fork・再開、持ち越し質問への回答、SSM ノード探索）
+のときだけ自動で起こします。**ターミナルを開いても起動しませんし、閲覧や Console のリロードでも
+起動しません**（「停止しています。起動してください」を返します）。開きっぱなしのタブが Workspace を
+温め続けることはありません。
+
+### Workspace を起こし続けるもの
+
+バックグラウンド作業（アイドルのセッションが起動した開発サーバや
+`run_in_background` のタスク）が Workspace を抱える時間は最大 **2 時間**です
+（`AF_BACKGROUND_HOLD_MAX`、テナント単位は `background_hold_max`。`0` で無制限）。超えると
+Workspace を起こし続ける理由から外れます。本当に長いジョブを残すには「自動停止しない」ピンを使います。
+
+ターミナルの claude / agy / codex / cursor / copilot / kiro / opencode セッションが「作業中」と表示されて
+Workspace を起こし続けるのは、生きている兆候がある間だけです。出力・状態の変化・実行中の
+ツールプロセスのいずれも **1 時間**無ければ数えなくなります。これは総作業時間ではなく「変化が
+無い時間」の上限です。claude と agy は実行中のツールプロセスも生存とみなしますが、codex・cursor・
+copilot・kiro・opencode はペインの再描画だけが生存信号です（スピナーや経過時間の更新も含む）。
+そのため、ペインが 1 時間静止したままの無出力ツールは失効し得て、逆にスピナーが動き続ける固まった
+セッションは抱え続けます。これらの kind で長い無出力作業をするときは「自動停止しない」ピンを使ってください。managed の cursor・kiro・codex・opencode セッションも、ランタイム自身の生存信号（そのセッションに関する最後のメッセージ、
+または実行中のツール。未完了のツール呼び出し／item、cursor と kiro はランタイムの下のツールプロセスも）で同じように上限がかかります。
+実測は cursor-agent 2026.10.16・kiro-cli 2.31.0・codex 0.163.0・opencode 2.0.32 のローカル shell ツールです。
+Agent が何が動いているか判断できないとき（再起動・再接続・プロセス表の読み取り失敗）は抱え続けます。
+opencode 1.x と managed の muse・lcpp・copilot はこの上限の対象外です（ADR 0055 の 2026-10-17 追記を参照）。
+shell と ssm は「作業中」にならず、muse と lcpp にはターミナル方式が無いので、これらの kind に上限をかける対象はありません。
+バックグラウンド作業と「自動停止しない」ピンは常に対象外です。
+
+### force-stop（力業）
+
+`docker compose down` では**ユーザーの Workspace は止まりません**（compose
+管理外）。特定の Workspace を確実に止めたいときは、super_admin が Console の Admin パネルから
+force-stop します。ホスト全体をメンテナンスで完全に落とす必要があるときは、CP/Caddy を止めた
+うえで、残る `af-ws-*` コンテナを別途 `docker stop` する必要があります（この点は障害対応の
+[06](06-diagnose.ja.md) でも触れます）。
