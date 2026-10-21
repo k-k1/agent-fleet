@@ -405,3 +405,63 @@ func TestForceStopFencesAFreshlyGrownSlot(t *testing.T) {
 		}
 	}
 }
+
+// A quarantine cleanup that runs after a Stop and a newer Start must leave the newer Start's
+// claim alone.
+func TestDropClaimIfCurrentLeavesANewerStartsClaim(t *testing.T) {
+	ctx := context.Background()
+	h := wedgedSlot(t)
+	h.ec2.addSlot("i-new2", "ap-northeast-1a", "m7i.large", true, false)
+	gen, err := h.rt.beginStart(ctx) // the Start whose cleanup runs late
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.rt.Stop(ctx); err != nil { // moves the Start count on
+		t.Fatal(err)
+	}
+	if err := h.rt.claim(ctx, "vol-1", "i-new2"); err != nil { // the newer Start's claim
+		t.Fatal(err)
+	}
+	h.rt.dropClaimIfCurrent(ctx, gen, "vol-1")
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-new2" {
+		t.Fatalf("claim = %q: a cleanup from a superseded Start deleted the newer Start's claim", got)
+	}
+	cur, _ := h.rt.startGenNow(ctx)
+	h.rt.dropClaimIfCurrent(ctx, cur, "vol-1")
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "" {
+		t.Fatalf("claim = %q: the current Start's own cleanup did not drop its claim", got)
+	}
+}
+
+// A replacement slot that is force-stopped before the Start's claim is evidence, not an
+// unused box: the move stops, the claim goes, and nothing is terminated.
+func TestForceStopOfAReplacementSlotKeepsItsEvidence(t *testing.T) {
+	ctx := context.Background()
+	h := reservedSlotHarness(t, true)
+	f := h.factory()
+	h.rt.ec2 = &ec2BeforeClaim{ec2API: h.ec2, fire: func() {
+		for id, inst := range h.ec2.instances {
+			if id == "i-old" {
+				continue
+			}
+			inst.State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning}
+			if _, err := f.ForceStopSlot(ctx, id, false); err != nil {
+				t.Errorf("ForceStopSlot(%s): %v", id, err)
+			}
+		}
+	}}
+	if err := h.rt.Start(ctx); err == nil || !strings.Contains(err.Error(), "quarantined") {
+		t.Fatalf("Start = %v, want a quarantined-replacement failure", err)
+	}
+	for _, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "TerminateInstances") {
+			t.Fatalf("the quarantined replacement was terminated: %v", h.ec2.calls)
+		}
+	}
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "" {
+		t.Fatalf("claim %q survived", got)
+	}
+	if attachedInstance(h.ec2.volumes["vol-1"]) != "i-old" {
+		t.Fatal("the home left the old slot although the move did not happen")
+	}
+}

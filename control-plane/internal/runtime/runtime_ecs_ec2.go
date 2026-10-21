@@ -1732,6 +1732,10 @@ func (e *ecsEC2Runtime) slotTypeMatches(ctx context.Context, instanceID string) 
 }
 
 func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
+	// The Start count at entry stands for the Start's own generation (the caller stamps it on
+	// the placement only afterwards): a cleanup of this placement's claim is skipped when a
+	// Stop and a newer Start have moved it on (dropClaimIfCurrent).
+	gen, _ := e.startGenNow(ctx)
 	vol, err := e.homeVolume(ctx)
 	if err != nil {
 		return ec2Placement{}, fmt.Errorf("describe home volume: %w", err)
@@ -1994,7 +1998,7 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	// before this claim is seen here, and one after it finds the claim. Nothing is attached
 	// yet, so stepping off is dropping the claim; the quarantined box is kept as evidence.
 	if e.slotNowQuarantined(ctx, inst) {
-		e.unclaim(ctx, volID)
+		e.dropClaimIfCurrent(ctx, gen, volID)
 		return ec2Placement{}, fmt.Errorf("the new slot %s was quarantined while it was being set up; start again", inst)
 	}
 	return ec2Placement{volumeID: volID, instanceID: inst, az: azFilter, deferred: true, claimed: true, wipe: homeWipeOf(vol)}, nil
