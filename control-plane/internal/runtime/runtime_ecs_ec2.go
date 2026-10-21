@@ -1989,6 +1989,14 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	if err := e.claim(ctx, volID, inst); err != nil {
 		return ec2Placement{}, fmt.Errorf("claim %s for %s: %w", volID, inst, err)
 	}
+	// The same two-sided fence as the attach paths above: ForceStopSlot writes the
+	// quarantine tag and only then reads who holds the slot, so a force-stop that landed
+	// before this claim is seen here, and one after it finds the claim. Nothing is attached
+	// yet, so stepping off is dropping the claim; the quarantined box is kept as evidence.
+	if e.slotNowQuarantined(ctx, inst) {
+		e.unclaim(ctx, volID)
+		return ec2Placement{}, fmt.Errorf("the new slot %s was quarantined while it was being set up; start again", inst)
+	}
 	return ec2Placement{volumeID: volID, instanceID: inst, az: azFilter, deferred: true, claimed: true, wipe: homeWipeOf(vol)}, nil
 }
 

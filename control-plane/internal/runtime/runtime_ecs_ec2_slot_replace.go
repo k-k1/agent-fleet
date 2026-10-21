@@ -571,6 +571,14 @@ func (e *ecsEC2Runtime) slotNowReserved(ctx context.Context, id string) bool {
 	})
 }
 
+// slotNowQuarantined is the quarantine half of slotNowReserved alone; unreadable counts as
+// quarantined, for the same reason.
+func (e *ecsEC2Runtime) slotNowQuarantined(ctx context.Context, id string) bool {
+	return e.slotTagged(ctx, id, func(inst ec2types.Instance) bool {
+		return ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined
+	})
+}
+
 // slotNowReservedByOperator is slotNowReserved for an operator's reservation alone — the
 // sweeper's fence (ec2TagSlotRetire) does not forbid the automatic fallback.
 func (e *ecsEC2Runtime) slotNowReservedByOperator(ctx context.Context, id string) bool {

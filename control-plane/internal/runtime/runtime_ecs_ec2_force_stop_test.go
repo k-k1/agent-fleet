@@ -354,3 +354,54 @@ func TestForceStopFencesAPlacementThatListedTheSlotEarlier(t *testing.T) {
 		t.Fatal("a claim on the force-stopped slot survived")
 	}
 }
+
+// ec2BeforeClaim runs fire once, just before the first claim tag is written.
+type ec2BeforeClaim struct {
+	ec2API
+	fire func()
+}
+
+func (w *ec2BeforeClaim) CreateTags(ctx context.Context, in *ec2.CreateTagsInput, opt ...func(*ec2.Options)) (*ec2.CreateTagsOutput, error) {
+	for _, tag := range in.Tags {
+		if aws.ToString(tag.Key) == EC2TagClaim && w.fire != nil {
+			f := w.fire
+			w.fire = nil
+			f()
+		}
+	}
+	return w.ec2API.CreateTags(ctx, in, opt...)
+}
+
+// A slot the Start itself just added to the pool is force-stopped between RunInstances and
+// the claim: the Start must notice the quarantine after its claim and step off, not carry on
+// with a live claim on a stopped box.
+func TestForceStopFencesAFreshlyGrownSlot(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	f := h.factory()
+	h.rt.ec2 = &ec2BeforeClaim{ec2API: h.ec2, fire: func() {
+		for id, inst := range h.ec2.instances {
+			inst.State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning}
+			if _, err := f.ForceStopSlot(ctx, id, false); err != nil {
+				t.Errorf("ForceStopSlot(%s): %v", id, err)
+			}
+		}
+	}}
+	err := h.rt.Start(ctx)
+	if err == nil {
+		t.Fatal("the Start went on with a claim on a quarantined, stopped slot")
+	}
+	if !strings.Contains(err.Error(), "quarantined") {
+		t.Fatalf("Start failed for another reason: %v", err)
+	}
+	for _, v := range h.ec2.volumes {
+		if ec2TagValue(v.Tags, EC2TagClaim) != "" {
+			t.Fatalf("a claim survived on %s", aws.ToString(v.VolumeId))
+		}
+	}
+	for id, inst := range h.ec2.instances {
+		if ec2TagValue(inst.Tags, EC2TagRole) != ec2RoleQuarantined {
+			t.Fatalf("%s was not kept as quarantined evidence", id)
+		}
+	}
+}
