@@ -201,14 +201,17 @@ tenant-wide side, so they are super_admin's domain). It has two stages, set by t
   resumed later. A session left stopped for 7 days is moved to the archive (each user can change the period, or turn it off, in Settings → Agents → Session; the deployment's `AF_SESSION_STOPPED_TTL` sets it for users who leave that at Default). It is never deleted, so it
   can still be restored from there, and its working copy is left in place; a session locked
   against deletion stays in the list.
-- **Halt when awaiting a decision**: the same for a session waiting on a person (a question, a
-  plan awaiting approval, a permission prompt, the usage-limit menu, an expired login). Such a
-  session keeps its container up until someone answers, so it has its own clock; empty uses the
-  session value. Nothing is lost when one is folded: the answer is delivered on resume from the
-  card in the conversation.
+- **Halt when awaiting a decision**: the same for an unattended session waiting on a person (a
+  question, a plan awaiting approval, a permission prompt, the usage-limit menu, an expired
+  login), on a clock of its own. Waiting does not keep the workspace running: **Workspace stop
+  after** still applies. Empty follows the tenant's **Session halt after** when that is set,
+  and otherwise the deployment's default for decision waits (which normally equals its session
+  default). Nothing is lost when one is folded: the answer is delivered on resume from the card
+  in the conversation.
 - **Max hold by background work**: how long background work (a dev server or a
   `run_in_background` task that an idle session started) keeps the workspace from stopping.
-  Empty means 2 hours, `0` means no limit; details in
+  Empty uses the deployment default (2 hours unless the operator changed it), `0` means no
+  limit; details in
   [operate/03](../operate/03-run.md#what-keeps-a-workspace-awake).
 - **Workspace stop after**: a workspace with no one connected and no running sessions has its
   whole container stopped once it exceeds this time.
