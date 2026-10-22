@@ -337,7 +337,8 @@ the box's state nor the volume, only tags, so it needs no count or epoch match:
   compare and write of `af-wedge-at` runs under a per-instance lease (`ec2-slot-wedge/<instance id>`, from the
   same `cp_lease` store as the home locks), shared by all rescues of that box whatever the home or epoch, with
   the lease re-checked by the clock before the write. If the lease cannot be had the marker stays and the next
-  pass retries, so a late, old write cannot land after a newer one.
+  pass retries, which serialises concurrent finalizers in the ordinary case. It does **not** fence a request already sent to AWS
+  and delayed past the lease's expiry: see Open question 8.
 - `detaching` with the volume no longer on this box is decided by the count: still `g_r` means nobody else
   could have moved it (every other releaser is refused while the marker exists, rule 2), so it was this
   rescue and it is complete; a moved count means the occupant's own Start moved it, and the episode is
@@ -397,3 +398,16 @@ expires on a dead CP, so the replica that resumes can take it.
 7. **Do `MemoryMin` and the host reserve (#2452, the memory-pressure response) change the base
    rate?** If dark episodes become rare, L2's repeat rule may never fire and `darkRepeatWindow` can be
    dropped.
+8. **A stale `CreateTags` landing after the lease expired.** The per-instance lease serialises the finalizers'
+   read, compare and write, and the clock is checked before the write is sent, but neither cancels or fences a
+   request AWS has already received. Scenario: finalizer A holds the lease, reads `af-wedge-at`, and sends
+   `t1`; the RPC is delayed and the lease expires; another replica finishes that old episode and removes its
+   marker; the next episode's finalizer takes the lease and writes `t2` (t2 > t1); A's request then lands and
+   the tag reads `t1` again. The effect is on the repeat decision of rung L2: it reads an older time, the
+   window `darkRepeatWindow` may then have passed, and a box that went dark twice is treated as a first
+   episode (a missed escalation, never a wrong stop). EC2 tags have no conditional write, so a monotonic
+   update needs something else, and the choice is open: an authoritative store with an atomic max (the
+   CP's database, if the callback of decision 4 may write one), a record that cannot be overwritten (one tag
+   or one audit row per episode, with the repeat test taking the maximum), or a fencing token that the
+   write target verifies. The #2450 implementation has to settle this before `af-wedge-at` gates anything,
+   and until then the repeat rule is advisory and `quarantine` mode is not to be enabled on its strength.
