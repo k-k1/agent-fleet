@@ -19,6 +19,16 @@ interface TrustedView {
   unreadable?: boolean;
 }
 
+const SOURCE_KEY = {
+  admin: "admin.mcptrust_source_admin",
+  env: "admin.mcptrust_source_env",
+  default: "admin.mcptrust_source_default",
+} as const;
+const FALLBACK_KEY = {
+  env: "admin.mcptrust_fallback_env",
+  default: "admin.mcptrust_fallback_default",
+} as const;
+
 const PATH = "api/admin/mcp-oauth/trusted-hosts";
 
 export function McpTrustedHostsView() {
@@ -107,7 +117,7 @@ export function McpTrustedHostsView() {
             }}
           />
         </label>
-        {data && <p className="muted">{tr("admin.mcptrust_source_" + data.source)}</p>}
+        {data && <p className="muted">{tr(SOURCE_KEY[data.source])}</p>}
         {data && data.hosts.length === 0 && <p className="muted">{tr("admin.mcptrust_none")}</p>}
         <div className="usage-toolbar">
           <button
@@ -131,7 +141,7 @@ export function McpTrustedHostsView() {
           <p className="muted">
             {tr("admin.mcptrust_reset_note", {
               hosts: fallbackLabel,
-              source: tr("admin.mcptrust_fallback_" + data.fallback_source),
+              source: tr(FALLBACK_KEY[data.fallback_source]),
             })}
           </p>
         )}
