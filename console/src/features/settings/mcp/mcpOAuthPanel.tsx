@@ -127,6 +127,18 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
         pre?.close();
         return;
       }
+      // Every start path goes through here (the button, the DCR retry, the resume after a client
+      // id is saved), and the Agent adds the recorded step-up scope to a start that carries none:
+      // so on a needs-more-permission row the scope is checked, and sent, whichever way it started.
+      if (status?.state === "needs_more_permission") {
+        const su = stepUpRequest(status);
+        if (!su.ok) {
+          pre?.close();
+          toast(tr(su.reason === "too_long" ? "mcp.oauth_stepup_too_long" : "mcp.oauth_stepup_invalid"));
+          return;
+        }
+        opts = { ...opts, scope: opts.scope ?? su.scope };
+      }
       inFlight.current = true;
       setFailedCimd(false);
       const tab = pre === undefined ? openSignInTab() : pre;
@@ -161,7 +173,7 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
         setBusy(false);
       }
     },
-    [s.id, toast, tr],
+    [s.id, status, toast, tr],
   );
 
   const submitClient = useCallback(

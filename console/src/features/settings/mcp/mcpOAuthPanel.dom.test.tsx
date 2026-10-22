@@ -191,6 +191,23 @@ describe("row states", () => {
     expect(button("Disconnect")).toBeTruthy();
   });
 
+  it("the DCR retry on a needs-more-permission row obeys the same scope check", async () => {
+    const start = () => calls.some((c) => c.path.endsWith("/oauth/start"));
+    replies["POST api/mcp-servers/mcp-1/oauth/start"] = () => ({ authorize_url: "https://as.example.com/a", issuer: "https://as.example.com" });
+    // Refused union with an unfinished CIMD sign-in: the retry must not start anything.
+    setStatus({ state: "needs_more_permission", stepUpScope: "b".repeat(600), scopes: ["a".repeat(600)], pendingRegistration: "cimd" });
+    await mount(row());
+    await click(button("Retry with dynamic registration"));
+    expect(start()).toBe(false);
+    act(() => root!.unmount());
+    host!.remove();
+    // A valid union: the retry carries the registration and the checked scope.
+    setStatus({ state: "needs_more_permission", stepUpScope: "mcp:write", scopes: ["mcp:read"], pendingRegistration: "cimd" });
+    await mount(row());
+    await click(button("Retry with dynamic registration"));
+    expect(calls.find((c) => c.path.endsWith("/oauth/start"))!.body).toEqual({ registration: "dcr", scope: "mcp:read mcp:write" });
+  });
+
   it("a union the Agent would refuse is not sent: the reason is shown and the button is off", async () => {
     setStatus({ state: "needs_more_permission", stepUpScope: "b".repeat(600), scopes: ["a".repeat(600)] });
     await mount(row());
