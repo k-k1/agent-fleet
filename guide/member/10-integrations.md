@@ -15,8 +15,12 @@ It's fine to read only the parts you need, when you need them. AWS, SSM hosts an
 You can check web services started inside the workspace (dev servers of all kinds, Spring Boot, any web app)
 on the spot, **with no extra port publishing and no container rebuild**. There are two methods.
 
-Enter a port number in the **port input field** on the right of the workspace action bar, and you can choose
-**"Open in pane"** (browser pane) or **"Lightweight preview"** (both only while the workspace is running).
+Open **"Preview"** on the workspace action bar and enter a port number under **"Open a specific port"**. The
+primary button opens the default target (**"Open in new tab"** when the port has a preview URL, otherwise the
+browser pane, or the lightweight preview where there is no browser pane), and **"Open in pane"** (browser pane)
+and **"Lightweight preview"** sit beside it. All of them work only while the workspace is running. A loopback URL
+such as `http://127.0.0.1:3000/` in an agent's reply or a rendered document opens the same way when you click it
+([04](04-files.md#links-in-rendered-markdown)).
 
 - **Browser pane ("Open in pane")**: a browser inside the workspace opens `127.0.0.1:{port}` directly, and
   **only its rendering and input** are mirrored into a Console pane. You can click, scroll, type ASCII/Japanese,
@@ -57,12 +61,13 @@ left of the pane; it stays open while you keep tapping the page.
 
 1. Have a shell or an agent start the dev server. Make the server listen on `127.0.0.1` inside the workspace
    (or on all interfaces).
-2. On the **desktop / tablet** workspace action bar, enter a port number from `1..65535` (excluding `7700`,
-   which the Agent itself uses) in the port field, plus a path starting with `/` if needed (no host or external
-   URL).
-3. Normally choose **"Open in pane"**; if all you need is a single HTTP check, choose **"Lightweight preview"**.
+2. Open **"Preview"** on the workspace action bar and, under **"Open a specific port"**, enter a port number from
+   `1..65535` (excluding `7700`, which the Agent itself uses), plus a path starting with `/` if needed (no host
+   or external URL).
+3. Press the primary button, or **Enter** in either field, to open the default target. Choose **"Open in pane"**
+   to touch the screen, or **"Lightweight preview"** for a single HTTP check.
 
-For example, once you start an API server on 8080 in a shell, enter `8080` in the port field and press
+For example, once you start an API server on 8080 in a shell, enter `8080` under "Open a specific port" and press
 "Open in pane", and the app appears in a pane. There is no need to ask IT to open extra ports.
 
 ### Preview subdomains (only where they are issued)
@@ -172,6 +177,8 @@ When the browser pane fails to render properly, a status appears in the pane.
 | Status | Meaning | What to do |
 |------|------|------|
 | `target-unreachable` | The browser started, but the connection to that port/path hasn't been established yet. **Waiting for the dev server to start** is also this state. | Check the port number, the path, and whether the server is listening; once it's up, press **"Reload"**. If it persists, press **"Reconnect"**. |
+| `target-unreachable`, "listening but does not speak HTTP" | Something listens on the port, but it is not an HTTP server. The browser pane shows HTTP only. | Check that the port is the web server's, not a database's or a debugger's. |
+| `target-unreachable`, "serving HTTPS" | The dev server on that port serves HTTPS. | Turn off the dev server's HTTPS, then press **"Reconnect"**. |
 | `disconnected` | Communication with the pane (WebSocket) was lost. This is not necessarily a browser crash. | Check that the workspace is running and connectivity is back, then press **"Reconnect"**. |
 | `crashed` | The browser inside the workspace terminated abnormally and cannot continue that display. | Reopen with **"Reconnect"**. If it keeps happening, check the workspace's memory usage and the target app ([11](11-troubleshooting.md)). |
 
@@ -193,7 +200,7 @@ workspace is running.
   (up to 200 entries; not stored persistently).
 
 > **On a smartphone**, the action bar has no "Preview" button: tap **⋯** at its right end instead; the port
-> and path fields and "Open in pane" are in the popover it opens.
+> and path fields are under "Open a specific port" in the popover it opens, with the same buttons.
 
 ## Signing in with Google on a preview URL (development OIDC IdP)
 
@@ -480,7 +487,7 @@ workspace again).
   **not in this workspace yet**; picking one shows an **Install** button that fetches it right there (about
   200MB, into your home volume, so it survives restarts). Sessions started after it finishes get it as
   `JAVA_HOME`, with no stop and start needed.
-- **Agent CLI updates**: "Update the agent CLIs and rtk to the latest on start" (covers claude / opencode / codex / cursor / GitHub Copilot / Antigravity (agy) / rtk). Default is OFF (pinned to the versions baked into the image). Kiro is not part of this toggle; its version is fixed by the image rebuild / on-demand install and its own auto-update is kept off. Neither is Muse Code: it is installed from its card at the build this image pins and never updates itself; when a newer pinned build arrives with the image, the card offers **"Update Muse Code"** ([06](06-agents.md#muse-code)). lcpp has no CLI in the workspace to update: its engine belongs to the deployment.
+- **Agent CLI updates**: "Update the agent CLIs and rtk to the latest on start" (covers claude / opencode / codex / cursor / GitHub Copilot / [Antigravity (agy)](06-agents.md#antigravity-agy) / rtk). Default is OFF (pinned to the versions baked into the image). Kiro is not part of this toggle; its version is fixed by the image rebuild / on-demand install and its own auto-update is kept off. Neither is Muse Code: it is installed from its card at the build this image pins and never updates itself; when a newer pinned build arrives with the image, the card offers **"Update Muse Code"** ([06](06-agents.md#muse-code)). lcpp has no CLI in the workspace to update: its engine belongs to the deployment.
 
 ### Recreating the workspace (danger zone)
 
