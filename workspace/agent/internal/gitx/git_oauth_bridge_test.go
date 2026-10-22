@@ -2,10 +2,12 @@ package gitx
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -130,5 +132,23 @@ func TestBitbucketRefreshWithoutBridgeOrLegacyCredsSaysWhy(t *testing.T) {
 	}
 	if got := err.Error(); !strings.Contains(got, "bridge") {
 		t.Fatalf("the error must name the missing bridge, got %q", got)
+	}
+}
+
+// The shared bridge call is not retried on its own (Bitbucket's callers keep their timing);
+// a 503 is one request and an error the caller can classify.
+func TestRefreshOAuthViaCPSingleAttemptAndClassification(t *testing.T) {
+	var n int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&n, 1)
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	_, err := RefreshOAuthViaCP(secrets.CPBridge{BaseURL: srv.URL, Token: "t"}, "jira", "rt")
+	if err == nil || !CPRefreshTransient(err) || atomic.LoadInt32(&n) != 1 {
+		t.Fatalf("err=%v transient=%v calls=%d", err, CPRefreshTransient(err), n)
+	}
+	if CPRefreshTransient(&CPRefreshStatusError{Status: 400}) || CPRefreshTransient(fmt.Errorf("x")) {
+		t.Error("a 4xx or an unclassified error counted as transient")
 	}
 }

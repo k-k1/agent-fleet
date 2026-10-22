@@ -619,6 +619,40 @@ var jiraRefreshMu sync.Mutex
 // cost it a delay, not a hang.
 var jiraRefreshBudget = 30 * time.Second
 
+// jiraRefreshAttemptTimeout caps one bridge call; the attempt is also cut by what is left
+// of jiraRefreshBudget, so a retry never runs past the budget.
+var jiraRefreshAttemptTimeout = 20 * time.Second
+
+// jiraRefreshRetryPause is the wait before retrying a transient bridge failure.
+var jiraRefreshRetryPause = time.Second
+
+// jiraRefreshMaxAttempts bounds the bridge retries inside one renewal.
+const jiraRefreshMaxAttempts = 3
+
+// jiraBridgeRefresh runs the grant through the CP bridge, retrying a transient failure
+// (transport error, timeout, CP 502/503/504) with the SAME refresh token.
+//
+// Why: the CP may have completed the exchange at Atlassian before the answer was lost.
+// Atlassian rotates the token but accepts the old one again for a reuse interval (10 min
+// by default), so presenting it again returns a fresh pair; giving up here keeps the
+// retired token and the next renewal after that window gets invalid_grant. A 4xx such as
+// invalid_grant is final and returns at once so the member is told to reconnect.
+func jiraBridgeRefresh(ctx context.Context, b secrets.CPBridge, refreshToken string) (tok gitx.CPRefreshedToken, err error) {
+	for attempt := 1; ; attempt++ {
+		actx, cancel := context.WithTimeout(ctx, jiraRefreshAttemptTimeout)
+		tok, err = gitx.RefreshOAuthViaCPContext(actx, b, "jira", refreshToken)
+		cancel()
+		if err == nil || !gitx.CPRefreshTransient(err) || attempt >= jiraRefreshMaxAttempts {
+			return tok, err
+		}
+		select {
+		case <-ctx.Done():
+			return tok, err
+		case <-time.After(jiraRefreshRetryPause):
+		}
+	}
+}
+
 // jiraRefreshNow runs the refresh grant through the CP bridge and PERSISTS the result.
 //
 // The Agent and every `workspace-agent jira-cred` the jira wrapper starts are separate
@@ -658,7 +692,7 @@ func jiraRefreshNow(c *secrets.JiraCreds) error {
 		if d.RefreshToken == "" {
 			return fmt.Errorf("no refresh token stored (re-connect Jira)")
 		}
-		tok, err := gitx.RefreshOAuthViaCP(*b, "jira", d.RefreshToken)
+		tok, err := jiraBridgeRefresh(ctx, *b, d.RefreshToken)
 		if err != nil {
 			return err
 		}
@@ -678,6 +712,12 @@ func jiraRefreshNow(c *secrets.JiraCreds) error {
 		err = secrets.UpdateContext(wctx, func(s *secrets.Data) error {
 			if s.Jira == nil || s.Jira.AuthKind != "oauth" {
 				return fmt.Errorf("jira connection disappeared")
+			}
+			if s.Jira.RefreshToken != d.RefreshToken {
+				// Replaced since the read under the lock (a reconnect does not take it):
+				// what is stored is newer than this grant's pair.
+				tok.AccessToken, next, expiry = s.Jira.AccessToken, s.Jira.RefreshToken, s.Jira.Expiry
+				return nil
 			}
 			s.Jira.AccessToken, s.Jira.RefreshToken, s.Jira.Expiry = tok.AccessToken, next, expiry
 			return nil

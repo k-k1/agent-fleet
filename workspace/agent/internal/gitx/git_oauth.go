@@ -1,7 +1,9 @@
 package gitx
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -159,6 +161,9 @@ type cpRefreshedToken struct {
 	ExpiresIn    int64  `json:"expires_in"`
 }
 
+// CPRefreshedToken names the bridge answer for callers outside this package.
+type CPRefreshedToken = cpRefreshedToken
+
 // RefreshOAuthViaCP runs one provider's refresh grant through the CP bridge. The
 // provider is a path segment (bitbucket / jira, docs/log/80 §80.17) — the bridge token and
 // base URL are shared, because what the bridge authorizes is "refresh THIS member's
@@ -168,25 +173,70 @@ type cpRefreshedToken struct {
 // is near expiry (and in front of every work item refresh for Jira), so a hung CP must
 // fail rather than wedge the caller. The CP's own retries fit inside this budget.
 func RefreshOAuthViaCP(b secrets.CPBridge, provider, refreshToken string) (cpRefreshedToken, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return RefreshOAuthViaCPContext(ctx, b, provider, refreshToken)
+}
+
+// CPRefreshStatusError is a non-200 answer from the CP bridge, so a caller can tell
+// the CP's own "upstream unreachable" (502/503/504) from a definitive refusal (4xx).
+type CPRefreshStatusError struct {
+	Status int
+	Body   string
+}
+
+func (e *CPRefreshStatusError) Error() string {
+	return fmt.Sprintf("cp refresh failed: %d: %s", e.Status, e.Body)
+}
+
+// CPRefreshTransient reports whether err means the grant may or may not have reached
+// the provider: a transport failure or deadline before any answer, or the CP's
+// 502/503/504. Anything else (a 4xx such as invalid_grant, a malformed 200) is final.
+func CPRefreshTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	var se *CPRefreshStatusError
+	if errors.As(err, &se) {
+		return se.Status == http.StatusBadGateway || se.Status == http.StatusServiceUnavailable ||
+			se.Status == http.StatusGatewayTimeout
+	}
+	var ne *cpRefreshNetError
+	return errors.As(err, &ne)
+}
+
+// cpRefreshNetError marks an error from the HTTP round trip itself (no response).
+type cpRefreshNetError struct{ err error }
+
+func (e *cpRefreshNetError) Error() string { return e.err.Error() }
+func (e *cpRefreshNetError) Unwrap() error { return e.err }
+
+// RefreshOAuthViaCPContext is RefreshOAuthViaCP bounded by ctx alone (no fixed client
+// timeout), so a caller with its own budget can size each attempt to what is left.
+func RefreshOAuthViaCPContext(ctx context.Context, b secrets.CPBridge, provider, refreshToken string) (cpRefreshedToken, error) {
 	if refreshToken == "" {
 		return cpRefreshedToken{}, fmt.Errorf("no refresh token stored")
 	}
 	body, _ := json.Marshal(map[string]string{"refresh_token": refreshToken})
-	req, err := http.NewRequest("POST",
+	req, err := http.NewRequestWithContext(ctx, "POST",
 		strings.TrimRight(b.BaseURL, "/")+"/internal/git-oauth/"+provider+"/refresh", strings.NewReader(string(body)))
 	if err != nil {
 		return cpRefreshedToken{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+b.Token)
-	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return cpRefreshedToken{}, err
+		return cpRefreshedToken{}, &cpRefreshNetError{err}
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil && resp.StatusCode == http.StatusOK {
+		// The body was cut after a 200: the grant most likely went through.
+		return cpRefreshedToken{}, &cpRefreshNetError{err}
+	}
 	if resp.StatusCode != http.StatusOK {
-		return cpRefreshedToken{}, fmt.Errorf("cp refresh failed: %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return cpRefreshedToken{}, &CPRefreshStatusError{Status: resp.StatusCode, Body: strings.TrimSpace(string(raw))}
 	}
 	var out cpRefreshedToken
 	if err := json.Unmarshal(raw, &out); err != nil {
