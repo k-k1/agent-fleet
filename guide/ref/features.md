@@ -109,14 +109,14 @@ explains them.
 |---|---|---|
 | Agent connections | member | Agents |
 | Instructions to agents | member | Agent instructions |
-| Agent Fleet shared memory management | member | Agent memory |
-| Version history of agents' own memory | member | Memory snapshots |
-| Memory suggestions — finished sessions propose memories for you to approve (off by default) | member | Agent memory → Settings |
-| Agent Fleet memory from an agent outside Agent Fleet (off by default) | member | Agent memory → Settings |
+| Agent Fleet shared memory management | member | Agent memory ([14](../member/14-agent-memory.md#agent-memory)) |
+| Version history of agents' own memory | member | Memory snapshots ([14](../member/14-agent-memory.md#memory-snapshots)) |
+| Memory suggestions — finished sessions propose memories for you to approve (off by default) | member | Agent memory → Settings ([14](../member/14-agent-memory.md#settings)) |
+| Agent Fleet memory from an agent outside Agent Fleet (off by default) | member | Agent memory → Settings ([14](../member/14-agent-memory.md#using-agent-fleet-memory-from-an-external-agent)) |
 | Git hosting connections | member | Git hosting |
 | Internal repositories | member | Internal repos |
-| AWS profiles and SSM | member | AWS profiles/SSM |
-| Google Cloud profiles | member | Google Cloud |
+| AWS profiles and SSM | member | AWS profiles/SSM ([15](../member/15-cloud-accounts.md#logging-in-to-another-in-house-host-ssm)) |
+| Google Cloud profiles | member | Google Cloud ([15](../member/15-cloud-accounts.md#running-commands-in-google-cloud-as-you-af-gcloud-exec)) |
 | Integration servers and tokens | member | MCP servers / MCP tokens |
 | Issue-tracker connections | member | Issue tracker |
 | Usage | member | Agent usage |

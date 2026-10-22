@@ -59,9 +59,9 @@ If it is still missing, check whether it was **archived** (AI sessions can be re
 the archive browser) or tidied away by **cleanup** (deleted sessions can be restored from the
 trash). See [02](02-sessions.md#tidying-up-in-bulk-cleanup).
 
-If the Files pane says **"Can't reach the workspace — showing the last known list"**, nothing
-is gone: the Console could not read the list just now and shows the last one it had. While the
-workspace runs, the list comes back by itself.
+If the **Repositories** section of the left pane says **"Can't reach the workspace — showing the
+last known list"**, nothing is gone: the Console could not read the repository list just now and
+shows the last one it had. While the workspace runs, the list comes back by itself.
 
 ### A session won't resume / is shown struck through
 
@@ -421,11 +421,17 @@ moved, because its conversation is gone. shell and ssm sessions have no conversa
 
 ### AWS commands say "Unable to locate credentials", or `af-aws-exec` / `af-gcloud-exec` stops
 
-- **"Unable to locate credentials"** in a workspace means the command named no profile. It is not
-  a credentials problem to configure: name the profile, or run it through `af-aws-exec`
+- **"Unable to locate credentials"** in a workspace means the command found no credentials of
+  yours: the workspace's own role is withheld from your shell. Do not configure credentials. Run
+  the command as you with the profile from ⚙ Settings:
+  `af-aws-exec --profile <name> --account <id> -- <command>`. A plain `aws --profile` is only for
+  the read-only lookups that chapter 15 allows after its isolation check
   ([15](15-cloud-accounts.md#using-the-profiles-from-the-terminal-sdks-and-build-tools)).
-- **`af-gcloud-exec` exit code 3** always means a login: log in from the toast or ⚙ Settings, then
-  run the command again ([15](15-cloud-accounts.md#when-it-stops)).
+- **`af-gcloud-exec` exit code 3** means a login only when the wrapper says so ("the login was
+  requested in the Agent Fleet Console …", "Google Cloud login required …"). Log in from the toast
+  or ⚙ Settings, or run the terminal command it printed, then run the command again. Otherwise the
+  status is the command's own: read that command's error
+  ([15](15-cloud-accounts.md#when-it-stops)).
 
 ### Signing in on a preview URL shows an Agent Fleet error page
 
@@ -439,6 +445,18 @@ These pages come from the development OIDC IdP
 | **Sign-in confirmation is no longer valid** | The confirmation was refused, expired, or was already used. Sign in again from the app. |
 | **Can't complete the sign-in** | A problem on the server. Try again in a moment; if it keeps failing, ask the deployment's administrator. |
 | **Sign in from your app** | You opened one step of the sign-in on its own. Start from the app you are previewing. |
+
+### A preview URL says the port changed, too many ports are open, or the workspace must restart
+
+These messages come from the preview, not from the app:
+
+| Message | What to do |
+|---|---|
+| **"The listener on port N changed or stopped. Reopen the port from the Console."** | The server on that port was restarted or replaced. Open the port again from the Console (the port chip or Preview). |
+| **"Too many temporarily opened ports. Close a server or add the port to the preview ports in Settings."** | Stop a server you no longer need, or list the port under ⚙ Settings → Preview subdomains. |
+| **"Opening port N is not available until the workspace is restarted (its agent is older than this feature)."** | Restart the workspace. |
+
+See [10](10-integrations.md#preview-subdomains-only-where-they-are-issued).
 
 ### On a phone, the keyboard pops up on its own / it's hard to operate
 
