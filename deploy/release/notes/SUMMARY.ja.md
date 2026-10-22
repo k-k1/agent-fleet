@@ -13,6 +13,34 @@
 
 ---
 
+## [0.34.0](0.34.0.ja.md) — 2026-10-22
+
+**CLI ピン** — Claude Code 2.1.308 / Copilot 1.0.102 / Antigravity 1.4.5 / Kiro 2.33.1 / OpenCode 2.1.3
+
+**New / Improved**
+
+- **[MCP]** リモート MCP クライアント（claude.ai・ChatGPT・Claude Code など）がサインインで `/mcp` に接続する。接続済みアプリと最近の呼び出し・テナント単位のスイッチ・管理画面で信頼するクライアントのホスト・入力に **MCP 経由** の印 ([#2433](https://github.com/k-k1/agent-fleet/issues/2433), [#2434](https://github.com/k-k1/agent-fleet/issues/2434), [#2455](https://github.com/k-k1/agent-fleet/issues/2455), [#2457](https://github.com/k-k1/agent-fleet/issues/2457), [#2531](https://github.com/k-k1/agent-fleet/issues/2531), [#2542](https://github.com/k-k1/agent-fleet/issues/2542), [#2567](https://github.com/k-k1/agent-fleet/issues/2567))
+- **[MCP]** OAuth が必要な MCP サーバーに設定からサインインし、セッションはワークスペース内の中継で使う ([#2479](https://github.com/k-k1/agent-fleet/issues/2479), [#2485](https://github.com/k-k1/agent-fleet/issues/2485), [#2549](https://github.com/k-k1/agent-fleet/issues/2549), [#2568](https://github.com/k-k1/agent-fleet/issues/2568), [#2580](https://github.com/k-k1/agent-fleet/issues/2580))
+- **[MCP]** MCP サーバーの登録フォームをリモートサーバー前提に。表示名と認証方式を選ぶ ([#2550](https://github.com/k-k1/agent-fleet/issues/2550))
+- **[ecs-ec2]** 応答しないプールのスロットを **停止（強制）** で止める ([#2449](https://github.com/k-k1/agent-fleet/issues/2449))
+- **[ecs-ec2]** どのスロットでもホスト用に 2 GiB を残し、ECS と SSM のエージェントをメモリの回収から守る ([#2451](https://github.com/k-k1/agent-fleet/issues/2451), [#2452](https://github.com/k-k1/agent-fleet/issues/2452))
+- **[ecs-ec2]** 停止しきれないタスクの後ろで止まった開始をブロック中と表示する ([#2447](https://github.com/k-k1/agent-fleet/issues/2447))
+- **[ファイル]** フォルダのコンテキストメニューに「ここでシェルを開く」 ([#2460](https://github.com/k-k1/agent-fleet/issues/2460))
+- **[jira]** `jira issue comment edit` と `delete` ([#2477](https://github.com/k-k1/agent-fleet/issues/2477))
+- **[jira]** やり直し・時間切れ・作成が時間切れになったときの候補表示。エージェントへの指示で Atlassian の MCP ツールを優先できる ([#2476](https://github.com/k-k1/agent-fleet/issues/2476), [#2532](https://github.com/k-k1/agent-fleet/issues/2532), [#2538](https://github.com/k-k1/agent-fleet/issues/2538), [#2539](https://github.com/k-k1/agent-fleet/issues/2539), [#2543](https://github.com/k-k1/agent-fleet/issues/2543))
+- **[muse]** Muse Code のコントリビューターモードの設定 ([#2535](https://github.com/k-k1/agent-fleet/issues/2535))
+
+**Fixed**
+
+- **[ecs-ec2]** 「開始中」のまま止まったワークスペースを停止できず、サイズ変更後の開始が応答しないスロットで時間切れになっていた ([#2446](https://github.com/k-k1/agent-fleet/issues/2446), [#2448](https://github.com/k-k1/agent-fleet/issues/2448))
+- **[ecs-ec2]** `AF_ECS_EC2_HOST_RESERVE_MB=0` が `auto` として扱われていた ([#2503](https://github.com/k-k1/agent-fleet/issues/2503))
+- **[ワークスペース]** `~/.af-work` の下にメンバーが作ったフォルダが起動時に消されることがあった ([#2454](https://github.com/k-k1/agent-fleet/issues/2454))
+- **[ミラー]** 書き終わったばかりの返答が一瞬消えることがあった ([#2564](https://github.com/k-k1/agent-fleet/issues/2564))
+- **[opencode]** 共有サーバーの再起動後、ターミナルペインがつながらないままになることがあった ([#2432](https://github.com/k-k1/agent-fleet/issues/2432))
+- **[MCP]** ChatGPT が `/mcp` のツール一覧を不正なスキーマのため拒否していた ([#2540](https://github.com/k-k1/agent-fleet/issues/2540))
+- **[プレビュー]** Control Plane のエラーの後でプレビューの設定項目が隠れたままになっていた ([#2317](https://github.com/k-k1/agent-fleet/issues/2317))
+- **[コマンドパレット]** 選択が一覧の外に出ることがあった ([#2504](https://github.com/k-k1/agent-fleet/issues/2504), [#2554](https://github.com/k-k1/agent-fleet/issues/2554))
+
 ## [0.33.0](0.33.0.ja.md) — 2026-10-21
 
 **CLI ピン** — Claude Code 2.1.305 / Copilot 1.0.101 / Antigravity 1.4.3 / Cursor 2026.10.19-6bbf2c4 / OpenCode 2.1.1 / Muse Code 1.4.11-R6667.1

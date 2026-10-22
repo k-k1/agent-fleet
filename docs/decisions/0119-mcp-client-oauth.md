@@ -2,9 +2,11 @@
 
 English | [日本語](0119-mcp-client-oauth.ja.md)
 
-- Status: **proposed** (2026-10-22). Documentation only: nothing below is built. The code facts
-  were read from the tree on this date; the protocol requirements from the MCP 2026-07-28
-  specification. Nothing was measured against a real authorization server.
+- Status: **accepted** (2026-10-23; proposed 2026-10-22). P1-P3 are built and ship in 0.34.0:
+  the probe (#2485), sign-in (#2549, #2568) and the relay with materialization for every kind
+  (#2580). Not built: tenant distribution with `auth: oauth` (decision 9) and pre-registered
+  confidential clients. No live run against a real authorization server yet. All three stay
+  on #2479; the dated notes at the end record what was measured.
 - Tracking: #2479
 - Related: [0031](0031-mcp-registry.md) (the registry; its "Left over" says OAuth MCPs are not
   driven from af, and its rejected options include "af acts as an MCP proxy", which decision 6
