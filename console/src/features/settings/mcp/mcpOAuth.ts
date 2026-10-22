@@ -47,6 +47,17 @@ export function normalizeStatus(raw: any, serverId: string): OAuthStatus {
 // safeAuthorizeUrl: the browser is sent only to an http(s) URL. The value comes from the
 // Agent's discovery of a server the member registered; a javascript: or data: URL must never
 // be navigated to whatever produced it.
+// stepUpRequest is the scope a step-up sign-in asks for: the one the server challenged for (the
+// relay recorded it) together with what is already granted. The new grant replaces the old one,
+// so asking for the challenged scope alone would drop the permissions the server already has.
+export function stepUpRequest(st: Pick<OAuthStatus, "scopes" | "stepUpScope"> | null | undefined): string {
+  const out: string[] = [];
+  for (const sc of [...(st?.scopes ?? []), ...(st?.stepUpScope ?? "").split(/\s+/)]) {
+    if (sc && !out.includes(sc)) out.push(sc);
+  }
+  return out.join(" ");
+}
+
 export function safeAuthorizeUrl(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   try {

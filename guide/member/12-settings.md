@@ -380,8 +380,9 @@ search.
   start**. A session that is already running when you disconnect, or whose sign-in can no longer be renewed, gets an
   error from the relay telling you to sign in again in the Console (Settings > Connections > MCP servers). If the
   server answers that a tool needs more permission, the call fails with the server's own answer and the row shows
-  **More permission needed**. The relay's port is remembered across restarts of the Agent; if that port is taken at
+  **More permission needed**, and its **Approve the extra permission** button signs in again asking for that permission on top of what you already granted. The relay's port is remembered across restarts of the Agent; if that port is taken at
   start-up, a new one is chosen (with a new private key) and the configurations are rewritten, so sessions started before that need a restart.
+  Of the agent kinds, claude, copilot and cursor were seen sending the relay's header to a local test server; opencode's use of it is not yet measured.
   OAuth is not offered for tenant-distributed servers.
 - **Advanced** (closed by default): **targets** (**assistants**, **sessions**, or both; clear both and the entry
   stays but goes nowhere), **target agents** (empty covers every agent), the **timeout** and **enabled**. The

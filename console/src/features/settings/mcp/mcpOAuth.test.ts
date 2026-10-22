@@ -6,9 +6,20 @@ import {
   normalizeStatus,
   parseOAuthReturn,
   safeAuthorizeUrl,
+  stepUpRequest,
   stripOAuthReturn,
 } from "./mcpOAuth.ts";
 import { tools as en } from "../../../lib/i18n/locales/en/tools.ts";
+
+describe("stepUpRequest", () => {
+  it("adds the challenged scope to what is granted, once", () => {
+    expect(stepUpRequest({ scopes: ["mcp:read", "offline_access"], stepUpScope: "mcp:write mcp:read" })).toBe("mcp:read offline_access mcp:write");
+  });
+  it("copes with nothing granted or nothing challenged", () => {
+    expect(stepUpRequest({ scopes: undefined, stepUpScope: "mcp:write" })).toBe("mcp:write");
+    expect(stepUpRequest(null)).toBe("");
+  });
+});
 
 describe("parseOAuthReturn", () => {
   it("is null for any other URL", () => {

@@ -6,6 +6,7 @@ import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import type { McpServer } from "./mcpWire.ts";
 import { disconnectOAuth, fetchOAuthStatus, saveClientId, startSignIn } from "./mcpOAuthApi.ts";
+import { stepUpRequest } from "./mcpOAuth.ts";
 import type { OAuthRegistration, OAuthReturn, OAuthState, OAuthStatus } from "./mcpOAuth.ts";
 import { clearSameTab, markSameTab, onSignInDone, outcomeText } from "./mcpOAuthSignal.ts";
 
@@ -121,7 +122,7 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
   // tab the caller already opened inside its own click; without one this opens it, which only
   // works when signIn runs synchronously from the click. A blocked tab falls back to this tab.
   const signIn = useCallback(
-    async (opts: { registration?: "dcr" | "cimd" | "preregistered" } = {}, pre?: Window | null) => {
+    async (opts: { registration?: "dcr" | "cimd" | "preregistered"; scope?: string } = {}, pre?: Window | null) => {
       if (inFlight.current) {
         pre?.close();
         return;
@@ -238,6 +239,13 @@ const REG_LABEL = {
   dcr: "mcp.oauth_reg_dcr",
 } as const satisfies Record<OAuthRegistration, string>;
 
+const RELAY_NOTE = {
+  not_signed_in: "mcp.oauth_relay_note_not_signed_in",
+  connected: "mcp.oauth_relay_note_connected",
+  sign_in_again: "mcp.oauth_relay_note_again",
+  needs_more_permission: "mcp.oauth_relay_note_connected",
+} as const satisfies Record<OAuthState, string>;
+
 // OAuthPanel is the sign-in block of an OAuth row: state, what was granted, and the buttons.
 export function OAuthPanel({ flow }: { flow: OAuthFlow }) {
   const tr = useT();
@@ -252,8 +260,15 @@ export function OAuthPanel({ flow }: { flow: OAuthFlow }) {
         <span className="mcp-oauth-state">{tr(STATE_LABEL[state])}</span>
         <span className="mcp-actions">
           {/* Connected needs no Sign in beside "Connected": Disconnect, then Sign in, switches account. */}
+          {state === "needs_more_permission" && (
+            // The relay recorded the scope the server challenged for; the new sign-in asks for it
+            // on top of what is already granted, since the new grant replaces the old one.
+            <button className="primary mcp-btn" disabled={busy} onClick={() => void flow.signIn({ scope: stepUpRequest(status) })}>
+              {tr("mcp.oauth_btn_stepup")}
+            </button>
+          )}
           {state !== "connected" && (
-            <button className="primary mcp-btn" disabled={busy} onClick={() => void flow.signIn()}>
+            <button className={state === "needs_more_permission" ? "ghost mcp-btn" : "primary mcp-btn"} disabled={busy} onClick={() => void flow.signIn()}>
               {again ? tr("mcp.oauth_btn_signin_again") : tr("mcp.oauth_btn_signin")}
             </button>
           )}
@@ -291,7 +306,7 @@ export function OAuthPanel({ flow }: { flow: OAuthFlow }) {
         </div>
       )}
       <p className="muted" data-testid="mcp-oauth-relay-note">
-        {tr("mcp.oauth_relay_note")}
+        {tr(RELAY_NOTE[state])}
       </p>
       {(flow.unfinished || flow.cimdUnfinished) && !clientFor && (
         <div className="ps-note" data-testid="mcp-oauth-unfinished">
