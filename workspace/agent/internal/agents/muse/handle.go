@@ -57,6 +57,10 @@ type threadHandle struct {
 	// unchanged" cannot express a three-valued bool.
 	bypass bool
 
+	// contributor is the session's recorded contributor mode (session.Meta.MuseContributorMode),
+	// refreshed from meta on every Resume and passed to each host spawned for it.
+	contributor bool
+
 	mu    sync.Mutex
 	cmd   *exec.Cmd
 	stdin io.WriteCloser
@@ -167,7 +171,10 @@ func (h *threadHandle) tq() *agents.TurnQueue {
 
 // spawn starts the host, runs the handshake and starts or reloads the muse session.
 func (h *threadHandle) spawn(st agents.ThreadSettings) error {
-	cmd := exec.Command(Bin(), serveArgs()...)
+	h.mu.Lock()
+	contributor := h.contributor
+	h.mu.Unlock()
+	cmd := exec.Command(Bin(), serveArgs(contributor)...)
 	cmd.Dir = h.dir
 	// One host per session: this puts the name in the model's own shell as well, the way a
 	// Terminal session has it. The af server gets it on the wire (mcp.go), since muse scrubs

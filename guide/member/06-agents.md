@@ -349,10 +349,10 @@ things must be true:
    the pay-as-you-go route: saving a key removes a stored account sign-in and moves you onto
    per-use billing, so disconnect first if you are signed in with an account.
 
-The **Behaviour** settings on the same card let you set the model (Agent Fleet selects the
-newest model without the "-contributor" clause by default; see
-[Agents reference](../ref/agents.md) for what the `-contributor` models mean) and the
-reasoning effort.
+The **Behaviour** settings on the same card let you set the model and the reasoning effort,
+and switch Muse Code's **contributor mode**. While it is on, Meta may use your conversations
+to improve the product. It is off by default, and each session keeps the mode it was created
+with across a stop and start. See [Agents reference](../ref/agents.md) for the details.
 
 In a running muse session the **`/`** button beside the input lists the session's own skills:
 Muse Code's bundled ones, plugin skills, yours under `~/.config/muse/skills`, and the working

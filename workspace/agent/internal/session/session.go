@@ -493,8 +493,15 @@ type Meta struct {
 	// is no way to express "off in settings, back on for this one session".
 	// It only takes effect at launch (a TUI needs a restart). A plan launch drops the
 	// bypass for every kind, so mode=plan still prompts even when this is true.
-	SkipPermissions *bool  `json:"skipPermissions,omitempty"`
-	Kind            string `json:"kind"`
+	SkipPermissions *bool `json:"skipPermissions,omitempty"`
+	// MuseContributorMode is the Muse Code contributor mode this session runs with (#2535),
+	// resolved from ui-prefs museContributorMode when the session is created and passed as
+	// `--contributor-mode` every time a host is spawned for it. It is recorded rather than read
+	// at each spawn because the flag is per process: a restart reading the current setting
+	// would move a conversation the member started with it off into product-improvement use.
+	// A meta written before the field existed reads false, which is off.
+	MuseContributorMode bool   `json:"museContributorMode,omitempty"`
+	Kind                string `json:"kind"`
 	// Driver selects the control route (docs/log/27): "" | "tui" = the traditional TUI
 	// inside tmux, "managed" = a shared runtime plus structured RPC (no pane). The default
 	// tui persists as "", keeping existing metas byte-identical on disk.

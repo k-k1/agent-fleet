@@ -209,7 +209,8 @@ the assistant conversation: they share an implementation, but they surface somew
   up. Without prices it falls back to the previous defaults. "Recommended (currently: …)" shows what it resolves
   to right now. For muse, both are the newest model that is neither a `-contributor` one nor one you hid;
   if there is none (or muse's model list cannot be read), the assistance is not generated rather than run on
-  its contributor default.
+  its contributor default. Muse Code's contributor mode (Settings › Agents › Muse Code) applies to these
+  turns too.
 - **Features that use AI assistance**: one card per feature (8, plus **Background memory review** while memory
   suggestions are on). Turning one off hides its button
   entirely and folds away that card's agent/model rows.

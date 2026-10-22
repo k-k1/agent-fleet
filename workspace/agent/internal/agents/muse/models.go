@@ -255,6 +255,10 @@ func modelsFrom(cl *msp.Client) ([]agents.ModelChoice, []string, error) {
 // fail in opposite directions: a renamed suffix leaves the sentence, a reworded sentence
 // leaves the suffix, and the cost of the two errors is not symmetric. A false positive costs
 // a model AF will not pick by default; a false negative costs the member's conversations.
+//
+// From 1.4 the catalog has no such row (measured on 1.4.11: three rows, none suffixed or
+// described) and the same choice is a contributor mode instead, which ContributorModeArgs sets
+// on every spawn. This check stays for a host that still lists the twins.
 func dataSharingModel(m msp.ModelCatalogEntry) bool {
 	if strings.HasSuffix(m.ModelID, "-contributor") {
 		return true
@@ -280,7 +284,9 @@ func dialProbe() (*msp.Client, func(), error) {
 	if err := EnsureClamps(); err != nil {
 		return nil, nil, err
 	}
-	cmd := exec.Command(Bin(), "serve", "--disable-sandbox")
+	// Contributor mode is always off here: this host runs no turn, so the member's setting has
+	// nothing to govern, and off is the answer that needs no reason.
+	cmd := exec.Command(Bin(), append([]string{"serve", "--disable-sandbox"}, ContributorModeArgs(false)...)...)
 	cmd.Dir = paths.HomeDir()
 	cmd.Env = childEnv(os.Environ())
 	stdin, err := cmd.StdinPipe()
