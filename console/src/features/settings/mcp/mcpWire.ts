@@ -269,6 +269,37 @@ export const memberTokenValue = (typed: string, stored: string): string => {
   return t;
 };
 
+// switchAuth changes the mode and carries the credential already entered across the
+// Bearer <-> Custom headers boundary, so a typed token is never silently dropped by the
+// switch. Leaving or entering None changes nothing: the rows stay for a switch back, and
+// authHeaders("none") keeps them off the wire.
+export const switchAuth = <T extends { auth: AuthMode; token: string; headers: KV[] }>(
+  f: T,
+  next: AuthMode,
+  userSecret = false,
+): T => {
+  const from = f.auth;
+  if (from === next) return f;
+  if (from === "bearer" && next === "headers") {
+    const eff = authHeaders("bearer", f.token, f.headers, userSecret);
+    const entries = Object.entries(eff);
+    if (entries.length === 0) return { ...f, auth: next };
+    const [k, v] = entries[0];
+    const i = f.headers.findIndex((r) => isAuthHeader(r.k));
+    const headers =
+      i >= 0 ? f.headers.map((r, j) => (j === i ? { k, v } : r)) : [{ k, v }, ...f.headers];
+    return { ...f, auth: next, token: "", headers };
+  }
+  if (from === "headers" && next === "bearer") {
+    // A real (unmasked) `Bearer <token>` typed in the editor becomes the token; a mask or a
+    // non-Bearer value stays where it is.
+    const row = f.headers.find((r) => isAuthHeader(r.k));
+    const m = row && !BEARER_MASKED_RE.test(row.v) ? /^bearer\s+(\S.*)$/i.exec(row.v.trim()) : null;
+    return { ...f, auth: next, token: m ? m[1].trim() : f.token };
+  }
+  return { ...f, auth: next };
+};
+
 // --- ID derivation ----------------------------------------------------------------------
 
 // slugId turns free text into a NAME_RE-valid ID, or "" when nothing usable is left

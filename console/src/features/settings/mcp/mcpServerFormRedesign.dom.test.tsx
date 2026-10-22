@@ -153,6 +153,43 @@ describe("new server form", () => {
   });
 });
 
+const addHeader = (k: string, v: string) => {
+  const add = [...host!.querySelectorAll("button")].find((b) => b.textContent?.includes("Add header"))!;
+  click(add);
+  const rows = host!.querySelectorAll(".mcp-kv-row");
+  const inputs = rows[rows.length - 1].querySelectorAll("input");
+  type(inputs[0], k);
+  type(inputs[1], v);
+};
+
+describe("switching the authentication mode keeps what was typed", () => {
+  it("new: Bearer token -> Custom headers -> extra header keeps Authorization", () => {
+    mountServerForm({ ...emptyForm(), url: "https://mcp.example.com/mcp", name: "x", nameEdited: true });
+    click(seg("Bearer token"));
+    type(fieldInput("Token"), "fresh");
+    click(seg("Custom headers"));
+    addHeader("X-Team", "ops");
+    expect(bodyOf(latest!).headers).toEqual({ Authorization: "Bearer fresh", "X-Team": "ops" });
+  });
+
+  it("edit: replacing a stored token, then switching, does not resurrect the old one", () => {
+    mountServerForm(formOf(row({ headers: { Authorization: "Bearer ***" } })));
+    type(fieldInput("Token"), "fresh");
+    click(seg("Custom headers"));
+    expect(bodyOf(latest!).headers).toEqual({ Authorization: "Bearer fresh" });
+    click(seg("None"));
+    expect(bodyOf(latest!).headers).toEqual({});
+  });
+
+  it("tenant: Bearer token -> Custom headers keeps the token", () => {
+    mountTenantForm(emptyTenantForm());
+    click(seg("Bearer token"));
+    type(fieldInput("Token"), "fresh");
+    click(seg("Custom headers"));
+    expect(bodyOfTenant(latestTenant!, "acme").headers).toEqual({ Authorization: "Bearer fresh" });
+  });
+});
+
 describe("edit form", () => {
   it("opens a stored Bearer token in Bearer mode and keeps it untouched", () => {
     mountServerForm(formOf(row({ headers: { Authorization: "Bearer ***" } })));
@@ -221,6 +258,28 @@ describe("SecretsForm (member values for a distributed server)", () => {
   it("a stored Bearer token is kept when untouched and replaced when typed", async () => {
     expect(await save(dist({ Authorization: "Bearer ***" }), [""])).toEqual({ Authorization: "Bearer ***" });
     expect(await save(dist({ Authorization: "Bearer ***" }), ["new"])).toEqual({ Authorization: "Bearer new" });
+  });
+  it("the saved value can be deleted explicitly, which sends a blank", async () => {
+    let sent: Record<string, string> = {};
+    mount(
+      <SecretsForm
+        s={dist({ Authorization: "Bearer ***" })}
+        onSave={async (_s, h) => {
+          sent = h;
+          return true;
+        }}
+        onCancel={() => {}}
+      />,
+    );
+    const clear = [...host!.querySelectorAll("button")].find((b) => b.textContent === "Delete saved value")!;
+    click(clear);
+    expect(host!.querySelector<HTMLInputElement>('input[type="password"]')!.disabled).toBe(true);
+    await act(async () => (host!.querySelector("button.primary") as HTMLElement).click());
+    expect(sent).toEqual({ Authorization: "" });
+    // And undoing it keeps the value again.
+    click([...host!.querySelectorAll("button")].find((b) => b.textContent === "Keep it")!);
+    await act(async () => (host!.querySelector("button.primary") as HTMLElement).click());
+    expect(sent).toEqual({ Authorization: "Bearer ***" });
   });
   it("any other header takes the raw value", async () => {
     expect(await save(dist({ "X-Api-Key": "" }), ["k1"])).toEqual({ "X-Api-Key": "k1" });

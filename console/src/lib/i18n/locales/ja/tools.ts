@@ -78,7 +78,10 @@ export const tools = {
   "mcp.f_label_placeholder": "社内 Wiki",
   "mcp.f_transport": "接続方式",
   "mcp.f_transport_hint":
-    "stdio はコンテナ内でコマンドを起動します。リモートは Streamable HTTP だけに対応しています。",
+    "リモートは Streamable HTTP だけに対応しています。stdio はコンテナ内でコマンドを起動します。",
+  "mcp.token_clear": "保存済みの値を削除",
+  "mcp.token_clear_undo": "削除をやめる",
+  "mcp.token_clearing": "保存すると、保存済みの値が削除されます。",
   "mcp.f_command": "コマンド",
   "mcp.f_command_hint": "ワークスペース内で実行する実行ファイル。PATH 上の名前か絶対パス。",
   "mcp.f_args": "引数",

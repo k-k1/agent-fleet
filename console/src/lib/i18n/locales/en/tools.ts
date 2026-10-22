@@ -79,7 +79,10 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mcp.f_label_placeholder": "Internal wiki",
   "mcp.f_transport": "Transport",
   "mcp.f_transport_hint":
-    "stdio launches a command inside your container. Remote supports Streamable HTTP only.",
+    "Remote supports Streamable HTTP only. stdio launches a command inside your container.",
+  "mcp.token_clear": "Delete saved value",
+  "mcp.token_clear_undo": "Keep it",
+  "mcp.token_clearing": "The saved value is deleted when you save.",
   "mcp.f_command": "Command",
   "mcp.f_command_hint": "The executable to run inside the workspace: a name on PATH or an absolute path.",
   "mcp.f_args": "Arguments",

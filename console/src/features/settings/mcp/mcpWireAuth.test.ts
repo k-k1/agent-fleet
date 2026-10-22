@@ -15,6 +15,7 @@ import {
   memberTokenOnly,
   memberTokenValue,
   stripBearer,
+  switchAuth,
   tenantFormOf,
   tenantFormValid,
   withDerivedId,
@@ -214,5 +215,47 @@ describe("member value form (user_secret rows)", () => {
   it("untouched keeps what was stored", () => {
     expect(memberTokenValue("", "Bearer ***")).toBe("Bearer ***");
     expect(memberTokenValue("  ", "")).toBe("");
+  });
+});
+
+describe("switchAuth carries the entered credential across modes", () => {
+  it("new Bearer token -> Custom headers keeps Authorization: Bearer <token>", () => {
+    const f = switchAuth({ ...emptyForm(), url: "https://e.com/mcp", name: "x", auth: "bearer" as const, token: "fresh" }, "headers");
+    expect(f.headers).toEqual([{ k: "Authorization", v: "Bearer fresh" }]);
+    expect(bodyOf({ ...f, headers: [...f.headers, { k: "X-Team", v: "ops" }] }).headers).toEqual({
+      Authorization: "Bearer fresh",
+      "X-Team": "ops",
+    });
+  });
+  it("replacing a stored token, then switching, sends the new token, not the old mask", () => {
+    const base = { ...formOf(remote({ Authorization: "Bearer ***" })), token: "fresh" };
+    expect(bodyOf(switchAuth(base, "headers")).headers).toEqual({ Authorization: "Bearer fresh" });
+  });
+  it("an untouched stored token stays a mask across the switch", () => {
+    const base = formOf(remote({ Authorization: "Bearer ***" }));
+    expect(bodyOf(switchAuth(base, "headers")).headers).toEqual({ Authorization: "Bearer ***" });
+  });
+  it("Custom headers -> Bearer takes a typed `Bearer <token>` row as the token", () => {
+    const f = switchAuth(
+      { ...emptyForm(), auth: "headers" as const, headers: [{ k: "Authorization", v: "Bearer typed" }] },
+      "bearer",
+    );
+    expect(f.token).toBe("typed");
+    expect(bodyOf({ ...f, name: "x", url: "https://e.com" }).headers).toEqual({ Authorization: "Bearer typed" });
+  });
+  it("None keeps nothing on the wire but the rows survive a switch back", () => {
+    const f = switchAuth({ ...emptyForm(), auth: "bearer" as const, token: "t" }, "none");
+    expect(bodyOf({ ...f, name: "x", url: "https://e.com" }).headers).toEqual({});
+    expect(switchAuth(f, "bearer").token).toBe("t");
+  });
+  it("user_secret Bearer -> Custom keeps the Authorization name with no value", () => {
+    const f = switchAuth({ ...emptyTenantForm(), auth: "bearer" as const, userSecret: true }, "headers", true);
+    expect(f.headers).toEqual([{ k: "Authorization", v: "" }]);
+  });
+});
+
+describe("member value form: clearing", () => {
+  it("a blank keeps; clearing is a separate action handled by the form", () => {
+    expect(memberTokenValue("", "Bearer ***")).toBe("Bearer ***");
   });
 });

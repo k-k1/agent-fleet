@@ -11,6 +11,7 @@ import {
   isInsecureRemote,
   memberTokenOnly,
   memberTokenValue,
+  switchAuth,
   toKV,
   useMcpKinds,
   withDerivedId,
@@ -36,6 +37,15 @@ export function SecretsForm({
     toKV(s.headers).map((r) => (memberTokenOnly(r.k, r.v) ? { k: r.k, v: "" } : r)),
   );
   const [busy, setBusy] = useState(false);
+  // Token-only rows whose saved value the member chose to delete. A blank field means "keep",
+  // so deleting needs its own action; the wire value is "" (SetTenantSecrets: blank clears).
+  const [cleared, setCleared] = useState<Set<string>>(new Set());
+  const toggleClear = (k: string) =>
+    setCleared((c) => {
+      const n = new Set(c);
+      if (!n.delete(k)) n.add(k);
+      return n;
+    });
   const patch = (i: number, v: string) => setRows(rows.map((r, j) => (i === j ? { ...r, v } : r)));
   const stored = (k: string) => s.headers?.[k] ?? "";
 
@@ -44,7 +54,16 @@ export function SecretsForm({
     try {
       await onSave(
         s,
-        Object.fromEntries(rows.map((r) => [r.k, memberTokenOnly(r.k, stored(r.k)) ? memberTokenValue(r.v, stored(r.k)) : r.v])),
+        Object.fromEntries(
+          rows.map((r) => [
+            r.k,
+            !memberTokenOnly(r.k, stored(r.k))
+              ? r.v
+              : cleared.has(r.k)
+                ? ""
+                : memberTokenValue(r.v, stored(r.k)),
+          ]),
+        ),
       );
     } finally {
       setBusy(false);
@@ -60,22 +79,31 @@ export function SecretsForm({
             {rows.map((r, i) => {
               const bare = memberTokenOnly(r.k, stored(r.k));
               return (
-                <div key={r.k} className="mcp-kv-row two">
-                  <input className="cinput mono" value={r.k} readOnly disabled />
-                  <input
-                    className="cinput"
-                    type="password"
-                    autoComplete="off"
-                    placeholder={
-                      bare
-                        ? stored(r.k) !== ""
-                          ? tr("mcp.token_kept")
-                          : tr("mcp.token_placeholder")
-                        : tr("mcp.kv_value")
-                    }
-                    value={r.v}
-                    onChange={(e) => patch(i, e.target.value)}
-                  />
+                <div key={r.k}>
+                  <div className="mcp-kv-row two">
+                    <input className="cinput mono" value={r.k} readOnly disabled />
+                    <input
+                      className="cinput"
+                      type="password"
+                      autoComplete="off"
+                      placeholder={
+                        bare
+                          ? stored(r.k) !== ""
+                            ? tr("mcp.token_kept")
+                            : tr("mcp.token_placeholder")
+                          : tr("mcp.kv_value")
+                      }
+                      value={r.v}
+                      disabled={cleared.has(r.k)}
+                      onChange={(e) => patch(i, e.target.value)}
+                    />
+                  </div>
+                  {bare && stored(r.k) !== "" && (
+                    <button type="button" className="ghost mcp-btn" onClick={() => toggleClear(r.k)}>
+                      {cleared.has(r.k) ? tr("mcp.token_clear_undo") : tr("mcp.token_clear")}
+                    </button>
+                  )}
+                  {cleared.has(r.k) && <div className="hint">{tr("mcp.token_clearing")}</div>}
                 </div>
               );
             })}
@@ -240,7 +268,7 @@ export function ServerForm({
               </Field>
               <AuthFields
                 auth={form.auth}
-                onAuth={(auth) => patch({ auth })}
+                onAuth={(auth) => patch(switchAuth(form, auth))}
                 token={form.token}
                 onToken={(token) => patch({ token })}
                 rows={form.headers}

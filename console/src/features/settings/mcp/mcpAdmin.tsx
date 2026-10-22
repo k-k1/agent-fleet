@@ -17,6 +17,7 @@ import {
   advancedIsDefault,
   bodyOfTenant,
   hasStoredBearer,
+  switchAuth,
   isInsecureRemote,
   withDerivedId,
   emptyTenantForm,
@@ -299,7 +300,7 @@ export function McpAdminForm({
           </Field>
           <AuthFields
             auth={form.auth}
-            onAuth={(auth) => patch({ auth })}
+            onAuth={(auth) => patch(switchAuth(form, auth, form.userSecret))}
             token={form.token}
             onToken={(token) => patch({ token })}
             rows={form.headers}
