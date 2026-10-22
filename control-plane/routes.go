@@ -1073,6 +1073,19 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	// waiting for the poll), and fill in the values of a user_secret server's headers.
 	mux.HandleFunc("POST /api/mcp-servers/tenant-refresh", rest)
 	mux.HandleFunc("PUT /api/mcp-servers/{id}/secrets", rest)
+	// OAuth sign-in for MCP servers that require it (ADR 0119 P2, oauth_mcp_client.go). start
+	// and disconnect are CP handlers (state, session binding, audit); status and the member's
+	// client id are plain proxies. The Agent's /oauth/callback is never proxied from the Console.
+	withRes := proxy.withResolved
+	mux.HandleFunc("POST /api/mcp-servers/{id}/oauth/start", withRes(cfg.handleMCPClientOAuthStart))
+	mux.HandleFunc("GET /api/mcp-servers/{id}/oauth", rest)
+	mux.HandleFunc("DELETE /api/mcp-servers/{id}/oauth", withRes(cfg.handleMCPClientOAuthDisconnect))
+	mux.HandleFunc("PUT /api/mcp-servers/{id}/oauth/client", rest)
+	// The callback sits under the auth-exempt /oauth2/ prefix and gates on the session itself.
+	// The CIMD document is exempted by its exact path: nothing else under /oauth/ is public.
+	mux.HandleFunc("GET "+mcpClientOAuthCallbackPath, cfg.handleMCPClientOAuthCallback)
+	exemptExact(mcpClientOAuthCIMDPath)
+	mux.HandleFunc("GET "+mcpClientOAuthCIMDPath, cfg.handleMCPClientOAuthCIMD)
 	mux.HandleFunc("GET /api/connections", rest)
 	mux.HandleFunc("GET /api/connections/git/{host}/repos", rest)
 	mux.HandleFunc("GET /api/connections/git/{host}/branches", rest)

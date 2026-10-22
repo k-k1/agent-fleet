@@ -377,6 +377,52 @@ type MCPTargets struct {
 	Session   bool `json:"session"`   // materialized into the agent CLIs' native config
 }
 
+// MCPOAuthGrant is one member's OAuth sign-in to a registered MCP server (ADR 0119 decision 5),
+// keyed by server id + authorization-server issuer. It holds the tokens, so it lives only in
+// this encrypted store and is never put on a wire: the status read exposes the derived facts
+// (state, scope, expiry), not the values.
+type MCPOAuthGrant struct {
+	ServerID string `json:"serverId"`
+	Issuer   string `json:"issuer"`
+	// Registration is how the client id was obtained: "preregistered" | "cimd" | "dcr".
+	Registration string `json:"registration"`
+	ClientID     string `json:"clientId"`
+	ClientSecret string `json:"clientSecret,omitempty"`
+	// TokenAuth is how the client authenticates at the token and revocation endpoints:
+	// "none" | "basic" | "post".
+	TokenAuth          string `json:"tokenAuth"`
+	TokenEndpoint      string `json:"tokenEndpoint"`
+	RevocationEndpoint string `json:"revocationEndpoint,omitempty"`
+	Resource           string `json:"resource"`
+	Scope              string `json:"scope,omitempty"`
+	AccessToken        string `json:"accessToken,omitempty"`
+	RefreshToken       string `json:"refreshToken,omitempty"`
+	// ExpiresAt is the access token's expiry (unix seconds); 0 when the AS did not say.
+	ExpiresAt   int64 `json:"expiresAt,omitempty"`
+	ConnectedAt int64 `json:"connectedAt"`
+	RefreshedAt int64 `json:"refreshedAt,omitempty"`
+	// SignInAgain is set when the refresh grant was refused (invalid_grant) or the access
+	// token expired with no refresh token. The tokens are dropped; nothing retries it.
+	SignInAgain bool `json:"signInAgain,omitempty"`
+	// StepUpScope is the scope a 403 insufficient_scope asked for and the grant lacks.
+	StepUpScope string `json:"stepUpScope,omitempty"`
+}
+
+// MCPOAuthClient is an OAuth client identity for one authorization server: either entered by
+// the member ("preregistered", scoped to one server) or obtained by dynamic client
+// registration ("dcr", scoped to the issuer and the redirect URI it was registered with).
+type MCPOAuthClient struct {
+	Issuer       string `json:"issuer"`
+	ServerID     string `json:"serverId,omitempty"` // preregistered only
+	Kind         string `json:"kind"`               // "preregistered" | "dcr"
+	RedirectURI  string `json:"redirectUri,omitempty"`
+	ClientID     string `json:"clientId"`
+	ClientSecret string `json:"clientSecret,omitempty"`
+	// SecretExpiresAt is the DCR client_secret_expires_at (unix seconds); 0 = never.
+	SecretExpiresAt int64 `json:"secretExpiresAt,omitempty"`
+	CreatedAt       int64 `json:"createdAt"`
+}
+
 // ghSnap is the GitHub entry as a snapshot saw it: whether there was one, and what it held.
 type ghSnap struct {
 	Exists bool
@@ -421,6 +467,10 @@ type Data struct {
 	// tenant definition's id, so it survives the tenant editing the label/URL and is
 	// dropped naturally when the definition stops being distributed.
 	MCPSecrets map[string]map[string]string `json:"mcpSecrets,omitempty"`
+	// MCPOAuth and MCPOAuthClients are the member's OAuth sign-ins to registered MCP servers
+	// and the client identities they were made with (ADR 0119).
+	MCPOAuth        []MCPOAuthGrant  `json:"mcpOAuth,omitempty"`
+	MCPOAuthClients []MCPOAuthClient `json:"mcpOAuthClients,omitempty"`
 	// InternalGitStaleEnv is the sha256 (hex) of the AF_INTERNAL_GIT_TOKEN this
 	// container was started with, once the CP pushed a rotated token over it (issue
 	// #1199). An Agent restart in the same container skips seeding that env token, which

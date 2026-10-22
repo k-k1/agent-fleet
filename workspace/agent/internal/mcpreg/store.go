@@ -333,6 +333,7 @@ func Delete(id string) error {
 	for i := range s.MCP {
 		if s.MCP[i].ID == id {
 			s.MCP = append(s.MCP[:i], s.MCP[i+1:]...)
+			purgeOAuthLocked(s, id) // a deleted server must not leave its tokens behind
 			return s.Save()
 		}
 	}

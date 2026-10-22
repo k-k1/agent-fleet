@@ -79,6 +79,9 @@ type OAuthReport struct {
 	// Selected is the issuer of the first server that validated; empty when none did.
 	Selected string         `json:"selected,omitempty"`
 	Problems []OAuthProblem `json:"problems,omitempty"`
+
+	// prmScopes is the PRM's scopes_supported uncapped, for the first authorization request.
+	prmScopes []string
 }
 
 // OAuthServer is one authorization server's validated offer.
@@ -94,6 +97,18 @@ type OAuthServer struct {
 	// IssParam is `authorization_response_iss_parameter_supported` (RFC 9207).
 	IssParam        bool     `json:"issParam"`
 	ScopesSupported []string `json:"scopesSupported,omitempty"`
+
+	// ep is what sign-in needs beyond the report; it never reaches the wire.
+	ep asEndpoints
+}
+
+// asEndpoints are the parts of a validated authorization-server document the sign-in flow
+// uses. asScopes is not capped like ScopesSupported: "offline_access" must be found wherever
+// the AS lists it.
+type asEndpoints struct {
+	authorization, token, revocation, registration string
+	tokenAuthMethods                               []string
+	asScopes                                       []string
 }
 
 // OAuthProblem is one validation failure, identified by a stable Code.
@@ -411,6 +426,10 @@ type authServerMeta struct {
 	CodeChallengeMethodsSupported []string `json:"code_challenge_methods_supported"`
 	IssParameterSupported         bool     `json:"authorization_response_iss_parameter_supported"`
 	ScopesSupported               []string `json:"scopes_supported"`
+	AuthorizationEndpoint         string   `json:"authorization_endpoint"`
+	TokenEndpoint                 string   `json:"token_endpoint"`
+	RevocationEndpoint            string   `json:"revocation_endpoint"`
+	TokenEndpointAuthMethods      []string `json:"token_endpoint_auth_methods_supported"`
 }
 
 func capList(l []string) []string {
@@ -470,6 +489,7 @@ func probeOAuth(ctx context.Context, serverURL string, header http.Header) (OAut
 		return rep, true
 	}
 	rep.ScopesSupported = capList(prm.ScopesSupported)
+	rep.prmScopes = prm.ScopesSupported
 	if len(prm.AuthorizationServers) == 0 {
 		rep.Problems = append(rep.Problems, OAuthProblem{Code: OAuthProblemNoAuthServers})
 		return rep, true
@@ -534,6 +554,11 @@ func discoverAuthServer(ctx context.Context, g metadataGetter, issuer string) (O
 			}
 		}
 		srv.IssParam = m.IssParameterSupported
+		srv.ep = asEndpoints{
+			authorization: m.AuthorizationEndpoint, token: m.TokenEndpoint,
+			revocation: m.RevocationEndpoint, registration: m.RegistrationEndpoint,
+			tokenAuthMethods: m.TokenEndpointAuthMethods, asScopes: m.ScopesSupported,
+		}
 		srv.ScopesSupported = capList(m.ScopesSupported)
 		if !srv.S256 {
 			return srv, []OAuthProblem{{Code: OAuthProblemASNoS256, Issuer: issuer}}

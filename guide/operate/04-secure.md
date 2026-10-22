@@ -410,6 +410,27 @@ working for CI and clients without OAuth.
 - **Tenant network restriction** applies to the consent step (the person in the browser), not to `/mcp` and the token
   endpoint, which come from the vendors' servers, as with PATs (ADR 0047).
 
+### Sign-in for OAuth-protected MCP servers members register
+
+The other direction from the section above: when a member registers a remote MCP server that only accepts OAuth, the
+member's own Agent signs in to it (ADR 0119). The Control Plane owns two public paths for that, and both need a
+reachable `PUBLIC_BASE_URL`:
+
+- `GET {PUBLIC_BASE_URL}/oauth2/mcp/callback` — where the server's authorization server sends the browser back. It
+  sits under the `/oauth2/` prefix that is already outside the session gate, and checks the caller itself (the Console session under `AUTH=oauth`, the
+  gateway's identity header under `AUTH=proxy`): the browser must belong to the member who started the sign-in, and a sign-in is valid for 10 minutes and once.
+- `GET {PUBLIC_BASE_URL}/oauth/mcp-client.json` — the client ID metadata document (CIMD), served only when
+  `PUBLIC_BASE_URL` is `https`. Authorization servers that support CIMD fetch it **from their own servers**, so
+  under `AUTH=proxy` the gateway has to let exactly this path bypass authentication; nothing else under `/oauth/` is
+  public. The callback, by contrast, must pass **through** the gateway so the member's identity header is on it: with no
+  identity the sign-in fails. Without an `https` base URL, or when the authorization server cannot fetch it, the
+  Agent falls back to dynamic client registration, or asks the member for a client id.
+
+Tokens never reach the Control Plane: the Agent keeps them in the member's encrypted store. The Control Plane writes
+`mcp.client_oauth` audit rows (`started`, `completed`, `failed`, `disconnected`) that name the server and the
+authorization server, never a code or token. Members use this from the Console once its sign-in UI ships; until then the
+paths exist but nothing in the Console starts a sign-in.
+
 ### Reading what a client sent to `/mcp`
 
 Every request to `/mcp` — refused ones, a `GET` or `DELETE` answered 405 before authentication, each

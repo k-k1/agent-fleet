@@ -963,6 +963,7 @@ type Store interface {
 	SessionIndexStore
 	PATStore
 	MCPOAuthStore
+	MCPClientOAuthStore
 	GitRepoStore
 	LFSObjectStore
 	LFSLockStore
