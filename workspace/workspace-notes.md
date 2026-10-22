@@ -185,7 +185,7 @@ directory belongs to someone else.
   `board|sprint|epic|project list`, `me`) up to twice after a connection reset or timeout and prints
   only the last attempt; writes are never re-run, so after a failed **or timed-out** write
   (`issue create`, `comment add`, exit 124) check Jira before running it again, e.g. JQL
-  `project = KEY AND reporter = currentUser() AND created >= -15m` (a timed-out `issue create`
+  `project = KEY AND creator = currentUser() AND created >= -15m` (a timed-out `issue create`
   with `-s` and a project prints "possible matches" from that search itself). Without a terminal every run
   is bounded (`AF_JIRA_TIMEOUT` seconds, default 120 for a write, 45 per read attempt, `0` = off;
   a timed-out read counts as a failure and is re-run), and jira-cli's useless stdin read is cut off

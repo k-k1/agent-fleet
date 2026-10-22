@@ -96,7 +96,7 @@ session. You can view, list, create, edit, comment on and transition issues:
   `epic` and `project list`, `me`) are re-run up to twice after a connection reset or timeout, and
   only the last attempt's output is shown. Commands that change something are never re-run, so after
   a failed **or timed-out** `issue create` or `comment add` check Jira before running it again (for
-  example with the JQL `project = PROJ AND reporter = currentUser() AND created >= -15m`). `comment edit` and
+  example with the JQL `project = PROJ AND creator = currentUser() AND created >= -15m`). `comment edit` and
   `comment delete` retry on their own; "probably already deleted" means the delete went through.
   `jira` can otherwise wait forever for a server that never answers, so a run with no terminal is
   stopped after `AF_JIRA_TIMEOUT` seconds (default 120 for a command that changes something, 45 per

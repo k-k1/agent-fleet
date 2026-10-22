@@ -28,6 +28,7 @@ case "$1" in
   jira-comment) printf '%s\n' "$@" >"$STUB_DIR/comment.argv"; cat >"$STUB_DIR/comment.stdin"
     [ ! -f "$STUB_DIR/comment.exit" ] || exit "$(cat "$STUB_DIR/comment.exit")"; echo "stub: comment done" ;;
   jira-find-created) shift; printf '%s\n' "$@" >"$STUB_DIR/find.argv"
+    [ ! -f "$STUB_DIR/find.delay" ] || sleep "$(cat "$STUB_DIR/find.delay")"
     [ ! -f "$STUB_DIR/find.hang" ] || exec sleep 60
     [ ! -f "$STUB_DIR/find.err" ] || cat "$STUB_DIR/find.err" >&2
     [ ! -f "$STUB_DIR/find.out" ] || cat "$STUB_DIR/find.out"
@@ -1288,6 +1289,27 @@ issue:
 run AF_JIRA_TIMEOUT=0.5 -- issue create -s "from config"
 [ "$(cat "$T/find.argv" 2>/dev/null)" = "CFG
 from config" ] || fail "find: config project, argv '$(cat "$T/find.argv" 2>/dev/null)'"
+# An explicit -c names the project when -p is absent.
+reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
+config "$MANAGED/other.yml" 'project:
+  key: OTH
+issue:
+  types:
+    - id: "1"'
+run AF_JIRA_TIMEOUT=0.5 -- -c "$MANAGED/other.yml" issue create -s "via -c"
+[ "$(cat "$T/find.argv" 2>/dev/null)" = "OTH
+via -c" ] || fail "find: -c project, argv '$(cat "$T/find.argv" 2>/dev/null)'"
+# A small AF_JIRA_TIMEOUT does not shorten the lookup: a helper that takes 2 s still answers.
+reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
+printf 'AB-5 x\n' >"$T/find.out"; echo 2 >"$T/find.delay"
+run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s slow
+[ "$rc" = 124 ] && grep -q 'possible matches: AB-5' "$T/err" || fail "find: lookup cut by AF_JIRA_TIMEOUT: '$(cat "$T/err")'"
+# A signal during the lookup ends the run with 130 and leaves nothing behind.
+reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"; touch "$T/find.hang"; rm -f "$T/jira.count"
+( env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" TMPDIR="$T/tmp" AF_JIRA_TIMEOUT=0.5 \
+    bash "$WRAPPER" issue create -p AB -s sig >"$T/out" 2>"$T/err" </dev/null & p=$!
+  sleep 2; kill -TERM "$p"; wait "$p"; echo $? >"$T/sig.rc" )
+[ "$(cat "$T/sig.rc")" = 130 ] || fail "find: signal during lookup, rc=$(cat "$T/sig.rc")"
 # Nothing found: the "may still appear" line.
 reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
 run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s none
@@ -1298,7 +1320,7 @@ echo "no Jira connection" >"$T/find.err"; echo 1 >"$T/find.exit"
 run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s boom
 [ "$rc" = 124 ] && [ "$(errl | wc -l)" = 2 ] && [ "$(errl | sed -n 2p)" = "jira: could not look for the issue (no Jira connection); check Jira before running it again" ] || fail "find failure: rc=$rc '$(cat "$T/err")'"
 reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"; touch "$T/find.hang"
-run AF_JIRA_TIMEOUT=0.5 AF_JIRA_KILL_GRACE=1 -- issue create -p AB -s stuck
+run AF_JIRA_TIMEOUT=0.5 AF_JIRA_FIND_TIMEOUT=1 AF_JIRA_KILL_GRACE=1 -- issue create -p AB -s stuck
 [ "$rc" = 124 ] && [ "$(errl | sed -n 2p)" = "jira: could not look for the issue (no answer in time); check Jira before running it again" ] || fail "find hang: rc=$rc '$(cat "$T/err")'"
 # No lookup: no summary, no project, a user-owned config / token / server, a debug run, a write
 # other than create, a create that did not time out.
@@ -1321,7 +1343,7 @@ nolookup "edit" -- issue edit AB-1 -s x
 nolookup "comment" -- issue comment add AB-1 hi
 reset; find_reset; oauth; plan 1 0 "AB-1
 " ""
-run -- issue create -p AB -s done
+run -- issue create -p AB -s "done"
 [ "$rc" = 0 ] && [ ! -e "$T/find.argv" ] || fail "find: a create that answered was looked up"
 
 if [ "$fails" != 0 ]; then

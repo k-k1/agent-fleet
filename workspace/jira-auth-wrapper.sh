@@ -73,7 +73,7 @@
 set +xa
 unset comment_cmd cred tok server auth login cfg sub sub2 sub3 proj cfg_argv own_init debug prev conf managed gen
 unset parent eff key cdir types derived yaml hint basekey soft npos ikey haveproj hasasg dd pv site why
-unset sbody stmpl spos spbody ssum injected
+unset sbody stmpl spos spbody ssum injected fpid fsig fout
 
 real="${AF_JIRA_REAL:-/usr/local/libexec/jira}"
 
@@ -188,6 +188,7 @@ run_bounded() {
       *) what="change may have been applied" ;;
     esac
     echo "jira: jira did not answer within $lim s; the $what - check Jira before running it again" >&2
+    pid=""
     find_created "$@"
     exit 124
   fi
@@ -200,17 +201,35 @@ run_bounded() {
 # holds the token itself; argv carries the project key and the summary, nothing secret. Never
 # changes the exit status: the caller prints this and exits 124 whatever it found.
 find_created() {
-  local key="${proj:-}" out rc lim tcmd=()
+  local key="${proj:-}" out rc lim fpid="" fsig="" fout eff
   [ -n "$injected" ] && [ "$sub2" = create ] || return 0
   scan_body_args "$@"
   [ -n "$ssum" ] || return 0
-  if [ -z "$key" ] && [ -n "${JIRA_CONFIG_FILE:-}" ]; then key="$(project_key "$JIRA_CONFIG_FILE")"; fi
+  # The config jira reads: an explicit -c wins over the environment (it is not exported).
+  eff="${cfg_argv:-${JIRA_CONFIG_FILE:-}}"
+  if [ -z "$key" ] && [ -n "$eff" ]; then key="$(project_key "$eff")"; fi
   [ -n "$key" ] || return 0
-  # The helper has a 15 s deadline of its own; this only guards one that never starts or never ends.
+  # The helper has a 15 s deadline of its own; this only guards one that never starts or never
+  # ends. It is deliberately not AF_JIRA_TIMEOUT: a small value for the create would cut a lookup
+  # that needs the store lock and a token renewal (AF_JIRA_FIND_TIMEOUT is for the tests; 0 = off).
+  lim="${AF_JIRA_FIND_TIMEOUT:-20}"
+  case "$lim" in "" | . | *[!0-9.]* | *.*.*) lim=20 ;; esac
+  fout="$(mktemp 2>/dev/null)" || return 0
+  # Run in the background so a signal ends the wait at once (130) instead of after the lookup.
   # It reads the store itself, so the token this shell exports for jira is taken out of its env.
-  lim="$(attempt_limit 20)"
-  [ -z "$lim" ] || tcmd=(timeout -k "$(kill_grace)" "$lim")
-  out="$(env -u JIRA_API_TOKEN "${tcmd[@]}" workspace-agent jira-find-created "$key" "$ssum" 2>&1 </dev/null)"; rc=$?
+  trap 'fsig=1; [ -z "$fpid" ] || kill -TERM "$fpid" 2>/dev/null' INT TERM HUP
+  if [ -n "${lim//[0.]/}" ]; then
+    env -u JIRA_API_TOKEN timeout -k "$(kill_grace)" "$lim" workspace-agent jira-find-created "$key" "$ssum" >"$fout" 2>&1 </dev/null &
+  else
+    env -u JIRA_API_TOKEN workspace-agent jira-find-created "$key" "$ssum" >"$fout" 2>&1 </dev/null &
+  fi
+  fpid=$!
+  [ -z "$fsig" ] || kill -TERM "$fpid" 2>/dev/null
+  wait "$fpid"; rc=$?
+  while kill -0 "$fpid" 2>/dev/null; do wait "$fpid"; rc=$?; done
+  trap - INT TERM HUP
+  out="$(cat "$fout")"; rm -f "$fout"
+  [ -z "$fsig" ] || exit 130
   if [ "$rc" -ne 0 ]; then
     if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then out="no answer in time"; else out="$(printf '%s\n' "$out" | head -n1 | tr -cd '[:print:]' | cut -c1-120)"; fi
     echo "jira: could not look for the issue${out:+ ($out)}; check Jira before running it again" >&2

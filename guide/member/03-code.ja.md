@@ -98,12 +98,12 @@ Jira を接続していれば（設定の**課題管理**）、Jira CLI の `jir
   `epic`・`project` の `list`、`me`）は、接続のリセットやタイムアウトの後に最大 2 回やり直され、最後の
   実行の出力だけが表示されます。変更を伴うコマンドは決してやり直されないので、`issue create` や
   `comment add` が失敗した、または時間切れになったら、再実行する前に Jira を確認してください
-  （例: JQL `project = PROJ AND reporter = currentUser() AND created >= -15m`）。`comment edit` と `comment delete` は
+  （例: JQL `project = PROJ AND creator = currentUser() AND created >= -15m`）。`comment edit` と `comment delete` は
   自分でやり直し、「probably already deleted」と出たときは削除は通っています。
   `jira` は応答しないサーバを永遠に待つことがあるため、端末のない実行は `AF_JIRA_TIMEOUT` 秒
   （既定は変更を伴うコマンドが 120 秒、読み取り系は 1 回あたり 45 秒。`0` で無効）で止められます。読み取り系は
   接続リセットのときと同じようにやり直され、変更を伴うコマンドは終了コード 124 で、課題やコメントが
-  作られている可能性があると表示します（`issue create` では、直近 15 分以内に同じ件名で作成された課題を
+  作られている可能性があると表示します（`issue create` では、直近 15 分以内に自分が同じ件名で作成した課題を
   「possible matches」として併記し、見つからなければ「no matching issue found」と出します。終了コードは 124 のままです）。また `jira` は `-b` を付けても標準入力を最後まで読むため、本文を
   コマンドラインで渡したときは、ラッパーが空の入力に差し替えます。それでも止まったままのときは、`jira`
   プロセスの `/proc/<pid>/wchan` で、入力待ち（`pipe_read`、`unix_stream_data_wait`）とネットワーク待ちを

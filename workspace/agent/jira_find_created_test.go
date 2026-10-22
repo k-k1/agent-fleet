@@ -21,8 +21,8 @@ func TestJiraJQLStringEscapes(t *testing.T) {
 	if !strings.Contains(q, `summary ~ "x\" OR project = \"Z"`) {
 		t.Errorf("quote not escaped: %s", q)
 	}
-	if !strings.Contains(q, "created >= -15m") || !strings.Contains(q, "reporter = currentUser()") {
-		t.Errorf("window or reporter missing: %s", q)
+	if !strings.Contains(q, "created >= -15m") || !strings.Contains(q, "creator = currentUser()") {
+		t.Errorf("window or creator missing: %s", q)
 	}
 	if strings.Contains(jiraFindJQL("KEY", "s", false), "summary") {
 		t.Error("fallback JQL still has the summary clause")
@@ -122,6 +122,28 @@ func TestJiraFindCreatedFallsBackOnGoneAndOnBadJQL(t *testing.T) {
 	}
 	if last := jqls[len(jqls)-1]; strings.Contains(last, "summary ~") {
 		t.Errorf("last query still fuzzy: %s", last)
+	}
+}
+
+// A 200 with nothing from the fuzzy query is asked again without it.
+func TestJiraFindCreatedRetriesWithoutSummaryWhenFuzzyIsEmpty(t *testing.T) {
+	var jqls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		jqls = append(jqls, r.URL.Query().Get("jql"))
+		if strings.Contains(r.URL.Query().Get("jql"), "summary ~") {
+			_, _ = w.Write([]byte(`{"issues":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"issues":[{"key":"AB-2","fields":{"summary":"C++ port"}}]}`))
+	}))
+	defer srv.Close()
+	seedFindStore(t, srv.URL)
+	var out bytes.Buffer
+	if err := jiraFindCreatedRun(&out, "AB", "C++ port"); err != nil {
+		t.Fatal(err)
+	}
+	if len(jqls) != 2 || !strings.HasPrefix(out.String(), "AB-2 ") {
+		t.Errorf("jqls=%v out=%q", jqls, out.String())
 	}
 }
 

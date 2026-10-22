@@ -92,20 +92,26 @@ func jiraFindCreated(ctx context.Context, key, summary string) ([]string, error)
 		return nil, fmt.Errorf("no Jira site selected")
 	}
 	body, err := jiraFindSearch(&c, jiraFindJQL(key, summary, true))
-	if je, ok := err.(*jiraHTTPError); ok && je.code == 400 {
-		// `~` is a text-index query and Jira's parser refuses some summaries (Lucene syntax
-		// characters); the window and the reporter already narrow the set, so ask without it.
+	var lines []string
+	if err == nil {
+		lines, err = jiraFindMatches(body, c.Site, summary)
+	}
+	// `~` is a text-index query: Jira refuses some summaries outright (400, Lucene syntax
+	// characters), lags behind a fresh issue and drops punctuation (`C++`, `v1.2.3`), so an
+	// answer of "none" proves nothing. The window and the creator already narrow the set, so ask
+	// once more without it and let the exact filter decide.
+	if je, ok := err.(*jiraHTTPError); (ok && je.code == 400) || (err == nil && len(lines) == 0) {
 		body, err = jiraFindSearch(&c, jiraFindJQL(key, summary, false))
+		if err == nil {
+			lines, err = jiraFindMatches(body, c.Site, summary)
+		}
 	}
-	if err != nil {
-		return nil, err
-	}
-	return jiraFindMatches(body, c.Site, summary)
+	return lines, err
 }
 
 // jiraFindJQL: project, reporter and window always; the fuzzy summary clause only when asked.
 func jiraFindJQL(key, summary string, withSummary bool) string {
-	q := `project = "` + jiraJQLString(key) + `" AND reporter = currentUser() AND created >= ` + jiraFindWindow
+	q := `project = "` + jiraJQLString(key) + `" AND creator = currentUser() AND created >= ` + jiraFindWindow
 	if withSummary {
 		q += ` AND summary ~ "` + jiraJQLString(summary) + `"`
 	}
