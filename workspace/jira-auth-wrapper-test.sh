@@ -828,7 +828,7 @@ plan() { # plan <n> <rc> <stdout> <stderr>
   echo "$2" >"$T/plan.$1.rc"
 }
 count() { cat "$T/jira.count" 2>/dev/null || echo 0; }
-for cmdline in "issue list" "issue view K-1" "board list" "sprint list" "epic list" "project list" "me" "issues list"; do
+for cmdline in "issue list" "issue view K-1" "issue show K-1" "issue ls" "issue search x" "epic ls" "board list" "sprint list" "epic list" "project list" "me" "issues list"; do
   reset
   oauth
   plan 1 1 PARTIAL "$RESET_ERR"
@@ -853,7 +853,8 @@ run -- issue list --plain
 # Every spelling jira-cli prints for a connection that never answered.
 for msg in 'read tcp: connection reset by peer' 'write tcp: write: connection reset by peer' \
   'dial tcp 1.2.3.4:443: i/o timeout' 'net/http: TLS handshake timeout' 'Get "https://x/y": EOF' \
-  'Get "https://x/y": unexpected EOF' 'write: broken pipe' 'context deadline exceeded (Client.Timeout exceeded while awaiting headers)'; do
+  'Get "https://x/y": unexpected EOF' 'write: broken pipe' 'dial tcp 1.2.3.4:443: connect: connection refused' \
+  'dial tcp: lookup x.atlassian.net: no such host' 'dial tcp: lookup x: Temporary failure in name resolution' 'context deadline exceeded (Client.Timeout exceeded while awaiting headers)'; do
   reset; oauth
   plan 1 1 "" "Error: $msg"
   run -- issue view K-1
@@ -940,6 +941,27 @@ reset
 printf 'unusable=bad\033[31m red\n' >"$T/agent.why"
 run -- issue list
 grep -q "$(printf '\033')" "$T/err" && fail "unusable: control character passed through"
+
+# --raw output is not rewritten.
+reset; oauth
+plan 1 0 "{\"body\":\"$ROUTE/browse/KEY-1\"}
+" ""
+run -- issue view KEY-1 --raw
+grep -q "$ROUTE/browse/KEY-1" "$T/out" || fail "links (--raw): rewritten"
+# Completion still works when the connection is unusable.
+reset
+printf 'unusable=x\n' >"$T/agent.why"
+run -- __complete issue ""
+[ -f "$T/jira.seen" ] || fail "unusable: __complete blocked"
+# stdin is not passed to a captured read.
+reset; oauth
+cat >"$T/bin/jira-real-stdin" <<'STUB'
+#!/bin/sh
+cat >"$STUB_DIR/stdin.seen"
+STUB
+chmod +x "$T/bin/jira-real-stdin"
+echo input | env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real-stdin" TMPDIR="$T/tmp" bash "$WRAPPER" issue list >/dev/null 2>&1
+[ ! -s "$T/stdin.seen" ] || fail "captured read inherited stdin"
 
 # 17. Browse links of an OAuth connection point at api.atlassian.com; on the captured path they
 #     become site links. A write (exec) prints jira-cli's own, and an API-token connection has

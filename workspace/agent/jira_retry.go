@@ -44,8 +44,9 @@ type jiraCallResult struct {
 	body   []byte
 	status int
 	err    error
-	// afterTransport is set when an earlier attempt of this call failed in transport (not a 429
-	// or 5xx): the request may have been applied although its answer was lost.
+	// afterTransport is set when an earlier attempt failed in transport after the request may
+	// have reached Jira (reset, EOF, timeout; not DNS / refused / TLS, not a 429 or 5xx): it may
+	// have been applied although its answer was lost.
 	afterTransport bool
 }
 
@@ -86,6 +87,17 @@ func jiraTransportClass(err error) string {
 	return "network error"
 }
 
+// jiraMaybeApplied is false for failures that happen before the request leaves this host
+// (DNS, refused connection, TLS setup): the server never saw it, so a later 404 means the
+// resource was never there.
+func jiraMaybeApplied(err error) bool {
+	switch jiraTransportClass(err) {
+	case "DNS lookup failed", "connection refused", "TLS error":
+		return false
+	}
+	return true
+}
+
 func jiraTransportError(err error) error {
 	return fmt.Errorf("could not reach Jira (%s)", jiraTransportClass(err))
 }
@@ -118,7 +130,7 @@ func jiraDo(c *secrets.JiraCreds, method, u string, payload []byte) jiraCallResu
 		var retryAfter time.Duration
 		body, status, hdr, err := jiraOnce(c, method, u, payload, idem)
 		transport := err != nil
-		if transport {
+		if transport && jiraMaybeApplied(err) {
 			res.afterTransport = true
 		}
 		res.body, res.status, res.err = body, status, err

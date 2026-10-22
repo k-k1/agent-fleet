@@ -167,7 +167,7 @@ soft="$(printf '%s\n' "$cred" | field software)"
 if [ -z "$tok" ] || [ -z "$server" ] || [ -z "$auth" ]; then
   if [ -n "$why" ]; then
     case "$sub" in
-      "" | help | completion | man | version) ;;
+      "" | help | completion | man | version | __complete*) ;;
       *) echo "jira: the Jira connection is unusable (expired or revoked): reconnect Jira in Settings [$why]" >&2
          exit 1 ;;
     esac
@@ -383,8 +383,9 @@ if [ -n "$login" ]; then export JIRA_LOGIN="$login"; else unset JIRA_LOGIN; fi
 # this does not know is a write: the direction to fail in is "run once".
 readonly_cmd() {
   case "$sub" in
-    issue | issues) [ "$sub2" = view ] || [ "$sub2" = list ] ;;
-    board | boards | sprint | sprints | epic | epics | project | projects) [ "$sub2" = list ] ;;
+    issue | issues) case "$sub2" in view | show | list | lists | ls | search) true ;; *) false ;; esac ;;
+    board | boards | sprint | sprints | epic | epics | project | projects)
+      case "$sub2" in list | lists | ls) true ;; *) false ;; esac ;;
     me) true ;;
     *) false ;;
   esac
@@ -392,7 +393,7 @@ readonly_cmd() {
 # True when a failed attempt's stderr says the request never got a proper answer. HTTP statuses
 # (401, 404, 5xx bodies) are not in it: those were answered, and a retry would not change them.
 transport_failure() {
-  grep -Eiq 'connection reset by peer|broken pipe|i/o timeout|TLS handshake timeout|Client\.Timeout exceeded|unexpected EOF|: EOF($|[^a-zA-Z])|^EOF$' "$1" 2>/dev/null
+  grep -Eiq 'connection refused|no such host|Temporary failure in name resolution|Name or service not known|connection reset by peer|broken pipe|i/o timeout|TLS handshake timeout|Client\.Timeout exceeded|unexpected EOF|: EOF($|[^a-zA-Z])|^EOF$' "$1" 2>/dev/null
 }
 # Runs jira to a private directory, re-running on a transport failure, then replays the last
 # attempt: stdout (browse links rewritten to the site) and stderr, with jira's exit status.
@@ -402,7 +403,8 @@ run_read_only() {
   trap 'rm -rf "$d"' EXIT
   trap 'rm -rf "$d"; exit 130' INT TERM HUP
   while :; do
-    "$real" "$@" >"$d/out" 2>"$d/err"
+    # Reads take no input; a terminal stdin must not wait on a prompt the capture hides.
+    "$real" "$@" >"$d/out" 2>"$d/err" </dev/null
     rc=$?
     [ "$rc" -ne 0 ] && transport_failure "$d/err" || break
     if [ "$n" -ge 2 ]; then
@@ -415,7 +417,8 @@ run_read_only() {
     case "$wait" in *[!0-9]*) wait=0 ;; esac
     sleep "$((wait / 1000)).$(printf '%03d' "$((wait % 1000))")"
   done
-  if [ -n "$site" ] && [ "$site" != "$server" ]; then
+  # --raw output carries user text verbatim; it is not rewritten.
+  if [ -n "$site" ] && [ "$site" != "$server" ] && ! printf '%s\n' "$@" | grep -qx -e '--raw'; then
     FROM="$server/browse/" TO="$site/browse/" awk '
       BEGIN { f = ENVIRON["FROM"]; t = ENVIRON["TO"]; n = length(f) }
       { out = ""; while ((i = index($0, f)) > 0) { out = out substr($0, 1, i - 1) t; $0 = substr($0, i + n) }

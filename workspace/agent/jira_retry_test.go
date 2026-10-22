@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -218,5 +219,32 @@ func TestJiraCommentEditRetriesReset(t *testing.T) {
 	}
 	if hits.Load() != 3 { // reset + GET + PUT
 		t.Errorf("hits=%d", hits.Load())
+	}
+}
+
+// A failure before the request left this host proves nothing about the delete: a later 404 is a
+// real "no such comment".
+func TestJiraCommentDeleteAfterRefusedThenNotFoundIsAnError(t *testing.T) {
+	fastRetries(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(404) }))
+	defer srv.Close()
+	good := srv.Listener.Addr().String()
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	dead := ln.Addr().String()
+	ln.Close()
+	var n atomic.Int32
+	old := jiraHTTPClient
+	jiraHTTPClient = &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, nw, _ string) (net.Conn, error) {
+		a := good
+		if n.Add(1) == 1 {
+			a = dead
+		}
+		return (&net.Dialer{}).DialContext(ctx, nw, a)
+	}}}
+	defer func() { jiraHTTPClient = old }()
+	c := &secrets.JiraCreds{Site: "http://jira.invalid", Email: "me@example.com", Token: "t"}
+	rc, out, errs := runComment(c, "", "issue", "comment", "delete", "-p", "T", "T-1", "99999")
+	if rc != 1 || strings.Contains(out, "probably") || !strings.Contains(errs, "404") {
+		t.Fatalf("rc=%d out=%q err=%q", rc, out, errs)
 	}
 }
