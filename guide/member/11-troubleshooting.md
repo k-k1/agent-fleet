@@ -59,6 +59,10 @@ If it is still missing, check whether it was **archived** (AI sessions can be re
 the archive browser) or tidied away by **cleanup** (deleted sessions can be restored from the
 trash). See [02](02-sessions.md#tidying-up-in-bulk-cleanup).
 
+If the **Repositories** section of the left pane says **"Can't reach the workspace — showing the
+last known list"**, nothing is gone: the Console could not read the repository list just now and
+shows the last one it had. While the workspace runs, the list comes back by itself.
+
 ### A session won't resume / is shown struck through
 
 If the state is **"Folder missing — can't resume"**, that session's **working folder is gone**
@@ -241,6 +245,9 @@ privacy setting, quota or billing, a bad key) end the turn as failed by themselv
 says so: fix the cause on the provider account (for "requires Global regions", its privacy /
 region setting) and send again ([06](06-agents.md)).
 
+The band appears in **Managed** sessions. A **Terminal (CLI)** session has no band; opencode's
+own retry output is in the terminal.
+
 ### The launch dialog offers only "Default"
 
 The agents with a live catalog (codex / opencode / copilot / cursor / kiro / agy / lcpp / muse) fetch their
@@ -270,8 +277,9 @@ Work through ⚙ Settings → MCP servers in this order
 7. On an egress-restricted deployment the host may still be **awaiting approval** (the card
    shows the request flow).
 
-**Connection test passes (or now fails with "The server rejected the session id it had just
-issued"), but the session reports `Session not found`.** The server keeps MCP sessions in
+**Connection test passes (or now fails, saying the server rejected the session id it had just
+issued), but the session reports `Session not found`.** The test's messages are in Japanese
+whatever the display language. The server keeps MCP sessions in
 memory (a stateful Streamable HTTP server) and runs as **several instances without session
 affinity**: `initialize` lands on one instance, which issues the session id, and the next
 request lands on another that has never heard of it. Agent Fleet can't fix the server. The
@@ -290,8 +298,9 @@ older build could pass it by luck.
 
 ### An agent stopped with "your login has expired"
 
-The error in the chat view offers **"Re-authenticate"**. Connect again from there and **that
-session resumes exactly where it left off**. The agent's card in ⚙ Settings → Agents also
+The error in the chat view offers **"Re-authenticate"**, which opens ⚙ Settings → Agents
+scrolled to that agent's card. Connect again there and **that session resumes exactly where it
+left off**. The agent's card in ⚙ Settings → Agents also
 shows the connection state ([06](06-agents.md)).
 
 Once you are signed in again, **that same error turns into "Re-authenticated"** (the button
@@ -353,23 +362,101 @@ Check its row in the **Schedules** section of the left pane.
 
 ### Ctrl+C doesn't work in the terminal / I can't copy-paste
 
-Working as intended. In the terminal, Ctrl+C with nothing selected is passed to the program as an interrupt (SIGINT); with a selection it copies. **Copy is
-automatic on select, or Ctrl+C with a selection / Ctrl+Shift+C; paste with right-click / middle-click / Ctrl+V / Ctrl+Shift+V**
-([05](05-terminal.md)).
+Working as intended. In the terminal, Ctrl+C with nothing selected is passed to the program as an
+interrupt (SIGINT); with a selection it copies. **Copy is automatic on select, or Ctrl+C with a
+selection / Ctrl+Shift+C; paste with right-click / middle-click / Ctrl+V / Ctrl+Shift+V**.
+
+- Ctrl+C right after a mouse drag interrupts: the drag already copied the selection when you let
+  go.
+- Ctrl+C and Ctrl+V copy and paste only while **"Ctrl+C / Ctrl+V copy and paste"** is on in
+  ⚙ Settings → Display (on by default). With it off both keys go to the program; Ctrl+Shift+C /
+  Ctrl+Shift+V always work.
+
+See [05](05-terminal.md#copy-paste).
 
 ### App shortcuts such as the command palette don't work
 
-While a terminal has focus, a setting in ⚙ Settings → Keys may be handing your keys to the
+While a terminal has focus, a setting in ⚙ Settings → Keyboard may be handing your keys to the
 terminal.
 
-- **"Prioritise the terminal over the app while a terminal has focus"**: every Ctrl-key goes
+- **"Prefer the terminal over the app while the terminal is focused"**: every Ctrl-key goes
   to the terminal. Only the leader survives on the app side, so open the palette with the
   default **Ctrl+K → ;** (**⌘K → ;** on macOS).
-- **"Pass every key to shell / SSM terminals"**: even the leader and the palette go through.
+- **"Pass all keys to shell / SSM terminals (incl. Ctrl+K, Ctrl+P)"**: even the leader and the palette go through.
   Move focus to another pane to get the app operations back.
 
 **?** opens the list of what is bound to what ([05](05-terminal.md#shortcuts),
 [12](12-settings.md#keys)).
+
+### "Your home disk is nearly full"
+
+The notice appears when less than 2 GiB is free or more than 90 % of the home is used, and goes
+away once more than 3 GiB is free and use is below 85 %. Installs and agents can stop working
+when the disk fills. Free space from ⚙ Settings → Machine, or ask a tenant administrator to grow
+the home. You see it only where the home is a volume of your own (ECS on EC2); on shared storage
+the numbers would include other people's files, so no notice is shown
+([12](12-settings.md#machine)).
+
+### Starting a session says the agent's CLI could not be installed
+
+**"This agent's CLI could not be installed when the workspace started …"** means the install of
+that CLI failed at this start and the CLI is not there, so the session is refused. The message
+says why:
+
+| The message ends with | What to do |
+|---|---|
+| … because the home disk is full | Free some space, then restart the workspace. |
+| … because of a network error | Restart the workspace to try again. |
+| … because the download did not match its checksum | Restart the workspace to try again. |
+| … See Settings › Toolchains and the workspace log | Read the reason in ⚙ Settings → Toolchains ([12](12-settings.md#toolchain)). |
+
+Your tenant administrator sees the same failure on your card in the member list.
+
+### A session cannot be moved to another agent
+
+The move refuses while the session is working, or while a question, plan or approval waits for
+you: let the turn end or stop it, and answer first. A stopped Managed Cursor session cannot be
+moved, because its conversation is gone. shell and ssm sessions have no conversation to move. See
+[02](02-sessions.md#moving-a-session-to-another-agent-move).
+
+### AWS commands say "Unable to locate credentials", or `af-aws-exec` / `af-gcloud-exec` stops
+
+- **"Unable to locate credentials"** in a workspace means the command found no credentials of
+  yours: the workspace's own role is withheld from your shell. Do not configure credentials. Run
+  the command as you with the profile from ⚙ Settings:
+  `af-aws-exec --profile <name> --account <id> -- <command>`. A plain `aws --profile` is only for
+  the read-only lookups that chapter 15 allows after its isolation check
+  ([15](15-cloud-accounts.md#using-the-profiles-from-the-terminal-sdks-and-build-tools)).
+- **`af-gcloud-exec` exit code 3** means a login only when the wrapper says so ("the login was
+  requested in the Agent Fleet Console …", "Google Cloud login required …"). Log in from the toast
+  or ⚙ Settings, or run the terminal command it printed, then run the command again. Otherwise the
+  status is the command's own: read that command's error
+  ([15](15-cloud-accounts.md#when-it-stops)).
+
+### Signing in on a preview URL shows an Agent Fleet error page
+
+These pages come from the development OIDC IdP
+([10](10-integrations.md#signing-in-with-google-on-a-preview-url-development-oidc-idp)).
+
+| Page | Cause and fix |
+|---|---|
+| **Can't start the sign-in** | The request was refused. Check that the client ID and callback URL set in the app belong to this workspace, then sign in again from the app. |
+| **Callback address not allowed** | The app's callback URL is not this workspace's current preview URL or `http://localhost:<port>`. Fix it in the app and sign in again. |
+| **Sign-in confirmation is no longer valid** | The confirmation was refused, expired, or was already used. Sign in again from the app. |
+| **Can't complete the sign-in** | A problem on the server. Try again in a moment; if it keeps failing, ask the deployment's administrator. |
+| **Sign in from your app** | You opened one step of the sign-in on its own. Start from the app you are previewing. |
+
+### A preview URL says the port changed, too many ports are open, or the workspace must restart
+
+These messages come from the preview, not from the app:
+
+| Message | What to do |
+|---|---|
+| **"The listener on port N changed or stopped. Reopen the port from the Console."** | The server on that port was restarted or replaced. Open the port again from the Console (the port chip or Preview). |
+| **"Too many temporarily opened ports. Close a server or add the port to the preview ports in Settings."** | Stop a server you no longer need, or list the port under ⚙ Settings → Preview subdomains. |
+| **"Opening port N is not available until the workspace is restarted (its agent is older than this feature)."** | Restart the workspace. |
+
+See [10](10-integrations.md#preview-subdomains-only-where-they-are-issued).
 
 ### On a phone, the keyboard pops up on its own / it's hard to operate
 
@@ -413,8 +500,12 @@ Stop = just pause (resumable), Delete = remove from the list (throwaway kinds), 
 Recreate = a new conversation in the same place (the current conversation goes to the archive). Details in [02](02-sessions.md).
 
 **Q. opencode doesn't show up among the new-session kinds**
-It can't be selected until you've registered at least one API key. Register a key for opencode in
-⚙ Settings → the "Agents" tab ([06](06-agents.md)).
+On its card in ⚙ Settings → Agents, **"Use opencode"** must be on, and the **"opencode.ai
+billing"** choice must leave something to launch: **"Free models only"** needs nothing,
+**"Go (subscription)"** and **"Zen (metered)"** need an opencode.ai sign-in or key, and
+**"None (my own keys)"** needs a provider key of your own or one of the fleet's engines. With
+billing **"Off"**, or "Use opencode" off, it never appears, key or not
+([06](06-agents.md#opencode)).
 
 **Q. If I unshare it, does it disappear from their side too?**
 No. The recipient can save what was displayed, so **unsharing only ends further access**. A
