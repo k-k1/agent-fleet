@@ -1,8 +1,9 @@
+import { useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
-import { MASKED } from "../mcp/mcpWire.ts";
-import type { KV } from "../mcp/mcpWire.ts";
+import { AUTH_MODES, MASKED } from "../mcp/mcpWire.ts";
+import type { AdvancedValues, AuthMode, KV } from "../mcp/mcpWire.ts";
 
 // Form primitives shared by the member registry (McpTab), the tenant distribution
 // form (McpAdminView in AdminTab), and the SSM tab (SsmTab). The forms edit almost the
@@ -128,4 +129,134 @@ export function Check({
       {children}
     </label>
   );
+}
+
+const AUTH_LABEL = {
+  none: "mcp.auth_none",
+  bearer: "mcp.auth_bearer",
+  headers: "mcp.auth_headers",
+} as const satisfies Record<AuthMode, string>;
+
+// AuthFields — the Authentication selector of a remote server (member form, tenant form).
+// Every mode is a branch below and an entry in AUTH_MODES / AUTH_LABEL, so another
+// mode (OAuth) is one more of each, not a rework of the form.
+//
+// namesOnly is the tenant user_secret case: the admin names the header, each member types
+// the value, so no value input is rendered (Bearer shows a note instead of a token field).
+export function AuthFields({
+  auth,
+  onAuth,
+  token,
+  onToken,
+  rows,
+  onRows,
+  tokenStored,
+  namesOnly,
+  headersHint,
+}: {
+  auth: AuthMode;
+  onAuth: (a: AuthMode) => void;
+  token: string;
+  onToken: (t: string) => void;
+  rows: KV[];
+  onRows: (rows: KV[]) => void;
+  tokenStored: boolean;
+  namesOnly?: boolean;
+  headersHint?: ReactNode;
+}) {
+  const tr = useT();
+  return (
+    <>
+      <Field label={tr("mcp.f_auth")} wide>
+        <div className="seg choice-seg">
+          {AUTH_MODES.map((m) => (
+            <button
+              key={m}
+              type="button"
+              className={"seg-btn" + (auth === m ? " active" : "")}
+              onClick={() => onAuth(m)}
+            >
+              {tr(AUTH_LABEL[m])}
+            </button>
+          ))}
+        </div>
+      </Field>
+      {auth === "bearer" && (
+        <Field label={tr("mcp.f_token")} wide hint={namesOnly ? tr("mcp.token_names_hint") : tr("mcp.token_hint")}>
+          {!namesOnly && (
+            <input
+              className="cinput"
+              type="password"
+              autoComplete="off"
+              placeholder={tokenStored ? tr("mcp.token_kept") : tr("mcp.token_placeholder")}
+              value={token}
+              onChange={(e) => onToken(e.target.value)}
+            />
+          )}
+        </Field>
+      )}
+      {auth === "headers" && (
+        <Field label={tr("mcp.f_headers")} wide hint={headersHint ?? tr("mcp.f_headers_hint")}>
+          <KVEditor
+            rows={rows}
+            onChange={onRows}
+            keyPlaceholder="Authorization"
+            addLabel={tr("mcp.add_header")}
+            noValue={namesOnly}
+          />
+        </Field>
+      )}
+    </>
+  );
+}
+
+// AdvancedSection — targets / kinds / timeout / enabled, closed by default. The summary line
+// shows the current values so a closed section still tells what is set; defaultOpen (decided
+// once, at mount) opens it for an existing server whose values are not the defaults.
+export function AdvancedSection({
+  summary,
+  defaultOpen,
+  children,
+}: {
+  summary: ReactNode;
+  defaultOpen: boolean;
+  children: ReactNode;
+}) {
+  const tr = useT();
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <details
+      className="mcp-adv ssm-fld wide"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary className="mcp-adv-head">
+        <span className="mcp-adv-title">{tr("mcp.adv_title")}</span>
+        <span className="mcp-adv-sum">{summary}</span>
+      </summary>
+      <div className="ssm-fgrid mcp-adv-body">{children}</div>
+    </details>
+  );
+}
+
+// advancedSummary — "Assistant, Sessions · every agent · default timeout" (a disabled server
+// gets a trailing "disabled"). withTimeout is false for the tenant form, which has no
+// timeout field.
+export function advancedSummary(
+  tr: ReturnType<typeof useT>,
+  v: AdvancedValues,
+  kindLabel: (k: string) => string,
+  withTimeout = true,
+): string {
+  const targets = [v.assistant && tr("mcp.target_assistant"), v.session && tr("mcp.target_session")].filter(Boolean);
+  const parts = [
+    targets.length ? targets.join(", ") : tr("mcp.target_none"),
+    v.kinds.length ? v.kinds.map(kindLabel).join(", ") : tr("mcp.kinds_all"),
+  ];
+  if (withTimeout) {
+    const ms = Number(v.timeoutMs);
+    parts.push(ms > 0 ? tr("mcp.adv_timeout_ms", { ms }) : tr("mcp.adv_timeout_default"));
+  }
+  if (!v.enabled) parts.push(tr("mcp.adv_disabled"));
+  return parts.join(" · ");
 }

@@ -35,6 +35,11 @@ export function useMcpKinds(): string[] {
 // definition without ever handling the real credential.
 export const MASKED = "***";
 
+// What the agent / CP send for a stored Bearer credential: the scheme (any case, as
+// stored) stays, the secret does not. Sending it back unchanged keeps the stored value.
+// Every other stored header value — a non-Bearer Authorization included — arrives as MASKED.
+export const BEARER_MASKED_RE = /^bearer\s+\*\*\*$/i;
+
 // Name rule, identical to mcpreg.nameRe (Go), so the form refuses locally what the
 // agent would refuse anyway. It is the narrowest of the target CLIs' key charsets
 // (codex writes the name as a TOML bare key).
@@ -132,16 +137,24 @@ export interface KV {
   v: string;
 }
 
+// How a remote server authenticates. A fourth option (OAuth, ADR 0119) joins this union and
+// AUTH_MODES; authHeaders() is the one place that turns a mode into wire headers.
+export type AuthMode = "none" | "bearer" | "headers";
+export const AUTH_MODES: readonly AuthMode[] = ["none", "bearer", "headers"];
+
 export interface Form {
   id: string; // "" = a new registration
-  name: string;
-  label: string;
+  name: string; // the ID: the key written into every CLI config (NAME_RE)
+  label: string; // the display name
+  nameEdited: boolean; // the user typed the ID: stop deriving it
   transport: "stdio" | "http";
   command: string;
   args: string; // one argument per line (an argument may itself contain spaces)
   env: KV[];
   url: string;
-  headers: KV[];
+  auth: AuthMode;
+  token: string; // Bearer mode: a newly typed token; "" keeps the stored one
+  headers: KV[]; // Custom headers mode; in Bearer mode it holds the stored Authorization row
   assistant: boolean;
   session: boolean;
   kinds: string[]; // empty = every kind
@@ -153,11 +166,14 @@ export const emptyForm = (): Form => ({
   id: "",
   name: "",
   label: "",
-  transport: "stdio",
+  nameEdited: false,
+  transport: "http",
   command: "",
   args: "",
   env: [],
   url: "",
+  auth: "none",
+  token: "",
   headers: [],
   assistant: true,
   session: true,
@@ -177,15 +193,147 @@ export const fromKV = (rows: KV[]): Record<string, string> => {
   return out;
 };
 
+// --- authentication ---------------------------------------------------------------------
+
+export const isAuthHeader = (k: string): boolean => k.trim().toLowerCase() === "authorization";
+
+// stripBearer: a pasted `Bearer <token>` is a token with its scheme attached.
+export const stripBearer = (t: string): string => t.trim().replace(/^bearer\s+/i, "").trim();
+
+// authOf picks the editor a stored header set opens in. Bearer only when the headers are
+// exactly one Authorization row whose value the server masked as `Bearer ***` (or, for a
+// user_secret tenant row, whose value is not stored at all); anything else — a `Token abc`
+// Authorization, extra headers — is Custom headers, so no header is ever lost by opening it.
+export const authOf = (rows: KV[], userSecret = false): AuthMode => {
+  const named = rows.filter((r) => r.k.trim() !== "");
+  if (named.length === 0) return "none";
+  if (named.length === 1 && isAuthHeader(named[0].k)) {
+    const v = named[0].v;
+    if (BEARER_MASKED_RE.test(v) || (userSecret && v === "")) return "bearer";
+  }
+  return "headers";
+};
+
+// storedBearer is the Authorization row that still carries a stored Bearer credential.
+const storedBearer = (rows: KV[]): KV | undefined =>
+  rows.find((r) => isAuthHeader(r.k) && BEARER_MASKED_RE.test(r.v));
+export const hasStoredBearer = (rows: KV[]): boolean => !!storedBearer(rows);
+
+// bearerReady: Bearer mode needs a token, typed now or already stored.
+export const bearerReady = (auth: AuthMode, token: string, rows: KV[]): boolean =>
+  auth !== "bearer" || stripBearer(token) !== "" || !!storedBearer(rows);
+
+// authHeaders is the wire header map for a mode. namesOnly (a tenant user_secret row)
+// keeps the names and blanks every value.
+export const authHeaders = (
+  auth: AuthMode,
+  token: string,
+  rows: KV[],
+  namesOnly = false,
+): Record<string, string> => {
+  switch (auth) {
+    case "none":
+      return {};
+    case "headers": {
+      const h = fromKV(rows);
+      return namesOnly ? Object.fromEntries(Object.keys(h).map((k) => [k, ""])) : h;
+    }
+    case "bearer": {
+      // Reuse the stored row's key as written: the stored map is keyed by it, so a renamed
+      // `authorization` would no longer match and `Bearer ***` would be dropped.
+      const row = rows.find((r) => isAuthHeader(r.k));
+      const key = row ? row.k.trim() : "Authorization";
+      if (namesOnly) return { [key]: "" };
+      const typed = stripBearer(token);
+      if (typed) return { [key]: "Bearer " + typed };
+      const kept = storedBearer(rows);
+      return kept ? { [key]: kept.v } : {};
+    }
+  }
+};
+
+// A member's value for a distributed header is a bare token when the header is a Bearer
+// Authorization: either the stored value is `Bearer ***`, or nothing is stored yet and the
+// header is Authorization (the tenant carries header names only, so there is no scheme marker
+// to read before the first entry).
+export const memberTokenOnly = (k: string, stored: string): boolean =>
+  BEARER_MASKED_RE.test(stored) || (stored === "" && isAuthHeader(k));
+
+// What goes on the wire for a token-only row. Blank: untouched, so a stored value is kept
+// (as sent back unchanged) and an unset one stays unset. Typed: the token with `Bearer `
+// in front, unless the member typed their own scheme (`Token abc`), which is kept as is.
+export const memberTokenValue = (typed: string, stored: string): string => {
+  const t = typed.trim();
+  if (t === "") return stored;
+  if (/^bearer\s/i.test(t) || !/\s/.test(t)) return "Bearer " + stripBearer(t);
+  return t;
+};
+
+// --- ID derivation ----------------------------------------------------------------------
+
+// slugId turns free text into a NAME_RE-valid ID, or "" when nothing usable is left
+// (a Japanese-only label has no [a-z0-9] at all).
+export const slugId = (text: string): string =>
+  text
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48)
+    .replace(/-+$/, "");
+
+export const hostOf = (url: string): string => {
+  try {
+    return new URL(url.trim()).hostname;
+  } catch {
+    return "";
+  }
+};
+
+// deriveId: from the display name; when that yields nothing, from the URL host.
+export const deriveId = (label: string, url: string): string => slugId(label) || slugId(hostOf(url));
+
+// withDerivedId re-derives a NEW registration's ID until the user edits it. An existing
+// server's ID is never regenerated: it is the key in the stored config and in every CLI's.
+export const withDerivedId = <T extends { id: string; name: string; label: string; url: string; nameEdited: boolean }>(
+  f: T,
+): T => (f.id !== "" || f.nameEdited ? f : { ...f, name: deriveId(f.label, f.url) });
+
+// isInsecureRemote: plain http:// to a host that is not this machine. Warned about, not refused.
+export const isInsecureRemote = (url: string): boolean => {
+  const u = url.trim();
+  if (!/^http:\/\//i.test(u)) return false;
+  const h = hostOf(u).replace(/^\[|\]$/g, "");
+  return !(h === "localhost" || h.endsWith(".localhost") || h === "::1" || /^127(\.\d{1,3}){3}$/.test(h));
+};
+
+// --- advanced section ---------------------------------------------------------------------
+
+export interface AdvancedValues {
+  assistant: boolean;
+  session: boolean;
+  kinds: string[];
+  timeoutMs: string;
+  enabled: boolean;
+}
+
+// advancedIsDefault: every advanced value is what a fresh form starts with. withTimeout is
+// false for the tenant form, which has no timeout field.
+export const advancedIsDefault = (v: AdvancedValues, withTimeout = true): boolean =>
+  v.assistant && v.session && v.kinds.length === 0 && v.enabled && (!withTimeout || v.timeoutMs.trim() === "");
+
 export const formOf = (s: McpServer): Form => ({
   id: s.id,
   name: s.name,
   label: s.label || "",
+  nameEdited: true,
   transport: s.transport,
   command: s.command || "",
   args: (s.args || []).join("\n"),
   env: toKV(s.env),
   url: s.url || "",
+  auth: authOf(toKV(s.headers)),
+  token: "",
   headers: toKV(s.headers),
   assistant: !!s.targets?.assistant,
   session: !!s.targets?.session,
@@ -214,14 +362,16 @@ export const bodyOf = (f: Form): Record<string, unknown> => {
     base.env = fromKV(f.env);
   } else {
     base.url = f.url.trim();
-    base.headers = fromKV(f.headers);
+    base.headers = authHeaders(f.auth, f.token, f.headers);
   }
   return base;
 };
 
 export const formValid = (f: Form): boolean =>
   NAME_RE.test(f.name.trim()) &&
-  (f.transport === "stdio" ? f.command.trim() !== "" : /^https?:\/\/.+/.test(f.url.trim()));
+  (f.transport === "stdio"
+    ? f.command.trim() !== ""
+    : /^https?:\/\/.+/.test(f.url.trim()) && bearerReady(f.auth, f.token, f.headers));
 
 // --- tenant distribution (docs/log/48 P4, AdminTab) -----------------------------------
 //
@@ -252,9 +402,12 @@ export interface TenantServer {
 
 export interface TenantForm {
   id: string; // "" = a new distribution
-  name: string;
-  label: string;
+  name: string; // the ID (see Form)
+  label: string; // the display name
+  nameEdited: boolean;
   url: string;
+  auth: AuthMode;
+  token: string;
   headers: KV[];
   assistant: boolean;
   session: boolean;
@@ -268,7 +421,10 @@ export const emptyTenantForm = (): TenantForm => ({
   id: "",
   name: "",
   label: "",
+  nameEdited: false,
   url: "",
+  auth: "none",
+  token: "",
   headers: [],
   assistant: true,
   session: true,
@@ -282,7 +438,10 @@ export const tenantFormOf = (s: TenantServer): TenantForm => ({
   id: s.id,
   name: s.name,
   label: s.label || "",
+  nameEdited: true,
   url: s.url || "",
+  auth: authOf(toKV(s.headers), !!s.user_secret),
+  token: "",
   headers: toKV(s.headers),
   assistant: !!s.targets?.assistant,
   session: !!s.targets?.session,
@@ -303,9 +462,7 @@ export const bodyOfTenant = (f: TenantForm, tenantSlug: string): Record<string, 
   label: f.label.trim(),
   transport: "http",
   url: f.url.trim(),
-  headers: f.userSecret
-    ? Object.fromEntries(Object.keys(fromKV(f.headers)).map((k) => [k, ""]))
-    : fromKV(f.headers),
+  headers: authHeaders(f.auth, f.token, f.headers, f.userSecret),
   targets: { assistant: f.assistant, session: f.session },
   kinds: f.kinds,
   timeoutMs: Number(f.timeoutMs) || 0,
@@ -314,7 +471,9 @@ export const bodyOfTenant = (f: TenantForm, tenantSlug: string): Record<string, 
 });
 
 export const tenantFormValid = (f: TenantForm): boolean =>
-  NAME_RE.test(f.name.trim()) && /^https?:\/\/.+/.test(f.url.trim());
+  NAME_RE.test(f.name.trim()) &&
+  /^https?:\/\/.+/.test(f.url.trim()) &&
+  (f.userSecret || bearerReady(f.auth, f.token, f.headers));
 
 // NOTE: this file used to export a codexUnsupported() helper, on the premise that
 // codex could carry nothing but a bearer token on a remote MCP server. That premise

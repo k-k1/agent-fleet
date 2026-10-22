@@ -2,8 +2,20 @@ import { useState } from "react";
 import { agentOf } from "../../../agents/registry.ts";
 import { useT, t } from "../../../lib/i18n/index.ts";
 import type { Form, KV, McpServer, ProbeResult } from "./mcpWire.ts";
-import { MASKED, NAME_RE, formValid, toKV, useMcpKinds } from "./mcpWire.ts";
-import { Field, KVEditor } from "../parts/mcpForm.tsx";
+import {
+  MASKED,
+  NAME_RE,
+  advancedIsDefault,
+  formValid,
+  hasStoredBearer,
+  isInsecureRemote,
+  memberTokenOnly,
+  memberTokenValue,
+  toKV,
+  useMcpKinds,
+  withDerivedId,
+} from "./mcpWire.ts";
+import { AdvancedSection, AuthFields, Field, KVEditor, advancedSummary } from "../parts/mcpForm.tsx";
 import { EgressNote } from "./EgressNote.tsx";
 import type { EgressCheck } from "./egressCheck.ts";
 import { ProbeView } from "./mcpServerRow.tsx";
@@ -18,14 +30,22 @@ export function SecretsForm({
   onCancel: () => void;
 }) {
   const tr = useT();
-  const [rows, setRows] = useState<KV[]>(() => toKV(s.headers));
+  // For a token-only row, `v` is what the member typed ("" = untouched); the stored mask
+  // stays in s.headers.
+  const [rows, setRows] = useState<KV[]>(() =>
+    toKV(s.headers).map((r) => (memberTokenOnly(r.k, r.v) ? { k: r.k, v: "" } : r)),
+  );
   const [busy, setBusy] = useState(false);
   const patch = (i: number, v: string) => setRows(rows.map((r, j) => (i === j ? { ...r, v } : r)));
+  const stored = (k: string) => s.headers?.[k] ?? "";
 
   const submit = async () => {
     setBusy(true);
     try {
-      await onSave(s, Object.fromEntries(rows.map((r) => [r.k, r.v])));
+      await onSave(
+        s,
+        Object.fromEntries(rows.map((r) => [r.k, memberTokenOnly(r.k, stored(r.k)) ? memberTokenValue(r.v, stored(r.k)) : r.v])),
+      );
     } finally {
       setBusy(false);
     }
@@ -37,18 +57,28 @@ export function SecretsForm({
         <p className="ps-note">{tr("mcp.secrets_intro", { name: s.name })}</p>
         <Field label={tr("mcp.f_headers")} wide hint={tr("mcp.secrets_hint")}>
           <div className="mcp-kv">
-            {rows.map((r, i) => (
-              <div key={r.k} className="mcp-kv-row two">
-                <input className="cinput mono" value={r.k} readOnly disabled />
-                <input
-                  className="cinput"
-                  type="password"
-                  placeholder={tr("mcp.kv_value")}
-                  value={r.v}
-                  onChange={(e) => patch(i, e.target.value)}
-                />
-              </div>
-            ))}
+            {rows.map((r, i) => {
+              const bare = memberTokenOnly(r.k, stored(r.k));
+              return (
+                <div key={r.k} className="mcp-kv-row two">
+                  <input className="cinput mono" value={r.k} readOnly disabled />
+                  <input
+                    className="cinput"
+                    type="password"
+                    autoComplete="off"
+                    placeholder={
+                      bare
+                        ? stored(r.k) !== ""
+                          ? tr("mcp.token_kept")
+                          : tr("mcp.token_placeholder")
+                        : tr("mcp.kv_value")
+                    }
+                    value={r.v}
+                    onChange={(e) => patch(i, e.target.value)}
+                  />
+                </div>
+              );
+            })}
             {rows.length === 0 && <div className="hint">{tr("mcp.secrets_none")}</div>}
             {rows.some((r) => r.v === MASKED) && <div className="hint">{tr("mcp.kv_masked_hint")}</div>}
           </div>
@@ -93,7 +123,10 @@ export function ServerForm({
   const tr = useT();
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
-  const patch = (part: Partial<Form>) => setForm({ ...form, ...part });
+  // Opens once, at mount: an existing server whose advanced values are not the defaults.
+  const [advOpen] = useState(() => form.id !== "" && !advancedIsDefault(form));
+  // Display name and URL feed the derived ID, so every edit goes through withDerivedId.
+  const patch = (part: Partial<Form>) => setForm(withDerivedId({ ...form, ...part }));
   const valid = formValid(form);
   const kinds = useMcpKinds();
   const nameBad = form.name.trim() !== "" && !NAME_RE.test(form.name.trim());
@@ -124,26 +157,26 @@ export function ServerForm({
     <div className="ssm-frm mcp-frm">
       <div className="ssm-fgroup">
         <div className="ssm-fgrid">
-          <Field label={tr("mcp.f_name")} req hint={nameBad ? tr("mcp.f_name_bad") : tr("mcp.f_name_hint")}>
-            <input
-              className="cinput"
-              placeholder="my-server"
-              value={form.name}
-              onChange={(e) => patch({ name: e.target.value })}
-              autoFocus
-            />
-          </Field>
           <Field label={tr("mcp.f_label")} hint={tr("mcp.f_label_hint")}>
             <input
               className="cinput"
               placeholder={tr("mcp.f_label_placeholder")}
               value={form.label}
               onChange={(e) => patch({ label: e.target.value })}
+              autoFocus
+            />
+          </Field>
+          <Field label={tr("mcp.f_name")} req hint={nameBad ? tr("mcp.f_name_bad") : tr("mcp.f_name_hint")}>
+            <input
+              className="cinput mono"
+              placeholder="my-server"
+              value={form.name}
+              onChange={(e) => patch({ name: e.target.value, nameEdited: true })}
             />
           </Field>
           <Field label={tr("mcp.f_transport")} req wide hint={tr("mcp.f_transport_hint")}>
             <div className="seg choice-seg">
-              {(["stdio", "http"] as const).map((tp) => (
+              {(["http", "stdio"] as const).map((tp) => (
                 <button
                   key={tp}
                   type="button"
@@ -186,69 +219,83 @@ export function ServerForm({
             </>
           ) : (
             <>
-              <Field label="URL" req wide hint={tr("mcp.f_url_hint")}>
+              <Field
+                label="URL"
+                req
+                wide
+                hint={
+                  isInsecureRemote(form.url) ? (
+                    <span className="ps-note-warn">{tr("mcp.url_http_warn")}</span>
+                  ) : (
+                    tr("mcp.f_url_hint")
+                  )
+                }
+              >
                 <input
                   className="cinput"
-                  placeholder="https://mcp.example.com/mcp"
+                  placeholder="https://"
                   value={form.url}
                   onChange={(e) => patch({ url: e.target.value })}
                 />
               </Field>
-              <Field label={tr("mcp.f_headers")} wide hint={tr("mcp.f_headers_hint")}>
-                <KVEditor
-                  rows={form.headers}
-                  onChange={(headers) => patch({ headers })}
-                  keyPlaceholder="Authorization"
-                  addLabel={tr("mcp.add_header")}
-                />
-              </Field>
+              <AuthFields
+                auth={form.auth}
+                onAuth={(auth) => patch({ auth })}
+                token={form.token}
+                onToken={(token) => patch({ token })}
+                rows={form.headers}
+                onRows={(headers) => patch({ headers })}
+                tokenStored={hasStoredBearer(form.headers)}
+              />
             </>
           )}
 
-          {/* Deliberately NOT marked required: both off is a legal staging state
-              (stored, handed to nothing) — see secrets.MCPTargets. */}
-          <Field label={tr("mcp.f_targets")} wide hint={tr("mcp.f_targets_hint")}>
-            <div className="mcp-checks">
-              <label className="mcp-check">
-                <input type="checkbox" checked={form.assistant} onChange={(e) => patch({ assistant: e.target.checked })} />
-                {tr("mcp.target_assistant")}
-              </label>
-              <label className="mcp-check">
-                <input type="checkbox" checked={form.session} onChange={(e) => patch({ session: e.target.checked })} />
-                {tr("mcp.target_session")}
-              </label>
-            </div>
-          </Field>
-          <Field label={tr("mcp.f_kinds")} wide hint={tr("mcp.f_kinds_hint")}>
-            <div className="mcp-checks">
-              {kinds.map((k) => (
-                <label key={k} className="mcp-check">
-                  <input type="checkbox" checked={form.kinds.includes(k)} onChange={() => toggleKind(k)} />
-                  {agentOf(k).label}
+          <AdvancedSection defaultOpen={advOpen} summary={advancedSummary(tr, form, (k) => agentOf(k).label)}>
+            {/* Deliberately NOT marked required: both off is a legal staging state
+                (stored, handed to nothing) — see secrets.MCPTargets. */}
+            <Field label={tr("mcp.f_targets")} wide hint={tr("mcp.f_targets_hint")}>
+              <div className="mcp-checks">
+                <label className="mcp-check">
+                  <input type="checkbox" checked={form.assistant} onChange={(e) => patch({ assistant: e.target.checked })} />
+                  {tr("mcp.target_assistant")}
                 </label>
-              ))}
-            </div>
-          </Field>
-          <Field label={tr("mcp.f_timeout")} hint={tr("mcp.f_timeout_hint")}>
-            <input
-              className="cinput"
-              type="number"
-              min={1000}
-              max={120000}
-              step={1000}
-              placeholder="30000"
-              value={form.timeoutMs}
-              onChange={(e) => patch({ timeoutMs: e.target.value })}
-            />
-          </Field>
-          <Field label={tr("mcp.f_enabled")} hint={tr("mcp.f_enabled_hint")}>
-            <div className="mcp-checks">
-              <label className="mcp-check">
-                <input type="checkbox" checked={form.enabled} onChange={(e) => patch({ enabled: e.target.checked })} />
-                {tr("mcp.enabled_on")}
-              </label>
-            </div>
-          </Field>
+                <label className="mcp-check">
+                  <input type="checkbox" checked={form.session} onChange={(e) => patch({ session: e.target.checked })} />
+                  {tr("mcp.target_session")}
+                </label>
+              </div>
+            </Field>
+            <Field label={tr("mcp.f_kinds")} wide hint={tr("mcp.f_kinds_hint")}>
+              <div className="mcp-checks">
+                {kinds.map((k) => (
+                  <label key={k} className="mcp-check">
+                    <input type="checkbox" checked={form.kinds.includes(k)} onChange={() => toggleKind(k)} />
+                    {agentOf(k).label}
+                  </label>
+                ))}
+              </div>
+            </Field>
+            <Field label={tr("mcp.f_timeout")} hint={tr("mcp.f_timeout_hint")}>
+              <input
+                className="cinput"
+                type="number"
+                min={1000}
+                max={120000}
+                step={1000}
+                placeholder="30000"
+                value={form.timeoutMs}
+                onChange={(e) => patch({ timeoutMs: e.target.value })}
+              />
+            </Field>
+            <Field label={tr("mcp.f_enabled")} hint={tr("mcp.f_enabled_hint")}>
+              <div className="mcp-checks">
+                <label className="mcp-check">
+                  <input type="checkbox" checked={form.enabled} onChange={(e) => patch({ enabled: e.target.checked })} />
+                  {tr("mcp.enabled_on")}
+                </label>
+              </div>
+            </Field>
+          </AdvancedSection>
         </div>
         {form.session && <p className="ps-note">{tr("mcp.session_restart_note")}</p>}
         {form.transport === "http" && (

@@ -60,6 +60,20 @@ const (
 // ever handling the real credential (the connections convention, docs/log/48 §5.1).
 const MaskedValue = "***"
 
+// bearerRe / maskedBearerRe: a stored `Bearer <secret>` header value comes back as
+// `Bearer ***` (scheme kept as stored, any case) so the Console can open an Authorization
+// header in its Bearer editor; every other value, a non-Bearer Authorization included, is
+// MaskedValue. Same rule as the Agent's mcpreg.Masked.
+var (
+	bearerRe       = regexp.MustCompile(`(?i)^(bearer)[ \t]+(\S.*)$`)
+	maskedBearerRe = regexp.MustCompile(`(?i)^bearer[ \t]+\*\*\*$`)
+)
+
+// isMaskedHeader reports whether an incoming header value stands in for the stored one.
+func isMaskedHeader(v string) bool {
+	return v == MaskedValue || maskedBearerRe.MatchString(v)
+}
+
 // mcpNameRe is the intersection of what the target CLIs accept as a server key — codex
 // writes it as a TOML bare key, the narrowest. Identical to mcpreg.nameRe.
 var mcpNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}$`)
@@ -307,7 +321,7 @@ func splitKinds(s string) []string {
 }
 
 // mergeHeaders resolves an incoming (masked) header map against the stored one: a value
-// still equal to MaskedValue keeps its stored counterpart, anything else is a new
+// still equal to MaskedValue (or `Bearer ***`) keeps its stored counterpart, anything else is a new
 // secret, and a key absent from the incoming map is a deletion. A masked value with
 // nothing behind it is DROPPED rather than stored — otherwise the literal "***" would be
 // sent to the MCP server as if it were a credential.
@@ -317,7 +331,7 @@ func mergeHeaders(incoming, stored map[string]string) map[string]string {
 	}
 	out := make(map[string]string, len(incoming))
 	for k, v := range incoming {
-		if v == MaskedValue {
+		if isMaskedHeader(v) {
 			if old, ok := stored[k]; ok {
 				out[k] = old
 			}
@@ -352,6 +366,10 @@ func maskHeaders(h map[string]string) map[string]string {
 	for k, v := range h {
 		if v == "" {
 			out[k] = "" // user_secret: no value is stored, so there is nothing to mask
+			continue
+		}
+		if m := bearerRe.FindStringSubmatch(v); m != nil {
+			out[k] = m[1] + " " + MaskedValue
 			continue
 		}
 		out[k] = MaskedValue

@@ -110,13 +110,45 @@ func TestMergeHeadersRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMaskHeadersKeepsBearerScheme(t *testing.T) {
+	cases := map[string]string{
+		"Bearer abc123": "Bearer ***",
+		"bearer abc123": "bearer ***",
+		"Token abc123":  MaskedValue,
+		"Bearer":        MaskedValue,
+		"abc123":        MaskedValue,
+	}
+	for in, want := range cases {
+		got := maskHeaders(map[string]string{"Authorization": in})["Authorization"]
+		if got != want {
+			t.Errorf("maskHeaders(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestMergeHeadersBearerMask(t *testing.T) {
+	stored := map[string]string{"Authorization": "bearer real", "X-Team": "sre"}
+	for _, in := range []string{"Bearer ***", "bearer ***", "BEARER ***", MaskedValue} {
+		if got := mergeHeaders(map[string]string{"Authorization": in}, stored); got["Authorization"] != "bearer real" {
+			t.Errorf("incoming %q lost the stored value: %v", in, got)
+		}
+	}
+	if got := mergeHeaders(map[string]string{"Authorization": "Bearer new"}, stored); got["Authorization"] != "Bearer new" {
+		t.Errorf("a typed token must replace the stored one: %v", got)
+	}
+	// Never stored literally when nothing is behind it.
+	if _, ok := mergeHeaders(map[string]string{"New": "Bearer ***"}, stored)["New"]; ok {
+		t.Error("an unbacked Bearer mask must be dropped")
+	}
+}
+
 func TestStripValuesAndMask(t *testing.T) {
 	in := map[string]string{"Authorization": "Bearer real"}
 	if v := stripValues(in)["Authorization"]; v != "" {
 		t.Fatalf("user_secret must keep the NAME and drop the value, got %q", v)
 	}
-	if v := maskHeaders(in)["Authorization"]; v != MaskedValue {
-		t.Fatalf("a stored value must be masked, got %q", v)
+	if v := maskHeaders(in)["Authorization"]; v != "Bearer "+MaskedValue {
+		t.Fatalf("a stored Bearer value must be masked with its scheme kept, got %q", v)
 	}
 	// An empty value stays empty: it is not a secret being withheld, it is one nobody has
 	// entered. Masking it would tell the admin a credential is stored when none is.

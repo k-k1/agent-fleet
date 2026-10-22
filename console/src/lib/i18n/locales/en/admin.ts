@@ -714,12 +714,12 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mcp_secret_policy": "Credentials",
   "admin.mcp_user_secret": "Each member enters the credential",
   "admin.mcp_headers_hint":
-    "Values are stored encrypted and distributed to every member. Put a bearer token in the Authorization header.",
+    "Values are stored encrypted and distributed to every member. For a plain bearer token, choose Bearer token instead.",
   "admin.mcp_headers_names_hint":
     "Header names only; each member fills in the values in their own workspace.",
   "admin.mcp_user_secret_hint":
     "Only the endpoint and the header names are distributed; each member enters the values in their own workspace. A value distributed here is readable in plaintext inside every member's container.",
-  "admin.mcp_url_hint": "The MCP endpoint URL. Put credentials in a header, not in the URL.",
+  "admin.mcp_url_hint": "The MCP endpoint URL. Put credentials in the authentication below, not in the URL.",
   "admin.mcp_enabled_hint": "Disabling keeps the definition but stops distributing it to anyone.",
   "admin.mcp_restart_note":
     "Member workspaces fetch this every 5 minutes, and it takes effect in sessions started after that.",
