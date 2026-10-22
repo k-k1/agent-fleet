@@ -114,11 +114,14 @@ The commands are in the runbook's "Upgrade" section.
   that stack is updated by hand; `update.sh` warns when it finds this (read-only check) and
   prints the change-set command. See `deploy/aws/ecs/README.md`, "Upgrade (runbook)" step 1a.
   The same finding is shown to super_admins as a banner on every section of the Console's
-  Admin screen ("no daily EFS backup"), so it is not lost if nobody reads the `update.sh`
+  Admin screen, opening "This deployment keeps member data on EFS (Persistence=retain) but its
+  data stack has no daily EFS backup", so it is not lost if nobody reads the `update.sh`
   output. `update.sh` records it in the ingress stack (parameter `EfsBackup`), and the banner
   clears at the first `update.sh` run that confirms the data stack has its backup. Never filled
   means no banner. If `update.sh` cannot read or evaluate the data stack it keeps the previous
-  verdict, so an existing banner stays until a run confirms the fix.
+  verdict, so an existing banner stays until a run confirms the fix. The same read-only check runs
+  on its own as `deploy/aws/ecs/efs-backup-check.sh --profile <p> --region <r>`; it exits `0` only
+  when the backup is there or the deployment does not need one (`Persistence=delete`).
   **On `ecs-ec2`, a release that changes the slot launch template** reaches the slots you already
   have only when they are replaced ([below](#ecs-ec2-replacing-slots-after-a-launch-template-change)).
 

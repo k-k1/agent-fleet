@@ -32,6 +32,11 @@ These do not vary by deployment.
 | Folder zip download: transfer time | 15 min | The connection is closed; a stalled client cannot hold the one build slot longer |
 | Folder zip download: concurrent builds | 1 per workspace | A second press waits up to 2 s, then 503 "busy"; each build holds a temp file of up to the byte limit on the home volume |
 | A "working" session with no sign of life | 1 hour | It stops keeping the Workspace awake. Only for the session kinds whose progress the Agent observes; the time counts from the last output, state change or (for some kinds) running tool, not from the start of the turn. A session whose progress cannot be read keeps holding, and the "do not auto-stop" pin and background work are exempt ([operate/03](../operate/03-run.md#what-keeps-a-workspace-awake) lists the kinds) |
+| A question, plan or permission left by a stopped session | 14 days | The carried card is dropped ([07](../member/07-chat-memo.md#questions-and-plans-left-by-a-stopped-session)) |
+| Agent memory: one memory | 200 KiB body, 2,000-character description | Refused ([member/14](../member/14-agent-memory.md)) |
+| Agent memory: the index a session receives | described part 24 KiB by default (the `memory_index` tool's `budget` takes 4–64 KiB), each description cut to 150 characters; then names only, within 8 KiB | Past the names budget the rest is only counted ("and N more") |
+| Agent memory: Changes / Forgotten | the Console's Changes view shows the newest 100; `af-memory changes` lists 30 by default and `--limit` up to 300; 300 forgotten memories at a time | Older ones are not listed |
+| Agent memory: suggestions from sessions | 250 review calls a day, one at a time; 100 proposals waiting | "Today's review limit has been reached" / "The pending proposals are full" |
 | Jumping to an older turn from a search hit | 8,000 transcript positions back, in at most 4 requests | The turn is not reached; a notice says it is too far back, and scrolling up loads it |
 
 > **Why the title limit is worth naming.** It used to differ per layer: a handoff
@@ -54,6 +59,7 @@ Defaults are the Control Plane's own; `deploy/compose/.env.example` annotates mo
 | Start timeout (AWS targets) | 300 s | `AF_ECS_START_TIMEOUT_SEC` |
 | Stopped session kept in the list | 7 days | Each user's **Settings → Agents → Session** (1 / 3 / 7 / 14 / 30 days, or off); `AF_SESSION_STOPPED_TTL` is the deployment default for users who leave it at Default; after that it moves to the archive, never deleted, and its working copy stays; a session locked against deletion stays in the list |
 | Cloud-cost window | 7 days | `AF_CLOUD_COST_WINDOW_DAYS` |
+| A parent session and all its live children quiet, before the parent gets one notice naming the idle children | 15 minutes | `AF_STALLED_TREE_MINUTES` in the workspace's environment; `0` turns it off |
 | Idle sweep | on | `AF_IDLE_SWEEP_INTERVAL`: **`0` switches the reaper off entirely**, so nothing is ever stopped for being idle |
 | Idle session halted after | 1 hour | `AF_SESSION_IDLE_TIMEOUT`; `0` turns it off |
 | Session waiting on a decision (question, approval) halted after | the session value | `AF_INTERACTION_IDLE_TIMEOUT` |
@@ -77,7 +83,9 @@ Read the screen rather than this page.
 - Workspace size (CPU, memory, disk) where the target supports it;
   see [deploy-targets.md](deploy-targets.md)
 - Idle auto-stop: session halt, halt when awaiting a decision, the background-work hold and the
-  Workspace stop, each empty for the deployment default above or `0` for off (unbounded for the hold)
+  Workspace stop; `0` is off (unbounded for the hold). An empty field takes the deployment default
+  above, except halt when awaiting a decision: empty, it follows the tenant's own session halt when
+  that is set, and only otherwise the deployment default ([admin/02](../admin/02-limits.md#idle-auto-stop))
 - Whether the tenant's administrators may take engine models in (off unless granted), and whether
   the tenant may use the self-hosted engines at all, per role (llm / image): allowed unless
   switched off

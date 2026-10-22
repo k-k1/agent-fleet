@@ -112,7 +112,7 @@ search itself fails, the palette says why and offers to retry, rather than repor
 ### Memory
 
 **"Memory"** searches the memories agents saved in Agent Fleet's own agent memory
-([Settings → Agent memory](12-settings.md)); it appears only while that switch is on. Names and descriptions match as you
+([Settings → Agent memory](14-agent-memory.md#memories)); it appears only while that switch is on. Names, descriptions, types and authors match as you
 type, and the text of each memory is searched a moment later; a hit that matched in the text shows the matching line.
 **Enter** opens Settings → Agent memory → Memories with that memory selected. The workspace has to be running (the
 memory lives inside it), and a memory withheld by the secret scan is only counted, never listed. If the

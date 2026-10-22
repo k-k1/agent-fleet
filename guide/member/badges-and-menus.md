@@ -124,16 +124,30 @@ connection. Not this deployment's engine."** together with the model the last ch
   counts them ("1/3"); green when something is logged in, plain when nothing is, amber when an AWS login ends soon
   or an agent waits for a Google Cloud login. Press it for each profile's state and its **Log in** button (AWS:
   **Log out** too; Google Cloud: **Log in again** and **Log out**). Neither picks a default profile: each command names one
-  ([15](15-cloud-accounts.md#the-google-cloud-badge-in-the-ws-bar)).
+  ([15](15-cloud-accounts.md#the-google-cloud-badge-in-the-ws-bar)). An AWS profile that assumes a role from
+  another has no login of its own, so the count leaves it out; its row reads **"Follows {source}'s login"**,
+  or **"Source unavailable"** when that profile is missing, and has no Log out
+  ([15](15-cloud-accounts.md#profile-type-assume-a-role-from-another-profile)).
 - Colored `1`, `2`…: the number of the pane it is shown in. Press to jump to that pane.
 - "Untracked", "Added", "Modified", "Renamed", "Deleted": the file's Git change type.
 - The number on an assistant row: the conversation's message count.
 - The spinning icon / check on an assistant row: generating an answer / waiting.
 - "Awaiting approval", "Approved", "Rejected" on a plan card: the decision on the plan.
+- **"Question left unanswered at stop"**, **"Plan awaiting approval at stop"**, **"Permission requested at
+  stop"** on a card in the conversation: what was on screen when the session stopped. Answering it resumes the
+  session and delivers the answer; the card is kept for 14 days
+  ([07](07-chat-memo.md#questions-and-plans-left-by-a-stopped-session)).
+- **The inbox button's number** in the top bar: new inbox items plus handoffs waiting for you
+  ([09](09-collaboration.md#asking-a-teammate-the-inbox)). In the inbox, **"Open for 14+ days"** marks a
+  request nobody has finished. A session started from an inbox request has an inbox mark
+  (**"Started from an inbox request (sender: …)"**), a memo taken in from the inbox reads **"Inbox: …"**,
+  and a shared session with a handoff for you has a branch mark, **"A handoff is waiting"**.
 - "LFS pointer": a file with only the Git LFS pointer present, not the actual content.
 - **"From the operator", "Scheduled", "Manual run", "Auto-resume", "From <name>"** in the chat view: where a
   prompt you did not type came from: the fleet operator, a schedule, an auto-resume after an interruption, and
-  [a message from another session](02-sessions.md#messages-between-sessions).
+  [a message from another session](02-sessions.md#messages-between-sessions). **"Started by <name>"** marks the
+  first prompt of a session another session started, and **"Stalled-tree notice"** the one Agent Fleet sends a
+  parent whose children have all gone quiet ([02](02-sessions.md#starting-sessions-from-a-session-child-sessions)).
 - **"Paused"** on a schedule row: that schedule is suspended ([08](08-organising.md)).
 - **The budget mark** (a pulse icon) on a stopped session: its estimated spend reached its budget and it was
   stopped; **"Raise budget & resume…"** in its menu carries on ([02](02-sessions.md#a-spend-budget-pausing-a-session-that-spends-too-much)).
@@ -149,7 +163,13 @@ connection. Not this deployment's engine."** together with the model the last ch
 Depending on state and kind you'll see resume, re-login to SSM, stop, open the remote session, copy the ID,
 rename, rename the branch, hand the conversation off, **move it to another agent**
 ([02](02-sessions.md#moving-a-session-to-another-agent-move)), **Share…**, **set / clear the delete lock**,
-archive / delete, and recreate. For a session that doesn't belong to a repository, **assignment to a working
+**"Export as Markdown"** (three choices, [02](02-sessions.md#saving-a-conversation-as-markdown)),
+archive / delete, and recreate. While Agent memory has session suggestions turned on, **"Suggest memories now"**
+asks for suggestions from this conversation; it is greyed out when no agent that can run without tools is
+available ([14](14-agent-memory.md#settings)). A session that was moved carries a line under its row,
+**"Moved to …"** (click to open the target) or **"Move to … unfinished"** (click to retry or cancel), and its
+menu offers **"Open the session it moved to"** and **"Resume here anyway…"**, or **"Retry or cancel the
+move…"**, instead of resume. For a session that doesn't belong to a repository, **assignment to a working
 set** appears here too (an item shown ticked but unclickable is one that follows its repository or conversation
 automatically).
 If the session has made images with `generate_image`, **"Generated images (N)"** appears too (N is how many;
