@@ -198,8 +198,15 @@ func ForAssistant(kind string) (map[string]ServerDef, error) {
 	}
 	out := map[string]ServerDef{}
 	for _, d := range reg.Servers {
-		if !d.Targets.Assistant || !Ready(d) || d.Auth == AuthOAuth {
-			continue // an OAuth server is not handed out until the relay exists (see ForSession)
+		if !d.Targets.Assistant || !Ready(d) {
+			continue
+		}
+		if d.Auth == AuthOAuth {
+			// Through the relay, and only while a grant is live (see ForSession).
+			var ok bool
+			if d, ok = relayDef(d); !ok {
+				continue
+			}
 		}
 		if kind != "" && !KindAllowed(d, kind) {
 			continue
@@ -244,16 +251,21 @@ func ForSession(kind string) ([]ServerDef, error) {
 	}
 	var out []ServerDef
 	for _, d := range reg.Servers {
-		// An OAuth definition is written only while a session can actually use it (ADR 0119
-		// decision 7). Until the relay exists none can, and a plain URL with no credential would
-		// make the CLI meet the 401 and start its own OAuth flow, whose loopback callback the
-		// member's browser cannot reach. Every kind's config, and muse's wire list, come through here.
-		if d.Auth == AuthOAuth {
+		if !AppliesTo(d, kind) || !Ready(d) {
 			continue
 		}
-		if AppliesTo(d, kind) && Ready(d) {
-			out = append(out, d)
+		// An OAuth definition is written only while a session can actually use it (ADR 0119
+		// decision 7): as the relay URL plus the relay key, and only while the member holds a
+		// live grant. A plain URL with no credential would make the CLI meet the 401 and start
+		// its own OAuth flow, whose loopback callback the member's browser cannot reach. Every
+		// kind's config, and muse's wire list, come through here.
+		if d.Auth == AuthOAuth {
+			var ok bool
+			if d, ok = relayDef(d); !ok {
+				continue
+			}
 		}
+		out = append(out, d)
 	}
 	return out, nil
 }

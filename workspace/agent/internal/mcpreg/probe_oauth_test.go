@@ -18,18 +18,18 @@ func TestParseBearerChallenges(t *testing.T) {
 		want   []bearerChallenge
 	}{
 		{"quoted", []string{`Bearer resource_metadata="https://h/prm", scope="a b"`},
-			[]bearerChallenge{{"https://h/prm", "a b"}}},
+			[]bearerChallenge{{"https://h/prm", "a b", ""}}},
 		{"bare values and mixed case", []string{`BEARER Resource_Metadata=https://h/prm,SCOPE=read`},
-			[]bearerChallenge{{"https://h/prm", "read"}}},
+			[]bearerChallenge{{"https://h/prm", "read", ""}}},
 		{"realm and error first", []string{`Bearer realm="mcp", error="invalid_token", resource_metadata="https://h/prm"`},
-			[]bearerChallenge{{"https://h/prm", ""}}},
+			[]bearerChallenge{{"https://h/prm", "", "invalid_token"}}},
 		{"several challenges in one header", []string{`Basic realm="x", Bearer resource_metadata="https://h/prm", scope="s1"`},
-			[]bearerChallenge{{"https://h/prm", "s1"}}},
+			[]bearerChallenge{{"https://h/prm", "s1", ""}}},
 		{"several headers", []string{`Basic realm="x"`, `Bearer scope="s1"`, `Bearer resource_metadata="https://h/prm"`},
-			[]bearerChallenge{{"", "s1"}, {"https://h/prm", ""}}},
-		{"escaped quote", []string{`Bearer scope="a \"b\" c"`}, []bearerChallenge{{"", `a "b" c`}}},
+			[]bearerChallenge{{"", "s1", ""}, {"https://h/prm", "", ""}}},
+		{"escaped quote", []string{`Bearer scope="a \"b\" c"`}, []bearerChallenge{{"", `a "b" c`, ""}}},
 		{"other scheme parameters are not ours", []string{`Basic scope="no"`}, nil},
-		{"token68 tail", []string{`Negotiate abc==, Bearer scope=x`}, []bearerChallenge{{"", "x"}}},
+		{"token68 tail", []string{`Negotiate abc==, Bearer scope=x`}, []bearerChallenge{{"", "x", ""}}},
 		{"empty", []string{``}, nil},
 	}
 	for _, c := range cases {

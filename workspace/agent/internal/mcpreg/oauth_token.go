@@ -1,7 +1,7 @@
 package mcpreg
 
 // What happens to a grant after sign-in (ADR 0119 decision 5): the access token a caller may
-// use, refresh, disconnect, and the status the Console reads. The relay (a later phase) calls
+// use, refresh, disconnect, and the status the Console reads. The relay (relay.go) calls
 // AccessToken / RefreshAccessToken; nothing else hands a token out.
 
 import (
@@ -215,6 +215,11 @@ func markSignInAgain(serverID, issuer, spent string) {
 		}
 		return nil
 	})
+	// The configs that name this server's relay path are stale now. A running CLI keeps its
+	// copy and gets the relay's error naming the Console; the next one should not see the server.
+	if f := OnGrantChange; f != nil {
+		go f()
+	}
 }
 
 // NoteInsufficientScope records that the server refused the grant's token for lack of scope

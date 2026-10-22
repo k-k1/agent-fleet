@@ -227,3 +227,34 @@ naming the server and the AS issuer. No token, code or verifier is logged or aud
   assistant and no muse wire list (`ForSession` / `ForAssistant` skip it). Decision 7 already says an OAuth
   definition is written only while a session can use it; this states what that means in the meantime, because a
   plain URL with no credential would send each CLI into its own OAuth flow, which decision 1 rules out.
+
+- 2026-10-23, P3 Agent side built (#2580; the Console half follows). `ForSession` / `ForAssistant` no longer skip
+  `auth: oauth`: while a live grant exists (not "sign in again", a token held) and the relay is listening, the
+  definition is written as `http://127.0.0.1:<port>/mcp/<server id>` plus an `X-Af-Relay-Key` header, into every
+  kind's config, assistant chat and muse's wire list (lcpp reads the same list in-process). Facts the decisions
+  above did not pin down:
+  - **Port and key.** The key is generated once per workspace and the port is remembered, both in
+    `mcp-relay.json` (`0600`, beside the registry's other files). A CLI keeps the config it read at start-up, so the
+    Agent tries the remembered port first; only when that port is taken does it choose another, rewrite the configs and
+    log it, and sessions started before then need a restart. The relay is started before the boot materialization;
+    while it is down, OAuth definitions are left out.
+  - **Request body.** A POST body is buffered (32 MiB cap, 413 beyond it) rather than tee'd: the retry after a 401
+    needs the whole body again, and MCP requests are single JSON-RPC messages.
+  - **Statuses the CLI sees.** Host or key failure: a bare 403. A grant that is missing, needs a new sign-in or cannot
+    be renewed, or a server that still answers 401 after one refresh: **502** with a text naming the Console
+    (Settings > MCP servers), never 401 (a CLI answers that by starting OAuth against the relay's own origin) and never
+    403 (it reads as a scope problem). An upstream redirect: 502, with no `Location` (a CLI would follow it carrying
+    the relay key header). An upstream stream that breaks after the headers: the connection is aborted rather than
+    ended cleanly, so the CLI reconnects.
+  - **403 `insufficient_scope`.** Passed through with the server's own body and status, **without** its
+    `WWW-Authenticate` (that header is what would start a CLI's own step-up); the challenged scope is recorded with
+    `NoteInsufficientScope`, so the row shows "needs more permission". A 403 without that challenge is not recorded.
+  - **Re-materialization.** Sign-in completion and disconnect re-materialize in their handlers; a refresh that ends a
+    grant (`invalid_grant`) does it through `OnGrantChange`, because nothing else would notice.
+  - Measured on 2026-10-23 with the installed CLIs, a fake MCP server on `127.0.0.1` and a config written by af's own
+    writer: claude (`mcp list`), copilot (`mcp list`) and cursor (`mcp list`) connect over plain http to the loopback URL
+    and send the custom header (cursor then reports "needs approval"). Config level only, no request observed:
+    codex (`mcp get` reads the URL and header back), kiro (`mcp status`), agy (`mcp list`), and opencode (`mcp list`
+    says "connected" yet the listener saw no request, so its header is not established). All seven kinds have a
+    loopback-URL-plus-header drift case in `materialize_drift_test.go`; the cases that compare with `mcp add`
+    (claude, opencode, copilot, kiro) pass, cursor and agy only check that the CLI lists what af wrote.

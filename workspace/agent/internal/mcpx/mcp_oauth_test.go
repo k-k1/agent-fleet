@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -97,5 +99,44 @@ func TestUpdateAwayFromOAuthDropsTheGrant(t *testing.T) {
 	plant()
 	if c := put(`{"name":"hosted","transport":"http","url":"https://m.example.com/third","enabled":true}`); c != 200 || grants() != 0 {
 		t.Fatalf("a URL change must drop a stray grant: %d, grants=%d", c, grants())
+	}
+}
+
+// A sign-in's end is what takes an OAuth server out of every kind's config, so the disconnect
+// route must re-materialize. The CLI's own config is what the member's next session reads.
+func TestDisconnectRemovesTheServerFromTheKindConfigs(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, "claude-cfg"))
+	stop, err := mcpreg.StartRelay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stop)
+	d, err := mcpreg.Create(mcpreg.ServerDef{Name: "hosted", Transport: mcpreg.TransportHTTP, URL: "https://m.example.com/mcp",
+		Auth: mcpreg.AuthOAuth, Enabled: true, Targets: mcpreg.Targets{Session: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.MCPOAuth = append(s.MCPOAuth, secrets.MCPOAuthGrant{ServerID: d.ID, Issuer: "https://as.example.com", AccessToken: "x"})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(home, "claude-cfg", ".claude.json")
+	MaterializeAll()
+	if b, _ := os.ReadFile(cfg); !strings.Contains(string(b), "/mcp/"+d.ID) {
+		t.Fatalf("a signed-in server is not in claude's config:\n%s", b)
+	}
+	r := httptest.NewRequest(http.MethodDelete, "/mcp-servers/"+d.ID+"/oauth", nil)
+	r.SetPathValue("id", d.ID)
+	w := httptest.NewRecorder()
+	HandleOAuthDisconnect(w, r)
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if b, _ := os.ReadFile(cfg); strings.Contains(string(b), d.ID) {
+		t.Fatalf("a disconnected server is still in claude's config:\n%s", b)
 	}
 }
