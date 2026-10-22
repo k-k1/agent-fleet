@@ -138,6 +138,7 @@ describe("new server form", () => {
       "None",
       "Bearer token",
       "Custom headers",
+      "OAuth",
     ]);
     click(seg("Bearer token"));
     type(fieldInput("Token"), "Bearer abc");

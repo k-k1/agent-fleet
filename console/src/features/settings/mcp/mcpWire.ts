@@ -56,6 +56,9 @@ export interface McpServer {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
+  // "oauth": the member signs in from the Console and the Agent holds the grant (ADR 0119).
+  // Absent = static headers (or none).
+  auth?: "oauth";
   enabled: boolean;
   targets: { assistant: boolean; session: boolean };
   kinds?: string[];
@@ -128,19 +131,30 @@ export interface ProbeResult {
 }
 
 // isOAuthRequired: the test reached an OAuth-protected server. It is not a failure — the
-// server answered, and wants a sign-in this phase cannot do yet — so the Console shows it
-// apart from a red error.
+// server answered and wants a sign-in — so the Console shows it apart from a red error.
 export const isOAuthRequired = (p: ProbeResult): boolean => !p.ok && p.oauth?.required === true;
+
+// probeOfAnswer turns the answer of POST api/mcp-servers/test into a ProbeResult. A request the
+// CP/Agent refused is an error ENVELOPE (`error` is an object with a code); a probe's own
+// failure also has a string `error`, and for an OAuth-protected server it rides together with
+// the `oauth` report, which must not be thrown away as if the request had failed.
+export const probeOfAnswer = (res: any, errMsg: (e: unknown) => string): ProbeResult =>
+  res && res.error && typeof res.error === "object"
+    ? { ok: false, toolCount: 0, elapsedMs: 0, error: errMsg(res.error) }
+    : (res as ProbeResult);
 
 export interface KV {
   k: string;
   v: string;
 }
 
-// How a remote server authenticates. A fourth option (OAuth, ADR 0119) joins this union and
-// AUTH_MODES; authHeaders() is the one place that turns a mode into wire headers.
-export type AuthMode = "none" | "bearer" | "headers";
-export const AUTH_MODES: readonly AuthMode[] = ["none", "bearer", "headers"];
+// How a remote server authenticates. authHeaders() is the one place that turns a mode into wire
+// headers; OAuth (ADR 0119) sends none, and bodyOf() marks the definition `auth: "oauth"`.
+export type AuthMode = "none" | "bearer" | "headers" | "oauth";
+export const AUTH_MODES: readonly AuthMode[] = ["none", "bearer", "headers", "oauth"];
+// A tenant-distributed definition cannot use OAuth yet (each member would sign in for
+// themselves, ADR 0119 decision 9): the tenant form and the member's secrets form offer these.
+export const TENANT_AUTH_MODES: readonly AuthMode[] = ["none", "bearer", "headers"];
 
 export interface Form {
   id: string; // "" = a new registration
@@ -233,6 +247,7 @@ export const authHeaders = (
 ): Record<string, string> => {
   switch (auth) {
     case "none":
+    case "oauth":
       return {};
     case "headers": {
       const h = fromKV(rows);
@@ -365,7 +380,7 @@ export const formOf = (s: McpServer): Form => ({
   args: (s.args || []).join("\n"),
   env: toKV(s.env),
   url: s.url || "",
-  auth: authOf(toKV(s.headers)),
+  auth: s.auth === "oauth" ? "oauth" : authOf(toKV(s.headers)),
   token: "",
   headers: toKV(s.headers),
   assistant: !!s.targets?.assistant,
@@ -396,6 +411,9 @@ export const bodyOf = (f: Form): Record<string, unknown> => {
   } else {
     base.url = f.url.trim();
     base.headers = authHeaders(f.auth, f.token, f.headers);
+    // Omitted for every other mode: an update replaces the definition, so leaving OAuth is
+    // just not sending it.
+    if (f.auth === "oauth") base.auth = "oauth";
   }
   return base;
 };

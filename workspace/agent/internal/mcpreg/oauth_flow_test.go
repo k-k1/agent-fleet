@@ -138,7 +138,7 @@ const testCIMD = "https://af.example.com/oauth/mcp-client.json"
 // registerServer stores a user server pointing at the fake and returns its id.
 func registerServer(t *testing.T, f *asFake) string {
 	t.Helper()
-	d, err := Create(ServerDef{Name: "hosted", Transport: TransportHTTP, URL: f.url("/mcp"), Enabled: true})
+	d, err := Create(ServerDef{Name: "hosted", Transport: TransportHTTP, URL: f.url("/mcp"), Auth: AuthOAuth, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -956,4 +956,92 @@ func TestSignInDiscoveryDoesNotFollowACrossOriginRedirectWithHeaders(t *testing.
 	if leaked {
 		t.Error("a static header followed a redirect to another origin")
 	}
+}
+
+func TestValidateOAuthAuth(t *testing.T) {
+	ok := ServerDef{Name: "hosted", Transport: TransportHTTP, URL: "https://m.example.com/mcp", Auth: AuthOAuth}
+	if err := Validate(ok); err != nil {
+		t.Fatalf("a remote OAuth server is valid: %v", err)
+	}
+	cases := map[string]struct {
+		mod  func(*ServerDef)
+		code string
+	}{
+		"stdio":   {func(d *ServerDef) { d.Transport, d.URL, d.Command = TransportStdio, "", "x" }, CodeOAuthTransport},
+		"headers": {func(d *ServerDef) { d.Headers = map[string]string{"authorization": "Bearer x"} }, CodeOAuthHeader},
+		"tenant":  {func(d *ServerDef) { d.Origin = OriginTenant }, CodeOAuthTenant},
+		"unknown": {func(d *ServerDef) { d.Auth = "kerberos" }, CodeAuthUnknown},
+	}
+	for name, c := range cases {
+		d := ok
+		c.mod(&d)
+		var ve *ValidationError
+		if err := Validate(d); !errors.As(err, &ve) || ve.Code != c.code {
+			t.Errorf("%s: %v, want code %s", name, err, c.code)
+		}
+	}
+	other := ok
+	other.Headers = map[string]string{"X-Team": "a"}
+	var ve *ValidationError
+	if err := Validate(other); !errors.As(err, &ve) || ve.Code != CodeOAuthHeader {
+		t.Errorf("no static header at all goes with OAuth: %v", err)
+	}
+}
+
+// Until the relay exists an OAuth definition is handed to no CLI and no assistant: a plain URL
+// would send each CLI into its own OAuth flow.
+func TestOAuthDefinitionsAreNotMaterialized(t *testing.T) {
+	withTempCLIHomes(t)
+	for _, name := range []string{"plainremote", "oauthremote"} {
+		d := ServerDef{Name: name, Transport: TransportHTTP, URL: "https://m.example.com/" + name, Enabled: true,
+			Targets: Targets{Assistant: true, Session: true}}
+		if name == "oauthremote" {
+			d.Auth = AuthOAuth
+		}
+		if _, err := Create(d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for kind := range knownKinds {
+		defs, err := ForSession(kind)
+		if err != nil {
+			t.Fatal(err)
+		}
+		names := map[string]bool{}
+		for _, d := range defs {
+			names[d.Name] = true
+		}
+		if names["oauthremote"] {
+			t.Errorf("%s: ForSession hands out the OAuth server", kind)
+		}
+		if !names["plainremote"] {
+			t.Errorf("%s: the ordinary remote server went missing", kind)
+		}
+		res := Materialize(kind)
+		for _, w := range res.Written {
+			if w == "oauthremote" {
+				t.Errorf("%s: written into the config", kind)
+			}
+		}
+		av, _ := ForAssistant(kind)
+		for _, d := range av {
+			if d.Name == "oauthremote" {
+				t.Errorf("%s: handed to an assistant", kind)
+			}
+		}
+	}
+}
+
+// Sign-in is for a server whose authentication is OAuth: a grant for a bearer/none server would
+// be a credential nothing asked for.
+func TestStartRefusesAServerThatIsNotOAuth(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, nil)
+	d, err := Create(ServerDef{Name: "plainhosted", Transport: TransportHTTP, URL: f.url("/mcp"), Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = Delete(d.ID) })
+	_, err = StartOAuth(context.Background(), d.ID, startReq(nil))
+	wantCode(t, err, OAuthErrNotOAuthServer)
 }

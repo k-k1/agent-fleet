@@ -135,6 +135,7 @@ const AUTH_LABEL = {
   none: "mcp.auth_none",
   bearer: "mcp.auth_bearer",
   headers: "mcp.auth_headers",
+  oauth: "mcp.auth_oauth",
 } as const satisfies Record<AuthMode, string>;
 
 // AuthFields — the Authentication selector of a remote server (member form, tenant form).
@@ -153,6 +154,7 @@ export function AuthFields({
   tokenStored,
   namesOnly,
   headersHint,
+  modes = AUTH_MODES,
 }: {
   auth: AuthMode;
   onAuth: (a: AuthMode) => void;
@@ -163,13 +165,15 @@ export function AuthFields({
   tokenStored: boolean;
   namesOnly?: boolean;
   headersHint?: ReactNode;
+  // The modes offered; the tenant form passes TENANT_AUTH_MODES (no OAuth yet).
+  modes?: readonly AuthMode[];
 }) {
   const tr = useT();
   return (
     <>
       <Field label={tr("mcp.f_auth")} wide>
         <div className="seg choice-seg">
-          {AUTH_MODES.map((m) => (
+          {modes.map((m) => (
             <button
               key={m}
               type="button"
@@ -194,6 +198,11 @@ export function AuthFields({
             />
           )}
         </Field>
+      )}
+      {auth === "oauth" && (
+        <p className="ps-note" data-testid="mcp-auth-oauth-note">
+          {tr("mcp.auth_oauth_note")}
+        </p>
       )}
       {auth === "headers" && (
         <Field label={tr("mcp.f_headers")} wide hint={headersHint ?? tr("mcp.f_headers_hint")}>
