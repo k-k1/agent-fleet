@@ -318,9 +318,13 @@ func TestMCPOAuthMetadataAndChallenge(t *testing.T) {
 	}
 	// The 401 points at the metadata.
 	rec = e.mcpCall("", "tools/list")
-	want := `Bearer resource_metadata="` + testBase + `/.well-known/oauth-protected-resource/mcp", scope="read"`
+	want := `Bearer resource_metadata="` + testBase + `/.well-known/oauth-protected-resource/mcp"`
 	if rec.Code != 401 || rec.Header().Get("WWW-Authenticate") != want {
 		t.Errorf("/mcp 401 = %d %q, want %q", rec.Code, rec.Header().Get("WWW-Authenticate"), want)
+	}
+	rec = e.mcpCall("expired-token", "tools/list")
+	if wantInvalid := want + `, error="invalid_token"`; rec.Code != http.StatusUnauthorized || rec.Header().Get("WWW-Authenticate") != wantInvalid {
+		t.Errorf("invalid token challenge = %d %q, want %q", rec.Code, rec.Header().Get("WWW-Authenticate"), wantInvalid)
 	}
 }
 
@@ -818,6 +822,53 @@ func TestMCPOAuthConsentPageContent(t *testing.T) {
 	}
 }
 
+func TestMCPOAuthConsentDefaultsToRead(t *testing.T) {
+	for _, tc := range []struct {
+		name, requested, chosen, wantScope string
+		canWrite                           bool
+	}{
+		{"narrow to read", "read write", "read", "read", true},
+		{"choose write", "read write", "write", "read write", true},
+		{"read only", "read", "read", "read", false},
+		{"cannot widen read", "read", "write", "read", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newMCPOAuthEnv(t)
+			id := e.registerClient(loopbackCB)
+			verifier, challenge := pkcePair()
+			q := e.authQuery(id, loopbackCB, challenge)
+			q.Set("scope", tc.requested)
+			rec := e.authorize(q)
+			ticket := e.ticketFrom(rec)
+			body := rec.Body.String()
+			if !strings.Contains(body, `name="scope" value="read" checked`) {
+				t.Error("read must be selected by default")
+			}
+			if strings.Contains(body, `name="scope" value="write" checked`) {
+				t.Error("write must require an explicit choice")
+			}
+			if got := strings.Contains(body, `name="scope" value="write"`); got != tc.canWrite {
+				t.Errorf("write offered = %v, want %v", got, tc.canWrite)
+			}
+			if strings.Contains(body, `value="admin:dangerous"`) {
+				t.Error("dangerous scope must never be offered")
+			}
+			lq := locationQuery(t, e.consent(ticket, url.Values{"membership": {e.membershipID()}, "scope": {tc.chosen}}))
+			rec = e.post(mcpOAuthToken, url.Values{
+				"grant_type": {"authorization_code"}, "client_id": {id}, "code": {lq.Get("code")},
+				"redirect_uri": {loopbackCB}, "code_verifier": {verifier}, "resource": {testResource},
+			})
+			if rec.Code != http.StatusOK || jsonField(t, rec, "scope") != tc.wantScope {
+				t.Fatalf("token scope: %d %s, want %q", rec.Code, rec.Body, tc.wantScope)
+			}
+			tools := toolNames(t, e.mcpCall(jsonField(t, rec, "access_token"), "tools/list"))
+			if got := tools["send_to_session"]; got != (tc.wantScope == "read write") {
+				t.Errorf("write tool advertised = %v for scope %q", got, tc.wantScope)
+			}
+		})
+	}
+}
+
 func TestMCPOAuthConsentPOSTChecks(t *testing.T) {
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
@@ -892,6 +943,10 @@ func TestMCPOAuthPromptNoneNeedsAnExistingWiderGrant(t *testing.T) {
 	}
 	if got := none("read write"); got.Get("error") != "consent_required" {
 		t.Errorf("wider scope than the grant: %v, want consent_required", got)
+	}
+	e.connect(id, loopbackCB, "read write")
+	if got := none("read write"); got.Get("code") == "" || got.Get("iss") != testIssuer {
+		t.Errorf("covering write grant: %v, want a code", got)
 	}
 	// Another client does not inherit it.
 	other := e.registerClient(loopbackCB)

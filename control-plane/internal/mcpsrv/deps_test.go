@@ -54,8 +54,9 @@ func (c testCP) ScopeRank(scope string) int {
 	return 0
 }
 
-func (c testCP) HashPAT(string) string    { unwired("HashPAT"); return "" }
-func (c testCP) EgressDefaults() []string { unwired("EgressDefaults"); return nil }
+func (c testCP) ServerIdentity(context.Context) ServerIdentity { return ServerIdentity{} }
+func (c testCP) HashPAT(string) string                         { unwired("HashPAT"); return "" }
+func (c testCP) EgressDefaults() []string                      { unwired("EgressDefaults"); return nil }
 
 func (c testCP) RuntimeFor(store.Workspace, string, ...string) runtime.Runtime {
 	unwired("RuntimeFor")

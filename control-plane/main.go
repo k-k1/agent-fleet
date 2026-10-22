@@ -316,6 +316,8 @@ func main() {
 		brand: newBrandResolver(newBrandConfig(os.Getenv("AF_BRAND_COLOR"), os.Getenv("AF_BRAND_LABEL")), mgr.store),
 	}
 
+	mgr.brand = cfg.brand
+
 	// P3-9 idle-stop (docs/log/19): a background reaper halts idle claude sessions
 	// (tier 1) and stops cold workspaces (tier 2).
 	//

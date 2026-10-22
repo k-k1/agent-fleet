@@ -5,6 +5,7 @@ English | [日本語](0031-mcp-registry.ja.md)
 - Status: **adopted; P0–P4 implemented** (the registry model, composition, user CRUD, the connection
   test, the Console tab, assistant wiring, session materialisation for claude and codex, and
   **tenant distribution**). The design is [docs/48](../log/48-mcp-registry.md).
+  Status update (2026-10-22): OAuth for registered remote servers is proposed in [0119](0119-mcp-client-oauth.md), which would revisit the rejected "af acts as an MCP proxy" option for OAuth servers only.
 - See also: [history/19](../log/19-assistant-chat.md) (the assistant) / [0020](0020-chat-bridge.md) (a CP bridge of the same shape) /
   docs/25 (the built-in ops integrations this generalises) / docs/20 (the egress allowlist)
 

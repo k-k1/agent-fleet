@@ -62,12 +62,13 @@ const oauthAccessPrefix = "afmcp_at_"
 const oauthIdle = 30 * 24 * time.Hour
 
 // challenge is the WWW-Authenticate value of a 401: bare Bearer while OAuth is off, otherwise
-// the RFC 9728 pointer and the scope a first request should ask for.
+// the RFC 9728 pointer. Omitting scope lets clients request the advertised scopes
+// instead of pinning their first grant to read before the member can choose.
 func (a API) challenge(presented bool) string {
 	if a.oauth.metadataURL == "" {
 		return "Bearer"
 	}
-	c := `Bearer resource_metadata="` + a.oauth.metadataURL + `", scope="read"`
+	c := `Bearer resource_metadata="` + a.oauth.metadataURL + `"`
 	if presented {
 		c += `, error="invalid_token"`
 	}
@@ -285,7 +286,7 @@ func (a API) dispatchMCPMethod(ctx context.Context, prin *mcpPrincipal, req rpcR
 	case "server/discover":
 		// 2026-07-28: servers MUST implement this. It replaces initialize as the way a
 		// client learns versions/capabilities, and is what a stdio client probes with.
-		return rpcOK(req.ID, mcpDiscoverResult("agent-fleet", "p3-6",
+		return rpcOK(req.ID, mcpDiscoverResult(serverInfo(a.identity(ctx)),
 			"Agent Fleet の運用 MCP。自分のセッションの観測・操縦と、管理者向けのワークスペース管理を提供する。"))
 	case "initialize":
 		// Initialize-era clients (2025-*) only. Removed in 2026-07-28, but a server that
@@ -302,7 +303,7 @@ func (a API) dispatchMCPMethod(ctx context.Context, prin *mcpPrincipal, req rpcR
 		return rpcOK(req.ID, map[string]any{
 			"protocolVersion": ver,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "agent-fleet", "version": "p3-6"},
+			"serverInfo":      serverInfo(a.identity(ctx)),
 		})
 	case "notifications/initialized", "notifications/cancelled":
 		return nil // notifications get no response

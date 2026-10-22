@@ -81,6 +81,17 @@ jobs:
         env:
           E2E_REQUIRE: "1"
         run: go test -tags contract -run '^TestDriftAgyModelsCatalog$' -count=1 -v -timeout 5m ./...
+
+      # The hooks contract. The steps above run agy without our hooks.json entry, so none saw
+      # agy 1.4.4 deny every tool call when the PreToolUse hook printed "{}" (#2470): the session
+      # starts and answers, and no tool ever runs. This runs one real turn that calls a tool with
+      # the Agent's entry installed, and fails unless the tool ran and the hook fired.
+      - name: real tool-call hooks contract
+        id: contract_3
+        working-directory: workspace/agent
+        env:
+          E2E_REQUIRE: "1"
+        run: go test -tags contract -run '^TestDriftAgyToolHooks$' -count=1 -v -timeout 8m ./...
       - name: remember successfully tested latest
         if: success() && inputs.cli_version == 'latest'
         env:
@@ -99,7 +110,7 @@ jobs:
       # step counts: a setup or credential-guard failure ran no test and spent no quota, so it
       # is retried by the next watcher run instead of being held until a human acts.
       - name: report failed contract for latest
-        if: failure() && (steps.contract_0.conclusion == 'failure' || steps.contract_1.conclusion == 'failure' || steps.contract_2.conclusion == 'failure') && inputs.cli_version == 'latest'
+        if: failure() && (steps.contract_0.conclusion == 'failure' || steps.contract_1.conclusion == 'failure' || steps.contract_2.conclusion == 'failure' || steps.contract_3.conclusion == 'failure') && inputs.cli_version == 'latest'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EFFECTIVE: ${{ steps.cli.outputs.version }}
