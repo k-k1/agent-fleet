@@ -65,6 +65,8 @@ type CallRecord struct {
 	// Principal is "pat:<id>", "grant:<id>" or "unauthenticated".
 	Principal string `json:"principal"`
 	ClientID  string `json:"client_id,omitempty"`
+	// Scope is the PAT / grant scope: a short tools/list may just be a narrow scope.
+	Scope string `json:"scope,omitempty"`
 	// Reason says why a request was refused before it reached a tool.
 	Reason string `json:"reason,omitempty"`
 	// HeaderVersion is the MCP-Protocol-Version header; the `_meta` one is per item.
@@ -147,7 +149,7 @@ func (l *CallLog) Forget(key string) {
 	l.mu.Unlock()
 }
 
-// Recent returns the ring of key, newest first. The result is a copy.
+// Recent returns the ring of key, newest first. The slice is a copy; each record's Items are shared but never mutated after add.
 func (l *CallLog) Recent(key string) []CallRecord {
 	out := []CallRecord{}
 	if l == nil {
@@ -192,6 +194,7 @@ func (t *callTrace) setPrincipal(p *mcpPrincipal) {
 	t.key = CallKey(p.oauth, p.patID)
 	t.rec.Principal = t.key
 	t.rec.ClientID = clip(p.clientID, 100)
+	t.rec.Scope = clip(p.scope, 32)
 }
 
 // addParseError records a body that was not JSON-RPC at all (answered 200 with -32700).
@@ -219,6 +222,10 @@ func itemFor(req rpcRequest, p paramsMeta, era mcpEra, resp *rpcResponse, status
 	it.ClientName, it.ClientVersion = clientDeclared(req, p)
 	if resp != nil && resp.Error != nil {
 		it.ErrorCode, it.ErrorMessage = resp.Error.Code, clip(resp.Error.Message, 120)
+		// A Mcp-Name mismatch error quotes the body's resource URI, which is an argument.
+		if req.Method == "resources/read" {
+			it.ErrorMessage = ""
+		}
 	}
 	if resp != nil && req.Method == "tools/call" {
 		if m, ok := resp.Result.(map[string]any); ok {
@@ -281,6 +288,9 @@ func callLogLine(c CallRecord) string {
 	kv("principal", c.Principal)
 	if c.ClientID != "" {
 		kv("client_id", c.ClientID)
+	}
+	if c.Scope != "" {
+		kv("scope", c.Scope)
 	}
 	if c.Reason != "" {
 		kv("reason", c.Reason)

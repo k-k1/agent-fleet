@@ -198,6 +198,7 @@ func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident store.Ident
 // tokens, newest first; another member's id answers 404 like an unknown one. Per replica, in
 // memory (mcpsrv/mcp_calls.go).
 func (a patAPI) calls(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	noStore(w)
 	id := r.PathValue("id")
 	pats, err := a.store.ListPATsByIdentity(r.Context(), ident.ID)
 	if err != nil {

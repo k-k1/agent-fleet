@@ -423,7 +423,7 @@ mcp-call http_method="POST" status=400 latency_ms=2 principal="grant:<id>" clien
 - `principal` is `pat:<id>`, `grant:<id>` (OAuth; `client_id` follows) or `unauthenticated`, with `reason=` saying why
   (no bearer token, unknown or expired token, an OAuth token bound to another resource, `method not allowed`).
 - `era` is `legacy` (an `initialize` handshake) or `stateless` (2026-07-28: `_meta` on every request). A stateless request
-  the server rejects shows the JSON-RPC `error_code` (-32020 header mismatch, -32021 missing client capabilities, -32022 unsupported version, -32602 missing `_meta` field)
+  the server rejects shows the JSON-RPC `error_code` (-32020 header mismatch, -32022 unsupported version, -32602 a missing `_meta` field, `clientInfo` and `clientCapabilities` included)
   and the `Mcp-Method` / `Mcp-Name` presence flags; `tools/list` items carry `tools`, the number returned. A `tools/call` that ran and failed (answered 200 with `isError`) shows `tool_error:true`, without the text.
 - Never recorded: a token, the `Authorization` value, request arguments or tool results. Only the tool name of a `tools/call` / `prompts/get` is.
 - The same records of an authenticated caller are readable by their owner in memory (last 50 per token / connection,

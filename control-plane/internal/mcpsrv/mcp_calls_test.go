@@ -79,6 +79,10 @@ func TestItemForBoundsAndFlags(t *testing.T) {
 		t.Errorf("tool error: %+v", it)
 	}
 	read := rpcRequest{ID: json.RawMessage("1"), Method: "resources/read"}
+	if it := itemFor(read, paramsMeta{URI: "file:///secret/medical.txt"}, mcpEra{Stateless: true, Version: mcpVersionStateless},
+		rpcErr(read.ID, rpcHeaderMismatch, `header mismatch: Mcp-Name (absent) does not match body value "file:///secret/medical.txt"`), 400); it.ErrorMessage != "" || it.ErrorCode != rpcHeaderMismatch {
+		t.Errorf("resource URI leaked through the error message: %+v", it)
+	}
 	if it := itemFor(read, paramsMeta{URI: "file:///secret"}, mcpEra{}, nil, 200); it.Name != "" {
 		t.Errorf("a resource URI must not be recorded: %q", it.Name)
 	}

@@ -113,7 +113,7 @@ func TestMCPCallsRecordedPerRequest(t *testing.T) {
 		t.Errorf("400 item: %+v", it)
 	}
 	if bad.HeaderVersion != "2026-07-28" || bad.McpMethodHeader || bad.McpNameHeader || bad.Accept != "application/json, text/event-stream" ||
-		bad.ContentType != "application/json" || bad.UserAgent != "probe-agent/1" || bad.Principal != "grant:"+gid || bad.ClientID != client {
+		bad.Scope != "read" || bad.ContentType != "application/json" || bad.UserAgent != "probe-agent/1" || bad.Principal != "grant:"+gid || bad.ClientID != client {
 		t.Errorf("400 request fields: %+v", bad)
 	}
 
@@ -184,12 +184,15 @@ func TestMCPCallsNeverRecordSecrets(t *testing.T) {
 	e.mcpPost(tk.Access, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"no_such_tool","arguments":{"note":"`+secretArg+`"}}}`, nil)
 	e.mcpCall(tk.Access, "tools/list")
 	e.mcpCall(tk.Access+"x", "tools/list") // a refused token must not be echoed either
+	// A stateless resources/read without Mcp-Name is refused with an error quoting the URI.
+	e.mcpPost(tk.Access, `{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"file:///secret/medical.txt",`+statelessMeta+`}}`,
+		map[string]string{"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "resources/read"})
 
 	buf := e.do(http.MethodGet, "/api/mcp-oauth/grants/"+gid+"/calls", "", nil).Body.String()
 	if !strings.Contains(buf, "no_such_tool") {
 		t.Fatalf("tool name expected in the buffer: %s", buf)
 	}
-	for _, s := range []string{tk.Access, devIdPHash(tk.Access), hashPAT(tk.Access), tk.Refresh, devIdPHash(tk.Refresh), "Bearer", secretArg} {
+	for _, s := range []string{tk.Access, devIdPHash(tk.Access), hashPAT(tk.Access), tk.Refresh, devIdPHash(tk.Refresh), "Bearer", secretArg, "medical.txt"} {
 		if strings.Contains(buf, s) || strings.Contains(logs.String(), s) {
 			t.Errorf("secret %q found in the buffer or the log", s)
 		}
