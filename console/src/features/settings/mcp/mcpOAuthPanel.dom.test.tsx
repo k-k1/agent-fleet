@@ -41,6 +41,9 @@ import { setLocale } from "../../../lib/i18n/index.ts";
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 const assign = vi.fn();
+// The blank tab window.open hands back; the authorization URL is set on it after the start call.
+let tab: { closed: boolean; close: ReturnType<typeof vi.fn>; location: { href: string }; opener: unknown };
+let openTab: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   calls.length = 0;
@@ -48,6 +51,10 @@ beforeEach(() => {
   toasts.length = 0;
   confirmAnswer.value = true;
   assign.mockReset();
+  tab = { closed: false, close: vi.fn(), location: { href: "" }, opener: {} };
+  openTab = vi.fn(() => tab);
+  vi.stubGlobal("open", openTab);
+  sessionStorage.clear();
   vi.stubGlobal("location", { ...window.location, assign, search: "", pathname: "/", hash: "" });
 });
 afterEach(() => {
@@ -178,7 +185,8 @@ describe("Sign in", () => {
     await mount(row());
     await click(button("Sign in"));
     expect(calls.find((c) => c.method === "POST")!.body).toEqual({});
-    expect(assign).toHaveBeenCalledWith("https://as.example.com/authorize?state=s");
+    expect(tab.location.href).toBe("https://as.example.com/authorize?state=s");
+    expect(assign).not.toHaveBeenCalled();
   });
 
   it("never navigates to a non-http(s) address", async () => {
@@ -224,7 +232,7 @@ describe("Sign in", () => {
     const put = calls.find((c) => c.method === "PUT")!;
     expect(put.body).toEqual({ issuer: "https://as.example.com", clientId: "my-client", clientSecret: "s3cret" });
     expect(starts).toBe(2);
-    expect(assign).toHaveBeenCalledWith("https://as.example.com/authorize?x=1");
+    expect(tab.location.href).toBe("https://as.example.com/authorize?x=1");
   });
 
   it("omits an empty secret", async () => {
@@ -253,7 +261,7 @@ describe("DCR retry", () => {
     await mount(row());
     await click(button("Retry with dynamic registration"));
     expect(calls.find((c) => c.method === "POST")!.body).toEqual({ registration: "dcr" });
-    expect(assign).toHaveBeenCalled();
+    expect(tab.location.href).toBe("https://as.example.com/a");
   });
 
   it("is offered after a failed CIMD return for this server only", async () => {
@@ -266,10 +274,10 @@ describe("DCR retry", () => {
     expect(button("Retry with dynamic registration")).toBeUndefined();
   });
 
-  it("is disabled until the status has been read", async () => {
+  it("does not wait for the status read", async () => {
     replies["GET api/mcp-servers/mcp-1/oauth"] = () => new Promise(() => {}); // never answers
     await mount(row({ failedReturn: { ok: false, server: "mcp-1", reason: "failed", registration: "cimd" } }));
-    expect(button("Retry with dynamic registration")!.disabled).toBe(true);
+    expect(button("Retry with dynamic registration")!.disabled).toBe(false);
   });
 
   it("is not offered once connected, nor after a DCR failure", async () => {
@@ -316,7 +324,7 @@ describe("connection-test report", () => {
     const inReport = host!.querySelector(".mcp-probe.info")!;
     const b = Array.from(inReport.querySelectorAll("button")).find((x) => x.textContent === "Sign in")!;
     await click(b);
-    expect(assign).toHaveBeenCalledWith("https://as.example.com/a");
+    expect(tab.location.href).toBe("https://as.example.com/a");
   });
 
   it("explains how to get there when the server is not saved as OAuth", async () => {
@@ -359,7 +367,9 @@ describe("Authentication selector", () => {
 });
 
 describe("return from the authorization server", () => {
-  const setLocation = (search: string) => {
+  // The old in-place behaviour is the same-tab fallback's: the marker says this tab started it.
+  const setLocation = (search: string, sameTab = true) => {
+    if (sameTab) sessionStorage.setItem("af.mcp_oauth.same_tab", "1");
     vi.stubGlobal("location", { ...window.location, assign, search, pathname: "/", hash: "" });
   };
 
@@ -411,6 +421,304 @@ describe("return from the authorization server", () => {
     setLocation("?x=1");
     await mount(<McpOAuthReturn booted />);
     expect(toasts).toHaveLength(0);
+  });
+});
+
+// --- #2568: new tab, no wait for the status, unfinished sign-in ---------------------------------
+
+// An in-memory BroadcastChannel bus: every instance of the same name hears the others.
+class FakeChannel {
+  static all: FakeChannel[] = [];
+  onmessage: ((e: { data: unknown }) => void) | null = null;
+  constructor(public name: string) {
+    FakeChannel.all.push(this);
+  }
+  postMessage(data: unknown) {
+    for (const c of FakeChannel.all) if (c !== this && c.name === this.name) c.onmessage?.({ data });
+  }
+  close() {
+    FakeChannel.all = FakeChannel.all.filter((c) => c !== this);
+  }
+}
+const startReply = (url = "https://as.example.com/authorize?state=s") =>
+  (replies["POST api/mcp-servers/mcp-1/oauth/start"] = () => ({ authorize_url: url, issuer: "https://as.example.com" }));
+
+describe("new-tab sign-in", () => {
+  it("opens the blank tab inside the click, cuts its opener, and points it at the URL afterwards", async () => {
+    setStatus({ state: "not_signed_in" });
+    startReply();
+    await mount(row());
+    await click(button("Sign in"));
+    expect(openTab).toHaveBeenCalledTimes(1);
+    expect(openTab.mock.calls[0][0]).toBe("about:blank"); // not the AS URL: that is not known yet
+    expect(tab.opener).toBeNull();
+    expect(tab.location.href).toBe("https://as.example.com/authorize?state=s");
+    expect(assign).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("af.mcp_oauth.same_tab")).toBeNull();
+  });
+
+  it("closes the blank tab when the start fails or the URL is unusable", async () => {
+    setStatus({ state: "not_signed_in" });
+    replies["POST api/mcp-servers/mcp-1/oauth/start"] = () => ({ error: { code: "oauth_discovery_failed" } });
+    await mount(row());
+    await click(button("Sign in"));
+    expect(tab.close).toHaveBeenCalled();
+    expect(tab.location.href).toBe("");
+  });
+
+  it("closes the blank tab when a client id is needed", async () => {
+    setStatus({ state: "not_signed_in" });
+    replies["POST api/mcp-servers/mcp-1/oauth/start"] = () => ({
+      error: { code: "client_id_needed", issuer: "https://as.example.com" },
+    });
+    await mount(row());
+    await click(button("Sign in"));
+    expect(tab.close).toHaveBeenCalled();
+    expect(host!.querySelector('[data-testid="mcp-oauth-client"]')).toBeTruthy();
+  });
+
+  it("popup blocked: says so and falls back to this tab, leaving the same-tab marker", async () => {
+    openTab.mockReturnValue(null);
+    setStatus({ state: "not_signed_in" });
+    startReply();
+    await mount(row());
+    await click(button("Sign in"));
+    expect(toasts.join(" ")).toContain("blocked the new tab");
+    expect(assign).toHaveBeenCalledWith("https://as.example.com/authorize?state=s");
+    expect(sessionStorage.getItem("af.mcp_oauth.same_tab")).toBe("1");
+  });
+
+  it("a second click while the start is in flight starts nothing more", async () => {
+    setStatus({ state: "not_signed_in" });
+    let release!: () => void;
+    replies["POST api/mcp-servers/mcp-1/oauth/start"] = () =>
+      new Promise((res) => (release = () => res({ authorize_url: "https://as.example.com/a", issuer: "x" })));
+    await mount(row());
+    const b = button("Sign in")!;
+    await act(async () => {
+      b.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      b.dispatchEvent(new MouseEvent("click", { bubbles: true })); // same tick: React has not re-rendered
+    });
+    await act(async () => release());
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+    expect(openTab).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not navigate a tab the member already closed", async () => {
+    setStatus({ state: "not_signed_in" });
+    startReply();
+    tab.closed = true;
+    await mount(row());
+    await click(button("Sign in"));
+    expect(tab.location.href).toBe("");
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("Save and sign in opens its tab in the click, before the save", async () => {
+    setStatus({ state: "not_signed_in" });
+    let n = 0;
+    replies["POST api/mcp-servers/mcp-1/oauth/start"] = () =>
+      n++ === 0 ? { error: { code: "client_id_needed", issuer: "https://as.example.com" } } : { authorize_url: "https://as.example.com/b", issuer: "x" };
+    replies["PUT api/mcp-servers/mcp-1/oauth/client"] = () => ({});
+    await mount(row());
+    await click(button("Sign in"));
+    openTab.mockClear();
+    const input = host!.querySelector('input[aria-label="Client ID"]') as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "cid");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(button("Save and sign in"));
+    expect(openTab).toHaveBeenCalledTimes(1);
+    expect(tab.location.href).toBe("https://as.example.com/b");
+  });
+});
+
+describe("cross-tab completion", () => {
+  beforeEach(() => {
+    FakeChannel.all = [];
+    vi.stubGlobal("BroadcastChannel", FakeChannel);
+  });
+
+  const announce = (msg: unknown) => new FakeChannel("af-mcp-oauth").postMessage(msg);
+
+  it("re-reads the status and says so when THIS server's sign-in completes elsewhere", async () => {
+    setStatus({ state: "not_signed_in" });
+    await mount(row());
+    setStatus({ state: "connected", registration: "cimd" });
+    await act(async () => announce({ server: "mcp-1", outcome: "ok" }));
+    await act(async () => {});
+    expect(host!.querySelector('[data-testid="mcp-oauth-panel"]')!.getAttribute("data-state")).toBe("connected");
+    expect(toasts).toEqual(["Signed in."]);
+  });
+
+  it("ignores another server's completion, and malformed payloads", async () => {
+    setStatus({ state: "not_signed_in" });
+    await mount(row());
+    const reads = () => calls.filter((c) => c.method === "GET").length;
+    const before = reads();
+    await act(async () => announce({ server: "mcp-other", outcome: "ok" }));
+    await act(async () => announce({ server: "mcp-1", outcome: "<script>" }));
+    await act(async () => announce("mcp-1"));
+    expect(reads()).toBe(before);
+    expect(toasts).toHaveLength(0);
+  });
+
+  it("a failed outcome shows our own text for the code", async () => {
+    setStatus({ state: "not_signed_in" });
+    await mount(row());
+    await act(async () => announce({ server: "mcp-1", outcome: "iss_mismatch" }));
+    expect(toasts[0]).toContain("different authorization server");
+  });
+
+  it("re-reads on focus only while a sign-in started here is waiting", async () => {
+    setStatus({ state: "not_signed_in" });
+    startReply();
+    await mount(row());
+    const reads = () => calls.filter((c) => c.method === "GET").length;
+    let n = reads();
+    await act(async () => void window.dispatchEvent(new Event("focus")));
+    expect(reads()).toBe(n); // nothing started here
+    await click(button("Sign in"));
+    n = reads();
+    await act(async () => void window.dispatchEvent(new Event("focus")));
+    await act(async () => void document.dispatchEvent(new Event("visibilitychange")));
+    expect(reads()).toBeGreaterThan(n);
+  });
+
+  it("works through the storage event when there is no BroadcastChannel", async () => {
+    vi.stubGlobal("BroadcastChannel", undefined);
+    setStatus({ state: "not_signed_in" });
+    await mount(row());
+    setStatus({ state: "connected" });
+    await act(async () =>
+      void window.dispatchEvent(
+        new StorageEvent("storage", { key: "af.mcp_oauth.done", newValue: JSON.stringify({ server: "mcp-1", outcome: "ok" }) }),
+      ),
+    );
+    await act(async () => {});
+    expect(host!.querySelector('[data-testid="mcp-oauth-panel"]')!.getAttribute("data-state")).toBe("connected");
+  });
+});
+
+describe("return tab", () => {
+  beforeEach(() => {
+    FakeChannel.all = [];
+    vi.stubGlobal("BroadcastChannel", FakeChannel);
+  });
+  const at = (search: string) =>
+    vi.stubGlobal("location", { ...window.location, assign, search, pathname: "/", hash: "" });
+
+  it("shows the outcome, says the tab can be closed, announces only server id and outcome code", async () => {
+    const heard: unknown[] = [];
+    const listener = new FakeChannel("af-mcp-oauth");
+    listener.onmessage = (e) => heard.push(e.data);
+    const open = vi.spyOn(useSettingsUI.getState(), "openSettings").mockImplementation(() => {});
+    at("?mcp_oauth=ok&server=mcp-1&registration=cimd&code=SECRET&state=SECRET");
+    await mount(<McpOAuthReturn booted />);
+    expect(host!.querySelector('[data-testid="mcp-oauth-return"]')!.textContent).toContain("Signed in.");
+    expect(text()).toContain("You can close this tab");
+    expect(heard).toEqual([{ server: "mcp-1", outcome: "ok" }]);
+    expect(JSON.stringify(heard)).not.toContain("SECRET");
+    expect(open).not.toHaveBeenCalled(); // no navigation, no Settings takeover
+    expect(assign).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+
+  it("a failure shows our own words, announces the code, and never the received reason", async () => {
+    const heard: unknown[] = [];
+    const listener = new FakeChannel("af-mcp-oauth");
+    listener.onmessage = (e) => heard.push(e.data);
+    at("?mcp_oauth=failed&server=mcp-1&reason=" + encodeURIComponent("https://evil.example.com"));
+    await mount(<McpOAuthReturn booted />);
+    expect(text()).toContain("Sign-in did not finish");
+    expect(text()).not.toContain("evil");
+    expect(heard).toEqual([{ server: "mcp-1", outcome: "failed" }]);
+  });
+
+  it("announces nothing for a return that names no valid server", async () => {
+    const heard: unknown[] = [];
+    const listener = new FakeChannel("af-mcp-oauth");
+    listener.onmessage = (e) => heard.push(e.data);
+    at("?mcp_oauth=failed&server=" + encodeURIComponent("../x"));
+    await mount(<McpOAuthReturn booted />);
+    expect(heard).toEqual([]);
+  });
+
+  it("'Open the Console in this tab' dismisses it and opens Settings on MCP", async () => {
+    const open = vi.spyOn(useSettingsUI.getState(), "openSettings").mockImplementation(() => {});
+    at("?mcp_oauth=ok&server=mcp-1");
+    await mount(<McpOAuthReturn booted />);
+    await click(button("Open the Console in this tab"));
+    expect(host!.querySelector('[data-testid="mcp-oauth-return"]')).toBeNull();
+    expect(open).toHaveBeenCalledWith("mcp");
+    open.mockRestore();
+  });
+});
+
+describe("Sign in with the status read pending or failed", () => {
+  it("is enabled while the status read has not answered", async () => {
+    replies["GET api/mcp-servers/mcp-1/oauth"] = () => new Promise(() => {});
+    await mount(row());
+    expect(button("Sign in")!.disabled).toBe(false);
+  });
+
+  it("stays usable after a failed read, which offers a Reload that re-reads", async () => {
+    replies["GET api/mcp-servers/mcp-1/oauth"] = () => ({ error: { code: "mcp_not_found" } });
+    startReply();
+    await mount(row());
+    expect(text()).toContain("Could not read the sign-in status");
+    expect(button("Sign in")!.disabled).toBe(false);
+    setStatus({ state: "connected" });
+    await click(button("Reload"));
+    expect(host!.querySelector('[data-testid="mcp-oauth-status-error"]')).toBeNull();
+    expect(host!.querySelector('[data-testid="mcp-oauth-panel"]')!.getAttribute("data-state")).toBe("connected");
+  });
+
+  it("a Sign in pressed before the status arrives still starts a sign-in", async () => {
+    replies["GET api/mcp-servers/mcp-1/oauth"] = () => new Promise(() => {});
+    startReply();
+    await mount(row());
+    await click(button("Sign in"));
+    expect(tab.location.href).toBe("https://as.example.com/authorize?state=s");
+  });
+});
+
+describe("unfinished sign-in note", () => {
+  it("shows for a pending registration: try again, DCR, and the operator's trusted host", async () => {
+    setStatus({ state: "not_signed_in", pendingRegistration: "cimd" });
+    await mount(row());
+    const note = host!.querySelector('[data-testid="mcp-oauth-unfinished"]')!;
+    expect(note.textContent).toContain("never finished");
+    expect(note.textContent).toContain("Press Sign in to try again");
+    expect(note.textContent).toContain("trust this deployment's host");
+    expect(note.textContent).toContain("trusted client hosts");
+    expect(button("Retry with dynamic registration")).toBeTruthy();
+  });
+
+  it("offers no DCR retry for a pending registration that was not CIMD", async () => {
+    setStatus({ state: "not_signed_in", pendingRegistration: "dcr" });
+    await mount(row());
+    expect(host!.querySelector('[data-testid="mcp-oauth-unfinished"]')).toBeTruthy();
+    expect(button("Retry with dynamic registration")).toBeUndefined();
+  });
+
+  it("is absent with nothing pending, and when connected", async () => {
+    setStatus({ state: "not_signed_in" });
+    await mount(row());
+    expect(host!.querySelector('[data-testid="mcp-oauth-unfinished"]')).toBeNull();
+    act(() => root!.unmount());
+    host!.remove();
+    setStatus({ state: "connected", pendingRegistration: "cimd" });
+    await mount(row());
+    expect(host!.querySelector('[data-testid="mcp-oauth-unfinished"]')).toBeNull();
+  });
+
+  it("reads naturally in Japanese", async () => {
+    setStatus({ state: "not_signed_in", pendingRegistration: "cimd" });
+    await mount(row(), "ja");
+    expect(text()).toContain("最後まで終わっていません");
+    expect(text()).toContain("信頼するクライアントのホスト");
   });
 });
 

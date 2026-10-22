@@ -356,13 +356,19 @@ search.
   a new one replaces it. A server whose stored `Authorization` is anything other than a Bearer token (`Token ...`,
   say) opens as Custom headers. **OAuth** is for servers that only accept an OAuth sign-in: nothing is typed in the
   form (no static header is allowed with it). Save the server, then press **Sign in** on its row.
-  Your browser goes to the server's authorization server and comes back to the Console, and the row shows
+  The server's authorization server opens in a **new tab** (Sign in does not wait for the status to load). When it
+  is done, that tab shows the result and says it can be closed, and the row in your original Console tab updates by
+  itself. Only if the browser blocks the new tab does the sign-in open in the current tab, after telling you. The row shows
   **Connected** with when the access token expires (it renews itself), the scopes granted and how the client was
   identified (a client ID document Agent Fleet publishes, dynamic registration, or a client ID you entered).
   Other row states: **Not signed in**, **Sign in again** (the saved sign-in can no longer be renewed) and **More
   permission needed** (the server asked for a scope you did not grant). If the authorization server offers no
   automatic registration, Sign in asks for a **client ID** (and a secret, if it has one) registered by hand. If a
-  sign-in through the client ID document did not finish, the row offers **Retry with dynamic registration**.
+  sign-in through the client ID document did not finish, the row offers **Retry with dynamic registration**. A sign-in that was started and never came back (the
+  authorization server refused the client on its own error page, say) shows an **unfinished sign-in** note on the
+  row: press Sign in again, retry with dynamic registration, or ask the server's operator to trust this deployment's
+  host. To sign in to another Agent Fleet deployment, its administrator has to add this deployment's host to that
+  deployment's trusted client hosts setting.
   **Disconnect** deletes the saved sign-in and revokes it at the authorization server when that supports it.
   The sign-in lives in your workspace's encrypted store only. Using it from sessions and assistants is not built
   yet (#2479, phase 3): until the relay ships, an OAuth server is **not handed to any session or assistant**, so no

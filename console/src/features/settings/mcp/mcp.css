@@ -221,3 +221,29 @@
   padding-top: 6px;
   border-top: 1px solid var(--border);
 }
+
+.mcp-oauth-next {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+/* The tab the authorization server returned to: says how it went and that it can be closed. */
+.mcp-oauth-return {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.mcp-oauth-return-card {
+  max-width: 440px;
+  padding: 24px 28px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}

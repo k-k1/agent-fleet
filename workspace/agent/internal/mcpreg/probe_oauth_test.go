@@ -187,6 +187,9 @@ func TestProbeOAuthHappyPathViaChallenge(t *testing.T) {
 	if res.OK || res.OAuth == nil || !res.OAuth.Required {
 		t.Fatalf("want a recognised OAuth server, got %+v", res)
 	}
+	if !strings.Contains(res.Error, "サーバーの行からサインイン") || strings.Contains(res.Error, "まだ対応していません") {
+		t.Errorf("the text must point at the row's Sign in, not say it is unsupported: %q", res.Error)
+	}
 	o := res.OAuth
 	if len(o.Problems) != 0 || o.Selected != issuer || len(o.Servers) != 1 {
 		t.Fatalf("unexpected report: %+v", o)
