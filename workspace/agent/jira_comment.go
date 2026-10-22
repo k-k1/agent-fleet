@@ -138,7 +138,7 @@ func jiraCommentRun(c *secrets.JiraCreds, args []string, stdin io.Reader, stdout
 		// Jira does not say what an omitted visibility does on update, so the comment's own
 		// restriction (role / group, or a JSM internal flag) is read first and sent back as it was.
 		// The read also fails early, and in the same words, for a missing comment.
-		raw, status, err := jiraCommentCall(c, "GET", u+"?expand=properties", nil)
+		raw, status, _, err := jiraCommentCall(c, "GET", u+"?expand=properties", nil)
 		if err != nil {
 			fmt.Fprintln(stderr, "jira:", err)
 			return 1
@@ -161,10 +161,17 @@ func jiraCommentRun(c *secrets.JiraCreds, args []string, stdin io.Reader, stdout
 		}
 		payload, _ = json.Marshal(body)
 	}
-	raw, status, err := jiraCommentCall(c, method, u, payload)
+	raw, status, afterTransport, err := jiraCommentCall(c, method, u, payload)
 	if err != nil {
 		fmt.Fprintln(stderr, "jira:", err)
 		return 1
+	}
+	if a.verb == "delete" && status == http.StatusNotFound && afterTransport {
+		// An attempt cut off in transport may have been applied before the connection died; the
+		// retry then finds nothing. Reporting an error here made a delete that worked look failed.
+		fmt.Fprintf(stdout, "Comment %s on %s probably already deleted\n", a.id, a.key)
+		fmt.Fprintln(stderr, "jira: an earlier attempt failed in transport and the retry got 404, so the delete most likely went through")
+		return 0
 	}
 	if status != http.StatusOK && status != http.StatusNoContent {
 		fmt.Fprintln(stderr, "jira:", jiraCommentFailure(a, status, raw))
@@ -206,18 +213,21 @@ func jiraCommentBody(a jiraCommentArgs, stdin io.Reader) (string, error) {
 	return body, nil
 }
 
-// jiraCommentCall is one call with the same renewal rules as jiraPostIssueComment.
-func jiraCommentCall(c *secrets.JiraCreds, method, u string, payload []byte) ([]byte, int, error) {
+// jiraCommentCall is one call with the same renewal rules as jiraPostIssueComment. The bool
+// says an attempt failed in transport on the way (see jiraCallResult.afterTransport).
+func jiraCommentCall(c *secrets.JiraCreds, method, u string, payload []byte) ([]byte, int, bool, error) {
 	if err := jiraEnsureFresh(c); err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
-	raw, status, err := jiraRequest(c, method, u, payload)
-	if err == nil && status == http.StatusUnauthorized && c.AuthKind == "oauth" {
+	r := jiraDo(c, method, u, payload)
+	if r.err == nil && r.status == http.StatusUnauthorized && c.AuthKind == "oauth" {
 		if rerr := jiraRefreshNow(c); rerr == nil {
-			raw, status, err = jiraRequest(c, method, u, payload)
+			after := r.afterTransport
+			r = jiraDo(c, method, u, payload)
+			r.afterTransport = r.afterTransport || after
 		}
 	}
-	return raw, status, err
+	return r.body, r.status, r.afterTransport, r.err
 }
 
 // jiraCommentFailure words a refusal in one line, without the token or the request.

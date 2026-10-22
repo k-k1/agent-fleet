@@ -92,6 +92,14 @@ session. You can view, list, create, edit, comment on and transition issues:
 
   Open the body with a heading or a list, or put inline markup (bold, a link, `code`) in the first
   paragraph, and always leave a blank line before a list. Agents are told this too.
+- **Flaky network to Atlassian**: reading commands (`issue view` / `issue list`, `board`, `sprint`,
+  `epic` and `project list`, `me`) are re-run up to twice after a connection reset or timeout, and
+  only the last attempt's output is shown. Commands that change something are never re-run, so after
+  a failure of `issue create` or `comment add` check Jira before trying again. `comment edit` and
+  `comment delete` retry on their own; "probably already deleted" means the delete went through. If
+  the authorization expired or was revoked, `jira` prints "the Jira connection is unusable"
+  instead of asking for an API token: reconnect Jira in Settings. In output that is not a terminal,
+  links to issues point at your Jira site.
 - **Using an Atlassian MCP tool instead**: `jira` is the default because it works for every agent and
   renews the token itself, while an MCP connector serves one agent and needs a session restart when
   its login expires. To prefer the MCP route, say so in **⚙Settings → "Agent instructions"**, for

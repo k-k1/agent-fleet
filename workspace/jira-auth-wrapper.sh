@@ -36,14 +36,28 @@
 #   `workspace-agent jira-comment`, which holds the token itself and calls REST v3 (the body is
 #   Markdown converted to ADF there); the wrapper never sees the token for it. A user-owned
 #   config or an explicit token never gets here: those exec jira unchanged, as for everything else.
-# - Fails closed: any helper error leaves jira running with no injected auth.
+# - Fails closed: any helper error leaves jira running with no injected auth. The one exception
+#   is a connection the Agent reports as unusable (`unusable=<reason>` on jira-cred's stderr: an
+#   OAuth authorization that expired and could not be renewed, or was revoked): jira would
+#   print "generate an API token and run jira init", which is the wrong advice, so one line
+#   naming the real next step is printed and jira is not run. No connection at all is not that
+#   case and still runs jira as before.
+# - Atlassian is reached over a path that resets TCP connections now and then, and jira-cli
+#   never retries. READ-ONLY commands (readonly_cmd below) are therefore run to a private
+#   temporary directory and re-run, at most twice with a short jittered wait, when stderr names a
+#   transport failure; only the last attempt's output reaches the caller, so nothing is printed
+#   twice. A write is never re-run (`issue create` would duplicate), nor is anything unknown, and
+#   a terminal on stdout or stderr (jira-cli's TUI) keeps the plain exec. The captured files hold
+#   only what jira prints, never the token (a debug run is refused above). On this captured path
+#   the OAuth routing URLs in browse links are rewritten to the site URL; a write or a terminal
+#   run still prints jira-cli's own links.
 # - The token only ever lives in this shell's variables and, at the very end, in the exec'd
 #   jira's environment: never argv, never a file, never printed. xtrace and allexport are
 #   switched off first, and the variables are unset so none inherits an export attribute:
 #   otherwise the assignments below would be echoed, or exported to every helper.
 set +xa
 unset comment_cmd cred tok server auth login cfg sub sub2 sub3 proj cfg_argv own_init debug prev conf managed gen
-unset parent eff key cdir types derived yaml hint basekey soft npos ikey haveproj hasasg dd pv
+unset parent eff key cdir types derived yaml hint basekey soft npos ikey haveproj hasasg dd pv site why
 
 real="${AF_JIRA_REAL:-/usr/local/libexec/jira}"
 
@@ -140,13 +154,24 @@ fi
 # First value of a `key=value` line in the helper's answer on stdin.
 field() { sed -n "s/^$1=//;T;p;q"; }
 
-cred="$(workspace-agent jira-cred 2>/dev/null)" || cred=""
+# stderr joins the capture: jira-cred writes nothing there but an `unusable=` reason line, and
+# fields are picked by their key, so noise on it cannot become a credential.
+cred="$(workspace-agent jira-cred 2>&1)" || cred=""
+why="$(printf '%s\n' "$cred" | field unusable | tr -cd '[:print:]' | cut -c1-200)"
+site="$(printf '%s\n' "$cred" | field site)"
 tok="$(printf '%s\n' "$cred" | field token)"
 server="$(printf '%s\n' "$cred" | field server)"
 auth="$(printf '%s\n' "$cred" | field auth)"
 login="$(printf '%s\n' "$cred" | field login)"
 soft="$(printf '%s\n' "$cred" | field software)"
 if [ -z "$tok" ] || [ -z "$server" ] || [ -z "$auth" ]; then
+  if [ -n "$why" ]; then
+    case "$sub" in
+      "" | help | completion | man | version | __complete*) ;;
+      *) echo "jira: the Jira connection is unusable (expired or revoked): reconnect Jira in Settings [$why]" >&2
+         exit 1 ;;
+    esac
+  fi
   exec "$real" "$@"
 fi
 
@@ -353,4 +378,58 @@ fi
 
 export JIRA_API_TOKEN="$tok" JIRA_SERVER="$server" JIRA_AUTH_TYPE="$auth" JIRA_INSTALLATION=Cloud JIRA_DEBUG=false
 if [ -n "$login" ]; then export JIRA_LOGIN="$login"; else unset JIRA_LOGIN; fi
+
+# Commands that only read, by the same positional words the rest of this file goes by. A word
+# this does not know is a write: the direction to fail in is "run once".
+readonly_cmd() {
+  case "$sub" in
+    issue | issues) case "$sub2" in view | show | list | lists | ls | search) true ;; *) false ;; esac ;;
+    board | boards | sprint | sprints | epic | epics | project | projects)
+      case "$sub2" in list | lists | ls) true ;; *) false ;; esac ;;
+    me) true ;;
+    *) false ;;
+  esac
+}
+# True when a failed attempt's stderr says the request never got a proper answer. HTTP statuses
+# (401, 404, 5xx bodies) are not in it: those were answered, and a retry would not change them.
+transport_failure() {
+  grep -Eiq 'connection refused|no such host|Temporary failure in name resolution|Name or service not known|connection reset by peer|broken pipe|i/o timeout|TLS handshake timeout|Client\.Timeout exceeded|unexpected EOF|: EOF($|[^a-zA-Z])|^EOF$' "$1" 2>/dev/null
+}
+# Runs jira to a private directory, re-running on a transport failure, then replays the last
+# attempt: stdout (browse links rewritten to the site) and stderr, with jira's exit status.
+run_read_only() {
+  local d n=0 rc wait
+  d="$(mktemp -d 2>/dev/null)" || exec "$real" "$@"
+  trap 'rm -rf "$d"' EXIT
+  trap 'rm -rf "$d"; exit 130' INT TERM HUP
+  while :; do
+    # Reads take no input; a terminal stdin must not wait on a prompt the capture hides.
+    "$real" "$@" >"$d/out" 2>"$d/err" </dev/null
+    rc=$?
+    [ "$rc" -ne 0 ] && transport_failure "$d/err" || break
+    if [ "$n" -ge 2 ]; then
+      echo "jira: giving up after $((n + 1)) attempts: the connection to Jira kept failing" >&2
+      break
+    fi
+    n=$((n + 1))
+    # Jittered, 0.5-1 s then 1-2 s; AF_JIRA_RETRY_WAIT overrides it (the tests).
+    wait="${AF_JIRA_RETRY_WAIT:-$((n * 500 + RANDOM % (n * 500 + 1)))}"
+    case "$wait" in *[!0-9]*) wait=0 ;; esac
+    sleep "$((wait / 1000)).$(printf '%03d' "$((wait % 1000))")"
+  done
+  # --raw output carries user text verbatim; it is not rewritten.
+  if [ -n "$site" ] && [ "$site" != "$server" ] && ! printf '%s\n' "$@" | grep -qxe '--raw' -e '--raw=.*'; then
+    FROM="$server/browse/" TO="$site/browse/" awk '
+      BEGIN { f = ENVIRON["FROM"]; t = ENVIRON["TO"]; n = length(f) }
+      { out = ""; while ((i = index($0, f)) > 0) { out = out substr($0, 1, i - 1) t; $0 = substr($0, i + n) }
+        print out $0 }' "$d/out"
+  else
+    cat "$d/out"
+  fi
+  cat "$d/err" >&2
+  exit "$rc"
+}
+if readonly_cmd && [ ! -t 1 ] && [ ! -t 2 ]; then
+  run_read_only "$@"
+fi
 exec "$real" "$@"

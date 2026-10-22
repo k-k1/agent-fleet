@@ -26,9 +26,14 @@ func seedJiraStore(t *testing.T, fn func(s *secrets.Data)) {
 }
 
 func jiraCredOut() string {
-	var out bytes.Buffer
-	jiraCredGet(&out)
-	return out.String()
+	out, _ := jiraCredBoth()
+	return out
+}
+
+func jiraCredBoth() (string, string) {
+	var out, errb bytes.Buffer
+	jiraCredGet(&out, &errb)
+	return out.String(), errb.String()
 }
 
 func TestJiraCredServesAnAPITokenConnectionAsBasic(t *testing.T) {
@@ -191,7 +196,7 @@ func TestJiraCredRaceHelper(t *testing.T) {
 		t.Skip("helper process only")
 	}
 	<-time.After(time.Until(time.Unix(0, mustInt64(os.Getenv("AF_JIRA_CRED_RACE")))))
-	jiraCredGet(os.Stdout)
+	jiraCredGet(os.Stdout, os.Stderr)
 }
 
 func mustInt64(s string) int64 {
@@ -348,5 +353,36 @@ func TestConnectionsGetBackfillsJiraScopes(t *testing.T) {
 	}
 	if s, _ := secrets.Load(); len(s.Jira.Sites[0].Scopes) == 0 {
 		t.Fatal("scopes not stored")
+	}
+}
+
+// A connection that exists but cannot be used says why on stderr; no connection stays silent.
+func TestJiraCredSaysWhyAConnectionIsUnusable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+	oauthExpired := func(s *secrets.Data) {
+		s.GitOAuthBridge = &secrets.CPBridge{BaseURL: srv.URL, Token: "afo_x"}
+		s.Jira = &secrets.JiraCreds{AuthKind: "oauth", Site: "https://acme.atlassian.net", CloudID: "cid-1",
+			AccessToken: "fake-at1", RefreshToken: "fake-rt1", Expiry: time.Now().Add(-time.Minute).Unix()}
+	}
+	seedJiraStore(t, oauthExpired)
+	out, errs := jiraCredBoth()
+	if out != "" || !strings.HasPrefix(errs, "unusable=the access token expired") || strings.Count(errs, "\n") != 1 {
+		t.Fatalf("expired: out=%q err=%q", out, errs)
+	}
+	if strings.Contains(errs, "fake-") || strings.Contains(errs, srv.URL) {
+		t.Errorf("reason leaks detail: %q", errs)
+	}
+	seedJiraStore(t, func(s *secrets.Data) {})
+	if out, errs := jiraCredBoth(); out != "" || errs != "" {
+		t.Errorf("no connection: out=%q err=%q", out, errs)
+	}
+	seedJiraStore(t, func(s *secrets.Data) {
+		s.Jira = &secrets.JiraCreds{AuthKind: "oauth", AccessToken: "fake-at", Expiry: time.Now().Add(time.Hour).Unix()}
+	})
+	if _, errs := jiraCredBoth(); !strings.HasPrefix(errs, "unusable=") {
+		t.Errorf("no site: err=%q", errs)
 	}
 }
