@@ -51,6 +51,21 @@
 #   only what jira prints, never the token (a debug run is refused above). On this captured path
 #   the OAuth routing URLs in browse links are rewritten to the site URL; a write or a terminal
 #   run still prints jira-cli's own links.
+# - jira-cli 1.7.0 can hang forever, for two reasons; both are bounded here for a run with no
+#   terminal on stdin, stdout or stderr (a terminal run keeps the plain exec: `timeout` without
+#   --foreground breaks job control, and the TUI must never be killed).
+#   * `issue create|edit` and `comment add` read all of stdin whenever it is not a terminal, even
+#     with -b and --no-input, and discard what they read. An open pipe or socket never ends. When
+#     a body is given on the command line and there is no -T file (`-T -` included: the body flag
+#     wins), or stdin is a character device other than /dev/null, jira gets </dev/null. A pipe or
+#     socket that may hold the body (no -b, or `-T -` alone) is left alone even if that blocks:
+#     cutting it would create the issue with an empty description.
+#   * It has no request timeout, so a server that takes the request and never answers blocks it
+#     forever. Every jira run is wrapped in `timeout` (AF_JIRA_TIMEOUT seconds, 0 = off; default
+#     120 for a write, 45 per attempt for a read), the user's-own-setup paths included, and so are
+#     the Agent helpers (30 s). A timed-out read counts as a transport failure and is re-run like
+#     one. A timed-out write is never re-run: it exits 124 and says the change may exist, because
+#     `issue create` is not idempotent and the agent cannot tell the two apart.
 # - The token only ever lives in this shell's variables and, at the very end, in the exec'd
 #   jira's environment: never argv, never a file, never printed. xtrace and allexport are
 #   switched off first, and the variables are unset so none inherits an export attribute:
@@ -58,16 +73,146 @@
 set +xa
 unset comment_cmd cred tok server auth login cfg sub sub2 sub3 proj cfg_argv own_init debug prev conf managed gen
 unset parent eff key cdir types derived yaml hint basekey soft npos ikey haveproj hasasg dd pv site why
+unset sbody stmpl spos spbody
 
 real="${AF_JIRA_REAL:-/usr/local/libexec/jira}"
+
+# True when no terminal is attached to stdin, stdout or stderr: the only runs that are bounded.
+nontty() { [ ! -t 0 ] && [ ! -t 1 ] && [ ! -t 2 ]; }
+
+# Seconds one attempt may take, empty when unbounded. AF_JIRA_TIMEOUT overrides the default
+# ($1); 0 switches it off; anything that is not a plain number is ignored.
+attempt_limit() {
+  local v="${AF_JIRA_TIMEOUT:-$1}"
+  case "$v" in "" | . | *[!0-9.]* | *.*.*) v="$1" ;; esac
+  [ -n "${v//[0.]/}" ] && printf '%s' "$v"
+  return 0
+}
+kill_grace() {
+  case "${AF_JIRA_KILL_GRACE:-5}" in "" | . | *[!0-9.]* | *.*.*) echo 5 ;; *) echo "${AF_JIRA_KILL_GRACE:-5}" ;; esac
+}
+# timed_out <rc> <start seconds> <limit>: timeout(1) answers 124, or 137 when jira ignored the
+# TERM and the KILL after the grace period came. Either only counts once the limit has really
+# elapsed: 137 is also what an OOM kill looks like, and jira-cli itself exits 0 or 1.
+timed_out() {
+  local whole="${3%%.*}"
+  [ "$1" = 124 ] || [ "$1" = 137 ] && [ "$((SECONDS - $2))" -ge "$((${whole:-0} - 1))" ]
+}
+
+# Only the commands below read stdin in jira-cli (see the header): issue create, issue edit and
+# issue comment add. scan_body_args sets sbody / stmpl / spbody from argv the way cobra parses
+# it: -b, -bX, -b=X, -b X, --body=X, --body X (same for -T / --template), skipping the values of the
+# other flags so that `-s -b` (a summary of "-b") is not read as a body. The last one wins, and an
+# empty value is no value (jira-cli then reads stdin for the body).
+stdin_cmd() {
+  case "$sub" in
+    issue | issues)
+      case "$sub2" in
+        create | edit | update | modify) true ;;
+        comment | comments) [ "$sub3" = add ] ;;
+        *) false ;;
+      esac ;;
+    *) false ;;
+  esac
+}
+scan_body_args() {
+  local a nx="" dd="" k rest
+  sbody="" stmpl="" spos=0 spbody=""
+  for a in "$@"; do
+    if [ -n "$nx" ]; then
+      case "$nx" in body) sbody="$a" ;; template) stmpl="$a" ;; esac
+      nx=""; continue
+    fi
+    if [ -z "$dd" ]; then
+      case "$a" in
+        --) dd=1; continue ;;
+        --body=*) sbody="${a#--body=}"; continue ;;
+        --template=*) stmpl="${a#--template=}"; continue ;;
+        --body) nx=body; continue ;;
+        --template) nx=template; continue ;;
+        --type | --parent | --summary | --priority | --reporter | --assignee | --label | --component | \
+          --fix-version | --affects-version | --original-estimate | --custom | --config | --project)
+          nx=other; continue ;;
+        --*) continue ;;
+        -[tPsbyraelCTcp]*)
+          k="${a:1:1}" rest="${a:2}"
+          case "$k" in b) k=body ;; T) k=template ;; *) k=other ;; esac
+          if [ -z "$rest" ]; then nx="$k"; continue; fi
+          rest="${rest#=}"
+          case "$k" in body) sbody="$rest" ;; template) stmpl="$rest" ;; esac
+          continue ;;
+        -?*) continue ;;
+      esac
+    fi
+    spos=$((spos + 1))
+    [ "$spos" -ne 5 ] || spbody="$a"
+  done
+}
+# For a run with no terminal: take stdin away from jira-cli when it would only block there.
+# - A character device other than /dev/null (/dev/zero never ends) cannot be a body.
+# - A body on the command line makes whatever stdin holds, `-T -` included, discarded data.
+# - Otherwise stdin may be the body (a pipe, a socket, `-T -`) and is left alone, even if that can
+#   block: cutting it would create the issue with an empty description without a word.
+stdin_guard() {
+  stdin_cmd || return 0
+  if [ -c /dev/stdin ] && [ ! /dev/stdin -ef /dev/null ]; then exec </dev/null; fi
+  scan_body_args "$@"
+  case "$sub2" in comment | comments) sbody="${sbody:-$spbody}" ;; esac
+  if [ -n "$sbody" ] && { [ -z "$stmpl" ] || [ "$stmpl" = - ]; }; then exec </dev/null; fi
+}
+
+# A write that has no terminal runs under timeout(1) as a child, so that its exit status can be
+# told from a timeout; everything it prints goes straight through. Signals meant for the wrapper
+# are forwarded: a bash that dies on TERM would leave timeout and jira behind. Returns (and the
+# caller execs as before) when there is nothing to enforce.
+run_bounded() {
+  local lim pid="" rc start sig="" what
+  lim="$(attempt_limit 120)"
+  [ -n "$lim" ] && command -v timeout >/dev/null 2>&1 || return 0
+  start=$SECONDS
+  trap 'sig=1; [ -z "$pid" ] || kill -TERM "$pid" 2>/dev/null' INT TERM HUP
+  timeout -k "$(kill_grace)" "$lim" "$real" "$@" <&0 &
+  pid=$!
+  [ -z "$sig" ] || kill -TERM "$pid" 2>/dev/null
+  wait "$pid"; rc=$?
+  while kill -0 "$pid" 2>/dev/null; do wait "$pid"; rc=$?; done
+  trap - INT TERM HUP
+  [ -z "$sig" ] || exit "$rc"
+  if timed_out "$rc" "$start" "$lim"; then
+    case "$sub2" in
+      create) what="issue may have been created" ;;
+      comment | comments) what="comment may have been added" ;;
+      *) what="change may have been applied" ;;
+    esac
+    echo "jira: jira did not answer within $lim s; the $what - check Jira before running it again" >&2
+    exit 124
+  fi
+  exit "$rc"
+}
+# Bounded run of a helper of the Agent (jira-cred, jira-issue-types): a stuck helper must not hang
+# every command, and the fail-closed paths already treat an empty answer as "no credential".
+bounded() {
+  local lim
+  lim="$(attempt_limit 30)"
+  if [ -n "$lim" ] && nontty && command -v timeout >/dev/null 2>&1; then
+    timeout -k "$(kill_grace)" "$lim" "$@"
+  else
+    "$@"
+  fi
+}
+# The final step of a path that runs jira unchanged: no terminal means stdin and time are bounded.
+exec_real() {
+  if nontty; then
+    stdin_guard "$@"
+    run_bounded "$@"
+  fi
+  exec "$real" "$@"
+}
+
 
 # `jira version` needs no credential. Skipping the helper keeps the Toolchains probe (which
 # runs this wrapper) from taking the store lock or renewing an OAuth token over the network.
 if [ "$#" -eq 1 ] && [ "$1" = version ]; then
-  exec "$real" "$@"
-fi
-
-if [ -n "${JIRA_API_TOKEN:-}" ] || [ -n "${JIRA_SERVER:-}" ]; then
   exec "$real" "$@"
 fi
 
@@ -99,6 +244,9 @@ for a in "$@"; do
 done
 case "$sub" in initialize | configure | config | setup) sub=init ;; esac
 case "${JIRA_DEBUG:-}" in "" | 0 | f* | F*) ;; *) debug=1 ;; esac
+if [ -n "${JIRA_API_TOKEN:-}" ] || [ -n "${JIRA_SERVER:-}" ]; then
+  exec_real "$@"
+fi
 cfg_argv="$cfg"
 [ -n "$cfg" ] || cfg="${JIRA_CONFIG_FILE:-}"
 
@@ -112,16 +260,16 @@ in_managed() {
 
 if [ "$sub" = init ]; then
   # `jira init` naming its own server or login is configuring another Jira.
-  [ -z "$own_init" ] || exec "$real" "$@"
+  [ -z "$own_init" ] || exec_real "$@"
   if [ -z "$cfg" ]; then
     export JIRA_CONFIG_FILE="$managed/config.yml"
   elif ! in_managed "$cfg"; then
-    exec "$real" "$@"
+    exec_real "$@"
   fi
 elif [ -n "$cfg" ]; then
-  in_managed "$cfg" || exec "$real" "$@"
+  in_managed "$cfg" || exec_real "$@"
 elif [ -e "$conf/.jira/.config.yml" ] || [ -e "$conf/.jira/.config.yaml" ]; then
-  exec "$real" "$@"
+  exec_real "$@"
 elif [ -e "$managed/config.yml" ]; then
   export JIRA_CONFIG_FILE="$managed/config.yml"
 else
@@ -143,11 +291,14 @@ if [ -n "$debug" ]; then
     exit 1
   fi
   echo "jira: debug output prints the Authorization header, so this run gets no credential from the connection" >&2
-  exec "$real" "$@"
+  exec_real "$@"
 fi
 
 # Not a jira-cli command: the Agent makes the call with its own copy of the credential.
 if [ -n "$comment_cmd" ]; then
+  if nontty && command -v timeout >/dev/null 2>&1 && lim="$(attempt_limit 120)" && [ -n "$lim" ]; then
+    exec timeout -k "$(kill_grace)" "$lim" workspace-agent jira-comment "$@"
+  fi
   exec workspace-agent jira-comment "$@"
 fi
 
@@ -156,7 +307,7 @@ field() { sed -n "s/^$1=//;T;p;q"; }
 
 # stderr joins the capture: jira-cred writes nothing there but an `unusable=` reason line, and
 # fields are picked by their key, so noise on it cannot become a credential.
-cred="$(workspace-agent jira-cred 2>&1)" || cred=""
+cred="$(bounded workspace-agent jira-cred 2>&1)" || cred=""
 why="$(printf '%s\n' "$cred" | field unusable | tr -cd '[:print:]' | cut -c1-200)"
 site="$(printf '%s\n' "$cred" | field site)"
 tok="$(printf '%s\n' "$cred" | field token)"
@@ -172,7 +323,7 @@ if [ -z "$tok" ] || [ -z "$server" ] || [ -z "$auth" ]; then
          exit 1 ;;
     esac
   fi
-  exec "$real" "$@"
+  exec_real "$@"
 fi
 
 # The Agent says `software=missing` only for an OAuth authorization it knows lacks the Jira
@@ -259,7 +410,7 @@ derive_types_config() {
   ddir="${XDG_CACHE_HOME:-${HOME:-/nonexistent}/.cache}/agent-fleet/jira/derived"
   types="$ddir/issue-types-$sh-$key.yml"
   (umask 077; mkdir -p "$ddir" 2>/dev/null) && chmod 700 "$ddir" 2>/dev/null || return 1
-  yaml="$(workspace-agent jira-issue-types "$key" 2>/dev/null)" || yaml=""
+  yaml="$(bounded workspace-agent jira-issue-types "$key" 2>/dev/null)" || yaml=""
   case "$yaml" in
     "issue:"*"- id:"*) (umask 077; printf '%s\n' "$yaml" >"$types.$$") 2>/dev/null && mv -f "$types.$$" "$types" 2>/dev/null ;;
   esac
@@ -398,17 +549,36 @@ transport_failure() {
 # Runs jira to a private directory, re-running on a transport failure, then replays the last
 # attempt: stdout (browse links rewritten to the site) and stderr, with jira's exit status.
 run_read_only() {
-  local d n=0 rc wait
+  local d n=0 rc wait lim start tcmd=() late pid="" sig="" why
   d="$(mktemp -d 2>/dev/null)" || exec "$real" "$@"
+  lim="$(attempt_limit 45)"
+  if [ -n "$lim" ] && command -v timeout >/dev/null 2>&1; then
+    tcmd=(timeout -k "$(kill_grace)" "$lim")
+  else
+    lim=""
+  fi
   trap 'rm -rf "$d"' EXIT
-  trap 'rm -rf "$d"; exit 130' INT TERM HUP
+  # A signal is forwarded to the attempt (timeout, then jira) and the run ends after it.
+  trap 'sig=1; [ -z "$pid" ] || kill -TERM "$pid" 2>/dev/null' INT TERM HUP
   while :; do
     # Reads take no input; a terminal stdin must not wait on a prompt the capture hides.
-    "$real" "$@" >"$d/out" 2>"$d/err" </dev/null
-    rc=$?
-    [ "$rc" -ne 0 ] && transport_failure "$d/err" || break
+    start=$SECONDS late=""
+    "${tcmd[@]}" "$real" "$@" >"$d/out" 2>"$d/err" </dev/null &
+    pid=$!
+    wait "$pid"; rc=$?
+    while kill -0 "$pid" 2>/dev/null; do wait "$pid"; rc=$?; done
+    pid=""
+    [ -z "$sig" ] || exit 130
+    # No answer in time is a transport failure like a reset one.
+    if [ -n "$lim" ] && timed_out "$rc" "$start" "$lim"; then
+      late=1
+      rc=124
+      echo "jira: no answer within $lim s (AF_JIRA_TIMEOUT sets the limit, 0 = none)" >>"$d/err"
+    fi
+    if [ "$rc" -eq 0 ] || { [ -z "$late" ] && ! transport_failure "$d/err"; }; then break; fi
     if [ "$n" -ge 2 ]; then
-      echo "jira: giving up after $((n + 1)) attempts: the connection to Jira kept failing" >&2
+      if [ -n "$late" ]; then why="Jira did not answer in time"; else why="the connection to Jira kept failing"; fi
+      echo "jira: giving up after $((n + 1)) attempts: $why" >&2
       break
     fi
     n=$((n + 1))
@@ -416,6 +586,7 @@ run_read_only() {
     wait="${AF_JIRA_RETRY_WAIT:-$((n * 500 + RANDOM % (n * 500 + 1)))}"
     case "$wait" in *[!0-9]*) wait=0 ;; esac
     sleep "$((wait / 1000)).$(printf '%03d' "$((wait % 1000))")"
+    [ -z "$sig" ] || exit 130
   done
   # --raw output carries user text verbatim; it is not rewritten.
   if [ -n "$site" ] && [ "$site" != "$server" ] && ! printf '%s\n' "$@" | grep -qxe '--raw' -e '--raw=.*'; then
@@ -431,5 +602,9 @@ run_read_only() {
 }
 if readonly_cmd && [ ! -t 1 ] && [ ! -t 2 ]; then
   run_read_only "$@"
+fi
+if nontty; then
+  stdin_guard "$@"
+  run_bounded "$@"
 fi
 exec "$real" "$@"

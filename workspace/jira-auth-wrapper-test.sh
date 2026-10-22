@@ -11,7 +11,7 @@
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WRAPPER="$HERE/jira-auth-wrapper.sh"
+WRAPPER="${AF_JIRA_WRAPPER:-$HERE/jira-auth-wrapper.sh}"
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 mkdir "$T/bin" "$T/home" "$T/tmp"
@@ -20,6 +20,7 @@ cat >"$T/bin/workspace-agent" <<'STUB'
 #!/bin/sh
 set +x
 echo "$*" >>"$STUB_DIR/agent.calls"
+[ ! -f "$STUB_DIR/agent.hang" ] || exec sleep 60
 [ -z "${JIRA_API_TOKEN-}" ] || echo leaked >"$STUB_DIR/agent.leak"
 case "$1" in
   jira-cred) [ ! -f "$STUB_DIR/agent.why" ] || { cat "$STUB_DIR/agent.why" >&2; exit 0; }
@@ -37,6 +38,12 @@ set +x
 # Attempt N takes plan.N.{rc,out,err} when they exist (see plan()); otherwise it succeeds.
 n=$(($(cat "$STUB_DIR/jira.count" 2>/dev/null || echo 0) + 1))
 echo "$n" >"$STUB_DIR/jira.count"
+echo "$$" >"$STUB_DIR/jira.pid"
+# Who started this process, and with which argv: `timeout` when the wrapper bounded the run.
+cat "/proc/$PPID/comm" >"$STUB_DIR/jira.parent" 2>/dev/null
+tr '\0' ' ' <"/proc/$PPID/cmdline" >"$STUB_DIR/jira.parent.cmd" 2>/dev/null
+# What jira-cli does: read all of stdin (until EOF) whatever -b says. Capped for a char device.
+[ -z "${STUB_READ_STDIN-}" ] || head -c 65536 >"$STUB_DIR/stdin.seen"
 {
   echo "TOKEN=${JIRA_API_TOKEN-<unset>}"
   echo "SERVER=${JIRA_SERVER-<unset>}"
@@ -47,6 +54,9 @@ echo "$n" >"$STUB_DIR/jira.count"
   echo "DEBUG=${JIRA_DEBUG-<unset>}"
   for a in "$@"; do echo "ARG=$a"; done
 } >"$STUB_DIR/jira.seen"
+# plan.N.hang: take the request and never answer (N seconds; plan.N.deaf ignores TERM too).
+[ ! -f "$STUB_DIR/plan.$n.deaf" ] || trap '' TERM
+[ ! -f "$STUB_DIR/plan.$n.hang" ] && [ ! -f "$STUB_DIR/plan.$n.deaf" ] || exec sleep "$(cat "$STUB_DIR"/plan.$n.hang "$STUB_DIR"/plan.$n.deaf 2>/dev/null | head -n1)"
 [ ! -f "$STUB_DIR/plan.$n.out" ] || cat "$STUB_DIR/plan.$n.out"
 [ ! -f "$STUB_DIR/plan.$n.err" ] || cat "$STUB_DIR/plan.$n.err" >&2
 [ ! -f "$STUB_DIR/plan.$n.rc" ] || exit "$(cat "$STUB_DIR/plan.$n.rc")"
@@ -55,6 +65,7 @@ STUB
 chmod +x "$T/bin/"*
 
 fails=0
+RUN_PRE=()
 fail() { echo "FAIL: $*" >&2; fails=$((fails + 1)); }
 
 # run <env assignments…> -- <jira args…>: a clean slate, then the wrapper. stdout/stderr land in
@@ -63,9 +74,9 @@ run() {
   local envs=()
   while [ "$1" != -- ]; do envs+=("$1"); shift; done
   shift
-  rm -f "$T/jira.seen" "$T/agent.calls" "$T/agent.leak" "$T/jira.count"
-  env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" \
-    TMPDIR="$T/tmp" AF_JIRA_RETRY_WAIT=0 "${envs[@]}" bash "$WRAPPER" "$@" >"$T/out" 2>"$T/err" </dev/null
+  rm -f "$T/jira.seen" "$T/agent.calls" "$T/agent.leak" "$T/jira.count" "$T/jira.parent" "$T/stdin.seen"
+  "${RUN_PRE[@]}" env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" \
+    TMPDIR="$T/tmp" AF_JIRA_RETRY_WAIT=0 "${envs[@]}" bash "$WRAPPER" "$@" >"$T/out" 2>"$T/err" <"${RUN_IN:-/dev/null}"
   rc=$?
 }
 seen() { sed -n "s/^$1=//p" "$T/jira.seen"; }
@@ -986,6 +997,255 @@ plan 1 0 "$ROUTE/browse/KEY-1
 " ""
 run -- issue create -s x
 [ "$(cat "$T/out")" = "$ROUTE/browse/KEY-1" ] || fail "links (write): '$(cat "$T/out")'"
+
+# 18. jira-cli 1.7.0 reads all of stdin for `issue create|edit` and `comment add` even with -b, so
+#     an open pipe hangs it forever. With the body on the command line (and no -T file), or a
+#     character device other than /dev/null for stdin, jira gets /dev/null; a body that may come
+#     from stdin (a pipe or socket with no -b, `-T -` alone) is untouched, even if it blocks.
+#     The stub reads stdin to EOF like jira-cli; the open pipe is a fifo whose write end this
+#     shell keeps open, so the only way out is the wrapper taking stdin away. Each run is
+#     watched for 3 s.
+mkfifo "$T/fifo"
+exec 9<>"$T/fifo"
+finishes() { # finishes <label> <env…> -- <jira args…>: stdin is the open pipe
+  local label="$1"; shift
+  RUN_IN="$T/fifo"; RUN_PRE=(timeout -k 1 3)
+  run STUB_READ_STDIN=1 "$@"
+  RUN_PRE=() RUN_IN=
+  [ "$rc" != 124 ] && [ "$rc" != 137 ] && [ -f "$T/jira.seen" ] || fail "stdin [$label]: blocked on an open pipe (rc=$rc)"
+  [ ! -s "$T/stdin.seen" ] || fail "stdin [$label]: jira got stdin data"
+}
+for cmdline in "issue create -tTask -s sum -b body --no-input" "issue create -tTask -s sum --body body" \
+  "issue create -s sum --body=body" "issue create -s sum -b=body" "issue create -s sum -bbody" \
+  "issue edit K-1 -b body" "issue update K-1 --body=x" "issue modify K-1 -bx" \
+  "issue comment add K-1 hello --no-input" "issues comments add K-1 hello" "issue comment add -p KEY K-1 hello" \
+  "issue create -s sum -b body --label l1 -a me" "issue create -t Task -s sum -b body -T - --no-input" \
+  "issue comment add K-1 hello -T -" "issue create -s sum -e 2h -b body" "issue create -s sum -b body --template=-" \
+  "issue edit K-1 -b x -T -"; do
+  reset; oauth
+  # shellcheck disable=SC2086
+  finishes "$cmdline" -- $cmdline
+done
+# A summary that looks like a flag is not a body: -s -b swallows the next word, so stdin stays.
+reset; oauth
+echo data >"$T/body.in"
+RUN_IN="$T/body.in" run STUB_READ_STDIN=1 -- issue create -s -b x
+[ "$(cat "$T/stdin.seen")" = data ] || fail "stdin: '-s -b x' was taken for a body"
+exec 9>&-
+# Bodies that come from stdin reach jira: -T -, a pipe with no -b, an empty -b, and comment add
+# with no text. (The pipe is a fifo with a writer, so it ends.)
+for cmdline in "issue create -s sum -T -" "issue create -s sum --template=-" \
+  "issue create -s sum" "issue create -s sum -b ''" "issue edit K-1 -s x" "issue comment add K-1" \
+  "issue comment add K-1 -T -" "issue create -s sum -- -b body" "issue create -s sum -T $T/body.in -b body"; do
+  reset; oauth
+  (printf 'piped body' >"$T/fifo") &
+  # shellcheck disable=SC2086
+  eval "RUN_IN='$T/fifo' run STUB_READ_STDIN=1 -- $cmdline"
+  wait
+  [ "$(cat "$T/stdin.seen" 2>/dev/null)" = "piped body" ] || fail "stdin [$cmdline]: piped body did not reach jira: '$(cat "$T/stdin.seen" 2>/dev/null)'"
+done
+# Other commands never lose stdin.
+reset; oauth
+(printf 'x' >"$T/fifo") &
+RUN_IN="$T/fifo" run STUB_READ_STDIN=1 -- issue move K-1 Done
+wait
+[ "$(cat "$T/stdin.seen")" = x ] || fail "stdin: issue move lost its stdin"
+# A socket is a body source like a pipe: with -b it is cut (it may never end), without it jira
+# gets what was sent. A character device other than /dev/null is never a body.
+if command -v python3 >/dev/null 2>&1; then
+  sockrun() { # sockrun <data> <close the far end: 1|0> <jira args…>
+    local data="$1" close="$2"; shift 2
+    RUN_PRE=(timeout -k 1 3 python3 -c 'import socket,subprocess,sys
+a,b=socket.socketpair()
+if sys.argv[1]: b.send(sys.argv[1].encode())
+if sys.argv[2]=="1": b.close()
+sys.exit(subprocess.run(sys.argv[3:],stdin=a).returncode)' "$data" "$close")
+    run STUB_READ_STDIN=1 "$@"
+    RUN_PRE=()
+  }
+  reset; oauth
+  sockrun "" 0 -- issue create -s sum -b body --no-input
+  [ "$rc" = 0 ] && [ ! -s "$T/stdin.seen" ] && [ -f "$T/jira.seen" ] || fail "stdin: a socket blocked jira despite -b (rc=$rc)"
+  reset; oauth
+  sockrun "sock body" 1 -- issue create -s sum --no-input
+  [ "$(cat "$T/stdin.seen" 2>/dev/null)" = "sock body" ] || fail "stdin: a socket body was dropped: '$(cat "$T/stdin.seen" 2>/dev/null)'"
+else
+  echo "SKIP: no python3, socket stdin case not run" >&2
+fi
+reset; oauth
+RUN_IN=/dev/zero; RUN_PRE=(timeout -k 1 3)
+run STUB_READ_STDIN=1 -- issue create -s sum --no-input
+RUN_PRE=() RUN_IN=
+[ "$rc" = 0 ] && [ ! -s "$T/stdin.seen" ] || fail "stdin: a character device was passed on (rc=$rc, $(wc -c <"$T/stdin.seen") bytes)"
+
+# 19. jira-cli has no request timeout. A run with no terminal is bounded: 120 s for a write, 45 s
+#     per attempt for a read, AF_JIRA_TIMEOUT overriding both (0 = off). Small values here.
+errl() { grep -v '^jira: this config has no issue types' "$T/err"; } # the config-less create hint is not under test
+# A write is never re-run: 124, one line on stderr, the issue/comment may exist.
+for cmdline in "issue create -s x -b y" "issue comment add K-1 hi" "issue edit K-1 -s x" "issue move K-1 Done"; do
+  reset; oauth
+  echo 60 >"$T/plan.1.hang"
+  # shellcheck disable=SC2086
+  run AF_JIRA_TIMEOUT=0.5 -- $cmdline
+  [ "$rc" = 124 ] && [ "$(count)" = 1 ] || fail "write timeout [$cmdline]: rc=$rc attempts=$(count), want 124 and 1"
+  errl | grep -q '^jira: jira did not answer within 0.5 s; the .* - check Jira before running it again$' || fail "write timeout [$cmdline]: stderr '$(cat "$T/err")'"
+  [ "$(errl | wc -l)" = 1 ] || fail "write timeout [$cmdline]: more than one line on stderr"
+  [ "$(cat "$T/jira.parent")" = timeout ] || fail "write [$cmdline]: not run under timeout"
+  kill -0 "$(cat "$T/jira.pid")" 2>/dev/null && fail "write timeout [$cmdline]: jira left running"
+  no_leak "write timeout [$cmdline]" fake-oauth-tok
+done
+reset; oauth; echo 60 >"$T/plan.1.hang"
+run AF_JIRA_TIMEOUT=0.5 -- issue create -s x
+grep -q 'the issue may have been created' "$T/err" || fail "write timeout: create wording '$(cat "$T/err")'"
+reset; oauth; echo 60 >"$T/plan.1.hang"
+run AF_JIRA_TIMEOUT=0.5 -- issue comment add K-1 hi
+grep -q 'the comment may have been added' "$T/err" || fail "write timeout: comment wording '$(cat "$T/err")'"
+# A jira that ignores TERM is killed after the grace period, and still reported as a timeout.
+reset; oauth; echo 60 >"$T/plan.1.deaf"
+run AF_JIRA_TIMEOUT=0.5 AF_JIRA_KILL_GRACE=1 -- issue create -s x
+[ "$rc" = 124 ] && grep -q 'did not answer within 0.5 s' "$T/err" || fail "write kill grace: rc=$rc err='$(cat "$T/err")'"
+# A write that answers in time passes its output and status through untouched.
+reset; oauth
+plan 1 3 "partial
+" "Error: nope"
+run AF_JIRA_TIMEOUT=5 -- issue create -s x
+[ "$rc" = 3 ] && [ "$(cat "$T/out")" = partial ] && [ "$(errl)" = "Error: nope" ] || fail "write in time: rc=$rc out='$(cat "$T/out")' err='$(cat "$T/err")'"
+# Default limits: 120 s for a write, 45 for a read, under timeout(1) with a kill grace.
+reset; oauth
+run -- issue create -s x
+grep -Eq '^timeout -k [0-9.]+ 120 ' "$T/jira.parent.cmd" || fail "default write limit: '$(cat "$T/jira.parent.cmd")'"
+reset; oauth
+run -- issue list
+grep -Eq '^timeout -k [0-9.]+ 45 ' "$T/jira.parent.cmd" || fail "default read limit: '$(cat "$T/jira.parent.cmd")'"
+no_leak "bounded argv" fake-oauth-tok
+grep -q fake-oauth-tok "$T/jira.parent.cmd" && fail "bounded run: token in timeout's argv"
+for v in abc -5 1.2.3 ''; do
+  reset; oauth
+  run AF_JIRA_TIMEOUT="$v" -- issue create -s x
+  grep -Eq '^timeout -k [0-9.]+ 120 ' "$T/jira.parent.cmd" || fail "AF_JIRA_TIMEOUT='$v' not ignored: '$(cat "$T/jira.parent.cmd")'"
+done
+reset; oauth
+run AF_JIRA_TIMEOUT=7 -- issue create -s x
+grep -Eq '^timeout -k [0-9.]+ 7 ' "$T/jira.parent.cmd" || fail "AF_JIRA_TIMEOUT=7: '$(cat "$T/jira.parent.cmd")'"
+# 0 switches it off, however spelt: jira runs without timeout and a slow answer is waited for.
+for v in 0 0.0; do
+  for cmdline in "issue create -s x" "issue list"; do
+    reset; oauth
+    echo 1 >"$T/plan.1.hang"
+    # shellcheck disable=SC2086
+    run AF_JIRA_TIMEOUT="$v" -- $cmdline
+    [ "$rc" = 0 ] && [ "$(count)" = 1 ] && [ "$(cat "$T/jira.parent")" != timeout ] || fail "AF_JIRA_TIMEOUT=$v [$cmdline]: rc=$rc attempts=$(count) parent=$(cat "$T/jira.parent")"
+  done
+done
+# A signal for the wrapper reaches jira instead of orphaning it.
+reset; oauth
+echo 60 >"$T/plan.1.hang"
+env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" TMPDIR="$T/tmp" \
+  bash "$WRAPPER" issue create -s x >"$T/out" 2>"$T/err" </dev/null &
+wpid=$!
+for _ in $(seq 50); do [ -f "$T/jira.pid" ] && break; sleep 0.1; done
+kill -TERM "$wpid"
+wait "$wpid"
+sleep 0.3
+kill -0 "$(cat "$T/jira.pid")" 2>/dev/null && { fail "signal: jira orphaned"; kill "$(cat "$T/jira.pid")"; }
+
+# The paths that run jira unchanged (the user's own config, an explicit token or server, a debug
+# run) get the same stdin guard and bound; the injected credential is not part of that.
+exec 9<>"$T/fifo"
+for envs in "JIRA_API_TOKEN=own" "JIRA_SERVER=https://own.example.net"; do
+  reset; oauth
+  RUN_IN="$T/fifo"; RUN_PRE=(timeout -k 1 3)
+  run STUB_READ_STDIN=1 $envs -- issue create -s sum -b body --no-input
+  RUN_PRE=() RUN_IN=
+  [ "$rc" = 0 ] && [ -f "$T/jira.seen" ] && [ ! -s "$T/stdin.seen" ] || fail "own setup [$envs]: blocked on stdin (rc=$rc)"
+done
+reset; oauth
+config "$T/other.yml" "installation: Cloud"
+RUN_IN="$T/fifo"; RUN_PRE=(timeout -k 1 3)
+run STUB_READ_STDIN=1 -- -c "$T/other.yml" issue comment add K-1 hello
+RUN_PRE=() RUN_IN=
+[ "$rc" = 0 ] && [ -f "$T/jira.seen" ] && [ ! -s "$T/stdin.seen" ] || fail "own config: blocked on stdin (rc=$rc)"
+expect "own config" TOKEN '<unset>'
+exec 9>&-
+reset; oauth; echo 60 >"$T/plan.1.hang"
+run AF_JIRA_TIMEOUT=0.5 -- -c "$T/other.yml" issue create -s x
+[ "$rc" = 124 ] && grep -q 'did not answer within 0.5 s' "$T/err" || fail "own config: no timeout (rc=$rc)"
+reset; oauth; echo 60 >"$T/plan.1.hang"
+run AF_JIRA_TIMEOUT=0.5 JIRA_API_TOKEN=own -- issue move K-1 Done
+[ "$rc" = 124 ] || fail "own token: no timeout (rc=$rc)"
+# A helper of the Agent that never answers must not hang every command: jira runs as if there
+# were no connection (or, for comment edit, the call is cut off).
+reset; oauth; touch "$T/agent.hang"
+run AF_JIRA_TIMEOUT=0.5 -- issue list
+[ "$rc" = 0 ] && [ -f "$T/jira.seen" ] && expect "stuck helper" TOKEN '<unset>' || fail "stuck jira-cred: rc=$rc"
+reset; oauth; touch "$T/agent.hang"
+run AF_JIRA_TIMEOUT=0.5 -- issue comment edit K-1 10001 -b x
+[ "$rc" = 124 ] || fail "stuck jira-comment: rc=$rc"
+rm -f "$T/agent.hang"
+# A kill grace that is not a number is ignored.
+reset; oauth
+run AF_JIRA_KILL_GRACE=1.2.3 -- issue create -s x
+grep -Eq '^timeout -k 5 120 ' "$T/jira.parent.cmd" || fail "bad kill grace: '$(cat "$T/jira.parent.cmd")'"
+# A signal for a reading wrapper reaches the attempt too.
+reset; oauth
+echo 60 >"$T/plan.1.hang"
+env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" TMPDIR="$T/tmp" \
+  bash "$WRAPPER" issue list >"$T/out" 2>"$T/err" </dev/null &
+wpid=$!
+for _ in $(seq 50); do [ -f "$T/jira.pid" ] && break; sleep 0.1; done
+kill -TERM "$wpid"
+wait "$wpid"
+sleep 0.3
+kill -0 "$(cat "$T/jira.pid")" 2>/dev/null && { fail "signal (read): jira orphaned"; kill "$(cat "$T/jira.pid")"; }
+[ -z "$(ls -A "$T/tmp")" ] || fail "signal (read) left files behind"
+
+# A read that never answers is re-run (a timeout is a transport failure); only the last
+# attempt's output reaches the caller, and no file is left behind.
+for cmdline in "issue list" "issue view K-1" "me"; do
+  reset; oauth
+  echo 60 >"$T/plan.1.hang"
+  plan 2 0 "GOOD
+" ""
+  # shellcheck disable=SC2086
+  run AF_JIRA_TIMEOUT=0.5 -- $cmdline
+  [ "$rc" = 0 ] && [ "$(count)" = 2 ] && [ "$(cat "$T/out")" = GOOD ] && [ -z "$(cat "$T/err")" ] || fail "read timeout [$cmdline]: rc=$rc attempts=$(count) out='$(cat "$T/out")' err='$(cat "$T/err")'"
+  [ "$(cat "$T/jira.parent")" = timeout ] || fail "read [$cmdline]: not run under timeout"
+  no_leak "read timeout [$cmdline]" fake-oauth-tok
+done
+[ -z "$(ls -A "$T/tmp")" ] || fail "read timeout left files behind: $(ls -A "$T/tmp")"
+# Three silent attempts: 124, why, and the give-up line.
+reset; oauth
+for i in 1 2 3; do echo 60 >"$T/plan.$i.hang"; done
+run AF_JIRA_TIMEOUT=0.5 -- issue view K-1
+[ "$rc" = 124 ] && [ "$(count)" = 3 ] || fail "read timeouts: rc=$rc attempts=$(count), want 124 and 3"
+grep -q 'no answer within 0.5 s' "$T/err" && grep -q 'giving up after 3 attempts' "$T/err" || fail "read timeouts: stderr '$(cat "$T/err")'"
+[ -z "$(ls -A "$T/tmp")" ] || fail "read timeouts left files behind"
+no_leak "read timeouts" fake-oauth-tok
+
+# A terminal on stdin, stdout or stderr is never bounded, written to or re-run, whatever
+# AF_JIRA_TIMEOUT says: `timeout` without --foreground would break job control, and the TUI must
+# not be killed. The stub reports who its parent is; stdin is the open pipe for the guard.
+if command -v script >/dev/null 2>&1; then
+  for cmdline in "issue create -s x -b y" "issue list"; do
+    for redir in "" ">/dev/null" "2>/dev/null"; do
+      reset; oauth
+      echo 1 >"$T/plan.1.hang"
+      rm -f "$T/jira.count"
+      script -qec "env -i PATH='$T/bin:/usr/bin:/bin' HOME='$T/home' STUB_DIR='$T' AF_JIRA_REAL='$T/bin/jira-real' TMPDIR='$T/tmp' AF_JIRA_TIMEOUT=0.5 bash '$WRAPPER' $cmdline $redir" /dev/null >"$T/out" 2>&1 </dev/null
+      # With stdout or stderr redirected the other is still the terminal; stdin always is.
+      [ "$(count)" = 1 ] && [ "$(cat "$T/jira.parent")" != timeout ] || fail "tty [$cmdline $redir]: bounded or re-run (attempts=$(count) parent=$(cat "$T/jira.parent" 2>/dev/null))"
+      grep -q 'did not answer' "$T/out" && fail "tty [$cmdline $redir]: timeout message on a terminal run"
+    done
+  done
+  # A terminal on stdin alone does not matter for a read: it is captured, so it is bounded too.
+  reset; oauth
+  echo 60 >"$T/plan.1.hang"
+  plan 2 0 "GOOD
+" ""
+  rm -f "$T/jira.count"
+  script -qec "env -i PATH='$T/bin:/usr/bin:/bin' HOME='$T/home' STUB_DIR='$T' AF_JIRA_REAL='$T/bin/jira-real' TMPDIR='$T/tmp' AF_JIRA_TIMEOUT=0.5 AF_JIRA_RETRY_WAIT=0 bash '$WRAPPER' issue list 2>&1 | cat" /dev/null >"$T/out" 2>&1 </dev/null
+  [ "$(count)" = 2 ] && grep -q GOOD "$T/out" || fail "tty stdin only: read not bounded (attempts=$(count))"
+fi
 
 if [ "$fails" != 0 ]; then
   echo "jira-auth-wrapper-test: $fails failure(s)" >&2

@@ -95,8 +95,17 @@ session. You can view, list, create, edit, comment on and transition issues:
 - **Flaky network to Atlassian**: reading commands (`issue view` / `issue list`, `board`, `sprint`,
   `epic` and `project list`, `me`) are re-run up to twice after a connection reset or timeout, and
   only the last attempt's output is shown. Commands that change something are never re-run, so after
-  a failure of `issue create` or `comment add` check Jira before trying again. `comment edit` and
-  `comment delete` retry on their own; "probably already deleted" means the delete went through. If
+  a failed **or timed-out** `issue create` or `comment add` check Jira before running it again (for
+  example with the JQL `project = PROJ AND reporter = currentUser() AND created >= -15m`). `comment edit` and
+  `comment delete` retry on their own; "probably already deleted" means the delete went through.
+  `jira` can otherwise wait forever for a server that never answers, so a run with no terminal is
+  stopped after `AF_JIRA_TIMEOUT` seconds (default 120 for a command that changes something, 45 per
+  attempt for a reading one; `0` turns it off). A reading command is then re-run like after a reset.
+  A command that changes something exits with status 124 and says that the issue or comment may
+  exist. `jira` also reads standard input to the end even when `-b` is given; with the body on the
+  command line the wrapper gives it an empty input instead. If a run still hangs, the file
+  `/proc/<pid>/wchan` of the `jira` process tells a wait on input (`pipe_read`,
+  `unix_stream_data_wait`) from a wait on the network. If
   the authorization expired or was revoked, `jira` prints "the Jira connection is unusable"
   instead of asking for an API token: reconnect Jira in Settings. In output that is not a terminal,
   links to issues point at your Jira site.
