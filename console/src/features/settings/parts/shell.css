@@ -1053,6 +1053,26 @@ label.idp-flag {
   background: color-mix(in srgb, var(--err) 8%, transparent);
 }
 
+.mcp-probe.info {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border2));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.mcp-probe-as,
+.mcp-probe-problems {
+  margin-top: 6px;
+}
+
+.mcp-probe-problems {
+  color: var(--err);
+}
+
+.mcp-probe-problems ul {
+  margin: 2px 0 0;
+  padding-left: 18px;
+}
+
 .mcp-probe .muted {
   color: var(--muted);
 }
