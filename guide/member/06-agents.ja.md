@@ -473,7 +473,7 @@ claude / codex / opencode / GitHub Copilot / agy の 5 エージェントに **�
   （実行中・回答待ち、保留中の質問やプラン、権限の確認、通知の転送）を足します。コマンドが `session-status` または
   `session-push-notification` を実行するエントリがそれです。ほかに、`/model` が claude の「Switch model?」
   （プロンプトキャッシュの警告）で止まらないよう "allow" を返す `PreModelSwitch` のエントリもあります
-  （切り替え後の次のメッセージでは、履歴全体がキャッシュ料金なしで読み直されます）。RTK のエントリ（`rtk hook claude`）は編集ではなく
+  （切り替え後の次のメッセージでは、履歴全体がキャッシュの効かない料金で読み直されます）。RTK のエントリ（`rtk hook claude`）は編集ではなく
   **⚙設定 →「エージェント」→ Claude → RTK** で切り替えます。Fleet のエントリが無いと、そのセッションの状態が
   Console に出なくなります。Agent は起動時に足し直します。
 - **自分のフックと、ほかのキーは残ります。** Agent は自分のエントリをコマンドで見分けるので、同じツールの

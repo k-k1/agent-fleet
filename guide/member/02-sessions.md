@@ -221,16 +221,22 @@ In the mirror and the assistant chat, **ticket references the agent writes becom
 the same details panel, even with the left pane collapsed. Ctrl/⌘-click or a middle click goes
 straight to the tracker instead.
 
-- A `#956` in running text links, merged and closed ones included.
+- A `#956` in running text links, merged and closed ones included. In a range such as `#573-#598`,
+  both ends link.
 - **A number in backticks, such as `` `#166` ``,** links only when your Issue tracker list holds it,
   so a number quoted as something you typed does not turn into a link to an unrelated issue.
 - `#956` is read as a number in the session's own repository (its origin on github.com or
   bitbucket.org). The chat has no working copy, so there only the `owner/name#956` form links.
-- A Jira key (`PROJ-123`) links when the list holds an issue of that project (in backticks, only
-  when it holds that issue); look-alikes such as `UTF-8` or `SHA-256` stay text. In a Bitbucket
+- A Jira key (`PROJ-123`) links when the list holds an issue of that project, or when the project
+  is one your Jira connection can browse. In backticks it links only when the list holds that
+  issue. Look-alikes such as `UTF-8` or `SHA-256` stay text unless a project has that key. In a Bitbucket
   working copy, `#N` links only the pull requests the list holds.
-- A ticket that is not in the list opens with just its key and a link to the original page; a session can still be started from it. **Nothing is fetched for it**: as with
-  the list, opening it never starts a stopped workspace.
+- A ticket that is not in the list opens with its key and a link to the original page; a session can
+  still be started from it. While the workspace runs, a GitHub, Bitbucket or Jira ticket is read
+  live when the panel opens. A stopped workspace is not started for it: the panel says **"The
+  workspace is stopped, so … was not asked"** and keeps the key and the link.
+- How links in files you open (rather than in the conversation) behave is in
+  [04 Files](04-files.md#links-in-rendered-markdown).
 - Someone reading a shared session sees these as plain text.
 
 ## Reading state — badges and notifications
@@ -390,7 +396,8 @@ go to the archive, shell / SSM to the trash).
   the "delete it anyway" confirmation**.
 - **Rows with a running session are not a dead end.** Tick **"Stop the running sessions first
   (N)"** and the modal stops them as part of the same tidy-up, ticking for you the rows that only
-  needed stopping (a turn in flight is cut off). **Rows locked against deletion cannot be
+  needed stopping (a turn in flight is cut off). A row that would still lose work once stopped
+  becomes tickable but stays unticked; ticking it is the same "delete it anyway" confirmation. **Rows locked against deletion cannot be
   ticked**; the reason is shown under the row. Remove the lock first.
 - Ticking **"Delete the merged branches too"** also removes the throwaway `temp/…` branches (the
   trash can restore them). Adding **"Delete the branch on the remote (origin) too"** removes it on
@@ -523,6 +530,8 @@ colour the whole card, so they can be spotted from across the room.
 - **Opening it**: **"Sessions"** on the action bar (next to Split right / Split down / Close all),
   the same button on the layout map at the top of the left pane, or the leader keys **`g` → `s`** / **`s` → `l`**.
   It is an ordinary pane: split it, tab it, pop it out, and it is there again after a reload.
+  On a phone, Sessions, Split down and Close all can sit in the action bar's **⋯**
+  ([05](05-terminal.md#using-it-on-a-phone)).
 - **How many columns** depends on the width of the pane it is in: one column in a narrow side
   column, four or more across a wide one.
 - **Cards sit under one heading per project (repository)**. Every working copy of the same
@@ -660,7 +669,9 @@ handoff proposal: the key points, unfinished tasks, changed files, and next step
 You review the proposal, the working folder, and the agent to start, and the new session is
 created only after you explicitly agree. The original session stays as it is. In a long
 conversation, this lets you hand off to another agent or try a different direction without
-using up the new conversation's context.
+using up the new conversation's context. The proposal card also offers **"Hand off to a member"**,
+which offers the session to someone it is shared with instead
+([09](09-collaboration.md#handing-a-session-to-another-member)).
 
 **When you want the conversation itself rather than a summary, branch instead of handing
 off.** In the chat view, **"Branch here"** on one of your past messages

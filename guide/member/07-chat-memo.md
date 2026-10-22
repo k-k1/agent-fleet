@@ -403,3 +403,6 @@ over in one go at your PC.
 - **Read a long memo, then close it again**: a memo body is clamped to two lines; click it to open the full text (a long one stops at half the pane and scrolls inside the memo from there). **Collapse**, under the body or in the row's **⋯** menu, puts it back to two lines. Clicking the body again while it is open starts editing. The same **⋯** menu also has **Copy**, which puts the memo's text on the clipboard as written.
 - **Tidy up with AI**: select memos and hit **"Organize the selected memos with an assistant"**; it turns scribbles into clear instructions and suggests categories. The result is **always previewed** and nothing is applied until you approve with "Apply N item(s)".
 - **Send**: pick a running destination session and send in bulk with **"Send selection"**. You can also send a whole category at once ("Send this category together"). If there's no running session to send to, start one first. Sending several memos together adds the category headings (`## …`) and the `1.` numbering; **a single memo goes out as its bare text**. Either way you can edit the message before it leaves.
+- **Memos taken in from the inbox** carry an **"Inbox: …"** chip and are always sent on their own,
+  one message each, with where they came from; a running session has to take them
+  ([09](09-collaboration.md#asking-a-teammate-the-inbox)).
