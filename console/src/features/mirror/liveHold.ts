@@ -8,9 +8,9 @@ import type { Turn } from "./transcript/types.ts";
 // land between the two: it carries no liveText any more and no row yet (measured: the row came
 // 0.4-0.5 s after Stop; the browser showed nothing for one 1.5 s poll). Dropping the block on
 // that poll is what made a just-typed answer vanish and come back. So a liveText that goes
-// empty is held until assistant text lands in the transcript, or LIVE_HOLD_MS passes — the
-// bound is for a turn that ends with no row at all (an interrupt), which must not keep a
-// "still writing" block up.
+// empty is held until something lands in the transcript (assistantTextSig), or LIVE_HOLD_MS
+// passes — the bound is for a turn that ends with no row at all (an interrupt), which must not
+// keep a "still writing" block up.
 
 /** How long a dropped liveText is held with no assistant text landing. Above the slow poll
  *  cadence (3 s), so one poll that misses the row cannot run the hold out. */
