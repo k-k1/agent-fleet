@@ -57,13 +57,9 @@ So:
 
 ## When Kubernetes, and when not
 
-> **Preview.** The `kubernetes` runtime is a preview: it has been accepted on a GKE Standard
-> cluster but is not yet supported for production. Known limits: there are no browser features
-> on this runtime (no browser pane, no headless Chromium), and on GKE the region's SSD disk quota
-> has to hold the deployment before you start ([Preconditions](../../deploy/kubernetes/README.md#preconditions)). Still being
-> measured: how the load balancer's 24-hour WebSocket cut affects day-long sessions
-> ([7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)). What it costs on
-> GKE, measured: [The bill](../../deploy/kubernetes/README.md#the-bill).
+> **Preview.** The `kubernetes` runtime is a preview, not yet supported for production. Its known
+> limits, what a load-balancer cut does to a terminal and what it costs are listed once, in
+> [Deployment targets](../ref/deploy-targets.md).
 
 Choose **kubernetes** when a Kubernetes cluster is already how your organisation runs things,
 or when you are on Google Cloud and want what ECS gives on AWS: a pod per workspace, isolated by
