@@ -108,6 +108,9 @@ type mcpPrincipal struct {
 	// oauth marks a grant: patID then holds the grant id and clientID the OAuth client's.
 	oauth    bool
 	clientID string
+	// name is what the member named the connection: the OAuth client's registered name, or the
+	// PAT's name. It goes into the envelope send_to_session adds (#2542).
+	name string
 }
 
 // --- JSON-RPC 2.0 ---
@@ -233,7 +236,9 @@ func (a API) dispatchMCPHTTP(r *http.Request, prin *mcpPrincipal, req rpcRequest
 func (a API) dispatchTraced(r *http.Request, prin *mcpPrincipal, req rpcRequest) (*rpcResponse, int, CallItem) {
 	p := parseParamsMeta(req.Params)
 	era := eraOf(p)
-	ctx := withMCPCall(r.Context(), mcpCallInfo{patID: prin.patID, client: mcpClientName(r, p)})
+	impl, _ := clientDeclared(req, p)
+	ctx := withMCPCall(r.Context(), mcpCallInfo{patID: prin.patID, client: mcpClientName(r, p),
+		principalName: prin.name, impl: impl})
 	var resp *rpcResponse
 	status := http.StatusOK
 	if !era.Stateless {
@@ -280,7 +285,7 @@ func (a API) authMCP(r *http.Request, tr *callTrace) (*mcpPrincipal, *APIError) 
 		}
 	}
 	_ = a.cp.Store().TouchPAT(r.Context(), p.ID) // best-effort last-used
-	return &mcpPrincipal{patID: p.ID, identityID: p.IdentityID, membershipID: p.MembershipID, scope: p.Scope}, nil
+	return &mcpPrincipal{patID: p.ID, identityID: p.IdentityID, membershipID: p.MembershipID, scope: p.Scope, name: p.Name}, nil
 }
 
 // authOAuth resolves an OAuth access token to the same principal a PAT gives, with the grant id
@@ -306,7 +311,7 @@ func (a API) authOAuth(r *http.Request, tok string, tr *callTrace) (*mcpPrincipa
 	if strings.Contains(" "+g.Scope+" ", " "+scopeWrite+" ") {
 		scope = scopeWrite
 	}
-	return &mcpPrincipal{patID: g.GrantID, identityID: g.IdentityID, membershipID: g.MembershipID, scope: scope, oauth: true, clientID: g.ClientID}, nil
+	return &mcpPrincipal{patID: g.GrantID, identityID: g.IdentityID, membershipID: g.MembershipID, scope: scope, oauth: true, clientID: g.ClientID, name: g.ClientName}, nil
 }
 
 func (a API) dispatchMCP(ctx context.Context, prin *mcpPrincipal, req rpcRequest) *rpcResponse {
@@ -430,7 +435,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "send_to_session", minScope: scopeWrite,
-			desc: "Send a prompt to a session (drives the remote Claude). Returns immediately; poll get_session_status then get_session_output for the reply.",
+			desc: "Send a prompt to a session (drives the remote Claude). Returns immediately; poll get_session_status then get_session_output for the reply. The session sees it with a header naming this connection, so it knows the message came through MCP and not from the member typing; a prompt that itself starts with \"[agent-fleet:\" is refused. Not available for shell / ssm sessions.",
 			schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -440,8 +445,11 @@ func memberTools() []mcpTool {
 				"required": []string{"name", "prompt"},
 			},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
-				body, _ := json.Marshal(map[string]string{"prompt": argStr(args, "prompt")})
-				return a.cp.AgentText(ctx, res.RT, "POST", "/sessions/"+url.PathEscape(argStr(args, "name"))+"/input", body)
+				body, err := mcpInputBody(ctx, argStr(args, "prompt"))
+				if err != nil {
+					return "", err
+				}
+				return a.cp.AgentText(ctx, res.RT, "POST", "/sessions/"+url.PathEscape(argStr(args, "name"))+"/mcp-input", body)
 			},
 		},
 		{

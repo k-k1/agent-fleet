@@ -26,6 +26,9 @@ type mcpCallInfo struct {
 	// client is the MCP clientInfo name and version, or the User-Agent when the request has none.
 	// The client declares it itself, so it is recorded for information and never decides anything.
 	client string
+	// principalName and impl are the authenticated connection's name and the client's own
+	// clientInfo name, for send_to_session's origin (mcpInputBody).
+	principalName, impl string
 }
 
 type mcpCallKey struct{}

@@ -132,6 +132,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/restore", sessionx.HandleRestoreSession)
 	// Programmatic drive I/O for the MCP tools (docs/0006 P3-6 E).
 	mux.HandleFunc("POST /sessions/{name}/input", sessionx.HandleSessionInput)
+	// The same delivery for a prompt that arrived over the CP's /mcp, with the origin envelope
+	// (#2542). Deliberately absent from the CP's agent-proxy allowlist: the Console can only
+	// reach /input, which never badges or envelopes anything as MCP.
+	mux.HandleFunc("POST /sessions/{name}/mcp-input", sessionx.HandleSessionMCPInput)
 	// Drop one peer message queued behind the user's answer (#1031).
 	mux.HandleFunc("DELETE /sessions/{name}/pending-peer/{id}", sessionx.HandleDropPendingPeer)
 	// Semantic turn ops + Interaction reply (docs/log/27 P1.5/P2) — the entry point of the

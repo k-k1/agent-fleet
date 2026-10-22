@@ -512,6 +512,33 @@ describe("an expanded work trace or thinking block closes from the bottom too", 
   });
 });
 
+describe("how an input that arrived over MCP looks (#2542)", () => {
+  const env = "[agent-fleet:mcp via=ChatGPT connection=grant_01 impl=openai-mcp reply=none] テストを走らせて";
+
+  it("badges the connection named in the envelope, with the source tag", () => {
+    const el = render([{ role: "user", text: env, idx: 1, source: "mcp" }], RECIPIENT);
+    const badge = el.querySelector(".mt-peer");
+    expect(badge?.textContent).toContain("ChatGPT");
+    expect(badge?.textContent).not.toContain("mirror.from_mcp");
+    expect(badge?.getAttribute("title")?.trim()).toBeTruthy();
+  });
+
+  it("badges from the envelope alone when the tag is missing", () => {
+    const el = render([{ role: "user", text: env, idx: 1 }], RECIPIENT);
+    expect(el.querySelector(".mt-peer")?.textContent).toContain("ChatGPT");
+  });
+
+  it("badges an unnamed MCP turn by its tag when there is no envelope text", () => {
+    const el = render([{ role: "user", text: "x", idx: 1, source: "mcp" }], RECIPIENT);
+    expect(el.querySelector(".mt-peer")?.textContent?.trim()).toBeTruthy();
+  });
+
+  it("adds no badge to the reader's own input", () => {
+    const el = render([{ role: "user", text: "自分で打った指示", idx: 1 }], RECIPIENT);
+    expect(el.querySelector(".mt-peer")).toBeNull();
+  });
+});
+
 describe("how an incoming peer message looks (docs/log/58 §58.14)", () => {
   const peerTurn = (text: string): Turn[] => [{ role: "user", text, idx: 1, source: "peer" }];
 

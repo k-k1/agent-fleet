@@ -55,7 +55,7 @@ func TestMCPOAuthRefreshIsSpentExactlyOnce(t *testing.T) {
 func TestMCPOAuthAccessFollowsGrant(t *testing.T) {
 	ctx := context.Background()
 	for name, st := range homeOpStores(t) {
-		g := MCPOAuthGrant{ID: "g1", ClientID: "c", IdentityID: "i", MembershipID: "m", Scope: "read",
+		g := MCPOAuthGrant{ID: "g1", ClientID: "c", ClientName: "Claude", IdentityID: "i", MembershipID: "m", Scope: "read",
 			Resource: "https://x/mcp", CodeHash: "code1", CreatedAt: 100, IdleExpiresAt: 500, AbsExpiresAt: 900}
 		if err := st.CreateMCPOAuthGrant(ctx, g); err != nil {
 			t.Fatal(err)
@@ -64,7 +64,7 @@ func TestMCPOAuthAccessFollowsGrant(t *testing.T) {
 			ClientID: "c", IdentityID: "i", MembershipID: "m", Resource: "https://x/mcp", ExpiresAt: 1000}); err != nil {
 			t.Fatal(err)
 		}
-		if a, ok, err := st.GetMCPOAuthAccess(ctx, "a1", 200); err != nil || !ok || a.GrantID != "g1" || a.Resource != "https://x/mcp" {
+		if a, ok, err := st.GetMCPOAuthAccess(ctx, "a1", 200); err != nil || !ok || a.GrantID != "g1" || a.ClientName != "Claude" || a.Resource != "https://x/mcp" {
 			t.Fatalf("%s: live token: %+v %v %v", name, a, ok, err)
 		}
 		if _, ok, _ := st.GetMCPOAuthAccess(ctx, "a1", 500); ok {

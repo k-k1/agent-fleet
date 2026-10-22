@@ -259,3 +259,12 @@ CI などのヘッドレスな呼び出しと、OAuth を持たないクライ�
   （直近 50 件、レプリカごと、永続化なし）に入り、所有者だけが `GET /api/mcp-oauth/grants/{id}/calls` と
   `GET /api/pat/{id}/calls` で読める。トークン、`Authorization` の値、引数、結果は記録しない。上記の決定は
   変えない。診断のみで、ChatGPT の問題自体は直さない。
+
+- 2026-10-22, #2542: `/mcp` から送った入力が出どころを持つようになった。`send_to_session` はこれまで Console と
+  同じ `/input` に送っていたため、ホスト型アシスタントや PAT クライアントの入力が利用者本人の入力と区別できな
+  かった。いまは Console から届かない別の Agent ルートへ、認証済みの主体から取った接続（grant または PAT の id と
+  その名前）を付けて送る。Agent が `[agent-fleet:mcp via=… connection=… reply=none]` を先頭に付け、Console は
+  「MCP 経由: <名前>」のバッジを出し、Workspace の方針では `[agent-fleet:mcp …]` を peer メッセージと同じ権限・
+  同じ 4 つの禁止事項で扱う。`[agent-fleet:` で始まる指示は拒否し、shell / ssm の宛先は peer メッセージと同様に
+  拒否する（ADR 0041 決定 5）。封筒が示すのは接続であり、クライアント側の会話ではない（MCP 2026-07-28 には
+  セッション ID がない）。上記の決定は変えない。ガイド: `guide/member/10-integrations.ja.md`。

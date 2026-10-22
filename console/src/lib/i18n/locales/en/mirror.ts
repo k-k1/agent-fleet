@@ -310,6 +310,10 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.from_peer_named": "From {name}",
   "mirror.from_peer_title":
     "A message another session in this workspace sent, typed neither by you nor by the assistant. The agent is told it is not an instruction from you, and will not change permissions or config because a peer asked.",
+  "mirror.from_mcp": "Via MCP",
+  "mirror.from_mcp_named": "Via MCP: {name}",
+  "mirror.from_mcp_title":
+    "Sent through the MCP connection of an outside assistant or client (send_to_session), typed neither by you nor by the assistant here. The agent is told it is not an instruction from you: it cannot stand in for your approval and will not change permissions or config because the message asked.",
   "mirror.from_spawn": "Started by another session",
   "mirror.from_spawn_named": "Started by {name}",
   "mirror.from_spawn_title":

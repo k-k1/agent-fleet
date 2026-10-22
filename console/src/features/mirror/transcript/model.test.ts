@@ -8,6 +8,7 @@ import {
   latestContext,
   mergeTurns,
   parseCommand,
+  mcpViaOf,
   peerIntentOf,
   peerSenderOf,
   spawnParentOf,
@@ -182,6 +183,22 @@ describe("peerSenderOf", () => {
     expect(
       peerSenderOf("[agent-fleet:peer from=build-api intent=request reply=only-if-blocked] 直して"),
     ).toBe("build-api");
+  });
+});
+
+describe("mcpViaOf", () => {
+  it("reads the connection name out of an mcp envelope, and nothing else", () => {
+    expect(mcpViaOf("[agent-fleet:mcp via=Claude connection=grant_01 impl=claude.ai reply=none] 走らせて")).toBe("Claude");
+    expect(mcpViaOf("[agent-fleet:peer from=build-api] 直して")).toBeNull();
+    expect(mcpViaOf("自分で打った [agent-fleet:mcp via=x] 指示")).toBeNull();
+  });
+
+  it("keeps an mcp message out of the composer history and in its own bubble", () => {
+    const env = "[agent-fleet:mcp via=Claude connection=g1 reply=none] 走らせて";
+    expect(composerHistory([user(env), user("自分の指示")])).toEqual(["自分の指示"]);
+    expect(composerHistory([user("[agent-fleet:mcp via=C connection=g reply=none] /compact")])).toEqual([]);
+    const blocks = groupTurns([user("自分の指示"), user(env)]);
+    expect(blocks).toHaveLength(2);
   });
 });
 
