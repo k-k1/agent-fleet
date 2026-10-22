@@ -288,7 +288,7 @@ describe("command palette — ticket references (#1665)", () => {
     });
     expect(titles()).toEqual(["note1"]);
     expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("note1");
-    // An emptied list must not leave sel at -1 once rows come back.
+    // An emptied list must still highlight the first row once rows come back.
     act(() => {
       useSessionsStore.setState({ sessions: [] });
     });
@@ -297,6 +297,9 @@ describe("command palette — ticket references (#1665)", () => {
       useSessionsStore.setState({ sessions: [session("note1")] });
     });
     expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("note1");
+    opened.length = 0;
+    key("Enter");
+    expect(opened).toEqual(["note1"]);
   });
 
   it("does not let a prefix of the number match", () => {
