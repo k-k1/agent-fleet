@@ -34,6 +34,7 @@ to going further. When you are stuck, it is fine to open [11 Troubleshooting](11
 11. [Troubleshooting](11-troubleshooting.md): fixes by symptom, and an FAQ
 12. [Settings](12-settings.md): every tab, and "where is that setting?"
 13. [Ops tooling](13-ops-tooling.md): wiring monitoring tools into a conversation (experimental)
+14. [Agent memory](14-agent-memory.md): what agents remember across kinds and sessions, importing it, and snapshots of their own memory
 15. [Cloud accounts](15-cloud-accounts.md): AWS profiles, SSM hosts, `af-aws-exec` and Google Cloud
 
 Also here: [Icons, badges and menus](badges-and-menus.md) for what a mark on the
