@@ -1032,6 +1032,7 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 		ssmc: h.ssmc,
 		ci:   h.ci,
 		pool: ec2PoolConfig{
+			hostReserveMiB: ec2HostReserveAuto, // the production default (unset env)
 			launchTemplate: "lt-1",
 			pool:           "clu",
 			classes:        parseSlotClasses("m7i.large:8192,m7i.xlarge:16384"),
@@ -5113,7 +5114,7 @@ func TestECSEC2EveryServiceCallPinsOneTaskPerWorkspace(t *testing.T) {
 // contain anything (the incident's whole point was that the daemons had nowhere to
 // live); one that is too mean takes RAM off a member for nothing.
 func TestECSEC2WorkspaceMemCap(t *testing.T) {
-	auto := ec2PoolConfig{hostReserveMiB: 0}
+	auto := ec2PoolConfig{hostReserveMiB: ec2HostReserveAuto}
 	for _, tc := range []struct {
 		name string
 		pool ec2PoolConfig
@@ -5136,6 +5137,8 @@ func TestECSEC2WorkspaceMemCap(t *testing.T) {
 		{"the smallest capped rung leaves more than the soft reservation", auto, 2561, 513},
 		{"a cap equal to the soft reservation is dropped", auto, 2560, 0},
 		{"explicit reserve is honoured", ec2PoolConfig{hostReserveMiB: 1536}, 8192, 6656},
+		// An explicit 0 is "reserve nothing", not auto (#2503).
+		{"explicit 0 caps at the full rung", ec2PoolConfig{hostReserveMiB: 0}, 8192, 8192},
 		{"off means uncapped", ec2PoolConfig{hostReserveMiB: ec2HostReserveOff}, 8192, 0},
 		// Capping a rung this small would leave a workspace that cannot run; better to
 		// leave the deployment as it was than to break every Start on it.
@@ -5153,7 +5156,7 @@ func TestECSEC2WorkspaceMemCap(t *testing.T) {
 // ECS rejects a task definition whose hard Memory is not above MemoryReservation (512),
 // so no rung may come out capped at or below it, auto or explicit.
 func TestECSEC2WorkspaceMemCapStaysAboveSoftReservation(t *testing.T) {
-	for _, pool := range []ec2PoolConfig{{hostReserveMiB: 0}, {hostReserveMiB: 1024}} {
+	for _, pool := range []ec2PoolConfig{{hostReserveMiB: ec2HostReserveAuto}, {hostReserveMiB: 0}, {hostReserveMiB: 1024}} {
 		for rung := int64(1); rung <= 4096; rung++ {
 			if c := pool.workspaceMemCapMiB(rung); c != 0 && c <= 512 {
 				t.Fatalf("reserve %d, rung %d: cap %d is not above the 512 MiB soft reservation", pool.hostReserveMiB, rung, c)
@@ -5166,10 +5169,11 @@ func TestECSEC2WorkspaceMemCapStaysAboveSoftReservation(t *testing.T) {
 // a deployment stops capping — or stops starting.
 func TestECSEC2HostReserveParsing(t *testing.T) {
 	for in, want := range map[string]int64{
-		"": 0, "auto": 0, "AUTO": 0, " auto ": 0,
+		"": ec2HostReserveAuto, "auto": ec2HostReserveAuto, "AUTO": ec2HostReserveAuto, " auto ": ec2HostReserveAuto,
 		"off": ec2HostReserveOff, "none": ec2HostReserveOff,
-		"1536": 1536, "0": 0,
-		"banana": 0, "-5": 0,
+		"1536": 1536, "0": 0, " 0 ": 0,
+		"OFF": ec2HostReserveOff, "None": ec2HostReserveOff, "FALSE": ec2HostReserveOff,
+		"banana": ec2HostReserveAuto, "-5": ec2HostReserveAuto,
 	} {
 		if got := parseHostReserveMiB(in); got != want {
 			t.Errorf("parseHostReserveMiB(%q) = %d, want %d", in, got, want)

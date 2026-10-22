@@ -581,9 +581,12 @@ type ec2PoolConfig struct {
 	// the box's own daemons cannot be starved by it (AF_ECS_EC2_HOST_RESERVE_MB).
 	// See workspaceMemCapMiB for what it buys and how the default was sized.
 	//
-	//	unset / "auto"  → -1 < 0: a flat 2 GiB (the default)
-	//	"off"           → the sentinel below: no cap at all, the pre-2026-08 behaviour
-	//	<n>             → exactly n MiB
+	//	unset / "auto"  → ec2HostReserveAuto: a flat 2 GiB (the default)
+	//	"off"           → ec2HostReserveOff: no cap at all, the pre-2026-08 behaviour
+	//	<n>             → exactly n MiB; 0 reserves nothing and caps at the full rung
+	//
+	// Only ec2HostReserveAuto, ec2HostReserveOff and values >= 0 are valid; parseHostReserveMiB
+	// never returns anything else.
 	hostReserveMiB int64
 }
 
@@ -592,6 +595,9 @@ const (
 	// Negative rather than 0 because 0 is a meaningful answer ("reserve nothing, cap at
 	// the full rung"), and an operator's explicit off has to be distinguishable from it.
 	ec2HostReserveOff = -1
+	// ec2HostReserveAuto is the "use the flat floor below" sentinel, likewise distinct
+	// from an explicit 0: an operator who sets 0 must not get 2 GiB reserved.
+	ec2HostReserveAuto = -2
 	// The auto reserve (and so its floor), flat at every rung. The daemons were measured at ~1.2-1.4 GiB
 	// with a workspace and its Service Connect sidecars running, and the rung overstates
 	// the real MemTotal by ~5% on top; a fifth of an 8 GiB rung left ~1230 MiB and a box
@@ -896,24 +902,24 @@ func (p ec2PoolConfig) rungFor(classID string, memBytes int64) (ec2Slot, ec2Slot
 func parseHostReserveMiB(s string) int64 {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "", "auto":
-		return 0
+		return ec2HostReserveAuto
 	case "off", "none", "false":
 		return ec2HostReserveOff
 	}
 	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
 	if err != nil || n < 0 {
 		log.Printf("ecs-ec2: AF_ECS_EC2_HOST_RESERVE_MB=%q is not auto|off|<MiB>; using auto", s)
-		return 0
+		return ec2HostReserveAuto
 	}
 	return n
 }
 
 func (p ec2PoolConfig) workspaceMemCapMiB(slotMemMiB int64) int64 {
-	if slotMemMiB <= 0 || p.hostReserveMiB < 0 {
+	if slotMemMiB <= 0 || p.hostReserveMiB == ec2HostReserveOff {
 		return 0
 	}
 	reserve := p.hostReserveMiB
-	if reserve == 0 { // "auto"
+	if reserve == ec2HostReserveAuto {
 		reserve = ec2HostReserveFloorMiB
 	}
 	cap := slotMemMiB - reserve
