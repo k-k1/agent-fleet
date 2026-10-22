@@ -169,9 +169,8 @@ type CPRefreshedToken = cpRefreshedToken
 // base URL are shared, because what the bridge authorizes is "refresh THIS member's
 // tokens", not one provider's.
 //
-// Bounded on purpose: this call sits in front of every git clone once the access token
-// is near expiry (and in front of every work item refresh for Jira), so a hung CP must
-// fail rather than wedge the caller. The CP's own retries fit inside this budget.
+// This wrapper has no production caller (Jira uses RefreshOAuthViaCPContext, Bitbucket
+// refreshBitbucketViaCP); it stays as the fixed-20 s, single-attempt form.
 func RefreshOAuthViaCP(b secrets.CPBridge, provider, refreshToken string) (cpRefreshedToken, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -238,12 +237,14 @@ func RefreshOAuthViaCPContext(ctx context.Context, b secrets.CPBridge, provider,
 	if resp.StatusCode != http.StatusOK {
 		return cpRefreshedToken{}, &CPRefreshStatusError{Status: resp.StatusCode, Body: strings.TrimSpace(string(raw))}
 	}
+	// A 200 whose body is unusable is treated like a cut body: the CP most likely
+	// completed the exchange, so the caller must be allowed to present the same token again.
 	var out cpRefreshedToken
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return cpRefreshedToken{}, err
+		return cpRefreshedToken{}, &cpRefreshNetError{err}
 	}
 	if out.AccessToken == "" {
-		return cpRefreshedToken{}, fmt.Errorf("cp refresh returned no access_token")
+		return cpRefreshedToken{}, &cpRefreshNetError{fmt.Errorf("cp refresh returned no access_token")}
 	}
 	return out, nil
 }

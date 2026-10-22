@@ -176,3 +176,41 @@ func TestJiraRefreshDoesNotOverwriteNewerStoredPair(t *testing.T) {
 		t.Errorf("older grant overwrote the newer pair: store=%+v caller=%+v", after.Jira, c)
 	}
 }
+
+// The retry count is bounded: a bridge that keeps answering 503 is called exactly
+// jiraRefreshMaxAttempts times, and the last error is returned.
+func TestJiraRefreshAttemptsAreBounded(t *testing.T) {
+	b := newBridgeStub(t, func(n int, w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"jira_unreachable"}`, http.StatusServiceUnavailable)
+	})
+	c := setupJiraRefresh(t, b)
+	if err := jiraRefreshNow(c); err == nil {
+		t.Fatal("persistent 503 reported success")
+	}
+	if got := b.tokens(); len(got) != jiraRefreshMaxAttempts {
+		t.Fatalf("bridge called %d times, want %d", len(got), jiraRefreshMaxAttempts)
+	}
+}
+
+// A 200 with an unusable body is retried like a cut body: the CP most likely completed the
+// exchange, so the same token must be presented again.
+func TestJiraRefreshRetriesMalformed200(t *testing.T) {
+	for name, bad := range map[string]string{"bad json": `{"access_tok`, "no access_token": `{"refresh_token":"x"}`} {
+		t.Run(name, func(t *testing.T) {
+			b := newBridgeStub(t, func(n int, w http.ResponseWriter, r *http.Request) {
+				if n == 1 {
+					_, _ = w.Write([]byte(bad))
+					return
+				}
+				okGrant(w)
+			})
+			c := setupJiraRefresh(t, b)
+			if err := jiraRefreshNow(c); err != nil {
+				t.Fatal(err)
+			}
+			if got := b.tokens(); len(got) != 2 || got[1] != "rt0" {
+				t.Fatalf("tokens = %v", got)
+			}
+		})
+	}
+}

@@ -135,7 +135,7 @@ func TestBitbucketRefreshWithoutBridgeOrLegacyCredsSaysWhy(t *testing.T) {
 	}
 }
 
-// The shared bridge call is not retried on its own (Bitbucket's callers keep their timing);
+// The fixed-timeout wrapper makes exactly one attempt;
 // a 503 is one request and an error the caller can classify.
 func TestRefreshOAuthViaCPSingleAttemptAndClassification(t *testing.T) {
 	var n int32

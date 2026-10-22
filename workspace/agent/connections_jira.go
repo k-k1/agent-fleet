@@ -645,10 +645,12 @@ func jiraBridgeRefresh(ctx context.Context, b secrets.CPBridge, refreshToken str
 		if err == nil || !gitx.CPRefreshTransient(err) || attempt >= jiraRefreshMaxAttempts {
 			return tok, err
 		}
+		t := time.NewTimer(jiraRefreshRetryPause)
 		select {
 		case <-ctx.Done():
-			return tok, err
-		case <-time.After(jiraRefreshRetryPause):
+			t.Stop()
+			return tok, fmt.Errorf("%w (last bridge error: %v)", ctx.Err(), err)
+		case <-t.C:
 		}
 	}
 }
@@ -666,6 +668,11 @@ func jiraBridgeRefresh(ctx context.Context, b secrets.CPBridge, refreshToken str
 // Atlassian rotates the refresh token: the response carries a new one and retires the
 // old. Not saving it strands the connection at the next expiry with nothing to renew, so
 // the store write is part of the refresh, not an afterthought.
+//
+// Worst-case hold of the "jira-refresh" lock is the budget plus the 10 s persist, which can
+// exceed a waiter's own 30 s (the jira wrapper's jira-cred bound). Accepted: the waiter fails
+// once with a generic error and the next call adopts the stored pair. The persist cannot move
+// out of the lock — a second process would exchange the retired token.
 func jiraRefreshNow(c *secrets.JiraCreds) error {
 	jiraRefreshMu.Lock()
 	defer jiraRefreshMu.Unlock()
