@@ -60,6 +60,9 @@ const (
 	// Source reads as the user's own. It is recorded ONLY for origin=session, so no other
 	// create route changes shape.
 	TurnSourceSpawn = "spawn"
+	// TurnSourceMCP is a prompt a hosted assistant or PAT client sent over the CP's /mcp
+	// (#2542). Stamped from the route (session_mcp.go), never from the body.
+	TurnSourceMCP = "mcp"
 )
 
 // injectionSource maps a caller-supplied source onto the recordable vocabulary. The
@@ -105,6 +108,8 @@ func badgeOriginOf(peerFrom, reportTo, source string) string {
 	switch {
 	case peerFrom != "":
 		return turnSourcePeer
+	case source == TurnSourceMCP:
+		return TurnSourceMCP
 	case source == TurnSourceSpawn:
 		// A spawned child's launch task (ADR 0073). Ahead of the report_to branch because it
 		// is decided by the source alone: a session-spawned create has no report_to, so
@@ -199,6 +204,8 @@ func fleetGraphActorFor(source, reportTo, spawnParent string) string {
 		return "bridge:slack"
 	case TurnSourceSpawn:
 		return spawnParent // the parent session — a real lane, not a special ActorId spelling
+	case TurnSourceMCP:
+		return "" // a connection, not a lane or the member: drop rather than mis-attribute
 	case TurnSourceAutoResume, TurnSourceNotice:
 		return "agent" // AF's own nudge, never the user (docs/log/47 §4-6)
 	default:

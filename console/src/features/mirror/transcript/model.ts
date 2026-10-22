@@ -79,12 +79,22 @@ export function spawnParentOf(text: string): string | null {
   return SPAWN_ENVELOPE_RE.exec(text)?.[1] ?? null;
 }
 
+// mcpViaOf reads the connection's name out of the envelope the Agent prepends to a prompt that
+// arrived over /mcp (session_mcp.go mcpEnvelope, #2542): a hosted assistant or PAT client, not the
+// member. Same two-source reasoning as peerSenderOf — the "mcp" source tag comes from a separate
+// store that can be missing, and the envelope is always there. The value is the Agent's sanitised
+// token (no spaces or brackets), so the match is everything up to the next space or "]".
+const MCP_ENVELOPE_RE = /^\[agent-fleet:mcp via=([^\s\]]+)/;
+export function mcpViaOf(text: string): string | null {
+  return MCP_ENVELOPE_RE.exec(text)?.[1] ?? null;
+}
+
 // splitSessionEnvelope separates the envelope line AF prepends to a message from another session
-// (peer or spawn) from the message itself. The body is what a reader may want translated; the
+// (peer or spawn) or from an MCP client from the message itself. The body is what a reader may want translated; the
 // envelope is machine-facing — its keys are parsed back by peerSenderOf / peerIntentOf — and must
 // reach the screen untouched, so it is never sent to the translator. A text with no envelope (a
 // claude-native cross-session message, docs/log/58 §58.16) is all body.
-const SESSION_ENVELOPE_RE = /^\[agent-fleet:(?:peer|spawn) [^\]]*\][ \t]*(?:\r?\n)*/;
+const SESSION_ENVELOPE_RE = /^\[agent-fleet:(?:peer|spawn|mcp) [^\]]*\][ \t]*(?:\r?\n)*/;
 export function splitSessionEnvelope(text: string): { head: string; body: string } {
   const m = SESSION_ENVELOPE_RE.exec(text);
   if (!m) return { head: "", body: text };
@@ -188,7 +198,7 @@ export function parseCommand(t: Turn): { name: string; args: string } | null {
 // composer:
 //   * a turn with a source tag — the operator, a chat bridge, a schedule, auto-resume, another
 //     session (session_injections.go); "" is the only value that means the user's own input;
-//   * a peer/spawn envelope with no tag yet (fetched before the injection record, or claude's
+//   * a peer/spawn/mcp envelope with no tag yet (fetched before the injection record, or claude's
 //     own cross-session channel before the parser named it);
 //   * compaction summaries, sidechain (subagent) turns and isNoise's system lines.
 // A slash command / skill run is kept in its re-typeable "/name args" form, and the image
@@ -206,7 +216,7 @@ export function composerHistory(turns: Turn[]): string[] {
     if (slash) s = slash.name + (slash.args ? " " + slash.args : "");
     else if (t.text && !isNoise(t)) {
       const text = t.text.trim();
-      if (peerSenderOf(text) === null && spawnParentOf(text) === null) s = stripStudioSignal(text).trim();
+      if (peerSenderOf(text) === null && spawnParentOf(text) === null && mcpViaOf(text) === null) s = stripStudioSignal(text).trim();
     }
     if (s && out[out.length - 1] !== s) out.push(s);
   }
@@ -309,9 +319,9 @@ function originsOf(t: Turn, parts: Part[]): string[] {
 // alone is not enough: a queued bubble on the claude TUI route and a pending echo carry none,
 // and there the envelope is the only mark.
 function fromSession(t: { source?: string; text?: string }): boolean {
-  if (t.source === "peer" || t.source === "spawn") return true;
+  if (t.source === "peer" || t.source === "spawn" || t.source === "mcp") return true;
   const text = t.text || "";
-  return peerSenderOf(text) !== null || spawnParentOf(text) !== null;
+  return peerSenderOf(text) !== null || spawnParentOf(text) !== null || mcpViaOf(text) !== null;
 }
 
 // groupTurns folds consecutive same-role turns into one block (concatenating their

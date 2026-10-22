@@ -282,3 +282,14 @@ and a revoke button.
   `GET /api/mcp-oauth/grants/{id}/calls` and `GET /api/pat/{id}/calls`. Tokens, `Authorization`
   values, arguments and results are never recorded. No decision above changes; this is
   diagnostics only and does not fix ChatGPT.
+
+- 2026-10-22, #2542: input sent over `/mcp` now carries its origin. `send_to_session` used to post
+  the same `/input` the Console uses, so a hosted assistant or PAT client was indistinguishable
+  from the member typing. It now posts to a separate Agent route the Console cannot reach, with
+  the connection (grant or PAT id and its name) taken from the authenticated principal; the Agent
+  prepends `[agent-fleet:mcp via=… connection=… reply=none]`, the Console badges it "Via MCP:
+  <name>", and `[agent-fleet:mcp …]` carries a peer message's authority and its four prohibitions
+  in the Workspace policy. A prompt starting with `[agent-fleet:` is refused, and shell / ssm
+  targets are refused as for peer messages (ADR 0041 decision 5). The envelope names the
+  connection, not a client conversation (MCP 2026-07-28 has no session id). No decision above
+  changes. Guide: `guide/member/10-integrations.md`.

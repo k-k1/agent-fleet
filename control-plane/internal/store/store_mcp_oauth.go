@@ -53,7 +53,7 @@ const (
 // MCPOAuthAccess is a live access token joined to its live grant. Scope is the token's own,
 // which a refresh may have narrowed below the grant's.
 type MCPOAuthAccess struct {
-	GrantID, ClientID, IdentityID, MembershipID, Scope, Resource string
+	GrantID, ClientID, ClientName, IdentityID, MembershipID, Scope, Resource string
 }
 
 // ErrMCPOAuthDisabled rejects a grant whose tenant disabled OAuth during issuance.
@@ -220,13 +220,13 @@ func (s *SQL) GetMCPOAuthTokenByHash(ctx context.Context, hash string, now int64
 func (s *SQL) GetMCPOAuthAccess(ctx context.Context, hash string, now int64) (MCPOAuthAccess, bool, error) {
 	var a MCPOAuthAccess
 	err := s.db.QueryRowContext(ctx,
-		`SELECT g.id, g.client_id, g.identity_id, g.membership_id, t.scope, t.resource
+		`SELECT g.id, g.client_id, g.client_name, g.identity_id, g.membership_id, t.scope, t.resource
 		 FROM mcp_oauth_token t JOIN mcp_oauth_grant g ON g.id=t.grant_id
 		 WHERE t.hash=? AND t.kind=? AND t.expires_at>? AND g.revoked_at=0
 		   AND g.abs_expires_at>? AND g.idle_expires_at>?
 		   AND NOT EXISTS (SELECT 1 FROM tenant WHERE id=g.tenant_id AND mcp_oauth_disabled<>0)`,
 		hash, MCPOAuthAccessKind, now, now, now).
-		Scan(&a.GrantID, &a.ClientID, &a.IdentityID, &a.MembershipID, &a.Scope, &a.Resource)
+		Scan(&a.GrantID, &a.ClientID, &a.ClientName, &a.IdentityID, &a.MembershipID, &a.Scope, &a.Resource)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MCPOAuthAccess{}, false, nil
 	}

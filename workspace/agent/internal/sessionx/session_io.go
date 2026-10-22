@@ -215,6 +215,10 @@ func titleFirst(s string) string {
 // session and submits it. Returns immediately; the caller polls /status then
 // /output for the reply.
 func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
+	// True only when HandleSessionMCPInput (session_mcp.go) delegated here: its route is not in
+	// the CP's agent-proxy allowlist, and the context key is unexported, so nothing a client
+	// sends can claim the MCP origin on this route.
+	fromMCP := r.Context().Value(mcpDeliveryKey{}) != nil
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
@@ -283,6 +287,14 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
 		return
+	}
+	// Source is a client-supplied field on the shared /input route, so the MCP origin is
+	// stamped here from the route and a caller-supplied "mcp" is erased: otherwise the Console
+	// could badge its own input as an assistant's.
+	if fromMCP {
+		body.Source = TurnSourceMCP
+	} else if body.Source == TurnSourceMCP {
+		body.Source = ""
 	}
 	if len(body.Keys) == 0 && len(body.Seq) == 0 && strings.TrimSpace(body.Prompt) == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
@@ -656,6 +668,9 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// that.
 	case body.ReportTo != "" || delivery != nil:
 		chatx.AddScheduledInstruction(name, body.ReportTo, injectionSource(body.Source), delivery, false)
+	case body.Source == TurnSourceMCP:
+		// An assistant's message over /mcp: not mirrored to Discord (that mirror reflects what
+		// the member typed) and not on the ledger (no report_to). Badge origin already recorded.
 	case scheduleInjectionSource(body.Source) != "":
 		// A scheduled injection with completion reporting off (report_to is empty, so it
 		// misses the branch above). It does not go on the ledger — there is no report

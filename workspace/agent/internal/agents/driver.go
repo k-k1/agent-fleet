@@ -71,6 +71,7 @@ const (
 	OriginSlack          = "slack"
 	OriginAutoResume     = "auto-resume"
 	OriginNotice         = "notice"
+	OriginMCP            = "mcp"
 )
 
 // Origin says where a TurnInput came from.
