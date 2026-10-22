@@ -435,6 +435,19 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 	fresh := &http.Client{Transport: freshTransport}
 	session := "" // legacy era only: 2026-07-28 removed Mcp-Session-Id entirely
 
+	// oauthFrom turns a 401 from any step of the test into the OAuth report when the server
+	// is OAuth-protected: a server may leave server/discover public and challenge only later.
+	oauthFrom := func(ex httpExchange) (ProbeResult, bool) {
+		if ex.status != http.StatusUnauthorized {
+			return ProbeResult{}, false
+		}
+		rep, ok := probeOAuth(ctx, d.URL, ex.header)
+		if !ok {
+			return ProbeResult{}, false
+		}
+		return ProbeResult{Error: errOAuthRequired, OAuth: &rep}, true
+	}
+
 	reqCtx := ctx
 	post := func(m rpcMsg, stateless bool) (httpExchange, error) {
 		b, err := json.Marshal(m)
@@ -494,10 +507,8 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 	if err != nil && ex.status == 0 {
 		return ProbeResult{Error: err.Error(), Detail: tail(ex.raw)}
 	}
-	if ex.status == http.StatusUnauthorized {
-		if rep, ok := probeOAuth(ctx, d.URL, ex.header); ok {
-			return ProbeResult{Error: errOAuthRequired, OAuth: &rep}
-		}
+	if res, ok := oauthFrom(ex); ok {
+		return res
 	}
 	statelessServer := ex.msg.Error == nil && len(ex.msg.Result) > 0
 	if !statelessServer && isModernErr(ex.msg.Error) && !isLegacyEraSignal(ex.msg.Error) {
@@ -513,6 +524,9 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 		ex, err = post(statelessReq(2, "tools/list"), true)
 		if err != nil {
 			return ProbeResult{Error: err.Error(), Detail: tail(ex.raw)}
+		}
+		if res, ok := oauthFrom(ex); ok {
+			return res
 		}
 		if ex.status < 200 || ex.status >= 300 {
 			return ProbeResult{Error: fmt.Sprintf("HTTP %d", ex.status), Detail: tail(ex.raw)}
@@ -530,6 +544,9 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 	if err != nil {
 		return ProbeResult{Error: err.Error(), Detail: tail(ex.raw)}
 	}
+	if res, ok := oauthFrom(ex); ok {
+		return res
+	}
 	if ex.status < 200 || ex.status >= 300 {
 		return ProbeResult{Error: fmt.Sprintf("HTTP %d", ex.status), Detail: tail(ex.raw)}
 	}
@@ -543,6 +560,9 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 	// instance with probability 1/N and the test would pass by luck.
 	stateful := session != ""
 	failStatus := func(ex httpExchange) ProbeResult {
+		if res, ok := oauthFrom(ex); ok {
+			return res
+		}
 		if stateful && sessionRejected(ex) {
 			return ProbeResult{
 				Error:  errSessionRejected,

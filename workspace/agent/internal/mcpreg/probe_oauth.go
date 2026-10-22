@@ -290,6 +290,16 @@ func issuerUsable(issuer string) (*url.URL, bool) {
 	return nil, false
 }
 
+// metadataURLUsable is the gate before any metadata request leaves the process: https, or
+// plain http for a loopback host only, and no userinfo. A plain-http document could be altered
+// on the path, and the PRM or AS metadata is exactly what decides which server gets trusted.
+func metadataURLUsable(u *url.URL, parseErr error) bool {
+	if parseErr != nil || u.Host == "" || u.User != nil {
+		return false
+	}
+	return u.Scheme == "https" || (u.Scheme == "http" && isLoopbackHost(u.Hostname()))
+}
+
 func isLoopbackHost(h string) bool {
 	if strings.EqualFold(h, "localhost") {
 		return true
@@ -299,7 +309,9 @@ func isLoopbackHost(h string) bool {
 }
 
 // prmCandidates are the protected-resource metadata URLs to try when the challenge named
-// none (RFC 9728 §3): the well-known URL with the resource's path inserted, then the root.
+// none (RFC 9728 §3.1): the well-known URL inserted between the host and the resource's path
+// and query, then the root form. Only a lone "/" right after the host is dropped; the rest of
+// the path, including a trailing "/", is kept as is.
 func prmCandidates(resource string) []string {
 	u, err := url.Parse(resource)
 	if err != nil {
@@ -307,11 +319,18 @@ func prmCandidates(resource string) []string {
 	}
 	origin := u.Scheme + "://" + u.Host
 	const wk = "/.well-known/oauth-protected-resource"
-	path := strings.TrimRight(u.EscapedPath(), "/")
-	if path == "" {
+	path := u.EscapedPath()
+	if path == "/" {
+		path = ""
+	}
+	if path == "" && u.RawQuery == "" {
 		return []string{origin + wk}
 	}
-	return []string{origin + wk + path, origin + wk}
+	with := origin + wk + path
+	if u.RawQuery != "" {
+		with += "?" + u.RawQuery
+	}
+	return []string{with, origin + wk}
 }
 
 // asCandidates are the authorization-server metadata URLs for an issuer, in the order the
@@ -342,8 +361,8 @@ type metadataGetter struct{}
 
 func (metadataGetter) get(ctx context.Context, raw string, out any) error {
 	start, err := url.Parse(raw)
-	if err != nil || (start.Scheme != "http" && start.Scheme != "https") || start.Host == "" {
-		return fmt.Errorf("not an http(s) URL")
+	if !metadataURLUsable(start, err) {
+		return fmt.Errorf("metadata URL must be https (http only for a loopback host) without credentials")
 	}
 	ctx, cancel := context.WithTimeout(ctx, metadataTimeout)
 	defer cancel()
