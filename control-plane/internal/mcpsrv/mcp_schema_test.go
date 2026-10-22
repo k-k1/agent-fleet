@@ -73,14 +73,16 @@ func TestToolsListSchemasAreValidJSONSchema(t *testing.T) {
 					if len(res.Tools) == 0 {
 						t.Fatal("no tools listed")
 					}
-					if role != "member" && scope == "write" {
-						found := false
-						for _, tl := range res.Tools {
-							found = found || tl.Name == "list_sessions"
-						}
-						if !found {
-							t.Fatal("admin tools missing; the test would not reach userKeyArg")
-						}
+					listed := map[string]bool{}
+					for _, tl := range res.Tools {
+						listed[tl.Name] = true
+					}
+					if !listed["list_my_sessions"] {
+						t.Error("member tool list_my_sessions missing")
+					}
+					// list_sessions is the tool built by userKeyArg with no required field.
+					if wantAdmin := role != "member"; listed["list_sessions"] != wantAdmin {
+						t.Errorf("list_sessions listed = %v, want %v", listed["list_sessions"], wantAdmin)
 					}
 					seen := map[string]bool{}
 					for _, tl := range res.Tools {
@@ -132,6 +134,19 @@ func schemaProblems(schema any) []string {
 					out = append(out, fmt.Sprintf("required names %q, which is not a property", s))
 				}
 			}
+		}
+	}
+	for name, pv := range props {
+		pm, isMap := pv.(map[string]any)
+		if !isMap {
+			out = append(out, fmt.Sprintf("property %q is %T, want object", name, pv))
+			continue
+		}
+		typ, isStr := pm["type"].(string)
+		if !isStr {
+			out = append(out, fmt.Sprintf("property %q has no string type", name))
+		} else if _, has := pm["properties"]; typ == "object" && !has {
+			out = append(out, fmt.Sprintf("object property %q has no properties", name))
 		}
 	}
 	var walk func(path string, v any)
