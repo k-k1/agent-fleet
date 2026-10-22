@@ -410,6 +410,26 @@ working for CI and clients without OAuth.
 - **Tenant network restriction** applies to the consent step (the person in the browser), not to `/mcp` and the token
   endpoint, which come from the vendors' servers, as with PATs (ADR 0047).
 
+### Reading what a client sent to `/mcp`
+
+Every request to `/mcp` — refused ones, a `GET` or `DELETE` answered 405 before authentication, each
+item of a batch — writes one Control Plane log line, so a client that connects and then shows no tools can be
+diagnosed from what it actually did:
+
+```
+mcp-call http_method="POST" status=400 latency_ms=2 principal="grant:<id>" client_id="<id>" header_version="2026-07-28" mcp_method_header=false mcp_name_header=false accept="application/json, text/event-stream" content_type="application/json" user_agent="…" items=[{"method":"tools/list","era":"stateless","meta_version":"2026-07-28","client_name":"…","status":400,"error_code":-32020,"error_message":"header mismatch: Mcp-Method (absent) does not match body method \"tools/list\""}]
+```
+
+- `principal` is `pat:<id>`, `grant:<id>` (OAuth; `client_id` follows) or `unauthenticated`, with `reason=` saying why
+  (no bearer token, unknown or expired token, an OAuth token bound to another resource, `method not allowed`).
+- `era` is `legacy` (an `initialize` handshake) or `stateless` (2026-07-28: `_meta` on every request). A stateless request
+  the server rejects shows the JSON-RPC `error_code` (-32020 header mismatch, -32021, -32022 unsupported version, -32602 missing `_meta` field)
+  and the `Mcp-Method` / `Mcp-Name` presence flags; `tools/list` items carry `tools`, the number returned.
+- Never recorded: a token, the `Authorization` value, request arguments or tool results. Only the tool name of a `tools/call` is.
+- The same records of an authenticated caller are readable by their owner in memory (last 50 per token / connection,
+  not persisted, lost on restart, **per Control Plane replica**) under Settings → Connections → MCP tokens → *Recent calls*.
+  Behind several replicas look for the line in the logs of all of them; 405 and unauthenticated requests exist only in the log.
+
 ## Handing over the in-workspace browser
 
 An agent can hand a page from the Chromium it started inside the workspace to the user as a

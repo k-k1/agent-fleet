@@ -105,6 +105,9 @@ const (
 // mcpPrincipal is the resolved caller behind a PAT for one MCP request.
 type mcpPrincipal struct {
 	patID, identityID, membershipID, scope string
+	// oauth marks a grant: patID then holds the grant id and clientID the OAuth client's.
+	oauth    bool
+	clientID string
 }
 
 // --- JSON-RPC 2.0 ---
@@ -139,17 +142,24 @@ func rpcErr(id json.RawMessage, code int, msg string) *rpcResponse {
 }
 
 // HandleMCP is the /mcp endpoint. Registered only when AF_MCP_ENABLED=true.
+//
+// Every request, refused ones included, ends in one log line and (once authenticated) one
+// ring entry — see mcp_calls.go. The record is written on the way out so it carries the
+// status the client actually got.
 func (a API) HandleMCP(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet || r.Method == http.MethodDelete {
-		// No server-initiated stream / session teardown in the minimal server.
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
+	tr := newCallTrace(r)
+	sw := &statusWriter{ResponseWriter: w}
+	defer func() { a.finish(tr, sw.status) }()
+	w = sw
+
 	if r.Method != http.MethodPost {
+		// No server-initiated stream (GET) / session teardown (DELETE) in the minimal server.
+		// Answered before authentication, so it can only be logged, never attributed.
+		tr.rec.Reason = "method not allowed"
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	prin, aerr := a.authMCP(r)
+	prin, aerr := a.authMCP(r, tr)
 	if aerr != nil {
 		if aerr.Status == http.StatusUnauthorized {
 			w.Header().Set("WWW-Authenticate", a.challenge(strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")) != ""))
@@ -157,10 +167,12 @@ func (a API) HandleMCP(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
+	tr.setPrincipal(prin)
 
 	raw, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
+		tr.addParseError("empty request")
 		writeJSON(w, http.StatusOK, rpcErr(nil, -32700, "empty request"))
 		return
 	}
@@ -169,13 +181,16 @@ func (a API) HandleMCP(w http.ResponseWriter, r *http.Request) {
 	if trimmed[0] == '[' {
 		var reqs []rpcRequest
 		if err := json.Unmarshal(trimmed, &reqs); err != nil {
+			tr.addParseError("parse error")
 			writeJSON(w, http.StatusOK, rpcErr(nil, -32700, "parse error"))
 			return
 		}
 		var out []*rpcResponse
 		for _, req := range reqs {
 			// A batch is answered 200 as a whole: per-item HTTP status has nowhere to go.
-			if resp, _ := a.dispatchMCPHTTP(r, prin, req); resp != nil {
+			resp, _, it := a.dispatchTraced(r, prin, req)
+			tr.addItem(it)
+			if resp != nil {
 				out = append(out, resp)
 			}
 		}
@@ -189,10 +204,12 @@ func (a API) HandleMCP(w http.ResponseWriter, r *http.Request) {
 
 	var req rpcRequest
 	if err := json.Unmarshal(trimmed, &req); err != nil {
+		tr.addParseError("parse error")
 		writeJSON(w, http.StatusOK, rpcErr(nil, -32700, "parse error"))
 		return
 	}
-	resp, status := a.dispatchMCPHTTP(r, prin, req)
+	resp, status, it := a.dispatchTraced(r, prin, req)
+	tr.addItem(it)
 	if resp == nil { // notification
 		w.WriteHeader(http.StatusAccepted)
 		return
@@ -208,42 +225,57 @@ func (a API) HandleMCP(w http.ResponseWriter, r *http.Request) {
 //
 // Initialize-era requests keep the previous behavior exactly: always 200.
 func (a API) dispatchMCPHTTP(r *http.Request, prin *mcpPrincipal, req rpcRequest) (*rpcResponse, int) {
+	resp, status, _ := a.dispatchTraced(r, prin, req)
+	return resp, status
+}
+
+// dispatchTraced is dispatchMCPHTTP plus the record of what the message was and how it was answered.
+func (a API) dispatchTraced(r *http.Request, prin *mcpPrincipal, req rpcRequest) (*rpcResponse, int, CallItem) {
 	p := parseParamsMeta(req.Params)
 	era := eraOf(p)
 	ctx := withMCPCall(r.Context(), mcpCallInfo{patID: prin.patID, client: mcpClientName(r, p)})
+	var resp *rpcResponse
+	status := http.StatusOK
 	if !era.Stateless {
-		return a.dispatchMCP(ctx, prin, req), http.StatusOK
+		resp = a.dispatchMCP(ctx, prin, req)
+	} else if vr, vs := validateStateless(r, req, p, era); vr != nil {
+		resp, status = vr, vs
+	} else {
+		resp = a.dispatchMCP(ctx, prin, req)
+		if resp != nil && resp.Error != nil && resp.Error.Code == rpcMethodNotFound {
+			status = http.StatusNotFound
+		}
 	}
-	if resp, status := validateStateless(r, req, p, era); resp != nil {
-		return resp, status
-	}
-	resp := a.dispatchMCP(ctx, prin, req)
-	if resp != nil && resp.Error != nil && resp.Error.Code == rpcMethodNotFound {
-		return resp, http.StatusNotFound
-	}
-	return resp, http.StatusOK
+	return resp, status, itemFor(req, p, era, resp, status)
 }
 
 // authMCP resolves the Bearer PAT to a principal, rejecting missing/unknown/
 // revoked/expired tokens. role is resolved live downstream (per call).
-func (a API) authMCP(r *http.Request) (*mcpPrincipal, *APIError) {
+//
+// Why a request was refused goes to tr.rec.Reason, which says more than the client is told
+// (an OAuth token for another resource answers the same "invalid token" as an unknown one).
+func (a API) authMCP(r *http.Request, tr *callTrace) (*mcpPrincipal, *APIError) {
 	auth := r.Header.Get("Authorization")
 	tok := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
 	if tok == "" || tok == auth { // no/!Bearer prefix
+		tr.rec.Reason = "no bearer token presented"
 		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "missing bearer token"}
 	}
 	if a.oauth.resource != "" && strings.HasPrefix(tok, oauthAccessPrefix) {
-		return a.authOAuth(r, tok)
+		return a.authOAuth(r, tok, tr)
 	}
 	p, ok, err := a.cp.Store().GetPATByHash(r.Context(), a.cp.HashPAT(tok))
 	if err != nil {
+		tr.rec.Reason = "store error"
 		return nil, internalErr(err)
 	}
 	if !ok || p.RevokedAt != "" {
+		tr.rec.Reason = "pat unknown or revoked"
 		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid token"}
 	}
 	if p.ExpiresAt != "" {
 		if exp, err := time.Parse(time.RFC3339, p.ExpiresAt); err == nil && time.Now().After(exp) {
+			tr.rec.Reason = "pat expired"
 			return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "token expired"}
 		}
 	}
@@ -254,13 +286,19 @@ func (a API) authMCP(r *http.Request) (*mcpPrincipal, *APIError) {
 // authOAuth resolves an OAuth access token to the same principal a PAT gives, with the grant id
 // where the PAT id was. The token must be bound to this endpoint: a token the issuer minted for
 // anything else is refused here even though it is otherwise valid.
-func (a API) authOAuth(r *http.Request, tok string) (*mcpPrincipal, *APIError) {
+func (a API) authOAuth(r *http.Request, tok string, tr *callTrace) (*mcpPrincipal, *APIError) {
 	now := time.Now()
 	g, ok, err := a.cp.Store().GetMCPOAuthAccess(r.Context(), a.cp.HashPAT(tok), now.Unix())
 	if err != nil {
+		tr.rec.Reason = "store error"
 		return nil, internalErr(err)
 	}
-	if !ok || g.Resource != a.oauth.resource {
+	if !ok {
+		tr.rec.Reason = "oauth token unknown, expired or its grant ended"
+		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid token"}
+	}
+	if g.Resource != a.oauth.resource {
+		tr.rec.Reason = "oauth token bound to another resource"
 		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid token"}
 	}
 	_ = a.cp.Store().TouchMCPOAuthGrant(r.Context(), g.GrantID, now.Unix(), int64(oauthIdle.Seconds())) // best-effort, like TouchPAT
@@ -268,7 +306,7 @@ func (a API) authOAuth(r *http.Request, tok string) (*mcpPrincipal, *APIError) {
 	if strings.Contains(" "+g.Scope+" ", " "+scopeWrite+" ") {
 		scope = scopeWrite
 	}
-	return &mcpPrincipal{patID: g.GrantID, identityID: g.IdentityID, membershipID: g.MembershipID, scope: scope}, nil
+	return &mcpPrincipal{patID: g.GrantID, identityID: g.IdentityID, membershipID: g.MembershipID, scope: scope, oauth: true, clientID: g.ClientID}, nil
 }
 
 func (a API) dispatchMCP(ctx context.Context, prin *mcpPrincipal, req rpcRequest) *rpcResponse {

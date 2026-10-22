@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -191,6 +192,25 @@ func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident store.Ident
 		"id":    p.ID, "name": p.Name, "scope": scope,
 		"tenant": mv.TenantSlug, "expires_at": expires,
 	})
+}
+
+// calls (GET /api/pat/{id}/calls) is the recent /mcp requests made with one of the caller's own
+// tokens, newest first; another member's id answers 404 like an unknown one. Per replica, in
+// memory (mcpsrv/mcp_calls.go).
+func (a patAPI) calls(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	id := r.PathValue("id")
+	pats, err := a.store.ListPATsByIdentity(r.Context(), ident.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	for _, p := range pats {
+		if p.ID == id {
+			writeJSON(w, http.StatusOK, mcpCallsOut{Calls: a.mgr.mcpCalls.Recent(mcpsrv.CallKey(false, id))})
+			return
+		}
+	}
+	writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "unknown token"})
 }
 
 // revoke (DELETE /api/pat/{id}) revokes one of the caller's tokens.

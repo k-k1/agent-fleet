@@ -344,6 +344,24 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
 - **テナントのネットワーク制限**は確認（同意）の段階、つまりブラウザの前にいる人に適用されます。ベンダーのサーバーから来る `/mcp` とトークンエンドポイントには、PAT と同じく適用されません
   （ADR 0047）。
 
+### クライアントが `/mcp` に送ったものを読む
+
+`/mcp` へのリクエストは、拒否されたもの、認証より前に 405 で答える `GET` / `DELETE`、バッチの各要素も含め、
+1 件ごとに Control Plane のログへ 1 行出ます。接続はできるのにツールが出ないクライアントでも、実際に何をしたかから原因を追えます。
+
+```
+mcp-call http_method="POST" status=400 latency_ms=2 principal="grant:<id>" client_id="<id>" header_version="2026-07-28" mcp_method_header=false mcp_name_header=false accept="application/json, text/event-stream" content_type="application/json" user_agent="…" items=[{"method":"tools/list","era":"stateless","meta_version":"2026-07-28","client_name":"…","status":400,"error_code":-32020,"error_message":"header mismatch: Mcp-Method (absent) does not match body method \"tools/list\""}]
+```
+
+- `principal` は `pat:<id>`、`grant:<id>`（OAuth。続けて `client_id`）、`unauthenticated` のいずれかで、拒否したときは `reason=` に理由が入ります
+  （Bearer なし、不明・期限切れのトークン、別リソース向けの OAuth トークン、`method not allowed`）。
+- `era` は `legacy`（`initialize` ハンドシェイク）か `stateless`（2026-07-28。毎回 `_meta` を付ける）です。stateless で拒否されたときは
+  JSON-RPC の `error_code`（-32020 ヘッダ不一致、-32021、-32022 非対応バージョン、-32602 `_meta` 欠落）と、`Mcp-Method` / `Mcp-Name` ヘッダの有無が出ます。
+  `tools/list` の要素には返したツール数 `tools` が付きます。
+- トークン、`Authorization` の値、リクエストの引数、ツールの結果は記録しません。`tools/call` のツール名だけ記録します。
+- 認証できた呼び出し者の記録は、本人が 設定 → 接続 → MCP トークン →「最近の呼び出し」で読めます（トークン / 接続ごとに直近 50 件、
+  メモリ上のみで再起動すると消え、**Control Plane のレプリカごと**）。レプリカが複数あるときは全レプリカのログを探してください。405 と未認証のリクエストはログにしか残りません。
+
 ## ワークスペース内ブラウザの引き渡し
 
 エージェントは、ワークスペース内で自分が起動した Chromium のページを Console のペインとして

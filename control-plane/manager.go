@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -28,6 +29,8 @@ type manager struct {
 	// mcpOAuthServed: the /mcp authorization server is on (set once at route registration),
 	// which authGate reads to answer 404 instead of a login redirect while it is off.
 	mcpOAuthServed atomic.Bool
+	// mcpCalls: recent /mcp calls per PAT / grant, this replica only (mcpsrv/mcp_calls.go).
+	mcpCalls mcpsrv.CallLog
 
 	// mu guards ONLY the in-memory maps below (runtime/lock/activity caches) — it is
 	// never held across store/docker I/O (docs/log/23 P2-W2). The I/O of a first resolve

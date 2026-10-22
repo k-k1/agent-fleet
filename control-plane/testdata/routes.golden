@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
 # ANY = registered without a method. Taken with every routeSwitch on (routes_golden_test.go).
-# count: 708
+# count: 711
 ANY /
 ANY /.well-known/oauth-authorization-server/mcp-oauth
 ANY /.well-known/oauth-protected-resource/mcp
@@ -17,8 +17,8 @@ GET /api/admin/dev-idp
 PUT /api/admin/dev-idp
 GET /api/admin/ec2-pool
 POST /api/admin/ec2-pool/reserve-outdated
-POST /api/admin/ec2-pool/slots/{id}/force-stop
 DELETE /api/admin/ec2-pool/slots/{id}
+POST /api/admin/ec2-pool/slots/{id}/force-stop
 DELETE /api/admin/ec2-pool/slots/{id}/replace
 PUT /api/admin/ec2-pool/slots/{id}/replace
 GET /api/admin/egress
@@ -416,6 +416,7 @@ GET /api/limit-board/me
 PUT /api/limit-board/me
 GET /api/mcp-oauth/grants
 DELETE /api/mcp-oauth/grants/{id}
+GET /api/mcp-oauth/grants/{id}/calls
 GET /api/mcp-servers
 POST /api/mcp-servers
 POST /api/mcp-servers/tenant-refresh
@@ -449,6 +450,7 @@ GET /api/oauth/jira/callback
 GET /api/pat
 POST /api/pat
 DELETE /api/pat/{id}
+GET /api/pat/{id}/calls
 GET /api/preview/shared
 GET /api/repo-jobs
 DELETE /api/repo-jobs/{id}

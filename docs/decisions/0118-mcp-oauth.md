@@ -270,3 +270,15 @@ and a revoke button.
   insufficient-scope handling. `prompt=none` still requires an existing grant covering
   the entire requested scope: a read grant cannot silently approve a read+write request.
   Live verification of the changed hosted-client flow remains tracked by #2435.
+
+- 2026-10-22, #2531: `/mcp` calls are now observable. The #2435 live run showed ChatGPT
+  completing the OAuth flow and one call, then listing no tools, while nothing recorded what it
+  had sent or been answered, so the cause (suspected: a 400 from the stateless-era validation,
+  or the 405 on `GET`) could not be seen. Every `/mcp` request now writes one `mcp-call` log
+  line (method, status, JSON-RPC methods per batch item, era and protocol version, which
+  mirrored headers were present, error code and message, tool count of `tools/list`, latency,
+  principal or the refusal reason), and an authenticated one also enters a per-PAT / per-grant
+  in-memory ring (last 50, per replica, not persisted) that only its owner reads at
+  `GET /api/mcp-oauth/grants/{id}/calls` and `GET /api/pat/{id}/calls`. Tokens, `Authorization`
+  values, arguments and results are never recorded. No decision above changes; this is
+  diagnostics only and does not fix ChatGPT.

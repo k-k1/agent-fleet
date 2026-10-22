@@ -47,6 +47,10 @@ type CP interface {
 	// serverInfo reports. The brand label can change at runtime, hence the context.
 	ServerIdentity(ctx context.Context) ServerIdentity
 
+	// CallLog is the per-replica ring of recent /mcp calls the member API reads back. It lives
+	// on the CP because that API is not part of this package; nil drops the records.
+	CallLog() *CallLog
+
 	// --- Resolution / lifecycle (manager's methods) -----------------------------
 	RuntimeFor(ws store.Workspace, secretKey string, extraEnv ...string) runtime.Runtime
 	ResolveByMembership(ctx context.Context, identityID, membershipID string) (*Resolved, *APIError)
