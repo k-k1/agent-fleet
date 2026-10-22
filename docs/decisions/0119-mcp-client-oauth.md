@@ -212,3 +212,13 @@ naming the server and the AS issuer. No token, code or verifier is logged or aud
 - Not measured: which hosted MCP servers' authorization servers support CIMD, and whether every
   agent kind accepts a plain-http loopback URL with a header (decision 7 adds the test that will
   say).
+
+- 2026-10-22, P2 server side built (#2549; the Console half follows). Facts the decisions above did not
+  pin down. The sign-in `state` lives in a CP table (`mcp_client_oauth_state`, keyed by the SHA-256 of the
+  state, deleted by the one statement that reads it), while the PKCE verifier and the pending authorization
+  live in the Agent's memory only and expire with the state. The callback identifies the browser by the
+  Console session under `AUTH=oauth`, by the gateway header under `AUTH=proxy`. A grant is one per server:
+  completing a sign-in replaces another issuer's grant. DCR clients are stored per issuer and redirect URI,
+  pre-registered ones per server and issuer. A refresh response that cannot be written to the store is held
+  in memory and written before anything else on the next call; a process crash inside that window still
+  loses the response, which only the AS can make good. Not measured against a real authorization server.

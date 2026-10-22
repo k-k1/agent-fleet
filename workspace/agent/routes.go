@@ -625,6 +625,13 @@ func buildMux() *http.ServeMux {
 	// user_secret definition declares.
 	mux.HandleFunc("POST /mcp-servers/tenant-refresh", mcpx.HandleTenantRefresh)
 	mux.HandleFunc("PUT /mcp-servers/{id}/secrets", mcpx.HandleServerSecrets)
+	// OAuth sign-in (ADR 0119 P2). start and callback are called by the CP's own handlers, which
+	// bind them to a member; the CP does not proxy them from the Console.
+	mux.HandleFunc("POST /mcp-servers/{id}/oauth/start", mcpx.HandleOAuthStart)
+	mux.HandleFunc("POST /mcp-servers/{id}/oauth/callback", mcpx.HandleOAuthCallback)
+	mux.HandleFunc("GET /mcp-servers/{id}/oauth", mcpx.HandleOAuthStatus)
+	mux.HandleFunc("DELETE /mcp-servers/{id}/oauth", mcpx.HandleOAuthDisconnect)
+	mux.HandleFunc("PUT /mcp-servers/{id}/oauth/client", mcpx.HandleOAuthClient)
 
 	// Connections — per-user provider credentials (git tokens; Claude in Stage 3).
 	mux.HandleFunc("GET /connections", handleConnectionsGet)

@@ -108,6 +108,11 @@ func HandleServerUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func HandleServerDelete(w http.ResponseWriter, r *http.Request) {
+	// Revoke a sign-in at its authorization server before the definition (and with it the
+	// local grant) goes. Best effort: deleting the server never waits on the AS.
+	if d, err := mcpreg.Get(r.PathValue("id")); err == nil && d.Origin == mcpreg.OriginUser {
+		_, _ = mcpreg.DisconnectOAuth(r.Context(), d.ID)
+	}
 	if err := mcpreg.Delete(r.PathValue("id")); err != nil {
 		writeMCPErr(w, err)
 		return
