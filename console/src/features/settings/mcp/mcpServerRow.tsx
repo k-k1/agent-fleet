@@ -1,9 +1,9 @@
 import { Icon } from "../../../ui/Icon.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { agentOf } from "../../../agents/registry.ts";
-import { useT } from "../../../lib/i18n/index.ts";
-import type { McpServer, ProbeResult } from "./mcpWire.ts";
-import { needsMemberSecrets } from "./mcpWire.ts";
+import { tMaybe, useT } from "../../../lib/i18n/index.ts";
+import { isOAuthRequired, needsMemberSecrets } from "./mcpWire.ts";
+import type { McpServer, OAuthReport, ProbeResult } from "./mcpWire.ts";
 import { Meta } from "../parts/mcpForm.tsx";
 import { EgressNote } from "./EgressNote.tsx";
 import type { EgressCheck } from "./egressCheck.ts";
@@ -143,6 +143,7 @@ export function targetsText(tg: { assistant: boolean; session: boolean } | undef
 export function ProbeView({ probe }: { probe?: ProbeResult }) {
   const tr = useT();
   if (!probe) return null;
+  if (isOAuthRequired(probe) && probe.oauth) return <OAuthProbeView report={probe.oauth} />;
   if (!probe.ok) {
     return (
       <div className="mcp-probe bad">
@@ -168,6 +169,57 @@ export function ProbeView({ probe }: { probe?: ProbeResult }) {
         </div>
         {probe.revision && <div className="muted">{tr("mcp.test_revision", { rev: probe.revision })}</div>}
         {probe.tools && probe.tools.length > 0 && <div className="muted mono">{probe.tools.join(", ")}</div>}
+      </div>
+    </div>
+  );
+}
+
+// OAuthProbeView is the test result of a server that wants an OAuth sign-in: what it offers,
+// and anything the Agent refused to trust. There is no sign-in button yet (ADR 0119 P1).
+function OAuthProbeView({ report }: { report: OAuthReport }) {
+  const tr = useT();
+  const problems = report.problems || [];
+  const regLabel = (reg: string[]) =>
+    reg.length === 0
+      ? tr("mcp.oauth_reg_none")
+      : reg.map((r) => (r === "cimd" ? tr("mcp.oauth_reg_cimd") : r === "dcr" ? tr("mcp.oauth_reg_dcr") : r)).join(" / ");
+  const problemText = (p: { code: string; issuer?: string }) => {
+    return (
+      tMaybe(`mcp.oauth_problem_${p.code}`, { issuer: p.issuer || "?" }) ??
+      tr("mcp.oauth_problem_unknown", { code: p.code })
+    );
+  };
+  return (
+    <div className="mcp-probe info" data-testid="mcp-oauth-probe">
+      <Icon name="info" />
+      <div>
+        <div>{tr("mcp.oauth_required")}</div>
+        <div className="muted">{tr("mcp.oauth_soon")}</div>
+        {report.challengedScope && <div className="muted mono">{tr("mcp.oauth_scope", { scope: report.challengedScope })}</div>}
+        {report.scopesSupported && report.scopesSupported.length > 0 && (
+          <div className="muted mono">{tr("mcp.oauth_scopes", { scopes: report.scopesSupported.join(" ") })}</div>
+        )}
+        {(report.servers || []).map((s) => (
+          <div className="mcp-probe-as" key={s.issuer}>
+            <div className="mono">
+              {tr("mcp.oauth_as", { issuer: s.issuer })}
+              {report.selected === s.issuer && <> {tr("mcp.oauth_as_selected")}</>}
+            </div>
+            <div className="muted">{tr("mcp.oauth_reg", { paths: regLabel(s.registration || []) })}</div>
+            <div className="muted">{tr(s.s256 ? "mcp.oauth_s256_yes" : "mcp.oauth_s256_no")}</div>
+            <div className="muted">{tr(s.issParam ? "mcp.oauth_iss_yes" : "mcp.oauth_iss_no")}</div>
+          </div>
+        ))}
+        {problems.length > 0 && (
+          <div className="mcp-probe-problems">
+            <div>{tr("mcp.oauth_problems")}</div>
+            <ul>
+              {problems.map((p, i) => (
+                <li key={i}>{problemText(p)}</li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     </div>
   );

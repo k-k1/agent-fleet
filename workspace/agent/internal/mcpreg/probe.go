@@ -82,6 +82,10 @@ const affinityBudget = 5 * time.Second
 // (several instances, in-memory sessions, no affinity).
 const errSessionRejected = "サーバーが、自ら発行したセッション ID を拒否しました。複数インスタンスで動作していて、セッションの親和性（同じセッションを同じインスタンスへ振り分ける設定）がない可能性があります。サーバーをステートレスにするか、同じセッションのリクエストを必ず同じインスタンスへ振り分けてください"
 
+// errOAuthRequired is the Error of a recognised OAuth-protected server. The Console keys off
+// ProbeResult.OAuth, not this text; it is what an older Console shows.
+const errOAuthRequired = "OAuth によるサインインが必要なサーバーです（サインインにはまだ対応していません）"
+
 // errProbeTimeout distinguishes "no answer in time" from "the process died", so the
 // era probe can fall back on the former and fail fast on the latter.
 var errProbeTimeout = errors.New("タイムアウトしました")
@@ -102,8 +106,11 @@ type ProbeResult struct {
 	Error             string   `json:"error,omitempty"`
 	// Detail carries the server's stderr / response body tail on failure. Truncated,
 	// and shown verbatim to the user — a broken command usually explains itself there.
-	Detail    string `json:"detail,omitempty"`
-	ElapsedMS int64  `json:"elapsedMs"`
+	Detail string `json:"detail,omitempty"`
+	// OAuth is set when the server answered 401 as an OAuth-protected resource. OK stays
+	// false (nothing was listed), but the Console shows the report instead of a failure.
+	OAuth     *OAuthReport `json:"oauth,omitempty"`
+	ElapsedMS int64        `json:"elapsedMs"`
 }
 
 type rpcMsg struct {
@@ -412,6 +419,7 @@ type httpExchange struct {
 	msg    rpcMsg
 	status int
 	raw    string
+	header http.Header
 }
 
 func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
@@ -426,6 +434,19 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 	freshTransport.DisableKeepAlives = true
 	fresh := &http.Client{Transport: freshTransport}
 	session := "" // legacy era only: 2026-07-28 removed Mcp-Session-Id entirely
+
+	// oauthFrom turns a 401 from any step of the test into the OAuth report when the server
+	// is OAuth-protected: a server may leave server/discover public and challenge only later.
+	oauthFrom := func(ex httpExchange) (ProbeResult, bool) {
+		if ex.status != http.StatusUnauthorized {
+			return ProbeResult{}, false
+		}
+		rep, ok := probeOAuth(ctx, d.URL, ex.header)
+		if !ok {
+			return ProbeResult{}, false
+		}
+		return ProbeResult{Error: errOAuthRequired, OAuth: &rep}, true
+	}
 
 	reqCtx := ctx
 	post := func(m rpcMsg, stateless bool) (httpExchange, error) {
@@ -468,7 +489,7 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 			session = sid
 		}
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxProbeBody))
-		ex := httpExchange{status: resp.StatusCode, raw: string(body)}
+		ex := httpExchange{status: resp.StatusCode, raw: string(body), header: resp.Header}
 		if resp.StatusCode == http.StatusAccepted || len(bytes.TrimSpace(body)) == 0 {
 			return ex, nil // notification ack, or empty 200
 		}
@@ -486,6 +507,9 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 	if err != nil && ex.status == 0 {
 		return ProbeResult{Error: err.Error(), Detail: tail(ex.raw)}
 	}
+	if res, ok := oauthFrom(ex); ok {
+		return res
+	}
 	statelessServer := ex.msg.Error == nil && len(ex.msg.Result) > 0
 	if !statelessServer && isModernErr(ex.msg.Error) && !isLegacyEraSignal(ex.msg.Error) {
 		return ProbeResult{
@@ -500,6 +524,9 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 		ex, err = post(statelessReq(2, "tools/list"), true)
 		if err != nil {
 			return ProbeResult{Error: err.Error(), Detail: tail(ex.raw)}
+		}
+		if res, ok := oauthFrom(ex); ok {
+			return res
 		}
 		if ex.status < 200 || ex.status >= 300 {
 			return ProbeResult{Error: fmt.Sprintf("HTTP %d", ex.status), Detail: tail(ex.raw)}
@@ -517,6 +544,9 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 	if err != nil {
 		return ProbeResult{Error: err.Error(), Detail: tail(ex.raw)}
 	}
+	if res, ok := oauthFrom(ex); ok {
+		return res
+	}
 	if ex.status < 200 || ex.status >= 300 {
 		return ProbeResult{Error: fmt.Sprintf("HTTP %d", ex.status), Detail: tail(ex.raw)}
 	}
@@ -530,6 +560,9 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 	// instance with probability 1/N and the test would pass by luck.
 	stateful := session != ""
 	failStatus := func(ex httpExchange) ProbeResult {
+		if res, ok := oauthFrom(ex); ok {
+			return res
+		}
 		if stateful && sessionRejected(ex) {
 			return ProbeResult{
 				Error:  errSessionRejected,

@@ -335,6 +335,9 @@ search.
 - **Targets**: whether it is handed to **assistants**, **sessions**, or both (clear both and the entry stays
   but goes nowhere). Leave **target agents** empty to cover every agent.
 - **Connection test**: reports the server name, version, tool count and round-trip time.
+  If the server answers that it needs an **OAuth sign-in**, the test says so instead of reporting a failure
+  and lists what it found: the authorization server, how a client can register with it, and the scopes.
+  Agent Fleet detects such servers but cannot sign in to them yet; that is coming.
 - **Enabled / disabled**: disabling keeps the definition but stops handing it out.
 - Sessions pick it up **from the next session you start**. For assistants, choose it in the assistant's own
   edit form under "MCP servers" ([07](07-chat-memo.md)).
