@@ -948,6 +948,8 @@ plan 1 0 "{\"body\":\"$ROUTE/browse/KEY-1\"}
 " ""
 run -- issue view KEY-1 --raw
 grep -q "$ROUTE/browse/KEY-1" "$T/out" || fail "links (--raw): rewritten"
+run -- issue view KEY-1 --raw=true
+grep -q "$ROUTE/browse/KEY-1" "$T/out" || fail "links (--raw=true): rewritten"
 # Completion still works when the connection is unusable.
 reset
 printf 'unusable=x\n' >"$T/agent.why"

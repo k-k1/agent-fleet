@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -246,5 +249,16 @@ func TestJiraCommentDeleteAfterRefusedThenNotFoundIsAnError(t *testing.T) {
 	rc, out, errs := runComment(c, "", "issue", "comment", "delete", "-p", "T", "T-1", "99999")
 	if rc != 1 || strings.Contains(out, "probably") || !strings.Contains(errs, "404") {
 		t.Fatalf("rc=%d out=%q err=%q", rc, out, errs)
+	}
+}
+
+func TestJiraMaybeApplied(t *testing.T) {
+	dialTimeout := &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}
+	readReset := &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
+	readTimeout := &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}
+	for err, want := range map[error]bool{dialTimeout: false, readReset: true, readTimeout: true, io.EOF: true} {
+		if got := jiraMaybeApplied(err); got != want {
+			t.Errorf("jiraMaybeApplied(%v) = %v, want %v", err, got, want)
+		}
 	}
 }

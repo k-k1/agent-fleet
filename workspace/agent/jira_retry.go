@@ -88,9 +88,14 @@ func jiraTransportClass(err error) string {
 }
 
 // jiraMaybeApplied is false for failures that happen before the request leaves this host
-// (DNS, refused connection, TLS setup): the server never saw it, so a later 404 means the
+// (DNS, dial failures including a dial timeout, TLS setup): the server never saw it, so a later 404 means the
 // resource was never there.
 func jiraMaybeApplied(err error) bool {
+	var op *net.OpError
+	if errors.As(err, &op) && (op.Op == "dial" || op.Op == "resolve") {
+		// A dial that timed out never completed the handshake, so nothing was sent.
+		return false
+	}
 	switch jiraTransportClass(err) {
 	case "DNS lookup failed", "connection refused", "TLS error":
 		return false

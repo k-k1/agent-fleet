@@ -418,7 +418,7 @@ run_read_only() {
     sleep "$((wait / 1000)).$(printf '%03d' "$((wait % 1000))")"
   done
   # --raw output carries user text verbatim; it is not rewritten.
-  if [ -n "$site" ] && [ "$site" != "$server" ] && ! printf '%s\n' "$@" | grep -qx -e '--raw'; then
+  if [ -n "$site" ] && [ "$site" != "$server" ] && ! printf '%s\n' "$@" | grep -qxe '--raw' -e '--raw=.*'; then
     FROM="$server/browse/" TO="$site/browse/" awk '
       BEGIN { f = ENVIRON["FROM"]; t = ENVIRON["TO"]; n = length(f) }
       { out = ""; while ((i = index($0, f)) > 0) { out = out substr($0, 1, i - 1) t; $0 = substr($0, i + n) }
