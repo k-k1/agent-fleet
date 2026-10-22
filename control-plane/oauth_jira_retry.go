@@ -90,7 +90,7 @@ func clipBody(b []byte) string {
 	return strings.TrimSpace(string(b))
 }
 
-// post sends payload as JSON to jiraTokenURL. It retries transport errors, 429 and 5xx and
+// post sends payload as JSON to jiraTokenURL. It retries transport errors and transient statuses (transientStatus) and
 // returns at once on anything else, including a permanent 4xx such as invalid_grant, so a
 // revoked grant is never hammered. When attempts run out it returns the last outcome:
 // err != nil for a transport failure, otherwise the last status and body.

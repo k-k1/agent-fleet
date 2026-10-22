@@ -201,7 +201,7 @@ type jiraTokenResp struct {
 
 // jiraExchangeCode runs the authorization-code grant. JSON body, not form+Basic.
 //
-// Transport errors, 429 and 5xx are retried (jiraExchangeRetry). The code is single-use:
+// Transport errors and transient statuses (transientStatus) are retried (jiraExchangeRetry). The code is single-use:
 // when Atlassian consumed it and only the response was lost, the retry gets invalid_grant,
 // which the callback shows as "start the connection again" (jiraCodeConsumed).
 func jiraExchangeCode(ctx context.Context, key, secret, code, redirect string) (jiraTokenResp, error) {
