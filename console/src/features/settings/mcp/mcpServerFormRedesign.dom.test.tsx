@@ -181,6 +181,24 @@ describe("switching the authentication mode keeps what was typed", () => {
     expect(bodyOf(latest!).headers).toEqual({});
   });
 
+  it("passing through None keeps the same contract", () => {
+    mountServerForm({ ...emptyForm(), url: "https://mcp.example.com/mcp", name: "x", nameEdited: true });
+    click(seg("Bearer token"));
+    type(fieldInput("Token"), "fresh");
+    click(seg("None"));
+    expect(bodyOf(latest!).headers).toEqual({});
+    click(seg("Custom headers"));
+    expect(bodyOf(latest!).headers).toEqual({ Authorization: "Bearer fresh" });
+  });
+
+  it("edit: a replaced stored token survives Bearer -> None -> Custom headers", () => {
+    mountServerForm(formOf(row({ headers: { Authorization: "Bearer ***" } })));
+    type(fieldInput("Token"), "fresh");
+    click(seg("None"));
+    click(seg("Custom headers"));
+    expect(bodyOf(latest!).headers).toEqual({ Authorization: "Bearer fresh" });
+  });
+
   it("tenant: Bearer token -> Custom headers keeps the token", () => {
     mountTenantForm(emptyTenantForm());
     click(seg("Bearer token"));

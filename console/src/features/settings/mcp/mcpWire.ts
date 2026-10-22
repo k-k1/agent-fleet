@@ -271,8 +271,10 @@ export const memberTokenValue = (typed: string, stored: string): string => {
 
 // switchAuth changes the mode and carries the credential already entered across the
 // Bearer <-> Custom headers boundary, so a typed token is never silently dropped by the
-// switch. Leaving or entering None changes nothing: the rows stay for a switch back, and
-// authHeaders("none") keeps them off the wire.
+// switch. Leaving Bearer (for Custom headers or None) writes the effective Authorization into
+// the rows; entering Bearer (from Custom headers or None) reads it back out of them. None
+// therefore keeps the same contract: authHeaders("none") keeps the rows off the wire, and
+// they come back intact on the way out of it.
 export const switchAuth = <T extends { auth: AuthMode; token: string; headers: KV[] }>(
   f: T,
   next: AuthMode,
@@ -280,7 +282,7 @@ export const switchAuth = <T extends { auth: AuthMode; token: string; headers: K
 ): T => {
   const from = f.auth;
   if (from === next) return f;
-  if (from === "bearer" && next === "headers") {
+  if (from === "bearer") {
     const eff = authHeaders("bearer", f.token, f.headers, userSecret);
     const entries = Object.entries(eff);
     if (entries.length === 0) return { ...f, auth: next };
@@ -290,7 +292,7 @@ export const switchAuth = <T extends { auth: AuthMode; token: string; headers: K
       i >= 0 ? f.headers.map((r, j) => (j === i ? { k, v } : r)) : [{ k, v }, ...f.headers];
     return { ...f, auth: next, token: "", headers };
   }
-  if (from === "headers" && next === "bearer") {
+  if (next === "bearer") {
     // A real (unmasked) `Bearer <token>` typed in the editor becomes the token; a mask or a
     // non-Bearer value stays where it is.
     const row = f.headers.find((r) => isAuthHeader(r.k));

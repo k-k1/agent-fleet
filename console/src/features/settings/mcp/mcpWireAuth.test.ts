@@ -248,6 +248,22 @@ describe("switchAuth carries the entered credential across modes", () => {
     expect(bodyOf({ ...f, name: "x", url: "https://e.com" }).headers).toEqual({});
     expect(switchAuth(f, "bearer").token).toBe("t");
   });
+  it("Bearer -> None -> Custom headers keeps a new token", () => {
+    const f = switchAuth(switchAuth({ ...emptyForm(), auth: "bearer" as const, token: "fresh" }, "none"), "headers");
+    expect(bodyOf({ ...f, name: "x", url: "https://e.com" }).headers).toEqual({ Authorization: "Bearer fresh" });
+  });
+  it("replacing a stored token -> None -> Custom headers does not bring the old mask back", () => {
+    const base = { ...formOf(remote({ Authorization: "Bearer ***" })), token: "fresh" };
+    expect(bodyOf(switchAuth(switchAuth(base, "none"), "headers")).headers).toEqual({ Authorization: "Bearer fresh" });
+    expect(bodyOf(switchAuth(switchAuth(base, "none"), "bearer")).headers).toEqual({ Authorization: "Bearer fresh" });
+  });
+  it("Custom headers -> None -> Bearer takes a typed Bearer row as the token", () => {
+    const f = switchAuth(
+      switchAuth({ ...emptyForm(), auth: "headers" as const, headers: [{ k: "Authorization", v: "Bearer typed" }] }, "none"),
+      "bearer",
+    );
+    expect(f.token).toBe("typed");
+  });
   it("user_secret Bearer -> Custom keeps the Authorization name with no value", () => {
     const f = switchAuth({ ...emptyTenantForm(), auth: "bearer" as const, userSecret: true }, "headers", true);
     expect(f.headers).toEqual([{ k: "Authorization", v: "" }]);
