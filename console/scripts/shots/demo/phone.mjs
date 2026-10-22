@@ -48,7 +48,7 @@ export function fixtures(locale) {
         path: "/home/dev/repos/webshop@feature-issue-321",
         state: done ? "" : state.answered ? "working" : "question",
         alive: true,
-        model: "gpt-5.6-luna",
+        model: "gpt-6-luna",
         branch: "feature/issue-321",
         worktree: true,
         createdAt: t0,
@@ -63,7 +63,7 @@ export function fixtures(locale) {
         path: "/home/dev/repos/webshop@feature-issue-318",
         state: "idle",
         alive: true,
-        model: "claude-sonnet-5",
+        model: "claude-sonnet-5-5",
         branch: "feature/issue-318",
         worktree: true,
         createdAt: ago(16),
@@ -97,7 +97,7 @@ export function fixtures(locale) {
           tool("Bash", "rg -n expiresAt src/coupons", "src/coupons/expiry.ts:12:  return now() > coupon.expiresAt;"),
           txt(L(locale, "判定が UTC の現在時刻と比べています。直し方が 2 通りあります。", "The check compares against the current UTC time. There are two ways to fix it.")),
         ],
-        "gpt-5.6-luna",
+        "gpt-6-luna",
       ),
     ];
     if (!state.answered) {
@@ -124,7 +124,7 @@ export function fixtures(locale) {
         ),
       );
     }
-    turns.push(assistant(3, new Date().toISOString(), after, "gpt-5.6-luna"));
+    turns.push(assistant(3, new Date().toISOString(), after, "gpt-6-luna"));
     return messagesBody(CODEX, turns, state.phase === "done" ? "idle" : "working");
   };
 
@@ -206,7 +206,9 @@ export async function script(c) {
   await c.caption(3, T[2]);
   await c.waitFor(`!document.querySelector(".mirror-typing, .mt-typing") && /${L(c.locale, "全部緑", "all green")}/.test(document.body.innerText)`);
   await c.sleep(1600);
-  await c.click(find(".ws-overview"), 700);
+  // At phone width the WS bar folds its pane buttons into the ⋯ menu (measured by width).
+  await c.click(find(".ws-more-btn"), 500);
+  await c.click(find(".ws-more-actions .ws-overview"), 700);
   await c.waitFor(`!/question|working/.test((${find(".ovw-card", "#321")})?.className || "working")`, 12000);
   await c.sleep(2600);
 }

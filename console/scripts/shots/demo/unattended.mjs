@@ -51,7 +51,7 @@ export function fixtures(locale) {
             path: "/home/dev/repos/webshop",
             branch: "main",
             alive: true,
-            model: "claude-sonnet-5",
+            model: "claude-sonnet-5-5",
             origin: "schedule",
             createdAt: iso(9, 0),
             state: state.phase === "limited" ? "limited" : state.phase === "done" ? "idle" : "working",
@@ -94,7 +94,7 @@ export function fixtures(locale) {
           tool("Bash", "npm test", L(locale, "2 件失敗: スナップショットの形式が変わった", "2 failed: snapshot format changed")),
           ...(past("limited") ? [txt(L(locale, "vitest 3 でスナップショットの形式が変わったので直します。", "vitest 3 changed the snapshot format; fixing those two."))] : []),
         ],
-        "claude-sonnet-5",
+        "claude-sonnet-5-5",
       ),
     ];
     if (past("resumed")) {
@@ -127,7 +127,7 @@ export function fixtures(locale) {
                 ]
               : []),
           ],
-          "claude-sonnet-5",
+          "claude-sonnet-5-5",
         ),
       );
     }

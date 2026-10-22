@@ -54,7 +54,7 @@ export function fixtures(locale) {
       driver: "tui",
       title: T.parent,
       state: state.phase === "working" ? "working" : "idle",
-      model: "claude-opus-5",
+      model: "claude-opus-5-5",
       createdAt: at(150),
       origin: "user",
     }),
@@ -65,7 +65,7 @@ export function fixtures(locale) {
             driver: "managed",
             title: T.child,
             state: at2("reported") ? "idle" : "working",
-            model: "gpt-5.6-luna",
+            model: "gpt-6-luna",
             createdAt: at(95),
             origin: "session",
             originSession: PARENT,
@@ -89,7 +89,7 @@ export function fixtures(locale) {
         tool("mcp__af__create_session", `codex · ${T.child}`),
       );
     }
-    const turns = [user(1, T.ask, at(150)), assistant(2, at(96), work, "claude-opus-5")];
+    const turns = [user(1, T.ask, at(150)), assistant(2, at(96), work, "claude-opus-5-5")];
     if (at2("reported")) {
       const env = `[agent-fleet:peer from=${CHILD} intent=answer reply=none] ${T.report}`;
       turns.push(
@@ -108,7 +108,7 @@ export function fixtures(locale) {
               ),
             ),
           ],
-          "claude-opus-5",
+          "claude-opus-5-5",
         ),
       );
     }
@@ -123,7 +123,7 @@ export function fixtures(locale) {
         2,
         at(36),
         [tool("Bash", "git diff main...HEAD --stat", " 3 files changed, 61 insertions(+), 4 deletions(-)"), ...(at2("reported") ? [txt(T.report)] : [])],
-        "gpt-5.6-luna",
+        "gpt-6-luna",
       ),
     );
     return messagesBody(CHILD, turns, at2("reported") ? "idle" : "working");

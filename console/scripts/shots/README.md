@@ -38,7 +38,10 @@ node console/scripts/shots/capture.mjs --locale en
   address, a private repo, or an agent account's usage numbers. That covers third-party
   image models too: a real checkpoint's name beside a licence line reads as an endorsement
   and a licence claim, so the studio's models are invented (`sdxl` / `flux1` are Agent
-  Fleet's own family ids and stay).
+  Fleet's own family ids and stay). Agent model ids are the exception: the sessions run real,
+  current models (`claude-opus-5-5`, `gpt-6-luna`, `gemini-4-argon-medium`) by the maintainer's
+  choice. Move them to the newest ids the agents offer (`list_models` per kind) when the shots
+  are retaken.
 - Fixture shapes follow the real wire contracts (`console/src/types/session.ts`,
   `console/src/features/repos/store.ts`,
   `workspace/agent/internal/transcript/transcript.go`, `console/src/lib/gitgraph.ts`).

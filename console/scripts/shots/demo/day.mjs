@@ -162,7 +162,7 @@ export function fixtures(locale, fx) {
       name,
       kind,
       driver: body?.driver || "",
-      model: kind === "claude" ? "claude-sonnet-5" : "gpt-5.6-luna",
+      model: kind === "claude" ? "claude-sonnet-5-5" : "gpt-6-luna",
       title: body?.title || issueOf(kind)?.title || "",
       branch,
       repo: `webshop@${branch.replace(/\//g, "-")}`,

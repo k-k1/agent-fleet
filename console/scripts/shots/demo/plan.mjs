@@ -49,7 +49,7 @@ export function fixtures(locale, fx) {
       path: "/home/dev/repos/webshop",
       state: sessionState(),
       alive: true,
-      model: "claude-sonnet-5",
+      model: "claude-sonnet-5-5",
       branch: "main",
       createdAt: t0,
       mode: "plan",
@@ -67,7 +67,7 @@ export function fixtures(locale, fx) {
           tool("Grep", "redeemCoupon  ·  src/", "src/coupons/redeem.ts:9\nsrc/checkout/index.ts:41"),
           tool("Read", "src/coupons/redeem.ts", L(locale, "38 行を読み込みました", "read 38 lines")),
         ],
-        "claude-sonnet-5",
+        "claude-sonnet-5-5",
       ),
     ];
     if (!state.approved) return messagesBody(SESSION, turns, "plan", { pendingPlan: plan(locale), mode: "plan" });
@@ -90,7 +90,7 @@ export function fixtures(locale, fx) {
         ),
       );
     }
-    turns.push(assistant(3, new Date().toISOString(), work, "claude-sonnet-5"));
+    turns.push(assistant(3, new Date().toISOString(), work, "claude-sonnet-5-5"));
     return messagesBody(SESSION, turns, state.phase === "edited" ? "idle" : "working");
   };
 
