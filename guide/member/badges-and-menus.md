@@ -145,7 +145,9 @@ connection. Not this deployment's engine."** together with the model the last ch
 - "LFS pointer": a file with only the Git LFS pointer present, not the actual content.
 - **"From the operator", "Scheduled", "Manual run", "Auto-resume", "From <name>"** in the chat view: where a
   prompt you did not type came from: the fleet operator, a schedule, an auto-resume after an interruption, and
-  [a message from another session](02-sessions.md#messages-between-sessions).
+  [a message from another session](02-sessions.md#messages-between-sessions). **"Started by <name>"** marks the
+  first prompt of a session another session started, and **"Stalled-tree notice"** the one Agent Fleet sends a
+  parent whose children have all gone quiet ([02](02-sessions.md#starting-sessions-from-a-session-child-sessions)).
 - **"Paused"** on a schedule row: that schedule is suspended ([08](08-organising.md)).
 - **The budget mark** (a pulse icon) on a stopped session: its estimated spend reached its budget and it was
   stopped; **"Raise budget & resume…"** in its menu carries on ([02](02-sessions.md#a-spend-budget-pausing-a-session-that-spends-too-much)).
