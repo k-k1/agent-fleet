@@ -23,17 +23,23 @@ If a feature ships and does not appear here, it is not done
 | Run in a fresh git worktree | member | Start dialog | [03 Git](../member/03-code.md) |
 | Chat mirror — follow and steer a running agent | member | main area | [02 Sessions](../member/02-sessions.md) |
 | Answer a question, plan, or permission prompt | member | mirror | [07 Chat and memos](../member/07-chat-memo.md); [agents.md](agents.md) for which agents ask |
+| Answer a question or plan left by a stopped session | member | mirror, the carried card | [07 Chat and memos](../member/07-chat-memo.md#questions-and-plans-left-by-a-stopped-session) |
+| Hold follow-ups while a turn runs (Waiting to send) | member | mirror composer → Send ▾ → Add to waiting list, or Alt+Enter | [07 Chat and memos](../member/07-chat-memo.md#holding-follow-ups-before-sending-send-queue) |
+| Have another session review a plan | member | the plan card | [07 Chat and memos](../member/07-chat-memo.md#having-another-session-review-the-plan) |
 | Skill / command picker | member | mirror composer | [07 Chat and memos](../member/07-chat-memo.md); [agents.md](agents.md) for which agents |
 | Live terminal attached to a session | member | main area | [05 Terminal](../member/05-terminal.md) |
 | Terminal round-trip time (keystroke lag) | member | terminal pane header | [05 Terminal](../member/05-terminal.md) |
+| Ctrl+C / Ctrl+V copy and paste in the terminal | member | terminal | [05 Terminal](../member/05-terminal.md#copy-paste) |
 | Resume a stopped session | member | left pane → the session | [02 Sessions](../member/02-sessions.md) |
 | Home — what waits for you, where you left off, and the first-run setup | member | the empty main area, action bar → Home, or leader `g h` | [01 First day](../member/01-first-day.md) |
 | Sessions overview — every running session as a card | member | action bar → Sessions, or leader `g s` | [02 Sessions](../member/02-sessions.md) |
 | Fleet graph — one lane per session, time left to right | member | sessions overview → Graph, or leader `g f` | [02 Sessions](../member/02-sessions.md#seeing-how-sessions-relate-over-time-the-fleet-graph) |
 | Stop every session under a working copy | member | repository / worktree right-click → Stop the sessions below | [02 Sessions](../member/02-sessions.md#stopping-and-tidying-up-sessions) |
-| Hand a conversation to a new session | member | session ⋯ menu | [02 Sessions](../member/02-sessions.md) |
+| Hand a conversation to a new session | member | session ⋯ menu | [02 Sessions](../member/02-sessions.md#continuing-elsewhere-handoff-branch-move) |
+| Move a session to another agent | member | session ⋯ menu → Move to another agent…, or the usage-limit band in the chat | [02 Sessions](../member/02-sessions.md#moving-a-session-to-another-agent-move) |
+| Export a conversation as Markdown | member | session ⋯ menu → Export as Markdown | [02 Sessions](../member/02-sessions.md#saving-a-conversation-as-markdown) |
 | Fork from a past message | member | mirror, on a past message | [07 Chat and memos](../member/07-chat-memo.md); [agents.md](agents.md) for which agents |
-| Hand a session to another member | member | session ⋯ menu | [02 Sessions](../member/02-sessions.md) |
+| Hand a session to another member | member | handoff proposal card in the chat → Hand off to a member | [09 Working with others](../member/09-collaboration.md#handing-a-session-to-another-member) |
 | Share a session read-only | member | Shared sessions | [02 Sessions](../member/02-sessions.md) |
 | Highlights | member | mirror, on a selection | [09 Working with others](../member/09-collaboration.md) |
 | Changed files | member | strip under the mirror header | [09 Working with others](../member/09-collaboration.md) |
@@ -51,7 +57,13 @@ If a feature ships and does not appear here, it is not done
 | Start from an empty folder | member | Repositories → new folder | [03 Git](../member/03-code.md) |
 | Commit graph, diff, stage and commit | member | Commit graph | [03 Git](../member/03-code.md) |
 | Worktrees | member | under each repository | [03 Git](../member/03-code.md) |
+| Use `gh` and `bkt` in a session, already signed in | member | any session | [03 Git](../member/03-code.md#use-gh-and-bkt-in-a-session); the list of signed-in CLIs is in [10](../member/10-integrations.md#clis-that-are-already-signed-in) |
+| Use `jira` in a session, already signed in | member | any session | [03 Git](../member/03-code.md#use-jira-in-a-session) |
+| Subversion working copies — update, show log, local changes | member | Repositories → an SVN row | [03 Git](../member/03-code.md#subversion-svn-repositories) |
 | File tree and viewer | member | Files | [04 Files](../member/04-files.md) |
+| Download a folder as zip | member | Files tree or gallery → right-click → Download as zip | [04 Files](../member/04-files.md#download-a-folder-as-zip) |
+| Links in rendered Markdown — tickets, file paths, loopback URLs that open the workspace preview | member | mirror, chat, file and document viewers | [04 Files](../member/04-files.md#links-in-rendered-markdown) |
+| Menu on file and folder links in replies and documents | member | right-click a link | [Icons, badges and menus](../member/badges-and-menus.md#file-and-folder-links-in-replies-and-documents) |
 | Markdown and code editing | member | Files → a file | [04 Files](../member/04-files.md) |
 | `.drawio` diagrams | member | Files → a `.drawio` file | [04 Files](../member/04-files.md) |
 | PDF and Office document preview | member | Files → that document | [04 Files](../member/04-files.md) |
@@ -64,6 +76,7 @@ If a feature ships and does not appear here, it is not done
 | Gallery card menu — copy, rename, delete, jump to the session that made it | member | gallery card → right-click | [Icons, badges and menus](../member/badges-and-menus.md#cards-in-the-image-gallery) |
 | Browser pane for a local web app | member | workspace action bar → Preview | [10 Going further](../member/10-integrations.md); [browser-pane.md](browser-pane.md) for the contract |
 | Preview subdomains (minted on every start) | member | workspace action bar → Preview | [10 Going further](../member/10-integrations.md) |
+| Sign in with Google on a preview URL (development OIDC IdP) | member | Settings → Preview subdomains | [10 Going further](../member/10-integrations.md#signing-in-with-google-on-a-preview-url-development-oidc-idp) |
 | Attach to a Chromium the agent owns | member | a link the agent hands you | [10 Going further](../member/10-integrations.md) |
 
 ## Organising the work
@@ -98,6 +111,8 @@ explains them.
 | Instructions to agents | member | Agent instructions |
 | Agent Fleet shared memory management | member | Agent memory |
 | Version history of agents' own memory | member | Memory snapshots |
+| Memory suggestions — finished sessions propose memories for you to approve (off by default) | member | Agent memory → Settings |
+| Agent Fleet memory from an agent outside Agent Fleet (off by default) | member | Agent memory → Settings |
 | Git hosting connections | member | Git hosting |
 | Internal repositories | member | Internal repos |
 | AWS profiles and SSM | member | AWS profiles/SSM |
@@ -132,6 +147,9 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Sign-in methods and login rules | tenant admin | Sign-in methods / Login rules | [operator 05](../operate/05-signin.md) |
 | Connection-source restriction | tenant admin | Allowed networks | [admin 05](../admin/05-access.md) |
 | Integration app OAuth | tenant admin | Integration OAuth apps | [admin 05](../admin/05-access.md) |
+| Member defaults — the agent new members connect | tenant admin | Member defaults | [admin 07](../admin/07-member-defaults.md) |
+| Whether members may use Agent Fleet memory from outside | tenant admin | External memory access | [admin 08](../admin/08-external-memory.md) |
+| The development OIDC IdP for preview URLs | deployment admin (super_admin) | Admin → Dev sign-in | [admin 05](../admin/05-access.md#development-sign-in-dev-oidc-idp-superadmin-only) |
 | Distributing integration servers | tenant admin | MCP distribution | [admin 04](../admin/04-mcp-egress.md) |
 | Audit | tenant admin | Audit | [admin 03](../admin/03-audit-usage.md) |
 | Running time and cloud cost | tenant admin | Running time / Cloud cost | [admin 03](../admin/03-audit-usage.md) |
