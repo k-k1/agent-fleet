@@ -362,7 +362,7 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
 ARG CLAUDE_CODE_VERSION=2.1.308
-ARG OPENCODE_VERSION=2.1.2
+ARG OPENCODE_VERSION=2.1.3
 ARG CODEX_VERSION=0.163.0
 ARG COPILOT_VERSION=1.0.102
 # opencode's npm package follows the pin's major: `opencode-ai` for 1.x, `@opencode/cli` for
@@ -485,9 +485,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.32.0
-ARG KIRO_SHA256_X64=7cea2c90198edc60ccaee9e0d9c9de26902b3824f54a66aa3639a365f7242fbb
-ARG KIRO_SHA256_ARM64=219a047427ca2b43681f4788104df5e784eda030d98abeec1c732aac9090eb8b
+ARG KIRO_VERSION=2.33.1
+ARG KIRO_SHA256_X64=1ea738240f50734581edb1326ea7db24ceb66ad22df39cd01b7669243e2fe828
+ARG KIRO_SHA256_ARM64=7a1844150521ad2df38aa5960cb078a2a9bd933863936f2be83d040636846084
 # Muse Code（kind="muse"、ADR 0095 決定 8）。プロプライエタリなので **配布イメージには
 # 入らない**（BAKE_AGENT_CLIS=0 既定・理由は本ファイル冒頭と NOTICE）。既定の経路は
 # per-user のオンデマンド導入（workspace-agent install-muse）で、ここのピンは
