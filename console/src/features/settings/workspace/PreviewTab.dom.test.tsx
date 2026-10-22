@@ -106,6 +106,37 @@ describe("usePreviewAvailable", () => {
     await mount(<P />);
     expect(read()).toBe("pending");
   });
+
+  // Settings opening again is a fresh mount of the same module (the cache survives it).
+  const remount = async (P: () => React.ReactElement) => {
+    act(() => root?.unmount());
+    host?.remove();
+    await mount(<P />);
+  };
+
+  it("does not cache an error answer: the next open asks again and shows the entry", async () => {
+    api.mockResolvedValueOnce({ error: "control plane starting" });
+    const { usePreviewAvailable } = await freshModule();
+    const P = probe(usePreviewAvailable);
+    await mount(<P />);
+    expect(read()).toBe("false");
+    api.mockResolvedValueOnce(wsSettings());
+    await remount(P);
+    expect(api).toHaveBeenCalledTimes(2);
+    expect(read()).toBe("true");
+  });
+
+  it("still caches a successful answer without previewDomain as unavailable", async () => {
+    api.mockResolvedValueOnce(wsSettings({ previewDomain: "" }));
+    const { usePreviewAvailable } = await freshModule();
+    const P = probe(usePreviewAvailable);
+    await mount(<P />);
+    expect(read()).toBe("false");
+    api.mockResolvedValueOnce(wsSettings());
+    await remount(P);
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(read()).toBe("false");
+  });
 });
 
 describe("PreviewTab", () => {

@@ -38,8 +38,11 @@ export function usePreviewAvailable(): boolean | null {
     let cancelled = false;
     void api("api/env/ws-settings").then(
       (res: any) => {
-        const v = !!(res && !res.error && res.previewDomain);
-        availCache = v;
+        // An error body (CP starting, workspace unreachable, 5xx) is no more an answer than a
+        // rejected fetch: caching it as false would hide the entry until the page reloads.
+        const failed = !res || !!res.error;
+        const v = !failed && !!res.previewDomain;
+        if (!failed) availCache = v;
         if (!cancelled) setOk(v);
       },
       // A failed fetch (CP unreachable, …) is not the same as "not available", so it is
