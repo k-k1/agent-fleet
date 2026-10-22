@@ -9,11 +9,14 @@ const calls: { path: string; method: string; body?: any }[] = [];
 let replies: Record<string, (body: any) => any> = {};
 const confirmAnswer = { value: true };
 const toasts: string[] = [];
+// Chronological log of window.open and API calls, to assert what happens inside the click.
+const order: string[] = [];
 
 vi.mock("../../../core/api/client.ts", async () => {
   const actual = await vi.importActual<any>("../../../core/api/client.ts");
   const route = async (path: string, method: string, body?: any) => {
     calls.push({ path, method, body });
+    order.push(method + " " + path);
     const key = method + " " + path;
     const f = replies[key];
     if (!f) throw new Error("unexpected call " + key);
@@ -52,7 +55,11 @@ beforeEach(() => {
   confirmAnswer.value = true;
   assign.mockReset();
   tab = { closed: false, close: vi.fn(), location: { href: "" }, opener: {} };
-  openTab = vi.fn(() => tab);
+  order.length = 0;
+  openTab = vi.fn(() => {
+    order.push("open");
+    return tab;
+  });
   vi.stubGlobal("open", openTab);
   sessionStorage.clear();
   vi.stubGlobal("location", { ...window.location, assign, search: "", pathname: "/", hash: "" });
@@ -514,22 +521,41 @@ describe("new-tab sign-in", () => {
     expect(assign).not.toHaveBeenCalled();
   });
 
-  it("Save and sign in opens its tab in the click, before the save", async () => {
+  it("opens the tab in the click itself, while the start call is still unanswered", async () => {
+    setStatus({ state: "not_signed_in" });
+    let release!: () => void;
+    replies["POST api/mcp-servers/mcp-1/oauth/start"] = () =>
+      new Promise((res) => (release = () => res({ authorize_url: "https://as.example.com/a", issuer: "x" })));
+    await mount(row());
+    order.length = 0;
+    await act(async () => void button("Sign in")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(order).toEqual(["open", "POST api/mcp-servers/mcp-1/oauth/start"]); // open first, nothing awaited yet
+    expect(tab.location.href).toBe("");
+    await act(async () => release());
+    expect(tab.location.href).toBe("https://as.example.com/a");
+    expect(openTab).toHaveBeenCalledTimes(1);
+  });
+
+  it("Save and sign in opens its tab in the click, before the save, and never a second one", async () => {
     setStatus({ state: "not_signed_in" });
     let n = 0;
     replies["POST api/mcp-servers/mcp-1/oauth/start"] = () =>
       n++ === 0 ? { error: { code: "client_id_needed", issuer: "https://as.example.com" } } : { authorize_url: "https://as.example.com/b", issuer: "x" };
-    replies["PUT api/mcp-servers/mcp-1/oauth/client"] = () => ({});
+    let releaseSave!: () => void;
+    replies["PUT api/mcp-servers/mcp-1/oauth/client"] = () => new Promise((res) => (releaseSave = () => res({})));
     await mount(row());
     await click(button("Sign in"));
-    openTab.mockClear();
     const input = host!.querySelector('input[aria-label="Client ID"]') as HTMLInputElement;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "cid");
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await click(button("Save and sign in"));
-    expect(openTab).toHaveBeenCalledTimes(1);
+    order.length = 0;
+    await act(async () => void button("Save and sign in")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(order).toEqual(["open", "PUT api/mcp-servers/mcp-1/oauth/client"]); // the save is still pending
+    await act(async () => releaseSave());
+    await act(async () => {});
+    expect(order).toEqual(["open", "PUT api/mcp-servers/mcp-1/oauth/client", "POST api/mcp-servers/mcp-1/oauth/start"]);
     expect(tab.location.href).toBe("https://as.example.com/b");
   });
 });
@@ -542,9 +568,20 @@ describe("cross-tab completion", () => {
 
   const announce = (msg: unknown) => new FakeChannel("af-mcp-oauth").postMessage(msg);
 
-  it("re-reads the status and says so when THIS server's sign-in completes elsewhere", async () => {
+  // Presses Sign in so this tab is the one awaiting a completion.
+  const waiting = async (registration = "cimd") => {
     setStatus({ state: "not_signed_in" });
+    replies["POST api/mcp-servers/mcp-1/oauth/start"] = () => ({
+      authorize_url: "https://as.example.com/a", issuer: "https://as.example.com", registration,
+    });
     await mount(row());
+    await click(button("Sign in"));
+    toasts.length = 0;
+  };
+  const reads = () => calls.filter((c) => c.method === "GET").length;
+
+  it("says 'Signed in' once the status read agrees, for the sign-in started here", async () => {
+    await waiting();
     setStatus({ state: "connected", registration: "cimd" });
     await act(async () => announce({ server: "mcp-1", outcome: "ok" }));
     await act(async () => {});
@@ -552,10 +589,37 @@ describe("cross-tab completion", () => {
     expect(toasts).toEqual(["Signed in."]);
   });
 
-  it("ignores another server's completion, and malformed payloads", async () => {
+  it("ignores a notice when no sign-in was started from this tab", async () => {
     setStatus({ state: "not_signed_in" });
     await mount(row());
-    const reads = () => calls.filter((c) => c.method === "GET").length;
+    const before = reads();
+    await act(async () => announce({ server: "mcp-1", outcome: "ok" }));
+    await act(async () => {});
+    expect(reads()).toBe(before);
+    expect(toasts).toHaveLength(0);
+  });
+
+  it("a made-up ok does not claim success, nor stop the wait", async () => {
+    await waiting();
+    await act(async () => announce({ server: "mcp-1", outcome: "ok" })); // status stays not_signed_in
+    await act(async () => {});
+    expect(toasts).toHaveLength(0);
+    expect(host!.querySelector('[data-testid="mcp-oauth-panel"]')!.getAttribute("data-state")).toBe("not_signed_in");
+    const n = reads();
+    await act(async () => void window.dispatchEvent(new Event("focus")));
+    expect(reads()).toBeGreaterThan(n); // still waiting: the real completion is still found on focus
+  });
+
+  it("repeated notices say it once", async () => {
+    await waiting();
+    setStatus({ state: "connected" });
+    for (let i = 0; i < 3; i++) await act(async () => announce({ server: "mcp-1", outcome: "ok" }));
+    await act(async () => {});
+    expect(toasts).toEqual(["Signed in."]);
+  });
+
+  it("ignores another server's completion, and malformed payloads", async () => {
+    await waiting();
     const before = reads();
     await act(async () => announce({ server: "mcp-other", outcome: "ok" }));
     await act(async () => announce({ server: "mcp-1", outcome: "<script>" }));
@@ -565,10 +629,25 @@ describe("cross-tab completion", () => {
   });
 
   it("a failed outcome shows our own text for the code", async () => {
-    setStatus({ state: "not_signed_in" });
-    await mount(row());
+    await waiting();
     await act(async () => announce({ server: "mcp-1", outcome: "iss_mismatch" }));
+    await act(async () => {});
     expect(toasts[0]).toContain("different authorization server");
+  });
+
+  it("a CIMD sign-in that failed in the other tab keeps the DCR retry, though nothing is pending any more", async () => {
+    await waiting("cimd");
+    setStatus({ state: "not_signed_in" }); // the callback consumed the pending record
+    await act(async () => announce({ server: "mcp-1", outcome: "token_exchange_failed" }));
+    await act(async () => {});
+    expect(button("Retry with dynamic registration")).toBeTruthy();
+  });
+
+  it("a failure of a DCR sign-in offers no DCR retry", async () => {
+    await waiting("dcr");
+    await act(async () => announce({ server: "mcp-1", outcome: "token_exchange_failed" }));
+    await act(async () => {});
+    expect(button("Retry with dynamic registration")).toBeUndefined();
   });
 
   it("re-reads on focus only while a sign-in started here is waiting", async () => {
@@ -588,8 +667,7 @@ describe("cross-tab completion", () => {
 
   it("works through the storage event when there is no BroadcastChannel", async () => {
     vi.stubGlobal("BroadcastChannel", undefined);
-    setStatus({ state: "not_signed_in" });
-    await mount(row());
+    await waiting();
     setStatus({ state: "connected" });
     await act(async () =>
       void window.dispatchEvent(

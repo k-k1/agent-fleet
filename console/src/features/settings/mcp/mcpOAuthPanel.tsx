@@ -52,18 +52,26 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
   // Guards double clicks: React's busy state is not visible to a second click in the same tick.
   const inFlight = useRef(false);
 
-  const reload = useCallback(async () => {
-    if (!active) return;
+  // The registration path the sign-in started from this tab used; a failed finish of a CIMD one
+  // keeps the DCR retry on offer even though the Agent has already consumed its pending record.
+  const startedReg = useRef<OAuthRegistration | undefined>(undefined);
+  const [failedCimd, setFailedCimd] = useState(false);
+  // A completion notice is being checked against the status; repeats meanwhile are dropped.
+  const checking = useRef(false);
+
+  const reload = useCallback(async (): Promise<OAuthStatus | null> => {
+    if (!active) return null;
     const mine = ++seq.current;
     const r = await fetchOAuthStatus(s.id);
-    if (mine !== seq.current) return; // a newer read is in flight
+    if (mine !== seq.current) return null; // a newer read is in flight
     if ("error" in r) {
       setStatusErr(errText(r.error as any));
-      return;
+      return null;
     }
     setStatusErr("");
     setStatus(r);
     if (r.state === "connected") awaiting.current = false;
+    return r;
   }, [active, s.id]);
   useEffect(() => {
     void reload();
@@ -72,11 +80,26 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
   // The sign-in finishes in another tab. Only that tab's outcome for THIS server is acted on.
   useEffect(() => {
     if (!active) return;
+    // A notice is a hint, never proof: it is acted on only while a sign-in started from this tab
+    // is awaited (anyone can open a made-up return URL in another tab), and "Signed in" is said
+    // only once the status read agrees.
     const off = onSignInDone((d) => {
-      if (d.server !== s.id) return;
-      awaiting.current = false;
-      toast(outcomeText(tr, d.outcome));
-      void reload();
+      if (d.server !== s.id || !awaiting.current || checking.current) return;
+      checking.current = true;
+      void (async () => {
+        try {
+          const st = await reload();
+          if (d.outcome === "ok") {
+            if (st?.state === "connected") toast(outcomeText(tr, "ok"));
+            return; // not connected yet: keep waiting, the focus re-read tries again
+          }
+          awaiting.current = false;
+          if (startedReg.current === "cimd") setFailedCimd(true);
+          toast(outcomeText(tr, d.outcome));
+        } finally {
+          checking.current = false;
+        }
+      })();
     });
     const wake = () => {
       if (awaiting.current && document.visibilityState !== "hidden") void reload();
@@ -100,6 +123,7 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
         return;
       }
       inFlight.current = true;
+      setFailedCimd(false);
       const tab = pre === undefined ? openSignInTab() : pre;
       setBusy(true);
       try {
@@ -113,6 +137,7 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
           toast(tr("mcp.oauth_signin_failed", { msg: errText(r.error as any) }));
           return;
         }
+        startedReg.current = r.registration;
         if (tab) {
           if (tab.closed) return; // the member closed it: they changed their mind
           tab.location.href = r.authorizeUrl;
@@ -185,7 +210,7 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
   // so, or the Agent still holds the unfinished attempt. Not when connected.
   const cimdUnfinished =
     status?.state !== "connected" &&
-    (status?.pendingRegistration === "cimd" || (failedReturn?.server === s.id && failedReturn.registration === "cimd"));
+    (status?.pendingRegistration === "cimd" || failedCimd || (failedReturn?.server === s.id && failedReturn.registration === "cimd"));
 
   // A sign-in the Agent still holds and nothing came back for (the authorization server may have
   // refused the client on its own error page, where it cannot redirect to us).
