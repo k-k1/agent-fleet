@@ -301,8 +301,17 @@ func TestContractSharedServeTerminalSessions(t *testing.T) {
 		return m
 	}
 	pane := func(name string) string { return tmuxx.CapturePane(session.TmuxName(name)) }
-	// A TUI cold-starting next to the serve and its siblings is slow on a loaded host (the whole
-	// test measured 90-100 s with every core busy, against 35-60 s idle), so the wait is generous; a TUI that never
+	// dumpPanes captures every pane a failure may involve: one TUI failing is often another's cue.
+	dumpPanes := func() string {
+		var panes strings.Builder
+		for _, pn := range []string{"t1", "t2", "t3", "t4"} {
+			if c := pane(pn); c != "" {
+				fmt.Fprintf(&panes, "--- pane %s ---\n%s\n", pn, c)
+			}
+		}
+		return panes.String()
+	}
+	// A TUI cold-starting next to the serve and its siblings is slow on a loaded host, so the wait is generous; a TUI that never
 	// comes up fails with the captures of every pane, not only the one waited on.
 	waitPane := func(name, want string) {
 		t.Helper()
@@ -311,13 +320,7 @@ func TestContractSharedServeTerminalSessions(t *testing.T) {
 				return
 			}
 		}
-		var panes strings.Builder
-		for _, pn := range []string{"t1", "t2", "t3", "t4"} {
-			if c := pane(pn); c != "" {
-				fmt.Fprintf(&panes, "--- pane %s ---\n%s\n", pn, c)
-			}
-		}
-		t.Fatalf("pane %s never showed %q (serve generation %d):\n%s", name, want, Serve().Generation(), panes.String())
+		t.Fatalf("pane %s never showed %q (serve generation %d):\n%s", name, want, Serve().Generation(), dumpPanes())
 	}
 
 	api := func(method, path string, in, out any) error {
@@ -379,16 +382,10 @@ func TestContractSharedServeTerminalSessions(t *testing.T) {
 				return o
 			}
 		}
-		var panes strings.Builder
-		for _, pn := range []string{"t1", "t2", "t3", "t4"} {
-			if c := pane(pn); c != "" {
-				fmt.Fprintf(&panes, "--- pane %s ---\n%s\n", pn, c)
-			}
-		}
 		var raw any
 		_ = api("GET", "/api/session/"+ses+"/message?order=asc&limit=200", nil, &raw)
 		msgs, _ := json.Marshal(raw)
-		t.Fatalf("session %s never ran %d shell command(s); had %d\nmessages: %.1500s\n%s", ses, n, len(shellOutputs(ses)), msgs, panes.String())
+		t.Fatalf("session %s never ran %d shell command(s); had %d\nmessages: %.1500s\n%s", ses, n, len(shellOutputs(ses)), msgs, dumpPanes())
 		return nil
 	}
 	// userMessages counts the session's user messages whose text is exactly text (exact, so "ENVQ
@@ -419,14 +416,20 @@ func TestContractSharedServeTerminalSessions(t *testing.T) {
 	// only sent while the text still sits in the prompt and the server, asked again right before,
 	// has no such message, so a slow first Enter is never doubled. Worst case 3 x
 	// statusWaitTimeout per call; budget for the sum when changing either.
+	var confirmPrompt func(name, ses, text string, want int) int
 	submitPrompt := func(name, ses, text string) int {
 		t.Helper()
 		base := userMessages(ses, text)
 		if base < 0 {
 			base = 0
 		}
-		want := base + 1
 		typeInto(name, text, "Enter")
+		return confirmPrompt(name, ses, text, base+1)
+	}
+	// confirmPrompt waits for the server to hold want user messages text, pressing Enter again while
+	// the text still sits in the prompt (3 times at most), and returns want.
+	confirmPrompt = func(name, ses, text string, want int) int {
+		t.Helper()
 		for try := 1; try <= 3; try++ {
 			if pollUntil(statusWaitTimeout, 200*time.Millisecond, func() bool { return userMessages(ses, text) >= want }) {
 				return want
@@ -441,7 +444,7 @@ func TestContractSharedServeTerminalSessions(t *testing.T) {
 			t.Logf("%s: %q still in the prompt after %v, pressing Enter again (try %d)", name, text, statusWaitTimeout, try)
 			typeInto(name, "Enter")
 		}
-		t.Fatalf("%s: %q never reached the server after 3 Enters (user messages %d, want %d):\n%s", name, text, userMessages(ses, text), want, pane(name))
+		t.Fatalf("%s: %q never reached the server after 3 Enters (user messages %d, want %d, serve generation %d):\n%s", name, text, userMessages(ses, text), want, Serve().Generation(), dumpPanes())
 		return want
 	}
 	// wantSentOnce fails when a retried Enter submitted the prompt twice.
@@ -569,8 +572,12 @@ func TestContractSharedServeTerminalSessions(t *testing.T) {
 		dump, _ := json.Marshal(all)
 		t.Fatalf("the /new session was never tagged: %s\n%s", dump, pane("t1"))
 	}
+	// The session id is only known now, so submitPrompt could not type it; the Enter may have been
+	// dropped while the TUI switched sessions.
+	wNew := confirmPrompt("t1", second, "ENVQ second", 1)
 	o := waitShell(second, 1)
 	wantEnv("t1 /new", o[0], "t1")
+	wantSentOnce("t1", second, "ENVQ second", wNew)
 	if got := sids.Read(session.UUID(work, "t1")); got != second {
 		t.Errorf("slot t1 = %s after /new, want %s", got, second)
 	}
