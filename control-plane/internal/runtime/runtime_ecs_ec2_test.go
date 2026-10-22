@@ -1032,6 +1032,7 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 		ssmc: h.ssmc,
 		ci:   h.ci,
 		pool: ec2PoolConfig{
+			hostReserveMiB: ec2HostReserveAuto, // the production default (unset env)
 			launchTemplate: "lt-1",
 			pool:           "clu",
 			classes:        parseSlotClasses("m7i.large:8192,m7i.xlarge:16384"),
@@ -5170,7 +5171,8 @@ func TestECSEC2HostReserveParsing(t *testing.T) {
 	for in, want := range map[string]int64{
 		"": ec2HostReserveAuto, "auto": ec2HostReserveAuto, "AUTO": ec2HostReserveAuto, " auto ": ec2HostReserveAuto,
 		"off": ec2HostReserveOff, "none": ec2HostReserveOff,
-		"1536": 1536, "0": 0,
+		"1536": 1536, "0": 0, " 0 ": 0,
+		"OFF": ec2HostReserveOff, "None": ec2HostReserveOff, "FALSE": ec2HostReserveOff,
 		"banana": ec2HostReserveAuto, "-5": ec2HostReserveAuto,
 	} {
 		if got := parseHostReserveMiB(in); got != want {
@@ -5185,7 +5187,6 @@ func TestECSEC2HostReserveParsing(t *testing.T) {
 func TestECSEC2TaskDefinitionCarriesTheMemoryCap(t *testing.T) {
 	ctx := context.Background()
 	h := newEC2Harness(t)
-	h.rt.pool.hostReserveMiB = ec2HostReserveAuto
 	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
 	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
 	h.ci.registered["i-hot"] = true

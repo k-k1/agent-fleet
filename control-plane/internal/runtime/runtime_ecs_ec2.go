@@ -584,6 +584,9 @@ type ec2PoolConfig struct {
 	//	unset / "auto"  → ec2HostReserveAuto: a flat 2 GiB (the default)
 	//	"off"           → ec2HostReserveOff: no cap at all, the pre-2026-08 behaviour
 	//	<n>             → exactly n MiB; 0 reserves nothing and caps at the full rung
+	//
+	// Only ec2HostReserveAuto, ec2HostReserveOff and values >= 0 are valid; parseHostReserveMiB
+	// never returns anything else.
 	hostReserveMiB int64
 }
 
