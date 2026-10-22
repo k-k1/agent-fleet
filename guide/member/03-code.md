@@ -102,7 +102,8 @@ session. You can view, list, create, edit, comment on and transition issues:
   stopped after `AF_JIRA_TIMEOUT` seconds (default 120 for a command that changes something, 45 per
   attempt for a reading one; `0` turns it off). A reading command is then re-run like after a reset.
   A command that changes something exits with status 124 and says that the issue or comment may
-  exist. `jira` also reads standard input to the end even when `-b` is given; with the body on the
+  exist; for `issue create` it also lists the issues you created in the last 15 minutes with exactly
+  that summary ("possible matches", or "no matching issue found"), still with status 124. `jira` also reads standard input to the end even when `-b` is given; with the body on the
   command line the wrapper gives it an empty input instead. If a run still hangs, the file
   `/proc/<pid>/wchan` of the `jira` process tells a wait on input (`pipe_read`,
   `unix_stream_data_wait`) from a wait on the network. If

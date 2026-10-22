@@ -27,6 +27,11 @@ case "$1" in
     [ -f "$STUB_DIR/agent.out" ] || exit 1; cat "$STUB_DIR/agent.out" ;;
   jira-comment) printf '%s\n' "$@" >"$STUB_DIR/comment.argv"; cat >"$STUB_DIR/comment.stdin"
     [ ! -f "$STUB_DIR/comment.exit" ] || exit "$(cat "$STUB_DIR/comment.exit")"; echo "stub: comment done" ;;
+  jira-find-created) shift; printf '%s\n' "$@" >"$STUB_DIR/find.argv"
+    [ ! -f "$STUB_DIR/find.hang" ] || exec sleep 60
+    [ ! -f "$STUB_DIR/find.err" ] || cat "$STUB_DIR/find.err" >&2
+    [ ! -f "$STUB_DIR/find.out" ] || cat "$STUB_DIR/find.out"
+    [ ! -f "$STUB_DIR/find.exit" ] || exit "$(cat "$STUB_DIR/find.exit")"; exit 0 ;;
   jira-issue-types) [ -f "$STUB_DIR/types.out" ] || exit 1; cat "$STUB_DIR/types.out" ;;
   *) exit 2 ;;
 esac
@@ -1246,6 +1251,78 @@ if command -v script >/dev/null 2>&1; then
   script -qec "env -i PATH='$T/bin:/usr/bin:/bin' HOME='$T/home' STUB_DIR='$T' AF_JIRA_REAL='$T/bin/jira-real' TMPDIR='$T/tmp' AF_JIRA_TIMEOUT=0.5 AF_JIRA_RETRY_WAIT=0 bash '$WRAPPER' issue list 2>&1 | cat" /dev/null >"$T/out" 2>&1 </dev/null
   [ "$(count)" = 2 ] && grep -q GOOD "$T/out" || fail "tty stdin only: read not bounded (attempts=$(count))"
 fi
+
+# 20. After a timed-out `issue create` the wrapper asks the Agent for candidate issues (project and
+#     exact summary on argv, no token anywhere) and prints them after the timeout line; the status
+#     stays 124 whatever the lookup says. Only a run with the Agent's own credential does it.
+find_reset() { rm -f "$T"/find.*; }
+reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
+printf 'AB-7 %s/browse/AB-7\nAB-9 %s/browse/AB-9\n' "$SITE" "$SITE" >"$T/find.out"
+run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s "my summary"
+[ "$rc" = 124 ] || fail "find: rc=$rc, want 124"
+[ "$(errl | sed -n 2p)" = "jira: possible matches: AB-7 $SITE/browse/AB-7, AB-9 $SITE/browse/AB-9" ] || fail "find: stderr '$(cat "$T/err")'"
+[ "$(errl | head -n1 | cut -c1-30)" = "jira: jira did not answer with" ] || fail "find: timeout line is not first"
+[ "$(cat "$T/find.argv")" = "AB
+my summary" ] || fail "find: argv '$(cat "$T/find.argv")'"
+[ ! -e "$T/agent.leak" ] || fail "find: the helper inherited JIRA_API_TOKEN"
+no_leak "find" fake-oauth-tok
+grep -q fake-oauth-tok "$T/find.argv" && fail "find: token in the helper's argv"
+# Every spelling of the summary flag, the last one wins, and a value that looks like a flag is a value.
+for spec in "-s|X1" "-sX1|X1" "-s=X1|X1" "--summary|X1" "--summary=X1|X1"; do
+  flags="${spec%|*}" want="${spec#*|}"
+  reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
+  case "$flags" in -s | --summary) run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s ignored "$flags" "$want" ;;
+    *) run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s ignored "$flags" ;; esac
+  [ "$(sed -n 2p "$T/find.argv" 2>/dev/null)" = "$want" ] || fail "find [$flags]: summary '$(cat "$T/find.argv" 2>/dev/null)'"
+done
+reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
+run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s -b -b body
+[ "$(sed -n 2p "$T/find.argv" 2>/dev/null)" = "-b" ] || fail "find: '-s -b' summary '$(cat "$T/find.argv" 2>/dev/null)'"
+# The project may come from the config instead of -p.
+reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
+config "$MANAGED/config.yml" 'project:
+  key: CFG
+issue:
+  types:
+    - id: "1"'
+run AF_JIRA_TIMEOUT=0.5 -- issue create -s "from config"
+[ "$(cat "$T/find.argv" 2>/dev/null)" = "CFG
+from config" ] || fail "find: config project, argv '$(cat "$T/find.argv" 2>/dev/null)'"
+# Nothing found: the "may still appear" line.
+reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
+run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s none
+[ "$rc" = 124 ] && [ "$(errl | sed -n 2p)" = "jira: no matching issue found in the last 15 minutes (it may still appear; check again before re-running)" ] || fail "find none: rc=$rc '$(cat "$T/err")'"
+# The lookup itself failing, or hanging, says so in one line and still exits 124.
+reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
+echo "no Jira connection" >"$T/find.err"; echo 1 >"$T/find.exit"
+run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s boom
+[ "$rc" = 124 ] && [ "$(errl | wc -l)" = 2 ] && [ "$(errl | sed -n 2p)" = "jira: could not look for the issue (no Jira connection); check Jira before running it again" ] || fail "find failure: rc=$rc '$(cat "$T/err")'"
+reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"; touch "$T/find.hang"
+run AF_JIRA_TIMEOUT=0.5 AF_JIRA_KILL_GRACE=1 -- issue create -p AB -s stuck
+[ "$rc" = 124 ] && [ "$(errl | sed -n 2p)" = "jira: could not look for the issue (no answer in time); check Jira before running it again" ] || fail "find hang: rc=$rc '$(cat "$T/err")'"
+# No lookup: no summary, no project, a user-owned config / token / server, a debug run, a write
+# other than create, a create that did not time out.
+nolookup() { # nolookup <label> <env…> -- <args…>
+  local label="$1"; shift
+  reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
+  printf 'AB-7 x\n' >"$T/find.out"
+  run AF_JIRA_TIMEOUT=0.5 "$@"
+  [ "$rc" = 124 ] || fail "no lookup [$label]: rc=$rc"
+  [ ! -e "$T/find.argv" ] || fail "no lookup [$label]: the helper was called"
+  ! grep -Eq 'possible matches|no matching issue|could not look' "$T/err" || fail "no lookup [$label]: stderr '$(cat "$T/err")'"
+}
+nolookup "no summary" -- issue create -p AB
+nolookup "no project" -- issue create -s x
+nolookup "user config" -- -c "$T/other.yml" issue create -p AB -s x
+nolookup "own token" JIRA_API_TOKEN=own -- issue create -p AB -s x
+nolookup "own server" JIRA_SERVER=https://own.example.net -- issue create -p AB -s x
+nolookup "debug" -- issue create --debug -p AB -s x
+nolookup "edit" -- issue edit AB-1 -s x
+nolookup "comment" -- issue comment add AB-1 hi
+reset; find_reset; oauth; plan 1 0 "AB-1
+" ""
+run -- issue create -p AB -s done
+[ "$rc" = 0 ] && [ ! -e "$T/find.argv" ] || fail "find: a create that answered was looked up"
 
 if [ "$fails" != 0 ]; then
   echo "jira-auth-wrapper-test: $fails failure(s)" >&2
