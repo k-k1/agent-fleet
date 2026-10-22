@@ -272,6 +272,33 @@ describe("command palette — ticket references (#1665)", () => {
     expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("busy");
   });
 
+  it("pulls the highlight back into range when its row disappears and the list shrinks below it", () => {
+    act(() => {
+      useSessionsStore.setState({ sessions: [session("note1"), session("note2"), session("note3")] });
+    });
+    mount();
+    type("note");
+    const input = document.querySelector<HTMLInputElement>(".cp-input")!;
+    const key = (k: string) => act(() => void input.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })));
+    key("ArrowDown");
+    key("ArrowDown");
+    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("note3");
+    act(() => {
+      useSessionsStore.setState({ sessions: [session("note1")] });
+    });
+    expect(titles()).toEqual(["note1"]);
+    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("note1");
+    // An emptied list must not leave sel at -1 once rows come back.
+    act(() => {
+      useSessionsStore.setState({ sessions: [] });
+    });
+    expect(titles()).toEqual([]);
+    act(() => {
+      useSessionsStore.setState({ sessions: [session("note1")] });
+    });
+    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("note1");
+  });
+
   it("does not let a prefix of the number match", () => {
     mount();
     type("#166");

@@ -798,6 +798,13 @@ export function CommandPalette() {
         setSel(i);
         return;
       }
+      // The row is gone and the list shrank below the index: pull it back to the last row, or
+      // Enter acts on nothing until an arrow key. An empty list ends at 0, never -1.
+      const last = Math.max(0, filtered.length - 1);
+      if (i < 0 && sel > last) {
+        setSel(last);
+        return;
+      }
     }
     selTrack.current = { id: filtered[sel]?.id ?? null, q, mode, list: filtered };
   }, [filtered, sel, q, mode]);
