@@ -14,10 +14,9 @@ you see depends on what your company set up: Google, Microsoft, or another sign-
 If there are several, use your company account with the one your administrator told you
 to use (only permitted accounts can get in).
 
-Once you're logged in, a **tenant selector** appears at the very top of the screen. A tenant
-is a group such as a department, and your workspaces are separated per tenant. In most cases
-there is only one, so you can just proceed. If you belong to several, pick the tenant you
-want to work in (see the [README](README.md) for the names of the screen areas).
+A tenant is a group such as a department, and your workspaces are separated per tenant. In
+most cases there is only one, so you can just proceed. If you belong to several, a **Tenant**
+selector appears in the account menu at the top right; pick the tenant you want to work in there (see the [README](README.md) for the names of the screen areas).
 
 ## Home and the welcome card — 2 steps + picking a goal
 
@@ -45,12 +44,13 @@ on Home shows three sections:
 - **Start something**: "Get started" (clone and launch) and "Start chatting".
 
 Home is what an empty screen shows, so closing every pane ("Close all") brings you back to it.
-To open it from anywhere, use **Home** on the workspace action bar, or the leader key `g h`.
+To open it from anywhere, use **Home** on the workspace action bar (on a phone it may be inside the bar's **⋯**), or the leader key `g h`.
 
 ### It's fine to close the card
 
 Pressing **"Later"** at the bottom right dismisses the card. This is remembered for your
-account, so the card does not come back when you sign in from another device. You can reopen the same
+membership in this tenant, so the card does not come back when you sign in from another device;
+in another tenant you belong to, it is shown again. You can reopen the same
 checklist at any time from **"Getting-started guide"** in the account menu at the top right.
 The regular guide for looking up operations opens from **"User guide"** in the same menu.
 
