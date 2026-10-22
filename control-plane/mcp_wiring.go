@@ -23,6 +23,7 @@ type cpDeps struct{ m *manager }
 var _ mcpsrv.CP = cpDeps{}
 
 func (d cpDeps) Store() store.Store               { return d.m.store }
+func (d cpDeps) CallLog() *mcpsrv.CallLog         { return &d.m.mcpCalls }
 func (d cpDeps) Custodian() mcpsrv.KeyCustodian   { return d.m.custodian }
 func (d cpDeps) Master32() []byte                 { return d.m.master32 }
 func (d cpDeps) TokenSignMaster() []byte          { return d.m.tokenSignMaster() }

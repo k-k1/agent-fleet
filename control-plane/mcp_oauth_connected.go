@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -49,6 +50,32 @@ func (a mcpConnectedAPI) list(w http.ResponseWriter, r *http.Request, ident stor
 	writeJSON(w, http.StatusOK, out)
 }
 
+// calls (GET /api/mcp-oauth/grants/{id}/calls) is the recent /mcp requests of one of the caller's
+// own connections, newest first. Another member's id answers 404 exactly like an unknown one.
+// The ring lives in this replica's memory (mcpsrv/mcp_calls.go), so behind several replicas it
+// holds only the requests that replica served.
+func (a mcpConnectedAPI) calls(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	noStore(w)
+	id := r.PathValue("id")
+	grants, err := a.mgr.store.ListMCPOAuthGrantsByIdentity(r.Context(), ident.ID, time.Now().Unix())
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	for _, g := range grants {
+		if g.ID == id {
+			writeJSON(w, http.StatusOK, mcpCallsOut{Calls: a.mgr.mcpCalls.Recent(mcpsrv.CallKey(true, id))})
+			return
+		}
+	}
+	writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "unknown connection"})
+}
+
+// mcpCallsOut is the body of the two "recent calls" endpoints.
+type mcpCallsOut struct {
+	Calls []mcpsrv.CallRecord `json:"calls"`
+}
+
 func (a mcpConnectedAPI) revoke(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	noStore(w)
 	id := r.PathValue("id")
@@ -61,5 +88,6 @@ func (a mcpConnectedAPI) revoke(w http.ResponseWriter, r *http.Request, ident st
 		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "unknown connection"})
 		return
 	}
+	a.mgr.mcpCalls.Forget(mcpsrv.CallKey(true, id))
 	w.WriteHeader(http.StatusNoContent)
 }

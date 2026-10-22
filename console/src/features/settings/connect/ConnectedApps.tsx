@@ -4,6 +4,7 @@ import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { fmtDate } from "./tokenDate.ts";
+import { RecentCalls } from "./RecentCalls.tsx";
 
 interface Grant {
   id: string;
@@ -76,12 +77,12 @@ export function ConnectedApps() {
               <th>{tr("tokens.apps_tenant")}</th><th>{tr("tokens.scope")}</th>
               <th>{tr("tokens.apps_created")}</th><th>{tr("tokens.th_last_used")}</th><th />
             </tr></thead>
-            <tbody>{view.grants.map((g) => <tr key={g.id}>
+            {view.grants.map((g) => <tbody key={g.id}><tr>
               <td>{g.client_name || tr("tokens.unnamed")}<small className="muted" style={{ display: "block" }}>{tr("tokens.apps_self_declared")}</small></td>
               <td>{g.redirect_host}</td><td>{g.tenant}</td><td>{g.scope}</td>
               <td>{date(g.created_at)}</td><td>{date(g.last_used_at)}</td>
               <td><button type="button" className="btn-ghost" disabled={busy !== null} onClick={() => revoke(g)}>{tr("tokens.revoke")}</button></td>
-            </tr>)}</tbody>
+            </tr><tr><td colSpan={7}><RecentCalls url={`api/mcp-oauth/grants/${encodeURIComponent(g.id)}/calls`} /></td></tr></tbody>)}
           </table>
         </div>
       )}

@@ -14,6 +14,7 @@ type identCP struct {
 }
 
 func (c identCP) ServerIdentity(context.Context) ServerIdentity { return c.id }
+func (c identCP) CallLog() *CallLog                             { return nil }
 
 func infoVia(t *testing.T, id ServerIdentity, body string, hdr map[string]string) (top, meta, legacy map[string]any) {
 	t.Helper()

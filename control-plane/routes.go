@@ -325,9 +325,11 @@ func registerPATRoutes(mux *http.ServeMux, cfg config) {
 	pat := newPATAPI(cfg.mgr)
 	apps := mcpConnectedAPI{memberAuth{cfg.mgr}}
 	mux.HandleFunc("GET /api/mcp-oauth/grants", apps.withIdentity(apps.list))
+	mux.HandleFunc("GET /api/mcp-oauth/grants/{id}/calls", apps.withIdentity(apps.calls))
 	mux.HandleFunc("DELETE /api/mcp-oauth/grants/{id}", apps.withIdentity(apps.revoke))
 	mux.HandleFunc("GET /api/pat", pat.withIdentity(pat.list))
 	mux.HandleFunc("POST /api/pat", pat.withIdentity(pat.create))
+	mux.HandleFunc("GET /api/pat/{id}/calls", pat.withIdentity(pat.calls))
 	mux.HandleFunc("DELETE /api/pat/{id}", pat.withIdentity(pat.revoke))
 }
 

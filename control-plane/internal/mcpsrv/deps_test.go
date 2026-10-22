@@ -55,6 +55,7 @@ func (c testCP) ScopeRank(scope string) int {
 }
 
 func (c testCP) ServerIdentity(context.Context) ServerIdentity { return ServerIdentity{} }
+func (c testCP) CallLog() *CallLog                             { return nil }
 func (c testCP) HashPAT(string) string                         { unwired("HashPAT"); return "" }
 func (c testCP) EgressDefaults() []string                      { unwired("EgressDefaults"); return nil }
 
