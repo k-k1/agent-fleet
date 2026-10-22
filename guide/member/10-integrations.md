@@ -16,9 +16,11 @@ You can check web services started inside the workspace (dev servers of all kind
 on the spot, **with no extra port publishing and no container rebuild**. There are two methods.
 
 Open **"Preview"** on the workspace action bar and enter a port number under **"Open a specific port"**. The
-primary button opens the default target (**"Open in new tab"** when the port has a preview URL, otherwise the
-browser pane, or the lightweight preview where there is no browser pane), and **"Open in pane"** (browser pane)
-and **"Lightweight preview"** sit beside it. All of them work only while the workspace is running. A loopback URL
+primary button opens the default target. That is **"Open in new tab"** (the port's preview subdomain) whenever
+this start has preview URLs, even for a port you have not listed, which then opens for you alone. Otherwise it is
+**"Open in pane"** (browser pane), or **"Lightweight preview"** where there is no browser pane. The other targets
+sit beside the primary button, greyed out when they are not available. All of them work only while the workspace
+is running. A loopback URL
 such as `http://127.0.0.1:3000/` in an agent's reply or a rendered document opens the same way when you click it
 ([04](04-files.md#links-in-rendered-markdown)).
 
