@@ -513,6 +513,6 @@ written above.
 Some deployments see bursts of TCP resets towards `auth.atlassian.com`. The Control Plane's two Jira
 token calls now retry transport errors, 429 and 5xx with a jittered exponential backoff
 (`oauth_jira_retry.go`); a permanent 4xx such as `invalid_grant` still returns at once. The refresh
-grant's total budget (17 s) stays under the Agent's 20 s call to the bridge. Retrying a refresh with the
+grant's total budget (14 s) stays well under the Agent's 20 s call to the bridge. Retrying a refresh with the
 same token relies on Atlassian's rotating-refresh-token reuse interval (default 10 minutes), per its
 documentation; it has not been measured against a real tenant. The decisions above stand as written.

@@ -11,6 +11,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -48,14 +49,15 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// The refresh budget sits under the 20 s the Agent gives its call to the CP bridge
-// (gitx.RefreshOAuthViaCP), which is itself inside the Agent's 30 s jiraRefreshBudget.
-// Raising it makes the Agent give up while the CP is still retrying with a token it
-// would then not know was spent.
+// The refresh budget sits well under the 20 s the Agent gives its call to the CP bridge
+// (gitx.RefreshOAuthViaCP): the handler spends time before the grant starts (token check,
+// membership and OAuth-app lookups), and the budget does not include it. Past 20 s the
+// Agent gives up while the CP is still retrying, and a rotation that then succeeds is
+// stored by nobody.
 var (
 	jiraRefreshRetry = jiraBackoff{
 		attempts: 5, base: 500 * time.Millisecond, max: 4 * time.Second,
-		attemptTimeout: 6 * time.Second, budget: 17 * time.Second,
+		attemptTimeout: 6 * time.Second, budget: 14 * time.Second,
 		jitter: equalJitter, sleep: sleepCtx,
 	}
 	// The code grant answers a browser tab, so there is no tight upstream deadline.
@@ -69,7 +71,24 @@ var (
 // minUsefulAttempt is the least time worth starting another attempt with.
 const minUsefulAttempt = time.Second
 
-func transientStatus(code int) bool { return code == http.StatusTooManyRequests || code >= 500 }
+// transientStatus: 429 and 5xx, plus 408 and 425, which proxies in front of Atlassian emit
+// for a request that was not processed. Reporting those as a refused grant would send the
+// member to reconnect for a blip.
+func transientStatus(code int) bool {
+	return code == http.StatusTooManyRequests || code == http.StatusRequestTimeout ||
+		code == http.StatusTooEarly || code >= 500
+}
+
+// echoLimit caps how much of a provider's error body is echoed to a log, an API error or
+// the callback page.
+const echoLimit = 4096
+
+func clipBody(b []byte) string {
+	if len(b) > echoLimit {
+		b = b[:echoLimit]
+	}
+	return strings.TrimSpace(string(b))
+}
 
 // post sends payload as JSON to jiraTokenURL. It retries transport errors, 429 and 5xx and
 // returns at once on anything else, including a permanent 4xx such as invalid_grant, so a

@@ -190,8 +190,8 @@ func (a gitOAuthBridgeAPI) refreshJira(w http.ResponseWriter, r *http.Request, m
 
 // jiraRefreshGrant sits in front of every rail refresh once the hour-old access token
 // expires, and one blip should not read as "reconnect Jira". Resets come in bursts, so the
-// backoff is longer than Bitbucket's and jittered (jiraRefreshRetry), but bounded by the
-// Agent's 20 s call to this bridge.
+// backoff is jittered and grows to seconds (jiraRefreshRetry), bounded by the Agent's
+// 20 s call to this bridge.
 //
 // Retrying with the SAME refresh token is safe for the retry window: Atlassian's rotation
 // has a reuse interval (default 10 minutes) during which presenting an already-exchanged
@@ -213,7 +213,7 @@ func jiraRefreshGrant(ctx context.Context, key, secret, refreshToken string) (bb
 				fmt.Sprintf("jira refresh failed: %d", status)}
 		}
 		return bbRefreshToken{}, &apiError{http.StatusBadRequest, "invalid_grant",
-			fmt.Sprintf("jira refused the refresh (%d): %s", status, strings.TrimSpace(string(b)))}
+			fmt.Sprintf("jira refused the refresh (%d): %s", status, clipBody(b))}
 	}
 	var out bbRefreshToken
 	if derr := json.Unmarshal(b, &out); derr != nil {

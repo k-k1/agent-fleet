@@ -142,7 +142,7 @@ func (c config) handleJiraOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		bbCallbackPage(w, t.notConfigured)
 		return
 	}
-	tok, err := jiraExchangeCode(key, secret, code, c.jiraRedirectURI())
+	tok, err := jiraExchangeCode(r.Context(), key, secret, code, c.jiraRedirectURI())
 	if err != nil {
 		if jiraCodeConsumed(err) {
 			bbCallbackPageLink(w, t.codeConsumed, t.backLink)
@@ -162,7 +162,11 @@ func (c config) handleJiraOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		bbCallbackPage(w, t.workspaceResolveFailed+aerr.message)
 		return
 	}
-	areq, _ := http.NewRequest("PUT", rt.Endpoint()+"/connections/jira/oauth", strings.NewReader(string(payload)))
+	// The tokens are in hand, so a slow Agent costs a retry from Settings, not data. Bound
+	// the wait: agentHTTPClient alone would hold this tab for 2 minutes.
+	actx, acancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer acancel()
+	areq, _ := http.NewRequestWithContext(actx, "PUT", rt.Endpoint()+"/connections/jira/oauth", strings.NewReader(string(payload)))
 	areq.Header.Set("Content-Type", "application/json")
 	if rt.Token() != "" {
 		areq.Header.Set("Authorization", "Bearer "+rt.Token())
@@ -200,19 +204,19 @@ type jiraTokenResp struct {
 // Transport errors, 429 and 5xx are retried (jiraExchangeRetry). The code is single-use:
 // when Atlassian consumed it and only the response was lost, the retry gets invalid_grant,
 // which the callback shows as "start the connection again" (jiraCodeConsumed).
-func jiraExchangeCode(key, secret, code, redirect string) (jiraTokenResp, error) {
+func jiraExchangeCode(ctx context.Context, key, secret, code, redirect string) (jiraTokenResp, error) {
 	body, _ := json.Marshal(map[string]string{
 		"grant_type": "authorization_code", "client_id": key, "client_secret": secret,
 		"code": code, "redirect_uri": redirect,
 	})
-	status, raw, err := jiraExchangeRetry.post(context.Background(), body)
+	status, raw, err := jiraExchangeRetry.post(ctx, body)
 	if err != nil {
 		return jiraTokenResp{}, err
 	}
 	var out jiraTokenResp
 	_ = json.Unmarshal(raw, &out)
 	if out.AccessToken == "" {
-		return jiraTokenResp{}, &httpStatusError{status, strings.TrimSpace(string(raw))}
+		return jiraTokenResp{}, &httpStatusError{status, clipBody(raw)}
 	}
 	if out.ExpiresIn <= 0 {
 		out.ExpiresIn = 3600
