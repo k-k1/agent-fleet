@@ -283,7 +283,7 @@ does, and read the warning above as applying to it in full.
 
 ¹⁴ Muse Code has a **contributor mode**: while it is on, Meta may use your conversations,
 including messages between sessions, to improve the product. Agent Fleet runs every muse
-process with the mode set explicitly. It is **off** unless you switch it on under Settings ›
+process that handles a conversation with the mode set explicitly. It is **off** unless you switch it on under Settings ›
 Agents › Muse Code › Behaviour › **Contributor mode**. Each session keeps the mode it was
 created with, across a stop and start and an Agent restart, and a fork or recreate keeps it
 too. Changing the setting applies to sessions created afterwards, and to assistant chat and

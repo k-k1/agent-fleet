@@ -71,9 +71,10 @@ func serveArgs(contributor bool) []string {
 	return append([]string{"serve", "--disable-sandbox", "--trust-workspace"}, ContributorModeArgs(contributor)...)
 }
 
-// ContributorModeArgs is the `--contributor-mode` pair every muse process AF spawns carries
-// (#2535). Since 1.4 the vendor's product-improvement use is a contributor MODE rather than the
-// `-contributor` model twins dataSharingModel looks for: measured on 1.4.11, `model/list` lists
+// ContributorModeArgs is the `--contributor-mode` pair every `muse serve` and `muse exec` AF spawns
+// carries (#2535); login, logout and `auth set` handle no conversation and take none. Since 1.4
+// the vendor's product-improvement use is a contributor MODE rather than the `-contributor`
+// model twins dataSharingModel looks for: measured on 1.4.11, `model/list` lists
 // no such row, with the mode on or off. The flag is sent explicitly in both directions because
 // it is the only route that never writes the member's own settings.json (`--help`: "never
 // persisted"), and because the host's answer with no flag and no setting was not observable
