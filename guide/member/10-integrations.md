@@ -88,9 +88,14 @@ https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com/   → port 8080 (e.g. Spring B
   issued, and a menu behind the chip's `⋯` (or right-click, or long-press) offers browser pane, subdomain and
   lightweight preview side by side. This opening is **yours only**, public mode and tenant sharing included, and
   it ends when that server stops: a different process that later takes the port is not reachable until you open
-  it again. It needs the port to answer plain HTTP (a database, SSH or an HTTPS-only dev server is refused with
-  the reason), and it does not set `AF_PREVIEW_URL_<port>`; list the port (the menu's **Expose this port…**)
-  when the app has to know its public URL or when someone else should see it.
+  it again. It also ends when the workspace stops or restarts and when you press "Discard and mint a new one",
+  because it belongs to the URL of that start. At most **16** ports can be open this way per workspace; past
+  that the page says "Too many temporarily opened ports" until a server stops or you list the port. It needs
+  the port to answer plain HTTP (a database, SSH or an HTTPS-only dev server is refused with the reason), and
+  it does not set `AF_PREVIEW_URL_<port>`. The development OIDC IdP does not accept a sign-in callback on such
+  a port either ([below](#signing-in-with-google-on-a-preview-url-development-oidc-idp)). List the port (the
+  menu's **Expose this port…**) when the app has to know its public URL, signs in through that IdP, or someone
+  else should see it.
 
 #### What the app has to get right
 
@@ -145,7 +150,52 @@ What you use depends on who you want to show it to. **Each step opens it wider.*
   returning 404 immediately. ⚠️ **Pressing it while the workspace is stopped does nothing**, because
   there is no issued URL to discard (the next start gets a new one anyway).
 
-#### Signing in with Google on a preview URL (development OIDC IdP)
+To sign in with Google on a preview URL, see [Signing in with Google on a preview URL](#signing-in-with-google-on-a-preview-url-development-oidc-idp) below.
+
+### Examples by setup
+
+| Setup | Example input | Which to open with |
+|------|--------|----------------|
+| **Node / Vite** | `5173` + `/` | Uses HMR (WebSocket), so **browser pane**. |
+| **Spring Boot** | `8080` + `/` or `/actuator/health` | Screens involving redirects, absolute `/assets/*`, and cookies: **browser pane**. Just a one-time look at the health JSON: lightweight preview. |
+| **API only** | `8080` + `/api/health` | One-time JSON / status checks: **lightweight preview**. SSE, auth cookies, redirects, and interactive checks: **browser pane**. |
+| **Frontend + API (multiple ports)** | frontend `5173` / API `8080` | **Preview subdomains are the best fit if you have them** (each port gets its own URL). Otherwise open the frontend's `5173` in a **browser pane**; fetch / WebSocket / SSE to another port (`8080`) works from there (as in a normal browser, CORS configuration is required). |
+| **React 3000 + Spring Boot 8080** | `3000` / `8080` | Preview subdomains serve both at the root. Routing the API through the dev server's proxy onto `/api` is the least trouble, and the same configuration then works on your own PC too. |
+
+> **Spring Boot links / redirects**: to have them resolve correctly, set
+> `server.forward-headers-strategy=framework` (or `native`) on the app side.
+
+### Status display and recovery
+
+When the browser pane fails to render properly, a status appears in the pane.
+
+| Status | Meaning | What to do |
+|------|------|------|
+| `target-unreachable` | The browser started, but the connection to that port/path hasn't been established yet. **Waiting for the dev server to start** is also this state. | Check the port number, the path, and whether the server is listening; once it's up, press **"Reload"**. If it persists, press **"Reconnect"**. |
+| `disconnected` | Communication with the pane (WebSocket) was lost. This is not necessarily a browser crash. | Check that the workspace is running and connectivity is back, then press **"Reconnect"**. |
+| `crashed` | The browser inside the workspace terminated abnormally and cannot continue that display. | Reopen with **"Reconnect"**. If it keeps happening, check the workspace's memory usage and the target app ([11](11-troubleshooting.md)). |
+
+If you try to open it while the workspace is stopped or starting, a dedicated notice appears. Reopen once the
+workspace is running.
+
+### Limits and transience (good to know)
+
+- You can have at most **2 open per workspace**, the display size is at most **1600×1200**, and rendering is at
+  most **12fps**. It is not suited to video playback or high-frame-rate checks.
+- If you **switch the pane to another view / send it to the back**, rendering stops and the Page is kept for
+  about **60 seconds**. Return quickly and the same state continues; after a while it is recreated from the
+  saved port/path.
+- On a **workspace Stop → Start** or a Console reload, browser panes that were on display are **automatically
+  recreated** from the same port/path, but cookies and half-typed input do not come back.
+- This is **not a general-purpose browser for opening external URLs** (it is localhost-only; there is no host
+  field, only a port and path). Nor is it a **full replacement for browser devtools** with DOM / Network /
+  Sources. The pane's "Console" lets you view and copy that page's `error` / `warn` logs and the like
+  (up to 200 entries; not stored persistently).
+
+> **On a smartphone**, the action bar has no "Preview" button: tap **⋯** at its right end instead; the port
+> and path fields and "Open in pane" are in the popover it opens.
+
+## Signing in with Google on a preview URL (development OIDC IdP)
 
 Google accepts only redirect URIs registered on its OAuth client, and a preview URL changes at every start.
 Where the deployment turns it on, the Control Plane can stand in for Google **during development**: a sign-in
@@ -159,9 +209,9 @@ client secret); no code, and nothing to register in the Google Cloud console.
   per-workspace switch**: wherever the IdP is offered, the values below reach every workspace at every start
   and sign-in simply works. Settings › Preview subdomains shows the issuer, the discovery URL and the client id
   with copy buttons. The client secret is not shown there: read `AF_DEV_IDP_CLIENT_SECRET` inside the
-  container. The client id and secret stay the same across restarts; "Issue a new secret" replaces them (the
-  old pair stops working at once, and the new one reaches the container at its next start, so stop and start the
-  workspace). A production configuration must never trust this issuer.
+  container. The client id and secret stay the same across restarts; **"Issue a new secret…"** replaces both
+  (the old pair stops working at once, and the new one reaches the container at its next start, so stop and
+  start the workspace). A production configuration must never trust this issuer.
 
 - **What you get**: `AF_DEV_IDP_ISSUER`, `AF_DEV_IDP_WELL_KNOWN` (the discovery URL), `AF_DEV_IDP_CLIENT_ID` and
   `AF_DEV_IDP_CLIENT_SECRET` inside the container, next to `AF_PREVIEW_URL_*`. The client is **yours alone**: its
@@ -172,8 +222,16 @@ client secret); no code, and nothing to register in the Google Cloud console.
   opening your shared preview ([above](#showing-it-to-someone-else-three-steps)) signs in as themselves.
 - **Where it may send the browser back to**: only your **current** preview URL on a **listed port**, and
   `http://localhost:<port>` / `http://127.0.0.1:<port>` (so the browser pane works too). Anything else, including
-  the URL from before a restart, gets an error page and is never redirected to. Set the app's own URL from
+  the URL from before a restart and a port you opened for yourself without listing it, gets an error page and is
+  never redirected to. Set the app's own URL from
   `AF_PREVIEW_URL_<port>` (for example `AUTH_URL`) so the callback it sends is exactly that.
+
+Settings › Preview subdomains › **"App configuration examples"** writes the configuration for you, for Spring
+Boot, Auth.js, Go, Better Auth or plain environment lines. Pick the **Form** (for Spring Boot "dev profile
+(recommended)", "One file with defaults" or "Environment only"; for Auth.js v5 or next-auth v4), the **Port**
+(one of your listed ports), whether to **Include preview settings**, and whether the **Values** reference
+environment variables or are filled in. The client secret is always an environment reference. The two
+examples below show the idea.
 
 **Auth.js (NextAuth)**, v5: point the Google provider at the dev issuer when the variables exist.
 
@@ -230,16 +288,21 @@ With `server.forward-headers-strategy=framework` (above) Spring builds the callb
 **Test personas.** To try role checks (admin, viewer, …) define personas under Settings › Preview subdomains ›
 "Test personas". Once the workspace has one, the sign-in shows a confirmation page where you pick yourself or a
 persona. A persona's address is always `<handle>@example.test` and its `sub` starts with `persona:`, so it can
-never be a real member; the token audit names the persona. A sign-in with `prompt=none` still passes silently as
-yourself, and a workspace with no persona never sees the page.
+never be a real member; the token audit names the persona. A workspace holds at most 20 personas, and a handle
+is 1 to 32 characters of `a-z`, `0-9`, `.`, `_` and `-`, starting with a letter or digit. The page accepts one
+answer, within 5 minutes; **Cancel** sends the app back an `access_denied` error. A sign-in with `prompt=none`
+still passes silently as yourself, and a workspace with no persona never sees the page.
 
 Good to know: tokens last 10 minutes and the sign-in code 60 seconds. **Only sign-in is replaced**: you do not
-get Google API access tokens (Calendar, Drive, …), and there is no `picture`. Turning the option off removes the
-client; turning it on again issues a **new** client id and secret (that is how you rotate the secret). The
-switch takes effect immediately for the endpoints, but a running container keeps the values it started with
-until the next start.
+get Google API access tokens (Calendar, Drive, …), and there is no `picture`. The sign-in request may not
+carry `prompt` other than `none`, `max_age`, or a `response_mode` other than `query`; the app gets an
+`invalid_request` error back (some Google examples add `prompt: "consent"`, so drop it for the dev issuer).
+The signing key changes every 30 days and the old one stays in the JWKS for 24 hours, so let the library fetch
+keys from the discovery URL rather than pinning one. To rotate the credentials, use "Issue a new secret…"
+(above): it takes effect immediately for the endpoints, but a running container keeps the values it started
+with until the next start.
 
-##### Using it from an app on your own machine
+### Using it from an app on your own machine
 
 An app running on your own PC at `http://localhost:<port>` can sign in through the same IdP, **also while the
 workspace is stopped** (ADR 0116).
@@ -251,10 +314,10 @@ workspace is stopped** (ADR 0116).
 3. In the browser on that machine, stay signed in to the Console. The sign-in needs no other login.
 
 - **Treat the secret like a password**: keep it out of git, chat and screenshots. Settings › Preview subdomains ›
-  "Issue a new secret…" revokes every copy at once; the workspace then needs a restart to get the new one, and
-  your machine needs the new value.
-- **It does not work while** the deployment is paused, the IdP is switched off in the Admin modal, or the
-  deployment has no preview domain (the issuer then answers 404).
+  "Issue a new secret…" revokes every copy at once. It issues a new client id as well as a new secret: the
+  workspace needs a restart to get them, and your machine needs both new values.
+- **It does not work while** the IdP is switched off for the deployment (in the Admin modal or with
+  `AF_DEV_IDP=0`), or on a deployment without a preview domain (the issuer then answers 404).
 - **A redirect to the preview URL still needs the workspace running**; only `localhost` / `127.0.0.1` is
   accepted while it is stopped.
 - **One configuration for both places**: Settings › Preview subdomains › "App configuration examples" generates
@@ -263,49 +326,6 @@ workspace is stopped** (ADR 0116).
   (`SPRING_PROFILES_ACTIVE=devidp`, recommended: the production configuration never names the dev issuer).
   Auth.js: `process.env.AF_DEV_IDP_ISSUER ? { issuer, clientId, clientSecret } : {}`, as in the example above.
   Never put the dev issuer into the production configuration.
-
-### Examples by setup
-
-| Setup | Example input | Which to open with |
-|------|--------|----------------|
-| **Node / Vite** | `5173` + `/` | Uses HMR (WebSocket), so **browser pane**. |
-| **Spring Boot** | `8080` + `/` or `/actuator/health` | Screens involving redirects, absolute `/assets/*`, and cookies: **browser pane**. Just a one-time look at the health JSON: lightweight preview. |
-| **API only** | `8080` + `/api/health` | One-time JSON / status checks: **lightweight preview**. SSE, auth cookies, redirects, and interactive checks: **browser pane**. |
-| **Frontend + API (multiple ports)** | frontend `5173` / API `8080` | **Preview subdomains are the best fit if you have them** (each port gets its own URL). Otherwise open the frontend's `5173` in a **browser pane**; fetch / WebSocket / SSE to another port (`8080`) works from there (as in a normal browser, CORS configuration is required). |
-| **React 3000 + Spring Boot 8080** | `3000` / `8080` | Preview subdomains serve both at the root. Routing the API through the dev server's proxy onto `/api` is the least trouble, and the same configuration then works on your own PC too. |
-
-> **Spring Boot links / redirects**: to have them resolve correctly, set
-> `server.forward-headers-strategy=framework` (or `native`) on the app side.
-
-### Status display and recovery
-
-When the browser pane fails to render properly, a status appears in the pane.
-
-| Status | Meaning | What to do |
-|------|------|------|
-| `target-unreachable` | The browser started, but the connection to that port/path hasn't been established yet. **Waiting for the dev server to start** is also this state. | Check the port number, the path, and whether the server is listening; once it's up, press **"Reload"**. If it persists, press **"Reconnect"**. |
-| `disconnected` | Communication with the pane (WebSocket) was lost. This is not necessarily a browser crash. | Check that the workspace is running and connectivity is back, then press **"Reconnect"**. |
-| `crashed` | The browser inside the workspace terminated abnormally and cannot continue that display. | Reopen with **"Reconnect"**. If it keeps happening, check the workspace's memory usage and the target app ([11](11-troubleshooting.md)). |
-
-If you try to open it while the workspace is stopped or starting, a dedicated notice appears. Reopen once the
-workspace is running.
-
-### Limits and transience (good to know)
-
-- You can have at most **2 open per workspace**, the display size is at most **1600×1200**, and rendering is at
-  most **12fps**. It is not suited to video playback or high-frame-rate checks.
-- If you **switch the pane to another view / send it to the back**, rendering stops and the Page is kept for
-  about **60 seconds**. Return quickly and the same state continues; after a while it is recreated from the
-  saved port/path.
-- On a **workspace Stop → Start** or a Console reload, browser panes that were on display are **automatically
-  recreated** from the same port/path, but cookies and half-typed input do not come back.
-- This is **not a general-purpose browser for opening external URLs** (it is localhost-only; there is no host
-  field, only a port and path). Nor is it a **full replacement for browser devtools** with DOM / Network /
-  Sources. The pane's "Console" lets you view and copy that page's `error` / `warn` logs and the like
-  (up to 200 entries; not stored persistently).
-
-> **On a smartphone**, the action bar has no "Preview" button: tap **⋯** at its right end instead; the port
-> and path fields and "Open in pane" are in the popover it opens.
 
 ## Operating a browser the agent opened
 

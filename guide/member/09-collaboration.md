@@ -55,16 +55,61 @@ nothing is sent until you choose one.
 
 ## Sharing and handing over
 
-Both live in the session's ⋯ menu, and they are different things:
+The first two live in the session's ⋯ menu, and they are different things:
 
 | | What it does | The other person |
 |---|---|---|
 | **Share…** | shows your conversation to another member of the same tenant, read-only | reads it; may be allowed to propose |
 | **Hand off to another agent…** | starts a new session carrying the context | continues the work themselves |
+| **Hand off to a member** | offers that handoff to someone the session is shared with ([below](#handing-a-session-to-another-member)) | starts the new session in their own workspace |
 
 A shared session appears in the other person's **Shared sessions** section and carries a
 **Shared** badge on yours, so you can always see what is visible to someone else.
 Sharing does not give access to your workspace, only to the conversation.
+
+## Handing a session to another member
+
+**Hand off to a member** is a button on the handoff proposal card in the conversation: the
+card that **Hand off to another agent…** produces, or that an agent proposes on its own. It
+does not start anything for you. It offers the proposal to one member, who starts the new
+session in their own workspace if they accept.
+
+- **Who can receive it**: only members this session is already shared with (read-only is
+  enough). If it is shared with nobody, the dialog offers **Share this session** first.
+- **What is sent**: a name for the new session, the handoff text, and the repository, branch
+  and commit the Control Plane reads from your working copy. Nothing on your disk travels, and
+  your workspace has to be running to send. A session has at most one waiting offer, and
+  editing the card afterwards does not change what the recipient sees.
+- **The push gate**: the recipient cannot see your disk, so unpushed commits or a branch that
+  was never pushed stop the send. **Push, then send** pushes exactly the commit shown to the
+  branch of the same name on `origin`, without force, tags or submodules, then checks again;
+  if git refuses, nothing is sent and git's message is shown. Uncommitted changes are never
+  pushed: you send anyway only after ticking that they are not handed over. A detached HEAD
+  is refused outright, so check out a branch first.
+
+The recipient sees the offer at the top of the inbox's **Received** list (**Handoffs from
+members**), as a notification, and as a banner on the shared conversation with **Review and
+take it over**. **Take it over** asks for a working copy and opens the usual launch dialog,
+already filled in: the session runs in the recipient's workspace and bills to them. **Decline**
+closes the offer.
+
+What can happen to an offer:
+
+- It **expires after 7 days** without an answer, and the sender is notified. The card's status
+  line shows waiting, taken over, declined, withdrawn or expired.
+- **Withdrawing** has no button of its own: pressing **Start new session** on the card while
+  the offer waits asks first, then withdraws it before your launch dialog opens, so the work
+  never starts on both sides. To change the text, withdraw this way and send again.
+- A notification for an offer that is no longer open says it is gone and opens nothing.
+- The offer is reserved when the recipient presses launch, not when the dialog opens. If the
+  sender withdrew it, or another window is already launching it, nothing starts and a message
+  says why. While a launch holds it, the sender cannot withdraw it and it does not expire. A
+  launch that stops before the Control Plane confirms it for sending to the workspace stops
+  holding the offer after 10 minutes.
+- Once the launch is confirmed, an unanswered result keeps the offer reserved for the
+  recipient: **press launch again to check** whether the session started. Ten minutes after the
+  confirmation, if there is still no outcome, **Not in my workspace — give it back** appears.
+  It returns the offer, but it does not cancel the earlier launch.
 
 ## Asking a teammate: the inbox
 
@@ -81,7 +126,7 @@ appear in the notification centre, and an open request never expires there.
   can **Hand back** (it is open again), **Mark done**, start a session from it, and record
   the PR and final branch by hand. The sender can **Withdraw** it while it is open or
   taken; work already started is not stopped. A request everybody declined, or that nobody
-  left in the tenant can take, ends as *declined*.
+  left in the tenant can take, ends as *Declined by everyone*.
 - **Starting a session from a request** is for the assignee only and runs in your own
   workspace on your own account. The Control Plane checks that you still hold the request
   before the session is created, and records which session it was.
@@ -91,9 +136,9 @@ appear in the notification centre, and an open request never expires there.
 - **Receiving** (inbox → **Receiving**): accept from everyone in the tenant or from chosen
   members only, block a sender, or turn on *do not disturb*, which mutes the badge and
   toasts but still delivers.
-- **Recipes**: tick *Attach a recipe* in **New** to send a prompt with a suggested agent,
-  model and effort, and optionally a repository (`owner/repo` on github.com or
-  bitbucket.org; a pasted URL keeps no credentials or query). The recipient sees the
+- **Recipes**: tick *Attach a recipe* in **New** to send a prompt (16 KiB at most) with a
+  suggested agent, model and effort, and optionally a repository (`owner/repo` on github.com
+  or bitbucket.org; a pasted URL keeps no credentials or query). The recipient sees the
   repository apart from the prompt, and nothing is fetched or cloned on their side.
 - **Taking a recipe in**: **Take into my memos** copies it into your memo queue as your own
   memo, marked with where it came from. For a request only the person who took it can do
@@ -105,11 +150,12 @@ appear in the notification centre, and an open request never expires there.
   including what is added later) — you confirm the session, the recipients and the scope,
   and the share and the message are created together or not at all. A recipient who cannot
   see an attached session gets an empty placeholder, decided again on every read: if the
-  share is removed later, the card turns into the placeholder. Withdrawing the message
-  removes no share.
-- **Handoffs from members** are listed at the top of **Received** while they wait for your
-  answer, and they count on the inbox badge until you take them over or decline them;
-  opening the inbox does not clear them. Open one to take it over or decline it, exactly
+  share is removed later, the card turns into the placeholder. Withdrawing a request removes
+  no share.
+- **[Handoffs from members](#handing-a-session-to-another-member)** are listed at the top of
+  **Received** while they wait for your answer, and they count on the inbox badge until you
+  take them over or decline them; opening the inbox does not clear them. Open one to take it
+  over or decline it, exactly
   as from its notification or the shared session. They are not inbox items: the
   **Receiving** settings, blocking and *do not disturb* do not apply to them — a handoff
   can only come from a member who shares that session with you.
@@ -122,7 +168,8 @@ sender to one recipient. Messages are kept 90 days from sending, requests 90 day
 end; a request open for 14 days is marked as long open. Bodies are stored encrypted with the
 tenant key when the deployment has one (the operator can still decrypt them), and
 **Receiving** says so when it does not. Administrators get an audit record of who sent which
-kind of item to whom, never the text.
+kind of item to whom, of every later step on it (take, decline, hand back, done, withdraw, PR
+record, take-in, launch) and of every block or unblock, never the text.
 
 ## Showing teammates where you stand on usage limits
 

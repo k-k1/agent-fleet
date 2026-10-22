@@ -1,6 +1,6 @@
 ---
 audience: "a tenant administrator managing who belongs to the team"
-updated: "2026-08"
+updated: "2026-10"
 ---
 
 # 01. Member management
@@ -18,43 +18,83 @@ name, its member count, the number of workspaces currently running ("N running")
 tenant-wide limits ("Limits — Workspace: X / Session: Y"). This is **read-only** (a super_admin
 sets the caps; see [02-limits.md](02-limits.md)).
 
-**Roster**: one card per member. Each card shows the email address with the internal identifier
-(`user_key`) under it, the role (`member` / `tenant_admin`), and a state badge that says in words
-whether the workspace is Running, Starting, Stopped, Never started, Stopped automatically (the
-Control Plane stopped it) or Removed. Below that are the sessions figure ("3 live / 5 total", with
-the limit and a thin bar next to the numbers when the member has a session limit, and how long ago
-that count was taken), the auto-stop outlook and the machine size. A stopped card also says when
-the member was last active. Where the home is the member's own volume (ECS on EC2, Kubernetes) or
-the deployment can read the home folder's size (local, native), the card also has a disk gauge with
-its numbers in text, for example "Disk 19.0 / 20.0 GiB (95%)". It turns to a warning at 85 % and to
-an error at 95 % or when less than 2 GiB is left, and either puts the member under **Needs
-attention**. Without a disk quota (local, native) only the used size is shown. On ECS Fargate the
-working disk is wiped on every stop, so there is no gauge, only the configured size. The gauge is the
-last reading the Control Plane took while the workspace ran (about every five minutes); on a stopped
-card it says how old that reading is. A member whose last start could not install a CLI (a full home is the usual cause) also goes
-under **Needs attention**; the card's tooltip says a CLI failed to install (the per-CLI reason is in the member detail), and a stopped card keeps the last start the Control Plane observed (a start that began and ended between two readings is not seen).
-In the member detail, the **"Size and limits"** card shows the same reason per CLI, and, where the home is the
-member's own volume (ECS on EC2, Kubernetes), a notice when the home is nearly full (the same threshold the
-member's own notice uses). The home-nearly-full notice needs a running workspace; a stopped or unreachable one shows no such notice, and no
-boot-install flag unless a failure was actually recorded.
-The session counts come from the Control Plane's copy of each
-workspace's session list, which it refreshes about every five minutes for every running workspace
-(`AF_USAGE_SAMPLE_INTERVAL`), so they can lag what the member sees. The one exception is a
-**running** card: while it is on screen (and the browser tab is in the foreground) it also shows live
-memory and CPU, for example "Memory 2.0 / 8.0 GiB (25%)" and "CPU 25% of 4 vCPU limit", read from that member's
-workspace about every 15 seconds, at most three at a time, and a card shows "Live usage: reading…"
-until its first reading. The CPU bar is a share of the member's CPU limit where the runtime enforces one; otherwise only the figure is shown, as "CPU 200% (100% = 1 core)". Cards scrolled out of view, hidden by the filter, or stopped are not asked,
-and nothing is asked while the Members page is closed. Clicking a card takes you to the member detail.
+The roster has one card per member. Clicking a card takes you to the member detail.
 
-Above the cards are the counts (running out of total, and how many need attention), a filter
-(All / Running / Needs attention / Stopped / Removed), a sort (needs attention first, by name, or by last active, with members who have no activity recorded last, or by disk usage, fullest first)
-and a search over name and email. A member **needs attention** when the Control Plane stopped
-their workspace, or when a session is still holding it open past its deadline; those cards have a
-warning edge and come first.
+### The roster cards
 
-**Member detail**: the screen that gathers that member's workspace resources, running sessions,
-and the various operations. Resources and sessions, force-stop, and limit settings are covered in
+Each card shows the email address with the internal identifier (`user_key`) under it, the role
+(`member` / `tenant_admin`), and a state badge that says in words what the workspace is doing:
+Running, Starting, Stopped, Never started, Stopped automatically (the Control Plane stopped it)
+or Removed. A removed member whose workspace is still up keeps Running or Starting, since
+stopping it is the next offboarding step; the role line then reads "removed".
+
+Below that are the sessions figure ("3 live / 5 total", with the limit and a thin bar next to the
+numbers when the member has a session limit, and how long ago that count was taken), the disk
+gauge, the auto-stop outlook and the machine size. A stopped card also says when the member was
+last active, and a running card that is on screen adds live memory and CPU. The next two sections
+say when each of these appears and how fresh it is.
+
+Above the cards are the counts ("N of M running", where starting workspaces count as running, and
+"N need attention"), a filter (All / Running / Needs attention / Stopped / Removed), a sort and a
+search box. The sort is "Needs attention first" (the default), "Name", "Last active" (members
+with no activity recorded last) or "Disk usage" (fullest first, members with no percentage to show last). The
+search box ("Search name or e-mail") matches the email address and the `user_key`; the roster
+holds no other name to match.
+
+### Needs attention
+
+A card that needs you has a warning edge and a **Needs attention** mark. Hovering the mark lists
+the reasons, which are:
+
+- "The Control Plane stopped this workspace": the platform stopped it itself (see
+  [02-limits.md](02-limits.md#viewing-a-members-resources)).
+- "A session is still holding it past its deadline": the workspace is running and a session is
+  still holding it open after its deadline.
+- "The home disk is nearly full": the disk gauge is at 85 % or more.
+- "The home disk is full or almost out of space": the disk gauge is at 95 % or more, or less than
+  2 GiB is left.
+- "A CLI failed to install at the last start": a full home is the usual cause. The per-CLI reason
+  is in the member detail.
+
+In the default order, cards whose home disk is full or almost out of space come first, then cards
+with any other reason, then everyone else, each group by name.
+
+### Where the numbers come from
+
+The session counts, last active, disk gauge and install flag are what the Control Plane recorded,
+so opening the roster makes no call to any workspace. They can lag what the member sees.
+
+- **Sessions** come from the Control Plane's copy of each workspace's session list, which it
+  refreshes about every five minutes for every running workspace (`AF_USAGE_SAMPLE_INTERVAL`).
+- **The disk gauge** appears where the home is the member's own volume (ECS on EC2, Kubernetes) or
+  the deployment can read the home folder's size (local, native), with its numbers in text, for
+  example "Disk 19.0 / 20.0 GiB (95%)". Without a disk quota (local, native) only the used size is
+  shown. On ECS Fargate the working disk is wiped on every stop, so there is no gauge, only the
+  configured size. The gauge is the last reading the Control Plane took while the workspace ran
+  (about every five minutes); on a stopped card it says how old that reading is.
+- **The install flag** is read at the same time. A stopped card keeps the last start the Control
+  Plane observed (a start that began and ended between two readings is not seen).
+- **Live memory and CPU** are the one exception. While a **running** card is on screen (and the
+  browser tab is in the foreground), the Console reads that member's workspace about every 15
+  seconds, at most three at a time, and shows for example "Memory 2.0 / 8.0 GiB (25%)" and "CPU
+  25% of 4 vCPU limit". A card shows "Live usage: reading…" until its first reading. The CPU bar is
+  a share of the member's CPU limit where the runtime enforces one; otherwise only the figure is
+  shown, as "CPU 200% (100% = 1 core)". Cards scrolled out of view, hidden by the filter, or
+  stopped are not asked, and nothing is asked while the Members page is closed.
+
+### Member detail
+
+The member detail gathers that member's workspace resources, running sessions, and the various
+operations. Resources and sessions, force-stop, and limit settings are covered in
 [02-limits.md](02-limits.md).
+
+Its **"Size and limits"** card names each CLI that failed to install at the last start, with the
+reason. On ECS on EC2, where the home is the member's own volume, it also shows a notice when the
+home is nearly full. That notice uses the member's own thresholds: it appears above 90 % or with
+less than 2 GiB free and goes away once usage is below 85 % with more than 3 GiB free. These are not
+the roster gauge's levels, so a card can be marked nearly full while the detail shows no notice.
+The notice needs a running workspace; a stopped or unreachable one shows none, and the install
+flag appears only when a failure was actually recorded.
 
 ## Adding a member
 

@@ -407,22 +407,7 @@ the allowlist → enforce**.
 
 ## Development sign-in (dev OIDC IdP — super_admin only)
 
-The **Dev sign-in** section of the Admin modal switches the Control Plane's development OIDC IdP
-(ADR 0116) for the whole deployment. **It is on by default** and super_admin only, so it does not
-appear in your tenant settings. There is no per-workspace switch: while it is on (and preview subdomains exist) every workspace's
-client is served.
-
-- The section shows the issuer, how many workspaces hold a client (one is created at every workspace start, opted in or not), and the one rule that matters:
-  **a production app must never trust this issuer**, because it signs in as any member without a
-  password.
-- Turning it off takes effect without a restart (another Control Plane replica follows within a few
-  seconds): every `/dev-idp/…` URL answers 404. **Workspaces' client registrations are kept**, so turning it on
-  again hands the same client ids and secrets back.
-- **Members can use it only with preview subdomains.** Without a preview domain
-  (`AF_PREVIEW_DOMAIN`) the section says so, the `/dev-idp/…` URLs answer 404, nothing is injected into
-  workspaces and workspaces report it unavailable. The switch itself stays operable.
-- It shows as locked when the operator set `AF_DEV_IDP=0`, and cannot be on without
-  `PUBLIC_BASE_URL`; the section says which one applies. Every change is audited (`dev_idp.set`).
+This section moved to [05 Who may sign in, and from where](05-access.md#development-sign-in-dev-oidc-idp-superadmin-only).
 
 ## A template for asking upstream
 

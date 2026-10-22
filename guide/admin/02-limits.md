@@ -79,7 +79,7 @@ those terms allow members to divide work this way is the tenant's judgement.
 What you can adjust is the per-member **session limit**. In the member detail, the
 **"Size and limits"** card (right under the resource meters) has a **"Change"** button; under
 **"Session limit"** you enter "Max sessions (0 = unlimited)", and once saved it applies to that
-person only. Members with a personal limit show "s≤ N" on their member row in the roster.
+person only. Members with a personal limit show "s≤ N" on their member card in the roster.
 
 Between a personal session limit and the tenant-wide limit, whichever is stricter kicks in first.
 
@@ -122,6 +122,10 @@ procedure on a deployment where the disk axis reads "Workspace home (persistent)
 3. **"Growing the home from N to M GiB"** under the card means it was accepted. **The workspace
    keeps running**; the extra room shows up on their side within a minute or so.
 
+The roster also flags this on its own: a card whose home disk is nearly full, or whose last start
+could not install a CLI, is listed under "Needs attention"
+([01-members.md](01-members.md#needs-attention)).
+
 Three constraints apply.
 
 - **It cannot go down.** Saving a smaller number leaves the existing home exactly as it is (cloud
@@ -159,6 +163,8 @@ The question to ask is what that person spends their time on.
 - The **tenant-wide default** is picked from the "Limits" page of the tenant settings.
 - A **per-member** choice is made from that member's "Set limits" panel, and it wins: members who
   chose for themselves are unaffected when you change the tenant default.
+- The roster card shows the instance type the member's next start lands on, whether it comes from
+  their own choice or the tenant default; hovering it shows the machine's name.
 - The memory number means the same thing in every machine. **The machine picks the ladder, memory
   picks the rung on it.**
 
@@ -224,10 +230,10 @@ the workspace's own volume rather than on a disk the platform can read while it 
 
 A workspace can also be stopped by the platform itself: a start that has not finished within
 the deployment's limit (30 minutes by default) is stopped so it stops holding capacity. Such a
-member's row in the roster says **"Workspace start stopped automatically"** (hover it for the
-reason), and the member detail shows the same heading with the limit, the last step the start
-reached (on AWS often why no machine could take the workspace, which is usually what needs
-fixing), and when it was stopped. The member got the same text as a notification. It stays
+member's card in the roster has the badge "Stopped automatically" and the chip **"Workspace start
+stopped automatically"** (hover the chip for the reason), and the member detail shows the same
+heading with the limit, the last step the start reached (on AWS often why no machine could take
+the workspace, which is usually what needs fixing), and when it was stopped. The member got the same text as a notification. It stays
 until the workspace is next started. The `list_workspaces` MCP tool returns it as `auto_stop`.
 
 ## Viewing sessions / getting the whole picture
@@ -253,8 +259,11 @@ container stops. **The work (home) is not lost.** The member can start it again 
 It is strictly a "pause for now" operation, not destructive.
 
 Below it, ruled off under **"Cannot be undone"**, are exactly what the heading says: "Clean home",
-"Delete backups", "Remove member", "Destroy workspace" and "Delete member permanently" (a deployment
-shows only the ones it can perform). **All of them are yours to
+"Delete backups", "Remove member", "Destroy workspace" and "Delete this member". A deployment shows
+only the ones it can perform, and the member's state decides the rest: "Remove member" appears for
+a current member, while "Destroy workspace" and "Delete this member" appear only after removal,
+Destroy while the member still has a workspace and Delete once it is gone
+([01-members.md](01-members.md#removing-a-member)). **All of them are yours to
 run**. The point is that an employee leaving should not become a ticket for IT. Read what each
 confirmation dialog says it keeps and deletes before you press it. **Situations that need heavier
 measures** (the container is broken and restarting doesn't fix it, host-side intervention is
