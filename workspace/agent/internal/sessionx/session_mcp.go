@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -31,11 +32,19 @@ const (
 	mcpEnvelopeOpen = "[agent-fleet:"
 
 	mcpTokenMax      = 40
-	mcpConnectionMax = 12
+	mcpConnectionMax = 64
 )
 
 // mcpDeliveryKey marks a request HandleSessionMCPInput handed to HandleSessionInput.
 type mcpDeliveryKey struct{}
+
+// typedByMember reports whether an injection is what the member typed, as opposed to one that
+// carries its own origin. Only that input is mirrored into the Discord thread and drawn as the
+// "user" arrow; the managed path decides on it so a new origin cannot fall through to the default.
+func typedByMember(peerFrom, reportTo, source string, scheduled bool) bool {
+	return peerFrom == "" && reportTo == "" && !scheduled &&
+		source != TurnSourceMCP && scheduleInjectionSource(source) == ""
+}
 
 // mcpOrigin is who sent the input, as the CP authenticated it. None of it is a claim by the
 // prompt's author except Impl, which is the client's own clientInfo name: informational.
@@ -89,7 +98,11 @@ func mcpEnvelope(o mcpOrigin, message string) string {
 // while a refusal tells the assistant plainly what to change. Matched case-insensitively on the
 // trimmed text, where a model would read it as the first line.
 func mcpForgedEnvelope(prompt string) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(prompt)), mcpEnvelopeOpen)
+	// TrimSpace leaves a BOM and zero-width characters, which a client could put in front.
+	lead := strings.TrimLeftFunc(prompt, func(r rune) bool {
+		return unicode.IsSpace(r) || r == '\uFEFF' || r == '\u200B' || r == '\u200C' || r == '\u200D'
+	})
+	return strings.HasPrefix(strings.ToLower(lead), mcpEnvelopeOpen)
 }
 
 // HandleSessionMCPInput is POST /sessions/{name}/mcp-input.

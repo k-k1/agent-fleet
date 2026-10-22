@@ -211,12 +211,14 @@ export function composerHistory(turns: Turn[]): string[] {
   const out: string[] = [];
   for (const t of turns) {
     if (t.role !== "user" || t.source || t.compact || t.sidechain) continue;
+    // An mcp envelope is never the member's words, even when its body opens with "/".
+    if (mcpViaOf(t.text || "") !== null) continue;
     const slash = parseCommand(t);
     let s = "";
     if (slash) s = slash.name + (slash.args ? " " + slash.args : "");
     else if (t.text && !isNoise(t)) {
       const text = t.text.trim();
-      if (peerSenderOf(text) === null && spawnParentOf(text) === null && mcpViaOf(text) === null) s = stripStudioSignal(text).trim();
+      if (peerSenderOf(text) === null && spawnParentOf(text) === null) s = stripStudioSignal(text).trim();
     }
     if (s && out[out.length - 1] !== s) out.push(s);
   }

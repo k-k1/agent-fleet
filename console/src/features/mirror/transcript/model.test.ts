@@ -196,6 +196,7 @@ describe("mcpViaOf", () => {
   it("keeps an mcp message out of the composer history and in its own bubble", () => {
     const env = "[agent-fleet:mcp via=Claude connection=g1 reply=none] 走らせて";
     expect(composerHistory([user(env), user("自分の指示")])).toEqual(["自分の指示"]);
+    expect(composerHistory([user("[agent-fleet:mcp via=C connection=g reply=none] /compact")])).toEqual([]);
     const blocks = groupTurns([user("自分の指示"), user(env)]);
     expect(blocks).toHaveLength(2);
   });

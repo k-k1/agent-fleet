@@ -820,15 +820,9 @@ func handleManagedInputPrompt(lease *lifegate.Lease, w http.ResponseWriter, meta
 	// user turn is already in the store). Without this the codex resume would land silently
 	// and only the TUI kinds would report one (docs/log/47 §4-12).
 	notifyRateLimitResumeDelivered(meta.Name, prompt, source, time.Now())
-	switch {
-	case peerFrom != "":
-		// Not on the ledger (ADR 0041 decision 4). The origin was recorded above.
-	case reportTo != "" || delivery != nil:
-		// Raised before the send, above.
-	case scheduleInjectionSource(source) != "":
-		// Scheduled execution with reporting off (as on the TUI path) — no ledger row,
-		// no Discord mirror.
-	default:
+	// Peer (ADR 0041 decision 4), report_to / schedule (ledger raised above) and MCP input
+	// are not the member's own typing: no Discord mirror, no "user" arrow.
+	if typedByMember(peerFrom, reportTo, source, delivery != nil) {
 		mirrorUserInputAsync(meta.Name, prompt) // docs/log/37 Fix ②: Console-input mirror
 		fleetgraph.RecordInstruct("user", meta.Name, "", prompt)
 	}
