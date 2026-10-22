@@ -375,7 +375,7 @@ func TestMCPOAuthRedirectRule(t *testing.T) {
 		"javascript:alert(1)":                   redirectRefused,
 		"":                                      redirectRefused,
 	} {
-		if got := e.api.classifyRedirect(raw); got != want {
+		if got := e.api.classifyRedirect(e.api.fallback, raw); got != want {
 			t.Errorf("classifyRedirect(%q) = %v, want %v", raw, got, want)
 		}
 	}
@@ -388,14 +388,14 @@ func TestMCPOAuthRedirectRule(t *testing.T) {
 		"https://claude.ai/api/mcp/auth_callback": true,
 		"https://claude.ai/api/mcp/other":         false,
 	} {
-		if got := e.api.redirectRegistered(reg, raw); got != want {
+		if got := e.api.redirectRegistered(e.api.fallback, reg, raw); got != want {
 			t.Errorf("redirectRegistered(%q) = %v, want %v", raw, got, want)
 		}
 	}
 	// The operator list is honoured, in both directions.
 	t.Setenv("AF_MCP_OAUTH_TRUSTED_HOSTS", "claude.ai, mcp.corp.example")
 	api := newMCPOAuthAPI(config{mgr: e.mgr})
-	if api.classifyRedirect("https://chatgpt.com/cb") != redirectRefused || api.classifyRedirect("https://mcp.corp.example/cb") != redirectHosted {
+	if api.classifyRedirect(api.fallback, "https://chatgpt.com/cb") != redirectRefused || api.classifyRedirect(api.fallback, "https://mcp.corp.example/cb") != redirectHosted {
 		t.Error("the configured trusted-host list was not applied")
 	}
 }
@@ -416,7 +416,7 @@ func TestMCPOAuthUntrustedRedirectIsAPageNeverARedirect(t *testing.T) {
 		t.Errorf("unknown client: %d", rec.Code)
 	}
 	t.Setenv("AF_MCP_OAUTH_TRUSTED_HOSTS", "chatgpt.com")
-	e.api.trusted = parseTrustedClientHosts("chatgpt.com")
+	e.api.fallback = parseTrustedClientHosts("chatgpt.com")
 	if rec := e.authorize(e.authQuery(id, "https://claude.ai/api/mcp/auth_callback", challenge)); rec.Code != http.StatusBadRequest {
 		t.Errorf("a host dropped from the trusted list still worked: %d", rec.Code)
 	}
@@ -602,7 +602,7 @@ func TestMCPOAuthCIMDChatGPT(t *testing.T) {
 				}
 			}
 			e.docs[id] = string(doc)
-			client, err := e.api.loadCIMD(context.Background(), id)
+			client, err := e.api.loadCIMD(context.Background(), e.api.fallback, id)
 			if !tc.accepted {
 				if !errors.Is(err, errMCPClientUnknown) {
 					t.Fatalf("loadCIMD: %v, want unknown client", err)
@@ -1387,7 +1387,7 @@ func TestMCPOAuthLoopbackMatchIgnoresOnlyThePort(t *testing.T) {
 		{"http://127.0.0.1/a", "http://127.0.0.1:4567/a?x=1", false},
 		{"http://127.0.0.1/a?x=1", "http://127.0.0.1:4567/a?x=1", true},
 	} {
-		if got := e.api.redirectRegistered([]string{c.reg}, c.req); got != c.want {
+		if got := e.api.redirectRegistered(e.api.fallback, []string{c.reg}, c.req); got != c.want {
 			t.Errorf("registered %q, requested %q = %v, want %v", c.reg, c.req, got, c.want)
 		}
 	}

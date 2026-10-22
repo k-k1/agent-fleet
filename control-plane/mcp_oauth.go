@@ -72,7 +72,11 @@ type mcpOAuthAPI struct {
 
 	// issuer and resource are "" while the deployment does not serve OAuth for /mcp.
 	issuer, resource string
-	trusted          map[string]bool
+	// fallback is the list in force while no super admin has saved one: the env var, else the
+	// built-in default (fallbackSource says which). The list a request uses comes from
+	// trustedNow.
+	fallback       trustedHosts
+	fallbackSource string
 
 	// fetch reads a CIMD document; tests replace it. It is only ever called for a URL on a
 	// trusted host.
@@ -84,8 +88,8 @@ type mcpOAuthAPI struct {
 func newMCPOAuthAPI(cfg config) *mcpOAuthAPI {
 	m := cfg.mgr
 	a := &mcpOAuthAPI{mgr: m, now: time.Now, brand: cfg.brand,
-		trusted: parseTrustedClientHosts(envx.Or("AF_MCP_OAUTH_TRUSTED_HOSTS", defaultMCPOAuthTrustedHosts)),
-		cimd:    newCIMDCache(64), reg: newRateLimiter(mcpOAuthRegPerHour, time.Hour, 10000)}
+		cimd: newCIMDCache(64), reg: newRateLimiter(mcpOAuthRegPerHour, time.Hour, 10000)}
+	a.fallback, a.fallbackSource = envTrustedHosts()
 	a.fetch = fetchCIMDDocument
 	base := strings.TrimRight(m.publicBaseURL, "/")
 	if envx.Or("AF_MCP_ENABLED", "") == "true" && envx.Or("AF_MCP_OAUTH", "") == "1" && strings.HasPrefix(base, "https://") {
@@ -229,7 +233,7 @@ const (
 // The match is on the canonical spelling: an upper-case host, a trailing dot, an explicit :443,
 // userinfo, a fragment or a backslash are refused rather than normalised, because every
 // normalisation is a chance for this check and the browser to disagree.
-func (a *mcpOAuthAPI) classifyRedirect(raw string) redirectClass {
+func (a *mcpOAuthAPI) classifyRedirect(trusted trustedHosts, raw string) redirectClass {
 	u, ok := parseCanonicalRedirect(raw)
 	if !ok {
 		return redirectRefused
@@ -256,7 +260,7 @@ func (a *mcpOAuthAPI) classifyRedirect(raw string) redirectClass {
 		}
 		return redirectLoopback
 	case "https":
-		if u.Host != u.Hostname() || !a.trusted[u.Host] {
+		if u.Host != u.Hostname() || !trusted[u.Host] {
 			return redirectRefused
 		}
 		return redirectHosted
@@ -267,8 +271,8 @@ func (a *mcpOAuthAPI) classifyRedirect(raw string) redirectClass {
 // redirectRegistered reports whether requested is one of the client's registered URIs. A
 // loopback URI matches ignoring the port, which a CLI picks at random; everything else is an
 // exact string match.
-func (a *mcpOAuthAPI) redirectRegistered(registered []string, requested string) bool {
-	class := a.classifyRedirect(requested)
+func (a *mcpOAuthAPI) redirectRegistered(trusted trustedHosts, registered []string, requested string) bool {
+	class := a.classifyRedirect(trusted, requested)
 	if class == redirectRefused {
 		return false
 	}
@@ -277,7 +281,7 @@ func (a *mcpOAuthAPI) redirectRegistered(registered []string, requested string) 
 		if reg == requested {
 			return true
 		}
-		if class != redirectLoopback || a.classifyRedirect(reg) != redirectLoopback {
+		if class != redirectLoopback || a.classifyRedirect(trusted, reg) != redirectLoopback {
 			continue
 		}
 		gu, err := url.Parse(reg)
@@ -306,9 +310,9 @@ var (
 // cimdURLAllowed is the SSRF guard: a CIMD client_id is fetched only when it is an https URL
 // with a path on a trusted host, so the server never makes a request to an address a stranger
 // chose.
-func (a *mcpOAuthAPI) cimdURLAllowed(id string) (*url.URL, bool) {
+func (a *mcpOAuthAPI) cimdURLAllowed(trusted trustedHosts, id string) (*url.URL, bool) {
 	u, ok := parseCanonicalRedirect(id)
-	if !ok || u.Scheme != "https" || u.Host != u.Hostname() || !a.trusted[u.Host] ||
+	if !ok || u.Scheme != "https" || u.Host != u.Hostname() || !trusted[u.Host] ||
 		u.RawQuery != "" || u.ForceQuery || len(u.Path) < 2 || path.Clean(u.Path) != u.Path {
 		return nil, false
 	}
@@ -316,12 +320,12 @@ func (a *mcpOAuthAPI) cimdURLAllowed(id string) (*url.URL, bool) {
 }
 
 // loadClient resolves a client_id to the registration the redirect is checked against.
-func (a *mcpOAuthAPI) loadClient(ctx context.Context, id string) (mcpClient, error) {
+func (a *mcpOAuthAPI) loadClient(ctx context.Context, trusted trustedHosts, id string) (mcpClient, error) {
 	switch {
 	case id == "" || len(id) > 512:
 		return mcpClient{}, errMCPClientUnknown
 	case strings.HasPrefix(id, "https://"):
-		return a.loadCIMD(ctx, id)
+		return a.loadCIMD(ctx, trusted, id)
 	}
 	row, ok, err := a.mgr.store.GetMCPOAuthClient(ctx, id)
 	if err != nil {
@@ -333,15 +337,15 @@ func (a *mcpOAuthAPI) loadClient(ctx context.Context, id string) (mcpClient, err
 	}
 	var uris []string
 	_ = json.Unmarshal([]byte(row.RedirectURIs), &uris)
-	return mcpClient{ID: row.ClientID, Name: row.Name, Redirects: a.vettedRedirects(uris)}, nil
+	return mcpClient{ID: row.ClientID, Name: row.Name, Redirects: a.vettedRedirects(trusted, uris)}, nil
 }
 
 // vettedRedirects keeps the URIs the current rule still admits (the trusted list may have
 // shrunk since the client registered).
-func (a *mcpOAuthAPI) vettedRedirects(uris []string) []string {
+func (a *mcpOAuthAPI) vettedRedirects(trusted trustedHosts, uris []string) []string {
 	var out []string
 	for _, u := range uris {
-		if a.classifyRedirect(u) != redirectRefused {
+		if a.classifyRedirect(trusted, u) != redirectRefused {
 			out = append(out, u)
 		}
 	}
@@ -365,13 +369,13 @@ const (
 	cimdDefaultTTL = 5 * time.Minute
 )
 
-func (a *mcpOAuthAPI) loadCIMD(ctx context.Context, id string) (mcpClient, error) {
-	if _, ok := a.cimdURLAllowed(id); !ok {
+func (a *mcpOAuthAPI) loadCIMD(ctx context.Context, trusted trustedHosts, id string) (mcpClient, error) {
+	if _, ok := a.cimdURLAllowed(trusted, id); !ok {
 		return mcpClient{}, errMCPClientUnknown
 	}
 	now := a.now()
 	if c, ok := a.cimd.get(id, now); ok {
-		return c, nil
+		return a.vettedCIMD(trusted, c)
 	}
 	fctx, cancel := context.WithTimeout(ctx, cimdFetchLimit)
 	defer cancel()
@@ -393,18 +397,26 @@ func (a *mcpOAuthAPI) loadCIMD(ctx context.Context, id string) (mcpClient, error
 	if len(doc.RedirectURIs) > mcpOAuthMaxRedirects {
 		doc.RedirectURIs = doc.RedirectURIs[:mcpOAuthMaxRedirects]
 	}
-	redirects := a.vettedRedirects(doc.RedirectURIs)
-	if len(redirects) == 0 {
-		return mcpClient{}, errMCPClientUnknown
-	}
 	if maxAge < cimdMinTTL {
 		maxAge = cimdMinTTL
 	}
 	if maxAge > cimdMaxTTL {
 		maxAge = cimdMaxTTL
 	}
-	c := mcpClient{ID: id, Name: cleanClientName(doc.ClientName), Redirects: redirects, CIMD: true}
+	// The cache keeps the document's own list; the trusted list is applied on every read so a
+	// change to it takes effect before the entry expires, in both directions.
+	c := mcpClient{ID: id, Name: cleanClientName(doc.ClientName), Redirects: doc.RedirectURIs, CIMD: true}
 	a.cimd.put(id, c, now.Add(maxAge), now)
+	return a.vettedCIMD(trusted, c)
+}
+
+// vettedCIMD narrows a document's redirect URIs to the ones the trusted list admits now. A
+// client left with none is unknown.
+func (a *mcpOAuthAPI) vettedCIMD(trusted trustedHosts, c mcpClient) (mcpClient, error) {
+	c.Redirects = a.vettedRedirects(trusted, c.Redirects)
+	if len(c.Redirects) == 0 {
+		return mcpClient{}, errMCPClientUnknown
+	}
 	return c, nil
 }
 
@@ -663,8 +675,14 @@ func (a *mcpOAuthAPI) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	seen := map[string]bool{}
+	trusted, _, err := a.trustedNow(ctx)
+	if err != nil {
+		log.Printf("mcp oauth: trusted hosts: %v", err)
+		regError(w, http.StatusInternalServerError, "server_error", "could not register the client")
+		return
+	}
 	for _, u := range req.RedirectURIs {
-		if a.classifyRedirect(u) == redirectRefused || seen[u] {
+		if a.classifyRedirect(trusted, u) == redirectRefused || seen[u] {
 			regError(w, http.StatusBadRequest, "invalid_redirect_uri",
 				"redirect_uris must be unique loopback URIs or https URIs on a trusted client host")
 			return

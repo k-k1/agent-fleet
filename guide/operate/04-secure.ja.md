@@ -316,7 +316,7 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
 | 設定 | 意味 |
 |---|---|
 | `AF_MCP_OAUTH=1` | サーバーを有効にします。`AF_MCP_ENABLED=true` と `https` の `PUBLIC_BASE_URL` も必要です。どれか欠けていると、以下のパスはすべて 404、`/mcp` は従来どおりの素の 401 になり、クライアントはトークンを求める動作に戻ります |
-| `AF_MCP_OAUTH_TRUSTED_HOSTS` | サインインのリダイレクト先になれる／クライアントメタデータを配信できるホスト名のカンマ区切り。既定は `claude.ai,claude.com,chatgpt.com`。外すとそのベンダーは使えなくなり、社内クライアントなら追加します（ホスト名の完全一致、`https` のみ）。`none` でループバックのクライアントだけになります |
+| `AF_MCP_OAUTH_TRUSTED_HOSTS` | サインインのリダイレクト先になれる／クライアントメタデータを配信できるホスト名のカンマ区切り。既定は `claude.ai,claude.com,chatgpt.com`。**super admin は Admin モーダル（配備 → MCP ログイン許可ホスト、[admin/05](../admin/05-access.ja.md)）で実行時に上書きできます**。保存した一覧が優先され、保存がない間はこの変数がフォールバックです。外すとそのベンダーは使えなくなり、社内クライアントなら追加します（ホスト名の完全一致、`https` のみ）。`none` でループバックのクライアントだけになります |
 
 - **提供されるパス**（issuer は `{PUBLIC_BASE_URL}/mcp-oauth`）: `/.well-known/oauth-protected-resource/mcp`、
   `/.well-known/oauth-authorization-server/mcp-oauth`、`/mcp-oauth/authorize`、`/mcp-oauth/consent`、
