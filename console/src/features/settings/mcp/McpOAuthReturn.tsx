@@ -16,12 +16,15 @@ export function McpOAuthReturn({ booted }: { booted: boolean }) {
     if (!booted) return;
     const r = parseOAuthReturn(window.location.search);
     if (!r) return;
-    rememberReturn(r);
     window.history.replaceState(
       window.history.state,
       "",
       window.location.pathname + stripOAuthReturn(window.location.search) + window.location.hash,
     );
+    // The Control Plane always names the server on a sign-in that happened; a success without
+    // one is a made-up URL, so it is neither announced nor acted on.
+    if (r.ok && !r.server) return;
+    rememberReturn(r);
     if (r.ok) {
       toast(tr("mcp.oauth_return_ok_generic"));
     } else {

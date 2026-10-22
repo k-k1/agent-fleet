@@ -57,12 +57,15 @@ func TestUpdateAwayFromOAuthDropsTheGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = mcpreg.Delete(d.ID) })
-	if err := secrets.Update(func(s *secrets.Data) error {
-		s.MCPOAuth = append(s.MCPOAuth, secrets.MCPOAuthGrant{ServerID: d.ID, Issuer: "https://as.example.com", AccessToken: "x"})
-		return nil
-	}); err != nil {
-		t.Fatal(err)
+	plant := func() {
+		if err := secrets.Update(func(s *secrets.Data) error {
+			s.MCPOAuth = append(s.MCPOAuth, secrets.MCPOAuthGrant{ServerID: d.ID, Issuer: "https://as.example.com", AccessToken: "x"})
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
+	plant()
 	put := func(body string) int {
 		r := httptest.NewRequest(http.MethodPut, "/mcp-servers/"+d.ID, strings.NewReader(body))
 		r.SetPathValue("id", d.ID)
@@ -83,7 +86,16 @@ func TestUpdateAwayFromOAuthDropsTheGrant(t *testing.T) {
 	if c := put(`{"name":"hosted","transport":"http","url":"https://m.example.com/mcp","auth":"oauth","enabled":true}`); c != 200 || grants() != 1 {
 		t.Fatalf("an unchanged OAuth server keeps its grant: %d, grants=%d", c, grants())
 	}
-	if c := put(`{"name":"hosted","transport":"http","url":"https://m.example.com/mcp","enabled":true}`); c != 200 || grants() != 0 {
+	if c := put(`{"name":"hosted","transport":"http","url":"https://m.example.com/other","auth":"oauth","enabled":true}`); c != 200 || grants() != 0 {
+		t.Fatalf("a new URL must drop the grant, OAuth or not: %d, grants=%d", c, grants())
+	}
+	plant()
+	if c := put(`{"name":"hosted","transport":"http","url":"https://m.example.com/other","enabled":true}`); c != 200 || grants() != 0 {
 		t.Fatalf("leaving OAuth must drop the grant: %d, grants=%d", c, grants())
+	}
+	// A grant left on a server that is not OAuth is dropped by a URL change too.
+	plant()
+	if c := put(`{"name":"hosted","transport":"http","url":"https://m.example.com/third","enabled":true}`); c != 200 || grants() != 0 {
+		t.Fatalf("a URL change must drop a stray grant: %d, grants=%d", c, grants())
 	}
 }

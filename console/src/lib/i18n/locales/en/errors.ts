@@ -191,7 +191,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.mcp_url_credentials": "Do not embed credentials in the URL. Use a header.",
   "err.mcp_auth_unknown": "That authentication method is not known.",
   "err.mcp_oauth_remote_only": "OAuth sign-in is only for remote servers.",
-  "err.mcp_oauth_authorization_header": "An OAuth server takes no static Authorization header. Remove it, or choose another authentication.",
+  "err.mcp_oauth_authorization_header": "An OAuth server takes no static headers. Remove them, or choose another authentication.",
   "err.mcp_oauth_not_distributed": "A tenant-distributed server cannot use OAuth yet.",
   "err.oauth_not_required": "The server did not ask for OAuth.",
   "err.oauth_discovery_failed": "The server's OAuth metadata could not be used. Run the connection test to see why.",

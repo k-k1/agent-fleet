@@ -23,7 +23,6 @@ export interface OAuthStatus {
   stepUpScope?: string;
   // A sign-in begun and not finished (its 10 minutes): the DCR retry is offered when it is "cimd".
   pendingRegistration?: OAuthRegistration;
-  preregisteredIssuers?: string[];
 }
 
 export const asRegistration = (v: unknown): OAuthRegistration | undefined =>
@@ -42,7 +41,6 @@ export function normalizeStatus(raw: any, serverId: string): OAuthStatus {
     connectedAt: typeof raw?.connectedAt === "number" ? raw.connectedAt : undefined,
     stepUpScope: typeof raw?.stepUpScope === "string" ? raw.stepUpScope : undefined,
     pendingRegistration: asRegistration(raw?.pendingRegistration),
-    preregisteredIssuers: Array.isArray(raw?.preregisteredIssuers) ? raw.preregisteredIssuers : undefined,
   };
 }
 

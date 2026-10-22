@@ -109,6 +109,7 @@ describe("row states", () => {
     expect(text()).toContain("https://as.example.com");
     expect(host!.querySelector('[data-testid="mcp-oauth-registration"]')!.textContent).toContain("client ID metadata document (CIMD)");
     expect(button("Disconnect")).toBeTruthy();
+    expect(button("Sign in")).toBeUndefined(); // "Connected" next to "Sign in" reads as not signed in
   });
 
   it("names a pre-registered and a dynamically registered client", async () => {
@@ -120,6 +121,16 @@ describe("row states", () => {
     setStatus({ state: "connected", registration: "dcr" });
     await mount(row());
     expect(text()).toContain("dynamic registration (DCR)");
+  });
+
+  it("says sessions do not use the sign-in yet, whatever the state", async () => {
+    for (const state of ["not_signed_in", "connected"]) {
+      setStatus({ state });
+      await mount(row());
+      expect(host!.querySelector('[data-testid="mcp-oauth-relay-note"]')!.textContent).toContain("not handed this server yet");
+      act(() => root!.unmount());
+      host!.remove();
+    }
   });
 
   it("sign in again", async () => {
@@ -255,6 +266,12 @@ describe("DCR retry", () => {
     expect(button("Retry with dynamic registration")).toBeUndefined();
   });
 
+  it("is disabled until the status has been read", async () => {
+    replies["GET api/mcp-servers/mcp-1/oauth"] = () => new Promise(() => {}); // never answers
+    await mount(row({ failedReturn: { ok: false, server: "mcp-1", reason: "failed", registration: "cimd" } }));
+    expect(button("Retry with dynamic registration")!.disabled).toBe(true);
+  });
+
   it("is not offered once connected, nor after a DCR failure", async () => {
     setStatus({ state: "connected", pendingRegistration: "cimd" });
     await mount(row());
@@ -376,8 +393,17 @@ describe("return from the authorization server", () => {
     open.mockRestore();
   });
 
-  it("does nothing before boot, or on an ordinary URL", async () => {
+  it("does not announce a success that names no server", async () => {
     setLocation("?mcp_oauth=ok");
+    const open = vi.spyOn(useSettingsUI.getState(), "openSettings").mockImplementation(() => {});
+    await mount(<McpOAuthReturn booted />);
+    expect(toasts).toHaveLength(0);
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+
+  it("does nothing before boot, or on an ordinary URL", async () => {
+    setLocation("?mcp_oauth=ok&server=mcp-1");
     await mount(<McpOAuthReturn booted={false} />);
     expect(toasts).toHaveLength(0);
     act(() => root!.unmount());

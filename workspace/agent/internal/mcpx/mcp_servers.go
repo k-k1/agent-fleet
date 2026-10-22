@@ -106,7 +106,8 @@ func HandleServerUpdate(w http.ResponseWriter, r *http.Request) {
 		writeMCPErr(w, err)
 		return
 	}
-	if oldErr == nil && old.Auth == mcpreg.AuthOAuth && (out.Auth != mcpreg.AuthOAuth || out.URL != old.URL) {
+	// Whatever the authentication is now: a grant belongs to the URL it was made for.
+	if oldErr == nil && (out.URL != old.URL || (old.Auth == mcpreg.AuthOAuth && out.Auth != mcpreg.AuthOAuth)) {
 		_, _ = mcpreg.DisconnectOAuth(r.Context(), out.ID)
 	}
 	MaterializeAll()

@@ -140,9 +140,12 @@ export function OAuthPanel({ flow }: { flow: OAuthFlow }) {
       <div className="mcp-oauth-head">
         <span className="mcp-oauth-state">{tr(STATE_LABEL[state])}</span>
         <span className="mcp-actions">
-          <button className="primary mcp-btn" disabled={busy || !status} onClick={() => void flow.signIn()}>
-            {again ? tr("mcp.oauth_btn_signin_again") : tr("mcp.oauth_btn_signin")}
-          </button>
+          {/* Connected needs no Sign in beside "Connected": Disconnect, then Sign in, switches account. */}
+          {state !== "connected" && (
+            <button className="primary mcp-btn" disabled={busy || !status} onClick={() => void flow.signIn()}>
+              {again ? tr("mcp.oauth_btn_signin_again") : tr("mcp.oauth_btn_signin")}
+            </button>
+          )}
           {signedIn && (
             <button className="ghost danger mcp-btn" disabled={busy} onClick={() => void flow.disconnect()}>
               {tr("mcp.oauth_btn_disconnect")}
@@ -169,10 +172,13 @@ export function OAuthPanel({ flow }: { flow: OAuthFlow }) {
           {tr("mcp.oauth_reg_used", { path: tr(REG_LABEL[status.registration]) })}
         </div>
       )}
+      <p className="muted" data-testid="mcp-oauth-relay-note">
+        {tr("mcp.oauth_relay_note")}
+      </p>
       {flow.cimdUnfinished && !clientFor && (
         <div className="ps-note">
           <div>{tr("mcp.oauth_dcr_note")}</div>
-          <button className="ghost mcp-btn" disabled={busy} onClick={() => void flow.signIn({ registration: "dcr" })}>
+          <button className="ghost mcp-btn" disabled={busy || !status} onClick={() => void flow.signIn({ registration: "dcr" })}>
             {tr("mcp.oauth_btn_dcr")}
           </button>
         </div>

@@ -355,7 +355,7 @@ search.
   pairs. A saved token is never shown again: the field reads "Saved", leaving it blank keeps the token, and typing
   a new one replaces it. A server whose stored `Authorization` is anything other than a Bearer token (`Token ...`,
   say) opens as Custom headers. **OAuth** is for servers that only accept an OAuth sign-in: nothing is typed in the
-  form (no static `Authorization` header is allowed with it). Save the server, then press **Sign in** on its row.
+  form (no static header is allowed with it). Save the server, then press **Sign in** on its row.
   Your browser goes to the server's authorization server and comes back to the Console, and the row shows
   **Connected** with when the access token expires (it renews itself), the scopes granted and how the client was
   identified (a client ID document Agent Fleet publishes, dynamic registration, or a client ID you entered).
@@ -365,7 +365,8 @@ search.
   sign-in through the client ID document did not finish, the row offers **Retry with dynamic registration**.
   **Disconnect** deletes the saved sign-in and revokes it at the authorization server when that supports it.
   The sign-in lives in your workspace's encrypted store only. Using it from sessions and assistants is not built
-  yet: for now the row records that you are signed in, and sessions are not handed the server's token. OAuth is not
+  yet (#2479, phase 3): until the relay ships, an OAuth server is **not handed to any session or assistant**, so no
+  agent CLI meets its sign-in prompt, and the row says so. OAuth is not
   offered for tenant-distributed servers.
 - **Advanced** (closed by default): **targets** (**assistants**, **sessions**, or both; clear both and the entry
   stays but goes nowhere), **target agents** (empty covers every agent), the **timeout** and **enabled**. The

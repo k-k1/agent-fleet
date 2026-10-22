@@ -222,3 +222,8 @@ naming the server and the AS issuer. No token, code or verifier is logged or aud
   pre-registered ones per server and issuer. A refresh response that cannot be written to the store is held
   in memory and written before anything else on the next call; a process crash inside that window still
   loses the response, which only the AS can make good. Not measured against a real authorization server.
+
+- 2026-10-22, until the relay (P3) exists, a definition with `auth: oauth` is handed to no CLI config, no
+  assistant and no muse wire list (`ForSession` / `ForAssistant` skip it). Decision 7 already says an OAuth
+  definition is written only while a session can use it; this states what that means in the meantime, because a
+  plain URL with no credential would send each CLI into its own OAuth flow, which decision 1 rules out.

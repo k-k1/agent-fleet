@@ -468,8 +468,8 @@ func StartOAuth(ctx context.Context, serverID string, req StartRequest) (StartRe
 		}
 		return StartResult{}, oerr(http.StatusInternalServerError, OAuthErrInternal, "the secret store could not be read")
 	}
-	if d.Transport != TransportHTTP || d.URL == "" || d.Origin == OriginBuiltin {
-		return StartResult{}, oerr(http.StatusBadRequest, OAuthErrNotOAuthServer, "only a registered remote server can be signed in to")
+	if d.Transport != TransportHTTP || d.URL == "" || d.Origin == OriginBuiltin || d.Auth != AuthOAuth {
+		return StartResult{}, oerr(http.StatusBadRequest, OAuthErrNotOAuthServer, "only a remote server whose authentication is OAuth can be signed in to")
 	}
 	rep, ok := discoverForSignIn(ctx, d)
 	if !ok {

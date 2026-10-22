@@ -145,10 +145,8 @@ func Validate(d ServerDef) error {
 		if d.Origin == OriginTenant {
 			return invalid(CodeOAuthTenant, "a tenant-distributed definition cannot use OAuth yet")
 		}
-		for k := range d.Headers {
-			if strings.EqualFold(strings.TrimSpace(k), "authorization") {
-				return invalid(CodeOAuthHeader, "an OAuth server takes no static Authorization header")
-			}
+		if len(d.Headers) > 0 {
+			return invalid(CodeOAuthHeader, "an OAuth server takes no static headers")
 		}
 	default:
 		return invalid(CodeAuthUnknown, "unknown authentication: %q", d.Auth)
