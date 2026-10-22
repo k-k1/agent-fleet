@@ -41,7 +41,7 @@ import (
 // The shape an OAuth server takes once the relay carries it (ADR 0119 decision 7).
 const (
 	relayDriftURL = "http://127.0.0.1:43117/mcp/mcp-0123456789abcdef"
-	relayDriftKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	relayDriftKey = "af-test-fixture-relay-key-0123456789abcdef"
 )
 
 func relayDriftDefNamed(name string, timeoutMS int) ServerDef {

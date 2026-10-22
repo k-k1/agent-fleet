@@ -169,7 +169,7 @@ func relayPath() string { return relayPathPrefix + relayTestID }
 func TestRelayRequiresTheKey(t *testing.T) {
 	up := newUpstream(t, okFor("tok-initial"))
 	e := newRelayEnv(t, up)
-	for name, hdr := range map[string]string{"missing": "", "wrong": "0123456789abcdef0123456789abcdef0123456789abcdef", "prefix of the real one": e.key[:len(e.key)-1]} {
+	for name, hdr := range map[string]string{"missing": "", "wrong": "af-test-fixture-wrong-key-0123456789abcdef", "prefix of the real one": e.key[:len(e.key)-1]} {
 		req, _ := http.NewRequest(http.MethodPost, e.base+relayPath(), strings.NewReader("{}"))
 		if hdr != "" {
 			req.Header.Set(RelayKeyHeader, hdr)

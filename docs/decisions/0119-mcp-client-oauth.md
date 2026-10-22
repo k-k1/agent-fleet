@@ -235,8 +235,8 @@ naming the server and the AS issuer. No token, code or verifier is logged or aud
   above did not pin down:
   - **Port and key.** The key is generated once per workspace and the port is remembered, both in
     `mcp-relay.json` (`0600`, beside the registry's other files). A CLI keeps the config it read at start-up, so the
-    Agent tries the remembered port first; only when that port is taken does it choose another **and a new key** (a CLI
-    still configured for the old port would hand the old key to whoever holds it), rewrite the configs and log it, and
+    Agent tries the remembered port first; only when that port is taken does it choose another **and a new key** (to invalidate, on the
+    new port, an old key that may have leaked to whoever now holds the old port), rewrite the configs and log it, and
     sessions started before then need a restart. A key-bearing config is held at `0600` even when a pass changes
     nothing, and every temp file is created fresh at `0600`. The relay is started before the boot materialization;
     while it is down, OAuth definitions are left out.
