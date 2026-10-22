@@ -83,12 +83,14 @@ holds and `now − stamp ≥ darkAfter`. The stamp is cleared by a pass that fin
 and a stamp whose `LaunchTime` is not the current one is stale and rewritten, so every start
 re-arms the clock.
 
-External timestamps shorten the wait only when they prove **both** halves independently: an
-SSM `LastPingDateTime` older than `darkAfter` *and* a task stuck `STOPPING` on this container
-instance (`StoppingAt`, #2447) older than `darkAfter`, both from the current launch epoch and
-both confirmed by this pass. One of them alone proves nothing about the other half: an SSM agent
-that has been offline for days on a box whose ECS agent was fine until a minute ago would
-otherwise read as ten dark minutes.
+**No external timestamp shortens the wait.** An SSM `LastPingDateTime` and a task's `StoppingAt` (#2447)
+are *not* evidence of how long the whole predicate has held: `StoppingAt` is when the stop was asked, not
+when the agent disconnected, and a `LastPing` can be days old on a box whose ECS agent was fine until a
+minute ago. The only start of the clock is the first sweep that observed every condition at once, so the
+first episode on a box is acted on `darkAfter` after that observation (at most `sweepEvery` later than the
+box went dark). Both timestamps are shown on the pool view as explanation and used for nothing else. The
+cost is up to one sweep interval of extra latency, and it buys that a short ECS disconnect on a box whose
+SSM was already offline cannot read as ten minutes.
 
 **Thresholds.** `darkAfter` defaults to **10 minutes** as an env value (`AF_ECS_EC2_DARK_AFTER_SEC`,
 0 = off). It must be at least `darkBootGrace` and at least `slotLostAfter + sweepEvery`; a
@@ -141,14 +143,18 @@ evidence of something the logs already tell. So:
   for `rescueBlockedAfter` (default 30 min). Quarantine tags the box `af-role=quarantined` with a
   reason, keeps it, and never collects it (decision 30). For a blocked rescue it also permits the one
   exception `abandonLostSlot` already makes, a **forced detach** of the home from a box that will not
-  stop. That is a yanked disk under a workspace nobody can reach, and the trade-off is explicit: the
-  loss is bounded by that workspace's unflushed writes (ext4 and XFS replay their journal on the next
-  mount), against a member blocked indefinitely. It is enabled only by `quarantine` mode, after the
-  measurement in Open question 5.
+  stop. This is a last resort chosen as policy, not a safe operation: AWS documents that detaching a
+  volume that is still in use can corrupt the filesystem and require a repair. The damage is neither
+  bounded nor measured here, and recovery means a filesystem check and, if that fails, the home's most
+  recent backup or hibernation snapshot (decision 17 keeps copies). The alternative is a member blocked
+  indefinitely, and the choice between them is the operator's, made once per deployment by enabling
+  `quarantine` mode, and only after the measurement and the recovery procedure of Open question 5 exist.
 
 A task still `STOPPING` is **not assumed to be cleared** by the rescue. Whether it is, is Open question
-4; if it persists, the member's next Start shows #2447's blocked-phase line and the existing remedy
-applies (start the old instance once so its agent reports; the guide says how).
+4; if it persists, the member's next Start shows #2447's blocked-phase line. #2447's remedy (start the
+old instance once so its agent reports) was measured on a box that had **not** been deregistered, and it
+is not assumed to work on a deregistered container instance; that is an acceptance condition of Open
+question 4.
 
 *Alternatives rejected.* **Always quarantine** (the first design of #2474): the argument above and
 decision 3. **Always force-stop and wake the same box** (what #2474 does for an operator): safe for a
@@ -168,15 +174,15 @@ in `runtime_ecs_ec2*.go`, the actor behind it, and what it shares with L1.
 
 | Actor | Verb on the slot | What serialises it with L1 | Rule for a dark slot |
 |---|---|---|---|
-| the occupant's own Start, same-type affinity (`placeHome`) | claims it, wakes it | the home's Start count and claim lock | L1's ownership overtakes it; the Start's own `slotLostAfter` verdict stays for a slot it holds a claim on |
+| the occupant's own Start, same-type affinity (`placeHome`) | claims it, wakes it | the home's Start count and claim lock | the one actor a marker does not refuse: it overtakes L1 by moving the count, and L1 stops at its next check; its own `slotLostAfter` verdict stays for a slot it holds a claim on |
 | the occupant's own Start, size/class mismatch (`placeHome` → `releaseAndReplace`) | `releaseSlotSince` in the background | `startSuperseded` at each boundary; the mount lock | same |
 | the occupant's own Start, reserved/outdated (`replaceReservedSlot`) | `moveHomeOff` (`releaseSlot`) then `terminateSlot` on the **old** box | the same count and mount lock | same; `terminateSlot` refuses a quarantined box (rule 4) |
-| another member's eviction (`evictLongestIdle`) | `victim.releaseSlot` on the longest-idle occupant | the victim's own runtime: its mount lock and Start count | **skip** a slot stamped `af-dark-since` or carrying a rescue marker |
-| another member's `makeRoom` | `victim.releaseSlot`, then the **caller's** `terminateSlot` of the box | the victim's mount lock and count; the terminate itself is not fenced | **skip** (a dark dormant occupant has no running task, so `tasks[id] > 0` does not exclude it) |
+| another member's eviction (`evictLongestIdle`) | `victim.releaseSlot` on the longest-idle occupant | the victim's own runtime: its mount lock and Start count | **refused** at `releaseSlotSince` while a rescue marker exists (rule 2); skipped at selection as an optimisation |
+| another member's `makeRoom` | `victim.releaseSlot`, then the **caller's** `terminateSlot` of the box | the victim's mount lock and count; the terminate itself is not fenced | **refused** the same way, and its `terminateSlot` re-reads the box's marker and stamp (rule 2); a dark dormant occupant has no running task, so `tasks[id] > 0` does not exclude it |
 | the golden baker (`ReleaseForBake`, and the seed's and probe's Start/Stop) | `releaseSlot` on the seed's or probe's home | the same home locks and count; the baker's own bake lease does **not** serialise it with L1 | no special case: the seed and the probe are ordinary workspaces; a rescued one fails the bake, which the baker's own deadline already handles |
-| hibernation (`hibernate`, from the reaper) | `releaseSlot` as its first step | the same | **skip** and retry; after L1 the home is detached and hibernation proceeds |
+| hibernation (`hibernate`, from the reaper) | `releaseSlot` as its first step | the same | **refused** the same way and retried; after L1 the home is detached and hibernation proceeds |
 | `Destroy`, `EraseHome` (a member or admin action) | `Stop` then `releaseSlot` | the same; the `Stop` moves the count | their `Stop` overtakes L1; their umount then waits on a box that cannot answer, as today. L1 cancels the CP's pending commands first so the lock is not held for the umount's life |
-| `sweepVolume` drift and terminate stages | `releaseSlot`, then `terminateSlot` | the same | **skip** a dark-stamped slot (the dark scan runs first in the pass) |
+| `sweepVolume` drift and terminate stages | `releaseSlot`, then `terminateSlot` | the same | **refused** the same way (the dark scan runs first in the pass) |
 | `sweepFreeSlots` | stop / terminate a slot with no home | none needed | a free dark slot is not an L1 target; the pool view marks it |
 | #2474, the operator's force-stop | the occupant's `Stop`, cancel, `StopInstances` | the same count protocol (decision 4) | allowed; it is the operator's call |
 
@@ -190,8 +196,8 @@ behind, harmlessly, for at most one TTL.
 
 **The invariant, in one sentence:** *every actor on a slot that holds a home reaches it through that
 home's mount lock and Start count and re-reads the count before each destructive call; every automatic
-releaser skips a slot that is dark-stamped or under a rescue marker; and a slot with no home is never an
-L1 or L2 target.*
+releaser other than the occupant's own Start is refused, at its destructive entry and under that same lock, while
+a rescue marker exists for the home; and a slot with no home is never an L1 or L2 target.*
 
 That is why this design acts only on slots with a home and no live claim (decision 1), and why it
 does not need a fence on the free-slot and new-slot paths. #2474's first version quarantined by a tag
@@ -218,8 +224,18 @@ Four rules follow for the code that will implement this, each cheap to test:
    released and re-placed rather than woken on a box the CP is no longer allowed to command
    (`SendCommand` is granted to `af-role=slot` only). `releaseSlot` waits for a box that is still
    `stopping` before it detaches.
-2. Every automatic releaser in the table skips a slot stamped `af-dark-since` or carrying a rescue
-   marker.
+2. The exclusion is **at the destructive entry, under the home's mount lock**, not at candidate selection.
+   A candidate picked by `evictLongestIdle` or `makeRoom` before the rescue began, and a rescue that
+   writes its marker after that, would otherwise meet in `releaseSlotSince`, which reads the count at its
+   own entry and does not move it. So `releaseSlotSince` (the one entry every `releaseSlot` caller shares)
+   refuses while a rescue marker exists for the home and the caller is not that rescue; the rescue writes
+   its marker under the same lock only after confirming the home is still attached. For `makeRoom` the
+   box's `terminateSlot` after the victim's release re-reads the box's marker and stamp (an automatic-intent
+   refusal, rule 4); that is safe because a rescue needs a home attached under the lock, and the victim's
+   home is gone by then. The one actor the marker does **not** refuse is the occupant's own Start, including
+   `releaseAndReplace` and `replaceReservedSlot`: it overtakes the rescue by moving the count (decision 4),
+   and the rescue then stops at its next check. Candidate-selection skips (`af-dark-since`) are an
+   optimisation on top, never the fence.
 3. Ownership follows decision 4, and the check and the destructive call share one lease. A lock that
    cannot be taken, a count that cannot be read, or a lease that lapsed **aborts** the step: the
    fallback of `ifOwned`, which runs the step unguarded when the lock cannot be taken, is not used.
@@ -262,15 +278,31 @@ landed first, our Stop's own bump would abort it, and reusing `g_d` after our ow
 Stop as an overtaking. So the check of `g_d` and the bump are one locked step, and the token is the `g_r` it
 produced.
 
-**The rescue marker** is an instance tag, `af-rescue = <home volume id>/<launch epoch>/<phase>/<g_r>`,
-written **before the first side effect**, with phases `begun`, `deregistered`, `stopped`. It is what
-survives a restart; the detection predicate cannot, because a box that is `stopping` or `stopped`, or
-whose SSM came back after the deregistration, is no longer "dark" by definition. A **resume scan**,
-separate from detection, lists every instance carrying a marker whatever its state (`running`,
-`stopping`, `stopped`) and continues the next phase only if all of these still hold: the same volume is
-still attached to this box; the launch epoch is unchanged for the phases before `stopped`; and the
-count is still `g_r`. If the volume is gone or is another home, the box was started again, or the count
-moved, the marker is dropped and the old rescue is **not** applied to the new situation. A rescue that has
+**The rescue marker** is an instance tag,
+`af-rescue = <home volume id>/<launch epoch>/<phase>/<g_r>/<began>/<blocked_since>`, written **before the first
+side effect**. Phases: `begun`, `deregistered`, `stopped`, `detached`. The two times persist across a restart
+(`rescueBlockedAfter` runs from `blocked_since`, written when a step first fails its bound; `af-dark-since` is
+not that time). The marker is what survives a restart; the detection predicate cannot, because a box that is
+`stopping` or `stopped`, or whose SSM came back after the deregistration, is no longer "dark" by definition.
+
+A **resume scan**, separate from detection, lists every instance carrying a marker whatever its state and
+continues from the marker's phase only if all of these hold: the same volume is attached to this box (or the
+phase is `stopped` or `detached` and it is not, see below); the box's `LaunchTime` equals the marker's epoch **in
+every phase, `stopped` included**; and the Start count is still `g_r`. The phase is a record of what this
+rescue did, not evidence of the box's present state: before any step that depends on the state of the box,
+and in particular **immediately before the detach**, EC2 is asked and must say `stopped`. A box that was
+stopped, restarted by an operator from the EC2 console (which moves `LaunchTime` and not the Start count),
+and found by the scan is therefore never detached from while running.
+
+**Ownership of the marker.** The rescue may only change or remove **its own exact marker**: a removal is a
+conditional `DeleteTags` carrying the value that rescue wrote (EC2 deletes a tag by value only if the value
+matches), and an update replaces a value it read. A scan that finds the count moved, the epoch changed or
+the home gone removes that marker the same way, so a late-resuming old rescue can never delete a newer
+rescue's marker (the R8 shape). **Completion** is ordered so that a crash between any two steps loses
+nothing: after the detach succeeds the marker is advanced to `detached`; then `af-wedge-at` is written;
+then the marker is removed. A scan that finds `detached`, or finds the volume no longer attached with the
+phase `stopped` and the count still `g_r`, finishes it (writes `af-wedge-at`, removes its own marker), so
+the success is recorded and the same box's next episode is correctly counted as a repeat. A rescue that has
 begun is not cancelled by the agents coming back, only overtaken by a person or a Start. The home lease
 (`homeLeaseTTL`, 90 s) expires on a dead CP, so the replica that resumes can take it.
 
@@ -309,11 +341,11 @@ begun is not cancelled by the agents coming back, only overtaken by a person or 
    (agent self-update, docker restart, an instance reboot, a short stall)? `darkAfter` 10 min is a
    guess until the detect-only window answers it.
 3. **SSM freshness.** How often is `LastPingDateTime` refreshed, and when does `PingStatus` turn
-   `ConnectionLost`? The early-arm rule of decision 1 is only as good as that.
+   `ConnectionLost`? It no longer gates anything (decision 1 uses no external timestamp to shorten the wait), but the pool view shows it, and a corroborating signal would be welcome.
 4. **What deregistration does to the task.** The 2026-08 incident observed the ENI going after the
    force-deregistration; whether a task stuck `STOPPING` is released, or its processes keep running as
    orphans (which is what AWS documents for deregistration), is not established here. #2447 observed
-   that starting the box cleared it. The design does not rely on either.
+   that starting the box cleared it, on a box that had not been deregistered. Acceptance: on a deregistered container instance, does starting the box make its agent reconnect and report the task, or is the task already gone? The design relies on neither.
 5. **Does a forced detach, or a Force stop, corrupt a home?** Measure an ext4 / XFS journal replay after
    each on a thrashing box. This gates `quarantine` mode.
 6. **Is a workspace-Agent probe cheap and honest on a thrashing box, and where does the CP reach the
