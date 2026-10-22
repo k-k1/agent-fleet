@@ -27,11 +27,13 @@ exception for "I just need to see one HTTP response".
 1. Have a shell or an agent start the dev server, listening on `127.0.0.1` inside the
    Workspace (or on all interfaces).
 2. On desktop or tablet, open **Preview** from the workspace action bar.
-3. Enter a port in `1..65535` (except `7700`) and a path that starts with `/`. There
-   is no host field, so external URLs are not accepted.
-4. Normally choose **open in pane**: back, forward, reload, changing port or path,
-   clicking, scrolling and typing all happen inside the pane.
-5. Choose the **lightweight preview** only for a plain HTTP check.
+3. Under **Open a specific port**, enter a port in `1..65535` (except `7700`) and a path
+   that starts with `/`. There is no host field, so external URLs are not accepted.
+4. The primary button is the workspace's default target: **Open in new tab** where a
+   preview subdomain is issued, otherwise **Open in pane**; Enter presses it. The other
+   targets sit beside it. Choose **Open in pane** for HMR or WebSockets: back, forward,
+   reload, changing port or path, clicking, scrolling and typing all happen inside the pane.
+5. Choose the **Lightweight preview** only for a plain HTTP check.
 6. If an overlay appears, follow the state table below. If the server was started
    afterwards, **Reload** first; **Reconnect** rebuilds the connection or Chromium.
 7. Check the **Console** drawer's badge for `warn` and `error` from the page.
@@ -40,7 +42,9 @@ Shortcut: when the server was started by a session, its row in the left pane lis
 (`:5173`) on a second line; clicking it opens that port in the workspace's default target — the preview
 subdomain where one is issued, otherwise the pane at that port and `/` — and Ctrl/⌘-click or middle-click
 always opens the pane in a new tab. The `⋯` beside the port offers all three targets
-([badges](../member/badges-and-menus.md#session-display)).
+([badges](../member/badges-and-menus.md#session-display)). A loopback URL
+(`http://127.0.0.1:<port>/…`, `localhost`, `0.0.0.0`) in a reply or a document opens the same way
+([04 Files](../member/04-files.md#links-in-rendered-markdown)).
 
 Reconnect, a Console reload and a Workspace stop/start all create a *new* Page at the
 current port and path. Cookies, storage and half-typed input are not restored.

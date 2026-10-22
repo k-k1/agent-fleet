@@ -30,7 +30,7 @@ to going further. When you are stuck, it is fine to open [11 Troubleshooting](11
 7. [Chat and memos](07-chat-memo.md): questions without a repository, collecting memos
 8. [Running several at once](08-organising.md): directing sessions from chat, parallel work, scheduled runs
 9. [Working with others, and keeping things tidy](09-collaboration.md): highlights, changed files, sharing, locks, cleanup
-10. [Connecting outward](10-integrations.md): Discord / Slack, driving from an external Claude, other hosts
+10. [Connecting outward](10-integrations.md): previews, Discord / Slack, and using your workspace from an external agent (MCP)
 11. [Troubleshooting](11-troubleshooting.md): fixes by symptom, and an FAQ
 12. [Settings](12-settings.md): every tab, and "where is that setting?"
 13. [Ops tooling](13-ops-tooling.md): wiring monitoring tools into a conversation (experimental)

@@ -29,7 +29,7 @@ updated: "2026-08"
 7. [チャットとメモ](07-chat-memo.ja.md) — リポジトリを使わない質問、メモの溜め方
 8. [並行して回す](08-organising.ja.md) — チャットからの指揮、並行作業、定時実行
 9. [他の人と扱う、そして片付ける](09-collaboration.ja.md) — マーカー、変更ファイル、共有、ロック、掃除
-10. [外へつなぐ](10-integrations.ja.md) — Discord / Slack、外部 Claude からの操作、別ホスト
+10. [外へつなぐ](10-integrations.ja.md) — プレビュー、Discord / Slack、外部のエージェントからワークスペースを使う（MCP）
 11. [困ったとき](11-troubleshooting.ja.md) — 症状別の対処と FAQ
 12. [設定](12-settings.ja.md) — 全タブと「あの設定はどこ？」
 13. [運用ツール](13-ops-tooling.ja.md) — 監視ツールを会話につなぐ（実験的）
