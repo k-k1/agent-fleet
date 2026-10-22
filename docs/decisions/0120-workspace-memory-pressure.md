@@ -7,6 +7,7 @@ English | [日本語](0120-workspace-memory-pressure.ja.md)
   measurement**: no pressure history exists from the incidents (the signals were never recorded), and
   decision 8 is the plan to get it.
 - Refs: #2453
+- Follow-ups: #2516, #2517, #2518, #2519
 - Related: [0045](0045-ec2-persistent-workspace.md) decision 8 (one slot per member, which is why the
   box's memory is the member's own) / [0044](0044-workspace-sizing.md) (sizing) /
   [64-ec2-persistent-workspace.md](../log/64-ec2-persistent-workspace.md) §64.40 (the first thrash
@@ -376,10 +377,10 @@ These are not decisions and have no owner yet.
 1. **Do the thresholds hold?** `some` 10/25 and `full` 5/15 are borrowed from how such ladders are
    usually set, not measured here. The numbers must come from phase 0 on a real slot, at least 8 and
    16 GiB, with the incident's load reproduced.
-2. **Is `memory.pressure` readable on Fargate, and on a real `ecs-ec2` slot, inside the container?**
+2. **Is `memory.pressure` readable on Fargate, and on a real `ecs-ec2` slot, inside the container?** (#2517)
    The `docker` case was read on a development Workspace; the other two are expectations from the
    platforms' documentation.
-3. **How is the Agent protected from reclaim?** `MemoryMin` (#2452) protects the daemons and not
+3. **How is the Agent protected from reclaim?** (#2518) `MemoryMin` (#2452) protects the daemons and not
    the Agent, which lives in the cgroup that thrashes. Options: a sub-cgroup with `memory.low` for the
    Agent set by the slot's boot script (`ecs-ec2` only); running the Agent outside the capped container
    cgroup; a CP-side dead-man's check that stops a workspace whose Agent has been silent beyond N
