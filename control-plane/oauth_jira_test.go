@@ -4,13 +4,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Four parts of the authorize URL are pinned. Any one of them missing shows up as
@@ -108,6 +112,7 @@ func TestJiraExchangeCodeReportsRefusal(t *testing.T) {
 // Refresh is JSON too. A 4xx returns immediately as invalid_grant, meaning the user has to
 // reconnect; only 5xx and 429 are retried, so a revoked authorization is not hammered.
 func TestJiraRefreshGrant(t *testing.T) {
+	fastJiraRetry(t)
 	var hits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++
@@ -122,7 +127,7 @@ func TestJiraRefreshGrant(t *testing.T) {
 	jiraTokenURL = srv.URL
 	defer func() { jiraTokenURL = old }()
 
-	tok, aerr := jiraRefreshGrant("cid", "s", "rt1")
+	tok, aerr := jiraRefreshGrant(context.Background(), "cid", "s", "rt1")
 	if aerr != nil {
 		t.Fatalf("refresh: %v", aerr)
 	}
@@ -143,7 +148,7 @@ func TestJiraRefreshGrant(t *testing.T) {
 	}))
 	defer srv2.Close()
 	jiraTokenURL = srv2.URL
-	_, aerr = jiraRefreshGrant("cid", "s", "revoked")
+	_, aerr = jiraRefreshGrant(context.Background(), "cid", "s", "revoked")
 	if aerr == nil || aerr.code != "invalid_grant" {
 		t.Fatalf("aerr = %+v, want invalid_grant", aerr)
 	}
@@ -188,5 +193,201 @@ func TestOAuthCallbackTextNamesTheProvider(t *testing.T) {
 	en := oauthCallbackText("en", "Bitbucket")
 	if !strings.Contains(en.success, "Bitbucket") {
 		t.Errorf("en text does not name the provider: %+v", en)
+	}
+}
+
+// fastJiraRetry swaps both policies' sleep for a recorder so no test waits real seconds,
+// and returns the delays asked for.
+func fastJiraRetry(t *testing.T) *[]time.Duration {
+	t.Helper()
+	var slept []time.Duration
+	sl := func(ctx context.Context, d time.Duration) error { slept = append(slept, d); return nil }
+	idj := func(d time.Duration) time.Duration { return d }
+	oldR, oldE := jiraRefreshRetry, jiraExchangeRetry
+	jiraRefreshRetry.sleep, jiraRefreshRetry.jitter = sl, idj
+	jiraExchangeRetry.sleep, jiraExchangeRetry.jitter = sl, idj
+	t.Cleanup(func() { jiraRefreshRetry, jiraExchangeRetry = oldR, oldE })
+	return &slept
+}
+
+// resetThenServe resets the TCP connection for the first n requests (hijack + close, so
+// the client sees "connection reset"/EOF exactly as on the affected deployments), then
+// answers with ok. hits counts every request.
+func resetThenServe(t *testing.T, n int, ok func(w http.ResponseWriter)) (*int, func()) {
+	t.Helper()
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if hits <= n {
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Errorf("hijack: %v", err)
+				return
+			}
+			if tc, isTCP := conn.(*net.TCPConn); isTCP {
+				_ = tc.SetLinger(0) // RST rather than FIN
+			}
+			conn.Close()
+			return
+		}
+		ok(w)
+	}))
+	old := jiraTokenURL
+	jiraTokenURL = srv.URL
+	return &hits, func() { jiraTokenURL = old; srv.Close() }
+}
+
+func TestJiraExchangeCodeSucceedsAfterResets(t *testing.T) {
+	slept := fastJiraRetry(t)
+	hits, done := resetThenServe(t, 2, func(w http.ResponseWriter) {
+		_, _ = w.Write([]byte(`{"access_token":"at","refresh_token":"rt","expires_in":3600}`))
+	})
+	defer done()
+	tok, err := jiraExchangeCode("cid", "s", "c", "https://af.example/cb")
+	if err != nil {
+		t.Fatalf("exchange after 2 resets: %v", err)
+	}
+	if tok.AccessToken != "at" || *hits != 3 {
+		t.Errorf("tok=%+v hits=%d, want success on the third attempt", tok, *hits)
+	}
+	if len(*slept) != 2 || (*slept)[1] <= (*slept)[0] {
+		t.Errorf("backoff = %v, want two growing delays", *slept)
+	}
+}
+
+func TestJiraExchangeCodeGivesUpOnPersistentResets(t *testing.T) {
+	fastJiraRetry(t)
+	hits, done := resetThenServe(t, 1000, nil)
+	defer done()
+	if _, err := jiraExchangeCode("cid", "s", "c", "https://af.example/cb"); err == nil {
+		t.Fatal("persistent resets reported as success")
+	}
+	if *hits != jiraExchangeRetry.attempts {
+		t.Errorf("hits = %d, want %d", *hits, jiraExchangeRetry.attempts)
+	}
+}
+
+func TestJiraExchangeCodeDoesNotRetryPermanent4xx(t *testing.T) {
+	slept := fastJiraRetry(t)
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+	}))
+	defer srv.Close()
+	old := jiraTokenURL
+	jiraTokenURL = srv.URL
+	defer func() { jiraTokenURL = old }()
+	_, err := jiraExchangeCode("cid", "s", "used", "https://af.example/cb")
+	if err == nil || !jiraCodeConsumed(err) {
+		t.Fatalf("err = %v, want a consumed-code error", err)
+	}
+	if hits != 1 || len(*slept) != 0 {
+		t.Errorf("hits=%d sleeps=%v — a permanent 4xx must return at once", hits, *slept)
+	}
+}
+
+func TestJiraExchangeCodeRetries429And5xx(t *testing.T) {
+	fastJiraRetry(t)
+	for _, code := range []int{429, 502} {
+		hits := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits++
+			if hits == 1 {
+				w.WriteHeader(code)
+				return
+			}
+			_, _ = w.Write([]byte(`{"access_token":"at","expires_in":60}`))
+		}))
+		old := jiraTokenURL
+		jiraTokenURL = srv.URL
+		_, err := jiraExchangeCode("cid", "s", "c", "https://af.example/cb")
+		jiraTokenURL = old
+		srv.Close()
+		if err != nil || hits != 2 {
+			t.Errorf("status %d: err=%v hits=%d, want one retry then success", code, err, hits)
+		}
+	}
+}
+
+func TestJiraRefreshGrantSucceedsAfterResets(t *testing.T) {
+	slept := fastJiraRetry(t)
+	hits, done := resetThenServe(t, 3, func(w http.ResponseWriter) {
+		_, _ = w.Write([]byte(`{"access_token":"at2","refresh_token":"rt2","expires_in":3600}`))
+	})
+	defer done()
+	tok, aerr := jiraRefreshGrant(context.Background(), "cid", "s", "rt1")
+	if aerr != nil {
+		t.Fatalf("refresh after 3 resets: %v", aerr)
+	}
+	if tok.RefreshToken != "rt2" || *hits != 4 || len(*slept) != 3 {
+		t.Errorf("tok=%+v hits=%d sleeps=%v", tok, *hits, *slept)
+	}
+}
+
+// Whatever the policy, the delays plus attempts must stay inside what the Agent waits for
+// (20 s on its CP call), and the longest sleep must exceed the old 600 ms.
+func TestJiraRefreshRetryFitsTheAgentBudget(t *testing.T) {
+	p := jiraRefreshRetry
+	if p.budget >= 20*time.Second {
+		t.Errorf("budget %v is not under the Agent's 20 s bridge timeout", p.budget)
+	}
+	if p.max <= 600*time.Millisecond {
+		t.Errorf("max backoff %v is no longer than the old policy", p.max)
+	}
+}
+
+// The budget is enforced for real: a hung endpoint with a tiny budget returns promptly
+// instead of running attempts x attemptTimeout.
+func TestJiraBackoffRespectsBudget(t *testing.T) {
+	fastJiraRetry(t)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-time.After(10 * time.Second):
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+	old := jiraTokenURL
+	jiraTokenURL = srv.URL
+	defer func() { jiraTokenURL = old }()
+	b := jiraRefreshRetry
+	b.budget, b.attemptTimeout = 200*time.Millisecond, 5*time.Second
+	start := time.Now()
+	if _, _, err := b.post(context.Background(), []byte(`{}`)); err == nil {
+		t.Fatal("hung endpoint reported success")
+	}
+	if el := time.Since(start); el > 2*time.Second {
+		t.Errorf("took %v, budget was 200ms", el)
+	}
+}
+
+func TestEqualJitterBounds(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		d := equalJitter(time.Second)
+		if d < 500*time.Millisecond || d > time.Second {
+			t.Fatalf("jitter %v outside [d/2, d]", d)
+		}
+	}
+}
+
+func TestJiraCallbackPageOnExchangeFailure(t *testing.T) {
+	for _, lang := range []string{"en", "ja"} {
+		tx := oauthCallbackText(lang, "Jira")
+		if tx.codeConsumed == "" || tx.tryAgain == "" || tx.backLink == "" {
+			t.Fatalf("%s: missing strings %+v", lang, tx)
+		}
+		rec := httptest.NewRecorder()
+		bbCallbackPageLink(rec, tx.codeConsumed, tx.backLink)
+		body := rec.Body.String()
+		if !strings.Contains(body, `href="/"`) || !strings.Contains(body, tx.backLink) {
+			t.Errorf("%s: page has no link back: %s", lang, body)
+		}
+	}
+	if err := jiraCodeConsumed(errors.New("Post x: connection reset by peer")); err {
+		t.Error("a transport error is not a consumed code")
 	}
 }
