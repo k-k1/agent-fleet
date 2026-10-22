@@ -93,6 +93,10 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
             if (st?.state === "connected") toast(outcomeText(tr, "ok"));
             return; // not connected yet: keep waiting, the focus re-read tries again
           }
+          // A failure is confirmed the same way: the callback consumes the Agent's pending record
+          // when it fails, so a record still there (or an unreadable status, or a connection)
+          // means the notice is made up or belongs to an earlier attempt.
+          if (!st || st.state === "connected" || st.pendingRegistration) return;
           awaiting.current = false;
           if (startedReg.current === "cimd") setFailedCimd(true);
           toast(outcomeText(tr, d.outcome));

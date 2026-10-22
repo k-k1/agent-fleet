@@ -635,6 +635,37 @@ describe("cross-tab completion", () => {
     expect(toasts[0]).toContain("different authorization server");
   });
 
+  it("a made-up failure while the sign-in is still pending neither says so nor stops the wait", async () => {
+    await waiting("cimd");
+    setStatus({ state: "not_signed_in", pendingRegistration: "cimd" }); // the real attempt is still running
+    await act(async () => announce({ server: "mcp-1", outcome: "iss_mismatch" }));
+    await act(async () => {});
+    expect(toasts).toHaveLength(0);
+    setStatus({ state: "connected", registration: "cimd" });
+    await act(async () => void window.dispatchEvent(new Event("focus"))); // the focus re-read still runs
+    await act(async () => {});
+    expect(host!.querySelector('[data-testid="mcp-oauth-panel"]')!.getAttribute("data-state")).toBe("connected");
+  });
+
+  it("the real success notice still lands after a made-up failure", async () => {
+    await waiting("cimd");
+    setStatus({ state: "not_signed_in", pendingRegistration: "cimd" });
+    await act(async () => announce({ server: "mcp-1", outcome: "state_expired" }));
+    await act(async () => {});
+    setStatus({ state: "connected" });
+    await act(async () => announce({ server: "mcp-1", outcome: "ok" }));
+    await act(async () => {});
+    expect(toasts).toEqual(["Signed in."]);
+  });
+
+  it("a failure notice is not confirmed while the status cannot be read", async () => {
+    await waiting("cimd");
+    replies["GET api/mcp-servers/mcp-1/oauth"] = () => ({ error: { code: "internal" } });
+    await act(async () => announce({ server: "mcp-1", outcome: "iss_mismatch" }));
+    await act(async () => {});
+    expect(toasts).toHaveLength(0);
+  });
+
   it("a CIMD sign-in that failed in the other tab keeps the DCR retry, though nothing is pending any more", async () => {
     await waiting("cimd");
     setStatus({ state: "not_signed_in" }); // the callback consumed the pending record
