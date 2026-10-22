@@ -54,9 +54,8 @@ Everything about appearance.
 - **Colour theme**: besides the app itself, you can theme the **session**, **shared session** and **assistant**
   surfaces separately ("inherit" follows the app theme). Different colours per surface make a grid of panes
   readable at a glance.
-- **Terminal**: font and font size, and **Ctrl+C / Ctrl+V copy and paste** (on by default: Ctrl+C copies the
-  selection and still interrupts the program when nothing is selected; Ctrl+Shift+C / Ctrl+Shift+V always work)
-  ([05](05-terminal.md)).
+- **Terminal**: font and font size, and **Ctrl+C / Ctrl+V copy and paste** (on by default; when Ctrl+C
+  copies and when it interrupts the program is in [05](05-terminal.md#copy-paste)).
 - **File viewer**: tab width, line numbers, wrapping, minimap, Markdown rendering ([04](04-files.md)).
 - **Reader view** / **file icons** (icon set).
 - **Main area layout**: **split panes** (drag the dividers) or **tabbed grid** (each cell switches by tab).
