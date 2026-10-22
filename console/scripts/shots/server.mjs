@@ -133,7 +133,7 @@ const exact = {
   "/api/agents/memory/entries/member-read": (q) => fx.memoryRead(LOCALE, q.get("name") || ""),
   "/api/agents/memory/entries/member-forgotten": () => ({ forgotten: [], projects: [], withheld: 0 }),
   "/api/agents/memory/entries/changes": (q) => fx.memoryChanges(LOCALE, Number(q.get("limit") || 0)),
-  "/api/agents/memory/auto-sync": () => ({ want: true, settled: true, phase: "idle" }),
+  "/api/agents/memory/auto-sync": () => ({ phase: "on", want: true, settled: true, nativeMemoryOff: true }),
   "/api/update/status": () => ({ current: "0.3.0", latest: "0.3.0" }),
   "/api/usage": () => ({ agents: fx.usage(LOCALE) }),
   // Cloud cost (docs/log/67). The whole tab is hidden unless profile.available is true, so

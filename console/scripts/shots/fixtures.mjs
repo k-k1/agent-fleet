@@ -2098,8 +2098,8 @@ function memoryRows(locale) {
     authorKind: kind, authorSession: session, body: L(locale, body[0], body[1]), created: ago(h + 48),
   });
   return [
-    m("checkout-tests-need-stripe-mock", "project", "webshop", "feedback",
-      "決済のテストは Stripe のモックを起動してから流す", "Start the payment mock before running the checkout tests",
+    m("checkout-tests-need-payment-mock", "project", "webshop", "feedback",
+      "決済のテストは決済モックを起動してから流す", "Start the payment mock before running the checkout tests",
       3, "claude", "sk4rq2f", 14, true, [
         "決済まわりのテストは `make mock-pay` でモックを起動してから `npm test -- checkout` を流す。\n\nモック無しだと 30 秒のタイムアウトで全件赤になり、テストが壊れたように見える（実測: 42 件中 42 件）。\n\nCI は `services:` でモックを立てているので、ローカルだけの手順。",
         "Run `make mock-pay` before `npm test -- checkout`.\n\nWithout the mock every checkout test fails on a 30 s timeout, which looks like a broken suite (measured: 42 of 42 red).\n\nCI starts the mock as a service, so this is a local step only.",
