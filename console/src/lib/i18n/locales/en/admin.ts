@@ -1513,4 +1513,5 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mcptrust_fallback_none": "none",
   "admin.mcptrust_not_served": "This deployment does not serve MCP OAuth yet (it needs AF_MCP_ENABLED=true, AF_MCP_OAUTH=1 and an https PUBLIC_BASE_URL), so the list has no effect until it does.",
   "admin.mcptrust_saved": "Saved.",
+  "admin.mcptrust_unreadable": "The saved list is not valid, so no hosted client is trusted until you save a new list or reset it.",
 };

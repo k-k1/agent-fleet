@@ -675,7 +675,12 @@ func (a *mcpOAuthAPI) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	seen := map[string]bool{}
-	trusted, _ := a.trustedNow(ctx)
+	trusted, _, err := a.trustedNow(ctx)
+	if err != nil {
+		log.Printf("mcp oauth: trusted hosts: %v", err)
+		regError(w, http.StatusInternalServerError, "server_error", "could not register the client")
+		return
+	}
 	for _, u := range req.RedirectURIs {
 		if a.classifyRedirect(trusted, u) == redirectRefused || seen[u] {
 			regError(w, http.StatusBadRequest, "invalid_redirect_uri",

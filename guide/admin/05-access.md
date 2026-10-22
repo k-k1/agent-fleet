@@ -60,7 +60,7 @@ Enabling the switch again permits new connections; it does not restore revoked c
 - **Removing a vendor works**: delete `chatgpt.com` from the list and save, and that vendor can no longer sign in. Saving an empty list trusts no hosted client at all.
 - Entries are exact host names: no `https://`, port, path or wildcard, and no IP address. A mistake is refused with a message and nothing is saved.
 - **Which list applies**: the list saved here wins; with nothing saved, the `AF_MCP_OAUTH_TRUSTED_HOSTS` environment variable; with that unset, the built-in default (`claude.ai`, `claude.com`, `chatgpt.com`). The screen says which one is in effect. **Reset to default** deletes the saved list so the other two apply again.
-- A change applies from the next request, with no restart, to new sign-ins, client registration, and token requests. An existing connection from a client identified by a metadata URL (CIMD) on a removed host stops refreshing. Every change is audited (`mcp_oauth.trusted_hosts.set` / `.reset`, with the old and new lists).
+- A change applies from the next request, with no restart, to new sign-ins, client registration, and token requests. A connection whose redirect host (or, for a metadata-URL client, whose own host) was removed can no longer refresh its token or redeem a pending code; an access token already issued works until it expires (at most one hour). Loopback connections are not affected. Every change is audited (`mcp_oauth.trusted_hosts.set` / `.reset`, with the old and new lists).
 
 ## Integration OAuth apps
 

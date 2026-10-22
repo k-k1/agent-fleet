@@ -74,7 +74,12 @@ func (a *mcpOAuthAPI) token(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	trusted, _ := a.trustedNow(ctx)
+	trusted, _, terr := a.trustedNow(ctx)
+	if terr != nil {
+		log.Printf("mcp oauth: trusted hosts: %v", terr)
+		mcpTokenErr(w, http.StatusInternalServerError, "server_error", "could not read the trusted client hosts")
+		return
+	}
 	switch registered, err := a.clientStillRegistered(ctx, trusted, clientID); {
 	case err != nil:
 		log.Printf("mcp oauth: client lookup: %v", err)
@@ -86,9 +91,9 @@ func (a *mcpOAuthAPI) token(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.PostForm.Get("grant_type") {
 	case "authorization_code":
-		a.exchangeCode(w, r, clientID)
+		a.exchangeCode(w, r, clientID, trusted)
 	case "refresh_token":
-		a.refresh(w, r, clientID)
+		a.refresh(w, r, clientID, trusted)
 	default:
 		mcpTokenErr(w, http.StatusBadRequest, "unsupported_grant_type", "only authorization_code and refresh_token are supported")
 	}
@@ -111,7 +116,7 @@ func (a *mcpOAuthAPI) auditGrant(ctx context.Context, grantID, identityID, detai
 	return a.audit(ctx, tenant, identityID, "mcp.oauth.grant", grantID, detail)
 }
 
-func (a *mcpOAuthAPI) exchangeCode(w http.ResponseWriter, r *http.Request, clientID string) {
+func (a *mcpOAuthAPI) exchangeCode(w http.ResponseWriter, r *http.Request, clientID string, trusted trustedHosts) {
 	ctx := r.Context()
 	if r.PostForm.Get("resource") != a.resource {
 		mcpTokenErr(w, http.StatusBadRequest, "invalid_target", "resource must be "+a.resource)
@@ -148,6 +153,10 @@ func (a *mcpOAuthAPI) exchangeCode(w http.ResponseWriter, r *http.Request, clien
 		return
 	case !pkceMatches(r.PostForm.Get("code_verifier"), c.Challenge):
 		mcpTokenErr(w, http.StatusBadRequest, "invalid_grant", "code_verifier does not match the code_challenge")
+		return
+	case a.classifyRedirect(trusted, c.RedirectURI) == redirectRefused:
+		// The host was removed from the trusted list after the code was issued.
+		mcpTokenErr(w, http.StatusBadRequest, "invalid_grant", "the redirect host is no longer trusted")
 		return
 	}
 	// The permission is re-decided now, not trusted from the minute before: the member must
@@ -283,7 +292,7 @@ func (a *mcpOAuthAPI) issueTokens(w http.ResponseWriter, r *http.Request, g stor
 	})
 }
 
-func (a *mcpOAuthAPI) refresh(w http.ResponseWriter, r *http.Request, clientID string) {
+func (a *mcpOAuthAPI) refresh(w http.ResponseWriter, r *http.Request, clientID string, trusted trustedHosts) {
 	ctx := r.Context()
 	if res := r.PostForm.Get("resource"); res != "" && res != a.resource {
 		mcpTokenErr(w, http.StatusBadRequest, "invalid_target", "resource must be "+a.resource)
@@ -320,6 +329,12 @@ func (a *mcpOAuthAPI) refresh(w http.ResponseWriter, r *http.Request, clientID s
 	}
 	if !enabled || g.RevokedAt != 0 || g.AbsExpiresAt <= now.Unix() || g.IdleExpiresAt <= now.Unix() {
 		mcpTokenErr(w, http.StatusBadRequest, "invalid_grant", "the connection has ended")
+		return
+	}
+	// A DCR grant outlives the trusted list it was made under; removing its redirect host must
+	// cut it off here, as it does a CIMD client. Loopback grants are not on the list.
+	if !a.grantHostAllowed(trusted, g.RedirectHost) {
+		mcpTokenErr(w, http.StatusBadRequest, "invalid_grant", "the redirect host is no longer trusted")
 		return
 	}
 	scope := g.Scope
@@ -391,4 +406,15 @@ func (a *mcpOAuthAPI) revoke(w http.ResponseWriter, r *http.Request) {
 	}
 	noStore(w)
 	w.WriteHeader(http.StatusOK)
+}
+
+// grantHostAllowed re-applies the redirect rule to the host a grant recorded (host[:port], as
+// exchangeCode stored it).
+func (a *mcpOAuthAPI) grantHostAllowed(trusted trustedHosts, host string) bool {
+	scheme := "https"
+	if h := strings.Trim(strings.Split(host, "]")[0], "["); h == "localhost" || h == "127.0.0.1" || h == "::1" ||
+		strings.HasPrefix(host, "127.0.0.1:") || strings.HasPrefix(host, "localhost:") {
+		scheme = "http"
+	}
+	return a.classifyRedirect(trusted, scheme+"://"+host+"/") != redirectRefused
 }

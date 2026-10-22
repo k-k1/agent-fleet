@@ -16,6 +16,7 @@ interface TrustedView {
   fallback: string[];
   fallback_source: "env" | "default";
   served: boolean;
+  unreadable?: boolean;
 }
 
 const PATH = "api/admin/mcp-oauth/trusted-hosts";
@@ -89,6 +90,7 @@ export function McpTrustedHostsView() {
           </button>
         </div>
         <p className="muted">{tr("admin.mcptrust_note")}</p>
+        {data?.unreadable && <p className="form-err">{tr("admin.mcptrust_unreadable")}</p>}
         {data && !data.served && <p className="form-err">{tr("admin.mcptrust_not_served")}</p>}
         <label className="brand-field">
           {tr("admin.mcptrust_hosts")}

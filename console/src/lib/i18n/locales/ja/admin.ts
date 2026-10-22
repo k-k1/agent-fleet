@@ -1504,4 +1504,5 @@ export const admin = {
   "admin.mcptrust_fallback_none": "なし",
   "admin.mcptrust_not_served": "この環境はまだ MCP OAuth を提供していません（AF_MCP_ENABLED=true、AF_MCP_OAUTH=1、https の PUBLIC_BASE_URL が必要です）。提供されるまで、この一覧は効果がありません。",
   "admin.mcptrust_saved": "保存しました。",
+  "admin.mcptrust_unreadable": "保存されている一覧が不正なため、新しい一覧を保存するか既定に戻すまで、ホスト経由のクライアントは一切信頼されません。",
 };

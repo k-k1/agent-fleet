@@ -10,6 +10,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -97,7 +99,12 @@ func envTrustedHosts() (trustedHosts, string) {
 	return parseTrustedClientHosts(defaultMCPOAuthTrustedHosts), trustSourceDefault
 }
 
-// savedTrustedHosts reads the super admin's value. ok is false when nothing is saved.
+// errTrustedCorrupt marks a saved value that is there but is not a valid list. It is told apart
+// from a store failure because an admin must still be able to overwrite or reset it.
+var errTrustedCorrupt = errors.New("saved trusted-host list is not valid")
+
+// savedTrustedHosts reads the super admin's value. ok is false when nothing is saved. A store
+// failure is returned as is; an unparsable value wraps errTrustedCorrupt.
 func (a *mcpOAuthAPI) savedTrustedHosts(ctx context.Context) (hosts []string, ok bool, err error) {
 	raw, err := a.mgr.store.GetSetting(ctx, mcpOAuthTrustedSetting)
 	if err != nil || raw == "" {
@@ -105,30 +112,36 @@ func (a *mcpOAuthAPI) savedTrustedHosts(ctx context.Context) (hosts []string, ok
 	}
 	var list []string
 	if err := json.Unmarshal([]byte(raw), &list); err != nil {
-		return nil, true, err
+		return nil, true, fmt.Errorf("%w: %v", errTrustedCorrupt, err)
 	}
 	hosts, err = validateTrustedClientHosts(list)
+	if err != nil {
+		err = fmt.Errorf("%w: %v", errTrustedCorrupt, err)
+	}
 	return hosts, true, err
 }
 
-// trustedNow is the list in force for one request. When the saved value cannot be read or is
-// not a valid list it answers the empty set, never the env or default list: a failure must not
-// widen what is trusted. Callers take one snapshot per request so a save mid-request cannot make
-// two checks of the same request disagree.
-func (a *mcpOAuthAPI) trustedNow(ctx context.Context) (trustedHosts, string) {
+// trustedNow is the list in force for one request. A saved value that is not a valid list
+// answers the empty set, never the env or default list: a failure must not widen what is
+// trusted. A store failure is returned so the caller can answer 5xx instead of a misleading
+// refusal. Callers take one snapshot per request so a save mid-request cannot make two checks of
+// the same request disagree.
+func (a *mcpOAuthAPI) trustedNow(ctx context.Context) (trustedHosts, string, error) {
 	saved, ok, err := a.savedTrustedHosts(ctx)
 	switch {
+	case errors.Is(err, errTrustedCorrupt):
+		log.Printf("mcp oauth: trusted hosts unusable, trusting none: %v", err)
+		return trustedHosts{}, trustSourceAdmin, nil
 	case err != nil:
-		log.Printf("mcp oauth: trusted hosts unreadable, trusting none: %v", err)
-		return trustedHosts{}, trustSourceAdmin
+		return nil, "", err
 	case ok:
 		t := trustedHosts{}
 		for _, h := range saved {
 			t[h] = true
 		}
-		return t, trustSourceAdmin
+		return t, trustSourceAdmin, nil
 	}
-	return a.fallback, a.fallbackSource
+	return a.fallback, a.fallbackSource, nil
 }
 
 // --- admin API (super_admin) --------------------------------------------------------
@@ -144,12 +157,21 @@ type mcpOAuthTrustedView struct {
 	// Served is false when this deployment does not run the OAuth server, so the list has no
 	// effect yet.
 	Served bool `json:"served"`
+	// Unreadable is true when the saved value is not a valid list: nothing is trusted until it
+	// is overwritten or reset.
+	Unreadable bool `json:"unreadable,omitempty"`
 }
 
-func (a *mcpOAuthAPI) trustedView(ctx context.Context) mcpOAuthTrustedView {
-	t, src := a.trustedNow(ctx)
+// trustedView reports the list in force. A store failure is an error: a view built from it
+// would show an empty saved list that was never read.
+func (a *mcpOAuthAPI) trustedView(ctx context.Context) (mcpOAuthTrustedView, error) {
+	_, _, serr := a.savedTrustedHosts(ctx)
+	t, src, err := a.trustedNow(ctx)
+	if err != nil {
+		return mcpOAuthTrustedView{}, err
+	}
 	return mcpOAuthTrustedView{Hosts: t.sorted(), Source: src, Fallback: a.fallback.sorted(),
-		FallbackSource: a.fallbackSource, Served: a.issuer != ""}
+		FallbackSource: a.fallbackSource, Served: a.issuer != "", Unreadable: errors.Is(serr, errTrustedCorrupt)}, nil
 }
 
 // trustedAdmin serves GET, PUT and DELETE /api/admin/mcp-oauth/trusted-hosts. PUT body:
@@ -157,18 +179,23 @@ func (a *mcpOAuthAPI) trustedView(ctx context.Context) mcpOAuthTrustedView {
 // value so the env var, then the built-in default, applies again.
 func (a *mcpOAuthAPI) trustedAdmin(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	ctx := r.Context()
-	if r.Method == http.MethodGet {
-		writeJSON(w, http.StatusOK, a.trustedView(ctx))
+	before, err := a.trustedView(ctx)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
 		return
 	}
-	before := a.trustedView(ctx)
+	if r.Method == http.MethodGet {
+		writeJSON(w, http.StatusOK, before)
+		return
+	}
 	action := "mcp_oauth.trusted_hosts.reset"
 	switch r.Method {
 	case http.MethodPut:
 		var b struct {
 			Hosts *[]string `json:"hosts"`
 		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil || b.Hosts == nil {
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16))
+		if err := dec.Decode(&b); err != nil || b.Hosts == nil || dec.Decode(&struct{}{}) != io.EOF {
 			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", `body must be {"hosts":[...]}`})
 			return
 		}
@@ -188,10 +215,19 @@ func (a *mcpOAuthAPI) trustedAdmin(w http.ResponseWriter, r *http.Request, ident
 			writeAPIErr(w, internalErr(err))
 			return
 		}
+		// Nothing was saved, so nothing changed: no audit row for a no-op.
+		if before.Source != trustSourceAdmin {
+			writeJSON(w, http.StatusOK, before)
+			return
+		}
 	}
-	after := a.trustedView(ctx)
+	after, err := a.trustedView(ctx)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
 	detail, _ := json.Marshal(map[string]any{
-		"old": before.Hosts, "old_source": before.Source, "new": after.Hosts, "new_source": after.Source,
+		"old": before.Hosts, "old_source": before.Source, "old_unreadable": before.Unreadable, "new": after.Hosts, "new_source": after.Source,
 	})
 	if err := a.mgr.store.InsertAudit(ctx, store.AuditLog{
 		ID: store.NewID(), ActorKind: "admin", ActorID: ident.ID,

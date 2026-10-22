@@ -304,4 +304,6 @@ and a revoke button.
   saved empty list (`none`) differs from nothing saved. Saving validates strictly (exact host,
   no scheme / port / path / wildcard / IP literal) and an unreadable saved value trusts nothing
   rather than falling back to the wider default. Each change is audited with the old and new lists.
-  No decision above changes. Guide: `guide/admin/05-access.md`.
+  A grant's recorded redirect host is re-checked against the list on refresh and on code exchange
+  (loopback exempt), so removal also ends existing DCR connections; an issued access token lives
+  out its TTL. No decision above changes. Guide: `guide/admin/05-access.md`.

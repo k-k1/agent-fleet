@@ -107,7 +107,7 @@ func TestMCPOAuthTrustedHostsEmptyIsNoneNotUnset(t *testing.T) {
 	if v.Source != "admin" || len(v.Hosts) != 0 {
 		t.Fatalf("view after saving none = %+v", v)
 	}
-	if got, _ := e.api.trustedNow(context.Background()); len(got) != 0 {
+	if got, _, _ := e.api.trustedNow(context.Background()); len(got) != 0 {
 		t.Fatalf("effective list = %v, want none", got.sorted())
 	}
 	if e.api.classifyRedirect(mustTrusted(e.api), "https://claude.ai/cb") != redirectRefused ||
@@ -121,7 +121,7 @@ func TestMCPOAuthTrustedHostsEmptyIsNoneNotUnset(t *testing.T) {
 }
 
 func mustTrusted(a *mcpOAuthAPI) trustedHosts {
-	t, _ := a.trustedNow(context.Background())
+	t, _, _ := a.trustedNow(context.Background())
 	return t
 }
 
@@ -159,7 +159,7 @@ func TestMCPOAuthTrustedHostsCorruptSavedValueFailsClosed(t *testing.T) {
 		if err := e.mgr.store.SetSetting(ctx, mcpOAuthTrustedSetting, raw); err != nil {
 			t.Fatal(err)
 		}
-		if got, _ := e.api.trustedNow(ctx); len(got) != 0 {
+		if got, _, err := e.api.trustedNow(ctx); err != nil || len(got) != 0 {
 			t.Errorf("saved %q: trusted %v, want none", raw, got.sorted())
 		}
 	}
@@ -271,7 +271,8 @@ func TestMCPOAuthTrustedHostsApplyLive(t *testing.T) {
 	_ = tok
 }
 
-// The effective list is read while saves happen; the race detector is the assertion.
+// The effective list is read while saves happen: no reader may see a half-written list (and
+// under -race, no data race).
 func TestMCPOAuthTrustedHostsConcurrentSaveAndRead(t *testing.T) {
 	e := newTrustedAdminEnv(t)
 	var wg sync.WaitGroup
@@ -297,4 +298,79 @@ func TestMCPOAuthTrustedHostsConcurrentSaveAndRead(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// A grant made through DCR is cut off at the token endpoint when its redirect host leaves the
+// list; a loopback grant is not affected.
+func TestMCPOAuthTrustedHostsRemovalEndsExistingDCRGrants(t *testing.T) {
+	e := newTrustedAdminEnv(t)
+	const cb = "https://claude.ai/api/mcp/auth_callback"
+	hosted := e.connect(e.registerClient(cb), cb, "")
+	loop := e.connect(e.registerClient(loopbackCB), loopbackCB, "")
+
+	// A code issued while claude.ai was trusted, not yet redeemed.
+	id := e.registerClient(cb)
+	verifier, challenge := pkcePair()
+	ticket := e.ticketFrom(e.authorize(e.authQuery(id, cb, challenge)))
+	code := locationQuery(t, e.consent(ticket, map[string][]string{"membership": {e.membershipID()}, "scope": {"write"}})).Get("code")
+
+	e.put(`["chatgpt.com"]`)
+	refresh := func(client, rt string) *httptest.ResponseRecorder { return e.refresh(client, rt) }
+	clientOf := func(tk tokens) string { return clientOfRefresh(t, e.mcpOAuthEnv, tk) }
+	if rec := refresh(clientOf(hosted), hosted.Refresh); rec.Code != http.StatusBadRequest || jsonField(t, rec, "error") != "invalid_grant" {
+		t.Errorf("refresh of a grant on a removed host: %d %s", rec.Code, rec.Body)
+	}
+	if rec := refresh(clientOf(loop), loop.Refresh); rec.Code != http.StatusOK {
+		t.Errorf("a loopback grant must survive the removal: %d %s", rec.Code, rec.Body)
+	}
+	rec := e.post(mcpOAuthToken, map[string][]string{"grant_type": {"authorization_code"}, "client_id": {id},
+		"code": {code}, "redirect_uri": {cb}, "code_verifier": {verifier}, "resource": {testResource}})
+	if rec.Code != http.StatusBadRequest || jsonField(t, rec, "error") != "invalid_grant" {
+		t.Errorf("code exchange for a removed host: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func clientOfRefresh(t *testing.T, e *mcpOAuthEnv, tk tokens) string {
+	t.Helper()
+	g, ok, err := e.mgr.store.GetMCPOAuthTokenByHash(context.Background(), devIdPHash(tk.Refresh), e.now().Unix())
+	if err != nil || !ok {
+		t.Fatalf("refresh token lookup: %v %v", ok, err)
+	}
+	return g.ClientID
+}
+
+func TestMCPOAuthTrustedHostsNoOpResetAndTrailingGarbage(t *testing.T) {
+	e := newTrustedAdminEnv(t)
+	if code, _, _ := e.call("DELETE", "root@acme.co.jp", ""); code != http.StatusOK {
+		t.Fatalf("reset with nothing saved = %d", code)
+	}
+	rows, _ := e.mgr.store.ListAuditByTenant(context.Background(), "", 20)
+	for _, r := range rows {
+		if strings.HasPrefix(r.Action, "mcp_oauth.trusted_hosts") {
+			t.Errorf("a reset that changed nothing was audited: %s", r.Action)
+		}
+	}
+	if code, _, _ := e.call("PUT", "root@acme.co.jp", `{"hosts":[]} junk`); code != http.StatusBadRequest {
+		t.Errorf("PUT with trailing data = %d, want 400", code)
+	}
+}
+
+// An unreadable store is a 5xx, never an empty saved list, and a write is not attempted or
+// audited blind. A corrupt value is reported as such and an admin can still overwrite it.
+func TestMCPOAuthTrustedHostsStoreFailureIsNotAnEmptyList(t *testing.T) {
+	e := newTrustedAdminEnv(t)
+	ctx := context.Background()
+	e.mgr.store.SetSetting(ctx, mcpOAuthTrustedSetting, "garbage")
+	if code, v, _ := e.call("GET", "root@acme.co.jp", ""); code != http.StatusOK || !v.Unreadable {
+		t.Errorf("GET over a corrupt value = %d %+v, want 200 unreadable", code, v)
+	}
+	if e.put(`["claude.ai"]`) != http.StatusOK {
+		t.Error("a corrupt value could not be overwritten")
+	}
+	e.mgr.store.Close()
+	for _, m := range []string{"GET", "PUT", "DELETE"} {
+		if code, _, _ := e.call(m, "root@acme.co.jp", `{"hosts":[]}`); code != http.StatusInternalServerError {
+			t.Errorf("%s with the store down = %d, want 500", m, code)
+		}
+	}
 }
