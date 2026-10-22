@@ -54,13 +54,18 @@ Everything about appearance.
 - **Colour theme**: besides the app itself, you can theme the **session**, **shared session** and **assistant**
   surfaces separately ("inherit" follows the app theme). Different colours per surface make a grid of panes
   readable at a glance.
-- **Terminal**: font and font size ([05](05-terminal.md)).
+- **Terminal**: font and font size, and **Ctrl+C / Ctrl+V copy and paste** (on by default: Ctrl+C copies the
+  selection and still interrupts the program when nothing is selected; Ctrl+Shift+C / Ctrl+Shift+V always work)
+  ([05](05-terminal.md)).
 - **File viewer**: tab width, line numbers, wrapping, minimap, Markdown rendering ([04](04-files.md)).
 - **Reader view** / **file icons** (icon set).
 - **Main area layout**: **split panes** (drag the dividers) or **tabbed grid** (each cell switches by tab).
   Stored **on this device only**, and the two layouts are remembered separately, so moving between them does not
   disturb either ([05](05-terminal.md)). If you switch often, the same choice sits in **Appearance** (the paint
   can) in the top bar.
+- **Separate appearance per tenant** (only if you belong to two or more tenants; off by default): remembers the
+  theme and surface colours for each tenant on this device and switches with the tenant. Off keeps the look you see
+  now for every tenant; saved looks are kept.
 
 ### Account
 
@@ -135,7 +140,7 @@ Reads out replies from sessions and assistants.
   | Session report | a session reported to an assistant conversation |
   | Rate limit | a session hit a rate limit, or resumed after one |
   | Scheduled runs | a scheduled run finished, failed or was skipped |
-  | Handoffs | a handoff offered to you, accepted or expired |
+  | Handoffs | a handoff offered to you, accepted or expired, or a session that started from one you gave back |
   | Cloud sign-in | AWS or Google Cloud needs you to sign in, or an SSO session is about to expire |
   | Terminal notifications | a program in a session sent OSC 9 / 99 / 777 |
   | Other notices | assistant chat paused or near its context limit, submodule sync, stop after turn, a workspace start that was stopped, and any kind added later |
@@ -280,6 +285,10 @@ limit resets, and auto-resume of an interrupted turn.
 ### Git hosting
 
 GitHub / Bitbucket (authentication for clone / push). **Connecting GitHub also connects GitHub Copilot.**
+The same connection signs in `gh`, and for Bitbucket Cloud `bkt`, in every session
+([10](10-integrations.md#clis-that-are-already-signed-in)). If GitHub cannot renew the connection, the tab says
+"GitHub could not renew this connection: the authorization has expired or was revoked. Disconnect and connect GitHub
+again."
 → [03 Repositories and git](03-code.md)
 
 ### Ops & monitoring
@@ -301,11 +310,14 @@ issues and pull requests, Bitbucket pull requests), so that a session can be sta
   (GitHub rejects some accounts' searches that name neither `is:issue` nor `is:pull-request`)
   covers what you authored, are assigned, were mentioned in or commented on. **Reviews requested of
   you are not in it**. Add `is:open review-requested:@me` as a second query (an item matched by both
-  still takes one row). `OR` and parentheses work too, but only once your workspace is running an
-  up-to-date agent; on an older one the row says "could not parse the query".
+  still takes one row). `OR` and parentheses work too. A query GitHub rejects shows its reason on the row
+  ("github rejected the query: …"); one GitHub rejects only because it names neither type is retried once as
+  `(is:issue OR is:pull-request) (<your query>)`.
 - **Jira** is connected here, either with **OAuth** or with **your email address and an API token**
-  (the address is half of that credential). **GitHub and Bitbucket ride on the Git hosting
-  connection**, so they need nothing of their own.
+  (the address is half of that credential). The connection also signs in the `jira` CLI in sessions
+  ([03](03-code.md#use-jira-in-a-session)). An OAuth connection without the Jira Software scopes says on its card
+  "Boards, sprints and epics: not available.", with what your tenant administrator has to add. **GitHub and
+  Bitbucket ride on the Git hosting connection**, so they need nothing of their own.
 - **Bitbucket** has no search across an account, so its query is **assembled from your connected
   repositories** (what to list × which target) instead of being typed by hand. Bitbucket items are
   **read only**: nothing is written back to them.
@@ -362,7 +374,10 @@ The same token can use your Agent Fleet memory too; the tab lists what it can do
 
 Your AWS profiles (shared settings), which `af-aws-exec` and SSM sessions sign in with, and SSM hosts (individual)
 for logging in to another in-house host. Each profile row has **Log in** to sign in to IAM Identity Center from the
-Console, and a signed-in row has **Log out** to end that profile's login only.
+Console, and a signed-in row has **Log out** to end that profile's login only. A profile is one of two types:
+**IAM Identity Center (SSO)**, or **Assume a role from another profile**, which uses an SSO profile's sign-in to assume
+an IAM role. On an assume-role row **Log in** signs in its source profile, and the row has no **Log out**
+([15](15-cloud-accounts.md#profile-type-assume-a-role-from-another-profile)).
 → [15 Cloud accounts](15-cloud-accounts.md#logging-in-to-another-in-house-host-ssm)
 
 ### Google Cloud
@@ -405,7 +420,9 @@ scale.
   The same instance shows **when the catalog was fetched**, because a newer catalog changes past estimates as well.
 - Clicking a series in the time chart filters to it. There is also a **feature × model** matrix.
 - **Measurement coverage** is stated explicitly. Calls that do not report tokens are shown as counted-only
-  (which does not mean they were free).
+  (which does not mean they were free). cursor's Terminal (CLI) sessions report tokens per turn from a `stop` hook
+  and are shown as "Tokens: partial"; a turn on Auto has no model name of its own (cursor reports `default`).
+  Managed cursor sessions are not counted this way ([06](06-agents.md#cursor)).
 - **RTK gain**: cumulative tokens saved, average saving rate and command count, daily / weekly / monthly
   (RTK is in [06](06-agents.md#rtk-token-savings)).
 
@@ -540,7 +557,9 @@ your **AWS profiles/SSM** registrations, your **Google Cloud** profiles, and you
   set of SSM registrations works.
 - Importing only **adds**. A profile with the same name, or the same host (alias + instance), is left as it
   is and reported back as "already there". A Google Cloud profile counts as already there when one with the
-  same label (ignoring case) exists; one without a label or project is skipped.
+  same label (ignoring case) exists; one without a label or project is skipped. An assume-role AWS profile is
+  imported only when an SSO profile with exactly its source's label and the same sign-in already exists or is in
+  the same file.
 - Personal settings are **merged onto** what you have now. Things that accumulate (learned quick replies,
   key bindings) are never emptied just because the imported file has none.
 - Agent instructions are the one exception: they **replace** the text you have now (you are asked to

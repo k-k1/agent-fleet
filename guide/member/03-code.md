@@ -466,7 +466,7 @@ toggle** to select SVN, then enter the **Repository URL** and, if needed, a **su
 - **Update and lock cleanup**: use "Update (svn)" on the svn row to move to the latest revision.
   If the working copy gets locked (an error prompting `svn cleanup`), e.g. after an interruption,
   checkout / update automatically attempts one recovery. If the lock remains, use
-  **"Clean up lock"** from the row menu.
+  **"Clean up lock (svn)"** from the row menu.
 - **Show log and local changes**: the svn row menu has **"Show log"** (revision list, newest
   first, with a path filter and "Load more"; a revision newer than the working copy is marked
   "not updated yet", and selecting one shows its changed paths and diff) and **"Local changes"**
