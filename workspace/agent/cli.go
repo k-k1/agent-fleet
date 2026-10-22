@@ -220,6 +220,14 @@ var subcommands = []subcommand{
 		run:     runJiraIssueTypes,
 	},
 	{
+		// Candidate issues after a timed-out `jira issue create`, for the PATH wrapper at
+		// /usr/local/bin/jira. See jira_find_created.go.
+		name:    "jira-find-created",
+		summary: "recently created Jira issues with an exact summary",
+		hidden:  true,
+		run:     runJiraFindCreated,
+	},
+	{
 		// `jira issue comment edit|delete`, which jira-cli lacks, for the PATH wrapper at
 		// /usr/local/bin/jira. See jira_comment.go.
 		name:    "jira-comment",
