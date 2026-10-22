@@ -100,12 +100,15 @@ air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/RE
   より前に構築した `Persistence=retain` の環境は、そのスタックを手で更新するまで EFS の日次
   バックアップがありません。`update.sh` はこれを（読み取りだけで）検出して警告し、change set
   のコマンドを印字します。`deploy/aws/ecs/README.md`「Upgrade (runbook)」の手順 1a を参照。
-  同じ検出結果は、Console の管理画面の全セクションに super_admin 向けのバナー（「日次の EFS
-  バックアップがない」）としても出るので、`update.sh` の出力を誰も読まなくても見落としません。
+  同じ検出結果は、Console の管理画面の全セクションに super_admin 向けのバナー（「この配備はメンバーの
+  データを EFS に保持（Persistence=retain）していますが、データスタックに日次の EFS バックアップが
+  ありません。」で始まるもの）としても出るので、`update.sh` の出力を誰も読まなくても見落としません。
   `update.sh` が結果を ingress スタックに記録し（パラメータ `EfsBackup`）、データスタックにバック
   アップが入ったあとの`update.sh` が確認できた時点でバナーは消えます。`update.sh` がデータスタックを読めな
   かった場合は以前の判定を保持するので、既存のバナーは修復を確認できた実行まで残ります。
-  一度も記録されていない環境ではバナーは出ません。
+  一度も記録されていない環境ではバナーは出ません。同じ読み取りだけの確認は
+  `deploy/aws/ecs/efs-backup-check.sh --profile <p> --region <r>` で単独でも実行でき、バックアップが
+  あるか、配備がバックアップを要らない（`Persistence=delete`）ときだけ `0` で終わります。
   **`ecs-ec2` で、リリースがスロットの起動テンプレートを変えたとき**は、今あるスロットには入れ替えた
   ときにしか届きません（[下記](#ecs-ec2-起動テンプレートを変えたあとのスロットの入れ替え)）。
 

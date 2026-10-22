@@ -75,8 +75,10 @@ AWS that key can be held by KMS instead (next section). Details in `docs/build/0
 ### Keys at rest on AWS KMS
 
 On `ecs` / `ecs-ec2` the Control Plane can have AWS KMS hold the keys for what it seals: MCP
-connection headers, sign-in client secrets, engine tokens, session handoffs and shares, and the
-key of each workspace's credential store. Each value is sealed with a fresh data key from KMS,
+connection headers, sign-in and Git OAuth client secrets, engine tokens, session handoffs and
+shares, inbox messages and their attachments, the development sign-in's signing keys and client
+secrets, the key of each workspace's credential store, and each home's own credential-store key
+where homes have one. Each value is sealed with a fresh data key from KMS,
 bound to its tenant, so it cannot be opened under another tenant's name. Turning it on:
 
 1. Deploy `10-data` with `CustodianKmsKey=create` (or bring a symmetric KMS key of your own in
@@ -115,8 +117,9 @@ What to know before you switch:
 
 `af-cp rewrap-keys` re-seals, under KMS, every value the Control Plane sealed with the master
 key before the switch: the wrapped key of each workspace's credential store, MCP connection
-headers, sign-in and Git OAuth client secrets, session handoffs and share proposals, and the
-Hugging Face, Civitai and ComfyUI keys of the engines. Afterwards disabling the KMS key makes
+headers, sign-in and Git OAuth client secrets, session handoffs and share proposals, inbox
+messages and their attachments, the development sign-in's signing keys and client secrets, each
+home's own credential-store key, and the Hugging Face, Civitai and ComfyUI keys of the engines. Afterwards disabling the KMS key makes
 those unreadable too.
 
 - Run it **after** the Control Plane itself runs with `AF_KEY_CUSTODIAN=kms`, with the Control

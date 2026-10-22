@@ -32,6 +32,12 @@ These do not vary by deployment.
 | Folder zip download: transfer time | 15 min | The connection is closed; a stalled client cannot hold the one build slot longer |
 | Folder zip download: concurrent builds | 1 per workspace | A second press waits up to 2 s, then 503 "busy"; each build holds a temp file of up to the byte limit on the home volume |
 | A "working" session with no sign of life | 1 hour | It stops keeping the Workspace awake. Only for the session kinds whose progress the Agent observes; the time counts from the last output, state change or (for some kinds) running tool, not from the start of the turn. A session whose progress cannot be read keeps holding, and the "do not auto-stop" pin and background work are exempt ([operate/03](../operate/03-run.md#what-keeps-a-workspace-awake) lists the kinds) |
+| A parent session and all its live children quiet | 15 minutes | The parent gets one notice naming the idle children. `AF_STALLED_TREE_MINUTES` in the workspace changes it; `0` turns it off |
+| A question, plan or permission left by a stopped session | 14 days | The carried card is dropped ([07](../member/07-chat-memo.md#questions-and-plans-left-by-a-stopped-session)) |
+| Agent memory: one memory | 200 KiB body, 2,000-character description | Refused ([member/14](../member/14-agent-memory.md)) |
+| Agent memory: the index a session receives | about 24 KiB, each description cut to 150 characters | What does not fit is listed by name only |
+| Agent memory: Changes / Forgotten | newest 100 changes (`af-memory changes --limit` up to 300); 300 forgotten memories at a time | Older ones are not listed |
+| Agent memory: suggestions from sessions | 250 review calls a day, one at a time; 100 proposals waiting | "Today's review limit has been reached" / "The pending proposals are full" |
 | Jumping to an older turn from a search hit | 8,000 transcript positions back, in at most 4 requests | The turn is not reached; a notice says it is too far back, and scrolling up loads it |
 
 > **Why the title limit is worth naming.** It used to differ per layer: a handoff
