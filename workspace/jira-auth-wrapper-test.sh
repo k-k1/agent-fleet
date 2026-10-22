@@ -1237,6 +1237,14 @@ if command -v script >/dev/null 2>&1; then
       grep -q 'did not answer' "$T/out" && fail "tty [$cmdline $redir]: timeout message on a terminal run"
     done
   done
+  # A terminal on stdin alone does not matter for a read: it is captured, so it is bounded too.
+  reset; oauth
+  echo 60 >"$T/plan.1.hang"
+  plan 2 0 "GOOD
+" ""
+  rm -f "$T/jira.count"
+  script -qec "env -i PATH='$T/bin:/usr/bin:/bin' HOME='$T/home' STUB_DIR='$T' AF_JIRA_REAL='$T/bin/jira-real' TMPDIR='$T/tmp' AF_JIRA_TIMEOUT=0.5 AF_JIRA_RETRY_WAIT=0 bash '$WRAPPER' issue list 2>&1 | cat" /dev/null >"$T/out" 2>&1 </dev/null
+  [ "$(count)" = 2 ] && grep -q GOOD "$T/out" || fail "tty stdin only: read not bounded (attempts=$(count))"
 fi
 
 if [ "$fails" != 0 ]; then

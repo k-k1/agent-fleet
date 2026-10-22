@@ -56,14 +56,16 @@
 #   --foreground breaks job control, and the TUI must never be killed).
 #   * `issue create|edit` and `comment add` read all of stdin whenever it is not a terminal, even
 #     with -b and --no-input, and discard what they read. An open pipe or socket never ends. When
-#     the body is given on the command line (and no -T), or stdin is a socket or a character device
-#     other than /dev/null, jira gets </dev/null. A body that comes from stdin (`-T -`, or a pipe
-#     with no -b) is never touched.
+#     a body is given on the command line and there is no -T file (`-T -` included: the body flag
+#     wins), or stdin is a character device other than /dev/null, jira gets </dev/null. A pipe or
+#     socket that may hold the body (no -b, or `-T -` alone) is left alone even if that blocks:
+#     cutting it would create the issue with an empty description.
 #   * It has no request timeout, so a server that takes the request and never answers blocks it
-#     forever. Every run is wrapped in `timeout` (AF_JIRA_TIMEOUT seconds, 0 = off; default 120 for
-#     a write, 45 per attempt for a read). A timed-out read counts as a transport failure and is
-#     re-run like one. A timed-out write is never re-run: it exits 124 and says the change may
-#     exist, because `issue create` is not idempotent and the agent cannot tell the two apart.
+#     forever. Every jira run is wrapped in `timeout` (AF_JIRA_TIMEOUT seconds, 0 = off; default
+#     120 for a write, 45 per attempt for a read), the user's-own-setup paths included, and so are
+#     the Agent helpers (30 s). A timed-out read counts as a transport failure and is re-run like
+#     one. A timed-out write is never re-run: it exits 124 and says the change may exist, because
+#     `issue create` is not idempotent and the agent cannot tell the two apart.
 # - The token only ever lives in this shell's variables and, at the very end, in the exec'd
 #   jira's environment: never argv, never a file, never printed. xtrace and allexport are
 #   switched off first, and the variables are unset so none inherits an export attribute:
@@ -192,7 +194,7 @@ run_bounded() {
 bounded() {
   local lim
   lim="$(attempt_limit 30)"
-  if [ -n "$lim" ] && command -v timeout >/dev/null 2>&1; then
+  if [ -n "$lim" ] && nontty && command -v timeout >/dev/null 2>&1; then
     timeout -k "$(kill_grace)" "$lim" "$@"
   else
     "$@"
@@ -550,7 +552,7 @@ run_read_only() {
   local d n=0 rc wait lim start tcmd=() late pid="" sig="" why
   d="$(mktemp -d 2>/dev/null)" || exec "$real" "$@"
   lim="$(attempt_limit 45)"
-  if [ -n "$lim" ] && nontty && command -v timeout >/dev/null 2>&1; then
+  if [ -n "$lim" ] && command -v timeout >/dev/null 2>&1; then
     tcmd=(timeout -k "$(kill_grace)" "$lim")
   else
     lim=""
@@ -584,6 +586,7 @@ run_read_only() {
     wait="${AF_JIRA_RETRY_WAIT:-$((n * 500 + RANDOM % (n * 500 + 1)))}"
     case "$wait" in *[!0-9]*) wait=0 ;; esac
     sleep "$((wait / 1000)).$(printf '%03d' "$((wait % 1000))")"
+    [ -z "$sig" ] || exit 130
   done
   # --raw output carries user text verbatim; it is not rewritten.
   if [ -n "$site" ] && [ "$site" != "$server" ] && ! printf '%s\n' "$@" | grep -qxe '--raw' -e '--raw=.*'; then
