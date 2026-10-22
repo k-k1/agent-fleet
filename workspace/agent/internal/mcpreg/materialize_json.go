@@ -109,7 +109,7 @@ func (c jsonConfig) materialize(defs []ServerDef, prev []string) (written, remov
 	written = defNames(defs)
 
 	if !changed {
-		return written, removed, false, nil
+		return written, removed, false, keepPrivate(path, defs)
 	}
 	if len(servers) == 0 {
 		// Leave the file exactly as a CLI that never had MCP servers would: no key at

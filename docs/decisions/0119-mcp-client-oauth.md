@@ -235,9 +235,14 @@ naming the server and the AS issuer. No token, code or verifier is logged or aud
   above did not pin down:
   - **Port and key.** The key is generated once per workspace and the port is remembered, both in
     `mcp-relay.json` (`0600`, beside the registry's other files). A CLI keeps the config it read at start-up, so the
-    Agent tries the remembered port first; only when that port is taken does it choose another, rewrite the configs and
-    log it, and sessions started before then need a restart. The relay is started before the boot materialization;
+    Agent tries the remembered port first; only when that port is taken does it choose another **and a new key** (a CLI
+    still configured for the old port would hand the old key to whoever holds it), rewrite the configs and log it, and
+    sessions started before then need a restart. A key-bearing config is held at `0600` even when a pass changes
+    nothing, and every temp file is created fresh at `0600`. The relay is started before the boot materialization;
     while it is down, OAuth definitions are left out.
+  - **Token and destination.** The token comes back with the resource its grant was made for, and the relay sends it
+    only to a URL that resource names, checked again after a 401 refresh; a URL changed or a sign-in redone while a
+    request is in flight ends in a 502, never in a token sent to a host it was not issued for.
   - **Request body.** A POST body is buffered (32 MiB cap, 413 beyond it) rather than tee'd: the retry after a 401
     needs the whole body again, and MCP requests are single JSON-RPC messages.
   - **Statuses the CLI sees.** Host or key failure: a bare 403. A grant that is missing, needs a new sign-in or cannot

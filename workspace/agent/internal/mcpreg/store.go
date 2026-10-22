@@ -108,16 +108,55 @@ func saveOptOut(ids map[string]bool) error {
 	return writeFileAtomic(optOutPath(), b, 0o600)
 }
 
+// writeFileAtomic writes through a fresh temp file created with exactly mode. A stale temp left
+// at a wider mode would otherwise keep it (os.WriteFile applies mode only to a file it creates),
+// and the result is renamed over the target.
 func writeFileAtomic(path string, b []byte, mode os.FileMode) error {
 	tmp := path + ".af-tmp"
-	if err := os.WriteFile(tmp, b, mode); err != nil {
+	_ = os.Remove(tmp)
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
 		return err
+	}
+	_, werr := f.Write(b)
+	if werr == nil {
+		werr = f.Chmod(mode) // the umask only ever narrows, but say it
+	}
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		_ = os.Remove(tmp)
+		return werr
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
 	return nil
+}
+
+// holdsRelayKey reports whether a config written from defs carries the relay key.
+func holdsRelayKey(defs []ServerDef) bool {
+	for _, d := range defs {
+		if d.Headers[RelayKeyHeader] != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// keepPrivate narrows a config that carries the relay key to 0600 even when its content is
+// unchanged: a CLI or the member may have rewritten the file wider since af last wrote it.
+func keepPrivate(path string, defs []ServerDef) error {
+	if !holdsRelayKey(defs) {
+		return nil
+	}
+	fi, err := os.Stat(path)
+	if err != nil || fi.Mode().Perm() == 0o600 {
+		return nil
+	}
+	return os.Chmod(path, 0o600)
 }
 
 // Registry is one composed snapshot. TenantFetchedAt is surfaced so the Console can

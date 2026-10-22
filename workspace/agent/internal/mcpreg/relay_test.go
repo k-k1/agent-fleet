@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -50,8 +51,9 @@ func newUpstream(t *testing.T, h func(w http.ResponseWriter, r *http.Request, n 
 		u.mu.Lock()
 		u.reqs = append(u.reqs, seen{r.Method, r.RequestURI, r.Header.Clone(), string(b)})
 		n := len(u.reqs) - 1
+		h := u.handler
 		u.mu.Unlock()
-		u.handler(w, r, n)
+		h(w, r, n)
 	}))
 	t.Cleanup(u.srv.Close)
 	return u
@@ -594,7 +596,9 @@ func TestRelayNeverLogsTheKeyOrATokenAndTheRegistryNeverHoldsIt(t *testing.T) {
 		resp.Body.Close()
 	}
 	e.as.tokenReply = func(int, url.Values) (int, string) { return 500, `{"error":"server_error"}` }
+	up.mu.Lock()
 	up.handler = okFor()
+	up.mu.Unlock()
 	e.do(http.MethodPost, relayPath(), strings.NewReader("{}"), nil).Body.Close()
 
 	for _, secret := range []string{e.key, "tok-initial", "rt-initial", "at-0", "wrong"} {
@@ -668,8 +672,19 @@ func TestRelayChoosesAnotherPortWhenItsOwnIsTaken(t *testing.T) {
 	}
 	defer stop()
 	base2, key2, ok := relayEndpoint()
-	if !ok || base2 == base1 || key2 != key1 {
-		t.Fatalf("base %s -> %s, key kept %v", base1, base2, key1 == key2)
+	if !ok || base2 == base1 || key2 == key1 {
+		t.Fatalf("base %s -> %s, key kept %v: a moved relay needs a new key", base1, base2, key1 == key2)
+	}
+	// Whoever now holds the old port, and any CLI still configured for it, cannot open the new relay.
+	req, _ := http.NewRequest(http.MethodPost, strings.TrimSuffix(base2, relayPathPrefix)+relayPath(), strings.NewReader("{}"))
+	req.Header.Set(RelayKeyHeader, key1)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("the old key opened the new relay: %d", resp.StatusCode)
 	}
 	if cfg := loadRelayConfig(); !strings.Contains(base2, fmt.Sprint(cfg.Port)) {
 		t.Errorf("the new port was not persisted: %+v", cfg)
@@ -784,5 +799,206 @@ func TestMaterializeFollowsTheGrantAndKeepsTheKeyPrivate(t *testing.T) {
 	b, _ = os.ReadFile(claudeJSON)
 	if strings.Contains(string(b), relayTestID) || strings.Contains(string(b), e.key) {
 		t.Fatalf("a disconnected server (or the key) is still in claude's config:\n%s", b)
+	}
+}
+
+// --- review round 1 -----------------------------------------------------------
+
+// repoint changes what the registry says without going through the handlers, as an update does.
+func repoint(t *testing.T, url string, grant *secrets.MCPOAuthGrant) {
+	t.Helper()
+	if err := secrets.Update(func(s *secrets.Data) error {
+		if url != "" {
+			s.MCP[0].URL = url
+		}
+		if grant != nil {
+			s.MCPOAuth = []secrets.MCPOAuthGrant{*grant}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func newGrantFor(e *relayEnv, resource, access string) *secrets.MCPOAuthGrant {
+	now := time.Now().Unix()
+	return &secrets.MCPOAuthGrant{
+		ServerID: relayTestID, Issuer: e.as.url(""), Registration: OAuthRegDCR, ClientID: "c",
+		TokenAuth: "none", TokenEndpoint: e.as.url("/token"), Resource: resource,
+		AccessToken: access, RefreshToken: "rt-new", ExpiresAt: now + 3600, ConnectedAt: now + 1,
+	}
+}
+
+func TestRelayNeverSendsAnotherGrantsTokenToTheOldURL(t *testing.T) {
+	// (a) the URL changes and the member signs in again while the request body is still arriving.
+	oldUp := newUpstream(t, okFor("tok-initial", "tok-new"))
+	e := newRelayEnv(t, oldUp)
+	newUp := newUpstream(t, okFor("tok-new"))
+
+	pr, pw := io.Pipe()
+	done := make(chan *http.Response, 1)
+	go func() { done <- e.do(http.MethodPost, relayPath(), pr, nil) }()
+	_, _ = pw.Write([]byte(`{"a":`))
+	time.Sleep(200 * time.Millisecond) // the relay has resolved the target and is reading the body
+	repoint(t, newUp.srv.URL+"/mcp", newGrantFor(e, newUp.srv.URL+"/mcp", "tok-new"))
+	_, _ = pw.Write([]byte(`1}`))
+	pw.Close()
+	resp := <-done
+	if readAll(t, resp); resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("(a) status %d, want 502", resp.StatusCode)
+	}
+	if oldUp.count() != 0 || newUp.count() != 0 {
+		t.Errorf("(a) a request was sent: old=%d new=%d", oldUp.count(), newUp.count())
+	}
+}
+
+func TestRelayRetryChecksTheRenewedTokenBelongsToTheTarget(t *testing.T) {
+	// (b) the old server answers 401 slowly; meanwhile the URL changes and a new sign-in lands.
+	gate := make(chan struct{})
+	oldUp := newUpstream(t, func(w http.ResponseWriter, r *http.Request, n int) {
+		<-gate
+		http.Error(w, "no", http.StatusUnauthorized)
+	})
+	e := newRelayEnv(t, oldUp)
+	newUp := newUpstream(t, okFor("tok-new"))
+	done := make(chan *http.Response, 1)
+	go func() { done <- e.do(http.MethodPost, relayPath(), strings.NewReader("{}"), nil) }()
+	for i := 0; oldUp.count() == 0 && i < 100; i++ {
+		time.Sleep(20 * time.Millisecond)
+	}
+	repoint(t, newUp.srv.URL+"/mcp", newGrantFor(e, newUp.srv.URL+"/mcp", "tok-new"))
+	close(gate)
+	resp := <-done
+	if readAll(t, resp); resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("(b) status %d, want 502", resp.StatusCode)
+	}
+	if oldUp.count() != 1 || newUp.count() != 0 {
+		t.Errorf("(b) old=%d new=%d: the retry must not go to the old URL with the new token (or anywhere)", oldUp.count(), newUp.count())
+	}
+}
+
+func TestRelayRefusesAGrantMadeForAnotherURL(t *testing.T) {
+	// (c) the update stored the new URL and has not yet dropped the old grant.
+	oldUp := newUpstream(t, okFor("tok-initial"))
+	e := newRelayEnv(t, oldUp)
+	newUp := newUpstream(t, okFor("tok-initial"))
+	repoint(t, newUp.srv.URL+"/mcp", nil)
+	resp := e.do(http.MethodPost, relayPath(), strings.NewReader("{}"), nil)
+	if readAll(t, resp); resp.StatusCode != http.StatusBadGateway || newUp.count() != 0 || oldUp.count() != 0 {
+		t.Errorf("(c) status %d new=%d old=%d: the old token reached the new URL", resp.StatusCode, newUp.count(), oldUp.count())
+	}
+}
+
+func TestRelayFlushesHeadersBeforeTheFirstEvent(t *testing.T) {
+	release := make(chan struct{})
+	up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, _ int) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})
+	e := newRelayEnv(t, up)
+	defer close(release)
+	got := make(chan int, 1)
+	go func() {
+		resp := e.do(http.MethodGet, relayPath(), nil, map[string]string{"Accept": "text/event-stream"})
+		got <- resp.StatusCode
+		resp.Body.Close()
+	}()
+	select {
+	case c := <-got:
+		if c != 200 {
+			t.Fatalf("status %d", c)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the CLI got no response headers until the first event: a stream that waits cannot connect")
+	}
+}
+
+func TestRelayStopFreesThePortAtOnce(t *testing.T) {
+	withTempCLIHomes(t)
+	stop, err := StartRelay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b0, _, _ := relayEndpoint()
+	stop()
+	for i := 0; i < 100; i++ {
+		stop, err = StartRelay()
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _, _ := relayEndpoint()
+		stop()
+		if b != b0 {
+			t.Fatalf("round %d: the port moved (%s -> %s) because the last stop had not released it", i, b0, b)
+		}
+	}
+}
+
+func TestKeyBearingConfigsStayPrivateWhenNothingChanges(t *testing.T) {
+	up := newUpstream(t, okFor("tok-initial"))
+	e := newRelayEnv(t, up)
+	home := os.Getenv("HOME")
+	holders := func() []string {
+		var out []string
+		_ = filepath.WalkDir(home, func(p string, d os.DirEntry, err error) error {
+			if err == nil && !d.IsDir() && p != relayConfigPath() {
+				if b, _ := os.ReadFile(p); bytes.Contains(b, []byte(e.key)) {
+					out = append(out, p)
+				}
+			}
+			return nil
+		})
+		return out
+	}
+	known := map[string]bool{}
+	for _, kind := range MaterializedKinds {
+		if r := Materialize(kind); r.Err != "" {
+			t.Fatalf("%s: %+v", kind, r)
+		}
+		var mine []string
+		for _, p := range holders() {
+			if !known[p] {
+				known[p] = true
+				mine = append(mine, p)
+			}
+		}
+		if len(mine) == 0 {
+			t.Fatalf("%s: no config holds the key, the check proves nothing", kind)
+		}
+		for _, p := range mine {
+			if err := os.Chmod(p, 0o644); err != nil { // a CLI or the member rewrote it wider
+				t.Fatal(err)
+			}
+		}
+		if r := Materialize(kind); r.Err != "" || r.Changed {
+			t.Fatalf("%s: second pass %+v (must be a no-op on content)", kind, r)
+		}
+		for _, p := range mine {
+			if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o600 {
+				t.Errorf("%s: %s is %v after an unchanged materialize", kind, p, fi.Mode().Perm())
+			}
+		}
+	}
+}
+
+func TestAtomicWriteIgnoresAStaleWideTemp(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cfg")
+	if err := os.WriteFile(path+".af-tmp", []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(path, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v", fi.Mode().Perm())
+	}
+	if b, _ := os.ReadFile(path); string(b) != "new" {
+		t.Errorf("content = %q", b)
 	}
 }

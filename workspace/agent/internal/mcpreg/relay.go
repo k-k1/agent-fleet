@@ -124,23 +124,34 @@ func relayEndpoint() (base, key string, ok bool) {
 // materialization of the boot: until it is up no OAuth definition is written anywhere.
 func StartRelay() (stop func(), err error) {
 	cfg := loadRelayConfig()
-	if cfg.Key == "" {
+	var ln net.Listener
+	newKey := func() error {
 		var kb [32]byte
 		if _, err := rand.Read(kb[:]); err != nil {
-			return nil, err
+			return err
 		}
 		cfg.Key = hex.EncodeToString(kb[:])
+		return nil
 	}
-	var ln net.Listener
 	if cfg.Port != 0 {
 		ln, err = net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(cfg.Port))
 		if err != nil {
-			log.Printf("mcp relay: port %d is taken (%v); choosing another, the configs are rewritten", cfg.Port, err)
+			// A new key with the new port: configs written earlier still name the old port and
+			// key, and whoever holds that port now would receive the old key from a CLI that
+			// reconnects. With a new key it opens nothing here.
+			log.Printf("mcp relay: port %d is taken (%v); choosing another and a new key, the configs are rewritten", cfg.Port, err)
+			cfg.Key = ""
 		}
 	}
 	if ln == nil {
 		if ln, err = net.Listen("tcp", "127.0.0.1:0"); err != nil {
 			return nil, err
+		}
+		if cfg.Key == "" {
+			if err := newKey(); err != nil {
+				_ = ln.Close()
+				return nil, err
+			}
 		}
 	}
 	cfg.Port = ln.Addr().(*net.TCPAddr).Port
@@ -165,6 +176,7 @@ func StartRelay() (stop func(), err error) {
 		relay.key, relay.port = "", 0
 		relay.mu.Unlock()
 		_ = srv.Close()
+		_ = ln.Close() // Serve may not have registered it yet; the port is free when stop returns
 	}, nil
 }
 
@@ -268,9 +280,13 @@ func serveRelay(w http.ResponseWriter, r *http.Request, key string) {
 	}
 
 	ctx := r.Context()
-	token, err := AccessToken(ctx, id)
+	token, res, err := refreshGrantRes(ctx, id, "")
 	if err != nil {
 		relayGrantProblem(w, id, err)
+		return
+	}
+	if !relayBound(res, target) {
+		relayChanged(w, id)
 		return
 	}
 	resp, err := relayForward(ctx, r, target, body, token)
@@ -282,9 +298,15 @@ func serveRelay(w http.ResponseWriter, r *http.Request, key string) {
 		_ = resp.Body.Close()
 		// Once: the token the server just refused is named, so a caller that already renewed
 		// it is not followed by a second renewal, and a second 401 ends the exchange.
-		next, rerr := RefreshAccessToken(ctx, id, token)
+		next, res, rerr := refreshGrantRes(ctx, id, token)
 		if rerr != nil {
 			relayGrantProblem(w, id, rerr)
+			return
+		}
+		// The server may have been re-pointed or signed in again while the first attempt was
+		// out: the renewed token is for whatever grant exists now, the target is the old URL.
+		if !relayBound(res, target) {
+			relayChanged(w, id)
 			return
 		}
 		if resp, err = relayForward(ctx, r, target, body, next); err != nil {
@@ -307,6 +329,21 @@ func serveRelay(w http.ResponseWriter, r *http.Request, key string) {
 		noteInsufficientScope(id, resp.Header.Values("Www-Authenticate"))
 	}
 	relayCopyResponse(w, r, resp)
+}
+
+// relayBound reports whether a token made for resource may be sent to target. The token and the
+// destination come from two reads of the store; this is the check that they are the same
+// registration, so a URL changed or a sign-in redone between them can never send a token to a
+// host it was not issued for. Nothing else is trusted to close that window.
+func relayBound(resource string, target *url.URL) bool {
+	a, ok1 := canonicalResource(resource)
+	b, ok2 := canonicalResource(target.String())
+	return ok1 && ok2 && a == b
+}
+
+func relayChanged(w http.ResponseWriter, id string) {
+	log.Printf("mcp relay: %s: the registered URL and the sign-in no longer match", id)
+	relayFail(w, http.StatusBadGateway, "this MCP server's address or sign-in changed while the request was in flight; "+consoleHint)
 }
 
 // noteInsufficientScope records a 403 whose challenge says insufficient_scope, with the scope it
@@ -439,6 +476,9 @@ func relayCopyResponse(w http.ResponseWriter, r *http.Request, resp *http.Respon
 	}
 	w.WriteHeader(resp.StatusCode)
 	rc := http.NewResponseController(w)
+	// An SSE stream may send its headers and then wait for the first event: the CLI has to see
+	// the 200 now, not with the first byte.
+	_ = rc.Flush()
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := resp.Body.Read(buf)
