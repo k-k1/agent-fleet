@@ -274,7 +274,7 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	// The reply claude is still writing (#1250): what the MessageDisplay hook has flushed and
 	// the transcript does not show yet. See session_livetext.go.
 	if wantsLiveReply(r, alive, state) {
-		if txt := liveReplyText(sid, lines, time.Now()); txt != "" {
+		if txt := liveReplyText(sid, lines, time.Now(), state == "working"); txt != "" {
 			resp["liveText"] = txt
 		}
 	}

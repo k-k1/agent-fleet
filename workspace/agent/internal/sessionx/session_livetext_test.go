@@ -24,7 +24,7 @@ func TestWantsLiveReply(t *testing.T) {
 		{"?since=3", true, "working", false},        // setting off: the response stays as it always was
 		{"?since=3&live=0", true, "working", false}, // only the Console's own spelling turns it on
 		{"?since=3&live=1", false, "working", false},
-		{"?since=3&live=1", true, "idle", false}, // at rest: no field, so unchanged polls stay byte-identical
+		{"?since=3&live=1", true, "idle", true}, // Stop runs before the final row lands; liveReplyText bounds it
 		{"?since=3&live=1", true, "question", false},
 		{"?since=3&live=1", true, "permission", false},
 	} {
@@ -104,7 +104,7 @@ func TestLiveReplyTextWhileStreaming(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	flush("p1", "m2", 0, false, "1. first\n")
 	flush("p1", "m2", 1, false, "2. second\n")
-	if got := liveReplyText("s", afterFirstTool(), time.Now()); got != "1. first\n2. second" {
+	if got := liveReplyText("s", afterFirstTool(), time.Now(), true); got != "1. first\n2. second" {
 		t.Fatalf("got %q, want the two streamed lines", got)
 	}
 }
@@ -115,7 +115,7 @@ func TestLiveReplyTextHiddenOnceLanded(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	flush("p1", "m2", 0, false, "1. first\n")
 	lines := append(afterFirstTool(), []byte(textRow("msg_2", "1. first\n2. second")))
-	if got := liveReplyText("s", lines, time.Now()); got != "" {
+	if got := liveReplyText("s", lines, time.Now(), true); got != "" {
 		t.Fatalf("got %q after the row landed, want nothing", got)
 	}
 }
@@ -127,7 +127,7 @@ func TestLiveReplyTextSendsOnlyWhatHasNotLanded(t *testing.T) {
 	flush("p1", "m2", 0, false, "Searching.\n")
 	flush("p1", "m2", 1, false, "Found it:\n")
 	lines := append(afterFirstTool(), []byte(textRow("msg_2", "Searching.\n")))
-	if got := liveReplyText("s", lines, time.Now()); got != "Found it:" {
+	if got := liveReplyText("s", lines, time.Now(), true); got != "Found it:" {
 		t.Fatalf("got %q, want only the part that has not landed", got)
 	}
 }
@@ -145,15 +145,15 @@ func TestLiveReplyTextNotConfusedByThePreviousTurn(t *testing.T) {
 		}
 		lines := rowsOf(rows...)
 		flush("p2", "m1", 0, false, "Done.\n")
-		if got := liveReplyText("s", lines, time.Now()); got != "Done." {
+		if got := liveReplyText("s", lines, time.Now(), true); got != "Done." {
 			t.Fatalf("times=%v: got %q, want the new reply although the last answer said the same", withTimes, got)
 		}
 		flush("p2", "m1", 1, false, "Next, the tests.\n")
-		if got := liveReplyText("s", lines, time.Now()); got != "Done.\nNext, the tests." {
+		if got := liveReplyText("s", lines, time.Now(), true); got != "Done.\nNext, the tests." {
 			t.Fatalf("times=%v: got %q, want it whole, not hidden behind the previous answer", withTimes, got)
 		}
 		flush("p2", "m1", 2, true, "")
-		if got := liveReplyText("s", lines, time.Now()); got != "Done.\nNext, the tests." {
+		if got := liveReplyText("s", lines, time.Now(), true); got != "Done.\nNext, the tests." {
 			t.Fatalf("times=%v: finished but not landed got %q, want it still shown", withTimes, got)
 		}
 	}
@@ -164,7 +164,7 @@ func TestLiveReplyTextNotConfusedByThePreviousMessage(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	flush("p1", "m2", 0, false, "Reading the file.\n")
 	flush("p1", "m2", 1, false, "It says alpha.\n")
-	if got := liveReplyText("s", afterFirstTool(), time.Now()); got != "Reading the file.\nIt says alpha." {
+	if got := liveReplyText("s", afterFirstTool(), time.Now(), true); got != "Reading the file.\nIt says alpha." {
 		t.Fatalf("got %q, want the whole second message", got)
 	}
 }
@@ -176,7 +176,7 @@ func TestLiveReplyTextFinalMessageLandedInItsTurn(t *testing.T) {
 	flush("p1", "m2", 0, false, "It says alpha.\n")
 	flush("p1", "m2", 1, true, "")
 	lines := append(afterFirstTool(), later(textRow("msg_2", "It says alpha.\n")), later(toolRow("msg_2")), later(resultRow("p1")))
-	if got := liveReplyText("s", lines, time.Now()); got != "" {
+	if got := liveReplyText("s", lines, time.Now(), true); got != "" {
 		t.Fatalf("got %q for a finished message whose row is in the transcript, want nothing", got)
 	}
 }
@@ -190,11 +190,11 @@ func TestLiveReplyTextSupersededTurn(t *testing.T) {
 	flush("p1", "m9", 0, false, "Half a reply\n")
 	status.WriteLivePrompt("s", "p1")
 	lines := rowsOf(promptRow("p1"))
-	if got := liveReplyText("s", lines, time.Now()); got != "Half a reply" {
+	if got := liveReplyText("s", lines, time.Now(), true); got != "Half a reply" {
 		t.Fatalf("got %q while p1 is the running turn, want it", got)
 	}
 	status.WriteLivePrompt("s", "p2") // p2's UserPromptSubmit; its row is not in the transcript yet
-	if got := liveReplyText("s", lines, time.Now()); got != "" {
+	if got := liveReplyText("s", lines, time.Now(), true); got != "" {
 		t.Fatalf("got %q from the previous turn, want nothing", got)
 	}
 	long := rowsOf(promptRow("p1"))
@@ -202,7 +202,7 @@ func TestLiveReplyTextSupersededTurn(t *testing.T) {
 		long = append(long, []byte(toolRow("msg_x")), []byte(resultRow("p1")))
 	}
 	long = append(long, []byte(promptRow("p2")))
-	if got := liveReplyText("s", long, time.Now()); got != "" {
+	if got := liveReplyText("s", long, time.Now(), true); got != "" {
 		t.Fatalf("got %q after a 6000-row previous turn, want nothing", got)
 	}
 }
@@ -219,11 +219,11 @@ func TestLiveReplyTextSameTextAsThePreviousMessage(t *testing.T) {
 	)
 	flush("p1", "m1", 0, true, "Done.")
 	flush("p1", "m2", 0, true, "Done.")
-	if got := liveReplyText("s", lines, time.Now()); got != "Done." {
+	if got := liveReplyText("s", lines, time.Now(), true); got != "Done." {
 		t.Fatalf("got %q before m2's row landed, want m2 shown", got)
 	}
 	lines = append(lines, later(textRow("msg_2", "Done.")))
-	if got := liveReplyText("s", lines, time.Now()); got != "" {
+	if got := liveReplyText("s", lines, time.Now(), true); got != "" {
 		t.Fatalf("got %q after m2's row landed, want nothing", got)
 	}
 }
@@ -237,7 +237,7 @@ func TestLiveReplyTextLateFinalOfThePreviousMessage(t *testing.T) {
 	lines := append(afterFirstTool(), later(textRow("msg_2", "Done.")))
 	time.Sleep(2 * time.Millisecond)
 	flush("p1", "m1", 1, true, "") // m1's last hook, late
-	if got := liveReplyText("s", lines, time.Now()); got != "" {
+	if got := liveReplyText("s", lines, time.Now(), true); got != "" {
 		t.Fatalf("got %q with m2's row in the transcript, want nothing", got)
 	}
 }
@@ -260,11 +260,11 @@ func TestLiveReplyTextLongMessageSameAsThePrevious(t *testing.T) {
 		stamped(toolRow("msg_1"), ago(57*time.Second)),
 		stamped(resultRow("p1"), ago(56*time.Second)),
 	)
-	if got := liveReplyText("s", lines, time.Now()); got == "" {
+	if got := liveReplyText("s", lines, time.Now(), true); got == "" {
 		t.Fatal("got nothing before m2's row landed, want its tail")
 	}
 	lines = append(lines, later(textRow("msg_2", long.String())))
-	if got := liveReplyText("s", lines, time.Now()); got != "" {
+	if got := liveReplyText("s", lines, time.Now(), true); got != "" {
 		t.Fatalf("got %d bytes after m2's row landed, want nothing", len(got))
 	}
 }
@@ -275,10 +275,10 @@ func TestLiveReplyTextStaleWithoutFinal(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	flush("p1", "m2", 0, false, "cut off\n")
 	lines := afterFirstTool()
-	if got := liveReplyText("s", lines, time.Now()); got != "cut off" {
+	if got := liveReplyText("s", lines, time.Now(), true); got != "cut off" {
 		t.Fatalf("got %q, want it while still recent", got)
 	}
-	if got := liveReplyText("s", lines, time.Now().Add(liveStaleAfter+time.Second)); got != "" {
+	if got := liveReplyText("s", lines, time.Now().Add(liveStaleAfter+time.Second), true); got != "" {
 		t.Fatalf("got %q after %v of silence, want nothing", got, liveStaleAfter)
 	}
 }
@@ -295,14 +295,14 @@ func TestLiveReplyTextMemoryTags(t *testing.T) {
 			lines = rowsOf(promptRow("p1"), textRow("msg_1", "Reading the file."), toolRow("msg_1"), resultRow("p1"))
 		}
 		lines = append(lines, []byte(textRow("msg_2", stored)))
-		if got := liveReplyText("s", lines, time.Now()); got != "" {
+		if got := liveReplyText("s", lines, time.Now(), true); got != "" {
 			t.Fatalf("times=%v: got %q while the row (with memory tags) has landed, want nothing", withTimes, got)
 		}
 	}
 	// Finished and past its own tool call: only the boundary can find its rows.
 	flush("p1", "m2", 1, true, "")
 	lines := append(afterFirstTool(), later(textRow("msg_2", stored)), later(toolRow("msg_2")), later(resultRow("p1")))
-	if got := liveReplyText("s", lines, time.Now()); got != "" {
+	if got := liveReplyText("s", lines, time.Now(), true); got != "" {
 		t.Fatalf("got %q for the finished message, want nothing", got)
 	}
 }
@@ -314,11 +314,42 @@ func TestLiveReplyTextFinalMessageExpires(t *testing.T) {
 	flush("p1", "m2", 0, false, "shown\n")
 	flush("p1", "m2", 1, true, "tail")
 	lines := afterFirstTool()
-	if got := liveReplyText("s", lines, time.Now()); got != "shown\ntail" {
+	if got := liveReplyText("s", lines, time.Now(), true); got != "shown\ntail" {
 		t.Fatalf("right after the final flush got %q, want the whole message", got)
 	}
-	if got := liveReplyText("s", lines, time.Now().Add(liveFinalGrace+time.Second)); got != "" {
+	if got := liveReplyText("s", lines, time.Now().Add(liveFinalGrace+time.Second), true); got != "" {
 		t.Fatalf("past the grace period got %q, want nothing", got)
+	}
+}
+
+// Stop runs before claude appends the final assistant row, so an idle poll can fall between
+// them. The streamed text bridges that gap, and goes once the row is in the transcript.
+func TestLiveReplyTextBridgesStopBeforeTheFinalRow(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	flush("p1", "m2", 0, false, "All done:\n")
+	flush("p1", "m2", 1, true, "the tests pass.")
+	lines := afterFirstTool()
+	if got := liveReplyText("s", lines, time.Now(), false); got != "All done:\nthe tests pass." {
+		t.Fatalf("idle before the final row got %q, want the streamed reply", got)
+	}
+	lines = append(lines, later(textRow("msg_2", "All done:\nthe tests pass.")))
+	if got := liveReplyText("s", lines, time.Now(), false); got != "" {
+		t.Fatalf("idle after the final row got %q, want nothing", got)
+	}
+}
+
+// At rest the streamed text is bounded by the last flush, not by liveStaleAfter: a turn
+// interrupted before its final flush must not hold an in-progress block on an idle session.
+func TestLiveReplyTextIdleOnlyRightAfterTheLastFlush(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	flush("p1", "m2", 0, false, "cut off\n")
+	lines := afterFirstTool()
+	later := time.Now().Add(liveFinalGrace + time.Second)
+	if got := liveReplyText("s", lines, later, false); got != "" {
+		t.Fatalf("idle %v after the last flush got %q, want nothing", liveFinalGrace, got)
+	}
+	if got := liveReplyText("s", lines, later, true); got != "cut off" {
+		t.Fatalf("working got %q, want it until liveStaleAfter", got)
 	}
 }
 
@@ -330,7 +361,7 @@ func TestLiveReplyTextKeepsTheTailOfALongReply(t *testing.T) {
 		flush("p1", "m1", i, false, line)
 	}
 	flush("p1", "m1", n, false, "last line\n")
-	got := liveReplyText("s", rowsOf(promptRow("p1")), time.Now())
+	got := liveReplyText("s", rowsOf(promptRow("p1")), time.Now(), true)
 	if !strings.HasPrefix(got, "…\n") || !strings.HasSuffix(got, "last line") {
 		t.Fatalf("got %q…%q, want an ellipsis then the tail", got[:12], got[len(got)-12:])
 	}
@@ -344,7 +375,7 @@ func TestLiveReplyTextKeepsTheTailOfALongReply(t *testing.T) {
 
 func TestLiveReplyTextNothingStreamed(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	if got := liveReplyText("s", rowsOf(promptRow("p1")), time.Now()); got != "" {
+	if got := liveReplyText("s", rowsOf(promptRow("p1")), time.Now(), true); got != "" {
 		t.Fatalf("got %q with no live-text file", got)
 	}
 }
@@ -369,9 +400,21 @@ func TestMessageDisplayHookFeedsLiveText(t *testing.T) {
 	if _, ok := status.ReadLiveText(sid); !ok {
 		t.Fatal("PostToolUse's working dropped the streamed reply mid-turn")
 	}
+	// Stop keeps it: claude runs Stop before it appends the final row, and the reply has to
+	// stay on screen until that row lands.
 	feedStatusHook(t, "idle", `{"session_id":"`+sid+`"}`)
+	if _, ok := status.ReadLiveText(sid); !ok {
+		t.Fatal("Stop dropped the streamed reply before its transcript row could land")
+	}
+	// A queued prompt fires UserPromptSubmit mid-turn under the same prompt_id: still kept.
+	feedStatusHook(t, "working", `{"session_id":"`+sid+`","hook_event_name":"UserPromptSubmit","prompt_id":"p1","prompt":"also"}`)
+	if _, ok := status.ReadLiveText(sid); !ok {
+		t.Fatal("a queued prompt of the same turn dropped the streamed reply")
+	}
+	// The next turn's prompt drops it.
+	feedStatusHook(t, "working", `{"session_id":"`+sid+`","hook_event_name":"UserPromptSubmit","prompt_id":"p2","prompt":"next"}`)
 	if _, ok := status.ReadLiveText(sid); ok {
-		t.Fatal("the streamed reply survived the end of the turn")
+		t.Fatal("the streamed reply survived into the next turn")
 	}
 }
 

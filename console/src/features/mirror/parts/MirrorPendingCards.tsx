@@ -153,9 +153,11 @@ export function MirrorPendingCards({
           translate={translate}
         />
       )}
-      {liveText && busy && !pending && !pendingPlan && !pendingPerm && !pendingApproval && (
+      {liveText && !pending && !pendingPlan && !pendingPerm && !pendingApproval && (
         // Above the typing row: that row keeps the stop button and says the turn is still
-        // running; this is what the turn has written so far.
+        // running; this is what the turn has written so far. Not gated on busy: the text is
+        // held past the turn's end until its transcript row lands (liveHold.ts), and a turn
+        // that used tools is not busy by then.
         <LiveReplyCard
           agentName={agentName}
           text={liveText}

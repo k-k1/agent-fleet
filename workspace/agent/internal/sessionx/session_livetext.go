@@ -17,7 +17,8 @@ import (
 
 const (
 	// liveFinalGrace is how long a finished message may still be shown from the live-text
-	// file. Its transcript row lands within milliseconds of the last flush, before or after it.
+	// file, and how long after its last flush an ended turn may still show one. Its transcript
+	// row lands close to the last flush, before or after it (measured: up to 0.5 s after Stop).
 	// The grace covers a row the text match in liveReplyText misses (claude strips memory tags
 	// from what it displays but stores them), which would otherwise duplicate the reply until
 	// the turn ends.
@@ -32,16 +33,19 @@ const (
 )
 
 // wantsLiveReply: the in-progress reply goes out only when the Console asks for it (its
-// per-kind "stream replies" setting) and only while a turn runs. With the setting off the
-// response is exactly what it always was, and at rest the field is absent, so an unchanged
-// poll stays byte-identical (TestUnchangedPollIsByteIdentical).
+// per-kind "stream replies" setting) and only while a turn runs or has just ended. With the
+// setting off the response is exactly what it always was. Idle is included because claude runs
+// Stop before it appends the turn's final assistant row; liveReplyText bounds what an idle poll
+// may show, so at rest the field is absent and an unchanged poll stays byte-identical
+// (TestUnchangedPollIsByteIdentical).
 func wantsLiveReply(r *http.Request, alive bool, state string) bool {
-	return alive && state == "working" && r.URL.Query().Get("live") == "1"
+	return alive && (state == "working" || state == "idle") && r.URL.Query().Get("live") == "1"
 }
 
 // liveReplyText is the streamed text of the newest assistant message that the transcript does
-// not show yet, or "". lines is the whole transcript.
-func liveReplyText(sid string, lines [][]byte, now time.Time) string {
+// not show yet, or "". lines is the whole transcript. working is false once the turn has ended:
+// then only a message flushed within liveFinalGrace is shown, the gap until its row lands.
+func liveReplyText(sid string, lines [][]byte, now time.Time, working bool) string {
 	lr, ok := status.ReadLiveText(sid)
 	if !ok {
 		return ""
@@ -49,6 +53,10 @@ func liveReplyText(sid string, lines [][]byte, now time.Time) string {
 	current := status.ReadLivePrompt(sid)
 	switch {
 	case lr.Final && now.Sub(lr.FinalAt) > liveFinalGrace:
+		return ""
+	case !working && now.Sub(lr.LastAt) > liveFinalGrace:
+		// A turn that ended without its final flush (interrupted) would otherwise stay on screen
+		// at rest until liveStaleAfter.
 		return ""
 	case !lr.Final && now.Sub(lr.LastAt) > liveStaleAfter:
 		return ""
