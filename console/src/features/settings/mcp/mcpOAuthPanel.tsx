@@ -253,7 +253,8 @@ export function OAuthPanel({ flow }: { flow: OAuthFlow }) {
   if (!flow.active) return null;
   const state = status?.state ?? "not_signed_in";
   const signedIn = state === "connected" || state === "sign_in_again" || state === "needs_more_permission";
-  const again = state === "sign_in_again" || state === "needs_more_permission";
+  const again = state === "sign_in_again";
+  const stepUp = stepUpRequest(status);
   return (
     <div className={"mcp-oauth mcp-oauth-" + state} data-testid="mcp-oauth-panel" data-state={state}>
       <div className="mcp-oauth-head">
@@ -262,13 +263,19 @@ export function OAuthPanel({ flow }: { flow: OAuthFlow }) {
           {/* Connected needs no Sign in beside "Connected": Disconnect, then Sign in, switches account. */}
           {state === "needs_more_permission" && (
             // The relay recorded the scope the server challenged for; the new sign-in asks for it
-            // on top of what is already granted, since the new grant replaces the old one.
-            <button className="primary mcp-btn" disabled={busy} onClick={() => void flow.signIn({ scope: stepUpRequest(status) })}>
+            // on top of what is already granted, since the new grant replaces the old one. It is the
+            // only sign-in button here: the Agent adds the recorded scope to a scope-less start
+            // itself, so a plain Sign in again would be the same request without this check.
+            <button
+              className="primary mcp-btn"
+              disabled={busy || !stepUp.ok}
+              onClick={() => stepUp.ok && void flow.signIn({ scope: stepUp.scope })}
+            >
               {tr("mcp.oauth_btn_stepup")}
             </button>
           )}
-          {state !== "connected" && (
-            <button className={state === "needs_more_permission" ? "ghost mcp-btn" : "primary mcp-btn"} disabled={busy} onClick={() => void flow.signIn()}>
+          {state !== "connected" && state !== "needs_more_permission" && (
+            <button className="primary mcp-btn" disabled={busy} onClick={() => void flow.signIn()}>
               {again ? tr("mcp.oauth_btn_signin_again") : tr("mcp.oauth_btn_signin")}
             </button>
           )}
@@ -298,6 +305,11 @@ export function OAuthPanel({ flow }: { flow: OAuthFlow }) {
       {state === "sign_in_again" && <p className="ps-note ps-note-warn">{tr("mcp.oauth_again_note")}</p>}
       {state === "needs_more_permission" && (
         <p className="ps-note ps-note-warn">{tr("mcp.oauth_step_note", { scope: status?.stepUpScope || "?" })}</p>
+      )}
+      {state === "needs_more_permission" && !stepUp.ok && (
+        <p className="ps-note ps-note-warn" data-testid="mcp-oauth-stepup-refused">
+          {tr(stepUp.reason === "too_long" ? "mcp.oauth_stepup_too_long" : "mcp.oauth_stepup_invalid")}
+        </p>
       )}
       {signedIn && status?.issuer && <div className="muted mono">{tr("mcp.oauth_as", { issuer: status.issuer })}</div>}
       {signedIn && status?.registration && (

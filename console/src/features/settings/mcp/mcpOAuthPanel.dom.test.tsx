@@ -168,7 +168,6 @@ describe("row states", () => {
     await mount(row());
     expect(text()).toContain("More permission needed");
     expect(text()).toContain("mcp:write");
-    expect(button("Sign in again")).toBeTruthy();
   });
 
   it("needs more permission: re-authorize asks for the challenged scope on top of the granted ones", async () => {
@@ -183,12 +182,26 @@ describe("row states", () => {
     expect(tab.location.href).toContain("https://as.example.com/authorize");
   });
 
-  it("plain Sign in again does not carry a scope", async () => {
+  it("needs more permission has one sign-in button: the Agent adds the challenged scope to a plain start too", async () => {
     setStatus({ state: "needs_more_permission", stepUpScope: "mcp:write", scopes: ["mcp:read"] });
-    replies["POST api/mcp-servers/mcp-1/oauth/start"] = () => ({ authorize_url: "https://as.example.com/a", issuer: "https://as.example.com" });
     await mount(row());
-    await click(button("Sign in again"));
-    expect(calls.find((c) => c.path.endsWith("/oauth/start"))!.body.scope).toBeUndefined();
+    expect(button("Sign in again")).toBeUndefined();
+    expect(button("Sign in")).toBeUndefined();
+    expect(button("Approve the extra permission")).toBeTruthy();
+    expect(button("Disconnect")).toBeTruthy();
+  });
+
+  it("a union the Agent would refuse is not sent: the reason is shown and the button is off", async () => {
+    setStatus({ state: "needs_more_permission", stepUpScope: "b".repeat(600), scopes: ["a".repeat(600)] });
+    await mount(row());
+    expect(host!.querySelector('[data-testid="mcp-oauth-stepup-refused"]')!.textContent).toContain("too long");
+    expect(button("Approve the extra permission")!.disabled).toBe(true);
+    await click(button("Approve the extra permission"));
+    expect(calls.some((c) => c.path.endsWith("/oauth/start"))).toBe(false);
+    act(() => root!.unmount());
+    host!.remove();
+    await mount(row(), "ja");
+    expect(text()).toContain("長すぎて");
   });
 
   it("renders in Japanese", async () => {

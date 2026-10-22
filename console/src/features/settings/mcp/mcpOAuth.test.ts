@@ -13,11 +13,26 @@ import { tools as en } from "../../../lib/i18n/locales/en/tools.ts";
 
 describe("stepUpRequest", () => {
   it("adds the challenged scope to what is granted, once", () => {
-    expect(stepUpRequest({ scopes: ["mcp:read", "offline_access"], stepUpScope: "mcp:write mcp:read" })).toBe("mcp:read offline_access mcp:write");
+    expect(stepUpRequest({ scopes: ["mcp:read", "offline_access"], stepUpScope: "mcp:write mcp:read" })).toEqual({
+      ok: true, scope: "mcp:read offline_access mcp:write",
+    });
   });
   it("copes with nothing granted or nothing challenged", () => {
-    expect(stepUpRequest({ scopes: undefined, stepUpScope: "mcp:write" })).toBe("mcp:write");
-    expect(stepUpRequest(null)).toBe("");
+    expect(stepUpRequest({ scopes: undefined, stepUpScope: "mcp:write" })).toEqual({ ok: true, scope: "mcp:write" });
+    expect(stepUpRequest(null)).toEqual({ ok: true, scope: "" });
+  });
+  it("accepts exactly the Agent's limit and refuses one more, without trimming", () => {
+    const at = stepUpRequest({ scopes: ["a".repeat(1000)], stepUpScope: "b".repeat(1023 - 1000) });
+    expect(at.ok && at.scope.length).toBe(1024);
+    expect(stepUpRequest({ scopes: ["a".repeat(1000)], stepUpScope: "b".repeat(1024 - 1000) })).toEqual({ ok: false, reason: "too_long" });
+  });
+  it("refuses a union that is too long although each side is valid on its own", () => {
+    expect(stepUpRequest({ scopes: ["a".repeat(600)], stepUpScope: "b".repeat(600) })).toEqual({ ok: false, reason: "too_long" });
+  });
+  it("refuses characters the Agent refuses", () => {
+    for (const bad of ['a"b', "a\\b", "caf\u00e9"]) {
+      expect(stepUpRequest({ scopes: [], stepUpScope: bad })).toEqual({ ok: false, reason: "invalid" });
+    }
   });
 });
 

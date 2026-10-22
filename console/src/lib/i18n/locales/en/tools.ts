@@ -33,6 +33,8 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mcp.oauth_relay_note_not_signed_in": "Sessions and assistants get this server once you sign in.",
   "mcp.oauth_relay_note_connected": "Sessions and assistants use this sign-in through a relay in your workspace, from the next session you start. The token is never written into an agent's configuration.",
   "mcp.oauth_relay_note_again": "Sessions you start now do not get this server until you sign in again. A running session gets an error telling it to sign in again here.",
+  "mcp.oauth_stepup_too_long": "The permissions to request (the ones already granted plus the new one) are too long for one sign-in. Disconnect and sign in again to start over.",
+  "mcp.oauth_stepup_invalid": "The permission the server asked for contains characters a sign-in cannot request. Disconnect and sign in again to start over.",
   "mcp.oauth_btn_stepup": "Approve the extra permission",
   "mcp.oauth_state_sign_in_again": "Sign in again",
   "mcp.oauth_state_needs_more_permission": "More permission needed",
