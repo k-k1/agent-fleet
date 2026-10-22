@@ -301,14 +301,23 @@ func TestContractSharedServeTerminalSessions(t *testing.T) {
 		return m
 	}
 	pane := func(name string) string { return tmuxx.CapturePane(session.TmuxName(name)) }
+	// A TUI cold-starting next to the serve and its siblings is slow on a loaded host (the whole
+	// test measured 90-100 s with every core busy, against 35-60 s idle), so the wait is generous; a TUI that never
+	// comes up fails with the captures of every pane, not only the one waited on.
 	waitPane := func(name, want string) {
 		t.Helper()
-		for d := time.Now().Add(40 * time.Second); time.Now().Before(d); time.Sleep(300 * time.Millisecond) {
+		for d := time.Now().Add(90 * time.Second); time.Now().Before(d); time.Sleep(300 * time.Millisecond) {
 			if strings.Contains(pane(name), want) {
 				return
 			}
 		}
-		t.Fatalf("pane %s never showed %q:\n%s", name, want, pane(name))
+		var panes strings.Builder
+		for _, pn := range []string{"t1", "t2", "t3", "t4"} {
+			if c := pane(pn); c != "" {
+				fmt.Fprintf(&panes, "--- pane %s ---\n%s\n", pn, c)
+			}
+		}
+		t.Fatalf("pane %s never showed %q (serve generation %d):\n%s", name, want, Serve().Generation(), panes.String())
 	}
 
 	api := func(method, path string, in, out any) error {
@@ -499,12 +508,14 @@ func TestContractSharedServeTerminalSessions(t *testing.T) {
 			t.Fatalf("%s: tagged sessions %v, slot %s", n, got, first[n])
 		}
 	}
+	sentOne := map[string]int{}
 	for _, n := range names {
-		typeInto(n, "ENVQ one", "Enter")
+		sentOne[n] = submitPrompt(n, first[n], "ENVQ one")
 	}
 	for _, n := range names {
 		o := waitShell(first[n], 1)
 		wantEnv(n+" first", o[0], n)
+		wantSentOnce(n, first[n], "ENVQ one", sentOne[n])
 	}
 	// Every request of those turns (the model's two steps, the title) carried its own session's
 	// engine token — never the workspace-scoped one the server's environment holds.
@@ -585,9 +596,10 @@ func TestContractSharedServeTerminalSessions(t *testing.T) {
 	if got := sessionsOf(session.UUID(work, "t4")); len(got) != 1 || got[0] != forkSes {
 		t.Errorf("the fork is not tagged for t4: %v", got)
 	}
-	typeInto("t4", "ENVQ forked", "Enter")
+	wForked := submitPrompt("t4", forkSes, "ENVQ forked")
 	fo := waitShell(forkSes, 2) // the copied turn of t2 plus the new one
 	wantEnv("t4 fork", fo[len(fo)-1], "t4")
+	wantSentOnce("t4", forkSes, "ENVQ forked", wForked)
 
 	// --- resume keeps identity: relaunching a stopped slot attaches to ITS session ---
 	_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(session.TmuxName("t3"))).Run()
@@ -596,9 +608,10 @@ func TestContractSharedServeTerminalSessions(t *testing.T) {
 	if got := sids.Read(session.UUID(work, "t3")); got != first["t3"] {
 		t.Errorf("t3 resumed %s, want its own %s", got, first["t3"])
 	}
-	typeInto("t3", "ENVQ resumed", "Enter")
+	wResumed := submitPrompt("t3", first["t3"], "ENVQ resumed")
 	ro := waitShell(first["t3"], 2)
 	wantEnv("t3 resume", ro[1], "t3")
+	wantSentOnce("t3", first["t3"], "ENVQ resumed", wResumed)
 
 	// --- RSS ---
 	rss := func(label string, pids []int) {
