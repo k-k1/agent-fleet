@@ -426,7 +426,7 @@ func TestContractSharedServeTerminalSessions(t *testing.T) {
 			if n >= want {
 				return want
 			}
-			if n >= 0 && !strings.Contains(pane(name), text) {
+			if !strings.Contains(pane(name), text) {
 				return want // the prompt was cleared: the turn is on its way, waitShell reports if it is not
 			}
 			t.Logf("%s: %q still in the prompt after %v, pressing Enter again (try %d)", name, text, statusWaitTimeout, try)
