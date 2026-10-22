@@ -936,6 +936,22 @@ type runtimeSlotTerminator interface {
 	TerminateQuarantinedSlot(ctx context.Context, instanceID string) (reason string, err error)
 }
 
+// runtimeSlotForceStopper is the pool's "stop a wedged slot" action (#2449), a claim of its
+// own for the reason runtimeSlotTerminator is.
+type runtimeSlotForceStopper interface {
+	ForceStopSlot(ctx context.Context, instanceID string, overrideHealthy bool) (runtime.SlotForceStop, error)
+}
+
+// forceStopSlot stops one wedged slot (it stays in service); ok=false on every runtime with no pool.
+func (m *manager) forceStopSlot(ctx context.Context, instanceID string, overrideHealthy bool) (runtime.SlotForceStop, bool, error) {
+	p, ok := m.rtFactory.(runtimeSlotForceStopper)
+	if !ok {
+		return runtime.SlotForceStop{}, false, nil
+	}
+	res, err := p.ForceStopSlot(ctx, instanceID, overrideHealthy)
+	return res, true, err
+}
+
 // runtimeSlotReserver marks a slot for replacement at its workspace's next Start (#1473).
 type runtimeSlotReserver interface {
 	ReserveSlotReplacement(ctx context.Context, instanceID string, reserve, onlyOutdated bool) (runtime.SlotReservation, error)

@@ -137,6 +137,19 @@ type Slot = {
   /** Reserved for replacement: its workspace's next start moves to a new slot (#1473). */
   replace_reserved?: boolean;
   replace_reserved_at?: string;
+  /** A task asked to stop on this slot whose agent has not reported it (#2447), read only for
+   *  slots whose agent is not connected. Cleared by starting the instance once. */
+  stopping_task?: string;
+  stopping_task_minutes?: number;
+};
+/** The reply to a force-stop (#2449). */
+type ForceStopReply = {
+  instance_id: string;
+  cancelled_commands: number;
+  cancel_failed: number;
+  forced: boolean;
+  force_after_sec: number;
+  stopping_task?: string;
 };
 type BulkReply = {
   reserved?: { instance_id: string }[];
@@ -186,6 +199,11 @@ export function PoolView() {
   const [reserveErr, setReserveErr] = useState("");
   const [reserving, setReserving] = useState("");
   const [bulk, setBulk] = useState<Slot[] | null>(null);
+  // Force-stop of a wedged slot (#2449): the slot being confirmed, and the last result, which
+  // stays on the page because the 10s poll would wipe a toast.
+  const [stopping, setStopping] = useState<Slot | null>(null);
+  const [stopErr, setStopErr] = useState("");
+  const [stopped, setStopped] = useState<ForceStopReply | null>(null);
   const [bulkErr, setBulkErr] = useState("");
   const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
@@ -224,6 +242,24 @@ export function PoolView() {
       return;
     }
     setKilling(null);
+    poll();
+  };
+
+  const forceStop = async (s: Slot) => {
+    setBusy(true);
+    setStopErr("");
+    const d: ForceStopReply & { error?: ApiError } = await apiJSON(
+      "api/admin/ec2-pool/slots/" + encodeURIComponent(s.instance_id) + "/force-stop",
+      "POST",
+      {},
+    );
+    setBusy(false);
+    if (d?.error) {
+      setStopErr(tr("pool.force_stop_failed", { msg: errText(d.error) }));
+      return;
+    }
+    setStopping(null);
+    setStopped(d);
     poll();
   };
 
@@ -344,6 +380,21 @@ export function PoolView() {
           </div>
         )}
         {reserveErr && <p className="warn-text">{reserveErr}</p>}
+        {stopped && (
+          <p className="admin-hint" role="status">
+            {tr("pool.force_stop_done", {
+              id: stopped.instance_id,
+              cancelled: String(stopped.cancelled_commands),
+              failed: stopped.cancel_failed ? tr("pool.force_stop_cancel_failed", { n: String(stopped.cancel_failed) }) : "",
+              how: stopped.forced
+                ? tr("pool.force_stop_forced")
+                : tr("pool.force_stop_graceful", { min: String(Math.round((stopped.force_after_sec || 0) / 60)) }),
+            })}
+            {stopped.stopping_task && (
+              <span className="warn-text"> {tr("pool.stopping_task_title", { status: stopped.stopping_task })}</span>
+            )}
+          </p>
+        )}
         {slots.length === 0 ? (
           <p className="muted">{tr("pool.no_slots")}</p>
         ) : (
@@ -380,6 +431,14 @@ export function PoolView() {
                       {!s.quarantined && s.state === "running" && !s.registered && (
                         <span className="muted"> {tr("pool.not_registered")}</span>
                       )}
+                      {s.stopping_task && (
+                        <span
+                          className="pool-badge outdated"
+                          title={tr("pool.stopping_task_title", { status: s.stopping_task })}
+                        >
+                          {tr("pool.stopping_task", { status: s.stopping_task, min: String(s.stopping_task_minutes ?? 0) })}
+                        </span>
+                      )}
                     </td>
                     <td className="mono">
                       {s.workspace || <span className="muted">{tr("pool.free_slot")}</span>}
@@ -413,6 +472,14 @@ export function PoolView() {
                           {tr("pool.terminate")}
                         </Button>
                       ) : (
+                        <>
+                        {/* Only for a slot that is up but whose agent is not connected: that is
+                            the wedged shape, and the server refuses a healthy one anyway. */}
+                        {!s.registered && (s.state === "running" || s.state === "pending" || s.state === "stopping") && (
+                          <Button small variant="danger" onClick={() => { setStopErr(""); setStopping(s); }}>
+                            {tr("pool.force_stop")}
+                          </Button>
+                        )}
                         <Button
                           small
                           disabled={reserving === s.instance_id}
@@ -421,6 +488,7 @@ export function PoolView() {
                         >
                           {tr(s.replace_reserved ? "pool.reserve_cancel" : "pool.reserve")}
                         </Button>
+                        </>
                       )}
                     </td>
                   </tr>
@@ -552,6 +620,21 @@ export function PoolView() {
             ))}
           </ul>
           {bulkErr && <p className="warn-text">{bulkErr}</p>}
+        </ConfirmDialog>
+      )}
+
+      {stopping && (
+        <ConfirmDialog
+          title={tr("pool.force_stop_title", { id: stopping.instance_id })}
+          confirmLabel={tr("pool.force_stop")}
+          danger
+          busy={busy}
+          onCancel={() => setStopping(null)}
+          onConfirm={() => forceStop(stopping)}
+        >
+          <p>{tr("pool.force_stop_body")}</p>
+          {stopping.workspace && <p className="mono">{tr("pool.force_stop_occupant", { ws: stopping.workspace })}</p>}
+          {stopErr && <p className="warn-text">{stopErr}</p>}
         </ConfirmDialog>
       )}
 

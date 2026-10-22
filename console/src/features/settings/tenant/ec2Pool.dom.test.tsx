@@ -472,4 +472,71 @@ describe("replacement reservations", () => {
     await act(async () => rowOf("i-done")!.querySelector("button")!.click());
     expect(api).toHaveBeenCalledWith("api/admin/ec2-pool/slots/i-done/replace", { method: "DELETE" });
   });
+
+  // #2449: a wedged slot (running, agent not connected) gets "Stop (force)"; a healthy or
+  // sleeping one does not, and the server's answer is shown rather than toasted away.
+  describe("force-stop of a wedged slot", () => {
+    const WEDGED = {
+      ...POOL,
+      slots: [
+        ...POOL.slots,
+        { instance_id: "i-wedge", instance_type: "m7i.large", az: "ap-northeast-1a", state: "running", registered: false, workspace: "af-ws-acme-dave", idle_minutes: 0 },
+        { instance_id: "i-dark", instance_type: "m7i.large", az: "ap-northeast-1a", state: "stopped", registered: false, workspace: "af-ws-acme-erin", idle_minutes: 9, stopping_task: "STOPPING", stopping_task_minutes: 42 },
+      ],
+    };
+    const buttonsIn = (row: Element | null) => Array.from(row?.querySelectorAll("button") || []);
+    const rowOf = (id: string) =>
+      Array.from(host!.querySelectorAll("tbody tr")).find((tr) => tr.textContent?.includes(id)) || null;
+    const labelsIn = (id: string) => buttonsIn(rowOf(id)).map((b) => b.textContent);
+
+    it("offers it on a running slot whose agent is not connected only", async () => {
+      api.mockResolvedValue(WEDGED);
+      await mount();
+      expect(labelsIn("i-wedge")).toContain("停止（強制）");
+      expect(labelsIn("i-hot")).not.toContain("停止（強制）");
+      expect(labelsIn("i-zzz")).not.toContain("停止（強制）");
+    });
+
+    it("shows a task still stopping on a stopped slot, with the guidance", async () => {
+      api.mockResolvedValue(WEDGED);
+      await mount();
+      const row = rowOf("i-dark");
+      expect(row?.textContent).toContain("STOPPING");
+      expect(row?.textContent).toContain("42");
+      expect(row?.querySelector(".pool-badge")?.getAttribute("title")).toContain("インスタンスを起動");
+    });
+
+    it("asks first, naming the occupant, then posts and keeps the result on screen", async () => {
+      api.mockResolvedValue(WEDGED);
+      apiJSON.mockResolvedValue({ instance_id: "i-wedge", cancelled_commands: 2, cancel_failed: 0, forced: false, force_after_sec: 180, stopping_task: "STOPPING" });
+      await mount();
+      await act(async () => buttonsIn(rowOf("i-wedge")).find((b) => b.textContent === "停止（強制）")!.click());
+      expect(document.querySelector(".confirm")?.textContent).toContain("af-ws-acme-dave");
+      expect(apiJSON).not.toHaveBeenCalled();
+      const actions = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
+      await act(async () => actions[actions.length - 1].click());
+      expect(apiJSON).toHaveBeenCalledWith("api/admin/ec2-pool/slots/i-wedge/force-stop", "POST", {});
+      expect(host!.querySelector("[role=status]")?.textContent).toContain("2");
+      expect(host!.querySelector("[role=status]")?.textContent).toContain("3 分");
+    });
+
+    it("keeps Stop (force) on a slot that is still stopping, for the second press", async () => {
+      api.mockResolvedValue({
+        ...POOL,
+        slots: [...POOL.slots, { instance_id: "i-going", instance_type: "m7i.large", az: "ap-northeast-1a", state: "stopping", registered: false, workspace: "af-ws-acme-dave", idle_minutes: 0 }],
+      });
+      await mount();
+      expect(buttonsIn(rowOf("i-going")).map((b) => b.textContent)).toContain("停止（強制）");
+    });
+
+    it("keeps the server's refusal in the dialog", async () => {
+      api.mockResolvedValue(WEDGED);
+      apiJSON.mockResolvedValue({ error: { code: "slot_healthy", message: "slot is healthy" } });
+      await mount();
+      await act(async () => buttonsIn(rowOf("i-wedge")).find((b) => b.textContent === "停止（強制）")!.click());
+      const actions = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
+      await act(async () => actions[actions.length - 1].click());
+      expect(document.querySelector(".confirm")?.textContent).toContain("slot is healthy");
+    });
+  });
 });

@@ -178,6 +178,46 @@ the protection is larger than the reserve. This is a launch template change: it 
 `$Latest`, and existing slots pick it up only through the replacement above. It needs cgroup v2
 (the Amazon Linux 2023 default).
 
+### ecs-ec2: stopping a wedged slot
+
+A slot can be **wedged**: the EC2 instance is running and its status checks are `ok`, but its ECS
+agent is not connected, SSM no longer answers, and a member's home may still be attached. Every Start
+for that member then waits or fails. The Slots tab shows such a row as running with **(not accepting
+tasks yet)**, and gives it **Stop (force)** (super_admin).
+
+1. **Settings → Admin → Slots → Stop (force)** on the row, then confirm. The dialog names the
+   workspace on the slot. The server refuses a slot whose ECS agent is connected **and** whose SSM is
+   online (`slot_healthy`): the action is for slots that do not answer. A stopped slot
+   (`slot_not_running`) and a quarantined one (`slot_quarantined`) are refused too. The API takes
+   `{"override_healthy": true}` for the rare case where you must stop a healthy one; the Console never
+   sends it, and a workspace running on that slot is stopped with it.
+2. It ends the member's Start on that slot (their workspace reads as stopped), cancels the commands the
+   Control Plane queued on the instance (a pending umount or mount is what holds the home's lock), and
+   stops the instance. The stop is a normal shutdown first, so the kernel can unmount the home; if the
+   instance has not stopped after 3 minutes the Control Plane repeats it with Force, and pressing the
+   button again while the instance is `stopping` forces it at once. A timer never acts on an instance
+   that has been started again since.
+3. **The slot is not quarantined and the home stays on it.** Once the slot row shows asleep
+   (stopped), the member's next Start wakes this same slot through the ordinary path. **Wait for
+   that**: a Start made while the instance is still `stopping` gives up waiting after about two minutes
+   and leaves the workspace on "starting" until its claim expires; if that happens, stop the workspace
+   and start it again. The reboot clears whatever thrashed, and the slot's ECS agent
+   reconnects and reports a task that was still `STOPPING` on it. Keeping a box as evidence is what
+   quarantine is for, and routing dark slots there is a separate change (#2450).
+4. The result is on the page after the call (commands cancelled, whether Force was used) and in the audit
+   log (`pool.slot_force_stop`, with the workspace, both health signals and the counts).
+   The Control Plane role needs `ssm:ListCommands`, `ssm:CancelCommand` and
+   `ssm:DescribeInstanceInformation` for this (statement `SsmSlotForceStop` in `20-platform`):
+   **update the `20-platform` stack before using the button**, or the health check fails with
+   AccessDenied and the action cannot run.
+
+**A task still STOPPING.** When a slot's agent cannot report a stop, ECS keeps the workspace's previous
+task as `STOPPING`, and the member's next Start waits for it (the service allows one task at a time). The
+row shows **task STOPPING N min** for a slot whose agent is not connected. Once the instance is running
+again its agent reports the stop, which is what the member's next Start after a force-stop does; you can
+also start the instance from the EC2 console. The Control Plane does not do that on its own.
+Not verified against a live AWS account.
+
 ## Installing into an air-gapped network
 
 You can install onto a host with no external network access. Since

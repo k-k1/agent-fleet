@@ -152,3 +152,69 @@ func orDash(s string) string {
 	}
 	return s
 }
+
+// ForceStopPoolSlot (POST /api/admin/ec2-pool/slots/{id}/force-stop, optional body
+// {"override_healthy": true}) stops a wedged slot (#2449). super_admin
+// only: slots are shared across tenants, so no tenant_admin owns one.
+//
+// The adapter decides, from AWS, what may be stopped. Its refusals are answers rather than
+// faults: an id that is not a slot of this pool (404), a slot that is already stopped (409),
+// a quarantined slot (409 slot_quarantined), and a slot whose agents both answer (409 slot_healthy — only an API caller sets the
+// override; the Console never does). Whatever the adapter managed before failing is
+// kept in the audit line, since the occupant's Start may be ended with the stop still unsent.
+func (a Admin) ForceStopPoolSlot(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "instance id required"})
+		return
+	}
+	if !a.cp.HasSlotPool() {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_pool", "this runtime has no slot pool"})
+		return
+	}
+	var body struct {
+		OverrideHealthy bool `json:"override_healthy"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
+			return
+		}
+	}
+	in, ok := a.beginIrreversible(w, r, store.AuditLog{
+		TenantID: "", ActorKind: "admin", ActorID: ident.ID,
+		Action: "pool.slot_force_stop", Target: id,
+	})
+	if !ok {
+		return
+	}
+	res, ok, err := a.cp.ForceStopSlot(r.Context(), id, body.OverrideHealthy)
+	if !ok {
+		refuseIrreversible(w, r, in, &APIError{http.StatusNotFound, "no_pool", "this runtime has no slot pool"})
+		return
+	}
+	detail := fmt.Sprintf("workspace=%s state=%s agent_connected=%t ssm_online=%t override=%t cancelled=%d cancel_failed=%d forced=%t",
+		orDash(res.Workspace), orDash(res.PreviousState), res.AgentConnected, res.SSMOnline, body.OverrideHealthy,
+		res.CancelledCommands, res.CancelFailed, res.Forced)
+	var aerr *APIError
+	switch {
+	case err == nil:
+	case errors.Is(err, runtime.ErrSlotNotFound):
+		aerr = &APIError{http.StatusNotFound, "no_such_slot", err.Error()}
+	case errors.Is(err, runtime.ErrSlotNotRunning):
+		aerr = &APIError{http.StatusConflict, "slot_not_running", err.Error()}
+	case errors.Is(err, runtime.ErrSlotQuarantined):
+		aerr = &APIError{http.StatusConflict, "slot_quarantined", err.Error()}
+	case errors.Is(err, runtime.ErrSlotHealthy):
+		aerr = &APIError{http.StatusConflict, "slot_healthy", err.Error()}
+	default:
+		aerr = internalErr(err)
+	}
+	if aerr != nil {
+		in.Done(r.Context(), "error "+aerr.Code+": "+aerr.Message+" ("+detail+")", aerr.Status)
+		writeAPIErr(w, aerr)
+		return
+	}
+	in.Done(r.Context(), detail, http.StatusOK)
+	writeJSON(w, http.StatusOK, res)
+}

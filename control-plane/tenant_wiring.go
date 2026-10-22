@@ -132,6 +132,10 @@ func (a adminAPI) terminatePoolSlot(w http.ResponseWriter, r *http.Request, iden
 	a.srv().TerminatePoolSlot(w, r, ident)
 }
 
+func (a adminAPI) forceStopPoolSlot(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	a.srv().ForceStopPoolSlot(w, r, ident)
+}
+
 func (a adminAPI) reservePoolSlot(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	a.srv().ReservePoolSlot(w, r, ident)
 }
@@ -312,6 +316,10 @@ func (d cpTenant) HasSlotPool() bool {
 
 func (d cpTenant) TerminateQuarantinedSlot(ctx context.Context, instanceID string) (string, bool, error) {
 	return d.m.terminateQuarantinedSlot(ctx, instanceID)
+}
+
+func (d cpTenant) ForceStopSlot(ctx context.Context, instanceID string, overrideHealthy bool) (runtime.SlotForceStop, bool, error) {
+	return d.m.forceStopSlot(ctx, instanceID, overrideHealthy)
 }
 
 func (d cpTenant) ReserveSlotReplacement(ctx context.Context, instanceID string, reserve, onlyOutdated bool) (runtime.SlotReservation, bool, error) {
