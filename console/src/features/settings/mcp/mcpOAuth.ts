@@ -44,6 +44,29 @@ export function normalizeStatus(raw: any, serverId: string): OAuthStatus {
   };
 }
 
+// The Agent's validScope (workspace/agent/internal/mcpreg/oauth_flow.go): at most this many
+// characters, every scope token printable ASCII without a double quote or a backslash.
+export const MAX_SCOPE_LEN = 1024;
+const SCOPE_TOKEN_RE = /^[\x21\x23-\x5b\x5d-\x7e]+$/;
+
+export type StepUp = { ok: true; scope: string } | { ok: false; reason: "too_long" | "invalid" };
+
+// stepUpRequest is the scope a step-up sign-in asks for: the one the server challenged for (the
+// relay recorded it) together with what is already granted. The new grant replaces the old one,
+// so asking for the challenged scope alone would drop the permissions the server already has.
+// The union is checked as the Agent will check it, and refused rather than trimmed: dropping a
+// scope would change either the permissions the member has or the one the server asked for.
+export function stepUpRequest(st: Pick<OAuthStatus, "scopes" | "stepUpScope"> | null | undefined): StepUp {
+  const out: string[] = [];
+  for (const sc of [...(st?.scopes ?? []), ...(st?.stepUpScope ?? "").split(/\s+/)]) {
+    if (!sc || out.includes(sc)) continue;
+    if (!SCOPE_TOKEN_RE.test(sc)) return { ok: false, reason: "invalid" };
+    out.push(sc);
+  }
+  const scope = out.join(" ");
+  return scope.length > MAX_SCOPE_LEN ? { ok: false, reason: "too_long" } : { ok: true, scope };
+}
+
 // safeAuthorizeUrl: the browser is sent only to an http(s) URL. The value comes from the
 // Agent's discovery of a server the member registered; a javascript: or data: URL must never
 // be navigated to whatever produced it.

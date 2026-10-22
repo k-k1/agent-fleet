@@ -137,11 +137,19 @@ describe("row states", () => {
     expect(text()).toContain("dynamic registration (DCR)");
   });
 
-  it("says sessions do not use the sign-in yet, whatever the state", async () => {
-    for (const state of ["not_signed_in", "connected"]) {
+  it("says what sessions get in each state, and no longer that the relay is missing", async () => {
+    const want: Record<string, string> = {
+      not_signed_in: "once you sign in",
+      connected: "through a relay in your workspace",
+      sign_in_again: "do not get this server until you sign in again",
+      needs_more_permission: "through a relay in your workspace",
+    };
+    for (const [state, phrase] of Object.entries(want)) {
       setStatus({ state });
       await mount(row());
-      expect(host!.querySelector('[data-testid="mcp-oauth-relay-note"]')!.textContent).toContain("not handed this server yet");
+      const note = host!.querySelector('[data-testid="mcp-oauth-relay-note"]')!.textContent!;
+      expect(note).toContain(phrase);
+      expect(note).not.toContain("ships");
       act(() => root!.unmount());
       host!.remove();
     }
@@ -160,7 +168,57 @@ describe("row states", () => {
     await mount(row());
     expect(text()).toContain("More permission needed");
     expect(text()).toContain("mcp:write");
-    expect(button("Sign in again")).toBeTruthy();
+  });
+
+  it("needs more permission: re-authorize asks for the challenged scope on top of the granted ones", async () => {
+    setStatus({ state: "needs_more_permission", stepUpScope: "mcp:write", scopes: ["mcp:read", "offline_access"] });
+    replies["POST api/mcp-servers/mcp-1/oauth/start"] = () => ({
+      authorize_url: "https://as.example.com/authorize?x=1", issuer: "https://as.example.com", registration: "dcr",
+    });
+    await mount(row());
+    await click(button("Approve the extra permission"));
+    const start = calls.find((c) => c.path.endsWith("/oauth/start"))!;
+    expect(start.body.scope).toBe("mcp:read offline_access mcp:write");
+    expect(tab.location.href).toContain("https://as.example.com/authorize");
+  });
+
+  it("needs more permission has one sign-in button: the Agent adds the challenged scope to a plain start too", async () => {
+    setStatus({ state: "needs_more_permission", stepUpScope: "mcp:write", scopes: ["mcp:read"] });
+    await mount(row());
+    expect(button("Sign in again")).toBeUndefined();
+    expect(button("Sign in")).toBeUndefined();
+    expect(button("Approve the extra permission")).toBeTruthy();
+    expect(button("Disconnect")).toBeTruthy();
+  });
+
+  it("the DCR retry on a needs-more-permission row obeys the same scope check", async () => {
+    const start = () => calls.some((c) => c.path.endsWith("/oauth/start"));
+    replies["POST api/mcp-servers/mcp-1/oauth/start"] = () => ({ authorize_url: "https://as.example.com/a", issuer: "https://as.example.com" });
+    // Refused union with an unfinished CIMD sign-in: the retry must not start anything.
+    setStatus({ state: "needs_more_permission", stepUpScope: "b".repeat(600), scopes: ["a".repeat(600)], pendingRegistration: "cimd" });
+    await mount(row());
+    await click(button("Retry with dynamic registration"));
+    expect(start()).toBe(false);
+    act(() => root!.unmount());
+    host!.remove();
+    // A valid union: the retry carries the registration and the checked scope.
+    setStatus({ state: "needs_more_permission", stepUpScope: "mcp:write", scopes: ["mcp:read"], pendingRegistration: "cimd" });
+    await mount(row());
+    await click(button("Retry with dynamic registration"));
+    expect(calls.find((c) => c.path.endsWith("/oauth/start"))!.body).toEqual({ registration: "dcr", scope: "mcp:read mcp:write" });
+  });
+
+  it("a union the Agent would refuse is not sent: the reason is shown and the button is off", async () => {
+    setStatus({ state: "needs_more_permission", stepUpScope: "b".repeat(600), scopes: ["a".repeat(600)] });
+    await mount(row());
+    expect(host!.querySelector('[data-testid="mcp-oauth-stepup-refused"]')!.textContent).toContain("too long");
+    expect(button("Approve the extra permission")!.disabled).toBe(true);
+    await click(button("Approve the extra permission"));
+    expect(calls.some((c) => c.path.endsWith("/oauth/start"))).toBe(false);
+    act(() => root!.unmount());
+    host!.remove();
+    await mount(row(), "ja");
+    expect(text()).toContain("長すぎて");
   });
 
   it("renders in Japanese", async () => {
@@ -168,6 +226,12 @@ describe("row states", () => {
     await mount(row(), "ja");
     expect(text()).toContain("再サインインが必要");
     expect(button("もう一度サインイン")).toBeTruthy();
+  });
+
+  it("renders the step-up button in Japanese", async () => {
+    setStatus({ state: "needs_more_permission", stepUpScope: "mcp:write" });
+    await mount(row(), "ja");
+    expect(button("追加の権限を許可する")).toBeTruthy();
   });
 
   it("shows nothing for a server that is not OAuth, and asks the Agent nothing", async () => {
