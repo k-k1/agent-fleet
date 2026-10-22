@@ -27,6 +27,9 @@ type MCPClientOAuthStore interface {
 	// any number of concurrent callers exactly one gets ok. Expired rows are deleted too and
 	// return ok=false with the row, so the caller can tell "expired" from "never existed".
 	TakeMCPClientOAuthState(ctx context.Context, state string, now int64) (s MCPClientOAuthState, ok, expired bool, err error)
+	// DeleteMCPClientOAuthStates drops the sign-ins in flight of one membership for one server
+	// (a disconnect must not be undone by a tab still open at the authorization server).
+	DeleteMCPClientOAuthStates(ctx context.Context, membershipID, serverID string) error
 }
 
 func mcpClientOAuthHash(state string) string {
@@ -65,4 +68,9 @@ func (s *SQL) TakeMCPClientOAuthState(ctx context.Context, state string, now int
 		return st, false, true, nil
 	}
 	return st, true, false, nil
+}
+
+func (s *SQL) DeleteMCPClientOAuthStates(ctx context.Context, membershipID, serverID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM mcp_client_oauth_state WHERE membership_id=? AND server_id=?`, membershipID, serverID)
+	return err
 }

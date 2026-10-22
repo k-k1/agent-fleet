@@ -278,7 +278,7 @@ func discoverForSignIn(ctx context.Context, d ServerDef) (OAuthReport, bool) {
 			for k, v := range d.Headers {
 				req.Header.Set(k, v)
 			}
-			if resp, err := (&http.Client{}).Do(req); err == nil {
+			if resp, err := sameOriginClient(d.URL).Do(req); err == nil {
 				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxProbeBody))
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusUnauthorized {
@@ -288,6 +288,18 @@ func discoverForSignIn(ctx context.Context, d ServerDef) (OAuthReport, bool) {
 		}
 	}
 	return probeOAuth(ctx, d.URL, hdr)
+}
+
+// sameOriginClient follows redirects only within the origin of raw: the definition's static
+// headers go with the request and must not follow a redirect to another host.
+func sameOriginClient(raw string) *http.Client {
+	start, _ := url.Parse(raw)
+	return &http.Client{CheckRedirect: func(r *http.Request, via []*http.Request) error {
+		if start == nil || r.URL.Scheme != start.Scheme || r.URL.Host != start.Host || len(via) > maxMetadataHops {
+			return http.ErrUseLastResponse
+		}
+		return nil
+	}}
 }
 
 func endpointUsable(raw string) bool {
@@ -707,6 +719,8 @@ func postToken(ctx context.Context, endpoint string, form url.Values, clientID, 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 	if basic {
+		// Both parts are form-encoded first (RFC 6749 §2.3.1), so a secret holding ":" or "%"
+		// survives an AS that decodes them.
 		req.SetBasicAuth(url.QueryEscape(clientID), url.QueryEscape(secret))
 	}
 	resp, err := oauthHTTP().Do(req)

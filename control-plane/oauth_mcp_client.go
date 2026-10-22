@@ -369,13 +369,13 @@ func (c config) handleMCPClientOAuthCallback(w http.ResponseWriter, r *http.Requ
 		body["error"] = "authorization_error" // the AS's own text is not forwarded
 		body["code"] = ""
 	}
-	forwarded = true
 	status, raw, err := c.callAgentOAuth(r.Context(), rs, http.MethodPost,
 		"/mcp-servers/"+url.PathEscape(st.ServerID)+"/oauth/callback", body)
 	if err != nil {
-		fail("workspace_unreachable")
+		fail("workspace_unreachable") // the Agent saw nothing, so it is still told to drop the verifier
 		return
 	}
+	forwarded = true
 	if status != http.StatusOK {
 		var e agentOAuthError
 		reason := "failed"
@@ -468,6 +468,10 @@ func (c config) handleMCPClientOAuthDisconnect(w http.ResponseWriter, r *http.Re
 	if err := json.Unmarshal(raw, &out); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadGateway, "agent_error", "unreadable answer from the workspace agent"})
 		return
+	}
+	// A sign-in still open in a browser tab must not complete after the disconnect.
+	if err := c.mgr.store.DeleteMCPClientOAuthStates(r.Context(), res.mv.MembershipID, serverID); err != nil {
+		log.Printf("mcp client oauth: drop open sign-ins: %v", err)
 	}
 	if out.HadGrant {
 		reason := ""

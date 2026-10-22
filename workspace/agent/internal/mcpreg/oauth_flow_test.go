@@ -920,3 +920,40 @@ func TestSecretsNeverReachTheSourceOfLogs(t *testing.T) {
 		}
 	}
 }
+
+// A sign-in still open in a browser tab must not bring a disconnected grant back.
+func TestDisconnectInvalidatesAnOpenSignIn(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, nil)
+	id := registerServer(t, f)
+	req := startReq(nil)
+	mustStart(t, id, req)
+	if _, err := DisconnectOAuth(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	_, err := CompleteOAuth(context.Background(), id, CompleteRequest{State: req.State, Code: "c", Iss: f.url("")})
+	wantCode(t, err, OAuthErrStateUnknown)
+	if f.tokenCount() != 0 {
+		t.Error("the code reached the token endpoint after the disconnect")
+	}
+}
+
+// The static headers of a definition go to the server only: a redirect to another origin is
+// not followed with them.
+func TestSignInDiscoveryDoesNotFollowACrossOriginRedirectWithHeaders(t *testing.T) {
+	var leaked bool
+	evil := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Static") != "" {
+			leaked = true
+		}
+	}))
+	defer evil.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, evil.URL, http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+	discoverForSignIn(context.Background(), ServerDef{Transport: TransportHTTP, URL: srv.URL + "/mcp", Headers: map[string]string{"X-Static": "secret"}})
+	if leaked {
+		t.Error("a static header followed a redirect to another origin")
+	}
+}

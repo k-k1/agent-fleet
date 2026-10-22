@@ -332,6 +332,7 @@ type DisconnectResult struct {
 // then deletes it locally whatever the answer.
 func DisconnectOAuth(ctx context.Context, serverID string) (DisconnectResult, error) {
 	res := DisconnectResult{ServerID: serverID}
+	dropPendingFor(serverID)
 	g := currentGrant(serverID)
 	if g == nil {
 		return res, nil
@@ -358,6 +359,8 @@ func DisconnectOAuth(ctx context.Context, serverID string) (DisconnectResult, er
 	rotatedMu.Lock()
 	delete(rotated, key)
 	rotatedMu.Unlock()
+	// A sign-in still open in a browser tab must not bring the grant back after this.
+	dropPendingFor(serverID)
 	err := updateSecrets(func(s *secrets.Data) error {
 		kept := s.MCPOAuth[:0]
 		for _, o := range s.MCPOAuth {
@@ -369,6 +372,16 @@ func DisconnectOAuth(ctx context.Context, serverID string) (DisconnectResult, er
 		return nil
 	})
 	return res, err
+}
+
+func dropPendingFor(serverID string) {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	for k, p := range pendingAuths {
+		if p.serverID == serverID {
+			delete(pendingAuths, k)
+		}
+	}
 }
 
 func revokeToken(ctx context.Context, g secrets.MCPOAuthGrant, token, hint string) bool {
@@ -390,7 +403,7 @@ func revokeToken(ctx context.Context, g secrets.MCPOAuthGrant, token, hint strin
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if g.TokenAuth == "basic" {
-		req.SetBasicAuth(url.QueryEscape(g.ClientID), url.QueryEscape(g.ClientSecret))
+		req.SetBasicAuth(url.QueryEscape(g.ClientID), url.QueryEscape(g.ClientSecret)) // form-encoded, RFC 6749 §2.3.1
 	}
 	resp, err := oauthHTTP().Do(req)
 	if err != nil {

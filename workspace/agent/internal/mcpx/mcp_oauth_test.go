@@ -39,11 +39,11 @@ func TestOAuthRoutesAnswerForUnknownServers(t *testing.T) {
 			t.Errorf("%s: %d %s", name, w.Code, w.Body.String())
 		}
 	}
-	r := httptest.NewRequest(http.MethodPost, "/mcp-servers/mcp-nope/oauth/start", strings.NewReader(`{"state":"short"}`))
+	r := httptest.NewRequest(http.MethodPost, "/mcp-servers/mcp-nope/oauth/start", strings.NewReader(`{"state":"state-0123456789abcdef","redirectUri":"https://af.example.com/oauth2/mcp/callback"}`))
 	r.SetPathValue("id", "mcp-nope")
 	w := httptest.NewRecorder()
 	HandleOAuthStart(w, r)
-	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "bad_request") {
+	if w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "mcp_not_found") {
 		t.Errorf("start: %d %s", w.Code, w.Body.String())
 	}
 }

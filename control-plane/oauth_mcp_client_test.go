@@ -665,3 +665,27 @@ func TestMCPClientOAuthCallbackRechecksTheSessionIsStillAllowed(t *testing.T) {
 		}
 	}
 }
+
+// A disconnect ends the sign-ins still open for that server: a tab left at the authorization
+// server must not complete afterwards.
+func TestMCPClientOAuthDisconnectEndsOpenSignIns(t *testing.T) {
+	f := newMCPClientFixture(t)
+	_, state := f.start(t, f.alice, ``)
+	r := httptest.NewRequest(http.MethodDelete, "/api/mcp-servers/mcp-1/oauth", nil)
+	r.SetPathValue("id", "mcp-1")
+	r = f.asMember(r, f.alice)
+	w := httptest.NewRecorder()
+	newAgentProxyAPI(f.cfg.mgr).withResolved(f.cfg.handleMCPClientOAuthDisconnect)(w, r)
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	loc := mcpClientLocation(t, f.callback(t, f.alice.session, "code=c&state="+state))
+	if loc.Query().Get("reason") != "state_unknown" {
+		t.Errorf("Location = %s", loc)
+	}
+	for _, c := range f.alice.agent.callsTo("/oauth/callback") {
+		if c.body["code"] != "" {
+			t.Error("the code was forwarded after the disconnect")
+		}
+	}
+}
