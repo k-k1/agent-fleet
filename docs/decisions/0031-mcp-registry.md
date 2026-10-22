@@ -164,3 +164,12 @@ using the builtin ids as they are, so **saved assistants need no migration**.
   separation** (a property already stated in `custodian.go`). The real isolation rests on the store's
   `tenant_id` scoping and on the distribution surface resolving token → membership → tenant. True
   per-tenant revocation is a matter for the Vault/KMS adapter and is not changed here.
+
+## Note (2026-10-22): the masked wire form keeps a Bearer scheme
+
+The Console's server form now has an Authentication selector (None / Bearer token / Custom headers).
+To open a stored row in the right editor, a header value of the form `Bearer <secret>` is masked as
+`Bearer ***` (the scheme as stored, any case) instead of `***`, on both the agent (`mcpreg.Masked`) and
+the CP tenant path (`maskHeaders`); every other value, a non-Bearer `Authorization` included, still
+masks as `***`. Both merge functions treat an incoming `Bearer ***` like `***`: keep the stored value, or
+drop it when nothing is stored. Nothing else on the wire changed, and decisions 1–8 stand.

@@ -393,7 +393,7 @@ func SetTenantSecrets(id string, incoming map[string]string) error {
 		if _, ok := def.Headers[k]; !ok {
 			continue // not a header this tenant server asks for
 		}
-		if v == MaskedValue {
+		if isMaskedHeader(v) {
 			if old, ok := stored[k]; ok {
 				next[k] = old
 			}

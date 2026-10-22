@@ -52,8 +52,10 @@ export function ServerRow({
   return (
     <li className={"ssm-item mcp-item" + (s.enabled ? "" : " off")}>
       <div className="ssm-item-head">
-        <span className="ssm-alias mcp-name">{s.name}</span>
-        {s.label && <span className="mcp-label">{s.label}</span>}
+        <span className={"ssm-alias mcp-title" + (s.label ? "" : " mcp-name")} title={s.label ? s.name : undefined}>
+          {s.label || s.name}
+        </span>
+        {s.label && <span className="mcp-id">{s.name}</span>}
         <OriginBadge origin={s.origin} />
         <span className="mcp-transport">{s.transport === "stdio" ? tr("mcp.tp_stdio") : tr("mcp.tp_http")}</span>
         <span className="mcp-actions">

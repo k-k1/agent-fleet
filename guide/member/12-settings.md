@@ -340,12 +340,25 @@ Connect a Discord / Slack bot to follow session progress in chat and drive it by
 This is where you add tools Agent Fleet does not ship with, such as an internal wiki, an issue tracker, a document
 search.
 
-- **Transport**: **stdio** (run an executable inside the workspace: command, arguments, environment variables)
-  or **remote (HTTP)** (URL and headers). **Environment variable and header values are stored encrypted**. The
-  configuration handed to the CLI that runs the server can still contain them (in an owner-only file in your
-  home, never in a repository). Put credentials in a header, not in the URL.
-- **Targets**: whether it is handed to **assistants**, **sessions**, or both (clear both and the entry stays
-  but goes nowhere). Leave **target agents** empty to cover every agent.
+- **Display name and ID**: the form starts with the **display name**, which the list shows prominently. The
+  **ID** (the server key written into every CLI's configuration) is filled in from the display name, or from the
+  URL host when the display name has nothing a key can use (a Japanese-only name, say), until you type in the ID
+  field yourself. Editing an existing server never changes its ID.
+- **Transport**: **remote (HTTP)** (URL) is the default; **stdio** (run an executable inside the workspace:
+  command, arguments, environment variables) is the second choice. A plain `http://` URL to a host other than
+  this machine is accepted but gets a warning, because the token and every request would travel unencrypted.
+  **Environment variable and header values are stored encrypted**. The configuration handed to the CLI that
+  runs the server can still contain them (in an owner-only file in your home, never in a repository). Put
+  credentials in the authentication, not in the URL.
+- **Authentication** (remote servers): **None**; **Bearer token**, one field that is sent as
+  `Authorization: Bearer <token>` (a pasted `Bearer ` prefix is removed); or **Custom headers**, any name/value
+  pairs. A saved token is never shown again: the field reads "Saved", leaving it blank keeps the token, and typing
+  a new one replaces it. A server whose stored `Authorization` is anything other than a Bearer token (`Token ...`,
+  say) opens as Custom headers.
+- **Advanced** (closed by default): **targets** (**assistants**, **sessions**, or both; clear both and the entry
+  stays but goes nowhere), **target agents** (empty covers every agent), the **timeout** and **enabled**. The
+  summary line beside the title shows the current values, for example "Assistant, Sessions · Every agent · default
+  timeout". It opens by itself when you edit a server whose values are not the defaults.
 - **Connection test**: reports the server name, version, tool count and round-trip time.
   If the server answers that it needs an **OAuth sign-in**, the test says so instead of reporting a failure
   and lists what it found: the authorization server, how a client can register with it, and the scopes.

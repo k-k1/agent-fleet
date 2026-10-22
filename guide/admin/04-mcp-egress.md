@@ -40,6 +40,14 @@ attributed to a person, or any token with real power, choose "each member enters
 credential". Distributed that way, the member's card offers an **"Enter values"** flow (until
 they do, the server is not used for them).
 
+The form is the same shape as a member's own: **display name** first (the **ID** is filled in
+from it until you edit it), then the URL, the credential choice above, and an
+**Authentication** selector: **None**, **Bearer token** or **Custom headers**. With "each member
+enters the credential", Bearer token distributes only the `Authorization` header name and the member
+is offered a token-only field; otherwise your token is stored encrypted and shown back as
+`Bearer ***`. Targets, target agents and **enabled** sit in a closed **Advanced** section whose
+summary line shows the current values; it opens by itself for a distribution that differs from the defaults.
+
 ### When it takes effect
 
 - Each member's workspace **fetches the distribution every 5 minutes**.

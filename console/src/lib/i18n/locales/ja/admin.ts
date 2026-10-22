@@ -705,12 +705,12 @@ export const admin = {
   "admin.mcp_secret_policy": "資格情報の扱い",
   "admin.mcp_user_secret": "認証の値は各メンバーが入力する",
   "admin.mcp_headers_hint":
-    "値は暗号化保存され、全メンバーへ配布されます。Bearer トークンは Authorization ヘッダに入れてください。",
+    "値は暗号化保存され、全メンバーへ配布されます。ふつうの Bearer トークンなら、認証で「Bearer トークン」を選んでください。",
   "admin.mcp_headers_names_hint":
     "配布するのはヘッダ名だけです。値は各メンバーが自分のワークスペースで入力します。",
   "admin.mcp_user_secret_hint":
     "配布するのは接続先とヘッダ名だけになり、値は各メンバーが自分のワークスペースに入力します。ここで値を配布すると、そのトークンは全メンバーのコンテナ内で平文で読めます。",
-  "admin.mcp_url_hint": "MCP エンドポイントの URL です。資格情報は URL ではなくヘッダに入れてください。",
+  "admin.mcp_url_hint": "MCP エンドポイントの URL です。資格情報は URL ではなく、下の認証に入れてください。",
   "admin.mcp_enabled_hint": "無効にすると定義は残したまま、どのメンバーにも配布されなくなります。",
   "admin.mcp_restart_note":
     "各メンバーのワークスペースは 5 分ごとに取得します。反映されるのは、その後に起動したセッションからです。",

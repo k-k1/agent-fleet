@@ -240,22 +240,47 @@ func HasSecrets(d ServerDef) bool {
 	return false
 }
 
+// bearerRe matches a header value that is an HTTP Bearer credential: the scheme (any
+// case) and a non-empty secret. The scheme survives masking so the Console can tell a
+// Bearer token from any other Authorization value and open the right editor.
+var bearerRe = regexp.MustCompile(`(?i)^(bearer)[ \t]+(\S.*)$`)
+
+// maskedBearerRe matches what maskValue produces for a Bearer credential, in any scheme
+// case. Only a header VALUE is ever compared against it, never an env value.
+var maskedBearerRe = regexp.MustCompile(`(?i)^bearer[ \t]+\*\*\*$`)
+
+// maskValue is the wire form of one stored header value: `Bearer ***` for a Bearer
+// credential (the scheme is kept as stored), MaskedValue for everything else.
+func maskValue(v string) string {
+	if m := bearerRe.FindStringSubmatch(v); m != nil {
+		return m[1] + " " + MaskedValue
+	}
+	return MaskedValue
+}
+
+// isMaskedHeader reports whether an incoming header value is a stand-in for the stored
+// one rather than a new secret.
+func isMaskedHeader(v string) bool {
+	return v == MaskedValue || maskedBearerRe.MatchString(v)
+}
+
 // Masked returns a copy safe to send to the Console: every secret VALUE becomes
 // MaskedValue while the keys stay visible (the user needs to see which headers and
-// env vars a server carries).
+// env vars a server carries). A header holding a Bearer credential keeps its scheme
+// (`Bearer ***`); every other value, including a non-Bearer Authorization, is `***`.
 func Masked(d ServerDef) ServerDef {
 	out := d
-	out.Env = maskMap(d.Env)
-	out.Headers = maskMap(d.Headers)
+	out.Env = maskMap(d.Env, func(string) string { return MaskedValue })
+	out.Headers = maskMap(d.Headers, maskValue)
 	return out
 }
 
-// maskMap replaces every value with MaskedValue — EXCEPT an empty one, which stays
+// maskMap replaces every value with mask(value) — EXCEPT an empty one, which stays
 // empty. An absent value is not a secret being withheld, it is a value nobody has
 // entered yet (a tenant user_secret definition arrives exactly like this), and masking it
 // would tell the Console a credential is stored when none is, leaving the member no way
 // to see that they are the ones who have to supply it.
-func maskMap(m map[string]string) map[string]string {
+func maskMap(m map[string]string, mask func(string) string) map[string]string {
 	if len(m) == 0 {
 		return nil
 	}
@@ -265,33 +290,34 @@ func maskMap(m map[string]string) map[string]string {
 			out[k] = ""
 			continue
 		}
-		out[k] = MaskedValue
+		out[k] = mask(v)
 	}
 	return out
 }
 
 // MergeSecrets resolves an incoming (masked) definition against the stored one: any
-// value still equal to MaskedValue keeps the stored value, everything else is taken
-// as a new secret. A key absent from the incoming map is a deletion.
+// value still equal to MaskedValue (a header may also send `Bearer ***`) keeps the
+// stored value, everything else is taken as a new secret. A key absent from the
+// incoming map is a deletion.
 func MergeSecrets(incoming, stored ServerDef) ServerDef {
 	out := incoming
-	out.Env = mergeMap(incoming.Env, stored.Env)
-	out.Headers = mergeMap(incoming.Headers, stored.Headers)
+	out.Env = mergeMap(incoming.Env, stored.Env, func(v string) bool { return v == MaskedValue })
+	out.Headers = mergeMap(incoming.Headers, stored.Headers, isMaskedHeader)
 	return out
 }
 
-func mergeMap(incoming, stored map[string]string) map[string]string {
+func mergeMap(incoming, stored map[string]string, masked func(string) bool) map[string]string {
 	if len(incoming) == 0 {
 		return nil
 	}
 	out := make(map[string]string, len(incoming))
 	for k, v := range incoming {
-		if v == MaskedValue {
+		if masked(v) {
 			if old, ok := stored[k]; ok {
 				out[k] = old
 				continue
 			}
-			// Masked with nothing behind it: drop rather than store a literal "***",
+			// Masked with nothing behind it: drop rather than store a literal "***" (or "Bearer ***"),
 			// which would otherwise be sent to the server as a real credential.
 			continue
 		}
@@ -316,7 +342,7 @@ func Ready(d ServerDef) bool {
 			return false
 		}
 		for _, v := range d.Headers {
-			if strings.TrimSpace(v) == "" || v == MaskedValue {
+			if strings.TrimSpace(v) == "" || isMaskedHeader(v) {
 				return false
 			}
 		}

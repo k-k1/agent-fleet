@@ -189,6 +189,13 @@ func TestUserSecretIsHeldBackUntilFilled(t *testing.T) {
 	if got, _ := Get(d.ID); got.Headers["Authorization"] != "Bearer mine" {
 		t.Fatalf("the value was lost in the masked round trip: %q", got.Headers["Authorization"])
 	}
+	// The scheme-preserving mask is the same stand-in.
+	if err := SetTenantSecrets(d.ID, map[string]string{"Authorization": "Bearer ***"}); err != nil {
+		t.Fatalf("SetTenantSecrets bearer mask: %v", err)
+	}
+	if got, _ := Get(d.ID); got.Headers["Authorization"] != "Bearer mine" {
+		t.Fatalf("the value was lost in the Bearer-masked round trip: %q", got.Headers["Authorization"])
+	}
 	// An empty string means "clear it".
 	if err := SetTenantSecrets(d.ID, map[string]string{"Authorization": ""}); err != nil {
 		t.Fatalf("SetTenantSecrets clear: %v", err)
