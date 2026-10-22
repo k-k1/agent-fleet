@@ -1038,7 +1038,12 @@ func adminTools() []mcpTool {
 		for k, v := range extra {
 			props[k] = v
 		}
-		return map[string]any{"type": "object", "properties": props, "required": required}
+		schema := map[string]any{"type": "object", "properties": props}
+		// A nil slice marshals as "required": null, which strict clients reject.
+		if len(required) > 0 {
+			schema["required"] = required
+		}
+		return schema
 	}
 	empty := map[string]any{"type": "object", "properties": map[string]any{}}
 	return []mcpTool{
