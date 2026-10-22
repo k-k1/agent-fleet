@@ -81,9 +81,9 @@ value you set is not the value in force, look one layer out.
 ## Deployment variables
 
 Set before the Control Plane starts. The annotated list is
-`deploy/compose/.env.example`, which stays the
-source of truth for defaults; these are the ones that decide the shape of everything
-else:
+`deploy/compose/.env.example`, which covers most variables but not all (the preview and
+development sign-in ones below are not in it); these are the ones that decide the shape of
+everything else:
 
 | Variable | Decides |
 |---|---|
@@ -96,6 +96,9 @@ else:
 | `SUPER_ADMIN_EMAILS` | who is a deployment administrator |
 | `PUBLIC_BASE_URL` | the address people reach, and what OAuth callbacks are built from |
 | `WS_MEMORY` | the default memory ceiling for a workspace |
+| `AF_PREVIEW_DOMAIN` | the parent domain of the preview subdomains (`<workspace>-<port>.<domain>`), which needs a wildcard DNS name and certificate for it. Unset means no preview subdomains, only the Console's own preview path. Set `AF_COOKIE_SECRET` and `PUBLIC_BASE_URL` with it: the Control Plane warns at start when either is missing, because preview sign-in then cannot be trusted or has no Console to return to |
+| `AF_DEV_IDP` | `0` locks the development sign-in (an OIDC provider on the Console's origin that a member's app on a preview subdomain can sign in with in place of Google) off, whatever the deployment administrator's switch says. Unset leaves it to that switch, which is on by default. It is only served where `AF_PREVIEW_DOMAIN` and `PUBLIC_BASE_URL` are set |
+| `AF_SESSION_IDLE_TIMEOUT`, `AF_WS_IDLE_TIMEOUT`, `AF_BACKGROUND_HOLD_MAX`, `AF_WORKSPACE_START_DEADLINE` | when idle sessions and Workspaces are stopped; the defaults are in [limits](limits.md#set-by-the-deployment) and the behaviour in [operate/03](../operate/03-run.md#idle-stop-and-force-stop) |
 
 ## Status
 

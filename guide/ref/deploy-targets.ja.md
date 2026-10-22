@@ -22,11 +22,18 @@ updated: "2026-10"
 
 > **プレビュー。** `kubernetes` ランタイムはプレビューです。GKE Standard クラスタで受け入れを確かめて
 > いますが、本番での利用はまだサポートしていません。既知の制約：このランタイムにはブラウザ機能が
-> ありません（ブラウザペインもヘッドレス Chromium もなし）。GKE では、始める前にリージョンの SSD
-> ディスク割り当てが配備に足りている必要があります（[Preconditions](../../deploy/kubernetes/README.md#preconditions)）。まだ測って
-> いるもの：ロードバランサが WebSocket を 24 時間で切ることが 1 日続くセッションにどう響くか
-> （[7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)）。GKE で実測した費用は
-> [The bill](../../deploy/kubernetes/README.md#the-bill) にあります。
+> ありません（ブラウザペインもヘッドレス Chromium もなし）。ホームは 1 つのゾーンに置かれ、
+> バックアップされません。GKE では、始める前にリージョンの SSD ディスク割り当てが配備に足りている
+> 必要があります（[Preconditions](../../deploy/kubernetes/README.md#preconditions)）。ロードバランサは、
+> タイムアウトの設定にかかわらず、使用中の WebSocket を 24 時間で切ります
+> （[7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)）。切れたあとの
+> ターミナルペインには `[disconnected]` と出て、クリックするかタブに戻るとつなぎ直します。シェルと
+> その tmux セッションは動き続けます。これは接続を強制的に切って確かめたもので、1 日待って確かめた
+> ものではありません。GKE で実測した費用は [The bill](../../deploy/kubernetes/README.md#the-bill) に
+> あります。試用や 1 チームで使うなら、`deploy/gcp/gke` の小さなゾーン構成（1 ゾーン、データベースの
+> 待機系なし）で、請求先アカウントの GKE の無料枠が残っていれば既定の構成の床のおよそ半分になります（ほかの
+> クラスタが無料枠を使っていれば、およそ 3 分の 2）。請求額ではなく、実測した単価からの見積もりです。数字と
+> その前提は `deploy/gcp/gke/README.md` の「Small profile」にあります。
 
 `docker` は `local`、`ecs` は `aws`、`native` は `wsl`、`kubernetes` は `k8s` という綴りでも通ります。
 それ以外は**起動時に失敗**します（知らないうちに docker に切り替わったりしません）。
@@ -147,8 +154,8 @@ EFS にあるので、ほかの形態と同じく残る。ただし、その中�
 
 ## 手順の在り処
 
-[operate/](../operate/README.ja.md) を書き上げるまで、runbook は「操作する対象の隣」に
-あります。
+コマンドは runbook にあり、runbook は操作する対象の隣に置いています。何が起きるか、何に気をつけるかは
+[operate/](../operate/README.ja.md) で説明します。
 
 | 形態 | runbook |
 |---|---|

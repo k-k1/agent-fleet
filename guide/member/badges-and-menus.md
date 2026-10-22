@@ -76,6 +76,10 @@ are not attributed to any session.
 
 `●N` is the number of running sessions in that working copy; a plain number is the count of stopped sessions.
 A collapsed parent repository also aggregates the sessions of the worktrees under it.
+A collapsed row whose own folder has sessions shows a second line with the newest running one (its
+agent icon, title and state), or the newest stopped one, dimmed, when none is running; the `●N`
+tooltip names the other running ones. Sessions of the worktrees under it are only counted, not
+named. Clicking the row still just expands it.
 
 ## The engine pills in the top bar
 
@@ -159,7 +163,10 @@ a new one in the same place. When there is no working folder, resume, handoff, a
 
 You can open the commit graph, open the folder, commit changes, switch branches, copy the branch name,
 Fast-Forward (on a worktree, **"Fast-forward from origin/develop"** or similar), project settings, **Share…**, **assignment to
-a working set**, launch a session by kind, **stop the sessions below**, and delete the working copy. Stop
+a working set**, launch a session by kind, **stop the sessions below**, and delete the working copy. **"Archived sessions of this working copy"** opens the archive
+filtered to it. A Subversion working copy has **"Update (svn)"**, **"Clean up lock (svn)"**,
+**"Re-authenticate (svn)"**, **"Show log"** and **"Local changes"** instead of the Git items
+([03](03-code.md#subversion-svn-repositories)). Stop
 opens a modal listing the sessions running in that row and in the copies nested under it
 ([02](02-sessions.md#stopping-and-tidying-up-sessions)); Delete opens a confirmation
 that also lists the copies nested under that row
@@ -169,15 +176,23 @@ Ctrl / ⌘+click or middle-click opens the commit graph in a new pane.
 ### Files / folders
 
 You can create a new file, create a new folder, copy the name, copy the relative path, rename, and delete.
-Files additionally show "Open in reader" and "Download"; **folders show "Download as zip"** (the same
+Files additionally show "Open in reader", "Download", "Translate with assistant" and "Summarize with assistant"; **folders show "Download as zip"** (the same
 item is in the gallery's folder menu; a touch long-press on a folder row opens the menu;
 [04](04-files.md#download-a-folder-as-zip)). Folders and **image files** also show
 **"Open in gallery"** (from an image it opens the parent folder's gallery with that image enlarged; see
 [04](04-files.md#image-gallery)). A file that sits in a folder (not directly in home) also shows **"Open the folder"**
-(shows the parent folder in the file list) and, unless it is an image, **"Open folder in gallery"**. The same
-items are in the menu of a file link in a reply or document. A path an agent writes as `$AF_WORK_DIR/…` in a Terminal (CLI)
-session's chat is linked too, when the file exists in that session's scratch folder. To hand a file to a session or an assistant, open the
+(shows the parent folder in the file list) and, unless it is an image, **"Open folder in gallery"**. To hand a file to a session or an assistant, open the
 file and use "Send" in the viewer.
+
+### File and folder links in replies and documents
+
+A file or folder link in an agent's reply, the assistant chat, the document viewer or a Markdown
+preview ([04](04-files.md#links-in-rendered-markdown)) has a menu of its own: right-click it,
+long-press it, or press the Menu key or Shift+F10 on it. A file offers **"Open in pane"** and
+**"Open in new pane"**, both offer **"Show in Files"**, and then come the items above that change
+nothing (no new, rename or delete). For a path outside your home (`/…`), what follows the open
+items is only **"Copy the path"** and, for a file, **"Download"**. The target is looked up again when the menu
+opens, so a file that has gone since the reply was written says so instead.
 
 ### Cards in the image gallery
 

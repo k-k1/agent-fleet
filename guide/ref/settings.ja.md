@@ -80,7 +80,8 @@ updated: "2026-10"
 ## 配備の変数
 
 Control Plane の起動前に設定します。注釈つきの一覧は
-`deploy/compose/.env.example` で、既定値の正はそちらです。ここには「他の全部の形を決めてしまう」ものだけを挙げます。
+`deploy/compose/.env.example` で、ほとんどの変数を載せていますが全部ではありません（下のプレビューと
+開発用ログインの変数は載っていません）。ここには「他の全部の形を決めてしまう」ものだけを挙げます。
 
 | 変数 | 決めるもの |
 |---|---|
@@ -93,6 +94,9 @@ Control Plane の起動前に設定します。注釈つきの一覧は
 | `SUPER_ADMIN_EMAILS` | 誰が配備管理者か |
 | `PUBLIC_BASE_URL` | 利用者が到達する URL。OAuth のコールバックもここから組み立てる |
 | `WS_MEMORY` | ワークスペースの既定メモリ上限 |
+| `AF_PREVIEW_DOMAIN` | プレビュー用サブドメイン（`<ワークスペース>-<ポート>.<ドメイン>`）の親ドメイン。そのためのワイルドカードの DNS 名と証明書が要る。未設定ならプレビュー用サブドメインは無く、Console 自身のプレビューのパスだけになる。`AF_COOKIE_SECRET` と `PUBLIC_BASE_URL` も一緒に設定する。どちらかが無いと、プレビューのサインインを信頼できないか戻る先の Console が無いため、Control Plane が起動時に警告する |
+| `AF_DEV_IDP` | `0` にすると、開発用ログイン（プレビュー用サブドメイン上のメンバーのアプリが Google の代わりにサインインに使える、Console のオリジン上の OIDC プロバイダ）を、配備管理者のスイッチにかかわらずオフに固定する。未設定ならそのスイッチに従い、スイッチは既定でオン。提供するのは `AF_PREVIEW_DOMAIN` と `PUBLIC_BASE_URL` があるときだけ |
+| `AF_SESSION_IDLE_TIMEOUT`・`AF_WS_IDLE_TIMEOUT`・`AF_BACKGROUND_HOLD_MAX`・`AF_WORKSPACE_START_DEADLINE` | アイドルのセッションと Workspace を止めるタイミング。既定値は [上限](limits.ja.md#配備が決めるもの)、動きは [operate/03](../operate/03-run.ja.md#アイドル停止と-force-stop) |
 
 ## 状態
 
