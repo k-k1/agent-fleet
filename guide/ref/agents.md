@@ -281,12 +281,20 @@ approval is considered. Measured, a muse turn wrote a file outside its working c
 prompt. So treat a muse session as having the same reach over this container as `shell`
 does, and read the warning above as applying to it in full.
 
-¹⁴ Muse Code's catalogue lists a "-contributor" twin of every model: the same model at the
-same price, except that Meta may use those conversations, including messages between
-sessions, to improve the product. It is Muse Code's own default. Agent Fleet does not pick it
-for you: a session launched on **Default** runs on the newest model without that clause, and
-the twins stay in the picker for anyone who wants one. Settings › Agents › Muse Code ›
-Behaviour is where you choose, and the reasoning effort (`none` … `ultra`) sits beside it.
+¹⁴ Muse Code has a **contributor mode**: while it is on, Meta may use your conversations,
+including messages between sessions, to improve the product. Agent Fleet runs every muse
+process that handles a conversation with the mode set explicitly. It is **off** unless you switch it on under Settings ›
+Agents › Muse Code › Behaviour › **Contributor mode**. Each session keeps the mode it was
+created with, across a stop and start and an Agent restart, and a fork or recreate keeps it
+too. Changing the setting applies to sessions created afterwards, and to assistant chat and
+AI assist turns from the next one. A session cannot switch the setting on by itself: only a
+change you make from the Console can.
+
+Muse Code 1.3 offered the same choice as a "-contributor" twin of every model, and made that
+twin its own default. Where a host still lists those twins, Agent Fleet never picks one for
+you: a session launched on **Default** runs on the newest model without the clause, and the
+twins stay in the picker for anyone who wants one. The default model and the reasoning effort
+(`none` … `ultra`) are chosen on the same Behaviour settings.
 
 The assistant chat follows the same rule, under Settings › AI: left on the recommendation it
 runs on the newest model without the clause, and if the catalogue cannot be read at all the

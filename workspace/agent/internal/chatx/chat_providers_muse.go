@@ -35,6 +35,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
@@ -118,8 +119,9 @@ func (museChat) Send(ctx context.Context, c *ChatConversation, prompt string) (s
 // model (measured: the session store recorded `muse-spark-1.3-contributor`).
 //
 // Refusing beats falling back. The member who WANTS a contributor model picks it in
-// Settings › AI › Muse Code, where both twins are listed; what AF must never do is choose it
-// for someone who chose nothing.
+// Settings › AI › Muse Code, where a host that lists the twins shows both; what AF must never do
+// is choose it for someone who chose nothing. From 1.4 the twins are gone and the same choice is
+// the contributor mode museChatBaseArgs passes.
 func museChatModel(c *ChatConversation) (string, error) {
 	if model := chatModelFor(c, session.KindMuse); model != "" {
 		// A model the member hid is refused, as the launch guard refuses it for a session.
@@ -202,8 +204,11 @@ func museOneShotArgs(model, promptPath string) []string {
 //   - --approval-judge off: the judge makes its own model call for every approval; headless
 //     with --approval-mode never means no approvals fire, but the flag is free and stays
 //     as belt-to-braces for MUSE_DISABLE_APPROVAL_JUDGE=1 in the env
+//   - --contributor-mode: the member's current setting (muse.ContributorModeArgs). An assistant
+//     conversation is not a session and records no mode of its own, so each turn follows the
+//     setting as it stands.
 func museChatBaseArgs() []string {
-	return []string{
+	return append([]string{
 		"exec",
 		"--json",
 		"--disable-shell",
@@ -212,7 +217,7 @@ func museChatBaseArgs() []string {
 		"--no-foreign-personal-context",
 		"--approval-mode", "never",
 		"--approval-judge", "off",
-	}
+	}, muse.ContributorModeArgs(uiprefs.MuseContributorMode())...)
 }
 
 // museChatDataHome is an isolated XDG_DATA_HOME so chat-driven exec sessions do not appear

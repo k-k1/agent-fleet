@@ -212,3 +212,26 @@ func TestMemoryReviewAutoIsOffByDefaultAndNeedsTheReview(t *testing.T) {
 		})
 	}
 }
+
+// Muse Code's contributor mode is on only for a boolean true (#2535): a missing key, false or a
+// malformed value never opts the member in.
+func TestMuseContributorModeIsOnOnlyForTrue(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		prefs map[string]any
+		want  bool
+	}{
+		{"missing", map[string]any{}, false},
+		{"false", map[string]any{"museContributorMode": false}, false},
+		{"string", map[string]any{"museContributorMode": "true"}, false},
+		{"number", map[string]any{"museContributorMode": 1}, false},
+		{"true", map[string]any{"museContributorMode": true}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writePrefs(t, tc.prefs)
+			if got := MuseContributorMode(); got != tc.want {
+				t.Errorf("MuseContributorMode = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

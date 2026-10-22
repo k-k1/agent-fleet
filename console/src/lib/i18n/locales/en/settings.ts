@@ -359,8 +359,9 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.muse_update": "Update Muse Code",
   "agents.muse_update_note": "Re-downloads the pinned build (about 299MB). Takes a few minutes.",
   "agents.muse_updating": "Updating Muse Code… (about 299MB, a few minutes). Running muse sessions keep working on the old build until they are restarted.",
-  "agents.muse_model_note":
-    "Muse Code lists a \"-contributor\" twin of each model. It is the same model at the same price, but Meta may use those conversations, including messages between sessions, to improve the product. It is Muse Code's own default; \"Default\" here means Agent Fleet picks the newest model without that clause.",
+  "agents.muse_contributor": "Contributor mode",
+  "agents.muse_contributor_note":
+    "On: Meta may use your Muse Code conversations, including messages between sessions, to improve its product (Muse Code's contributor mode). Off by default. Each session keeps the mode it was created with, also across a stop and start and an Agent restart; a change applies to sessions created afterwards, and to assistant and AI assist turns from the next one.",
   "agents.remote_control": "Remote control",
   "agents.note_claude_remote_control":
     "Applies to Claude sessions started after you change it. Remote Control will not start while the workspace's CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC is set. While this is on, Claude sessions started afterwards are launched without it, so that variable no longer suppresses release notes, PR/MR status and availability checks. Telemetry, error reports and auto-update stay off. A copy of the variable in a Claude settings.json env block, or an organization that requires Trusted Devices, still prevents connecting. See the guide (Agents) for details.",

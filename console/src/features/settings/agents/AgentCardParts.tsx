@@ -135,12 +135,18 @@ export function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" |
         )}
       </SettingRow>
       {kind === "claude" && <ClaudeCustomModelsRow />}
-      {/* 🔴 muse's catalogue pairs every model with a "-contributor" twin — same model, same
-          price, and Meta may use the conversation to improve the product. It is the vendor's
-          OWN default, so the note sits under the picker rather than in the guide alone: this is
-          where the member either leaves it to Agent Fleet (which picks the other one) or
-          deliberately chooses otherwise (ADR 0095 decision 6 clamp 8). */}
-      {kind === "muse" && <p className="ps-note">{tr("agents.muse_model_note")}</p>}
+      {/* Muse Code's contributor mode (#2535): on, Meta may use the conversation to improve its
+          product (ADR 0095 decision 6 clamp 8). It sits beside the default model because, from
+          1.4, it replaces the "-contributor" model twins this row used to explain. The Agent
+          passes it on every muse spawn and refuses to switch it on without the member's mark. */}
+      {kind === "muse" && (
+        <>
+          <SettingRow label={tr("agents.muse_contributor")}>
+            <OnOff value={s.museContributorMode} onChange={(museContributorMode) => setSettings({ museContributorMode })} />
+          </SettingRow>
+          <p className="ps-note">{tr("agents.muse_contributor_note")}</p>
+        </>
+      )}
       {/* agy bakes the effort equivalent into the model name ("(Medium)" and so on), so the row
           is omitted entirely. */}
       {desc.caps.effort && (

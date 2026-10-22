@@ -103,3 +103,50 @@ func TestAPrefsWriteThatArmsTheMemoryReviewNeedsTheMemberMark(t *testing.T) {
 		t.Fatal("a mark signed for another body armed the review")
 	}
 }
+
+func TestMuseContributorNeedsMarkRule(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		before, after map[string]any
+		want          bool
+	}{
+		{"nothing", map[string]any{}, map[string]any{}, false},
+		{"switched on", map[string]any{}, map[string]any{"museContributorMode": true}, true},
+		{"switched on from false", map[string]any{"museContributorMode": false}, map[string]any{"museContributorMode": true}, true},
+		{"stays on", map[string]any{"museContributorMode": true}, map[string]any{"museContributorMode": true, "iconSet": "x"}, false},
+		{"switched off", map[string]any{"museContributorMode": true}, map[string]any{"museContributorMode": false}, false},
+		{"key dropped", map[string]any{"museContributorMode": true}, map[string]any{}, false},
+		{"wrong type", map[string]any{}, map[string]any{"museContributorMode": "true"}, false},
+	} {
+		if got := museContributorNeedsMark(tc.before, tc.after); got != tc.want {
+			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A session holds AGENT_TOKEN and can write the prefs; it must not be able to switch Muse Code's
+// contributor mode on that way, since on, the vendor may use the member's conversations (#2535).
+func TestAPrefsWriteThatTurnsMuseContributorModeOnNeedsTheMemberMark(t *testing.T) {
+	signer := memberorigintest.Install(t)
+	writeUIPrefs(t, `{}`)
+	rec := putPrefs(t, nil, `{"museContributorMode":true}`)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "member_origin") {
+		t.Fatalf("without a mark: %d %s", rec.Code, rec.Body)
+	}
+	if uiprefs.MuseContributorMode() {
+		t.Fatal("the refused write switched contributor mode on")
+	}
+	if rec := putPrefs(t, signer, `{"museContributorMode":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("with a mark: %d %s", rec.Code, rec.Body)
+	}
+	if !uiprefs.MuseContributorMode() {
+		t.Fatal("the marked write did not switch contributor mode on")
+	}
+	// Leaving it on while changing something else, and then turning it off, need no mark. In this
+	// order: from off, the first body would be a switch on.
+	for _, body := range []string{`{"museContributorMode":true,"iconSet":"vscode"}`, `{"museContributorMode":false}`} {
+		if rec := putPrefs(t, nil, body); rec.Code != http.StatusOK {
+			t.Errorf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+}

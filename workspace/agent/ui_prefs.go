@@ -273,6 +273,14 @@ func memoryReviewNeedsMark(before, after map[string]any) bool {
 	return mode(before) != "propose" || (memory(after) && !memory(before))
 }
 
+// museContributorNeedsMark says whether replacing `before` with `after` switches Muse Code's
+// contributor mode on (museContributorMode, #2535). Only a boolean true is on, the reading
+// uiprefs.MuseContributorMode applies, so a write of any other value cannot slip past as "not on".
+func museContributorNeedsMark(before, after map[string]any) bool {
+	on := func(m map[string]any) bool { b, _ := m["museContributorMode"].(bool); return b }
+	return on(after) && !on(before)
+}
+
 func handleGetUIPrefs(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, uiprefs.Read())
 }
@@ -298,7 +306,10 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	// holds, can read and write these prefs, and the review's own member-origin route would be a
 	// door beside an open window. A write that would switch the review on therefore needs the
 	// Control Plane's mark (ADR 0113), which the CP puts on every relayed prefs write.
-	if memoryReviewNeedsMark(uiprefs.Read(), obj) && !memberorigin.RequireBody(w, r, body) {
+	// Muse Code's contributor mode is the same decision about the member's own conversations: on,
+	// the vendor may use them to improve its product.
+	prev := uiprefs.Read()
+	if (memoryReviewNeedsMark(prev, obj) || museContributorNeedsMark(prev, obj)) && !memberorigin.RequireBody(w, r, body) {
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(uiprefs.Path()), 0o700); err != nil {

@@ -284,6 +284,15 @@ func MemoryReview() string {
 	return memoryx.MemoryReviewOff
 }
 
+// MuseContributorMode is the member's choice to run Muse Code in contributor mode (ui-prefs
+// museContributorMode, #2535), under which the vendor may use the conversation to improve its
+// product. Only a boolean true is on; missing or malformed reads as off, so nobody is opted in
+// by a prefs file that predates the switch or was written by hand.
+func MuseContributorMode() bool {
+	v, _ := Read()["museContributorMode"].(bool)
+	return v
+}
+
 // MemoryReviewEnabled is whether the review may run at all: AF memory is on AND a review mode is
 // chosen. Every caller that starts or continues a review asks this, never MemoryReview alone —
 // a review proposing into a store the member switched off would be a write path the switch does
