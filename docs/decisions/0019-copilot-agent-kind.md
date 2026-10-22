@@ -71,3 +71,13 @@ authentication passes straight through.
   and ACP, with the live test as the primary detector); no support for classic PATs (`ghp_`)
   (normally not applicable, since the fleet's GitHub OAuth produces `gho_`); and no plan-mode chip
   in the TUI (the footer shows no mode, so it cannot be detected).
+
+### Note 2026-10-23 — decision 8's flags follow the installed version (#2576)
+
+copilot 1.0.103 removed `--no-remote` (remote control is now only switched on inside a session,
+with `/remote on`) and renamed `--no-remote-export` to `--sync-session=off`. Each version rejects
+the other's spelling and exits before drawing anything, so the Terminal (CLI) launch, the ACP
+driver and the model probe now read `copilot --version` (cached for a minute) and pass
+`--no-remote --no-remote-export` below 1.0.103 and `--sync-session=off` from it on. The posture is
+unchanged. Measured: the TUI mirror contract passes on 1.0.102 and 1.0.103, and the ACP fork
+contract on 1.0.103.

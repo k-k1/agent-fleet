@@ -15,15 +15,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// envOr duplicates the helper of the same name in package main; it is small enough that the
-// duplication is preferred to sharing it.
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
 // Home is copilot's state root ($COPILOT_HOME, default ~/.copilot): config.json
 // (trustedFolders), mcp-config.json, logs/, session-store.db and
 // session-state/<sid>/. The tree is denylisted from the file browser (fs.go):
@@ -43,23 +34,28 @@ func EventsPath(sid string) string { return filepath.Join(sessionStateDir(sid), 
 // defaultFlags is the fleet-standard permission/privacy posture:
 //   - --allow-all: the fleet-default bypass equivalent (the peer of claude's
 //     skip-permissions).
-//   - --no-remote --no-remote-export: a session's GitHub sync and remote steering are off by
-//     default (keeps the conversation from leaving the fleet and prevents double steering —
-//     the docs/log/36 contract).
-const defaultFlags = "--allow-all --no-remote --no-remote-export"
+//   - privacyFlags: a session's GitHub sync and remote steering are off by default (keeps the
+//     conversation from leaving the fleet and prevents double steering — the docs/log/36
+//     contract), spelled for the copilot on PATH.
+func defaultFlags() string {
+	return strings.Join(append([]string{"--allow-all"}, privacyFlags("copilot")...), " ")
+}
 
 // buildProgram returns the tmux pane program for a copilot session. Auth is ambient (copilot
 // picks up gh's transparent-auth token itself — measured), so no token is injected.
 // --session-id covers creating a new session and resuming one in the same shape.
 // bypass=false means "do not skip the permission prompts" (the user's choice from
-// docs/log/76, or a plan launch), and only --allow-all is dropped. --no-remote /
-// --no-remote-export (keeping the conversation inside the fleet and preventing double
-// steering) sit on a different axis from permission prompts, so they always stay.
+// docs/log/76, or a plan launch), and only --allow-all is dropped. The privacy flags (keeping
+// the conversation inside the fleet and preventing double steering) sit on a different axis
+// from permission prompts, so they always stay.
 func buildProgram(model, effort, mode, sid string, bypass bool) string {
 	if override := os.Getenv("AGENT_COPILOT_CMD"); override != "" {
 		return override
 	}
-	flags := envOr("AGENT_COPILOT_FLAGS", defaultFlags)
+	flags := os.Getenv("AGENT_COPILOT_FLAGS")
+	if flags == "" {
+		flags = defaultFlags()
+	}
 	if !bypass {
 		// The TUI's own permission menu is what the user drives from the terminal or the mirror.
 		flags = strings.TrimSpace(strings.ReplaceAll(flags, "--allow-all", ""))
