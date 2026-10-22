@@ -1,17 +1,24 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
-import { tMaybe, useT } from "../../../lib/i18n/index.ts";
+import { useT } from "../../../lib/i18n/index.ts";
 import { useSettingsUI } from "../store.ts";
 import { parseOAuthReturn, rememberReturn, stripOAuthReturn } from "./mcpOAuth.ts";
+import { announceSignInDone, outcomeText, takeSameTab } from "./mcpOAuthSignal.ts";
+import type { SignInDone } from "./mcpOAuthSignal.ts";
 
 // McpOAuthReturn handles the browser coming back from an MCP server's authorization server
 // (`/?mcp_oauth=ok|failed&server=&reason=&registration=`, written by the Control Plane's
-// callback). Once the console has booted it says how it went, opens Settings on the MCP tab,
-// and removes the parameters so a reload does not replay the notice. Nothing in the query is
-// shown as received: the reason picks one of our own texts.
+// callback). The sign-in normally runs in a tab of its own, so this is that tab: it says how it
+// went, tells the tab the member started from (by server id and outcome code only), and says it
+// can be closed. It never navigates anywhere on the strength of the query. When the browser
+// blocked the new tab the sign-in ran in the Console tab itself (the same-tab marker), and
+// the old behaviour applies: a notice, and Settings on the MCP tab. Either way the parameters are
+// removed so a reload does not replay the notice. Nothing in the query is shown as received:
+// the reason picks one of our own texts.
 export function McpOAuthReturn({ booted }: { booted: boolean }) {
   const tr = useT();
   const toast = useToast();
+  const [shown, setShown] = useState<SignInDone["outcome"] | null>(null);
   useEffect(() => {
     if (!booted) return;
     const r = parseOAuthReturn(window.location.search);
@@ -25,14 +32,34 @@ export function McpOAuthReturn({ booted }: { booted: boolean }) {
     // one is a made-up URL, so it is neither announced nor acted on.
     if (r.ok && !r.server) return;
     rememberReturn(r);
-    if (r.ok) {
-      toast(tr("mcp.oauth_return_ok_generic"));
-    } else {
-      const why = tMaybe("mcp.oauth_return_" + r.reason) ?? tr("mcp.oauth_return_failed_generic");
-      toast(tr("mcp.oauth_return_failed", { reason: why }));
+    const outcome = r.ok ? "ok" : (r.reason ?? "failed");
+    if (takeSameTab()) {
+      toast(outcomeText(tr, outcome));
+      useSettingsUI.getState().openSettings("mcp");
+      return;
     }
-    useSettingsUI.getState().openSettings("mcp");
+    if (r.server) announceSignInDone({ server: r.server, outcome });
+    setShown(outcome);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booted]);
-  return null;
+  if (!shown) return null;
+  return (
+    <div className="mcp-oauth-return" role="dialog" aria-modal="true" data-testid="mcp-oauth-return">
+      <div className="mcp-oauth-return-card">
+        <strong>{outcomeText(tr, shown)}</strong>
+        <p className="muted">{tr("mcp.oauth_return_tab_close")}</p>
+        <div className="mcp-actions">
+          <button
+            className="ghost mcp-btn"
+            onClick={() => {
+              setShown(null);
+              useSettingsUI.getState().openSettings("mcp");
+            }}
+          >
+            {tr("mcp.oauth_return_stay")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

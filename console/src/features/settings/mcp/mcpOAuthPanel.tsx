@@ -7,6 +7,30 @@ import { useT } from "../../../lib/i18n/index.ts";
 import type { McpServer } from "./mcpWire.ts";
 import { disconnectOAuth, fetchOAuthStatus, saveClientId, startSignIn } from "./mcpOAuthApi.ts";
 import type { OAuthRegistration, OAuthReturn, OAuthState, OAuthStatus } from "./mcpOAuth.ts";
+import { clearSameTab, markSameTab, onSignInDone, outcomeText } from "./mcpOAuthSignal.ts";
+
+// openSignInTab opens the tab the authorization server will be shown in. It has to run in the
+// click's own task: the authorization URL only exists after an async start call, and a window
+// opened after that await is popup-blocked (Safari in particular). The tab starts blank and is
+// pointed at the URL later; opener is cut by hand because noopener would make window.open
+// return null, leaving nothing to navigate. Null means the browser blocked it.
+function openSignInTab(): Window | null {
+  clearSameTab();
+  let w: Window | null = null;
+  try {
+    w = window.open("about:blank", "_blank");
+  } catch {
+    return null;
+  }
+  if (w) {
+    try {
+      w.opener = null;
+    } catch {
+      /* cross-origin opener is read-only in some engines; the tab still works */
+    }
+  }
+  return w;
+}
 
 // useOAuthFlow is the sign-in state of one OAuth server row (ADR 0119 P2): the Agent's status,
 // and the actions that change it. The row, its panel and the connection-test report share one
@@ -22,31 +46,94 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
   // Set by a 409 client_id_needed: the issuer a client id has to be entered for.
   const [clientFor, setClientFor] = useState<string | null>(null);
   const seq = useRef(0);
+  // True while a sign-in started from this tab has not been seen to finish: only then does a
+  // window focus re-read the status (a row per OAuth server would otherwise read on every focus).
+  const awaiting = useRef(false);
+  // Guards double clicks: React's busy state is not visible to a second click in the same tick.
+  const inFlight = useRef(false);
 
-  const reload = useCallback(async () => {
-    if (!active) return;
+  // The registration path the sign-in started from this tab used; a failed finish of a CIMD one
+  // keeps the DCR retry on offer even though the Agent has already consumed its pending record.
+  const startedReg = useRef<OAuthRegistration | undefined>(undefined);
+  const [failedCimd, setFailedCimd] = useState(false);
+  // A completion notice is being checked against the status; repeats meanwhile are dropped.
+  const checking = useRef(false);
+
+  const reload = useCallback(async (): Promise<OAuthStatus | null> => {
+    if (!active) return null;
     const mine = ++seq.current;
     const r = await fetchOAuthStatus(s.id);
-    if (mine !== seq.current) return; // a newer read is in flight
+    if (mine !== seq.current) return null; // a newer read is in flight
     if ("error" in r) {
       setStatusErr(errText(r.error as any));
-      return;
+      return null;
     }
     setStatusErr("");
     setStatus(r);
+    if (r.state === "connected") awaiting.current = false;
+    return r;
   }, [active, s.id]);
   useEffect(() => {
     void reload();
   }, [reload]);
 
-  // Navigates away on success: the authorization server owns the next screen and the Control
-  // Plane's callback brings the browser back.
+  // The sign-in finishes in another tab. Only that tab's outcome for THIS server is acted on.
+  useEffect(() => {
+    if (!active) return;
+    // A notice is a hint, never proof: it is acted on only while a sign-in started from this tab
+    // is awaited (anyone can open a made-up return URL in another tab), and "Signed in" is said
+    // only once the status read agrees.
+    const off = onSignInDone((d) => {
+      if (d.server !== s.id || !awaiting.current || checking.current) return;
+      checking.current = true;
+      void (async () => {
+        try {
+          const st = await reload();
+          if (d.outcome === "ok") {
+            if (st?.state === "connected") toast(outcomeText(tr, "ok"));
+            return; // not connected yet: keep waiting, the focus re-read tries again
+          }
+          // A failure is confirmed the same way: the callback consumes the Agent's pending record
+          // when it fails, so a record still there (or an unreadable status, or a connection)
+          // means the notice is made up or belongs to an earlier attempt.
+          if (!st || st.state === "connected" || st.pendingRegistration) return;
+          awaiting.current = false;
+          if (startedReg.current === "cimd") setFailedCimd(true);
+          toast(outcomeText(tr, d.outcome));
+        } finally {
+          checking.current = false;
+        }
+      })();
+    });
+    const wake = () => {
+      if (awaiting.current && document.visibilityState !== "hidden") void reload();
+    };
+    window.addEventListener("focus", wake);
+    document.addEventListener("visibilitychange", wake);
+    return () => {
+      off();
+      window.removeEventListener("focus", wake);
+      document.removeEventListener("visibilitychange", wake);
+    };
+  }, [active, s.id, reload, toast, tr]);
+
+  // Opens the authorization server in a new tab, so the Console stays where it is. `pre` is a
+  // tab the caller already opened inside its own click; without one this opens it, which only
+  // works when signIn runs synchronously from the click. A blocked tab falls back to this tab.
   const signIn = useCallback(
-    async (opts: { registration?: "dcr" | "cimd" | "preregistered" } = {}) => {
+    async (opts: { registration?: "dcr" | "cimd" | "preregistered" } = {}, pre?: Window | null) => {
+      if (inFlight.current) {
+        pre?.close();
+        return;
+      }
+      inFlight.current = true;
+      setFailedCimd(false);
+      const tab = pre === undefined ? openSignInTab() : pre;
       setBusy(true);
       try {
         const r = await startSignIn(s.id, opts);
         if ("error" in r) {
+          tab?.close();
           if (r.error.code === "client_id_needed" && r.error.issuer) {
             setClientFor(r.error.issuer);
             return;
@@ -54,8 +141,22 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
           toast(tr("mcp.oauth_signin_failed", { msg: errText(r.error as any) }));
           return;
         }
+        startedReg.current = r.registration;
+        if (tab) {
+          if (tab.closed) return; // the member closed it: they changed their mind
+          tab.location.href = r.authorizeUrl;
+          awaiting.current = true;
+          toast(tr("mcp.oauth_newtab_note"));
+          return;
+        }
+        toast(tr("mcp.oauth_popup_blocked"));
+        markSameTab();
         window.location.assign(r.authorizeUrl);
+      } catch (e) {
+        tab?.close();
+        toast(tr("mcp.oauth_signin_failed", { msg: errText(e as any) }));
       } finally {
+        inFlight.current = false;
         setBusy(false);
       }
     },
@@ -64,8 +165,11 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
 
   const submitClient = useCallback(
     async (clientId: string, secret: string) => {
-      if (!clientFor) return;
+      if (!clientFor || inFlight.current) return;
+      inFlight.current = true;
+      const tab = openSignInTab(); // still inside the click: the save below would outlive it
       setBusy(true);
+      let saved = false;
       try {
         const r = await saveClientId(s.id, clientFor, clientId, secret);
         if (r.error) {
@@ -73,10 +177,13 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
           return;
         }
         setClientFor(null);
+        saved = true;
       } finally {
+        inFlight.current = false;
         setBusy(false);
+        if (!saved) tab?.close();
       }
-      await signIn(); // the stored client id is first in the registration order
+      await signIn({}, tab); // the stored client id is first in the registration order
     },
     [clientFor, s.id, signIn, toast, tr],
   );
@@ -107,9 +214,13 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
   // so, or the Agent still holds the unfinished attempt. Not when connected.
   const cimdUnfinished =
     status?.state !== "connected" &&
-    (status?.pendingRegistration === "cimd" || (failedReturn?.server === s.id && failedReturn.registration === "cimd"));
+    (status?.pendingRegistration === "cimd" || failedCimd || (failedReturn?.server === s.id && failedReturn.registration === "cimd"));
 
-  return { active, status, statusErr, busy, clientFor, setClientFor, signIn, submitClient, disconnect, reload, cimdUnfinished };
+  // A sign-in the Agent still holds and nothing came back for (the authorization server may have
+  // refused the client on its own error page, where it cannot redirect to us).
+  const unfinished = status?.state !== "connected" && !!status?.pendingRegistration;
+
+  return { active, status, unfinished, statusErr, busy, clientFor, setClientFor, signIn, submitClient, disconnect, reload, cimdUnfinished };
 }
 
 export type OAuthFlow = ReturnType<typeof useOAuthFlow>;
@@ -142,7 +253,7 @@ export function OAuthPanel({ flow }: { flow: OAuthFlow }) {
         <span className="mcp-actions">
           {/* Connected needs no Sign in beside "Connected": Disconnect, then Sign in, switches account. */}
           {state !== "connected" && (
-            <button className="primary mcp-btn" disabled={busy || !status} onClick={() => void flow.signIn()}>
+            <button className="primary mcp-btn" disabled={busy} onClick={() => void flow.signIn()}>
               {again ? tr("mcp.oauth_btn_signin_again") : tr("mcp.oauth_btn_signin")}
             </button>
           )}
@@ -153,7 +264,14 @@ export function OAuthPanel({ flow }: { flow: OAuthFlow }) {
           )}
         </span>
       </div>
-      {statusErr && <p className="ps-note ps-note-warn">{tr("mcp.oauth_status_failed", { msg: statusErr })}</p>}
+      {statusErr && (
+        <div className="ps-note ps-note-warn" data-testid="mcp-oauth-status-error">
+          <div>{tr("mcp.oauth_status_failed", { msg: statusErr })}</div>
+          <button className="ghost mcp-btn" onClick={() => void flow.reload()}>
+            {tr("mcp.oauth_btn_reload")}
+          </button>
+        </div>
+      )}
       {state === "connected" && (
         <div className="muted">
           {status?.expiresAt ? <div>{tr("mcp.oauth_expires", { when: fmtDateTime(status.expiresAt * 1000, DATETIME_FULL) })}</div> : null}
@@ -175,12 +293,19 @@ export function OAuthPanel({ flow }: { flow: OAuthFlow }) {
       <p className="muted" data-testid="mcp-oauth-relay-note">
         {tr("mcp.oauth_relay_note")}
       </p>
-      {flow.cimdUnfinished && !clientFor && (
-        <div className="ps-note">
-          <div>{tr("mcp.oauth_dcr_note")}</div>
-          <button className="ghost mcp-btn" disabled={busy || !status} onClick={() => void flow.signIn({ registration: "dcr" })}>
-            {tr("mcp.oauth_btn_dcr")}
-          </button>
+      {(flow.unfinished || flow.cimdUnfinished) && !clientFor && (
+        <div className="ps-note" data-testid="mcp-oauth-unfinished">
+          <div>{flow.unfinished ? tr("mcp.oauth_unfinished_lead") : tr("mcp.oauth_dcr_note")}</div>
+          <ul className="mcp-oauth-next">
+            <li>{tr("mcp.oauth_unfinished_retry")}</li>
+            {flow.cimdUnfinished && <li>{tr("mcp.oauth_unfinished_dcr")}</li>}
+            <li>{tr("mcp.oauth_unfinished_trust")}</li>
+          </ul>
+          {flow.cimdUnfinished && (
+            <button className="ghost mcp-btn" disabled={busy} onClick={() => void flow.signIn({ registration: "dcr" })}>
+              {tr("mcp.oauth_btn_dcr")}
+            </button>
+          )}
         </div>
       )}
       {clientFor && <ClientIdForm issuer={clientFor} busy={busy} onSubmit={flow.submitClient} onCancel={() => flow.setClientFor(null)} />}

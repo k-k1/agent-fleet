@@ -83,8 +83,9 @@ const affinityBudget = 5 * time.Second
 const errSessionRejected = "サーバーが、自ら発行したセッション ID を拒否しました。複数インスタンスで動作していて、セッションの親和性（同じセッションを同じインスタンスへ振り分ける設定）がない可能性があります。サーバーをステートレスにするか、同じセッションのリクエストを必ず同じインスタンスへ振り分けてください"
 
 // errOAuthRequired is the Error of a recognised OAuth-protected server. The Console keys off
-// ProbeResult.OAuth, not this text; it is what an older Console shows.
-const errOAuthRequired = "OAuth によるサインインが必要なサーバーです（サインインにはまだ対応していません）"
+// ProbeResult.OAuth, not this text; it is what an older Console shows, so it names where
+// sign-in happens today (the server's row) rather than anything the Console would explain.
+const errOAuthRequired = "OAuth によるサインインが必要なサーバーです。認証で OAuth を選んで保存し、サーバーの行からサインインしてください"
 
 // errProbeTimeout distinguishes "no answer in time" from "the process died", so the
 // era probe can fall back on the former and fail fast on the latter.
