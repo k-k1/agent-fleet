@@ -12,6 +12,7 @@
 package opencode
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -128,6 +130,45 @@ func rssKB(pid int) int {
 	return 0
 }
 
+// waitHomeVacated waits until no other process runs with HOME=home, then SIGKILLs any that
+// outlive within so the TempDir can still go. It matches on the environment rather than on pane
+// PIDs: that also covers the tmux server, a pane killed mid-test and anything a TUI spawned.
+// A zombie's environ reads empty, so it counts as gone.
+func waitHomeVacated(t *testing.T, home string, within time.Duration) {
+	t.Helper()
+	want := []byte("\x00HOME=" + home + "\x00")
+	holders := func() []int {
+		var pids []int
+		ents, _ := os.ReadDir("/proc")
+		for _, e := range ents {
+			pid, err := strconv.Atoi(e.Name())
+			if err != nil || pid == os.Getpid() {
+				continue
+			}
+			b, err := os.ReadFile(filepath.Join("/proc", e.Name(), "environ"))
+			if err == nil && bytes.Contains(append([]byte{0}, b...), want) {
+				pids = append(pids, pid)
+			}
+		}
+		return pids
+	}
+	start, left := time.Now(), holders()
+	n := len(left)
+	for len(left) > 0 && time.Since(start) < within {
+		time.Sleep(100 * time.Millisecond)
+		left = holders()
+	}
+	if len(left) == 0 {
+		t.Logf("%d process(es) still ran with the test HOME after kill-server; gone in %v", n, time.Since(start).Round(time.Millisecond))
+		return
+	}
+	t.Errorf("processes still running with HOME=%s %v after kill-server: %v", home, within, left)
+	for _, pid := range left {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
+	time.Sleep(time.Second)
+}
+
 func descendants(root int) []int {
 	out := []int{root}
 	for i := 0; i < len(out); i++ {
@@ -164,7 +205,14 @@ func TestContractSharedServeTerminalSessions(t *testing.T) {
 	} {
 		t.Setenv(k, v)
 	}
-	testguard.IsolateTmux(t)
+	sock := testguard.IsolateTmux(t)
+	// Registered after home's TempDir, so it runs before that RemoveAll (cleanups are LIFO).
+	// kill-server returns once SIGHUP is sent, and a TUI still shutting down writes under
+	// $HOME/.local while RemoveAll walks it: "directory not empty" (#2544).
+	t.Cleanup(func() {
+		_ = exec.Command("tmux", "-L", sock, "kill-server").Run()
+		waitHomeVacated(t, home, 30*time.Second)
+	})
 
 	cfgDir := filepath.Join(home, ".config", "opencode")
 	cfg, _ := json.Marshal(map[string]any{
