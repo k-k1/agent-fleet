@@ -1,6 +1,6 @@
-# 0119. Workspace memory pressure: the Agent reads cgroup v2 PSI, warns, then refuses new sessions, then stops the largest one — and ships measure-only first
+# 0120. Workspace memory pressure: the Agent reads cgroup v2 PSI, warns, then refuses new sessions, then stops the largest one — and ships measure-only first
 
-English | [日本語](0119-workspace-memory-pressure.ja.md)
+English | [日本語](0120-workspace-memory-pressure.ja.md)
 
 - Status: **proposed** (2026-10-22). Documentation only: nothing below is built. The code facts were
   read from the tree on this date. **Every threshold is a provisional starting value, not a
