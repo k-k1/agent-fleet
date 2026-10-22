@@ -124,18 +124,21 @@ evidence of something the logs already tell. So:
 - **L1. Rescue**, once dark for `darkAfter`: take the home off the box and leave the box in service.
   Each step is a gate for the next, never a sequence to push through:
   1. **prepare**, under the claim lock alone (decision 4, lock order): take ownership, write the rescue
-     marker, end any Start as a Stop does (`abortStarts`, desiredCount 0, claim dropped), and release the
-     claim lock. Nothing in this step waits for the mount lock;
-  2. cancel the CP's own pending SSM commands on the box, **with no home lock held**. They hold the
-     home's mount lock for as long as they live, so the cancel has to be able to arrive before the rescue
-     asks for that lock;
+     marker, end any Start as a Stop does (`abortStarts`, desiredCount 0, claim dropped), and, still holding
+     the claim lock with the token valid, **list the CP's own pending SSM commands on the box and fix that
+     set of command ids**. Then release the claim lock. Nothing in this step waits for the mount lock;
+  2. cancel exactly that set of ids, **with no home lock held**. They hold the home's mount lock for as long
+     as they live, so the cancel has to be able to arrive before the rescue asks for that lock. The set is
+     never re-listed afterwards: a later Start of the member sends commands after the token was taken, and
+     those are not this rescue's to cancel. A resumed rescue may list again only by re-taking the claim
+     lock and finding the count still `g_r`, and cancels only what that listing returns;
   3. take the mount lock with a bounded wait; if it is not had within the bound, stop for this pass (the
      marker stays, the next pass retries). Every destructive call from here runs under the mount lock and
      re-verifies the token under the claim lock nested inside it;
-  4. force-deregister the container instance, and **verify that the task ENI is physically gone**
+  4. write `deregistering`, then force-deregister the container instance, and **verify that the task ENI is physically gone**
      (`DescribeInstances`) within a bound. Deregistration is not assumed to do anything else: AWS
      documents that it does not stop the task's processes;
-  5. only with the ENI gone, `StopInstances` (graceful; Force on a stop that has not finished,
+  5. only with the ENI gone, write `stopping` and call `StopInstances` (graceful; Force on a stop that has not finished,
      never on an instance started again since, as in #2474), and **verify `stopped`**;
   6. only with the box stopped, an ordinary detach of the home, preceded by the `detaching` marker phase
      (decision 4). The role stays `slot`; the finalizer of decision 4 then records the episode.
@@ -295,7 +298,10 @@ produced.
 
 **The rescue marker** is an instance tag,
 `af-rescue = <home volume id>/<launch epoch>/<phase>/<g_r>/<began>/<blocked_since>`, written **before the first
-side effect**. Phases: `begun`, `deregistered`, `stopped`, `detaching`, `detached`. The two times persist across a restart
+side effect**. Phases: `begun`, `deregistering`, `deregistered`, `stopping`, `stopped`, `detaching`, `detached`. Every AWS
+side effect on the box is preceded by the phase that names it (`deregistering`, `stopping`, `detaching`), written under
+the strict conditions, so a crash between the call and the next write still leaves a marker that says the box
+was acted on. The two times persist across a restart
 (`rescueBlockedAfter` runs from `blocked_since`, written when a step first fails its bound; `af-dark-since` is
 not that time). The marker is what survives a restart; the detection predicate cannot, because a box that is
 `stopping` or `stopped`, or whose SSM came back after the deregistration, is no longer "dark" by definition.
@@ -320,13 +326,18 @@ box or the home) needs the strict match above: same volume, same `LaunchTime`, c
 saying `stopped` before the detach. The *finalizer* only records that an episode happened. It touches neither
 the box's state nor the volume, only tags, so it needs no count or epoch match:
 
-- Before the detach call the marker is advanced to `detaching` (the completion intent), under the strict
-  conditions. After it succeeds, to `detached`, which also records `detached_at`.
-- A marker whose phase is `deregistered`, `stopped`, `detaching` or `detached` means the box was acted on, so
-  it is an episode whatever became of the rescue: the finalizer writes `af-wedge-at = marker.began`, **only if
-  that is later than the `af-wedge-at` already there** (the value never moves backwards, so an old finalizer
-  cannot overwrite a later episode's), and then removes its own exact marker. A marker still at `begun` acted
-  on nothing and is just removed.
+- Before each of the deregistration, the stop and the detach, the marker is advanced to the phase that names
+  it (`deregistering`, `stopping`, `detaching`: the intent), under the strict conditions; after the call
+  succeeds, to the completed phase (`deregistered`, `stopped`, `detached`, the last also recording `detached_at`).
+- A marker whose phase is beyond `begun` (any intent or completed phase) means the box may have been acted on,
+  so it is an episode whatever became of the rescue: the finalizer writes `af-wedge-at = marker.began`, **only if
+  that is later than the `af-wedge-at` already there**, and then removes its own exact marker. A marker still
+  at `begun` has taken no action on the box (its preparation touched the Start and the claim only) and is just
+  removed. `CreateTags` overwrites unconditionally, so "only if later" needs a fence: every finalizer's read,
+  compare and write of `af-wedge-at` runs under a per-instance lease (`ec2-slot-wedge/<instance id>`, from the
+  same `cp_lease` store as the home locks), shared by all rescues of that box whatever the home or epoch, with
+  the lease re-checked by the clock before the write. If the lease cannot be had the marker stays and the next
+  pass retries, so a late, old write cannot land after a newer one.
 - `detaching` with the volume no longer on this box is decided by the count: still `g_r` means nobody else
   could have moved it (every other releaser is refused while the marker exists, rule 2), so it was this
   rescue and it is complete; a moved count means the occupant's own Start moved it, and the episode is
