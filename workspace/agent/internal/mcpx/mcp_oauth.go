@@ -67,6 +67,7 @@ func HandleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		writeOAuthErr(w, err)
 		return
 	}
+	MaterializeAll() // a live grant is what puts the server into every kind's config
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
@@ -96,6 +97,7 @@ func HandleOAuthDisconnect(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", "the secret store could not be written")
 		return
 	}
+	MaterializeAll() // and its going takes the server out of them again
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 

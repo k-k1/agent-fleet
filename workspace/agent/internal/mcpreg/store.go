@@ -108,16 +108,55 @@ func saveOptOut(ids map[string]bool) error {
 	return writeFileAtomic(optOutPath(), b, 0o600)
 }
 
+// writeFileAtomic writes through a fresh temp file created with exactly mode. A stale temp left
+// at a wider mode would otherwise keep it (os.WriteFile applies mode only to a file it creates),
+// and the result is renamed over the target.
 func writeFileAtomic(path string, b []byte, mode os.FileMode) error {
 	tmp := path + ".af-tmp"
-	if err := os.WriteFile(tmp, b, mode); err != nil {
+	_ = os.Remove(tmp)
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
 		return err
+	}
+	_, werr := f.Write(b)
+	if werr == nil {
+		werr = f.Chmod(mode) // the umask only ever narrows, but say it
+	}
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		_ = os.Remove(tmp)
+		return werr
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
 	return nil
+}
+
+// holdsRelayKey reports whether a config written from defs carries the relay key.
+func holdsRelayKey(defs []ServerDef) bool {
+	for _, d := range defs {
+		if d.Headers[RelayKeyHeader] != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// keepPrivate narrows a config that carries the relay key to 0600 even when its content is
+// unchanged: a CLI or the member may have rewritten the file wider since af last wrote it.
+func keepPrivate(path string, defs []ServerDef) error {
+	if !holdsRelayKey(defs) {
+		return nil
+	}
+	fi, err := os.Stat(path)
+	if err != nil || fi.Mode().Perm() == 0o600 {
+		return nil
+	}
+	return os.Chmod(path, 0o600)
 }
 
 // Registry is one composed snapshot. TenantFetchedAt is surfaced so the Console can
@@ -198,8 +237,15 @@ func ForAssistant(kind string) (map[string]ServerDef, error) {
 	}
 	out := map[string]ServerDef{}
 	for _, d := range reg.Servers {
-		if !d.Targets.Assistant || !Ready(d) || d.Auth == AuthOAuth {
-			continue // an OAuth server is not handed out until the relay exists (see ForSession)
+		if !d.Targets.Assistant || !Ready(d) {
+			continue
+		}
+		if d.Auth == AuthOAuth {
+			// Through the relay, and only while a grant is live (see ForSession).
+			var ok bool
+			if d, ok = relayDef(d); !ok {
+				continue
+			}
 		}
 		if kind != "" && !KindAllowed(d, kind) {
 			continue
@@ -244,16 +290,21 @@ func ForSession(kind string) ([]ServerDef, error) {
 	}
 	var out []ServerDef
 	for _, d := range reg.Servers {
-		// An OAuth definition is written only while a session can actually use it (ADR 0119
-		// decision 7). Until the relay exists none can, and a plain URL with no credential would
-		// make the CLI meet the 401 and start its own OAuth flow, whose loopback callback the
-		// member's browser cannot reach. Every kind's config, and muse's wire list, come through here.
-		if d.Auth == AuthOAuth {
+		if !AppliesTo(d, kind) || !Ready(d) {
 			continue
 		}
-		if AppliesTo(d, kind) && Ready(d) {
-			out = append(out, d)
+		// An OAuth definition is written only while a session can actually use it (ADR 0119
+		// decision 7): as the relay URL plus the relay key, and only while the member holds a
+		// live grant. A plain URL with no credential would make the CLI meet the 401 and start
+		// its own OAuth flow, whose loopback callback the member's browser cannot reach. Every
+		// kind's config, and muse's wire list, come through here.
+		if d.Auth == AuthOAuth {
+			var ok bool
+			if d, ok = relayDef(d); !ok {
+				continue
+			}
 		}
+		out = append(out, d)
 	}
 	return out, nil
 }

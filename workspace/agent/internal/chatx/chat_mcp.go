@@ -146,8 +146,19 @@ func writeChatMCPConfig(convID string, cfg []byte) (string, error) {
 	}
 	path := chatMCPConfigPath(convID)
 	tmp := path + ".af-tmp"
-	if err := os.WriteFile(tmp, append(cfg, '\n'), 0o600); err != nil {
+	// A fresh temp: a stale one at a wider mode would keep it, and this file can carry the relay key.
+	_ = os.Remove(tmp)
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
 		return "", err
+	}
+	_, werr := f.Write(append(cfg, '\n'))
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		_ = os.Remove(tmp)
+		return "", werr
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)

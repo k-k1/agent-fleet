@@ -38,6 +38,19 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/hostcaps"
 )
 
+// The shape an OAuth server takes once the relay carries it (ADR 0119 decision 7).
+const (
+	relayDriftURL = "http://127.0.0.1:43117/mcp/mcp-0123456789abcdef"
+	relayDriftKey = "af-test-fixture-relay-key-0123456789abcdef"
+)
+
+func relayDriftDefNamed(name string, timeoutMS int) ServerDef {
+	return sessionDef(ServerDef{Name: name, Origin: OriginUser, Transport: TransportHTTP,
+		URL: relayDriftURL, Headers: map[string]string{RelayKeyHeader: relayDriftKey}, TimeoutMS: timeoutMS})
+}
+
+func relayDriftDef(timeoutMS int) ServerDef { return relayDriftDefNamed("afdrift", timeoutMS) }
+
 func cliBin(t *testing.T, name string) string {
 	t.Helper()
 	p, err := exec.LookPath(name)
@@ -154,6 +167,14 @@ func TestDriftClaudeMatchesMCPAdd(t *testing.T) {
 			add: []string{"mcp", "add", "-s", "user", "-t", "http", "afdrift", "https://mcp.example.com/mcp",
 				"-H", "Authorization: Bearer t", "-H", "X-Team: sre"},
 		},
+		{
+			// What an OAuth server becomes (ADR 0119 decision 7): a plain-http loopback URL and the
+			// relay key as a custom header.
+			name: "relay",
+			def:  relayDriftDef(0),
+			add: []string{"mcp", "add", "-s", "user", "-t", "http", "afdrift", relayDriftURL,
+				"-H", RelayKeyHeader + ": " + relayDriftKey},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -265,6 +286,26 @@ func TestDriftCodexRemoteKeys(t *testing.T) {
 	}
 }
 
+// TestDriftCodexRelayEntry is TestDriftCodexRemoteKeys for the shape an OAuth server takes: a
+// plain-http loopback URL carrying the relay key as a custom header.
+func TestDriftCodexRelayEntry(t *testing.T) {
+	bin := cliBin(t, "codex")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	codexHome := filepath.Join(home, "codex-home")
+	t.Setenv("CODEX_HOME", codexHome)
+	if _, _, _, err := materializeCodex([]ServerDef{relayDriftDef(12000)}, nil); err != nil {
+		t.Fatalf("materializeCodex: %v", err)
+	}
+	tr, _ := codexListed(t, bin, codexHome, "afdrift")["transport"].(map[string]any)
+	if tr["type"] != "streamable_http" || tr["url"] != relayDriftURL {
+		t.Fatalf("the relay URL is not read back as streamable_http: %v", tr)
+	}
+	if hdr, _ := tr["http_headers"].(map[string]any); hdr[RelayKeyHeader] != relayDriftKey {
+		t.Fatalf("the relay key header did not get through: %v", tr)
+	}
+}
+
 // TestDriftCodexAcceptsUserFileWithAFBlocks: codex can still read the WHOLE file after af has
 // appended to a user's hand-written config. A duplicate TOML table or a broken append does not
 // merely cost one MCP server — codex itself stops starting.
@@ -314,6 +355,12 @@ func TestDriftOpencodeMatchesMCPAdd(t *testing.T) {
 				URL: "https://mcp.example.com/mcp", Headers: map[string]string{"Authorization": "Bearer t"}}),
 			add: []string{"mcp", "add", "afdrift", "--url", "https://mcp.example.com/mcp",
 				"--header", "Authorization=Bearer t"},
+		},
+		{
+			name: "relay",
+			def:  relayDriftDef(0),
+			add: []string{"mcp", "add", "afdrift", "--url", relayDriftURL,
+				"--header", RelayKeyHeader + "=" + relayDriftKey},
 		},
 	}
 	for _, tc := range cases {
@@ -505,6 +552,12 @@ func TestDriftCopilotMatchesMCPAdd(t *testing.T) {
 			add: []string{"mcp", "add", "--transport", "http", "--timeout", "12000",
 				"--header", "Authorization: Bearer t", "afdrift", "https://mcp.example.com/mcp"},
 		},
+		{
+			name: "relay",
+			def:  relayDriftDef(12000),
+			add: []string{"mcp", "add", "--transport", "http", "--timeout", "12000",
+				"--header", RelayKeyHeader + ": " + relayDriftKey, "afdrift", relayDriftURL},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -567,6 +620,14 @@ func TestDriftKiroMatchesMCPAdd(t *testing.T) {
 			add: []string{"mcp", "add", "--scope", "workspace", "--name", "afdrift",
 				"--url", "https://mcp.example.com/mcp", "--timeout", "12000"},
 		},
+		{
+			// kiro's `mcp add` has no header option; the header part is af's own and was measured
+			// through a real turn (docs/log/48 §8.1), so the CLI side here is the URL alone.
+			name: "relay",
+			def:  relayDriftDef(12000),
+			add: []string{"mcp", "add", "--scope", "workspace", "--name", "afdrift",
+				"--url", relayDriftURL, "--timeout", "12000"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -581,7 +642,14 @@ func TestDriftKiroMatchesMCPAdd(t *testing.T) {
 			}
 			got := serverEntry(t, kiroMCPConfigPath(), "mcpServers", "afdrift")
 
-			requireSameKeys(t, "kiro", got, want)
+			// `kiro-cli mcp add` cannot write headers, so af's "headers" is the one key allowed to
+			// exist only on af's side; for the relay case it must carry the key.
+			requireSameKeys(t, "kiro", got, want, "headers")
+			if tc.name == "relay" {
+				if h, _ := got["headers"].(map[string]any); h[RelayKeyHeader] != relayDriftKey {
+					t.Fatalf("kiro: the relay key header is not in af's entry: %v", got)
+				}
+			}
 		})
 	}
 }
@@ -600,6 +668,7 @@ func TestDriftCursorReadsAFConfig(t *testing.T) {
 			Command: "/bin/echo", Args: []string{"a"}}),
 		sessionDef(ServerDef{Name: "afdriftremote", Origin: OriginUser, Transport: TransportHTTP,
 			URL: "https://mcp.example.com/mcp", Headers: map[string]string{"Authorization": "Bearer t"}}),
+		relayDriftDefNamed("afdriftrelay", 0),
 	}
 	if _, _, _, err := materializeCursor(defs, nil); err != nil {
 		t.Fatalf("materializeCursor: %v", err)
@@ -609,7 +678,7 @@ func TestDriftCursorReadsAFConfig(t *testing.T) {
 	cmd.Dir = afHome
 	cmd.Env = append(os.Environ(), "HOME="+afHome)
 	out, _ := cmd.CombinedOutput()
-	for _, name := range []string{"afdriftlocal", "afdriftremote"} {
+	for _, name := range []string{"afdriftlocal", "afdriftremote", "afdriftrelay"} {
 		if !strings.Contains(string(out), name) {
 			t.Fatalf("cursor cannot read af's ~/.cursor/mcp.json (%q does not appear):\n%s", name, out)
 		}
@@ -641,6 +710,7 @@ func TestDriftAgyMatchesMCPAdd(t *testing.T) {
 			Command: "/bin/echo", Args: []string{"a", "b"}, Env: map[string]string{"K": "v"}}),
 		sessionDef(ServerDef{Name: "afdriftremote", Origin: OriginUser, Transport: TransportHTTP,
 			URL: "https://mcp.example.com/mcp", Headers: map[string]string{"Authorization": "Bearer t"}}),
+		relayDriftDefNamed("afdriftrelay", 0),
 	}
 	if _, _, _, err := materializeAgy(defs, nil); err != nil {
 		t.Fatalf("materializeAgy: %v", err)
@@ -667,7 +737,7 @@ func TestDriftAgyMatchesMCPAdd(t *testing.T) {
 	cmd.Dir = afHome
 	cmd.Env = append(os.Environ(), agyDriftEnv(afHome)...)
 	out, _ := cmd.CombinedOutput() // an unreachable probe is reported in the table, not the exit code
-	for _, want := range []string{"afdrift", "afdriftremote", "https://mcp.example.com/mcp"} {
+	for _, want := range []string{"afdrift", "afdriftremote", "https://mcp.example.com/mcp", "afdriftrelay", relayDriftURL} {
 		if !strings.Contains(string(out), want) {
 			t.Fatalf("agy cannot read af's mcp_config.json (%q does not appear):\n%s", want, out)
 		}

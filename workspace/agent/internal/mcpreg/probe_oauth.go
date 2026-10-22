@@ -122,6 +122,8 @@ type OAuthProblem struct {
 type bearerChallenge struct {
 	resourceMetadata string
 	scope            string
+	// errCode is the `error` parameter (RFC 6750 §3), e.g. insufficient_scope.
+	errCode string
 }
 
 // parseBearerChallenges extracts every Bearer challenge from the WWW-Authenticate header
@@ -207,6 +209,8 @@ func parseChallengeLine(s string) []bearerChallenge {
 					out[cur].resourceMetadata = val
 				case "scope":
 					out[cur].scope = val
+				case "error":
+					out[cur].errCode = val
 				}
 			}
 			continue

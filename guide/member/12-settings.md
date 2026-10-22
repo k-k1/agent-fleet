@@ -370,10 +370,19 @@ search.
   host. To sign in to another Agent Fleet deployment, its administrator has to add this deployment's host to that
   deployment's trusted client hosts setting.
   **Disconnect** deletes the saved sign-in and revokes it at the authorization server when that supports it.
-  The sign-in lives in your workspace's encrypted store only. Using it from sessions and assistants is not built
-  yet (#2479, phase 3): until the relay ships, an OAuth server is **not handed to any session or assistant**, so no
-  agent CLI meets its sign-in prompt, and the row says so. OAuth is not
-  offered for tenant-distributed servers.
+  The sign-in lives in your workspace's encrypted store only. Sessions and assistants use it through a small
+  relay inside your workspace: the CLI's configuration names a local address (`127.0.0.1`, never reachable from
+  outside the container) and a private key instead of the server and a token, and the relay adds the access token,
+  renews it when needed and forwards the request. The token itself is never written into a CLI's configuration, so
+  a session can use the sign-in without being able to read it. An OAuth server is handed to sessions and
+  assistants **only while you are signed in**: signing in puts it into the configuration of every agent kind,
+  and disconnecting or **Sign in again** takes it out. Like any server, it is picked up **from the next session you
+  start**. A session that is already running when you disconnect, or whose sign-in can no longer be renewed, gets an
+  error from the relay telling you to sign in again in the Console (Settings > Connections > MCP servers). If the
+  server answers that a tool needs more permission, the call fails with the server's own answer and the row shows
+  **More permission needed**. The relay's port is remembered across restarts of the Agent; if that port is taken at
+  start-up, a new one is chosen (with a new private key) and the configurations are rewritten, so sessions started before that need a restart.
+  OAuth is not offered for tenant-distributed servers.
 - **Advanced** (closed by default): **targets** (**assistants**, **sessions**, or both; clear both and the entry
   stays but goes nowhere), **target agents** (empty covers every agent), the **timeout** and **enabled**. The
   summary line beside the title shows the current values, for example "Assistant, Sessions · Every agent · default

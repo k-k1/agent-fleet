@@ -1,7 +1,7 @@
 package mcpreg
 
 // What happens to a grant after sign-in (ADR 0119 decision 5): the access token a caller may
-// use, refresh, disconnect, and the status the Console reads. The relay (a later phase) calls
+// use, refresh, disconnect, and the status the Console reads. The relay (relay.go) calls
 // AccessToken / RefreshAccessToken; nothing else hands a token out.
 
 import (
@@ -123,7 +123,8 @@ func fresh(g *secrets.MCPOAuthGrant, now time.Time) bool {
 // AccessToken returns an access token for serverID that is valid now, renewing it first when
 // it is about to expire.
 func AccessToken(ctx context.Context, serverID string) (string, error) {
-	return refreshGrant(ctx, serverID, "")
+	tok, _, err := refreshGrantRes(ctx, serverID, "")
+	return tok, err
 }
 
 // RefreshAccessToken is for a caller whose request was refused 401 with the token rejected: it
@@ -132,16 +133,19 @@ func RefreshAccessToken(ctx context.Context, serverID, rejected string) (string,
 	if rejected == "" {
 		return "", errors.New("mcp oauth: no rejected token named")
 	}
-	return refreshGrant(ctx, serverID, rejected)
+	tok, _, err := refreshGrantRes(ctx, serverID, rejected)
+	return tok, err
 }
 
-// refreshGrant is the single-flight renewal: one request per grant at a time, and a caller that
+// refreshGrantRes is the single-flight renewal: one request per grant at a time, and a caller that
 // waited behind another re-reads the grant and finds the work done instead of sending a second
 // request with a refresh token the first already spent.
-func refreshGrant(ctx context.Context, serverID, rejected string) (string, error) {
+// It returns the resource the grant was made for, so a caller that sends the token somewhere can
+// check the two belong together from the same snapshot.
+func refreshGrantRes(ctx context.Context, serverID, rejected string) (token, resource string, err error) {
 	g0 := currentGrant(serverID)
 	if g0 == nil {
-		return "", ErrNotSignedIn
+		return "", "", ErrNotSignedIn
 	}
 	key := serverID + "\n" + g0.Issuer
 	mu := lockFor(key)
@@ -150,10 +154,10 @@ func refreshGrant(ctx context.Context, serverID, rejected string) (string, error
 
 	g := currentGrant(serverID)
 	if g == nil {
-		return "", ErrNotSignedIn
+		return "", "", ErrNotSignedIn
 	}
 	if g.SignInAgain {
-		return "", ErrSignInAgain
+		return "", "", ErrSignInAgain
 	}
 	rotatedMu.Lock()
 	r, have := rotated[key]
@@ -161,7 +165,7 @@ func refreshGrant(ctx context.Context, serverID, rejected string) (string, error
 	if have {
 		if g.RefreshToken == r.oldRefresh {
 			if err := persistRotation(g.ServerID, g.Issuer, r); err != nil {
-				return "", errors.New("mcp oauth: the renewed grant could not be saved yet")
+				return "", "", errors.New("mcp oauth: the renewed grant could not be saved yet")
 			}
 			applyRotation(g, r)
 		}
@@ -170,11 +174,11 @@ func refreshGrant(ctx context.Context, serverID, rejected string) (string, error
 		rotatedMu.Unlock()
 	}
 	if fresh(g, oauthNow()) && (rejected == "" || g.AccessToken != rejected) {
-		return g.AccessToken, nil
+		return g.AccessToken, g.Resource, nil
 	}
 	if g.RefreshToken == "" {
 		markSignInAgain(g.ServerID, g.Issuer, "")
-		return "", ErrSignInAgain
+		return "", "", ErrSignInAgain
 	}
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
@@ -185,9 +189,9 @@ func refreshGrant(ctx context.Context, serverID, rejected string) (string, error
 	if terr != nil {
 		if terr.code == "invalid_grant" {
 			markSignInAgain(g.ServerID, g.Issuer, g.RefreshToken)
-			return "", ErrSignInAgain
+			return "", "", ErrSignInAgain
 		}
-		return "", errors.New("mcp oauth: the authorization server did not renew the grant (" + terr.code + ")")
+		return "", "", errors.New("mcp oauth: the authorization server did not renew the grant (" + terr.code + ")")
 	}
 	rot := rotation{oldRefresh: g.RefreshToken, tok: tok, at: oauthNow().Unix()}
 	// The rotated refresh token is written before the new access token is used: the old one
@@ -197,9 +201,9 @@ func refreshGrant(ctx context.Context, serverID, rejected string) (string, error
 		rotatedMu.Lock()
 		rotated[key] = rot
 		rotatedMu.Unlock()
-		return "", errors.New("mcp oauth: the renewed grant could not be saved yet")
+		return "", "", errors.New("mcp oauth: the renewed grant could not be saved yet")
 	}
-	return tok.AccessToken, nil
+	return tok.AccessToken, g.Resource, nil
 }
 
 // markSignInAgain drops the tokens of a grant that cannot be renewed and flags it. spent, when
@@ -215,6 +219,11 @@ func markSignInAgain(serverID, issuer, spent string) {
 		}
 		return nil
 	})
+	// The configs that name this server's relay path are stale now. A running CLI keeps its
+	// copy and gets the relay's error naming the Console; the next one should not see the server.
+	if f := OnGrantChange; f != nil {
+		go f()
+	}
 }
 
 // NoteInsufficientScope records that the server refused the grant's token for lack of scope

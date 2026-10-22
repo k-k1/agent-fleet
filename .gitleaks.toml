@@ -28,6 +28,9 @@ regexes = [
   # control-plane/rewrap_keys_test.go before 85017c3cf: base64 of the literal "not-sealed",
   # a stored value no master key opens. Later commits use an af-test-fixture- value instead.
   '''bm90LXNlYWxlZA==''',
+  # materialize_drift_test.go and relay_test.go in 2edc93bc1 / f1bbfa34e: a fake relay key that
+  # is only counting hex digits, never a credential. Later commits use an af-test-fixture- value.
+  '''0123456789abcdef0123456789abcdef0123456789abcdef(0123456789abcdef)?''',
 ]
 
 [[allowlists]]
