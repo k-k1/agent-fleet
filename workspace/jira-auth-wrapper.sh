@@ -51,6 +51,19 @@
 #   only what jira prints, never the token (a debug run is refused above). On this captured path
 #   the OAuth routing URLs in browse links are rewritten to the site URL; a write or a terminal
 #   run still prints jira-cli's own links.
+# - jira-cli 1.7.0 can hang forever, for two reasons; both are bounded here for a run with no
+#   terminal on stdin, stdout or stderr (a terminal run keeps the plain exec: `timeout` without
+#   --foreground breaks job control, and the TUI must never be killed).
+#   * `issue create|edit` and `comment add` read all of stdin whenever it is not a terminal, even
+#     with -b and --no-input, and discard what they read. An open pipe or socket never ends. When
+#     the body is given on the command line (and no -T), or stdin is a socket or a character device
+#     other than /dev/null, jira gets </dev/null. A body that comes from stdin (`-T -`, or a pipe
+#     with no -b) is never touched.
+#   * It has no request timeout, so a server that takes the request and never answers blocks it
+#     forever. Every run is wrapped in `timeout` (AF_JIRA_TIMEOUT seconds, 0 = off; default 120 for
+#     a write, 45 per attempt for a read). A timed-out read counts as a transport failure and is
+#     re-run like one. A timed-out write is never re-run: it exits 124 and says the change may
+#     exist, because `issue create` is not idempotent and the agent cannot tell the two apart.
 # - The token only ever lives in this shell's variables and, at the very end, in the exec'd
 #   jira's environment: never argv, never a file, never printed. xtrace and allexport are
 #   switched off first, and the variables are unset so none inherits an export attribute:
@@ -58,6 +71,7 @@
 set +xa
 unset comment_cmd cred tok server auth login cfg sub sub2 sub3 proj cfg_argv own_init debug prev conf managed gen
 unset parent eff key cdir types derived yaml hint basekey soft npos ikey haveproj hasasg dd pv site why
+unset sbody stmpl spos spbody
 
 real="${AF_JIRA_REAL:-/usr/local/libexec/jira}"
 
@@ -398,15 +412,28 @@ transport_failure() {
 # Runs jira to a private directory, re-running on a transport failure, then replays the last
 # attempt: stdout (browse links rewritten to the site) and stderr, with jira's exit status.
 run_read_only() {
-  local d n=0 rc wait
+  local d n=0 rc wait lim start tcmd=() late
   d="$(mktemp -d 2>/dev/null)" || exec "$real" "$@"
+  lim="$(attempt_limit 45)"
+  if [ -n "$lim" ] && nontty && command -v timeout >/dev/null 2>&1; then
+    tcmd=(timeout -k "$(kill_grace)" "$lim")
+  else
+    lim=""
+  fi
   trap 'rm -rf "$d"' EXIT
   trap 'rm -rf "$d"; exit 130' INT TERM HUP
   while :; do
     # Reads take no input; a terminal stdin must not wait on a prompt the capture hides.
-    "$real" "$@" >"$d/out" 2>"$d/err" </dev/null
+    start=$SECONDS late=""
+    "${tcmd[@]}" "$real" "$@" >"$d/out" 2>"$d/err" </dev/null
     rc=$?
-    [ "$rc" -ne 0 ] && transport_failure "$d/err" || break
+    # No answer in time is a transport failure like a reset one.
+    if [ -n "$lim" ] && timed_out "$rc" "$start" "$lim"; then
+      late=1
+      rc=124
+      echo "jira: no answer within $lim s" >>"$d/err"
+    fi
+    if [ "$rc" -eq 0 ] || { [ -z "$late" ] && ! transport_failure "$d/err"; }; then break; fi
     if [ "$n" -ge 2 ]; then
       echo "jira: giving up after $((n + 1)) attempts: the connection to Jira kept failing" >&2
       break
@@ -429,7 +456,122 @@ run_read_only() {
   cat "$d/err" >&2
   exit "$rc"
 }
+# True when no terminal is attached to stdin, stdout or stderr: the only runs that are bounded.
+nontty() { [ ! -t 0 ] && [ ! -t 1 ] && [ ! -t 2 ]; }
+
+# Seconds one attempt may take, empty when unbounded. AF_JIRA_TIMEOUT overrides the default
+# ($1); 0 switches it off; anything that is not a plain number is ignored.
+attempt_limit() {
+  local v="${AF_JIRA_TIMEOUT:-$1}"
+  case "$v" in "" | . | *[!0-9.]* | *.*.*) v="$1" ;; esac
+  [ -n "${v//[0.]/}" ] && printf '%s' "$v"
+  return 0
+}
+kill_grace() {
+  case "${AF_JIRA_KILL_GRACE:-5}" in "" | *[!0-9.]*) echo 5 ;; *) echo "${AF_JIRA_KILL_GRACE:-5}" ;; esac
+}
+# timed_out <rc> <start seconds> <limit>: timeout(1) answers 124, or 137 when jira ignored the
+# TERM and the KILL after the grace period came; 137 alone is also what an OOM kill looks like,
+# so it only counts once the limit has really elapsed.
+timed_out() {
+  local whole="${3%%.*}"
+  [ "$1" = 124 ] && return 0
+  [ "$1" = 137 ] && [ "$((SECONDS - $2))" -ge "$((${whole:-0} - 1))" ]
+}
+
+# Only the commands below read stdin in jira-cli (see the header): issue create, issue edit and
+# issue comment add. stdin_body_given sets sbody / stmpl / spbody from argv the way cobra parses
+# it: -b, -bX, -b=X, -b X, --body=X, --body X (same for -T / --template), skipping the values of the
+# other flags so that `-s -b` (a summary of "-b") is not read as a body. The last one wins, and an
+# empty value is no value (jira-cli then reads stdin for the body).
+stdin_cmd() {
+  case "$sub" in
+    issue | issues)
+      case "$sub2" in
+        create | edit | update | modify) true ;;
+        comment | comments) [ "$sub3" = add ] ;;
+        *) false ;;
+      esac ;;
+    *) false ;;
+  esac
+}
+scan_body_args() {
+  local a nx="" dd="" k rest
+  sbody="" stmpl="" spos=0 spbody=""
+  for a in "$@"; do
+    if [ -n "$nx" ]; then
+      case "$nx" in body) sbody="$a" ;; template) stmpl="$a" ;; esac
+      nx=""; continue
+    fi
+    if [ -z "$dd" ]; then
+      case "$a" in
+        --) dd=1; continue ;;
+        --body=*) sbody="${a#--body=}"; continue ;;
+        --template=*) stmpl="${a#--template=}"; continue ;;
+        --body) nx=body; continue ;;
+        --template) nx=template; continue ;;
+        --type | --parent | --summary | --priority | --reporter | --assignee | --label | --component | \
+          --fix-version | --affects-version | --original-estimate | --custom | --config | --project)
+          nx=other; continue ;;
+        --*) continue ;;
+        -[tPsbyralCTcp]*)
+          k="${a:1:1}" rest="${a:2}"
+          case "$k" in b) k=body ;; T) k=template ;; *) k=other ;; esac
+          if [ -z "$rest" ]; then nx="$k"; continue; fi
+          rest="${rest#=}"
+          case "$k" in body) sbody="$rest" ;; template) stmpl="$rest" ;; esac
+          continue ;;
+        -?*) continue ;;
+      esac
+    fi
+    spos=$((spos + 1))
+    [ "$spos" -ne 5 ] || spbody="$a"
+  done
+}
+# For a run with no terminal: take stdin away from jira-cli when it would only block there.
+stdin_guard() {
+  stdin_cmd || return 0
+  scan_body_args "$@"
+  [ "$stmpl" != - ] || return 0
+  case "$sub2" in comment | comments) [ -z "$spbody" ] || sbody="${sbody:-$spbody}" ;; esac
+  if { [ -n "$sbody" ] && [ -z "$stmpl" ]; } || [ -S /dev/stdin ] ||
+    { [ -c /dev/stdin ] && [ ! /dev/stdin -ef /dev/null ]; }; then
+    exec </dev/null
+  fi
+}
+
+# A write that has no terminal runs under timeout(1) as a child, so that its exit status can be
+# told from a timeout; everything it prints goes straight through. Signals meant for the wrapper
+# are forwarded: a bash that dies on TERM would leave timeout and jira behind. Returns (and the
+# caller execs as before) when there is nothing to enforce.
+run_bounded() {
+  local lim pid rc start sig="" what
+  lim="$(attempt_limit 120)"
+  [ -n "$lim" ] && command -v timeout >/dev/null 2>&1 || return 0
+  start=$SECONDS
+  timeout -k "$(kill_grace)" "$lim" "$real" "$@" <&0 &
+  pid=$!
+  trap 'sig=1; kill -TERM "$pid" 2>/dev/null' INT TERM HUP
+  wait "$pid"; rc=$?
+  while kill -0 "$pid" 2>/dev/null; do wait "$pid"; rc=$?; done
+  trap - INT TERM HUP
+  [ -z "$sig" ] || exit "$rc"
+  if timed_out "$rc" "$start" "$lim"; then
+    case "$sub2" in
+      create) what="issue may have been created" ;;
+      comment | comments) what="comment may have been added" ;;
+      *) what="change may have been applied" ;;
+    esac
+    echo "jira: jira did not answer within $lim s; the $what - check Jira before running it again" >&2
+    exit 124
+  fi
+  exit "$rc"
+}
 if readonly_cmd && [ ! -t 1 ] && [ ! -t 2 ]; then
   run_read_only "$@"
+fi
+if nontty; then
+  stdin_guard "$@"
+  run_bounded "$@"
 fi
 exec "$real" "$@"

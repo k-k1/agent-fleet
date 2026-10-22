@@ -175,8 +175,14 @@ directory belongs to someone else.
   user's own (jira then says it has no such command).
 - **Jira over a flaky network:** the wrapper re-runs read-only commands (`issue view|list`,
   `board|sprint|epic|project list`, `me`) up to twice after a connection reset or timeout and prints
-  only the last attempt; writes are never re-run, so after a failed `issue create` or `comment add`
-  look at Jira before trying again. `comment edit|delete` retry themselves, and a delete reported as
+  only the last attempt; writes are never re-run, so after a failed **or timed-out** write
+  (`issue create`, `comment add`, exit 124) check Jira before running it again, e.g. JQL
+  `project = KEY AND reporter = currentUser() AND created >= -15m`. Without a terminal every run
+  is bounded (`AF_JIRA_TIMEOUT` seconds, default 120 for a write, 45 per read attempt, `0` = off;
+  a timed-out read counts as a failure and is re-run), and jira-cli's useless stdin read is cut off
+  when `-b` / the comment text is given. A hang that persists: `/proc/<pid>/wchan` of jira shows
+  `pipe_read` / `unix_stream_data_wait` for a stdin block, a network wait otherwise.
+  `comment edit|delete` retry themselves, and a delete reported as
   "probably already deleted" (rc 0) went through. A "the Jira connection is unusable" line means
   the connection has to be reconnected in Settings; `jira init` will not help.
 - The clock is the workspace's local timezone (`date`), not UTC. Outbound network may be
