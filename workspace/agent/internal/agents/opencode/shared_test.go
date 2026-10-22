@@ -1075,3 +1075,63 @@ func TestFailedForkCleanupHoldsTheClaimUntilTheCopyIsGone(t *testing.T) {
 		t.Errorf("a claim during the cleanup's DELETE must be refused, got %v", during)
 	}
 }
+
+// stubTerminalEnsure makes ensureForTerminals fast and countable: no backoff, and every attempt
+// answers with the next error from errs (nil once they run out).
+func stubTerminalEnsure(t *testing.T, errs ...error) *int {
+	t.Helper()
+	calls := 0
+	oldBackoff, oldEnsure := terminalEnsureBackoff, ensureTerminalServe
+	terminalEnsureBackoff = []time.Duration{0, 0, 0}
+	ensureTerminalServe = func() error {
+		calls++
+		if calls <= len(errs) {
+			return errs[calls-1]
+		}
+		return nil
+	}
+	t.Cleanup(func() { terminalEnsureBackoff, ensureTerminalServe = oldBackoff, oldEnsure })
+	return &calls
+}
+
+// A replacement serve that fails to start once must not strand the Terminal panes: nothing else
+// retries for them.
+func TestEnsureForTerminalsRetriesAFailedStart(t *testing.T) {
+	m := session.Meta{Name: "oc-term", Dir: t.TempDir(), Kind: session.KindOpencode, Driver: session.DriverTUI}
+	stubTerminalSlots(t, func() []session.Meta { return []session.Meta{m} })
+	timeout := errors.New("opencode serve did not start in time")
+	calls := stubTerminalEnsure(t, timeout, timeout)
+	ensureForTerminals("test")
+	if *calls != 3 {
+		t.Fatalf("attempts = %d, want 3 (two failures, then the start that works)", *calls)
+	}
+}
+
+func TestEnsureForTerminalsGivesUp(t *testing.T) {
+	m := session.Meta{Name: "oc-term", Dir: t.TempDir(), Kind: session.KindOpencode, Driver: session.DriverTUI}
+	stubTerminalSlots(t, func() []session.Meta { return []session.Meta{m} })
+	timeout := errors.New("opencode serve did not start in time")
+
+	t.Run("bounded", func(t *testing.T) {
+		calls := stubTerminalEnsure(t, timeout, timeout, timeout, timeout, timeout)
+		ensureForTerminals("test")
+		if *calls != 4 {
+			t.Fatalf("attempts = %d, want 4 (one plus one per backoff step)", *calls)
+		}
+	})
+	t.Run("not connected", func(t *testing.T) {
+		calls := stubTerminalEnsure(t, ErrNotConnected)
+		ensureForTerminals("test")
+		if *calls != 1 {
+			t.Fatalf("attempts = %d, want 1: retrying cannot connect opencode", *calls)
+		}
+	})
+	t.Run("no panes left", func(t *testing.T) {
+		stubTerminalSlots(t, func() []session.Meta { return nil })
+		calls := stubTerminalEnsure(t, timeout)
+		ensureForTerminals("test")
+		if *calls != 1 {
+			t.Fatalf("attempts = %d, want 1: no pane needs the serve any more", *calls)
+		}
+	})
+}
