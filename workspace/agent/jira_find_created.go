@@ -109,7 +109,7 @@ func jiraFindCreated(ctx context.Context, key, summary string) ([]string, error)
 	return lines, err
 }
 
-// jiraFindJQL: project, reporter and window always; the fuzzy summary clause only when asked.
+// jiraFindJQL: project, creator and window always; the fuzzy summary clause only when asked.
 func jiraFindJQL(key, summary string, withSummary bool) string {
 	q := `project = "` + jiraJQLString(key) + `" AND creator = currentUser() AND created >= ` + jiraFindWindow
 	if withSummary {

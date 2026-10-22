@@ -1308,7 +1308,9 @@ run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s slow
 reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"; touch "$T/find.hang"; rm -f "$T/jira.count"
 ( env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" TMPDIR="$T/tmp" AF_JIRA_TIMEOUT=0.5 \
     bash "$WRAPPER" issue create -p AB -s sig >"$T/out" 2>"$T/err" </dev/null & p=$!
-  sleep 2; kill -TERM "$p"; wait "$p"; echo $? >"$T/sig.rc" )
+  # The stub writes find.argv when the helper starts: the lookup is in flight from then on.
+  for _ in $(seq 1 150); do [ -f "$T/find.argv" ] && break; sleep 0.1; done
+  kill -TERM "$p"; wait "$p"; echo $? >"$T/sig.rc" )
 [ "$(cat "$T/sig.rc")" = 130 ] || fail "find: signal during lookup, rc=$(cat "$T/sig.rc")"
 # Nothing found: the "may still appear" line.
 reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
