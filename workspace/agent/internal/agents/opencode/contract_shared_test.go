@@ -24,7 +24,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -130,10 +129,11 @@ func rssKB(pid int) int {
 	return 0
 }
 
-// waitHomeVacated waits until no other process runs with HOME=home, then SIGKILLs any that
-// outlive within so the TempDir can still go. It matches on the environment rather than on pane
-// PIDs: that also covers the tmux server, a pane killed mid-test and anything a TUI spawned.
-// A zombie's environ reads empty, so it counts as gone.
+// waitHomeVacated waits until no other process runs with HOME=home, and reports the ones that
+// outlive within. It never kills them: a PID can be reused between the last scan and a signal,
+// and on a shared host that signal would land on another session's process. It matches on the
+// environment rather than on pane PIDs: that also covers the tmux server, a pane killed
+// mid-test and anything a TUI spawned. A zombie's environ reads empty, so it counts as gone.
 func waitHomeVacated(t *testing.T, home string, within time.Duration) {
 	t.Helper()
 	want := []byte("\x00HOME=" + home + "\x00")
@@ -163,10 +163,6 @@ func waitHomeVacated(t *testing.T, home string, within time.Duration) {
 		return
 	}
 	t.Errorf("processes still running with HOME=%s %v after kill-server: %v", home, within, left)
-	for _, pid := range left {
-		_ = syscall.Kill(pid, syscall.SIGKILL)
-	}
-	time.Sleep(time.Second)
 }
 
 func descendants(root int) []int {
