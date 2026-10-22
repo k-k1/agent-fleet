@@ -233,9 +233,13 @@
   margin-left: 0;
 }
 
-/* Nested session list under a node: no extra outer padding. */
-.proj-sub-list {
-  padding: 1px 0 2px;
+/* Nested session list under a node: only a hairline above and below, so the rows sit
+   right under their repo row. Compounded with .sess-list because sessions.css loads
+   later and its 4px/8px padding otherwise wins at equal specificity (measured: 4px
+   above, 8px below the rows). The 6px sides are .sess-list's and stay: they keep the
+   session kind icons visibly deeper than the repo icon. */
+.sess-list.proj-sub-list {
+  padding: 1px 6px 2px;
 }
 
 .proj-sub-empty {
