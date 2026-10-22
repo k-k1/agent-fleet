@@ -14,16 +14,16 @@ be running).
 
 Six major CLI coding agents are compared in the table below. Two more run Managed only:
 **Muse Code** (muse, [below](#muse-code)) and the fleet's own llama.cpp engine
-(**lcpp**, [below](#lcpp)). The experimental Antigravity (agy) slot is covered in
-[10](10-integrations.md). All of them have a column in the
-[feature matrix](#feature-matrix-all-agent-kinds). Connection changes take effect
+(**lcpp**, [below](#lcpp)). The experimental Antigravity (agy) slot has
+[its own section](#antigravity-agy). All of them have a column in the
+[feature matrix](../ref/agents.md). Connection changes take effect
 immediately; behavior settings apply **from each agent's new sessions**.
 
 | | claude | codex | opencode | copilot | cursor | kiro |
 |--|--------|-------|----------|---------|--------|------|
 | Authentication | OAuth connection (paste a code) | ChatGPT subscription / API key | Provider API keys (env) | Rides the GitHub connection (no separate sign-in) | Sign in with a Cursor account (browser approval only) | Device-flow sign-in (Builder ID / Google / GitHub; browser approval only) |
 | Model choice at launch | Yes | Yes | Yes | Yes (plan-dependent; Free is Auto only) | Yes (tied to the account) | Yes (named models even on Free) |
-| States | Working / Question / Plan ready / Awaiting permission / Ready | Working / Question / Plan ready / Ready | Working / Question / Ready | Working / Awaiting permission / Ready | Working / Awaiting permission / Plan ready / Ready | Working / Awaiting permission / Ready |
+| States | Working / Question / Plan ready / Awaiting permission / Ready | Working / Question / Plan ready / Ready | Working / Question / Ready | Working / Awaiting permission / Ready | Working / Awaiting permission / Plan ready / Ready | Working / Question / Ready |
 | Chat view & history | Yes | Yes | Yes | Yes | Live: yes (simplified tool output). Stopped: no history under Managed | Yes (readable history even under Managed) |
 | Plan mode | Yes | Yes | Yes | Set at launch + switchable from managed settings | Yes | Not supported |
 | Execution method | Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) |
@@ -57,36 +57,25 @@ It shows **"Connected"**, and for claude / codex also the signed-in account (ema
 plan. Once one agent is connected, it appears among the session types when you launch a
 new session ([02](02-sessions.md)).
 
+> **A note on autonomous execution.** Agents run commands, edit files, and push on your
+> behalf, including unattended (scheduled runs) and, in permission-bypassing modes,
+> without asking each time. shell / SSM sessions run the string you send **verbatim**.
+> These actions can be destructive or irreversible. Keep backups, use least-privilege
+> credentials, and lean on the approval gates (shell-command confirmation, chat-bridge
+> approve / deny). See also [08 Fleet operator](08-organising.md).
+
+**shell** is a raw shell and **ssm** is a remote login over AWS SSM; both are terminal-only
+with no conversation, state model, or notifications. A muse session asks for no tool
+approvals, so read the note above as applying to it the way it applies to `shell`
+([Muse Code](#muse-code)). The states every kind shows, the other agents included, are listed in
+the [Agents reference](../ref/agents.md#states-shown-in-the-mirror).
+
 ## Feature matrix (all agent kinds)
 
-The table at the top compares the six main CLI agents. This one adds Antigravity (agy),
-the Managed-only agents (lcpp and muse), and the non-agent session kinds (shell / SSM),
-and rolls in the cross-cutting features covered elsewhere in this guide: worktrees
-([03](03-code.md)), scheduled runs and the chat bridge ([08](08-organising.md),
-[10](10-integrations.md)). ✓ = supported, — = not applicable / not supported.
+What each session kind supports, all eleven of them (Antigravity (agy), lcpp, muse, shell and SSM
+included), is in one table in the [Agents reference](../ref/agents.md).
 
-| Capability | claude | codex | cursor | copilot | kiro | agy | opencode | lcpp | muse | shell | ssm |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| Managed (paneless) execution | — | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | — | — |
-| Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | —⁴ | —⁴ | ✓ | ✓ |
-| Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| History when stopped (read-only) | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Reasoning-effort control | ✓ | ✓ | —² | ✓ | — | —² | ✓ | — | ✓ | — | — |
-| Plan mode | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — | — | — |
-| Context-window gauge | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | ✓ | — | — |
-| Image paste | ✓ | ✓ | — | — | — | ✓ | ✓ | — | ✓ | — | — |
-| Hand off a conversation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| Usable as the assistant chat | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — | ✓⁵ | — | — |
-| WS-bar usage / limit chip | ✓ | ✓ | — | ✓ | — | ✓ | — | — | ✓ | — | — |
-
-¹ copilot's model choice is plan-dependent (Free = Auto only).
-
-² cursor and agy fold the reasoning effort into the model name, so there is no separate
-control. kiro accepts a `--effort` flag but exposes no per-model effort picker.
+## Model prices and usage chips
 
 The model lists show each model's **API list price** (input / output per 1M tokens) and context
 window, and the line under the chosen model adds the cache-read price and release date. The
@@ -96,19 +85,6 @@ has announced it will retire, or one models.dev marks deprecated, is tagged "Ret
 shown for cursor, muse and lcpp, or for claude's tier aliases (Opus and so on): there is no price
 source for the first three, and which model an alias runs depends on the CLI version. A full claude
 id you registered does get one.
-
-³ cursor's managed (default) execution keeps no local transcript: a **stopped** cursor
-session has no history to show (the live mirror works while running, and running cursor
-as Terminal (CLI) does persist a readable history). kiro, by contrast, persists a readable
-transcript even under Managed, so a stopped kiro session still shows its history.
-
-⁴ lcpp and muse have no Terminal (CLI) route: lcpp has no vendor CLI to put in a pane;
-muse drives the session protocol directly. Sessions of either kind default to Managed.
-
-⁵ As the assistant, muse answers one prompt per turn as its own headless run and remembers
-the conversation; it answers rather than acts (shell, file writing and web tools are off for
-those turns). It needs Muse Code installed and signed in first; see the connection card below.
-Every muse row was ticked only after it was observed working on a real session.
 
 Usage chips add up, so the bar keeps only the **two agents you used most recently**. The
 rest fold into a **"+N"** chip on the right and open from inside it (a folded chip keeps
@@ -120,28 +96,16 @@ permanently, and note that "Always fold" keeps it folded even near its cap. On a
 chips already sit in the ⋯ overflow as a list, so nothing is folded there.
 
 The WS-bar usage chip needs an account-level limit to show: opencode
-(bring-your-own provider API keys), cursor, and kiro expose none. **lcpp** and **muse**
-have no Terminal (CLI) route; sessions of either kind default to Managed. **muse**
-requires on-demand installation (~299 MB) and a sign-in before it appears in the launch
-menu. 🔴 A muse session asks for no tool approvals: every tool call is allowed before any
-approval is considered, giving it the same reach over this workspace as `shell` (read the
-autonomous execution note above with that in mind). **shell** is a raw shell and **ssm**
-is a remote login over AWS SSM; both are terminal-only with no conversation, state model,
-or notifications.
+(bring-your-own provider API keys), cursor, and kiro expose none.
 
-**Default model for the assistant chat**: each assistant can pin its own model, and
+## Default model for the assistant chat
+
+Each assistant can pin its own model, and
 claude's default is settable deployment-wide via `AF_CHAT_MODEL`. Fast, low-cost tiers are
 the defaults because the assistant is conversational: claude → Sonnet 5 · codex → the newest
 Luna it lists (`gpt-6-luna` at the time of writing) · opencode → `opencode-go/glm-5.2` when the account lists it, otherwise `opencode/nemotron-3-ultra-free` · agy → Gemini 3.5 Flash ·
 cursor → its own default (Auto). cursor's assistant runs **read-only** (`--mode ask`).
 kiro is **not** available as an assistant chat (it has no headless chat mode).
-
-> **A note on autonomous execution.** Agents run commands, edit files, and push on your
-> behalf, including unattended (scheduled runs) and, in permission-bypassing modes,
-> without asking each time. shell / SSM sessions run the string you send **verbatim**.
-> These actions can be destructive or irreversible. Keep backups, use least-privilege
-> credentials, and lean on the approval gates (shell-command confirmation, chat-bridge
-> approve / deny). See also [08 Fleet operator](08-organising.md).
 
 ## Claude
 
@@ -222,39 +186,11 @@ serve keeps the configuration it started with. When a change needs applying, the
 and offers **"Restart opencode serve to apply"**. A restart waits for opencode sessions to
 finish answering and cuts short any that do not, so press it when nothing is mid-turn.
 
-**Behavior** also lets you choose how opencode's thinking (chain-of-thought) is shown.
+A few things work differently from the other agents:
 
-- **Show thinking expanded**: the session view's "Thinking" block starts expanded. Off by default (collapsed; click the heading to read it). Display only: it doesn't change how the agent works (independent of the same setting on claude / codex).
-
-### When the provider returns an error
-
-opencode keeps retrying a provider error such as a rate limit or an overloaded service. While it
-does, the session view shows a band with the attempt and the provider's message ("The provider
-returned an error and the agent is retrying (attempt N): …") instead of a plain working state. It
-goes away when the answer starts or the turn ends, and you can stop the turn at any time.
-
-Errors that no retry can fix (a region or privacy setting, an exhausted quota or billing balance,
-a bad API key) end the turn as **failed** with the provider's message, and the band then reads
-"The provider returned an error that retrying cannot fix, so the turn was stopped: …" until your
-next input. For a "requires Global regions" message, change the privacy / region setting of the
-provider account (for opencode Go, the workspace's Privacy settings on opencode.ai); for quota or
-billing, top up the account; for a key, replace it on the agent's card ([11](11-troubleshooting.md)).
-
-### How opencode 2 differs
-
-opencode in Agent Fleet is **opencode 2**. What follows is what is different from opencode 1,
-which earlier releases ran; the rest of this section is unchanged. If your administrator has
-re-pinned the image to opencode 1, none of the points below applies.
-
-- **Your earlier conversations carry over.** The first time opencode 2 starts on a workspace
-  that used opencode 1, it converts opencode's database in place and imports the existing
-  sessions once, with the same session ids, so a conversation you started before the upgrade
-  resumes in Managed and Terminal (CLI) sessions alike. Conversations you start under opencode 2
-  are not visible to opencode 1, so going back later loses them (your administrator has the
-  details in [operate/03](../operate/03-run.md#going-back-to-opencode-1)).
-- **Only `AGENTS.md` is read.** opencode 2 does not fall back to `CLAUDE.md`, so a repository
+- **Only `AGENTS.md` is read.** opencode does not fall back to `CLAUDE.md`, so a repository
   that has only a `CLAUDE.md` gives opencode nothing. Put what opencode should follow in the
-  repository's `AGENTS.md`. Your own **Agent instructions** still reach opencode: Agent Fleet
+  repository's `AGENTS.md`. Your own **Agent instructions** do reach opencode: Agent Fleet
   writes them into a marked block of opencode's global `AGENTS.md`, and the row in
   **⚙Settings → "Agent instructions"** shows that this is where they went and whether they are
   in effect. Leave that block alone; it is rewritten when you save.
@@ -262,8 +198,8 @@ re-pinned the image to opencode 1, none of the points below applies.
   opencode server Agent Fleet runs (it starts it when needed), instead of starting a private
   one, which saves about 150-250 MB of memory per additional Terminal session (measured with
   idle sessions). Every session stays separate: its own conversation, its own environment and
-  its own status. If that server cannot be had (it fails to start, or opencode is switched off
-  for the Workspace), the session starts with a private server instead, on its own. An
+  its own status. If that server cannot be had (it fails to start, or an administrator has
+  turned it off for the Workspace), the session starts with a private server instead, on its own. An
   administrator can also force a private server per session
   ([operate/03](../operate/03-run.md#opencode-2-terminal-sessions-and-the-shared-server)).
   A session keeps the mode it was launched in.
@@ -276,8 +212,37 @@ re-pinned the image to opencode 1, none of the points below applies.
   private server shows the card too, but a form with several questions or multiple-choice fields
   has to be answered in the terminal view (for a single question the card's buttons press the
   keys). A form that is waiting is lost if the opencode server restarts.
-- **No ToDo list.** opencode 2 has no todo tool, so the session never shows a ToDo list.
-  This is how opencode 2 works, not a lost connection.
+- **No ToDo list.** The session view never shows a ToDo list for opencode. That is expected,
+  not a lost connection.
+
+**Behavior** also lets you choose how opencode's thinking (chain-of-thought) is shown.
+
+- **Show thinking expanded**: the session view's "Thinking" block starts expanded. Off by default (collapsed; click the heading to read it). Display only: it doesn't change how the agent works (independent of the same setting on claude / codex).
+
+### When the provider returns an error
+
+opencode retries a provider error such as a rate limit or an overloaded service. While it does,
+a Managed session's view shows a band with the attempt and the provider's message ("The provider
+returned an error and the agent is retrying (attempt N): …") instead of a plain working state. It
+goes away when the answer starts or the turn ends, and you can stop the turn at any time. A
+Terminal (CLI) session has no such band; the terminal shows what opencode itself prints.
+
+In a Managed session, errors that no retry can fix (a region or privacy setting, an exhausted quota or billing balance,
+a bad API key) end the turn as **failed** with the provider's message, and the band then reads
+"The provider returned an error that retrying cannot fix, so the turn was stopped: …" until your
+next input. For a "requires Global regions" message, change the privacy / region setting of the
+provider account (for opencode Go, the workspace's Privacy settings on opencode.ai); for quota or
+billing, top up the account; for a key, replace it on the agent's card ([11](11-troubleshooting.md)).
+
+### How opencode 2 differs
+
+The image runs opencode 2. A workspace that used opencode 1 keeps its conversations: the
+first time opencode 2 starts there, it converts opencode's database in place and imports the
+existing sessions once, with the same session ids, so they resume in Managed and Terminal (CLI)
+sessions alike. Conversations started under opencode 2 are not visible to opencode 1, so going
+back later loses them. If your administrator has pinned the image back to opencode 1, the
+`AGENTS.md`, shared-server, question-form and ToDo points above do not apply
+([operate/03](../operate/03-run.md#going-back-to-opencode-1)).
 
 ## GitHub Copilot
 
@@ -302,6 +267,11 @@ supported.
   (fetched live). You can't change the model after a session has started.
 - The usage chip, context gauge, and image paste are not supported for cursor.
   Check your plan's remaining quota on the Cursor dashboard.
+- In a Terminal (CLI) session, each finished turn's token counts reach ⚙Settings →
+  "Agent usage" through a `stop` entry Agent Fleet adds to `~/.cursor/hooks.json`. Other
+  entries in that file are kept. The counts are cursor's own report, so they are marked
+  partial, and a turn on Auto is recorded under the model name `default`. A Managed cursor
+  session's turns are not counted this way.
 
 ## Kiro
 
@@ -323,6 +293,46 @@ email. Connecting with an API key is not supported.
   live **context gauge**.
 - The image paste, Plan mode, and the WS-bar usage chip are not supported for kiro, and it
   can't be used as the left-pane assistant chat.
+
+## Antigravity (agy)
+
+**agy** (the Antigravity CLI) is an experimental slot. Its card says "Experimental slot
+(small quota, shared with the Antigravity IDE / Jules)", and the launch menu offers it as
+"Launch Antigravity (experimental)".
+
+On the **Antigravity** card in the "Agents" tab, press **"Connect via OAuth"**. A Google sign-in
+opens in a new tab. Approve it, then paste the displayed code and press "Done", as for
+claude. Once connected, the card shows the account email and plan. The other auth method, GCP
+project, is listed as "coming soon" and can't be picked yet. On a host where agy cannot run, the
+card says "Not available on this host (…)" and agy is not offered.
+
+- **Terminal (CLI) only.** There is no Managed execution for agy.
+- The model choices at launch are the account's live list. The reasoning effort is part of the
+  model name, so there is no separate picker. Image paste works; Plan mode and the context
+  gauge are not available. The WS bar shows its usage (5-hour and weekly).
+- **States**: Working / Question / Awaiting permission / Ready. agy ends its turn soon after a
+  command it ran with `run_command` starts, and leaves the command running. While such a command
+  runs, the row reads **"Ready · running in background"**, and the session does not count as
+  idle. That background work keeps the Workspace awake for at most 2 hours by default (the
+  deployment can change the bound); after that the Workspace can stop as idle while the command
+  still runs. For a longer build, use **Keep awake**
+  ([09](09-collaboration.md#keeping-a-session-awake)). A turn that agy never closes (the CLI died
+  mid-turn) stops reading Working after an hour with no change, unless one of its commands is
+  still running.
+- **Agent Fleet adds a hook entry to agy's configuration.** To know which conversation a session
+  holds and whether it is working, it adds an entry named `agent-fleet` to
+  `~/.gemini/config/hooks.json` and writes it again at every launch. Entries under other names
+  in that file are kept. When the hook has not reported, the state is read from agy's
+  conversation database instead. Each launch also marks the working folder as trusted, so agy
+  does not stop on its trust prompt, and keeps agy's telemetry setting off.
+- **Image generation.** "Antigravity (agy)" is one of the image routes a session can use
+  ([02](02-sessions.md#having-a-session-generate-an-image)). It goes through agy's own
+  image-generator subagent and makes one picture per call. An edit takes up to 3 reference
+  images (the Codex route takes 5); they are copied into the run's own folder, and that folder
+  is the only place the run may read. When the signed-in account is not offered image
+  generation, the call fails with "the signed-in Antigravity/Gemini account is not offered image
+  generation (agy says: …)".
+- RTK works by instruction only, as best effort ([RTK](#rtk-token-savings)).
 
 ## Muse Code
 
@@ -348,6 +358,9 @@ In a running muse session the **`/`** button beside the input lists the session'
 Muse Code's bundled ones, plugin skills, yours under `~/.config/muse/skills`, and the working
 copy's `.agents/skills/`. Picking one runs it
 ([07](07-chat-memo.md#calling-a-skill-or-a-command)).
+
+When a usage limit stops a muse turn, the row shows "Waiting for limit reset" with the time,
+and the session resumes by itself once the limit resets, as claude does.
 
 > 🔴 **A muse session asks for no tool approvals.** Every tool call is allowed before any
 > approval is considered: the sandbox cannot be built inside this Workspace container.
@@ -427,7 +440,7 @@ Instructions come in three layers, and this setting is the **middle** one.
 - It applies to **sessions started from now on**. Running sessions keep what they read at start.
   lcpp is the exception: it has no file to write, so its row says it is added to the system
   prompt every turn, and a running lcpp session picks up a change on its next turn.
-- It can be delivered to claude / codex / opencode / GitHub Copilot / agy / Kiro / lcpp / muse (opencode 2 takes it through an `AGENTS.md` block; see [OpenCode](#how-opencode-2-differs)).
+- It can be delivered to claude / codex / opencode / GitHub Copilot / agy / Kiro / lcpp / muse (opencode takes it through an `AGENTS.md` block; see [OpenCode](#opencode)).
   **Cursor is the only one that can't take it**, and it still appears in the list with the reason
   (Cursor keeps User Rules in your Cursor account, with no local per-user place for instructions).
 - Each row shows **where it goes** (the file it was written to, or for lcpp the system prompt) and **whether it is actually in effect**. When

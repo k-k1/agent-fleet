@@ -27,6 +27,10 @@ Start a conversation with **+ (New chat)** in the **Assistants** section. Send w
 screenshot and asking about it). Its thumbnail, both before you send and in the sent message,
 opens enlarged in the same lightbox the gallery uses.
 
+If the chat runs on claude and the workspace's Claude login has expired, the failed reply turns
+into a short notice with **Re-authenticate** and **Retry**; see
+[11 Troubleshooting](11-troubleshooting.md#an-agent-stopped-with-your-login-has-expired).
+
 ### Purpose-built assistants and translation
 
 Assistants with specific roles are provided, such as guidance on using Agent Fleet or SRE
@@ -153,6 +157,26 @@ finished reading instead of scrolling back to the heading.
 
 A stopped session is read-only history; to reply, restart it with **"Resume and continue"**.
 
+### Questions and plans left by a stopped session
+
+When a session stops while a question, a plan or a permission request is still waiting for you
+(whether you stopped it, it was folded away after waiting, or the workspace stopped), the card
+stays in its chat, headed **"Question left unanswered at stop"**, **"Plan awaiting approval at
+stop"** or **"Permission requested at stop"**, and the notification center tells you. The dialog itself did not survive the stop, so whatever you
+choose reaches the agent as an ordinary message, and the session is resumed to receive it.
+
+- **Question**: pick and type as on a live card, then **"Answer and resume"**.
+- **Plan**: an optional "Notes or changes" box, then **"Approve and run"** (it asks first: the
+  session resumes and runs the plan straight away, and that cannot be undone) or **"Do not
+  approve"** (the session resumes and is asked to revise the plan, or gets your notes).
+  **"Review in another session"** is offered too; see
+  [Having another session review the plan](#having-another-session-review-the-plan).
+- **Permission**: the tool call it asked about is gone, so the only choice is **"Resume and
+  continue"**; the agent is told what it had asked and tries again if it still needs to.
+- **Discard** removes the card without resuming the session.
+
+A card that is not answered is dropped after 14 days.
+
 ### Stopping a turn when something is queued
 
 What **"Stop"** does with messages that are waiting in the queue depends on the execution method.
@@ -190,18 +214,36 @@ arrives while a message is being handed over still stops it the moment the agent
 runs inside the Agent and stops it the same way); on copilot, cursor, kiro and OpenCode that stop
 is best effort, and the message can take a first step before it stops.
 
-**Terminal (CLI)** sessions keep the CLI's own behaviour: Stop sends Esc and the CLI decides. In
-the measured versions, claude and codex sent the queued message on the first Esc, and a second
-Esc stopped it; OpenCode kept it in its history. The discard action and the notice are not offered
-there, because the queue lives inside the CLI. A message another session sends to a claude Terminal
-session in the middle of a turn is reported to the sender as queued, not delivered: claude keeps it
-in memory only, so ending the pane before the turn ends (stopping, archiving or recreating the session) loses it.
-A message to a cursor Terminal session whose CLI refuses it at submit (for example a model the plan
-cannot use) is reported the same way, with the CLI's error text: the message stays in the input box
-and nothing runs it, so the sender is told not to resend.
+**Terminal (CLI)** sessions keep the CLI's own behaviour: Stop sends one Esc and the CLI decides.
+The discard action and the notice are not offered there, because the queue lives inside the CLI.
+This is what each CLI did with a prompt typed while its turn was running, measured once per CLI.
+They are observations, not promises, and a CLI update can change them:
 
-**Rejecting a plan** and **having another session review the plan** send the same stop, and follow
-the same rules. **Cancelling a question** follows them on codex only, where cancelling stops the
+| CLI | Stop (one Esc) while a prompt is queued | The pane is closed while a prompt is queued |
+|---|---|---|
+| claude | The turn stops and the queued prompt runs next | The queued prompt is lost |
+| codex | The turn stops and the queued prompt runs next | The queued prompt still runs: codex's background process outlives the pane |
+| opencode | One Esc only arms the interrupt; press Stop again within about a second. Then the turn stops and the queued prompt runs next | The queued prompt still runs: opencode's background server outlives the pane |
+| cursor | The queued prompt is cancelled and the turn runs on to its end. Ctrl+C in the terminal stops the turn and leaves the prompt unsent in the CLI's panel | Not restored or run when the CLI resumes |
+| kiro | The turn stops and the queued prompt runs next | Not restored or run when the CLI resumes |
+| copilot | The turn is not interrupted; the queued prompt runs after it. Ctrl+C in the terminal stops the turn and drops the queued prompt | Not restored or run when the CLI resumes |
+| agy | Not measured | Not measured |
+
+Messages from other sessions to a Terminal session follow the same rules, with these reports to
+the sender:
+
+- A message to a claude Terminal session in the middle of a turn is reported as queued, not
+  delivered: claude keeps it in memory only, so ending the pane before the turn ends (stopping,
+  archiving or recreating the session) loses it.
+- A message to a cursor Terminal session whose CLI refuses it at submit (for example a model the
+  plan cannot use) is reported the same way, with the CLI's error text: the message stays in the
+  input box and nothing runs it, so the sender is told not to resend.
+- A message to a cursor Terminal session whose input box still holds unsent text (a prompt the CLI
+  refused earlier, or a draft) is refused, because cursor would run the two as one prompt. The
+  sender is told to have that text sent or cleared in the pane first.
+
+**Rejecting a plan** and **having another session review the plan** (including **"Review again
+in …"**) send the same stop, and follow the same rules. **Cancelling a question** follows them on codex only, where cancelling stops the
 turn; the other agents answer the question as declined and leave the queue alone.
 
 ### Holding follow-ups before sending (send queue)
@@ -220,9 +262,12 @@ conversation yet.
 - **Send now** sends one row immediately, whatever the session is doing. On **codex** and **muse**
   (Managed) the agent takes it into the running turn; on every other agent it is accepted and
   handled after the running turn, exactly like a plain send during a turn.
-- **Stopping pauses it.** Pressing **Stop** (or rejecting a plan) holds the rest of the list, so the
-  stop is not followed by your queued messages; **Resume** in the list's header lets it go on.
-  A send the agent refuses also pauses the list, and the message stays at its place.
+- **Stopping pauses it.** Pressing **Stop**, rejecting a plan, sending a plan to
+  **"Review in another session"** or **"Review again in …"**, and cancelling a question with Esc on
+  a Terminal session all hold the rest of the list, so the stop is not followed by your queued
+  messages; the header then says **"Auto-send is paused because you stopped the turn."** and
+  **Resume** lets it go on. A send the agent refuses also pauses the list, and the message stays at
+  its place. While the session is stopped nothing is sent; the rows stay in the list.
 - **It is per session and temporary.** The list stays when you switch panes or sessions in the
   same page, and is cleared when you reload the page; it is never stored on the server. It sends
   only while that session's chat is open. It is not the **Memo queue** below (saved, shared across
@@ -273,6 +318,19 @@ there, so you can show the plan to a different model than the one that wrote it.
   too. You can pick a new worktree in the launch dialog instead.
 - The reviewer folds itself away when it is done. The session stays in the list, so you can open
   it later to see **why** a given point was raised.
+- **A plan left by a stopped session** can be reviewed the same way, from the
+  [card it left behind](#questions-and-plans-left-by-a-stopped-session). Nothing is rejected
+  there and the session is not resumed; once the reviewer session has been created the card is
+  removed (cancelling the launch dialog keeps it), and the reviewer's findings resume the session.
+- **"Review again in ‹reviewer›"** appears on the card of a revised claude plan when a session
+  launched from that plan's card is still there. It sends the revised plan back to that reviewer
+  as a message, so the second round sees its earlier findings, instead of starting a new reviewer.
+  A stopped reviewer is resumed first; one in the middle of a turn gets the message when the turn
+  ends. On a live card the plan is rejected as with the first review, and if the send fails after
+  that, the error toast offers **"Send again"**. On the card of a stopped session nothing is
+  rejected, and the card is removed only once the plan has been sent. The link between plan and
+  reviewer is kept in this browser only, so another browser or device shows only "Review in
+  another session".
 
 ### Calling a skill or a command
 

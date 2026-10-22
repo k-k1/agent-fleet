@@ -297,7 +297,7 @@ body on demand) is a second way to the same text; the other kinds have only the 
 ## opencode 2: Terminal sessions and the shared server
 
 With opencode 2, Terminal (CLI) sessions attach to the one opencode server the Workspace Agent
-runs ([member/06](../member/06-agents.md#how-opencode-2-differs)). To force a private server per
+runs ([member/06](../member/06-agents.md#opencode)). To force a private server per
 Terminal session instead (about 150-250 MB more memory per session, measured idle), start the
 Workspace Agent with this in its environment:
 

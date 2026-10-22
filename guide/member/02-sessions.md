@@ -420,7 +420,7 @@ runs on to **twice** the budget, the session is halted at once, mid-turn, and th
 - **What the figure is.** An estimate at list price from the session's own transcript, or the
   CLI's own reported cost where it gives one (opencode); **not your bill**. On a subscription plan
   it is the API-equivalent figure. A model with no price cannot be estimated, so a budget has no
-  effect on it (the dialog says so); kinds that record no token counts (Kiro, Cursor, Antigravity)
+  effect on it (the dialog says so); kinds whose transcript carries no token counts (Kiro, Cursor, Antigravity)
   and the self-hosted engine ($0) are never stopped by one. A fork starts from $0: the history it
   copied is not charged to it.
 
@@ -488,8 +488,8 @@ archive, as before, and the archive always takes a snapshot of the copy too. Res
 puts the live log at the log's path only if it is complete and newer than the copy, otherwise the
 copy; the other is kept next to it as `.backup.archived` or `.superseded.archived`. If a log
 cannot be read, other than because it just vanished, the delete is refused.) **"Start a new
-conversation"** keeps the copy aside (`claude-transcripts/<id>.superseded.<number>`) instead of
-restoring it. The copy is made while the session is stopped, so
+conversation"** sets the session's whole backup folder aside
+(`claude-transcripts/<id>.superseded.<number>`) instead of restoring from it. The copy is made while the session is stopped, so
 a log that disappears before the first copy (a session stopped only seconds ago, or one that
 last ran before this feature) cannot be recovered this way.
 
@@ -635,11 +635,25 @@ moved or copied. Only **what you see** changes.
   members).
 - From the keyboard, the leader key **`w` → `w`** cycles through the groups.
 
-## Handing a conversation off (handoff)
+## Continuing elsewhere — handoff, branch, move
 
-From the **⋯** menu of a running claude, codex, cursor, copilot, kiro, agy, opencode, or muse session, choose
-**"Hand off to another agent…"** and pick the **target agent** in the handoff modal that
-opens. Rather than handing over the whole original
+There are three ways to carry a conversation into a new session. They differ in who prepares what
+the new session starts from, and in what happens to the original.
+
+| | Handoff | Branch here | Move |
+|---|---|---|---|
+| Where | **⋯** menu, **"Hand off to another agent…"** | **"Branch here"** under one of your past messages ([07 Chat](07-chat-memo.md#branch-from-a-past-message)) | **⋯** menu, **"Move to another agent…"** |
+| Who prepares the context | The fleet operator writes a summary, and you review it | Nobody: the conversation is copied as it is | The Workspace writes the conversation to a handover file; no AI summarises it |
+| Target agent | Any connected agent | The same agent | Another kind of agent only |
+| The original session | Stays as it is | Stays as it is | Stops and takes no more input |
+| What carries over | Key points, unfinished tasks, changed files, next steps | By default the conversation before that message, word for word, with the message left as a draft; **Continue after it** also carries that message and its reply | The conversation, where it stopped, the working copy's state, queued instructions; the new session works in the same working copy |
+
+### Handing a conversation off (handoff)
+
+From the **⋯** menu of any session that has a conversation (every agent kind; not shell or ssm),
+choose **"Hand off to another agent…"** and pick the **target agent** in the handoff modal that
+opens. The workspace has to be running; the session itself may be stopped. Rather than handing
+over the whole original
 conversation as is, the **fleet operator** reads the source session's situation and drafts a
 handoff proposal: the key points, unfinished tasks, changed files, and next steps.
 
@@ -664,15 +678,29 @@ secrets masked), starts the agent you pick **in the same working copy**, and tel
 that file first. The original session then **stops and takes no more input**, so only one
 session works on the working copy.
 
-A session stopped at a usage limit (or a spend limit) also shows a band above its chat with a **"Move to another agent"** button; it opens the same dialog with the agents that still have quota left in front (and marked). Agents whose usage is not shown stay selectable, unmarked. The band is not shown when no agent can take the session, or every candidate is at its own cap.
+**Which sessions can be moved.** Only a session with a conversation the Workspace can read, so
+not shell or ssm. It has to be idle, stopped, or stopped at a usage or spend limit: a move is
+refused while a turn is running, or while a question, a plan or a permission prompt is waiting
+for you. Let the turn end or stop it, and answer first. A stopped Managed cursor session cannot
+be moved either, because its conversation lived only in the running agent.
+
+A session stopped at a usage limit (or a spend limit) also shows a band above its chat with a
+**"Move to another agent"** button; it opens the same dialog with the agents that still have
+quota left in front (and marked). Agents whose usage is not shown stay selectable, unmarked. The
+band is not shown when no agent can take the session, or every candidate is at its own cap.
+When the move completes, the automatic resume that was booked for the limit's reset is
+cancelled, so the original does not start again on its own.
 
 The dialog shows, before you confirm:
 
-- **The agents it can move to.** The same agent is never offered (it draws on the same account's
-  quota); to continue in the same kind, use **"Branch here"** above where the kind supports it.
-  Agents that cannot read the file, or are not connected, are listed with the reason. Kiro can
-  receive a move; Cursor is not offered yet, because its reading of the file has not been
-  verified through the Managed driver. Where the workspace bar shows an agent's usage (claude, codex, muse), its current usage is shown too.
+- **The agents it can move to**: claude, codex, opencode, copilot, agy, muse and kiro. The same
+  agent is never offered (it draws on the same account's quota); to continue in the same kind,
+  use **"Branch here"** above where the kind supports it. Agents that cannot read the file, or
+  are not connected, are listed with the reason: Cursor is not offered yet, because its reading
+  of the file has not been verified through the Managed driver, and lcpp cannot read a file
+  outside its working folder. Both can still be moved *from*. For claude, codex and muse the
+  dialog also shows each agent's current usage; for the others it says nothing about quota.
+- **"Model"** and **"Execution method"** for the new session, as when you start one.
 - **Uncommitted changes** in the working copy. The move never commits, stashes or discards them;
   the new session takes them over as they are, so tidy them first if you need to.
 - Instructions still queued, messages from other sessions not yet delivered (both go into the
@@ -680,6 +708,18 @@ The dialog shows, before you confirm:
   original session: their reports no longer reach it, so check them in the Console.
 - For a Managed cursor session: its conversation view is empty once it stops, and the file is
   then the only record.
+
+**The handover file** is written to `~/.af-work/<new session>/handover-<original session>.md`,
+outside the working copy, so it is never committed. Besides the conversation it records where
+the session stopped, including instructions that were queued but never delivered and inputs a
+stop threw away. Your last three messages keep every tool call with its output; before them,
+tool calls that only read are left out and the others keep one line without their output.
+Thinking is left out. Past about 256 KiB the oldest agent replies are cut to their first
+paragraph; your own messages and the last three exchanges are never cut, so the file can still
+be larger, and the dialog says so. Strings that look like secrets are masked. Its headings
+follow the Console's display language. When the original agent followed project instruction
+files the new one does not load, the file names them. The file goes to the trash with the new
+session and comes back when you restore it.
 
 Afterwards the original row reads **"Moved to …"** and opens the new session. Its menu offers
 **"Resume here anyway…"**, which opens the original's input again without stopping the new one;
@@ -689,7 +729,7 @@ same name) and **"Cancel the move"**. When the new session's first prompt is not
 arrived, the dialog offers to resend it; resending may deliver it twice. The workspace has to be
 running.
 
-### Saving a conversation as Markdown
+## Saving a conversation as Markdown
 
 The **⋯** menu of any session that has a conversation offers **"Export as Markdown"** with three
 choices: **"Conversation only (no tools)"** keeps what you and the agent said, asked and planned
@@ -700,6 +740,12 @@ subagent's own exchanges are left out. Strings that look like tokens or password
 `[secret redacted]`; the masking is a best-effort pattern match, so read the file before you
 share it. Times are shown in your browser's time zone. The workspace has to be running; the
 session itself may be stopped.
+
+The file is named after the session (`<session>.md`, or `session.md` when the name itself looks
+like a secret). It starts with the session, the agent, the working folder, the branch and the
+export time; these labels and the file's headings follow the Console's display language, not the
+browser's. A question the agent is still waiting on is included at the end. When the export
+fails, the message says why (the error, or the HTTP status).
 
 ## Starting sessions from a session (child sessions)
 
@@ -761,6 +807,14 @@ message travels over the channel of the next section, so it arrives only while *
 between sessions"** is on as well. With it off, the parent checks its children's state and
 output itself.
 
+One automated check does reach the parent: when a running parent and all its live children have
+been idle for 15 minutes, with no background work and no message between sessions queued or in
+flight, the parent gets **one notice** naming the idle children, so it can see whether one of
+them is waiting on another. The chat view badges it **"Stalled-tree notice"**. A question, a plan
+or permission prompt, or a usage-limit wait is not idle, so it never triggers the notice. It is
+sent once per quiet spell, and again only after one of the children has changed state. The
+deployment can change the 15 minutes or turn the notice off.
+
 **Children outlive their parent.** Nothing stops them when the parent finishes, so before its
 last turn the parent is told to list the children it leaves behind and their state. Read that
 list: only you can delete a child, and each one is a whole agent, holding memory on your
@@ -803,6 +857,10 @@ one ("tell the session next door what we just did").
   stopping the session or the workspace, or the Agent restarting: the message waits on disk and
   becomes the session's first turn when it next starts, stamped with the time it was queued.
   Archiving or deleting the session, or switching it to Terminal (CLI), drops it.
+  A **Terminal (CLI)** claude session in the middle of a turn holds the message in its own input
+  queue: the sender is told it is queued, and it is lost if the pane ends before the turn does.
+  A Terminal cursor session that refuses the message leaves it unsent in its input box (the
+  sender is told why), and a message to one whose input box still holds unsent text is refused.
 - **A session waiting on your answer gets it after you answer.** While a session shows a
   question, a plan to approve or a permission prompt, a message sent to it waits instead of
   being refused (typed into the dialog, it would pick an answer for you). Its chat view says how
