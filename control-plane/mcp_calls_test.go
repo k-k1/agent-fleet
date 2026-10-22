@@ -241,3 +241,33 @@ func TestMCPCallsOwnerOnly(t *testing.T) {
 		t.Errorf("PAT ring: %+v", got)
 	}
 }
+
+func TestMCPCallsRevokeDropsRingOnlyForTheOwner(t *testing.T) {
+	e := newMCPOAuthEnv(t)
+	registerPATRoutes(e.mux, config{mgr: e.mgr})
+	captureMCPLog(t)
+	ctx := context.Background()
+	other, err := e.mgr.store.UpsertIdentity(ctx, "", "other-user", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	patTok, patHash := newPATToken()
+	if err := e.mgr.store.CreatePAT(ctx, store.PAT{ID: "pat-r", IdentityID: e.ident.ID, MembershipID: e.membershipID(), Scope: "read", Name: "t", CreatedAt: store.NowTS()}, patHash); err != nil {
+		t.Fatal(err)
+	}
+	e.mcpCall(patTok, "tools/list")
+	pats := newPATAPI(e.mgr)
+	revoke := func(who store.Identity) {
+		r := httptest.NewRequest("DELETE", "/api/pat/pat-r", nil)
+		r.SetPathValue("id", "pat-r")
+		pats.revoke(httptest.NewRecorder(), r, who)
+	}
+	revoke(other)
+	if len(e.mgr.mcpCalls.Recent(mcpsrv.CallKey(false, "pat-r"))) != 1 {
+		t.Fatal("a foreign revoke wiped the owner's ring")
+	}
+	revoke(e.ident)
+	if len(e.mgr.mcpCalls.Recent(mcpsrv.CallKey(false, "pat-r"))) != 0 {
+		t.Error("the owner's revoke left the ring behind")
+	}
+}

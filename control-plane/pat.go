@@ -216,9 +216,18 @@ func (a patAPI) calls(w http.ResponseWriter, r *http.Request, ident store.Identi
 // revoke (DELETE /api/pat/{id}) revokes one of the caller's tokens.
 func (a patAPI) revoke(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	id := r.PathValue("id")
+	owned := false
+	if pats, err := a.store.ListPATsByIdentity(r.Context(), ident.ID); err == nil {
+		for _, p := range pats {
+			owned = owned || p.ID == id
+		}
+	}
 	if err := a.store.RevokePAT(r.Context(), id, ident.ID); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
+	}
+	if owned { // only the owner's revoke may drop a ring
+		a.mgr.mcpCalls.Forget(mcpsrv.CallKey(false, id))
 	}
 	a.auditPAT(r.Context(), "", ident.ID, "pat.revoke", id, "")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})

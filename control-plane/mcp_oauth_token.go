@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -351,6 +352,7 @@ func (a *mcpOAuthAPI) refresh(w http.ResponseWriter, r *http.Request, clientID s
 		if _, err := a.mgr.store.RevokeMCPOAuthGrant(ctx, t.GrantID, "refresh token reused", now.Unix()); err != nil {
 			log.Printf("mcp oauth: revoke on reuse: %v", err)
 		}
+		a.mgr.mcpCalls.Forget(mcpsrv.CallKey(true, t.GrantID))
 		mcpTokenErr(w, http.StatusBadRequest, "invalid_grant", "the refresh token was already used; the connection was revoked")
 		return
 	}
@@ -384,6 +386,7 @@ func (a *mcpOAuthAPI) revoke(w http.ResponseWriter, r *http.Request) {
 			mcpTokenErr(w, http.StatusInternalServerError, "server_error", "could not revoke")
 			return
 		}
+		a.mgr.mcpCalls.Forget(mcpsrv.CallKey(true, t.GrantID))
 	}
 	noStore(w)
 	w.WriteHeader(http.StatusOK)

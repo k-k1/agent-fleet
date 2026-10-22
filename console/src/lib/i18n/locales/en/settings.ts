@@ -20,6 +20,8 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "tokens.apps_revoke_body": "Revoke the connection for {name}? The app must connect again to regain access.",
   "tokens.apps_load_failed": "Could not load connected apps.",
   "tokens.apps_revoke_failed": "Could not revoke the connection. Try again.",
+  "tokens.calls_loading": "Loading…",
+  "tokens.calls_tool_error": "tool reported an error",
   "tokens.calls_toggle": "Recent calls",
   "tokens.calls_hint": "The last 50 requests to /mcp, kept in memory only. With several Control Plane replicas, each keeps its own list, so this shows only the requests this replica served and may be empty after a restart.",
   "tokens.calls_refresh": "Refresh",

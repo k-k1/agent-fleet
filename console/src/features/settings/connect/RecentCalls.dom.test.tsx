@@ -52,4 +52,16 @@ describe("recent calls", () => {
     await click(host.querySelector("button")!);
     expect(host.textContent).toContain("レプリカ");
   });
+  it("shows loading until the first answer and flags a failed tool call", async () => {
+    let resolve!: (v: unknown) => void;
+    api.mockReturnValue(new Promise((r) => { resolve = r; }));
+    await act(async () => { root.render(<RecentCalls url="u" />); });
+    await click(host.querySelector("button")!);
+    expect(host.textContent).toContain("Loading…");
+    const failed = { ...listed, items: [{ method: "tools/call", name: "list_my_sessions", era: "", status: 200, tool_error: true }] };
+    await act(async () => { resolve({ calls: [failed] }); });
+    expect(host.textContent).not.toContain("Loading…");
+    expect(host.textContent).toContain("tool reported an error");
+    expect(host.querySelector("tr.calls-bad")).not.toBeNull();
+  });
 });

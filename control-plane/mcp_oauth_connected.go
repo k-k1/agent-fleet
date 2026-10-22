@@ -88,5 +88,6 @@ func (a mcpConnectedAPI) revoke(w http.ResponseWriter, r *http.Request, ident st
 		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "unknown connection"})
 		return
 	}
+	a.mgr.mcpCalls.Forget(mcpsrv.CallKey(true, id))
 	w.WriteHeader(http.StatusNoContent)
 }

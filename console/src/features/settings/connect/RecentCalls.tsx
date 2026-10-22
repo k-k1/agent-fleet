@@ -15,6 +15,7 @@ interface CallItem {
   error_code?: number;
   error_message?: string;
   tools?: number;
+  tool_error?: boolean;
 }
 interface Call {
   at: string;
@@ -35,6 +36,7 @@ function summary(it: CallItem, tr: ReturnType<typeof useT>): string {
   let s = it.method || tr("tokens.calls_unparsed");
   if (it.name) s += ` (${it.name})`;
   if (it.tools !== undefined) s += ` → ${tr("tokens.calls_tools", { n: it.tools })}`;
+  if (it.tool_error) s += ` ✖ ${tr("tokens.calls_tool_error")}`;
   if (it.error_code) s += ` ✖ ${it.error_code} ${it.error_message ?? ""}`;
   return s;
 }
@@ -76,6 +78,7 @@ export function RecentCalls({ url }: { url: string }) {
             <button type="button" className="btn-ghost" onClick={() => void load()}>{tr("tokens.calls_refresh")}</button>
           </p>
           {error && <p role="alert">{error}</p>}
+          {calls === null && !error && <p className="muted">{tr("tokens.calls_loading")}</p>}
           {calls && calls.length === 0 && !error && <p className="muted">{tr("tokens.calls_empty")}</p>}
           {calls && calls.length > 0 && (
             <div style={{ overflowX: "auto" }}>
@@ -88,11 +91,11 @@ export function RecentCalls({ url }: { url: string }) {
                 </tr></thead>
                 <tbody>{calls.map((c, i) => {
                   const first = c.items[0];
-                  const era = first ? `${first.era}${first.meta_version ? ` ${first.meta_version}` : ""}` : "";
+                  const era = first?.era ? `${first.era}${first.meta_version ? ` ${first.meta_version}` : ""}` : "";
                   const client = first?.client_name ? `${first.client_name}/${first.client_version ?? ""}` : c.user_agent ?? "";
                   return (
-                    <tr key={`${c.at}-${i}`} className={c.status >= 400 ? "calls-bad" : ""}>
-                      <td>{new Date(c.at).toLocaleTimeString()}</td>
+                    <tr key={`${c.at}-${i}`} className={c.status >= 400 || c.items.some((it) => it.tool_error) ? "calls-bad" : ""}>
+                      <td>{new Date(c.at).toLocaleString()}</td>
                       <td>{c.http_method} {c.status}</td>
                       <td>{c.items.map((it, j) => <div key={j}>{summary(it, tr)}</div>)}
                         {c.items_omitted ? <div className="muted">+{c.items_omitted}</div> : null}</td>

@@ -18,6 +18,8 @@ export const settings = {
   "tokens.apps_revoke_body": "{name} の接続を取り消しますか？再びアクセスするには、アプリから接続し直す必要があります。",
   "tokens.apps_load_failed": "接続済みアプリを読み込めませんでした。",
   "tokens.apps_revoke_failed": "接続を取り消せませんでした。もう一度お試しください。",
+  "tokens.calls_loading": "読み込み中…",
+  "tokens.calls_tool_error": "ツールがエラーを返しました",
   "tokens.calls_toggle": "最近の呼び出し",
   "tokens.calls_hint": "/mcp への直近 50 件のリクエストです。メモリ上にだけ保持します。Control Plane が複数あるときは各レプリカが別々に持つため、ここにはこのレプリカが受けたものだけが出ます。再起動後は空になることがあります。",
   "tokens.calls_refresh": "更新",

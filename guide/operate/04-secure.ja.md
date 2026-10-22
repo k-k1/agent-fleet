@@ -356,9 +356,9 @@ mcp-call http_method="POST" status=400 latency_ms=2 principal="grant:<id>" clien
 - `principal` は `pat:<id>`、`grant:<id>`（OAuth。続けて `client_id`）、`unauthenticated` のいずれかで、拒否したときは `reason=` に理由が入ります
   （Bearer なし、不明・期限切れのトークン、別リソース向けの OAuth トークン、`method not allowed`）。
 - `era` は `legacy`（`initialize` ハンドシェイク）か `stateless`（2026-07-28。毎回 `_meta` を付ける）です。stateless で拒否されたときは
-  JSON-RPC の `error_code`（-32020 ヘッダ不一致、-32021、-32022 非対応バージョン、-32602 `_meta` 欠落）と、`Mcp-Method` / `Mcp-Name` ヘッダの有無が出ます。
-  `tools/list` の要素には返したツール数 `tools` が付きます。
-- トークン、`Authorization` の値、リクエストの引数、ツールの結果は記録しません。`tools/call` のツール名だけ記録します。
+  JSON-RPC の `error_code`（-32020 ヘッダ不一致、-32021 クライアント capability の欠落、-32022 非対応バージョン、-32602 `_meta` 欠落）と、`Mcp-Method` / `Mcp-Name` ヘッダの有無が出ます。
+  `tools/list` の要素には返したツール数 `tools` が付きます。実行して失敗した `tools/call`（200 で `isError`）には、本文なしで `tool_error:true` が付きます。
+- トークン、`Authorization` の値、リクエストの引数、ツールの結果は記録しません。`tools/call` / `prompts/get` のツール名 / プロンプト名だけ記録します。
 - 認証できた呼び出し者の記録は、本人が 設定 → 接続 → MCP トークン →「最近の呼び出し」で読めます（トークン / 接続ごとに直近 50 件、
   メモリ上のみで再起動すると消え、**Control Plane のレプリカごと**）。レプリカが複数あるときは全レプリカのログを探してください。405 と未認証のリクエストはログにしか残りません。
 
