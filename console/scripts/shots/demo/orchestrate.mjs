@@ -39,7 +39,7 @@ function children(locale) {
     {
       name: "sc2dm7k",
       kind: "codex",
-      model: "gpt-5.6-luna",
+      model: "gpt-6-luna",
       repo: "webshop@review-data-model",
       branch: "review/data-model",
       title: L(locale, "レビュー: データモデルと移行", "Review: data model & migrations"),
@@ -54,7 +54,7 @@ function children(locale) {
     {
       name: "sa5api3",
       kind: "agy",
-      model: "gemini-3-pro",
+      model: "gemini-4-argon-medium",
       repo: "webshop@review-api",
       branch: "review/api",
       title: L(locale, "レビュー: API 互換性", "Review: API compatibility"),
@@ -98,7 +98,7 @@ export function fixtures(locale) {
       path: "/home/dev/repos/webshop",
       branch: "main",
       alive: true,
-      model: "claude-opus-5",
+      model: "claude-opus-5-5",
       createdAt: at(150),
       origin: "user",
       state: state.phase === "working" ? "working" : state.phase === "r3" ? "idle" : "idle",
@@ -137,7 +137,7 @@ export function fixtures(locale) {
         first.push(txt(k.area), tool("mcp__af__create_session", `${k.kind} · ${k.title}`));
       }
     }
-    const turns = [user(1, T.ask, at(150)), assistant(2, at(122), first, "claude-opus-5")];
+    const turns = [user(1, T.ask, at(150)), assistant(2, at(122), first, "claude-opus-5-5")];
     const acks = [
       L(locale, "受け取りました。残り 2 本を待ちます。", "Noted — waiting for the other two."),
       L(locale, "2 本そろいました。あと 1 本です。", "Two in, one to go."),
@@ -157,7 +157,7 @@ export function fixtures(locale) {
                 ),
               ),
             ];
-      turns.push(assistant(4 + i * 2, at(k.done - 1), reply, "claude-opus-5"));
+      turns.push(assistant(4 + i * 2, at(k.done - 1), reply, "claude-opus-5-5"));
     });
     return messagesBody(PARENT, turns, state.phase === "working" ? "working" : "idle");
   };

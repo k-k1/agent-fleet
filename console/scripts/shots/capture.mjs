@@ -136,6 +136,74 @@ const SCENES = [
     settle: 2500,
   },
   {
+    // Settings › Agent memory, for the features page: the memories every agent kind shares,
+    // each with the session and agent that wrote it, opened from the account menu like usage.
+    name: "memory",
+    sections: FOCUS_TREE,
+    settings: "memory",
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      // Open the pinned project memory so the detail pane shows a body and its author.
+      await new Promise((r) => setTimeout(r, 1500));
+      document.querySelector(".mem-md-pick")?.click();
+    })()`,
+    settle: 2000,
+  },
+  {
+    // The member inbox (ADR 0111), for the features page: a request waiting to be taken, one this
+    // member holds with the session started from it, and a direct message.
+    name: "inbox",
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".inbox-btn")?.click();
+      // Unfold the request this member took: its session and the Done / PR controls.
+      await new Promise((r) => setTimeout(r, 1000));
+      document.querySelectorAll(".inbox-group")[1]?.querySelector(".inbox-card-head")?.click();
+    })()`,
+    settle: 2000,
+  },
+  {
+    // The session menu, for the features page: move to another agent, hand off, share, and the
+    // three Markdown exports of the conversation, in one open menu.
+    name: "sessionmenu",
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const row = [...document.querySelectorAll(".sess-menu-wrap")].find((el) =>
+        /チェックアウトの入力検証|Checkout input validation/.test(el.closest("li, .sess-row, [class*=row]")?.textContent || ""));
+      row?.querySelector(".sess-menu-btn")?.click();
+    })()`,
+    settle: 1200,
+  },
+  {
+    // Moving a session to another agent (ADR 0115), for the features page: the dialog opened from
+    // the Claude session's menu, with the kinds it can go to and the work that goes with it.
+    name: "move",
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const row = [...document.querySelectorAll(".sess-menu-wrap")].find((el) =>
+        /チェックアウトの入力検証|Checkout input validation/.test(el.closest("li, .sess-row, [class*=row]")?.textContent || ""));
+      row?.querySelector(".sess-menu-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".ui-menu-item")].find((el) => /別のエージェントへ移す|Move to another agent/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 2000,
+  },
+  {
     // The image-generation studio (ADR 0081, ADR 0100): the bound claude session's mirror on
     // the left, the studio's draft in the middle (the negative locked), and the trial slot, a
     // batch mid-run, the results and the studio's pictures on the right. The stub's second read

@@ -59,7 +59,7 @@ export function fixtures(locale, fx) {
       {
         role: "assistant",
         agent: "claude",
-        model: "claude-sonnet-5",
+        model: "claude-sonnet-5-5",
         content: L(locale, "いまは何も動いていません。フリートは待機中です。", "Nothing is running right now — the fleet is idle."),
         ts: Date.now() - 41 * 60_000,
       },
@@ -78,7 +78,7 @@ export function fixtures(locale, fx) {
         icon: "pulse",
         builtin: true,
         agent: "claude",
-        model: "claude-sonnet-5",
+        model: "claude-sonnet-5-5",
         description: L(locale, "インシデント対応の相談相手（読み取り専用）。", "Incident response and monitoring, read-only."),
         tools: {},
       },
@@ -92,7 +92,7 @@ export function fixtures(locale, fx) {
       agent: "claude",
       assistant_id: "sre",
       title: L(locale, "SRE・checkout の 5xx", "SRE · checkout 5xx"),
-      model: "claude-sonnet-5",
+      model: "claude-sonnet-5-5",
       created_at: now() - 60_000,
       updated_at: now(),
       message_count: state.sre.length,
@@ -103,7 +103,7 @@ export function fixtures(locale, fx) {
       agent: "claude",
       assistant_id: "operator",
       title: L(locale, "フリート運用", "Fleet operations"),
-      model: "claude-sonnet-5",
+      model: "claude-sonnet-5-5",
       created_at: now() - 3600_000,
       updated_at: now(),
       message_count: state.ops.length,
@@ -131,7 +131,7 @@ export function fixtures(locale, fx) {
     frames.push({
       delay: 200,
       data: () => {
-        list.push({ role: "assistant", agent: "claude", model: "claude-sonnet-5", content, steps, ts: now() });
+        list.push({ role: "assistant", agent: "claude", model: "claude-sonnet-5-5", content, steps, ts: now() });
         return { done: true, conversation: conversation(conv) };
       },
     });
@@ -171,7 +171,7 @@ export function fixtures(locale, fx) {
     branch: "fix/redis-pool",
     worktree: true,
     alive: true,
-    model: "gpt-5.6-luna",
+    model: "gpt-6-luna",
     origin: "operator",
     createdAt: new Date().toISOString(),
     state: "working",
@@ -190,7 +190,7 @@ export function fixtures(locale, fx) {
             tool("Bash", "rg -n REDIS_ modules/checkout-api", "modules/checkout-api/task.tf:41:        { name = \"REDIS_URL\", value = var.redis_url },"),
             tool("Edit", "modules/checkout-api/task.tf"),
           ],
-          "gpt-5.6-luna",
+          "gpt-6-luna",
         ),
       ],
       "working",
