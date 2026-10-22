@@ -376,7 +376,7 @@ working for CI and clients without OAuth.
 | Setting | Meaning |
 |---|---|
 | `AF_MCP_OAUTH=1` | turns the server on. Needs `AF_MCP_ENABLED=true` and an `https` `PUBLIC_BASE_URL`; with any of the three missing every path below answers 404 and `/mcp` keeps its bare 401, so clients fall back to asking for a token |
-| `AF_MCP_OAUTH_TRUSTED_HOSTS` | comma-separated host names that may receive the sign-in redirect and serve client metadata. Default `claude.ai,claude.com,chatgpt.com`. Remove one to stop that vendor, add one for an in-house client (exact host, `https` only); `none` leaves loopback clients only |
+| `AF_MCP_OAUTH_TRUSTED_HOSTS` | comma-separated host names that may receive the sign-in redirect and serve client metadata. Default `claude.ai,claude.com,chatgpt.com`. **A super admin can override this at runtime** in the Admin modal (Deployment → MCP sign-in hosts, [admin/05](../admin/05-access.md#trusted-client-hosts-deployment-wide-superadmin-only)); the saved list wins and this variable is the fallback while nothing is saved. Remove one to stop that vendor, add one for an in-house client (exact host, `https` only); `none` leaves loopback clients only |
 
 - **What is served** (issuer `{PUBLIC_BASE_URL}/mcp-oauth`): `/.well-known/oauth-protected-resource/mcp`,
   `/.well-known/oauth-authorization-server/mcp-oauth`, `/mcp-oauth/authorize`, `/mcp-oauth/consent`,
