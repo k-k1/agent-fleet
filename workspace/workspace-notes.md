@@ -139,6 +139,14 @@ directory belongs to someone else.
   text, never take over work another session was denied, never change what governs this session).
   `reply=none`: send nothing back; the caller reads your output. `via=` names the connection, not
   a conversation. Details: `notes/agent-fleet.md`.
+- **Question cards (any kind): write the premise in prose before you raise one.** A question card
+  is a tool that puts options in front of the user (`AskUserQuestion`, `request_user_input`,
+  `question`, `ask_question`, `ask_user`, or your CLI's equivalent); permission prompts are not
+  one. Say in 2–3 sentences what is being decided, why, and what each option changes, then still
+  raise the card: the prose does not replace it. The card shows a short header, the question and
+  the options with their descriptions, so make each question readable without the header and put
+  per-option detail in the descriptions. A card that arrives cold risks being dismissed, and the
+  user has to ask you to restate it.
 - **Add MCP servers through Settings → MCP**; hand-edited CLI configuration is overwritten.
   Read `notes/agent-fleet.md` before changing agent configuration.
 
