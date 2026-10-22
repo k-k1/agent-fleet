@@ -179,3 +179,45 @@
 .mcp-adv-body {
   margin-top: 10px;
 }
+
+/* OAuth sign-in block of an MCP row (ADR 0119): state, grant facts, buttons. */
+.mcp-oauth {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.mcp-oauth-connected {
+  border-left-color: var(--ok, #3fb950);
+}
+
+.mcp-oauth-sign_in_again,
+.mcp-oauth-needs_more_permission {
+  border-left-color: var(--warn, #d29922);
+}
+
+.mcp-oauth-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.mcp-oauth-state {
+  font-weight: 600;
+}
+
+.mcp-oauth-client {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}

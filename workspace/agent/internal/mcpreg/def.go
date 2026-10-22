@@ -103,7 +103,14 @@ const (
 	CodeHeaderValue     = "mcp_header_value_invalid"
 	CodeKindUnknown     = "mcp_kind_unknown"
 	CodeTimeoutRange    = "mcp_timeout_range"
+	CodeAuthUnknown     = "mcp_auth_unknown"
+	CodeOAuthTransport  = "mcp_oauth_remote_only"
+	CodeOAuthHeader     = "mcp_oauth_authorization_header"
+	CodeOAuthTenant     = "mcp_oauth_not_distributed"
 )
+
+// AuthOAuth marks a definition whose server is signed in to with OAuth.
+const AuthOAuth = "oauth"
 
 func invalid(code, format string, a ...any) error {
 	return &ValidationError{Code: code, Msg: fmt.Sprintf(format, a...)}
@@ -128,6 +135,23 @@ func Validate(d ServerDef) error {
 	// be swept as one of af's leftovers.
 	if reservedNames[strings.ToLower(d.Name)] || afNameRE.MatchString(strings.ToLower(d.Name)) {
 		return invalid(CodeNameReserved, "%q is a name reserved by Agent Fleet", d.Name)
+	}
+	switch d.Auth {
+	case "":
+	case AuthOAuth:
+		if d.Transport != TransportHTTP {
+			return invalid(CodeOAuthTransport, "OAuth sign-in is for remote servers only")
+		}
+		if d.Origin == OriginTenant {
+			return invalid(CodeOAuthTenant, "a tenant-distributed definition cannot use OAuth yet")
+		}
+		for k := range d.Headers {
+			if strings.EqualFold(strings.TrimSpace(k), "authorization") {
+				return invalid(CodeOAuthHeader, "an OAuth server takes no static Authorization header")
+			}
+		}
+	default:
+		return invalid(CodeAuthUnknown, "unknown authentication: %q", d.Auth)
 	}
 	switch d.Transport {
 	case TransportStdio:

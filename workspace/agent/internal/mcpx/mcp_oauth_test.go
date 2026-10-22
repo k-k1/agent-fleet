@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // The envelope carries the issuer when a refusal concerns one: the Console needs it to ask for
@@ -45,5 +46,44 @@ func TestOAuthRoutesAnswerForUnknownServers(t *testing.T) {
 	HandleOAuthStart(w, r)
 	if w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "mcp_not_found") {
 		t.Errorf("start: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// Leaving OAuth (or changing the URL) ends the sign-in: the grant is a credential for that
+// one server.
+func TestUpdateAwayFromOAuthDropsTheGrant(t *testing.T) {
+	d, err := mcpreg.Create(mcpreg.ServerDef{Name: "hosted", Transport: mcpreg.TransportHTTP, URL: "https://m.example.com/mcp", Auth: mcpreg.AuthOAuth, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = mcpreg.Delete(d.ID) })
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.MCPOAuth = append(s.MCPOAuth, secrets.MCPOAuthGrant{ServerID: d.ID, Issuer: "https://as.example.com", AccessToken: "x"})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	put := func(body string) int {
+		r := httptest.NewRequest(http.MethodPut, "/mcp-servers/"+d.ID, strings.NewReader(body))
+		r.SetPathValue("id", d.ID)
+		w := httptest.NewRecorder()
+		HandleServerUpdate(w, r)
+		return w.Code
+	}
+	grants := func() int {
+		s, _ := secrets.Load()
+		n := 0
+		for _, g := range s.MCPOAuth {
+			if g.ServerID == d.ID {
+				n++
+			}
+		}
+		return n
+	}
+	if c := put(`{"name":"hosted","transport":"http","url":"https://m.example.com/mcp","auth":"oauth","enabled":true}`); c != 200 || grants() != 1 {
+		t.Fatalf("an unchanged OAuth server keeps its grant: %d, grants=%d", c, grants())
+	}
+	if c := put(`{"name":"hosted","transport":"http","url":"https://m.example.com/mcp","enabled":true}`); c != 200 || grants() != 0 {
+		t.Fatalf("leaving OAuth must drop the grant: %d, grants=%d", c, grants())
 	}
 }

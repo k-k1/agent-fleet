@@ -353,6 +353,10 @@ type MCPServer struct {
 	// http
 	URL     string            `json:"url,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
+	// Auth is "" (static headers, or none) or "oauth": the member signs in from the Console and
+	// the Agent holds the grant (ADR 0119). It only records the choice; what a CLI is handed for
+	// such a server is a later phase.
+	Auth string `json:"auth,omitempty"`
 
 	Enabled   bool       `json:"enabled"`
 	Targets   MCPTargets `json:"targets"`

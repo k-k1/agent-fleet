@@ -98,10 +98,16 @@ func HandleServerUpdate(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
+	// A sign-in belongs to one server URL under OAuth; changing either ends it (revoked at the
+	// authorization server when it offers that), and the member signs in again.
+	old, oldErr := mcpreg.Get(r.PathValue("id"))
 	out, err := mcpreg.Update(r.PathValue("id"), in)
 	if err != nil {
 		writeMCPErr(w, err)
 		return
+	}
+	if oldErr == nil && old.Auth == mcpreg.AuthOAuth && (out.Auth != mcpreg.AuthOAuth || out.URL != old.URL) {
+		_, _ = mcpreg.DisconnectOAuth(r.Context(), out.ID)
 	}
 	MaterializeAll()
 	httpx.WriteJSON(w, http.StatusOK, wireMCPServer(out))

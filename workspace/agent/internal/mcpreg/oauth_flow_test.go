@@ -957,3 +957,32 @@ func TestSignInDiscoveryDoesNotFollowACrossOriginRedirectWithHeaders(t *testing.
 		t.Error("a static header followed a redirect to another origin")
 	}
 }
+
+func TestValidateOAuthAuth(t *testing.T) {
+	ok := ServerDef{Name: "hosted", Transport: TransportHTTP, URL: "https://m.example.com/mcp", Auth: AuthOAuth}
+	if err := Validate(ok); err != nil {
+		t.Fatalf("a remote OAuth server is valid: %v", err)
+	}
+	cases := map[string]struct {
+		mod  func(*ServerDef)
+		code string
+	}{
+		"stdio":         {func(d *ServerDef) { d.Transport, d.URL, d.Command = TransportStdio, "", "x" }, CodeOAuthTransport},
+		"authorization": {func(d *ServerDef) { d.Headers = map[string]string{"authorization": "Bearer x"} }, CodeOAuthHeader},
+		"tenant":        {func(d *ServerDef) { d.Origin = OriginTenant }, CodeOAuthTenant},
+		"unknown":       {func(d *ServerDef) { d.Auth = "kerberos" }, CodeAuthUnknown},
+	}
+	for name, c := range cases {
+		d := ok
+		c.mod(&d)
+		var ve *ValidationError
+		if err := Validate(d); !errors.As(err, &ve) || ve.Code != c.code {
+			t.Errorf("%s: %v, want code %s", name, err, c.code)
+		}
+	}
+	other := ok
+	other.Headers = map[string]string{"X-Team": "a"}
+	if err := Validate(other); err != nil {
+		t.Errorf("a non-Authorization header is allowed: %v", err)
+	}
+}

@@ -62,6 +62,7 @@ import { Section } from "../ui/Section.tsx";
 import { WsBar } from "./WsBar.tsx";
 import { TopBar } from "./TopBar.tsx";
 import { useSettingsUI } from "../features/settings/store.ts";
+import { McpOAuthReturn } from "../features/settings/mcp/McpOAuthReturn.tsx";
 import { SettingsDialog } from "../features/settings/SettingsDialog.tsx";
 import { AdminDialog } from "../features/settings/AdminDialog.tsx";
 import { TenantDialog } from "../features/settings/TenantDialog.tsx";
@@ -617,6 +618,7 @@ export function App() {
           <PaneHost />
         </main>
       </div>
+      <McpOAuthReturn booted={booted} />
       {settingsOpen && <SettingsDialog />}
       {adminOpen && <AdminDialog />}
       {tenantOpen && <TenantDialog />}

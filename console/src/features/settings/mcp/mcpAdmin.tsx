@@ -13,6 +13,7 @@ import { useT } from "../../../lib/i18n/index.ts";
 // mcpWire.test.ts rather than by this component.
 import {
   NAME_RE,
+  TENANT_AUTH_MODES,
   useMcpKinds,
   advancedIsDefault,
   bodyOfTenant,
@@ -307,6 +308,7 @@ export function McpAdminForm({
             onRows={(headers) => patch({ headers })}
             tokenStored={hasStoredBearer(form.headers)}
             namesOnly={form.userSecret}
+            modes={TENANT_AUTH_MODES}
             headersHint={form.userSecret ? tr("admin.mcp_headers_names_hint") : tr("admin.mcp_headers_hint")}
           />
 

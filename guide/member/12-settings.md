@@ -354,7 +354,19 @@ search.
   `Authorization: Bearer <token>` (a pasted `Bearer ` prefix is removed); or **Custom headers**, any name/value
   pairs. A saved token is never shown again: the field reads "Saved", leaving it blank keeps the token, and typing
   a new one replaces it. A server whose stored `Authorization` is anything other than a Bearer token (`Token ...`,
-  say) opens as Custom headers.
+  say) opens as Custom headers. **OAuth** is for servers that only accept an OAuth sign-in: nothing is typed in the
+  form (no static `Authorization` header is allowed with it). Save the server, then press **Sign in** on its row.
+  Your browser goes to the server's authorization server and comes back to the Console, and the row shows
+  **Connected** with when the access token expires (it renews itself), the scopes granted and how the client was
+  identified (a client ID document Agent Fleet publishes, dynamic registration, or a client ID you entered).
+  Other row states: **Not signed in**, **Sign in again** (the saved sign-in can no longer be renewed) and **More
+  permission needed** (the server asked for a scope you did not grant). If the authorization server offers no
+  automatic registration, Sign in asks for a **client ID** (and a secret, if it has one) registered by hand. If a
+  sign-in through the client ID document did not finish, the row offers **Retry with dynamic registration**.
+  **Disconnect** deletes the saved sign-in and revokes it at the authorization server when that supports it.
+  The sign-in lives in your workspace's encrypted store only. Using it from sessions and assistants is not built
+  yet: for now the row records that you are signed in, and sessions are not handed the server's token. OAuth is not
+  offered for tenant-distributed servers.
 - **Advanced** (closed by default): **targets** (**assistants**, **sessions**, or both; clear both and the entry
   stays but goes nowhere), **target agents** (empty covers every agent), the **timeout** and **enabled**. The
   summary line beside the title shows the current values, for example "Assistant, Sessions · Every agent · default
@@ -362,7 +374,7 @@ search.
 - **Connection test**: reports the server name, version, tool count and round-trip time.
   If the server answers that it needs an **OAuth sign-in**, the test says so instead of reporting a failure
   and lists what it found: the authorization server, how a client can register with it, and the scopes.
-  Agent Fleet detects such servers but cannot sign in to them yet; that is coming.
+  For a saved server whose authentication is **OAuth**, the report has a **Sign in** button.
 - **Enabled / disabled**: disabling keeps the definition but stops handing it out.
 - Sessions pick it up **from the next session you start**. For assistants, choose it in the assistant's own
   edit form under "MCP servers" ([07](07-chat-memo.md)).
