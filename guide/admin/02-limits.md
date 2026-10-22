@@ -193,18 +193,32 @@ that there is no room, and everything stays in the home directory as before.
 ## Idle auto-stop
 
 This is the mechanism that automatically folds up neglected environments (the settings are on the
-tenant-wide side, so they are super_admin's domain). It has two stages.
+tenant-wide side, so they are super_admin's domain). It has two stages, set by the four fields under
+**Idle auto-stop**.
 
 - **Session halt after**: a neglected session that no one has open is folded to
   "stopped (resumable)" once it exceeds this time. The conversation log remains, so it can be
   resumed later. A session left stopped for 7 days is moved to the archive (each user can change the period, or turn it off, in Settings → Agents → Session; the deployment's `AF_SESSION_STOPPED_TTL` sets it for users who leave that at Default). It is never deleted, so it
   can still be restored from there, and its working copy is left in place; a session locked
   against deletion stays in the list.
+- **Halt when awaiting a decision**: the same for an unattended session waiting on a person (a
+  question, a plan awaiting approval, a permission prompt, the usage-limit menu, an expired
+  login), on a clock of its own. Waiting does not keep the workspace running: **Workspace stop
+  after** still applies. Empty follows the tenant's **Session halt after** when that is set,
+  and otherwise the deployment's default for decision waits (which normally equals its session
+  default). Nothing is lost when one is folded: the answer is delivered on resume from the card
+  in the conversation.
+- **Max hold by background work**: how long background work (a dev server or a
+  `run_in_background` task that an idle session started) keeps the workspace from stopping.
+  Empty uses the deployment default (2 hours unless the operator changed it), `0` means no
+  limit; details in
+  [operate/03](../operate/03-run.md#what-keeps-a-workspace-awake).
 - **Workspace stop after**: a workspace with no one connected and no running sessions has its
   whole container stopped once it exceeds this time.
 
-The time format is `30m` (minutes), `2h` (hours), `90s` (seconds). Empty follows the deploy
-default (disabled by default), and `0` means explicitly disabled. For the details of the behavior,
+The time format is `30m` (minutes), `2h` (hours), `90s` (seconds). Empty follows the deployment
+default, which is 1 hour for **Session halt after** and 2 hours for **Workspace stop after** unless
+the operator changed it, and `0` means explicitly disabled. For the details of the behavior,
 see the developer documentation.
 
 Even when stopped, the work itself (the contents of home) remains. The next time members need it,
