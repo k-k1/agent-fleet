@@ -162,6 +162,18 @@ has two sides, and a kind can be on one without the other.
 - A move always goes to another kind. To continue in the same kind, fork the session where the
   kind can fork. shell and ssm have no conversation to hand over.
 
+## Each agent's own memory
+
+What the switch **"Let sessions use Agent Fleet memory"**
+([14 Agent memory](../member/14-agent-memory.md#settings)) does to the memory a kind keeps by itself.
+
+| Kind | While the switch is on | Carried into Agent Fleet memory | Written back when it goes off |
+|---|---|---|---|
+| claude | New sessions start with Claude Code's auto-memory off | ✓ (imported in the background) | ✓ |
+| codex | codex's `features.memories` is switched off, and your value is restored when the switch goes off | — | — |
+| muse | New hosts start with Muse Code's native memory off | Once, with **Import from muse** | — |
+| other kinds | Nothing is changed | — | — |
+
 ## Choosing one
 
 Choose by the subscription you already pay for. An Anthropic account → **claude**;
