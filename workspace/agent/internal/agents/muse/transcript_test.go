@@ -808,3 +808,29 @@ func TestScheduledFireSummaryIsClipped(t *testing.T) {
 		t.Errorf("Info not clipped: %d runes, newline=%v", len([]rune(got)), strings.Contains(got, "\n"))
 	}
 }
+
+// muse 1.4.12 reports how a backgrounded command ended as its own item, with the facts in a
+// typed member. overdueNotice has none and takes the host's fallbackText like any unknown kind.
+func TestBackgroundTerminalCompletionAndOverdueNoticeRender(t *testing.T) {
+	bc := item(msp.ItemKindBackgroundTerminalCompletion, "b-1", 1)
+	bc.Status = msp.ItemStatusCompleted
+	bc.BackgroundTerminalCompletion = &msp.BackgroundTerminalCompletion{
+		Command: "npm test", Output: "1 failed", TerminalStatus: "failed", ToolCallID: "call-1",
+	}
+
+	od := item(msp.ItemKindOverdueNotice, "o-1", 1)
+	od.Status = msp.ItemStatusCompleted
+	od.FallbackText = sp("scheduled job is overdue")
+
+	turns := turnsFromItems([]msp.Item{bc, od})
+	if len(turns) != 1 || len(turns[0].Parts) != 2 {
+		t.Fatalf("items were dropped or split: %+v", turns)
+	}
+	p := turns[0].Parts
+	if p[0].Tool != "backgroundTerminalCompletion" || p[0].Info != "background command failed: npm test" {
+		t.Errorf("backgroundTerminalCompletion = %+v", p[0])
+	}
+	if p[1].Tool != "overdueNotice" || p[1].Info != "scheduled job is overdue" {
+		t.Errorf("overdueNotice = %+v", p[1])
+	}
+}
