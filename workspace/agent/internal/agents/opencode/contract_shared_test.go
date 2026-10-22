@@ -370,8 +370,77 @@ func TestContractSharedServeTerminalSessions(t *testing.T) {
 				return o
 			}
 		}
-		t.Fatalf("session %s never ran %d shell command(s)", ses, n)
+		var panes strings.Builder
+		for _, pn := range []string{"t1", "t2", "t3", "t4"} {
+			if c := pane(pn); c != "" {
+				fmt.Fprintf(&panes, "--- pane %s ---\n%s\n", pn, c)
+			}
+		}
+		var raw any
+		_ = api("GET", "/api/session/"+ses+"/message?order=asc&limit=200", nil, &raw)
+		msgs, _ := json.Marshal(raw)
+		t.Fatalf("session %s never ran %d shell command(s); had %d\nmessages: %.1500s\n%s", ses, n, len(shellOutputs(ses)), msgs, panes.String())
 		return nil
+	}
+	// userMessages counts the session's user messages whose text is exactly text (exact, so "ENVQ
+	// one" never counts "ENVQ one more"). A failed read returns -1: unknown is not zero, or a blip
+	// right after a daemon swap would read as "nothing sent" and trigger a duplicate Enter.
+	userMessages := func(ses, text string) int {
+		var w struct {
+			Data []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"data"`
+		}
+		if err := api("GET", "/api/session/"+ses+"/message?order=asc&limit=200", nil, &w); err != nil {
+			return -1
+		}
+		n := 0
+		for _, m := range w.Data {
+			if m.Type == "user" && m.Text == text {
+				n++
+			}
+		}
+		return n
+	}
+	// submitPrompt types text into pane name and presses Enter until the server holds the user
+	// message, and returns how many such messages the session must hold afterwards. A TUI that has
+	// just reconnected to a replacement daemon can take the text and swallow the Enter, leaving the
+	// prompt filled and nothing sent; a second Enter is then the input the member would give. It is
+	// only sent while the text still sits in the prompt and the server, asked again right before,
+	// has no such message, so a slow first Enter is never doubled. Worst case 3 x
+	// statusWaitTimeout per call; budget for the sum when changing either.
+	submitPrompt := func(name, ses, text string) int {
+		t.Helper()
+		base := userMessages(ses, text)
+		if base < 0 {
+			base = 0
+		}
+		want := base + 1
+		typeInto(name, text, "Enter")
+		for try := 1; try <= 3; try++ {
+			if pollUntil(statusWaitTimeout, 200*time.Millisecond, func() bool { return userMessages(ses, text) >= want }) {
+				return want
+			}
+			n := userMessages(ses, text)
+			if n >= want {
+				return want
+			}
+			if !strings.Contains(pane(name), text) {
+				return want // the prompt was cleared: the turn is on its way, waitShell reports if it is not
+			}
+			t.Logf("%s: %q still in the prompt after %v, pressing Enter again (try %d)", name, text, statusWaitTimeout, try)
+			typeInto(name, "Enter")
+		}
+		t.Fatalf("%s: %q never reached the server after 3 Enters (user messages %d, want %d):\n%s", name, text, userMessages(ses, text), want, pane(name))
+		return want
+	}
+	// wantSentOnce fails when a retried Enter submitted the prompt twice.
+	wantSentOnce := func(name, ses, text string, want int) {
+		t.Helper()
+		if got := userMessages(ses, text); got != want {
+			t.Errorf("%s: session %s holds %d user message(s) %q, want %d", name, ses, got, text, want)
+		}
 	}
 	// wantEnv: the shell of slot name sees ITS pane's environment and nothing of the server's.
 	wantEnv := func(label string, env map[string]string, name string) {
@@ -657,16 +726,20 @@ func TestContractSharedServeTerminalSessions(t *testing.T) {
 	if servePassword() != pw {
 		t.Error("the server password changed across generations: attached TUIs could not reconnect")
 	}
-	for _, n := range []string{"t2", "t4"} {
-		typeInto(n, "ENVQ after restart", "Enter")
-	}
+	// The replacement daemon is up, but a TUI reconnects on its own schedule and may drop the Enter
+	// of a prompt typed in that window.
+	w2 := submitPrompt("t2", first["t2"], "ENVQ after restart")
+	w4 := submitPrompt("t4", forkSes, "ENVQ after restart")
 	ao := waitShell(first["t2"], 2)
 	wantEnv("t2 after restart", ao[1], "t2")
+	wantSentOnce("t2", first["t2"], "ENVQ after restart", w2)
 	fo = waitShell(forkSes, 3)
 	wantEnv("t4 after restart", fo[len(fo)-1], "t4")
+	wantSentOnce("t4", forkSes, "ENVQ after restart", w4)
 	// A pane whose TUI plugin re-sends the environment for the /new session it claimed.
-	typeInto("t1", "ENVQ third", "Enter")
+	w1 := submitPrompt("t1", second, "ENVQ third")
 	so := waitShell(second, 2)
 	wantEnv("t1 /new after restart", so[1], "t1")
+	wantSentOnce("t1", second, "ENVQ third", w1)
 	rss("serve+", []int{daemonPID(addr)})
 }

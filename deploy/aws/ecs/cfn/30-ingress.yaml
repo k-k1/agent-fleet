@@ -111,7 +111,7 @@ Parameters:
     Description: >-
       How much of a slot is held back from the workspace so the box's own daemons cannot be
       starved. auto = a flat 2 GiB; off = uncapped (what melted a
-      live slot on 2026-08-27); a number = that many MiB. PARAMETERS.md.
+      live slot on 2026-08-27); a number = that many MiB (0 = reserve nothing, cap at the full rung; not off). PARAMETERS.md.
   Ec2SlotSleepSec:
     Type: String
     Default: "900"

@@ -178,7 +178,7 @@ containerd, the ECS agent, SSM, the EFS stunnel) cannot be starved by it.
   that the kernel evicted all page cache, every daemon spent hours re-reading its own
   executable off disk, and the instance stopped answering the cluster while still looking healthy
   to EC2.
-- A plain number is that many MiB.
+- A plain number is that many MiB. `0` reserves nothing and caps the workspace at the full rung (not the same as `off`, and not auto).
 
 NOTE: this is part of the task definition, so changing it replaces the running task at the
 owner's next start, exactly as an image change does.

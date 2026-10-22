@@ -73,7 +73,7 @@
 set +xa
 unset comment_cmd cred tok server auth login cfg sub sub2 sub3 proj cfg_argv own_init debug prev conf managed gen
 unset parent eff key cdir types derived yaml hint basekey soft npos ikey haveproj hasasg dd pv site why
-unset sbody stmpl spos spbody
+unset sbody stmpl spos spbody ssum injected fpid fsig fout
 
 real="${AF_JIRA_REAL:-/usr/local/libexec/jira}"
 
@@ -103,7 +103,8 @@ timed_out() {
 # issue comment add. scan_body_args sets sbody / stmpl / spbody from argv the way cobra parses
 # it: -b, -bX, -b=X, -b X, --body=X, --body X (same for -T / --template), skipping the values of the
 # other flags so that `-s -b` (a summary of "-b") is not read as a body. The last one wins, and an
-# empty value is no value (jira-cli then reads stdin for the body).
+# empty value is no value (jira-cli then reads stdin for the body). The summary (-s, --summary) is
+# read the same way into ssum, for find_created.
 stdin_cmd() {
   case "$sub" in
     issue | issues)
@@ -117,10 +118,10 @@ stdin_cmd() {
 }
 scan_body_args() {
   local a nx="" dd="" k rest
-  sbody="" stmpl="" spos=0 spbody=""
+  sbody="" stmpl="" spos=0 spbody="" ssum=""
   for a in "$@"; do
     if [ -n "$nx" ]; then
-      case "$nx" in body) sbody="$a" ;; template) stmpl="$a" ;; esac
+      case "$nx" in body) sbody="$a" ;; template) stmpl="$a" ;; summary) ssum="$a" ;; esac
       nx=""; continue
     fi
     if [ -z "$dd" ]; then
@@ -128,18 +129,20 @@ scan_body_args() {
         --) dd=1; continue ;;
         --body=*) sbody="${a#--body=}"; continue ;;
         --template=*) stmpl="${a#--template=}"; continue ;;
+        --summary=*) ssum="${a#--summary=}"; continue ;;
         --body) nx=body; continue ;;
         --template) nx=template; continue ;;
-        --type | --parent | --summary | --priority | --reporter | --assignee | --label | --component | \
+        --summary) nx=summary; continue ;;
+        --type | --parent | --priority | --reporter | --assignee | --label | --component | \
           --fix-version | --affects-version | --original-estimate | --custom | --config | --project)
           nx=other; continue ;;
         --*) continue ;;
         -[tPsbyraelCTcp]*)
           k="${a:1:1}" rest="${a:2}"
-          case "$k" in b) k=body ;; T) k=template ;; *) k=other ;; esac
+          case "$k" in b) k=body ;; T) k=template ;; s) k=summary ;; *) k=other ;; esac
           if [ -z "$rest" ]; then nx="$k"; continue; fi
           rest="${rest#=}"
-          case "$k" in body) sbody="$rest" ;; template) stmpl="$rest" ;; esac
+          case "$k" in body) sbody="$rest" ;; template) stmpl="$rest" ;; summary) ssum="$rest" ;; esac
           continue ;;
         -?*) continue ;;
       esac
@@ -185,9 +188,56 @@ run_bounded() {
       *) what="change may have been applied" ;;
     esac
     echo "jira: jira did not answer within $lim s; the $what - check Jira before running it again" >&2
+    pid=""
+    find_created "$@"
     exit 124
   fi
   exit "$rc"
+}
+# After a timed-out `issue create`: name the issues this connection created in the last 15 minutes
+# with exactly the summary of the command, so the caller can tell "created" from "lost" before
+# re-running. Only for a run that got the Agent's credential ($injected): a user-owned config,
+# JIRA_API_TOKEN / JIRA_SERVER or a debug run is another Jira the helper cannot search. The helper
+# holds the token itself; argv carries the project key and the summary, nothing secret. Never
+# changes the exit status: the caller prints this and exits 124 whatever it found.
+find_created() {
+  local key="${proj:-}" out rc lim fpid="" fsig="" fout eff
+  [ -n "$injected" ] && [ "$sub2" = create ] || return 0
+  scan_body_args "$@"
+  [ -n "$ssum" ] || return 0
+  # The config jira reads: an explicit -c wins over the environment (it is not exported).
+  eff="${cfg_argv:-${JIRA_CONFIG_FILE:-}}"
+  if [ -z "$key" ] && [ -n "$eff" ]; then key="$(project_key "$eff")"; fi
+  [ -n "$key" ] || return 0
+  # The helper has a 15 s deadline of its own; this only guards one that never starts or never
+  # ends. It is deliberately not AF_JIRA_TIMEOUT: a small value for the create would cut a lookup
+  # that needs the store lock and a token renewal (AF_JIRA_FIND_TIMEOUT is for the tests; 0 = off).
+  lim="${AF_JIRA_FIND_TIMEOUT:-20}"
+  case "$lim" in "" | . | *[!0-9.]* | *.*.*) lim=20 ;; esac
+  fout="$(mktemp 2>/dev/null)" || return 0
+  # Run in the background so a signal ends the wait at once (130) instead of after the lookup.
+  # It reads the store itself, so the token this shell exports for jira is taken out of its env.
+  trap 'fsig=1; [ -z "$fpid" ] || kill -TERM "$fpid" 2>/dev/null' INT TERM HUP
+  if [ -n "${lim//[0.]/}" ]; then
+    env -u JIRA_API_TOKEN timeout -k "$(kill_grace)" "$lim" workspace-agent jira-find-created "$key" "$ssum" >"$fout" 2>&1 </dev/null &
+  else
+    env -u JIRA_API_TOKEN workspace-agent jira-find-created "$key" "$ssum" >"$fout" 2>&1 </dev/null &
+  fi
+  fpid=$!
+  [ -z "$fsig" ] || kill -TERM "$fpid" 2>/dev/null
+  wait "$fpid"; rc=$?
+  while kill -0 "$fpid" 2>/dev/null; do wait "$fpid"; rc=$?; done
+  trap - INT TERM HUP
+  out="$(cat "$fout")"; rm -f "$fout"
+  [ -z "$fsig" ] || exit 130
+  if [ "$rc" -ne 0 ]; then
+    if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then out="no answer in time"; else out="$(printf '%s\n' "$out" | head -n1 | tr -cd '[:print:]' | cut -c1-120)"; fi
+    echo "jira: could not look for the issue${out:+ ($out)}; check Jira before running it again" >&2
+  elif [ -n "$out" ]; then
+    echo "jira: possible matches: $(printf '%s\n' "$out" | tr -cd '[:print:]\n' | paste -sd, - | sed 's/,/, /g')" >&2
+  else
+    echo "jira: no matching issue found in the last 15 minutes (it may still appear; check again before re-running)" >&2
+  fi
 }
 # Bounded run of a helper of the Agent (jira-cred, jira-issue-types): a stuck helper must not hang
 # every command, and the fail-closed paths already treat an empty answer as "no credential".
@@ -527,6 +577,7 @@ if [ "$sub" = init ]; then
   set -- "$@" --installation cloud --server "$server" --auth-type "$auth" --login "${login:-oauth}"
 fi
 
+injected=1
 export JIRA_API_TOKEN="$tok" JIRA_SERVER="$server" JIRA_AUTH_TYPE="$auth" JIRA_INSTALLATION=Cloud JIRA_DEBUG=false
 if [ -n "$login" ]; then export JIRA_LOGIN="$login"; else unset JIRA_LOGIN; fi
 

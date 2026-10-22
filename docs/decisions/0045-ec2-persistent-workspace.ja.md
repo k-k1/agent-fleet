@@ -1640,6 +1640,8 @@ stat 1 回と最大 8 KiB の read だけで、home には触れず、メンバ�
 （8 GiB ラングの 1/5 では実メモリの余裕が約 1230 MiB しか残らず、常駐デーモンの実測 1.2〜1.4 GiB に対して足りず、
 実機でスラッシングした）。`off`、明示の `<n>` は変わらない。
 
+**2026-10-22 追記（#2503）:** `AF_ECS_EC2_HOST_RESERVE_MB=0` の明示は、コードコメントが昔から言っていたとおりになった。予約なしで、ワークスペースはフルラングで頭打ちになる。従来は `auto`（2 GiB）として読まれていた。`auto`／未設定／解釈不能の扱いは変わらず、無制限なのは引き続き `off` だけ。
+
 **注記（2026-10-21、#2448）：Stop は、バックグラウンドで収束中の Start より優先される。** `Stop` はまずワークスペースの Start カウントを進め（`abortStarts`、`homeLockClaim` 配下）、そのあと desiredCount を 0 にし、phase と claim を消すので、`State()` はすぐ `stopped` を返す。バックグラウンド側（`converge`/`launch`）は各ステップの境目でそのカウントを確認し、desiredCount を上げる呼び出しの直前には同じロックのもとで確認する（`underStart`）。追い越された Start は claim にも phase にも触れず静かに終わる（`errStartSuperseded`）。home は通常の Stop と同じくアタッチ・マウントされたまま残る。対象外：`placeHome` の最中に Stop が入ると、その呼び出しが書いた claim が TTL まで残ることがある。実 AWS では未検証。
 
 **追記（2026-10-21, #2449）: 動かないスロットをプール画面から強制停止できる。隔離はしない。** `POST /api/admin/ec2-pool/slots/{id}/force-stop`（super_admin）は、ECS エージェントが接続し SSM がオンラインのスロットを、body で上書きしない限り拒否し（停止済み・隔離済みも拒否）、ランタイム自身の `Stop`（`homeLockClaim` 下の `abortStarts`）で載っている Start を打ち切り、CP 自身の未実行 SSM コマンド（コメント `agent-fleet slot volume`）を取り消し、`StopInstances` を送ります。停止はまず通常（動かない箱でも home がマウントされたままのことがあり、Force は電源断と同じ）で、3 分後に Force で再送しますが、同じ起動のまま `stopping` のインスタンス（LaunchTime で照合）に限ります。`stopping` 中の再押下ならすぐ Force です。**決定: 隔離せず、Start の経路にも手を入れない。** スロットは `af-role=slot` のまま home も載ったままなので、メンバーの次の Start が既存の経路で同じ停止中のスロットを起こします。再起動で詰まりが解け、スロットの ECS エージェントが再接続して、そこに STOPPING のまま残っていたタスクを報告します（#2447）。ECS のコンテナインスタンスは登録解除しません。STOPPING のまま残るタスクはプール画面に出し（`stopping_task`）、解消は自動化しません。証拠として箱を残すのは隔離（決定 20・23）の役目で、動かないスロットを隔離へ回す仕組みは #2450 です。IAM は `ssm:ListCommands` / `ssm:CancelCommand` / `ssm:DescribeInstanceInformation`（`SsmSlotForceStop`）。実 AWS では未検証。

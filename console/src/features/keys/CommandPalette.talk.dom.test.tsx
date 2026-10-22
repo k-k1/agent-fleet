@@ -282,3 +282,28 @@ describe("CommandPalette conversations mode — PageDown on an empty list (#2412
     expect(opened.map((o) => o.name)).toEqual(["fixer"]);
   }, 10_000);
 });
+
+describe("CommandPalette conversations mode — arrow keys on an empty list (#2504)", () => {
+  it.each(["ArrowDown", "ArrowUp"])(
+    "leaves the first hit selected when %s was pressed before the hits arrived",
+    async (key) => {
+      // Same trap as PageDown: ArrowDown on zero rows computed min(1, -1) = -1, so the hits that
+      // landed later had no highlighted row and Enter did nothing.
+      opened.length = 0;
+      searchBody = { hits: [], indexing: true, indexed: 0, total: 9 };
+      await typeQuery("alpha");
+      act(() => {
+        input().dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+      });
+      searchBody = { hits: [hit("fixer", 3, "alpha beta")], indexing: false, indexed: 9, total: 9 };
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 3300));
+      });
+      expect(snippets()).toHaveLength(1);
+      expect(document.querySelector(".cp-item.sel")).not.toBeNull();
+      pressEnter();
+      expect(opened.map((o) => o.name)).toEqual(["fixer"]);
+    },
+    10_000,
+  );
+});

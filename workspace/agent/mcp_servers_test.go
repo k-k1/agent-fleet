@@ -67,8 +67,8 @@ func TestMCPServerCreateMasksSecretsOnTheWire(t *testing.T) {
 	if got == nil {
 		t.Fatalf("the registered definition is missing from the list: %+v", list.Servers)
 	}
-	if got.Headers["Authorization"] != mcpreg.MaskedValue {
-		t.Fatalf("header not masked: %q", got.Headers["Authorization"])
+	if got.Headers["Authorization"] != "Bearer "+mcpreg.MaskedValue {
+		t.Fatalf("header not masked with the Bearer scheme kept: %q", got.Headers["Authorization"])
 	}
 	if !got.Editable || !got.Ready {
 		t.Fatalf("a user definition is not editable/ready: %+v", got)
