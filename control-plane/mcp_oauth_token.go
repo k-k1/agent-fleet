@@ -59,9 +59,9 @@ func (a *mcpOAuthAPI) publicClient(w http.ResponseWriter, r *http.Request) (stri
 // table (a deleted one is invalid_client, which is claude.ai's cue to register again); a CIMD
 // client must still be on a trusted host. The document is not fetched here: the code's own
 // stored redirect is what is matched.
-func (a *mcpOAuthAPI) clientStillRegistered(ctx context.Context, id string) (ok bool, err error) {
+func (a *mcpOAuthAPI) clientStillRegistered(ctx context.Context, trusted trustedHosts, id string) (ok bool, err error) {
 	if strings.HasPrefix(id, "https://") {
-		_, ok := a.cimdURLAllowed(id)
+		_, ok := a.cimdURLAllowed(trusted, id)
 		return ok, nil
 	}
 	_, ok, err = a.mgr.store.GetMCPOAuthClient(ctx, id)
@@ -74,7 +74,8 @@ func (a *mcpOAuthAPI) token(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	switch registered, err := a.clientStillRegistered(ctx, clientID); {
+	trusted, _ := a.trustedNow(ctx)
+	switch registered, err := a.clientStillRegistered(ctx, trusted, clientID); {
 	case err != nil:
 		log.Printf("mcp oauth: client lookup: %v", err)
 		mcpTokenErr(w, http.StatusInternalServerError, "server_error", "could not look the client up")

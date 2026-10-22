@@ -52,6 +52,16 @@ Clear **Allow apps to connect through MCP OAuth**, choose **Save**, and confirm.
 
 Enabling the switch again permits new connections; it does not restore revoked connections. Members reconnect from their apps. They can also revoke individual connections in **Settings → Connections → MCP tokens → Connected apps**.
 
+### Trusted client hosts (deployment-wide — super_admin only)
+
+**Admin → Deployment → MCP sign-in hosts** lists the client hosts this deployment's MCP OAuth server trusts: the hosts that may receive the sign-in redirect and serve client metadata. It is deployment-wide, not per tenant, and only a super administrator sees it. Loopback clients (a CLI on the member's own machine) are always allowed.
+
+- **To let another Agent Fleet deployment sign in to this one's `/mcp`, add its host here** (the host name only, for example `af.example.com`).
+- **Removing a vendor works**: delete `chatgpt.com` from the list and save, and that vendor can no longer sign in. Saving an empty list trusts no hosted client at all.
+- Entries are exact host names: no `https://`, port, path or wildcard, and no IP address. A mistake is refused with a message and nothing is saved.
+- **Which list applies**: the list saved here wins; with nothing saved, the `AF_MCP_OAUTH_TRUSTED_HOSTS` environment variable; with that unset, the built-in default (`claude.ai`, `claude.com`, `chatgpt.com`). The screen says which one is in effect. **Reset to default** deletes the saved list so the other two apply again.
+- A change applies from the next request, with no restart, to new sign-ins, client registration, and token requests. An existing connection from a client identified by a metadata URL (CIMD) on a removed host stops refreshing. Every change is audited (`mcp_oauth.trusted_hosts.set` / `.reset`, with the old and new lists).
+
 ## Integration OAuth apps
 
 Members can always connect GitHub or Bitbucket by pasting a token. Registering your

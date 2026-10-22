@@ -293,3 +293,15 @@ and a revoke button.
   targets are refused as for peer messages (ADR 0041 decision 5). The envelope names the
   connection, not a client conversation (MCP 2026-07-28 has no session id). No decision above
   changes. Guide: `guide/member/10-integrations.md`.
+
+- 2026-10-23, #2567: the trusted-client list is editable at runtime. A super admin edits it in the
+  Admin modal (`GET`/`PUT`/`DELETE /api/admin/mcp-oauth/trusted-hosts`, CP setting
+  `mcp_oauth_trusted_hosts`, deployment-wide); precedence is the saved value, else
+  `AF_MCP_OAUTH_TRUSTED_HOSTS`, else the built-in default, and "reset" deletes the saved value. The
+  list is read per request (no cache, so replicas agree) at authorize, consent, DCR and the token
+  endpoint; the CIMD cache keeps the document's own redirect URIs and the list is applied on each
+  read, so a change bites immediately in both directions. The saved value is a JSON array, so a
+  saved empty list (`none`) differs from nothing saved. Saving validates strictly (exact host,
+  no scheme / port / path / wildcard / IP literal) and an unreadable saved value trusts nothing
+  rather than falling back to the wider default. Each change is audited with the old and new lists.
+  No decision above changes. Guide: `guide/admin/05-access.md`.

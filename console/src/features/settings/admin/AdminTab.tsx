@@ -15,6 +15,7 @@ import { SignInMethodRegister } from "../tenant/tenantSignInMethods.tsx";
 import { TenantScopeBody, tenantScopeGroups } from "../tenant/tenantScope.tsx";
 import { BrandAdminView } from "./adminBrand.tsx";
 import { EgressView } from "./adminEgress.tsx";
+import { McpTrustedHostsView } from "./adminMcpTrusted.tsx";
 import { DevIdpAdminView } from "./adminDevIdp.tsx";
 import { TtsAdminView } from "./adminTts.tsx";
 import { EnginesAdminView } from "./adminEngines.tsx";
@@ -59,6 +60,8 @@ function rootGroups(opts: { pool: boolean; cost: boolean; engines: boolean }): R
       label: "admin.group_deployment",
       items: [
         ["egress", "admin.mode_egress"],
+        // Which client hosts the MCP OAuth server trusts (ADR 0118): deployment-wide, super admin only.
+        ["mcp-trusted", "admin.mode_mcp_trusted"],
         ["tts", "admin.mode_tts"],
         // Which deployment this is (favicon colour + app-name label). Unconditional: it
         // works the same on every runtime, and it is the one item here that is about
@@ -247,6 +250,7 @@ export function AdminTab() {
     }
     if (shownRootSection === "register") return <SignInMethodRegister />;
     if (shownRootSection === "egress") return <EgressView />;
+    if (shownRootSection === "mcp-trusted") return <McpTrustedHostsView />;
     if (shownRootSection === "tts") return <TtsAdminView />;
     if (shownRootSection === "brand") return <BrandAdminView />;
     if (shownRootSection === "dev-idp") return <DevIdpAdminView />;

@@ -142,7 +142,8 @@ func (a *mcpOAuthAPI) authorize(w http.ResponseWriter, r *http.Request) {
 		a.refuse(w, r, "duplicate client_id or redirect_uri")
 		return
 	}
-	cl, err := a.loadClient(ctx, p.get("client_id"))
+	trusted, _ := a.trustedNow(ctx)
+	cl, err := a.loadClient(ctx, trusted, p.get("client_id"))
 	switch err {
 	case nil:
 	case errMCPClientStore:
@@ -153,7 +154,7 @@ func (a *mcpOAuthAPI) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	redirectURI := p.get("redirect_uri")
-	if !a.redirectRegistered(cl.Redirects, redirectURI) {
+	if !a.redirectRegistered(trusted, cl.Redirects, redirectURI) {
 		log.Printf("mcp oauth: authorize refused: redirect_uri")
 		a.errPage(w, r, http.StatusBadRequest, mcpErrRedirect, callbackHost(redirectURI))
 		return
@@ -286,7 +287,7 @@ func (a *mcpOAuthAPI) askConsent(w http.ResponseWriter, r *http.Request, req mcp
 	}{
 		mcpShell: a.shell(r, lang), T: mcpConsentText[lang], Ticket: ticket, Action: mcpOAuthConsent,
 		Host: callbackHost(req.redirectURI), ClientName: req.cl.Name,
-		Loopback: a.classifyRedirect(req.redirectURI) == redirectLoopback,
+		Loopback: a.classifyRedirect(nil, req.redirectURI) == redirectLoopback,
 		CanWrite: req.level >= scopeRank(scopeWrite), Scope: scopeRead,
 	}
 	for _, mv := range ms {
@@ -356,8 +357,9 @@ func (a *mcpOAuthAPI) consent(w http.ResponseWriter, r *http.Request) {
 	}
 	// Everything authorize decided is decided again: the client and the trusted list may have
 	// changed in the minutes the page was open.
-	cl, err := a.loadClient(ctx, g.ClientID)
-	if err != nil || !a.redirectRegistered(cl.Redirects, g.RedirectURI) {
+	trusted, _ := a.trustedNow(ctx)
+	cl, err := a.loadClient(ctx, trusted, g.ClientID)
+	if err != nil || !a.redirectRegistered(trusted, cl.Redirects, g.RedirectURI) {
 		a.consentRefuse(w, r, http.StatusBadRequest, "client or redirect_uri")
 		return
 	}
