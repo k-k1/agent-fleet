@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -350,6 +352,27 @@ func TestLiveReplyTextIdleOnlyRightAfterTheLastFlush(t *testing.T) {
 	}
 	if got := liveReplyText("s", lines, later, true); got != "cut off" {
 		t.Fatalf("working got %q, want it until liveStaleAfter", got)
+	}
+}
+
+// At rest a file whose last append is older than the grace is not read at all: the field stays
+// absent, so an unchanged idle poll stays byte-identical however long the file outlives its turn.
+func TestLiveReplyTextAtRestSkipsAnOldFile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	flush("p1", "m2", 0, false, "left over\n")
+	at, ok := status.LiveTextModTime("s")
+	if !ok {
+		t.Fatal("no live-text file after a flush")
+	}
+	old := at.Add(-time.Minute)
+	if err := os.Chtimes(filepath.Join(paths.AgentStateDir(), "live-text", "s.jsonl"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if got := liveReplyText("s", afterFirstTool(), time.Now(), false); got != "" {
+		t.Fatalf("at rest with an old file got %q, want nothing", got)
+	}
+	if got := liveReplyText("s", afterFirstTool(), time.Now(), true); got != "left over" {
+		t.Fatalf("working got %q, want the text (the mtime gate is for rest only)", got)
 	}
 }
 

@@ -16,7 +16,9 @@ import type { Turn } from "./transcript/types.ts";
  *  cadence (3 s), so one poll that misses the row cannot run the hold out. */
 export const LIVE_HOLD_MS = 4000;
 
-/** What has landed of the agent's prose: a turn adding or growing a text part changes it. */
+/** What has landed since the text was streamed: any new turn (a prompt, a tool row with no text
+ *  — the reply may have been stored as a thinking summary) or assistant text growing changes it.
+ *  A history page prepended into the window changes it too; that only ends a hold early. */
 export function assistantTextSig(turns: readonly Turn[]): string {
   let n = 0;
   let len = 0;
@@ -29,7 +31,7 @@ export function assistantTextSig(turns: readonly Turn[]): string {
       }
     }
   }
-  return `${n}:${len}`;
+  return `${turns.length}:${n}:${len}`;
 }
 
 export interface LiveHold {
@@ -55,14 +57,15 @@ export function holdLive(prev: LiveHold, raw: string, sig: string, now: number):
 }
 
 /** useLiveHold returns the liveText to render for the poll's raw value. `scope` is the session:
- *  a held text never crosses into another one. */
-export function useLiveHold(raw: string, turns: readonly Turn[], scope: string): string {
+ *  a held text never crosses into another one. `enabled` false (the setting off, or state that
+ *  still belongs to the previous session) shows nothing and forgets the hold. */
+export function useLiveHold(raw: string, turns: readonly Turn[], scope: string, enabled = true): string {
   const sig = useMemo(() => assistantTextSig(turns), [turns]);
   const state = useRef<{ scope: string; hold: LiveHold }>({ scope, hold: LIVE_HOLD_IDLE });
-  if (state.current.scope !== scope) state.current = { scope, hold: LIVE_HOLD_IDLE };
+  if (state.current.scope !== scope || !enabled) state.current = { scope, hold: LIVE_HOLD_IDLE };
   // Folded during render, not in an effect: an effect would commit one frame without the block,
   // which is the very flash this exists to stop. holdLive is idempotent for the same inputs.
-  state.current.hold = holdLive(state.current.hold, raw, sig, Date.now());
+  if (enabled) state.current.hold = holdLive(state.current.hold, raw, sig, Date.now());
   const hold = state.current.hold;
   const [, expire] = useReducer((n: number) => n + 1, 0);
   // An unchanged poll does not re-render the mirror, so the bound needs a clock of its own.

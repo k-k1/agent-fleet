@@ -134,9 +134,9 @@ export function useMirrorState({
     if (!liveOn) setLiveText(""); // switched off: drop what is shown now, not at the next poll
   }, [liveOn]);
   // What is shown: the poll's text, held across the poll between claude's Stop and the
-  // transcript row that replaces it (liveHold.ts). Switching the setting off is not held.
-  const liveHeld = useLiveHold(liveRaw, turns, session);
-  const liveText = liveOn ? liveHeld : "";
+  // transcript row that replaces it (liveHold.ts). Neither the setting switched off nor the
+  // previous session's leftover state (stateSession lags a pane's session switch) is held.
+  const liveText = useLiveHold(liveRaw, turns, session, liveOn && stateSession === session);
   const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
   const [pendingPerm, setPendingPerm] = useState<string | null>(null); // tool-permission prompt awaiting allow/deny
   // A MANAGED session's tool approval. Kept apart from pendingPerm because the two are

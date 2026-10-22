@@ -10,14 +10,14 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let shown = "";
 
-function Probe({ raw, turns, scope }: { raw: string; turns: Turn[]; scope: string }) {
-  shown = useLiveHold(raw, turns, scope);
+function Probe({ raw, turns, scope, enabled }: { raw: string; turns: Turn[]; scope: string; enabled: boolean }) {
+  shown = useLiveHold(raw, turns, scope, enabled);
   return null;
 }
 
-const render = (raw: string, turns: Turn[], scope = "s1") =>
+const render = (raw: string, turns: Turn[], scope = "s1", enabled = true) =>
   act(() => {
-    root!.render(<Probe raw={raw} turns={turns} scope={scope} />);
+    root!.render(<Probe raw={raw} turns={turns} scope={scope} enabled={enabled} />);
   });
 
 beforeEach(() => {
@@ -49,6 +49,30 @@ describe("useLiveHold", () => {
     act(() => {
       vi.advanceTimersByTime(20);
     });
+    expect(shown).toBe("");
+  });
+
+  it("shows nothing while disabled, and does not bring a held text back on re-enable", () => {
+    render("All done.", turns);
+    render("", turns);
+    render("", turns, "s1", false); // the setting switched off
+    expect(shown).toBe("");
+    render("", turns, "s1", true);
+    expect(shown).toBe("");
+  });
+
+  it("never takes up the previous session's leftover text while state lags the switch", () => {
+    render("old session's reply", turns, "s1");
+    // The pane switched to s2, but this commit still holds s1's poll state.
+    render("old session's reply", turns, "s2", false);
+    expect(shown).toBe("");
+  });
+
+  it("lets go when the next prompt lands", () => {
+    render("cut off", turns);
+    render("", turns);
+    expect(shown).toBe("cut off");
+    render("", [...turns, { role: "user", text: "next" } as Turn]);
     expect(shown).toBe("");
   });
 

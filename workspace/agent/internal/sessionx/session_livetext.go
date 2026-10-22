@@ -46,6 +46,13 @@ func wantsLiveReply(r *http.Request, alive bool, state string) bool {
 // not show yet, or "". lines is the whole transcript. working is false once the turn has ended:
 // then only a message flushed within liveFinalGrace is shown, the gap until its row lands.
 func liveReplyText(sid string, lines [][]byte, now time.Time, working bool) string {
+	// The file now outlives the turn (it goes when the next prompt starts), so every poll at rest
+	// would read it; its mtime says without reading that nothing was flushed within the grace.
+	if !working {
+		if at, ok := status.LiveTextModTime(sid); !ok || now.Sub(at) > liveFinalGrace {
+			return ""
+		}
+	}
 	lr, ok := status.ReadLiveText(sid)
 	if !ok {
 		return ""

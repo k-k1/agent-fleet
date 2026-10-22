@@ -214,6 +214,16 @@ func assemble(recs []liveRecord) LiveReply {
 	return out
 }
 
+// LiveTextModTime is when sid's live-text file was last appended to; false when there is none.
+// A stat, so a poll at rest can skip reading a file whose turn is long over.
+func LiveTextModTime(sid string) (time.Time, bool) {
+	fi, err := os.Stat(liveTexts.Path(sid))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return fi.ModTime(), true
+}
+
 // RemoveLiveText drops sid's streamed text; called when a turn with a new prompt starts, just
 // before that prompt is recorded.
 func RemoveLiveText(sid string) { liveTexts.Remove(sid) }

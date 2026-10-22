@@ -9,13 +9,16 @@ const assistant = (...texts: string[]): Turn =>
 const tool = (): Turn => ({ role: "assistant", parts: [{ kind: "tool", tool: "Bash" }] }) as Turn;
 
 describe("assistantTextSig", () => {
-  it("moves when assistant text lands, not for tools or user turns", () => {
+  it("moves when anything lands after the streamed text", () => {
     const base = [assistant("Reading.")];
     const sig = assistantTextSig(base);
-    expect(assistantTextSig([...base, tool()])).toBe(sig);
-    expect(assistantTextSig([...base, { role: "user", text: "hi", parts: [{ kind: "text", text: "hi" }] } as Turn])).toBe(sig);
+    expect(assistantTextSig([...base])).toBe(sig); // a new array of the same turns
     expect(assistantTextSig([...base, assistant("All done.")])).not.toBe(sig);
     expect(assistantTextSig([assistant("Reading. More")])).not.toBe(sig); // a part that grew
+    // A tool row with no text: the reply may have been stored as a thinking summary instead.
+    expect(assistantTextSig([...base, tool()])).not.toBe(sig);
+    // The next prompt: a turn that ended with no row must not carry its text into the next one.
+    expect(assistantTextSig([...base, { role: "user", text: "hi" } as Turn])).not.toBe(sig);
   });
 });
 
