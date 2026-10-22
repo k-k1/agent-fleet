@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -478,28 +477,11 @@ func jiraGet(c *secrets.JiraCreds, u string) ([]byte, error) {
 
 // jiraRequest performs one authenticated call and returns the body and status. It does
 // not interpret the status — callers differ on what a 404 means (a missing endpoint to
-// fall back from, versus a missing issue).
+// fall back from, versus a missing issue). GET / PUT / DELETE are re-sent on transport
+// errors, 429 and 5xx (jira_retry.go); POST is sent once.
 func jiraRequest(c *secrets.JiraCreds, method, u string, payload []byte) ([]byte, int, error) {
-	var rdr io.Reader
-	if payload != nil {
-		rdr = strings.NewReader(string(payload))
-	}
-	req, err := http.NewRequest(method, u, rdr)
-	if err != nil {
-		return nil, 0, err
-	}
-	req.Header.Set("Authorization", jiraAuthHeader(c))
-	req.Header.Set("Accept", "application/json")
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := jiraHTTPClient.Do(req)
-	if err != nil {
-		return nil, 0, fmt.Errorf("could not reach Jira")
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	return body, resp.StatusCode, nil
+	r := jiraDo(c, method, u, payload)
+	return r.body, r.status, r.err
 }
 
 // jiraScopesRecorded reports whether the current site of an OAuth connection has its scopes.

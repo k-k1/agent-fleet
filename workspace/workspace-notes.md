@@ -173,6 +173,12 @@ directory belongs to someone else.
   `jira issue view KEY --raw` (`.fields.comment.comments[].id`). Edit or delete only a comment you
   posted in this session or one the user named. They refuse a `--debug` run and a config of the
   user's own (jira then says it has no such command).
+- **Jira over a flaky network:** the wrapper re-runs read-only commands (`issue view|list`,
+  `board|sprint|epic|project list`, `me`) up to twice after a connection reset or timeout and prints
+  only the last attempt; writes are never re-run, so after a failed `issue create` or `comment add`
+  look at Jira before trying again. `comment edit|delete` retry themselves, and a delete reported as
+  "probably already deleted" (rc 0) went through. A "the Jira connection is unusable" line means
+  the connection has to be reconnected in Settings; `jira init` will not help.
 - The clock is the workspace's local timezone (`date`), not UTC. Outbound network may be
   restricted; an unreachable host is not necessarily an error.
 - **AWS: the default credential chain is not the user.** A bare `aws` / SDK / build-tool call

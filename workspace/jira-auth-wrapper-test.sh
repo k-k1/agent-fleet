@@ -14,7 +14,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WRAPPER="$HERE/jira-auth-wrapper.sh"
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
-mkdir "$T/bin" "$T/home"
+mkdir "$T/bin" "$T/home" "$T/tmp"
 
 cat >"$T/bin/workspace-agent" <<'STUB'
 #!/bin/sh
@@ -22,7 +22,8 @@ set +x
 echo "$*" >>"$STUB_DIR/agent.calls"
 [ -z "${JIRA_API_TOKEN-}" ] || echo leaked >"$STUB_DIR/agent.leak"
 case "$1" in
-  jira-cred) [ -f "$STUB_DIR/agent.out" ] || exit 1; cat "$STUB_DIR/agent.out" ;;
+  jira-cred) [ ! -f "$STUB_DIR/agent.why" ] || { cat "$STUB_DIR/agent.why" >&2; exit 0; }
+    [ -f "$STUB_DIR/agent.out" ] || exit 1; cat "$STUB_DIR/agent.out" ;;
   jira-comment) printf '%s\n' "$@" >"$STUB_DIR/comment.argv"; cat >"$STUB_DIR/comment.stdin"
     [ ! -f "$STUB_DIR/comment.exit" ] || exit "$(cat "$STUB_DIR/comment.exit")"; echo "stub: comment done" ;;
   jira-issue-types) [ -f "$STUB_DIR/types.out" ] || exit 1; cat "$STUB_DIR/types.out" ;;
@@ -33,6 +34,9 @@ STUB
 cat >"$T/bin/jira-real" <<'STUB'
 #!/bin/sh
 set +x
+# Attempt N takes plan.N.{rc,out,err} when they exist (see plan()); otherwise it succeeds.
+n=$(($(cat "$STUB_DIR/jira.count" 2>/dev/null || echo 0) + 1))
+echo "$n" >"$STUB_DIR/jira.count"
 {
   echo "TOKEN=${JIRA_API_TOKEN-<unset>}"
   echo "SERVER=${JIRA_SERVER-<unset>}"
@@ -43,6 +47,9 @@ set +x
   echo "DEBUG=${JIRA_DEBUG-<unset>}"
   for a in "$@"; do echo "ARG=$a"; done
 } >"$STUB_DIR/jira.seen"
+[ ! -f "$STUB_DIR/plan.$n.out" ] || cat "$STUB_DIR/plan.$n.out"
+[ ! -f "$STUB_DIR/plan.$n.err" ] || cat "$STUB_DIR/plan.$n.err" >&2
+[ ! -f "$STUB_DIR/plan.$n.rc" ] || exit "$(cat "$STUB_DIR/plan.$n.rc")"
 exit "${STUB_JIRA_EXIT:-0}"
 STUB
 chmod +x "$T/bin/"*
@@ -56,9 +63,9 @@ run() {
   local envs=()
   while [ "$1" != -- ]; do envs+=("$1"); shift; done
   shift
-  rm -f "$T/jira.seen" "$T/agent.calls" "$T/agent.leak"
+  rm -f "$T/jira.seen" "$T/agent.calls" "$T/agent.leak" "$T/jira.count"
   env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" \
-    "${envs[@]}" bash "$WRAPPER" "$@" >"$T/out" 2>"$T/err" </dev/null
+    TMPDIR="$T/tmp" AF_JIRA_RETRY_WAIT=0 "${envs[@]}" bash "$WRAPPER" "$@" >"$T/out" 2>"$T/err" </dev/null
   rc=$?
 }
 seen() { sed -n "s/^$1=//p" "$T/jira.seen"; }
@@ -80,7 +87,7 @@ MANAGED="$T/home/.config/agent-fleet/jira"
 GEN="$T/home/.cache/agent-fleet/jira/config.yml"
 oauth() { printf 'site=%s\nserver=%s\nauth=bearer\nlogin=me@example.com\ntoken=fake-oauth-tok\n' "$SITE" "$ROUTE" >"$T/agent.out"; }
 apitok() { printf 'site=%s\nserver=%s\nauth=basic\nlogin=me@example.com\ntoken=fake-api-tok\n' "$SITE" "$SITE" >"$T/agent.out"; }
-reset() { rm -f "$T/agent.out" "$T/types.out"; rm -rf "$T/home/.config" "$T/home/.cache" "$T/other.yml"; }
+reset() { rm -f "$T/agent.out" "$T/agent.why" "$T/types.out" "$T"/plan.*; rm -rf "$T/home/.config" "$T/home/.cache" "$T/other.yml"; }
 config() { mkdir -p "${1%/*}"; printf '%s\n' "$2" >"$1"; }
 
 # 1. OAuth connection, no config → bearer on the api.atlassian.com route, through a generated
@@ -811,6 +818,150 @@ reset
 oauth
 run -- issue list
 [ ! -f "$T/agent.leak" ] || fail "JIRA_API_TOKEN visible to the helper"
+
+# 13. Read-only commands are re-run on a transport failure; only the last attempt's output
+#     reaches the caller, and nothing of the failed attempts does.
+RESET_ERR='Error: Get "https://api.atlassian.com/ex/jira/cid-1/rest/api/3/search": read tcp 10.0.0.2:5->1.2.3.4:443: read: connection reset by peer'
+plan() { # plan <n> <rc> <stdout> <stderr>
+  printf '%s' "$3" >"$T/plan.$1.out"
+  printf '%s\n' "$4" >"$T/plan.$1.err"
+  echo "$2" >"$T/plan.$1.rc"
+}
+count() { cat "$T/jira.count" 2>/dev/null || echo 0; }
+for cmdline in "issue list" "issue view K-1" "board list" "sprint list" "epic list" "project list" "me" "issues list"; do
+  reset
+  oauth
+  plan 1 1 PARTIAL "$RESET_ERR"
+  plan 2 1 PARTIAL2 "$RESET_ERR"
+  # shellcheck disable=SC2086
+  run -- $cmdline
+  [ "$rc" = 0 ] && [ "$(count)" = 3 ] || fail "retry [$cmdline]: rc=$rc attempts=$(count), want 0 and 3"
+  [ "$(cat "$T/out")" = "" ] || fail "retry [$cmdline]: output '$(cat "$T/out")'"
+  grep -q PARTIAL "$T/out" && fail "retry [$cmdline]: a failed attempt's stdout reached the caller"
+  [ ! -s "$T/err" ] || fail "retry [$cmdline]: a failed attempt's stderr reached the caller: $(cat "$T/err")"
+  expect "retry [$cmdline]" TOKEN fake-oauth-tok
+  no_leak "retry [$cmdline]" fake-oauth-tok
+done
+reset
+oauth
+plan 3 0 "GOOD
+" ""
+plan 1 1 PARTIAL "$RESET_ERR"
+plan 2 1 PARTIAL "$RESET_ERR"
+run -- issue list --plain
+[ "$(cat "$T/out")" = GOOD ] || fail "retry: output '$(cat "$T/out")', want GOOD once"
+# Every spelling jira-cli prints for a connection that never answered.
+for msg in 'read tcp: connection reset by peer' 'write tcp: write: connection reset by peer' \
+  'dial tcp 1.2.3.4:443: i/o timeout' 'net/http: TLS handshake timeout' 'Get "https://x/y": EOF' \
+  'Get "https://x/y": unexpected EOF' 'write: broken pipe' 'context deadline exceeded (Client.Timeout exceeded while awaiting headers)'; do
+  reset; oauth
+  plan 1 1 "" "Error: $msg"
+  run -- issue view K-1
+  [ "$(count)" = 2 ] && [ "$rc" = 0 ] || fail "retry [$msg]: attempts=$(count) rc=$rc"
+done
+# Gives up after 2 re-runs, with jira's own exit status and its last stderr.
+reset; oauth
+for i in 1 2 3 4; do plan "$i" 4 "" "$RESET_ERR"; done
+run -- issue list
+[ "$(count)" = 3 ] && [ "$rc" = 4 ] || fail "give up: attempts=$(count) rc=$rc, want 3 and 4"
+grep -q 'connection reset by peer' "$T/err" && grep -q 'giving up after 3 attempts' "$T/err" || fail "give up: stderr '$(cat "$T/err")'"
+# An answered failure (HTTP status, bad query) is final.
+for msg in 'Error: Request failed. Please try again: 401 Unauthorized' 'Error: 404 Not Found' 'Error: the JQL is invalid'; do
+  reset; oauth
+  plan 1 1 "" "$msg"
+  run -- issue list
+  [ "$(count)" = 1 ] && [ "$rc" = 1 ] || fail "no retry [$msg]: attempts=$(count) rc=$rc"
+  grep -q "$msg" "$T/err" || fail "no retry [$msg]: stderr lost"
+done
+# The private files are gone afterwards.
+[ -z "$(ls -A "$T/tmp")" ] || fail "retry left files behind: $(ls -A "$T/tmp")"
+
+# 14. A write, init, or anything unknown is run once, whatever the stderr says, and by exec.
+for cmdline in "issue create -s x" "issue edit K-1 -s x" "issue move K-1 Done" "issue assign K-1 me" \
+  "issue comment add K-1 hi" "issue link K-1 K-2 Blocks" "issue delete K-1" "issue clone K-1" "issue watch K-1" \
+  "issue worklog add K-1 1h" "epic add E-1 K-1" "epic create" "sprint add 1 K-1" "init" "open K-1" "release list" "frobnicate"; do
+  reset
+  oauth
+  plan 1 1 "" "$RESET_ERR"
+  plan 2 0 "OK" ""
+  # shellcheck disable=SC2086
+  run -- $cmdline
+  [ "$(count)" = 1 ] && [ "$rc" = 1 ] || fail "write [$cmdline]: attempts=$(count) rc=$rc, want 1 and 1"
+  grep -q 'connection reset by peer' "$T/err" || fail "write [$cmdline]: stderr not passed through"
+done
+# Not even when a flag value or -p sits between the words.
+reset; oauth
+plan 1 1 "" "$RESET_ERR"
+run -- issue -p KEY create -s x
+[ "$(count)" = 1 ] || fail "write with -p: attempts=$(count)"
+
+# 15. A terminal on stdout or stderr (jira-cli's TUI) keeps the plain exec: no capture, no re-run.
+if command -v script >/dev/null 2>&1; then
+  reset; oauth
+  plan 1 1 "" "$RESET_ERR"
+  plan 2 0 "OK" ""
+  rm -f "$T/jira.count"
+  script -qec "env -i PATH='$T/bin:/usr/bin:/bin' HOME='$T/home' STUB_DIR='$T' AF_JIRA_REAL='$T/bin/jira-real' TMPDIR='$T/tmp' AF_JIRA_RETRY_WAIT=0 bash '$WRAPPER' issue list" /dev/null >"$T/out" 2>&1 </dev/null
+  [ "$(count)" = 1 ] || fail "tty: attempts=$(count), want 1 (exec, no re-run)"
+  grep -q 'connection reset by peer' "$T/out" || fail "tty: stderr did not reach the terminal"
+  # Only stderr on a terminal is enough, too.
+  reset; oauth
+  plan 1 1 "" "$RESET_ERR"
+  rm -f "$T/jira.count"
+  script -qec "env -i PATH='$T/bin:/usr/bin:/bin' HOME='$T/home' STUB_DIR='$T' AF_JIRA_REAL='$T/bin/jira-real' TMPDIR='$T/tmp' AF_JIRA_RETRY_WAIT=0 bash '$WRAPPER' issue list >/dev/null" /dev/null >"$T/out" 2>&1 </dev/null
+  [ "$(count)" = 1 ] || fail "tty stderr: attempts=$(count), want 1"
+else
+  echo "SKIP: no script(1), tty cases not run" >&2
+fi
+
+# 16. An unusable connection (the Agent says why on stderr): one line, jira not run. No
+#     connection at all, a user-owned config and help still behave as before.
+reset
+printf 'unusable=the access token expired and Atlassian refused to renew it\n' >"$T/agent.why"
+run -- issue list
+[ "$rc" = 1 ] && [ ! -f "$T/jira.seen" ] || fail "unusable: rc=$rc, jira ran"
+[ "$(cat "$T/err")" = "jira: the Jira connection is unusable (expired or revoked): reconnect Jira in Settings [the access token expired and Atlassian refused to renew it]" ] || fail "unusable: stderr '$(cat "$T/err")'"
+grep -q 'API token' "$T/err" && fail "unusable: still advises an API token"
+[ ! -s "$T/out" ] || fail "unusable: stdout '$(cat "$T/out")'"
+run -- help
+[ -f "$T/jira.seen" ] || fail "unusable: help did not reach jira"
+run -- version-not-a-command
+[ "$rc" = 1 ] || fail "unusable: unknown command rc=$rc"
+reset
+config "$DEFCFG" "installation: Cloud"
+printf 'unusable=x\n' >"$T/agent.why"
+run -- issue list
+[ -f "$T/jira.seen" ] && ! grep -q unusable "$T/err" || fail "unusable: a user-owned config was blocked"
+reset
+run -- issue list
+[ -f "$T/jira.seen" ] && [ ! -s "$T/err" ] || fail "no connection: jira must still run silently (rc=$rc err='$(cat "$T/err")')"
+# A reason cannot smuggle control characters onto the terminal.
+reset
+printf 'unusable=bad\033[31m red\n' >"$T/agent.why"
+run -- issue list
+grep -q "$(printf '\033')" "$T/err" && fail "unusable: control character passed through"
+
+# 17. Browse links of an OAuth connection point at api.atlassian.com; on the captured path they
+#     become site links. A write (exec) prints jira-cli's own, and an API-token connection has
+#     nothing to rewrite.
+reset; oauth
+plan 1 0 "KEY-1 $ROUTE/browse/KEY-1
+see $ROUTE/browse/KEY-2 and $ROUTE/browse/KEY-3, not $ROUTE/rest/api/3/issue/KEY-1
+" ""
+run -- issue list --plain
+want="KEY-1 $SITE/browse/KEY-1
+see $SITE/browse/KEY-2 and $SITE/browse/KEY-3, not $ROUTE/rest/api/3/issue/KEY-1"
+[ "$(cat "$T/out")" = "$want" ] || fail "links: '$(cat "$T/out")'"
+reset; apitok
+plan 1 0 "$SITE/browse/KEY-1
+" ""
+run -- issue view KEY-1
+[ "$(cat "$T/out")" = "$SITE/browse/KEY-1" ] || fail "links (api token): '$(cat "$T/out")'"
+reset; oauth
+plan 1 0 "$ROUTE/browse/KEY-1
+" ""
+run -- issue create -s x
+[ "$(cat "$T/out")" = "$ROUTE/browse/KEY-1" ] || fail "links (write): '$(cat "$T/out")'"
 
 if [ "$fails" != 0 ]; then
   echo "jira-auth-wrapper-test: $fails failure(s)" >&2
