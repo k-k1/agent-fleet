@@ -37,6 +37,13 @@ actually touched, and takes you straight to one. Click its heading to fold it op
 closed; the choice is remembered per session. **Ctrl+P** (**⌘P** on macOS), then **Tab**
 to "Changed files", reaches the same list.
 
+Each row carries a badge: **Untracked**, **Unstaged**, **Staged**, **Committed** or **No diff**
+for a file in the working copy, **Session scratch** for a file in `$AF_WORK_DIR` (deleted with
+the session), **Outside working copy** for anything else. A file in an agent's own memory folder
+is badged **Claude memory**, **Codex memory** or, for another agent, **Agent memory**, and opens
+read-only. That badge means the agent kind's own memory files, not Agent Fleet's
+[agent memory](14-agent-memory.md).
+
 It answers the question you have at review time ("what did this thing do to my
 working copy?") without reading the whole conversation back. It is derived from the
 conversation and the repository together, so it reflects what happened, not what the
@@ -60,7 +67,7 @@ The first two live in the session's ⋯ menu, and they are different things:
 | | What it does | The other person |
 |---|---|---|
 | **Share…** | shows your conversation to another member of the same tenant, read-only | reads it; may be allowed to propose |
-| **Hand off to another agent…** | starts a new session carrying the context | continues the work themselves |
+| **Hand off to another agent…** | starts a new session of your own, of any agent kind, carrying the context ([02](02-sessions.md#continuing-elsewhere-handoff-branch-move)) | nobody else is involved |
 | **Hand off to a member** | offers that handoff to someone the session is shared with ([below](#handing-a-session-to-another-member)) | starts the new session in their own workspace |
 
 A shared session appears in the other person's **Shared sessions** section and carries a
