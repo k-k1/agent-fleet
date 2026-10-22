@@ -33,6 +33,7 @@ updated: "2026-08"
 11. [困ったとき](11-troubleshooting.ja.md) — 症状別の対処と FAQ
 12. [設定](12-settings.ja.md) — 全タブと「あの設定はどこ？」
 13. [運用ツール](13-ops-tooling.ja.md) — 監視ツールを会話につなぐ（実験的）
+15. [クラウドのアカウント](15-cloud-accounts.ja.md) — AWS プロファイル、SSM ホスト、`af-aws-exec`、Google Cloud
 
 ほかに [アイコン・バッジ・メニュー](badges-and-menus.ja.md)（画面の印の意味）と、
 [かんたんガイド](lite.ja.md)（端末を一切開かない人のための短い版）があります。

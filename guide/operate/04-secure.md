@@ -480,7 +480,7 @@ into answers, logs or commits is part of the agent-side instructions as well.
 
   A workspace on the native runtime runs directly on the member's machine and is left alone:
   an instance role there is that machine's own.
-  Members run AWS commands as themselves with `af-aws-exec` ([member guide 10](../member/10-integrations.md)).
+  Members run AWS commands as themselves with `af-aws-exec` ([member guide 15](../member/15-cloud-accounts.md)).
 
 ## Offboarding: how access is actually revoked
 
