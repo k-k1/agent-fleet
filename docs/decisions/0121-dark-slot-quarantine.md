@@ -123,16 +123,22 @@ evidence of something the logs already tell. So:
   release this is the whole behaviour (decision 5).
 - **L1. Rescue**, once dark for `darkAfter`: take the home off the box and leave the box in service.
   Each step is a gate for the next, never a sequence to push through:
-  1. take ownership (decision 4), write the rescue marker, cancel the CP's own pending SSM commands
-     on the box (they hold the home's mount lock for as long as they live);
-  2. end any Start as a Stop does (`abortStarts`, desiredCount 0, claim dropped);
-  3. force-deregister the container instance, and **verify that the task ENI is physically gone**
+  1. **prepare**, under the claim lock alone (decision 4, lock order): take ownership, write the rescue
+     marker, end any Start as a Stop does (`abortStarts`, desiredCount 0, claim dropped), and release the
+     claim lock. Nothing in this step waits for the mount lock;
+  2. cancel the CP's own pending SSM commands on the box, **with no home lock held**. They hold the
+     home's mount lock for as long as they live, so the cancel has to be able to arrive before the rescue
+     asks for that lock;
+  3. take the mount lock with a bounded wait; if it is not had within the bound, stop for this pass (the
+     marker stays, the next pass retries). Every destructive call from here runs under the mount lock and
+     re-verifies the token under the claim lock nested inside it;
+  4. force-deregister the container instance, and **verify that the task ENI is physically gone**
      (`DescribeInstances`) within a bound. Deregistration is not assumed to do anything else: AWS
      documents that it does not stop the task's processes;
-  4. only with the ENI gone, `StopInstances` (graceful; Force on a stop that has not finished,
+  5. only with the ENI gone, `StopInstances` (graceful; Force on a stop that has not finished,
      never on an instance started again since, as in #2474), and **verify `stopped`**;
-  5. only with the box stopped, an ordinary detach of the home. The role stays `slot`, `af-wedge-at`
-     is stamped, the marker is removed.
+  6. only with the box stopped, an ordinary detach of the home, preceded by the `detaching` marker phase
+     (decision 4). The role stays `slot`; the finalizer of decision 4 then records the episode.
 
   If the ENI does not go, or the box does not stop, within the bounds, the rescue is **blocked**:
   nothing further is done, the box is left as it is, the marker keeps its phase, and the pool view
@@ -228,8 +234,11 @@ Four rules follow for the code that will implement this, each cheap to test:
    A candidate picked by `evictLongestIdle` or `makeRoom` before the rescue began, and a rescue that
    writes its marker after that, would otherwise meet in `releaseSlotSince`, which reads the count at its
    own entry and does not move it. So `releaseSlotSince` (the one entry every `releaseSlot` caller shares)
-   refuses while a rescue marker exists for the home and the caller is not that rescue; the rescue writes
-   its marker under the same lock only after confirming the home is still attached. For `makeRoom` the
+   refuses while a rescue marker exists for the home and the caller is not that rescue. The rescue writes its
+   marker under the claim lock after confirming the home is still attached, and takes the mount lock only
+   afterwards; a releaser that already holds the mount lock finishes first (its pending SSM commands are
+   cancelled in step 2, so it cannot hold the lock for the life of an umount), and the rescue then finds the
+   home gone and stops. For `makeRoom` the
    box's `terminateSlot` after the victim's release re-reads the box's marker and stamp (an automatic-intent
    refusal, rule 4); that is safe because a rescue needs a home attached under the lock, and the victim's
    home is gone by then. The one actor the marker does **not** refuse is the occupant's own Start, including
@@ -266,6 +275,12 @@ operator's Terminate button.
   `slotDark` (boot grace, durations, the Agent probe) is a behaviour change this record proposes, not
   one that exists.
 
+**Lock order.** Everywhere, the mount lock (`homeLockMount`) is outer and the claim lock (`homeLockClaim`) is inner,
+as in `quarantineSlot` today (mount, then `ifOwned`). Nothing waits for the mount lock while holding the claim lock:
+the rescue's prepare step takes the claim lock alone and lets go of it before it asks for the mount lock, and the
+cancel in step 2 needs neither. The marker and the token are what carry the fence across the gap between the
+two; each destructive call re-checks the token under the claim lock nested inside the mount lock.
+
 **The ownership token.** The decision pass records the Start count `g_d`, the home's volume id and the
 launch epoch. To begin L1, **under the home's claim lock and lease, in one step**: read the count `g`;
 require `g == g_d`; if so, bump it to `g_r` (the increment a Stop makes) and write the rescue marker
@@ -280,31 +295,48 @@ produced.
 
 **The rescue marker** is an instance tag,
 `af-rescue = <home volume id>/<launch epoch>/<phase>/<g_r>/<began>/<blocked_since>`, written **before the first
-side effect**. Phases: `begun`, `deregistered`, `stopped`, `detached`. The two times persist across a restart
+side effect**. Phases: `begun`, `deregistered`, `stopped`, `detaching`, `detached`. The two times persist across a restart
 (`rescueBlockedAfter` runs from `blocked_since`, written when a step first fails its bound; `af-dark-since` is
 not that time). The marker is what survives a restart; the detection predicate cannot, because a box that is
 `stopping` or `stopped`, or whose SSM came back after the deregistration, is no longer "dark" by definition.
 
 A **resume scan**, separate from detection, lists every instance carrying a marker whatever its state and
-continues from the marker's phase only if all of these hold: the same volume is attached to this box (or the
-phase is `stopped` or `detached` and it is not, see below); the box's `LaunchTime` equals the marker's epoch **in
+continues the rescue's own steps only if all of these hold: the same volume is attached to this box; the box's `LaunchTime` equals the marker's epoch **in
 every phase, `stopped` included**; and the Start count is still `g_r`. The phase is a record of what this
 rescue did, not evidence of the box's present state: before any step that depends on the state of the box,
 and in particular **immediately before the detach**, EC2 is asked and must say `stopped`. A box that was
 stopped, restarted by an operator from the EC2 console (which moves `LaunchTime` and not the Start count),
-and found by the scan is therefore never detached from while running.
+and found by the scan is therefore never detached from while running. A marker that fails these conditions is
+not discarded unread: it goes to the finalizer below.
 
 **Ownership of the marker.** The rescue may only change or remove **its own exact marker**: a removal is a
 conditional `DeleteTags` carrying the value that rescue wrote (EC2 deletes a tag by value only if the value
 matches), and an update replaces a value it read. A scan that finds the count moved, the epoch changed or
 the home gone removes that marker the same way, so a late-resuming old rescue can never delete a newer
-rescue's marker (the R8 shape). **Completion** is ordered so that a crash between any two steps loses
-nothing: after the detach succeeds the marker is advanced to `detached`; then `af-wedge-at` is written;
-then the marker is removed. A scan that finds `detached`, or finds the volume no longer attached with the
-phase `stopped` and the count still `g_r`, finishes it (writes `af-wedge-at`, removes its own marker), so
-the success is recorded and the same box's next episode is correctly counted as a repeat. A rescue that has
-begun is not cancelled by the agents coming back, only overtaken by a person or a Start. The home lease
-(`homeLeaseTTL`, 90 s) expires on a dead CP, so the replica that resumes can take it.
+rescue's marker (the R8 shape).
+
+**Two jobs with two sets of conditions.** The *recovery* of a rescue (continuing a phase that touches the
+box or the home) needs the strict match above: same volume, same `LaunchTime`, count still `g_r`, and EC2
+saying `stopped` before the detach. The *finalizer* only records that an episode happened. It touches neither
+the box's state nor the volume, only tags, so it needs no count or epoch match:
+
+- Before the detach call the marker is advanced to `detaching` (the completion intent), under the strict
+  conditions. After it succeeds, to `detached`, which also records `detached_at`.
+- A marker whose phase is `deregistered`, `stopped`, `detaching` or `detached` means the box was acted on, so
+  it is an episode whatever became of the rescue: the finalizer writes `af-wedge-at = marker.began`, **only if
+  that is later than the `af-wedge-at` already there** (the value never moves backwards, so an old finalizer
+  cannot overwrite a later episode's), and then removes its own exact marker. A marker still at `begun` acted
+  on nothing and is just removed.
+- `detaching` with the volume no longer on this box is decided by the count: still `g_r` means nobody else
+  could have moved it (every other releaser is refused while the marker exists, rule 2), so it was this
+  rescue and it is complete; a moved count means the occupant's own Start moved it, and the episode is
+  recorded the same way. Either way the repeat window is correct, and the rescue's own remaining steps are
+  dropped.
+
+So a crash between any two steps loses **no episode**; what is dropped, when somebody else got there first, is
+the rest of the rescue, never the record that the box went dark. A rescue that has begun is not cancelled by
+the agents coming back, only overtaken by a person or a Start. The home lease (`homeLeaseTTL`, 90 s)
+expires on a dead CP, so the replica that resumes can take it.
 
 - **Two replicas** both detect and both stamp the same value; ownership is taken in the locked step,
   so the second finds the count moved and steps aside. Every step is idempotent (`StopInstances`, a
