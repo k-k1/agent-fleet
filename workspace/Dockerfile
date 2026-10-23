@@ -362,12 +362,12 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
 ARG CLAUDE_CODE_VERSION=2.1.309
-ARG OPENCODE_VERSION=2.1.3
+ARG OPENCODE_VERSION=2.1.4
 # The opencode 2 release `workspace-agent install-opencode2` installs while OPENCODE_VERSION is
 # 1.x (a rollback). It is not installed here; it is only recorded in versions.json. Keep it equal
 # to OPENCODE_VERSION while that is 2.x: cli-pin-bump.sh moves both, so a rollback (set
 # OPENCODE_VERSION=1.19.0, nothing else) leaves it at the last 2.x the contracts passed on.
-ARG OPENCODE_V2_VERSION=2.1.3
+ARG OPENCODE_V2_VERSION=2.1.4
 ARG CODEX_VERSION=0.164.0
 ARG COPILOT_VERSION=1.0.103
 # opencode's npm package follows the pin's major: `opencode-ai` for 1.x, `@opencode/cli` for
