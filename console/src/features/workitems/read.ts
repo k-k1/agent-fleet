@@ -651,9 +651,12 @@ function readLine(item: WorkItem): string {
       return t("wi.prompt_read_github", { key: shortKey(item.key).replace("#", "") });
     case "jira":
       return t("wi.prompt_read_jira", { key: shortKey(item.key) });
+    case "bitbucket":
+      // `bkt` ships in the Workspace image, so Bitbucket names a CLI the way GitHub and Jira do.
+      return t("wi.prompt_read_bitbucket", { id: shortKey(item.key).replace("#", "") });
     default:
-      // Bitbucket lands here. There is no in-session tool equivalent to `gh`, so the URL is all
-      // this can point at (docs/log/80 §80.19.5). The point is not to name a tool that is absent.
+      // An unknown provider has no CLI to name, so the URL is all this can point at
+      // (docs/log/80 §80.19.5). The point is not to name a tool that is absent.
       return t("wi.prompt_read_generic");
   }
 }
