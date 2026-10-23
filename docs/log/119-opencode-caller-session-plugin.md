@@ -458,3 +458,16 @@ tests for both majors.
 package: each aside package under its own name, and the bins independently of the package, with the
 directory removed only after every move succeeded. This covers a stop between the package move and
 the bin move, and an image re-pinned to the other major while a copy was aside.
+
+## 2026-10-23 — the opt-in's install version follows the image pin (#2493)
+
+`opencode.V2Version` was a literal (`2.0.29`) that called itself the image pin and stayed there
+while the pin moved to 2.1.x, so `install-opencode2` after a 1.x rollback installed a release the
+contracts had not run on. It cannot be read from the `opencode` entry of `versions.json`: the opt-in
+only works while that is 1.x, which is exactly when it names no 2.x release. The Dockerfile now has
+`ARG OPENCODE_V2_VERSION`, recorded in `versions.json` as `opencode_v2` and read by
+`opencode.V2Version()`. `cli-pin-bump.sh` moves it with `OPENCODE_VERSION` whenever the pin is 2.x,
+and a rollback (`OPENCODE_VERSION=1.19.0`, nothing else) leaves it at the last tested 2.x.
+`V2FallbackVersion` remains for images built before the key existed; nothing bumps it and a test
+only requires it to be 2.x. `TestDockerfileV2ArgFollowsOpencodePin` fails when a 2.x pin and the V2
+ARG differ.

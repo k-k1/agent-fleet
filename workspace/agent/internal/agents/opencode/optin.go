@@ -1,6 +1,7 @@
 package opencode
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,10 +24,28 @@ import (
 // switch file says. Unset, the switch file decides.
 const MajorEnv = "AF_OPENCODE_MAJOR"
 
-// V2Version is the opencode 2 release the opt-in installs unless told otherwise: the image pin
-// (workspace/Dockerfile), so a rolled-back workspace tries the same build the contract tests ran
-// on (docs/log/119). Moving it is a deliberate act, like the image pin.
-const V2Version = "2.0.29"
+// V2FallbackVersion is what V2Version answers when the image recorded no usable opencode 2
+// version (an image built before versions.json carried "opencode_v2"). It is a second literal
+// that nothing bumps: a test only checks that it is a 2.x release, so it may trail the image pin.
+const V2FallbackVersion = "2.0.29"
+
+// V2Version is the opencode 2 release the opt-in installs unless told otherwise: the
+// Dockerfile's OPENCODE_V2_VERSION as recorded in versions.json, so a rolled-back workspace tries
+// the build the contract tests last ran on (docs/log/119). It is never derived from the
+// "opencode" pin: the opt-in only has a job while that pin is 1.x, and handing it a 1.x version
+// would install the wrong package. A recorded value that is not 2.x (a 1.x or a later major) is ignored: the opt-in
+// is built for the 2.x API and plugin contract.
+func V2Version() string {
+	if b, err := os.ReadFile(buildPinsPath); err == nil {
+		var pins struct {
+			V2 string `json:"opencode_v2"`
+		}
+		if json.Unmarshal(b, &pins) == nil && majorOf(pins.V2) == 2 {
+			return pins.V2
+		}
+	}
+	return V2FallbackVersion
+}
 
 // V2Prefix is the npm prefix `@opencode/cli` is installed into. It is a private tree, so the
 // package's `opencode` bin never lands on PATH next to the pinned 1.x one; the database is kept
