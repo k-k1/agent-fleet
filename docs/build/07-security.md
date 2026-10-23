@@ -535,6 +535,12 @@ Implemented:
   refuse them in every mode.
 - Events go to the CP (`POST /internal/egress`, `AF_EGRESS_TOKEN`) and are aggregated
   daily (`egress_daily`); the policy is served back from `GET /internal/egress/policy`.
+  Reporting is at-least-once: the proxy flushes every 10 s (10 s request timeout, fixed
+  interval, no backoff) and keeps a batch until the CP answers 2xx, sending it in chunks
+  under the CP's 1 MiB body limit. A retry after a timeout or a half-recorded batch counts
+  rows twice, so counts are approximate. While the CP is unreachable the proxy holds at most
+  5000 distinct host/verdict buckets; the overflow is reported as `dropped` and audited as
+  `egress.dropped`. Pending counts live in memory and are lost when the proxy restarts.
 - **The allowlist is versioned** (`egress_allowlist`: active / proposed / retired) with a
   deployment-wide mode (`egress_mode`). **An AI may only propose; a human approves** —
   nothing is applied automatically.

@@ -453,6 +453,11 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
   メタデータのアドレスを含む）・未指定アドレスは、どのモードでも検査して拒否する設計である。
 - イベントは CP へ（`POST /internal/egress`・`AF_EGRESS_TOKEN`）送って日次集計（`egress_daily`）、
   ポリシーは `GET /internal/egress/policy` で配る。
+  報告は at-least-once：proxy は 10 秒ごとに送信し（タイムアウト 10 秒・固定間隔・バックオフ
+  なし）、CP が 2xx を返すまでバッチを保持し、CP の 1 MiB 上限に収まるチャンクに分けて送る。
+  タイムアウト後の再送や途中まで記録されたバッチでは行が二重に数えられるため、件数は概数。
+  CP に届かない間 proxy が保持するのは host/verdict 最大 5000 件で、超過分は `dropped` として
+  報告され `egress.dropped` で監査される。保持中の件数はメモリ上のみで、proxy 再起動で失われる。
 - **allowlist は版管理**（`egress_allowlist`: active / proposed / retired）+ デプロイ全体のモード
   （`egress_mode`）。**AI は提案のみ・人間が承認**（自動適用しない）。
 - **enforce は proxy で遮断する**: allowlist の外は 403。
