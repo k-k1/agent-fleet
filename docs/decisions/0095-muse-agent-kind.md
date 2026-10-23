@@ -3178,3 +3178,20 @@ to decode; the question was only what the client does with them.
 
 The same cost applies again: the 1.4.11 bundle is red against a 1.4.10 binary until
 `MUSE_VERSION` moves; measured: 1.4.11 green, 1.4.10 red. The pin bump is cli-pin-bump's.
+
+### Note 2026-10-23 — bundle bumped to 1.4.12-R6909.1 (#2575)
+
+`internal/msp/schema` and `types_gen.go` now carry the 1.4.12 export (fingerprint
+`sha256:cfdb6d25…`, equal to the release manifest's `msp_schema_fingerprint`). The contract's
+two breaks were new values in the open `ItemKind` enum: `backgroundTerminalCompletion` and
+`overdueNotice`.
+
+- `backgroundTerminalCompletion` reports how a backgrounded command ended, in a typed member
+  (command, terminal status, output). It takes the generic item path, and the mirror derives a
+  one-line summary from that member, so a command that failed after its turn ended is visible.
+- `overdueNotice` has no typed members and renders from `fallbackText` like any unknown kind.
+- The additive Computer Use approval facts, `blockedPrompt`, `checkpointBoundary` and the task
+  list's `command` / `executionMode` are generated but unused.
+
+The same cost applies again: the 1.4.12 bundle is red against a 1.4.11 binary until
+`MUSE_VERSION` moves; measured: 1.4.12 green, 1.4.11 red. The pin bump is cli-pin-bump's.

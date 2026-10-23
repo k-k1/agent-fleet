@@ -50,6 +50,12 @@ func newV2Daemon(t *testing.T) *v2Daemon {
 	if !healthy(f.srv.URL) {
 		t.Fatal("fake v2 daemon not healthy")
 	}
+	// A daemon that just started has never been down, but its port may be one an earlier test's
+	// closed server held and a read marked down: the verdict is keyed by address and ports are
+	// reused. A stale verdict sends reads to the store although this daemon answers.
+	v2Down.mu.Lock()
+	clear(v2Down.until)
+	v2Down.mu.Unlock()
 	v2ActiveTTL = 0
 	t.Cleanup(func() { v2ActiveTTL = 500 * time.Millisecond })
 	d := &v2Daemon{f: f, sessions: map[string]string{}, messages: map[string][]string{}, inbox: map[string]string{}}

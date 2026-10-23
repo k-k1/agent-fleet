@@ -387,7 +387,11 @@ func (h *threadHandle) bypassNow() bool {
 }
 
 func (h *threadHandle) spawn(st agents.ThreadSettings) error {
-	args := []string{"--acp", "--no-remote", "--no-remote-export"}
+	bin := os.Getenv("AGENT_COPILOT_BIN")
+	if bin == "" {
+		bin = "copilot"
+	}
+	args := append([]string{"--acp"}, privacyFlags(bin)...)
 	if h.bypassNow() && st.Mode != "plan" {
 		// The fleet default is bypass. It is dropped for a plan launch and when the user chose
 		// permission prompts (docs/log/76), so approvals surface as an Interaction.
@@ -402,10 +406,6 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	// non-auto model, else the child errors on startup.
 	if st.Effort != "" && concreteModel {
 		args = append(args, "--effort", st.Effort)
-	}
-	bin := os.Getenv("AGENT_COPILOT_BIN")
-	if bin == "" {
-		bin = "copilot"
 	}
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = h.dir
