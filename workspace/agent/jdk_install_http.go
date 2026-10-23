@@ -45,7 +45,11 @@ func (j *jdkInstall) snapshot() (state, major, errMsg string) {
 // jdkInstallStatus is the body both verbs answer with, so the caller always learns the
 // job state AND what is actually on disk in one round trip.
 func jdkInstallStatus() map[string]any {
-	state, major, errMsg := jdkInstaller.snapshot()
+	return jdkInstallStatusOf(jdkInstaller.snapshot())
+}
+
+// jdkInstallStatusOf builds that body from a job state the caller already read.
+func jdkInstallStatusOf(state, major, errMsg string) map[string]any {
 	return map[string]any{
 		"state":          state,
 		"major":          major,
@@ -90,8 +94,12 @@ func handleJDKInstall(w http.ResponseWriter, r *http.Request) {
 	if jdkInstaller.state == "installing" {
 		// One download at a time. A second request while one runs reports the running
 		// job rather than starting a competing one (they share the home JVM dir).
+		// Report the job as it was when we refused: re-reading after the unlock let a
+		// job that ended in between come back as "done"/"error", which a caller
+		// cannot tell from the outcome of its own request.
+		busyMajor, busyErr := jdkInstaller.major, jdkInstaller.err
 		jdkInstaller.mu.Unlock()
-		httpx.WriteJSON(w, http.StatusOK, jdkInstallStatus())
+		httpx.WriteJSON(w, http.StatusOK, jdkInstallStatusOf("installing", busyMajor, busyErr))
 		return
 	}
 	jdkInstaller.state = "installing"
