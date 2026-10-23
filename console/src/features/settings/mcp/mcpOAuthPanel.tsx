@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { errText } from "../../../core/api/client.ts";
+import { errDetail, errText } from "../../../core/api/client.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
@@ -151,7 +151,9 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
             setClientFor(r.error.issuer);
             return;
           }
-          toast(tr("mcp.oauth_signin_failed", { msg: errText(r.error as any) }));
+          // errDetail: the Agent's bad_request carries the reason (e.g. the server's scope
+          // list is invalid) that the generic err.bad_request wording alone would hide.
+          toast(tr("mcp.oauth_signin_failed", { msg: errDetail(r.error as any) }));
           return;
         }
         startedReg.current = r.registration;

@@ -507,6 +507,13 @@ func StartOAuth(ctx context.Context, serverID string, req StartRequest) (StartRe
 	if scope == "" {
 		scope = selectScope(rep.ChallengedScope, rep.prmScopes, srv.ep.asScopes)
 	}
+	// A scope the Agent assembled from the server's challenge / PRM / AS metadata is
+	// remote input: refuse it as a caller-sent one would be, before any registration
+	// side effect. Dropping tokens would silently change what the member consents to.
+	if !validScope(scope) {
+		return StartResult{}, oerr(http.StatusBadRequest, OAuthErrBadRequest,
+			"the scope the server advertises is not valid (too long or outside the RFC 6749 scope charset)")
+	}
 	cl, oe := chooseClient(ctx, d, srv, req)
 	if oe != nil {
 		return StartResult{}, oe

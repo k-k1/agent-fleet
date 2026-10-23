@@ -278,6 +278,17 @@ describe("Sign in", () => {
     expect(assign).not.toHaveBeenCalled();
   });
 
+  it("shows the Agent's reason when the server's scope is refused (bad_request is generic)", async () => {
+    setStatus({ state: "not_signed_in" });
+    replies["POST api/mcp-servers/mcp-1/oauth/start"] = () => ({
+      error: { code: "bad_request", message: "the scope the server advertises is not valid (too long or outside the RFC 6749 scope charset)" },
+    });
+    await mount(row());
+    await click(button("Sign in"));
+    expect(toasts.join(" ")).toContain("the scope the server advertises is not valid");
+    expect(assign).not.toHaveBeenCalled();
+  });
+
   it("asks for a client id on 409, saves it, then retries", async () => {
     setStatus({ state: "not_signed_in" });
     let starts = 0;
