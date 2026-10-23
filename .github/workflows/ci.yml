@@ -356,6 +356,10 @@ jobs:
       # the env var must stay unset without a key, so the CP never crash-loops on it.
       - name: CP AF_WORKSPACE_DEK parameter / Rule (offline template evaluation)
         run: python3 ./deploy/local/cfn-workspace-dek-test.py
+      # /mcp and MCP OAuth stay off unless the operator turns them on, and arrive as the
+      # exact values the CP accepts ("true" / "1").
+      - name: CP AF_MCP_* parameters / Rule (offline template evaluation)
+        run: python3 ./deploy/local/cfn-mcp-env-test.py
       # IAM caps a role's inline policies at 10,240 characters in total and each managed one
       # at 6,144, and four stacks attach to the CP task role, so no one template shows the
       # total. Passing it is a ServiceLimitExceeded and a rolled-back stack on a real

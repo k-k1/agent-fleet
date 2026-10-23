@@ -378,6 +378,13 @@ working for CI and clients without OAuth.
 | `AF_MCP_OAUTH=1` | turns the server on. Needs `AF_MCP_ENABLED=true` and an `https` `PUBLIC_BASE_URL`; with any of the three missing every path below answers 404 and `/mcp` keeps its bare 401, so clients fall back to asking for a token |
 | `AF_MCP_OAUTH_TRUSTED_HOSTS` | comma-separated host names that may receive the sign-in redirect and serve client metadata. Default `claude.ai,claude.com,chatgpt.com`. **A super admin can override this at runtime** in the Admin modal (Deployment → MCP sign-in hosts, [admin/05](../admin/05-access.md#trusted-client-hosts-deployment-wide-superadmin-only)); the saved list wins and this variable is the fallback while nothing is saved. Remove one to stop that vendor, add one for an in-house client (exact host, `https` only); `none` leaves loopback clients only |
 
+- **Turning it on.** Compose / native / local: set `AF_MCP_ENABLED=true` and `AF_MCP_OAUTH=1` (exactly those
+  values; `1` is not accepted for `AF_MCP_ENABLED`) and, optionally, `AF_MCP_OAUTH_TRUSTED_HOSTS` in the Control Plane's
+  environment. Kubernetes: add them to the Control Plane's environment file (`cp.env`). **ECS:** the 30-ingress
+  parameters `McpEnabled=on`, `McpOAuth=on` and optionally `McpOAuthTrustedHosts`, set with a targeted
+  `aws cloudformation deploy` of `30-ingress.yaml` (`--parameter-overrides McpEnabled=on McpOAuth=on`).
+  `update.sh` overrides only `ImageTag`, so it neither turns them on nor turns them off: parameters keep their
+  previous value, and one a stack has not had yet starts off. See [`deploy/aws/ecs/README.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/README.md).
 - **What is served** (issuer `{PUBLIC_BASE_URL}/mcp-oauth`): `/.well-known/oauth-protected-resource/mcp`,
   `/.well-known/oauth-authorization-server/mcp-oauth`, `/mcp-oauth/authorize`, `/mcp-oauth/consent`,
   `/mcp-oauth/token`, `/mcp-oauth/register` and `/mcp-oauth/revoke`. The `/mcp` 401 now carries
