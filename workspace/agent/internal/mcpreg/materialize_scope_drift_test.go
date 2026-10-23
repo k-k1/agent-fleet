@@ -465,11 +465,14 @@ func opencodeScopeDoc(servers map[string]string) string {
 
 // TestScopeServeListHangIsBounded is the negative control for opencodeServeList: a fake CLI
 // whose `serve` prints a password and whose `api` never answers must make the helper fail
-// within its budget and leave no process behind. It needs no real CLI.
+// within its budget and leave none of its processes behind. The fake records its own PID,
+// so only those PIDs are checked (never a process-table pattern, which could match another
+// session's). It needs no real CLI.
 func TestScopeServeListHangIsBounded(t *testing.T) {
+	pidFile := os.Getenv("AF_SCOPE_HANG_PIDS")
 	if os.Getenv("AF_SCOPE_HANG_CHILD") == "1" {
 		fake := filepath.Join(t.TempDir(), "opencode")
-		script := "#!/bin/sh\ncase \"$1\" in\nserve) echo 'server password pw'; exec sleep 301;;\n*) exec sleep 302;;\nesac\n"
+		script := "#!/bin/sh\necho $$ >> \"$AF_SCOPE_HANG_PIDS\"\ncase \"$1\" in\nserve) echo 'server password pw'; exec sleep 300;;\n*) exec sleep 300;;\nesac\n"
 		if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -477,9 +480,10 @@ func TestScopeServeListHangIsBounded(t *testing.T) {
 		opencodeServeList(t, t.TempDir(), nil, fake)
 		return
 	}
+	pidFile = filepath.Join(t.TempDir(), "pids")
 	// Run the failing helper in a child test so its t.Fatal is the observed outcome.
 	cmd := exec.Command(os.Args[0], "-test.run", "^TestScopeServeListHangIsBounded$", "-test.v")
-	cmd.Env = append(os.Environ(), "AF_SCOPE_HANG_CHILD=1")
+	cmd.Env = append(os.Environ(), "AF_SCOPE_HANG_CHILD=1", "AF_SCOPE_HANG_PIDS="+pidFile)
 	start := time.Now()
 	out, err := cmd.CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "did not answer before the deadline") {
@@ -488,8 +492,29 @@ func TestScopeServeListHangIsBounded(t *testing.T) {
 	if d := time.Since(start); d > 30*time.Second {
 		t.Fatalf("took %s, want it bounded by the budget", d)
 	}
-	time.Sleep(time.Second)
-	if left, _ := exec.Command("pgrep", "-f", "sleep 30[12]$").Output(); len(left) > 0 {
-		t.Fatalf("processes left behind: %s", left)
+	raw, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("the fake CLI recorded no PID (it never ran?): %v\n%s", err, out)
+	}
+	pids := strings.Fields(string(raw))
+	if len(pids) < 2 {
+		t.Fatalf("want the serve and at least one api PID, got %v", pids)
+	}
+	for _, f := range pids {
+		pid, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("bad PID %q: %v", f, err)
+		}
+		gone := false
+		for i := 0; i < 50 && !gone; i++ {
+			gone = syscall.Kill(pid, 0) == syscall.ESRCH
+			if !gone {
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+		if !gone {
+			_ = syscall.Kill(pid, syscall.SIGKILL) // our own fake; do not leave it
+			t.Errorf("fake CLI process %d is still alive after the helper failed", pid)
+		}
 	}
 }
