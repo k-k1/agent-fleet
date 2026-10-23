@@ -477,3 +477,21 @@ func TestResolveDenyAllCachedNeverCallsAReachableKindUnavailable(t *testing.T) {
 		t.Fatalf("cold: got %q %v, want unknown", source, ok)
 	}
 }
+
+// A call cut by its context must return promptly even though the killed CLI left a child holding
+// its stdout (the fake's `sleep`): without WaitDelay Output waits for that child, and the caller's
+// slot with it.
+func TestOneShotDenyAllReturnsWhenTheCallIsCutAndAChildOutlivesIt(t *testing.T) {
+	denyAllEnv(t)
+	fakeDenyAllClaude(t, cleanProbe, fakeRun{Out: lines(initClean, assistText, runResult), Sleep: 20})
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := OneShotDenyAll(ctx, usagex.FeatureMemoryReview, OneShotShort, "persona", secretPrompt)
+	if err == nil {
+		t.Fatal("a cut call returned a reply")
+	}
+	if d := time.Since(start); d > 8*time.Second {
+		t.Fatalf("the call took %s to return after its context ended", d)
+	}
+}

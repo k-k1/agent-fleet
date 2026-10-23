@@ -185,6 +185,7 @@ func runClaudeDenyAll(ctx context.Context, persona, prompt, selected string) (st
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	cmd := claudeOneShotCmd(ctx, claudeOneShotArgsFormat(persona, selected, true))
 	cmd.Stdin = strings.NewReader(prompt)
+	cmd.WaitDelay = time.Second // a child that outlives the killed CLI must not keep the call (and the caller's slot) open
 	out, runErr := cmd.Output()
 	ev := parseClaudeStream(out)
 	r := ev.result
