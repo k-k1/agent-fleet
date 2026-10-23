@@ -35,6 +35,10 @@ type asFake struct {
 	tokenDelay time.Duration
 	revokeCode int
 	regBody    string
+	// prmScopes replaces the PRM's scopes_supported; dropChallengeScope removes scope=
+	// from the 401 challenge so the PRM list is what selectScope uses.
+	prmScopes          []string
+	dropChallengeScope bool
 }
 
 func newASFake(t *testing.T, doc map[string]any) *asFake {
@@ -49,12 +53,20 @@ func (f *asFake) url(p string) string { return f.srv.URL + p }
 func (f *asFake) serve(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/mcp":
-		w.Header().Add("WWW-Authenticate", `Bearer resource_metadata="`+f.url("/prm")+`", scope="mcp:read"`)
+		hdr := `Bearer resource_metadata="` + f.url("/prm") + `"`
+		if !f.dropChallengeScope {
+			hdr += `, scope="mcp:read"`
+		}
+		w.Header().Add("WWW-Authenticate", hdr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	case "/prm":
+		prm := []string{"mcp:read", "mcp:write"}
+		if f.prmScopes != nil {
+			prm = f.prmScopes
+		}
 		writeTestJSON(w, map[string]any{
 			"resource": f.url("/mcp"), "authorization_servers": []string{f.url("")},
-			"scopes_supported": []string{"mcp:read", "mcp:write"},
+			"scopes_supported": prm,
 		})
 	case "/.well-known/oauth-authorization-server":
 		d := map[string]any{
@@ -226,6 +238,47 @@ func TestStartBuildsTheAuthorizationRequest(t *testing.T) {
 	}
 	if strings.Contains(res.AuthorizeURL, "code_verifier") {
 		t.Error("the verifier must not be in the authorization URL")
+	}
+}
+
+func TestStartValidatesTheServerSelectedScope(t *testing.T) {
+	long := []string{strings.Repeat("a", maxScopeLen/2), strings.Repeat("b", maxScopeLen/2)} // joined: 1025 bytes
+	cases := []struct {
+		name string
+		prm  []string
+		ok   bool
+	}{
+		{"over-long list", long, false},
+		{"quote in a token", []string{"mcp:read", `bad"scope`}, false},
+		{"backslash in a token", []string{`bad\scope`}, false},
+		{"non-ASCII token", []string{"mcp:read", "スコープ"}, false},
+		{"legitimate list", []string{"mcp:read", "mcp:write", "offline_access"}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			resetOAuthState(t)
+			f := newASFake(t, map[string]any{"client_id_metadata_document_supported": true})
+			f.prmScopes, f.dropChallengeScope = c.prm, true
+			id := registerServer(t, f)
+			res, err := StartOAuth(context.Background(), id, startReq(nil))
+			if c.ok {
+				if err != nil {
+					t.Fatalf("start: %v", err)
+				}
+				u, _ := url.Parse(res.AuthorizeURL)
+				if got := u.Query().Get("scope"); got != strings.Join(c.prm, " ") {
+					t.Errorf("scope = %q", got)
+				}
+				return
+			}
+			wantCode(t, err, OAuthErrBadRequest)
+			if !strings.Contains(err.Error(), "scope") {
+				t.Errorf("message should name the scope: %v", err)
+			}
+			if len(f.regs) != 0 || len(pendingAuths) != 0 {
+				t.Errorf("a refused start must leave no registration or pending state")
+			}
+		})
 	}
 }
 
