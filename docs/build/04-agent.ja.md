@@ -610,7 +610,9 @@ Agent は暗号化ストア `secrets.enc`（AES-256-GCM、0600。ロックの下
     しないので、ここが唯一の置き場。
 
   `JAVA_HOME` は 設定 → ツールチェーン の選択に従い、探索は Workspace 自身のアーキテクチャを優先する
-  （`jvmSearchDirs`）。Node は `workspace-agent install-node` が版ごとに nvm の配置へ入れる。
+  （`jvmSearchDirs`）。同じメジャーが両方の置き場にあれば新しいパッチの方を選ぶので、`install-jdk` を
+  もう一度走らせればその版を更新できる（`javaHomeFor`。entrypoint は同じ規則を書き直さず
+  `workspace-agent java-home` に聞く）。Node は `workspace-agent install-node` が版ごとに nvm の配置へ入れる。
 - **レイヤの順序**: 重くてめったに変わらないレイヤを前に置く。よく変わるコピー（Agent のバイナリ・
   entrypoint・plugin・notes）は最後にまとめ、小さな修正でキャッシュを壊さない。`CMD` は絶対パスの
   `/usr/local/bin/workspace-agent` なので、`~/.local/bin` のコピーには乗っ取られない。

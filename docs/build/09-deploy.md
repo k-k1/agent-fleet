@@ -141,7 +141,9 @@ Java version in the Console makes the entrypoint install any missing one and put
 can be installed (`java_available`); **choosing one that is not installed offers a
 button that installs it there and then** (`POST /env/jdk-install`, then poll with
 `GET`). After installation `resolvedToolchains` globs the directories at every start,
-so it takes effect **from the next session** without a restart.
+so it takes effect **from the next session** without a restart. A major that is in both
+directories resolves to the newer patch (the `release` file's `SEMANTIC_VERSION`; a tie
+keeps `/usr/lib/jvm`), so installing an installed major again is an update.
 
 ## 9.5 The AWS target
 
