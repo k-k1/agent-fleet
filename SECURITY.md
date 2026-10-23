@@ -65,10 +65,11 @@ informed choice — not undisclosed bugs.
   Store it in a **separate vault** from the database and the homes, and back it up
   independently: neither `deploy/compose/backup.sh` nor the AWS templates copy it. On
   AWS it is the SSM SecureString `<SsmPrefix>/master-key` (`/af-cp` by default), and
-  `deploy/aws/ecs/teardown.sh --purge-secrets` deletes it. **Left unset, the CP still
-  starts, and members' stores are written in plaintext** (`secrets.json` instead of
-  `secrets.enc`); outside `AUTH=dev` it logs a warning and shows super_admins a banner.
-  See `deploy/compose/README.md`.
+  `deploy/aws/ecs/teardown.sh --purge-secrets` deletes it. **Left unset with the local
+  custodian, the CP still starts, and members' stores are written in plaintext**
+  (`secrets.json` instead of `secrets.enc`); outside `AUTH=dev` it logs a warning and
+  shows super_admins a banner. With `AF_KEY_CUSTODIAN=kms` the CP refuses to start
+  without it. See `deploy/compose/README.md`.
 
 - **Backups are sensitive.** Members' homes (with their store: `secrets.enc`, or the
   plaintext `secrets.json` when no master key is set) and the agent CLIs' sign-in
@@ -80,8 +81,10 @@ informed choice — not undisclosed bugs.
   elsewhere with `AF_DB` or `AF_DATABASE_URL` needs its own backup), on AWS in its
   automated backups and final snapshot (`Persistence=retain`), and on `kubernetes` in
   the backups of the Postgres the deployment provides. On `kubernetes` the homes are not
-  backed up in this version; the CP's own disk (`af-cp-data`, with the git token key) is
-  ([deploy/kubernetes/README.md](deploy/kubernetes/README.md#what-has-to-survive)).
+  backed up in this version, and the CP's own disk (`af-cp-data`, with the git token
+  key) is backed up only once the operator gives it a snapshot schedule, again after
+  every restore
+  ([deploy/kubernetes/README.md](deploy/kubernetes/README.md#backups-point-in-time-recovery-and-the-restore-rehearsal)).
   Protect where they are stored.
 
 - **Anything running in a Workspace can read that user's own secrets.** Agents,
@@ -111,6 +114,14 @@ informed choice — not undisclosed bugs.
   deploy and operate it.
   - Hardening option: front the socket with a filtering proxy
     (e.g. `tecnativa/docker-socket-proxy`) to narrow the Docker API surface.
+
+- **Data-root name collisions stored before 0.27.0 are not repaired.** A tenant slug and
+  a default-tenant member's key are sibling directories under `WS_DATA`, next to the
+  CP's own entries. New names that would collide are refused, but a collision stored
+  earlier stays as it is: the CP logs `data root name collision` at start-up, and only
+  an administrator can move it
+  ([operate/02 §7](guide/operate/02-install.md#7-the-first-tenant-and-members)). Check
+  the start-up log after an upgrade.
 
 - **`native` is single-user only, and the user is the operator.** There is no
   container: the workspace is a bubblewrap sandbox that shares the host's network, and
@@ -145,12 +156,14 @@ declare.
   ([#1182](https://github.com/k-k1/agent-fleet/issues/1182),
   [#1419](https://github.com/k-k1/agent-fleet/issues/1419),
   [#1423](https://github.com/k-k1/agent-fleet/issues/1423)). A launch may boot only from
-  an Amazon-owned or public image or the slot AMIs its pool stack names, and may not map a
-  snapshot the account owns, so another deployment's home snapshots cannot be booted and
-  read ([#1522](https://github.com/k-k1/agent-fleet/issues/1522)). Three things stay open:
-  snapshots shared in from other accounts can still be mapped, an engine purchase's
-  mapping override is fenced only if EC2 Fleet checks the caller's `RunInstances`, and
-  the fence has not yet had its live check under the real role (the run is listed in
+  an Amazon-owned or public image or the slot AMIs its pool stack names, and is meant
+  not to map a snapshot the account owns, so that another deployment's home snapshots
+  cannot be booted and read ([#1522](https://github.com/k-k1/agent-fleet/issues/1522)).
+  Three things stay open: snapshots shared in from other accounts can still be mapped;
+  the snapshot fence is the negated form on `ec2:Owner`, so if AWS presented no owner
+  for this account's snapshots it would be silently void; and an engine purchase's
+  mapping override is fenced only if EC2 Fleet checks the caller's `RunInstances`.
+  None of this has had its live check under the real role yet (the run is listed in
   [#1527](https://github.com/k-k1/agent-fleet/pull/1527)). Which statements there are,
   and what they reach, is in
   [07 §7.1](docs/build/07-security.md#71-threat-model-and-trust-boundary).
@@ -168,12 +181,15 @@ declare.
   service that trusts that address (a git host's IP allowlist, for example) trusts
   every member's workload, not just the CP.
 
-- **Clean home does not remove copies of the home.** On `ecs-ec2` an administrator's
-  Clean home deletes the home volume and its hibernation snapshots but keeps the backup
-  copies; deleting those is a separate action in the member's detail
-  ([deploy-targets ⁹](guide/ref/deploy-targets.md#capability-differences)). With
+- **Clean home does not remove all of a member's data.** It keeps the member's
+  logins, connections and Claude state, which on `ecs` / `ecs-ec2` live on the file
+  system; **Destroy workspace** removes those, and its outcome is written to the audit
+  log once the removal task has finished. On `ecs-ec2` Clean home also keeps the backup
+  copies of the home; deleting those is a separate action in the member's detail. With
   `Persistence=retain`, the file system's AWS Backup recovery points stay until their
-  retention ends. To remove a member's data, account for both.
+  retention ends
+  ([deploy-targets ⁷–⁹](guide/ref/deploy-targets.md#capability-differences)). To remove
+  a departing member's data, account for all three.
 
 ### `kubernetes` (preview)
 
@@ -190,6 +206,12 @@ declare.
   access to it. A compromised CP reaches that namespace — every Secret, and pods it can
   create but not make privileged — and, through its read-only cluster role, nothing else
   ([07 §7.2](docs/build/07-security.md#72-isolation-controls)).
+
+- **Node disk is shared.** A workspace's ephemeral-storage limit and its `/tmp` size
+  limit are enforced by eviction after the fact, not as a quota at write time, so a
+  workload that writes fast can fill a node's disk first and get its neighbours on that
+  node evicted too. Keep disk headroom on the nodes and alert on disk pressure
+  ([deploy/kubernetes/README.md](deploy/kubernetes/README.md#node-disk)).
 
 ## Supported versions
 
