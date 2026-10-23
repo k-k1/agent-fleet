@@ -311,8 +311,8 @@ for row in "${KINDS[@]}"; do
   if [ "$kind" = claude ] || [ "$kind" = codex ] || [ "$kind" = opencode ] || [ "$kind" = copilot ]; then
     resolve_npm "$arg" "$latest"
     # The opt-in's install version follows a 2.x pin (workspace/Dockerfile, OPENCODE_V2_VERSION);
-    # a 1.x pin is a rollback and leaves it at the last 2.x.
-    if [ "$kind" = opencode ] && [ "$(major_of "$latest")" -ge 2 ]; then
+    # a 1.x pin is a rollback and leaves it at the last 2.x, and a later major is never recorded.
+    if [ "$kind" = opencode ] && [ "$(major_of "$latest")" = 2 ]; then
       resolve_npm OPENCODE_V2_VERSION "$latest"
     fi
   else
