@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.34.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.0) — 2026-10-23
+
+MCP sign-in works in both directions. Remote MCP clients such as claude.ai and ChatGPT can connect to
+Agent Fleet by signing in instead of pasting a token, and you can sign in to MCP servers that require
+OAuth from Settings so your sessions can use them. EC2 pool slots get a force-stop and more memory
+headroom for the host, and the Jira CLI copes with a flaky network.
+
 ## [0.33.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.33.0) — 2026-10-21
 
 The tenant Members page shows each member as a card with live sessions, last activity, home disk,

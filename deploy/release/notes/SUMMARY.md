@@ -14,6 +14,36 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 
 ---
 
+## [0.34.0](0.34.0.md) — 2026-10-23
+
+**CLI pins** — Claude Code 2.1.309, Copilot 1.0.103, Antigravity 1.4.5, Cursor 2026.10.22-27dcf5f, Kiro 2.33.1, OpenCode 2.1.3, Muse Code 1.4.12-R6909.1
+
+**New / Improved**
+
+- **[MCP]** Remote MCP clients (claude.ai, ChatGPT, Claude Code and others) connect to `/mcp` by signing in; connected apps with recent calls, a tenant switch, trusted client hosts in the Admin panel, and a **Via MCP** mark on their input ([#2433](https://github.com/k-k1/agent-fleet/issues/2433), [#2434](https://github.com/k-k1/agent-fleet/issues/2434), [#2455](https://github.com/k-k1/agent-fleet/issues/2455), [#2457](https://github.com/k-k1/agent-fleet/issues/2457), [#2531](https://github.com/k-k1/agent-fleet/issues/2531), [#2542](https://github.com/k-k1/agent-fleet/issues/2542), [#2567](https://github.com/k-k1/agent-fleet/issues/2567))
+- **[MCP]** Sign in to MCP servers that require OAuth from Settings; sessions use them through a relay in the workspace ([#2479](https://github.com/k-k1/agent-fleet/issues/2479), [#2485](https://github.com/k-k1/agent-fleet/issues/2485), [#2549](https://github.com/k-k1/agent-fleet/issues/2549), [#2568](https://github.com/k-k1/agent-fleet/issues/2568), [#2580](https://github.com/k-k1/agent-fleet/issues/2580))
+- **[MCP]** The MCP server forms start from a remote server with a display name and an authentication choice ([#2550](https://github.com/k-k1/agent-fleet/issues/2550))
+- **[ecs-ec2]** **Stop (force)** for a wedged pool slot ([#2449](https://github.com/k-k1/agent-fleet/issues/2449))
+- **[ecs-ec2]** The host keeps 2 GiB of every slot and its ECS and SSM agents are protected from reclaim ([#2451](https://github.com/k-k1/agent-fleet/issues/2451), [#2452](https://github.com/k-k1/agent-fleet/issues/2452))
+- **[ecs-ec2]** A Start stuck behind a task that cannot finish stopping is shown as blocked ([#2447](https://github.com/k-k1/agent-fleet/issues/2447))
+- **[files]** Open shell here in a folder's context menu ([#2460](https://github.com/k-k1/agent-fleet/issues/2460))
+- **[jira]** `jira issue comment edit` and `delete` ([#2477](https://github.com/k-k1/agent-fleet/issues/2477))
+- **[jira]** Retries, timeouts and candidate issues after a timed-out create; Agent instructions may prefer an Atlassian MCP tool ([#2476](https://github.com/k-k1/agent-fleet/issues/2476), [#2532](https://github.com/k-k1/agent-fleet/issues/2532), [#2538](https://github.com/k-k1/agent-fleet/issues/2538), [#2539](https://github.com/k-k1/agent-fleet/issues/2539), [#2543](https://github.com/k-k1/agent-fleet/issues/2543))
+- **[muse]** Muse Code 1.4.12 and its new record kinds ([#2575](https://github.com/k-k1/agent-fleet/issues/2575))
+- **[muse]** Muse Code contributor mode setting ([#2535](https://github.com/k-k1/agent-fleet/issues/2535))
+
+**Fixed**
+
+- **[copilot]** Sessions did not start once copilot had updated itself to 1.0.103 ([#2576](https://github.com/k-k1/agent-fleet/issues/2576))
+- **[ecs-ec2]** A workspace stuck in "starting" could not be stopped; a Start after a size change timed out on a wedged slot ([#2446](https://github.com/k-k1/agent-fleet/issues/2446), [#2448](https://github.com/k-k1/agent-fleet/issues/2448))
+- **[ecs-ec2]** `AF_ECS_EC2_HOST_RESERVE_MB=0` was treated as `auto` ([#2503](https://github.com/k-k1/agent-fleet/issues/2503))
+- **[workspace]** Folders made by the member under `~/.af-work` could be deleted at start ([#2454](https://github.com/k-k1/agent-fleet/issues/2454))
+- **[mirror]** A just-finished reply could vanish for a moment ([#2564](https://github.com/k-k1/agent-fleet/issues/2564))
+- **[opencode]** Terminal panes could stay disconnected after the shared server restarted ([#2432](https://github.com/k-k1/agent-fleet/issues/2432))
+- **[MCP]** ChatGPT refused the `/mcp` tool list because of an invalid schema ([#2540](https://github.com/k-k1/agent-fleet/issues/2540))
+- **[preview]** The Preview settings entry stayed hidden after a Control Plane error ([#2317](https://github.com/k-k1/agent-fleet/issues/2317))
+- **[command palette]** The selection could fall off the list ([#2504](https://github.com/k-k1/agent-fleet/issues/2504), [#2554](https://github.com/k-k1/agent-fleet/issues/2554))
+
 ## [0.33.0](0.33.0.md) — 2026-10-21
 
 **CLI pins** — Claude Code 2.1.305, Copilot 1.0.101, Antigravity 1.4.3, Cursor 2026.10.19-6bbf2c4, OpenCode 2.1.1, Muse Code 1.4.11-R6667.1

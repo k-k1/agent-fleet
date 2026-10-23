@@ -2,9 +2,11 @@
 
 English | [日本語](0118-mcp-oauth.ja.md)
 
-- Status: **proposed** (2026-10-20). Documentation only: nothing below is built. The code facts
-  were read from the tree on this date; the client behaviour was read from the published
-  documents named under Notes, **not measured** against a live client.
+- Status: **accepted** (2026-10-23; proposed 2026-10-20). Built and shipped in 0.34.0: the
+  authorization server (#2433), the connected-apps list and the tenant switch (#2434), the
+  trusted client hosts setting (#2567), the call record (#2531) and the origin envelope (#2542).
+  Run live against claude.ai, ChatGPT and Claude Code (#2435); Codex over loopback was not run.
+  The dated notes at the end record what changed on the way.
 - Follow-ups: #2433, #2434, #2435
 - Related: [0006](0006-mcp-unified.md) decision 2 (PAT authentication; it named "native OAuth2.1"
   as the later stage, this record is that stage) / [0032](0032-mcp-2026-07-28.md) (left OAuth out
