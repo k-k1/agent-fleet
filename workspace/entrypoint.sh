@@ -1244,11 +1244,13 @@ if [ -n "$JAVA_VER" ]; then
   # workspace-agent owns the lookup rule (this architecture only, never another's;
   # docs/log/70 §70.5.1) and the newer patch when a major is in both directories, so
   # this JAVA_HOME and the one sessions get from resolvedToolchains cannot disagree.
-  find_jh() { workspace-agent java-home "$JAVA_VER"; }
+  # Absolute path, like the image's CMD: PATH puts ~/.local/bin first, and a stale build
+  # left there predates java-home, exits 2, and leaves JAVA_HOME unset with the JDK on disk.
+  find_jh() { /usr/local/bin/workspace-agent java-home "$JAVA_VER"; }
   JH=$(find_jh || true)
   if [ -z "$JH" ]; then
     echo "[entrypoint] temurin-$JAVA_VER not present; installing into home volume ..."
-    workspace-agent install-jdk "$JAVA_VER" || echo "[entrypoint] WARN: install-jdk $JAVA_VER failed"
+    /usr/local/bin/workspace-agent install-jdk "$JAVA_VER" || echo "[entrypoint] WARN: install-jdk $JAVA_VER failed"
     JH=$(find_jh || true)
   fi
   if [ -n "$JH" ]; then
