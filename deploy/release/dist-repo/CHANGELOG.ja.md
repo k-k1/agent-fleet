@@ -3,7 +3,7 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
-## [0.34.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.0) — 2026-10-22
+## [0.34.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.0) — 2026-10-23
 
 MCP のサインインが両方向で使えるようになりました。claude.ai や ChatGPT などのリモート MCP クライアントは、
 トークンを貼り付ける代わりにサインインして Agent Fleet に接続できます。OAuth が必要な MCP サーバーには設定から

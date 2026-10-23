@@ -3,7 +3,7 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
-## [0.34.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.0) — 2026-10-22
+## [0.34.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.0) — 2026-10-23
 
 MCP sign-in works in both directions. Remote MCP clients such as claude.ai and ChatGPT can connect to
 Agent Fleet by signing in instead of pasting a token, and you can sign in to MCP servers that require
