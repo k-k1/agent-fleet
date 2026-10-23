@@ -58,9 +58,11 @@ updated: "2026-10"
 | worktree | メンバー | 各リポジトリの下 | [03 Git](../member/03-code.ja.md) |
 | サインイン済みの `gh` と `bkt` をセッションで使う | メンバー | どのセッションでも | [03 Git](../member/03-code.ja.md#セッションで-gh-と-bkt-を使う)。サインイン済みの CLI の一覧は [10](../member/10-integrations.ja.md#サインイン済みの-cli) |
 | サインイン済みの `jira` をセッションで使う | メンバー | どのセッションでも | [03 Git](../member/03-code.ja.md#セッションで-jira-を使う) |
+| Jira のコメントを編集・削除する（`jira issue comment edit` / `delete`）| メンバー | どのセッションでも | [03 Git](../member/03-code.ja.md#セッションで-jira-を使う) |
 | Subversion の作業コピー — 更新、ログを表示、ローカルの変更 | メンバー | リポジトリ → SVN の行 | [03 Git](../member/03-code.ja.md#subversionsvnリポジトリ) |
 | ファイルツリーとビューア | メンバー | ファイル | [04 ファイル](../member/04-files.ja.md) |
 | フォルダを zip でダウンロードする | メンバー | ファイルツリーまたはギャラリー → 右クリック → zip でダウンロード | [04 ファイル](../member/04-files.ja.md#フォルダを-zip-でダウンロードする) |
+| フォルダからシェルを開く | メンバー | ファイルツリー → フォルダを右クリック → ここでシェルを開く | [04 ファイル](../member/04-files.ja.md#フォルダからシェルを開く) |
 | 表示した Markdown の中のリンク — 課題番号、ファイルのパス、ワークスペースのプレビューを開くループバック URL | メンバー | ミラー、チャット、ファイルとドキュメントのビュアー | [04 ファイル](../member/04-files.ja.md#表示した-markdown-の中のリンク) |
 | 返信やドキュメントの中のファイル・フォルダのリンクのメニュー | メンバー | リンクを右クリック | [アイコン・バッジ・メニュー](../member/badges-and-menus.ja.md#返信やドキュメントの中のファイルとフォルダのリンク) |
 | Markdown / コードの編集 | メンバー | ファイル → 各ファイル | [04 ファイル](../member/04-files.ja.md) |
@@ -111,11 +113,15 @@ updated: "2026-10"
 | エージェント自前のメモリの版管理 | メンバー | メモリのスナップショット（[14](../member/14-agent-memory.ja.md#メモリのスナップショット)） |
 | メモリの提案 — 終わったセッションがメモリを提案し、あなたが承認する（既定はオフ）| メンバー | エージェントメモリ → 設定（[14](../member/14-agent-memory.ja.md#設定)） |
 | Agent Fleet の外のエージェントから Agent Fleet のメモリを使う（既定はオフ）| メンバー | エージェントメモリ → 設定（[14](../member/14-agent-memory.ja.md#外部のエージェントから-agent-fleet-のメモリを使う)） |
+| Muse Code の contributor モード（既定はオフ）| メンバー | エージェント → Muse Code → 動作（[06](../member/06-agents.ja.md#muse-code)）
 | Git ホスティングの接続 | メンバー | Git ホスティング |
 | 内部リポジトリ | メンバー | 内部リポジトリ |
 | AWS プロファイルと SSM | メンバー | AWS プロファイル/SSM（[15](../member/15-cloud-accounts.ja.md#社内の別ホストに入るssm)） |
 | Google Cloud のプロファイル | メンバー | Google Cloud（[15](../member/15-cloud-accounts.ja.md#google-cloud-で自分としてコマンドを実行するaf-gcloud-exec)） |
 | 連携サーバーとトークン | メンバー | MCP サーバー / MCP トークン |
+| サインインでリモート MCP クライアントを接続する（OAuth。配備が有効にしているとき）— 接続済みアプリ、最近の呼び出し | メンバー | MCP トークン（[10](../member/10-integrations.ja.md#サインインでリモート-mcp-クライアントを接続するoauth)）
+| `/mcp` から送った入力の「MCP 経由」バッジ | メンバー | ミラーの入力の吹き出し（[10](../member/10-integrations.ja.md#外部の-claude-から自分のワークスペースを操作するmcp)）
+| OAuth が要る登録済み MCP サーバーにサインインする（サインイン・もう一度サインイン・追加の権限を許可する） | メンバー | MCP サーバー → 認証 → OAuth（[12](../member/12-settings.ja.md#mcp-サーバー)）
 | 課題管理の接続 | メンバー | 課題管理 |
 | 使用量 | メンバー | エージェント使用量 |
 | 利用枠ボード: 利用上限に対する自分の状況を公開し、メンバーが自分に公開している状況を見る | メンバー | 利用枠ボード |

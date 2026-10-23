@@ -81,8 +81,7 @@ value you set is not the value in force, look one layer out.
 ## Deployment variables
 
 Set before the Control Plane starts. The annotated list is
-`deploy/compose/.env.example`, which covers most variables but not all (the preview and
-development sign-in ones below are not in it); these are the ones that decide the shape of
+`deploy/compose/.env.example`, which covers most variables but not all; these are the ones that decide the shape of
 everything else:
 
 | Variable | Decides |

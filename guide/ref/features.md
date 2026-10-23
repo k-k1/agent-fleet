@@ -59,9 +59,11 @@ If a feature ships and does not appear here, it is not done
 | Worktrees | member | under each repository | [03 Git](../member/03-code.md) |
 | Use `gh` and `bkt` in a session, already signed in | member | any session | [03 Git](../member/03-code.md#use-gh-and-bkt-in-a-session); the list of signed-in CLIs is in [10](../member/10-integrations.md#clis-that-are-already-signed-in) |
 | Use `jira` in a session, already signed in | member | any session | [03 Git](../member/03-code.md#use-jira-in-a-session) |
+| Edit and delete Jira comments (`jira issue comment edit` / `delete`) | member | any session | [03 Git](../member/03-code.md#use-jira-in-a-session) |
 | Subversion working copies — update, show log, local changes | member | Repositories → an SVN row | [03 Git](../member/03-code.md#subversion-svn-repositories) |
 | File tree and viewer | member | Files | [04 Files](../member/04-files.md) |
 | Download a folder as zip | member | Files tree or gallery → right-click → Download as zip | [04 Files](../member/04-files.md#download-a-folder-as-zip) |
+| Open a shell from a folder | member | Files tree → right-click a folder → Open shell here | [04 Files](../member/04-files.md#open-a-shell-from-a-folder) |
 | Links in rendered Markdown — tickets, file paths, loopback URLs that open the workspace preview | member | mirror, chat, file and document viewers | [04 Files](../member/04-files.md#links-in-rendered-markdown) |
 | Menu on file and folder links in replies and documents | member | right-click a link | [Icons, badges and menus](../member/badges-and-menus.md#file-and-folder-links-in-replies-and-documents) |
 | Markdown and code editing | member | Files → a file | [04 Files](../member/04-files.md) |
@@ -113,11 +115,15 @@ explains them.
 | Version history of agents' own memory | member | Memory snapshots ([14](../member/14-agent-memory.md#memory-snapshots)) |
 | Memory suggestions — finished sessions propose memories for you to approve (off by default) | member | Agent memory → Settings ([14](../member/14-agent-memory.md#settings)) |
 | Agent Fleet memory from an agent outside Agent Fleet (off by default) | member | Agent memory → Settings ([14](../member/14-agent-memory.md#using-agent-fleet-memory-from-an-external-agent)) |
+| Muse Code contributor mode (off by default) | member | Agents → Muse Code → Behaviour ([06](../member/06-agents.md#muse-code)) |
 | Git hosting connections | member | Git hosting |
 | Internal repositories | member | Internal repos |
 | AWS profiles and SSM | member | AWS profiles/SSM ([15](../member/15-cloud-accounts.md#logging-in-to-another-in-house-host-ssm)) |
 | Google Cloud profiles | member | Google Cloud ([15](../member/15-cloud-accounts.md#running-commands-in-google-cloud-as-you-af-gcloud-exec)) |
 | Integration servers and tokens | member | MCP servers / MCP tokens |
+| Connect a remote MCP client by signing in (OAuth, when the deployment enables it) — Connected apps, Recent calls | member | MCP tokens ([10](../member/10-integrations.md#connecting-a-remote-mcp-client-by-signing-in-oauth)) |
+| The "via MCP" badge on input sent through `/mcp` | member | input bubble in the mirror ([10](../member/10-integrations.md#driving-your-workspace-from-an-external-claude-mcp)) |
+| Sign in to a registered MCP server that needs OAuth (Sign in, sign in again, approve extra permission) | member | MCP servers → Authentication → OAuth ([12](../member/12-settings.md#mcp-servers)) |
 | Issue-tracker connections | member | Issue tracker |
 | Usage | member | Agent usage |
 | Limit board: publish where you stand on usage limits, and see what teammates publish to you | member | Limit board |
