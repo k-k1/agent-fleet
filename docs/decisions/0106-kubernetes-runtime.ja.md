@@ -719,3 +719,5 @@ Pod を止めていた。いまは両方の消去（init コンテナと erase P
   Identity）は塞がない。その経路を塞ぐこと（NetworkPolicy、メタデータの隠蔽）はクラスタ側に任せる。
 - ランタイムは `OwnHomeVolume()` で `home_own` を報告する。ホームの claim はワークスペースごとに分かれている。
   実クラスタでは未検証。
+- `AF_K8S_HOME_SHARED_FS=1` は、StorageClass が 1 つの共有ファイルシステムでホームを支える場合に `home_own` を出さない。
+  ブロックストレージの前提は検査していない。残件: #2620。

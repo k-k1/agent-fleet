@@ -49,3 +49,37 @@ func TestKubeRuntimeOwnsItsHome(t *testing.T) {
 		t.Error("a per-workspace home claim must report an own home volume")
 	}
 }
+
+func TestKubeSecretEnvTemplateOptInKeepsIMDS(t *testing.T) {
+	f := &kubeFactory{cfg: &kubeConfig{namespace: "ns", image: "img:1", templateEnv: []string{"AF_WS_WORKLOAD_AWS=1"}}}
+	rt := f.New(Workspace{ContainerName: "af-ws-x"}, SecretKeys{}, nil).(*kubeRuntime)
+	if v, ok := rt.secretEnv()["AWS_EC2_METADATA_DISABLED"]; ok {
+		t.Errorf("WS_ENV opt-in still sets AWS_EC2_METADATA_DISABLED=%q", v)
+	}
+}
+
+func TestKubeHomeSharedFSWithholdsOwnHome(t *testing.T) {
+	get := func(shared string) func(k, def string) string {
+		return func(k, def string) string {
+			switch k {
+			case "AF_K8S_NAMESPACE":
+				return "ns"
+			case "AF_K8S_WORKSPACE_IMAGE":
+				return "img:1"
+			case "AF_K8S_HOME_SHARED_FS":
+				return shared
+			}
+			return def
+		}
+	}
+	for shared, want := range map[string]bool{"": true, "0": true, "1": false, "true": false} {
+		cfg, err := kubeConfigFromEnv(get(shared), Config{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rt := (&kubeFactory{cfg: cfg}).New(Workspace{ContainerName: "af-ws-x"}, SecretKeys{}, nil).(*kubeRuntime)
+		if got := rt.OwnHomeVolume(); got != want {
+			t.Errorf("AF_K8S_HOME_SHARED_FS=%q: OwnHomeVolume = %v, want %v", shared, got, want)
+		}
+	}
+}

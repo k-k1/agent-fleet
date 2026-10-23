@@ -1001,3 +1001,5 @@ cluster (2026-10-02/05; GKE 1.35.8, Dataplane V2, `asia-northeast1`); the figure
   blocking that route (NetworkPolicy, metadata concealment) is left to the cluster.
 - The runtime reports `home_own` through `OwnHomeVolume()`: the home claim is per workspace.
   Not verified on a real cluster.
+- `AF_K8S_HOME_SHARED_FS=1` withholds `home_own` for a StorageClass that backs homes with one
+  shared filesystem; the block-storage expectation is not checked. Follow-ups: #2620.
