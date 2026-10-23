@@ -499,6 +499,22 @@ Copilot CLI 1.0.78。固定しているテストは `mcpreg/materialize_scope_dr
   従って **managed codex セッションだけは乗っ取りに強い** — プロジェクト設定が `af` を定義しても
   thread 設定が勝つ。docs/27 §9.3.1 の副次的効果で、狙って作ったものではない。
 
+**追記（2026-10-23, #2582）— 再測定: 前提は変わっていない。変わったのは観測手段と copilot のゲート。**
+opencode 2.1.3 / Copilot CLI 1.0.103 で `TestDriftMCPScope*` が opencode と copilot で落ちていたが、
+実 CLI で測り直すと上表の「マージ ✔」「勝者」はどちらも同じだった（af のサーバは消えない）。
+
+- opencode: 2.x の `mcp list` は `$HOME` を根にした常駐サービスに問い合わせ、MCP を遅延ロードするため、
+  設定が正しくても（`mcp add` が書いた分も含めて）`No MCP servers configured` と出す。プロジェクトの
+  ディレクトリで `opencode serve` を立てて `/api/mcp` を引くと、`af` と `afdrift_proj` が両方出て、
+  同名衝突は project の定義が解決される（上表どおり **project**）。テストはこの経路で読む。
+- copilot: プロジェクトスコープ（`.mcp.json`）は**フォルダ信頼が前提**になっていた。未信頼のフォルダでは
+  Workspace servers が出ず、user の `af` だけが残る（上表の「ゲート: 無し」は 1.0.78 時点の実測）。
+  `trustedFolders` に入れると従来どおりマージされ、勝者は **project**。af のランチャは作業ディレクトリを
+  事前に信頼する（`agents/copilot/trust.go`）ので、実運用の挙動は表のまま。テストも同じ前提を置く。
+- CI: `mcp-config-contract.yml` の `-run '^TestDrift<Agent>'` は `TestDriftMCPScope*` を選ばなかったため、
+  kind ごとの subtest を選ぶステップを足した。
+- 未検証: cursor-agent / claude はバージョン差で落ちていない（再測定のみ）。kiro・agy は従来どおり。
+
 ---
 
 ## 9. 安全弁

@@ -25,11 +25,18 @@
 package mcpreg
 
 import (
+	"encoding/json"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // scopeSpec describes one CLI's two-scope layout and how its `mcp list` reveals which
@@ -46,6 +53,12 @@ type scopeSpec struct {
 	projectFile string
 	projectDoc  func(servers map[string]string) string
 	list        []string
+	// listFn replaces running `list` when the CLI's own listing no longer reflects the
+	// config (opencode 2.x); it returns text the winner reader understands.
+	listFn func(t *testing.T, dir string, env []string, bin string) string
+	// prepare runs after both scopes are written, for gates the CLI puts in front of the
+	// project scope (copilot's folder trust).
+	prepare func(t *testing.T, home, proj string)
 	// winner reads a listing produced with the SAME name in both scopes and reports
 	// which definition the CLI resolved: "user", "project", or "" for unreadable.
 	winner func(out string) string
@@ -99,8 +112,12 @@ func scopeSpecs() []scopeSpec {
 			projectFile: "opencode.json",
 			projectDoc:  opencodeScopeDoc,
 			list:        []string{"mcp", "list"},
-			winner:      commandWinner,
-			wantWinner:  "project",
+			// 2.x `mcp list` asks a background service rooted at $HOME that loads MCP
+			// lazily, so it prints "No MCP servers configured" for any config; the
+			// per-project server's /api/mcp is what reports the resolved servers.
+			listFn:     opencodeServeList,
+			winner:     commandWinner,
+			wantWinner: "project",
 		},
 		{
 			kind: "cursor",
@@ -136,6 +153,10 @@ func scopeSpecs() []scopeSpec {
 			projectFile: ".mcp.json",
 			projectDoc:  jsonScopeDoc("mcpServers", `"type":"local",`),
 			list:        []string{"mcp", "list"},
+			// copilot ignores the project scope of an untrusted folder; af's launcher
+			// pre-trusts the working directory (agents/copilot/trust.go), so the test
+			// does the same.
+			prepare: copilotTrustFolder,
 			// copilot prints no command either, but groups by origin — the losing
 			// scope's section disappears entirely.
 			winner:     sectionWinner,
@@ -151,7 +172,8 @@ func TestDriftMCPScopesMerge(t *testing.T) {
 		t.Run(sp.kind, func(t *testing.T) {
 			out := runScopeList(t, sp, map[string]string{"afdrift_proj": "/bin/true"})
 			for _, want := range []string{"af", "afdrift_proj"} {
-				if !strings.Contains(out, want) {
+				// Whole word: "af" is also a prefix of "afdrift_proj".
+				if !regexp.MustCompile(`\b` + want + `\b`).MatchString(out) {
 					t.Fatalf("%s: %q is not in the listing — the user scope and the project "+
 						"scope are no longer merged, so af's server disappears in any repository "+
 						"that has a project config (docs/log/48 §8.4)\n%s", sp.kind, want, out)
@@ -207,6 +229,12 @@ func runScopeList(t *testing.T, sp scopeSpec, project map[string]string) string 
 	if err := os.WriteFile(path, []byte(sp.projectDoc(project)), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if sp.prepare != nil {
+		sp.prepare(t, home, proj)
+	}
+	if sp.listFn != nil {
+		return sp.listFn(t, proj, sp.env(home), bin)
+	}
 	return runScopeCLI(t, proj, sp.env(home), bin, sp.list)
 }
 
@@ -222,6 +250,88 @@ func runScopeCLI(t *testing.T, dir string, env []string, bin string, args []stri
 		t.Fatalf("%s %v: %v", bin, args, err)
 	}
 	return string(out)
+}
+
+// copilotTrustFolder writes the trustedFolders entry copilot's folder-trust dialog would
+// store, into $COPILOT_HOME/config.json.
+func copilotTrustFolder(t *testing.T, home, proj string) {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{"trustedFolders": []string{proj}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".copilot", "config.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// opencodeServeList runs `opencode serve` in the project directory on a free loopback
+// port and returns /api/mcp once every server has left its pending state. A failed
+// status carries the spawn error, which names the command the CLI resolved — the same
+// tell commandWinner reads. The server is this test's own process and is killed on exit.
+func opencodeServeList(t *testing.T, dir string, env []string, bin string) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	var log lockedBuf
+	srv := exec.Command(bin, "serve", "--hostname", "127.0.0.1", "--port", strconv.Itoa(port))
+	srv.Dir = dir
+	srv.Env = append(os.Environ(), env...)
+	srv.Stdout, srv.Stderr = &log, &log
+	srv.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := srv.Start(); err != nil {
+		t.Fatalf("%s serve: %v", bin, err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-srv.Process.Pid, syscall.SIGKILL)
+		_ = srv.Wait()
+	})
+	pw := regexp.MustCompile(`server password (\S+)`)
+	deadline := time.Now().Add(60 * time.Second)
+	var password string
+	for time.Now().Before(deadline) {
+		if m := pw.FindStringSubmatch(log.String()); m != nil {
+			password = m[1]
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if password == "" {
+		t.Fatalf("opencode serve printed no password:\n%s", log.String())
+	}
+	apiEnv := append(append([]string{}, env...), "OPENCODE_PASSWORD="+password)
+	url := "http://127.0.0.1:" + strconv.Itoa(port)
+	var out string
+	for time.Now().Before(deadline) {
+		out = runScopeCLI(t, dir, apiEnv, bin, []string{"api", "--server", url, "GET", "/api/mcp"})
+		if strings.Contains(out, `"name":`) && !strings.Contains(out, `"pending"`) &&
+			!strings.Contains(out, `"connecting"`) {
+			return out
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return out
+}
+
+type lockedBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuf) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }
 
 // --- listing readers ----------------------------------------------------------
