@@ -250,6 +250,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.java_update_note":
     "Temurin {v} is available (this workspace uses {cur}). Updating downloads it (~200MB) into your home volume; sessions started afterwards get it as JAVA_HOME, with no Stop → Start.",
   "env.java_install_failed": "JDK install failed: {msg}",
+  "env.java_install_busy": "Temurin {v} is being installed right now. Try again when it has finished.",
   "env.java_install_timeout": "the download did not finish in time",
   "env.node_opt_absent": "v{v} (not installed)",
   "env.node_install": "Install",

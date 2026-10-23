@@ -10,6 +10,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -29,9 +30,18 @@ type jdkLatestEntry struct {
 	at      time.Time
 }
 
+// jdkLatestCall is one in-flight lookup that concurrent callers for the same major
+// share. Without it two tab opens both fetch, and whichever finishes last wins the
+// cache: a timeout landing after a success hid the update for the failure TTL.
+type jdkLatestCall struct {
+	done chan struct{}
+	e    jdkLatestEntry
+}
+
 var (
-	jdkLatestMu    sync.Mutex
-	jdkLatestCache = map[string]jdkLatestEntry{}
+	jdkLatestMu       sync.Mutex // guards the cache and the in-flight table
+	jdkLatestCache    = map[string]jdkLatestEntry{}
+	jdkLatestInflight = map[string]*jdkLatestCall{}
 	// jdkLatestFetch is a var so tests can answer without the network.
 	jdkLatestFetch = fetchJDKLatest
 	jdkLatestNow   = time.Now
@@ -87,28 +97,46 @@ func fetchJDKLatest(major string) (string, error) {
 }
 
 // jdkLatest returns the cached latest version of a major, fetching when the entry
-// is missing or stale.
+// is missing or stale. Concurrent callers for one major share a single fetch.
 func jdkLatest(major string) (string, error) {
 	now := jdkLatestNow()
 	jdkLatestMu.Lock()
-	e, ok := jdkLatestCache[major]
-	jdkLatestMu.Unlock()
-	ttl := jdkLatestTTL
-	if e.err != "" {
-		ttl = jdkLatestFailTTL
-	}
-	if !ok || now.Sub(e.at) >= ttl {
-		v, err := jdkLatestFetch(major)
-		e = jdkLatestEntry{version: v, at: now}
-		if err != nil {
-			e.err = err.Error()
-		}
-		jdkLatestMu.Lock()
-		jdkLatestCache[major] = e
+	if e, ok := jdkLatestCache[major]; ok && now.Sub(e.at) < e.ttl() {
 		jdkLatestMu.Unlock()
+		return e.result()
 	}
+	if c := jdkLatestInflight[major]; c != nil {
+		jdkLatestMu.Unlock()
+		<-c.done
+		return c.e.result()
+	}
+	c := &jdkLatestCall{done: make(chan struct{})}
+	jdkLatestInflight[major] = c
+	jdkLatestMu.Unlock()
+
+	v, err := jdkLatestFetch(major)
+	c.e = jdkLatestEntry{version: v, at: now}
+	if err != nil {
+		c.e.err = err.Error()
+	}
+	jdkLatestMu.Lock()
+	jdkLatestCache[major] = c.e
+	delete(jdkLatestInflight, major)
+	jdkLatestMu.Unlock()
+	close(c.done)
+	return c.e.result()
+}
+
+func (e jdkLatestEntry) ttl() time.Duration {
 	if e.err != "" {
-		return "", fmt.Errorf("%s", e.err)
+		return jdkLatestFailTTL
+	}
+	return jdkLatestTTL
+}
+
+func (e jdkLatestEntry) result() (string, error) {
+	if e.err != "" {
+		return "", errors.New(e.err)
 	}
 	return e.version, nil
 }

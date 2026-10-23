@@ -26,7 +26,8 @@ vi.mock("../../../core/store/workspace.ts", () => ({
 vi.mock("../../sessions/store.ts", () => ({
   useSessionsStore: (sel: (s: unknown) => unknown) => sel({ sessions: [] }),
 }));
-vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
+const toast = vi.fn();
+vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => toast }));
 vi.mock("../../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => async () => true }));
 vi.mock("../hostUpdate.ts", () => ({ useHostUpdate: () => null }));
 
@@ -63,6 +64,7 @@ async function mount() {
 beforeEach(() => {
   api.mockReset();
   apiJSON.mockReset();
+  toast.mockReset();
   localStorage.clear();
 });
 
@@ -200,5 +202,85 @@ describe("EnvTab Java row", () => {
       act(() => root?.unmount());
       host?.remove();
     }
+  });
+
+  // A later lookup that says "current" (or fails) must take an earlier "newer patch"
+  // away, e.g. after a restart brought the JDK up to date with the same version shown.
+  it("drops an earlier update offer when a later lookup says current or fails", async () => {
+    let answer: () => Promise<unknown> = () =>
+      Promise.resolve({ major: "21", current: "21.0.11+10", latest: "21.0.13+9", update_available: true });
+    let wsState = "running";
+    const store = await import("../../../core/store/workspace.ts");
+    const spy = vi.spyOn(store, "useWorkspaceStore").mockImplementation(((sel: (s: unknown) => unknown) =>
+      sel({ state: wsState, start: () => {} })) as typeof store.useWorkspaceStore);
+    api.mockImplementation((path: string) => {
+      if (path === "api/env/toolchains") return Promise.resolve(toolchains(["21"], "21", { "21": "21.0.11+10" }));
+      if (path.startsWith("api/env/jdk-latest")) return answer();
+      return Promise.resolve({});
+    });
+    await mount();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(javaBtn()!.textContent).toBe("21.0.13+9 に更新");
+
+    for (const next of [
+      () => Promise.resolve({ major: "21", current: "21.0.11+10", latest: "21.0.11+10", update_available: false }),
+      () => Promise.reject(new Error("jdk_latest_unavailable")),
+    ]) {
+      answer = next;
+      // A stop/start cycle makes the row ask again.
+      wsState = "stopped";
+      await act(async () => {
+        root!.render(<EnvTab key="a" />);
+      });
+      wsState = "running";
+      await act(async () => {
+        root!.render(<EnvTab key="a" />);
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(javaBtn()).toBeNull();
+      // Bring the offer back for the next case.
+      answer = () =>
+        Promise.resolve({ major: "21", current: "21.0.11+10", latest: "21.0.13+9", update_available: true });
+      wsState = "stopped";
+      await act(async () => {
+        root!.render(<EnvTab key="a" />);
+      });
+      wsState = "running";
+      await act(async () => {
+        root!.render(<EnvTab key="a" />);
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(javaBtn()!.textContent).toBe("21.0.13+9 に更新");
+    }
+    spy.mockRestore();
+  });
+
+  it("does not take another major's running install for its own", async () => {
+    api.mockImplementation((path: string) => {
+      if (path === "api/env/toolchains") return Promise.resolve(toolchains(["21"], "21", { "21": "21.0.11+10" }));
+      if (path.startsWith("api/env/jdk-latest"))
+        return Promise.resolve({ major: "21", current: "21.0.11+10", latest: "21.0.13+9", update_available: true });
+      return Promise.resolve({ state: "installing", major: "17" });
+    });
+    apiJSON.mockResolvedValue({ state: "installing", major: "17" });
+    await mount();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      javaBtn()!.click();
+    });
+    expect(apiJSON).toHaveBeenCalledWith("api/env/jdk-install", "POST", { major: "21" });
+    expect(toast).toHaveBeenCalledWith(expect.stringContaining("Temurin 17"));
+    // Not stuck in "installing": the member can press it again once 17 is done.
+    const btn = javaBtn()!;
+    expect(btn.disabled).toBe(false);
+    expect(btn.textContent).toBe("21.0.13+9 に更新");
   });
 });

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -21,6 +22,7 @@ func stubJDKLatest(t *testing.T, version string, err error) (*int, *time.Time) {
 	jdkLatestNow = func() time.Time { return now }
 	jdkLatestMu.Lock()
 	jdkLatestCache = map[string]jdkLatestEntry{}
+	jdkLatestInflight = map[string]*jdkLatestCall{}
 	jdkLatestMu.Unlock()
 	t.Cleanup(func() {
 		jdkLatestFetch, jdkLatestNow = prevFetch, prevNow
@@ -118,6 +120,40 @@ func TestJDKLatestFailureIsCachedShortly(t *testing.T) {
 	jdkLatestReq(t, "21")
 	if *calls != 2 {
 		t.Fatalf("fetches after the failure TTL = %d, want 2", *calls)
+	}
+}
+
+// Two lookups racing on a cold cache share one fetch, so a slow failure can never
+// overwrite the success the other one just stored.
+func TestJDKLatestConcurrentCallersShareOneFetch(t *testing.T) {
+	stubJDKLatest(t, "", nil)
+	var calls atomic.Int32
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	jdkLatestFetch = func(string) (string, error) {
+		calls.Add(1)
+		entered <- struct{}{}
+		<-release
+		return "21.0.13+9", nil
+	}
+	results := make(chan string, 2)
+	get := func() {
+		v, _ := jdkLatest("21")
+		results <- v
+	}
+	go get()
+	<-entered
+	go get()
+	// Give the second caller time to reach the fetch if it is (wrongly) allowed to.
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	for i := 0; i < 2; i++ {
+		if v := <-results; v != "21.0.13+9" {
+			t.Fatalf("caller %d got %q", i, v)
+		}
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("fetches = %d, want 1 shared fetch", n)
 	}
 }
 

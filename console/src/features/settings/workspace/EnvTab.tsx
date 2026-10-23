@@ -411,18 +411,23 @@ function JavaRow({
   const needsInstall = !!selected && !installed.includes(selected);
   const current: string = (selected && d.java_versions?.[selected]) || "";
   const [latest, setLatest] = useState<{ major: string; current: string; latest: string } | null>(null);
-  // Keyed on the resolved version too, so a finished update re-asks; a stale answer is
-  // ignored by newerPatch's major/current check rather than cleared here.
+  // Keyed on the resolved version too, so a finished update re-asks. Every new lookup
+  // starts from "no update", and a false or failed answer clears it: an earlier "newer
+  // patch" must not come back after a restart that already brought the JDK up to date.
   useEffect(() => {
+    setLatest(null);
     if (!running || !selected || !current) return;
     let live = true;
     api(`api/env/jdk-latest?major=${encodeURIComponent(selected)}`)
       .then((r) => {
-        if (live && r?.update_available && r.latest) {
-          setLatest({ major: selected, current: r.current, latest: r.latest });
-        }
+        if (!live) return;
+        setLatest(
+          r?.update_available && r.latest ? { major: selected, current: r.current, latest: r.latest } : null,
+        );
       })
-      .catch(() => {});
+      .catch(() => {
+        if (live) setLatest(null);
+      });
     return () => {
       live = false;
     };
@@ -440,6 +445,14 @@ function JavaRow({
     const res = await apiJSON("api/env/jdk-install", "POST", { major: selected });
     if (!res || res.error) {
       finish(res?.error?.message || "");
+      return;
+    }
+    // The agent runs one download at a time and answers a POST made during another
+    // major's download (another tab) with THAT job. Following it would report our
+    // request as done when it never started.
+    if (res.state === "installing" && res.major && res.major !== selected) {
+      setInstalling("");
+      toast(tr("env.java_install_busy", { v: res.major }));
       return;
     }
     if (res.state === "done" || res.state === "error") {
