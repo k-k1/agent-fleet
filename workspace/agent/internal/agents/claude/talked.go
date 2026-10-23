@@ -17,7 +17,11 @@ import (
 // `claude --session-id <sid>` — a blank conversation under the old session, which reads as the
 // old one losing its memory with no word said. The user starts fresh explicitly
 // (StartFresh, then relaunch) instead.
-var ErrTranscriptLost = errors.New("この会話のログ（jsonl）が削除されているため再開できません。新しい会話として開始できます")
+var ErrTranscriptLost = errors.New("the conversation log (jsonl) was deleted, so it cannot be resumed; a new conversation can be started")
+
+// ErrTranscriptRestore: the backup copy of a deleted log exists to be restored but restoring it
+// failed on I/O. It is not evidence that there is no backup, so it is not ErrTranscriptLost.
+var ErrTranscriptRestore = errors.New("could not restore the conversation log from the backup")
 
 // talked remembers, per slot, the id of the log claude last wrote the slot's conversation
 // under. Without it a missing jsonl cannot be told from "never talked" (the safe reading,

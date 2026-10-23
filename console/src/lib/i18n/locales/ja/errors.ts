@@ -78,6 +78,9 @@ export const errors = {
   "err.codex_releasing":
     "codex がまだこの会話を手放していません（停止から通常 1 分ほど）。少し待ってからもう一度お試しください。",
   "err.driver_switching": "実行方式を切り替えています。切り替えが終わってからもう一度お試しください。",
+  "err.interaction_not_pending":
+    "この質問は既に回答済みか、取り消されています。画面を更新して最新の状態を確認してください。",
+  "err.transcript_restore_failed": "バックアップから会話ログを復元できませんでした",
   "err.codex_stop_first":
     "codex のセッションは停止してからターミナル（CLI）に切り替えてください（停止から 1 分ほどで切り替えられます）。",
   "err.not_running": "セッションが停止しています。再開してから送信してください。",

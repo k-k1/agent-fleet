@@ -922,7 +922,7 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	inter, ch := h.inter, h.replyCh
 	h.mu.Unlock()
 	if inter == nil || inter.ID != reply.ID || ch == nil {
-		return fmt.Errorf("interaction %s は待機中ではありません", reply.ID)
+		return fmt.Errorf("interaction %s is not pending: %w", reply.ID, agents.ErrInteractionNotPending)
 	}
 	select {
 	case ch <- reply:

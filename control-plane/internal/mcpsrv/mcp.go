@@ -324,13 +324,20 @@ func (a API) dispatchMCP(ctx context.Context, prin *mcpPrincipal, req rpcRequest
 	return resp
 }
 
+// mcpInstructions is the server/discover `instructions` text. It goes to external models whatever
+// the user's display language is, so it stays English, and it names the three tool families
+// (sessions, shared agent memory, admin) so a model knows what to reach for.
+const mcpInstructions = "Agent Fleet operations MCP. It lets you observe and steer your own sessions, " +
+	"read the memory shared by every agent kind (memory_projects, memory_index, memory_search, memory_read), " +
+	"and, for administrators, manage workspaces."
+
 func (a API) dispatchMCPMethod(ctx context.Context, prin *mcpPrincipal, req rpcRequest) *rpcResponse {
 	switch req.Method {
 	case "server/discover":
 		// 2026-07-28: servers MUST implement this. It replaces initialize as the way a
 		// client learns versions/capabilities, and is what a stdio client probes with.
 		return rpcOK(req.ID, mcpDiscoverResult(serverInfo(a.identity(ctx)),
-			"Agent Fleet の運用 MCP。自分のセッションの観測・操縦と、管理者向けのワークスペース管理を提供する。"))
+			mcpInstructions))
 	case "initialize":
 		// Initialize-era clients (2025-*) only. Removed in 2026-07-28, but a server that
 		// wants to serve both eras MAY keep it (SEP-2575 Backward Compatibility), and
