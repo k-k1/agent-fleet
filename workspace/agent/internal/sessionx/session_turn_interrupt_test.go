@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -44,6 +46,7 @@ func TestHandleSessionTurnInterruptKeysPerKind(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.kind, func(t *testing.T) {
 			logPath := fakeTmux(t)
+			stubInterruptState(t, "working")
 			name := "turn_int_" + c.kind
 			session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: c.kind})
 			rec := postTurn(t, name, `{"op":"interrupt"}`)
@@ -71,11 +74,75 @@ func TestTuiInterruptForOpencodeSubagentView(t *testing.T) {
 	if strings.Join(p.keys, ",") != "Up,Escape,Escape" {
 		t.Fatalf("keys = %v", p.keys)
 	}
-	if p.gap >= 1000*1e6 {
-		t.Fatalf("gap %v must stay inside opencode's ~1 s double-Esc window", p.gap)
+	if p.measured {
+		t.Fatal("the subagent-view sequence was never measured; it must not claim so")
+	}
+	if p.gap < 400*time.Millisecond || p.gap >= time.Second {
+		t.Fatalf("gap %v must separate the two Esc yet stay inside opencode's ~1 s window", p.gap)
 	}
 	q := tuiInterruptFor(session.KindClaude, func() bool { t.Fatal("subagent probe is opencode-only"); return false })
 	if strings.Join(q.keys, ",") != "Escape" {
 		t.Fatalf("claude keys = %v", q.keys)
+	}
+}
+
+func stubInterruptState(t *testing.T, st string) {
+	t.Helper()
+	old := interruptLiveState
+	interruptLiveState = func(string, session.Meta) string { return st }
+	t.Cleanup(func() { interruptLiveState = old })
+}
+
+// Ctrl+C on an idle (or unreadable) cursor/copilot can exit the CLI, so nothing is sent.
+func TestHandleSessionTurnInterruptCtrlCNeedsWorking(t *testing.T) {
+	for _, st := range []string{"idle", "question", ""} {
+		for _, kind := range []string{session.KindCursor, session.KindCopilot} {
+			t.Run(kind+"/"+st, func(t *testing.T) {
+				logPath := fakeTmux(t)
+				stubInterruptState(t, st)
+				name := "turn_idle_" + kind
+				session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: kind})
+				rec := postTurn(t, name, `{"op":"interrupt"}`)
+				if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "not_working") {
+					t.Fatalf("status = %d, body = %s, want 409 not_working", rec.Code, rec.Body.String())
+				}
+				if got := sendKeysLines(t, logPath); len(got) != 0 {
+					t.Fatalf("keys sent to a non-working CLI: %v", got)
+				}
+			})
+		}
+	}
+}
+
+// Two overlapping stops on opencode must not interleave: the second click's Esc pair would
+// land on the next queued turn. The second is absorbed and sends nothing.
+func TestHandleSessionTurnInterruptCoalesces(t *testing.T) {
+	logPath := fakeTmux(t)
+	const name = "turn_coalesce"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindOpencode})
+
+	var wg sync.WaitGroup
+	bodies := make([]string, 2)
+	start := time.Now()
+	for i := range bodies {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			time.Sleep(time.Duration(i) * 150 * time.Millisecond)
+			bodies[i] = postTurn(t, name, `{"op":"interrupt"}`).Body.String()
+		}()
+	}
+	wg.Wait()
+	if got := sendKeysLines(t, logPath); strings.Join(got, ",") != "Escape,Escape" {
+		t.Fatalf("keys = %v, want exactly one Escape pair", got)
+	}
+	if time.Since(start) < opencodeDoubleEscGap {
+		t.Fatalf("the Esc pair was sent without the %v gap", opencodeDoubleEscGap)
+	}
+	if !strings.Contains(bodies[1], `"coalesced":true`) || strings.Contains(bodies[0], "coalesced") {
+		t.Fatalf("bodies = %v, want only the second coalesced", bodies)
+	}
+	if _, busy := interruptsInFlight.Load(name); busy {
+		t.Fatal("in-flight marker leaked")
 	}
 }
