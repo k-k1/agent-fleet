@@ -123,7 +123,7 @@ export const settings = {
   "tokens.can_memory_write": "Agent Fleet のメモリ（書き込み）: memory_save・memory_forget（write スコープ、かつ設定が「読み書き」であること）。",
   "tokens.can_memory_setting_pre": "メモリを使うには、さらに ",
   "tokens.can_memory_setting_link": "設定 > エージェントメモリ",
-  "tokens.can_memory_setting_post": " で「Agent Fleet の外からメモリを使わせる」を「読み取りのみ」か「読み書き」にする必要があります。既定はオフで、トークンのスコープはこの設定が許す範囲をさらに絞るだけです。",
+  "tokens.can_memory_setting_post": " で「Agent Fleet の外からメモリを使わせる」を「読み取りのみ」か「読み書き」にする必要があります。既定はオフで、トークンのスコープはこの設定が許す範囲をさらに絞るだけです。テナント管理者が「外部からのメモリ利用」をブロックしている場合は、トークンや設定にかかわらず、これらのメモリのツールは一覧に出ません。",
   "tokens.can_stopped": "メモリはワークスペースの中にあるため、停止中はメモリのツールが「ワークスペースを起動してください」と答えます。Console から起動して、もう一度試してください。",
   "tokens.th_expiry": "期限",
   "tokens.th_last_used": "最終使用",

@@ -307,3 +307,11 @@ and a revoke button.
   A grant's recorded redirect host is re-checked against the list on refresh and on code exchange
   (loopback exempt), so removal also ends existing DCR connections; an issued access token lives
   out its TTL. No decision above changes. Guide: `guide/admin/05-access.md`.
+
+- 2026-10-23, #2490: the consent page's scope help now says that a grant also reaches Agent Fleet
+  memory: `read` exposes `memory_projects`, `memory_index`, `memory_search` and `memory_read`,
+  `write` adds `memory_save` and `memory_forget`. They are listed only when the tenant's External
+  memory access is Allow, and each call still needs the member's own "Use Agent Fleet memory from
+  outside Agent Fleet" setting (off by default; Read only or Read and write). A tenant Block hides
+  the tools from OAuth connections and tokens alike. Copy only (consent page, Console and guide, en
+  and ja); what a scope grants is unchanged and no decision above changes.

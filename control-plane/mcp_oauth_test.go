@@ -798,6 +798,7 @@ func TestMCPOAuthConsentPageContent(t *testing.T) {
 	for _, want := range []string{
 		`class="host">claude.ai<`, "Test Client", "declared by the app itself", "Acme Corp",
 		`name="membership"`, `value="read"`, `value="write"`, `value="cancel"`,
+		"Agent Fleet memory (list, search, read)", "saves and forgets memories",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("consent page lacks %q", want)

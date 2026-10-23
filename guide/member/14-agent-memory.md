@@ -275,7 +275,8 @@ refused.
 
 - **From outside Agent Fleet** (setting "Use Agent Fleet memory from outside Agent Fleet", **off by default**
   and independent of the switch above; **Read only** or **Read and write**): lets your own Claude Code or Claude
-  Desktop on another machine use this memory through the Control Plane's `/mcp` with an MCP token. The setting is
+  Desktop on another machine, or an app you connected with OAuth (such as claude.ai), use this memory through the
+  Control Plane's `/mcp`. The setting is
   your own; your tenant administrator can still block it for the whole tenant. What it allows, and what is
   recorded, is in [Using Agent Fleet memory from an external agent](#using-agent-fleet-memory-from-an-external-agent).
 
@@ -342,17 +343,18 @@ The view you leave open is remembered. It needs the running workspace.
 
 ## Using Agent Fleet memory from an external agent
 
-The same MCP token can also let your own Claude Code / Claude Desktop use the memory Agent Fleet keeps (see
+The same MCP token, or an app you connected by signing in (OAuth), can also use the memory Agent Fleet keeps; the
+consent page says so next to `read` and `write`. For example your own Claude Code / Claude Desktop (see
 [Agent memory](#agent-memory); how to make a token and connect a client is in
-[10 Going further](10-integrations.md#driving-your-workspace-from-an-external-claude-mcp)). Two things have to be true: the token's scope, and **⚙ Settings → Agent
+[10 Going further](10-integrations.md#driving-your-workspace-from-an-external-claude-mcp)). Two things have to be true: the scope of the token or OAuth connection, and **⚙ Settings → Agent
 memory → Settings → "Use Agent Fleet memory from outside Agent Fleet"** (`Off` by default; `Read only` or `Read and write`).
-The "MCP tokens" tab lists what the token can do and links to that setting; the setting has a "How to connect"
+The "MCP tokens" tab lists what the token can do (including that a tenant Block hides these tools) and links to that setting; the setting has a "How to connect"
 link back.
 
 - **Your tenant administrator can block it.** If they have, the memory tools are not offered at all, whatever your
   setting and scope say ([admin 08](../admin/08-external-memory.md)).
-- **Tools**: `memory_projects`, `memory_index`, `memory_search` and `memory_read` need a read (or higher) token;
-  `memory_save` and `memory_forget` need a write token and "Read and write". The setting and the scope both have
+- **Tools**: `memory_projects`, `memory_index`, `memory_search` and `memory_read` need a read (or higher) token or OAuth connection;
+  `memory_save` and `memory_forget` need a write token or OAuth connection and "Read and write". The setting and the scope both have
   to allow a call: the narrower one wins.
 - **Asking the agent**: just say it in plain words in your local client, e.g. "search my Agent Fleet memory for how
   we run the integration tests" or "save to Agent Fleet memory that this repo's lint step needs `make gen` first".

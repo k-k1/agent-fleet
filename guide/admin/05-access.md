@@ -50,6 +50,8 @@ Under **Tenant settings → Allowed networks**, the **MCP OAuth** panel controls
 
 Clear **Allow apps to connect through MCP OAuth**, choose **Save**, and confirm. Existing OAuth grants for this tenant are revoked and audited immediately. The tenant disappears from consent choices, code exchange and refresh fail, and its OAuth access tokens stop working at `/mcp`. Other tenants and Personal Access Tokens are unaffected.
 
+An OAuth connection's `read` and `write` scopes also reach members' Agent Fleet memory, exactly as a token's do: the consent page says so. Whether they can is decided by **External memory access** ([08](08-external-memory.md)) and each member's own setting, not by this panel. Block there hides the memory tools from OAuth connections and tokens alike.
+
 Enabling the switch again permits new connections; it does not restore revoked connections. Members reconnect from their apps. They can also revoke individual connections in **Settings → Connections → MCP tokens → Connected apps**.
 
 ### Trusted client hosts (deployment-wide — super_admin only)
