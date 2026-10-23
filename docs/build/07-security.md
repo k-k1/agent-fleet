@@ -542,7 +542,7 @@ Implemented:
 - `AF_EGRESS_PROXY_ADDR` injects the proxy variables (`http_proxy`, `https_proxy`,
   `no_proxy`, and their upper-case forms) into every workspace, on every target. `docker`,
   `native` and Kubernetes pass the whole deployment env on; `ecs` and `ecs-ec2` take only
-  these variables from it, because they deliberately do not pass `WS_ENV` (it may hold a
+  these variables (the ones generated from `AF_EGRESS_PROXY_ADDR`, never a same-named `WS_ENV` entry), because they deliberately do not pass `WS_ENV` (it may hold a
   credential and a task definition's plain environment is readable). Where
   `AF_CP_INTERNAL_URL` is set, its host joins `NO_PROXY` on Kubernetes, ecs and ecs-ec2, and
   ecs / ecs-ec2 add the task and instance metadata addresses (`169.254.170.2`,

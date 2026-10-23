@@ -95,7 +95,7 @@ type kubeConfig struct {
 	serviceAccount string
 	sessionCmd     string
 	// templateEnv is Config.ExtraEnv: WS_ENV and the egress proxy variables. Unlike the
-	// ECS adapters, which take only the proxy variables from it (ecsTemplateEnv), this
+	// ECS adapters, which take only Config.EgressProxyEnv, this
 	// one passes all of it on, as docker and native do, and it travels in the Secret with the rest of the environment, since
 	// an operator's WS_ENV may hold a credential.
 	templateEnv     []string

@@ -13,13 +13,13 @@ import (
 
 const testProxy = "http://proxy.internal:3128"
 
-// proxyTemplateEnv is what main.go appends to the deployment env for AF_EGRESS_PROXY_ADDR,
-// with an operator's WS_ENV entry in front of it.
-var proxyTemplateEnv = []string{
-	"CLAUDE_INSTALL=0", "SECRET_FROM_WS_ENV=hunter2",
+// testProxyEnv is what main.go generates for AF_EGRESS_PROXY_ADDR; testExtraEnv is the
+// deployment env: an operator's WS_ENV entries with that list behind them.
+var testProxyEnv = []string{
 	"http_proxy=" + testProxy, "https_proxy=" + testProxy, "HTTP_PROXY=" + testProxy, "HTTPS_PROXY=" + testProxy,
 	"no_proxy=localhost,127.0.0.1,::1", "NO_PROXY=localhost,127.0.0.1,::1",
 }
+var testExtraEnv = append([]string{"CLAUDE_INSTALL=0", "SECRET_FROM_WS_ENV=hunter2"}, testProxyEnv...)
 
 // envOf flattens a container definition's environment into a map, failing on a name that
 // appears twice: ECS does not define which of two entries wins.
@@ -38,13 +38,13 @@ func envOf(t *testing.T, c ecstypes.ContainerDefinition) map[string]string {
 
 // ecsFactoryFor builds the Fargate factory the way the CP does (newECSFactory reads no
 // network at boot) and swaps the AWS clients for the fakes.
-func ecsFactoryFor(t *testing.T, extra []string, fe *fakeECS) *ecsFactory {
+func ecsFactoryFor(t *testing.T, extra, proxy []string, fe *fakeECS) *ecsFactory {
 	t.Helper()
 	t.Setenv("AWS_REGION", "ap-northeast-1")
 	t.Setenv("AWS_ACCESS_KEY_ID", "x")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "x")
 	t.Setenv("AF_ECS_REGION", "ap-northeast-1")
-	f, err := newECSFactory(Config{ExtraEnv: extra, Image: "ecr/af-workspace:dev"})
+	f, err := newECSFactory(Config{ExtraEnv: extra, EgressProxyEnv: proxy, Image: "ecr/af-workspace:dev"})
 	if err != nil {
 		t.Fatalf("newECSFactory: %v", err)
 	}
@@ -59,7 +59,7 @@ var testWS = Workspace{ContainerName: "af-ws-acme-alice", MembershipID: "M-1", A
 
 func TestECSFactoryPassesProxyEnv(t *testing.T) {
 	fe := &fakeECS{}
-	f := ecsFactoryFor(t, proxyTemplateEnv, fe)
+	f := ecsFactoryFor(t, testExtraEnv, testProxyEnv, fe)
 	rt := f.New(testWS, SecretKeys{Key: "dek"}, []string{"AF_CP_INTERNAL_URL=http://cp.internal:8081"})
 	if err := rt.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -91,7 +91,7 @@ func TestECSFactoryPassesProxyEnv(t *testing.T) {
 
 func TestECSFactoryPerStartEnvWinsOverTemplate(t *testing.T) {
 	fe := &fakeECS{}
-	f := ecsFactoryFor(t, proxyTemplateEnv, fe)
+	f := ecsFactoryFor(t, testExtraEnv, testProxyEnv, fe)
 	rt := f.New(testWS, SecretKeys{Key: "dek"}, []string{"https_proxy=http://other:1", "FOO=bar"})
 	if err := rt.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -104,7 +104,7 @@ func TestECSFactoryPerStartEnvWinsOverTemplate(t *testing.T) {
 
 func TestECSFactoryWithoutProxyChangesNothing(t *testing.T) {
 	fe := &fakeECS{}
-	f := ecsFactoryFor(t, []string{"CLAUDE_INSTALL=0"}, fe)
+	f := ecsFactoryFor(t, []string{"CLAUDE_INSTALL=0"}, nil, fe)
 	rt := f.New(testWS, SecretKeys{Key: "dek"}, []string{"FOO=bar"})
 	if err := rt.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -126,7 +126,7 @@ func TestECSFactoryWithoutProxyChangesNothing(t *testing.T) {
 func TestECSEC2FactoryPassesProxyEnv(t *testing.T) {
 	h := newEC2Harness(t)
 	fe := &fakeECS{}
-	base := ecsFactoryFor(t, proxyTemplateEnv, fe)
+	base := ecsFactoryFor(t, testExtraEnv, testProxyEnv, fe)
 	f := &ecsEC2Factory{base: base, ec2: h.ec2, ssmc: h.ssmc, ci: h.ci, pool: h.rt.pool, bg: h.rt.bg, sleep: h.rt.sleep}
 	rt := f.New(testWS, SecretKeys{Key: "dek"}, []string{"AF_CP_INTERNAL_URL=http://cp.internal:8081", "http_proxy=http://other:1"}).(*ecsEC2Runtime)
 	build := func() *ecs.RegisterTaskDefinitionInput {
@@ -150,5 +150,21 @@ func TestECSEC2FactoryPassesProxyEnv(t *testing.T) {
 	}
 	if a, b := taskDefFingerprint(in), taskDefFingerprint(build()); a == "" || a != b {
 		t.Errorf("fingerprint moved between identical builds: %q vs %q", a, b)
+	}
+}
+
+// A proxy variable that comes from WS_ENV, with AF_EGRESS_PROXY_ADDR unset, is the
+// operator's own credential-bearing value and must stay out of the task definition.
+func TestECSFactoryIgnoresProxyVarsFromWSEnv(t *testing.T) {
+	fe := &fakeECS{}
+	f := ecsFactoryFor(t, []string{"https_proxy=http://user:password@proxy.internal:3128", "NO_PROXY=x"}, nil, fe)
+	rt := f.New(testWS, SecretKeys{Key: "dek"}, nil)
+	if err := rt.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	for _, kv := range fe.regCalls[0].ContainerDefinitions[0].Environment {
+		if strings.Contains(strings.ToLower(aws.ToString(kv.Name)), "proxy") || strings.Contains(aws.ToString(kv.Value), "password") {
+			t.Errorf("WS_ENV value reached the task definition: %s", aws.ToString(kv.Name))
+		}
 	}
 }

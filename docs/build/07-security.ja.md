@@ -458,7 +458,7 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
 - **enforce は proxy で遮断する**: allowlist の外は 403。
 - `AF_EGRESS_PROXY_ADDR` がどのターゲットでも全 Workspace に proxy の変数（`http_proxy`・
   `https_proxy`・`no_proxy`、と大文字の同名変数）を注入する。`docker`・`native`・Kubernetes は
-  配備全体の env をそのまま渡し、`ecs` と `ecs-ec2` はそこからこれらの変数だけを取る
+  配備全体の env をそのまま渡し、`ecs` と `ecs-ec2` はこれらの変数（`AF_EGRESS_PROXY_ADDR` から生成したものだけで、同名の `WS_ENV` の項目は取らない）だけを取る
   （`WS_ENV` は資格情報を含みうるうえ、タスク定義の平文 env は読めてしまうため、意図して渡さない）。
   `AF_CP_INTERNAL_URL` があれば、そのホストを Kubernetes・ecs・ecs-ec2 で `NO_PROXY` に加え、
   ecs / ecs-ec2 は proxy がリンクローカル宛を拒否するため、タスク／インスタンスのメタデータ

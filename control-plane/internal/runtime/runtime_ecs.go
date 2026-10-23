@@ -160,7 +160,8 @@ type ecsConfig struct {
 // config and stamps each Workspace record into an ecsRuntime.
 type ecsFactory struct {
 	cfg ecsConfig
-	// templateEnv is the egress proxy subset of Config.ExtraEnv (ecsTemplateEnv).
+	// templateEnv is Config.EgressProxyEnv, the only deployment-wide env these runtimes pass on
+	// (WS_ENV is not: it may hold a credential and a task definition's environment is readable).
 	templateEnv []string
 	ecs         ecsAPI
 	efs         efsAPI
@@ -212,24 +213,6 @@ func (f *ecsFactory) New(ws Workspace, keys SecretKeys, extraEnv []string) Runti
 		ebsGiB:       ebsGiB,
 		waitReady:    httpHealthz,
 	}
-}
-
-// ecsProxyEnvKeys are the only Config.ExtraEnv entries the ECS adapters take. The rest is
-// WS_ENV, which these runtimes deliberately do not pass on (an operator's WS_ENV may hold
-// a credential, and a task definition's plain environment is readable with
-// ecs:DescribeTaskDefinition; the AF_WS_WORKLOAD_AWS opt-in travels per start for the same
-// reason). The egress proxy address is not a secret.
-var ecsProxyEnvKeys = []string{"http_proxy", "https_proxy", "no_proxy", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"}
-
-// ecsTemplateEnv keeps the egress proxy variables of the deployment-wide env, in order.
-func ecsTemplateEnv(env []string) []string {
-	var out []string
-	for _, kv := range env {
-		if k, _, ok := strings.Cut(kv, "="); ok && slices.Contains(ecsProxyEnvKeys, k) {
-			out = append(out, kv)
-		}
-	}
-	return out
 }
 
 // ecsLinkLocalNoProxy are the hosts an ECS task reaches over link-local addresses: the
@@ -367,7 +350,7 @@ func newECSFactory(mcfg Config) (RuntimeFactory, error) {
 	ecsClient := ecs.NewFromConfig(ac)
 	return &ecsFactory{
 		cfg:         cfg,
-		templateEnv: ecsTemplateEnv(mcfg.ExtraEnv),
+		templateEnv: slices.Clone(mcfg.EgressProxyEnv),
 		ecs:         ecsClient,
 		efs:         efs.NewFromConfig(ac),
 		ssm:         ssm.NewFromConfig(ac),

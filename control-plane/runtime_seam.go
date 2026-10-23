@@ -57,6 +57,7 @@ func newRuntimeFactory(profile string, m *manager) (runtime.RuntimeFactory, erro
 		Memory:            m.memory,
 		SessionCmd:        m.sessionCmd,
 		ExtraEnv:          m.extraEnv,
+		EgressProxyEnv:    m.egressProxyEnv,
 		AuthMode:          m.authMode,
 		RootDataDir:       func(ws runtime.Workspace) string { return m.rootedDataDir(store.Workspace(ws)) },
 		HomeLeases:        m.store,
