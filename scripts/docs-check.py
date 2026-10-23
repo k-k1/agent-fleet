@@ -10,9 +10,9 @@ machine-checked here rather than left to human review.
 
 Fifteen checks:
 
-  links      relative links resolve (anchors ignored)
+  links      relative links resolve (anchors ignored); also the root's *.md files
   anchors    a #fragment points at a heading that exists (Console's slug rule in guide/,
-             GitHub's elsewhere); living shelves and decisions/
+             GitHub's elsewhere); living shelves, decisions/ and the root's *.md files
   closure    no link out of guide/ — the shipped tree is self-contained
   chapters   chapter numbers agree with the file name and with cross-reference labels
   index      every file on a living shelf is linked from that shelf's README (per language)
@@ -180,6 +180,20 @@ def all_docs() -> list[str]:
     return sorted(out)
 
 
+def root_docs() -> list[str]:
+    """The Markdown files directly in the repository root (SECURITY.md, CONTRIBUTING.md …).
+
+    They belong to neither tree, so only the checks that need no shelf run on them: links
+    and anchors. They are read on GitHub, and SECURITY.md is what an operator reads
+    before choosing a deployment, so a dead link there is not cosmetic.
+    """
+    return sorted(
+        os.path.join(ROOT, name)
+        for name in os.listdir(ROOT)
+        if name.endswith(".md") and os.path.isfile(os.path.join(ROOT, name))
+    )
+
+
 def bilingual_scope(relpath: str) -> bool:
     s = shelf(relpath)
     if s in JA_ONLY_DIRS:
@@ -293,10 +307,11 @@ def github_slug(text: str) -> str:
     return t.replace(" ", "-")
 
 
-def heading_slugs(path: str) -> set[str]:
+def heading_slugs(path: str, on_github: bool = False) -> set[str]:
     """The document's heading ids, built with the rule of whatever renders `path`.
 
-    The rule is decided by the destination tree. `guide/` is opened by readers in the
+    The rule is decided by the destination tree, unless `on_github` says the link is
+    followed on GitHub whatever it points at (a link from a repository-root file). `guide/` is opened by readers in the
     container's Console, so it uses the Console's `slug()`; `docs/` and files at the
     repository root (CONTRIBUTING.md and the like) are only ever read on GitHub, so they
     use github-slugger. Applying one rule to both reports anchors that are correct on
@@ -310,7 +325,7 @@ def heading_slugs(path: str) -> set[str]:
     """
     rule = (
         console_slug
-        if path.startswith(GUIDE + os.sep)
+        if path.startswith(GUIDE + os.sep) and not on_github
         else github_slug
     )
     return {
@@ -329,8 +344,9 @@ def check_anchors(files: list[str], f: Findings) -> None:
     for path in files:
         src = rel(path)
         # decisions/ is not living (no front matter), but an ADR's anchors are read on
-        # GitHub like any other; log/ is the frozen archive and is left as written.
-        if shelf(src) not in LIVING + ("decisions",):
+        # GitHub like any other; log/ is the frozen archive and is left as written. A
+        # file in the repository root has no shelf and is always checked.
+        if "/" in src and shelf(src) not in LIVING + ("decisions",):
             continue
         for m in LINK_RE.finditer(strip_code(read(path))):
             target = m.group(2)
@@ -348,9 +364,16 @@ def check_anchors(files: list[str], f: Findings) -> None:
             )
             if not dest.endswith(".md") or not os.path.exists(dest):
                 continue  # a missing file is check_links' business
-            if frag in heading_slugs(dest):
+            # A root file is read on GitHub, so its link into guide/ lands on the id
+            # GitHub renders, not the Console's.
+            on_github = "/" not in src
+            if frag in heading_slugs(dest, on_github):
                 continue
-            who = "Console" if dest.startswith(GUIDE + os.sep) else "GitHub"
+            who = (
+                "Console"
+                if dest.startswith(GUIDE + os.sep) and not on_github
+                else "GitHub"
+            )
             f.error(
                 f"{src}: anchor with no matching heading -> {target}"
                 f" (does not match the id {who} assigns)"
@@ -1646,11 +1669,12 @@ def main() -> int:
     run = lambda name: not want or name in want  # noqa: E731
 
     files = all_docs()
+    root = root_docs()
     f = Findings()
     if run("links"):
-        check_links(files, f)
+        check_links(files + root, f)
     if run("anchors"):
-        check_anchors(files, f)
+        check_anchors(files + root, f)
     if run("closure"):
         check_closure(files, f)
     if run("chapters"):
@@ -1684,7 +1708,7 @@ def main() -> int:
     for e in f.errors:
         print(f"ERROR: {e}")
     print(
-        f"\ndocs-check: {len(files)} files, "
+        f"\ndocs-check: {len(files) + len(root)} files, "
         f"{len(f.errors)} error(s), {len(f.warns)} warning(s)"
     )
     return 1 if f.errors else 0

@@ -313,6 +313,48 @@ class AnchorTests(unittest.TestCase):
         self.assertIn("anchor with no matching heading", self.errors(heading, "02-target.md#syntax-label"))
 
 
+class RootDocTests(unittest.TestCase):
+    """The repository root's *.md files get the link and anchor checks."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "docs/build").mkdir(parents=True)
+        (self.root / "docs/build/07-security.md").write_text("# 07. Security\n\n## 7.1 Threat model\n")
+        self.addCleanup(patch.stopall)
+        patch.object(check, "ROOT", str(self.root)).start()
+        patch.object(check, "GUIDE", str(self.root / "guide")).start()
+
+    def errors(self, link):
+        source = self.root / "SECURITY.md"
+        source.write_text(f"# Security Policy\n\nSee [it]({link}).\n")
+        check._cache.clear()
+        findings = check.Findings()
+        files = check.root_docs()
+        check.check_links(files, findings)
+        check.check_anchors(files, findings)
+        return "\n".join(findings.errors)
+
+    def test_root_docs_lists_only_the_root(self):
+        (self.root / "SECURITY.md").write_text("# Security Policy\n")
+        self.assertEqual([Path(p).name for p in check.root_docs()], ["SECURITY.md"])
+
+    def test_anchor_is_checked(self):
+        self.assertEqual(self.errors("docs/build/07-security.md#71-threat-model"), "")
+        self.assertIn("anchor with no matching heading", self.errors("docs/build/07-security.md#72-isolation"))
+
+    def test_link_is_checked(self):
+        self.assertIn("broken link", self.errors("docs/build/08-missing.md"))
+
+    def test_link_into_guide_uses_the_github_id(self):
+        # The Console gives this heading `a-b`; GitHub, where a root file is read, `a--b`.
+        (self.root / "guide/ref").mkdir(parents=True)
+        (self.root / "guide/ref/probe.md").write_text("# Probe\n\n## A — B\n")
+        self.assertEqual(self.errors("guide/ref/probe.md#a--b"), "")
+        self.assertIn("does not match the id GitHub assigns", self.errors("guide/ref/probe.md#a-b"))
+
+
 class SettingTabsTests(unittest.TestCase):
     """ref/settings*.md rows against the Console's per-domain tab labels."""
 
