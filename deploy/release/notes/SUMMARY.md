@@ -16,7 +16,7 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 
 ## [0.34.0](0.34.0.md) — 2026-10-22
 
-**CLI pins** — Claude Code 2.1.308, Copilot 1.0.102, Antigravity 1.4.5, Kiro 2.33.1, OpenCode 2.1.3
+**CLI pins** — Claude Code 2.1.309, Copilot 1.0.103, Antigravity 1.4.5, Cursor 2026.10.22-27dcf5f, Kiro 2.33.1, OpenCode 2.1.3, Muse Code 1.4.12-R6909.1
 
 **New / Improved**
 
@@ -29,10 +29,12 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 - **[files]** Open shell here in a folder's context menu ([#2460](https://github.com/k-k1/agent-fleet/issues/2460))
 - **[jira]** `jira issue comment edit` and `delete` ([#2477](https://github.com/k-k1/agent-fleet/issues/2477))
 - **[jira]** Retries, timeouts and candidate issues after a timed-out create; Agent instructions may prefer an Atlassian MCP tool ([#2476](https://github.com/k-k1/agent-fleet/issues/2476), [#2532](https://github.com/k-k1/agent-fleet/issues/2532), [#2538](https://github.com/k-k1/agent-fleet/issues/2538), [#2539](https://github.com/k-k1/agent-fleet/issues/2539), [#2543](https://github.com/k-k1/agent-fleet/issues/2543))
+- **[muse]** Muse Code 1.4.12 and its new record kinds ([#2575](https://github.com/k-k1/agent-fleet/issues/2575))
 - **[muse]** Muse Code contributor mode setting ([#2535](https://github.com/k-k1/agent-fleet/issues/2535))
 
 **Fixed**
 
+- **[copilot]** Sessions did not start once copilot had updated itself to 1.0.103 ([#2576](https://github.com/k-k1/agent-fleet/issues/2576))
 - **[ecs-ec2]** A workspace stuck in "starting" could not be stopped; a Start after a size change timed out on a wedged slot ([#2446](https://github.com/k-k1/agent-fleet/issues/2446), [#2448](https://github.com/k-k1/agent-fleet/issues/2448))
 - **[ecs-ec2]** `AF_ECS_EC2_HOST_RESERVE_MB=0` was treated as `auto` ([#2503](https://github.com/k-k1/agent-fleet/issues/2503))
 - **[workspace]** Folders made by the member under `~/.af-work` could be deleted at start ([#2454](https://github.com/k-k1/agent-fleet/issues/2454))

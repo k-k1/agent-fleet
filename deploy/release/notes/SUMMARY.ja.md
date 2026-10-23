@@ -15,7 +15,7 @@
 
 ## [0.34.0](0.34.0.ja.md) — 2026-10-22
 
-**CLI ピン** — Claude Code 2.1.308 / Copilot 1.0.102 / Antigravity 1.4.5 / Kiro 2.33.1 / OpenCode 2.1.3
+**CLI ピン** — Claude Code 2.1.309 / Copilot 1.0.103 / Antigravity 1.4.5 / Cursor 2026.10.22-27dcf5f / Kiro 2.33.1 / OpenCode 2.1.3 / Muse Code 1.4.12-R6909.1
 
 **New / Improved**
 
@@ -28,10 +28,12 @@
 - **[ファイル]** フォルダのコンテキストメニューに「ここでシェルを開く」 ([#2460](https://github.com/k-k1/agent-fleet/issues/2460))
 - **[jira]** `jira issue comment edit` と `delete` ([#2477](https://github.com/k-k1/agent-fleet/issues/2477))
 - **[jira]** やり直し・時間切れ・作成が時間切れになったときの候補表示。エージェントへの指示で Atlassian の MCP ツールを優先できる ([#2476](https://github.com/k-k1/agent-fleet/issues/2476), [#2532](https://github.com/k-k1/agent-fleet/issues/2532), [#2538](https://github.com/k-k1/agent-fleet/issues/2538), [#2539](https://github.com/k-k1/agent-fleet/issues/2539), [#2543](https://github.com/k-k1/agent-fleet/issues/2543))
+- **[muse]** Muse Code 1.4.12 と新しい種類の記録 ([#2575](https://github.com/k-k1/agent-fleet/issues/2575))
 - **[muse]** Muse Code のコントリビューターモードの設定 ([#2535](https://github.com/k-k1/agent-fleet/issues/2535))
 
 **Fixed**
 
+- **[copilot]** copilot が 1.0.103 に自分で更新されるとセッションが始まらなくなっていた ([#2576](https://github.com/k-k1/agent-fleet/issues/2576))
 - **[ecs-ec2]** 「開始中」のまま止まったワークスペースを停止できず、サイズ変更後の開始が応答しないスロットで時間切れになっていた ([#2446](https://github.com/k-k1/agent-fleet/issues/2446), [#2448](https://github.com/k-k1/agent-fleet/issues/2448))
 - **[ecs-ec2]** `AF_ECS_EC2_HOST_RESERVE_MB=0` が `auto` として扱われていた ([#2503](https://github.com/k-k1/agent-fleet/issues/2503))
 - **[ワークスペース]** `~/.af-work` の下にメンバーが作ったフォルダが起動時に消されることがあった ([#2454](https://github.com/k-k1/agent-fleet/issues/2454))
