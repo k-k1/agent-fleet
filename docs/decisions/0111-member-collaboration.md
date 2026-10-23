@@ -2,8 +2,10 @@
 
 English | [日本語](0111-member-collaboration.ja.md)
 
-- Status: **accepted** (2026-10-10). Nothing is built. Proposed 2026-10-07 after three rounds of design
-  review by a second model. The open questions are settled in the addendum at the end.
+- Status: **accepted** (2026-10-10; proposed 2026-10-07 after three rounds of design review by a second
+  model). P0 (#1960) is done. P1-A (the inbox, DMs, requests and recipes) and P1-B (the limit board) are
+  built, first released in v0.31.0; the manual run on a real fleet that closes #1961 and #1962 has not
+  been recorded. Not built: P2 and P3. The open questions are settled in the addendum at the end.
   Status update (2026-10-11): the P0 inbox acceptance conditions that P1-A must pass are in
   [docs/log/130](../log/130-member-inbox-acceptance.md).
   Status update (2026-10-12): the first half of P1-A is built (issue #1961): the CP tables
@@ -27,7 +29,7 @@ English | [日本語](0111-member-collaboration.ja.md)
   rows left manual with the reason (real IdP, two Agent or CP versions, deployment target), are
   in that PR.
 - Tracking: #1840
-- Follow-ups: #1960, #1961, #1962
+- Follow-ups: #1961, #1962 (open: the manual real-fleet acceptance run); #1960 is closed
 - Related: [0057](0057-member-handoff.md) (handover between members: execution never crosses) /
   [0041](0041-cross-session-messaging.md) (peer messaging, permission laundering, live governance) /
   [0020](0020-chat-bridge.md) (Slack / Discord bridge) / [0108](0108-af-owned-agent-memory.md)

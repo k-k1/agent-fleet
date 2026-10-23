@@ -2,10 +2,13 @@
 
 English | [日本語](0108-af-owned-agent-memory.ja.md)
 
-- Status: **proposed** (2026-10-03); built as of 2026-10-11, see the note at the end: P1, P2 (#1733),
-  P3 / decision 6 step 2 (#1734, #1916), usage ranking and pins (#1703), size and name limits (#1921) and
-  the write-back to claude's native memory (#1914). Still open: codex import (#1950) and automatic
-  import on switch (#1972). The original status text follows, as of 2026-10-03.
+- Status: **accepted** (2026-10-05; proposed 2026-10-03). Built, in stages: P1 (the store, tools and Console list)
+  first released in v0.28.0, with the claude seed and index budget in v0.29.0; P2 (#1733), P3 / decision 6 step 2
+  (#1734, #1916), the write-back to claude's native memory (#1914), usage ranking and pins (#1703) and size and
+  name limits (#1921) in v0.30.0; the automatic import and write-back on switch (#1972, closed 2026-10-14),
+  purge and project move in v0.31.0; and the answers to open questions 3, 5 and 6 (#1982, #1984, #1986; see the notes at
+  the end). Not built: the codex import. Follow-ups: #1950 (codex import, open), #1559 (background review,
+  open; see [0117](0117-background-memory-skill-review.md)). The original status text follows, as of 2026-10-03.
   Built so far (P1 without the claude seed): the store, the
   five MCP tools, revisions, authorship, the one-commit history under `af/` and the secret scan
   (`memoryx/agent_memory.go`); the Console change list with revert and forget
@@ -272,14 +275,16 @@ that is safe when what one session writes is read by every kind.
    step 2 (#1734). The live check (a new claude session loads no `MEMORY.md`) was answered 2026-10-08, see #1734 and #1916.
 2. The size of the `memory_index` answer and how its entries are ranked (recency, `kinds`), and the
    cost of the coexistence period measured on a real project.
-3. Purging a secret from history: rewriting the 0022 history for one memory, and what that does to
+3. **Answered 2026-10-14** (note "the member can purge a memory's past revisions from history", #1982).
+   Purging a secret from history: rewriting the 0022 history for one memory, and what that does to
    bundles already exported.
 4. Whether codex's `external_agent_memory_import`
    ([0022](0022-agent-memory-management.md) decision 6) makes a native codex route worth having
    beside the MCP tools — under decision 6's rule that a native writer never publishes by writing.
-5. Project identity over time: a renamed or re-cloned repository, and how the member merges two
+5. **Answered 2026-10-14** (note "moving the memories of an orphaned project", #1984).
+   Project identity over time: a renamed or re-cloned repository, and how the member merges two
    project ids.
-6. Whether muse has a native memory, and if so how it coexists with this one.
+6. **Answered 2026-10-11** (note "muse has a native memory", #1986). Whether muse has a native memory, and if so how it coexists with this one.
 7. The cross-workspace track (decision 10).
 
 ## Phases
