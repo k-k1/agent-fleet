@@ -136,7 +136,7 @@ export const notifications = {
   "noti.conversation_gone": "報告先の会話が見つかりません（{title}）。削除された可能性があります。",
   "noti.conversation_gone_session": "報告先の会話が見つかりません（{title}）。報告元のセッションを開きました。",
   "noti.handoff_closed": "この引き継ぎはもう受け取れません。引き継ぎ済み・辞退済み・取り下げ・期限切れのいずれかか、共有が解除されています。",
-  "noti.handoff_recovery": "この引き継ぎはもう引き継げませんが、先ほどの起動がまだ確保しています。共有セッション欄の「{inbox}」から返してください。",
+  "noti.handoff_recovery": "この引き継ぎはもう引き継げませんが、先ほどの起動がまだ確保しています。受信箱の「受け取った」の先頭にある「{inbox}」から返してください。",
   "noti.conversation_untitled": "無題",
   "noti.notifications": "通知",
   "noti.center": "通知センター",
