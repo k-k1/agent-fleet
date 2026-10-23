@@ -102,3 +102,19 @@ func TestForkWithoutBodyKeepsWholeConversationPath(t *testing.T) {
 		}
 	}
 }
+
+// The wire says a Terminal session can fork at a past message only when its kind says so for
+// this session: an opencode pane that is not attached to af's serve, and a kind with no such
+// route (codex), stay unflagged, so the Console keeps those managed-only.
+func TestWireForkAtTerminalUnsetWithoutARoute(t *testing.T) {
+	withTempHome(t)
+	for _, m := range []session.Meta{
+		{Name: "oc-tui", Dir: t.TempDir(), Kind: session.KindOpencode, Driver: session.DriverTUI},
+		{Name: "oc-mgd", Dir: t.TempDir(), Kind: session.KindOpencode, Driver: session.DriverManaged},
+		{Name: "cx-tui", Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverTUI},
+	} {
+		if s := wireSession(m, true); s.ForkAtTerminal {
+			t.Errorf("%s: ForkAtTerminal = true without a route that carries a fork point", m.Name)
+		}
+	}
+}

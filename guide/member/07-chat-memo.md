@@ -389,7 +389,9 @@ the exact wording and the fine details matter; hand off when you want another ag
 If the button isn't there, one of these applies: you can't branch from the agent's messages,
 nor from one that's still being sent. Only **claude, codex, opencode, copilot, lcpp and muse**
 sessions support it, and codex and opencode only in **managed** execution (the CLI launch command
-has no way to pass a branch point; lcpp and muse are always managed).
+has no way to pass a branch point; lcpp and muse are always managed). One exception: an
+**opencode 2** Terminal (CLI) session attached to the shared server can branch too, because that
+server takes the branch point. A Terminal session on a private server (or on opencode 1.x) cannot.
 
 ## Memo queue
 

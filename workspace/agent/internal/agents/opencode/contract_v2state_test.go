@@ -92,6 +92,14 @@ func (s *stubProvider) handler(w http.ResponseWriter, r *http.Request) {
 		send(map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"index": 0, "id": "call_q", "type": "function",
 			"function": map[string]any{"name": "question", "arguments": string(args)}}}}, nil)
 		send(map[string]any{}, "tool_calls")
+	case strings.Contains(text, "TODO") && !afterTool:
+		args, _ := json.Marshal(map[string]any{"todos": []any{
+			map[string]any{"content": "write the probe", "status": "completed", "priority": "high"},
+			map[string]any{"content": "read the result", "status": "in_progress", "priority": "medium"},
+			map[string]any{"content": "report", "status": "pending", "priority": "low"}}})
+		send(map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"index": 0, "id": "call_t", "type": "function",
+			"function": map[string]any{"name": "todowrite", "arguments": string(args)}}}}, nil)
+		send(map[string]any{}, "tool_calls")
 	case strings.Contains(text, "TOOL") && !afterTool:
 		send(map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"index": 0, "id": "call_1", "type": "function",
 			"function": map[string]any{"name": "shell", "arguments": `{"command":"echo hi","description":"say hi"}`}}}}, nil)
@@ -115,6 +123,12 @@ func (s *stubProvider) handler(w http.ResponseWriter, r *http.Request) {
 // on a v1 binary.
 func startStubbedV2(t *testing.T) (stub *stubProvider, addr, dir string) {
 	t.Helper()
+	return startStubbedV2With(t, nil)
+}
+
+// startStubbedV2With is startStubbedV2 with extra top-level keys in the opencode config.
+func startStubbedV2With(t *testing.T, extra map[string]any) (stub *stubProvider, addr, dir string) {
+	t.Helper()
 	requireOpencode(t)
 	if !strings.HasPrefix(strings.TrimPrefix(opencodeVersion(t), "opencode v"), "2.") {
 		skipUnlessV2Required(t, "needs opencode 2")
@@ -128,12 +142,16 @@ func startStubbedV2(t *testing.T) (stub *stubProvider, addr, dir string) {
 	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	cfg, _ := json.Marshal(map[string]any{"provider": map[string]any{"stub": map[string]any{
+	cfgMap := map[string]any{"provider": map[string]any{"stub": map[string]any{
 		"npm": "@ai-sdk/openai-compatible", "name": "stub",
 		"options": map[string]any{"baseURL": llm.URL + "/v1", "apiKey": "x"},
 		"models": map[string]any{"m": map[string]any{"name": "m", "tool_call": true,
 			"cost": map[string]any{"input": 1, "output": 2}, "limit": map[string]any{"context": 8000, "output": 1000}}},
-	}}, "permission": map[string]any{"*": "allow"}})
+	}}, "permission": map[string]any{"*": "allow"}}
+	for k, v := range extra {
+		cfgMap[k] = v
+	}
+	cfg, _ := json.Marshal(cfgMap)
 	if err := os.WriteFile(filepath.Join(cfgDir, "opencode.json"), cfg, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -301,4 +319,47 @@ func TestContractV2StateReadsTurnsThroughTheAPI(t *testing.T) {
 	}
 	t.Logf("opencode %s: tool turn, provider 401, interrupt with queued input and compaction read through the API; usage %.6f == session %.6f; stub saw %d requests",
 		opencodeVersion(t), sum, info.Data.Cost, seen)
+}
+
+// TestContractV2Todo measures the ToDo list on the opencode 2 on PATH: the stub model calls
+// `todowrite`, once on a default config and once with experimental.todo on, and the messages the
+// daemon keeps are dumped (OPENCODE_V2_DUMP=<dir>) so the recorded fixtures can be refreshed.
+func TestContractV2Todo(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		name := "default"
+		var extra map[string]any
+		if on {
+			name, extra = "experimental.todo", map[string]any{"experimental": map[string]any{"todo": true}}
+		}
+		t.Run(name, func(t *testing.T) {
+			_, addr, dir := startStubbedV2With(t, extra)
+			ses, err := serveCreateSession(addr, dir, "todo")
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := session.Meta{Name: "v2todo", Dir: dir, Kind: session.KindOpencode, Driver: session.DriverManaged}
+			sids.Write(session.UUID(m.Dir, m.Name), ses)
+			t.Cleanup(func() { sids.Remove(session.UUID(m.Dir, m.Name)) })
+			st := agents.ThreadSettings{Model: "stub/m"}
+			req, err := newTurnRequest(addr, ses, dir, agents.TurnInput{Prompt: "make a TODO list"}, st)
+			if err != nil {
+				t.Fatal(err)
+			}
+			res, err := sendTurn(addr, ses, dir, req, st)
+			if err != nil {
+				t.Fatal(err)
+			}
+			res.Body.Close()
+			var raw json.RawMessage
+			if err := (apiTarget{Addr: addr, Client: serveClient}).get("/api/session/"+ses+"/message?limit=50", &raw); err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("%s: messages: %s", name, raw)
+			if dump := os.Getenv("OPENCODE_V2_DUMP"); dump != "" {
+				_ = os.WriteFile(filepath.Join(dump, "todo-"+name+".messages.json"), raw, 0o644)
+			}
+			td, _ := readTranscript(m)
+			t.Logf("%s: turns=%d tasks=%+v", name, len(td.Turns), td.Tasks)
+		})
+	}
 }

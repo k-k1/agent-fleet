@@ -867,3 +867,49 @@ func TestV2UnreadableOutcomeGivesUpWhileTheNextExecutionRuns(t *testing.T) {
 		t.Fatalf("gave up after %d outcome reads, want %d", reads, v2PollMisses)
 	}
 }
+
+// ToDo on opencode 2, from payloads captured on 2.1.4 (TestContractV2Todo): the `todowrite` tool
+// exists only with experimental.todo on; its newest completed call is the list.
+func TestV2TasksFromTodowrite(t *testing.T) {
+	_, m := v2Slot(t, "todo-on.messages.json")
+	td, _ := readTranscript(m)
+	want := []struct{ subject, status string }{
+		{"write the probe", "completed"}, {"read the result", "in_progress"}, {"report", "pending"},
+	}
+	if len(td.Tasks) != len(want) {
+		t.Fatalf("tasks = %+v", td.Tasks)
+	}
+	for i, w := range want {
+		if td.Tasks[i].Subject != w.subject || td.Tasks[i].Status != w.status || td.Tasks[i].ID != fmt.Sprint(i+1) {
+			t.Fatalf("task %d = %+v, want %+v", i, td.Tasks[i], w)
+		}
+	}
+}
+
+// With the flag off the call fails ("No tool named todowrite ..."): that is not a list.
+func TestV2TasksIgnoreAFailedTodowrite(t *testing.T) {
+	_, m := v2Slot(t, "todo-off.messages.json")
+	if td, _ := readTranscript(m); len(td.Tasks) != 0 {
+		t.Fatalf("tasks = %+v from a todowrite that never ran", td.Tasks)
+	}
+}
+
+func TestV2TasksLatestCallWinsAndEmptyIsNil(t *testing.T) {
+	call := func(status, todos string) v2Msg {
+		var c v2Content
+		_ = json.Unmarshal([]byte(`{"type":"tool","name":"todowrite","state":{"status":"`+status+`","input":{"todos":`+todos+`}}}`), &c)
+		return v2Msg{Type: "assistant", Content: []v2Content{c}}
+	}
+	got := v2Tasks([]v2Msg{
+		call("completed", `[{"content":"old","status":"pending"}]`),
+		call("completed", `[{"content":"new","status":""},{"content":"","status":"pending"}]`),
+		call("running", `[{"content":"in flight","status":"pending"}]`),
+		{Type: "user", Text: "hi"},
+	})
+	if len(got) != 1 || got[0].Subject != "new" || got[0].Status != "pending" {
+		t.Fatalf("tasks = %+v; want the newest completed list, blank status = pending", got)
+	}
+	if v2Tasks(nil) != nil {
+		t.Fatal("no messages must give nil")
+	}
+}

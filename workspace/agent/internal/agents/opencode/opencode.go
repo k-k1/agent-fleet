@@ -42,6 +42,18 @@ func (agentImpl) Caps() agents.Caps {
 	return agents.Caps{CanTranscript: true, CanFork: true, CanForkAt: true, ManagedDefault: true, MCPClient: agents.TriYes}
 }
 
+// ForkAtOnTerminal reports whether a Terminal session of this kind can fork at a past message.
+func (agentImpl) ForkAtOnTerminal(m session.Meta) bool { return forkAtOnSharedTerminal(m) }
+
+// forkAtOnSharedTerminal is whether a point fork of Terminal session m can reach the serve API:
+// its pane is attached to af's serve (sharedSlot) AND the fork's own launch will use the serve
+// too (sharedTUI). Either alone is not enough: a standalone pane has no API to read the
+// conversation through, and a launch that falls back to --standalone cannot cut at a point, so
+// BuildLaunch refuses it rather than copy the whole conversation.
+func forkAtOnSharedTerminal(m session.Meta) bool {
+	return sharedSlot(m) && sharedTUI()
+}
+
 // ForkSource resolves this session's current opencode conversation as the fork
 // source. An interrupted conversation is refused: opencode re-runs the incomplete
 // turn on resume/fork, which is never what a fork should do.
@@ -81,8 +93,11 @@ func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, err
 		return "", errors.New("分岐点が指定されていません")
 	}
 	// Only the serve API takes a fork point; `--session <src> --fork` has no such argument.
-	if m.DriverKind() != session.DriverManaged {
-		return "", fmt.Errorf("%w: opencode の発言時点からの分岐は managed のセッションでのみ利用できます",
+	// A managed session talks to it directly and a Terminal pane attached to af's shared serve
+	// forks through the same endpoint (buildSharedLaunch).
+	if m.DriverKind() != session.DriverManaged && !forkAtOnSharedTerminal(m) {
+		return "", fmt.Errorf("%w: opencode の発言時点からの分岐は managed のセッション、"+
+			"または opencode 2 の共有サーバに接続したターミナルでのみ利用できます",
 			agents.ErrForkAtRoute)
 	}
 	if t, ok := v2TargetFor(m); ok {

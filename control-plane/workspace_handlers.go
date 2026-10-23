@@ -825,6 +825,10 @@ type sessionWire struct {
 	// is waiting for the limit to lift and not when work will resume. No DB-mirror column
 	// (a stopped workspace has no episode in progress).
 	RateLimitResumeAt string `json:"rateLimitResumeAt,omitempty"`
+	// ForkAtTerminal passes through whether a Terminal session can fork from a past message.
+	// Dropped here, the Console never offers "fork from here" on an opencode 2 Terminal session.
+	// No DB-mirror column: it describes a running pane's route.
+	ForkAtTerminal bool `json:"forkAtTerminal,omitempty"`
 	// AuthOkAt passes through when the agent's current login was written (RFC3339, claude
 	// only). Dropped, an error block in the mirror goes on offering "re-authenticate" for a
 	// failure the user already dealt with, and the Console cannot tell a fixed login failure

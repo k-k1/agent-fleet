@@ -471,3 +471,33 @@ and a rollback (`OPENCODE_VERSION=1.19.0`, nothing else) leaves it at the last t
 `V2FallbackVersion` remains for images built before the key existed; nothing bumps it and a test
 only requires it to be 2.x. `TestDockerfileV2ArgFollowsOpencodePin` fails when a 2.x pin and the V2
 ARG differ.
+
+## 2026-10-24 — fork-at on the shared-serve Terminal, and the ToDo list, re-measured on 2.1.4 (#2493)
+
+**Fork-at.** `ResolveForkAt` refused every non-managed opencode session, although a Terminal pane
+attached to af's serve (`sharedSlot`) already forks through `POST /api/session/{id}/fork` with
+`before` in `buildSharedLaunch` (#2123). It now accepts a Terminal session when the pane is on the
+shared serve AND the fork's own launch will use it (`sharedTUI()`); every other route — standalone
+pane, no mode record, the next launch switched to `--standalone`, opencode 1.x, codex — still
+returns `ErrForkAtRoute`. A launch that falls back to `--standalone` with a fork point is still
+refused by `BuildLaunch`, never widened to a whole-conversation copy. The Console learns the
+per-session answer from a new wire field `forkAtTerminal` (`TerminalForkAtter`, computed in
+`wireSession`; the kind's static `forkAtManagedOnly` is unchanged). Verified with unit tests (the
+accepted route, four refused routes, the serve-unavailable launch) and, on the wire, the goldens
+and the CP relay test; not verified end to end in a live Terminal pane.
+
+**ToDo, measured on opencode 2.1.4** (`opencode --version` → `v2.1.4`; isolated `HOME`, own
+`opencode serve` on a free loopback port, stopped afterwards):
+
+- `GET /openapi.json` (124 paths): no todo route, event or schema. The only mention of "todo" is
+  `Config.experimental.todo` ("Enable the experimental todowrite tool. Defaults to false.").
+- `TestContractV2Todo` (contract tag, stub OpenAI-compatible provider that calls `todowrite`):
+  with the default config the call fails — `state.status: "error"`, "No tool named \"todowrite\" is
+  currently available"; with `experimental.todo: true` it runs — `state.status: "completed"`,
+  `state.input.todos: [{content, status, priority}]` and the same list in `state.metadata.todos`.
+- The opencode 2 TUI itself derives its list from the newest completed `todowrite` tool part of the
+  messages (no todo table), so that is what `v2Tasks` now reads into `Tasks`. Both captures are in
+  `testdata/v2/todo-{off,on}.messages.json`.
+
+So the 2.0.28 statement "no ToDo on opencode 2" holds only for a default config: the list exists
+once a member enables `experimental.todo`, and af does not set it.

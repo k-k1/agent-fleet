@@ -30,7 +30,11 @@ package opencode
 //     message. Its cost is on the compaction message, not on any assistant message.
 //   - Input typed while a turn runs waits in GET /api/session/{id}/inbox ({payload.text});
 //     an interrupt leaves it there.
-//   - There is no todo list in the v2 API or events (no route, no tool), so Tasks stays empty.
+//   - There is no todo route, event or table in the v2 API (measured on 2.1.4: none in /openapi.json).
+//     The `todowrite` tool exists there only behind the experimental.todo config flag, which
+//     defaults to false; with it off a call fails ("No tool named todowrite is currently
+//     available"). With it on the list is the newest completed todowrite call's input (v2Tasks),
+//     which is also how the opencode 2 TUI derives it. So Tasks is empty on a default config.
 //   - The question tool is a form there (v2form.go): pending questions come from the form list.
 //   - Fork copies keep time.created but get new ids, so a message older than its session is
 //     a copy whose cost the source session already reported (same rule as v1).
@@ -50,6 +54,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -474,12 +479,50 @@ func readTranscriptV2(t apiTarget, m session.Meta) agents.TranscriptData {
 		Mode:       v2Mode(info, msgs),
 		Queued:     queuedV2(t, info.ID),
 		Compacting: compactingV2(t, m),
-		// Tasks stays empty: opencode 2.0.28 has no todo route, event or tool (its tool list is
-		// edit glob grep question read shell skill subagent webfetch websearch write execute).
+		Tasks:      v2Tasks(msgs),
 	}
 	td.Pending = questionsV2(pendingFormsV2(t, m, info.ID))
 	managedEnrich(m, &td)
 	return td
+}
+
+// v2Tasks is the ToDo list: the todos of the newest completed `todowrite` call (the tool resends
+// the whole list every time, so the latest wins). nil when the conversation has none, which is
+// every conversation on a default config (the tool is behind experimental.todo, v2state.go header).
+func v2Tasks(msgs []v2Msg) []transcript.Task {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Type != "assistant" {
+			continue
+		}
+		for j := len(msgs[i].Content) - 1; j >= 0; j-- {
+			c := msgs[i].Content[j]
+			if c.Type != "tool" || c.Name != "todowrite" || c.State.Status != "completed" {
+				continue
+			}
+			var in struct {
+				Todos []struct {
+					Content string `json:"content"`
+					Status  string `json:"status"`
+				} `json:"todos"`
+			}
+			if json.Unmarshal(c.State.Input, &in) != nil {
+				continue
+			}
+			var out []transcript.Task
+			for n, td := range in.Todos {
+				if td.Content == "" {
+					continue
+				}
+				st := td.Status
+				if st == "" {
+					st = "pending"
+				}
+				out = append(out, transcript.Task{ID: strconv.Itoa(n + 1), Subject: td.Content, Status: st})
+			}
+			return out
+		}
+	}
+	return nil
 }
 
 // v2Mode is the conversation's current agent normalized to "plan" | "normal", from the newest
