@@ -597,3 +597,13 @@ confirmed on a live Console: `memory.review` resolves to claude and a review run
 approved, one rejected and the approved run reverted. Any other kind being qualified or refused was **not**
 verified live, since every other kind needs a workspace without claude; those decisions are the per-kind
 table above, covered by unit tests only. A kind still qualifies only by gaining a runner in `denyAllBackends`.
+
+**Note (2026-10-23, #2487): the helper call is bounded per window.** Decision 8's one in-flight review
+per Agent meant a hung helper CLI blocked every review until the Agent restarted, because only the
+deny-all probe (45 s) had a deadline. Each helper call now has its own deadline, `DefaultCallTimeout`
+(5 min: the probe's 45 s plus the 240 s a chat turn is allowed, rounded up). It is per window, not per
+trigger, so a review of ten windows is not cut short as a whole. A call that hits it is cut (the CLI is
+killed, and a child holding its output no longer holds the call open), counts as a spent attempt, and
+ends the run with the failure text "the helper call timed out" once the attempt budget is gone. The
+Console's "Suggest memories now" watch still ends after about 3 minutes; it now says the review is
+still running instead of falling silent. No decision above changes.

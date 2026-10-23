@@ -477,3 +477,39 @@ func TestResolveDenyAllCachedNeverCallsAReachableKindUnavailable(t *testing.T) {
 		t.Fatalf("cold: got %q %v, want unknown", source, ok)
 	}
 }
+
+// A call cut by its context must return promptly even though the killed CLI left a child holding
+// its stdout (the fake's `sleep`): without WaitDelay Output waits for that child, and the caller's
+// slot with it.
+func TestOneShotDenyAllReturnsWhenTheCallIsCutAndAChildOutlivesIt(t *testing.T) {
+	denyAllEnv(t)
+	logDir := fakeDenyAllClaude(t, cleanProbe, fakeRun{Out: lines(initClean, assistText, runResult), Sleep: 20})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type result struct{ err error }
+	done := make(chan result, 1)
+	go func() {
+		_, err := OneShotDenyAll(ctx, usagex.FeatureMemoryReview, OneShotShort, "persona", secretPrompt)
+		done <- result{err}
+	}()
+	// Cut only once the real run (the second invocation, after the probe) has started and had time
+	// to start its `sleep` child, so the path under test is the one reached, not the probe's.
+	deadline := time.Now().Add(30 * time.Second)
+	for invocations(t, logDir) < 2 {
+		if time.Now().After(deadline) {
+			t.Fatal("the real run never started")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(300 * time.Millisecond)
+	cancel()
+	start := time.Now()
+	select {
+	case r := <-done:
+		if r.err == nil || errors.Is(r.err, ErrDenyAllUnavailable) {
+			t.Fatalf("err = %v, want a failure of the cut call itself", r.err)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatalf("the call was still blocked %s after its context ended", time.Since(start))
+	}
+}

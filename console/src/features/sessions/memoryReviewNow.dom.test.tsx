@@ -149,6 +149,7 @@ describe("reviewSessionNow", () => {
     apiMock.mockResolvedValue(status({ running: true }));
     apiJSONMock.mockResolvedValue({ started: true });
     await reviewSessionNow("a", notify, noSleep);
-    expect(notify).toHaveBeenCalledTimes(1); // only "started"
+    expect(notify).toHaveBeenCalledTimes(2); // "started", then that it is still running
+    expect(notify).toHaveBeenNthCalledWith(2, t("srow.memory_review_still_running"), { kind: "info" });
   });
 });

@@ -41,6 +41,13 @@ const (
 	MaxPending = 100
 	// DefaultBackoff is the wait after a transient failure before the same run is tried again.
 	DefaultBackoff = 5 * time.Minute
+	// DefaultCallTimeout bounds one helper call. The deny-all route first runs a probe of up to 45 s
+	// that talks to no model, then one tool-less model turn; chat bounds a whole CLI turn, tools
+	// included, at 240 s (chatx chatTimeout). 45 s + 240 s, rounded up to 5 min, leaves the turn
+	// its full chat budget and still frees the Agent's single review slot within one backoff.
+	DefaultCallTimeout = 5 * time.Minute
+	// FailureCallTimeout is the run's failure text when the helper call hit DefaultCallTimeout.
+	FailureCallTimeout = "the helper call timed out"
 
 	keepTerminalRuns = 200
 )
