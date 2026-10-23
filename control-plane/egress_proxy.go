@@ -250,6 +250,11 @@ func newEgressBatcher(url, token string) *egressBatcher {
 func (b *egressBatcher) add(host string, allowed bool) {
 	k := host + "\x00" + map[bool]string{true: "1", false: "0"}[allowed]
 	b.mu.Lock()
+	if len(host) > maxEgressHost {
+		b.dropped++
+		b.mu.Unlock()
+		return
+	}
 	b.addLocked(k, 1)
 	b.mu.Unlock()
 }
@@ -312,9 +317,18 @@ func (b *egressBatcher) run(ctx context.Context) {
 	}
 }
 
-// flush reports the pending batch and keeps it for the next tick unless the CP answers
-// 2xx. Delivery is at-least-once: a timeout after the CP recorded the batch re-sends it,
-// and the CP counts it twice.
+// maxEgressReportBytes keeps one report well under the CP's 1 MiB ingest limit
+// (egressAPI.ingest). Measured: 5000 buckets of 248-character hosts marshal to ~1.4 MB,
+// so an uncapped batch accumulated during an outage would be answered 400 forever.
+const maxEgressReportBytes = 256 << 10
+
+// maxEgressHost is the longest DNS name (253) that is worth recording; anything longer
+// is not a destination and would let one row eat the report budget.
+const maxEgressHost = 253
+
+// flush reports the pending batch in chunks that fit the CP's body limit and keeps
+// whatever the CP did not accept for the next tick. Delivery is at-least-once: a timeout
+// after the CP recorded a chunk re-sends it, and the CP counts it twice.
 func (b *egressBatcher) flush() {
 	b.flushMu.Lock()
 	defer b.flushMu.Unlock()
@@ -322,10 +336,47 @@ func (b *egressBatcher) flush() {
 	if len(evs) == 0 && dropped == 0 {
 		return
 	}
-	if err := b.post(evs, dropped); err != nil {
-		log.Printf("egress-proxy: report failed (will retry): %v", err)
-		b.restore(evs, dropped)
+	chunks := splitEgressEvents(evs)
+	if len(chunks) == 0 {
+		chunks = [][]egressEvent{nil}
 	}
+	for i, c := range chunks {
+		d := 0
+		if i == 0 {
+			d = dropped // rides on the first chunk; later chunks carry none
+		}
+		if err := b.post(c, d); err != nil {
+			log.Printf("egress-proxy: report failed (will retry): %v", err)
+			// Chunks before i were accepted and are not restored; this one and the
+			// untried rest are.
+			rest := append([]egressEvent(nil), c...)
+			for _, r := range chunks[i+1:] {
+				rest = append(rest, r...)
+			}
+			b.restore(rest, d)
+			return
+		}
+	}
+}
+
+// splitEgressEvents groups events so each chunk's JSON stays under maxEgressReportBytes.
+func splitEgressEvents(evs []egressEvent) [][]egressEvent {
+	var out [][]egressEvent
+	var cur []egressEvent
+	size := 0
+	for _, e := range evs {
+		n := len(e.Host) + 48 // host + the fixed JSON around it, rounded up
+		if len(cur) > 0 && size+n > maxEgressReportBytes {
+			out = append(out, cur)
+			cur, size = nil, 0
+		}
+		cur = append(cur, e)
+		size += n
+	}
+	if len(cur) > 0 {
+		out = append(out, cur)
+	}
+	return out
 }
 
 func (b *egressBatcher) post(evs []egressEvent, dropped int) error {

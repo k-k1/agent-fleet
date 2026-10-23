@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -109,31 +110,133 @@ func TestEgressBatcherCapCountsDroppedAndReportsOnce(t *testing.T) {
 	}
 }
 
-func TestEgressBatcherConcurrentAddAndFlush(t *testing.T) {
-	f := &fakeIngest{script: []string{"500", "500", "drop"}, got: map[string]int{}}
-	srv := httptest.NewServer(f)
+// A failing POST must merge back with whatever add() collected while it was in flight:
+// same-key counts add up, a new key past the cap becomes dropped, and the batch's own
+// dropped is not lost. The handler is held on a barrier so the interleaving is fixed.
+func TestEgressBatcherAddDuringFailingPost(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var mu sync.Mutex
+	got, dropped, calls := map[string]int{}, 0, 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		first := calls == 1
+		mu.Unlock()
+		if first {
+			close(entered)
+			<-release
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		var in egressIngest
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		mu.Lock()
+		for _, e := range in.Events {
+			got[e.Host] += e.Count
+		}
+		dropped += in.Dropped
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
 	defer srv.Close()
 	b := newEgressBatcher(srv.URL, "")
-	const workers, each = 8, 200
-	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < each; i++ {
-				b.add("c.example", true)
-			}
-		}()
+
+	for i := 0; i < maxEgressKeys; i++ { // fill the cap
+		b.add("h"+strconv.Itoa(i), true)
 	}
-	for i := 0; i < 6; i++ {
-		b.flush()
+	b.add("overflow-before", true) // dropped = 1 inside the in-flight batch
+	done := make(chan struct{})
+	go func() { b.flush(); close(done) }()
+	<-entered
+	// The window is empty now; fill it again to the cap, then go over it.
+	b.add("h0", true)
+	b.add("h0", true)
+	for i := 0; i < maxEgressKeys; i++ {
+		b.add("n"+strconv.Itoa(i), true)
 	}
-	wg.Wait()
-	for i := 0; i < 4; i++ { // outlasts whatever failures the loop above did not consume
-		b.flush()
+	b.add("overflow-after", true) // dropped = 1 more, outside the in-flight batch
+	// A second flush must wait for the first to finish rather than POST concurrently.
+	second := make(chan struct{})
+	go func() { b.flush(); close(second) }()
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	inFlight := calls
+	mu.Unlock()
+	select {
+	case <-second:
+		t.Fatal("second flush returned while the first POST was in flight")
+	default:
 	}
-	if f.got["c.example/true"] != workers*each {
-		t.Fatalf("want %d got %d", workers*each, f.got["c.example/true"])
+	if inFlight != 1 {
+		t.Fatalf("second flush POSTed while the first was in flight (calls=%d)", inFlight)
+	}
+	close(release)
+	<-done
+	<-second
+	b.flush()
+	b.flush()
+
+	mu.Lock()
+	defer mu.Unlock()
+	total := 0
+	for _, n := range got {
+		total += n
+	}
+	// 5000 + 2 (h0 twice) + 5000 observed; 5000 old + 5000 new keys exceed the cap by
+	// 5000 keys, which are folded into dropped on restore.
+	if total+dropped != maxEgressKeys+1+2+maxEgressKeys+1 {
+		t.Fatalf("every observation is either delivered or counted as dropped: delivered=%d dropped=%d", total, dropped)
+	}
+	if got["h0"] != 3 {
+		t.Fatalf("same-key counts must add up across the restore: h0=%d", got["h0"])
+	}
+	if dropped < 2 {
+		t.Fatalf("both overflow observations must be counted: dropped=%d", dropped)
+	}
+}
+
+// After a long outage the pending batch is as large as the cap allows; it must still fit
+// the CP's 1 MiB body limit, in pieces, or it would be refused for ever.
+func TestEgressBatcherDeliversMaxSizedBacklogUnderBodyLimit(t *testing.T) {
+	var mu sync.Mutex
+	up := false
+	got, dropped := map[string]int{}, 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !up {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
+		var in egressIngest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
+			http.Error(w, "bad body", http.StatusBadRequest)
+			return
+		}
+		for _, e := range in.Events {
+			got[e.Host] += e.Count
+		}
+		dropped += in.Dropped
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	b := newEgressBatcher(srv.URL, "")
+
+	pad := strings.Repeat("a", 240)
+	for i := 0; i < maxEgressKeys+3; i++ {
+		b.add(pad+strconv.Itoa(1000+i)+".example", true) // 248 characters each
+	}
+	b.add(strings.Repeat("x", 300), true) // not a hostname: dropped, never sent
+	b.flush()                             // outage
+	mu.Lock()
+	up = true
+	mu.Unlock()
+	b.flush()
+	b.flush()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != maxEgressKeys || dropped != 4 {
+		t.Fatalf("delivered %d buckets (want %d), dropped=%d (want 4)", len(got), maxEgressKeys, dropped)
 	}
 }
 

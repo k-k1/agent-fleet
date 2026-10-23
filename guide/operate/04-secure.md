@@ -324,6 +324,12 @@ in the Console.
    destinations to the allowlist. The allowlist is versioned (active / proposed / retired); the
    AI only **proposes; approval is done by humans** (approve/reject under "Proposed (needs
    approval)" in the Admin panel).
+
+   **Reading the observations:** counts are approximate. A report that is retried after a
+   timeout can be counted twice, and the proxy keeps at most 5000 distinct destinations
+   while the Control Plane is unreachable (overflow shows up as an `egress.dropped` audit
+   entry), and loses what it held in memory if it restarts. Treat a missing host as "not
+   seen", not "never used", and check the audit log for `egress.dropped` before enforcing.
 3. **Switch to enforce**: once the allowlist is sufficiently solid, switch the mode to
    enforce. From then on, traffic outside the allowlist is **blocked**. The Admin UI also warns
    you to confirm reality in log-only first before switching.
