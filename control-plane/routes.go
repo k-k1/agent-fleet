@@ -1027,6 +1027,7 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	// starts the download in the workspace, GET polls its state.
 	mux.HandleFunc("POST /api/env/jdk-install", rest)
 	mux.HandleFunc("GET /api/env/jdk-install", rest)
+	mux.HandleFunc("GET /api/env/jdk-latest", rest)
 	mux.HandleFunc("POST /api/env/node-install", rest)
 	mux.HandleFunc("GET /api/env/node-install", rest)
 	mux.HandleFunc("GET /api/env/tool-versions", rest)

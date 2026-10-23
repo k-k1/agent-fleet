@@ -53,7 +53,7 @@ connections_slack.go handleSlackInspect x1 {botName,botUserId,teamName}
 engines.go handleEngineCatalogChanged x1 {refreshing}
 engines.go handleEngineUsage x1 {recorded}
 env_tool_versions.go handleToolVersions x1 {checkedAt,tools}
-env_toolchains.go handleToolchainsGet x1 {agentUpdate,go,go_options,java,java_available,java_installed,node,node_installed,node_options,timezone,tz_options}
+env_toolchains.go handleToolchainsGet x1 {agentUpdate,go,go_options,java,java_available,java_installed,java_versions,node,node_installed,node_options,timezone,tz_options}
 fs.go handleFSDelete x1 {deleted}
 fs.go handleFSMkdir x1 {path}
 fs.go handleFSNewFile x1 {path}
@@ -206,7 +206,7 @@ internal/sessionx/session_turn.go handleManagedTurn x1 {op,sent}
 internal/sessionx/session_turn.go handleQueueEdit x1 {dismissed,op,sent}
 internal/sessionx/session_turn.go handleQueueEdit x1 {op,removed,sent}
 internal/sessionx/session_usage.go HandleSessionsUsage x1 {sessions}
-jdk_install_http.go handleJDKInstall x3 {error,java_available,java_installed,major,state}
+jdk_install_http.go handleJDKInstall x3 {error,java_available,java_installed,java_versions,major,state}
 kiro_install_http.go handleKiroInstall x1 {error,installed,pin,state,updateAvailable,version} cond{installed,pin,updateAvailable,version}
 kiro_install_http.go handleKiroInstall x3 {state}
 main.go handleHealth x1 {ok,secrets_key,secrets_key_next,secrets_key_start}

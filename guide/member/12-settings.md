@@ -565,6 +565,9 @@ administrator's to set.
 Timezone, Node.js / Java / Go versions, the table of effective tool versions (a CLI whose install at the workspace's start failed shows
 "install failed" with the reason, typically a full home disk, and is tried again at the next start; starting a session of that agent is refused with the same reason until the CLI is installed, while other agents start as usual), **agent CLI updates** (off by
 default), and applying an Agent Fleet update.
+The Java row shows the exact JDK version in use (for example `21.0.11+10`). When a newer patch
+of that version is out, an **Update to …** button downloads it into your home volume;
+sessions started afterwards use it, with no Stop → Start.
 → [10 Going further](10-integrations.md#environment-settings-and-recreating-the-workspace)
 
 ### Databases

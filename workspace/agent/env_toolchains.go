@@ -289,8 +289,9 @@ func handleToolchainsGet(w http.ResponseWriter, r *http.Request) {
 		"go":             t.Go,
 		"timezone":       t.Timezone,
 		"agentUpdate":    t.AgentUpdate,
-		"java_available": javaOptions(),         // offered for selection (installed ∪ installable)
-		"java_installed": installedJavaMajors(), // present on disk now (ready without a download)
+		"java_available": javaOptions(),           // offered for selection (installed ∪ installable)
+		"java_installed": installedJavaMajors(),   // present on disk now (ready without a download)
+		"java_versions":  installedJavaVersions(), // major → the version its JAVA_HOME resolves to
 		"node_options":   nodeOptionsFor(t.Node),
 		// nodeOptions is a FIXED list, so — exactly like java — it offers
 		// versions that may not be on disk. Without this the Console cannot tell the two
