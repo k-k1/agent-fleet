@@ -459,6 +459,16 @@ type TerminalForkAtter interface {
 	ForkAtOnTerminal(m session.Meta) bool
 }
 
+// ForkAtPinner is a ForkAtResolver that also names the conversation the point was resolved
+// against ("" = not known). The fork handler forks exactly that one: ForkSource reads the current
+// conversation again, and a Terminal pane can switch conversation (/new, reconnect) between the two
+// reads, which would pair a point from one conversation with the source of another. A point that
+// resolves to "" (the whole conversation) cannot be checked afterwards, so the pair has to be
+// fixed here.
+type ForkAtPinner interface {
+	ResolveForkAtPinned(m session.Meta, at ForkPoint) (point, source string, err error)
+}
+
 // ForkPoint is what the user pointed at, before any per-engine translation.
 type ForkPoint struct {
 	// Anchor is the transcript.Turn.AnchorID of the USER turn the user clicked.

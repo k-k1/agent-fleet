@@ -571,18 +571,19 @@ func recallSettingsV2(t apiTarget, m session.Meta) agents.RecalledSettings {
 
 // resolveForkAtV2 validates a mirror anchor against the slot's own conversation exactly like the
 // v1 reader does: the anchor must be a message of THIS conversation, and "include" moves it to
-// just before the next user message.
-func resolveForkAtV2(t apiTarget, m session.Meta, at agents.ForkPoint) (string, error) {
+// just before the next user message. source is the conversation it was resolved against, so the caller
+// can fork exactly that one (agents.ForkAtPinner).
+func resolveForkAtV2(t apiTarget, m session.Meta, at agents.ForkPoint) (point, source string, err error) {
 	info, err := t.v2Session(m)
 	if err != nil {
-		return "", fmt.Errorf("opencode の会話ストアを読めません")
+		return "", "", fmt.Errorf("opencode の会話ストアを読めません")
 	}
 	if info == nil {
-		return "", fmt.Errorf("分岐できる会話がまだありません")
+		return "", "", fmt.Errorf("分岐できる会話がまだありません")
 	}
 	msgs, err := t.messages(info.ID)
 	if err != nil {
-		return "", fmt.Errorf("opencode の会話ストアを読めません")
+		return "", "", fmt.Errorf("opencode の会話ストアを読めません")
 	}
 	idx := -1
 	for i, mm := range msgs {
@@ -594,17 +595,17 @@ func resolveForkAtV2(t apiTarget, m session.Meta, at agents.ForkPoint) (string, 
 	// A subagent turn lives in a child session, which this list does not contain, so it is
 	// refused here as "not found" along with a stray id.
 	if idx < 0 {
-		return "", fmt.Errorf("指定された分岐点がこの会話に見つかりません")
+		return "", "", fmt.Errorf("指定された分岐点がこの会話に見つかりません")
 	}
 	if !at.Include {
-		return at.Anchor, nil
+		return at.Anchor, info.ID, nil
 	}
 	for _, mm := range msgs[idx+1:] {
 		if mm.Type == "user" {
-			return mm.ID, nil
+			return mm.ID, info.ID, nil
 		}
 	}
-	return "", nil
+	return "", info.ID, nil
 }
 
 // --- messages → turns -----------------------------------------------------------

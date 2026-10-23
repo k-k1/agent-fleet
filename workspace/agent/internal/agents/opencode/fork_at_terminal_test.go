@@ -110,3 +110,15 @@ func TestSharedForkAtRefusesAPointOutsideTheSource(t *testing.T) {
 		t.Fatalf("a fork was made anyway: %v", f)
 	}
 }
+
+// The resolver names the conversation it resolved against, also for "include the last exchange"
+// where the point itself is "" and could not be checked later.
+func TestResolveForkAtPinnedNamesTheSource(t *testing.T) {
+	useMajor(t, 2)
+	t.Setenv(standaloneEnv, "")
+	m, user := terminalV2Slot(t, modeShared)
+	point, src, err := (agentImpl{}).ResolveForkAtPinned(m, agents.ForkPoint{Anchor: user, Include: true})
+	if err != nil || point != "" || src != "ses_a" {
+		t.Fatalf("point %q source %q err %v; want \"\" and ses_a", point, src, err)
+	}
+}
