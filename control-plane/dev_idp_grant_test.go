@@ -62,13 +62,18 @@ func TestDevIdPRedirectHonoursTheOwnersLiveGrant(t *testing.T) {
 	if allowed("", uri) || allowed("no-such-membership", uri) {
 		t.Error("unknown membership admitted")
 	}
-	// Another workspace's grant on the same port number gives nothing.
+	// Another workspace's grant: current slug and valid inodes, only the workspace id differs,
+	// so a missing workspace scope in the lookup is the one thing that could admit it.
 	if err := d.mgr.store.UpsertPreviewTempPort(ctx, store.PreviewTempPort{
-		WorkspaceID: "ws-colleague", Port: 6000, Slug: "whatever", Inodes: "9", CreatedAt: store.NowTS()}); err != nil {
+		WorkspaceID: "ws-colleague", Port: 6000, Slug: d.slug, Inodes: "9", CreatedAt: store.NowTS()}); err != nil {
 		t.Fatal(err)
 	}
 	if allowed(owner, d.ownHost(6000)+"/cb") {
 		t.Error("another workspace's grant admitted")
+	}
+	grant(6000, d.slug, "9") // positive control: the same row under the owner's workspace is read
+	if !allowed(owner, d.ownHost(6000)+"/cb") {
+		t.Error("control: own grant on 6000 refused")
 	}
 	// A grant with no recorded listener is not live.
 	grant(5175, d.slug, "")
@@ -89,16 +94,22 @@ func TestDevIdPRedirectHonoursTheOwnersLiveGrant(t *testing.T) {
 	if !allowed(owner, uri) {
 		t.Fatal("control: fresh grant refused")
 	}
+	oldSlug := d.slug
 	fresh := d.mintSlug(t)
-	if allowed(owner, uri) || allowed(owner, d.ownHost(5173)+"/cb") {
-		t.Error("grant from the previous slug admitted")
+	d.slug = fresh
+	// Re-insert a grant row under the OLD slug: only the slug comparison can refuse it now.
+	grant(5173, oldSlug, "111")
+	if allowed(owner, d.ownHost(5173)+"/cb") {
+		t.Error("grant from the previous slug admitted under the new slug")
 	}
-	if allowed(owner, "https://"+previewHostname(fresh, 5173, d.domain)+"/cb") {
-		t.Error("old grant honoured under the new slug")
+	grant(5173, fresh, "111") // positive control: the lookup reads this row
+	if !allowed(owner, d.ownHost(5173)+"/cb") {
+		t.Error("control: grant under the new slug refused")
 	}
 	// A stopped workspace has no slug at all.
 	ws, st := cur()
 	ws.PreviewSlug = ""
+	uri = d.ownHost(5173) + "/cb"
 	if d.mgr.devIdPRedirectAllowed(ctx, ws, st, owner, uri) {
 		t.Error("stopped workspace admitted")
 	}

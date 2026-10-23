@@ -64,7 +64,7 @@ func (m *manager) liveGrant(ctx context.Context, ws store.Workspace, port int) (
 	return g, true
 }
 
-// previewPortOpenableBy is the port half of the stable-open decision, shared by openStable and
+// previewPortOpenableBy is the port half of the stable-open decision, shared by the preview handshake and
 // the dev IdP's redirect ACL so the two cannot drift: a listed port is open to every viewer
 // previewViewerAllowed admits; an unlisted one only to the owner, and only under a live grant.
 // Lookup errors count as "no grant" (fail closed).

@@ -408,7 +408,7 @@ Decision 3 is left as written. It no longer matches the code, and the notes of 2
 
 The `redirect_uri` allow-list used to check only the preview port list, so a callback on an unlisted port
 the owner had opened through a temporary grant (ADR 0062, #2138) was refused although the subdomain serves
-it. The check now asks `previewPortOpenableBy`, the same decision `openStable` makes: a listed port is open
+it. The check now asks `previewPortOpenableBy`, the same decision the preview handshake makes: a listed port is open
 to every viewer the allow-list already admits; an unlisted port only to the **owner**, and only while a grant
 made under the current slug exists. Tenant-share colleagues, revoked or previous-slug grants, other
 workspaces' grants and a failed lookup are all refused. `dev_idp_grant_test.go` pins each of these.
