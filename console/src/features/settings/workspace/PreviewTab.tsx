@@ -332,8 +332,8 @@ function PreviewSection({
         </button>
       </Row>
       <p className="muted ds-note">{tr("env.preview_reissue_note")}</p>
-      {/* Only where the operator turned the IdP on: a switch that every PUT would refuse
-          must not be offered. */}
+      {/* Only where the operator turned the IdP on and the deployment has a preview domain
+          (the server folds both into devIdpAvailable). */}
       {au.devIdpAvailable && (
         <>
           <DevIdpSection au={au} rotate={rotateDevIdp} />
