@@ -25,6 +25,7 @@
 package mcpreg
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"os"
@@ -260,15 +261,25 @@ func copilotTrustFolder(t *testing.T, home, proj string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(home, ".copilot"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(home, ".copilot", "config.json"), b, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
 
+// scopeServeBudget bounds the whole opencodeServeList exchange; a var so the hang test can
+// shorten it.
+var scopeServeBudget = 60 * time.Second
+
 // opencodeServeList runs `opencode serve` in the project directory on a free loopback
 // port and returns /api/mcp once every server has left its pending state. A failed
 // status carries the spawn error, which names the command the CLI resolved — the same
-// tell commandWinner reads. The server is this test's own process and is killed on exit.
+// tell commandWinner reads. The server is this test's own process group and is killed on
+// exit. Every wait is bounded: a hung CLI must fail the test, not stall until
+// `go test -timeout` panics (t.Cleanup does not run then). For that case the server is
+// started under timeout(1) when available, so it still ends on its own.
 func opencodeServeList(t *testing.T, dir string, env []string, bin string) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -278,11 +289,17 @@ func opencodeServeList(t *testing.T, dir string, env []string, bin string) strin
 	port := ln.Addr().(*net.TCPAddr).Port
 	_ = ln.Close()
 	var log lockedBuf
-	srv := exec.Command(bin, "serve", "--hostname", "127.0.0.1", "--port", strconv.Itoa(port))
+	args := []string{bin, "serve", "--hostname", "127.0.0.1", "--port", strconv.Itoa(port)}
+	if tp, err := exec.LookPath("timeout"); err == nil {
+		secs := int(scopeServeBudget/time.Second) + 30
+		args = append([]string{tp, "-k", "5", strconv.Itoa(secs)}, args...)
+	}
+	srv := exec.Command(args[0], args[1:]...)
 	srv.Dir = dir
 	srv.Env = append(os.Environ(), env...)
 	srv.Stdout, srv.Stderr = &log, &log
 	srv.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	srv.WaitDelay = 2 * time.Second
 	if err := srv.Start(); err != nil {
 		t.Fatalf("%s serve: %v", bin, err)
 	}
@@ -291,7 +308,7 @@ func opencodeServeList(t *testing.T, dir string, env []string, bin string) strin
 		_ = srv.Wait()
 	})
 	pw := regexp.MustCompile(`server password (\S+)`)
-	deadline := time.Now().Add(60 * time.Second)
+	deadline := time.Now().Add(scopeServeBudget)
 	var password string
 	for time.Now().Before(deadline) {
 		if m := pw.FindStringSubmatch(log.String()); m != nil {
@@ -307,7 +324,11 @@ func opencodeServeList(t *testing.T, dir string, env []string, bin string) strin
 	url := "http://127.0.0.1:" + strconv.Itoa(port)
 	var out string
 	for time.Now().Before(deadline) {
-		out = runScopeCLI(t, dir, apiEnv, bin, []string{"api", "--server", url, "GET", "/api/mcp"})
+		var ok bool
+		out, ok = runScopeCLIBefore(dir, apiEnv, bin, []string{"api", "--server", url, "GET", "/api/mcp"}, deadline)
+		if !ok {
+			t.Fatalf("opencode api did not answer before the deadline; output so far:\n%s", out)
+		}
 		if strings.Contains(out, `"name":`) && !strings.Contains(out, `"pending"`) &&
 			!strings.Contains(out, `"connecting"`) {
 			return out
@@ -315,6 +336,22 @@ func opencodeServeList(t *testing.T, dir string, env []string, bin string) strin
 		time.Sleep(500 * time.Millisecond)
 	}
 	return out
+}
+
+// runScopeCLIBefore runs the CLI in its own process group and kills the group at
+// deadline (or after 15s, whichever is sooner); ok is false when it had to.
+func runScopeCLIBefore(dir string, env []string, bin string, args []string, deadline time.Time) (string, bool) {
+	limit := min(15*time.Second, time.Until(deadline))
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), env...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 2 * time.Second
+	out, _ := cmd.CombinedOutput()
+	return string(out), ctx.Err() == nil
 }
 
 type lockedBuf struct {
@@ -424,4 +461,35 @@ func opencodeScopeDoc(servers map[string]string) string {
 	}
 	b.WriteString("}}")
 	return b.String()
+}
+
+// TestScopeServeListHangIsBounded is the negative control for opencodeServeList: a fake CLI
+// whose `serve` prints a password and whose `api` never answers must make the helper fail
+// within its budget and leave no process behind. It needs no real CLI.
+func TestScopeServeListHangIsBounded(t *testing.T) {
+	if os.Getenv("AF_SCOPE_HANG_CHILD") == "1" {
+		fake := filepath.Join(t.TempDir(), "opencode")
+		script := "#!/bin/sh\ncase \"$1\" in\nserve) echo 'server password pw'; exec sleep 301;;\n*) exec sleep 302;;\nesac\n"
+		if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		scopeServeBudget = 4 * time.Second
+		opencodeServeList(t, t.TempDir(), nil, fake)
+		return
+	}
+	// Run the failing helper in a child test so its t.Fatal is the observed outcome.
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestScopeServeListHangIsBounded$", "-test.v")
+	cmd.Env = append(os.Environ(), "AF_SCOPE_HANG_CHILD=1")
+	start := time.Now()
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "did not answer before the deadline") {
+		t.Fatalf("the hung api call must fail the helper (err=%v):\n%s", err, out)
+	}
+	if d := time.Since(start); d > 30*time.Second {
+		t.Fatalf("took %s, want it bounded by the budget", d)
+	}
+	time.Sleep(time.Second)
+	if left, _ := exec.Command("pgrep", "-f", "sleep 30[12]$").Output(); len(left) > 0 {
+		t.Fatalf("processes left behind: %s", left)
+	}
 }
