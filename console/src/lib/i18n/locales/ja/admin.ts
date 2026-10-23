@@ -1310,7 +1310,7 @@ export const admin = {
   "tenant.tab_external_memory": "外部からのメモリ利用",
   "tenant.ext_memory_title": "Agent Fleet の外からのメモリ利用",
   "tenant.ext_memory_note":
-    "このテナントのメンバーが、Agent Fleet の外のエージェント（自分のマシンの Claude Code や Claude Desktop など）から、コントロールプレーンの MCP エンドポイント経由で自分の Agent Fleet メモリを使えるかを決めます。使うにはメンバー自身も 設定 > エージェントメモリ で有効にする必要があり、それまではオフのままです。メモリの本文はワークスペースの外に出て、そのクライアントのモデルに渡ります。",
+    "このテナントのメンバーが、Agent Fleet の外のエージェント（自分のマシンで MCP トークンを使う Claude Code や Claude Desktop、OAuth で接続した claude.ai などのアプリ）から、コントロールプレーンの MCP エンドポイント経由で自分の Agent Fleet メモリを使えるかを決めます。使うにはメンバー自身も 設定 > エージェントメモリ で有効にする必要があり、それまではオフのままです。ブロックにすると、このテナントのすべてのトークンと接続済みアプリからメモリのツールが見えなくなります。メモリの本文はワークスペースの外に出て、そのクライアントのモデルに渡ります。",
   "tenant.ext_memory_allow": "許可",
   "tenant.ext_memory_block": "ブロック",
   "tenant.ext_memory_on_hint": "メンバーは各自の判断で有効にできます。メンバー側の設定は引き続きオフから始まります。",

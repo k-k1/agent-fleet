@@ -126,7 +126,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "tokens.can_memory_write": "Agent Fleet memory, write: memory_save and memory_forget (write scope, and the setting must be Read and write).",
   "tokens.can_memory_setting_pre": "Memory also needs “Use Agent Fleet memory from outside Agent Fleet” set to Read only or Read and write in ",
   "tokens.can_memory_setting_link": "Settings > Agent memory",
-  "tokens.can_memory_setting_post": ". It is off by default, and a token's scope can only narrow what that setting allows.",
+  "tokens.can_memory_setting_post": ". It is off by default, and a token's scope can only narrow what that setting allows. If your tenant administrator has set External memory access to Block, these memory tools are not listed at all, whatever the token or the setting.",
   "tokens.can_stopped": "Memory lives inside the workspace: while it is stopped, the memory tools answer “start the workspace”. Start it from the Console and try again.",
   "tokens.th_expiry": "Expires",
   "tokens.th_last_used": "Last used",

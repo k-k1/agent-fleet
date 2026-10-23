@@ -410,6 +410,11 @@ not turned it on, the client asks for a token as before and the section above ap
    - **The tenant** to connect, one choice per tenant you belong to. The connection is fixed to it, as a token is.
    - **The scope**: `read` (see sessions and output) or `write` (read, plus act). You can choose less than the app
      asked for. `read` starts selected; choose `write` explicitly if the app requested it.
+     The scopes also reach your Agent Fleet memory: `read` lets the app list, search and read it, and `write` also
+     lets it save and forget memories. That applies only where your tenant administrator has not blocked External
+     memory access and you have turned on "Use Agent Fleet memory from outside Agent Fleet" yourself (off by
+     default); see [14 Agent memory](14-agent-memory.md#using-agent-fleet-memory-from-an-external-agent). The memory
+     text then reaches that app's model.
      `admin:dangerous` is never granted this way; use a token for that.
 3. Press **Allow** (or **Cancel**, which tells the app you declined). The client is connected. It keeps itself
    signed in with a short-lived access token (1 hour) that it renews on its own; you are not asked again.
