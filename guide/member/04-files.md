@@ -22,6 +22,12 @@ folder, **"Download as zip"**, below) and handing a file to an assistant to tran
 summarize. Deleting a folder removes its contents too, so a confirmation is shown.
 [Icons, badges, and menus](badges-and-menus.md#files-folders) lists every item and when it appears.
 
+### Open a shell from a folder
+
+Right-click a folder → **"Open shell here"** starts a shell session whose working folder is that
+folder (named `shell · <folder name>`). For a folder inside a repository's working copy, the shell opens in that
+folder under the working copy and the session belongs to that working copy. Paths outside the home folder work too.
+
 ### Download a folder as zip
 
 Right-click a folder (or press the Menu key on it, or **long-press it on a touch screen**) →
