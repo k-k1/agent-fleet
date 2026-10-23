@@ -457,7 +457,12 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
   （`egress_mode`）。**AI は提案のみ・人間が承認**（自動適用しない）。
 - **enforce は proxy で遮断する**: allowlist の外は 403。
 - `AF_EGRESS_PROXY_ADDR` がどのターゲットでも全 Workspace に proxy の変数（`http_proxy`・
-  `https_proxy`・`no_proxy`）を注入する。
+  `https_proxy`・`no_proxy`、と大文字の同名変数）を注入する。`docker`・`native`・Kubernetes は
+  配備全体の env をそのまま渡し、`ecs` と `ecs-ec2` はこれらの変数（`AF_EGRESS_PROXY_ADDR` から生成したものだけで、同名の `WS_ENV` の項目は取らない）だけを取る
+  （`WS_ENV` は資格情報を含みうるうえ、タスク定義の平文 env は読めてしまうため、意図して渡さない）。
+  `AF_CP_INTERNAL_URL` があれば、そのホストを Kubernetes・ecs・ecs-ec2 で `NO_PROXY` に加え、
+  ecs / ecs-ec2 は proxy がリンクローカル宛を拒否するため、タスク／インスタンスのメタデータ
+  アドレス（`169.254.170.2`・`169.254.169.254`）も加える。起動ごとの同名の変数は、配備全体の値に優先する。
 
 **足りないのは柵である。** Workspace の通信を proxy に強制するものが無い: `docker` に内部専用の
 network は無く、AWS の SG に egress 規則も無く、proxy を動かすデプロイのテンプレートも無い。

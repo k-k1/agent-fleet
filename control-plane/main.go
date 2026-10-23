@@ -243,9 +243,10 @@ func main() {
 	egressProxyAddr := os.Getenv("AF_EGRESS_PROXY_ADDR")
 	if addr := egressProxyAddr; addr != "" {
 		pu := "http://" + addr
-		mgr.extraEnv = append(mgr.extraEnv,
-			"http_proxy="+pu, "https_proxy="+pu, "HTTP_PROXY="+pu, "HTTPS_PROXY="+pu,
-			"no_proxy=localhost,127.0.0.1,::1", "NO_PROXY=localhost,127.0.0.1,::1")
+		mgr.egressProxyEnv = []string{
+			"http_proxy=" + pu, "https_proxy=" + pu, "HTTP_PROXY=" + pu, "HTTPS_PROXY=" + pu,
+			"no_proxy=localhost,127.0.0.1,::1", "NO_PROXY=localhost,127.0.0.1,::1"}
+		mgr.extraEnv = append(mgr.extraEnv, mgr.egressProxyEnv...)
 		log.Printf("egress: routing workspace egress through proxy %s (log-only)", addr)
 	}
 

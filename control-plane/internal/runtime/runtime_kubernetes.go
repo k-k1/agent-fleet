@@ -99,8 +99,8 @@ type kubeConfig struct {
 	serviceAccount string
 	sessionCmd     string
 	// templateEnv is Config.ExtraEnv: WS_ENV and the egress proxy variables. Unlike the
-	// ECS adapters this one passes it on, as docker and native do — the egress proxy is
-	// the reason — and it travels in the Secret with the rest of the environment, since
+	// ECS adapters, which take only Config.EgressProxyEnv, this
+	// one passes all of it on, as docker and native do, and it travels in the Secret with the rest of the environment, since
 	// an operator's WS_ENV may hold a credential.
 	templateEnv     []string
 	defaultMemBytes int64 // Config.Memory (WS_MEMORY) in bytes; 0 = no default
@@ -777,29 +777,45 @@ func (k *kubeRuntime) secretEnv() map[string]string {
 // step, as main.go sets both.
 func bypassProxyForCP(env map[string]string) {
 	internal := env["AF_CP_INTERNAL_URL"]
-	if internal == "" {
+	if internal == "" || !routesThroughProxy(env) {
 		return
-	}
-	proxied := false
-	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
-		if env[k] != "" {
-			proxied = true
-		}
 	}
 	u, err := url.Parse(internal)
-	if !proxied || err != nil || u.Hostname() == "" {
+	if err != nil || u.Hostname() == "" {
 		return
 	}
-	host := u.Hostname()
+	appendNoProxy(env, u.Hostname())
+}
+
+// routesThroughProxy reports whether env points any proxy variable at an egress proxy.
+func routesThroughProxy(env map[string]string) bool {
+	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		if env[k] != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// appendNoProxy adds hosts to NO_PROXY and no_proxy, skipping any already listed. The two
+// spellings are kept in step.
+func appendNoProxy(env map[string]string, hosts ...string) {
 	for _, k := range []string{"NO_PROXY", "no_proxy"} {
 		cur := env[k]
-		if slices.Contains(splitCSV(cur), host) {
-			continue
+		have := splitCSV(cur)
+		for _, h := range hosts {
+			if slices.Contains(have, h) {
+				continue
+			}
+			have = append(have, h)
+			if cur == "" {
+				cur = h
+			} else {
+				cur += "," + h
+			}
 		}
-		if cur == "" {
-			env[k] = host
-		} else {
-			env[k] = cur + "," + host
+		if cur != "" {
+			env[k] = cur
 		}
 	}
 }

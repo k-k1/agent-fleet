@@ -109,6 +109,8 @@ type manager struct {
 	memMaxBytes int64
 	sessionCmd  string
 	extraEnv    []string
+	// egressProxyEnv is the part of extraEnv that AF_EGRESS_PROXY_ADDR generated.
+	egressProxyEnv []string
 
 	portBase int
 
