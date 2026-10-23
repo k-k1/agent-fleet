@@ -3,6 +3,8 @@
 //   1. the install button appears only for a major that is not installed yet
 //   2. the button POSTs /env/jdk-install, polls to completion, then refetches the list
 //   3. the option itself reads as "not installed" (finding out after selecting is too late)
+//   4. an installed major shows its exact version, and offers an update only when the
+//      agent says a newer patch exists
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -30,13 +32,14 @@ vi.mock("../hostUpdate.ts", () => ({ useHostUpdate: () => null }));
 
 import { EnvTab } from "./EnvTab.tsx";
 
-const toolchains = (installed: string[], java: string) => ({
+const toolchains = (installed: string[], java: string, versions: Record<string, string> = {}) => ({
   node: "system",
   java,
   go: "system",
   timezone: "Asia/Tokyo",
   java_available: ["8", "17", "21"],
   java_installed: installed,
+  java_versions: versions,
   node_options: ["system", "22"],
   go_options: ["system"],
   tz_options: ["Asia/Tokyo"],
@@ -135,5 +138,67 @@ describe("EnvTab Java row", () => {
     // The select is locked too: switching major mid-install would make it unreadable which
     // one is being installed.
     expect(document.querySelector<HTMLSelectElement>(".env-java-pick select")!.disabled).toBe(true);
+  });
+
+  it("shows the resolved version and offers an update when a newer patch exists", async () => {
+    let versions: Record<string, string> = { "21": "21.0.11+10" };
+    api.mockImplementation((path: string) => {
+      if (path === "api/env/toolchains") return Promise.resolve(toolchains(["21"], "21", versions));
+      if (path === "api/env/jdk-latest?major=21") {
+        const cur = versions["21"];
+        return Promise.resolve({
+          major: "21",
+          current: cur,
+          latest: "21.0.13+9",
+          update_available: cur !== "21.0.13+9",
+        });
+      }
+      return Promise.resolve({});
+    });
+    apiJSON.mockImplementation(async () => {
+      versions = { "21": "21.0.13+9" };
+      return { state: "done", major: "21", java_installed: ["21"], java_versions: versions };
+    });
+    await mount();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(document.querySelector(".env-java-version")!.textContent).toBe("21.0.11+10");
+    expect(javaBtn()!.textContent).toBe("21.0.13+9 に更新");
+
+    await act(async () => {
+      javaBtn()!.click();
+    });
+    expect(apiJSON).toHaveBeenCalledWith("api/env/jdk-install", "POST", { major: "21" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // After the refetch the resolved version is the new one and there is nothing to update.
+    expect(document.querySelector(".env-java-version")!.textContent).toBe("21.0.13+9");
+    expect(javaBtn()).toBeNull();
+  });
+
+  it("offers no update when the agent says the JDK is current or the lookup fails", async () => {
+    for (const latest of [
+      () => Promise.resolve({ major: "21", current: "21.0.13+9", latest: "21.0.13+9", update_available: false }),
+      () => Promise.reject(new Error("jdk_latest_unavailable")),
+    ]) {
+      api.mockImplementation((path: string) => {
+        if (path === "api/env/toolchains") return Promise.resolve(toolchains(["21"], "21", { "21": "21.0.13+9" }));
+        if (path.startsWith("api/env/jdk-latest")) return latest();
+        return Promise.resolve({});
+      });
+      await mount();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(document.querySelector(".env-java-version")!.textContent).toBe("21.0.13+9");
+      expect(javaBtn()).toBeNull();
+      act(() => root?.unmount());
+      host?.remove();
+    }
   });
 });

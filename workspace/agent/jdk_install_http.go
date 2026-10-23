@@ -51,6 +51,7 @@ func jdkInstallStatus() map[string]any {
 		"major":          major,
 		"error":          errMsg,
 		"java_installed": installedJavaMajors(),
+		"java_versions":  installedJavaVersions(),
 		"java_available": javaOptions(),
 	}
 }
