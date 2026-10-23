@@ -176,6 +176,14 @@ func (r dedicatedStatsRuntime) MachineProfile() runtime.WorkspaceMachine {
 	return runtime.WorkspaceMachine{Dedicated: r.dedicated}
 }
 
+// ownHomeStatsRuntime is a per-user volume on a shared box (a kubernetes claim): no
+// MachineProfile, but its home is the member's own.
+type ownHomeStatsRuntime struct {
+	agentStatsRuntime
+}
+
+func (ownHomeStatsRuntime) OwnHomeVolume() bool { return true }
+
 // home_own is what lets the Console warn about a nearly full home: only a member's own volume
 // makes disk_used / disk_total theirs. A shared host (no MachineProfile) and a profile that
 // declares no dedicated box must both leave it out.
@@ -193,6 +201,7 @@ func TestWorkspaceStatsMarksAMembersOwnHomeVolume(t *testing.T) {
 		{"dedicated ec2 box", dedicatedStatsRuntime{base, true}, true},
 		{"profile without a dedicated box", dedicatedStatsRuntime{base, false}, false},
 		{"no machine profile (docker / fargate)", base, false},
+		{"per-user volume on a shared box (kubernetes)", ownHomeStatsRuntime{base}, true},
 	}
 	for _, c := range cases {
 		out := workspaceStats(context.Background(), mgr, c.rt, running)

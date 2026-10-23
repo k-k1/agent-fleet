@@ -427,7 +427,7 @@ mcp-call http_method="POST" status=400 latency_ms=2 principal="grant:<id>" clien
   メタデータエンドポイント（`169.254.169.254`）に届き得ます。メンバーの資格情報を持たない AWS SDK はそこで
   見つけたロールに気づかないうちに切り替わります。インスタンスプロファイルを持つ EC2 ホストなら、すべてのセッションで、
   エラーも出さずにそのロールです。Control Plane はワークスペースを `AWS_EC2_METADATA_DISABLED=true` 付きで
-  起動し（docker）、またはタスクロールを外したうえでそれを立てる（ECS）ので、SDK は問い合わせなくなります。
+  起動し（docker と Kubernetes）、またはタスクロールを外したうえでそれを立てる（ECS）ので、SDK は問い合わせなくなります。
   ネットワークでの遮断はホストの役目です。
   - **compose 用の EC2 ホスト**（`deploy/aws/ec2-single`）: IMDSv2 とホップ数 1（`HttpTokens: required`、
     `HttpPutResponseHopLimit: 1`）。ホストネットワークの Control Plane は 1 ホップなのでインスタンス
@@ -438,6 +438,9 @@ mcp-call http_method="POST" status=400 latency_ms=2 principal="grant:<id>" clien
   - **クラウド上のそれ以外の docker ホスト**: 同じメタデータ設定か、Docker の `DOCKER-USER` チェーンで
     ワークスペースのブリッジからの `169.254.169.254` を拒否するホストのファイアウォール規則（ホストの root が
     要ります。compose 自体に新しい権限は要りません）。
+  - **Kubernetes**: この変数はクラスタのメタデータサーバ（ノードのサービスアカウント、GKE では
+    Workload Identity）を塞ぎません。その経路を塞ぐのはクラスタの役目です（NetworkPolicy の egress 規則、
+    または GKE のメタデータ隠蔽）。Control Plane はそれをしません。
   - **ecs-ec2**: スロットのユーザーデータが `ECS_AWSVPC_BLOCK_IMDS=true` を設定します。残っている
     スロットは入れ替えが要ります。設定 → 管理 → スロットで入れ替え予約してください（[03-run](03-run.ja.md)
     「ecs-ec2: 起動テンプレートを変えたあとのスロットの入れ替え」）。

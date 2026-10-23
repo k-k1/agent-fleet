@@ -85,9 +85,13 @@ const (
 
 // kubeConfig is the deployment-wide placement, read once at boot from AF_K8S_*.
 type kubeConfig struct {
-	namespace      string
-	image          string // AF_K8S_WORKSPACE_IMAGE: a tag; Start pins the digest
-	storageClass   string // "" = the cluster's default class
+	namespace    string
+	image        string // AF_K8S_WORKSPACE_IMAGE: a tag; Start pins the digest
+	storageClass string // "" = the cluster's default class
+	// homeSharedFS (AF_K8S_HOME_SHARED_FS) declares that the StorageClass backs claims with
+	// one shared filesystem (an NFS subdir provisioner, say), where statfs of a home is the
+	// whole share's usage.
+	homeSharedFS   bool
 	homeGiB        int
 	stateGiB       int
 	pullSecret     string
@@ -148,6 +152,7 @@ func newKubeFactory(mcfg Config) (RuntimeFactory, error) {
 // fail the boot: a node selector or size that silently fell back to a default would
 // place workspaces where the operator said they must not go.
 func kubeConfigFromEnv(get func(k, def string) string, mcfg Config) (*kubeConfig, error) {
+	sharedFS, _ := strconv.ParseBool(get("AF_K8S_HOME_SHARED_FS", ""))
 	cfg := &kubeConfig{
 		namespace:      get("AF_K8S_NAMESPACE", ""),
 		image:          get("AF_K8S_WORKSPACE_IMAGE", mcfg.Image),
@@ -156,6 +161,7 @@ func kubeConfigFromEnv(get func(k, def string) string, mcfg Config) (*kubeConfig
 		serviceAccount: get("AF_K8S_SERVICE_ACCOUNT", "default"),
 		sessionCmd:     mcfg.SessionCmd,
 		templateEnv:    append([]string(nil), mcfg.ExtraEnv...),
+		homeSharedFS:   sharedFS,
 	}
 	if cfg.namespace == "" {
 		return nil, errors.New("kubernetes runtime: AF_K8S_NAMESPACE is required")
@@ -333,6 +339,14 @@ func (k *kubeRuntime) Endpoint() string {
 }
 
 func (k *kubeRuntime) secretName() string { return k.base + "-env" }
+
+// OwnHomeVolume reports that statfs of the home is this member's own figure. The claim is
+// per workspace, but that alone does not make the filesystem per workspace: ADR 0106
+// expects block storage (one volume per claim), which nothing here checks. A StorageClass
+// that carves claims out of one shared filesystem returns the whole share's usage, so
+// the operator declares it with AF_K8S_HOME_SHARED_FS=1 and the notice is withheld.
+func (k *kubeRuntime) OwnHomeVolume() bool { return !k.cfg.homeSharedFS }
+
 func (k *kubeRuntime) homeClaim() string  { return k.base + "-home" }
 func (k *kubeRuntime) stateClaim() string { return k.base + "-state" }
 
@@ -726,8 +740,19 @@ func (k *kubeRuntime) ensureService(ctx context.Context) error {
 // secretEnv is the whole per-start environment: the deployment's template env, the
 // start's own variables (the minted tokens among them), then AGENT_TOKEN and the DEK. A
 // later entry wins, the order docker gives its -e flags.
+//
+// AWS_EC2_METADATA_DISABLED is seeded first, as docker's envArgs does, so an operator's
+// WS_ENV can still override it (which is why it lives here and not in the pod template's
+// env, which beats envFrom). It makes the AWS SDKs stop asking the node's instance
+// metadata service; it does not block a pod's route to the GKE metadata server (node
+// service account / Workload Identity), which a tool ignoring the variable still reaches.
+// AF_WS_WORKLOAD_AWS=1 leaves the default chain alone, as on docker and ECS.
 func (k *kubeRuntime) secretEnv() map[string]string {
 	env := map[string]string{}
+	// The opt-in may arrive from either list (docker merges them before asking).
+	if !slices.Contains(k.extraEnv, "AF_WS_WORKLOAD_AWS=1") && !slices.Contains(k.cfg.templateEnv, "AF_WS_WORKLOAD_AWS=1") {
+		env["AWS_EC2_METADATA_DISABLED"] = "true"
+	}
 	for _, list := range [][]string{k.cfg.templateEnv, k.extraEnv} {
 		for _, kv := range list {
 			if key, v, ok := strings.Cut(kv, "="); ok && key != "" {
