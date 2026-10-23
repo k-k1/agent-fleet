@@ -39,6 +39,9 @@ describe("TokensTab what-this-token-can-do section", () => {
       expect(text).toContain(tool);
     }
     expect(text).toContain(t("tokens.can_stopped"));
+    // A tenant Block withholds the tools from /mcp's list; the tab must say so rather than promise them.
+    expect(text).toContain(t("tokens.can_memory_setting_post"));
+    expect(t("tokens.can_memory_setting_post")).toMatch(/Block|ブロック/);
     // A write token with “Read only” is refused by the Agent, so the write line must name the setting.
     expect(t("tokens.can_memory_write")).toMatch(/Read and write|読み書き/);
 

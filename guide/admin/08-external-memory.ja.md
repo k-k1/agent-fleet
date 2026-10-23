@@ -7,7 +7,7 @@ updated: "2026-10"
 
 [English](08-external-memory.md) | 日本語
 
-メンバーは、Agent Fleet の外のエージェント（自分のマシンの Claude Code や Claude Desktop。自分の MCP トークンを持つもの）に、
+メンバーは、Agent Fleet の外のエージェント（自分のマシンで MCP トークンを持つ Claude Code や Claude Desktop、または MCP OAuth で接続した claude.ai などのアプリ）に、
 自分の Agent Fleet メモリの一覧・検索・読み取りを許せます。もう一段階選ぶと保存と忘却も許せます
 （[メンバー編](../member/14-agent-memory.ja.md#外部のエージェントから-agent-fleet-のメモリを使う)）。このときメモリの本文はワークスペースの外に出て、そのクライアントのモデルに渡ります。
 秘密情報のスキャンは認証情報を止めますが、顧客名や社内の事情までは止められません。このページは、テナント全体でこれを止める方法です。
