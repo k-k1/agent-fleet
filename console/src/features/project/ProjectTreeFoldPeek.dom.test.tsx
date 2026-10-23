@@ -104,6 +104,19 @@ describe("folded node summary", () => {
     expect(badge()?.title).toContain("Also running:\nkid");
   });
 
+  it("lists live descendants on the badge of a parent with no sessions of its own", async () => {
+    useSessionsStore.setState({
+      sessions: [
+        sess("kid", { repo: "af@w", createdAt: at(2) }),
+        sess("kid2", { repo: "af@w", createdAt: at(3) }),
+      ],
+    });
+    await render();
+    expect(peekText()).toBeNull();
+    expect(badge()?.textContent).toBe("●2");
+    expect(badge()?.title).toContain("kid2\nkid");
+  });
+
   it("falls back to the newest stopped session, dimmed, when none is live", async () => {
     useSessionsStore.setState({
       sessions: [

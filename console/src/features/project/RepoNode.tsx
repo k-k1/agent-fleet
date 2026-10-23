@@ -118,7 +118,10 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
   const top = live[0] ?? mine[0];
   const liveBelow = below.flatMap((f) => sessionsInFolder(sessions, f).filter((s) => s.alive));
   const others = [...live.slice(1), ...liveBelow].map(displayName);
-  const peek = !open && top ? { s: top, others } : undefined;
+  const peek = !open && top ? { s: top } : undefined;
+  // Independent of `peek`: a parent with no sessions of its own has no summary row but its badge
+  // still counts the live descendants.
+  const alsoRunning = !open ? others : undefined;
   // A root's header height sets where its worktrees' headers pin (project.css). Only roots:
   // deeper worktree headers do not pin, and a nested value would shadow the root's.
   const headRef = usePublishedHeight<HTMLDivElement>("--proj-base-head-h", depth === 0);
@@ -163,6 +166,7 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
             sess={{ alive: sessAlive, total: sessTotal }}
             unread={unread}
             peek={peek}
+            alsoRunning={alsoRunning}
             stoppedCount={stoppedMine.length}
             onArchiveStopped={() => void actions.archiveStopped(stoppedMine)}
           />
