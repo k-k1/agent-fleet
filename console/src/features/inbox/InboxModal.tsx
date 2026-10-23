@@ -34,7 +34,7 @@ import {
   type InboxPerson,
   type InboxSettings,
 } from "./store.ts";
-import { AttachmentView, buildAttachments, emptyRecipe, RecipeEditor, SessionAttachEditor, type RecipeDraft, type SessionChoice } from "./Attachments.tsx";
+import { AttachmentView, buildAttachments, emptyRecipe, RecipeEditor, SessionAttachEditor, type RecipeDraft, type SessionAttach } from "./Attachments.tsx";
 import "./inbox.css";
 
 /** The CP's caps (inbox.go), repeated so the form can say so before sending. */
@@ -444,8 +444,7 @@ function Compose({ onSent }: { onSent: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [recipe, setRecipe] = useState<RecipeDraft | null>(null);
-  const [session, setSession] = useState<SessionChoice | null>(null);
-  const [share, setShare] = useState(false);
+  const [sessions, setSessions] = useState<SessionAttach[]>([]);
   const bytes = byteLength(body);
   const send = async () => {
     if (to.length === 0) {
@@ -457,7 +456,7 @@ function Compose({ onSent }: { onSent: () => void }) {
       kind,
       to.map((p) => p.userKey),
       body,
-      buildAttachments(recipe, session, share, to),
+      buildAttachments(recipe, sessions, to),
     );
     setBusy(false);
     if (!r.ok) {
@@ -469,8 +468,7 @@ function Compose({ onSent }: { onSent: () => void }) {
     setTo([]);
     setErr("");
     setRecipe(null);
-    setSession(null);
-    setShare(false);
+    setSessions([]);
     onSent();
   };
   return (
@@ -501,7 +499,7 @@ function Compose({ onSent }: { onSent: () => void }) {
         <span>{tr("inbox.attach_recipe")}</span>
       </label>
       {recipe && <RecipeEditor value={recipe} onChange={setRecipe} />}
-      <SessionAttachEditor value={session} share={share} recipients={to} onChange={setSession} onShare={setShare} />
+      <SessionAttachEditor value={sessions} recipients={to} onChange={setSessions} />
       <p className="ui-field-hint">{tr("inbox.compose_agents_note")}</p>
       {err && (
         <p className="ui-field-hint inbox-warn" role="alert">

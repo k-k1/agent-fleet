@@ -152,7 +152,7 @@ appear in the notification centre, and an open request never expires there.
   this; a message's recipe any recipient can. Pressing it again gives the same memo. That
   memo is always sent to a session on its own, never joined to your other memos, and a
   session started from it, or from a request, shows an inbox mark in the left pane.
-- **Attaching a session**: pick one of your sessions, or one shared with you. Attaching
+- **Attaching a session**: pick up to 5 sessions, each one of yours or one shared with you. Attaching
   your own session can share it read-only with every recipient (the whole conversation,
   including what is added later) — you confirm the session, the recipients and the scope,
   and the share and the message are created together or not at all. A recipient who cannot
