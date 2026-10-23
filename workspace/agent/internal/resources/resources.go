@@ -54,7 +54,8 @@ type Stats struct {
 	DiskUsed  *uint64 `json:"disk_used,omitempty"`
 	DiskTotal *uint64 `json:"disk_total,omitempty"`
 	// BootInstallFailed maps each CLI whose install failed on this start to the reason
-	// (no_space, network, checksum, other). It is filled by the caller, not by Read: the
+	// (no_space, network, checksum, other), or "skipped_no_space" for an upgrade skipped for
+	// lack of space whose installed copy still runs. It is filled by the caller, not by Read: the
 	// status file belongs to the entrypoint, not to the cgroup. Absent when nothing failed
 	// or the outcome is unknown, so the admin view never flags on a guess.
 	BootInstallFailed map[string]string `json:"boot_install_failed,omitempty"`

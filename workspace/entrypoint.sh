@@ -330,7 +330,8 @@ VJ=/usr/local/share/agent-fleet/versions.json
 vj_pin() { node -e 'try{process.stdout.write(String(require(process.argv[1])[process.argv[2]]||""))}catch{}' "$VJ" "$1" 2>/dev/null; }
 cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
 # Boot-install outcome per CLI, read by the Agent (boot_install_status.go) for Settings >
-# Toolchains. One line per CLI: <tool>\t<ok|skipped|failed>\t<reason>. It lives under /tmp rather
+# Toolchains. One line per CLI: <tool>\t<ok|skipped|failed>\t<reason>
+# (reason: failed always; skipped only for "no_space", an upgrade skipped with the old copy kept). It lives under /tmp rather
 # than home because the failure it reports is usually a full home, where a status file in home
 # could not be written. /tmp is shared, so the files sit in a private directory of ours that is
 # checked before use (a real directory, not a symlink, owned by this user); a directory that fails
@@ -374,11 +375,15 @@ bi_reason() {
 bi_failed() { local r t; r="$(bi_reason)"; for t in "$@"; do bi_note "$t" failed "$r"; done; }
 # bi_room <mb> <tool...> — whether home has <mb> MiB free (true when df cannot tell). When it
 # has not, the install is skipped and what is installed stays: a half-run install is how a full
-# home turned into "every agent broke at once".
+# home turned into "every agent broke at once". A tool that is already installed keeps working,
+# so its skipped upgrade is recorded "skipped no_space" and only a tool with nothing usable is
+# "failed no_space" (the Agent refuses a start only for the latter).
 bi_room() {
   local need="$1" t; shift
   bi_free_ok "$need" "$*" && return 0
-  for t in "$@"; do bi_note "$t" failed no_space; done
+  for t in "$@"; do
+    if cli_present "$t"; then bi_note "$t" skipped no_space; else bi_note "$t" failed no_space; fi
+  done
   return 1
 }
 # bi_free_ok <mb> <what> — the check alone, for callers that have no per-CLI outcome to record

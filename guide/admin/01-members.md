@@ -50,11 +50,13 @@ the reasons, which are:
   [02-limits.md](02-limits.md#viewing-a-members-resources)).
 - "A session is still holding it past its deadline": the workspace is running and a session is
   still holding it open after its deadline.
-- "The home disk is nearly full": the disk gauge is at 85 % or more.
-- "The home disk is full or almost out of space": the disk gauge is at 95 % or more, or less than
-  2 GiB is left.
+- "The home disk is nearly full": the home is over 90 % full or has less than
+  2 GiB free (the same rule as the member detail's notice).
+- "The home disk is full or almost out of space": the same condition, escalated at 95 % or more
+  or when less than 2 GiB is left.
 - "A CLI failed to install at the last start": a full home is the usual cause. The per-CLI reason
-  is in the member detail.
+  is in the member detail. A CLI whose upgrade was merely skipped for lack of space, with the old
+  version still installed and working, does not raise this flag; the member detail notes it instead.
 
 In the default order, cards whose home disk is full or almost out of space come first, then cards
 with any other reason, then everyone else, each group by name.
@@ -91,8 +93,8 @@ operations. Resources and sessions, force-stop, and limit settings are covered i
 Its **"Size and limits"** card names each CLI that failed to install at the last start, with the
 reason. On ECS on EC2, where the home is the member's own volume, it also shows a notice when the
 home is nearly full. That notice uses the member's own thresholds: it appears above 90 % or with
-less than 2 GiB free and goes away once usage is below 85 % with more than 3 GiB free. These are not
-the roster gauge's levels, so a card can be marked nearly full while the detail shows no notice.
+less than 2 GiB free and goes away once usage is below 85 % with more than 3 GiB free. The roster
+card warns by the same rule, so a card marked nearly full has this notice behind it.
 The notice needs a running workspace; a stopped or unreachable one shows none, and the install
 flag appears only when a failure was actually recorded.
 

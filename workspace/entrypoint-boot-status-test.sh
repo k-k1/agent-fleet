@@ -120,6 +120,14 @@ has 'only 100 MiB free' || fail "low space: no WARN naming the free space"
 has 'agy already present' && fail "low space: reported agy as already present"
 grep -q 0.9 "$T/home/.local/bin/rtk" || fail "low space: an installed CLI was touched"
 
+# 4a. An installed CLI whose upgrade is skipped for lack of space keeps working: "skipped
+# no_space", never "failed" (the Agent refuses a start only for failed, and the Console words a
+# failure as "install failed").
+reset; printf '#!/bin/sh\necho rtk 0.9\n' >"$T/home/.local/bin/rtk"; chmod +x "$T/home/.local/bin/rtk"
+run_block STUB_FREE_MB=100 AF_AGENT_SELF_UPDATE_SKIP=0
+[ "$(st rtk)" = "rtk skipped no_space" ] || fail "low space, rtk installed: rtk is '$(st rtk)'"
+[ "$(st agy)" = "agy failed no_space" ] || fail "low space, rtk installed: absent agy is '$(st agy)'"
+
 # 4b. A skipped install is not undone by a later path in the same start: the claude fallback
 # (claude absent) and the self-update opt-in both stay off, and nothing is downloaded at all.
 reset; printf '#!/bin/sh\necho 0.9\n' >"$T/home/.local/bin/agy"; chmod +x "$T/home/.local/bin/agy"

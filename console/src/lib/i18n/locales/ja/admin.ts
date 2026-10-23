@@ -1020,6 +1020,7 @@ export const admin = {
   "admin.ws_size_change": "変更",
   "admin.ws_size_unset": "すべて配備の既定",
   "admin.ws_home_full": "home ディスクの空きが少なくなっています（{total} GiB 中 {used} GiB 使用）。空きを作るまで、インストールや書き込みに失敗することがあります。",
+  "admin.ws_boot_skipped": "直近の起動で、空き容量が足りず CLI のアップグレードをスキップしました: {list}。現在のバージョンを引き続き使用中で、次の起動でもう一度試します。",
   "admin.ws_boot_failed": "直近の起動で CLI のインストールに失敗しました: {list}。次の起動でもう一度試します。",
   "admin.ws_size_group": "ワークスペースのサイズ",
   "admin.session_limit_group": "セッション上限",

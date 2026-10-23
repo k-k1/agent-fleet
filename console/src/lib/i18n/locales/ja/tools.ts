@@ -398,6 +398,8 @@ export const tools = {
     "home ディスクの空きが少なくなっています（{total} GiB 中 {free} GiB）。いっぱいになるとインストールやエージェントが動かなくなります。設定 › マシン から空きを作るか、テナント管理者に home の拡張を依頼してください。",
   "env.boot_failed": "インストール失敗: {reason}",
   "env.boot_failed_title": "このワークスペースの起動時のインストールに失敗しました。次の起動でもう一度試します。",
+  "env.boot_skipped": "アップグレードをスキップ: home ディスク満杯、現在のバージョンを使用中",
+  "env.boot_skipped_title": "このワークスペースの起動時のアップグレードは、空き容量が足りずスキップされました。インストール済みのバージョンはそのまま動作します。次の起動でもう一度試します。",
   "env.boot_reason_no_space": "home ディスク満杯",
   "env.boot_reason_network": "ネットワークエラー",
   "env.boot_reason_checksum": "チェックサム不一致",

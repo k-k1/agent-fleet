@@ -1029,6 +1029,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.ws_size_change": "Change",
   "admin.ws_size_unset": "All deployment defaults",
   "admin.ws_home_full": "The home disk is nearly full ({used} of {total} GiB). Installs and writes can fail until space is freed.",
+  "admin.ws_boot_skipped": "A CLI upgrade was skipped at the last start for lack of space: {list}. The old version is still in use; the upgrade is tried again at the next start.",
   "admin.ws_boot_failed": "A CLI failed to install at the last start: {list}. It is tried again at the next start.",
   "admin.ws_size_group": "Workspace size",
   "admin.session_limit_group": "Session limit",

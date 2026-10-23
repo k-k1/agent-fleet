@@ -254,6 +254,11 @@ function ToolVersions({ running, cliRelease }: { running: boolean; cliRelease?: 
                       {tr("env.boot_failed", { reason: tr(bootReasonKey(t.bootInstall.reason)) })}
                     </span>
                   )}
+                  {t.bootInstall?.status === "skipped" && t.bootInstall.reason === "no_space" && (
+                    <span className="tool-ver-pin" title={tr("env.boot_skipped_title")}>
+                      {tr("env.boot_skipped")}
+                    </span>
+                  )}
                   {t.overridden && (
                     <span className="tool-ver-badge" title={tr("env.override_title")}>
                       override

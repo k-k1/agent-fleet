@@ -53,6 +53,17 @@ func TestCLIInstallRefusalNamesTheReason(t *testing.T) {
 	}
 }
 
+// An upgrade skipped for lack of space leaves the old CLI in use: never a start refusal, even
+// when the binary is not found (the refusal is for failed, which entrypoint.sh writes only when
+// nothing usable is installed).
+func TestCLIInstallRefusalIgnoresASkippedUpgrade(t *testing.T) {
+	isolateCLIs(t)
+	writeBootStatus(t, "codex\tskipped\tno_space\n")
+	if ref := cliInstallRefusal("codex"); ref != nil {
+		t.Errorf("a skipped upgrade refused the start: %+v", ref)
+	}
+}
+
 func TestCLIInstallRefusalLeavesEverythingElseAlone(t *testing.T) {
 	home := isolateCLIs(t)
 	writeBootStatus(t, "codex\tfailed\tno_space\nclaude\tskipped\nopencode\tok\nagy\tfailed\tnetwork\n")

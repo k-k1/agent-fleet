@@ -28,9 +28,9 @@ export function rosterState(m: Member): RosterState {
 export type AttentionReason = "auto_stop" | "hold_lapsed" | "disk_warn" | "disk_error" | "boot_install";
 
 const GIB = 1024 ** 3;
-/** The thresholds #2383 uses for the boot-time disk check: warn at 85 %, error at 95 % or with
- *  less than 2 GiB left. */
-export const DISK_WARN_RATIO = 0.85;
+/** The escalation tier of a card already in pressure: 95 % or less than 2 GiB left. Whether the
+ *  card warns at all is never decided here but by nextHomeDiskPressure, the rule the member
+ *  detail's notice uses, so a "nearly full" card always has that notice behind it. */
 export const DISK_ERROR_RATIO = 0.95;
 export const DISK_ERROR_FREE = 2 * GIB;
 
@@ -41,10 +41,8 @@ export type DiskLevel = "ok" | "warn" | "error";
 export function diskLevel(m: Member): DiskLevel | null {
   const d = m.disk;
   if (!d || !d.total || d.total <= 0 || !Number.isFinite(d.used)) return null;
-  const ratio = d.used / d.total;
-  if (ratio >= DISK_ERROR_RATIO || d.total - d.used < DISK_ERROR_FREE) return "error";
-  if (ratio >= DISK_WARN_RATIO) return "warn";
-  return "ok";
+  if (!nextHomeDiskPressure(false, d.used, d.total)) return "ok";
+  return d.used / d.total >= DISK_ERROR_RATIO || d.total - d.used < DISK_ERROR_FREE ? "error" : "warn";
 }
 
 export function diskRatio(m: Member): number | null {
@@ -53,8 +51,24 @@ export function diskRatio(m: Member): number | null {
 }
 
 /** The CLIs that failed to install at the last start, as [tool, reason] sorted by tool; empty
- *  when none failed or the Agent did not say. */
+ *  when none failed or the Agent did not say. A skipped upgrade is not among them. */
 export function bootFailures(failed?: Record<string, string> | null): [string, string][] {
+  return bootEntries(failed).filter(([, reason]) => reason !== BOOT_SKIPPED_NO_SPACE);
+}
+
+/** The reason the Agent reports for an upgrade skipped for lack of space while the installed
+ *  CLI keeps working. It shares the boot_failed map with real failures, so every reader must
+ *  split on it: it is never a failure and never flags the member. */
+export const BOOT_SKIPPED_NO_SPACE = "skipped_no_space";
+
+/** The CLIs whose upgrade was skipped for lack of space at the last start, sorted by tool. */
+export function bootSkipped(failed?: Record<string, string> | null): string[] {
+  return bootEntries(failed)
+    .filter(([, reason]) => reason === BOOT_SKIPPED_NO_SPACE)
+    .map(([tool]) => tool);
+}
+
+function bootEntries(failed?: Record<string, string> | null): [string, string][] {
   return Object.entries(failed ?? {}).sort(([a], [b]) => a.localeCompare(b));
 }
 

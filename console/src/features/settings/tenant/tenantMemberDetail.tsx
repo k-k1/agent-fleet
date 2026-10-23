@@ -29,7 +29,7 @@ import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
 import type { HomeResize, Member, WsSizing, WsSlot } from "../parts/adminShared.ts";
 import { fmtG, fmtPct, fmtGbHint, ladderFor, memberClassID, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
 import { bootReasonKey } from "../../../core/store/bootInstallReason.ts";
-import { bootFailures, homeFullFigures, memberStopAvailable, nextMemberHomePressure } from "./memberRoster.ts";
+import { bootFailures, bootSkipped, homeFullFigures, memberStopAvailable, nextMemberHomePressure } from "./memberRoster.ts";
 import { MemberAutoStopDetail, MemberIdleDetail, MemberSizeChips } from "./tenantMembers.tsx";
 import { MemberEngineAccessPanel } from "./tenantEngineAccess.tsx";
 
@@ -229,6 +229,7 @@ export function MemberView({
   // workspace's own report or, while stopped, the stored outcome. The roster snapshot in
   // `member` is fixed at click time and must never decide it.
   const bootFailed = bootFailures(stats?.boot_failed);
+  const bootSkippedTools = bootSkipped(stats?.boot_failed);
   const homeFigures = homeFullFigures(stats);
   const fmtGiB = (b: number) => (b / 1024 ** 3).toFixed(1);
   const diskRatio = diskTotal && stats?.disk_used != null ? stats.disk_used / diskTotal : null;
@@ -591,6 +592,12 @@ export function MemberView({
             {tr("admin.ws_boot_failed", {
               list: bootFailed.map(([tool, reason]) => `${tool} (${tr(bootReasonKey(reason))})`).join(", "),
             })}
+          </p>
+        )}
+        {bootSkippedTools.length > 0 && (
+          <p className="ws-size-flag" role="status">
+            <Icon name="warning" />
+            {tr("admin.ws_boot_skipped", { list: bootSkippedTools.join(", ") })}
           </p>
         )}
         {limitOpen && (
