@@ -94,3 +94,19 @@ func TestSharedTerminalForkAtRefusedWhenServeUnavailable(t *testing.T) {
 		t.Fatal("BuildLaunch = nil error; want a refusal instead of a whole-conversation fork")
 	}
 }
+
+// The point was resolved against one conversation and ForkFrom may name another by launch time (a
+// /new or reconnect in between): the launch refuses and copies nothing.
+func TestSharedForkAtRefusesAPointOutsideTheSource(t *testing.T) {
+	d := newSharedDaemon(t)
+	d.sessions["ses_b"] = sharedMetadata("source-sid", "source")
+	d.messageIDs = map[string][]string{"ses_b": {"msg_b1"}}
+	m := terminalMeta(t, "forkat-moved")
+	m.ForkFrom, m.ForkAt = "ses_b", "msg_a1" // msg_a1 belonged to the earlier conversation
+	if _, err := (agentImpl{}).BuildLaunch(m, agents.LaunchOpts{}); err == nil {
+		t.Fatal("BuildLaunch accepted a fork point that is not in the source conversation")
+	}
+	if f := d.callsMatching("POST /api/session/ses_b/fork"); len(f) != 0 {
+		t.Fatalf("a fork was made anyway: %v", f)
+	}
+}

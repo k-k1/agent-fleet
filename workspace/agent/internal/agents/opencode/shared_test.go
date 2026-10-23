@@ -31,10 +31,11 @@ type sharedDaemon struct {
 	next       int
 	pid        int
 	version    string
-	failGet    map[string]bool // GET of these session ids answers 503
-	deleteGate func(id string) // runs on a DELETE before it is applied (the lock is released)
-	failSwitch bool            // model/agent switches answer 500
-	failEnv    int             // fail this many environment PUTs with 503 before accepting
+	failGet    map[string]bool     // GET of these session ids answers 503
+	deleteGate func(id string)     // runs on a DELETE before it is applied (the lock is released)
+	failSwitch bool                // model/agent switches answer 500
+	messageIDs map[string][]string // session id → message ids GET .../message answers with
+	failEnv    int                 // fail this many environment PUTs with 503 before accepting
 }
 
 func newSharedDaemon(t *testing.T) *sharedDaemon {
@@ -121,6 +122,12 @@ func (d *sharedDaemon) handle(w http.ResponseWriter, r *http.Request) {
 			m, _ := body["metadata"].(map[string]any)
 			d.sessions[id] = md(m) // replaces, as the real server does
 			w.WriteHeader(http.StatusNoContent)
+		case len(parts) == 4 && parts[3] == "message" && r.Method == "GET":
+			var data []map[string]any
+			for _, mid := range d.messageIDs[id] {
+				data = append(data, map[string]any{"id": mid, "type": "user"})
+			}
+			reply(map[string]any{"data": data})
 		case len(parts) == 4 && parts[3] == "fork":
 			d.next++
 			nid := fmt.Sprintf("ses_fork%d", d.next)
@@ -273,6 +280,7 @@ func TestSharedLaunchVanishedSessionStartsOver(t *testing.T) {
 func TestSharedLaunchForkRetagsTheCopy(t *testing.T) {
 	d := newSharedDaemon(t)
 	d.sessions["ses_src"] = sharedMetadata("source-sid", "source")
+	d.messageIDs = map[string][]string{"ses_src": {"msg_1", "msg_5"}}
 	m := terminalMeta(t, "copy")
 	m.ForkFrom, m.ForkAt = "ses_src", "msg_5"
 	if _, err := (agentImpl{}).BuildLaunch(m, agents.LaunchOpts{}); err != nil {

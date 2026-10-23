@@ -332,7 +332,7 @@ func TestContractV2Todo(t *testing.T) {
 			name, extra = "experimental.todo", map[string]any{"experimental": map[string]any{"todo": true}}
 		}
 		t.Run(name, func(t *testing.T) {
-			_, addr, dir := startStubbedV2With(t, extra)
+			stub, addr, dir := startStubbedV2With(t, extra)
 			ses, err := serveCreateSession(addr, dir, "todo")
 			if err != nil {
 				t.Fatal(err)
@@ -349,17 +349,66 @@ func TestContractV2Todo(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			res.Body.Close()
+			defer res.Body.Close()
+			if e, has := decodeTurnError(res.Body); has {
+				t.Fatalf("the turn failed: %+v", e)
+			}
+			stub.mu.Lock()
+			seen := stub.seen
+			stub.mu.Unlock()
+			if seen < 2 {
+				t.Fatalf("the stub provider saw %d requests; the turn did not reach it", seen)
+			}
 			var raw json.RawMessage
 			if err := (apiTarget{Addr: addr, Client: serveClient}).get("/api/session/"+ses+"/message?limit=50", &raw); err != nil {
 				t.Fatal(err)
 			}
-			t.Logf("%s: messages: %s", name, raw)
 			if dump := os.Getenv("OPENCODE_V2_DUMP"); dump != "" {
 				_ = os.WriteFile(filepath.Join(dump, "todo-"+name+".messages.json"), raw, 0o644)
 			}
-			td, _ := readTranscript(m)
-			t.Logf("%s: turns=%d tasks=%+v", name, len(td.Turns), td.Tasks)
+			td, ok := readTranscript(m)
+			if !ok {
+				t.Fatal("the transcript could not be read")
+			}
+			// The tool part itself, as the daemon recorded it.
+			var w struct {
+				Data []v2Msg `json:"data"`
+			}
+			if err := json.Unmarshal(raw, &w); err != nil {
+				t.Fatal(err)
+			}
+			var status, errText string
+			for _, mm := range w.Data {
+				for _, c := range mm.Content {
+					if c.Type == "tool" && c.Name == "todowrite" {
+						status = c.State.Status
+						if c.State.Error != nil {
+							errText = c.State.Error.Message
+						}
+					}
+				}
+			}
+			if !on {
+				if status != "error" || !strings.Contains(errText, "todowrite") {
+					t.Fatalf("default config: todowrite part status %q error %q; want the tool to be unavailable", status, errText)
+				}
+				if len(td.Tasks) != 0 {
+					t.Fatalf("default config: tasks = %+v", td.Tasks)
+				}
+				return
+			}
+			if status != "completed" {
+				t.Fatalf("experimental.todo: todowrite part status %q (%s); the flag did not enable the tool", status, errText)
+			}
+			want := [][2]string{{"write the probe", "completed"}, {"read the result", "in_progress"}, {"report", "pending"}}
+			if len(td.Tasks) != len(want) {
+				t.Fatalf("experimental.todo: tasks = %+v", td.Tasks)
+			}
+			for i, wt := range want {
+				if td.Tasks[i].Subject != wt[0] || td.Tasks[i].Status != wt[1] {
+					t.Fatalf("task %d = %+v, want %v", i, td.Tasks[i], wt)
+				}
+			}
 		})
 	}
 }
