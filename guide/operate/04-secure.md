@@ -506,7 +506,7 @@ into answers, logs or commits is part of the agent-side instructions as well.
   cloud metadata endpoint (`169.254.169.254`) of the machine it runs on, and an AWS SDK with no
   member credentials falls back to whatever role it finds there: on an EC2 host with an
   instance profile, that role, in every session, without an error. The Control Plane starts
-  every workspace with `AWS_EC2_METADATA_DISABLED=true` (docker) or withholds the task role
+  every workspace with `AWS_EC2_METADATA_DISABLED=true` (docker and Kubernetes) or withholds the task role
   and sets it (ECS), which stops the SDKs from asking; the network block is the host's job:
   - **EC2 host for compose** (`deploy/aws/ec2-single`): IMDSv2 with hop limit 1
     (`HttpTokens: required`, `HttpPutResponseHopLimit: 1`). The host-network Control Plane is
@@ -518,6 +518,9 @@ into answers, logs or commits is part of the agent-side instructions as well.
   - **Any other docker host in a cloud**: the same metadata settings, or a host firewall rule
     in Docker's `DOCKER-USER` chain that rejects `169.254.169.254` from the workspace bridges
     (it needs root on the host; compose itself needs nothing new).
+  - **Kubernetes**: the variable does not block the cluster's metadata server (the node's
+    service account, Workload Identity on GKE). Blocking that route is the cluster's job (a
+    NetworkPolicy egress rule, or GKE metadata concealment); the Control Plane does not do it.
   - **ecs-ec2**: the slot user data sets `ECS_AWSVPC_BLOCK_IMDS=true`; retained slots have to
     be replaced: reserve them in Settings → Admin → Slots ([03-run](03-run.md), "ecs-ec2:
     replacing slots after a launch template change").

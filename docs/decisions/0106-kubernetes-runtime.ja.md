@@ -711,3 +711,11 @@ Pod を止めていた。いまは両方の消去（init コンテナと erase P
 - **費用。** 測定した費用表は同じ Issue と [`deploy/gcp/gke/README.md`](../../deploy/gcp/gke/README.md#cost) にある。この記録には
   数値を書かない。
 - **測っていないこと：** GKE Autopilot（未決事項 4）。フェーズ 2 に残る。
+
+## 追記 2026-10-23 — IMDS の無効化とホーム満杯通知（#2498）
+
+- ワークスペースの Secret の先頭に `AWS_EC2_METADATA_DISABLED=true` を入れる（docker と同じ）。オペレーターの `WS_ENV` で
+  上書きできる。`AF_WS_WORKLOAD_AWS=1` のときは入れない。GKE のメタデータサーバ（ノードのサービスアカウント / Workload
+  Identity）は塞がない。その経路を塞ぐこと（NetworkPolicy、メタデータの隠蔽）はクラスタ側に任せる。
+- ランタイムは `OwnHomeVolume()` で `home_own` を報告する。ホームの claim はワークスペースごとに分かれている。
+  実クラスタでは未検証。

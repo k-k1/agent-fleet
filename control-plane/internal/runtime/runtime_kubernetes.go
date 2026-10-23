@@ -333,6 +333,12 @@ func (k *kubeRuntime) Endpoint() string {
 }
 
 func (k *kubeRuntime) secretName() string { return k.base + "-env" }
+
+// OwnHomeVolume reports that the home is this member's own volume: homeClaim is a
+// ReadWriteOnce claim created per workspace, never a shared one, so the Agent's statfs of
+// home measures only their bytes and a nearly-full threshold on it is theirs to act on.
+func (k *kubeRuntime) OwnHomeVolume() bool { return true }
+
 func (k *kubeRuntime) homeClaim() string  { return k.base + "-home" }
 func (k *kubeRuntime) stateClaim() string { return k.base + "-state" }
 
@@ -726,8 +732,18 @@ func (k *kubeRuntime) ensureService(ctx context.Context) error {
 // secretEnv is the whole per-start environment: the deployment's template env, the
 // start's own variables (the minted tokens among them), then AGENT_TOKEN and the DEK. A
 // later entry wins, the order docker gives its -e flags.
+//
+// AWS_EC2_METADATA_DISABLED is seeded first, as docker's envArgs does, so an operator's
+// WS_ENV can still override it (which is why it lives here and not in the pod template's
+// env, which beats envFrom). It makes the AWS SDKs stop asking the node's instance
+// metadata service; it does not block a pod's route to the GKE metadata server (node
+// service account / Workload Identity), which a tool ignoring the variable still reaches.
+// AF_WS_WORKLOAD_AWS=1 leaves the default chain alone, as on docker and ECS.
 func (k *kubeRuntime) secretEnv() map[string]string {
 	env := map[string]string{}
+	if !slices.Contains(k.extraEnv, "AF_WS_WORKLOAD_AWS=1") {
+		env["AWS_EC2_METADATA_DISABLED"] = "true"
+	}
 	for _, list := range [][]string{k.cfg.templateEnv, k.extraEnv} {
 		for _, kv := range list {
 			if key, v, ok := strings.Cut(kv, "="); ok && key != "" {

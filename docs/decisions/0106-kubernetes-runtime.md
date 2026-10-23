@@ -992,3 +992,12 @@ cluster (2026-10-02/05; GKE 1.35.8, Dataplane V2, `asia-northeast1`); the figure
 - **Cost.** The measured cost table is in the same issue and in
   [`deploy/gcp/gke/README.md`](../../deploy/gcp/gke/README.md#cost); this record states no figure.
 - **Not measured:** GKE Autopilot (open question 4), which stays with phase 2.
+
+## Note 2026-10-23 — IMDS opt-out and home-full notice (#2498)
+
+- The workspace Secret now carries `AWS_EC2_METADATA_DISABLED=true` as the first entry, as
+  docker does, so an operator's `WS_ENV` still overrides it; `AF_WS_WORKLOAD_AWS=1` leaves it
+  out. It does not block the GKE metadata server (node service account / Workload Identity);
+  blocking that route (NetworkPolicy, metadata concealment) is left to the cluster.
+- The runtime reports `home_own` through `OwnHomeVolume()`: the home claim is per workspace.
+  Not verified on a real cluster.

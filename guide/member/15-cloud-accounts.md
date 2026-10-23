@@ -558,4 +558,7 @@ the change, within about five minutes.
 included: `af-gcloud-exec` keeps Google's standard ways of finding credentials (gcloud's and the client
 libraries') from finding anything but the token it hands over; it does not make your files unreadable, and a tool
 that looks elsewhere, such as `gsutil` with its own configuration, is not covered. On a workspace that runs directly on a Google Cloud VM, a
-program that ignores those standard ways could still reach the VM's own identity.
+program that ignores those standard ways could still reach the VM's own identity. The same holds for a pod on Kubernetes: the
+workspace is started with `AWS_EC2_METADATA_DISABLED=true`, but that variable does not block the cluster's metadata server (the
+node's service account, or Workload Identity on GKE), so a program that ignores the standard ways could still reach that
+identity unless your administrator blocks the route in the cluster's network.
