@@ -2,8 +2,10 @@
 
 English | [日本語](0115-move-session-to-another-agent.ja.md)
 
-- Status: **accepted** (2026-10-20; proposed 2026-10-15). P2a and P2b are built and were used once
-  on a live fleet; see the implementation record at the end. Follow-ups: #2233, #2252
+- Status: **accepted** (2026-10-20; proposed 2026-10-15). P2a and P2b are built, first released in v0.32.0, and
+  were used once on a live fleet; kiro became a target on 2026-10-20 (#2252). Not built: cursor as a move
+  target, which stays `not_measured`. Follow-ups: #2492 (open: measure cursor as a target); #2233 and #2252 are
+  closed.
 - Tracking: #2182. Builds on #2183 (the shared Markdown renderer, `transcript.Markdown`).
 - See also: [0039](0039-fork-at-message.md) (fork) /
   [0049](0049-session-changed-files.md) (the changed-files list) /

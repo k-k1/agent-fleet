@@ -361,10 +361,10 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.308
+ARG CLAUDE_CODE_VERSION=2.1.309
 ARG OPENCODE_VERSION=2.1.3
 ARG CODEX_VERSION=0.163.0
-ARG COPILOT_VERSION=1.0.102
+ARG COPILOT_VERSION=1.0.103
 # opencode's npm package follows the pin's major: `opencode-ai` for 1.x, `@opencode/cli` for
 # 2.x (which also installs an `opencode2` bin). The pin has been 2.x since the v2 cut-over
 # (#2101); rolling back is OPENCODE_VERSION=1.19.0, nothing else (docs/log/119). entrypoint.sh,
@@ -443,9 +443,9 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 # setTimeout(...).unref() で走るが `disableAutoUpdate || channel==="static"` でスキップ）。
 # 焼き込みでは AF が起動フラグ `--disable-auto-update`（全経路）＋ entrypoint の
 # cli-config.json `channel:"static"` 再固定の二重で封じる（詳細 docs/log/40 Track B）。
-ARG CURSOR_VERSION=2026.10.19-6bbf2c4
-ARG CURSOR_SHA256_X64=cf80cc18d8b33bf33e762353977ca1868cfc45290c92c0ffdcef83bb8b37b44f
-ARG CURSOR_SHA256_ARM64=71a90f12a8b8183a71442b7ed4037bddc1a0f88114ec4fb9ec92782acb8e7d84
+ARG CURSOR_VERSION=2026.10.22-27dcf5f
+ARG CURSOR_SHA256_X64=85296944e4600a83c4b764f578d1502bf9c416db200d33a593e8f3ecabfdc294
+ARG CURSOR_SHA256_ARM64=22a36df9720830668ccd4d707e5190204ab9c8a0efb2f068cc914895f804d3ec
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -505,9 +505,9 @@ ARG KIRO_SHA256_ARM64=7a1844150521ad2df38aa5960cb078a2a9bd933863936f2be83d040636
 # MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 362,440,920 B / 323,360,856 B（1.4.1-R4503.1）。
 # ⚠️ 版文字列は `Muse Code 1.3.0 (1.3.0-R3401.1)`＝**括弧内のビルド id** がピンと突合する値。
 # agy の `tr -dc '0-9.'` 流儀だと `-R3401.1` が落ちて毎回不一致になる（install_muse.go）。
-ARG MUSE_VERSION=1.4.11-R6667.1
-ARG MUSE_SHA256_X64=6fda12a6a4f236528dafa707384cf6395fe859b1438ef77c7be26ed9d7976839
-ARG MUSE_SHA256_ARM64=b1ce49b4d988a1d6b1d76994d6c7a0eae912c8ed2c1cf67ac89434c017c8232e
+ARG MUSE_VERSION=1.4.12-R6909.1
+ARG MUSE_SHA256_X64=81e8bb16289203ba8e0ca7f80c4b82e59ba35f5ee50aafef93a2a4116f2cb27f
+ARG MUSE_SHA256_ARM64=e488288a0bcb68d548cad1e03e3026b51ff831755d1bebd22ab46edc5e715f37
 # Postgres供給ピン（ADR 0086 P0 供給レーン）: Zonky embedded-postgres 17.11.0 jar のハッシュ。
 # sha256 は `curl -sfL <jar-url> | sha256sum` で確認した値。
 # 他メジャー（16/17/18）は install-postgres が Maven Central の .sha256 サイドカーで動的に取得する。

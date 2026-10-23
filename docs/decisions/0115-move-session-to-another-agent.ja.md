@@ -2,8 +2,9 @@
 
 [English](0115-move-session-to-another-agent.md) | 日本語
 
-- Status: **accepted**（2026-10-20。提案は 2026-10-15）。P2a と P2b を実装済みで、実機で 1 度使った。末尾の
-  実装記録を参照。Follow-ups: #2233, #2252
+- Status: **accepted**（2026-10-20。提案は 2026-10-15）。P2a と P2b は実装済みで、最初のリリースは v0.32.0。
+  実機で 1 度使った。kiro は 2026-10-20 に移動先になった（#2252）。未実装：cursor を移動先にすること
+  （`not_measured` のまま）。Follow-ups: #2492（開いている：cursor を移動先として測る）。#2233 と #2252 はクローズ済み。
 - Tracking: #2182。#2183（共通の Markdown レンダラー `transcript.Markdown`）の上に作る。
 - See also: [0039](0039-fork-at-message.ja.md)（分岐）／
   [0049](0049-session-changed-files.ja.md)（変更ファイル一覧）／
