@@ -2,10 +2,11 @@
 
 English | [日本語](0108-af-owned-agent-memory.ja.md)
 
-- Status: **accepted** (2026-10-05; proposed 2026-10-03). Built, first released in v0.28.0: P1, P2 (#1733),
-  P3 / decision 6 step 2 (#1734, #1916), usage ranking and pins (#1703), size and name limits (#1921),
-  the write-back to claude's native memory (#1914), the automatic import and write-back on switch (#1972,
-  closed 2026-10-14) and the answers to open questions 3, 5 and 6 (#1982, #1984, #1986; see the notes at
+- Status: **accepted** (2026-10-05; proposed 2026-10-03). Built, in stages: P1 (the store, tools and Console list)
+  first released in v0.28.0, with the claude seed and index budget in v0.29.0; P2 (#1733), P3 / decision 6 step 2
+  (#1734, #1916), the write-back to claude's native memory (#1914), usage ranking and pins (#1703) and size and
+  name limits (#1921) in v0.30.0; the automatic import and write-back on switch (#1972, closed 2026-10-14),
+  purge and project move in v0.31.0; and the answers to open questions 3, 5 and 6 (#1982, #1984, #1986; see the notes at
   the end). Not built: the codex import. Follow-ups: #1950 (codex import, open), #1559 (background review,
   open; see [0117](0117-background-memory-skill-review.md)). The original status text follows, as of 2026-10-03.
   Built so far (P1 without the claude seed): the store, the

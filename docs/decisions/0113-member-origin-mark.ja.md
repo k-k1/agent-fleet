@@ -2,13 +2,15 @@
 
 [English](0113-member-origin-mark.md) | 日本語
 
-- Status: **accepted**（2026-10-12）。#1997 で実装し、#2014 と #2076 で拡張した。最初のリリースは v0.31.0：
-  CP が中継する 17 ルート（`control-plane/member_origin.go` の `memberOriginRoutes`。bundle の取り込みは本文のハッシュで署名）と、
+- Status: **accepted**（2026-10-12）。#1997 で実装し、最初のリリースは v0.31.0。#2014 と #2076（v0.31.0）、および v0.32.0 の 7 ルート
+  （設定の書き込みとメモリレビューの実行は #2348、提案の決定は #2353）で拡張した：CP が中継する 17 ルート（`control-plane/member_origin.go` の `memberOriginRoutes`。bundle の取り込みは本文のハッシュで署名）と、
   CP 自身が行う引き継ぎの push に署名し、Agent が検証して（`workspace/agent/internal/memberorigin`）、メンバー専用の
   書き込みに印を必須とした。`restore`、`claude-import`、`muse-import`、`claude-export` は決定により開いたまま
-  （2026-10-14 の注）。実際の CP と Agent で印を動かしているのは `e2e/handoff_test.go` の引き継ぎ push だけで、
-  **メモリ書き込みを本物のフリートで動かした記録はない**。両側は共通のワイヤーベクタでテストしている。
-- Tracking: #1997。Follow-ups: 開いているものはない（#2014 と #2076 はクローズ済み）。関連：[0108](0108-af-owned-agent-memory.ja.md) 決定 4・8（スイッチと、承認手順が境界に
+  （2026-10-14 の注）。実際の CP と Agent で印を動かしているのは `e2e/handoff_test.go`（引き継ぎ push）と、
+  デプロイ済みの Console で Workspace の再起動後にメンバーが確かめた作成・編集・ピン留め（#1997）。
+  **本物のフリートで未確認：** 重なって動く Fargate の 2 タスク（#2018）、ブラウザからの大きな bundle のアップロード、
+  ほかの署名ルートの否定側の対照。両側は共通のワイヤーベクタでテストしている。
+- Tracking: #1997。Follow-ups: #2018（開いている：重なって動く Fargate の 2 タスク間での再生）。#2014 と #2076 はクローズ済み。関連：[0108](0108-af-owned-agent-memory.ja.md) 決定 4・8（スイッチと、承認手順が境界に
   ならない理由）／[0102](0102-aws-login-through-the-console.ja.md)（ルートが呼び手を区別できないときに結果を
   人の操作に結び付ける）／[07-security §7.2・§7.5](../build/07-security.ja.md)。
 

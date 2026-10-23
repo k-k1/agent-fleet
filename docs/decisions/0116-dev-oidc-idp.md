@@ -8,7 +8,7 @@ English | [日本語](0116-dev-oidc-idp.ja.md)
   per-workspace opt-in, so decision 3's "off by default" and decision 5's opt-in no longer describe the
   code (note of 2026-10-23). **Not yet run against a real Auth.js or Spring Boot app on a preview host**:
   that needs a deployment with a `PreviewDomain`.
-- Follow-ups: none open (#2222, #2223 and #2302 are closed)
+- Follow-ups: #2500 (open: callbacks on owner-only ports are refused although the hint says they work); #2222, #2223 and #2302 are closed
 - Related: [0062-preview-subdomain.md](0062-preview-subdomain.md) (decisions 3, 7, 8, 14, 15 and 17:
   the slug, the separate origin, the ACL this one reuses) / [0005](0005-envelope-custodian.md) (the
   custodian that seals the keys and secrets; see `sealedColumns`)
@@ -394,8 +394,8 @@ Decision 3 is left as written. It no longer matches the code, and the notes of 2
 #2242) already supersede it; this records the behaviour in one place.
 
 - **The deployment switch defaults to on.** No `dev_idp` row in `deployment_setting` means on
-  (`control-plane/dev_idp_admin.go`). `AF_DEV_IDP` unset is the same as `1`; only `0` / `false`
-  locks the IdP off (`mgr.devIdPEnvOff = !envBool("AF_DEV_IDP", true)` in `control-plane/main.go`).
+  (`control-plane/dev_idp_admin.go`). `AF_DEV_IDP` unset is the same as `1`; any value `envBool` reads as false (`0`, `false`, `no`, `off`,
+  case and surrounding spaces ignored) locks the IdP off (`mgr.devIdPEnvOff = !envBool("AF_DEV_IDP", true)` in `control-plane/main.go`).
   `PUBLIC_BASE_URL` and a preview domain are still required, and without them nothing is injected
   and every route answers 404.
 - **There is no workspace opt-in.** Every workspace's client exists once the deployment offers the

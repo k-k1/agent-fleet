@@ -4,8 +4,8 @@ English | [日本語](0117-background-memory-skill-review.ja.md)
 
 - Status: **accepted** (2026-10-18; proposed 2026-10-18, the owner answered the six open questions the same
   day). P0 (measurement, #2319), P1 (trigger, helper turn and pending queue, #2320), P2 (approval and publish,
-  #2321), the separate switch for the automatic loop (#2358) and the per-kind deny-all check (#2357) are built,
-  first released in v0.32.0. The review runs on claude only. Not built: P3 (the `auto` publish mode) and P4
+  #2321) are built, first released in v0.32.0; the separate switch for the automatic loop (#2358) and the
+  per-kind deny-all check (#2357) are built too, first released in v0.32.1. The review runs on claude only. Not built: P3 (the `auto` publish mode) and P4
   (learned skills). Caps beyond P0's one sample are unmeasured. The figures in the text above were proposals
   when written; the notes record what was confirmed.
 - Tracking: #1559 (open until P3 and P4 are decided)

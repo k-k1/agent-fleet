@@ -7,7 +7,7 @@
   loopback へのリダイレクト（#2301）。IdP は**既定で on**で、ワークスペースごとのオプトインはないため、決定 3 の
   「既定は off」と決定 5 のオプトインはコードと合わない（2026-10-23 の注記）。**実際の Auth.js／Spring Boot アプリを
   プレビューホストで動かす確認は未実施**：`PreviewDomain` を持つデプロイが要る。
-- Follow-ups: 開いているものはない（#2222、#2223、#2302 はクローズ済み）
+- Follow-ups: #2500（開いている：owner-only のポートへのコールバックが、案内は使えると言うのに拒否される）。#2222、#2223、#2302 はクローズ済み
 - Related: [0062-preview-subdomain.ja.md](0062-preview-subdomain.ja.md)（決定 3・7・8・14・15・17：
   スラグ、別オリジン、本件が流用する ACL）／[0005](0005-envelope-custodian.ja.md)（鍵とシークレットを封緘する
   カストディアン。`sealedColumns` 参照）
@@ -350,7 +350,7 @@ secret が発行されたためである。そのうえでスイッチ自体を�
 ここでは挙動を 1 か所にまとめる。
 
 - **デプロイのスイッチの既定は on。** `deployment_setting` の `dev_idp` の行がなければ on（`control-plane/dev_idp_admin.go`）。
-  `AF_DEV_IDP` を設定しないのは `1` と同じで、`0`／`false` のときだけ IdP を off に固定する
+  `AF_DEV_IDP` を設定しないのは `1` と同じで、`envBool` が false と読む値（`0`、`false`、`no`、`off`。大文字小文字と前後の空白は無視）のときだけ IdP を off に固定する
   （`control-plane/main.go` の `mgr.devIdPEnvOff = !envBool("AF_DEV_IDP", true)`）。`PUBLIC_BASE_URL` とプレビュードメインは
   引き続き必要で、無ければ何も注入されず、すべてのルートが 404 を返す。
 - **ワークスペースごとのオプトインはない。** デプロイが IdP を提供していれば、すべてのワークスペースのクライアントがあり、
