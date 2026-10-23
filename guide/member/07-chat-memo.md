@@ -214,20 +214,20 @@ arrives while a message is being handed over still stops it the moment the agent
 runs inside the Agent and stops it the same way); on copilot, cursor, kiro and OpenCode that stop
 is best effort, and the message can take a first step before it stops.
 
-**Terminal (CLI)** sessions keep the CLI's own behaviour: Stop sends one Esc and the CLI decides.
+**Terminal (CLI)** sessions keep the CLI's own behaviour: Stop sends the key that CLI stops a turn with (Esc, two Esc for OpenCode, Ctrl+C for cursor and copilot) and the CLI decides. cursor and copilot get Ctrl+C only while the turn is running; otherwise Stop answers that nothing is running. A second Stop click while one is being sent is ignored.
 The discard action and the notice are not offered there, because the queue lives inside the CLI.
 This is what each CLI did with a prompt typed while its turn was running, measured once per CLI.
 They are observations, not promises, and a CLI update can change them:
 
-| CLI | Stop (one Esc) while a prompt is queued | The pane is closed while a prompt is queued |
+| CLI | Stop while a prompt is queued | The pane is closed while a prompt is queued |
 |---|---|---|
 | claude | The turn stops and the queued prompt runs next | The queued prompt is lost |
 | codex | The turn stops and the queued prompt runs next | The queued prompt still runs: codex's background process outlives the pane |
-| opencode | One Esc only arms the interrupt; press Stop again within about a second. Then the turn stops and the queued prompt runs next | The queued prompt still runs: opencode's background server outlives the pane |
-| cursor | The queued prompt is cancelled and the turn runs on to its end. Ctrl+C in the terminal stops the turn and leaves the prompt unsent in the CLI's panel | Not restored or run when the CLI resumes |
+| opencode | Stop sends two Esc about half a second apart (one Esc only arms the interrupt). The turn stops and the queued prompt runs next | The queued prompt still runs: opencode's background server outlives the pane |
+| cursor | Stop sends Ctrl+C: the turn stops and the prompt is left unsent in the CLI's panel (a plain Esc would cancel the queued prompt and let the turn run on) | Not restored or run when the CLI resumes |
 | kiro | The turn stops and the queued prompt runs next | Not restored or run when the CLI resumes |
-| copilot | The turn is not interrupted; the queued prompt runs after it. Ctrl+C in the terminal stops the turn and drops the queued prompt | Not restored or run when the CLI resumes |
-| agy | Not measured | Not measured |
+| copilot | Stop sends Ctrl+C: the turn stops and the queued prompt is dropped (a plain Esc does not interrupt) | Not restored or run when the CLI resumes |
+| agy | Not measured (Stop still sends one Esc; the reply says the key is unmeasured) | Not measured |
 
 Messages from other sessions to a Terminal session follow the same rules, with these reports to
 the sender:

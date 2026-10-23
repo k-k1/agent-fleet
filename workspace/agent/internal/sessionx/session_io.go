@@ -1189,12 +1189,17 @@ func inputSubmitDelay(name string) time.Duration {
 // the TUI can re-render between keys (e.g. after Enter advances to the next
 // question page). Shared by the /input {keys} path and /turn's tui interrupt.
 func sendNamedKeys(pane string, keys []string) error {
+	return sendNamedKeysGap(pane, keys, 90*time.Millisecond)
+}
+
+// sendNamedKeysGap is sendNamedKeys with an explicit pause between keys.
+func sendNamedKeysGap(pane string, keys []string, gap time.Duration) error {
 	for i, k := range keys {
 		if out, err := tmuxx.Cmd("send-keys", "-t", pane, k).CombinedOutput(); err != nil {
 			return fmt.Errorf("%v: %s", err, out)
 		}
 		if i < len(keys)-1 {
-			time.Sleep(90 * time.Millisecond)
+			time.Sleep(gap)
 		}
 	}
 	return nil

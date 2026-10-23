@@ -66,10 +66,10 @@
       "response": {"sent": "fixture-session", "op": "interrupt", "stop": "discard", "discard": null}
     },
     "interrupt_tui": {
-      "_note": "Terminal (CLI): a plain stop is an Esc to the CLI (decision 6). No stop kind, no discard.",
+      "_note": "Terminal (CLI): a plain stop is the kind's own stop key (Esc, a double Esc or Ctrl+C; docs/log/133) (decision 6). No stop kind, no discard. interrupt_measured is false when the kind's stop key was never measured.",
       "request": {"op": "interrupt"},
       "status": 200,
-      "response": {"sent": "fixture-session", "op": "interrupt"}
+      "response": {"sent": "fixture-session", "op": "interrupt", "interrupt_measured": true}
     },
     "interrupt_discard_queue_tui": {
       "request": {"op": "interrupt", "discard_queue": true},
