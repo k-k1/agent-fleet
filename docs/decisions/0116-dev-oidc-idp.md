@@ -403,3 +403,15 @@ Decision 3 is left as written. It no longer matches the code, and the notes of 2
   ignored.
 - **Not verified:** a real Auth.js or Spring Boot sign-in on a preview host; every "Not verified"
   line above still stands.
+
+## Note (2026-10-23): a preview-host redirect honours the owner's live port grant (#2500)
+
+The `redirect_uri` allow-list used to check only the preview port list, so a callback on an unlisted port
+the owner had opened through a temporary grant (ADR 0062, #2138) was refused although the subdomain serves
+it. The check now asks `previewPortOpenableBy`, the same decision `openStable` makes: a listed port is open
+to every viewer the allow-list already admits; an unlisted port only to the **owner**, and only while a grant
+made under the current slug exists. Tenant-share colleagues, revoked or previous-slug grants, other
+workspaces' grants and a failed lookup are all refused. `dev_idp_grant_test.go` pins each of these.
+
+- Not changed: whether the listener is still alive stays the Agent's per-request call; the redirect check
+  only needs the grant row.

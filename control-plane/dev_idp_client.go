@@ -40,9 +40,10 @@ func (m *manager) devIdPIssuer(ctx context.Context) string {
 }
 
 // devIdPOfferedToMembers is false on a deployment without a preview domain. Without preview
-// hosts the only redirect target is localhost, which only the workspace's browser pane can
-// reach, and that pane would itself need a Console session to pass authGate. devIdPIssuer
-// folds it in, so such a deployment serves nothing and injects nothing.
+// hosts the only redirect target is localhost, which a member reaches through the browser pane
+// or a forwarded port on their own machine (ADR 0116, note 2026-10-18); the IdP is still not
+// offered there, so such a deployment serves nothing and injects nothing. devIdPIssuer folds
+// it in.
 func (m *manager) devIdPOfferedToMembers() bool {
 	return m.previewDomain != ""
 }
@@ -183,8 +184,9 @@ func devIdPScopedClaims(all devIdPProfile, scope string) devIdPProfile {
 //
 //   - http://127.0.0.1:<port>/… and http://localhost:<port>/… (an app in the workspace, seen
 //     from the browser pane or a forwarded port), and
-//   - https://<slug>-<port>.<PreviewDomain>/… for THIS workspace's CURRENT slug and a listed
-//     port, which is a host the member could open anyway,
+//   - https://<slug>-<port>.<PreviewDomain>/… for THIS workspace's CURRENT slug and a port the
+//     member could open anyway: a listed one, or, for the owner alone, an unlisted one holding
+//     a live grant (previewPortOpenableBy, the same decision the preview proxy makes),
 //
 // and only for a member who may open this workspace's preview at all (owner, or tenant share
 // on). The match is on the canonical spelling: an upper-case host, a trailing dot, an explicit
@@ -211,7 +213,7 @@ func (m *manager) devIdPRedirectAllowed(ctx context.Context, ws store.Workspace,
 		if !ok || ws.PreviewSlug == "" || ph.slug != ws.PreviewSlug {
 			return false
 		}
-		return u.Host == previewHostname(ph.slug, ph.port, m.previewDomain) && previewPortAllowed(st, ph.port)
+		return u.Host == previewHostname(ph.slug, ph.port, m.previewDomain) && m.previewPortOpenableBy(ctx, ws, st, membershipID, ph.port)
 	}
 	return false
 }

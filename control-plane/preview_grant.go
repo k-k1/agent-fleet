@@ -50,14 +50,33 @@ var previewListenerClient = &http.Client{
 // liveGrant returns the workspace's grant for port when it was made under the CURRENT slug.
 // Whether the listener is still alive is the Agent's call, per request.
 func (a previewHostAPI) liveGrant(ctx context.Context, ws store.Workspace, port int) (store.PreviewTempPort, bool) {
+	return a.mgr.liveGrant(ctx, ws, port)
+}
+
+func (m *manager) liveGrant(ctx context.Context, ws store.Workspace, port int) (store.PreviewTempPort, bool) {
 	if ws.PreviewSlug == "" {
 		return store.PreviewTempPort{}, false
 	}
-	g, ok, err := a.mgr.store.GetPreviewTempPort(ctx, ws.ID, port)
+	g, ok, err := m.store.GetPreviewTempPort(ctx, ws.ID, port)
 	if err != nil || !ok || g.Slug != ws.PreviewSlug || g.Inodes == "" {
 		return store.PreviewTempPort{}, false
 	}
 	return g, true
+}
+
+// previewPortOpenableBy is the port half of the stable-open decision, shared by openStable and
+// the dev IdP's redirect ACL so the two cannot drift: a listed port is open to every viewer
+// previewViewerAllowed admits; an unlisted one only to the owner, and only under a live grant.
+// Lookup errors count as "no grant" (fail closed).
+func (m *manager) previewPortOpenableBy(ctx context.Context, ws store.Workspace, st wsSettings, membershipID string, port int) bool {
+	if previewPortAllowed(st, port) {
+		return true
+	}
+	if membershipID == "" || membershipID != ws.MembershipID {
+		return false
+	}
+	_, live := m.liveGrant(ctx, ws, port)
+	return live
 }
 
 // agentListener is the Agent's answer to GET /preview-listener/{port}.
