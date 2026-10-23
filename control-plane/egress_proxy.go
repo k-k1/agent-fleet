@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"io"
 	"log"
@@ -218,30 +219,60 @@ func (p *egressProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, resp.Body)
 }
 
+// maxEgressKeys bounds the distinct (host, verdict) buckets held while the CP is
+// unreachable. A workspace can touch unbounded hostnames, so without a cap a long CP
+// outage grows the proxy's memory until it is OOM-killed and takes egress down with it.
+const maxEgressKeys = 5000
+
+// egressReportTimeout bounds one report POST; http.DefaultClient has none, and a hung CP
+// would otherwise wedge the flush loop and with it every later report.
+const egressReportTimeout = 10 * time.Second
+
 // egressBatcher aggregates observations by (host, allowed) and flushes them to the CP
-// periodically so a burst of connections becomes one small POST.
+// periodically so a burst of connections becomes one small POST. A batch stays pending
+// until the CP answers 2xx: log-only mode curates the allowlist from what was seen, so a
+// lost batch leaves a host off the list and enforce later breaks a tool nobody saw.
 type egressBatcher struct {
 	url, token string
-	mu         sync.Mutex
+	client     *http.Client
+	flushMu    sync.Mutex     // serialises flush; add() never takes it
+	mu         sync.Mutex     // guards counts and dropped
 	counts     map[string]int // key = host + "\x00" + ("1"|"0")
+	// dropped counts observations that did not fit under maxEgressKeys. It is reported
+	// to the CP (egressIngest.Dropped) so the loss is visible rather than silent.
+	dropped int
 }
 
 func newEgressBatcher(url, token string) *egressBatcher {
-	return &egressBatcher{url: url, token: token, counts: map[string]int{}}
+	return &egressBatcher{url: url, token: token, client: &http.Client{Timeout: egressReportTimeout}, counts: map[string]int{}}
 }
 
 func (b *egressBatcher) add(host string, allowed bool) {
 	k := host + "\x00" + map[bool]string{true: "1", false: "0"}[allowed]
 	b.mu.Lock()
-	b.counts[k]++
+	b.addLocked(k, 1)
 	b.mu.Unlock()
 }
 
-func (b *egressBatcher) drain() []egressEvent {
+// addLocked adds n to a bucket, or to dropped when the bucket is new and the cap is hit.
+// An existing bucket always grows, so the cap bounds keys, not counts.
+func (b *egressBatcher) addLocked(k string, n int) {
+	if _, ok := b.counts[k]; !ok && len(b.counts) >= maxEgressKeys {
+		b.dropped += n
+		return
+	}
+	b.counts[k] += n
+}
+
+// drain hands over everything pending and starts a fresh window. The caller owns the
+// result and must restore() it when the report fails.
+func (b *egressBatcher) drain() ([]egressEvent, int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	dropped := b.dropped
+	b.dropped = 0
 	if len(b.counts) == 0 {
-		return nil
+		return nil, dropped
 	}
 	out := make([]egressEvent, 0, len(b.counts))
 	for k, n := range b.counts {
@@ -249,7 +280,20 @@ func (b *egressBatcher) drain() []egressEvent {
 		out = append(out, egressEvent{Host: host, Allowed: a == "1", Count: n})
 	}
 	b.counts = map[string]int{}
-	return out
+	return out, dropped
+}
+
+// restore merges an unreported batch back into the pending counts, next to whatever
+// add() collected while the POST was in flight. What no longer fits under the cap is
+// folded into dropped.
+func (b *egressBatcher) restore(evs []egressEvent, dropped int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.dropped += dropped
+	for _, e := range evs {
+		k := e.Host + "\x00" + map[bool]string{true: "1", false: "0"}[e.Allowed]
+		b.addLocked(k, e.Count)
+	}
 }
 
 func (b *egressBatcher) run(ctx context.Context) {
@@ -268,24 +312,43 @@ func (b *egressBatcher) run(ctx context.Context) {
 	}
 }
 
+// flush reports the pending batch and keeps it for the next tick unless the CP answers
+// 2xx. Delivery is at-least-once: a timeout after the CP recorded the batch re-sends it,
+// and the CP counts it twice.
 func (b *egressBatcher) flush() {
-	evs := b.drain()
-	if len(evs) == 0 {
+	b.flushMu.Lock()
+	defer b.flushMu.Unlock()
+	evs, dropped := b.drain()
+	if len(evs) == 0 && dropped == 0 {
 		return
 	}
-	body, _ := json.Marshal(egressIngest{Events: evs})
+	if err := b.post(evs, dropped); err != nil {
+		log.Printf("egress-proxy: report failed (will retry): %v", err)
+		b.restore(evs, dropped)
+	}
+}
+
+func (b *egressBatcher) post(evs []egressEvent, dropped int) error {
+	body, err := json.Marshal(egressIngest{Events: evs, Dropped: dropped})
+	if err != nil {
+		return err
+	}
 	req, err := http.NewRequest(http.MethodPost, b.url, bytes.NewReader(body))
 	if err != nil {
-		return
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if b.token != "" {
 		req.Header.Set("Authorization", "Bearer "+b.token)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := b.client.Do(req)
 	if err != nil {
-		log.Printf("egress-proxy: report failed: %v", err)
-		return
+		return err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("CP answered %s", resp.Status)
+	}
+	return nil
 }

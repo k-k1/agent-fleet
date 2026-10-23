@@ -53,7 +53,7 @@ func TestEgressBatcher(t *testing.T) {
 	b.add("api.anthropic.com", true)
 	b.add("api.anthropic.com", true)
 	b.add("paste.ee", false)
-	evs := b.drain()
+	evs, _ := b.drain()
 	got := map[string]egressEvent{}
 	for _, e := range evs {
 		got[e.Host] = e
@@ -64,7 +64,7 @@ func TestEgressBatcher(t *testing.T) {
 	if got["paste.ee"].Count != 1 || got["paste.ee"].Allowed {
 		t.Fatalf("paste.ee bucket: %+v", got["paste.ee"])
 	}
-	if b.drain() != nil {
+	if evs, d := b.drain(); evs != nil || d != 0 {
 		t.Fatalf("drain should be empty after first drain")
 	}
 }
