@@ -359,13 +359,17 @@ func (b *egressBatcher) flush() {
 	}
 }
 
-// splitEgressEvents groups events so each chunk's JSON stays under maxEgressReportBytes.
+// splitEgressEvents groups events so each chunk's JSON stays under maxEgressReportBytes;
+// the budget leaves ample room for the envelope and the dropped field.
 func splitEgressEvents(evs []egressEvent) [][]egressEvent {
 	var out [][]egressEvent
 	var cur []egressEvent
 	size := 0
 	for _, e := range evs {
-		n := len(e.Host) + 48 // host + the fixed JSON around it, rounded up
+		// The marshalled length, not len(Host): json.Marshal escapes '&', '<', '>' to
+		// \u00XX, so a host of valid-looking characters can be 6x its raw size.
+		eb, _ := json.Marshal(e)
+		n := len(eb) + 1 // the separating comma
 		if len(cur) > 0 && size+n > maxEgressReportBytes {
 			out = append(out, cur)
 			cur, size = nil, 0

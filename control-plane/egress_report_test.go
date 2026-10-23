@@ -138,7 +138,12 @@ func TestEgressBatcherAddDuringFailingPost(t *testing.T) {
 		mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	}))
+	// Registered after srv.Close's defer so it runs first: a failing assertion below must
+	// still free the held handler, or srv.Close would wait on it and hang the test.
 	defer srv.Close()
+	var relOnce sync.Once
+	releaseAll := func() { relOnce.Do(func() { close(release) }) }
+	defer releaseAll()
 	b := newEgressBatcher(srv.URL, "")
 
 	for i := 0; i < maxEgressKeys; i++ { // fill the cap
@@ -162,17 +167,18 @@ func TestEgressBatcherAddDuringFailingPost(t *testing.T) {
 	mu.Lock()
 	inFlight := calls
 	mu.Unlock()
+	secondRan := false
 	select {
 	case <-second:
-		t.Fatal("second flush returned while the first POST was in flight")
+		secondRan = true
 	default:
 	}
-	if inFlight != 1 {
-		t.Fatalf("second flush POSTed while the first was in flight (calls=%d)", inFlight)
-	}
-	close(release)
+	releaseAll()
 	<-done
 	<-second
+	if secondRan || inFlight != 1 {
+		t.Fatalf("second flush ran while the first POST was in flight (returned=%v, calls=%d)", secondRan, inFlight)
+	}
 	b.flush()
 	b.flush()
 
@@ -332,4 +338,66 @@ func TestEgressIngestAuditsDropped(t *testing.T) {
 		}
 	}
 	t.Fatalf("egress.dropped audit row missing: %+v", al)
+}
+
+// '&' is a legal host character that json.Marshal escapes to \u0026, so budgeting by raw
+// host length would build chunks over the CP's body limit.
+func TestEgressBatcherChunksByEscapedSize(t *testing.T) {
+	var evs []egressEvent
+	for i := 0; i < maxEgressKeys; i++ {
+		evs = append(evs, egressEvent{Host: strings.Repeat("&", 248) + strconv.Itoa(1000+i), Allowed: true, Count: 1})
+	}
+	for i, c := range splitEgressEvents(evs) {
+		body, _ := json.Marshal(egressIngest{Events: c, Dropped: 1 << 30})
+		if len(body) > 1<<20 {
+			t.Fatalf("chunk %d marshals to %d bytes, over the CP limit", i, len(body))
+		}
+	}
+}
+
+// First chunk accepted, second refused: the accepted chunk (and the dropped count riding
+// on it) must not be sent again, and everything else must arrive on the retry.
+func TestEgressBatcherPartialChunkFailureRetriesOnlyTheRest(t *testing.T) {
+	var mu sync.Mutex
+	calls, dropped := 0, 0
+	got := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls++
+		if calls == 2 {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		var in egressIngest
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		for _, e := range in.Events {
+			got[e.Host] += e.Count
+		}
+		dropped += in.Dropped
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	b := newEgressBatcher(srv.URL, "")
+	pad := strings.Repeat("a", 240)
+	const n = 3000 // ~3 chunks
+	for i := 0; i < n; i++ {
+		b.add(pad+strconv.Itoa(1000+i), true)
+	}
+	b.mu.Lock()
+	b.dropped = 5
+	b.mu.Unlock()
+	b.flush() // chunk 1 ok, chunk 2 fails
+	b.flush()
+	b.flush()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != n || dropped != 5 {
+		t.Fatalf("buckets=%d (want %d) dropped=%d (want 5)", len(got), n, dropped)
+	}
+	for h, c := range got {
+		if c != 1 {
+			t.Fatalf("%s delivered %d times", h[len(h)-4:], c)
+		}
+	}
 }
