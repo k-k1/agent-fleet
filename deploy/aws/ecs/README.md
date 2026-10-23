@@ -295,6 +295,24 @@ not shredded (#1956). The per-workspace SSM parameter `secret-key-next` sits und
 which the CP role (`SsmWorkspaceParams`) and the workspace execution role already cover. Details:
 [`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#workspacedekrandom) and `guide/operate/04-secure.md`.
 
+### Remote MCP and MCP OAuth (optional, off by default)
+
+```bash
+# 30-ingress: serve /mcp, then (optionally) let hosted MCP clients sign in with OAuth
+aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides McpEnabled=on McpOAuth=on
+```
+
+`McpEnabled=on` sets `AF_MCP_ENABLED=true`, `McpOAuth=on` sets `AF_MCP_OAUTH=1` (it needs
+`McpEnabled=on`; the Rule fails the operation otherwise) and `McpOAuthTrustedHosts` sets the
+fallback host list `AF_MCP_OAUTH_TRUSTED_HOSTS`. All three default to off / empty and then
+add no environment entry, so an existing stack is unchanged until you set them. **`update.sh`
+overrides only `ImageTag` (plus `EfsBackup`)**, every other parameter keeps its previous
+value and a parameter the stack has never had takes the template default, so a release
+that adds these parameters turns nothing on; run the targeted deploy above to turn them on.
+Details: [`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#mcp-mcp-and-mcp-oauth) and
+`guide/operate/04-secure.md`, "Sign-in for remote MCP clients".
+
 ### Alarms — the Control Plane cannot reach its database (set this one)
 
 ```bash
