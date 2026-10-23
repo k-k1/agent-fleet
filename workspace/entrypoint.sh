@@ -373,16 +373,36 @@ bi_reason() {
 }
 # bi_failed <tool...> — record a failed block (stderr already echoed by the caller).
 bi_failed() { local r t; r="$(bi_reason)"; for t in "$@"; do bi_note "$t" failed "$r"; done; }
+# cli_usable <tool> — an installed copy that can run now: a regular executable file (symlinks
+# followed, so a dangling link or a directory does not count) that answers --version, asked the
+# way the install decision above asks (agy's env mask, cursor's bundle check). The status name
+# is not always the binary name (cursor is cursor-agent).
+cli_usable() {
+  local bin="$1" p
+  [ "$1" = cursor ] && bin=cursor-agent
+  for p in "/usr/local/bin/$bin" "$HOME/.local/bin/$bin"; do
+    [ -f "$p" ] && [ -x "$p" ] || continue
+    case "$1" in
+      agy) if [ "$p" = "$HOME/.local/bin/agy" ]; then [ -n "$(agy_effective_version)" ] || continue
+           else timeout 30 "$p" --version >/dev/null 2>&1 || continue; fi ;;
+      cursor) cursor_runs "$p" || continue ;;
+      *) timeout 30 "$p" --version >/dev/null 2>&1 || continue ;;
+    esac
+    return 0
+  done
+  return 1
+}
 # bi_room <mb> <tool...> — whether home has <mb> MiB free (true when df cannot tell). When it
 # has not, the install is skipped and what is installed stays: a half-run install is how a full
-# home turned into "every agent broke at once". A tool that is already installed keeps working,
-# so its skipped upgrade is recorded "skipped no_space" and only a tool with nothing usable is
+# home turned into "every agent broke at once". A tool with a usable copy (cli_usable, not the
+# weaker cli_present: a broken or non-executable leftover is not one) keeps working, so its
+# skipped upgrade is recorded "skipped no_space" and only a tool with nothing usable is
 # "failed no_space" (the Agent refuses a start only for the latter).
 bi_room() {
   local need="$1" t; shift
   bi_free_ok "$need" "$*" && return 0
   for t in "$@"; do
-    if cli_present "$t"; then bi_note "$t" skipped no_space; else bi_note "$t" failed no_space; fi
+    if cli_usable "$t"; then bi_note "$t" skipped no_space; else bi_note "$t" failed no_space; fi
   done
   return 1
 }

@@ -94,7 +94,7 @@ Its **"Size and limits"** card names each CLI that failed to install at the last
 reason. On ECS on EC2, where the home is the member's own volume, it also shows a notice when the
 home is nearly full. That notice uses the member's own thresholds: it appears above 90 % or with
 less than 2 GiB free and goes away once usage is below 85 % with more than 3 GiB free. The roster
-card warns by the same rule, so a card marked nearly full has this notice behind it.
+card warns by the same rule, so for a running workspace with a valid own-home reading, a card marked nearly full has this notice behind it.
 The notice needs a running workspace; a stopped or unreachable one shows none, and the install
 flag appears only when a failure was actually recorded.
 
