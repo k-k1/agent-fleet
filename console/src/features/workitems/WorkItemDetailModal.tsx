@@ -137,6 +137,19 @@ function useLiveDetail(item: WorkItem, reference: boolean) {
   return { detail, err, stopped, busy, retry: () => setAttempt((n) => n + 1) };
 }
 
+/** A fact row whose value the live read has not brought back yet. It keeps the row's height so
+ * the answer fills it in place; hidden from assistive tech, which gets the status line instead. */
+function PendingRow({ label }: { label: string }) {
+  return (
+    <>
+      <dt aria-hidden="true">{label}</dt>
+      <dd aria-hidden="true">
+        <span className="wi-dskel" />
+      </dd>
+    </>
+  );
+}
+
 const PROVIDER_NAMES: Record<string, string> = { github: "GitHub", bitbucket: "Bitbucket", jira: "Jira" };
 
 interface Props {
@@ -189,6 +202,12 @@ export function WorkItemDetailModal({
   // until the live read has answered, after which the answer decides the kind (and with it the
   // review launch flow), exactly as for a cached row.
   const kindKnown = !reference || item.provider !== "github" || !!live.detail;
+  // True from the first render, before the effect has raised `live.busy`, so that no frame draws
+  // the layout the answer is about to replace.
+  const reading = canReadLive(item, reference) && !live.detail && !live.err && !live.stopped;
+  // Reference of unknown kind: either layout would be wrong for half of the answers and swap
+  // wholesale, so neither is drawn until the read has decided (or failed).
+  const neutral = reading && !kindKnown;
   const isPR = live.detail && reference ? live.detail.kind === "pr" : item.kind === "pr";
   const shownPR = isPR;
   const providerName = PROVIDER_NAMES[item.provider] || item.provider;
@@ -309,7 +328,7 @@ export function WorkItemDetailModal({
         {/* A stand-in has nothing the CP holds: it is not in any saved query's results. Fetching
             it here would be a new single-item read (ADR 0061 decision 20.1), so the panel says
             where to read it instead. */}
-        {reference && !live.detail && (
+        {reference && !live.detail && !reading && (
           <p className="wi-dref" role="status">
             <Icon name="info" />
             <span>{tr("wi.detail_ref_note", { name: providerName })}</span>
@@ -322,11 +341,11 @@ export function WorkItemDetailModal({
         {canReadLive(item, reference) && (
           <p className={"wi-dlive" + (live.err ? " bad" : "")} role="status" title={live.err || undefined}>
             <Icon
-              name={live.busy ? "sync" : live.err ? "warning" : live.stopped ? "debug-pause" : "check"}
-              spin={live.busy}
+              name={reading ? "sync" : live.err ? "warning" : live.stopped ? "debug-pause" : "check"}
+              spin={reading}
             />
             <span>
-              {live.busy
+              {reading
                 ? tr("wi.detail_live_loading")
                 : live.err
                   ? reference ? tr("wi.detail_live_failed_ref", { name: providerName }) : tr("wi.detail_live_failed")
@@ -334,7 +353,7 @@ export function WorkItemDetailModal({
                     ? reference ? tr("wi.detail_live_stopped_ref", { name: providerName }) : tr("wi.detail_live_stopped")
                     : reference ? tr("wi.detail_live_fresh_ref", { name: providerName }) : tr("wi.detail_live_fresh")}
             </span>
-            {!live.busy && (live.err || live.stopped) && (
+            {!reading && (live.err || live.stopped) && (
               <button type="button" className="linklike" onClick={live.retry}>
                 {tr("wi.detail_live_retry")}
               </button>
@@ -344,13 +363,16 @@ export function WorkItemDetailModal({
 
         {/* Exactly the fields the CP holds. A row with no value is not drawn; a column of
             em-dashes only adds things to read. */}
-        <dl className="wi-dfacts">
-          {stateText && (
+        <dl className="wi-dfacts" aria-busy={reading || undefined}>
+          {stateText ? (
             <>
               <dt>{tr("wi.detail_state")}</dt>
               <dd>{stateText}</dd>
             </>
+          ) : (
+            neutral && <PendingRow label={tr("wi.detail_state")} />
           )}
+          {neutral && <PendingRow label={tr("wi.detail_kind")} />}
           {kindKnown && (
             <>
               <dt>{tr("wi.detail_kind")}</dt>
@@ -361,11 +383,13 @@ export function WorkItemDetailModal({
           <dd>
             <span className="wi-dprov">{item.provider}</span>
           </dd>
-          {d?.author && (
+          {d?.author ? (
             <>
               <dt>{tr("wi.detail_author")}</dt>
               <dd>@{d.author}</dd>
             </>
+          ) : (
+            reading && <PendingRow label={tr("wi.detail_author")} />
           )}
           {view.assignee && (
             <>
@@ -382,6 +406,16 @@ export function WorkItemDetailModal({
           {/* From here down: only what the live read brought back. These are the fields that
               decide whether to pick a review up, and every one of them can change between two
               rail refreshes — which is why none of them is cached (§80.24). */}
+          {/* While reading, the rows a pull request will have are reserved (an issue has none of
+              them). A neutral reference reserves them too: it may turn out to be one. */}
+          {reading && (neutral || shownPR) && (
+            <>
+              <PendingRow label={tr("wi.detail_branches")} />
+              <PendingRow label={tr("wi.detail_merge")} />
+              <PendingRow label={tr("wi.detail_diff")} />
+              <PendingRow label={tr("wi.detail_checks")} />
+            </>
+          )}
           {d && (d.baseBranch || d.headBranch) && (
             <>
               <dt>{tr("wi.detail_branches")}</dt>
@@ -456,7 +490,7 @@ export function WorkItemDetailModal({
         {/* The body is not shown here, so where to go and read it always is (same reason as
             §80.9). A pull request carries the same link as the footer's main button, so it is
             not repeated here. */}
-        {!isPR && view.url && (
+        {!neutral && !isPR && view.url && (
           <a className="wi-dlink" href={view.url} target="_blank" rel="noreferrer noopener">
             <Icon name="link-external" />
             {tr("wi.open_external")}
@@ -509,6 +543,15 @@ export function WorkItemDetailModal({
             it conflict, who has approved it — and reviewing it locally is the less common half,
             so it folds away rather than disappearing: a review still needs a working copy, and
             the started ledger under it is what stops two people picking up the same review. */}
+        {neutral ? (
+          // Holds the room the start section will take (the issue layout's, which is the taller
+          // one), without committing to its heading, its controls or the PR's folded form.
+          <div className="wi-dstart wi-dstart-pending" aria-hidden="true">
+            <span className="wi-dskel wi-dskel-head" />
+            <span className="wi-dskel wi-dskel-field" />
+            <span className="wi-dskel wi-dskel-field" />
+          </div>
+        ) : (
         <StartSection fold={isPR} title={tr(isPR ? "wi.detail_start_head_pr" : "wi.detail_start_head")}>
           {bases.length === 0 ? (
             <p className="wi-shint">{tr("wi.start_no_repos")}</p>
@@ -557,12 +600,16 @@ export function WorkItemDetailModal({
             </Button>
           )}
         </StartSection>
+        )}
       </div>
       <footer className="ui-modal-foot">
         <Button variant="ghost" onClick={onClose}>
           {tr("common.cancel")}
         </Button>
-        {isPR ? (
+        {neutral ? (
+          // No label: "Start" and "Open in GitHub" are both wrong for half of the answers.
+          <Button disabled>{tr("common.loading")}</Button>
+        ) : isPR ? (
           // The main act for a pull request is going and reading it where it lives. af holds no
           // diff, no review thread and no comment text, so anything more here would be a worse
           // copy of the provider's own page (§80.1).

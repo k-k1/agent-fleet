@@ -1080,6 +1080,25 @@ describe("WorkItemDetailModal — a pull request", () => {
     expect(fold.textContent).toContain(t("wi.detail_start_head_pr"));
   });
 
+  it("reserves the live-only rows while the read is running, then fills them in place (#2631)", async () => {
+    let release: (v: unknown) => void = () => {};
+    workItemDetail.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    const modal = await openPR();
+
+    const labels = (m: Element) => [...m.querySelectorAll(".wi-dfacts dt")].map((e) => e.textContent);
+    const live = [t("wi.detail_author"), t("wi.detail_branches"), t("wi.detail_merge"), t("wi.detail_diff"), t("wi.detail_checks")];
+    for (const l of live) expect(labels(modal)).toContain(l);
+    expect(modal.querySelectorAll(".wi-dfacts dd .wi-dskel").length).toBe(live.length);
+    // Placeholders are decoration: the status line is what is announced.
+    expect(modal.querySelector(".wi-dfacts dd .wi-dskel")?.closest("dd")?.getAttribute("aria-hidden")).toBe("true");
+    expect(modal.querySelector(".wi-dlive")?.getAttribute("role")).toBe("status");
+
+    await act(async () => release(detail));
+    expect(modal.querySelectorAll(".wi-dskel").length).toBe(0);
+    for (const l of live) expect(labels(modal)).toContain(l);
+    expect(modal.textContent).toContain("feature/x");
+  });
+
   it("keeps the cached row and says so when the workspace is stopped (it is never started for a panel)", async () => {
     workItemDetail.mockResolvedValue({ error: { code: "workspace_stopped" } });
     const modal = await openPR();
@@ -1501,6 +1520,38 @@ describe("WorkItemModalHost — opened from a ticket link outside the rail (#165
       await openRef("acme/web#7");
       await act(async () => startReview().click());
       expect(useLaunchTarget.getState().existingBranch).toBe("");
+    });
+
+    it("draws no layout before the kind of a #N reference is known (#2631)", async () => {
+      useReposStore.setState({ repos: [{ name: "web", path: "/home/dev/repos/web" }] });
+      let release: (v: unknown) => void = () => {};
+      workItemDetail.mockImplementationOnce(() => new Promise((r) => (release = r)));
+      const modal = await openRef();
+
+      // Neither the issue layout's start section / "Start" button nor the note is there yet.
+      expect(modal.querySelector(".wi-dstart:not(.wi-dstart-pending)")).toBeNull();
+      expect(modal.querySelector(".wi-dref")).toBeNull();
+      expect(modal.querySelector(".wi-dlink")).toBeNull();
+      const foot = [...modal.querySelectorAll<HTMLButtonElement>(".ui-modal-foot button")].map((b) => b.textContent);
+      expect(foot).not.toContain(t("wi.start"));
+      expect(modal.querySelector(".ui-modal-foot .wi-dopen")).toBeNull();
+      expect(modal.querySelector(".wi-dtitle")?.textContent).toBe("acme/web#7");
+      expect(modal.querySelectorAll(".wi-dfacts dd .wi-dskel").length).toBeGreaterThan(4);
+      expect(modal.querySelector(".wi-dlive")?.getAttribute("role")).toBe("status");
+
+      await act(async () => release(live({ kind: "pr", state: "open", headBranch: "f", baseBranch: "b" })));
+      expect(modal.querySelector(".wi-dskel")).toBeNull();
+      expect(modal.querySelector("details.wi-dfold")).not.toBeNull();
+      expect(modal.querySelector(".ui-modal-foot .wi-dopen")).not.toBeNull();
+    });
+
+    it("falls back to the note and the start section once the read fails (#2631)", async () => {
+      workItemDetail.mockResolvedValue({ error: { code: "provider_error", message: "boom" } });
+      const modal = await openRef();
+      expect(modal.querySelector(".wi-dskel")).toBeNull();
+      expect(modal.querySelector(".wi-dstart")).not.toBeNull();
+      const foot = [...modal.querySelectorAll<HTMLButtonElement>(".ui-modal-foot button")].map((b) => b.textContent);
+      expect(foot).toContain(t("wi.start"));
     });
 
     it("falls back to the reference note when GitHub has no such item", async () => {
