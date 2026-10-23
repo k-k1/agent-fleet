@@ -13,6 +13,16 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
+## [0.34.1](0.34.1.md) — 2026-10-23
+
+**New / Improved**
+
+- **[ECS]** `30-ingress` parameters `McpEnabled`, `McpOAuth` and `McpOAuthTrustedHosts` turn on `/mcp` and MCP sign-in; `SessionTtl`, `GithubAllowedEmails` and `KmsDataKeyCacheTtl` are settable too ([#2595](https://github.com/k-k1/agent-fleet/issues/2595))
+
+**Fixed**
+
+- **[compose]** `AF_MCP_ENABLED=1` in `.env.example` left `/mcp` off; the example now shows `true` ([#2595](https://github.com/k-k1/agent-fleet/issues/2595))
+
 
 ## [0.34.0](0.34.0.md) — 2026-10-23
 
