@@ -127,6 +127,11 @@ function useLiveDetail(item: WorkItem, reference: boolean) {
         }
         setErr(errText(got.error) || " ");
       })
+      .catch((e: unknown) => {
+        // A rejected request (network down, unreadable body) never reaches the error branch above;
+        // without this the panel would stay in its loading state with no way to retry.
+        if (current) setErr((e instanceof Error ? e.message : String(e)) || " ");
+      })
       .finally(() => {
         if (current) setBusy(false);
       });
@@ -139,6 +144,15 @@ function useLiveDetail(item: WorkItem, reference: boolean) {
 
 /** A fact row whose value the live read has not brought back yet. It keeps the row's height so
  * the answer fills it in place; hidden from assistive tech, which gets the status line instead. */
+function SpacerRow() {
+  return (
+    <>
+      <dt aria-hidden="true">&nbsp;</dt>
+      <dd aria-hidden="true">&nbsp;</dd>
+    </>
+  );
+}
+
 function PendingRow({ label }: { label: string }) {
   return (
     <>
@@ -432,6 +446,7 @@ export function WorkItemDetailModal({
               <dd className={d.mergeable === "conflict" && !d.merged ? "tone-bad" : undefined}>{mergeText(d)}</dd>
             </>
           )}
+          {d && !(d.changedFiles > 0 || d.additions > 0 || d.deletions > 0) && d.kind === "pr" && <SpacerRow />}
           {d && (d.changedFiles > 0 || d.additions > 0 || d.deletions > 0) && (
             <>
               <dt>{tr("wi.detail_diff")}</dt>
@@ -455,6 +470,7 @@ export function WorkItemDetailModal({
               </dd>
             </>
           )}
+          {d && d.checks.total === 0 && d.kind === "pr" && <SpacerRow />}
           {d && d.checks.total > 0 && (
             <>
               <dt>{tr("wi.detail_checks")}</dt>
