@@ -12,6 +12,16 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.34.1](0.34.1.ja.md) — 2026-10-23
+
+**New / Improved**
+
+- **[ECS]** `30-ingress` のパラメータ `McpEnabled`・`McpOAuth`・`McpOAuthTrustedHosts` で `/mcp` と MCP のサインインを有効にする。`SessionTtl`・`GithubAllowedEmails`・`KmsDataKeyCacheTtl` も設定できる ([#2595](https://github.com/k-k1/agent-fleet/issues/2595))
+
+**Fixed**
+
+- **[compose]** `.env.example` の `AF_MCP_ENABLED=1` では `/mcp` がオフのままだった。例を `true` に ([#2595](https://github.com/k-k1/agent-fleet/issues/2595))
+
 
 ## [0.34.0](0.34.0.ja.md) — 2026-10-23
 

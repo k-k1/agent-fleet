@@ -3,6 +3,11 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.34.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.1) — 2026-10-23
+
+ECS deployments can now turn on the `/mcp` endpoint and MCP sign-in (OAuth) that 0.34.0 shipped.
+0.34.0's template had no way to set them.
+
 ## [0.34.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.0) — 2026-10-23
 
 MCP sign-in works in both directions. Remote MCP clients such as claude.ai and ChatGPT can connect to

@@ -3,6 +3,11 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.34.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.1) — 2026-10-23
+
+0.34.0 で出た `/mcp` エンドポイントと MCP のサインイン（OAuth）を、ECS のデプロイでも有効にできるように
+なりました。0.34.0 のテンプレートには、これらを設定する手段がありませんでした。
+
 ## [0.34.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.0) — 2026-10-23
 
 MCP のサインインが両方向で使えるようになりました。claude.ai や ChatGPT などのリモート MCP クライアントは、
