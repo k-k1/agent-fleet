@@ -261,17 +261,21 @@ describe("EnvTab Java row", () => {
     spy.mockRestore();
   });
 
-  it("does not take another major's install for its own, running or just finished", async () => {
+  it("does not take another major's install for its own, running, finished or failed", async () => {
     api.mockImplementation((path: string) => {
       if (path === "api/env/toolchains") return Promise.resolve(toolchains(["21"], "21", { "21": "21.0.11+10" }));
       if (path.startsWith("api/env/jdk-latest"))
         return Promise.resolve({ major: "21", current: "21.0.11+10", latest: "21.0.13+9", update_available: true });
       return Promise.resolve({ state: "installing", major: "17" });
     });
-    for (const state of ["installing", "done"]) {
+    for (const [state, error] of [
+      ["installing", ""],
+      ["done", ""],
+      ["error", "download failed"],
+    ]) {
       apiJSON.mockReset();
       toast.mockReset();
-      apiJSON.mockResolvedValue({ state, major: "17", error: "" });
+      apiJSON.mockResolvedValue({ state, major: "17", error });
       await mount();
       await act(async () => {
         await Promise.resolve();
@@ -288,5 +292,18 @@ describe("EnvTab Java row", () => {
       act(() => root?.unmount());
       host?.remove();
     }
+  });
+
+  // The installer's own failure arrives as state "error" with a string, not an API error.
+  it("reports its own install failure with the installer's message", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(path === "api/env/toolchains" ? toolchains(["21"], "17") : {}),
+    );
+    apiJSON.mockResolvedValue({ state: "error", major: "17", error: "download failed" });
+    await mount();
+    await act(async () => {
+      javaBtn()!.click();
+    });
+    expect(toast).toHaveBeenCalledWith(expect.stringContaining("download failed"));
   });
 });

@@ -443,17 +443,24 @@ function JavaRow({
       reload(); // refresh java_installed either way
     };
     const res = await apiJSON("api/env/jdk-install", "POST", { major: selected });
-    if (!res || res.error) {
-      finish(res?.error?.message || "");
+    if (!res) {
+      finish("");
       return;
     }
     // The agent runs one download at a time and answers a POST made during another
-    // major's download (another tab) with THAT job — still installing, or already done
-    // if it finished between the agent's check and its reply. Either way ours never
-    // started, and following it would report our request as done.
+    // major's download (another tab) with THAT job — installing, done or failed, since
+    // it can end between the agent's check and its reply. Either way ours never started,
+    // so this comes before any state handling: following it would report our request as
+    // done or failed.
     if (res.major && res.major !== selected) {
       setInstalling("");
       toast(tr("env.java_install_busy", { v: res.major }));
+      return;
+    }
+    // An API failure carries {error: {code, message}}; the installer's own failure is
+    // state "error" with error as a plain string.
+    if (res.error && typeof res.error === "object") {
+      finish(res.error.message || "");
       return;
     }
     if (res.state === "done" || res.state === "error") {
