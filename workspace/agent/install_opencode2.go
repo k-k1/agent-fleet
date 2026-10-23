@@ -32,7 +32,7 @@ func runInstallOpencode2(args []string) {
 		fmt.Fprintln(os.Stderr, "[install-opencode2] "+pinnedV2Message)
 		return
 	}
-	ver := opencode.V2Version
+	ver := opencode.V2Version()
 	if len(args) > 0 && args[0] != "" {
 		ver = args[0]
 	}

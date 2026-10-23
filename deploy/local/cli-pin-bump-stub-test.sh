@@ -467,7 +467,11 @@ add_tested opencode "$L_OC"
 STUB_LATEST_OPENCODE="$L_OC" run_bump
 code_is 0
 grep -qE '^bumped=.*opencode' "$WORK/gh_out" || fail "opencode did not bump within its major"
-expect_changed "${BUMP_OK[@]}" "${MUSE_OK[@]}" "+ARG OPENCODE_VERSION=$L_OC"
+# A 2.x pin carries the opt-in's install version along (ARG OPENCODE_V2_VERSION); a 1.x pin
+# (a rollback) leaves it alone.
+OC_V2_LINE=""
+[ "${P_OPENCODE%%.*}" -lt 2 ] || OC_V2_LINE="+ARG OPENCODE_V2_VERSION=$L_OC"
+expect_changed "${BUMP_OK[@]}" "${MUSE_OK[@]}" "+ARG OPENCODE_VERSION=$L_OC" ${OC_V2_LINE:+"$OC_V2_LINE"}
 
 echo "== case 13: a gone fragment is named in the PR body and the issue report, and the bump still happens =="
 cp "$ROOT/workspace/Dockerfile" "$DF"
