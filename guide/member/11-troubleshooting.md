@@ -59,8 +59,8 @@ If it is still missing, check whether it was **archived** (AI sessions can be re
 the archive browser) or tidied away by **cleanup** (deleted sessions can be restored from the
 trash). See [02](02-sessions.md#tidying-up-in-bulk-cleanup).
 
-If the **Repositories** section of the left pane says **"Can't reach the workspace — showing the
-last known list"**, nothing is gone: the Console could not read the repository list just now and
+If the **Repositories** section of the left pane says **"Couldn't refresh the list — showing the
+last known one"**, nothing is gone: the Console could not read the repository list just now and
 shows the last one it had. While the workspace runs, the list comes back by itself.
 
 ### A session won't resume / is shown struck through

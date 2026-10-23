@@ -186,6 +186,7 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
           <MarkdownView
             source={content || ""}
             previewLinks
+            workItemRefs
             onOpenFile={(path, line, column, openInNew) => {
               const target = { content: { kind: "file" as const, filePath: path, targetLine: line, targetColumn: column } };
               if (openInNew) openTargetInNew(target, true);

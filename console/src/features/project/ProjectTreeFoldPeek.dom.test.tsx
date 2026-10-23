@@ -92,6 +92,18 @@ describe("folded node summary", () => {
     expect(badge()?.title).toContain("mid\nold");
   });
 
+  it("lists descendants' live sessions too, so the names add up to the badge", async () => {
+    useSessionsStore.setState({
+      sessions: [
+        sess("top", { repo: "af", createdAt: at(3) }),
+        sess("kid", { repo: "af@w", createdAt: at(2) }),
+      ],
+    });
+    await render();
+    expect(badge()?.textContent).toBe("●2");
+    expect(badge()?.title).toContain("Also running:\nkid");
+  });
+
   it("falls back to the newest stopped session, dimmed, when none is live", async () => {
     useSessionsStore.setState({
       sessions: [

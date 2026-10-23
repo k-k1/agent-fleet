@@ -223,7 +223,7 @@ export const ProjectTree = memo(function ProjectTree() {
           ) : loadState === "loading" ? (
             <EmptyState icon="repo" title={tr("pj.loading_repos")} />
           ) : loadState === "unreachable" ? (
-            <EmptyState icon="repo" title={tr("pj.repos_unreachable")} hint={tr("pj.repos_unreachable_hint")} />
+            <EmptyState icon="repo" title={tr("pj.repos_unreachable")} hint={running ? tr("pj.repos_unreachable_hint") : undefined} />
           ) : (
             <EmptyState icon="repo" title={tr("pj.no_repos")} hint={tr("pj.no_repos_hint")}>
               {running && (
