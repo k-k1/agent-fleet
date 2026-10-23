@@ -18,12 +18,15 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -89,7 +92,14 @@ func TestDriftCodexPaneMode(t *testing.T) {
 		"-x", "200", "-y", "50", "-c", plan.Cwd, launch).CombinedOutput(); err != nil {
 		t.Fatalf("tmux new-session: %v: %s", err, out)
 	}
-	defer func() { _ = tmuxx.Cmd("kill-session", "-t", tn).Run() }()
+	// Deferred, so it runs before t.TempDir's cleanup: codex keeps writing into
+	// $HOME/.codex/.tmp (a background plugin clone) after kill-session returns, and
+	// RemoveAll racing it fails a test whose assertions all passed (measured: 2 of 11 runs).
+	pgid := panePID(tn)
+	defer func() {
+		_ = tmuxx.Cmd("kill-session", "-t", tn).Run()
+		awaitProcessGroupGone(t, pgid)
+	}()
 
 	// Default mode: footer is "<model> <effort> · <cwd>" with no "Plan mode" label.
 	if got := awaitPaneMode(t, tn, "Default"); got != "Default" {
@@ -102,31 +112,94 @@ func TestDriftCodexPaneMode(t *testing.T) {
 	// Plan mode: shift+tab cycles. Up through 0.144 the footer gained a "Plan mode"
 	// label; 0.145 removed that label but prints a trusted TUI system message confirming
 	// the transition. Production persists mirror-driven mode changes in session meta.
-	if out, err := tmuxx.Cmd("send-keys", "-t", tn, "BTab").CombinedOutput(); err != nil {
-		t.Fatalf("send-keys BTab: %v: %s", err, out)
-	}
-	if got, pane := awaitCodexPlanTransition(t, tn); got != "Plan" &&
-		!strings.Contains(pane, "for Plan mode.") {
+	before := capturePane(tn)
+	got, pane, presses := awaitCodexPlanTransition(t, tn)
+	if got != "Plan" && !strings.Contains(pane, "for Plan mode.") {
 		diagnosePane(t, tn)
-		t.Fatalf("after shift+tab neither the footer nor the TUI system message confirms "+
-			"Plan mode.\npaneMode=%q\npane:\n%s", got, pane)
+		t.Fatalf("after %d shift+tab presses neither the footer nor the TUI system message "+
+			"confirms Plan mode.\npaneMode=%q\npane before the first press:\n%s\npane:\n%s\n"+
+			"warnings (f2):\n%s", presses, got, before, pane, codexWarnings(tn))
+	}
+	if presses > 1 {
+		// Not a failure, but the evidence for why a single press is not enough.
+		t.Logf("Plan mode took %d shift+tab presses; pane before the first:\n%s", presses, before)
 	}
 	t.Log("ok: codex composer readiness and Plan transition survive the production launch plan")
 }
 
-func awaitCodexPlanTransition(t *testing.T, tn string) (string, string) {
+// codexPlanRepress is how long a shift+tab may go unanswered before it is sent again. A
+// press codex dropped (one that arrived while something drawn at startup held the input)
+// otherwise fails the whole test. A re-press cannot toggle a slow first one back out of
+// Plan unseen: the "for Plan mode." system message stays in the pane once printed.
+const codexPlanRepress = 10 * time.Second
+
+// awaitCodexPlanTransition presses shift+tab and polls until the pane confirms Plan mode,
+// pressing again every codexPlanRepress. It returns the last mode and pane seen and the
+// number of presses sent.
+func awaitCodexPlanTransition(t *testing.T, tn string) (string, string, int) {
 	t.Helper()
-	lastMode, lastPane := "", ""
+	lastMode, lastPane, presses := "", "", 0
+	var pressed time.Time
 	deadline := time.Now().Add(120 * time.Second)
 	for time.Now().Before(deadline) {
+		if presses == 0 || time.Since(pressed) >= codexPlanRepress {
+			if out, err := tmuxx.Cmd("send-keys", "-t", tn, "BTab").CombinedOutput(); err != nil {
+				t.Fatalf("send-keys BTab: %v: %s", err, out)
+			}
+			presses++
+			pressed = time.Now()
+		}
+		time.Sleep(250 * time.Millisecond)
 		lastMode = sessionx.PaneMode(session.KindCodex, tn)
 		lastPane = capturePane(tn)
 		if lastMode == "Plan" || strings.Contains(lastPane, "for Plan mode.") {
-			return lastMode, lastPane
+			return lastMode, lastPane, presses
 		}
-		time.Sleep(250 * time.Millisecond)
 	}
-	return lastMode, lastPane
+	return lastMode, lastPane, presses
+}
+
+// codexWarnings opens the warnings view the footer advertises ("f2 to view") and returns
+// it. Only called on the way to a failure: it changes what the pane shows.
+func codexWarnings(tn string) string {
+	if err := tmuxx.Cmd("send-keys", "-t", tn, "F2").Run(); err != nil {
+		return "(send-keys F2 failed: " + err.Error() + ")"
+	}
+	time.Sleep(time.Second)
+	return capturePane(tn)
+}
+
+// panePID is the pid of the process tmux started in the session's pane, which is also
+// its process group: tmux makes each pane a session leader.
+func panePID(tn string) int {
+	out, err := tmuxx.Cmd("display-message", "-p", "-t", tn, "#{pane_pid}").Output()
+	if err != nil {
+		return 0
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	return pid
+}
+
+// awaitProcessGroupGone waits until no process is left in pgid, escalating to SIGKILL
+// when the group outlives kill-session's SIGHUP. It never fails the test: a straggler
+// costs a noisy cleanup at worst, not a wrong verdict.
+func awaitProcessGroupGone(t *testing.T, pgid int) {
+	t.Helper()
+	if pgid <= 1 {
+		return
+	}
+	for _, sig := range []syscall.Signal{0, syscall.SIGKILL} {
+		if sig != 0 {
+			_ = syscall.Kill(-pgid, sig)
+		}
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+			if err := syscall.Kill(-pgid, 0); errors.Is(err, syscall.ESRCH) {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	t.Logf("process group %d still alive after SIGKILL", pgid)
 }
 
 // diagnosePane fails with the REAL reason when the pane never reached the composer, so
