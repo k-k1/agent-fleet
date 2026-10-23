@@ -717,7 +717,9 @@ the split ([09](09-deploy.md)).
     nothing is mounted, so it is the only root there.
 
   `JAVA_HOME` follows the Settings → Toolchains choice, and the lookup prefers the
-  workspace's own architecture (`jvmSearchDirs`). Node is installed per version by
+  workspace's own architecture (`jvmSearchDirs`). A major present in both roots resolves
+  to the newer patch, so a re-run of `install-jdk` updates it (`javaHomeFor`; the
+  entrypoint asks `workspace-agent java-home` rather than repeating the rule). Node is installed per version by
   `workspace-agent install-node` into nvm's layout.
 - **Layer order**: the heavy, rarely-changing layers come first. The frequently-changing
   copies (the agent binary, the entrypoint, the plugin, the notes) come last, so a
