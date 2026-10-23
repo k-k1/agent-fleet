@@ -543,6 +543,10 @@ func TestSanitizeBootFailed(t *testing.T) {
 	if len(got) != 2 || got["claude"] != "no_space" || got["codex"] != "other" {
 		t.Errorf("got %v, want claude=no_space and codex=other only", got)
 	}
+	// A skipped upgrade keeps its own reason; it must not degrade to a failure of class "other".
+	if got := sanitizeBootFailed(map[string]string{"claude": "skipped_no_space"}); got["claude"] != "skipped_no_space" {
+		t.Errorf("skipped_no_space was rewritten: %v", got)
+	}
 	many := map[string]string{}
 	for i := 0; i < 100; i++ {
 		many[fmt.Sprintf("t%d", i)] = "other"

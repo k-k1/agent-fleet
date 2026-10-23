@@ -17,6 +17,8 @@ func TestReadBootInstallStatus(t *testing.T) {
 		"cursor\tweird\t\n" + // unknown status is dropped
 		"copilot\tfailed\tnetwork\r\n" +
 		"claude\tfailed\tchecksum\n" + // later line wins
+		"kiro\tskipped\tno_space\n" + // upgrade skipped, old copy kept
+		"opencode\tskipped\tnetwork\n" + // only no_space is a valid skip reason
 		"\n"
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -27,11 +29,13 @@ func TestReadBootInstallStatus(t *testing.T) {
 
 	got := readBootInstallStatus()
 	want := map[string]bootInstall{
-		"claude":  {"failed", "checksum"},
-		"codex":   {"ok", ""},
-		"rtk":     {"skipped", ""},
-		"agy":     {"failed", "other"},
-		"copilot": {"failed", "network"},
+		"claude":   {"failed", "checksum"},
+		"codex":    {"ok", ""},
+		"rtk":      {"skipped", ""},
+		"agy":      {"failed", "other"},
+		"copilot":  {"failed", "network"},
+		"kiro":     {"skipped", "no_space"},
+		"opencode": {"skipped", ""},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
@@ -164,5 +168,21 @@ func TestReadBootInstallStatusRefusesWhatTheEntrypointDidNotWrite(t *testing.T) 
 	bootInstallStatusPath = filepath.Join(linkDir, "install.tsv")
 	if got := readBootInstallStatus(); got != nil {
 		t.Errorf("a symlinked directory must read as unknown, got %v", got)
+	}
+}
+
+func TestBootInstallFailedReportsASkippedUpgradeApartFromFailures(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.tsv")
+	body := "claude\tskipped\tno_space\n" + "agy\tfailed\tno_space\n" + "rtk\tskipped\n" + "codex\tok\t\n"
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := bootInstallStatusPath
+	bootInstallStatusPath = p
+	t.Cleanup(func() { bootInstallStatusPath = old })
+
+	got := bootInstallFailed()
+	if len(got) != 2 || got["claude"] != "skipped_no_space" || got["agy"] != "no_space" {
+		t.Fatalf("got %v", got)
 	}
 }

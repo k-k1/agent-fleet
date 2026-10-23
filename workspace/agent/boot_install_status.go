@@ -9,8 +9,10 @@ package main
 //
 //	<tool>\t<status>\t<reason>
 //
-// status is ok, skipped (already present) or failed; reason is set for failed only and is one
-// of no_space, network, checksum, other. The file lives under /tmp, not in home: the failure
+// status is ok, skipped (already present) or failed; reason is set for failed and is one of
+// no_space, network, checksum, other. A skipped line may also carry no_space: an upgrade that
+// was skipped for lack of space while the installed copy stays in use. An Agent that predates
+// this reads such a line as a plain skip. The file lives under /tmp, not in home: the failure
 // being reported is usually a full home, and a status file that needed home to be written
 // would vanish exactly then. /tmp is per container and wiped on restart, which matches what
 // it describes: one boot's outcome. A missing or unreadable file means "unknown", never "ok".
@@ -87,7 +89,7 @@ func readBootInstallFile(path string) ([]byte, bool) {
 // bootInstall is one CLI's outcome.
 type bootInstall struct {
 	Status string `json:"status"`           // ok | skipped | failed
-	Reason string `json:"reason,omitempty"` // no_space | network | checksum | other (failed only)
+	Reason string `json:"reason,omitempty"` // no_space | network | checksum | other (failed; skipped only no_space)
 }
 
 var bootInstallStatuses = map[string]bool{"ok": true, "skipped": true, "failed": true}
@@ -113,27 +115,43 @@ func readBootInstallStatus() map[string]bootInstall {
 				bi.Reason = f[2]
 			}
 		}
+		if bi.Status == "skipped" && len(f) > 2 && f[2] == "no_space" {
+			bi.Reason = "no_space"
+		}
 		out[f[0]] = bi // a later line for the same tool wins
 	}
 	return out
 }
 
-// bootInstallFailed is the failed subset of readBootInstallStatus, tool to reason. nil when
-// nothing failed and when the file is unknown: "skipped" and "ok" are never reported, and an
-// unreadable file must not look like a failure.
+// bootInstallSkippedNoSpace is the reason a tool is reported under when its upgrade was skipped
+// for lack of space and the installed copy stays in use. It travels in the same tool-to-reason
+// map as the failures (no new wire field): a reader that does not know it shows "other", and
+// the Console and CP know it as "not a failure".
+const bootInstallSkippedNoSpace = "skipped_no_space"
+
+// bootInstallFailed is the subset of readBootInstallStatus worth reporting, tool to reason: the
+// failures, plus the upgrades skipped for lack of space under bootInstallSkippedNoSpace. nil
+// when there are none and when the file is unknown: a plain "skipped" and "ok" are never
+// reported, and an unreadable file must not look like a failure.
 //
 // The tool name comes from a file the member's own user can write, so only a short CLI-name-shaped
 // one is passed on, and at most bootInstallMaxTools of them: the CP stores and serves this.
 func bootInstallFailed() map[string]string {
 	var out map[string]string
 	for tool, bi := range readBootInstallStatus() {
-		if bi.Status != "failed" || !validBootTool(tool) || len(out) >= bootInstallMaxTools {
+		reason := bi.Reason
+		if bi.Status == "skipped" && reason == "no_space" {
+			reason = bootInstallSkippedNoSpace
+		} else if bi.Status != "failed" {
+			continue
+		}
+		if !validBootTool(tool) || len(out) >= bootInstallMaxTools {
 			continue
 		}
 		if out == nil {
 			out = map[string]string{}
 		}
-		out[tool] = bi.Reason
+		out[tool] = reason
 	}
 	return out
 }

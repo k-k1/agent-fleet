@@ -59,7 +59,9 @@ const agentStatsMaxBytes = 64 << 10
 // CP accepts only a short CLI-name-shaped key, one of the four reasons, and a handful of entries.
 const bootFailedMaxTools = 16
 
-var bootFailedReasons = map[string]bool{"no_space": true, "network": true, "checksum": true, "other": true}
+// skipped_no_space is not a failure: the upgrade was skipped for lack of space and the installed
+// copy still runs (the Console shows it as such and does not flag the member).
+var bootFailedReasons = map[string]bool{"skipped_no_space": true, "no_space": true, "network": true, "checksum": true, "other": true}
 
 func validBootTool(s string) bool {
 	if s == "" || len(s) > 32 {

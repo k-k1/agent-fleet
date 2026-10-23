@@ -401,6 +401,8 @@ export const tools: Record<keyof typeof jaTools, string> = {
     "Your home disk is nearly full ({free} GiB free of {total} GiB). Installs and agents can stop working when it fills. Free space from Settings › Machine, or ask a tenant admin to grow the home.",
   "env.boot_failed": "install failed: {reason}",
   "env.boot_failed_title": "The install at this workspace's start failed; it is tried again at the next start.",
+  "env.boot_skipped": "upgrade skipped: home disk full, old version in use",
+  "env.boot_skipped_title": "The upgrade at this workspace's start was skipped for lack of space. The installed version keeps working; the upgrade is tried again at the next start.",
   "env.boot_reason_no_space": "home disk full",
   "env.boot_reason_network": "network error",
   "env.boot_reason_checksum": "checksum mismatch",
