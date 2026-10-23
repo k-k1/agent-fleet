@@ -803,6 +803,15 @@ RUN find / -xdev -type f -perm /6000 ! -path /usr/lib/chromium/chrome-sandbox \
  && test -z "$(find / -xdev -type f -perm /6000 \
       ! -path /usr/lib/chromium/chrome-sandbox -print -quit)"
 
+# fontconfig's binary cache under /var/cache/fontconfig is written by the apt trigger at
+# build time and carries mtimes and checksums, so its bytes differ on every build. The
+# release scanner folds every byte, so a short forbidden term can match inside it by
+# chance and fail a publish (#2600). Drop it last, after the final apt-get / fc-cache:
+# fontconfig rebuilds it on first use into ~/.cache/fontconfig (the dir is root-owned and
+# the process runs as dev); measured ~0.2s once per home for DejaVu + Noto CJK.
+# workspace/dockerfile-fontconfig-cache-test.sh pins this step's position.
+RUN rm -rf /var/cache/fontconfig/*
+
 USER dev
 WORKDIR /home/dev
 EXPOSE 7700
