@@ -2,11 +2,14 @@
 
 English | [日本語](0117-background-memory-skill-review.ja.md)
 
-- Status: **proposed** (2026-10-18). Documentation only: nothing below is built. The code facts were read from the
-  tree on this date; every size, cap and cost figure is a **proposal that was not measured**
-  (phase P0 measures them).
-- Tracking: #1559
-- Follow-ups: #2319, #2320, #2321, #2322, #2323
+- Status: **accepted** (2026-10-18; proposed 2026-10-18, the owner answered the six open questions the same
+  day). P0 (measurement, #2319), P1 (trigger, helper turn and pending queue, #2320), P2 (approval and publish,
+  #2321), the separate switch for the automatic loop (#2358) and the per-kind deny-all check (#2357) are built,
+  first released in v0.32.0. The review runs on claude only. Not built: P3 (the `auto` publish mode) and P4
+  (learned skills). Caps beyond P0's one sample are unmeasured. The figures in the text above were proposals
+  when written; the notes record what was confirmed.
+- Tracking: #1559 (open until P3 and P4 are decided)
+- Follow-ups: #2322 (P3), #2323 (P4), #2333 (measurements P0 left open); #2319, #2320, #2321 and #2357 are closed
 - Related: [0108](0108-af-owned-agent-memory.md) (the store this record writes to; its decision 8 left
   "a review queue is built when #1559's automated review needs one") /
   [0022](0022-agent-memory-management.md) (history and rollback) /
@@ -587,3 +590,10 @@ a new kind must be classified. Not verified here: any run of codex, opencode, cu
 this probe), so a later attempt should start from the *not run* lines, not treat them as measured dead ends.
 
 Follow-ups: #2357 stays open for the kinds above.
+
+**Note (2026-10-23): #2357 is closed.** The line above that says #2357 stays open for the kinds above is
+out of date. The issue closed on 2026-10-20 (merged in #2365) with the claude path and the fail-closed wiring
+confirmed on a live Console: `memory.review` resolves to claude and a review run completed, with one proposal
+approved, one rejected and the approved run reverted. Any other kind being qualified or refused was **not**
+verified live, since every other kind needs a workspace without claude; those decisions are the per-kind
+table above, covered by unit tests only. A kind still qualifies only by gaining a runner in `denyAllBackends`.

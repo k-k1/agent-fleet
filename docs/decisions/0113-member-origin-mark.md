@@ -2,11 +2,14 @@
 
 English | [日本語](0113-member-origin-mark.ja.md)
 
-- Status: **accepted** (2026-10-12), built with #1997: the CP signs three relayed routes
-  (`control-plane/member_origin.go`), the Agent verifies (`workspace/agent/internal/memberorigin`) and
-  requires the mark on the member-only memory writes. **Not verified end to end**: no real CP↔Agent run
-  was possible in the workspace this was built in; both halves are tested against a shared wire vector.
-- Tracking: #1997. Follow-ups: #2014. Related: [0108](0108-af-owned-agent-memory.md) decisions 4 and 8 (the switch, and why an
+- Status: **accepted** (2026-10-12). Built with #1997 and extended by #2014 and #2076, first released in v0.31.0:
+  the CP signs 17 relayed routes (`memberOriginRoutes` in `control-plane/member_origin.go`, with the bundle
+  import signed by body hash) and the handoff push it makes itself; the Agent verifies
+  (`workspace/agent/internal/memberorigin`) and requires the mark on the member-only writes. `restore`,
+  `claude-import`, `muse-import` and `claude-export` stay open by decision (2026-10-14 note). The mark is
+  exercised by a real CP and Agent only through the handoff push in `e2e/handoff_test.go`; **no real-fleet run of
+  the memory writes is recorded**, and both halves are tested against a shared wire vector.
+- Tracking: #1997. Follow-ups: none open (#2014 and #2076 are closed). Related: [0108](0108-af-owned-agent-memory.md) decisions 4 and 8 (the switch, and why an
   approval step is not a boundary) / [0102](0102-aws-login-through-the-console.md) (binding a result to a
   person's press when a route cannot tell who called it) / [07-security §7.2, §7.5](../build/07-security.md#75-cp--agent-authentication).
 

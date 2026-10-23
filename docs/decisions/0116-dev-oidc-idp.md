@@ -2,11 +2,13 @@
 
 English | [日本語](0116-dev-oidc-idp.ja.md)
 
-- Status: **accepted** (2026-10-16). The endpoints, the per-workspace registration, the redirect
-  allow-list, the env injection and the guide are implemented. **Not yet run against a real
-  Auth.js or Spring Boot app on a preview host**: that needs a deployment with a `PreviewDomain`
-  (the PR lists what the live run has to check).
-- Follow-ups: #2222 (Console screen for the opt-in and the credentials), #2223 (test personas)
+- Status: **accepted** (2026-10-16). Built, first released in v0.32.0: the endpoints, the per-workspace
+  registration, the redirect allow-list, the env injection, the guide, the Console screen (#2222), test
+  personas with a consent page (#2223), and loopback redirects (#2301). The IdP is **on by default**, with no
+  per-workspace opt-in, so decision 3's "off by default" and decision 5's opt-in no longer describe the
+  code (note of 2026-10-23). **Not yet run against a real Auth.js or Spring Boot app on a preview host**:
+  that needs a deployment with a `PreviewDomain`.
+- Follow-ups: none open (#2222, #2223 and #2302 are closed)
 - Related: [0062-preview-subdomain.md](0062-preview-subdomain.md) (decisions 3, 7, 8, 14, 15 and 17:
   the slug, the separate origin, the ACL this one reuses) / [0005](0005-envelope-custodian.md) (the
   custodian that seals the keys and secrets; see `sealedColumns`)
@@ -385,3 +387,19 @@ refuses clients of stopped workspaces would fail those tests.
   how copied secrets are revoked; the old pair stops working at once.
 - The IdP cannot tell the browser pane's loopback from the member's machine; both are the same redirect.
 - Member-facing guidance is #2302.
+
+## Note (2026-10-23) — what the code does where decision 3 says off by default
+
+Decision 3 is left as written. It no longer matches the code, and the notes of 2026-10-16 (#2228,
+#2242) already supersede it; this records the behaviour in one place.
+
+- **The deployment switch defaults to on.** No `dev_idp` row in `deployment_setting` means on
+  (`control-plane/dev_idp_admin.go`). `AF_DEV_IDP` unset is the same as `1`; only `0` / `false`
+  locks the IdP off (`mgr.devIdPEnvOff = !envBool("AF_DEV_IDP", true)` in `control-plane/main.go`).
+  `PUBLIC_BASE_URL` and a preview domain are still required, and without them nothing is injected
+  and every route answers 404.
+- **There is no workspace opt-in.** Every workspace's client exists once the deployment offers the
+  IdP, and `AF_DEV_IDP_*` is injected at every start; `devIdp` in `ws-settings` is accepted and
+  ignored.
+- **Not verified:** a real Auth.js or Spring Boot sign-in on a preview host; every "Not verified"
+  line above still stands.
