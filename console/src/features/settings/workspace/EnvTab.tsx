@@ -448,9 +448,10 @@ function JavaRow({
       return;
     }
     // The agent runs one download at a time and answers a POST made during another
-    // major's download (another tab) with THAT job. Following it would report our
-    // request as done when it never started.
-    if (res.state === "installing" && res.major && res.major !== selected) {
+    // major's download (another tab) with THAT job — still installing, or already done
+    // if it finished between the agent's check and its reply. Either way ours never
+    // started, and following it would report our request as done.
+    if (res.major && res.major !== selected) {
       setInstalling("");
       toast(tr("env.java_install_busy", { v: res.major }));
       return;
@@ -471,7 +472,9 @@ function JavaRow({
         } catch {
           p = null;
         }
-        if (p && p.state === "done") {
+        // Another major in the status means our job ended and a newer one (another tab)
+        // replaced it; the refetch in finish shows what is on disk now.
+        if (p && (p.state === "done" || (p.major && p.major !== selected))) {
           finish();
           return { stop: true };
         }

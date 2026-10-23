@@ -232,11 +232,11 @@ describe("EnvTab Java row", () => {
       // A stop/start cycle makes the row ask again.
       wsState = "stopped";
       await act(async () => {
-        root!.render(<EnvTab key="a" />);
+        root!.render(<EnvTab />);
       });
       wsState = "running";
       await act(async () => {
-        root!.render(<EnvTab key="a" />);
+        root!.render(<EnvTab />);
       });
       await act(async () => {
         await Promise.resolve();
@@ -247,11 +247,11 @@ describe("EnvTab Java row", () => {
         Promise.resolve({ major: "21", current: "21.0.11+10", latest: "21.0.13+9", update_available: true });
       wsState = "stopped";
       await act(async () => {
-        root!.render(<EnvTab key="a" />);
+        root!.render(<EnvTab />);
       });
       wsState = "running";
       await act(async () => {
-        root!.render(<EnvTab key="a" />);
+        root!.render(<EnvTab />);
       });
       await act(async () => {
         await Promise.resolve();
@@ -261,26 +261,32 @@ describe("EnvTab Java row", () => {
     spy.mockRestore();
   });
 
-  it("does not take another major's running install for its own", async () => {
+  it("does not take another major's install for its own, running or just finished", async () => {
     api.mockImplementation((path: string) => {
       if (path === "api/env/toolchains") return Promise.resolve(toolchains(["21"], "21", { "21": "21.0.11+10" }));
       if (path.startsWith("api/env/jdk-latest"))
         return Promise.resolve({ major: "21", current: "21.0.11+10", latest: "21.0.13+9", update_available: true });
       return Promise.resolve({ state: "installing", major: "17" });
     });
-    apiJSON.mockResolvedValue({ state: "installing", major: "17" });
-    await mount();
-    await act(async () => {
-      await Promise.resolve();
-    });
-    await act(async () => {
-      javaBtn()!.click();
-    });
-    expect(apiJSON).toHaveBeenCalledWith("api/env/jdk-install", "POST", { major: "21" });
-    expect(toast).toHaveBeenCalledWith(expect.stringContaining("Temurin 17"));
-    // Not stuck in "installing": the member can press it again once 17 is done.
-    const btn = javaBtn()!;
-    expect(btn.disabled).toBe(false);
-    expect(btn.textContent).toBe("21.0.13+9 に更新");
+    for (const state of ["installing", "done"]) {
+      apiJSON.mockReset();
+      toast.mockReset();
+      apiJSON.mockResolvedValue({ state, major: "17", error: "" });
+      await mount();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await act(async () => {
+        javaBtn()!.click();
+      });
+      expect(apiJSON).toHaveBeenCalledWith("api/env/jdk-install", "POST", { major: "21" });
+      expect(toast).toHaveBeenCalledWith(expect.stringContaining("Temurin 17"));
+      // Not stuck in "installing": the member can press it again.
+      const btn = javaBtn()!;
+      expect(btn.disabled).toBe(false);
+      expect(btn.textContent).toBe("21.0.13+9 に更新");
+      act(() => root?.unmount());
+      host?.remove();
+    }
   });
 });
