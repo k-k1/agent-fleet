@@ -347,6 +347,13 @@ class RootDocTests(unittest.TestCase):
     def test_link_is_checked(self):
         self.assertIn("broken link", self.errors("docs/build/08-missing.md"))
 
+    def test_link_into_guide_uses_the_github_id(self):
+        # The Console gives this heading `a-b`; GitHub, where a root file is read, `a--b`.
+        (self.root / "guide/ref").mkdir(parents=True)
+        (self.root / "guide/ref/probe.md").write_text("# Probe\n\n## A — B\n")
+        self.assertEqual(self.errors("guide/ref/probe.md#a--b"), "")
+        self.assertIn("does not match the id GitHub assigns", self.errors("guide/ref/probe.md#a-b"))
+
 
 class SettingTabsTests(unittest.TestCase):
     """ref/settings*.md rows against the Console's per-domain tab labels."""

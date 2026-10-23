@@ -307,10 +307,11 @@ def github_slug(text: str) -> str:
     return t.replace(" ", "-")
 
 
-def heading_slugs(path: str) -> set[str]:
+def heading_slugs(path: str, on_github: bool = False) -> set[str]:
     """The document's heading ids, built with the rule of whatever renders `path`.
 
-    The rule is decided by the destination tree. `guide/` is opened by readers in the
+    The rule is decided by the destination tree, unless `on_github` says the link is
+    followed on GitHub whatever it points at (a link from a repository-root file). `guide/` is opened by readers in the
     container's Console, so it uses the Console's `slug()`; `docs/` and files at the
     repository root (CONTRIBUTING.md and the like) are only ever read on GitHub, so they
     use github-slugger. Applying one rule to both reports anchors that are correct on
@@ -324,7 +325,7 @@ def heading_slugs(path: str) -> set[str]:
     """
     rule = (
         console_slug
-        if path.startswith(GUIDE + os.sep)
+        if path.startswith(GUIDE + os.sep) and not on_github
         else github_slug
     )
     return {
@@ -363,9 +364,16 @@ def check_anchors(files: list[str], f: Findings) -> None:
             )
             if not dest.endswith(".md") or not os.path.exists(dest):
                 continue  # a missing file is check_links' business
-            if frag in heading_slugs(dest):
+            # A root file is read on GitHub, so its link into guide/ lands on the id
+            # GitHub renders, not the Console's.
+            on_github = "/" not in src
+            if frag in heading_slugs(dest, on_github):
                 continue
-            who = "Console" if dest.startswith(GUIDE + os.sep) else "GitHub"
+            who = (
+                "Console"
+                if dest.startswith(GUIDE + os.sep) and not on_github
+                else "GitHub"
+            )
             f.error(
                 f"{src}: anchor with no matching heading -> {target}"
                 f" (does not match the id {who} assigns)"
