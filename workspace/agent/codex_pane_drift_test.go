@@ -180,26 +180,22 @@ func panePID(tn string) int {
 	return pid
 }
 
-// awaitProcessGroupGone waits until no process is left in pgid, escalating to SIGKILL
-// when the group outlives kill-session's SIGHUP. It never fails the test: a straggler
-// costs a noisy cleanup at worst, not a wrong verdict.
+// awaitProcessGroupGone waits, bounded, until no process is left in pgid. It only ever
+// probes (signal 0) and never kills: by the time a straggler outlives kill-session's
+// SIGHUP the number may belong to a reused, unrelated group, which a SIGKILL would take
+// down. A straggler costs a noisy TempDir cleanup at worst, not a wrong verdict.
 func awaitProcessGroupGone(t *testing.T, pgid int) {
 	t.Helper()
 	if pgid <= 1 {
 		return
 	}
-	for _, sig := range []syscall.Signal{0, syscall.SIGKILL} {
-		if sig != 0 {
-			_ = syscall.Kill(-pgid, sig)
+	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); {
+		if err := syscall.Kill(-pgid, 0); errors.Is(err, syscall.ESRCH) {
+			return
 		}
-		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
-			if err := syscall.Kill(-pgid, 0); errors.Is(err, syscall.ESRCH) {
-				return
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	t.Logf("process group %d still alive after SIGKILL", pgid)
+	t.Logf("process group %d still present 15s after kill-session; TempDir cleanup may race it", pgid)
 }
 
 // diagnosePane fails with the REAL reason when the pane never reached the composer, so
