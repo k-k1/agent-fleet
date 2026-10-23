@@ -13,6 +13,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
@@ -129,19 +130,18 @@ func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Op == "interrupt" {
-		// The chat stop button. In opencode's subagent detail view Escape turns into a
-		// navigation key, so prefix Up as /input's Escape special case does.
-		keys := []string{"Escape"}
-		if opencodeInSubagentView(tn) {
-			keys = []string{"Up", "Escape"}
-		}
-		if err := sendNamedKeys(pane, keys); err != nil {
+		// The chat stop button. Which key stops a turn depends on the kind (docs/log/133 §1).
+		plan := tuiInterruptFor(meta.Kind, func() bool { return opencodeInSubagentView(tn) })
+		if err := sendNamedKeysGap(pane, plan.keys, plan.gap); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 			return
 		}
-		// Escape starts no turn, so do not mark working (same reason as /input: no Stop
-		// hook fires and the session would stick at "working").
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name, "op": req.Op})
+		// An interrupt starts no turn, so do not mark working (same reason as /input: no Stop
+		// hook fires and the session would stick at "working"). "interrupt_measured" is false
+		// for a kind whose stop key was never measured: the keys went out, the effect is unknown.
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"sent": name, "op": req.Op, "interrupt_measured": plan.measured,
+		})
 		return
 	}
 	// start / steer go through the same delivery as /input's {prompt} path (submitPromptTUI),
@@ -535,4 +535,45 @@ type managedThreadSettingsWire struct {
 	DynamicModel  bool   `json:"dynamicModel"`
 	DynamicEffort bool   `json:"dynamicEffort"`
 	DynamicMode   bool   `json:"dynamicMode"`
+}
+
+// tuiInterrupt is the key sequence that stops a running turn in a Terminal pane.
+type tuiInterrupt struct {
+	keys []string
+	// gap separates the keys; it is the whole delay between two presses of the same key.
+	gap time.Duration
+	// measured is false when docs/log/133 holds no observation of this kind's stop key.
+	measured bool
+}
+
+// opencodeDoubleEscGap sits inside opencode 2.x's window: the first Esc only arms "esc
+// again to interrupt" and the arm lapses after a few seconds (measured: two Esc 0.5 s apart
+// interrupt, one Esc does nothing). The gap is the time /turn holds the request.
+const opencodeDoubleEscGap = 600 * time.Millisecond
+
+// tuiInterruptFor picks the stop keys from docs/log/133 §1, per kind. Never add a sequence
+// without an observation there: a key the CLI ignores reads as "Stop did nothing".
+//   - claude, codex, kiro: Esc interrupts (and sends what was queued).
+//   - opencode 2.x: two Esc within ~1 s. In the subagent detail view Escape only navigates,
+//     so Up goes first (as /input does); the double Esc after it is not measured there.
+//   - cursor: Esc cancels the queued follow-up and leaves the turn running; Ctrl+C stops it.
+//   - copilot: Esc is ignored while a prompt is pending; Ctrl+C cancels the operation.
+//   - anything else (agy was never measured; shell, ssm, ...): the historic single Escape,
+//     reported with measured=false.
+func tuiInterruptFor(kind string, inOpencodeSubagentView func() bool) tuiInterrupt {
+	const defaultGap = 90 * time.Millisecond
+	switch kind {
+	case session.KindClaude, session.KindCodex, session.KindKiro:
+		return tuiInterrupt{keys: []string{"Escape"}, gap: defaultGap, measured: true}
+	case session.KindOpencode:
+		keys := []string{"Escape", "Escape"}
+		if inOpencodeSubagentView() {
+			keys = []string{"Up", "Escape", "Escape"}
+		}
+		return tuiInterrupt{keys: keys, gap: opencodeDoubleEscGap, measured: true}
+	case session.KindCursor, session.KindCopilot:
+		return tuiInterrupt{keys: []string{"C-c"}, gap: defaultGap, measured: true}
+	default:
+		return tuiInterrupt{keys: []string{"Escape"}, gap: defaultGap, measured: false}
+	}
 }
