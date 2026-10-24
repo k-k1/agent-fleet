@@ -19,11 +19,13 @@ package main
 //   - Trees must be self-contained, or nothing is pruned at all. Every tree of every
 //     major is checked first; any top-level entry that is a symlink, any directory
 //     symlink inside a tree, or any symlink whose target leaves its own tree stops the
-//     whole pass. Following chains to work out what still depends on what proved
-//     error-prone (a link through the old tree and back passed a final-target check; a
-//     "../" after a directory link escaped a lexical check; one major's link into
-//     another's tree went unseen), and the trees Node ships only hold a few file links
-//     within themselves. The newest of a major must also have an executable bin/node.
+//     whole pass. A link target may not climb above its own tree even on the way, which
+//     rules out every path through something outside it. Following chains to work out
+//     what still depends on what proved error-prone (a link through the old tree and
+//     back passed a final-target check; a "../" after a directory link, or a detour
+//     through a link outside the tree, escaped a lexical check; one major's link into
+//     another's tree went unseen), and the trees Node ships only hold a few relative
+//     file links within themselves. The newest of a major must also have an executable bin/node.
 //   - It runs from the entrypoint, before any session exists. A session started earlier
 //     has the old patch's bin on PATH, so a Console update leaves the old tree for the
 //     next start instead of deleting it under a running process.
@@ -119,12 +121,15 @@ func pruneSupersededNodes(keep []string) ([]string, error) {
 	return removed, firstErr
 }
 
-// selfContained reports whether every symlink under dir is a link to a non-directory
-// whose target, joined to the link's directory, stays inside dir. With no directory
-// links in the tree, that lexical answer matches what the OS resolves. A tree that
-// cannot be fully read is not self-contained.
+// selfContained reports whether every symlink under dir is a relative link to a
+// non-directory whose target never climbs above dir, judged component by component
+// from the link's own directory. Checking only the cleaned end point is not enough: a
+// target can step out, pass through a directory link elsewhere and come back as text
+// while the OS lands somewhere else. Never leaving dir, with no directory links inside
+// it, leaves nothing for the OS to resolve differently. Absolute targets are refused,
+// and so is a tree that cannot be fully read.
 func selfContained(dir string) bool {
-	prefix := filepath.Clean(dir) + string(filepath.Separator)
+	dir = filepath.Clean(dir)
 	ok := true
 	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -135,7 +140,7 @@ func selfContained(dir string) bool {
 			return nil
 		}
 		target, rerr := os.Readlink(p)
-		if rerr != nil {
+		if rerr != nil || filepath.IsAbs(target) {
 			ok = false
 			return filepath.SkipAll
 		}
@@ -143,12 +148,27 @@ func selfContained(dir string) bool {
 			ok = false
 			return filepath.SkipAll
 		}
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(filepath.Dir(p), target)
-		}
-		if !strings.HasPrefix(filepath.Clean(target)+string(filepath.Separator), prefix) {
+		rel, rerr := filepath.Rel(dir, filepath.Dir(p))
+		if rerr != nil {
 			ok = false
 			return filepath.SkipAll
+		}
+		depth := 0 // directories below dir where the link sits
+		if rel != "." {
+			depth = len(strings.Split(rel, string(filepath.Separator)))
+		}
+		for _, c := range strings.Split(target, "/") {
+			switch c {
+			case "", ".":
+			case "..":
+				depth--
+				if depth < 0 {
+					ok = false
+					return filepath.SkipAll
+				}
+			default:
+				depth++
+			}
 		}
 		return nil
 	})

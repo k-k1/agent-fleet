@@ -456,3 +456,38 @@ func TestPruneSkipsOnAnyDirectoryLink(t *testing.T) {
 		t.Fatalf("left %s", got)
 	}
 }
+
+// A target that steps out to the root, passes a directory link outside every tree and
+// comes back reads as in-tree once cleaned, yet the OS lands in the old tree.
+func TestPruneSkipsOnDetourThroughOutsideLink(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := nvmNodeRoot()
+	fakeNode(t, "v22.23.4", true)
+	if err := os.MkdirAll(filepath.Join(root, "v22.23.4", "subdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "v22.23.4", "v22.23.5", "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "v22.23.4", "v22.23.5", "bin", "node"), nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nodeSymlink(t, "v22.23.4/subdir", filepath.Join(root, "shared"))
+	nodeSymlink(t, "../../shared/../v22.23.5/bin/node", filepath.Join(root, "v22.23.5", "bin", "node"))
+	if got := pruneLeft(t, filepath.Join(root, "v22.23.5", "bin")); !strings.Contains(got, "v22.23.4") {
+		t.Fatalf("left %s: v22.23.4 removed although the newest node resolves into it", got)
+	}
+}
+
+// Absolute targets are refused, even ones that point into their own tree.
+func TestPruneSkipsOnAbsoluteLink(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := nvmNodeRoot()
+	fakeNode(t, "v22.23.4", true)
+	fakeNode(t, "v22.23.5", true)
+	writePinFile(t, filepath.Join(root, "v22.23.5", "lib", "cli.js"), "")
+	nodeSymlink(t, filepath.Join(root, "v22.23.5", "lib", "cli.js"), filepath.Join(root, "v22.23.5", "bin", "cli"))
+	if got := pruneLeft(t); got != "v22.23.4,v22.23.5" {
+		t.Fatalf("left %s", got)
+	}
+}
