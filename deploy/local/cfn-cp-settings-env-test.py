@@ -147,6 +147,15 @@ def check(tpl, size, patterns):
         full = P["SsmPrefix"]["Default"] + "/" + leaf
         if not any(fnmatch.fnmatchcase(full, pat) for pat in patterns):
             fails.append("%s is outside the ExecRole ssm-read grant %s" % (full, patterns))
+    # GitHub sign-in secrets: the dedicated App replaces the legacy secret (injecting both would
+    # need both in SSM and stop the task when only one exists); the legacy one is unchanged.
+    for params, legacy, login in (({}, False, False),
+                                  ({"GithubAllowedOrgs": "example-org"}, True, False),
+                                  ({"GithubAllowedOrgs": "example-org", "GithubLoginSecret": "on"}, False, True),
+                                  ({"GithubLoginSecret": "on"}, False, True)):
+        got = secrets(dek.Ev(tpl, params))
+        if ("GITHUB_OAUTH_CLIENT_SECRET" in got) != legacy or ("AF_GITHUB_LOGIN_CLIENT_SECRET" in got) != login:
+            fails.append("GitHub secrets for %r: %s, want legacy=%s login=%s" % (params, sorted(got), legacy, login))
     if "WS_ENV" in base.cp_env_names() or any("WS_ENV" in str(e) for e in cp_container(tpl)["Environment"]):
         fails.append("WS_ENV is exposed; it is deliberately not (PARAMETERS.md)")
     if size > MAX_BYTES:
@@ -197,7 +206,11 @@ def main():
     def ws_env(t):
         env(t).append({"Name": "WS_ENV", "Value": "A=b"})
 
+    def both_github(t):
+        t["Conditions"]["GithubLegacySecret"] = {"!Condition": "HasGithub"}
+
     controls = {
+        "legacy GitHub secret kept beside the login one": both_github,
         "wiring removed": unwire_env,
         "env always set": always_set,
         "secret follows the sibling URL": secret_follows_sibling,

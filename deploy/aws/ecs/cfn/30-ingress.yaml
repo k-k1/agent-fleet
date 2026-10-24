@@ -94,7 +94,7 @@ Parameters:
   Ec2SlotTerminateAfterSec:
     Type: String
     Default: "0"
-    Description: "Seconds after sleep before the slot root volume is released; 0 = never. PARAMETERS.md."
+    Description: "Idle seconds (clock of Ec2SlotSleepSec) before the slot root is deleted; 0 = never. PARAMETERS.md."
   Ec2HibernateAfterSec:
     Type: String
     Default: "0"
@@ -151,7 +151,7 @@ Parameters:
   PreviewDomain:
     Type: String
     Default: ""
-    Description: "Parent domain of preview subdomains; empty = path-mode previews only. PARAMETERS.md."
+    Description: "Preview parent domain: SIBLING of Fqdn, inside a zone you own, or ACM stalls. Empty = off. PARAMETERS.md."
   PreviewHostedZoneId:
     Type: String
     Default: ""
@@ -229,7 +229,7 @@ Parameters:
   AllowedDomains:
     Type: String
     Default: ""
-    Description: "AF_OAUTH_ALLOWED_DOMAINS (comma list). Both allow-lists empty + nobody invited = login denied. PARAMETERS.md."
+    Description: "AF_OAUTH_ALLOWED_DOMAINS (comma list); both lists empty + no invite = login denied. PARAMETERS.md."
   SuperAdminEmails:
     Type: String
     Default: ""
@@ -253,7 +253,7 @@ Parameters:
   VoicevoxUrl:
     Type: String
     Default: ""
-    Description: "AF_VOICEVOX_URL, from 50-tts. PARAMETERS.md."
+    Description: "AF_VOICEVOX_URL, from 50-tts."
   EnginesSsmParam:
     Type: String
     Default: ""
@@ -267,12 +267,12 @@ Parameters:
     Type: String
     Default: ""
     AllowedValues: [ "", teal, blue, violet, magenta, red, orange, green, slate ]
-    Description: "AF_BRAND_COLOR, favicon/PWA colour. PARAMETERS.md."
+    Description: "AF_BRAND_COLOR, favicon/PWA colour."
   BrandLabel:
     Type: String
     Default: ""
     MaxLength: 16
-    Description: "AF_BRAND_LABEL, label before the app name. PARAMETERS.md."
+    Description: "AF_BRAND_LABEL, label before the app name."
   CpAlarmEmail:
     Type: String
     Default: ""
@@ -306,67 +306,67 @@ Parameters:
   SessionIdleTimeout:
     Type: String
     Default: ""
-    Description: "AF_SESSION_IDLE_TIMEOUT; empty = CP default. PARAMETERS.md"
+    Description: "AF_SESSION_IDLE_TIMEOUT; empty = default. PARAMETERS.md"
   InteractionIdleTimeout:
     Type: String
     Default: ""
-    Description: "AF_INTERACTION_IDLE_TIMEOUT; empty = CP default. PARAMETERS.md"
+    Description: "AF_INTERACTION_IDLE_TIMEOUT; empty = default. PARAMETERS.md"
   WsIdleTimeout:
     Type: String
     Default: ""
-    Description: "AF_WS_IDLE_TIMEOUT; empty = CP default. PARAMETERS.md"
+    Description: "AF_WS_IDLE_TIMEOUT; empty = default. PARAMETERS.md"
   PresenceIdleTimeout:
     Type: String
     Default: ""
-    Description: "AF_PRESENCE_IDLE_TIMEOUT; empty = CP default. PARAMETERS.md"
+    Description: "AF_PRESENCE_IDLE_TIMEOUT; empty = default. PARAMETERS.md"
   BackgroundHoldMax:
     Type: String
     Default: ""
-    Description: "AF_BACKGROUND_HOLD_MAX; empty = CP default. PARAMETERS.md"
+    Description: "AF_BACKGROUND_HOLD_MAX; empty = default. PARAMETERS.md"
   WorkspaceStartDeadline:
     Type: String
     Default: ""
-    Description: "AF_WORKSPACE_START_DEADLINE; empty = CP default. PARAMETERS.md"
+    Description: "AF_WORKSPACE_START_DEADLINE; empty = default. PARAMETERS.md"
   UsageSampleInterval:
     Type: String
     Default: ""
-    Description: "AF_USAGE_SAMPLE_INTERVAL; empty = CP default. PARAMETERS.md"
+    Description: "AF_USAGE_SAMPLE_INTERVAL; empty = default. PARAMETERS.md"
   GithubLoginClientId:
     Type: String
     Default: ""
-    Description: "AF_GITHUB_LOGIN_CLIENT_ID; empty = CP default. PARAMETERS.md"
+    Description: "AF_GITHUB_LOGIN_CLIENT_ID; empty = default. PARAMETERS.md"
   GithubLabelJa:
     Type: String
     Default: ""
-    Description: "AF_GITHUB_LABEL_JA; empty = CP default. PARAMETERS.md"
+    Description: "AF_GITHUB_LABEL_JA; empty = default. PARAMETERS.md"
   GithubLabelEn:
     Type: String
     Default: ""
-    Description: "AF_GITHUB_LABEL_EN; empty = CP default. PARAMETERS.md"
+    Description: "AF_GITHUB_LABEL_EN; empty = default. PARAMETERS.md"
   GithubMembershipTtl:
     Type: String
     Default: ""
-    Description: "AF_GITHUB_MEMBERSHIP_TTL; empty = CP default. PARAMETERS.md"
+    Description: "AF_GITHUB_MEMBERSHIP_TTL; empty = default. PARAMETERS.md"
   GithubMembershipGrace:
     Type: String
     Default: ""
-    Description: "AF_GITHUB_MEMBERSHIP_GRACE; empty = CP default. PARAMETERS.md"
+    Description: "AF_GITHUB_MEMBERSHIP_GRACE; empty = default. PARAMETERS.md"
   LlmUrl:
     Type: String
     Default: ""
-    Description: "AF_LLM_URL; empty = CP default. PARAMETERS.md"
+    Description: "AF_LLM_URL; empty = default. PARAMETERS.md"
   ComfyUrl:
     Type: String
     Default: ""
-    Description: "AF_COMFY_URL; empty = CP default. PARAMETERS.md"
+    Description: "AF_COMFY_URL; empty = default. PARAMETERS.md"
   RemoteEngineUrl:
     Type: String
     Default: ""
-    Description: "AF_REMOTE_ENGINE_URL; empty = CP default. PARAMETERS.md"
+    Description: "AF_REMOTE_ENGINE_URL; empty = default. PARAMETERS.md"
   RemoteEngineKeys:
     Type: String
     Default: ""
-    Description: "AF_REMOTE_ENGINE_KEYS; empty = CP default. PARAMETERS.md"
+    Description: "AF_REMOTE_ENGINE_KEYS; empty = default. PARAMETERS.md"
   GithubLoginSecret:
     Type: String
     Default: "off"
@@ -407,6 +407,7 @@ Conditions:
   # login. That flow reads the tenant's own app since docs/log/71, but the switch stays the
   # org list: it is the thing that authorizes the sign-in.
   HasGithub: !Not [ !Equals [ !Ref GithubAllowedOrgs, "" ] ]
+  GithubLegacySecret: !And [ !Condition HasGithub, !Not [ !Condition GithubLoginSecretOn ] ]
   # The rate limit is what creates the web ACL; reputation is an extra rule on it.
   HasPreviewDomain: !Not [ !Equals [ !Ref PreviewDomain, "" ] ]
   # Set when the preview name lives in another zone (a sibling needs its own delegated
@@ -972,7 +973,7 @@ Resources:
                 ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/oidc-client-secret"
               - !Ref "AWS::NoValue"
             - !If
-              - HasGithub
+              - GithubLegacySecret
               - Name: GITHUB_OAUTH_CLIENT_SECRET
                 ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/github-client-secret"
               - !Ref "AWS::NoValue"

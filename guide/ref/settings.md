@@ -139,6 +139,6 @@ empty one adds no environment entry, so the Control Plane keeps its own default.
 
 `WS_ENV` has no parameter on ECS on purpose: it carries free-form `KEY=VAL` pairs, secrets
 included, in plain environment. The parameters are set with a targeted `aws cloudformation deploy` of `30-ingress.yaml`
-(`update.sh` overrides only `ImageTag`); see
+(`update.sh` overrides only `ImageTag` and `EfsBackup`); see
 [`deploy/aws/ecs/cfn/PARAMETERS.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/PARAMETERS.md#control-plane-timers-github-sign-in-extras-and-lan--borrowed-engines).
 A LAN engine is reachable from ECS only when the VPC has a route to it (VPN, peering).

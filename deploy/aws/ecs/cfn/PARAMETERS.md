@@ -783,7 +783,9 @@ only matter while the reaper runs (`AF_IDLE_SWEEP_INTERVAL`, not exposed). Behav
 (`AF_GITHUB_LOGIN_CLIENT_SECRET`, SSM `<SsmPrefix>/github-login-client-secret`) are a second OAuth
 App used only for signing in. Set both: the CP disables GitHub login without both halves. With the
 id set and the switch off, the CP falls back to `GITHUB_OAUTH_CLIENT_SECRET`
-(`github-client-secret`, wired by `GithubAllowedOrgs`). `GithubLabelJa` / `GithubLabelEn` rename the
+(`github-client-secret`, wired by `GithubAllowedOrgs`). With the switch **on**, the dedicated App is
+the only one used: `github-client-secret` is then NOT injected (and `standup.sh` does not require
+it), so a stack with only `github-login-client-secret` in SSM starts. `GithubLabelJa` / `GithubLabelEn` rename the
 button (CP defaults: "GitHub でサインイン" / "Sign in with GitHub"; any value you pass is your input,
 the template itself stays ASCII). `GithubMembershipTtl` (default 10m) is how long a positive org-membership
 answer is cached and `GithubMembershipGrace` (default 1h) how long a stale one is still honoured when

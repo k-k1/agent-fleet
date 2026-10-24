@@ -192,7 +192,11 @@ for s in cookie-secret master-key; do
 done
 [ -z "$(p30 GoogleClientId)" ] || have_ssm "$SSM_PREFIX/google-client-secret" || say_missing "no SSM $SSM_PREFIX/google-client-secret (GoogleClientId is set)"
 [ -z "$(p30 OidcClientId)" ]   || have_ssm "$SSM_PREFIX/oidc-client-secret"   || say_missing "no SSM $SSM_PREFIX/oidc-client-secret (OidcClientId is set)"
-[ -z "$(p30 GithubClientId)" ] || have_ssm "$SSM_PREFIX/github-client-secret" || say_missing "no SSM $SSM_PREFIX/github-client-secret (GithubClientId is set)"
+# github-client-secret is injected (30-ingress GithubLegacySecret) while GithubAllowedOrgs is set and the
+# dedicated sign-in App switch is off; GithubClientId alone was the older trigger and still is one.
+if [ "$(p30 GithubLoginSecret)" != on ] && { [ -n "$(p30 GithubClientId)" ] || [ -n "$(p30 GithubAllowedOrgs)" ]; }; then
+  have_ssm "$SSM_PREFIX/github-client-secret" || say_missing "no SSM $SSM_PREFIX/github-client-secret (GithubClientId or GithubAllowedOrgs is set)"
+fi
 # Each optional secret has its own switch (30-ingress): a Secrets entry for a parameter that
 # does not exist stops the CP task from starting.
 for sw in GithubLoginSecret:github-login-client-secret ComfyApiKey:comfy-api-key RemoteEngineToken:remote-engine-token; do
