@@ -186,19 +186,22 @@ When the browser pane fails to render properly, a status appears in the pane.
 If you try to open it while the workspace is stopped or starting, a dedicated notice appears. Reopen once the
 workspace is running.
 
+Every recovery (**"Reconnect"**, a Console reload, a workspace stop and start) builds a *new* page at the
+current port and path, so cookies, storage and half-typed input do not come back.
+
 ### Limits and transience (good to know)
 
-- You can have at most **2 open per workspace**, the display size is at most **1600×1200**, and rendering is at
-  most **12fps**. It is not suited to video playback or high-frame-rate checks.
-- If you **switch the pane to another view / send it to the back**, rendering stops and the Page is kept for
-  about **60 seconds**. Return quickly and the same state continues; after a while it is recreated from the
-  saved port/path.
+- The number of panes open at once, the display size and the frame rate are capped (the numbers are in
+  [limits](../ref/limits.md#fixed-in-the-product)). It is not suited to video playback or high-frame-rate checks.
+- If you **switch the pane to another view / send it to the back**, rendering stops and the page is kept for a
+  short while. Return quickly and the same state continues; after that it is recreated from the saved
+  port/path.
 - On a **workspace Stop → Start** or a Console reload, browser panes that were on display are **automatically
   recreated** from the same port/path, but cookies and half-typed input do not come back.
 - This is **not a general-purpose browser for opening external URLs** (it is localhost-only; there is no host
   field, only a port and path). Nor is it a **full replacement for browser devtools** with DOM / Network /
   Sources. The pane's "Console" lets you view and copy that page's `error` / `warn` logs and the like
-  (up to 200 entries; not stored persistently).
+  (a bounded number of entries; not stored persistently).
 
 > **On a smartphone**, the action bar has no "Preview" button: tap **⋯** at its right end instead; the port
 > and path fields are under "Open a specific port" in the popover it opens, with the same buttons.

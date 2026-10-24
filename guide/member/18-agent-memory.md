@@ -33,7 +33,8 @@ Home and End move between them.
   **All**, **Pinned** and **Forgotten** narrow it. Search looks for what you typed, as one piece of text, in the name,
   description, type, author and author session at once; after a short pause it also searches the bodies, and
   memories only the body search found are listed after those, ranked like the agents' `memory_search`; searching is not a use and does not change how
-  often a memory is read. Pick a row and the right side shows that memory: its text, scope, type, author, last update
+  often a memory is read. The command palette's **Memory** scope searches the same memories from anywhere
+  ([02](02-console-basics.md#memory)). Pick a row and the right side shows that memory: its text, scope, type, author, last update
   and how often agents read it, with **Edit**, **Pin** / **Unpin**, **Forget this memory** and, under **More actions**
   (⋯), **Purge history…**. **New memory** (in the scope on screen; the user-wide scope while all scopes are shown) and
   **Edit** open a form in the same place. The scope, the chip and the memory you picked are remembered while you move
@@ -105,7 +106,7 @@ number sits beside **Changes** in the view bar, and a notification ("N memory su
 approval", under the **Other notices** row of the notification settings) opens this view. If any are waiting, the view opens
 on **Proposed**.
 
-- **Proposed** lists what the background review suggested, oldest first, with the reason it gave and the difference
+- **Proposed** lists what a memory review suggested (the background review, or one you asked for with **Suggest memories now**), oldest first, with the reason it gave and the difference
   from the memory as it is now. **Nothing in it is in memory yet.** **Approve** publishes it as a change by
   `review` (the session it was suggested from is shown as the author session); you can undo it like any other change.
   **Reject** deletes its text and keeps only a fingerprint, so the same suggestion is not made again until that memory
@@ -266,10 +267,10 @@ refused.
   affected; a running session keeps what it started with.
 
 - **Muse Code's own memory**: while the switch is on, Agent Fleet starts Muse Code with its native memory
-  switched off (`MUSE_EXPERIMENTAL_MEMORY=0`): Muse has no `read_memory` / `add_memory` / `edit_memory`
+  switched off: Muse has no `read_memory` / `add_memory` / `edit_memory`
   tools, no memory snapshot in its context and no "use persistent memory" paragraph in its prompt, so it uses
-  the af tools like every other kind. The setting wins over the same variable in your own environment while
-  the switch is on; with the switch off Agent Fleet sets nothing and Muse keeps its default. This covers
+  the af tools like every other kind. While the switch is on it wins over a native-memory setting in your own environment; with the switch off
+  Agent Fleet changes nothing and Muse keeps its default. This covers
   Muse sessions and the assistant chat. Only Muse hosts *started* after the change are affected; a running
   session keeps what it started with.
 
@@ -369,4 +370,4 @@ link back.
   controls. The secret scan stops credentials, not customer names or internal context.
 - **Saves** go through the same revision check, secret scan and limits as an agent's save inside the workspace.
 - **A stopped workspace** answers that it must be started first; start it in the Console and ask again.
-- A deployment that does not serve `/mcp` (`AF_MCP_ENABLED`) has no outside access at all.
+- A deployment that does not serve `/mcp` has no outside access at all.

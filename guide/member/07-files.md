@@ -148,7 +148,8 @@ shows **"Slides", "Preview", "Source"**, and slides are the default view.
 
 A `.drawio` / `.dio` file (and any `.xml` holding an `mxfile`) is shown as a **diagram**.
 The toggle at the top switches between **"Diagram"** and **"Edit"**, or **"Source"** when
-the file is read-only, so you can always drop down to the XML.
+the file is read-only. "Edit" and "Source" show the file's XML as plain text, so you can always drop
+down to it; the drawing itself is not edited graphically (see below).
 
 - **Multiple pages**: the header shows `page n / m`; the arrows at the top left move between pages.
 - **Zoom and pan**: Ctrl (⌘) + wheel, or a two-finger pinch, zooms around the pointer; a plain wheel or drag pans. Double-click / double-tap toggles between fit and actual size.
@@ -159,7 +160,9 @@ the file is read-only, so you can always drop down to the XML.
 There is a sample to try in this repository: **[`docs/assets/architecture.drawio`](../assets/architecture.drawio)**
 (the deployment shape of Agent Fleet itself, on AWS and on a single Docker Compose host).
 
-Editing the drawing itself is not supported yet; use the source view, or an external editor.
+Editing the drawing graphically (moving shapes, drawing connectors) is not supported yet. "Edit"
+changes the XML text only, the same way as for any other file ([Editing a file](#editing-a-file)); for
+drawing, use an external editor.
 
 ### PDFs and Office documents
 

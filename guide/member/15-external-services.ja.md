@@ -25,7 +25,7 @@ git と同じ要領で更新されます。
   テナント管理者が設定します。
 - **Bitbucket Data Center**（bitbucket.org 以外のホスト）は設定画面からは接続できません。
   自分で設定してください（`bkt auth login`、または `BKT_HOST` と `BKT_TOKEN`）。設定があると
-  ラッパーは `bkt` に手を出しません。
+  その場合 `bkt` は、保存済みの接続を使わず、あなたの設定どおりに動きます。
 
 ## セッションで `jira` を使う
 
@@ -36,34 +36,25 @@ Jira を接続していれば（設定の**課題管理**）、Jira CLI の `jir
 できます: `jira issue view PROJ-1`、`jira issue list -p PROJ`、`jira issue create -p PROJ`、
 `jira issue comment add PROJ-1 "…"`、`jira issue move PROJ-1 "In Progress"`。
 
-- **課題の作成**: `jira issue create -p PROJ …` は `jira init` なしで使えます。設定に課題タイプが
-  ないとき、ラッパーが Jira からそのプロジェクトの課題タイプを読み（既定のスコープだけで足ります）、
-  それを加えた設定のコピーを生成して `jira` に渡します。対象はラッパーが生成した設定と
-  `~/.config/agent-fleet/jira/` の中の設定だけで、`-p`（またはその設定の既定プロジェクト）が
-  必要です。取得できないときは 1 行のヒントを出し、`jira` は `invalid issue types in config` で
-  失敗します。その場合は次の `jira init` を実行してください（正確なボード名は `jira board list -p PROJ` で
-  分かります）。`jira init` が書いた設定の課題タイプはそのプロジェクト専用です（チーム管理
-  プロジェクトでは ID がプロジェクトごとに違います）。そこで `-p` に別のプロジェクトを指定すると、
-  ラッパーはそのプロジェクトの課題タイプを入れ、設定のカスタムフィールド（最初のプロジェクトのもの
-  なので）を除いたコピーを `jira` に渡します。課題タイプを読めないときは設定をそのまま使い、
-  `jira init -c ~/.config/agent-fleet/jira/<名前>.yml --project PROJ --board "PROJ board"` で
-  そのプロジェクト専用の設定を作るよう、ヒントで案内します。別プロジェクトへの `--parent` 付きの作成は、
-  設定からそのプロジェクトの種別が分からないため、常にこの案内になります。
+- **課題の作成**: `jira issue create -p PROJ …` は `jira init` なしで使えます。`-p` でプロジェクトを
+  指定してください（または下記の既定プロジェクトを設定します）。必要な課題タイプを `jira` が判断できない
+  ときは 1 行のヒントを出し、`invalid issue types in config` で失敗します。その場合はヒントが示す
+  `jira init` を、表示されたとおりに実行してください（正確なボード名は `jira board list -p PROJ` で
+  分かります）。既定以外のプロジェクトへ `--parent` 付きで作成するときは、常にこの案内になります。
 - **担当者の指定**: 担当者の検索（`jira issue assign`、および `issue edit`・`create`・`move` の
-  `-a` / `--assignee`）は、設定の既定プロジェクトか `-p` のプロジェクトを対象にするため、
+  `-a` / `--assignee`）は、既定プロジェクトか `-p` のプロジェクトを対象にするため、
   プロジェクトが必要です。既定プロジェクトがない（まだ `jira init` していない）ときは、
   `jira issue assign PROJ-1 <ユーザー>` が課題キーの接頭辞からプロジェクトを補います。
   ほかのコマンドは 1 行のヒントを出します: `-p PROJ` を付けるか、
-  `jira init --project PROJ --board "PROJ board"` を実行してください。明示した `-p` や、
-  プロジェクトを持つ設定は上書きしません。
+  `jira init --project PROJ --board "PROJ board"` を実行してください。明示した `-p` は上書きしません。
 - **プロジェクト・ボード・スプリント・エピック**: 一度 `jira init --project PROJ --board "PROJ board"`
   を実行してください（前の設定を置き換えるときは `--force` を付けます）。既定のプロジェクト・
   ボード・課題タイプ・エピック用フィールドが書き込まれ、`jira sprint list`・エピック系のコマンドが
   使えるようになります。質問はされません。実行しない場合は、コマンドごとに `-p PROJ` を
-  付けてください。2 つ目のボードは
-  `jira init -c ~/.config/agent-fleet/jira/other-board.yml --project PROJ --board "Other board"`
-  で作り、`jira -c ~/.config/agent-fleet/jira/other-board.yml …` で使います。接続が使われるのは
-  `~/.config/agent-fleet/jira/` の中の設定だけです。
+  付けてください。2 つ目のボードや、最初の設定が対象にしていないプロジェクトには専用の設定ファイルが
+  要ります。`jira` がそれを勧めるときは `jira init -c … --project … --board …` のコマンドを丸ごと表示するので、
+  表示どおりに実行し、以後の `jira` にも同じ `-c …` を付けてください。接続が使われるのは、この方法で作った
+  設定ファイルのときだけです。
 - **コメントや説明文の Markdown**: CLI は Markdown を Jira の記法に変換しますが、最初の記法（見出し、
   リスト、太字、リンク）が出てくるまで、記法のない段落の直後に来るリスト・見出し・コードブロック・引用がその段落に
   貼り付きます（段落が続くだけなら問題ありません）。段落、空行、リストの順に書くと、こう送られます:
@@ -82,16 +73,13 @@ Jira を接続していれば（設定の**課題管理**）、Jira CLI の `jir
   `comment add` が失敗した、または時間切れになったら、再実行する前に Jira を確認してください
   （例: JQL `project = PROJ AND creator = currentUser() AND created >= -15m`）。`comment edit` と `comment delete` は
   自分でやり直し、「probably already deleted」と出たときは削除は通っています。
-  `jira` は応答しないサーバを永遠に待つことがあるため、端末のない実行は `AF_JIRA_TIMEOUT` 秒
-  （既定は変更を伴うコマンドが 120 秒、読み取り系は 1 回あたり 45 秒。`0` で無効）で止められます。読み取り系は
-  接続リセットのときと同じようにやり直され、変更を伴うコマンドは終了コード 124 で、課題やコメントが
-  作られている可能性があると表示します（`issue create` では、直近 15 分以内に自分が同じ件名で作成した課題を
-  「possible matches」として併記し、見つからなければ「no matching issue found」と出します。終了コードは 124 のままです）。また `jira` は `-b` を付けても標準入力を最後まで読むため、本文を
-  コマンドラインで渡したときは、ラッパーが空の入力に差し替えます。それでも止まったままのときは、`jira`
-  プロセスの `/proc/<pid>/wchan` で、入力待ち（`pipe_read`、`unix_stream_data_wait`）とネットワーク待ちを
-  見分けられます。認可の期限切れや取り消しのときは、
-  API トークンを求める代わりに「the Jira connection is unusable」と表示するので、設定で Jira を接続し直して
-  ください。端末ではない出力では、課題へのリンクがお使いの Jira サイトを指します。
+  端末のない実行では、応答のない呼び出しは待ち続けずに止められます。変更を伴うコマンドは約 2 分、
+  読み取り系は 1 回あたり約 45 秒で、読み取り系は上のとおりやり直されます。変更を伴うコマンドは
+  終了コード 124 で、課題やコメントが作られている可能性があると表示します（`issue create` では、直近 15 分以内に
+  自分が同じ件名で作成した課題を「possible matches」として併記し、見つからなければ「no matching issue found」と出します。
+  終了コードは 124 のままです）。認可の期限切れや取り消しのときは、API トークンを求める代わりに
+  「the Jira connection is unusable」と表示するので、設定で Jira を接続し直してください。
+  端末ではない出力では、課題へのリンクがお使いの Jira サイトを指します。
 - **代わりに Atlassian MCP ツールを使う**: `jira` が既定なのは、どのエージェントでも使え、トークンも
   自動で更新されるからです。MCP コネクタは 1 つのエージェントにしか使えず、ログインが切れるとセッションの
   再起動が要ります。MCP を優先したいときは、**⚙設定 →「エージェントへの指示」** に書いてください。例:
@@ -108,7 +96,7 @@ Jira を接続していれば（設定の**課題管理**）、Jira CLI の `jir
   使えるのは保存済みの接続だけで、`--debug`、`JIRA_API_TOKEN`、自分で用意した設定では
   `jira` 本体が「そのコマンドはない」と答えます。
 - **`--debug` では接続を使いません**: jira のデバッグ出力は認可ヘッダーまで表示するので、
-  ラッパーはデバッグ実行にトークンを渡しません。
+  デバッグ実行には接続のトークンを渡しません。
 - **変更できる範囲**は接続の権限どおりです。CLI はあなたとして Jira に書き込むので、課題の
   作成・編集・遷移にはそれが許されたアカウントが必要です。
 - **OAuth でボード・スプリント・エピックを使う**には、テナントの Jira アプリに Jira Software の
@@ -119,8 +107,8 @@ Jira を接続していれば（設定の**課題管理**）、Jira CLI の `jir
   コマンドの前に同じ説明を表示します。また、CLI が
   表示するリンクはサイトではなく `api.atlassian.com` を指します。
 - **Jira Data Center**（またはほかの Jira）は設定画面からは接続できません。自分で設定して
-  ください（自分の `--server` を付けた `jira init`、`~/.config/agent-fleet/jira/` の外の設定、
-  または `JIRA_API_TOKEN`）。設定があるとラッパーは `jira` に手を出しません。
+  ください（自分の `--server` を付けた `jira init`、自分で用意した設定ファイル、
+  または `JIRA_API_TOKEN`）。その場合 `jira` は、保存済みの接続を使わず、あなたの設定どおりに動きます。
 
 ## サインイン済みの CLI
 
@@ -183,140 +171,25 @@ Jira を接続していれば（設定の**課題管理**）、Jira CLI の `jir
 3. チャットで **「SRE アシスタント」** を選んで新しい会話を開始。「今開いている PagerDuty のインシデントを一覧して経緯をまとめて」「このサービスの直近 1 時間のエラーレートを Grafana で見て」「CloudWatch でこのロググループの ERROR を分析して」のように聞くと、実データを確認しながら状況整理・原因の仮説出し・対外報告の草稿を手伝います（読み取り専用。ack/resolve はしません）。
 4. 接続の変更は**次のチャット送信から反映**されます（AWS をセッションで使う場合は**次のセッション起動から**）。ワークスペースの再起動は不要です。
 
-Zabbix など他ツールは、設定 > 接続 > [MCP サーバー](20-settings.ja.md#mcp-サーバー) にその MCP サーバーを登録してください。下の手作業の PoC 手順は、ターミナル（CLI）の claude セッションから試す用途に残しています。
+### Amazon Managed Grafana：トークンの発行
 
----
+カードに入れるのは、セルフホストの Grafana と同じ種類のサービスアカウントトークンです（IAM や SigV4 の設定は不要）。
+AMG の Grafana 管理画面（Administration → Service accounts。管理者権限が必要）で発行するか、IAM 権限があれば
+AWS CLI の `aws grafana create-workspace-service-account-token` で発行します
+（`af-aws-exec` でプロファイルを指定して実行します。[16](16-cloud-accounts.ja.md#プロファイルを端末sdkビルドツールから使う)）。
+AMG のトークンの有効期限は**最長 30 日**です。切れたら新しいものをカードに貼り直してください。
 
-## （PoC）その他ツールを手動で繋ぐ 🧪
+### その他のツール（Zabbix など）
 
-**実験的な手順です。**「運用・監視」タブに無いツール（Zabbix など）や、チャットではなく**ターミナル（CLI）の claude セッション**に繋ぎたい場合の手作業手順です。
+カードのないツールは MCP サーバーとして繋ぎます。設定 > 接続 > [MCP サーバー](20-settings.ja.md#mcp-サーバー) に
+対象へアシスタントを含めて登録し、アシスタントの編集フォームの「MCP サーバー（任意）」で選んでください。
+編集できるのは自分で作ったアシスタントだけで、組み込みのもの（SRE アシスタント・フリート・オペレーター・
+Agent Fleet アシスタント）は編集できません。`claude mcp add` で手作業で足したサーバーはその選択肢に出てこず、
+トークンもホームフォルダに平文で残ります。暗号化して保存される登録のほうを使ってください。
 
-- 対象: ターミナル（CLI）の claude セッション。**チャット（アシスタント）にツールを持たせるには、設定 > 接続 > [MCP サーバー](20-settings.ja.md#mcp-サーバー) で登録します**。対象にアシスタントを含めて登録し、アシスタントの編集フォームの「MCP サーバー（任意）」で選んでください。編集できるのは自分で作ったアシスタントだけで、組み込みのもの（SRE アシスタント・フリート・オペレーター・Agent Fleet アシスタント）は編集できません。`claude mcp add` で手作業で足したサーバーは付け方になりません。その選択肢には出てこず、MCP サーバーや Agent Fleet のツールを付けた claude ベースのアシスタントは、それを含まない厳格な MCP 構成で動きます。
-- 前提: ワークスペースから各監視ツールのエンドポイントへ outbound が通ること。PyPI 系は `uvx` の初回取得で必要。
-- ⚠️ **トークンの扱い（PoC 限定の妥協）**: `claude mcp add -e` で渡したトークンは `~/.claude.json` に**平文で保存されます**。home ボリューム内でコンテナ recreate では消えませんが、リポジトリには絶対に書かないこと・**read-only の専用トークンだけ**を使うこと。登録元のトークンを暗号化して保管したいときは、代わりに [MCP サーバー](20-settings.ja.md#mcp-サーバー) に登録してください。登録情報は暗号化して保存されますが、CLI に渡す構成にはトークンが含まれることがあります。
+アラートの本文やログは**攻撃者が影響できる入力**です。これらの接続は読み取り専用のまま使い、書き込みを試すときは
+専用のアシスタントかセッションで明示的に行ってください。
 
-## 0. 下ごしらえ（1 回だけ・recreate 後も残る）
-
-```bash
-mkdir -p ~/.local/bin
-# uv/uvx（Python 系 MCP サーバのランチャ。~/.local に入るので永続）
-pip install --user uv
-```
-
-## 1. Grafana（メトリクス・ログ・アラート・OnCall）
-
-Go の単一バイナリで、最も軽量で、機能も最も充実している。**検証済み**: v0.17.1 は `-disable-write -disable-admin` で read-only 52 ツール（Prometheus/Loki クエリ、ダッシュボード検索、アラート、Incident/OnCall 参照、Sift 分析。create/update/delete/install 系ゼロ）になる。Grafana のデータソース経由で CloudWatch / Athena / Elasticsearch 等を引くツールも同梱。
-
-```bash
-# バイナリ取得（~/.local/bin に置くと永続）
-curl -sL https://github.com/grafana/mcp-grafana/releases/download/v0.17.1/mcp-grafana_Linux_x86_64.tar.gz \
-  | tar xz -C ~/.local/bin mcp-grafana
-
-# Grafana 側: 管理画面で Viewer 権限のサービスアカウントを作りトークン発行
-
-# claude に登録（user スコープ = このワークスペースの全セッションで有効）
-claude mcp add -s user grafana \
-  -e GRAFANA_URL=https://grafana.example.com \
-  -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<viewer-sa-token> \
-  -- ~/.local/bin/mcp-grafana -disable-write -disable-admin
-```
-
-**Amazon Managed Grafana（AMG）の場合**も同じ手順で繋がる（認証はセルフホストと同じサービスアカウントトークン。IAM/SigV4 は不要）。違いは 2 点だけ:
-
-- `GRAFANA_URL` は workspace endpoint（`https://g-xxxxxxxxxx.grafana-workspace.<region>.amazonaws.com`）。
-- トークンは AMG の Grafana 管理画面（Administration → Service accounts、要 admin）か、IAM 権限があれば AWS CLI でも発行できる（**最長 30 日**で失効するので期限管理に注意）:
-
-```bash
-aws grafana create-workspace-service-account-token \
-  --workspace-id g-xxxxxxxxxx --service-account-id <sa-id> \
-  --name poc-$(date +%Y%m%d) --seconds-to-live 604800   # 7日。応答の key がトークン（再表示不可）
-```
-
-## 2. PagerDuty（インシデント・オンコール）
-
-公式 self-host 版（Python / PyPI `pagerduty-mcp`）。**既定で read-only**、write 系は `--enable-write-tools` を付けない限り出ない。トークンは PagerDuty の User API Token（My Profile → User Settings）。
-
-```bash
-claude mcp add -s user pagerduty \
-  -e PAGERDUTY_USER_API_KEY=<user-api-token> \
-  -- ~/.local/bin/uvx pagerduty-mcp
-# EU アカウントは -e PAGERDUTY_API_HOST=https://api.eu.pagerduty.com を追加
-```
-
-> hosted 版（`https://mcp.pagerduty.com/mcp`、remote HTTP）もあるが、**既定で write ツールまで出る**ため PoC では self-host + read-only 既定を推奨。
-
-## 3. CloudWatch（アラーム起点調査・ログ分析）
-
-### 3a. まずは MCP なしで: aws CLI で直接ログを見る（最速）
-
-ターミナル（CLI）の claude セッションは Bash が使えるので、**MCP を繋がなくても焼き込み済みの aws CLI でログ確認の壁打ちができます**。SSM 接続で使っているプロファイルでログインしてあれば（設定 › AWS プロファイル/SSM の **ログイン**）追加設定ゼロです。`AWS_PROFILE` を export するのではなく、`af-aws-exec` で毎回プロファイルを名指ししてください（理由は [16](16-cloud-accounts.ja.md#プロファイルを端末sdkビルドツールから使う)）。claude に「`<ロググループ>` の直近 1 時間の ERROR を見て」と頼めば、以下のようなコマンドを自分で叩いて調べてくれます。
-
-```bash
-awsx() { af-aws-exec --profile <name> --region ap-northeast-1 -- aws "$@"; }
-
-awsx logs describe-log-groups --log-group-name-prefix /aws/   # ロググループ探し
-awsx logs tail /aws/ecs/my-service --since 1h                 # 直近ログ（--follow で追尾）
-awsx logs filter-log-events --log-group-name /aws/ecs/my-service \
-  --start-time $(date -d '1 hour ago' +%s)000 --filter-pattern ERROR
-
-# 集計や横断は Logs Insights（start-query → get-query-results の 2 段）
-qid=$(awsx logs start-query --log-group-name /aws/ecs/my-service \
-  --start-time $(date -d '3 hours ago' +%s) --end-time $(date +%s) \
-  --query-string 'filter @message like /ERROR/ | stats count(*) by bin(5m)' \
-  --query queryId --output text)
-awsx logs get-query-results --query-id $qid
-```
-
-必要な IAM は読み取りのみ（`CloudWatchLogsReadOnlyAccess` 相当: DescribeLogGroups / FilterLogEvents / GetLogEvents / StartQuery / GetQueryResults）。
-
-### 3b. MCP で繋ぐ（アラーム分析・異常検知ツールが欲しいとき）
-
-AWS 公式（awslabs）の MCP サーバ。資格は焼き込み済み aws CLI と同じチェーンを読むので、**SSO プロファイルがあれば追加の秘密は不要**。全ツール read-only（メトリクス取得・アラーム履歴・ロググループの異常パターン分析・Logs Insights クエリなど）。
-
-```bash
-# 事前にプロファイルへログインしておく（設定 › AWS プロファイル/SSM の「ログイン」）
-claude mcp add -s user cloudwatch \
-  -e AWS_PROFILE=<sso-profile> \
-  -e FASTMCP_LOG_LEVEL=ERROR \
-  -- ~/.local/bin/uvx awslabs.cloudwatch-mcp-server@latest
-```
-
-※ チャットの SRE アシスタントで使うだけなら、この手順は不要です（冒頭の「運用・監視」タブから接続してください）。この手順はターミナル（CLI）の claude セッションに繋ぎたい場合用です。
-
-Athena は (a) まず素の aws CLI（追加設定ゼロ、claude が Bash で叩ける）、(b) 本格的には `uvx awslabs.aws-dataprocessing-mcp-server@latest`。PoC では (a) で十分なことが多い。
-
-## 4. Zabbix
-
-initMAX 製（事実上の標準、read_only 設定・全 API 対応）は **systemd 常駐のチーム共有サービス**として立てて remote HTTP で繋ぐ設計なので、個人 PoC には重い。軽く試すなら PyPI の stdio 版（例: `uvx zabbix-mcp`、`ZABBIX_URL`/`ZABBIX_TOKEN`）で雰囲気を掴み、本採用の評価時に initMAX を検討する。
-
-## 5. 動作確認と壁打ちの試し方
-
-```bash
-claude mcp list        # 登録一覧と接続ヘルス
-```
-
-セッション（claude）を開いて、実インシデントで試す例:
-
-- 「PagerDuty で今開いているインシデントを一覧して、最新のものの経緯をまとめて」
-- 「そのサービスの直近 1 時間のエラーレートを Grafana の Prometheus で引いて、アラート発火時刻と突き合わせて」
-- 「CloudWatch で該当 Lambda のログから ERROR パターンを分析して、時系列で何が起きたか仮説を 3 つ」
-- 「ここまでの調査を、経緯 → 影響範囲 → 原因仮説 → 次アクションの形式で対外報告向けに整理して」
-
-評価したい観点: ツール横断の状況整理が速いか / 仮説の質 / 対外文案の使い物度 / トークン消費と応答速度。
-
-## 6. 片付け
-
-```bash
-claude mcp remove -s user grafana
-claude mcp remove -s user pagerduty
-claude mcp remove -s user cloudwatch
-```
-
-トークンを失効させるのも忘れずに（Grafana SA トークン削除・PagerDuty User API Token 削除）。
-
-## 手作業の経路の制約
-
-- トークンが `~/.claude.json` 平文（→ 登録元の情報を暗号化して保管するなら [MCP サーバー](20-settings.ja.md#mcp-サーバー) に登録する）
-- `claude mcp add` で足したサーバーはチャット/アシスタントに付けられない（→ 代わりに [MCP サーバー](20-settings.ja.md#mcp-サーバー) に登録し、自分で作ったアシスタントに付ける）
-- アラート本文やログは**攻撃者が影響を与えられる入力**。read-only 構成を崩さないこと。write を試すときは専用アシスタント/セッションで明示的に
-- uvx 系は初回起動時に PyPI から取得（egress 必要）。メモリ制約ホストでは同時起動しすぎない
+接続なしでターミナル（CLI）のセッションから CloudWatch Logs を読むには、エージェントに `af-aws-exec` 経由で
+プロファイルを指定して `aws` CLI を使わせます（`aws logs tail`、`aws logs filter-log-events`、Logs Insights）。
+プロファイルに必要なのはログの読み取り権限だけです（[16](16-cloud-accounts.ja.md#プロファイルを端末sdkビルドツールから使う)）。

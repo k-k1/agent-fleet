@@ -292,6 +292,23 @@ Agents in the workspace follow the same rule.
 - Credentials last as long as the SSO role session, or the assumed role's session (often one hour). A longer
   command fails when they expire rather than switching identity.
 
+### The AWS badge in the WS bar
+
+While the workspace is running and you have at least one AWS profile in Settings, the WS bar shows a badge with
+the AWS mark. It names the profile when exactly one is logged in, and otherwise counts them ("1/3", one of three
+logged in; a **Renews on use** login counts as logged in). A profile that assumes a role from another has no login
+of its own, so the count leaves it out. The badge is **green** when something is logged in, **plain** when nothing
+is, and **amber** while any login ends soon (the warning described under "Before a login ends" above); its
+tooltip then reads "AWS profiles: a login ends soon". Press it for the list: each profile with its state
+(**Signed in**, **Renews on use**, **Not signed in**), its name, account and role, **Ends {time}** on a row whose
+end is known (amber when it ends soon), **Log in** on a row that is not signed in or ends soon, and **Log out** on
+a signed-in row (see above). A chained profile's row reads **"Follows {source}'s login"**, or **Source
+unavailable** when the source is missing or not exported; it has no **Log out**, and its **Log in** signs in to
+the source. There is no default profile: every logged-in profile can be used at the same time, and each command
+picks one with `af-aws-exec --profile <name>`. **AWS profile settings** at the bottom opens the Settings tab.
+The list is refreshed when the workspace comes up, when you open it, after a login or logout, and when a known
+login end passes.
+
 ## Running commands in Google Cloud as you (af-gcloud-exec)
 
 Your Google Cloud profiles live in **⚙ Settings → the "Google Cloud" tab**. A profile says which project a
