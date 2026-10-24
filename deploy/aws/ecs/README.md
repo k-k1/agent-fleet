@@ -1919,7 +1919,7 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
     × 2 AZ each adds up past the NAT Gateway they would relieve.
   - The endpoint carries a **policy** (#2657): only the ECR layer bucket
     (`prod-<region>-starport-layer-bucket`), the AL2023 repo bucket and the models bucket
-    (`af-*-models-<account>`) go through it. Any other bucket is reached via the NAT. Access
+    (`af-*-models-<account>`) go through it. Any other same-region bucket is **denied** (a refused request does not fall back to the NAT; S3 in another region still goes out via the NAT). Access
     through the endpoint is still not recorded per workspace.
   - What still crosses the NAT: git / Anthropic / npm / package registries (the real
     developer traffic), plus the small ECR auth+manifest, Logs and SSM calls.

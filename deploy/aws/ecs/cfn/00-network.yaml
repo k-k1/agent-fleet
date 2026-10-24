@@ -185,10 +185,13 @@ Resources:
       RouteTableIds: [ !Ref PrivateRt ]
       # Without a policy the endpoint is full access: a workspace could reach any bucket in
       # the region without crossing the NAT gateway (or the egress gateway of ADR 0122).
-      # Only what the stack itself needs is admitted; everything else falls back to the
-      # NAT route and is judged there. Access through the endpoint is still not recorded
-      # per workspace. When the stack starts using another bucket from a private subnet,
-      # add it here (deploy/local/cfn-s3-endpoint-policy-test.py pins this list).
+      # Only what the stack itself needs is admitted. A request the policy denies does NOT
+      # fall back to the NAT: the S3 prefix-list route is more specific than 0.0.0.0/0, so
+      # a same-region S3 request that the policy refuses is AccessDenied (S3 in another
+      # region is outside the prefix list and still leaves through the NAT). Access
+      # through the endpoint is still not recorded per workspace. When the stack starts
+      # using another bucket from a private subnet, add it here
+      # (deploy/local/cfn-s3-endpoint-policy-test.py pins this list).
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -216,7 +219,11 @@ Resources:
           # The optional models bucket of 60-engines (af-<engines stack>-models-<account>):
           # the CP lists and reads it, the ingest tasks write it and the engine VMs read
           # it. This stack cannot name the engines stack, so the stack-name part is a
-          # wildcard; the account id in the name keeps it to this account's buckets.
+          # wildcard. The account id in the name is not an ownership proof (anyone can
+          # create af-x-models-<this account id> in their own account), so the statements
+          # also require s3:ResourceAccount to be this account, which AWS sets from the
+          # bucket's owner. Other stacks' buckets in this account match too; IAM on each
+          # role is what narrows them.
           # Actions are the union of what those IAM roles hold (IAM still decides per
           # role); multipart and tagging are what `aws s3 mv/cp` of a large model uses.
           - Sid: ModelsObjects
@@ -231,11 +238,15 @@ Resources:
               - s3:GetObjectTagging
               - s3:PutObjectTagging
             Resource: !Sub "arn:${AWS::Partition}:s3:::af-*-models-${AWS::AccountId}/*"
+            Condition:
+              StringEquals: { "s3:ResourceAccount": !Ref AWS::AccountId }
           - Sid: ModelsList
             Effect: Allow
             Principal: "*"
             Action: [ "s3:ListBucket", "s3:ListBucketMultipartUploads" ]
             Resource: !Sub "arn:${AWS::Partition}:s3:::af-*-models-${AWS::AccountId}"
+            Condition:
+              StringEquals: { "s3:ResourceAccount": !Ref AWS::AccountId }
 
   # --- Security groups: linear alb -> cp -> ws (no cycle) ---
   AlbSg:

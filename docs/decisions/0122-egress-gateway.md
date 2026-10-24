@@ -320,10 +320,14 @@ attributed per workspace.
 The endpoint stays, so ECR layer bytes keep off the gateway, and `S3Endpoint` now carries an
 endpoint policy (#2657) that admits only the ECR image-layer bucket for the region
 (`prod-<region>-starport-layer-bucket`, the resource the ECR documentation names), the Amazon
-Linux 2023 repository bucket and the models bucket of the engines stack. Any other bucket is
-reached through the NAT gateway, and so through the egress gateway once decision 5 lands. Access
+Linux 2023 repository bucket and the models bucket of the engines stack. Any other bucket in
+the region is denied: a request the policy refuses does not fall back to the NAT gateway, because
+the S3 prefix-list route is more specific than the default route (S3 in another region is outside
+the prefix list and does leave through the NAT). Access
 through the endpoint is still not recorded per workspace: the policy narrows what is reachable,
-it does not attribute it. Not yet verified on a deployed account.
+it does not attribute it. A consequence for operators: SSM Agent self-update, Patch Manager and
+Distributor read their own AWS-owned buckets, which the policy does not admit, so they are denied
+in the same region. Nothing in the current bootstrap downloads that way. Not yet verified on a deployed account.
 
 ### Open point 4: SSH git and DNS (decided with the maintainer, 2026-10-24)
 

@@ -10,7 +10,7 @@ reaches S3 without crossing the NAT gateway (and later the egress gateway of ADR
 With no PolicyDocument that is every bucket in the region (#2657). So this check fails when
 
   - the endpoint has no policy, or a statement is not an Allow with a concrete action list;
-  - a Resource is "*", or names no concrete bucket (`s3:::*`), or the set of buckets differs
+  - a Resource is "*", or names no concrete bucket (`s3:::*`), or the statements differ
     from the pinned list below - a new bucket is a decision, made here and in the template;
   - the models bucket name pattern in the endpoint stops matching the bucket 60-engines
     creates (the CP and the ingest tasks would lose it to AccessDenied).
@@ -34,13 +34,21 @@ except ImportError:
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CFN = os.path.join(ROOT, "deploy", "aws", "ecs", "cfn")
 
-# The buckets the endpoint may admit, as the Resource strings with the CloudFormation
-# pseudo parameters spelled out.
+# What each statement may admit: Sid -> (actions, resources, owner condition required).
+# Resources are spelled with the CloudFormation pseudo parameters left in. The AWS-owned
+# buckets take no owner condition; the models bucket must, because its name is not proof of
+# ownership (anyone can create af-x-models-<this account id> elsewhere).
+OWNER = {"StringEquals": {"s3:ResourceAccount": {"!Ref": "AWS::AccountId"}}}
+MODELS = "arn:${AWS::Partition}:s3:::af-*-models-${AWS::AccountId}"
 EXPECTED = {
-    "arn:${AWS::Partition}:s3:::prod-${AWS::Region}-starport-layer-bucket/*",
-    "arn:${AWS::Partition}:s3:::al2023-repos-${AWS::Region}-de612dc2/*",
-    "arn:${AWS::Partition}:s3:::af-*-models-${AWS::AccountId}/*",
-    "arn:${AWS::Partition}:s3:::af-*-models-${AWS::AccountId}",
+    "EcrLayerBucket": ({"s3:GetObject"},
+                       {"arn:${AWS::Partition}:s3:::prod-${AWS::Region}-starport-layer-bucket/*"}, None),
+    "Al2023Repos": ({"s3:GetObject"},
+                    {"arn:${AWS::Partition}:s3:::al2023-repos-${AWS::Region}-de612dc2/*"}, None),
+    "ModelsObjects": ({"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload",
+                       "s3:ListMultipartUploadParts", "s3:GetObjectTagging", "s3:PutObjectTagging"},
+                      {MODELS + "/*"}, OWNER),
+    "ModelsList": ({"s3:ListBucket", "s3:ListBucketMultipartUploads"}, {MODELS}, OWNER),
 }
 
 
@@ -79,23 +87,38 @@ def check(net, engines):
     if not doc:
         return ["S3Endpoint has no PolicyDocument (full access)"]
     resources = set()
+    seen = set()
     for st in doc.get("Statement", []):
         sid = st.get("Sid", "?")
+        seen.add(sid)
         if st.get("Effect") != "Allow":
             fails.append("%s: not an Allow" % sid)
-        for a in as_list(st.get("Action", [])):
-            if a in ("*", "s3:*") or a.endswith("*"):
+        if st.get("Principal") != "*":
+            fails.append("%s: Principal is %r, not \"*\" (gateway endpoints carry no principal)"
+                         % (sid, st.get("Principal")))
+        actions = set(as_list(st.get("Action", [])))
+        for a in actions:
+            if a.endswith("*"):
                 fails.append("%s: wildcard action %s" % (sid, a))
-        if not st.get("Action"):
-            fails.append("%s: no Action" % sid)
+        rs = set()
         for r in as_list(st.get("Resource", [])):
             r = r.get("!Sub", r) if isinstance(r, dict) else r
-            resources.add(r)
+            rs.add(r)
             if r == "*" or re.search(r":s3:::\*", r):
                 fails.append("%s: Resource %s names no concrete bucket" % (sid, r))
-    if resources != EXPECTED:
-        fails.append("bucket set differs: extra %s, missing %s"
-                     % (sorted(resources - EXPECTED), sorted(EXPECTED - resources)))
+        resources |= rs
+        if sid not in EXPECTED:
+            fails.append("%s: statement is not in the pinned list" % sid)
+            continue
+        want_actions, want_res, want_cond = EXPECTED[sid]
+        if actions != want_actions:
+            fails.append("%s: actions %s, want %s" % (sid, sorted(actions), sorted(want_actions)))
+        if rs != want_res:
+            fails.append("%s: resources %s, want %s" % (sid, sorted(rs), sorted(want_res)))
+        if st.get("Condition") != want_cond:
+            fails.append("%s: condition %r, want %r" % (sid, st.get("Condition"), want_cond))
+    for sid in sorted(set(EXPECTED) - seen):
+        fails.append("%s: pinned statement is missing" % sid)
 
     # The models bucket 60-engines creates must match the endpoint's wildcard.
     name = engines["Resources"]["ModelsBucket"]["Properties"]["BucketName"]["!Sub"]
@@ -142,6 +165,15 @@ def main():
         ("extra bucket", mutated(lambda p: stmts(p).append(
             {"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": "arn:aws:s3:::other/*"})), engines),
         ("ECR bucket dropped", mutated(lambda p: stmts(p).pop(0)), engines),
+        ("ECR statement becomes PutObject", mutated(lambda p: stmts(p)[0].update(Action=["s3:PutObject"])), engines),
+        ("models object actions replaced by ListBucket",
+         mutated(lambda p: stmts(p)[2].update(Action=["s3:ListBucket"])), engines),
+        ("models resources swapped", mutated(lambda p: (stmts(p)[2].update(Resource=stmts(p)[3]["Resource"]),
+                                                       stmts(p)[3].update(Resource=stmts(p)[2]["Resource"]))), engines),
+        ("principal dropped", mutated(lambda p: stmts(p)[0].pop("Principal")), engines),
+        ("owner condition dropped (objects)", mutated(lambda p: stmts(p)[2].pop("Condition")), engines),
+        ("owner condition dropped (list)", mutated(lambda p: stmts(p)[3].pop("Condition")), engines),
+        ("owner condition on an AWS-owned bucket", mutated(lambda p: stmts(p)[0].update(Condition=OWNER)), engines),
         ("models bucket renamed", net, renamed_bucket(engines)),
     ]
     for name, n, e in controls:
