@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
@@ -218,5 +219,60 @@ func TestForceStopEscalationLeavesARevivedInstanceAlone(t *testing.T) {
 				t.Fatalf("stops %v: the stale timer stopped the %s instance again", got, state)
 			}
 		})
+	}
+}
+
+// A wedged slot whose task ENI ECS never cleaned up: the force-stop deregisters the
+// container instance (its agent is disconnected, so only force can) and stops the box only
+// once the ENI is gone.
+func TestForceStopSlotDeregistersAndWaitsForTheTaskENI(t *testing.T) {
+	ctx := context.Background()
+	h := wedgedSlot(t)
+	h.ec2.giveTaskENI("i-wedge")
+	res, err := h.factory().ForceStopSlot(ctx, "i-wedge", false)
+	if err != nil {
+		t.Fatalf("ForceStopSlot: %v", err)
+	}
+	if !res.Deregistered || len(h.ci.deregistered) != 1 || h.ci.deregistered[0] != "arn:ci/i-wedge" {
+		t.Fatalf("result %+v, deregistered %v; want the container instance force-deregistered once", res, h.ci.deregistered)
+	}
+	if len(h.ec2.stopForce) != 1 {
+		t.Fatalf("stops %v, want one once the ENI is gone", h.ec2.stopForce)
+	}
+	if out, _ := h.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{"i-wedge"}}); instancesHoldTaskENI(out) {
+		t.Fatal("the task ENI is still attached")
+	}
+}
+
+// ECS acknowledges the deregistration and keeps the ENI: the stop is refused, with a
+// reason the operator can act on, rather than leaving a multi-ENI box behind.
+func TestForceStopSlotRefusesWhileTheTaskENIStaysAttached(t *testing.T) {
+	ctx := context.Background()
+	h := wedgedSlot(t)
+	h.ec2.giveTaskENI("i-wedge")
+	h.ci.stickyENI = true
+	res, err := h.factory().ForceStopSlot(ctx, "i-wedge", false)
+	if !errors.Is(err, ErrSlotTaskENIHeld) {
+		t.Fatalf("ForceStopSlot = %+v, %v; want ErrSlotTaskENIHeld", res, err)
+	}
+	if len(h.ec2.stopForce) != 0 {
+		t.Fatalf("stopped a slot that still held a task ENI: %v", h.ec2.stopForce)
+	}
+	if !res.Deregistered {
+		t.Fatalf("result %+v: the deregistration was attempted and must be reported", res)
+	}
+	// The same press again, once ECS has let go, goes through.
+	h.ec2.dropTaskENIs("i-wedge")
+	if _, err := h.factory().ForceStopSlot(ctx, "i-wedge", false); err != nil || len(h.ec2.stopForce) != 1 {
+		t.Fatalf("retry after the ENI went: err=%v stops=%v", err, h.ec2.stopForce)
+	}
+}
+
+// No task ENI, nothing to release: the container instance is left registered.
+func TestForceStopSlotWithoutATaskENIDoesNotDeregister(t *testing.T) {
+	h := wedgedSlot(t)
+	res, err := h.factory().ForceStopSlot(context.Background(), "i-wedge", false)
+	if err != nil || res.Deregistered || len(h.ci.deregistered) != 0 || len(h.ec2.stopForce) != 1 {
+		t.Fatalf("res=%+v err=%v deregistered=%v stops=%v", res, err, h.ci.deregistered, h.ec2.stopForce)
 	}
 }

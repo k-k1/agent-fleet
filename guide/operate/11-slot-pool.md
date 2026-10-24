@@ -80,6 +80,13 @@ tasks yet)**, and gives it **Stop (force)** (super_admin).
    instance has not stopped after 3 minutes the Control Plane repeats it with Force, and pressing the
    button again while the instance is `stopping` forces it at once. A timer never acts on an instance
    that has been started again since.
+   If ECS still has a task network interface (ENI) on the slot, which it does when the agent is
+   disconnected and cannot clean up, the Control Plane first force-deregisters the slot's container
+   instance and waits up to 30 seconds for that interface to go. A box stopped with a task ENI attached
+   comes back with two interfaces and no automatically assigned public IPv4, so on a public subnet it has no
+   egress and its agent cannot reconnect. If the interface is still there after 30 seconds the stop is
+   refused (`slot_task_eni_held`) and the instance keeps running; wait a minute and press again. The
+   container instance registers again when the box restarts. A slot with no task ENI is not deregistered.
 3. **The slot is not quarantined and the home stays on it.** Once the slot row shows asleep
    (stopped), the member's next Start wakes this same slot through the ordinary path. **Wait for
    that**: a Start made while the instance is still `stopping` gives up waiting after about two minutes

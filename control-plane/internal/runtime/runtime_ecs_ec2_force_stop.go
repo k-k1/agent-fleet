@@ -63,6 +63,9 @@ type SlotForceStop struct {
 	// background re-stop with Force, 0 when none is pending.
 	Forced        bool `json:"forced"`
 	ForceAfterSec int  `json:"force_after_sec"`
+	// Deregistered: the slot held a task ENI, so its container instance was force-deregistered
+	// and the ENI waited out before the stop.
+	Deregistered bool `json:"deregistered,omitempty"`
 	// StoppingTask is the ECS status of a task that is still STOPPING on the slot ("" = none).
 	StoppingTask string `json:"stopping_task,omitempty"`
 }
@@ -82,7 +85,12 @@ type SlotForceStop struct {
 //  3. Cancel the CP's own pending SSM commands (slotVolumeCommandComment). A queued umount
 //     or mount holds the home's mount lock for as long as the command lives and no agent
 //     will ever finish it; cancelling is what lets the lock holder see it end.
-//  4. StopInstances. Graceful first, because a wedged box may still have the home mounted
+//  4. When a task ENI is still attached (the agent is gone, so ECS never cleans it up),
+//     force-deregister the container instance and wait up to 30 s for the ENI to go
+//     (releaseSlotTaskENI). Not released: refuse with ErrSlotTaskENIHeld and leave the
+//     box running, because a box stopped with a task ENI comes back multi-ENI and, on a
+//     public subnet, without egress (ADR 0045 decision 3-3). The operator presses again.
+//  5. StopInstances. Graceful first, because a wedged box may still have the home mounted
 //     and Force is a power cut with no unmount; a background re-stop with Force follows
 //     after slotForceStopGrace if the same stop has not finished. A slot already
 //     `stopping` (the operator pressing again) is forced at once.
@@ -91,7 +99,8 @@ type SlotForceStop struct {
 // this same slot through the ordinary path (the home is attached, the instance is stopped).
 // The reboot clears whatever thrashed, and the slot's ECS agent reconnects and reports a
 // task still STOPPING on it (#2447). Keeping a box as evidence is quarantine's job, and
-// routing dark slots there is #2450. The ECS container instance is not deregistered.
+// routing dark slots there is #2450. The container instance is deregistered only for the
+// task ENI (step 4), and the agent registers it again when the box restarts.
 func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, overrideHealthy bool) (SlotForceStop, error) {
 	res := SlotForceStop{InstanceID: instanceID}
 	cmds, ok := f.ssmc.(ssmSlotCommands)
@@ -178,7 +187,13 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 	// 3. the CP's own pending commands.
 	res.CancelledCommands, res.CancelFailed = cancelSlotVolumeCommands(ctx, cmds, instanceID)
 
-	// 4. stop.
+	// 4. the task ENI.
+	var eniErr error
+	if res.Deregistered, eniErr = probe.releaseSlotTaskENI(ctx, instanceID, slotENIReleasePolls); eniErr != nil {
+		return res, fmt.Errorf("not stopping %s: %w (its commands are already cancelled and the occupant's start is ended)", instanceID, eniErr)
+	}
+
+	// 5. stop.
 	res.Forced = inst.State.Name == ec2types.InstanceStateNameStopping
 	if _, err := f.ec2.StopInstances(ctx, &ec2.StopInstancesInput{
 		InstanceIds: []string{instanceID}, Force: aws.Bool(res.Forced),

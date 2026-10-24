@@ -2544,7 +2544,12 @@ func (e *ecsEC2Runtime) forceDetachHome(ctx context.Context, p ec2Placement) {
 // waitTaskENIsGone polls until ECS has taken its task ENIs off the instance. Same check
 // the sweeper makes before stopping a slot, and for the same reason (decision 3-3).
 func (e *ecsEC2Runtime) waitTaskENIsGone(ctx context.Context, instanceID string) error {
-	for i := 0; i < 60; i++ {
+	return e.waitTaskENIsGoneWithin(ctx, instanceID, 60)
+}
+
+// waitTaskENIsGoneWithin polls every 2s, at most `polls` times.
+func (e *ecsEC2Runtime) waitTaskENIsGoneWithin(ctx context.Context, instanceID string, polls int) error {
+	for i := 0; i < polls; i++ {
 		out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
 		if err == nil && !instancesHoldTaskENI(out) {
 			return nil
@@ -6266,9 +6271,18 @@ func (f *ecsEC2Factory) TerminateQuarantinedSlot(ctx context.Context, instanceID
 // A box the cluster does not know about is not an error: a slot that never finished
 // registering is exactly the kind we terminate.
 func (e *ecsEC2Runtime) deregisterSlot(ctx context.Context, instanceID string) {
+	if err := e.deregisterContainerInstance(ctx, instanceID); err != nil {
+		// Not fatal: sweepGhostInstances re-tries this once the EC2 side is gone.
+		log.Printf("ecs-ec2 sweep: deregistering %s failed: %v", instanceID, err)
+	}
+}
+
+// deregisterContainerInstance is deregisterSlot with the failure handed back. Nil also
+// means "the cluster has no container instance for this box".
+func (e *ecsEC2Runtime) deregisterContainerInstance(ctx context.Context, instanceID string) error {
 	arns, err := e.listContainerInstanceARNs(ctx)
 	if err != nil || len(arns) == 0 {
-		return
+		return err
 	}
 	for _, chunk := range chunkStrings(arns, 100) {
 		out, err := e.ci.DescribeContainerInstances(ctx, &ecs.DescribeContainerInstancesInput{
@@ -6276,8 +6290,7 @@ func (e *ecsEC2Runtime) deregisterSlot(ctx context.Context, instanceID string) {
 			ContainerInstances: chunk,
 		})
 		if err != nil {
-			log.Printf("ecs-ec2 sweep: looking up the container instance of %s: %v", instanceID, err)
-			return
+			return fmt.Errorf("look up the container instance of %s: %w", instanceID, err)
 		}
 		for _, ci := range out.ContainerInstances {
 			if !isPoolContainerInstance(ci) || aws.ToString(ci.Ec2InstanceId) != instanceID {
@@ -6288,12 +6301,12 @@ func (e *ecsEC2Runtime) deregisterSlot(ctx context.Context, instanceID string) {
 				ContainerInstance: ci.ContainerInstanceArn,
 				Force:             aws.Bool(true),
 			}); err != nil {
-				// Not fatal: sweepGhostInstances re-tries this once the EC2 side is gone.
-				log.Printf("ecs-ec2 sweep: deregistering %s before terminating it failed: %v", instanceID, err)
+				return fmt.Errorf("deregister the container instance of %s: %w", instanceID, err)
 			}
-			return
+			return nil
 		}
 	}
+	return nil
 }
 
 // slotTaskCounts maps EC2 instance id → tasks ECS believes are on it (running + pending).
