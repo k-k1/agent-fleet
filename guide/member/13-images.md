@@ -82,7 +82,7 @@ A plain click uses the current pane; Ctrl/⌘-click and middle-click open anothe
 
 **Images a session generated**
 
-Images made with `generate_image` stay in a per-session folder for 30 days. That folder is named
+Images a session made with its image tool stay in a per-session folder for 30 days. That folder is named
 after the session's internal id, so the file tree is no way in. **"Generated images (N)" in the
 session's context menu** is the way, and it appears **only for sessions that have generated
 something** (N is how many). It is absent while the workspace is stopped, because reading the images is
@@ -101,11 +101,8 @@ the conversation the pictures came from (it is absent once the session is gone).
 A pane that makes pictures on your organisation's own ComfyUI **without an agent in the loop**.
 Asking a session for a picture is right for "put an illustration in this document"; this is for
 "forty variations of one prompt at three CFG values", where every round trip through a model
-would cost a turn. A session can name the same settings you can (`generate_image` takes steps,
-cfg, sampler, scheduler, clip skip, guidance, shift, seed, the negative prompt and the LoRA
-weights); what it leaves out runs
-at the checkpoint's own published values, and a setting its family does not read is named in the
-result's warnings rather than dropped in silence. What a session cannot see is what this form shows
+would cost a turn. A session can name the same settings you can
+([below](#having-a-session-generate-an-image)). What a session cannot see is what this form shows
 you: each checkpoint's own published numbers as the placeholders, the fields its family does not
 read greyed out, and a trial run before you commit forty. Three fields appear only for the family
 that reads them: **clip skip** for SD1.5 and SDXL (SDXL already runs at 2, so only 3 and up change
@@ -269,7 +266,7 @@ agent never paints a batch on its own.
   (On by default) turns that off. The switch applies from the agent's next trial, in a session
   that is already running too; while it is off, the agent is told you have to turn it on.
 - **Enqueueing N pictures is yours alone.**
-- **`generate_image` is not available to a studio's session** (the agent does not see it, and a
+- **The image tool is not available to a studio's session** (the agent does not see it, and a
   call is refused), so this pane is the one road to a picture. A CLI's own built-in image tool
   (codex's, for instance) is outside that limit.
 
@@ -363,19 +360,19 @@ the new list **without a restart**.
 - **The aspect ratio is the one exception, and only on the Antigravity route** (16:9 measured
   as 1376×768). You still cannot pick exact dimensions, but you can ask for landscape or
   portrait. The Codex route has no aspect-ratio setting at all.
-- **Sampler settings can be asked for on the deployment's engines.** `generate_image` takes
-  steps, cfg, sampler and scheduler (and a seed, the negative prompt and LoRA weights), plus three
-  settings one family each reads: clip skip (SD1.5, SDXL), guidance (FLUX.1, which has no cfg) and
-  shift (Anima). Anything left out runs at the checkpoint's published values, and a setting the
-  model's family does not read (cfg on FLUX.1, a named scheduler on FLUX.2 klein) is **named in
-  the result as not applied** rather than dropped in silence.
+- **Sampler settings can be asked for on the deployment's engines**, the same ones the form
+  offers: steps, cfg, sampler and scheduler (and a seed, the negative prompt and LoRA weights),
+  plus the three settings one family each reads, clip skip, guidance and shift
+  ([what they are](#image-generation)). Anything left out runs at the checkpoint's published
+  values, and a setting the model's family does not read (cfg on FLUX.1, a named scheduler on
+  FLUX.2 klein) is **named in the result as not applied** rather than dropped in silence.
 - **A LoRA asked for from chat carries its trigger words.** The tool lists each adapter with the
   words it was trained on and tells the agent to put one in the prompt, because an adapter loaded
   without its trigger costs the whole generation and changes nothing visible.
 - **The picture appears in the conversation as a card** (click to enlarge, or open it in a
   pane). Anything the request did not get is noted above it, e.g. "asked for 1024x1024, got
   1536x1024".
-- Results are kept under `~/.cache/agent-fleet/generated/` and also open in the file pane.
-  They are removed after 30 days.
+- Results also open in the file pane, and are removed after 30 days
+  ([where to find them](#image-gallery)).
 - The card is shown for claude, opencode and GitHub Copilot sessions. Other kinds still get
   the path back, but the picture is not drawn into the conversation.

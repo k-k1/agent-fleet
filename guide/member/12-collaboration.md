@@ -11,17 +11,12 @@ This chapter covers the parts of the Console for **more than one person**: shari
 
 ## Sharing and handing over
 
-The first two live in the session's ⋯ menu, and they are different things:
-
-| | What it does | The other person |
-|---|---|---|
-| **Share…** | shows your conversation to another member of the same tenant, read-only | reads it; may be allowed to propose |
-| **Hand off to another agent…** | starts a new session of your own, of any agent kind, carrying the context ([05](05-stopping-and-tidying.md#continuing-elsewhere-handoff-branch-move)) | nobody else is involved |
-| **Hand off to a member** | offers that handoff to someone the session is shared with ([below](#handing-a-session-to-another-member)) | starts the new session in their own workspace |
-
-A shared session appears in the other person's **Shared sessions** section and carries a
-**Shared** badge on yours, so you can always see what is visible to someone else.
-Sharing does not give access to your workspace, only to the conversation.
+Two different things live in the session's ⋯ menu. **Share…** shows your conversation to another
+member of the same tenant, read-only ([Sharing a conversation](#sharing-a-conversation-shared-sessions)).
+Handing over starts a new session instead: **Hand off to another agent…** starts one of your own,
+with the context carried over ([05](05-stopping-and-tidying.md#continuing-elsewhere-handoff-branch-move)),
+and **Hand off to a member** offers that handoff to someone the session is shared with, who starts
+it in their own workspace ([below](#handing-a-session-to-another-member)).
 
 ## Handing a session to another member
 
@@ -139,6 +134,11 @@ tenants, each has its own setting, and the tab lists every tenant you currently 
   sign-in problem), *band* (each quota as under 50% / under 80% / under 95% / 95% or more), or
   *exact* (the percentage and the reset time).
 
+The tab also shows **Your values (only you see this)**, a **Members** list with what the others
+publish to you, and **What is collected**, the agents the board covers. A tenant administrator can
+turn the limit board off for the whole tenant; then nobody's values are collected or shown, and the
+tab says so.
+
 What you see of a teammate is only what they publish to you. Someone who publishes nothing to
 you looks exactly like someone nobody has observed yet: **Unknown**. Your provider e-mail,
 plan and error text are never shown, and an administrator gets no wider view.
@@ -163,6 +163,10 @@ work this way is your organisation's call.
 
 You can show a session's conversation to another member of the same tenant, **read-only**:
 "keep an eye on where this investigation goes", "while you review it, here is how we got here".
+
+A shared session appears in the other person's **Shared sessions** section and carries a
+**Shared** badge on yours, so you can always see what is visible to someone else.
+Sharing does not give access to your workspace, only to the conversation.
 
 **Sharing it**
 

@@ -12,43 +12,17 @@ be running).
 
 ## Supported agents and how to choose
 
-Six major CLI coding agents are compared in the table below. Two more run Managed only:
-**Muse Code** (muse, [below](#muse-code)) and the fleet's own llama.cpp engine
-(**lcpp**, [below](#lcpp)). The experimental Antigravity (agy) slot has
-[its own section](#antigravity-agy). All of them have a column in the
-[feature matrix](../ref/agents.md). Connection changes take effect
-immediately; behavior settings apply **from each agent's new sessions**.
+Agent Fleet drives eleven session kinds, and what each of them supports (execution methods,
+history, plan mode, usage chips, instructions and so on), how each one signs in, which states it
+shows, and how to choose between them are all in the
+[Agents reference](../ref/agents.md#choosing-one). Connection changes take effect
+immediately; behavior settings apply **from each agent's new sessions**. The sections below cover
+the cards in ⚙Settings → "Agents": [Claude](#claude), [Codex](#codex), [OpenCode](#opencode),
+[GitHub Copilot](#github-copilot), [Cursor](#cursor), [Kiro](#kiro),
+[Antigravity (agy)](#antigravity-agy), [Muse Code](#muse-code) and [lcpp](#lcpp).
 
-| | claude | codex | opencode | copilot | cursor | kiro |
-|--|--------|-------|----------|---------|--------|------|
-| Authentication | OAuth connection (paste a code) | ChatGPT subscription / API key | Provider API keys (env) | Rides the GitHub connection (no separate sign-in) | Sign in with a Cursor account (browser approval only) | Device-flow sign-in (Builder ID / Google / GitHub; browser approval only) |
-| Model choice at launch | Yes | Yes | Yes | Yes (plan-dependent; Free is Auto only) | Yes (tied to the account) | Yes (named models even on Free) |
-| States | Working / Question / Plan ready / Awaiting permission / Ready | Working / Question / Plan ready / Ready | Working / Question / Ready | Working / Awaiting permission / Ready | Working / Awaiting permission / Plan ready / Ready | Working / Question / Ready |
-| Chat view & history | Yes | Yes | Yes | Yes | Live: yes (simplified tool output). Stopped: no history under Managed | Yes (readable history even under Managed) |
-| Plan mode | Yes | Yes | Yes | Set at launch + switchable from managed settings | Yes | Not supported |
-| Execution method | Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) |
-| Resume | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (can't resume across execution methods) | Yes (not if the working folder is gone) |
-| Hand off | Yes | Yes | Yes | Yes | Yes | Yes |
-| Image paste | Yes | Yes | Yes (model-dependent) | Not supported | Not supported | Not supported |
-| Auto-resume after a usage limit resets | Yes | Managed only | Not supported | Not supported | Not supported | Not supported |
-
-If you're unsure, choose by the subscription or models you use. If you use an Anthropic
-account, pick **claude**; if you use ChatGPT or the OpenAI API, pick **codex**; if you want
-to switch between API keys from multiple providers, pick **opencode**; if you have a
-GitHub Copilot subscription, pick **copilot**; if you have a Cursor plan, pick
-**cursor**; if you use an AWS Builder ID (or Kiro plan), pick **kiro**. They all support
-the conversation view, answering questions, and handing a conversation off to another
-agent; the context gauge is on claude / codex / opencode / kiro / lcpp / muse. Beyond those
-six: if you have a Meta account (or a Meta Model API key), pick **muse**; if you want a model
-that needs no vendor account at all, pick **lcpp**. It runs on your organization's own
-engine (or a llama-server on your network), so there is no sign-in and no subscription limit.
-
-**Managed execution** for Codex / opencode / copilot / cursor / kiro lets you handle your everyday
-work entirely from the conversation view (Codex / opencode carry no extra per-session
-process, which makes them well suited to parallel work; copilot / cursor / kiro run a dedicated
-per-session process even when Managed). Pick **Terminal (CLI)** only when you need the
-CLI's own black screen. lcpp and muse run Managed only, so there is no Terminal (CLI) to pick;
-lcpp needs no per-session process either, while muse runs one per session. For details, see
+Which kinds run Managed and which run in Terminal (CLI) is in the
+[Agents reference](../ref/agents.md), and what each choice means is in
 [03 Starting sessions](03-starting-sessions.md#execution-method-managed-and-terminal-cli).
 The Managed chat view is separate from the assistant chat in the left pane, which doesn't use a repository.
 
@@ -70,11 +44,6 @@ approvals, so read the note above as applying to it the way it applies to `shell
 ([Muse Code](#muse-code)). The states every kind shows, the other agents included, are listed in
 the [Agents reference](../ref/agents.md#states-shown-in-the-mirror).
 
-## Feature matrix (all agent kinds)
-
-What each session kind supports, all eleven of them (Antigravity (agy), lcpp, muse, shell and SSM
-included), is in one table in the [Agents reference](../ref/agents.md).
-
 ## Model prices and usage chips
 
 The model lists show each model's **API list price** (input / output per 1M tokens) and context
@@ -95,17 +64,20 @@ show** / **Auto** (default) / **Always fold**). Pin a third agent if you want it
 permanently, and note that "Always fold" keeps it folded even near its cap. On a phone the
 chips already sit in the ⋯ overflow as a list, so nothing is folded there.
 
-The WS-bar usage chip needs an account-level limit to show: opencode
-(bring-your-own provider API keys), cursor, and kiro expose none.
+The WS-bar usage chip needs an account-level limit to show; which kinds have one is the "Usage /
+remaining-quota chip" row of the [Agents reference](../ref/agents.md).
 
 ## Default model for the assistant chat
 
-Each assistant can pin its own model, and
-claude's default is settable deployment-wide via `AF_CHAT_MODEL`. Fast, low-cost tiers are
-the defaults because the assistant is conversational: claude → Sonnet 5 · codex → the newest
-Luna it lists (`gpt-6-luna` at the time of writing) · opencode → `opencode-go/glm-5.2` when the account lists it, otherwise `opencode/nemotron-3-ultra-free` · agy → Gemini 3.5 Flash ·
-cursor → its own default (Auto). cursor's assistant runs **read-only** (`--mode ask`).
-kiro is **not** available as an assistant chat (it has no headless chat mode).
+Each assistant can pin its own model, and an administrator can set claude's default for the whole
+deployment. Fast, low-cost tiers are the defaults because the assistant is conversational:
+claude → Sonnet 5 · codex → the newest Luna it lists (`gpt-6-luna` at the time of writing) ·
+opencode → `opencode-go/glm-5.2` when the account lists it, otherwise `opencode/nemotron-3-ultra-free` ·
+agy → Gemini 3.5 Flash · cursor → its own default (Auto). muse is not a fast tier: left on the
+recommendation it runs on the newest Muse Code model that does not let Meta use your conversations
+(the assistant-chat note in the [Agents reference](../ref/agents.md)). Which kinds can be an
+assistant chat at all is the "Usable as the assistant chat" row there; cursor's assistant, for
+one, runs **read-only**.
 
 ## Claude
 
@@ -267,8 +239,7 @@ supported.
 
 - The model choices at launch are **exactly the models available to that account**
   (fetched live). You can't change the model after a session has started.
-- The usage chip, context gauge, and image paste are not supported for cursor.
-  Check your plan's remaining quota on the Cursor dashboard.
+- Check your plan's remaining quota on the Cursor dashboard.
 - In a Terminal (CLI) session, each finished turn's token counts reach ⚙Settings →
   "Agent usage" through a `stop` entry Agent Fleet adds to `~/.cursor/hooks.json`. Other
   entries in that file are kept. The counts are cursor's own report, so they are marked
@@ -288,15 +259,14 @@ email. Connecting with an API key is not supported.
   connection card shows an **"Install Kiro"** button with progress before you can sign in.
   When a newer pinned build exists, the card offers **"Update Kiro"** so you can update ahead of
   time. A Terminal (CLI) launch updates to the pinned build by itself when it starts.
-  (Deployments that set `BAKE_AGENT_CLIS=1` ship it pre-installed.)
+  (A deployment that bakes Kiro into the image ships it pre-installed.) While an update runs,
+  Kiro sessions already running keep working on the old build until they are restarted.
 - The model choices at launch are fetched live; **named models are available even on the
   Free plan** (Auto, Claude Sonnet / Haiku, and others). There's no separate
   reasoning-effort picker.
-- Both **Managed (default)** and **Terminal (CLI)** execution are supported. Unlike cursor,
-  a **stopped** kiro session still shows a readable history, and running kiro exposes a
-  live **context gauge**.
-- The image paste, Plan mode, and the WS-bar usage chip are not supported for kiro, and it
-  can't be used as the left-pane assistant chat.
+- Both **Managed (default)** and **Terminal (CLI)** execution are supported; what else kiro
+  supports (history, context gauge, plan mode and so on) is in the
+  [Agents reference](../ref/agents.md).
 
 ## Antigravity (agy)
 
@@ -312,9 +282,9 @@ card says "Not available on this host (…)" and agy is not offered.
 
 - **Terminal (CLI) only.** There is no Managed execution for agy.
 - The model choices at launch are the account's live list. The reasoning effort is part of the
-  model name, so there is no separate picker. Image paste works; Plan mode and the context
-  gauge are not available. The WS bar shows its usage (5-hour and weekly).
-- **States**: Working / Question / Awaiting permission / Ready. agy ends its turn soon after a
+  model name, so there is no separate picker. The WS bar shows its usage (5-hour and weekly).
+  What else agy supports is in the [Agents reference](../ref/agents.md).
+- **Background commands.** agy ends its turn soon after a
   command it ran with `run_command` starts, and leaves the command running. While such a command
   runs, the row reads **"Ready · running in background"**, and the session does not count as
   idle. That background work keeps the Workspace awake for at most 2 hours by default (the
@@ -358,13 +328,15 @@ and switch Muse Code's **contributor mode**. While it is on, Meta may use your c
 to improve the product. It is off by default, and each session keeps the mode it was created
 with across a stop and start. See [Agents reference](../ref/agents.md) for the details.
 
-In a running muse session the **`/`** button beside the input lists the session's own skills:
-Muse Code's bundled ones, plugin skills, yours under `~/.config/muse/skills`, and the working
-copy's `.agents/skills/`. Picking one runs it
-([04](04-conversation.md#calling-a-skill-or-a-command)).
+In a running muse session the **`/`** button beside the input lists the session's own skills,
+and picking one runs it ([04](04-conversation.md#calling-a-skill-or-a-command); what the list
+holds is in the [Agents reference](../ref/agents.md)). When a usage limit stops a muse turn, the
+session resumes by itself once the limit resets (the states are in the same reference).
 
-When a usage limit stops a muse turn, the row shows "Waiting for limit reset" with the time,
-and the session resumes by itself once the limit resets, as claude does.
+The card shows how muse is billed. Signed in with a Meta account it uses your plan; connected with
+an API key it bills per use. If an API key is also set in the workspace's environment variables,
+the card warns that it takes priority over the stored sign-in, so you are billed per use whatever
+the card says; remove that variable to use your plan.
 
 > 🔴 **A muse session asks for no tool approvals.** Every tool call is allowed before any
 > approval is considered: the sandbox cannot be built inside this Workspace container.
@@ -389,23 +361,19 @@ and the model it found) rather than the deployment's engine
 ([badges](badges-and-menus.md#the-engine-pills-in-the-top-bar)). Clear the fields to go back to
 the deployment's engine.
 
-What to expect before your first session:
+Read [lcpp: what hardware measurement found](../ref/agents.md#lcpp-what-hardware-measurement-found)
+before your first session: the first turn can take minutes, the context window has a minimum worth
+choosing, and only some model families are verified.
 
-- **The first turn can take minutes.** When the engine instance is stopped, waking it is a
-  genuine cold start (roughly 3.5–7 minutes). Subsequent turns are fast while the
-  instance stays warm.
-- **Choose a context window of 8000 tokens or more.** At smaller windows, some model
-  families trigger compaction loops the harness deliberately breaks out of.
-- **Stick to a verified model family.** Qwen3, GPT-OSS, and Gemma are confirmed to work;
-  `llama-3.1-8b-instruct` does not (no Llama-specific tool-call parser in this build).
-- **External (MCP) tools are loaded on demand.** Once the tools from your enabled MCP servers add up to more than a few thousand characters of schema, the model is not sent them all on every turn. It gets three small tools instead (`tool_search`, `tool_describe`, `tool_call`) and looks up the tool it needs. This keeps a small context window free. Approvals work as for any other tool, and the transcript shows the tool that was actually called. lcpp's own tools (read, edit, bash and so on) are always sent. An administrator can change this with `AF_LCPP_MCP_TOOLS` on the Agent: `direct` always sends every schema, `deferred` always uses the three tools.
+What else to know:
 
-For full details (measured turn counts by model family, cold-start timings, and the
-reasoning behind the window guidance), see [Agents reference](../ref/agents.md#lcpp-what-hardware-measurement-found).
+- **External (MCP) tools are loaded on demand.** Once the tools from your enabled MCP servers add up to more than a few thousand characters of schema, the model is not sent them all on every turn. It gets three small tools instead (`tool_search`, `tool_describe`, `tool_call`) and looks up the tool it needs. This keeps a small context window free. Approvals work as for any other tool, and the transcript shows the tool that was actually called. lcpp's own tools (read, edit, bash and so on) are always sent. An administrator can force either behaviour for the whole deployment.
+
 
 ## Checking remaining context
 
-In claude / codex / opencode / kiro / lcpp / muse sessions, a **"Context"** gauge (`ctx` when the screen is
+In the sessions of the kinds that have a context gauge (the "Context usage gauge" row of the
+[Agents reference](../ref/agents.md)), a **"Context"** gauge (`ctx` when the screen is
 narrow) appears at the top. Hover over it to see how many tokens the current conversation
 is using, the limit, and the breakdown into cache reuse, new cache writes, and uncached.
 As you approach the limit, a "May be auto-compacted soon" warning appears. If a long
@@ -444,9 +412,9 @@ Instructions come in three layers, and this setting is the **middle** one.
 - It applies to **sessions started from now on**. Running sessions keep what they read at start.
   lcpp is the exception: it has no file to write, so its row says it is added to the system
   prompt every turn, and a running lcpp session picks up a change on its next turn.
-- It can be delivered to claude / codex / opencode / GitHub Copilot / agy / Kiro / lcpp / muse (opencode takes it through an `AGENTS.md` block; see [OpenCode](#opencode)).
-  **Cursor is the only one that can't take it**, and it still appears in the list with the reason
-  (Cursor keeps User Rules in your Cursor account, with no local per-user place for instructions).
+- Which kinds can receive it is the "Receives your agent instructions" row of the
+  [Agents reference](../ref/agents.md) (opencode takes it through a marked block; see
+  [OpenCode](#opencode)). A kind that cannot still appears in the list with the reason.
 - Each row shows **where it goes** (the file it was written to, or for lcpp the system prompt) and **whether it is actually in effect**. When
   something saved but isn't in effect, that row says why.
 - There is a length limit: this text rides along in **every session's context, every time**, so
