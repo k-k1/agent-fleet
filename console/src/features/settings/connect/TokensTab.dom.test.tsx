@@ -5,8 +5,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 const api = vi.fn(async () => ({ tokens: [], ceiling: "write" }));
+const apiJSON = vi.fn(async () => ({ token: "" }));
 vi.mock("../../../core/api/client.ts", async (importActual) => ({
   ...(await importActual<typeof import("../../../core/api/client.ts")>()),
+  apiJSON: (...args: unknown[]) => (apiJSON as (...a: unknown[]) => unknown)(...args),
   api: (...args: unknown[]) => (api as (...a: unknown[]) => unknown)(...args),
 }));
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
@@ -51,5 +53,25 @@ describe("TokensTab what-this-token-can-do section", () => {
     expect(useSettingsUI.getState().settingsSection).toBe("memory");
     expect(useSettingsUI.getState().settingsView).toBe("settings");
     expect(useSettingsUI.getState().settingsOpen).toBe(true);
+  });
+
+  // A PAT carries the member's full /mcp authority, so the tab says not to hand it to a session —
+  // beside the issue form and again in the shown-once panel.
+  it("warns against giving the token to a session, at the form and in the issued panel", async () => {
+    api.mockImplementation(async () => ({ tokens: [], ceiling: "write" }));
+    const warn = t("tokens.session_warning");
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => root!.render(<TokensTab />));
+    const count = () => (host!.textContent ?? "").split(warn).length - 1;
+    expect(warn).toBeTruthy();
+    expect(count()).toBe(1);
+
+    apiJSON.mockResolvedValueOnce({ token: "afp_secret" });
+    const issue = Array.from(host.querySelectorAll("button")).find((b) => b.textContent === t("tokens.issue"));
+    await act(async () => issue!.click());
+    expect(host.querySelector(".pat-issued")?.textContent).toContain(warn);
+    expect(count()).toBe(2);
   });
 });
