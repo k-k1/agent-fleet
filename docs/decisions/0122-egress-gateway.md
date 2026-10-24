@@ -33,7 +33,7 @@ acceptable for a deploying organisation.** Today:
 
 Constraints found while looking at the targets:
 
-- The AWS stack owns its VPC and a NAT gateway with a retained Elastic IP, so customers can
+- The AWS stack owns its VPC and a NAT gateway with a retained Elastic IP, so a deploying organisation can
   allow-list a stable egress address (`00-network.yaml`). ECS tasks use `awsvpc`: each has its
   own ENI and private IP.
 - The GKE stack owns Cloud NAT with a reserved address (`network.tf`).
@@ -160,7 +160,7 @@ retried instead of dropped. The events gain the source address, so the CP can at
    route and the Elastic IP before any workspace starts.
 6. **Existing deployments**: moving the default route from the NAT gateway to the gateway is a
    change to a running VPC, with a rollback.
-7. **The egress address customers allow-list.** Today it is the one retained Elastic IP on the NAT
+7. **The egress address a deploying organisation allow-lists.** Today it is the one retained Elastic IP on the NAT
    gateway (`NatEip`, `DeletionPolicy: Retain`), and `NatEipAllocationId` is meant for a new
    stand-up only: handing it to a running stack makes CloudFormation replace the NAT gateway
    (measured on a deployed stack with `--no-execute-changeset`). The gateway instance has to take
@@ -168,7 +168,7 @@ retried instead of dropped. The events gain the source address, so the CP can at
    holds it, so the cut-over has an egress gap unless it is planned (a second address for the
    switch, or a short maintenance window).
 8. **One gateway is one Availability Zone.** The NAT gateway is already single-AZ; a gateway
-   instance in an Auto Scaling group of one keeps that. A gateway per zone gives the customer two
+   instance in an Auto Scaling group of one keeps that. A gateway per zone gives the deploying organisation two
    egress addresses to allow-list, so the choice has to be made before the address is handed out.
 
 ## Notes
