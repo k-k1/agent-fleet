@@ -106,6 +106,7 @@ export function TokensTab() {
       {issued && (
         <div className="pat-issued">
           <div className="pat-issued-head">✅ {tr("tokens.issued_head")}</div>
+          <p className="muted ds-note">{tr("tokens.session_warning")}</p>
           <code className="pat-secret">{issued.token}</code>
           <div className="pat-issued-actions">
             <button
@@ -134,6 +135,8 @@ export function TokensTab() {
           </div>
         </div>
       )}
+
+      <p className="muted ds-note">{tr("tokens.session_warning")}</p>
 
       <div className="pat-form">
         <Row label={tr("tokens.name")}>
