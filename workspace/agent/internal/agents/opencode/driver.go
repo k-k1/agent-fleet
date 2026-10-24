@@ -238,7 +238,7 @@ func (managedDriver) RespondTerminal(m session.Meta, reply agents.InteractionRep
 		waiting = waiting || f.ID == reply.ID
 	}
 	if !waiting {
-		return fmt.Errorf("interaction %s は待機中ではありません: %w", reply.ID, errFormSettled)
+		return fmt.Errorf("interaction %s is not pending: %w", reply.ID, errFormSettled)
 	}
 	return respondForm(t.Addr, ses, reply)
 }
@@ -1044,7 +1044,7 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	}
 	h.mu.Unlock()
 	if inter == nil || inter.ID != reply.ID {
-		return fmt.Errorf("interaction %s は待機中ではありません", reply.ID)
+		return fmt.Errorf("interaction %s is not pending: %w", reply.ID, errFormSettled)
 	}
 	if isV2() {
 		// A form, not a question: it is answered by field key and read again first (v2form.go).

@@ -5,7 +5,7 @@
 // repaint flickered the terminal cursor in the old console.
 import { createElement } from "react";
 import { create } from "zustand";
-import { api, getTenant, getUser, isTransientErr } from "../../core/api/client.ts";
+import { api, errDetail, getTenant, getUser, isTransientErr } from "../../core/api/client.ts";
 import { pushHealthy, pushStamp } from "../../core/push/events.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { dismissToast, toast } from "../../ui/toast.ts";
@@ -153,7 +153,9 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
         // An uncatalogued code (start_failed carrying tmux's stderr, say) keeps the server's
         // message: it is the only clue to why.
         const msg = typeof r.error.message === "string" ? r.error.message.trim() : "";
-        toast(tMaybe("err." + r.error.code) ?? (msg ? `${tr("srow.resume_failed")}: ${msg}` : tr("srow.resume_failed")), {
+        // transcript_restore_failed: the catalogue says what failed, the message why (the I/O cause).
+        const head = r.error.code === "transcript_restore_failed" ? errDetail(r.error) : tMaybe("err." + r.error.code);
+        toast(head ?? (msg ? `${tr("srow.resume_failed")}: ${msg}` : tr("srow.resume_failed")), {
           kind: "error",
         });
       }

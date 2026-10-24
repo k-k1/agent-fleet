@@ -25,6 +25,14 @@ beforeAll(async () => {
   client = await import("./client.ts");
 });
 
+describe("errText for Go-built error codes", () => {
+  it("words interaction_not_pending from the catalogue, not the server's English message", () => {
+    const text = client.errText({ code: "interaction_not_pending", message: "interaction x is not pending" });
+    expect(text).not.toContain("is not pending");
+    expect(text).not.toBe("");
+  });
+});
+
 describe("errDetail", () => {
   it("appends the server's message even for a code that has a translation", () => {
     const head = client.errText({ code: "memory_import_failed" });

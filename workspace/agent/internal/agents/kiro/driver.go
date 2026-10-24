@@ -1146,7 +1146,7 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	inter, permID, permOpts, cl := h.inter, h.permID, h.permOpts, h.cl
 	h.mu.Unlock()
 	if inter == nil || inter.ID != reply.ID || cl == nil {
-		return fmt.Errorf("interaction %s は待機中ではありません", reply.ID)
+		return fmt.Errorf("interaction %s is not pending: %w", reply.ID, agents.ErrInteractionNotPending)
 	}
 	var result map[string]any
 	switch reply.Decision {

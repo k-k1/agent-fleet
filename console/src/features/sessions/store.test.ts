@@ -113,6 +113,22 @@ describe("sessions store", () => {
     expect(toastMock.mock.calls[0][1]).toMatchObject({ kind: "error" });
   });
 
+  it("words a failed log restore from the catalogue and keeps the cause", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ error: { code: "transcript_restore_failed", message: "could not restore: disk full" } }),
+          { status: 409, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(jsonResponse({ sessions: [row("ssko6g5", false)] }));
+
+    await expect(useSessionsStore.getState().start("ssko6g5")).resolves.toBe(false);
+    const shown = String(toastMock.mock.calls[0][0]);
+    expect(shown).toContain(tMaybe("err.transcript_restore_failed") as string);
+    expect(shown).toContain("disk full");
+  });
+
   it("keeps the server's message for an uncatalogued refusal", async () => {
     fetchMock
       .mockResolvedValueOnce(
