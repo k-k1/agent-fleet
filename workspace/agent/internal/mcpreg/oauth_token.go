@@ -189,7 +189,7 @@ func refreshGrantRes(ctx context.Context, serverID, rejected string) (token, res
 		"refresh_token": {g.RefreshToken},
 		"resource":      {g.Resource},
 	}
-	tok, terr := postToken(ctx, g.ServerID, g.TokenEndpoint, form, g.ClientID, g.ClientSecret, g.TokenAuth)
+	tok, terr := postToken(ctx, g.ServerID, g.Issuer, g.TokenEndpoint, form, g.ClientID, g.ClientSecret, g.TokenAuth)
 	if terr != nil {
 		if terr.code == "invalid_grant" {
 			markSignInAgain(g.ServerID, g.Issuer, g.RefreshToken)
@@ -419,7 +419,7 @@ func dropPendingFor(serverID string) {
 
 func revokeToken(ctx context.Context, g secrets.MCPOAuthGrant, token, hint string) bool {
 	if g.TokenAuth == tokenAuthCP {
-		return revokeTokenCP(ctx, g.ServerID, token, hint)
+		return revokeTokenCP(ctx, g.ServerID, g.Issuer, g.ClientID, token, hint)
 	}
 	if !endpointUsable(g.RevocationEndpoint) {
 		return false

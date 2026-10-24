@@ -26,9 +26,12 @@ type asStub struct {
 	mu        sync.Mutex
 	issuer    string // what the metadata says; defaults to the server's own URL
 	methods   []string
+	revMeth   []string // revocation_endpoint_auth_methods_supported
+	postOnly  bool     // the client is registered for client_secret_post: basic gets invalid_client
 	forms     []url.Values
 	basics    []string
 	revokes   []url.Values
+	revBasics []string
 	tokenCode int
 	tokenBody string
 }
@@ -46,18 +49,25 @@ func newASStub(t *testing.T) *asStub {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"issuer": iss, "token_endpoint": s.srv.URL + "/token", "revocation_endpoint": s.srv.URL + "/revoke",
-				"token_endpoint_auth_methods_supported": s.methods,
+				"token_endpoint_auth_methods_supported": s.methods, "revocation_endpoint_auth_methods_supported": s.revMeth,
 			})
 		case "/token":
 			_ = r.ParseForm()
 			u, p, _ := r.BasicAuth()
 			s.forms = append(s.forms, r.PostForm)
 			s.basics = append(s.basics, u+":"+p)
+			if s.postOnly && r.PostForm.Get("client_secret") == "" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"invalid_client"}`))
+				return
+			}
 			w.WriteHeader(s.tokenCode)
 			_, _ = w.Write([]byte(s.tokenBody))
 		case "/revoke":
 			_ = r.ParseForm()
+			u, p, _ := r.BasicAuth()
 			s.revokes = append(s.revokes, r.PostForm)
+			s.revBasics = append(s.revBasics, u+":"+p)
 		default:
 			http.NotFound(w, r)
 		}
@@ -95,7 +105,19 @@ func bridgeRow(t *testing.T, a ServerAPI, ctx context.Context, issuer, secret st
 	return row
 }
 
-func bridgeCall(a ServerAPI, op, tenant string, form url.Values) *httptest.ResponseRecorder {
+// bridgeCall names the stored row's client as the grant's, as the Agent does, unless the form
+// already names one.
+func bridgeCall(a ServerAPI, op, tenant string, in url.Values) *httptest.ResponseRecorder {
+	form := url.Values{}
+	for k, v := range in {
+		form[k] = v
+	}
+	if !form.Has("issuer") {
+		if row, ok, _ := a.store.GetMCPServer(context.Background(), "tenant-a", "s1"); ok {
+			form.Set("issuer", row.OAuthIssuer)
+			form.Set("client_id", row.OAuthClientID)
+		}
+	}
 	r := httptest.NewRequest(http.MethodPost, "/internal/mcp-servers/s1/oauth/"+op, strings.NewReader(form.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.SetPathValue("id", "s1")
@@ -205,6 +227,11 @@ func TestBridgePassesOnlyAnErrorCode(t *testing.T) {
 	}
 	as.tokenCode, as.tokenBody = 500, `{"error":"<b>Oops</b>"}`
 	if w := bridgeCall(a, "token", "tenant-a", codeForm()); w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "server_error") {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	// Well-formed but not a token endpoint code: the AS's own words do not pass.
+	as.tokenCode, as.tokenBody = 400, `{"error":"client_secret_s_cret"}`
+	if w := bridgeCall(a, "token", "tenant-a", codeForm()); strings.TrimSpace(w.Body.String()) != `{"error":"server_error"}` {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }
@@ -357,5 +384,75 @@ func TestBridgeToleratesTrailingSlashAndLoopbackRedirect(t *testing.T) {
 	f.Set("redirect_uri", "http://af.example.com/oauth2/mcp/callback")
 	if w := bridgeCall(a, "token", "tenant-a", f); w.Code != http.StatusBadRequest {
 		t.Fatalf("a non-loopback http redirect URI was relayed: %d %s", w.Code, w.Body)
+	}
+}
+
+// A grant made with a client the admin has since replaced is refused before anything is sent:
+// its tokens belong to the old client's AS, not the new one's.
+func TestBridgeRefusesAGrantOfAReplacedClient(t *testing.T) {
+	a, ctx := newMCPServerAPITest(t, true)
+	as := newASStub(t)
+	bridgeRow(t, a, ctx, as.srv.URL, "s3cret")
+	refresh := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {"old-rt"}, "resource": {bridgeResource}}
+	cases := map[string]url.Values{
+		"another issuer":    {"issuer": {"https://old-as.example.com"}, "client_id": {"corp"}},
+		"another client id": {"issuer": {as.srv.URL}, "client_id": {"old-corp"}},
+		"no client named":   {"issuer": {""}},
+	}
+	for name, grant := range cases {
+		for _, op := range []string{"token", "revoke"} {
+			f := url.Values{"token": {"old-rt"}}
+			if op == "token" {
+				f = url.Values{}
+				for k, v := range refresh {
+					f[k] = v
+				}
+			}
+			for k, v := range grant {
+				f[k] = v
+			}
+			if w := bridgeCall(a, op, "tenant-a", f); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "unauthorized_client") {
+				t.Errorf("%s %s: %d %s", name, op, w.Code, w.Body)
+			}
+		}
+	}
+	if len(as.forms) != 0 || len(as.revokes) != 0 {
+		t.Fatalf("the AS was sent %d token and %d revocation request(s)", len(as.forms), len(as.revokes))
+	}
+}
+
+// The metadata lists what the AS supports, not what the client was registered with: with both
+// listed, a client registered for client_secret_post still signs in.
+func TestBridgeRetriesWithPostForAPostRegisteredClient(t *testing.T) {
+	a, ctx := newMCPServerAPITest(t, true)
+	as := newASStub(t)
+	as.methods, as.postOnly = []string{"client_secret_basic", "client_secret_post"}, true
+	bridgeRow(t, a, ctx, as.srv.URL, "s3cret")
+	if w := bridgeCall(a, "token", "tenant-a", codeForm()); w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if len(as.forms) != 2 || as.basics[0] != "corp:s3cret" || as.forms[1].Get("client_secret") != "s3cret" || as.basics[1] != ":" {
+		t.Fatalf("AS saw %v / %v", as.forms, as.basics)
+	}
+	// A refusal that is not about the client is not retried.
+	as.postOnly, as.forms, as.basics = false, nil, nil
+	as.tokenCode, as.tokenBody = 400, `{"error":"invalid_grant"}`
+	if w := bridgeCall(a, "token", "tenant-a", codeForm()); len(as.forms) != 1 || !strings.Contains(w.Body.String(), "invalid_grant") {
+		t.Fatalf("%d %s after %d request(s)", w.Code, w.Body, len(as.forms))
+	}
+}
+
+// Revocation authenticates with the revocation endpoint's own methods (RFC 8414 §2).
+func TestBridgeRevokeUsesItsOwnAuthMethods(t *testing.T) {
+	a, ctx := newMCPServerAPITest(t, true)
+	as := newASStub(t)
+	as.methods, as.revMeth = []string{"client_secret_basic"}, []string{"client_secret_post"}
+	bridgeRow(t, a, ctx, as.srv.URL, "s3cret")
+	w := bridgeCall(a, "revoke", "tenant-a", url.Values{"token": {"rt"}})
+	if w.Code != 200 || len(as.revokes) != 1 || as.revokes[0].Get("client_secret") != "s3cret" || as.revBasics[0] != ":" {
+		t.Fatalf("%d %s; revokes %v basic %v", w.Code, w.Body, as.revokes, as.revBasics)
+	}
+	if as.revokes[0].Has("issuer") {
+		t.Errorf("the grant's issuer was forwarded to the AS: %v", as.revokes[0])
 	}
 }

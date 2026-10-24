@@ -135,6 +135,9 @@ type pendingAuth struct {
 	redirectURI          string
 	verifier             string
 	expires              time.Time
+	// tenantClient is the definition's tenant client when the sign-in started, whatever
+	// registration path it took: a tenant fetch that changes it ends every sign-in (endedOAuth).
+	tenantClient *secrets.MCPTenantClient
 }
 
 var (
@@ -547,7 +550,7 @@ func StartOAuth(ctx context.Context, serverID string, req StartRequest) (StartRe
 		registration: cl.path, clientID: cl.id, secret: cl.secret, tokenAuth: cl.tokenAuth,
 		tokenEndpoint: srv.ep.token, revocationEndpoint: revocation, resource: rep.Resource,
 		scope: scope, redirectURI: req.RedirectURI, verifier: verifier,
-		expires: oauthNow().Add(oauthStateTTL),
+		expires: oauthNow().Add(oauthStateTTL), tenantClient: copyTenantClient(d.OAuthClient),
 	}); e != nil {
 		return StartResult{}, e
 	}
@@ -614,7 +617,7 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 		"code_verifier": {p.verifier},
 		"resource":      {p.resource},
 	}
-	tok, terr := postToken(ctx, p.serverID, p.tokenEndpoint, form, p.clientID, p.secret, p.tokenAuth)
+	tok, terr := postToken(ctx, p.serverID, p.issuer, p.tokenEndpoint, form, p.clientID, p.secret, p.tokenAuth)
 	if terr != nil {
 		return fail(http.StatusBadGateway, OAuthErrTokenExchange, "the authorization server refused the code ("+terr.code+")")
 	}
@@ -721,9 +724,9 @@ func safeErrCode(s string) string {
 
 // postToken sends one token-endpoint request with the client's authentication. A tenant's
 // confidential client (tokenAuth "cp") sends it through the CP, which adds the secret.
-func postToken(ctx context.Context, serverID, endpoint string, form url.Values, clientID, secret, tokenAuth string) (tokenResponse, *tokenError) {
+func postToken(ctx context.Context, serverID, issuer, endpoint string, form url.Values, clientID, secret, tokenAuth string) (tokenResponse, *tokenError) {
 	if tokenAuth == tokenAuthCP {
-		return postTokenCP(ctx, serverID, form)
+		return postTokenCP(ctx, serverID, issuer, clientID, form)
 	}
 	if !endpointUsable(endpoint) {
 		return tokenResponse{}, &tokenError{code: "bad_endpoint"}

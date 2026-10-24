@@ -300,10 +300,19 @@ naming the server and the AS issuer. No token, code or verifier is logged or aud
     be the row's URL. The token and revocation endpoints come from the CP's own discovery of the issuer the admin
     entered (RFC 8414 / OIDC in the specification's order, the document must name the same issuer, endpoints
     `https`), never from the Agent, and the CP dials public addresses only and follows no redirect, the CIMD fetch's
-    guard. The AS's error reaches the Agent as an RFC 6749 code only.
+    guard. The AS's error reaches the Agent as one of the token endpoint's own codes (RFC 6749 §5.2, RFC 8707's
+    `invalid_target`), anything else as `server_error`.
+  - **Client authentication.** The metadata lists what the AS supports, not what the client was registered with.
+    With only `client_secret_post` listed the CP uses it; otherwise `client_secret_basic` (the default when the list
+    is absent), and when both are listed an `invalid_client` answer is retried once with post. Revocation reads
+    `revocation_endpoint_auth_methods_supported` on its own (RFC 8414 §2).
   - **Write-only secret.** The admin list and the upsert answer show `***`; `***` sent back keeps the secret only while
     the issuer and client id are unchanged, so an admin cannot point a secret someone else entered at an AS of their
     choosing.
   - **Changing the client ends sign-ins**, as a URL change does: the Agent's fetch comparison includes the client,
-    because a grant made with a confidential client is renewed through the CP with that client.
+    because a grant made with a confidential client is renewed through the CP with that client. Adding a client
+    counts too, and a sign-in still open in a browser is refused on completion whatever path it took. The Agent names
+    its grant's issuer and client id in every bridge request and the CP refuses one that is no longer the row's, so an
+    old grant's tokens never reach the new client's AS; the price is that they cannot be revoked through the CP
+    either (the old secret is gone) and expire at the old AS on their own.
   - The CP has to reach the AS for this case only, which the operate guide says.

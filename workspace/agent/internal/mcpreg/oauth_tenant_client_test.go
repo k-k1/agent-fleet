@@ -141,7 +141,8 @@ func TestTenantConfidentialClientGoesThroughTheCP(t *testing.T) {
 			t.Errorf("CP form %s = %q, want %q", k, form.Get(k), v)
 		}
 	}
-	if form.Get("code_verifier") == "" || form.Has("client_id") || form.Has("client_secret") {
+	// The grant's client rides along so the CP can refuse once the admin replaced it.
+	if form.Get("code_verifier") == "" || form.Get("issuer") != f.url("") || form.Get("client_id") != "corp" || form.Has("client_secret") {
 		t.Errorf("CP form: %v", form)
 	}
 	g := storedGrant(t, id)
@@ -181,7 +182,8 @@ func TestDisconnectRevokesAConfidentialGrantThroughTheCP(t *testing.T) {
 	if err != nil || !res.Revoked || cp.revoked != 1 || len(f.revokes) != 0 {
 		t.Fatalf("disconnect %+v %v: CP revokes %d, AS revokes %d", res, err, cp.revoked, len(f.revokes))
 	}
-	if last := cp.forms[len(cp.forms)-1]; last.Get("token") != "cp-rt-0" || last.Get("token_type_hint") != "refresh_token" {
+	if last := cp.forms[len(cp.forms)-1]; last.Get("token") != "cp-rt-0" || last.Get("token_type_hint") != "refresh_token" ||
+		last.Get("issuer") != f.url("") || last.Get("client_id") != "corp" {
 		t.Errorf("revoke form: %v", last)
 	}
 }
@@ -273,5 +275,24 @@ func TestCompleteRefusesWhenTheDefinitionChangedMeanwhile(t *testing.T) {
 				t.Errorf("the unstored tokens were not revoked: %v", f.revokes)
 			}
 		})
+	}
+}
+
+// A sign-in that took another registration path still ends when the tenant adds a client: the
+// tenant fetch disconnects on any client change, and finding no grant yet must not let this one
+// be stored afterwards.
+func TestCompleteRefusesWhenTheTenantAddedAClientMeanwhile(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, nil)
+	id := distributeOAuth(t, f, nil)
+	req := startReq(nil)
+	if res, _ := mustStart(t, id, req); res.Registration != OAuthRegDCR {
+		t.Fatalf("registration = %q, want dynamic registration", res.Registration)
+	}
+	distributeOAuth(t, f, &secrets.MCPTenantClient{Issuer: f.url(""), ClientID: "corp-public"})
+	_, err := CompleteOAuth(context.Background(), id, CompleteRequest{State: req.State, Code: "c", Iss: f.url("")})
+	wantCode(t, err, OAuthErrStateMismatch)
+	if g := currentGrant(id); g != nil {
+		t.Fatalf("a grant was stored: %+v", g)
 	}
 }

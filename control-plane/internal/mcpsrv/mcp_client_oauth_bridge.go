@@ -12,6 +12,10 @@ package mcpsrv
 // What keeps it from being a general-purpose token proxy:
 //   - the tenant comes from the AF_MCP_TOKEN's membership, never the request, and the server id
 //     must be one of that tenant's enabled OAuth rows with a confidential client;
+//   - the request names the issuer and client id its grant was made with, and they must still be
+//     the row's: after an admin replaces the client, an old grant's tokens are refused here
+//     rather than sent to the new client's authorization server (nor can they be revoked at
+//     the old one, whose secret is gone);
 //   - only authorization_code and refresh_token are relayed, and resource must be that row's URL;
 //   - the endpoint is never taken from the caller: the CP discovers the issuer the admin entered,
 //     requires the metadata to name the same issuer, and dials public addresses only with no
@@ -78,10 +82,11 @@ func bridgePublicDial(_, address string, _ syscall.RawConn) error {
 
 // asMeta is what the bridge uses of an authorization server's metadata.
 type asMeta struct {
-	Issuer      string   `json:"issuer"`
-	Token       string   `json:"token_endpoint"`
-	Revocation  string   `json:"revocation_endpoint"`
-	AuthMethods []string `json:"token_endpoint_auth_methods_supported"`
+	Issuer            string   `json:"issuer"`
+	Token             string   `json:"token_endpoint"`
+	Revocation        string   `json:"revocation_endpoint"`
+	AuthMethods       []string `json:"token_endpoint_auth_methods_supported"`
+	RevokeAuthMethods []string `json:"revocation_endpoint_auth_methods_supported"`
 }
 
 var (
@@ -220,10 +225,14 @@ func writeTokenErr(w http.ResponseWriter, status int, code string) {
 	_ = json.NewEncoder(w).Encode(tokenErrWire{Error: code})
 }
 
-// bridgeClient resolves the confidential client of one of the caller's tenant's rows.
-func (a ServerAPI) bridgeClient(ctx context.Context, mv store.MembershipView, id string) (store.MCPServerRow, string, bool) {
+// bridgeClient resolves the confidential client of one of the caller's tenant's rows, and only
+// while it is still the client (issuer, client id) the caller's grant was made with.
+func (a ServerAPI) bridgeClient(ctx context.Context, mv store.MembershipView, id string, in url.Values) (store.MCPServerRow, string, bool) {
 	row, found, err := a.store.GetMCPServer(ctx, mv.TenantID, id)
 	if err != nil || !found || !row.Enabled || row.Auth != mcpAuthOAuth || row.OAuthClientID == "" || row.OAuthSecretEnc == "" {
+		return store.MCPServerRow{}, "", false
+	}
+	if in.Get("client_id") != row.OAuthClientID || in.Get("issuer") == "" || !sameIssuer(in.Get("issuer"), row.OAuthIssuer) {
 		return store.MCPServerRow{}, "", false
 	}
 	h, err := a.openHeaders(ctx, row.OAuthSecretEnc, row.OAuthKeyRef)
@@ -233,20 +242,68 @@ func (a ServerAPI) bridgeClient(ctx context.Context, mv store.MembershipView, id
 	return row, h[oauthSecretKey], true
 }
 
-// authenticate adds the client authentication the AS asks for: client_secret_post when it lists
-// only that, else client_secret_basic (the RFC 6749 default), both parts form-encoded first.
-func authenticate(req *http.Request, form url.Values, meta asMeta, clientID, secret string) {
-	basic, post := false, false
-	for _, m := range meta.AuthMethods {
+// postClientAuth posts form to endpoint with the tenant client's authentication and returns the
+// status and (bounded) body. The metadata lists what the AS supports (an absent list means
+// client_secret_basic, RFC 8414 §2), not what this client was registered with, so when both
+// basic and post are listed, basic goes first and an invalid_client answer is retried once with
+// post: client authentication fails before the AS looks at the code or token.
+func postClientAuth(ctx context.Context, endpoint string, form url.Values, methods []string, clientID, secret string) (int, []byte, error) {
+	basic, post := len(methods) == 0, false
+	for _, m := range methods {
 		basic = basic || m == "client_secret_basic"
 		post = post || m == "client_secret_post"
 	}
-	if post && !basic {
-		form.Set("client_id", clientID)
-		form.Set("client_secret", secret)
-		return
+	tries := []bool{false} // usePost
+	switch {
+	case post && !basic:
+		tries = []bool{true}
+	case post && basic:
+		tries = []bool{false, true}
 	}
-	req.SetBasicAuth(url.QueryEscape(clientID), url.QueryEscape(secret))
+	var status int
+	var body []byte
+	for i, usePost := range tries {
+		f := url.Values{}
+		for k, v := range form {
+			f[k] = v
+		}
+		if usePost {
+			f.Set("client_id", clientID)
+			f.Set("client_secret", secret)
+		}
+		enc := f.Encode()
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(enc))
+		if err != nil {
+			return 0, nil, err
+		}
+		if !usePost {
+			req.SetBasicAuth(url.QueryEscape(clientID), url.QueryEscape(secret))
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "application/json")
+		resp, err := bridgeHTTP().Do(req)
+		if err != nil {
+			return 0, nil, err
+		}
+		body, err = io.ReadAll(io.LimitReader(resp.Body, bridgeMaxBody))
+		resp.Body.Close()
+		if err != nil {
+			return 0, nil, err
+		}
+		status = resp.StatusCode
+		if i == len(tries)-1 || !clientAuthRefused(status, body) {
+			break
+		}
+	}
+	return status, body, nil
+}
+
+func clientAuthRefused(status int, body []byte) bool {
+	if status == http.StatusUnauthorized {
+		return true
+	}
+	var e tokenErrWire
+	return status == http.StatusBadRequest && json.Unmarshal(body, &e) == nil && e.Error == "invalid_client"
 }
 
 // OAuthToken (POST /internal/mcp-servers/{id}/oauth/token) runs an authorization_code or
@@ -258,7 +315,7 @@ func (a ServerAPI) OAuthToken(w http.ResponseWriter, r *http.Request, mv store.M
 		return
 	}
 	in := r.PostForm
-	row, secret, ok := a.bridgeClient(r.Context(), mv, r.PathValue("id"))
+	row, secret, ok := a.bridgeClient(r.Context(), mv, r.PathValue("id"), in)
 	if !ok {
 		writeTokenErr(w, http.StatusBadRequest, "unauthorized_client")
 		return
@@ -292,22 +349,11 @@ func (a ServerAPI) OAuthToken(w http.ResponseWriter, r *http.Request, mv store.M
 		writeTokenErr(w, http.StatusBadGateway, "temporarily_unavailable")
 		return
 	}
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, meta.Token, nil)
+	status, body, err := postClientAuth(r.Context(), meta.Token, form, meta.AuthMethods, row.OAuthClientID, secret)
 	if err != nil {
 		writeTokenErr(w, http.StatusBadGateway, "temporarily_unavailable")
 		return
 	}
-	authenticate(req, form, meta, row.OAuthClientID, secret)
-	req.Body = io.NopCloser(strings.NewReader(form.Encode()))
-	req.ContentLength = int64(len(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	resp, err := bridgeHTTP().Do(req)
-	if err != nil {
-		writeTokenErr(w, http.StatusBadGateway, "temporarily_unavailable")
-		return
-	}
-	defer resp.Body.Close()
 	var out struct {
 		AccessToken  string          `json:"access_token,omitempty"`
 		TokenType    string          `json:"token_type,omitempty"`
@@ -316,17 +362,17 @@ func (a ServerAPI) OAuthToken(w http.ResponseWriter, r *http.Request, mv store.M
 		Scope        string          `json:"scope,omitempty"`
 		Error        string          `json:"error,omitempty"`
 	}
-	jerr := json.NewDecoder(io.LimitReader(resp.Body, bridgeMaxBody)).Decode(&out)
-	if resp.StatusCode != http.StatusOK {
+	jerr := json.Unmarshal(body, &out)
+	if status != http.StatusOK {
 		code := "server_error"
-		if jerr == nil && tokenErrCode(out.Error) {
+		if jerr == nil && tokenErrCodes[out.Error] {
 			code = out.Error
 		}
-		status := http.StatusBadGateway
-		if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnauthorized {
-			status = http.StatusBadRequest
+		answer := http.StatusBadGateway
+		if status == http.StatusBadRequest || status == http.StatusUnauthorized {
+			answer = http.StatusBadRequest
 		}
-		writeTokenErr(w, status, code)
+		writeTokenErr(w, answer, code)
 		return
 	}
 	if jerr != nil || out.AccessToken == "" {
@@ -339,18 +385,13 @@ func (a ServerAPI) OAuthToken(w http.ResponseWriter, r *http.Request, mv store.M
 	_ = json.NewEncoder(w).Encode(out)
 }
 
-// tokenErrCode accepts an RFC 6749 error code: short, lower case, underscores. Anything else is
-// replaced, so nothing the AS wrote reaches the Agent's error text.
-func tokenErrCode(s string) bool {
-	if s == "" || len(s) > 40 {
-		return false
-	}
-	for _, c := range s {
-		if !(c >= 'a' && c <= 'z' || c == '_') {
-			return false
-		}
-	}
-	return true
+// tokenErrCodes are the token endpoint error codes relayed to the Agent (RFC 6749 §5.2, and
+// RFC 8707's invalid_target). Anything else becomes server_error, so no text the AS chose
+// reaches the Agent's error message.
+var tokenErrCodes = map[string]bool{
+	"invalid_request": true, "invalid_client": true, "invalid_grant": true, "unauthorized_client": true,
+	"unsupported_grant_type": true, "invalid_scope": true, "invalid_target": true,
+	"temporarily_unavailable": true, "server_error": true,
 }
 
 // OAuthRevoke (POST /internal/mcp-servers/{id}/oauth/revoke) revokes a token (RFC 7009) with the
@@ -361,7 +402,7 @@ func (a ServerAPI) OAuthRevoke(w http.ResponseWriter, r *http.Request, mv store.
 		writeTokenErr(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	row, secret, ok := a.bridgeClient(r.Context(), mv, r.PathValue("id"))
+	row, secret, ok := a.bridgeClient(r.Context(), mv, r.PathValue("id"), r.PostForm)
 	if !ok {
 		writeTokenErr(w, http.StatusBadRequest, "unauthorized_client")
 		return
@@ -375,22 +416,13 @@ func (a ServerAPI) OAuthRevoke(w http.ResponseWriter, r *http.Request, mv store.
 	if h := r.PostForm.Get("token_type_hint"); h == "refresh_token" || h == "access_token" {
 		form.Set("token_type_hint", h)
 	}
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, meta.Revocation, nil)
+	// The revocation endpoint has its own list of methods (RFC 8414 §2).
+	status, _, err := postClientAuth(r.Context(), meta.Revocation, form, meta.RevokeAuthMethods, row.OAuthClientID, secret)
 	if err != nil {
 		writeTokenErr(w, http.StatusBadGateway, "temporarily_unavailable")
 		return
 	}
-	authenticate(req, form, meta, row.OAuthClientID, secret)
-	req.Body = io.NopCloser(strings.NewReader(form.Encode()))
-	req.ContentLength = int64(len(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := bridgeHTTP().Do(req)
-	if err != nil {
-		writeTokenErr(w, http.StatusBadGateway, "temporarily_unavailable")
-		return
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if status != http.StatusOK {
 		writeTokenErr(w, http.StatusBadGateway, "server_error")
 		return
 	}

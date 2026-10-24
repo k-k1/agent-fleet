@@ -13,10 +13,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // OAuthRegTenant is the registration path of a client the tenant pre-registered.
@@ -46,11 +48,20 @@ var cpOAuthBridgeHTTP = &http.Client{
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
-func cpOAuthRequest(ctx context.Context, serverID, op string, form url.Values) (*http.Response, error) {
+// cpOAuthRequest names the client the grant belongs to (issuer and client id) next to the form.
+// The CP refuses when the server's client is no longer that one, so a grant made with a client
+// the admin has since replaced never reaches the new client's authorization server.
+func cpOAuthRequest(ctx context.Context, serverID, issuer, clientID, op string, in url.Values) (*http.Response, error) {
 	base, token := cpurl.Request(), os.Getenv("AF_MCP_TOKEN")
 	if base == "" || token == "" {
 		return nil, ErrTenantBridgeOff
 	}
+	form := url.Values{}
+	for k, v := range in {
+		form[k] = v
+	}
+	form.Set("issuer", issuer)
+	form.Set("client_id", clientID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		strings.TrimRight(base, "/")+"/internal/mcp-servers/"+url.PathEscape(serverID)+"/oauth/"+op,
 		strings.NewReader(form.Encode()))
@@ -64,20 +75,20 @@ func cpOAuthRequest(ctx context.Context, serverID, op string, form url.Values) (
 }
 
 // postTokenCP sends a token request through the CP. The form carries no client authentication:
-// the CP adds the tenant's client id and secret for the server named in the path. Its answer has
+// the CP adds the tenant's secret for the server named in the path. Its answer has
 // the token endpoint's shape, with the CP's own refusals as RFC 6749-style error codes.
-func postTokenCP(ctx context.Context, serverID string, form url.Values) (tokenResponse, *tokenError) {
-	resp, err := cpOAuthRequest(ctx, serverID, "token", form)
+func postTokenCP(ctx context.Context, serverID, issuer, clientID string, form url.Values) (tokenResponse, *tokenError) {
+	resp, err := cpOAuthRequest(ctx, serverID, issuer, clientID, "token", form)
 	if err != nil {
 		return tokenResponse{}, &tokenError{code: "cp_unreachable"}
 	}
 	return readTokenResponse(resp)
 }
 
-func revokeTokenCP(ctx context.Context, serverID, token, hint string) bool {
+func revokeTokenCP(ctx context.Context, serverID, issuer, clientID, token, hint string) bool {
 	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	resp, err := cpOAuthRequest(rctx, serverID, "revoke", url.Values{"token": {token}, "token_type_hint": {hint}})
+	resp, err := cpOAuthRequest(rctx, serverID, issuer, clientID, "revoke", url.Values{"token": {token}, "token_type_hint": {hint}})
 	if err != nil {
 		return false
 	}
@@ -94,7 +105,7 @@ func sameIssuer(a, b string) bool {
 }
 
 // pendingStillCovers reports whether the sign-in p was started for what the server is now: still
-// an OAuth definition at the URL p's resource names, and, for a tenant client, still that client.
+// an OAuth definition at the URL p's resource names, with the same tenant client (or none).
 func pendingStillCovers(p *pendingAuth) bool {
 	d, err := Get(p.serverID)
 	if err != nil || d.Auth != AuthOAuth {
@@ -104,11 +115,13 @@ func pendingStillCovers(p *pendingAuth) bool {
 	if err != nil || !relayBound(p.resource, u) {
 		return false
 	}
-	if p.registration == OAuthRegTenant {
-		c := d.OAuthClient
-		if c == nil || !sameIssuer(c.Issuer, p.issuer) || c.ClientID != p.clientID || c.Confidential != (p.tokenAuth == tokenAuthCP) {
-			return false
-		}
+	return reflect.DeepEqual(d.OAuthClient, p.tenantClient)
+}
+
+func copyTenantClient(c *secrets.MCPTenantClient) *secrets.MCPTenantClient {
+	if c == nil {
+		return nil
 	}
-	return true
+	cc := *c
+	return &cc
 }

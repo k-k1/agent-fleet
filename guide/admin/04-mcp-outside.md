@@ -57,7 +57,8 @@ instead of registering their own. A **client secret** is optional: enter one onl
 stored encrypted, never sent to a workspace, and Agent Fleet's control plane then makes the token requests itself, so
 the deployment administrator has to make sure the control plane can reach that authorization server. A stored secret
 belongs to its issuer and client ID: change either and the form asks for the secret again. Changing or
-removing the client also disconnects every member's sign-in. Targets, target agents and **enabled** sit in a closed **Advanced** section whose
+removing the client also disconnects every member's sign-in; with a confidential client, the tokens those
+sign-ins hold cannot be revoked any more and stay valid at the old authorization server until they expire. Targets, target agents and **enabled** sit in a closed **Advanced** section whose
 summary line shows the current values; it opens by itself for a distribution that differs from the defaults.
 
 ### When it takes effect
