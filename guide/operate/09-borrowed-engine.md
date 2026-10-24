@@ -1,7 +1,6 @@
 ---
 audience: "a deployment administrator running compose / native / docker who also has an Agent Fleet on AWS with GPU engines, and wants the first one to use the second one's"
 source_of_truth: "the environment variables the Control Plane reads at startup; the far deployment's own catalogue for which engines exist and which models they offer"
-updated: "2026-09"
 ---
 
 # 09. Borrowing another deployment's engines

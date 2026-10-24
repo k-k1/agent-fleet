@@ -1,7 +1,6 @@
 ---
 audience: "everyone"
 source_of_truth: "this table (maintained by hand — there is no single provider registry in the code)"
-updated: "2026-09"
 ---
 
 # Repository providers — what each supports

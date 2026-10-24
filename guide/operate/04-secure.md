@@ -1,7 +1,6 @@
 ---
 audience: "someone responsible for the deployment's security posture"
 source_of_truth: "the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page"
-updated: "2026-09"
 ---
 
 # 04. Security Operations

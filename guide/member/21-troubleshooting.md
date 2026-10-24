@@ -1,6 +1,5 @@
 ---
 audience: "anyone whose screen is not doing what they expected"
-updated: "2026-10"
 ---
 
 # 21. Troubleshooting — fixes by symptom and FAQ
@@ -185,7 +184,7 @@ Check its row in the **Schedules** section of the left pane.
 - A **"Paused"** tag means it is suspended; **"Resume"** in the row menu brings it back.
 - `skipped_*` entries in the **run history** mean the previous run was still going (the
   overlap policy) or the target conversation was busy.
-- The firing time, timezone and prompt are visible and editable under **"Details & edit"** in
+- The firing time, timezone and prompt are visible and editable under **"Details / edit"** in
   the row menu (only the advanced fields, session mode, reuse and so on, are changed from
   the operator chat).
 - **"Run now"** exercises the same path as a timed firing (allow up to about a minute).

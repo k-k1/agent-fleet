@@ -1,6 +1,5 @@
 ---
 audience: "anyone who wants agents to remember what they learned, or to undo what they remembered"
-updated: "2026-10"
 ---
 
 # 18. Agent memory — what agents remember, and how you keep it

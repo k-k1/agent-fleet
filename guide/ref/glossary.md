@@ -1,7 +1,6 @@
 ---
 audience: "everyone, and especially anyone translating between a screen and the code"
 source_of_truth: "the Console's own strings for the screen column; the code for the implementation column"
-updated: "2026-09"
 ---
 
 # Glossary

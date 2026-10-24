@@ -1,6 +1,5 @@
 ---
 audience: "anyone working with repositories, branches and commits"
-updated: "2026-10"
 ---
 
 # 06. Repositories and git — cloning, reviewing changes, committing, pushing

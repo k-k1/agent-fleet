@@ -1,7 +1,6 @@
 ---
 audience: "everyone, but written for whoever is looking for a knob and cannot find it"
 source_of_truth: "the Console for personal and tenant settings; `deploy/compose/.env.example` for deployment variables"
-updated: "2026-10"
 ---
 
 # Settings — where things are configured

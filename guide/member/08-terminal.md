@@ -1,6 +1,5 @@
 ---
 audience: "anyone using the terminal"
-updated: "2026-10"
 ---
 
 # 08. Terminal — copy & paste, round-trip time, font and size

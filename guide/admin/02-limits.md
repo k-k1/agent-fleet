@@ -1,6 +1,5 @@
 ---
 audience: "a tenant administrator managing resources and running sessions"
-updated: "2026-09"
 ---
 
 # 02. Resource limits, idle auto-stop, and the sessions overview

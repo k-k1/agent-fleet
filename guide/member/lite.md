@@ -1,6 +1,5 @@
 ---
 audience: "someone using Agent Fleet without touching the terminal"
-updated: "2026-10"
 ---
 
 # Simple guide (for people who don't use the terminal)

@@ -1,7 +1,6 @@
 ---
 audience: "someone adding a deployment target or an adapter"
 source_of_truth: "the code plus each runbook (`deploy/*/README.md`)"
-updated: "2026-10"
 ---
 
 # 09. Deployment — the forms, the adapters, the environment index

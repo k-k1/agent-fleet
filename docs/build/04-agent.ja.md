@@ -1,7 +1,6 @@
 ---
 audience: "Workspace Agent、またはエージェント種別を変える人"
 source_of_truth: "コード（本書は地図と設計意図）"
-updated: "2026-09"
 ---
 
 # 04. Workspace Agent と Workspace イメージ

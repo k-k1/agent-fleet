@@ -1,7 +1,6 @@
 ---
 audience: "全員（ただし「つまみが見つからない人」に向けて書く）"
 source_of_truth: "個人/テナント設定は Console、配備の変数は `deploy/compose/.env.example`"
-updated: "2026-10"
 ---
 
 # 設定 — どこで何を決めるか

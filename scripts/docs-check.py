@@ -8,7 +8,7 @@ into containers, so the directory boundary *is* the distribution boundary. When 
 boundary erodes, links break silently in the reader's copy, so the conventions are
 machine-checked here rather than left to human review.
 
-Fifteen checks:
+Seventeen checks:
 
   links      relative links resolve (anchors ignored); also the root's *.md files
   anchors    a #fragment points at a heading that exists (Console's slug rule in guide/,
@@ -17,7 +17,7 @@ Fifteen checks:
   chapters   chapter numbers agree with the file name and with cross-reference labels
   index      every file on a living shelf is linked from that shelf's README (per language)
   lang       bilingual closure (en links to .md, ja to .ja.md) and the counterpart exists
-  header     every file on a living shelf has front matter (audience / source_of_truth / updated)
+  header     every file on a living shelf has front matter (audience / source_of_truth)
   vocab      no implementation vocabulary (AF_* / kind= / /api/) on reader-facing shelves
   frozen     no link from a living shelf into docs/log/ (the frozen archive)
   ref        ref/ tables agree with the source of truth in code, and the ✓ marks match the
@@ -27,6 +27,8 @@ Fifteen checks:
   knowledge  the assistant knowledge covers the member rows of the feature catalogue
   notes      the operating policy shipped to every container points only at shipped shelves
   emphasis   every ** in guide/, docs/ and the release notes renders as bold on GitHub
+  labels     a quoted bold label in member/ and admin/ exists in the Console's catalogue
+  size       a guide chapter stays within CHAPTER_LINE_BUDGET lines (warning only)
 
 ref is checked at three levels. (a) Axis coverage: the agent columns cover the session
 kind constants, the deployment rows cover the runtime profiles. (b) Row agreement:
@@ -37,13 +39,14 @@ same places in en and ja. Checking only that a translation exists does not stop 
 translation whose content has drifted, and a capability table that is stale on one side
 does the same harm as having two tables.
 
-`--strict` promotes warnings to errors, so shelves still being migrated can be tightened
-in stages.
+`--strict` promotes only the warnings a check opts in (check_vocab); other warnings, such as
+the chapter size budget, stay warnings so `--strict` cannot go red on them.
 """
 
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import os
 import re
@@ -82,7 +85,7 @@ READER_FACING = ("member", "admin")
 # (ADR 0064).
 GUIDE_SHELVES = ("member", "admin", "operate", "ref")
 # Bilingual = English is authoritative (X.md), Japanese accompanies it (X.ja.md).
-# decisions/ is not LIVING (an ADR is immutable, so it carries no Updated:) but it is
+# decisions/ is not LIVING (an ADR is immutable, so it carries no front matter) but it is
 # bilingual: as with the reader-based shelves, an English-only reader who cannot reach
 # the reasoning behind a decision is the same gap.
 BILINGUAL = LIVING + ("decisions",)
@@ -100,8 +103,7 @@ LINK_RE = re.compile(r"(?<!!)\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 # under deploy/, …".
 FM_RE = re.compile(r"^---\n(.*?)\n---\s*\n", re.S)
 FM_KEY_RE = re.compile(r'^([a-z_]+):\s*"(.*)"\s*$', re.M)
-FM_KEYS = ("audience", "source_of_truth", "updated")
-UPDATED_RE = re.compile(r"^\d{4}-\d{2}$")
+FM_KEYS = ("audience", "source_of_truth")
 
 # Implementation vocabulary that must not appear on reader-facing shelves. The brake
 # that keeps those shelves written in the names shown on screen.
@@ -619,7 +621,7 @@ def check_header(files: list[str], f: Findings, strict: bool) -> None:
         if fm is None:
             f.error(
                 f"{src}: no front matter at the top of the file"
-                " (fence it with --- and give audience / source_of_truth / updated)"
+                " (fence it with --- and give audience / source_of_truth)"
             )
             continue
         inherited = (
@@ -632,8 +634,6 @@ def check_header(files: list[str], f: Findings, strict: bool) -> None:
             if key == "source_of_truth" and key in inherited:
                 continue  # the shelf README declares it on their behalf
             f.error(f"{src}: front matter has no {key}")
-        if "updated" in fm and not UPDATED_RE.match(fm["updated"]):
-            f.error(f"{src}: updated must be YYYY-MM (currently {fm['updated']!r})")
 
 
 def check_vocab(files: list[str], f: Findings, strict: bool) -> None:
@@ -1639,6 +1639,240 @@ def check_emphasis(files: list[str], f: Findings) -> None:
                 bad(path, body, start, block, i, "is never closed")
 
 
+# --- UI labels ----------------------------------------------------------------
+# A label the guide tells the reader to click must exist in the Console of the same
+# language. A rename in locales/en leaves the English chapter naming a button that is
+# gone while the Japanese twin is still right, and nothing else notices.
+#
+# Only a bold span that is also *quoted* counts as a label: "**Stop**" in English,
+# 「**停止する**」 in Japanese. Bold alone is mostly emphasis (measured over the tree
+# when this was written: 5182 bold spans, 891 absent from the catalogue and nearly all
+# of them emphasis, against 522 quoted spans with 3 non-labels), so widening the rule
+# would bury a real stale label under noise.
+LOCALES = os.path.join(ROOT, "console", "src", "lib", "i18n", "locales")
+# Deliberate non-labels (an example message to type, not a button), one
+# `<repo path>: <text>` per line.
+LABEL_ALLOWLIST = os.path.join(ROOT, "scripts", "docs-label-allowlist.txt")
+# A span that stands for a value the Console fills in: an ellipsis, <x> / ‹x›, a
+# {placeholder}, a stand-in letter or a number.
+LABEL_WILD_RE = re.compile(r"…|\.\.\.|‹[^›]*›|<[^>]*>|\{[^}]*\}|\b[NXM]\b|\d+")
+# One bold span can name a path or several labels: "Settings → Agents", "Slides / Source".
+# The coarse separators are tried first so a comma inside one sentence-long label survives.
+LABEL_SPLITS = (
+    re.compile(r"\s*(?:→|›|＞|>|\s/\s|／)\s*"),
+    re.compile(r"\s*(?:、|,)\s*"),
+)
+LABEL_QUOTED_RE = re.compile(r"\"([^\"]+)\"|“([^”]+)”|「([^」]+)」|『([^』]+)』")
+# A leading "+" / "＋" is the icon drawn beside the label, not part of it.
+LABEL_ICON_RE = re.compile(r"^[+＋]\s*")
+LABEL_MIN_LITERAL = 2
+LABEL_MIN_PATTERN = 5
+# A quote that stops short of the whole label must be at least this long ("For" starts
+# a hundred labels and says nothing about any of them).
+LABEL_MIN_CUT = 4
+LABEL_QUOTES = "\"“”「」『』‘’'"
+# A span may wrap onto the next line but never over a blank one.
+BOLD_RE = re.compile(r"\*\*((?:[^*\n]|\n(?!\s*\n))+?)\*\*")
+
+
+def label_norm(text: str) -> str:
+    text = re.sub(r"\s+", " ", text.replace("\u00a0", " ")).strip()
+    return text.strip(":：。. ")
+
+
+def label_literal(text: str) -> int:
+    """How many characters of `text` are fixed once placeholders and spacing are gone.
+
+    A value that is nothing but a placeholder ("{count}") or a guide span of "N" would
+    match every label, so neither is allowed to stand in for one. A catalogue value needs
+    more than a guide span (LABEL_MIN_PATTERN): "from {name}" would otherwise accept any
+    sentence that starts with "From".
+    """
+    fixed = re.sub(r"[\W_]", "", LABEL_WILD_RE.sub("", text))
+    return sum(2 if ord(c) > 0x2E7F else 1 for c in fixed)  # a CJK character says more
+
+
+def label_regex(text: str) -> re.Pattern[str]:
+    """`text` with each placeholder replaced by "anything", the rest literal."""
+    out: list[str] = []
+    last = 0
+    for m in LABEL_WILD_RE.finditer(text):
+        out += [re.escape(text[last : m.start()]), ".+?"]
+        last = m.end()
+    out.append(re.escape(text[last:]))
+    return re.compile("".join(out), re.I)
+
+
+class LabelCatalogue:
+    """Every string a locale's catalogue can show, normalised for comparison.
+
+    Reads each string literal of the domain files rather than only `"key": "value"`
+    pairs, so a value split over lines, a ternary or a comment never hides a label. A
+    literal that is a key is in the set too; no guide label equals a dotted key.
+    """
+
+    def __init__(self, locale: str) -> None:
+        folder = os.path.join(LOCALES, locale)
+        values: set[str] = set()
+        if os.path.isdir(folder):
+            for name in sorted(os.listdir(folder)):
+                if name.endswith(".ts") and not name.endswith(".test.ts"):
+                    for kind, value, _ in ts_tokens(read(os.path.join(folder, name))):
+                        if kind == "str" and value:
+                            values.add(label_norm(value).casefold())
+        values.discard("")
+        self.sorted = sorted(values)
+        # A value with placeholders matches the concrete text the guide quotes
+        # ("Fast-forward from {ref}" vs "Fast-forward from origin/develop").
+        self.patterns = [
+            label_regex(v) for v in self.sorted if "{" in v and label_pattern_ok(v)
+        ]
+
+    def knows(self, text: str) -> bool:
+        """Is `text` a catalogue value, the leading part of one, or one with its
+        placeholders filled in? The guide often quotes only the start of a long label,
+        but never cuts a word in half: "Credential" is not "Credentials"."""
+        t = label_norm(text)
+        if not t:
+            return True
+        # A trailing ellipsis in the guide says "and then more", so it is not part of the cut.
+        low = t.rstrip("…. ").rstrip(":： ").casefold() or t.casefold()
+        i = bisect.bisect_left(self.sorted, low)
+        while i < len(self.sorted) and self.sorted[i].startswith(low):
+            full = len(self.sorted[i]) == len(low)
+            if label_cut_ok(self.sorted[i], len(low)) and (full or label_literal(low) >= LABEL_MIN_CUT):
+                return True
+            i += 1
+        if LABEL_WILD_RE.search(t) and label_literal(t) >= LABEL_MIN_LITERAL:
+            rx = label_regex(t)
+            for v in self.sorted:
+                m = rx.match(v)
+                if m and label_cut_ok(v, m.end()):
+                    return True
+        return any(rx.fullmatch(t) for rx in self.patterns)
+
+
+def label_cut_ok(value: str, end: int) -> bool:
+    """May a quote stop at `end` in `value`? Not between two letters or digits (Japanese
+    characters count as letters, so a cut inside a word fails there too)."""
+    return end >= len(value) or not (value[end - 1].isalnum() and value[end].isalnum())
+
+
+def label_pattern_ok(value: str) -> bool:
+    """May a catalogue value with placeholders stand in for the concrete text a guide quotes?
+
+    Only if it fixes enough: a Latin value needs two words besides its placeholders, or
+    "Delete {name}" and "From {name}" would accept any "Delete ..." / "From ...".
+    """
+    if label_literal(value) < LABEL_MIN_PATTERN:
+        return False
+    fixed = LABEL_WILD_RE.sub(" ", value)
+    if re.search(r"[^\x00-\u2e7f]", fixed):
+        return True
+    return len(re.findall(r"[A-Za-z0-9]+", fixed)) >= 2
+
+
+def span_labels(text: str) -> list[str]:
+    """The labels a bold span names. A span wrapped in quotes names whatever sits inside
+    its quote pairs; anything else is one label as written."""
+    if text[:1] in LABEL_QUOTES and text[-1:] in LABEL_QUOTES:
+        found = [next(g for g in m.groups() if g) for m in LABEL_QUOTED_RE.finditer(text)]
+        if found:
+            return found
+    return [text.strip(LABEL_QUOTES)]
+
+
+def known_label(cat: LabelCatalogue, text: str) -> bool:
+    """`text` as a whole, or every piece of it once split at path arrows and slashes and
+    then at commas. A shape with nothing fixed in it ("+N", "≈$X") is not a name."""
+    text = LABEL_ICON_RE.sub("", text.strip(LABEL_QUOTES + " "))
+    if label_literal(text) < LABEL_MIN_LITERAL or cat.knows(text):
+        return True
+    for split in LABEL_SPLITS:
+        pieces = [x for x in split.split(text) if x.strip()]
+        if len(pieces) > 1 and all(known_label(cat, x) for x in pieces):
+            return True
+    return False
+
+
+def label_allowlist() -> set[tuple[str, str]]:
+    out: set[tuple[str, str]] = set()
+    if not os.path.exists(LABEL_ALLOWLIST):
+        return out
+    for line in read(LABEL_ALLOWLIST).splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and ": " in line:
+            path, text = line.split(": ", 1)
+            out.add((path.strip(), label_norm(text)))
+    return out
+
+
+def bold_labels(body: str) -> list[tuple[int, str]]:
+    """(line, text) of each quoted bold span outside code and front matter."""
+    body = FM_RE.sub(lambda m: re.sub(r"[^\n]", "", m.group(0)), body, count=1)
+    body = strip_fenced_blocks(body)
+    body = CODE_SPAN_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), body)
+    out: list[tuple[int, str]] = []
+    for m in BOLD_RE.finditer(body):
+        # A wrapped line is a space in English and nothing between two Japanese characters.
+        text = re.sub(r"(?<=[^\x00-\u2e7f])\s*\n\s*(?=[^\x00-\u2e7f])", "", m.group(1))
+        text = re.sub(r"\s+", " ", text).strip()
+        before = body[m.start() - 1 : m.start()]
+        after = body[m.end() : m.end() + 1]
+        wrapped = text[:1] in "\"“" and text[-1:] in "\"”"
+        outside = (before, after) in (("「", "」"), ("\"", "\""), ("“", "”"), ("『", "』"))
+        if wrapped or outside:
+            out.append((body.count("\n", 0, m.start()) + 1, text))
+    return out
+
+
+def check_labels(files: list[str], f: Findings) -> None:
+    """Does every quoted bold label in guide/member and guide/admin exist in the Console?
+
+    English files are read against locales/en and `.ja.md` against locales/ja. An
+    unreadable catalogue is an error, never a skip: a check that read nothing finds
+    nothing, which looks the same as a clean tree.
+    """
+    cats: dict[bool, LabelCatalogue] = {}
+    allow = label_allowlist()
+    for ja in (False, True):
+        cats[ja] = LabelCatalogue("ja" if ja else "en")
+        if not cats[ja].sorted:
+            f.error(f"console/src/lib/i18n/locales/{'ja' if ja else 'en'}: no strings could be read")
+            return
+    for path in files:
+        src = rel(path)
+        if shelf(src) not in READER_FACING:
+            continue
+        cat = cats[is_ja(src)]
+        for line, text in bold_labels(read(path)):
+            if (src, label_norm(text.strip(LABEL_QUOTES))) in allow:
+                continue  # an exempt example, not a screen string
+            if all(known_label(cat, label) for label in span_labels(text)):
+                continue
+            f.error(
+                f"{src}:{line}: bold label {text!r} is not in the Console's "
+                f"{'ja' if is_ja(src) else 'en'} catalogue (renamed? fix the guide;"
+                " not a label? list it in scripts/docs-label-allowlist.txt)"
+            )
+
+
+# A chapter this long is hard to hold in one read. A warning, not an error, and never
+# promoted by --strict: two settings/troubleshooting chapters are knowingly over, and
+# splitting a chapter is an editorial decision no gate should force.
+CHAPTER_LINE_BUDGET = 600
+
+
+def check_size(files: list[str], f: Findings) -> None:
+    for path in files:
+        src = rel(path)
+        if tree(src) != "guide" or shelf(src) not in LIVING or is_shelf_readme(src):
+            continue
+        n = read(path).count("\n")
+        if n > CHAPTER_LINE_BUDGET:
+            f.warn(f"{src}: {n} lines exceeds the {CHAPTER_LINE_BUDGET}-line chapter budget")
+
+
 _cache: dict[str, str] = {}
 
 
@@ -1660,7 +1894,7 @@ def main() -> int:
         help=(
             "comma-separated check names "
             "(links,anchors,closure,chapters,index,lang,header,vocab,frozen,"
-            "ref,settings,features,knowledge,notes,emphasis)"
+            "ref,settings,features,knowledge,notes,emphasis,labels,size)"
         ),
     )
     args = ap.parse_args()
@@ -1702,6 +1936,10 @@ def main() -> int:
         check_notes(f)
     if run("emphasis"):
         check_emphasis(files, f)
+    if run("labels"):
+        check_labels(files, f)
+    if run("size"):
+        check_size(files, f)
 
     for w in f.warns:
         print(f"warn: {w}")

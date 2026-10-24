@@ -1,7 +1,6 @@
 ---
 audience: "a deployment administrator on AWS who wants the Control Plane's keys held by KMS, with or without a key of its own for each home"
 source_of_truth: "`deploy/aws/ecs/README.md` and `deploy/aws/ecs/cfn/PARAMETERS.md` for the parameters; `af-cp rewrap-keys --help` and `af-cp home-dek-status --help` for the commands"
-updated: "2026-10"
 ---
 
 # 12. Keys at rest: AWS KMS and a key for each home

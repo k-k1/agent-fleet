@@ -1,7 +1,6 @@
 ---
 audience: "someone deciding how and where to run a deployment"
 source_of_truth: "ref/deploy-targets.md for what each target supports; this page for how to choose between them"
-updated: "2026-10"
 ---
 
 # 01. Choosing a deployment target

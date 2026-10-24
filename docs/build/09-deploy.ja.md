@@ -1,7 +1,6 @@
 ---
 audience: "デプロイ形態やアダプタを足す人"
 source_of_truth: "コード ＋ 各 runbook（`deploy/*/README.md`）"
-updated: "2026-10"
 ---
 
 # 09. デプロイ — 形態・ポート&アダプタ・env 索引

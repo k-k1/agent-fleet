@@ -1,7 +1,6 @@
 ---
 audience: "全員（とくに画面とコードの間を行き来する人）"
 source_of_truth: "画面欄は Console の文字列、実装欄はコード"
-updated: "2026-09"
 ---
 
 # 用語

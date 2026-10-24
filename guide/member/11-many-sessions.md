@@ -1,6 +1,5 @@
 ---
 audience: "anyone running several pieces of work at once"
-updated: "2026-10"
 ---
 
 # 11. Running many sessions at once — overview, child sessions, the Fleet Operator
@@ -477,13 +476,13 @@ next run time, so check that it matches your intent.
 - By default each run uses a fresh session. If you ask "reuse the same session and build up
   context," **long-lived session reuse** (with rebuild conditions such as every N runs or
   per time period) is also possible.
-- It can also **stop when it is done**. Tick **"Stop when done"** in Details & edit (ask the
+- It can also **stop when it is done**. Tick **"Stop when done"** in "Details / edit" (ask the
   operator for `stop_after_run`) and the session stops once that run has finished: report
   first, stop after, and resumable. It keeps the session an unattended run leaves behind from
   holding its memory for the rest of the night (it does not change when the workspace itself
   stops; a finished session was never what kept it awake).
 - **Where the report goes** is chosen per schedule. With the report on, **"Deliver to"** in
-  Details & edit (`deliver_to` for the operator) takes any of: the **assistant conversation**
+  "Details / edit" (`deliver_to` for the operator) takes any of: the **assistant conversation**
   (the default, and what every schedule did before), the **notification center**, and your
   **Discord** / **Slack** connection. A chat post carries the run's answer under a heading that
   names the schedule, even when the connection is not in full-text mode. Only your own

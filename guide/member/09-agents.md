@@ -1,6 +1,5 @@
 ---
 audience: "anyone choosing and connecting an agent"
-updated: "2026-10"
 ---
 
 # 09. Agents — connecting one, and choosing between them
