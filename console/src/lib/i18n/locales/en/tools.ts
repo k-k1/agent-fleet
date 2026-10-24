@@ -1032,6 +1032,8 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mem.reason_absent": "Not found in this environment",
   "mem.codex_cost_hint":
     "Once enabled, Codex extracts and consolidates memories from your conversations in the background, spending tokens on an ongoing basis.",
+  "mem.codex_dual_hint":
+    "Agent Fleet memory is on, so Codex's own memories keep running beside it. The two are separate: Codex keeps writing its memories, and Agent Fleet memory is shared by every agent kind.",
   "mem.codex_enabled": "Codex memories enabled. They join the history the next time Codex runs.",
   "mem.codex_disabled_toast": "Codex memories disabled. Snapshots already taken are kept.",
   "mem.history_empty": "No snapshots yet.",

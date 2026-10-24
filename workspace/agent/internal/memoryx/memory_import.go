@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -38,14 +39,21 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
 	memoryImportDefaultMax = 64 << 20 // default cap on the received size (docs/log/39 ★3)
-	memoryImportMaxEntries = 20000    // cap on the number of tar entries
-	memoryImportMaxFile    = 8 << 20  // cap on a single file in the tar
-	memoryImportKeepRefs   = 10       // how many imported lineages are kept
+	// Ceiling for AF_MEMORY_IMPORT_MAX. The Control Plane spools at most 130 MiB of an upload
+	// (memberOriginUploadMax, control-plane/member_origin.go) and refuses a larger body with 413
+	// before the Agent sees it, so a cap above this could never be reached. Plus
+	// memberImportFramingSlack it must stay within that 130 MiB; both modules pin the pair
+	// (TestMemoryImportCeilingFitsControlPlane here, TestMemberOriginUploadMaxCoversAgentCeiling there).
+	memoryImportCeiling    = 128 << 20
+	memoryImportMaxEntries = 20000   // cap on the number of tar entries
+	memoryImportMaxFile    = 8 << 20 // cap on a single file in the tar
+	memoryImportKeepRefs   = 10      // how many imported lineages are kept
 
 	// How to apply (REST's mode). replace = take only the content of the selected scope
 	// (the default; the history stays your own). migrate = swap the history along with it
@@ -59,14 +67,25 @@ const (
 // handed to git.
 var memoryImportIDRe = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z(-[0-9]+)?$`)
 
+// memoryImportMaxBytes is the received-size cap: AF_MEMORY_IMPORT_MAX bytes (default 64 MiB),
+// never above memoryImportCeiling. A value above it is clamped and logged once, so the limit the
+// member configured is not silently replaced by a 413 from the Control Plane.
 func memoryImportMaxBytes() int64 {
 	if v := strings.TrimSpace(os.Getenv("AF_MEMORY_IMPORT_MAX")); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			if n > memoryImportCeiling {
+				memoryImportClampWarn.Do(func() {
+					log.Printf("memory import: AF_MEMORY_IMPORT_MAX=%d exceeds the ceiling of %d bytes (the Control Plane upload limit); using the ceiling", n, int64(memoryImportCeiling))
+				})
+				return memoryImportCeiling
+			}
 			return n
 		}
 	}
 	return memoryImportDefaultMax
 }
+
+var memoryImportClampWarn sync.Once
 
 // memoryImportPreview summarises the lineage that was taken in. The Console shows it so the
 // user can pick the scope to apply.

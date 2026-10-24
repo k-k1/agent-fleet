@@ -95,8 +95,11 @@ var memberOriginHashedRoutes = map[string]bool{
 }
 
 // memberOriginUploadMax bounds a hashed upload. The Agent's import limit is 64 MiB by default
-// (AF_MEMORY_IMPORT_MAX); this leaves room for that, a raised limit up to twice the default, and
-// the multipart framing. A larger body is refused here with 413 and nothing reaches the Agent.
+// (AF_MEMORY_IMPORT_MAX) and the Agent clamps it to 128 MiB (memoryImportCeiling in
+// workspace/agent/internal/memoryx); this leaves room for that plus the multipart framing, so a
+// configured cap never meets a 413 from here. A larger body is refused here with 413 and nothing
+// reaches the Agent. The two modules cannot share the constant: TestMemberOriginUploadMaxCoversAgentCeiling
+// here and TestMemoryImportCeilingFitsControlPlane there pin the pair.
 var memberOriginUploadMax int64 = 130 << 20 // a var so tests can lower it
 
 // memberOriginConsoleHeader must accompany a hashed upload. The body is multipart/form-data,

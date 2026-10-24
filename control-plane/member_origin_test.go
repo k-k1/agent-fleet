@@ -609,3 +609,12 @@ func TestRelaySignsSettingsWrites(t *testing.T) {
 		t.Fatalf("claims = %+v", c)
 	}
 }
+
+// The Agent clamps AF_MEMORY_IMPORT_MAX to 128 MiB (memoryImportCeiling in workspace/agent, a
+// separate module) and adds 1 MiB of multipart framing; the spool limit must admit that body.
+func TestMemberOriginUploadMaxCoversAgentCeiling(t *testing.T) {
+	const agentCeiling, agentFraming = 128 << 20, 1 << 20
+	if memberOriginUploadMax < agentCeiling+agentFraming {
+		t.Fatalf("memberOriginUploadMax %d is below the Agent ceiling %d + framing %d", memberOriginUploadMax, agentCeiling, agentFraming)
+	}
+}
