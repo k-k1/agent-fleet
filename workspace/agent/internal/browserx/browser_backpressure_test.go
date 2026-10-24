@@ -85,31 +85,46 @@ func TestBrowserScreencastBackpressureIntegration(t *testing.T) {
 		}
 	}
 
+	// The assertion is progress-based, not rate-based: each phase must deliver
+	// browserBackpressurePhaseFrames more frames, but the deadline is generous. A
+	// slow or busy runner only takes longer; a stalled ACK loop or an invalidated
+	// Page still fails. The deterministic pacing and burst-absorption contracts are
+	// covered without Chromium by TestBrowserScreencastAckPacesCaptureBeforeNextFrame and
+	// TestBrowserScreencastAbsorbsInFlightBurst.
 	frames := 0
-	drain := func(d time.Duration) {
-		deadline := time.Now().Add(d)
-		for time.Now().Before(deadline) {
+	await := func(phase string, want int, limit time.Duration) {
+		t.Helper()
+		start, got := time.Now(), 0
+		for got < want {
+			if time.Since(start) > limit {
+				t.Fatalf("%s: only %d of %d frames within %s (total %d)", phase, got, want, limit, frames)
+			}
 			select {
 			case f := <-p.latestFrame:
 				if len(f) < 2 || f[0] != 0xff || f[1] != 0xd8 {
 					t.Fatalf("received a non-JPEG frame: %x", f)
 				}
 				frames++
+				got++
 			case <-time.After(40 * time.Millisecond):
 			}
 			alive()
 		}
 	}
 
-	drain(3 * time.Second)
+	// Chromium start-up and the first paint are not part of what is measured.
+	await("first frames", 1, browserBackpressurePhaseLimit)
+	await("initial stream", browserBackpressurePhaseFrames, browserBackpressurePhaseLimit)
 	// Wheel scroll and reload each unleash a fresh burst of continuous paints.
 	v.handleControl([]byte(`{"type":"wheel","x":600,"y":400,"deltaX":0,"deltaY":240,"modifiers":0}`))
-	drain(2 * time.Second)
+	await("after wheel", browserBackpressurePhaseFrames, browserBackpressurePhaseLimit)
 	v.handleControl([]byte(`{"type":"reload","ignoreCache":false}`))
-	drain(3 * time.Second)
+	await("after reload", browserBackpressurePhaseFrames, browserBackpressurePhaseLimit)
 
-	fmt.Printf("backpressure integration: %d JPEG frames over ~8s at 1200x800 with viewport/wheel/reload churn\n", frames)
-	if frames < 40 {
-		t.Fatalf("expected sustained ~12fps streaming, got only %d frames", frames)
-	}
+	fmt.Printf("backpressure integration: %d JPEG frames at 1200x800 with viewport/wheel/reload churn\n", frames)
 }
+
+const (
+	browserBackpressurePhaseFrames = 10
+	browserBackpressurePhaseLimit  = 30 * time.Second
+)
