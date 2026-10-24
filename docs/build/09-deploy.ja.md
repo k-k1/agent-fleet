@@ -151,7 +151,7 @@ alias（symlink の alias も含む）や `~/.nvmrc` / `~/repos/*/.nvmrc`（nvm 
 `GET /env/toolchain-installs` は JDK の全ツリー（home ボリュームと `/usr/lib/jvm`）と `~/.nvm` 配下の Node の
 メジャーを、版・サイズ・削除できるかと一緒に返す。`DELETE /env/jdk/{major}` / `DELETE /env/node/{major}` は
 home ボリュームのツリーだけを消す（`toolchain_uninstall.go`）。選択中のメジャー（厳密な `22.23.4` も 22 とみなす）は、
-独立した `/usr/lib/jvm` のコピー（home の外にある実ディレクトリで、Node の prune と同じリンク検査を通り、`bin/java` が
+独立した `/usr/lib/jvm` のコピー（上位のパスにも symlink が無い、home の外にある実ディレクトリで、Node の prune と同じリンク検査を通り、`bin/java` が
 動くもの。Temurin 21/25 は通る。Temurin 8 はディレクトリのリンクがあるので代わりにならない）が残る場合を除いて拒否する。インストール中も拒否し、端末から
 起動したものも含む（install-jdk / install-node はインストールの間ずっと置き場の flock を持つ）。判定と
 `<root>/.agent-fleet-trash` への改名は、その flock・インストーラの mutex・選択の PUT と共有するロック（PUT は

@@ -174,7 +174,8 @@ func selectedMajor(sel string) string {
 
 // independentJDK reports whether sys is a usable JDK that removing home leaves intact.
 // Final targets are not enough (a link can pass through home and come back), so sys
-// must be a real directory outside home and self-contained by the same rule the Node
+// must be a real directory with no symlink on the path above it, outside home, and
+// self-contained by the same rule the Node
 // prune uses: only relative file links that never climb above the tree, no directory
 // links. Temurin 21/25 trees pass (in-tree file links only); a tree that does not is no
 // fallback, which only means its home copy cannot go while that major is selected.
@@ -183,6 +184,14 @@ func independentJDK(sys, home string) bool {
 		return false
 	}
 	if fi, err := os.Lstat(sys); err != nil || !fi.IsDir() {
+		return false
+	}
+	// No symlink above it either: javaHomeFor keeps looking it up through this path, so
+	// a link in /usr/lib/jvm or higher that passes through home would break the lookup
+	// once home is gone even though the tree itself survives. Deployments bake or bind-
+	// mount /usr/lib/jvm as a real directory.
+	parent := filepath.Dir(filepath.Clean(sys))
+	if real, err := filepath.EvalSymlinks(parent); err != nil || real != parent {
 		return false
 	}
 	realHome, err := filepath.EvalSymlinks(home)

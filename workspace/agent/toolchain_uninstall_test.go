@@ -496,3 +496,23 @@ func TestListingMatchesDeleteWhileInstalling(t *testing.T) {
 		t.Fatalf("idle: %+v", e)
 	}
 }
+
+// A /usr/lib/jvm that reaches its real directory through a link in home is no fallback:
+// removing home breaks the path javaHomeFor looks up, though the tree itself survives.
+func TestIndependentJDKRejectsAncestorLinkThroughHome(t *testing.T) {
+	_, homeRoot := jdkRoots(t)
+	arch := "-" + runtime.GOARCH
+	home := fakeJDK(t, homeRoot, "temurin-21-jdk"+arch, "21.0.13+9")
+	real := t.TempDir()
+	withJava(t, fakeJDK(t, real, "temurin-21-jdk"+arch, "21.0.11+10"))
+	if err := os.Symlink(real, filepath.Join(home, "bridge")); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "jvm")
+	if err := os.Symlink(filepath.Join(home, "bridge"), link); err != nil {
+		t.Fatal(err)
+	}
+	if independentJDK(filepath.Join(link, "temurin-21-jdk"+arch), home) {
+		t.Fatal("a system path through home counted as a fallback")
+	}
+}
