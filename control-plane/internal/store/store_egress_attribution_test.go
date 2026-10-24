@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -189,4 +190,88 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// A purge deletes in bounded batches, oldest first, leaves newer events alone, and removes
+// a closed address row only when it ended before the cutoff: an open row never goes.
+func TestEgressPurgeIsBatchedAndKeepsWhatIsInWindow(t *testing.T) {
+	ctx := context.Background()
+	for name, st := range homeOpStores(t) {
+		for i := int64(1); i <= 7; i++ {
+			e := EgressEvent{ID: "e" + string(rune('0'+i)), At: i * 100, Source: "10.0.1.5", Host: "a.example", Allowed: true, Count: 1}
+			if _, err := st.RecordEgressEvent(ctx, "2026-10-24", e, 9); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Events at 100..500 are before the cutoff 600; at 600 and 700 they are not.
+		var got []int
+		for {
+			n, err := st.PurgeEgressEvents(ctx, 600, 2)
+			if err != nil {
+				t.Fatalf("%s: purge: %v", name, err)
+			}
+			got = append(got, n)
+			if n < 2 {
+				break
+			}
+		}
+		if want := []int{2, 2, 1}; len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+			t.Errorf("%s: batches = %v, want %v (at most the limit per statement)", name, got, want)
+		}
+		left, err := st.ListAttributedEgressEvents(ctx, 0, 10)
+		if err != nil || len(left) != 2 || left[0].ID != "e7" || left[1].ID != "e6" {
+			t.Errorf("%s: events left = %+v (%v), want e7 and e6", name, left, err)
+		}
+		if stats, _ := st.ListEgress(ctx, "2026-10-24", 10); len(stats) != 1 || stats[0].Allowed != 7 {
+			t.Errorf("%s: egress_daily must keep the aggregate, got %+v", name, stats)
+		}
+
+		seen := []WorkspaceAddress{
+			{WorkspaceID: "w", Address: "10.0.1.5", Ref: "old", From: 10, Until: 200},
+			{WorkspaceID: "w", Address: "10.0.1.5", Ref: "edge", From: 300, Until: 600},
+			{WorkspaceID: "w", Address: "10.0.1.5", Ref: "open", From: 50},
+		}
+		if err := st.UpsertWorkspaceAddresses(ctx, "m", seen); err != nil {
+			t.Fatal(err)
+		}
+		n, err := st.PurgeWorkspaceAddresses(ctx, 600, 10)
+		if err != nil || n != 1 {
+			t.Fatalf("%s: purged %d address rows (%v), want only the one that ended before 600", name, n, err)
+		}
+		if refs, _ := st.OpenWorkspaceAddressRefs(ctx, "m"); !equalStrings(refs, []string{"open"}) {
+			t.Errorf("%s: the open row must stay, got %v", name, refs)
+		}
+	}
+}
+
+// The floor a purge commits refuses older events from then on, on every store handle, and
+// never goes back down.
+func TestEgressFloorRefusesAndNeverLowers(t *testing.T) {
+	ctx := context.Background()
+	for name, st := range homeOpStores(t) {
+		e := EgressEvent{ID: "x", At: 100, Source: "10.0.1.5", Host: "a.example", Allowed: true, Count: 1}
+		if ok, err := st.RecordEgressEvent(ctx, "2026-10-24", e, 1); err != nil || !ok {
+			t.Fatalf("%s: first record: %v %v", name, ok, err)
+		}
+		if err := st.RaiseEgressEventFloor(ctx, 200); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := st.PurgeEgressEvents(ctx, 200, 10); err != nil || n != 1 {
+			t.Fatalf("%s: purge %d %v", name, n, err)
+		}
+		if err := st.RaiseEgressEventFloor(ctx, 50); err != nil { // a longer retention
+			t.Fatal(err)
+		}
+		if ok, err := st.RecordEgressEvent(ctx, "2026-10-24", e, 1); !errors.Is(err, ErrEgressEventExpired) || ok {
+			t.Errorf("%s: purged event came back: %v %v", name, ok, err)
+		}
+		if stats, _ := st.ListEgress(ctx, "2026-10-24", 10); len(stats) != 1 || stats[0].Allowed != 1 {
+			t.Errorf("%s: counted once, got %+v", name, stats)
+		}
+		fresh := e
+		fresh.ID, fresh.At = "y", 300
+		if ok, err := st.RecordEgressEvent(ctx, "2026-10-24", fresh, 1); err != nil || !ok {
+			t.Errorf("%s: an event above the floor must be stored: %v %v", name, ok, err)
+		}
+	}
 }

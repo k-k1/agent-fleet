@@ -357,6 +357,18 @@ The design and the staged rollout — log-only → allowlist → enforce — are
   recorded to the audit log. An event that carries an `id` (the egress gateway's, ADR
   [0122](../decisions/0122-egress-gateway.md)) is also kept raw with its `at`, `source` and
   `dest`, and is stored and counted once however often it is resent.
+- **Retention** — raw events are kept `AF_EGRESS_EVENT_RETENTION_DAYS` days (default 30; `0` =
+  forever). A purger (one CP at a time, under a CP lease, every 10 minutes) deletes older events
+  and the closed `workspace_address` rows that ended before them, in batches of 5000 rows;
+  an open row is never deleted. `egress_daily` is not touched. Because dedup on `id` only holds
+  while the row exists, ingest refuses to store or count an event whose `at` is older than the
+  window, or older than the **purge floor** (logged, still answered 204): a resend of a purged
+  event cannot be counted twice. The floor is the newest cutoff any purge has deleted up to, kept
+  in the database (`cp_counter` row `egress-event-floor`), raised before each delete and read by
+  `RecordEgressEvent` in the same transaction, so it holds for every CP, whatever its clock or
+  its retention setting, and it never falls: lengthening the retention or setting it to `0`
+  does not let a purged event back in. An address row is deleted only after the event delete
+  finished without error.
 - **Attribution** — when `AF_EGRESS_TOKEN` is set, a recorder (one CP at a time, under a CP
   lease) asks each workspace's runtime every `AF_EGRESS_ADDRESS_INTERVAL` (default 60s) which
   addresses it holds: the ECS task ENI,
