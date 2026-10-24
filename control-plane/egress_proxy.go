@@ -132,7 +132,7 @@ func hostOnly(hostport string) string {
 // proceeds (even for a would-block); enforce blocks a host that's not allowed.
 func (p *egressProxy) decide(host string) bool {
 	pol := p.cur.Load()
-	allowed := pol.policy.allows(host)
+	allowed := pol.policy.Allows(host)
 	p.batch.add(host, allowed)
 	return allowed || !pol.enforce
 }

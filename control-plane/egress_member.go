@@ -139,7 +139,7 @@ func (a egressAPI) checkHosts(w http.ResponseWriter, r *http.Request, _ store.Id
 		if h == "" {
 			continue
 		}
-		out[raw] = egressHostVerdict{Host: h, Allowed: pol.allows(h), Proposed: pendingPol.allows(h)}
+		out[raw] = egressHostVerdict{Host: h, Allowed: pol.Allows(h), Proposed: pendingPol.Allows(h)}
 	}
 	mode := "log-only"
 	if enforce {

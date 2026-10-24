@@ -47,7 +47,7 @@ source_of_truth: "コード"
 ## 90.3 `control-plane/`
 
 配線は `main.go`。`control-plane egress-proxy` で同じバイナリが egress のフォワードプロキシとして
-動く。CP の大半はモジュール直下の `package main` で、関心事ごとに名前の接頭辞をそろえたファイル群に
+動き、`control-plane egress-agent` で egress ゲートウェイ上のエージェントとして動く。CP の大半はモジュール直下の `package main` で、関心事ごとに名前の接頭辞をそろえたファイル群に
 分かれている。切り出せた系統は `internal/` にある。一覧は `ls control-plane/internal` で、
 パッケージのファイル冒頭のコメント（と、あれば `deps.go`）が中身を言う。CP のイメージは
 `control-plane/Dockerfile` で、リポジトリ直下をコンテキストにしてビルドする（直下の `.dockerignore`）。

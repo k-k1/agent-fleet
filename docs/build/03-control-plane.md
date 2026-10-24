@@ -344,8 +344,14 @@ The design and the staged rollout — log-only → allowlist → enforce — are
   outside the allowlist is blocked only when enforce is on; loopback, link-local (the
   cloud metadata address included) and unspecified destinations are refused in every
   mode.
+- **An egress-agent subcommand** — `control-plane egress-agent` is the small agent on the
+  egress gateway of ADR [0122](../decisions/0122-egress-gateway.md) (decision 4,
+  `internal/egressagent`). It writes Squid's allow file and mode include from the policy
+  and reloads Squid on a change (and once at start), and ships Squid's log to ingest from a stored file
+  offset, one event per line with the line's position as its `id`. The Squid lines it
+  expects and its log format are in the package doc.
 - **Policy distribution** — `GET /internal/egress/policy` returns the effective
-  allowlist and mode to the proxy.
+  allowlist and mode to the proxy and the gateway agent.
 - **Ingest** — `POST /internal/egress` (`AF_EGRESS_TOKEN`) takes observed events into a
   daily aggregate, with would-block entries de-duplicated per day and host and also
   recorded to the audit log. An event that carries an `id` (the egress gateway's, ADR

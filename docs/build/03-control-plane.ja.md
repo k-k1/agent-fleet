@@ -264,7 +264,13 @@ Workspace を起こさない。
   （FQDN 判定・TLS 非復号・`AF_EGRESS_LISTEN`、`:3128`）。許可リストに無いホストを遮断するのは
   enforce のときだけで、loopback・link-local（クラウドのメタデータのアドレスを含む）・unspecified の宛先は
   どのモードでも拒否する。
-- **policy 配布** — `GET /internal/egress/policy` が実効の許可リストとモードを proxy へ返す。
+- **egress-agent サブコマンド** — `control-plane egress-agent` は ADR
+  [0122](../decisions/0122-egress-gateway.ja.md) の egress ゲートウェイ上の小さなエージェント（決定 4、
+  `internal/egressagent`）。policy から Squid の許可ファイルとモードの include を書き、変わったとき
+  （と起動時に 1 回）Squid を再読込する。Squid のログは保存したファイルオフセットから ingest へ送る。1 行が 1 イベントで、
+  `id` は行の位置。前提にする Squid の設定行とログ形式はパッケージの doc にある。
+- **policy 配布** — `GET /internal/egress/policy` が実効の許可リストとモードを proxy とゲートウェイの
+  エージェントへ返す。
 - **ingest** — `POST /internal/egress`（`AF_EGRESS_TOKEN`）で観測イベントを受けて日次に集計する。
   would-block は日 × ホストで重複を除き、監査ログにも記録する。`id` を持つイベント（egress ゲートウェイが
   送るもの。ADR [0122](../decisions/0122-egress-gateway.ja.md)）は `at`・`source`・`dest` と一緒に生のまま

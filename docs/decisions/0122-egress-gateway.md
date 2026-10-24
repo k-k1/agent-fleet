@@ -6,7 +6,7 @@ English | [日本語](0122-egress-gateway.ja.md)
   template facts were read from the tree on this date. Squid's behaviour was read from its
   published documentation and an AWS blog post, **not run**; no Docker and no cloud account were
   available while writing this.
-- Follow-ups: #1181, #2603, #2604, #2657, #2658
+- Follow-ups: #1181, #2603, #2604, #2657, #2658, #2687
 - Related: [0047](0047-tenant-network-restriction.md) (inbound IP restriction; this record does
   not touch it) / #1056 (credential injection, needs this fence first) / #1067 (why an OS sandbox
   is not the answer)
@@ -352,3 +352,44 @@ includes, on a stack with egress configured:
 - Secure Web Proxy: "Overview", "Deploy Secure Web Proxy as next hop", "Security rules"
   (SNI `host()` without TLS inspection in next-hop mode), "View proxy transaction logs"
   (`source_ip`).
+
+## Addendum (2026-10-24) — decision 4: the gateway agent is built
+
+The agent of decision 4 exists as `control-plane egress-agent` (#2683, code in
+`control-plane/internal/egressagent`). Squid itself, nftables and the deploy templates are not
+part of it. **It was not run against a real Squid**: the parser and the rotation handling are
+tested with fixture lines and files.
+
+- **Shape.** A subcommand of the CP binary, as `egress-proxy` and `efs-home-op` are, so the
+  gateway gets the same binary. The package imports nothing from the CP's `main`, so it can
+  become its own binary if the size ever matters on the gateway.
+- **Policy.** The agent polls `GET /internal/egress/policy` and writes two files with a temp file
+  and a rename: the allow file (dstdomain entries, reduced to the minimal sorted set, because
+  Squid warns about an entry another one covers and the defaults have such pairs) and a mode
+  include holding the `ssl_bump` and `http_access` lines for log-only or enforce. It reloads
+  Squid when a file's bytes changed, and once at start, since a previous run may have written
+  the files without a reload that worked; that reload uses the files on disk and does not wait
+  for the CP. An unreachable CP, a non-200 answer or an empty
+  allowlist leaves the files as they are.
+- **Log.** The agent owns Squid's `logformat` (`af1`, documented in the package): the time the
+  connection started (`%tS`, not the time the line was written: a tunnel is logged when it
+  closes, possibly after the workspace released its address), source and server address,
+  Squid's status and bump mode, and the SNI and request domain, URL-encoded so a hostile SNI
+  cannot add fields. Each line is one event. Its id is the file's generation plus the line's byte
+  offset. The generation is a random id the agent writes into the file's extended attribute
+  `user.af-egress.gen` the first time it sees the file: it survives a rename and a restart, and
+  a newly created file has none. Nothing derived from the file itself is unique: a new file can
+  reuse a deleted one's inode, the birth time has the kernel clock's few-millisecond resolution
+  (or is not recorded), and two files can start with the same line. A collision makes the agent
+  resume at the wrong offset and the CP drop real events as duplicates. The agent therefore needs
+  write access to Squid's log files and a filesystem with user xattrs, and refuses to start
+  without them. A generation is fsynced before any event carries it, so a host crash cannot
+  leave lines on disk whose generation was lost and is then assigned again. The offset is committed only after a 2xx. A line whose tail is damaged is still sent with its time and source
+  and no name. Rotation must be Squid's own (`logfile_rotate` >= 1); `copytruncate` is not
+  supported.
+- **Verdict.** `allowed` is the policy's verdict on the name, and false when Squid denied or
+  terminated the connection. In log-only it is the verdict the connection would have had. It is
+  computed with the policy current when the line is shipped, so a line written just before a
+  policy change can carry the new verdict.
+- **One matcher.** The allowlist matcher moved to `control-plane/internal/egressallow`, shared by
+  the CP and the agent.
