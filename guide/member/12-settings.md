@@ -571,7 +571,8 @@ When a newer patch of that version is out, an **Update to …** button downloads
 sessions started afterwards use it, with no Stop → Start. For a Java or Node.js version that is
 not installed yet, the button names the version it will install (for example
 **Install 17.0.21+9**). Older Node.js patches that Agent Fleet installed are removed at the next
-workspace start; versions you installed yourself with nvm are kept.
+workspace start; versions you installed yourself with nvm, and exact versions pinned by an
+nvm alias or a `.nvmrc`, are kept.
 → [10 Going further](10-integrations.md#environment-settings-and-recreating-the-workspace)
 
 ### Databases
