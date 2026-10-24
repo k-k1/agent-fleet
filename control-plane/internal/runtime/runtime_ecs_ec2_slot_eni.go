@@ -5,21 +5,23 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 )
 
-// slotENIReleasePolls bounds releaseSlotTaskENI's wait for the task ENI to go (2 s per
-// poll, so 30 s). It has to fit inside a request: the admin force-stop runs it on the
-// handler's thread, behind a 60 s idle ingress timeout, after health checks and before
-// StopInstances.
+// slotENIReleasePolls caps releaseSlotTaskENI's polls (2 s apart). The sleeps are only a
+// floor on the time the wait takes: the AWS calls between them add to it, so the wall-clock
+// bound is the context deadline ForceStopSlot passes (forceStopENIBudget), not this count.
 const slotENIReleasePolls = 15
 
 // ErrSlotTaskENIHeld: the slot still carries a task ENI and ECS did not release it in time.
 // Stopping now would bring the box back multi-ENI, without an auto-assigned public IPv4
 // (ADR 0045 decision 3-3), so the stop is refused. Retrying is safe and usually enough.
 var ErrSlotTaskENIHeld = errors.New("the slot still holds a task network interface")
+
+// ErrSlotStartedAgain: a Start was accepted for the slot's workspace after the force-stop
+// ended the previous one. The slot is that Start's now, so nothing more is done to it.
+var ErrSlotStartedAgain = errors.New("the workspace was started again while its slot was being stopped; the slot was left alone")
 
 // releaseSlotTaskENI is the first half of stopping a slot whose ECS agent may be gone:
 // when a task ENI is attached, force-deregister the container instance (ECS cannot stop a
@@ -30,10 +32,16 @@ var ErrSlotTaskENIHeld = errors.New("the slot still holds a task network interfa
 // Never deregisters a slot with no task ENI: it has nothing to release, and a
 // deregistered box only re-registers after its agent restarts.
 //
-// Deliberately free of any Start ownership check, unlike abandonLostSlot: the caller
-// (an operator's force-stop, and the dark-slot rescue of ADR 0121 once it exists) has
-// already ended or fenced the occupant's Start.
-func (e *ecsEC2Runtime) releaseSlotTaskENI(ctx context.Context, instanceID string, polls int) (deregistered bool, err error) {
+// Free of any Start accounting itself, unlike abandonLostSlot: the caller (an operator's
+// force-stop, and the dark-slot rescue of ADR 0121 once it exists) says what fences the
+// one destructive call, the deregistration, through guard. A guard that refuses (false)
+// ends the sequence with ErrSlotStartedAgain before anything is deregistered; nil runs
+// the call unguarded. The wait is not guarded and does not hold any lock.
+func (e *ecsEC2Runtime) releaseSlotTaskENI(ctx context.Context, instanceID string, polls int,
+	guard func(context.Context, func(context.Context)) bool) (deregistered bool, err error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
 	if err != nil {
 		return false, fmt.Errorf("could not tell whether %s holds a task network interface: %w", instanceID, err)
@@ -42,10 +50,19 @@ func (e *ecsEC2Runtime) releaseSlotTaskENI(ctx context.Context, instanceID strin
 		return false, nil
 	}
 	log.Printf("ecs-ec2: slot %s holds a task ENI; force-deregistering its container instance before it is stopped", instanceID)
-	deregistered = true
 	// A failed deregistration is not decisive by itself: the wait below is what says
 	// whether the ENI went. Its message is kept for the refusal.
-	derr := e.deregisterContainerInstance(ctx, instanceID)
+	deregistered = true
+	var derr error
+	dereg := func(c context.Context) { derr = e.deregisterContainerInstance(c, instanceID) }
+	if guard == nil {
+		dereg(ctx)
+	} else if !guard(ctx, dereg) {
+		if ctx.Err() != nil {
+			return false, ctx.Err() // out of time before the lock: not a Start's doing
+		}
+		return false, ErrSlotStartedAgain
+	}
 	if derr != nil {
 		log.Printf("ecs-ec2: %v", derr)
 	}
@@ -53,7 +70,7 @@ func (e *ecsEC2Runtime) releaseSlotTaskENI(ctx context.Context, instanceID strin
 		if ctx.Err() != nil {
 			return deregistered, werr
 		}
-		why := fmt.Sprintf("ECS did not release it within %s", time.Duration(polls)*2*time.Second)
+		why := "ECS did not release it in time"
 		if derr != nil {
 			why += " (" + derr.Error() + ")"
 		}

@@ -207,6 +207,8 @@ func (a Admin) ForceStopPoolSlot(w http.ResponseWriter, r *http.Request, ident s
 		aerr = &APIError{http.StatusConflict, "slot_quarantined", err.Error()}
 	case errors.Is(err, runtime.ErrSlotTaskENIHeld):
 		aerr = &APIError{http.StatusConflict, "slot_task_eni_held", err.Error()}
+	case errors.Is(err, runtime.ErrSlotStartedAgain):
+		aerr = &APIError{http.StatusConflict, "slot_started_again", err.Error()}
 	case errors.Is(err, runtime.ErrSlotHealthy):
 		aerr = &APIError{http.StatusConflict, "slot_healthy", err.Error()}
 	default:

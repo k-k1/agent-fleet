@@ -1474,11 +1474,24 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 // (umount before detach) still lives in releaseSlot, which is now reached only by
 // eviction, Destroy and drift repair.
 func (e *ecsEC2Runtime) Stop(ctx context.Context) error {
+	_, err := e.stopCounted(ctx)
+	return err
+}
+
+// stopCounted is Stop that also hands back the Start count its abort set. A caller that
+// goes on to act on the slot (the admin force-stop) fences that work on the count: any
+// Start accepted after this Stop moves it.
+func (e *ecsEC2Runtime) stopCounted(ctx context.Context) (int64, error) {
 	// First: a Start still converging in the background must find itself overtaken before
 	// desiredCount is touched, or it raises the count again after the scale-to-zero below.
-	if err := e.abortStarts(ctx); err != nil {
-		return err
+	gen, err := e.beginStart(ctx)
+	if err != nil {
+		return 0, err
 	}
+	return gen, e.stopAfterAbort(ctx)
+}
+
+func (e *ecsEC2Runtime) stopAfterAbort(ctx context.Context) error {
 	if _, ok, err := e.base.describeService(ctx); err != nil {
 		return err
 	} else if ok {
@@ -2550,6 +2563,9 @@ func (e *ecsEC2Runtime) waitTaskENIsGone(ctx context.Context, instanceID string)
 // waitTaskENIsGoneWithin polls every 2s, at most `polls` times.
 func (e *ecsEC2Runtime) waitTaskENIsGoneWithin(ctx context.Context, instanceID string, polls int) error {
 	for i := 0; i < polls; i++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
 		if err == nil && !instancesHoldTaskENI(out) {
 			return nil

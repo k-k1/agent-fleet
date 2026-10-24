@@ -276,3 +276,95 @@ func TestForceStopSlotWithoutATaskENIDoesNotDeregister(t *testing.T) {
 		t.Fatalf("res=%+v err=%v deregistered=%v stops=%v", res, err, h.ci.deregistered, h.ec2.stopForce)
 	}
 }
+
+// A Start accepted while the force-stop waits for the task ENI owns the slot now: the
+// stop is dropped instead of powering off the box that Start is booting on.
+func TestForceStopSlotLeavesASlotAloneWhenAStartLandsDuringTheENIWait(t *testing.T) {
+	ctx := context.Background()
+	h := wedgedSlot(t)
+	h.ec2.giveTaskENI("i-wedge")
+	h.ci.stickyENI = true
+	f := h.factory()
+	started := false
+	f.sleep = func(context.Context, time.Duration) error {
+		if !started {
+			started = true
+			if err := h.rt.Start(ctx); err != nil {
+				t.Errorf("Start during the wait: %v", err)
+			}
+			h.ec2.dropTaskENIs("i-wedge")
+		}
+		return nil
+	}
+	_, err := f.ForceStopSlot(ctx, "i-wedge", false)
+	if !errors.Is(err, ErrSlotStartedAgain) {
+		t.Fatalf("ForceStopSlot = %v, want ErrSlotStartedAgain", err)
+	}
+	if len(h.ec2.stopForce) != 0 {
+		t.Fatalf("stopped a slot a new Start had taken: %v", h.ec2.stopForce)
+	}
+}
+
+// The same, one step earlier: the Start is accepted before the deregistration, which
+// would otherwise cut the new task's ENI.
+func TestForceStopSlotDoesNotDeregisterAfterAStartLanded(t *testing.T) {
+	ctx := context.Background()
+	h := wedgedSlot(t)
+	h.ec2.giveTaskENI("i-wedge")
+	h.ssmc.onList = func() {
+		h.ssmc.onList = nil
+		if err := h.rt.Start(ctx); err != nil {
+			t.Errorf("Start: %v", err)
+		}
+	}
+	_, err := h.factory().ForceStopSlot(ctx, "i-wedge", false)
+	if !errors.Is(err, ErrSlotStartedAgain) {
+		t.Fatalf("ForceStopSlot = %v, want ErrSlotStartedAgain", err)
+	}
+	if len(h.ci.deregistered) != 0 || len(h.ec2.stopForce) != 0 {
+		t.Fatalf("deregistered %v, stops %v: acted on a slot a new Start owns", h.ci.deregistered, h.ec2.stopForce)
+	}
+}
+
+// The ENI wait spends the request's wall clock, not a count of sleeps: slow AWS calls
+// must end it at the deadline with a refusal, long before the 15 polls would.
+func TestForceStopSlotENIWaitStopsAtItsDeadlineWhenAWSCallsAreSlow(t *testing.T) {
+	ctx := context.Background()
+	old := forceStopENIBudget
+	forceStopENIBudget = 400 * time.Millisecond
+	defer func() { forceStopENIBudget = old }()
+	h := wedgedSlot(t)
+	h.ec2.giveTaskENI("i-wedge")
+	h.ci.stickyENI = true
+	h.ssmc.onList = func() { h.ec2.describeDelay = 150 * time.Millisecond }
+	f := h.factory()
+	f.sleep = func(c context.Context, d time.Duration) error { return sleepCtx(c, 10*time.Millisecond) }
+	begin := time.Now()
+	_, err := f.ForceStopSlot(ctx, "i-wedge", false)
+	if !errors.Is(err, ErrSlotTaskENIHeld) {
+		t.Fatalf("ForceStopSlot = %v, want ErrSlotTaskENIHeld", err)
+	}
+	if took := time.Since(begin); took > 1500*time.Millisecond {
+		t.Fatalf("took %s with a 400ms ENI budget", took)
+	}
+	if len(h.ec2.stopForce) != 0 {
+		t.Fatalf("stopped despite the held ENI: %v", h.ec2.stopForce)
+	}
+}
+
+// Pre-steps that already used the budget leave no time for the ENI stage: refuse without
+// deregistering anything.
+func TestForceStopSlotRefusesWithoutDeregisteringWhenNoTimeIsLeft(t *testing.T) {
+	old := forceStopBudget
+	forceStopBudget = 5 * time.Second // below forceStopStopReserve: no ENI time at all
+	defer func() { forceStopBudget = old }()
+	h := wedgedSlot(t)
+	h.ec2.giveTaskENI("i-wedge")
+	_, err := h.factory().ForceStopSlot(context.Background(), "i-wedge", false)
+	if !errors.Is(err, ErrSlotTaskENIHeld) {
+		t.Fatalf("ForceStopSlot = %v, want ErrSlotTaskENIHeld", err)
+	}
+	if len(h.ci.deregistered) != 0 || len(h.ec2.stopForce) != 0 {
+		t.Fatalf("deregistered %v, stops %v", h.ci.deregistered, h.ec2.stopForce)
+	}
+}

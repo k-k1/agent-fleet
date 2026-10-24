@@ -88,6 +88,9 @@ type fakeEC2 struct {
 	// an operator's reservation lands while a Start is under way.
 	afterDescribeVolumes func()
 	onAttach             func(instID string)
+	// describeDelay makes every DescribeInstances take that long (ending early with the
+	// context), so a test can spend a request's wall-clock budget on AWS calls.
+	describeDelay time.Duration
 	// terminateErr makes TerminateInstances fail without terminating anything.
 	terminateErr error
 	// stopForce records the Force flag of each StopInstances; stopHold leaves the instance
@@ -289,7 +292,14 @@ func (f *fakeEC2) DescribeVolumes(_ context.Context, in *ec2.DescribeVolumesInpu
 	return out, nil
 }
 
-func (f *fakeEC2) DescribeInstances(_ context.Context, in *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
+func (f *fakeEC2) DescribeInstances(ctx context.Context, in *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
+	if d := f.describeDelay; d > 0 {
+		select {
+		case <-time.After(d):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := &ec2.DescribeInstancesOutput{}
@@ -738,6 +748,8 @@ type fakeSSMCmd struct {
 	// onSend, when set, is called with each command as it is sent, so a test can look at
 	// the rest of the fake world at that moment.
 	onSend func(cmd string)
+	// onList runs before ListCommands answers, outside the fake's lock.
+	onList func()
 	// status, when set and non-empty for a command, is the invocation status reported for it.
 	status func(cmd string) string
 	// unfinished are the commands ListCommands reports as Pending; cancelled collects the
@@ -750,6 +762,9 @@ type fakeSSMCmd struct {
 }
 
 func (f *fakeSSMCmd) ListCommands(_ context.Context, in *ssm.ListCommandsInput, _ ...func(*ssm.Options)) (*ssm.ListCommandsOutput, error) {
+	if f.onList != nil {
+		f.onList()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := &ssm.ListCommandsOutput{}
