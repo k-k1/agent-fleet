@@ -349,7 +349,15 @@ The design and the staged rollout — log-only → allowlist → enforce — are
   allowlist and mode to the proxy.
 - **Ingest** — `POST /internal/egress` (`AF_EGRESS_TOKEN`) takes observed events into a
   daily aggregate, with would-block entries de-duplicated per day and host and also
-  recorded to the audit log.
+  recorded to the audit log. An event that carries an `id` (the egress gateway's, ADR
+  [0122](../decisions/0122-egress-gateway.md)) is also kept raw with its `at`, `source` and
+  `dest`, and is stored and counted once however often it is resent.
+- **Attribution** — when `AF_EGRESS_TOKEN` is set, a recorder asks each workspace's runtime
+  every `AF_EGRESS_ADDRESS_INTERVAL` (default 30s) which addresses it holds: the ECS task ENI,
+  the pod IP, or the container's address on the per-user network. It keeps them as time ranges.
+  `GET /api/admin/egress/events` joins each raw event to them on address and time and reports
+  the event as attributed, ambiguous, unattributed, or infrastructure (a source inside
+  `AF_EGRESS_INFRA_CIDRS`).
 - **The admin API** — `/api/admin/egress*`, `super_admin` only: the statistics, the
   allowlist (active, proposed, retired) and the log-only / enforce switch.
 - **The member face** — `GET /api/egress/check` says whether a workspace can reach a

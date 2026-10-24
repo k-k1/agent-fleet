@@ -267,7 +267,14 @@ Workspace を起こさない。
   どのモードでも拒否する。
 - **policy 配布** — `GET /internal/egress/policy` が実効の許可リストとモードを proxy へ返す。
 - **ingest** — `POST /internal/egress`（`AF_EGRESS_TOKEN`）で観測イベントを受けて日次に集計する。
-  would-block は日 × ホストで重複を除き、監査ログにも記録する。
+  would-block は日 × ホストで重複を除き、監査ログにも記録する。`id` を持つイベント（egress ゲートウェイが
+  送るもの。ADR [0122](../decisions/0122-egress-gateway.ja.md)）は `at`・`source`・`dest` と一緒に生のまま
+  保存し、何度再送されても 1 回だけ保存・集計する。
+- **帰属** — `AF_EGRESS_TOKEN` があるとき、レコーダーが `AF_EGRESS_ADDRESS_INTERVAL`（既定 30s）ごとに、
+  各 Workspace のランタイムへ持っているアドレス（ECS タスクの ENI、ポッドの IP、ユーザー別ネットワーク上の
+  コンテナのアドレス）を尋ね、期間として残す。`GET /api/admin/egress/events` は生のイベントをアドレスと時刻で
+  その期間と突き合わせ、帰属済み・曖昧・帰属不明・基盤（送信元が `AF_EGRESS_INFRA_CIDRS` の範囲内）の
+  いずれかとして返す。
 - **admin API** — `/api/admin/egress*`、`super_admin` のみ: 統計・許可リスト（active / proposed /
   retired）・log-only / enforce の切替。
 - **member の面** — `GET /api/egress/check` は Workspace がそのホストに届くかを答え、

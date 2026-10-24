@@ -159,7 +159,10 @@ membership を解決し直す。
 | `/git/{slug}/{repo...}` | git トークン（Basic 認証）| 内部 git プロバイダ（[91](91-internal-git.ja.md)）|
 
 `POST /internal/egress` へ送り `GET /internal/egress/policy` を読むのは Workspace ではなく egress
-プロキシで、配備全体で 1 つの `AF_EGRESS_TOKEN` を使う（[07 §7.8](07-security.ja.md)）。
+プロキシで、配備全体で 1 つの `AF_EGRESS_TOKEN` を使う（[07 §7.8](07-security.ja.md)）。イベントには
+`id`・`at`（unix ミリ秒）・`source`・`dest` を付けられる。`id` のあるイベントは何度再送されても 1 回だけ
+保存し、`id` があっても正しい `source` か `at` が無いものは読み飛ばす。`GET /api/admin/egress/events?minutes=&limit=`
+（`super_admin`）は、その生のイベントを `attribution` と一致したアドレスの行つきで返す（[03](03-control-plane.ja.md)）。
 
 ## 5.3 中継の 5 経路
 

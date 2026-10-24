@@ -121,7 +121,7 @@ func TestEgressIngestHandler(t *testing.T) {
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", &egressAuditDedup{})
+	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", &egressAuditDedup{}, nil)
 	body := `{"events":[{"host":"api.anthropic.com","allowed":true,"count":3},` +
 		`{"host":"paste.ee","allowed":false,"count":2},{"host":"paste.ee","allowed":false,"count":1}]}`
 
@@ -232,7 +232,7 @@ func TestEffectivePolicyEndpoint(t *testing.T) {
 	}
 	_ = st.AddAllowlist(ctx, store.AllowlistEntry{ID: store.NewID(), Entry: "extra.internal", State: "active", AddedAt: store.NowTS()})
 	_ = st.SetSetting(ctx, "egress_mode", "enforce")
-	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil)
+	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil, nil)
 
 	entries, enforce := eg.effectivePolicy(ctx)
 	if !enforce {

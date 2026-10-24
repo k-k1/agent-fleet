@@ -175,7 +175,11 @@ and the CP resolves that membership on each call.
 
 The egress proxy, not a workspace, posts to `POST /internal/egress` and reads
 `GET /internal/egress/policy` with the deployment-wide `AF_EGRESS_TOKEN`
-([07 §7.8](07-security.md)).
+([07 §7.8](07-security.md)). An event body may carry `id`, `at` (unix milliseconds),
+`source` and `dest`; an event with an `id` is stored once however often it is resent, and
+one with an `id` but no valid `source` or `at` is skipped. `GET /api/admin/egress/events?minutes=&limit=`
+(`super_admin`) returns those raw events, each with `attribution` and the address rows it matched
+([03](03-control-plane.md)).
 
 ## 5.3 The five relay paths
 

@@ -184,7 +184,10 @@ type kEmptyDirVolumeSource struct {
 }
 
 type kPodStatus struct {
-	Phase             string             `json:"phase,omitempty"`
+	Phase string `json:"phase,omitempty"`
+	// PodIP and StartTime are what egress attribution records (addresses.go).
+	PodIP             string             `json:"podIP,omitempty"`
+	StartTime         string             `json:"startTime,omitempty"`
 	Conditions        []kPodCondition    `json:"conditions,omitempty"`
 	ContainerStatuses []kContainerStatus `json:"containerStatuses,omitempty"`
 }
