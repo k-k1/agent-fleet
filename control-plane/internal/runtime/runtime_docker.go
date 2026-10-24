@@ -29,6 +29,11 @@ type dockerRuntime struct {
 	memory     string
 	sessionCmd string
 	extraEnv   []string // KEY=VAL passed to the workspace container (e.g. CLAUDE_INSTALL=0)
+	// onRelease, membership and wsID record the container's address before Stop removes it
+	// (Config.OnAddressesReleasing).
+	onRelease  AddressReleaseHook
+	membership string
+	wsID       string
 	// inspect overrides `docker inspect` (tests only); nil = the real docker CLI.
 	inspect func(ctx context.Context, typ, ref, format string) string
 	// stopFn overrides Stop (tests only; the CP's own test environment has no docker
@@ -52,6 +57,7 @@ type dockerFactory struct {
 	sessionCmd  string
 	extraEnv    []string
 	rootDataDir func(Workspace) string
+	onRelease   AddressReleaseHook
 }
 
 func (f *dockerFactory) New(ws Workspace, keys SecretKeys, extraEnv []string) Runtime {
@@ -85,6 +91,9 @@ func (f *dockerFactory) New(ws Workspace, keys SecretKeys, extraEnv []string) Ru
 		cpus:       cpus,
 		sessionCmd: f.sessionCmd,
 		extraEnv:   env,
+		onRelease:  f.onRelease,
+		membership: ws.MembershipID,
+		wsID:       ws.ID,
 	}
 }
 
@@ -512,6 +521,7 @@ func (d *dockerRuntime) Stop(ctx context.Context) error {
 	// container, so it does no harm, but no reason to keep a stale one either — the next
 	// Start writes its own.
 	d.startingMarker().clear()
+	noteReleasing(ctx, d.onRelease, d, d.membership, d.wsID)
 	// "No such container" counts as idempotent success: a stop API call against an
 	// already-stopped (i.e. container-less) workspace must not answer 500.
 	noSuch := func(out []byte) bool {

@@ -70,6 +70,14 @@ func eniTask(arn, ip string, created time.Time, stopped *time.Time) ecstypes.Tas
 	}
 }
 
+func heldByRef(r AddressReport) map[string]HeldAddress {
+	out := map[string]HeldAddress{}
+	for _, h := range r.Held {
+		out[h.Ref] = h
+	}
+	return out
+}
+
 func TestECSHeldAddressesReadsTheTaskENI(t *testing.T) {
 	t0 := time.Date(2026, 10, 24, 9, 0, 0, 0, time.UTC)
 	stop := t0.Add(time.Hour)
@@ -86,12 +94,12 @@ func TestECSHeldAddressesReadsTheTaskENI(t *testing.T) {
 		"arn:task/new": {Address: "10.0.1.9", Ref: "arn:task/new", From: t0.Add(2 * time.Hour)},
 		"arn:task/old": {Address: "10.0.1.5", Ref: "arn:task/old", From: t0, Until: stop},
 	}
-	if len(got) != len(want) {
+	if len(got.Held) != len(want) || len(got.Unresolved) != 0 {
 		t.Fatalf("got %+v", got)
 	}
-	for _, h := range got {
-		if w := want[h.Ref]; h.Address != w.Address || !h.From.Equal(w.From) || !h.Until.Equal(w.Until) {
-			t.Errorf("%s: got %+v, want %+v", h.Ref, h, w)
+	for ref, h := range heldByRef(got) {
+		if w := want[ref]; h.Address != w.Address || !h.From.Equal(w.From) || !h.Until.Equal(w.Until) {
+			t.Errorf("%s: got %+v, want %+v", ref, h, w)
 		}
 	}
 
@@ -103,24 +111,20 @@ func TestECSHeldAddressesReadsTheTaskENI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var found bool
-	for _, h := range got {
-		if h.Ref == "arn:task/unlisted" && h.Until.Equal(late) {
-			found = true
-		}
-	}
-	if !found {
+	if h, ok := heldByRef(got)["arn:task/unlisted"]; !ok || !h.Until.Equal(late) {
 		t.Errorf("an open task missing from the listing must be described: %+v", got)
 	}
 
-	// MISSING proves nothing: the read fails rather than closing the task's interval.
-	f.missing = map[string]bool{"arn:task/ghost": true}
-	if _, err := e.HeldAddresses(context.Background(), []string{"arn:task/ghost"}); err == nil {
-		t.Error("an open task answered MISSING must fail the read")
+	// An open task ECS no longer knows (aged out, or not indexed yet) next to a live one:
+	// the live one is still reported, the old one comes back unresolved, and the read
+	// does not fail.
+	f.missing = map[string]bool{"arn:task/aged-out": true}
+	got, err = e.HeldAddresses(context.Background(), []string{"arn:task/aged-out"})
+	if err != nil {
+		t.Fatalf("MISSING must not fail the read: %v", err)
 	}
-	f.missing = map[string]bool{"arn:task/new": true}
-	if _, err := e.HeldAddresses(context.Background(), nil); err == nil {
-		t.Error("a listed task answered MISSING must fail the read")
+	if _, ok := heldByRef(got)["arn:task/new"]; !ok || len(got.Unresolved) != 1 || got.Unresolved[0] != "arn:task/aged-out" {
+		t.Errorf("want the live task held and the aged-out one unresolved, got %+v", got)
 	}
 	f.missing = nil
 	f.listErr = errors.New("throttled")
@@ -128,7 +132,7 @@ func TestECSHeldAddressesReadsTheTaskENI(t *testing.T) {
 		t.Error("a list failure must be an error")
 	}
 	f.listErr = &ecstypes.ServiceNotFoundException{}
-	if got, err := e.HeldAddresses(context.Background(), nil); err != nil || len(got) != 0 {
+	if got, err := e.HeldAddresses(context.Background(), nil); err != nil || len(got.Held) != 0 {
 		t.Errorf("no service holds nothing: got %+v, %v", got, err)
 	}
 }
@@ -158,7 +162,7 @@ func TestDockerHeldAddresses(t *testing.T) {
 		return "abc123|2026-10-24T09:00:00.123456789Z|172.19.0.2"
 	}}
 	got, err := d.HeldAddresses(context.Background(), nil)
-	if err != nil || len(got) != 1 || got[0].Ref != "abc123" || got[0].Address != "172.19.0.2" {
+	if err != nil || len(got.Held) != 1 || got.Held[0].Ref != "abc123" || got.Held[0].Address != "172.19.0.2" {
 		t.Fatalf("got %+v, %v", got, err)
 	}
 	if want := `index .NetworkSettings.Networks "af-u1"`; !strings.Contains(asked, want) {
@@ -166,15 +170,49 @@ func TestDockerHeldAddresses(t *testing.T) {
 	}
 	// Stopped: no address on the network, nothing held.
 	d.inspect = func(context.Context, string, string, string) string { return "abc123|2026-10-24T09:00:00Z|" }
-	if got, err := d.HeldAddresses(context.Background(), nil); err != nil || len(got) != 0 {
+	if got, err := d.HeldAddresses(context.Background(), nil); err != nil || len(got.Held) != 0 {
 		t.Errorf("stopped container: %+v, %v", got, err)
 	}
 	// Gone: nothing held, not an error.
 	d.inspect = func(context.Context, string, string, string) string { return "" }
-	if got, err := d.HeldAddresses(context.Background(), nil); err != nil || len(got) != 0 {
+	if got, err := d.HeldAddresses(context.Background(), nil); err != nil || len(got.Held) != 0 {
 		t.Errorf("missing container: %+v, %v", got, err)
 	}
 	if _, err := dockerHeldAddresses("garbage"); err == nil {
 		t.Error("unparseable output must be an error, not an empty list")
+	}
+}
+
+// A docker Stop removes the container and its address with it, so the address is handed to
+// the hook before the stop runs: a workspace started and stopped between two recorder
+// sweeps is still on record.
+func TestDockerStopHandsTheAddressToTheReleaseHook(t *testing.T) {
+	var gotM, gotW string
+	var got []HeldAddress
+	d := &dockerRuntime{
+		name: "ws", network: "af-u1", dataDir: t.TempDir(), membership: "m1", wsID: "w1",
+		inspect: func(context.Context, string, string, string) string {
+			return "abc123|2026-10-24T09:00:00Z|172.19.0.2"
+		},
+		onRelease: func(_ context.Context, m, w string, held []HeldAddress) { gotM, gotW, got = m, w, held },
+	}
+	_ = d.Stop(context.Background()) // no docker CLI here; the hook runs before it is needed
+	if gotM != "m1" || gotW != "w1" || len(got) != 1 || got[0].Address != "172.19.0.2" {
+		t.Errorf("hook got %q %q %+v", gotM, gotW, got)
+	}
+}
+
+// The Kubernetes Stop deletes the pod, so its address is handed to the hook before the
+// StatefulSet is scaled to zero.
+func TestKubeStopHandsThePodAddressToTheReleaseHook(t *testing.T) {
+	rt, f := fakeKubeRuntime(t)
+	var got []HeldAddress
+	rt.cfg.onRelease = func(_ context.Context, _, _ string, held []HeldAddress) { got = held }
+	f.set(stsPathX, 200, stsJSON(1, 4, 4, 1, "af-ws-x-7f8c9d6b4", "2"))
+	f.set(podsPathX, 200, podListJSON(`{"metadata":{"name":"af-ws-x-0","uid":"pod-uid-1"},`+
+		`"status":{"phase":"Running","podIP":"10.4.0.7","startTime":"2026-10-24T09:00:00Z"}}`))
+	_ = rt.Stop(context.Background()) // the scale-down itself is not served here
+	if len(got) != 1 || got[0].Ref != "pod-uid-1" || got[0].Address != "10.4.0.7" {
+		t.Errorf("hook got %+v", got)
 	}
 }

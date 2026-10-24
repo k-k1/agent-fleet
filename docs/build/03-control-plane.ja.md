@@ -272,7 +272,9 @@ Workspace を起こさない。
   保存し、何度再送されても 1 回だけ保存・集計する。
 - **帰属** — `AF_EGRESS_TOKEN` があるとき、レコーダー（CP lease で常に 1 台だけ）が `AF_EGRESS_ADDRESS_INTERVAL`（既定 60s）ごとに、
   各 Workspace のランタイムへ持っているアドレス（ECS タスクの ENI、ポッドの IP、ユーザー別ネットワーク上の
-  コンテナのアドレス）を尋ね、期間として残す。`GET /api/admin/egress/events` は生のイベントをアドレスと時刻で
+  コンテナのアドレス）を尋ね、期間として残す。docker と Kubernetes の Stop は、消した後には読めるものが
+  残らないので、消す直前にアドレスを渡す。DescribeTasks が MISSING と答えた ECS のタスクは、15 分間は
+  開いたままにしてから閉じる。`GET /api/admin/egress/events` は生のイベントをアドレスと時刻で
   その期間と突き合わせ、帰属済み・曖昧・帰属不明・基盤（送信元が `AF_EGRESS_INFRA_CIDRS` の範囲内）の
   いずれかとして返す。
 - **admin API** — `/api/admin/egress*`、`super_admin` のみ: 統計・許可リスト（active / proposed /

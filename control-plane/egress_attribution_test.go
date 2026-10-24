@@ -85,16 +85,28 @@ func TestEgressAttributionOf(t *testing.T) {
 
 type addressStub struct {
 	hibernateStub
-	held  []runtime.HeldAddress
-	err   error
-	asked int
-	open  []string
+	held       []runtime.HeldAddress
+	unresolved []string
+	err        error
+	asked      int
+	open       []string
+	onAsk      func()
 }
 
-func (r *addressStub) HeldAddresses(_ context.Context, open []string) ([]runtime.HeldAddress, error) {
+func (r *addressStub) HeldAddresses(_ context.Context, open []string) (runtime.AddressReport, error) {
 	r.asked++
 	r.open = open
-	return r.held, r.err
+	if r.onAsk != nil {
+		r.onAsk()
+	}
+	return runtime.AddressReport{Held: r.held, Unresolved: r.unresolved}, r.err
+}
+
+// stubsByName hands each workspace its own stub runtime.
+type stubsByName map[string]*addressStub
+
+func (f stubsByName) New(ws runtime.Workspace, _ runtime.SecretKeys, _ []string) runtime.Runtime {
+	return f[ws.ContainerName]
 }
 
 func openAddressRefs(t *testing.T, st *store.SQL, m string) []string {
@@ -213,4 +225,132 @@ func TestAddressRecorderKeepsIntervals(t *testing.T) {
 	if open := openAddressRefs(t, st, ws.MembershipID); len(open) != 0 {
 		t.Errorf("an orphan row stayed open: %v", open)
 	}
+}
+
+// An open task ECS no longer knows next to the live one that replaced it: the live one is
+// recorded at once, the old one stays open through the grace and is closed after it, and
+// no tick fails because of it.
+func TestAddressRecorderRecoversFromAnAgedOutTask(t *testing.T) {
+	ctx := context.Background()
+	st, ws, mgr := reaperLifecycleFixture(t)
+	clock := time.Now()
+	ar := &addressRecorder{mgr: mgr, interval: time.Minute, holder: "cp-1", now: func() time.Time { return clock }}
+	rt := &addressStub{held: []runtime.HeldAddress{{Address: "10.0.1.5", Ref: "task/A", From: clock.Add(-2 * time.Hour)}}}
+	mgr.rtFactory = stubFactory{rt: rt}
+	ar.tick(ctx)
+
+	rt.held = []runtime.HeldAddress{{Address: "10.0.1.9", Ref: "task/B", From: clock}}
+	rt.unresolved = []string{"task/A"}
+	for i := 0; i < 3; i++ {
+		clock = clock.Add(time.Minute)
+		ar.tick(ctx)
+		if got := openAddressRefs(t, st, ws.MembershipID); !equalRefs(got, "task/A", "task/B") {
+			t.Fatalf("tick %d within the grace: open %v", i, got)
+		}
+	}
+	clock = clock.Add(addressUnresolvedGrace)
+	ar.tick(ctx)
+	if got := openAddressRefs(t, st, ws.MembershipID); !equalRefs(got, "task/B") {
+		t.Errorf("past the grace the aged-out task must be closed and the live one kept: %v", got)
+	}
+}
+
+// A sweep cut off by its deadline resumes with the workspaces it did not reach.
+func TestAddressRecorderResumesWhereTheSweepStopped(t *testing.T) {
+	ctx := context.Background()
+	st, ws0, mgr := reaperLifecycleFixture(t)
+	stubs := stubsByName{ws0.ContainerName: &addressStub{}}
+	for _, name := range []string{"ws-b", "ws-c"} {
+		id, _ := st.UpsertIdentity(ctx, name+"@example.com", name, "")
+		m, _ := st.EnsureMembership(ctx, id.ID, ws0.TenantID, "member")
+		ws := store.Workspace{ID: store.NewID(), TenantID: ws0.TenantID, MembershipID: m.ID,
+			ContainerName: name, Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t",
+			State: "running", CreatedAt: store.NowTS()}
+		if err := st.CreateWorkspace(ctx, ws); err != nil {
+			t.Fatal(err)
+		}
+		stubs[name] = &addressStub{}
+	}
+	mgr.rtFactory = stubs
+	clock := time.Now()
+	ar := &addressRecorder{mgr: mgr, interval: time.Minute, holder: "cp-1", now: func() time.Time { return clock }}
+
+	// The deadline runs out while the second workspace is being asked.
+	sctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	asked := 0
+	for _, s := range stubs {
+		s.onAsk = func() {
+			if asked++; asked == 2 {
+				cancel()
+			}
+		}
+	}
+	ar.sweep(sctx)
+	var missed string
+	for name, s := range stubs {
+		if s.asked == 0 {
+			missed = name
+		}
+	}
+	if asked != 2 || missed == "" {
+		t.Fatalf("want two asked and one left over, asked %d", asked)
+	}
+	for _, s := range stubs {
+		s.onAsk = nil
+	}
+	clock = clock.Add(time.Minute)
+	first := ""
+	for name, s := range stubs {
+		name := name
+		s.onAsk = func() {
+			if first == "" {
+				first = name
+			}
+		}
+	}
+	ar.sweep(ctx)
+	if first != missed {
+		t.Errorf("the next sweep must start with the workspace the last one did not reach (%s), started with %s", missed, first)
+	}
+}
+
+// A Kubernetes or docker workspace started and stopped between two sweeps: the next read is
+// empty, so only the release hook can put its address on record.
+func TestReleaseHookRecordsAnAddressTheNextSweepCannotSee(t *testing.T) {
+	ctx := context.Background()
+	st, ws, mgr := reaperLifecycleFixture(t)
+	rt := &addressStub{}
+	mgr.rtFactory = stubFactory{rt: rt}
+	base := time.Now().Add(-time.Minute)
+	clock := base.Add(30 * time.Second)
+	ar := &addressRecorder{mgr: mgr, interval: time.Minute, holder: "cp-1", now: func() time.Time { return clock }}
+
+	addressReleaseHook(mgr)(ctx, ws.MembershipID, ws.ID, []runtime.HeldAddress{{Address: "10.4.0.7", Ref: "pod-uid", From: base}})
+	ar.tick(ctx) // the pod is gone: the read is empty
+	if got := openAddressRefs(t, st, ws.MembershipID); len(got) != 0 {
+		t.Errorf("the released address must be closed by the next sweep: %v", got)
+	}
+	if _, err := st.RecordEgressEvent(ctx, "d", store.EgressEvent{ID: "e", At: base.Add(10 * time.Second).UnixMilli(), Source: "10.4.0.7", Count: 1}, clock.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.ListAttributedEgressEvents(ctx, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || len(got[0].Holders) != 1 || got[0].Holders[0].MembershipID != ws.MembershipID {
+		t.Errorf("an event from the short-lived pod must be attributed: %+v", got)
+	}
+}
+
+func equalRefs(got []string, want ...string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }

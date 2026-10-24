@@ -35,15 +35,15 @@ func TestEgressAttributionFollowsAddressReuse(t *testing.T) {
 	ctx := context.Background()
 	for name, st := range homeOpStores(t) {
 		const addr = "10.0.1.5"
-		if err := st.ObserveWorkspaceAddresses(ctx, "mA", []WorkspaceAddress{{WorkspaceID: "wA", Address: addr, Ref: "taskA", From: 100}}, 150); err != nil {
+		if err := st.ObserveWorkspaceAddresses(ctx, "mA", []WorkspaceAddress{{WorkspaceID: "wA", Address: addr, Ref: "taskA", From: 100}}, nil, 150); err != nil {
 			t.Fatal(err)
 		}
 		// mA's task is gone when next looked at (closed at 300); mB's task got the address
 		// at 250, before the close was seen.
-		if err := st.ObserveWorkspaceAddresses(ctx, "mA", nil, 300); err != nil {
+		if err := st.ObserveWorkspaceAddresses(ctx, "mA", nil, nil, 300); err != nil {
 			t.Fatal(err)
 		}
-		if err := st.ObserveWorkspaceAddresses(ctx, "mB", []WorkspaceAddress{{WorkspaceID: "wB", Address: addr, Ref: "taskB", From: 250}}, 300); err != nil {
+		if err := st.ObserveWorkspaceAddresses(ctx, "mB", []WorkspaceAddress{{WorkspaceID: "wB", Address: addr, Ref: "taskB", From: 250}}, nil, 300); err != nil {
 			t.Fatal(err)
 		}
 		for _, e := range []EgressEvent{
@@ -92,13 +92,13 @@ func TestObserveWorkspaceAddressesEndsOnlyMoveEarlier(t *testing.T) {
 	ctx := context.Background()
 	for name, st := range homeOpStores(t) {
 		row := WorkspaceAddress{WorkspaceID: "w1", Address: "10.0.1.7", Ref: "task-1", From: 100}
-		if err := st.ObserveWorkspaceAddresses(ctx, "m1", []WorkspaceAddress{row}, 110); err != nil {
+		if err := st.ObserveWorkspaceAddresses(ctx, "m1", []WorkspaceAddress{row}, nil, 110); err != nil {
 			t.Fatal(err)
 		}
 		if got := openRefs(t, st, "m1"); !equalStrings(got, []string{"task-1"}) {
 			t.Errorf("%s: open refs %v", name, got)
 		}
-		if err := st.ObserveWorkspaceAddresses(ctx, "m1", nil, 300); err != nil {
+		if err := st.ObserveWorkspaceAddresses(ctx, "m1", nil, nil, 300); err != nil {
 			t.Fatal(err)
 		}
 		if got := openRefs(t, st, "m1"); len(got) != 0 {
@@ -107,17 +107,17 @@ func TestObserveWorkspaceAddressesEndsOnlyMoveEarlier(t *testing.T) {
 		// The task's reported stop time is earlier than the noticed absence: it wins.
 		stopped := row
 		stopped.Until = 200
-		if err := st.ObserveWorkspaceAddresses(ctx, "m1", []WorkspaceAddress{stopped}, 310); err != nil {
+		if err := st.ObserveWorkspaceAddresses(ctx, "m1", []WorkspaceAddress{stopped}, nil, 310); err != nil {
 			t.Fatal(err)
 		}
 		// An older observation applied late (the task still running) must neither reopen the
 		// row nor push its end back.
-		if err := st.ObserveWorkspaceAddresses(ctx, "m1", []WorkspaceAddress{row}, 320); err != nil {
+		if err := st.ObserveWorkspaceAddresses(ctx, "m1", []WorkspaceAddress{row}, nil, 320); err != nil {
 			t.Fatal(err)
 		}
 		late := row
 		late.Until = 250
-		if err := st.ObserveWorkspaceAddresses(ctx, "m1", []WorkspaceAddress{late}, 330); err != nil {
+		if err := st.ObserveWorkspaceAddresses(ctx, "m1", []WorkspaceAddress{late}, nil, 330); err != nil {
 			t.Fatal(err)
 		}
 		if got := openRefs(t, st, "m1"); len(got) != 0 {
@@ -143,14 +143,38 @@ func TestObserveWorkspaceAddressesEndsOnlyMoveEarlier(t *testing.T) {
 			t.Errorf("%s: the interval must end at the reported stop (200): %v", name, holders)
 		}
 		// Another membership's rows are never closed by this one's report.
-		if err := st.ObserveWorkspaceAddresses(ctx, "m2", []WorkspaceAddress{{Address: "10.0.1.8", Ref: "other", From: 1}}, 1); err != nil {
+		if err := st.ObserveWorkspaceAddresses(ctx, "m2", []WorkspaceAddress{{Address: "10.0.1.8", Ref: "other", From: 1}}, nil, 1); err != nil {
 			t.Fatal(err)
 		}
-		if err := st.ObserveWorkspaceAddresses(ctx, "m1", nil, 500); err != nil {
+		if err := st.ObserveWorkspaceAddresses(ctx, "m1", nil, nil, 500); err != nil {
 			t.Fatal(err)
 		}
 		if got, err := st.OpenAddressMemberships(ctx); err != nil || !equalStrings(got, []string{"m2"}) {
 			t.Errorf("%s: open memberships %v, %v", name, got, err)
+		}
+	}
+}
+
+func TestObserveWorkspaceAddressesKeepsUnresolvedAndUpsertClosesNothing(t *testing.T) {
+	ctx := context.Background()
+	for name, st := range homeOpStores(t) {
+		a := WorkspaceAddress{Address: "10.0.1.5", Ref: "task-a", From: 100}
+		b := WorkspaceAddress{Address: "10.0.1.6", Ref: "task-b", From: 200}
+		if err := st.UpsertWorkspaceAddresses(ctx, "m1", []WorkspaceAddress{a}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.UpsertWorkspaceAddresses(ctx, "m1", []WorkspaceAddress{b}); err != nil {
+			t.Fatal(err)
+		}
+		if got := openRefs(t, st, "m1"); !equalStrings(got, []string{"task-a", "task-b"}) {
+			t.Errorf("%s: an upsert must close nothing: %v", name, got)
+		}
+		// task-a could not be resolved this time: kept open. task-b is not reported: closed.
+		if err := st.ObserveWorkspaceAddresses(ctx, "m1", nil, []string{"task-a"}, 300); err != nil {
+			t.Fatal(err)
+		}
+		if got := openRefs(t, st, "m1"); !equalStrings(got, []string{"task-a"}) {
+			t.Errorf("%s: open refs %v, want only the kept one", name, got)
 		}
 	}
 }

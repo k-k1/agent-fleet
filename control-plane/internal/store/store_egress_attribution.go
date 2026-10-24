@@ -43,9 +43,13 @@ type EgressAttributionStore interface {
 	ListAttributedEgressEvents(ctx context.Context, since int64, limit int) ([]AttributedEgressEvent, error)
 	// ObserveWorkspaceAddresses records what one membership's runtime reports now: a reported
 	// row is inserted, or has its end set or moved earlier, and every row of the membership
-	// still open but not reported is closed at now. A closed row is never opened again: the
-	// observation that would reopen it can only be an older one applied late.
-	ObserveWorkspaceAddresses(ctx context.Context, membershipID string, seen []WorkspaceAddress, now int64) error
+	// still open, not reported and whose ref is not in keep is closed at now. A closed row is
+	// never opened again: the observation that would reopen it can only be an older one
+	// applied late.
+	ObserveWorkspaceAddresses(ctx context.Context, membershipID string, seen []WorkspaceAddress, keep []string, now int64) error
+	// UpsertWorkspaceAddresses records reported rows as ObserveWorkspaceAddresses does and
+	// closes nothing: for a partial view, such as the addresses a Stop is about to release.
+	UpsertWorkspaceAddresses(ctx context.Context, membershipID string, seen []WorkspaceAddress) error
 	// OpenWorkspaceAddressRefs returns the refs of the membership's rows still open.
 	OpenWorkspaceAddressRefs(ctx context.Context, membershipID string) ([]string, error)
 	// OpenAddressMemberships returns every membership that has a row still open.
@@ -126,7 +130,15 @@ func (s *SQL) ListAttributedEgressEvents(ctx context.Context, since int64, limit
 	return out, rows.Err()
 }
 
-func (s *SQL) ObserveWorkspaceAddresses(ctx context.Context, membershipID string, seen []WorkspaceAddress, now int64) error {
+func (s *SQL) UpsertWorkspaceAddresses(ctx context.Context, membershipID string, seen []WorkspaceAddress) error {
+	return s.observeWorkspaceAddresses(ctx, membershipID, seen, nil, 0, false)
+}
+
+func (s *SQL) ObserveWorkspaceAddresses(ctx context.Context, membershipID string, seen []WorkspaceAddress, keep []string, now int64) error {
+	return s.observeWorkspaceAddresses(ctx, membershipID, seen, keep, now, true)
+}
+
+func (s *SQL) observeWorkspaceAddresses(ctx context.Context, membershipID string, seen []WorkspaceAddress, keepRefs []string, now int64, closeRest bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -148,6 +160,13 @@ func (s *SQL) ObserveWorkspaceAddresses(ctx context.Context, membershipID string
 		}
 		keep[addressKey(a.Ref, a.Address, a.From)] = true
 	}
+	if !closeRest {
+		return tx.Commit()
+	}
+	kept := map[string]bool{}
+	for _, r := range keepRefs {
+		kept[r] = true
+	}
 	rows, err := tx.QueryContext(ctx,
 		`SELECT ref, address, from_at FROM workspace_address WHERE membership_id=? AND until_at=0`, membershipID)
 	if err != nil {
@@ -160,7 +179,7 @@ func (s *SQL) ObserveWorkspaceAddresses(ctx context.Context, membershipID string
 			rows.Close()
 			return err
 		}
-		if !keep[addressKey(a.Ref, a.Address, a.From)] {
+		if !keep[addressKey(a.Ref, a.Address, a.From)] && !kept[a.Ref] {
 			gone = append(gone, a)
 		}
 	}

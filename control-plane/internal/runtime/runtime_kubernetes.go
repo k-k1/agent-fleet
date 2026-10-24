@@ -85,6 +85,8 @@ const (
 
 // kubeConfig is the deployment-wide placement, read once at boot from AF_K8S_*.
 type kubeConfig struct {
+	// onRelease records a pod's address before Stop deletes it (Config.OnAddressesReleasing).
+	onRelease    AddressReleaseHook
 	namespace    string
 	image        string // AF_K8S_WORKSPACE_IMAGE: a tag; Start pins the digest
 	storageClass string // "" = the cluster's default class
@@ -154,6 +156,7 @@ func newKubeFactory(mcfg Config) (RuntimeFactory, error) {
 func kubeConfigFromEnv(get func(k, def string) string, mcfg Config) (*kubeConfig, error) {
 	sharedFS, _ := strconv.ParseBool(get("AF_K8S_HOME_SHARED_FS", ""))
 	cfg := &kubeConfig{
+		onRelease:      mcfg.OnAddressesReleasing,
 		namespace:      get("AF_K8S_NAMESPACE", ""),
 		image:          get("AF_K8S_WORKSPACE_IMAGE", mcfg.Image),
 		storageClass:   get("AF_K8S_STORAGE_CLASS", ""),
@@ -259,6 +262,8 @@ func (f *kubeFactory) New(ws Workspace, keys SecretKeys, extraEnv []string) Runt
 		poll:       f.poll,
 		stopMargin: f.stopMargin,
 		wsName:     ws.ContainerName,
+		membership: ws.MembershipID,
+		wsID:       ws.ID,
 		base:       kubeObjectName(ws.ContainerName),
 		token:      ws.AgentToken,
 		keys:       keys,
@@ -310,6 +315,8 @@ type kubeRuntime struct {
 	c             *kubeClient
 	pins          imageResolver
 	wsName        string // the CP's name for the workspace (Workspace.ContainerName)
+	membership    string // for the address-release hook (cfg.onRelease)
+	wsID          string
 	base          string // the Kubernetes name of the StatefulSet and the Service
 	token         string
 	keys          SecretKeys
@@ -539,6 +546,9 @@ func (k *kubeRuntime) Stop(ctx context.Context) error {
 	}
 	k.setPhase("")
 	if stsReplicas(s) != 0 {
+		if k.cfg != nil {
+			noteReleasing(ctx, k.cfg.onRelease, k, k.membership, k.wsID)
+		}
 		var out kStatefulSet
 		if err := k.c.jsonPatch(ctx, k.stsPath(), []kubePatchOp{
 			{Op: "replace", Path: "/spec/replicas", Value: 0},

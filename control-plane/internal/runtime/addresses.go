@@ -27,17 +27,45 @@ type HeldAddress struct {
 	From, Until  time.Time
 }
 
-// AddressReporter is the optional capability behind egress attribution. HeldAddresses
-// answers every address the workspace holds now, plus any it held recently that the
-// orchestrator still reports with an end time. open is the refs the caller still has as
-// holding an address; each of them must come back, with an end if it has one, unless the
-// orchestrator positively says it is gone.
+// AddressReport is one read of a workspace's addresses. Held is every address it holds now,
+// plus any it held recently that the orchestrator still reports with an end time.
+// Unresolved is the refs the orchestrator could not account for this time (ECS answers
+// MISSING both for a task its eventually consistent index has not caught up with and for a
+// stopped task it no longer keeps); the caller keeps those open for a while rather than
+// reading them as gone, and its other observations still count.
+type AddressReport struct {
+	Held       []HeldAddress
+	Unresolved []string
+}
+
+// AddressReporter is the optional capability behind egress attribution. open is the refs the
+// caller still has as holding an address; each must come back in Held (with an end if it
+// has one) or in Unresolved, unless the orchestrator positively says it is gone.
 //
-// An address missing from the answer is taken as no longer held, so an error must be
-// returned rather than a partial list whenever the orchestrator could not be read, or could
-// not account for a ref in open: a partial list closes intervals that are still running.
+// An address missing from the report is taken as no longer held, so an error must be
+// returned rather than a partial report whenever the orchestrator could not be read: a
+// partial report closes intervals that are still running.
 type AddressReporter interface {
-	HeldAddresses(ctx context.Context, open []string) ([]HeldAddress, error)
+	HeldAddresses(ctx context.Context, open []string) (AddressReport, error)
+}
+
+// AddressReleaseHook is Config.OnAddressesReleasing: told what a workspace holds just before
+// a Stop takes it away. On docker and Kubernetes a stopped workspace leaves nothing to read
+// afterwards, so a workspace started and stopped between two recorder sweeps would
+// otherwise leave no record of its address at all.
+type AddressReleaseHook func(ctx context.Context, membershipID, workspaceID string, held []HeldAddress)
+
+// noteReleasing reads rep's addresses and hands them to hook. Best effort: a failed read
+// leaves the recorder's next sweep to do what it can, and must never fail the Stop.
+func noteReleasing(ctx context.Context, hook AddressReleaseHook, rep AddressReporter, membershipID, workspaceID string) {
+	if hook == nil {
+		return
+	}
+	r, err := rep.HeldAddresses(ctx, nil)
+	if err != nil || len(r.Held) == 0 {
+		return
+	}
+	hook(ctx, membershipID, workspaceID, r.Held)
 }
 
 // HeldAddresses lists the service's tasks, running and recently stopped, and reports each
@@ -46,14 +74,14 @@ type AddressReporter interface {
 //
 // ListTasks and DescribeTasks are eventually consistent and can leave out a task that is
 // running, so a task in open that the listing missed is described by ARN. Only a STOPPED
-// answer ends it; MISSING proves nothing (the same rule as waitServiceTasksGone) and fails
-// the read.
-func (e *ecsRuntime) HeldAddresses(ctx context.Context, open []string) ([]HeldAddress, error) {
+// answer ends it; MISSING proves nothing (the same rule as waitServiceTasksGone), so such a
+// task comes back as unresolved. Any other describe failure fails the read.
+func (e *ecsRuntime) HeldAddresses(ctx context.Context, open []string) (AddressReport, error) {
 	lister, ok := e.ecs.(ecsTaskLister)
 	if !ok {
-		return nil, errors.New("ecs client cannot list tasks")
+		return AddressReport{}, errors.New("ecs client cannot list tasks")
 	}
-	var out []HeldAddress
+	var out AddressReport
 	seen := map[string]bool{}
 	describe := func(arns []string) error {
 		for len(arns) > 0 {
@@ -65,14 +93,17 @@ func (e *ecsRuntime) HeldAddresses(ctx context.Context, open []string) ([]HeldAd
 			if err != nil {
 				return err
 			}
-			if len(described.Failures) > 0 {
-				f := described.Failures[0]
-				return fmt.Errorf("describe task %s: %s", aws.ToString(f.Arn), aws.ToString(f.Reason))
+			for _, f := range described.Failures {
+				if aws.ToString(f.Reason) != "MISSING" {
+					return fmt.Errorf("describe task %s: %s", aws.ToString(f.Arn), aws.ToString(f.Reason))
+				}
+				seen[aws.ToString(f.Arn)] = true
+				out.Unresolved = append(out.Unresolved, aws.ToString(f.Arn))
 			}
 			for _, t := range described.Tasks {
 				seen[aws.ToString(t.TaskArn)] = true
 			}
-			out = append(out, taskHeldAddresses(described.Tasks)...)
+			out.Held = append(out.Held, taskHeldAddresses(described.Tasks)...)
 			arns = arns[n:]
 		}
 		return nil
@@ -91,10 +122,10 @@ func (e *ecsRuntime) HeldAddresses(ctx context.Context, open []string) ([]HeldAd
 				if errors.As(err, &nf) {
 					break // no service, no task: nothing is held
 				}
-				return nil, err
+				return AddressReport{}, err
 			}
 			if err := describe(listed.TaskArns); err != nil {
-				return nil, err
+				return AddressReport{}, err
 			}
 			if listed.NextToken == nil {
 				break
@@ -109,7 +140,7 @@ func (e *ecsRuntime) HeldAddresses(ctx context.Context, open []string) ([]HeldAd
 		}
 	}
 	if err := describe(missed); err != nil {
-		return nil, err
+		return AddressReport{}, err
 	}
 	return out, nil
 }
@@ -146,7 +177,7 @@ func taskHeldAddresses(tasks []ecstypes.Task) []HeldAddress {
 
 // HeldAddresses: an ecs-ec2 workspace task is an awsvpc task of the same service shape, so
 // its ENI is read the same way. The slot instance's own address is not the workspace's.
-func (e *ecsEC2Runtime) HeldAddresses(ctx context.Context, open []string) ([]HeldAddress, error) {
+func (e *ecsEC2Runtime) HeldAddresses(ctx context.Context, open []string) (AddressReport, error) {
 	return e.base.HeldAddresses(ctx, open)
 }
 
@@ -154,12 +185,12 @@ func (e *ecsEC2Runtime) HeldAddresses(ctx context.Context, open []string) ([]Hel
 // last look is simply absent, and the caller closes its interval when it sees that, which
 // is later than the pod went; an overlap with the next holder then shows as ambiguous. open
 // is not needed: a list is served from the API server's current state, not a lagging index.
-func (k *kubeRuntime) HeldAddresses(ctx context.Context, _ []string) ([]HeldAddress, error) {
+func (k *kubeRuntime) HeldAddresses(ctx context.Context, _ []string) (AddressReport, error) {
 	pods, err := k.workspacePods(ctx)
 	if err != nil {
-		return nil, err
+		return AddressReport{}, err
 	}
-	return podHeldAddresses(pods), nil
+	return AddressReport{Held: podHeldAddresses(pods)}, nil
 }
 
 func podHeldAddresses(pods []kPod) []HeldAddress {
@@ -188,7 +219,7 @@ var errDockerNoSuchObject = errors.New("no such object")
 
 // HeldAddresses reports the container's address on its per-user network while it runs. open
 // is not needed: docker answers for the one container by name.
-func (d *dockerRuntime) HeldAddresses(ctx context.Context, _ []string) ([]HeldAddress, error) {
+func (d *dockerRuntime) HeldAddresses(ctx context.Context, _ []string) (AddressReport, error) {
 	network := d.network
 	if network == "" {
 		network = "bridge"
@@ -196,12 +227,13 @@ func (d *dockerRuntime) HeldAddresses(ctx context.Context, _ []string) ([]HeldAd
 	format := `{{.Id}}|{{.State.StartedAt}}|{{with index .NetworkSettings.Networks "` + network + `"}}{{.IPAddress}}{{end}}`
 	out, err := d.inspectAddresses(ctx, format)
 	if errors.Is(err, errDockerNoSuchObject) {
-		return nil, nil
+		return AddressReport{}, nil
 	}
 	if err != nil {
-		return nil, err
+		return AddressReport{}, err
 	}
-	return dockerHeldAddresses(out)
+	held, err := dockerHeldAddresses(out)
+	return AddressReport{Held: held}, err
 }
 
 func (d *dockerRuntime) inspectAddresses(ctx context.Context, format string) (string, error) {

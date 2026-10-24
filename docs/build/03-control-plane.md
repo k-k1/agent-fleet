@@ -356,6 +356,9 @@ The design and the staged rollout — log-only → allowlist → enforce — are
   lease) asks each workspace's runtime every `AF_EGRESS_ADDRESS_INTERVAL` (default 60s) which
   addresses it holds: the ECS task ENI,
   the pod IP, or the container's address on the per-user network. It keeps them as time ranges.
+  A docker or Kubernetes Stop hands the address over just before it removes it, because nothing
+  is left to read afterwards. An ECS task that DescribeTasks answers MISSING stays open for 15
+  minutes before it is closed.
   `GET /api/admin/egress/events` joins each raw event to them on address and time and reports
   the event as attributed, ambiguous, unattributed, or infrastructure (a source inside
   `AF_EGRESS_INFRA_CIDRS`).

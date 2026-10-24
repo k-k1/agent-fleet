@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"sort"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
@@ -26,6 +27,14 @@ type addressRecorder struct {
 	interval time.Duration
 	holder   string
 	now      func() time.Time
+
+	// lastPolled orders a sweep: the workspaces asked longest ago go first, so a sweep cut
+	// off by its deadline resumes where it stopped instead of starting over at the same
+	// head every time. In memory: a CP that takes the lease over starts from no order,
+	// which is only one unfair sweep.
+	lastPolled map[string]time.Time
+	// unresolvedSince is when a ref the runtime could not account for was first seen so.
+	unresolvedSince map[string]time.Time
 }
 
 const addressRecorderLease = "egress-address-recorder"
@@ -35,8 +44,44 @@ const addressRecorderLease = "egress-address-recorder"
 // still describes its stopped task for at least an hour, so its interval can be recovered.
 const addressRecentlyActive = time.Hour
 
+// addressUnresolvedGrace is how long a ref the orchestrator cannot account for stays open.
+// ECS answers MISSING for a few seconds while its index catches up with a new task, and
+// for good once a stopped task has aged out (an hour at least): past the grace the row is
+// closed at now, later than the task really stopped, which shows as ambiguous if its
+// address was given out again, never as the wrong workspace.
+const addressUnresolvedGrace = 15 * time.Minute
+
 func newAddressRecorder(mgr *manager, interval time.Duration) *addressRecorder {
 	return &addressRecorder{mgr: mgr, interval: interval, holder: store.NewID(), now: time.Now}
+}
+
+// addressReleaseHook is Config.OnAddressesReleasing: what a docker or Kubernetes workspace
+// holds just before a Stop takes it away, so one started and stopped between two sweeps is
+// still on record. Rows only: the next sweep closes them once the holder is gone.
+func addressReleaseHook(m *manager) runtime.AddressReleaseHook {
+	return func(ctx context.Context, membershipID, workspaceID string, held []runtime.HeldAddress) {
+		if m.store == nil {
+			return
+		}
+		if err := m.store.UpsertWorkspaceAddresses(ctx, membershipID, toWorkspaceAddresses(membershipID, workspaceID, held)); err != nil {
+			log.Printf("egress address recorder: record released addresses of %s: %v", workspaceID, err)
+		}
+	}
+}
+
+func toWorkspaceAddresses(membershipID, workspaceID string, held []runtime.HeldAddress) []store.WorkspaceAddress {
+	out := make([]store.WorkspaceAddress, 0, len(held))
+	for _, h := range held {
+		a := store.WorkspaceAddress{
+			MembershipID: membershipID, WorkspaceID: workspaceID, Address: h.Address, Ref: h.Ref,
+			From: h.From.UnixMilli(),
+		}
+		if !h.Until.IsZero() {
+			a.Until = h.Until.UnixMilli()
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 func (ar *addressRecorder) run(ctx context.Context) {
@@ -72,12 +117,21 @@ func (ar *addressRecorder) tick(ctx context.Context) {
 	ar.sweep(sctx)
 }
 
+// sweep reads the workspace list from the database first and closes orphans from it, then
+// asks the runtimes, oldest-asked first, for as long as the deadline allows.
 func (ar *addressRecorder) sweep(ctx context.Context) {
+	if ar.lastPolled == nil {
+		ar.lastPolled = map[string]time.Time{}
+	}
+	if ar.unresolvedSince == nil {
+		ar.unresolvedSince = map[string]time.Time{}
+	}
 	tenants, err := ar.mgr.store.ListTenants(ctx)
 	if err != nil {
 		log.Printf("egress address recorder: list tenants: %v", err)
 		return
 	}
+	var all []store.Workspace
 	live := map[string]bool{}
 	for _, t := range tenants {
 		wss, err := ar.mgr.store.ListWorkspaces(ctx, t.ID)
@@ -88,10 +142,24 @@ func (ar *addressRecorder) sweep(ctx context.Context) {
 		}
 		for _, ws := range wss {
 			live[ws.MembershipID] = true
-			ar.recordWorkspace(ctx, ws)
 		}
+		all = append(all, wss...)
 	}
 	ar.closeOrphans(ctx, live)
+	sort.SliceStable(all, func(i, j int) bool {
+		return ar.lastPolled[all[i].MembershipID].Before(ar.lastPolled[all[j].MembershipID])
+	})
+	for _, ws := range all {
+		if ctx.Err() != nil {
+			return
+		}
+		ar.recordWorkspace(ctx, ws)
+	}
+	for m := range ar.lastPolled {
+		if !live[m] {
+			delete(ar.lastPolled, m)
+		}
+	}
 }
 
 // recordWorkspace asks one workspace's runtime what it holds. A workspace the database has
@@ -111,25 +179,33 @@ func (ar *addressRecorder) recordWorkspace(ctx context.Context, ws store.Workspa
 	if !ok {
 		return
 	}
-	held, err := rep.HeldAddresses(ctx, open)
+	ar.lastPolled[ws.MembershipID] = ar.now()
+	report, err := rep.HeldAddresses(ctx, open)
 	if err != nil {
 		// Unknown is not gone: closing the open rows here would end intervals that are
 		// still running and leave the next connections unattributed.
 		log.Printf("egress address recorder: %s: %v", ws.ContainerName, err)
 		return
 	}
-	seen := make([]store.WorkspaceAddress, 0, len(held))
-	for _, h := range held {
-		a := store.WorkspaceAddress{
-			MembershipID: ws.MembershipID, WorkspaceID: ws.ID, Address: h.Address, Ref: h.Ref,
-			From: h.From.UnixMilli(),
+	var keep []string
+	now := ar.now()
+	for _, ref := range report.Unresolved {
+		since, ok := ar.unresolvedSince[ref]
+		if !ok {
+			since = now
+			ar.unresolvedSince[ref] = now
 		}
-		if !h.Until.IsZero() {
-			a.Until = h.Until.UnixMilli()
+		if now.Sub(since) < addressUnresolvedGrace {
+			keep = append(keep, ref)
+		} else {
+			delete(ar.unresolvedSince, ref)
 		}
-		seen = append(seen, a)
 	}
-	if err := ar.mgr.store.ObserveWorkspaceAddresses(ctx, ws.MembershipID, seen, ar.now().UnixMilli()); err != nil {
+	for _, h := range report.Held {
+		delete(ar.unresolvedSince, h.Ref)
+	}
+	if err := ar.mgr.store.ObserveWorkspaceAddresses(ctx, ws.MembershipID,
+		toWorkspaceAddresses(ws.MembershipID, ws.ID, report.Held), keep, now.UnixMilli()); err != nil {
 		log.Printf("egress address recorder: record %s: %v", ws.ContainerName, err)
 	}
 }
@@ -153,7 +229,7 @@ func (ar *addressRecorder) closeOrphans(ctx context.Context, live map[string]boo
 		if live[m] {
 			continue
 		}
-		if err := ar.mgr.store.ObserveWorkspaceAddresses(ctx, m, nil, ar.now().UnixMilli()); err != nil {
+		if err := ar.mgr.store.ObserveWorkspaceAddresses(ctx, m, nil, nil, ar.now().UnixMilli()); err != nil {
 			log.Printf("egress address recorder: close orphan %s: %v", m, err)
 		}
 	}
