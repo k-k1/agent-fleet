@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -67,8 +68,9 @@ func materializeCodex(defs []ServerDef, prev []string) (written, removed []strin
 
 	// af's own name rotates every boot; last boot's table has to go even when the
 	// ownership ledger no longer names it (see StaleAFServerName).
+	legacyAF := codexLegacyAF(src, keep)
 	out := appendTOMLBlocks(stripCodexServers(src, func(name string) bool {
-		return drop[name] || StaleAFServerName(name, keep)
+		return drop[name] || StaleAFServerName(name, keep) || (legacyAF && name == BuiltinAF)
 	}), codexServerBlocks(defs))
 	written = defNames(defs)
 	if out == src {
@@ -81,6 +83,83 @@ func materializeCodex(defs []ServerDef, prev []string) (written, removed []strin
 		return nil, nil, false, err
 	}
 	return written, removed, true, nil
+}
+
+var (
+	tomlCommandRE = regexp.MustCompile(`^\s*command\s*=\s*("(?:[^"\\]|\\.)*")\s*(?:#.*)?$`)
+	tomlArgsRE    = regexp.MustCompile(`^\s*args\s*=\s*\[\s*("(?:[^"\\]|\\.)*")`)
+)
+
+// tomlLinesInMultilineString marks the lines that BEGIN inside a `"""` or `”'` string, where
+// a header-looking or `command = …` line is data. Without it a user's value could be read as
+// a table boundary, and the next server's table dropped along with it.
+func tomlLinesInMultilineString(lines []string) []bool {
+	out := make([]bool, len(lines))
+	delim := "" // the open multi-line delimiter, or "" outside one
+	for n, line := range lines {
+		out[n] = delim != ""
+		for i := 0; i < len(line); {
+			if delim != "" {
+				if delim == `"""` && line[i] == '\\' {
+					i += 2
+				} else if strings.HasPrefix(line[i:], delim) {
+					delim = ""
+					i += 3
+				} else {
+					i++
+				}
+				continue
+			}
+			switch c := line[i]; {
+			case c == '#':
+				i = len(line)
+			case strings.HasPrefix(line[i:], `"""`), strings.HasPrefix(line[i:], `'''`):
+				delim = line[i : i+3]
+				i += 3
+			case c == '"' || c == '\'':
+				i++
+				for i < len(line) && line[i] != c {
+					if c == '"' && line[i] == '\\' {
+						i++
+					}
+					i++
+				}
+				i++
+			default:
+				i++
+			}
+		}
+	}
+	return out
+}
+
+// codexLegacyAF reports whether src holds a `[mcp_servers.af]` table that is af's own
+// leftover (StaleLegacyAFEntry). Only the single-line `command = "…"` / `args = ["…", …]`
+// spelling af itself writes is read; a table spelled any other way is taken to be the
+// user's and kept.
+func codexLegacyAF(src string, keep map[string]bool) bool {
+	in := false
+	var command, first string
+	lines := strings.Split(src, "\n")
+	inString := tomlLinesInMultilineString(lines)
+	for i, line := range lines {
+		if inString[i] {
+			continue // text inside a multi-line string is a value, not a table or key
+		}
+		if m := tomlHeaderRE.FindStringSubmatch(line); m != nil {
+			in = strings.TrimSpace(m[1]) == "mcp_servers."+BuiltinAF
+			continue
+		}
+		if !in {
+			continue
+		}
+		if m := tomlCommandRE.FindStringSubmatch(line); m != nil {
+			command, _ = strconv.Unquote(m[1])
+		} else if m := tomlArgsRE.FindStringSubmatch(line); m != nil {
+			first, _ = strconv.Unquote(m[1])
+		}
+	}
+	return first != "" && StaleLegacyAFEntry(BuiltinAF, keep, command, []string{first})
 }
 
 // tomlHeaderRE matches a table header line, `[a.b]` or `[[a.b]]`, with an optional
@@ -111,8 +190,10 @@ func stripCodexServers(src string, drop func(name string) bool) string {
 	}
 	var out []string
 	skipping := false
-	for _, line := range strings.Split(src, "\n") {
-		if m := tomlHeaderRE.FindStringSubmatch(line); m != nil {
+	lines := strings.Split(src, "\n")
+	inString := tomlLinesInMultilineString(lines)
+	for i, line := range lines {
+		if m := tomlHeaderRE.FindStringSubmatch(line); m != nil && !inString[i] {
 			skipping = drop(mcpServerTableName(m[1]))
 			if skipping {
 				for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
