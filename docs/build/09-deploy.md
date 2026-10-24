@@ -155,8 +155,12 @@ reports `node_versions` too (major → the patch `nodeBinFor` resolves), and the
 offers the same update. `install-node` adds each patch next to the old ones, so it marks
 its trees (`.agent-fleet-installed`) and the entrypoint runs `prune-node-versions` right
 after it, before any session: per major, marked patches older than the newest go. Unmarked
-trees (an nvm install, an exact `.nvmrc` pin, or one written before the marker existed)
-are never removed.
+trees (an nvm install, or one written before the marker existed) are never removed. The
+marker only says who installed a tree, so pinned versions stay regardless: the tree
+install-node returned (`--keep`), an exact saved selection, and exact versions named by
+an nvm alias or by `~/.nvmrc` / `~/repos/*/.nvmrc`. If the newest tree's `bin/node` is not
+an executable inside that tree, the major is skipped, and a tree another tree's node
+resolves into is never removed.
 
 ## 9.5 The AWS target
 
