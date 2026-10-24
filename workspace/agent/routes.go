@@ -592,6 +592,7 @@ func buildMux() *http.ServeMux {
 	// Whether the selected JDK has a newer GA patch (jdk_latest_http.go); kept out of
 	// the toolchains GET because it needs the network.
 	mux.HandleFunc("GET /env/jdk-latest", handleJDKLatest)
+	mux.HandleFunc("GET /env/node-latest", handleNodeLatest)
 	// The same for node: without this, selecting a version that is not installed silently
 	// does nothing, exactly the gap the JDK had (docs/decisions/0068, and the head of
 	// node_install.go).

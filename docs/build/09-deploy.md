@@ -146,7 +146,11 @@ directories resolves to the newer patch (the `release` file's `SEMANTIC_VERSION`
 keeps `/usr/lib/jvm`), so installing an installed major again is an update. The
 toolchains GET also reports `java_versions` (major → resolved version) and stays offline;
 `GET /env/jdk-latest?major=N` asks Adoptium (cached 6 h, a failure 10 min) and answers
-`update_available`, which is when the Console offers the update button.
+`update_available`, which is when the Console offers the update button. For a major that
+is not installed it still answers `latest`, the version Install would fetch, and the
+Console names it on the button. `GET /env/node-latest?major=N` is the Node.js twin
+(nodejs.org's index, versions with nvm's `v` prefix). Both accept only the majors the
+picker offers, because each one is a cache key (`version_lookup.go`).
 
 ## 9.5 The AWS target
 

@@ -375,6 +375,50 @@ function Toolchains({
   );
 }
 
+// useToolchainLatest asks the agent (jdk-latest / node-latest) which patch Install would
+// fetch for the selected major, and whether that is newer than `current`, the version in
+// use ("" = not installed). The agent compares; nothing here parses a version.
+//
+// Keyed on `current` too, so a finished install or update re-asks. Every lookup starts
+// from nothing, and a failed one leaves nothing: an earlier "newer patch" must not come
+// back after a restart that already brought the toolchain up to date, and offline the
+// buttons simply read as before.
+function useToolchainLatest(
+  endpoint: "jdk-latest" | "node-latest",
+  enabled: boolean,
+  selected: string,
+  current: string,
+): { installVersion: string; newerPatch: string } {
+  const [ans, setAns] = useState<{ major: string; current: string; latest: string; update: boolean } | null>(
+    null,
+  );
+  useEffect(() => {
+    setAns(null);
+    if (!enabled) return;
+    let live = true;
+    api(`api/env/${endpoint}?major=${encodeURIComponent(selected)}`)
+      .then((r) => {
+        if (!live) return;
+        setAns(
+          r?.latest
+            ? { major: selected, current: r.current || "", latest: r.latest, update: !!r.update_available }
+            : null,
+        );
+      })
+      .catch(() => {
+        if (live) setAns(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [endpoint, enabled, selected, current]);
+  const fresh = ans && ans.major === selected && ans.current === current ? ans : null;
+  return {
+    installVersion: fresh && !current ? fresh.latest : "",
+    newerPatch: fresh && current && fresh.update ? fresh.latest : "",
+  };
+}
+
 // Java is the one toolchain whose picker offers versions that are not on disk yet:
 // java_available is "installed ∪ installable" (agent jdk.go), because on ECS
 // /usr/lib/jvm is empty and EVERY JDK has to be downloaded into the home volume. Until
@@ -410,29 +454,7 @@ function JavaRow({
   const selected: string = d.java || "";
   const needsInstall = !!selected && !installed.includes(selected);
   const current: string = (selected && d.java_versions?.[selected]) || "";
-  const [latest, setLatest] = useState<{ major: string; current: string; latest: string } | null>(null);
-  // Keyed on the resolved version too, so a finished update re-asks. Every new lookup
-  // starts from "no update", and a false or failed answer clears it: an earlier "newer
-  // patch" must not come back after a restart that already brought the JDK up to date.
-  useEffect(() => {
-    setLatest(null);
-    if (!running || !selected || !current) return;
-    let live = true;
-    api(`api/env/jdk-latest?major=${encodeURIComponent(selected)}`)
-      .then((r) => {
-        if (!live) return;
-        setLatest(
-          r?.update_available && r.latest ? { major: selected, current: r.current, latest: r.latest } : null,
-        );
-      })
-      .catch(() => {
-        if (live) setLatest(null);
-      });
-    return () => {
-      live = false;
-    };
-  }, [running, selected, current]);
-  const newerPatch = latest && latest.major === selected && latest.current === current ? latest.latest : "";
+  const { installVersion, newerPatch } = useToolchainLatest("jdk-latest", running && !!selected, selected, current);
 
   const install = async () => {
     if (!selected) return;
@@ -515,7 +537,11 @@ function JavaRow({
             </select>
             {needsInstall && (
               <button disabled={!running || !!installing} onClick={install}>
-                {installing ? tr("env.java_installing") : tr("env.java_install")}
+                {installing
+                  ? tr("env.java_installing")
+                  : installVersion
+                    ? tr("env.java_install_version", { v: installVersion })
+                    : tr("env.java_install")}
               </button>
             )}
             {current && <span className="muted env-java-version">{current}</span>}
@@ -565,6 +591,7 @@ function NodeRow({
   const selected: string = d.node || "system";
   // "system" is the image's own node — never an install target.
   const needsInstall = selected !== "system" && !!selected && !installed.includes(selected);
+  const { installVersion } = useToolchainLatest("node-latest", running && needsInstall, selected, "");
 
   const install = async () => {
     if (!needsInstall) return;
@@ -629,7 +656,11 @@ function NodeRow({
           </select>
           {needsInstall && (
             <button disabled={!running || !!installing} onClick={install}>
-              {installing ? tr("env.node_installing") : tr("env.node_install")}
+              {installing
+                ? tr("env.node_installing")
+                : installVersion
+                  ? tr("env.node_install_version", { v: installVersion })
+                  : tr("env.node_install")}
             </button>
           )}
         </span>

@@ -134,7 +134,10 @@ ECS 系ランタイムにはこのマウントが無いので、そのディレ�
 選ぶ（`release` ファイルの `SEMANTIC_VERSION`。同じ版なら `/usr/lib/jvm`）ので、導入済みのメジャーを
 もう一度入れればそれが更新になる。toolchains の GET は `java_versions`（メジャー → 解決後の版）も返し、
 ネットワークには出ない。`GET /env/jdk-latest?major=N` が Adoptium に聞き（6 時間、失敗は 10 分キャッシュ）、
-`update_available` を返す。Console はそれが真のときに更新ボタンを出す。
+`update_available` を返す。Console はそれが真のときに更新ボタンを出す。未導入のメジャーにも `latest`
+（インストールで入る版）を返し、Console はそれをボタンに出す。`GET /env/node-latest?major=N` は Node.js 版
+（nodejs.org の index から。版は nvm と同じく `v` 付き）。どちらもピッカーが出すメジャーしか受け付けない
+（メジャーごとにキャッシュのキーになるため。`version_lookup.go`）。
 
 ## 9.5 aws ターゲット
 

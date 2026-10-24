@@ -306,4 +306,24 @@ describe("EnvTab Java row", () => {
     });
     expect(toast).toHaveBeenCalledWith(expect.stringContaining("download failed"));
   });
+
+  it("names the version Install would fetch for an absent major, plain Install offline", async () => {
+    for (const [latest, label] of [
+      [() => Promise.resolve({ major: "17", current: "", latest: "17.0.21+9", update_available: false }), "17.0.21+9 をインストール"],
+      [() => Promise.reject(new Error("jdk_latest_unavailable")), "インストール"],
+    ] as const) {
+      api.mockImplementation((path: string) => {
+        if (path === "api/env/toolchains") return Promise.resolve(toolchains(["21"], "17"));
+        if (path === "api/env/jdk-latest?major=17") return latest();
+        return Promise.resolve({});
+      });
+      await mount();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(javaBtn()!.textContent).toBe(label);
+      act(() => root?.unmount());
+      host?.remove();
+    }
+  });
 });

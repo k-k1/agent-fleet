@@ -568,7 +568,9 @@ Timezone, Node.js / Java / Go versions, the table of effective tool versions (a 
 default), and applying an Agent Fleet update.
 The Java row shows the exact JDK version in use (for example `21.0.11+10`). When a newer patch
 of that version is out, an **Update to …** button downloads it into your home volume;
-sessions started afterwards use it, with no Stop → Start.
+sessions started afterwards use it, with no Stop → Start. For a Java or Node.js version that is
+not installed yet, the button names the version it will install (for example
+**Install 17.0.21+9**).
 → [10 Going further](10-integrations.md#environment-settings-and-recreating-the-workspace)
 
 ### Databases
