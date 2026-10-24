@@ -143,6 +143,12 @@ ECS 系ランタイムにはこのマウントが無いので、そのディレ�
 セッションが無いうちに `prune-node-versions` を走らせる。メジャーごとに、最新より古い印付きパッチを消す。
 印の無いツリー（nvm で入れたもの・`.nvmrc` の厳密な固定・印ができる前に入ったもの）は消さない。
 
+`GET /env/toolchain-installs` は JDK の全ツリー（home ボリュームと `/usr/lib/jvm`）と `~/.nvm` 配下の Node の
+メジャーを、版・サイズ・削除できるかと一緒に返す。`DELETE /env/jdk/{major}` / `DELETE /env/node/{major}` は
+home ボリュームのツリーだけを消す（`toolchain_uninstall.go`）。代わりの無い選択中のメジャーと、インストール中の
+メジャーは拒否する。判定と隠し名 `.removing-*` への改名はインストーラのロック内、削除はロック外で行い、残骸は
+次の一覧取得で掃除する。
+
 ## 9.5 aws ターゲット
 
 CloudFormation スタックは 7 本で、配備順は `00-network → 10-data → 20-platform →

@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console and CP read. Generated - do not edit by hand.
 # Update: cd workspace/agent && go test -run TestWireShapeGolden -update-wire-golden .
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 162
+# count: 176
 Repo.ahead number
 Repo.behind number
 Repo.branch string
@@ -160,6 +160,20 @@ session.Session.tmux string
 session.Session.tokenSpends [number],omitempty
 session.Session.workingCopyId string,omitempty
 session.Session.worktree bool,omitempty
+toolchainInstalls.java[].bytes number
+toolchainInstalls.java[].in_use bool
+toolchainInstalls.java[].major string
+toolchainInstalls.java[].reason string,omitempty
+toolchainInstalls.java[].removable bool
+toolchainInstalls.java[].source string
+toolchainInstalls.java[].version string
+toolchainInstalls.node[].bytes number
+toolchainInstalls.node[].in_use bool
+toolchainInstalls.node[].major string
+toolchainInstalls.node[].reason string,omitempty
+toolchainInstalls.node[].removable bool
+toolchainInstalls.node[].source string
+toolchainInstalls.node[].version string
 toolchainLatest.current string
 toolchainLatest.latest string
 toolchainLatest.major string

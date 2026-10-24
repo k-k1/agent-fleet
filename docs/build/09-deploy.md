@@ -158,6 +158,14 @@ after it, before any session: per major, marked patches older than the newest go
 trees (an nvm install, an exact `.nvmrc` pin, or one written before the marker existed)
 are never removed.
 
+`GET /env/toolchain-installs` lists every JDK tree (home volume and `/usr/lib/jvm`) and
+every Node major under `~/.nvm` with version, size and whether it may be removed;
+`DELETE /env/jdk/{major}` / `DELETE /env/node/{major}` remove home-volume trees only
+(`toolchain_uninstall.go`). They refuse the selected major when nothing else provides it
+and a major whose install job runs. The check and a rename to a hidden `.removing-*` name
+happen under the installer's lock, the delete outside it, and the next listing sweeps
+leftovers.
+
 ## 9.5 The AWS target
 
 Seven CloudFormation stacks, in deploy order `00-network → 10-data → 20-platform →

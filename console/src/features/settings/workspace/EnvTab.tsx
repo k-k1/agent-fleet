@@ -11,6 +11,7 @@ import { useT } from "../../../lib/i18n/index.ts";
 import { bootReasonKey } from "../../../core/store/bootInstallReason.ts";
 import { pinDrift } from "../../../lib/pinDrift.ts";
 import { relTime } from "../../../lib/intl.ts";
+import { fmtGiB } from "../../../lib/bytes.ts";
 import { watcherHealth, type CLIRelease } from "../cliRelease.ts";
 
 // EnvTab (the "toolchains" tab) selects the workspace toolchains: timezone, node (via nvm),
@@ -95,7 +96,10 @@ export function EnvTab() {
     <div className="display-settings">
       <HostUpdateSection />
       {d ? (
-        <Toolchains d={d} update={update} running={running} reload={load} />
+        <>
+          <Toolchains d={d} update={update} running={running} reload={load} />
+          <InstalledVersions d={d} running={running} reload={load} />
+        </>
       ) : err ? (
         <p className="muted pad">{err}</p>
       ) : (
@@ -695,6 +699,115 @@ function NodeRow({
         <p className="muted ds-note">{tr("env.node_update_note", { cur: current, v: newerPatch })}</p>
       )}
     </>
+  );
+}
+
+type ToolchainInstall = {
+  major: string;
+  version: string;
+  source: "home" | "system";
+  bytes: number;
+  in_use: boolean;
+  removable: boolean;
+  reason?: "selected" | "installing";
+};
+
+// InstalledVersions lists the JDK / Node.js trees on disk (GET /env/toolchain-installs)
+// and removes home-volume ones, so a member gets back the space of versions they no
+// longer use. The agent decides what may go (never /usr/lib/jvm, never the selected
+// major without a fallback, never one being installed); this only shows its answer and
+// asks before deleting. It refetches whenever the toolchains payload changes, so an
+// install, an update or a new selection shows here at once.
+function InstalledVersions({ d, running, reload }: { d: any; running: boolean; reload: () => void }) {
+  const tr = useT();
+  const toast = useToast();
+  const askConfirm = useConfirm();
+  const [list, setList] = useState<{ java: ToolchainInstall[]; node: ToolchainInstall[] } | null>(null);
+  const [busy, setBusy] = useState("");
+  const key = JSON.stringify([d.java, d.node, d.java_installed, d.java_versions, d.node_installed, d.node_versions]);
+  useEffect(() => {
+    if (!running) return;
+    let live = true;
+    api("api/env/toolchain-installs")
+      .then((r) => {
+        if (live) setList(r && !r.error && r.java && r.node ? r : null);
+      })
+      .catch(() => {
+        if (live) setList(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [running, key]);
+  if (!running || !list || list.java.length + list.node.length === 0) return null;
+
+  const remove = async (kind: "jdk" | "node", e: ToolchainInstall) => {
+    const name = kind === "jdk" ? `Temurin ${e.major}` : `Node.js v${e.major}`;
+    const ok = await askConfirm({
+      title: tr("env.uninstall_title", { name }),
+      body: tr(kind === "jdk" ? "env.uninstall_body_jdk" : "env.uninstall_body_node", {
+        name,
+        size: fmtGiB(e.bytes),
+      }),
+      confirmLabel: tr("env.uninstall"),
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(kind + e.major);
+    const res = await apiJSON(`api/env/${kind}/${encodeURIComponent(e.major)}`, "DELETE");
+    setBusy("");
+    if (!res || res.error) {
+      toast(tr("env.uninstall_failed", { msg: res?.error?.message || "" }));
+      return;
+    }
+    setList(res);
+    reload();
+  };
+
+  const row = (kind: "jdk" | "node", e: ToolchainInstall) => (
+    <tr key={kind + e.major + e.source}>
+      <td>{kind === "jdk" ? `Temurin ${e.major}` : `Node.js v${e.major}`}</td>
+      <td>
+        {e.version}
+        {e.in_use && <span className="muted"> {tr("env.installed_in_use")}</span>}
+      </td>
+      <td>{e.source === "home" ? tr("env.installed_src_home") : tr("env.installed_src_system")}</td>
+      <td>{e.source === "home" ? `${fmtGiB(e.bytes)} GiB` : ""}</td>
+      <td>
+        {e.source === "home" &&
+          (e.removable ? (
+            <button disabled={!!busy} onClick={() => remove(kind, e)}>
+              {busy === kind + e.major ? tr("env.uninstalling") : tr("env.uninstall")}
+            </button>
+          ) : (
+            <span className="muted">
+              {e.reason === "installing" ? tr("env.uninstall_no_installing") : tr("env.uninstall_no_selected")}
+            </span>
+          ))}
+      </td>
+    </tr>
+  );
+
+  return (
+    <section className="ds-group env-installed">
+      <h4 className="ds-title">{tr("env.installed_title")}</h4>
+      <p className="muted ds-note">{tr("env.installed_note")}</p>
+      <table className="tool-ver">
+        <thead>
+          <tr>
+            <th>{tr("env.th_tool")}</th>
+            <th>{tr("env.installed_th_version")}</th>
+            <th>{tr("env.installed_th_where")}</th>
+            <th>{tr("env.installed_th_size")}</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {list.java.map((e) => row("jdk", e))}
+          {list.node.map((e) => row("node", e))}
+        </tbody>
+      </table>
+    </section>
   );
 }
 
