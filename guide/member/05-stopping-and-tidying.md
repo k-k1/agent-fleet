@@ -209,7 +209,7 @@ setting it to `0` makes claude stop saving conversations at all.
 
 On top of that, Agent Fleet keeps its own backup of a stopped session's log, out of claude's reach.
 When you resume a session whose log is gone, the backup is put back and the conversation
-continues with its history. A log that still exists is never replaced by the backup. There is one
+continues with its history. A log that still exists is not replaced by the backup, except one that holds no conversation yet: that one is set aside and the backup is restored. There is one
 backup per session, removed when you delete the session; backups set aside by **"Start a new
 conversation"** stay until the session is deleted, and backups of sessions deleted while the
 Agent was not running are not cleaned up automatically. The backup is made while the session is

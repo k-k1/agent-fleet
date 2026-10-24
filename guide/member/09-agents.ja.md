@@ -69,8 +69,8 @@ WSバーの使用量チップは、アカウント単位の利用枠（使える
 既定は管理者が配備全体で変えることもできます。会話用途のため高速・低コストの
 ティアを既定にしています: claude → Sonnet 5 · codex → 一覧にある最新の Luna（執筆時点で `gpt-6-luna`） · opencode →
 一覧にあれば `opencode-go/glm-5.2`、無ければ `opencode/nemotron-3-ultra-free` · agy → Gemini 3.5 Flash · cursor → Cursor 自身の既定
-（Auto）。muse は高速ティアではなく、推奨のままにすると、Meta に会話を使われない Muse Code の最新モデルで
-動きます（[エージェントリファレンス](../ref/agents.ja.md)のアシスタントチャットの注）。そもそもどの種別が
+（Auto）。muse は高速ティアではなく、推奨のままにすると、contributor 用ではない Muse Code の最新モデルを選びます。
+Meta に会話を使われるかどうかは、モデルとは別に、自分の Contributor モードの設定に従います（[エージェントリファレンス](../ref/agents.ja.md)のアシスタントチャットの注）。そもそもどの種別が
 アシスタントチャットになれるかは、同じ表の「アシスタントチャットとして利用」の行にあります。たとえば
 cursor のアシスタントは**読み取り専用**で動きます。
 

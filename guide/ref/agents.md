@@ -21,7 +21,7 @@ because "does this apply to a plain shell session?" is a real question.
 | Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | —⁹ | —⁹ | ✓ | ✓ |
 | Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
 | Read-only history while stopped | ✓ | ✓ | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | ✓¹² | — | — |
-| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | ✓¹⁹ | ✓¹⁴ | — | — |
+| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓²² | ✓²² | ✓ | ✓¹⁹ | ✓¹⁴ | — | — |
 | Reasoning effort | ✓ | ✓ | ✓ | ✓ | —² | —⁵ | —² | — | ✓ | — | — |
 | Plan mode | ✓ | ✓ | ✓ | ✓²¹ | ✓ | — | — | ✓ | — | — | — |
 | Context usage gauge | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | — |
@@ -134,6 +134,11 @@ show **Ready · running in background**.
 
 `shell` and `ssm` have no conversation and therefore no state model and no
 notifications.
+
+A stopped session of any kind with a conversation can be resumed, except that claude, codex,
+opencode, copilot, cursor, kiro, agy, lcpp and muse cannot resume when the working folder they
+were launched in is gone (shell falls back to home); see
+[05 Stopping and tidying up](../member/05-stopping-and-tidying.md#when-you-can-and-cant-resume).
 
 ## Stopping a turn, and messages sent while one runs
 
@@ -400,3 +405,5 @@ pass a branch point. (lcpp and muse are always Managed.) One exception: an openc
 point. A Terminal session on a private server, or on opencode 1.x, cannot.
 
 ²¹ copilot's plan mode is set at launch, and can also be switched from the managed settings.
+
+²² cursor's list is exactly the models available to the signed-in account (fetched live); kiro offers named models (Auto, Claude Sonnet / Haiku and others) even on the Free plan.

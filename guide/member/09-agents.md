@@ -74,8 +74,9 @@ deployment. Fast, low-cost tiers are the defaults because the assistant is conve
 claude → Sonnet 5 · codex → the newest Luna it lists (`gpt-6-luna` at the time of writing) ·
 opencode → `opencode-go/glm-5.2` when the account lists it, otherwise `opencode/nemotron-3-ultra-free` ·
 agy → Gemini 3.5 Flash · cursor → its own default (Auto). muse is not a fast tier: left on the
-recommendation it runs on the newest Muse Code model that does not let Meta use your conversations
-(the assistant-chat note in the [Agents reference](../ref/agents.md)). Which kinds can be an
+recommendation it picks the newest Muse Code model that is not a "contributor" model; whether Meta
+may use your conversations still follows your own Contributor mode setting (the assistant-chat
+note in the [Agents reference](../ref/agents.md)). Which kinds can be an
 assistant chat at all is the "Usable as the assistant chat" row there; cursor's assistant, for
 one, runs **read-only**.
 
