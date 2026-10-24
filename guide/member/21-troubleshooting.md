@@ -478,8 +478,8 @@ MCP servers, cloud-account commands, Jira and apps that connect from outside.
 
 ### An MCP server I registered isn't available in sessions or assistants
 
-Work through ⚙ Settings → MCP servers in this order
-([20](20-settings.md#mcp-servers)).
+Work through ⚙ Settings → MCP servers (used by sessions) in this order
+([20](20-settings.md#mcp-servers-used-by-sessions)).
 
 1. Is it **enabled**? Disabled keeps the definition but hands it to nobody.
 2. Do the **targets** include "sessions" / "assistants"? With both cleared it goes nowhere.
@@ -513,8 +513,8 @@ older build could pass it by luck.
 
 ### An MCP server's row says "Sign in again", "More permission needed" or shows an unfinished sign-in
 
-These are the states of an **OAuth** server's row in ⚙ Settings → MCP servers
-([20](20-settings.md#mcp-servers)). An OAuth server is handed to sessions and assistants only while you are
+These are the states of an **OAuth** server's row in ⚙ Settings → MCP servers (used by sessions)
+([20](20-settings.md#mcp-servers-used-by-sessions)). An OAuth server is handed to sessions and assistants only while you are
 signed in, and a session picks the change up from the next one you start.
 
 | The row says | What it means | What to do |
@@ -525,7 +525,7 @@ signed in, and a session picks the change up from the next one you start.
 
 ### An outside app connects but shows no tools
 
-Open **Recent calls** under the app (⚙ Settings → MCP tokens → **Connected apps**) and check the HTTP status of
+Open **Recent calls** under the app (⚙ Settings → Outside access → MCP tokens & apps → **Connected apps**) and check the HTTP status of
 its requests and how many tools the `tools/list` request returned. Press **Refresh** if the list looks empty, and
 reconnect from the app if needed. The details are in ([19](19-outside-access.md#recent-calls-when-an-app-connects-but-shows-no-tools)).
 

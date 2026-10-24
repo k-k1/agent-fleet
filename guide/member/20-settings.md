@@ -11,12 +11,13 @@ How each setting is *used* belongs to the other chapters, so read this one as a
 
 ## Opening it, and how it is organised
 
-**⚙ Settings** is in the account menu of the top bar. The left rail is split into three groups.
+**⚙ Settings** is in the account menu of the top bar. The left rail is split into four groups.
 
 | Group | What is in it |
 |---|---|
 | **Personal** | Display / Account / Keyboard / Read aloud / Notifications / Limit board / Assistant / AI assistance / Agent instructions / Agent memory / Memory snapshots |
-| **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat / MCP servers / MCP tokens / AWS profiles/SSM / Google Cloud |
+| **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat / MCP servers (used by sessions) / AWS profiles/SSM / Google Cloud |
+| **Outside access** | MCP tokens & apps (personal access tokens and connected apps that drive this Workspace from outside) |
 | **Workspace** | Agent usage / Cloud cost / Running time / Machine / Toolchains / Databases / Preview subdomains / Internal repos / Export / import / Danger zone |
 
 - It remembers the tab you opened last and reopens there.
@@ -330,7 +331,9 @@ starting a session from a row.
 Connect a Discord / Slack bot to follow session progress in chat and drive it by replying.
 → [15 External services](15-external-services.md#connecting-discord-slack-chat-bridge)
 
-### MCP servers
+### MCP servers (used by sessions)
+
+The tab is named **MCP servers (used by sessions)**: these are servers *your sessions use*. To let an outside app drive this Workspace, see [MCP tokens & apps](#mcp-tokens-apps) under **Outside access**.
 
 **Register the MCP servers you want to use here** and they become available to your assistants and sessions.
 This is where you add tools Agent Fleet does not ship with, such as an internal wiki, an issue tracker, a document
@@ -374,7 +377,7 @@ search.
   assistants **only while you are signed in**: signing in puts it into the configuration of every agent kind,
   and disconnecting or **Sign in again** takes it out. Like any server, it is picked up **from the next session you
   start**. A session that is already running when you disconnect, or whose sign-in can no longer be renewed, gets an
-  error from the relay telling you to sign in again in the Console (Settings > Connections > MCP servers). If the
+  error from the relay telling you to sign in again in the Console (Settings > Connections > MCP servers (used by sessions)). If the
   server answers that a tool needs more permission, the call fails with the server's own answer and the row shows
   **More permission needed**, and its **Approve the extra permission** button signs in again asking for that permission on top of what you already granted. The relay's port is remembered across restarts of the Agent; if that port is taken at
   start-up, a new one is chosen (with a new private key) and the configurations are rewritten, so sessions started before that need a restart.
@@ -408,14 +411,6 @@ search.
 > **Agent Fleet's own MCP** is the "built-in" entry handed to every session from the start, with no setup needed.
 > It is what lets a session report that it finished, or propose a handoff to the next session.
 
-### MCP tokens
-
-Tokens for driving your workspace remotely from Claude Code / Claude Desktop on your own machine.
-→ [19 Using it from outside](19-outside-access.md#driving-your-workspace-from-an-external-claude-mcp)
-
-The same token can use your Agent Fleet memory too; the tab lists what it can do:
-→ [18 Agent memory](18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent)
-
 ### AWS profiles/SSM
 
 Your AWS profiles (shared settings), which `af-aws-exec` and SSM sessions sign in with, and SSM hosts (individual)
@@ -434,6 +429,18 @@ they work, and the WS bar's Google Cloud badge, are in
 [16 Cloud accounts](16-cloud-accounts.md#running-commands-in-google-cloud-as-you-af-gcloud-exec).
 
 ---
+
+## Outside access
+
+### MCP tokens & apps
+
+The **MCP tokens & apps** tab sits in the **Outside access** group, not under Connections, because it points the other way: it holds the personal access tokens and connected apps that *use this Workspace*. To register servers your sessions call, see [MCP servers (used by sessions)](#mcp-servers-used-by-sessions).
+
+Tokens for driving your workspace remotely from Claude Code / Claude Desktop on your own machine.
+→ [19 Using it from outside](19-outside-access.md#driving-your-workspace-from-an-external-claude-mcp)
+
+The same token can use your Agent Fleet memory too; the tab lists what it can do:
+→ [18 Agent memory](18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent)
 
 ## Workspace
 
@@ -654,8 +661,8 @@ appears only on deployments that can perform them.
 | Get help investigating an incident | Ops & monitoring |
 | Start work from a ticket or an issue | Issue tracker |
 | Follow progress while away from the desk | Chat |
-| Let the AI use an in-house tool | MCP servers |
-| Drive it from the Claude on my laptop | MCP tokens |
+| Let the AI use an in-house tool | MCP servers (used by sessions) |
+| Drive it from the Claude on my laptop | Outside access → MCP tokens & apps |
 | Find out what the tokens went on | Agent usage |
 | Find out what my workspace costs to run | Cloud cost |
 | I want to know when my workspace was actually running | Running time |

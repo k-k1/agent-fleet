@@ -14,9 +14,9 @@ administrator.
 
 Tenant settings → **"Operations → MCP distribution"** distributes an MCP server to every member of
 the tenant.
-A distributed server appears in each member's ⚙ Settings → MCP servers labelled **tenant**,
+A distributed server appears in each member's ⚙ Settings → Connections → MCP servers (used by sessions) labelled **tenant**,
 ready to use from their assistants and sessions (what they see:
-[member/20 Settings](../member/20-settings.md#mcp-servers)).
+[member/20 Settings](../member/20-settings.md#mcp-servers-used-by-sessions)).
 
 ### Only remote (HTTP) can be distributed
 
@@ -49,7 +49,7 @@ is offered a token-only field; otherwise your token is stored encrypted and show
 `Bearer ***`. **OAuth** distributes no credential at all, so the credential choice disappears and
 no header can be added: each member's row offers **Sign in**, the grant stays in that member's
 workspace, and the server reaches a member's sessions only after they have signed in (what they see:
-[member/20 Settings](../member/20-settings.md#mcp-servers)). Switching an existing distribution to
+[member/20 Settings](../member/20-settings.md#mcp-servers-used-by-sessions)). Switching an existing distribution to
 OAuth deletes the header values stored for it. Changing its URL, switching OAuth off or deleting it
 disconnects every member's sign-in at their next fetch. If you registered a client for Agent Fleet at the server's
 authorization server, enter its **client ID** and the **issuer** it is registered at; members' sign-ins then use it
@@ -89,7 +89,7 @@ Clear **Allow apps to connect through MCP OAuth**, choose **Save**, and confirm.
 
 An OAuth connection's `read` and `write` scopes also reach members' Agent Fleet memory, exactly as a token's do: the consent page says so. Whether they can is decided by **External memory access** ([below](#memory-from-outside-agent-fleet)) and each member's own setting, not by this panel. Block there hides the memory tools from OAuth connections and tokens alike.
 
-Enabling the switch again permits new connections; it does not restore revoked connections. Members reconnect from their apps. They can also revoke individual connections in **Settings → Connections → MCP tokens → Connected apps**.
+Enabling the switch again permits new connections; it does not restore revoked connections. Members reconnect from their apps. They can also revoke individual connections in **Settings → Outside access → MCP tokens & apps → Connected apps**.
 
 ## Memory from outside Agent Fleet
 
@@ -144,5 +144,5 @@ and they can act on it as-is.
 ---
 
 - Previously: [03 Audit and usage](03-audit-usage.md)
-- What members see: [member/20 Settings](../member/20-settings.md#mcp-servers)
+- What members see: [member/20 Settings](../member/20-settings.md#mcp-servers-used-by-sessions)
 

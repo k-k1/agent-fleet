@@ -107,13 +107,20 @@ export const GROUPS: { key: string; label: string; items: [string, string][] }[]
       ["tracker", "set.tab_tracker"],
       ["chat", "set.tab_chat"],
       ["mcp", "set.tab_mcp"],
-      ["tokens", "set.tab_tokens"],
       // AWS SSM registers an SSO profile and the hosts to log into — an external
       // connection like the ones above it, not a property of the workspace.
       ["ssm", "set.tab_ssm"],
       // Google Cloud profiles (ADR 0107) sit beside the AWS ones: the same kind of connection.
       ["gcp", "set.tab_gcp"],
     ],
+  },
+  {
+    // Inbound: what drives this Workspace from outside (PATs, OAuth-connected apps via /mcp).
+    // Kept out of "connections", whose every other tab is outbound. The section key stays
+    // "tokens" so openSettings("tokens") and the remembered tab keep working.
+    key: "outside",
+    label: "set.group_outside",
+    items: [["tokens", "set.tab_tokens"]],
   },
   {
     key: "workspace",
@@ -208,6 +215,10 @@ export function SettingsDialog() {
   }, [section]);
 
   const pick = (key: string) => {
+    // Mirror the rail choice into the store: the follow-effect above only fires when the
+    // requested section changes, so a stale store value would swallow a later
+    // openSettings() back to the section the rail just left (cross-tab links).
+    useSettingsUI.setState({ settingsSection: key });
     setSection(key);
     setEntered(true);
   };

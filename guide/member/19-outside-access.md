@@ -18,7 +18,7 @@ checked against your role at that moment.
 
 From Claude Code / Claude Desktop on your local PC you can **remotely drive** sessions in your workspace.
 Think "from my own Claude while I'm out, check on the session running in the company workspace and send it the
-next instruction". Issue the token for this in **⚙ Settings → the "MCP tokens" tab**.
+next instruction". Issue the token for this in **⚙ Settings → Outside access → the "MCP tokens & apps" tab**.
 
 1. Choose a **name** (e.g. `laptop-claude`), a **scope**, and an **expiry**, then press **"Issue token"**.
    - Scopes are **read (view only)** / **write (drive sessions; the default)** / **admin:dangerous (elevated / admin)**. You cannot pick a scope beyond your own permissions. If all you want is to drive sessions remotely, write is enough.
@@ -78,7 +78,7 @@ callback is anywhere else is refused with an error page and is never sent your c
 
 #### Connected apps
 
-Open **Settings → Connections → MCP tokens** and look below your Personal Access Tokens for **Connected apps**. Each OAuth connection shows the app name (self-declared, unverified), redirect host, tenant, scope, connection date and last use. Choose **Revoke** and confirm to end that connection immediately, including its refresh token. Reconnect from the app if you want to use it again. The section appears only when this deployment serves MCP OAuth.
+Open **Settings → Outside access → MCP tokens & apps** and look below your Personal Access Tokens for **Connected apps**. Each OAuth connection shows the app name (self-declared, unverified), redirect host, tenant, scope, connection date and last use. Choose **Revoke** and confirm to end that connection immediately, including its refresh token. Reconnect from the app if you want to use it again. The section appears only when this deployment serves MCP OAuth.
 
 Your tenant administrator can disable MCP OAuth for the tenant. This revokes its existing OAuth connections and prevents new ones. Personal Access Tokens continue to work.
 

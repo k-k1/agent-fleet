@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { DirectionNote } from "../parts/DirectionNote.tsx";
 import { api, apiJSON, raw, rel } from "../../../core/api/client.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -99,6 +100,7 @@ export function TokensTab() {
 
   return (
     <div className="display-settings">
+      <DirectionNote text="tokens.direction" linkLabel="tokens.direction_link" target="mcp" />
       <p className="muted ds-note">{tr("tokens.intro")}</p>
 
       {issued && (
