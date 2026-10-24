@@ -68,9 +68,9 @@ summary line shows the current values; it opens by itself for a distribution tha
 - On a deployment with restricted egress, a distribution still fails if **the destination host
   is not allowed**. Check the allowlist below first.
 
-## Speech (tenant-wide settings)
+## Read aloud (tenant-wide settings)
 
-Speech is super_admin only (the **Speech** section of the Admin modal). It starts and stops the VOICEVOX (Zundamon) engine and
+Read aloud is super_admin only (the **Read aloud** section of the Admin modal). It starts and stops the VOICEVOX (Zundamon) engine and
 holds the **tenant-wide pronunciation dictionary**, which applies to everyone's text-to-speech
 (a member's personal dictionary overrides the same spelling). When a product name or an
 in-house term is consistently mispronounced, ask the super_admin to add it there.
@@ -387,7 +387,7 @@ and the darker it is the longer the engine was up in that hour.
 
 ## Controlling outbound traffic (egress — super_admin only)
 
-This is the **Traffic** section of the Admin modal. **It is super_admin only, so it does not appear
+This is the **Egress** section of the Admin modal. **It is super_admin only, so it does not appear
 in your tenant settings.** It belongs
 to IT / the deployment administrator, so ask them when you need it (see the request template at
 the end). The following is here so you know what happens on their side.

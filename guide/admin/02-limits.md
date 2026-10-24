@@ -218,8 +218,8 @@ tenant-wide side, so they are super_admin's domain). It has two stages, set by t
 
 The time format is `30m` (minutes), `2h` (hours), `90s` (seconds). Empty follows the deployment
 default, which is 1 hour for **Session halt after** and 2 hours for **Workspace stop after** unless
-the operator changed it, and `0` means explicitly disabled. For the details of the behavior,
-see the developer documentation.
+the operator changed it, and `0` means explicitly disabled. The deployment-wide defaults are
+listed in [Limits and defaults](../ref/limits.md#set-by-the-deployment).
 
 Even when stopped, the work itself (the contents of home) remains. The next time members need it,
 they just start it again from the Console.

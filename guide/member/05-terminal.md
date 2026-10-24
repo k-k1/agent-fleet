@@ -32,7 +32,6 @@ even when they're displayed wrapped. No need to copy a long URL and paste it bac
 
 ## Shortcuts
 
-- **Ctrl+PgUp / Ctrl+PgDn**: switch to the previous / next session.
 - **Alt** covers the everyday actions, one keypress each: **Alt+N** start a session,
   **Alt+W** close this tab / pane, **Alt+Shift+W** close them all, **Alt+1..8** jump to a
   pane by its number, **Alt+[ / Alt+]** previous / next pane, **Alt+PgUp / Alt+PgDn**
@@ -140,8 +139,8 @@ or in ⚙ Settings → Display → **main area layout**.
   the rest without going back to the rail. Tabs that are not sessions keep the browser's own menu.
 
 The setting is stored **on this device only**, and the two layouts remember their arrangements
-separately, so moving between them disturbs neither. On desktop you can arrange up to 4 columns
-× 2 rows. On phones it's 1 column, up to 2 panes.
+separately, so moving between them disturbs neither. On desktop split panes go up to 4 columns
+× 2 rows, and the tabbed grid up to 3 columns × 2 rows with 24 tabs in all. On phones it's 1 column, up to 2 panes.
 
 Each pane's content is independent. For claude / codex / cursor / copilot / kiro / agy / opencode running as Terminal (CLI),
 the **Chat ⇄ Terminal** toggle at the top switches between the conversation's Markdown view and

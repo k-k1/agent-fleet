@@ -386,7 +386,7 @@ terminal.
   Move focus to another pane to get the app operations back.
 
 **?** opens the list of what is bound to what ([05](05-terminal.md#shortcuts),
-[12](12-settings.md#keys)).
+[12](12-settings.md#keyboard)).
 
 ### "Your home disk is nearly full"
 
@@ -408,7 +408,7 @@ says why:
 | … because the home disk is full | Free some space, then restart the workspace. |
 | … because of a network error | Restart the workspace to try again. |
 | … because the download did not match its checksum | Restart the workspace to try again. |
-| … See Settings › Toolchains and the workspace log | Read the reason in ⚙ Settings → Toolchains ([12](12-settings.md#toolchain)). |
+| … See Settings › Toolchains and the workspace log | Read the reason in ⚙ Settings → Toolchains ([12](12-settings.md#toolchains)). |
 
 Your tenant administrator sees the same failure on your card in the member list.
 

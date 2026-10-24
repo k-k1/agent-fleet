@@ -12,18 +12,19 @@ How each setting is *used* belongs to the other chapters, so read this one as a
 
 ## Opening it, and how it is organised
 
-**⚙ Settings** is in the top bar. The left rail is split into three groups.
+**⚙ Settings** is in the account menu of the top bar. The left rail is split into three groups.
 
 | Group | What is in it |
 |---|---|
-| **Personal** | Display / Account / Keys / Speech / Notifications / Assistant / AI assistance / Agent instructions / Agent memory / Memory snapshots |
-| **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat integration / MCP servers / MCP tokens / AWS profiles/SSM / Google Cloud |
-| **Workspace** | Agent usage / Cloud cost / Running time / Machine / Toolchain / Databases / Preview subdomains / Internal repositories / Export & import / Danger zone |
+| **Personal** | Display / Account / Keyboard / Read aloud / Notifications / Limit board / Assistant / AI assistance / Agent instructions / Agent memory / Memory snapshots |
+| **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat / MCP servers / MCP tokens / AWS profiles/SSM / Google Cloud |
+| **Workspace** | Agent usage / Cloud cost / Running time / Machine / Toolchains / Databases / Preview subdomains / Internal repos / Export / import / Danger zone |
 
 - It remembers the tab you opened last and reopens there.
 - **On a phone it is a list → detail drill-down.** Back returns to the list; back again closes the dialog.
-- Managing your team's **members, quotas and audit** is a **separate dialog** (the shield icon), shown only to
-  those with the permission ([admin/](../admin/README.md)).
+- Managing your team's **members, quotas and audit** is a **separate dialog**, **Tenant settings** in the same
+  menu, shown only to those with the permission ([admin/](../admin/README.md)). **Admin** (the shield icon)
+  is the deployment-wide one.
 - Some tabs **need the workspace running**, because the setting itself lives inside the workspace. While it is
   stopped you get a note and a "Start workspace" button.
 
@@ -34,7 +35,7 @@ Getting this wrong is what makes a setting look like it "didn't work".
 | Timing | What |
 |---|---|
 | **Immediately** | Display, keys, speech, notifications; adding and removing connections; the stopped-session archive period (on the next session-list refresh) |
-| **From the next session you start** | Agent behaviour settings, agent instructions, session-to-session messaging, starting sessions from sessions, fleet observation, past-session search (turning it off also refuses running sessions' searches at once), Agent Fleet memory (likewise), image generation, MCP servers |
+| **From the next session you start** | Agent behaviour settings, agent instructions, session-to-session messaging, starting sessions from sessions, past-session search (turning it off also refuses running sessions' searches at once), Agent Fleet memory (likewise), image generation, MCP servers |
 | **From the next chat message** | Assistant settings; ops & monitoring connections (when used from an assistant) |
 | **After stopping and starting the workspace** | Toolchain (timezone, language versions); Machine (a size or class your admin changed) |
 
@@ -88,7 +89,7 @@ land in the same workspace, the same home and the same settings.
   - **the only method left**: removing it would leave you unable to sign in at all, with no way to undo it
     yourself (this deployment has no password and sends no email).
 
-### Keys
+### Keyboard
 
 - **Shortcut assignment**: you can change the direct keys (`Alt+1` …) and the three app-wide keys. Sequences
   under the leader (e.g. leader → `p` → `r`) are structural and cannot be changed. **?** opens the cheat sheet
@@ -105,7 +106,7 @@ land in the same workspace, the same home and the same settings.
   drops only the throwaway phrasings you sent exactly once (pinned ones stay, and sending one again learns it
   back), while **Clear all learned** wipes both what was learned and the dismissed list, back to the initial state.
 
-### Speech
+### Read aloud
 
 Reads out replies from sessions and assistants.
 
@@ -274,7 +275,7 @@ Antigravity): default model, **models you don't use**, **extra Claude models**, 
 **llama.cpp** card holds its on / off switch and **your own connection** to a llama-server on your network;
 the **Muse Code** card holds its one-time install, the sign-in and the model / effort choice. The
 **Sessions** group holds **when stopped sessions are archived** (Default, which is the deployment's period (7 days unless the deployment changed it), 1 / 3 / 7 / 14 / 30 days, or Off), **session-to-session messaging**, **starting sessions from sessions** (with
-**children per session**), **fleet observation from sessions**, **past-session search** (on by default: lets a
+**children per session**), **past-session search** (on by default: lets a
 session search this workspace's past conversations with the `search_sessions` tool; the command palette's
 "Conversations" mode works either way, see [05](05-terminal.md#command-palette)), **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes), auto-resume after a rate
 limit resets, and auto-resume of an interrupted turn.
@@ -329,7 +330,7 @@ issues and pull requests, Bitbucket pull requests), so that a session can be sta
 See [02 Sessions](02-sessions.md#starting-from-the-issue-tracker) for the list itself and for
 starting a session from a row.
 
-### Chat integration
+### Chat
 
 Connect a Discord / Slack bot to follow session progress in chat and drive it by replying.
 → [10 Going further](10-integrations.md#connecting-discord-slack-chat-bridge)
@@ -560,7 +561,7 @@ administrator's to set.
   elsewhere, for example under `~/repos` or a folder of your own in your home directory.
 - The **Machine and usage** link in the WS bar's **Resources** popover opens this screen directly.
 
-### Toolchain
+### Toolchains
 
 Timezone, Node.js / Java / Go versions, the table of effective tool versions (a CLI whose install at the workspace's start failed shows
 "install failed" with the reason, typically a full home disk, and is tried again at the next start; starting a session of that agent is refused with the same reason until the CLI is installed, while other agents start as usual), **agent CLI updates** (off by
@@ -588,7 +589,7 @@ also shows its Issuer, Discovery URL and Client ID with **Copy** buttons (the cl
 **Issue a new secret…**, **App configuration examples** and **Test personas**.
 → [10 Going further](10-integrations.md#preview-subdomains-only-where-they-are-issued)
 
-### Internal repositories
+### Internal repos
 
 Create, rename, delete and browse git repositories that **live entirely inside the tenant**, with no external
 git hosting. The clone URL authenticates itself, so there is no connect step (and it works while the workspace
@@ -645,8 +646,8 @@ appears only on deployments that can perform them.
 | Let sessions talk to each other | Agents (session-to-session messaging) |
 | Stop sessions from searching past conversations | Agents (past-session search) |
 | Let agents share what they learn across kinds | Agent memory (Settings) |
-| Let a session see what the other sessions are doing | Agents (fleet observation from sessions) |
-| Have a session leave you a note about what it noticed | Agents (fleet observation from sessions) |
+| Let a session see what the other sessions are doing | Nothing to set: every session can ([02](02-sessions.md#letting-a-session-see-the-fleet)) |
+| Have a session leave you a note about what it noticed | Nothing to set: every session can ([02](02-sessions.md#letting-a-session-see-the-fleet)) |
 | Clone a private repository | Git hosting |
 | Get help investigating an incident | Ops & monitoring |
 | Start work from a ticket or an issue | Issue tracker |

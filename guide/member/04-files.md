@@ -497,11 +497,11 @@ and the preview side by side).
   into another tab and the like ask first, offering **"Save and continue"** or **"Discard and
   continue"** (a file with unsaved changes cannot be popped out).
 - **When it changes underneath you**: if an agent or another session rewrites the same file you
-  get **"The file changed externally"**, and **"Check the diff"** lets you compare before taking
+  get **"The file was changed outside this editor"**, and **"Check diff"** lets you compare before taking
   it.
-- **When it conflicts**: saving from a stale revision gives **"Conflicts with the remote
-  change"**. Your text (mine) is kept, and you choose **adopt remote / discard mine / merge
-  manually onto remote as the base**. Even when the outcome of a save cannot be determined, mine
+- **When it conflicts**: saving from a stale revision gives **"Remote changes conflict with
+  yours"**. Your text (mine) is kept, and you choose **Adopt remote / Discard mine / Use remote
+  as base for manual merge**. Even when the outcome of a save cannot be determined, mine
   and the submitted snapshot are held so you can settle it with "Retry" or "Save explicitly".
   **Your edit is never silently lost.**
 - **What cannot be saved**: a change over 2 MiB, content containing NUL, CR/CRLF newlines (LF
@@ -509,11 +509,11 @@ and the preview side by side).
 
 ### Have an AI propose the change
 
-**"AI suggestion"** in the editor asks an AI for a change to the selection (or to the whole file
+**"AI suggest"** in the editor asks an AI for a change to the selection (or to the whole file
 when nothing is selected). Write the instruction, generate with **Ctrl+Enter**, review the diff
 and choose **Apply** or **Reject**; nothing is rewritten on its own (if the text moved on after
 generation, it tells you to regenerate). The tokens it spends are recorded in ⚙ Settings → Agent usage
-as **"Edit suggestion (editor)"** ([12](12-settings.md#agent-usage)).
+as **"Edit suggestions (editor)"** ([12](12-settings.md#agent-usage)).
 
 ## Send a file to a session / chat
 

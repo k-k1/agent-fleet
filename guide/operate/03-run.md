@@ -129,7 +129,7 @@ The commands are in the runbook's "Upgrade" section.
 
 On `ecs-ec2` a workspace runs as a task on an EC2 slot taken from a pool, and its home is an EBS
 volume that stays with its slot between starts. A super_admin manages the slots under
-**Settings → Admin → Slots**.
+**Admin → Slots**.
 
 ### ecs-ec2: replacing slots after a launch template change
 
@@ -148,7 +148,7 @@ launched (capacity, quota) the start still succeeds on the old slot, and starts 
 yourself when a workspace must never be put back on its old slot (then a start that cannot launch
 a new slot fails instead):
 
-1. **Settings → Admin → Slots** (super_admin). The **Template** column shows the launch template
+1. **Admin → Slots** (super_admin). The **Template** column shows the launch template
    version each slot was launched from, marked **older than $Latest** when it is.
 2. **Reserve all N for replacement…** lists the slots below `$Latest` and the workspace on each,
    and reserves exactly those once you confirm. **Replace at next start** on a row reserves one
@@ -188,7 +188,7 @@ agent is not connected, SSM no longer answers, and a member's home may still be 
 for that member then waits or fails. The Slots tab shows such a row as running with **(not accepting
 tasks yet)**, and gives it **Stop (force)** (super_admin).
 
-1. **Settings → Admin → Slots → Stop (force)** on the row, then confirm. The dialog names the
+1. **Admin → Slots → Stop (force)** on the row, then confirm. The dialog names the
    workspace on the slot. The server refuses a slot whose ECS agent is connected **and** whose SSM is
    online (`slot_healthy`): the action is for slots that do not answer. A stopped slot
    (`slot_not_running`) and a quarantined one (`slot_quarantined`) are refused too. The API takes

@@ -51,7 +51,7 @@ agent said it would do.
 
 ## Reply suggestions
 
-Under the message box, **Suggest replies with AI (from the recent conversation)** offers
+Above the message box, **Suggest replies with AI (from the recent conversation)** offers
 a few things you might plausibly want to send next. They are suggestions, not actions:
 nothing is sent until you choose one.
 
@@ -269,11 +269,11 @@ Every candidate is graded:
 | **Keep** | it is running, or it has uncommitted or unpushed work. Stop it or push it first |
 
 **Select all safe** does the boring majority in one click. What you remove is not
-destroyed: sessions and branches go to **Trash (restore)**, the second tab of the same
-dialog, and can be brought back.
+destroyed: stopped AI sessions are archived (restore them from the archive browser), and
+shell / SSM sessions and branches go to **Trash (restore)**, the second tab of the same
+dialog, and can be brought back. Deleting a worktree itself cannot be undone.
 
-Archived sessions are a separate thing from the trash and are not part of cleanup.
-They have their own browser.
+Sessions already archived are not part of cleanup; they have their own browser.
 
 ## When a turn is interrupted
 

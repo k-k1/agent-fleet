@@ -3,7 +3,7 @@ audience: "someone using Agent Fleet without touching the terminal"
 updated: "2026-10"
 ---
 
-# Easy Guide (for people who don't use the terminal)
+# Simple guide (for people who don't use the terminal)
 
 English | [日本語](lite.ja.md)
 
@@ -16,10 +16,9 @@ and you don't need to know what the word "git" means. This volume explains only 
 using Agent Fleet that never require opening that black screen.
 
 This guide describes the "how" of the operations. It doesn't get into the "why it works that way"
-mechanics (if you're curious, that is in the developer documentation).
-See the index [README.md](README.md) for guides for other roles and the glossary. If you ever need
-to go a step further (write code yourself, edit files, and so on), move on to the developer-facing
-[member/README.md](README.md).
+mechanics. See the [guide's index](../README.md) for guides for other roles, and the
+[glossary](../ref/glossary.md). If you ever need to go a step further (write code yourself, edit
+files, and so on), move on to the full [user guide](README.md).
 
 ---
 

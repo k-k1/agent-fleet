@@ -29,7 +29,7 @@ In a word, it's a feature that lets you **"hire a site foreman for your sessions
 - **Session list and states**: what is running where right now, and whether each is working, idle, or asking a question.
 - **Session output**: reads the recent portion of each session's conversation / terminal output to grasp progress and conclusions.
 - **Repository list**: the working copies under `~/repos`. Material for choosing where to launch a new session.
-- **Agent usage and limits**: claude / codex / Muse Code subscription usage (5-hour window and weekly window), copilot account credit balance, and agy quota balance, plus each agent's plan and account in use, and when limits reset. It answers "How much do I have left?", "When does the limit reset?", "Which plan?" with actual values, and this also informs decisions before assigning a big task (opencode is excluded because it uses per-provider API keys and has no notion of subscription usage). Muse Code's figures are the last reading a muse session saw: there are none until a muse session in this workspace has finished a turn, and they carry the plan but not the signed-in account.
+- **Agent usage and limits**: claude / codex / Muse Code subscription usage (5-hour window and weekly window) and agy quota balance, plus each agent's plan and account in use, and when limits reset. It answers "How much do I have left?", "When does the limit reset?", "Which plan?" with actual values, and this also informs decisions before assigning a big task (opencode, copilot, cursor and kiro are not covered: there is no usage source for them). Muse Code's figures are the last reading a muse session saw: there are none until a muse session in this workspace has finished a turn, and they carry the plan but not the signed-in account.
 - **Per-session context volume and cumulative consumption**: how full each session's context is (fill ratio against the window) and the cumulative tokens consumed so far. This helps you spot sessions with tight context and decide on a handover (splitting into a new session).
 
 With questions like "Summarize the state of the sessions running right now" or
@@ -41,8 +41,9 @@ guessing. Note that reading usage and context volume is also available to other 
 
 - **Send instructions to running sessions**: delivers prompts just as if you typed them into the terminal. It states which session it will send what to before executing.
 - **Launch new sessions**: pick a repository (dir), agent kind (claude / codex / cursor / copilot / kiro / agy / opencode / lcpp / muse / shell), and model, then start. Models are specified after checking the actually selectable list (claude uses tier names fable / opus / sonnet / haiku plus user-registered full IDs; codex / cursor / copilot / kiro / opencode use a catalog reflecting connection state). With a **worktree** you can carve out an independent working copy plus branch, so parallel work doesn't collide. If you pass an **initial task (initial_prompt)**, work starts right after launch.
-- **Stop and resume sessions**: fold up sessions that are no longer needed, running away, or hogging resources, and resume them later with their conversation history intact. It confirms which one to stop before executing, and stopped sessions can also be resumed from the Console. The operator can only perform a **resumable "stop"**; destructive deletion of a session is limited to Console-side operations.
+- **Stop and resume sessions**: fold up sessions that are no longer needed, running away, or hogging resources, and resume them later with their conversation history intact. It confirms which one to stop before executing, and stopped sessions can also be resumed from the Console.
   - For a session that is still working you can ask it to **stop when that work is done**: the running turn finishes and its report arrives before the session is folded away, so nothing is cut off. Use it to reclaim a fan-out one session at a time as each finishes (sending the session a new instruction releases it).
+- **Clean up**: it lists the same cleanup candidates as the Console's cleanup (stopped and archived sessions, stale worktrees, merged branches, each marked safe / review / keep), shows you the ones it proposes, and acts only on those you approve — archive a finished session (reversible), delete a session, a worktree or a merged branch. What it deletes is stashed in the cleanup archive first, so it can also restore it, or purge the archive when you want the space back. Candidates marked keep (running, uncommitted, unpushed) are left alone.
 - **Memo queue operations**: check, add, and organize queued memos, and **batch-send selected memos** (operate the memo queue from [07](07-chat-memo.md) over chat).
 - **Consulting other assistants**: when a decision needs specialist knowledge, it asks the SRE assistant or others for advice before acting (the consulted assistant only returns advice; it does no work).
 
@@ -120,7 +121,7 @@ Even the "see" side alone, without driving anything, is useful.
 
 - **Briefing** (after stepping away or the next morning): "Summarize the current state of the sessions running since yesterday and why any are stopped." It actually reads states and output before reporting.
 - **Memo triage**: "Route the memos piled up in the memo queue to the appropriate sessions by content and send them." You can finish off the capture-as-you-go flow ([07](07-chat-memo.md)) from chat.
-- **Cleanup**: "Check which sessions have served their purpose and stop the ones no longer needed." After parallel work, you can fold up scattered sessions and free resources (stopped = resumable, so nothing disappears).
+- **Cleanup**: "Check which sessions have served their purpose and stop the ones no longer needed", or "Show me what can be cleaned up". After parallel work, you can fold up scattered sessions and free resources (stopped = resumable, so nothing disappears), and clear away what is finished once you have approved the list.
 - **Assignment based on remaining quota**: "Between claude and codex, which still has room in its window?" "Given the limits, which should this larger task go to?" It checks actual usage ratios and reset times, so you can discuss assignments that avoid agents close to their limits.
 - **Context watching and handover**: "Are any sessions getting tight on context?" When it finds a session with a high fill ratio, that feeds the decision to summarize the key points and hand over to a new session (the steps of Pattern 1) instead of piling on more instructions.
 
@@ -136,7 +137,7 @@ next run time, so check that it matches your intent.
   in the notification center.
 - In the **"Schedules"** section of the left pane you can see the list and run history
   (success/failure, manual / scheduled, and a link to the session that ran), and the row
-  menu offers **Pause / Resume / Run now / Delete**. **"Details & edit"** in the same menu
+  menu offers **Pause / Resume / Run now / Delete**. **"Details / edit"** in the same menu
   opens the firing spec, timezone, wake policy, agent, model, report opt-in and the prompt
   itself for editing; only the advanced execution fields (session mode, reuse target,
   rotation, overlap policy) are read-only there and changed by asking the operator.

@@ -50,7 +50,7 @@ updated: "2026-10"
 
 | 上限 | 既定 | 決める変数 |
 |---|---|---|
-| ワークスペースのメモリ | 5g | `WS_MEMORY` |
+| ワークスペースのメモリ | 1g（Compose の例とローカル用スクリプトは 5g、ECS では `WsTaskMemory` パラメータの 2048 MiB） | `WS_MEMORY` |
 | ワークスペースの作業ディスク（Fargate）| 50 GiB | `AF_ECS_WS_DISK_GB` |
 | ユーザー毎のホームボリューム（EC2 形態）| 50 GiB | `AF_ECS_EC2_HOME_GB` |
 | 停止の猶予 | 30 秒 | `AF_STOP_GRACE_SEC` |

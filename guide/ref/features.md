@@ -98,6 +98,8 @@ If a feature ships and does not appear here, it is not done
 | Assistant chat | member | Assistants | [07 Chat & memo](../member/07-chat-memo.md) |
 | Chat bridge — Discord / Slack | member | Settings → Chat | [10 Advanced](../member/10-integrations.md) |
 | Reply suggestions | member | mirror composer | [09 Working with others](../member/09-collaboration.md) |
+| Deletion lock | member | session ⋯ menu | [09 Working with others](../member/09-collaboration.md) |
+| Cleanup and the trash | member | Clean up | [09 Working with others](../member/09-collaboration.md) |
 | Keyboard system | member | Settings → Keyboard | [10 Advanced](../member/10-integrations.md) |
 | Text-to-speech | member | Settings → Read aloud | [12 Settings](../member/12-settings.md) |
 
@@ -150,7 +152,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Limit board on / off for the tenant | tenant admin | Limit board | [admin 02](../admin/02-limits.md) |
 | Whether this tenant may use the llm / image engines | deployment admin (super_admin) | Tenant settings → Limits | [admin 02](../admin/02-limits.md) |
 | Workspace sizing | deployment admin | — | [deploy-targets.md](deploy-targets.md) |
-| Sign-in methods and login rules | tenant admin | Sign-in methods / Login rules | [operator 05](../operate/05-signin.md) |
+| Sign-in methods and login rules | tenant admin | Sign-in methods / Login rules | [admin 05](../admin/05-access.md#sign-in-methods-and-login-rules) |
 | Connection-source restriction | tenant admin | Allowed networks | [admin 05](../admin/05-access.md) |
 | Integration app OAuth | tenant admin | Integration OAuth apps | [admin 05](../admin/05-access.md) |
 | Member defaults — the agent new members connect | tenant admin | Member defaults | [admin 07](../admin/07-member-defaults.md) |
@@ -159,8 +161,6 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Distributing integration servers | tenant admin | MCP distribution | [admin 04](../admin/04-mcp-egress.md) |
 | Audit | tenant admin | Audit | [admin 03](../admin/03-audit-usage.md) |
 | Running time and cloud cost | tenant admin | Running time / Cloud cost | [admin 03](../admin/03-audit-usage.md) |
-| Deletion lock | member | session ⋯ menu | [09 Working with others](../member/09-collaboration.md) |
-| Cleanup and the trash | member | Clean up | [09 Working with others](../member/09-collaboration.md) |
 
 ## Operating a deployment
 
@@ -173,24 +173,12 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Monitoring integrations | deployment admin | Settings → Ops & monitoring | [member 13](../member/13-ops-tooling.md) |
 | Slot pool and instance classes | deployment admin | Admin | [deploy-targets.md](deploy-targets.md) |
 | The inference engines' GPU class | deployment admin (super_admin) | Admin → Inference engines | [admin 04](../admin/04-mcp-egress.md) |
-| Taking a model in — search, plan card, one press | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engine models | [admin 04](../admin/04-mcp-egress.md) |
-| The S3 bucket as the ledger of what is actually held | deployment admin (super_admin) | Admin → Inference engine models → Bucket | [admin 04](../admin/04-mcp-egress.md) |
-| Model names, example images and family categories in the catalogue | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engine models → Registered | [admin 04](../admin/04-mcp-egress.md) |
-| A repository's quantisations, with what fits the GPU class | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engine models → Registered | [admin 04](../admin/04-mcp-egress.md) |
+| Taking a model in — search, plan card, one press | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engines → Model catalogue | [admin 04](../admin/04-mcp-egress.md) |
+| The S3 bucket as the ledger of what is actually held | deployment admin (super_admin) | Admin → Inference engines → Model catalogue → Bucket | [admin 04](../admin/04-mcp-egress.md) |
+| Model names, example images and family categories in the catalogue | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engines → Model catalogue → Registered | [admin 04](../admin/04-mcp-egress.md) |
+| A repository's quantisations, with what fits the GPU class | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engines → Model catalogue → Registered | [admin 04](../admin/04-mcp-egress.md) |
 | Hugging Face and Civitai tokens for gated downloads | deployment admin (super_admin) | Admin → API tokens | [admin 04](../admin/04-mcp-egress.md) |
 | Civitai Red (the NSFW sister domain) as a search source | deployment admin (super_admin), where the deployment was given it | Admin → API tokens | [admin 04](../admin/04-mcp-egress.md) |
 | Image generation on a ComfyUI of your own | deployment admin (super_admin) | a shell, then Admin → Inference engines | [operator 07](../operate/07-image-engine.md) |
 | Borrowing another deployment's llm / image engines | deployment admin (super_admin) | a shell, plus a membership on the far deployment | [operator 08](../operate/08-borrowed-engine.md) |
 | The user guide inside containers | — | automatic | [roles.md](roles.md) |
-
-## Rows with no Details yet
-
-A dash means the feature exists and works, but no reader-facing page covers it; the
-old guide never caught up with it. Those gaps are the reason this catalogue exists,
-Phase P2 closed them all: highlights, changed files, reply suggestions, deletion lock,
-cleanup and the trash, and abort auto-resume are in
-[09 Working with others](../member/09-collaboration.md); connection-source restriction
-and integration app OAuth are in [admin 05](../admin/05-access.md).
-
-A dash that remains means the row is covered by the table it links to, not that
-something is missing.

@@ -97,6 +97,8 @@ updated: "2026-10"
 | アシスタントチャット | メンバー | アシスタント | [07 チャットとメモ](../member/07-chat-memo.ja.md) |
 | チャットブリッジ（Discord / Slack）| メンバー | 設定 → チャット連携 | [10 応用](../member/10-integrations.ja.md) |
 | 返信候補 | メンバー | ミラーの入力欄 | [09 他の人と扱う](../member/09-collaboration.ja.md) |
+| 削除ロック | メンバー | セッションの ⋯ メニュー | [09 他の人と扱う](../member/09-collaboration.ja.md) |
+| 掃除とごみ箱 | メンバー | 掃除 | [09 他の人と扱う](../member/09-collaboration.ja.md) |
 | キーボード操作体系 | メンバー | 設定 → キー操作 | [10 応用](../member/10-integrations.ja.md) |
 | 音声読み上げ | メンバー | 設定 → 読み上げ | [12 設定](../member/12-settings.ja.md) |
 
@@ -148,7 +150,7 @@ updated: "2026-10"
 | テナントで利用枠ボードを使うかどうか | テナント管理者 | 利用枠ボード | [admin 02](../admin/02-limits.ja.md) |
 | このテナントが llm / image エンジンを使ってよいか | 配備管理者（super_admin）| テナント設定 → 上限 | [admin 02](../admin/02-limits.ja.md) |
 | ワークスペースのサイズ | 配備管理者 | — | [deploy-targets.md](deploy-targets.ja.md) |
-| サインイン方式とサインイン規則 | テナント管理者 | サインイン方式 / サインイン規則 | [operator 05](../operate/05-signin.ja.md) |
+| サインイン方式とサインイン規則 | テナント管理者 | サインイン方式 / サインイン規則 | [admin 05](../admin/05-access.ja.md#サインイン方式とサインイン規則) |
 | 接続元の制限 | テナント管理者 | 接続元の制限 | [admin 05](../admin/05-access.ja.md) |
 | 連携アプリの OAuth | テナント管理者 | 連携アプリの OAuth | [admin 05](../admin/05-access.ja.md) |
 | メンバーの既定 — 新しいメンバーがつなぐエージェント | テナント管理者 | メンバーの既定 | [admin 07](../admin/07-member-defaults.ja.md) |
@@ -157,8 +159,6 @@ updated: "2026-10"
 | 連携サーバーの配布 | テナント管理者 | MCP 配布 | [admin 04](../admin/04-mcp-egress.ja.md) |
 | 監査 | テナント管理者 | 監査 | [admin 03](../admin/03-audit-usage.ja.md) |
 | 稼働時間とクラウド費用 | テナント管理者 | 稼働時間 / クラウド費用 | [admin 03](../admin/03-audit-usage.ja.md) |
-| 削除ロック | メンバー | セッションの ⋯ メニュー | [09 他の人と扱う](../member/09-collaboration.ja.md) |
-| 掃除とごみ箱 | メンバー | 掃除 | [09 他の人と扱う](../member/09-collaboration.ja.md) |
 
 ## 配備を運用する
 
@@ -171,23 +171,12 @@ updated: "2026-10"
 | 監視連携 | 配備管理者 | 設定 → 運用・監視 | [member 13](../member/13-ops-tooling.ja.md) |
 | スロットのプールとインスタンス種別 | 配備管理者 | 管理 | [deploy-targets.md](deploy-targets.ja.md) |
 | 推論エンジンの GPU クラス | 配備管理者（super_admin）| 管理 → 推論エンジン | [admin 04](../admin/04-mcp-egress.ja.md) |
-| モデルの取り込み — 検索・計画カード・1 押し | 配備管理者（super_admin）、許可されたテナント管理者 | 管理 → 推論エンジンのモデル | [admin 04](../admin/04-mcp-egress.ja.md) |
-| S3 Bucket — 配備が実際に持っているものの台帳 | 配備管理者（super_admin）| 管理 → 推論エンジンのモデル → バケット | [admin 04](../admin/04-mcp-egress.ja.md) |
-| 目録のモデル名・作例・ファミリー分類 | 配備管理者（super_admin）、または許可されたテナント管理者 | 管理 → 推論エンジンのモデル → 登録済み | [admin 04](../admin/04-mcp-egress.ja.md) |
-| 配布元の量子化一覧と、GPU クラスに収まるかの判定 | 配備管理者（super_admin）、または許可されたテナント管理者 | 管理 → 推論エンジンのモデル → 登録済み | [admin 04](../admin/04-mcp-egress.ja.md) |
+| モデルの取り込み — 検索・計画カード・1 押し | 配備管理者（super_admin）、許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ | [admin 04](../admin/04-mcp-egress.ja.md) |
+| S3 Bucket — 配備が実際に持っているものの台帳 | 配備管理者（super_admin）| 管理 → 推論エンジン → モデルカタログ → バケット | [admin 04](../admin/04-mcp-egress.ja.md) |
+| 目録のモデル名・作例・ファミリー分類 | 配備管理者（super_admin）、または許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ → 登録済み | [admin 04](../admin/04-mcp-egress.ja.md) |
+| 配布元の量子化一覧と、GPU クラスに収まるかの判定 | 配備管理者（super_admin）、または許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ → 登録済み | [admin 04](../admin/04-mcp-egress.ja.md) |
 | Hugging Face / Civitai のトークン（ログインが要る取り込み）| 配備管理者（super_admin）| 管理 → API トークン | [admin 04](../admin/04-mcp-egress.ja.md) |
 | 検索の出所としての Civitai Red（NSFW の姉妹ドメイン）| 配備管理者（super_admin）、配備がそれを与えられている場合 | 管理 → API トークン | [admin 04](../admin/04-mcp-egress.ja.md) |
 | 自前の ComfyUI での画像生成 | 配備管理者（super_admin）| 端末、それから 管理 → 推論エンジン | [operator 07](../operate/07-image-engine.ja.md) |
 | 別の配備の llm / image エンジンを借りる | 配備管理者（super_admin）| 端末と、向こうの配備のメンバーシップ 1 つ | [operator 08](../operate/08-borrowed-engine.ja.md) |
 | コンテナ内のユーザーガイド | — | 自動 | [roles.md](roles.ja.md) |
-
-## 詳細が「—」の行
-
-「—」は、**機能は在って動くのに、利用者向けのページがどこにも無い**という意味です。
-旧ガイドが追いつけなかった箇所で、**このカタログを作った理由そのもの**であり、
-P2 で全部埋まりました。マーカー・変更ファイル・返信候補・削除ロック・掃除とごみ箱・
-中断の自動再開は [09 他の人と扱う](../member/09-collaboration.ja.md)、接続元の制限と
-連携アプリの OAuth は [admin 05](../admin/05-access.ja.md) です。
-
-残っている「—」は、その行がリンク先の表で完結しているという意味で、
-何かが欠けているという意味ではありません。

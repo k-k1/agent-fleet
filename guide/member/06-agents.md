@@ -283,7 +283,9 @@ email. Connecting with an API key is not supported.
 
 - **On-demand install.** Kiro's CLI is large (~855 MB) and is **not baked into the image**
   by default. The first time you use it, it's downloaded into your home directory. The
-  connection card shows an **"Install"** button with progress before you can sign in.
+  connection card shows an **"Install Kiro"** button with progress before you can sign in.
+  When a newer pinned build exists, the card offers **"Update Kiro"**; until you press it, the
+  installed version keeps being used.
   (Deployments that set `BAKE_AGENT_CLIS=1` ship it pre-installed.)
 - The model choices at launch are fetched live; **named models are available even on the
   Free plan** (Auto, Claude Sonnet / Haiku, and others). There's no separate
@@ -349,7 +351,7 @@ things must be true:
    the pay-as-you-go route: saving a key removes a stored account sign-in and moves you onto
    per-use billing, so disconnect first if you are signed in with an account.
 
-The **Behaviour** settings on the same card let you set the model and the reasoning effort,
+The **Behavior** settings on the same card let you set the model and the reasoning effort,
 and switch Muse Code's **contributor mode**. While it is on, Meta may use your conversations
 to improve the product. It is off by default, and each session keeps the mode it was created
 with across a stop and start. See [Agents reference](../ref/agents.md) for the details.
