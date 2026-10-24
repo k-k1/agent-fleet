@@ -22,7 +22,7 @@ These do not vary by deployment.
 | Browser pane: Chromium processes | 1 per workspace | — |
 | Browser pane: concurrent pages | 2 per workspace | A third cannot be opened until one is released |
 | Browser pane: viewport | 1600×1200 (DPR 1) | Larger is clamped |
-| Browser pane: frame rate | 12 fps while visible | Not usable for video |
+| Browser pane: frame rate | 12 fps while visible (JPEG quality 70) | Not usable for video |
 | Browser pane: hidden page retention | 60 seconds | After that the page is released and rebuilt from the saved port and path on return |
 | Browser pane: console messages kept | 200 | Oldest are dropped; this is not a persistent log |
 | Folder zip download: files / folders / depth | 20,000 / 4,000 / 32 levels | Refused with 413 and a message naming the limit; nothing is truncated (ADR 0111) |
@@ -71,7 +71,7 @@ Defaults are the Control Plane's own; `deploy/compose/.env.example` annotates mo
 
 The self-hosted engines' own auto-stop is not in this table: **Stop after** is set per role under
 Admin → Inference engines, and a saved value wins over the engine stack's default from the
-controller's next pass ([admin/04](../admin/04-mcp-egress.md)).
+controller's next pass ([operate/07](../operate/07-engines.md#inference-engines-self-hosted-gpus-superadmin-only)).
 
 ## Set per tenant
 
@@ -126,10 +126,3 @@ stopped, the deployment runs no sweep, or the tenant has none of the idle-stop, 
 backup features on) with no browser open is not updated, and its values turn stale or stay unknown.
 A failed refresh never makes an old value look new, and signing in to another provider account
 drops the previous account's values.
-
-## Status
-
-Two rules for anyone extending this page. A limit enforced in more than one layer must
-state **every** layer, for the reason above. And a limit nobody measures must say so
-rather than being given a plausible-looking number. An invented default is worse than
-an admitted gap, because it stops people from checking.

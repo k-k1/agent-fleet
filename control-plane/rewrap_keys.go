@@ -2,7 +2,7 @@ package main
 
 // `af-cp rewrap-keys` re-seals every value the local custodian sealed before the deployment
 // switched to AF_KEY_CUSTODIAN=kms, so disabling the KMS key shreds those rows too (ADR 0005
-// addendum 2026-10-10, guide/operate/04-secure.md). It never decides what to do from a KMS
+// addendum 2026-10-10, guide/operate/12-keys.md). It never decides what to do from a KMS
 // failure: the format prefix says which rows are legacy, and any KMS error stops the run with
 // the row it was on untouched.
 

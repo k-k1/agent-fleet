@@ -396,7 +396,7 @@ func TestManualLiveEngineContract(t *testing.T) {
 		// the test has to read that off the answer rather than assume it: the same harness
 		// talks to a borrowed ROUTER through the CP gateway (the dev deployment, ADR 0079) and
 		// to a SINGLE-MODEL llama-server on the operator's own network (guide/operate/
-		// 09-llm-lan.md). `role` is absent entirely on the latter — measured 2026-09-21 against
+		// 10-llm-lan.md). `role` is absent entirely on the latter — measured 2026-09-21 against
 		// b11067-932a68e06: role="" model_path=<the real .gguf path> n_ctx=24064, and the whole
 		// router asymmetry simply does not arise because /props IS describing the one model.
 		router := props.Role == "router"

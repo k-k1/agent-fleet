@@ -352,7 +352,7 @@ The "MCP tokens" tab lists what the token can do (including that a tenant Block 
 link back.
 
 - **Your tenant administrator can block it.** If they have, the memory tools are not offered at all, whatever your
-  setting and scope say ([admin 08](../admin/08-external-memory.md)).
+  setting and scope say ([admin 04](../admin/04-mcp-outside.md#memory-from-outside-agent-fleet)).
 - **Tools**: `memory_projects`, `memory_index`, `memory_search` and `memory_read` need a read (or higher) token or OAuth connection;
   `memory_save` and `memory_forget` need a write token or OAuth connection and "Read and write". The setting and the scope both have
   to allow a call: the narrower one wins.

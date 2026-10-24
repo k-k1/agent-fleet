@@ -4,13 +4,13 @@ source_of_truth: "the environment variables the Control Plane reads at startup; 
 updated: "2026-09"
 ---
 
-# 08. Borrowing another deployment's engines
+# 09. Borrowing another deployment's engines
 
-English | [日本語](08-borrowed-engine.ja.md)
+English | [日本語](09-borrowed-engine.ja.md)
 
 The fleet's own GPU engines (the `llm` role behind chat completions, the `image`
 role behind `generate_image`) are bought on AWS, so they exist on the `ecs-ec2`
-target only. [07 Image generation on your own ComfyUI](07-image-engine.md) is one way
+target only. [08 Image generation on your own ComfyUI](08-image-engine.md) is one way
 around that: point at a machine you already run. **This chapter is the other one.**
 
 If you already operate an Agent Fleet on AWS, a second deployment on your own host
@@ -33,11 +33,6 @@ code on the far deployment, no port opened there, no VPN and no change to any wo
 - **The other direction.** An AWS deployment using an engine at home is the same row
   pointed the other way, but nothing here assumes a residential network is reachable,
   and it is not supported.
-
-🔴 **Nothing in this chapter has been measured on a real pair of deployments.** The
-code is tested against a stand-in far gateway; the timings in "What the first request
-waits for" come from the far deployment's own cold starts, not from a borrowed one.
-Where a number is unknown, it says so.
 
 ## The two variables, and the optional third
 
@@ -106,7 +101,7 @@ far deployment (it needs no workspace and never has to run anything) and then as
 that deployment for its token.
 
 **The far deployment's super-admin issues it.** The route is
-`POST /api/admin/engines/issue-token` with `{"tenant_slug": "...", "user_key": "..."}`,
+`POST /api/admin/engines/issue-token`, which takes the tenant and the membership's user key,
 and it answers with the token, the variable to put it in, what the token opens, and how
 to revoke it. There is no `GET`: a credential must not end up in a URL, a browser
 history or a proxy log. A membership that is not active is refused (409) rather than
@@ -240,11 +235,8 @@ being borrowed from:
 
 The far deployment's Control Plane records what it cannot deliver, so "a GPU was bought
 and I cannot tell who for" is no longer the answer. Both are read from one route, as a
-super-admin of **that** deployment:
-
-```
-GET /api/admin/engines/<key>/attribution?from=YYYY-MM-DD&to=YYYY-MM-DD
-```
+super-admin of **that** deployment: the engine's `attribution` route
+(`/api/admin/engines/<key>/attribution`, narrowed with `from` and `to` dates).
 
 - `memberships`: requests, successes, milliseconds and tokens per membership per hour,
   for **both roles**. This is the only count the image role has, and it is what answers

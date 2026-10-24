@@ -32,6 +32,9 @@ settings**. Only a deployment administrator sees the shield-icon **Admin** item.
 | Rotate another member's internal git token | — | ✓ | ✓ |
 | Add and remove members | — | ✓ | ✓ |
 | Per-member session limits | — | ✓ | ✓ |
+| Make a member's home bigger; choose the machine a member's workspace runs on | — | ✓ | ✓ |
+| Choose which members may use the self-hosted engines (within what the tenant is allowed) | — | ✓ | ✓ |
+| Switch the limit board on or off for the tenant | — | ✓ | ✓ |
 | Tenant-wide limits, sizing and idle auto-stop | — | —¹ | ✓ |
 | Register a sign-in method for the tenant | — | ✓² | ✓ |
 | Approve a sign-in method | — | — | ✓ |
@@ -39,9 +42,12 @@ settings**. Only a deployment administrator sees the shield-icon **Admin** item.
 | Restrict where members may connect from | — | ✓ | ✓ |
 | Register the tenant's integration app OAuth | — | ✓ | ✓ |
 | Distribute integration servers to the team | — | ✓ | ✓ |
+| Allow or block outside apps (MCP OAuth) and outside use of members' memory, for the tenant | — | ✓ | ✓ |
+| Set the team's branch naming rules and the agent new members are pointed at | — | ✓ | ✓ |
 | Read the audit log | — | ✓ | ✓ |
 | Running time and cloud cost | — | ✓ | ✓ |
-| Egress control, speech engine, shared dictionary, the development OIDC IdP switch | — | — | ✓ |
+| Egress control, speech engine, shared dictionary, the MCP sign-in hosts, the development OIDC IdP switch, the deployment's colour and label | — | — | ✓ |
+| Replace or force-stop slots on `ecs-ec2`, keys at rest (KMS), pausing an idle deployment | — | — | ✓ |
 | Allow a tenant the self-hosted engines (llm / image), take models in, API tokens | — | —³ | ✓ |
 | Create tenants and grant admin rights | — | — | ✓ |
 | Install, upgrade, back up, restore | — | — | ✓ |

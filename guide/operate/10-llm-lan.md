@@ -4,26 +4,26 @@ source_of_truth: "the environment variables the Control Plane reads at startup; 
 updated: "2026-09"
 ---
 
-# 09. Chat inference on your own llama.cpp
+# 10. Chat inference on your own llama.cpp
 
-English | [日本語](09-llm-lan.ja.md)
+English | [日本語](10-llm-lan.ja.md)
 
 The fleet's own GPU engine behind chat completions, the `llm` role, is bought on
 AWS, so it exists on the `ecs-ec2` target only. If you already run an Agent Fleet on
-AWS, [08 Borrowing another deployment's engines](08-borrowed-engine.md) lets you use
+AWS, [09 Borrowing another deployment's engines](09-borrowed-engine.md) lets you use
 that fleet's `llm` role instead.
 
 This chapter is for neither of those. It points a `compose` / `native` / `docker`
 deployment at **a llama.cpp that is already running on your own network** (or that
 you are about to start). It is the chat counterpart of what
-[07 Image generation on your own ComfyUI](07-image-engine.md) does for images, in the
+[08 Image generation on your own ComfyUI](08-image-engine.md) does for images, in the
 same shape, pointed at a GPU machine under someone's desk, the Windows side of a WSL2
 machine, or a shared server.
 
 It is an environment variable and a model list you keep yourself. **The engine stays
 yours**: the Control Plane never starts it, never stops it, and never bills for it.
 
-## Two paths; the code change was the shortcut
+## Two paths: the shortcut and the table
 
 Turning the `llm` role into an externally managed row already had two paths.
 
@@ -169,7 +169,7 @@ This is the same as for the image engine in 07.
 See [ref/deploy-targets.md](../ref/deploy-targets.md) for which target
 supports which of these.
 
-## A member's own connection (docs/log/107)
+## A member's own connection
 
 Everything above is a **deployment administrator's** choice: `AF_LLM_URL` is read once at
 CP startup and applies to every member. There is a second, independent way to point lcpp at
@@ -190,7 +190,7 @@ administrator action and no CP restart.
   `allow_engine_llm` gate (ADR 0084) too.** A tenant that
   turned chat inference off for its members cannot stop a member from pointing their own
   session at a LAN box they can reach, the same way nothing stops a member from running any
-  other tool against a server on their own network. This is a deliberate trade (docs/log/107),
+  other tool against a server on their own network. This is a deliberate trade,
   not an oversight: there is no new gate to close it.
 - **The "check connection" button** dials the stored connection live and reports the
   engine's build (`build_info`), its real context window, and the model ids it currently

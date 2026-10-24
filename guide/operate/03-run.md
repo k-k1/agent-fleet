@@ -123,103 +123,7 @@ The commands are in the runbook's "Upgrade" section.
   on its own as `deploy/aws/ecs/efs-backup-check.sh --profile <p> --region <r>`; it exits `0` only
   when the backup is there or the deployment does not need one (`Persistence=delete`).
   **On `ecs-ec2`, a release that changes the slot launch template** reaches the slots you already
-  have only when they are replaced ([below](#ecs-ec2-replacing-slots-after-a-launch-template-change)).
-
-## ecs-ec2 slot pool
-
-On `ecs-ec2` a workspace runs as a task on an EC2 slot taken from a pool, and its home is an EBS
-volume that stays with its slot between starts. A super_admin manages the slots under
-**Admin → Slots**.
-
-### ecs-ec2: replacing slots after a launch template change
-
-A slot reads its user data only when it is launched, and a stopped workspace goes back to the
-same slot on its next Start, so a change to the slot launch template (a release's security
-setting, for example) does not reach the slots you already have. Replace them from the
-Console instead of terminating instances by hand.
-
-**Slots below `$Latest` are replaced automatically.** When a workspace starts and its home is on
-such a slot, that start moves it to a new slot exactly as a reservation does, but without the WS
-bar notice, and a free slot below `$Latest` is terminated by the sweeper. If no new slot can be
-launched (capacity, quota) the start still succeeds on the old slot, and starts within the next
-10 minutes stay on it without trying again. Each automatic move is in the audit log (`pool.slot_replace_auto`). The Slots tab shows
-**older than $Latest · replaced at next start** on these slots. Set
-`AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS=false` on the Control Plane to turn this off. Reserve slots
-yourself when a workspace must never be put back on its old slot (then a start that cannot launch
-a new slot fails instead):
-
-1. **Admin → Slots** (super_admin). The **Template** column shows the launch template
-   version each slot was launched from, marked **older than $Latest** when it is.
-2. **Reserve all N for replacement…** lists the slots below `$Latest` and the workspace on each,
-   and reserves exactly those once you confirm. **Replace at next start** on a row reserves one
-   slot (a reserved row then shows the label "replaced at next start"); **Cancel replacement** takes it back. Every reservation is in the audit log
-   (`pool.slot_replace_reserve` / `pool.slot_replace_cancel`, with the workspace it moves).
-3. Nothing happens to a running workspace. Its member sees **Moves to a new slot** in the WS bar,
-   and their next stop → start launches a new slot from `$Latest`, moves the home onto it and
-   terminates the old one. That start is about 25 seconds longer than usual. Files, repos and
-   logins come along: the home is never deleted.
-4. If no new slot can be launched (capacity, quota), the start fails with the reason and the
-   reservation stays. The member is never put back on the reserved slot; retry later. A
-   reserved slot with no workspace on it is terminated by the sweeper.
-
-`deploy/aws/ecs/README.md`, "Moving retained slots onto new user data", has the details and how
-to verify the result.
-
-### ecs-ec2: memory protection for the management plane
-
-The slot user data gives the SSM agent, docker
-and containerd a systemd `MemoryMin` (192 / 256 / 128 MiB), and a small helper service
-(`af-protect-mgmt`) finds the ECS agent, which runs as a docker container rather than under
-`ecs.service`, and gives its scope a 192 MiB `memory.min`. The helper re-applies this every 30
-seconds, so it follows agent restarts, and also lowers the OOM score of the ECS and SSM agents
-(on the SSM agent process that is already running at first boot too). `system.slice` carries the
-832 MiB total so the floors count. Under memory pressure the kernel then reclaims the workspace
-container's pages first, so a memory-hungry workspace is much less likely to leave a slot whose
-agents stop answering while EC2 still reports it healthy. The total sits inside the host reserve
-(`AF_ECS_EC2_HOST_RESERVE_MB`, at least 1024 MiB by default); if you set the reserve below 832,
-the protection is larger than the reserve. This is a launch template change: it creates a new
-`$Latest`, and existing slots pick it up only through the replacement above. It needs cgroup v2
-(the Amazon Linux 2023 default).
-
-### ecs-ec2: stopping a wedged slot
-
-A slot can be **wedged**: the EC2 instance is running and its status checks are `ok`, but its ECS
-agent is not connected, SSM no longer answers, and a member's home may still be attached. Every Start
-for that member then waits or fails. The Slots tab shows such a row as running with **(not accepting
-tasks yet)**, and gives it **Stop (force)** (super_admin).
-
-1. **Admin → Slots → Stop (force)** on the row, then confirm. The dialog names the
-   workspace on the slot. The server refuses a slot whose ECS agent is connected **and** whose SSM is
-   online (`slot_healthy`): the action is for slots that do not answer. A stopped slot
-   (`slot_not_running`) and a quarantined one (`slot_quarantined`) are refused too. The API takes
-   `{"override_healthy": true}` for the rare case where you must stop a healthy one; the Console never
-   sends it, and a workspace running on that slot is stopped with it.
-2. It ends the member's Start on that slot (their workspace reads as stopped), cancels the commands the
-   Control Plane queued on the instance (a pending umount or mount is what holds the home's lock), and
-   stops the instance. The stop is a normal shutdown first, so the kernel can unmount the home; if the
-   instance has not stopped after 3 minutes the Control Plane repeats it with Force, and pressing the
-   button again while the instance is `stopping` forces it at once. A timer never acts on an instance
-   that has been started again since.
-3. **The slot is not quarantined and the home stays on it.** Once the slot row shows asleep
-   (stopped), the member's next Start wakes this same slot through the ordinary path. **Wait for
-   that**: a Start made while the instance is still `stopping` gives up waiting after about two minutes
-   and leaves the workspace on "starting" until its claim expires; if that happens, stop the workspace
-   and start it again. The reboot clears whatever thrashed, and the slot's ECS agent
-   reconnects and reports a task that was still `STOPPING` on it. Keeping a box as evidence is what
-   quarantine is for, and routing dark slots there is a separate change (#2450).
-4. The result is on the page after the call (commands cancelled, whether Force was used) and in the audit
-   log (`pool.slot_force_stop`, with the workspace, both health signals and the counts).
-   The Control Plane role needs `ssm:ListCommands`, `ssm:CancelCommand` and
-   `ssm:DescribeInstanceInformation` for this (statement `SsmSlotForceStop` in `20-platform`):
-   **update the `20-platform` stack before using the button**, or the health check fails with
-   AccessDenied and the action cannot run.
-
-**A task still STOPPING.** When a slot's agent cannot report a stop, ECS keeps the workspace's previous
-task as `STOPPING`, and the member's next Start waits for it (the service allows one task at a time). The
-row shows **task STOPPING N min** for a slot whose agent is not connected. Once the instance is running
-again its agent reports the stop, which is what the member's next Start after a force-stop does; you can
-also start the instance from the EC2 console. The Control Plane does not do that on its own.
-Not verified against a live AWS account.
+  have only when they are replaced ([chapter 11](11-slot-pool.md#ecs-ec2-replacing-slots-after-a-launch-template-change)).
 
 ## Installing into an air-gapped network
 
@@ -405,9 +309,9 @@ art as it serves it.
 ### A start that never finishes
 
 **A start that never finishes is stopped**: a Workspace that has been starting for
-**30 minutes** with no task running (on ECS, typically a task the cluster refuses to
+longer than the start deadline ([Limits and defaults](../ref/limits.md#set-by-the-deployment)) with no task running (on ECS, typically a task the cluster refuses to
 place) is stopped, so it no longer holds capacity and the user can press **Start** again
-once the cause is fixed. The 30 minutes count from its last Start, or from when the
+once the cause is fixed. The deadline counts from its last Start, or from when the
 Control Plane first saw it starting if that is later (after a Control Plane restart, for
 instance), and it is checked once per usage sample (5 minutes), so the stop comes up to
 one sample late. The member gets a notification in the Console's notification center saying
@@ -420,9 +324,9 @@ it off too.
 
 ### Automatic idle stop (scale-to-zero)
 
-An idle claude session is halted after **1 hour**
-and a Workspace with nothing running is stopped after **2 hours**. That is the default;
-`AF_SESSION_IDLE_TIMEOUT` / `AF_INTERACTION_IDLE_TIMEOUT` (a session parked on a question or an approval) / `AF_WS_IDLE_TIMEOUT` / `AF_PRESENCE_IDLE_TIMEOUT` (how long a terminal with no typing still counts as someone being there; 30m) change it (per-tenant overrides are in the
+An idle claude session is halted, and a Workspace with nothing running is stopped, after the
+defaults in [Limits and defaults](../ref/limits.md#set-by-the-deployment);
+`AF_SESSION_IDLE_TIMEOUT` / `AF_INTERACTION_IDLE_TIMEOUT` (a session parked on a question or an approval) / `AF_WS_IDLE_TIMEOUT` / `AF_PRESENCE_IDLE_TIMEOUT` (how long a terminal with no typing still counts as someone being there) change it (per-tenant overrides are in the
 Admin UI: a tenant setting `0` opts that tenant out, and `0` in the env turns it off for the
 whole deployment). A tenant's values are the four fields under **Idle auto-stop** in its limits
 (**Session halt after**, **Halt when awaiting a decision**, **Max hold by background work**,
@@ -442,16 +346,16 @@ left open never keeps a Workspace warm.
 
 Background work (a dev server or a
 `run_in_background` task started by an idle session) holds the Workspace for at most
-**2 hours** (`AF_BACKGROUND_HOLD_MAX`, per tenant `background_hold_max`; `0` = unbounded);
+the background-hold limit ([default](../ref/limits.md#set-by-the-deployment); `AF_BACKGROUND_HOLD_MAX`, per tenant `background_hold_max`; `0` = unbounded);
 after that it no longer keeps the Workspace awake, and the "do not auto-stop" pin is the way to
 keep a genuinely long job.
 
 A Terminal claude, agy, codex, cursor, copilot, kiro or opencode session showing "working" keeps the
 Workspace awake only while it shows signs of life: if it has produced no output, state change or
-running tool process for **1 hour**, it stops counting. That is a limit on time without any
+running tool process for the no-sign-of-life limit ([Limits and defaults](../ref/limits.md#fixed-in-the-product)), it stops counting. That is a limit on time without any
 change, not on total working time. For claude and agy a running tool process counts as life; for
 codex, cursor, copilot, kiro and opencode only a pane repaint does (a spinner or elapsed-time
-counter counts), so a silent tool under a pane that stays static for an hour can lapse, while a
+counter counts), so a silent tool under a pane that stays static that long can lapse, while a
 stuck session whose spinner keeps animating keeps holding. Use the "do not auto-stop" pin for
 long silent work on those kinds. A Managed cursor, kiro, codex or opencode session is bounded the same way, on the runtime's own sign of life: its last message for that session, or a running tool (an open tool call or item, or for cursor and kiro a tool process under the runtime). It was measured on cursor-agent 2026.10.16, kiro-cli 2.31.0, codex 0.163.0 and opencode 2.0.32 with a local shell tool;
 whenever the Agent cannot tell what is running (a restart, a reconnect, a failed process-table read) the session keeps holding. opencode 1.x and Managed muse, lcpp and copilot are not bounded this way (see ADR 0055, 2026-10-17 addendum).

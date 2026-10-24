@@ -1,79 +1,19 @@
 ---
-audience: "a tenant administrator distributing integrations to the team"
-updated: "2026-09"
+audience: "a deployment administrator (super_admin) running the self-hosted inference engines and the speech engine"
+source_of_truth: "the Admin modal's Inference engines, API tokens and Read aloud sections; the engine stack's declarations for what exists"
+updated: "2026-10"
 ---
 
-# 04. Distributing MCP servers and controlling outbound traffic
+# 07. Inference engines and read aloud: the Admin panel
 
-English | [日本語](04-mcp-egress.ja.md)
+English | [日本語](07-engines.ja.md)
 
-Handing the team a shared tool is yours to do; controlling outbound traffic belongs
-to IT / the deployment administrator.
-
-## Distributing an MCP server to everyone in the tenant (your permission)
-
-Tenant settings → **"Operations → MCP distribution"** distributes an MCP server to every member of
-the tenant.
-A distributed server appears in each member's ⚙ Settings → MCP servers labelled **tenant**,
-ready to use from their assistants and sessions (what they see:
-[member/12 Settings](../member/12-settings.md#mcp-servers)).
-
-### Only remote (HTTP) can be distributed
-
-**stdio (running a command inside the workspace) cannot be distributed.** Distributing one
-would be equivalent to an admin running an arbitrary command in everybody's container. Only a
-**Streamable HTTP endpoint** can be distributed, specified by URL and headers. A member who
-needs stdio registers it personally in their own settings.
-
-### Decide how credentials are handled (this is the important one)
-
-**"Credential handling"** in the form offers two choices. It is the key design decision of a
-distribution.
-
-| Choice | What is distributed | Fits |
-|---|---|---|
-| Distribute the values | The header values as well (stored encrypted, handed over only when the server starts) | A shared read-only token: everyone reads with the same credential |
-| **"Each member enters the credential"** | **Only the endpoint and the header names**; each member enters the value in their own workspace | Per-person tokens, and anything you want attributable in an audit |
-
-**A distributed value is readable inside every member's container.** For anything you want
-attributed to a person, or any token with real power, choose "each member enters the
-credential". Distributed that way, the member's card offers an **"Enter values"** flow (until
-they do, the server is not used for them).
-
-The form is the same shape as a member's own: **display name** first (the **ID** is filled in
-from it until you edit it), then the URL, the credential choice above, and an
-**Authentication** selector: **None**, **Bearer token** or **Custom headers**. With "each member
-enters the credential", Bearer token distributes only the `Authorization` header name and the member
-is offered a token-only field; otherwise your token is stored encrypted and shown back as
-`Bearer ***`. Targets, target agents and **enabled** sit in a closed **Advanced** section whose
-summary line shows the current values; it opens by itself for a distribution that differs from the defaults.
-
-### When it takes effect
-
-- Each member's workspace **fetches the distribution every 5 minutes**.
-- It actually applies **from the next session they start**. Sessions already running do not
-  change.
-- **Disabling** keeps the definition but hands it to nobody. **Deleting** removes it from each
-  workspace at its next fetch.
-- For a member who has a **personal entry with the same name**, the distributed one wins (their
-  screen says so). Pick names that are unlikely to collide.
-
-### Practical notes
-
-- Register it personally in your own workspace first and run the **connection test**; move to
-  distribution once you know the configuration works.
-- To rotate a distributed token, **replace the value in the distribution first**, then revoke
-  the old token. Doing it the other way round breaks the tool for everyone until the next
-  fetch.
-- On a deployment with restricted egress, a distribution still fails if **the destination host
-  is not allowed**. Check the allowlist below first.
-
-## Read aloud (tenant-wide settings)
-
-Read aloud is super_admin only (the **Read aloud** section of the Admin modal). It starts and stops the VOICEVOX (Zundamon) engine and
-holds the **tenant-wide pronunciation dictionary**, which applies to everyone's text-to-speech
-(a member's personal dictionary overrides the same spelling). When a product name or an
-in-house term is consistently mispronounced, ask the super_admin to add it there.
+The fleet's own GPU engines and the speech engine are run from one place, the Admin modal, which only a
+super_admin sees. This chapter is that panel: what each mode costs, the GPU class, taking models in,
+reading the state. Where an engine comes from is a different question, with a chapter each:
+[08 your own ComfyUI](08-image-engine.md), [09 another deployment's engines](09-borrowed-engine.md) and
+[10 your own llama.cpp](10-llm-lan.md). A tenant administrator sees a reduced model screen only if you
+granted it ([admin 02](../admin/02-limits.md#taking-engine-models-in-only-if-your-tenant-was-granted-it)).
 
 ## Inference engines (self-hosted GPUs — super_admin only)
 
@@ -146,8 +86,8 @@ more VRAM.
   tag and **"Back to the default"** are shown permanently while it is. **Put it back when you
   are done.**
 - **Some classes cannot be bought.** Choose one above the account's GPU limit and the instance never
-  arrives; the ECS reason (`VcpuLimitExceeded`) is printed under the state as it came. Ask the
-  deployment admin for a limit increase.
+  arrives; the ECS reason (`VcpuLimitExceeded`) is printed under the state as it came. Ask AWS
+  for a GPU limit increase on the account.
 
 #### A Spot offer is not bought until "accept interruption" is ticked
 
@@ -295,27 +235,19 @@ parts of its own. **Qwen-Image-Edit 2509** and **2511** edit and inpaint only (n
 generation, no strength, no size choice), from up to three reference pictures. **Qwen-Image 2.1**
 both generates and edits (up to ten references) and **shares no file with them**: its
 autoencoder is a different one that the loader accepts and decodes to noise, so its parts are
-taken in as files of their own even where the edit families' are already held. A Qwen-Image 2.1
-row also needs the image engine's ComfyUI at **v0.37.0 or newer**; on an older one the row
-registers and enables, and every request fails at the engine.
+taken in as files of their own even where the edit families' are already held. The ComfyUI version a
+Qwen-Image 2.1 row needs is covered under [registering models by hand](08-image-engine.md#registering-the-models-by-hand).
 
 When a press is refused because something already holds its destination, the
 card names it (**held by** the registered row, the ingest job, the bucket object or the running
 task) and offers the one next step: **Register it**, **Complete it**, **Replace it**, **Forget the
 row**, or **Dismiss the job**, which removes a finished line from the ingest history.
 
-That press (putting the file in the bucket and creating a catalogue row) can be started by a
-**super_admin only**, by default. Where the operator grants it
-to a tenant, that tenant's **tenant_admins can take models in too** (Admin modal → the tenant →
-"Limits & idle" → **Inference engine model ingest**).
-
-The grant covers **starting an ingest and nothing else**. These four stay super_admin whether it is
-granted or not:
-
-- **Enabling** a model (making it something members can choose)
-- Changing the image role's **selected checkpoint**
-- **Forgetting** a row
-- Registering the deployment's **Hugging Face token** and **Civitai token**
+Starting an ingest is a **super_admin** action by default. You can grant it to a tenant (Admin modal → the
+tenant → "Limits & idle" → **Inference engine model ingest**), and that tenant's administrators then get a
+reduced model screen of their own. What the grant covers, what stays with you and what they see is written for
+them in [admin 02](../admin/02-limits.md#taking-engine-models-in-only-if-your-tenant-was-granted-it). The grant never
+makes the catalogue per tenant, as the paragraphs below explain.
 
 Both tokens live under the Admin modal's **API tokens** item, which opens even before any engine
 is registered. Without the Hugging Face token only ungated repositories can be taken in; without
@@ -328,21 +260,6 @@ enabled model is synced onto it at every start, so a per-tenant catalogue would 
 past ten minutes **at about five tenants, even with one model each** (measured; the sync is serial at
 roughly 159 MB/s). The boundary worth having is the GPU instance, not the catalogue. **Do not read this
 grant as isolation between tenants.**
-
-Who accepted which licence is kept on the row: **which tenant, which person, when, and which
-licence**, and the audit log carries the same four. A model taken in by a super_admin has no tenant against
-it, which means "the operator accepted on behalf of the whole deployment".
-
-#### What a tenant administrator sees
-
-A tenant_admin of a granted tenant gets a reduced screen under **Tenant settings → "Inference
-engine models"** (not the Admin modal; that one is super_admin only). It holds four things:
-**the model search, the plan card, the bucket entries their own tenant's jobs produced, and the list
-of catalogue rows** (id, name, family, licence and on/off; **read-only**). What it does not hold:
-**the mode (disabled / on demand / always on), the GPU class, the state of the instance, enabling
-and selecting a model, forgetting a row, and the API tokens**: each of those decides what
-every *other* tenant runs, or who pays for the GPU. The bucket shows **that tenant's own objects
-only**, and a super_admin's do not appear in it (a super_admin's own screen shows the whole bucket).
 
 ### Reading the current state
 
@@ -383,50 +300,52 @@ and the darker it is the longer the engine was up in that hour.
   running"; "what did it cost" is answered by the cloud cost screen. The one real price this
   deployment knows is the hourly rate of each instance it bought, and that is written once, in the
   audit log's `engine.<engine>.offer` line, with the instance type that was actually bought
-  ([03](03-audit-usage.md)).
+  ([admin 03](../admin/03-audit-usage.md)).
 
-## Controlling outbound traffic (egress — super_admin only)
+## Read aloud (the speech engine and the shared dictionary)
 
-This is the **Egress** section of the Admin modal. **It is super_admin only, so it does not appear
-in your tenant settings.** It belongs
-to IT / the deployment administrator, so ask them when you need it (see the request template at
-the end). The following is here so you know what happens on their side.
+The **Read aloud** section of the Admin modal has two jobs: it starts and stops the VOICEVOX
+(Zundamon) engine, and it holds the **tenant-wide pronunciation dictionary**.
 
-### log-only and enforce
+- **The engine** takes the same three modes as the inference engines (**Disabled** / **On demand** /
+  **Always on**). Starting takes 1–2 minutes, and until it is up Japanese read-aloud is covered by
+  Polly (silent where Polly is not set). On demand, the engine starts once demand builds up (2,000
+  characters in 5 minutes) and stops after 30 minutes with nobody listening; every automatic start
+  and stop is in the audit log. Disabling moves read-aloud to Polly at once and, on AWS, sets the ECS
+  desired count to 0 about a minute later. A deployment with no VOICEVOX engine that is not
+  ECS-managed either has nothing this screen could start, and the switch stays at disabled. A
+  speech engine cannot be borrowed from another deployment ([09](09-borrowed-engine.md)).
+- **The dictionary** applies to everyone's text-to-speech (a member's personal dictionary overrides
+  the same spelling): one `spelling=reading` per line, `#` for a comment. Other members pick up a saved
+  change on their next Console load. When a product name or an in-house term is consistently
+  mispronounced, a tenant administrator will ask you to add it there.
 
-- **log-only**: observes without blocking. Start here to **learn what actually flows**.
-- **enforce**: **blocks** anything not on the allowlist.
+## What a picture keeps out
 
-The order matters. Switching straight to enforce also kills the traffic you need: agent CLI
-updates, MCP endpoints, and so on. The correct progression is **observe in log-only → settle
-the allowlist → enforce**.
+Three places say what should NOT be drawn, and they are added together rather than overriding
+one another:
 
-### The allowlist, and requests from members
+- **the model row's own**: what this checkpoint's publisher recommends keeping out. Register it
+  in the same panel, on the row.
+- **the member's**, per request (`negative_prompt` on the image tool).
+- **yours, for the whole engine**: the box labelled "excluded from every image". It applies to
+  every request, whoever made it and whichever checkpoint answers.
 
-- Entries are added as a **host** or as **`.suffix.example.com`**, with an optional reason, and
-  **retired** when no longer needed. With no added entries, only the product's built-in
-  allowances apply.
-- When a member requests access from ⚙ Settings → MCP servers, it lands here as
-  **"Proposed (needs approval)"**. Review it and **approve** (it joins the allowlist) or
-  **reject**. On the member's side it sits showing "waiting for an administrator's approval".
-- **Observed destinations** shows, over a chosen period, where traffic actually went and
-  whether it was **allowed / blocked / a block candidate**. Clearing the block candidates while
-  still in log-only is what makes the switch to enforce uneventful.
+When all three are empty, a fixed default is used (`blurry, lowres, deformed, watermark, text`).
+A row that declares its own replaces that default rather than being added to it.
 
-## Development sign-in (dev OIDC IdP — super_admin only)
+🔴 **This is a negative prompt, not a content filter.** The words are handed to the sampler as
+something to steer away from. They are not a gate, a determined prompt outweighs them, and, most
+importantly, **the distilled families ignore them completely**: Z-Image and FLUX.2 klein
+sample at cfg 1, where the negative branch cancels out exactly, and FLUX.1 has no negative
+input at all. The words reach the guided families (SD 1.5, SDXL, SD3.5, Anima, Krea 2,
+Qwen-Image-Edit 2509 / 2511), and even there a row at cfg 1 cancels them the same way: a Turbo
+variant, or Krea 2 and Qwen-Image 2.1, whose recipes start at cfg 1 unless the row raises it.
+A request answered by a model that ignores them **says so in its warnings**, naming the
+family. If a deployment needs a guarantee about what can be produced, this is not where it
+lives.
 
-This section moved to [05 Who may sign in, and from where](05-access.md#development-sign-in-dev-oidc-idp-superadmin-only).
-
-## A template for asking upstream
-
-For anything outside a tenant_admin's permission, ask the super_admin / IT. Include these three
-and they can act on it as-is.
-
-- **What**: the host to allow (`api.example.com` or `.example.com`)
-- **Why**: which MCP server, for which work
-- **How long**: permanent, or until when
-
----
-
-- Previously: [03 Audit and usage](03-audit-usage.md)
-- What members see: [member/12 Settings](../member/12-settings.md#mcp-servers)
+The family also decides the size a request gets when it names none: the megapixel-era
+families generate at 1024×1024, SD 1.5 at 512×512, because asking that UNet for 1024 returns
+a plausible picture with the subject duplicated rather than an error. A row's own size list
+still overrides the family's.

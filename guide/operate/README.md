@@ -16,13 +16,19 @@ workflow is assumed; a general grounding in Docker, DNS, OAuth and backups is.
 
 1. [Choosing a deployment target](01-choose.md): which one, and what ECS really costs
 2. [Install](02-install.md): generating secrets, sign-in configuration, first start, first tenant
-3. [Running it](03-run.md): backup, restore, upgrades, air-gapped networks, shutdown
-4. [Securing it](04-secure.md): threat model, the residual risks, egress control, reporting channel
+3. [Running it](03-run.md): backup, restore, upgrades, air-gapped networks, idle stop and pausing
+4. [Securing it](04-secure.md): threat model, the residual risks, egress control, MCP sign-in and its trusted hosts, the development sign-in switch, offboarding, reporting channel
 5. [Sign-in methods](05-signin.md): end to end: what to create at Google / Entra ID / GitHub / another OIDC provider, which value goes where, and how to check it
 6. [Diagnosing it](06-diagnose.md): incident response and FAQ, including the three constraints that break silently
-7. [Image generation on your own ComfyUI](07-image-engine.md): pointing sessions at a ComfyUI on your own network, and the network that is then yours to close
-8. [Borrowing another deployment's engines](08-borrowed-engine.md): using an AWS fleet's llm and image engines from a deployment on your own host, and where the boundary between the two administrators falls
-9. [Chat inference on your own llama.cpp](09-llm-lan.md): pointing sessions' chat completions at a llama.cpp on your own network, the chat counterpart of chapter 7
+7. [Inference engines and read aloud](07-engines.md): the Admin panel for the fleet's own GPU engines (modes, GPU class, taking models in, reading the state), the speech engine and the shared dictionary
+8. [Image generation on your own ComfyUI](08-image-engine.md): pointing sessions at a ComfyUI on your own network, and the network that is then yours to close
+9. [Borrowing another deployment's engines](09-borrowed-engine.md): using an AWS fleet's llm and image engines from a deployment on your own host, and where the boundary between the two administrators falls
+10. [Chat inference on your own llama.cpp](10-llm-lan.md): pointing sessions' chat completions at a llama.cpp on your own network, the chat counterpart of chapter 8
+11. [The ecs-ec2 slot pool](11-slot-pool.md): replacing slots after a launch template change, memory protection for the management plane, stopping a wedged slot
+12. [Keys at rest](12-keys.md): AWS KMS custody, re-sealing earlier values, and a key of its own for each home
+
+Chapters 7 to 10 are the engines (one panel, three ways to get an engine); 11 and 12 are
+deep dives that apply to AWS only.
 
 What each target supports is [ref/deploy-targets.md](../ref/deploy-targets.md); who may
 do what is [ref/roles.md](../ref/roles.md).

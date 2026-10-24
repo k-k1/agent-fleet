@@ -276,7 +276,7 @@ The CP's key custodian (ADR 0005) then seals with data keys from KMS instead of 
 from `AF_MASTER_KEY`. Nothing stored before is re-encrypted and `AF_MASTER_KEY` stays
 required; KMS errors fail closed. The trade-offs are in
 [`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#custodiankmskeyarn) and the operator's view in
-`guide/operate/04-secure.md`.
+`guide/operate/12-keys.md`.
 
 #### A key of its own for each home (optional, kms only)
 
@@ -293,7 +293,24 @@ stops keys for new homes (existing ones keep theirs, no reconnecting), while goi
 does not know the home's key, or losing `home_dek`, can need credentials reconnected; unmigrated homes and old snapshots are
 not shredded (#1956). The per-workspace SSM parameter `secret-key-next` sits under `/af-ws/*`,
 which the CP role (`SsmWorkspaceParams`) and the workspace execution role already cover. Details:
-[`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#workspacedekrandom) and `guide/operate/04-secure.md`.
+[`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#workspacedekrandom) and `guide/operate/12-keys.md`.
+
+#### Running `af-cp` commands against the Control Plane's database
+
+`af-cp rewrap-keys` (re-seal values stored before the KMS switch) and `af-cp home-dek-status` (count, list
+or remove per-home keys) need the Control Plane's own environment: the same `AF_MASTER_KEY`,
+`AF_KMS_KEY_ID`, database settings and task role. On `ecs` / `ecs-ec2`, run them as a one-off task of
+the Control Plane's task definition with the command overridden, in the Control Plane's subnets and
+security group. The output is in the Control Plane's log group. Start with `--dry-run`:
+
+```bash
+aws ecs run-task --cluster <cluster> --launch-type FARGATE \
+  --task-definition <the Control Plane task definition> \
+  --network-configuration 'awsvpcConfiguration={subnets=[<private subnet>],securityGroups=[<Control Plane security group>]}' \
+  --overrides '{"containerOverrides":[{"name":"cp","command":["rewrap-keys","--dry-run"]}]}'
+```
+
+What each command does and when to run it: `guide/operate/12-keys.md`.
 
 ### Remote MCP and MCP OAuth (optional, off by default)
 

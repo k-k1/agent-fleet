@@ -24,13 +24,11 @@ administrators are also working members: for everyday development read
 ## Chapters
 
 1. [Members](01-members.md): adding, removing, and the offboarding sequence
-2. [Resource limits and sessions](02-limits.md): per-member limits, what is running, force-stopping
-3. [Audit and usage](03-audit-usage.md): who changed what, running time, cost
-4. [Distributing integrations](04-mcp-egress.md): handing servers to the whole team
+2. [Resource limits and sessions](02-limits.md): per-member limits, engine access, the limit board, home size and machine, what is running, force-stopping
+3. [Audit and usage](03-audit-usage.md): who changed what, running time, cloud cost
+4. [MCP distribution and outside access](04-mcp-outside.md): handing servers to the whole team, outside apps connecting through MCP OAuth, memory used from outside Agent Fleet
 5. [Who may sign in, and from where](05-access.md): sign-in methods, login rules, allowed networks, your own OAuth apps
-6. [Branch naming rules](06-branch-rules.md): the team's default branch names and where branches start
-7. [Member defaults](07-member-defaults.md): the agent new members are pointed at
-8. [Memory from outside Agent Fleet](08-external-memory.md): allow or block members using their memory from an external agent
+6. [Team defaults](06-team-defaults.md): the team's branch naming rules, and the agent new members are pointed at
 
 ## Getting in
 
@@ -49,11 +47,15 @@ effect crosses tenants, or that could lock people out, sits upstream of you.
 
 | Matter | Owner |
 |---|---|
-| Adding and removing members, per-member session limits, force-stopping a workspace, reviewing audit and usage, **the whole offboarding sequence** | **you** |
-| Distributing a shared integration server to the team, the team's default branch naming rules, the agent new members are pointed at | **you** |
+| Adding and removing members, per-member session limits, force-stopping a workspace, reviewing audit, running time and cloud cost, **the whole offboarding sequence** | **you** |
+| Making a member's home bigger, and choosing the machine a member's workspace runs on (where the deployment offers it) | **you** |
+| Which members may use the self-hosted chat and image engines (**Engine access**, within what the deployment administrator allows your tenant), and taking engine models in when your tenant was granted that | **you** |
+| Whether members may publish where they stand on usage limits (the **Limit board**) | **you** |
+| Distributing a shared integration server to the team, whether outside apps may connect through MCP OAuth, and whether members may use their Agent Fleet memory from outside (**External memory access**) | **you** |
+| The team's default branch naming rules, the agent new members are pointed at | **you** |
 | Registering a sign-in method, login rules you can read, restricting where members connect from, your tenant's own OAuth apps | **you** (a sign-in method still needs approval) |
-| Creating tenants, tenant-wide limits and idle auto-stop, granting admin rights, changing the login rules, approving a sign-in method | deployment administrator |
-| Egress control, the speech engine, the shared dictionary, the development OIDC IdP switch | deployment administrator |
+| Creating tenants, tenant-wide limits and idle auto-stop, whether your tenant may use the self-hosted engines at all and take models in, granting admin rights, changing the login rules, approving a sign-in method | deployment administrator |
+| Egress control, the speech engine, the shared dictionary, the MCP sign-in hosts, the development OIDC IdP switch | deployment administrator |
 | Backups, upgrades, host incident response | deployment administrator (often the same person as IT / SRE) |
 
 When something cannot be completed with your own authority, the people to consult are
@@ -74,14 +76,3 @@ Touring it once, before it matters, is what stops you being lost when it does.
 
 Day to day, the rhythm is: a glance at Sessions in the morning, an export from Running
 time at month end.
-
-## What belongs on this shelf
-
-- Procedures whose effect lands on **other people**.
-- How to read the administrator-facing views, and what each number does and does not
-  include.
-
-What does not: capability facts (they are [ref/](../ref/README.md)), anything a member
-does for themselves ([member/](../member/README.md)), standing up or upgrading the
-deployment ([operate/](../operate/README.md)), and implementation vocabulary: a tenant
-administrator has no shell on the host, and this shelf never assumes one.
