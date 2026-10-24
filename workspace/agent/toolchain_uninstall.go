@@ -174,8 +174,8 @@ func selectedMajor(sel string) string {
 
 // independentJDK reports whether sys is a usable JDK that removing home leaves intact.
 // Final targets are not enough (a link can pass through home and come back), so sys
-// must be a real directory with no symlink on the path above it, outside home, and
-// self-contained by the same rule the Node
+// must be a real directory with no symlink on the path above it, outside home, sharing
+// no directory with home (bind mounts), and self-contained by the same rule the Node
 // prune uses: only relative file links that never climb above the tree, no directory
 // links. Temurin 21/25 trees pass (in-tree file links only); a tree that does not is no
 // fallback, which only means its home copy cannot go while that major is selected.
@@ -205,8 +205,69 @@ func independentJDK(sys, home string) bool {
 	if !selfContained(sys) {
 		return false
 	}
+	// Paths can differ while the directories are the same: a bind mount of the home
+	// JDK (or of a subtree) shows up under /usr/lib/jvm with its own path and no link.
+	if sharesDirectory(home, sys) {
+		return false
+	}
 	fi, err := os.Stat(filepath.Join(sys, "bin", "java"))
 	return err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o111 != 0
+}
+
+// sharesDirectory reports whether any directory in tree b is the same directory
+// (device and inode) as one in tree a, as a bind mount makes it; or whether either tree
+// cannot be fully read. Files are not compared: a hard-linked file survives the removal
+// of its other name.
+func sharesDirectory(a, b string) bool {
+	type id struct{ dev, ino uint64 }
+	dirID := func(fi os.FileInfo) (id, bool) {
+		st, ok := fi.Sys().(*syscall.Stat_t)
+		if !ok {
+			return id{}, false
+		}
+		return id{uint64(st.Dev), uint64(st.Ino)}, true
+	}
+	seen := map[id]bool{}
+	if err := filepath.WalkDir(a, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			fi, err := d.Info()
+			if err != nil {
+				return err
+			}
+			k, ok := dirID(fi)
+			if !ok {
+				return fmt.Errorf("no inode for %s", p)
+			}
+			seen[k] = true
+		}
+		return nil
+	}); err != nil {
+		return true
+	}
+	shared := false
+	if err := filepath.WalkDir(b, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			fi, err := d.Info()
+			if err != nil {
+				return err
+			}
+			k, ok := dirID(fi)
+			if !ok || seen[k] {
+				shared = true
+				return filepath.SkipAll
+			}
+		}
+		return nil
+	}); err != nil {
+		return true
+	}
+	return shared
 }
 
 // rootBusy reports whether an install into root is running: the root's flock is held

@@ -516,3 +516,26 @@ func TestIndependentJDKRejectsAncestorLinkThroughHome(t *testing.T) {
 		t.Fatal("a system path through home counted as a fallback")
 	}
 }
+
+// sharesDirectory sees the same directory under two paths. A bind mount cannot be made
+// here (no mount privilege), so the case is built from a tree and its own subtree,
+// which share directories the same way a bind of a subtree would.
+func TestSharesDirectory(t *testing.T) {
+	a := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(a, "lib", "server"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !sharesDirectory(a, filepath.Join(a, "lib")) {
+		t.Fatal("a subtree's directories were not seen as shared")
+	}
+	b := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(b, "lib", "server"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if sharesDirectory(a, b) {
+		t.Fatal("two separate trees were seen as shared")
+	}
+	if !sharesDirectory(a, filepath.Join(b, "missing")) {
+		t.Fatal("an unreadable tree must count as shared (refuse when unsure)")
+	}
+}

@@ -171,7 +171,8 @@ every Node major under `~/.nvm` with version, size and whether it may be removed
 `DELETE /env/jdk/{major}` / `DELETE /env/node/{major}` remove home-volume trees only
 (`toolchain_uninstall.go`). They refuse the selected major (an exact `22.23.4` counts as
 22) unless an independent `/usr/lib/jvm` copy remains — a real directory, with no symlink
-on the path above it, outside home, that
+on the path above it, outside home, sharing no directory (device and inode) with the home
+copy so a bind mount of it does not count, that
 passes the same self-contained link check as the Node prune and has a working `bin/java`
 (Temurin 21/25 do; Temurin 8's directory link means it is no fallback) — and refuse
 while an install runs, including one started from a terminal: install-jdk / install-node
