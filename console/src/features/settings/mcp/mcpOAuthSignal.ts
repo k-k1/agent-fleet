@@ -106,6 +106,8 @@ export const takeSameTab = (): boolean => {
 // texts, nothing received is shown as it came.
 export function outcomeText(tr: typeof t, outcome: SignInDone["outcome"]): string {
   if (outcome === "ok") return tr("mcp.oauth_return_ok_generic");
-  const why = tMaybe("mcp.oauth_return_" + outcome) ?? tr("mcp.oauth_return_failed_generic");
+  // Per-reason texts live under their own prefix so a reason code can never name a wrapper key
+  // (mcp.oauth_return_failed is the "{reason}" template itself); "failed" has no text of its own.
+  const why = (outcome !== "failed" && tMaybe("mcp.oauth_return_reason_" + outcome)) || tr("mcp.oauth_return_failed_generic");
   return tr("mcp.oauth_return_failed", { reason: why });
 }
