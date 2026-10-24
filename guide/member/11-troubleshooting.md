@@ -220,9 +220,9 @@ Candidates rated **Keep** are left alone by cleanup, and the row states why.
   it anyway, force-delete from the Console.
 - **Delete-locked**: clear the lock from the session's ⋯ menu.
 
-Note that **only deleting a worktree cannot be undone** (the working copy goes; the history,
-the remote and the branch stay). Deleted sessions and branches are stashed in the **trash**,
-so the "Trash (restore)" tab of the cleanup modal brings them back
+Deleted sessions, branches and worktrees are stashed in the **trash**, so the "Trash
+(restore)" tab of the cleanup modal brings them back (a worktree at the commit it was on, with
+its uncommitted changes when the row says so)
 ([02](02-sessions.md#tidying-up-in-bulk-cleanup)).
 
 ### A model I want isn't offered, or launching with it is refused
@@ -386,7 +386,7 @@ terminal.
   Move focus to another pane to get the app operations back.
 
 **?** opens the list of what is bound to what ([05](05-terminal.md#shortcuts),
-[12](12-settings.md#keys)).
+[12](12-settings.md#keyboard)).
 
 ### "Your home disk is nearly full"
 
@@ -408,7 +408,7 @@ says why:
 | … because the home disk is full | Free some space, then restart the workspace. |
 | … because of a network error | Restart the workspace to try again. |
 | … because the download did not match its checksum | Restart the workspace to try again. |
-| … See Settings › Toolchains and the workspace log | Read the reason in ⚙ Settings → Toolchains ([12](12-settings.md#toolchain)). |
+| … See Settings › Toolchains and the workspace log | Read the reason in ⚙ Settings → Toolchains ([12](12-settings.md#toolchains)). |
 
 Your tenant administrator sees the same failure on your card in the member list.
 

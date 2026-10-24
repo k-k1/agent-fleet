@@ -443,8 +443,8 @@ reachable `PUBLIC_BASE_URL`:
 
 Tokens never reach the Control Plane: the Agent keeps them in the member's encrypted store. The Control Plane writes
 `mcp.client_oauth` audit rows (`started`, `completed`, `failed`, `disconnected`) that name the server and the
-authorization server, never a code or token. Members use this from the Console once its sign-in UI ships; until then the
-paths exist but nothing in the Console starts a sign-in.
+authorization server, never a code or token. Members sign in from Settings › MCP servers
+([member guide 12](../member/12-settings.md#mcp-servers)).
 
 ### Reading what a client sent to `/mcp`
 
@@ -530,7 +530,7 @@ into answers, logs or commits is part of the agent-side instructions as well.
     service account, Workload Identity on GKE). Blocking that route is the cluster's job (a
     NetworkPolicy egress rule, or GKE metadata concealment); the Control Plane does not do it.
   - **ecs-ec2**: the slot user data sets `ECS_AWSVPC_BLOCK_IMDS=true`; retained slots have to
-    be replaced: reserve them in Settings → Admin → Slots ([03-run](03-run.md), "ecs-ec2:
+    be replaced: reserve them in Admin → Slots ([03-run](03-run.md), "ecs-ec2:
     replacing slots after a launch template change").
 
   `AF_WS_WORKLOAD_AWS=1` on the Control Plane hands the ECS task role back to workspaces and

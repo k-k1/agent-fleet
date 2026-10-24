@@ -116,7 +116,7 @@ out an independent working copy (worktree) per session.
 
 ### Working folder — starting inside a subfolder
 
-**"Working folder"**, under **"More"** in "Start working", narrows where the agent starts: leave it empty to start
+**"Working folder"**, under **"Location"** in "Start working", narrows where the agent starts: leave it empty to start
 at the working copy root (the default), or pick a folder beneath it, which is useful in a monorepo where
 a task only concerns `console/` or `apps/web`. Type the path or press **"Browse"** to walk the
 repository's folders.
@@ -338,7 +338,7 @@ tidy)"** in the **Repositories** heading. It is split into two stages so that **
 things stop for you first**.
 
 - **① Tidy sessions**: **"Tidy all"** archives stopped AI sessions and moves shell / SSM to the trash.
-- **② Delete working copies and branches**: **"Delete the safe ones"** removes only what was
+- **② Delete working copies and branches**: **"Delete all safe"** removes only what was
   judged safe.
 - **Cache of deleted sessions**: files you pasted or attached into a session, and images codex
   looked at, stay on disk after the session is deleted. Once the session (or assistant chat) is
@@ -412,7 +412,7 @@ this turn") and the notification centre says so (**"Stopped by its budget"**). I
 runs on to **twice** the budget, the session is halted at once, mid-turn, and the notification says
 **halted mid-turn**.
 
-- **Setting it.** In the start dialog under **Advanced → Budget (USD)**; later from the session's
+- **Setting it.** In the start dialog under **More → Budget (USD)**; later from the session's
   menu, **"Spend budget…"**. Settings › Agents › **"Budget for new sessions"** is the default for
   every launch that names none, including sessions started by `create_session` and by schedules.
   0 means no budget.
@@ -935,11 +935,7 @@ made visible.
 You can let a session see **the fleet it is part of**. If the messaging above is for telling,
 this is for looking.
 
-It is **off by default**. Turn it on under **Settings > Agents > Sessions > "Fleet observation
-from sessions"**. The change applies **from the next session you start**; sessions already
-running keep their current tools until restarted.
-
-It opens exactly four things.
+Every session has it; there is nothing to turn on. It covers these things.
 
 - **Another session's state**: working, waiting for input, or stopped. A session can check
   whether the peer it handed work to is still going, without asking you.
@@ -949,10 +945,13 @@ It opens exactly four things.
 - **Adding one memo**: leaving you a note about something outside what you asked for. "There
   is another bug next to the function I fixed", "this runbook is out of date": **a report set
   down without interrupting the work**. When and where the queue gets sent stays your call.
+- **Correcting a memo**: when a note it left turns out to be wrong or incomplete, it corrects
+  that note instead of adding a second one that contradicts it. It cannot delete a memo.
 
-**Nothing that acts is added.** Instructing another session, answering its questions, approving
-its plans, starting, stopping or deleting sessions, and sending the memo queue all remain the
-job of the fleet operator ([08](08-organising.md)) and Console.
+**None of this acts on another session.** Instructing another session, answering its questions,
+approving its plans, starting, stopping or deleting sessions, and sending the memo queue remain
+the job of the fleet operator ([08](08-organising.md)) and Console — except what you open with
+the two settings above (messages between sessions, and child sessions).
 
 There is one deliberate limit. A session can see **that** another session is stopped on a
 question or waiting for plan approval, **but not the text of it**. Being able to read it would
@@ -1041,7 +1040,7 @@ You can show a session's conversation to another member of the same tenant, **re
 3. Pick the **recipient** by searching for their email address.
 4. Pick the **permission**.
    - **View only**: reading, nothing else.
-   - **May propose**: the recipient can **propose** something to send, and **it does not reach
+   - **Can propose**: the recipient can **propose** something to send, and **it does not reach
      the agent until you approve it**.
 5. **"Unshare"** in the share list ends it.
 

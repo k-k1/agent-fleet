@@ -52,7 +52,7 @@ Defaults are the Control Plane's own; `deploy/compose/.env.example` annotates mo
 
 | Limit | Default | Set by |
 |---|---|---|
-| Workspace memory | 5g | `WS_MEMORY` |
+| Workspace memory | 1g (the Compose example and the local scripts set 5g; on ECS it comes from the `WsTaskMemory` parameter, 2048 MiB) | `WS_MEMORY` |
 | Workspace working disk (Fargate) | 50 GiB | `AF_ECS_WS_DISK_GB` |
 | Per-user home volume (EC2 target) | 50 GiB | `AF_ECS_EC2_HOME_GB` |
 | Graceful stop | 30 s | `AF_STOP_GRACE_SEC` |

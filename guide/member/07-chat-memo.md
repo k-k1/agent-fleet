@@ -299,8 +299,8 @@ retype. **"Open in pane"** on the plan card opens the body in a pane marked for 
 **selecting a passage lets you attach a comment to it**.
 
 The plan card then sends them all at once with **"Send comments (N)"**. For a plan awaiting
-approval it reads **"Send comments and reject (N)"**; delivering the body requires closing the
-approval dialog, so the two go together. The agent comes back with a revised plan that takes
+approval it reads **"Send feedback and keep planning (N)"**: the plan is not approved, because
+delivering the body requires closing the approval dialog, so the two go together. The agent comes back with a revised plan that takes
 your comments into account.
 
 ### Having another session review the plan

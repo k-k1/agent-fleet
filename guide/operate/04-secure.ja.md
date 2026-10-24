@@ -371,7 +371,7 @@ Control Plane はそのために 2 つの公開パスを持ち、どちらも到
   `/oauth/` の下のほかのパスは公開しません。コールバックは逆に、メンバーの識別ヘッダーが付くよう**ゲートウェイを通す**必要があります。識別がなければサインインは失敗します。`https` の基底 URL がない場合や認可サーバーが取得できない場合、Agent は動的クライアント登録に切り替えるか、メンバーにクライアント ID を尋ねます。
 
 トークンは Control Plane に届きません。Agent がメンバーの暗号化ストアに保存します。Control Plane は `mcp.client_oauth` の監査行（`started` / `completed` / `failed` / `disconnected`）に、
-サーバーと認可サーバーの名前だけを書き、コードやトークンは書きません。メンバーは Console のサインイン UI が出てから使えます。それまでは、パスはあっても Console からサインインを始める操作はありません。
+サーバーと認可サーバーの名前だけを書き、コードやトークンは書きません。メンバーは設定 › MCP サーバーからサインインします（[メンバー向け 12](../member/12-settings.ja.md#mcp-サーバー)）。
 
 ### クライアントが `/mcp` に送ったものを読む
 
@@ -450,7 +450,7 @@ mcp-call http_method="POST" status=400 latency_ms=2 principal="grant:<id>" clien
     Workload Identity）を塞ぎません。その経路を塞ぐのはクラスタの役目です（NetworkPolicy の egress 規則、
     または GKE のメタデータ隠蔽）。Control Plane はそれをしません。
   - **ecs-ec2**: スロットのユーザーデータが `ECS_AWSVPC_BLOCK_IMDS=true` を設定します。残っている
-    スロットは入れ替えが要ります。設定 → 管理 → スロットで入れ替え予約してください（[03-run](03-run.ja.md)
+    スロットは入れ替えが要ります。管理 → スロットで入れ替え予約してください（[03-run](03-run.ja.md)
     「ecs-ec2: 起動テンプレートを変えたあとのスロットの入れ替え」）。
 
   Control Plane の `AF_WS_WORKLOAD_AWS=1` は ECS のタスクロールをワークスペースに戻し、SDK のメタデータ参照の

@@ -507,10 +507,11 @@ shells started afterwards** (running ones and existing processes pick them up af
 workspace again).
 
 - **Time zone (TZ)**: the default is Japan time. Applying a change requires stopping and starting the workspace.
-- **Node.js / Java (JAVA_HOME)**: pick the versions to use. The Java list also offers versions that are
-  **not in this workspace yet**; picking one shows an **Install** button that fetches it right there (about
-  200MB, into your home volume, so it survives restarts). Sessions started after it finishes get it as
-  `JAVA_HOME`, with no stop and start needed.
+- **Node.js / Java (JAVA_HOME) / Go**: pick the versions to use. The Node.js and Java lists also offer
+  versions that are **not in this workspace yet**; picking one shows an **Install** button that fetches it
+  right there (Java about 200MB; both go into your home volume, so they survive restarts). When a newer
+  patch of the Java version in use is out, **Update to …** fetches it the same way. Sessions started after
+  it finishes use it (Java as `JAVA_HOME`), with no stop and start needed.
 - **Agent CLI updates**: "Update the agent CLIs and rtk to the latest on start" (covers claude / opencode / codex / cursor / GitHub Copilot / [Antigravity (agy)](06-agents.md#antigravity-agy) / rtk). Default is OFF (pinned to the versions baked into the image). Kiro is not part of this toggle; its version is fixed by the image rebuild / on-demand install and its own auto-update is kept off. Neither is Muse Code: it is installed from its card at the build this image pins and never updates itself; when a newer pinned build arrives with the image, the card offers **"Update Muse Code"** ([06](06-agents.md#muse-code)). lcpp has no CLI in the workspace to update: its engine belongs to the deployment.
 
 ### Recreating the workspace (danger zone)

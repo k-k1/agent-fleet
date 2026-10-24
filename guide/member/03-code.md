@@ -19,8 +19,13 @@ workspace, so the workspace must be started).
 OAuth (device flow) is three steps: **Copy the code** shown, **Open the link and paste**,
 then **Wait for approval**. Once connected, your handle and email are displayed.
 
-**If "Connect via OAuth" is not offered**, your tenant has not registered an OAuth app for that
-provider. It is a tenant setting, not something you can enable yourself: ask a tenant
+If your tenant connects GitHub through a **GitHub App**, the card says so: the connection reaches
+only the repositories the app is installed on. Install it on your account or organization and
+choose the repositories with **"Install the app / choose repositories"**, before or after
+connecting; the same link later adds or changes them.
+
+**If "Connect via OAuth" is not offered**, your tenant has no OAuth app for that provider (for
+GitHub, a tenant administrator chose none). It is a tenant setting, not something you can enable yourself: ask a tenant
 administrator to add it under **Tenant settings → Integrations → Integration OAuth apps**. Connecting
 with a token works in the meantime and is not a lesser connection.
 
@@ -320,7 +325,7 @@ Opening "Changes" shows the list of changed files (`{repository name} — Change
 
 - Use the **stage** / **unstage** buttons on each row to move files in and out. For tracked files you can also **Discard changes** (with a "This cannot be undone." confirmation).
 - Write in the **Commit message** field below, check **"Stage all tracked (-a)"** if needed, then click **"Commit"**. If the message is empty, "A commit message is required" is shown.
-- The commit author (identity) can be overridden from this screen. The resolution order is "repo override > provider > global default" (also configurable in ⚙Settings → "Git").
+- The commit author (identity) can be overridden from this screen. The resolution order is "repo override > provider > global default" (also configurable in ⚙Settings → "Git hosting").
 
 ### History and diffs
 
@@ -332,11 +337,10 @@ Diffs can be folded per file, and you can adjust how they are shown with "Expand
 ## Deleting a working copy
 
 When you no longer need a working copy, use **"Delete the working copy"** from the repository
-row's right-click menu or from the delete action in the commit graph header. Only the local
-working copy is removed; history and the remote remain. If there are uncommitted / unpushed
-changes, a second confirmation ("Force delete") warns you that they will be lost. If sessions are
-still running in it, the confirmation offers to stop them first rather than turning you away
-([02](02-sessions.md#clearing-one-finished-job-deleting-a-working-copy)).
+row's right-click menu. Only the local working copy is removed; history and the remote remain.
+A copy with uncommitted or unmerged work is not ticked for you, so ticking it is the "delete it
+anyway" confirmation. If sessions are still running in it, the dialog offers to stop them first
+rather than turning you away ([02](02-sessions.md#clearing-one-finished-job-deleting-a-working-copy)).
 
 ## Push and authentication
 
@@ -477,7 +481,7 @@ toggle** to select SVN, then enter the **Repository URL** and, if needed, a **su
 - **Entering credentials later**: you do not have to check out again if you declined. Use
   **"Re-authenticate (svn)"** on the row menu (an update that fails on authentication offers it
   by itself). What you enter is checked against the server before it is saved. Servers saved this
-  way are listed under Settings › Connections › Git, where you can also add or forget one.
+  way are listed under Settings › Connections › Git hosting, where you can also add or forget one.
 - **Self-signed certificates**: if the certificate cannot be trusted (e.g. an in-house server),
   turn on "Trust self-signed certificate" in the modal. This is a per-server opt-in that
   **disables certificate verification for that server**, and it persists across future updates.
