@@ -855,6 +855,40 @@ describe("return tab", () => {
     expect(open).toHaveBeenCalledWith("mcp");
     open.mockRestore();
   });
+
+  it("'Close this tab' calls window.close() only on click and shows no hint when the tab went away", async () => {
+    vi.useFakeTimers();
+    const close = vi.fn();
+    vi.stubGlobal("close", close);
+    at("?mcp_oauth=ok&server=mcp-1");
+    await mount(<McpOAuthReturn booted />);
+    expect(close).not.toHaveBeenCalled(); // never on mount
+    vi.stubGlobal("closed", true);
+    await click(button("Close this tab"));
+    await act(async () => void vi.advanceTimersByTime(1000));
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(host!.querySelector('[data-testid="mcp-oauth-return-close-failed"]')).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("when the browser refuses to close the tab, hints and keeps 'Open the Console in this tab' working", async () => {
+    vi.useFakeTimers();
+    const close = vi.fn();
+    vi.stubGlobal("close", close);
+    vi.stubGlobal("closed", false);
+    const open = vi.spyOn(useSettingsUI.getState(), "openSettings").mockImplementation(() => {});
+    at("?mcp_oauth=ok&server=mcp-1");
+    await mount(<McpOAuthReturn booted />);
+    await click(button("Close this tab"));
+    expect(host!.querySelector('[data-testid="mcp-oauth-return-close-failed"]')).toBeNull(); // not before the grace period
+    await act(async () => void vi.advanceTimersByTime(1000));
+    expect(host!.querySelector('[data-testid="mcp-oauth-return-close-failed"]')!.textContent).toContain("could not be closed");
+    await click(button("Open the Console in this tab"));
+    expect(open).toHaveBeenCalledWith("mcp");
+    expect(host!.querySelector('[data-testid="mcp-oauth-return"]')).toBeNull();
+    open.mockRestore();
+    vi.useRealTimers();
+  });
 });
 
 describe("Sign in with the status read pending or failed", () => {

@@ -59,6 +59,8 @@ export const tools = {
   "mcp.oauth_unfinished_dcr": "動的登録が使えるサーバーなら、下のボタンで動的登録に切り替えてやり直せます。",
   "mcp.oauth_unfinished_trust": "それでも進まないときは、サーバーの運営者に、このデプロイのホストを信頼するよう依頼してください。別の Agent Fleet のデプロイなら、その管理者の「信頼するクライアントのホスト」設定です。",
   "mcp.oauth_return_tab_close": "このタブは閉じて構いません。サインインを始めた Console のタブに結果が反映されます。",
+  "mcp.oauth_return_close": "このタブを閉じる",
+  "mcp.oauth_return_close_failed": "このタブはここから閉じられませんでした。ご自身で閉じるか、もう一方のボタンでこのタブに Console を開いてください。",
   "mcp.oauth_return_stay": "このタブで Console を開く",
   "mcp.oauth_dcr_note": "前回のサインインはクライアント ID メタデータ文書を使い、最後まで進んでいません。認可サーバーに拒否された場合は、動的登録でやり直せます。",
   "mcp.oauth_client_title": "クライアント ID が必要です",
