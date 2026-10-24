@@ -208,7 +208,7 @@ Do **not** export dummy keys (`AWS_ACCESS_KEY_ID=test`) instead. Every command w
 forgets `--endpoint-url` sends its request to real AWS (where the dummy keys are rejected) instead of stopping
 with "Unable to locate credentials" before anything leaves the workspace. How much a forgotten profile protects
 you depends on the workspace: where a command without a profile stops with that error (see `af-aws-exec` in [16](16-cloud-accounts.md)),
-it stops; where the workspace's own role is handed back (`AF_WS_WORKLOAD_AWS=1`) or on the native runtime with
+it stops; where your administrator hands the workspace's own role back or on the native runtime with
 the machine's own credentials, a command without a profile runs as that identity against real AWS. There,
 never leave the profile out. MiniStack is never run through `af-aws-exec`, which removes endpoint settings on
 purpose.

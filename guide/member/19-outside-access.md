@@ -86,7 +86,7 @@ Your tenant administrator can disable MCP OAuth for the tenant. This revokes its
 
 Under each connected app, and under each Personal Access Token, choose **Recent calls** to see the last 50 requests made with it: time, HTTP method and status, the JSON-RPC methods (each item of a batch), the protocol era and version, the client name, which `Mcp-Method` / `Mcp-Name` headers were sent, the error returned and, for `tools/list`, how many tools came back. Tokens, authorization headers, tool arguments and results are never recorded.
 
-The list is kept in memory by the Control Plane only. It disappears when the Control Plane restarts, and with several Control Plane replicas each one keeps its own list, so you see only the requests that replica served — press **Refresh** a few times, or ask your operator to read the Control Plane log, where every request (including those refused before sign-in) is one `mcp-call` line.
+The list is kept in memory by the Control Plane only. It disappears when the Control Plane restarts, and with several Control Plane replicas each one keeps its own list, so you see only the requests that replica served — press **Refresh** a few times, or ask your operator to read the Control Plane log, where every request is recorded, including those refused before sign-in.
 
 ### Using Agent Fleet memory from an external agent
 
