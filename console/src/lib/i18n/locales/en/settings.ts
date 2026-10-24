@@ -101,7 +101,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "tokens.intro":
     "A token for driving workspace sessions over MCP from your local Claude (Claude Code / Desktop). It inherits the issuer's permissions; pick the scope here.",
   "tokens.session_warning":
-    "Do not give this token to sessions in this Workspace: it lets them operate and delete any session, and use admin tools if you are an admin. Use it from an outside client.",
+    "Do not give this token to sessions in this Workspace: within its scope it gives them access to all of your sessions here (with write, they can operate and delete them), plus admin tools if you are an admin. Use it from an outside client.",
   "tokens.issued_head": "Token issued (you can't see it again once you close this).",
   "tokens.copy_token": "Copy token",
   "tokens.mcp_json_head_1": "For Claude Code: ",

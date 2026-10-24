@@ -66,6 +66,8 @@ describe("TokensTab what-this-token-can-do section", () => {
     await act(async () => root!.render(<TokensTab />));
     const count = () => (host!.textContent ?? "").split(warn).length - 1;
     expect(warn).toBeTruthy();
+    // The warning must say the reach depends on the chosen scope (a read token cannot delete).
+    expect(warn).toMatch(/scope|スコープ/);
     expect(count()).toBe(1);
 
     apiJSON.mockResolvedValueOnce({ token: "afp_secret" });
