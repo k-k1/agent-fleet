@@ -213,3 +213,71 @@ func TestPolicySyncRetriesFailedReload(t *testing.T) {
 		t.Fatal("the reload that failed was not retried")
 	}
 }
+
+func TestPolicyAllowChangeOwesReloadWhenModeWriteFails(t *testing.T) {
+	cp := &fakeCP{allowlist: []string{"github.com", "x.example"}, enforce: true}
+	s, reloads := newPolicyFixture(t, cp)
+	modeDir := filepath.Join(t.TempDir(), "modes")
+	if err := os.Mkdir(modeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.ModeFile = filepath.Join(modeDir, "mode.conf")
+	ctx := context.Background()
+	if err := s.sync(ctx); err != nil || reloads() != 1 {
+		t.Fatalf("first sync: err %v, %d reloads", err, reloads())
+	}
+
+	// The allowlist shrinks; the allow file is written, then the mode file's directory is
+	// gone and that write fails.
+	cp.set(func(f *fakeCP) { f.allowlist = []string{"github.com"} })
+	if err := os.Rename(modeDir, modeDir+".away"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.sync(ctx); err == nil {
+		t.Fatal("a failed mode write must report an error")
+	}
+	if err := os.Rename(modeDir+".away", modeDir); err != nil {
+		t.Fatal(err)
+	}
+	// Both files now hold what the CP says, so nothing changes on this poll; the reload
+	// the allow file is owed must still happen.
+	if err := s.sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if reloads() != 2 {
+		t.Fatalf("%d reloads, want 2: Squid still allows the removed name", reloads())
+	}
+}
+
+func TestPolicyRestartReloadsWhileCPIsDown(t *testing.T) {
+	cp := &fakeCP{allowlist: []string{"github.com"}, enforce: true}
+	s, reloads := newPolicyFixture(t, cp)
+	good := s.cfg.ReloadCmd
+	s.cfg.ReloadCmd = []string{"false"}
+	if err := s.sync(context.Background()); err == nil {
+		t.Fatal("a failed reload must report an error")
+	}
+	s.cfg.ReloadCmd = good
+	cp.set(func(f *fakeCP) { f.status = http.StatusServiceUnavailable })
+
+	restarted := newPolicySync(s.cfg)
+	restarted.loadFromDisk()
+	if err := restarted.sync(context.Background()); err == nil {
+		t.Fatal("the fetch failed; sync must say so")
+	}
+	if reloads() != 1 {
+		t.Fatalf("%d reloads: Squid was not given the enforce policy on disk while the CP was down", reloads())
+	}
+	if err := restarted.sync(context.Background()); err == nil || reloads() != 1 {
+		t.Fatalf("a paid reload was repeated (%d reloads)", reloads())
+	}
+}
+
+func TestPolicyNoFilesNoReloadWhileCPIsDown(t *testing.T) {
+	cp := &fakeCP{status: http.StatusServiceUnavailable}
+	s, reloads := newPolicyFixture(t, cp)
+	s.loadFromDisk()
+	if err := s.sync(context.Background()); err == nil || reloads() != 0 {
+		t.Fatalf("err %v, %d reloads: nothing on disk, nothing to reload", err, reloads())
+	}
+}

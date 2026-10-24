@@ -429,3 +429,50 @@ func TestShipGatewaysNeverShareIDs(t *testing.T) {
 		t.Fatalf("two gateways produced %d distinct ids over %d events, want 2: %v", len(ids), n, ids)
 	}
 }
+
+func TestShipRecreatedFileOnReusedInodeGetsNewIDs(t *testing.T) {
+	// The old log is deleted and a new one takes its inode, starting with the same line.
+	// Its lines must not inherit the old file's offsets or ids.
+	f := newShipFixture(t)
+	ctx := context.Background()
+	first := line(1, "10.0.1.5", "a.github.com")
+	appendFile(t, f.log, first+line(2, "10.0.1.5", "b.github.com"))
+	if err := f.sh.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	oldIno := inodeOf(t, f.log)
+	reused := false
+	for i := 0; i < 50 && !reused; i++ {
+		if err := os.Remove(f.log); err != nil {
+			t.Fatal(err)
+		}
+		appendFile(t, f.log, first)
+		reused = inodeOf(t, f.log) == oldIno
+	}
+	if !reused {
+		t.Skip("the filesystem did not reuse the inode")
+	}
+	appendFile(t, f.log, line(3, "10.0.1.5", "c.github.com"))
+	f.restart(t) // the agent was down across the replacement: its state still has the old file
+	if err := f.sh.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ids, n := f.cp.ids()
+	if len(ids) != 4 || n != 4 {
+		t.Fatalf("%d ids over %d events, want 4 and 4: %v", len(ids), n, ids)
+	}
+}
+
+func inodeOf(t *testing.T, path string) uint64 {
+	t.Helper()
+	fh, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fh.Close()
+	ino, _, err := fileID(fh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ino
+}

@@ -95,13 +95,13 @@ func logFiles(path string) []string {
 	return append(out, path)
 }
 
-// fileIdent identifies a log file by the gateway, its inode and a hash of its first line.
-// All three survive a rename and a restart. The inode alone is not enough: a new file can
-// reuse a deleted one's inode and would then reuse its ids, which the CP drops as
-// duplicates. The first line alone is not enough either: two connections that started in
-// the same millisecond from the same source to the same name can be the first lines of
-// two files, and two gateways can write the same line. "" means the file has no complete
-// first line yet and is not read.
+// fileIdent identifies a log file by the gateway, its inode, its birth time and a hash of
+// its first line. All four survive a rename and a restart. A colliding identity makes the
+// CP drop a real file's events as duplicates, and each part closes one way to collide: two
+// gateways can write the same line; two connections that started in the same millisecond
+// from one source to one name can be the first lines of two files; and a new file can
+// reuse a deleted one's inode, which only the birth time tells apart. "" means the file
+// has no complete first line yet and is not read.
 func fileIdent(f *os.File, gateway string) (string, error) {
 	buf := make([]byte, identPrefix)
 	n, err := f.ReadAt(buf, 0)
@@ -114,12 +114,13 @@ func fileIdent(f *os.File, gateway string) (string, error) {
 	} else if n < identPrefix {
 		return "", nil
 	}
-	fi, err := f.Stat()
+	ino, btime, err := fileID(f)
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(buf)
-	return gateway + "." + strconv.FormatUint(inode(fi), 36) + "." + hex.EncodeToString(sum[:8]), nil
+	return gateway + "." + strconv.FormatUint(ino, 36) + "." + strconv.FormatInt(btime, 36) + "." +
+		hex.EncodeToString(sum[:8]), nil
 }
 
 // errShipFailed stops a pass at the first rejected POST; the offset stays where the CP

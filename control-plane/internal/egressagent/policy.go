@@ -121,22 +121,38 @@ var errEmptyPolicy = errors.New("policy has no allowlist entries")
 func (s *policySync) sync(ctx context.Context) error {
 	entries, enforce, err := s.fetch(ctx)
 	if err != nil {
+		// The files on disk are the last policy that worked. A reload they are owed (the
+		// one at start included) does not wait for the CP to come back.
+		if s.reloadOwed && s.cur.Load() != nil {
+			if rerr := s.reload(ctx); rerr == nil {
+				s.reloadOwed = false
+				log.Printf("egress-agent: reloaded Squid with the policy on disk")
+			}
+		}
 		return err
 	}
 	allow := renderAllow(entries)
 	mode := renderMode(enforce)
+	// A file is owed a reload from the moment it changes, not from when both are written:
+	// a failure writing the second must not leave the first unread by Squid once the
+	// second turns out unchanged on the next poll.
 	changedA, err := writeIfChanged(s.cfg.AllowFile, allow)
+	if changedA {
+		s.reloadOwed = true
+	}
 	if err != nil {
 		return err
 	}
 	changedM, err := writeIfChanged(s.cfg.ModeFile, mode)
+	if changedM {
+		s.reloadOwed = true
+	}
 	if err != nil {
 		return err
 	}
 	s.cur.Store(&snapshot{enforce: enforce, match: parseAllow(allow)})
-	if changedA || changedM || s.reloadOwed {
+	if s.reloadOwed {
 		if err := s.reload(ctx); err != nil {
-			s.reloadOwed = true
 			return fmt.Errorf("reload: %w", err)
 		}
 		s.reloadOwed = false
@@ -191,7 +207,8 @@ func (s *policySync) reload(ctx context.Context) error {
 	return nil
 }
 
-// writeIfChanged replaces path with b when its bytes differ, through a temp file in the
+// writeIfChanged replaces path with b when its bytes differ (changed is true then, even if
+// the write failed: the file may already be replaced), through a temp file in the
 // same directory and a rename, so Squid never reads a half-written file. It compares with
 // the file on disk rather than a remembered copy, so a restart does not reload Squid for
 // nothing and a file someone edited is put back.
