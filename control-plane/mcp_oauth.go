@@ -305,6 +305,9 @@ type mcpClient struct {
 var (
 	errMCPClientUnknown = errors.New("unknown client")
 	errMCPClientStore   = errors.New("client store")
+	// errMCPClientHostUntrusted is a CIMD client_id that is a well-formed https URL on a host the
+	// deployment does not trust. Only the authorize page tells it apart from errMCPClientUnknown.
+	errMCPClientHostUntrusted = errors.New("client host not trusted")
 )
 
 // cimdURLAllowed is the SSRF guard: a CIMD client_id is fetched only when it is an https URL
@@ -371,6 +374,11 @@ const (
 
 func (a *mcpOAuthAPI) loadCIMD(ctx context.Context, trusted trustedHosts, id string) (mcpClient, error) {
 	if _, ok := a.cimdURLAllowed(trusted, id); !ok {
+		// Nothing was fetched. Name the host only when it is the single thing wrong: a plain https
+		// host (no userinfo, no port) that is off the list.
+		if u, ok := parseCanonicalRedirect(id); ok && u.Scheme == "https" && u.Host == u.Hostname() && !trusted[u.Host] {
+			return mcpClient{}, errMCPClientHostUntrusted
+		}
 		return mcpClient{}, errMCPClientUnknown
 	}
 	now := a.now()

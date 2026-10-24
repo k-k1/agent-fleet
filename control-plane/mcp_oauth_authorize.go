@@ -154,6 +154,10 @@ func (a *mcpOAuthAPI) authorize(w http.ResponseWriter, r *http.Request) {
 	case errMCPClientStore:
 		a.errPage(w, r, http.StatusServiceUnavailable, mcpErrUnavailable, "")
 		return
+	case errMCPClientHostUntrusted:
+		log.Printf("mcp oauth: authorize refused: client host not trusted")
+		a.errPage(w, r, http.StatusBadRequest, mcpErrClientHost, callbackHost(p.get("client_id")))
+		return
 	default:
 		a.refuse(w, r, "client")
 		return
@@ -434,13 +438,15 @@ const (
 	mcpErrExpired
 	mcpErrUnavailable
 	mcpErrMethod
+	mcpErrClientHost
 )
 
 type mcpErrText struct{ Title, What, Next string }
 
 type mcpErrStrings struct {
-	HostLabel                                       string
+	HostLabel, ClientHostLabel                      string
 	Refused, Redirect, Expired, Unavailable, Method mcpErrText
+	ClientHost                                      mcpErrText
 }
 
 func (s mcpErrStrings) text(k mcpErrKind) mcpErrText {
@@ -453,26 +459,32 @@ func (s mcpErrStrings) text(k mcpErrKind) mcpErrText {
 		return s.Unavailable
 	case mcpErrMethod:
 		return s.Method
+	case mcpErrClientHost:
+		return s.ClientHost
 	}
 	return s.Refused
 }
 
 var mcpErrCatalogue = map[string]mcpErrStrings{
 	"ja": {
-		HostLabel:   "拒否された戻り先",
-		Refused:     mcpErrText{"接続を開始できません", "この接続要求は受け付けられませんでした。", "アプリ側からもう一度接続を始めてください。"},
-		Redirect:    mcpErrText{"戻り先のアドレスが許可されていません", "アプリが、この Agent Fleet では許可されていないアドレスへの戻りを求めました。", "接続先アプリの管理者に確認するか、アプリからもう一度接続を始めてください。"},
-		Expired:     mcpErrText{"確認が無効です", "この確認は拒否されたか、期限が切れたか、すでに使われています。", "アプリからもう一度接続を始めてください。"},
-		Unavailable: mcpErrText{"接続を完了できません", "サーバー側の問題で接続を完了できませんでした。", "少し待ってからもう一度お試しください。続く場合はこのデプロイの管理者に連絡してください。"},
-		Method:      mcpErrText{"アプリから接続してください", "このアドレスは接続の途中の手順で、単独では開けません。", "MCP クライアントから接続を始めてください。"},
+		HostLabel:       "拒否された戻り先",
+		ClientHostLabel: "信頼されていないアプリのホスト",
+		ClientHost:      mcpErrText{"このアプリのホストは信頼されていません", "このアプリのホストは、この Agent Fleet では信頼するクライアントのホストに登録されていないため、接続できません。", "このデプロイの管理者に、「管理 → 配備 → MCP ログイン許可ホスト」（信頼するクライアントのホスト）への追加を依頼してください。手順は運用者ガイド「セキュリティ運用」章の「信頼するクライアントのホスト」にあります。"},
+		Refused:         mcpErrText{"接続を開始できません", "この接続要求は受け付けられませんでした。", "アプリ側からもう一度接続を始めてください。"},
+		Redirect:        mcpErrText{"戻り先のアドレスが許可されていません", "アプリが、この Agent Fleet では許可されていないアドレスへの戻りを求めました。", "接続先アプリの管理者に確認するか、アプリからもう一度接続を始めてください。"},
+		Expired:         mcpErrText{"確認が無効です", "この確認は拒否されたか、期限が切れたか、すでに使われています。", "アプリからもう一度接続を始めてください。"},
+		Unavailable:     mcpErrText{"接続を完了できません", "サーバー側の問題で接続を完了できませんでした。", "少し待ってからもう一度お試しください。続く場合はこのデプロイの管理者に連絡してください。"},
+		Method:          mcpErrText{"アプリから接続してください", "このアドレスは接続の途中の手順で、単独では開けません。", "MCP クライアントから接続を始めてください。"},
 	},
 	"en": {
-		HostLabel:   "Rejected callback",
-		Refused:     mcpErrText{"Can't start the connection", "This connection request was refused.", "Start the connection again from the app."},
-		Redirect:    mcpErrText{"Callback address not allowed", "The app asked to return to an address this Agent Fleet does not allow.", "Ask whoever runs the app, or start the connection again from the app."},
-		Expired:     mcpErrText{"Confirmation is no longer valid", "This confirmation was refused, has expired, or was already used.", "Start the connection again from the app."},
-		Unavailable: mcpErrText{"Can't complete the connection", "A problem on the server stopped the connection from finishing.", "Try again in a moment. If it keeps failing, ask this deployment's administrator."},
-		Method:      mcpErrText{"Connect from your app", "This address is one step of a connection and cannot be opened on its own.", "Start the connection from your MCP client."},
+		HostLabel:       "Rejected callback",
+		ClientHostLabel: "Untrusted app host",
+		ClientHost:      mcpErrText{"This app's host is not trusted here", "This app's host is not in this Agent Fleet's trusted client hosts, so it cannot connect.", "Ask this deployment's administrator to add it to the trusted client hosts setting (Admin → Deployment → MCP sign-in hosts). See \"Trusted client hosts\" in the Security Operations chapter of the operator guide."},
+		Refused:         mcpErrText{"Can't start the connection", "This connection request was refused.", "Start the connection again from the app."},
+		Redirect:        mcpErrText{"Callback address not allowed", "The app asked to return to an address this Agent Fleet does not allow.", "Ask whoever runs the app, or start the connection again from the app."},
+		Expired:         mcpErrText{"Confirmation is no longer valid", "This confirmation was refused, has expired, or was already used.", "Start the connection again from the app."},
+		Unavailable:     mcpErrText{"Can't complete the connection", "A problem on the server stopped the connection from finishing.", "Try again in a moment. If it keeps failing, ask this deployment's administrator."},
+		Method:          mcpErrText{"Connect from your app", "This address is one step of a connection and cannot be opened on its own.", "Start the connection from your MCP client."},
 	},
 }
 
@@ -508,6 +520,9 @@ func (a *mcpOAuthAPI) errPage(w http.ResponseWriter, r *http.Request, status int
 		mcpErrText
 		HostLabel, Host string
 	}{a.shell(r, lang), t.text(kind), t.HostLabel, host}
+	if kind == mcpErrClientHost {
+		data.HostLabel = t.ClientHostLabel
+	}
 	var buf bytes.Buffer
 	if err := mcpErrTmpl.Execute(&buf, data); err != nil {
 		log.Printf("mcp oauth: error page: %v", err)
