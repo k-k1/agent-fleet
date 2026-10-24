@@ -1,7 +1,6 @@
 ---
 audience: "someone asking \"which file does that?\""
 source_of_truth: "the code"
-updated: "2026-09"
 ---
 
 # 90. Code map

@@ -1,6 +1,5 @@
 ---
 audience: "anyone wondering what a mark on the screen means"
-updated: "2026-10"
 ---
 
 # Icons, badges, and menus — common Console reference
@@ -44,7 +43,7 @@ merely opening the bell marks nothing as read. This is the one place that descri
 (which notifications raise it: [Settings › Notifications](20-settings.md#notifications)).
 
 A row can also carry **"Shared"** (visible to another member;
-see [12](12-collaboration.md#sharing-a-conversation-shared-sessions)) and **"Delete-locked"** (excluded from deletion and
+see [12](12-collaboration.md#sharing-a-conversation-shared-sessions)) and **"Locked against deletion"** (excluded from deletion and
 automatic tidying; see [05](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup)).
 
 A row can grow a **second line** with links. The first is the GitHub pull request of the
@@ -147,7 +146,7 @@ connection. Not this deployment's engine."** together with the model the last ch
   (**"Started from an inbox request (sender: …)"**), a memo taken in from the inbox reads **"Inbox: …"**,
   and a shared session with a handoff for you has a branch mark, **"A handoff is waiting"**.
 - "LFS pointer": a file with only the Git LFS pointer present, not the actual content.
-- **"From the operator", "Scheduled", "Manual run", "Auto-resume", "From <name>"** in the chat view: where a
+- **"From operator", "Scheduled", "Manual fire", "Auto-resume", "From <name>"** in the chat view: where a
   prompt you did not type came from: the fleet operator, a schedule, an auto-resume after an interruption, and
   [a message from another session](11-many-sessions.md#messages-between-sessions). **"Via MCP: <name>"** (a
   plug icon; just **"Via MCP"** when the name is unknown) marks a prompt that came in through the MCP connection

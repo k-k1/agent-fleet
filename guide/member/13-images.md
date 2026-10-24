@@ -1,6 +1,5 @@
 ---
 audience: "anyone looking at, generating or refining images"
-updated: "2026-10"
 ---
 
 # 13. Images — gallery, generation, studio

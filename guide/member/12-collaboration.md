@@ -1,6 +1,5 @@
 ---
 audience: "anyone working with other members on the same conversation"
-updated: "2026-10"
 ---
 
 # 12. Working with others — sharing, handing over, the inbox, usage limits

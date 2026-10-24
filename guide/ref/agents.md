@@ -1,7 +1,6 @@
 ---
 audience: "everyone"
 source_of_truth: "this table; the columns and the marked rows are checked against the code"
-updated: "2026-10"
 ---
 
 # Agents — what each kind can do

@@ -1,6 +1,5 @@
 ---
 audience: "a tenant administrator distributing integrations to the team and deciding what outside apps may reach"
-updated: "2026-10"
 ---
 
 # 04. MCP distribution and outside access
@@ -28,7 +27,7 @@ needs stdio registers it personally in their own settings.
 
 ### Decide how credentials are handled (this is the important one)
 
-**"Credential handling"** in the form offers two choices. It is the key design decision of a
+**"Credentials"** in the form offers two choices. It is the key design decision of a
 distribution.
 
 | Choice | What is distributed | Fits |

@@ -1,7 +1,6 @@
 ---
 audience: "someone changing the code, who needs the assumptions the design rests on"
 source_of_truth: "the decision records and guide/ref — this page is an index onto them"
-updated: "2026-09"
 ---
 
 # 00. Project context — status and the settled assumptions

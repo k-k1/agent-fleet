@@ -1,0 +1,18 @@
+# Bold-and-quoted text in guide/member and guide/admin that is not a Console label
+# (check_labels). One `<repo path>: <text>` per line. Say in a comment why it is exempt.
+
+# Example messages the reader types to an assistant, not buttons.
+guide/member/11-many-sessions.ja.md: セッションたちの現場監督をチャットに雇う
+guide/member/11-many-sessions.ja.md: 終わったら止めて
+# The question the chapter index answers, not a screen string.
+guide/member/README.ja.md: どうやるの？
+guide/member/README.md: how do I do this?
+guide/member/11-many-sessions.md: hire a site foreman for your sessions, in chat.
+guide/member/05-stopping-and-tidying.ja.md: 子 ≈$X
+# Strings the Control Plane or a CLI prints, not catalogue entries
+# (control-plane/preview_relay_error.go; the AWS CLI).
+guide/member/21-troubleshooting.md: The listener on port N changed or stopped. Reopen the port from the Console.
+guide/member/21-troubleshooting.md: Opening port N is not available until the workspace is restarted (its agent is older than this feature).
+guide/member/21-troubleshooting.md: Unable to locate credentials
+# A concrete value the Console fills into "Model: {name}".
+guide/member/badges-and-menus.md: Model: Qwen3.8 27B IQ4_XS

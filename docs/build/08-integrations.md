@@ -1,7 +1,6 @@
 ---
 audience: "someone adding an external provider or a CLI agent"
 source_of_truth: "the code (this is a map of the methods and the intent)"
-updated: "2026-09"
 ---
 
 # 08. External integrations

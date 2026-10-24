@@ -1,6 +1,5 @@
 ---
 audience: "anyone setting up or resetting the workspace's environment"
-updated: "2026-10"
 ---
 
 # 17. Workspace environment — settings, recreating, test databases, a local AWS emulator

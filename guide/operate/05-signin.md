@@ -1,7 +1,6 @@
 ---
 audience: "someone wiring an identity provider into the deployment"
 source_of_truth: "the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page"
-updated: "2026-08"
 ---
 
 # 05. Sign-in Methods — Setting Up an IdP End to End

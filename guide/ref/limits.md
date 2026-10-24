@@ -1,7 +1,6 @@
 ---
 audience: "everyone; most often a member asking \"why did it stop?\" and an administrator asking \"what should I set?\""
 source_of_truth: "this table for the fixed values; the limit's own screen for anything a tenant or deployment sets"
-updated: "2026-10"
 ---
 
 # Limits and defaults

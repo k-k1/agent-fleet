@@ -1,7 +1,6 @@
 ---
 audience: "everyone — this is the one shelf all four readers share"
 source_of_truth: "this shelf, for capability facts (the axes are checked against the code)"
-updated: "2026-08"
 ---
 
 # Reference — what Agent Fleet can do

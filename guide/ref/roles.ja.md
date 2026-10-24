@@ -1,7 +1,6 @@
 ---
 audience: "全員（features.md の「誰が」を解決する軸）"
 source_of_truth: "この表（手で保守）。どのロールにどのセクションを配るかは Control Plane の 1 箇所で決まる"
-updated: "2026-09"
 ---
 
 # ロール — 誰が何をできるか

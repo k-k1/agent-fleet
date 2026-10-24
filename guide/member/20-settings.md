@@ -1,6 +1,5 @@
 ---
 audience: "anyone looking for a setting"
-updated: "2026-10"
 ---
 
 # 20. Settings — every tab of the ⚙ settings dialog

@@ -1,7 +1,6 @@
 ---
 audience: "ワークスペースを動かす場所を足す人"
 source_of_truth: "`control-plane/internal/runtime/`——`runtime.go` の `Runtime` ポートと `NewFactory`、CP が問い合わせる任意の能力、そしてアダプタ本体（`runtime_*.go`）"
-updated: "2026-10"
 ---
 
 # 21. デプロイ形態を足す

@@ -1,6 +1,5 @@
 ---
 audience: "anyone using the workspace from an external agent or app"
-updated: "2026-10"
 ---
 
 # 19. Using your workspace from outside — MCP and OAuth

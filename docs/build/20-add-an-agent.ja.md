@@ -1,7 +1,6 @@
 ---
 audience: "新しい CLI コーディングエージェントを統合する人"
 source_of_truth: "既存の `internal/agents/<kind>` パッケージ（一番近いものを写す）"
-updated: "2026-10"
 ---
 
 # 20. エージェント種別を足す

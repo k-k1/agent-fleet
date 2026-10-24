@@ -1,7 +1,6 @@
 ---
 audience: "anyone who runs agents from the Console"
 source_of_truth: "the Console itself — if a screen disagrees with this guide, the screen is right"
-updated: "2026-10"
 ---
 
 # Using Agent Fleet

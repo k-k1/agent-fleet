@@ -1,7 +1,6 @@
 ---
 audience: "someone changing the Agent Fleet code"
 source_of_truth: "the code — if this tree disagrees with it, the code is right"
-updated: "2026-09"
 ---
 
 # Agent Fleet developer documentation

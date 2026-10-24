@@ -507,5 +507,160 @@ class RealSettingTabsTests(unittest.TestCase):
                 self.assertEqual(set(tabs), used)
 
 
+class LabelTests(unittest.TestCase):
+    """A quoted bold label must exist in the Console catalogue of the same language."""
+
+    EN = (
+        "// comment: \"Ghost label\" is only in a comment\n"
+        "export const x = {\n"
+        "  \"a.stop\": \"Stop\",\n"
+        "  \"a.fast\": \"Fast-forward from {ref}\",\n"
+        "  \"a.long\":\n"
+        "    \"Tidy every stopped session (archived ones can be restored)\",\n"
+        "  \"a.any\": \"{count}\",\n"
+        "  \"a.from\": \"From {name}\",\n"
+        "  \"a.new\": \"New chat\",\n"
+        "  /* \"a.dead\": \"Dead label\", */\n"
+        "};\n"
+    )
+    JA = "export const x = {\n  \"a.stop\": \"停止する\",\n  \"a.sel\": \"選択（{count} 件）\",\n};\n"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        loc = self.root / "console/src/lib/i18n/locales"
+        (loc / "en").mkdir(parents=True)
+        (loc / "ja").mkdir(parents=True)
+        (loc / "en/a.ts").write_text(self.EN)
+        (loc / "ja/a.ts").write_text(self.JA)
+        self.member = self.root / "guide/member"
+        self.member.mkdir(parents=True)
+        self.addCleanup(patch.stopall)
+        patch.object(check, "ROOT", str(self.root)).start()
+        patch.object(check, "LOCALES", str(loc)).start()
+        patch.object(check, "LABEL_ALLOWLIST", str(self.root / "allow.txt")).start()
+
+    def errors(self, en="", ja=""):
+        (self.member / "01-a.md").write_text(en)
+        (self.member / "01-a.ja.md").write_text(ja)
+        check._cache.clear()
+        findings = check.Findings()
+        check.check_labels(sorted(str(p) for p in self.member.glob("*.md")), findings)
+        return "\n".join(findings.errors)
+
+    def test_known_labels_pass(self):
+        self.assertEqual(
+            self.errors(
+                en=(
+                    'Press **"Stop"**, then **"+ New chat"** or **"Fast-forward from origin/develop"**.\n'
+                    'Also **"Tidy every stopped session"** and **"Stop" → "New chat"**.\n'
+                    'Wrapped **"Tidy every\nstopped session"** too.\n'
+                ),
+                ja="「**停止する**」と「**選択（3 件）**」と「**選択**」。\n",
+            ),
+            "",
+        )
+
+    def test_stale_label_is_an_error_per_language(self):
+        out = self.errors(en='Press **"Halt"**.\n', ja="「**止める**」を押す。\n")
+        self.assertIn("01-a.md:1: bold label '\"Halt\"'", out)
+        self.assertIn("01-a.ja.md:1: bold label '止める'", out)
+
+    def test_a_label_is_checked_against_its_own_language(self):
+        self.assertIn("停止する", self.errors(en='**"停止する"**\n'))
+        self.assertIn("Stop", self.errors(ja="「**Stop**」\n"))
+
+    def test_plain_bold_is_emphasis(self):
+        self.assertEqual(self.errors(en="This is **not a label** at all.\n"), "")
+
+    def test_code_and_front_matter_are_skipped(self):
+        body = '---\naudience: "**\\"Nope\\"**"\n---\n`**"Nope"**`\n```\n**"Nope"**\n```\n'
+        self.assertEqual(self.errors(en=body), "")
+
+    def test_comment_and_dead_catalogue_entries_are_not_labels(self):
+        self.assertIn("Ghost label", self.errors(en='**"Ghost label"**\n'))
+        self.assertIn("Dead label", self.errors(en='**"Dead label"**\n'))
+
+    def test_a_bare_placeholder_value_accepts_nothing(self):
+        # "{count}" and "From {name}" would otherwise match any label or any "From ..." text.
+        self.assertIn("Whatever", self.errors(en='**"Whatever"**\n'))
+        self.assertIn("From the boss", self.errors(en='**"From the boss"**\n'))
+        self.assertEqual(self.errors(en='**"From <name>"**\n'), "")
+
+    def test_shapes_with_nothing_fixed_are_skipped(self):
+        self.assertEqual(self.errors(en='**"+N"** and **"≈$X"**\n'), "")
+
+    def test_allowlist_exempts_one_file_and_text(self):
+        Path(check.LABEL_ALLOWLIST).write_text("# why\nguide/member/01-a.md: Halt\n")
+        self.assertEqual(self.errors(en='**"Halt"**\n'), "")
+        self.assertIn("Halt", self.errors(en='**"Halt"**\n', ja="「**Halt**」\n"))
+
+    def test_unreadable_catalogue_is_an_error_not_a_skip(self):
+        (Path(check.LOCALES) / "en/a.ts").unlink()
+        self.assertIn("no strings could be read", self.errors(en='**"Stop"**\n'))
+
+    def test_real_guide_has_no_stale_label(self):
+        patch.stopall()
+        check._cache.clear()
+        findings = check.Findings()
+        check.check_labels(check.all_docs(), findings)
+        self.assertEqual(findings.errors, [])
+
+
+class SizeAndHeaderTests(unittest.TestCase):
+    """The chapter budget warns and never errors; `updated` is no longer a required key."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.shelf = self.root / "guide/member"
+        self.shelf.mkdir(parents=True)
+        self.addCleanup(patch.stopall)
+        patch.object(check, "ROOT", str(self.root)).start()
+
+    def size(self, lines, name="01-a.md"):
+        path = self.shelf / name
+        path.write_text("x\n" * lines)
+        check._cache.clear()
+        findings = check.Findings()
+        check.check_size([str(path)], findings)
+        return findings
+
+    def test_over_budget_warns_only(self):
+        findings = self.size(check.CHAPTER_LINE_BUDGET + 1)
+        self.assertEqual(findings.errors, [])
+        self.assertEqual(len(findings.warns), 1)
+        self.assertIn("chapter budget", findings.warns[0])
+
+    def test_at_budget_and_shelf_readme_are_quiet(self):
+        self.assertEqual(self.size(check.CHAPTER_LINE_BUDGET).warns, [])
+        self.assertEqual(self.size(check.CHAPTER_LINE_BUDGET + 50, "README.md").warns, [])
+
+    def test_strict_run_stays_green_on_a_budget_warning(self):
+        # --strict promotes only what a check opts in to; the budget is not one of them.
+        (self.shelf / "README.md").write_text('---\naudience: "a"\nsource_of_truth: "b"\n---\n# T\n')
+        (self.shelf / "01-a.md").write_text('---\naudience: "a"\n---\n' + "x\n" * 700)
+        check._cache.clear()
+        with patch.object(sys, "argv", ["docs-check", "--strict", "--only", "size"]), \
+                patch.object(check, "all_docs", lambda: [str(self.shelf / "01-a.md")]), \
+                patch("builtins.print") as out:
+            self.assertEqual(check.main(), 0)
+        self.assertIn("chapter budget", str(out.call_args_list))
+
+    def header(self, front):
+        for name in ("README.md", "01-a.md"):
+            (self.shelf / name).write_text(front + "\n# T\n")
+        check._cache.clear()
+        findings = check.Findings()
+        check.check_header([str(self.shelf / "01-a.md")], findings, False)
+        return "\n".join(findings.errors)
+
+    def test_header_needs_audience_and_source_only(self):
+        self.assertEqual(self.header('---\naudience: "a"\nsource_of_truth: "b"\n---\n'), "")
+        self.assertIn("no source_of_truth", self.header('---\naudience: "a"\n---\n'))
+
+
 if __name__ == "__main__":
     unittest.main()

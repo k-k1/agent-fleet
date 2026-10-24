@@ -1,7 +1,6 @@
 ---
 audience: "全員（operate/ には決定的）"
 source_of_truth: "この表（行は Control Plane が受け付ける runtime プロファイルと突き合わせ）"
-updated: "2026-10"
 ---
 
 # 配備形態 — どこに何が在るか

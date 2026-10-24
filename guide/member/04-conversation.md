@@ -1,6 +1,5 @@
 ---
 audience: "anyone talking to a running agent"
-updated: "2026-10"
 ---
 
 # 04. Talking to a session — replying, plans, highlights, suggestions, translation
