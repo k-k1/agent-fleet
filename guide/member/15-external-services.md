@@ -181,7 +181,7 @@ AMG tokens last **30 days at most**; paste a new one into the card when the old 
 ### Other tools (Zabbix and the like)
 
 Tools without a card (Zabbix, a Terminal (CLI) session's own Grafana / PagerDuty / CloudWatch server, and the like) are
-connected as MCP servers under Settings > Connections > [MCP servers](20-settings.md#mcp-servers). Under
+connected as MCP servers under Settings > Connections > [MCP servers (used by sessions)](20-settings.md#mcp-servers-used-by-sessions). Under
 **Advanced**, choose the **targets**: **sessions** for Terminal (CLI) and other agent sessions, which pick the
 server up from the next session you start, and **assistants** for chat. For an assistant, then pick it in the
 assistant's edit form under "MCP servers (optional)"; only assistants you created can be edited, and the built-in

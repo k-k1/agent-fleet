@@ -88,7 +88,7 @@ in the Console.
    AI only **proposes; approval is done by humans** (approve/reject under "Proposed (needs
    approval)" in the Admin panel). Entries are a **host** or a **`.suffix.example.com`**, with an optional
    reason, and are **retired** when no longer needed; with no added entries only the product's built-in
-   allowances apply. A member's request from ⚙ Settings → MCP servers arrives as a proposal too, and the
+   allowances apply. A member's request from ⚙ Settings → MCP servers (used by sessions) arrives as a proposal too, and the
    member sees "waiting for an administrator's approval" until you decide.
 
    **Reading the observations:** counts are approximate. A report that is retried after a
@@ -118,7 +118,7 @@ in the Console.
 
 ## MCP servers and external connections
 
-Users register **their own MCP servers** under ⚙ Settings → MCP servers, and a tenant admin can
+Users register **their own MCP servers** under ⚙ Settings → MCP servers (used by sessions), and a tenant admin can
 **distribute one to every member** ([admin/04](../admin/04-mcp-outside.md#distributing-an-mcp-server-to-everyone-in-the-tenant-your-permission)). Four things matter to
 an operator.
 
@@ -221,7 +221,7 @@ reachable `PUBLIC_BASE_URL`:
 Tokens never reach the Control Plane: the Agent keeps them in the member's encrypted store. The Control Plane writes
 `mcp.client_oauth` audit rows (`started`, `completed`, `failed`, `disconnected`) that name the server and the
 authorization server, never a code or token. Members sign in from Settings › MCP servers
-([member guide 20](../member/20-settings.md#mcp-servers)).
+([member guide 20](../member/20-settings.md#mcp-servers-used-by-sessions)).
 
 ### Reading what a client sent to `/mcp`
 
@@ -240,7 +240,7 @@ mcp-call http_method="POST" status=400 latency_ms=2 principal="grant:<id>" clien
   and the `Mcp-Method` / `Mcp-Name` presence flags; `tools/list` items carry `tools`, the number returned. A `tools/call` that ran and failed (answered 200 with `isError`) shows `tool_error:true`, without the text.
 - Never recorded: a token, the `Authorization` value, request arguments or tool results. Only the tool name of a `tools/call` / `prompts/get` is.
 - The same records of an authenticated caller are readable by their owner in memory (last 50 per token / connection,
-  not persisted, lost on restart, **per Control Plane replica**) under Settings → Connections → MCP tokens → *Recent calls*.
+  not persisted, lost on restart, **per Control Plane replica**) under Settings → Outside access → MCP tokens & apps → *Recent calls*.
   Behind several replicas look for the line in the logs of all of them; 405 and unauthenticated requests exist only in the log.
 
 ## Handing over the in-workspace browser

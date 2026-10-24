@@ -11,6 +11,8 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mcp.ws_required_title": "The workspace is stopped",
   "mcp.ws_required_hint":
     "Registered MCP servers live in the workspace's encrypted store. Start it to load them.",
+  "mcp.direction": "These are servers your sessions and the assistant use. To let an outside app drive this Workspace, see",
+  "mcp.direction_link": "Outside access",
   "mcp.intro":
     "Register any MCP server to make it available to the assistant chat and to interactive sessions. Environment-variable and header values are stored encrypted inside the workspace and are never sent back to this screen.",
   "mcp.project_scope_note":

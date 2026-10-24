@@ -42,6 +42,18 @@ describe("settings rail", () => {
     expect(groupOf("database")).toBe("workspace");
   });
 
+  // MCP tokens are inbound (outside → Workspace); every Connections tab is outbound (#2680).
+  // The section key stays "tokens" so openSettings("tokens") and the remembered tab survive.
+  it("keeps the inbound MCP tokens tab out of Connections, in its own group", () => {
+    expect(groupOf("tokens")).toBe("outside");
+    expect(groupOf("mcp")).toBe("connections");
+    const outside = GROUPS.find((g) => g.key === "outside")!;
+    expect(outside.items).toEqual([["tokens", "set.tab_tokens"]]);
+    expect(GROUPS.map((g) => g.key)).toEqual(["personal", "connections", "outside", "workspace"]);
+    expect(t("set.group_outside")).toBe("Outside access");
+    expect(t("set.tab_mcp")).toContain("used by sessions");
+  });
+
   it("has a renderer for every item in the rail", () => {
     const missing = GROUPS.flatMap((g) => g.items.map(([k]) => k)).filter(
       (k) => !source.includes(`section === "${k}"`),

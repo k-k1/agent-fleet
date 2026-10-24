@@ -425,7 +425,7 @@ Instructions come in three layers, and this setting is the **middle** one.
 ## Bringing your personal Claude Code setup
 
 Two settings cover part of this: **⚙Settings → "Agent instructions"** is your global `CLAUDE.md`
-(see above) and **⚙Settings → "MCP servers"** covers MCP. Personal **hooks, skills and subagents**
+(see above) and **⚙Settings → "MCP servers (used by sessions)"** covers MCP. Personal **hooks, skills and subagents**
 have no settings screen. In a Workspace they are plain files in Claude Code's configuration
 folder, `/var/lib/af/claude` (run `echo $CLAUDE_CONFIG_DIR` in a shell to confirm the path on your
 deployment). It is what `~/.claude` is on your own machine.

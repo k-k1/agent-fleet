@@ -1,4 +1,4 @@
-// ExternalMemoryHelpLink points the externalMemory control at the MCP tokens tab, where the
+// ExternalMemoryHelpLink points the externalMemory control at the MCP tokens & apps tab (Outside access), where the
 // token, the client config and the tool list live. It is one standalone component so it can be
 // mounted wherever the control ends up; it carries no steps of its own and reads no Agent data.
 

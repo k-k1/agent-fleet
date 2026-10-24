@@ -41,8 +41,8 @@ value you set is not the value in force, look one layer out.
 | Google Cloud | Google Cloud profiles that `af-gcloud-exec` runs commands with |
 | Issue tracker | Jira and the other work-item sources |
 | Chat | Discord / Slack bridge |
-| MCP servers | integration servers available to your agents |
-| MCP tokens | tokens for driving your sessions from outside and, with the Agent memory setting, for using your Agent Fleet memory from an outside agent |
+| MCP servers (used by sessions) | integration servers available to your agents |
+| MCP tokens & apps | tokens for driving your sessions from outside and, with the Agent memory setting, for using your Agent Fleet memory from an outside agent |
 | Notifications | what you are told about, and how |
 | Limit board | who in this tenant may see where you stand on usage limits, and how much (hidden by default); what teammates publish to you |
 | Read aloud | speech engine and voice |

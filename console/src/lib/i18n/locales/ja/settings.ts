@@ -93,6 +93,8 @@ export const settings = {
   "tokens.revoke_title": "トークンを失効",
   "tokens.revoke_body": "このトークンを失効します。使用中の接続は次回から 401 になります。",
   "tokens.revoke_confirm": "失効する",
+  "tokens.direction": "外部のアプリからこのワークスペースを操作するための設定です。セッションが使うサーバーを登録するには",
+  "tokens.direction_link": "MCP サーバー（セッションで使う）",
   "tokens.intro":
     "手元の Claude（Claude Code / Desktop）から MCP でワークスペースのセッションを操作するためのトークンです。発行者の権限を継承し、スコープはここで選びます。",
   "tokens.issued_head": "トークンを発行しました（この画面を閉じると再表示できません）",
@@ -685,11 +687,12 @@ export const settings = {
   "set.tab_ops": "運用・監視",
   "set.tab_tracker": "課題管理",
   "set.tab_chat": "チャット連携",
-  "set.tab_mcp": "MCP サーバー",
-  "set.tab_tokens": "MCP トークン",
+  "set.tab_mcp": "MCP サーバー（セッションで使う）",
+  "set.tab_tokens": "MCP トークン・接続アプリ",
   // 設定ダイアログ左レールのグループ見出し + モバイル drill-down の戻り
   "set.group_personal": "個人設定",
   "set.group_connections": "接続",
+  "set.group_outside": "外部からのアクセス",
   "set.group_workspace": "ワークスペース",
   "set.back": "設定一覧",
   "set.prefs_unsynced": "設定をサーバーに保存できていません。変更はこのブラウザにだけあり、エージェントは前の設定のまま動きます。",

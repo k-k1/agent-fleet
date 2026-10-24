@@ -1175,8 +1175,8 @@ def heading3_under(path: str, groups: tuple[str, ...]) -> list[str]:
 USE_SETTINGS_EXEMPT: dict[str, str] = {}
 
 # Group headings matched in the documents, so these stay in the documents' own language.
-USE_SETTINGS_GROUPS_JA = ("個人設定", "接続", "ワークスペース")
-USE_SETTINGS_GROUPS_EN = ("Personal", "Connections", "Workspace")
+USE_SETTINGS_GROUPS_JA = ("個人設定", "接続", "外部からのアクセス", "ワークスペース")
+USE_SETTINGS_GROUPS_EN = ("Personal", "Connections", "Outside access", "Workspace")
 
 
 def check_use_settings(f: Findings) -> None:

@@ -149,7 +149,7 @@ depending on state and location.
 - **Open commit graph** / **Open the folder** / **Commit changes**
 - **Switch branch** / **Copy the branch name** / **Copy the directory name** / **Fast-Forward** (on a worktree, **"Fast-forward from origin/develop"** or similar)
 - **Initialize Git Flow** (a git repository's base copy only); see [below](#initialize-git-flow)
-- **Project settings**: the MCP definitions committed in that repository, with per-agent status and warnings ([20](20-settings.md#mcp-servers))
+- **Project settings**: the MCP definitions committed in that repository, with per-agent status and warnings ([20](20-settings.md#mcp-servers-used-by-sessions))
 - **Share…**: share this working copy's (project's) sessions with another member ([12](12-collaboration.md#sharing-a-conversation-shared-sessions))
 - **Assignment to a working set** ([11](11-many-sessions.md#narrowing-the-view-with-working-sets))
 - **Launch shell**: opens a shell session in that copy (the other kinds launch from the **▾** next to "Launch")

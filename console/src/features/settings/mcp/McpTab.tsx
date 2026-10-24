@@ -17,6 +17,7 @@ import { hostsOf } from "./egressCheck.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { ServerRow } from "./mcpServerRow.tsx";
 import { SecretsForm, ServerForm } from "./mcpServerForm.tsx";
+import { DirectionNote } from "../parts/DirectionNote.tsx";
 import { takeReturn } from "./mcpOAuth.ts";
 
 // McpTab — the member's own MCP server registry (docs/log/48 P1 + ADR0031). Lists the
@@ -182,6 +183,7 @@ export function McpTab() {
   const hasTenant = reg.servers.some((s) => s.origin === "tenant") || !!reg.tenantFetchedAt;
   return (
     <div className="mcp-tab">
+      <DirectionNote text="mcp.direction" linkLabel="mcp.direction_link" target="tokens" />
       <p className="muted ds-note">{tr("mcp.intro")}</p>
       {/* Project scope (a repository's .mcp.json and friends) is a separate axis (docs/log/56
           P0); this tab covers only the effective registry (user/tenant/builtin). One line of
