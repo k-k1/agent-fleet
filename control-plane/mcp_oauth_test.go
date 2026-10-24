@@ -1480,3 +1480,53 @@ func TestFetchCIMDDocumentLeavesNoConnectionBehind(t *testing.T) {
 		t.Errorf("%d connections left open after four fetches", n)
 	}
 }
+
+func TestMCPOAuthAuthorizeNamesAnUntrustedClientHost(t *testing.T) {
+	e := newMCPOAuthEnv(t)
+	_, challenge := pkcePair()
+	cb := "https://claude.ai/api/mcp/auth_callback"
+	get := func(id, lang string) *httptest.ResponseRecorder {
+		return e.do(http.MethodGet, mcpOAuthAuthorize+"?"+e.authQuery(id, cb, challenge).Encode(), "", map[string]string{"Accept-Language": lang})
+	}
+
+	// A well-formed https client_id on a host off the list: the page names the host, nothing more.
+	for _, id := range []string{
+		"https://app.example.org/oauth/client.json",
+		"https://app.example.org/oauth/client.json?token=s3cret",
+		"https://app.example.org/oauth/client.json?x=%3Cscript%3E",
+	} {
+		rec := get(id, "en")
+		body := rec.Body.String()
+		if rec.Code != http.StatusBadRequest || !strings.Contains(body, "not trusted here") ||
+			!strings.Contains(body, "<code>app.example.org</code>") || !strings.Contains(body, "trusted client hosts") {
+			t.Errorf("%q: want the untrusted-host page naming app.example.org, got %d %s", id, rec.Code, body)
+		}
+		for _, leak := range []string{"oauth/client.json", "s3cret", "token=", "<script>"} {
+			if strings.Contains(body, leak) {
+				t.Errorf("%q: page leaks %q", id, leak)
+			}
+		}
+	}
+	if rec := get("https://app.example.org/c.json", "ja"); !strings.Contains(rec.Body.String(), "信頼されていません") {
+		t.Errorf("ja page missing: %s", rec.Body)
+	}
+
+	// Markup in the host never reaches the page unescaped.
+	if rec := get("https://<b>x</b>.example.org/c.json", "en"); strings.Contains(rec.Body.String(), "<b>x") {
+		t.Errorf("markup in the host was echoed: %s", rec.Body)
+	}
+
+	// Everything else stays generic: userinfo, a port, plain http, an unknown DCR id, and a
+	// trusted host whose document cannot be fetched.
+	for _, id := range []string{
+		"https://user:pw@app.example.org/c.json", "https://app.example.org:8443/c.json",
+		"http://app.example.org/c.json", "dcr-unknown", "https://claude.ai/missing.json",
+	} {
+		rec := get(id, "en")
+		body := rec.Body.String()
+		if rec.Code != http.StatusBadRequest || !strings.Contains(body, "This connection request was refused.") ||
+			strings.Contains(body, "app.example.org") || strings.Contains(body, "pw") {
+			t.Errorf("%q: want the generic page without the host, got %d %s", id, rec.Code, body)
+		}
+	}
+}
