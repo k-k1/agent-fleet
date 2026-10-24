@@ -383,7 +383,8 @@ tested with fixture lines and files.
   (or is not recorded), and two files can start with the same line. A collision makes the agent
   resume at the wrong offset and the CP drop real events as duplicates. The agent therefore needs
   write access to Squid's log files and a filesystem with user xattrs, and refuses to start
-  without them. The offset is committed only after a 2xx. A line whose tail is damaged is still sent with its time and source
+  without them. A generation is fsynced before any event carries it, so a host crash cannot
+  leave lines on disk whose generation was lost and is then assigned again. The offset is committed only after a 2xx. A line whose tail is damaged is still sent with its time and source
   and no name. Rotation must be Squid's own (`logfile_rotate` >= 1); `copytruncate` is not
   supported.
 - **Verdict.** `allowed` is the policy's verdict on the name, and false when Squid denied or

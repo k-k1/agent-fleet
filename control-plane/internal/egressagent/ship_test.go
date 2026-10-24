@@ -416,3 +416,27 @@ func TestShipSameFirstLineInTwoFilesGetsDistinctIDs(t *testing.T) {
 		t.Fatalf("%d ids over %d events, want 4 and 4: %v", len(ids), n, ids)
 	}
 }
+
+func TestShipNothingBeforeTheGenerationIsDurable(t *testing.T) {
+	f := newShipFixture(t)
+	appendFile(t, f.log, line(1, "10.0.1.5", "a.github.com"))
+	orig := syncFile
+	t.Cleanup(func() { syncFile = orig })
+	syncs := 0
+	syncFile = func(*os.File) error { syncs++; return fmt.Errorf("disk gone") }
+	if err := f.sh.pass(context.Background()); err == nil {
+		t.Fatal("a failed sync must stop the pass")
+	}
+	if f.cp.requests != 0 {
+		t.Fatal("events were sent under a generation that is not on disk")
+	}
+	syncFile = func(fh *os.File) error { syncs++; return orig(fh) }
+	for i := 0; i < 2; i++ {
+		if err := f.sh.pass(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, n := f.cp.ids(); n != 1 || syncs != 2 {
+		t.Fatalf("%d events, %d syncs: want 1 event and one sync per generation per process", n, syncs)
+	}
+}

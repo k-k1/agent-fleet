@@ -64,7 +64,17 @@ type shipper struct {
 	cfg   *Config
 	pol   *policySync
 	state shipState
+	// durable holds the generations this process has fsynced. A generation reaches the CP
+	// only after the xattr holding it is on disk: if the host died with the lines on disk
+	// but not the xattr, the next run would tag the same lines anew and the CP would store
+	// them twice. The xattr may also have been written by another run that died before
+	// syncing, so a generation read back is synced too, once per process.
+	durable map[string]bool
 }
+
+// syncFile flushes a file and its metadata, the xattr included. A variable so a test can
+// make it fail.
+var syncFile = func(f *os.File) error { return f.Sync() }
 
 // logFiles lists the log and its rotated siblings (path.0, path.1, ...), oldest first, so
 // a rotated file is finished before the newer ones.
@@ -149,6 +159,15 @@ func (s *shipper) shipFile(ctx context.Context, path string, snap *snapshot) (st
 	id, err := fileGen(f)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", path, err)
+	}
+	if !s.durable[id] {
+		if err := syncFile(f); err != nil {
+			return "", fmt.Errorf("%s: sync the generation id: %w", path, err)
+		}
+		if s.durable == nil {
+			s.durable = map[string]bool{}
+		}
+		s.durable[id] = true
 	}
 	fi, err := f.Stat()
 	if err != nil {
