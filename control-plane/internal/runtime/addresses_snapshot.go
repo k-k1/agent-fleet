@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -30,9 +31,16 @@ type AddressSnapshot interface {
 	ReporterFor(rt Runtime) (AddressReporter, bool)
 }
 
+// addressSnapshotTimeout bounds one cluster's read (every page and batch of it). The
+// per-workspace read has 20s; this one covers the whole cluster, so it gets more, but it must
+// end well before the sweep's deadline: a read that held until then would leave the first
+// workspace unmarked as asked, and the next sweep would start at the same place again.
+const addressSnapshotTimeout = 60 * time.Second
+
 // ecsAddressSnapshot lists each cluster once per sweep and groups its tasks by service.
 type ecsAddressSnapshot struct {
-	ctx context.Context
+	ctx     context.Context
+	timeout time.Duration
 
 	mu       sync.Mutex
 	clusters map[string]*clusterTasks
@@ -49,7 +57,7 @@ type clusterTasks struct {
 }
 
 func newECSAddressSnapshot(ctx context.Context) *ecsAddressSnapshot {
-	return &ecsAddressSnapshot{ctx: ctx, clusters: map[string]*clusterTasks{}}
+	return &ecsAddressSnapshot{ctx: ctx, timeout: addressSnapshotTimeout, clusters: map[string]*clusterTasks{}}
 }
 
 func (s *ecsAddressSnapshot) ReporterFor(rt Runtime) (AddressReporter, bool) {
@@ -73,7 +81,11 @@ func (s *ecsAddressSnapshot) tasksOf(cluster string, lister ecsTaskLister) (map[
 		s.clusters[cluster] = c
 	}
 	s.mu.Unlock()
-	c.once.Do(func() { c.byService, c.err = listClusterTasks(s.ctx, lister, cluster) })
+	c.once.Do(func() {
+		ctx, cancel := context.WithTimeout(s.ctx, s.timeout)
+		defer cancel()
+		c.byService, c.err = listClusterTasks(ctx, lister, cluster)
+	})
 	return c.byService, c.err
 }
 

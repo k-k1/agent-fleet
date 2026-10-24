@@ -225,3 +225,52 @@ func TestECSAddressSnapshotCoversEC2AndSkipsOthers(t *testing.T) {
 		t.Error("a docker runtime is not in the snapshot")
 	}
 }
+
+// blockingTasks never answers a listing until its context ends.
+type blockingTasks struct {
+	fakeECS
+	listCalls int
+}
+
+func (f *blockingTasks) ListTasks(ctx context.Context, _ *ecs.ListTasksInput, _ ...func(*ecs.Options)) (*ecs.ListTasksOutput, error) {
+	f.listCalls++
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (f *blockingTasks) DescribeTasks(ctx context.Context, _ *ecs.DescribeTasksInput, _ ...func(*ecs.Options)) (*ecs.DescribeTasksOutput, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// A cluster read that hangs ends on its own budget, well before the sweep's deadline, and
+// the failure is shared: the next workspace fails at once instead of waiting again.
+func TestECSAddressSnapshotReadHasItsOwnBudget(t *testing.T) {
+	f := &blockingTasks{}
+	snap := newECSAddressSnapshot(context.Background())
+	snap.timeout = 50 * time.Millisecond
+	a := &ecsRuntime{cfg: ecsConfig{cluster: "c"}, ecs: f, name: "a"}
+	b := &ecsRuntime{cfg: ecsConfig{cluster: "c"}, ecs: f, name: "b"}
+	start := time.Now()
+	for _, e := range []*ecsRuntime{a, b} {
+		rep, _ := snap.ReporterFor(e)
+		if _, err := rep.HeldAddresses(context.Background(), nil); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("%s: want the read's own deadline, got %v", e.name, err)
+		}
+	}
+	if d := time.Since(start); d > 5*time.Second || f.listCalls != 1 {
+		t.Errorf("one bounded read for the cluster: took %s, %d listings", d, f.listCalls)
+	}
+}
+
+// The sweep's own cancellation still ends the read.
+func TestECSAddressSnapshotStopsWithTheSweep(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	snap := newECSAddressSnapshot(ctx)
+	e := &ecsRuntime{cfg: ecsConfig{cluster: "c"}, ecs: &blockingTasks{}, name: "a"}
+	rep, _ := snap.ReporterFor(e)
+	time.AfterFunc(20*time.Millisecond, cancel)
+	if _, err := rep.HeldAddresses(context.Background(), nil); !errors.Is(err, context.Canceled) {
+		t.Errorf("want the sweep's cancellation, got %v", err)
+	}
+}
