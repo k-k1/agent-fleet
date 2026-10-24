@@ -546,9 +546,14 @@ func TestImportApplyAcceptsALargeSelection(t *testing.T) {
 }
 
 // The Control Plane spools at most 130 MiB of an upload (memberOriginUploadMax in control-plane,
-// a separate module); the ceiling plus framing must fit inside it.
+// a separate module, copied below). The real values here are pinned by equality first so a change
+// to either side cannot slip past the relation; control-plane has the mirror test
+// (TestMemberOriginUploadMaxCoversAgentCeiling).
 func TestMemoryImportCeilingFitsControlPlane(t *testing.T) {
 	const controlPlaneUploadMax = 130 << 20
+	if memoryImportCeiling != 128<<20 || memberImportFramingSlack != 1<<20 {
+		t.Fatalf("ceiling %d / framing %d changed: update control-plane's TestMemberOriginUploadMaxCoversAgentCeiling and this test together", memoryImportCeiling, memberImportFramingSlack)
+	}
 	if memoryImportCeiling+memberImportFramingSlack > controlPlaneUploadMax {
 		t.Fatalf("ceiling %d + framing %d exceeds the Control Plane upload limit %d", memoryImportCeiling, memberImportFramingSlack, controlPlaneUploadMax)
 	}
