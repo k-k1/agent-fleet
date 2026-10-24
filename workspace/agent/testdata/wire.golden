@@ -34,10 +34,6 @@ RepoStatus.staged number
 RepoStatus.unborn bool,omitempty
 RepoStatus.unstaged number
 RepoStatus.untracked number
-jdkLatest.current string
-jdkLatest.latest string
-jdkLatest.major string
-jdkLatest.update_available bool
 kindCatalog.kinds[].caps.canFork bool
 kindCatalog.kinds[].caps.canForkAt bool
 kindCatalog.kinds[].caps.canTranscript bool
@@ -164,3 +160,7 @@ session.Session.tmux string
 session.Session.tokenSpends [number],omitempty
 session.Session.workingCopyId string,omitempty
 session.Session.worktree bool,omitempty
+toolchainLatest.current string
+toolchainLatest.latest string
+toolchainLatest.major string
+toolchainLatest.update_available bool

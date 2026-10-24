@@ -243,6 +243,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.unselected": "Not selected",
   "env.java_opt_absent": "Temurin {v} (not installed)",
   "env.java_install": "Install",
+  "env.java_install_version": "Install {v}",
   "env.java_installing": "Installing…",
   "env.java_install_note":
     "Temurin {v} is not in this workspace yet. Install downloads it (~200MB) into your home volume, where it persists across restarts; sessions started afterwards get it as JAVA_HOME, with no Stop → Start.",
@@ -254,6 +255,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.java_install_timeout": "the download did not finish in time",
   "env.node_opt_absent": "v{v} (not installed)",
   "env.node_install": "Install",
+  "env.node_install_version": "Install {v}",
   "env.node_installing": "Installing…",
   "env.node_install_note":
     "Node.js v{v} is not in this workspace yet. Install downloads it into your home volume, where it persists across restarts; sessions started afterwards use it, with no Stop → Start.",

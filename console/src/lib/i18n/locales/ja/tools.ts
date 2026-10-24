@@ -241,6 +241,7 @@ export const tools = {
   "env.unselected": "未選択",
   "env.java_opt_absent": "Temurin {v}（未インストール）",
   "env.java_install": "インストール",
+  "env.java_install_version": "{v} をインストール",
   "env.java_installing": "インストール中…",
   "env.java_install_note":
     "Temurin {v} はまだこのワークスペースにありません。「インストール」で今すぐ取得します（約 200MB／home ボリュームへ入るので再起動しても残ります）。完了後に起動したセッションから JAVA_HOME に入り、Stop → Start は不要です。",
@@ -252,6 +253,7 @@ export const tools = {
   "env.java_install_timeout": "時間内にダウンロードが終わりませんでした",
   "env.node_opt_absent": "v{v}（未インストール）",
   "env.node_install": "インストール",
+  "env.node_install_version": "{v} をインストール",
   "env.node_installing": "インストール中…",
   "env.node_install_note":
     "Node.js v{v} はまだこのワークスペースにありません。「インストール」で今すぐ取得します（home ボリュームへ入るので再起動しても残ります）。完了後に起動したセッションから使われ、Stop → Start は不要です。",

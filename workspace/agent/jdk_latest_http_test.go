@@ -11,26 +11,31 @@ import (
 	"time"
 )
 
-// stubJDKLatest replaces the Adoptium lookup and the clock, and empties the cache.
-// It returns a pointer to the fetch count.
-func stubJDKLatest(t *testing.T, version string, err error) (*int, *time.Time) {
+// stubLookup replaces a lookup's fetch and clock and empties its cache. It returns
+// pointers to the fetch count and the clock.
+func stubLookup(t *testing.T, l *versionLookup, version string, err error) (*int, *time.Time) {
 	t.Helper()
 	calls := 0
 	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
-	prevFetch, prevNow := jdkLatestFetch, jdkLatestNow
-	jdkLatestFetch = func(string) (string, error) { calls++; return version, err }
-	jdkLatestNow = func() time.Time { return now }
-	jdkLatestMu.Lock()
-	jdkLatestCache = map[string]jdkLatestEntry{}
-	jdkLatestInflight = map[string]*jdkLatestCall{}
-	jdkLatestMu.Unlock()
+	prevFetch, prevNow := l.fetch, l.now
+	reset := func() {
+		l.mu.Lock()
+		l.cache = map[string]latestEntry{}
+		l.inflight = map[string]*latestCall{}
+		l.mu.Unlock()
+	}
+	l.fetch = func(string) (string, error) { calls++; return version, err }
+	l.now = func() time.Time { return now }
+	reset()
 	t.Cleanup(func() {
-		jdkLatestFetch, jdkLatestNow = prevFetch, prevNow
-		jdkLatestMu.Lock()
-		jdkLatestCache = map[string]jdkLatestEntry{}
-		jdkLatestMu.Unlock()
+		l.fetch, l.now = prevFetch, prevNow
+		reset()
 	})
 	return &calls, &now
+}
+
+func stubJDKLatest(t *testing.T, version string, err error) (*int, *time.Time) {
+	return stubLookup(t, jdkLatestLookup, version, err)
 }
 
 func jdkLatestReq(t *testing.T, major string) (int, map[string]any) {
@@ -74,16 +79,17 @@ func TestJDKLatestOffersUpdateOnlyWhenNewer(t *testing.T) {
 	}
 }
 
-// A major that is not installed has nothing to update, and must not cost a lookup.
-func TestJDKLatestNotInstalledSkipsLookup(t *testing.T) {
+// For a major that is not installed, latest is what Install would download, and
+// there is nothing to update.
+func TestJDKLatestNotInstalledReportsInstallVersion(t *testing.T) {
 	jdkRoots(t)
 	calls, _ := stubJDKLatest(t, "17.0.21+9", nil)
 	code, out := jdkLatestReq(t, "17")
-	if code != http.StatusOK || out["update_available"] != false || out["current"] != "" {
+	if code != http.StatusOK || out["current"] != "" || out["latest"] != "17.0.21+9" || out["update_available"] != false {
 		t.Fatalf("code %d body %v", code, out)
 	}
-	if *calls != 0 {
-		t.Fatalf("fetched %d times for an absent major", *calls)
+	if *calls != 1 {
+		t.Fatalf("fetches = %d, want 1", *calls)
 	}
 }
 
@@ -96,7 +102,7 @@ func TestJDKLatestCachesAndExpires(t *testing.T) {
 	if *calls != 1 {
 		t.Fatalf("fetches within the TTL = %d, want 1", *calls)
 	}
-	*now = now.Add(jdkLatestTTL)
+	*now = now.Add(latestTTL)
 	jdkLatestReq(t, "21")
 	if *calls != 2 {
 		t.Fatalf("fetches after the TTL = %d, want 2", *calls)
@@ -116,7 +122,7 @@ func TestJDKLatestFailureIsCachedShortly(t *testing.T) {
 	if *calls != 1 {
 		t.Fatalf("fetches within the failure TTL = %d, want 1", *calls)
 	}
-	*now = now.Add(jdkLatestFailTTL)
+	*now = now.Add(latestFailTTL)
 	jdkLatestReq(t, "21")
 	if *calls != 2 {
 		t.Fatalf("fetches after the failure TTL = %d, want 2", *calls)
@@ -130,7 +136,7 @@ func TestJDKLatestConcurrentCallersShareOneFetch(t *testing.T) {
 	var calls atomic.Int32
 	entered := make(chan struct{}, 2)
 	release := make(chan struct{})
-	jdkLatestFetch = func(string) (string, error) {
+	jdkLatestLookup.fetch = func(string) (string, error) {
 		calls.Add(1)
 		entered <- struct{}{}
 		<-release
@@ -138,7 +144,7 @@ func TestJDKLatestConcurrentCallersShareOneFetch(t *testing.T) {
 	}
 	results := make(chan string, 2)
 	get := func() {
-		v, _ := jdkLatest("21")
+		v, _ := jdkLatestLookup.latest("21")
 		results <- v
 	}
 	go get()
@@ -157,11 +163,18 @@ func TestJDKLatestConcurrentCallersShareOneFetch(t *testing.T) {
 	}
 }
 
+// Not offered (999) is refused too: the major is a cache key, and an absent major now
+// costs a lookup.
 func TestJDKLatestRejectsBadMajor(t *testing.T) {
-	for _, m := range []string{"", "21%26x%3D1", "..%2F..", "latest"} {
+	jdkRoots(t)
+	calls, _ := stubJDKLatest(t, "x", nil)
+	for _, m := range []string{"", "21%26x%3D1", "..%2F..", "latest", "999"} {
 		if code, _ := jdkLatestReq(t, m); code != http.StatusBadRequest {
 			t.Errorf("major %q: want 400 got %d", m, code)
 		}
+	}
+	if *calls != 0 {
+		t.Fatalf("a refused major cost %d lookups", *calls)
 	}
 }
 

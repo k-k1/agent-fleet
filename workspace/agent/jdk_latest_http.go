@@ -1,6 +1,7 @@
 package main
 
-// jdk_latest_http.go — "is there a newer patch of this JDK?" for Settings → Toolchains.
+// jdk_latest_http.go — "which patch would Install fetch, and is it newer than the one
+// in use?" for the Java row of Settings → Toolchains.
 //
 // The toolchains GET stays offline: it only reports what is on disk (java_versions).
 // Asking Adoptium is a separate call the Console makes for the selected major, so a
@@ -10,42 +11,14 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-const (
-	jdkLatestTTL     = 6 * time.Hour
-	jdkLatestFailTTL = 10 * time.Minute // a failed lookup is not retried on every tab open
-)
-
-type jdkLatestEntry struct {
-	version string
-	err     string
-	at      time.Time
-}
-
-// jdkLatestCall is one in-flight lookup that concurrent callers for the same major
-// share. Without it two tab opens both fetch, and whichever finishes last wins the
-// cache: a timeout landing after a success hid the update for the failure TTL.
-type jdkLatestCall struct {
-	done chan struct{}
-	e    jdkLatestEntry
-}
-
-var (
-	jdkLatestMu       sync.Mutex // guards the cache and the in-flight table
-	jdkLatestCache    = map[string]jdkLatestEntry{}
-	jdkLatestInflight = map[string]*jdkLatestCall{}
-	// jdkLatestFetch is a var so tests can answer without the network.
-	jdkLatestFetch = fetchJDKLatest
-	jdkLatestNow   = time.Now
-)
+var jdkLatestLookup = newVersionLookup(fetchJDKLatest)
 
 // adoptiumVersion is the "version" object of an Adoptium v3 asset.
 type adoptiumVersion struct {
@@ -96,66 +69,13 @@ func fetchJDKLatest(major string) (string, error) {
 	return assets[0].Version.semantic(), nil
 }
 
-// jdkLatest returns the cached latest version of a major, fetching when the entry
-// is missing or stale. Concurrent callers for one major share a single fetch.
-func jdkLatest(major string) (string, error) {
-	now := jdkLatestNow()
-	jdkLatestMu.Lock()
-	if e, ok := jdkLatestCache[major]; ok && now.Sub(e.at) < e.ttl() {
-		jdkLatestMu.Unlock()
-		return e.result()
-	}
-	if c := jdkLatestInflight[major]; c != nil {
-		jdkLatestMu.Unlock()
-		<-c.done
-		return c.e.result()
-	}
-	c := &jdkLatestCall{done: make(chan struct{})}
-	jdkLatestInflight[major] = c
-	jdkLatestMu.Unlock()
-
-	v, err := jdkLatestFetch(major)
-	c.e = jdkLatestEntry{version: v, at: now}
-	if err != nil {
-		c.e.err = err.Error()
-	}
-	jdkLatestMu.Lock()
-	jdkLatestCache[major] = c.e
-	delete(jdkLatestInflight, major)
-	jdkLatestMu.Unlock()
-	close(c.done)
-	return c.e.result()
-}
-
-func (e jdkLatestEntry) ttl() time.Duration {
-	if e.err != "" {
-		return jdkLatestFailTTL
-	}
-	return jdkLatestTTL
-}
-
-func (e jdkLatestEntry) result() (string, error) {
-	if e.err != "" {
-		return "", errors.New(e.err)
-	}
-	return e.version, nil
-}
-
-// jdkLatestReply is the GET /env/jdk-latest answer.
-type jdkLatestReply struct {
-	Major           string `json:"major"`
-	Current         string `json:"current"` // "" = not installed: nothing to update
-	Latest          string `json:"latest"`
-	UpdateAvailable bool   `json:"update_available"`
-}
-
 // handleJDKLatest is GET /env/jdk-latest?major=21: the version JAVA_HOME resolves to
-// now, the latest GA patch, and whether installing would update it. A major that is
-// not installed has nothing to update (the install button covers it).
+// now, the latest GA patch, and whether installing would update it. For a major that
+// is not installed, latest is what Install would download.
 func handleJDKLatest(w http.ResponseWriter, r *http.Request) {
 	major := r.URL.Query().Get("major")
-	// The major reaches a URL, so only the digits the picker offers.
-	if !majorOnlyRe.MatchString(major) {
+	// The major reaches a URL and a cache key, so only the majors the picker offers.
+	if !majorOnlyRe.MatchString(major) || !isOffered(major, javaOptions()) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_major", "invalid JDK major version")
 		return
 	}
@@ -163,20 +83,16 @@ func handleJDKLatest(w http.ResponseWriter, r *http.Request) {
 	if jh := javaHomeFor(major); jh != "" {
 		current = jdkVersion(jh)
 	}
-	if current == "" {
-		httpx.WriteJSON(w, http.StatusOK, jdkLatestReply{Major: major})
-		return
-	}
-	latest, err := jdkLatest(major)
+	latest, err := jdkLatestLookup.latest(major)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadGateway, "jdk_latest_unavailable", err.Error())
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, jdkLatestReply{
+	httpx.WriteJSON(w, http.StatusOK, toolchainLatestReply{
 		Major:           major,
 		Current:         current,
 		Latest:          latest,
-		UpdateAvailable: compareJDKVersions(latest, current) > 0,
+		UpdateAvailable: current != "" && compareJDKVersions(latest, current) > 0,
 	})
 }
 

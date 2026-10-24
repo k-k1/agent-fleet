@@ -7,6 +7,7 @@
 //   2. the button POSTs /env/node-install and refetches the list once it finishes
 //   3. the option itself reads as "not installed" (finding out after selecting is too late)
 //   4. "system" (the image's own node) is never an install target
+//   5. the button names the version it would install when the agent can tell
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -145,5 +146,25 @@ describe("EnvTab Node.js row", () => {
     expect(btn.disabled).toBe(true);
     expect(btn.textContent).toBe("インストール中…");
     expect(document.querySelector<HTMLSelectElement>(".env-node-pick select")!.disabled).toBe(true);
+  });
+
+  it("names the version Install would fetch, and falls back to plain Install offline", async () => {
+    for (const [latest, label] of [
+      [() => Promise.resolve({ major: "24", current: "", latest: "v24.11.0", update_available: false }), "v24.11.0 をインストール"],
+      [() => Promise.reject(new Error("node_latest_unavailable")), "インストール"],
+    ] as const) {
+      api.mockImplementation((path: string) => {
+        if (path === "api/env/toolchains") return Promise.resolve(toolchains(["22"], "24"));
+        if (path === "api/env/node-latest?major=24") return latest();
+        return Promise.resolve({});
+      });
+      await mount();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(document.querySelector<HTMLButtonElement>(".env-node-pick button")!.textContent).toBe(label);
+      act(() => root?.unmount());
+      host?.remove();
+    }
   });
 });
