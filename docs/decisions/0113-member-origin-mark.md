@@ -212,5 +212,5 @@ Review notes on the above (same day):
 The 130 MiB spool cap above is a fixed ceiling, while `AF_MEMORY_IMPORT_MAX` is an Agent setting, so a
 value large enough for the multipart body to pass 130 MiB was refused by the CP with 413 before the Agent saw the upload. The
 Agent now clamps the setting to 128 MiB (the 130 MiB cap less the 1 MiB reserved for
-multipart framing) and logs a warning once. The CP limit stays as it was. The modules cannot share the
+multipart framing, with another 1 MiB of headroom) and logs a warning once. The CP limit stays as it was. The modules cannot share the
 constant; each pins the pair in a test.

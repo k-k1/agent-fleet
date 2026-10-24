@@ -191,5 +191,5 @@ Follow-ups: #2076
 ## 追記 2026-10-25: Agent の import 上限を CP の退避上限に合わせて丸める (#2489)
 
 上の 130 MiB の退避上限は固定値だが、`AF_MEMORY_IMPORT_MAX` は Agent 側の設定なので、multipart 本文が 130 MiB を超える値にすると
-Agent に届く前に CP が 413 で断っていた。Agent は設定値を 128 MiB（130 MiB から multipart 用に予約した 1 MiB を引いた値）に
+Agent に届く前に CP が 413 で断っていた。Agent は設定値を 128 MiB（130 MiB から multipart 用に予約した 1 MiB を引き、さらに 1 MiB の余裕を持たせた値）に
 丸め、警告を 1 回ログに出す。CP の上限は変えない。2 つのモジュールは定数を共有できないので、それぞれのテストで組を固定する。
