@@ -3,9 +3,9 @@ audience: "anyone working with repositories, branches and commits"
 updated: "2026-10"
 ---
 
-# 03. Repositories and git — cloning, reviewing changes, committing, pushing
+# 06. Repositories and git — cloning, reviewing changes, committing, pushing
 
-English | [日本語](03-code.ja.md)
+English | [日本語](06-code.ja.md)
 
 ## Connect a git provider
 

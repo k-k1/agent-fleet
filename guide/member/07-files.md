@@ -3,9 +3,9 @@ audience: "anyone reading or editing files in the Console"
 updated: "2026-10"
 ---
 
-# 04. Files — tree, viewer, Markdown/slides
+# 07. Files — tree, viewer, Markdown/slides
 
-English | [日本語](04-files.ja.md)
+English | [日本語](07-files.ja.md)
 
 ## File tree
 

@@ -3,9 +3,9 @@ audience: "anyone whose screen is not doing what they expected"
 updated: "2026-09"
 ---
 
-# 11. Troubleshooting — fixes by symptom and FAQ
+# 21. Troubleshooting — fixes by symptom and FAQ
 
-English | [日本語](11-troubleshooting.ja.md)
+English | [日本語](21-troubleshooting.ja.md)
 
 Start with the "by symptom" index and look for your situation; if nothing matches,
 check the FAQ at the end. Each entry links to the relevant chapter of the main guide.

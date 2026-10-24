@@ -3,9 +3,9 @@ audience: "anyone using AWS or Google Cloud from the workspace"
 updated: "2026-10"
 ---
 
-# 15. Cloud accounts — AWS profiles, SSM hosts and Google Cloud
+# 16. Cloud accounts — AWS profiles, SSM hosts and Google Cloud
 
-English | [日本語](15-cloud-accounts.ja.md)
+English | [日本語](16-cloud-accounts.ja.md)
 
 ## Logging in to another in-house host (SSM)
 

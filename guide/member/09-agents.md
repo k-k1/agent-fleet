@@ -3,9 +3,9 @@ audience: "anyone choosing and connecting an agent"
 updated: "2026-10"
 ---
 
-# 06. Agents — connecting one, and choosing between them
+# 09. Agents — connecting one, and choosing between them
 
-English | [日本語](06-agents.ja.md)
+English | [日本語](09-agents.ja.md)
 
 All connections are made from **⚙Settings → the "Agents" tab** (the workspace must
 be running).

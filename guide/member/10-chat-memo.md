@@ -3,9 +3,9 @@ audience: "anyone using the assistant chat or the memo queue"
 updated: "2026-09"
 ---
 
-# 07. Chat and memos — quick questions, translation, and memo capture
+# 10. Chat and memos — quick questions, translation, and memo capture
 
-English | [日本語](07-chat-memo.ja.md)
+English | [日本語](10-chat-memo.ja.md)
 
 ## What the assistant chat is
 

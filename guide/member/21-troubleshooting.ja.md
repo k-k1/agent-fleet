@@ -3,9 +3,9 @@ audience: "画面が思ったとおりに動かない人"
 updated: "2026-09"
 ---
 
-# 11. 困ったとき — 症状別の対処と FAQ
+# 21. 困ったとき — 症状別の対処と FAQ
 
-[English](11-troubleshooting.md) | 日本語
+[English](21-troubleshooting.md) | 日本語
 
 まず「症状別」で自分の状況を探し、当てはまらなければ末尾の FAQ を見てください。
 各項目は本編の該当章にリンクしています。

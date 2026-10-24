@@ -3,9 +3,9 @@ audience: "エージェントを動かし、操縦する人"
 updated: "2026-09"
 ---
 
-# 02. セッション — AI との会話を起動・切り替え・止める
+# 03. セッション — AI との会話を起動・切り替え・止める
 
-[English](02-sessions.md) | 日本語
+[English](03-starting-sessions.md) | 日本語
 
 セッションは、AI に任せる 1 つの仕事を、**会話・作業場所・実行状態**をまとめた単位です。
 ターミナルの有無とは別の概念で、Codex / opencode / GitHub Copilot / Cursor / Kiro は黒い画面を持たない

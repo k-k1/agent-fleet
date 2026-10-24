@@ -3,9 +3,9 @@ audience: "ワークスペースを外のものへつなぐ人"
 updated: "2026-10"
 ---
 
-# 10. 一歩進んだ使い方 — ブラウザペイン／軽量プレビュー・外部連携・環境設定
+# 14. 一歩進んだ使い方 — ブラウザペイン／軽量プレビュー・外部連携・環境設定
 
-[English](10-integrations.md) | 日本語
+[English](14-preview-browser.md) | 日本語
 
 必要になったところだけ読めば十分です。AWS・SSM ホスト・Google Cloud は
 [15 クラウドのアカウント](15-cloud-accounts.ja.md)にあります。

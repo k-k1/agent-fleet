@@ -3,9 +3,9 @@ audience: "anyone looking for a setting"
 updated: "2026-10"
 ---
 
-# 12. Settings — every tab of the ⚙ settings dialog
+# 20. Settings — every tab of the ⚙ settings dialog
 
-English | [日本語](12-settings.ja.md)
+English | [日本語](20-settings.ja.md)
 
 How each setting is *used* belongs to the other chapters, so read this one as a
 **map**.

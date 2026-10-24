@@ -3,9 +3,9 @@ audience: "anyone running several pieces of work at once"
 updated: "2026-08"
 ---
 
-# 08. Fleet operator — directing multiple sessions from chat
+# 11. Fleet operator — directing multiple sessions from chat
 
-English | [日本語](08-organising.ja.md)
+English | [日本語](11-many-sessions.ja.md)
 
 It helps to read the assistant chat in [07 Chat and memos](07-chat-memo.md) and
 [02 Sessions](02-sessions.md) first.

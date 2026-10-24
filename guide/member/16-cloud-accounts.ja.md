@@ -3,9 +3,9 @@ audience: "ワークスペースから AWS や Google Cloud を使う人"
 updated: "2026-10"
 ---
 
-# 15. クラウドのアカウント — AWS プロファイル・SSM ホスト・Google Cloud
+# 16. クラウドのアカウント — AWS プロファイル・SSM ホスト・Google Cloud
 
-[English](15-cloud-accounts.md) | 日本語
+[English](16-cloud-accounts.md) | 日本語
 
 ## 社内の別ホストに入る（SSM）
 

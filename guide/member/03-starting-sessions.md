@@ -3,9 +3,9 @@ audience: "anyone running and steering agents"
 updated: "2026-09"
 ---
 
-# 02. Sessions — launch, switch, and stop AI conversations
+# 03. Sessions — launch, switch, and stop AI conversations
 
-English | [日本語](02-sessions.ja.md)
+English | [日本語](03-starting-sessions.ja.md)
 
 A session bundles one job you delegate to the AI into a single unit: its **conversation,
 working location, and execution state**. It is separate from whether a terminal

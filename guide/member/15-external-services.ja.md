@@ -3,9 +3,9 @@ audience: "監視ツールを会話につなぐ人"
 updated: "2026-08"
 ---
 
-# 13. 運用ツール連携（MCP でインシデント壁打ち）🧪
+# 15. 運用ツール連携（MCP でインシデント壁打ち）🧪
 
-[English](13-ops-tooling.md) | 日本語
+[English](15-external-services.md) | 日本語
 
 ## PagerDuty / Grafana / CloudWatch / AWS は「運用・監視」タブから接続できます（推奨）
 

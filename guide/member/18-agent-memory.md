@@ -3,9 +3,9 @@ audience: "anyone who wants agents to remember what they learned, or to undo wha
 updated: "2026-10"
 ---
 
-# 14. Agent memory — what agents remember, and how you keep it
+# 18. Agent memory — what agents remember, and how you keep it
 
-English | [日本語](14-agent-memory.ja.md)
+English | [日本語](18-agent-memory.ja.md)
 
 Two features keep what agents learn. **Agent memory** is Agent Fleet's own memory, shared by every kind of agent.
 **Memory snapshots** version the memory an agent keeps in its own files. Both are pages of ⚙ Settings.

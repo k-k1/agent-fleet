@@ -3,9 +3,9 @@ audience: "anyone using the terminal, panes, or a preview of a running app"
 updated: "2026-10"
 ---
 
-# 05. Terminal — working the black screen, copy & paste, shortcuts, phones
+# 08. Terminal — working the black screen, copy & paste, shortcuts, phones
 
-English | [日本語](05-terminal.ja.md)
+English | [日本語](08-terminal.ja.md)
 
 Even if you're comfortable with CLIs, a browser terminal has quirks of its own
 (copy & paste in particular), so reading this once will keep you from getting stuck.

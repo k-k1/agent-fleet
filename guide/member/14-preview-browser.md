@@ -3,9 +3,9 @@ audience: "anyone connecting the workspace to something outside it"
 updated: "2026-10"
 ---
 
-# 10. Going further — browser pane / lightweight preview, external integrations, environment settings
+# 14. Going further — browser pane / lightweight preview, external integrations, environment settings
 
-English | [日本語](10-integrations.ja.md)
+English | [日本語](14-preview-browser.ja.md)
 
 It's fine to read only the parts you need, when you need them. AWS, SSM hosts and Google Cloud are in
 [15 Cloud accounts](15-cloud-accounts.md).

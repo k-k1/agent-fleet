@@ -3,9 +3,9 @@ audience: "anyone working with other members on the same conversation, or tidyin
 updated: "2026-10"
 ---
 
-# 09. Working with others, and keeping things tidy
+# 12. Working with others, and keeping things tidy
 
-English | [日本語](09-collaboration.ja.md)
+English | [日本語](12-collaboration.ja.md)
 
 This chapter covers the parts of the Console for **more than one person** and for
 **what happens to work after it is finished**: highlighting a line so somebody

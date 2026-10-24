@@ -3,9 +3,9 @@ audience: "Console でファイルを読む・編集する人"
 updated: "2026-10"
 ---
 
-# 04. ファイル — ツリー・ビュアー・Markdown/スライド
+# 07. ファイル — ツリー・ビュアー・Markdown/スライド
 
-[English](04-files.md) | 日本語
+[English](07-files.md) | 日本語
 
 ## ファイルツリー
 
