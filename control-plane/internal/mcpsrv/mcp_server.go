@@ -56,6 +56,8 @@ const (
 	codeMCPAuthUnknown    = "mcp_auth_unknown"
 	codeMCPOAuthHeader    = "mcp_oauth_authorization_header"
 	codeMCPOAuthSecret    = "mcp_oauth_user_secret"
+	codeMCPOAuthClient    = "mcp_oauth_client_invalid"
+	codeMCPOAuthReenter   = "mcp_oauth_secret_reenter"
 )
 
 // mcpAuthOAuth marks a definition each member signs in to with OAuth (ADR 0119 decision 9). It
@@ -139,9 +141,18 @@ type mcpServerBody struct {
 	Enabled    bool              `json:"enabled"`
 	UserSecret bool              `json:"user_secret,omitempty"`
 	Auth       string            `json:"auth,omitempty"`
-	CreatedBy  string            `json:"created_by,omitempty"`
-	CreatedAt  string            `json:"created_at,omitempty"`
-	UpdatedAt  string            `json:"updated_at,omitempty"`
+	// OAuthClient is the client the tenant registered at the server's authorization server. Its
+	// secret is write-only: it comes back as MaskedValue, which sent back keeps it.
+	OAuthClient *mcpOAuthClientBody `json:"oauth_client,omitempty"`
+	CreatedBy   string              `json:"created_by,omitempty"`
+	CreatedAt   string              `json:"created_at,omitempty"`
+	UpdatedAt   string              `json:"updated_at,omitempty"`
+}
+
+type mcpOAuthClientBody struct {
+	Issuer       string `json:"issuer"`
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret,omitempty"`
 }
 
 type mcpTargets struct {
@@ -166,6 +177,15 @@ type distDef struct {
 	TimeoutMS  int               `json:"timeoutMs,omitempty"`
 	UserSecret bool              `json:"userSecret,omitempty"`
 	Auth       string            `json:"auth,omitempty"`
+	// OAuthClient carries no secret: with one, the Agent sends its token requests here.
+	OAuthClient *distOAuthClient `json:"oauthClient,omitempty"`
+}
+
+// distOAuthClient is the agent's secrets.MCPTenantClient.
+type distOAuthClient struct {
+	Issuer       string `json:"issuer"`
+	ClientID     string `json:"clientId"`
+	Confidential bool   `json:"confidential,omitempty"`
 }
 
 // --- header sealing ---------------------------------------------------------------
@@ -259,8 +279,14 @@ func validateMCPBody(b mcpServerBody) *APIError {
 		if b.UserSecret {
 			return &APIError{http.StatusBadRequest, codeMCPOAuthSecret, "an OAuth server asks members for no header values"}
 		}
+		if c := b.OAuthClient; c != nil && !validOAuthClient(*c) {
+			return &APIError{http.StatusBadRequest, codeMCPOAuthClient, "a pre-registered client needs a client id and an https issuer"}
+		}
 	default:
 		return &APIError{http.StatusBadRequest, codeMCPAuthUnknown, "unknown authentication: " + b.Auth}
+	}
+	if b.Auth != mcpAuthOAuth && b.OAuthClient != nil {
+		return &APIError{http.StatusBadRequest, codeMCPOAuthClient, "a pre-registered client belongs to an OAuth server"}
 	}
 	for k, v := range b.Headers {
 		if strings.TrimSpace(k) == "" || strings.ContainsAny(k, "\r\n:") {
@@ -279,6 +305,27 @@ func validateMCPBody(b mcpServerBody) *APIError {
 		return &APIError{http.StatusBadRequest, codeMCPTimeoutRange, "timeout must be between 1000 and 120000 ms"}
 	}
 	return nil
+}
+
+// validOAuthClient mirrors the Agent's validTenantClient, stricter on the issuer: https only,
+// since the CP itself fetches its metadata for a confidential client. The client id is RFC 6749
+// VSCHAR; the secret may hold anything but a control character.
+func validOAuthClient(c mcpOAuthClientBody) bool {
+	u, err := url.Parse(c.Issuer)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	if strings.TrimSpace(c.ClientID) == "" || len(c.ClientID) > 255 || len(c.ClientSecret) > 1024 {
+		return false
+	}
+	for _, s := range []string{c.ClientID, c.ClientSecret} {
+		for _, r := range s {
+			if r < 0x20 || r > 0x7e {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // validateMCPURL keeps a distributed definition to an absolute http(s) URL with no
@@ -433,8 +480,53 @@ func rowToBody(row store.MCPServerRow, headers map[string]string) mcpServerBody 
 		Headers: headers, Targets: splitTargets(row.Targets), Kinds: splitKinds(row.Kinds),
 		TimeoutMS: row.TimeoutMS, Enabled: row.Enabled, UserSecret: row.UserSecret, Auth: row.Auth,
 		CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		OAuthClient: maskedOAuthClient(row),
 	}
 }
+
+func maskedOAuthClient(row store.MCPServerRow) *mcpOAuthClientBody {
+	if row.Auth != mcpAuthOAuth || row.OAuthClientID == "" {
+		return nil
+	}
+	c := &mcpOAuthClientBody{Issuer: row.OAuthIssuer, ClientID: row.OAuthClientID}
+	if row.OAuthSecretEnc != "" {
+		c.ClientSecret = MaskedValue
+	}
+	return c
+}
+
+// resolveOAuthClient fills row's client columns from the request. A masked secret keeps the
+// stored one only while the issuer and the client id are unchanged: otherwise an admin could point
+// a secret somebody else entered at an authorization server of their choosing. Any other masked
+// secret is refused rather than dropped: dropping it would quietly turn a confidential client
+// into a public one, and "***" is never stored as a secret.
+func (a ServerAPI) resolveOAuthClient(ctx context.Context, tenantID string, b mcpServerBody, stored *store.MCPServerRow, row *store.MCPServerRow) *APIError {
+	if b.Auth != mcpAuthOAuth || b.OAuthClient == nil {
+		return nil
+	}
+	row.OAuthIssuer = strings.TrimSpace(b.OAuthClient.Issuer)
+	row.OAuthClientID = strings.TrimSpace(b.OAuthClient.ClientID)
+	secret := strings.TrimSpace(b.OAuthClient.ClientSecret)
+	switch {
+	case secret == MaskedValue:
+		if stored == nil || stored.OAuthSecretEnc == "" || stored.OAuthIssuer != row.OAuthIssuer || stored.OAuthClientID != row.OAuthClientID {
+			return &APIError{http.StatusBadRequest, codeMCPOAuthReenter,
+				"enter the client secret again: the issuer or client id changed, or no secret is stored"}
+		}
+		row.OAuthSecretEnc, row.OAuthKeyRef = stored.OAuthSecretEnc, stored.OAuthKeyRef
+	case secret != "":
+		enc, ref, err := a.sealHeaders(ctx, tenantID, map[string]string{oauthSecretKey: secret})
+		if err != nil {
+			return internalErr(err)
+		}
+		row.OAuthSecretEnc, row.OAuthKeyRef = enc, ref
+	}
+	return nil
+}
+
+// oauthSecretKey is the single entry of the sealed map a client secret is kept in, so it is sealed
+// and opened by the same code as headers.
+const oauthSecretKey = "client_secret"
 
 // mcpTenantSlug picks the tenant slug: the query param (GET / DELETE, which have no
 // body) or the decoded body's tenant_slug (POST / PUT). Falling back to the header-based
@@ -519,6 +611,10 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 		Targets: joinTargets(b.Targets), Kinds: strings.Join(b.Kinds, ","), TimeoutMS: b.TimeoutMS,
 		Enabled: b.Enabled, UserSecret: b.UserSecret, Auth: b.Auth, UpdatedAt: store.NowTS(),
 	}
+	if aerr := a.resolveOAuthClient(r.Context(), t.ID, b, stored, &row); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	if stored == nil {
 		row.ID = store.NewID()
 		row.CreatedBy = ident.Email
@@ -535,7 +631,8 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 	}
 	// Audit detail names the server and the flags, never a header value (docs/log/48 §9).
 	a.auditMCP(r.Context(), ident, t.ID, "mcp.upsert", row.Name,
-		"url="+row.URL+" targets="+row.Targets+" enabled="+boolStr(row.Enabled)+" user_secret="+boolStr(row.UserSecret)+" auth="+row.Auth)
+		"url="+row.URL+" targets="+row.Targets+" enabled="+boolStr(row.Enabled)+" user_secret="+boolStr(row.UserSecret)+" auth="+row.Auth+
+			" oauth_client="+row.OAuthClientID+" confidential="+boolStr(row.OAuthSecretEnc != ""))
 	writeJSON(w, http.StatusOK, rowToBody(row, maskHeaders(headers)))
 }
 
@@ -581,6 +678,13 @@ func (a ServerAPI) auditMCP(ctx context.Context, ident store.Identity, tenantID,
 
 // --- distribution face -------------------------------------------------------------
 
+func distClientOf(row store.MCPServerRow) *distOAuthClient {
+	if row.Auth != mcpAuthOAuth || row.OAuthClientID == "" {
+		return nil
+	}
+	return &distOAuthClient{Issuer: row.OAuthIssuer, ClientID: row.OAuthClientID, Confidential: row.OAuthSecretEnc != ""}
+}
+
 // Distribute (GET /internal/mcp-servers) serves the caller's tenant's ENABLED
 // definitions to their Workspace agent, which caches them (docs/log/48 §6). The tenant comes
 // from the token's membership, never the request, so this can never read another
@@ -615,6 +719,7 @@ func (a ServerAPI) Distribute(w http.ResponseWriter, r *http.Request, mv store.M
 			Transport: "http", URL: row.URL, Headers: h, Enabled: true,
 			Targets: splitTargets(row.Targets), Kinds: splitKinds(row.Kinds),
 			TimeoutMS: row.TimeoutMS, UserSecret: row.UserSecret, Auth: row.Auth,
+			OAuthClient: distClientOf(row),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"servers": out, "unreadable": broken})

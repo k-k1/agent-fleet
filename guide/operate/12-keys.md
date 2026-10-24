@@ -17,7 +17,7 @@ are in the [ECS runbook](../../deploy/aws/ecs/README.md#keys-at-rest-on-kms-opti
 ## Keys at rest on AWS KMS
 
 On `ecs` / `ecs-ec2` the Control Plane can have AWS KMS hold the keys for what it seals: MCP
-connection headers, sign-in and Git OAuth client secrets, engine tokens, session handoffs and
+connection headers and the client secrets tenants registered for MCP servers, sign-in and Git OAuth client secrets, engine tokens, session handoffs and
 shares, inbox messages and their attachments, the development sign-in's signing keys and client
 secrets, the key of each workspace's credential store, and each home's own credential-store key
 where homes have one. Each value is sealed with a fresh data key from KMS,
@@ -59,7 +59,7 @@ What to know before you switch:
 
 `af-cp rewrap-keys` re-seals, under KMS, every value the Control Plane sealed with the master
 key before the switch: the wrapped key of each workspace's credential store, MCP connection
-headers, sign-in and Git OAuth client secrets, session handoffs and share proposals, inbox
+headers and the client secrets tenants registered for MCP servers, sign-in and Git OAuth client secrets, session handoffs and share proposals, inbox
 messages and their attachments, the development sign-in's signing keys and client secrets, each
 home's own credential-store key, and the Hugging Face, Civitai and ComfyUI keys of the engines. Afterwards disabling the KMS key makes
 those unreadable too.

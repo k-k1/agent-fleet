@@ -46,6 +46,7 @@ export const tools = {
   "mcp.oauth_granted_scopes": "スコープ: {scopes}",
   "mcp.oauth_reg_used": "クライアントの識別方法: {path}",
   "mcp.oauth_reg_path_preregistered": "入力したクライアント ID",
+  "mcp.oauth_reg_path_tenant": "テナントが登録したクライアント",
   "mcp.oauth_again_note": "保存されているサインインを更新できなくなりました。もう一度サインインしてください。",
   "mcp.oauth_step_note": "サーバーが、このサインインにない権限（{scope}）を求めました。もう一度サインインすると付与されます。",
   "mcp.oauth_btn_reload": "再読み込み",

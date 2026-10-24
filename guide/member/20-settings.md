@@ -384,6 +384,8 @@ search.
   offers **Sign in** like one of your own, the sign-in is yours alone, and the server reaches your sessions only
   after you have signed in. If the administrator stops distributing it, moves it to another URL or takes OAuth
   off it, your sign-in to it is disconnected at your workspace's next fetch (within 5 minutes), and a new URL needs a new sign-in.
+  When the administrator registered a client for it, the row says the client was identified by **a client your tenant
+  registered**; changing that client also disconnects your sign-in.
 - **Advanced** (closed by default): **targets** (**assistants**, **sessions**, or both; clear both and the entry
   stays but goes nowhere), **target agents** (empty covers every agent), the **timeout** and **enabled**. The
   summary line beside the title shows the current values, for example "Assistant, Sessions · Every agent · default

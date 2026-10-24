@@ -340,8 +340,9 @@ func hasReg(srv OAuthServer, path string) bool {
 	return false
 }
 
-// chooseClient follows the registration order: pre-registered, CIMD, DCR, then "client id
-// needed". force pins one path.
+// chooseClient follows the registration order: pre-registered (the tenant's client for this
+// issuer first, then one the member entered), CIMD, DCR, then "client id needed". force pins one
+// path.
 func chooseClient(ctx context.Context, d ServerDef, srv OAuthServer, req StartRequest) (clientIdentity, *OAuthError) {
 	force := req.Registration
 	switch force {
@@ -354,6 +355,9 @@ func chooseClient(ctx context.Context, d ServerDef, srv OAuthServer, req StartRe
 		return clientIdentity{}, oerr(http.StatusInternalServerError, OAuthErrInternal, "the secret store could not be read")
 	}
 	if force == "" || force == OAuthRegPreregistered {
+		if cl, ok := tenantClient(d, srv); ok {
+			return cl, nil
+		}
 		for _, c := range data.MCPOAuthClients {
 			if c.Kind == OAuthRegPreregistered && c.Issuer == srv.Issuer && c.ServerID == d.ID {
 				return clientIdentity{OAuthRegPreregistered, c.ClientID, c.ClientSecret, tokenAuthFor(c.ClientSecret, srv.ep.tokenAuthMethods)}, nil
@@ -610,7 +614,7 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 		"code_verifier": {p.verifier},
 		"resource":      {p.resource},
 	}
-	tok, terr := postToken(ctx, p.tokenEndpoint, form, p.clientID, p.secret, p.tokenAuth)
+	tok, terr := postToken(ctx, p.serverID, p.tokenEndpoint, form, p.clientID, p.secret, p.tokenAuth)
 	if terr != nil {
 		return fail(http.StatusBadGateway, OAuthErrTokenExchange, "the authorization server refused the code ("+terr.code+")")
 	}
@@ -630,9 +634,9 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 		g.ExpiresAt = now + int64(tok.ExpiresIn)
 	}
 	// The definition may have changed while the browser was away (a tenant fetch moved the URL
-	// and disconnected what it found). Checked and stored under the server's lock, which
-	// DisconnectOAuth holds too, so a grant can never be stored after a disconnect that should
-	// have ended it.
+	// or swapped the client, and disconnected what it found). Checked and stored under the
+	// server's lock, which DisconnectOAuth holds too, so a grant can never be stored after a
+	// disconnect that should have ended it.
 	mu := lockFor(serverLockKey(p.serverID))
 	mu.Lock()
 	if !pendingStillCovers(p) {
@@ -660,17 +664,6 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 		ServerID: g.ServerID, ServerName: p.serverName, Issuer: g.Issuer,
 		Registration: g.Registration, Scope: g.Scope, ExpiresAt: g.ExpiresAt,
 	}, nil
-}
-
-// pendingStillCovers reports whether the sign-in p was started for what the server is now: still
-// an OAuth definition at the URL p's resource names.
-func pendingStillCovers(p *pendingAuth) bool {
-	d, err := Get(p.serverID)
-	if err != nil || d.Auth != AuthOAuth {
-		return false
-	}
-	u, err := url.Parse(d.URL)
-	return err == nil && relayBound(p.resource, u)
 }
 
 // flexInt reads a JSON number that some authorization servers send as a string.
@@ -726,8 +719,12 @@ func safeErrCode(s string) string {
 	return s
 }
 
-// postToken sends one token-endpoint request with the client's authentication.
-func postToken(ctx context.Context, endpoint string, form url.Values, clientID, secret, tokenAuth string) (tokenResponse, *tokenError) {
+// postToken sends one token-endpoint request with the client's authentication. A tenant's
+// confidential client (tokenAuth "cp") sends it through the CP, which adds the secret.
+func postToken(ctx context.Context, serverID, endpoint string, form url.Values, clientID, secret, tokenAuth string) (tokenResponse, *tokenError) {
+	if tokenAuth == tokenAuthCP {
+		return postTokenCP(ctx, serverID, form)
+	}
 	if !endpointUsable(endpoint) {
 		return tokenResponse{}, &tokenError{code: "bad_endpoint"}
 	}
@@ -760,6 +757,11 @@ func postToken(ctx context.Context, endpoint string, form url.Values, clientID, 
 	if err != nil {
 		return tokenResponse{}, &tokenError{code: "unreachable"}
 	}
+	return readTokenResponse(resp)
+}
+
+// readTokenResponse reads a token-endpoint answer, from the AS or relayed by the CP.
+func readTokenResponse(resp *http.Response) (tokenResponse, *tokenError) {
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxOAuthBody))
 	var out tokenResponse

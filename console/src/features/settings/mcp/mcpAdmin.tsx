@@ -23,6 +23,8 @@ import {
   emptyTenantForm,
   tenantFormOf,
   tenantFormValid,
+  tenantOAuthClientValid,
+  tenantOAuthSecretReentry,
 } from "./mcpWire.ts";
 import type { TenantForm, TenantServer } from "./mcpWire.ts";
 // Same field furniture as the member tab's form (McpTab), so the two MCP forms stay
@@ -226,6 +228,67 @@ export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
   );
 }
 
+// TenantClientFields — the client the tenant registered at the server's authorization server
+// (ADR 0119 decision 9), optional. Without one, each member's sign-in registers on its own. With a
+// secret, the secret never leaves the control plane, which then runs the token requests.
+function TenantClientFields({ form, patch }: { form: TenantForm; patch: (p: Partial<TenantForm>) => void }) {
+  const tr = useT();
+  const reentry = tenantOAuthSecretReentry(form);
+  const issuerBad = form.oauthClientId.trim() !== "" && !reentry && !tenantOAuthClientValid(form);
+  return (
+    <>
+      <Field label={tr("admin.mcp_oauth_client_id")} hint={tr("admin.mcp_oauth_client_id_hint")}>
+        <input
+          className="cinput mono"
+          autoComplete="off"
+          value={form.oauthClientId}
+          onChange={(e) => patch({ oauthClientId: e.target.value })}
+        />
+      </Field>
+      <Field
+        label={tr("admin.mcp_oauth_issuer")}
+        hint={issuerBad ? <span className="ps-note-warn">{tr("admin.mcp_oauth_issuer_bad")}</span> : tr("admin.mcp_oauth_issuer_hint")}
+      >
+        <input
+          className="cinput"
+          placeholder="https://"
+          value={form.oauthIssuer}
+          onChange={(e) => patch({ oauthIssuer: e.target.value })}
+        />
+      </Field>
+      {form.oauthClientId.trim() !== "" && (
+        <Field
+          label={tr("admin.mcp_oauth_secret")}
+          wide
+          hint={
+            reentry ? (
+              <span className="ps-note-warn">{tr("admin.mcp_oauth_secret_reenter")}</span>
+            ) : (
+              tr("admin.mcp_oauth_secret_hint")
+            )
+          }
+        >
+          <input
+            className="cinput"
+            type="password"
+            autoComplete="off"
+            placeholder={form.oauthSecretStored && !form.oauthSecretDrop && !reentry ? tr("mcp.token_kept") : ""}
+            value={form.oauthSecret}
+            onChange={(e) => patch({ oauthSecret: e.target.value })}
+          />
+          {form.oauthSecretStored && (
+            <CheckRow>
+              <Check checked={form.oauthSecretDrop} onChange={(v) => patch({ oauthSecretDrop: v, oauthSecret: "" })}>
+                {tr("admin.mcp_oauth_secret_drop")}
+              </Check>
+            </CheckRow>
+          )}
+        </Field>
+      )}
+    </>
+  );
+}
+
 // McpAdminForm — the tenant distribution form. Remote only by construction (see
 // bodyOfTenant): there is no transport switch to get wrong.
 export function McpAdminForm({
@@ -317,6 +380,7 @@ export function McpAdminForm({
             oauthNote={tr("admin.mcp_oauth_note")}
             headersHint={form.userSecret ? tr("admin.mcp_headers_names_hint") : tr("admin.mcp_headers_hint")}
           />
+          {form.auth === "oauth" && <TenantClientFields form={form} patch={patch} />}
 
           <AdvancedSection
             defaultOpen={advOpen}

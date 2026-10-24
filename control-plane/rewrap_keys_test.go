@@ -89,6 +89,9 @@ func seedLegacyRows(t *testing.T, st *store.SQL, local *localCustodian) (map[str
 		tn.ID, put("mcp_server", "M1", tn.ID, []byte(`{"Authorization":"Bearer x"}`)), tn.ID, now, now)
 	exec(`INSERT INTO mcp_server(id, tenant_id, name, headers_enc, key_ref, created_at, updated_at) VALUES('M2', ?, 'b', '{"X":"plain"}', '', ?, ?)`,
 		tn.ID, now, now)
+	exec(`INSERT INTO mcp_server(id, tenant_id, name, auth, oauth_issuer, oauth_client_id, oauth_secret_enc, oauth_key_ref, created_at, updated_at)
+		VALUES('M3', ?, 'c', 'oauth', 'https://as.example', 'cid', ?, ?, ?, ?)`,
+		tn.ID, put("mcp_server.oauth_secret_enc", "M3", tn.ID, []byte(`{"client_secret":"s"}`)), tn.ID, now, now)
 	exec(`INSERT INTO tenant_idp(id, tenant_id, name, issuer, client_id, secret_enc, key_ref, trust, created_at, updated_at)
 		VALUES('I1', ?, 'okta', 'https://idp.example', 'cid', ?, ?, 'issuer', ?, ?)`,
 		tn.ID, put("tenant_idp", "I1", tn.ID, []byte("idp-secret")), tn.ID, now, now)

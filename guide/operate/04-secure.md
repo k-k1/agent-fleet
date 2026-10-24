@@ -219,7 +219,12 @@ reachable `PUBLIC_BASE_URL`:
   identity the sign-in fails. Without an `https` base URL, or when the authorization server cannot fetch it, the
   Agent falls back to dynamic client registration, or asks the member for a client id.
 
-Tokens never reach the Control Plane: the Agent keeps them in the member's encrypted store. The Control Plane writes
+Tokens are kept by the Agent, in the member's encrypted store. One case sends them through the Control Plane: a tenant
+administrator who distributes such a server with a **confidential client** they registered (its client secret). The
+secret stays in the Control Plane, so the Control Plane runs the token, refresh and revocation requests for the
+members' Agents and passes the answers through without storing them. For that case the **Control Plane** itself has
+to reach the authorization server over `https` (it discovers the token endpoint from the issuer the administrator entered,
+connects to public addresses only and follows no redirect); every other request is made from the workspace. The Control Plane writes
 `mcp.client_oauth` audit rows (`started`, `completed`, `failed`, `disconnected`) that name the server and the
 authorization server, never a code or token. Members sign in from Settings › MCP servers
 ([member guide 20](../member/20-settings.md#mcp-servers)).

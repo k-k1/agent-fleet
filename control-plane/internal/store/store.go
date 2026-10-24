@@ -766,17 +766,21 @@ type ScheduleRun struct {
 // distributed header is readable in plaintext by every member of the tenant, which
 // container isolation cannot prevent.
 type MCPServerRow struct {
-	ID, TenantID         string
-	Name, Label          string
-	Transport            string // always "http" — stdio is refused (ADR0031 decision 2)
-	URL                  string
-	HeadersEnc, KeyRef   string
-	Targets, Kinds       string
-	TimeoutMS            int
-	Enabled, UserSecret  bool
-	Auth                 string // "" or "oauth" (ADR 0119): an oauth row has no headers
-	CreatedBy            string
-	CreatedAt, UpdatedAt string
+	ID, TenantID        string
+	Name, Label         string
+	Transport           string // always "http" — stdio is refused (ADR0031 decision 2)
+	URL                 string
+	HeadersEnc, KeyRef  string
+	Targets, Kinds      string
+	TimeoutMS           int
+	Enabled, UserSecret bool
+	Auth                string // "" or "oauth" (ADR 0119): an oauth row has no headers
+	// The tenant's pre-registered client for an oauth row; OAuthSecretEnc is sealed under
+	// OAuthKeyRef like HeadersEnc, and empty for a public client.
+	OAuthIssuer, OAuthClientID  string
+	OAuthSecretEnc, OAuthKeyRef string
+	CreatedBy                   string
+	CreatedAt, UpdatedAt        string
 }
 
 // Notification is a membership-scoped, content-free activity record shared by
