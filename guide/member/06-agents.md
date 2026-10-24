@@ -212,8 +212,10 @@ A few things work differently from the other agents:
   private server shows the card too, but a form with several questions or multiple-choice fields
   has to be answered in the terminal view (for a single question the card's buttons press the
   keys). A form that is waiting is lost if the opencode server restarts.
-- **No ToDo list.** The session view never shows a ToDo list for opencode. That is expected,
-  not a lost connection.
+- **No ToDo list by default.** opencode 2 only has its `todowrite` tool when you turn on
+  `experimental.todo` in your own opencode config (measured on 2.1.4: off by default). Without
+  it the session view shows no ToDo list, which is expected, not a lost connection; with it on,
+  the session view shows the list of the latest `todowrite` call.
 
 **Behavior** also lets you choose how opencode's thinking (chain-of-thought) is shown.
 

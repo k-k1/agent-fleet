@@ -16,13 +16,15 @@ export interface BranchableTurn {
 // is canBranchFrom). The condition differs per agent kind: opencode/codex can only be given a
 // fork point through the runtime API, so they require managed; claude has no managed driver and
 // cuts its own transcript, so it works under the TUI. Requiring managed for everything would
-// hide the control for claude forever.
+// hide the control for claude forever. The one exception to "managed only" is a Terminal session
+// the Agent says reaches that API too (opencode 2 on the shared serve: terminalForkAt, the wire's
+// forkAtTerminal); the kind's static flag alone never grants it.
 export function canBranchInSession(
   caps: { forkAt: boolean; forkAtManagedOnly: boolean },
-  opts: { managed: boolean; readOnly: boolean },
+  opts: { managed: boolean; readOnly: boolean; terminalForkAt?: boolean },
 ): boolean {
   if (!caps.forkAt || opts.readOnly) return false;
-  return !caps.forkAtManagedOnly || opts.managed;
+  return !caps.forkAtManagedOnly || opts.managed || !!opts.terminalForkAt;
 }
 
 // canBranchFrom reports whether this block can be forked from. It must be:

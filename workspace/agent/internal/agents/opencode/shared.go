@@ -225,6 +225,24 @@ func forkSharedSession(addr, src, before string) (string, error) {
 	return w.Data.ID, nil
 }
 
+// forkPointInSource checks that message `at` belongs to conversation src ("" = the whole
+// conversation, nothing to check). When in doubt, it refuses.
+func forkPointInSource(addr, src, at string) error {
+	if at == "" {
+		return nil
+	}
+	msgs, err := (apiTarget{Addr: addr, Client: serveClient}).messages(src)
+	if err != nil {
+		return fmt.Errorf("opencode: read the conversation to fork: %w", err)
+	}
+	for _, mm := range msgs {
+		if mm.ID == at {
+			return nil
+		}
+	}
+	return errors.New("opencode: the fork point is not in the conversation being forked (it changed since the point was chosen); pick the message again")
+}
+
 // discardUnclaimedCopy removes a fork copy this slot failed to claim — but only while it holds the
 // session's claim itself. The failed attempt gave its record back, and in the meantime another pane
 // (the source's, which sees the copy under the inherited tag) may have claimed it legitimately and be
@@ -366,6 +384,12 @@ func buildSharedLaunch(spec LaunchSpec, m session.Meta, sid string) (plan shared
 		srcSID := ""
 		if src, gerr := getSharedSession(addr, m.ForkFrom); gerr == nil {
 			srcSID = src.Metadata[metaSID]
+		}
+		// The fork point was resolved against the conversation the pane had then; a /new or a
+		// reconnect since may have pointed ForkFrom at another one. A point that is not in the
+		// source is refused here, before anything is copied.
+		if err := forkPointInSource(addr, m.ForkFrom, m.ForkAt); err != nil {
+			return sharedPlan{}, false, err
 		}
 		for attempt := 0; ; attempt++ {
 			ses, err = forkSharedSession(addr, m.ForkFrom, m.ForkAt)

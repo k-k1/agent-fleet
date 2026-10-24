@@ -367,7 +367,7 @@ function MirrorViewBody({
   // "Fork from here" (docs/log/55). The conditions differ per kind (canBranchInSession);
   // without filtering here the button would either be pressable but always 400, or never
   // appear at all for claude.
-  const canForkAt = canBranchInSession(agent.caps, { managed, readOnly });
+  const canForkAt = canBranchInSession(agent.caps, { managed, readOnly, terminalForkAt: sessionMeta?.forkAtTerminal });
   const openForkAt = (turn: Group) => {
     if (!canBranchFrom(turn)) return;
     setForkAtTarget({

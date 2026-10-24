@@ -1548,9 +1548,15 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 	// never starts working.
 	// Stop when this fails: "asked for a point, got the whole conversation forked" arrives
 	// with plausible-looking history, so the user cannot notice the breakage.
-	var forkAt string
+	var forkAt, pinned string
 	if req.At != "" {
-		at, err := resolver.ResolveForkAt(src, agents.ForkPoint{Anchor: req.At, Include: req.Include})
+		var at string
+		var err error
+		if p, ok := ag.(agents.ForkAtPinner); ok {
+			at, pinned, err = p.ResolveForkAtPinned(src, agents.ForkPoint{Anchor: req.At, Include: req.Include})
+		} else {
+			at, err = resolver.ResolveForkAt(src, agents.ForkPoint{Anchor: req.At, Include: req.Include})
+		}
 		if err != nil {
 			code := errCodeForkBadAnchor
 			if errors.Is(err, agents.ErrForkAtRoute) {
@@ -1564,6 +1570,13 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 	forkFrom, err := forker.ForkSource(src)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "not_resumable", err.Error())
+		return
+	}
+	// The point was resolved against `pinned`; forking another conversation with it (or, for a
+	// point that means "everything", forking one the user did not look at) is refused.
+	if pinned != "" && forkFrom != pinned {
+		httpx.WriteErr(w, http.StatusConflict, errCodeForkBadAnchor,
+			"the conversation changed while the fork point was being resolved; pick the message again")
 		return
 	}
 	forkName := allocSessionName(src.Dir)

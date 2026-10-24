@@ -261,6 +261,11 @@ type Session struct {
 	// docs/log/47 §4-5). Display only, so the chip can say when it will move again; the
 	// waiting itself belongs to the CP's scheduled execution.
 	RateLimitResumeAt string `json:"rateLimitResumeAt,omitempty"`
+	// ForkAtTerminal: a Terminal (CLI) session that can still fork from a past message, because
+	// its kind forks through an API this launch route reaches (opencode 2 on af's shared serve).
+	// The Console offers "fork from here" on a Terminal session only when it is set; managed
+	// sessions do not need it. Absent = not offered.
+	ForkAtTerminal bool `json:"forkAtTerminal,omitempty"`
 	// AuthOkAt is when the agent's login in force RIGHT NOW was written (RFC3339), claude
 	// only, empty when there is nothing to judge on (claude.AuthOKAt). Display only, and
 	// read against a TURN'S time rather than the clock: an error block whose turn is older
