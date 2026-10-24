@@ -6,7 +6,7 @@ English | [日本語](0122-egress-gateway.ja.md)
   template facts were read from the tree on this date. Squid's behaviour was read from its
   published documentation and an AWS blog post, **not run**; no Docker and no cloud account were
   available while writing this.
-- Follow-ups: #1181, #2603, #2604, #2657, #2658, #2687
+- Follow-ups: #1181, #2603, #2604, #2657, #2658, #2687, #2699
 - Related: [0047](0047-tenant-network-restriction.md) (inbound IP restriction; this record does
   not touch it) / #1056 (credential injection, needs this fence first) / #1067 (why an OS sandbox
   is not the answer)
@@ -393,3 +393,29 @@ tested with fixture lines and files.
   policy change can carry the new verdict.
 - **One matcher.** The allowlist matcher moved to `control-plane/internal/egressallow`, shared by
   the CP and the agent.
+
+## Addendum (2026-10-25) — retention of raw events (#2675)
+
+The decisions above stand. `egress_event` and `workspace_address` were never deleted; at 100
+events/s the former takes about 8.6M rows a day. The maintainer decided:
+
+- **Raw events are kept 30 days**, set by `AF_EGRESS_EVENT_RETENTION_DAYS` (`0` keeps them
+  forever). `egress_daily` is not touched.
+- **A purger deletes in bounded batches** (5000 rows per statement, oldest first, a short pause
+  between them) on SQLite and Postgres. It runs on one CP at a time under the CP lease
+  `egress-event-purge`, as the address recorder does.
+- **`workspace_address` is kept at least as long as the events it attributes.** A closed
+  interval is deleted only when its end is older than the purge cutoff, and events go first. An
+  open interval is never deleted.
+- **The bound on resends.** Dedup on `id` only holds while the row exists, and the gateway agent
+  resends from its committed offset, so after a long outage it can resend lines older than the
+  window. Ingest therefore refuses to store, and to count into `egress_daily`, an event that
+  carries an `id` and whose `at` is older than now minus the retention. It logs how many it
+  refused and still answers 2xx, so the gateway does not retry for ever. The purge deletes only
+  events older than the retention plus one hour, so a deleted event is always one ingest
+  already refuses, even between two CPs whose clocks differ by less than that hour. Events
+  without an `id` (the own proxy's) were never deduplicated and are not affected.
+  **Consequence:** an event arriving later than the retention window after it happened is
+  lost, from the raw table and from the aggregate. That is the price of not keeping a table of
+  purged ids.
+- **No archive in this change.** Archiving to object storage before the purge is #2699.

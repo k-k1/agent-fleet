@@ -109,10 +109,15 @@ type egressAPI struct {
 	// infra is AF_EGRESS_INFRA_CIDRS: source ranges attributed to the stack itself rather
 	// than reported as unattributed (egress_attribution.go).
 	infra []netip.Prefix
+	// retention is AF_EGRESS_EVENT_RETENTION_DAYS as a duration: an id-carrying event older
+	// than this is refused (egress_purge.go). Zero keeps every event and refuses none.
+	retention time.Duration
+	// now is the clock the retention bound is read against; nil is time.Now.
+	now func() time.Time
 }
 
 func newEgressAPI(m *manager, token, proxy string, dedup *egressAuditDedup, infra []netip.Prefix) egressAPI {
-	return egressAPI{memberAuth{m}, token, proxy, dedup, m.store, infra}
+	return egressAPI{memberAuth: memberAuth{m}, token: token, proxy: proxy, dedup: dedup, store: m.store, infra: infra}
 }
 
 // auditAdmin records a deployment-wide admin action (docs/log/20 M3: allowlist/mode edits
@@ -165,14 +170,41 @@ func (a egressAPI) ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := context.Background()
-	now := time.Now().UTC()
+	clock := time.Now
+	if a.now != nil {
+		clock = a.now
+	}
+	now := clock().UTC()
 	day := now.Format("2006-01-02")
+	// Dedup on id only holds while the row exists, and the purge deletes rows past the
+	// retention window. An event older than the window is therefore refused, not stored and
+	// not counted: it could be the resend of one already purged and counted. It is still
+	// answered with a 2xx, or the gateway would resend it for ever.
+	var oldest int64
+	expired := 0
+	var notBefore int64
+	if a.retention > 0 {
+		notBefore = now.Add(-a.retention).UnixMilli()
+	}
+	defer func() {
+		if expired > 0 {
+			log.Printf("egress ingest: refused %d events older than the %s retention window (oldest at %s)",
+				expired, a.retention, time.UnixMilli(oldest).UTC().Format(time.RFC3339))
+		}
+	}()
 	for _, e := range body.Events {
 		host := strings.ToLower(strings.TrimSpace(e.Host))
 		if e.ID != "" {
 			ev, ok := rawEgressEvent(e, host)
 			if !ok {
 				log.Printf("egress ingest: skipping event %q without a source address or time", e.ID)
+				continue
+			}
+			if ev.At < notBefore {
+				if expired == 0 || ev.At < oldest {
+					oldest = ev.At
+				}
+				expired++
 				continue
 			}
 			// Counted under the day it happened, not the day it arrived: a batch the gateway

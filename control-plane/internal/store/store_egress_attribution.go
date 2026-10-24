@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"strconv"
 	"strings"
 )
@@ -54,6 +55,13 @@ type EgressAttributionStore interface {
 	OpenWorkspaceAddressRefs(ctx context.Context, membershipID string) ([]string, error)
 	// OpenAddressMemberships returns every membership that has a row still open.
 	OpenAddressMemberships(ctx context.Context) ([]string, error)
+	// PurgeEgressEvents deletes at most limit raw events whose time is before the cutoff
+	// (unix milliseconds), oldest first, and returns how many it deleted. One call is one
+	// bounded statement: the caller loops until it returns less than limit.
+	PurgeEgressEvents(ctx context.Context, before int64, limit int) (int, error)
+	// PurgeWorkspaceAddresses deletes at most limit closed address rows that ended before the
+	// cutoff and returns how many. A row still open is never deleted: it has no end.
+	PurgeWorkspaceAddresses(ctx context.Context, before int64, limit int) (int, error)
 }
 
 func (s *SQL) RecordEgressEvent(ctx context.Context, day string, e EgressEvent, receivedAt int64) (bool, error) {
@@ -207,6 +215,33 @@ func (s *SQL) OpenWorkspaceAddressRefs(ctx context.Context, membershipID string)
 func (s *SQL) OpenAddressMemberships(ctx context.Context) ([]string, error) {
 	return s.queryStrings(ctx,
 		`SELECT DISTINCT membership_id FROM workspace_address WHERE until_at=0 ORDER BY membership_id`)
+}
+
+func (s *SQL) PurgeEgressEvents(ctx context.Context, before int64, limit int) (int, error) {
+	// The id subquery keeps the delete to one batch on both dialects (a bare DELETE ... LIMIT
+	// is SQLite-only) and walks egress_event_at, so the oldest rows go first.
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM egress_event WHERE id IN
+		 (SELECT id FROM egress_event WHERE at < ? ORDER BY at LIMIT ?)`, before, limit)
+	return rowsDeleted(res, err)
+}
+
+func (s *SQL) PurgeWorkspaceAddresses(ctx context.Context, before int64, limit int) (int, error) {
+	// No index covers until_at; the table holds one row per address interval, not per
+	// connection, so the scan stays small next to egress_event.
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM workspace_address WHERE (ref, address, from_at) IN
+		 (SELECT ref, address, from_at FROM workspace_address WHERE until_at > 0 AND until_at < ? LIMIT ?)`,
+		before, limit)
+	return rowsDeleted(res, err)
+}
+
+func rowsDeleted(res sql.Result, err error) (int, error) {
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 func (s *SQL) queryStrings(ctx context.Context, q string, args ...any) ([]string, error) {

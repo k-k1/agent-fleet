@@ -275,6 +275,12 @@ Workspace を起こさない。
   would-block は日 × ホストで重複を除き、監査ログにも記録する。`id` を持つイベント（egress ゲートウェイが
   送るもの。ADR [0122](../decisions/0122-egress-gateway.ja.md)）は `at`・`source`・`dest` と一緒に生のまま
   保存し、何度再送されても 1 回だけ保存・集計する。
+- **保持期間** — 生のイベントは `AF_EGRESS_EVENT_RETENTION_DAYS` 日（既定 30、`0` で無期限）保持する。
+  purger（CP lease で常に 1 台だけ、10 分ごと）が、それより古いイベントと、それより前に終わった
+  `workspace_address` の閉じた行を 5000 行ずつのバッチで削除する。開いた行は消さない。`egress_daily` には
+  触れない。`id` による重複排除は行が残っている間しか効かないので、ingest は `at` が保持期間より古い
+  イベントを保存も集計もしない（ログに出し、応答は 204 のまま）。purge 済みのイベントの再送が
+  二重に数えられることはない。
 - **帰属** — `AF_EGRESS_TOKEN` があるとき、レコーダー（CP lease で常に 1 台だけ）が `AF_EGRESS_ADDRESS_INTERVAL`（既定 60s）ごとに、
   各 Workspace のランタイムへ持っているアドレス（ECS タスクの ENI、ポッドの IP、ユーザー別ネットワーク上の
   コンテナのアドレス）を尋ね、期間として残す。docker と Kubernetes の Stop は、消した後には読めるものが
