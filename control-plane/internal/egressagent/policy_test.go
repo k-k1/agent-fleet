@@ -281,3 +281,36 @@ func TestPolicyNoFilesNoReloadWhileCPIsDown(t *testing.T) {
 		t.Fatalf("err %v, %d reloads: nothing on disk, nothing to reload", err, reloads())
 	}
 }
+
+func TestPolicyDiskReloadPublishesWhatSquidLoaded(t *testing.T) {
+	// The allow file gains a name, the mode write fails, and the next fetch fails too. The
+	// reload paid from disk gives Squid the new name, so the verdicts must allow it.
+	cp := &fakeCP{allowlist: []string{"github.com"}, enforce: true}
+	s, reloads := newPolicyFixture(t, cp)
+	modeDir := filepath.Join(t.TempDir(), "modes")
+	if err := os.Mkdir(modeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.ModeFile = filepath.Join(modeDir, "mode.conf")
+	ctx := context.Background()
+	if err := s.sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cp.set(func(f *fakeCP) { f.allowlist = append(f.allowlist, "x.example") })
+	if err := os.Rename(modeDir, modeDir+".away"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.sync(ctx); err == nil {
+		t.Fatal("a failed mode write must report an error")
+	}
+	if err := os.Rename(modeDir+".away", modeDir); err != nil {
+		t.Fatal(err)
+	}
+	cp.set(func(f *fakeCP) { f.status = http.StatusServiceUnavailable })
+	if err := s.sync(ctx); err == nil {
+		t.Fatal("the fetch failed; sync must say so")
+	}
+	if reloads() != 2 || !s.cur.Load().match.Allows("x.example") || !s.cur.Load().enforce {
+		t.Fatalf("%d reloads, snapshot allows x.example: %v", reloads(), s.cur.Load().match.Allows("x.example"))
+	}
+}

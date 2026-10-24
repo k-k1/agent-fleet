@@ -103,12 +103,35 @@ func newPolicySync(cfg *Config) *policySync {
 // loadFromDisk seeds the snapshot from the files a previous run wrote, so the shipper can
 // report verdicts while the CP is unreachable at start-up. Both files must be present.
 func (s *policySync) loadFromDisk() {
+	if snap := s.readDisk(); snap != nil {
+		s.cur.Store(snap)
+	}
+}
+
+func (s *policySync) readDisk() *snapshot {
 	allow, err1 := os.ReadFile(s.cfg.AllowFile)
 	mode, err2 := os.ReadFile(s.cfg.ModeFile)
 	if err1 != nil || err2 != nil {
+		return nil
+	}
+	return &snapshot{enforce: bytes.Equal(mode, []byte(ModeEnforce)), match: parseAllow(allow)}
+}
+
+// reloadFromDisk pays an owed reload with the files on disk while the CP is unreachable,
+// and publishes what those files say: after the reload that is what Squid decides by, and
+// the shipper's verdicts must match it. The files are read before the reload, so a
+// snapshot never claims more than Squid was given.
+func (s *policySync) reloadFromDisk(ctx context.Context) {
+	snap := s.readDisk()
+	if snap == nil {
 		return
 	}
-	s.cur.Store(&snapshot{enforce: bytes.Equal(mode, []byte(ModeEnforce)), match: parseAllow(allow)})
+	if err := s.reload(ctx); err != nil {
+		return
+	}
+	s.reloadOwed = false
+	s.cur.Store(snap)
+	log.Printf("egress-agent: reloaded Squid with the policy on disk (%s)", modeName(snap.enforce))
 }
 
 // errEmptyPolicy refuses an answer with no entries: the CP always sends its built-in
@@ -123,11 +146,8 @@ func (s *policySync) sync(ctx context.Context) error {
 	if err != nil {
 		// The files on disk are the last policy that worked. A reload they are owed (the
 		// one at start included) does not wait for the CP to come back.
-		if s.reloadOwed && s.cur.Load() != nil {
-			if rerr := s.reload(ctx); rerr == nil {
-				s.reloadOwed = false
-				log.Printf("egress-agent: reloaded Squid with the policy on disk")
-			}
+		if s.reloadOwed {
+			s.reloadFromDisk(ctx)
 		}
 		return err
 	}
