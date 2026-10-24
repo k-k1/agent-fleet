@@ -51,6 +51,10 @@ const addressRecentlyActive = time.Hour
 // address was given out again, never as the wrong workspace.
 const addressUnresolvedGrace = 15 * time.Minute
 
+// addressReadTimeout bounds one workspace's read, so a runtime that hangs is given up on and
+// moved to the back of the next sweep instead of holding the sweep until its deadline.
+const addressReadTimeout = 20 * time.Second
+
 func newAddressRecorder(mgr *manager, interval time.Duration) *addressRecorder {
 	return &addressRecorder{mgr: mgr, interval: interval, holder: store.NewID(), now: time.Now}
 }
@@ -149,11 +153,18 @@ func (ar *addressRecorder) sweep(ctx context.Context) {
 	sort.SliceStable(all, func(i, j int) bool {
 		return ar.lastPolled[all[i].MembershipID].Before(ar.lastPolled[all[j].MembershipID])
 	})
+	unresolved := map[string]bool{}
 	for _, ws := range all {
 		if ctx.Err() != nil {
 			return
 		}
-		ar.recordWorkspace(ctx, ws)
+		ar.recordWorkspace(ctx, ws, unresolved)
+	}
+	// Only a sweep that reached every workspace knows which refs are still unresolved.
+	for ref := range ar.unresolvedSince {
+		if !unresolved[ref] {
+			delete(ar.unresolvedSince, ref)
+		}
 	}
 	for m := range ar.lastPolled {
 		if !live[m] {
@@ -166,7 +177,7 @@ func (ar *addressRecorder) sweep(ctx context.Context) {
 // as stopped is still asked while it has an open row, so the row is closed (with the stop
 // time ECS reports, where it does), and while it was active recently, so a task that came
 // and went between two sweeps is still recorded.
-func (ar *addressRecorder) recordWorkspace(ctx context.Context, ws store.Workspace) {
+func (ar *addressRecorder) recordWorkspace(ctx context.Context, ws store.Workspace, unresolved map[string]bool) {
 	open, err := ar.mgr.store.OpenWorkspaceAddressRefs(ctx, ws.MembershipID)
 	if err != nil {
 		log.Printf("egress address recorder: open rows of %s: %v", ws.ContainerName, err)
@@ -179,8 +190,15 @@ func (ar *addressRecorder) recordWorkspace(ctx context.Context, ws store.Workspa
 	if !ok {
 		return
 	}
-	ar.lastPolled[ws.MembershipID] = ar.now()
-	report, err := rep.HeldAddresses(ctx, open)
+	rctx, cancel := context.WithTimeout(ctx, addressReadTimeout)
+	report, err := rep.HeldAddresses(rctx, open)
+	cancel()
+	// A read the sweep's own deadline cut short does not count as asked: the workspace stays
+	// at the front for the next sweep. One that failed or timed out by itself goes to the
+	// back, so it cannot hold every later sweep up.
+	if ctx.Err() == nil {
+		ar.lastPolled[ws.MembershipID] = ar.now()
+	}
 	if err != nil {
 		// Unknown is not gone: closing the open rows here would end intervals that are
 		// still running and leave the next connections unattributed.
@@ -190,6 +208,7 @@ func (ar *addressRecorder) recordWorkspace(ctx context.Context, ws store.Workspa
 	var keep []string
 	now := ar.now()
 	for _, ref := range report.Unresolved {
+		unresolved[ref] = true
 		since, ok := ar.unresolvedSince[ref]
 		if !ok {
 			since = now

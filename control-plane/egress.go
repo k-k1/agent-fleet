@@ -177,14 +177,15 @@ func (a egressAPI) ingest(w http.ResponseWriter, r *http.Request) {
 			}
 			// Counted under the day it happened, not the day it arrived: a batch the gateway
 			// resends after an outage belongs to the day of the connections.
-			inserted, err := a.store.RecordEgressEvent(ctx, time.UnixMilli(ev.At).UTC().Format("2006-01-02"), ev, now.UnixMilli())
+			evDay := time.UnixMilli(ev.At).UTC().Format("2006-01-02")
+			inserted, err := a.store.RecordEgressEvent(ctx, evDay, ev, now.UnixMilli())
 			if err != nil {
 				log.Printf("egress ingest: record event %s: %v", e.ID, err)
 				http.Error(w, "record failed", http.StatusInternalServerError)
 				return
 			}
 			if inserted && host != "" {
-				a.auditWouldBlock(ctx, day, host, e.Allowed)
+				a.auditWouldBlock(ctx, evDay, host, e.Allowed)
 			}
 			continue
 		}

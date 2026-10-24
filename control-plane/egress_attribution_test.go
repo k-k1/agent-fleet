@@ -253,6 +253,17 @@ func TestAddressRecorderRecoversFromAnAgedOutTask(t *testing.T) {
 	if got := openAddressRefs(t, st, ws.MembershipID); !equalRefs(got, "task/B") {
 		t.Errorf("past the grace the aged-out task must be closed and the live one kept: %v", got)
 	}
+	// A ref no longer reported unresolved (its workspace gone, say) is forgotten, not kept
+	// in memory for good.
+	rt.unresolved = []string{"task/C"}
+	clock = clock.Add(time.Minute)
+	ar.tick(ctx)
+	rt.unresolved = nil
+	clock = clock.Add(time.Minute)
+	ar.tick(ctx)
+	if len(ar.unresolvedSince) != 0 {
+		t.Errorf("stale unresolved refs kept: %v", ar.unresolvedSince)
+	}
 }
 
 // A sweep cut off by its deadline resumes with the workspaces it did not reach.
@@ -278,40 +289,26 @@ func TestAddressRecorderResumesWhereTheSweepStopped(t *testing.T) {
 	// The deadline runs out while the second workspace is being asked.
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	asked := 0
-	for _, s := range stubs {
+	var order []string
+	for name, s := range stubs {
+		name := name
 		s.onAsk = func() {
-			if asked++; asked == 2 {
+			if order = append(order, name); len(order) == 2 {
 				cancel()
 			}
 		}
 	}
 	ar.sweep(sctx)
-	var missed string
-	for name, s := range stubs {
-		if s.asked == 0 {
-			missed = name
-		}
+	if len(order) != 2 {
+		t.Fatalf("want two asked before the deadline, got %v", order)
 	}
-	if asked != 2 || missed == "" {
-		t.Fatalf("want two asked and one left over, asked %d", asked)
-	}
-	for _, s := range stubs {
-		s.onAsk = nil
-	}
+	completed, interrupted := order[0], order[1]
+	order = nil
 	clock = clock.Add(time.Minute)
-	first := ""
-	for name, s := range stubs {
-		name := name
-		s.onAsk = func() {
-			if first == "" {
-				first = name
-			}
-		}
-	}
 	ar.sweep(ctx)
-	if first != missed {
-		t.Errorf("the next sweep must start with the workspace the last one did not reach (%s), started with %s", missed, first)
+	// The one cut short and the one never reached go first; the one that completed goes last.
+	if len(order) != 3 || order[2] != completed || order[0] == completed || order[1] == completed {
+		t.Errorf("next sweep order %v: %s completed and must go last, %s was interrupted", order, completed, interrupted)
 	}
 }
 

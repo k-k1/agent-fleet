@@ -55,12 +55,19 @@ type AddressReporter interface {
 // otherwise leave no record of its address at all.
 type AddressReleaseHook func(ctx context.Context, membershipID, workspaceID string, held []HeldAddress)
 
+// noteReleasingTimeout bounds what the hook adds to a Stop.
+const noteReleasingTimeout = 10 * time.Second
+
 // noteReleasing reads rep's addresses and hands them to hook. Best effort: a failed read
-// leaves the recorder's next sweep to do what it can, and must never fail the Stop.
+// leaves the recorder's next sweep to do what it can, and must never fail the Stop. It runs
+// on its own short deadline, detached from the Stop's: a Stop that is cancelled is exactly
+// when this record is wanted, and a slow read must not hold the Stop for long.
 func noteReleasing(ctx context.Context, hook AddressReleaseHook, rep AddressReporter, membershipID, workspaceID string) {
 	if hook == nil {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noteReleasingTimeout)
+	defer cancel()
 	r, err := rep.HeldAddresses(ctx, nil)
 	if err != nil || len(r.Held) == 0 {
 		return
@@ -164,7 +171,7 @@ func taskHeldAddresses(tasks []ecstypes.Task) []HeldAddress {
 				if err != nil {
 					continue
 				}
-				h := HeldAddress{Address: a.String(), Ref: aws.ToString(t.TaskArn), From: *t.CreatedAt}
+				h := HeldAddress{Address: a.Unmap().String(), Ref: aws.ToString(t.TaskArn), From: *t.CreatedAt}
 				if t.StoppedAt != nil {
 					h.Until = *t.StoppedAt
 				}
@@ -208,7 +215,7 @@ func podHeldAddresses(pods []kPod) []HeldAddress {
 				continue
 			}
 		}
-		out = append(out, HeldAddress{Address: a.String(), Ref: p.Metadata.UID, From: from})
+		out = append(out, HeldAddress{Address: a.Unmap().String(), Ref: p.Metadata.UID, From: from})
 	}
 	return out
 }
@@ -274,7 +281,7 @@ func dockerHeldAddresses(out string) ([]HeldAddress, error) {
 	if err != nil {
 		return nil, fmt.Errorf("docker inspect: start time %q: %v", parts[1], err)
 	}
-	return []HeldAddress{{Address: a.String(), Ref: parts[0], From: from}}, nil
+	return []HeldAddress{{Address: a.Unmap().String(), Ref: parts[0], From: from}}, nil
 }
 
 // The adapters that run a workspace behind an address the egress gateway can see. native
