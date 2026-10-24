@@ -1,7 +1,6 @@
 ---
 audience: "someone integrating a new CLI coding agent"
 source_of_truth: "the existing `internal/agents/<kind>` packages — copy the closest one"
-updated: "2026-10"
 ---
 
 # 20. Adding an agent kind

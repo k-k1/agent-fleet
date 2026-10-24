@@ -1,7 +1,6 @@
 ---
 audience: "Agent Fleet を使う人（メンバー・テナント管理者・配備管理者）"
 source_of_truth: "Console そのもの（画面と食い違ったら画面が正）"
-updated: "2026-09"
 ---
 
 # Agent Fleet 利用ガイド

@@ -1,6 +1,5 @@
 ---
 audience: "someone opening the Console for the first time"
-updated: "2026-10"
 ---
 
 # 01. First day — from login to your first session

@@ -1,6 +1,5 @@
 ---
 audience: "a tenant administrator managing who belongs to the team"
-updated: "2026-10"
 ---
 
 # 01. Member management

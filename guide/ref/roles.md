@@ -1,7 +1,6 @@
 ---
 audience: "everyone; the axis features.md resolves \"who\" against"
 source_of_truth: "this table (maintained by hand); which shelves a role receives is decided in one place in the Control Plane"
-updated: "2026-09"
 ---
 
 # Roles — who may do what

@@ -1,7 +1,6 @@
 ---
 audience: "everyone's first chapter — anyone who wants the shape of the whole thing"
 source_of_truth: "the code (this is a map and a statement of intent)"
-updated: "2026-10"
 ---
 
 # 01. Architecture

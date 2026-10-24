@@ -1,6 +1,5 @@
 ---
 audience: "anyone finding their way around the Console"
-updated: "2026-10"
 ---
 
 # 02. Console basics — shortcuts, command palette, panes, phones

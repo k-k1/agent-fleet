@@ -1,7 +1,6 @@
 ---
 audience: "someone building this repository for the first time"
 source_of_truth: "the code and the CI definitions"
-updated: "2026-10"
 ---
 
 # 10. Development — building, reflecting a change, testing, conventions

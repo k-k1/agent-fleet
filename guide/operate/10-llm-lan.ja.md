@@ -1,7 +1,6 @@
 ---
 audience: "すでに自分の網の中で llama.cpp（またはこれから立てる）を動かしていて、それをセッションのチャット補完に使わせたい配備管理者"
 source_of_truth: "Control Plane が起動時に読む環境変数。llama-server 自身の起動引数は上流の `--help`"
-updated: "2026-09"
 ---
 
 # 10. 自前の llama.cpp でチャットの推論を担う

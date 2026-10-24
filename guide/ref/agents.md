@@ -1,7 +1,6 @@
 ---
 audience: "everyone"
 source_of_truth: "this table; the columns and the marked rows are checked against the code"
-updated: "2026-10"
 ---
 
 # Agents — what each kind can do
@@ -40,6 +39,9 @@ because "does this apply to a plain shell session?" is a real question.
 | Receives integration (MCP) servers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓¹⁸ | ✓¹⁷ | — | — |
 | Shares Agent Fleet memory (af memory tools) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
 | Agent memory is version-managed | ✓ | ✓ | — | — | — | — | — | — | — | — | — |
+| RTK (token savings) | ✓²³ | ✓²³ | ✓²³ | ✓²³ | — | — | ✓²³ | — | — | — | — |
+| Starts child sessions and messages other sessions | ✓²⁴ | ✓²⁴ | ✓²⁴ | ✓²⁴ | ✓²⁴ | ✓²⁴ | ✓²⁴ | ✓²⁴ | ✓²⁴ | — | — |
+| Bound to an image studio | ✓²⁵ | ✓²⁵ | ✓²⁵ | ✓²⁵ | ✓²⁵ | ✓²⁵ | ✓²⁵ | ✓²⁵ | — | — | — |
 
 ¹ copilot's model list depends on the plan: Free offers only "Auto (Copilot picks)".
 
@@ -407,3 +409,30 @@ point. A Terminal session on a private server, or on opencode 1.x, cannot.
 ²¹ copilot's plan mode is set at launch, and can also be switched from the managed settings.
 
 ²² cursor's list is exactly the models available to the signed-in account (fetched live); kiro offers named models (Auto, Claude Sonnet / Haiku and others) even on the Free plan.
+
+²³ RTK rewrites the commands an agent runs so that their output costs fewer tokens. It is
+on or off per agent in ⚙Settings → "Agents", and does nothing when the workspace image has no
+`rtk`. How it takes effect differs. claude, opencode and copilot have a hook or plugin that
+rewrites each shell command before it runs, so it applies every time (copilot: to sessions
+started after the change). codex and agy have no way to rewrite a command, so Agent Fleet
+only adds an instruction block asking the agent to use `rtk`; whether it does is up to the
+agent (best effort). cursor, kiro, lcpp and muse have no RTK setting. This row is checked
+against the code: a kind is marked when its driver ships an RTK artifact.
+
+²⁴ Both are opt-in settings, off by default (Settings › Agents › Session). A session starts a
+child, or sends a message, with tools of Agent Fleet's own MCP server, which every kind marked in
+"Receives integration (MCP) servers" gets; so this row follows that one, and the check ties it
+to the same code field. The other end accepts every kind in the row: a child can be any of
+these nine kinds, and any of them can be the target of a message (a stopped session is resumed
+first). `shell` and `ssm` can do neither, because text sent to them would run as a command.
+
+²⁵ The studio's agent session is bound under either execution method, except where the agent
+cannot tell the studio's tools which session it is. For opencode that is its Managed mode (one
+server is shared by every session of a folder, so a write could not be traced to the session that
+made it), and for copilot, cursor and kiro their Managed mode (not told their session name yet);
+those four bind in Terminal (CLI) only. claude and agy have no Managed mode, so Terminal (CLI) is
+their only route anyway; codex binds under either method, and lcpp (Managed only, no Terminal
+(CLI) route) binds as Managed. muse has no Terminal (CLI) route to fall back on and its Managed
+mode is refused for the same reason, so a muse session cannot be bound yet. The binding is
+checked against the code. A worktree is on by default for the studio's session; as the Console
+offers it, only a Terminal (CLI) session and lcpp can turn it off.

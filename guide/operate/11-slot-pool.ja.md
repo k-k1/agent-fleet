@@ -1,7 +1,6 @@
 ---
 audience: "ワークスペースが EC2 スロットのプール上で動く ecs-ec2 ターゲットの配備管理者"
 source_of_truth: "コマンドは `deploy/aws/ecs/README.md`。各スロットの状態は 管理 → スロット の画面"
-updated: "2026-10"
 ---
 
 # 11. ecs-ec2 のスロットプール
