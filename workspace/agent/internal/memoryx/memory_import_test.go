@@ -544,3 +544,37 @@ func TestImportApplyAcceptsALargeSelection(t *testing.T) {
 		t.Fatalf("large selection: %d %s, want the handler's 400", w.Code, w.Body)
 	}
 }
+
+// The Control Plane spools at most 130 MiB of an upload (memberOriginUploadMax in control-plane,
+// a separate module, copied below). The real values here are pinned by equality first so a change
+// to either side cannot slip past the relation; control-plane has the mirror test
+// (TestMemberOriginUploadMaxCoversAgentCeiling).
+func TestMemoryImportCeilingFitsControlPlane(t *testing.T) {
+	const controlPlaneUploadMax = 130 << 20
+	if memoryImportCeiling != 128<<20 || memberImportFramingSlack != 1<<20 {
+		t.Fatalf("ceiling %d / framing %d changed: update control-plane's TestMemberOriginUploadMaxCoversAgentCeiling and this test together", memoryImportCeiling, memberImportFramingSlack)
+	}
+	if memoryImportCeiling+memberImportFramingSlack > controlPlaneUploadMax {
+		t.Fatalf("ceiling %d + framing %d exceeds the Control Plane upload limit %d", memoryImportCeiling, memberImportFramingSlack, controlPlaneUploadMax)
+	}
+}
+
+func TestMemoryImportMaxBytesClampsToCeiling(t *testing.T) {
+	for _, c := range []struct {
+		env  string
+		want int64
+	}{
+		{"", memoryImportDefaultMax},
+		{"junk", memoryImportDefaultMax},
+		{"0", memoryImportDefaultMax},
+		{"1048576", 1 << 20},
+		{"134217728", memoryImportCeiling},
+		{"268435456", memoryImportCeiling},
+		{"9223372036854775807", memoryImportCeiling},
+	} {
+		t.Setenv("AF_MEMORY_IMPORT_MAX", c.env)
+		if got := memoryImportMaxBytes(); got != c.want {
+			t.Errorf("AF_MEMORY_IMPORT_MAX=%q: got %d, want %d", c.env, got, c.want)
+		}
+	}
+}

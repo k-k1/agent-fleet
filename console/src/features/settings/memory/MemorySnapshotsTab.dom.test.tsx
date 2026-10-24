@@ -27,6 +27,7 @@ vi.mock("../../../core/store/workspace.ts", () => ({
 const { MemorySnapshotsTab } = await import("./MemorySnapshotsTab.tsx");
 const { useSettingsUI } = await import("../store.ts");
 const { t } = await import("../../../lib/i18n/index.ts");
+const { setSetting } = await import("../../../lib/settings.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -342,6 +343,43 @@ describe("MemorySnapshotsTab", () => {
     expect(text()).toContain(t("mem.codex_cost_hint"));
     expect(text()).toContain(t("mem.auto_label"));
     expect(text()).not.toContain(t("mem.restore"));
+  });
+
+  describe("the codex dual-memory hint under Targets", () => {
+    const rootsWith = (codex: Record<string, unknown>) =>
+      api.mockImplementation((path: string) => {
+        if (path.startsWith("api/agents/memory/roots"))
+          return Promise.resolve({
+            roots: [{ kind: "claude", label: "Claude", scopes: true, files: 3, bytes: 100, projects: [] }],
+            inactive: [{ kind: "codex", label: "Codex", reason: "codex_memories_pending", toggleable: true, ...codex }],
+            auto: true,
+            autoLocked: false,
+          });
+        return Promise.resolve(path.startsWith("api/agents/memory/snapshots") ? { snapshots: [] } : { diff: "" });
+      });
+    afterEach(() => setSetting("agentMemory", false));
+
+    it("shows when Agent memory is on and codex memories are enabled", async () => {
+      setSetting("agentMemory", true);
+      rootsWith({ enabled: true });
+      await mount();
+      await goto("targets");
+      expect(text()).toContain(t("mem.codex_dual_hint"));
+    });
+
+    it("stays away when codex memories are off or Agent memory is off", async () => {
+      setSetting("agentMemory", true);
+      rootsWith({ enabled: false });
+      await mount();
+      await goto("targets");
+      expect(text()).not.toContain(t("mem.codex_dual_hint"));
+      unmount();
+      setSetting("agentMemory", false);
+      rootsWith({ enabled: true });
+      await mount();
+      await goto("targets");
+      expect(text()).not.toContain(t("mem.codex_dual_hint"));
+    });
   });
 
   it("puts the bundle export under Export & import", async () => {

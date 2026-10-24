@@ -60,6 +60,7 @@ Defaults are the Control Plane's own; `deploy/compose/.env.example` annotates mo
 | Cloud-cost window | 7 days | `AF_CLOUD_COST_WINDOW_DAYS` |
 | A parent session and all its live children quiet, before the parent gets one notice naming the idle children | 15 minutes | `AF_STALLED_TREE_MINUTES` in the workspace's environment; `0` turns it off |
 | Idle sweep | on | `AF_IDLE_SWEEP_INTERVAL`: **`0` switches the reaper off entirely**, so nothing is ever stopped for being idle |
+| Memory import: size of a bundle or tar.gz | 64 MiB; at most 128 MiB | `AF_MEMORY_IMPORT_MAX` (bytes) in the workspace's environment. A larger value is clamped to 128 MiB, with a warning in the Agent log, because the Control Plane spools at most 130 MiB of an upload and answers 413 beyond it; an upload over the cap is refused with "too large" ([member/18](../member/18-agent-memory.md)) |
 | Idle session halted after | 1 hour | `AF_SESSION_IDLE_TIMEOUT`; `0` turns it off |
 | Session waiting on a decision (question, approval) halted after | the session value | `AF_INTERACTION_IDLE_TIMEOUT` |
 | Idle Workspace stopped after | 2 hours | `AF_WS_IDLE_TIMEOUT`; `0` turns it off |

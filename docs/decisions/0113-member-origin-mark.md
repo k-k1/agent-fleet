@@ -206,3 +206,11 @@ Review notes on the above (same day):
   same limit as writing the store directly (Threat model, "What the mark does not do"), not a new
   capability, and it is not closed in code: an open or unlinked descriptor is reachable through
   `/proc/<pid>/fd` just the same.
+
+## Note 2026-10-25: the Agent's import cap is clamped to the CP spool limit (#2489)
+
+The 130 MiB spool cap above is a fixed ceiling, while `AF_MEMORY_IMPORT_MAX` is an Agent setting, so a
+value large enough for the multipart body to pass 130 MiB was refused by the CP with 413 before the Agent saw the upload. The
+Agent now clamps the setting to 128 MiB (the 130 MiB cap less the 1 MiB reserved for
+multipart framing, with another 1 MiB of headroom) and logs a warning once. The CP limit stays as it was. The modules cannot share the
+constant; each pins the pair in a test.

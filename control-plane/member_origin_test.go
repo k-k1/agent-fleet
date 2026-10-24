@@ -609,3 +609,17 @@ func TestRelaySignsSettingsWrites(t *testing.T) {
 		t.Fatalf("claims = %+v", c)
 	}
 }
+
+// The Agent clamps AF_MEMORY_IMPORT_MAX to 128 MiB (memoryImportCeiling in workspace/agent, a
+// separate module) and adds 1 MiB of multipart framing; the spool limit must admit that body.
+// The Agent's values are copied here, so they are pinned by equality first: whoever changes the
+// real limit must also edit these constants and the Agent's test, which names this one.
+func TestMemberOriginUploadMaxCoversAgentCeiling(t *testing.T) {
+	const agentCeiling, agentFraming = 128 << 20, 1 << 20
+	if memberOriginUploadMax != 130<<20 {
+		t.Fatalf("memberOriginUploadMax is %d, want 130 MiB: update the Agent's memoryImportCeiling and both pinning tests together", memberOriginUploadMax)
+	}
+	if memberOriginUploadMax < agentCeiling+agentFraming {
+		t.Fatalf("memberOriginUploadMax %d is below the Agent ceiling %d + framing %d", memberOriginUploadMax, agentCeiling, agentFraming)
+	}
+}
