@@ -9,8 +9,8 @@ English | [日本語](03-starting-sessions.ja.md)
 
 A session bundles one job you delegate to the AI into a single unit: its **conversation,
 working location, and execution state**. It is separate from whether a terminal
-exists: Codex / opencode / GitHub Copilot / Cursor / Kiro also run as sessions under managed
-execution, without a black screen, and lcpp / muse run no other way. In the left pane, sessions
+exists: most kinds also run as sessions under managed execution, without a black screen, and
+lcpp / muse run no other way (which kind supports what: [Agents — what each kind can do](../ref/agents.md)). In the left pane, sessions
 appear under the **repository** that matches their working location; those that don't belong to
 a repository appear under **Other sessions**. You can have multiple sessions in parallel, each
 with its own independent conversation and working folder.
@@ -37,8 +37,9 @@ covered in [16 Cloud accounts](16-cloud-accounts.md).)
 
 ## Execution method — Managed and Terminal (CLI)
 
-On the start screen for Codex / cursor / opencode / GitHub Copilot / Kiro you can choose the
-**execution method** (lcpp and muse offer no choice, because they are Managed only). This is the
+On the start screen of a kind that supports both routes you can choose the
+**execution method**; a kind that has only one offers no choice (the per-kind table is in
+[Agents — what each kind can do](../ref/agents.md)). This is the
 difference in the path Agent Fleet uses to run the agent and deliver your instructions
 (internally, the "driver"). It chooses **how a session of the same kind is run**, and does not
 give the conversation a separate storage location or a separate working folder.
@@ -53,9 +54,7 @@ give the conversation a separate storage location or a separate working folder.
   interactive screen directly from the terminal. Suited to cases that need CLI-specific screens
   or commands; each session uses extra memory.
 
-New Codex / cursor / opencode / GitHub Copilot / Kiro sessions default to managed. lcpp / muse
-are Managed only, claude / agy use Terminal (CLI), and shell / SSM use only the terminal path.
-For kinds that support both methods, you can switch the execution method from the session's ⋯
+A kind that supports both starts Managed by default. For those kinds you can switch the execution method from the session's ⋯
 menu whenever the agent is not in the middle of processing. **The conversation carries over as
 is.** A codex session goes from Managed to Terminal (CLI) only while it is stopped: stop it first,
 then switch. codex lets go of the conversation about a minute after the stop; until then the
@@ -111,8 +110,10 @@ out an independent working copy (worktree) per session.
   silently starts weeks behind. **The parent working copy is left alone** (someone may be
   working in it, and files must not be swapped out under them). When the local base is ahead or
   has diverged, or origin has no branch of that name, the local base is used as before.
-- Launching from an existing worktree row launches directly in that worktree. Create new
-  worktrees from the base repository.
+- Launching from an existing worktree row launches directly in that worktree, and says so in
+  place of the choice. Create new worktrees from the base repository. The same happens for a
+  Subversion working copy, and for a repository with no commit yet (a worktree needs a first
+  commit to branch from).
 
 ### Working folder — starting inside a subfolder
 
@@ -246,24 +247,12 @@ at the end shows the current state. Hover over the state icon to see the state n
 need action from you (**Question**, **Plan ready**, **Awaiting permission**) also show text.
 Active sessions refresh automatically every 4 seconds.
 
-| State display | Meaning |
-|--------|------|
-| Working… | The agent is working (spinning) |
-| Question | It has asked you something and is waiting for a reply |
-| Plan ready | A proposed plan is waiting for your review |
-| Awaiting permission | It is asking for permission to act |
-| Waiting for limit reset | Stopped at a usage limit (when a time is shown, it resumes automatically around then) |
-| Spend limit — needs a raise | Stopped at the spend / credit limit (waiting will not clear it; raise the limit or add credit) |
-| Ready | Idle, waiting for your next instruction |
-| Ready · running in background | Awaiting input, but something is still running behind the scenes |
-| Running | shell and the like (kinds with no working / awaiting-input distinction) |
-| Stopped | Not running (click to open and resume) |
-| Folder missing — can't resume | The working folder is gone and it can't be resumed ([05](05-stopping-and-tidying.md#when-you-can-and-cant-resume)) |
-| Ended (out of memory) | May have been force-terminated, e.g. by the memory limit |
-| Force-killed / Crashed | SIGKILL, a signal, a non-zero exit, etc. was detected |
+The states and what each one means (Working…, Question, Plan ready, Awaiting permission, Ready,
+Stopped, a usage or spend limit, and so on) are listed in one place:
+[Icons, badges, and menus](badges-and-menus.md#session-display).
 
-For the other marks shown on a row (colored pane numbers, reading aloud, branch-switch
-warnings, and so on), see [Icons, badges, and menus](badges-and-menus.md).
+The other marks on a row (colored pane numbers, reading aloud, branch-switch warnings, the unread
+red dot) and the right-click menus are in the same chapter.
 
 When a state changes while you're not watching, a **browser notification** appears (suppressed
 while you have that screen open). When the work pauses (the session becomes Ready) you're
@@ -282,15 +271,18 @@ to avoid duplicates. The exception is claude's own notification tool (`PushNotif
 default in claude): when claude decides to notify you, that message arrives as a terminal
 notification too, unless claude held it back because you were active in that terminal.
 
-**A red dot on a session marks a notification you have not read yet.** It sits on the session's
-row in the left pane (on the corner of its icon) and on its tab, and rolls up onto a collapsed
-project row or section, so a folded parent still shows that something inside is waiting. The dot
-clears once that session is on screen in one of your panes, or when you press **"Mark all as
-read"** in the notification centre. Merely opening the bell marks nothing as read. A session's
-**report** is the exception: it was posted to an operator conversation, so it clears when that
-conversation is on screen (or you open it from the notification centre), not when the session is.
+A session with a notification you have not read gets a **red dot**; what sets it and what clears it
+is described under [Icons, badges, and menus](badges-and-menus.md#session-display).
 
 ## Changing the title and branch name
+
+Both are in the session's ⋯ menu (or right-click). The same menu also has **"Menu of repository
+{name}"**, which jumps to the left pane and opens the menu of the repository the session belongs to,
+so commit, switch branch and the like are one step away from a session you are looking at. It is not
+shown for sessions without a repository, on a phone, or while the workspace is stopped; when the
+left pane is hiding that repository (a search or the active working set), a notice says so instead.
+All menu items: [Icons, badges, and menus](badges-and-menus.md#right-click-menus).
+
 
 - **Rename**: changes the identifying name in the list. Saving it empty reverts to the automatic name (repository name + timestamp). **"Ask AI to suggest"** has a name proposed from the conversation contents. A session started from an issue keeps the issue's key (`#1146`, `PROJ-123`) at the front; adopt it with "Use this".
 - **Rename the branch**: appears only for sessions running in a worktree. Renames that worktree's branch (the folder, that is the session, stays as is). Buttons let you swap the prefix for one of the repository's branch naming rules (`feature/` `fix/` `hotfix/` … by default), and **"Ask AI to suggest"** proposes a branch name from the conversation, composed by the same rules. A session started from an issue keeps the issue's number in it. A name outside the rules only gets a note. Use it to give a meaningful name later to a session started under a provisional name (`temp/…`).

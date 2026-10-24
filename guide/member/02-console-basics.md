@@ -17,12 +17,23 @@ This chapter is about moving around the Console itself rather than any one kind 
   previous / next tab, **Alt+A** add a memo, **Alt+G** cycle working sets, **Alt+/** jump to
   the rail's filter box, **Alt+Q** mute the read-aloud, **Alt+,** open settings.
   All of them are rebindable in Settings › Keyboard.
+- **Leader key (Ctrl+K, macOS ⌘K)**: press it, then a short sequence of letters. About a
+  third of a second after the leader, a **which-key panel** lists the keys that can come next
+  (groups first, then actions), so you do not have to remember the sequences: **p** Panes /
+  layout, **s** Session, **w** Workspace, **g** Open panel, **n** Notifications, **v** View.
+  **Backspace** goes one level back up, **Esc** (or the leader again) cancels, and **?**
+  lists every shortcut. A leader left hanging cancels itself. The leader, the palette key
+  and the key bindings for the commands are rebindable in Settings › Keyboard; the sequences
+  under the leader are fixed ([20 Settings](20-settings.md)).
+- **F6 / Shift+F6**: move keyboard focus to the next / previous **region** of the screen: the
+  left pane, the main area and the bars, in that order, wrapping round.
+- **Ctrl+B (macOS ⌘B)**: show or hide the left pane (leader **w** → **b**).
 - **Alt+U**: jump to the next session that **needs you**: first the ones waiting on your
   answer (question, plan approval, permission), most recent first, then the ones with an
   unread notification (a finished turn, a report). Press again to walk the rest. In the
-  left rail a session waiting on you is ringed, and one with unread news has a bold title
-  and a red dot; a pane showing a session that waits on you is ringed too. Opening the
-  session clears the unread mark; the ring goes away when you answer.
+  left rail a session waiting on you is ringed, and one with unread news is marked as unread
+  (see [Icons, badges, and menus](badges-and-menus.md)); a pane showing a session that waits on
+  you is ringed too.
 - **Alt+= / Alt+- / Alt+0**: make the text you're looking at **bigger / smaller / default
   size**. The terminal, the file viewer, the conversation (mirror) and the read-aloud view
   each keep their own size, and the one belonging to the focused pane is what moves (the
@@ -61,6 +72,12 @@ is waiting for you. Children follow in the order they were started. A session st
 palette is open stays at the foot until you open the palette again. Once you type, the list is
 flat again and a child's row names its parent (**↳** and the parent's title); typing the parent's
 title also finds its children.
+
+With text that looks like an issue or PR number (`#1662`, `1662`, `owner/name#1662`, `PROJ-123`),
+the Sessions list shows first the sessions linked to that number, as the PR in their row or as
+the issue they were started from, and the row names the reference that matched. The match is
+on the whole number, so `#12` does not find `#1662`; ordinary text matching still runs
+alongside it. The filter box at the top of the left pane understands the same numbers.
 
 ### Keys inside the palette
 
