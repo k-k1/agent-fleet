@@ -31,10 +31,11 @@ type sharedDaemon struct {
 	next       int
 	pid        int
 	version    string
-	failGet    map[string]bool // GET of these session ids answers 503
-	deleteGate func(id string) // runs on a DELETE before it is applied (the lock is released)
-	failSwitch bool            // model/agent switches answer 500
-	failEnv    int             // fail this many environment PUTs with 503 before accepting
+	failGet    map[string]bool     // GET of these session ids answers 503
+	deleteGate func(id string)     // runs on a DELETE before it is applied (the lock is released)
+	failSwitch bool                // model/agent switches answer 500
+	messageIDs map[string][]string // session id → message ids GET .../message answers with
+	failEnv    int                 // fail this many environment PUTs with 503 before accepting
 }
 
 func newSharedDaemon(t *testing.T) *sharedDaemon {
@@ -121,6 +122,12 @@ func (d *sharedDaemon) handle(w http.ResponseWriter, r *http.Request) {
 			m, _ := body["metadata"].(map[string]any)
 			d.sessions[id] = md(m) // replaces, as the real server does
 			w.WriteHeader(http.StatusNoContent)
+		case len(parts) == 4 && parts[3] == "message" && r.Method == "GET":
+			var data []map[string]any
+			for _, mid := range d.messageIDs[id] {
+				data = append(data, map[string]any{"id": mid, "type": "user"})
+			}
+			reply(map[string]any{"data": data})
 		case len(parts) == 4 && parts[3] == "fork":
 			d.next++
 			nid := fmt.Sprintf("ses_fork%d", d.next)
@@ -273,6 +280,7 @@ func TestSharedLaunchVanishedSessionStartsOver(t *testing.T) {
 func TestSharedLaunchForkRetagsTheCopy(t *testing.T) {
 	d := newSharedDaemon(t)
 	d.sessions["ses_src"] = sharedMetadata("source-sid", "source")
+	d.messageIDs = map[string][]string{"ses_src": {"msg_1", "msg_5"}}
 	m := terminalMeta(t, "copy")
 	m.ForkFrom, m.ForkAt = "ses_src", "msg_5"
 	if _, err := (agentImpl{}).BuildLaunch(m, agents.LaunchOpts{}); err != nil {
@@ -1074,4 +1082,64 @@ func TestFailedForkCleanupHoldsTheClaimUntilTheCopyIsGone(t *testing.T) {
 	if !errors.Is(during, errClaimTaken) {
 		t.Errorf("a claim during the cleanup's DELETE must be refused, got %v", during)
 	}
+}
+
+// stubTerminalEnsure makes ensureForTerminals fast and countable: no backoff, and every attempt
+// answers with the next error from errs (nil once they run out).
+func stubTerminalEnsure(t *testing.T, errs ...error) *int {
+	t.Helper()
+	calls := 0
+	oldBackoff, oldEnsure := terminalEnsureBackoff, ensureTerminalServe
+	terminalEnsureBackoff = []time.Duration{0, 0, 0}
+	ensureTerminalServe = func() error {
+		calls++
+		if calls <= len(errs) {
+			return errs[calls-1]
+		}
+		return nil
+	}
+	t.Cleanup(func() { terminalEnsureBackoff, ensureTerminalServe = oldBackoff, oldEnsure })
+	return &calls
+}
+
+// A replacement serve that fails to start once must not strand the Terminal panes: nothing else
+// retries for them.
+func TestEnsureForTerminalsRetriesAFailedStart(t *testing.T) {
+	m := session.Meta{Name: "oc-term", Dir: t.TempDir(), Kind: session.KindOpencode, Driver: session.DriverTUI}
+	stubTerminalSlots(t, func() []session.Meta { return []session.Meta{m} })
+	timeout := errors.New("opencode serve did not start in time")
+	calls := stubTerminalEnsure(t, timeout, timeout)
+	ensureForTerminals("test")
+	if *calls != 3 {
+		t.Fatalf("attempts = %d, want 3 (two failures, then the start that works)", *calls)
+	}
+}
+
+func TestEnsureForTerminalsGivesUp(t *testing.T) {
+	m := session.Meta{Name: "oc-term", Dir: t.TempDir(), Kind: session.KindOpencode, Driver: session.DriverTUI}
+	stubTerminalSlots(t, func() []session.Meta { return []session.Meta{m} })
+	timeout := errors.New("opencode serve did not start in time")
+
+	t.Run("bounded", func(t *testing.T) {
+		calls := stubTerminalEnsure(t, timeout, timeout, timeout, timeout, timeout)
+		ensureForTerminals("test")
+		if *calls != 4 {
+			t.Fatalf("attempts = %d, want 4 (one plus one per backoff step)", *calls)
+		}
+	})
+	t.Run("not connected", func(t *testing.T) {
+		calls := stubTerminalEnsure(t, ErrNotConnected)
+		ensureForTerminals("test")
+		if *calls != 1 {
+			t.Fatalf("attempts = %d, want 1: retrying cannot connect opencode", *calls)
+		}
+	})
+	t.Run("no panes left", func(t *testing.T) {
+		stubTerminalSlots(t, func() []session.Meta { return nil })
+		calls := stubTerminalEnsure(t, timeout)
+		ensureForTerminals("test")
+		if *calls != 1 {
+			t.Fatalf("attempts = %d, want 1: no pane needs the serve any more", *calls)
+		}
+	})
 }

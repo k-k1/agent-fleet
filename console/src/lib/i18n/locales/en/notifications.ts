@@ -138,7 +138,7 @@ export const notifications: Record<keyof typeof jaNotifications, string> = {
   "noti.conversation_gone": "The conversation this report went to is gone ({title}). It may have been deleted.",
   "noti.conversation_gone_session": "The conversation this report went to is gone ({title}). Opened the reporting session instead.",
   "noti.handoff_closed": "This handoff can no longer be taken over: it was already taken over, declined, withdrawn or expired, or the session is no longer shared with you.",
-  "noti.handoff_recovery": "This handoff can no longer be taken over, but your earlier launch from it still holds it. Give it back from “{inbox}” in the shared sessions section.",
+  "noti.handoff_recovery": "This handoff can no longer be taken over, but your earlier launch from it still holds it. Give it back from “{inbox}” at the top of the inbox’s Received list.",
   "noti.conversation_untitled": "untitled",
   "noti.notifications": "Notifications",
   "noti.center": "Notification center",

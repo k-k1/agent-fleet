@@ -75,8 +75,10 @@ AWS that key can be held by KMS instead (next section). Details in `docs/build/0
 ### Keys at rest on AWS KMS
 
 On `ecs` / `ecs-ec2` the Control Plane can have AWS KMS hold the keys for what it seals: MCP
-connection headers, sign-in client secrets, engine tokens, session handoffs and shares, and the
-key of each workspace's credential store. Each value is sealed with a fresh data key from KMS,
+connection headers, sign-in and Git OAuth client secrets, engine tokens, session handoffs and
+shares, inbox messages and their attachments, the development sign-in's signing keys and client
+secrets, the key of each workspace's credential store, and each home's own credential-store key
+where homes have one. Each value is sealed with a fresh data key from KMS,
 bound to its tenant, so it cannot be opened under another tenant's name. Turning it on:
 
 1. Deploy `10-data` with `CustodianKmsKey=create` (or bring a symmetric KMS key of your own in
@@ -115,8 +117,9 @@ What to know before you switch:
 
 `af-cp rewrap-keys` re-seals, under KMS, every value the Control Plane sealed with the master
 key before the switch: the wrapped key of each workspace's credential store, MCP connection
-headers, sign-in and Git OAuth client secrets, session handoffs and share proposals, and the
-Hugging Face, Civitai and ComfyUI keys of the engines. Afterwards disabling the KMS key makes
+headers, sign-in and Git OAuth client secrets, session handoffs and share proposals, inbox
+messages and their attachments, the development sign-in's signing keys and client secrets, each
+home's own credential-store key, and the Hugging Face, Civitai and ComfyUI keys of the engines. Afterwards disabling the KMS key makes
 those unreadable too.
 
 - Run it **after** the Control Plane itself runs with `AF_KEY_CUSTODIAN=kms`, with the Control
@@ -198,6 +201,8 @@ together with `CustodianKmsKeyArn`; only the Control Plane task definition chang
   by disabling the KMS key. A key whose home is destroyed is removed only when the runtime
   proves the home gone (next item).
 
+#### How the home's key behaves
+
 - **The key belongs to the home, not the workspace.** Deleting and re-creating a workspace over
   a kept home keeps the key. A key is removed in one case: Destroy finished, a workspace row no
   longer names the home, and the runtime **proves** the whole home is gone. A key dropped while
@@ -210,8 +215,10 @@ together with `CustodianKmsKeyArn`; only the Control Plane task definition chang
   removes; an access point rooted elsewhere is kept and reported, not deleted), never afterwards, and never from "no leftovers"
   (`ecs` without the home task removes only the access points, and a retry then reports none).
   A key still `migrating` is never removed this way, and a runtime that cannot prove it keeps
-  the key. Once that crypto-shredding happens, the key's ciphertext is gone with the row, so
-  copies of the store that survive elsewhere (snapshots, backups) are unreadable too.
+  the key. Once the row is deleted, the store and any copy of it sealed under that key (a
+  snapshot, a backup) no longer open, unless a database backup that still holds the
+  `home_dek` row is restored while the KMS key is enabled. Copies made before the store moved
+  are on the derived key ([below](#disabling-the-kms-key-restoring-a-copy-turning-it-off)).
 - **Orphaned keys.** Keys that were kept (a `migrating` probe of a golden bake, a runtime that
   could not prove it, a destroy by an older Control Plane) are listed by
   `af-cp home-dek-status --orphans` (read-only; keys no workspace row names). A listed key is a
@@ -219,8 +226,10 @@ together with `CustodianKmsKeyArn`; only the Control Plane task definition chang
   that the home is gone (the EFS directories, the EBS volume and snapshots, the cluster
   claims, or the data directory), remove it with
   `af-cp home-dek-status --remove-orphan <membership-id> --force`. `--force` is your statement
-  that the home is gone, because that command has no runtime to check with; it still refuses
-  a key a workspace row names. A key removed while the home exists makes its `secrets.enc`
+  that the home is gone, because that command has no runtime to check with. It still refuses
+  a key a workspace row names, and refuses while a workspace operation on that membership is
+  in progress. It exits `0` when it removed the key, `1` when it removed nothing, and `2`
+  when the database fails. A key removed while the home exists makes its `secrets.enc`
   unreadable for good.
 - **Moving a store to it.** The first start after you turn it on mints the home's key, and the
   Control Plane passes it to the workspace beside the derived key. At boot the workspace opens
@@ -239,9 +248,14 @@ together with `CustodianKmsKeyArn`; only the Control Plane task definition chang
   home's key alone (as `AF_SECRET_KEY`) and no derived key; on `ecs` / `ecs-ec2` that start also
   deletes the `secret-key-next` parameter. A workspace that is already running keeps both keys
   in its environment until it is restarted. `unreadable` or `derived` leaves the home
-  migrating, is logged, and deletes nothing. If the Control Plane restarts while it waits, the
-  home simply stays migrating and is confirmed at a later start. `af-cp home-dek-status` counts
-  migrating and confirmed homes.
+  migrating, is logged, and deletes nothing. The wait asks every 3 seconds for at most 15
+  minutes; if that runs out, or the Control Plane restarts while it waits, the home stays
+  migrating and is confirmed at a later start. `af-cp home-dek-status` counts migrating and
+  confirmed homes; on `ecs` / `ecs-ec2` run it as a one-off task like `rewrap-keys` above, with
+  `"command":["home-dek-status"]`.
+
+#### Disabling the KMS key, restoring a copy, turning it off
+
 - **What disabling the KMS key does, and what it does not.** Once a home's store has been
   re-sealed, the key derived from `AF_MASTER_KEY` no longer opens it, and once the Control
   Plane's data-key cache has expired (`AF_KMS_DATA_KEY_CACHE_TTL`, 5 minutes by default) the
@@ -271,18 +285,18 @@ together with `CustodianKmsKeyArn`; only the Control Plane task definition chang
   that home no longer receives: the workspace reports `unreadable` and refuses to write over
   it. Run `af-cp home-dek-status --remigrate <membership-id>` with the Control Plane's
   environment, then restart the workspace: it gets both keys again and re-seals the restored
-  store.
+  store. The command exits `1` when the membership has no confirmed home key, `2` when the
+  database fails.
 - **Turning it off does not undo it.** With `AF_WORKSPACE_DEK` unset again, homes that already
   have a key keep getting it, because their store may be sealed under it. After a store has
   been re-sealed, two kinds of going back differ:
-  - **A Control Plane that does not know the home's key, or a lost `home_dek` table**, with the
-    workspace image of this version: the store no longer opens, and the workspace refuses
-    every write to it, reconnecting a credential included (this version never writes over a
-    store it cannot open). A Control Plane that knows the home's key but not the confirm step
-    is fine: it hands out both keys again, and the workspace opens the store with the home's.
-  - **A workspace image from before this version: do not start one on a home that has
-    moved.** Its Agent has no such guard: a save after a failed read can write an empty
-    store over the re-sealed one, and the credentials are lost.
+  - **A Control Plane that does not know the home's key, or a lost `home_dek` table**, with a
+    workspace image of v0.31.0 or later: the store no longer opens, and the workspace refuses
+    every write to it, reconnecting a credential included (that image never writes over a
+    store it cannot open).
+  - **A workspace image older than v0.31.0: do not start one on a home that has moved.**
+    Its Agent has no such guard: a save after a failed read can write an empty store over the
+    re-sealed one, and the credentials are lost.
 
   To recover, first restore what opens the store, before any workspace starts on that home:
   the Control Plane version, its `home_dek` rows and the KMS key. Only if the stored
@@ -310,16 +324,24 @@ in the Console.
    destinations to the allowlist. The allowlist is versioned (active / proposed / retired); the
    AI only **proposes; approval is done by humans** (approve/reject under "Proposed (needs
    approval)" in the Admin panel).
+
+   **Reading the observations:** counts are approximate. A report that is retried after a
+   timeout can be counted twice, and the proxy keeps at most 5000 distinct destinations
+   while the Control Plane is unreachable (overflow shows up as an `egress.dropped` audit
+   entry), and loses what it held in memory if it restarts. Treat a missing host as "not
+   seen", not "never used", and check the audit log for `egress.dropped` before enforcing.
 3. **Switch to enforce**: once the allowlist is sufficiently solid, switch the mode to
    enforce. From then on, traffic outside the allowlist is **blocked**. The Admin UI also warns
    you to confirm reality in log-only first before switching.
 
 > Current implementation scope: **observation (log-only) and allowlist management work, and the
-> proxy itself can block (enforce)**. On the compose (Docker) target, setting `AF_EGRESS_PROXY_ADDR`
-> on the Control Plane injects `http_proxy` / `https_proxy` / `no_proxy` (and their upper-case forms)
-> into every workspace container (off by default), so programs that honour those variables go through
-> the proxy. The ecs / ecs-ec2 targets do not pass this setting on to workspaces. What is **not built
-> yet** is forcing
+> proxy itself can block (enforce)**. Setting `AF_EGRESS_PROXY_ADDR` on the Control Plane
+> injects `http_proxy` / `https_proxy` / `no_proxy` (and their upper-case forms) into every workspace
+> on every target (off by default), so programs that honour those variables go through the proxy.
+> The CP's internal address (`AF_CP_INTERNAL_URL`) is kept out of the proxy on Kubernetes, ecs and
+> ecs-ec2, and the ecs / ecs-ec2 targets also keep the link-local task and instance metadata
+> addresses (`169.254.170.2`, `169.254.169.254`) out of it, because the proxy refuses link-local
+> destinations. What is **not built yet** is forcing
 > traffic through it (an internal network or security-group egress rule that leaves the proxy as
 > the only way out, and templates that run the proxy), so a process that ignores the variables
 > still goes straight out, and **switching to enforce does not yet constrain a workspace**
@@ -347,10 +369,102 @@ an operator.
   on the deployment side it depends on the feature flag (`AF_MCP_ENABLED`) and on whether the
   ingress passes `/mcp`. The scope (read / write / admin:dangerous) and the expiry are the user's
   choice, and they can revoke it themselves. Over that door a member can also let their own agent
-  use their Agent Fleet memory; it is a separate per-member setting, off by default (member guide,
+  use their Agent Fleet memory; it is a separate per-member setting, off by default ([member guide](../member/18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent),
   Settings > Agent memory > Settings). External saves and forgets are audited (`memory.entry.save` /
   `memory.entry.forget`, actor `mcp`, target the project id). A tenant administrator can block it for the
   whole tenant ([admin 08](../admin/08-external-memory.md)); `AF_MCP_ENABLED` turns the whole endpoint off.
+
+### Sign-in for remote MCP clients (OAuth)
+
+By default `/mcp` accepts a Personal Access Token and nothing else. With `AF_MCP_OAUTH=1` the Control Plane is also
+an OAuth 2.1 authorization server for `/mcp` (ADR 0118), so claude.ai,
+ChatGPT, Claude Code and Codex connect by signing the member in to the Console instead of pasting a token. PATs keep
+working for CI and clients without OAuth.
+
+| Setting | Meaning |
+|---|---|
+| `AF_MCP_OAUTH=1` | turns the server on. Needs `AF_MCP_ENABLED=true` and an `https` `PUBLIC_BASE_URL`; with any of the three missing every path below answers 404 and `/mcp` keeps its bare 401, so clients fall back to asking for a token |
+| `AF_MCP_OAUTH_TRUSTED_HOSTS` | comma-separated host names that may receive the sign-in redirect and serve client metadata. Default `claude.ai,claude.com,chatgpt.com`. **A super admin can override this at runtime** in the Admin modal (Deployment → MCP sign-in hosts, [admin/05](../admin/05-access.md#trusted-client-hosts-deployment-wide-superadmin-only)); the saved list wins and this variable is the fallback while nothing is saved. Remove one to stop that vendor, add one for an in-house client (exact host, `https` only); `none` leaves loopback clients only |
+
+- **Turning it on.** Compose / native / local: set `AF_MCP_ENABLED=true` and `AF_MCP_OAUTH=1` (exactly those
+  values; `1` is not accepted for `AF_MCP_ENABLED`) and, optionally, `AF_MCP_OAUTH_TRUSTED_HOSTS` in the Control Plane's
+  environment. Kubernetes: add them to the Control Plane's environment file (`cp.env`). **ECS:** the 30-ingress
+  parameters `McpEnabled=on`, `McpOAuth=on` and optionally `McpOAuthTrustedHosts`, set with a targeted
+  `aws cloudformation deploy` of `30-ingress.yaml` (`--parameter-overrides McpEnabled=on McpOAuth=on`).
+  `update.sh` overrides only `ImageTag`, so it neither turns them on nor turns them off: parameters keep their
+  previous value, and one a stack has not had yet starts off. See [`deploy/aws/ecs/README.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/README.md).
+- **What is served** (issuer `{PUBLIC_BASE_URL}/mcp-oauth`): `/.well-known/oauth-protected-resource/mcp`,
+  `/.well-known/oauth-authorization-server/mcp-oauth`, `/mcp-oauth/authorize`, `/mcp-oauth/consent`,
+  `/mcp-oauth/token`, `/mcp-oauth/register` and `/mcp-oauth/revoke`. The `/mcp` 401 now carries
+  `WWW-Authenticate: Bearer resource_metadata="…"` (with `, error="invalid_token"` appended when a presented token is invalid).
+  The client requests the scopes; the consent page starts with `read` selected and offers `write` only when requested.
+- **Ingress.** The hosted clients call `/mcp` and the token endpoint **from their vendors' servers**, so the Control
+  Plane has to be reachable from the internet on those paths. A deployment behind a VPN or a narrow ALB ingress CIDR
+  gets command-line (loopback) clients only; that is by construction, not a fault.
+  Under `AUTH=oauth` or `AUTH=dev` the Console's own session gate already lets the discovery, `token`, `register`
+  and `revoke` paths through and keeps `authorize` and `consent` behind it. Under **`AUTH=proxy`** the gateway has
+  to do the same: `/mcp-oauth/authorize` and `/mcp-oauth/consent` must pass **through** it (the member's identity header comes from
+  there), and the other five paths plus `/mcp` must **bypass** it.
+- **Who may be a client.** Registration is open (dynamic client registration is rate-limited per source, capped in
+  number, and a registration that never produces a grant is deleted after 30 days) but a registration only chooses
+  where a code is *sent*, so a redirect must be loopback or an `https` address on the trusted list, spelled
+  canonically (no upper case, trailing dot, explicit port, user info or fragment). A client identified by a metadata
+  document URL is fetched only when that URL is on the same list, without following redirects, with a short timeout
+  and a size cap, and never to a non-public address.
+- **Tokens.** Access tokens are opaque, last one hour and are bound to `{PUBLIC_BASE_URL}/mcp`; refresh tokens rotate on
+  every use and presenting a used one revokes the whole connection. A connection ends after 30 idle days or 90 days.
+  Only hashes are stored. They are not PAT rows and do not count toward the 20-token PAT limit.
+- **Audit.** `mcp.oauth.grant` (created, revoked, reuse-revoked) and `mcp.oauth.token` (each issuance) are written before
+  the response leaves; a call made with a connection is recorded as `mcp` with the connection's id as the actor. If the
+  audit store is down no token is issued.
+  Tenant policy changes are recorded as `tenant.mcp_oauth` (`enabled=true/false`). Member revocations use
+  `mcp.oauth.grant` with `revoked by member`; tenant disablement uses `revoked reason=tenant-disabled` for each
+  connection it ends. A code exchange refused during disablement appends `refused reason=tenant-disabled`
+  to distinguish its earlier audit-before-issue `created` attempt from an actual connection.
+- **Scope.** `read` and `write` only. `admin:dangerous` is never granted over OAuth, whatever the member's role.
+- **Tenant network restriction** applies to the consent step (the person in the browser), not to `/mcp` and the token
+  endpoint, which come from the vendors' servers, as with PATs (ADR 0047).
+
+### Sign-in for OAuth-protected MCP servers members register
+
+The other direction from the section above: when a member registers a remote MCP server that only accepts OAuth, the
+member's own Agent signs in to it (ADR 0119). The Control Plane owns two public paths for that, and both need a
+reachable `PUBLIC_BASE_URL`:
+
+- `GET {PUBLIC_BASE_URL}/oauth2/mcp/callback` — where the server's authorization server sends the browser back. It
+  sits under the `/oauth2/` prefix that is already outside the session gate, and checks the caller itself (the Console session under `AUTH=oauth`, the
+  gateway's identity header under `AUTH=proxy`): the browser must belong to the member who started the sign-in, and a sign-in is valid for 10 minutes and once.
+- `GET {PUBLIC_BASE_URL}/oauth/mcp-client.json` — the client ID metadata document (CIMD), served only when
+  `PUBLIC_BASE_URL` is `https`. Authorization servers that support CIMD fetch it **from their own servers**, so
+  under `AUTH=proxy` the gateway has to let exactly this path bypass authentication; nothing else under `/oauth/` is
+  public. The callback, by contrast, must pass **through** the gateway so the member's identity header is on it: with no
+  identity the sign-in fails. Without an `https` base URL, or when the authorization server cannot fetch it, the
+  Agent falls back to dynamic client registration, or asks the member for a client id.
+
+Tokens never reach the Control Plane: the Agent keeps them in the member's encrypted store. The Control Plane writes
+`mcp.client_oauth` audit rows (`started`, `completed`, `failed`, `disconnected`) that name the server and the
+authorization server, never a code or token. Members sign in from Settings › MCP servers
+([member guide 20](../member/20-settings.md#mcp-servers)).
+
+### Reading what a client sent to `/mcp`
+
+Every request to `/mcp` — refused ones, a `GET` or `DELETE` answered 405 before authentication, each
+item of a batch — writes one Control Plane log line, so a client that connects and then shows no tools can be
+diagnosed from what it actually did:
+
+```
+mcp-call http_method="POST" status=400 latency_ms=2 principal="grant:<id>" client_id="<id>" header_version="2026-07-28" mcp_method_header=false mcp_name_header=false accept="application/json, text/event-stream" content_type="application/json" user_agent="…" items=[{"method":"tools/list","era":"stateless","meta_version":"2026-07-28","client_name":"…","status":400,"error_code":-32020,"error_message":"header mismatch: Mcp-Method (absent) does not match body method \"tools/list\""}]
+```
+
+- `principal` is `pat:<id>`, `grant:<id>` (OAuth; `client_id` follows) or `unauthenticated`, with `reason=` saying why
+  (no bearer token, unknown or expired token, an OAuth token bound to another resource, `method not allowed`).
+- `era` is `legacy` (an `initialize` handshake) or `stateless` (2026-07-28: `_meta` on every request). A stateless request
+  the server rejects shows the JSON-RPC `error_code` (-32020 header mismatch, -32022 unsupported version, -32602 a missing `_meta` field, `clientInfo` and `clientCapabilities` included)
+  and the `Mcp-Method` / `Mcp-Name` presence flags; `tools/list` items carry `tools`, the number returned. A `tools/call` that ran and failed (answered 200 with `isError`) shows `tool_error:true`, without the text.
+- Never recorded: a token, the `Authorization` value, request arguments or tool results. Only the tool name of a `tools/call` / `prompts/get` is.
+- The same records of an authenticated caller are readable by their owner in memory (last 50 per token / connection,
+  not persisted, lost on restart, **per Control Plane replica**) under Settings → Connections → MCP tokens → *Recent calls*.
+  Behind several replicas look for the line in the logs of all of them; 405 and unauthenticated requests exist only in the log.
 
 ## Handing over the in-workspace browser
 
@@ -400,7 +514,7 @@ into answers, logs or commits is part of the agent-side instructions as well.
   cloud metadata endpoint (`169.254.169.254`) of the machine it runs on, and an AWS SDK with no
   member credentials falls back to whatever role it finds there: on an EC2 host with an
   instance profile, that role, in every session, without an error. The Control Plane starts
-  every workspace with `AWS_EC2_METADATA_DISABLED=true` (docker) or withholds the task role
+  every workspace with `AWS_EC2_METADATA_DISABLED=true` (docker and Kubernetes) or withholds the task role
   and sets it (ECS), which stops the SDKs from asking; the network block is the host's job:
   - **EC2 host for compose** (`deploy/aws/ec2-single`): IMDSv2 with hop limit 1
     (`HttpTokens: required`, `HttpPutResponseHopLimit: 1`). The host-network Control Plane is
@@ -412,8 +526,11 @@ into answers, logs or commits is part of the agent-side instructions as well.
   - **Any other docker host in a cloud**: the same metadata settings, or a host firewall rule
     in Docker's `DOCKER-USER` chain that rejects `169.254.169.254` from the workspace bridges
     (it needs root on the host; compose itself needs nothing new).
+  - **Kubernetes**: the variable does not block the cluster's metadata server (the node's
+    service account, Workload Identity on GKE). Blocking that route is the cluster's job (a
+    NetworkPolicy egress rule, or GKE metadata concealment); the Control Plane does not do it.
   - **ecs-ec2**: the slot user data sets `ECS_AWSVPC_BLOCK_IMDS=true`; retained slots have to
-    be replaced: reserve them in Settings → Admin → Slots ([03-run](03-run.md), "ecs-ec2:
+    be replaced: reserve them in Admin → Slots ([03-run](03-run.md), "ecs-ec2:
     replacing slots after a launch template change").
 
   `AF_WS_WORKLOAD_AWS=1` on the Control Plane hands the ECS task role back to workspaces and
@@ -436,7 +553,7 @@ into answers, logs or commits is part of the agent-side instructions as well.
 
   A workspace on the native runtime runs directly on the member's machine and is left alone:
   an instance role there is that machine's own.
-  Members run AWS commands as themselves with `af-aws-exec` ([member guide 10](../member/10-integrations.md)).
+  Members run AWS commands as themselves with `af-aws-exec` ([member guide 16](../member/16-cloud-accounts.md)).
 
 ## Offboarding: how access is actually revoked
 

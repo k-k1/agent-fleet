@@ -225,6 +225,8 @@ func writeCodexReleasingErr(w http.ResponseWriter, err error) bool {
 		httpx.WriteErr(w, http.StatusConflict, "codex_releasing", err.Error())
 	case errors.Is(err, claude.ErrTranscriptLost):
 		httpx.WriteErr(w, http.StatusConflict, "transcript_lost", err.Error())
+	case errors.Is(err, claude.ErrTranscriptRestore):
+		httpx.WriteErr(w, http.StatusConflict, errCodeTranscriptRestoreFailed, err.Error())
 	case errors.Is(err, errDriverSwitching):
 		httpx.WriteErr(w, http.StatusConflict, errCodeDriverSwitching, err.Error())
 	default:

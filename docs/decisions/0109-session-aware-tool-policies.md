@@ -364,7 +364,7 @@ An `ask` verdict becomes one of the two approval surfaces the Console already ha
   Terminal sessions too. The 501 stays for every other interaction of a Terminal session.
 - **Scope** reuses `once` / `turn` / `thread`, limited by decision 3's rule on who may disarm what.
 - **Only a person answers.** No af MCP tool answers an approval, and a parent session cannot approve for its
-  child ([guide/member/02-sessions.md](../../guide/member/02-sessions.md) already says so for CLI approvals).
+  child ([guide/member/11-many-sessions.md](../../guide/member/11-many-sessions.md) already says so for CLI approvals).
 - **A stop does not carry an approval as a grant.** As in ADR 0055 decision 13, only the fact that an approval
   was pending survives. On resume, an answer to the old id is refused; the CLI's next attempt at the call is a
   new check, and if it still needs approval, a new card.

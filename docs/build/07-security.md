@@ -535,12 +535,25 @@ Implemented:
   refuse them in every mode.
 - Events go to the CP (`POST /internal/egress`, `AF_EGRESS_TOKEN`) and are aggregated
   daily (`egress_daily`); the policy is served back from `GET /internal/egress/policy`.
+  Reporting is at-least-once: the proxy flushes every 10 s (10 s request timeout, fixed
+  interval, no backoff) and keeps a batch until the CP answers 2xx, sending it in chunks
+  under the CP's 1 MiB body limit. A retry after a timeout or a half-recorded batch counts
+  rows twice, so counts are approximate. While the CP is unreachable the proxy holds at most
+  5000 distinct host/verdict buckets; the overflow is reported as `dropped` and audited as
+  `egress.dropped`. Pending counts live in memory and are lost when the proxy restarts.
 - **The allowlist is versioned** (`egress_allowlist`: active / proposed / retired) with a
   deployment-wide mode (`egress_mode`). **An AI may only propose; a human approves** —
   nothing is applied automatically.
 - **Enforce blocks at the proxy**: outside the allowlist the answer is a 403.
 - `AF_EGRESS_PROXY_ADDR` injects the proxy variables (`http_proxy`, `https_proxy`,
-  `no_proxy`) into every workspace, on every target.
+  `no_proxy`, and their upper-case forms) into every workspace, on every target. `docker`,
+  `native` and Kubernetes pass the whole deployment env on; `ecs` and `ecs-ec2` take only
+  these variables (the ones generated from `AF_EGRESS_PROXY_ADDR`, never a same-named `WS_ENV` entry), because they deliberately do not pass `WS_ENV` (it may hold a
+  credential and a task definition's plain environment is readable). Where
+  `AF_CP_INTERNAL_URL` is set, its host joins `NO_PROXY` on Kubernetes, ecs and ecs-ec2, and
+  ecs / ecs-ec2 add the task and instance metadata addresses (`169.254.170.2`,
+  `169.254.169.254`) too, since the proxy refuses link-local destinations. A per-start
+  variable of the same name wins over the deployment-wide one.
 
 **What is missing is the fence.** Nothing forces a workspace's traffic through the
 proxy: there is no internal-only network on `docker` and no egress rule on the AWS

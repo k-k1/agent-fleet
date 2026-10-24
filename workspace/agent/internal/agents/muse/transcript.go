@@ -443,7 +443,7 @@ func genericPart(it msp.Item) transcript.Part {
 // kindSummary is the one-line summary of a kind that carries its facts in typed members rather
 // than in label/fallbackText. Without it a damagedRange item, which says how much of the session
 // log could not be read, would reach the mirror as a bare kind name and the loss would go
-// unnoticed. Empty for any other kind.
+// unnoticed. Empty for any other kind, including overdueNotice, which has no typed members.
 func kindSummary(it msp.Item) string {
 	switch it.Kind {
 	case msp.ItemKindDamagedRange:
@@ -453,6 +453,12 @@ func kindSummary(it msp.Item) string {
 	case msp.ItemKindScheduledFire:
 		if it.JobID != nil && *it.JobID != "" {
 			return "scheduled job " + *it.JobID
+		}
+	case msp.ItemKindBackgroundTerminalCompletion:
+		// The terminal status is the point: a backgrounded command that failed or timed out
+		// after its turn ended has no other trace in the mirror.
+		if b := it.BackgroundTerminalCompletion; b != nil {
+			return fmt.Sprintf("background command %s: %s", b.TerminalStatus, b.Command)
 		}
 	}
 	return ""

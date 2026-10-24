@@ -28,16 +28,237 @@
 #   A managed config that has types holds one project's (IDs are per project in team-managed
 #   projects): `-p` naming another project gets a derived config with that project's types and
 #   without the base's `issue` block, custom fields included.
-# - Fails closed: any helper error leaves jira running with no injected auth.
+# - Assignee lookup (`issue assign`, and -a/--assignee of edit / create / move) searches users in
+#   the configured or -p project, not the issue key's. A config of ours without project.key makes
+#   Jira answer a bare 400, so `issue assign KEY-N` gets `-p KEY` from the key's prefix; the other
+#   commands only get a one-line hint. An explicit -p, or any `project:` entry in the config, wins.
+# - `issue comment edit|delete KEY ID` does not exist in jira-cli. For a config of ours it goes to
+#   `workspace-agent jira-comment`, which holds the token itself and calls REST v3 (the body is
+#   Markdown converted to ADF there); the wrapper never sees the token for it. A user-owned
+#   config or an explicit token never gets here: those exec jira unchanged, as for everything else.
+# - Fails closed: any helper error leaves jira running with no injected auth. The one exception
+#   is a connection the Agent reports as unusable (`unusable=<reason>` on jira-cred's stderr: an
+#   OAuth authorization that expired and could not be renewed, or was revoked): jira would
+#   print "generate an API token and run jira init", which is the wrong advice, so one line
+#   naming the real next step is printed and jira is not run. No connection at all is not that
+#   case and still runs jira as before.
+# - Atlassian is reached over a path that resets TCP connections now and then, and jira-cli
+#   never retries. READ-ONLY commands (readonly_cmd below) are therefore run to a private
+#   temporary directory and re-run, at most twice with a short jittered wait, when stderr names a
+#   transport failure; only the last attempt's output reaches the caller, so nothing is printed
+#   twice. A write is never re-run (`issue create` would duplicate), nor is anything unknown, and
+#   a terminal on stdout or stderr (jira-cli's TUI) keeps the plain exec. The captured files hold
+#   only what jira prints, never the token (a debug run is refused above). On this captured path
+#   the OAuth routing URLs in browse links are rewritten to the site URL; a write or a terminal
+#   run still prints jira-cli's own links.
+# - jira-cli 1.7.0 can hang forever, for two reasons; both are bounded here for a run with no
+#   terminal on stdin, stdout or stderr (a terminal run keeps the plain exec: `timeout` without
+#   --foreground breaks job control, and the TUI must never be killed).
+#   * `issue create|edit` and `comment add` read all of stdin whenever it is not a terminal, even
+#     with -b and --no-input, and discard what they read. An open pipe or socket never ends. When
+#     a body is given on the command line and there is no -T file (`-T -` included: the body flag
+#     wins), or stdin is a character device other than /dev/null, jira gets </dev/null. A pipe or
+#     socket that may hold the body (no -b, or `-T -` alone) is left alone even if that blocks:
+#     cutting it would create the issue with an empty description.
+#   * It has no request timeout, so a server that takes the request and never answers blocks it
+#     forever. Every jira run is wrapped in `timeout` (AF_JIRA_TIMEOUT seconds, 0 = off; default
+#     120 for a write, 45 per attempt for a read), the user's-own-setup paths included, and so are
+#     the Agent helpers (30 s). A timed-out read counts as a transport failure and is re-run like
+#     one. A timed-out write is never re-run: it exits 124 and says the change may exist, because
+#     `issue create` is not idempotent and the agent cannot tell the two apart.
 # - The token only ever lives in this shell's variables and, at the very end, in the exec'd
 #   jira's environment: never argv, never a file, never printed. xtrace and allexport are
 #   switched off first, and the variables are unset so none inherits an export attribute:
 #   otherwise the assignments below would be echoed, or exported to every helper.
 set +xa
-unset cred tok server auth login cfg sub sub2 proj cfg_argv own_init debug prev conf managed gen
-unset parent eff key cdir types derived yaml hint basekey soft
+unset comment_cmd cred tok server auth login cfg sub sub2 sub3 proj cfg_argv own_init debug prev conf managed gen
+unset parent eff key cdir types derived yaml hint basekey soft npos ikey haveproj hasasg dd pv site why
+unset sbody stmpl spos spbody ssum injected fpid fsig fout
 
 real="${AF_JIRA_REAL:-/usr/local/libexec/jira}"
+
+# True when no terminal is attached to stdin, stdout or stderr: the only runs that are bounded.
+nontty() { [ ! -t 0 ] && [ ! -t 1 ] && [ ! -t 2 ]; }
+
+# Seconds one attempt may take, empty when unbounded. AF_JIRA_TIMEOUT overrides the default
+# ($1); 0 switches it off; anything that is not a plain number is ignored.
+attempt_limit() {
+  local v="${AF_JIRA_TIMEOUT:-$1}"
+  case "$v" in "" | . | *[!0-9.]* | *.*.*) v="$1" ;; esac
+  [ -n "${v//[0.]/}" ] && printf '%s' "$v"
+  return 0
+}
+kill_grace() {
+  case "${AF_JIRA_KILL_GRACE:-5}" in "" | . | *[!0-9.]* | *.*.*) echo 5 ;; *) echo "${AF_JIRA_KILL_GRACE:-5}" ;; esac
+}
+# timed_out <rc> <start seconds> <limit>: timeout(1) answers 124, or 137 when jira ignored the
+# TERM and the KILL after the grace period came. Either only counts once the limit has really
+# elapsed: 137 is also what an OOM kill looks like, and jira-cli itself exits 0 or 1.
+timed_out() {
+  local whole="${3%%.*}"
+  [ "$1" = 124 ] || [ "$1" = 137 ] && [ "$((SECONDS - $2))" -ge "$((${whole:-0} - 1))" ]
+}
+
+# Only the commands below read stdin in jira-cli (see the header): issue create, issue edit and
+# issue comment add. scan_body_args sets sbody / stmpl / spbody from argv the way cobra parses
+# it: -b, -bX, -b=X, -b X, --body=X, --body X (same for -T / --template), skipping the values of the
+# other flags so that `-s -b` (a summary of "-b") is not read as a body. The last one wins, and an
+# empty value is no value (jira-cli then reads stdin for the body). The summary (-s, --summary) is
+# read the same way into ssum, for find_created.
+stdin_cmd() {
+  case "$sub" in
+    issue | issues)
+      case "$sub2" in
+        create | edit | update | modify) true ;;
+        comment | comments) [ "$sub3" = add ] ;;
+        *) false ;;
+      esac ;;
+    *) false ;;
+  esac
+}
+scan_body_args() {
+  local a nx="" dd="" k rest
+  sbody="" stmpl="" spos=0 spbody="" ssum=""
+  for a in "$@"; do
+    if [ -n "$nx" ]; then
+      case "$nx" in body) sbody="$a" ;; template) stmpl="$a" ;; summary) ssum="$a" ;; esac
+      nx=""; continue
+    fi
+    if [ -z "$dd" ]; then
+      case "$a" in
+        --) dd=1; continue ;;
+        --body=*) sbody="${a#--body=}"; continue ;;
+        --template=*) stmpl="${a#--template=}"; continue ;;
+        --summary=*) ssum="${a#--summary=}"; continue ;;
+        --body) nx=body; continue ;;
+        --template) nx=template; continue ;;
+        --summary) nx=summary; continue ;;
+        --type | --parent | --priority | --reporter | --assignee | --label | --component | \
+          --fix-version | --affects-version | --original-estimate | --custom | --config | --project)
+          nx=other; continue ;;
+        --*) continue ;;
+        -[tPsbyraelCTcp]*)
+          k="${a:1:1}" rest="${a:2}"
+          case "$k" in b) k=body ;; T) k=template ;; s) k=summary ;; *) k=other ;; esac
+          if [ -z "$rest" ]; then nx="$k"; continue; fi
+          rest="${rest#=}"
+          case "$k" in body) sbody="$rest" ;; template) stmpl="$rest" ;; summary) ssum="$rest" ;; esac
+          continue ;;
+        -?*) continue ;;
+      esac
+    fi
+    spos=$((spos + 1))
+    [ "$spos" -ne 5 ] || spbody="$a"
+  done
+}
+# For a run with no terminal: take stdin away from jira-cli when it would only block there.
+# - A character device other than /dev/null (/dev/zero never ends) cannot be a body.
+# - A body on the command line makes whatever stdin holds, `-T -` included, discarded data.
+# - Otherwise stdin may be the body (a pipe, a socket, `-T -`) and is left alone, even if that can
+#   block: cutting it would create the issue with an empty description without a word.
+stdin_guard() {
+  stdin_cmd || return 0
+  if [ -c /dev/stdin ] && [ ! /dev/stdin -ef /dev/null ]; then exec </dev/null; fi
+  scan_body_args "$@"
+  case "$sub2" in comment | comments) sbody="${sbody:-$spbody}" ;; esac
+  if [ -n "$sbody" ] && { [ -z "$stmpl" ] || [ "$stmpl" = - ]; }; then exec </dev/null; fi
+}
+
+# A write that has no terminal runs under timeout(1) as a child, so that its exit status can be
+# told from a timeout; everything it prints goes straight through. Signals meant for the wrapper
+# are forwarded: a bash that dies on TERM would leave timeout and jira behind. Returns (and the
+# caller execs as before) when there is nothing to enforce.
+run_bounded() {
+  local lim pid="" rc start sig="" what
+  lim="$(attempt_limit 120)"
+  [ -n "$lim" ] && command -v timeout >/dev/null 2>&1 || return 0
+  start=$SECONDS
+  trap 'sig=1; [ -z "$pid" ] || kill -TERM "$pid" 2>/dev/null' INT TERM HUP
+  timeout -k "$(kill_grace)" "$lim" "$real" "$@" <&0 &
+  pid=$!
+  [ -z "$sig" ] || kill -TERM "$pid" 2>/dev/null
+  wait "$pid"; rc=$?
+  while kill -0 "$pid" 2>/dev/null; do wait "$pid"; rc=$?; done
+  trap - INT TERM HUP
+  [ -z "$sig" ] || exit "$rc"
+  if timed_out "$rc" "$start" "$lim"; then
+    case "$sub2" in
+      create) what="issue may have been created" ;;
+      comment | comments) what="comment may have been added" ;;
+      *) what="change may have been applied" ;;
+    esac
+    echo "jira: jira did not answer within $lim s; the $what - check Jira before running it again" >&2
+    pid=""
+    find_created "$@"
+    exit 124
+  fi
+  exit "$rc"
+}
+# After a timed-out `issue create`: name the issues this connection created in the last 15 minutes
+# with exactly the summary of the command, so the caller can tell "created" from "lost" before
+# re-running. Only for a run that got the Agent's credential ($injected): a user-owned config,
+# JIRA_API_TOKEN / JIRA_SERVER or a debug run is another Jira the helper cannot search. The helper
+# holds the token itself; argv carries the project key and the summary, nothing secret. Never
+# changes the exit status: the caller prints this and exits 124 whatever it found.
+find_created() {
+  local key="${proj:-}" out rc lim fpid="" fsig="" fout eff
+  [ -n "$injected" ] && [ "$sub2" = create ] || return 0
+  scan_body_args "$@"
+  [ -n "$ssum" ] || return 0
+  # The config jira reads: an explicit -c wins over the environment (it is not exported).
+  eff="${cfg_argv:-${JIRA_CONFIG_FILE:-}}"
+  if [ -z "$key" ] && [ -n "$eff" ]; then key="$(project_key "$eff")"; fi
+  [ -n "$key" ] || return 0
+  # The helper has a 15 s deadline of its own; this only guards one that never starts or never
+  # ends. It is deliberately not AF_JIRA_TIMEOUT: a small value for the create would cut a lookup
+  # that needs the store lock and a token renewal (AF_JIRA_FIND_TIMEOUT is for the tests; 0 = off).
+  lim="${AF_JIRA_FIND_TIMEOUT:-20}"
+  case "$lim" in "" | . | *[!0-9.]* | *.*.*) lim=20 ;; esac
+  fout="$(mktemp 2>/dev/null)" || return 0
+  # Run in the background so a signal ends the wait at once (130) instead of after the lookup.
+  # It reads the store itself, so the token this shell exports for jira is taken out of its env.
+  trap 'fsig=1; [ -z "$fpid" ] || kill -TERM "$fpid" 2>/dev/null' INT TERM HUP
+  if [ -n "${lim//[0.]/}" ]; then
+    env -u JIRA_API_TOKEN timeout -k "$(kill_grace)" "$lim" workspace-agent jira-find-created "$key" "$ssum" >"$fout" 2>&1 </dev/null &
+  else
+    env -u JIRA_API_TOKEN workspace-agent jira-find-created "$key" "$ssum" >"$fout" 2>&1 </dev/null &
+  fi
+  fpid=$!
+  [ -z "$fsig" ] || kill -TERM "$fpid" 2>/dev/null
+  wait "$fpid"; rc=$?
+  while kill -0 "$fpid" 2>/dev/null; do wait "$fpid"; rc=$?; done
+  trap - INT TERM HUP
+  out="$(cat "$fout")"; rm -f "$fout"
+  [ -z "$fsig" ] || exit 130
+  if [ "$rc" -ne 0 ]; then
+    if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then out="no answer in time"; else out="$(printf '%s\n' "$out" | head -n1 | tr -cd '[:print:]' | cut -c1-120)"; fi
+    echo "jira: could not look for the issue${out:+ ($out)}; check Jira before running it again" >&2
+  elif [ -n "$out" ]; then
+    echo "jira: possible matches: $(printf '%s\n' "$out" | tr -cd '[:print:]\n' | paste -sd, - | sed 's/,/, /g')" >&2
+  else
+    echo "jira: no matching issue found in the last 15 minutes (it may still appear; check again before re-running)" >&2
+  fi
+}
+# Bounded run of a helper of the Agent (jira-cred, jira-issue-types): a stuck helper must not hang
+# every command, and the fail-closed paths already treat an empty answer as "no credential".
+bounded() {
+  local lim
+  lim="$(attempt_limit 30)"
+  if [ -n "$lim" ] && nontty && command -v timeout >/dev/null 2>&1; then
+    timeout -k "$(kill_grace)" "$lim" "$@"
+  else
+    "$@"
+  fi
+}
+# The final step of a path that runs jira unchanged: no terminal means stdin and time are bounded.
+exec_real() {
+  if nontty; then
+    stdin_guard "$@"
+    run_bounded "$@"
+  fi
+  exec "$real" "$@"
+}
+
 
 # `jira version` needs no credential. Skipping the helper keeps the Toolchains probe (which
 # runs this wrapper) from taking the store lock or renewing an OAuth token over the network.
@@ -45,14 +266,10 @@ if [ "$#" -eq 1 ] && [ "$1" = version ]; then
   exec "$real" "$@"
 fi
 
-if [ -n "${JIRA_API_TOKEN:-}" ] || [ -n "${JIRA_SERVER:-}" ]; then
-  exec "$real" "$@"
-fi
-
 # The config jira will read, the subcommand (and the word after it), the project, and whether
 # this is a debug run, from argv. Cobra takes the last -c, in any of -c X, -cX, -c=X, --config X,
 # --config=X; -p / --project the same way.
-cfg="" sub="" sub2="" proj="" own_init="" debug="" prev="" parent=""
+cfg="" sub="" sub2="" sub3="" proj="" own_init="" debug="" prev="" parent=""
 for a in "$@"; do
   case "$prev" in
     -c | --config) cfg="$a"; prev=""; continue ;;
@@ -72,11 +289,14 @@ for a in "$@"; do
     --server | --server=* | --login | --login=* | --installation | --installation=* | --auth-type | --auth-type=*)
       own_init=1 ;;
     -*) ;;
-    *) if [ -z "$sub" ]; then sub="$a"; elif [ -z "$sub2" ]; then sub2="$a"; fi ;;
+    *) if [ -z "$sub" ]; then sub="$a"; elif [ -z "$sub2" ]; then sub2="$a"; elif [ -z "$sub3" ]; then sub3="$a"; fi ;;
   esac
 done
 case "$sub" in initialize | configure | config | setup) sub=init ;; esac
 case "${JIRA_DEBUG:-}" in "" | 0 | f* | F*) ;; *) debug=1 ;; esac
+if [ -n "${JIRA_API_TOKEN:-}" ] || [ -n "${JIRA_SERVER:-}" ]; then
+  exec_real "$@"
+fi
 cfg_argv="$cfg"
 [ -n "$cfg" ] || cfg="${JIRA_CONFIG_FILE:-}"
 
@@ -90,16 +310,16 @@ in_managed() {
 
 if [ "$sub" = init ]; then
   # `jira init` naming its own server or login is configuring another Jira.
-  [ -z "$own_init" ] || exec "$real" "$@"
+  [ -z "$own_init" ] || exec_real "$@"
   if [ -z "$cfg" ]; then
     export JIRA_CONFIG_FILE="$managed/config.yml"
   elif ! in_managed "$cfg"; then
-    exec "$real" "$@"
+    exec_real "$@"
   fi
 elif [ -n "$cfg" ]; then
-  in_managed "$cfg" || exec "$real" "$@"
+  in_managed "$cfg" || exec_real "$@"
 elif [ -e "$conf/.jira/.config.yml" ] || [ -e "$conf/.jira/.config.yaml" ]; then
-  exec "$real" "$@"
+  exec_real "$@"
 elif [ -e "$managed/config.yml" ]; then
   export JIRA_CONFIG_FILE="$managed/config.yml"
 else
@@ -110,22 +330,50 @@ else
   fi
   [ -s "$gen" ] && export JIRA_CONFIG_FILE="$gen"
 fi
+comment_cmd=""
+if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && [ "$sub2" = comment ] &&
+  { [ "$sub3" = edit ] || [ "$sub3" = delete ]; }; then
+  comment_cmd=1
+fi
 if [ -n "$debug" ]; then
+  if [ -n "$comment_cmd" ]; then
+    echo "jira: comment $sub3 is not available in a debug run (it would print the Authorization header)" >&2
+    exit 1
+  fi
   echo "jira: debug output prints the Authorization header, so this run gets no credential from the connection" >&2
-  exec "$real" "$@"
+  exec_real "$@"
+fi
+
+# Not a jira-cli command: the Agent makes the call with its own copy of the credential.
+if [ -n "$comment_cmd" ]; then
+  if nontty && command -v timeout >/dev/null 2>&1 && lim="$(attempt_limit 120)" && [ -n "$lim" ]; then
+    exec timeout -k "$(kill_grace)" "$lim" workspace-agent jira-comment "$@"
+  fi
+  exec workspace-agent jira-comment "$@"
 fi
 
 # First value of a `key=value` line in the helper's answer on stdin.
 field() { sed -n "s/^$1=//;T;p;q"; }
 
-cred="$(workspace-agent jira-cred 2>/dev/null)" || cred=""
+# stderr joins the capture: jira-cred writes nothing there but an `unusable=` reason line, and
+# fields are picked by their key, so noise on it cannot become a credential.
+cred="$(bounded workspace-agent jira-cred 2>&1)" || cred=""
+why="$(printf '%s\n' "$cred" | field unusable | tr -cd '[:print:]' | cut -c1-200)"
+site="$(printf '%s\n' "$cred" | field site)"
 tok="$(printf '%s\n' "$cred" | field token)"
 server="$(printf '%s\n' "$cred" | field server)"
 auth="$(printf '%s\n' "$cred" | field auth)"
 login="$(printf '%s\n' "$cred" | field login)"
 soft="$(printf '%s\n' "$cred" | field software)"
 if [ -z "$tok" ] || [ -z "$server" ] || [ -z "$auth" ]; then
-  exec "$real" "$@"
+  if [ -n "$why" ]; then
+    case "$sub" in
+      "" | help | completion | man | version | __complete*) ;;
+      *) echo "jira: the Jira connection is unusable (expired or revoked): reconnect Jira in Settings [$why]" >&2
+         exit 1 ;;
+    esac
+  fi
+  exec_real "$@"
 fi
 
 # The Agent says `software=missing` only for an OAuth authorization it knows lacks the Jira
@@ -212,7 +460,7 @@ derive_types_config() {
   ddir="${XDG_CACHE_HOME:-${HOME:-/nonexistent}/.cache}/agent-fleet/jira/derived"
   types="$ddir/issue-types-$sh-$key.yml"
   (umask 077; mkdir -p "$ddir" 2>/dev/null) && chmod 700 "$ddir" 2>/dev/null || return 1
-  yaml="$(workspace-agent jira-issue-types "$key" 2>/dev/null)" || yaml=""
+  yaml="$(bounded workspace-agent jira-issue-types "$key" 2>/dev/null)" || yaml=""
   case "$yaml" in
     "issue:"*"- id:"*) (umask 077; printf '%s\n' "$yaml" >"$types.$$") 2>/dev/null && mv -f "$types.$$" "$types" 2>/dev/null ;;
   esac
@@ -266,12 +514,148 @@ if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && [ "$sub2" = create ]; then
   fi
 fi
 
+# Assignee lookup searches users in the configured / -p project, not the project of the issue
+# key given. With neither, Jira answers a bare 400 that reads as "assignee not found".
+# `issue assign KEY-N` therefore gets `-p KEY` from the key's prefix; the commands that only take
+# -a/--assignee get a hint. Only an effective config of ours (the user-owned ones exec'd above)
+# and only when it provably has no `project:` key (no_project_plain): a project we cannot parse
+# must not be overridden. The -a hint is a heuristic: a value-taking flag's value that looks like
+# -a/--assignee (`-s '--assignee=x'`) is not told apart, which costs one extra hint line.
+# True only when the file provably has no project: the same plain block layout `appendable`
+# demands (first real line at column 0, every column-0 line a bare `key:`, so no flow mapping,
+# JSON, quoted or explicit keys, tags or document marks) and none of those keys is `project`.
+# Anything else may hide one, and an inferred project must never replace the config's own.
+no_project_plain() {
+  local first
+  first="$(sed -n '/^[[:space:]]*\(#.*\)\{0,1\}$/d;p;q' "$1" 2>/dev/null)"
+  case "$first" in "" | [[:space:]]*) return 1 ;; esac
+  grep -Ev '^([[:space:]]|#|$)' "$1" 2>/dev/null | grep -Evq '^[A-Za-z_][A-Za-z0-9_-]*:([[:space:]]|$)' && return 1
+  ! grep -Eiq '^project[[:space:]]*:' "$1" 2>/dev/null
+}
+scan_assign_args() {
+  local a
+  npos=0 ikey="" haveproj="" hasasg="" dd="" pv=""
+  for a in "$@"; do
+    if [ -n "$pv" ]; then pv=""; continue; fi
+    if [ -z "$dd" ]; then
+      case "$a" in
+        --) dd=1; continue ;;
+        -c | --config) pv=1; continue ;;
+        -p | --project) haveproj=1; pv=1; continue ;;
+        -p?* | --project=*) haveproj=1; continue ;;
+        -a | --assignee | -a?* | --assignee=*) hasasg=1; continue ;;
+        -*) continue ;;
+      esac
+    fi
+    npos=$((npos + 1))
+    [ "$npos" -ne 3 ] || ikey="$a"
+  done
+}
+if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && [ -z "$proj" ]; then
+  case "$sub2" in assign | edit | create | move)
+    scan_assign_args "$@"
+    eff="${cfg_argv:-${JIRA_CONFIG_FILE:-}}"
+    if [ -z "$haveproj" ] && [ -n "$eff" ] && [ -r "$eff" ] &&
+      no_project_plain "$eff"; then
+      if [ "$sub2" = assign ]; then
+        case "$ikey" in
+          [A-Za-z]*-[0-9]*)
+            case "${ikey%-*}" in *[!A-Za-z0-9_]*) ;; *)
+              case "${ikey##*-}" in "" | *[!0-9]*) ;; *) set -- -p "${ikey%-*}" "$@" ;; esac ;;
+            esac ;;
+        esac
+      elif [ -n "$hasasg" ]; then
+        echo "jira: assignee lookup needs a project; pass -p KEY or run jira init --project KEY --board NAME" >&2
+      fi
+    fi ;;
+  esac
+fi
+
 if [ "$sub" = init ]; then
   # A bearer login is replaced by what /myself reports, so the placeholder only gets past
   # init's prompt for an empty one.
   set -- "$@" --installation cloud --server "$server" --auth-type "$auth" --login "${login:-oauth}"
 fi
 
+injected=1
 export JIRA_API_TOKEN="$tok" JIRA_SERVER="$server" JIRA_AUTH_TYPE="$auth" JIRA_INSTALLATION=Cloud JIRA_DEBUG=false
 if [ -n "$login" ]; then export JIRA_LOGIN="$login"; else unset JIRA_LOGIN; fi
+
+# Commands that only read, by the same positional words the rest of this file goes by. A word
+# this does not know is a write: the direction to fail in is "run once".
+readonly_cmd() {
+  case "$sub" in
+    issue | issues) case "$sub2" in view | show | list | lists | ls | search) true ;; *) false ;; esac ;;
+    board | boards | sprint | sprints | epic | epics | project | projects)
+      case "$sub2" in list | lists | ls) true ;; *) false ;; esac ;;
+    me) true ;;
+    *) false ;;
+  esac
+}
+# True when a failed attempt's stderr says the request never got a proper answer. HTTP statuses
+# (401, 404, 5xx bodies) are not in it: those were answered, and a retry would not change them.
+transport_failure() {
+  grep -Eiq 'connection refused|no such host|Temporary failure in name resolution|Name or service not known|connection reset by peer|broken pipe|i/o timeout|TLS handshake timeout|Client\.Timeout exceeded|unexpected EOF|: EOF($|[^a-zA-Z])|^EOF$' "$1" 2>/dev/null
+}
+# Runs jira to a private directory, re-running on a transport failure, then replays the last
+# attempt: stdout (browse links rewritten to the site) and stderr, with jira's exit status.
+run_read_only() {
+  local d n=0 rc wait lim start tcmd=() late pid="" sig="" why
+  d="$(mktemp -d 2>/dev/null)" || exec "$real" "$@"
+  lim="$(attempt_limit 45)"
+  if [ -n "$lim" ] && command -v timeout >/dev/null 2>&1; then
+    tcmd=(timeout -k "$(kill_grace)" "$lim")
+  else
+    lim=""
+  fi
+  trap 'rm -rf "$d"' EXIT
+  # A signal is forwarded to the attempt (timeout, then jira) and the run ends after it.
+  trap 'sig=1; [ -z "$pid" ] || kill -TERM "$pid" 2>/dev/null' INT TERM HUP
+  while :; do
+    # Reads take no input; a terminal stdin must not wait on a prompt the capture hides.
+    start=$SECONDS late=""
+    "${tcmd[@]}" "$real" "$@" >"$d/out" 2>"$d/err" </dev/null &
+    pid=$!
+    wait "$pid"; rc=$?
+    while kill -0 "$pid" 2>/dev/null; do wait "$pid"; rc=$?; done
+    pid=""
+    [ -z "$sig" ] || exit 130
+    # No answer in time is a transport failure like a reset one.
+    if [ -n "$lim" ] && timed_out "$rc" "$start" "$lim"; then
+      late=1
+      rc=124
+      echo "jira: no answer within $lim s (AF_JIRA_TIMEOUT sets the limit, 0 = none)" >>"$d/err"
+    fi
+    if [ "$rc" -eq 0 ] || { [ -z "$late" ] && ! transport_failure "$d/err"; }; then break; fi
+    if [ "$n" -ge 2 ]; then
+      if [ -n "$late" ]; then why="Jira did not answer in time"; else why="the connection to Jira kept failing"; fi
+      echo "jira: giving up after $((n + 1)) attempts: $why" >&2
+      break
+    fi
+    n=$((n + 1))
+    # Jittered, 0.5-1 s then 1-2 s; AF_JIRA_RETRY_WAIT overrides it (the tests).
+    wait="${AF_JIRA_RETRY_WAIT:-$((n * 500 + RANDOM % (n * 500 + 1)))}"
+    case "$wait" in *[!0-9]*) wait=0 ;; esac
+    sleep "$((wait / 1000)).$(printf '%03d' "$((wait % 1000))")"
+    [ -z "$sig" ] || exit 130
+  done
+  # --raw output carries user text verbatim; it is not rewritten.
+  if [ -n "$site" ] && [ "$site" != "$server" ] && ! printf '%s\n' "$@" | grep -qxe '--raw' -e '--raw=.*'; then
+    FROM="$server/browse/" TO="$site/browse/" awk '
+      BEGIN { f = ENVIRON["FROM"]; t = ENVIRON["TO"]; n = length(f) }
+      { out = ""; while ((i = index($0, f)) > 0) { out = out substr($0, 1, i - 1) t; $0 = substr($0, i + n) }
+        print out $0 }' "$d/out"
+  else
+    cat "$d/out"
+  fi
+  cat "$d/err" >&2
+  exit "$rc"
+}
+if readonly_cmd && [ ! -t 1 ] && [ ! -t 2 ]; then
+  run_read_only "$@"
+fi
+if nontty; then
+  stdin_guard "$@"
+  run_bounded "$@"
+fi
 exec "$real" "$@"

@@ -110,8 +110,8 @@ Parameters:
     Default: auto
     Description: >-
       How much of a slot is held back from the workspace so the box's own daemons cannot be
-      starved. auto = a fifth of the rung, clamped to 1-2 GiB; off = uncapped (what melted a
-      live slot on 2026-08-27); a number = that many MiB. PARAMETERS.md.
+      starved. auto = a flat 2 GiB; off = uncapped (what melted a
+      live slot on 2026-08-27); a number = that many MiB (0 = reserve nothing, cap at the full rung; not off). PARAMETERS.md.
   Ec2SlotSleepSec:
     Type: String
     Default: "900"
@@ -401,8 +401,39 @@ Parameters:
       Where to send "the Control Plane cannot reach its database". Empty (the default) = no
       topic and no alarm, and the only trace is the CP log. !! That is exactly how the
       2026-09-01 outage stayed silent - /healthz kept answering 200. Set it.
+  McpEnabled:
+    Type: String
+    Default: "off"
+    AllowedValues: [ "off", "on" ]
+    Description: on = AF_MCP_ENABLED=true, serving /mcp (PAT sign-in). PARAMETERS.md.
+  McpOAuth:
+    Type: String
+    Default: "off"
+    AllowedValues: [ "off", "on" ]
+    Description: on = AF_MCP_OAUTH=1, OAuth sign-in for /mcp clients; needs McpEnabled=on.
+  McpOAuthTrustedHosts:
+    Type: String
+    Default: ""
+    Description: AF_MCP_OAUTH_TRUSTED_HOSTS (comma list). Empty = the CP default. PARAMETERS.md.
+  SessionTtl:
+    Type: String
+    Default: ""
+    Description: AF_SESSION_TTL, how long a sign-in cookie lives (Go duration, e.g. 72h). Empty = 168h.
+  GithubAllowedEmails:
+    Type: String
+    Default: ""
+    Description: AF_GITHUB_ALLOWED_EMAILS (comma list) admitted by GitHub sign-in, besides orgs and domains.
+  KmsDataKeyCacheTtl:
+    Type: String
+    Default: ""
+    Description: AF_KMS_DATA_KEY_CACHE_TTL (Go duration; 0s = no cache). Empty = 5m. Kms custodian only.
 
 Rules:
+  McpOAuthNeedsMcp:
+    RuleCondition: !Equals [ !Ref McpOAuth, "on" ]
+    Assertions:
+      - Assert: !Equals [ !Ref McpEnabled, "on" ]
+        AssertDescription: McpOAuth=on needs McpEnabled=on.
   # The CP refuses the flag without kms (dek.go). Execute-time guard: see PARAMETERS.md.
   WorkspaceDekNeedsKmsCustodian:
     RuleCondition: !Equals [ !Ref WorkspaceDekRandom, "on" ]
@@ -440,15 +471,14 @@ Conditions:
   HasVoicevoxUrl: !Not [ !Equals [ !Ref VoicevoxUrl, "" ] ]
   # Self-hosted inference engines (ADR 0071). One parameter, so one condition.
   HasEnginesSsmParam: !Not [ !Equals [ !Ref EnginesSsmParam, "" ] ]
-  # CpArch is spelled the way an operator writes an architecture (and the way every
-  # captured params file already holds it), while the ECS enum is X86_64 / ARM64. ECS
-  # accepts the lowercase spelling but stores it verbatim, so the case has to be turned
-  # here rather than in the parameter - raising the AllowedValues to match 50-tts's own
-  # CpuArchitecture would reject the value every deployed stack carries on its next
-  # update, which is the one thing a captured parameter must survive. TaskDef below.
+  # CpArch keeps the operator's spelling (arm64); ECS stores the case verbatim, so it is
+  # turned here, never in AllowedValues (that would reject every captured value). TaskDef below.
   CpArm: !Equals [ !Ref CpArch, arm64 ]
   UseKmsCustodian: !Not [ !Equals [ !Ref CustodianKmsKeyArn, "" ] ]
   UseWorkspaceDek: !And [ !Condition UseKmsCustodian, !Equals [ !Ref WorkspaceDekRandom, "on" ] ]
+  McpOn: !Equals [ !Ref McpEnabled, "on" ]
+  McpOAuthOn: !Equals [ !Ref McpOAuth, "on" ]
+  HasMcpTrustedHosts: !Not [ !Equals [ !Ref McpOAuthTrustedHosts, "" ] ]
   HasCpAlarms: !Not [ !Equals [ !Ref CpAlarmEmail, "" ] ]
   HasWaf: !Not [ !Equals [ !Ref WafRateLimitPer5Min, 0 ] ]
   HasWafReputation: !And [ !Condition HasWaf, !Equals [ !Ref WafIpReputation, "on" ] ]
@@ -472,12 +502,8 @@ Resources:
       Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PublicSubnets" } ]
       SecurityGroups:
         - Fn::ImportValue: !Sub "${NetworkStackName}-AlbSgId"
-      # Spelled out at the AWS default (60s) rather than left implicit: it is the
-      # hard ceiling on every CP request, and a handler that outran it is what
-      # turned a cold workspace Start into a 504 (docs/log/62 sec.62.5). The CP now
-      # answers Start immediately and reports convergence through GET
-      # /api/workspace, so raise this only for a NEW long-poll - never to let a
-      # handler block longer.
+      # Spelled out at the AWS default (60s): the hard ceiling on every CP request. Raise it
+      # only for a NEW long-poll, never to let a handler block longer (docs/log/62 sec.62.5).
       LoadBalancerAttributes:
         - { Key: idle_timeout.timeout_seconds, Value: "60" }
 
@@ -615,11 +641,9 @@ Resources:
       RetentionInDays: 7
 
   # --- "the Control Plane cannot reach its database", made visible -------------
-  # In the 2026-09-01 outage every instrument was green and the only signal was a line in
-  # this log group (README, "Alarms"). The marker is a constant shared with
-  # control-plane/store_postgres_secret.go (logDBUnavailable): change both or neither.
-  # Unconditional on purpose: a filter that matches nothing costs nothing, and the history
-  # should already exist by the time anyone looks.
+  # The only signal in the 2026-09-01 outage was a line in this log group (README, "Alarms").
+  # The marker is shared with control-plane/store_postgres_secret.go (logDBUnavailable):
+  # change both or neither. Unconditional: a filter matching nothing costs nothing.
   CpDbUnavailableFilter:
     Type: AWS::Logs::MetricFilter
     Properties:
@@ -681,21 +705,13 @@ Resources:
       RetentionInDays: 7
 
   # --- The home task: Recreate, Clean home and Destroy on an EFS home (ecs; #1260) ---
-  # The CP cannot mount EFS (the EFS SG admits only the workspace SG), so these run as a
-  # one-shot task the CP starts with RunTask: `af-cp efs-home-op`, from the CP's own image so
-  # the keep-list is the CP's (control-plane/internal/runtime/home_task.go). The operation
-  # and the membership arrive as environment overrides; the CP reads the exit code back
-  # with DescribeTasks.
+  # The CP cannot mount EFS (the EFS SG admits only the workspace SG), so Recreate, Clean home
+  # and Destroy run as a one-shot RunTask of `af-cp efs-home-op` from the CP's own image
+  # (control-plane/internal/runtime/home_task.go); the CP reads the exit code back.
   #
-  # !! The file system ROOT, as uid 0, not the member's access point. A task definition's
-  # volumes cannot be overridden per RunTask, so one declared here cannot name a member's
-  # access point, and registering one per run would put RegisterTaskDefinition on this
-  # path and leave the RunTask grant below fencing nothing. The access point would also be
-  # too little: it pins uid 1000, which cannot remove the read-only trees toolchains leave
-  # (Go's module cache is 0555), and Destroy has to remove the access point's own root
-  # directory. The confinement is in the command instead: it refuses a membership id that
-  # is not one path element, refuses unless /mnt/efs is a mount, and only ever removes under
-  # /home/<id> and /claude-config/<id>.
+  # !! The file system ROOT as uid 0, not a member's access point: volumes cannot be
+  # overridden per RunTask, and an access point (uid 1000) cannot remove read-only trees or
+  # its own root. The confinement is the command's (PARAMETERS.md, "Home task").
   #
   # No task role: the command calls no AWS API. The execution role pulls the image and
   # writes the log; the CP may already pass it (PassTaskRoles, 20-platform).
@@ -845,25 +861,17 @@ Resources:
             - !If [ UseKmsCustodian, { Name: AF_KMS_KEY_ID, Value: !Ref CustodianKmsKeyArn }, !Ref "AWS::NoValue" ]
             - !If [ UseWorkspaceDek, { Name: AF_WORKSPACE_DEK, Value: random }, !Ref "AWS::NoValue" ]
             - { Name: AF_DB_USER, Value: afadmin }
-            # ...and where to go and read the password AGAIN when the injected one stops
-            # working, because RDS rotates it every 7 days and `secrets` below is
-            # resolved once, at task start (the 2026-09-01 outage; ADR 0065).
-            #
-            # !! Environment, NOT Secrets. An ARN is not a credential, and putting it
-            # under `secrets` would make it another start-time snapshot - which is the
-            # very thing being fixed. Unset = the CP keeps using the injected value and
-            # nothing else changes, which is how every non-RDS deployment behaves.
+            # Where the CP re-reads the RDS password (rotated every 7 days; `secrets` below is
+            # resolved once at task start, ADR 0065). Environment, NOT Secrets: an ARN is no
+            # credential, and `secrets` would be another start-time snapshot.
             - Name: AF_DB_PASSWORD_SECRET_ARN
               Value: !ImportValue { "Fn::Sub": "${DataStackName}-DbSecretArn" }
             # The JSON field inside the RDS-managed secret - the same `password` the
             # `:password::` suffix picks out below.
             - { Name: AF_DB_PASSWORD_SECRET_KEY, Value: password }
-            # !! Exactly one proxy sits in front of the CP here: this ALB. The CP needs
-            # to be TOLD, because it cannot tell - without this, r.RemoteAddr is the load
-            # balancer and every request looks like it comes from the same private
-            # address. That is what a tenant's source-network restriction is matched
-            # against (docs/log/66, ADR 0047 decision 2), so a wrong value here is either "the
-            # rule never matches anyone" or "the rule matches everyone".
+            # !! Exactly one proxy (this ALB) sits in front of the CP, and the CP cannot tell:
+            # tenant source-network rules are matched on the client address this derives
+            # (docs/log/66, ADR 0047 decision 2), so a wrong value matches no one or everyone.
             - { Name: AF_TRUSTED_PROXY_HOPS, Value: "1" }
             - { Name: AUTH, Value: !Ref AuthMode }
             - { Name: PUBLIC_BASE_URL, Value: !Sub "https://${Fqdn}" }
@@ -892,6 +900,12 @@ Resources:
             - { Name: GITHUB_OAUTH_CLIENT_ID, Value: !Ref GithubClientId }
             - { Name: AF_GITHUB_ALLOWED_ORGS, Value: !Ref GithubAllowedOrgs }
             - { Name: AF_GITHUB_ALLOWED_DOMAINS, Value: !Ref GithubAllowedDomains }
+            - { Name: AF_SESSION_TTL, Value: !Ref SessionTtl }
+            - { Name: AF_GITHUB_ALLOWED_EMAILS, Value: !Ref GithubAllowedEmails }
+            - { Name: AF_KMS_DATA_KEY_CACHE_TTL, Value: !Ref KmsDataKeyCacheTtl }
+            - !If [ McpOn, { Name: AF_MCP_ENABLED, Value: "true" }, !Ref "AWS::NoValue" ]
+            - !If [ McpOAuthOn, { Name: AF_MCP_OAUTH, Value: "1" }, !Ref "AWS::NoValue" ]
+            - !If [ HasMcpTrustedHosts, { Name: AF_MCP_OAUTH_TRUSTED_HOSTS, Value: !Ref McpOAuthTrustedHosts }, !Ref "AWS::NoValue" ]
             # No BITBUCKET_OAUTH_* / workspace GITHUB_OAUTH_CLIENT_ID: git OAuth apps are
             # per-tenant rows (docs/log/71); the Bitbucket callback derives from PUBLIC_BASE_URL.
             # AF_RUNTIME: ecs = Fargate, ecs-ec2 = EC2 slots with a per-user EBS home (needs

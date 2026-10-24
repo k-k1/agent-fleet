@@ -185,3 +185,25 @@ func TestMuseChatBaseArgsCarryTheHeadlessClamps(t *testing.T) {
 		t.Errorf("--approval-mode is not never: %v", args)
 	}
 }
+
+// An assistant turn or AI assist one-shot is not a session and records no mode, so its argv
+// follows the member's setting as it stands (#2535). Anything but a boolean true is off.
+func TestMuseExecArgsFollowTheContributorSetting(t *testing.T) {
+	for _, tc := range []struct{ prefs, want string }{
+		{`{}`, "off"},
+		{`{"museContributorMode":false}`, "off"},
+		{`{"museContributorMode":"true"}`, "off"},
+		{`{"museContributorMode":true}`, "on"},
+	} {
+		writeUIPrefs(t, tc.prefs)
+		for name, args := range map[string][]string{
+			"chat turn": museChatBaseArgs(),
+			"one-shot":  museOneShotArgs("muse-spark-1.3", "/dev/null"),
+		} {
+			i := slices.Index(args, "--contributor-mode")
+			if i < 0 || i+1 >= len(args) || args[i+1] != tc.want {
+				t.Errorf("%s with %s: argv = %v, want --contributor-mode %s", name, tc.prefs, args, tc.want)
+			}
+		}
+	}
+}

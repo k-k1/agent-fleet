@@ -12,6 +12,68 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.34.1](0.34.1.ja.md) — 2026-10-23
+
+**New / Improved**
+
+- **[ECS]** `30-ingress` のパラメータ `McpEnabled`・`McpOAuth`・`McpOAuthTrustedHosts` で `/mcp` と MCP のサインインを有効にする。`SessionTtl`・`GithubAllowedEmails`・`KmsDataKeyCacheTtl` も設定できる ([#2595](https://github.com/k-k1/agent-fleet/issues/2595))
+
+**Fixed**
+
+- **[compose]** `.env.example` の `AF_MCP_ENABLED=1` では `/mcp` がオフのままだった。例を `true` に ([#2595](https://github.com/k-k1/agent-fleet/issues/2595))
+
+
+## [0.34.0](0.34.0.ja.md) — 2026-10-23
+
+**CLI ピン** — Claude Code 2.1.309 / Copilot 1.0.103 / Antigravity 1.4.5 / Cursor 2026.10.22-27dcf5f / Kiro 2.33.1 / OpenCode 2.1.3 / Muse Code 1.4.12-R6909.1
+
+**New / Improved**
+
+- **[MCP]** リモート MCP クライアント（claude.ai・ChatGPT・Claude Code など）がサインインで `/mcp` に接続する。接続済みアプリと最近の呼び出し・テナント単位のスイッチ・管理画面で信頼するクライアントのホスト・入力に **MCP 経由** の印 ([#2433](https://github.com/k-k1/agent-fleet/issues/2433), [#2434](https://github.com/k-k1/agent-fleet/issues/2434), [#2455](https://github.com/k-k1/agent-fleet/issues/2455), [#2457](https://github.com/k-k1/agent-fleet/issues/2457), [#2531](https://github.com/k-k1/agent-fleet/issues/2531), [#2542](https://github.com/k-k1/agent-fleet/issues/2542), [#2567](https://github.com/k-k1/agent-fleet/issues/2567))
+- **[MCP]** OAuth が必要な MCP サーバーに設定からサインインし、セッションはワークスペース内の中継で使う ([#2479](https://github.com/k-k1/agent-fleet/issues/2479), [#2485](https://github.com/k-k1/agent-fleet/issues/2485), [#2549](https://github.com/k-k1/agent-fleet/issues/2549), [#2568](https://github.com/k-k1/agent-fleet/issues/2568), [#2580](https://github.com/k-k1/agent-fleet/issues/2580))
+- **[MCP]** MCP サーバーの登録フォームをリモートサーバー前提に。表示名と認証方式を選ぶ ([#2550](https://github.com/k-k1/agent-fleet/issues/2550))
+- **[ecs-ec2]** 応答しないプールのスロットを **停止（強制）** で止める ([#2449](https://github.com/k-k1/agent-fleet/issues/2449))
+- **[ecs-ec2]** どのスロットでもホスト用に 2 GiB を残し、ECS と SSM のエージェントをメモリの回収から守る ([#2451](https://github.com/k-k1/agent-fleet/issues/2451), [#2452](https://github.com/k-k1/agent-fleet/issues/2452))
+- **[ecs-ec2]** 停止しきれないタスクの後ろで止まった開始をブロック中と表示する ([#2447](https://github.com/k-k1/agent-fleet/issues/2447))
+- **[ファイル]** フォルダのコンテキストメニューに「ここでシェルを開く」 ([#2460](https://github.com/k-k1/agent-fleet/issues/2460))
+- **[jira]** `jira issue comment edit` と `delete` ([#2477](https://github.com/k-k1/agent-fleet/issues/2477))
+- **[jira]** やり直し・時間切れ・作成が時間切れになったときの候補表示。エージェントへの指示で Atlassian の MCP ツールを優先できる ([#2476](https://github.com/k-k1/agent-fleet/issues/2476), [#2532](https://github.com/k-k1/agent-fleet/issues/2532), [#2538](https://github.com/k-k1/agent-fleet/issues/2538), [#2539](https://github.com/k-k1/agent-fleet/issues/2539), [#2543](https://github.com/k-k1/agent-fleet/issues/2543))
+- **[muse]** Muse Code 1.4.12 と新しい種類の記録 ([#2575](https://github.com/k-k1/agent-fleet/issues/2575))
+- **[muse]** Muse Code のコントリビューターモードの設定 ([#2535](https://github.com/k-k1/agent-fleet/issues/2535))
+
+**Fixed**
+
+- **[copilot]** copilot が 1.0.103 に自分で更新されるとセッションが始まらなくなっていた ([#2576](https://github.com/k-k1/agent-fleet/issues/2576))
+- **[ecs-ec2]** 「開始中」のまま止まったワークスペースを停止できず、サイズ変更後の開始が応答しないスロットで時間切れになっていた ([#2446](https://github.com/k-k1/agent-fleet/issues/2446), [#2448](https://github.com/k-k1/agent-fleet/issues/2448))
+- **[ecs-ec2]** `AF_ECS_EC2_HOST_RESERVE_MB=0` が `auto` として扱われていた ([#2503](https://github.com/k-k1/agent-fleet/issues/2503))
+- **[ワークスペース]** `~/.af-work` の下にメンバーが作ったフォルダが起動時に消されることがあった ([#2454](https://github.com/k-k1/agent-fleet/issues/2454))
+- **[ミラー]** 書き終わったばかりの返答が一瞬消えることがあった ([#2564](https://github.com/k-k1/agent-fleet/issues/2564))
+- **[opencode]** 共有サーバーの再起動後、ターミナルペインがつながらないままになることがあった ([#2432](https://github.com/k-k1/agent-fleet/issues/2432))
+- **[MCP]** ChatGPT が `/mcp` のツール一覧を不正なスキーマのため拒否していた ([#2540](https://github.com/k-k1/agent-fleet/issues/2540))
+- **[プレビュー]** Control Plane のエラーの後でプレビューの設定項目が隠れたままになっていた ([#2317](https://github.com/k-k1/agent-fleet/issues/2317))
+- **[コマンドパレット]** 選択が一覧の外に出ることがあった ([#2504](https://github.com/k-k1/agent-fleet/issues/2504), [#2554](https://github.com/k-k1/agent-fleet/issues/2554))
+
+## [0.33.0](0.33.0.ja.md) — 2026-10-21
+
+**CLI ピン** — Claude Code 2.1.305 / Copilot 1.0.101 / Antigravity 1.4.3 / Cursor 2026.10.19-6bbf2c4 / OpenCode 2.1.1 / Muse Code 1.4.11-R6667.1
+
+**New / Improved**
+
+- **[メンバー]** メンバー画面をメンバーごとのカードに：状態バッジ・絞り込み・並べ替え・検索・セッション数・最終アクティブ・home ディスク・メモリと CPU ([#2385](https://github.com/k-k1/agent-fleet/issues/2385), [#2388](https://github.com/k-k1/agent-fleet/issues/2388), [#2389](https://github.com/k-k1/agent-fleet/issues/2389))
+- **[ワークスペース]** home ディスクの空き不足と CLI のインストール失敗をメンバーとテナント管理者に示し、その種類の開始は理由を添えて断る ([#2383](https://github.com/k-k1/agent-fleet/issues/2383), [#2398](https://github.com/k-k1/agent-fleet/issues/2398))
+- **[コマンドパレット]** メモリ モードでエージェントメモリを検索する ([#2407](https://github.com/k-k1/agent-fleet/issues/2407))
+- **[コマンドパレット]** パレットのキー＋Shift でモードを逆順に、PageUp/PageDown でページ移動。モードのヒントは別の行に ([#2412](https://github.com/k-k1/agent-fleet/issues/2412), [#2421](https://github.com/k-k1/agent-fleet/issues/2421))
+- **[プレビュー]** Markdown 中のループバック URL をそのポートのワークスペースプレビューで開く ([#2414](https://github.com/k-k1/agent-fleet/issues/2414), [#2419](https://github.com/k-k1/agent-fleet/issues/2419), [#2426](https://github.com/k-k1/agent-fleet/issues/2426))
+- **[セッション間メッセージ]** セッションツリー全体が 15 分アイドルなら親に一度だけ通知する ([#2397](https://github.com/k-k1/agent-fleet/issues/2397))
+- **[ミラー]** ターミナルの返答の `$AF_WORK_DIR` のパスをリンクに。ファイルのメニューからフォルダやフォルダのギャラリーを開く ([#2429](https://github.com/k-k1/agent-fleet/issues/2429))
+- **[セッション]** kiro を移動先に選べる ([#2252](https://github.com/k-k1/agent-fleet/issues/2252))
+- **[引き継ぎ]** 引き継ぎファイルを Console の言語で書き、捨てた入力を載せ、古い読み取り専用の呼び出しを省く ([#2233](https://github.com/k-k1/agent-fleet/issues/2233))
+- **[muse]** Muse Code 1.4.11 と新しい種類の記録に対応 ([#2394](https://github.com/k-k1/agent-fleet/issues/2394))
+- **[ECS]** `pause.sh` が休止中は NAT ゲートウェイを削除し、休止中の RDS インスタンスを止めたままにする ([#2386](https://github.com/k-k1/agent-fleet/issues/2386))
+
+**Fixed**
+
+- **[ワークスペース]** 起動時の CLI のインストールが途中で失敗しても成功と記録され、壊れたバイナリが残っていた ([#2384](https://github.com/k-k1/agent-fleet/issues/2384))
 
 ## [0.32.1](0.32.1.ja.md) — 2026-10-19
 

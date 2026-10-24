@@ -1,0 +1,149 @@
+{
+ "data": [
+  {
+   "id": "msg_1697a7d3b001NO9aKm3vP3mw8e",
+   "time": {
+    "created": 1792770997567
+   },
+   "type": "model-switched",
+   "model": {
+    "id": "m",
+    "providerID": "stub"
+   }
+  },
+  {
+   "id": "msg_1697a7e39001xV7B83ZSW4vLNW",
+   "time": {
+    "created": 1792770999699
+   },
+   "text": "make a TODO list",
+   "type": "user"
+  },
+  {
+   "id": "msg_1697a85b6001splTRdh0SEgX9H",
+   "time": {
+    "created": 1792770999772,
+    "streamed": 1792770999838,
+    "completed": 1792770999855
+   },
+   "type": "assistant",
+   "agent": "build",
+   "model": {
+    "id": "m",
+    "providerID": "stub",
+    "variant": "default"
+   },
+   "content": [
+    {
+     "type": "tool",
+     "id": "call_t",
+     "name": "todowrite",
+     "executed": false,
+     "state": {
+      "status": "completed",
+      "input": {
+       "todos": [
+        {
+         "content": "write the probe",
+         "priority": "high",
+         "status": "completed"
+        },
+        {
+         "content": "read the result",
+         "priority": "medium",
+         "status": "in_progress"
+        },
+        {
+         "content": "report",
+         "priority": "low",
+         "status": "pending"
+        }
+       ]
+      },
+      "content": [
+       {
+        "type": "text",
+        "text": "Todos updated: 1/3 completed, 1 in progress, 1 pending. In progress: \"read the result\""
+       }
+      ],
+      "metadata": {
+       "todos": [
+        {
+         "content": "write the probe",
+         "status": "completed"
+        },
+        {
+         "content": "read the result",
+         "status": "in_progress"
+        },
+        {
+         "content": "report",
+         "status": "pending"
+        }
+       ],
+       "truncated": false
+      }
+     },
+     "time": {
+      "created": 1792770999814,
+      "ran": 1792770999832,
+      "completed": 1792770999849
+     }
+    }
+   ],
+   "finish": "tool-calls",
+   "rawFinish": "tool_calls",
+   "cost": 0.00014,
+   "tokens": {
+    "input": 100,
+    "output": 20,
+    "reasoning": 0,
+    "cache": {
+     "read": 0,
+     "write": 0
+    }
+   }
+  },
+  {
+   "id": "msg_1697a864b00133ZdNVhLkljAYv",
+   "time": {
+    "created": 1792770999913,
+    "streamed": 1792770999940,
+    "completed": 1792770999943
+   },
+   "type": "assistant",
+   "agent": "build",
+   "model": {
+    "id": "m",
+    "providerID": "stub",
+    "variant": "default"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "ok done"
+    }
+   ],
+   "finish": "stop",
+   "rawFinish": "stop",
+   "cost": 0.00014,
+   "tokens": {
+    "input": 100,
+    "output": 20,
+    "reasoning": 0,
+    "cache": {
+     "read": 0,
+     "write": 0
+    }
+   }
+  },
+  {
+   "id": "msg_1697a868e001Gti4dtxprbXUgh",
+   "time": {
+    "created": 1792770999950
+   },
+   "type": "idle",
+   "outcome": "succeeded"
+  }
+ ]
+}

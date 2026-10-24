@@ -457,6 +457,36 @@ describe("ui-prefs: the owner of the local copy", () => {
     expect(s.getSettings().agentMemory).toBe(true);
   });
 
+  // #2535: the Agent reads a missing museContributorMode as OFF, and on, Meta may use the
+  // conversations. One account's ON must not survive into another account whose server copy lacks
+  // the key, where the next save of anything would switch it on.
+  it("turns Muse contributor mode off when another owner left it on and the server lacks the key", async () => {
+    const s = await freshSettings({ museContributorMode: true });
+    localStorage.setItem(OWNER_KEY, "t1|u1");
+    s.setPrefsOwnerSource(() => "t1|u2");
+    apiMock.mockResolvedValueOnce({ chatSize: 14 });
+    await s.hydrateUIPrefs();
+    expect(s.getSettings().museContributorMode).toBe(false);
+    s.setSetting("chatSize", 15);
+    await vi.advanceTimersByTimeAsync(1_000);
+    for (const call of apiJSONMock.mock.calls as [string, string, Record<string, unknown>][]) {
+      expect(call[2].museContributorMode).not.toBe(true);
+    }
+  });
+
+  it("reads Muse contributor mode as on only for a boolean true, from the server and from storage", async () => {
+    const s = await freshSettings({ museContributorMode: "true" as unknown as boolean });
+    expect(s.getSettings().museContributorMode).toBe(false);
+    localStorage.setItem(OWNER_KEY, "t1|u1");
+    s.setPrefsOwnerSource(() => "t1|u1");
+    apiMock.mockResolvedValueOnce({ museContributorMode: 1 });
+    await s.hydrateUIPrefs();
+    expect(s.getSettings().museContributorMode).toBe(false);
+    apiMock.mockResolvedValueOnce({ museContributorMode: true });
+    await s.hydrateUIPrefs();
+    expect(s.getSettings().museContributorMode).toBe(true);
+  });
+
   it("does not push a never-held key while the owner is unknown", async () => {
     const s = await freshSettings({ hiddenModels: hidden });
     localStorage.setItem(OWNER_KEY, "t1|u1");

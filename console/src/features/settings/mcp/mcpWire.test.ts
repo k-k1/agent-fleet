@@ -109,16 +109,16 @@ describe("formOf / bodyOf round-trip", () => {
   });
 
   it("omits the id for a new registration (the agent mints it)", () => {
-    expect(bodyOf({ ...emptyForm(), name: "x", command: "true" }).id).toBeUndefined();
+    expect(bodyOf({ ...emptyForm(), transport: "stdio" as const, name: "x", command: "true" }).id).toBeUndefined();
   });
 
   it("splits arguments one per line and keeps embedded spaces", () => {
-    const body = bodyOf({ ...emptyForm(), name: "x", command: "sh", args: "-c\necho hello world\n\n" });
+    const body = bodyOf({ ...emptyForm(), transport: "stdio" as const, name: "x", command: "sh", args: "-c\necho hello world\n\n" });
     expect(body.args).toEqual(["-c", "echo hello world"]);
   });
 
   it("sends timeout 0 (= the CLI default) for a blank field", () => {
-    expect(bodyOf({ ...emptyForm(), name: "x", command: "true", timeoutMs: "" }).timeoutMs).toBe(0);
+    expect(bodyOf({ ...emptyForm(), transport: "stdio" as const, name: "x", command: "true", timeoutMs: "" }).timeoutMs).toBe(0);
   });
 });
 
@@ -133,8 +133,8 @@ describe("fromKV", () => {
 
 describe("formValid", () => {
   it("requires a command for stdio", () => {
-    expect(formValid({ ...emptyForm(), name: "x" })).toBe(false);
-    expect(formValid({ ...emptyForm(), name: "x", command: "npx" })).toBe(true);
+    expect(formValid({ ...emptyForm(), transport: "stdio" as const, name: "x" })).toBe(false);
+    expect(formValid({ ...emptyForm(), transport: "stdio" as const, name: "x", command: "npx" })).toBe(true);
   });
   it("requires an http(s) URL for a remote server", () => {
     const base = { ...emptyForm(), name: "x", transport: "http" as const };
@@ -143,12 +143,12 @@ describe("formValid", () => {
     expect(formValid({ ...base, url: "https://x.example.com/mcp" })).toBe(true);
   });
   it("refuses an invalid name whatever the transport", () => {
-    expect(formValid({ ...emptyForm(), name: "bad name", command: "npx" })).toBe(false);
+    expect(formValid({ ...emptyForm(), transport: "stdio" as const, name: "bad name", command: "npx" })).toBe(false);
   });
   // Both targets off is a legal staging state (stored, handed to nothing), so it must
   // not block the save — see secrets.MCPTargets.
   it("allows a definition with no target selected", () => {
-    expect(formValid({ ...emptyForm(), name: "x", command: "npx", assistant: false, session: false })).toBe(true);
+    expect(formValid({ ...emptyForm(), transport: "stdio" as const, name: "x", command: "npx", assistant: false, session: false })).toBe(true);
   });
 });
 

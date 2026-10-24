@@ -274,6 +274,8 @@ jobs:
           ./workspace/entrypoint-boot-install-test.sh
           bash -n workspace/entrypoint-boot-status-test.sh
           ./workspace/entrypoint-boot-status-test.sh
+          bash -n workspace/dockerfile-fontconfig-cache-test.sh
+          ./workspace/dockerfile-fontconfig-cache-test.sh
       # The bkt wrapper is the one place a Bitbucket token meets an exec: what the real binary is
       # given, that nothing reaches argv or output, and that every helper failure leaves bkt
       # running without injected auth are pinned against stub git / workspace-agent / bkt.
@@ -356,6 +358,10 @@ jobs:
       # the env var must stay unset without a key, so the CP never crash-loops on it.
       - name: CP AF_WORKSPACE_DEK parameter / Rule (offline template evaluation)
         run: python3 ./deploy/local/cfn-workspace-dek-test.py
+      # /mcp and MCP OAuth stay off unless the operator turns them on, and arrive as the
+      # exact values the CP accepts ("true" / "1").
+      - name: CP AF_MCP_* parameters / Rule (offline template evaluation)
+        run: python3 ./deploy/local/cfn-mcp-env-test.py
       # IAM caps a role's inline policies at 10,240 characters in total and each managed one
       # at 6,144, and four stacks attach to the CP task role, so no one template shows the
       # total. Passing it is a ServiceLimitExceeded and a rolled-back stack on a real
@@ -398,6 +404,10 @@ jobs:
       # docker calls, refusals and re-run behaviour are pinned against a stateful fake docker.
       - name: LAN ComfyUI helper (real script, stub docker / nvidia-smi)
         run: ./deploy/local/comfyui-lan-stub-test.sh
+      # The Kiro CI credential is uploaded by hand from an operator's machine; a bad upload
+      # only shows as a red kiro contract, so what lands in the secrets is pinned here.
+      - name: Kiro CI credential upload (real script, stub gh, fixture DB)
+        run: ./deploy/local/set-kiro-ci-auth-stub-test.sh
 
   console:
     needs: changes

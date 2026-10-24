@@ -962,6 +962,8 @@ type Store interface {
 	DEKStore
 	SessionIndexStore
 	PATStore
+	MCPOAuthStore
+	MCPClientOAuthStore
 	GitRepoStore
 	LFSObjectStore
 	LFSLockStore

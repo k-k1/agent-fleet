@@ -233,8 +233,8 @@ Workspace だけである。`start` と `cancel` を、プロファイル名付�
 - `--no-login` は依頼を出さず、待たない。
 - exit 3 の意味は保つ。「SSO ログインが要り、ここでは完了していない」。
 
-`workspace/notes/aws.md`（`af-aws` スキル）とメンバーガイドの連携の章（`guide/member/10-integrations.md` と
-`10-integrations.ja.md`）に、新しい exit 3 の文言を書く。エージェントには、利用者に端末を開くよう頼むのではなく、
+`workspace/notes/aws.md`（`af-aws` スキル）とメンバーガイドの連携の章（`guide/member/16-cloud-accounts.md` と
+`16-cloud-accounts.ja.md`）に、新しい exit 3 の文言を書く。エージェントには、利用者に端末を開くよう頼むのではなく、
 ログインが Console で待っていると伝えるよう書く。
 
 ## 却下した案

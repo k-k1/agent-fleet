@@ -419,7 +419,7 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
 - **Console**: `features/imagegen/` を 3 列に（MirrorView 埋め込み・起動部品・錠・ハイライト・
   編集履歴・履歴・知識のメモ・スタジオ設定）、ペイン種別に `studioId`、セッション一覧の杖と分岐、
   転写モデル層の剥がし手、`caps` の添付可否、`FAMILY_CARDS`・`PromptHelpModal` の撤去、i18n、撮影スタブ。
-- **ドキュメント**: `guide/member/04-files` の画像生成節、`guide/ref/features`、af-usage の知識。
+- **ドキュメント**: `guide/member/13-images` の画像生成節、`guide/ref/features`、af-usage の知識。
 - **試験**: 純関数（下書きの検証・錠・巻き戻し・since の畳み）／DOM（ハイライト・錠・カード）／Go
   （番人の陰性対照・錠・JSONL・広告の切替・tools/list の指紋）／実機 1 回（Managed と TUI で各 1 kind・
   `list_changed` の尊重を kind ごとに測る）。

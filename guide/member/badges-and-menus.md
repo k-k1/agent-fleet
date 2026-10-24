@@ -26,7 +26,7 @@ shown as text as well, not just an icon.
 | Spend limit — needs a raise | The spend / credit limit was reached. Waiting will not clear it; the limit has to be raised or credit added |
 | Ready | Ready to take the next instruction |
 | Ready · running in background | Accepts input, but background processing is still running |
-| Ready · handoff to launch | The **last** next-session prompt this session proposed has not been launched. Open the conversation and start it (or discard it) from the handoff card ([02](02-sessions.md)). An older proposal that a newer, launched one replaced does not raise it |
+| Ready · handoff to launch | The **last** next-session prompt this session proposed has not been launched. Open the conversation and start it (or discard it) from the handoff card ([05](05-stopping-and-tidying.md)). An older proposal that a newer, launched one replaced does not raise it |
 | Running | A shell / ssm with no detailed progress state is running |
 | Stopped | The process is stopped |
 | Stopped · handoff to launch | Stopped, and the last handoff it proposed is still unlaunched |
@@ -39,11 +39,11 @@ switched to a branch different from the one it started on. A **red dot on the co
 the session's tab) is a notification for that session you have not read yet; a collapsed project row or section
 shows it for anything folded inside. It clears when the session is on screen (a report: when its operator
 conversation is), or with **"Mark all as read"** in the notification centre
-([02](02-sessions.md#reading-state-badges-and-notifications)).
+([03](03-starting-sessions.md#reading-state-badges-and-notifications)).
 
 A row can also carry **"Shared"** (visible to another member;
-see [02](02-sessions.md#sharing-a-conversation-shared-sessions)) and **"Delete-locked"** (excluded from deletion and
-automatic tidying; see [02](02-sessions.md#tidying-up-in-bulk-cleanup)).
+see [12](12-collaboration.md#sharing-a-conversation-shared-sessions)) and **"Delete-locked"** (excluded from deletion and
+automatic tidying; see [05](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup)).
 
 A row can grow a **second line** with links. The first is the GitHub pull request of the
 branch the session works on. The icon says open, draft, merged or closed, and an open one
@@ -67,7 +67,7 @@ are not attributed to any session.
 | Uncommitted | There are uncommitted changes |
 | = parent | Same commit as the parent ("parent" here is the upstream of the parent working copy's branch, e.g. `origin/develop`, or the parent working copy's HEAD when it has none; the chip's tooltip names it; commits the parent working copy has not pushed are not compared) |
 | unmerged N | There are N worktree-specific commits not contained in the parent |
-| parent+N, FF ok | The worktree's HEAD is contained in the parent, which is N commits ahead. **"Fast-forward from origin/develop"** in the menu (**"Fast-forward from parent"** without an upstream) brings them in ([03](03-code.md)) |
+| parent+N, FF ok | The worktree's HEAD is contained in the parent, which is N commits ahead. **"Fast-forward from origin/develop"** in the menu (**"Fast-forward from parent"** without an upstream) brings them in ([06](06-code.md)) |
 | diverged N↕M, no FF | Both the worktree and the parent have their own commits; a merge or rebase is needed |
 | n/a | The relation to the parent can't be determined (detached HEAD etc.) |
 | ↑N | N commits ahead of origin |
@@ -76,6 +76,10 @@ are not attributed to any session.
 
 `●N` is the number of running sessions in that working copy; a plain number is the count of stopped sessions.
 A collapsed parent repository also aggregates the sessions of the worktrees under it.
+A collapsed row whose own folder has sessions shows a second line with the newest running one (its
+agent icon, title and state), or the newest stopped one, dimmed, when none is running; the `●N`
+tooltip names the other running ones. Sessions of the worktrees under it are only counted, not
+named. Clicking the row still just expands it.
 
 ## The engine pills in the top bar
 
@@ -105,10 +109,10 @@ unknown. No model line means the engine is holding nothing (it is asleep). Where
 models, only one is loaded at a time, and whoever asks for the other one waits for it to load.
 The popover says so before you ask. The image-generation pane's
 header says the same four things for the engine it is about to use
-([04](04-files.md#image-generation)).
+([13](13-images.md#image-generation)).
 
 When you have set **your own llama.cpp connection** in ⚙ Settings → Agents
-([06](06-agents.md#lcpp)), the **Chat** pill reports that connection instead of the deployment's
+([09](09-agents.md#lcpp)), the **Chat** pill reports that connection instead of the deployment's
 engine: **Connected**, **Not reachable** or **Checking**, and its popover says **"Your own
 connection. Not this deployment's engine."** together with the model the last check found
 (**"Model: …"**).
@@ -120,23 +124,37 @@ connection. Not this deployment's engine."** together with the model the last ch
   counts them ("1/3"); green when something is logged in, plain when nothing is, amber when an AWS login ends soon
   or an agent waits for a Google Cloud login. Press it for each profile's state and its **Log in** button (AWS:
   **Log out** too; Google Cloud: **Log in again** and **Log out**). Neither picks a default profile: each command names one
-  ([10](10-integrations.md#the-google-cloud-badge-in-the-ws-bar)).
+  ([16](16-cloud-accounts.md#the-google-cloud-badge-in-the-ws-bar)). An AWS profile that assumes a role from
+  another has no login of its own, so the count leaves it out; its row reads **"Follows {source}'s login"**,
+  or **"Source unavailable"** when that profile is missing, and has no Log out
+  ([16](16-cloud-accounts.md#profile-type-assume-a-role-from-another-profile)).
 - Colored `1`, `2`…: the number of the pane it is shown in. Press to jump to that pane.
 - "Untracked", "Added", "Modified", "Renamed", "Deleted": the file's Git change type.
 - The number on an assistant row: the conversation's message count.
 - The spinning icon / check on an assistant row: generating an answer / waiting.
 - "Awaiting approval", "Approved", "Rejected" on a plan card: the decision on the plan.
+- **"Question left unanswered at stop"**, **"Plan awaiting approval at stop"**, **"Permission requested at
+  stop"** on a card in the conversation: what was on screen when the session stopped. Answering it resumes the
+  session and delivers the answer; the card is kept for 14 days
+  ([04](04-conversation.md#questions-and-plans-left-by-a-stopped-session)).
+- **The inbox button's number** in the top bar: new inbox items plus handoffs waiting for you
+  ([12](12-collaboration.md#asking-a-teammate-the-inbox)). In the inbox, **"Open for 14+ days"** marks a
+  request nobody has finished. A session started from an inbox request has an inbox mark
+  (**"Started from an inbox request (sender: …)"**), a memo taken in from the inbox reads **"Inbox: …"**,
+  and a shared session with a handoff for you has a branch mark, **"A handoff is waiting"**.
 - "LFS pointer": a file with only the Git LFS pointer present, not the actual content.
 - **"From the operator", "Scheduled", "Manual run", "Auto-resume", "From <name>"** in the chat view: where a
   prompt you did not type came from: the fleet operator, a schedule, an auto-resume after an interruption, and
-  [a message from another session](02-sessions.md#messages-between-sessions).
-- **"Paused"** on a schedule row: that schedule is suspended ([08](08-organising.md)).
+  [a message from another session](11-many-sessions.md#messages-between-sessions). **"Started by <name>"** marks the
+  first prompt of a session another session started, and **"Stalled-tree notice"** the one Agent Fleet sends a
+  parent whose children have all gone quiet ([11](11-many-sessions.md#starting-sessions-from-a-session-child-sessions)).
+- **"Paused"** on a schedule row: that schedule is suspended ([11](11-many-sessions.md)).
 - **The budget mark** (a pulse icon) on a stopped session: its estimated spend reached its budget and it was
-  stopped; **"Raise budget & resume…"** in its menu carries on ([02](02-sessions.md#a-spend-budget-pausing-a-session-that-spends-too-much)).
+  stopped; **"Raise budget & resume…"** in its menu carries on ([05](05-stopping-and-tidying.md#a-spend-budget-pausing-a-session-that-spends-too-much)).
 - **"N awaiting approval"** on shared sessions: proposals from a recipient are waiting for you
-  ([02](02-sessions.md#sharing-a-conversation-shared-sessions)).
+  ([12](12-collaboration.md#sharing-a-conversation-shared-sessions)).
 - **"Safe" / "Review" / "Keep"** in the cleanup modal: whether it is fine to tidy away
-  ([02](02-sessions.md#tidying-up-in-bulk-cleanup)).
+  ([05](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup)).
 
 ## Right-click menus
 
@@ -144,14 +162,20 @@ connection. Not this deployment's engine."** together with the model the last ch
 
 Depending on state and kind you'll see resume, re-login to SSM, stop, open the remote session, copy the ID,
 rename, rename the branch, hand the conversation off, **move it to another agent**
-([02](02-sessions.md#moving-a-session-to-another-agent-move)), **Share…**, **set / clear the delete lock**,
-archive / delete, and recreate. For a session that doesn't belong to a repository, **assignment to a working
+([05](05-stopping-and-tidying.md#moving-a-session-to-another-agent-move)), **Share…**, **set / clear the delete lock**,
+**"Export as Markdown"** (three choices, [04](04-conversation.md#saving-a-conversation-as-markdown)),
+archive / delete, and recreate. While Agent memory has session suggestions turned on, **"Suggest memories now"**
+asks for suggestions from this conversation; it is greyed out when no agent that can run without tools is
+available ([18](18-agent-memory.md#settings)). A session that was moved carries a line under its row,
+**"Moved to …"** (click to open the target) or **"Move to … unfinished"** (click to retry or cancel), and its
+menu offers **"Open the session it moved to"** and **"Resume here anyway…"**, or **"Retry or cancel the
+move…"**, instead of resume. For a session that doesn't belong to a repository, **assignment to a working
 set** appears here too (an item shown ticked but unclickable is one that follows its repository or conversation
 automatically).
 If the session has made images with `generate_image`, **"Generated images (N)"** appears too (N is how many;
-absent for sessions that have not, and while the workspace is stopped; see [04](04-files.md#image-gallery)).
+absent for sessions that have not, and while the workspace is stopped; see [13](13-images.md#image-gallery)).
 **"Spend budget…"** sets the session's budget; on a session its budget stopped it reads **"Raise budget &
-resume…"** ([02](02-sessions.md#a-spend-budget-pausing-a-session-that-spends-too-much)).
+resume…"** ([05](05-stopping-and-tidying.md#a-spend-budget-pausing-a-session-that-spends-too-much)).
 Archive keeps the conversation but hides it from the list; recreate archives the current conversation and starts
 a new one in the same place. When there is no working folder, resume, handoff, and recreate are not shown.
 
@@ -159,25 +183,36 @@ a new one in the same place. When there is no working folder, resume, handoff, a
 
 You can open the commit graph, open the folder, commit changes, switch branches, copy the branch name,
 Fast-Forward (on a worktree, **"Fast-forward from origin/develop"** or similar), project settings, **Share…**, **assignment to
-a working set**, launch a session by kind, **stop the sessions below**, and delete the working copy. Stop
+a working set**, launch a session by kind, **stop the sessions below**, and delete the working copy. **"Archived sessions of this working copy"** opens the archive
+filtered to it. A Subversion working copy has **"Update (svn)"**, **"Clean up lock (svn)"**,
+**"Re-authenticate (svn)"**, **"Show log"** and **"Local changes"** instead of the Git items
+([06](06-code.md#subversion-svn-repositories)). Stop
 opens a modal listing the sessions running in that row and in the copies nested under it
-([02](02-sessions.md#stopping-and-tidying-up-sessions)); Delete opens a confirmation
+([05](05-stopping-and-tidying.md#stopping-and-tidying-up-sessions)); Delete opens a confirmation
 that also lists the copies nested under that row
-([02](02-sessions.md#clearing-one-finished-job-deleting-a-working-copy)). A normal click expands / collapses the row.
+([05](05-stopping-and-tidying.md#clearing-one-finished-job-deleting-a-working-copy)). A normal click expands / collapses the row.
 Ctrl / ⌘+click or middle-click opens the commit graph in a new pane.
 
 ### Files / folders
 
 You can create a new file, create a new folder, copy the name, copy the relative path, rename, and delete.
-Files additionally show "Open in reader" and "Download"; **folders show "Download as zip"** (the same
+Files additionally show "Open in reader", "Download", "Translate with assistant" and "Summarize with assistant"; **folders show "Download as zip"** (the same
 item is in the gallery's folder menu; a touch long-press on a folder row opens the menu;
-[04](04-files.md#download-a-folder-as-zip)). Folders and **image files** also show
+[07](07-files.md#download-a-folder-as-zip)). Folders and **image files** also show
 **"Open in gallery"** (from an image it opens the parent folder's gallery with that image enlarged; see
-[04](04-files.md#image-gallery)). A file that sits in a folder (not directly in home) also shows **"Open the folder"**
-(shows the parent folder in the file list) and, unless it is an image, **"Open folder in gallery"**. The same
-items are in the menu of a file link in a reply or document. A path an agent writes as `$AF_WORK_DIR/…` in a Terminal (CLI)
-session's chat is linked too, when the file exists in that session's scratch folder. To hand a file to a session or an assistant, open the
+[13](13-images.md#image-gallery)). A file that sits in a folder (not directly in home) also shows **"Open the folder"**
+(shows the parent folder in the file list) and, unless it is an image, **"Open folder in gallery"**. To hand a file to a session or an assistant, open the
 file and use "Send" in the viewer.
+
+### File and folder links in replies and documents
+
+A file or folder link in an agent's reply, the assistant chat, the document viewer or a Markdown
+preview ([07](07-files.md#links-in-rendered-markdown)) has a menu of its own: right-click it,
+long-press it, or press the Menu key or Shift+F10 on it. A file offers **"Open in pane"** and
+**"Open in new pane"**, both offer **"Show in Files"**, and then come the items above that change
+nothing (no new, rename or delete). For a path outside your home (`/…`), what follows the open
+items is only **"Copy the path"** and, for a file, **"Download"**. The target is looked up again when the menu
+opens, so a file that has gone since the reply was written says so instead.
 
 ### Cards in the image gallery
 
@@ -190,7 +225,7 @@ same for the folder, plus **"Open in another pane"** (a plain click moves this p
 a folder takes everything in it. Where the folder holds a session's generated images, **"Open …, the
 session that generated this"** jumps to that conversation, and the same name sits in the breadcrumb row
 as a button; neither appears once that session is gone. The menu opens from a right-click, the Menu key or
-Shift+F10 ([04](04-files.md#image-gallery)).
+Shift+F10 ([13](13-images.md#image-gallery)).
 
 ### Assistants
 
@@ -208,17 +243,17 @@ create a new branch based at that commit. While viewing a submodule, the branch-
 At the top right of a pane you get, depending on its content, **toggle wrapping**, **pop out into another tab**
 (the pane moves into a browser tab of its own) and **close** (middle-click / Ctrl+click closes without
 confirmation). Panes that cannot be popped out don't show the button
-([05](05-terminal.md#arranging-multiple-views-panes)).
+([02](02-console-basics.md#arranging-multiple-views-panes)).
 
 ### Tabs (tabbed grid)
 
 Right-clicking **a session's tab** gives the same menu as that session's row in the left pane
-([05](05-terminal.md#arranging-multiple-views-panes)). Tabs that are not sessions, and every tab while the
+([02](02-console-basics.md#arranging-multiple-views-panes)). Tabs that are not sessions, and every tab while the
 workspace is stopped, keep the browser's own menu.
 
 ### Cards in the sessions overview
 
-A card in the sessions overview pane ([02](02-sessions.md#seeing-every-running-session-at-once-the-sessions-overview))
+A card in the sessions overview pane ([11](11-many-sessions.md#seeing-every-running-session-at-once-the-sessions-overview))
 gives the same menu again, from a right-click, its ⋯ button, or the Menu key while the card has focus.
 
 ## When a menu doesn't appear
@@ -232,4 +267,4 @@ gives the same menu again, from a right-click, its ⋯ button, or the Menu key w
 
 ---
 
-Related: [Sessions](02-sessions.md) · [Repositories and git](03-code.md) · [Files](04-files.md)
+Related: [Sessions](03-starting-sessions.md) · [Repositories and git](06-code.md) · [Files](07-files.md)

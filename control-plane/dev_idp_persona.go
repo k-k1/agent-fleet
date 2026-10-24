@@ -423,8 +423,11 @@ func (a devIdPAPI) consentRefuse(w http.ResponseWriter, r *http.Request, status 
 // sameOrigin is the cross-site guard for the consent POST: a browser that sends Origin or
 // Sec-Fetch-Site must say it came from the Console origin itself. (The ticket is the real
 // defence; this refuses early and keeps the failure legible.)
-func (a devIdPAPI) sameOrigin(r *http.Request) bool {
-	base, err := url.Parse(a.mgr.publicBaseURL)
+func (a devIdPAPI) sameOrigin(r *http.Request) bool { return sameConsoleOrigin(a.mgr.publicBaseURL, r) }
+
+// sameConsoleOrigin is sameOrigin for any page served on the Console origin.
+func sameConsoleOrigin(publicBaseURL string, r *http.Request) bool {
+	base, err := url.Parse(publicBaseURL)
 	if err != nil || base.Host == "" {
 		return false
 	}

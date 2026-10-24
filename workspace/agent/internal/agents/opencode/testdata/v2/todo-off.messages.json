@@ -1,0 +1,130 @@
+{
+ "data": [
+  {
+   "id": "msg_1697a6c4b001VWEehpuJSKP9RA",
+   "time": {
+    "created": 1792770993227
+   },
+   "type": "model-switched",
+   "model": {
+    "id": "m",
+    "providerID": "stub"
+   }
+  },
+  {
+   "id": "msg_1697a6d500015Dvaa2vmU8w2f7",
+   "time": {
+    "created": 1792770995408
+   },
+   "text": "make a TODO list",
+   "type": "user"
+  },
+  {
+   "id": "msg_1697a74e0001ovZ66MkQ6cwafQ",
+   "time": {
+    "created": 1792770995451,
+    "streamed": 1792770995515,
+    "completed": 1792770995527
+   },
+   "type": "assistant",
+   "agent": "build",
+   "model": {
+    "id": "m",
+    "providerID": "stub",
+    "variant": "default"
+   },
+   "content": [
+    {
+     "type": "tool",
+     "id": "call_t",
+     "name": "todowrite",
+     "executed": false,
+     "state": {
+      "status": "error",
+      "input": {
+       "todos": [
+        {
+         "content": "write the probe",
+         "priority": "high",
+         "status": "completed"
+        },
+        {
+         "content": "read the result",
+         "priority": "medium",
+         "status": "in_progress"
+        },
+        {
+         "content": "report",
+         "priority": "low",
+         "status": "pending"
+        }
+       ]
+      },
+      "error": {
+       "type": "tool.execution",
+       "message": "No tool named \"todowrite\" is currently available. Please use a tool from the available tool list."
+      }
+     },
+     "time": {
+      "created": 1792770995486,
+      "ran": 1792770995507,
+      "completed": 1792770995521
+     }
+    }
+   ],
+   "finish": "tool-calls",
+   "rawFinish": "tool_calls",
+   "cost": 0.00014,
+   "tokens": {
+    "input": 100,
+    "output": 20,
+    "reasoning": 0,
+    "cache": {
+     "read": 0,
+     "write": 0
+    }
+   }
+  },
+  {
+   "id": "msg_1697a7565001xUMyq5uyP8wFlm",
+   "time": {
+    "created": 1792770995590,
+    "streamed": 1792770995628,
+    "completed": 1792770995632
+   },
+   "type": "assistant",
+   "agent": "build",
+   "model": {
+    "id": "m",
+    "providerID": "stub",
+    "variant": "default"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "ok done"
+    }
+   ],
+   "finish": "stop",
+   "rawFinish": "stop",
+   "cost": 0.00014,
+   "tokens": {
+    "input": 100,
+    "output": 20,
+    "reasoning": 0,
+    "cache": {
+     "read": 0,
+     "write": 0
+    }
+   }
+  },
+  {
+   "id": "msg_1697a75bb001YMHj87MgG0OHo1",
+   "time": {
+    "created": 1792770995644
+   },
+   "type": "idle",
+   "outcome": "succeeded"
+  }
+ ]
+}

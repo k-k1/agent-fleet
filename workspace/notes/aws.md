@@ -8,7 +8,7 @@ user-invocable: false
 Read when: a command touches the user's AWS accounts or resources (deploys, writes, and reads
 too — anything whose account matters), or an AWS command failed with "Unable to locate
 credentials", an SSO/token error, "The config profile (X) could not be found", or `af-aws-exec`
-exited 3. The member-side explanation is `member/10-integrations.md` in the user guide (section
+exited 3. The member-side explanation is `member/16-cloud-accounts.md` in the user guide (section
 "Using the profiles from the terminal, SDKs and build tools").
 
 ## The trap
@@ -200,7 +200,7 @@ for an approval nobody sees, and a code from you is exactly what the user is tol
 ## A local emulator is not the user's account
 
 To try AWS code without an account, the user may run MiniStack (an AWS API emulator) in the
-workspace; the setup is `member/10-integrations.md`, "Trying AWS code against a local emulator
+workspace; the setup is `member/17-workspace-environment.md`, "Trying AWS code against a local emulator
 (MiniStack)". Reach it only through a dedicated profile, under a name used nowhere else, that carries
 its `endpoint_url` and dummy keys (`aws --profile ministack …`), never by exporting dummy keys. Name
 that profile on every command: where the workspace's own role is handed back, or on the native

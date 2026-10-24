@@ -98,16 +98,28 @@ func HandleServerUpdate(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
+	// A sign-in belongs to one server URL under OAuth; changing either ends it (revoked at the
+	// authorization server when it offers that), and the member signs in again.
+	old, oldErr := mcpreg.Get(r.PathValue("id"))
 	out, err := mcpreg.Update(r.PathValue("id"), in)
 	if err != nil {
 		writeMCPErr(w, err)
 		return
+	}
+	// Whatever the authentication is now: a grant belongs to the URL it was made for.
+	if oldErr == nil && (out.URL != old.URL || (old.Auth == mcpreg.AuthOAuth && out.Auth != mcpreg.AuthOAuth)) {
+		_, _ = mcpreg.DisconnectOAuth(r.Context(), out.ID)
 	}
 	MaterializeAll()
 	httpx.WriteJSON(w, http.StatusOK, wireMCPServer(out))
 }
 
 func HandleServerDelete(w http.ResponseWriter, r *http.Request) {
+	// Revoke a sign-in at its authorization server before the definition (and with it the
+	// local grant) goes. Best effort: deleting the server never waits on the AS.
+	if d, err := mcpreg.Get(r.PathValue("id")); err == nil && d.Origin == mcpreg.OriginUser {
+		_, _ = mcpreg.DisconnectOAuth(r.Context(), d.ID)
+	}
 	if err := mcpreg.Delete(r.PathValue("id")); err != nil {
 		writeMCPErr(w, err)
 		return

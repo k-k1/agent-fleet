@@ -58,6 +58,9 @@ export interface Session {
   resumable?: boolean; // a stopped session whose dir still exists (false = archive only)
   backgroundBusy?: boolean; // idle by hook but a run_in_background task is still running
   backgroundBusyReason?: string;
+  // A Terminal session that can still "fork from here" (opencode 2 on af's shared serve). Absent =
+  // the Terminal route cannot; a managed session is judged by the kind alone (canBranchInSession).
+  forkAtTerminal?: boolean;
   // RFC3339: the Agent's newest sign that a working row is still moving (state file, state
   // source, pane repaint, live tool process). Read by the Control Plane's reaper, not drawn.
   progressAt?: string;

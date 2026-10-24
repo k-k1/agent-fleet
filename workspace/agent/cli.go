@@ -99,6 +99,12 @@ var subcommands = []subcommand{
 		run:      runInstallJDK,
 	},
 	{
+		name:     "java-home",
+		operands: "<major>",
+		summary:  "print the JAVA_HOME a Temurin major resolves to (newest patch across both JDK dirs)",
+		run:      runJavaHome,
+	},
+	{
 		name:    "install-chromium",
 		summary: "download the pinned chromium + CJK font for the browser pane",
 		run:     runInstallChromium,
@@ -149,6 +155,14 @@ var subcommands = []subcommand{
 		summary: "remove old copilot and cursor versions left in home",
 		hidden:  true,
 		run:     runPruneCLIVersions,
+	},
+	{
+		// Removes Node.js patches install-node installed that a newer patch of the same
+		// major supersedes. The entrypoint runs it after install-node, before any session.
+		name:    "prune-node-versions",
+		summary: "remove superseded Node.js patches install-node left in home",
+		hidden:  true,
+		run:     runPruneNodeVersions,
 	},
 	{
 		// Opt-in to opencode 2 beside the pinned 1.x: a private npm prefix, ~200 MB, never
@@ -218,6 +232,22 @@ var subcommands = []subcommand{
 		summary: "Jira project issue types as a jira config fragment",
 		hidden:  true,
 		run:     runJiraIssueTypes,
+	},
+	{
+		// Candidate issues after a timed-out `jira issue create`, for the PATH wrapper at
+		// /usr/local/bin/jira. See jira_find_created.go.
+		name:    "jira-find-created",
+		summary: "recently created Jira issues with an exact summary",
+		hidden:  true,
+		run:     runJiraFindCreated,
+	},
+	{
+		// `jira issue comment edit|delete`, which jira-cli lacks, for the PATH wrapper at
+		// /usr/local/bin/jira. See jira_comment.go.
+		name:    "jira-comment",
+		summary: "Jira comment edit / delete for the jira wrapper",
+		hidden:  true,
+		run:     runJiraComment,
 	},
 	{
 		// Transparent SVN auth: the PATH shim at /usr/local/bin/svn re-enters this binary,

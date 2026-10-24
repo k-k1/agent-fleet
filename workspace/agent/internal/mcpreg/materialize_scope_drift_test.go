@@ -25,11 +25,19 @@
 package mcpreg
 
 import (
+	"context"
+	"encoding/json"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // scopeSpec describes one CLI's two-scope layout and how its `mcp list` reveals which
@@ -46,6 +54,12 @@ type scopeSpec struct {
 	projectFile string
 	projectDoc  func(servers map[string]string) string
 	list        []string
+	// listFn replaces running `list` when the CLI's own listing no longer reflects the
+	// config (opencode 2.x); it returns text the winner reader understands.
+	listFn func(t *testing.T, dir string, env []string, bin string) string
+	// prepare runs after both scopes are written, for gates the CLI puts in front of the
+	// project scope (copilot's folder trust).
+	prepare func(t *testing.T, home, proj string)
 	// winner reads a listing produced with the SAME name in both scopes and reports
 	// which definition the CLI resolved: "user", "project", or "" for unreadable.
 	winner func(out string) string
@@ -99,8 +113,12 @@ func scopeSpecs() []scopeSpec {
 			projectFile: "opencode.json",
 			projectDoc:  opencodeScopeDoc,
 			list:        []string{"mcp", "list"},
-			winner:      commandWinner,
-			wantWinner:  "project",
+			// 2.x `mcp list` asks a background service rooted at $HOME that loads MCP
+			// lazily, so it prints "No MCP servers configured" for any config; the
+			// per-project server's /api/mcp is what reports the resolved servers.
+			listFn:     opencodeServeList,
+			winner:     commandWinner,
+			wantWinner: "project",
 		},
 		{
 			kind: "cursor",
@@ -136,6 +154,10 @@ func scopeSpecs() []scopeSpec {
 			projectFile: ".mcp.json",
 			projectDoc:  jsonScopeDoc("mcpServers", `"type":"local",`),
 			list:        []string{"mcp", "list"},
+			// copilot ignores the project scope of an untrusted folder; af's launcher
+			// pre-trusts the working directory (agents/copilot/trust.go), so the test
+			// does the same.
+			prepare: copilotTrustFolder,
 			// copilot prints no command either, but groups by origin — the losing
 			// scope's section disappears entirely.
 			winner:     sectionWinner,
@@ -151,7 +173,8 @@ func TestDriftMCPScopesMerge(t *testing.T) {
 		t.Run(sp.kind, func(t *testing.T) {
 			out := runScopeList(t, sp, map[string]string{"afdrift_proj": "/bin/true"})
 			for _, want := range []string{"af", "afdrift_proj"} {
-				if !strings.Contains(out, want) {
+				// Whole word: "af" is also a prefix of "afdrift_proj".
+				if !regexp.MustCompile(`\b` + want + `\b`).MatchString(out) {
 					t.Fatalf("%s: %q is not in the listing — the user scope and the project "+
 						"scope are no longer merged, so af's server disappears in any repository "+
 						"that has a project config (docs/log/48 §8.4)\n%s", sp.kind, want, out)
@@ -207,6 +230,12 @@ func runScopeList(t *testing.T, sp scopeSpec, project map[string]string) string 
 	if err := os.WriteFile(path, []byte(sp.projectDoc(project)), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if sp.prepare != nil {
+		sp.prepare(t, home, proj)
+	}
+	if sp.listFn != nil {
+		return sp.listFn(t, proj, sp.env(home), bin)
+	}
 	return runScopeCLI(t, proj, sp.env(home), bin, sp.list)
 }
 
@@ -222,6 +251,124 @@ func runScopeCLI(t *testing.T, dir string, env []string, bin string, args []stri
 		t.Fatalf("%s %v: %v", bin, args, err)
 	}
 	return string(out)
+}
+
+// copilotTrustFolder writes the trustedFolders entry copilot's folder-trust dialog would
+// store, into $COPILOT_HOME/config.json.
+func copilotTrustFolder(t *testing.T, home, proj string) {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{"trustedFolders": []string{proj}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".copilot"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".copilot", "config.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// scopeServeBudget bounds the whole opencodeServeList exchange; a var so the hang test can
+// shorten it.
+var scopeServeBudget = 60 * time.Second
+
+// opencodeServeList runs `opencode serve` in the project directory on a free loopback
+// port and returns /api/mcp once every server has left its pending state. A failed
+// status carries the spawn error, which names the command the CLI resolved — the same
+// tell commandWinner reads. The server is this test's own process group and is killed on
+// exit. Every wait is bounded: a hung CLI must fail the test, not stall until
+// `go test -timeout` panics (t.Cleanup does not run then). For that case the server is
+// started under timeout(1) when available, so it still ends on its own.
+func opencodeServeList(t *testing.T, dir string, env []string, bin string) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	var log lockedBuf
+	args := []string{bin, "serve", "--hostname", "127.0.0.1", "--port", strconv.Itoa(port)}
+	if tp, err := exec.LookPath("timeout"); err == nil {
+		secs := int(scopeServeBudget/time.Second) + 30
+		args = append([]string{tp, "-k", "5", strconv.Itoa(secs)}, args...)
+	}
+	srv := exec.Command(args[0], args[1:]...)
+	srv.Dir = dir
+	srv.Env = append(os.Environ(), env...)
+	srv.Stdout, srv.Stderr = &log, &log
+	srv.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	srv.WaitDelay = 2 * time.Second
+	if err := srv.Start(); err != nil {
+		t.Fatalf("%s serve: %v", bin, err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-srv.Process.Pid, syscall.SIGKILL)
+		_ = srv.Wait()
+	})
+	pw := regexp.MustCompile(`server password (\S+)`)
+	deadline := time.Now().Add(scopeServeBudget)
+	var password string
+	for time.Now().Before(deadline) {
+		if m := pw.FindStringSubmatch(log.String()); m != nil {
+			password = m[1]
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if password == "" {
+		t.Fatalf("opencode serve printed no password:\n%s", log.String())
+	}
+	apiEnv := append(append([]string{}, env...), "OPENCODE_PASSWORD="+password)
+	url := "http://127.0.0.1:" + strconv.Itoa(port)
+	var out string
+	for time.Now().Before(deadline) {
+		var ok bool
+		out, ok = runScopeCLIBefore(dir, apiEnv, bin, []string{"api", "--server", url, "GET", "/api/mcp"}, deadline)
+		if !ok {
+			t.Fatalf("opencode api did not answer before the deadline; output so far:\n%s", out)
+		}
+		if strings.Contains(out, `"name":`) && !strings.Contains(out, `"pending"`) &&
+			!strings.Contains(out, `"connecting"`) {
+			return out
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return out
+}
+
+// runScopeCLIBefore runs the CLI in its own process group and kills the group at
+// deadline (or after 15s, whichever is sooner); ok is false when it had to.
+func runScopeCLIBefore(dir string, env []string, bin string, args []string, deadline time.Time) (string, bool) {
+	limit := min(15*time.Second, time.Until(deadline))
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), env...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 2 * time.Second
+	out, _ := cmd.CombinedOutput()
+	return string(out), ctx.Err() == nil
+}
+
+type lockedBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuf) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }
 
 // --- listing readers ----------------------------------------------------------
@@ -314,4 +461,60 @@ func opencodeScopeDoc(servers map[string]string) string {
 	}
 	b.WriteString("}}")
 	return b.String()
+}
+
+// TestScopeServeListHangIsBounded is the negative control for opencodeServeList: a fake CLI
+// whose `serve` prints a password and whose `api` never answers must make the helper fail
+// within its budget and leave none of its processes behind. The fake records its own PID,
+// so only those PIDs are checked (never a process-table pattern, which could match another
+// session's). It needs no real CLI.
+func TestScopeServeListHangIsBounded(t *testing.T) {
+	pidFile := os.Getenv("AF_SCOPE_HANG_PIDS")
+	if os.Getenv("AF_SCOPE_HANG_CHILD") == "1" {
+		fake := filepath.Join(t.TempDir(), "opencode")
+		script := "#!/bin/sh\necho $$ >> \"$AF_SCOPE_HANG_PIDS\"\ncase \"$1\" in\nserve) echo 'server password pw'; exec sleep 300;;\n*) exec sleep 300;;\nesac\n"
+		if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		scopeServeBudget = 4 * time.Second
+		opencodeServeList(t, t.TempDir(), nil, fake)
+		return
+	}
+	pidFile = filepath.Join(t.TempDir(), "pids")
+	// Run the failing helper in a child test so its t.Fatal is the observed outcome.
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestScopeServeListHangIsBounded$", "-test.v")
+	cmd.Env = append(os.Environ(), "AF_SCOPE_HANG_CHILD=1", "AF_SCOPE_HANG_PIDS="+pidFile)
+	start := time.Now()
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "did not answer before the deadline") {
+		t.Fatalf("the hung api call must fail the helper (err=%v):\n%s", err, out)
+	}
+	if d := time.Since(start); d > 30*time.Second {
+		t.Fatalf("took %s, want it bounded by the budget", d)
+	}
+	raw, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("the fake CLI recorded no PID (it never ran?): %v\n%s", err, out)
+	}
+	pids := strings.Fields(string(raw))
+	if len(pids) < 2 {
+		t.Fatalf("want the serve and at least one api PID, got %v", pids)
+	}
+	for _, f := range pids {
+		pid, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("bad PID %q: %v", f, err)
+		}
+		gone := false
+		for i := 0; i < 50 && !gone; i++ {
+			gone = syscall.Kill(pid, 0) == syscall.ESRCH
+			if !gone {
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+		if !gone {
+			_ = syscall.Kill(pid, syscall.SIGKILL) // our own fake; do not leave it
+			t.Errorf("fake CLI process %d is still alive after the helper failed", pid)
+		}
+	}
 }

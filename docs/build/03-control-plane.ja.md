@@ -273,7 +273,8 @@ Workspace を起こさない。
 - **member の面** — `GET /api/egress/check` は Workspace がそのホストに届くかを答え、
   `POST /api/egress/propose` は*提案*のエントリを出す。承認は配備管理者の仕事のまま。
 
-コンテナ側の配線は `AF_EGRESS_PROXY_ADDR` があるときだけで、全 Workspace に proxy の env を注入する。
+コンテナ側の配線は `AF_EGRESS_PROXY_ADDR` があるときだけで、どのターゲットでも全 Workspace に proxy の env を注入する
+（各ターゲットが何を受け取り、何を proxy の対象から外すかは [07 §7.8](07-security.ja.md)）。
 **既定は off で、何も変わらない**。
 
 ## 3.9 自前エンジン

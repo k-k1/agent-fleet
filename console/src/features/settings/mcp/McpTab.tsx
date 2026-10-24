@@ -8,7 +8,7 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 // The wire contract (types, masked-secret round-trip, form↔definition mapping)
 // lives beside this file so its rules are unit-tested — see mcpWire.test.ts.
-import { bodyOf, emptyForm, formOf } from "./mcpWire.ts";
+import { bodyOf, emptyForm, formOf, probeOfAnswer } from "./mcpWire.ts";
 import type { Form, McpServer, ProbeResult, Registry } from "./mcpWire.ts";
 // Egress allowlist tie-in (docs/log/48 §9): a remote server the deployment's proxy will not
 // let the workspace reach is warned about here, where it can still be acted on.
@@ -17,6 +17,7 @@ import { hostsOf } from "./egressCheck.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { ServerRow } from "./mcpServerRow.tsx";
 import { SecretsForm, ServerForm } from "./mcpServerForm.tsx";
+import { takeReturn } from "./mcpOAuth.ts";
 
 // McpTab — the member's own MCP server registry (docs/log/48 P1 + ADR0031). Lists the
 // EFFECTIVE registry (builtin ∪ tenant ∪ user) as one table, because that is what the
@@ -43,6 +44,12 @@ export function McpTab() {
   const running = wsState === "running";
   const startWs = useWorkspaceStore((s) => s.start);
   const toast = useToast();
+  // The failed sign-in the browser just came back from (set once by McpOAuthReturn), so its row
+  // can offer the dynamic-registration retry.
+  const [failedReturn] = useState(() => {
+    const r = takeReturn();
+    return r && !r.ok ? r : null;
+  });
 
   const [reg, setReg] = useState<Registry | null>(null);
   const [form, setForm] = useState<Form | null>(null);
@@ -102,11 +109,7 @@ export function McpTab() {
       return rest;
     });
     const res = await apiJSON("api/mcp-servers/test", "POST", bodyOf(f));
-    if (res && res.error) {
-      setProbes((p) => ({ ...p, [key]: { ok: false, toolCount: 0, elapsedMs: 0, error: errText(res.error) } }));
-      return;
-    }
-    setProbes((p) => ({ ...p, [key]: res as ProbeResult }));
+    setProbes((p) => ({ ...p, [key]: probeOfAnswer(res, (e) => errText(e as any)) }));
   };
 
   const setEnabled = async (s: McpServer, on: boolean) => {
@@ -236,6 +239,7 @@ export function McpTab() {
                 onToggle={(on) => void setEnabled(s, on)}
                 onDelete={() => void remove(s)}
                 onEnterSecrets={() => setSecretFor(s)}
+                failedReturn={failedReturn}
               />
             ),
           )}

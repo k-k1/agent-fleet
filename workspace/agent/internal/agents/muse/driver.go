@@ -154,6 +154,9 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	// Resume, not carried in ThreadSettings: "empty means unchanged" cannot make a bool
 	// three-valued, so a re-spawn after a settings change still uses the value resolved here.
 	h.bypass = agents.SkipPermissions(m)
+	// From meta, never from the current setting: a session keeps the mode it was created with
+	// across a stop and start, an Agent restart and a crashed host (#2535).
+	h.contributor = m.MuseContributorMode
 	st := h.settings
 	h.mu.Unlock()
 

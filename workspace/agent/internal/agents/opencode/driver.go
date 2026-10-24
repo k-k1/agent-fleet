@@ -238,7 +238,7 @@ func (managedDriver) RespondTerminal(m session.Meta, reply agents.InteractionRep
 		waiting = waiting || f.ID == reply.ID
 	}
 	if !waiting {
-		return fmt.Errorf("interaction %s は待機中ではありません: %w", reply.ID, errFormSettled)
+		return fmt.Errorf("interaction %s is not pending: %w", reply.ID, errFormSettled)
 	}
 	return respondForm(t.Addr, ses, reply)
 }
@@ -382,8 +382,44 @@ func ReconcileManaged(reason string) {
 	// start a replacement and put their environments back) rather than wait for a Console poll,
 	// which never comes for a session that has no managed handle.
 	if sharedTerminals() > 0 {
-		if _, _, err := Serve().Ensure(); err != nil {
+		ensureForTerminals(reason)
+	}
+}
+
+// terminalEnsureBackoff is the wait before each further attempt ensureForTerminals makes, and
+// ensureTerminalServe, when set, replaces the attempt; vars so tests need no daemon. (A function
+// default for the latter would be an initialization cycle: Ensure can reach this reconcile.)
+var (
+	terminalEnsureBackoff = []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second}
+	ensureTerminalServe   func() error
+)
+
+// ensureForTerminals brings the shared serve up for the Terminal panes attached to it, retrying a
+// failed start. Nothing else retries for them: they have no managed handle, so no Console poll
+// calls Resume, and a single failed start would strand every pane until another one is launched
+// or the Agent restarts.
+// Seen on CI: a replacement serve stayed silent past serveStartTimeout after a restart, and the
+// same job passed when rerun.
+func ensureForTerminals(reason string) {
+	for i := 0; ; i++ {
+		var err error
+		if ensureTerminalServe != nil {
+			err = ensureTerminalServe()
+		} else {
+			_, _, err = Serve().Ensure()
+		}
+		if err == nil {
+			return
+		}
+		// Not connected or disabled is a decision, not a hiccup: another attempt cannot change it.
+		if i == len(terminalEnsureBackoff) || errors.Is(err, ErrNotConnected) || Serve().Disabled() {
 			log.Printf("opencode: terminal sessions need the shared serve (%s): %v", reason, err)
+			return
+		}
+		log.Printf("opencode: terminal sessions need the shared serve (%s), retrying in %v: %v", reason, terminalEnsureBackoff[i], err)
+		time.Sleep(terminalEnsureBackoff[i])
+		if sharedTerminals() == 0 {
+			return
 		}
 	}
 }
@@ -1008,7 +1044,7 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	}
 	h.mu.Unlock()
 	if inter == nil || inter.ID != reply.ID {
-		return fmt.Errorf("interaction %s は待機中ではありません", reply.ID)
+		return fmt.Errorf("interaction %s is not pending: %w", reply.ID, errFormSettled)
 	}
 	if isV2() {
 		// A form, not a question: it is answered by field key and read again first (v2form.go).

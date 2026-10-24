@@ -73,6 +73,9 @@ export async function reviewSessionNow(name: string, notify: Notify, sleep: (ms:
     else if (queued === 0) notify(t("srow.memory_review_none"), { kind: "info" });
     return;
   }
+  // The watch ends before a long review does (up to 10 windows, each its own helper call): say so
+  // rather than leave "Review started" as the last word. The result still lands in the proposals.
+  notify(t("srow.memory_review_still_running"), { kind: "info" });
 }
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));

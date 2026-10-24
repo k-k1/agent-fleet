@@ -432,6 +432,15 @@ describe("promptForItem — how to read the body, per provider", () => {
     expect(p).not.toContain("MCP");
   });
 
+  it("points Bitbucket at bkt with the pull request number, not at the URL or the MCP", () => {
+    const p = promptForItem(item({ provider: "bitbucket", kind: "pr", key: "acme/web#7", repo: "acme/web", url: "https://bitbucket.org/acme/web/pull-requests/7" }));
+    expect(p).toContain("https://bitbucket.org/acme/web/pull-requests/7");
+    expect(p).toContain("`bkt pr view 7`");
+    expect(p).toContain("`bkt pr comments 7`");
+    expect(p).not.toContain("MCP");
+    expect(p).not.toContain("gh pr view");
+  });
+
   it("always gives the URL and a generic read line, even for an unknown provider", () => {
     const p = promptForItem(item({ provider: "backlog", key: "BL-9" }));
     expect(p).toContain("BL-9");

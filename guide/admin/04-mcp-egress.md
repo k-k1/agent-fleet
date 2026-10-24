@@ -16,7 +16,7 @@ Tenant settings → **"Operations → MCP distribution"** distributes an MCP ser
 the tenant.
 A distributed server appears in each member's ⚙ Settings → MCP servers labelled **tenant**,
 ready to use from their assistants and sessions (what they see:
-[member/12 Settings](../member/12-settings.md#mcp-servers)).
+[member/20 Settings](../member/20-settings.md#mcp-servers)).
 
 ### Only remote (HTTP) can be distributed
 
@@ -40,6 +40,14 @@ attributed to a person, or any token with real power, choose "each member enters
 credential". Distributed that way, the member's card offers an **"Enter values"** flow (until
 they do, the server is not used for them).
 
+The form is the same shape as a member's own: **display name** first (the **ID** is filled in
+from it until you edit it), then the URL, the credential choice above, and an
+**Authentication** selector: **None**, **Bearer token** or **Custom headers**. With "each member
+enters the credential", Bearer token distributes only the `Authorization` header name and the member
+is offered a token-only field; otherwise your token is stored encrypted and shown back as
+`Bearer ***`. Targets, target agents and **enabled** sit in a closed **Advanced** section whose
+summary line shows the current values; it opens by itself for a distribution that differs from the defaults.
+
 ### When it takes effect
 
 - Each member's workspace **fetches the distribution every 5 minutes**.
@@ -60,9 +68,9 @@ they do, the server is not used for them).
 - On a deployment with restricted egress, a distribution still fails if **the destination host
   is not allowed**. Check the allowlist below first.
 
-## Speech (tenant-wide settings)
+## Read aloud (tenant-wide settings)
 
-Speech is super_admin only (the **Speech** section of the Admin modal). It starts and stops the VOICEVOX (Zundamon) engine and
+Read aloud is super_admin only (the **Read aloud** section of the Admin modal). It starts and stops the VOICEVOX (Zundamon) engine and
 holds the **tenant-wide pronunciation dictionary**, which applies to everyone's text-to-speech
 (a member's personal dictionary overrides the same spelling). When a product name or an
 in-house term is consistently mispronounced, ask the super_admin to add it there.
@@ -379,7 +387,7 @@ and the darker it is the longer the engine was up in that hour.
 
 ## Controlling outbound traffic (egress — super_admin only)
 
-This is the **Traffic** section of the Admin modal. **It is super_admin only, so it does not appear
+This is the **Egress** section of the Admin modal. **It is super_admin only, so it does not appear
 in your tenant settings.** It belongs
 to IT / the deployment administrator, so ask them when you need it (see the request template at
 the end). The following is here so you know what happens on their side.
@@ -407,22 +415,7 @@ the allowlist → enforce**.
 
 ## Development sign-in (dev OIDC IdP — super_admin only)
 
-The **Dev sign-in** section of the Admin modal switches the Control Plane's development OIDC IdP
-(ADR 0116) for the whole deployment. **It is on by default** and super_admin only, so it does not
-appear in your tenant settings. There is no per-workspace switch: while it is on (and preview subdomains exist) every workspace's
-client is served.
-
-- The section shows the issuer, how many workspaces hold a client (one is created at every workspace start, opted in or not), and the one rule that matters:
-  **a production app must never trust this issuer**, because it signs in as any member without a
-  password.
-- Turning it off takes effect without a restart (another Control Plane replica follows within a few
-  seconds): every `/dev-idp/…` URL answers 404. **Workspaces' client registrations are kept**, so turning it on
-  again hands the same client ids and secrets back.
-- **Members can use it only with preview subdomains.** Without a preview domain
-  (`AF_PREVIEW_DOMAIN`) the section says so, the `/dev-idp/…` URLs answer 404, nothing is injected into
-  workspaces and workspaces report it unavailable. The switch itself stays operable.
-- It shows as locked when the operator set `AF_DEV_IDP=0`, and cannot be on without
-  `PUBLIC_BASE_URL`; the section says which one applies. Every change is audited (`dev_idp.set`).
+This section moved to [05 Who may sign in, and from where](05-access.md#development-sign-in-dev-oidc-idp-superadmin-only).
 
 ## A template for asking upstream
 
@@ -436,4 +429,4 @@ and they can act on it as-is.
 ---
 
 - Previously: [03 Audit and usage](03-audit-usage.md)
-- What members see: [member/12 Settings](../member/12-settings.md#mcp-servers)
+- What members see: [member/20 Settings](../member/20-settings.md#mcp-servers)

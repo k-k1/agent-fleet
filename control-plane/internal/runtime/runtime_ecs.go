@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -159,10 +160,13 @@ type ecsConfig struct {
 // config and stamps each Workspace record into an ecsRuntime.
 type ecsFactory struct {
 	cfg ecsConfig
-	ecs ecsAPI
-	efs efsAPI
-	ssm ssmAPI
-	ecr ecrAPI
+	// templateEnv is Config.EgressProxyEnv, the only deployment-wide env these runtimes pass on
+	// (WS_ENV is not: it may hold a credential and a task definition's environment is readable).
+	templateEnv []string
+	ecs         ecsAPI
+	efs         efsAPI
+	ssm         ssmAPI
+	ecr         ecrAPI
 	// tasks is the same ECS client, through the home task's port.
 	tasks ecsTaskAPI
 }
@@ -202,13 +206,60 @@ func (f *ecsFactory) New(ws Workspace, keys SecretKeys, extraEnv []string) Runti
 		tenantSlug:   ws.TenantSlug,
 		token:        ws.AgentToken,
 		keys:         keys,
-		extraEnv:     extraEnv,
+		extraEnv:     ecsTaskEnv(f.templateEnv, extraEnv),
 		cpu:          cpu,
 		memory:       memory,
 		diskGiB:      diskGiB,
 		ebsGiB:       ebsGiB,
 		waitReady:    httpHealthz,
 	}
+}
+
+// ecsLinkLocalNoProxy are the hosts an ECS task reaches over link-local addresses: the
+// task metadata and credentials endpoint (AWS_CONTAINER_CREDENTIALS_RELATIVE_URI,
+// ECS_CONTAINER_METADATA_URI_V4) and the instance metadata service on ecs-ec2. The egress
+// proxy refuses link-local destinations (internalEgressDest), so an SDK that honours
+// http_proxy and finds them absent from NO_PROXY loses its task-role credentials.
+var ecsLinkLocalNoProxy = []string{"169.254.170.2", "169.254.169.254"}
+
+// ecsTaskEnv is the environment a workspace task is registered with besides the fixed
+// entries: the deployment's proxy variables first, then the start's own, a later entry
+// winning on a key collision (the order docker gives its -e flags). When the result routes
+// through the proxy, the CP's internal host and the link-local endpoints are appended to
+// NO_PROXY. Deterministic on purpose: ecs-ec2 fingerprints the task definition input to
+// skip a redundant revision (taskDefFingerprint).
+func ecsTaskEnv(template, perStart []string) []string {
+	if len(template) == 0 {
+		return perStart
+	}
+	var keys []string
+	vals := map[string]string{}
+	for _, list := range [][]string{template, perStart} {
+		for _, kv := range list {
+			k, v, ok := strings.Cut(kv, "=")
+			if !ok || k == "" {
+				continue
+			}
+			if _, seen := vals[k]; !seen {
+				keys = append(keys, k)
+			}
+			vals[k] = v
+		}
+	}
+	if routesThroughProxy(vals) {
+		bypassProxyForCP(vals)
+		appendNoProxy(vals, ecsLinkLocalNoProxy...)
+		for _, k := range []string{"NO_PROXY", "no_proxy"} {
+			if _, seen := vals[k]; seen && !slices.Contains(keys, k) {
+				keys = append(keys, k)
+			}
+		}
+	}
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, k+"="+vals[k])
+	}
+	return out
 }
 
 // pickDiskGiB resolves the working-disk request: the per-workspace value when set,
@@ -298,11 +349,12 @@ func newECSFactory(mcfg Config) (RuntimeFactory, error) {
 	initAgentResolver(context.Background(), ac, cfg.namespaceArn)
 	ecsClient := ecs.NewFromConfig(ac)
 	return &ecsFactory{
-		cfg: cfg,
-		ecs: ecsClient,
-		efs: efs.NewFromConfig(ac),
-		ssm: ssm.NewFromConfig(ac),
-		ecr: ecr.NewFromConfig(ac),
+		cfg:         cfg,
+		templateEnv: slices.Clone(mcfg.EgressProxyEnv),
+		ecs:         ecsClient,
+		efs:         efs.NewFromConfig(ac),
+		ssm:         ssm.NewFromConfig(ac),
+		ecr:         ecr.NewFromConfig(ac),
 		// The home task's port (runtime_ecs_home_task.go).
 		tasks: ecsClient,
 	}, nil

@@ -40,6 +40,8 @@ const tools = [
   { name: "copilot", pin: "1.0.98", effective: bin("1.0.98"), baked: null, userLocal: bin("1.0.98"), overridden: false,
     bootInstall: { status: "ok" } },
   { name: "rtk", pin: "1.2.3", effective: null, baked: null, userLocal: null, overridden: false },
+  { name: "agy", pin: "9.9.9", effective: bin("9.0.0"), baked: null, userLocal: bin("9.0.0"), overridden: false,
+    bootInstall: { status: "skipped", reason: "no_space" } },
 ];
 
 let root: Root | null = null;
@@ -85,6 +87,12 @@ describe("EnvTab boot-install outcome", () => {
     const r = rowOf("codex").textContent!;
     expect(r).toContain("0.150.0");
     expect(r).toContain("インストール失敗: ネットワークエラー");
+  });
+  it("says a skipped upgrade kept the old version, not that the install failed", async () => {
+    await mount();
+    const r = rowOf("agy").textContent!;
+    expect(r).toContain("アップグレードをスキップ");
+    expect(r).not.toContain("インストール失敗");
   });
   it("is silent for ok and for a tool with no record", async () => {
     await mount();

@@ -295,6 +295,24 @@ not shredded (#1956). The per-workspace SSM parameter `secret-key-next` sits und
 which the CP role (`SsmWorkspaceParams`) and the workspace execution role already cover. Details:
 [`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#workspacedekrandom) and `guide/operate/04-secure.md`.
 
+### Remote MCP and MCP OAuth (optional, off by default)
+
+```bash
+# 30-ingress: serve /mcp, then (optionally) let hosted MCP clients sign in with OAuth
+aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides McpEnabled=on McpOAuth=on
+```
+
+`McpEnabled=on` sets `AF_MCP_ENABLED=true`, `McpOAuth=on` sets `AF_MCP_OAUTH=1` (it needs
+`McpEnabled=on`; the Rule fails the operation otherwise) and `McpOAuthTrustedHosts` sets the
+fallback host list `AF_MCP_OAUTH_TRUSTED_HOSTS`. All three default to off / empty and then
+add no environment entry, so an existing stack is unchanged until you set them. **`update.sh`
+overrides only `ImageTag` (plus `EfsBackup`)**, every other parameter keeps its previous
+value and a parameter the stack has never had takes the template default, so a release
+that adds these parameters turns nothing on; run the targeted deploy above to turn them on.
+Details: [`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#mcp-mcp-and-mcp-oauth) and
+`guide/operate/04-secure.md`, "Sign-in for remote MCP clients".
+
 ### Alarms — the Control Plane cannot reach its database (set this one)
 
 ```bash
@@ -1357,7 +1375,7 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 | `Ec2SlotTerminateAfterSec` | `AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC` | `0` (off) | The next step on the same clock: past it the instance is **terminated** and its root volume goes too. `0` means instances are kept forever, so retained roots grow to `Ec2MaxSlots` — see below. `14400` (4h) recommended |
 | `Ec2HomeGiB` | `AF_ECS_EC2_HOME_GB` | `50` | Per-user home volume (gp3) |
 | `Ec2HibernateAfterSec` | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0` (off) | **Default** for how long a home may sit unopened before it is snapshotted and its volume deleted. A tenant overrides it from the Console. Nothing is destroyed — the snapshot completes before the volume goes, and the next start restores it. See below |
-| `Ec2HostReserveMb` | `AF_ECS_EC2_HOST_RESERVE_MB` | `auto` | How much of a slot is held back from the workspace so the instance's own daemons cannot be starved by it. `auto` = a fifth of the rung, clamped to 1–2 GiB, which puts an 8 GiB slot's workspace at 6.4 GiB. `off` = uncapped (what every deployment did before 0.12.5, and what melted one). See below |
+| `Ec2HostReserveMb` | `AF_ECS_EC2_HOST_RESERVE_MB` | `auto` | How much of a slot is held back from the workspace so the instance's own daemons cannot be starved by it. `auto` = a flat 2 GiB at every rung (an 8 GiB slot's workspace gets 6 GiB; a fifth of the rung left too little and a box thrashed). `off` = uncapped (what every deployment did before 0.12.5, and what melted one). A number = that many MiB; `0` reserves nothing and caps the workspace at the full rung (not the same as `off`, and not auto). See below |
 | — | `AF_ECS_EC2_SLOT_LOST_AFTER_SEC` | `300` | How long a slot may be EC2-`running` while the cluster cannot reach its agent before the CP gives up on it and rebuilds the workspace elsewhere. `0` = wait as long as the caller allows |
 | — | `AF_ECS_EC2_GOLDEN_AUTOBAKE` | `1` (on) | Keep the golden snapshot in step with the workspace image without anyone re-baking by hand (ADR 0045 decision 9-1). Set `0` and it becomes your job on every release |
 | — | `AF_ECS_EC2_GOLDEN_BAKE_SEC` | `60` | How often the baker looks. It advances one step per look, so this is also how fast a bake progresses |
@@ -1366,7 +1384,7 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 workspace's: dockerd, containerd, the ECS agent, SSM and the EFS stunnel live on the same
 instance, and the rung overstates what the machine has (an "8192 MiB" m7i.large reports 7784).
 So the container is capped at the rung less a reserve, and the Console prints the number
-the workspace can actually spend with the instance beside it — `6.4 GiB (of 8 GiB)`.
+the workspace can actually spend with the instance beside it — `6 GiB (of 8 GiB)`.
 
 ⚠️ **Turning it off is not free.** Uncapped, one workspace taking several GB of anonymous
 memory can push the instance into refault thrash: with no swap the kernel throws away page
@@ -1521,6 +1539,22 @@ in the product that deletes a machine on request. It accepts a box of this pool 
 `af-role=quarantined` with no home attached and no live claim, and refuses everything else —
 a working slot included, which leaves through `Ec2SlotTerminateAfterSec` instead. The
 quarantine reason goes into the audit log before the instance (and its tags) disappear.
+
+**A wedged slot** (running, status checks `ok`, `agentConnected=false`, SSM silent, a home still
+attached) is stopped with **Stop (force)** on its row
+(`POST /api/admin/ec2-pool/slots/{id}/force-stop`, super_admin, audit `pool.slot_force_stop`; #2449). It
+refuses a slot whose ECS agent is connected and SSM online unless the body says
+`{"override_healthy": true}`, and refuses a stopped or quarantined slot; ends the occupant's Start (the
+runtime's own Stop); cancels the CP's own pending SSM commands (those commented
+`agent-fleet slot volume`); and calls `StopInstances` gracefully, repeating it with `Force` after 3
+minutes (only on an instance still `stopping` from the same launch) or at once on a second press while
+`stopping`. Graceful first because a wedged box may still have the home mounted and Force is a power
+cut. The slot is **not** quarantined and the home stays attached: the member's next Start wakes the
+same stopped slot, the reboot clears the thrash, and its ECS agent reports a task that was still
+STOPPING (#2447). Evidence-keeping quarantine for dark slots is #2450. Needs `ssm:ListCommands`,
+`ssm:CancelCommand` and `ssm:DescribeInstanceInformation` on the CP task role (`20-platform`,
+`SsmSlotForceStop`; apply that stack before using the button). A task still STOPPING on a slot whose
+agent is disconnected is shown on the row. Not verified against a live AWS account.
 
 **Golden snapshot: skip boot-install for new users.** A brand-new home pays boot-install
 (4 CLIs 41s + rtk 1s + agy 6s = 48s) and a cold npm cache. Bake one home that has already

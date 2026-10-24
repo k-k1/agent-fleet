@@ -29,7 +29,7 @@ value you set is not the value in force, look one layer out.
 | Keyboard | shortcuts and rebinding |
 | Agents | connecting each agent, its default model, models to exclude, per-agent behaviour; llama.cpp on / off and your own llama-server connection; Muse Code install and sign-in; the Session group (messages between sessions, starting sessions from sessions and children per session, past-session search, image generation) |
 | Agent instructions | text added to every agent you start in this workspace |
-| Agent memory | Agent Fleet's own shared memory, in four views: Memories (browse, pin, forget, unforget, purge), Changes (the change list, with revert and forget), Import & export (a hub of cards: import from Claude Code, muse or a memory bundle, write back to Claude Code, project move) and Settings (the sessions' switch with the sync status, outside access) |
+| Agent memory | Agent Fleet's own shared memory, in four views: Memories (browse, search, create, edit, pin, forget, unforget, purge), Changes (the change list, with revert and forget, and **Proposed**: memories sessions suggested, to approve or reject), Import & export (a hub of cards: import from Claude Code, muse or a memory bundle, write back to Claude Code, project move) and Settings (the sessions' switch with the sync status, outside access, **Have finished sessions suggest memories** and **Also suggest automatically**); see [member/18](../member/18-agent-memory.md) |
 | Memory snapshots | version management of each agent kind's own memory, in three views: History (with Restore this point; the Agent Fleet memory writes are hidden unless you ask), Targets (the roots, codex memories, automatic snapshots) and Export & import |
 | Assistant | the assistant chat's agent and model |
 | AI assistance | default agent/models for titles, branch names, reply/edit suggestions, plan updates and translation; per-feature on/off plus per-feature agent/model override |
@@ -43,7 +43,7 @@ value you set is not the value in force, look one layer out.
 | Issue tracker | Jira and the other work-item sources |
 | Chat | Discord / Slack bridge |
 | MCP servers | integration servers available to your agents |
-| MCP tokens | tokens for driving your sessions from outside |
+| MCP tokens | tokens for driving your sessions from outside and, with the Agent memory setting, for using your Agent Fleet memory from an outside agent |
 | Notifications | what you are told about, and how |
 | Limit board | who in this tenant may see where you stand on usage limits, and how much (hidden by default); what teammates publish to you |
 | Read aloud | speech engine and voice |
@@ -81,9 +81,8 @@ value you set is not the value in force, look one layer out.
 ## Deployment variables
 
 Set before the Control Plane starts. The annotated list is
-`deploy/compose/.env.example`, which stays the
-source of truth for defaults; these are the ones that decide the shape of everything
-else:
+`deploy/compose/.env.example`, which covers most variables but not all; these are the ones that decide the shape of
+everything else:
 
 | Variable | Decides |
 |---|---|
@@ -96,6 +95,10 @@ else:
 | `SUPER_ADMIN_EMAILS` | who is a deployment administrator |
 | `PUBLIC_BASE_URL` | the address people reach, and what OAuth callbacks are built from |
 | `WS_MEMORY` | the default memory ceiling for a workspace |
+| `AF_PREVIEW_DOMAIN` | the parent domain of the preview subdomains (`<workspace>-<port>.<domain>`), which needs a wildcard DNS name and certificate for it. Unset means no preview subdomains, only the Console's own preview path. Set `AF_COOKIE_SECRET` and `PUBLIC_BASE_URL` with it: the Control Plane warns at start when either is missing, because preview sign-in then cannot be trusted or has no Console to return to |
+| `AF_DEV_IDP` | `0` locks the development sign-in (an OIDC provider on the Console's origin that a member's app on a preview subdomain can sign in with in place of Google) off, whatever the deployment administrator's switch says. Unset leaves it to that switch, which is on by default. It is only served where `AF_PREVIEW_DOMAIN` and `PUBLIC_BASE_URL` are set |
+| `AF_EFS_BACKUP` | not set by hand: on `ecs` / `ecs-ec2`, `update.sh` and `standup.sh` fill it from the ingress stack's `EfsBackup` parameter (`present`, `off` or `missing`), and `missing` raises the Admin screen's "no daily EFS backup" banner ([operate/03](../operate/03-run.md#upgrade)) |
+| `AF_SESSION_IDLE_TIMEOUT`, `AF_WS_IDLE_TIMEOUT`, `AF_BACKGROUND_HOLD_MAX`, `AF_WORKSPACE_START_DEADLINE` | when idle sessions and Workspaces are stopped; the defaults are in [limits](limits.md#set-by-the-deployment) and the behaviour in [operate/03](../operate/03-run.md#idle-stop-and-force-stop) |
 
 ## Status
 

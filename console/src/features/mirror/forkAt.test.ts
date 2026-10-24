@@ -57,6 +57,17 @@ describe("canBranchInSession", () => {
     expect(canBranchInSession(managedOnly, { managed: false, readOnly: false })).toBe(false);
   });
 
+  it("lets a Terminal session through only when the Agent says its route carries a fork point", () => {
+    // opencode 2 on af's shared serve (wire: forkAtTerminal). The kind's static flag alone never grants it.
+    const oc = agentOf("opencode").caps;
+    expect(canBranchInSession(oc, { managed: false, readOnly: false, terminalForkAt: true })).toBe(true);
+    expect(canBranchInSession(oc, { managed: false, readOnly: false, terminalForkAt: false })).toBe(false);
+    expect(canBranchInSession(oc, { managed: false, readOnly: false })).toBe(false);
+    // codex's Agent never sets it, but even if a stale flag arrived the read-only rule still wins.
+    expect(canBranchInSession(oc, { managed: false, readOnly: true, terminalForkAt: true })).toBe(false);
+    expect(canBranchInSession({ forkAt: false, forkAtManagedOnly: true }, { managed: false, readOnly: false, terminalForkAt: true })).toBe(false);
+  });
+
   it("allows a TUI session for a kind that cuts its own transcript", () => {
     // claude has no managed driver; requiring managed here would hide the control forever.
     expect(canBranchInSession(anyRoute, { managed: false, readOnly: false })).toBe(true);

@@ -170,6 +170,16 @@ func serve() {
 	// Chromium attach; a random suffix makes that collision go away, and rotating it
 	// per boot means even a deliberate one is shaken off by a restart.
 	log.Printf("mcp: af server name for this boot = %s", mcpreg.RotateAFServerName())
+	// The relay for OAuth-protected MCP servers (ADR 0119 decision 6) has to be listening before
+	// the materialization below: an OAuth definition is written into a config only as the
+	// relay's URL, and only while something answers there. Fail-open: without it those
+	// servers are simply not written, as before the relay existed.
+	if stopRelay, err := mcpreg.StartRelay(); err != nil {
+		log.Printf("mcp relay: not started: %v (OAuth MCP servers are left out of sessions)", err)
+	} else {
+		defer stopRelay()
+		mcpreg.OnGrantChange = mcpx.MaterializeAll
+	}
 	// Write the MCP registry into each CLI's own config (docs/log/48 P3) so the servers a
 	// user registered are live from container start — including for a CLI they launch
 	// by hand in a terminal, which never passes through the session launch hook.

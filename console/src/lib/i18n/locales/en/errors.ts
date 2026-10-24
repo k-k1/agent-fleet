@@ -80,6 +80,9 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.codex_releasing":
     "codex has not let go of this conversation yet (usually about a minute after the stop). Try again shortly.",
   "err.driver_switching": "This session is switching its execution method. Try again once the switch is done.",
+  "err.interaction_not_pending":
+    "This question has already been answered or cancelled. Refresh to see the current state.",
+  "err.transcript_restore_failed": "Couldn't restore the conversation log from the backup",
   "err.codex_stop_first": "Stop this codex session first, then switch it to terminal execution (about a minute after the stop).",
   "err.not_running": "The session is stopped. Resume it before sending.",
   // The workspace is mid-boot (container up, Agent not answering yet) and something
@@ -189,6 +192,18 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.mcp_url_scheme": "The URL must be http or https.",
   "err.mcp_url_host": "The URL has no host.",
   "err.mcp_url_credentials": "Do not embed credentials in the URL. Use a header.",
+  "err.mcp_auth_unknown": "That authentication method is not known.",
+  "err.mcp_oauth_remote_only": "OAuth sign-in is only for remote servers.",
+  "err.mcp_oauth_authorization_header": "An OAuth server takes no static headers. Remove them, or choose another authentication.",
+  "err.mcp_oauth_not_distributed": "A tenant-distributed server cannot use OAuth yet.",
+  "err.oauth_not_required": "The server did not ask for OAuth.",
+  "err.oauth_discovery_failed": "The server's OAuth metadata could not be used. Run the connection test to see why.",
+  "err.as_endpoints_unusable": "The authorization server's authorization or token endpoint is missing or not https.",
+  "err.registration_failed": "The authorization server refused the dynamic client registration.",
+  "err.not_oauth_server": "Only a registered remote server can be signed in to.",
+  "err.bad_authorize_url": "The authorization address is not usable.",
+  "err.no_public_base_url": "Sign-in needs this deployment's public address (PUBLIC_BASE_URL). Ask the operator.",
+  "err.workspace_unreachable": "The workspace could not be reached. Is it running?",
   "err.mcp_http_no_command": "A remote server cannot carry a command, arguments or environment variables.",
   "err.mcp_env_name_invalid": "Invalid environment variable name.",
   "err.mcp_header_name_invalid": "Invalid header name.",

@@ -120,6 +120,30 @@ has 'only 100 MiB free' || fail "low space: no WARN naming the free space"
 has 'agy already present' && fail "low space: reported agy as already present"
 grep -q 0.9 "$T/home/.local/bin/rtk" || fail "low space: an installed CLI was touched"
 
+# 4a. An installed CLI whose upgrade is skipped for lack of space keeps working: "skipped
+# no_space", never "failed" (the Agent refuses a start only for failed, and the Console words a
+# failure as "install failed").
+reset; printf '#!/bin/sh\necho rtk 0.9\n' >"$T/home/.local/bin/rtk"; chmod +x "$T/home/.local/bin/rtk"
+run_block STUB_FREE_MB=100 AF_AGENT_SELF_UPDATE_SKIP=0
+[ "$(st rtk)" = "rtk skipped no_space" ] || fail "low space, rtk installed: rtk is '$(st rtk)'"
+[ "$(st agy)" = "agy failed no_space" ] || fail "low space, rtk installed: absent agy is '$(st agy)'"
+
+# 4a2. A leftover that cannot run is not "the old version still in use": a broken agy (exits 1)
+# and a non-executable partial rtk stay failed, which also keeps the Agent's start refusal.
+reset; printf '#!/bin/sh\nexit 1\n' >"$T/home/.local/bin/agy"; chmod +x "$T/home/.local/bin/agy"
+printf 'partial' >"$T/home/.local/bin/rtk"; chmod 600 "$T/home/.local/bin/rtk"
+run_block STUB_FREE_MB=100 AF_AGENT_SELF_UPDATE_SKIP=0
+[ "$(st agy)" = "agy failed no_space" ] || fail "low space, broken agy: agy is '$(st agy)'"
+[ "$(st rtk)" = "rtk failed no_space" ] || fail "low space, partial rtk: rtk is '$(st rtk)'"
+
+# 4a3. cursor's binary is cursor-agent: a working old tree linked there, pinned tree not fetched.
+reset; d="$T/home/.local/share/cursor-agent/versions"; mkdir -p "$d/2026.0.9-old"
+printf '#!/bin/sh\necho c\n' >"$d/2026.0.9-old/cursor-agent"; chmod +x "$d/2026.0.9-old/cursor-agent"
+ln -sfn "$d/2026.0.9-old/cursor-agent" "$T/home/.local/bin/cursor-agent"
+run_block STUB_FREE_MB=100 AF_AGENT_SELF_UPDATE_SKIP=0
+[ "$(st cursor)" = "cursor skipped no_space" ] || fail "low space, old cursor: cursor is '$(st cursor)'"
+rm -rf "$T/home/.local/share"
+
 # 4b. A skipped install is not undone by a later path in the same start: the claude fallback
 # (claude absent) and the self-update opt-in both stay off, and nothing is downloaded at all.
 reset; printf '#!/bin/sh\necho 0.9\n' >"$T/home/.local/bin/agy"; chmod +x "$T/home/.local/bin/agy"

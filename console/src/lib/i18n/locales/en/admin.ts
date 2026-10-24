@@ -7,6 +7,14 @@
 import type { admin as jaAdmin } from "../ja/admin.ts";
 
 export const admin: Record<keyof typeof jaAdmin, string> = {
+  "tenant.mcp_oauth_title": "MCP OAuth",
+  "tenant.mcp_oauth_allow": "Allow apps to connect through MCP OAuth",
+  "tenant.mcp_oauth_hint": "Enabled by default. Turning this off revokes all existing OAuth connections for this tenant and blocks new ones. Personal Access Tokens are unaffected. Turning it on again requires apps to reconnect.",
+  "tenant.mcp_oauth_disable_title": "Disable MCP OAuth?",
+  "tenant.mcp_oauth_disable_body": "All OAuth app connections for this tenant will be revoked. This cannot be undone by enabling the switch again.",
+  "tenant.mcp_oauth_load_failed": "Could not load the MCP OAuth setting.",
+  "tenant.mcp_oauth_save_failed": "Could not save the MCP OAuth setting.",
+
   // --- admin (AdminTab; super_admin / tenant_admin) ---
   "admin.title": "Admin",
   "admin.forbidden": "You don't have permission (super_admin only).",
@@ -706,12 +714,12 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mcp_secret_policy": "Credentials",
   "admin.mcp_user_secret": "Each member enters the credential",
   "admin.mcp_headers_hint":
-    "Values are stored encrypted and distributed to every member. Put a bearer token in the Authorization header.",
+    "Values are stored encrypted and distributed to every member. For a plain bearer token, choose Bearer token instead.",
   "admin.mcp_headers_names_hint":
     "Header names only; each member fills in the values in their own workspace.",
   "admin.mcp_user_secret_hint":
     "Only the endpoint and the header names are distributed; each member enters the values in their own workspace. A value distributed here is readable in plaintext inside every member's container.",
-  "admin.mcp_url_hint": "The MCP endpoint URL. Put credentials in a header, not in the URL.",
+  "admin.mcp_url_hint": "The MCP endpoint URL. Put credentials in the authentication below, not in the URL.",
   "admin.mcp_enabled_hint": "Disabling keeps the definition but stops distributing it to anyone.",
   "admin.mcp_restart_note":
     "Member workspaces fetch this every 5 minutes, and it takes effect in sessions started after that.",
@@ -1021,6 +1029,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.ws_size_change": "Change",
   "admin.ws_size_unset": "All deployment defaults",
   "admin.ws_home_full": "The home disk is nearly full ({used} of {total} GiB). Installs and writes can fail until space is freed.",
+  "admin.ws_boot_skipped": "A CLI upgrade was skipped at the last start for lack of space: {list}. The old version is still in use; the upgrade is tried again at the next start.",
   "admin.ws_boot_failed": "A CLI failed to install at the last start: {list}. It is tried again at the next start.",
   "admin.ws_size_group": "Workspace size",
   "admin.session_limit_group": "Session limit",
@@ -1044,6 +1053,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.stop_ws_title": "Stop {key}'s workspace",
   "admin.stop_confirm": "Stop",
   "admin.stop_body": "This stops this member's {slug} workspace container.",
+  "admin.stop_body_starting": "This member's {slug} workspace is still starting. Stopping cancels that start; the home is kept and the member can start it again.",
   "admin.rotate_git_title": "Rotate {key}'s git token",
   "admin.rotate_git_confirm": "Rotate",
   "admin.rotate_git_body": "Issues a new token for this member's access to the tenant's internal git repositories, and the current token stops working immediately. Use it when the token may have leaked out of the workspace.",
@@ -1310,7 +1320,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "tenant.tab_external_memory": "External memory access",
   "tenant.ext_memory_title": "Memory from outside Agent Fleet",
   "tenant.ext_memory_note":
-    "Decides whether members of this tenant may use their Agent Fleet memory from an agent outside Agent Fleet (for example Claude Code or Claude Desktop on their own machine) through the Control Plane's MCP endpoint. Each member still has to turn it on for themselves in Settings > Agent memory, and it stays off until they do. The memory text leaves the workspace and reaches that client's model.",
+    "Decides whether members of this tenant may use their Agent Fleet memory from an agent outside Agent Fleet (for example Claude Code or Claude Desktop on their own machine with an MCP token, or an app they connected with OAuth such as claude.ai) through the Control Plane's MCP endpoint. Block hides the memory tools from every token and connected app of this tenant. Each member still has to turn it on for themselves in Settings > Agent memory, and it stays off until they do. The memory text leaves the workspace and reaches that client's model.",
   "tenant.ext_memory_allow": "Allow",
   "tenant.ext_memory_block": "Block",
   "tenant.ext_memory_on_hint": "Members may opt in. Their own setting still starts off.",
@@ -1489,4 +1499,20 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.reason_hint.cache_stalled": "Too many session records and trash archives to judge. Surveying again will not help; tidying the trash will",
   "clean.reason_badge.cache_partial": "Partial",
   "clean.reason_hint.cache_partial": "Too many to check at once; only what was checked is covered. Survey again after deleting to see the rest. Cannot be undone",
+  "admin.mode_mcp_trusted": "MCP sign-in hosts",
+  "admin.mcptrust_title": "Trusted MCP client hosts",
+  "admin.mcptrust_note": "Hosts that may receive the sign-in redirect and serve client metadata when an MCP client connects to this deployment's /mcp with OAuth. Exact host names only (no scheme, port, path or wildcard); loopback clients are always allowed. To let another Agent Fleet deployment sign in to this one's /mcp, add its host here. The change applies to the next request, with no restart.",
+  "admin.mcptrust_hosts": "Hosts (one per line)",
+  "admin.mcptrust_source_admin": "In effect: the list saved here.",
+  "admin.mcptrust_source_env": "In effect: AF_MCP_OAUTH_TRUSTED_HOSTS from the Control Plane's environment (nothing is saved here).",
+  "admin.mcptrust_source_default": "In effect: the built-in default (nothing is saved here and AF_MCP_OAUTH_TRUSTED_HOSTS is unset).",
+  "admin.mcptrust_none": "No host is trusted: only loopback clients can sign in.",
+  "admin.mcptrust_reset": "Reset to default",
+  "admin.mcptrust_reset_note": "Deletes the saved list. What applies then: {hosts} ({source}).",
+  "admin.mcptrust_fallback_env": "environment variable",
+  "admin.mcptrust_fallback_default": "built-in default",
+  "admin.mcptrust_fallback_none": "none",
+  "admin.mcptrust_not_served": "This deployment does not serve MCP OAuth yet (it needs AF_MCP_ENABLED=true, AF_MCP_OAUTH=1 and an https PUBLIC_BASE_URL), so the list has no effect until it does.",
+  "admin.mcptrust_saved": "Saved.",
+  "admin.mcptrust_unreadable": "The saved list is not valid, so no hosted client is trusted until you save a new list or reset it.",
 };

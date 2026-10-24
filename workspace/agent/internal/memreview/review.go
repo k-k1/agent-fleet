@@ -82,6 +82,8 @@ type Reviewer struct {
 	// Ledger finds the usage row of a lost attempt, if one was written.
 	Ledger  func(LedgerQuery) LedgerHit
 	Backoff time.Duration
+	// CallTimeout bounds one helper call (one window); zero means DefaultCallTimeout.
+	CallTimeout time.Duration
 
 	// hook is called when a stage has been persisted; tests use it to stop the process there.
 	hook func(stage string)
@@ -100,6 +102,13 @@ func New() *Reviewer {
 		Ledger:  ledgerSpend,
 		Backoff: DefaultBackoff,
 	}
+}
+
+func (r *Reviewer) callTimeout() time.Duration {
+	if r.CallTimeout > 0 {
+		return r.CallTimeout
+	}
+	return DefaultCallTimeout
 }
 
 // allowed says whether a review with this trigger may start or continue now. It is asked before a
@@ -288,12 +297,23 @@ func (r *Reviewer) advance(ctx context.Context, run *Run, req Request) (Result, 
 	r.stage("dispatched")
 
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureMemoryReview, Trigger: req.Trigger, Ref: run.Session})
-	reply, callErr := r.Call(ctx, in.Persona, in.Prompt)
+	// Only the call is bounded, and per window: a hung helper must give the one in-flight slot back,
+	// while a long review is many windows, each with its own full budget. callCtx's expiry is told
+	// apart from the caller's own stop by looking at ctx, which only the caller can end.
+	callCtx, cancel := context.WithTimeout(ctx, r.callTimeout())
+	reply, callErr := r.Call(callCtx, in.Persona, in.Prompt)
+	timedOut := callCtx.Err() != nil && ctx.Err() == nil
+	cancel()
 	now = r.Now() // when the call ended: EndedAt is read off this, not off the start
 	at := &run.Attempts[len(run.Attempts)-1]
 	switch {
 	case callErr != nil && ctx.Err() != nil:
 		return Result{}, ctx.Err() // stopped mid-call: the record stays "dispatched" for recovery
+	case callErr != nil && timedOut && !errors.Is(callErr, chatx.ErrDenyAllUnavailable):
+		// The call may have reached a model and was billed up to the kill, so it stays a spent
+		// attempt (unlike ErrDenyAllUnavailable below); the retry budget bounds the repeats.
+		log.Printf("memory review: %s: the helper call timed out after %s", run.Session, r.callTimeout())
+		return r.retryOrFail(run, at, OutcomeFailed, FailureCallTimeout, now)
 	case errors.Is(callErr, chatx.ErrDenyAllUnavailable):
 		// Nothing reached a model: no attempt spent, no call counted. The attempt written before
 		// the call is taken back and only a counter remains, so an unusable pin cannot grow the

@@ -7,9 +7,9 @@ updated: "2026-10"
 
 [English](08-external-memory.md) | 日本語
 
-メンバーは、Agent Fleet の外のエージェント（自分のマシンの Claude Code や Claude Desktop。自分の MCP トークンを持つもの）に、
+メンバーは、Agent Fleet の外のエージェント（自分のマシンで MCP トークンを持つ Claude Code や Claude Desktop、または MCP OAuth で接続した claude.ai などのアプリ）に、
 自分の Agent Fleet メモリの一覧・検索・読み取りを許せます。もう一段階選ぶと保存と忘却も許せます
-（[メンバー編](../member/10-integrations.ja.md)）。このときメモリの本文はワークスペースの外に出て、そのクライアントのモデルに渡ります。
+（[メンバー編](../member/18-agent-memory.ja.md#外部のエージェントから-agent-fleet-のメモリを使う)）。このときメモリの本文はワークスペースの外に出て、そのクライアントのモデルに渡ります。
 秘密情報のスキャンは認証情報を止めますが、顧客名や社内の事情までは止められません。このページは、テナント全体でこれを止める方法です。
 
 ## スイッチ
@@ -29,4 +29,4 @@ updated: "2026-10"
 スイッチを読めないとき（ストアが使えないなど）は、ツールを出さない側に倒します。
 
 変更は [監査ログ](03-audit-usage.ja.md) に `tenant.external_memory` として、`enabled=true` または `enabled=false` つきで残ります。
-変更できるのはテナント管理者だけです。配備全体で `/mcp` エンドポイントを止めるのは運用者の `AF_MCP_ENABLED` で、別のスイッチです。
+変更できるのはテナント管理者と super_admin だけです。配備全体で `/mcp` エンドポイントを止めるのは運用者の `AF_MCP_ENABLED` で、別のスイッチです。

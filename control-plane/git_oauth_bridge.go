@@ -27,6 +27,7 @@ package main
 // "refresh this member's git token".
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -179,7 +180,7 @@ func (a gitOAuthBridgeAPI) refreshJira(w http.ResponseWriter, r *http.Request, m
 			"this tenant no longer has a Jira OAuth app, so the token cannot be refreshed"})
 		return
 	}
-	tok, aerr := jiraRefreshGrant(key, secret, body.RefreshToken)
+	tok, aerr := jiraRefreshGrant(r.Context(), key, secret, body.RefreshToken)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
@@ -187,56 +188,44 @@ func (a gitOAuthBridgeAPI) refreshJira(w http.ResponseWriter, r *http.Request, m
 	writeJSON(w, http.StatusOK, tok)
 }
 
-// jiraRefreshGrant mirrors bbRefreshGrant's retry policy for the same reason: this call
-// sits in front of every rail refresh once the hour-old access token expires, and one
-// blip should not read as "reconnect Jira".
-func jiraRefreshGrant(key, secret, refreshToken string) (bbRefreshToken, *apiError) {
+// jiraRefreshGrant sits in front of every rail refresh once the hour-old access token
+// expires, and one blip should not read as "reconnect Jira". Resets come in bursts, so the
+// backoff is jittered and grows to seconds (jiraRefreshRetry), bounded by the Agent's
+// 20 s call to this bridge.
+//
+// Retrying with the SAME refresh token is safe for the retry window: Atlassian's rotation
+// has a reuse interval (default 10 minutes) during which presenting an already-exchanged
+// token does not trip breach detection. If an attempt reached Atlassian and only the
+// response was lost, the next one is a reuse inside that interval. A permanent 4xx
+// (invalid_grant) returns at once.
+func jiraRefreshGrant(ctx context.Context, key, secret, refreshToken string) (bbRefreshToken, *apiError) {
 	payload, _ := json.Marshal(map[string]string{
 		"grant_type": "refresh_token", "client_id": key, "client_secret": secret,
 		"refresh_token": refreshToken,
 	})
-	const attempts = 3
-	var last *apiError
-	for i := 0; i < attempts; i++ {
-		if i > 0 {
-			time.Sleep(time.Duration(i) * 300 * time.Millisecond)
-		}
-		req, err := http.NewRequest("POST", jiraTokenURL, strings.NewReader(string(payload)))
-		if err != nil {
-			return bbRefreshToken{}, internalErr(err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := bbHTTPClient.Do(req)
-		if err != nil {
-			last = &apiError{http.StatusBadGateway, "jira_unreachable", err.Error()}
-			continue
-		}
-		if resp.StatusCode != http.StatusOK {
-			b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-			resp.Body.Close()
-			if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
-				return bbRefreshToken{}, &apiError{http.StatusBadRequest, "invalid_grant",
-					fmt.Sprintf("jira refused the refresh (%d): %s", resp.StatusCode, strings.TrimSpace(string(b)))}
-			}
-			last = &apiError{http.StatusBadGateway, "jira_error",
-				fmt.Sprintf("jira refresh failed: %d", resp.StatusCode)}
-			continue
-		}
-		var out bbRefreshToken
-		derr := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out)
-		resp.Body.Close()
-		if derr != nil {
-			return bbRefreshToken{}, &apiError{http.StatusBadGateway, "jira_error", derr.Error()}
-		}
-		if out.AccessToken == "" {
-			return bbRefreshToken{}, &apiError{http.StatusBadGateway, "jira_error", "refresh returned no access_token"}
-		}
-		if out.ExpiresIn <= 0 {
-			out.ExpiresIn = 3600
-		}
-		return out, nil
+	status, b, err := jiraRefreshRetry.post(ctx, payload)
+	if err != nil {
+		return bbRefreshToken{}, &apiError{http.StatusBadGateway, "jira_unreachable", err.Error()}
 	}
-	return bbRefreshToken{}, last
+	if status != http.StatusOK {
+		if transientStatus(status) {
+			return bbRefreshToken{}, &apiError{http.StatusBadGateway, "jira_error",
+				fmt.Sprintf("jira refresh failed: %d", status)}
+		}
+		return bbRefreshToken{}, &apiError{http.StatusBadRequest, "invalid_grant",
+			fmt.Sprintf("jira refused the refresh (%d): %s", status, clipBody(b))}
+	}
+	var out bbRefreshToken
+	if derr := json.Unmarshal(b, &out); derr != nil {
+		return bbRefreshToken{}, &apiError{http.StatusBadGateway, "jira_error", derr.Error()}
+	}
+	if out.AccessToken == "" {
+		return bbRefreshToken{}, &apiError{http.StatusBadGateway, "jira_error", "refresh returned no access_token"}
+	}
+	if out.ExpiresIn <= 0 {
+		out.ExpiresIn = 3600
+	}
+	return out, nil
 }
 
 // bbRefreshToken is the wire shape returned to the Agent — deliberately only the three

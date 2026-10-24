@@ -254,6 +254,11 @@ function ToolVersions({ running, cliRelease }: { running: boolean; cliRelease?: 
                       {tr("env.boot_failed", { reason: tr(bootReasonKey(t.bootInstall.reason)) })}
                     </span>
                   )}
+                  {t.bootInstall?.status === "skipped" && t.bootInstall.reason === "no_space" && (
+                    <span className="tool-ver-pin" title={tr("env.boot_skipped_title")}>
+                      {tr("env.boot_skipped")}
+                    </span>
+                  )}
                   {t.overridden && (
                     <span className="tool-ver-badge" title={tr("env.override_title")}>
                       override
@@ -370,6 +375,50 @@ function Toolchains({
   );
 }
 
+// useToolchainLatest asks the agent (jdk-latest / node-latest) which patch Install would
+// fetch for the selected major, and whether that is newer than `current`, the version in
+// use ("" = not installed). The agent compares; nothing here parses a version.
+//
+// Keyed on `current` too, so a finished install or update re-asks. Every lookup starts
+// from nothing, and a failed one leaves nothing: an earlier "newer patch" must not come
+// back after a restart that already brought the toolchain up to date, and offline the
+// buttons simply read as before.
+function useToolchainLatest(
+  endpoint: "jdk-latest" | "node-latest",
+  enabled: boolean,
+  selected: string,
+  current: string,
+): { installVersion: string; newerPatch: string } {
+  const [ans, setAns] = useState<{ major: string; current: string; latest: string; update: boolean } | null>(
+    null,
+  );
+  useEffect(() => {
+    setAns(null);
+    if (!enabled) return;
+    let live = true;
+    api(`api/env/${endpoint}?major=${encodeURIComponent(selected)}`)
+      .then((r) => {
+        if (!live) return;
+        setAns(
+          r?.latest
+            ? { major: selected, current: r.current || "", latest: r.latest, update: !!r.update_available }
+            : null,
+        );
+      })
+      .catch(() => {
+        if (live) setAns(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [endpoint, enabled, selected, current]);
+  const fresh = ans && ans.major === selected && ans.current === current ? ans : null;
+  return {
+    installVersion: fresh && !current ? fresh.latest : "",
+    newerPatch: fresh && current && fresh.update ? fresh.latest : "",
+  };
+}
+
 // Java is the one toolchain whose picker offers versions that are not on disk yet:
 // java_available is "installed ∪ installable" (agent jdk.go), because on ECS
 // /usr/lib/jvm is empty and EVERY JDK has to be downloaded into the home volume. Until
@@ -379,6 +428,12 @@ function Toolchains({
 // This row makes that one button: it downloads into the home volume now, and since the
 // agent resolves JAVA_HOME by globbing the JDK dirs at each launch, the next session
 // picks it up with no restart.
+//
+// An installed major shows the exact version JAVA_HOME resolves to (java_versions) and,
+// when the agent reports a newer GA patch (GET /env/jdk-latest), offers the same install
+// job as an update: the agent puts the new patch in the home volume and prefers the newer
+// copy over /usr/lib/jvm. The agent does the version comparison; a failed lookup (no
+// egress) just shows no update.
 function JavaRow({
   d,
   update,
@@ -398,6 +453,8 @@ function JavaRow({
   const installed: string[] = d.java_installed || [];
   const selected: string = d.java || "";
   const needsInstall = !!selected && !installed.includes(selected);
+  const current: string = (selected && d.java_versions?.[selected]) || "";
+  const { installVersion, newerPatch } = useToolchainLatest("jdk-latest", running && !!selected, selected, current);
 
   const install = async () => {
     if (!selected) return;
@@ -408,8 +465,24 @@ function JavaRow({
       reload(); // refresh java_installed either way
     };
     const res = await apiJSON("api/env/jdk-install", "POST", { major: selected });
-    if (!res || res.error) {
-      finish(res?.error?.message || "");
+    if (!res) {
+      finish("");
+      return;
+    }
+    // The agent runs one download at a time and answers a POST made during another
+    // major's download (another tab) with THAT job — installing, done or failed, since
+    // it can end between the agent's check and its reply. Either way ours never started,
+    // so this comes before any state handling: following it would report our request as
+    // done or failed.
+    if (res.major && res.major !== selected) {
+      setInstalling("");
+      toast(tr("env.java_install_busy", { v: res.major }));
+      return;
+    }
+    // An API failure carries {error: {code, message}}; the installer's own failure is
+    // state "error" with error as a plain string.
+    if (res.error && typeof res.error === "object") {
+      finish(res.error.message || "");
       return;
     }
     if (res.state === "done" || res.state === "error") {
@@ -428,7 +501,9 @@ function JavaRow({
         } catch {
           p = null;
         }
-        if (p && p.state === "done") {
+        // Another major in the status means our job ended and a newer one (another tab)
+        // replaced it; the refetch in finish shows what is on disk now.
+        if (p && (p.state === "done" || (p.major && p.major !== selected))) {
           finish();
           return { stop: true };
         }
@@ -462,13 +537,26 @@ function JavaRow({
             </select>
             {needsInstall && (
               <button disabled={!running || !!installing} onClick={install}>
-                {installing ? tr("env.java_installing") : tr("env.java_install")}
+                {installing
+                  ? tr("env.java_installing")
+                  : installVersion
+                    ? tr("env.java_install_version", { v: installVersion })
+                    : tr("env.java_install")}
+              </button>
+            )}
+            {current && <span className="muted env-java-version">{current}</span>}
+            {!needsInstall && newerPatch && (
+              <button disabled={!running || !!installing} onClick={install}>
+                {installing ? tr("env.java_installing") : tr("env.java_update", { v: newerPatch })}
               </button>
             )}
           </span>
         )}
       </Row>
       {needsInstall && <p className="muted ds-note">{tr("env.java_install_note", { v: selected })}</p>}
+      {!needsInstall && newerPatch && (
+        <p className="muted ds-note">{tr("env.java_update_note", { cur: current, v: newerPatch })}</p>
+      )}
     </>
   );
 }
@@ -503,9 +591,16 @@ function NodeRow({
   const selected: string = d.node || "system";
   // "system" is the image's own node — never an install target.
   const needsInstall = selected !== "system" && !!selected && !installed.includes(selected);
+  const current: string = (selected !== "system" && d.node_versions?.[selected]) || "";
+  const { installVersion, newerPatch } = useToolchainLatest(
+    "node-latest",
+    running && selected !== "system" && !!selected,
+    selected,
+    current,
+  );
 
   const install = async () => {
-    if (!needsInstall) return;
+    if (selected === "system" || !selected) return;
     setInstalling(selected);
     const finish = (msg?: string) => {
       setInstalling("");
@@ -513,8 +608,20 @@ function NodeRow({
       reload(); // refresh node_installed either way
     };
     const res = await apiJSON("api/env/node-install", "POST", { major: selected });
-    if (!res || res.error) {
-      finish(res?.error?.message || "");
+    if (!res) {
+      finish("");
+      return;
+    }
+    // Same as Java: a reply about another major (another tab's download, in any state)
+    // means ours never started; and only an object error is an API failure, the
+    // installer's own failure is state "error" with a string.
+    if (res.major && res.major !== selected) {
+      setInstalling("");
+      toast(tr("env.node_install_busy", { v: res.major }));
+      return;
+    }
+    if (res.error && typeof res.error === "object") {
+      finish(res.error.message || "");
       return;
     }
     if (res.state === "done" || res.state === "error") {
@@ -533,7 +640,8 @@ function NodeRow({
         } catch {
           p = null;
         }
-        if (p && p.state === "done") {
+        // Another major in the status means our job ended and a newer one replaced it.
+        if (p && (p.state === "done" || (p.major && p.major !== selected))) {
           finish();
           return { stop: true };
         }
@@ -567,12 +675,25 @@ function NodeRow({
           </select>
           {needsInstall && (
             <button disabled={!running || !!installing} onClick={install}>
-              {installing ? tr("env.node_installing") : tr("env.node_install")}
+              {installing
+                ? tr("env.node_installing")
+                : installVersion
+                  ? tr("env.node_install_version", { v: installVersion })
+                  : tr("env.node_install")}
+            </button>
+          )}
+          {current && <span className="muted env-node-version">{current}</span>}
+          {!needsInstall && newerPatch && (
+            <button disabled={!running || !!installing} onClick={install}>
+              {installing ? tr("env.node_installing") : tr("env.node_update", { v: newerPatch })}
             </button>
           )}
         </span>
       </Row>
       {needsInstall && <p className="muted ds-note">{tr("env.node_install_note", { v: selected })}</p>}
+      {!needsInstall && newerPatch && (
+        <p className="muted ds-note">{tr("env.node_update_note", { cur: current, v: newerPatch })}</p>
+      )}
     </>
   );
 }

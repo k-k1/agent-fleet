@@ -23,6 +23,7 @@ type cpDeps struct{ m *manager }
 var _ mcpsrv.CP = cpDeps{}
 
 func (d cpDeps) Store() store.Store               { return d.m.store }
+func (d cpDeps) CallLog() *mcpsrv.CallLog         { return &d.m.mcpCalls }
 func (d cpDeps) Custodian() mcpsrv.KeyCustodian   { return d.m.custodian }
 func (d cpDeps) Master32() []byte                 { return d.m.master32 }
 func (d cpDeps) TokenSignMaster() []byte          { return d.m.tokenSignMaster() }
@@ -30,7 +31,14 @@ func (d cpDeps) EvictMembershipCache(mid string)  { d.m.evictMembershipCache(mid
 func (d cpDeps) TenantSel(r *http.Request) string { return tenantSel(r) }
 func (d cpDeps) ScopeRank(scope string) int       { return scopeRank(scope) }
 func (d cpDeps) HashPAT(token string) string      { return hashPAT(token) }
-func (d cpDeps) EgressDefaults() []string         { return defaultEgressAllowlist }
+func (d cpDeps) ServerIdentity(ctx context.Context) mcpsrv.ServerIdentity {
+	return mcpsrv.ServerIdentity{
+		Version:       buildVersion,
+		BrandLabel:    d.m.brand.get(ctx).label,
+		PublicBaseURL: d.m.publicBaseURL,
+	}
+}
+func (d cpDeps) EgressDefaults() []string { return defaultEgressAllowlist }
 func (d cpDeps) StopWorkspaceByMembership(ctx context.Context, mid string) error {
 	return d.m.stopWorkspaceByMembership(ctx, mid)
 }

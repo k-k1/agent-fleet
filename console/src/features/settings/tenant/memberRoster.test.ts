@@ -1,6 +1,6 @@
 // The roster's state words, "needs attention" and the filter / sort / search (#2385 phase 1).
 import { describe, it, expect } from "vitest";
-import { attentionReasons, bootFailures, diskLevel, homeFullFigures, nextMemberHomePressure, matchesFilter, matchesQuery, rosterCounts, rosterState, sortMembers } from "./memberRoster.ts";
+import { attentionReasons, bootFailures, bootSkipped, diskLevel, homeFullFigures, memberStopAvailable, nextMemberHomePressure, matchesFilter, matchesQuery, rosterCounts, rosterState, sortMembers } from "./memberRoster.ts";
 import type { Member } from "../parts/adminShared.ts";
 
 const NOW = Date.parse("2026-10-20T12:00:00Z");
@@ -100,7 +100,7 @@ const withDisk = (used: number, total?: number) => m({ disk: { used, total } });
 describe("default attention order", () => {
   it("leads with a full disk, whatever order the members arrive in", () => {
     const err = m({ user_key: "zed", disk: { used: 96 * GIB, total: 100 * GIB } });
-    const warn = m({ user_key: "alice", disk: { used: 90 * GIB, total: 100 * GIB } });
+    const warn = m({ user_key: "alice", disk: { used: 92 * GIB, total: 100 * GIB } });
     const stopped = m({ user_key: "carol", state: "stopped", auto_stop: AUTO_STOP });
     const calm = m({ user_key: "bob" });
     const orders = [
@@ -115,9 +115,12 @@ describe("default attention order", () => {
 });
 
 describe("disk level and attention", () => {
-  it("warns at 85 %, errors at 95 % or under 2 GiB free", () => {
+  it("warns by the member notice's rule (over 90 % or under 2 GiB free), errors at 95 % or under 2 GiB free", () => {
     expect(diskLevel(withDisk(84 * GIB, 100 * GIB))).toBe("ok");
-    expect(diskLevel(withDisk(85 * GIB, 100 * GIB))).toBe("warn");
+    // 85-90 % used with plenty free: the detail shows no notice, so the card must not warn.
+    expect(diskLevel(withDisk(85 * GIB, 100 * GIB))).toBe("ok");
+    expect(diskLevel(withDisk(90 * GIB, 100 * GIB))).toBe("ok");
+    expect(diskLevel(withDisk(91 * GIB, 100 * GIB))).toBe("warn");
     expect(diskLevel(withDisk(95 * GIB, 100 * GIB))).toBe("error");
     // 50 % used but only 1.5 GiB left of 3 GiB.
     expect(diskLevel(withDisk(1.5 * GIB, 3 * GIB))).toBe("error");
@@ -133,7 +136,8 @@ describe("disk level and attention", () => {
 
   it("adds a disk reason to needs-attention, stopped members included", () => {
     expect(attentionReasons(m({ state: "stopped", disk: { used: 96 * GIB, total: 100 * GIB } }), NOW)).toEqual(["disk_error"]);
-    expect(attentionReasons(withDisk(90 * GIB, 100 * GIB), NOW)).toEqual(["disk_warn"]);
+    expect(attentionReasons(withDisk(92 * GIB, 100 * GIB), NOW)).toEqual(["disk_warn"]);
+    expect(attentionReasons(withDisk(88 * GIB, 100 * GIB), NOW)).toEqual([]);
   });
 
   it("sorts the fullest first and members with no ratio last", () => {
@@ -142,7 +146,7 @@ describe("disk level and attention", () => {
       m({ user_key: "ok", disk: { used: 10 * GIB, total: 100 * GIB } }),
       m({ user_key: "used-only", disk: { used: 90 * GIB } }),
       m({ user_key: "err", disk: { used: 96 * GIB, total: 100 * GIB } }),
-      m({ user_key: "warn", disk: { used: 90 * GIB, total: 100 * GIB } }),
+      m({ user_key: "warn", disk: { used: 92 * GIB, total: 100 * GIB } }),
     ];
     expect(sortMembers(list, "disk", NOW).map((x) => x.user_key)).toEqual(["err", "warn", "ok", "none", "used-only"]);
   });
@@ -153,6 +157,14 @@ describe("boot-install failure", () => {
     expect(attentionReasons(m({ state: "stopped", boot_failed: { claude: "no_space" } }), NOW)).toEqual(["boot_install"]);
     expect(attentionReasons(m({ state: "stopped", boot_failed: {} }), NOW)).toEqual([]);
     expect(attentionReasons(m({ state: "stopped" }), NOW)).toEqual([]);
+  });
+
+  it("does not treat a skipped upgrade as a failure", () => {
+    const bf = { claude: "skipped_no_space", agy: "no_space" };
+    expect(bootFailures(bf)).toEqual([["agy", "no_space"]]);
+    expect(bootSkipped(bf)).toEqual(["claude"]);
+    expect(attentionReasons(m({ state: "stopped", boot_failed: { claude: "skipped_no_space" } }), NOW)).toEqual([]);
+    expect(attentionReasons(m({ state: "stopped", boot_failed: bf }), NOW)).toEqual(["boot_install"]);
   });
 
   it("lists the failures by tool", () => {
@@ -209,5 +221,15 @@ describe("homeFullFigures", () => {
     expect(homeFullFigures(gap)).toBeNull();
     flag = nextMemberHomePressure(flag, own(50));
     expect(flag).toBe(false);
+  });
+});
+
+describe("memberStopAvailable", () => {
+  it("offers Force-stop for running and for starting, not for stopped or unread", () => {
+    expect(memberStopAvailable({ running: true })).toBe(true);
+    expect(memberStopAvailable({ running: false, starting: true })).toBe(true);
+    expect(memberStopAvailable({ running: false })).toBe(false);
+    expect(memberStopAvailable({})).toBe(false);
+    expect(memberStopAvailable(null)).toBe(false);
   });
 });

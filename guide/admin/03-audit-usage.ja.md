@@ -38,6 +38,10 @@ updated: "2026-09"
   `engine.<エンジン>.model.complete` はモデルの取り込みと揃え、`engine.hf_token` と
   `engine.civitai_token` は API トークンの登録と削除です。これらの行はテナントではなく配備に
   属するので、配備管理者の監査画面に出ます。
+  メンバーの受信箱（[メンバー 12](../member/12-collaboration.ja.md#メンバーに頼む-受信箱)）は `inbox.send`（種類と宛先。本文は残しません）、
+  `inbox.claim`・`inbox.decline`・`inbox.release`・`inbox.done`・`inbox.withdraw`・`inbox.pr`・`inbox.block` / `inbox.unblock`・
+  `inbox.launch` を書きます。テナントのスイッチは `limit_board.set` と `tenant.member_defaults`、開発用サインインの
+  切り替えは配備の行として `dev_idp.set` を書きます。
 - **記録されない**：単なる**読み取り**（ファイルを開いて見ただけ、一覧を眺めただけ）は既定で残りません。
   そして **ターミナルの生の入出力（画面に流れる文字そのもの）は保存しません**。パスワードやトークンが
   紛れ込むリスクを避けるための設計です。

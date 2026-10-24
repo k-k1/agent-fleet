@@ -357,7 +357,8 @@ The design and the staged rollout — log-only → allowlist → enforce — are
   administrator still has to approve.
 
 The container side is only wired when `AF_EGRESS_PROXY_ADDR` is set, which injects the
-proxy environment into every workspace; **the default is off, and nothing changes**.
+proxy environment into every workspace on every target (what each target takes, and what stays
+out of the proxy, is [07 §7.8](07-security.md)); **the default is off, and nothing changes**.
 
 ## 3.9 Self-hosted engines
 

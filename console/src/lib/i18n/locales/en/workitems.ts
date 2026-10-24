@@ -168,6 +168,7 @@ export const workitems: Record<keyof typeof jaWorkitems, string> = {
   "wi.prompt_target_key": "Work item: {key}",
   "wi.prompt_url": "URL: {url}",
   "wi.prompt_read_github": "Read the body and comments with `gh issue view {key}` (or `gh pr view {key}` for a PR).",
+  "wi.prompt_read_bitbucket": "Read the body and comments with `bkt pr view {id}` (and `bkt pr comments {id}` for the comments).",
   "wi.prompt_read_generic": "Read the body and comments at the URL above (or through the MCP server if one is available).",
   "wi.prompt_investigate": "Investigate first and propose an approach before you start implementing.",
   "wi.prompt_review": "Review this pull request. Check the diff, CI and review history, and point out concrete problems if you find any. If a finding needs real implementation work, confirm the approach before starting it.",

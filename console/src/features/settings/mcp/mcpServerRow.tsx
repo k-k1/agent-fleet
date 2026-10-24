@@ -1,11 +1,13 @@
 import { Icon } from "../../../ui/Icon.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { agentOf } from "../../../agents/registry.ts";
-import { useT } from "../../../lib/i18n/index.ts";
-import type { McpServer, ProbeResult } from "./mcpWire.ts";
-import { needsMemberSecrets } from "./mcpWire.ts";
+import { tMaybe, useT } from "../../../lib/i18n/index.ts";
+import { isOAuthRequired, needsMemberSecrets } from "./mcpWire.ts";
+import type { McpServer, OAuthReport, ProbeResult } from "./mcpWire.ts";
 import { Meta } from "../parts/mcpForm.tsx";
 import { EgressNote } from "./EgressNote.tsx";
+import { OAuthPanel, useOAuthFlow } from "./mcpOAuthPanel.tsx";
+import type { OAuthReturn } from "./mcpOAuth.ts";
 import type { EgressCheck } from "./egressCheck.ts";
 
 export function OriginBadge({ origin }: { origin: string }) {
@@ -25,6 +27,7 @@ export function ServerRow({
   onToggle,
   onDelete,
   onEnterSecrets,
+  failedReturn,
 }: {
   s: McpServer;
   probe?: ProbeResult;
@@ -35,9 +38,12 @@ export function ServerRow({
   onToggle: (on: boolean) => void;
   onDelete: () => void;
   onEnterSecrets: () => void;
+  // The failed sign-in the browser just came back from, for the DCR retry offer.
+  failedReturn?: OAuthReturn | null;
 }) {
   const tr = useT();
   const askConfirm = useConfirm();
+  const oauth = useOAuthFlow(s, failedReturn);
   const del = async () => {
     const ok = await askConfirm({
       title: tr("mcp.del_title"),
@@ -52,8 +58,10 @@ export function ServerRow({
   return (
     <li className={"ssm-item mcp-item" + (s.enabled ? "" : " off")}>
       <div className="ssm-item-head">
-        <span className="ssm-alias mcp-name">{s.name}</span>
-        {s.label && <span className="mcp-label">{s.label}</span>}
+        <span className={"ssm-alias mcp-title" + (s.label ? "" : " mcp-name")} title={s.label ? s.name : undefined}>
+          {s.label || s.name}
+        </span>
+        {s.label && <span className="mcp-id">{s.name}</span>}
         <OriginBadge origin={s.origin} />
         <span className="mcp-transport">{s.transport === "stdio" ? tr("mcp.tp_stdio") : tr("mcp.tp_http")}</span>
         <span className="mcp-actions">
@@ -97,6 +105,7 @@ export function ServerRow({
         {s.transport === "stdio" && Object.keys(s.env || {}).length > 0 && (
           <Meta k={tr("mcp.f_env")} v={Object.keys(s.env || {}).join(", ")} />
         )}
+        {s.transport === "http" && s.auth === "oauth" && <Meta k={tr("mcp.f_auth")} v={tr("mcp.auth_oauth")} mono={false} />}
         {s.transport === "http" && Object.keys(s.headers || {}).length > 0 && (
           <Meta k={tr("mcp.f_headers")} v={Object.keys(s.headers || {}).join(", ")} />
         )}
@@ -123,7 +132,8 @@ export function ServerRow({
       {s.origin === "tenant" && (
         <p className="ps-note">{s.userSecret ? tr("mcp.tenant_user_secret_note") : tr("mcp.tenant_note")}</p>
       )}
-      <ProbeView probe={probe} />
+      <OAuthPanel flow={oauth} />
+      <ProbeView probe={probe} onSignIn={oauth.active ? () => void oauth.signIn() : undefined} />
     </li>
   );
 }
@@ -140,9 +150,10 @@ export function targetsText(tg: { assistant: boolean; session: boolean } | undef
 // ProbeView renders one connection-test outcome (docs/log/48 §10). On failure the server's
 // own stderr / body tail is shown verbatim — a broken command almost always explains
 // itself there, and paraphrasing it would only hide the cause.
-export function ProbeView({ probe }: { probe?: ProbeResult }) {
+export function ProbeView({ probe, onSignIn }: { probe?: ProbeResult; onSignIn?: () => void }) {
   const tr = useT();
   if (!probe) return null;
+  if (isOAuthRequired(probe) && probe.oauth) return <OAuthProbeView report={probe.oauth} onSignIn={onSignIn} />;
   if (!probe.ok) {
     return (
       <div className="mcp-probe bad">
@@ -168,6 +179,64 @@ export function ProbeView({ probe }: { probe?: ProbeResult }) {
         </div>
         {probe.revision && <div className="muted">{tr("mcp.test_revision", { rev: probe.revision })}</div>}
         {probe.tools && probe.tools.length > 0 && <div className="muted mono">{probe.tools.join(", ")}</div>}
+      </div>
+    </div>
+  );
+}
+
+// OAuthProbeView is the test result of a server that wants an OAuth sign-in: what it offers,
+// and anything the Agent refused to trust. The Sign in button appears for a saved server whose
+// authentication is OAuth (onSignIn); otherwise the note says how to get there.
+function OAuthProbeView({ report, onSignIn }: { report: OAuthReport; onSignIn?: () => void }) {
+  const tr = useT();
+  const problems = report.problems || [];
+  const regLabel = (reg: string[]) =>
+    reg.length === 0
+      ? tr("mcp.oauth_reg_none")
+      : reg.map((r) => (r === "cimd" ? tr("mcp.oauth_reg_cimd") : r === "dcr" ? tr("mcp.oauth_reg_dcr") : r)).join(" / ");
+  const problemText = (p: { code: string; issuer?: string }) => {
+    return (
+      tMaybe(`mcp.oauth_problem_${p.code}`, { issuer: p.issuer || "?" }) ??
+      tr("mcp.oauth_problem_unknown", { code: p.code })
+    );
+  };
+  return (
+    <div className="mcp-probe info" data-testid="mcp-oauth-probe">
+      <Icon name="info" />
+      <div>
+        <div>{tr("mcp.oauth_required")}</div>
+        {onSignIn ? (
+          <button className="primary mcp-btn" onClick={onSignIn}>
+            {tr("mcp.oauth_probe_signin")}
+          </button>
+        ) : (
+          <div className="muted">{tr("mcp.oauth_soon")}</div>
+        )}
+        {report.challengedScope && <div className="muted mono">{tr("mcp.oauth_scope", { scope: report.challengedScope })}</div>}
+        {report.scopesSupported && report.scopesSupported.length > 0 && (
+          <div className="muted mono">{tr("mcp.oauth_scopes", { scopes: report.scopesSupported.join(" ") })}</div>
+        )}
+        {(report.servers || []).map((s) => (
+          <div className="mcp-probe-as" key={s.issuer}>
+            <div className="mono">
+              {tr("mcp.oauth_as", { issuer: s.issuer })}
+              {report.selected === s.issuer && <> {tr("mcp.oauth_as_selected")}</>}
+            </div>
+            <div className="muted">{tr("mcp.oauth_reg", { paths: regLabel(s.registration || []) })}</div>
+            <div className="muted">{tr(s.s256 ? "mcp.oauth_s256_yes" : "mcp.oauth_s256_no")}</div>
+            <div className="muted">{tr(s.issParam ? "mcp.oauth_iss_yes" : "mcp.oauth_iss_no")}</div>
+          </div>
+        ))}
+        {problems.length > 0 && (
+          <div className="mcp-probe-problems">
+            <div>{tr("mcp.oauth_problems")}</div>
+            <ul>
+              {problems.map((p, i) => (
+                <li key={i}>{problemText(p)}</li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     </div>
   );

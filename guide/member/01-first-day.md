@@ -14,10 +14,9 @@ you see depends on what your company set up: Google, Microsoft, or another sign-
 If there are several, use your company account with the one your administrator told you
 to use (only permitted accounts can get in).
 
-Once you're logged in, a **tenant selector** appears at the very top of the screen. A tenant
-is a group such as a department, and your workspaces are separated per tenant. In most cases
-there is only one, so you can just proceed. If you belong to several, pick the tenant you
-want to work in (see the [README](README.md) for the names of the screen areas).
+A tenant is a group such as a department, and your workspaces are separated per tenant. In
+most cases there is only one, so you can just proceed. If you belong to several, a **Tenant**
+selector appears in the account menu at the top right; pick the tenant you want to work in there (see the [README](README.md) for the names of the screen areas).
 
 ## Home and the welcome card — 2 steps + picking a goal
 
@@ -27,15 +26,15 @@ off. The first time, a card titled **"Welcome to Agent Fleet"** sits at the top 
 are checked off automatically. Only the top two items are required for everyone.
 
 1. **Start workspace**: the "Start" button brings up your own private work environment. While it's starting you'll see "Starting…", and when it finishes it shows "Running" and the item is checked off. Nothing that follows (including connecting) works until you do this.
-2. **Connect an agent**: from "Connect", sign in to Claude, Codex, or opencode. Connecting at least one checks the item off (see [06 Agents](06-agents.md) for connection details). If your administrator has chosen the team's agent, the step names it ("Your team's default is Claude"). Start with that one; any other agent still completes the step.
+2. **Connect an agent**: from "Connect", sign in to Claude, Codex, or opencode. Connecting at least one checks the item off (see [09 Agents](09-agents.md) for connection details). If your administrator has chosen the team's agent, the step names it ("Your team's default is Claude"). Start with that one; any other agent still completes the step.
 
 Next comes a two-way choice: **"Where do you want to start?"** (you can use both later).
 
 - **Ask AI a question or for a translation**: "Start chatting" opens a chat with the
-  assistant right away. You need neither git nor a terminal ([07 Chat and memos](07-chat-memo.md)).
+  assistant right away. You need neither git nor a terminal ([10 Chat and memos](10-chat-memo.md)).
 - **Develop in a repository**: "Go to dev setup" expands the remaining steps.
-  1. **Connect a git provider** (optional): sign in to GitHub / Bitbucket. It is required if you'll clone or push private repositories ([03 Repositories and git](03-code.md)).
-  2. **Clone a repository and start a session**: from **"Start"** on the workspace action bar you can clone and launch in one go ([02 Sessions](02-sessions.md)).
+  1. **Connect a git provider** (optional): sign in to GitHub / Bitbucket. It is required if you'll clone or push private repositories ([06 Repositories and git](06-code.md)).
+  2. **Clone a repository and start a session**: from **"Start"** on the workspace action bar you can clone and launch in one go ([03 Starting sessions](03-starting-sessions.md)).
 
 The card leaves Home once you create your first session or start your first chat. From then
 on Home shows three sections:
@@ -45,12 +44,13 @@ on Home shows three sections:
 - **Start something**: "Get started" (clone and launch) and "Start chatting".
 
 Home is what an empty screen shows, so closing every pane ("Close all") brings you back to it.
-To open it from anywhere, use **Home** on the workspace action bar, or the leader key `g h`.
+To open it from anywhere, use **Home** on the workspace action bar (on a phone it may be inside the bar's **⋯**), or the leader key `g h`.
 
 ### It's fine to close the card
 
 Pressing **"Later"** at the bottom right dismisses the card. This is remembered for your
-account, so the card does not come back when you sign in from another device. You can reopen the same
+membership in this tenant, so the card does not come back when you sign in from another device;
+in another tenant you belong to, it is shown again. You can reopen the same
 checklist at any time from **"Getting-started guide"** in the account menu at the top right.
 The regular guide for looking up operations opens from **"User guide"** in the same menu.
 
@@ -73,7 +73,7 @@ Open **"Add"** from **Repositories** in the left pane and leave **Kind** on **Gi
 
 Press **"Clone"** and the fetch starts; when it finishes, the repository appears in the
 **Repositories** list. From **"Launch"** on that row you can start your first session right
-away. See [03 Repositories and git](03-code.md) for detailed steps and
+away. See [06 Repositories and git](06-code.md) for detailed steps and
 common pitfalls.
 
 If you are starting something that does not exist anywhere yet, there is nothing to clone. Use
@@ -87,7 +87,7 @@ Yes, stop it if you like. Even if you stop the workspace from the workspace acti
 the following remain:
 
 - The repositories you cloned, and the changes inside them (including uncommitted work).
-- The list of sessions you were running. They remain as **stopped**, and the next time you start the workspace you can resume them with a click (for the cases that can't be resumed, see [02 Sessions](02-sessions.md)).
+- The list of sessions you were running. They remain as **stopped**, and the next time you start the workspace you can resume them with a click (for the cases that can't be resumed, see [05 Stopping and tidying up](05-stopping-and-tidying.md)).
 - Your git and agent **connections (logins)**. They persist across workspace stop / start.
 
 Even while the workspace is stopped, the session list is still visible in the left pane
@@ -99,7 +99,7 @@ inactivity (idle auto-stop). It saves resources, so if stopping it explicitly fe
 chore, it's fine to just leave it.
 
 However, **uncommitted changes exist only inside the workspace**. For long-running work,
-committing and pushing frequently is the safe habit ([03](03-code.md)).
+committing and pushing frequently is the safe habit ([06](06-code.md)).
 
 ### "A new version is available" and the **Restart needed** badge
 
@@ -118,9 +118,9 @@ See the [release history](../../deploy/release/notes/SUMMARY.md) for what each r
 ### End-of-first-day checklist
 
 - Did you commit and push the changes that matter? (Only what you pushed survives outside the workspace.)
-- Sessions you want to keep running can simply stay as they are. If you've reached a good stopping point, stopping them via "Stop (resumable later)" in the ⋯ menu means a single click resumes them next time ([02](02-sessions.md)).
+- Sessions you want to keep running can simply stay as they are. If you've reached a good stopping point, stopping them via "Stop (resumable later)" in the ⋯ menu means a single click resumes them next time ([05](05-stopping-and-tidying.md)).
 - The workspace can be stopped by you, or left alone for idle auto-stop. Either is fine.
 
 For the things that tend to trip people up on day one (claude showing a login screen, a session
 that won't resume, a failed clone, and so on), see
-[11 Troubleshooting](11-troubleshooting.md).
+[21 Troubleshooting](21-troubleshooting.md).

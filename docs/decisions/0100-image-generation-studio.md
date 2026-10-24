@@ -483,7 +483,7 @@ conversation.
   highlights, edit log, history, knowledge notes, studio settings), `studioId` on the pane kind, the
   wand and branch in the session list, the transcript-model stripper, the attachment capability flag,
   removal of `FAMILY_CARDS` and `PromptHelpModal`, i18n, the screenshot stub.
-- **Docs**: the image-generation section of `guide/member/04-files`, `guide/ref/features`, af-usage
+- **Docs**: the image-generation section of `guide/member/13-images`, `guide/ref/features`, af-usage
   knowledge.
 - **Tests**: pure (draft validation, locks, rewind, since folding) / DOM (highlights, locks, cards) /
   Go (negative controls for the guard, locks, JSONL, advertising toggle, tools/list fingerprint) / one

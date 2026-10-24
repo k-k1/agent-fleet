@@ -13,6 +13,8 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
@@ -129,19 +131,38 @@ func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Op == "interrupt" {
-		// The chat stop button. In opencode's subagent detail view Escape turns into a
-		// navigation key, so prefix Up as /input's Escape special case does.
-		keys := []string{"Escape"}
-		if opencodeInSubagentView(tn) {
-			keys = []string{"Up", "Escape"}
+		// The chat stop button. Which key stops a turn depends on the kind (docs/log/133 §1).
+		plan := tuiInterruptFor(meta.Kind, func() bool { return opencodeInSubagentView(tn) })
+		// Ctrl+C is not a stop on an idle CLI: it can exit the CLI or signal the pane's
+		// process, and docs/log/133 measured it only on a running turn. Send it only when
+		// the kind's own transcript says "working"; anything else is refused, not guessed.
+		if plan.needsWorking {
+			if st := interruptLiveState(meta.Kind, meta); st != "working" {
+				httpx.WriteErr(w, http.StatusConflict, "not_working",
+					"the turn is not running (state: "+stateOrUnknown(st)+"); nothing to stop")
+				return
+			}
 		}
-		if err := sendNamedKeys(pane, keys); err != nil {
+		// A multi-key stop sleeps between keys while holding only the shared lease, so a
+		// second click would interleave its keys and the later ones would stop the NEXT
+		// queued turn. A stop already under way absorbs it.
+		if _, busy := interruptsInFlight.LoadOrStore(name, struct{}{}); busy {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"sent": name, "op": req.Op, "interrupt_measured": plan.measured, "coalesced": true,
+			})
+			return
+		}
+		defer interruptsInFlight.Delete(name)
+		if err := sendNamedKeysGap(pane, plan.keys, plan.gap); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 			return
 		}
-		// Escape starts no turn, so do not mark working (same reason as /input: no Stop
-		// hook fires and the session would stick at "working").
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name, "op": req.Op})
+		// An interrupt starts no turn, so do not mark working (same reason as /input: no Stop
+		// hook fires and the session would stick at "working"). "interrupt_measured" is false
+		// for a kind whose stop key was never measured: the keys went out, the effect is unknown.
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"sent": name, "op": req.Op, "interrupt_measured": plan.measured,
+		})
 		return
 	}
 	// start / steer go through the same delivery as /input's {prompt} path (submitPromptTUI),
@@ -342,6 +363,10 @@ func HandleSessionRespond(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusNotImplemented, "respond_unsupported", respondKeysMsg)
 			return
 		}
+		if errors.Is(err, agents.ErrInteractionNotPending) {
+			httpx.WriteErr(w, http.StatusConflict, errCodeInteractionNotPending, err.Error())
+			return
+		}
 		httpx.WriteErr(w, http.StatusConflict, "respond_failed", err.Error())
 		return
 	}
@@ -535,4 +560,70 @@ type managedThreadSettingsWire struct {
 	DynamicModel  bool   `json:"dynamicModel"`
 	DynamicEffort bool   `json:"dynamicEffort"`
 	DynamicMode   bool   `json:"dynamicMode"`
+}
+
+// tuiInterrupt is the key sequence that stops a running turn in a Terminal pane.
+type tuiInterrupt struct {
+	keys []string
+	// gap separates the keys; it is the whole delay between two presses of the same key.
+	gap time.Duration
+	// measured is false when docs/log/133 holds no observation of this kind's stop key.
+	measured bool
+	// needsWorking: the keys are harmful on an idle CLI, so send them only to a running turn.
+	needsWorking bool
+}
+
+// interruptsInFlight holds the names of sessions whose stop keys are being sent.
+var interruptsInFlight sync.Map
+
+// interruptLiveState is the kind's transcript-derived state, replaceable in tests. Only the
+// kinds whose stop is Ctrl+C need it.
+var interruptLiveState = func(kind string, m session.Meta) string {
+	switch kind {
+	case session.KindCursor:
+		return cursor.LiveState(m)
+	case session.KindCopilot:
+		return copilot.LiveState(m)
+	}
+	return ""
+}
+
+func stateOrUnknown(st string) string {
+	if st == "" {
+		return "unknown"
+	}
+	return st
+}
+
+// opencodeDoubleEscGap sits inside opencode 2.x's window: the first Esc only arms "esc
+// again to interrupt" and the arm lapses after a few seconds (measured: two Esc 0.5 s apart
+// interrupt, one Esc does nothing). The gap is the time /turn holds the request.
+const opencodeDoubleEscGap = 600 * time.Millisecond
+
+// tuiInterruptFor picks the stop keys from docs/log/133 §1, per kind. Never add a sequence
+// without an observation there: a key the CLI ignores reads as "Stop did nothing".
+//   - claude, codex, kiro: Esc interrupts (and sends what was queued).
+//   - opencode 2.x: two Esc within ~1 s. In the subagent detail view Escape only navigates,
+//     so Up goes first (as /input does); the double Esc after it is not measured there.
+//   - cursor: Esc cancels the queued follow-up and leaves the turn running; Ctrl+C stops it.
+//   - copilot: Esc is ignored while a prompt is pending; Ctrl+C cancels the operation.
+//   - anything else (agy was never measured; shell, ssm, ...): the historic single Escape,
+//     reported with measured=false.
+func tuiInterruptFor(kind string, inOpencodeSubagentView func() bool) tuiInterrupt {
+	const defaultGap = 90 * time.Millisecond
+	switch kind {
+	case session.KindClaude, session.KindCodex, session.KindKiro:
+		return tuiInterrupt{keys: []string{"Escape"}, gap: defaultGap, measured: true}
+	case session.KindOpencode:
+		if inOpencodeSubagentView() {
+			// Not in docs/log/133: Up then Escape is the historic sequence, the second Escape
+			// is added for 2.x's double-Esc and its effect here was never observed.
+			return tuiInterrupt{keys: []string{"Up", "Escape", "Escape"}, gap: opencodeDoubleEscGap}
+		}
+		return tuiInterrupt{keys: []string{"Escape", "Escape"}, gap: opencodeDoubleEscGap, measured: true}
+	case session.KindCursor, session.KindCopilot:
+		return tuiInterrupt{keys: []string{"C-c"}, gap: defaultGap, measured: true, needsWorking: true}
+	default:
+		return tuiInterrupt{keys: []string{"Escape"}, gap: defaultGap, measured: false}
+	}
 }

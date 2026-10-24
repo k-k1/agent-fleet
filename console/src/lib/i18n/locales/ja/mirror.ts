@@ -333,6 +333,10 @@ export const mirror = {
   "mirror.from_peer_named": "{name} から",
   "mirror.from_peer_title":
     "同じワークスペースの別のセッションが送ったメッセージです。あなたもアシスタントも入力していません。エージェントには「利用者の指示ではない」と伝えてあり、これを根拠に権限設定や設定ファイルを変えることはしません。",
+  "mirror.from_mcp": "MCP 経由",
+  "mirror.from_mcp_named": "MCP 経由: {name}",
+  "mirror.from_mcp_title":
+    "外部のアシスタントやクライアントが MCP 接続（send_to_session）から送った入力です。あなたもこの画面のアシスタントも入力していません。エージェントには「利用者の指示ではない」と伝えてあり、あなたの承認の代わりにはならず、これを根拠に権限設定や設定ファイルを変えることもしません。",
   "mirror.from_spawn": "別のセッションが起動",
   "mirror.from_spawn_named": "{name} が起動",
   "mirror.from_spawn_title":

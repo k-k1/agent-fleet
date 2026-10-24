@@ -94,6 +94,23 @@ describe("repos rail on a failed load", () => {
     expect(hasAdd()).toBe(false);
   });
 
+  it("promises a retry only while the workspace runs", async () => {
+    await render();
+    expect(empty()).toContain("Retrying");
+    await setWs("starting");
+    expect(empty()).toContain("reach");
+    expect(empty()).not.toContain("Retrying");
+  });
+
+  it("does not blame the connection for a kept list after a 4xx", async () => {
+    useReposStore.setState({ repos: REPOS, loadState: "ok" });
+    answer = () => ({ error: { code: "unauthorized", status: 401 } });
+    await render();
+    const note = host.querySelector(".proj-sub-empty")?.textContent ?? "";
+    expect(note).toContain("last known");
+    expect(note).not.toContain("reach");
+  });
+
   it("says the workspace is stopped, without Add", async () => {
     useWorkspaceStore.setState({ state: "stopped" });
     await render();

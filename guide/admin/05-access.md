@@ -17,6 +17,9 @@ read-only for you, and one is yours to register but somebody else's to approve.
 | **Allowed networks** | yours |
 | **Integration OAuth apps** | yours |
 
+The last section, development sign-in, is not one of them: it is a deployment-wide switch
+that only a super_admin sees.
+
 ## Allowed networks
 
 By default your tenant is reachable from anywhere the deployment itself is reachable
@@ -40,6 +43,26 @@ Two more things worth knowing:
   who may use a valid session; it is not a substitute for sign-in.
 - It applies to your tenant. Someone who also belongs to another tenant reaches that
   one under its own rules.
+
+## MCP OAuth
+
+Under **Tenant settings → Allowed networks**, the **MCP OAuth** panel controls whether external apps may connect to this tenant through OAuth. It appears only when the deployment serves MCP OAuth. The tenant setting is enabled by default; a tenant administrator or deployment administrator can change it.
+
+Clear **Allow apps to connect through MCP OAuth**, choose **Save**, and confirm. Existing OAuth grants for this tenant are revoked and audited immediately. The tenant disappears from consent choices, code exchange and refresh fail, and its OAuth access tokens stop working at `/mcp`. Other tenants and Personal Access Tokens are unaffected.
+
+An OAuth connection's `read` and `write` scopes also reach members' Agent Fleet memory, exactly as a token's do: the consent page says so. Whether they can is decided by **External memory access** ([08](08-external-memory.md)) and each member's own setting, not by this panel. Block there hides the memory tools from OAuth connections and tokens alike.
+
+Enabling the switch again permits new connections; it does not restore revoked connections. Members reconnect from their apps. They can also revoke individual connections in **Settings → Connections → MCP tokens → Connected apps**.
+
+### Trusted client hosts (deployment-wide — super_admin only)
+
+**Admin → Deployment → MCP sign-in hosts** lists the client hosts this deployment's MCP OAuth server trusts: the hosts that may receive the sign-in redirect and serve client metadata. It is deployment-wide, not per tenant, and only a super administrator sees it. Loopback clients (a CLI on the member's own machine) are always allowed.
+
+- **To let another Agent Fleet deployment sign in to this one's `/mcp`, add its host here** (the host name only, for example `af.example.com`).
+- **Removing a vendor works**: delete `chatgpt.com` from the list and save, and that vendor can no longer sign in. Saving an empty list trusts no hosted client at all.
+- Entries are exact host names: no `https://`, port, path or wildcard, and no IP address. A mistake is refused with a message and nothing is saved.
+- **Which list applies**: the list saved here wins; with nothing saved, the `AF_MCP_OAUTH_TRUSTED_HOSTS` environment variable; with that unset, the built-in default (`claude.ai`, `claude.com`, `chatgpt.com`). The screen says which one is in effect. **Reset to default** deletes the saved list so the other two apply again.
+- A change applies from the next request, with no restart, to new sign-ins, client registration, and token requests. A connection whose redirect host (or, for a metadata-URL client, whose own host) was removed can no longer refresh its token or redeem a pending code; an access token already issued works until it expires (at most one hour). Loopback connections are not affected. Every change is audited (`mcp_oauth.trusted_hosts.set` / `.reset`, with the old and new lists).
 
 ## Integration OAuth apps
 
@@ -158,6 +181,26 @@ deployment administrator's chapter on sign-in
   method: a sign-in page with no buttons is a dead end, so the setting is ignored.
 - If someone holds both accounts, they can link the second method to their own account
   themselves, under their personal account settings. You have nothing to do.
+
+## Development sign-in (dev OIDC IdP — super_admin only)
+
+The **Dev sign-in** section of the Admin modal switches the Control Plane's development OIDC IdP
+(ADR 0116) for the whole deployment. **It is on by default** and super_admin only, so it does not
+appear in your tenant settings. There is no per-workspace switch: while it is on (and preview subdomains exist) every workspace's
+client is served.
+
+- The section shows the issuer, how many workspaces hold a client (one is created when a workspace starts while
+  the IdP is offered, and kept from then on), and the one rule that matters:
+  **a production app must never trust this issuer**, because it signs in as any member without a
+  password.
+- Turning it off takes effect without a restart (another Control Plane replica follows within a few
+  seconds): every `/dev-idp/…` URL answers 404. **Workspaces' client registrations are kept**, so turning it on
+  again hands the same client ids and secrets back.
+- **Members can use it only with preview subdomains.** Without a preview domain
+  (`AF_PREVIEW_DOMAIN`) the section says so, the `/dev-idp/…` URLs answer 404, nothing is injected into
+  workspaces and workspaces report it unavailable. The switch itself stays operable.
+- It shows as locked when the operator set `AF_DEV_IDP=0`, and cannot be on without
+  `PUBLIC_BASE_URL`; the section says which one applies. Every change is audited (`dev_idp.set`).
 
 ---
 

@@ -8,6 +8,7 @@ import type {
 } from "../../../core/api/client.ts";
 import type { Session } from "../../../types/session.ts";
 import { streamReplies, type Settings } from "../../../lib/settings.ts";
+import { useLiveHold } from "../liveHold.ts";
 import { useDraft } from "../../../lib/draft.ts";
 import { useAttachDraft } from "../../../lib/attachDraft.ts";
 import { useBackClose } from "../../../lib/backClose.ts";
@@ -120,18 +121,22 @@ export function useMirrorState({
   const dirGone = sessionMeta?.resumable === false && !alive;
   const [pending, setPending] = useState<Question[] | null>(null); // currently-awaiting AskUserQuestion
   const [pendingText, setPendingText] = useState<string>(""); // prose streamed just before the pending question
-  // The reply claude is still writing (#1250), sent by the Agent only while a turn runs and only
-  // when this poll asked for it (?live=1). Only claude's route streams it; the per-kind setting
+  // The reply claude is still writing (#1250), sent by the Agent only while a turn runs (or has
+  // just ended and its row has not landed) and only when this poll asked for it (?live=1). Only claude's route streams it; the per-kind setting
   // turns it off. Line by line and typewriter (#1274) differ only in how LiveReplyCard shows it:
   // the request is the same. Read through a ref inside the poll loop, which outlives renders.
   const liveMode = sessionMeta?.kind === "claude" ? streamReplies(settings, sessionMeta?.kind) : "off";
   const liveOn = liveMode !== "off";
   const liveOnRef = useRef(liveOn);
   liveOnRef.current = liveOn;
-  const [liveText, setLiveText] = useState("");
+  const [liveRaw, setLiveText] = useState("");
   useEffect(() => {
     if (!liveOn) setLiveText(""); // switched off: drop what is shown now, not at the next poll
   }, [liveOn]);
+  // What is shown: the poll's text, held across the poll between claude's Stop and the
+  // transcript row that replaces it (liveHold.ts). Neither the setting switched off nor the
+  // previous session's leftover state (stateSession lags a pane's session switch) is held.
+  const liveText = useLiveHold(liveRaw, turns, session, liveOn && stateSession === session);
   const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
   const [pendingPerm, setPendingPerm] = useState<string | null>(null); // tool-permission prompt awaiting allow/deny
   // A MANAGED session's tool approval. Kept apart from pendingPerm because the two are

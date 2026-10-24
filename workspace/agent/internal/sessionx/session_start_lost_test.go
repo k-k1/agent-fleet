@@ -1,6 +1,7 @@
 package sessionx
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +25,23 @@ func TestWriteCodexReleasingErrMapsTranscriptLost(t *testing.T) {
 		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"transcript_lost"`) {
 			t.Fatalf("%v: got %d %s", err, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// A backup restore that failed on I/O reaches the Console as 409 transcript_restore_failed, with
+// an English message carrying the cause, never a Japanese literal.
+func TestWriteCodexReleasingErrMapsTranscriptRestore(t *testing.T) {
+	err := fmt.Errorf("%w: %w", claude.ErrTranscriptRestore, errors.New("disk full"))
+	rec := httptest.NewRecorder()
+	if !writeCodexReleasingErr(rec, err) {
+		t.Fatal("not handled")
+	}
+	body := rec.Body.String()
+	if rec.Code != http.StatusConflict || !strings.Contains(body, `"transcript_restore_failed"`) || !strings.Contains(body, "disk full") {
+		t.Fatalf("got %d %s", rec.Code, body)
+	}
+	if strings.ContainsFunc(body, func(r rune) bool { return r > 0x7f }) {
+		t.Fatalf("non-English message: %s", body)
 	}
 }
 

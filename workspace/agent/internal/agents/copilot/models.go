@@ -79,7 +79,7 @@ func probeModels() ([]agents.ModelChoice, error) {
 	if bin == "" {
 		bin = "copilot"
 	}
-	cmd := exec.Command(bin, "--no-remote", "--no-remote-export")
+	cmd := exec.Command(bin, privacyFlags(bin)...)
 	cmd.Dir = work
 	cmd.Env = append(os.Environ(),
 		"COPILOT_HOME="+home,

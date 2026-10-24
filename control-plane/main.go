@@ -243,9 +243,10 @@ func main() {
 	egressProxyAddr := os.Getenv("AF_EGRESS_PROXY_ADDR")
 	if addr := egressProxyAddr; addr != "" {
 		pu := "http://" + addr
-		mgr.extraEnv = append(mgr.extraEnv,
-			"http_proxy="+pu, "https_proxy="+pu, "HTTP_PROXY="+pu, "HTTPS_PROXY="+pu,
-			"no_proxy=localhost,127.0.0.1,::1", "NO_PROXY=localhost,127.0.0.1,::1")
+		mgr.egressProxyEnv = []string{
+			"http_proxy=" + pu, "https_proxy=" + pu, "HTTP_PROXY=" + pu, "HTTPS_PROXY=" + pu,
+			"no_proxy=localhost,127.0.0.1,::1", "NO_PROXY=localhost,127.0.0.1,::1"}
+		mgr.extraEnv = append(mgr.extraEnv, mgr.egressProxyEnv...)
 		log.Printf("egress: routing workspace egress through proxy %s (log-only)", addr)
 	}
 
@@ -315,6 +316,8 @@ func main() {
 		// deployment_setting and wins over it, so this is a resolver, not a fixed value.
 		brand: newBrandResolver(newBrandConfig(os.Getenv("AF_BRAND_COLOR"), os.Getenv("AF_BRAND_LABEL")), mgr.store),
 	}
+
+	mgr.brand = cfg.brand
 
 	// P3-9 idle-stop (docs/log/19): a background reaper halts idle claude sessions
 	// (tier 1) and stops cold workspaces (tier 2).

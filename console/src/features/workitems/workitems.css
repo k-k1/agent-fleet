@@ -747,3 +747,41 @@
 .wi-dopen {
   text-decoration: none;
 }
+
+/* Placeholder for a fact the live read has not returned yet. Row height matches a text line so the
+   answer fills the row in place (#2631). */
+.wi-dskel {
+  display: block;
+  height: 10px;
+  width: 7em;
+  max-width: 60%;
+  border-radius: 4px;
+  background: var(--panel2);
+  animation: wi-dskel-pulse 1.2s ease-in-out infinite;
+}
+.wi-dfacts dd:has(> .wi-dskel) {
+  display: flex;
+  align-items: center;
+  min-height: 1.4em;
+}
+.wi-dstart-pending {
+  min-height: 150px;
+}
+.wi-dskel-head {
+  width: 5em;
+}
+.wi-dskel-field {
+  width: 100%;
+  max-width: none;
+  height: 26px;
+}
+@keyframes wi-dskel-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wi-dskel {
+    animation: none;
+  }
+}

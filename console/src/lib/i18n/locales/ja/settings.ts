@@ -5,6 +5,37 @@
 // 1 ファイルで、フロントの並列セッションが全員ここへ追記＝毎回確実に衝突していた。
 // ja が正本。新しいキーはここに足し、同じキーを ../en/ の同名ファイルにも足す。
 export const settings = {
+  "tokens.apps_title": "接続済みアプリ",
+  "tokens.apps_intro": "OAuth で MCP に接続したアプリです。取り消すと、その接続のアクセスはすぐに終了します。",
+  "tokens.apps_client": "アプリ",
+  "tokens.apps_redirect": "戻り先ホスト",
+  "tokens.apps_tenant": "テナント",
+  "tokens.apps_created": "接続日",
+  "tokens.apps_self_declared": "自己申告の名前（未確認）",
+  "tokens.apps_never_used": "未使用",
+  "tokens.apps_empty": "接続済みアプリはありません。",
+  "tokens.apps_revoke_title": "アプリの接続を取り消しますか？",
+  "tokens.apps_revoke_body": "{name} の接続を取り消しますか？再びアクセスするには、アプリから接続し直す必要があります。",
+  "tokens.apps_load_failed": "接続済みアプリを読み込めませんでした。",
+  "tokens.apps_revoke_failed": "接続を取り消せませんでした。もう一度お試しください。",
+  "tokens.calls_loading": "読み込み中…",
+  "tokens.calls_tool_error": "ツールがエラーを返しました",
+  "tokens.calls_toggle": "最近の呼び出し",
+  "tokens.calls_hint": "/mcp への直近 50 件のリクエストです。メモリ上にだけ保持します。Control Plane が複数あるときは各レプリカが別々に持つため、ここにはこのレプリカが受けたものだけが出ます。再起動後は空になることがあります。",
+  "tokens.calls_refresh": "更新",
+  "tokens.calls_empty": "記録されたリクエストはまだありません。",
+  "tokens.calls_load_failed": "最近の呼び出しを読み込めませんでした。",
+  "tokens.calls_time": "時刻",
+  "tokens.calls_status": "ステータス",
+  "tokens.calls_rpc": "JSON-RPC",
+  "tokens.calls_era": "プロトコル",
+  "tokens.calls_client": "クライアント",
+  "tokens.calls_headers": "ヘッダ",
+  "tokens.calls_latency": "所要時間",
+  "tokens.calls_tools": "ツール {n} 件",
+  "tokens.calls_unparsed": "（JSON-RPC ではない）",
+  "tokens.calls_hdr_version": "MCP-Protocol-Version",
+
   "settings.language": "言語",
   // 招待前の着地面（docs/log/61 §61.10.2・P7-2）。★ 失敗ではなく、招待制デプロイの正常な
   // 最初の一歩として書く。管理者に伝えるべき「自分のアドレス」を必ず読ませる。
@@ -92,7 +123,7 @@ export const settings = {
   "tokens.can_memory_write": "Agent Fleet のメモリ（書き込み）: memory_save・memory_forget（write スコープ、かつ設定が「読み書き」であること）。",
   "tokens.can_memory_setting_pre": "メモリを使うには、さらに ",
   "tokens.can_memory_setting_link": "設定 > エージェントメモリ",
-  "tokens.can_memory_setting_post": " で「Agent Fleet の外からメモリを使わせる」を「読み取りのみ」か「読み書き」にする必要があります。既定はオフで、トークンのスコープはこの設定が許す範囲をさらに絞るだけです。",
+  "tokens.can_memory_setting_post": " で「Agent Fleet の外からメモリを使わせる」を「読み取りのみ」か「読み書き」にする必要があります。既定はオフで、トークンのスコープはこの設定が許す範囲をさらに絞るだけです。テナント管理者が「外部からのメモリ利用」をブロックしている場合は、トークンや設定にかかわらず、これらのメモリのツールは一覧に出ません。",
   "tokens.can_stopped": "メモリはワークスペースの中にあるため、停止中はメモリのツールが「ワークスペースを起動してください」と答えます。Console から起動して、もう一度試してください。",
   "tokens.th_expiry": "期限",
   "tokens.th_last_used": "最終使用",
@@ -327,8 +358,9 @@ export const settings = {
   "agents.muse_update": "Muse Code を更新",
   "agents.muse_update_note": "ピンされた版を再取得します（約 299MB・数分かかります）。",
   "agents.muse_updating": "Muse Code を更新中…（約 299MB・数分かかります）。稼働中の muse セッションは再起動するまで古い版で動き続けます。",
-  "agents.muse_model_note":
-    "Muse Code の一覧には、各モデルの「-contributor」版が並びます。モデルも料金も同じですが、そちらを選ぶと会話（セッション間のメッセージを含む）が Meta の製品改善に使われることがあります。Muse Code 自身の既定はこの版です。ここの「既定」は、その条件が付かない最新のモデルを Agent Fleet が選ぶという意味です。",
+  "agents.muse_contributor": "contributor モード",
+  "agents.muse_contributor_note":
+    "オンにすると、Muse Code の会話（セッション間のメッセージを含む）が Meta の製品改善に使われることがあります（Muse Code の contributor モード）。既定はオフです。各セッションは作成時のモードを、停止・再開や Agent の再起動をまたいでも保ちます。変更は、以後に作成するセッションと、次回以降のアシスタント・AI 補助に反映されます。",
   "agents.remote_control": "リモートコントロール",
   "agents.note_claude_remote_control":
     "変更後に起動する Claude セッションから反映されます。このワークスペースの CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC が設定されていると、リモートコントロールは起動しません。オンの間は、以後に起動する Claude セッションをこの変数なしで起動するので、リリースノート・PR/MR の状態・利用可否の確認も、この変数では抑止されなくなります。テレメトリ・エラーレポート・自動更新は止めたままです。Claude の settings.json の env に同じ変数が書かれている場合や、組織が Trusted Devices を必須にしている場合は、接続できません。詳細はガイド（エージェント）を参照してください。",

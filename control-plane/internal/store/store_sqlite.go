@@ -1376,6 +1376,9 @@ func membershipCascade(membershipID string) []struct {
 		{`DELETE FROM user_limit WHERE membership_id=?`, id},
 		{`DELETE FROM engine_access_grant WHERE membership_id=?`, id},
 		{`DELETE FROM pat WHERE membership_id=?`, id},
+		{`DELETE FROM mcp_oauth_token WHERE membership_id=?`, id},
+		{`DELETE FROM mcp_oauth_grant WHERE membership_id=?`, id},
+		{`DELETE FROM mcp_client_oauth_state WHERE membership_id=?`, id},
 		// sso_session was dropped by 0011 (ssm_profile replaced it). Deleting from a
 		// table that does not exist only fails at run time in SQLite, so list tables
 		// that really exist and nothing else.

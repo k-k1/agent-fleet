@@ -1,8 +1,10 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
 # ANY = registered without a method. Taken with every routeSwitch on (routes_golden_test.go).
-# count: 697
+# count: 722
 ANY /
+ANY /.well-known/oauth-authorization-server/mcp-oauth
+ANY /.well-known/oauth-protected-resource/mcp
 ANY /agent-fleet
 ANY /agent-fleet/
 GET /api/admin/audit
@@ -16,6 +18,7 @@ PUT /api/admin/dev-idp
 GET /api/admin/ec2-pool
 POST /api/admin/ec2-pool/reserve-outdated
 DELETE /api/admin/ec2-pool/slots/{id}
+POST /api/admin/ec2-pool/slots/{id}/force-stop
 DELETE /api/admin/ec2-pool/slots/{id}/replace
 PUT /api/admin/ec2-pool/slots/{id}/replace
 GET /api/admin/egress
@@ -62,6 +65,9 @@ POST /api/admin/engines/{key}/replace-box
 PUT /api/admin/engines/{key}/spot
 GET /api/admin/host
 GET /api/admin/idp
+DELETE /api/admin/mcp-oauth/trusted-hosts
+GET /api/admin/mcp-oauth/trusted-hosts
+PUT /api/admin/mcp-oauth/trusted-hosts
 GET /api/admin/mcp-servers
 POST /api/admin/mcp-servers
 DELETE /api/admin/mcp-servers/{id}
@@ -95,6 +101,8 @@ GET /api/admin/tenants/{slug}/limit-board
 PUT /api/admin/tenants/{slug}/limit-board
 PUT /api/admin/tenants/{slug}/limits
 PUT /api/admin/tenants/{slug}/login
+GET /api/admin/tenants/{slug}/mcp-oauth
+PUT /api/admin/tenants/{slug}/mcp-oauth
 GET /api/admin/tenants/{slug}/member-defaults
 PUT /api/admin/tenants/{slug}/member-defaults
 GET /api/admin/tenants/{slug}/members
@@ -311,8 +319,10 @@ GET /api/env/databases
 POST /api/env/databases/{engine}/{action}
 GET /api/env/jdk-install
 POST /api/env/jdk-install
+GET /api/env/jdk-latest
 GET /api/env/node-install
 POST /api/env/node-install
+GET /api/env/node-latest
 GET /api/env/tool-versions
 GET /api/env/toolchains
 PUT /api/env/toolchains
@@ -409,6 +419,9 @@ GET /api/internal-git/repos/{name}/tree
 GET /api/limit-board
 GET /api/limit-board/me
 PUT /api/limit-board/me
+GET /api/mcp-oauth/grants
+DELETE /api/mcp-oauth/grants/{id}
+GET /api/mcp-oauth/grants/{id}/calls
 GET /api/mcp-servers
 POST /api/mcp-servers
 POST /api/mcp-servers/tenant-refresh
@@ -416,6 +429,10 @@ POST /api/mcp-servers/test
 DELETE /api/mcp-servers/{id}
 PUT /api/mcp-servers/{id}
 POST /api/mcp-servers/{id}/enabled
+DELETE /api/mcp-servers/{id}/oauth
+GET /api/mcp-servers/{id}/oauth
+PUT /api/mcp-servers/{id}/oauth/client
+POST /api/mcp-servers/{id}/oauth/start
 PUT /api/mcp-servers/{id}/secrets
 DELETE /api/me/login-methods
 GET /api/me/login-methods
@@ -442,6 +459,7 @@ GET /api/oauth/jira/callback
 GET /api/pat
 POST /api/pat
 DELETE /api/pat/{id}
+GET /api/pat/{id}/calls
 GET /api/preview/shared
 GET /api/repo-jobs
 DELETE /api/repo-jobs/{id}
@@ -683,10 +701,17 @@ GET /login
 GET /login/{slug}
 GET /manifest.webmanifest
 ANY /mcp
+ANY /mcp-oauth/authorize
+ANY /mcp-oauth/consent
+ANY /mcp-oauth/register
+ANY /mcp-oauth/revoke
+ANY /mcp-oauth/token
+GET /oauth/mcp-client.json
 GET /oauth2/callback
 GET /oauth2/link
 GET /oauth2/login
 GET /oauth2/logout
+GET /oauth2/mcp/callback
 GET /open/browser-attachment/{id}
 GET /open/browser-attachment/{id}/{$}
 GET /preview-auth

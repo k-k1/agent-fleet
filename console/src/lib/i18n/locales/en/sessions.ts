@@ -114,6 +114,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "wsbar.state_title.no_tenant_admin":
     "You do not belong to any tenant yet, so there is no workspace. Add yourself as a member from Admin → Tenants.",
   "wsbar.start_failed": "Could not start the workspace",
+  "wsbar.stop_failed": "Could not stop the workspace",
   "wsbar.start_here": "Start",
   "wsbar.start_here.running": "Start (chat / repository / clone / shell)",
   "wsbar.start_here.queued": "Starting — opens when ready",
@@ -363,6 +364,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "srow.memory_review_empty": "Nothing new since the last review",
   "srow.memory_review_unreadable": "The conversation could not be read",
   "srow.memory_review_failed": "The review got no proposals from this stretch of the conversation",
+  "srow.memory_review_still_running": "The review is still running. Check the memory proposals again in a few minutes",
   "srow.memory_review_off": "The memory review is off (turn it on under Agent memory in settings)",
   "srow.memory_review_busy": "Another review is running",
   "srow.memory_review_daily_cap": "Today's review limit has been reached",

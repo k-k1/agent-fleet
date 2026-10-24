@@ -3,6 +3,25 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.34.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.1) — 2026-10-23
+
+0.34.0 で出た `/mcp` エンドポイントと MCP のサインイン（OAuth）を、ECS のデプロイでも有効にできるように
+なりました。0.34.0 のテンプレートには、これらを設定する手段がありませんでした。
+
+## [0.34.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.0) — 2026-10-23
+
+MCP のサインインが両方向で使えるようになりました。claude.ai や ChatGPT などのリモート MCP クライアントは、
+トークンを貼り付ける代わりにサインインして Agent Fleet に接続できます。OAuth が必要な MCP サーバーには設定から
+サインインでき、セッションから使えます。EC2 プールのスロットは強制停止でき、ホスト側のメモリの余裕が増えました。
+Jira CLI は不安定なネットワークでも動くようになりました。
+
+## [0.33.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.33.0) — 2026-10-21
+
+テナントのメンバー画面が、メンバーごとのカードで稼働中のセッション・最終アクティブ・home ディスク・メモリと CPU を
+示すようになりました。home ディスクの空き不足や CLI のインストール失敗は、壊れたセッションとしてではなく、メンバーと
+テナント管理者に知らされます。コマンドパレットでエージェントメモリを検索でき、Markdown 中のループバック URL は
+ワークスペースのプレビューで開きます。
+
 ## [0.32.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.32.1) — 2026-10-19
 
 0.32.0 の修正リリースです。メモリの提案は頼まない限りバックグラウンドで動かなくなり、止めた opencode セッションの

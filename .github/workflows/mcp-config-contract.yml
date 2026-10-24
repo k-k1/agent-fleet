@@ -89,3 +89,19 @@ jobs:
           go test -tags contract -count=1 -v -timeout 10m \
             -run '^TestDrift${{ matrix.test }}' \
             ./internal/mcpreg/
+      # The scope premises (docs/log/48 §8.4) live in TestDriftMCPScope*, whose names carry
+      # no agent suffix, so the step above never selects them. Their subtests are named by
+      # kind; codex has none (its own scope test is in codex-contract.yml).
+      - name: scope drift (${{ matrix.agent }}, ${{ matrix.version }})
+        if: matrix.agent != 'codex'
+        working-directory: workspace/agent
+        env:
+          E2E_REQUIRE: "1"
+        run: |
+          set -o pipefail
+          go test -tags contract -count=1 -v -timeout 10m \
+            -run '^TestDriftMCPScope(sMerge|CollisionWinner)$/^${{ matrix.agent }}$' \
+            ./internal/mcpreg/ | tee scope.out
+          # A selector that matches nothing exits 0 with "no tests to run": insist on a PASS.
+          grep -q -- '--- PASS: TestDriftMCPScopesMerge/${{ matrix.agent }}' scope.out
+          grep -q -- '--- PASS: TestDriftMCPScopeCollisionWinner/${{ matrix.agent }}' scope.out

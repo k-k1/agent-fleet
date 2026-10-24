@@ -45,6 +45,7 @@ import (
 // listed adjacently on purpose: reading the two columns side by side is the review.
 var cpTenantDelegates = map[string]string{
 	"Store":                         "store",
+	"MCPOAuthServed":                "mcpOAuthServed",
 	"KnownProviderIDs":              "knownProviderIDs",
 	"DeploymentWarnings":            "deploymentWarnings",
 	"EvictMembershipCache":          "evictMembershipCache", // ↕ same type, swappable
@@ -82,6 +83,7 @@ var cpTenantDelegates = map[string]string{
 	"HasSlotPool":                   "hasSlotPool",
 	"TerminateQuarantinedSlot":      "terminateQuarantinedSlot",
 	"ReserveSlotReplacement":        "reserveSlotReplacement",
+	"ForceStopSlot":                 "forceStopSlot",
 	"TenantAdminFor":                "tenantAdminFor",
 	"ResolveMember":                 "resolveMember",
 	"ClientIPFrom":                  "clientIPFrom",

@@ -2,9 +2,11 @@
 
 English | [日本語](0118-mcp-oauth.ja.md)
 
-- Status: **proposed** (2026-10-20). Documentation only: nothing below is built. The code facts
-  were read from the tree on this date; the client behaviour was read from the published
-  documents named under Notes, **not measured** against a live client.
+- Status: **accepted** (2026-10-23; proposed 2026-10-20). Built and shipped in 0.34.0: the
+  authorization server (#2433), the connected-apps list and the tenant switch (#2434), the
+  trusted client hosts setting (#2567), the call record (#2531) and the origin envelope (#2542).
+  Run live against claude.ai, ChatGPT and Claude Code (#2435); Codex over loopback was not run.
+  The dated notes at the end record what changed on the way.
 - Follow-ups: #2433, #2434, #2435
 - Related: [0006](0006-mcp-unified.md) decision 2 (PAT authentication; it named "native OAuth2.1"
   as the later stage, this record is that stage) / [0032](0032-mcp-2026-07-28.md) (left OAuth out
@@ -229,3 +231,89 @@ and a revoke button.
 - Open: whether ChatGPT and claude.ai always send the `scope` from the 401 challenge or request
   every `scopes_supported` entry. Decision 4 handles both (the member narrows), but the default
   shown on the consent page follows whichever they do.
+- 2026-10-21, implementation of decisions 1-5 and the deployment flag (#2433). No decision changed;
+  the points the text left open were settled as follows. The trusted-client list is
+  `AF_MCP_OAUTH_TRUSTED_HOSTS` (exact host names, `none` for loopback only). `resource` is required
+  on `authorize` and on the `authorization_code` request and checked when present on a refresh. A
+  grant's access token carries its own scope, so a refresh may narrow it below the grant's. A
+  second use of a spent refresh token revokes the grant even when it is a concurrent duplicate
+  (one request wins, the rest revoke): there is no grace window. A CIMD host is checked again at
+  `token` but the document is not refetched there. Not built here, as the Consequences already
+  say: the tenant switch and the connected-apps list (#2434); live-client runs (#2435).
+
+- 2026-10-21, #2434: implemented decisions 6 and 7: connected apps beside PATs and a
+  tenant-admin MCP OAuth switch beside source networks. Disabling atomically audits and revokes
+  tenant grants, marks outstanding codes, and serializes with grant creation on the tenant row.
+  Token issuance checks the tenant and revocation mark after insertion; re-enabling cannot
+  resurrect a connection interrupted by disabling. Live-client runs remain tracked by #2435.
+
+- 2026-10-21, #2457: chose option A for ChatGPT's CIMD document. Its preferred
+  `token_endpoint_auth_method` is `private_key_jwt`, but its
+  `token_endpoint_auth_methods_supported` includes `none`. Accept a document when the
+  preferred method is empty or `none`, or the supported list contains `none`; continue
+  refusing a client secret. Our authorization server advertises only `none`, so ChatGPT
+  must use that common method. The client remains public with mandatory S256 PKCE;
+  `/token` still rejects `client_assertion`, Basic authentication and `client_secret`
+  rather than silently ignoring authentication. This clarifies decision 2 without
+  implementing private-key authentication or changing DCR. Option B, verifying
+  `private_key_jwt` against the document's `jwks_uri`, remains possible if a client
+  requires it. The published ChatGPT document is covered by a fixed test fixture;
+  a live ChatGPT connection remains unverified and tracked by #2435.
+
+- 2026-10-21, #2455: chose option 1: omit `scope` from the `/mcp` 401 challenge,
+  keeping `resource_metadata` and the invalid-token error when applicable. This settles
+  the open question above: the #2435 live run found that claude.ai sends the challenged
+  scope, while ChatGPT requests every `scopes_supported` entry. Advertising `scope="read"`
+  therefore prevented claude.ai from ever asking for write tools. Without a challenged
+  scope, clients can request the advertised scopes; the consent page always starts at
+  `read` and offers `write` only when requested, requiring an explicit member choice.
+  The token response reports the granted scope, never a wider scope than requested;
+  `admin:dangerous` remains unavailable. This refines decisions 1 and 4 without changing
+  insufficient-scope handling. `prompt=none` still requires an existing grant covering
+  the entire requested scope: a read grant cannot silently approve a read+write request.
+  Live verification of the changed hosted-client flow remains tracked by #2435.
+
+- 2026-10-22, #2531: `/mcp` calls are now observable. The #2435 live run showed ChatGPT
+  completing the OAuth flow and one call, then listing no tools, while nothing recorded what it
+  had sent or been answered, so the cause (suspected: a 400 from the stateless-era validation,
+  or the 405 on `GET`) could not be seen. Every `/mcp` request now writes one `mcp-call` log
+  line (method, status, JSON-RPC methods per batch item, era and protocol version, which
+  mirrored headers were present, error code and message, tool count of `tools/list`, latency,
+  principal or the refusal reason), and an authenticated one also enters a per-PAT / per-grant
+  in-memory ring (last 50, per replica, not persisted) that only its owner reads at
+  `GET /api/mcp-oauth/grants/{id}/calls` and `GET /api/pat/{id}/calls`. Tokens, `Authorization`
+  values, arguments and results are never recorded. No decision above changes; this is
+  diagnostics only and does not fix ChatGPT.
+
+- 2026-10-22, #2542: input sent over `/mcp` now carries its origin. `send_to_session` used to post
+  the same `/input` the Console uses, so a hosted assistant or PAT client was indistinguishable
+  from the member typing. It now posts to a separate Agent route the Console cannot reach, with
+  the connection (grant or PAT id and its name) taken from the authenticated principal; the Agent
+  prepends `[agent-fleet:mcp via=… connection=… reply=none]`, the Console badges it "Via MCP:
+  <name>", and `[agent-fleet:mcp …]` carries a peer message's authority and its four prohibitions
+  in the Workspace policy. A prompt starting with `[agent-fleet:` is refused, and shell / ssm
+  targets are refused as for peer messages (ADR 0041 decision 5). The envelope names the
+  connection, not a client conversation (MCP 2026-07-28 has no session id). No decision above
+  changes. Guide: `guide/member/19-outside-access.md`.
+
+- 2026-10-23, #2567: the trusted-client list is editable at runtime. A super admin edits it in the
+  Admin modal (`GET`/`PUT`/`DELETE /api/admin/mcp-oauth/trusted-hosts`, CP setting
+  `mcp_oauth_trusted_hosts`, deployment-wide); precedence is the saved value, else
+  `AF_MCP_OAUTH_TRUSTED_HOSTS`, else the built-in default, and "reset" deletes the saved value. The
+  list is read per request (no cache, so replicas agree) at authorize, consent, DCR and the token
+  endpoint; the CIMD cache keeps the document's own redirect URIs and the list is applied on each
+  read, so a change bites immediately in both directions. The saved value is a JSON array, so a
+  saved empty list (`none`) differs from nothing saved. Saving validates strictly (exact host,
+  no scheme / port / path / wildcard / IP literal) and an unreadable saved value trusts nothing
+  rather than falling back to the wider default. Each change is audited with the old and new lists.
+  A grant's recorded redirect host is re-checked against the list on refresh and on code exchange
+  (loopback exempt), so removal also ends existing DCR connections; an issued access token lives
+  out its TTL. No decision above changes. Guide: `guide/admin/05-access.md`.
+
+- 2026-10-23, #2490: the consent page's scope help now says that a grant also reaches Agent Fleet
+  memory: `read` exposes `memory_projects`, `memory_index`, `memory_search` and `memory_read`,
+  `write` adds `memory_save` and `memory_forget`. They are listed only when the tenant's External
+  memory access is Allow, and each call still needs the member's own "Use Agent Fleet memory from
+  outside Agent Fleet" setting (off by default; Read only or Read and write). A tenant Block hides
+  the tools from OAuth connections and tokens alike. Copy only (consent page, Console and guide, en
+  and ja); what a scope grants is unchanged and no decision above changes.

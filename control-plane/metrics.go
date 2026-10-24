@@ -377,10 +377,26 @@ func workspaceStats(ctx context.Context, m *manager, rt runtime.Runtime, state f
 	// threshold on them means something. Everywhere else they are a statfs of the whole host or
 	// a shared EFS, where "your home is nearly full" would blame the member for other people's
 	// bytes. Absent means "do not warn", never "fine".
-	if mp, ok := rt.(machineProfiler); ok && mp.MachineProfile().Dedicated {
+	if homeIsOwnVolume(rt) {
 		out["home_own"] = true
 	}
 	return out
+}
+
+// ownHomeVolumer is the optional Runtime capability of a home that is one member's own
+// volume without the box being theirs (a per-user Kubernetes claim). Dedicated says more —
+// it also lets the Console show the host's RAM and cores as "your machine" — so it cannot
+// be borrowed for this.
+type ownHomeVolumer interface {
+	OwnHomeVolume() bool
+}
+
+func homeIsOwnVolume(rt runtime.Runtime) bool {
+	if mp, ok := rt.(machineProfiler); ok && mp.MachineProfile().Dedicated {
+		return true
+	}
+	oh, ok := rt.(ownHomeVolumer)
+	return ok && oh.OwnHomeVolume()
 }
 
 // stats serves the own-workspace resource chip. It is a workspaceAPI method, wrapped in

@@ -5,6 +5,14 @@
 // 1 ファイルで、フロントの並列セッションが全員ここへ追記＝毎回確実に衝突していた。
 // ja が正本。新しいキーはここに足し、同じキーを ../en/ の同名ファイルにも足す。
 export const admin = {
+  "tenant.mcp_oauth_title": "MCP OAuth",
+  "tenant.mcp_oauth_allow": "MCP OAuth によるアプリの接続を許可する",
+  "tenant.mcp_oauth_hint": "既定で有効です。無効にすると、このテナントの OAuth 接続はすべて取り消され、新規接続も拒否されます。Personal Access Token には影響しません。再度有効にしても、アプリの再接続が必要です。",
+  "tenant.mcp_oauth_disable_title": "MCP OAuth を無効にしますか？",
+  "tenant.mcp_oauth_disable_body": "このテナントの OAuth アプリ接続をすべて取り消します。再度有効にしても、接続は復元されません。",
+  "tenant.mcp_oauth_load_failed": "MCP OAuth 設定を読み込めませんでした。",
+  "tenant.mcp_oauth_save_failed": "MCP OAuth 設定を保存できませんでした。",
+
   // --- 管理（features/settings/AdminTab.tsx。super_admin / tenant_admin）---
   "admin.title": "管理",
   "admin.forbidden": "権限がありません（super_admin のみ）。",
@@ -697,12 +705,12 @@ export const admin = {
   "admin.mcp_secret_policy": "資格情報の扱い",
   "admin.mcp_user_secret": "認証の値は各メンバーが入力する",
   "admin.mcp_headers_hint":
-    "値は暗号化保存され、全メンバーへ配布されます。Bearer トークンは Authorization ヘッダに入れてください。",
+    "値は暗号化保存され、全メンバーへ配布されます。ふつうの Bearer トークンなら、認証で「Bearer トークン」を選んでください。",
   "admin.mcp_headers_names_hint":
     "配布するのはヘッダ名だけです。値は各メンバーが自分のワークスペースで入力します。",
   "admin.mcp_user_secret_hint":
     "配布するのは接続先とヘッダ名だけになり、値は各メンバーが自分のワークスペースに入力します。ここで値を配布すると、そのトークンは全メンバーのコンテナ内で平文で読めます。",
-  "admin.mcp_url_hint": "MCP エンドポイントの URL です。資格情報は URL ではなくヘッダに入れてください。",
+  "admin.mcp_url_hint": "MCP エンドポイントの URL です。資格情報は URL ではなく、下の認証に入れてください。",
   "admin.mcp_enabled_hint": "無効にすると定義は残したまま、どのメンバーにも配布されなくなります。",
   "admin.mcp_restart_note":
     "各メンバーのワークスペースは 5 分ごとに取得します。反映されるのは、その後に起動したセッションからです。",
@@ -1012,6 +1020,7 @@ export const admin = {
   "admin.ws_size_change": "変更",
   "admin.ws_size_unset": "すべて配備の既定",
   "admin.ws_home_full": "home ディスクの空きが少なくなっています（{total} GiB 中 {used} GiB 使用）。空きを作るまで、インストールや書き込みに失敗することがあります。",
+  "admin.ws_boot_skipped": "直近の起動で、空き容量が足りず CLI のアップグレードをスキップしました: {list}。現在のバージョンを引き続き使用中で、次の起動でもう一度試します。",
   "admin.ws_boot_failed": "直近の起動で CLI のインストールに失敗しました: {list}。次の起動でもう一度試します。",
   "admin.ws_size_group": "ワークスペースのサイズ",
   "admin.session_limit_group": "セッション上限",
@@ -1035,6 +1044,7 @@ export const admin = {
   "admin.stop_ws_title": "{key} のワークスペースを停止",
   "admin.stop_confirm": "停止する",
   "admin.stop_body": "このメンバーの {slug} のワークスペースコンテナを停止します。",
+  "admin.stop_body_starting": "このメンバーの {slug} のワークスペースはまだ起動中です。停止すると起動を取りやめます。ホームは残り、メンバーはもう一度起動できます。",
   "admin.rotate_git_title": "{key} の git トークンを再発行",
   "admin.rotate_git_confirm": "再発行する",
   "admin.rotate_git_body": "このメンバーがテナントの内部 git リポジトリにアクセスするためのトークンを新しく発行し、今のトークンはすぐに使えなくなります。トークンがワークスペースの外に漏れたおそれがあるときに使います。",
@@ -1301,7 +1311,7 @@ export const admin = {
   "tenant.tab_external_memory": "外部からのメモリ利用",
   "tenant.ext_memory_title": "Agent Fleet の外からのメモリ利用",
   "tenant.ext_memory_note":
-    "このテナントのメンバーが、Agent Fleet の外のエージェント（自分のマシンの Claude Code や Claude Desktop など）から、コントロールプレーンの MCP エンドポイント経由で自分の Agent Fleet メモリを使えるかを決めます。使うにはメンバー自身も 設定 > エージェントメモリ で有効にする必要があり、それまではオフのままです。メモリの本文はワークスペースの外に出て、そのクライアントのモデルに渡ります。",
+    "このテナントのメンバーが、Agent Fleet の外のエージェント（自分のマシンで MCP トークンを使う Claude Code や Claude Desktop、OAuth で接続した claude.ai などのアプリ）から、コントロールプレーンの MCP エンドポイント経由で自分の Agent Fleet メモリを使えるかを決めます。使うにはメンバー自身も 設定 > エージェントメモリ で有効にする必要があり、それまではオフのままです。ブロックにすると、このテナントのすべてのトークンと接続済みアプリからメモリのツールが見えなくなります。メモリの本文はワークスペースの外に出て、そのクライアントのモデルに渡ります。",
   "tenant.ext_memory_allow": "許可",
   "tenant.ext_memory_block": "ブロック",
   "tenant.ext_memory_on_hint": "メンバーは各自の判断で有効にできます。メンバー側の設定は引き続きオフから始まります。",
@@ -1480,4 +1490,20 @@ export const admin = {
   "clean.reason_hint.cache_stalled": "セッション情報とごみ箱が多すぎて判定できません。点検し直しても変わりません。ごみ箱を整理すると進みます",
   "clean.reason_badge.cache_partial": "一部だけ",
   "clean.reason_hint.cache_partial": "件数が多いため上限まで点検した分だけが対象です。削除後にもう一度点検すると残りが出ます。元に戻せません",
+  "admin.mode_mcp_trusted": "MCP ログイン許可ホスト",
+  "admin.mcptrust_title": "信頼する MCP クライアントのホスト",
+  "admin.mcptrust_note": "この環境の /mcp に MCP クライアントが OAuth で接続するとき、サインイン後のリダイレクトを受け取れるホスト、およびクライアントメタデータを配信できるホストです。ホスト名の完全一致のみ（スキーム・ポート・パス・ワイルドカードは不可）で、ループバックのクライアントは常に許可されます。別の Agent Fleet 環境からこの環境の /mcp にサインインさせたいときは、そのホストをここに追加してください。変更は次のリクエストから反映され、再起動は不要です。",
+  "admin.mcptrust_hosts": "ホスト（1 行に 1 つ）",
+  "admin.mcptrust_source_admin": "適用中: ここで保存した一覧。",
+  "admin.mcptrust_source_env": "適用中: Control Plane の環境変数 AF_MCP_OAUTH_TRUSTED_HOSTS（ここには何も保存されていません）。",
+  "admin.mcptrust_source_default": "適用中: 組み込みの既定値（ここには何も保存されておらず、AF_MCP_OAUTH_TRUSTED_HOSTS も未設定です）。",
+  "admin.mcptrust_none": "信頼するホストはありません。ループバックのクライアントだけがサインインできます。",
+  "admin.mcptrust_reset": "既定に戻す",
+  "admin.mcptrust_reset_note": "保存した一覧を削除します。その後に適用されるのは {hosts}（{source}）です。",
+  "admin.mcptrust_fallback_env": "環境変数",
+  "admin.mcptrust_fallback_default": "組み込みの既定値",
+  "admin.mcptrust_fallback_none": "なし",
+  "admin.mcptrust_not_served": "この環境はまだ MCP OAuth を提供していません（AF_MCP_ENABLED=true、AF_MCP_OAUTH=1、https の PUBLIC_BASE_URL が必要です）。提供されるまで、この一覧は効果がありません。",
+  "admin.mcptrust_saved": "保存しました。",
+  "admin.mcptrust_unreadable": "保存されている一覧が不正なため、新しい一覧を保存するか既定に戻すまで、ホスト経由のクライアントは一切信頼されません。",
 };

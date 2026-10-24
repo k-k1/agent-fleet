@@ -3,6 +3,25 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.34.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.1) — 2026-10-23
+
+ECS deployments can now turn on the `/mcp` endpoint and MCP sign-in (OAuth) that 0.34.0 shipped.
+0.34.0's template had no way to set them.
+
+## [0.34.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.0) — 2026-10-23
+
+MCP sign-in works in both directions. Remote MCP clients such as claude.ai and ChatGPT can connect to
+Agent Fleet by signing in instead of pasting a token, and you can sign in to MCP servers that require
+OAuth from Settings so your sessions can use them. EC2 pool slots get a force-stop and more memory
+headroom for the host, and the Jira CLI copes with a flaky network.
+
+## [0.33.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.33.0) — 2026-10-21
+
+The tenant Members page shows each member as a card with live sessions, last activity, home disk,
+memory and CPU. A full home disk or a CLI that failed to install is now reported to the member and the
+tenant admin instead of surfacing as a broken session. The command palette searches Agent memory, and
+loopback URLs in Markdown open the workspace preview.
+
 ## [0.32.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.32.1) — 2026-10-19
 
 A fix release for 0.32.0: memory suggestions no longer run in the background unless you ask for it,

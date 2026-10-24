@@ -28,6 +28,7 @@ vi.mock("../../core/api/client.ts", () => ({
 vi.mock("../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 
 import { TenantDialog } from "./TenantDialog.tsx";
+import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
 import { useSettingsUI } from "./store.ts";
 
 const TENANT = {
@@ -59,6 +60,7 @@ function respond(superAdmin: boolean) {
       return Promise.resolve({ tenants: [TENANT], super_admin: superAdmin });
     }
     if (path.endsWith("/idp")) return Promise.resolve({ providers: [IDP] });
+    if (path.endsWith("/mcp-oauth")) return Promise.resolve({ enabled: true, served: true });
     if (path.endsWith("/members")) return Promise.resolve({ members: [MEMBER] });
     if (path.includes("/stats")) return Promise.resolve({ running: true, mem_used: 1, mem_max: 2 });
     if (path.includes("/sessions")) return Promise.resolve({ sessions: [] });
@@ -74,7 +76,7 @@ async function mount(section: string) {
   document.body.append(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(<TenantDialog />);
+    root!.render(<ConfirmProvider><TenantDialog /></ConfirmProvider>);
   });
   // Flush the two stages: fetch the tenants, then fetch the IdPs for that slug.
   await act(async () => {
@@ -151,6 +153,8 @@ describe("TenantDialog", () => {
     respond(false);
     await mount("network");
     expect(api).toHaveBeenCalledWith("api/admin/tenants/acme/network");
+    expect(api).toHaveBeenCalledWith("api/admin/tenants/acme/mcp-oauth");
+    expect(document.querySelector(".settings-content")?.textContent).toContain("MCP OAuth によるアプリの接続を許可する");
     const rail = document.querySelector(".settings-rail, .settings-modal")!;
     expect(rail.textContent).toContain("接続元の制限");
   });

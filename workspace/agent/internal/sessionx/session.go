@@ -188,6 +188,9 @@ func wireSession(m session.Meta, alive bool) session.Session {
 			s.AuthOkAt = at.Format(time.RFC3339)
 		}
 	}
+	if t, ok := AgentOf(m.Kind).(agents.TerminalForkAtter); ok && m.DriverKind() != session.DriverManaged {
+		s.ForkAtTerminal = t.ForkAtOnTerminal(m)
+	}
 	// For a stopped session, surface WHY it ended (crash / OOM) if the pane recorder
 	// captured a cause. A clean quit (exited) or a deliberate stop (empty reason) leaves
 	// the fields unset so the row shows the plain stopped chip.

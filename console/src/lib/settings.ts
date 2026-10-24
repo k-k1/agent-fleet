@@ -388,6 +388,11 @@ export interface Settings {
   // own. Default false, like the Agent's own missing-key answer (uiprefs.MemoryReviewAuto); the manual
   // "Suggest memories now" needs only memoryReview.
   memoryReviewAuto: boolean;
+  // Muse Code's contributor mode (#2535, Settings > Agents > Muse Code): on, Meta may use the
+  // conversations to improve its product. Default false, like the Agent's own missing-key answer
+  // (uiprefs.MuseContributorMode). A muse session records the value it was created with and keeps
+  // it across stop and start, so switching affects sessions created afterwards.
+  museContributorMode: boolean;
   // How many children ONE session may have at a time (ADR 0073 decision 6, AgentsTab > Session).
   // Per parent, not per workspace: two parents at the ceiling is twice that many agents.
   //
@@ -1202,6 +1207,7 @@ const DEFAULTS: Settings = {
   externalMemory: "off", // opt-in (#1988) — memory text leaves the workspace for an outside client's model
   memoryReview: "off", // opt-in (ADR 0117) — conversation excerpts go to a model, and it spends tokens
   memoryReviewAuto: false, // opt-in (ADR 0117 decision 1) — the loop spends tokens unattended
+  museContributorMode: false, // opt-in (#2535) — the vendor may use the conversations
   sessionSpawnChildLimit: 3, // the value the limit had while it was a constant (ADR 0073 decision 6)
   sessionStoppedArchiveDays: 0, // the deployment default (ADR 0097)
   sessionSpendCapUsd: 0, // no budget (#1054)
@@ -1547,6 +1553,7 @@ function load(): Settings {
       externalMemory: normalizeExternalMemory(saved.externalMemory),
       memoryReview: normalizeMemoryReview(saved.memoryReview),
       memoryReviewAuto: saved.memoryReviewAuto === true,
+      museContributorMode: saved.museContributorMode === true,
     };
   } catch {
     return { ...DEFAULTS };
@@ -1980,6 +1987,7 @@ const AGENT_DEFAULTED = new Set<keyof Settings>([
   "externalMemory", // #1988: missing ⇒ off (uiprefs.ExternalMemory), for the same reason
   "memoryReview", // ADR 0117: missing ⇒ off (uiprefs.MemoryReview), for the same reason
   "memoryReviewAuto", // ADR 0117: missing ⇒ off (uiprefs.MemoryReviewAuto), for the same reason
+  "museContributorMode", // #2535: missing ⇒ off (uiprefs.MuseContributorMode), for the same reason
 ]);
 
 // Accumulated data — unlike toggles and colors these settings build up over time and cannot be
@@ -2217,6 +2225,10 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   }
   if (merged.memoryReviewAuto !== (merged.memoryReviewAuto === true)) {
     merged.memoryReviewAuto = merged.memoryReviewAuto === true;
+    changed = true;
+  }
+  if (merged.museContributorMode !== (merged.museContributorMode === true)) {
+    merged.museContributorMode = merged.museContributorMode === true;
     changed = true;
   }
   const customClaude = normalizeClaudeCustomModels(merged.claudeCustomModels);

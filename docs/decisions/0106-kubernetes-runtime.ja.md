@@ -2,8 +2,11 @@
 
 [English](0106-kubernetes-runtime.md) | 日本語
 
-- 状態: **proposed**（2026-10-02）。まだ何も作っておらず、何も測っていない。以下の事実はコード・文書・Kubernetes と
-  Google Cloud の資料を読んで得たもので、動かしていないものはその旨を書いている。
+- 状態: **accepted**（2026-10-05。提案は 2026-10-02）。フェーズ 1 は実装済みで、GKE Standard の実機で受け入れ済み
+  （#1468、2026-10-05 クローズ）：アダプタ、CP の Workspace 専用リスナー、`deploy/kubernetes/`、`deploy/gcp/gke/`。
+  最初のリリースは v0.27.0。未実装：フェーズ 2（Autopilot と「範囲外」の項目）。Helm chart は棚上げのまま（決定 12）。
+  測定値は下の 2026-10-03・2026-10-04・2026-10-23 の注記にある。
+  Follow-ups: #1092（追跡、まだ開いている）、#2498（このランタイムでは IMDS の隔離と home 残量の通知がない）。
 - 追跡: #1092
 - 見直す決定: [docs/log/35](../log/35-packaging.md) §35.3-5 と `docs/log/roadmap.md` P3-10 の Kubernetes の棚上げ
   （「Helm chart は需要が出るまで棚上げ。AWS の答えは ECS + CFN」、2026-07-21）。**Helm chart そのものは棚上げのまま**（決定 12）。
@@ -691,3 +694,30 @@ Fargate は足せないので、ecs ランタイムは kubernetes と同じく `
 Pod を止めていた。いまは両方の消去（init コンテナと erase Pod の Clean home、Recreate の `~/repos`）が、
 消す対象に `find … -type d ! -perm -u+rwx -exec chmod u+rwx {} \;` を先に当てる。保持する名前は除き、
 リンクは辿らず、1 つのファイルシステムの中に限る。決定 4 そのものは変えない。
+
+## 注記（2026-10-23）— 実機の受け入れ試験の測定値を書き戻す（#1468）
+
+上の文は変えない。未決事項 2 と 3 は GKE Standard の受け入れ用クラスタ（2026-10-02〜05、GKE 1.35.8、Dataplane V2、
+`asia-northeast1`）で答えが出た。数値は #1468 による。
+
+- **起動の遅さ（未決事項 2）。** Pod の作成から Ready までは、Workspace イメージがノードにある状態で 49 秒。うち 33 秒はエージェント
+  CLI の起動時インストール。ノードを 0 台から増やす場合は約 3 分 20 秒。イメージの初回 pull は約 49 秒。
+  runbook にはこの数値を載せていない。
+- **Console の再接続（未決事項 3、2026-10-05 に測定）。** 強制的に切った（CP の rollout restart で、Console の WebSocket が
+  すべて閉じる）ところ、ターミナルのペインは `[disconnected]` のままになった。ペインをクリックすると数秒で再接続し、シェルと
+  tmux セッションはそのまま、ページの再読み込みも要らなかった。Console は異常終了した接続をフォーカス時に再接続する（即時ではない。
+  通知が読めるようにするため）。ロードバランサによる切断もブラウザには同じ異常終了として届く。24 時間での切断そのものは待っておらず、
+  非表示のタブやスリープ中の端末も測っていない。
+- **費用。** 測定した費用表は同じ Issue と [`deploy/gcp/gke/README.md`](../../deploy/gcp/gke/README.md#cost) にある。この記録には
+  数値を書かない。
+- **測っていないこと：** GKE Autopilot（未決事項 4）。フェーズ 2 に残る。
+
+## 追記 2026-10-23 — IMDS の無効化とホーム満杯通知（#2498）
+
+- ワークスペースの Secret の先頭に `AWS_EC2_METADATA_DISABLED=true` を入れる（docker と同じ）。オペレーターの `WS_ENV` で
+  上書きできる。`AF_WS_WORKLOAD_AWS=1` のときは入れない。GKE のメタデータサーバ（ノードのサービスアカウント / Workload
+  Identity）は塞がない。その経路を塞ぐこと（NetworkPolicy、メタデータの隠蔽）はクラスタ側に任せる。
+- ランタイムは `OwnHomeVolume()` で `home_own` を報告する。ホームの claim はワークスペースごとに分かれている。
+  実クラスタでは未検証。
+- `AF_K8S_HOME_SHARED_FS=1` は、StorageClass が 1 つの共有ファイルシステムでホームを支える場合に `home_own` を出さない。
+  ブロックストレージの前提は検査していない。残件: #2620。

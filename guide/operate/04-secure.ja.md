@@ -64,8 +64,9 @@ Workspace の中では CLI エージェントが**任意コードを実行**し�
 
 ### AWS KMS で保存時の鍵を守る
 
-`ecs` / `ecs-ec2` では、Control Plane が封じるもの（MCP 接続のヘッダ、サインインのクライアント
-シークレット、エンジンのトークン、セッションの引き継ぎと共有、各ワークスペースの資格情報ストアの鍵）の
+`ecs` / `ecs-ec2` では、Control Plane が封じるもの（MCP 接続のヘッダ、サインインと Git OAuth のクライアント
+シークレット、エンジンのトークン、セッションの引き継ぎと共有、受信箱のメッセージとその添付、開発用ログインの
+署名鍵とクライアントシークレット、各ワークスペースの資格情報ストアの鍵、ホームごとの鍵があるホームではその資格情報ストアの鍵）の
 鍵を AWS KMS に持たせられます。値はそれぞれ KMS から得た新しいデータ鍵で封じられ、テナントに結び付くので、
 別のテナントの名前では開けません。有効にする手順:
 
@@ -102,7 +103,8 @@ Workspace の中では CLI エージェントが**任意コードを実行**し�
 
 `af-cp rewrap-keys` は、切り替え前に Control Plane が master 鍵で封じた値をすべて KMS で封じ直します。
 対象は各ワークスペースの資格情報ストアの鍵を包んだもの、MCP 接続のヘッダ、サインインと Git OAuth の
-クライアントシークレット、セッションの引き継ぎと共有の提案、エンジンの Hugging Face・Civitai・ComfyUI の鍵です。
+クライアントシークレット、セッションの引き継ぎと共有の提案、受信箱のメッセージとその添付、開発用ログインの
+署名鍵とクライアントシークレット、ホームごとの資格情報ストアの鍵、エンジンの Hugging Face・Civitai・ComfyUI の鍵です。
 実行後は、KMS 鍵を無効化するとこれらも読めなくなります。
 
 - Control Plane 自身が `AF_KEY_CUSTODIAN=kms` で動くようになって**から**、Control Plane と同じ環境
@@ -171,6 +173,8 @@ Workspace の中では CLI エージェントが**任意コードを実行**し�
 - まだ起動していないホームや古いスナップショット・バックアップは、KMS 鍵を無効化しても **crypto-shred されません**。
   破棄したホームの鍵は、ランタイムがホームの消滅を証明できたときにだけ消えます（次の項目）。
 
+#### ホームの鍵のふるまい
+
 - **鍵はワークスペースではなくホームのもの。** 残したホームの上でワークスペースを削除して作り直しても鍵は
   そのままです。鍵を消すのは 1 つの場合だけです: Destroy が終わり、どのワークスペースの行もそのホームを指しておらず、
   ランタイムがホームの全体が消えたことを**証明**したとき。ホームの一部が残ったまま鍵を消すとその部分が読めなくなる
@@ -180,15 +184,19 @@ Workspace の中では CLI エージェントが**任意コードを実行**し�
   StatefulSet の削除、全アクセスポイントが task の消すディレクトリを指していたうえで EFS の home task が 0 で
   終わったこと。別の場所を指すアクセスポイントは消さずに報告します）。後から確かめることも、「残りなし」から言うことも
   しません（home task の無い `ecs` はアクセスポイントだけを消し、再試行しても残りは報告されません）。
-  `migrating` のままの鍵はこの経路では消えず、証明できないランタイムは鍵を残します。この crypto-shred が
-  起きると鍵の暗号文が行ごと消えるので、よそに残ったストアの写し（スナップショットやバックアップ）も読めなくなります。
+  `migrating` のままの鍵はこの経路では消えず、証明できないランタイムは鍵を残します。行が消えると、
+  ストアと、その鍵で封じたストアの写し（スナップショットやバックアップ）は開けなくなります。ただし `home_dek` の行が
+  残っているデータベースのバックアップを、KMS 鍵が有効なうちに戻すと開けます。ストアが移る前の写しは導いた鍵の
+  ままです（[後述](#kms-鍵の無効化写しの復元無効に戻すとき)）。
 - **取り残された鍵。** 残った鍵（golden bake の `migrating` なプローブ、証明できないランタイム、古い Control Plane
   による破棄）は `af-cp home-dek-status --orphans` が一覧します（読み取りのみ。どのワークスペースの行も指さない鍵）。
   一覧に出ただけでは候補であって証明ではありません。ホームはワークスペースの行より長く残り得るからです。ホームが
   消えたことを確かめた後（EFS のディレクトリ、EBS ボリュームとスナップショット、クラスタの claim、データディレクトリ）、
   `af-cp home-dek-status --remove-orphan <membership-id> --force` で消します。`--force` はホームが消えたという
-  あなたの宣言です。このコマンドには確かめるランタイムが無いからです。ワークスペースの行が指す鍵は、これでも
-  消しません。ホームが残っているのに鍵を消すと、その `secrets.enc` は二度と読めません。
+  あなたの宣言です。このコマンドには確かめるランタイムが無いからです。ワークスペースの行が指す鍵と、その
+  メンバーシップでワークスペースの操作が進行中の鍵は、これでも消しません。終了コードは消したとき `0`、何も
+  消さなかったとき `1`、データベースのエラーで `2` です。ホームが残って
+  いるのに鍵を消すと、その `secrets.enc` は二度と読めません。
 - **ストアの移し替え。** 有効にした後の最初の起動でホームの鍵を作り、Control Plane は導いた鍵と並べて
   ワークスペースに渡します。ワークスペースは起動時に `secrets.enc` をどちらかの鍵で開き、ホームの鍵で封じ直します。
   どちらでも開けないストアには触りません。まだストアの無いホームには、その起動でホームの鍵で封じた空のストアを
@@ -202,9 +210,13 @@ Workspace の中では CLI エージェントが**任意コードを実行**し�
   ワークスペースがホームの鍵で封じていて `migrated`・`current` を返したら、Control Plane はホームを確認済みにし、**次の**起動からワークスペースには
   ホームの鍵だけを（`AF_SECRET_KEY` として）渡し、導いた鍵は渡しません。`ecs` / `ecs-ec2` ではその起動で
   `secret-key-next` パラメータも消します。すでに動いているワークスペースは、再起動するまで両方の鍵を環境変数に
-  持ったままです。`unreadable` や `derived` ではホームは移行中のままで、ログに残し、何も消しません。待っている間に
-  Control Plane が再起動しても、ホームは移行中のままで、後の起動で確認されます。`af-cp home-dek-status` が
-  移行中と確認済みのホームを数えます。
+  持ったままです。`unreadable` や `derived` ではホームは移行中のままで、ログに残し、何も消しません。待つ間は
+  3 秒ごとに尋ね、待つのは最長 15 分です。それを過ぎたとき、または待っている間に Control Plane が再起動したときは、
+  ホームは移行中のままで、後の起動で確認されます。`af-cp home-dek-status` が移行中と確認済みのホームを数えます。
+  `ecs` / `ecs-ec2` では、上の `rewrap-keys` と同じ単発タスクとして `"command":["home-dek-status"]` で実行します。
+
+#### KMS 鍵の無効化、写しの復元、無効に戻すとき
+
 - **KMS 鍵を無効化すると何が起き、何が起きないか。** ホームのストアが封じ直された後は、`AF_MASTER_KEY` から
   導いた鍵ではもう開けません。また Control Plane のデータ鍵キャッシュ（`AF_KMS_DATA_KEY_CACHE_TTL`、既定 5 分）が
   切れた後は、Control Plane はホームの鍵を新たに開けず、次の起動を拒否します。その TTL の間は起動が成功し得ます。
@@ -228,14 +240,14 @@ Workspace の中では CLI エージェントが**任意コードを実行**し�
   `secrets.enc` を戻すと、それは導いた鍵で封じられていて、そのホームにはもう渡されない鍵です。ワークスペースは
   `unreadable` を返し、その上には書きません。Control Plane の環境で
   `af-cp home-dek-status --remigrate <membership-id>` を実行してからワークスペースを再起動すると、両方の鍵が
-  再び渡され、戻したストアが封じ直されます。
+  再び渡され、戻したストアが封じ直されます。このコマンドは、そのメンバーシップに確認済みのホームの鍵が無いと `1`、
+  データベースのエラーで `2` で終わります。
 - **無効にしても元には戻らない。** `AF_WORKSPACE_DEK` を外しても、すでに鍵を持つホームにはその鍵を渡し続けます。
   ストアがその鍵で封じられているかもしれないからです。ストアが封じ直された後は、戻し方によって違います:
-  - **ホームの鍵を知らない Control Plane に戻す、または `home_dek` 表を失う**（ワークスペースイメージはこの版のまま）:
+  - **ホームの鍵を知らない Control Plane に戻す、または `home_dek` 表を失う**（ワークスペースイメージは v0.31.0 以降）:
     ストアは開けなくなり、ワークスペースはそのストアへの書き込みを、資格情報の接続し直しを含めてすべて拒否します
-    （この版は開けないストアの上には書きません）。ホームの鍵は知っていて確認の手順を知らない Control Plane なら
-    問題ありません。両方の鍵を再び渡し、ワークスペースはホームの鍵でストアを開きます。
-  - **この版より前のワークスペースイメージ: 移ったホームでは起動しないでください。** その Agent にはこの保護が無く、
+    （そのイメージは開けないストアの上には書きません）。
+  - **v0.31.0 より前のワークスペースイメージ: 移ったホームでは起動しないでください。** その Agent にはこの保護が無く、
     読めなかった後の保存が封じ直したストアの上に空のストアを書き、資格情報が失われ得ます。
 
   復旧するには、そのホームでワークスペースを起動する前に、まず開けるものを戻してください: Control Plane の版、
@@ -259,15 +271,23 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
 2. **allowlist を固める**：観測結果を見ながら、正当な宛先を許可リストに追加していきます。許可
    リストは版管理され（active / proposed / retired）、AI は**提案のみ・承認は人間**が行います
    （Admin の「提案中（要承認）」で承認/却下）。
+
+   **観測結果の読み方：** 件数は概数です。タイムアウト後に再送された報告は二重に数えられる
+   ことがあり、Control Plane に届かない間 proxy が保持するのは最大 5000 宛先で（超過分は
+   監査ログの `egress.dropped` に出ます）、proxy を再起動するとメモリ上の分は失われます。
+   載っていないホストは「見ていない」だけで「使われていない」ではありません。enforce に
+   する前に `egress.dropped` が無いか監査ログで確認してください。
 3. **enforce へ切替**：許可リストが十分に固まってから、モードを enforce に切り替えます。以降は
    許可リスト外の通信を**遮断**します。Admin の UI も「先に log-only で実態を確認してから切替えて
    ください」と警告します。
 
 > 現状の実装範囲: **観測（log-only）と許可リスト管理が動作し、proxy 自体は遮断（enforce）できます**。
-> compose（Docker）ターゲットでは、Control Plane に `AF_EGRESS_PROXY_ADDR` を設定すると、すべての
-> Workspace コンテナに `http_proxy` / `https_proxy` / `no_proxy`（と大文字の同名変数）が注入され
-> （既定はオフ）、これらの変数に従うプログラムは proxy を通ります。ecs / ecs-ec2 ターゲットでは、
-> この設定は Workspace に渡りません。**まだ無い**のは、proxy を通ることの強制（proxy だけを出口に残す内部網や
+> Control Plane に `AF_EGRESS_PROXY_ADDR` を設定すると、どのターゲットでも
+> すべての Workspace に `http_proxy` / `https_proxy` / `no_proxy`（と大文字の同名変数）が注入され
+> （既定はオフ）、これらの変数に従うプログラムは proxy を通ります。CP の内部アドレス
+> （`AF_CP_INTERNAL_URL`）は Kubernetes・ecs・ecs-ec2 で proxy の対象から外され、ecs / ecs-ec2 では
+> proxy がリンクローカル宛を拒否するため、タスク／インスタンスのメタデータアドレス
+> （`169.254.170.2`・`169.254.169.254`）も対象から外されます。**まだ無い**のは、proxy を通ることの強制（proxy だけを出口に残す内部網や
 > セキュリティグループの egress ルール、proxy を動かすテンプレート）です。変数を無視する
 > プロセスはそのまま外へ出るので、**enforce へ切り替えても、まだ Workspace は縛られません**
 > （[#1181](https://github.com/k-k1/agent-fleet/issues/1181)）。
@@ -291,9 +311,85 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
   配備側では機能フラグ（`AF_MCP_ENABLED`）と、ingress で `/mcp` を通すかどうかが効きます。
   スコープ（read / write / admin:dangerous）と有効期限は利用者が選び、失効も本人が行えます。
   この入口から、メンバーは自分のエージェントに自分の Agent Fleet メモリを使わせることもできます。メンバーごとの別設定で、
-  既定はオフです（メンバー編 設定 > エージェントメモリ > 設定）。外からの保存と忘却は監査されます（`memory.entry.save` /
+  既定はオフです（[メンバー編](../member/18-agent-memory.ja.md#外部のエージェントから-agent-fleet-のメモリを使う) 設定 > エージェントメモリ > 設定）。外からの保存と忘却は監査されます（`memory.entry.save` /
   `memory.entry.forget`、実行者は `mcp`、対象はプロジェクト ID）。テナント管理者はテナント全体でこれをブロックでき
   （[管理 08](../admin/08-external-memory.ja.md)）、`AF_MCP_ENABLED` はエンドポイント全体を止めます。
+
+### リモート MCP クライアント向けのサインイン（OAuth）
+
+既定では `/mcp` は Personal Access Token だけを受け付けます。`AF_MCP_OAUTH=1` を設定すると、Control Plane が `/mcp` 用の OAuth 2.1
+認可サーバーにもなり（ADR 0118）、claude.ai・ChatGPT・Claude Code・Codex は
+トークンを貼り付ける代わりに、メンバーが Console にサインインして接続できます。CI などの OAuth を使えないクライアント向けに PAT は引き続き使えます。
+
+| 設定 | 意味 |
+|---|---|
+| `AF_MCP_OAUTH=1` | サーバーを有効にします。`AF_MCP_ENABLED=true` と `https` の `PUBLIC_BASE_URL` も必要です。どれか欠けていると、以下のパスはすべて 404、`/mcp` は従来どおりの素の 401 になり、クライアントはトークンを求める動作に戻ります |
+| `AF_MCP_OAUTH_TRUSTED_HOSTS` | サインインのリダイレクト先になれる／クライアントメタデータを配信できるホスト名のカンマ区切り。既定は `claude.ai,claude.com,chatgpt.com`。**super admin は Admin モーダル（配備 → MCP ログイン許可ホスト、[admin/05](../admin/05-access.ja.md)）で実行時に上書きできます**。保存した一覧が優先され、保存がない間はこの変数がフォールバックです。外すとそのベンダーは使えなくなり、社内クライアントなら追加します（ホスト名の完全一致、`https` のみ）。`none` でループバックのクライアントだけになります |
+
+- **有効にする方法。** Compose / native / local: Control Plane の環境に `AF_MCP_ENABLED=true` と `AF_MCP_OAUTH=1`（この値そのもの。
+  `AF_MCP_ENABLED` に `1` は通りません）、必要なら `AF_MCP_OAUTH_TRUSTED_HOSTS` を設定します。Kubernetes: Control Plane の
+  環境ファイル（`cp.env`）に追記します。**ECS:** 30-ingress のパラメータ `McpEnabled=on`、`McpOAuth=on`、必要なら
+  `McpOAuthTrustedHosts` を、`30-ingress.yaml` に対する個別の `aws cloudformation deploy`
+  （`--parameter-overrides McpEnabled=on McpOAuth=on`）で設定します。`update.sh` は `ImageTag` しか上書きしないので、
+  これらを有効にも無効にもしません（パラメータは前回の値を保ち、スタックにまだ無いパラメータはオフで始まります）。
+  詳しくは [`deploy/aws/ecs/README.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/README.md) を参照してください。
+- **提供されるパス**（issuer は `{PUBLIC_BASE_URL}/mcp-oauth`）: `/.well-known/oauth-protected-resource/mcp`、
+  `/.well-known/oauth-authorization-server/mcp-oauth`、`/mcp-oauth/authorize`、`/mcp-oauth/consent`、
+  `/mcp-oauth/token`、`/mcp-oauth/register`、`/mcp-oauth/revoke`。`/mcp` の 401 には
+  `WWW-Authenticate: Bearer resource_metadata="…"` が付きます（提示されたトークンが無効な場合は `, error="invalid_token"` が付きます）。
+  スコープはクライアントが要求し、同意ページは `read` を初期選択して、要求された場合だけ `write` を表示します。
+- **ingress。** ホスト型クライアントは `/mcp` とトークンエンドポイントを**ベンダーのサーバーから**呼ぶので、Control Plane はこれらのパスでインターネットから
+  到達できる必要があります。VPN の内側や ALB の ingress CIDR を絞った配備では、コマンドライン（ループバック）のクライアントだけが使えます。これは仕様であり不具合ではありません。
+  `AUTH=oauth` と `AUTH=dev` では Console 自身のセッションゲートが、探索・`token`・`register`・`revoke` を素通しにし、`authorize` と `consent` はゲートの内側に置きます。
+  **`AUTH=proxy`** ではゲートウェイ側で同じ設定が必要です。`/mcp-oauth/authorize` と `/mcp-oauth/consent` はゲートウェイを**通し**（メンバーの
+  識別ヘッダーはそこで付きます）、残りの 5 パスと `/mcp` はゲートウェイを**迂回**させます。
+- **クライアントになれるもの。** 登録は誰でもできますが（動的クライアント登録は送信元ごとのレート制限と総数の上限があり、グラントが一度も生まれない登録は 30 日で削除されます）、
+  登録で決められるのはコードの*送り先*だけなので、リダイレクトはループバックか、信頼リスト上のホストの `https` アドレスで、表記も正規形
+  （大文字・末尾のドット・明示ポート・ユーザー情報・フラグメントなし）に限ります。メタデータ文書の URL でクライアントを示す場合は、その URL が同じリストにあるときだけ取得し、
+  リダイレクトは追わず、短いタイムアウトとサイズ上限を課し、公開アドレス以外には接続しません。
+- **トークン。** アクセストークンは不透明で 1 時間有効、`{PUBLIC_BASE_URL}/mcp` に結び付きます。リフレッシュトークンは使うたびに更新され、使用済みのものが
+  再提示されると接続全体が取り消されます。接続は 30 日間使われないか、90 日たつと終わります。保存されるのはハッシュだけで、PAT の行ではないため 20 個の PAT 上限には数えません。
+- **監査。** `mcp.oauth.grant`（作成・取り消し・再利用による取り消し）と `mcp.oauth.token`（発行のたび）は、応答を返す前に書き込まれます。接続を使った呼び出しは、
+  接続 ID を実行者として `mcp` で記録されます。監査ストアが止まっているときはトークンを発行しません。
+  テナント設定の変更は `tenant.mcp_oauth`（`enabled=true/false`）で記録します。メンバーによる失効は
+  `mcp.oauth.grant` の `revoked by member`、テナント無効化による失効は接続ごとの `revoked reason=tenant-disabled` です。
+  無効化と競合してコード交換を拒否した場合は `refused reason=tenant-disabled` を追記し、発行前に記録した `created` が
+  接続の成立ではなく試行だったと分かるようにします。
+- **スコープ。** `read` と `write` だけです。`admin:dangerous` は、メンバーのロールにかかわらず OAuth では付与されません。
+- **テナントのネットワーク制限**は確認（同意）の段階、つまりブラウザの前にいる人に適用されます。ベンダーのサーバーから来る `/mcp` とトークンエンドポイントには、PAT と同じく適用されません
+  （ADR 0047）。
+
+### メンバーが登録した OAuth 必須の MCP サーバーへのサインイン
+
+上の節とは逆向きです。メンバーが OAuth しか受け付けないリモート MCP サーバーを登録したとき、メンバー自身の Agent がそのサーバーにサインインします（ADR 0119）。
+Control Plane はそのために 2 つの公開パスを持ち、どちらも到達できる `PUBLIC_BASE_URL` が必要です。
+
+- `GET {PUBLIC_BASE_URL}/oauth2/mcp/callback` — サーバーの認可サーバーがブラウザを戻す先です。すでにセッションゲートの外にある `/oauth2/` の下にあり、
+  呼び出した人の確認は自分で行います（`AUTH=oauth` では Console のセッション、`AUTH=proxy` ではゲートウェイの識別ヘッダー）。ブラウザはサインインを始めたメンバー本人のものでなければならず、サインインは 10 分間・1 回だけ有効です。
+- `GET {PUBLIC_BASE_URL}/oauth/mcp-client.json` — クライアント ID メタデータ文書（CIMD）です。`PUBLIC_BASE_URL` が `https` のときだけ配信します。
+  CIMD に対応する認可サーバーは**その側のサーバーから**取得するので、`AUTH=proxy` ではゲートウェイがこのパスだけを認証なしで通す必要があります。
+  `/oauth/` の下のほかのパスは公開しません。コールバックは逆に、メンバーの識別ヘッダーが付くよう**ゲートウェイを通す**必要があります。識別がなければサインインは失敗します。`https` の基底 URL がない場合や認可サーバーが取得できない場合、Agent は動的クライアント登録に切り替えるか、メンバーにクライアント ID を尋ねます。
+
+トークンは Control Plane に届きません。Agent がメンバーの暗号化ストアに保存します。Control Plane は `mcp.client_oauth` の監査行（`started` / `completed` / `failed` / `disconnected`）に、
+サーバーと認可サーバーの名前だけを書き、コードやトークンは書きません。メンバーは設定 › MCP サーバーからサインインします（[メンバー向け 20](../member/20-settings.ja.md#mcp-サーバー)）。
+
+### クライアントが `/mcp` に送ったものを読む
+
+`/mcp` へのリクエストは、拒否されたもの、認証より前に 405 で答える `GET` / `DELETE`、バッチの各要素も含め、
+1 件ごとに Control Plane のログへ 1 行出ます。接続はできるのにツールが出ないクライアントでも、実際に何をしたかから原因を追えます。
+
+```
+mcp-call http_method="POST" status=400 latency_ms=2 principal="grant:<id>" client_id="<id>" header_version="2026-07-28" mcp_method_header=false mcp_name_header=false accept="application/json, text/event-stream" content_type="application/json" user_agent="…" items=[{"method":"tools/list","era":"stateless","meta_version":"2026-07-28","client_name":"…","status":400,"error_code":-32020,"error_message":"header mismatch: Mcp-Method (absent) does not match body method \"tools/list\""}]
+```
+
+- `principal` は `pat:<id>`、`grant:<id>`（OAuth。続けて `client_id`）、`unauthenticated` のいずれかで、拒否したときは `reason=` に理由が入ります
+  （Bearer なし、不明・期限切れのトークン、別リソース向けの OAuth トークン、`method not allowed`）。
+- `era` は `legacy`（`initialize` ハンドシェイク）か `stateless`（2026-07-28。毎回 `_meta` を付ける）です。stateless で拒否されたときは
+  JSON-RPC の `error_code`（-32020 ヘッダ不一致、-32022 非対応バージョン、-32602 `_meta` の欠落（`clientInfo` と `clientCapabilities` を含む））と、`Mcp-Method` / `Mcp-Name` ヘッダの有無が出ます。
+  `tools/list` の要素には返したツール数 `tools` が付きます。実行して失敗した `tools/call`（200 で `isError`）には、本文なしで `tool_error:true` が付きます。
+- トークン、`Authorization` の値、リクエストの引数、ツールの結果は記録しません。`tools/call` / `prompts/get` のツール名 / プロンプト名だけ記録します。
+- 認証できた呼び出し者の記録は、本人が 設定 → 接続 → MCP トークン →「最近の呼び出し」で読めます（トークン / 接続ごとに直近 50 件、
+  メモリ上のみで再起動すると消え、**Control Plane のレプリカごと**）。レプリカが複数あるときは全レプリカのログを探してください。405 と未認証のリクエストはログにしか残りません。
 
 ## ワークスペース内ブラウザの引き渡し
 
@@ -339,7 +435,7 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
   メタデータエンドポイント（`169.254.169.254`）に届き得ます。メンバーの資格情報を持たない AWS SDK はそこで
   見つけたロールに気づかないうちに切り替わります。インスタンスプロファイルを持つ EC2 ホストなら、すべてのセッションで、
   エラーも出さずにそのロールです。Control Plane はワークスペースを `AWS_EC2_METADATA_DISABLED=true` 付きで
-  起動し（docker）、またはタスクロールを外したうえでそれを立てる（ECS）ので、SDK は問い合わせなくなります。
+  起動し（docker と Kubernetes）、またはタスクロールを外したうえでそれを立てる（ECS）ので、SDK は問い合わせなくなります。
   ネットワークでの遮断はホストの役目です。
   - **compose 用の EC2 ホスト**（`deploy/aws/ec2-single`）: IMDSv2 とホップ数 1（`HttpTokens: required`、
     `HttpPutResponseHopLimit: 1`）。ホストネットワークの Control Plane は 1 ホップなのでインスタンス
@@ -350,8 +446,11 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
   - **クラウド上のそれ以外の docker ホスト**: 同じメタデータ設定か、Docker の `DOCKER-USER` チェーンで
     ワークスペースのブリッジからの `169.254.169.254` を拒否するホストのファイアウォール規則（ホストの root が
     要ります。compose 自体に新しい権限は要りません）。
+  - **Kubernetes**: この変数はクラスタのメタデータサーバ（ノードのサービスアカウント、GKE では
+    Workload Identity）を塞ぎません。その経路を塞ぐのはクラスタの役目です（NetworkPolicy の egress 規則、
+    または GKE のメタデータ隠蔽）。Control Plane はそれをしません。
   - **ecs-ec2**: スロットのユーザーデータが `ECS_AWSVPC_BLOCK_IMDS=true` を設定します。残っている
-    スロットは入れ替えが要ります。設定 → 管理 → スロットで入れ替え予約してください（[03-run](03-run.ja.md)
+    スロットは入れ替えが要ります。管理 → スロットで入れ替え予約してください（[03-run](03-run.ja.md)
     「ecs-ec2: 起動テンプレートを変えたあとのスロットの入れ替え」）。
 
   Control Plane の `AF_WS_WORKLOAD_AWS=1` は ECS のタスクロールをワークスペースに戻し、SDK のメタデータ参照の
@@ -374,7 +473,7 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
   native ランタイムのワークスペースはメンバーのマシンで直接動くので、そのままにします。そこのインスタンスロールは
   そのマシン自身のものです。
 
-  メンバーは `af-aws-exec` で自分として AWS コマンドを実行します（[メンバーガイド 10](../member/10-integrations.ja.md)）。
+  メンバーは `af-aws-exec` で自分として AWS コマンドを実行します（[メンバーガイド 16](../member/16-cloud-accounts.ja.md)）。
 
 ## オフボーディング — アクセスは実際どこで切れるか
 

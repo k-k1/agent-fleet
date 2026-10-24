@@ -29,6 +29,14 @@ var errDriverSwitching = errors.New("実行方式を切り替えています。�
 // Resume is in flight).
 const errCodeDriverSwitching = "driver_switching"
 
+// errCodeInteractionNotPending is the 409 for a respond whose Interaction is no longer waiting;
+// the Console words it (err.interaction_not_pending), the message stays English for logs.
+const errCodeInteractionNotPending = "interaction_not_pending"
+
+// errCodeTranscriptRestoreFailed is the 409 for a launch whose conversation log could not be
+// restored from the Agent's backup; the message carries the I/O cause.
+const errCodeTranscriptRestoreFailed = "transcript_restore_failed"
+
 // beginCodexTerminalSwitch claims session name for a switch to Terminal. It fails while a
 // Managed Resume of it is in flight; end releases the claim.
 func beginCodexTerminalSwitch(name string) (end func(), ok bool) {

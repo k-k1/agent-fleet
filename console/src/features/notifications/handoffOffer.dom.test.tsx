@@ -96,7 +96,11 @@ describe("a handoff-offer notification", () => {
     const r = await openNotificationTarget(offerNotification(), false);
     expect(r).toEqual({ opened: false, handoffClosed: true });
     expect(openSharedSession).not.toHaveBeenCalled();
-    expect(toast).toHaveBeenCalledWith(t("noti.handoff_recovery", { inbox: t("handoff.inbox_title") }), { kind: "warn" });
+    expect(toast).toHaveBeenCalledWith(t("noti.handoff_recovery", { inbox: t("inbox.handoffs") }), { kind: "warn" });
+    // #2085 moved received handoffs to the top-bar inbox; the shared sessions section is no longer the place.
+    const text = String(vi.mocked(toast).mock.calls.at(-1)?.[0]);
+    expect(text).toContain(t("inbox.handoffs"));
+    expect(text).not.toMatch(/shared sessions section|共有セッション欄/);
   });
 
   it("falls back to the shared view when the inbox cannot be read, rather than calling it closed", async () => {

@@ -72,7 +72,7 @@ func materializeCodex(defs []ServerDef, prev []string) (written, removed []strin
 	}), codexServerBlocks(defs))
 	written = defNames(defs)
 	if out == src {
-		return written, removed, false, nil
+		return written, removed, false, keepPrivate(path, defs)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, nil, false, err

@@ -45,7 +45,7 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	// The session's throwaway directory (docs/log/116), created here so the path is real
 	// by the time the CLI reads it; removed when the session is deleted. A failure to create
 	// it does not block the launch — the variable is simply not set.
-	if wd := paths.SessionWorkDir(m.Name); wd != "" && os.MkdirAll(wd, 0o700) == nil {
+	if wd, err := paths.MakeSessionWorkDir(m.Name); err == nil {
 		plan.Env = append(plan.Env, "AF_WORK_DIR="+wd)
 	}
 	// Inject the database client environment (PG* / MYSQL_* / AF_DB_URL_POSTGRES) for

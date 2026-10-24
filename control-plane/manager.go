@@ -5,9 +5,11 @@ import (
 	"net/http"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -24,6 +26,11 @@ type manager struct {
 	memberConns memberConnRegistry
 	// removalStops: workspace ids with a removed-member sweep stop in flight.
 	removalStops sync.Map
+	// mcpOAuthServed: the /mcp authorization server is on (set once at route registration),
+	// which authGate reads to answer 404 instead of a login redirect while it is off.
+	mcpOAuthServed atomic.Bool
+	// mcpCalls: recent /mcp calls per PAT / grant, this replica only (mcpsrv/mcp_calls.go).
+	mcpCalls mcpsrv.CallLog
 
 	// mu guards ONLY the in-memory maps below (runtime/lock/activity caches) — it is
 	// never held across store/docker I/O (docs/log/23 P2-W2). The I/O of a first resolve
@@ -102,6 +109,8 @@ type manager struct {
 	memMaxBytes int64
 	sessionCmd  string
 	extraEnv    []string
+	// egressProxyEnv is the part of extraEnv that AF_EGRESS_PROXY_ADDR generated.
+	egressProxyEnv []string
 
 	portBase int
 
@@ -169,6 +178,10 @@ type manager struct {
 	// the CP's /internal/memos bridge over the public hairpin (memo_bridge.go). Empty
 	// (no PUBLIC_BASE_URL) = the memo bridge is not reachable, so it is not injected.
 	publicBaseURL string
+
+	// brand is the same resolver as config.brand (main.go sets both); /mcp's serverInfo
+	// reads the deployment's label through it. nil = no label.
+	brand *brandResolver
 
 	// internalBaseURL is AF_CP_INTERNAL_URL without a trailing slash: the base a workspace
 	// uses for its own requests to the CP where it cannot use the public one (ADR 0106

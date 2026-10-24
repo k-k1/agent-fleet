@@ -7,6 +7,37 @@
 import type { settings as jaSettings } from "../ja/settings.ts";
 
 export const settings: Record<keyof typeof jaSettings, string> = {
+  "tokens.apps_title": "Connected apps",
+  "tokens.apps_intro": "Apps connected to MCP through OAuth. Revoking a connection immediately ends its access.",
+  "tokens.apps_client": "App",
+  "tokens.apps_redirect": "Redirect host",
+  "tokens.apps_tenant": "Tenant",
+  "tokens.apps_created": "Connected",
+  "tokens.apps_self_declared": "Self-declared name (unverified)",
+  "tokens.apps_never_used": "Never used",
+  "tokens.apps_empty": "No connected apps.",
+  "tokens.apps_revoke_title": "Revoke app connection?",
+  "tokens.apps_revoke_body": "Revoke the connection for {name}? The app must connect again to regain access.",
+  "tokens.apps_load_failed": "Could not load connected apps.",
+  "tokens.apps_revoke_failed": "Could not revoke the connection. Try again.",
+  "tokens.calls_loading": "Loading…",
+  "tokens.calls_tool_error": "tool reported an error",
+  "tokens.calls_toggle": "Recent calls",
+  "tokens.calls_hint": "The last 50 requests to /mcp, kept in memory only. With several Control Plane replicas, each keeps its own list, so this shows only the requests this replica served and may be empty after a restart.",
+  "tokens.calls_refresh": "Refresh",
+  "tokens.calls_empty": "No requests recorded yet.",
+  "tokens.calls_load_failed": "Could not load recent calls.",
+  "tokens.calls_time": "Time",
+  "tokens.calls_status": "Status",
+  "tokens.calls_rpc": "JSON-RPC",
+  "tokens.calls_era": "Protocol",
+  "tokens.calls_client": "Client",
+  "tokens.calls_headers": "Headers",
+  "tokens.calls_latency": "Latency",
+  "tokens.calls_tools": "{n} tools",
+  "tokens.calls_unparsed": "(not JSON-RPC)",
+  "tokens.calls_hdr_version": "MCP-Protocol-Version",
+
   "settings.language": "Language",
   // The pre-invitation landing (docs/log/61 §61.10.2 · P7-2). ★ Written as the normal
   // first step on an invite-run deployment, not as a failure — and it must show the
@@ -95,7 +126,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "tokens.can_memory_write": "Agent Fleet memory, write: memory_save and memory_forget (write scope, and the setting must be Read and write).",
   "tokens.can_memory_setting_pre": "Memory also needs “Use Agent Fleet memory from outside Agent Fleet” set to Read only or Read and write in ",
   "tokens.can_memory_setting_link": "Settings > Agent memory",
-  "tokens.can_memory_setting_post": ". It is off by default, and a token's scope can only narrow what that setting allows.",
+  "tokens.can_memory_setting_post": ". It is off by default, and a token's scope can only narrow what that setting allows. If your tenant administrator has set External memory access to Block, these memory tools are not listed at all, whatever the token or the setting.",
   "tokens.can_stopped": "Memory lives inside the workspace: while it is stopped, the memory tools answer “start the workspace”. Start it from the Console and try again.",
   "tokens.th_expiry": "Expires",
   "tokens.th_last_used": "Last used",
@@ -328,8 +359,9 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.muse_update": "Update Muse Code",
   "agents.muse_update_note": "Re-downloads the pinned build (about 299MB). Takes a few minutes.",
   "agents.muse_updating": "Updating Muse Code… (about 299MB, a few minutes). Running muse sessions keep working on the old build until they are restarted.",
-  "agents.muse_model_note":
-    "Muse Code lists a \"-contributor\" twin of each model. It is the same model at the same price, but Meta may use those conversations, including messages between sessions, to improve the product. It is Muse Code's own default; \"Default\" here means Agent Fleet picks the newest model without that clause.",
+  "agents.muse_contributor": "Contributor mode",
+  "agents.muse_contributor_note":
+    "On: Meta may use your Muse Code conversations, including messages between sessions, to improve its product (Muse Code's contributor mode). Off by default. Each session keeps the mode it was created with, also across a stop and start and an Agent restart; a change applies to sessions created afterwards, and to assistant and AI assist turns from the next one.",
   "agents.remote_control": "Remote control",
   "agents.note_claude_remote_control":
     "Applies to Claude sessions started after you change it. Remote Control will not start while the workspace's CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC is set. While this is on, Claude sessions started afterwards are launched without it, so that variable no longer suppresses release notes, PR/MR status and availability checks. Telemetry, error reports and auto-update stay off. A copy of the variable in a Claude settings.json env block, or an organization that requires Trusted Devices, still prevents connecting. See the guide (Agents) for details.",

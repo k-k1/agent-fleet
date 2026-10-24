@@ -132,6 +132,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/restore", sessionx.HandleRestoreSession)
 	// Programmatic drive I/O for the MCP tools (docs/0006 P3-6 E).
 	mux.HandleFunc("POST /sessions/{name}/input", sessionx.HandleSessionInput)
+	// The same delivery for a prompt that arrived over the CP's /mcp, with the origin envelope
+	// (#2542). Deliberately absent from the CP's agent-proxy allowlist: the Console can only
+	// reach /input, which never badges or envelopes anything as MCP.
+	mux.HandleFunc("POST /sessions/{name}/mcp-input", sessionx.HandleSessionMCPInput)
 	// Drop one peer message queued behind the user's answer (#1031).
 	mux.HandleFunc("DELETE /sessions/{name}/pending-peer/{id}", sessionx.HandleDropPendingPeer)
 	// Semantic turn ops + Interaction reply (docs/log/27 P1.5/P2) — the entry point of the
@@ -585,6 +589,10 @@ func buildMux() *http.ServeMux {
 	// source of a JDK at all on ECS, where /usr/lib/jvm is empty.
 	mux.HandleFunc("POST /env/jdk-install", handleJDKInstall)
 	mux.HandleFunc("GET /env/jdk-install", handleJDKInstall)
+	// Whether the selected JDK has a newer GA patch (jdk_latest_http.go); kept out of
+	// the toolchains GET because it needs the network.
+	mux.HandleFunc("GET /env/jdk-latest", handleJDKLatest)
+	mux.HandleFunc("GET /env/node-latest", handleNodeLatest)
 	// The same for node: without this, selecting a version that is not installed silently
 	// does nothing, exactly the gap the JDK had (docs/decisions/0068, and the head of
 	// node_install.go).
@@ -621,6 +629,13 @@ func buildMux() *http.ServeMux {
 	// user_secret definition declares.
 	mux.HandleFunc("POST /mcp-servers/tenant-refresh", mcpx.HandleTenantRefresh)
 	mux.HandleFunc("PUT /mcp-servers/{id}/secrets", mcpx.HandleServerSecrets)
+	// OAuth sign-in (ADR 0119 P2). start and callback are called by the CP's own handlers, which
+	// bind them to a member; the CP does not proxy them from the Console.
+	mux.HandleFunc("POST /mcp-servers/{id}/oauth/start", mcpx.HandleOAuthStart)
+	mux.HandleFunc("POST /mcp-servers/{id}/oauth/callback", mcpx.HandleOAuthCallback)
+	mux.HandleFunc("GET /mcp-servers/{id}/oauth", mcpx.HandleOAuthStatus)
+	mux.HandleFunc("DELETE /mcp-servers/{id}/oauth", mcpx.HandleOAuthDisconnect)
+	mux.HandleFunc("PUT /mcp-servers/{id}/oauth/client", mcpx.HandleOAuthClient)
 
 	// Connections — per-user provider credentials (git tokens; Claude in Stage 3).
 	mux.HandleFunc("GET /connections", handleConnectionsGet)

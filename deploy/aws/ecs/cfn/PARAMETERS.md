@@ -23,6 +23,7 @@ Order matches the template. Parameters not listed here are self-explanatory in i
 - [Control Plane task](#control-plane-task)
 - [Sign-in](#sign-in)
 - [Alarms](#alarms)
+- [MCP (`/mcp`) and MCP OAuth](#mcp-mcp-and-mcp-oauth)
 
 ## Images and workspace defaults
 
@@ -169,14 +170,16 @@ clear error at the cap instead of growing the bill.
 How much of a slot is held back from the WORKSPACE so the instance's own daemons (dockerd,
 containerd, the ECS agent, SSM, the EFS stunnel) cannot be starved by it.
 
-- `auto` = a fifth of the rung, clamped to 1-2 GiB: an 8 GiB slot's workspace is capped at
-  6.4 GiB, and the Console prints that number with the instance beside it.
+- `auto` = a flat 2 GiB at every rung: an 8 GiB slot's workspace is capped at 6 GiB, and the Console prints
+  that number with the instance beside it. A fifth (1.6 GiB) left an 8 GiB box about 1.2 GiB
+  of real memory (the rung overstates MemTotal by ~5%), no more than its daemons use, and one
+  thrashed with the ECS and SSM agents going dark (#2451).
 - `off` = uncapped, which is what every deployment did before this existed — and what melted
   a live slot on 2026-08-27 (docs/log/64 §64.40): one workspace took enough anonymous memory
   that the kernel evicted all page cache, every daemon spent hours re-reading its own
   executable off disk, and the instance stopped answering the cluster while still looking healthy
   to EC2.
-- A plain number is that many MiB.
+- A plain number is that many MiB. `0` reserves nothing and caps the workspace at the full rung (not the same as `off`, and not auto).
 
 NOTE: this is part of the task definition, so changing it replaces the running task at the
 owner's next start, exactly as an image change does.
@@ -675,6 +678,17 @@ per-workspace SSM parameter `secret-key-next` (deleted best-effort by the next s
 (GetParameters) already cover it, so no IAM statement was added. Operator view:
 `guide/operate/04-secure.md`, "A key of its own for each home".
 
+### Home task (volume root)
+
+The file system ROOT, as uid 0, not the member's access point. A task definition's volumes
+cannot be overridden per RunTask, so one declared here cannot name a member's access point, and
+registering one per run would put RegisterTaskDefinition on this path and leave the RunTask
+grant below fencing nothing. The access point would also be too little: it pins uid 1000, which
+cannot remove the read-only trees toolchains leave (Go's module cache is 0555), and Destroy has
+to remove the access point's own root directory. The confinement is in the command instead: it
+refuses a membership id that is not one path element, refuses unless /mnt/efs is a mount, and
+only ever removes under /home/<id> and /claude-config/<id>.
+
 ### Home task grant
 
 The CP's grant for the home task: it lives in this stack because only this stack can name the
@@ -686,6 +700,58 @@ task's cost tags (af-membership, af-role, af-tenant) are authorized as ecs:TagRe
 task: only as part of a RunTask (ecs:CreateAction), so no task that exists can be retagged, only
 in this cluster, and only the keys EcsTagServiceOnCreate (20-platform) allows on a workspace
 service. `deploy/local/cfn-cp-ec2-scope-test.py` holds the allowed calls and the denied ones.
+
+## MCP (`/mcp`) and MCP OAuth
+
+### `McpEnabled` / `McpOAuth` / `McpOAuthTrustedHosts`
+
+All three are off / empty by default and emit **no** environment entry when off, so a stack
+that predates them gains parameters and nothing else: the CP task keeps serving no `/mcp`.
+
+| Parameter | Values | CP variable it sets |
+|---|---|---|
+| `McpEnabled` | `off` (default), `on` | `AF_MCP_ENABLED=true` (the CP accepts exactly `true`) |
+| `McpOAuth` | `off` (default), `on` | `AF_MCP_OAUTH=1` (the CP accepts exactly `1`) |
+| `McpOAuthTrustedHosts` | empty (default) or a comma list of host names | `AF_MCP_OAUTH_TRUSTED_HOSTS` |
+
+`McpOAuth=on` needs `McpEnabled=on`: the CP serves the OAuth endpoints only when
+`AF_MCP_ENABLED=true`, `AF_MCP_OAUTH=1` and an `https` `PUBLIC_BASE_URL` all hold, and a Rule
+fails the stack operation for `McpOAuth=on` without `McpEnabled=on` rather than leaving every
+OAuth path answering 404. `PUBLIC_BASE_URL` here is always `https://<Fqdn>`.
+
+`McpOAuthTrustedHosts` empty = the CP's built-in list (`claude.ai,claude.com,chatgpt.com`).
+A super admin can override the list at runtime in the Admin modal (Deployment > MCP sign-in
+hosts); the saved list wins and this parameter is the fallback while nothing is saved. `none`
+leaves loopback clients only. Operator view: `guide/operate/04-secure.md`, "Sign-in for remote
+MCP clients".
+
+Turning it on (`update.sh` overrides only `ImageTag`, so it is not the way to set these):
+
+```
+aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides McpEnabled=on McpOAuth=on
+```
+
+Parameters not named in `--parameter-overrides` keep the stack's previous value, so nothing
+else moves. Unknown or new parameters on `update.sh`'s own run get the template default (off).
+Template-size note: this template is within about 130 bytes of the 51,200-byte wall (see the
+README), so the parameters here were paid for by moving prose out of it; the Home task
+paragraph above is one. The next parameter needs the same.
+
+### `SessionTtl` / `GithubAllowedEmails` / `KmsDataKeyCacheTtl`
+
+Pass-throughs for CP variables the operator guide calls configurable and that had no ECS
+route. All three default to empty, and the CP treats an empty value as unset (`envx.DurationOr`,
+`envx.EmailSet`, `kmsCacheTTL`), so a stack that predates them behaves as before.
+
+| Parameter | CP variable | Empty means |
+|---|---|---|
+| `SessionTtl` | `AF_SESSION_TTL`, a Go duration (`72h`), how long the signed sign-in cookie stays valid | 168h |
+| `GithubAllowedEmails` | `AF_GITHUB_ALLOWED_EMAILS`, comma list admitted by GitHub sign-in besides the org / domain lists | nobody by email |
+| `KmsDataKeyCacheTtl` | `AF_KMS_DATA_KEY_CACHE_TTL`, a Go duration, `0s` = no cache (kms custodian only) | 5m |
+
+`GithubAllowedEmails` only matters while GitHub sign-in is on, which the template decides by
+`GithubAllowedOrgs`.
 
 ## Alarms
 

@@ -4,6 +4,9 @@ import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Row } from "../parts/controls.tsx";
+import { fmtDate } from "./tokenDate.ts";
+import { ConnectedApps } from "./ConnectedApps.tsx";
+import { RecentCalls } from "./RecentCalls.tsx";
 import { TokenCapabilities } from "./TokenCapabilities.tsx";
 
 // TokensTab issues and revokes Personal Access Tokens for the MCP endpoint
@@ -190,9 +193,9 @@ export function TokensTab() {
               <th />
             </tr>
           </thead>
-          <tbody>
-            {tokens.map((t) => (
-              <tr key={t.id} className={t.revoked ? "pat-revoked" : ""}>
+          {tokens.map((t) => (
+            <tbody key={t.id}>
+              <tr className={t.revoked ? "pat-revoked" : ""}>
                 <td>{t.name || tr("tokens.unnamed")}</td>
                 <td>{t.scope}</td>
                 <td>{fmtDate(t.expires_at) || tr("tokens.ttl_never")}</td>
@@ -207,19 +210,17 @@ export function TokensTab() {
                   )}
                 </td>
               </tr>
-            ))}
-          </tbody>
+              {!t.revoked && (
+                <tr>
+                  <td colSpan={5}><RecentCalls url={`api/pat/${encodeURIComponent(t.id)}/calls`} /></td>
+                </tr>
+              )}
+            </tbody>
+          ))}
         </table>
       )}
+      <ConnectedApps />
     </div>
   );
-}
-
-function fmtDate(s: string | undefined): string {
-  if (!s) return "";
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 

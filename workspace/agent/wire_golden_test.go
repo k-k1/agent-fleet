@@ -74,6 +74,9 @@ func wireGoldenTypes() []struct {
 		// GET /agents/kinds — the kind catalog the CP embeds a snapshot of and the Console will
 		// derive its kind lists from.
 		{"kindCatalog", reflect.TypeOf(kindCatalogWire{})},
+		// GET /env/jdk-latest and /env/node-latest — the version Install would fetch and
+		// whether the Toolchains tab offers an update.
+		{"toolchainLatest", reflect.TypeOf(toolchainLatestReply{})},
 	}
 }
 

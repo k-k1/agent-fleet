@@ -1,7 +1,7 @@
 ---
 audience: "everyone"
 source_of_truth: "this table; the columns and the marked rows are checked against the code"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # Agents — what each kind can do
@@ -30,7 +30,7 @@ because "does this apply to a plain shell session?" is a real question.
 | Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
 | Choosing to skip permission prompts | ✓ | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | —¹³ | — | — |
 | Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | —⁴ | ✓⁴ | — | — |
-| Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
+| Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
 | Start in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
@@ -111,7 +111,10 @@ layer, and takes effect from the next turn, running sessions included.
 | opencode | Working / Question / Ready |
 | copilot | Working / Awaiting permission / Ready |
 | cursor | Working / Awaiting permission / Plan ready / Ready |
-| kiro | Working / Awaiting permission / Ready |
+| kiro | Working / Question / Ready |
+| agy | Working / Question / Awaiting permission / Ready |
+| lcpp | Working / Ready |
+| muse | Working / Question / Ready |
 
 On a Terminal (CLI) session, cursor stops for a command approval only when **Tool
 permissions** asks for approval or the session started in plan mode, and for a build
@@ -119,9 +122,57 @@ decision only in a plan launch. The mirror shows the state but draws no card for
 answer in the terminal. Text sent from anywhere while it waits is refused, because the
 menu would take its Enter as "run" or "build".
 
+kiro shows a tool approval it is waiting for as **Question**, not as Awaiting permission.
+lcpp's tool approvals and its questions appear as cards in the mirror while the state
+stays Working. muse asks for no tool approvals (footnote 13), so it never shows Awaiting
+permission.
+
+After a usage limit stops a turn, claude, codex under Managed and muse show **Waiting for
+limit reset** with the time, and resume by themselves once the limit resets. When a turn
+has ended but work it started is still running, claude, codex under Managed, agy and muse
+show **Ready · running in background**.
+
 `shell` and `ssm` have no conversation and therefore no state model and no
-notifications. agy's states are not separately documented; treat its mirror as
-best-effort.
+notifications.
+
+## Moving a session to another agent
+
+A move ([05 Stopping and tidying up](../member/05-stopping-and-tidying.md#moving-a-session-to-another-agent-move))
+has two sides, and a kind can be on one without the other.
+
+| Kind | As the source | As the target |
+|---|:--:|:--:|
+| claude | ✓ | ✓ |
+| codex | ✓ | ✓ |
+| opencode | ✓ | ✓ |
+| copilot | ✓ | ✓ |
+| cursor | ✓ (not a stopped Managed session) | — (not yet verified) |
+| kiro | ✓ | ✓ |
+| agy | ✓ | ✓ |
+| lcpp | ✓ | — (cannot read the handover file) |
+| muse | ✓ | ✓ |
+| shell / ssm | — | — |
+
+- **A stopped Managed cursor session cannot be moved.** Its conversation lived only in the
+  running agent, so nothing is left to write the handover file from.
+- **cursor is not offered as a target** until reading the handover file through its Managed
+  driver has been verified.
+- **lcpp is not offered as a target** because its file tools refuse paths outside the working
+  folder, and the handover file lives outside it.
+- A move always goes to another kind. To continue in the same kind, fork the session where the
+  kind can fork. shell and ssm have no conversation to hand over.
+
+## Each agent's own memory
+
+What the switch **"Let sessions use Agent Fleet memory"**
+([18 Agent memory](../member/18-agent-memory.md#settings)) does to the memory a kind keeps by itself.
+
+| Kind | While the switch is on | Carried into Agent Fleet memory | Written back when it goes off |
+|---|---|---|---|
+| claude | New sessions start with Claude Code's auto-memory off | ✓ (imported in the background) | ✓ |
+| codex | codex's `features.memories` is switched off, and your value is restored when the switch goes off | — | — |
+| muse | New hosts start with Muse Code's native memory off | Once, with **Import from muse** | — |
+| other kinds | Nothing is changed | — | — |
 
 ## Choosing one
 
@@ -171,13 +222,14 @@ Managed.
 ## muse: what Agent Fleet does not see
 
 Muse Code brings its own versions of things Agent Fleet also does. They keep working
-inside a muse session, and Agent Fleet has no view of them, so if you use them, expect
-that no Agent Fleet screen will show what happened.
+inside a muse session, and Agent Fleet sees little or nothing of them, so if you use them,
+expect the Console to tell you less than Muse Code itself would.
 
 - **Runs a muse session schedules for itself.** A muse session can put a prompt on its
   own timer and run it later without you. Those are Muse Code's jobs, not Agent Fleet's:
   they do not appear in the Console's scheduled runs, Agent Fleet cannot cancel one, and
-  only the session itself can list or delete them: ask it to. They fire while that
+  only the session itself can list or delete them: ask it to. When one fires, the mirror
+  shows a one-line `scheduledFire` row for it, so you can see that it ran. They fire while that
   session is running, and a repeating one expires by itself after seven days. Agent Fleet
   cannot switch the feature off, either: Muse Code has no setting for it, and its one
   control that would remove those tools removes every integration (MCP) tool along with
@@ -229,12 +281,20 @@ approval is considered. Measured, a muse turn wrote a file outside its working c
 prompt. So treat a muse session as having the same reach over this container as `shell`
 does, and read the warning above as applying to it in full.
 
-¹⁴ Muse Code's catalogue lists a "-contributor" twin of every model: the same model at the
-same price, except that Meta may use those conversations, including messages between
-sessions, to improve the product. It is Muse Code's own default. Agent Fleet does not pick it
-for you: a session launched on **Default** runs on the newest model without that clause, and
-the twins stay in the picker for anyone who wants one. Settings › Agents › Muse Code ›
-Behaviour is where you choose, and the reasoning effort (`none` … `ultra`) sits beside it.
+¹⁴ Muse Code has a **contributor mode**: while it is on, Meta may use your conversations,
+including messages between sessions, to improve the product. Agent Fleet runs every muse
+process that handles a conversation with the mode set explicitly. It is **off** unless you switch it on under Settings ›
+Agents › Muse Code › Behaviour › **Contributor mode**. Each session keeps the mode it was
+created with, across a stop and start and an Agent restart, and a fork or recreate keeps it
+too. Changing the setting applies to sessions created afterwards, and to assistant chat and
+AI assist turns from the next one. A session cannot switch the setting on by itself: only a
+change you make from the Console can.
+
+Muse Code 1.3 offered the same choice as a "-contributor" twin of every model, and made that
+twin its own default. Where a host still lists those twins, Agent Fleet never picks one for
+you: a session launched on **Default** runs on the newest model without the clause, and the
+twins stay in the picker for anyone who wants one. The default model and the reasoning effort
+(`none` … `ultra`) are chosen on the same Behaviour settings.
 
 The assistant chat follows the same rule, under Settings › AI: left on the recommendation it
 runs on the newest model without the clause, and if the catalogue cannot be read at all the

@@ -41,6 +41,11 @@ keep it in mind.
   `engine.<engine>.model.complete` are models taken in or completed; `engine.hf_token` and
   `engine.civitai_token` are the API tokens registered or removed. These lines belong to the
   deployment rather than to a tenant, so they appear in a deployment administrator's audit view.
+  Members' inbox ([member 12](../member/12-collaboration.md#asking-a-teammate-the-inbox)) writes `inbox.send`
+  (kind and recipients, never the text), `inbox.claim`, `inbox.decline`, `inbox.release`, `inbox.done`,
+  `inbox.withdraw`, `inbox.pr`, `inbox.block` / `inbox.unblock` and `inbox.launch`. Tenant switches write
+  `limit_board.set` and `tenant.member_defaults`; switching the development sign-in writes `dev_idp.set`, a
+  deployment row.
 - **Not recorded**: plain **reads** (just opening and viewing a file, just browsing a list) are
   not kept by default. And **raw terminal input/output (the very characters flowing across the
   screen) is not stored**. This is by design, to avoid the risk of passwords or tokens slipping in.

@@ -1195,6 +1195,10 @@ func createSession(w http.ResponseWriter, r *http.Request, req CreateReq) {
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 		Origin: origin, OriginConv: originConv, OriginSession: originSession,
 		Studio: studio, WorkItem: cleanWorkItemRef(req.WorkItem),
+
+		// From the member's setting only, never the request: a session can call create_session,
+		// and turning contributor mode on is the member's decision (ui_prefs.go's mark gate).
+		MuseContributorMode: kind == session.KindMuse && uiprefs.MuseContributorMode(),
 	}
 	// pending from the first write of the meta: the pane must not offer a resend while the
 	// delivery below may still be typing (ADR 0100 decision 2).
@@ -1544,9 +1548,15 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 	// never starts working.
 	// Stop when this fails: "asked for a point, got the whole conversation forked" arrives
 	// with plausible-looking history, so the user cannot notice the breakage.
-	var forkAt string
+	var forkAt, pinned string
 	if req.At != "" {
-		at, err := resolver.ResolveForkAt(src, agents.ForkPoint{Anchor: req.At, Include: req.Include})
+		var at string
+		var err error
+		if p, ok := ag.(agents.ForkAtPinner); ok {
+			at, pinned, err = p.ResolveForkAtPinned(src, agents.ForkPoint{Anchor: req.At, Include: req.Include})
+		} else {
+			at, err = resolver.ResolveForkAt(src, agents.ForkPoint{Anchor: req.At, Include: req.Include})
+		}
 		if err != nil {
 			code := errCodeForkBadAnchor
 			if errors.Is(err, agents.ErrForkAtRoute) {
@@ -1560,6 +1570,13 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 	forkFrom, err := forker.ForkSource(src)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "not_resumable", err.Error())
+		return
+	}
+	// The point was resolved against `pinned`; forking another conversation with it (or, for a
+	// point that means "everything", forking one the user did not look at) is refused.
+	if pinned != "" && forkFrom != pinned {
+		httpx.WriteErr(w, http.StatusConflict, errCodeForkBadAnchor,
+			"the conversation changed while the fork point was being resolved; pick the message again")
 		return
 	}
 	forkName := allocSessionName(src.Dir)
@@ -2002,7 +2019,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	newMeta := session.Meta{
 		Name: allocSessionName(m.Dir), Dir: m.Dir, Subdir: m.Subdir, Model: m.Model, Effort: m.Effort, Mode: m.Mode,
 		Kind: m.Kind, Driver: m.Driver, SkipPermissions: m.SkipPermissions, SpendCapUSD: m.SpendCapUSD,
-		Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitx.GitCurrentBranch(m.Dir),
+		MuseContributorMode: m.MuseContributorMode, Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitx.GitCurrentBranch(m.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
 		// recreate means "make the same slot again, empty", so the origin is inherited (ADR 0029 §6).
 		Origin: session.OriginOf(m), OriginConv: m.OriginConv, OriginSession: m.OriginSession,
@@ -2085,6 +2102,7 @@ func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) sessio
 	return session.Meta{
 		Name: forkName, Dir: src.Dir, Subdir: src.Subdir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
 		Kind: src.Kind, Driver: src.Driver, Title: title, SkipPermissions: src.SkipPermissions,
+		MuseContributorMode: src.MuseContributorMode,
 		// The budget value carries over, the hit does not: the fork's spend starts from the
 		// instant it was made, to the sub-second (SpendFrom), so it has spent nothing yet.
 		SpendCapUSD: src.SpendCapUSD, SpendFrom: now.Format(time.RFC3339Nano),

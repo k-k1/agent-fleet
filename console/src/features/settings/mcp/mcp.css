@@ -38,7 +38,14 @@
   font-family: var(--mono);
 }
 
-.mcp-label {
+/* The row leads with the display name; the ID (the key in every CLI config) is secondary.
+   A server without a display name shows its ID in the title slot, in .mcp-name's mono. */
+.mcp-title {
+  font-weight: 600;
+}
+
+.mcp-id {
+  font-family: var(--mono);
   font-size: 12px;
   color: var(--muted);
   min-width: 0;
@@ -132,4 +139,111 @@
     width: 100%;
   }
 
+}
+
+/* Advanced section of the MCP forms (member + tenant): a closed disclosure whose summary line
+   shows the current values. */
+.mcp-adv {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.mcp-adv-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  cursor: pointer;
+}
+
+.mcp-adv-head::before {
+  content: "\25B8";
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.mcp-adv[open] > .mcp-adv-head::before {
+  content: "\25BE";
+}
+
+.mcp-adv-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mcp-adv-sum {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.mcp-adv-body {
+  margin-top: 10px;
+}
+
+/* OAuth sign-in block of an MCP row (ADR 0119): state, grant facts, buttons. */
+.mcp-oauth {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.mcp-oauth-connected {
+  border-left-color: var(--ok, #3fb950);
+}
+
+.mcp-oauth-sign_in_again,
+.mcp-oauth-needs_more_permission {
+  border-left-color: var(--warn, #d29922);
+}
+
+.mcp-oauth-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.mcp-oauth-state {
+  font-weight: 600;
+}
+
+.mcp-oauth-client {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.mcp-oauth-next {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+/* The tab the authorization server returned to: says how it went and that it can be closed. */
+.mcp-oauth-return {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.mcp-oauth-return-card {
+  max-width: 440px;
+  padding: 24px 28px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }

@@ -2,8 +2,9 @@
 
 [English](0111-member-collaboration.md) | 日本語
 
-- Status: **accepted**（2026-10-10）。未実装。2026-10-07 に別モデルによる設計レビュー 3 巡を経て提案。
-  未解決の問いは末尾の追記で決着した。
+- Status: **accepted**（2026-10-10。提案は 2026-10-07、別モデルによる設計レビュー 3 巡を経た）。P0（#1960）は完了。
+  P1-A（受信箱・DM・依頼・レシピ）と P1-B（利用枠ボード）は実装済みで、最初のリリースは v0.31.0。#1961 と #1962 を閉じる
+  本物のフリートでの手動の実行は、まだ記録されていない。未実装：P2 と P3。未解決の問いは末尾の追記で決着した。
   状態の更新（2026-10-11）: P1-A が満たすべき受信箱の受け入れ条件（P0）を
   [docs/log/130](../log/130-member-inbox-acceptance.md) に書いた。
   状態の更新（2026-10-12）: P1-A の前半を作った（Issue #1961）。CP の表
@@ -24,7 +25,7 @@
   （`e2e/inbox_test.go`・`e2e/inbox_workspace_test.go`、PR #2042）。ID ごとの証拠と、手作業で残した行と
   その理由（実際の IdP、Agent や CP の 2 つの版、配備先）はその PR にある。
 - Tracking: #1840
-- Follow-ups: #1960, #1961, #1962
+- Follow-ups: #1961、#1962（開いている：本物のフリートでの手動の受け入れ実行）。#1960 はクローズ済み
 - Related: [0057](0057-member-handoff.ja.md)（メンバー間の引き継ぎ：実行は越境しない）/
   [0041](0041-cross-session-messaging.ja.md)（peer メッセージ、permission laundering、live governance）/
   [0020](0020-chat-bridge.ja.md)（Slack / Discord ブリッジ）/ [0108](0108-af-owned-agent-memory.ja.md)

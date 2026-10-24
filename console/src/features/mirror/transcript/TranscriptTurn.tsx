@@ -20,7 +20,7 @@ import { textOfParts, workSplit, type WorkSplit } from "../mirrorParts.ts";
 import { looksForeign, translatableTexts, turnTranslateKey } from "../translate.ts";
 import { authResolved, footTime } from "../turnTime.ts";
 import { canBranchFrom } from "../forkAt.ts";
-import { foldParts, peerIntentOf, peerSenderOf, spawnParentOf, spendOf, splitSessionEnvelope } from "./model.ts";
+import { foldParts, mcpViaOf, peerIntentOf, peerSenderOf, spawnParentOf, spendOf, splitSessionEnvelope } from "./model.ts";
 import { paintTurnMarks } from "./markPaint.ts";
 import { chipPart, turnFiles } from "./turnFiles.ts";
 import type { Group, Part } from "./types.ts";
@@ -140,6 +140,10 @@ function TranscriptTurnImpl({
   // create_session. Read the envelope first, like peer, so the badge survives a missing tag.
   const spawnParent = isUser ? spawnParentOf(turn.text ?? "") : null;
   const fromSpawn = isUser && (turn.source === "spawn" || !!spawnParent);
+  // MCP origin (#2542): a hosted assistant or PAT client sent this through send_to_session.
+  // Envelope first, like peer, so the badge survives a missing source tag.
+  const mcpVia = isUser ? mcpViaOf(turn.text ?? "") : null;
+  const fromMcp = isUser && (turn.source === "mcp" || !!mcpVia);
   // Copy and translate both follow what the reader can actually see. A folded turn hides its
   // work-process text (the intermediate replies between tool calls, e.g. "途中応答31件"), and
   // neither the clipboard nor a translation request should reach past that fold: the reader
@@ -155,7 +159,7 @@ function TranscriptTurnImpl({
   // A user turn is the reader's own words and is never offered — except a message another
   // session sent (peer, spawn): that one is written in whatever language the sending agent
   // drifted into, exactly like an answer. Only its body is sent; the envelope stays verbatim.
-  const fromSession = fromPeer || fromSpawn;
+  const fromSession = fromPeer || fromSpawn || fromMcp;
   const envelope = fromSession && !turn.bash && !turn.cmd ? splitSessionEnvelope(turn.text || "") : null;
   const tx = isUser ? (envelope?.body.trim() ? caps.translate : undefined) : caps.translate;
   const txTexts = !tx ? [] : envelope ? [envelope.body] : translatableTexts({ parts: visibleParts });
@@ -398,7 +402,7 @@ function TranscriptTurnImpl({
         (fromOperator ? " from-operator" : "") +
         (fromSchedule ? " from-schedule" : "") +
         (fromAutoResume || fromNotice ? " from-schedule" : "") +
-        (fromPeer ? " from-peer" : "") +
+        (fromPeer || fromMcp ? " from-peer" : "") +
         (chatProvider ? " from-chat" : "")
       }
       data-turn-idx={turn.idx}
@@ -440,6 +444,12 @@ function TranscriptTurnImpl({
           <span className="mt-op mt-peer" title={tr("mirror.from_peer_title")}>
             <Icon name="arrow-swap" />{" "}
             {peerFrom ? tr("mirror.from_peer_named", { name: peerFrom }) : tr("mirror.from_peer")}
+          </span>
+        )}
+        {fromMcp && (
+          // Sent through /mcp by a hosted assistant or PAT client (#2542) — not the user.
+          <span className="mt-op mt-peer" title={tr("mirror.from_mcp_title")}>
+            <Icon name="plug" /> {mcpVia ? tr("mirror.from_mcp_named", { name: mcpVia }) : tr("mirror.from_mcp")}
           </span>
         )}
         {fromSpawn && (

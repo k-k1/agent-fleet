@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -24,6 +25,9 @@ import (
 // egressIngest is the wire body the proxy POSTs.
 type egressIngest struct {
 	Events []egressEvent `json:"events"`
+	// Dropped is how many observations the proxy discarded while the CP was unreachable
+	// (its pending-bucket cap was full), so the loss shows up in the audit ledger.
+	Dropped int `json:"dropped,omitempty"`
 }
 
 type egressEvent struct {
@@ -130,7 +134,9 @@ func (a egressAPI) policy(w http.ResponseWriter, r *http.Request) {
 
 // ingest (POST /internal/egress) receives a batch of observations from the
 // egress proxy. Deployment-internal: authenticated by the shared AF_EGRESS_TOKEN bearer
-// (not a user session — it is authGate-exempt). Best-effort: a bad row is skipped.
+// (not a user session — it is authGate-exempt). A malformed row is skipped and the audit
+// insert is best-effort, but a store failure answers 500 so the proxy keeps the batch and
+// retries. Rows recorded before the failure are counted again on that retry (at-least-once).
 func (a egressAPI) ingest(w http.ResponseWriter, r *http.Request) {
 	if !a.tokenOK(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -148,13 +154,24 @@ func (a egressAPI) ingest(w http.ResponseWriter, r *http.Request) {
 		if host == "" || e.Count <= 0 {
 			continue
 		}
-		_ = a.store.RecordEgress(ctx, day, host, e.Allowed, e.Count)
+		if err := a.store.RecordEgress(ctx, day, host, e.Allowed, e.Count); err != nil {
+			log.Printf("egress ingest: record %s: %v", host, err)
+			http.Error(w, "record failed", http.StatusInternalServerError)
+			return
+		}
 		if !e.Allowed && a.dedup != nil && a.dedup.firstToday(day, host) {
 			_ = a.store.InsertAudit(ctx, store.AuditLog{
 				ID: store.NewID(), TenantID: "", ActorKind: "system", ActorID: "egress-proxy",
 				Action: "egress.observe", Target: host, Detail: "would-block (log-only)", At: store.NowTS(),
 			})
 		}
+	}
+	if body.Dropped > 0 {
+		_ = a.store.InsertAudit(ctx, store.AuditLog{
+			ID: store.NewID(), TenantID: "", ActorKind: "system", ActorID: "egress-proxy",
+			Action: "egress.dropped", Target: "egress-proxy",
+			Detail: strconv.Itoa(body.Dropped) + " observations dropped while the CP was unreachable", At: store.NowTS(),
+		})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

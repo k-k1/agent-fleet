@@ -218,6 +218,8 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// on both is checked mid-handler by tenantAdminFor.
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/network", adm.tenantNetwork)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/network", adm.setTenantNetwork)
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/mcp-oauth", adm.tenantMCPOAuth)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/mcp-oauth", adm.setTenantMCPOAuth)
 	// The tenant-wide switch for AF memory used from outside Agent Fleet through /mcp (#2318).
 	// tenant_admin, checked mid-handler by tenantAdminFor like the network rule above.
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/external-memory", adm.tenantExternalMemory)
@@ -281,6 +283,10 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// and the bulk form for every slot below the launch template's $Latest.
 	mux.HandleFunc("PUT /api/admin/ec2-pool/slots/{id}/replace", adm.withSuperAdmin(adm.reservePoolSlot))
 	mux.HandleFunc("DELETE /api/admin/ec2-pool/slots/{id}/replace", adm.withSuperAdmin(adm.reservePoolSlot))
+	// Stop a wedged slot (agents dark, instance running; #2449). It is not quarantined: the
+	// member's next Start wakes the same slot. A healthy slot is refused unless the body
+	// overrides it (the Console never sends that).
+	mux.HandleFunc("POST /api/admin/ec2-pool/slots/{id}/force-stop", adm.withSuperAdmin(adm.forceStopPoolSlot))
 	mux.HandleFunc("POST /api/admin/ec2-pool/reserve-outdated", adm.withSuperAdmin(adm.reserveOutdatedPoolSlots))
 	mux.HandleFunc("GET /api/admin/workspace-sizing", adm.withIdentity(adm.workspaceSizingProfile)) // what mem/CPU/disk MEAN on this runtime (ADR 0045 decision 21)
 	mux.HandleFunc("GET /api/admin/usage", adm.usage)                                               // showback: occupancy per tenant/member (json|csv)
@@ -317,8 +323,13 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 // Personal Access Tokens (Console-issued) for the MCP endpoint (docs/0006).
 func registerPATRoutes(mux *http.ServeMux, cfg config) {
 	pat := newPATAPI(cfg.mgr)
+	apps := mcpConnectedAPI{memberAuth{cfg.mgr}}
+	mux.HandleFunc("GET /api/mcp-oauth/grants", apps.withIdentity(apps.list))
+	mux.HandleFunc("GET /api/mcp-oauth/grants/{id}/calls", apps.withIdentity(apps.calls))
+	mux.HandleFunc("DELETE /api/mcp-oauth/grants/{id}", apps.withIdentity(apps.revoke))
 	mux.HandleFunc("GET /api/pat", pat.withIdentity(pat.list))
 	mux.HandleFunc("POST /api/pat", pat.withIdentity(pat.create))
+	mux.HandleFunc("GET /api/pat/{id}/calls", pat.withIdentity(pat.calls))
 	mux.HandleFunc("DELETE /api/pat/{id}", pat.withIdentity(pat.revoke))
 }
 
@@ -329,8 +340,14 @@ func registerPATRoutes(mux *http.ServeMux, cfg config) {
 func registerMCPRoutes(mux *http.ServeMux, cfg config) {
 	exemptExact("/mcp")
 	exemptPrefix("/mcp/")
+	oauth := registerMCPOAuthRoutes(mux, cfg)
+	// Registered whether or not the OAuth server is served, so the list can be prepared first.
+	trusted := memberAuth{cfg.mgr}
+	for _, m := range []string{"GET", "PUT", "DELETE"} {
+		mux.HandleFunc(m+" /api/admin/mcp-oauth/trusted-hosts", trusted.withSuperAdmin(oauth.trustedAdmin)) // trusted MCP OAuth client hosts (super_admin, ADR 0118)
+	}
 	if envx.Or("AF_MCP_ENABLED", "") == "true" {
-		mux.HandleFunc("/mcp", mcpsrv.New(cpDeps{cfg.mgr}).HandleMCP)
+		mux.HandleFunc("/mcp", oauth.withOAuth(mcpsrv.New(cpDeps{cfg.mgr})).HandleMCP)
 		log.Printf("MCP endpoint enabled at /mcp")
 	}
 }
@@ -1010,6 +1027,8 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	// starts the download in the workspace, GET polls its state.
 	mux.HandleFunc("POST /api/env/jdk-install", rest)
 	mux.HandleFunc("GET /api/env/jdk-install", rest)
+	mux.HandleFunc("GET /api/env/jdk-latest", rest)
+	mux.HandleFunc("GET /api/env/node-latest", rest)
 	mux.HandleFunc("POST /api/env/node-install", rest)
 	mux.HandleFunc("GET /api/env/node-install", rest)
 	mux.HandleFunc("GET /api/env/tool-versions", rest)
@@ -1061,6 +1080,19 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	// waiting for the poll), and fill in the values of a user_secret server's headers.
 	mux.HandleFunc("POST /api/mcp-servers/tenant-refresh", rest)
 	mux.HandleFunc("PUT /api/mcp-servers/{id}/secrets", rest)
+	// OAuth sign-in for MCP servers that require it (ADR 0119 P2, oauth_mcp_client.go). start
+	// and disconnect are CP handlers (state, session binding, audit); status and the member's
+	// client id are plain proxies. The Agent's /oauth/callback is never proxied from the Console.
+	withRes := proxy.withResolved
+	mux.HandleFunc("POST /api/mcp-servers/{id}/oauth/start", withRes(cfg.handleMCPClientOAuthStart))
+	mux.HandleFunc("GET /api/mcp-servers/{id}/oauth", rest)
+	mux.HandleFunc("DELETE /api/mcp-servers/{id}/oauth", withRes(cfg.handleMCPClientOAuthDisconnect))
+	mux.HandleFunc("PUT /api/mcp-servers/{id}/oauth/client", rest)
+	// The callback sits under the auth-exempt /oauth2/ prefix and gates on the session itself.
+	// The CIMD document is exempted by its exact path: nothing else under /oauth/ is public.
+	mux.HandleFunc("GET "+mcpClientOAuthCallbackPath, cfg.handleMCPClientOAuthCallback)
+	exemptExact(mcpClientOAuthCIMDPath)
+	mux.HandleFunc("GET "+mcpClientOAuthCIMDPath, cfg.handleMCPClientOAuthCIMD)
 	mux.HandleFunc("GET /api/connections", rest)
 	mux.HandleFunc("GET /api/connections/git/{host}/repos", rest)
 	mux.HandleFunc("GET /api/connections/git/{host}/branches", rest)

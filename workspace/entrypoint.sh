@@ -330,7 +330,8 @@ VJ=/usr/local/share/agent-fleet/versions.json
 vj_pin() { node -e 'try{process.stdout.write(String(require(process.argv[1])[process.argv[2]]||""))}catch{}' "$VJ" "$1" 2>/dev/null; }
 cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
 # Boot-install outcome per CLI, read by the Agent (boot_install_status.go) for Settings >
-# Toolchains. One line per CLI: <tool>\t<ok|skipped|failed>\t<reason>. It lives under /tmp rather
+# Toolchains. One line per CLI: <tool>\t<ok|skipped|failed>\t<reason>
+# (reason: failed always; skipped only for "no_space", an upgrade skipped with the old copy kept). It lives under /tmp rather
 # than home because the failure it reports is usually a full home, where a status file in home
 # could not be written. /tmp is shared, so the files sit in a private directory of ours that is
 # checked before use (a real directory, not a symlink, owned by this user); a directory that fails
@@ -372,13 +373,37 @@ bi_reason() {
 }
 # bi_failed <tool...> — record a failed block (stderr already echoed by the caller).
 bi_failed() { local r t; r="$(bi_reason)"; for t in "$@"; do bi_note "$t" failed "$r"; done; }
+# cli_usable <tool> — an installed copy that can run now: a regular executable file (symlinks
+# followed, so a dangling link or a directory does not count) that answers --version, asked the
+# way the install decision above asks (agy's env mask, cursor's bundle check). The status name
+# is not always the binary name (cursor is cursor-agent).
+cli_usable() {
+  local bin="$1" p
+  [ "$1" = cursor ] && bin=cursor-agent
+  for p in "/usr/local/bin/$bin" "$HOME/.local/bin/$bin"; do
+    [ -f "$p" ] && [ -x "$p" ] || continue
+    case "$1" in
+      agy) if [ "$p" = "$HOME/.local/bin/agy" ]; then [ -n "$(agy_effective_version)" ] || continue
+           else timeout 30 "$p" --version >/dev/null 2>&1 || continue; fi ;;
+      cursor) cursor_runs "$p" || continue ;;
+      *) timeout 30 "$p" --version >/dev/null 2>&1 || continue ;;
+    esac
+    return 0
+  done
+  return 1
+}
 # bi_room <mb> <tool...> — whether home has <mb> MiB free (true when df cannot tell). When it
 # has not, the install is skipped and what is installed stays: a half-run install is how a full
-# home turned into "every agent broke at once".
+# home turned into "every agent broke at once". A tool with a usable copy (cli_usable, not the
+# weaker cli_present: a broken or non-executable leftover is not one) keeps working, so its
+# skipped upgrade is recorded "skipped no_space" and only a tool with nothing usable is
+# "failed no_space" (the Agent refuses a start only for the latter).
 bi_room() {
   local need="$1" t; shift
   bi_free_ok "$need" "$*" && return 0
-  for t in "$@"; do bi_note "$t" failed no_space; done
+  for t in "$@"; do
+    if cli_usable "$t"; then bi_note "$t" skipped no_space; else bi_note "$t" failed no_space; fi
+  done
   return 1
 }
 # bi_free_ok <mb> <what> — the check alone, for callers that have no per-CLI outcome to record
@@ -1216,31 +1241,16 @@ fi
 # everywhere, download it into the home volume now (persists on the volume / EFS, so
 # only the first launch pays the download). Soft-fail: no network → keep going.
 if [ -n "$JAVA_VER" ]; then
-  # Never go back to "glob and take the first". Both locations name JDKs
-  # temurin-<major>-jdk-<arch>, and "amd64" sorts before "arm64", so once a home populated
-  # on x86 is attached to an arm64 slot, the first match is always the one that cannot run
-  # (docs/log/70 §70.5.1; workspace-agent's javaHomeFor follows the same rule). Prefer this
-  # architecture's suffix and never take another architecture's.
-  find_jh() {
-    for d in /usr/lib/jvm "$HOME/.local/share/agent-fleet/jvm"; do
-      [ -d "$d" ] || continue
-      jh=""
-      for c in "$d"/temurin-"$JAVA_VER"-jdk*; do
-        [ -d "$c" ] || continue
-        case "$c" in
-          *-jdk-"$af_arch_now") printf '%s\n' "$c"; return 0 ;;
-          *-jdk-amd64 | *-jdk-arm64) continue ;;              # other arch: never take
-          *) [ -n "$jh" ] || jh="$c" ;;                       # no suffix: fallback
-        esac
-      done
-      [ -n "$jh" ] && { printf '%s\n' "$jh"; return 0; }
-    done
-    return 1
-  }
+  # workspace-agent owns the lookup rule (this architecture only, never another's;
+  # docs/log/70 §70.5.1) and the newer patch when a major is in both directories, so
+  # this JAVA_HOME and the one sessions get from resolvedToolchains cannot disagree.
+  # Absolute path, like the image's CMD: PATH puts ~/.local/bin first, and a stale build
+  # left there predates java-home, exits 2, and leaves JAVA_HOME unset with the JDK on disk.
+  find_jh() { /usr/local/bin/workspace-agent java-home "$JAVA_VER"; }
   JH=$(find_jh || true)
   if [ -z "$JH" ]; then
     echo "[entrypoint] temurin-$JAVA_VER not present; installing into home volume ..."
-    workspace-agent install-jdk "$JAVA_VER" || echo "[entrypoint] WARN: install-jdk $JAVA_VER failed"
+    /usr/local/bin/workspace-agent install-jdk "$JAVA_VER" || echo "[entrypoint] WARN: install-jdk $JAVA_VER failed"
     JH=$(find_jh || true)
   fi
   if [ -n "$JH" ]; then
@@ -1295,14 +1305,22 @@ if [ -n "$NODE_VER" ] && [ "$NODE_VER" != "system" ]; then
   # Never go back to `ls | tail -1` here: lexical order picked v22.9.0 over newer releases;
   # install-node resolves numerically (the same rule as nodeBinFor in env_toolchains.go).
   af_node_bin="$(workspace-agent install-node "$NODE_VER" 2>/dev/null || true)"
+  # Now that the newest patch is in place and before any session starts, drop the older
+  # patches install-node left behind. It keeps the tree just returned (--keep) and every
+  # pinned version (node_prune.go). Absolute path: a stale build in ~/.local/bin would not
+  # know the subcommand.
+  /usr/local/bin/workspace-agent prune-node-versions ${af_node_bin:+--keep "$af_node_bin"} \
+    || echo "[entrypoint] WARN: prune-node-versions failed (continuing)"
   if [ -n "$af_node_bin" ] && [ -x "$af_node_bin/node" ]; then
     export PATH="$af_node_bin:$PATH"
   fi
   if [ -s "$NVM_DIR/nvm.sh" ]; then
     # shellcheck disable=SC1091
     . "$NVM_DIR/nvm.sh"
-    nvm alias default "$NODE_VER" >/dev/null 2>&1
-    nvm use "$NODE_VER" >/dev/null 2>&1
+    # Under set -e a failing `nvm use` (a version that is not installed) would end the
+    # start before the Agent runs; the check below reports the mismatch instead.
+    nvm alias default "$NODE_VER" >/dev/null 2>&1 || true
+    nvm use "$NODE_VER" >/dev/null 2>&1 || true
   fi
   # Always check that the selected version is what runs. If both the install and `nvm use`
   # fail, `node -v` answers with the image's base node; without this check the log looks
