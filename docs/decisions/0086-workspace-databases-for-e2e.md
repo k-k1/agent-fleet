@@ -604,7 +604,7 @@ re-ran the acceptance after the fixes):
 
 | Lane | Branch | Findings sent / fixed | Merged as |
 |---|---|---|---|
-| L3 documentation (`workspace/notes/environment.md`, `guide/member/03-code`, `docs/build/10-development` §10.4, plus `AGENTS.md` and `workspace/workspace-notes.md` whose old "no database, skip them" lines contradicted the new note) | `temp/s6arm5b` | 11 / 11 | `a39c4487` |
+| L3 documentation (`workspace/notes/environment.md`, `guide/member/17-workspace-environment`, `docs/build/10-development` §10.4, plus `AGENTS.md` and `workspace/workspace-notes.md` whose old "no database, skip them" lines contradicted the new note) | `temp/s6arm5b` | 11 / 11 | `a39c4487` |
 | L1 supply (`install-postgres`, `install-pg-client`, `Dockerfile` pins and the `af-db` shim) | `temp/s66bqob` | 7 / 7 | `3ad2ce88` |
 | L2 runtime (`internal/afdb`, the `af-db` verbs, the idle loop, `session_tmux.go` injection, pgx) | `temp/sawbl7m` | 13 / 13 | `d3b6f3ce` |
 

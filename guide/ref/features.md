@@ -19,113 +19,113 @@ If a feature ships and does not appear here, it is not done
 
 | Feature | Who | Where | Details |
 |---|---|---|---|
-| Start a session — agent, model, effort, start mode | member | workspace action bar → Start | [02 Sessions](../member/02-sessions.md) |
-| Run in a fresh git worktree | member | Start dialog | [03 Git](../member/03-code.md) |
-| Chat mirror — follow and steer a running agent | member | main area | [02 Sessions](../member/02-sessions.md) |
-| Answer a question, plan, or permission prompt | member | mirror | [07 Chat and memos](../member/07-chat-memo.md); [agents.md](agents.md) for which agents ask |
-| Answer a question or plan left by a stopped session | member | mirror, the carried card | [07 Chat and memos](../member/07-chat-memo.md#questions-and-plans-left-by-a-stopped-session) |
-| Hold follow-ups while a turn runs (Waiting to send) | member | mirror composer → Send ▾ → Add to waiting list, or Alt+Enter | [07 Chat and memos](../member/07-chat-memo.md#holding-follow-ups-before-sending-send-queue) |
-| Have another session review a plan | member | the plan card | [07 Chat and memos](../member/07-chat-memo.md#having-another-session-review-the-plan) |
-| Skill / command picker | member | mirror composer | [07 Chat and memos](../member/07-chat-memo.md); [agents.md](agents.md) for which agents |
-| Live terminal attached to a session | member | main area | [05 Terminal](../member/05-terminal.md) |
-| Terminal round-trip time (keystroke lag) | member | terminal pane header | [05 Terminal](../member/05-terminal.md) |
-| Ctrl+C / Ctrl+V copy and paste in the terminal | member | terminal | [05 Terminal](../member/05-terminal.md#copy-paste) |
-| Resume a stopped session | member | left pane → the session | [02 Sessions](../member/02-sessions.md) |
+| Start a session — agent, model, effort, start mode | member | workspace action bar → Start | [03 Starting sessions](../member/03-starting-sessions.md) |
+| Run in a fresh git worktree | member | Start dialog | [06 Repositories and git](../member/06-code.md) |
+| Chat mirror — follow and steer a running agent | member | main area | [04 Conversation](../member/04-conversation.md) |
+| Answer a question, plan, or permission prompt | member | mirror | [04 Conversation](../member/04-conversation.md); [agents.md](agents.md) for which agents ask |
+| Answer a question or plan left by a stopped session | member | mirror, the carried card | [04 Conversation](../member/04-conversation.md#questions-and-plans-left-by-a-stopped-session) |
+| Hold follow-ups while a turn runs (Waiting to send) | member | mirror composer → Send ▾ → Add to waiting list, or Alt+Enter | [04 Conversation](../member/04-conversation.md#holding-follow-ups-before-sending-send-queue) |
+| Have another session review a plan | member | the plan card | [04 Conversation](../member/04-conversation.md#having-another-session-review-the-plan) |
+| Skill / command picker | member | mirror composer | [04 Conversation](../member/04-conversation.md); [agents.md](agents.md) for which agents |
+| Live terminal attached to a session | member | main area | [08 Terminal](../member/08-terminal.md) |
+| Terminal round-trip time (keystroke lag) | member | terminal pane header | [08 Terminal](../member/08-terminal.md) |
+| Ctrl+C / Ctrl+V copy and paste in the terminal | member | terminal | [08 Terminal](../member/08-terminal.md#copy-paste) |
+| Resume a stopped session | member | left pane → the session | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md) |
 | Home — what waits for you, where you left off, and the first-run setup | member | the empty main area, action bar → Home, or leader `g h` | [01 First day](../member/01-first-day.md) |
-| Sessions overview — every running session as a card | member | action bar → Sessions, or leader `g s` | [02 Sessions](../member/02-sessions.md) |
-| Fleet graph — one lane per session, time left to right | member | sessions overview → Graph, or leader `g f` | [02 Sessions](../member/02-sessions.md#seeing-how-sessions-relate-over-time-the-fleet-graph) |
-| Stop every session under a working copy | member | repository / worktree right-click → Stop the sessions below | [02 Sessions](../member/02-sessions.md#stopping-and-tidying-up-sessions) |
-| Hand a conversation to a new session | member | session ⋯ menu | [02 Sessions](../member/02-sessions.md#continuing-elsewhere-handoff-branch-move) |
-| Move a session to another agent | member | session ⋯ menu → Move to another agent…, or the usage-limit band in the chat | [02 Sessions](../member/02-sessions.md#moving-a-session-to-another-agent-move) |
-| Export a conversation as Markdown | member | session ⋯ menu → Export as Markdown | [02 Sessions](../member/02-sessions.md#saving-a-conversation-as-markdown) |
-| Fork from a past message | member | mirror, on a past message | [07 Chat and memos](../member/07-chat-memo.md); [agents.md](agents.md) for which agents |
-| Hand a session to another member | member | handoff proposal card in the chat → Hand off to a member | [09 Working with others](../member/09-collaboration.md#handing-a-session-to-another-member) |
-| Share a session read-only | member | Shared sessions | [02 Sessions](../member/02-sessions.md) |
-| Highlights | member | mirror, on a selection | [09 Working with others](../member/09-collaboration.md) |
-| Changed files | member | strip under the mirror header | [09 Working with others](../member/09-collaboration.md) |
-| Context usage gauge | member | session header | [06 Agents](../member/06-agents.md) |
-| Read an answer in your own language (translation, no turn spent) | member | mirror, under an answer | [02 Sessions](../member/02-sessions.md#reading-an-answer-in-your-own-language-translation) |
-| Have a session generate an image (`generate_image`) | member | any session not attached to a studio, by asking | [02 Sessions](../member/02-sessions.md#having-a-session-generate-an-image) |
-| Start a session from a session (child sessions) — hand a task to another agent, look after what it started | member | Settings → Agents → Session, then any session, by asking | [02 Sessions](../member/02-sessions.md#starting-sessions-from-a-session-child-sessions) |
-| Abort detection and auto-resume | member | automatic | [09 Working with others](../member/09-collaboration.md) |
+| Sessions overview — every running session as a card | member | action bar → Sessions, or leader `g s` | [11 Running many sessions](../member/11-many-sessions.md) |
+| Fleet graph — one lane per session, time left to right | member | sessions overview → Graph, or leader `g f` | [11 Running many sessions](../member/11-many-sessions.md#seeing-how-sessions-relate-over-time-the-fleet-graph) |
+| Stop every session under a working copy | member | repository / worktree right-click → Stop the sessions below | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md#stopping-and-tidying-up-sessions) |
+| Hand a conversation to a new session | member | session ⋯ menu | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md#continuing-elsewhere-handoff-branch-move) |
+| Move a session to another agent | member | session ⋯ menu → Move to another agent…, or the usage-limit band in the chat | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md#moving-a-session-to-another-agent-move) |
+| Export a conversation as Markdown | member | session ⋯ menu → Export as Markdown | [04 Conversation](../member/04-conversation.md#saving-a-conversation-as-markdown) |
+| Fork from a past message | member | mirror, on a past message | [04 Conversation](../member/04-conversation.md); [agents.md](agents.md) for which agents |
+| Hand a session to another member | member | handoff proposal card in the chat → Hand off to a member | [12 Working with others](../member/12-collaboration.md#handing-a-session-to-another-member) |
+| Share a session read-only | member | Shared sessions | [12 Working with others](../member/12-collaboration.md) |
+| Highlights | member | mirror, on a selection | [04 Conversation](../member/04-conversation.md) |
+| Changed files | member | strip under the mirror header | [04 Conversation](../member/04-conversation.md) |
+| Context usage gauge | member | session header | [09 Agents](../member/09-agents.md) |
+| Read an answer in your own language (translation, no turn spent) | member | mirror, under an answer | [04 Conversation](../member/04-conversation.md#reading-an-answer-in-your-own-language-translation) |
+| Have a session generate an image (`generate_image`) | member | any session not attached to a studio, by asking | [13 Images](../member/13-images.md#having-a-session-generate-an-image) |
+| Start a session from a session (child sessions) — hand a task to another agent, look after what it started | member | Settings → Agents → Session, then any session, by asking | [11 Running many sessions](../member/11-many-sessions.md#starting-sessions-from-a-session-child-sessions) |
+| Abort detection and auto-resume | member | automatic | [04 Conversation](../member/04-conversation.md) |
 
 ## Working with code
 
 | Feature | Who | Where | Details |
 |---|---|---|---|
-| Import a repository | member | Repositories → Clone | [03 Git](../member/03-code.md) |
-| Start from an empty folder | member | Repositories → new folder | [03 Git](../member/03-code.md) |
-| Commit graph, diff, stage and commit | member | Commit graph | [03 Git](../member/03-code.md) |
-| Worktrees | member | under each repository | [03 Git](../member/03-code.md) |
-| Use `gh` and `bkt` in a session, already signed in | member | any session | [03 Git](../member/03-code.md#use-gh-and-bkt-in-a-session); the list of signed-in CLIs is in [10](../member/10-integrations.md#clis-that-are-already-signed-in) |
-| Use `jira` in a session, already signed in | member | any session | [03 Git](../member/03-code.md#use-jira-in-a-session) |
-| Edit and delete Jira comments (`jira issue comment edit` / `delete`) | member | any session | [03 Git](../member/03-code.md#use-jira-in-a-session) |
-| Subversion working copies — update, show log, local changes | member | Repositories → an SVN row | [03 Git](../member/03-code.md#subversion-svn-repositories) |
-| File tree and viewer | member | Files | [04 Files](../member/04-files.md) |
-| Download a folder as zip | member | Files tree or gallery → right-click → Download as zip | [04 Files](../member/04-files.md#download-a-folder-as-zip) |
-| Open a shell from a folder | member | Files tree → right-click a folder → Open shell here | [04 Files](../member/04-files.md#open-a-shell-from-a-folder) |
-| Links in rendered Markdown — tickets, file paths, loopback URLs that open the workspace preview | member | mirror, chat, file and document viewers | [04 Files](../member/04-files.md#links-in-rendered-markdown) |
+| Import a repository | member | Repositories → Clone | [06 Repositories and git](../member/06-code.md) |
+| Start from an empty folder | member | Repositories → new folder | [06 Repositories and git](../member/06-code.md) |
+| Commit graph, diff, stage and commit | member | Commit graph | [06 Repositories and git](../member/06-code.md) |
+| Worktrees | member | under each repository | [06 Repositories and git](../member/06-code.md) |
+| Use `gh` and `bkt` in a session, already signed in | member | any session | [15 External services](../member/15-external-services.md#use-gh-and-bkt-in-a-session); the list of signed-in CLIs is in [15](../member/15-external-services.md#clis-that-are-already-signed-in) |
+| Use `jira` in a session, already signed in | member | any session | [15 External services](../member/15-external-services.md#use-jira-in-a-session) |
+| Edit and delete Jira comments (`jira issue comment edit` / `delete`) | member | any session | [15 External services](../member/15-external-services.md#use-jira-in-a-session) |
+| Subversion working copies — update, show log, local changes | member | Repositories → an SVN row | [06 Repositories and git](../member/06-code.md#subversion-svn-repositories) |
+| File tree and viewer | member | Files | [07 Files](../member/07-files.md) |
+| Download a folder as zip | member | Files tree or gallery → right-click → Download as zip | [07 Files](../member/07-files.md#download-a-folder-as-zip) |
+| Open a shell from a folder | member | Files tree → right-click a folder → Open shell here | [07 Files](../member/07-files.md#open-a-shell-from-a-folder) |
+| Links in rendered Markdown — tickets, file paths, loopback URLs that open the workspace preview | member | mirror, chat, file and document viewers | [07 Files](../member/07-files.md#links-in-rendered-markdown) |
 | Menu on file and folder links in replies and documents | member | right-click a link | [Icons, badges and menus](../member/badges-and-menus.md#file-and-folder-links-in-replies-and-documents) |
-| Markdown and code editing | member | Files → a file | [04 Files](../member/04-files.md) |
-| `.drawio` diagrams | member | Files → a `.drawio` file | [04 Files](../member/04-files.md) |
-| PDF and Office document preview | member | Files → that document | [04 Files](../member/04-files.md) |
-| Image generation — make pictures in bulk without an agent | member | action bar → Images, or leader `g i` | [04 Files](../member/04-files.md#image-generation) |
-| Edit and inpaint — reference pictures, a mask file, instruction-edit models | member | image generation → Advanced → Operation | [04 Files](../member/04-files.md#image-generation) |
-| LoRAs with their trigger words, shown before you pick one | member | image generation → LoRAs | [04 Files](../member/04-files.md#image-generation) |
-| Image studio — refine the draft by talking to an agent, a person presses generate (edit history, versions, picture history) | member | image generation → Attach an agent | [04 Files](../member/04-files.md#studio-refine-the-draft-by-talking-to-an-agent) |
-| Image knowledge notes — four sections per model and per family, in `~/imagegen-knowledge/` | member | image generation → Notes, or the file tree | [04 Files](../member/04-files.md#studio-refine-the-draft-by-talking-to-an-agent) |
-| Image gallery — a folder's pictures as cards | member | file tree → "Open in gallery", or a session's "Generated images (N)" | [04 Files](../member/04-files.md#image-gallery) |
+| Markdown and code editing | member | Files → a file | [07 Files](../member/07-files.md) |
+| `.drawio` diagrams | member | Files → a `.drawio` file | [07 Files](../member/07-files.md) |
+| PDF and Office document preview | member | Files → that document | [07 Files](../member/07-files.md) |
+| Image generation — make pictures in bulk without an agent | member | action bar → Images, or leader `g i` | [13 Images](../member/13-images.md#image-generation) |
+| Edit and inpaint — reference pictures, a mask file, instruction-edit models | member | image generation → Advanced → Operation | [13 Images](../member/13-images.md#image-generation) |
+| LoRAs with their trigger words, shown before you pick one | member | image generation → LoRAs | [13 Images](../member/13-images.md#image-generation) |
+| Image studio — refine the draft by talking to an agent, a person presses generate (edit history, versions, picture history) | member | image generation → Attach an agent | [13 Images](../member/13-images.md#studio-refine-the-draft-by-talking-to-an-agent) |
+| Image knowledge notes — four sections per model and per family, in `~/imagegen-knowledge/` | member | image generation → Notes, or the file tree | [13 Images](../member/13-images.md#studio-refine-the-draft-by-talking-to-an-agent) |
+| Image gallery — a folder's pictures as cards | member | file tree → "Open in gallery", or a session's "Generated images (N)" | [13 Images](../member/13-images.md#image-gallery) |
 | Gallery card menu — copy, rename, delete, jump to the session that made it | member | gallery card → right-click | [Icons, badges and menus](../member/badges-and-menus.md#cards-in-the-image-gallery) |
-| Browser pane for a local web app | member | workspace action bar → Preview | [10 Going further](../member/10-integrations.md); [browser-pane.md](browser-pane.md) for the contract |
-| Preview subdomains (minted on every start) | member | workspace action bar → Preview | [10 Going further](../member/10-integrations.md) |
-| Sign in with Google on a preview URL (development OIDC IdP) | member | Settings → Preview subdomains | [10 Going further](../member/10-integrations.md#signing-in-with-google-on-a-preview-url-development-oidc-idp) |
-| Attach to a Chromium the agent owns | member | a link the agent hands you | [10 Going further](../member/10-integrations.md) |
+| Browser pane for a local web app | member | workspace action bar → Preview | [14 Preview and browser](../member/14-preview-browser.md); [browser-pane.md](browser-pane.md) for the contract |
+| Preview subdomains (minted on every start) | member | workspace action bar → Preview | [14 Preview and browser](../member/14-preview-browser.md) |
+| Sign in with Google on a preview URL (development OIDC IdP) | member | Settings → Preview subdomains | [14 Preview and browser](../member/14-preview-browser.md#signing-in-with-google-on-a-preview-url-development-oidc-idp) |
+| Attach to a Chromium the agent owns | member | a link the agent hands you | [14 Preview and browser](../member/14-preview-browser.md) |
 
 ## Organising the work
 
 | Feature | Who | Where | Details |
 |---|---|---|---|
-| Working sets | member | top of the left pane | [02 Sessions](../member/02-sessions.md) |
-| Memo queue | member | Memo queue | [07 Chat & memo](../member/07-chat-memo.md) |
-| Work-item inbox — issues, tickets, pull requests | member | Issue tracker | [02 Sessions](../member/02-sessions.md); [repos.md](repos.md) for what each provider contributes |
-| Scheduled (unattended) runs | member | Schedules | [08 Fleet operator](../member/08-organising.md) |
-| Notification centre | member | top bar | [12 Settings](../member/12-settings.md) |
-| Inbox — messages and requests between members, with claim, launch and PR links | member | top bar → inbox | [09 Working with others](../member/09-collaboration.md#asking-a-teammate-the-inbox) |
-| Inbox recipes — send a prompt with a suggested agent and repository, take it into your memos | member | inbox → New / a card | [09 Working with others](../member/09-collaboration.md#asking-a-teammate-the-inbox) |
-| Attach a session to an inbox message, sharing it with the recipients | member | inbox → New | [09 Working with others](../member/09-collaboration.md#asking-a-teammate-the-inbox) |
-| Red dot on a session with an unread notification | member | left pane, tabs | [02 Sessions](../member/02-sessions.md#reading-state-badges-and-notifications) |
+| Working sets | member | top of the left pane | [11 Running many sessions](../member/11-many-sessions.md) |
+| Memo queue | member | Memo queue | [10 Chat and memos](../member/10-chat-memo.md) |
+| Work-item inbox — issues, tickets, pull requests | member | Issue tracker | [03 Starting sessions](../member/03-starting-sessions.md); [repos.md](repos.md) for what each provider contributes |
+| Scheduled (unattended) runs | member | Schedules | [11 Running many sessions](../member/11-many-sessions.md) |
+| Notification centre | member | top bar | [20 Settings](../member/20-settings.md) |
+| Inbox — messages and requests between members, with claim, launch and PR links | member | top bar → inbox | [12 Working with others](../member/12-collaboration.md#asking-a-teammate-the-inbox) |
+| Inbox recipes — send a prompt with a suggested agent and repository, take it into your memos | member | inbox → New / a card | [12 Working with others](../member/12-collaboration.md#asking-a-teammate-the-inbox) |
+| Attach a session to an inbox message, sharing it with the recipients | member | inbox → New | [12 Working with others](../member/12-collaboration.md#asking-a-teammate-the-inbox) |
+| Red dot on a session with an unread notification | member | left pane, tabs | [03 Starting sessions](../member/03-starting-sessions.md#reading-state-badges-and-notifications) |
 | Engine pills — is the chat / image engine up | member | top bar | [Icons, badges and menus](../member/badges-and-menus.md#the-engine-pills-in-the-top-bar) |
-| Assistant chat | member | Assistants | [07 Chat & memo](../member/07-chat-memo.md) |
-| Chat bridge — Discord / Slack | member | Settings → Chat | [10 Advanced](../member/10-integrations.md) |
-| Reply suggestions | member | mirror composer | [09 Working with others](../member/09-collaboration.md) |
-| Deletion lock | member | session ⋯ menu | [09 Working with others](../member/09-collaboration.md) |
-| Cleanup and the trash | member | Clean up | [09 Working with others](../member/09-collaboration.md) |
-| Keyboard system | member | Settings → Keyboard | [10 Advanced](../member/10-integrations.md) |
-| Text-to-speech | member | Settings → Read aloud | [12 Settings](../member/12-settings.md) |
+| Assistant chat | member | Assistants | [10 Chat and memos](../member/10-chat-memo.md) |
+| Chat bridge — Discord / Slack | member | Settings → Chat | [15 External services](../member/15-external-services.md) |
+| Reply suggestions | member | mirror composer | [04 Conversation](../member/04-conversation.md) |
+| Deletion lock | member | session ⋯ menu | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md) |
+| Cleanup and the trash | member | Clean up | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md) |
+| Keyboard system | member | Settings → Keyboard | [02 Console basics](../member/02-console-basics.md) |
+| Text-to-speech | member | Settings → Read aloud | [20 Settings](../member/20-settings.md) |
 
 ## Personal settings
 
 Every row is under **Settings**; the tab is the "Where".
-[settings.md](settings.md) lists the tabs, [12 Settings](../member/12-settings.md)
+[settings.md](settings.md) lists the tabs, [20 Settings](../member/20-settings.md)
 explains them.
 
 | Feature | Who | Where |
 |---|---|---|
 | Agent connections | member | Agents |
 | Instructions to agents | member | Agent instructions |
-| Agent Fleet shared memory management | member | Agent memory ([14](../member/14-agent-memory.md#agent-memory)) |
-| Version history of agents' own memory | member | Memory snapshots ([14](../member/14-agent-memory.md#memory-snapshots)) |
-| Memory suggestions — finished sessions propose memories for you to approve (off by default) | member | Agent memory → Settings ([14](../member/14-agent-memory.md#settings)) |
-| Agent Fleet memory from an agent outside Agent Fleet (off by default) | member | Agent memory → Settings ([14](../member/14-agent-memory.md#using-agent-fleet-memory-from-an-external-agent)) |
-| Muse Code contributor mode (off by default) | member | Agents → Muse Code → Behaviour ([06](../member/06-agents.md#muse-code)) |
+| Agent Fleet shared memory management | member | Agent memory ([18](../member/18-agent-memory.md#agent-memory)) |
+| Version history of agents' own memory | member | Memory snapshots ([18](../member/18-agent-memory.md#memory-snapshots)) |
+| Memory suggestions — finished sessions propose memories for you to approve (off by default) | member | Agent memory → Settings ([18](../member/18-agent-memory.md#settings)) |
+| Agent Fleet memory from an agent outside Agent Fleet (off by default) | member | Agent memory → Settings ([18](../member/18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent)) |
+| Muse Code contributor mode (off by default) | member | Agents → Muse Code → Behaviour ([09](../member/09-agents.md#muse-code)) |
 | Git hosting connections | member | Git hosting |
 | Internal repositories | member | Internal repos |
-| AWS profiles and SSM | member | AWS profiles/SSM ([15](../member/15-cloud-accounts.md#logging-in-to-another-in-house-host-ssm)) |
-| Google Cloud profiles | member | Google Cloud ([15](../member/15-cloud-accounts.md#running-commands-in-google-cloud-as-you-af-gcloud-exec)) |
+| AWS profiles and SSM | member | AWS profiles/SSM ([16](../member/16-cloud-accounts.md#logging-in-to-another-in-house-host-ssm)) |
+| Google Cloud profiles | member | Google Cloud ([16](../member/16-cloud-accounts.md#running-commands-in-google-cloud-as-you-af-gcloud-exec)) |
 | Integration servers and tokens | member | MCP servers / MCP tokens |
-| Connect a remote MCP client by signing in (OAuth, when the deployment enables it) — Connected apps, Recent calls | member | MCP tokens ([10](../member/10-integrations.md#connecting-a-remote-mcp-client-by-signing-in-oauth)) |
-| The "via MCP" badge on input sent through `/mcp` | member | input bubble in the mirror ([10](../member/10-integrations.md#driving-your-workspace-from-an-external-claude-mcp)) |
-| Sign in to a registered MCP server that needs OAuth (Sign in, sign in again, approve extra permission) | member | MCP servers → Authentication → OAuth ([12](../member/12-settings.md#mcp-servers)) |
+| Connect a remote MCP client by signing in (OAuth, when the deployment enables it) — Connected apps, Recent calls | member | MCP tokens ([19](../member/19-outside-access.md#connecting-a-remote-mcp-client-by-signing-in-oauth)) |
+| The "via MCP" badge on input sent through `/mcp` | member | input bubble in the mirror ([19](../member/19-outside-access.md#driving-your-workspace-from-an-external-claude-mcp)) |
+| Sign in to a registered MCP server that needs OAuth (Sign in, sign in again, approve extra permission) | member | MCP servers → Authentication → OAuth ([20](../member/20-settings.md#mcp-servers)) |
 | Issue-tracker connections | member | Issue tracker |
 | Usage | member | Agent usage |
 | Limit board: publish where you stand on usage limits, and see what teammates publish to you | member | Limit board |
@@ -170,7 +170,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Install, upgrade, back up, restore | deployment admin | a shell | [operator 02](../operate/02-install.md) / [03](../operate/03-run.md) |
 | Ingress, TLS and sign-in providers | deployment admin | a shell | [operator 04](../operate/04-secure.md) |
 | Audit log and egress control | deployment admin | Admin | [operator 04](../operate/04-secure.md) |
-| Monitoring integrations | deployment admin | Settings → Ops & monitoring | [member 13](../member/13-ops-tooling.md) |
+| Monitoring integrations | deployment admin | Settings → Ops & monitoring | [member 15](../member/15-external-services.md) |
 | Slot pool and instance classes | deployment admin | Admin | [deploy-targets.md](deploy-targets.md) |
 | The inference engines' GPU class | deployment admin (super_admin) | Admin → Inference engines | [admin 04](../admin/04-mcp-egress.md) |
 | Taking a model in — search, plan card, one press | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engines → Model catalogue | [admin 04](../admin/04-mcp-egress.md) |

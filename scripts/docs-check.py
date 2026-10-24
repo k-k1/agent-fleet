@@ -22,7 +22,7 @@ Fifteen checks:
   frozen     no link from a living shelf into docs/log/ (the frozen archive)
   ref        ref/ tables agree with the source of truth in code, and the ✓ marks match the
              translation
-  settings   the settings-tab chapter (member/12-settings) covers the tab list (ref/settings)
+  settings   the settings-tab chapter (member/20-settings) covers the tab list (ref/settings)
   features   member rows of the feature catalogue point at a procedure on the member/ shelf
   knowledge  the assistant knowledge covers the member rows of the feature catalogue
   notes      the operating policy shipped to every container points only at shipped shelves
@@ -1103,7 +1103,7 @@ def heading3_under(path: str, groups: tuple[str, ...]) -> list[str]:
 
 
 # Personal settings tabs of ref/settings.ja.md that need no section in
-# use/12-settings.ja.md (tab name -> reason). Every exemption states its reason: an
+# use/20-settings.ja.md (tab name -> reason). Every exemption states its reason: an
 # exemption list that can be extended without one fills up with "it failed, so I removed
 # it" and the check goes back to passing everything. Currently empty.
 USE_SETTINGS_EXEMPT: dict[str, str] = {}
@@ -1114,7 +1114,7 @@ USE_SETTINGS_GROUPS_EN = ("Personal", "Connections", "Workspace")
 
 
 def check_use_settings(f: Findings) -> None:
-    """Does the settings-tab chapter (use/12-settings) cover the tab list (ref/settings)?
+    """Does the settings-tab chapter (use/20-settings) cover the tab list (ref/settings)?
 
     check_ref already matches the rows of ref/settings against the Console labels, so a
     new screen always adds a row to ref/. Nothing checked use/, though, so ref/ could be
@@ -1124,7 +1124,7 @@ def check_use_settings(f: Findings) -> None:
 
     The name-to-name comparison is between the Japanese versions. The rows of the English
     ref/settings.md are the English Console labels (Keyboard / Read aloud …) and are not
-    word-for-word the section headings of use/12-settings.md (Keys / Speech …), so only
+    word-for-word the section headings of use/20-settings.md (Keys / Speech …), so only
     the ja side can be matched by name. The English version is checked by whether it has
     the same number of sections as its translation, which catches a section added in only
     one language.
@@ -1133,8 +1133,8 @@ def check_use_settings(f: Findings) -> None:
     (`table_first_column_under`).
     """
     ref = os.path.join(GUIDE, "ref", "settings.ja.md")
-    use_ja = os.path.join(GUIDE, "member", "12-settings.ja.md")
-    use_en = os.path.join(GUIDE, "member", "12-settings.md")
+    use_ja = os.path.join(GUIDE, "member", "20-settings.ja.md")
+    use_en = os.path.join(GUIDE, "member", "20-settings.md")
     if not all(os.path.exists(p) for p in (ref, use_ja, use_en)):
         return
 
@@ -1152,20 +1152,20 @@ def check_use_settings(f: Findings) -> None:
             continue
         if tab not in sections:
             f.error(
-                f"use/12-settings.ja.md: no section for a settings tab -> '### {tab}'"
+                f"use/20-settings.ja.md: no section for a settings tab -> '### {tab}'"
                 " (a tab present in ref/settings.ja.md needs a section in both languages)"
             )
     for name in sections:
         if name not in tabs:
             f.error(
-                f"use/12-settings.ja.md: section left behind with no tab"
+                f"use/20-settings.ja.md: section left behind with no tab"
                 f" -> '### {name}' (the tab was removed or renamed in the Console)"
             )
 
     en = heading3_under(use_en, USE_SETTINGS_GROUPS_EN)
     if len(en) != len(sections):
         f.error(
-            "use/12-settings.md: number of tab sections differs from the translation"
+            "use/20-settings.md: number of tab sections differs from the translation"
             f" (en={len(en)} / ja={len(sections)})"
         )
 

@@ -2,7 +2,7 @@
 //
 // The queue holds follow-ups the member wrote while a turn was running and has not sent yet. It
 // is per session, lives in client memory only, and is NOT the Memo queue (persistent, cross-device,
-// docs/member/07-chat-memo.md) nor the queue the agent keeps for input it already accepted
+// guide/member/10-chat-memo.md) nor the queue the agent keeps for input it already accepted
 // (ADR 0105). An item enters the transcript only when it is sent; until then it is a draft.
 
 /** One held follow-up: the text as typed and the uploaded attachment paths that go with it. */
@@ -76,7 +76,7 @@ export function shouldDrain(s: DrainState): boolean {
 /**
  * Whether a send during a running turn is taken INTO that turn. Only codex and muse do (Managed:
  * a native turn/steer); every other kind queues the input behind the turn, so the "send now"
- * hint must not promise more (docs/member/07-chat-memo.md, "Stopping a turn when something is queued").
+ * hint must not promise more (guide/member/04-conversation.md, "Stopping a turn when something is queued").
  */
 export function injectsMidTurn(agentId: string, managed: boolean): boolean {
   return managed && (agentId === "codex" || agentId === "muse");

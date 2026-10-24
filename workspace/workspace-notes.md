@@ -41,7 +41,7 @@ skip and say so.
   Connections); read or touch the agents' internal state (`~/.config/agent-fleet`, `~/.claude`,
   `~/.codex`, `~/.local/share/opencode` hold credentials and the encrypted store).
   This binds you, the agent; your user's own personal `skills/`, `agents/` and hooks in
-  `$CLAUDE_CONFIG_DIR` are theirs to manage (`member/06-agents.md`) and you edit them only when
+  `$CLAUDE_CONFIG_DIR` are theirs to manage (`member/09-agents.md`) and you edit them only when
   they ask, never the credentials or Fleet's own hook entries.
 - Run host-wide destructive commands (runaway `rm -rf`, fork bombs, mining, port scans), or hog
   the shared, memory-constrained host with heavy parallel builds.

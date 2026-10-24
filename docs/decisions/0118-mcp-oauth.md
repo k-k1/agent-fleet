@@ -294,7 +294,7 @@ and a revoke button.
   in the Workspace policy. A prompt starting with `[agent-fleet:` is refused, and shell / ssm
   targets are refused as for peer messages (ADR 0041 decision 5). The envelope names the
   connection, not a client conversation (MCP 2026-07-28 has no session id). No decision above
-  changes. Guide: `guide/member/10-integrations.md`.
+  changes. Guide: `guide/member/19-outside-access.md`.
 
 - 2026-10-23, #2567: the trusted-client list is editable at runtime. A super admin edits it in the
   Admin modal (`GET`/`PUT`/`DELETE /api/admin/mcp-oauth/trusted-hosts`, CP setting

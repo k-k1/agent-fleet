@@ -9,7 +9,7 @@ English | [日本語](08-external-memory.ja.md)
 
 A member can let an agent outside Agent Fleet (Claude Code or Claude Desktop on their own machine
 holding their MCP token, or an app they connected through MCP OAuth such as claude.ai) list, search and read their Agent Fleet memory, and with a second choice
-save and forget it ([member guide](../member/14-agent-memory.md#using-agent-fleet-memory-from-an-external-agent)).
+save and forget it ([member guide](../member/18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent)).
 The memory text then leaves the workspace and reaches that client's model. The secret scan stops
 credentials, not customer names or internal context. This page is how you switch the whole
 tenant off.

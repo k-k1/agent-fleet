@@ -105,7 +105,7 @@ CP は Workspace 専用の 2 本目のポート `AF_CP_INTERNAL_LISTEN`（`deplo
 | Postgres | `AF_DATABASE_URL`、または `AF_DB_{HOST,PORT,USER,PASSWORD,NAME,SSLMODE}`、それと**パスワードの真値が居る場所** `AF_DB_PASSWORD_SECRET_ARN` / `AF_DB_PASSWORD_SECRET_KEY` | Store が Postgres のときだけ。部品から DSN を組む。ARN は、ローテートされたパスワードを**タスクを作り直さずに**拾うためのもの（§9.9） | [06](06-data.ja.md) |
 | ECS アダプタ | `AF_ECS_{CLUSTER,REGION,SUBNETS,SECURITY_GROUP,NAMESPACE_ARN,EFS_ID,EXEC_ROLE,TASK_ROLE,INFRA_ROLE,LOG_GROUP,WORKSPACE_IMAGE,TASK_CPU,TASK_MEMORY,WS_DISK_GB,POSIX_UID,POSIX_GID,START_TIMEOUT_SEC}` | テンプレートが作った静的基盤の座標。`ecs` も `ecs-ec2` も読む | [ecs runbook](../../deploy/aws/ecs/README.md) |
 | EC2 スロットプール | `AF_ECS_EC2_LAUNCH_TEMPLATE`（必須）・`AF_ECS_EC2_SLOT_TYPES`・`AF_ECS_EC2_DEFAULT_SLOT_CLASS`・`AF_ECS_EC2_AMI_ARM64`・`AF_ECS_EC2_MAX_SLOTS`（8）・`AF_ECS_EC2_HOME_GB`（50）・`AF_ECS_EC2_SLOT_SLEEP_SEC`（900）・`AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC`（0 = しない）・`AF_ECS_EC2_HIBERNATE_AFTER_SEC`（0 = 無効）・`AF_ECS_EC2_BACKUP_EVERY_SEC`（0 = 無効）・`AF_ECS_EC2_BACKUP_KEEP`（3）・`AF_ECS_EC2_GOLDEN_AUTOBAKE`（on）、ほかに掃引とタイミングのノブ `AF_ECS_EC2_*_SEC` | `ecs-ec2` 専用: スロットの型と上限・home の大きさ・§9.5 のアイドル段 | [ecs runbook](../../deploy/aws/ecs/README.md) §Optional: EC2 slot pool / [decisions/0045](../decisions/0045-ec2-persistent-workspace.ja.md) |
-| ワークロードの AWS 身元 | `AF_WS_WORKLOAD_AWS`（オフ） | `1` で ECS のタスクロールをセッションとターミナルに戻し、SDK のインスタンスメタデータ参照の抑止をやめる。ネットワークの防護（`ECS_AWSVPC_BLOCK_IMDS`、IMDS のホップ数 1、`DOCKER-USER` の拒否）は外さないので、docker のワークスペースがホストのインスタンスプロファイルを得ることはない。それには運用者が別に許した資格情報の経路が要る。オフなら Agent は起動するものすべてで `AWS_CONTAINER_CREDENTIALS_*` / `AWS_CONTAINER_AUTHORIZATION_TOKEN*` を外し `AWS_EC2_METADATA_DISABLED=true` を立てる（docker では CP がそれを付けてコンテナを起動する）ので、メンバーのプロファイルを持たないツールはワークロードとして動かずに失敗する。CP に設定し、次のワークスペース起動ですべてのランタイムに届く（docker では動作中のコンテナは Stop → Start まで環境を保つ） | [guide member/10](../../guide/member/10-integrations.ja.md) |
+| ワークロードの AWS 身元 | `AF_WS_WORKLOAD_AWS`（オフ） | `1` で ECS のタスクロールをセッションとターミナルに戻し、SDK のインスタンスメタデータ参照の抑止をやめる。ネットワークの防護（`ECS_AWSVPC_BLOCK_IMDS`、IMDS のホップ数 1、`DOCKER-USER` の拒否）は外さないので、docker のワークスペースがホストのインスタンスプロファイルを得ることはない。それには運用者が別に許した資格情報の経路が要る。オフなら Agent は起動するものすべてで `AWS_CONTAINER_CREDENTIALS_*` / `AWS_CONTAINER_AUTHORIZATION_TOKEN*` を外し `AWS_EC2_METADATA_DISABLED=true` を立てる（docker では CP がそれを付けてコンテナを起動する）ので、メンバーのプロファイルを持たないツールはワークロードとして動かずに失敗する。CP に設定し、次のワークスペース起動ですべてのランタイムに届く（docker では動作中のコンテナは Stop → Start まで環境を保つ） | [guide member/16](../../guide/member/16-cloud-accounts.ja.md) |
 | エンジン | `AF_ENGINES_SSM_PARAM` / `AF_ENGINES_JSON`・`AF_LLM_URL`・`AF_COMFY_URL` / `AF_COMFY_API_KEY`・`AF_ENGINE_API_KEY_<KEY>`・`AF_ENGINE_<KEY>_{CONTROL_INTERVAL_SEC,WINDOW_SEC,IDLE_SEC,START_DEADLINE_SEC,FAIL_COOLDOWN_SEC}`・`AF_ENGINE_ECS_CLUSTER`・`AF_ENGINE_WAKE_TIMEOUT`（900 秒）・`AF_ENGINE_PLAIN_HOLD`・`AF_REMOTE_ENGINE_{URL,TOKEN,KEYS}` | エンジン表・エンジンの制御器・冷えたエンジンに対するゲートウェイの保留・別デプロイのエンジンの借用 | [decisions/0071](../decisions/0071-self-hosted-inference-engines.ja.md) / [0076](../decisions/0076-external-image-engine-on-lan.ja.md) / [0077](../decisions/0077-engine-boxes-bought-by-cp.ja.md) / [0079](../decisions/0079-remote-engine-from-another-deployment.ja.md) |
 | 音声 | `AF_VOICEVOX_URL`（`http://127.0.0.1:50021`）・`AF_TTS_ECS_SERVICE` ほか `AF_TTS_ECS_*`・`AF_TTS_MAX_CHARS`（300）・`AF_POLLY_{REGION,ENGINE}` | URL で指す VOICEVOX、または CP がゼロから起こす ECS 上の VOICEVOX。Amazon Polly | [decisions/0070](../decisions/0070-tts-ondemand-engine.ja.md) |
 | コンテナレスアダプタ | `AF_NATIVE_AGENT_BIN`（`PATH` 上の `workspace-agent`）・`AF_NATIVE_ROOTFS`・`AF_NATIVE_BWRAP` | Agent バイナリの所在・bubblewrap サンドボックスを有効にする rootfs | [native runbook](../../deploy/native/README.md) |
@@ -141,7 +141,12 @@ ECS 系ランタイムにはこのマウントが無いので、そのディレ�
 （メジャー → `nodeBinFor` が選ぶパッチ）も返し、Node の行も同じ更新を出す。`install-node` は新しいパッチを
 古いものの横に足すので、自分で入れたツリーに印（`.agent-fleet-installed`）を付け、entrypoint はその直後・
 セッションが無いうちに `prune-node-versions` を走らせる。メジャーごとに、最新より古い印付きパッチを消す。
-印の無いツリー（nvm で入れたもの・`.nvmrc` の厳密な固定・印ができる前に入ったもの）は消さない。
+印の無いツリー（nvm で入れたもの・印ができる前に入ったもの）は消さない。印は誰が入れたかを示すだけなので、
+固定されている版は印があっても残す：install-node が返したツリー（`--keep`）、厳密な版で保存された選択、nvm の
+alias（symlink の alias も含む）や `~/.nvmrc` / `~/repos/*/.nvmrc`（nvm と同じくコメント・空行・`key=value` 行を
+飛ばして読む）が名指す厳密な版。消す前に全ツリーを調べ、symlink の項目・ツリー内のディレクトリの symlink・
+絶対パスの symlink・途中で一度でも自ツリーより上へ出る相対 symlink が一つでもあれば、その回は何も消さない（Node
+自身のツリーには自ツリー内のファイルへの相対リンクが数本あるだけ）。最新に実行できる `bin/node` が無いメジャーは見送る。
 
 `GET /env/toolchain-installs` は JDK の全ツリー（home ボリュームと `/usr/lib/jvm`）と `~/.nvm` 配下の Node の
 メジャーを、版・サイズ・削除できるかと一緒に返す。`DELETE /env/jdk/{major}` / `DELETE /env/node/{major}` は

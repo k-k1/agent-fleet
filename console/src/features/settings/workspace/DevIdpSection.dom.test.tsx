@@ -155,7 +155,7 @@ describe("DevIdpSection", () => {
     await click(host!.querySelector(".dip-link")!);
     // The shipped markdown chapter as a file pane, not the getting-started checklist.
     expect(openTargetInNew).toHaveBeenCalledWith(
-      { content: { kind: "file", filePath: expect.stringMatching(/^\/usr\/local\/share\/agent-fleet\/docs\/member\/10-integrations(\.ja)?\.md$/) } },
+      { content: { kind: "file", filePath: expect.stringMatching(/^\/usr\/local\/share\/agent-fleet\/docs\/member\/14-preview-browser(\.ja)?\.md$/) } },
       true,
     );
   });

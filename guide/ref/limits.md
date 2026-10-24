@@ -32,8 +32,8 @@ These do not vary by deployment.
 | Folder zip download: transfer time | 15 min | The connection is closed; a stalled client cannot hold the one build slot longer |
 | Folder zip download: concurrent builds | 1 per workspace | A second press waits up to 2 s, then 503 "busy"; each build holds a temp file of up to the byte limit on the home volume |
 | A "working" session with no sign of life | 1 hour | It stops keeping the Workspace awake. Only for the session kinds whose progress the Agent observes; the time counts from the last output, state change or (for some kinds) running tool, not from the start of the turn. A session whose progress cannot be read keeps holding, and the "do not auto-stop" pin and background work are exempt ([operate/03](../operate/03-run.md#what-keeps-a-workspace-awake) lists the kinds) |
-| A question, plan or permission left by a stopped session | 14 days | The carried card is dropped ([07](../member/07-chat-memo.md#questions-and-plans-left-by-a-stopped-session)) |
-| Agent memory: one memory | 200 KiB body, 2,000-character description | Refused ([member/14](../member/14-agent-memory.md)) |
+| A question, plan or permission left by a stopped session | 14 days | The carried card is dropped ([04](../member/04-conversation.md#questions-and-plans-left-by-a-stopped-session)) |
+| Agent memory: one memory | 200 KiB body, 2,000-character description | Refused ([member/18](../member/18-agent-memory.md)) |
 | Agent memory: the index a session receives | described part 24 KiB by default (the `memory_index` tool's `budget` takes 4–64 KiB), each description cut to 150 characters; then names only, within 8 KiB | Past the names budget the rest is only counted ("and N more") |
 | Agent memory: Changes / Forgotten | the Console's Changes view shows the newest 100; `af-memory changes` lists 30 by default and `--limit` up to 300; 300 forgotten memories at a time | Older ones are not listed |
 | Agent memory: suggestions from sessions | 250 review calls a day, one at a time; 100 proposals waiting | "Today's review limit has been reached" / "The pending proposals are full" |
@@ -92,7 +92,7 @@ Read the screen rather than this page.
 
 ## The limit board: what it collects and how it reads
 
-The limit board (**Settings → Limit board**, [09 Working with others](../member/09-collaboration.md))
+The limit board (**Settings → Limit board**, [12 Working with others](../member/12-collaboration.md))
 shows where members stand on their agents' usage limits. This is its full coverage; anything not
 in the table is **unknown**, never "available".
 

@@ -189,7 +189,7 @@ dispatch するなら `RED_KINDS` も）に種別を足し、`cli-drift.yml` の
 1. `Caps()` が実物の実行系で**実際に駆動した内容**と、`Driver` の `Capabilities()` が driver の
    実装と一致している（§20.4）。
 2. [ref/agents.md](../../guide/ref/agents.ja.md) の列が埋まり、§20.4 の 2 つの検査が通っている。
-3. [member/06-agents](../../guide/member/06-agents.ja.md) に、**Console の言葉で**
+3. [member/09-agents](../../guide/member/09-agents.ja.md) に、**Console の言葉で**
    （`console/src/lib/i18n/locales/`）接続の仕方が書いてある。
 4. ワークスペースイメージがその CLI やホストをピンするなら、contract ワークフローが在り、
    リリース監視に登録され、実リリースに対して通っている。そうでなければ、実際に依存している相手に

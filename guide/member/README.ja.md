@@ -1,7 +1,7 @@
 ---
 audience: "Console からエージェントを動かす人"
 source_of_truth: "Console そのもの（画面と食い違ったら画面が正）"
-updated: "2026-08"
+updated: "2026-10"
 ---
 
 # Agent Fleet を使う
@@ -18,23 +18,40 @@ updated: "2026-08"
 ## 章立て
 
 **必要になる順**、初日から並べています。上から読めば「初日 → 日々の作業 → その先」の
-順に進めます。詰まったときは [11 困ったとき](11-troubleshooting.ja.md) から開いて構いません。
+順に進めます。詰まったときは [21 困ったとき](21-troubleshooting.ja.md) から開いて構いません。
+
+### はじめに
 
 1. [初日](01-first-day.ja.md) — サインイン、ようこそカード、最初のクローン
-2. [セッション](02-sessions.ja.md) — 会話の起動・切り替え・停止
-3. [リポジトリと git](03-code.ja.md) — クローン、変更の確認、コミット、push（SVN も）
-4. [ファイル](04-files.ja.md) — ツリー、ビューア、編集、Markdown と図
-5. [ターミナル](05-terminal.ja.md) — 黒い画面、ペイン、コピー＆ペースト、スマートフォン
-6. [エージェント](06-agents.ja.md) — 接続の仕方と選び方
-7. [チャットとメモ](07-chat-memo.ja.md) — リポジトリを使わない質問、メモの溜め方
-8. [並行して回す](08-organising.ja.md) — チャットからの指揮、並行作業、定時実行
-9. [他の人と扱う、そして片付ける](09-collaboration.ja.md) — マーカー、変更ファイル、共有、ロック、掃除
-10. [外へつなぐ](10-integrations.ja.md) — プレビュー、Discord / Slack、外部のエージェントからワークスペースを使う（MCP）
-11. [困ったとき](11-troubleshooting.ja.md) — 症状別の対処と FAQ
-12. [設定](12-settings.ja.md) — 全タブと「あの設定はどこ？」
-13. [運用ツール](13-ops-tooling.ja.md) — 監視ツールを会話につなぐ（実験的）
-14. [エージェントメモリ](14-agent-memory.ja.md) — 種類やセッションをまたいで覚えること、その取り込み、エージェント自身のメモリのスナップショット
-15. [クラウドのアカウント](15-cloud-accounts.ja.md) — AWS プロファイル、SSM ホスト、`af-aws-exec`、Google Cloud
+2. [Console の基本](02-console-basics.ja.md) — ショートカット、コマンドパレット、ペイン、スマートフォン
+3. [セッションを始める](03-starting-sessions.ja.md) — 種類、実行方式、新規作成、課題トラッカー
+
+### 日々の作業
+
+4. [セッションと会話する](04-conversation.ja.md) — 返信、プラン、マーカー、変更ファイル、返信候補、翻訳
+5. [止める・再開する・片付ける](05-stopping-and-tidying.ja.md) — 停止と再開、引き継ぎ、起こしたまま、ロック、掃除
+6. [リポジトリと git](06-code.ja.md) — クローン、変更の確認、コミット、push（SVN も）
+7. [ファイル](07-files.ja.md) — ツリー、ビューア、編集、Markdown と図
+8. [ターミナル](08-terminal.ja.md) — コピー＆ペースト、往復時間、フォントと大きさ
+9. [エージェント](09-agents.ja.md) — 接続の仕方と選び方
+10. [チャットとメモ](10-chat-memo.ja.md) — リポジトリを使わない質問、メモの溜め方
+
+### その先へ
+
+11. [たくさんのセッションを動かす](11-many-sessions.ja.md) — 一覧、作業グループ、子セッション、メッセージ、フリート・オペレーター、定時実行
+12. [他の人と扱う](12-collaboration.ja.md) — 共有、セッションの引き渡し、受信箱、使用量の上限
+13. [画像](13-images.ja.md) — ギャラリー、生成、スタジオ
+14. [プレビューとブラウザ](14-preview-browser.ja.md) — ブラウザペイン、プレビュー URL、開発用サインイン、エージェントが開いたブラウザ
+15. [外部サービスとログイン済み CLI](15-external-services.ja.md) — `gh` / `bkt` / `jira`、Discord / Slack、運用ツール（実験的）
+16. [クラウドのアカウント](16-cloud-accounts.ja.md) — AWS プロファイル、SSM ホスト、`af-aws-exec`、Google Cloud
+17. [ワークスペースの環境](17-workspace-environment.ja.md) — 環境設定、再作成、テスト用データベース、ローカルの AWS エミュレータ
+18. [エージェントメモリ](18-agent-memory.ja.md) — 種類やセッションをまたいで覚えること、その取り込み、エージェント自身のメモリのスナップショット
+19. [ワークスペースを外から使う](19-outside-access.ja.md) — MCP、OAuth サインイン、外部のエージェントからのメモリ
+
+### リファレンス
+
+20. [設定](20-settings.ja.md) — 全タブと「あの設定はどこ？」
+21. [困ったとき](21-troubleshooting.ja.md) — 症状別の対処と FAQ
 
 ほかに [アイコン・バッジ・メニュー](badges-and-menus.ja.md)（画面の印の意味）と、
 [かんたんガイド](lite.ja.md)（端末を一切開かない人のための短い版）があります。

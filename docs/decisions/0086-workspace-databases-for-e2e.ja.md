@@ -567,7 +567,7 @@ Agent が止める。あるセッションの終了が、兄弟セッション�
 
 | レーン | ブランチ | 指摘 送／修正 | merge |
 |---|---|---|---|
-| L3 文書（`workspace/notes/environment.md`・`guide/member/03-code`・`docs/build/10-development` §10.4。加えて旧文「DB は無いので skip」が新しいノートと矛盾していた `AGENTS.md` と `workspace/workspace-notes.md`） | `temp/s6arm5b` | 11 / 11 | `a39c4487` |
+| L3 文書（`workspace/notes/environment.md`・`guide/member/17-workspace-environment`・`docs/build/10-development` §10.4。加えて旧文「DB は無いので skip」が新しいノートと矛盾していた `AGENTS.md` と `workspace/workspace-notes.md`） | `temp/s6arm5b` | 11 / 11 | `a39c4487` |
 | L1 供給（`install-postgres`・`install-pg-client`・`Dockerfile` のピンと `af-db` シム） | `temp/s66bqob` | 7 / 7 | `3ad2ce88` |
 | L2 実行（`internal/afdb`・`af-db` の動詞・アイドルループ・`session_tmux.go` の注入・pgx） | `temp/sawbl7m` | 13 / 13 | `d3b6f3ce` |
 

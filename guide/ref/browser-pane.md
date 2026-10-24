@@ -46,7 +46,7 @@ otherwise the lightweight preview — and Ctrl/⌘-click or middle-click opens t
 deployment has a browser. The `⋯` beside the port offers all three targets
 ([badges](../member/badges-and-menus.md#session-display)). A loopback URL
 (`http://127.0.0.1:<port>/…`, `localhost`, `0.0.0.0`) in a reply or a document opens in the same
-default target ([04 Files](../member/04-files.md#links-in-rendered-markdown)).
+default target ([07 Files](../member/07-files.md#links-in-rendered-markdown)).
 
 Reconnect, a Console reload and a Workspace stop/start all create a *new* Page at the
 current port and path. Cookies, storage and half-typed input are not restored.

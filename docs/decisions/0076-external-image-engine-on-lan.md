@@ -272,7 +272,7 @@ seconds is P1.
   session's.
 - **P1**: entering the URL and key from the admin panel, first — the documentation lane had to
   write "there is no field for this; restart the CP" on two pages, which is the moment decision 2
-  said the variable would start to hurt; a member-facing section (`guide/member/02-sessions.md`
+  said the variable would start to hurt; a member-facing section (`guide/member/13-images.md`
   explains only the CLI-plan routes, and nothing in the guide says how a deployment-provided
   engine, ECS or LAN, looks from a session); the basename rule; a health prober and the uptime
   heatmap; candidates from `/object_info`; the reverse-proxy procedure for `AF_COMFY_API_KEY`.

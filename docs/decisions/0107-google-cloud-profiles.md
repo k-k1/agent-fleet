@@ -691,4 +691,4 @@ Guidance for now: a `terraform apply` (or any program that reads `GOOGLE_OAUTH_A
 finish within the token's remaining life, which each run prints at its start ("the token is valid for N more
 minutes": at least ten, at most about an hour, and not necessarily a fresh hour); split longer work into
 commands shorter than that, each under its own `af-gcloud-exec` run. See
-[the guide](../../guide/member/15-cloud-accounts.md#running-commands-in-google-cloud-as-you-af-gcloud-exec). #1879 stays open for (a) and (c).
+[the guide](../../guide/member/16-cloud-accounts.md#running-commands-in-google-cloud-as-you-af-gcloud-exec). #1879 stays open for (a) and (c).

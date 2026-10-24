@@ -674,7 +674,7 @@ reports the shortfall as a warning. `edit` is advertised on the strength of the 
   now "not a session whose own CLI is what the route would drive", which covers agy without a
   second special case.
 - The user-facing text stopped saying Codex. `agents.note_image_generation` (ja/en),
-  `guide/member/02-sessions` (ja/en) and `workspace/workspace-notes.md` now name both providers,
+  `guide/member/13-images` (ja/en) and `workspace/workspace-notes.md` now name both providers,
   say which plan each spends, and state the aspect-ratio exception.
 
 ### Driven end to end (2026-09-07)
