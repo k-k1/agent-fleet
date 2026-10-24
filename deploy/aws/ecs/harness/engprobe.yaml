@@ -238,7 +238,7 @@ Resources:
           Host: {}
       ContainerDefinitions:
         # S3 mode only: the sidecar copies the model from the stack bucket onto the host volume
-        # (gateway endpoint, multipart, no NAT) and logs how long it took - that number IS open
+        # (multipart, through the NAT: no S3 gateway endpoint, #2657) and logs how long it took - that number IS open
         # question 1 of ADR 0071.
         - !If
           - LlamaFromS3

@@ -30,7 +30,7 @@ platform changes:
 
 | File | Status | Contents |
 |------|--------|----------|
-| `cfn/00-network.yaml` | **proven** (deploy→verify→teardown in sandbox) | VPC, 2×AZ public+private subnets, IGW, NAT, S3 gateway endpoint, base SGs (`alb`/`cp`/`ws`) |
+| `cfn/00-network.yaml` | **proven** (deploy→verify→teardown in sandbox) | VPC, 2×AZ public+private subnets, IGW, NAT, base SGs (`alb`/`cp`/`ws`) |
 | `cfn/10-data.yaml` | **proven** (EFS 2 mount targets available, RDS pg18 available/private/encrypted) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro, RDS-managed master secret), optionally the KMS key of the CP's key custodian (`CustodianKmsKey=create`) |
 | `cfn/20-platform.yaml` | **proven** (ECR×2, cluster ACTIVE w/ SC default, 3 IAM roles) | ECR (cp+workspace, plus an empty `af-voicevox` for the optional speech engine and `af-llamacpp` / `af-comfyui` / `af-engine-tools` for the optional inference engines — the last two self-built, by `comfyui-image.yml` and `engine-tools-image.yml`), ECS cluster, Service Connect namespace (`af.internal`), IAM roles (`cp-task`/`exec`/`ws-task`) |
 | `cfn/30-ingress.yaml` | **proven** (CP boots on Fargate, `/healthz` 200, `/oauth2/login` → Google w/ correct redirect_uri) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
@@ -752,8 +752,8 @@ A deployment egresses from **exactly one address**: the Elastic IP on `00-networ
 NAT gateway. Everything outbound goes through it — every workspace's git, model API
 and package traffic, and the CP's own calls — because the slots and the CP task sit
 in private subnets with **no public IPv4** (`AssignPublicIp: DISABLED`; the slot
-launch template deliberately assigns none, ADR 0045 decision 3-3) and the only VPC
-endpoint is the free S3 gateway. So this is the value to hand to a corporate
+launch template deliberately assigns none, ADR 0045 decision 3-3) and there is no VPC
+endpoint (S3 included, #2657). So this is the value to hand to a corporate
 firewall or a SaaS IP allow-list.
 
 ```bash
@@ -1886,8 +1886,7 @@ pulled from the AWS Pricing API for **ap-northeast-1**, 730 h/month, 2026-08-15
 | EFS backups (`Persistence=retain` only) | $0.06/GB-mo warm backup storage | usage |
 | **Total** | | **≈ $107/mo + EFS** |
 
-Stopped workspaces cost **nothing** (that is scale-to-zero working); the S3 gateway
-endpoint, ACM, the NAT's EIP and standard SSM parameters are free. A *running*
+Stopped workspaces cost **nothing** (that is scale-to-zero working); ACM, the NAT's EIP and standard SSM parameters are free. A *running*
 workspace adds Fargate at **$0.0616/h** (1 vCPU + 2 GB) — ~$11/mo at 8 h × 22 days,
 $45/mo if left on around the clock.
 
@@ -1911,11 +1910,19 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
   and every private-subnet task also reaches ECR / CloudWatch Logs / SSM through it
   (there is no public IP on those tasks) — so the NAT is on the **workspace start
   path**, not just the user's internet access.
-  - The **S3 gateway endpoint is in `00-network.yaml`** because it is free (no
-    hourly charge, no ENI) and ECR layer blobs live in S3 — it takes the bulk of
-    every cold image pull off the NAT's data processing charge ($0.062/GB in
-    ap-northeast-1 — the same rate as its hourly charge). **Interface**
-    endpoints (ecr.api, ecr.dkr, logs, ssm) are left out on purpose: $0.01/AZ/hour
+  - There is **no S3 gateway endpoint** (#2657): it would let a workspace reach any bucket
+    in the region around the NAT, unrecorded, and a policy on it makes refused same-region
+    S3 requests fail with AccessDenied instead of using the NAT. So **all S3 traffic crosses
+    the NAT, ECR layer blobs included**: a Fargate workspace start pulls ~918 MiB compressed
+    (see the start-latency measurement below) through NAT data processing, and the models
+    bucket reads of `60-engines` do too. The end state (an endpoint limited to ECR layers
+    and the stack's buckets, workspace S3 through the egress gateway's proxy) is #2700.
+    **When updating a running stack that still has the endpoint**: deleting it switches S3
+    from the endpoint route to the NAT (source address private IP → NAT EIP), and existing TCP
+    connections do not survive that. Update when no large model fetch/ingest or image pull is
+    running, or verify that the clients reconnect and re-run. While paused (`NatEnabled=false`)
+    S3 is unreachable too, like ECR and logs.
+    **Interface** endpoints (ecr.api, ecr.dkr, logs, ssm) are left out on purpose: $0.01/AZ/hour
     × 2 AZ each adds up past the NAT Gateway they would relieve.
   - What still crosses the NAT: git / Anthropic / npm / package registries (the real
     developer traffic), plus the small ECR auth+manifest, Logs and SSM calls.

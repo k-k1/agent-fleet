@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   agent-fleet ECS adapter (P3-7) - network substrate: VPC, 2-AZ public/private
-  subnets, IGW, one NAT gateway, the (free) S3 gateway endpoint, and the base
+  subnets, IGW, one NAT gateway, and the base
   security groups (alb -> cp -> ws).
   Static substrate only; per-workspace resources are created by the Control Plane
   at runtime. Later stacks (10-data, 20-platform) import these via exports.
@@ -43,7 +43,7 @@ Parameters:
       "false" deletes the NAT gateway and the private default route (pause.sh does this
       while a deployment sleeps: a NAT gateway bills by the hour and has no stop). The
       egress address survives - see NatEip - so "true" brings the same source IP back.
-      Nothing in a private subnet can reach ECR, logs or the internet while it is false.
+      Nothing in a private subnet can reach ECR, logs, S3 or the internet while it is false.
 
 Mappings:
   Subnets:
@@ -169,20 +169,18 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties: { SubnetId: !Ref PrivateSubnet1, RouteTableId: !Ref PrivateRt }
 
-  # S3 gateway endpoint - the one VPC endpoint that is free (no hourly charge, no
-  # ENI). ECR stores layer blobs in S3, so every cold Fargate image pull (a fresh
-  # pull on EVERY task start - Fargate keeps no image cache) would otherwise cross
-  # the NAT gateway and pay its $0.045/GB data processing. Routing the S3 prefix
-  # list off the private route table takes the bulk of those bytes off the NAT.
-  # Interface endpoints (ecr.api / ecr.dkr / logs / ssm) are deliberately NOT here:
+  # No S3 gateway endpoint on purpose. An endpoint without a policy is full access: a
+  # workspace could reach any bucket in the region without crossing the NAT gateway (or the
+  # egress gateway of ADR 0122), unrecorded (#2657). One with a policy does not fall back
+  # to the NAT for what it refuses (the S3 prefix-list route is more specific than
+  # 0.0.0.0/0), so it would break same-region S3 for workspaces. So all S3 leaves through
+  # the NAT. Cost: ECR layer bytes cross it, ~918 MiB compressed per Fargate workspace
+  # start at the NAT data-processing rate (deploy/aws/ecs/README.md, NAT bullet). The end state - an endpoint
+  # limited to ECR layers and the stack's buckets, workspace S3 through the gateway's
+  # proxy - is #2700; the reviewed policy is in this file at commit 6829e6e.
+  # Interface endpoints (ecr.api / ecr.dkr / logs / ssm) are deliberately NOT here either:
   # at $0.01/AZ/hour x 2 AZ each they cost more than the NAT gateway they'd relieve.
-  S3Endpoint:
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcId: !Ref Vpc
-      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
-      VpcEndpointType: Gateway
-      RouteTableIds: [ !Ref PrivateRt ]
+  # deploy/local/cfn-no-s3-endpoint-test.py pins this.
 
   # --- Security groups: linear alb -> cp -> ws (no cycle) ---
   AlbSg:
