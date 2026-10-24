@@ -67,6 +67,13 @@ func TestBrowserScreencastBackpressureIntegration(t *testing.T) {
 	v := &browserViewer{page: p, control: make(chan browserOutbound, 64), done: make(chan struct{})}
 	p.mu.Lock()
 	p.viewer, p.visible = v, true
+	// Setting the viewer directly skips reserve(), which is what cancels the
+	// detached-grace deletion timer; without this the Page is deleted after
+	// DetachedGrace even though a viewer is streaming, and a slow run flakes.
+	if p.expiry != nil {
+		p.expiry.Stop()
+		p.expiry = nil
+	}
 	p.mu.Unlock()
 	if err := p.startScreencast(); err != nil {
 		t.Fatal(err)
