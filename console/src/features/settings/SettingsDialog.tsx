@@ -215,6 +215,10 @@ export function SettingsDialog() {
   }, [section]);
 
   const pick = (key: string) => {
+    // Mirror the rail choice into the store: the follow-effect above only fires when the
+    // requested section changes, so a stale store value would swallow a later
+    // openSettings() back to the section the rail just left (cross-tab links).
+    useSettingsUI.setState({ settingsSection: key });
     setSection(key);
     setEntered(true);
   };

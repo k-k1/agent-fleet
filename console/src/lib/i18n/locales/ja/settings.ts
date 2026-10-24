@@ -93,7 +93,7 @@ export const settings = {
   "tokens.revoke_title": "トークンを失効",
   "tokens.revoke_body": "このトークンを失効します。使用中の接続は次回から 401 になります。",
   "tokens.revoke_confirm": "失効する",
-  "tokens.direction": "外部のアプリからこのワークスペースを操作するための設定です。セッションが使うサーバーを登録するには",
+  "tokens.direction": "外部のアプリからこのワークスペースを操作するための設定です。セッションが使うサーバーを登録するときは、次のタブを開いてください:",
   "tokens.direction_link": "MCP サーバー（セッションで使う）",
   "tokens.intro":
     "手元の Claude（Claude Code / Desktop）から MCP でワークスペースのセッションを操作するためのトークンです。発行者の権限を継承し、スコープはここで選びます。",

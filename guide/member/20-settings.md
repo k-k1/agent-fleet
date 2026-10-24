@@ -333,7 +333,7 @@ Connect a Discord / Slack bot to follow session progress in chat and drive it by
 
 ### MCP servers (used by sessions)
 
-The tab is named **MCP servers (used by sessions)**: these are servers *your sessions use*. To let an outside app drive this Workspace, see [MCP tokens](#mcp-tokens-apps) under **Outside access**.
+The tab is named **MCP servers (used by sessions)**: these are servers *your sessions use*. To let an outside app drive this Workspace, see [MCP tokens & apps](#mcp-tokens-apps) under **Outside access**.
 
 **Register the MCP servers you want to use here** and they become available to your assistants and sessions.
 This is where you add tools Agent Fleet does not ship with, such as an internal wiki, an issue tracker, a document
@@ -432,7 +432,7 @@ they work, and the WS bar's Google Cloud badge, are in
 
 ### MCP tokens & apps
 
-The **MCP tokens & apps** tab sits in the **Outside access** group, not under Connections, because it points the other way: it holds the personal access tokens and connected apps that *use this Workspace*. To register servers your sessions call, see [MCP servers](#mcp-servers-used-by-sessions).
+The **MCP tokens & apps** tab sits in the **Outside access** group, not under Connections, because it points the other way: it holds the personal access tokens and connected apps that *use this Workspace*. To register servers your sessions call, see [MCP servers (used by sessions)](#mcp-servers-used-by-sessions).
 
 Tokens for driving your workspace remotely from Claude Code / Claude Desktop on your own machine.
 → [19 Using it from outside](19-outside-access.md#driving-your-workspace-from-an-external-claude-mcp)

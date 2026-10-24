@@ -168,22 +168,35 @@ export function McpTab() {
     return true;
   };
 
+  // The direction note stays above the stopped and loading states too: a member who opened
+  // this tab to let an outside app in should see the way to Outside access without having
+  // to start the Workspace first.
+  const direction = <DirectionNote text="mcp.direction" linkLabel="mcp.direction_link" target="tokens" />;
   if (!running) {
     return (
-      <EmptyState icon="debug-disconnect" title={tr("mcp.ws_required_title")} hint={tr("mcp.ws_required_hint")}>
-        <Button icon="play" disabled={wsStartBusy(wsState)} onClick={() => void startWs()}>
-          {wsStartBusy(wsState) ? tr("common.starting") : tr("ops.start_ws")}
-        </Button>
-      </EmptyState>
+      <div className="mcp-tab">
+        {direction}
+        <EmptyState icon="debug-disconnect" title={tr("mcp.ws_required_title")} hint={tr("mcp.ws_required_hint")}>
+          <Button icon="play" disabled={wsStartBusy(wsState)} onClick={() => void startWs()}>
+            {wsStartBusy(wsState) ? tr("common.starting") : tr("ops.start_ws")}
+          </Button>
+        </EmptyState>
+      </div>
     );
   }
-  if (!reg) return <p className="muted pad">{tr("common.loading")}</p>;
+  if (!reg)
+    return (
+      <div className="mcp-tab">
+        {direction}
+        <p className="muted pad">{tr("common.loading")}</p>
+      </div>
+    );
 
   const shadowed = reg.shadowed || [];
   const hasTenant = reg.servers.some((s) => s.origin === "tenant") || !!reg.tenantFetchedAt;
   return (
     <div className="mcp-tab">
-      <DirectionNote text="mcp.direction" linkLabel="mcp.direction_link" target="tokens" />
+      {direction}
       <p className="muted ds-note">{tr("mcp.intro")}</p>
       {/* Project scope (a repository's .mcp.json and friends) is a separate axis (docs/log/56
           P0); this tab covers only the effective registry (user/tenant/builtin). One line of
