@@ -1306,9 +1306,10 @@ if [ -n "$NODE_VER" ] && [ "$NODE_VER" != "system" ]; then
   # install-node resolves numerically (the same rule as nodeBinFor in env_toolchains.go).
   af_node_bin="$(workspace-agent install-node "$NODE_VER" 2>/dev/null || true)"
   # Now that the newest patch is in place and before any session starts, drop the older
-  # patches install-node left behind (only its own: nvm installs carry no marker). Absolute
-  # path: a stale build in ~/.local/bin would not know the subcommand.
-  /usr/local/bin/workspace-agent prune-node-versions \
+  # patches install-node left behind. It keeps the tree just returned (--keep) and every
+  # pinned version (node_prune.go). Absolute path: a stale build in ~/.local/bin would not
+  # know the subcommand.
+  /usr/local/bin/workspace-agent prune-node-versions ${af_node_bin:+--keep "$af_node_bin"} \
     || echo "[entrypoint] WARN: prune-node-versions failed (continuing)"
   if [ -n "$af_node_bin" ] && [ -x "$af_node_bin/node" ]; then
     export PATH="$af_node_bin:$PATH"
@@ -1316,8 +1317,10 @@ if [ -n "$NODE_VER" ] && [ "$NODE_VER" != "system" ]; then
   if [ -s "$NVM_DIR/nvm.sh" ]; then
     # shellcheck disable=SC1091
     . "$NVM_DIR/nvm.sh"
-    nvm alias default "$NODE_VER" >/dev/null 2>&1
-    nvm use "$NODE_VER" >/dev/null 2>&1
+    # Under set -e a failing `nvm use` (a version that is not installed) would end the
+    # start before the Agent runs; the check below reports the mismatch instead.
+    nvm alias default "$NODE_VER" >/dev/null 2>&1 || true
+    nvm use "$NODE_VER" >/dev/null 2>&1 || true
   fi
   # Always check that the selected version is what runs. If both the install and `nvm use`
   # fail, `node -v` answers with the image's base node; without this check the log looks

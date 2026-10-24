@@ -733,7 +733,7 @@ code. The first column of `guide/ref/settings.ja.md` (English: `settings.md`) is
 also rewritable as `table-cell`. Changed `set.tab_*` or `tenant.tab_*` keys produce
 `WARN SETTINGS TAB`: update those cells so `scripts/docs-check.py` continues to
 pass; its rules are unchanged. Japanese personal tabs also need the matching
-`guide/member/12-settings.ja.md` section heading updated manually; table replacement
+`guide/member/20-settings.ja.md` section heading updated manually; table replacement
 alone does not satisfy that check. Every edit prints `path:line old -> new`.
 
 The tool checks every target's git status before writing any file. A staged,
