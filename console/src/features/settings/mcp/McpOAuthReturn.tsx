@@ -23,7 +23,7 @@ const CLOSE_GRACE_MS = 300;
 export function McpOAuthReturn({ booted }: { booted: boolean }) {
   const tr = useT();
   const [closeFailed, setCloseFailed] = useState(false);
-  const closeTimer = useRef<ReturnType<typeof setTimeout>>();
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(closeTimer.current), []);
   const toast = useToast();
   const [shown, setShown] = useState<SignInDone["outcome"] | null>(null);
