@@ -193,6 +193,11 @@ done
 [ -z "$(p30 GoogleClientId)" ] || have_ssm "$SSM_PREFIX/google-client-secret" || say_missing "no SSM $SSM_PREFIX/google-client-secret (GoogleClientId is set)"
 [ -z "$(p30 OidcClientId)" ]   || have_ssm "$SSM_PREFIX/oidc-client-secret"   || say_missing "no SSM $SSM_PREFIX/oidc-client-secret (OidcClientId is set)"
 [ -z "$(p30 GithubClientId)" ] || have_ssm "$SSM_PREFIX/github-client-secret" || say_missing "no SSM $SSM_PREFIX/github-client-secret (GithubClientId is set)"
+# Each optional secret has its own switch (30-ingress): a Secrets entry for a parameter that
+# does not exist stops the CP task from starting.
+for sw in GithubLoginSecret:github-login-client-secret ComfyApiKey:comfy-api-key RemoteEngineToken:remote-engine-token; do
+  [ "$(p30 "${sw%%:*}")" != on ] || have_ssm "$SSM_PREFIX/${sw#*:}" || say_missing "no SSM $SSM_PREFIX/${sw#*:} (${sw%%:*}=on)"
+done
 
 if [ -n "$HOSTED_ZONE" ]; then
   "${AWS[@]}" route53 get-hosted-zone --id "$HOSTED_ZONE" >/dev/null 2>&1 \

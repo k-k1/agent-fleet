@@ -41,37 +41,24 @@ Parameters:
   ImageTag:
     Type: String
     Default: dev
-    Description: >-
-      Tag of BOTH the af-control-plane and af-workspace images in ECR (=VERSION).
-      Upgrade = push a new tag and re-deploy with only this overridden; running
-      workspaces are untouched and pick it up on their next Start.
+    Description: "Tag of BOTH the CP and workspace images in ECR (=VERSION). PARAMETERS.md."
   WsTaskCpu:
     Type: String
     Default: "1024"
-    Description: >-
-      Default Fargate CPU units for a workspace task (1024 = 1 vCPU). Only
-      256/512/1024/2048/4096/8192/16384 are valid, and only in Fargate's (cpu, memory) pairs.
+    Description: "Default Fargate CPU units for a workspace task (1024 = 1 vCPU). PARAMETERS.md."
   WsTaskMemory:
     Type: String
     Default: "2048"
-    Description: >-
-      Default workspace task memory in MiB. Must be a valid pair with WsTaskCpu (1 vCPU
-      allows 2048-8192 in 1024 steps). 2048 is tight for real use - see PARAMETERS.md.
+    Description: "Default workspace task memory in MiB; must pair with WsTaskCpu. PARAMETERS.md."
   WsDiskGiB:
     Type: String
     Default: "50"
-    Description: >-
-      Default per-workspace WORKING disk in GiB (wiped on stop; only the EFS home persists).
-      0 keeps Fargate's free 20 GiB; 21-200 sets ephemeral storage. !! Also the switch that
-      moves caches and build artifacts off EFS - it arms only at 30 or more. PARAMETERS.md.
+    Description: "Default per-workspace working disk in GiB (0 = Fargate's 20). PARAMETERS.md."
   WsRuntime:
     Type: String
     Default: ecs
     AllowedValues: [ ecs, ecs-ec2 ]
-    Description: >-
-      Which Runtime adapter the CP uses. ecs = Fargate (shipped default). ecs-ec2 = a pool of
-      EC2 slots with a persistent per-user EBS home; requires the 40-ec2-pool stack and
-      Ec2SlotLaunchTemplate. Choose it for I/O and persistence, NOT for start latency.
+    Description: "ecs = Fargate (default); ecs-ec2 = EC2 slot pool, needs 40-ec2-pool. PARAMETERS.md."
   Ec2SlotLaunchTemplate:
     Type: String
     Default: ""
@@ -81,12 +68,7 @@ Parameters:
   Ec2SlotTypes:
     Type: String
     Default: "standard|Standard (Intel)|x86_64|m7i.large:8192:2,m7i.xlarge:16384:4,m7i.2xlarge:32768:8;saver|Lower cost (Intel, previous gen)|x86_64|m6i.large:8192:2,m6i.xlarge:16384:4,m6i.2xlarge:32768:8"
-    Description: >-
-      The slot sizes the pool may run; a workspace lands on the smallest rung that holds its
-      memory request and gets the whole box. Either `instanceType:memoryMiB[:vcpu],...` (one
-      unnamed x86_64 class) or `id|label|arch|<ladder>[;...]` (one class per entry). arch is
-      declared, never guessed. !! Changing it moves nobody - see Ec2DefaultSlotClass. Adding
-      an arm64 class needs an arm64 workspace image AND Ec2SlotAmiArm64. PARAMETERS.md.
+    Description: "Slot sizes/classes the pool may run (instanceType:memoryMiB[:vcpu] or id|label|arch|ladder). PARAMETERS.md."
   Ec2SlotAmiArm64:
     Type: String
     Default: ""
@@ -96,53 +78,31 @@ Parameters:
   Ec2DefaultSlotClass:
     Type: String
     Default: ""
-    Description: >-
-      The class id a member lands on with no per-user and no per-tenant value. Empty = the
-      first class in Ec2SlotTypes. !! Moving it moves EVERY member who has not chosen.
+    Description: "Class id for members with no choice. Empty = first of Ec2SlotTypes. PARAMETERS.md."
   Ec2MaxSlots:
     Type: String
     Default: "8"
-    Description: >-
-      Hard cap on instances in the pool. A slot is one concurrently RUNNING workspace, so
-      size it like "how many people work at once". Start fails at the cap, clearly.
+    Description: "Hard cap on pool instances = concurrently running workspaces. PARAMETERS.md."
   Ec2HostReserveMb:
     Type: String
     Default: auto
-    Description: >-
-      How much of a slot is held back from the workspace so the box's own daemons cannot be
-      starved. auto = a flat 2 GiB; off = uncapped (what melted a
-      live slot on 2026-08-27); a number = that many MiB (0 = reserve nothing, cap at the full rung; not off). PARAMETERS.md.
+    Description: "Memory held back from a slot: auto, off, or MiB. PARAMETERS.md."
   Ec2SlotSleepSec:
     Type: String
     Default: "900"
-    Description: >-
-      How long a slot may sit with no running task before the instance is STOPPED (the image
-      cache lives on its root volume). Not the per-person idle-stop - this starts counting
-      after that. Sleeping ~$9.6/month vs ~$95 running; the owner wakes it in ~110s.
-      0 = keep every slot running forever. PARAMETERS.md.
+    Description: "Idle seconds before an empty slot instance is stopped; 0 = never. PARAMETERS.md."
   Ec2SlotTerminateAfterSec:
     Type: String
     Default: "0"
-    Description: >-
-      The step after Ec2SlotSleepSec on the same clock, and the only one that gives the ROOT
-      VOLUME back. 0 (default) = never terminate, so retained roots only grow to Ec2MaxSlots
-      x SlotRootVolumeGiB of gp3. 14400 (4h) bounds that cost, at 25s and the slot's caches
-      for the next arrival; keep 0 for fast restarts. Not a migration tool: reserve slots in
-      the admin Slots tab to replace them. Must be >= Ec2SlotSleepSec. PARAMETERS.md.
+    Description: "Seconds after sleep before the slot root volume is released; 0 = never. PARAMETERS.md."
   Ec2HibernateAfterSec:
     Type: String
     Default: "0"
-    Description: >-
-      Deployment default for how long a home may sit unopened before it is snapshotted and
-      its volume deleted; the next start restores it (~122s). A tenant overrides it from the
-      Console. !! The only automatic path that moves a user's HOME - hence 0 (off) by
-      default, and it snapshots before deleting. 2160h (90d) is a sane start. PARAMETERS.md.
+    Description: "Idle seconds before a home is snapshotted and its volume deleted; 0 = off. PARAMETERS.md."
   Ec2HomeGiB:
     Type: String
     Default: "50"
-    Description: >-
-      Default size of a user's persistent home volume (gp3). Billed on PROVISIONED size, so
-      the break-even fill rate against EFS is 26.7% - do not over-provision.
+    Description: "Default size of a user's persistent home volume (gp3). PARAMETERS.md."
   # --- Scheduled execution (docs/log/38) ------------------------------------
   # !! EMPTY means "keep the product default" for all four; the defaults live in the CP
   # (control-plane/main.go). Copying them here would freeze this deployment on whatever they
@@ -150,29 +110,19 @@ Parameters:
   SchedulerInterval:
     Type: String
     Default: ""
-    Description: >-
-      Tick cadence of the scheduled-execution loop (Go duration, default 1m). "0"
-      hard-disables timed execution and the Console hides the Schedules section.
+    Description: "Tick cadence of the schedule loop (Go duration, default 1m; 0 = timed execution off)."
   ScheduleWakeTimeout:
     Type: String
     Default: ""
-    Description: >-
-      How long one fire waits for the woken workspace's Agent to answer (Go duration,
-      default 300s). !! Do not lower this on ecs-ec2 without measuring - the clock starts
-      ~20s before the adapter's own, and the same workspace measured 65-131s. PARAMETERS.md.
+    Description: "How long one schedule fire waits for the woken Agent (Go duration, default 300s). PARAMETERS.md."
   ScheduleSettle:
     Type: String
     Default: ""
-    Description: >-
-      How long a schedule-woken workspace is held up so the reaper cannot stop it out from
-      under the session it just started (Go duration, default 5m).
+    Description: "How long a schedule-woken workspace is held against the reaper (default 5m)."
   ScheduleJitter:
     Type: String
     Default: ""
-    Description: >-
-      Deterministic spread applied to CRON fires so 09:00 does not wake everyone at once (Go
-      duration, default 2m; "0" = the exact slot). Derived from the schedule id, so next_run
-      and {{time}} still show the requested time.
+    Description: "Deterministic spread on CRON fires (Go duration, default 2m; 0 = exact). PARAMETERS.md."
 
   # --- WAF (optional, OFF by default) ---------------------------------------
   # !! ONLY rate limiting and IP reputation. The signature rule sets (Core rule set, SQLi,
@@ -182,16 +132,12 @@ Parameters:
   WafRateLimitPer5Min:
     Type: Number
     Default: 0
-    Description: >-
-      Requests per 5 minutes from one IP before WAF blocks it (0 = no WAF at all). Counts
-      Console polling too, so keep it well above one office behind one NAT - 3000 to start.
+    Description: "Requests per 5 min per IP before WAF blocks (0 = no WAF). PARAMETERS.md."
   WafIpReputation:
     Type: String
     Default: "off"
     AllowedValues: [ "off", "on" ]
-    Description: >-
-      Add AWS's managed IP reputation list (known scanners/botnets). Matches on the SOURCE,
-      not the body. Requires WafRateLimitPer5Min > 0 (that is what creates the web ACL).
+    Description: "on = AWS managed IP reputation list; needs WafRateLimitPer5Min > 0."
   Fqdn:
     Type: String
     Description: >-
@@ -205,20 +151,11 @@ Parameters:
   PreviewDomain:
     Type: String
     Default: ""
-    Description: >-
-      Parent domain for the per-start preview subdomains (docs/81), e.g. pv.example.com;
-      services become reachable at https://{slug}-{port}.{PreviewDomain}. Empty (default) =
-      the feature is off and only path-mode /preview/{port} exists. !! Use a SIBLING of the
-      Console FQDN, not a child (cookie scope - ADR 0062 decision 13), and make sure a zone you
-      pass here or in PreviewHostedZoneId contains it, or ACM validation never finishes and
-      the stack stalls rather than fails. PARAMETERS.md.
+    Description: "Parent domain of preview subdomains; empty = path-mode previews only. PARAMETERS.md."
   PreviewHostedZoneId:
     Type: String
     Default: ""
-    Description: >-
-      Route53 hosted zone id containing PreviewDomain, when that is NOT the Console's zone
-      (a delegated sibling zone). Empty = use HostedZoneId. Affects only the preview
-      certificate validation and the wildcard A record. PARAMETERS.md.
+    Description: "Hosted zone of PreviewDomain when not the Console's. Empty = HostedZoneId. PARAMETERS.md."
   CpPort:
     Type: Number
     Default: 8099
@@ -232,19 +169,11 @@ Parameters:
     Type: String
     Default: x86_64
     AllowedValues: [ x86_64, arm64 ]
-    Description: >-
-      CPU architecture of the Control Plane's own Fargate task (docs/log/72). arm64 =
-      Graviton, ~20% cheaper per vCPU-hour. !! The one prerequisite is the IMAGE: the tag in
-      ImageTag must carry an arm64 manifest, and an ordinary release is amd64-only, so check
-      first or the service cannot place its task at all. Independent of the slots'
-      architecture (Ec2SlotTypes). PARAMETERS.md.
+    Description: "Architecture of the CP's Fargate task; arm64 needs an arm64 ImageTag. PARAMETERS.md."
   SsmPrefix:
     Type: String
     Default: /af-cp
-    Description: SSM SecureString path prefix holding the CP secrets (created out of
-      band before deploy - see README). Params - cookie-secret, master-key, plus
-      google-client-secret / oidc-client-secret / github-client-secret depending on
-      the IdPs in use.
+    Description: "SSM SecureString prefix of the CP secrets (cookie-secret, master-key, IdP and engine secrets). PARAMETERS.md."
   GoogleClientId:
     Type: String
     Default: ""
@@ -254,19 +183,11 @@ Parameters:
     Type: String
     Default: ""
     AllowedPattern: "^[A-Z0-9_]*$"
-    Description: >-
-      Enable an OIDC IdP (Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab)
-      under this id - UPPERCASE, e.g. ENTRA (it names the AF_OIDC_<ID>_* env). Empty
-      = Google only. Its client secret must exist at <SsmPrefix>/oidc-client-secret.
-      docs/log/61.
+    Description: "UPPERCASE id enabling an OIDC IdP (names AF_OIDC_<ID>_*). Empty = Google only. PARAMETERS.md."
   OidcIssuer:
     Type: String
     Default: ""
-    Description: >-
-      AF_OIDC_<ID>_ISSUER, e.g. https://login.microsoftonline.com/<tenant-guid>/v2.0.
-      * Pin Entra to your tenant guid - with /common/ or /organizations/ every
-      Microsoft account in the world reaches the login and personal accounts can
-      rewrite their own email, so the CP refuses to start unless OidcAllowedTids is set.
+    Description: "AF_OIDC_<ID>_ISSUER; pin Entra to a tenant guid. PARAMETERS.md."
   OidcClientId:
     Type: String
     Default: ""
@@ -275,10 +196,7 @@ Parameters:
     Type: String
     Default: issuer
     AllowedValues: [ issuer, email_verified ]
-    Description: >-
-      AF_OIDC_<ID>_TRUST - why this IdP's email may be believed. issuer = the issuer
-      is pinned to one tenant (Entra ID, which never emits email_verified).
-      email_verified = accept only when the IdP asserts that claim (Okta / Keycloak / Auth0).
+    Description: "AF_OIDC_<ID>_TRUST: issuer (pinned tenant) or email_verified. PARAMETERS.md."
   OidcAllowedTids:
     Type: String
     Default: ""
@@ -295,25 +213,15 @@ Parameters:
   GithubAllowedOrgs:
     Type: String
     Default: ""
-    Description: >-
-      AF_GITHUB_ALLOWED_ORGS - comma-separated GitHub orgs whose ACTIVE members may sign in.
-      Setting this is what enables the GitHub button; its OAuth App secret must exist at
-      <SsmPrefix>/github-client-secret and the app needs the redirect URI
-      https://<Fqdn>/oauth2/callback. * An org that restricts third-party OAuth apps must
-      approve it or everyone is rejected. docs/log/61 sec.61.7.
+    Description: "AF_GITHUB_ALLOWED_ORGS (comma list); setting it enables the GitHub button. PARAMETERS.md."
   GithubClientId:
     Type: String
     Default: ""
-    Description: GITHUB_OAUTH_CLIENT_ID (not secret; the secret comes from SSM). Sign-in
-      only since docs/log/71 - the Console's GitHub "Connect" button reads the OAuth app the
-      TENANT registered (Tenant settings -> Integrations), not this one.
+    Description: "GITHUB_OAUTH_CLIENT_ID (not secret); sign-in only. PARAMETERS.md."
   GithubAllowedDomains:
     Type: String
     Default: ""
-    Description: >-
-      AF_GITHUB_ALLOWED_DOMAINS - strongly recommended. GitHub hands us the account's PRIMARY
-      VERIFIED address, personal for most people, and a personal address is a DIFFERENT
-      person here: they get a new empty workspace. Empty = the deployment-wide allowlist.
+    Description: "AF_GITHUB_ALLOWED_DOMAINS; strongly recommended. PARAMETERS.md."
   AllowedEmails:
     Type: String
     Default: ""
@@ -321,11 +229,7 @@ Parameters:
   AllowedDomains:
     Type: String
     Default: ""
-    Description: AF_OAUTH_ALLOWED_DOMAINS (comma-separated email domains) permitted
-      to sign in. Somebody invited to a tenant in the Admin panel also gets in
-      without being listed here, so an invite-run deployment can leave both empty.
-      Both empty AND nobody invited => every login is denied (fail closed), which
-      is what a fresh stack looks like - set one to get your first admin in.
+    Description: "AF_OAUTH_ALLOWED_DOMAINS (comma list). Both allow-lists empty + nobody invited = login denied. PARAMETERS.md."
   SuperAdminEmails:
     Type: String
     Default: ""
@@ -341,66 +245,38 @@ Parameters:
     Type: String
     Default: oauth
     AllowedValues: [ oauth, dev ]
-    Description: >-
-      CP auth mode. oauth (default) = the CP-native login (Google and/or OIDC). dev = fixed dev
-      identity with NO login - sandbox/E2E gates only: restrict the ALB security
-      group to your own IP before using it (an internet-facing ALB with dev auth
-      hands out an authenticated session to anyone who reaches it).
+    Description: "oauth = CP-native login; dev = NO login, sandbox only. PARAMETERS.md."
   TtsEcsService:
     Type: String
     Default: ""
-    Description: >-
-      AF_TTS_ECS_SERVICE - the ECS service of the VOICEVOX engine (50-tts's TtsEcsService
-      output). Setting it is what puts the engine under the CP's control: the admin toggle
-      then flips its desired count. Empty = no managed engine, and `auto` routes every
-      Japanese sentence to Polly. Cluster and region ride on AF_ECS_*, so they are not
-      passed separately. ADR 0070.
+    Description: "AF_TTS_ECS_SERVICE, from 50-tts. Empty = no managed engine (Polly). PARAMETERS.md."
   VoicevoxUrl:
     Type: String
     Default: ""
-    Description: >-
-      AF_VOICEVOX_URL - where the engine answers (50-tts's VoicevoxUrl output, a Cloud Map
-      DNS name such as http://voicevox.af.internal:50021). Empty leaves the CP on its
-      compose-era default of http://127.0.0.1:50021, where nothing listens on ECS.
+    Description: "AF_VOICEVOX_URL, from 50-tts. PARAMETERS.md."
   EnginesSsmParam:
     Type: String
     Default: ""
-    Description: >-
-      AF_ENGINES_SSM_PARAM - the SSM parameter holding 60-engines' engine table
-      (EnginesSsmParam output; a name under /af-ws/). ONE parameter for every engine on
-      purpose: six per engine would not fit in what is left of this template, and the CP
-      task role's SSM read is already scoped to /af-ws/* so nothing new is granted. Empty =
-      no self-hosted engines, and no llamacpp model appears in any launch menu. ADR 0071.
+    Description: "AF_ENGINES_SSM_PARAM, from 60-engines. Empty = no engines. PARAMETERS.md."
   CivitaiRed:
     Type: String
     Default: "0"
     AllowedValues: [ "0", "1" ]
-    Description: >-
-      AF_ENGINE_CIVITAI_RED - whether the model catalogue's search offers Civitai Red, the
-      sister domain Civitai split off for NSFW browsing. Default 0: the source does not
-      exist on this deployment and no switch for it appears in the Console. 1 offers it and
-      hands the on/off to a super_admin. PARAMETERS.md.
+    Description: "AF_ENGINE_CIVITAI_RED: 1 offers the Civitai Red source. PARAMETERS.md."
   BrandColor:
     Type: String
     Default: ""
     AllowedValues: [ "", teal, blue, violet, magenta, red, orange, green, slate ]
-    Description: >-
-      AF_BRAND_COLOR - favicon / PWA icon colour, so this stack is not a fourth identical
-      teal cat in the tab strip. Empty = the shipped teal. PARAMETERS.md.
+    Description: "AF_BRAND_COLOR, favicon/PWA colour. PARAMETERS.md."
   BrandLabel:
     Type: String
     Default: ""
     MaxLength: 16
-    Description: >-
-      AF_BRAND_LABEL - short deployment label prefixed onto the app name ("[staging] Agent
-      Fleet") in the tab title, the installed PWA and the login page. PARAMETERS.md.
+    Description: "AF_BRAND_LABEL, label before the app name. PARAMETERS.md."
   CpAlarmEmail:
     Type: String
     Default: ""
-    Description: >-
-      Where to send "the Control Plane cannot reach its database". Empty (the default) = no
-      topic and no alarm, and the only trace is the CP log. !! That is exactly how the
-      2026-09-01 outage stayed silent - /healthz kept answering 200. Set it.
+    Description: "Email for CP-database-unreachable alarms; empty = no alarm. PARAMETERS.md."
   McpEnabled:
     Type: String
     Default: "off"
@@ -427,6 +303,85 @@ Parameters:
     Type: String
     Default: ""
     Description: AF_KMS_DATA_KEY_CACHE_TTL (Go duration; 0s = no cache). Empty = 5m. Kms custodian only.
+  SessionIdleTimeout:
+    Type: String
+    Default: ""
+    Description: "AF_SESSION_IDLE_TIMEOUT; empty = CP default. PARAMETERS.md"
+  InteractionIdleTimeout:
+    Type: String
+    Default: ""
+    Description: "AF_INTERACTION_IDLE_TIMEOUT; empty = CP default. PARAMETERS.md"
+  WsIdleTimeout:
+    Type: String
+    Default: ""
+    Description: "AF_WS_IDLE_TIMEOUT; empty = CP default. PARAMETERS.md"
+  PresenceIdleTimeout:
+    Type: String
+    Default: ""
+    Description: "AF_PRESENCE_IDLE_TIMEOUT; empty = CP default. PARAMETERS.md"
+  BackgroundHoldMax:
+    Type: String
+    Default: ""
+    Description: "AF_BACKGROUND_HOLD_MAX; empty = CP default. PARAMETERS.md"
+  WorkspaceStartDeadline:
+    Type: String
+    Default: ""
+    Description: "AF_WORKSPACE_START_DEADLINE; empty = CP default. PARAMETERS.md"
+  UsageSampleInterval:
+    Type: String
+    Default: ""
+    Description: "AF_USAGE_SAMPLE_INTERVAL; empty = CP default. PARAMETERS.md"
+  GithubLoginClientId:
+    Type: String
+    Default: ""
+    Description: "AF_GITHUB_LOGIN_CLIENT_ID; empty = CP default. PARAMETERS.md"
+  GithubLabelJa:
+    Type: String
+    Default: ""
+    Description: "AF_GITHUB_LABEL_JA; empty = CP default. PARAMETERS.md"
+  GithubLabelEn:
+    Type: String
+    Default: ""
+    Description: "AF_GITHUB_LABEL_EN; empty = CP default. PARAMETERS.md"
+  GithubMembershipTtl:
+    Type: String
+    Default: ""
+    Description: "AF_GITHUB_MEMBERSHIP_TTL; empty = CP default. PARAMETERS.md"
+  GithubMembershipGrace:
+    Type: String
+    Default: ""
+    Description: "AF_GITHUB_MEMBERSHIP_GRACE; empty = CP default. PARAMETERS.md"
+  LlmUrl:
+    Type: String
+    Default: ""
+    Description: "AF_LLM_URL; empty = CP default. PARAMETERS.md"
+  ComfyUrl:
+    Type: String
+    Default: ""
+    Description: "AF_COMFY_URL; empty = CP default. PARAMETERS.md"
+  RemoteEngineUrl:
+    Type: String
+    Default: ""
+    Description: "AF_REMOTE_ENGINE_URL; empty = CP default. PARAMETERS.md"
+  RemoteEngineKeys:
+    Type: String
+    Default: ""
+    Description: "AF_REMOTE_ENGINE_KEYS; empty = CP default. PARAMETERS.md"
+  GithubLoginSecret:
+    Type: String
+    Default: "off"
+    AllowedValues: [ "off", "on" ]
+    Description: "on = AF_GITHUB_LOGIN_CLIENT_SECRET from SSM github-login-client-secret. PARAMETERS.md"
+  ComfyApiKey:
+    Type: String
+    Default: "off"
+    AllowedValues: [ "off", "on" ]
+    Description: "on = AF_COMFY_API_KEY from SSM comfy-api-key. PARAMETERS.md"
+  RemoteEngineToken:
+    Type: String
+    Default: "off"
+    AllowedValues: [ "off", "on" ]
+    Description: "on = AF_REMOTE_ENGINE_TOKEN from SSM remote-engine-token. PARAMETERS.md"
 
 Rules:
   McpOAuthNeedsMcp:
@@ -479,6 +434,25 @@ Conditions:
   McpOn: !Equals [ !Ref McpEnabled, "on" ]
   McpOAuthOn: !Equals [ !Ref McpOAuth, "on" ]
   HasMcpTrustedHosts: !Not [ !Equals [ !Ref McpOAuthTrustedHosts, "" ] ]
+  HasSessionIdleTimeout: !Not [ !Equals [ !Ref SessionIdleTimeout, "" ] ]
+  HasInteractionIdleTimeout: !Not [ !Equals [ !Ref InteractionIdleTimeout, "" ] ]
+  HasWsIdleTimeout: !Not [ !Equals [ !Ref WsIdleTimeout, "" ] ]
+  HasPresenceIdleTimeout: !Not [ !Equals [ !Ref PresenceIdleTimeout, "" ] ]
+  HasBackgroundHoldMax: !Not [ !Equals [ !Ref BackgroundHoldMax, "" ] ]
+  HasWorkspaceStartDeadline: !Not [ !Equals [ !Ref WorkspaceStartDeadline, "" ] ]
+  HasUsageSampleInterval: !Not [ !Equals [ !Ref UsageSampleInterval, "" ] ]
+  HasGithubLoginClientId: !Not [ !Equals [ !Ref GithubLoginClientId, "" ] ]
+  HasGithubLabelJa: !Not [ !Equals [ !Ref GithubLabelJa, "" ] ]
+  HasGithubLabelEn: !Not [ !Equals [ !Ref GithubLabelEn, "" ] ]
+  HasGithubMembershipTtl: !Not [ !Equals [ !Ref GithubMembershipTtl, "" ] ]
+  HasGithubMembershipGrace: !Not [ !Equals [ !Ref GithubMembershipGrace, "" ] ]
+  HasLlmUrl: !Not [ !Equals [ !Ref LlmUrl, "" ] ]
+  HasComfyUrl: !Not [ !Equals [ !Ref ComfyUrl, "" ] ]
+  HasRemoteEngineUrl: !Not [ !Equals [ !Ref RemoteEngineUrl, "" ] ]
+  HasRemoteEngineKeys: !Not [ !Equals [ !Ref RemoteEngineKeys, "" ] ]
+  GithubLoginSecretOn: !Equals [ !Ref GithubLoginSecret, "on" ]
+  ComfyApiKeyOn: !Equals [ !Ref ComfyApiKey, "on" ]
+  RemoteEngineTokenOn: !Equals [ !Ref RemoteEngineToken, "on" ]
   HasCpAlarms: !Not [ !Equals [ !Ref CpAlarmEmail, "" ] ]
   HasWaf: !Not [ !Equals [ !Ref WafRateLimitPer5Min, 0 ] ]
   HasWafReputation: !And [ !Condition HasWaf, !Equals [ !Ref WafIpReputation, "on" ] ]
@@ -906,6 +880,22 @@ Resources:
             - !If [ McpOn, { Name: AF_MCP_ENABLED, Value: "true" }, !Ref "AWS::NoValue" ]
             - !If [ McpOAuthOn, { Name: AF_MCP_OAUTH, Value: "1" }, !Ref "AWS::NoValue" ]
             - !If [ HasMcpTrustedHosts, { Name: AF_MCP_OAUTH_TRUSTED_HOSTS, Value: !Ref McpOAuthTrustedHosts }, !Ref "AWS::NoValue" ]
+            - !If [ HasSessionIdleTimeout, { Name: AF_SESSION_IDLE_TIMEOUT, Value: !Ref SessionIdleTimeout }, !Ref "AWS::NoValue" ]
+            - !If [ HasInteractionIdleTimeout, { Name: AF_INTERACTION_IDLE_TIMEOUT, Value: !Ref InteractionIdleTimeout }, !Ref "AWS::NoValue" ]
+            - !If [ HasWsIdleTimeout, { Name: AF_WS_IDLE_TIMEOUT, Value: !Ref WsIdleTimeout }, !Ref "AWS::NoValue" ]
+            - !If [ HasPresenceIdleTimeout, { Name: AF_PRESENCE_IDLE_TIMEOUT, Value: !Ref PresenceIdleTimeout }, !Ref "AWS::NoValue" ]
+            - !If [ HasBackgroundHoldMax, { Name: AF_BACKGROUND_HOLD_MAX, Value: !Ref BackgroundHoldMax }, !Ref "AWS::NoValue" ]
+            - !If [ HasWorkspaceStartDeadline, { Name: AF_WORKSPACE_START_DEADLINE, Value: !Ref WorkspaceStartDeadline }, !Ref "AWS::NoValue" ]
+            - !If [ HasUsageSampleInterval, { Name: AF_USAGE_SAMPLE_INTERVAL, Value: !Ref UsageSampleInterval }, !Ref "AWS::NoValue" ]
+            - !If [ HasGithubLoginClientId, { Name: AF_GITHUB_LOGIN_CLIENT_ID, Value: !Ref GithubLoginClientId }, !Ref "AWS::NoValue" ]
+            - !If [ HasGithubLabelJa, { Name: AF_GITHUB_LABEL_JA, Value: !Ref GithubLabelJa }, !Ref "AWS::NoValue" ]
+            - !If [ HasGithubLabelEn, { Name: AF_GITHUB_LABEL_EN, Value: !Ref GithubLabelEn }, !Ref "AWS::NoValue" ]
+            - !If [ HasGithubMembershipTtl, { Name: AF_GITHUB_MEMBERSHIP_TTL, Value: !Ref GithubMembershipTtl }, !Ref "AWS::NoValue" ]
+            - !If [ HasGithubMembershipGrace, { Name: AF_GITHUB_MEMBERSHIP_GRACE, Value: !Ref GithubMembershipGrace }, !Ref "AWS::NoValue" ]
+            - !If [ HasLlmUrl, { Name: AF_LLM_URL, Value: !Ref LlmUrl }, !Ref "AWS::NoValue" ]
+            - !If [ HasComfyUrl, { Name: AF_COMFY_URL, Value: !Ref ComfyUrl }, !Ref "AWS::NoValue" ]
+            - !If [ HasRemoteEngineUrl, { Name: AF_REMOTE_ENGINE_URL, Value: !Ref RemoteEngineUrl }, !Ref "AWS::NoValue" ]
+            - !If [ HasRemoteEngineKeys, { Name: AF_REMOTE_ENGINE_KEYS, Value: !Ref RemoteEngineKeys }, !Ref "AWS::NoValue" ]
             # No BITBUCKET_OAUTH_* / workspace GITHUB_OAUTH_CLIENT_ID: git OAuth apps are
             # per-tenant rows (docs/log/71); the Bitbucket callback derives from PUBLIC_BASE_URL.
             # AF_RUNTIME: ecs = Fargate, ecs-ec2 = EC2 slots with a per-user EBS home (needs
@@ -985,6 +975,21 @@ Resources:
               - HasGithub
               - Name: GITHUB_OAUTH_CLIENT_SECRET
                 ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/github-client-secret"
+              - !Ref "AWS::NoValue"
+            - !If
+              - GithubLoginSecretOn
+              - Name: AF_GITHUB_LOGIN_CLIENT_SECRET
+                ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/github-login-client-secret"
+              - !Ref "AWS::NoValue"
+            - !If
+              - ComfyApiKeyOn
+              - Name: AF_COMFY_API_KEY
+                ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/comfy-api-key"
+              - !Ref "AWS::NoValue"
+            - !If
+              - RemoteEngineTokenOn
+              - Name: AF_REMOTE_ENGINE_TOKEN
+                ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/remote-engine-token"
               - !Ref "AWS::NoValue"
             - Name: AF_COOKIE_SECRET
               ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/cookie-secret"

@@ -22,6 +22,7 @@ Order matches the template. Parameters not listed here are self-explanatory in i
 - [Public host and preview subdomains](#public-host-and-preview-subdomains)
 - [Control Plane task](#control-plane-task)
 - [Sign-in](#sign-in)
+- [Control Plane timers, GitHub sign-in extras and LAN / borrowed engines](#control-plane-timers-github-sign-in-extras-and-lan--borrowed-engines)
 - [Alarms](#alarms)
 - [MCP (`/mcp`) and MCP OAuth](#mcp-mcp-and-mcp-oauth)
 
@@ -512,6 +513,8 @@ SSM SecureString path prefix holding the CP secrets, created out of band before 
 [the README](../README.md#prerequisites-once-per-account)). Params: `cookie-secret`,
 `master-key`, plus `google-client-secret` / `oidc-client-secret` / `github-client-secret`
 depending on the IdPs in use.
+Optional, each behind its own switch: `github-login-client-secret`, `comfy-api-key`,
+`remote-engine-token` ([below](#control-plane-timers-github-sign-in-extras-and-lan--borrowed-engines)).
 
 ## Sign-in
 
@@ -734,9 +737,11 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 
 Parameters not named in `--parameter-overrides` keep the stack's previous value, so nothing
 else moves. Unknown or new parameters on `update.sh`'s own run get the template default (off).
-Template-size note: this template is within about 130 bytes of the 51,200-byte wall (see the
-README), so the parameters here were paid for by moving prose out of it; the Home task
-paragraph above is one. The next parameter needs the same.
+Template-size note: the template keeps about 1.2 KB under the 51,200-byte wall (see the
+README); `deploy/local/cfn-cp-settings-env-test.py` fails below 1 KiB. Write new
+parameters in block style (`Default:` on its own line): `standup.sh`'s preflight reads
+required parameters line by line and reports every flow-style one as missing. Parameters have been paid
+for by moving prose out of the template, so the next one needs the same.
 
 ### `SessionTtl` / `GithubAllowedEmails` / `KmsDataKeyCacheTtl`
 
@@ -752,6 +757,82 @@ route. All three default to empty, and the CP treats an empty value as unset (`e
 
 `GithubAllowedEmails` only matters while GitHub sign-in is on, which the template decides by
 `GithubAllowedOrgs`.
+
+## Control Plane timers, GitHub sign-in extras and LAN / borrowed engines
+
+### Timers
+
+| Parameter | CP variable | Empty means |
+|---|---|---|
+| `SessionIdleTimeout` | `AF_SESSION_IDLE_TIMEOUT`: idle time before a session is stopped | 1h |
+| `InteractionIdleTimeout` | `AF_INTERACTION_IDLE_TIMEOUT`: the same while the session waits on a human decision | the session timeout |
+| `WsIdleTimeout` | `AF_WS_IDLE_TIMEOUT`: idle time before a Workspace is stopped | 2h |
+| `PresenceIdleTimeout` | `AF_PRESENCE_IDLE_TIMEOUT`: how long a terminal with no keystrokes still counts as presence | 30m |
+| `BackgroundHoldMax` | `AF_BACKGROUND_HOLD_MAX`: upper bound on background work holding a Workspace awake | 2h |
+| `WorkspaceStartDeadline` | `AF_WORKSPACE_START_DEADLINE`: a start with no task running longer than this is stopped | 30m |
+| `UsageSampleInterval` | `AF_USAGE_SAMPLE_INTERVAL`: the usage sampler (also runs the start deadline) | 5m |
+
+Go durations (`90m`). `0` turns a timer off where the CP reads it with `intervalOff` (all seven);
+an unparseable value falls back to the default, so a typo does not stop the task. The idle timers
+only matter while the reaper runs (`AF_IDLE_SWEEP_INTERVAL`, not exposed). Behaviour:
+`guide/operate/03-run.md`; defaults: `guide/ref/limits.md`.
+
+### GitHub sign-in extras
+
+`GithubLoginClientId` (`AF_GITHUB_LOGIN_CLIENT_ID`) and the switch `GithubLoginSecret=on`
+(`AF_GITHUB_LOGIN_CLIENT_SECRET`, SSM `<SsmPrefix>/github-login-client-secret`) are a second OAuth
+App used only for signing in. Set both: the CP disables GitHub login without both halves. With the
+id set and the switch off, the CP falls back to `GITHUB_OAUTH_CLIENT_SECRET`
+(`github-client-secret`, wired by `GithubAllowedOrgs`). `GithubLabelJa` / `GithubLabelEn` rename the
+button (CP defaults: "GitHub でサインイン" / "Sign in with GitHub"; any value you pass is your input,
+the template itself stays ASCII). `GithubMembershipTtl` (default 10m) is how long a positive org-membership
+answer is cached and `GithubMembershipGrace` (default 1h) how long a stale one is still honoured when
+GitHub cannot be reached.
+
+### LAN and borrowed engines
+
+`LlmUrl` (`AF_LLM_URL`), `ComfyUrl` (`AF_COMFY_URL`) and `RemoteEngineUrl` (`AF_REMOTE_ENGINE_URL`)
+point the CP at engines somebody else runs; `RemoteEngineKeys` (`AF_REMOTE_ENGINE_KEYS`) is a comma
+list of the roles to borrow (empty = every role the far deployment offers). **Reachability:** the CP
+task runs in the stack's private subnets, so a LAN address works only when the VPC has a route and a
+security-group path to it (VPN, peering, Transit Gateway); nothing here creates one. The engines of
+`60-engines` are wired by `EnginesSsmParam` and need none of this.
+
+Secrets have their own switch each and are NEVER derived from the URL beside them:
+
+| Switch (default `off`) | CP variable | SSM SecureString read when `on` |
+|---|---|---|
+| `GithubLoginSecret` | `AF_GITHUB_LOGIN_CLIENT_SECRET` | `<SsmPrefix>/github-login-client-secret` |
+| `ComfyApiKey` | `AF_COMFY_API_KEY` | `<SsmPrefix>/comfy-api-key` |
+| `RemoteEngineToken` | `AF_REMOTE_ENGINE_TOKEN` | `<SsmPrefix>/remote-engine-token` |
+
+A ComfyUI URL without a key is a valid setup (the key is only for a reverse proxy in front of it).
+The CP borrows nothing (it logs the mismatch at boot) with only one of URL and token, so set `RemoteEngineUrl` and
+`RemoteEngineToken=on` together. The switch is explicit because a `Secrets` entry whose parameter
+does not exist stops the task from starting: create the parameter first
+(`aws ssm put-parameter --type SecureString --name <SsmPrefix>/comfy-api-key --value …`), then turn
+the switch on.
+
+**IAM.** No change. The execution role (`20-platform`, `ExecRole`, policy `ssm-read`) already
+grants `ssm:GetParameters` on `/af-cp/*` and `/af-ws/*`, with the AWS-managed `aws/ssm` key (no KMS
+grant). With the default `SsmPrefix=/af-cp` the three names above fall under it, which
+`cfn-cp-settings-env-test.py` checks. **A non-default `SsmPrefix` outside `/af-cp/` and `/af-ws/`
+is not covered, and that was already true for `cookie-secret` and `master-key`:** widen the
+execution role's `ssm-read` policy to your prefix (least privilege: the prefix, not `*`).
+
+### Not exposed: `WS_ENV`
+
+`WS_ENV` is a free-form `KEY=VAL,KEY=VAL` list copied into every Workspace container. An
+`Environment` entry would put whatever secrets it holds in the task definition in plain text, and
+a pass-through would be a way around the per-Workspace settings. Compose, Kubernetes and native
+keep it; ECS deliberately does not.
+
+Setting any of these (`update.sh` overrides only `ImageTag` and `EfsBackup`, so it never does):
+
+```
+aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides WsIdleTimeout=4h ComfyUrl=http://10.0.0.5:8188 ComfyApiKey=on
+```
 
 ## Alarms
 
