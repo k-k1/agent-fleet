@@ -25,7 +25,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/netip"
 	"net/url"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -466,10 +468,6 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
-	if aerr := refuseOwnMCP(b.URL, a.cp.ServerIdentity(r.Context()).PublicBaseURL); aerr != nil {
-		writeAPIErr(w, aerr)
-		return
-	}
 	id := r.PathValue("id")
 	rows, err := a.store.ListMCPServers(r.Context(), t.ID)
 	if err != nil {
@@ -492,6 +490,15 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 	if id != "" && stored == nil {
 		writeAPIErr(w, &APIError{http.StatusNotFound, codeMCPNotFound, "unknown MCP server"})
 		return
+	}
+
+	// A stored row that already holds the URL stays editable (disable, rename); only a
+	// new row or a changed URL is checked.
+	if stored == nil || stored.URL != strings.TrimSpace(b.URL) {
+		if aerr := refuseOwnMCP(b.URL, a.cp.ServerIdentity(r.Context()).PublicBaseURL); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
 	}
 
 	// Resolve the incoming (masked) headers against what is stored, then apply the
@@ -631,23 +638,45 @@ func (a ServerAPI) Distribute(w http.ResponseWriter, r *http.Request, mv store.M
 // deployment passes. The scheme is ignored, an absent port equals 80 and 443, and a trailing
 // slash does not matter.
 func refuseOwnMCP(raw, publicBase string) *APIError {
-	if strings.TrimSpace(publicBase) == "" {
-		return nil
-	}
-	a, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return nil
-	}
-	b, err := url.Parse(strings.TrimSpace(publicBase))
-	if err != nil || b.Hostname() == "" || a.Hostname() == "" {
-		return nil
-	}
-	if strings.EqualFold(a.Hostname(), b.Hostname()) && mcpEndpointPort(a) == mcpEndpointPort(b) &&
-		strings.TrimRight(a.Path, "/") == strings.TrimRight(b.Path, "/")+"/mcp" {
+	if sameMCPEndpoint(raw, publicBase) {
 		return &APIError{http.StatusBadRequest, codeMCPURLOwnMCP,
 			"this is this deployment's own /mcp endpoint: distributing it would give sessions the member's full /mcp authority"}
 	}
 	return nil
+}
+
+// sameMCPEndpoint reports whether raw reaches base's /mcp. Hosts compare without a trailing
+// dot and as parsed IPs, and both paths are cleaned because the server's mux redirects
+// /mcp/../mcp and //mcp to /mcp. An empty or unparsable base never matches.
+func sameMCPEndpoint(raw, base string) bool {
+	if strings.TrimSpace(base) == "" {
+		return false
+	}
+	a, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	b, err := url.Parse(strings.TrimSpace(base))
+	if err != nil || b.Hostname() == "" || a.Hostname() == "" {
+		return false
+	}
+	return mcpEndpointHost(a) == mcpEndpointHost(b) && mcpEndpointPort(a) == mcpEndpointPort(b) &&
+		mcpCleanPath(a.Path) == mcpCleanPath(b.Path)+"/mcp"
+}
+
+func mcpCleanPath(p string) string {
+	if c := path.Clean("/" + p); c != "/" {
+		return c
+	}
+	return ""
+}
+
+func mcpEndpointHost(u *url.URL) string {
+	h := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	if ip, err := netip.ParseAddr(h); err == nil {
+		return ip.Unmap().String()
+	}
+	return h
 }
 
 func mcpEndpointPort(u *url.URL) string {

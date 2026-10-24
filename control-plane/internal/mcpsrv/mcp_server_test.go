@@ -510,6 +510,14 @@ func TestRefuseOwnMCP(t *testing.T) {
 		{"explicit default port", "https://af.example.com:443/mcp", base, true},
 		{"scheme and case", "http://AF.Example.com/mcp", base, true},
 		{"base with slash and port", "https://af.example.com:8443/mcp", "https://af.example.com:8443/", true},
+		{"dot segment", "https://af.example.com/mcp/../mcp", base, true},
+		{"double slash", "https://af.example.com//mcp", base, true},
+		{"base prefix equal", "https://af.example.com/af/mcp", "https://af.example.com/af/", true},
+		{"base prefix other path", "https://af.example.com/mcp", "https://af.example.com/af", false},
+		{"dot segment escapes base", "https://af.example.com/af/../mcp", "https://af.example.com/af", false},
+		{"absolute dns name", "https://af.example.com./mcp", base, true},
+		{"ipv6 spelling", "http://[0:0:0:0:0:0:0:1]:8080/mcp", "http://[::1]:8080", true},
+		{"other ipv6", "http://[::2]:8080/mcp", "http://[::1]:8080", false},
 		{"other host", "https://other.example.com/mcp", base, false},
 		{"other deployment subdomain", "https://af.example.com.evil.test/mcp", base, false},
 		{"other port", "https://af.example.com:8443/mcp", base, false},
@@ -542,5 +550,36 @@ func TestAdminUpsertRefusesOwnMCPEndpoint(t *testing.T) {
 	}
 	if w := post("https://other.example.com/mcp"); w.Code != http.StatusOK {
 		t.Fatalf("other deployment: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestAdminUpsertKeepsLegacyOwnMCPRowEditable(t *testing.T) {
+	a, _ := newMCPServerAPITest(t, true)
+	tn := store.Tenant{ID: "tenant-a", Slug: "a"}
+	cp := a.cp.(testCP)
+	cp.admin = &tn
+	send := func(api ServerAPI, method, id string, b mcpServerBody) *httptest.ResponseRecorder {
+		b.TenantSlug = tn.Slug
+		raw, _ := json.Marshal(b)
+		r := httptest.NewRequest(method, "/api/admin/mcp-servers", strings.NewReader(string(raw)))
+		r.SetPathValue("id", id)
+		w := httptest.NewRecorder()
+		api.AdminUpsert(w, r)
+		return w
+	}
+	const own = "https://af.example.com/mcp"
+	// The row predates the check: no public base was known when it was saved.
+	w := send(NewServerAPI(cp), http.MethodPost, "", mcpServerBody{Name: "old", URL: own, Targets: mcpTargets{Session: true}, Enabled: true})
+	if w.Code != http.StatusOK {
+		t.Fatalf("seed: %d %s", w.Code, w.Body)
+	}
+	var row mcpServerBody
+	_ = json.Unmarshal(w.Body.Bytes(), &row)
+	api := NewServerAPI(identCP{testCP: cp, id: ServerIdentity{PublicBaseURL: "https://af.example.com"}})
+	if w := send(api, http.MethodPut, row.ID, mcpServerBody{Name: "old2", URL: own, Targets: mcpTargets{Session: true}, Enabled: false}); w.Code != http.StatusOK {
+		t.Fatalf("disable and rename of a legacy row: %d %s", w.Code, w.Body)
+	}
+	if w := send(api, http.MethodPut, row.ID, mcpServerBody{Name: "old2", URL: "https://af.example.com/mcp/../mcp", Targets: mcpTargets{Session: true}}); w.Code != http.StatusBadRequest {
+		t.Fatalf("a changed URL that is still the own endpoint: %d %s", w.Code, w.Body)
 	}
 }

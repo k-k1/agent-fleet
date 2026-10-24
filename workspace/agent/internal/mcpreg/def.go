@@ -10,7 +10,9 @@ package mcpreg
 
 import (
 	"fmt"
+	"net/netip"
 	"net/url"
+	"path"
 	"regexp"
 	"strings"
 
@@ -393,9 +395,10 @@ func RefuseOwnMCP(raw string, bases ...string) error {
 	return nil
 }
 
-// SameMCPEndpoint reports whether raw points at base's /mcp endpoint. The scheme is
-// ignored, an absent port equals 80 and 443, and a trailing slash on the path does not
-// matter. An empty or unparsable base never matches.
+// SameMCPEndpoint reports whether raw reaches base's /mcp endpoint. The scheme is
+// ignored, an absent port equals 80 and 443, hosts compare without a trailing dot and as
+// parsed IPs, and both paths are cleaned because the server's mux redirects /mcp/../mcp
+// and //mcp to /mcp. An empty or unparsable base never matches.
 func SameMCPEndpoint(raw, base string) bool {
 	if strings.TrimSpace(base) == "" {
 		return false
@@ -408,10 +411,23 @@ func SameMCPEndpoint(raw, base string) bool {
 	if err != nil || b.Hostname() == "" || a.Hostname() == "" {
 		return false
 	}
-	if !strings.EqualFold(a.Hostname(), b.Hostname()) || endpointPort(a) != endpointPort(b) {
-		return false
+	return endpointHost(a) == endpointHost(b) && endpointPort(a) == endpointPort(b) &&
+		cleanEndpointPath(a.Path) == cleanEndpointPath(b.Path)+ownMCPPath
+}
+
+func cleanEndpointPath(p string) string {
+	if c := path.Clean("/" + p); c != "/" {
+		return c
 	}
-	return strings.TrimRight(a.Path, "/") == strings.TrimRight(b.Path, "/")+ownMCPPath
+	return ""
+}
+
+func endpointHost(u *url.URL) string {
+	h := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	if ip, err := netip.ParseAddr(h); err == nil {
+		return ip.Unmap().String()
+	}
+	return h
 }
 
 func endpointPort(u *url.URL) string {
