@@ -270,8 +270,10 @@ Every candidate is graded:
 
 **Select all safe** does the boring majority in one click. What you remove is not
 destroyed: stopped AI sessions are archived (restore them from the archive browser), and
-shell / SSM sessions and branches go to **Trash (restore)**, the second tab of the same
-dialog, and can be brought back. Deleting a worktree itself cannot be undone.
+shell / SSM sessions, branches and deleted worktrees go to **Trash (restore)**, the second
+tab of the same dialog, and can be brought back with **Restore**. A worktree comes back at the
+commit it was on, with its uncommitted changes when the row says so; if its branch name is taken
+by then, you are asked for a new one.
 
 Sessions already archived are not part of cleanup; they have their own browser.
 

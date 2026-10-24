@@ -220,9 +220,9 @@ Candidates rated **Keep** are left alone by cleanup, and the row states why.
   it anyway, force-delete from the Console.
 - **Delete-locked**: clear the lock from the session's ⋯ menu.
 
-Note that **only deleting a worktree cannot be undone** (the working copy goes; the history,
-the remote and the branch stay). Deleted sessions and branches are stashed in the **trash**,
-so the "Trash (restore)" tab of the cleanup modal brings them back
+Deleted sessions, branches and worktrees are stashed in the **trash**, so the "Trash
+(restore)" tab of the cleanup modal brings them back (a worktree at the commit it was on, with
+its uncommitted changes when the row says so)
 ([02](02-sessions.md#tidying-up-in-bulk-cleanup)).
 
 ### A model I want isn't offered, or launching with it is refused

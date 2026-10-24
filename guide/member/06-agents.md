@@ -284,8 +284,8 @@ email. Connecting with an API key is not supported.
 - **On-demand install.** Kiro's CLI is large (~855 MB) and is **not baked into the image**
   by default. The first time you use it, it's downloaded into your home directory. The
   connection card shows an **"Install Kiro"** button with progress before you can sign in.
-  When a newer pinned build exists, the card offers **"Update Kiro"**; until you press it, the
-  installed version keeps being used.
+  When a newer pinned build exists, the card offers **"Update Kiro"** so you can update ahead of
+  time. A Terminal (CLI) launch updates to the pinned build by itself when it starts.
   (Deployments that set `BAKE_AGENT_CLIS=1` ship it pre-installed.)
 - The model choices at launch are fetched live; **named models are available even on the
   Free plan** (Auto, Claude Sonnet / Haiku, and others). There's no separate
