@@ -346,7 +346,7 @@ The view you leave open is remembered. It needs the running workspace.
 The same MCP token, or an app you connected by signing in (OAuth), can also use the memory Agent Fleet keeps; the
 consent page says so next to `read` and `write`. For example your own Claude Code / Claude Desktop (see
 [Agent memory](#agent-memory); how to make a token and connect a client is in
-[10 Going further](10-integrations.md#driving-your-workspace-from-an-external-claude-mcp)). Two things have to be true: the scope of the token or OAuth connection, and **⚙ Settings → Agent
+[19 Using it from outside](19-outside-access.md#driving-your-workspace-from-an-external-claude-mcp)). Two things have to be true: the scope of the token or OAuth connection, and **⚙ Settings → Agent
 memory → Settings → "Use Agent Fleet memory from outside Agent Fleet"** (`Off` by default; `Read only` or `Read and write`).
 The "MCP tokens" tab lists what the token can do (including that a tenant Block hides these tools) and links to that setting; the setting has a "How to connect"
 link back.

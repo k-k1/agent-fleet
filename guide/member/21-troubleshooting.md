@@ -1,6 +1,6 @@
 ---
 audience: "anyone whose screen is not doing what they expected"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 21. Troubleshooting — fixes by symptom and FAQ
@@ -18,7 +18,7 @@ In most cases the connection itself is still alive. This isn't an authentication
 the interactive screen is just redoing its onboarding, and it usually clears if you
 **resume** the session or use **"Recreate (current conversation goes to the archive)"**
 from the ⋯ menu. The traditional manual `/login` inside the terminal works alongside this too.
-You can check the connection status in ⚙ Settings → the "Agents" tab ([06](06-agents.md)).
+You can check the connection status in ⚙ Settings → the "Agents" tab ([09](09-agents.md)).
 
 ### claude doesn't know `/list-agents`, or says it can't message another session
 
@@ -27,7 +27,7 @@ enabling it also switches Claude's usage telemetry back on. Agent Fleet has its 
 the same thing: turn on **Settings > Agents > Session > "Messages between sessions"** (off by
 default; it applies to sessions started from then on). It reaches other agent kinds as well as
 claude, and reaches stopped sessions too. The full comparison is in
-[02 Sessions](02-sessions.md#how-this-differs-from-claude-codes-own-version).
+[11 Running many sessions](11-many-sessions.md#how-this-differs-from-claude-codes-own-version).
 
 If the agent still seems to lack the tools after you turn it on, check whether that session was
 already running beforehand: a running session keeps its current tools until it restarts.
@@ -53,11 +53,11 @@ list until you start again.
 **Suspect a working set filter first.** When the bar at the top of the left pane shows
 anything other than **"All"**, repositories, conversations and sessions outside that group
 are simply not displayed (nothing was deleted). Switch the bar back to "All" and they
-return ([02](02-sessions.md#narrowing-the-view-with-working-sets)).
+return ([11](11-many-sessions.md#narrowing-the-view-with-working-sets)).
 
 If it is still missing, check whether it was **archived** (AI sessions can be restored from
 the archive browser) or tidied away by **cleanup** (deleted sessions can be restored from the
-trash). See [02](02-sessions.md#tidying-up-in-bulk-cleanup).
+trash). See [05](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup).
 
 If the **Repositories** section of the left pane says **"Couldn't refresh the list — showing the
 last known one"**, nothing is gone: the Console could not read the repository list just now and
@@ -68,7 +68,7 @@ shows the last one it had. While the workspace runs, the list comes back by itse
 If the state is **"Folder missing — can't resume"**, that session's **working folder is gone**
 (typically after deleting the whole worktree). claude / codex / cursor / copilot / kiro / agy / opencode / lcpp / muse cannot resume from this state.
 Start the same work over as a new session. shell falls back to home and resumes if the
-working folder is missing ([02](02-sessions.md)).
+working folder is missing ([03](03-starting-sessions.md)).
 
 ### Resuming says "the conversation log was deleted"
 
@@ -83,7 +83,7 @@ reason: an unreadable folder, a full disk, or a log that appeared meanwhile). Th
 a stub log that was in the way may have been moved aside as `.superseded.<number>`. Resume again
 after fixing the cause. Choose **"Start a new conversation"** to continue in
 the same session without the old context, and remove a low `cleanupPeriodDays` if you set one
-(see [02](02-sessions.md)).
+(see [03](03-starting-sessions.md)).
 
 ### I shared it, but the recipient sees nothing — or only old conversations
 
@@ -96,7 +96,7 @@ the same session without the old context, and remove a low `cleanupPeriodDays` i
 - **While the owner's workspace is stopped, the history cannot be read**: the recipient sees
   a note saying so.
 - The list refreshes periodically; **"Refresh"** in Shared sessions pulls it right now
-  ([02](02-sessions.md#sharing-a-conversation-shared-sessions)).
+  ([12](12-collaboration.md#sharing-a-conversation-shared-sessions)).
 
 ### I sent something from a session shared with me, but the agent does nothing
 
@@ -107,18 +107,18 @@ place.
 
 If the outcome of a send could not be confirmed, nothing is re-sent automatically, on purpose.
 Use **"Check outcome"** to find out where it stands
-([02](02-sessions.md#sharing-a-conversation-shared-sessions)).
+([12](12-collaboration.md#sharing-a-conversation-shared-sessions)).
 
 ### Cloning fails
 
 - Private repositories need a GitHub / Bitbucket **connection** first (⚙ Settings → "Git hosting" tab). Check whether it says "Not connected".
 - Double-check the spelling of the URL and branch name.
-- Submodules are fetched best-effort after the clone; even if they fail, the parent clone itself succeeds ([03](03-code.md)).
+- Submodules are fetched best-effort after the clone; even if they fail, the parent clone itself succeeds ([06](06-code.md)).
 
 ### A session says the submodules are missing / broken
 
 - A large submodule may not finish fetching inside the launch. The fetch keeps going in the
-  background, and the notification center tells you when it lands ([03](03-code.md)).
+  background, and the notification center tells you when it lands ([06](06-code.md)).
 - A submodule left half-fetched is repaired the next time a session launches in that working
   copy. To fix it right away, run `git submodule update --init --recursive` there in a terminal.
 
@@ -126,7 +126,7 @@ Use **"Check outcome"** to find out where it stands
 
 In ⚙ Settings → the "Git hosting" tab, check that the provider in question is **"Connected"**.
 If it isn't, connect via OAuth or a token. Once connected, authentication is transparent, so
-from then on you can clone / push without entering tokens ([03](03-code.md) · [06](06-agents.md)).
+from then on you can clone / push without entering tokens ([06](06-code.md) · [09](09-agents.md)).
 
 ### The browser pane shows `target-unreachable` / goes blank or 404
 
@@ -148,7 +148,7 @@ from then on you can clone / push without entering tokens ([03](03-code.md) · [
   **If preview subdomains are issued on your deployment, open it there first**: the app is served at the root, so
   the problem cannot arise. Otherwise switch to **"Open in pane"** (browser pane). If you really must use the
   lightweight preview, set `server.forward-headers-strategy=framework` (or `native`) for Spring Boot,
-  or adjust the base path on the app side for anything else ([10](10-integrations.md)).
+  or adjust the base path on the app side for anything else ([14](14-preview-browser.md)).
 
 ### The preview URL I gave a colleague returns 404
 
@@ -161,7 +161,7 @@ from then on you can clone / push without entering tokens ([03](03-code.md) · [
   **from their very next request**, even mid-session; that is deliberate.
 - **"Stopped" on their side** means your workspace is not running. **They cannot start your
   workspace**. Start it and tell them.
-- Removing the port from the exposed-ports list also produces a 404 ([10](10-integrations.md)).
+- Removing the port from the exposed-ports list also produces a 404 ([14](14-preview-browser.md)).
 
 ### HMR (live reload) doesn't work / no automatic refresh / the shell renders but no data
 
@@ -171,13 +171,13 @@ from then on you can clone / push without entering tokens ([03](03-code.md) · [
   **blocks cross-origin access to `/_next/*` by default**, so HMR never connects and hydration never finishes.
   `⚠ Blocked cross-origin request to Next.js dev resource` in the dev server log confirms it. Add
   **`allowedDevOrigins`** to `next.config.ts` (the URL changes on every start, so a wildcard is required;
-  see [10](10-integrations.md) for the exact form).
+  see [14](14-preview-browser.md) for the exact form).
 - **The lightweight preview and the preview subdomains both pass WebSocket and SSE through.** If HMR still does not
   connect, the dev server may be **embedding its own port into the client** (Vite does this). Then the app needs a
   setting such as `server.hmr.clientPort: 443`.
 - To avoid adding configuration, or to isolate the cause, use **"Open in pane"** (browser pane). A browser inside
   the workspace opens `127.0.0.1` directly, so HMR, WebSocket and SSE behave exactly like plain localhost
-  ([10](10-integrations.md)).
+  ([14](14-preview-browser.md)).
 
 ### Every API call in the preview returns 401 (`preview requires sign-in`)
 
@@ -185,7 +185,7 @@ from then on you can clone / push without entering tokens ([03](03-code.md) · [
   Next.js's `rewrites()` `destination` as **`http://127.0.0.1:8080`**. The proxy is a **server-side** call made
   by the dev server inside the container; it does not carry the login state your browser has, so pointing it at
   a preview URL gets it rejected at authentication. Assuming the frontend "cannot see" 8080 is the usual way
-  into this mistake ([10](10-integrations.md)).
+  into this mistake ([14](14-preview-browser.md)).
 - **If the browser is calling the 8080 URL directly**, note that signing in is per port. Open
   `https://<random>-8080.…` **in a tab once** to sign in there too. And if the page on 3000 calls 8080
   directly, turn on **"Allow calls between ports"** in the settings (off by default).
@@ -197,19 +197,19 @@ from then on you can clone / push without entering tokens ([03](03-code.md) · [
 - **`crashed`** means the browser inside the workspace terminated abnormally. Reopen it with **"Reconnect"**.
 - **If it keeps dying within a short time**, workspace memory pressure is the likely suspect. Clean up heavy builds, watchers, and
   browser panes left open, and keep in mind that browser panes are limited to **2** at a time. For how to check memory and
-  what to do about it, also see the FAQ entry "Builds die / freeze from running out of memory" below ([10](10-integrations.md)).
+  what to do about it, also see the FAQ entry "Builds die / freeze from running out of memory" below ([14](14-preview-browser.md)).
 
 ### No notifications arrive
 
 They won't appear if the browser's notification permission is off (you're asked to allow it the first time). Also, notifications are
 **suppressed** while you have that session's screen open. shell / ssm are outside the scope of state notifications
-([02](02-sessions.md)).
+([03](03-starting-sessions.md)).
 
 ### I want to connect codex, but approving doesn't get me anywhere
 
 To connect with a ChatGPT subscription, you must first **turn on "Enable device code
 authentication for Codex" under ChatGPT's "Settings > Security"**. If it's off, approving
-won't get you any further ([06](06-agents.md)).
+won't get you any further ([09](09-agents.md)).
 
 ### Cleanup won't remove some things
 
@@ -223,7 +223,7 @@ Candidates rated **Keep** are left alone by cleanup, and the row states why.
 Deleted sessions, branches and worktrees are stashed in the **trash**, so the "Trash
 (restore)" tab of the cleanup modal brings them back (a worktree at the commit it was on, with
 its uncommitted changes when the row says so)
-([02](02-sessions.md#tidying-up-in-bulk-cleanup)).
+([05](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup)).
 
 ### A model I want isn't offered, or launching with it is refused
 
@@ -231,7 +231,7 @@ It may be excluded under **"Models you don't use"** in ⚙ Settings → Agents. 
 disappears from the launch dialog, the default-model setting and the list an assistant picks
 from, and **launching with that name is refused as well** (including a schedule's model field
 and launches via an assistant). Remove the exclusion on that agent's card
-([06](06-agents.md)).
+([09](09-agents.md)).
 
 To use a specific Claude release (a full id such as `claude-opus-4-8`), register it under
 **"Extra Claude models"** on the same screen and it joins the choices.
@@ -243,7 +243,7 @@ retrying (attempt N): …"**. opencode is retrying a provider error; the message
 limits and overloads usually pass, so wait or stop the turn. Errors that cannot pass (region or
 privacy setting, quota or billing, a bad key) end the turn as failed by themselves and the band
 says so: fix the cause on the provider account (for "requires Global regions", its privacy /
-region setting) and send again ([06](06-agents.md)).
+region setting) and send again ([09](09-agents.md)).
 
 The band appears in **Managed** sessions. A **Terminal (CLI)** session has no band; opencode's
 own retry output is in the terminal.
@@ -257,14 +257,14 @@ it before concluding anything. What the picker says once it settles is the answe
 | It says | What to do |
 |---|---|
 | **Every model is excluded in settings** | ⚙ Settings → Agents → that card → "Models you don't use" |
-| **The current billing choice leaves no model to pick** | ⚙ Settings → Agents → opencode → "opencode.ai billing" ([06](06-agents.md)) |
+| **The current billing choice leaves no model to pick** | ⚙ Settings → Agents → opencode → "opencode.ai billing" ([09](09-agents.md)) |
 | **Only the default model is available (check this agent's connection and plan)** | The agent answered with an empty catalog. Check the sign-in and the plan on that card. On a Copilot Free plan an empty list is normal: that plan offers Auto alone. |
 | **Couldn't fetch the model list — the workspace may have only just started** | The request never landed. The Agent isn't listening yet in the first seconds after a start: **wait half a minute and reopen the dialog** (each open tries again). |
 
 ### An MCP server I registered isn't available in sessions or assistants
 
 Work through ⚙ Settings → MCP servers in this order
-([12](12-settings.md#mcp-servers)).
+([20](20-settings.md#mcp-servers)).
 
 1. Is it **enabled**? Disabled keeps the definition but hands it to nobody.
 2. Do the **targets** include "sessions" / "assistants"? With both cleared it goes nowhere.
@@ -301,7 +301,7 @@ older build could pass it by luck.
 The error in the chat view offers **"Re-authenticate"**, which opens ⚙ Settings → Agents
 scrolled to that agent's card. Connect again there and **that session resumes exactly where it
 left off**. The agent's card in ⚙ Settings → Agents also
-shows the connection state ([06](06-agents.md)).
+shows the connection state ([09](09-agents.md)).
 
 Once you are signed in again, **that same error turns into "Re-authenticated"** (the button
 goes away) and **the session picks up where it stopped by itself** (Claude, with automatic
@@ -335,7 +335,7 @@ message**. The limit is in ⚙ Settings → Assistant (it cannot be unlimited).
 
 If you only want normal completions to stay quiet, turn on **"Quiet completion reports"** in
 the same tab: the card and the notification still arrive, but no automatic turn runs
-([08](08-organising.md)).
+([11](11-many-sessions.md)).
 
 ### The chat says the context went over the limit and won't answer
 
@@ -344,7 +344,7 @@ summary forward and continue) or open a **new chat** and hand over just the esse
 Starting an exchange above 90% auto-compacts first (can be turned off in ⚙ Settings →
 Assistant), but exceeding the limit before that point produces this state. Lowering the
 **automatic compaction threshold** in ⚙ Settings → Assistant makes it less likely to recur
-([07](07-chat-memo.md#when-a-conversation-gets-long-a-context-rule-of-thumb)).
+([10](10-chat-memo.md#when-a-conversation-gets-long-a-context-rule-of-thumb)).
 
 ### A scheduled run doesn't fire
 
@@ -358,7 +358,7 @@ Check its row in the **Schedules** section of the left pane.
   the operator chat).
 - **"Run now"** exercises the same path as a timed firing (allow up to about a minute).
 - If there is no Schedules section at all, scheduled execution is disabled on this deployment
-  ([08](08-organising.md#scheduled-runs)).
+  ([11](11-many-sessions.md#scheduled-runs)).
 
 ### Ctrl+C doesn't work in the terminal / I can't copy-paste
 
@@ -372,7 +372,7 @@ selection / Ctrl+Shift+C; paste with right-click / middle-click / Ctrl+V / Ctrl+
   ⚙ Settings → Display (on by default). With it off both keys go to the program; Ctrl+Shift+C /
   Ctrl+Shift+V always work.
 
-See [05](05-terminal.md#copy-paste).
+See [08](08-terminal.md#copy-paste).
 
 ### App shortcuts such as the command palette don't work
 
@@ -385,8 +385,8 @@ terminal.
 - **"Pass all keys to shell / SSM terminals (incl. Ctrl+K, Ctrl+P)"**: even the leader and the palette go through.
   Move focus to another pane to get the app operations back.
 
-**?** opens the list of what is bound to what ([05](05-terminal.md#shortcuts),
-[12](12-settings.md#keyboard)).
+**?** opens the list of what is bound to what ([02](02-console-basics.md#shortcuts),
+[20](20-settings.md#keyboard)).
 
 ### "Your home disk is nearly full"
 
@@ -395,7 +395,7 @@ away once more than 3 GiB is free and use is below 85 %. Installs and agents can
 when the disk fills. Free space from ⚙ Settings → Machine, or ask a tenant administrator to grow
 the home. You see it only where the home is a volume of your own (ECS on EC2); on shared storage
 the numbers would include other people's files, so no notice is shown
-([12](12-settings.md#machine)).
+([20](20-settings.md#machine)).
 
 ### Starting a session says the agent's CLI could not be installed
 
@@ -408,7 +408,7 @@ says why:
 | … because the home disk is full | Free some space, then restart the workspace. |
 | … because of a network error | Restart the workspace to try again. |
 | … because the download did not match its checksum | Restart the workspace to try again. |
-| … See Settings › Toolchains and the workspace log | Read the reason in ⚙ Settings → Toolchains ([12](12-settings.md#toolchains)). |
+| … See Settings › Toolchains and the workspace log | Read the reason in ⚙ Settings → Toolchains ([20](20-settings.md#toolchains)). |
 
 Your tenant administrator sees the same failure on your card in the member list.
 
@@ -417,7 +417,7 @@ Your tenant administrator sees the same failure on your card in the member list.
 The move refuses while the session is working, or while a question, plan or approval waits for
 you: let the turn end or stop it, and answer first. A stopped Managed Cursor session cannot be
 moved, because its conversation is gone. shell and ssm sessions have no conversation to move. See
-[02](02-sessions.md#moving-a-session-to-another-agent-move).
+[05](05-stopping-and-tidying.md#moving-a-session-to-another-agent-move).
 
 ### AWS commands say "Unable to locate credentials", or `af-aws-exec` / `af-gcloud-exec` stops
 
@@ -426,17 +426,17 @@ moved, because its conversation is gone. shell and ssm sessions have no conversa
   the command as you with the profile from ⚙ Settings:
   `af-aws-exec --profile <name> --account <id> -- <command>`. A plain `aws --profile` is only for
   the read-only lookups that chapter 15 allows after its isolation check
-  ([15](15-cloud-accounts.md#using-the-profiles-from-the-terminal-sdks-and-build-tools)).
+  ([16](16-cloud-accounts.md#using-the-profiles-from-the-terminal-sdks-and-build-tools)).
 - **`af-gcloud-exec` exit code 3** means a login only when the wrapper says so ("the login was
   requested in the Agent Fleet Console …", "Google Cloud login required …"). Log in from the toast
   or ⚙ Settings, or run the terminal command it printed, then run the command again. Otherwise the
   status is the command's own: read that command's error
-  ([15](15-cloud-accounts.md#when-it-stops)).
+  ([16](16-cloud-accounts.md#when-it-stops)).
 
 ### Signing in on a preview URL shows an Agent Fleet error page
 
 These pages come from the development OIDC IdP
-([10](10-integrations.md#signing-in-with-google-on-a-preview-url-development-oidc-idp)).
+([14](14-preview-browser.md#signing-in-with-google-on-a-preview-url-development-oidc-idp)).
 
 | Page | Cause and fix |
 |---|---|
@@ -456,18 +456,18 @@ These messages come from the preview, not from the app:
 | **"Too many temporarily opened ports. Close a server or add the port to the preview ports in Settings."** | Stop a server you no longer need, or list the port under ⚙ Settings → Preview subdomains. |
 | **"Opening port N is not available until the workspace is restarted (its agent is older than this feature)."** | Restart the workspace. |
 
-See [10](10-integrations.md#preview-subdomains-only-where-they-are-issued).
+See [14](14-preview-browser.md#preview-subdomains-only-where-they-are-issued).
 
 ### On a phone, the keyboard pops up on its own / it's hard to operate
 
 The **control key row** under the terminal (`Esc` `Tab` arrows `^C` `⏎`) sends keys without
 bringing up the soft keyboard. You can scroll back through past output with a **one-finger vertical swipe**. Toggle the left pane
-with the **≡ (menu)** at the top left of the screen ([05](05-terminal.md)).
+with the **≡ (menu)** at the top left of the screen ([08](08-terminal.md)).
 
 ### Only the terminal stays dark on the light theme
 
 This is known behavior. Even after switching themes, the terminal (the black screen) background stays dark. The file
-viewer and other screens follow the theme ([05](05-terminal.md)).
+viewer and other screens follow the theme ([08](08-terminal.md)).
 
 ### The workspace has stopped without me noticing
 
@@ -480,24 +480,24 @@ once more, and your session list, clones, and connections all come back as they 
 If you only hid it with "Archive", you can bring it back with "Restore" in the archived list. With "Stop
 (resumable later)" it remains as stopped and can be resumed with a click. "Delete" for shell / ssm
 cannot be undone (the conversation log files themselves remain). For the differences, see
-[02 Sessions](02-sessions.md).
+[03 Starting sessions](03-starting-sessions.md).
 
 **Q. Can I use it from both my work PC and my home PC?**
 Yes. Your login and connections, as well as display settings like font / text size, are stored on the server
-and follow you on other devices and browsers ([05](05-terminal.md)).
+and follow you on other devices and browsers ([08](08-terminal.md)).
 
 **Q. If I stop the workspace, is my work lost?**
 No. Clones, uncommitted changes, the session list, and connections all remain. However,
 uncommitted changes exist only inside the workspace, so commit / push for long-term safekeeping
-([01](01-first-day.md) · [03](03-code.md)).
+([01](01-first-day.md) · [06](06-code.md)).
 
 **Q. Is it OK to run several tasks at the same time?**
 Yes. If each session works in its own independent worktree, edits won't collide. Worktrees are
-created by default ([02](02-sessions.md) · [03](03-code.md)).
+created by default ([03](03-starting-sessions.md) · [06](06-code.md)).
 
 **Q. What's the difference between "Stop", "Delete", "Archive", and "Recreate"?**
 Stop = just pause (resumable), Delete = remove from the list (throwaway kinds), Archive = hide (restorable),
-Recreate = a new conversation in the same place (the current conversation goes to the archive). Details in [02](02-sessions.md).
+Recreate = a new conversation in the same place (the current conversation goes to the archive). Details in [03](03-starting-sessions.md).
 
 **Q. opencode doesn't show up among the new-session kinds**
 On its card in ⚙ Settings → Agents, **"Use opencode"** must be on, and the **"opencode.ai
@@ -505,19 +505,19 @@ billing"** choice must leave something to launch: **"Free models only"** needs n
 **"Go (subscription)"** and **"Zen (metered)"** need an opencode.ai sign-in or key, and
 **"None (my own keys)"** needs a provider key of your own or one of the fleet's engines. With
 billing **"Off"**, or "Use opencode" off, it never appears, key or not
-([06](06-agents.md#opencode)).
+([09](09-agents.md#opencode)).
 
 **Q. If I unshare it, does it disappear from their side too?**
 No. The recipient can save what was displayed, so **unsharing only ends further access**. A
 copy they already saved cannot be recalled. Before sharing, check what the conversation
 exposes (secrets in it are not detected for you). See
-[02](02-sessions.md#sharing-a-conversation-shared-sessions).
+[12](12-collaboration.md#sharing-a-conversation-shared-sessions).
 
 **Q. Does "Models you don't use" stop the billing?**
 It prevents picking one by accident; it is not a hard billing guard. The model disappears from
 the launch dialog, the settings and the assistant's list, and launching it by name is refused,
 but **it cannot stop the CLI's own commands, such as typing `/model` inside the terminal**
-([06](06-agents.md)).
+([09](09-agents.md)).
 
 **Q. Builds die / freeze from running out of memory**
 The host is shared and memory-constrained. For Node builds, raise the heap only for the command that needs it

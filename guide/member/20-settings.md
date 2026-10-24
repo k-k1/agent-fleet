@@ -56,12 +56,12 @@ Everything about appearance.
   surfaces separately ("inherit" follows the app theme). Different colours per surface make a grid of panes
   readable at a glance.
 - **Terminal**: font and font size, and **Ctrl+C / Ctrl+V copy and paste** (on by default; when Ctrl+C
-  copies and when it interrupts the program is in [05](05-terminal.md#copy-paste)).
-- **File viewer**: tab width, line numbers, wrapping, minimap, Markdown rendering ([04](04-files.md)).
+  copies and when it interrupts the program is in [08](08-terminal.md#copy-paste)).
+- **File viewer**: tab width, line numbers, wrapping, minimap, Markdown rendering ([07](07-files.md)).
 - **Reader view** / **file icons** (icon set).
 - **Main area layout**: **split panes** (drag the dividers) or **tabbed grid** (each cell switches by tab).
   Stored **on this device only**, and the two layouts are remembered separately, so moving between them does not
-  disturb either ([05](05-terminal.md)). If you switch often, the same choice sits in **Appearance** (the paint
+  disturb either ([08](08-terminal.md)). If you switch often, the same choice sits in **Appearance** (the paint
   can) in the top bar.
 - **Separate appearance per tenant** (only if you belong to two or more tenants; off by default): remembers the
   theme and surface colours for each tenant on this device and switches with the tenant. Off keeps the look you see
@@ -101,7 +101,7 @@ land in the same workspace, the same home and the same settings.
   terminals. Off by default.
 - **Send key**: **Ctrl+Enter to send (Enter for a newline, the default)** or **Enter to send
   (Shift+Enter for a newline)**. It applies to both session chat and assistant chat.
-- **Reply suggestions**: chips with short replies above the composer ([07](07-chat-memo.md)). This is also
+- **Reply suggestions**: chips with short replies above the composer ([10](10-chat-memo.md)). This is also
   where you clear what has been learned or unpin pinned chips. There are two ways to clear: **Clear used-once**
   drops only the throwaway phrasings you sent exactly once (pinned ones stay, and sending one again learns it
   back), while **Clear all learned** wipes both what was learned and the dismissed list, back to the initial state.
@@ -157,10 +157,10 @@ Reads out replies from sessions and assistants.
     child-session row (all three cells), "Limit-reset notifications" the usage-limit row.
   - Nothing pops up or speaks for the session in the pane you are working in, whatever the table says.
 - **Service notifications**: stop sending to Discord / Slack **without disconnecting**. The connection itself,
-  and which events each service receives, live in the "Chat integration" tab ([10](10-integrations.md)).
+  and which events each service receives, live in the "Chat integration" tab ([14](14-preview-browser.md)).
 - History is in the **notification centre** (last 7 days), opened from the bell in the top bar. An entry
   you have not read puts a red dot on its session; **"Mark all as read"** clears them all at once
-  ([02](02-sessions.md#reading-state-badges-and-notifications)).
+  ([03](03-starting-sessions.md#reading-state-badges-and-notifications)).
 
 ### Limit board
 
@@ -168,11 +168,11 @@ Who in this tenant may see where you stand on your agents' usage limits, and how
 default), everyone in the tenant, or members you pick; state only, band or exact. The setting is per
 tenant, and the tab lists every tenant you publish to. Below it are what teammates publish to you,
 and the table of what is collected. How to read the values is in
-[09](09-collaboration.md#showing-teammates-where-you-stand-on-usage-limits).
+[12](12-collaboration.md#showing-teammates-where-you-stand-on-usage-limits).
 
 ### Assistant
 
-The behaviour of assistant chat and the fleet operator ([07](07-chat-memo.md), [08](08-organising.md)).
+The behaviour of assistant chat and the fleet operator ([10](10-chat-memo.md), [11](11-many-sessions.md)).
 
 - **Output language**: follow the input / 日本語 / English. It changes chat replies only (the read-aloud
   language lives on the **Speech** tab).
@@ -180,14 +180,14 @@ The behaviour of assistant chat and the fleet operator ([07](07-chat-memo.md), [
   suggestions and the like are ranked separately (the **AI assistance** tab).
 - **Assistant models**: per CLI. "Recommended (currently: …)" picks a safe default from the live catalogue and
   shows what it currently resolves to. Under the select, the chosen model's (for "Recommended", the resolved
-  model's) API list price, context window and release date are shown ([Agents](06-agents.md)).
+  model's) API list price, context window and release date are shown ([Agents](09-agents.md)).
 - **Auto-reply to session reports**: the operator takes one turn automatically when a report arrives.
   **Automatic reply limit** (default 10, max 50; it cannot be unlimited), **model for automatic replies**
   (reading a report is routine work, so a lighter model saves a lot), **batching window** (reports arriving
   within it are handled in one turn), **quiet completion reports** (a normal completion delivers the card and
   the notification but takes no turn).
 - **Autopilot**: carries questions and plan approvals through automatically. Off by default
-  ([08](08-organising.md)).
+  ([11](11-many-sessions.md)).
 - **Auto-resume after an interruption**: resumes a turn cut short by a dropped connection or a temporary rate
   limit. On by default.
 - **Automatic context compaction** and its **threshold**: summarise and hand a long conversation forward.
@@ -236,7 +236,7 @@ the assistant conversation: they share an implementation, but they surface somew
     translation setting that spends without being asked.
   - **Background memory review**: shown only while memory suggestions are on; it has no switch of its own, only
     the agent and model the review uses. Only claude can run it today
-    ([14 Agent memory](14-agent-memory.md#settings)).
+    ([18 Agent memory](18-agent-memory.md#settings)).
 
   Each card can also be pinned to its own agent, separate from the priority order above (default: "auto —
   priority order"). Once pinned to one agent, that card can also pick that agent's own model: left on "auto"
@@ -247,21 +247,21 @@ the assistant conversation: they share an implementation, but they surface somew
 
 Adds your own standing instructions to every agent newly started in this workspace, with a per-target row
 showing which file it was written to and whether it is in effect.
-See [06 Agents](06-agents.md#agent-instructions-write-down-how-you-work-once).
+See [09 Agents](09-agents.md#agent-instructions-write-down-how-you-work-once).
 
 This covers instructions only. Personal Claude Code hooks, skills and subagents have no settings screen: they
 are files in claude's configuration folder, which survives Recreate. See
-[06 Agents](06-agents.md#bringing-your-personal-claude-code-setup).
+[09 Agents](09-agents.md#bringing-your-personal-claude-code-setup).
 
 ### Agent memory
 
 Agent Fleet's own shared memory, which every kind of agent reads and writes, with the sessions' switch in
-its **Settings** view. The page is described in [14 Agent memory](14-agent-memory.md#agent-memory).
+its **Settings** view. The page is described in [18 Agent memory](18-agent-memory.md#agent-memory).
 
 ### Memory snapshots
 
 Version control over the memory an agent keeps in its own files. The page is described in
-[14 Agent memory](14-agent-memory.md#memory-snapshots).
+[18 Agent memory](18-agent-memory.md#memory-snapshots).
 
 
 ---
@@ -277,26 +277,26 @@ the **Muse Code** card holds its one-time install, the sign-in and the model / e
 **Sessions** group holds **when stopped sessions are archived** (Default, which is the deployment's period (7 days unless the deployment changed it), 1 / 3 / 7 / 14 / 30 days, or Off), **session-to-session messaging**, **starting sessions from sessions** (with
 **children per session**), **past-session search** (on by default: lets a
 session search this workspace's past conversations with the `search_sessions` tool; the command palette's
-"Conversations" mode works either way, see [05](05-terminal.md#command-palette)), **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes), auto-resume after a rate
+"Conversations" mode works either way, see [02](02-console-basics.md#command-palette)), **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes), auto-resume after a rate
 limit resets, and auto-resume of an interrupted turn.
-→ [06 Agents](06-agents.md), [02 Sessions](02-sessions.md#messages-between-sessions),
-[02 Sessions](02-sessions.md#starting-sessions-from-a-session-child-sessions),
-[02 Sessions](02-sessions.md#having-a-session-generate-an-image)
+→ [09 Agents](09-agents.md), [11 Running many sessions](11-many-sessions.md#messages-between-sessions),
+[11 Running many sessions](11-many-sessions.md#starting-sessions-from-a-session-child-sessions),
+[13 Images](13-images.md#having-a-session-generate-an-image)
 
 ### Git hosting
 
 GitHub / Bitbucket (authentication for clone / push). **Connecting GitHub also connects GitHub Copilot.**
 The same connection signs in `gh`, and for Bitbucket Cloud `bkt`, in every session
-([10](10-integrations.md#clis-that-are-already-signed-in)). If GitHub cannot renew the connection, the tab says
+([15](15-external-services.md#clis-that-are-already-signed-in)). If GitHub cannot renew the connection, the tab says
 "GitHub could not renew this connection: the authorization has expired or was revoked. Disconnect and connect GitHub
 again."
-→ [03 Repositories and git](03-code.md)
+→ [06 Repositories and git](06-code.md)
 
 ### Ops & monitoring
 
 Connect PagerDuty / Grafana / CloudWatch / AWS so the **SRE assistant** can talk through an incident against
 real data. CloudWatch and AWS only need a profile picked from your SSM connections, with no secret to type. AWS
-**write tools are off by default**. → [13 Ops tooling](13-ops-tooling.md)
+**write tools are off by default**. → [15 External services](15-external-services.md)
 
 ### Issue tracker
 
@@ -316,7 +316,7 @@ issues and pull requests, Bitbucket pull requests), so that a session can be sta
   `(is:issue OR is:pull-request) (<your query>)`.
 - **Jira** is connected here, either with **OAuth** or with **your email address and an API token**
   (the address is half of that credential). The connection also signs in the `jira` CLI in sessions
-  ([03](03-code.md#use-jira-in-a-session)). An OAuth connection without the Jira Software scopes says on its card
+  ([15](15-external-services.md#use-jira-in-a-session)). An OAuth connection without the Jira Software scopes says on its card
   "Boards, sprints and epics: not available.", with what your tenant administrator has to add. **GitHub and
   Bitbucket ride on the Git hosting connection**, so they need nothing of their own.
 - **Bitbucket** has no search across an account, so its query is **assembled from your connected
@@ -327,13 +327,13 @@ issues and pull requests, Bitbucket pull requests), so that a session can be sta
   are `{ref}` `{num}` `{key}` `{project}` `{type}` `{prefix}` `{slug}`, and the example under the
   field shows what yours produces. A repository's own rules (git-flow and the like) win at launch.
 
-See [02 Sessions](02-sessions.md#starting-from-the-issue-tracker) for the list itself and for
+See [03 Starting sessions](03-starting-sessions.md#starting-from-the-issue-tracker) for the list itself and for
 starting a session from a row.
 
 ### Chat
 
 Connect a Discord / Slack bot to follow session progress in chat and drive it by replying.
-→ [10 Going further](10-integrations.md#connecting-discord-slack-chat-bridge)
+→ [15 External services](15-external-services.md#connecting-discord-slack-chat-bridge)
 
 ### MCP servers
 
@@ -395,7 +395,7 @@ search.
   For a saved server whose authentication is **OAuth**, the report has a **Sign in** button.
 - **Enabled / disabled**: disabling keeps the definition but stops handing it out.
 - Sessions pick it up **from the next session you start**. For assistants, choose it in the assistant's own
-  edit form under "MCP servers" ([07](07-chat-memo.md)).
+  edit form under "MCP servers" ([10](10-chat-memo.md)).
 - Entries are labelled by origin: **user** (yours), **tenant** (distributed by an admin: a user entry with the
   same name is not used; some are distributed such that only the values are asked of each member), and
   **built-in** (Agent Fleet's own server and the ops & monitoring integrations).
@@ -411,10 +411,10 @@ search.
 ### MCP tokens
 
 Tokens for driving your workspace remotely from Claude Code / Claude Desktop on your own machine.
-→ [10 Going further](10-integrations.md#driving-your-workspace-from-an-external-claude-mcp)
+→ [19 Using it from outside](19-outside-access.md#driving-your-workspace-from-an-external-claude-mcp)
 
 The same token can use your Agent Fleet memory too; the tab lists what it can do:
-→ [14 Agent memory](14-agent-memory.md#using-agent-fleet-memory-from-an-external-agent)
+→ [18 Agent memory](18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent)
 
 ### AWS profiles/SSM
 
@@ -423,8 +423,8 @@ for logging in to another in-house host. Each profile row has **Log in** to sign
 Console, and a signed-in row has **Log out** to end that profile's login only. A profile is one of two types:
 **IAM Identity Center (SSO)**, or **Assume a role from another profile**, which uses an SSO profile's sign-in to assume
 an IAM role. On an assume-role row **Log in** signs in its source profile, and the row has no **Log out**
-([15](15-cloud-accounts.md#profile-type-assume-a-role-from-another-profile)).
-→ [15 Cloud accounts](15-cloud-accounts.md#logging-in-to-another-in-house-host-ssm)
+([16](16-cloud-accounts.md#profile-type-assume-a-role-from-another-profile)).
+→ [16 Cloud accounts](16-cloud-accounts.md#logging-in-to-another-in-house-host-ssm)
 
 ### Google Cloud
 
@@ -438,7 +438,7 @@ you paste the verification code Google shows into that same window, and only int
 A logged-in row says **"Logged in as <account>"** and offers **Log in again**, which signs in afresh for a login you
 know was revoked, and **Log out**, which deletes the workspace's login for that account (every profile using the
 account is logged out with it; nothing changes at Google). The WS bar's Google Cloud badge lists the same logins.
-→ [15 Cloud accounts](15-cloud-accounts.md#running-commands-in-google-cloud-as-you-af-gcloud-exec)
+→ [16 Cloud accounts](16-cloud-accounts.md#running-commands-in-google-cloud-as-you-af-gcloud-exec)
 
 ---
 
@@ -468,9 +468,9 @@ scale.
 - **Measurement coverage** is stated explicitly. Calls that do not report tokens are shown as counted-only
   (which does not mean they were free). cursor's Terminal (CLI) sessions report tokens per turn from a `stop` hook
   and are shown as "Tokens: partial"; a turn on Auto has no model name of its own (cursor reports `default`).
-  Managed cursor sessions are not counted this way ([06](06-agents.md#cursor)).
+  Managed cursor sessions are not counted this way ([09](09-agents.md#cursor)).
 - **RTK gain**: cumulative tokens saved, average saving rate and command count, daily / weekly / monthly
-  (RTK is in [06](06-agents.md#rtk-token-savings)).
+  (RTK is in [09](09-agents.md#rtk-token-savings)).
 
 ### Cloud cost
 
@@ -518,7 +518,7 @@ administrator's to set.
 - Each value says whether it was **measured** (read inside the container) or **configured** (what the next
   start will use). While the workspace is stopped everything is configured.
 - **The architecture matters.** On `arm64` rtk is not installed at all, and JDKs and Node are downloaded as
-  arm64 builds ([11 Troubleshooting](11-troubleshooting.md)).
+  arm64 builds ([21 Troubleshooting](21-troubleshooting.md)).
 - **Memory leads with what this workspace may spend, not what the instance has.** Part of the instance is held back
   for the host's own daemons, so where both are known you get `6.5 GiB (instance has 8 GiB)`. The first number is
   the one to look at when a build is being killed.
@@ -537,7 +537,7 @@ administrator's to set.
   down (generated images, thumbnails, pasted and attached files, …), how much of it belongs to deleted
   sessions, and the size of the cleanup trash. Generated images expire after 30 days and thumbnails after
   14 on their own; **"Open cleanup"** closes Settings and opens the cleanup modal, where the deleted
-  sessions' share and the trash can be tidied up ([02 Sessions](02-sessions.md#tidying-up-in-bulk-cleanup)).
+  sessions' share and the trash can be tidied up ([05 Stopping and tidying up](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup)).
   Working copies and tool caches are not counted here.
 - **Tool caches**: the caches go, npm, uv and pip keep in your home (`~/.cache/go-build`,
   `~/.npm/_cacache`, …). They grow without limit (tens of GB is common) and are never emptied
@@ -572,7 +572,7 @@ sessions started afterwards use it, with no Stop → Start. For a Java or Node.j
 not installed yet, the button names the version it will install (for example
 **Install 17.0.21+9**). Older Node.js patches that Agent Fleet installed are removed at the next
 workspace start; versions you installed yourself with nvm are kept.
-→ [10 Going further](10-integrations.md#environment-settings-and-recreating-the-workspace)
+→ [17 Workspace environment](17-workspace-environment.md#environment-settings-and-recreating-the-workspace)
 
 ### Databases
 
@@ -580,7 +580,7 @@ PostgreSQL and MySQL for this workspace, which is what database-backed tests run
 state, version, memory, port and connection URL, with installing, starting and stopping it,
 creating, deleting and resetting a database by name, a shell already connected to one, and
 **Start with the workspace** (off by default). The same things from a terminal are `af-db`.
-→ [03 Repositories and git](03-code.md#running-database-backed-tests)
+→ [17 Workspace environment](17-workspace-environment.md#running-database-backed-tests)
 
 ### Preview subdomains
 
@@ -590,13 +590,13 @@ you set here). Which ports are exposed, pinning the URL, sharing it with your te
 login, and re-issuing the URL all live here. Where the deployment offers the development OIDC IdP, the tab
 also shows its Issuer, Discovery URL and Client ID with **Copy** buttons (the client secret is not shown),
 **Issue a new secret…**, **App configuration examples** and **Test personas**.
-→ [10 Going further](10-integrations.md#preview-subdomains-only-where-they-are-issued)
+→ [14 Preview and browser](14-preview-browser.md#preview-subdomains-only-where-they-are-issued)
 
 ### Internal repos
 
 Create, rename, delete and browse git repositories that **live entirely inside the tenant**, with no external
 git hosting. The clone URL authenticates itself, so there is no connect step (and it works while the workspace
-is stopped). → [03 Repositories and git](03-code.md)
+is stopped). → [06 Repositories and git](06-code.md)
 
 ### Export / import
 
@@ -623,7 +623,7 @@ your **AWS profiles/SSM** registrations, your **Google Cloud** profiles, and you
 **Recreate the workspace** (delete `~/repos` only and rebuild from the latest image) and **clean home** (a
 deeper reset that also removes home except logins and connections). Both lose uncommitted changes. The tab
 appears only on deployments that can perform them.
-→ [10 Going further](10-integrations.md#recreating-the-workspace-danger-zone)
+→ [17 Workspace environment](17-workspace-environment.md#recreating-the-workspace-danger-zone)
 
 ---
 
@@ -649,8 +649,8 @@ appears only on deployments that can perform them.
 | Let sessions talk to each other | Agents (session-to-session messaging) |
 | Stop sessions from searching past conversations | Agents (past-session search) |
 | Let agents share what they learn across kinds | Agent memory (Settings) |
-| Let a session see what the other sessions are doing | Nothing to set: every session can ([02](02-sessions.md#letting-a-session-see-the-fleet)) |
-| Have a session leave you a note about what it noticed | Nothing to set: every session can ([02](02-sessions.md#letting-a-session-see-the-fleet)) |
+| Let a session see what the other sessions are doing | Nothing to set: every session can ([11](11-many-sessions.md#letting-a-session-see-the-fleet)) |
+| Have a session leave you a note about what it noticed | Nothing to set: every session can ([11](11-many-sessions.md#letting-a-session-see-the-fleet)) |
 | Clone a private repository | Git hosting |
 | Get help investigating an incident | Ops & monitoring |
 | Start work from a ticket or an issue | Issue tracker |

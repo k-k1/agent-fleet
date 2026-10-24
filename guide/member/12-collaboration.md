@@ -1,64 +1,13 @@
 ---
-audience: "anyone working with other members on the same conversation, or tidying up after themselves"
+audience: "anyone working with other members on the same conversation"
 updated: "2026-10"
 ---
 
-# 12. Working with others, and keeping things tidy
+# 12. Working with others — sharing, handing over, the inbox, usage limits
 
 English | [日本語](12-collaboration.ja.md)
 
-This chapter covers the parts of the Console for **more than one person** and for
-**what happens to work after it is finished**: highlighting a line so somebody
-else sees it, seeing what a session actually changed, and clearing away what has piled
-up without losing anything you still want.
-
-## Highlighting a line in a conversation
-
-Select text in a conversation and a **Highlight** pill appears. Pick a colour (yellow,
-green, blue or pink) and the passage stays marked.
-
-- The marks are part of the conversation, not of your browser. Anyone the session is
-  shared with sees the same passage marked, in the same place, and the **Highlights**
-  strip under the conversation header lists them with the number of people who added
-  them.
-- **Remove highlight** takes yours away. Removing one does not touch anybody else's.
-- Colour carries no meaning the product enforces; it means whatever your team decides.
-- On a phone or tablet the colours appear in a bar at the **bottom of the screen** instead of
-  beside the selection: your browser's own Copy / Share menu already covers the space just above
-  whatever you selected.
-
-Use it when a conversation is long and the interesting part is three screens up: a
-highlight survives, where "look at the bit about the retry" does not.
-
-## Seeing what a session changed
-
-The **Changed files** strip under the conversation header lists the files that session
-actually touched, and takes you straight to one. Click its heading to fold it open or
-closed; the choice is remembered per session. **Ctrl+P** (**⌘P** on macOS), then **Tab**
-to "Changed files", reaches the same list.
-
-Each row carries a badge: **Untracked**, **Unstaged**, **Staged**, **Committed** or **No diff**
-for a file in the working copy, **Session scratch** for a file in `$AF_WORK_DIR` (deleted with
-the session), **Outside working copy** for anything else. A file in an agent's own memory folder
-is badged **Claude memory**, **Codex memory** or, for another agent, **Agent memory**, and opens
-read-only. That badge means the agent kind's own memory files, not Agent Fleet's
-[agent memory](14-agent-memory.md).
-
-It answers the question you have at review time ("what did this thing do to my
-working copy?") without reading the whole conversation back. It is derived from the
-conversation and the repository together, so it reflects what happened, not what the
-agent said it would do.
-
-## Reply suggestions
-
-Above the message box, **Suggest replies with AI (from the recent conversation)** offers
-a few things you might plausibly want to send next. They are suggestions, not actions:
-nothing is sent until you choose one.
-
-- **Always show (pin)** keeps a suggestion around.
-- **Stop suggesting this** removes one, and sending the same text yourself brings it back.
-- If the conversation is still short, or no AI is available for it, you are told so
-  rather than shown an empty box.
+This chapter covers the parts of the Console for **more than one person**: sharing a conversation, handing a session over to another member, asking a teammate through the inbox, and showing where you stand on usage limits.
 
 ## Sharing and handing over
 
@@ -67,7 +16,7 @@ The first two live in the session's ⋯ menu, and they are different things:
 | | What it does | The other person |
 |---|---|---|
 | **Share…** | shows your conversation to another member of the same tenant, read-only | reads it; may be allowed to propose |
-| **Hand off to another agent…** | starts a new session of your own, of any agent kind, carrying the context ([02](02-sessions.md#continuing-elsewhere-handoff-branch-move)) | nobody else is involved |
+| **Hand off to another agent…** | starts a new session of your own, of any agent kind, carrying the context ([05](05-stopping-and-tidying.md#continuing-elsewhere-handoff-branch-move)) | nobody else is involved |
 | **Hand off to a member** | offers that handoff to someone the session is shared with ([below](#handing-a-session-to-another-member)) | starts the new session in their own workspace |
 
 A shared session appears in the other person's **Shared sessions** section and carries a
@@ -210,89 +159,52 @@ The board never pools limits: nothing moves credentials, runs your work on someo
 account, or ranks members by what they have left. Whether your subscription terms allow sharing
 work this way is your organisation's call.
 
-## Keeping a session awake
+## Sharing a conversation (shared sessions)
 
-Idle workspaces stop on their own. If you have something long running that must not be
-interrupted, **Keep awake** in the ⋯ menu exempts the session from idle-stop for a set
-number of hours, and the row shows how much of that is left.
+You can show a session's conversation to another member of the same tenant, **read-only**:
+"keep an eye on where this investigation goes", "while you review it, here is how we got here".
 
-It is deliberately time-boxed. An exemption you set once and forget is how a workspace
-ends up running for a month.
+**Sharing it**
 
-## Having a session stop when it is done
+1. Choose **"Share"** from the **⋯** menu of a session row or a repository row (you can also
+   create one from ⚙ "Shares" in the left pane's **Shared sessions** section → **"New share…"**).
+2. There are three kinds of **target**.
+   - **Session**: that one session.
+   - **Project**: the base working copy **plus the sessions in the worktrees under it**. If you
+     give each session its own worktree, this is usually the one you want.
+   - **WT**: a single worktree.
+3. Pick the **recipient** by searching for their email address.
+4. Pick the **permission**.
+   - **View only**: reading, nothing else.
+   - **Can propose**: the recipient can **propose** something to send, and **it does not reach
+     the agent until you approve it**.
+5. **"Unshare"** in the share list ends it.
 
-The opposite case: you want the session to **stop once the work is finished**: you left a
-long job running overnight and would rather it did not hold the workspace up afterwards.
+**Being shared with**
 
-There are two ways to ask, and both set the same thing:
+They appear under **Shared sessions** in the left pane, grouped by owner and project. The
+conversation opens read-only; with "may propose" there is a composer for sending the owner a
+proposal (it says up front that nothing is sent until the owner approves). While the owner's
+workspace is stopped, the history cannot be read. The list refreshes on its own, but
+**"Refresh"** pulls it right now.
 
-- **Tell the session**: "stop when this is done". It arms the stop itself.
-- **Stop when this turn ends** in the ⋯ menu: set it yourself. Cancelling is in the same place.
+If the session proposed a **handoff to a new session**, that card appears in the shared
+conversation too, at the point it was proposed, with the title and the full prompt. Only the
+owner can edit it, discard it, or launch from it, so those buttons are not shown to you.
 
-An armed row carries a badge. The stop happens **after the running turn ends**: it will not
-stop while a question is waiting for you or while work is still going. It is the resumable
-stop, so the conversation stays and Start picks it up where it left off, and you get one
-notification when it happens.
+If the agent is **stopped on a question**, **its options appear in the shared conversation too**,
+so the recipient can see what it is waiting on. Only the owner can answer (with "may propose" you
+send it as a proposal and wait for approval).
 
-**Sending a new instruction releases it.** "Stop when you are done" was said about the work
-in front of you, not about whatever you ask for next.
+The view behaves like a session mirror: **opening a shared conversation for the first time
+lands on the latest message**, and if you leave part-way through, **reopening it returns you
+to where you were** (reloading the browser starts from the latest again).
 
-This is tidying rather than cost control: a session that has finished is not what keeps the
-workspace awake, so stopping it does not change when the workspace stops. What you get is
-the memory it was holding, back right away, and a list where "finished" reads as "stopped".
-Idle auto-stop does the same thing on a delay, except that it skips a session while you
-have it open, so stopping one while you watch it work is something only this can do.
+**Approving** (as the owner): the Shared sessions section shows **"N awaiting approval"**;
+review the content and choose **"Approve and send"** or **"Reject"**.
 
-## Locking something against deletion
-
-**Lock against deletion** in the ⋯ menu marks a session as one that must not go away.
-A locked session carries a badge saying so, and is **skipped by cleanup and by
-automatic tidying**, both the manual sweep below and anything that would have removed
-it on its own.
-
-Use it for the conversation you will need at the end of the quarter, and for the
-worktree you have not finished with. Cleanup refuses to remove a worktree that still
-holds a locked session, and tells you to unlock it first rather than quietly working
-around you.
-
-## Cleaning up
-
-**Clean up** surveys the stopped sessions, unneeded worktrees and merged branches that
-have accumulated, and lets you clear them in one pass.
-
-Every candidate is graded:
-
-| Grade | Means |
-|---|---|
-| **Safe** | nothing is lost by removing it |
-| **Review** | probably fine, but look first |
-| **Keep** | it is running, or it has uncommitted or unpushed work. Stop it or push it first |
-
-**Select all safe** does the boring majority in one click. What you remove is not
-destroyed: stopped AI sessions are archived (restore them from the archive browser), and
-shell / SSM sessions, branches and deleted worktrees go to **Trash (restore)**, the second
-tab of the same dialog, and can be brought back with **Restore**. A worktree comes back at the
-commit it was on, with its uncommitted changes when the row says so; if its branch name is taken
-by then, you are asked for a new one.
-
-Sessions already archived are not part of cleanup; they have their own browser.
-
-## When a turn is interrupted
-
-An agent's turn can be cut off by something outside the conversation, such as a provider
-error, a dropped connection or a usage limit. When that happens the conversation is not
-silently left half-finished:
-
-- You are notified, including when a run resumes after a usage limit resets.
-- **Auto-resume interrupted turns** (in the assistant's settings) lets the assistant
-  restart the turns that a retry would fix, rather than leaving them for you to notice.
-
-Only interruptions that a resend actually repairs are resumed. A turn that failed
-because of what it was asked to do is left alone, because retrying it would just fail
-again.
-
----
-
-Related: [02 Sessions](02-sessions.md) for launching and resuming ·
-[ref/features.md](../ref/features.md) for the catalogue ·
-[ref/agents.md](../ref/agents.md) for which agents support what
+> **Sharing exposes the whole conversation**: your prompts, the agent's replies, and tool
+> output. Secrets that ended up in the conversation are not detected for you. The recipient can
+> save what they see, so **unsharing cannot recall the copy they already have.** Think once about
+> what is on screen before you share. Archiving a session drops it from the recipient's list (the
+> rule itself remains, so restoring it makes it visible again).

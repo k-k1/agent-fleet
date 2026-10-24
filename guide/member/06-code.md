@@ -32,118 +32,6 @@ with a token works in the meantime and is not a lesser connection.
 After connecting, git authentication applies **transparently** to every git operation. You will
 never be asked for a token on each clone or push.
 
-## Use `gh` and `bkt` in a session
-
-Once GitHub is connected, `gh` in a session is already signed in. Once Bitbucket Cloud
-(bitbucket.org) is connected, so is `bkt`, the Bitbucket CLI: `bkt pr list`, `bkt pr create`,
-`bkt pipeline` and so on need no `auth login`. Both use your saved connection and renew it
-the way git does.
-
-- **Scopes**: `bkt` can do only what the connection was granted. For pull requests and
-  pipelines the Bitbucket OAuth app needs `repository`, `pullrequest:write`, `pipeline` (read)
-  and `account`, plus `pipeline:write` to start or stop a pipeline; a pasted API token needs the
-  matching `read:` / `write:` scopes (for example `read:pullrequest:bitbucket`, and
-  `write:pipeline:bitbucket` to start or stop a pipeline — write does not imply read). A token without the pull-request scopes can list repositories
-  but gets `403 Forbidden` from `bkt pr list`. The OAuth app's scopes are set by the tenant administrator.
-- **Bitbucket Data Center** (or any host other than bitbucket.org) is not connected through
-  Settings. Set it up yourself (`bkt auth login`, or `BKT_HOST` and `BKT_TOKEN`); the
-  wrapper then leaves `bkt` alone.
-
-## Use `jira` in a session
-
-Once Jira is connected (Settings, **Issue tracker**), `jira`, the Jira CLI, works in every session
-and for every agent, with no `jira init` token prompt and no login. It uses your saved connection,
-and an OAuth connection is renewed on each call, so an expired token never means restarting the
-session. You can view, list, create, edit, comment on and transition issues:
-`jira issue view PROJ-1`, `jira issue list -p PROJ`, `jira issue create -p PROJ`,
-`jira issue comment add PROJ-1 "…"`, `jira issue move PROJ-1 "In Progress"`.
-
-- **Creating issues**: `jira issue create -p PROJ …` works without `jira init`. When your config
-  holds no issue types, the wrapper reads the project's types from Jira (this needs only the default
-  scopes) and gives `jira` a generated copy of the config that includes them. It only does this
-  for the generated config and for configs in `~/.config/agent-fleet/jira/`, and it needs `-p`
-  (or a default project in that config). If it cannot, it prints a one-line hint and `jira` then
-  fails with `invalid issue types in config`; run `jira init` below (`jira board list -p PROJ`
-  shows the exact board name it wants). A config written by `jira init` holds the types of its
-  own project only (IDs are per project in team-managed projects), so for `-p` naming another
-  project the wrapper hands `jira` a copy with that project's types and without the config's
-  custom fields (they belong to the first project). If the types cannot be read, `jira` runs on
-  the config as it is and a hint names `jira init -c ~/.config/agent-fleet/jira/<name>.yml
-  --project PROJ --board "PROJ board"`, which gives that project a config of its own. Creating with `--parent` for another project always
-  takes that route, because the config cannot say what kind of project it is.
-- **Assigning**: looking up an assignee (`jira issue assign`, and `-a` / `--assignee` of
-  `issue edit`, `create` and `move`) searches users in the configured or `-p` project, so it
-  needs a project. With no default project (no `jira init` yet), `jira issue assign PROJ-1 <user>`
-  takes the project from the issue key's prefix for you. The other commands print a one-line hint:
-  pass `-p PROJ` or run `jira init --project PROJ --board "PROJ board"`. An explicit `-p` and a
-  config with a project are never overridden.
-- **Project, board, sprints and epics**: run `jira init --project PROJ --board "PROJ board"` once
-  (add `--force` to replace an earlier setup). It writes your default project, board, issue types
-  and epic fields, which `jira sprint list` and the epic commands need, and it asks no questions.
-  Without it, pass `-p PROJ` to each command. For a second board, run
-  `jira init -c ~/.config/agent-fleet/jira/other-board.yml --project PROJ --board "Other board"`
-  and then use `jira -c ~/.config/agent-fleet/jira/other-board.yml …`. Your connection is used
-  only with configs in `~/.config/agent-fleet/jira/`.
-- **Markdown in comments and descriptions**: the CLI converts Markdown to Jira markup, and until the
-  first piece of markup (a heading, a list, bold, a link) a list, heading,
-  code block or quote that follows a plain paragraph is glued onto it (two paragraphs in a row are
-  fine). A paragraph, a blank line and a list are sent as:
-
-  ```
-  Intro.          →  Intro.* a
-  (blank line)
-  - a
-  ```
-
-  Open the body with a heading or a list, or put inline markup (bold, a link, `code`) in the first
-  paragraph, and always leave a blank line before a list. Agents are told this too.
-- **Flaky network to Atlassian**: reading commands (`issue view` / `issue list`, `board`, `sprint`,
-  `epic` and `project list`, `me`) are re-run up to twice after a connection reset or timeout, and
-  only the last attempt's output is shown. Commands that change something are never re-run, so after
-  a failed **or timed-out** `issue create` or `comment add` check Jira before running it again (for
-  example with the JQL `project = PROJ AND creator = currentUser() AND created >= -15m`). `comment edit` and
-  `comment delete` retry on their own; "probably already deleted" means the delete went through.
-  `jira` can otherwise wait forever for a server that never answers, so a run with no terminal is
-  stopped after `AF_JIRA_TIMEOUT` seconds (default 120 for a command that changes something, 45 per
-  attempt for a reading one; `0` turns it off). A reading command is then re-run like after a reset.
-  A command that changes something exits with status 124 and says that the issue or comment may
-  exist; for `issue create` it also lists the issues you created in the last 15 minutes with exactly
-  that summary ("possible matches", or "no matching issue found"), still with status 124. `jira` also reads standard input to the end even when `-b` is given; with the body on the
-  command line the wrapper gives it an empty input instead. If a run still hangs, the file
-  `/proc/<pid>/wchan` of the `jira` process tells a wait on input (`pipe_read`,
-  `unix_stream_data_wait`) from a wait on the network. If
-  the authorization expired or was revoked, `jira` prints "the Jira connection is unusable"
-  instead of asking for an API token: reconnect Jira in Settings. In output that is not a terminal,
-  links to issues point at your Jira site.
-- **Using an Atlassian MCP tool instead**: `jira` is the default because it works for every agent and
-  renews the token itself, while an MCP connector serves one agent and needs a session restart when
-  its login expires. To prefer the MCP route, say so in **⚙Settings → "Agent instructions"**, for
-  example: "For Jira, use the Atlassian MCP tool instead of the `jira` CLI." Agents that have the
-  connector follow it; the others keep using `jira`. Without such a line, an agent uses an MCP tool
-  only for what the CLI cannot do.
-- **Editing and deleting comments**: `jira issue comment edit PROJ-1 10001 -b "…"` and
-  `jira issue comment delete PROJ-1 10001`. `jira` itself has only `comment add`; these two are
-  added by Agent Fleet. `edit` takes the new text from `-b`, `-T FILE` (`-` reads stdin) or a pipe,
-  and sends it as Markdown converted for Jira, so it is also how a garbled comment (see above) is
-  repaired. Find the comment ID with `jira issue view PROJ-1 --raw` (`fields.comment.comments[].id`).
-  Jira usually lets you change only your own comments (someone else's answers 403 unless your account may manage all comments), and agents
-  are told to edit or delete only a comment they posted in that session or one you named. They
-  work with your saved connection only: not with `--debug`, `JIRA_API_TOKEN` or a config of your
-  own, where plain `jira` answers that it has no such command.
-- **`--debug` runs without your connection**: jira's debug output prints the authorization
-  header, so the wrapper does not hand the token to a debug run.
-- **What it can change** is what your connection can. The CLI writes to Jira as you, so creating,
-  editing and moving issues needs an account that is allowed to.
-- **With OAuth, boards, sprints and epics** need the Jira Software scopes on the tenant's Jira app.
-  Your tenant administrator turns them on, and you then **reconnect Jira** once. Until then those
-  commands, and `jira init`, fail with an authorization error; Settings › Issue tracker shows
-  "Boards, sprints and epics: not available" on the Jira card, and `jira` prints the same
-  explanation before running those commands. Links the CLI prints point at
-  `api.atlassian.com` rather than your site.
-- **Jira Data Center** (or another Jira) is not connected through Settings. Set it up yourself
-  (`jira init` with your own `--server`, a config outside `~/.config/agent-fleet/jira/`, or
-  `JIRA_API_TOKEN`); the wrapper then leaves `jira` alone.
-
 ## Clone a repository
 
 Open **"Add"** in the **Repositories** section of the left pane and pick **Git** under **Kind**.
@@ -264,11 +152,11 @@ depending on state and location.
 - **Open commit graph** / **Open the folder** / **Commit changes**
 - **Switch branch** / **Copy the branch name** / **Fast-Forward** (on a worktree, **"Fast-forward from origin/develop"** or similar)
 - **Initialize Git Flow** (a git repository's base copy only); see [below](#initialize-git-flow)
-- **Project settings**: the MCP definitions committed in that repository, with per-agent status and warnings ([12](12-settings.md#mcp-servers))
-- **Share…**: share this working copy's (project's) sessions with another member ([02](02-sessions.md#sharing-a-conversation-shared-sessions))
-- **Assignment to a working set** ([02](02-sessions.md#narrowing-the-view-with-working-sets))
+- **Project settings**: the MCP definitions committed in that repository, with per-agent status and warnings ([20](20-settings.md#mcp-servers))
+- **Share…**: share this working copy's (project's) sessions with another member ([12](12-collaboration.md#sharing-a-conversation-shared-sessions))
+- **Assignment to a working set** ([11](11-many-sessions.md#narrowing-the-view-with-working-sets))
 - Per-kind session launch: claude, codex, opencode, shell, and so on
-- **Stop the sessions below**: stops every session running in that copy and in the copies nested under it, from one modal ([02](02-sessions.md#stopping-and-tidying-up-sessions))
+- **Stop the sessions below**: stops every session running in that copy and in the copies nested under it, from one modal ([05](05-stopping-and-tidying.md#stopping-and-tidying-up-sessions))
 - **Delete the working copy** (only for working copies that can be deleted)
 
 ### Initialize Git Flow
@@ -334,14 +222,6 @@ Diffs can be folded per file, and you can adjust how they are shown with "Expand
 "Collapse all", and "Wrap". Right-clicking a commit on the graph offers "Show details",
 "Switch branch", "New branch from this commit…", and more.
 
-## Deleting a working copy
-
-When you no longer need a working copy, use **"Delete the working copy"** from the repository
-row's right-click menu. Only the local working copy is removed; history and the remote remain.
-A copy with uncommitted or unmerged work is not ticked for you, so ticking it is the "delete it
-anyway" confirmation. If sessions are still running in it, the dialog offers to stop them first
-rather than turning you away ([02](02-sessions.md#clearing-one-finished-job-deleting-a-working-copy)).
-
 ## Push and authentication
 
 Push works as a normal git operation (`git push` from a terminal or an agent). If you are
@@ -350,120 +230,6 @@ Bitbucket tokens are refreshed automatically even after they expire.
 
 > Uncommitted changes and unpushed branches exist **only inside the workspace**.
 > Push work you want to keep frequently ([01 First day](01-first-day.md)).
-
-## Running database-backed tests
-
-Postgres is available inside the workspace without Docker or any external service. `af-db url`
-returns a connection URL for the current working copy's database, downloading, initialising, and
-starting the server on first call if needed (first use may take a few minutes). The server idle-stops
-after 30 minutes of no connections.
-
-```bash
-# Export DATABASE_URL into the current shell
-eval "$(af-db env)"
-go test -count=1 ./...
-
-# Or pass the URL under your project's own variable name
-MY_DB_URL="$(af-db url)" go test -count=1 ./...
-```
-
-Check what is running with `af-db status`. When you are done, stop the server:
-
-```bash
-af-db down
-```
-
-Stop it before a memory-intensive build: the server holds ≈ 47 MB of the workspace's memory
-quota, and a heavy JVM build next to it can exhaust it.
-
-A few things worth knowing:
-
-- **One database per working copy.** Two sessions that share the same working copy share the same
-  database. To address a named database explicitly, use `af-db url --db=<name>`.
-- **`af-db url --tcp`**: use when the test driver requires TCP (for example,
-  `jdbc:postgresql://127.0.0.1:…`). The default URL uses a unix socket, which most Go and Python
-  clients support but JDBC cannot.
-- **Your data survives a Stop → Start.** The database files live in your home
-  (`~/.local/state/af-db`), which is workspace state like anything else there. Only two things
-  delete them: `af-db down --purge`, and deleting a database from the Databases tab.
-- **`af-db up --durable`**: also flushes every commit to disk (`fsync`). The default trades that
-  for speed, which is the right trade for test data: a crash of the workspace can lose the last
-  few transactions, but a normal stop never does. (`--persist` is the old name for this flag and
-  still works.)
-- **`af-db up --ephemeral`**: the opposite: put the files on the task-local disk, which is
-  faster and is **wiped when the workspace stops**. Use it when you know the contents are a
-  fixture. Where the deployment has no task-local disk, it says so and uses your home.
-- **`psql` and `mysql` are on PATH, and connect with no arguments.** Starting an engine
-  installs its client and puts it there (`psql` is a separate download; `mysql` ships with the
-  server). A session launched afterwards carries `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` /
-  `PGDATABASE` and `MYSQL_UNIX_PORT` / `MYSQL_PWD`, so `psql` opens this working copy's database
-  and `mysql <name>` opens a MySQL one.
-- **The port is stable**: 5432 for Postgres and 3306 for MySQL, the numbers your framework already
-  defaults to. It only moves if something else in the container holds it when the server starts,
-  and the server keeps whatever it got across later restarts, so a connection string in the
-  application you are developing keeps working. `af-db status` always shows the live number.
-- **`af-db connect [engine] [--db=NAME]`** opens the client on a database whatever your shell
-  already has in it; it resolves the socket, password and user itself, and starts the engine
-  first if it is not running. Use it in a shell you opened before the server was up.
-
-### MySQL
-
-MySQL 8.4 is also available. Start it the same way:
-
-```bash
-af-db up mysql
-eval "$(af-db env)"
-```
-
-`eval "$(af-db env mysql)"` exports `AF_DB_URL_MYSQL` (and `DATABASE_URL`) into the shell that asked;
-nothing sets it for you. Pass the connection in the form your driver expects with
-`af-db url mysql --format=go-dsn` (for `go-sql-driver/mysql`).
-
-Things to know about MySQL specifically:
-
-- **Memory: ≈ 226 MB resident** (MySQL holds an InnoDB buffer pool even at idle). Stop it
-  before a JVM build or another memory-intensive task (the workspace's cgroup is shared with
-  all sessions): `af-db down mysql`.
-- **arm64 install downloads 909 MB.** The full tarball is required on arm64 (there is no
-  `minimal` build for that architecture). The installer keeps only what af-db needs and strips
-  the debug sections, so **the installed tree is ≈ 147 MB**, smaller than x86_64's. Measured
-  end to end: about 30 seconds.
-- **x86_64 install downloads ≈ 63 MB** (the `minimal` tarball, ≈ 446 MB installed).
-- The memory guard refuses `af-db up mysql` when the workspace's cgroup limit is below 1 GiB
-  and says so; run `af-db down postgres` first if Postgres is running.
-
-### Console Databases tab
-
-The workspace settings **Databases** tab shows every engine's version, resident size
-(MB), port, connection URL and state, and lets you start and stop an engine, and create, delete or reset a
-database, without opening a terminal.
-
-- **Start** on an uninstalled engine downloads and installs it first, then starts it. The card
-  polls automatically while the state is `installing` or `starting`.
-- **Stop** has a "Stop and remove data" option (`--purge`): use it to free the datadir space. It
-  takes **every database on that engine** with it, other working copies' included, and any
-  shared one made with `--db=`. To start one over, use **Reset** on its row instead.
-- **Start with the workspace** keeps that engine running: tick it and the Agent starts the engine
-  whenever the workspace starts, with no terminal and no button. It only appears for an engine
-  that has been started at least once, so booting never downloads a server. Off by default:
-  a database costs memory even when nothing is querying it.
-- **Connect** opens a Shell session in your home and starts `psql` / `mysql` on that row's
-  database (`af-db connect`). Quitting the client leaves you in the shell.
-- **Create** makes a database with the name you type (same as `af-db create --db=<name>`). Use it
-  for anything that is not one working copy's database: a scratch schema, a second database for
-  one project, one shared between sessions. Names are lower-case letters, digits and `_`, not
-  starting with a digit; the button stays disabled with the reason shown until the name is usable.
-- **Delete** removes one database and everything in it (same as `af-db drop --db=<name>`), after a
-  confirmation that names it. Anything still connected to that database is disconnected.
-- **Reset** empties one database: it is dropped and recreated (same as `af-db reset`). A
-  confirmation is shown before anything is deleted.
-- **One row per database**, with the working copy it belongs to; Copy hands you the URL of
-  *that* database. When there is none yet, create one here or run `af-db url` in a working copy.
-- The **socket / TCP toggle** on the URL lets you copy whichever form your driver needs.
-- Any error from the last operation is shown inline under the engine row.
-
-The tab becomes active once the workspace is running; when the workspace is stopped it shows
-a placeholder and makes no API calls.
 
 ## Subversion (SVN) repositories
 

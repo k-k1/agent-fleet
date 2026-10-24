@@ -61,7 +61,7 @@ and its sub-folders (empty ones too) and Unicode names intact.
 
 To add files, **upload by drag & drop** or create them via "New file" in the right-click menu.
 If a file with the same name exists, an overwrite confirmation is shown. **Ctrl+click** (or
-middle-click) a file to **open it in a new pane** while keeping the current view ([05](05-terminal.md)).
+middle-click) a file to **open it in a new pane** while keeping the current view ([08](08-terminal.md)).
 
 The tree is **refreshed automatically**, so there is normally no need to refresh by hand:
 
@@ -92,7 +92,7 @@ name, format, size, and line count.
 
 - **Syntax highlighting, line numbers, minimap**: code is highlighted with language detection. Toggle line numbers and the minimap under "File viewer" in ⚙Settings → the "Display" tab.
 - **Huge files**: files that are extremely large or have extremely long lines automatically switch to "Plain view" (no highlighting or line numbers).
-- **LFS pointers**: files whose Git LFS content has not been fetched show an "LFS pointer" badge. Enter the repository in a terminal and run `git lfs pull` to fetch the content ([03](03-code.md)).
+- **LFS pointers**: files whose Git LFS content has not been fetched show an "LFS pointer" badge. Enter the repository in a terminal and run `git lfs pull` to fetch the content ([06](06-code.md)).
 
 ### Markdown and Mermaid
 
@@ -116,7 +116,7 @@ assistant chat, the document viewer), it turns these into links:
   text in a Managed session, in the chat and in the document viewer.
 - **Ticket numbers** (`#956`, `owner/name#956`, a Jira key, and both ends of a range such as
   `#573-#598`) open the ticket's details, by the rules in
-  [02 Sessions](02-sessions.md#from-a-ticket-number-in-the-conversation). In a file's preview a
+  [03 Starting sessions](03-starting-sessions.md#from-a-ticket-number-in-the-conversation). In a file's preview a
   `#956` is read against the working copy the file is in: only for a file under `~/repos/<name>/`
   whose origin is on github.com or bitbucket.org. A file in a Git repository nested inside the
   copy (a submodule, a vendored clone) or outside `~/repos` gets no ticket links at all, and the
@@ -179,312 +179,6 @@ the original from **Download** in the info bar.
 - When it cannot be shown, **you are told why**: password-protected, corrupt, **pages that are
   images only** (reading the text would need OCR, which is not done here), or too large (over 40 MB).
 
-## Image gallery
-
-A pane that lays the images in a folder out as cards, so you can compare them without opening one
-at a time and see at a glance what a folder actually holds.
-
-**Six ways in**, each of them one item in a menu that is already there:
-
-- **Right-click a folder** in the file tree → "Open in gallery"
-- **Right-click an image file** in the file tree → "Open in gallery" (its parent folder opens with
-  that image enlarged)
-- **Right-click any other file** → "Open folder in gallery" (its parent folder, no image focused)
-- **"Gallery"** in the image viewer's header
-- **"Open folder"** in the enlarged view of a shared-file card in the mirror
-- **"Generated images (N)"** in a session's context menu (below)
-
-A plain click uses the current pane; Ctrl/⌘-click and middle-click open another one. A phone has no
-"beside", so it opens in place.
-
-**What you see, and what you can do**
-
-- **Sort**: "Newest" or "By name". The choice is remembered per pane, so moving between tabs does
-  not reset it. When the workspace's Agent is old enough not to send modification times, the
-  gallery falls back to name order and shows no relative time ("3 minutes ago") either.
-- **Count and size**: the header carries the totals for the whole folder. A big folder stops at
-  **300 images**, with "Show more" for the rest (each card is one thumbnail request).
-- **A folder you have already seen opens at once**: the gallery remembers how each folder it
-  has walked through looked, so coming back draws those cards immediately instead of waiting.
-  **Your scroll position and anything you expanded with "Show more" come back with them**, so a
-  folder you were halfway through carries on where you left it. It re-reads the folder behind
-  that, and says "updating…" beside the count while it does; anything that really did arrive
-  since appears afterwards with the usual highlight. If the folder itself is gone, you get an
-  error rather than the contents it remembered.
-- **Loading**: the first time you open a folder, while nothing has arrived yet, the pane shows a
-  loading state (it never sits there showing only "Up"). Thumbnails are requested for the cards
-  nearest the screen first, so opening a big folder does not fetch everything at once, and
-  scrolling ahead does not get stuck behind pictures you have already scrolled past.
-- **Folders**: subfolders are cards too, and each one shows **the newest picture inside it as
-  a cover** (the folder mark becomes a small badge over the picture), with **how many pictures
-  are in it** underneath. A folder named by a session's UUID is no longer a guess. Opening one
-  moves this pane into it. The first card,
-  "Up", goes back to the parent, and the **breadcrumb** in the row under the header
-  (`.cache / agent-fleet / generated`) jumps to any level. Ctrl/⌘-click and middle-click open the
-  folder in another pane.
-- **An always-on "Up", and the browser's Back button**: that breadcrumb row also has a
-  **permanent "Up" button** (disabled at the root), so a long folder whose "Up" card has scrolled
-  off screen is still one click from its parent. Folder navigation is retraced by the browser's
-  own **Back button** too: however you got somewhere ("Up", the breadcrumb, or a card), the same
-  number of Back presses gets you the same distance back.
-- **Include subfolders**: the button at the end of the breadcrumb row lists **every picture up to
-  three levels down** in one grid, newest first; each card's name shows the subfolder it is in.
-  The walk is bounded, so in a very large tree you get the newest ones and the header says
-  "newest N only". It switches itself off when you move to another folder.
-- **Cards**: click the card to **enlarge** (← / → move through the folder, and "3 / 12" tells you
-  where you are; **on a phone, swipe left and right** to move, only at fit, because while you are
-  zoomed in a drag pans the picture); the button in the corner **opens it in the file pane**. Just
-  looking never costs you a pane. **Right-click a card** (or press the Menu key) for **send to a
-  session / assistant**, copy path / copy name, rename and delete (on a folder, also "Open in another pane") and, in a session's
-  folder, a jump to the session that generated the pictures
-  ([menus](badges-and-menus.md#cards-in-the-image-gallery)).
-- **Refresh**: on open, on returning to the tab, and every 20 seconds while a session is running.
-  New arrivals get the same highlight as the file tree, so you see a generation land. "Refresh" in
-  the header re-reads at any time.
-- Cards show a **downscaled copy**, requested at your screen's own pixel density: a sharp
-  display gets a sharper thumbnail, a plain one is not sent pixels it cannot show. When you
-  enlarge, that downscaled copy is what you see first (slightly blurred) and it sharpens when
-  **a copy sized to your screen** arrives. That copy is re-made from the original pixels; for a
-  generated picture it is roughly 120 KB against 1.1 MB, so it looks the same and only the wait
-  shrinks. The neighbouring picture is fetched ahead, so ← / → do not wait.
-  **When you need the real file** (to save it, or to inspect detail at full size), open it in the
-  file pane with the button in the card's corner, or download it; those are still the original.
-
-**Images a session generated**
-
-Images made with `generate_image` stay in a per-session folder for 30 days. That folder is named
-after the session's internal id, so the file tree is no way in. **"Generated images (N)" in the
-session's context menu** is the way, and it appears **only for sessions that have generated
-something** (N is how many). It is absent while the workspace is stopped, because reading the images is
-the Agent's job, and the Agent lives in the workspace.
-
-To see **all of them at once**, an **"Open generated images"** button opens the parent folder from
-four places: the **minimap's button row**, the leader key **`g g`** (and the command palette), the
-**Files** section header in the left pane, and the **image-generation pane's header**. It opens on
-a page of cards: one folder per session, plus the image-generation pane's output (`console`). A session's
-folder is labelled with **the session's name and its image count**, not its internal id. Inside
-such a folder the breadcrumb row carries a button with that session's name, and pressing it opens
-the conversation the pictures came from (it is absent once the session is gone).
-
-## Image generation
-
-A pane that makes pictures on your organisation's own ComfyUI **without an agent in the loop**.
-Asking a session for a picture is right for "put an illustration in this document"; this is for
-"forty variations of one prompt at three CFG values", where every round trip through a model
-would cost a turn. A session can name the same settings you can (`generate_image` takes steps,
-cfg, sampler, scheduler, clip skip, guidance, shift, seed, the negative prompt and the LoRA
-weights); what it leaves out runs
-at the checkpoint's own published values, and a setting its family does not read is named in the
-result's warnings rather than dropped in silence. What a session cannot see is what this form shows
-you: each checkpoint's own published numbers as the placeholders, the fields its family does not
-read greyed out, and a trial run before you commit forty. Three fields appear only for the family
-that reads them: **clip skip** for SD1.5 and SDXL (SDXL already runs at 2, so only 3 and up change
-its picture), **guidance** for FLUX.1 (what its model cards call CFG; 3.5 to 5), and **shift** for
-Anima (3 by default; 14 to 24 steadies the composition of a large picture).
-
-**Two ways in:** the workspace action bar's **Images**, and the leader key **`g i`**. Opening it
-again focuses the pane you have. The pane always has a **studio** open: the one this browser
-opened last, else the one changed most recently on any device; only when you have no studio at all
-is a new, empty one made. The draft is saved in the workspace, so what you started on a PC carries on
-from your phone. To refine the draft in conversation with an agent, attach one to that studio
-([below](#studio-refine-the-draft-by-talking-to-an-agent)).
-
-**Before you generate**
-
-- **Model**: the checkpoints your administrator has enabled, under **the name their publisher
-  gave them** ("unsloth/Qwen-Image-GGUF Q8_0", enough to tell two sizes of one model apart).
-  One whose source page your administrator has not read yet appears under its internal id instead.
-  A dot marks one that is already
-  loaded on the engine; anything else means the first picture waits for the engine to start.
-  The header says which of the four states you are in: **ready**, **the engine is asleep**
-  (with roughly how long the first picture will take), **the engine is starting**, or **no
-  engine available**.
-- **The family card**: under the model, one line per thing that family expects: whether it
-  wants a tag list, sentences, or both (Anima takes both: tags for the subject, a sentence or two
-  for composition and positions, which controls it more finely), the prefix that dialect usually opens with (offered as a chip;
-  nothing is ever written into your prompt on its own), whether a negative prompt reaches it
-  at all, and the step and cfg ranges worth staying inside. The families the catalogue knows
-  run from SD 1.5 and SDXL to FLUX, Anima and Krea 2, the instruction-edit models Qwen-Image-Edit
-  (2509 and 2511) and Qwen-Image 2.1, and **the default size follows the family**:
-  SD 1.5 starts at 512 rather than the megapixel square the others share, because asking it
-  for more gives you a doubled subject, not an error.
-- **Fields a family does not read are disabled, with the reason on them.** `flux1` and
-  `flux2-klein` ignore cfg; the distilled families (and a checkpoint of a guided family that
-  runs at cfg 1) ignore the negative prompt. That comes from the workspace, not from a table in
-  the browser, so it cannot disagree with what actually runs.
-- **The administrator's negative** shows as a chip you cannot remove, next to the deployment-wide
-  one. It is applied on top of yours rather than mixed into your text.
-- **LoRAs**: only the ones that match the model's family are listed. Each row shows the
-  **trigger words** it would bring, so you can choose between two adapters before ticking
-  either; ticking one turns those words into chips over the prompt, and unticking it removes
-  those chips and nothing else. A missing trigger is the usual reason a LoRA "does nothing",
-  and if you generate without one, the result says so in as many words. The weight starts at
-  the strength the adapter's author published, or 1 when the catalogue has none.
-
-**Trial run, then the batch**
-
-- **Trial run (`Ctrl+Enter`)** puts **one** picture at the **head** of the queue, at fewer steps,
-  into `generated/console/trial/`. It appears in "Latest trial" beside the form with its seed and
-  how long it took. **"Use this seed"** pins it, which is the whole point of trying before a
-  sweep. Tick **Full steps** when the trial is meant to be the picture. Trial pictures are swept
-  after 7 days.
-- **Enqueue N (`Ctrl+Shift+Enter`)** puts N jobs (one picture each) at the tail as one group.
-  The seed follows your choice: **random each time**, **fixed** (the knob for "same picture, vary
-  the cfg"), or a **sequence**.
-- `batch_size` under **Advanced** is a different thing: pictures sampled together inside one job.
-  Faster on a card with headroom, an out-of-memory after a five-minute wait on one without, and
-  no per-picture cancel. It stays at 1 unless you know the card.
-- **Operation** under Advanced switches **Generate** to **Edit** or **Inpaint**. An edit takes
-  **reference images** (a path in the workspace, or a file dropped onto the field) and a slider,
-  **"How much of the input to change"**, from 0 to 1; the size fields step aside, because on an
-  edit the input's own dimensions win. **Inpaint** adds a **"Mask (white is repainted)"** field
-  that takes one file the same way (a path, or a file dropped onto it); until a mask is set,
-  neither the trial nor the batch can be sent: **"Inpaint needs a mask image"**.
-- **How many reference pictures you may add depends on the model.** The field's heading counts
-  them ("2 of 2"), and at the ceiling the add field itself goes away. The instruction-edit models
-  (the kind you ask in words, "change the sign to CLOSED") read **three**: the **first is the
-  picture being redrawn** and the **rest are things to bring into it** ("put the plant from
-  picture 2 and the duck from picture 3 on the table"). Every other model reads one. On a model with no slider, how much changes is decided by the instruction itself.
-  These models offer **Edit** and **Inpaint** only (there is no Generate, since they cannot work
-  without a picture), so choosing one while the operation is set to Generate switches it and says
-  so (**"… does not support the previous operation — switched to Edit"**). The whole picture is
-  edited (scaled to the model's size, never cropped), and a mask of another size is
-  stretched over it, so it marks the same region either way. An edited picture's
-  properties record the prompt, the negative and the size, as a generated one's do. **Qwen-Image 2.1** does both:
-  it generates from a prompt alone, with the size fields, and edits by instruction with up to
-  **ten** reference pictures.
-
-**While it runs**
-
-A group is one row: "12 / 40", a bar (done, failed, and the picture in flight filling by time
-against the usual duration; it stops short of the end rather than claiming a completion nobody
-has seen), and roughly how long is left. **Pause**, **resume**, **skip the current picture** and
-**abort** all act on the group; the ✕ on a line cancels that one picture. Pausing everything
-still lets trials through; that is what pausing is for. A batch left paused long enough lets the
-engine go to sleep, and the row says so. The row also names the phase the current picture is in:
-**starting the engine**, **uploading**, **sampling**, **fetching**, with its own seconds, and a
-picture that had to wait for the engine to start still gets its full time to sample afterwards.
-
-The pane polls only while something is unfinished, and stops while the tab is in the background.
-
-**Where the pictures go, and getting the numbers back**
-
-The default folder is `generated/console/`, which the gallery lists like any other and which is
-**never swept**, since you pressed the button for each of these. **Output folder** under Advanced puts
-a run somewhere of your own naming. Every picture is written with a small record beside it, so
-enlarging one anywhere in the Console (this pane, the gallery, a shared file in the mirror) and
-pressing **Properties** shows the model, seed, size, steps, cfg, sampler, scheduler (and clip
-skip, guidance or shift where set), LoRAs and
-both prompts, each row with a copy button, plus **copy all as JSON** and **open in image
-generation**, which loads the fields back into the form. Pictures made by an agent before this
-existed can still be read: the graph ComfyUI embeds in the PNG carries the same numbers. Pictures
-from the vendor routes (codex, agy) carry nothing, and the panel says that rather than showing
-empty rows.
-
-### Studio — refine the draft by talking to an agent
-
-The form above makes pictures on its own. A **studio** is the way to refine what is in that form
-(the **draft**) in conversation with a session's agent. Say "read `docs/chars/aoi.md` and put
-her in a harbour at dusk", then "darker", and the agent reads the material and rewrites the draft.
-**A person always presses the generate buttons**, and pressing runs the same queue as above; the
-agent never paints a batch on its own.
-
-**Attaching an agent**
-
-- Pressing **Attach an agent** starts one session and binds it to this studio. Merely opening the
-  pane creates no session. If the session fails to start, the studio and its draft stay, unbound.
-- **Choose a model first.** Prompts are written differently per model (SDXL-family, anima and
-  Qwen-Image prompts are built differently), so the button stays disabled until one is chosen. Clear
-  the model after attaching and the conversation's input is held until you choose again; switch to
-  another model and the agent rewrites the prompt for it.
-- You choose what you choose when starting any session: agent, model, effort, execution method,
-  repository, subfolder, worktree, and permission prompts. **There is no prompt field**: the
-  first turn is the studio's description of the agent's role. Until it arrives the pane says it
-  is sending it, and it offers **Resend** only when sending failed or could not be confirmed.
-- **Execution method**: Managed and Terminal (CLI) both work. claude is Terminal (CLI) only (it
-  has no Managed mode). **opencode cannot be attached as Managed** (sessions share one af
-  connection there, so a write cannot be traced to the session that made it; Terminal (CLI) is
-  fine). copilot, cursor and kiro are Terminal (CLI) only for now. muse, which only runs as
-  Managed, cannot be attached yet.
-- **Worktree is On by default**, so the agent can tell for certain which studio's session it is.
-  Only Terminal (CLI) and lcpp let you turn it off. From inside a worktree the agent **cannot see
-  uncommitted material** in your original working copy; commit what you want it to read.
-- **Switch agent** rebinds the studio to a new session at any time (sonnet to opus, claude to
-  codex). The draft, the edit history and the versions belong to the studio and stay. Opening a
-  studio's session opens this pane, not the mirror.
-
-**The draft changes as you talk**
-
-- The left column is the conversation (the same view as the mirror), the middle one the draft,
-  the right one results and history. A narrow pane folds them into **Chat / Settings /
-  Results** tabs.
-- **On a phone**, while you type the head, tabs and suggestions step aside and the draft bar (the
-  draft's first line and **Trial**) stays above the keyboard. "N pictures are ready" stays under
-  the tabs until you look at the results or close it.
-- The agent can rewrite the prompt, the negative, steps / cfg / sampler / scheduler, the size,
-  the LoRAs, the operation, the reference images and "how much to change the original". A field
-  it moved stays outlined until you edit that field or press trial or enqueue.
-- **Model, seed, count, output folder, label and mask image are yours alone.** Switching the
-  model switches the family, and with it which fields are read, the sizes, and how long the first
-  picture waits.
-- **Locks (🔒)**: per field. A write to a locked field is dropped for that field only and the
-  agent is told why. Nothing locks itself.
-- A message you send from the conversation carries one short trailing cue that tells the agent
-  "the draft changed, there are new results". The conversation view does not show it.
-
-**People press trial and enqueue**
-
-- The agent can only **trial**, and only **the draft exactly as it is on screen, one picture**;
-  it has no way to pass anything of its own. The studio setting **Allow the agent to trial**
-  (On by default) turns that off. The switch applies from the agent's next trial, in a session
-  that is already running too; while it is off, the agent is told you have to turn it on.
-- **Enqueueing N pictures is yours alone.**
-- **`generate_image` is not available to a studio's session** (the agent does not see it, and a
-  call is refused), so this pane is the one road to a picture. A CLI's own built-in image tool
-  (codex's, for instance) is outside that limit.
-
-**Edit history, rewind and versions**
-
-- **Edit history**: one entry each time the draft changes: the time, who wrote it (the agent,
-  you, or a rewind), and each changed field before and after. **Restore this point** is on the
-  middle column's **Edit history** and on the "Draft updated" cards in the conversation. Nothing
-  is deleted; the restore is itself an entry. Being your action, it restores every field
-  including locked ones, and leaves the locks as they are.
-- **Versions**: a copy of the draft at the moment someone pressed trial, enqueue, or the
-  agent's trial. What you want to compare is "what was pressed", so editing alone makes no
-  version, and pressing twice without editing makes two.
-
-**Picture history and "Restore these settings"**
-
-- The right column's **History** lists the studio's pictures, newest first. Each picture
-  remembers the version it came from, and that survives a Workspace restart.
-- **Restore these settings** puts back the draft that picture was made from (an edit-history entry,
-  like any rewind). **Use as reference** places it as the next edit's reference image.
-- You can have as many studios as you like and switch between them at the top of the pane. Its
-  **+ New studio** (in the command palette, "New image studio") opens an empty studio in a pane
-  beside this one, leaving the current studio as it is (on a phone it opens in the current pane
-  instead of splitting the screen; switch back here). A studio you have not named is listed by
-  when it was made ("Studio 9/27 14:05"); rename it from the gear menu. Deleting a studio deletes
-  its draft, edit history and versions; **the pictures stay**.
-- The results and the trial slot show **the jobs pressed in this studio** only. The queue is one
-  per workspace, so other studios' and sessions' jobs are folded under "jobs from other studios
-  and sessions"; that is where you see why your own batch has not started yet.
-- **Open in image generation** in a picture's properties creates a new studio from that picture's
-  settings and opens it.
-
-**Knowledge notes**
-
-- There is one note per model and one per family, grown by the agent and you together. They live
-  in **`~/imagegen-knowledge/`** as `families/<family>.md` and `models/<model>.md`, each in four
-  sections: **Summary** (short; the agent reads it every time), **Settings**, **Prompts** and
-  **Records** (append-only).
-- The agent writes only when told to remember something, or when it judges a result good or bad,
-  and only to the document of the model the studio has chosen or of that model's family.
-  **Deleting is yours.**
-- They are ordinary files, so you can open and edit them from the file tree, and being outside
-  `~/repos` they survive a Recreate. On a deployment whose file tree does not show the whole home
-  folder they do not appear there; edit all four sections in the pane's **Notes** instead.
-
 ## Editing a file
 
 Switch to editing with **View / Edit / Split** at the top of the viewer and you can fix the file
@@ -513,7 +207,7 @@ and the preview side by side).
 when nothing is selected). Write the instruction, generate with **Ctrl+Enter**, review the diff
 and choose **Apply** or **Reject**; nothing is rewritten on its own (if the text moved on after
 generation, it tells you to regenerate). The tokens it spends are recorded in ⚙ Settings → Agent usage
-as **"Edit suggestions (editor)"** ([12](12-settings.md#agent-usage)).
+as **"Edit suggestions (editor)"** ([20](20-settings.md#agent-usage)).
 
 ## Send a file to a session / chat
 
@@ -526,4 +220,4 @@ selecting a range). This action is not in the file's right-click menu.
 - The file is **passed by path**, and the session reads and writes it itself. This suits work that produces file output, such as translating a large file.
 
 You can also tag items with a "Category" and pile them up in the **memo queue** to send in a
-batch later ([07 Chat and memos](07-chat-memo.md)).
+batch later ([10 Chat and memos](10-chat-memo.md)).

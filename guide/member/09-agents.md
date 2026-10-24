@@ -49,20 +49,20 @@ process, which makes them well suited to parallel work; copilot / cursor / kiro 
 per-session process even when Managed). Pick **Terminal (CLI)** only when you need the
 CLI's own black screen. lcpp and muse run Managed only, so there is no Terminal (CLI) to pick;
 lcpp needs no per-session process either, while muse runs one per session. For details, see
-[02 Sessions](02-sessions.md#execution-method-managed-and-terminal-cli).
+[03 Starting sessions](03-starting-sessions.md#execution-method-managed-and-terminal-cli).
 The Managed chat view is separate from the assistant chat in the left pane, which doesn't use a repository.
 
 You can confirm a connection succeeded on each card in ⚙Settings → the "Agents" tab.
 It shows **"Connected"**, and for claude / codex also the signed-in account (email) and
 plan. Once one agent is connected, it appears among the session types when you launch a
-new session ([02](02-sessions.md)).
+new session ([03](03-starting-sessions.md)).
 
 > **A note on autonomous execution.** Agents run commands, edit files, and push on your
 > behalf, including unattended (scheduled runs) and, in permission-bypassing modes,
 > without asking each time. shell / SSM sessions run the string you send **verbatim**.
 > These actions can be destructive or irreversible. Keep backups, use least-privilege
 > credentials, and lean on the approval gates (shell-command confirmation, chat-bridge
-> approve / deny). See also [08 Fleet operator](08-organising.md).
+> approve / deny). See also [11 Running many sessions](11-many-sessions.md).
 
 **shell** is a raw shell and **ssm** is a remote login over AWS SSM; both are terminal-only
 with no conversation, state model, or notifications. A muse session asks for no tool
@@ -133,7 +133,7 @@ Claude's behavior can be adjusted on the same screen.
 
 > **If "Select login method" or a login screen shows up**, it's almost always a
 > transient session-side state, and the connection itself is still alive. For the fix, see
-> [11 Troubleshooting](11-troubleshooting.md). The traditional approach of running
+> [21 Troubleshooting](21-troubleshooting.md). The traditional approach of running
 > `/login` manually inside the terminal also still works.
 
 ## Codex
@@ -234,7 +234,7 @@ a bad API key) end the turn as **failed** with the provider's message, and the b
 "The provider returned an error that retrying cannot fix, so the turn was stopped: …" until your
 next input. For a "requires Global regions" message, change the privacy / region setting of the
 provider account (for opencode Go, the workspace's Privacy settings on opencode.ai); for quota or
-billing, top up the account; for a key, replace it on the agent's card ([11](11-troubleshooting.md)).
+billing, top up the account; for a key, replace it on the agent's card ([21](21-troubleshooting.md)).
 
 ### How opencode 2 differs
 
@@ -320,7 +320,7 @@ card says "Not available on this host (…)" and agy is not offered.
   idle. That background work keeps the Workspace awake for at most 2 hours by default (the
   deployment can change the bound); after that the Workspace can stop as idle while the command
   still runs. For a longer build, use **Keep awake**
-  ([09](09-collaboration.md#keeping-a-session-awake)). A turn that agy never closes (the CLI died
+  ([05](05-stopping-and-tidying.md#keeping-a-session-awake)). A turn that agy never closes (the CLI died
   mid-turn) stops reading Working after an hour with no change, unless one of its commands is
   still running.
 - **Agent Fleet adds a hook entry to agy's configuration.** To know which conversation a session
@@ -330,7 +330,7 @@ card says "Not available on this host (…)" and agy is not offered.
   conversation database instead. Each launch also marks the working folder as trusted, so agy
   does not stop on its trust prompt, and keeps agy's telemetry setting off.
 - **Image generation.** "Antigravity (agy)" is one of the image routes a session can use
-  ([02](02-sessions.md#having-a-session-generate-an-image)). It goes through agy's own
+  ([13](13-images.md#having-a-session-generate-an-image)). It goes through agy's own
   image-generator subagent and makes one picture per call. An edit takes up to 3 reference
   images (the Codex route takes 5); they are copied into the run's own folder, and that folder
   is the only place the run may read. When the signed-in account is not offered image
@@ -361,7 +361,7 @@ with across a stop and start. See [Agents reference](../ref/agents.md) for the d
 In a running muse session the **`/`** button beside the input lists the session's own skills:
 Muse Code's bundled ones, plugin skills, yours under `~/.config/muse/skills`, and the working
 copy's `.agents/skills/`. Picking one runs it
-([07](07-chat-memo.md#calling-a-skill-or-a-command)).
+([04](04-conversation.md#calling-a-skill-or-a-command)).
 
 When a usage limit stops a muse turn, the row shows "Waiting for limit reset" with the time,
 and the session resumes by itself once the limit resets, as claude does.
@@ -455,7 +455,7 @@ Instructions come in three layers, and this setting is the **middle** one.
 - While Agent memory is on, Agent Fleet also writes a short fixed note on its memory tools into the same
   instruction file, beside your text (copilot and Kiro get a file of their own; lcpp gets it in the system
   prompt). It never contains memories, and turning Agent memory off removes it without touching your text
-  ([14 Agent memory](14-agent-memory.md#settings)).
+  ([18 Agent memory](18-agent-memory.md#settings)).
 
 ## Bringing your personal Claude Code setup
 
