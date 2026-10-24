@@ -137,7 +137,7 @@ notifications.
 
 ## Moving a session to another agent
 
-A move ([02 Sessions](../member/02-sessions.md#moving-a-session-to-another-agent-move))
+A move ([05 Stopping and tidying up](../member/05-stopping-and-tidying.md#moving-a-session-to-another-agent-move))
 has two sides, and a kind can be on one without the other.
 
 | Kind | As the source | As the target |
@@ -165,7 +165,7 @@ has two sides, and a kind can be on one without the other.
 ## Each agent's own memory
 
 What the switch **"Let sessions use Agent Fleet memory"**
-([14 Agent memory](../member/14-agent-memory.md#settings)) does to the memory a kind keeps by itself.
+([18 Agent memory](../member/18-agent-memory.md#settings)) does to the memory a kind keeps by itself.
 
 | Kind | While the switch is on | Carried into Agent Fleet memory | Written back when it goes off |
 |---|---|---|---|

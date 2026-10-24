@@ -66,7 +66,7 @@ person can use each role right now (either place edits the same setting).
 
 **Tenant settings → Limit board** decides whether the tenant's members may publish their
 usage-limit state to each other (ADR 0111). It is **on by default**, and even then every member
-is hidden until they choose to publish ([09 Working with others](../member/09-collaboration.md)).
+is hidden until they choose to publish ([12 Working with others](../member/12-collaboration.md)).
 Turn it off if your organisation does not want remaining quota shown at all: collection stops
 and the board is empty for everyone. The switch is recorded in the audit log.
 

@@ -220,7 +220,7 @@ account can mint any identity the Control Plane will vouch for. What stands in t
 - Deployment: `AF_DEV_IDP=1` and `PUBLIC_BASE_URL`; nothing else (no certificate, no DNS).
 - A deployment with several Control Plane replicas shares the key table; replicas refresh their view
   of it once a minute.
-- Guide: `guide/member/10-integrations.md` (both languages): Auth.js and Spring Boot setup, and the
+- Guide: `guide/member/14-preview-browser.md` (both languages): Auth.js and Spring Boot setup, and the
   production warning.
 
 ## Notes

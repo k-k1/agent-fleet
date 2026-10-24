@@ -33,7 +33,7 @@ with its own independent conversation and working folder.
 claude / codex / cursor / opencode / copilot / kiro / agy appear in "Start" once you connect the corresponding
 agent (connections: [09 Agents](09-agents.md)). lcpp and muse have no terminal of their own and always
 run Managed. (**ssm**, which logs in to another host, is
-covered in [14 Preview and browser](14-preview-browser.md).)
+covered in [16 Cloud accounts](16-cloud-accounts.md).)
 
 ## Execution method — Managed and Terminal (CLI)
 
@@ -74,7 +74,7 @@ never need to operate that keep-alive mechanism yourself.
   ([10 Chat and memos](10-chat-memo.md)).
 - **Launch an agent in a repository**: search for and pick a cloned repository, and you move
   straight on to **"Start working"** (agent, model, worktree, first prompt). This is the same
-  screen as "Launch" on a repository row (see below).
+  screen as "Launch" on a repository row ([06](06-code.md#launch-a-session-from-a-repository-row)).
 - **Clone a new repository…**: sits below the repository list. Clone by picking from a
   connection or entering a URL by hand; when it completes you continue straight into
   "Start working" (you can specify a new branch, and the worktree folder name is generated
@@ -258,7 +258,7 @@ Active sessions refresh automatically every 4 seconds.
 | Ready · running in background | Awaiting input, but something is still running behind the scenes |
 | Running | shell and the like (kinds with no working / awaiting-input distinction) |
 | Stopped | Not running (click to open and resume) |
-| Folder missing — can't resume | The working folder is gone and it can't be resumed (see below) |
+| Folder missing — can't resume | The working folder is gone and it can't be resumed ([05](05-stopping-and-tidying.md#when-you-can-and-cant-resume)) |
 | Ended (out of memory) | May have been force-terminated, e.g. by the memory limit |
 | Force-killed / Crashed | SIGKILL, a signal, a non-zero exit, etc. was detected |
 

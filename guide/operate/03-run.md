@@ -292,7 +292,7 @@ body on demand) is a second way to the same text; the other kinds have only the 
   their workspace, or it takes effect the next time a container is created.
 - A user's own additions do **not** belong in this layer. They go in each person's ⚙ Settings →
   Agent instructions, and fleet policy wins where the two conflict
-  ([member/06](../member/06-agents.md#agent-instructions-write-down-how-you-work-once)).
+  ([member/09](../member/09-agents.md#agent-instructions-write-down-how-you-work-once)).
 - **The always-loaded file's length is a per-session context cost.** Every agent reads it every
   time, so before adding to it, check that it is genuinely needed by everyone, every time; a
   topic file costs nothing until it is read. This layer cannot be delivered to cursor.
@@ -300,7 +300,7 @@ body on demand) is a second way to the same text; the other kinds have only the 
 ## opencode 2: Terminal sessions and the shared server
 
 With opencode 2, Terminal (CLI) sessions attach to the one opencode server the Workspace Agent
-runs ([member/06](../member/06-agents.md#opencode)). To force a private server per
+runs ([member/09](../member/09-agents.md#opencode)). To force a private server per
 Terminal session instead (about 150-250 MB more memory per session, measured idle), start the
 Workspace Agent with this in its environment:
 

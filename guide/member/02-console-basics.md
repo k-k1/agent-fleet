@@ -123,7 +123,7 @@ separately, so moving between them disturbs neither. On desktop split panes go u
 
 Each pane's content is independent. For claude / codex / cursor / copilot / kiro / agy / opencode running as Terminal (CLI),
 the **Chat ⇄ Terminal** toggle at the top switches between the conversation's Markdown view and
-the terminal view. Managed sessions use only the chat view ([10 Chat and memos](10-chat-memo.md)).
+the terminal view. Managed sessions use only the chat view ([04 Conversation](04-conversation.md)).
 
 ## Using it on a phone
 

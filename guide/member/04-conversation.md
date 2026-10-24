@@ -148,7 +148,7 @@ conversation yet.
   its place. While the session is stopped nothing is sent; the rows stay in the list.
 - **It is per session and temporary.** The list stays when you switch panes or sessions in the
   same page, and is cleared when you reload the page; it is never stored on the server. It sends
-  only while that session's chat is open. It is not the **Memo queue** below (saved, shared across
+  only while that session's chat is open. It is not the **Memo queue** ([10 Chat and memos](10-chat-memo.md#memo-queue); saved, shared across
   devices) and not the messages other sessions send to this one.
 
 ### Reusing something you sent earlier

@@ -121,7 +121,7 @@ updated: "2026-10"
 
 各ペインの内容は独立しています。ターミナル（CLI）実行の claude / codex / cursor / copilot / kiro / agy / opencode なら上部の
 **チャット ⇄ ターミナル**で会話の Markdown 表示と端末表示を切り替えられます。マネージド実行の
-セッションはチャット表示だけを使います（[10 チャットとメモ](10-chat-memo.ja.md)）。
+セッションはチャット表示だけを使います（[04 会話](04-conversation.ja.md)）。
 
 ## スマホでの操作
 

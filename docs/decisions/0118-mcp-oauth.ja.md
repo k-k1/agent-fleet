@@ -268,7 +268,7 @@ CI などのヘッドレスな呼び出しと、OAuth を持たないクライ�
   「MCP 経由: <名前>」のバッジを出し、Workspace の方針では `[agent-fleet:mcp …]` を peer メッセージと同じ権限・
   同じ 4 つの禁止事項で扱う。`[agent-fleet:` で始まる指示は拒否し、shell / ssm の宛先は peer メッセージと同様に
   拒否する（ADR 0041 決定 5）。封筒が示すのは接続であり、クライアント側の会話ではない（MCP 2026-07-28 には
-  セッション ID がない）。上記の決定は変えない。ガイド: `guide/member/10-integrations.ja.md`。
+  セッション ID がない）。上記の決定は変えない。ガイド: `guide/member/19-outside-access.ja.md`。
 
 - 2026-10-23, #2567: 信頼するクライアントの一覧を実行時に編集できるようにした。super admin が Admin モーダルで
   編集する（`GET`/`PUT`/`DELETE /api/admin/mcp-oauth/trusted-hosts`、CP の設定 `mcp_oauth_trusted_hosts`、配備全体）。

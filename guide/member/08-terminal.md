@@ -22,7 +22,7 @@ When the terminal has focus, **Ctrl+C with text selected copies it, and Ctrl+V p
 Cloud Shell. **With nothing selected, Ctrl+C is still the interrupt (SIGINT)**, so a running command
 can always be stopped. Copying with Ctrl+C clears the selection, and a selection that was already copied (auto-copy on release) does not count, so Ctrl+C right after a drag interrupts. If you would
 rather send both keys to the program (Ctrl+V as character input), turn off **Ctrl+C / Ctrl+V copy and
-paste** under Settings > Display > Terminal; the other shortcuts below keep working.
+paste** under Settings > Display > Terminal; the other [shortcuts](02-console-basics.md#shortcuts) keep working.
 
 - **Copy**: **left-drag to select, and it is copied automatically the moment you release**. From the keyboard: `Ctrl+Shift+C` (macOS: `⌘+Shift+C`; `⌘C` also works when there is a selection), `Ctrl+Insert`. A short "Copied" notice confirms a keyboard copy, and a notice appears if the browser refuses clipboard access.
 - **Paste**: **right-click** or **middle-click** to paste. From the keyboard: `Ctrl+Shift+V` (macOS: `⌘+Shift+V` / `⌘V`), `Shift+Insert`.

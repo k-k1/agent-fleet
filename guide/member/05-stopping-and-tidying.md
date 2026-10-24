@@ -182,7 +182,7 @@ before.
 When you open a stopped session, the history is first shown read-only, and **"Resume"** restarts
 the conversation. After resuming, it continues with the execution method that was saved.
 **Ctrl+click** (or middle-click) opens it **in a new pane** while keeping your
-current view ([08 Terminal](08-terminal.md)).
+current view ([02 Console basics](02-console-basics.md#arranging-multiple-views-panes)).
 
 If you switched the model, effort or plan mode inside the terminal, the session **resumes on the
 last settings the conversation recorded** rather than the ones it was launched with. Except for
@@ -298,7 +298,7 @@ The dialog shows, before you confirm:
 
 - **The agents it can move to**: claude, codex, opencode, copilot, agy, muse and kiro. The same
   agent is never offered (it draws on the same account's quota); to continue in the same kind,
-  use **"Branch here"** above where the kind supports it. Agents that cannot read the file, or
+  use **"Branch here"** ([04 Conversation](04-conversation.md#branch-from-a-past-message)) where the kind supports it. Agents that cannot read the file, or
   are not connected, are listed with the reason: Cursor is not offered yet, because its reading
   of the file has not been verified through the Managed driver, and lcpp cannot read a file
   outside its working folder. Both can still be moved *from*. For claude, codex and muse the

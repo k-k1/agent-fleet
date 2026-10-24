@@ -258,7 +258,7 @@ shell or ssm session running a script, a kind added later) counts as unknown.
 - Exit 3 keeps its meaning: "SSO login required and not completed here".
 
 `workspace/notes/aws.md` (the `af-aws` skill) and the member guide's integrations chapter
-(`guide/member/10-integrations.md` and `10-integrations.ja.md`) describe the new exit-3 wording. They also
+(`guide/member/16-cloud-accounts.md` and `16-cloud-accounts.ja.md`) describe the new exit-3 wording. They also
 tell the agent to say that the login is waiting in the Console rather than asking the member to open a
 terminal.
 

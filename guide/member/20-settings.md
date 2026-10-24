@@ -61,7 +61,7 @@ Everything about appearance.
 - **Reader view** / **file icons** (icon set).
 - **Main area layout**: **split panes** (drag the dividers) or **tabbed grid** (each cell switches by tab).
   Stored **on this device only**, and the two layouts are remembered separately, so moving between them does not
-  disturb either ([08](08-terminal.md)). If you switch often, the same choice sits in **Appearance** (the paint
+  disturb either ([02](02-console-basics.md)). If you switch often, the same choice sits in **Appearance** (the paint
   can) in the top bar.
 - **Separate appearance per tenant** (only if you belong to two or more tenants; off by default): remembers the
   theme and surface colours for each tenant on this device and switches with the tenant. Off keeps the look you see
@@ -101,7 +101,7 @@ land in the same workspace, the same home and the same settings.
   terminals. Off by default.
 - **Send key**: **Ctrl+Enter to send (Enter for a newline, the default)** or **Enter to send
   (Shift+Enter for a newline)**. It applies to both session chat and assistant chat.
-- **Reply suggestions**: chips with short replies above the composer ([10](10-chat-memo.md)). This is also
+- **Reply suggestions**: chips with short replies above the composer ([04](04-conversation.md#reply-suggestions)). This is also
   where you clear what has been learned or unpin pinned chips. There are two ways to clear: **Clear used-once**
   drops only the throwaway phrasings you sent exactly once (pinned ones stay, and sending one again learns it
   back), while **Clear all learned** wipes both what was learned and the dismissed list, back to the initial state.
@@ -157,7 +157,7 @@ Reads out replies from sessions and assistants.
     child-session row (all three cells), "Limit-reset notifications" the usage-limit row.
   - Nothing pops up or speaks for the session in the pane you are working in, whatever the table says.
 - **Service notifications**: stop sending to Discord / Slack **without disconnecting**. The connection itself,
-  and which events each service receives, live in the "Chat integration" tab ([14](14-preview-browser.md)).
+  and which events each service receives, live in the "Chat integration" tab ([15](15-external-services.md#connecting-discord-slack-chat-bridge)).
 - History is in the **notification centre** (last 7 days), opened from the bell in the top bar. An entry
   you have not read puts a red dot on its session; **"Mark all as read"** clears them all at once
   ([03](03-starting-sessions.md#reading-state-badges-and-notifications)).

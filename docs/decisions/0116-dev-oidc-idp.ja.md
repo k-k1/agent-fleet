@@ -194,7 +194,7 @@ openid-client（Auth.js）も Spring Security も既定が RS256 なので、提
   **sqlite と Postgres の両方**：`0101_dev_idp.sql`／`0086_dev_idp.sql`。前方互換で、ダウングレードの道はない。
 - デプロイ：`AF_DEV_IDP=1` と `PUBLIC_BASE_URL`。証明書も DNS も要らない。
 - Control Plane を複数立てる構成では鍵テーブルを共有し、各レプリカは 1 分ごとにその見え方を更新する。
-- ガイド：`guide/member/10-integrations.md`（両言語）に Auth.js と Spring Boot の設定、本番への警告。
+- ガイド：`guide/member/14-preview-browser.md`（両言語）に Auth.js と Spring Boot の設定、本番への警告。
 
 ## 備考
 

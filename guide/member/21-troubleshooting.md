@@ -68,7 +68,7 @@ shows the last one it had. While the workspace runs, the list comes back by itse
 If the state is **"Folder missing — can't resume"**, that session's **working folder is gone**
 (typically after deleting the whole worktree). claude / codex / cursor / copilot / kiro / agy / opencode / lcpp / muse cannot resume from this state.
 Start the same work over as a new session. shell falls back to home and resumes if the
-working folder is missing ([03](03-starting-sessions.md)).
+working folder is missing ([05](05-stopping-and-tidying.md)).
 
 ### Resuming says "the conversation log was deleted"
 
@@ -83,7 +83,7 @@ reason: an unreadable folder, a full disk, or a log that appeared meanwhile). Th
 a stub log that was in the way may have been moved aside as `.superseded.<number>`. Resume again
 after fixing the cause. Choose **"Start a new conversation"** to continue in
 the same session without the old context, and remove a low `cleanupPeriodDays` if you set one
-(see [03](03-starting-sessions.md)).
+(see [05](05-stopping-and-tidying.md)).
 
 ### I shared it, but the recipient sees nothing — or only old conversations
 
@@ -197,7 +197,7 @@ from then on you can clone / push without entering tokens ([06](06-code.md) · [
 - **`crashed`** means the browser inside the workspace terminated abnormally. Reopen it with **"Reconnect"**.
 - **If it keeps dying within a short time**, workspace memory pressure is the likely suspect. Clean up heavy builds, watchers, and
   browser panes left open, and keep in mind that browser panes are limited to **2** at a time. For how to check memory and
-  what to do about it, also see the FAQ entry "Builds die / freeze from running out of memory" below ([14](14-preview-browser.md)).
+  what to do about it, also see the FAQ entry "Builds die / freeze from running out of memory" below ([17](17-workspace-environment.md)).
 
 ### No notifications arrive
 
@@ -425,7 +425,7 @@ moved, because its conversation is gone. shell and ssm sessions have no conversa
   yours: the workspace's own role is withheld from your shell. Do not configure credentials. Run
   the command as you with the profile from ⚙ Settings:
   `af-aws-exec --profile <name> --account <id> -- <command>`. A plain `aws --profile` is only for
-  the read-only lookups that chapter 15 allows after its isolation check
+  the read-only lookups that chapter 16 allows after its isolation check
   ([16](16-cloud-accounts.md#using-the-profiles-from-the-terminal-sdks-and-build-tools)).
 - **`af-gcloud-exec` exit code 3** means a login only when the wrapper says so ("the login was
   requested in the Agent Fleet Console …", "Google Cloud login required …"). Log in from the toast
@@ -462,7 +462,7 @@ See [14](14-preview-browser.md#preview-subdomains-only-where-they-are-issued).
 
 The **control key row** under the terminal (`Esc` `Tab` arrows `^C` `⏎`) sends keys without
 bringing up the soft keyboard. You can scroll back through past output with a **one-finger vertical swipe**. Toggle the left pane
-with the **≡ (menu)** at the top left of the screen ([08](08-terminal.md)).
+with the **≡ (menu)** at the top left of the screen ([02](02-console-basics.md#using-it-on-a-phone)).
 
 ### Only the terminal stays dark on the light theme
 
@@ -480,7 +480,7 @@ once more, and your session list, clones, and connections all come back as they 
 If you only hid it with "Archive", you can bring it back with "Restore" in the archived list. With "Stop
 (resumable later)" it remains as stopped and can be resumed with a click. "Delete" for shell / ssm
 cannot be undone (the conversation log files themselves remain). For the differences, see
-[03 Starting sessions](03-starting-sessions.md).
+[05 Stopping and tidying up](05-stopping-and-tidying.md).
 
 **Q. Can I use it from both my work PC and my home PC?**
 Yes. Your login and connections, as well as display settings like font / text size, are stored on the server
@@ -497,7 +497,7 @@ created by default ([03](03-starting-sessions.md) · [06](06-code.md)).
 
 **Q. What's the difference between "Stop", "Delete", "Archive", and "Recreate"?**
 Stop = just pause (resumable), Delete = remove from the list (throwaway kinds), Archive = hide (restorable),
-Recreate = a new conversation in the same place (the current conversation goes to the archive). Details in [03](03-starting-sessions.md).
+Recreate = a new conversation in the same place (the current conversation goes to the archive). Details in [05](05-stopping-and-tidying.md).
 
 **Q. opencode doesn't show up among the new-session kinds**
 On its card in ⚙ Settings → Agents, **"Use opencode"** must be on, and the **"opencode.ai
