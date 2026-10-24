@@ -232,7 +232,7 @@ agent never paints a batch on its own.
   studio" row of the [Agents reference](../ref/agents.md) and its footnote. Pick an agent
   the row marks and a method it allows; anything else is refused.
 - **Worktree is On by default**, so the agent can tell for certain which studio's session it is.
-  Only Terminal (CLI) and lcpp let you turn it off. From inside a worktree the agent **cannot see
+  Which agents can turn it off is in the footnote of the same [Agents reference](../ref/agents.md) row. From inside a worktree the agent **cannot see
   uncommitted material** in your original working copy; commit what you want it to read.
 - **Switch agent** rebinds the studio to a new session at any time (sonnet to opus, claude to
   codex). The draft, the edit history and the versions belong to the studio and stay. Opening a

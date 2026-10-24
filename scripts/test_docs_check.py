@@ -256,6 +256,26 @@ class CapsRowTests(unittest.TestCase):
         self.write_table([r if r[0] != "Bound to an image studio" else (r[0], "✓", "✓", "—") for r in self.ROWS])
         self.assertEqual(self.errors(), "")
 
+    def test_studio_reader_handles_a_multiline_case_and_refuses_shapes_it_cannot_read(self):
+        store = self.root / "workspace/agent/internal/imagegen/studio_store.go"
+        # A valid multi-line case still refuses beta: the table must stay as it is.
+        store.write_text(self.STUDIO_STORE.replace("case session.KindBeta:", "case\n\t\tsession.KindBeta:"))
+        self.assertEqual(self.errors(), "")
+        # Even with a "corrected" table, a shape the reader cannot interpret is an error,
+        # never a quiet approval.
+        self.write_table([r if r[0] != "Bound to an image studio" else (r[0], "✓", "✓", "—") for r in self.ROWS])
+        self.assertIn("disagrees", self.errors())
+        for body in (
+            "case session.KindBeta, session.KindNope:",   # unknown constant
+            'case "beta":',                               # literal
+            "case kindOf(x):",                            # expression
+        ):
+            with self.subTest(body=body):
+                store.write_text(self.STUDIO_STORE.replace("case session.KindBeta:", body))
+                self.assertIn("cannot be checked", self.errors())
+        store.write_text(self.STUDIO_STORE.replace("\tswitch kind {", "\tif kind == \"x\" {}\n\tswitch kind {\n\tcase session.KindShell:\n\tswitch driver {"))
+        self.assertIn("cannot be checked", self.errors())
+
     def test_derived_row_with_unreadable_source_is_an_error(self):
         (self.root / "workspace/agent/internal/imagegen/studio_store.go").unlink()
         self.assertIn("cannot be checked", self.errors())

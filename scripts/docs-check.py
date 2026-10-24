@@ -782,12 +782,18 @@ def source_studio_kinds() -> set[str]:
     if not m:
         return set()
     consts = dict(re.findall(r'^\s*(Kind\w+)\s*=\s*"([a-z]+)"', read(sess), re.M))
-    refused = {
-        consts[c]
-        for line in re.findall(r"^\s*case ([^:\n]+):", m.group(0), re.M)
-        for c in re.findall(r"session\.(Kind\w+)", line)
-        if c in consts
-    }
+    body = m.group(0)
+    # Any shape this reader does not understand reads as "nothing found", which the caller
+    # reports as an error: a guess here would approve a wrong cell.
+    if len(re.findall(r"\bswitch\b", body)) != 1:
+        return set()
+    refused: set[str] = set()
+    for case in re.findall(r"\bcase\b([^:]*):", body):  # a case list may span lines
+        for item in case.split(","):
+            ref = re.fullmatch(r"\s*session\.(Kind\w+)\s*", item)
+            if not ref or ref.group(1) not in consts:
+                return set()  # a literal, an unknown constant or an expression
+            refused.add(consts[ref.group(1)])
     caps = source_caps()
     managed_only = {k for k, fields in caps.items() if "ManagedOnly" in fields}
     return set(caps) - (refused & managed_only)

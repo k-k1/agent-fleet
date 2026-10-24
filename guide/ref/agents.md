@@ -431,6 +431,8 @@ cannot tell the studio's tools which session it is. For opencode that is its Man
 server is shared by every session of a folder, so a write could not be traced to the session that
 made it), and for copilot, cursor and kiro their Managed mode (not told their session name yet);
 those four bind in Terminal (CLI) only. claude and agy have no Managed mode, so Terminal (CLI) is
-their only route anyway; codex and lcpp (Managed only) bind either way. muse has no Terminal (CLI)
-route to fall back on and its Managed mode is refused for the same reason, so a muse session
-cannot be bound yet. This row is checked against the code.
+their only route anyway; codex binds under either method, and lcpp (Managed only, no Terminal
+(CLI) route) binds as Managed. muse has no Terminal (CLI) route to fall back on and its Managed
+mode is refused for the same reason, so a muse session cannot be bound yet. The binding is
+checked against the code. A worktree is on by default for the studio's session; as the Console
+offers it, only a Terminal (CLI) session and lcpp can turn it off.
