@@ -54,7 +54,7 @@ constructor's caller on the `main` side. The rules for these seams are in
 ## 90.3 `control-plane/`
 
 `main.go` wires the binary; `control-plane egress-proxy` runs the egress forward proxy
-from the same binary. Most of the CP is `package main` at the module root, one concern per
+from the same binary, and `control-plane egress-agent` the agent on the egress gateway. Most of the CP is `package main` at the module root, one concern per
 group of files that share a name prefix. The families that could be cut loose are under
 `internal/`: `ls control-plane/internal` is the list, and the comments at the top of a
 package's files (and its `deps.go`, where it has one) say what it holds. The CP image is `control-plane/Dockerfile`, built with the repository root

@@ -352,3 +352,34 @@ includes, on a stack with egress configured:
 - Secure Web Proxy: "Overview", "Deploy Secure Web Proxy as next hop", "Security rules"
   (SNI `host()` without TLS inspection in next-hop mode), "View proxy transaction logs"
   (`source_ip`).
+
+## Addendum (2026-10-24) — decision 4: the gateway agent is built
+
+The agent of decision 4 exists as `control-plane egress-agent` (#2683, code in
+`control-plane/internal/egressagent`). Squid itself, nftables and the deploy templates are not
+part of it. **It was not run against a real Squid**: the parser and the rotation handling are
+tested with fixture lines and files.
+
+- **Shape.** A subcommand of the CP binary, as `egress-proxy` and `efs-home-op` are, so the
+  gateway gets the same binary. The package imports nothing from the CP's `main`, so it can
+  become its own binary if the size ever matters on the gateway.
+- **Policy.** The agent polls `GET /internal/egress/policy` and writes two files with a temp file
+  and a rename: the allow file (dstdomain entries, reduced to the minimal sorted set, because
+  Squid warns about an entry another one covers and the defaults have such pairs) and a mode
+  include holding the `ssl_bump` and `http_access` lines for log-only or enforce. It reloads
+  Squid only when a file's bytes changed. An unreachable CP, a non-200 answer or an empty
+  allowlist leaves the files as they are.
+- **Log.** The agent owns Squid's `logformat` (`af1`, documented in the package): time in ms,
+  source and server address, Squid's status and bump mode, and the SNI and request domain,
+  URL-encoded so a hostile SNI cannot add fields. Each line is one event. Its id is the file's
+  identity (a hash of its first line, not the inode: a new file can reuse a rotated file's inode,
+  and the CP would drop its events as duplicates) plus the line's byte offset. The offset is
+  committed only after a 2xx. A line whose tail is damaged is still sent with its time and source
+  and no name. Rotation must be Squid's own (`logfile_rotate` >= 1); `copytruncate` is not
+  supported.
+- **Verdict.** `allowed` is the policy's verdict on the name, and false when Squid denied or
+  terminated the connection. In log-only it is the verdict the connection would have had. It is
+  computed with the policy current when the line is shipped, so a line written just before a
+  policy change can carry the new verdict.
+- **One matcher.** The allowlist matcher moved to `control-plane/internal/egressallow`, shared by
+  the CP and the agent.

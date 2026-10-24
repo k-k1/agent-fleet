@@ -325,3 +325,31 @@ sandbox に配備したところ、CP に `AF_EGRESS_PROXY_ADDR` が無く、ing
 - Cloud NGFW「Fully qualified domain name objects overview」：解決のしかたとその限界。
 - Secure Web Proxy：「Overview」「Deploy Secure Web Proxy as next hop」「Security rules」（next hop
   モードでは TLS インスペクション無しで SNI の `host()`）、「View proxy transaction logs」（`source_ip`）。
+
+## 追記（2026-10-24）— 決定 4：ゲートウェイのエージェントを作った
+
+決定 4 のエージェントは `control-plane egress-agent` として存在する（#2683、コードは
+`control-plane/internal/egressagent`）。Squid 本体・nftables・デプロイテンプレートは含まない。
+**本物の Squid では動かしていない**。パーサとローテーションの扱いは、行とファイルのフィクスチャで
+テストした。
+
+- **形。** CP バイナリのサブコマンド（`egress-proxy` や `efs-home-op` と同じ）なので、ゲートウェイには
+  同じバイナリを置く。パッケージは CP の `main` から何も import しないので、ゲートウェイでサイズが
+  問題になれば単独のバイナリにできる。
+- **policy。** `GET /internal/egress/policy` をポーリングし、2 つのファイルを一時ファイルと rename で
+  書く。許可ファイル（dstdomain のエントリ。ほかのエントリに覆われるものを Squid は警告し、既定の
+  リストにはその組があるので、最小の集合に絞って並べる）と、log-only か enforce の `ssl_bump` と
+  `http_access` の行を入れたモードの include。Squid の再読込はファイルのバイトが変わったときだけ。
+  CP に届かない・200 以外・許可リストが空、のときはファイルをそのままにする。
+- **ログ。** Squid の `logformat`（`af1`、パッケージに記載）はエージェントが決める。ミリ秒の時刻、
+  送信元とサーバのアドレス、Squid のステータスと bump モード、SNI とリクエストのドメイン（悪意ある SNI
+  がフィールドを足せないよう URL エンコード）。1 行が 1 イベントで、id はファイルの識別子（先頭行の
+  ハッシュ。inode ではない。新しいファイルはローテーションされたファイルの inode を再利用しうるので、
+  CP がそのイベントを重複として捨ててしまう）と行のバイトオフセット。オフセットは 2xx の後にだけ確定する。
+  後半が壊れた行も、時刻と送信元だけで名前なしとして送る。ローテーションは Squid 自身のもの
+  （`logfile_rotate` が 1 以上）に限り、`copytruncate` には対応しない。
+- **判定。** `allowed` は名前に対する policy の判定で、Squid が拒否・terminate した接続は false。
+  log-only では、その接続が受けたはずの判定になる。送る時点の policy で計算するので、policy が変わる
+  直前に書かれた行は新しい判定を持ちうる。
+- **照合器は 1 つ。** 許可リストの照合器は `control-plane/internal/egressallow` に移し、CP と
+  エージェントが共有する。

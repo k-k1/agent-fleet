@@ -96,6 +96,13 @@ func main() {
 		runEgressProxy()
 		return
 	}
+	// Subcommand: `control-plane egress-agent` runs the agent on the egress gateway (ADR
+	// 0122 decision 4, internal/egressagent): Squid's policy files from the CP, and Squid's
+	// log shipped to the CP from a file offset.
+	if len(os.Args) > 1 && os.Args[1] == "egress-agent" {
+		runEgressAgent()
+		return
+	}
 	// Subcommand: `control-plane drawio-preseed` fills the stencil cache ahead of
 	// time (docs/log/65 §65.5.5). It runs where the cache lives and reuses the embedded
 	// manifest, so it cannot drift from what the server will verify against.

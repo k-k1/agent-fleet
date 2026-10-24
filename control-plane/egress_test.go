@@ -25,13 +25,13 @@ func TestEgressPolicy(t *testing.T) {
 		"api.anthropic.com.",        // trailing FQDN dot
 	}
 	for _, h := range allow {
-		if !p.allows(h) {
+		if !p.Allows(h) {
 			t.Errorf("expected allow: %s", h)
 		}
 	}
 	deny := []string{"paste.ee", "evil.com", "anthropic.com.attacker.net", "notgithub.com", ""}
 	for _, h := range deny {
-		if p.allows(h) {
+		if p.Allows(h) {
 			t.Errorf("expected deny: %s", h)
 		}
 	}
@@ -39,11 +39,11 @@ func TestEgressPolicy(t *testing.T) {
 	// A custom allowlist with a wildcard entry.
 	c := newEgressPolicy([]string{"*.internal.example", "one.host", "# comment", ""})
 	for _, h := range []string{"a.internal.example", "internal.example", "one.host"} {
-		if !c.allows(h) {
+		if !c.Allows(h) {
 			t.Errorf("custom expected allow: %s", h)
 		}
 	}
-	if c.allows("two.host") {
+	if c.Allows("two.host") {
 		t.Errorf("custom expected deny: two.host")
 	}
 }

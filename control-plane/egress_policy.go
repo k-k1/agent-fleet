@@ -1,15 +1,11 @@
 package main
 
-import "strings"
+import "github.com/k-k1/agent-fleet/control-plane/internal/egressallow"
 
 // egressPolicy is the allowlist the egress proxy checks each destination against
-// (docs/log/20 M2). Matching is case-insensitive. An entry starting with "." (or "*.",
-// normalised to a leading ".") is a suffix match covering that domain and all its
-// subdomains; any other entry is an exact host match.
-type egressPolicy struct {
-	exact  map[string]bool
-	suffix []string // e.g. ".githubusercontent.com" (leading dot)
-}
+// (docs/log/20 M2). The matcher lives in internal/egressallow because the gateway agent
+// reports its verdicts with the same one.
+type egressPolicy = egressallow.Policy
 
 // defaultEgressAllowlist is what the product itself needs (docs/log/20 §B.5): Anthropic/
 // Claude (product-critical), the git hosts, and the common package registries —
@@ -34,34 +30,4 @@ var defaultEgressAllowlist = []string{
 
 // newEgressPolicy builds a policy from a list of entries (blank lines and "#"
 // comments ignored). Passing nil yields an empty (deny-all) policy.
-func newEgressPolicy(entries []string) *egressPolicy {
-	p := &egressPolicy{exact: map[string]bool{}}
-	for _, e := range entries {
-		e = strings.ToLower(strings.TrimSpace(e))
-		if e == "" || strings.HasPrefix(e, "#") {
-			continue
-		}
-		e = strings.TrimPrefix(e, "*") // "*.x" -> ".x"
-		if strings.HasPrefix(e, ".") {
-			p.suffix = append(p.suffix, e)
-		} else {
-			p.exact[e] = true
-		}
-	}
-	return p
-}
-
-// allows reports whether host is permitted. The caller strips any port first.
-func (p *egressPolicy) allows(host string) bool {
-	host = strings.ToLower(strings.TrimSuffix(host, ".")) // drop a trailing FQDN dot
-	if p.exact[host] {
-		return true
-	}
-	for _, s := range p.suffix {
-		// ".github.com" matches both "github.com" and "x.github.com".
-		if host == strings.TrimPrefix(s, ".") || strings.HasSuffix(host, s) {
-			return true
-		}
-	}
-	return false
-}
+func newEgressPolicy(entries []string) *egressPolicy { return egressallow.New(entries) }
