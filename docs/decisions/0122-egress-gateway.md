@@ -6,7 +6,7 @@ English | [日本語](0122-egress-gateway.ja.md)
   template facts were read from the tree on this date. Squid's behaviour was read from its
   published documentation and an AWS blog post, **not run**; no Docker and no cloud account were
   available while writing this.
-- Follow-ups: #1181, #2603, #2604
+- Follow-ups: #1181, #2603, #2604, #2657, #2658
 - Related: [0047](0047-tenant-network-restriction.md) (inbound IP restriction; this record does
   not touch it) / #1056 (credential injection, needs this fence first) / #1067 (why an OS sandbox
   is not the answer)
@@ -178,3 +178,177 @@ retried instead of dropped. The events gain the source address, so the CP can at
 - AWS Security Blog, "How to add DNS filtering to your NAT instance with Squid".
 - The `peek`/`splice` allowlist form (the published example is a denylist) and the QUIC and
   Encrypted Client Hello behaviour are **not measured**.
+
+## Addendum (2026-10-24) — open points 1 and 3: the GKE gateway and attribution
+
+The decisions above stand. This addendum covers open points 3 (attribution) and 1 (GKE), and
+records the maintainer's answer to open point 4.
+It also records one bypass on AWS that the gateway alone does not close. Sources: Google's
+published documentation, read on this date and listed at the end, and the tree at this date.
+**Nothing here was run**: no cluster, no account, no Docker. #2658 is the run that checks the
+GKE part.
+
+### Attribution: events carry a raw address; the CP keeps a time-ranged address table
+
+**What the gateway sees.** On ECS and ecs-ec2, each task has its own ENI (`awsvpc`), and the
+gateway in the same VPC sees that address unchanged. On GKE, it does not by default. Google's
+IP masquerade agent page says that for destinations outside the non-masquerade list (RFC 1918,
+100.64.0.0/10 and the reserved test and documentation blocks), "GKE changes source Pod IP
+addresses to source node IP addresses". Every workspace on one node would reach a gateway as
+the node's address.
+
+**Turning that off for this route only is not possible.** Masquerade depends only on the
+destination. The `ip-masq-agent` ConfigMap (`nonMasqueradeCIDRs`) applies to the whole cluster:
+the page names no node-pool scope, and its DaemonSet has no node selector. It is not needed
+either. `nonMasqueradeCIDRs: [0.0.0.0/0]` keeps pod source addresses for every destination, and
+the stack's Cloud NAT already translates every range, pod ranges included
+(`source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"`, `network.tf`). The
+system pool's pods therefore still leave through the same reserved address, and the gateway sees
+workspace pod addresses. `--disable-default-snat` does the same thing but only on a cluster with
+no `ip-masq-agent` DaemonSet, and only after the nodes are replaced. The ConfigMap is the lever.
+
+**The fence must not depend on SNAT.** The route that takes workspace traffic to the gateway is
+scoped to the workspace node pool's network tag, not to the pod source range. If the ConfigMap
+is ever lost, traffic is then attributed to the node, but it is still recorded. A route matched
+on the pod range would let the node-addressed packets take the default route out, unrecorded.
+
+**The record.** Squid's event gains the source address and the time. The CP stores them as they
+arrive and attributes them through a table it keeps:
+
+| Column | Meaning |
+|---|---|
+| workspace (membership) | whose address it was |
+| address | IPv4 as the gateway sees it |
+| from / until | the interval the address belonged to that workspace; `until` empty while it does |
+| ref | what was asked: task ARN, pod UID, container ID |
+
+Attribution is a join on address and time, never a lookup of the address alone, because
+addresses are reused: a stopped task's ENI address or a deleted pod's IP can be handed out again
+at once. The join's result is stored with the event, but the raw address is never discarded. An
+event that matches no row is shown as **unattributed**, and one that matches two rows is shown as
+**ambiguous**, with both candidates. Neither is dropped, and neither is guessed. Addresses the
+stack owns (nodes, slot instances, the CP) are a separate class, "infrastructure", not
+"unattributed".
+
+**Where each runtime fills the table** (`control-plane/internal/runtime/`):
+
+- **ECS and ecs-ec2.** Today neither describes a task. `State()` reads only the service
+  (`describeService`), and `Start` returns once the service is at desired count 1, before a task
+  runs. A record taken at `Start` is therefore not enough: the ECS service scheduler replaces a
+  failed task on its own, with a new ENI and a new address, and the CP never calls `Start` for it.
+  The table is filled from `DescribeTasks` on the service's tasks: the ENI attachment's
+  `privateIPv4Address`, from `createdAt` to `stoppedAt`. The task's ENI is created after
+  `createdAt` and is gone by `STOPPED` (the task lifecycle as documented; not measured), so two
+  tasks' intervals for one address cannot overlap.
+  It runs as a reconcile loop, plus an immediate lookup when an event arrives with an address the
+  table does not know. Stopped tasks stay describable only for a while, so the loop runs well
+  inside that window. For ecs-ec2, the slot instance's own address is infrastructure. Platform
+  traffic also leaves from the task ENI (image pulls from ECR, logs, SSM secrets; the stack has
+  only an S3 gateway endpoint, `00-network.yaml`). The gateway therefore has to allow those
+  hosts, and they appear in the workspace's record.
+- **Kubernetes and GKE.** `workspacePods` already lists the StatefulSet's pods by label. The
+  table needs `metadata.uid`, `status.podIP` and `status.startTime`, which `kPodStatus` does not
+  decode yet. `from` is the pod's start, and `until` is when the CP sees the pod gone. A
+  StatefulSet pod keeps its name across a restart but gets a new UID and address, so the row is
+  keyed by UID. Polling sees a deletion late, so a watch on the workspace pods is preferred. An
+  overlap that slips through still shows as ambiguous, not as the wrong workspace.
+- **docker.** The per-user network (`ensureNetwork`, created at `Start`, removed at `Stop`)
+  belongs to one user. The row records the network's subnet and the container's address on it,
+  from `Start` (after `docker run`, through `docker network inspect` / `docker inspect`) until
+  `Stop`. The subnet attributes even when the container's address changes. docker's gateway is
+  still open point 2, so this applies only once a gateway sees addresses on that network.
+- **native**: no gateway in this record. It is not part of the table.
+
+The gateway agent stays simple. It ships the address and the time, and the CP does the joining,
+because only the CP knows the workspaces.
+
+### GKE gateway: the same Squid on a forwarding VM, routed by the workspace pool's tag
+
+Four candidates were compared against the requirement: every connection recorded, by name where
+there is one, in log-only too.
+
+| Candidate | Decides by | Records | Against the requirement |
+|---|---|---|---|
+| **FQDN network policy** + **NetworkPolicy logging** | DNS answers the pod received; raw IPs never match | 5-tuples, allowed and/or denied; no host name | Fails. Log-only would have to allow everything, which leaves only IP records. Allow-union means `egress-internet` (all non-private addresses) already overrides it. |
+| **Cloud NGFW**, FQDN objects + firewall rules logging | Addresses resolved on a schedule; no wildcards, at most 32 addresses per name, results vary by region (Google names `googleapis.com` as a case that hits these) | 5-tuples | Fails for the same reason: names reduce to addresses. NGFW Enterprise (URL filtering, IPS) was not evaluated: it needs per-zone firewall endpoints. |
+| **Secure Web Proxy, next-hop mode** | SNI `host()` in a `sessionMatcher`, without TLS inspection | Cloud Logging transaction log with the source IP | Meets it for HTTP(S) and TCP. It drops other traffic "without notification", so drops are not recorded. One per VPC per region. Which egress address it uses was not found. |
+| **Squid on a forwarding VM** (decision 2) | SNI peek and splice, `Host` on port 80 | Squid's log, plus nftables for the rest | Meets it, with the same software, agent and log format as AWS. |
+
+**Chosen as the GKE row of decision 5: Squid on a forwarding VM**, the same gateway as AWS.
+
+- The workspace node pool gets a network tag. A static route `0.0.0.0/0` for that tag, with a
+  priority below the default route's 1000, has the gateway VM as its next hop. The VM needs IP
+  forwarding, and it carries no tag itself.
+- Subnet and peering routes win over a custom static route, so the private control-plane
+  endpoint and the node subnet are unaffected. The metadata server is not routed. The system
+  pool, which runs the CP, is untagged and keeps the default route.
+- The gateway VM, being untagged, leaves through the default route, so Cloud NAT gives it the
+  reserved address. The egress address the deploying organisation allow-lists does not change.
+- The workspace nodes' own traffic also takes the route: image pulls through Private Google
+  Access, and the logging and monitoring agents. A more specific route for Google API ranges
+  would also let workspaces reach any Google API unrecorded, so it is not added. That traffic is
+  recorded as infrastructure, and the gateway allows the Google hosts the nodes need. Which hosts
+  those are is measured in #2658.
+- The explicit-proxy listener is reached at the gateway VM's private address. The
+  `egress-internet` NetworkPolicy has to admit that one `/32` and port. A `/32` that is not a
+  node does not meet the remote-node selector issue of ADR 0106.
+- This adds `ip-masq-agent` with `nonMasqueradeCIDRs: [0.0.0.0/0]`, from the attribution section.
+
+**Secure Web Proxy in next-hop mode stays a swap-in for this VM**, as AWS Network Firewall is for
+the AWS gateway. It decides by SNI without decrypting, logs the client address, and is managed.
+It is not the base for three reasons: its drops are silent, the allowlist would have to be
+translated into its policy rules through the Google API, and it gives AWS and compose nothing.
+**NetworkPolicy logging stays useful as a second line:** deny-only logging records attempts the
+NetworkPolicy blocks (RFC 1918, the metadata range) cheaply. It is not the record of egress.
+
+Still open on GKE: the HA shape. A managed instance group of one, with the route following the
+instance, or an internal passthrough load balancer as next hop. Also the throughput sizing.
+Both belong to #2658.
+
+### AWS: the S3 gateway endpoint is a passthrough the gateway does not close
+
+`S3Endpoint` (`00-network.yaml`) routes the S3 prefix list off the private route table and has
+no endpoint policy, which means full access. A workspace can therefore reach any S3 bucket in
+the region without passing the NAT gateway today, and without passing the egress gateway that
+decision 5 puts in its place. The endpoint exists so that ECR layer bytes stay off the NAT
+gateway. The fix, an endpoint policy limited to the buckets the stack needs, or no route for
+the workspace subnets, is #2657. Even with a policy, access through the endpoint is not
+attributed per workspace.
+
+### Open point 4: SSH git and DNS (decided with the maintainer, 2026-10-24)
+
+- **SSH git is off by default and a deploying organisation can turn it on per host.** The gateway
+  has no name for SSH. When the organisation names an SSH host in the allowlist, nftables admits
+  port 22 to the addresses that host resolves to on the gateway, and logs the destination address
+  and the time. This is a decision by address, not by name: in log-only too, the record for SSH
+  is an address, attributed like any other event. With no SSH host named, port 22 is dropped
+  and the attempt is logged.
+- **DNS: direct queries to any resolver other than the VPC's or the cluster's are dropped and
+  logged** (port 53, and 853 for DNS over TLS), with nftables on the gateway. The content of
+  queries to the stack's own resolver is not recorded. Route 53 Resolver query logging and
+  Cloud DNS logging are not part of this record.
+
+### AWS first stage: its acceptance includes what #2604 left unverified
+
+The fix for #2604 (PR #2611) is on `main`, but no deployed stack can exercise it. A sandbox
+deployment of `main` had no `AF_EGRESS_PROXY_ADDR` on the CP, and the ingress stack has no
+parameter that sets it. No parameter and no launcher are added for `control-plane egress-proxy`,
+which is being retired (decision 4). Instead, the acceptance of the gateway's first AWS stage
+includes, on a stack with egress configured:
+
+- a started ecs workspace and a started ecs-ec2 workspace have the proxy variables in their task
+  definition;
+- the task-role credential path (`169.254.170.2`) and the instance metadata path still work.
+
+#2604 stays open until that run.
+
+### Sources (read 2026-10-24)
+
+- GKE, "IP masquerade agent" (concept) and "Configure an IP masquerade agent" (how-to):
+  default SNAT to the node address, the default non-masquerade list, `nonMasqueradeCIDRs:
+  0.0.0.0/0`, `--disable-default-snat`, Cloud NAT for pod ranges.
+- VPC, "Routes": tag-scoped static routes, order of evaluation (policy-based, subnet, custom).
+- Cloud NGFW, "Fully qualified domain name objects overview": resolution and its limits.
+- Secure Web Proxy: "Overview", "Deploy Secure Web Proxy as next hop", "Security rules"
+  (SNI `host()` without TLS inspection in next-hop mode), "View proxy transaction logs"
+  (`source_ip`).
