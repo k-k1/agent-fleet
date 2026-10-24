@@ -32,7 +32,7 @@ Turning the `llm` role into an externally managed row already had two paths.
 | **A. Shortcut** | Set `AF_LLM_URL`. The CP synthesises one `llm` row at startup. | `AF_LLM_URL`, optionally `AF_ENGINE_API_KEY_LLM` |
 | **B. Write the table** | Declare a `lifecycle: "external"` row yourself, in `AF_ENGINES_JSON` (or, on AWS, the engine stack's table). | The same `AF_ENGINE_API_KEY_LLM` |
 
-**A is the same shape of shortcut `AF_COMFY_URL` already is for 07, and B already
+**A is the same shape of shortcut `AF_COMFY_URL` already is for [08](08-image-engine.md), and B already
 works today with no code at all.** This chapter mostly covers A, since it is the one
 that is a single line.
 
@@ -53,7 +53,7 @@ Where to put them depends on the target:
 
 ### Why not `AF_LLM_API_KEY`
 
-07 gave the image role a variable of its own, `AF_COMFY_API_KEY`. This chapter does
+[08](08-image-engine.md) gave the image role a variable of its own, `AF_COMFY_API_KEY`. This chapter does
 not repeat that shape, because **`AF_ENGINE_API_KEY_LLM` is already the bearer every
 external row reads**: a hand-written `llm` row (path B) reads it as much as any other
 externally managed row. A second, dedicated name would only add a reconciliation
@@ -114,7 +114,7 @@ coding work depends on, so keep `llama-3.1` to tool-free uses if you pick it.
 
 ## Switch first, then register the models
 
-🔴 **While this deployment is still borrowing an AWS fleet's engines (08), you cannot
+🔴 **While this deployment is still borrowing an AWS fleet's engines ([09](09-borrowed-engine.md)), you cannot
 edit the `llm` model list.** A write to a borrowed row is refused, naming the far
 deployment. The order matters:
 
@@ -123,14 +123,14 @@ deployment. The order matters:
 2. Only then register models for `llm` under **Admin → Inference engines** in the
    Console, using the same **id** you gave `--alias`.
 
-Registering a model is the same shape as 07's "Registering the models by hand".
+Registering a model is the same shape as [08's "Registering the models by hand"](08-image-engine.md#registering-the-models-by-hand).
 Nothing is taken in for you here either. **The catalogue is a declaration you write**:
 id, `base_model`, and the window (`context_tokens`), kept consistent with what you
 started the LAN box with.
 
 ## What you lose (said plainly)
 
-The row you were borrowing under 08 carried authentication the CP could revoke and
+The row you were borrowing under [09](09-borrowed-engine.md) carried authentication the CP could revoke and
 track per membership: the far deployment issues a token per membership and cutting
 it stops that one borrower. Switching to `AF_LLM_URL` (or a hand-written external
 row) trades that for **a single shared bearer**: everyone who knows
@@ -157,7 +157,7 @@ for minutes: that budget exists for a cloud instance being bought.
 
 ## What the panel will and will not show you
 
-This is the same as for the image engine in 07.
+This is the same as for the image engine in [08](08-image-engine.md).
 
 - **warm** is a liveness check taken the moment you open the panel, read from
   `/models` (not `/health`: a llama.cpp router answers that with `ok` even while

@@ -307,13 +307,15 @@ and the darker it is the longer the engine was up in that hour.
 The **Read aloud** section of the Admin modal has two jobs: it starts and stops the VOICEVOX
 (Zundamon) engine, and it holds the **tenant-wide pronunciation dictionary**.
 
-- **The engine** takes the same three modes as the inference engines (**Disabled** / **On demand** /
-  **Always on**). Starting takes 1–2 minutes, and until it is up Japanese read-aloud is covered by
+- **The engine**, where it is ECS-managed, takes the same three modes as the inference engines
+  (**Disabled** / **On demand** / **Always on**). Starting takes 1–2 minutes, and until it is up Japanese read-aloud is covered by
   Polly (silent where Polly is not set). On demand, the engine starts once demand builds up (2,000
   characters in 5 minutes) and stops after 30 minutes with nobody listening; every automatic start
   and stop is in the audit log. Disabling moves read-aloud to Polly at once and, on AWS, sets the ECS
-  desired count to 0 about a minute later. A deployment with no VOICEVOX engine that is not
-  ECS-managed either has nothing this screen could start, and the switch stays at disabled. A
+  desired count to 0 about a minute later. With an externally managed VOICEVOX (standalone docker, say) there is no **On demand**: the switch
+  only turns the route on or off, and the engine itself is never started or stopped from here. A
+  deployment whose VOICEVOX is neither ECS-managed nor reachable has nothing to route to, and the switch
+  stays at disabled. A
   speech engine cannot be borrowed from another deployment ([09](09-borrowed-engine.md)).
 - **The dictionary** applies to everyone's text-to-speech (a member's personal dictionary overrides
   the same spelling): one `spelling=reading` per line, `#` for a comment. Other members pick up a saved

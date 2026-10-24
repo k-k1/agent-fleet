@@ -31,6 +31,12 @@ Agent Fleet on AWS, this deployment can **borrow that one's engines**:
 chat engine as well as the image one, and the far fleet does the waking and the
 paying.
 
+**What has been verified.** The `comfyui-lan.sh` script's docker commands, refusals and re-run behaviour are
+tested against a stand-in for docker, not on a real GPU host: the image starting under `--gpus`, the proxy
+accepting the key and a picture coming back have not been measured on a real machine. The
+OpenAI-compatible image row has only been exercised against the project's own test double. Treat both as
+unproven until you have run them.
+
 ## Running the fleet's image on your GPU host
 
 If the machine does not run ComfyUI yet, you do not have to build one by hand.

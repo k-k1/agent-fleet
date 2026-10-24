@@ -34,6 +34,10 @@ code on the far deployment, no port opened there, no VPN and no change to any wo
   pointed the other way, but nothing here assumes a residential network is reachable,
   and it is not supported.
 
+**What has been verified.** Nothing here has been measured on a real pair of deployments: the code is
+tested against a stand-in far gateway, and the timings in "What the first request waits for" are the far
+deployment's own cold starts, not a borrowed one's. Where a number is unknown, it says so.
+
 ## The two variables, and the optional third
 
 All three are read by the Control Plane **once at startup**, like `AF_COMFY_URL`
