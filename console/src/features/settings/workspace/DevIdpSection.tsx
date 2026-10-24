@@ -228,7 +228,7 @@ function Examples({
           <Icon name="device-desktop" />
           <span>
             {tr("env.devidp_note_local")}{" "}
-            <button type="button" className="dip-link" onClick={() => openGuidePage("member/10-integrations")}>
+            <button type="button" className="dip-link" onClick={() => openGuidePage("member/14-preview-browser")}>
               {tr("env.devidp_note_local_link")}
             </button>
           </span>

@@ -137,7 +137,7 @@ an operator.
   on the deployment side it depends on the feature flag (`AF_MCP_ENABLED`) and on whether the
   ingress passes `/mcp`. The scope (read / write / admin:dangerous) and the expiry are the user's
   choice, and they can revoke it themselves. Over that door a member can also let their own agent
-  use their Agent Fleet memory; it is a separate per-member setting, off by default ([member guide](../member/14-agent-memory.md#using-agent-fleet-memory-from-an-external-agent),
+  use their Agent Fleet memory; it is a separate per-member setting, off by default ([member guide](../member/18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent),
   Settings > Agent memory > Settings). External saves and forgets are audited (`memory.entry.save` /
   `memory.entry.forget`, actor `mcp`, target the project id). A tenant administrator can block it for the
   whole tenant ([admin 04](../admin/04-mcp-outside.md#memory-from-outside-agent-fleet)); `AF_MCP_ENABLED` turns the whole endpoint off.
@@ -222,7 +222,7 @@ reachable `PUBLIC_BASE_URL`:
 Tokens never reach the Control Plane: the Agent keeps them in the member's encrypted store. The Control Plane writes
 `mcp.client_oauth` audit rows (`started`, `completed`, `failed`, `disconnected`) that name the server and the
 authorization server, never a code or token. Members sign in from Settings › MCP servers
-([member guide 12](../member/12-settings.md#mcp-servers)).
+([member guide 20](../member/20-settings.md#mcp-servers)).
 
 ### Reading what a client sent to `/mcp`
 
@@ -348,7 +348,7 @@ client is served.
 
   A workspace on the native runtime runs directly on the member's machine and is left alone:
   an instance role there is that machine's own.
-  Members run AWS commands as themselves with `af-aws-exec` ([member guide 15](../member/15-cloud-accounts.md)).
+  Members run AWS commands as themselves with `af-aws-exec` ([member guide 16](../member/16-cloud-accounts.md)).
 
 ## Offboarding: how access is actually revoked
 

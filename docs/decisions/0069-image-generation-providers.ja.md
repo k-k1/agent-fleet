@@ -634,7 +634,7 @@ Codex 経路と同様に未計測である。
 - **tools/list の除外規則を一般化した。** 「codex 経路の codex セッションには出さない」から
   「**その経路が駆動するのがセッション自身の CLI なら出さない**」へ。agy が特例なしで入る。
 - 利用者向けの文言から Codex 前提を外した。`agents.note_image_generation`（ja/en）・
-  `guide/member/02-sessions`（ja/en）・`workspace/workspace-notes.md` は、2 つの provider を
+  `guide/member/13-images`（ja/en）・`workspace/workspace-notes.md` は、2 つの provider を
   名指しし、どちらがどのプランを消費するかを書き、縦横比だけは例外だと明記している。
 
 ### 通しで動かした（2026-09-07）

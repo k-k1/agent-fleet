@@ -23,7 +23,7 @@ wrong one wastes a round trip. This is the contract for both.
 exception for "I just need to see one HTTP response".
 
 How to open either one (the port and path fields, which button is the default where) is a member
-procedure: [member/10 Going further](../member/10-integrations.md#how-to-use-it). The port `7700` cannot be
+procedure: [member/14 Preview and browser](../member/14-preview-browser.md#how-to-use-it). The port `7700` cannot be
 opened, because the Agent itself uses it.
 
 ## Which route, by example

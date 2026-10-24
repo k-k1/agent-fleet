@@ -17,7 +17,7 @@ Tenant settings → **"Operations → MCP distribution"** distributes an MCP ser
 the tenant.
 A distributed server appears in each member's ⚙ Settings → MCP servers labelled **tenant**,
 ready to use from their assistants and sessions (what they see:
-[member/12 Settings](../member/12-settings.md#mcp-servers)).
+[member/20 Settings](../member/20-settings.md#mcp-servers)).
 
 ### Only remote (HTTP) can be distributed
 
@@ -83,7 +83,7 @@ Enabling the switch again permits new connections; it does not restore revoked c
 
 A member can let an agent outside Agent Fleet (Claude Code or Claude Desktop on their own machine
 holding their MCP token, or an app they connected through MCP OAuth such as claude.ai) list, search and read their Agent Fleet memory, and with a second choice
-save and forget it ([member guide](../member/14-agent-memory.md#using-agent-fleet-memory-from-an-external-agent)).
+save and forget it ([member guide](../member/18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent)).
 The memory text then leaves the workspace and reaches that client's model. The secret scan stops
 credentials, not customer names or internal context. This section is how you switch the whole
 tenant off.
@@ -132,5 +132,5 @@ and they can act on it as-is.
 ---
 
 - Previously: [03 Audit and usage](03-audit-usage.md)
-- What members see: [member/12 Settings](../member/12-settings.md#mcp-servers)
+- What members see: [member/20 Settings](../member/20-settings.md#mcp-servers)
 

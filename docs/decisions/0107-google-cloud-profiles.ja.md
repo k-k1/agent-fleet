@@ -583,4 +583,4 @@ Issue #1879。上の決定は変えない。何も作っていない。この補
 当面の運用: `terraform apply`（や `GOOGLE_OAUTH_ACCESS_TOKEN` を 1 度しか読まないプログラム）は、各実行が開始時に
 表示する残り時間（「the token is valid for N more minutes」。最低 10 分、最長でおよそ 1 時間で、毎回新しい 1 時間とは限らない）の
 中で終わらせる。それより長い作業は、その残り時間より短いコマンドに分け、それぞれ別の `af-gcloud-exec` 実行で行う。
-[ガイド](../../guide/member/15-cloud-accounts.ja.md#google-cloud-で自分としてコマンドを実行するaf-gcloud-exec)も参照。#1879 は (a) と (c) のために開いたままにする。
+[ガイド](../../guide/member/16-cloud-accounts.ja.md#google-cloud-で自分としてコマンドを実行するaf-gcloud-exec)も参照。#1879 は (a) と (c) のために開いたままにする。
