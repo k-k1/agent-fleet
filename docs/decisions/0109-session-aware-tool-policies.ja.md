@@ -320,7 +320,7 @@ add/install、curl、wget}、`then` = `git push` の `approval_gate` である�
   受け付ける。Terminal セッションのほかのやり取りについては 501 のままとする。
 - **スコープ**は `once` / `turn` / `thread` を流用し、誰が何を外せるかについての決定 3 の規則で制限する。
 - **答えるのは人だけである。** 承認に答える af MCP のツールは無く、親セッションは子の代わりに承認できない
-  （[guide/member/02-sessions.ja.md](../../guide/member/02-sessions.ja.md) が CLI の承認についてすでにそう言っている）。
+  （[guide/member/11-many-sessions.ja.md](../../guide/member/11-many-sessions.ja.md) が CLI の承認についてすでにそう言っている）。
 - **停止は承認を許可として持ち越さない。** ADR 0055 の決定 13 と同じく、残るのは承認が保留中だったという事実だけである。再開の
   とき、古い id への答えは断る。CLI がその呼び出しを次に試みれば新しい判定になり、なお承認が要るなら新しいカードになる。
 

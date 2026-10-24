@@ -311,7 +311,7 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
   配備側では機能フラグ（`AF_MCP_ENABLED`）と、ingress で `/mcp` を通すかどうかが効きます。
   スコープ（read / write / admin:dangerous）と有効期限は利用者が選び、失効も本人が行えます。
   この入口から、メンバーは自分のエージェントに自分の Agent Fleet メモリを使わせることもできます。メンバーごとの別設定で、
-  既定はオフです（[メンバー編](../member/14-agent-memory.ja.md#外部のエージェントから-agent-fleet-のメモリを使う) 設定 > エージェントメモリ > 設定）。外からの保存と忘却は監査されます（`memory.entry.save` /
+  既定はオフです（[メンバー編](../member/18-agent-memory.ja.md#外部のエージェントから-agent-fleet-のメモリを使う) 設定 > エージェントメモリ > 設定）。外からの保存と忘却は監査されます（`memory.entry.save` /
   `memory.entry.forget`、実行者は `mcp`、対象はプロジェクト ID）。テナント管理者はテナント全体でこれをブロックでき
   （[管理 08](../admin/08-external-memory.ja.md)）、`AF_MCP_ENABLED` はエンドポイント全体を止めます。
 
@@ -371,7 +371,7 @@ Control Plane はそのために 2 つの公開パスを持ち、どちらも到
   `/oauth/` の下のほかのパスは公開しません。コールバックは逆に、メンバーの識別ヘッダーが付くよう**ゲートウェイを通す**必要があります。識別がなければサインインは失敗します。`https` の基底 URL がない場合や認可サーバーが取得できない場合、Agent は動的クライアント登録に切り替えるか、メンバーにクライアント ID を尋ねます。
 
 トークンは Control Plane に届きません。Agent がメンバーの暗号化ストアに保存します。Control Plane は `mcp.client_oauth` の監査行（`started` / `completed` / `failed` / `disconnected`）に、
-サーバーと認可サーバーの名前だけを書き、コードやトークンは書きません。メンバーは設定 › MCP サーバーからサインインします（[メンバー向け 12](../member/12-settings.ja.md#mcp-サーバー)）。
+サーバーと認可サーバーの名前だけを書き、コードやトークンは書きません。メンバーは設定 › MCP サーバーからサインインします（[メンバー向け 20](../member/20-settings.ja.md#mcp-サーバー)）。
 
 ### クライアントが `/mcp` に送ったものを読む
 
@@ -473,7 +473,7 @@ mcp-call http_method="POST" status=400 latency_ms=2 principal="grant:<id>" clien
   native ランタイムのワークスペースはメンバーのマシンで直接動くので、そのままにします。そこのインスタンスロールは
   そのマシン自身のものです。
 
-  メンバーは `af-aws-exec` で自分として AWS コマンドを実行します（[メンバーガイド 15](../member/15-cloud-accounts.ja.md)）。
+  メンバーは `af-aws-exec` で自分として AWS コマンドを実行します（[メンバーガイド 16](../member/16-cloud-accounts.ja.md)）。
 
 ## オフボーディング — アクセスは実際どこで切れるか
 
