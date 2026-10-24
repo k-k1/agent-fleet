@@ -1,7 +1,6 @@
 ---
 audience: "anyone dealing with worktree dependencies and build caches"
 source_of_truth: "the code named in each section; measurements inside a Workspace, each labelled with when and where it was taken"
-updated: "2026-09"
 ---
 
 # 93. Worktree dependencies and build caches, measured per ecosystem

@@ -1,6 +1,5 @@
 ---
 audience: "anyone looking for a setting"
-updated: "2026-10"
 ---
 
 # 20. Settings — every tab of the ⚙ settings dialog
@@ -379,7 +378,7 @@ search.
   server answers that a tool needs more permission, the call fails with the server's own answer and the row shows
   **More permission needed**, and its **Approve the extra permission** button signs in again asking for that permission on top of what you already granted. The relay's port is remembered across restarts of the Agent; if that port is taken at
   start-up, a new one is chosen (with a new private key) and the configurations are rewritten, so sessions started before that need a restart.
-  Of the agent kinds, claude, copilot and cursor were seen sending the relay's header to a local test server; opencode's use of it is not yet measured.
+  The key is written into every agent's server entry as a plain header; that each CLI really sends it was only spot-checked against a local test server, not for every agent. A request without it is answered with a bare 403, so a server that stays unreachable from one agent while others reach it points here.
   A **tenant**-distributed server can use OAuth too. Its administrator distributes no credential: the row
   offers **Sign in** like one of your own, the sign-in is yours alone, and the server reaches your sessions only
   after you have signed in. If the administrator stops distributing it, moves it to another URL or takes OAuth
@@ -569,6 +568,9 @@ not installed yet, the button names the version it will install (for example
 **Install 17.0.21+9**). Older Node.js patches that Agent Fleet installed are removed at the next
 workspace start; versions you installed yourself with nvm, and exact versions pinned by an
 nvm alias or a `.nvmrc`, are kept.
+**Installed versions** lists the JDKs and Node.js versions on disk with their size. **Uninstall**
+removes one from your home volume, after asking. Versions provided by the workspace image, the
+selected version (unless the image also has it) and one being installed cannot be removed.
 → [17 Workspace environment](17-workspace-environment.md#environment-settings-and-recreating-the-workspace)
 
 ### Databases

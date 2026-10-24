@@ -1,7 +1,6 @@
 ---
 audience: "anyone touching authentication, crypto, isolation, audit or egress"
 source_of_truth: "the code (this is the boundaries and the intent)"
-updated: "2026-10"
 ---
 
 # 07. Security — threat model, authentication, crypto, audit

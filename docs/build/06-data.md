@@ -1,7 +1,6 @@
 ---
 audience: "someone touching the schema or a migration"
 source_of_truth: "`control-plane/internal/store/migrations/*.sql` and `migrations-pg/*.sql` (this is a reading of them, as of SQLite 0076 / Postgres 0061)"
-updated: "2026-09"
 ---
 
 # 06. The data model and migrations

@@ -1,6 +1,5 @@
 ---
 audience: "anyone using the assistant chat or the memo queue"
-updated: "2026-10"
 ---
 
 # 10. Chat and memos — quick questions, translation, and memo capture

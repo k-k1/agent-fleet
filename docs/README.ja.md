@@ -1,7 +1,6 @@
 ---
 audience: "Agent Fleet のコードを変える人"
 source_of_truth: "コード（この棚と食い違ったらコードが正）"
-updated: "2026-09"
 ---
 
 # Agent Fleet 開発ドキュメント

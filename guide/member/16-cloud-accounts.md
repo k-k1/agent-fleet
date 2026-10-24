@@ -1,6 +1,5 @@
 ---
 audience: "anyone using AWS or Google Cloud from the workspace"
-updated: "2026-10"
 ---
 
 # 16. Cloud accounts — AWS profiles, SSM hosts and Google Cloud

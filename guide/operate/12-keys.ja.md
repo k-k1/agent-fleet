@@ -1,7 +1,6 @@
 ---
 audience: "Control Plane の鍵を KMS に持たせたい（ホームごとの専用鍵の有無は問わない）AWS 上の配備管理者"
 source_of_truth: "パラメータは `deploy/aws/ecs/README.md` と `deploy/aws/ecs/cfn/PARAMETERS.md`。コマンドは `af-cp rewrap-keys --help` と `af-cp home-dek-status --help`"
-updated: "2026-10"
 ---
 
 # 12. 保存時の鍵: AWS KMS とホームごとの鍵

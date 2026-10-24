@@ -266,7 +266,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "onb.optional": "Optional",
   "onb.connect_git_hint": "Connect to clone / push private repositories",
   "onb.clone_start": "Clone a repository and start a session",
-  "onb.clone_start_hint": "Clone and launch together from “Get started”",
+  "onb.clone_start_hint": "Clone and launch together from “Start”",
   "onb.get_started": "Get started",
   "onb.which_start": "Where do you want to start? You can use both later",
   "onb.tile_chat_title": "Ask AI a question or for a translation",

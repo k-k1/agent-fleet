@@ -1,7 +1,6 @@
 ---
 audience: "a tenant administrator — someone responsible for a team's members, limits and integrations"
 source_of_truth: "the Console's tenant settings — if a screen disagrees with this guide, the screen is right"
-updated: "2026-10"
 ---
 
 # Administering a tenant

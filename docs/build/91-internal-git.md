@@ -1,7 +1,6 @@
 ---
 audience: "anyone touching the internal git provider"
 source_of_truth: "the code"
-updated: "2026-09"
 ---
 
 # 91. The tenant's internal git provider (bare + smart HTTP)

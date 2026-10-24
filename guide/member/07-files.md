@@ -1,6 +1,5 @@
 ---
 audience: "anyone reading or editing files in the Console"
-updated: "2026-10"
 ---
 
 # 07. Files — tree, viewer, Markdown/slides

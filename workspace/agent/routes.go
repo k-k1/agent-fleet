@@ -593,6 +593,10 @@ func buildMux() *http.ServeMux {
 	// the toolchains GET because it needs the network.
 	mux.HandleFunc("GET /env/jdk-latest", handleJDKLatest)
 	mux.HandleFunc("GET /env/node-latest", handleNodeLatest)
+	// Installed JDK / Node trees and removing home-volume ones (toolchain_uninstall.go).
+	mux.HandleFunc("GET /env/toolchain-installs", handleToolchainInstalls)
+	mux.HandleFunc("DELETE /env/jdk/{major}", handleJDKUninstall)
+	mux.HandleFunc("DELETE /env/node/{major}", handleNodeUninstall)
 	// The same for node: without this, selecting a version that is not installed silently
 	// does nothing, exactly the gap the JDK had (docs/decisions/0068, and the head of
 	// node_install.go).

@@ -1,7 +1,6 @@
 ---
 audience: "compose / native / docker で配備を動かしていて、AWS 上にも GPU エンジンを持つ Agent Fleet がある配備管理者。前者から後者のエンジンを使わせたい人"
 source_of_truth: "Control Plane が起動時に読む環境変数。どのエンジンが在ってどのモデルを出すかの正は、向こうの配備のカタログ"
-updated: "2026-09"
 ---
 
 # 09. 別の配備のエンジンを借りる

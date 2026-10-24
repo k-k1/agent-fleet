@@ -1,6 +1,5 @@
 ---
 audience: "anyone stopping, resuming or clearing away sessions"
-updated: "2026-10"
 ---
 
 # 05. Stopping, resuming and tidying up

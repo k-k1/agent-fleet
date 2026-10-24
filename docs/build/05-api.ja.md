@@ -1,7 +1,6 @@
 ---
 audience: "API の境界に触れる人"
 source_of_truth: "コード（本書は地図と普遍設計。個々の要求 / 応答の形は code-as-contract）"
-updated: "2026-09"
 ---
 
 # 05. API 境界と中継 — 契約はコードが正

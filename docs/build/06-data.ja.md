@@ -1,7 +1,6 @@
 ---
 audience: "スキーマとマイグレーションに触れる人"
 source_of_truth: "`control-plane/internal/store/migrations/*.sql` と `migrations-pg/*.sql`（本書はその読み解き。SQLite 0076／Postgres 0061 時点）"
-updated: "2026-09"
 ---
 
 # 06. データモデルとマイグレーション

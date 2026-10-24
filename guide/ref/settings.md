@@ -1,7 +1,6 @@
 ---
 audience: "everyone, but written for whoever is looking for a knob and cannot find it"
 source_of_truth: "the Console for personal and tenant settings; `deploy/compose/.env.example` for deployment variables"
-updated: "2026-10"
 ---
 
 # Settings — where things are configured
@@ -123,3 +122,22 @@ everything else:
 | `AF_MCP_OAUTH_TRUSTED_HOSTS` | the client hosts MCP OAuth trusts, comma-separated; the default is `claude.ai`, `claude.com` and `chatgpt.com`, and `none` leaves loopback clients only. A list saved in the Admin modal (**MCP sign-in hosts**) wins over this variable ([operate/04](../operate/04-secure.md#trusted-client-hosts-deployment-wide-superadmin-only)) |
 | `AF_EFS_BACKUP` | not set by hand: on `ecs` / `ecs-ec2`, `update.sh` and `standup.sh` fill it from the ingress stack's `EfsBackup` parameter (`present`, `off` or `missing`), and `missing` raises the Admin screen's "no daily EFS backup" banner ([operate/03](../operate/03-run.md#upgrade)) |
 | `AF_SESSION_IDLE_TIMEOUT`, `AF_WS_IDLE_TIMEOUT`, `AF_BACKGROUND_HOLD_MAX`, `AF_WORKSPACE_START_DEADLINE` | when idle sessions and Workspaces are stopped; the defaults are in [limits](limits.md#set-by-the-deployment) and the behaviour in [operate/03](../operate/03-run.md#idle-stop-and-force-stop) |
+
+### On AWS ECS
+
+The ECS stacks take no free-form environment: a Control Plane variable reaches the task only
+through a `30-ingress.yaml` parameter. Every parameter below defaults to empty (or `off`), and an
+empty one adds no environment entry, so the Control Plane keeps its own default.
+
+| Variables | Stack parameters |
+|---|---|
+| `AF_SESSION_IDLE_TIMEOUT`, `AF_INTERACTION_IDLE_TIMEOUT`, `AF_WS_IDLE_TIMEOUT`, `AF_PRESENCE_IDLE_TIMEOUT`, `AF_BACKGROUND_HOLD_MAX`, `AF_WORKSPACE_START_DEADLINE`, `AF_USAGE_SAMPLE_INTERVAL` | `SessionIdleTimeout`, `InteractionIdleTimeout`, `WsIdleTimeout`, `PresenceIdleTimeout`, `BackgroundHoldMax`, `WorkspaceStartDeadline`, `UsageSampleInterval` (Go durations; `0` turns the timer off) |
+| `AF_GITHUB_LOGIN_CLIENT_ID`, `AF_GITHUB_LABEL_JA`, `AF_GITHUB_LABEL_EN`, `AF_GITHUB_MEMBERSHIP_TTL`, `AF_GITHUB_MEMBERSHIP_GRACE` | `GithubLoginClientId`, `GithubLabelJa`, `GithubLabelEn`, `GithubMembershipTtl`, `GithubMembershipGrace` |
+| `AF_LLM_URL`, `AF_COMFY_URL`, `AF_REMOTE_ENGINE_URL`, `AF_REMOTE_ENGINE_KEYS` | `LlmUrl`, `ComfyUrl`, `RemoteEngineUrl`, `RemoteEngineKeys` |
+| `AF_GITHUB_LOGIN_CLIENT_SECRET`, `AF_COMFY_API_KEY`, `AF_REMOTE_ENGINE_TOKEN` | the switches `GithubLoginSecret`, `ComfyApiKey`, `RemoteEngineToken` (`on`): the value is read from the SSM SecureString `<SsmPrefix>/github-login-client-secret`, `/comfy-api-key`, `/remote-engine-token`, which must exist first |
+
+`WS_ENV` has no parameter on ECS on purpose: it carries free-form `KEY=VAL` pairs, secrets
+included, in plain environment. The parameters are set with a targeted `aws cloudformation deploy` of `30-ingress.yaml`
+(`update.sh` overrides only `ImageTag` and `EfsBackup`); see
+[`deploy/aws/ecs/cfn/PARAMETERS.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/PARAMETERS.md#control-plane-timers-github-sign-in-extras-and-lan--borrowed-engines).
+A LAN engine is reachable from ECS only when the VPC has a route to it (VPN, peering).

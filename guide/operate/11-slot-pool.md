@@ -1,7 +1,6 @@
 ---
 audience: "a deployment administrator running the ecs-ec2 target, where workspaces run on a pool of EC2 slots"
 source_of_truth: "`deploy/aws/ecs/README.md` for the commands; the Admin → Slots screen for what each slot is doing"
-updated: "2026-10"
 ---
 
 # 11. The ecs-ec2 slot pool

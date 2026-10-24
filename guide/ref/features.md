@@ -1,7 +1,6 @@
 ---
 audience: "everyone; the index the other tables hang off"
 source_of_truth: "this table for \"does it exist and who can use it\"; the linked page for how"
-updated: "2026-10"
 ---
 
 # Features — the catalogue

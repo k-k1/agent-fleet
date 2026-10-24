@@ -1,7 +1,6 @@
 ---
 audience: "someone with a deployment that is not behaving"
 source_of_truth: "the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page"
-updated: "2026-08"
 ---
 
 # 06. Troubleshooting and FAQ

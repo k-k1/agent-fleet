@@ -1,7 +1,6 @@
 ---
 audience: "someone changing the Console — the browser side"
 source_of_truth: "the code (this is a map and a statement of intent)"
-updated: "2026-09"
 ---
 
 # 02. Console (React + Vite + zustand)

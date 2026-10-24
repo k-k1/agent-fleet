@@ -1,7 +1,6 @@
 ---
 audience: "everyone; decisive for operate/"
 source_of_truth: "this table; the rows are checked against the runtime profiles the Control Plane accepts"
-updated: "2026-10"
 ---
 
 # Deployment targets — what exists where

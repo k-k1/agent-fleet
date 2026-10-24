@@ -1,7 +1,6 @@
 ---
 audience: "内部 git プロバイダに触れる人"
 source_of_truth: "コード"
-updated: "2026-09"
 ---
 
 # 91. テナント内部 git プロバイダ（bare + smart HTTP）

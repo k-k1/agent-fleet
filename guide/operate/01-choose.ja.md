@@ -1,7 +1,6 @@
 ---
 audience: "配備をどこで・どう動かすか決める人"
 source_of_truth: "各形態が何に対応しているかは ref/deploy-targets.md、選び方はこのページ"
-updated: "2026-10"
 ---
 
 # 01. 配備形態を選ぶ

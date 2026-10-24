@@ -280,9 +280,13 @@ func installJDK(major string) (string, error) {
 		return "", err
 	}
 	root := jvmHomeRoot()
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	// Held for the whole install, from any process (the CLI included), so an uninstall
+	// cannot stage away a tree this install is about to place or has just placed.
+	unlock, _, err := installLock(root, true)
+	if err != nil {
 		return "", err
 	}
+	defer unlock()
 	// Download to a temp tarball, extract into a staging dir, then atomically swap
 	// it into place — a failed/half download never corrupts an existing JDK.
 	tgz, err := os.CreateTemp(root, ".jdk-*.tgz")

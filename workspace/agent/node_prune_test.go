@@ -33,7 +33,9 @@ func nodeDirs(t *testing.T) []string {
 	ents, _ := os.ReadDir(nvmNodeRoot())
 	var out []string
 	for _, e := range ents {
-		out = append(out, e.Name())
+		if !strings.HasPrefix(e.Name(), ".") { // the install lock, the trash directory
+			out = append(out, e.Name())
+		}
 	}
 	sort.Strings(out)
 	return out

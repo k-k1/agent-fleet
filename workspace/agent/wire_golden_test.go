@@ -77,6 +77,9 @@ func wireGoldenTypes() []struct {
 		// GET /env/jdk-latest and /env/node-latest — the version Install would fetch and
 		// whether the Toolchains tab offers an update.
 		{"toolchainLatest", reflect.TypeOf(toolchainLatestReply{})},
+		// GET /env/toolchain-installs (and the DELETE /env/{jdk,node}/{major} answers) —
+		// what the Installed versions list shows and may remove.
+		{"toolchainInstalls", reflect.TypeOf(toolchainInstallsReply{})},
 	}
 }
 

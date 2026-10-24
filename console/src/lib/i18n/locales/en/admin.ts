@@ -1391,7 +1391,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.stage2_run_title": "Delete only what is graded safe (merged & clean)",
   "clean.stage2_empty": "No working copies or branches can be deleted.",
   "clean.stage2_confirm_title": "Bulk-delete working copies & branches",
-  "clean.stage2_confirm_body": "Delete the {count} items graded safe. Branches are moved to the trash first. Stopped sessions in a deleted working copy move to the archive (shell/ssm to the trash). Deleting a worktree cannot be undone.",
+  "clean.stage2_confirm_body": "Delete the {count} items graded safe. Branches are moved to the trash first. Stopped sessions in a deleted working copy move to the archive (shell/ssm to the trash). A deleted worktree also goes to the trash, and Restore recreates it with its commits and uncommitted changes, but not files git ignores (build output, .env) or which changes were staged.",
   "clean.shelf_n": "{count} archived sessions are on the shelf (not part of cleanup).",
   "clean.open_shelf": "Open the archive browser",
   "clean.safety_safe": "Safe",

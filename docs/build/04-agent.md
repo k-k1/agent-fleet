@@ -1,7 +1,6 @@
 ---
 audience: "someone changing the workspace agent, or adding an agent kind"
 source_of_truth: "the code (this is a map and a statement of intent)"
-updated: "2026-09"
 ---
 
 # 04. The workspace agent
