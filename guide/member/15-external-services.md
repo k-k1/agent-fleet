@@ -49,10 +49,12 @@ session. You can view, list, create, edit, comment on and transition issues:
 - **Project, board, sprints and epics**: run `jira init --project PROJ --board "PROJ board"` once
   (add `--force` to replace an earlier setup). It writes your default project, board, issue types
   and epic fields, which `jira sprint list` and the epic commands need, and it asks no questions.
-  Without it, pass `-p PROJ` to each command. A second board, or a project the first setup does not
-  cover, needs a configuration file of its own: when `jira` suggests one, it prints the full
-  `jira init -c … --project … --board …` command; run it as printed and add the same `-c …` to the
-  later `jira` calls. Your connection is used only with configuration files made that way.
+  Without it, pass `-p PROJ` to each command. For a second board (or a project the first
+  setup does not cover), make a configuration file of its own in the folder where `jira` keeps its
+  files: `jira init -c ~/.config/agent-fleet/jira/other-board.yml --project PROJ --board "Other board"`,
+  then use `jira -c ~/.config/agent-fleet/jira/other-board.yml …`. Your connection is used only with
+  configuration files in that folder; one anywhere else runs without it. (When `jira` itself suggests such a
+  command, for example for another project's issue types, run it as printed.)
 - **Markdown in comments and descriptions**: the CLI converts Markdown to Jira markup, and until the
   first piece of markup (a heading, a list, bold, a link) a list, heading,
   code block or quote that follows a plain paragraph is glued onto it (two paragraphs in a row are
@@ -154,7 +156,7 @@ replies.
 
 ## PagerDuty / Grafana / CloudWatch / AWS connect from the "Ops & monitoring" tab (recommended)
 
-**PagerDuty, Grafana, CloudWatch and AWS are already built into the product**. Use that first, rather than the manual PoC steps described later.
+**PagerDuty, Grafana, CloudWatch and AWS are already built into the product**. Use those cards.
 
 1. Open the **Settings > Ops & monitoring** tab, enter the connection details on each card, and hit "Connect":
    - **PagerDuty**: an API key. A **read-only key** is recommended (choose "Read-only" under Integrations > API Access Keys in PagerDuty). For EU accounts, turn the toggle on.
@@ -179,12 +181,15 @@ AMG tokens last **30 days at most**; paste a new one into the card when the old 
 
 ### Other tools (Zabbix and the like)
 
-Tools without a card are connected as MCP servers: register the server under
-Settings > Connections > [MCP servers](20-settings.md#mcp-servers) with assistants as a target, then pick it
-in the assistant's edit form under "MCP servers (optional)". Only assistants you created can be edited; the
-built-in ones (SRE Assistant, Fleet Operator, Agent Fleet Assistant) cannot. A server added by hand with
-`claude mcp add` never appears in that choice, and its token sits in plaintext in the home folder, so prefer
-the registration, which is stored encrypted.
+Tools without a card (Zabbix, a Terminal (CLI) session's own Grafana / PagerDuty / CloudWatch server, and the like) are
+connected as MCP servers under Settings > Connections > [MCP servers](20-settings.md#mcp-servers). Under
+**Advanced**, choose the **targets**: **sessions** for Terminal (CLI) and other agent sessions, which pick the
+server up from the next session you start, and **assistants** for chat. For an assistant, then pick it in the
+assistant's edit form under "MCP servers (optional)"; only assistants you created can be edited, and the built-in
+ones (SRE Assistant, Fleet Operator, Agent Fleet Assistant) cannot. Choose the server you want from the tool's own
+documentation (for Zabbix, the server of your Zabbix vendor; for AWS Athena, an Athena or data-processing MCP
+server, or simply the `aws` CLI). A server added by hand with `claude mcp add` never appears in the assistant
+choice, and its token sits in plaintext in the home folder, so prefer the registration, which is stored encrypted.
 
 Alert bodies and logs are **input an attacker can influence**: keep these connections read-only, and if you
 experiment with writes, do it explicitly in a dedicated assistant or session.

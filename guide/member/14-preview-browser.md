@@ -186,9 +186,6 @@ When the browser pane fails to render properly, a status appears in the pane.
 If you try to open it while the workspace is stopped or starting, a dedicated notice appears. Reopen once the
 workspace is running.
 
-Every recovery (**"Reconnect"**, a Console reload, a workspace stop and start) builds a *new* page at the
-current port and path, so cookies, storage and half-typed input do not come back.
-
 ### Limits and transience (good to know)
 
 - The number of panes open at once, the display size and the frame rate are capped (the numbers are in
@@ -196,7 +193,7 @@ current port and path, so cookies, storage and half-typed input do not come back
 - If you **switch the pane to another view / send it to the back**, rendering stops and the page is kept for a
   short while. Return quickly and the same state continues; after that it is recreated from the saved
   port/path.
-- On a **workspace Stop → Start** or a Console reload, browser panes that were on display are **automatically
+- On a **workspace Stop → Start**, a Console reload or **"Reconnect"**, browser panes that were on display are **automatically
   recreated** from the same port/path, but cookies and half-typed input do not come back.
 - This is **not a general-purpose browser for opening external URLs** (it is localhost-only; there is no host
   field, only a port and path). Nor is it a **full replacement for browser devtools** with DOM / Network /
