@@ -158,9 +158,10 @@ after it, before any session: per major, marked patches older than the newest go
 trees (an nvm install, or one written before the marker existed) are never removed. The
 marker only says who installed a tree, so pinned versions stay regardless: the tree
 install-node returned (`--keep`), an exact saved selection, and exact versions named by
-an nvm alias or by `~/.nvmrc` / `~/repos/*/.nvmrc`. If the newest tree's `bin/node` is not
-an executable inside that tree, the major is skipped, and a tree another tree's node
-resolves into is never removed.
+an nvm alias (symlinked aliases included) or by `~/.nvmrc` / `~/repos/*/.nvmrc` (read as
+nvm does: comments, blank and `key=value` lines skipped). A major is left alone when any
+of its entries is a symlink, when any symlink inside one of its trees points outside that
+tree, or when the newest has no executable `bin/node`.
 
 ## 9.5 The AWS target
 

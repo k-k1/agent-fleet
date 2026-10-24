@@ -263,3 +263,142 @@ func TestPruneKeepsTreesOthersDependOn(t *testing.T) {
 		t.Fatalf("left %s", got)
 	}
 }
+
+func nodeSymlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A chain newest → old → newest resolves inside the newest, yet removing the old tree
+// breaks it. Any link leaving its own tree keeps the whole major.
+func TestPruneSkipsMajorOnChainThroughOldTree(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := nvmNodeRoot()
+	writePinFile(t, filepath.Join(root, "v22.23.4", nodeInstallMarker), "")
+	nodeSymlink(t, "../../v22.23.5/lib/node", filepath.Join(root, "v22.23.4", "bin", "node"))
+	if err := os.MkdirAll(filepath.Join(root, "v22.23.5", "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "v22.23.5", "lib", "node"), nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nodeSymlink(t, "../v22.23.4/bin", filepath.Join(root, "v22.23.5", "bin"))
+	if got := pruneLeft(t, filepath.Join(root, "v22.23.5", "bin")); got != "v22.23.4,v22.23.5" {
+		t.Fatalf("left %s", got)
+	}
+}
+
+// Three trees chained (6 → 5 → 4): nothing of the major goes.
+func TestPruneSkipsMajorOnLongerChain(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := nvmNodeRoot()
+	fakeNode(t, "v22.23.4", true)
+	writePinFile(t, filepath.Join(root, "v22.23.5", nodeInstallMarker), "")
+	nodeSymlink(t, "../../v22.23.4/bin/node", filepath.Join(root, "v22.23.5", "bin", "node"))
+	if err := os.MkdirAll(filepath.Join(root, "v22.23.6"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nodeSymlink(t, "../v22.23.5/bin", filepath.Join(root, "v22.23.6", "bin"))
+	if got := pruneLeft(t); got != "v22.23.4,v22.23.5,v22.23.6" {
+		t.Fatalf("left %s", got)
+	}
+}
+
+// A top-level entry that is a symlink (v22.23.5 -> v22.23.4) keeps the major too.
+func TestPruneSkipsMajorWithSymlinkedEntry(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := nvmNodeRoot()
+	fakeNode(t, "v22.23.4", true)
+	fakeNode(t, "v22.23.6", true)
+	nodeSymlink(t, "v22.23.4", filepath.Join(root, "v22.23.5"))
+	if got := pruneLeft(t); got != "v22.23.4,v22.23.5,v22.23.6" {
+		t.Fatalf("left %s", got)
+	}
+}
+
+// Links that stay inside their own tree (npm, npx, corepack in a real tarball) do not
+// stop the prune.
+func TestPruneAllowsInTreeSymlinks(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := nvmNodeRoot()
+	fakeNode(t, "v22.23.4", true)
+	fakeNode(t, "v22.23.5", true)
+	for _, v := range []string{"v22.23.4", "v22.23.5"} {
+		writePinFile(t, filepath.Join(root, v, "lib", "node_modules", "npm", "bin", "npm-cli.js"), "")
+		nodeSymlink(t, "../lib/node_modules/npm/bin/npm-cli.js", filepath.Join(root, v, "bin", "npm"))
+	}
+	if got := pruneLeft(t); got != "v22.23.5" {
+		t.Fatalf("left %s", got)
+	}
+}
+
+// .nvmrc is read the way nvm reads it: comments, blank lines and key=value lines skipped.
+func TestPruneKeepsCommentedNvmrcPins(t *testing.T) {
+	for _, body := range []string{
+		"# project runtime\n22.23.4\n",
+		"\n\n22.23.4 # project runtime\n",
+		"some_option=true\nv22.23.4\n",
+	} {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		fakeNode(t, "v22.23.4", true)
+		fakeNode(t, "v22.23.5", true)
+		writePinFile(t, filepath.Join(home, "repos", "app", ".nvmrc"), body)
+		if got := pruneLeft(t); got != "v22.23.4,v22.23.5" {
+			t.Fatalf(".nvmrc %q: left %s", body, got)
+		}
+	}
+}
+
+func TestNvmrcVersion(t *testing.T) {
+	for in, want := range map[string]string{
+		"22.23.4\n":               "22.23.4",
+		"# c\n\n v22.23.4  # c\n": "v22.23.4",
+		"a=b\nlts/*\n":            "lts/*",
+		"# only a comment\n":      "",
+		"22.23.4\n24.1.0\n":       "22.23.4",
+	} {
+		if got := nvmrcVersion([]byte(in)); got != want {
+			t.Errorf("nvmrcVersion(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// nvm reads alias files with a plain file test, so a symlinked alias file, and a
+// symlinked alias directory, still pin. A link cycle must not hang the walk.
+func TestPruneFollowsSymlinkedAliases(t *testing.T) {
+	cases := map[string]func(home string){
+		"alias file symlink": func(h string) {
+			writePinFile(t, filepath.Join(h, "dotfiles", "proj"), "v22.23.4\n")
+			nodeSymlink(t, filepath.Join(h, "dotfiles", "proj"), filepath.Join(h, ".nvm", "alias", "proj"))
+		},
+		"alias dir symlink": func(h string) {
+			writePinFile(t, filepath.Join(h, "dotfiles", "alias", "proj"), "22.23.4")
+			if err := os.MkdirAll(filepath.Join(h, ".nvm"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			nodeSymlink(t, filepath.Join(h, "dotfiles", "alias"), filepath.Join(h, ".nvm", "alias"))
+		},
+		"cycle": func(h string) {
+			writePinFile(t, filepath.Join(h, ".nvm", "alias", "proj"), "22.23.4")
+			nodeSymlink(t, "..", filepath.Join(h, ".nvm", "alias", "loop"))
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			fakeNode(t, "v22.23.4", true)
+			fakeNode(t, "v22.23.5", true)
+			setup(home)
+			if got := pruneLeft(t); got != "v22.23.4,v22.23.5" {
+				t.Fatalf("left %s", got)
+			}
+		})
+	}
+}

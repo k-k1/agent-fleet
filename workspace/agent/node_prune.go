@@ -16,9 +16,11 @@ package main
 //     put on PATH (--keep), an exact version saved as the selection (the entrypoint runs
 //     `nvm use` on it under set -e, so removing it would stop the start), and exact
 //     versions named by an nvm alias or by ~/.nvmrc / ~/repos/*/.nvmrc.
-//   - The newest tree must be a working node of its own: its bin/node resolves to an
-//     executable regular file inside that tree. Otherwise the major is left alone, and
-//     a tree another tree's bin/node resolves into is never removed.
+//   - Trees must be self-contained. A major is left alone when any of its entries is a
+//     symlink, or when any symlink inside one of its trees points outside that tree:
+//     following chains to decide what still depends on what proved error-prone (a link
+//     through the old tree and back passed a final-target check), and the trees Node
+//     ships only link within themselves. The newest must also have an executable bin/node.
 //   - It runs from the entrypoint, before any session exists. A session started earlier
 //     has the old patch's bin on PATH, so a Console update leaves the old tree for the
 //     next start instead of deleting it under a running process.
@@ -56,75 +58,51 @@ func pruneSupersededNodes(keep []string) ([]string, error) {
 	}
 	type tree struct {
 		name   string
-		dir    string // symlinks resolved
 		ver    []int
 		marked bool
-		node   string // bin/node with symlinks resolved; "" when it does not resolve
-		ok     bool   // node is an executable regular file
+		link   bool // the entry itself is a symlink
 	}
-	var trees []*tree
+	byMajor := map[int][]*tree{}
 	for _, e := range ents {
-		if !e.IsDir() || !strings.HasPrefix(e.Name(), "v") {
+		if !strings.HasPrefix(e.Name(), "v") {
 			continue
 		}
 		v := parseDotted(strings.TrimPrefix(e.Name(), "v"))
 		if len(v) == 0 {
 			continue
 		}
-		dir := filepath.Join(root, e.Name())
-		// A tree without bin/node (a half-removed or foreign directory) neither counts
-		// as the newest nor gets removed.
-		if _, err := os.Lstat(filepath.Join(dir, "bin", "node")); err != nil {
+		t := &tree{name: e.Name(), ver: v, link: e.Type()&os.ModeSymlink != 0}
+		if !t.link && !e.IsDir() {
 			continue
 		}
-		t := &tree{name: e.Name(), dir: dir, ver: v}
-		if real, err := filepath.EvalSymlinks(dir); err == nil {
-			t.dir = real
-		}
-		_, merr := os.Stat(filepath.Join(dir, nodeInstallMarker))
+		_, merr := os.Lstat(filepath.Join(root, e.Name(), nodeInstallMarker))
 		t.marked = merr == nil
-		if real, err := filepath.EvalSymlinks(filepath.Join(dir, "bin", "node")); err == nil {
-			t.node = real
-			if fi, err := os.Stat(real); err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o111 != 0 {
-				t.ok = true
-			}
-		}
-		trees = append(trees, t)
-	}
-	// owner is the tree a resolved path lies in, or nil.
-	owner := func(p string) *tree {
-		for _, t := range trees {
-			if strings.HasPrefix(p, t.dir+string(filepath.Separator)) {
-				return t
-			}
-		}
-		return nil
-	}
-	// Any tree some other tree's node resolves into stays.
-	depended := map[string]bool{}
-	for _, t := range trees {
-		if o := owner(t.node); o != nil && o != t {
-			depended[o.name] = true
-		}
-	}
-	byMajor := map[int][]*tree{}
-	for _, t := range trees {
-		byMajor[t.ver[0]] = append(byMajor[t.ver[0]], t)
+		byMajor[v[0]] = append(byMajor[v[0]], t)
 	}
 	var removed []string
 	var firstErr error
 	for _, group := range byMajor {
-		newest := group[0]
-		for _, t := range group[1:] {
-			if compareDotted(t.ver, newest.ver) > 0 {
+		safe := true
+		for _, t := range group {
+			if t.link || linksOutside(filepath.Join(root, t.name)) {
+				safe = false
+				break
+			}
+		}
+		if !safe {
+			continue
+		}
+		var newest *tree
+		for _, t := range group {
+			if newest == nil || compareDotted(t.ver, newest.ver) > 0 {
 				newest = t
 			}
 		}
-		if !newest.ok || owner(newest.node) != newest {
+		if !executableNode(filepath.Join(root, newest.name)) {
 			continue
 		}
 		for _, t := range group {
-			if !t.marked || t == newest || pinned[t.name] || depended[t.name] {
+			if !t.marked || t == newest || pinned[t.name] {
 				continue
 			}
 			if err := os.RemoveAll(filepath.Join(root, t.name)); err != nil {
@@ -137,6 +115,44 @@ func pruneSupersededNodes(keep []string) ([]string, error) {
 		}
 	}
 	return removed, firstErr
+}
+
+// linksOutside reports whether any symlink under dir points outside dir (judged on the
+// link text, joined to the link's directory), or whether dir cannot be fully read. When
+// in doubt it answers true, which keeps the whole major.
+func linksOutside(dir string) bool {
+	prefix := filepath.Clean(dir) + string(filepath.Separator)
+	outside := false
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			outside = true
+			return filepath.SkipAll
+		}
+		if d.Type()&os.ModeSymlink == 0 {
+			return nil
+		}
+		target, rerr := os.Readlink(p)
+		if rerr != nil {
+			outside = true
+			return filepath.SkipAll
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(p), target)
+		}
+		if !strings.HasPrefix(filepath.Clean(target)+string(filepath.Separator), prefix) {
+			outside = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return outside || err != nil
+}
+
+// executableNode reports whether dir/bin/node is an executable regular file (in-tree
+// links are allowed; linksOutside already rejected the others).
+func executableNode(dir string) bool {
+	fi, err := os.Stat(filepath.Join(dir, "bin", "node"))
+	return err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o111 != 0
 }
 
 // pinnedNodeVersions collects the exact versions ("v22.23.4") something asks for: the
@@ -152,24 +168,61 @@ func pinnedNodeVersions() map[string]bool {
 	}
 	add(readToolchains().Node)
 	home := homeDir()
-	_ = filepath.WalkDir(filepath.Join(home, ".nvm", "alias"), func(p string, d os.DirEntry, err error) error {
-		if err == nil && d.Type().IsRegular() {
-			if b, rerr := os.ReadFile(p); rerr == nil {
-				add(firstLine(b))
-			}
-		}
-		return nil
-	})
+	readAliases(filepath.Join(home, ".nvm", "alias"), map[string]bool{}, 0, func(b []byte) { add(firstLine(b)) })
 	rcs := []string{filepath.Join(home, ".nvmrc")}
 	if m, err := filepath.Glob(filepath.Join(home, "repos", "*", ".nvmrc")); err == nil {
 		rcs = append(rcs, m...)
 	}
 	for _, p := range rcs {
 		if b, err := os.ReadFile(p); err == nil {
-			add(firstLine(b))
+			add(nvmrcVersion(b))
 		}
 	}
 	return out
+}
+
+// readAliases calls fn with the content of every alias file under dir. Like nvm, which
+// reads them with a plain file test, it follows symlinks — to files and to directories
+// (dotfile managers link them) — and the visited set stops a link cycle.
+func readAliases(dir string, seen map[string]bool, depth int, fn func([]byte)) {
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil || seen[real] || depth > 8 {
+		return
+	}
+	seen[real] = true
+	ents, err := os.ReadDir(real)
+	if err != nil {
+		return
+	}
+	for _, e := range ents {
+		p := filepath.Join(real, e.Name())
+		fi, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		if fi.IsDir() {
+			readAliases(p, seen, depth+1, fn)
+		} else if fi.Mode().IsRegular() {
+			if b, err := os.ReadFile(p); err == nil {
+				fn(b)
+			}
+		}
+	}
+}
+
+// nvmrcVersion reads the version a .nvmrc asks for the way nvm 0.40 does: comments
+// ("#" to end of line) and blank lines are dropped, key=value lines are options, and
+// the first remaining line is the version.
+func nvmrcVersion(b []byte) string {
+	for _, line := range strings.Split(string(b), "\n") {
+		line, _, _ = strings.Cut(line, "#")
+		line = strings.TrimSpace(line)
+		if line == "" || strings.Contains(line, "=") {
+			continue
+		}
+		return line
+	}
+	return ""
 }
 
 func firstLine(b []byte) string {
