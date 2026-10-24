@@ -297,7 +297,8 @@ func handleToolchainsGet(w http.ResponseWriter, r *http.Request) {
 		// versions that may not be on disk. Without this the Console cannot tell the two
 		// apart, and selecting an absent one silently did nothing (docs/decisions/0068).
 		"node_installed": installedNodeMajors(),
-		"go_options":     goOptions(), // "system" ∪ build pin ∪ installed on-demand versions
+		"node_versions":  installedNodeVersions(), // major → the patch sessions get
+		"go_options":     goOptions(),             // "system" ∪ build pin ∪ installed on-demand versions
 		"tz_options":     tzOptions,
 	})
 }

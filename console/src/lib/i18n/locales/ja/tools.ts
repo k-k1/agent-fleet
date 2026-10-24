@@ -257,6 +257,10 @@ export const tools = {
   "env.node_installing": "インストール中…",
   "env.node_install_note":
     "Node.js v{v} はまだこのワークスペースにありません。「インストール」で今すぐ取得します（home ボリュームへ入るので再起動しても残ります）。完了後に起動したセッションから使われ、Stop → Start は不要です。",
+  "env.node_install_busy": "いま Node.js v{v} をインストール中です。終わってからもう一度お試しください。",
+  "env.node_update": "{v} に更新",
+  "env.node_update_note":
+    "Node.js {v} が出ています（このワークスペースは {cur}）。「{v} に更新」で home ボリュームへ取得し、完了後に起動したセッションから使われます（Stop → Start は不要）。Agent Fleet が入れた古いパッチは次のワークスペース起動時に削除されます。",
   "env.node_install_failed": "Node.js のインストールに失敗しました: {msg}",
   "env.node_install_timeout": "時間内にダウンロードが終わりませんでした",
   "env.go_default": "既定 (image の go)",

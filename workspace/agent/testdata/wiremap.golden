@@ -53,7 +53,7 @@ connections_slack.go handleSlackInspect x1 {botName,botUserId,teamName}
 engines.go handleEngineCatalogChanged x1 {refreshing}
 engines.go handleEngineUsage x1 {recorded}
 env_tool_versions.go handleToolVersions x1 {checkedAt,tools}
-env_toolchains.go handleToolchainsGet x1 {agentUpdate,go,go_options,java,java_available,java_installed,java_versions,node,node_installed,node_options,timezone,tz_options}
+env_toolchains.go handleToolchainsGet x1 {agentUpdate,go,go_options,java,java_available,java_installed,java_versions,node,node_installed,node_options,node_versions,timezone,tz_options}
 fs.go handleFSDelete x1 {deleted}
 fs.go handleFSMkdir x1 {path}
 fs.go handleFSNewFile x1 {path}
@@ -213,7 +213,7 @@ main.go handleHealth x1 {ok,secrets_key,secrets_key_next,secrets_key_start}
 memo_paste.go handleMemoImageGC x1 {removed}
 muse_install_http.go handleMuseInstall x1 {error,installed,pin,state,updateAvailable,version} cond{installed,pin,updateAvailable,version}
 muse_install_http.go handleMuseInstall x3 {state}
-node_install.go handleNodeInstall x3 {error,major,node_available,node_installed,state}
+node_install.go handleNodeInstall x3 {error,major,node_available,node_installed,node_versions,state}
 notifications.go handleNotifications x1 {notifications}
 repo_jobs.go handleDeleteRepoJob x1 {canceled}
 repo_jobs.go handleDeleteRepoJob x1 {dismissed}

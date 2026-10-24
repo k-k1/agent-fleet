@@ -260,6 +260,10 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.node_install_note":
     "Node.js v{v} is not in this workspace yet. Install downloads it into your home volume, where it persists across restarts; sessions started afterwards use it, with no Stop → Start.",
   "env.node_install_failed": "Node.js install failed: {msg}",
+  "env.node_install_busy": "Node.js v{v} is being installed right now. Try again when it has finished.",
+  "env.node_update": "Update to {v}",
+  "env.node_update_note":
+    "Node.js {v} is available (this workspace uses {cur}). Updating downloads it into your home volume; sessions started afterwards use it, with no Stop → Start. Older patches Agent Fleet installed are removed at the next workspace start.",
   "env.node_install_timeout": "the download did not finish in time",
   "env.go_default": "Default (image's go)",
   "env.preview_cross_origin_label": "Allow calls between ports",

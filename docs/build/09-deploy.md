@@ -150,7 +150,13 @@ toolchains GET also reports `java_versions` (major → resolved version) and sta
 is not installed it still answers `latest`, the version Install would fetch, and the
 Console names it on the button. `GET /env/node-latest?major=N` is the Node.js twin
 (nodejs.org's index, versions with nvm's `v` prefix). Both accept only the majors the
-picker offers, because each one is a cache key (`version_lookup.go`).
+picker offers, because each one is a cache key (`version_lookup.go`). The toolchains GET
+reports `node_versions` too (major → the patch `nodeBinFor` resolves), and the Node row
+offers the same update. `install-node` adds each patch next to the old ones, so it marks
+its trees (`.agent-fleet-installed`) and the entrypoint runs `prune-node-versions` right
+after it, before any session: per major, marked patches older than the newest go. Unmarked
+trees (an nvm install, an exact `.nvmrc` pin, or one written before the marker existed)
+are never removed.
 
 ## 9.5 The AWS target
 

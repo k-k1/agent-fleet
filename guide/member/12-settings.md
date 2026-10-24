@@ -566,11 +566,12 @@ administrator's to set.
 Timezone, Node.js / Java / Go versions, the table of effective tool versions (a CLI whose install at the workspace's start failed shows
 "install failed" with the reason, typically a full home disk, and is tried again at the next start; starting a session of that agent is refused with the same reason until the CLI is installed, while other agents start as usual), **agent CLI updates** (off by
 default), and applying an Agent Fleet update.
-The Java row shows the exact JDK version in use (for example `21.0.11+10`). When a newer patch
-of that version is out, an **Update to …** button downloads it into your home volume;
+The Java and Node.js rows show the exact version in use (for example `21.0.11+10`, `v22.23.4`).
+When a newer patch of that version is out, an **Update to …** button downloads it into your home volume;
 sessions started afterwards use it, with no Stop → Start. For a Java or Node.js version that is
 not installed yet, the button names the version it will install (for example
-**Install 17.0.21+9**).
+**Install 17.0.21+9**). Older Node.js patches that Agent Fleet installed are removed at the next
+workspace start; versions you installed yourself with nvm are kept.
 → [10 Going further](10-integrations.md#environment-settings-and-recreating-the-workspace)
 
 ### Databases
