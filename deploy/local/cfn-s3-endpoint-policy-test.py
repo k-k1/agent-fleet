@@ -151,6 +151,10 @@ def main():
     def stmts(p):
         return p["PolicyDocument"]["Statement"]
 
+    def swap_resources(p):
+        s = stmts(p)
+        s[2]["Resource"], s[3]["Resource"] = s[3]["Resource"], s[2]["Resource"]
+
     def renamed_bucket(e):
         e = copy.deepcopy(e)
         e["Resources"]["ModelsBucket"]["Properties"]["BucketName"]["!Sub"] = "models-${AWS::StackName}"
@@ -168,8 +172,7 @@ def main():
         ("ECR statement becomes PutObject", mutated(lambda p: stmts(p)[0].update(Action=["s3:PutObject"])), engines),
         ("models object actions replaced by ListBucket",
          mutated(lambda p: stmts(p)[2].update(Action=["s3:ListBucket"])), engines),
-        ("models resources swapped", mutated(lambda p: (stmts(p)[2].update(Resource=stmts(p)[3]["Resource"]),
-                                                       stmts(p)[3].update(Resource=stmts(p)[2]["Resource"]))), engines),
+        ("models resources swapped", mutated(swap_resources), engines),
         ("principal dropped", mutated(lambda p: stmts(p)[0].pop("Principal")), engines),
         ("owner condition dropped (objects)", mutated(lambda p: stmts(p)[2].pop("Condition")), engines),
         ("owner condition dropped (list)", mutated(lambda p: stmts(p)[3].pop("Condition")), engines),

@@ -198,9 +198,9 @@ Resources:
           # ECR image layers. ECR serves layer blobs from an AWS-owned bucket in the region;
           # this is the resource AWS documents for the endpoint policy in "Amazon ECR
           # interface VPC endpoints (AWS PrivateLink)", section "Create a VPC endpoint for
-          # Amazon S3" (the S3 gateway endpoint ECR image pulls need). Read-only. A policy
-          # without it sends every layer pull through the NAT again, or fails it if the
-          # route table has no other way out.
+          # Amazon S3" (the S3 gateway endpoint ECR image pulls need). Read-only. Drop this
+          # statement and every image pull is refused at the endpoint: a refused request does
+          # not fall back to the NAT.
           - Sid: EcrLayerBucket
             Effect: Allow
             Principal: "*"
