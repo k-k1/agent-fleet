@@ -111,7 +111,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		// that fails on I/O is returned as such: it is not evidence that there is no backup.
 		restored, err := RestoreTranscript(sid, m.CWD())
 		if err != nil {
-			return agents.LaunchPlan{}, fmt.Errorf("バックアップから会話ログを復元できませんでした: %w", err)
+			return agents.LaunchPlan{}, fmt.Errorf("%w: %w", ErrTranscriptRestore, err)
 		}
 		if !restored || lostTranscript(sid) {
 			return agents.LaunchPlan{}, ErrTranscriptLost

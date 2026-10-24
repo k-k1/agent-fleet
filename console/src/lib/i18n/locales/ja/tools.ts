@@ -244,7 +244,11 @@ export const tools = {
   "env.java_installing": "インストール中…",
   "env.java_install_note":
     "Temurin {v} はまだこのワークスペースにありません。「インストール」で今すぐ取得します（約 200MB／home ボリュームへ入るので再起動しても残ります）。完了後に起動したセッションから JAVA_HOME に入り、Stop → Start は不要です。",
+  "env.java_update": "{v} に更新",
+  "env.java_update_note":
+    "Temurin {v} が出ています（このワークスペースは {cur}）。「{v} に更新」で home ボリュームへ取得します（約 200MB）。完了後に起動したセッションから JAVA_HOME に入り、Stop → Start は不要です。",
   "env.java_install_failed": "JDK のインストールに失敗しました: {msg}",
+  "env.java_install_busy": "いま Temurin {v} をインストール中です。終わってからもう一度お試しください。",
   "env.java_install_timeout": "時間内にダウンロードが終わりませんでした",
   "env.node_opt_absent": "v{v}（未インストール）",
   "env.node_install": "インストール",

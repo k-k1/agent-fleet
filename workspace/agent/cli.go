@@ -99,6 +99,12 @@ var subcommands = []subcommand{
 		run:      runInstallJDK,
 	},
 	{
+		name:     "java-home",
+		operands: "<major>",
+		summary:  "print the JAVA_HOME a Temurin major resolves to (newest patch across both JDK dirs)",
+		run:      runJavaHome,
+	},
+	{
 		name:    "install-chromium",
 		summary: "download the pinned chromium + CJK font for the browser pane",
 		run:     runInstallChromium,

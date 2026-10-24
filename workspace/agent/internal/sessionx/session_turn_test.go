@@ -2,6 +2,7 @@ package sessionx
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -301,6 +302,11 @@ func TestHandleSessionRespondTerminalResponder(t *testing.T) {
 	d.err = agents.ErrTerminalRespond
 	if rec := respond(); rec.Code != http.StatusNotImplemented || !strings.Contains(rec.Body.String(), "respond_unsupported") {
 		t.Fatalf("not on the serve: %d %s", rec.Code, rec.Body.String())
+	}
+	d.err = fmt.Errorf("interaction frm_1 is not pending: %w", agents.ErrInteractionNotPending)
+	if rec := respond(); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"interaction_not_pending"`) ||
+		strings.ContainsFunc(rec.Body.String(), func(r rune) bool { return r > 0x7f }) {
+		t.Fatalf("settled interaction: %d %s", rec.Code, rec.Body.String())
 	}
 	d.err = errors.New("settled")
 	if rec := respond(); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "respond_failed") {

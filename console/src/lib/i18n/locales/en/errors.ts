@@ -80,6 +80,9 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.codex_releasing":
     "codex has not let go of this conversation yet (usually about a minute after the stop). Try again shortly.",
   "err.driver_switching": "This session is switching its execution method. Try again once the switch is done.",
+  "err.interaction_not_pending":
+    "This question has already been answered or cancelled. Refresh to see the current state.",
+  "err.transcript_restore_failed": "Couldn't restore the conversation log from the backup",
   "err.codex_stop_first": "Stop this codex session first, then switch it to terminal execution (about a minute after the stop).",
   "err.not_running": "The session is stopped. Resume it before sending.",
   // The workspace is mid-boot (container up, Agent not answering yet) and something

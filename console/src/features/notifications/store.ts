@@ -208,7 +208,7 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
     // Unshared or archived while the recipient's launch still holds it (#2058): the shared view
     // has nothing to accept, and the give-back lives in the inbox.
     if (state === "recovery") {
-      toast(tr("noti.handoff_recovery", { inbox: tr("handoff.inbox_title") }), { kind: "warn" });
+      toast(tr("noti.handoff_recovery", { inbox: tr("inbox.handoffs") }), { kind: "warn" });
       return { opened: false, handoffClosed: true };
     }
     openSharedSession(n.payload.catalogId, split);

@@ -1241,31 +1241,16 @@ fi
 # everywhere, download it into the home volume now (persists on the volume / EFS, so
 # only the first launch pays the download). Soft-fail: no network → keep going.
 if [ -n "$JAVA_VER" ]; then
-  # Never go back to "glob and take the first". Both locations name JDKs
-  # temurin-<major>-jdk-<arch>, and "amd64" sorts before "arm64", so once a home populated
-  # on x86 is attached to an arm64 slot, the first match is always the one that cannot run
-  # (docs/log/70 §70.5.1; workspace-agent's javaHomeFor follows the same rule). Prefer this
-  # architecture's suffix and never take another architecture's.
-  find_jh() {
-    for d in /usr/lib/jvm "$HOME/.local/share/agent-fleet/jvm"; do
-      [ -d "$d" ] || continue
-      jh=""
-      for c in "$d"/temurin-"$JAVA_VER"-jdk*; do
-        [ -d "$c" ] || continue
-        case "$c" in
-          *-jdk-"$af_arch_now") printf '%s\n' "$c"; return 0 ;;
-          *-jdk-amd64 | *-jdk-arm64) continue ;;              # other arch: never take
-          *) [ -n "$jh" ] || jh="$c" ;;                       # no suffix: fallback
-        esac
-      done
-      [ -n "$jh" ] && { printf '%s\n' "$jh"; return 0; }
-    done
-    return 1
-  }
+  # workspace-agent owns the lookup rule (this architecture only, never another's;
+  # docs/log/70 §70.5.1) and the newer patch when a major is in both directories, so
+  # this JAVA_HOME and the one sessions get from resolvedToolchains cannot disagree.
+  # Absolute path, like the image's CMD: PATH puts ~/.local/bin first, and a stale build
+  # left there predates java-home, exits 2, and leaves JAVA_HOME unset with the JDK on disk.
+  find_jh() { /usr/local/bin/workspace-agent java-home "$JAVA_VER"; }
   JH=$(find_jh || true)
   if [ -z "$JH" ]; then
     echo "[entrypoint] temurin-$JAVA_VER not present; installing into home volume ..."
-    workspace-agent install-jdk "$JAVA_VER" || echo "[entrypoint] WARN: install-jdk $JAVA_VER failed"
+    /usr/local/bin/workspace-agent install-jdk "$JAVA_VER" || echo "[entrypoint] WARN: install-jdk $JAVA_VER failed"
     JH=$(find_jh || true)
   fi
   if [ -n "$JH" ]; then

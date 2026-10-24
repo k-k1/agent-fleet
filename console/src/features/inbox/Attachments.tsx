@@ -57,79 +57,100 @@ export function RecipeEditor({ value, onChange }: { value: RecipeDraft; onChange
 /** A session chosen to attach: the sender's own (by name) or one shared with them. */
 export type SessionChoice = { own: true; name: string; label: string } | { own: false; catalogId: string; label: string };
 
+/** One attached session and whether the sender also shares it (own sessions only). */
+export interface SessionAttach {
+  choice: SessionChoice;
+  share: boolean;
+}
+
+/** The Control Plane's per-item cap (`inboxMaxSessionAttach`); a send over it is a 400. */
+export const INBOX_MAX_SESSION_ATTACH = 5;
+
+const choiceKey = (c: SessionChoice) => (c.own ? "own:" + c.name : "shared:" + c.catalogId);
+
 export function SessionAttachEditor({
   value,
-  share,
   recipients,
   onChange,
-  onShare,
 }: {
-  value: SessionChoice | null;
-  share: boolean;
+  value: SessionAttach[];
   recipients: InboxPerson[];
-  onChange: (c: SessionChoice | null) => void;
-  onShare: (v: boolean) => void;
+  onChange: (v: SessionAttach[]) => void;
 }) {
   const tr = useT();
   const mine = useSessionsStore((s) => s.sessions);
   const shared = useSharedSessionsStore((s) => s.sessions);
+  const taken = new Set(value.map((a) => choiceKey(a.choice)));
   const options: SessionChoice[] = [
     ...mine.map((s) => ({ own: true as const, name: s.name, label: displayName(s) })),
     ...shared.map((s) => ({ own: false as const, catalogId: s.id, label: (s.title || s.name) + " — " + (s.ownerEmail || s.ownerUserKey) })),
-  ];
-  const keyOf = (c: SessionChoice) => (c.own ? "own:" + c.name : "shared:" + c.catalogId);
+  ].filter((o) => !taken.has(choiceKey(o)));
+  const full = value.length >= INBOX_MAX_SESSION_ATTACH;
+  const who = recipients.map((r) => r.email || r.userKey).join(", ") || "—";
+  const update = (i: number, patch: Partial<SessionAttach>) => onChange(value.map((a, j) => (j === i ? { ...a, ...patch } : a)));
   return (
     <div className="inbox-session-editor">
-      <label className="ui-field">
-        <span className="ui-field-label">{tr("inbox.attach_session")}</span>
-        <select
-          value={value ? keyOf(value) : ""}
-          onChange={(e) => {
-            const c = options.find((o) => keyOf(o) === e.target.value) ?? null;
-            onChange(c);
-            if (!c?.own) onShare(false);
-          }}
-        >
-          <option value="">{tr("inbox.attach_none")}</option>
-          {options.map((o) => (
-            <option key={keyOf(o)} value={keyOf(o)}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      {value?.own && (
-        // Decision 5: the owner confirms the session, every recipient and the scope before a
-        // share is created with the message.
-        <label className="inbox-check">
-          <input type="checkbox" checked={share} onChange={(e) => onShare(e.target.checked)} />
-          <span>
-            {tr("inbox.attach_share_confirm", {
-              session: value.label,
-              who: recipients.map((r) => r.email || r.userKey).join(", ") || "—",
-            })}
-          </span>
+      {value.map((a, i) => (
+        <div key={choiceKey(a.choice)} className="inbox-session-attached">
+          <div className="inbox-attachment-head">
+            <Icon name="comment-discussion" /> <strong>{a.choice.label}</strong>
+            <Button small variant="ghost" onClick={() => onChange(value.filter((_, j) => j !== i))}>
+              {tr("inbox.attach_remove")}
+            </Button>
+          </div>
+          {a.choice.own ? (
+            <>
+              {/* Decision 5: the owner confirms the session, every recipient and the scope
+                  before a share is created with the message. */}
+              <label className="inbox-check">
+                <input type="checkbox" checked={a.share} onChange={(e) => update(i, { share: e.target.checked })} />
+                <span>{tr("inbox.attach_share_confirm", { session: a.choice.label, who })}</span>
+              </label>
+              {!a.share && <p className="ui-field-hint">{tr("inbox.attach_no_share_hint")}</p>}
+            </>
+          ) : (
+            <p className="ui-field-hint">{tr("inbox.attach_shared_hint")}</p>
+          )}
+        </div>
+      ))}
+      {full ? (
+        <p className="ui-field-hint">{tr("inbox.attach_limit", { n: String(INBOX_MAX_SESSION_ATTACH) })}</p>
+      ) : (
+        <label className="ui-field">
+          <span className="ui-field-label">{tr(value.length ? "inbox.attach_another" : "inbox.attach_session")}</span>
+          <select
+            value=""
+            onChange={(e) => {
+              const c = options.find((o) => choiceKey(o) === e.target.value);
+              if (c) onChange([...value, { choice: c, share: false }]);
+            }}
+          >
+            <option value="">{tr("inbox.attach_none")}</option>
+            {options.map((o) => (
+              <option key={choiceKey(o)} value={choiceKey(o)}>
+                {o.label}
+              </option>
+            ))}
+          </select>
         </label>
       )}
-      {value && !value.own && <p className="ui-field-hint">{tr("inbox.attach_shared_hint")}</p>}
-      {value?.own && !share && <p className="ui-field-hint">{tr("inbox.attach_no_share_hint")}</p>}
     </div>
   );
 }
 
 /** Builds the send's attachments from the composer's state. */
-export function buildAttachments(recipe: RecipeDraft | null, session: SessionChoice | null, share: boolean, recipients: InboxPerson[]): InboxAttachmentIn[] {
+export function buildAttachments(recipe: RecipeDraft | null, sessions: SessionAttach[], recipients: InboxPerson[]): InboxAttachmentIn[] {
   const out: InboxAttachmentIn[] = [];
   if (recipe && recipe.prompt.trim()) out.push({ type: "recipe", recipe: { ...recipe } });
-  if (session) {
-    if (session.own) {
+  for (const { choice, share } of sessions.slice(0, INBOX_MAX_SESSION_ATTACH)) {
+    if (choice.own) {
       out.push({
         type: "session",
-        sessionName: session.name,
+        sessionName: choice.name,
         ...(share ? { share: { recipients: recipients.map((r) => r.userKey), scope: "session" } } : {}),
       });
     } else {
-      out.push({ type: "session", catalogId: session.catalogId });
+      out.push({ type: "session", catalogId: choice.catalogId });
     }
   }
   return out;

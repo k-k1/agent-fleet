@@ -363,6 +363,10 @@ func HandleSessionRespond(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusNotImplemented, "respond_unsupported", respondKeysMsg)
 			return
 		}
+		if errors.Is(err, agents.ErrInteractionNotPending) {
+			httpx.WriteErr(w, http.StatusConflict, errCodeInteractionNotPending, err.Error())
+			return
+		}
 		httpx.WriteErr(w, http.StatusConflict, "respond_failed", err.Error())
 		return
 	}

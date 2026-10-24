@@ -44,14 +44,16 @@ interface RepoRowConnectedProps {
   /** Unread-notification dot for the sessions this row currently hides (see RepoRow.unread). */
   unread?: boolean;
   /** Session summary shown on the folded row (see RepoRow.peek). */
-  peek?: { s: Session; others: string[] };
+  peek?: { s: Session };
+  /** See RepoRow.alsoRunning. */
+  alsoRunning?: string[];
   /** Bulk-archive stopped sessions (right-click menu). The owning node (RepoNode) passes a
    * count and a handler scoped to the sessions directly under this folder. */
   onArchiveStopped?: () => void;
   stoppedCount?: number;
 }
 
-export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, peek, onArchiveStopped, stoppedCount }: RepoRowConnectedProps) {
+export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, peek, alsoRunning, onArchiveStopped, stoppedCount }: RepoRowConnectedProps) {
   const settings = useSettings(); // default model for a claude launch
   const tr = useT();
   const toast = useToast();
@@ -106,6 +108,7 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, peek, o
       sess={sess}
       unread={unread}
       peek={peek}
+      alsoRunning={alsoRunning}
       onArchiveStopped={onArchiveStopped}
       stoppedCount={stoppedCount}
       // Bulk stop: the whole subtree's live sessions, planned per row in the modal.

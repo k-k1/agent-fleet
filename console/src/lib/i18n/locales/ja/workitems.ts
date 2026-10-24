@@ -166,6 +166,7 @@ export const workitems = {
   "wi.prompt_target_key": "作業対象: {key}",
   "wi.prompt_url": "URL: {url}",
   "wi.prompt_read_github": "本文とコメントは `gh issue view {key}`（PR なら `gh pr view {key}`）で読めます。",
+  "wi.prompt_read_bitbucket": "本文は `bkt pr view {id}`、コメントは `bkt pr comments {id}` で読めます。",
   "wi.prompt_read_generic": "本文とコメントは上の URL を参照してください（MCP が使えるならそちらで）。",
   "wi.prompt_investigate": "まず状況を調べ、実装に入る前に方針を提示してください。",
   "wi.prompt_review": "このプルリクエストをレビューしてください。差分・CI・レビュー履歴を確認し、問題があれば具体的に指摘してください。実装が必要な指摘は、着手前に方針を確認すること。",

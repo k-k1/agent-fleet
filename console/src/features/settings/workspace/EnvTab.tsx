@@ -384,6 +384,12 @@ function Toolchains({
 // This row makes that one button: it downloads into the home volume now, and since the
 // agent resolves JAVA_HOME by globbing the JDK dirs at each launch, the next session
 // picks it up with no restart.
+//
+// An installed major shows the exact version JAVA_HOME resolves to (java_versions) and,
+// when the agent reports a newer GA patch (GET /env/jdk-latest), offers the same install
+// job as an update: the agent puts the new patch in the home volume and prefers the newer
+// copy over /usr/lib/jvm. The agent does the version comparison; a failed lookup (no
+// egress) just shows no update.
 function JavaRow({
   d,
   update,
@@ -403,6 +409,30 @@ function JavaRow({
   const installed: string[] = d.java_installed || [];
   const selected: string = d.java || "";
   const needsInstall = !!selected && !installed.includes(selected);
+  const current: string = (selected && d.java_versions?.[selected]) || "";
+  const [latest, setLatest] = useState<{ major: string; current: string; latest: string } | null>(null);
+  // Keyed on the resolved version too, so a finished update re-asks. Every new lookup
+  // starts from "no update", and a false or failed answer clears it: an earlier "newer
+  // patch" must not come back after a restart that already brought the JDK up to date.
+  useEffect(() => {
+    setLatest(null);
+    if (!running || !selected || !current) return;
+    let live = true;
+    api(`api/env/jdk-latest?major=${encodeURIComponent(selected)}`)
+      .then((r) => {
+        if (!live) return;
+        setLatest(
+          r?.update_available && r.latest ? { major: selected, current: r.current, latest: r.latest } : null,
+        );
+      })
+      .catch(() => {
+        if (live) setLatest(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [running, selected, current]);
+  const newerPatch = latest && latest.major === selected && latest.current === current ? latest.latest : "";
 
   const install = async () => {
     if (!selected) return;
@@ -413,8 +443,24 @@ function JavaRow({
       reload(); // refresh java_installed either way
     };
     const res = await apiJSON("api/env/jdk-install", "POST", { major: selected });
-    if (!res || res.error) {
-      finish(res?.error?.message || "");
+    if (!res) {
+      finish("");
+      return;
+    }
+    // The agent runs one download at a time and answers a POST made during another
+    // major's download (another tab) with THAT job — installing, done or failed, since
+    // it can end between the agent's check and its reply. Either way ours never started,
+    // so this comes before any state handling: following it would report our request as
+    // done or failed.
+    if (res.major && res.major !== selected) {
+      setInstalling("");
+      toast(tr("env.java_install_busy", { v: res.major }));
+      return;
+    }
+    // An API failure carries {error: {code, message}}; the installer's own failure is
+    // state "error" with error as a plain string.
+    if (res.error && typeof res.error === "object") {
+      finish(res.error.message || "");
       return;
     }
     if (res.state === "done" || res.state === "error") {
@@ -433,7 +479,9 @@ function JavaRow({
         } catch {
           p = null;
         }
-        if (p && p.state === "done") {
+        // Another major in the status means our job ended and a newer one (another tab)
+        // replaced it; the refetch in finish shows what is on disk now.
+        if (p && (p.state === "done" || (p.major && p.major !== selected))) {
           finish();
           return { stop: true };
         }
@@ -470,10 +518,19 @@ function JavaRow({
                 {installing ? tr("env.java_installing") : tr("env.java_install")}
               </button>
             )}
+            {current && <span className="muted env-java-version">{current}</span>}
+            {!needsInstall && newerPatch && (
+              <button disabled={!running || !!installing} onClick={install}>
+                {installing ? tr("env.java_installing") : tr("env.java_update", { v: newerPatch })}
+              </button>
+            )}
           </span>
         )}
       </Row>
       {needsInstall && <p className="muted ds-note">{tr("env.java_install_note", { v: selected })}</p>}
+      {!needsInstall && newerPatch && (
+        <p className="muted ds-note">{tr("env.java_update_note", { cur: current, v: newerPatch })}</p>
+      )}
     </>
   );
 }

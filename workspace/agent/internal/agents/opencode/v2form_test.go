@@ -370,11 +370,16 @@ func TestV2RespondTerminalNeverDoubleAnswers(t *testing.T) {
 	fd.detail[id] = string(v2Fixture(t, "form-detail.answered.json")) // listed, but settled meanwhile
 	if err := (managedDriver{}).RespondTerminal(m, reply); !errors.Is(err, errFormSettled) {
 		t.Fatalf("settled form: %v", err)
+	} else if !errors.Is(err, agents.ErrInteractionNotPending) || strings.ContainsFunc(err.Error(), func(r rune) bool { return r > 0x7f }) {
+		// The wire code is interaction_not_pending and the text reaches logs and toasts verbatim.
+		t.Fatalf("settled form error must be the English not-pending sentinel: %v", err)
 	}
 	fd.list["ses_a"] = `{"data":[]}` // gone from the list (the detail alone would still say pending)
 	fd.detail[id] = string(v2Fixture(t, "form-detail.pending.json"))
 	if err := (managedDriver{}).RespondTerminal(m, reply); !errors.Is(err, errFormSettled) {
 		t.Fatalf("form gone from the list: %v", err)
+	} else if strings.ContainsFunc(err.Error(), func(r rune) bool { return r > 0x7f }) {
+		t.Fatalf("form gone from the list: non-English message: %v", err)
 	}
 	fd.replyStatus = http.StatusConflict // settled between the re-read and the post
 	fd.list["ses_a"] = string(v2Fixture(t, "form-single.pending.json"))
