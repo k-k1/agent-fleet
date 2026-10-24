@@ -1,0 +1,353 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
+)
+
+// A gateway resends a batch after a failed POST. Events with an id are stored and counted
+// once; the own proxy's id-less events keep their old at-least-once behaviour.
+func TestEgressIngestStoresGatewayEventsOnce(t *testing.T) {
+	ctx := context.Background()
+	st, _, mgr := reaperLifecycleFixture(t)
+	eg := newEgressAPI(mgr, "tok", "", &egressAuditDedup{}, nil)
+	at := time.Date(2026, 10, 24, 9, 0, 0, 0, time.UTC).UnixMilli()
+	body := `{"events":[` +
+		`{"id":"gw:100","at":` + strconv.FormatInt(at, 10) + `,"source":"10.0.1.5","dest":"140.82.112.3","host":"GitHub.com","allowed":true,"count":1},` +
+		`{"id":"gw:200","at":` + strconv.FormatInt(at, 10) + `,"source":"10.0.1.5","dest":"203.0.113.9","allowed":false},` +
+		`{"id":"gw:300","host":"no-source.example","allowed":true,"count":1}]}`
+	for i := 0; i < 2; i++ {
+		r := httptest.NewRequest("POST", "/internal/egress", strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer tok")
+		w := httptest.NewRecorder()
+		eg.ingest(w, r)
+		if w.Code != 204 {
+			t.Fatalf("post %d: want 204, got %d", i, w.Code)
+		}
+	}
+	stats, _ := st.ListEgress(ctx, "2026-10-24", 10)
+	if len(stats) != 1 || stats[0].Host != "github.com" || stats[0].Allowed != 1 {
+		t.Errorf("a resent batch must be counted once, under the event's day: %+v", stats)
+	}
+	got, err := st.ListAttributedEgressEvents(ctx, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The nameless connection is kept (by address); the one without a source is refused.
+	if len(got) != 2 {
+		t.Fatalf("want the two events with a source and a time, got %+v", got)
+	}
+	for _, e := range got {
+		if e.ID == "gw:300" {
+			t.Errorf("an event with no source address cannot be attributed and must not be stored")
+		}
+		if e.ID == "gw:200" && (e.Host != "" || e.Count != 1 || e.Allowed) {
+			t.Errorf("nameless event stored wrong: %+v", e)
+		}
+	}
+}
+
+func TestEgressAttributionOf(t *testing.T) {
+	infra := parseEgressInfraCIDRs("10.0.0.0/24, 10.9.9.9 not-a-cidr")
+	if len(infra) != 2 {
+		t.Fatalf("want two infra ranges (one prefix, one bare address), got %v", infra)
+	}
+	one := []store.WorkspaceAddress{{MembershipID: "m1"}}
+	two := []store.WorkspaceAddress{{MembershipID: "m1"}, {MembershipID: "m2"}}
+	for _, c := range []struct {
+		source  string
+		holders []store.WorkspaceAddress
+		want    string
+	}{
+		{"10.0.1.5", one, egressAttributed},
+		{"10.0.1.5", two, egressAmbiguous},
+		{"10.0.1.5", nil, egressUnattributed},
+		{"10.0.0.7", nil, egressInfrastructure},
+		{"10.9.9.9", nil, egressInfrastructure},
+		// A task ENI inside the slot subnet: the row is what tells it apart.
+		{"10.0.0.7", one, egressAttributed},
+	} {
+		e := store.AttributedEgressEvent{EgressEvent: store.EgressEvent{Source: c.source}, Holders: c.holders}
+		if got := egressAttributionOf(e, infra); got != c.want {
+			t.Errorf("%s with %d holders: got %s, want %s", c.source, len(c.holders), got, c.want)
+		}
+	}
+}
+
+type addressStub struct {
+	hibernateStub
+	held       []runtime.HeldAddress
+	unresolved []string
+	err        error
+	asked      int
+	open       []string
+	onAsk      func()
+}
+
+func (r *addressStub) HeldAddresses(_ context.Context, open []string) (runtime.AddressReport, error) {
+	r.asked++
+	r.open = open
+	if r.onAsk != nil {
+		r.onAsk()
+	}
+	return runtime.AddressReport{Held: r.held, Unresolved: r.unresolved}, r.err
+}
+
+// stubsByName hands each workspace its own stub runtime.
+type stubsByName map[string]*addressStub
+
+func (f stubsByName) New(ws runtime.Workspace, _ runtime.SecretKeys, _ []string) runtime.Runtime {
+	return f[ws.ContainerName]
+}
+
+func openAddressRefs(t *testing.T, st *store.SQL, m string) []string {
+	t.Helper()
+	refs, err := st.OpenWorkspaceAddressRefs(context.Background(), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return refs
+}
+
+// The recorder end to end: a running workspace's address is opened, a failed read leaves it
+// open, a vanished holder closes it, and a stopped workspace with nothing open is not asked.
+func TestAddressRecorderKeepsIntervals(t *testing.T) {
+	ctx := context.Background()
+	st, ws, mgr := reaperLifecycleFixture(t)
+	rt := &addressStub{}
+	// Recent enough for the events endpoint's default window.
+	base := time.Now().Add(-time.Minute).UnixMilli()
+	mgr.rtFactory = stubFactory{rt: rt}
+	clock := time.UnixMilli(base + 10_000)
+	ar := &addressRecorder{mgr: mgr, interval: time.Minute, holder: "cp-1", now: func() time.Time { return clock }}
+	eg := newEgressAPI(mgr, "tok", "", nil, nil)
+
+	rt.held = []runtime.HeldAddress{{Address: "10.0.1.5", Ref: "task/1", From: time.UnixMilli(base + 1_000)}}
+	ar.tick(ctx)
+	if open := openAddressRefs(t, st, ws.MembershipID); len(open) != 1 {
+		t.Fatal("a reported address must be recorded open")
+	}
+
+	rt.held, rt.err = nil, errors.New("throttled")
+	clock = time.UnixMilli(base + 20_000)
+	ar.tick(ctx)
+	if open := openAddressRefs(t, st, ws.MembershipID); len(open) != 1 {
+		t.Fatal("a failed read must not close the interval")
+	}
+	if len(rt.open) != 1 || rt.open[0] != "task/1" {
+		t.Errorf("the runtime must be told which refs are still open, got %v", rt.open)
+	}
+
+	rt.err = nil
+	clock = time.UnixMilli(base + 30_000)
+	ar.tick(ctx)
+	if open := openAddressRefs(t, st, ws.MembershipID); len(open) != 0 {
+		t.Fatal("a holder no longer reported must be closed")
+	}
+
+	for _, e := range []store.EgressEvent{
+		{ID: "in", At: base + 25_000, Source: "10.0.1.5", Count: 1},
+		{ID: "after", At: base + 31_000, Source: "10.0.1.5", Count: 1},
+	} {
+		if _, err := st.RecordEgressEvent(ctx, "d", e, base+40_000); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := httptest.NewRecorder()
+	eg.events(w, httptest.NewRequest("GET", "/api/admin/egress/events", nil), store.Identity{})
+	var resp egressEventsWire
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode %s: %v", w.Body.String(), err)
+	}
+	attr := map[string]egressEventWire{}
+	for _, e := range resp.Events {
+		attr[e.ID] = e
+	}
+	if e := attr["in"]; e.Attribution != egressAttributed || len(e.Holders) != 1 || e.Holders[0].MembershipID != ws.MembershipID {
+		t.Errorf("event inside the interval: %+v", e)
+	}
+	if e := attr["after"]; e.Attribution != egressUnattributed {
+		t.Errorf("event after the close: %+v", e)
+	}
+
+	// Stopped with nothing open and idle for long: the runtime is not asked at all.
+	if err := st.SetWorkspaceState(ctx, ws.ID, "stopped"); err != nil {
+		t.Fatal(err)
+	}
+	setLastActive(t, st, ws.ID, clock.Add(-2*time.Hour))
+	rt.held, rt.asked = []runtime.HeldAddress{{Address: "10.0.1.6", Ref: "task/2", From: time.UnixMilli(base + 35_000)}}, 0
+	ar.tick(ctx)
+	if rt.asked != 0 {
+		t.Error("an idle stopped workspace with no open address was polled")
+	}
+	// Stopped but active a moment ago: a task that came and went between two sweeps is
+	// still recovered.
+	setLastActive(t, st, ws.ID, clock.Add(-time.Minute))
+	ar.tick(ctx)
+	if rt.asked != 1 || len(openAddressRefs(t, st, ws.MembershipID)) != 1 {
+		t.Errorf("a recently active stopped workspace must be polled (asked %d)", rt.asked)
+	}
+
+	// Another CP holds the lease: this one does nothing.
+	if ok, err := st.AcquireCPLease(ctx, addressRecorderLease, "cp-2", time.Hour); err == nil && ok {
+		t.Fatal("cp-1's lease is still live; cp-2 must not get it")
+	}
+	if err := st.ReleaseCPLease(ctx, addressRecorderLease, "cp-1"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := st.AcquireCPLease(ctx, addressRecorderLease, "cp-2", time.Hour); err != nil || !ok {
+		t.Fatalf("cp-2 lease: %v %v", ok, err)
+	}
+	rt.asked = 0
+	ar.tick(ctx)
+	if rt.asked != 0 {
+		t.Error("a CP without the lease swept")
+	}
+	if err := st.ReleaseCPLease(ctx, addressRecorderLease, "cp-2"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The workspace is destroyed with its row still open: the row is closed, not left to
+	// claim the address forever.
+	if err := st.DeleteWorkspace(ctx, ws.ID); err != nil {
+		t.Fatal(err)
+	}
+	ar.tick(ctx)
+	if open := openAddressRefs(t, st, ws.MembershipID); len(open) != 0 {
+		t.Errorf("an orphan row stayed open: %v", open)
+	}
+}
+
+// An open task ECS no longer knows next to the live one that replaced it: the live one is
+// recorded at once, the old one stays open through the grace and is closed after it, and
+// no tick fails because of it.
+func TestAddressRecorderRecoversFromAnAgedOutTask(t *testing.T) {
+	ctx := context.Background()
+	st, ws, mgr := reaperLifecycleFixture(t)
+	clock := time.Now()
+	ar := &addressRecorder{mgr: mgr, interval: time.Minute, holder: "cp-1", now: func() time.Time { return clock }}
+	rt := &addressStub{held: []runtime.HeldAddress{{Address: "10.0.1.5", Ref: "task/A", From: clock.Add(-2 * time.Hour)}}}
+	mgr.rtFactory = stubFactory{rt: rt}
+	ar.tick(ctx)
+
+	rt.held = []runtime.HeldAddress{{Address: "10.0.1.9", Ref: "task/B", From: clock}}
+	rt.unresolved = []string{"task/A"}
+	for i := 0; i < 3; i++ {
+		clock = clock.Add(time.Minute)
+		ar.tick(ctx)
+		if got := openAddressRefs(t, st, ws.MembershipID); !equalRefs(got, "task/A", "task/B") {
+			t.Fatalf("tick %d within the grace: open %v", i, got)
+		}
+	}
+	clock = clock.Add(addressUnresolvedGrace)
+	ar.tick(ctx)
+	if got := openAddressRefs(t, st, ws.MembershipID); !equalRefs(got, "task/B") {
+		t.Errorf("past the grace the aged-out task must be closed and the live one kept: %v", got)
+	}
+	// A ref no longer reported unresolved (its workspace gone, say) is forgotten, not kept
+	// in memory for good.
+	rt.unresolved = []string{"task/C"}
+	clock = clock.Add(time.Minute)
+	ar.tick(ctx)
+	rt.unresolved = nil
+	clock = clock.Add(time.Minute)
+	ar.tick(ctx)
+	if len(ar.unresolvedSince) != 0 {
+		t.Errorf("stale unresolved refs kept: %v", ar.unresolvedSince)
+	}
+}
+
+// A sweep cut off by its deadline resumes with the workspaces it did not reach.
+func TestAddressRecorderResumesWhereTheSweepStopped(t *testing.T) {
+	ctx := context.Background()
+	st, ws0, mgr := reaperLifecycleFixture(t)
+	stubs := stubsByName{ws0.ContainerName: &addressStub{}}
+	for _, name := range []string{"ws-b", "ws-c"} {
+		id, _ := st.UpsertIdentity(ctx, name+"@example.com", name, "")
+		m, _ := st.EnsureMembership(ctx, id.ID, ws0.TenantID, "member")
+		ws := store.Workspace{ID: store.NewID(), TenantID: ws0.TenantID, MembershipID: m.ID,
+			ContainerName: name, Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t",
+			State: "running", CreatedAt: store.NowTS()}
+		if err := st.CreateWorkspace(ctx, ws); err != nil {
+			t.Fatal(err)
+		}
+		stubs[name] = &addressStub{}
+	}
+	mgr.rtFactory = stubs
+	clock := time.Now()
+	ar := &addressRecorder{mgr: mgr, interval: time.Minute, holder: "cp-1", now: func() time.Time { return clock }}
+
+	// The deadline runs out while the second workspace is being asked.
+	sctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var order []string
+	for name, s := range stubs {
+		name := name
+		s.onAsk = func() {
+			if order = append(order, name); len(order) == 2 {
+				cancel()
+			}
+		}
+	}
+	ar.sweep(sctx)
+	if len(order) != 2 {
+		t.Fatalf("want two asked before the deadline, got %v", order)
+	}
+	completed, interrupted := order[0], order[1]
+	order = nil
+	clock = clock.Add(time.Minute)
+	ar.sweep(ctx)
+	// The one cut short and the one never reached go first; the one that completed goes last.
+	if len(order) != 3 || order[2] != completed || order[0] == completed || order[1] == completed {
+		t.Errorf("next sweep order %v: %s completed and must go last, %s was interrupted", order, completed, interrupted)
+	}
+}
+
+// A Kubernetes or docker workspace started and stopped between two sweeps: the next read is
+// empty, so only the release hook can put its address on record.
+func TestReleaseHookRecordsAnAddressTheNextSweepCannotSee(t *testing.T) {
+	ctx := context.Background()
+	st, ws, mgr := reaperLifecycleFixture(t)
+	rt := &addressStub{}
+	mgr.rtFactory = stubFactory{rt: rt}
+	base := time.Now().Add(-time.Minute)
+	clock := base.Add(30 * time.Second)
+	ar := &addressRecorder{mgr: mgr, interval: time.Minute, holder: "cp-1", now: func() time.Time { return clock }}
+
+	addressReleaseHook(mgr)(ctx, ws.MembershipID, ws.ID, []runtime.HeldAddress{{Address: "10.4.0.7", Ref: "pod-uid", From: base}})
+	ar.tick(ctx) // the pod is gone: the read is empty
+	if got := openAddressRefs(t, st, ws.MembershipID); len(got) != 0 {
+		t.Errorf("the released address must be closed by the next sweep: %v", got)
+	}
+	if _, err := st.RecordEgressEvent(ctx, "d", store.EgressEvent{ID: "e", At: base.Add(10 * time.Second).UnixMilli(), Source: "10.4.0.7", Count: 1}, clock.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.ListAttributedEgressEvents(ctx, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || len(got[0].Holders) != 1 || got[0].Holders[0].MembershipID != ws.MembershipID {
+		t.Errorf("an event from the short-lived pod must be attributed: %+v", got)
+	}
+}
+
+func equalRefs(got []string, want ...string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}

@@ -974,6 +974,7 @@ type Store interface {
 	LFSLockStore
 	AuditStore
 	EgressStore
+	EgressAttributionStore
 	SettingsStore
 	UsageStore
 	EngineModelStore

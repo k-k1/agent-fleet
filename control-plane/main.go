@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -66,6 +67,9 @@ type config struct {
 	// `configured` so the Console only warns about unreachable MCP hosts on deployments
 	// where egress really is constrained (docs/log/48 §9).
 	egressProxyAddr string
+	// egressInfra mirrors AF_EGRESS_INFRA_CIDRS: the stack's own source ranges, which egress
+	// attribution reports as infrastructure (ADR 0122, addendum 2026-10-24).
+	egressInfra []netip.Prefix
 	// TTS read-aloud (docs/log/24 + ADR0013): base URL of the VOICEVOX engine the CP calls
 	// directly. In dev the CP runs on the host and reaches docker's published
 	// 127.0.0.1:50021; on AWS the fixed ECS + Cloud Map DNS name is injected (Phase 2).
@@ -305,6 +309,7 @@ func main() {
 		egressDedup: &egressAuditDedup{},
 		// Whether containers are actually routed through the proxy (docs/log/48 §9).
 		egressProxyAddr: egressProxyAddr,
+		egressInfra:     parseEgressInfraCIDRs(os.Getenv("AF_EGRESS_INFRA_CIDRS")),
 		// docs/log/24 TTS: the default is dev's docker-published endpoint (host loopback).
 		voicevoxURL: envx.Or("AF_VOICEVOX_URL", "http://127.0.0.1:50021"),
 		// docs/log/81: the parent of the preview subdomains. Empty = host-mode preview is
@@ -371,6 +376,12 @@ func main() {
 	// Not behind AF_IDLE_SWEEP_INTERVAL: switching idle-stop off must not leave a removed
 	// member's workspace running (member_removal.go).
 	go mgr.runRemovedMemberSweep(context.Background(), removedMemberSweepInterval)
+	// Egress attribution (ADR 0122, addendum 2026-10-24): only a deployment that ingests
+	// egress events has anything to attribute, and the recorder costs orchestrator reads.
+	if os.Getenv("AF_EGRESS_TOKEN") != "" {
+		iv := envx.DurationOr(os.Getenv("AF_EGRESS_ADDRESS_INTERVAL"), time.Minute)
+		go newAddressRecorder(mgr, iv).run(context.Background())
+	}
 	// Home operations a CP restart interrupted (ecs, home_operation.go): their task may
 	// still be running, and the step after it is owed. Not behind any switch either: an
 	// unfinished record keeps the workspace from starting until it is finished.

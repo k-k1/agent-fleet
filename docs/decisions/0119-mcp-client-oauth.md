@@ -284,7 +284,7 @@ naming the server and the AS issuer. No token, code or verifier is logged or aud
 
 - 2026-10-24, P5 built: a tenant's pre-registered client (decision 9), public or confidential. The admin enters a
   client id and the issuer it is registered at, and optionally a secret, on a distributed OAuth definition (`mcp_server`
-  `oauth_issuer`, `oauth_client_id`, `oauth_secret_enc` / `oauth_key_ref` in sqlite 0110, pg 0095, sealed like the headers). Facts the decision
+  `oauth_issuer`, `oauth_client_id`, `oauth_secret_enc` / `oauth_key_ref` in sqlite 0111, pg 0096, sealed like the headers). Facts the decision
   did not pin down:
   - **Order.** The tenant's client is the first pre-registered client, ahead of one the member entered, and is used
     only when its issuer is the AS the sign-in selected; at another AS the order goes on (CIMD, DCR). The Console

@@ -214,6 +214,7 @@ func NewFactory(profile string, mcfg Config) (RuntimeFactory, error) {
 			sessionCmd:  mcfg.SessionCmd,
 			extraEnv:    mcfg.ExtraEnv,
 			rootDataDir: mcfg.rootedDataDir,
+			onRelease:   mcfg.OnAddressesReleasing,
 		}, nil
 	case "ecs", "aws":
 		return newECSFactory(mcfg)

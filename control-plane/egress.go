@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +35,16 @@ type egressEvent struct {
 	Host    string `json:"host"`
 	Allowed bool   `json:"allowed"`
 	Count   int    `json:"count"`
+	// The fields below come from the egress gateway (ADR 0122, addendum 2026-10-24); the
+	// own proxy sends none of them. ID is the sender's key for this observation (the
+	// gateway uses its log position), so a resent batch is stored and counted once. At is
+	// unix milliseconds, Source the address the connection came from, Dest the address it
+	// went to. An event with an ID is kept raw and attributed later; without one it only
+	// feeds the daily aggregate.
+	ID     string `json:"id,omitempty"`
+	At     int64  `json:"at,omitempty"`
+	Source string `json:"source,omitempty"`
+	Dest   string `json:"dest,omitempty"`
 }
 
 // egressAuditDedup collapses would-block audit rows to one per (day, host) so a
@@ -70,10 +81,12 @@ func (a egressAPI) tokenOK(r *http.Request) bool {
 }
 
 // egressStore is the narrow store view the egress feature needs: observation
-// aggregation + allowlist (EgressStore), the admin-action / observe audit rows
-// (AuditStore) and the egress_mode setting (SettingsStore).
+// aggregation + allowlist (EgressStore), raw events and their attribution
+// (EgressAttributionStore), the admin-action / observe audit rows (AuditStore) and the
+// egress_mode setting (SettingsStore).
 type egressStore interface {
 	store.EgressStore
+	store.EgressAttributionStore
 	store.AuditStore
 	store.SettingsStore
 }
@@ -93,10 +106,13 @@ type egressAPI struct {
 	proxy string
 	dedup *egressAuditDedup
 	store egressStore
+	// infra is AF_EGRESS_INFRA_CIDRS: source ranges attributed to the stack itself rather
+	// than reported as unattributed (egress_attribution.go).
+	infra []netip.Prefix
 }
 
-func newEgressAPI(m *manager, token, proxy string, dedup *egressAuditDedup) egressAPI {
-	return egressAPI{memberAuth{m}, token, proxy, dedup, m.store}
+func newEgressAPI(m *manager, token, proxy string, dedup *egressAuditDedup, infra []netip.Prefix) egressAPI {
+	return egressAPI{memberAuth{m}, token, proxy, dedup, m.store, infra}
 }
 
 // auditAdmin records a deployment-wide admin action (docs/log/20 M3: allowlist/mode edits
@@ -136,7 +152,8 @@ func (a egressAPI) policy(w http.ResponseWriter, r *http.Request) {
 // egress proxy. Deployment-internal: authenticated by the shared AF_EGRESS_TOKEN bearer
 // (not a user session — it is authGate-exempt). A malformed row is skipped and the audit
 // insert is best-effort, but a store failure answers 500 so the proxy keeps the batch and
-// retries. Rows recorded before the failure are counted again on that retry (at-least-once).
+// retries. A row with an ID is stored once however often it is resent; a row without one,
+// recorded before the failure, is counted again on that retry (at-least-once).
 func (a egressAPI) ingest(w http.ResponseWriter, r *http.Request) {
 	if !a.tokenOK(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -148,9 +165,30 @@ func (a egressAPI) ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := context.Background()
-	day := time.Now().UTC().Format("2006-01-02")
+	now := time.Now().UTC()
+	day := now.Format("2006-01-02")
 	for _, e := range body.Events {
 		host := strings.ToLower(strings.TrimSpace(e.Host))
+		if e.ID != "" {
+			ev, ok := rawEgressEvent(e, host)
+			if !ok {
+				log.Printf("egress ingest: skipping event %q without a source address or time", e.ID)
+				continue
+			}
+			// Counted under the day it happened, not the day it arrived: a batch the gateway
+			// resends after an outage belongs to the day of the connections.
+			evDay := time.UnixMilli(ev.At).UTC().Format("2006-01-02")
+			inserted, err := a.store.RecordEgressEvent(ctx, evDay, ev, now.UnixMilli())
+			if err != nil {
+				log.Printf("egress ingest: record event %s: %v", e.ID, err)
+				http.Error(w, "record failed", http.StatusInternalServerError)
+				return
+			}
+			if inserted && host != "" {
+				a.auditWouldBlock(ctx, evDay, host, e.Allowed)
+			}
+			continue
+		}
 		if host == "" || e.Count <= 0 {
 			continue
 		}
@@ -159,12 +197,7 @@ func (a egressAPI) ingest(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "record failed", http.StatusInternalServerError)
 			return
 		}
-		if !e.Allowed && a.dedup != nil && a.dedup.firstToday(day, host) {
-			_ = a.store.InsertAudit(ctx, store.AuditLog{
-				ID: store.NewID(), TenantID: "", ActorKind: "system", ActorID: "egress-proxy",
-				Action: "egress.observe", Target: host, Detail: "would-block (log-only)", At: store.NowTS(),
-			})
-		}
+		a.auditWouldBlock(ctx, day, host, e.Allowed)
 	}
 	if body.Dropped > 0 {
 		_ = a.store.InsertAudit(ctx, store.AuditLog{
@@ -174,6 +207,36 @@ func (a egressAPI) ingest(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// auditWouldBlock records the first would-block observation of a host per day.
+func (a egressAPI) auditWouldBlock(ctx context.Context, day, host string, allowed bool) {
+	if allowed || a.dedup == nil || !a.dedup.firstToday(day, host) {
+		return
+	}
+	_ = a.store.InsertAudit(ctx, store.AuditLog{
+		ID: store.NewID(), TenantID: "", ActorKind: "system", ActorID: "egress-proxy",
+		Action: "egress.observe", Target: host, Detail: "would-block (log-only)", At: store.NowTS(),
+	})
+}
+
+// rawEgressEvent validates a gateway event. The source address and the time are what
+// attribution joins on, so an event missing either cannot be attributed and is refused
+// rather than stored under a guess. A connection with no name (a bare address, no SNI)
+// is still an event: host may be empty.
+func rawEgressEvent(e egressEvent, host string) (store.EgressEvent, bool) {
+	src, err := netip.ParseAddr(strings.TrimSpace(e.Source))
+	if err != nil || e.At <= 0 {
+		return store.EgressEvent{}, false
+	}
+	count := e.Count
+	if count <= 0 {
+		count = 1
+	}
+	return store.EgressEvent{
+		ID: e.ID, At: e.At, Source: src.Unmap().String(), Dest: strings.TrimSpace(e.Dest),
+		Host: host, Allowed: e.Allowed, Count: count,
+	}, true
 }
 
 // stats (GET /api/admin/egress?days=N) serves aggregated egress stats
