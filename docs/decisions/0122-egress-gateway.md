@@ -1,6 +1,6 @@
-# 0119. Workspace egress is recorded and decided at the network: an egress gateway on the route out, instead of proxy variables a process can ignore
+# 0122. Workspace egress is recorded and decided at the network: an egress gateway on the route out, instead of proxy variables a process can ignore
 
-English | [日本語](0119-egress-gateway.ja.md)
+English | [日本語](0122-egress-gateway.ja.md)
 
 - Status: **proposed** (2026-10-23). Documentation only: nothing below is built. The code and
   template facts were read from the tree on this date. Squid's behaviour was read from its
@@ -160,6 +160,16 @@ retried instead of dropped. The events gain the source address, so the CP can at
    route and the Elastic IP before any workspace starts.
 6. **Existing deployments**: moving the default route from the NAT gateway to the gateway is a
    change to a running VPC, with a rollback.
+7. **The egress address customers allow-list.** Today it is the one retained Elastic IP on the NAT
+   gateway (`NatEip`, `DeletionPolicy: Retain`), and `NatEipAllocationId` is meant for a new
+   stand-up only: handing it to a running stack makes CloudFormation replace the NAT gateway
+   (measured on a deployed stack with `--no-execute-changeset`). The gateway instance has to take
+   over that same address, which cannot be attached to the instance while the NAT gateway still
+   holds it, so the cut-over has an egress gap unless it is planned (a second address for the
+   switch, or a short maintenance window).
+8. **One gateway is one Availability Zone.** The NAT gateway is already single-AZ; a gateway
+   instance in an Auto Scaling group of one keeps that. A gateway per zone gives the customer two
+   egress addresses to allow-list, so the choice has to be made before the address is handed out.
 
 ## Notes
 
