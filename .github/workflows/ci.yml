@@ -348,10 +348,10 @@ jobs:
       # only, and a widened grant decrypts with keys the CP has no business with.
       - name: CP role KMS custodian grant (template vs Go)
         run: python3 ./deploy/local/cfn-cp-kms-scope-test.py
-      # 00-network's S3 gateway endpoint carries a policy naming the ECR layer bucket, the AL2023
-      # repos and the models bucket; with none it is a passthrough to every bucket (#2657).
-      - name: S3 gateway endpoint policy (template vs pinned bucket list)
-        run: python3 ./deploy/local/cfn-s3-endpoint-policy-test.py
+      # An S3 gateway endpoint on the private route table is an unrecorded passthrough to every
+      # bucket, and a policy on it turns refusals into AccessDenied rather than NAT traffic (#2657).
+      - name: No S3 endpoint / prefix-list route in the ECS templates
+        run: python3 ./deploy/local/cfn-no-s3-endpoint-test.py
       # pause.sh deletes the NAT gateway through 00-network's NatEnabled and re-stops a long-paused
       # database through 10-data's Lambda; a gateway outside its condition, or a Lambda that stops
       # an instance pause.sh did not tag, only shows on a real deployment.

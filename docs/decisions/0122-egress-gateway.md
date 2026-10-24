@@ -315,19 +315,20 @@ gateway. The fix, an endpoint policy limited to the buckets the stack needs, or 
 the workspace subnets, is #2657. Even with a policy, access through the endpoint is not
 attributed per workspace.
 
-### AWS: the S3 gateway endpoint gets a policy (decided with the maintainer, 2026-10-25)
+### AWS: no S3 gateway endpoint for now (decided with the maintainer, 2026-10-25)
 
-The endpoint stays, so ECR layer bytes keep off the gateway, and `S3Endpoint` now carries an
-endpoint policy (#2657) that admits only the ECR image-layer bucket for the region
-(`prod-<region>-starport-layer-bucket`, the resource the ECR documentation names), the Amazon
-Linux 2023 repository bucket and the models bucket of the engines stack. Any other bucket in
-the region is denied: a request the policy refuses does not fall back to the NAT gateway, because
-the S3 prefix-list route is more specific than the default route (S3 in another region is outside
-the prefix list and does leave through the NAT). Access
-through the endpoint is still not recorded per workspace: the policy narrows what is reachable,
-it does not attribute it. A consequence for operators: SSM Agent self-update, Patch Manager and
-Distributor read their own AWS-owned buckets, which the policy does not admit, so they are denied
-in the same region. Nothing in the current bootstrap downloads that way. Not yet verified on a deployed account.
+`S3Endpoint` is removed from `00-network.yaml` (#2657). A policy on it was written and reviewed
+(commit `6829e6e`, in the history of PR #2697): the ECR layer bucket, the AL2023 repositories and
+the models bucket, the latter limited to this account's buckets. It does not do what the
+first plan assumed. A request the policy refuses does not fall back to the NAT gateway, because
+the S3 prefix-list route is more specific than the default route; it is AccessDenied, which would
+break any same-region S3 use by a workspace. So S3 now leaves through the NAT gateway like other
+egress, and through the egress gateway once decision 5 lands, where it can be recorded. The
+cost: ECR layer bytes cross the NAT, about 918 MiB compressed per Fargate workspace start
+(`deploy/aws/ecs/README.md`, start-latency measurement), at NAT data-processing rates. The end
+state, an endpoint limited to ECR layers and the stack's buckets with workspace S3 through the
+gateway's explicit proxy, is #2700 and lands with the AWS gateway's first stage. Not yet verified
+on a deployed account.
 
 ### Open point 4: SSH git and DNS (decided with the maintainer, 2026-10-24)
 
