@@ -6,7 +6,7 @@ English | [日本語](0122-egress-gateway.ja.md)
   template facts were read from the tree on this date. Squid's behaviour was read from its
   published documentation and an AWS blog post, **not run**; no Docker and no cloud account were
   available while writing this.
-- Follow-ups: #1181, #2603, #2604, #2657, #2658
+- Follow-ups: #1181, #2603, #2604, #2657, #2658, #2687
 - Related: [0047](0047-tenant-network-restriction.md) (inbound IP restriction; this record does
   not touch it) / #1056 (credential injection, needs this fence first) / #1067 (why an OS sandbox
   is not the answer)
