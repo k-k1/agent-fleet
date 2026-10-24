@@ -77,7 +77,10 @@ def leaves(v):
 def is_s3_or_unknown(service):
     """True for an S3 service name, or one this check cannot resolve (fail safe).
 
-    A literal or a !Sub string is read as text. Anything else (!Join, !FindInMap, !If,
+    A literal or a !Sub string is read as text, once ${AWS::Region} and ${AWS::URLSuffix}
+    are set aside; a remaining substitution (a parameter holding the service part) makes it
+    unknown. Any service name starting with "s3" counts (s3, s3express, s3-outposts).
+    Anything else (!Join, !FindInMap, !If,
     !ImportValue, ...) builds the name from parts, so it is refused rather than guessed:
     `!Join ['.', [com, amazonaws, !Ref AWS::Region, s3]]` is the same service.
     """
@@ -85,9 +88,13 @@ def is_s3_or_unknown(service):
         text = service
     elif isinstance(service, dict) and list(service) == ["!Sub"] and isinstance(service["!Sub"], str):
         text = service["!Sub"]
+        for known in ("${AWS::Region}", "${AWS::URLSuffix}"):
+            text = text.replace(known, "")
+        if "${" in text:
+            return True
     else:
         return True
-    return "s3" in text.lower().replace("-", ".").split(".")
+    return any(tok.startswith("s3") for tok in text.lower().replace("-", ".").split("."))
 
 
 def check(templates):
@@ -135,13 +142,26 @@ def main():
         "GatewayId": "vpce-x"}}
     joined = copy.deepcopy(gateway)
     joined["Properties"]["ServiceName"] = {"!Join": [".", ["com", "amazonaws", {"!Ref": "AWS::Region"}, "s3"]]}
+    param = copy.deepcopy(gateway)
+    param["Properties"]["ServiceName"] = {"!Sub": "com.amazonaws.${AWS::Region}.${EndpointService}"}
+    express = copy.deepcopy(gateway)
+    express["Properties"]["ServiceName"] = {"!Sub": "com.amazonaws.${AWS::Region}.s3express"}
+    ecr = copy.deepcopy(interface)
+    ecr["Properties"]["ServiceName"] = {"!Sub": "com.amazonaws.${AWS::Region}.ecr.api"}
     controls = [
+        ("service part from a parameter", with_resources({"Hidden": param})),
+        ("S3 Express endpoint", with_resources({"Hidden": express})),
         ("S3 endpoint built with !Join in 60-engines", with_resources({"Hidden": joined}, "60-engines.yaml")),
         ("S3 endpoint built with !Join in 00-network", with_resources({"Hidden": joined})),
         ("S3 gateway endpoint comes back", with_resources({"S3Endpoint": gateway})),
         ("S3 interface endpoint", with_resources({"S3If": interface})),
         ("prefix-list route", with_resources({"S3Route": prefix_route})),
     ]
+    if check(with_resources({"Ecr": ecr})):
+        print("FAIL  an ECR endpoint is refused - the check is too broad")
+        failed = True
+    else:
+        print("ok    control: an ECR interface endpoint is not refused")
     for name, t in controls:
         if check(t):
             print("ok    control: %s fails" % name)
