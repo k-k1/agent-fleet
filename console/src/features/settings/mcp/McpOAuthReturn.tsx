@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Button } from "../../../ui/Button.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useSettingsUI } from "../store.ts";
@@ -15,8 +16,15 @@ import type { SignInDone } from "./mcpOAuthSignal.ts";
 // the old behaviour applies: a notice, and Settings on the MCP tab. Either way the parameters are
 // removed so a reload does not replay the notice. Nothing in the query is shown as received:
 // the reason picks one of our own texts.
+// How long to wait after window.close() before concluding the browser refused: a tab it will
+// close is gone well within this, and one it will not (not opened by script) stays put.
+const CLOSE_GRACE_MS = 300;
+
 export function McpOAuthReturn({ booted }: { booted: boolean }) {
   const tr = useT();
+  const [closeFailed, setCloseFailed] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
   const toast = useToast();
   const [shown, setShown] = useState<SignInDone["outcome"] | null>(null);
   useEffect(() => {
@@ -42,22 +50,38 @@ export function McpOAuthReturn({ booted }: { booted: boolean }) {
     setShown(outcome);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booted]);
+  // Only ever called from the button: closing on mount would hide the result before it is read.
+  const closeTab = () => {
+    window.close();
+    clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => {
+      if (!window.closed) setCloseFailed(true);
+    }, CLOSE_GRACE_MS);
+  };
   if (!shown) return null;
   return (
     <div className="mcp-oauth-return" role="dialog" aria-modal="true" data-testid="mcp-oauth-return">
       <div className="mcp-oauth-return-card">
         <strong>{outcomeText(tr, shown)}</strong>
         <p className="muted">{tr("mcp.oauth_return_tab_close")}</p>
+        {closeFailed && (
+          <p className="muted" role="status" data-testid="mcp-oauth-return-close-failed">
+            {tr("mcp.oauth_return_close_failed")}
+          </p>
+        )}
         <div className="mcp-actions">
-          <button
-            className="ghost mcp-btn"
+          <Button variant="primary" onClick={closeTab}>
+            {tr("mcp.oauth_return_close")}
+          </Button>
+          <Button
+            variant="ghost"
             onClick={() => {
               setShown(null);
               useSettingsUI.getState().openSettings("mcp");
             }}
           >
             {tr("mcp.oauth_return_stay")}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

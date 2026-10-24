@@ -60,6 +60,8 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mcp.oauth_unfinished_dcr": "If the server supports dynamic registration, the button below retries with it.",
   "mcp.oauth_unfinished_trust": "If it keeps failing, ask the server's operator to trust this deployment's host. For another Agent Fleet deployment, that is its administrator's trusted client hosts setting.",
   "mcp.oauth_return_tab_close": "You can close this tab. The result shows up in the Console tab where you started the sign-in.",
+  "mcp.oauth_return_close": "Close this tab",
+  "mcp.oauth_return_close_failed": "This tab could not be closed from here. Close it yourself, or use the other button to open the Console in this tab.",
   "mcp.oauth_return_stay": "Open the Console in this tab",
   "mcp.oauth_dcr_note": "The last sign-in used a client ID metadata document and did not finish. If the authorization server rejected it, retry with dynamic registration.",
   "mcp.oauth_client_title": "A client ID is needed",
