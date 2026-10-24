@@ -44,7 +44,8 @@ func TestSealedColumnsCoverSchema(t *testing.T) {
 		if err := rows.Scan(&table, &col); err != nil {
 			t.Fatal(err)
 		}
-		if col != "key_ref" && col != "ciphertext" && !strings.HasSuffix(col, "_enc") {
+		// A table with a second sealed value names its key reference <prefix>_key_ref.
+		if col != "key_ref" && !strings.HasSuffix(col, "_key_ref") && col != "ciphertext" && !strings.HasSuffix(col, "_enc") {
 			continue
 		}
 		seen++
@@ -117,5 +118,17 @@ func TestSealedValueSwap(t *testing.T) {
 	}
 	if got, _ := st.GetSetting(ctx, "k"); got != "c" {
 		t.Fatalf("setting = %q, want c", got)
+	}
+}
+
+// Every accessor finds a column by name, first match wins, so two entries with one name would
+// leave the second column out of the rewrap without a word.
+func TestSealedColumnNamesAreUnique(t *testing.T) {
+	seen := map[string]bool{}
+	for _, n := range SealedTables() {
+		if seen[n] {
+			t.Errorf("sealed column name %q is used twice; give the second one a Name", n)
+		}
+		seen[n] = true
 	}
 }

@@ -446,6 +446,9 @@ export interface TenantServer {
   user_secret?: boolean;
   // "oauth": each member signs in for themselves (ADR 0119 decision 9); the row has no headers.
   auth?: "oauth";
+  // The client the tenant registered at the server's authorization server, if any. A stored
+  // secret comes back as MASKED; none at all means a public client.
+  oauth_client?: { issuer: string; client_id: string; client_secret?: string };
   created_by?: string;
   updated_at?: string;
 }
@@ -465,6 +468,18 @@ export interface TenantForm {
   timeoutMs: string;
   enabled: boolean;
   userSecret: boolean;
+  // OAuth only: the tenant's pre-registered client. Empty client id = none (members' sign-ins
+  // register as usual). oauthSecret is a newly typed secret; "" keeps the stored one unless
+  // oauthSecretDrop is set.
+  oauthIssuer: string;
+  oauthClientId: string;
+  oauthSecret: string;
+  oauthSecretStored: boolean;
+  oauthSecretDrop: boolean;
+  // The issuer and client id the stored secret belongs to, as loaded. The control plane keeps a
+  // stored secret only for the same pair, so changing either needs the secret typed again.
+  oauthOrigIssuer: string;
+  oauthOrigClientId: string;
 }
 
 export const emptyTenantForm = (): TenantForm => ({
@@ -482,6 +497,13 @@ export const emptyTenantForm = (): TenantForm => ({
   timeoutMs: "",
   enabled: true,
   userSecret: false,
+  oauthIssuer: "",
+  oauthClientId: "",
+  oauthSecret: "",
+  oauthSecretStored: false,
+  oauthSecretDrop: false,
+  oauthOrigIssuer: "",
+  oauthOrigClientId: "",
 });
 
 export const tenantFormOf = (s: TenantServer): TenantForm => ({
@@ -499,7 +521,44 @@ export const tenantFormOf = (s: TenantServer): TenantForm => ({
   timeoutMs: s.timeoutMs ? String(s.timeoutMs) : "",
   enabled: s.enabled,
   userSecret: !!s.user_secret,
+  oauthIssuer: s.oauth_client?.issuer || "",
+  oauthClientId: s.oauth_client?.client_id || "",
+  oauthSecret: "",
+  oauthSecretStored: !!s.oauth_client?.client_secret,
+  oauthSecretDrop: false,
+  oauthOrigIssuer: s.oauth_client?.issuer || "",
+  oauthOrigClientId: s.oauth_client?.client_id || "",
 });
+
+// tenantOAuthSecretReentry: the stored secret no longer applies (the issuer or client id changed)
+// and no new one is typed. Saving would be refused, so the form asks for the secret instead.
+export const tenantOAuthSecretReentry = (f: TenantForm): boolean =>
+  f.auth === "oauth" &&
+  f.oauthClientId.trim() !== "" &&
+  f.oauthSecretStored &&
+  !f.oauthSecretDrop &&
+  f.oauthSecret.trim() === "" &&
+  (f.oauthIssuer.trim() !== f.oauthOrigIssuer || f.oauthClientId.trim() !== f.oauthOrigClientId);
+
+// An issuer the control plane accepts: https, a host, no credentials, query or fragment.
+const issuerUsable = (raw: string): boolean => {
+  try {
+    const u = new URL(raw);
+    return u.protocol === "https:" && u.hostname !== "" && !u.username && !u.password && !u.search && !u.hash;
+  } catch {
+    return false;
+  }
+};
+
+// tenantOAuthClient is the oauth_client of a tenant body: present only for OAuth with a client
+// id. The secret is the typed one, else MASKED to keep the stored one, else "" (a public client,
+// or a stored secret the admin removed).
+const tenantOAuthClient = (f: TenantForm) => {
+  if (f.auth !== "oauth" || f.oauthClientId.trim() === "") return undefined;
+  const typed = f.oauthSecret.trim();
+  const secret = typed !== "" ? typed : f.oauthSecretStored && !f.oauthSecretDrop ? MASKED : "";
+  return { issuer: f.oauthIssuer.trim(), client_id: f.oauthClientId.trim(), client_secret: secret };
+};
 
 // OAuth distributes no credential, so "each member supplies the value" has nothing to apply to:
 // the form hides the choice and the body never sends it with OAuth (the CP refuses the pair).
@@ -523,12 +582,20 @@ export const bodyOfTenant = (f: TenantForm, tenantSlug: string): Record<string, 
   enabled: f.enabled,
   user_secret: tenantUserSecret(f),
   ...(f.auth === "oauth" ? { auth: "oauth" } : {}),
+  ...(tenantOAuthClient(f) ? { oauth_client: tenantOAuthClient(f) } : {}),
 });
+
+// A tenant client names the authorization server it was registered at: an https issuer.
+export const tenantOAuthClientValid = (f: TenantForm): boolean =>
+  f.auth !== "oauth" ||
+  f.oauthClientId.trim() === "" ||
+  (issuerUsable(f.oauthIssuer.trim()) && !/[\s#?]/.test(f.oauthIssuer.trim()) && !tenantOAuthSecretReentry(f));
 
 export const tenantFormValid = (f: TenantForm): boolean =>
   NAME_RE.test(f.name.trim()) &&
   /^https?:\/\/.+/.test(f.url.trim()) &&
-  (tenantUserSecret(f) || bearerReady(f.auth, f.token, f.headers));
+  (tenantUserSecret(f) || bearerReady(f.auth, f.token, f.headers)) &&
+  tenantOAuthClientValid(f);
 
 // NOTE: this file used to export a codexUnsupported() helper, on the premise that
 // codex could carry nothing but a bearer token on a remote MCP server. That premise

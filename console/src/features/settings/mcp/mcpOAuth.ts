@@ -8,8 +8,9 @@ export type OAuthState = "not_signed_in" | "connected" | "sign_in_again" | "need
 export const OAUTH_STATES: readonly OAuthState[] = ["not_signed_in", "connected", "sign_in_again", "needs_more_permission"];
 
 // How the client id was obtained.
-export type OAuthRegistration = "preregistered" | "cimd" | "dcr";
-export const OAUTH_REGISTRATIONS: readonly OAuthRegistration[] = ["preregistered", "cimd", "dcr"];
+// "tenant": the client the tenant pre-registered for a distributed server (ADR 0119 decision 9).
+export type OAuthRegistration = "preregistered" | "tenant" | "cimd" | "dcr";
+export const OAUTH_REGISTRATIONS: readonly OAuthRegistration[] = ["preregistered", "tenant", "cimd", "dcr"];
 
 // GET api/mcp-servers/{id}/oauth (agent: mcpreg.OAuthStatus). No token appears in it.
 export interface OAuthStatus {

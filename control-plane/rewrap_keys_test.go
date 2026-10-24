@@ -89,6 +89,9 @@ func seedLegacyRows(t *testing.T, st *store.SQL, local *localCustodian) (map[str
 		tn.ID, put("mcp_server", "M1", tn.ID, []byte(`{"Authorization":"Bearer x"}`)), tn.ID, now, now)
 	exec(`INSERT INTO mcp_server(id, tenant_id, name, headers_enc, key_ref, created_at, updated_at) VALUES('M2', ?, 'b', '{"X":"plain"}', '', ?, ?)`,
 		tn.ID, now, now)
+	exec(`INSERT INTO mcp_server(id, tenant_id, name, auth, oauth_issuer, oauth_client_id, oauth_secret_enc, oauth_key_ref, created_at, updated_at)
+		VALUES('M3', ?, 'c', 'oauth', 'https://as.example', 'cid', ?, ?, ?, ?)`,
+		tn.ID, put("mcp_server.oauth_secret_enc", "M3", tn.ID, []byte(`{"client_secret":"s"}`)), tn.ID, now, now)
 	exec(`INSERT INTO tenant_idp(id, tenant_id, name, issuer, client_id, secret_enc, key_ref, trust, created_at, updated_at)
 		VALUES('I1', ?, 'okta', 'https://idp.example', 'cid', ?, ?, 'issuer', ?, ?)`,
 		tn.ID, put("tenant_idp", "I1", tn.ID, []byte("idp-secret")), tn.ID, now, now)
@@ -465,6 +468,12 @@ var rewrapSealSites = map[string]string{
 	"rewrap_keys.go:rewrapOne":                  "",
 }
 
+// rewrapSealSitesAlso lists the further targets a seal site in rewrapSealSites stores into,
+// for a sealer shared by two columns.
+var rewrapSealSitesAlso = map[string][]string{
+	"internal/mcpsrv/mcp_server.go:sealHeaders": {"mcp_server.oauth_secret_enc"},
+}
+
 // TestRewrapTargetsCoverSealCallSites fails when code anywhere in the module starts sealing a
 // value somewhere rewrapTargets does not walk: a new seal site has to be mapped to a target
 // here, and every target has to be reachable from a site.
@@ -536,6 +545,12 @@ func TestRewrapTargetsCoverSealCallSites(t *testing.T) {
 				t.Errorf("%s maps to %q, which rewrapTargets does not have", site, target)
 			}
 			reached[target] = true
+		}
+		for _, also := range rewrapSealSitesAlso[site] {
+			if !targets[also] {
+				t.Errorf("%s also maps to %q, which rewrapTargets does not have", site, also)
+			}
+			reached[also] = true
 		}
 	}
 	sort.Strings(unmapped)

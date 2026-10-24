@@ -136,7 +136,8 @@ func acceptTenant(in []ServerDef) (kept []ServerDef, dropped int) {
 }
 
 // endedOAuth lists the OAuth definitions of prev whose sign-in next no longer covers: gone,
-// another URL, or no longer OAuth. Only what the tenant changed counts here; a member's own
+// another URL, no longer OAuth, or another tenant client (a grant made with a confidential
+// client is renewed through the CP with that client, which may be gone). Only what the tenant changed counts here; a member's own
 // opt-out keeps the grant, so switching the server back on needs no new sign-in.
 func endedOAuth(prev, next []ServerDef) []string {
 	now := make(map[string]ServerDef, len(next))
@@ -148,7 +149,7 @@ func endedOAuth(prev, next []ServerDef) []string {
 		if p.Auth != AuthOAuth {
 			continue
 		}
-		if n, ok := now[p.ID]; !ok || n.Auth != AuthOAuth || !sameURL(n.URL, p.URL) {
+		if n, ok := now[p.ID]; !ok || n.Auth != AuthOAuth || !sameURL(n.URL, p.URL) || !reflect.DeepEqual(n.OAuthClient, p.OAuthClient) {
 			out = append(out, p.ID)
 		}
 	}

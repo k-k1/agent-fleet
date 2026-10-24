@@ -4,9 +4,9 @@ English | [日本語](0119-mcp-client-oauth.ja.md)
 
 - Status: **accepted** (2026-10-23; proposed 2026-10-22). P1-P3 are built and ship in 0.34.0:
   the probe (#2485), sign-in (#2549, #2568) and the relay with materialization for every kind
-  (#2580). Tenant distribution with `auth: oauth` (decision 9) is built after 0.34.0. Not built:
-  pre-registered confidential clients. No live run against a real authorization server yet. Both
-  stay on #2479; the dated notes at the end record what was measured.
+  (#2580). Tenant distribution with `auth: oauth` and tenant pre-registered clients, public and
+  confidential (decision 9), are built after 0.34.0. No live run against a real authorization
+  server yet; that stays on #2479. The dated notes at the end record what was measured.
 - Tracking: #2479
 - Related: [0031](0031-mcp-registry.md) (the registry; its "Left over" says OAuth MCPs are not
   driven from af, and its rejected options include "af acts as an MCP proxy", which decision 6
@@ -281,3 +281,38 @@ naming the server and the AS issuer. No token, code or verifier is logged or aud
   - **Materialization checks the grant's resource too.** A grant whose resource is not the definition's URL is
     not written (the relay would refuse it on every request anyway), so a disconnect that failed to write
     cannot leave a dead server in a CLI's config.
+
+- 2026-10-24, P5 built: a tenant's pre-registered client (decision 9), public or confidential. The admin enters a
+  client id and the issuer it is registered at, and optionally a secret, on a distributed OAuth definition (`mcp_server`
+  `oauth_issuer`, `oauth_client_id`, `oauth_secret_enc` / `oauth_key_ref` in sqlite 0111, pg 0096, sealed like the headers). Facts the decision
+  did not pin down:
+  - **Order.** The tenant's client is the first pre-registered client, ahead of one the member entered, and is used
+    only when its issuer is the AS the sign-in selected; at another AS the order goes on (CIMD, DCR). The Console
+    names the path "a client your tenant registered" (`registration: tenant`).
+  - **The secret never leaves the CP.** The distribution carries `oauthClient: {issuer, clientId, confidential}`.
+    For a confidential client the Agent sends its token and revocation requests to
+    `POST /internal/mcp-servers/{id}/oauth/{token,revoke}` with the membership's `AF_MCP_TOKEN`, without client
+    authentication; the CP adds it. The PKCE verifier is still made and kept by the Agent, and the grant is still
+    stored only in the workspace: the code, the verifier and the tokens cross the CP in the request and the answer
+    and are neither stored nor logged there. This is the reversal decision 9 anticipated, limited to this case.
+  - **Not a general token proxy.** The tenant comes from the token's membership; the id must be that tenant's enabled
+    OAuth row with a confidential client; only `authorization_code` and `refresh_token` are relayed; `resource` must
+    be the row's URL. The token and revocation endpoints come from the CP's own discovery of the issuer the admin
+    entered (RFC 8414 / OIDC in the specification's order, the document must name the same issuer, endpoints
+    `https`), never from the Agent, and the CP dials public addresses only and follows no redirect, the CIMD fetch's
+    guard. The AS's error reaches the Agent as one of the token endpoint's own codes (RFC 6749 §5.2, RFC 8707's
+    `invalid_target`), anything else as `server_error`.
+  - **Client authentication.** The metadata lists what the AS supports, not what the client was registered with.
+    With only `client_secret_post` listed the CP uses it; otherwise `client_secret_basic` (the default when the list
+    is absent), and when both are listed an `invalid_client` answer is retried once with post. Revocation reads
+    `revocation_endpoint_auth_methods_supported` on its own (RFC 8414 §2).
+  - **Write-only secret.** The admin list and the upsert answer show `***`; `***` sent back keeps the secret only while
+    the issuer and client id are unchanged, so an admin cannot point a secret someone else entered at an AS of their
+    choosing.
+  - **Changing the client ends sign-ins**, as a URL change does: the Agent's fetch comparison includes the client,
+    because a grant made with a confidential client is renewed through the CP with that client. Adding a client
+    counts too, and a sign-in still open in a browser is refused on completion whatever path it took. The Agent names
+    its grant's issuer and client id in every bridge request and the CP refuses one that is no longer the row's, so an
+    old grant's tokens never reach the new client's AS; the price is that they cannot be revoked through the CP
+    either (the old secret is gone) and expire at the old AS on their own.
+  - The CP has to reach the AS for this case only, which the operate guide says.

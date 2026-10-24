@@ -13,9 +13,18 @@ import (
 
 // SealedColumn names a table column holding a custodian-sealed value: Value is the sealed
 // text, KeyRef the custodian key reference it was sealed under ("" = stored unsealed, a
-// deployment that had no master key), ID the primary key.
+// deployment that had no master key), ID the primary key. Name is how the rewrap command and
+// these accessors address it: the table, unless the table seals a second value, which needs a
+// name of its own or every lookup would find the first column.
 type SealedColumn struct {
-	Table, ID, Value, KeyRef string
+	Name, Table, ID, Value, KeyRef string
+}
+
+func (c SealedColumn) name() string {
+	if c.Name != "" {
+		return c.Name
+	}
+	return c.Table
 }
 
 // sealedColumns is every table column the custodian seals into. TestSealedColumnsCoverSchema
@@ -29,6 +38,7 @@ var sealedColumns = []SealedColumn{
 	{Table: "wrapped_dek", ID: "workspace_id", Value: "ciphertext", KeyRef: "key_ref"},
 	{Table: "home_dek", ID: "membership_id", Value: "ciphertext", KeyRef: "key_ref"},
 	{Table: "mcp_server", ID: "id", Value: "headers_enc", KeyRef: "key_ref"},
+	{Name: "mcp_server.oauth_secret_enc", Table: "mcp_server", ID: "id", Value: "oauth_secret_enc", KeyRef: "oauth_key_ref"},
 	{Table: "tenant_idp", ID: "id", Value: "secret_enc", KeyRef: "key_ref"},
 	{Table: "tenant_git_oauth", ID: "id", Value: "secret_enc", KeyRef: "key_ref"},
 	{Table: "dev_idp_key", ID: "kid", Value: "private_enc", KeyRef: "key_ref"},
@@ -43,14 +53,14 @@ var sealedColumns = []SealedColumn{
 func SealedTables() []string {
 	out := make([]string, len(sealedColumns))
 	for i, c := range sealedColumns {
-		out[i] = c.Table
+		out[i] = c.name()
 	}
 	return out
 }
 
 func sealedColumn(table string) (SealedColumn, error) {
 	for _, c := range sealedColumns {
-		if c.Table == table {
+		if c.name() == table {
 			return c, nil
 		}
 	}

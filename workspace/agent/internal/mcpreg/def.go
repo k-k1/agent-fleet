@@ -107,6 +107,8 @@ const (
 	CodeOAuthTransport  = "mcp_oauth_remote_only"
 	CodeOAuthHeader     = "mcp_oauth_authorization_header"
 	CodeOAuthUserSecret = "mcp_oauth_user_secret"
+	CodeOAuthClient     = "mcp_oauth_client_invalid"
+	CodeOAuthClientUser = "mcp_oauth_client_tenant_only"
 )
 
 // AuthOAuth marks a definition whose server is signed in to with OAuth.
@@ -121,6 +123,25 @@ func invalid(code, format string, a ...any) error {
 var ErrTenantStdio error = &ValidationError{
 	Code: CodeTenantStdio,
 	Msg:  "tenant-distributed MCP servers cannot use stdio (remote only)",
+}
+
+// validTenantClient: the issuer is a URL the Agent would fetch metadata from (https, or http on
+// loopback) with no query or fragment, and the client id is RFC 6749 VSCHAR. Both come from the
+// CP and end up in an authorization URL and a token request.
+func validTenantClient(c secrets.MCPTenantClient) bool {
+	u, err := url.Parse(c.Issuer)
+	if !metadataURLUsable(u, err) || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	if strings.TrimSpace(c.ClientID) == "" || len(c.ClientID) > 255 {
+		return false
+	}
+	for _, r := range c.ClientID {
+		if r < 0x20 || r > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 // Validate checks a definition for internal consistency. It does NOT check
@@ -149,8 +170,19 @@ func Validate(d ServerDef) error {
 		if d.UserSecret {
 			return invalid(CodeOAuthUserSecret, "an OAuth server asks members for no header values")
 		}
+		if d.OAuthClient != nil {
+			if d.Origin != OriginTenant {
+				return invalid(CodeOAuthClientUser, "only a tenant-distributed definition carries a pre-registered client")
+			}
+			if !validTenantClient(*d.OAuthClient) {
+				return invalid(CodeOAuthClient, "a pre-registered client needs a client id and an https issuer")
+			}
+		}
 	default:
 		return invalid(CodeAuthUnknown, "unknown authentication: %q", d.Auth)
+	}
+	if d.Auth != AuthOAuth && d.OAuthClient != nil {
+		return invalid(CodeOAuthClient, "a pre-registered client belongs to an OAuth server")
 	}
 	switch d.Transport {
 	case TransportStdio:

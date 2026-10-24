@@ -703,6 +703,16 @@ export const admin = {
   "admin.mcp_disabled": "無効",
   "admin.mcp_user_secret_badge": "値は各自入力",
   "admin.mcp_oauth_badge": "各自サインイン",
+  "admin.mcp_oauth_client_id": "テナントが登録したクライアント ID",
+  "admin.mcp_oauth_client_id_hint": "任意。空のままなら、各メンバーのサインインがそれぞれクライアントを登録します。",
+  "admin.mcp_oauth_issuer": "認可サーバー（issuer）",
+  "admin.mcp_oauth_issuer_hint": "クライアントを登録した認可サーバーの issuer（メタデータに書かれているもの）。",
+  "admin.mcp_oauth_issuer_bad": "issuer は https の URL で入力してください。",
+  "admin.mcp_oauth_secret": "クライアントシークレット",
+  "admin.mcp_oauth_secret_hint":
+    "confidential クライアントのときだけ入力します。シークレットは暗号化して保存され、Agent Fleet のコントロールプレーンの外には出ません。トークンの要求はコントロールプレーンが行うので、コントロールプレーンから認可サーバーに到達できる必要があります。public クライアントなら空のままにしてください。",
+  "admin.mcp_oauth_secret_drop": "保存したシークレットを削除する",
+  "admin.mcp_oauth_secret_reenter": "issuer かクライアント ID を変えたので、保存したシークレットは使えません。シークレットを入力し直すか、削除して public クライアントにしてください。",
   "admin.mcp_oauth_note":
     "資格情報は配布しません。各メンバーが「設定 > MCP サーバー」から自分のアカウントでサインインし、サインインした人のセッションにだけこのサーバーが届きます。",
   "admin.mcp_secret_policy": "資格情報の扱い",
