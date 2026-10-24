@@ -180,8 +180,10 @@ The behaviour of assistant chat and the fleet operator ([10](10-chat-memo.md), [
   shows what it currently resolves to; prices and context window are described in
   [09](09-agents.md#model-prices-and-usage-chips).
 - **Auto-respond to session reports**: the operator takes one turn automatically when a report arrives.
-  Its companions are the **Unattended auto-reply limit** (default 10, max 50; it cannot be unlimited), the
-  **Auto-reply model**, the **Auto-reply bundling window** and **Quiet completion reports**; what each does is in
+  Its companions: the **Unattended auto-reply limit** (default 10, max 50; it cannot be unlimited), the
+  **Auto-reply model** (reading a report is routine work, so a lighter model saves a lot), the **Auto-reply
+  bundling window** (reports arriving within it are handled in one turn) and **Quiet completion reports** (a
+  normal completion delivers the card and the notification but takes no turn). See
   [11](11-many-sessions.md#session-reports-and-auto-reply).
 - **Auto-pilot**: carries questions and plan approvals through automatically. Off by default (same section).
 - **Auto-resume interrupted turns**: resumes a turn cut short by a dropped connection or a temporary rate
@@ -414,8 +416,8 @@ The same token can use your Agent Fleet memory too; the tab lists what it can do
 
 Your AWS profiles (shared settings), which `af-aws-exec` and SSM sessions sign in with, and SSM hosts (individual)
 for logging in to another in-house host. A profile is **IAM Identity Center (SSO)** or **Assume a role from another
-profile**; each row has **Log in** and, when signed in, **Log out**. How logging in and out work, and the two
-types, is in [16 Cloud accounts](16-cloud-accounts.md#logging-in-to-another-in-house-host-ssm).
+profile**; an SSO row has **Log in** and, when signed in, **Log out**; an assume-role row has no **Log out**. How logging
+in and out work, and the two types, is in [16 Cloud accounts](16-cloud-accounts.md#logging-in-to-another-in-house-host-ssm).
 
 ### Google Cloud
 
@@ -425,7 +427,7 @@ service account to impersonate, a region and a zone. No Google credentials are s
 service-account keys are not accepted. Two labels that make the same name are not available in the workspace
 until you rename one; the row says so. Each available row has **Log in**, **Log in again** and **Log out**; how
 they work, and the WS bar's Google Cloud badge, are in
-[16 Cloud accounts](16-cloud-accounts.md#logging-in-to-another-in-house-host-ssm).
+[16 Cloud accounts](16-cloud-accounts.md#running-commands-in-google-cloud-as-you-af-gcloud-exec).
 
 ---
 

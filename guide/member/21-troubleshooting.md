@@ -526,13 +526,9 @@ signed in, and a session picks the change up from the next one you start.
 
 ### An outside app connects but shows no tools
 
-Open **Recent calls** under the app (⚙ Settings → MCP tokens → **Connected apps**; a Personal Access Token has
-the same button). It lists the last 50 requests made with it: time, HTTP status, the JSON-RPC methods and, for
-`tools/list`, how many tools came back. Tokens, authorization headers and tool arguments or results are never
-recorded. The list lives in memory on the Control Plane, so a restart empties it, and with several replicas each
-shows only what it served: press **Refresh** a few times, or ask your operator to read the Control Plane log
-(one line per request, including those refused before sign-in). To start over, **Revoke** the connection
-and reconnect from the app ([19](19-outside-access.md#recent-calls-when-an-app-connects-but-shows-no-tools)).
+Open **Recent calls** under the app (⚙ Settings → MCP tokens → **Connected apps**) and check the HTTP status of
+its requests and how many tools the `tools/list` request returned. Press **Refresh** if the list looks empty, and
+reconnect from the app if needed. The details are in ([19](19-outside-access.md#recent-calls-when-an-app-connects-but-shows-no-tools)).
 
 ### Jira says boards, sprints and epics are "not available"
 
@@ -545,10 +541,11 @@ Viewing, listing, creating and commenting on issues do not need them ([15](15-ex
 
 ### `jira issue create` (or `comment add`) timed out with exit status 124
 
-Status **124** means the wrapper cut off a command that changes something (after 120 seconds by default, when
-it has no terminal). **The issue or comment may already exist**, so do not run it again straight away. For
-`issue create` the message also lists the issues you created in the last 15 minutes with exactly that summary
-("possible matches", or "no matching issue found"). Check Jira first, for example with the JQL
+Status **124** means the wrapper cut the command off at its time limit (120 seconds by default for a command
+that changes something, when it has no terminal). **The issue or comment may already exist**, so do not run it
+again straight away. When it knows the project and the summary, `issue create` also searches for issues you
+created in the last 15 minutes with that summary and prints "possible matches" or "no matching issue found";
+the search can fail ("could not look for the issue"), so do not rely on it. Check Jira first, for example with the JQL
 `project = PROJ AND creator = currentUser() AND created >= -15m`, and create it again only if it is not there.
 Commands that only read are re-run by themselves after a timeout or a connection reset
 ([15](15-external-services.md#use-jira-in-a-session)).
