@@ -468,6 +468,12 @@ var rewrapSealSites = map[string]string{
 	"rewrap_keys.go:rewrapOne":                  "",
 }
 
+// rewrapSealSitesAlso lists the further targets a seal site in rewrapSealSites stores into,
+// for a sealer shared by two columns.
+var rewrapSealSitesAlso = map[string][]string{
+	"internal/mcpsrv/mcp_server.go:sealHeaders": {"mcp_server.oauth_secret_enc"},
+}
+
 // TestRewrapTargetsCoverSealCallSites fails when code anywhere in the module starts sealing a
 // value somewhere rewrapTargets does not walk: a new seal site has to be mapped to a target
 // here, and every target has to be reachable from a site.
@@ -539,6 +545,12 @@ func TestRewrapTargetsCoverSealCallSites(t *testing.T) {
 				t.Errorf("%s maps to %q, which rewrapTargets does not have", site, target)
 			}
 			reached[target] = true
+		}
+		for _, also := range rewrapSealSitesAlso[site] {
+			if !targets[also] {
+				t.Errorf("%s also maps to %q, which rewrapTargets does not have", site, also)
+			}
+			reached[also] = true
 		}
 	}
 	sort.Strings(unmapped)
