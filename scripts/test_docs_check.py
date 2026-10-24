@@ -173,6 +173,14 @@ class CapsRowTests(unittest.TestCase):
         ("Fork from a past message", "✓", "—", "—"),
         ("Choosing to skip permission prompts", "—", "✓", "—"),
         ("Receives integration (MCP) servers", "✓", "—", "—"),
+        ("Starts child sessions and messages other sessions", "✓", "—", "—"),
+        # Rows that rest on code other than Caps(): the rtk artifact, the image studio refusal.
+        ("RTK (token savings)", "✓", "—", "—"),
+        ("Bound to an image studio", "✓", "—", "—"),
+    )
+    STUDIO_STORE = (
+        "package imagegen\n\nfunc StudioSessionUnsupported(kind, driver string) string {\n"
+        "\tswitch kind {\n\tcase session.KindBeta:\n\t\treturn \"no\"\n\t}\n\treturn \"\"\n}\n"
     )
 
     def setUp(self):
@@ -192,6 +200,10 @@ class CapsRowTests(unittest.TestCase):
                 f"\treturn agents.Caps{{{caps}}}\n}}\n"
             )
         self.struct.write_text(self.CAPS_STRUCT)
+        (agents / "alpha" / "rtk.go").write_text("package alpha\n\nfunc ApplyRTK(on bool) {}\n")
+        imagegen = self.root / "workspace/agent/internal/imagegen"
+        imagegen.mkdir(parents=True)
+        (imagegen / "studio_store.go").write_text(self.STUDIO_STORE)
         session = self.root / "workspace/agent/internal/session"
         session.mkdir(parents=True)
         (session / "session.go").write_text(
@@ -226,6 +238,47 @@ class CapsRowTests(unittest.TestCase):
                     rows[i][col] = "—" if rows[i][col].startswith("✓") else "✓"
                     self.write_table(rows)
                     self.assertIn(f"'{label}' disagrees", self.errors())
+
+    def test_rtk_follows_the_artifact_in_code(self):
+        # beta gains an rtk artifact (a hook command constant, as claude has): its cell must flip.
+        (self.root / "workspace/agent/internal/agents/beta/rtk.go").write_text(
+            'package beta\n\nconst rtkHookCommand = "rtk hook beta"\n'
+        )
+        self.assertIn("'RTK (token savings)' disagrees", self.errors())
+
+    def test_studio_follows_the_refusal_in_code(self):
+        # beta is ManagedOnly: refusing its Managed mode leaves it no route, so it is not
+        # ticked. Dropping the refusal must therefore demand a tick; a refused kind that has
+        # a Terminal route (alpha) stays ticked.
+        store = self.root / "workspace/agent/internal/imagegen/studio_store.go"
+        store.write_text(self.STUDIO_STORE.replace("KindBeta", "KindAlpha"))
+        self.assertIn("'Bound to an image studio' disagrees", self.errors())
+        self.write_table([r if r[0] != "Bound to an image studio" else (r[0], "✓", "✓", "—") for r in self.ROWS])
+        self.assertEqual(self.errors(), "")
+
+    def test_studio_reader_handles_a_multiline_case_and_refuses_shapes_it_cannot_read(self):
+        store = self.root / "workspace/agent/internal/imagegen/studio_store.go"
+        # A valid multi-line case still refuses beta: the table must stay as it is.
+        store.write_text(self.STUDIO_STORE.replace("case session.KindBeta:", "case\n\t\tsession.KindBeta:"))
+        self.assertEqual(self.errors(), "")
+        # Even with a "corrected" table, a shape the reader cannot interpret is an error,
+        # never a quiet approval.
+        self.write_table([r if r[0] != "Bound to an image studio" else (r[0], "✓", "✓", "—") for r in self.ROWS])
+        self.assertIn("disagrees", self.errors())
+        for body in (
+            "case session.KindBeta, session.KindNope:",   # unknown constant
+            'case "beta":',                               # literal
+            "case kindOf(x):",                            # expression
+        ):
+            with self.subTest(body=body):
+                store.write_text(self.STUDIO_STORE.replace("case session.KindBeta:", body))
+                self.assertIn("cannot be checked", self.errors())
+        store.write_text(self.STUDIO_STORE.replace("\tswitch kind {", "\tif kind == \"x\" {}\n\tswitch kind {\n\tcase session.KindShell:\n\tswitch driver {"))
+        self.assertIn("cannot be checked", self.errors())
+
+    def test_derived_row_with_unreadable_source_is_an_error(self):
+        (self.root / "workspace/agent/internal/imagegen/studio_store.go").unlink()
+        self.assertIn("cannot be checked", self.errors())
 
     def test_missing_row_is_an_error(self):
         self.write_table(self.ROWS[1:])

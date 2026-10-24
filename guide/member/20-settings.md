@@ -378,7 +378,7 @@ search.
   server answers that a tool needs more permission, the call fails with the server's own answer and the row shows
   **More permission needed**, and its **Approve the extra permission** button signs in again asking for that permission on top of what you already granted. The relay's port is remembered across restarts of the Agent; if that port is taken at
   start-up, a new one is chosen (with a new private key) and the configurations are rewritten, so sessions started before that need a restart.
-  Of the agent kinds, claude, copilot and cursor were seen sending the relay's header to a local test server; opencode's use of it is not yet measured.
+  The key is written into every agent's server entry as a plain header; that each CLI really sends it was only spot-checked against a local test server, not for every agent. A request without it is answered with a bare 403, so a server that stays unreachable from one agent while others reach it points here.
   OAuth is not offered for tenant-distributed servers.
 - **Advanced** (closed by default): **targets** (**assistants**, **sessions**, or both; clear both and the entry
   stays but goes nowhere), **target agents** (empty covers every agent), the **timeout** and **enabled**. The

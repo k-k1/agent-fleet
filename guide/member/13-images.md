@@ -227,13 +227,12 @@ agent never paints a batch on its own.
   repository, subfolder, worktree, and permission prompts. **There is no prompt field**: the
   first turn is the studio's description of the agent's role. Until it arrives the pane says it
   is sending it, and it offers **Resend** only when sending failed or could not be confirmed.
-- **Execution method**: Managed and Terminal (CLI) both work. claude is Terminal (CLI) only (it
-  has no Managed mode). **opencode cannot be attached as Managed** (sessions share one af
-  connection there, so a write cannot be traced to the session that made it; Terminal (CLI) is
-  fine). copilot, cursor and kiro are Terminal (CLI) only for now. muse, which only runs as
-  Managed, cannot be attached yet.
+- **Execution method**: which agents can be attached, and under which execution method (some
+  work in Terminal (CLI) only, and one cannot be attached yet), is the "Bound to an image
+  studio" row of the [Agents reference](../ref/agents.md) and its footnote. Pick an agent
+  the row marks and a method it allows; anything else is refused.
 - **Worktree is On by default**, so the agent can tell for certain which studio's session it is.
-  Only Terminal (CLI) and lcpp let you turn it off. From inside a worktree the agent **cannot see
+  Which agents can turn it off is in the footnote of the same [Agents reference](../ref/agents.md) row. From inside a worktree the agent **cannot see
   uncommitted material** in your original working copy; commit what you want it to read.
 - **Switch agent** rebinds the studio to a new session at any time (sonnet to opus, claude to
   codex). The draft, the edit history and the versions belong to the studio and stay. Opening a

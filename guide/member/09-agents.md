@@ -382,16 +382,13 @@ shows the per-turn token-spend trend.
 
 ## RTK (token savings)
 
-Five agents (claude / codex / opencode / GitHub Copilot / agy) have an on / off setting
-for **"RTK (token savings)"** (cursor and Kiro don't have it yet). It smartly
+Most agents have an on / off setting for **"RTK (token savings)"**. It smartly
 rewrites the commands the agent runs to keep token consumption down. If this workspace's
 image doesn't include RTK, "This workspace has no rtk." is shown.
 
-How it takes effect differs a little by agent.
-
-- **claude / opencode**: commands are rewritten transparently, so it works without you noticing.
-- **copilot**: shell commands are routed through rtk by a hook, so it takes effect deterministically, like claude / opencode (applies to new sessions).
-- **codex / agy**: they have no command-rewrite mechanism, so it's **instruction-based (best effort)**. It only nudges the agent to "please use rtk"; it isn't enforced.
+Which agents have the setting, and how it takes effect on each (a command rewritten every time,
+or only an instruction asking the agent to use rtk, which is best effort), is the "RTK (token
+savings)" row and its footnote in the [Agents reference](../ref/agents.md).
 
 ## Agent instructions (write down how you work, once)
 
