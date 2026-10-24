@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Button } from "../../../ui/Button.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useSettingsUI } from "../store.ts";
@@ -69,18 +70,18 @@ export function McpOAuthReturn({ booted }: { booted: boolean }) {
           </p>
         )}
         <div className="mcp-actions">
-          <button className="primary mcp-btn" onClick={closeTab}>
+          <Button variant="primary" onClick={closeTab}>
             {tr("mcp.oauth_return_close")}
-          </button>
-          <button
-            className="ghost mcp-btn"
+          </Button>
+          <Button
+            variant="ghost"
             onClick={() => {
               setShown(null);
               useSettingsUI.getState().openSettings("mcp");
             }}
           >
             {tr("mcp.oauth_return_stay")}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

@@ -863,6 +863,10 @@ describe("return tab", () => {
     at("?mcp_oauth=ok&server=mcp-1");
     await mount(<McpOAuthReturn booted />);
     expect(close).not.toHaveBeenCalled(); // never on mount
+    // Rendered outside the settings modal, so the modal-scoped button rules do not reach it: the
+    // shared Button (global .ui-btn rules) is what makes primary and secondary look different.
+    expect(button("Close this tab")!.className).toContain("ui-btn-primary");
+    expect(button("Open the Console in this tab")!.className).toContain("ui-btn-ghost");
     vi.stubGlobal("closed", true);
     await click(button("Close this tab"));
     await act(async () => void vi.advanceTimersByTime(1000));
