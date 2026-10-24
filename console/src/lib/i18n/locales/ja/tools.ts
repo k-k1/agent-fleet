@@ -864,7 +864,7 @@ export const tools = {
   "git.browse_title": "参照（クローン不要）",
   "git.rename": "リネーム",
   "git.rename_cancel": "取消",
-  "git.github_oauth_unconfigured": "このテナントに GitHub の OAuth アプリが登録されていません。テナント管理者に「テナント設定 › 連携 › git プロバイダ OAuth」での登録を依頼するか、アクセストークンの貼付で接続してください。",
+  "git.github_oauth_unconfigured": "このテナントに GitHub の OAuth アプリが登録されていません。テナント管理者に「テナント設定 › 連携 › 連携アプリの OAuth」での登録を依頼するか、アクセストークンの貼付で接続してください。",
   "git.github_app_install_hint": "このテナントは GitHub App で接続します。GitHub App はインストールされたリポジトリにしか届きません。接続の前後どちらでもよいので、自分のアカウントや organization にインストールしてリポジトリを選んでください。",
   "git.github_app_install_link": "アプリをインストール / リポジトリを選ぶ",
   "git.github_app_not_installed": "接続しましたが、GitHub App があなたから見えるどのアカウントにもインストールされていないため、まだどのリポジトリにも届きません。インストールしてリポジトリを選んでください。",
@@ -873,7 +873,7 @@ export const tools = {
   "git.github_reconnect_needed": "GitHub の接続を更新できませんでした。認可が期限切れになったか、取り消されています。切断してから、もう一度 GitHub に接続してください。",
   // OAuth の導線そのものを出さないときの説明（docs/log/71）。押せないボタンを置いても、
   // 押した本人には直せない（設定はテナント管理者のもの）。
-  "git.oauth_unregistered": "このテナントには OAuth アプリが登録されていないため、OAuth での接続は出していません。テナント管理者に「テナント設定 › 連携 › git プロバイダ OAuth」での登録を依頼してください。",
+  "git.oauth_unregistered": "このテナントには OAuth アプリが登録されていないため、OAuth での接続は出していません。テナント管理者に「テナント設定 › 連携 › 連携アプリの OAuth」での登録を依頼してください。",
   "git.oauth_start_failed": "OAuth 開始に失敗: {msg}",
   "git.oauth_waiting": "承認待ち…",
   "git.oauth_expired": "期限切れ。やり直してください",
@@ -889,7 +889,7 @@ export const tools = {
   "git.github_token_hint_read": "（プライベートリポジトリのクローン・push 両対応。パブリックのみなら ",
   "git.github_token_hint_pub": " で可）。fine-grained トークンの場合は Repository permissions で ",
   "git.github_token_hint_fg": " を付与（クローンのみなら Read-only）。",
-  "git.bitbucket_oauth_unconfigured": "このテナントに Bitbucket の OAuth アプリが登録されていません。テナント管理者に「テナント設定 › 連携 › git プロバイダ OAuth」での登録を依頼するか、メール＋アプリトークンで接続してください。",
+  "git.bitbucket_oauth_unconfigured": "このテナントに Bitbucket の OAuth アプリが登録されていません。テナント管理者に「テナント設定 › 連携 › 連携アプリの OAuth」での登録を依頼するか、メール＋アプリトークンで接続してください。",
   "git.bb_waiting": "別タブで承認してください…",
   "git.bb_timeout": "タイムアウト。やり直してください",
   "git.bitbucket_desc": "OAuth（コードグラント）か メール＋アプリトークンで接続します。",

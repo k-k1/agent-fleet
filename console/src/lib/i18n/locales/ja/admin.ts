@@ -1368,7 +1368,7 @@ export const admin = {
   "clean.stage2_run_title": "「安全」（マージ済み・クリーン等）と判定されたものだけを削除します",
   "clean.stage2_empty": "削除できる作業コピー・ブランチはありません。",
   "clean.stage2_confirm_title": "作業コピー・ブランチを一括削除",
-  "clean.stage2_confirm_body": "「安全」と判定された {count} 件を削除します。ブランチは削除前にごみ箱へ退避されます。作業コピーの中の停止中セッションはアーカイブへ（shell/ssm はごみ箱へ）移ります。worktree の削除は取り消せません。",
+  "clean.stage2_confirm_body": "「安全」と判定された {count} 件を削除します。ブランチは削除前にごみ箱へ退避されます。作業コピーの中の停止中セッションはアーカイブへ（shell/ssm はごみ箱へ）移ります。削除した worktree もごみ箱に入り、「復元」でコミットと未コミットの変更ごと作り直せます。ただし git が無視するファイル（ビルド成果物や .env など）と、どの変更をステージしていたかは戻りません。",
   "clean.shelf_n": "アーカイブ済みセッションが {count} 件あります（掃除の対象外）。",
   "clean.open_shelf": "アーカイブ一覧を開く",
   "clean.safety_safe": "安全",

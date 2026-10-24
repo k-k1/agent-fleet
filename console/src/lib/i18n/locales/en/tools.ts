@@ -863,7 +863,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "git.browse_title": "Browse (no clone needed)",
   "git.rename": "Rename",
   "git.rename_cancel": "Cancel",
-  "git.github_oauth_unconfigured": "This tenant has no GitHub OAuth app. Ask a tenant administrator to register one under Tenant settings › Integrations › Git provider OAuth, or connect by pasting an access token.",
+  "git.github_oauth_unconfigured": "This tenant has no GitHub OAuth app. Ask a tenant administrator to register one under Tenant settings › Integrations › Integration OAuth apps, or connect by pasting an access token.",
   "git.github_app_install_hint": "This tenant connects through a GitHub App, which reaches only the repositories it is installed on. Install it on your account or organization and choose the repositories before or after connecting.",
   "git.github_app_install_link": "Install the app / choose repositories",
   "git.github_app_not_installed": "Connected, but the GitHub App is not installed on any account you can see, so no repository is reachable yet. Install it and choose the repositories.",
@@ -872,7 +872,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "git.github_reconnect_needed": "GitHub could not renew this connection: the authorization has expired or was revoked. Disconnect and connect GitHub again.",
   // Shown when the OAuth option is not offered at all (docs/log/71). A button nobody can
   // make work is worse than no button: the setting belongs to their tenant admin.
-  "git.oauth_unregistered": "Connecting with OAuth isn't offered because this tenant has no OAuth app registered. Ask a tenant administrator to add one under Tenant settings › Integrations › Git provider OAuth.",
+  "git.oauth_unregistered": "Connecting with OAuth isn't offered because this tenant has no OAuth app registered. Ask a tenant administrator to add one under Tenant settings › Integrations › Integration OAuth apps.",
   "git.oauth_start_failed": "Failed to start OAuth: {msg}",
   "git.oauth_waiting": "Waiting for approval…",
   "git.oauth_expired": "Expired. Please try again.",
@@ -888,7 +888,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "git.github_token_hint_read": " (private repos — covers clone & push; use ",
   "git.github_token_hint_pub": " for public repos only). For a fine-grained token, grant Repository permissions ",
   "git.github_token_hint_fg": " (Read-only for clone only).",
-  "git.bitbucket_oauth_unconfigured": "This tenant has no Bitbucket OAuth app. Ask a tenant administrator to register one under Tenant settings › Integrations › Git provider OAuth, or connect with your email + an app token.",
+  "git.bitbucket_oauth_unconfigured": "This tenant has no Bitbucket OAuth app. Ask a tenant administrator to register one under Tenant settings › Integrations › Integration OAuth apps, or connect with your email + an app token.",
   "git.bb_waiting": "Approve it in the other tab…",
   "git.bb_timeout": "Timed out. Please try again.",
   "git.bitbucket_desc": "Connect via OAuth (code grant) or email + app token.",
