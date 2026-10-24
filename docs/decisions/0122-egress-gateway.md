@@ -181,7 +181,8 @@ retried instead of dropped. The events gain the source address, so the CP can at
 
 ## Addendum (2026-10-24) — open points 1 and 3: the GKE gateway and attribution
 
-The decisions above stand. This addendum covers two open points, 3 (attribution) and 1 (GKE).
+The decisions above stand. This addendum covers open points 3 (attribution) and 1 (GKE), and
+records the maintainer's answer to open point 4.
 It also records one bypass on AWS that the gateway alone does not close. Sources: Google's
 published documentation, read on this date and listed at the end, and the tree at this date.
 **Nothing here was run**: no cluster, no account, no Docker. #2658 is the run that checks the
@@ -313,6 +314,33 @@ decision 5 puts in its place. The endpoint exists so that ECR layer bytes stay o
 gateway. The fix, an endpoint policy limited to the buckets the stack needs, or no route for
 the workspace subnets, is #2657. Even with a policy, access through the endpoint is not
 attributed per workspace.
+
+### Open point 4: SSH git and DNS (decided with the maintainer, 2026-10-24)
+
+- **SSH git is off by default and a deploying organisation can turn it on per host.** The gateway
+  has no name for SSH. When the organisation names an SSH host in the allowlist, nftables admits
+  port 22 to the addresses that host resolves to on the gateway, and logs the destination address
+  and the time. This is a decision by address, not by name: in log-only too, the record for SSH
+  is an address, attributed like any other event. With no SSH host named, port 22 is dropped
+  and the attempt is logged.
+- **DNS: direct queries to any resolver other than the VPC's or the cluster's are dropped and
+  logged** (port 53, and 853 for DNS over TLS), with nftables on the gateway. The content of
+  queries to the stack's own resolver is not recorded. Route 53 Resolver query logging and
+  Cloud DNS logging are not part of this record.
+
+### AWS first stage: its acceptance includes what #2604 left unverified
+
+The fix for #2604 (PR #2611) is on `main`, but no deployed stack can exercise it. A sandbox
+deployment of `main` had no `AF_EGRESS_PROXY_ADDR` on the CP, and the ingress stack has no
+parameter that sets it. No parameter and no launcher are added for `control-plane egress-proxy`,
+which is being retired (decision 4). Instead, the acceptance of the gateway's first AWS stage
+includes, on a stack with egress configured:
+
+- a started ecs workspace and a started ecs-ec2 workspace have the proxy variables in their task
+  definition;
+- the task-role credential path (`169.254.170.2`) and the instance metadata path still work.
+
+#2604 stays open until that run.
 
 ### Sources (read 2026-10-24)
 
