@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -320,6 +321,9 @@ func Create(in ServerDef) (ServerDef, error) {
 	if err := Validate(in); err != nil {
 		return ServerDef{}, err
 	}
+	if err := refuseOwnCP(in); err != nil {
+		return ServerDef{}, err
+	}
 	s, err := secrets.Load()
 	if err != nil {
 		return ServerDef{}, err
@@ -367,6 +371,13 @@ func Update(id string, in ServerDef) (ServerDef, error) {
 	in.UpdatedAt = time.Now().Unix()
 	if err := Validate(in); err != nil {
 		return ServerDef{}, err
+	}
+	// A stored row that already holds the URL stays editable (disable, rename); only a
+	// changed URL is checked.
+	if in.URL != stored.URL {
+		if err := refuseOwnCP(in); err != nil {
+			return ServerDef{}, err
+		}
 	}
 	reg := compose(s, loadTenantCache(), loadOptOut())
 	for _, d := range reg.Servers {
@@ -512,4 +523,12 @@ func newID() string {
 		return fmt.Sprintf("mcp-%d", time.Now().UnixNano())
 	}
 	return "mcp-" + hex.EncodeToString(b)
+}
+
+// refuseOwnCP applies RefuseOwnMCP against the Control Plane bases this Workspace knows.
+func refuseOwnCP(d ServerDef) error {
+	if d.Transport != TransportHTTP {
+		return nil
+	}
+	return RefuseOwnMCP(d.URL, cpurl.All()...)
 }

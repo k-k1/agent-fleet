@@ -48,6 +48,7 @@ const (
 	codeMCPURLScheme      = "mcp_url_scheme"
 	codeMCPURLHost        = "mcp_url_host"
 	codeMCPURLCredentials = "mcp_url_credentials"
+	codeMCPURLOwnMCP      = "mcp_url_own_endpoint"
 	codeMCPHeaderName     = "mcp_header_name_invalid"
 	codeMCPHeaderValue    = "mcp_header_value_invalid"
 	codeMCPKindUnknown    = "mcp_kind_unknown"
@@ -465,6 +466,10 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
+	if aerr := refuseOwnMCP(b.URL, a.cp.ServerIdentity(r.Context()).PublicBaseURL); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	id := r.PathValue("id")
 	rows, err := a.store.ListMCPServers(r.Context(), t.ID)
 	if err != nil {
@@ -618,4 +623,38 @@ func (a ServerAPI) Distribute(w http.ResponseWriter, r *http.Request, mv store.M
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"servers": out, "unreadable": broken})
+}
+
+// refuseOwnMCP refuses a URL that is this deployment's own /mcp endpoint: distributing it
+// would give every member's sessions that member's full /mcp authority. A guardrail against
+// the self-loop, not a security boundary; an unset public base refuses nothing, and another
+// deployment passes. The scheme is ignored, an absent port equals 80 and 443, and a trailing
+// slash does not matter.
+func refuseOwnMCP(raw, publicBase string) *APIError {
+	if strings.TrimSpace(publicBase) == "" {
+		return nil
+	}
+	a, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return nil
+	}
+	b, err := url.Parse(strings.TrimSpace(publicBase))
+	if err != nil || b.Hostname() == "" || a.Hostname() == "" {
+		return nil
+	}
+	if strings.EqualFold(a.Hostname(), b.Hostname()) && mcpEndpointPort(a) == mcpEndpointPort(b) &&
+		strings.TrimRight(a.Path, "/") == strings.TrimRight(b.Path, "/")+"/mcp" {
+		return &APIError{http.StatusBadRequest, codeMCPURLOwnMCP,
+			"this is this deployment's own /mcp endpoint: distributing it would give sessions the member's full /mcp authority"}
+	}
+	return nil
+}
+
+func mcpEndpointPort(u *url.URL) string {
+	switch p := u.Port(); p {
+	case "", "80", "443":
+		return ""
+	default:
+		return p
+	}
 }

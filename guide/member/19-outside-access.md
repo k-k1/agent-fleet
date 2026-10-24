@@ -88,6 +88,14 @@ Under each connected app, and under each Personal Access Token, choose **Recent 
 
 The list is kept in memory by the Control Plane only. It disappears when the Control Plane restarts, and with several Control Plane replicas each one keeps its own list, so you see only the requests that replica served — press **Refresh** a few times, or ask your operator to read the Control Plane log, where every request is recorded, including those refused before sign-in.
 
+### Do not connect this deployment's /mcp to a session
+
+A session normally sees only its own narrow tool set: it can steer its own child sessions and cannot delete anything. This deployment's external `/mcp` endpoint is different, because it acts with your full member authority (any of your sessions, delete, and the administrator tools if you are one). Connecting it to a session lifts those limits, so a session could stop or delete its siblings.
+
+Agent Fleet therefore refuses to register this deployment's own `/mcp` URL as a remote MCP server, both in your Workspace and as a tenant-distributed server (error "This is this deployment's own /mcp endpoint"). This is a guardrail against doing it by accident, not a security boundary. It cannot see a connector you add in claude.ai, and connecting this deployment's `/mcp` that way lifts the same limits, so don't.
+
+Connecting a **different** Agent Fleet deployment is fine: to that deployment the session is an ordinary outside client, the same as Claude Desktop.
+
 ### Using Agent Fleet memory from an external agent
 
 Your own Claude Code or Claude Desktop can use Agent Fleet memory through the same MCP token. See

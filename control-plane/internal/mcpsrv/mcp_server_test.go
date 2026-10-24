@@ -498,3 +498,49 @@ func TestAdminUpsertToOAuthDropsStoredHeaders(t *testing.T) {
 		t.Fatalf("distributed as %+v, want auth=oauth with no headers", d)
 	}
 }
+
+func TestRefuseOwnMCP(t *testing.T) {
+	const base = "https://af.example.com"
+	for _, c := range []struct {
+		name, url, base string
+		refused         bool
+	}{
+		{"exact", "https://af.example.com/mcp", base, true},
+		{"trailing slash", "https://af.example.com/mcp/", base, true},
+		{"explicit default port", "https://af.example.com:443/mcp", base, true},
+		{"scheme and case", "http://AF.Example.com/mcp", base, true},
+		{"base with slash and port", "https://af.example.com:8443/mcp", "https://af.example.com:8443/", true},
+		{"other host", "https://other.example.com/mcp", base, false},
+		{"other deployment subdomain", "https://af.example.com.evil.test/mcp", base, false},
+		{"other port", "https://af.example.com:8443/mcp", base, false},
+		{"other path", "https://af.example.com/api", base, false},
+		{"unset base refuses nothing", "https://af.example.com/mcp", "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			aerr := refuseOwnMCP(c.url, c.base)
+			if c.refused != (aerr != nil) || (aerr != nil && aerr.Code != codeMCPURLOwnMCP) {
+				t.Fatalf("refuseOwnMCP(%q, %q) = %+v, refused want %v", c.url, c.base, aerr, c.refused)
+			}
+		})
+	}
+}
+
+func TestAdminUpsertRefusesOwnMCPEndpoint(t *testing.T) {
+	a, _ := newMCPServerAPITest(t, true)
+	tn := store.Tenant{ID: "tenant-a", Slug: "a"}
+	cp := a.cp.(testCP)
+	cp.admin = &tn
+	a = NewServerAPI(identCP{testCP: cp, id: ServerIdentity{PublicBaseURL: "https://af.example.com"}})
+	post := func(u string) *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(mcpServerBody{Name: "x", URL: u, TenantSlug: tn.Slug, Targets: mcpTargets{Session: true}, Enabled: true})
+		w := httptest.NewRecorder()
+		a.AdminUpsert(w, httptest.NewRequest(http.MethodPost, "/api/admin/mcp-servers", strings.NewReader(string(raw))))
+		return w
+	}
+	if w := post("https://af.example.com/mcp"); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), codeMCPURLOwnMCP) {
+		t.Fatalf("own endpoint: %d %s", w.Code, w.Body)
+	}
+	if w := post("https://other.example.com/mcp"); w.Code != http.StatusOK {
+		t.Fatalf("other deployment: %d %s", w.Code, w.Body)
+	}
+}
