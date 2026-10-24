@@ -21,13 +21,13 @@ because "does this apply to a plain shell session?" is a real question.
 | Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | —⁹ | —⁹ | ✓ | ✓ |
 | Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
 | Read-only history while stopped | ✓ | ✓ | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | ✓¹² | — | — |
-| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | ✓¹⁹ | ✓¹⁴ | — | — |
+| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓²² | ✓²² | ✓ | ✓¹⁹ | ✓¹⁴ | — | — |
 | Reasoning effort | ✓ | ✓ | ✓ | ✓ | —² | —⁵ | —² | — | ✓ | — | — |
-| Plan mode | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — |
+| Plan mode | ✓ | ✓ | ✓ | ✓²¹ | ✓ | — | — | ✓ | — | — | — |
 | Context usage gauge | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | — |
 | Image paste | ✓ | ✓ | ✓⁶ | — | — | — | ✓ | — | ✓ | — | — |
 | Copy the conversation into a new session | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
-| Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
+| Fork from a past message | ✓ | ✓²⁰ | ✓²⁰ | ✓ | — | — | — | ✓ | ✓ | — | — |
 | Choosing to skip permission prompts | ✓ | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | —¹³ | — | — |
 | Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | —⁴ | ✓⁴ | — | — |
 | Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
@@ -47,7 +47,7 @@ because "does this apply to a plain shell session?" is a real question.
 separate control.
 
 ³ cursor's managed execution keeps no local transcript, so a **stopped** cursor
-session has nothing to show. The live mirror works while it runs, and running cursor
+session has nothing to show. The live mirror works while it runs (with simplified tool output), and running cursor
 as Terminal (CLI) does persist a readable history. kiro, by contrast, keeps a readable
 transcript even under Managed.
 
@@ -135,6 +135,62 @@ show **Ready · running in background**.
 `shell` and `ssm` have no conversation and therefore no state model and no
 notifications.
 
+A stopped session of any kind with a conversation can be resumed, except that claude, codex,
+opencode, copilot, cursor, kiro, agy, lcpp and muse cannot resume when the working folder they
+were launched in is gone (shell falls back to home); see
+[05 Stopping and tidying up](../member/05-stopping-and-tidying.md#when-you-can-and-cant-resume).
+
+## Stopping a turn, and messages sent while one runs
+
+How Stop treats a waiting queue is explained in
+[04 Talking to a session](../member/04-conversation.md#stopping-a-turn-when-something-is-queued);
+this is what differs by kind.
+
+**Managed**
+
+- **A message sent while a turn runs.** codex and muse do not queue it: the agent takes it into
+  the running turn at once, so there is usually no need to stop. If you stop anyway, the message
+  ends with that turn, and the next turn still sees it in the conversation. The same holds for
+  **Send now** on the waiting list. Every other kind accepts the message and handles it after the
+  running turn.
+- **A stop that arrives while a message is being handed over.** On codex and muse it still stops
+  the message the moment the agent starts it (lcpp runs inside the Agent and stops it the same
+  way). On copilot, cursor, kiro and opencode that stop is best effort: the message can take a
+  first step before it stops.
+- **Cancelling a question** stops the turn on codex only. The other kinds answer the question as
+  declined and leave the queue alone.
+
+**Terminal (CLI)**
+
+Stop sends the key the CLI stops a turn with: Esc, two Esc for opencode, Ctrl+C for cursor and
+copilot. cursor and copilot get Ctrl+C only while the turn is running; otherwise Stop answers
+that nothing is running. This is what each CLI did with a prompt typed while its turn was
+running, measured once per CLI. They are observations, not promises, and a CLI update can change
+them:
+
+| CLI | Stop while a prompt is queued | The pane is closed while a prompt is queued |
+|---|---|---|
+| claude | The turn stops and the queued prompt runs next | The queued prompt is lost |
+| codex | The turn stops and the queued prompt runs next | The queued prompt still runs: codex's background process outlives the pane |
+| opencode | Stop sends two Esc about half a second apart (one Esc only arms the interrupt). The turn stops and the queued prompt runs next | The queued prompt still runs: opencode's background server outlives the pane |
+| cursor | Stop sends Ctrl+C: the turn stops and the prompt is left unsent in the CLI's panel (a plain Esc would cancel the queued prompt and let the turn run on) | Not restored or run when the CLI resumes |
+| kiro | The turn stops and the queued prompt runs next | Not restored or run when the CLI resumes |
+| copilot | Stop sends Ctrl+C: the turn stops and the queued prompt is dropped (a plain Esc does not interrupt) | Not restored or run when the CLI resumes |
+| agy | Not measured (Stop still sends one Esc; the reply says the key is unmeasured) | Not measured |
+
+**Messages from other sessions to a Terminal (CLI) session** follow the same rules, with these
+reports to the sender:
+
+- A message to a claude session in the middle of a turn is reported as queued, not delivered:
+  claude keeps it in memory only, so ending the pane before the turn ends (stopping, archiving or
+  recreating the session) loses it.
+- A message to a cursor session whose CLI refuses it at submit (for example a model the plan
+  cannot use) is reported the same way, with the CLI's error text: the message stays in the input
+  box and nothing runs it, so the sender is told not to resend.
+- A message to a cursor session whose input box still holds unsent text (a prompt the CLI refused
+  earlier, or a draft) is refused, because cursor would run the two as one prompt. The sender is
+  told to have that text sent or cleared in the pane first.
+
 ## Moving a session to another agent
 
 A move ([05 Stopping and tidying up](../member/05-stopping-and-tidying.md#moving-a-session-to-another-agent-move))
@@ -179,11 +235,14 @@ What the switch **"Let sessions use Agent Fleet memory"**
 Choose by the subscription you already pay for. An Anthropic account → **claude**;
 ChatGPT or the OpenAI API → **codex**; switching between several providers' API keys →
 **opencode**; a GitHub Copilot subscription → **copilot**; a Cursor plan → **cursor**;
-an AWS Builder ID or a Kiro plan → **kiro**.
+an AWS Builder ID or a Kiro plan → **kiro**; a Meta account (or a Meta Model API key) →
+**muse**. If you want a model that needs no vendor account at all, choose **lcpp**: it runs on
+your organization's own engine (or a llama-server on your network), so there is no sign-in and no
+subscription limit.
 
 All of them show the conversation, let you answer from the mirror, and hand a
 conversation off to another agent. The differences that most often decide it in
-practice are the context gauge (claude / codex / opencode / kiro / muse), image paste, and
+practice are the context gauge (claude / codex / opencode / kiro / lcpp / muse), image paste, and
 whether you want Managed execution: Codex and opencode carry no per-session process
 at all, which is what makes them comfortable to run many of at once.
 
@@ -339,3 +398,12 @@ the way the vendor CLIs do: a launch waits until you pick one. Which model you p
 cost decision on this kind: on one measured benchmark the same task took 29 turns on one
 family and 164 on another, and both finished it correctly. Swapping models later does not buy
 a new instance (see "lcpp: what hardware measurement found" above).
+
+²⁰ codex and opencode can fork only in Managed execution: their CLI launch command has no way to
+pass a branch point. (lcpp and muse are always Managed.) One exception: an opencode 2 Terminal
+(CLI) session attached to the shared server can fork too, because that server takes the branch
+point. A Terminal session on a private server, or on opencode 1.x, cannot.
+
+²¹ copilot's plan mode is set at launch, and can also be switched from the managed settings.
+
+²² cursor's list is exactly the models available to the signed-in account (fetched live); kiro offers named models (Auto, Claude Sonnet / Haiku and others) even on the Free plan.

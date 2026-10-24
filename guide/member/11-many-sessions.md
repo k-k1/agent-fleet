@@ -3,11 +3,11 @@ audience: "anyone running several pieces of work at once"
 updated: "2026-10"
 ---
 
-# 11. Running many sessions at once — overview, child sessions, the fleet operator
+# 11. Running many sessions at once — overview, child sessions, the Fleet Operator
 
 English | [日本語](11-many-sessions.ja.md)
 
-This chapter is for running several sessions at once: seeing all of them together, narrowing the view with working sets, starting sessions from a session, messages between sessions, and the fleet operator that directs them from chat, including scheduled runs.
+This chapter is for running several sessions at once: seeing all of them together, narrowing the view with working sets, starting sessions from a session, messages between sessions, and the Fleet Operator that directs them from chat, including scheduled runs.
 
 ## Seeing every running session at once (the sessions overview)
 
@@ -165,8 +165,8 @@ this in parallel").
   child's permission mode**: the child follows your per-kind default in Settings > Agents.
 - **A child starts in a new worktree** unless the parent asks otherwise, so it never shares the
   parent's working copy. Asking for a directory another session is working in is refused. The one
-  exception is the parent's own working copy, and only on an explicit request
-  (`worktree=false` with `allow_shared_working_copy=true`): parent and child then share one checkout,
+  exception is the parent's own working copy, and only when the parent asks for it explicitly
+  by name: parent and child then share one checkout,
   index and branch, and the child is told not to switch branches or stash and to commit by path.
   It only works while the parent is running and was started in a path without a symlink; otherwise
   the request is refused like any other busy directory.
@@ -246,10 +246,9 @@ one ("tell the session next door what we just did").
   stopping the session or the workspace, or the Agent restarting: the message waits on disk and
   becomes the session's first turn when it next starts, stamped with the time it was queued.
   Archiving or deleting the session, or switching it to Terminal (CLI), drops it.
-  A **Terminal (CLI)** claude session in the middle of a turn holds the message in its own input
-  queue: the sender is told it is queued, and it is lost if the pane ends before the turn does.
-  A Terminal cursor session that refuses the message leaves it unsent in its input box (the
-  sender is told why), and a message to one whose input box still holds unsent text is refused.
+  A **Terminal (CLI)** session keeps the message in its own input queue, so what the sender is
+  told, and what is lost, depends on the kind
+  ([Agents reference](../ref/agents.md#stopping-a-turn-and-messages-sent-while-one-runs)).
 - **A session waiting on your answer gets it after you answer.** While a session shows a
   question, a plan to approve or a permission prompt, a message sent to it waits instead of
   being refused (typed into the dialog, it would pick an answer for you). Its chat view says how
@@ -328,7 +327,7 @@ Every session has it; there is nothing to turn on. It covers these things.
 
 **None of this acts on another session.** Instructing another session, answering its questions,
 approving its plans, starting, stopping or deleting sessions, and sending the memo queue remain
-the job of the fleet operator ([11](11-many-sessions.md)) and Console — except what you open with
+the job of the Fleet Operator ([11](11-many-sessions.md)) and Console — except what you open with
 the two settings above (messages between sessions, and child sessions).
 
 There is one deliberate limit. A session can see **that** another session is stopped on a
@@ -339,9 +338,9 @@ is your job**; a session that finds a stopped peer goes as far as telling you.
 It helps to read the assistant chat in [10 Chat and memos](10-chat-memo.md) and
 [03 Starting sessions](03-starting-sessions.md) first.
 
-## What is the fleet operator?
+## What is the Fleet Operator?
 
-The **fleet operator** is a "command center" assistant that is available from the start
+The **Fleet Operator** is a "command center" assistant that is available from the start
 under **Assistants** in the left pane. While a regular assistant ([10](10-chat-memo.md))
 only answers inside the chat, the operator can **see and drive** your workspace.
 
@@ -385,7 +384,12 @@ what happened later.
 A session the operator instructed reports back to the conversation automatically,
 **once per instruction**, when it reaches a stopping point.
 
-- Reports arrive **when the session becomes idle** (i.e. its response to that instruction is done) and on **abnormal termination** (out of memory, crash, etc.).
+- Reports arrive **when the session becomes idle** (i.e. its response to that instruction is done) and on **abnormal termination** (out of memory, crash, etc.). The card also tells you about these cases:
+  - **The turn ended with an error** on the model or provider side: no answer was generated.
+  - **The turn was cut off** by something that clears on its own (a dropped connection, a temporary rate limit): the answer is unfinished, and re-sending resumes it. The card says so when the automatic-resume limit has been reached.
+  - **The instruction did not run**: it was dropped from the session's queue before it started. The card gives the reason: the session was archived, trashed, recreated, switched to Terminal (CLI) or no longer exists, a stop discarded the queue or caught it before it started, or it was removed from the queue.
+  - **It is unknown whether the instruction arrived**: the agent restarted while it was being sent.
+  - **A completion reported earlier was premature**: the session went on working. The card says when the correction limit has been reached and no more corrections will follow.
 - **When a session stops at a question (multiple choice), an interim report arrives too.** The operator presents the options to you, and replying in chat with "1" or "option 2" has the operator answer the session on your behalf (if you've said "your call" up front, the operator picks). Only free-text and multi-select questions need to be answered from the Console.
 - **When a session stops at plan approval, an interim report arrives as well.** From chat you can approve ("approve it") or send revision feedback ("have it fix ◯◯"), and asking "have another session review it" makes the operator broker the plan review → feedback → approval.
 - Turning ON **"Auto-pilot"** in ⚙Settings → Assistant makes the operator answer questions with the session's recommendation automatically, and drive plans through review by another session, feedback, and approval (every decision is shared in chat; unclear questions and choices/plans involving destructive or irreversible operations still come to you first). Default OFF.
@@ -500,7 +504,7 @@ next run time, so check that it matches your intent.
 
 ## Constraints and caveats
 
-- **Reports arrive for "idle," "question / plan approval" (interim), and "abnormal termination."** Tool-permission waits appear in the notification center but do not become reports to the operator. For tasks you want to run through unattended, cut the instructions so that few operations require permission. If something looks stalled, asking the operator for a status check will surface it.
+- **Which events become reports is listed under [Session reports and auto-reply](#session-reports-and-auto-reply).** Tool-permission waits appear in the notification center but do not become reports to the operator. For tasks you want to run through unattended, cut the instructions so that few operations require permission. If something looks stalled, asking the operator for a status check will surface it.
 - **Keep parallelism modest.** Each session uses memory, and the host is shared. As a guideline, keep parallel implementation to 2–3 sessions and don't run heavy builds at the same time (the operator also confirms before launching). Having the operator fold up finished sessions helps too.
 - **When the operator stops a session, the report that was due is cancelled as well.** Stopping is treated as cancelling that instruction. Even if you later resume it from the Console and the work completes, the old report will not arrive in the operator's conversation (if you stopped it with the Console's stop button it is not cancelled, and completion after resume is reported). When asking a resumed session to continue, have the operator send the instruction again.
 - **Session reports have no body** (only the fact of completion / question / abnormal termination). In practice this is fine because the operator goes and reads the output for details, but the report card alone doesn't show the contents.

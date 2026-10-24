@@ -58,14 +58,15 @@ things stop for you first**.
 
 - **① Tidy sessions**: **"Tidy all"** archives stopped AI sessions and moves shell / SSM to the trash.
 - **② Delete working copies and branches**: **"Delete all safe"** removes only what was
-  judged safe.
+  judged safe. In the **Candidates** tab, **"Select all safe"** ticks every safe row in one click and
+  **"Clean up selected"** removes what you ticked, so you can also go row by row.
 - **Cache of deleted sessions**: files you pasted or attached into a session, and images codex
   looked at, stay on disk after the session is deleted. Once the session (or assistant chat) is
   gone **and not in the trash**, nothing can refer to them again; they are listed here, one row per
   kind with its size, and **"Delete all"** removes them. Anything a trashed session, or a fork made
   from the session (live or trashed), could still need is left alone.
 
-Every candidate carries a **safety** rating and a reason. You can also pick them off one by one.
+Every candidate carries a **safety** rating and a reason.
 
 | Safety | Meaning |
 |---|---|
@@ -74,7 +75,8 @@ Every candidate carries a **safety** rating and a reason. You can also pick them
 | **Keep** | Running, uncommitted / unpushed, or delete-locked. Cleanup leaves it alone |
 
 To clear a **Keep**, stop it or push first (as a last resort, force-delete from the Console).
-The **⋯** menu on a session offers a **delete lock**, which takes it out of cleanup's reach.
+To make sure a session is never swept up, use the
+[delete lock](#locking-something-against-deletion).
 
 **Deleting too much is recoverable.** Sessions and branches are stashed in the **trash** before
 they are removed. The **"Trash (restore)"** tab of the cleanup modal **restores** them, and
@@ -88,7 +90,8 @@ collection. **Restoring** the entry recreates the worktree at the same path with
 unstaged) and puts the sessions that delete shelved back in the list. When it cannot come back as it
 was (the branch moved after the delete, or another working copy has it checked out), the restore
 creates nothing and opens the recreate dialog instead (the same one as "Recreate working copy",
-below), which brings it back on a new branch. **Deleting it permanently** from the trash removes the protection, and from then on it
+below), which brings it back on a new branch. A worktree comes back at the commit it was on, with
+its uncommitted changes when the row says so. **Deleting it permanently** from the trash removes the protection, and from then on it
 cannot be brought back. The worktree is not deleted if the record cannot be written (a full disk), or if it holds a
 repository git does not track (a clone inside it, whose contents the trash cannot keep). A new file
 that was staged comes back as an untracked file.
@@ -99,14 +102,15 @@ it only ever covers sessions that are already gone for good.
 Archived sessions are a "shelf" that cleanup does not touch (restore them from the archive
 browser). "Delete old ones" in the archive list deletes items older than 30 days in one go (they go to the trash too).
 
-You can also ask the fleet operator to do the same survey and tidy-up from chat
+You can also ask the Fleet Operator to do the same survey and tidy-up from chat
 ([11](11-many-sessions.md)).
 
 ### Clearing one finished job (deleting a working copy)
 
 Cleanup surveys the **whole workspace**. When what you want to clear is **one finished job** (a
 parent worktree and the worktrees of the child sessions it spawned), right-click that row and
-choose **"Delete the working copy"**. The copies the left pane nests under that row are listed as
+choose **"Delete the working copy"**. Only the local working copy is removed: history and the
+remote stay. The copies the left pane nests under that row are listed as
 they are, so **archiving the sessions and deleting the copies happen in one go** (stopped AI sessions
 go to the archive, shell / SSM to the trash).
 
@@ -160,7 +164,8 @@ after deleting a working copy together with its worktree. shell falls back to ho
 if its working folder is missing.
 
 **A deleted worktree can be recreated at its original path.** In the archive list, the heading of
-a deleted worktree's folder offers **"Recreate working copy"**. It looks for the branch the folder
+a deleted worktree's folder offers **"Recreate working copy"**; a session whose working copy is
+gone has **"Recreate working copy (worktree)…"** in its ⋯ menu, which opens the same dialog. It looks for the branch the folder
 last held, in this order, and creates the worktree at the same path from the first it finds: the
 state at the delete (when the trash recorded it; uncommitted changes come back too) → the
 local branch → the remote branch → the commit recorded when the branch was deleted from the Console
@@ -194,39 +199,38 @@ contents, but you can check "which sessions were there" even from a phone.
 
 ### A claude session whose conversation log was deleted
 
-claude keeps each conversation as a log file in the workspace, and by default deletes logs older
-than 30 days every time it starts. Agent Fleet therefore sets claude's `cleanupPeriodDays` to
-36500 (about 100 years) in the workspace's claude `settings.json`, so a session you stopped (not
-archived, not deleted) keeps its conversation however long it sits. Which logs go is decided by
-Agent Fleet's own lifecycle (archive → delete → cleanup), not by claude's age sweep. The setting
-is added when it is missing, in new and existing workspaces alike; a value you set yourself is
-never overwritten (and a lower value brings the 30-day-style deletion back). Never set it to `0`:
-in claude that turns conversation saving off.
+claude keeps each conversation as a log in the workspace and, left to itself, deletes logs older
+than 30 days. Agent Fleet turns that age-based deletion off in the workspace's claude settings
+(in new and existing workspaces alike), so a session you stopped (not archived, not deleted)
+keeps its conversation however long it sits. Which logs go is decided by Agent Fleet's own
+lifecycle (archive → delete → cleanup), not by claude's age sweep. A retention period you set in
+claude yourself is never overwritten, though a short one brings the age-based deletion back, and
+setting it to `0` makes claude stop saving conversations at all.
 
-On top of that, the Agent keeps its own copy of a stopped session's log under its data directory
-(`~/.local/share/agent-fleet/claude-transcripts/`, outside claude's reach). When you resume a
-session whose log is gone, the copy is put back and the conversation continues with its history
-(the Agent log records the restore); a log that exists is never replaced by the copy (a log with no conversation in it yet is moved aside first; a claude process still running outside Agent Fleet and writing to the same log at that moment is not guarded against). Disk use: one active copy per session
-(its current log, rewritten only when the log changed and is complete), removed when you delete the
-session. Copies set aside by "Start a new conversation" stay until the session is deleted, and
-copies of sessions deleted while the Agent was not running are not cleaned up automatically. (A deleted session's conversation then lives in the cleanup
-archive, as before, and the archive always takes a snapshot of the copy too. Restoring the archive
-puts the live log at the log's path only if it is complete and newer than the copy, otherwise the
-copy; the other is kept next to it as `.backup.archived` or `.superseded.archived`. If a log
-cannot be read, other than because it just vanished, the delete is refused.) **"Start a new
-conversation"** sets the session's whole backup folder aside
-(`claude-transcripts/<id>.superseded.<number>`) instead of restoring from it. The copy is made while the session is stopped, so
-a log that disappears before the first copy (a session stopped only seconds ago, or one that
-last ran before this feature) cannot be recovered this way.
+On top of that, Agent Fleet keeps its own backup of a stopped session's log, out of claude's reach.
+When you resume a session whose log is gone, the backup is put back and the conversation
+continues with its history. A log that still exists is not replaced by the backup, except one that holds no conversation yet: that one is set aside and the backup is restored. There is one
+backup per session, removed when you delete the session; backups set aside by **"Start a new
+conversation"** stay until the session is deleted, and backups of sessions deleted while the
+Agent was not running are not cleaned up automatically. The backup is made while the session is
+stopped, so a log that disappears before the first backup (a session stopped only seconds ago, or
+one that last ran before this existed) cannot be recovered this way.
 
-If there is no usable copy either (deleted before this setting existed, or by a lower value of your own),
-**"Resume"** does not silently start an empty conversation under the old session. It shows
-**"This session's conversation log was deleted…"** with a **"Start a new conversation"** button;
-pressing it starts a fresh conversation in the same session (for a forked session, without
-copying its source again; an older log left behind is kept next to it with a `.superseded.<number>` suffix; if it cannot be moved, the button reports an error and nothing changes). A session that never exchanged a message resumes as before.
-Limit: a deleted log is recognised only for sessions Agent Fleet has a record of a finished turn
-for. An old session with no such record is indistinguishable from one that never talked, so if
-its log was already gone it still starts empty without a warning.
+A deleted session's conversation lives in the cleanup archive, which always includes a snapshot
+of the backup. Restoring the archive puts back the live log if it is complete and newer than the
+backup, otherwise the backup; the other is kept next to it. If a log cannot be read (for any
+reason other than having just vanished), the delete is refused.
+
+If there is no usable backup either (deleted before this protection existed, or by a retention
+period of your own), **"Resume"** does not silently start an empty conversation under the old
+session. It shows **"This session's conversation log was deleted…"** with a **"Start a new
+conversation"** button. Pressing it starts a fresh conversation in the same session (for a forked
+session, without copying its source again), and sets any older log or backup aside instead of
+restoring from it. If that cannot be done, the button reports an error and nothing changes. A
+session that never exchanged a message resumes as before. Limit: a deleted log is recognised only
+for sessions Agent Fleet has a record of a finished turn for. An old session with no such record
+is indistinguishable from one that never talked, so if its log was already gone it still starts
+empty without a warning.
 
 ### The warning when the branch has been swapped
 
@@ -244,7 +248,7 @@ the new session starts from, and in what happens to the original.
 | | Handoff | Branch here | Move |
 |---|---|---|---|
 | Where | **⋯** menu, **"Hand off to another agent…"** | **"Branch here"** under one of your past messages ([04 Conversation](04-conversation.md#branch-from-a-past-message)) | **⋯** menu, **"Move to another agent…"** |
-| Who prepares the context | The fleet operator writes a summary, and you review it | Nobody: the conversation is copied as it is | The Workspace writes the conversation to a handover file; no AI summarises it |
+| Who prepares the context | The Fleet Operator writes a summary, and you review it | Nobody: the conversation is copied as it is | The Workspace writes the conversation to a handover file; no AI summarises it |
 | Target agent | Any connected agent | The same agent | Another kind of agent only |
 | The original session | Stays as it is | Stays as it is | Stops and takes no more input |
 | What carries over | Key points, unfinished tasks, changed files, next steps | By default the conversation before that message, word for word, with the message left as a draft; **Continue after it** also carries that message and its reply | The conversation, where it stopped, the working copy's state, queued instructions; the new session works in the same working copy |
@@ -284,8 +288,8 @@ session works on the working copy.
 **Which sessions can be moved.** Only a session with a conversation the Workspace can read, so
 not shell or ssm. It has to be idle, stopped, or stopped at a usage or spend limit: a move is
 refused while a turn is running, or while a question, a plan or a permission prompt is waiting
-for you. Let the turn end or stop it, and answer first. A stopped Managed cursor session cannot
-be moved either, because its conversation lived only in the running agent.
+for you. Let the turn end or stop it, and answer first. Some kinds cannot be moved in some states
+(see the Agents reference above).
 
 A session stopped at a usage limit (or a spend limit) also shows a band above its chat with a
 **"Move to another agent"** button; it opens the same dialog with the agents that still have
@@ -296,12 +300,11 @@ cancelled, so the original does not start again on its own.
 
 The dialog shows, before you confirm:
 
-- **The agents it can move to**: claude, codex, opencode, copilot, agy, muse and kiro. The same
+- **The agents it can move to**: which kinds can be a source or a target is in the
+  [Agents reference](../ref/agents.md#moving-a-session-to-another-agent). The same
   agent is never offered (it draws on the same account's quota); to continue in the same kind,
   use **"Branch here"** ([04 Conversation](04-conversation.md#branch-from-a-past-message)) where the kind supports it. Agents that cannot read the file, or
-  are not connected, are listed with the reason: Cursor is not offered yet, because its reading
-  of the file has not been verified through the Managed driver, and lcpp cannot read a file
-  outside its working folder. Both can still be moved *from*. For claude, codex and muse the
+  are not connected, are listed with the reason. For claude, codex and muse the
   dialog also shows each agent's current usage; for the others it says nothing about quota.
 - **"Model"** and **"Execution method"** for the new session, as when you start one.
 - **Uncommitted changes** in the working copy. The move never commits, stashes or discards them;
@@ -312,8 +315,8 @@ The dialog shows, before you confirm:
 - For a Managed cursor session: its conversation view is empty once it stops, and the file is
   then the only record.
 
-**The handover file** is written to `~/.af-work/<new session>/handover-<original session>.md`,
-outside the working copy, so it is never committed. Besides the conversation it records where
+**The handover file** is saved in the new session's own scratch folder, outside the working copy,
+so it is never committed; the dialog shows its name and size. Besides the conversation it records where
 the session stopped, including instructions that were queued but never delivered and inputs a
 stop threw away. Your last three messages keep every tool call with its output; before them,
 tool calls that only read are left out and the others keep one line without their output.
@@ -369,40 +372,10 @@ have it open, so stopping one while you watch it work is something only this can
 
 **Lock against deletion** in the ⋯ menu marks a session as one that must not go away.
 A locked session carries a badge saying so, and is **skipped by cleanup and by
-automatic tidying**, both the manual sweep below and anything that would have removed
-it on its own.
+automatic tidying**, both the [bulk cleanup](#tidying-up-in-bulk-cleanup) and anything that would
+have removed it on its own.
 
 Use it for the conversation you will need at the end of the quarter, and for the
 worktree you have not finished with. Cleanup refuses to remove a worktree that still
 holds a locked session, and tells you to unlock it first rather than quietly working
 around you.
-
-## Cleaning up
-
-**Clean up** surveys the stopped sessions, unneeded worktrees and merged branches that
-have accumulated, and lets you clear them in one pass.
-
-Every candidate is graded:
-
-| Grade | Means |
-|---|---|
-| **Safe** | nothing is lost by removing it |
-| **Review** | probably fine, but look first |
-| **Keep** | it is running, or it has uncommitted or unpushed work. Stop it or push it first |
-
-**Select all safe** does the boring majority in one click. What you remove is not
-destroyed: stopped AI sessions are archived (restore them from the archive browser), and
-shell / SSM sessions, branches and deleted worktrees go to **Trash (restore)**, the second
-tab of the same dialog, and can be brought back with **Restore**. A worktree comes back at the
-commit it was on, with its uncommitted changes when the row says so; if its branch name is taken
-by then, you are asked for a new one.
-
-Sessions already archived are not part of cleanup; they have their own browser.
-
-## Deleting a working copy
-
-When you no longer need a working copy, use **"Delete the working copy"** from the repository
-row's right-click menu. Only the local working copy is removed; history and the remote remain.
-A copy with uncommitted or unmerged work is not ticked for you, so ticking it is the "delete it
-anyway" confirmation. If sessions are still running in it, the dialog offers to stop them first
-rather than turning you away ([05](05-stopping-and-tidying.md#clearing-one-finished-job-deleting-a-working-copy)).

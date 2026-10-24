@@ -11,7 +11,8 @@ This chapter is about the conversation view of a session: reading and replying t
 
 ## Reading and replying to a running agent's conversation
 
-claude, codex, cursor, copilot, kiro, agy, opencode, lcpp and muse sessions can be driven from the **Chat** view. With Terminal (CLI)
+Every session kind that has a conversation can be driven from the **Chat** view (the kinds are
+in the "Live chat mirror" row of the [Agents reference](../ref/agents.md)). With Terminal (CLI)
 execution, switch with **Chat ⇄ Terminal** at the top of the pane; with Managed execution
 you use only the chat view from the start. In the chat view the
 exchange reads as **per-turn Markdown**, and you can reply right there. It suits
@@ -64,9 +65,9 @@ What **"Stop"** does with messages that are waiting in the queue depends on the 
 - **The first stop ends the running turn only.** What is queued (your own follow-ups and other
   sessions' messages alike) then runs, one message per turn, in order. This is what you want when
   you queued a correction ("no, do X instead") and stop the turn so the correction takes effect
-  now. On **codex** and **muse** a message you send while a turn runs is not queued: the agent takes
-  it into the running turn at once, so there is usually no need to stop. If you stop anyway, it
-  ends with that turn; the next turn still sees it in the conversation.
+  now. Some kinds do not queue a message sent while a turn runs but take it into the running turn
+  at once, so there is usually no need to stop there
+  ([which kinds](../ref/agents.md#stopping-a-turn-and-messages-sent-while-one-runs)).
 - **A second stop ends the rest.** Any stop until the queue has run out (and the last turn it
   started has settled) stops what is running and discards everything still queued, messages from
   other sessions included. It needs no timing: you can press it a minute later. Sending a new
@@ -87,42 +88,21 @@ What **"Stop"** does with messages that are waiting in the queue depends on the 
   input"** and **"Remove"** until the message is being handed to the agent; after that it shows
   without actions.
 
-What a stop can never take back is input the agent already holds. On codex and muse a stop that
-arrives while a message is being handed over still stops it the moment the agent starts it (lcpp
-runs inside the Agent and stops it the same way); on copilot, cursor, kiro and OpenCode that stop
-is best effort, and the message can take a first step before it stops.
+What a stop can never take back is input the agent already holds. A stop that arrives while a
+message is being handed over still stops it at once on some kinds and is only best effort on
+others, where the message can take a first step before it stops (see the
+[Agents reference](../ref/agents.md#stopping-a-turn-and-messages-sent-while-one-runs)).
 
-**Terminal (CLI)** sessions keep the CLI's own behaviour: Stop sends the key that CLI stops a turn with (Esc, two Esc for OpenCode, Ctrl+C for cursor and copilot) and the CLI decides. cursor and copilot get Ctrl+C only while the turn is running; otherwise Stop answers that nothing is running. A second Stop click while one is being sent is ignored.
+**Terminal (CLI)** sessions keep the CLI's own behaviour: Stop sends the key that CLI stops a turn with and the CLI decides. A second Stop click while one is being sent is ignored.
 The discard action and the notice are not offered there, because the queue lives inside the CLI.
-This is what each CLI did with a prompt typed while its turn was running, measured once per CLI.
-They are observations, not promises, and a CLI update can change them:
-
-| CLI | Stop while a prompt is queued | The pane is closed while a prompt is queued |
-|---|---|---|
-| claude | The turn stops and the queued prompt runs next | The queued prompt is lost |
-| codex | The turn stops and the queued prompt runs next | The queued prompt still runs: codex's background process outlives the pane |
-| opencode | Stop sends two Esc about half a second apart (one Esc only arms the interrupt). The turn stops and the queued prompt runs next | The queued prompt still runs: opencode's background server outlives the pane |
-| cursor | Stop sends Ctrl+C: the turn stops and the prompt is left unsent in the CLI's panel (a plain Esc would cancel the queued prompt and let the turn run on) | Not restored or run when the CLI resumes |
-| kiro | The turn stops and the queued prompt runs next | Not restored or run when the CLI resumes |
-| copilot | Stop sends Ctrl+C: the turn stops and the queued prompt is dropped (a plain Esc does not interrupt) | Not restored or run when the CLI resumes |
-| agy | Not measured (Stop still sends one Esc; the reply says the key is unmeasured) | Not measured |
-
-Messages from other sessions to a Terminal session follow the same rules, with these reports to
-the sender:
-
-- A message to a claude Terminal session in the middle of a turn is reported as queued, not
-  delivered: claude keeps it in memory only, so ending the pane before the turn ends (stopping,
-  archiving or recreating the session) loses it.
-- A message to a cursor Terminal session whose CLI refuses it at submit (for example a model the
-  plan cannot use) is reported the same way, with the CLI's error text: the message stays in the
-  input box and nothing runs it, so the sender is told not to resend.
-- A message to a cursor Terminal session whose input box still holds unsent text (a prompt the CLI
-  refused earlier, or a draft) is refused, because cursor would run the two as one prompt. The
-  sender is told to have that text sent or cleared in the pane first.
+Which key each CLI gets, what each did with a prompt typed while its turn was running, and how
+messages from other sessions to a Terminal session are reported to the sender are in the
+[Agents reference](../ref/agents.md#stopping-a-turn-and-messages-sent-while-one-runs).
 
 **Rejecting a plan** and **having another session review the plan** (including **"Review again
-in …"**) send the same stop, and follow the same rules. **Cancelling a question** follows them on codex only, where cancelling stops the
-turn; the other agents answer the question as declined and leave the queue alone.
+in …"**) send the same stop, and follow the same rules. **Cancelling a question** follows them only
+on the kinds where cancelling stops the turn; the others answer the question as declined and leave
+the queue alone (see the Agents reference above).
 
 ### Holding follow-ups before sending (send queue)
 
@@ -137,9 +117,9 @@ conversation yet.
 - **Order of sending**: when the turn ends, the first row is sent, then the next one once the agent
   has visibly started that turn and it ends, and so on. Items never go out two at a time. While you
   are editing a row, nothing is sent; it continues when you save or cancel.
-- **Send now** sends one row immediately, whatever the session is doing. On **codex** and **muse**
-  (Managed) the agent takes it into the running turn; on every other agent it is accepted and
-  handled after the running turn, exactly like a plain send during a turn.
+- **Send now** sends one row immediately, whatever the session is doing. It is handled exactly
+  like a plain send during a turn: some kinds take it into the running turn, the rest handle it
+  after the running turn (see the Agents reference above).
 - **Stopping pauses it.** Pressing **Stop**, rejecting a plan, sending a plan to
   **"Review in another session"** or **"Review again in …"**, and cancelling a question with Esc on
   a Terminal session all hold the rest of the list, so the stop is not followed by your queued
@@ -214,8 +194,8 @@ there, so you can show the plan to a different model than the one that wrote it.
 
 The button beside the input field (it shows the trigger character, **`/`** or **`$`**, or **✦** for an
 agent that has no trigger) opens **the skills and commands this session can actually call**.
-Typing the trigger at the head of an empty input opens the same list (`/` for claude, cursor and
-opencode, `$` for codex; the full-width `／` and `＄` a Japanese IME produces are accepted too).
+Typing that trigger at the head of an empty input opens the same list (the full-width `／` and
+`＄` a Japanese IME produces are accepted too).
 
 - Each entry carries its description, an argument hint, and where it came from: **user**, **CLI**
   or **shared**.
@@ -224,7 +204,7 @@ opencode, `$` for codex; the full-width `／` and `＄` a Japanese IME produces 
 - **Skills written for another agent** and left in the repository are listed too. Picking one
   inserts "read that file and follow its instructions", so the content is usable even by an agent
   that has no skill mechanism of its own.
-- See [agents.md](../ref/agents.md) for which agents offer the picker.
+- See the "Skill / command picker" row of the [Agents reference](../ref/agents.md) for which kinds offer the picker.
 
 ### Reply suggestions
 
@@ -237,9 +217,17 @@ It works from the keyboard alone: with the field empty, **Tab** moves to the chi
 between them, **Enter** inserts, **Ctrl (⌘) +Enter** sends, and **Esc** returns to the field (if
 you set Enter to send, Enter and Ctrl+Enter swap roles).
 
-The **✨ button** hands the recent conversation to an AI and adds suggestions that fit the
-context (it only spends tokens when you press it). Show or hide all of this in ⚙ Settings →
-Keys.
+The **✨ button** (**"Suggest replies with AI (from the recent conversation)"**) hands the recent
+conversation to an AI and adds a few suggestions that fit the context. They are suggestions, not
+actions: nothing is sent until you choose one. It only spends tokens when you press it.
+If the conversation is still short, or no AI is available for it, you are told so rather than
+shown an empty box.
+
+- **Always show (pin)** keeps a suggestion around.
+- **Stop suggesting this** removes one, and sending the same text yourself brings it back.
+
+Show or hide the chips in ⚙ Settings → Keys; the ✨ button has its own switch under ⚙ Settings →
+AI assistance.
 
 ### Branch from a past message
 
@@ -265,11 +253,8 @@ different agent*; a branch *copies the conversation as-is within the same agent*
 the exact wording and the fine details matter; hand off when you want another agent to take over.
 
 If the button isn't there, one of these applies: you can't branch from the agent's messages,
-nor from one that's still being sent. Only **claude, codex, opencode, copilot, lcpp and muse**
-sessions support it, and codex and opencode only in **managed** execution (the CLI launch command
-has no way to pass a branch point; lcpp and muse are always managed). One exception: an
-**opencode 2** Terminal (CLI) session attached to the shared server can branch too, because that
-server takes the branch point. A Terminal session on a private server (or on opencode 1.x) cannot.
+nor from one that's still being sent, or the session's kind or execution method cannot branch
+(see "Fork from a past message" in the [Agents reference](../ref/agents.md)).
 
 ## Highlighting a line in a conversation
 
@@ -297,7 +282,7 @@ closed; the choice is remembered per session. **Ctrl+P** (**⌘P** on macOS), th
 to "Changed files", reaches the same list.
 
 Each row carries a badge: **Untracked**, **Unstaged**, **Staged**, **Committed** or **No diff**
-for a file in the working copy, **Session scratch** for a file in `$AF_WORK_DIR` (deleted with
+for a file in the working copy, **Session scratch** for a file in the session's own scratch folder (deleted with
 the session), **Outside working copy** for anything else. A file in an agent's own memory folder
 is badged **Claude memory**, **Codex memory** or, for another agent, **Agent memory**, and opens
 read-only. That badge means the agent kind's own memory files, not Agent Fleet's
@@ -307,17 +292,6 @@ It answers the question you have at review time ("what did this thing do to my
 working copy?") without reading the whole conversation back. It is derived from the
 conversation and the repository together, so it reflects what happened, not what the
 agent said it would do.
-
-## Reply suggestions
-
-Above the message box, **Suggest replies with AI (from the recent conversation)** offers
-a few things you might plausibly want to send next. They are suggestions, not actions:
-nothing is sent until you choose one.
-
-- **Always show (pin)** keeps a suggestion around.
-- **Stop suggesting this** removes one, and sending the same text yourself brings it back.
-- If the conversation is still short, or no AI is available for it, you are told so
-  rather than shown an empty box.
 
 ## When a turn is interrupted
 
