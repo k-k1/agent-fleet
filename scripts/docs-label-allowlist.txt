@@ -16,3 +16,5 @@ guide/member/21-troubleshooting.md: Opening port N is not available until the wo
 guide/member/21-troubleshooting.md: Unable to locate credentials
 # A concrete value the Console fills into "Model: {name}".
 guide/member/badges-and-menus.md: Model: Qwen3.8 27B IQ4_XS
+guide/member/05-stopping-and-tidying.md: children ≈$X
+guide/member/21-troubleshooting.md: Too many temporarily opened ports. Close a server or add the port to the preview ports in Settings.

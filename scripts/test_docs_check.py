@@ -600,6 +600,22 @@ class LabelTests(unittest.TestCase):
         (Path(check.LOCALES) / "en/a.ts").unlink()
         self.assertIn("no strings could be read", self.errors(en='**"Stop"**\n'))
 
+    def test_a_quote_may_shorten_a_label_but_not_cut_a_word(self):
+        self.assertEqual(self.errors(en='**"Tidy every stopped"**\n'), "")
+        self.assertIn("Tidy ev", self.errors(en='**"Tidy ev"**\n'))
+        self.assertIn("Ne", self.errors(en='**"Ne"**\n'))
+
+    def test_real_catalogue_rejects_a_stale_label_a_loose_pattern_would_accept(self):
+        patch.stopall()
+        check._cache.clear()
+        cat = check.LabelCatalogue("en")
+        for stale in ("Delete the safe ones", "Credential", "St", "For", "From the boss"):
+            with self.subTest(stale=stale):
+                self.assertFalse(check.known_label(cat, stale))
+        for fine in ("Credentials", "Delete all safe", "Tidy every stopped session", "Tidy every stopped"):
+            with self.subTest(fine=fine):
+                self.assertTrue(check.known_label(cat, fine))
+
     def test_real_guide_has_no_stale_label(self):
         patch.stopall()
         check._cache.clear()

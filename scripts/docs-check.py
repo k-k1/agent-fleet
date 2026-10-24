@@ -1667,6 +1667,9 @@ LABEL_QUOTED_RE = re.compile(r"\"([^\"]+)\"|“([^”]+)”|「([^」]+)」|『(
 LABEL_ICON_RE = re.compile(r"^[+＋]\s*")
 LABEL_MIN_LITERAL = 2
 LABEL_MIN_PATTERN = 5
+# A quote that stops short of the whole label must be at least this long ("For" starts
+# a hundred labels and says nothing about any of them).
+LABEL_MIN_CUT = 4
 LABEL_QUOTES = "\"“”「」『』‘’'"
 # A span may wrap onto the next line but never over a blank one.
 BOLD_RE = re.compile(r"\*\*((?:[^*\n]|\n(?!\s*\n))+?)\*\*")
@@ -1722,26 +1725,51 @@ class LabelCatalogue:
         # A value with placeholders matches the concrete text the guide quotes
         # ("Fast-forward from {ref}" vs "Fast-forward from origin/develop").
         self.patterns = [
-            label_regex(v)
-            for v in self.sorted
-            if "{" in v and label_literal(v) >= LABEL_MIN_PATTERN
+            label_regex(v) for v in self.sorted if "{" in v and label_pattern_ok(v)
         ]
 
     def knows(self, text: str) -> bool:
         """Is `text` a catalogue value, the leading part of one, or one with its
-        placeholders filled in? The guide often quotes only the start of a long label."""
+        placeholders filled in? The guide often quotes only the start of a long label,
+        but never cuts a word in half: "Credential" is not "Credentials"."""
         t = label_norm(text)
         if not t:
             return True
-        low = t.casefold()
+        # A trailing ellipsis in the guide says "and then more", so it is not part of the cut.
+        low = t.rstrip("…. ").rstrip(":： ").casefold() or t.casefold()
         i = bisect.bisect_left(self.sorted, low)
-        if i < len(self.sorted) and self.sorted[i].startswith(low):
-            return True
+        while i < len(self.sorted) and self.sorted[i].startswith(low):
+            full = len(self.sorted[i]) == len(low)
+            if label_cut_ok(self.sorted[i], len(low)) and (full or label_literal(low) >= LABEL_MIN_CUT):
+                return True
+            i += 1
         if LABEL_WILD_RE.search(t) and label_literal(t) >= LABEL_MIN_LITERAL:
             rx = label_regex(t)
-            if any(rx.match(v) for v in self.sorted):
-                return True
+            for v in self.sorted:
+                m = rx.match(v)
+                if m and label_cut_ok(v, m.end()):
+                    return True
         return any(rx.fullmatch(t) for rx in self.patterns)
+
+
+def label_cut_ok(value: str, end: int) -> bool:
+    """May a quote stop at `end` in `value`? Not between two letters or digits (Japanese
+    characters count as letters, so a cut inside a word fails there too)."""
+    return end >= len(value) or not (value[end - 1].isalnum() and value[end].isalnum())
+
+
+def label_pattern_ok(value: str) -> bool:
+    """May a catalogue value with placeholders stand in for the concrete text a guide quotes?
+
+    Only if it fixes enough: a Latin value needs two words besides its placeholders, or
+    "Delete {name}" and "From {name}" would accept any "Delete ..." / "From ...".
+    """
+    if label_literal(value) < LABEL_MIN_PATTERN:
+        return False
+    fixed = LABEL_WILD_RE.sub(" ", value)
+    if re.search(r"[^\x00-\u2e7f]", fixed):
+        return True
+    return len(re.findall(r"[A-Za-z0-9]+", fixed)) >= 2
 
 
 def span_labels(text: str) -> list[str]:
