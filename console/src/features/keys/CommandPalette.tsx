@@ -34,7 +34,7 @@
 // on a CANCEL (Esc / browser-back / backdrop), return focus to it. Running a command/opening
 // a file does NOT restore — it may move focus deliberately (e.g. focus a pane).
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { Kbd } from "../../ui/Kbd.tsx";
+import { Kbd, chordText } from "../../ui/Kbd.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { toast } from "../../ui/toast.ts";
 import { paletteCommands } from "../../lib/keys/registry.ts";
@@ -832,6 +832,15 @@ export function CommandPalette() {
     switchMode(modes[(i + dir + modes.length) % modes.length]);
   };
 
+  // The hint names the chord that is bound right now: a rebind or macOS changes the text, and
+  // "Shift: back" is advertised only when the bound chord has a Shift twin to go backwards with.
+  const modeHint = () => {
+    const bound = boundChord(APP_PALETTE);
+    if (!bound) return t("keys.palette.mode_hint_tab");
+    const chord = chordText(bound);
+    return t(reverseChord(bound) ? "keys.palette.mode_hint" : "keys.palette.mode_hint_nobackward", { chord });
+  };
+
   if (!open) return null;
 
   // split (Ctrl/⌘+Enter or Ctrl/⌘+click) opens a file/diff row in a new pane; plain opens
@@ -945,7 +954,7 @@ export function CommandPalette() {
             </button>
           ))}
         </div>
-        <div className="cp-mode-hint">{t("keys.palette.mode_hint")}</div>
+        <div className="cp-mode-hint">{modeHint()}</div>
         <div className="cp-list" ref={listRef}>
           {mode === "file" && !q.trim() ? (
             <div className="cp-empty">{t("keys.palette.file_hint")}</div>

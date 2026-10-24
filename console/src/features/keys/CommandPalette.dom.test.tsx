@@ -523,6 +523,36 @@ describe("command palette — reverse mode chord and paging (#2412)", () => {
     expect(activeTab()).toBe(all[0]);
   });
 
+  describe("mode hint", () => {
+    const hint = () => document.querySelector(".cp-mode-hint")?.textContent;
+
+    it("names the bound chord and offers Shift: back", () => {
+      mount();
+      expect(hint()).toContain("Tab / Ctrl+P to switch (Shift: back)");
+    });
+
+    it("follows a rebound chord", () => {
+      setSetting("keybindings", { ...getSettings().keybindings, "app.palette": "alt+o" });
+      mount();
+      expect(hint()).toContain("Tab / Alt+O to switch (Shift: back)");
+      expect(hint()).not.toContain("Ctrl+P");
+    });
+
+    it("drops Shift: back when the bound chord already has Shift", () => {
+      setSetting("keybindings", { ...getSettings().keybindings, "app.palette": "mod+shift+k" });
+      mount();
+      expect(hint()).toContain("Tab / Ctrl+Shift+K to switch");
+      expect(hint()).not.toContain("Shift: back");
+    });
+
+    it("names only Tab when the palette chord is unbound", () => {
+      setSetting("keybindings", { ...getSettings().keybindings, "app.palette": "" });
+      mount();
+      expect(hint()).toContain("Tab to switch");
+      expect(hint()).not.toContain("Ctrl");
+    });
+  });
+
   describe("PageUp / PageDown", () => {
     // jsdom has no layout: 5 rows fit (100px list / 20px row).
     const proto = HTMLElement.prototype;
