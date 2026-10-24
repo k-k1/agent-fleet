@@ -49,6 +49,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mcp.oauth_granted_scopes": "Scopes: {scopes}",
   "mcp.oauth_reg_used": "Client identified by: {path}",
   "mcp.oauth_reg_path_preregistered": "a client ID you entered",
+  "mcp.oauth_reg_path_tenant": "a client your tenant registered",
   "mcp.oauth_again_note": "The saved sign-in can no longer be renewed. Sign in again.",
   "mcp.oauth_step_note": "The server asked for a permission this sign-in does not have ({scope}). Sign in again to grant it.",
   "mcp.oauth_btn_reload": "Reload",

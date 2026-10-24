@@ -354,9 +354,12 @@ type MCPServer struct {
 	URL     string            `json:"url,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
 	// Auth is "" (static headers, or none) or "oauth": the member signs in from the Console and
-	// the Agent holds the grant (ADR 0119). It only records the choice; what a CLI is handed for
-	// such a server is a later phase.
+	// the Agent holds the grant (ADR 0119). A CLI is handed such a server through the relay.
 	Auth string `json:"auth,omitempty"`
+	// OAuthClient is the client a tenant pre-registered for a distributed OAuth definition (ADR
+	// 0119 decision 9); never set on a user row. It carries no secret: a confidential client's
+	// secret stays in the CP, which then runs the token and revocation requests.
+	OAuthClient *MCPTenantClient `json:"oauthClient,omitempty"`
 
 	Enabled   bool       `json:"enabled"`
 	Targets   MCPTargets `json:"targets"`
@@ -372,6 +375,13 @@ type MCPServer struct {
 	// per-user container isolation cannot prevent. Never set on a user-scope row —
 	// there is nobody else to supply the value.
 	UserSecret bool `json:"userSecret,omitempty"`
+}
+
+// MCPTenantClient is a tenant's pre-registered OAuth client for one authorization server.
+type MCPTenantClient struct {
+	Issuer       string `json:"issuer"`
+	ClientID     string `json:"clientId"`
+	Confidential bool   `json:"confidential,omitempty"`
 }
 
 // MCPTargets selects where a server is handed to. Both false means the definition is

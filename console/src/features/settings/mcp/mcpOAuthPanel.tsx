@@ -249,6 +249,7 @@ const STATE_LABEL = {
 
 const REG_LABEL = {
   preregistered: "mcp.oauth_reg_path_preregistered",
+  tenant: "mcp.oauth_reg_path_tenant",
   cimd: "mcp.oauth_reg_cimd",
   dcr: "mcp.oauth_reg_dcr",
 } as const satisfies Record<OAuthRegistration, string>;

@@ -712,6 +712,17 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mcp_disabled": "Disabled",
   "admin.mcp_user_secret_badge": "Member-supplied value",
   "admin.mcp_oauth_badge": "Each member signs in",
+  "admin.mcp_oauth_client_id": "Client ID registered by the tenant",
+  "admin.mcp_oauth_client_id_hint":
+    "Optional. Leave it empty and each member's sign-in registers a client on its own.",
+  "admin.mcp_oauth_issuer": "Authorization server (issuer)",
+  "admin.mcp_oauth_issuer_hint": "The issuer the client is registered at, as its metadata names it.",
+  "admin.mcp_oauth_issuer_bad": "Enter the issuer as an https URL.",
+  "admin.mcp_oauth_secret": "Client secret",
+  "admin.mcp_oauth_secret_hint":
+    "Only for a confidential client. The secret is stored encrypted and never leaves Agent Fleet's control plane, which then runs the token requests, so the control plane must be able to reach the authorization server. Leave it empty for a public client.",
+  "admin.mcp_oauth_secret_drop": "Remove the stored secret",
+  "admin.mcp_oauth_secret_reenter": "The issuer or client ID changed, so the stored secret no longer applies. Enter the secret again, or remove it to make this a public client.",
   "admin.mcp_oauth_note":
     "No credential is distributed. Each member signs in with their own account from Settings > MCP servers, and the server reaches their sessions only after they have.",
   "admin.mcp_secret_policy": "Credentials",

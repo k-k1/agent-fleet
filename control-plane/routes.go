@@ -813,6 +813,10 @@ func registerMCPServerRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PUT /api/admin/mcp-servers/{id}", m.AdminUpsert)
 	mux.HandleFunc("DELETE /api/admin/mcp-servers/{id}", m.AdminDelete)
 	mux.HandleFunc("GET /internal/mcp-servers", m.WithMCPToken(m.Distribute))
+	// A tenant's confidential OAuth client: the Agent's token and revocation requests, with the
+	// secret added here (ADR 0119 decision 9).
+	mux.HandleFunc("POST /internal/mcp-servers/{id}/oauth/token", m.WithMCPToken(m.OAuthToken))
+	mux.HandleFunc("POST /internal/mcp-servers/{id}/oauth/revoke", m.WithMCPToken(m.OAuthRevoke))
 	// Role-scoped docs pull (docs/build/04 §4.9). Same shape as the MCP poll — a
 	// per-membership token, session-exempt via /internal/ — and the only way an ECS
 	// workspace gets its docs at all, since there is no host path to bind-mount there.
