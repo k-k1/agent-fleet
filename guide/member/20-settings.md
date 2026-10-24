@@ -37,7 +37,7 @@ Getting this wrong is what makes a setting look like it "didn't work".
 | **Immediately** | Display, keys, speech, notifications; adding and removing connections; the stopped-session archive period (on the next session-list refresh) |
 | **From the next session you start** | Agent behaviour settings, agent instructions, session-to-session messaging, starting sessions from sessions, past-session search (turning it off also refuses running sessions' searches at once), Agent Fleet memory (likewise), image generation, MCP servers |
 | **From the next chat message** | Assistant settings; ops & monitoring connections (when used from an assistant) |
-| **After stopping and starting the workspace** | Toolchain (timezone, language versions); Machine (a size or class your admin changed) |
+| **After stopping and starting the workspace** | Toolchains (timezone, language versions); Machine (a size or class your admin changed) |
 
 There are also **two storage scopes**. The theme, the surface colours and the main-area layout are stored **on
 this device only**; everything else (font, font size, …) is stored on the server and follows you to another PC
@@ -157,17 +157,15 @@ Reads out replies from sessions and assistants.
     child-session row (all three cells), "Limit-reset notifications" the usage-limit row.
   - Nothing pops up or speaks for the session in the pane you are working in, whatever the table says.
 - **Service notifications**: stop sending to Discord / Slack **without disconnecting**. The connection itself,
-  and which events each service receives, live in the "Chat integration" tab ([15](15-external-services.md#connecting-discord-slack-chat-bridge)).
-- History is in the **notification centre** (last 7 days), opened from the bell in the top bar. An entry
-  you have not read puts a red dot on its session; **"Mark all as read"** clears them all at once
-  ([03](03-starting-sessions.md#reading-state-badges-and-notifications)).
+  and which events each service receives, live in the "Chat" tab ([15](15-external-services.md#connecting-discord-slack-chat-bridge)).
+- History is in the **notification centre** (last 7 days), opened from the bell in the top bar. What the
+  unread red dot means and how it clears: [Icons, badges, and menus](badges-and-menus.md#session-display).
 
 ### Limit board
 
-Who in this tenant may see where you stand on your agents' usage limits, and how much: hidden (the
-default), everyone in the tenant, or members you pick; state only, band or exact. The setting is per
-tenant, and the tab lists every tenant you publish to. Below it are what teammates publish to you,
-and the table of what is collected. How to read the values is in
+Who in this tenant may see where you stand on your agents' usage limits, and how much. It is hidden
+until you choose otherwise and is set per tenant; the tab lists every tenant you publish to, then what teammates
+publish to you. The choices and how to read the values are in
 [12](12-collaboration.md#showing-teammates-where-you-stand-on-usage-limits).
 
 ### Assistant
@@ -175,22 +173,23 @@ and the table of what is collected. How to read the values is in
 The behaviour of assistant chat and the fleet operator ([10](10-chat-memo.md), [11](11-many-sessions.md)).
 
 - **Output language**: follow the input / 日本語 / English. It changes chat replies only (the read-aloud
-  language lives on the **Speech** tab).
+  language lives on the **Read aloud** tab).
 - **Agent priority**: the first connected CLI from the top of this list runs the assistants. Titles, reply
   suggestions and the like are ranked separately (the **AI assistance** tab).
 - **Assistant models**: per CLI. "Recommended (currently: …)" picks a safe default from the live catalogue and
-  shows what it currently resolves to. Under the select, the chosen model's (for "Recommended", the resolved
-  model's) API list price, context window and release date are shown ([Agents](09-agents.md)).
-- **Auto-reply to session reports**: the operator takes one turn automatically when a report arrives.
-  **Automatic reply limit** (default 10, max 50; it cannot be unlimited), **model for automatic replies**
-  (reading a report is routine work, so a lighter model saves a lot), **batching window** (reports arriving
-  within it are handled in one turn), **quiet completion reports** (a normal completion delivers the card and
-  the notification but takes no turn).
-- **Autopilot**: carries questions and plan approvals through automatically. Off by default
-  ([11](11-many-sessions.md)).
-- **Auto-resume after an interruption**: resumes a turn cut short by a dropped connection or a temporary rate
+  shows what it currently resolves to; prices and context window are described in
+  [09](09-agents.md#model-prices-and-usage-chips).
+- **Auto-respond to session reports**: the operator takes one turn automatically when a report arrives.
+  Its companions: the **Unattended auto-reply limit** (default 10, max 50; it cannot be unlimited), the
+  **Auto-reply model** (reading a report is routine work, so a lighter model saves a lot), the **Auto-reply
+  bundling window** (reports arriving within it are handled in one turn) and **Quiet completion reports** (a
+  normal completion delivers the card and the notification but takes no turn). See
+  [11](11-many-sessions.md#session-reports-and-auto-reply).
+- **Auto-pilot**: carries questions and plan approvals through automatically. Off by default (same section).
+- **Auto-resume interrupted turns**: resumes a turn cut short by a dropped connection or a temporary rate
   limit. On by default.
-- **Automatic context compaction** and its **threshold**: summarise and hand a long conversation forward.
+- **Auto-compact chat context** and its **threshold (tokens)**: summarise and hand a long conversation forward
+  ([10](10-chat-memo.md#when-a-conversation-gets-long-a-context-rule-of-thumb)).
 - **Session output fetch limit**: how much of a session's output the operator reads at once (default 32 KiB).
   The larger it is, the more accumulates in the conversation and the more tokens every later turn costs. The
   full output is always readable in the chat view.
@@ -220,20 +219,17 @@ the assistant conversation: they share an implementation, but they surface somew
   - **Branch name suggestion**: used when creating a worktree or renaming a branch.
   - **Reply suggestions (session)** / **Reply suggestions (chat)**: the ✨ button on the mirror and the chat
     composer, each its own switch; it spends tokens only when pressed. Turning one off does not affect the
-    other. The **reply suggestions** learned from your own input history (Keys tab) use no AI and are separate.
+    other. The **reply suggestions** learned from your own input history (Keyboard tab) use no AI and are separate.
   - **File edit suggestions**: turns a selection plus your instruction into a proposed replacement.
   - **Work-plan update**: the "refresh" button that re-derives the assistant chat's plan from the recent
     exchange.
   - **Answer translation (mirror)**: the "Translate" button on a mirror answer that came back in another
-    language. It spends tokens only when pressed and **uses no session turn** (the conversation does not
-    move). A translation is kept until that session is deleted, so the same text with the **same agent/model**
-    is free from the second press on. Changing this feature's agent or model means there is no translation yet
-    for that combination, so the next press generates a fresh one (the earlier agent/model's translation is
-    not lost; it comes back if you switch back).
-  - **Translate automatically**: presses that button for you the moment a turn finishes (off by default).
-    Only answers that **arrive while you are watching that session** qualify; answers already on screen when
-    you open it are never translated on their own, and the button is still there for them. This is the one
-    translation setting that spends without being asked.
+    language ([04](04-conversation.md#reading-an-answer-in-your-own-language-translation)). A translation is kept
+    per agent/model: changing this feature's agent or model means the next press generates a fresh one (the earlier
+    one comes back if you switch back).
+  - **Translate automatically**: presses that button for you the moment a turn finishes (off by default). Only
+    answers that **arrive while you are watching that session** qualify. This is the one translation setting
+    that spends without being asked.
   - **Background memory review**: shown only while memory suggestions are on; it has no switch of its own, only
     the agent and model the review uses. Only claude can run it today
     ([18 Agent memory](18-agent-memory.md#settings)).
@@ -271,7 +267,7 @@ Version control over the memory an agent keeps in its own files. The page is des
 ### Agents
 
 Connecting and configuring claude / codex / opencode / GitHub Copilot / Cursor / Kiro (and the experimental
-Antigravity): default model, **models you don't use**, **extra Claude models**, expanded thinking, RTK. The
+Antigravity): default model, **models to exclude**, **additional Claude models**, expanded thinking, RTK. The
 **llama.cpp** card holds its on / off switch and **your own connection** to a llama-server on your network;
 the **Muse Code** card holds its one-time install, the sign-in and the model / effort choice. The
 **Sessions** group holds **when stopped sessions are archived** (Default, which is the deployment's period (7 days unless the deployment changed it), 1 / 3 / 7 / 14 / 30 days, or Off), **session-to-session messaging**, **starting sessions from sessions** (with
@@ -419,12 +415,9 @@ The same token can use your Agent Fleet memory too; the tab lists what it can do
 ### AWS profiles/SSM
 
 Your AWS profiles (shared settings), which `af-aws-exec` and SSM sessions sign in with, and SSM hosts (individual)
-for logging in to another in-house host. Each profile row has **Log in** to sign in to IAM Identity Center from the
-Console, and a signed-in row has **Log out** to end that profile's login only. A profile is one of two types:
-**IAM Identity Center (SSO)**, or **Assume a role from another profile**, which uses an SSO profile's sign-in to assume
-an IAM role. On an assume-role row **Log in** signs in its source profile, and the row has no **Log out**
-([16](16-cloud-accounts.md#profile-type-assume-a-role-from-another-profile)).
-→ [16 Cloud accounts](16-cloud-accounts.md#logging-in-to-another-in-house-host-ssm)
+for logging in to another in-house host. A profile is **IAM Identity Center (SSO)** or **Assume a role from another
+profile**; an SSO row has **Log in** and, when signed in, **Log out**; an assume-role row has no **Log out**. How logging
+in and out work, and the two types, is in [16 Cloud accounts](16-cloud-accounts.md#logging-in-to-another-in-house-host-ssm).
 
 ### Google Cloud
 
@@ -432,13 +425,9 @@ Your Google Cloud profiles, which `af-gcloud-exec` runs commands with: a label (
 it and shown beside it), the project, and optionally a quota project, the Google account to sign in as, a
 service account to impersonate, a region and a zone. No Google credentials are stored here, and
 service-account keys are not accepted. Two labels that make the same name are not available in the workspace
-until you rename one; the row says so. Each available row has **Log in** to sign the workspace in to Google for
-that profile from the Console: it opens a login window, the sign-in starts only when you press **Log in** there, and
-you paste the verification code Google shows into that same window, and only into a login you started yourself.
-A logged-in row says **"Logged in as <account>"** and offers **Log in again**, which signs in afresh for a login you
-know was revoked, and **Log out**, which deletes the workspace's login for that account (every profile using the
-account is logged out with it; nothing changes at Google). The WS bar's Google Cloud badge lists the same logins.
-→ [16 Cloud accounts](16-cloud-accounts.md#running-commands-in-google-cloud-as-you-af-gcloud-exec)
+until you rename one; the row says so. Each available row has **Log in**, **Log in again** and **Log out**; how
+they work, and the WS bar's Google Cloud badge, are in
+[16 Cloud accounts](16-cloud-accounts.md#running-commands-in-google-cloud-as-you-af-gcloud-exec).
 
 ---
 
@@ -517,8 +506,9 @@ administrator's to set.
   instance to themselves, so these are that instance's figures.
 - Each value says whether it was **measured** (read inside the container) or **configured** (what the next
   start will use). While the workspace is stopped everything is configured.
-- **The architecture matters.** On `arm64` rtk is not installed at all, and JDKs and Node are downloaded as
-  arm64 builds ([21 Troubleshooting](21-troubleshooting.md)).
+- **The architecture matters.** JDKs, Node.js and the agent CLIs are downloaded as the build for that
+  architecture, and a tool whose build cannot run there is left out rather than installed broken
+  (what is installed is under Toolchains).
 - **Memory leads with what this workspace may spend, not what the instance has.** Part of the instance is held back
   for the host's own daemons, so where both are known you get `6.5 GiB (instance has 8 GiB)`. The first number is
   the one to look at when a build is being killed.
@@ -564,7 +554,8 @@ administrator's to set.
 ### Toolchains
 
 Timezone, Node.js / Java / Go versions, the table of effective tool versions (a CLI whose install at the workspace's start failed shows
-"install failed" with the reason, typically a full home disk, and is tried again at the next start; starting a session of that agent is refused with the same reason until the CLI is installed, while other agents start as usual), **agent CLI updates** (off by
+"install failed" with the reason and is tried again at the next start; what to do is in
+[21](21-troubleshooting.md#starting-a-session-says-the-agents-cli-could-not-be-installed)), **agent CLI updates** (off by
 default), and applying an Agent Fleet update.
 The Java and Node.js rows show the exact version in use (for example `21.0.11+10`, `v22.23.4`).
 When a newer patch of that version is out, an **Update to …** button downloads it into your home volume;
@@ -634,10 +625,10 @@ appears only on deployments that can perform them.
 |---|---|
 | Text is too small / change the colours | Display |
 | Sign in with another method too | Account |
-| Send with Enter | Keys (send key) |
+| Send with Enter | Keyboard (send key) |
 | Switch panes by tab | Display (main area layout) |
-| Rebind a shortcut / pass keys to the terminal | Keys |
-| Have replies read out loud | Speech |
+| Rebind a shortcut / pass keys to the terminal | Keyboard |
+| Have replies read out loud | Read aloud |
 | Silence Slack without disconnecting | Notifications (service notifications) |
 | Make the assistant answer in English | Assistant (output language) |
 | Let the operator run ahead, or stop it | Assistant (autopilot, auto-reply) |
@@ -645,7 +636,7 @@ appears only on deployments that can perform them.
 | Run only the assistance on a cheap model | AI assistance (priority, models) |
 | I keep typing the same preamble | Agent instructions |
 | Sign in to Claude / Codex | Agents |
-| Stop a model that bills extra from being picked | Agents (models you don't use) |
+| Stop a model that bills extra from being picked | Agents (models to exclude) |
 | Keep stopped sessions in the list longer, or out of it sooner | Agents (archive stopped sessions after) |
 | Let sessions talk to each other | Agents (session-to-session messaging) |
 | Stop sessions from searching past conversations | Agents (past-session search) |
@@ -655,18 +646,18 @@ appears only on deployments that can perform them.
 | Clone a private repository | Git hosting |
 | Get help investigating an incident | Ops & monitoring |
 | Start work from a ticket or an issue | Issue tracker |
-| Follow progress while away from the desk | Chat integration |
+| Follow progress while away from the desk | Chat |
 | Let the AI use an in-house tool | MCP servers |
 | Drive it from the Claude on my laptop | MCP tokens |
 | Find out what the tokens went on | Agent usage |
 | Find out what my workspace costs to run | Cloud cost |
 | I want to know when my workspace was actually running | Running time |
 | It memorised something wrong | Agent memory (Memories, Changes); Memory snapshots (History) |
-| Change the Java / Node version | Toolchain |
+| Change the Java / Node version | Toolchains |
 | Run a test suite that needs a database | Databases |
 | Show the app you are building to someone | Preview subdomains |
 | Get into another server | AWS profiles/SSM |
 | Run commands in my Google Cloud projects | Google Cloud |
-| Keep code that cannot leave the building | Internal repositories |
+| Keep code that cannot leave the building | Internal repos |
 | Take my settings to another environment | Export / import |
 | The environment is broken | Danger zone |
