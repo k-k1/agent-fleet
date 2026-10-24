@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -67,8 +68,9 @@ func materializeCodex(defs []ServerDef, prev []string) (written, removed []strin
 
 	// af's own name rotates every boot; last boot's table has to go even when the
 	// ownership ledger no longer names it (see StaleAFServerName).
+	legacyAF := codexLegacyAF(src, keep)
 	out := appendTOMLBlocks(stripCodexServers(src, func(name string) bool {
-		return drop[name] || StaleAFServerName(name, keep)
+		return drop[name] || StaleAFServerName(name, keep) || (legacyAF && name == BuiltinAF)
 	}), codexServerBlocks(defs))
 	written = defNames(defs)
 	if out == src {
@@ -81,6 +83,35 @@ func materializeCodex(defs []ServerDef, prev []string) (written, removed []strin
 		return nil, nil, false, err
 	}
 	return written, removed, true, nil
+}
+
+var (
+	tomlCommandRE = regexp.MustCompile(`^\s*command\s*=\s*("(?:[^"\\]|\\.)*")\s*(?:#.*)?$`)
+	tomlArgsRE    = regexp.MustCompile(`^\s*args\s*=\s*\[\s*("(?:[^"\\]|\\.)*")`)
+)
+
+// codexLegacyAF reports whether src holds a `[mcp_servers.af]` table that is af's own
+// leftover (StaleLegacyAFEntry). Only the single-line `command = "…"` / `args = ["…", …]`
+// spelling af itself writes is read; a table spelled any other way is taken to be the
+// user's and kept.
+func codexLegacyAF(src string, keep map[string]bool) bool {
+	in := false
+	var command, first string
+	for _, line := range strings.Split(src, "\n") {
+		if m := tomlHeaderRE.FindStringSubmatch(line); m != nil {
+			in = strings.TrimSpace(m[1]) == "mcp_servers."+BuiltinAF
+			continue
+		}
+		if !in {
+			continue
+		}
+		if m := tomlCommandRE.FindStringSubmatch(line); m != nil {
+			command, _ = strconv.Unquote(m[1])
+		} else if m := tomlArgsRE.FindStringSubmatch(line); m != nil {
+			first, _ = strconv.Unquote(m[1])
+		}
+	}
+	return first != "" && StaleLegacyAFEntry(BuiltinAF, keep, command, []string{first})
 }
 
 // tomlHeaderRE matches a table header line, `[a.b]` or `[[a.b]]`, with an optional

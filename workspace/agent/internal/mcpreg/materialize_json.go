@@ -33,6 +33,41 @@ import (
 	"reflect"
 )
 
+// staleLegacyAFJSON applies StaleLegacyAFEntry to a decoded JSON entry. Two spellings carry
+// the launch line: `command` string plus `args` array (every kind but opencode), or opencode's
+// `command` array holding both.
+func staleLegacyAFJSON(name string, entry any, keep map[string]bool) bool {
+	e, _ := entry.(map[string]any)
+	if name != BuiltinAF || e == nil {
+		return false
+	}
+	var line []string
+	switch c := e["command"].(type) {
+	case string:
+		line = append(line, c)
+		if a, ok := e["args"].([]any); ok {
+			for _, v := range a {
+				s, ok := v.(string)
+				if !ok {
+					return false
+				}
+				line = append(line, s)
+			}
+		}
+	case []any:
+		for _, v := range c {
+			s, ok := v.(string)
+			if !ok {
+				return false
+			}
+			line = append(line, s)
+		}
+	default:
+		return false
+	}
+	return len(line) > 0 && StaleLegacyAFEntry(name, keep, line[0], line[1:])
+}
+
 // jsonConfig is one CLI's native MCP config, described declaratively.
 type jsonConfig struct {
 	// path resolves the config file. A func, not a string, because HOME moves under
@@ -86,8 +121,8 @@ func (c jsonConfig) materialize(defs []ServerDef, prev []string) (written, remov
 	// af's own name rotates every boot, so last boot's entry has to go even when the
 	// ownership ledger no longer names it — otherwise every boot leaves another live
 	// server behind (see StaleAFServerName).
-	for name := range servers {
-		if StaleAFServerName(name, keep) {
+	for name, entry := range servers {
+		if StaleAFServerName(name, keep) || staleLegacyAFJSON(name, entry, keep) {
 			delete(servers, name)
 			removed = append(removed, name)
 			changed = true
