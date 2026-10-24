@@ -183,6 +183,59 @@ Resources:
       ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
       VpcEndpointType: Gateway
       RouteTableIds: [ !Ref PrivateRt ]
+      # Without a policy the endpoint is full access: a workspace could reach any bucket in
+      # the region without crossing the NAT gateway (or the egress gateway of ADR 0122).
+      # Only what the stack itself needs is admitted; everything else falls back to the
+      # NAT route and is judged there. Access through the endpoint is still not recorded
+      # per workspace. When the stack starts using another bucket from a private subnet,
+      # add it here (deploy/local/cfn-s3-endpoint-policy-test.py pins this list).
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          # ECR image layers. ECR serves layer blobs from an AWS-owned bucket in the region;
+          # this is the resource AWS documents for the endpoint policy in "Amazon ECR
+          # interface VPC endpoints (AWS PrivateLink)", section "Create a VPC endpoint for
+          # Amazon S3" (the S3 gateway endpoint ECR image pulls need). Read-only. A policy
+          # without it sends every layer pull through the NAT again, or fails it if the
+          # route table has no other way out.
+          - Sid: EcrLayerBucket
+            Effect: Allow
+            Principal: "*"
+            Action: [ "s3:GetObject" ]
+            Resource: !Sub "arn:${AWS::Partition}:s3:::prod-${AWS::Region}-starport-layer-bucket/*"
+          # Amazon Linux 2023 package repositories (dnf on the ecs-ec2 slot instances, which
+          # sit on the private route table). AWS documents the repo bucket as
+          # al2023-repos-<region>-de612dc2 ("Amazon Linux 2023 User Guide", "Package
+          # repository"). Read-only; nothing in the templates runs dnf today, so this keeps
+          # an operator's package install or an AMI refresh from needing the NAT.
+          - Sid: Al2023Repos
+            Effect: Allow
+            Principal: "*"
+            Action: [ "s3:GetObject" ]
+            Resource: !Sub "arn:${AWS::Partition}:s3:::al2023-repos-${AWS::Region}-de612dc2/*"
+          # The optional models bucket of 60-engines (af-<engines stack>-models-<account>):
+          # the CP lists and reads it, the ingest tasks write it and the engine VMs read
+          # it. This stack cannot name the engines stack, so the stack-name part is a
+          # wildcard; the account id in the name keeps it to this account's buckets.
+          # Actions are the union of what those IAM roles hold (IAM still decides per
+          # role); multipart and tagging are what `aws s3 mv/cp` of a large model uses.
+          - Sid: ModelsObjects
+            Effect: Allow
+            Principal: "*"
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:AbortMultipartUpload
+              - s3:ListMultipartUploadParts
+              - s3:GetObjectTagging
+              - s3:PutObjectTagging
+            Resource: !Sub "arn:${AWS::Partition}:s3:::af-*-models-${AWS::AccountId}/*"
+          - Sid: ModelsList
+            Effect: Allow
+            Principal: "*"
+            Action: [ "s3:ListBucket", "s3:ListBucketMultipartUploads" ]
+            Resource: !Sub "arn:${AWS::Partition}:s3:::af-*-models-${AWS::AccountId}"
 
   # --- Security groups: linear alb -> cp -> ws (no cycle) ---
   AlbSg:

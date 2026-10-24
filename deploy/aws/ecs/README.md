@@ -1917,6 +1917,10 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
     ap-northeast-1 — the same rate as its hourly charge). **Interface**
     endpoints (ecr.api, ecr.dkr, logs, ssm) are left out on purpose: $0.01/AZ/hour
     × 2 AZ each adds up past the NAT Gateway they would relieve.
+  - The endpoint carries a **policy** (#2657): only the ECR layer bucket
+    (`prod-<region>-starport-layer-bucket`), the AL2023 repo bucket and the models bucket
+    (`af-*-models-<account>`) go through it. Any other bucket is reached via the NAT. Access
+    through the endpoint is still not recorded per workspace.
   - What still crosses the NAT: git / Anthropic / npm / package registries (the real
     developer traffic), plus the small ECR auth+manifest, Logs and SSM calls.
   - Replacing the NAT Gateway with a **NAT instance** (t4g.nano $3.9 + 8 GB gp3

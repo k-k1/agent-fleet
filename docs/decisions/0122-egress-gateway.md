@@ -315,6 +315,16 @@ gateway. The fix, an endpoint policy limited to the buckets the stack needs, or 
 the workspace subnets, is #2657. Even with a policy, access through the endpoint is not
 attributed per workspace.
 
+### AWS: the S3 gateway endpoint gets a policy (decided with the maintainer, 2026-10-25)
+
+The endpoint stays, so ECR layer bytes keep off the gateway, and `S3Endpoint` now carries an
+endpoint policy (#2657) that admits only the ECR image-layer bucket for the region
+(`prod-<region>-starport-layer-bucket`, the resource the ECR documentation names), the Amazon
+Linux 2023 repository bucket and the models bucket of the engines stack. Any other bucket is
+reached through the NAT gateway, and so through the egress gateway once decision 5 lands. Access
+through the endpoint is still not recorded per workspace: the policy narrows what is reachable,
+it does not attribute it. Not yet verified on a deployed account.
+
 ### Open point 4: SSH git and DNS (decided with the maintainer, 2026-10-24)
 
 - **SSH git is off by default and a deploying organisation can turn it on per host.** The gateway
