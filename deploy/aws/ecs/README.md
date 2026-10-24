@@ -1917,6 +1917,11 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
     (see the start-latency measurement below) through NAT data processing, and the models
     bucket reads of `60-engines` do too. The end state (an endpoint limited to ECR layers
     and the stack's buckets, workspace S3 through the egress gateway's proxy) is #2700.
+    **When updating a running stack that still has the endpoint**: deleting it switches S3
+    from the endpoint route to the NAT (source address private IP → NAT EIP), and existing TCP
+    connections do not survive that. Update when no large model fetch/ingest or image pull is
+    running, or verify that the clients reconnect and re-run. While paused (`NatEnabled=false`)
+    S3 is unreachable too, like ECR and logs.
     **Interface** endpoints (ecr.api, ecr.dkr, logs, ssm) are left out on purpose: $0.01/AZ/hour
     × 2 AZ each adds up past the NAT Gateway they would relieve.
   - What still crosses the NAT: git / Anthropic / npm / package registries (the real

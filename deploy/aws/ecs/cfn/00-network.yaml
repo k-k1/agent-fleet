@@ -43,7 +43,7 @@ Parameters:
       "false" deletes the NAT gateway and the private default route (pause.sh does this
       while a deployment sleeps: a NAT gateway bills by the hour and has no stop). The
       egress address survives - see NatEip - so "true" brings the same source IP back.
-      Nothing in a private subnet can reach ECR, logs or the internet while it is false.
+      Nothing in a private subnet can reach ECR, logs, S3 or the internet while it is false.
 
 Mappings:
   Subnets:
