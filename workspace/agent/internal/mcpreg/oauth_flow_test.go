@@ -1103,3 +1103,60 @@ func TestStartRefusesAServerThatIsNotOAuth(t *testing.T) {
 	_, err = StartOAuth(context.Background(), d.ID, startReq(nil))
 	wantCode(t, err, OAuthErrNotOAuthServer)
 }
+
+func TestSplitScopes(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"a b", "a b"},
+		{"gist,notifications,repo", "gist notifications repo"},
+		{"gist, notifications ,repo  read:user", "gist notifications repo read:user"},
+		{",a,,b,", "a b"},
+		{"a b,a", "a b"},
+	} {
+		if got := strings.Join(splitScopes(c.in), " "); got != c.want {
+			t.Errorf("splitScopes(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestCommaSeparatedTokenScopeShowsAsIndividualScopes(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, nil)
+	f.tokenReply = func(int, url.Values) (int, string) {
+		return 200, `{"access_token":"at","refresh_token":"rt","token_type":"bearer","expires_in":3600,"scope":"gist,notifications, write:packages"}`
+	}
+	id := signedIn(t, f)
+	st, _ := OAuthStatusOf(id)
+	if got := strings.Join(st.Scopes, "|"); got != "gist|notifications|write:packages" {
+		t.Errorf("scopes = %q", got)
+	}
+}
+
+func TestStepUpUnionDedupesAgainstACommaSeparatedGrant(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, nil)
+	id := signedIn(t, f)
+	if err := updateSecrets(func(s *secrets.Data) error {
+		for i := range s.MCPOAuth {
+			if s.MCPOAuth[i].ServerID == id {
+				s.MCPOAuth[i].Scope = "gist,notifications"
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := NoteInsufficientScope(id, "notifications repo"); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := OAuthStatusOf(id); strings.Join(st.Scopes, "|") != "gist|notifications" {
+		t.Errorf("a grant stored with commas must read as separate scopes: %v", st.Scopes)
+	}
+	_, q := mustStart(t, id, startReq(nil))
+	if got := q.Get("scope"); got != "gist notifications repo" {
+		t.Errorf("step-up scope = %q", got)
+	}
+}

@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -243,16 +244,27 @@ func selectScope(challenge string, prmScopes, asScopes []string) string {
 	return strings.Join(scopes, " ")
 }
 
-func unionScope(a, b string) string {
-	seen := map[string]bool{}
+// splitScopes turns a scope string into its individual scopes. RFC 6749 §3.3 says
+// space-delimited, but some authorization servers (GitHub) answer comma-separated; splitting on
+// both keeps "a,b" from reading as one scope and from never matching "a" in a comparison. It
+// drops empties and repeats and keeps first-seen order. Apply it at read time: grants already
+// stored with commas must work too, and the stored string stays as received.
+func splitScopes(s string) []string {
 	var out []string
-	for _, s := range append(strings.Fields(a), strings.Fields(b)...) {
-		if !seen[s] {
-			seen[s] = true
-			out = append(out, s)
+	seen := map[string]bool{}
+	for _, f := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+		if !seen[f] {
+			seen[f] = true
+			out = append(out, f)
 		}
 	}
-	return strings.Join(out, " ")
+	return out
+}
+
+// unionScope joins two scope strings space-separated, so a grant stored comma-separated still
+// de-duplicates against the step-up scope.
+func unionScope(a, b string) string {
+	return strings.Join(splitScopes(a+" "+b), " ")
 }
 
 func pkcePair() (verifier, challenge string, err error) {
