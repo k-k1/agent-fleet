@@ -159,7 +159,7 @@ depending on state and location.
 - **Archive all stopped sessions**: archives every stopped session of that copy in one go; shown while any is stopped, with the count ([05](05-stopping-and-tidying.md#stopping-and-tidying-up-sessions))
 - **Archived sessions of this working copy**: opens the archive list narrowed to that copy, to restore or delete from
 - **Lock against deletion** / **Unlock (allow deletion)**: marks the working copy (worktrees included) as one that must not go away. A lock icon appears on the row and automatic tidying skips it ([05](05-stopping-and-tidying.md#locking-something-against-deletion)); **Delete the working copy** stays greyed out until you unlock
-- **Delete the working copy** (only for working copies that can be deleted; [05](05-stopping-and-tidying.md#deleting-a-working-copy))
+- **Delete the working copy** (only for working copies that can be deleted; [05](05-stopping-and-tidying.md#clearing-one-finished-job-deleting-a-working-copy))
 
 ### Initialize Git Flow
 
