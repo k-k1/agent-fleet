@@ -4,9 +4,9 @@ source_of_truth: "管理 → 推論エンジンの LAN の ComfyUI パネル、�
 updated: "2026-10"
 ---
 
-# 07. 自前の ComfyUI で画像を生成する
+# 08. 自前の ComfyUI で画像を生成する
 
-[English](07-image-engine.md) | 日本語
+[English](08-image-engine.md) | 日本語
 
 セッションはプロンプトから画像を生成できます。既定でそれを実行するのは**メンバー自身の
 CLI のプラン**（Codex の背後の ChatGPT ログイン、agy の背後の Gemini/Antigravity
@@ -25,8 +25,13 @@ CLI のプラン**（Codex の背後の ChatGPT ログイン、agy の背後の 
 
 4 つめの選択肢もあり、それは別の章です。すでに AWS で Agent Fleet を運用しているなら、
 この配備から**そちらのエンジンを借りられます**
-（[08 別の配備のエンジンを借りる](08-borrowed-engine.ja.md)）。あちらは画像だけでなく
+（[09 別の配備のエンジンを借りる](09-borrowed-engine.ja.md)）。あちらは画像だけでなく
 チャットのエンジンも対象で、起こすのも払うのも向こうのフリートです。
+
+**検証した範囲。** `comfyui-lan.sh` が打つ docker のコマンド、断る場面、再実行の振る舞いは、docker の代役に対して
+試験したもので、実際の GPU 機では動かしていません。`--gpus` でイメージが起動すること、proxy が鍵を受け付けること、
+絵が返ってくることは実機で測っていません。OpenAI 互換の画像の行も、このプロジェクト自身の試験用の偽サーバに対して
+試しただけです。どちらも、自分で動かすまでは未実証として扱ってください。
 
 ## フリートのイメージを自分の GPU 機で動かす
 
@@ -43,14 +48,11 @@ ComfyUI に対して試験されています。
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 です。どれかが欠けていれば、スクリプトは何かを変える前に止まり、欠けているものを言います。
 このリポジトリをその機械に clone するか、`deploy/comfyui-lan/` を
-`deploy/aws/ecs/cfn/60-engines.yaml` と一緒にコピーしてから、次を実行します。
+`deploy/aws/ecs/cfn/60-engines.yaml` と一緒にコピーしてから、スクリプトの `up` コマンドを次の 2 つのオプションで
+実行します（全オプションは `comfyui-lan.sh --help`）。
 
-```bash
-# models/ には checkpoints/・diffusion_models/・clip/・text_encoders/・vae/・loras/ を置く
-deploy/comfyui-lan/comfyui-lan.sh up --models /srv/comfy-models --bind 192.0.2.10
-```
-
-- **`--models`** は ComfyUI の `models/` として**読み取り専用で**マウントされます。足りない
+- **`--models`** は ComfyUI の `models/` として**読み取り専用で**マウントされます。種類のフォルダは
+  `checkpoints/`・`diffusion_models/`・`clip/`・`text_encoders/`・`vae/`・`loras/` です。足りない
   種類のフォルダはスクリプトが作ります。ファイルは
   [モデルは手で登録する](#モデルは手で登録する)のとおり、種類のフォルダの直下に置きます。
   ファイルを置くのはあなたで、何もダウンロードしてくれません。
@@ -61,7 +63,7 @@ deploy/comfyui-lan/comfyui-lan.sh up --models /srv/comfy-models --bind 192.0.2.1
 - **`--api-key-file <file>`** を付けると、bearer を確かめる proxy（compose と同じ Caddy の
   イメージ）を ComfyUI の前に置き、ComfyUI 自体はどこにも公開しません。ファイルには
   24 文字以上の鍵を 1 つ書き、読めるのは所有者だけにします。グループやその他が読めるファイルは
-  断ります: `(umask 077; openssl rand -hex 32 > comfy.key)`。CP には同じ鍵を、
+  断ります。CP には同じ鍵を、
   パネルの鍵の欄か `AF_COMFY_API_KEY` で渡します。鍵はすべてのパスで要り、`/system_stats`
   も例外ではありません。CP はヘルスチェックにも鍵を付けて送ります。これが
   [網を閉じるのはあなたの仕事](#網を閉じるのはあなたの仕事)の reverse proxy です。
@@ -71,7 +73,7 @@ deploy/comfyui-lan/comfyui-lan.sh up --models /srv/comfy-models --bind 192.0.2.1
   スクリプトは作ったものすべてにラベルを付け、それ以外には触りません。同じ名前
   （`af-comfyui-lan` か `--name`）でラベルの無いコンテナやネットワークがあれば、置き換えずに断ります。
 
-あとは Control Plane に `http://192.0.2.10:8188` を教えます（次の節）。
+あとは Control Plane に、公開したアドレスとポート（変えていなければ 8188）を教えます（次の節）。
 
 **何度実行しても安全です。** 同じ引数の `up` は何も変えません。止まっているコンテナは
 起動し直し、コンテナを作り直すのはイメージか設定が変わったときだけです。proxy の鍵・Caddyfile・Caddy の
@@ -83,12 +85,6 @@ deploy/comfyui-lan/comfyui-lan.sh up --models /srv/comfy-models --bind 192.0.2.1
 上で build します。どのオプションにも `AF_COMFY_LAN_*` の環境変数があるので（`--help` に
 一覧）、機械ごとの設定を 1 つのファイルに書き、`up` の前に source しておけます。ComfyUI が
 書き出した画像はコンテナの中にあり、作り直すと消えます。
-
-🔴 **実際の GPU 機ではまだ動かしていません。** スクリプトが打つ docker のコマンド、断る
-場面、再実行の振る舞いは、docker の代役に対して試験しています
-（`deploy/local/comfyui-lan-stub-test.sh`）。`--gpus` でイメージが起動すること、proxy が鍵を
-受け付けること、絵が返ってくることは実機で測っていません。その実行は
-[#958](https://github.com/k-k1/agent-fleet/issues/958) で追っています。
 
 ## Control Plane に場所を教える
 
@@ -130,14 +126,7 @@ ComfyUI の場所を伝える方法は 2 つあり、どちらか 1 つで足り
 削除は画像生成を止める手段では**ありません**。止めるにはエンジンを**オフ**にします。どの出どころが
 使われているか、削除したら何に戻るかはパネルに出ます。
 
-以下は環境変数の場合の説明です。
-
-| 変数 | 意味 |
-|---|---|
-| `AF_COMFY_URL` | ポートまで含めた完全な URL を、**CP から見た形**で。例: `http://192.168.1.20:8188`。これを設定することが経路を開くことです。 |
-| `AF_COMFY_API_KEY` | 任意。ComfyUI へ `Authorization: Bearer` として送ります。生成の呼び出しにも**ヘルスチェックにも**付きます。 |
-
-置き場所は形態によります。
+2 つの環境変数の置き場所は形態によります。
 
 | 形態 | 置き場所 |
 |---|---|
@@ -170,22 +159,16 @@ ComfyUI の場所を伝える方法は 2 つあり、どちらか 1 つで足り
   借りた `image` の**横に**置く LAN の ComfyUI は、`AF_COMFY_URL` ではなくテーブルに、
   `comfy-lan` のような自分の鍵で宣言します。
 - **OpenAI 互換の画像サーバも行です**。`external`（または `remote`）の行に
-  `provider: "openai-compat"` で 1 本宣言するだけです。
-
-  ```json
-  {"key":"oai-image","api":"images","provider":"openai-compat",
-   "url":"http://<host>:<port>","health":"/v1/models","lifecycle":"external"}
-  ```
+  `provider: "openai-compat"` で 1 本宣言するだけです（行の形は
+  [deploy/native/README.md](../../deploy/native/README.md#more-than-one-engine-row)）。
 
   サーバが bearer を要求するなら `AF_ENGINE_API_KEY_<KEY>` から読みます。`<KEY>` は行の鍵を
-  大文字にし、英数字以外の文字を全部 `_` に置き換えたもので、上の行が読むのは
+  大文字にし、英数字以外の文字を全部 `_` に置き換えたもので、鍵が `oai-image` の行が読むのは
   `AF_ENGINE_API_KEY_OAI_IMAGE` です。この行には置くファイルも宣言するファミリーもありません。
-  重みはサーバが持っています。**この経路が試されているのは、このプロジェクト自身の
-  試験用の偽サーバに対してだけです**。実在の OpenAI 互換サーバに当てるまでは未実証として
-  扱ってください。
+  重みはサーバが持っています。
 - **この build が動かせない行は、消えずに印が付きます**。Control Plane が駆動できる
   provider は `comfy` と `openai-compat` です。それ以外の provider（退役した `sdcpp` など）を名乗る行は、
-  以前はセッションから画像ツールが気づかないうちに消えるだけでした。いまは**管理 → 推論エンジン**が
+  放っておくとセッションから画像ツールが気づかないうちに消えます。そこで**管理 → 推論エンジン**が
   その行に印を付け、名乗っている provider 名を出します。直し方は行を向け直すことです。
 
 ## ここでのモードの意味
@@ -259,33 +242,6 @@ Console の**管理 → 推論エンジン**では、この種のエンジンは
 要ります。エンコードに使うノードがその版で初めて入ったからです。古い版でも行は登録も有効化も
 できますが、要求はすべてエンジンで失敗します。
 
-## 絵に描かせないもの
-
-「描かせないもの」を言える場所は 3 つあり、上書きではなく**足し合わされます**。
-
-- **モデル行自身のもの**：そのチェックポイントの配布元が「避けろ」と書いているもの。同じ
-  パネルの、その行で登録します。
-- **利用者のもの**：要求ごと（画像ツールの `negative_prompt`）。
-- **あなたのもの、エンジン全体に**：「全画像から除外する語」の欄。誰の要求でも、どの
-  チェックポイントが答えても適用されます。
-
-3 つとも空なら固定の既定（`blurry, lowres, deformed, watermark, text`）が使われます。自前の
-ものを宣言した行は、その既定に足すのではなく**置き換えます**。
-
-**これはネガティブプロンプトであって、コンテンツフィルタではありません。** 語は
-「そこから離れる向き」としてサンプラーに渡されるだけです。門ではなく、強い prompt には
-負けます。そして何より、**蒸留系のファミリーは完全に無視します**。Z-Image と FLUX.2 klein
-は cfg 1 でサンプリングし（ネガティブ側がちょうど打ち消されます）、FLUX.1 にはネガティブの
-入力自体がありません。語が届くのは誘導のあるファミリー（SD 1.5・SDXL・SD3.5・Anima・
-Krea 2・Qwen-Image-Edit 2509 / 2511）で、そこでも cfg 1 の行は同じように打ち消します。
-Turbo 版のチェックポイントのほか、Krea 2 と Qwen-Image 2.1 はレシピが cfg 1 から始まるので、
-行が上げない限りそうなります。無視するモデルが答えた要求は**警告にそう出ます**（ファミリーの名前つき）。作られる
-ものについて保証が要る配備なら、保証はここにはありません。
-
-寸法を言わない要求が何で描かれるかもファミリーが決めます。メガピクセル世代のファミリーは
-1024×1024、SD 1.5 は 512×512 です。あの UNet に 1024 を頼むと、エラーではなく被写体が
-二重になったもっともらしい絵が返るからです。行自身の寸法一覧があればそちらが優先です。
-
 ## 網を閉じるのはあなたの仕事
 
 AWS では GPU のエンジンに届くのは Control Plane だけで、それを保証しているのは
@@ -300,8 +256,7 @@ ComfyUI に直接話しかけられます**。Control Plane は迂回されま�
 
 - **egress 統制を enforce にする**（[04 守る](04-secure.ja.md)）。許可リストに無い
   プライベートアドレスは落とされます。ただしそのページの但し書きに注意してください。proxy 自体は
-  遮断できますが、Workspace の通信を proxy へ通すことをまだ何も強制していません
-  （[#1181](https://github.com/k-k1/agent-fleet/issues/1181)）。つまりこれは**方向で
+  遮断できますが、Workspace の通信を proxy へ通すことをまだ何も強制していません。つまりこれは**方向で
   あって、まだ答えではありません**。
 - **ComfyUI の前に reverse proxy を置く**。bearer トークンを要求し、その鍵は
   `AF_COMFY_API_KEY` で **Control Plane にだけ**渡します。今日使えるのはこちらです。

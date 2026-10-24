@@ -219,7 +219,7 @@ A full URL including the port, as the CP sees it (e.g.
 at startup**, so changing it is a restart. A super admin can instead set the URL and key
 under **Admin → Inference engines → LAN ComfyUI** in the Console. That needs no restart, and a
 URL saved there wins over `AF_COMFY_URL` and never receives `AF_COMFY_API_KEY`
-([guide/operate/07-image-engine.md](../../guide/operate/07-image-engine.md)).
+([guide/operate/08-image-engine.md](../../guide/operate/08-image-engine.md)).
 
 Optionally set `AF_COMFY_API_KEY` as well. The CP then sends it as
 `Authorization: Bearer` — on generation calls **and on the health check**. ComfyUI
@@ -255,7 +255,7 @@ other is shown marked in the admin panel, not dropped. A bearer for a row is
 `AF_ENGINE_API_KEY_<KEY>` (the key upper-cased, non-alphanumerics folded to `_`).
 Which row draws is the member's **Settings › Agents › "Image provider order"**, or
 the `provider` a request names. The procedure and the caveats are in
-`guide/operate/07-image-engine.md`.
+`guide/operate/08-image-engine.md`.
 
 ### Registering the models by hand
 
@@ -281,7 +281,7 @@ there is no uptime history for an engine the CP does not run, and no cost is
 attributed to it.
 
 The reader-facing version of all of this, including the network caveat, is
-[guide/operate/07-image-engine.md](../../guide/operate/07-image-engine.md).
+[guide/operate/08-image-engine.md](../../guide/operate/08-image-engine.md).
 
 ## Borrowing another deployment's engines — optional
 
@@ -370,7 +370,7 @@ and never retries the second. Streaming requests are covered by a heartbeat ever
 
 The reader-facing version — the panel's fields, who pays, and what is recorded for
 a borrowed picture — is
-[guide/operate/08-borrowed-engine.md](../../guide/operate/08-borrowed-engine.md).
+[guide/operate/09-borrowed-engine.md](../../guide/operate/09-borrowed-engine.md).
 
 ## systemd user unit (run as a service; systemd is on by default in WSL2)
 

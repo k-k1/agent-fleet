@@ -150,17 +150,21 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Sessions across the tenant | tenant admin | Sessions | [admin 02](../admin/02-limits.md) |
 | Limits and idle auto-stop | tenant admin (read) | Limits & idle | [admin 02](../admin/02-limits.md) |
 | Limit board on / off for the tenant | tenant admin | Limit board | [admin 02](../admin/02-limits.md) |
-| Whether this tenant may use the llm / image engines | deployment admin (super_admin) | Tenant settings → Limits | [admin 02](../admin/02-limits.md) |
+| Whether this tenant may use the llm / image engines, and whether its administrators may take models in | deployment admin (super_admin) | Tenant settings → Limits | [admin 02](../admin/02-limits.md) |
+| Which of the tenant's members may use the llm / image engines | tenant admin | Engine access | [admin 02](../admin/02-limits.md#who-may-use-the-inference-engines-you-can-set-this) |
+| Taking engine models in, when the tenant was granted it | tenant admin | Inference engine models | [admin 02](../admin/02-limits.md#taking-engine-models-in-only-if-your-tenant-was-granted-it) |
 | Workspace sizing | deployment admin | — | [deploy-targets.md](deploy-targets.md) |
 | Sign-in methods and login rules | tenant admin | Sign-in methods / Login rules | [admin 05](../admin/05-access.md#sign-in-methods-and-login-rules) |
-| Connection-source restriction | tenant admin | Allowed networks | [admin 05](../admin/05-access.md) |
+| Connection-source restriction | tenant admin | Allowed networks | [admin 05](../admin/05-access.md#allowed-networks) |
+| Whether outside apps may connect to the tenant through MCP OAuth | tenant admin | Allowed networks → MCP OAuth | [admin 04](../admin/04-mcp-outside.md#mcp-oauth) |
 | Integration app OAuth | tenant admin | Integration OAuth apps | [admin 05](../admin/05-access.md) |
-| Member defaults — the agent new members connect | tenant admin | Member defaults | [admin 07](../admin/07-member-defaults.md) |
-| Whether members may use Agent Fleet memory from outside | tenant admin | External memory access | [admin 08](../admin/08-external-memory.md) |
-| The development OIDC IdP for preview URLs | deployment admin (super_admin) | Admin → Dev sign-in | [admin 05](../admin/05-access.md#development-sign-in-dev-oidc-idp-superadmin-only) |
-| Distributing integration servers | tenant admin | MCP distribution | [admin 04](../admin/04-mcp-egress.md) |
+| Branch naming rules — the team's default branch names and base | tenant admin | Branch naming rules | [admin 06](../admin/06-team-defaults.md#branch-naming-rules) |
+| Member defaults — the agent new members connect | tenant admin | Member defaults | [admin 06](../admin/06-team-defaults.md#member-defaults) |
+| Whether members may use Agent Fleet memory from outside | tenant admin | External memory access | [admin 04](../admin/04-mcp-outside.md#memory-from-outside-agent-fleet) |
+| Distributing integration servers | tenant admin | MCP distribution | [admin 04](../admin/04-mcp-outside.md) |
 | Audit | tenant admin | Audit | [admin 03](../admin/03-audit-usage.md) |
-| Running time and cloud cost | tenant admin | Running time / Cloud cost | [admin 03](../admin/03-audit-usage.md) |
+| Running time | tenant admin | Running time | [admin 03](../admin/03-audit-usage.md#running-time-running-time) |
+| Cloud cost, per member (AWS only) | tenant admin | Cloud cost | [admin 03](../admin/03-audit-usage.md#cloud-cost-cloud-cost) |
 
 ## Operating a deployment
 
@@ -169,16 +173,25 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Deployment targets | deployment admin | before start | [deploy-targets.md](deploy-targets.md) |
 | Install, upgrade, back up, restore | deployment admin | a shell | [operator 02](../operate/02-install.md) / [03](../operate/03-run.md) |
 | Ingress, TLS and sign-in providers | deployment admin | a shell | [operator 04](../operate/04-secure.md) |
-| Audit log and egress control | deployment admin | Admin | [operator 04](../operate/04-secure.md) |
+| Audit log and egress control | deployment admin | Admin | [operator 04](../operate/04-secure.md#operating-egress-control) |
+| Which client hosts MCP OAuth trusts | deployment admin (super_admin) | Admin → MCP sign-in hosts | [operator 04](../operate/04-secure.md#trusted-client-hosts-deployment-wide-superadmin-only) |
+| The development OIDC IdP for preview URLs | deployment admin (super_admin) | Admin → Dev sign-in | [operator 04](../operate/04-secure.md#development-sign-in-dev-oidc-idp-superadmin-only) |
+| Keys at rest on AWS KMS, and a key of its own for each home | deployment admin | a stack parameter, then a shell | [operator 12](../operate/12-keys.md) |
+| The deployment's colour and label (Appearance) | deployment admin (super_admin) | Admin → Appearance | [operator 03](../operate/03-run.md#telling-two-deployments-apart-colour-and-label) |
+| Pausing an idle deployment | deployment admin | a shell | [operator 03](../operate/03-run.md#pausing-an-idle-deployment) |
 | Monitoring integrations | deployment admin | Settings → Ops & monitoring | [member 15](../member/15-external-services.md) |
 | Slot pool and instance classes | deployment admin | Admin | [deploy-targets.md](deploy-targets.md) |
-| The inference engines' GPU class | deployment admin (super_admin) | Admin → Inference engines | [admin 04](../admin/04-mcp-egress.md) |
-| Taking a model in — search, plan card, one press | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engines → Model catalogue | [admin 04](../admin/04-mcp-egress.md) |
-| The S3 bucket as the ledger of what is actually held | deployment admin (super_admin) | Admin → Inference engines → Model catalogue → Bucket | [admin 04](../admin/04-mcp-egress.md) |
-| Model names, example images and family categories in the catalogue | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engines → Model catalogue → Registered | [admin 04](../admin/04-mcp-egress.md) |
-| A repository's quantisations, with what fits the GPU class | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engines → Model catalogue → Registered | [admin 04](../admin/04-mcp-egress.md) |
-| Hugging Face and Civitai tokens for gated downloads | deployment admin (super_admin) | Admin → API tokens | [admin 04](../admin/04-mcp-egress.md) |
-| Civitai Red (the NSFW sister domain) as a search source | deployment admin (super_admin), where the deployment was given it | Admin → API tokens | [admin 04](../admin/04-mcp-egress.md) |
-| Image generation on a ComfyUI of your own | deployment admin (super_admin) | a shell, then Admin → Inference engines | [operator 07](../operate/07-image-engine.md) |
-| Borrowing another deployment's llm / image engines | deployment admin (super_admin) | a shell, plus a membership on the far deployment | [operator 08](../operate/08-borrowed-engine.md) |
+| Replacing slots after a launch template change | deployment admin (super_admin) | Admin → Slots | [operator 11](../operate/11-slot-pool.md#ecs-ec2-replacing-slots-after-a-launch-template-change) |
+| Force-stopping a wedged slot | deployment admin (super_admin) | Admin → Slots → Stop (force) | [operator 11](../operate/11-slot-pool.md#ecs-ec2-stopping-a-wedged-slot) |
+| The inference engines' GPU class | deployment admin (super_admin) | Admin → Inference engines | [operator 07](../operate/07-engines.md#the-gpu-instance-class) |
+| Taking a model in — search, plan card, one press | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engines → Model catalogue | [operator 07](../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants) |
+| The S3 bucket as the ledger of what is actually held | deployment admin (super_admin) | Admin → Inference engines → Model catalogue → Bucket | [operator 07](../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants) |
+| Model names, example images and family categories in the catalogue | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engines → Model catalogue → Registered | [operator 07](../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants) |
+| A repository's quantisations, with what fits the GPU class | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engines → Model catalogue → Registered | [operator 07](../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants) |
+| Hugging Face and Civitai tokens for gated downloads | deployment admin (super_admin) | Admin → API tokens | [operator 07](../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants) |
+| Civitai Red (the NSFW sister domain) as a search source | deployment admin (super_admin), where the deployment was given it | Admin → API tokens | [operator 07](../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants) |
+| The speech engine and the shared pronunciation dictionary | deployment admin (super_admin) | Admin → Read aloud | [operator 07](../operate/07-engines.md#read-aloud-the-speech-engine-and-the-shared-dictionary) |
+| Image generation on a ComfyUI of your own | deployment admin (super_admin) | a shell, then Admin → Inference engines | [operator 08](../operate/08-image-engine.md) |
+| Borrowing another deployment's llm / image engines | deployment admin (super_admin) | a shell, plus a membership on the far deployment | [operator 09](../operate/09-borrowed-engine.md) |
+| Chat inference on a llama.cpp of your own | deployment admin (super_admin) | a shell, then Admin → Inference engines | [operator 10](../operate/10-llm-lan.md) |
 | The user guide inside containers | — | automatic | [roles.md](roles.md) |

@@ -4,9 +4,9 @@ source_of_truth: "the LAN ComfyUI panel under Admin → Inference engines, or th
 updated: "2026-10"
 ---
 
-# 07. Image generation on your own ComfyUI
+# 08. Image generation on your own ComfyUI
 
-English | [日本語](07-image-engine.ja.md)
+English | [日本語](08-image-engine.ja.md)
 
 A session can generate an image from a prompt. Out of the box that runs on **the
 member's own CLI plan** (the ChatGPT login behind Codex, the Gemini/Antigravity
@@ -27,9 +27,15 @@ picture is a setting ([More than one image engine](#more-than-one-image-engine))
 
 There is a fourth possibility, and it is a different chapter: if you already run an
 Agent Fleet on AWS, this deployment can **borrow that one's engines**:
-[08 Borrowing another deployment's engines](08-borrowed-engine.md). That covers the
+[09 Borrowing another deployment's engines](09-borrowed-engine.md). That covers the
 chat engine as well as the image one, and the far fleet does the waking and the
 paying.
+
+**What has been verified.** The `comfyui-lan.sh` script's docker commands, refusals and re-run behaviour are
+tested against a stand-in for docker, not on a real GPU host: the image starting under `--gpus`, the proxy
+accepting the key and a picture coming back have not been measured on a real machine. The
+OpenAI-compatible image row has only been exercised against the project's own test double. Treat both as
+unproven until you have run them.
 
 ## Running the fleet's image on your GPU host
 
@@ -46,14 +52,11 @@ NVIDIA driver (`nvidia-smi -L` lists the GPU), and the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html),
 which is what makes `docker run --gpus` work. If any of these is missing, the script stops and
 says which one before it changes anything. Clone this repository on the host, or copy the
-`deploy/comfyui-lan/` folder together with `deploy/aws/ecs/cfn/60-engines.yaml`, then:
+`deploy/comfyui-lan/` folder together with `deploy/aws/ecs/cfn/60-engines.yaml`, then run the script's `up`
+command with the two options below (`comfyui-lan.sh --help` lists all of them).
 
-```bash
-# models/ holds checkpoints/, diffusion_models/, clip/, text_encoders/, vae/, loras/
-deploy/comfyui-lan/comfyui-lan.sh up --models /srv/comfy-models --bind 192.0.2.10
-```
-
-- **`--models`** is mounted **read-only** as ComfyUI's `models/` folder. The script creates
+- **`--models`** is mounted **read-only** as ComfyUI's `models/` folder, whose type folders are
+  `checkpoints/`, `diffusion_models/`, `clip/`, `text_encoders/`, `vae/` and `loras/`. The script creates
   any missing type folders. Put each file directly in its type folder, as described in
   [Registering the models by hand](#registering-the-models-by-hand). Copying the files in is
   your job; nothing downloads them for you.
@@ -64,7 +67,7 @@ deploy/comfyui-lan/comfyui-lan.sh up --models /srv/comfy-models --bind 192.0.2.1
 - **`--api-key-file <file>`** puts a bearer-checking proxy (Caddy, the same image compose
   uses) in front of ComfyUI, and ComfyUI itself is then not published at all. The file holds
   one key of at least 24 characters, and only its owner may read it; a file the group or
-  others can read is refused: `(umask 077; openssl rand -hex 32 > comfy.key)`. Give the CP the
+  others can read is refused. Give the CP the
   same key, either in the panel's key field or as `AF_COMFY_API_KEY`. Every path needs the
   key, `/system_stats` included, and that is the health check the CP sends it with. This is
   the reverse proxy described in [The network is yours to close](#the-network-is-yours-to-close).
@@ -75,7 +78,7 @@ deploy/comfyui-lan/comfyui-lan.sh up --models /srv/comfy-models --bind 192.0.2.1
   that already has its name (`af-comfyui-lan`, or `--name`) but not its label is refused, not
   replaced.
 
-Then point the Control Plane at `http://192.0.2.10:8188` (next section).
+Then point the Control Plane at the address you bound, on port 8188 unless you changed it (next section).
 
 **Running it again is safe.** `up` with the same arguments changes nothing. A stopped
 container is started again, and a container is recreated only when its image or a setting
@@ -87,12 +90,6 @@ builds `deploy/aws/ecs/comfyui/Dockerfile` at the pinned ComfyUI version on the 
 of pulling. Every option has an `AF_COMFY_LAN_*` environment variable as well (`--help` lists
 them), so you can keep a host's settings in one file and source it before each `up`. Pictures
 ComfyUI writes stay inside the container and are dropped when it is recreated.
-
-🔴 **Not yet run on a real GPU host.** The script's docker commands, its refusals and its
-re-run behaviour are tested against a stand-in for docker (`deploy/local/comfyui-lan-stub-test.sh`).
-The image starting under `--gpus`, the proxy accepting the key, and a picture coming back have
-not been measured on a real machine. [#958](https://github.com/k-k1/agent-fleet/issues/958)
-tracks that run.
 
 ## Pointing the Control Plane at it
 
@@ -137,14 +134,7 @@ next poll. Only when none of these exists does removing take the image engine aw
 therefore **not** a way to stop image generation; switch the engine **off** for that. The panel
 says which source is in effect and what removing would return to.
 
-The rest of this section is about the environment variables.
-
-| Variable | Meaning |
-|---|---|
-| `AF_COMFY_URL` | Full URL including the port, as the CP sees it, e.g. `http://192.168.1.20:8188`. Setting it is what turns the route on. |
-| `AF_COMFY_API_KEY` | Optional. Sent upstream as `Authorization: Bearer`, on generation calls **and on the health check**. |
-
-Where to put them depends on the target:
+Where to put the two environment variables depends on the target:
 
 | Target | Where |
 |---|---|
@@ -178,23 +168,17 @@ the Control Plane reads once at startup; on AWS the table is the engine stack's.
   poll). A LAN ComfyUI that is to sit *beside* a borrowed `image` is therefore declared in
   the table under a key of its own (`comfy-lan`, say) rather than through `AF_COMFY_URL`.
 - **An OpenAI-compatible image server is a row too.** Declare it once, on an `external` (or
-  `remote`) row, with `provider: "openai-compat"`:
-
-  ```json
-  {"key":"oai-image","api":"images","provider":"openai-compat",
-   "url":"http://<host>:<port>","health":"/v1/models","lifecycle":"external"}
-  ```
+  `remote`) row, with `provider: "openai-compat"` (the row's shape is in
+  [deploy/native/README.md](../../deploy/native/README.md#more-than-one-engine-row)).
 
   A bearer, if the server wants one, is read from `AF_ENGINE_API_KEY_<KEY>`, the row's key
-  upper-cased with every character that is not a letter or digit turned into `_`, so the row
-  above reads `AF_ENGINE_API_KEY_OAI_IMAGE`. Such a row has no files to stage and no family to
-  declare: the server holds its own weights. 🔴 **This path has only been exercised against
-  the project's own test double, never against a real OpenAI-compatible server**: treat it as
-  unverified until you have pointed it at one.
+  upper-cased with every character that is not a letter or digit turned into `_`, so a row keyed
+  `oai-image` reads `AF_ENGINE_API_KEY_OAI_IMAGE`. Such a row has no files to stage and no family to
+  declare: the server holds its own weights.
 - **A row this build cannot serve is marked, not dropped.** The providers a Control Plane can
-  drive are `comfy` and `openai-compat`. A row naming anything else (`sdcpp`, retired) used
-  to make the image tool disappear from sessions with no error anywhere; now **Admin → Inference
-  engines** marks that row and shows the provider name it carries, and the fix is to repoint
+  drive are `comfy` and `openai-compat`. A row naming anything else (`sdcpp`, retired) would make
+  the image tool disappear from sessions with no error anywhere, so **Admin → Inference
+  engines** marks that row and shows the provider name it carries; the fix is to repoint
   the row.
 
 ## What the modes mean here
@@ -274,36 +258,6 @@ A row of the **Qwen-Image 2.1** family needs a ComfyUI of **v0.37.0 or newer** o
 machine: the node it encodes with first appears there. On an older one the row registers
 and enables, and every request fails at the engine.
 
-## What a picture keeps out
-
-Three places say what should NOT be drawn, and they are added together rather than overriding
-one another:
-
-- **the model row's own**: what this checkpoint's publisher recommends keeping out. Register it
-  in the same panel, on the row.
-- **the member's**, per request (`negative_prompt` on the image tool).
-- **yours, for the whole engine**: the box labelled "excluded from every image". It applies to
-  every request, whoever made it and whichever checkpoint answers.
-
-When all three are empty, a fixed default is used (`blurry, lowres, deformed, watermark, text`).
-A row that declares its own replaces that default rather than being added to it.
-
-🔴 **This is a negative prompt, not a content filter.** The words are handed to the sampler as
-something to steer away from. They are not a gate, a determined prompt outweighs them, and, most
-importantly, **the distilled families ignore them completely**: Z-Image and FLUX.2 klein
-sample at cfg 1, where the negative branch cancels out exactly, and FLUX.1 has no negative
-input at all. The words reach the guided families (SD 1.5, SDXL, SD3.5, Anima, Krea 2,
-Qwen-Image-Edit 2509 / 2511), and even there a row at cfg 1 cancels them the same way: a Turbo
-variant, or Krea 2 and Qwen-Image 2.1, whose recipes start at cfg 1 unless the row raises it.
-A request answered by a model that ignores them **says so in its warnings**, naming the
-family. If a deployment needs a guarantee about what can be produced, this is not where it
-lives.
-
-The family also decides the size a request gets when it names none: the megapixel-era
-families generate at 1024×1024, SD 1.5 at 512×512, because asking that UNet for 1024 returns
-a plausible picture with the subject duplicated rather than an error. A row's own size list
-still overrides the family's.
-
 ## The network is yours to close
 
 On AWS the GPU engine is reachable from the Control Plane and nothing else, and a
@@ -320,8 +274,7 @@ Two ways to make it true:
 
 - **Egress control in enforce mode** ([04 Securing it](04-secure.md)): a private
   address that is not on the allowlist is refused. Note the caveat on that page:
-  the proxy can block, but nothing yet forces workspace traffic through it
-  ([#1181](https://github.com/k-k1/agent-fleet/issues/1181)), so this is the
+  the proxy can block, but nothing yet forces workspace traffic through it, so this is the
   direction, not yet the answer.
 - **A reverse proxy in front of ComfyUI** that requires a bearer token, with that
   token given to the Control Plane alone through `AF_COMFY_API_KEY`. This is the one

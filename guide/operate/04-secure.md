@@ -69,244 +69,8 @@ risks", grouped by deployment target (every target, `docker` and `native`, `ecs`
 
 A caveat on limits: by default the key that protects each workspace's credentials is derived
 from the master key, so the effective strength is equivalent to the single `AF_MASTER_KEY`. On
-AWS that key can be held by KMS instead (next section). Details in `docs/build/07-security.md`
+AWS that key can be held by KMS instead ([12 Keys at rest](12-keys.md)). Details in `docs/build/07-security.md`
 §7.6.
-
-### Keys at rest on AWS KMS
-
-On `ecs` / `ecs-ec2` the Control Plane can have AWS KMS hold the keys for what it seals: MCP
-connection headers, sign-in and Git OAuth client secrets, engine tokens, session handoffs and
-shares, inbox messages and their attachments, the development sign-in's signing keys and client
-secrets, the key of each workspace's credential store, and each home's own credential-store key
-where homes have one. Each value is sealed with a fresh data key from KMS,
-bound to its tenant, so it cannot be opened under another tenant's name. Turning it on:
-
-1. Deploy `10-data` with `CustodianKmsKey=create` (or bring a symmetric KMS key of your own in
-   the same account), and read the `CustodianKmsKeyArn` output.
-2. Deploy `30-ingress` with `CustodianKmsKeyArn=<that ARN>`. The Control Plane gets
-   `AF_KEY_CUSTODIAN=kms` and `AF_KMS_KEY_ID`, and its task role gets `kms:GenerateDataKey` and
-   `kms:Decrypt` on that key only, and only with the Control Plane's encryption context.
-
-What to know before you switch:
-
-- **`AF_MASTER_KEY` stays required.** It still opens everything stored before the switch, and
-  other keys are derived from it. Keep it exactly as before.
-- **Nothing is re-encrypted on its own.** Values stored before the switch stay readable and stay
-  protected by the master key alone; only what is stored afterwards is protected by KMS, until
-  you run `rewrap-keys` ([below](#re-sealing-values-stored-before-the-switch)).
-- **Members' stored credentials are not shredded by KMS.** Only a workspace whose key is stored
-  for the first time after the switch has it wrapped by KMS; a workspace that already had one
-  keeps the master-key wrapping, and restarting it changes nothing. Either way the key itself is
-  still derived from `AF_MASTER_KEY` and the member, so that stores written before keep opening,
-  and anyone with the master key can still derive it. Protect the master key as before. A key
-  of its own for each home takes the master key out of that path, though not every copy of
-  the key ([below](#a-key-of-its-own-for-each-home)).
-- **No fallback.** If KMS cannot be reached or refuses, sealing and opening fail with an error
-  that names KMS. The Control Plane never quietly uses the master key for a value KMS sealed.
-- **Opened keys are cached in memory for 5 minutes** (`AF_KMS_DATA_KEY_CACHE_TTL`, `0` turns it
-  off), so disabling the key takes effect within that time, not at once.
-- **Disabling or scheduling deletion of the KMS key makes everything sealed after the switch
-  unreadable to the Control Plane**, for every tenant at once. That is the crypto-shred lever, so restrict who can
-  administer the key. To cut off one tenant, add a statement to the key policy that denies
-  `kms:Decrypt` when `kms:EncryptionContext:af:key_ref` is that tenant's id; that is a
-  revocation an administrator of the key can undo, not a shred.
-- **Do not switch back to `local`** while values sealed by KMS exist: the local custodian refuses
-  them with an error that says so.
-
-### Re-sealing values stored before the switch
-
-`af-cp rewrap-keys` re-seals, under KMS, every value the Control Plane sealed with the master
-key before the switch: the wrapped key of each workspace's credential store, MCP connection
-headers, sign-in and Git OAuth client secrets, session handoffs and share proposals, inbox
-messages and their attachments, the development sign-in's signing keys and client secrets, each
-home's own credential-store key, and the Hugging Face, Civitai and ComfyUI keys of the engines. Afterwards disabling the KMS key makes
-those unreadable too.
-
-- Run it **after** the Control Plane itself runs with `AF_KEY_CUSTODIAN=kms`, with the Control
-  Plane's own environment: the same `AF_MASTER_KEY`, `AF_KMS_KEY_ID`, database settings and
-  task role. It refuses to run under `local`. A Control Plane still on `local` cannot open what
-  the command writes.
-- Start with `--dry-run`: it prints, for each place, how many values are already on KMS, how
-  many are in the old format, and how many are stored unsealed (written by a Control Plane that
-  had no master key; the command leaves those alone). It changes nothing and does not call KMS.
-- Without `--dry-run` each value is opened with the master key, sealed by KMS, opened again
-  through KMS to check it reads back, and only then written, one row at a time and only if the
-  row has not changed meanwhile. Interrupting it, a KMS error or a refused `Decrypt` stops it
-  before the row it was on is written: every row is left either in the old format or on KMS,
-  and both open. After the rewrite it looks at every place again without changing anything,
-  and the exit code comes from that final check. Run it again until it exits `0`; a run with
-  nothing left to do changes nothing.
-- **Run it while no administrator is editing.** The Control Plane can keep running, but saving
-  a sign-in provider or Git OAuth app without retyping its secret, or the ComfyUI panel without
-  retyping its key, writes back the stored value as it was read; a save that read the old value
-  before the command rewrote it puts the old value back. The final check catches one that lands
-  during the run; one that lands after it does not. Confirm afterwards with `--dry-run`.
-- Exit `0` (with or without `--dry-run`): when the command last looked, nothing was in the old
-  format and every row could be read. `1`: something is still in the old format or could not
-  be read or written, or the run stopped; the log names the place and the row id, never a
-  value. A `--dry-run` therefore exits `1` before the rewrap and `0` after it. `2`:
-  configuration (not `kms`, no master key, no key id, no database).
-- On `ecs` / `ecs-ec2`, run it as a one-off task of the Control Plane's task definition with
-  the command overridden, in the Control Plane's subnets and security group; the output is in
-  the Control Plane's log group:
-
-  ```bash
-  aws ecs run-task --cluster <cluster> --launch-type FARGATE \
-    --task-definition <the Control Plane task definition> \
-    --network-configuration 'awsvpcConfiguration={subnets=[<private subnet>],securityGroups=[<Control Plane security group>]}' \
-    --overrides '{"containerOverrides":[{"name":"cp","command":["rewrap-keys","--dry-run"]}]}'
-  ```
-
-**`AF_MASTER_KEY` still cannot be dropped afterwards**, and must not change:
-
-- The key of each workspace's credential store is still derived from it and the member
-  (`HMAC(master, userKey)`). The command moves the *wrapped copy* of that key to KMS, so with
-  the KMS key disabled the Control Plane can no longer start the workspace with it, but anyone
-  holding the master key can still derive it and open `secrets.enc`. Members' stored
-  credentials are therefore still not crypto-shredded by KMS. A key of its own for each home
-  changes that only in part ([next section](#a-key-of-its-own-for-each-home)).
-- A workspace started for the first time still gets its key from the same derivation.
-- The tokens that workspaces use to call back into the Control Plane (Git credentials, Git
-  OAuth, memos, schedules, engines, branch rules, AWS and Google Cloud profiles, documents, MCP)
-  are signed with keys derived from it.
-- The Control Plane refuses to start with `AF_KEY_CUSTODIAN=kms` and no `AF_MASTER_KEY`.
-
-What the command does change: the master key alone no longer opens the values it re-sealed,
-apart from the credential-store keys, which it can still derive.
-
-### A key of its own for each home
-
-With `AF_WORKSPACE_DEK=random` the Control Plane gives each member's home a random key for
-its credential store (`secrets.enc`), sealed by KMS. It is accepted only with
-`AF_KEY_CUSTODIAN=kms`; any other combination, or another value, stops the Control Plane at
-boot. On `ecs` / `ecs-ec2` it is the `30-ingress` parameter `WorkspaceDekRandom=on`, which needs
-`CustodianKmsKeyArn` (without it the update is rolled back when CloudFormation runs it; a change set can still be created); [before you turn it on](#before-you-turn-it-on-on-ecs).
-
-#### Before you turn it on on ECS
-
-Deploy `30-ingress` with `WorkspaceDekRandom=on`
-together with `CustodianKmsKeyArn`; only the Control Plane task definition changes (it gets
-`AF_WORKSPACE_DEK=random`) and the service rolls. Check first:
-
-- Kept homes stay on the derived key until their first start with the flag; the
-  `secret-key-next` SSM parameter appears per workspace from that start. After the home is
-  confirmed, the next start tries to delete it (a failure is logged and the start goes on), and
-  Destroy deletes it; a running task keeps its environment until restarted. The existing
-  `/af-ws/*` grants already cover it.
-- Turning the parameter off only stops minting keys for new homes: homes that already have a
-  key keep using it and need no reconnecting. Going back to a Control Plane that does not
-  know the home's key, or losing the `home_dek` table, is a different case and can need
-  credentials reconnected (see "Turning it off does not undo it" below).
-- Homes that have not started since, and old snapshots or backups, are **not** shredded
-  by disabling the KMS key. A key whose home is destroyed is removed only when the runtime
-  proves the home gone (next item).
-
-#### How the home's key behaves
-
-- **The key belongs to the home, not the workspace.** Deleting and re-creating a workspace over
-  a kept home keeps the key. A key is removed in one case: Destroy finished, a workspace row no
-  longer names the home, and the runtime **proves** the whole home is gone. A key dropped while
-  part of the home survives makes that part unreadable, so any other answer keeps it.
-  What each runtime can prove: `docker` and `native` cannot (a missing directory is also what a
-  detached volume or a wrong `WS_DATA` looks like), so their keys go through the operator
-  path below; `kubernetes` and `ecs`/`ecs-ec2` can only say so
-  from the Destroy they just ran (the StatefulSet deleted after every claim and volume was
-  confirmed gone; the EFS home task exiting 0 with every access point rooted at a directory it
-  removes; an access point rooted elsewhere is kept and reported, not deleted), never afterwards, and never from "no leftovers"
-  (`ecs` without the home task removes only the access points, and a retry then reports none).
-  A key still `migrating` is never removed this way, and a runtime that cannot prove it keeps
-  the key. Once the row is deleted, the store and any copy of it sealed under that key (a
-  snapshot, a backup) no longer open, unless a database backup that still holds the
-  `home_dek` row is restored while the KMS key is enabled. Copies made before the store moved
-  are on the derived key ([below](#disabling-the-kms-key-restoring-a-copy-turning-it-off)).
-- **Orphaned keys.** Keys that were kept (a `migrating` probe of a golden bake, a runtime that
-  could not prove it, a destroy by an older Control Plane) are listed by
-  `af-cp home-dek-status --orphans` (read-only; keys no workspace row names). A listed key is a
-  candidate, not a proof, because a home can outlive its workspace row. After you have checked
-  that the home is gone (the EFS directories, the EBS volume and snapshots, the cluster
-  claims, or the data directory), remove it with
-  `af-cp home-dek-status --remove-orphan <membership-id> --force`. `--force` is your statement
-  that the home is gone, because that command has no runtime to check with. It still refuses
-  a key a workspace row names, and refuses while a workspace operation on that membership is
-  in progress. It exits `0` when it removed the key, `1` when it removed nothing, and `2`
-  when the database fails. A key removed while the home exists makes its `secrets.enc`
-  unreadable for good.
-- **Moving a store to it.** The first start after you turn it on mints the home's key, and the
-  Control Plane passes it to the workspace beside the derived key. At boot the workspace opens
-  `secrets.enc` with either one and re-seals it under the home's key. A store that neither key
-  opens is not touched. A home with no store yet gets an empty one under the home's key at
-  that boot, so that no writer holding only the derived key can create one under it later.
-  The workspace's `/healthz` reports the outcome as `secrets_key` (`none`, `current`,
-  `migrated`, `derived` when the store could not be put under the home's key, `unreadable`) and
-  `secrets_key_next` (whether it sealed under the home's key), never a key.
-- **Confirming it.** After such a start the Control Plane waits for that report, and only for
-  the one from the workspace that start launched: each start passes a fresh identifier
-  (`AF_HOME_KEY_START`, not a secret) that the workspace echoes as `secrets_key_start`, so an
-  answer from an earlier task or another workspace is ignored, and a redirect is not followed.
-  When the workspace sealed under the home's key and reports `migrated` or `current`, the
-  Control Plane marks the home confirmed, and from the **next** start the workspace gets the
-  home's key alone (as `AF_SECRET_KEY`) and no derived key; on `ecs` / `ecs-ec2` that start also
-  deletes the `secret-key-next` parameter. A workspace that is already running keeps both keys
-  in its environment until it is restarted. `unreadable` or `derived` leaves the home
-  migrating, is logged, and deletes nothing. The wait asks every 3 seconds for at most 15
-  minutes; if that runs out, or the Control Plane restarts while it waits, the home stays
-  migrating and is confirmed at a later start. `af-cp home-dek-status` counts migrating and
-  confirmed homes; on `ecs` / `ecs-ec2` run it as a one-off task like `rewrap-keys` above, with
-  `"command":["home-dek-status"]`.
-
-#### Disabling the KMS key, restoring a copy, turning it off
-
-- **What disabling the KMS key does, and what it does not.** Once a home's store has been
-  re-sealed, the key derived from `AF_MASTER_KEY` no longer opens it, and once the Control
-  Plane's data-key cache has expired (`AF_KMS_DATA_KEY_CACHE_TTL`, 5 minutes by default) the
-  Control Plane can no longer unwrap the home's key, so it refuses the next start. Within that
-  TTL a start can still succeed. **That alone is not crypto-shredding**: copies of the home's
-  key already handed out still open the store, each protected by something other than the
-  custodian key:
-  - a **running workspace** keeps it in its environment, and its Agent, git helper and MCP
-    servers go on reading and writing the store without asking KMS;
-  - the **runtime's own copy** used to start it, which outlives a stop: the container's
-    environment on docker, the Kubernetes Secret, and on `ecs` / `ecs-ec2` the per-workspace
-    SSM SecureString parameters (`secret-key`, `secret-key-next`), encrypted with the
-    account's SSM key.
-
-  To shred a home's store while keeping the home, disable the key **and** stop the workspace
-  **and** remove those runtime copies yourself. Nothing here does that automatically. Destroy
-  is not that procedure: it removes the runtime copies and tries to remove the home as well,
-  and on an `ecs` stack without the home task it removes only the access points and leaves
-  the home's EFS directories behind.
-- **What it does not.** A home that has not been started since you turned it on is still on the
-  derived key, and is **not** shredded by disabling the KMS key. `af-cp home-dek-status` counts
-  them (read-only). Copies of a home made before its store was re-sealed (ecs-ec2 snapshots,
-  backups) still hold the old file, which the master key can open. Until a home is confirmed,
-  the derived key is still passed beside the home's key; it no longer opens a re-sealed store.
-- **A copy restored from before the move.** On a confirmed home, a `secrets.enc` restored from
-  a snapshot or backup taken before its store moved is sealed under the derived key, which
-  that home no longer receives: the workspace reports `unreadable` and refuses to write over
-  it. Run `af-cp home-dek-status --remigrate <membership-id>` with the Control Plane's
-  environment, then restart the workspace: it gets both keys again and re-seals the restored
-  store. The command exits `1` when the membership has no confirmed home key, `2` when the
-  database fails.
-- **Turning it off does not undo it.** With `AF_WORKSPACE_DEK` unset again, homes that already
-  have a key keep getting it, because their store may be sealed under it. After a store has
-  been re-sealed, two kinds of going back differ:
-  - **A Control Plane that does not know the home's key, or a lost `home_dek` table**, with a
-    workspace image of v0.31.0 or later: the store no longer opens, and the workspace refuses
-    every write to it, reconnecting a credential included (that image never writes over a
-    store it cannot open).
-  - **A workspace image older than v0.31.0: do not start one on a home that has moved.**
-    Its Agent has no such guard: a save after a failed read can write an empty store over the
-    re-sealed one, and the credentials are lost.
-
-  To recover, first restore what opens the store, before any workspace starts on that home:
-  the Control Plane version, its `home_dek` rows and the KMS key. Only if the stored
-  credentials are to be given up, stop the workspace, move the unreadable `secrets.enc` out of
-  the member's agent configuration directory (`~/.config/agent-fleet/`) yourself, and have the
-  member reconnect. A workspace image older than the Control Plane loses nothing as long as
-  the store has not been re-sealed yet: it ignores the home's key and keeps using the derived
-  one.
-- **No fallback.** If KMS cannot seal or open a home's key, the workspace does not start. It is
-  never started on the derived key alone.
 
 ## Operating egress control
 
@@ -323,7 +87,10 @@ in the Console.
 2. **Firm up the allowlist**: while reviewing the observations, add the legitimate
    destinations to the allowlist. The allowlist is versioned (active / proposed / retired); the
    AI only **proposes; approval is done by humans** (approve/reject under "Proposed (needs
-   approval)" in the Admin panel).
+   approval)" in the Admin panel). Entries are a **host** or a **`.suffix.example.com`**, with an optional
+   reason, and are **retired** when no longer needed; with no added entries only the product's built-in
+   allowances apply. A member's request from ⚙ Settings → MCP servers arrives as a proposal too, and the
+   member sees "waiting for an administrator's approval" until you decide.
 
    **Reading the observations:** counts are approximate. A report that is retried after a
    timeout can be counted twice, and the proxy keeps at most 5000 distinct destinations
@@ -331,8 +98,10 @@ in the Console.
    entry), and loses what it held in memory if it restarts. Treat a missing host as "not
    seen", not "never used", and check the audit log for `egress.dropped` before enforcing.
 3. **Switch to enforce**: once the allowlist is sufficiently solid, switch the mode to
-   enforce. From then on, traffic outside the allowlist is **blocked**. The Admin UI also warns
-   you to confirm reality in log-only first before switching.
+   enforce. From then on, traffic outside the allowlist is **blocked**. Switching straight to enforce also
+   kills the traffic you need (agent CLI updates, MCP endpoints), and clearing the block candidates under
+   **Observed destinations** while still in log-only is what makes the switch uneventful. The Admin UI also
+   warns you to confirm reality in log-only first before switching.
 
 > Current implementation scope: **observation (log-only) and allowlist management work, and the
 > proxy itself can block (enforce)**. Setting `AF_EGRESS_PROXY_ADDR` on the Control Plane
@@ -344,15 +113,14 @@ in the Console.
 > destinations. What is **not built yet** is forcing
 > traffic through it (an internal network or security-group egress rule that leaves the proxy as
 > the only way out, and templates that run the proxy), so a process that ignores the variables
-> still goes straight out, and **switching to enforce does not yet constrain a workspace**
-> ([#1181](https://github.com/k-k1/agent-fleet/issues/1181)).
+> still goes straight out, and **switching to enforce does not yet constrain a workspace**.
 > For now, understand that you can operate up to the "observe and grow the allowlist" stage.
 > The full design picture is in `docs/build/07-security.md` §7.8.
 
 ## MCP servers and external connections
 
 Users register **their own MCP servers** under ⚙ Settings → MCP servers, and a tenant admin can
-**distribute one to every member** ([admin/04](../admin/04-mcp-egress.md)). Four things matter to
+**distribute one to every member** ([admin/04](../admin/04-mcp-outside.md#distributing-an-mcp-server-to-everyone-in-the-tenant-your-permission)). Four things matter to
 an operator.
 
 - **Where secrets live.** Environment variable and header values are stored with envelope
@@ -372,7 +140,7 @@ an operator.
   use their Agent Fleet memory; it is a separate per-member setting, off by default ([member guide](../member/18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent),
   Settings > Agent memory > Settings). External saves and forgets are audited (`memory.entry.save` /
   `memory.entry.forget`, actor `mcp`, target the project id). A tenant administrator can block it for the
-  whole tenant ([admin 08](../admin/08-external-memory.md)); `AF_MCP_ENABLED` turns the whole endpoint off.
+  whole tenant ([admin 04](../admin/04-mcp-outside.md#memory-from-outside-agent-fleet)); `AF_MCP_ENABLED` turns the whole endpoint off.
 
 ### Sign-in for remote MCP clients (OAuth)
 
@@ -384,7 +152,7 @@ working for CI and clients without OAuth.
 | Setting | Meaning |
 |---|---|
 | `AF_MCP_OAUTH=1` | turns the server on. Needs `AF_MCP_ENABLED=true` and an `https` `PUBLIC_BASE_URL`; with any of the three missing every path below answers 404 and `/mcp` keeps its bare 401, so clients fall back to asking for a token |
-| `AF_MCP_OAUTH_TRUSTED_HOSTS` | comma-separated host names that may receive the sign-in redirect and serve client metadata. Default `claude.ai,claude.com,chatgpt.com`. **A super admin can override this at runtime** in the Admin modal (Deployment → MCP sign-in hosts, [admin/05](../admin/05-access.md#trusted-client-hosts-deployment-wide-superadmin-only)); the saved list wins and this variable is the fallback while nothing is saved. Remove one to stop that vendor, add one for an in-house client (exact host, `https` only); `none` leaves loopback clients only |
+| `AF_MCP_OAUTH_TRUSTED_HOSTS` | comma-separated host names that may receive the sign-in redirect and serve client metadata. Default `claude.ai,claude.com,chatgpt.com`; `none` leaves loopback clients only. A super admin can override it at runtime ([Trusted client hosts](#trusted-client-hosts-deployment-wide-superadmin-only)) |
 
 - **Turning it on.** Compose / native / local: set `AF_MCP_ENABLED=true` and `AF_MCP_OAUTH=1` (exactly those
   values; `1` is not accepted for `AF_MCP_ENABLED`) and, optionally, `AF_MCP_OAUTH_TRUSTED_HOSTS` in the Control Plane's
@@ -424,6 +192,16 @@ working for CI and clients without OAuth.
 - **Scope.** `read` and `write` only. `admin:dangerous` is never granted over OAuth, whatever the member's role.
 - **Tenant network restriction** applies to the consent step (the person in the browser), not to `/mcp` and the token
   endpoint, which come from the vendors' servers, as with PATs (ADR 0047).
+
+### Trusted client hosts (deployment-wide — super_admin only)
+
+**Admin → Deployment → MCP sign-in hosts** lists the client hosts this deployment's MCP OAuth server trusts: the hosts that may receive the sign-in redirect and serve client metadata. It is deployment-wide, not per tenant, and only a super administrator sees it. Loopback clients (a CLI on the member's own machine) are always allowed.
+
+- **To let another Agent Fleet deployment sign in to this one's `/mcp`, add its host here** (the host name only, for example `af.example.com`).
+- **Removing a vendor works**: delete `chatgpt.com` from the list and save, and that vendor can no longer sign in. Saving an empty list trusts no hosted client at all.
+- Entries are exact host names: no `https://`, port, path or wildcard, and no IP address. A mistake is refused with a message and nothing is saved.
+- **Which list applies**: the list saved here wins; with nothing saved, the `AF_MCP_OAUTH_TRUSTED_HOSTS` environment variable; with that unset, the built-in default (`claude.ai`, `claude.com`, `chatgpt.com`). The screen says which one is in effect. **Reset to default** deletes the saved list so the other two apply again.
+- A change applies from the next request, with no restart, to new sign-ins, client registration, and token requests. A connection whose redirect host (or, for a metadata-URL client, whose own host) was removed can no longer refresh its token or redeem a pending code; an access token already issued works until it expires (at most one hour). Loopback connections are not affected. Every change is audited (`mcp_oauth.trusted_hosts.set` / `.reset`, with the old and new lists).
 
 ### Sign-in for OAuth-protected MCP servers members register
 
@@ -474,6 +252,26 @@ only**, an attachment starts in **view-only** (it rejects every input from the u
 explicitly moved to user-control before they can operate it. Not putting CDP endpoints or cookies
 into answers, logs or commits is part of the agent-side instructions as well.
 
+## Development sign-in (dev OIDC IdP — super_admin only)
+
+The **Dev sign-in** section of the Admin modal switches the Control Plane's development OIDC IdP
+(ADR 0116) for the whole deployment. **It is on by default** and super_admin only, so tenant
+administrators do not see it. There is no per-workspace switch: while it is on (and preview subdomains exist) every workspace's
+client is served.
+
+- The section shows the issuer, how many workspaces hold a client (one is created when a workspace starts while
+  the IdP is offered, and kept from then on), and the one rule that matters:
+  **a production app must never trust this issuer**, because it signs in as any member without a
+  password.
+- Turning it off takes effect without a restart (another Control Plane replica follows within a few
+  seconds): every `/dev-idp/…` URL answers 404. **Workspaces' client registrations are kept**, so turning it on
+  again hands the same client ids and secrets back.
+- **Members can use it only with preview subdomains.** Without a preview domain
+  (`AF_PREVIEW_DOMAIN`) the section says so, the `/dev-idp/…` URLs answer 404, nothing is injected into
+  workspaces and workspaces report it unavailable. The switch itself stays operable.
+- It shows as locked when the operator set `AF_DEV_IDP=0`, and cannot be on without
+  `PUBLIC_BASE_URL`; the section says which one applies. Every change is audited (`dev_idp.set`).
+
 ## Other operational controls
 
 - **The login allowlist is fail-closed.** If all 3 of the `AF_OAUTH_ALLOWED_*` variables are
@@ -519,10 +317,9 @@ into answers, logs or commits is part of the agent-side instructions as well.
   - **EC2 host for compose** (`deploy/aws/ec2-single`): IMDSv2 with hop limit 1
     (`HttpTokens: required`, `HttpPutResponseHopLimit: 1`). The host-network Control Plane is
     one hop and can still use an instance profile; a workspace on a docker bridge is two and
-    gets no token. For an instance that already exists, apply it with
-    `aws ec2 modify-instance-metadata-options --instance-id <id> --http-tokens required
-    --http-put-response-hop-limit 1`. A stack update can replace the instance when the
-    Ubuntu AMI parameter has moved.
+    gets no token. For an instance that already exists, apply it to the running instance (the
+    call is in [the ec2-single runbook](../../deploy/aws/ec2-single/README.md#instance-metadata-imds)); a stack update can replace the instance
+    when the Ubuntu AMI parameter has moved.
   - **Any other docker host in a cloud**: the same metadata settings, or a host firewall rule
     in Docker's `DOCKER-USER` chain that rejects `169.254.169.254` from the workspace bridges
     (it needs root on the host; compose itself needs nothing new).
@@ -542,14 +339,12 @@ into answers, logs or commits is part of the agent-side instructions as well.
   `docker compose up -d` and a Docker restart do not change it. After upgrading the Control
   Plane and the workspace image (or changing `AF_WS_WORKLOAD_AWS`), have every workspace
   **Stopped and Started** in the Console, which recreates its container, and apply the host
-  metadata settings above. Check from a session shell, without printing the environment. With
-  the opt-in off (the default):
-  `echo ${AWS_EC2_METADATA_DISABLED:-unset}` prints `true`; `aws sts get-caller-identity`
-  with no profile fails with "Unable to locate credentials"; and the IMDSv2 token request
-  (`curl -s -o /dev/null -m 3 -w '%{http_code}' -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token`)
-  does not print `200`. With `AF_WS_WORKLOAD_AWS=1` the first two are expected to differ (the
+  metadata settings above. Check from a session shell, without printing the environment (the three checks
+  are in [the ec2-single runbook](../../deploy/aws/ec2-single/README.md#instance-metadata-imds)). With the opt-in off (the default), the variable reads
+  `true`, an AWS call with no profile fails with "Unable to locate credentials", and the IMDSv2 token
+  request does not succeed. With `AF_WS_WORKLOAD_AWS=1` the first two are expected to differ (the
   variable is unset on docker, and ECS resolves the task role); the token request must still
-  not print `200` wherever the host blocks metadata.
+  fail wherever the host blocks metadata.
 
   A workspace on the native runtime runs directly on the member's machine and is left alone:
   an instance role there is that machine's own.
@@ -594,13 +389,9 @@ Two asymmetries are worth knowing *before* somebody leaves rather than after:
 ### The emergency stop: rotating `AF_COOKIE_SECRET`
 
 If you need everyone's session invalidated *right now* (a leaked cookie, a laptop lost, an
-account you cannot reach), the only immediate switch is to change the cookie signing key:
-
-```sh
-openssl rand -base64 32          # generate a new value
-# put it in AF_COOKIE_SECRET in .env / oauth.env / the SSM parameter, then restart the CP
-docker compose up -d cp
-```
+account you cannot reach), the only immediate switch is to change the cookie signing key: generate a new random value
+(the [compose runbook](../../deploy/compose/README.md) has the one-liner for `AF_COOKIE_SECRET`), put it in
+`AF_COOKIE_SECRET` (`.env`, `oauth.env` or the SSM parameter) and restart the CP.
 
 Every session cookie signed with the old key stops verifying, so **everybody is logged out and
 signs in again**. It is blunt, it costs everyone one sign-in, and it is the only thing that

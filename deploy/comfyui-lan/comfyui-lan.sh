@@ -10,7 +10,7 @@
 # The image is the one the ecs-ec2 image role runs: ghcr.io/k-k1/agent-fleet/comfyui at the
 # tag 60-engines.yaml pins as ImageComfyImageTag, read from this checkout. Upgrading is
 # `git pull` and the same `up` again; the container is recreated only when the image or
-# a setting changed. Guide: guide/operate/07-image-engine.md, "Running the fleet's image".
+# a setting changed. Guide: guide/operate/08-image-engine.md, "Running the fleet's image".
 #
 # Every option also reads an environment variable (in brackets), so a host can keep its
 # settings in one file and source it before each `up`.

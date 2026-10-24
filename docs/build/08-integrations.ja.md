@@ -516,7 +516,7 @@ Bedrock を呼ばない。
   `POST /api/admin/engines/issue-token` で発行）・任意で `AF_REMOTE_ENGINE_KEYS` を設定する。
   発行トークンをエンジントークンに交換してメモリ上だけに持ち、貸す側の
   `GET /internal/engine/catalog` をポーリングする。貸す側は新たに何も保存しない。手順は
-  [operate/08](../../guide/operate/08-borrowed-engine.ja.md)。
+  [operate/09](../../guide/operate/09-borrowed-engine.ja.md)。
 - **モデル取り込み**は Hugging Face と Civitai から配備全体のトークンで取得する。super_admin が
   設定し、設定の行に封緘する。AWS では取り込みタスクのためにスタックの Secrets Manager の
   シークレットにも写すが、CP はそこに書くだけで読まない。

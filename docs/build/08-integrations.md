@@ -557,7 +557,7 @@ deployment's table directly**, and never holds an upstream credential:
   `AF_REMOTE_ENGINE_KEYS`; it exchanges the issuing token for engine tokens it keeps
   only in memory, and polls the lender's `GET /internal/engine/catalog`. The lender
   stores nothing new. The procedure is
-  [operate/08](../../guide/operate/08-borrowed-engine.md).
+  [operate/09](../../guide/operate/09-borrowed-engine.md).
 - **Model ingest** downloads from Hugging Face and Civitai with a deployment-wide token,
   set by a super_admin and sealed in a settings row; on AWS it is also copied into the
   stack's Secrets Manager secret for the ingest task, which the CP writes but never

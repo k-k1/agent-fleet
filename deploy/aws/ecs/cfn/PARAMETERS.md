@@ -637,7 +637,7 @@ ARN, so a grant on an alias would allow nothing.
 ⚠️ `AF_MASTER_KEY` stays required: values stored before the switch open with it until
 `af-cp rewrap-keys` re-seals them, and it still derives the workspace DEKs and the signing keys
 after that. Do not clear this parameter again while KMS-sealed values exist; the local
-custodian refuses them. The operator's side is `guide/operate/04-secure.md`, "Keys at rest on
+custodian refuses them. The operator's side is `guide/operate/12-keys.md`, "Keys at rest on
 AWS KMS".
 
 ### `WorkspaceDekRandom`
@@ -676,7 +676,7 @@ can need credentials reconnected (see 04-secure); unmigrated homes and old snaps
 per-workspace SSM parameter `secret-key-next` (deleted best-effort by the next start after confirm, or by Destroy) is under `/af-ws/*`: the CP role's
 `SsmWorkspaceParams` (20-platform: Put/Get/Delete) and the workspace execution role's `ssm-read`
 (GetParameters) already cover it, so no IAM statement was added. Operator view:
-`guide/operate/04-secure.md`, "A key of its own for each home".
+`guide/operate/12-keys.md`, "A key of its own for each home".
 
 ### Home task (volume root)
 

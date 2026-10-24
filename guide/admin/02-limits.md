@@ -33,7 +33,7 @@ in the Admin modal and never appears for you. What you can read is the current v
 - **Inference engine model ingest**: whether this tenant's tenant_admins may take engine models in
   from Hugging Face, Civitai or a URL. Off by default. Even where it is granted, **the catalogue stays
   one per deployment** and the id of a model taken in is visible from every tenant
-  ([04](04-mcp-egress.md#taking-models-in-and-what-that-has-to-do-with-tenants)).
+  ([why](../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants)).
 - **Inference engine use**: whether this tenant may use the deployment's self-hosted engines at all,
   one switch per role: **Allow using the self-hosted chat engine (llm)** and **Allow using the
   self-hosted image engine (image)**. Both are allowed by default, and a tenant nobody has touched
@@ -61,6 +61,37 @@ person can use each role right now (either place edits the same setting).
   launch menu or the catalogue, and a session already running is refused on its next request.
 - Switching back to **Every member** keeps the ticks, so restricting again restores the same list.
   Tick first and restrict afterwards, and nobody loses access in between.
+
+### Taking engine models in (only if your tenant was granted it)
+
+Putting a model into the deployment's engine catalogue (search for it, read the plan the card shows, press
+**take in**) is a deployment administrator's action by default. Where the operator grants it to your
+tenant (the **Inference engine model ingest** line under Limits & idle, above), you can do it too. The
+search and the plan card work exactly as they do on the operator's screen
+([how a model is taken in](../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants)).
+
+The grant covers **starting an ingest and nothing else**. These four stay super_admin whether it is
+granted or not:
+
+- **Enabling** a model (making it something members can choose)
+- Changing the image role's **selected checkpoint**
+- **Forgetting** a row
+- Registering the deployment's **Hugging Face token** and **Civitai token**
+
+Who accepted which licence is kept on the row: **which tenant, which person, when, and which
+licence**, and the audit log carries the same four. A model taken in by a super_admin has no tenant against
+it, which means "the operator accepted on behalf of the whole deployment".
+
+#### What a tenant administrator sees
+
+A tenant_admin of a granted tenant gets a reduced screen under **Tenant settings → "Inference
+engine models"** (not the Admin modal; that one is super_admin only). It holds four things:
+**the model search, the plan card, the bucket entries their own tenant's jobs produced, and the list
+of catalogue rows** (id, name, family, licence and on/off; **read-only**). What it does not hold:
+**the mode (disabled / on demand / always on), the GPU class, the state of the instance, enabling
+and selecting a model, forgetting a row, and the API tokens**: each of those decides what
+every *other* tenant runs, or who pays for the GPU. The bucket shows **that tenant's own objects
+only**, and a super_admin's do not appear in it (a super_admin's own screen shows the whole bucket).
 
 ### The limit board (you can set this)
 
@@ -210,16 +241,15 @@ tenant-wide side, so they are super_admin's domain). It has two stages, set by t
   in the conversation.
 - **Max hold by background work**: how long background work (a dev server or a
   `run_in_background` task that an idle session started) keeps the workspace from stopping.
-  Empty uses the deployment default (2 hours unless the operator changed it), `0` means no
+  Empty uses the deployment default ([Limits and defaults](../ref/limits.md#set-by-the-deployment)), `0` means no
   limit; details in
   [operate/03](../operate/03-run.md#what-keeps-a-workspace-awake).
 - **Workspace stop after**: a workspace with no one connected and no running sessions has its
   whole container stopped once it exceeds this time.
 
 The time format is `30m` (minutes), `2h` (hours), `90s` (seconds). Empty follows the deployment
-default, which is 1 hour for **Session halt after** and 2 hours for **Workspace stop after** unless
-the operator changed it, and `0` means explicitly disabled. The deployment-wide defaults are
-listed in [Limits and defaults](../ref/limits.md#set-by-the-deployment).
+default, unless the operator changed it, and `0` means explicitly disabled. The deployment-wide
+defaults are listed in [Limits and defaults](../ref/limits.md#set-by-the-deployment).
 
 Even when stopped, the work itself (the contents of home) remains. The next time members need it,
 they just start it again from the Console.
@@ -243,7 +273,7 @@ a stopped workspace shows no meters at all, including disk, which on those deplo
 the workspace's own volume rather than on a disk the platform can read while it is down.
 
 A workspace can also be stopped by the platform itself: a start that has not finished within
-the deployment's limit (30 minutes by default) is stopped so it stops holding capacity. Such a
+the deployment's limit ([Limits and defaults](../ref/limits.md#set-by-the-deployment)) is stopped so it stops holding capacity. Such a
 member's card in the roster has the badge "Stopped automatically" and the chip **"Workspace start
 stopped automatically"** (hover the chip for the reason), and the member detail shows the same
 heading with the limit, the last step the start reached (on AWS often why no machine could take

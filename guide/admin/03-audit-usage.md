@@ -82,6 +82,26 @@ approximation with some margin of error.
 The option to switch tenants appears only for super_admin. Your running-time screen is always scoped
 to your own tenant.
 
+## Cloud cost ("Cloud cost")
+
+**Tenant settings → Operations → Cloud cost** puts a price on what Running time counts in hours: the AWS
+invoice, attributed to each member by cost allocation tag. **The item exists only on a deployment running
+on AWS**, because nowhere else has a bill to read.
+
+- **Only what is tagged to a person appears.** For each member that is their workspace's slot hours,
+  persistent home volume and that volume's snapshots, and the headline is labelled "Attributable to
+  members". Shared infrastructure (NAT, DNS, load balancer, database, the idle slot pool) is deliberately
+  never divided between members, and your screen does not show the deployment's shared bill at all. The
+  figure is therefore **not** the full cost of running your team, and it is not an invoice.
+- **It runs about 24 hours behind, and the most recent days are not final.** The screen says how far
+  behind it is.
+- **Nothing is available from before cost attribution was switched on**, and it cannot be backfilled.
+  The screen says which day that is.
+- **Period**: "From" and "To", then "Apply", as in Running time. Amounts are in the currency of the
+  bill; nothing is converted.
+- The member detail carries the same figure for one person, with the daily trend and what it was
+  spent on.
+
 ---
 
 ## FAQ

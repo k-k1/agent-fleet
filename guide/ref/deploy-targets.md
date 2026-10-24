@@ -71,7 +71,7 @@ the first time.
 
 ⁴ A ComfyUI **already running on your own network**, pointed at with one environment
 variable, or several engine rows side by side: a LAN ComfyUI, a borrowed engine, an
-OpenAI-compatible server ([operate/07](../operate/07-image-engine.md)).
+OpenAI-compatible server ([operate/08](../operate/08-image-engine.md)).
 
 ⁵ The fleet's own GPU, bought when something asks for it. There is no equivalent on
 Fargate. On every target a session can also generate images on **the member's own CLI
@@ -79,7 +79,7 @@ plan** (Codex / Antigravity); this row is about an engine the deployment provide
 
 ⁶ On `ecs-ec2`, the fleet's own GPU. On `docker`, `native` and `kubernetes`, a llama.cpp
 **already running on your own network**, pointed at with one environment variable
-([operate/09](../operate/09-llm-lan.md)).
+([operate/10](../operate/10-llm-lan.md)).
 
 ⁷ The Control Plane cannot mount the member's EFS home itself, so it starts a short task the
 stack declares (`HomeOpsTaskDef` in `30-ingress`) that mounts the file system and removes the
@@ -151,7 +151,7 @@ before the workspace runs, as on `ecs-ec2`. An administrator's Clean home remove
 with the workspace stopped. Both keep the logins, connections and Claude's state, which live on a
 second volume of their own. The home volume itself is kept.
 
-¹⁴ Off by default; the operator turns it on in the stack ([operate/04](../operate/04-secure.md#keys-at-rest-on-aws-kms)).
+¹⁴ Off by default; the operator turns it on in the stack ([operate/12](../operate/12-keys.md#keys-at-rest-on-aws-kms)).
 The secrets the Control Plane itself seals after the switch (MCP connection headers, sign-in
 client secrets, engine tokens, session handoffs and shares) are then sealed with keys from AWS
 KMS, so disabling the KMS key makes them unreadable. The key to a member's stored credentials is

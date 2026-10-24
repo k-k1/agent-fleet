@@ -148,17 +148,21 @@ updated: "2026-10"
 | テナント全体のセッション | テナント管理者 | セッション | [admin 02](../admin/02-limits.ja.md) |
 | 上限とアイドル自動停止 | テナント管理者（読み取り）| 上限・自動停止 | [admin 02](../admin/02-limits.ja.md) |
 | テナントで利用枠ボードを使うかどうか | テナント管理者 | 利用枠ボード | [admin 02](../admin/02-limits.ja.md) |
-| このテナントが llm / image エンジンを使ってよいか | 配備管理者（super_admin）| テナント設定 → 上限 | [admin 02](../admin/02-limits.ja.md) |
+| このテナントが llm / image エンジンを使ってよいか、テナント管理者がモデルを取り込んでよいか | 配備管理者（super_admin）| テナント設定 → 上限 | [admin 02](../admin/02-limits.ja.md) |
+| テナントのどのメンバーが llm / image エンジンを使えるか | テナント管理者 | 推論エンジンの利用者 | [admin 02](../admin/02-limits.ja.md#推論エンジンを使えるメンバーあなたが設定できる) |
+| 許可が出ているテナントでの、エンジンのモデルの取り込み | テナント管理者 | 推論エンジンのモデル | [admin 02](../admin/02-limits.ja.md#エンジンのモデルを取り込むテナントに許可が出ている場合だけ) |
 | ワークスペースのサイズ | 配備管理者 | — | [deploy-targets.md](deploy-targets.ja.md) |
 | サインイン方式とサインイン規則 | テナント管理者 | サインイン方式 / サインイン規則 | [admin 05](../admin/05-access.ja.md#サインイン方式とサインイン規則) |
-| 接続元の制限 | テナント管理者 | 接続元の制限 | [admin 05](../admin/05-access.ja.md) |
+| 接続元の制限 | テナント管理者 | 接続元の制限 | [admin 05](../admin/05-access.ja.md#接続元の制限) |
+| 外のアプリが MCP OAuth でテナントに接続してよいか | テナント管理者 | 接続元の制限 → MCP OAuth | [admin 04](../admin/04-mcp-outside.ja.md#mcp-oauth) |
 | 連携アプリの OAuth | テナント管理者 | 連携アプリの OAuth | [admin 05](../admin/05-access.ja.md) |
-| メンバーの既定 — 新しいメンバーがつなぐエージェント | テナント管理者 | メンバーの既定 | [admin 07](../admin/07-member-defaults.ja.md) |
-| メンバーが外部から Agent Fleet のメモリを使ってよいか | テナント管理者 | 外部からのメモリ利用 | [admin 08](../admin/08-external-memory.ja.md) |
-| プレビュー URL 用の開発用 OIDC IdP | 配備管理者（super_admin）| 管理 → 開発用ログイン | [admin 05](../admin/05-access.ja.md#開発用ログイン開発用-oidc-idp-superadmin-のみ) |
-| 連携サーバーの配布 | テナント管理者 | MCP 配布 | [admin 04](../admin/04-mcp-egress.ja.md) |
+| ブランチ命名ルール — チームの既定のブランチ名と起点 | テナント管理者 | ブランチ命名ルール | [admin 06](../admin/06-team-defaults.ja.md#ブランチ命名ルール) |
+| メンバーの既定 — 新しいメンバーがつなぐエージェント | テナント管理者 | メンバーの既定 | [admin 06](../admin/06-team-defaults.ja.md#メンバーの既定) |
+| メンバーが外部から Agent Fleet のメモリを使ってよいか | テナント管理者 | 外部からのメモリ利用 | [admin 04](../admin/04-mcp-outside.ja.md#agent-fleet-の外からのメモリ利用) |
+| 連携サーバーの配布 | テナント管理者 | MCP 配布 | [admin 04](../admin/04-mcp-outside.ja.md) |
 | 監査 | テナント管理者 | 監査 | [admin 03](../admin/03-audit-usage.ja.md) |
-| 稼働時間とクラウド費用 | テナント管理者 | 稼働時間 / クラウド費用 | [admin 03](../admin/03-audit-usage.ja.md) |
+| 稼働時間 | テナント管理者 | 稼働時間 | [admin 03](../admin/03-audit-usage.ja.md#稼働時間稼働時間) |
+| クラウド費用をメンバーごとに（AWS のみ）| テナント管理者 | クラウド費用 | [admin 03](../admin/03-audit-usage.ja.md#クラウド費用クラウド費用) |
 
 ## 配備を運用する
 
@@ -167,16 +171,25 @@ updated: "2026-10"
 | 配備形態 | 配備管理者 | 起動前 | [deploy-targets.md](deploy-targets.ja.md) |
 | 導入・更新・バックアップ・復旧 | 配備管理者 | 端末 | [operator 02](../operate/02-install.ja.md) / [03](../operate/03-run.ja.md) |
 | 入口・TLS・サインイン方式 | 配備管理者 | 端末 | [operator 04](../operate/04-secure.ja.md) |
-| 監査ログと egress 統制 | 配備管理者 | 管理 | [operator 04](../operate/04-secure.ja.md) |
+| 監査ログと egress 統制 | 配備管理者 | 管理 | [operator 04](../operate/04-secure.ja.md#egress-統制の運用) |
+| MCP OAuth が信頼するクライアントのホスト | 配備管理者（super_admin）| 管理 → MCP ログイン許可ホスト | [operator 04](../operate/04-secure.ja.md#信頼するクライアントのホスト配備全体-superadmin-のみ) |
+| プレビュー URL 用の開発用 OIDC IdP | 配備管理者（super_admin）| 管理 → 開発用ログイン | [operator 04](../operate/04-secure.ja.md#開発用ログイン開発用-oidc-idp-superadmin-のみ) |
+| AWS KMS による保存時の鍵と、ホームごとの専用鍵 | 配備管理者 | スタックのパラメータ、それから端末 | [operator 12](../operate/12-keys.ja.md) |
+| この配備の色とラベル（見た目）| 配備管理者（super_admin）| 管理 → 見た目 | [operator 03](../operate/03-run.ja.md#2-つの配備を見分ける色とラベル) |
+| 使わない間の配備の一時停止 | 配備管理者 | 端末 | [operator 03](../operate/03-run.ja.md#使わない間の配備を一時停止する) |
 | 監視連携 | 配備管理者 | 設定 → 運用・監視 | [member 15](../member/15-external-services.ja.md) |
 | スロットのプールとインスタンス種別 | 配備管理者 | 管理 | [deploy-targets.md](deploy-targets.ja.md) |
-| 推論エンジンの GPU クラス | 配備管理者（super_admin）| 管理 → 推論エンジン | [admin 04](../admin/04-mcp-egress.ja.md) |
-| モデルの取り込み — 検索・計画カード・1 押し | 配備管理者（super_admin）、許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ | [admin 04](../admin/04-mcp-egress.ja.md) |
-| S3 Bucket — 配備が実際に持っているものの台帳 | 配備管理者（super_admin）| 管理 → 推論エンジン → モデルカタログ → バケット | [admin 04](../admin/04-mcp-egress.ja.md) |
-| 目録のモデル名・作例・ファミリー分類 | 配備管理者（super_admin）、または許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ → 登録済み | [admin 04](../admin/04-mcp-egress.ja.md) |
-| 配布元の量子化一覧と、GPU クラスに収まるかの判定 | 配備管理者（super_admin）、または許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ → 登録済み | [admin 04](../admin/04-mcp-egress.ja.md) |
-| Hugging Face / Civitai のトークン（ログインが要る取り込み）| 配備管理者（super_admin）| 管理 → API トークン | [admin 04](../admin/04-mcp-egress.ja.md) |
-| 検索の出所としての Civitai Red（NSFW の姉妹ドメイン）| 配備管理者（super_admin）、配備がそれを与えられている場合 | 管理 → API トークン | [admin 04](../admin/04-mcp-egress.ja.md) |
-| 自前の ComfyUI での画像生成 | 配備管理者（super_admin）| 端末、それから 管理 → 推論エンジン | [operator 07](../operate/07-image-engine.ja.md) |
-| 別の配備の llm / image エンジンを借りる | 配備管理者（super_admin）| 端末と、向こうの配備のメンバーシップ 1 つ | [operator 08](../operate/08-borrowed-engine.ja.md) |
+| 起動テンプレート変更後のスロットの入れ替え | 配備管理者（super_admin）| 管理 → スロット | [operator 11](../operate/11-slot-pool.ja.md#ecs-ec2-起動テンプレートを変えたあとのスロットの入れ替え) |
+| 動かなくなったスロットの強制停止 | 配備管理者（super_admin）| 管理 → スロット → 停止（強制）| [operator 11](../operate/11-slot-pool.ja.md#ecs-ec2-動かなくなったスロットの停止) |
+| 推論エンジンの GPU クラス | 配備管理者（super_admin）| 管理 → 推論エンジン | [operator 07](../operate/07-engines.ja.md#gpu-のインスタンスクラス) |
+| モデルの取り込み — 検索・計画カード・1 押し | 配備管理者（super_admin）、許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ | [operator 07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
+| S3 Bucket — 配備が実際に持っているものの台帳 | 配備管理者（super_admin）| 管理 → 推論エンジン → モデルカタログ → バケット | [operator 07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
+| 目録のモデル名・作例・ファミリー分類 | 配備管理者（super_admin）、または許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ → 登録済み | [operator 07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
+| 配布元の量子化一覧と、GPU クラスに収まるかの判定 | 配備管理者（super_admin）、または許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ → 登録済み | [operator 07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
+| Hugging Face / Civitai のトークン（ログインが要る取り込み）| 配備管理者（super_admin）| 管理 → API トークン | [operator 07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
+| 検索の出所としての Civitai Red（NSFW の姉妹ドメイン）| 配備管理者（super_admin）、配備がそれを与えられている場合 | 管理 → API トークン | [operator 07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
+| 音声エンジンと共通の読み仮名辞書 | 配備管理者（super_admin）| 管理 → 読み上げ | [operator 07](../operate/07-engines.ja.md#読み上げ音声エンジンと共通の読み仮名辞書) |
+| 自前の ComfyUI での画像生成 | 配備管理者（super_admin）| 端末、それから 管理 → 推論エンジン | [operator 08](../operate/08-image-engine.ja.md) |
+| 別の配備の llm / image エンジンを借りる | 配備管理者（super_admin）| 端末と、向こうの配備のメンバーシップ 1 つ | [operator 09](../operate/09-borrowed-engine.ja.md) |
+| 自前の llama.cpp でのチャット推論 | 配備管理者（super_admin）| 端末、それから 管理 → 推論エンジン | [operator 10](../operate/10-llm-lan.ja.md) |
 | コンテナ内のユーザーガイド | — | 自動 | [roles.md](roles.ja.md) |
