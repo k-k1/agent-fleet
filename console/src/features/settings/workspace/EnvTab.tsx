@@ -591,10 +591,16 @@ function NodeRow({
   const selected: string = d.node || "system";
   // "system" is the image's own node — never an install target.
   const needsInstall = selected !== "system" && !!selected && !installed.includes(selected);
-  const { installVersion } = useToolchainLatest("node-latest", running && needsInstall, selected, "");
+  const current: string = (selected !== "system" && d.node_versions?.[selected]) || "";
+  const { installVersion, newerPatch } = useToolchainLatest(
+    "node-latest",
+    running && selected !== "system" && !!selected,
+    selected,
+    current,
+  );
 
   const install = async () => {
-    if (!needsInstall) return;
+    if (selected === "system" || !selected) return;
     setInstalling(selected);
     const finish = (msg?: string) => {
       setInstalling("");
@@ -602,8 +608,20 @@ function NodeRow({
       reload(); // refresh node_installed either way
     };
     const res = await apiJSON("api/env/node-install", "POST", { major: selected });
-    if (!res || res.error) {
-      finish(res?.error?.message || "");
+    if (!res) {
+      finish("");
+      return;
+    }
+    // Same as Java: a reply about another major (another tab's download, in any state)
+    // means ours never started; and only an object error is an API failure, the
+    // installer's own failure is state "error" with a string.
+    if (res.major && res.major !== selected) {
+      setInstalling("");
+      toast(tr("env.node_install_busy", { v: res.major }));
+      return;
+    }
+    if (res.error && typeof res.error === "object") {
+      finish(res.error.message || "");
       return;
     }
     if (res.state === "done" || res.state === "error") {
@@ -622,7 +640,8 @@ function NodeRow({
         } catch {
           p = null;
         }
-        if (p && p.state === "done") {
+        // Another major in the status means our job ended and a newer one replaced it.
+        if (p && (p.state === "done" || (p.major && p.major !== selected))) {
           finish();
           return { stop: true };
         }
@@ -663,9 +682,18 @@ function NodeRow({
                   : tr("env.node_install")}
             </button>
           )}
+          {current && <span className="muted env-node-version">{current}</span>}
+          {!needsInstall && newerPatch && (
+            <button disabled={!running || !!installing} onClick={install}>
+              {installing ? tr("env.node_installing") : tr("env.node_update", { v: newerPatch })}
+            </button>
+          )}
         </span>
       </Row>
       {needsInstall && <p className="muted ds-note">{tr("env.node_install_note", { v: selected })}</p>}
+      {!needsInstall && newerPatch && (
+        <p className="muted ds-note">{tr("env.node_update_note", { cur: current, v: newerPatch })}</p>
+      )}
     </>
   );
 }

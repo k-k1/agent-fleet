@@ -204,6 +204,11 @@ func installNode(major string) (string, error) {
 	if _, err := os.Stat(filepath.Join(staging, "bin", "node")); err != nil {
 		return "", fmt.Errorf("extracted tree has no bin/node")
 	}
+	// The marker is what lets prune-node-versions remove this tree once a newer patch
+	// replaces it, without ever touching a patch the member installed with nvm.
+	if err := os.WriteFile(filepath.Join(staging, nodeInstallMarker), nil, 0o644); err != nil {
+		return "", err
+	}
 	if err := os.RemoveAll(dest); err != nil {
 		return "", err
 	}
@@ -259,14 +264,31 @@ func (n *nodeInstall) snapshot() (state, major, errMsg string) {
 // nodeInstallStatus answers both verbs, so one round trip tells the caller the job
 // state AND what is actually on disk (same contract as jdkInstallStatus).
 func nodeInstallStatus() map[string]any {
-	state, major, errMsg := nodeInstaller.snapshot()
+	return nodeInstallStatusOf(nodeInstaller.snapshot())
+}
+
+// nodeInstallStatusOf builds that body from a job state the caller already read.
+func nodeInstallStatusOf(state, major, errMsg string) map[string]any {
 	return map[string]any{
 		"state":          state,
 		"major":          major,
 		"error":          errMsg,
 		"node_installed": installedNodeMajors(),
+		"node_versions":  installedNodeVersions(),
 		"node_available": nodeOptionsFor(readToolchains().Node),
 	}
+}
+
+// installedNodeVersions maps each installed major to the patch nodeBinFor resolves
+// ("v22.23.4"), for the Console to show.
+func installedNodeVersions() map[string]string {
+	out := map[string]string{}
+	for _, m := range installedNodeMajors() {
+		if bin := nodeBinFor(m); bin != "" {
+			out[m] = filepath.Base(filepath.Dir(bin))
+		}
+	}
+	return out
 }
 
 // handleNodeInstall drives the on-demand node install. POST /env/node-install
@@ -302,9 +324,12 @@ func handleNodeInstall(w http.ResponseWriter, r *http.Request) {
 	nodeInstaller.mu.Lock()
 	if nodeInstaller.state == "installing" {
 		// One download at a time; a second request reports the running job rather than
-		// starting a competing one (they share the nvm dir).
+		// starting a competing one (they share the nvm dir). Report the job as it was when
+		// we refused: re-reading after the unlock let a job that ended in between come
+		// back as "done"/"error", which a caller cannot tell from its own request's outcome.
+		busyMajor, busyErr := nodeInstaller.major, nodeInstaller.err
 		nodeInstaller.mu.Unlock()
-		httpx.WriteJSON(w, http.StatusOK, nodeInstallStatus())
+		httpx.WriteJSON(w, http.StatusOK, nodeInstallStatusOf("installing", busyMajor, busyErr))
 		return
 	}
 	nodeInstaller.state = "installing"

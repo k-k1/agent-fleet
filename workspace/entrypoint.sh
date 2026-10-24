@@ -1305,6 +1305,11 @@ if [ -n "$NODE_VER" ] && [ "$NODE_VER" != "system" ]; then
   # Never go back to `ls | tail -1` here: lexical order picked v22.9.0 over newer releases;
   # install-node resolves numerically (the same rule as nodeBinFor in env_toolchains.go).
   af_node_bin="$(workspace-agent install-node "$NODE_VER" 2>/dev/null || true)"
+  # Now that the newest patch is in place and before any session starts, drop the older
+  # patches install-node left behind (only its own: nvm installs carry no marker). Absolute
+  # path: a stale build in ~/.local/bin would not know the subcommand.
+  /usr/local/bin/workspace-agent prune-node-versions \
+    || echo "[entrypoint] WARN: prune-node-versions failed (continuing)"
   if [ -n "$af_node_bin" ] && [ -x "$af_node_bin/node" ]; then
     export PATH="$af_node_bin:$PATH"
   fi

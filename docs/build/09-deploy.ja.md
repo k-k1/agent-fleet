@@ -137,7 +137,11 @@ ECS 系ランタイムにはこのマウントが無いので、そのディレ�
 `update_available` を返す。Console はそれが真のときに更新ボタンを出す。未導入のメジャーにも `latest`
 （インストールで入る版）を返し、Console はそれをボタンに出す。`GET /env/node-latest?major=N` は Node.js 版
 （nodejs.org の index から。版は nvm と同じく `v` 付き）。どちらもピッカーが出すメジャーしか受け付けない
-（メジャーごとにキャッシュのキーになるため。`version_lookup.go`）。
+（メジャーごとにキャッシュのキーになるため。`version_lookup.go`）。toolchains の GET は `node_versions`
+（メジャー → `nodeBinFor` が選ぶパッチ）も返し、Node の行も同じ更新を出す。`install-node` は新しいパッチを
+古いものの横に足すので、自分で入れたツリーに印（`.agent-fleet-installed`）を付け、entrypoint はその直後・
+セッションが無いうちに `prune-node-versions` を走らせる。メジャーごとに、最新より古い印付きパッチを消す。
+印の無いツリー（nvm で入れたもの・`.nvmrc` の厳密な固定・印ができる前に入ったもの）は消さない。
 
 ## 9.5 aws ターゲット
 

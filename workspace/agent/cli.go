@@ -157,6 +157,14 @@ var subcommands = []subcommand{
 		run:     runPruneCLIVersions,
 	},
 	{
+		// Removes Node.js patches install-node installed that a newer patch of the same
+		// major supersedes. The entrypoint runs it after install-node, before any session.
+		name:    "prune-node-versions",
+		summary: "remove superseded Node.js patches install-node left in home",
+		hidden:  true,
+		run:     runPruneNodeVersions,
+	},
+	{
 		// Opt-in to opencode 2 beside the pinned 1.x: a private npm prefix, ~200 MB, never
 		// on PATH. opencode-major switches af's launches to it.
 		name:     "install-opencode2",
