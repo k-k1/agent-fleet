@@ -716,15 +716,16 @@ type ToolchainInstall = {
 // and removes home-volume ones, so a member gets back the space of versions they no
 // longer use. The agent decides what may go (never /usr/lib/jvm, never the selected
 // major without a fallback, never one being installed); this only shows its answer and
-// asks before deleting. It refetches whenever the toolchains payload changes, so an
-// install, an update or a new selection shows here at once.
+// asks before deleting. It refetches on every toolchains reload (a new payload object,
+// even with the same values), so a finished or failed install, an update or a new
+// selection shows here at once.
 function InstalledVersions({ d, running, reload }: { d: any; running: boolean; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
   const askConfirm = useConfirm();
   const [list, setList] = useState<{ java: ToolchainInstall[]; node: ToolchainInstall[] } | null>(null);
   const [busy, setBusy] = useState("");
-  const key = JSON.stringify([d.java, d.node, d.java_installed, d.java_versions, d.node_installed, d.node_versions]);
+  const [nonce, setNonce] = useState(0);
   useEffect(() => {
     if (!running) return;
     let live = true;
@@ -738,7 +739,7 @@ function InstalledVersions({ d, running, reload }: { d: any; running: boolean; r
     return () => {
       live = false;
     };
-  }, [running, key]);
+  }, [running, d, nonce]);
   if (!running || !list || list.java.length + list.node.length === 0) return null;
 
   const remove = async (kind: "jdk" | "node", e: ToolchainInstall) => {
@@ -754,14 +755,23 @@ function InstalledVersions({ d, running, reload }: { d: any; running: boolean; r
     });
     if (!ok) return;
     setBusy(kind + e.major);
-    const res = await apiJSON(`api/env/${kind}/${encodeURIComponent(e.major)}`, "DELETE");
-    setBusy("");
-    if (!res || res.error) {
-      toast(tr("env.uninstall_failed", { msg: res?.error?.message || "" }));
-      return;
+    try {
+      const res = await apiJSON(`api/env/${kind}/${encodeURIComponent(e.major)}`, "DELETE");
+      if (!res || res.error) {
+        toast(tr("env.uninstall_failed", { msg: res?.error?.message || "" }));
+        // A refusal changes nothing, but a failure part-way (some Node trees gone) does:
+        // show what is on disk now.
+        setNonce((n) => n + 1);
+        return;
+      }
+      setList(res);
+      reload();
+    } catch (err) {
+      toast(tr("env.uninstall_failed", { msg: err instanceof Error ? err.message : "" }));
+      setNonce((n) => n + 1);
+    } finally {
+      setBusy("");
     }
-    setList(res);
-    reload();
   };
 
   const row = (kind: "jdk" | "node", e: ToolchainInstall) => (

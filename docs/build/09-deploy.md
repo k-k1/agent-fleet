@@ -161,10 +161,13 @@ are never removed.
 `GET /env/toolchain-installs` lists every JDK tree (home volume and `/usr/lib/jvm`) and
 every Node major under `~/.nvm` with version, size and whether it may be removed;
 `DELETE /env/jdk/{major}` / `DELETE /env/node/{major}` remove home-volume trees only
-(`toolchain_uninstall.go`). They refuse the selected major when nothing else provides it
-and a major whose install job runs. The check and a rename to a hidden `.removing-*` name
-happen under the installer's lock, the delete outside it, and the next listing sweeps
-leftovers.
+(`toolchain_uninstall.go`). They refuse the selected major (an exact `22.23.4` counts as
+22) unless an independent `/usr/lib/jvm` copy with a working `bin/java` remains, and refuse
+while an install runs, including one started from a terminal: install-jdk / install-node
+hold a flock on their root for the whole install. The check and a rename into
+`<root>/.agent-fleet-trash` happen under that flock, the installer's mutex and the lock
+the selection PUT takes (which now also writes `toolchains.json` atomically); the delete
+runs outside them, and only the trash directory is ever swept.
 
 ## 9.5 The AWS target
 

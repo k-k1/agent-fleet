@@ -167,4 +167,55 @@ describe("EnvTab installed versions", () => {
     await mount();
     expect(document.querySelector(".env-installed")).toBeNull();
   });
+
+  it("frees the buttons and refetches when the DELETE request itself fails", async () => {
+    confirm.mockResolvedValue(true);
+    apiJSON.mockRejectedValue(new Error("network down"));
+    await mount();
+    const before = api.mock.calls.filter((c) => c[0] === "api/env/toolchain-installs").length;
+    await act(async () => {
+      btnOf("Node.js v24", "v24.1.0")!.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(toast).toHaveBeenCalledWith(expect.stringContaining("network down"));
+    expect(btnOf("Temurin 17", "17.0.21+9")!.disabled).toBe(false);
+    expect(api.mock.calls.filter((c) => c[0] === "api/env/toolchain-installs").length).toBeGreaterThan(before);
+  });
+
+  // An install that ends with the same toolchains payload (e.g. a failed update) must
+  // still refresh the list, or "being installed" sticks.
+  it("refetches on every toolchains reload, even with identical values", async () => {
+    let installing = true;
+    api.mockImplementation((path: string) => {
+      if (path === "api/env/toolchains") return Promise.resolve({ ...toolchains });
+      if (path === "api/env/toolchain-installs") {
+        const l = listing();
+        if (installing) l.java[0] = { ...l.java[0], removable: false, reason: "installing" } as never;
+        return Promise.resolve(l);
+      }
+      if (path.startsWith("api/env/jdk-latest"))
+        return Promise.resolve({ major: "21", current: "21.0.13+9", latest: "21.0.14+1", update_available: true });
+      return Promise.resolve({});
+    });
+    // The update fails; the reload returns the same values.
+    apiJSON.mockImplementation(async () => {
+      installing = false;
+      return { state: "error", major: "21", error: "download failed" };
+    });
+    await mount();
+    expect(rowOf("Temurin 17", "17.0.21+9").cells[4].textContent).toContain("インストール中");
+    const update = document.querySelector<HTMLButtonElement>(".env-java-pick button")!;
+    await act(async () => {
+      update.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(btnOf("Temurin 17", "17.0.21+9")).not.toBeNull();
+  });
 });

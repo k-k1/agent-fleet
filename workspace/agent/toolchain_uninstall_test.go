@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // selectToolchains writes the member's selection into the (isolated) HOME.
@@ -35,10 +36,35 @@ func uninstallReq(t *testing.T, h http.HandlerFunc, kind, major string) (int, st
 
 func exists(p string) bool { _, err := os.Stat(p); return err == nil }
 
+// withJava gives a fake JDK an executable bin/java, which a fallback needs.
+func withJava(t *testing.T, dir string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bin", "java"), nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// visible lists dir without dot entries (the install lock, the trash directory).
+func visible(t *testing.T, dir string) []string {
+	t.Helper()
+	ents, _ := os.ReadDir(dir)
+	var out []string
+	for _, e := range ents {
+		if !strings.HasPrefix(e.Name(), ".") {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
 func TestListToolchainInstalls(t *testing.T) {
 	sys, home := jdkRoots(t)
 	arch := "-" + runtime.GOARCH
-	fakeJDK(t, sys, "temurin-21-jdk"+arch, "21.0.11+10")
+	withJava(t, fakeJDK(t, sys, "temurin-21-jdk"+arch, "21.0.11+10"))
 	fakeJDK(t, home, "temurin-21-jdk"+arch, "21.0.13+9")
 	fakeJDK(t, home, "temurin-17-jdk"+arch, "17.0.21+9")
 	fakeNode(t, "v22.23.4", true)
@@ -120,8 +146,11 @@ func TestJDKUninstallGuards(t *testing.T) {
 	if exists(only17) {
 		t.Fatal("JDK 17 still there")
 	}
-	if ents, _ := os.ReadDir(home); len(ents) != 0 {
-		t.Fatalf("left in home: %v", ents)
+	if left := visible(t, home); len(left) != 0 {
+		t.Fatalf("left in home: %v", left)
+	}
+	if exists(filepath.Join(home, trashDir)) {
+		t.Fatal("trash directory left behind")
 	}
 }
 
@@ -129,7 +158,7 @@ func TestJDKUninstallGuards(t *testing.T) {
 func TestJDKUninstallSelectedWithSystemFallback(t *testing.T) {
 	sys, home := jdkRoots(t)
 	arch := "-" + runtime.GOARCH
-	sysCopy := fakeJDK(t, sys, "temurin-21-jdk"+arch, "21.0.11+10")
+	sysCopy := withJava(t, fakeJDK(t, sys, "temurin-21-jdk"+arch, "21.0.11+10"))
 	homeCopy := fakeJDK(t, home, "temurin-21-jdk"+arch, "21.0.13+9")
 	selectToolchains(t, "21", "")
 	if code, body := uninstallReq(t, handleJDKUninstall, "jdk", "21"); code != http.StatusOK {
@@ -183,12 +212,16 @@ func TestNodeUninstallRefusedWhileInstalling(t *testing.T) {
 	}
 }
 
-// A ".removing-*" leftover from an interrupted delete is invisible to discovery and is
-// swept by the next listing.
-func TestRemovingLeftoversAreSwept(t *testing.T) {
+// Only the trash directory is swept: a leftover there goes, a look-alike name elsewhere
+// (the member's own file) stays, and a staged tree is invisible to discovery.
+func TestSweepOnlyTouchesTrash(t *testing.T) {
 	_, home := jdkRoots(t)
-	left := filepath.Join(home, removingPrefix+"temurin-11-jdk-x")
+	left := filepath.Join(home, trashDir, "temurin-11-jdk-x-abc")
 	if err := os.MkdirAll(filepath.Join(left, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mine := filepath.Join(home, ".removing-backup")
+	if err := os.MkdirAll(mine, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if majors := installedJavaMajors(); len(majors) != 0 {
@@ -196,6 +229,145 @@ func TestRemovingLeftoversAreSwept(t *testing.T) {
 	}
 	listToolchainInstalls()
 	if exists(left) {
-		t.Fatal("leftover not swept")
+		t.Fatal("trash leftover not swept")
+	}
+	if !exists(mine) {
+		t.Fatal("a file outside the trash was swept")
+	}
+}
+
+// An exact or partial version selection still protects its major.
+func TestUninstallTreatsExactSelectionAsItsMajor(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	fakeNode(t, "v22.23.4", true)
+	fakeNode(t, "v24.1.0", true)
+	selectToolchains(t, "", "22.23.4")
+	for _, e := range listToolchainInstalls().Node {
+		if e.Major == "22" && (e.Removable || e.Reason != "selected") {
+			t.Fatalf("listing: %+v", e)
+		}
+	}
+	if code, _ := uninstallReq(t, handleNodeUninstall, "node", "22"); code != http.StatusConflict {
+		t.Fatalf("want 409 got %d", code)
+	}
+	if !strings.Contains(strings.Join(nodeDirs(t), ","), "v22.23.4") {
+		t.Fatal("the selected patch was removed")
+	}
+}
+
+// A /usr/lib/jvm entry that links to the home copy is no fallback.
+func TestJDKUninstallRejectsSystemLinkToHome(t *testing.T) {
+	sys, home := jdkRoots(t)
+	arch := "-" + runtime.GOARCH
+	homeCopy := fakeJDK(t, home, "temurin-21-jdk"+arch, "21.0.13+9")
+	if err := os.MkdirAll(filepath.Join(homeCopy, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(homeCopy, "bin", "java"), nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(homeCopy, filepath.Join(sys, "temurin-21-jdk"+arch)); err != nil {
+		t.Fatal(err)
+	}
+	selectToolchains(t, "21", "")
+	if code, _ := uninstallReq(t, handleJDKUninstall, "jdk", "21"); code != http.StatusConflict {
+		t.Fatalf("want 409 got %d", code)
+	}
+	if !exists(homeCopy) {
+		t.Fatal("the only real copy of the selected JDK was removed")
+	}
+}
+
+// An independent /usr/lib/jvm copy with a working bin/java is a fallback.
+func TestIndependentJDK(t *testing.T) {
+	sys, home := jdkRoots(t)
+	arch := "-" + runtime.GOARCH
+	h := fakeJDK(t, home, "temurin-21-jdk"+arch, "21.0.13+9")
+	s := fakeJDK(t, sys, "temurin-21-jdk"+arch, "21.0.11+10")
+	if independentJDK(s, h) {
+		t.Fatal("a system copy without bin/java counted as a fallback")
+	}
+	if err := os.MkdirAll(filepath.Join(s, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s, "bin", "java"), nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !independentJDK(s, h) {
+		t.Fatal("an independent system copy did not count")
+	}
+}
+
+// The selection PUT and uninstall share toolchainsMu: a selection written while an
+// uninstall waits is seen by it.
+func TestUninstallSeesSelectionWrittenUnderTheSameLock(t *testing.T) {
+	_, home := jdkRoots(t)
+	arch := "-" + runtime.GOARCH
+	jdk := fakeJDK(t, home, "temurin-17-jdk"+arch, "17.0.21+9")
+	selectToolchains(t, "", "")
+	toolchainsMu.Lock()
+	done := make(chan int)
+	go func() {
+		code, _ := uninstallReq(t, handleJDKUninstall, "jdk", "17")
+		done <- code
+	}()
+	select {
+	case code := <-done:
+		toolchainsMu.Unlock()
+		t.Fatalf("uninstall finished (%d) while the selection lock was held", code)
+	case <-time.After(100 * time.Millisecond):
+	}
+	b, _ := json.Marshal(map[string]string{"java": "17"})
+	if err := writeToolchainsAtomic(toolchainsPath(), b); err != nil {
+		t.Fatal(err)
+	}
+	toolchainsMu.Unlock()
+	if code := <-done; code != http.StatusConflict {
+		t.Fatalf("want 409 got %d", code)
+	}
+	if !exists(jdk) {
+		t.Fatal("JDK selected meanwhile was removed")
+	}
+}
+
+// An install running in another process holds the root's flock: uninstall refuses.
+func TestUninstallRefusedWhileAnotherProcessInstalls(t *testing.T) {
+	_, home := jdkRoots(t)
+	jdk := fakeJDK(t, home, "temurin-17-jdk-"+runtime.GOARCH, "17.0.21+9")
+	fakeNode(t, "v24.1.0", true)
+	selectToolchains(t, "", "")
+	for _, c := range []struct {
+		root string
+		h    http.HandlerFunc
+		kind string
+		maj  string
+	}{{jvmHomeRoot(), handleJDKUninstall, "jdk", "17"}, {nvmNodeRoot(), handleNodeUninstall, "node", "24"}} {
+		unlock, ok, err := installLock(c.root, false)
+		if err != nil || !ok {
+			t.Fatalf("lock: %v %v", ok, err)
+		}
+		code, body := uninstallReq(t, c.h, c.kind, c.maj)
+		unlock()
+		if code != http.StatusConflict || !strings.Contains(body, "installing") {
+			t.Fatalf("%s: %d %s", c.kind, code, body)
+		}
+	}
+	if !exists(jdk) || !strings.Contains(strings.Join(nodeDirs(t), ","), "v24.1.0") {
+		t.Fatal("removed while an install held the lock")
+	}
+}
+
+func TestWriteToolchainsAtomicLeavesNoTemp(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	selectToolchains(t, "21", "22")
+	if err := writeToolchainsAtomic(toolchainsPath(), []byte(`{"java":"17"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if readToolchains().Java != "17" {
+		t.Fatal("not replaced")
+	}
+	ents, _ := os.ReadDir(filepath.Dir(toolchainsPath()))
+	if len(ents) != 1 {
+		t.Fatalf("left %v", ents)
 	}
 }

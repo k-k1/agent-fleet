@@ -145,9 +145,11 @@ ECS 系ランタイムにはこのマウントが無いので、そのディレ�
 
 `GET /env/toolchain-installs` は JDK の全ツリー（home ボリュームと `/usr/lib/jvm`）と `~/.nvm` 配下の Node の
 メジャーを、版・サイズ・削除できるかと一緒に返す。`DELETE /env/jdk/{major}` / `DELETE /env/node/{major}` は
-home ボリュームのツリーだけを消す（`toolchain_uninstall.go`）。代わりの無い選択中のメジャーと、インストール中の
-メジャーは拒否する。判定と隠し名 `.removing-*` への改名はインストーラのロック内、削除はロック外で行い、残骸は
-次の一覧取得で掃除する。
+home ボリュームのツリーだけを消す（`toolchain_uninstall.go`）。選択中のメジャー（厳密な `22.23.4` も 22 とみなす）は、
+`bin/java` が動く独立した `/usr/lib/jvm` のコピーが残る場合を除いて拒否する。インストール中も拒否し、端末から
+起動したものも含む（install-jdk / install-node はインストールの間ずっと置き場の flock を持つ）。判定と
+`<root>/.agent-fleet-trash` への改名は、その flock・インストーラの mutex・選択の PUT と共有するロック（PUT は
+`toolchains.json` を原子的に書き換えるようにした）の内側で行い、削除は外側で行う。掃除するのはごみ箱ディレクトリだけ。
 
 ## 9.5 aws ターゲット
 
