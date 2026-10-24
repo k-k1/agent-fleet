@@ -9,8 +9,8 @@ English | [日本語](03-starting-sessions.ja.md)
 
 A session bundles one job you delegate to the AI into a single unit: its **conversation,
 working location, and execution state**. It is separate from whether a terminal
-exists: most kinds also run as sessions under managed execution, without a black screen, and
-lcpp / muse run no other way (which kind supports what: [Agents — what each kind can do](../ref/agents.md)). In the left pane, sessions
+exists: most kinds also run as sessions under managed execution, without a black screen (which kind
+supports what: [Agents — what each kind can do](../ref/agents.md)). In the left pane, sessions
 appear under the **repository** that matches their working location; those that don't belong to
 a repository appear under **Other sessions**. You can have multiple sessions in parallel, each
 with its own independent conversation and working folder.
@@ -277,12 +277,9 @@ is described under [Icons, badges, and menus](badges-and-menus.md#session-displa
 ## Changing the title and branch name
 
 Both are in the session's ⋯ menu (or right-click). The same menu also has **"Menu of repository
-{name}"**, which jumps to the left pane and opens the menu of the repository the session belongs to,
-so commit, switch branch and the like are one step away from a session you are looking at. It is not
-shown for sessions without a repository, on a phone, or while the workspace is stopped; when the
-left pane is hiding that repository (a search or the active working set), a notice says so instead.
-All menu items: [Icons, badges, and menus](badges-and-menus.md#right-click-menus).
-
+{name}"**, which opens the menu of the session's repository in the left pane, so commit, switch
+branch and the like are one step away from a session you are looking at. The conditions for showing it are under
+[Icons, badges, and menus](badges-and-menus.md#sessions).
 
 - **Rename**: changes the identifying name in the list. Saving it empty reverts to the automatic name (repository name + timestamp). **"Ask AI to suggest"** has a name proposed from the conversation contents. A session started from an issue keeps the issue's key (`#1146`, `PROJ-123`) at the front; adopt it with "Use this".
 - **Rename the branch**: appears only for sessions running in a worktree. Renames that worktree's branch (the folder, that is the session, stays as is). Buttons let you swap the prefix for one of the repository's branch naming rules (`feature/` `fix/` `hotfix/` … by default), and **"Ask AI to suggest"** proposes a branch name from the conversation, composed by the same rules. A session started from an issue keeps the issue's number in it. A name outside the rules only gets a note. Use it to give a meaningful name later to a session started under a provisional name (`temp/…`).

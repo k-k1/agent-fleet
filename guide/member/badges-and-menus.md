@@ -122,9 +122,13 @@ connection. Not this deployment's engine."** together with the model the last ch
 ## Other badges
 
 - **The AWS and Google Cloud badges** in the WS bar (the AWS mark, the Google mark): your Settings profiles'
-  logins, shown only while the workspace runs and you have such profiles. Green means something is logged in;
-  the AWS badge turns amber when a login ends soon. What each badge shows, and its Log in / Log out buttons:
-  [16 Cloud accounts](16-cloud-accounts.md#the-google-cloud-badge-in-the-ws-bar).
+  logins, shown only while the workspace runs and you have such profiles. The badge names the one logged-in
+  profile, or counts them ("1/3"); green when something is logged in, plain when nothing is, amber when an AWS
+  login ends soon. Press it for each profile's state and its **Log in** button (AWS: **Log out** too). Neither badge
+  picks a default profile: each command names one. An AWS profile that assumes a role from another has no
+  login of its own, so the count leaves it out ([16](16-cloud-accounts.md#profile-type-assume-a-role-from-another-profile)).
+  The Google Cloud badge (amber while an agent waits for a login, **Log in again** and **Log out**) is described in
+  [16](16-cloud-accounts.md#the-google-cloud-badge-in-the-ws-bar).
 - **Restart needed**, beside the workspace power button in the WS bar: the workspace is still running the
   pre-update backend. Clicking it offers **Restart now**, which stops running sessions (resumable); it goes away
   once the workspace is current ([01](01-first-day.md#a-new-version-is-available-and-the-restart-needed-badge)).
