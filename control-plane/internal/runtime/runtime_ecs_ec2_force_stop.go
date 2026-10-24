@@ -26,6 +26,17 @@ const slotVolumeCommandComment = "agent-fleet slot volume"
 // enough that a box that will never answer ACPI does not sit in `stopping` for the hour.
 const slotForceStopGrace = 3 * time.Minute
 
+// The whole force-stop answers inside one request, behind a 60 s idle ingress timeout, and
+// every AWS call in it (health, occupant stop, SSM listing, the ENI wait, the stop) adds to
+// the clock. So there is one wall-clock budget for the call, a deadline for the ENI stage
+// that leaves forceStopStopReserve for the stop and the reply, and no stage may outlive
+// them. They are variables only so a test can shorten them.
+var (
+	forceStopBudget      = 50 * time.Second
+	forceStopENIBudget   = 30 * time.Second
+	forceStopStopReserve = 10 * time.Second
+)
+
 // Refusals ForceStopSlot adds to the ones TerminateQuarantinedSlot exports.
 var (
 	// ErrSlotHealthy: both agents answer, so this is not a wedged slot and a workspace may
@@ -63,6 +74,9 @@ type SlotForceStop struct {
 	// background re-stop with Force, 0 when none is pending.
 	Forced        bool `json:"forced"`
 	ForceAfterSec int  `json:"force_after_sec"`
+	// Deregistered: the slot held a task ENI, so its container instance was force-deregistered
+	// and the ENI waited out before the stop.
+	Deregistered bool `json:"deregistered,omitempty"`
 	// StoppingTask is the ECS status of a task that is still STOPPING on the slot ("" = none).
 	StoppingTask string `json:"stopping_task,omitempty"`
 }
@@ -82,7 +96,13 @@ type SlotForceStop struct {
 //  3. Cancel the CP's own pending SSM commands (slotVolumeCommandComment). A queued umount
 //     or mount holds the home's mount lock for as long as the command lives and no agent
 //     will ever finish it; cancelling is what lets the lock holder see it end.
-//  4. StopInstances. Graceful first, because a wedged box may still have the home mounted
+//  4. When a task ENI is still attached (the agent is gone, so ECS never cleans it up),
+//     force-deregister the container instance and wait up to 30 s for the ENI to go
+//     (releaseSlotTaskENI). Not released: refuse with ErrSlotTaskENIHeld and leave the
+//     box running, because a box stopped with a task ENI comes back multi-ENI and, on a
+//     public subnet, without egress (ADR 0045 decision 3-3). The operator presses again.
+//  5. StopInstances (with the deregistration, under the occupant's Start fence: a Start
+//     accepted after step 2 makes both give up with ErrSlotStartedAgain). Graceful first, because a wedged box may still have the home mounted
 //     and Force is a power cut with no unmount; a background re-stop with Force follows
 //     after slotForceStopGrace if the same stop has not finished. A slot already
 //     `stopping` (the operator pressing again) is forced at once.
@@ -91,9 +111,16 @@ type SlotForceStop struct {
 // this same slot through the ordinary path (the home is attached, the instance is stopped).
 // The reboot clears whatever thrashed, and the slot's ECS agent reconnects and reports a
 // task still STOPPING on it (#2447). Keeping a box as evidence is quarantine's job, and
-// routing dark slots there is #2450. The ECS container instance is not deregistered.
+// routing dark slots there is #2450. The container instance is deregistered only for the
+// task ENI (step 4), and the agent registers it again when the box restarts.
 func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, overrideHealthy bool) (SlotForceStop, error) {
 	res := SlotForceStop{InstanceID: instanceID}
+	// bgCtx is what the background re-stop gets: the request's own, not the budgeted one,
+	// which is cancelled when this call returns.
+	bgCtx := ctx
+	started := time.Now()
+	ctx, cancelBudget := context.WithTimeout(ctx, forceStopBudget)
+	defer cancelBudget()
 	cmds, ok := f.ssmc.(ssmSlotCommands)
 	if !ok {
 		return res, errors.New("the SSM client cannot list or cancel commands")
@@ -168,29 +195,65 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 	}
 	log.Printf("ecs-ec2: FORCE-STOPPING slot %s (state %s, ecs agent=%v, ssm online=%v, healthy override=%v, occupant %q)",
 		instanceID, res.PreviousState, res.AgentConnected, res.SSMOnline, res.OverrodeHealthy, res.Workspace)
+	// owned runs the destructive calls (deregister, stop) only while no Start has been
+	// accepted since the occupant's was ended, with the check and the call under the same
+	// lock a Start's count bump takes. Nobody to fence (a slot without a home) runs them
+	// as they are.
+	owned := func(c context.Context, fn func(context.Context)) bool { fn(c); return true }
 	if occupant != nil {
-		if err := occupant.Stop(ctx); err != nil {
+		gen, err := occupant.stopCounted(ctx)
+		if err != nil {
 			// Nothing destructive has happened yet, so failing here leaves the slot as it was.
 			return res, fmt.Errorf("end the start of %s before stopping its slot: %w", res.Workspace, err)
+		}
+		owned = func(c context.Context, fn func(context.Context)) bool {
+			return occupant.ifOwnedStrict(c, ec2Placement{gen: gen}, fn)
 		}
 	}
 
 	// 3. the CP's own pending commands.
 	res.CancelledCommands, res.CancelFailed = cancelSlotVolumeCommands(ctx, cmds, instanceID)
 
-	// 4. stop.
+	// 4. the task ENI.
+	eniDeadline := started.Add(forceStopENIBudget)
+	if limit := started.Add(forceStopBudget - forceStopStopReserve); limit.Before(eniDeadline) {
+		eniDeadline = limit
+	}
+	eniCtx, cancelENI := context.WithDeadline(ctx, eniDeadline)
+	defer cancelENI()
+	var eniErr error
+	if res.Deregistered, eniErr = probe.releaseSlotTaskENI(eniCtx, instanceID, slotENIReleasePolls, owned); eniErr != nil {
+		if errors.Is(eniErr, ErrSlotStartedAgain) {
+			return res, eniErr
+		}
+		if !errors.Is(eniErr, ErrSlotTaskENIHeld) && ctx.Err() == nil && eniCtx.Err() != nil {
+			// Only the ENI stage's own deadline ran out: an answer, not a fault.
+			eniErr = fmt.Errorf("%w: gave up at the time limit of this request", ErrSlotTaskENIHeld)
+		}
+		return res, fmt.Errorf("not stopping %s: %w (its commands are already cancelled and the occupant's start is ended)", instanceID, eniErr)
+	}
+
+	// 5. stop.
 	res.Forced = inst.State.Name == ec2types.InstanceStateNameStopping
-	if _, err := f.ec2.StopInstances(ctx, &ec2.StopInstancesInput{
-		InstanceIds: []string{instanceID}, Force: aws.Bool(res.Forced),
-	}); err != nil {
-		return res, fmt.Errorf("stop %s (its commands are already cancelled): %w", instanceID, err)
+	var stopErr error
+	if !owned(ctx, func(c context.Context) {
+		_, stopErr = f.ec2.StopInstances(c, &ec2.StopInstancesInput{
+			InstanceIds: []string{instanceID}, Force: aws.Bool(res.Forced),
+		})
+	}) {
+		return res, ErrSlotStartedAgain
+	}
+	if stopErr != nil {
+		return res, fmt.Errorf("stop %s (its commands are already cancelled): %w", instanceID, stopErr)
 	}
 	if !res.Forced {
 		res.ForceAfterSec = int(slotForceStopGrace.Seconds())
 		launched := aws.ToTime(inst.LaunchTime)
-		probe.bg(ctx, func(c context.Context) { probe.forceStopAfterGrace(c, instanceID, launched) })
+		probe.bg(bgCtx, func(c context.Context) { probe.forceStopAfterGrace(c, instanceID, launched) })
 	}
-	res.StoppingTask, _ = probe.stoppingTaskOn(ctx, instanceID)
+	infoCtx, cancelInfo := context.WithTimeout(ctx, 3*time.Second)
+	res.StoppingTask, _ = probe.stoppingTaskOn(infoCtx, instanceID)
+	cancelInfo()
 	log.Printf("ecs-ec2: force-stop of slot %s sent (forced=%v, cancelled %d commands, %d failed, stopping task %q)",
 		instanceID, res.Forced, res.CancelledCommands, res.CancelFailed, res.StoppingTask)
 	return res, nil
