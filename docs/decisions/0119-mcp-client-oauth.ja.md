@@ -261,7 +261,7 @@ CP は、サインインの開始・完了・失敗・切断について `mcp.cl
 
 - 2026-10-24、P5 を実装：テナントが事前登録したクライアント（決定 9）。public でも confidential でもよい。管理者は配布する
   OAuth の定義に、クライアント ID と登録先の issuer、任意でシークレットを入れる（`mcp_server` の `oauth_issuer`・
-  `oauth_client_id`・`oauth_secret_enc` / `oauth_key_ref`。ヘッダーと同じく封をする）。決定では決めきれていなかったこと：
+  `oauth_client_id`・`oauth_secret_enc` / `oauth_key_ref`、sqlite 0110・pg 0095。ヘッダーと同じく封をする）。決定では決めきれていなかったこと：
   - **順序。** テナントのクライアントは事前登録クライアントの先頭で、メンバーが入力したものより先。サインインが選んだ AS が
     その issuer のときだけ使い、別の AS なら順序を進める（CIMD、DCR）。Console は経路を「テナントが登録したクライアント」
     （`registration: tenant`）と表示する。
