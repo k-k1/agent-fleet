@@ -367,14 +367,18 @@ tested with fixture lines and files.
   and a rename: the allow file (dstdomain entries, reduced to the minimal sorted set, because
   Squid warns about an entry another one covers and the defaults have such pairs) and a mode
   include holding the `ssl_bump` and `http_access` lines for log-only or enforce. It reloads
-  Squid only when a file's bytes changed. An unreachable CP, a non-200 answer or an empty
+  Squid when a file's bytes changed, and once at start, since a previous run may have written
+  the files without a reload that worked. An unreachable CP, a non-200 answer or an empty
   allowlist leaves the files as they are.
-- **Log.** The agent owns Squid's `logformat` (`af1`, documented in the package): time in ms,
-  source and server address, Squid's status and bump mode, and the SNI and request domain,
-  URL-encoded so a hostile SNI cannot add fields. Each line is one event. Its id is the file's
-  identity (a hash of its first line, not the inode: a new file can reuse a rotated file's inode,
-  and the CP would drop its events as duplicates) plus the line's byte offset. The offset is
-  committed only after a 2xx. A line whose tail is damaged is still sent with its time and source
+- **Log.** The agent owns Squid's `logformat` (`af1`, documented in the package): the time the
+  connection started (`%tS`, not the time the line was written: a tunnel is logged when it
+  closes, possibly after the workspace released its address), source and server address,
+  Squid's status and bump mode, and the SNI and request domain, URL-encoded so a hostile SNI
+  cannot add fields. Each line is one event. Its id is the file's identity plus the line's byte
+  offset. The identity is the gateway (the host's machine id, so two gateways never share an id
+  and a restart keeps it), the inode and a hash of the first line: the inode alone can be reused
+  by a new file, and the first line alone can repeat, and either would make the CP drop real
+  events as duplicates. The offset is committed only after a 2xx. A line whose tail is damaged is still sent with its time and source
   and no name. Rotation must be Squid's own (`logfile_rotate` >= 1); `copytruncate` is not
   supported.
 - **Verdict.** `allowed` is the policy's verdict on the name, and false when Squid denied or

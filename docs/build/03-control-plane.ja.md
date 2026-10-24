@@ -266,8 +266,8 @@ Workspace を起こさない。
   どのモードでも拒否する。
 - **egress-agent サブコマンド** — `control-plane egress-agent` は ADR
   [0122](../decisions/0122-egress-gateway.ja.md) の egress ゲートウェイ上の小さなエージェント（決定 4、
-  `internal/egressagent`）。policy から Squid の許可ファイルとモードの include を書き、変わったときだけ
-  Squid を再読込する。Squid のログは保存したファイルオフセットから ingest へ送る。1 行が 1 イベントで、
+  `internal/egressagent`）。policy から Squid の許可ファイルとモードの include を書き、変わったとき
+  （と起動時に 1 回）Squid を再読込する。Squid のログは保存したファイルオフセットから ingest へ送る。1 行が 1 イベントで、
   `id` は行の位置。前提にする Squid の設定行とログ形式はパッケージの doc にある。
 - **policy 配布** — `GET /internal/egress/policy` が実効の許可リストとモードを proxy とゲートウェイの
   エージェントへ返す。

@@ -58,7 +58,20 @@ func TestParseLine(t *testing.T) {
 			want: logLine{at: 1761300000000, source: "10.0.1.5", dest: "203.0.113.9", denied: true},
 		},
 		{name: "another format", line: "1761300000.000 10.0.1.5 TCP_TUNNEL/200 0 CONNECT x:443", ok: false},
+		{
+			name: "fraction shorter or longer than milliseconds",
+			line: "af1 1761300000.5 10.0.1.5 - TCP_TUNNEL splice x.example -",
+			ok:   true,
+			want: logLine{at: 1761300000500, source: "10.0.1.5", host: "x.example"},
+		},
+		{
+			name: "microseconds are cut to milliseconds",
+			line: "af1 1761300000.123456 10.0.1.5 - TCP_TUNNEL splice x.example -",
+			ok:   true,
+			want: logLine{at: 1761300000123, source: "10.0.1.5", host: "x.example"},
+		},
 		{name: "bad time", line: "af1 1761300000 10.0.1.5 - TCP_TUNNEL splice x -", ok: false},
+		{name: "signed fraction", line: "af1 1761300000.-12 10.0.1.5 - TCP_TUNNEL splice x -", ok: false},
 		{name: "bad source", line: "af1 1761300000.000 - - TCP_TUNNEL splice x -", ok: false},
 		{name: "empty", line: "", ok: false},
 	}

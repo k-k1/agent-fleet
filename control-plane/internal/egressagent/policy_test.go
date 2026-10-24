@@ -71,7 +71,7 @@ func newPolicyFixture(t *testing.T, cp *fakeCP) (*policySync, func() int) {
 		b, _ := os.ReadFile(reloads)
 		return strings.Count(string(b), "r")
 	}
-	return &policySync{cfg: cfg}, count
+	return newPolicySync(cfg), count
 }
 
 func TestPolicySyncWritesAndReloadsOnlyOnChange(t *testing.T) {
@@ -115,17 +115,40 @@ func TestPolicySyncWritesAndReloadsOnlyOnChange(t *testing.T) {
 		t.Fatalf("allowlist change: %d reloads", reloads())
 	}
 
-	// A restart reads the same files back and does not reload for nothing.
-	s2 := &policySync{cfg: s.cfg}
+	// A restart reads the same files back and reloads once, because it cannot know whether
+	// the previous run's reload happened; after that, no reload for nothing.
+	s2 := newPolicySync(s.cfg)
 	s2.loadFromDisk()
 	if snap := s2.cur.Load(); snap == nil || !snap.enforce || !snap.match.Allows("a.example.org") {
 		t.Fatalf("loadFromDisk snapshot = %+v", snap)
 	}
-	if err := s2.sync(ctx); err != nil {
+	for i := 0; i < 2; i++ {
+		if err := s2.sync(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if reloads() != 4 {
+		t.Fatalf("restart: %d reloads, want 4", reloads())
+	}
+}
+
+func TestPolicyRestartAfterFailedReloadReloads(t *testing.T) {
+	// The files were written and the reload failed, then the agent restarted: the files
+	// already match the CP, but Squid still runs the old policy.
+	cp := &fakeCP{allowlist: []string{"github.com"}, enforce: true}
+	s, reloads := newPolicyFixture(t, cp)
+	good := s.cfg.ReloadCmd
+	s.cfg.ReloadCmd = []string{"false"}
+	if err := s.sync(context.Background()); err == nil {
+		t.Fatal("a failed reload must report an error")
+	}
+	s.cfg.ReloadCmd = good
+	restarted := newPolicySync(s.cfg)
+	if err := restarted.sync(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if reloads() != 3 {
-		t.Fatalf("restart with the same policy reloaded Squid (%d reloads)", reloads())
+	if reloads() != 1 {
+		t.Fatalf("after the restart Squid was reloaded %d times, want 1", reloads())
 	}
 }
 
@@ -137,6 +160,9 @@ func TestPolicySyncKeepsLastWorkingPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := os.ReadFile(s.cfg.AllowFile)
+	if reloads() != 1 {
+		t.Fatalf("%d reloads after the first sync", reloads())
+	}
 
 	for _, breakIt := range []func(*fakeCP){
 		func(f *fakeCP) { f.status = http.StatusServiceUnavailable },

@@ -3,8 +3,9 @@
 //
 //   - Policy. It polls GET /internal/egress/policy and writes what Squid reads: the allow
 //     file (one dstdomain entry per line) and the mode include (log-only or enforce). It
-//     reloads Squid only when a file's bytes changed. When the CP is unreachable the files
-//     on disk stay as they are, so Squid keeps the last policy that worked.
+//     reloads Squid when a file's bytes changed. When the CP is unreachable the files
+//     on disk stay as they are, so Squid keeps the last policy that worked. It also reloads
+//     once at start: a previous run may have written the files and died before its reload.
 //   - Log. It reads Squid's access log from a stored offset and POSTs each line to
 //     /internal/egress as one event. The event id is the line's position (file identity
 //     and byte offset), so a resend is stored once by the CP, and the offset is committed
@@ -22,7 +23,7 @@
 //	acl af_allowed_sni ssl::server_name "/etc/squid/af-allow.txt"
 //	acl af_step1 at_step SslBump1
 //	include /etc/squid/af-mode.conf
-//	logformat af_egress af1 %ts.%03tu %>a %<a %Ss %ssl::bump_mode %#ssl::>sni %#>rd
+//	logformat af_egress af1 %tS %>a %<a %Ss %ssl::bump_mode %#ssl::>sni %#>rd
 //	access_log stdio:/var/log/squid/af-egress.log af_egress
 //	logfile_rotate 10
 //
@@ -32,7 +33,10 @@
 // The log format, field by field (Squid writes "-" for a value it does not have):
 //
 //	af1               format version; a line with any other first field is not ours
-//	%ts.%03tu         time, seconds.milliseconds
+//	%tS               when the connection started, seconds.milliseconds. Not %ts, which
+//	                  is when the line was written: a tunnel is logged when it closes,
+//	                  possibly after the workspace released its address, and attribution
+//	                  joins on the time the workspace held it.
 //	%>a               client (workspace) address: the source attribution joins on
 //	%<a               address of the server Squid connected to
 //	%Ss               Squid's request status, e.g. TCP_TUNNEL, TCP_DENIED

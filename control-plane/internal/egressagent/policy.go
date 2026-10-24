@@ -90,8 +90,14 @@ type policySync struct {
 	cfg *Config
 	cur atomic.Pointer[snapshot]
 	// reloadOwed is set when a reload failed, so the next poll retries it even though the
-	// files on disk already match the policy.
+	// files on disk already match the policy. newPolicySync starts with it set: a previous
+	// run may have written the files and died, or failed to reload, before Squid read
+	// them, and only a reload proves Squid has what the files say.
 	reloadOwed bool
+}
+
+func newPolicySync(cfg *Config) *policySync {
+	return &policySync{cfg: cfg, reloadOwed: true}
 }
 
 // loadFromDisk seeds the snapshot from the files a previous run wrote, so the shipper can

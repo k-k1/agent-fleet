@@ -347,7 +347,7 @@ The design and the staged rollout — log-only → allowlist → enforce — are
 - **An egress-agent subcommand** — `control-plane egress-agent` is the small agent on the
   egress gateway of ADR [0122](../decisions/0122-egress-gateway.md) (decision 4,
   `internal/egressagent`). It writes Squid's allow file and mode include from the policy
-  and reloads Squid only on a change, and ships Squid's log to ingest from a stored file
+  and reloads Squid on a change (and once at start), and ships Squid's log to ingest from a stored file
   offset, one event per line with the line's position as its `id`. The Squid lines it
   expects and its log format are in the package doc.
 - **Policy distribution** — `GET /internal/egress/policy` returns the effective

@@ -9,7 +9,7 @@ import (
 
 // LogFormat is the Squid logformat the parser reads (see the package doc). Changing it
 // means a new version token, because a running agent must recognise old lines too.
-const LogFormat = "af1 %ts.%03tu %>a %<a %Ss %ssl::bump_mode %#ssl::>sni %#>rd"
+const LogFormat = "af1 %tS %>a %<a %Ss %ssl::bump_mode %#ssl::>sni %#>rd"
 
 const formatVersion = "af1"
 
@@ -72,18 +72,20 @@ func parseLine(s string) (logLine, bool) {
 	return l, true
 }
 
-// parseSquidTime reads "%ts.%03tu" (seconds, a dot, milliseconds) as unix milliseconds.
+// parseSquidTime reads "%tS" (seconds, a dot, a fraction; Squid prints milliseconds) as
+// unix milliseconds. Digits past the third are dropped.
 func parseSquidTime(s string) (int64, bool) {
-	sec, ms, ok := strings.Cut(s, ".")
-	if !ok || len(ms) != 3 {
+	sec, frac, ok := strings.Cut(s, ".")
+	if !ok || frac == "" || len(frac) > 9 {
 		return 0, false
 	}
 	a, err1 := strconv.ParseInt(sec, 10, 64)
-	b, err2 := strconv.ParseInt(ms, 10, 64)
-	if err1 != nil || err2 != nil || a <= 0 || b < 0 {
+	_, err2 := strconv.ParseUint(frac, 10, 64)
+	if err1 != nil || err2 != nil || a <= 0 {
 		return 0, false
 	}
-	return a*1000 + b, true
+	ms, _ := strconv.ParseInt((frac + "00")[:3], 10, 64)
+	return a*1000 + ms, true
 }
 
 // hostOf picks the name the connection claimed: the SNI, else the request domain when it

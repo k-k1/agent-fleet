@@ -19,7 +19,8 @@ import (
 // ingestCP records every accepted event and can refuse requests.
 type ingestCP struct {
 	mu       sync.Mutex
-	fail     int // refuse this many requests, then accept
+	fail     int    // refuse this many requests, then accept
+	onPost   func() // runs inside each request, before it is answered
 	requests int
 	maxBody  int
 	got      []Event
@@ -29,6 +30,9 @@ func (c *ingestCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.requests++
+	if c.onPost != nil {
+		c.onPost()
+	}
 	if r.Header.Get("Authorization") != "Bearer tok" {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -93,7 +97,7 @@ func newShipFixture(t *testing.T) *shipFixture {
 	srv := httptest.NewServer(cp)
 	t.Cleanup(srv.Close)
 	cfg := &Config{
-		IngestURL: srv.URL, Token: "tok", Client: srv.Client(),
+		IngestURL: srv.URL, Token: "tok", Client: srv.Client(), GatewayID: "gw1",
 		LogPath: filepath.Join(dir, "af-egress.log"), StatePath: filepath.Join(dir, "state.json"),
 	}
 	pol := &policySync{cfg: cfg}
@@ -354,5 +358,74 @@ func TestShipWaitsForAPolicy(t *testing.T) {
 	}
 	if f.cp.requests != 0 {
 		t.Fatal("shipped without a policy: every verdict would read not allowed")
+	}
+}
+
+func TestShipLineCompletedDuringPost(t *testing.T) {
+	// The pass reads A and the start of B, hits EOF, and POSTs A. While that POST is in
+	// flight Squid finishes B and writes C. B and C must arrive whole, with their own
+	// offsets as ids.
+	f := newShipFixture(t)
+	a, b, c := line(1, "10.0.1.5", "a.github.com"), line(2, "10.0.1.5", "b.github.com"), line(3, "10.0.1.5", "c.github.com")
+	appendFile(t, f.log, a+b[:15])
+	once := sync.Once{}
+	f.cp.onPost = func() { once.Do(func() { appendFile(t, f.log, b[15:]+c) }) }
+	if err := f.sh.pass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.sh.pass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.cp.got) != 3 {
+		t.Fatalf("got %d events, want 3: %+v", len(f.cp.got), f.cp.got)
+	}
+	prefix := strings.TrimSuffix(f.cp.got[0].ID, "@0")
+	for i, want := range []struct {
+		host string
+		off  int
+	}{{"a.github.com", 0}, {"b.github.com", len(a)}, {"c.github.com", len(a) + len(b)}} {
+		if e := f.cp.got[i]; e.Host != want.host || e.ID != fmt.Sprintf("%s@%d", prefix, want.off) {
+			t.Fatalf("event %d = %+v, want host %s at offset %d", i, e, want.host, want.off)
+		}
+	}
+}
+
+func TestShipSameFirstLineInTwoFilesGetsDistinctIDs(t *testing.T) {
+	// Two connections that started in the same millisecond can be the first lines of the
+	// rotated file and the new one. Both files' lines must all arrive, under distinct ids.
+	f := newShipFixture(t)
+	ctx := context.Background()
+	first := line(1, "10.0.1.5", "a.github.com")
+	appendFile(t, f.log, first+line(2, "10.0.1.5", "b.github.com"))
+	if err := f.sh.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(f.log, f.log+".0"); err != nil {
+		t.Fatal(err)
+	}
+	appendFile(t, f.log, first+line(3, "10.0.1.5", "c.github.com"))
+	if err := f.sh.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ids, n := f.cp.ids()
+	if len(ids) != 4 || n != 4 {
+		t.Fatalf("%d ids over %d events, want 4 and 4: %v", len(ids), n, ids)
+	}
+}
+
+func TestShipGatewaysNeverShareIDs(t *testing.T) {
+	// The same bytes in a file with the same inode, read by two gateways, must not collide.
+	f := newShipFixture(t)
+	appendFile(t, f.log, line(1, "10.0.1.5", "a.github.com"))
+	for _, gw := range []string{"gw1", "gw2"} {
+		f.sh.cfg.GatewayID = gw
+		_ = os.Remove(f.sh.cfg.StatePath)
+		f.restart(t)
+		if err := f.sh.pass(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ids, n := f.cp.ids(); len(ids) != 2 || n != 2 {
+		t.Fatalf("two gateways produced %d distinct ids over %d events, want 2: %v", len(ids), n, ids)
 	}
 }

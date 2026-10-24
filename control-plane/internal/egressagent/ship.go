@@ -95,12 +95,14 @@ func logFiles(path string) []string {
 	return append(out, path)
 }
 
-// fileIdent identifies a log file by a hash of its first line: it survives a rename, and a
-// new file never shares it with an old one (the first line starts with a millisecond
-// time). An inode is not used, because a new file can reuse a rotated one's inode and
-// would then reuse its ids, which the CP drops as duplicates. "" means the file has no
-// complete first line yet and is not read.
-func fileIdent(f *os.File) (string, error) {
+// fileIdent identifies a log file by the gateway, its inode and a hash of its first line.
+// All three survive a rename and a restart. The inode alone is not enough: a new file can
+// reuse a deleted one's inode and would then reuse its ids, which the CP drops as
+// duplicates. The first line alone is not enough either: two connections that started in
+// the same millisecond from the same source to the same name can be the first lines of
+// two files, and two gateways can write the same line. "" means the file has no complete
+// first line yet and is not read.
+func fileIdent(f *os.File, gateway string) (string, error) {
 	buf := make([]byte, identPrefix)
 	n, err := f.ReadAt(buf, 0)
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -112,8 +114,12 @@ func fileIdent(f *os.File) (string, error) {
 	} else if n < identPrefix {
 		return "", nil
 	}
+	fi, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
 	sum := sha256.Sum256(buf)
-	return hex.EncodeToString(sum[:8]), nil
+	return gateway + "." + strconv.FormatUint(inode(fi), 36) + "." + hex.EncodeToString(sum[:8]), nil
 }
 
 // errShipFailed stops a pass at the first rejected POST; the offset stays where the CP
@@ -163,7 +169,7 @@ func (s *shipper) shipFile(ctx context.Context, path string, snap *snapshot) (st
 		return "", err
 	}
 	defer f.Close()
-	id, err := fileIdent(f)
+	id, err := fileIdent(f, s.cfg.GatewayID)
 	if err != nil || id == "" {
 		return id, err
 	}
@@ -176,11 +182,15 @@ func (s *shipper) shipFile(ctx context.Context, path string, snap *snapshot) (st
 		log.Printf("egress-agent: %s is shorter than its committed offset (%d > %d): truncated in place? reading it again from the start", path, off, fi.Size())
 		off = 0
 	}
-	if _, err := f.Seek(off, io.SeekStart); err != nil {
-		return id, err
-	}
 	r := bufio.NewReaderSize(f, 64<<10)
 	for {
+		// Every batch starts from a fresh reader at the committed offset: a reader that hit
+		// EOF inside a line has already consumed that line's first bytes, and reusing it
+		// after Squid finished the line would split it and shift every later id.
+		if _, err := f.Seek(off, io.SeekStart); err != nil {
+			return id, err
+		}
+		r.Reset(f)
 		batch, next, err := readBatch(r, id, off, snap)
 		if err != nil {
 			return id, err
