@@ -77,6 +77,9 @@ func TestValidateMCPBodyRules(t *testing.T) {
 		{"unknown kind", mcpServerBody{Name: "x", URL: "https://x/y", Kinds: []string{"emacs"}}, codeMCPKindUnknown},
 		{"timeout", mcpServerBody{Name: "x", URL: "https://x/y", TimeoutMS: 10}, codeMCPTimeoutRange},
 		{"transport", mcpServerBody{Name: "x", Transport: "sse", URL: "https://x/y"}, codeMCPTransport},
+		{"oauth headers", mcpServerBody{Name: "x", URL: "https://x/y", Auth: "oauth", Headers: map[string]string{"Authorization": "***"}}, codeMCPOAuthHeader},
+		{"oauth user_secret", mcpServerBody{Name: "x", URL: "https://x/y", Auth: "oauth", UserSecret: true}, codeMCPOAuthSecret},
+		{"auth unknown", mcpServerBody{Name: "x", URL: "https://x/y", Auth: "kerberos"}, codeMCPAuthUnknown},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -275,7 +278,7 @@ func TestMCPServerStoreRoundTripsFlags(t *testing.T) {
 	row := store.MCPServerRow{
 		ID: "s1", TenantID: "t", Name: "wiki", Transport: "http", URL: "https://wiki/mcp",
 		Targets: "session", Kinds: "claude,codex", TimeoutMS: 30000,
-		Enabled: false, UserSecret: true, CreatedBy: "admin@example.com",
+		Enabled: false, UserSecret: true, Auth: "oauth", CreatedBy: "admin@example.com",
 		CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := a.store.CreateMCPServer(ctx, row); err != nil {
@@ -290,7 +293,7 @@ func TestMCPServerStoreRoundTripsFlags(t *testing.T) {
 	if got.Enabled || !got.UserSecret {
 		t.Fatalf("bool columns round-tripped wrong: enabled=%v user_secret=%v", got.Enabled, got.UserSecret)
 	}
-	if got.TimeoutMS != 30000 || got.Kinds != "claude,codex" || got.CreatedBy != "admin@example.com" {
+	if got.TimeoutMS != 30000 || got.Kinds != "claude,codex" || got.CreatedBy != "admin@example.com" || got.Auth != "oauth" {
 		t.Fatalf("row round-tripped wrong: %+v", got)
 	}
 }
@@ -436,5 +439,62 @@ func TestMcpKnownKindsMirrorConsole(t *testing.T) {
 		if mcpKnownKinds[e.Kind] != inConsole {
 			t.Errorf("%q: CP accepts=%v, Console MCP_KINDS lists=%v", e.Kind, mcpKnownKinds[e.Kind], inConsole)
 		}
+	}
+}
+
+// Switching a distributed definition to OAuth discards the header values stored for it, the
+// same rule as user_secret: nothing reads them any more, so they must not stay in the table.
+// The row is then distributed as auth=oauth with no headers.
+func TestAdminUpsertToOAuthDropsStoredHeaders(t *testing.T) {
+	a, ctx := newMCPServerAPITest(t, true)
+	tn := store.Tenant{ID: "tenant-a", Slug: "a"}
+	cp := a.cp.(testCP)
+	cp.admin = &tn
+	a = NewServerAPI(cp)
+	upsert := func(method, path, id string, b mcpServerBody) *httptest.ResponseRecorder {
+		b.TenantSlug = tn.Slug
+		raw, _ := json.Marshal(b)
+		r := httptest.NewRequest(method, path, strings.NewReader(string(raw)))
+		r.SetPathValue("id", id)
+		w := httptest.NewRecorder()
+		a.AdminUpsert(w, r)
+		return w
+	}
+	w := upsert(http.MethodPost, "/api/admin/mcp-servers", "", mcpServerBody{Name: "hosted", URL: "https://m.example.com/mcp",
+		Headers: map[string]string{"Authorization": "Bearer tenant-wide"}, Targets: mcpTargets{Session: true}, Enabled: true})
+	if w.Code != http.StatusOK {
+		t.Fatalf("create: %d %s", w.Code, w.Body)
+	}
+	var created mcpServerBody
+	_ = json.Unmarshal(w.Body.Bytes(), &created)
+
+	// The Console sends the masked header back by mistake: refused, nothing changes.
+	if w := upsert(http.MethodPut, "/api/admin/mcp-servers/"+created.ID, created.ID, mcpServerBody{Name: "hosted", URL: "https://m.example.com/mcp",
+		Auth: "oauth", Headers: map[string]string{"Authorization": "Bearer ***"}, Targets: mcpTargets{Session: true}, Enabled: true}); w.Code != http.StatusBadRequest {
+		t.Fatalf("oauth with a header: %d %s", w.Code, w.Body)
+	}
+	if w := upsert(http.MethodPut, "/api/admin/mcp-servers/"+created.ID, created.ID, mcpServerBody{Name: "hosted", URL: "https://m.example.com/mcp",
+		Auth: "oauth", Targets: mcpTargets{Session: true}, Enabled: true}); w.Code != http.StatusOK {
+		t.Fatalf("switch to oauth: %d %s", w.Code, w.Body)
+	}
+	row, ok, err := a.store.GetMCPServer(ctx, tn.ID, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get: %v %v", ok, err)
+	}
+	if row.Auth != "oauth" || row.HeadersEnc != "" || row.KeyRef != "" {
+		t.Fatalf("the stored row still holds headers or lost auth: auth=%q headers_enc=%q", row.Auth, row.HeadersEnc)
+	}
+
+	rec := httptest.NewRecorder()
+	a.Distribute(rec, httptest.NewRequest(http.MethodGet, "/internal/mcp-servers", nil),
+		store.MembershipView{MembershipID: "m1", TenantID: tn.ID})
+	var out struct {
+		Servers []distDef `json:"servers"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Servers) != 1 {
+		t.Fatalf("distribute: %v %s", err, rec.Body)
+	}
+	if d := out.Servers[0]; d.Auth != "oauth" || len(d.Headers) != 0 || d.UserSecret {
+		t.Fatalf("distributed as %+v, want auth=oauth with no headers", d)
 	}
 }

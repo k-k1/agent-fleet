@@ -1,9 +1,8 @@
-// OAuth as the fourth Authentication mode (ADR 0119): it sends no header, marks the
-// definition, and stays out of the tenant form.
+// OAuth as the fourth Authentication mode (ADR 0119): it sends no header and marks the
+// definition, for a member's own server and a tenant-distributed one alike.
 import { describe, expect, it } from "vitest";
 import {
   AUTH_MODES,
-  TENANT_AUTH_MODES,
   authHeaders,
   bodyOf,
   bodyOfTenant,
@@ -12,6 +11,8 @@ import {
   formOf,
   probeOfAnswer,
   switchAuth,
+  tenantFormOf,
+  tenantFormValid,
 } from "./mcpWire.ts";
 import type { McpServer } from "./mcpWire.ts";
 
@@ -21,10 +22,8 @@ const server = (over: Partial<McpServer> = {}): McpServer => ({
 });
 
 describe("OAuth authentication mode", () => {
-  it("is offered to members and not to tenant distribution", () => {
-    expect(AUTH_MODES).toContain("oauth");
-    expect(TENANT_AUTH_MODES).not.toContain("oauth");
-    expect([...TENANT_AUTH_MODES]).toEqual(["none", "bearer", "headers"]);
+  it("is offered", () => {
+    expect([...AUTH_MODES]).toEqual(["none", "bearer", "headers", "oauth"]);
   });
 
   it("sends no headers, even when the rows hold an Authorization", () => {
@@ -55,9 +54,38 @@ describe("OAuth authentication mode", () => {
     expect(authHeaders(f.auth, f.token, f.headers)).toEqual({ Authorization: "Bearer abc" });
   });
 
-  it("never puts auth on a tenant body", () => {
+  it("puts auth on a tenant body only in OAuth mode", () => {
     const f = { ...emptyTenantForm(), name: "t", url: "https://m.example.com/mcp" };
-    expect("auth" in bodyOfTenant(f, "sales")).toBe(false);
+    for (const auth of ["none", "bearer", "headers"] as const) {
+      expect("auth" in bodyOfTenant({ ...f, auth }, "sales")).toBe(false);
+    }
+    expect(bodyOfTenant({ ...f, auth: "oauth" }, "sales").auth).toBe("oauth");
+  });
+
+  // The CP refuses OAuth with user_secret or with a header, so a tenant form that still holds
+  // either from an earlier mode must send neither.
+  it("sends a tenant OAuth body with no header and no user_secret", () => {
+    const f = {
+      ...emptyTenantForm(),
+      name: "t",
+      url: "https://m.example.com/mcp",
+      auth: "oauth" as const,
+      userSecret: true,
+      headers: [{ k: "Authorization", v: "" }],
+    };
+    const body = bodyOfTenant(f, "sales");
+    expect(body.headers).toEqual({});
+    expect(body.user_secret).toBe(false);
+    expect(tenantFormValid(f)).toBe(true);
+  });
+
+  it("opens a distributed OAuth server in OAuth mode", () => {
+    const row = {
+      id: "t1", name: "hosted", transport: "http" as const, url: "https://m.example.com/mcp",
+      targets: { assistant: true, session: true }, enabled: true,
+    };
+    expect(tenantFormOf({ ...row, auth: "oauth" }).auth).toBe("oauth");
+    expect(tenantFormOf(row).auth).toBe("none");
   });
 });
 

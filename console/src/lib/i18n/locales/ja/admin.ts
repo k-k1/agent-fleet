@@ -702,6 +702,9 @@ export const admin = {
   "admin.mcp_save_add": "配布する",
   "admin.mcp_disabled": "無効",
   "admin.mcp_user_secret_badge": "値は各自入力",
+  "admin.mcp_oauth_badge": "各自サインイン",
+  "admin.mcp_oauth_note":
+    "資格情報は配布しません。各メンバーが「設定 > MCP サーバー」から自分のアカウントでサインインし、サインインした人のセッションにだけこのサーバーが届きます。",
   "admin.mcp_secret_policy": "資格情報の扱い",
   "admin.mcp_user_secret": "認証の値は各メンバーが入力する",
   "admin.mcp_headers_hint":

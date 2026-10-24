@@ -61,6 +61,10 @@ type TenantFetchResult struct {
 	Unreadable int   `json:"unreadable,omitempty"`
 	Changed    bool  `json:"changed"`
 	FetchedAt  int64 `json:"fetchedAt"`
+	// EndedOAuth names the OAuth servers whose sign-in this fetch ended: the tenant stopped
+	// distributing them, moved them to another URL or took OAuth off them. A grant belongs to
+	// the URL it was made for, so the caller disconnects these (EndTenantGrants).
+	EndedOAuth []string `json:"-"`
 }
 
 // FetchTenant pulls the tenant set from the CP and updates the cache. It returns an
@@ -96,7 +100,8 @@ func FetchTenant() (TenantFetchResult, error) {
 	kept, dropped := acceptTenant(wire.Servers)
 	res := TenantFetchResult{
 		Servers: len(kept), Dropped: dropped, Unreadable: wire.Unreadable,
-		FetchedAt: time.Now().Unix(),
+		FetchedAt:  time.Now().Unix(),
+		EndedOAuth: endedOAuth(loadTenantCache().Servers, kept),
 	}
 	changed, err := saveTenantCache(kept, res.FetchedAt)
 	if err != nil {
@@ -128,6 +133,26 @@ func acceptTenant(in []ServerDef) (kept []ServerDef, dropped int) {
 		kept = append(kept, d)
 	}
 	return kept, dropped
+}
+
+// endedOAuth lists the OAuth definitions of prev whose sign-in next no longer covers: gone,
+// another URL, or no longer OAuth. Only what the tenant changed counts here; a member's own
+// opt-out keeps the grant, so switching the server back on needs no new sign-in.
+func endedOAuth(prev, next []ServerDef) []string {
+	now := make(map[string]ServerDef, len(next))
+	for _, d := range next {
+		now[d.ID] = d
+	}
+	var out []string
+	for _, p := range prev {
+		if p.Auth != AuthOAuth {
+			continue
+		}
+		if n, ok := now[p.ID]; !ok || n.Auth != AuthOAuth || n.URL != p.URL {
+			out = append(out, p.ID)
+		}
+	}
+	return out
 }
 
 // saveTenantCache writes the cache only when the server set differs from what is already

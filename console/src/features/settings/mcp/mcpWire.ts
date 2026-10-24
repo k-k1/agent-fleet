@@ -152,9 +152,6 @@ export interface KV {
 // headers; OAuth (ADR 0119) sends none, and bodyOf() marks the definition `auth: "oauth"`.
 export type AuthMode = "none" | "bearer" | "headers" | "oauth";
 export const AUTH_MODES: readonly AuthMode[] = ["none", "bearer", "headers", "oauth"];
-// A tenant-distributed definition cannot use OAuth yet (each member would sign in for
-// themselves, ADR 0119 decision 9): the tenant form and the member's secrets form offer these.
-export const TENANT_AUTH_MODES: readonly AuthMode[] = ["none", "bearer", "headers"];
 
 export interface Form {
   id: string; // "" = a new registration
@@ -447,6 +444,8 @@ export interface TenantServer {
   timeoutMs?: number;
   enabled: boolean;
   user_secret?: boolean;
+  // "oauth": each member signs in for themselves (ADR 0119 decision 9); the row has no headers.
+  auth?: "oauth";
   created_by?: string;
   updated_at?: string;
 }
@@ -491,7 +490,7 @@ export const tenantFormOf = (s: TenantServer): TenantForm => ({
   label: s.label || "",
   nameEdited: true,
   url: s.url || "",
-  auth: authOf(toKV(s.headers), !!s.user_secret),
+  auth: s.auth === "oauth" ? "oauth" : authOf(toKV(s.headers), !!s.user_secret),
   token: "",
   headers: toKV(s.headers),
   assistant: !!s.targets?.assistant,
@@ -501,6 +500,10 @@ export const tenantFormOf = (s: TenantServer): TenantForm => ({
   enabled: s.enabled,
   userSecret: !!s.user_secret,
 });
+
+// OAuth distributes no credential, so "each member supplies the value" has nothing to apply to:
+// the form hides the choice and the body never sends it with OAuth (the CP refuses the pair).
+export const tenantUserSecret = (f: TenantForm): boolean => f.userSecret && f.auth !== "oauth";
 
 // bodyOfTenant builds the admin wire body. transport is pinned to "http" rather than
 // taken from the form — see the note above. With userSecret on, only the header NAMES
@@ -513,18 +516,19 @@ export const bodyOfTenant = (f: TenantForm, tenantSlug: string): Record<string, 
   label: f.label.trim(),
   transport: "http",
   url: f.url.trim(),
-  headers: authHeaders(f.auth, f.token, f.headers, f.userSecret),
+  headers: authHeaders(f.auth, f.token, f.headers, tenantUserSecret(f)),
   targets: { assistant: f.assistant, session: f.session },
   kinds: f.kinds,
   timeoutMs: Number(f.timeoutMs) || 0,
   enabled: f.enabled,
-  user_secret: f.userSecret,
+  user_secret: tenantUserSecret(f),
+  ...(f.auth === "oauth" ? { auth: "oauth" } : {}),
 });
 
 export const tenantFormValid = (f: TenantForm): boolean =>
   NAME_RE.test(f.name.trim()) &&
   /^https?:\/\/.+/.test(f.url.trim()) &&
-  (f.userSecret || bearerReady(f.auth, f.token, f.headers));
+  (tenantUserSecret(f) || bearerReady(f.auth, f.token, f.headers));
 
 // NOTE: this file used to export a codexUnsupported() helper, on the premise that
 // codex could carry nothing but a bearer token on a remote MCP server. That premise

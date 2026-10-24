@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
@@ -260,5 +261,58 @@ func TestMaskedKeepsUnsetValuesVisible(t *testing.T) {
 	m := Masked(ServerDef{Headers: map[string]string{"Authorization": "", "X-Team": "sre"}})
 	if m.Headers["Authorization"] != "" || m.Headers["X-Team"] != MaskedValue {
 		t.Fatalf("wrong masking: %+v", m.Headers)
+	}
+}
+
+func TestAcceptTenantKeepsOAuthAndRefusesItWithSecrets(t *testing.T) {
+	oauth := tenantDef("hosted")
+	oauth.Auth = AuthOAuth
+	withHeader := oauth
+	withHeader.ID, withHeader.Name, withHeader.Headers = "t-h", "h", map[string]string{"Authorization": "Bearer x"}
+	withSecret := oauth
+	withSecret.ID, withSecret.Name, withSecret.UserSecret = "t-s", "s", true
+	kept, dropped := acceptTenant([]ServerDef{oauth, withHeader, withSecret})
+	if dropped != 2 || len(kept) != 1 || kept[0].Name != "hosted" || kept[0].Auth != AuthOAuth {
+		t.Fatalf("kept=%+v dropped=%d, want only the plain OAuth definition", kept, dropped)
+	}
+}
+
+// A sign-in ends when the tenant takes the server away, moves it, or takes OAuth off it; a
+// change to anything else (or to a static-header server) ends nothing.
+func TestFetchTenantNamesTheSignInsItEnded(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	def := func(name, url, auth string) ServerDef {
+		d := tenantDef(name)
+		d.URL, d.Auth = url, auth
+		return d
+	}
+	first := []ServerDef{
+		def("gone", "https://gone.example/mcp", AuthOAuth),
+		def("moved", "https://moved.example/mcp", AuthOAuth),
+		def("plain", "https://plain.example/mcp", AuthOAuth),
+		def("same", "https://same.example/mcp", AuthOAuth),
+		def("static", "https://static.example/mcp", ""),
+	}
+	serveTenant(t, map[string]any{"servers": first})
+	if res, err := FetchTenant(); err != nil || len(res.EndedOAuth) != 0 {
+		t.Fatalf("first fetch: %+v %v", res, err)
+	}
+	second := []ServerDef{
+		def("moved", "https://moved.example/v2/mcp", AuthOAuth),
+		def("plain", "https://plain.example/mcp", ""),
+		def("same", "https://same.example/mcp", AuthOAuth),
+	}
+	second[2].Label = "relabelled"
+	serveTenant(t, map[string]any{"servers": second})
+	res, err := FetchTenant()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, id := range res.EndedOAuth {
+		got[id] = true
+	}
+	if !reflect.DeepEqual(got, map[string]bool{"t-gone": true, "t-moved": true, "t-plain": true}) {
+		t.Fatalf("ended %v, want t-gone, t-moved and t-plain", res.EndedOAuth)
 	}
 }
