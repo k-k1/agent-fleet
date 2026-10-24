@@ -34,7 +34,8 @@ ref is checked at three levels. (a) Axis coverage: the agent columns cover the s
 kind constants, the deployment rows cover the runtime profiles. (b) Row agreement:
 every row that restates a Caps() field (CAPS_ROWS) must match exactly (not ⊇ — marking a
 capability ✓ that is not set is the worst kind of lie), and every Caps field must be either
-mapped or excused. (c) Translation agreement: the ✓ marks are in the
+mapped or excused. Rows resting on code outside Caps()
+(RTK artifacts, the image studio refusal) are derived the same way (DERIVED_ROWS). (c) Translation agreement: the ✓ marks are in the
 same places in en and ja. Checking only that a translation exists does not stop a
 translation whose content has drifted, and a capability table that is stale on one side
 does the same harm as having two tables.
@@ -738,6 +739,65 @@ CAPS_ROWS = (
     ("Fork from a past message", "CanForkAt", False),
     ("Choosing to skip permission prompts", "PermissionChoice", False),
     ("Receives integration (MCP) servers", "MCPClient", False),
+    # Starting child sessions and messaging other sessions are tools of the af MCP server, and
+    # a kind receives that server exactly when MCPClient is yes (mcpreg builtin af, which
+    # targets every session). The target side (peerTargetAllowed, spawnKindRefusal) refuses
+    # only shell / ssm, which have no Caps() and so never appear here.
+    ("Starts child sessions and messages other sessions", "MCPClient", False),
+)
+
+def source_rtk_kinds() -> set[str]:
+    """Kinds with an rtk artifact: a package under agents/<kind>/ that defines ApplyRTK (the
+    plugin, hook file or instruction block the Console's RTK toggle writes), or, for claude,
+    the settings hook command. RTK is not a Caps() field, so this is the only link from the
+    ref/agents.md row to the code."""
+    base = os.path.join(ROOT, "workspace", "agent", "internal", "agents")
+    out: set[str] = set()
+    if not os.path.isdir(base):
+        return out
+    for kind in sorted(os.listdir(base)):
+        d = os.path.join(base, kind)
+        if not os.path.isdir(d):
+            continue
+        for name in sorted(os.listdir(d)):
+            if name.endswith(".go") and not name.endswith("_test.go"):
+                body = read(os.path.join(d, name))
+                if re.search(r"^func ApplyRTK\(|^const rtkHookCommand\b", body, re.M):
+                    out.add(kind)
+    return out
+
+
+def source_studio_kinds() -> set[str]:
+    """Kinds an image studio can be bound to under at least one execution method.
+
+    imagegen.StudioSessionUnsupported refuses a Managed session of some kinds. A kind is
+    unusable only when it is refused AND has no Terminal route (ManagedOnly) to fall back on,
+    so the kinds are every agent kind (one with a Caps()) minus that intersection."""
+    internal = os.path.join(ROOT, "workspace", "agent", "internal")
+    path = os.path.join(internal, "imagegen", "studio_store.go")
+    sess = os.path.join(internal, "session", "session.go")
+    if not (os.path.exists(path) and os.path.exists(sess)):
+        return set()
+    m = re.search(r"^func StudioSessionUnsupported\(.*?^\}", read(path), re.M | re.S)
+    if not m:
+        return set()
+    consts = dict(re.findall(r'^\s*(Kind\w+)\s*=\s*"([a-z]+)"', read(sess), re.M))
+    refused = {
+        consts[c]
+        for line in re.findall(r"^\s*case ([^:\n]+):", m.group(0), re.M)
+        for c in re.findall(r"session\.(Kind\w+)", line)
+        if c in consts
+    }
+    caps = source_caps()
+    managed_only = {k for k, fields in caps.items() if "ManagedOnly" in fields}
+    return set(caps) - (refused & managed_only)
+
+
+# Rows of ref/agents.md that restate a fact the code holds outside Caps(): (row label, function
+# returning the kinds that are ✓). Same exact-match rule as CAPS_ROWS.
+DERIVED_ROWS = (
+    ("RTK (token savings)", source_rtk_kinds),
+    ("Bound to an image studio", source_studio_kinds),
 )
 
 # Caps fields with no row in the table, and why. Every field must be either in CAPS_ROWS or
@@ -1440,6 +1500,22 @@ def check_ref(f: Findings) -> None:
                 f.error(
                     f"ref/agents.md: '{row}' disagrees with {name} in the"
                     f" implementation (table={sorted(marked)} / code={sorted(want)})"
+                )
+        for row, source in DERIVED_ROWS:
+            marked = table_check_marks(agents, row)
+            if marked is None:
+                f.error(f"ref/agents.md: row not found -> '{row}'")
+                continue
+            want = source()
+            if not want:
+                f.error(
+                    f"ref/agents.md: '{row}' cannot be checked: {source.__name__}() found"
+                    " nothing in the code (the source moved or its shape changed)"
+                )
+            elif marked != want:
+                f.error(
+                    f"ref/agents.md: '{row}' disagrees with the implementation"
+                    f" (table={sorted(marked)} / code={sorted(want)})"
                 )
 
     # The Console labels are the source of truth for the settings tabs. Each language is
