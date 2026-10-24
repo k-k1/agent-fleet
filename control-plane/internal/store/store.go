@@ -774,6 +774,7 @@ type MCPServerRow struct {
 	Targets, Kinds       string
 	TimeoutMS            int
 	Enabled, UserSecret  bool
+	Auth                 string // "" or "oauth" (ADR 0119): an oauth row has no headers
 	CreatedBy            string
 	CreatedAt, UpdatedAt string
 }

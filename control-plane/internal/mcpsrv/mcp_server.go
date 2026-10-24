@@ -53,7 +53,14 @@ const (
 	codeMCPKindUnknown    = "mcp_kind_unknown"
 	codeMCPTimeoutRange   = "mcp_timeout_range"
 	codeMCPNotFound       = "mcp_not_found"
+	codeMCPAuthUnknown    = "mcp_auth_unknown"
+	codeMCPOAuthHeader    = "mcp_oauth_authorization_header"
+	codeMCPOAuthSecret    = "mcp_oauth_user_secret"
 )
+
+// mcpAuthOAuth marks a definition each member signs in to with OAuth (ADR 0119 decision 9). It
+// distributes no credential, so it has no headers and no user_secret.
+const mcpAuthOAuth = "oauth"
 
 // MaskedValue is what a stored header value is replaced with on the wire. Sending it
 // back unchanged keeps the stored value, so the admin UI can edit a definition without
@@ -131,6 +138,7 @@ type mcpServerBody struct {
 	TimeoutMS  int               `json:"timeoutMs,omitempty"`
 	Enabled    bool              `json:"enabled"`
 	UserSecret bool              `json:"user_secret,omitempty"`
+	Auth       string            `json:"auth,omitempty"`
 	CreatedBy  string            `json:"created_by,omitempty"`
 	CreatedAt  string            `json:"created_at,omitempty"`
 	UpdatedAt  string            `json:"updated_at,omitempty"`
@@ -157,6 +165,7 @@ type distDef struct {
 	Kinds      []string          `json:"kinds,omitempty"`
 	TimeoutMS  int               `json:"timeoutMs,omitempty"`
 	UserSecret bool              `json:"userSecret,omitempty"`
+	Auth       string            `json:"auth,omitempty"`
 }
 
 // --- header sealing ---------------------------------------------------------------
@@ -240,6 +249,18 @@ func validateMCPBody(b mcpServerBody) *APIError {
 	}
 	if aerr := validateMCPURL(b.URL); aerr != nil {
 		return aerr
+	}
+	switch b.Auth {
+	case "":
+	case mcpAuthOAuth:
+		if len(b.Headers) > 0 {
+			return &APIError{http.StatusBadRequest, codeMCPOAuthHeader, "an OAuth server takes no static headers"}
+		}
+		if b.UserSecret {
+			return &APIError{http.StatusBadRequest, codeMCPOAuthSecret, "an OAuth server asks members for no header values"}
+		}
+	default:
+		return &APIError{http.StatusBadRequest, codeMCPAuthUnknown, "unknown authentication: " + b.Auth}
 	}
 	for k, v := range b.Headers {
 		if strings.TrimSpace(k) == "" || strings.ContainsAny(k, "\r\n:") {
@@ -410,7 +431,7 @@ func rowToBody(row store.MCPServerRow, headers map[string]string) mcpServerBody 
 	return mcpServerBody{
 		ID: row.ID, Name: row.Name, Label: row.Label, Transport: row.Transport, URL: row.URL,
 		Headers: headers, Targets: splitTargets(row.Targets), Kinds: splitKinds(row.Kinds),
-		TimeoutMS: row.TimeoutMS, Enabled: row.Enabled, UserSecret: row.UserSecret,
+		TimeoutMS: row.TimeoutMS, Enabled: row.Enabled, UserSecret: row.UserSecret, Auth: row.Auth,
 		CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 }
@@ -496,7 +517,7 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 		ID: id, TenantID: t.ID, Name: name, Label: strings.TrimSpace(b.Label),
 		Transport: "http", URL: strings.TrimSpace(b.URL), HeadersEnc: enc, KeyRef: keyRef,
 		Targets: joinTargets(b.Targets), Kinds: strings.Join(b.Kinds, ","), TimeoutMS: b.TimeoutMS,
-		Enabled: b.Enabled, UserSecret: b.UserSecret, UpdatedAt: store.NowTS(),
+		Enabled: b.Enabled, UserSecret: b.UserSecret, Auth: b.Auth, UpdatedAt: store.NowTS(),
 	}
 	if stored == nil {
 		row.ID = store.NewID()
@@ -514,7 +535,7 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 	}
 	// Audit detail names the server and the flags, never a header value (docs/log/48 §9).
 	a.auditMCP(r.Context(), ident, t.ID, "mcp.upsert", row.Name,
-		"url="+row.URL+" targets="+row.Targets+" enabled="+boolStr(row.Enabled)+" user_secret="+boolStr(row.UserSecret))
+		"url="+row.URL+" targets="+row.Targets+" enabled="+boolStr(row.Enabled)+" user_secret="+boolStr(row.UserSecret)+" auth="+row.Auth)
 	writeJSON(w, http.StatusOK, rowToBody(row, maskHeaders(headers)))
 }
 
@@ -593,7 +614,7 @@ func (a ServerAPI) Distribute(w http.ResponseWriter, r *http.Request, mv store.M
 			ID: row.ID, Name: row.Name, Label: row.Label, Origin: "tenant",
 			Transport: "http", URL: row.URL, Headers: h, Enabled: true,
 			Targets: splitTargets(row.Targets), Kinds: splitKinds(row.Kinds),
-			TimeoutMS: row.TimeoutMS, UserSecret: row.UserSecret,
+			TimeoutMS: row.TimeoutMS, UserSecret: row.UserSecret, Auth: row.Auth,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"servers": out, "unreadable": broken})

@@ -629,7 +629,20 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 	if tok.ExpiresIn > 0 {
 		g.ExpiresAt = now + int64(tok.ExpiresIn)
 	}
-	if err := updateSecrets(func(s *secrets.Data) error {
+	// The definition may have changed while the browser was away (a tenant fetch moved the URL
+	// and disconnected what it found). Checked and stored under the server's lock, which
+	// DisconnectOAuth holds too, so a grant can never be stored after a disconnect that should
+	// have ended it.
+	mu := lockFor(serverLockKey(p.serverID))
+	mu.Lock()
+	if !pendingStillCovers(p) {
+		// Nothing shared is touched from here on, so a disconnect of this server need not wait
+		// for the revocation's round trip.
+		mu.Unlock()
+		revokeUnstored(ctx, g)
+		return fail(http.StatusConflict, OAuthErrStateMismatch, "the server's definition changed while this sign-in was open; sign in again")
+	}
+	err := updateSecrets(func(s *secrets.Data) error {
 		kept := s.MCPOAuth[:0]
 		for _, o := range s.MCPOAuth {
 			if o.ServerID != g.ServerID { // one grant per server: another issuer's is replaced
@@ -638,13 +651,26 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 		}
 		s.MCPOAuth = append(kept, g)
 		return nil
-	}); err != nil {
+	})
+	mu.Unlock()
+	if err != nil {
 		return fail(http.StatusInternalServerError, OAuthErrInternal, "the secret store could not be written")
 	}
 	return CompleteResult{
 		ServerID: g.ServerID, ServerName: p.serverName, Issuer: g.Issuer,
 		Registration: g.Registration, Scope: g.Scope, ExpiresAt: g.ExpiresAt,
 	}, nil
+}
+
+// pendingStillCovers reports whether the sign-in p was started for what the server is now: still
+// an OAuth definition at the URL p's resource names.
+func pendingStillCovers(p *pendingAuth) bool {
+	d, err := Get(p.serverID)
+	if err != nil || d.Auth != AuthOAuth {
+		return false
+	}
+	u, err := url.Parse(d.URL)
+	return err == nil && relayBound(p.resource, u)
 }
 
 // flexInt reads a JSON number that some authorization servers send as a string.

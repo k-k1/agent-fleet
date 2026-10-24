@@ -27,13 +27,14 @@ needs stdio registers it personally in their own settings.
 
 ### Decide how credentials are handled (this is the important one)
 
-**"Credentials"** in the form offers two choices. It is the key design decision of a
-distribution.
+**"Credentials"** in the form offers two choices, and a server that needs an OAuth sign-in is a
+third case. It is the key design decision of a distribution.
 
 | Choice | What is distributed | Fits |
 |---|---|---|
 | Distribute the values | The header values as well (stored encrypted, handed over only when the server starts) | A shared read-only token: everyone reads with the same credential |
 | **"Each member enters the credential"** | **Only the endpoint and the header names**; each member enters the value in their own workspace | Per-person tokens, and anything you want attributable in an audit |
+| **Authentication: OAuth** | **Only the endpoint**; each member signs in with their own account from their own settings | Hosted servers that accept only an OAuth sign-in |
 
 **A distributed value is readable inside every member's container.** For anything you want
 attributed to a person, or any token with real power, choose "each member enters the
@@ -45,7 +46,12 @@ from it until you edit it), then the URL, the credential choice above, and an
 **Authentication** selector: **None**, **Bearer token** or **Custom headers**. With "each member
 enters the credential", Bearer token distributes only the `Authorization` header name and the member
 is offered a token-only field; otherwise your token is stored encrypted and shown back as
-`Bearer ***`. Targets, target agents and **enabled** sit in a closed **Advanced** section whose
+`Bearer ***`. **OAuth** distributes no credential at all, so the credential choice disappears and
+no header can be added: each member's row offers **Sign in**, the grant stays in that member's
+workspace, and the server reaches a member's sessions only after they have signed in (what they see:
+[member/20 Settings](../member/20-settings.md#mcp-servers)). Switching an existing distribution to
+OAuth deletes the header values stored for it. Changing its URL, switching OAuth off or deleting it
+disconnects every member's sign-in at their next fetch. Targets, target agents and **enabled** sit in a closed **Advanced** section whose
 summary line shows the current values; it opens by itself for a distribution that differs from the defaults.
 
 ### When it takes effect

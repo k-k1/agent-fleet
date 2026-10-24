@@ -61,7 +61,7 @@ func TestUpdateAwayFromOAuthDropsTheGrant(t *testing.T) {
 	t.Cleanup(func() { _ = mcpreg.Delete(d.ID) })
 	plant := func() {
 		if err := secrets.Update(func(s *secrets.Data) error {
-			s.MCPOAuth = append(s.MCPOAuth, secrets.MCPOAuthGrant{ServerID: d.ID, Issuer: "https://as.example.com", AccessToken: "x"})
+			s.MCPOAuth = append(s.MCPOAuth, secrets.MCPOAuthGrant{ServerID: d.ID, Issuer: "https://as.example.com", Resource: d.URL, AccessToken: "x"})
 			return nil
 		}); err != nil {
 			t.Fatal(err)
@@ -119,7 +119,7 @@ func TestDisconnectRemovesTheServerFromTheKindConfigs(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := secrets.Update(func(s *secrets.Data) error {
-		s.MCPOAuth = append(s.MCPOAuth, secrets.MCPOAuthGrant{ServerID: d.ID, Issuer: "https://as.example.com", AccessToken: "x"})
+		s.MCPOAuth = append(s.MCPOAuth, secrets.MCPOAuthGrant{ServerID: d.ID, Issuer: "https://as.example.com", Resource: d.URL, AccessToken: "x"})
 		return nil
 	}); err != nil {
 		t.Fatal(err)

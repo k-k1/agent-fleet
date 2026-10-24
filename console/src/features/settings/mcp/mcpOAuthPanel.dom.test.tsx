@@ -36,8 +36,8 @@ import { ServerRow, ProbeView } from "./mcpServerRow.tsx";
 import { ServerForm } from "./mcpServerForm.tsx";
 import { McpAdminForm } from "./mcpAdmin.tsx";
 import { McpOAuthReturn } from "./McpOAuthReturn.tsx";
-import { emptyForm, emptyTenantForm, bodyOf } from "./mcpWire.ts";
-import type { Form, McpServer, ProbeResult } from "./mcpWire.ts";
+import { emptyForm, emptyTenantForm, bodyOf, bodyOfTenant } from "./mcpWire.ts";
+import type { Form, McpServer, ProbeResult, TenantForm } from "./mcpWire.ts";
 import { useSettingsUI } from "../store.ts";
 import { setLocale } from "../../../lib/i18n/index.ts";
 
@@ -439,12 +439,29 @@ describe("Authentication selector", () => {
     expect(bodyOf(form).headers).toEqual({});
   });
 
-  it("does not offer OAuth in the tenant distribution form", async () => {
-    await mount(
-      <McpAdminForm form={{ ...emptyTenantForm(), name: "t", url: "https://m.example.com/mcp" }} setForm={() => {}} busy={false} onSave={async () => {}} egress={null} onProposed={() => {}} />,
-    );
-    expect(button("Bearer token")).toBeTruthy();
-    expect(button("OAuth")).toBeUndefined();
+  it("offers OAuth in the tenant distribution form, which then distributes no credential", async () => {
+    const saved: TenantForm[] = [];
+    function Harness() {
+      const [form, setForm] = useState<TenantForm | null>({ ...emptyTenantForm(), name: "t", url: "https://m.example.com/mcp", userSecret: true });
+      return form ? (
+        <McpAdminForm form={form} setForm={setForm} busy={false} onSave={async (f) => void saved.push(f)} egress={null} onProposed={() => {}} />
+      ) : null;
+    }
+    await mount(<Harness />);
+    expect(text()).toContain("Each member enters the credential");
+    await click(button("OAuth"));
+    expect(text()).not.toContain("Each member enters the credential");
+    expect(text()).toContain("Each member signs in with their own account");
+    await click(button("Distribute"));
+    expect(saved).toHaveLength(1);
+    const body = bodyOfTenant(saved[0], "sales");
+    expect(body).toMatchObject({ auth: "oauth", headers: {}, user_secret: false });
+  });
+
+  it("offers Sign in on a tenant-distributed OAuth row", async () => {
+    setStatus({ state: "not_signed_in" });
+    await mount(row({ s: server({ origin: "tenant", editable: false }) }));
+    expect(button("Sign in")).toBeTruthy();
   });
 });
 

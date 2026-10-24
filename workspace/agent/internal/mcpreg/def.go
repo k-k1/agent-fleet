@@ -106,7 +106,7 @@ const (
 	CodeAuthUnknown     = "mcp_auth_unknown"
 	CodeOAuthTransport  = "mcp_oauth_remote_only"
 	CodeOAuthHeader     = "mcp_oauth_authorization_header"
-	CodeOAuthTenant     = "mcp_oauth_not_distributed"
+	CodeOAuthUserSecret = "mcp_oauth_user_secret"
 )
 
 // AuthOAuth marks a definition whose server is signed in to with OAuth.
@@ -142,11 +142,12 @@ func Validate(d ServerDef) error {
 		if d.Transport != TransportHTTP {
 			return invalid(CodeOAuthTransport, "OAuth sign-in is for remote servers only")
 		}
-		if d.Origin == OriginTenant {
-			return invalid(CodeOAuthTenant, "a tenant-distributed definition cannot use OAuth yet")
-		}
 		if len(d.Headers) > 0 {
 			return invalid(CodeOAuthHeader, "an OAuth server takes no static headers")
+		}
+		// Each member signs in for themselves, so there is no header value left for them to supply.
+		if d.UserSecret {
+			return invalid(CodeOAuthUserSecret, "an OAuth server asks members for no header values")
 		}
 	default:
 		return invalid(CodeAuthUnknown, "unknown authentication: %q", d.Auth)

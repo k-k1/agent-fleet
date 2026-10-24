@@ -3,8 +3,8 @@ package mcpsrv
 // The mcpsrv unit tests have no package main, so the CP-side seam is wired with fakes
 // (the same idea as workspace/agent/internal/mcpx/deps_test.go).
 //
-// Only the four the tests in this package actually reach are wired — store, master32,
-// custodian and the token signing master. The rest panic instead of returning a value: a
+// Only what the tests in this package actually reach is wired — store, master32, custodian,
+// the token signing master, and the tenant admin check when a test sets admin. The rest panic instead of returning a value: a
 // fake that returned zero values would let a test that forgot to wire something go green
 // on an empty result. (The real wiring is main's mcp_wiring.go.)
 //
@@ -27,6 +27,8 @@ type testCP struct {
 	store     store.Store
 	master32  []byte
 	custodian KeyCustodian
+	// admin, when set, is the tenant every TenantAdminFor call resolves to (an admin of it).
+	admin *store.Tenant
 }
 
 var _ CP = testCP{}
@@ -105,6 +107,9 @@ func (c testCP) AgentSessions(context.Context, runtime.Runtime) ([]Session, erro
 }
 
 func (c testCP) TenantAdminFor(http.ResponseWriter, *http.Request, string) (store.Identity, store.Tenant, bool) {
+	if c.admin != nil {
+		return store.Identity{ID: "admin-1", Email: "admin@example.com"}, *c.admin, true
+	}
 	unwired("TenantAdminFor")
 	return store.Identity{}, store.Tenant{}, false
 }

@@ -379,7 +379,10 @@ search.
   **More permission needed**, and its **Approve the extra permission** button signs in again asking for that permission on top of what you already granted. The relay's port is remembered across restarts of the Agent; if that port is taken at
   start-up, a new one is chosen (with a new private key) and the configurations are rewritten, so sessions started before that need a restart.
   The key is written into every agent's server entry as a plain header; that each CLI really sends it was only spot-checked against a local test server, not for every agent. A request without it is answered with a bare 403, so a server that stays unreachable from one agent while others reach it points here.
-  OAuth is not offered for tenant-distributed servers.
+  A **tenant**-distributed server can use OAuth too. Its administrator distributes no credential: the row
+  offers **Sign in** like one of your own, the sign-in is yours alone, and the server reaches your sessions only
+  after you have signed in. If the administrator stops distributing it, moves it to another URL or takes OAuth
+  off it, your sign-in to it is disconnected at your workspace's next fetch (within 5 minutes), and a new URL needs a new sign-in.
 - **Advanced** (closed by default): **targets** (**assistants**, **sessions**, or both; clear both and the entry
   stays but goes nowhere), **target agents** (empty covers every agent), the **timeout** and **enabled**. The
   summary line beside the title shows the current values, for example "Assistant, Sessions · Every agent · default

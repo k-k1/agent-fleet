@@ -711,6 +711,9 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mcp_save_add": "Distribute",
   "admin.mcp_disabled": "Disabled",
   "admin.mcp_user_secret_badge": "Member-supplied value",
+  "admin.mcp_oauth_badge": "Each member signs in",
+  "admin.mcp_oauth_note":
+    "No credential is distributed. Each member signs in with their own account from Settings > MCP servers, and the server reaches their sessions only after they have.",
   "admin.mcp_secret_policy": "Credentials",
   "admin.mcp_user_secret": "Each member enters the credential",
   "admin.mcp_headers_hint":

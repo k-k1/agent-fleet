@@ -1022,7 +1022,7 @@ func TestValidateOAuthAuth(t *testing.T) {
 	}{
 		"stdio":   {func(d *ServerDef) { d.Transport, d.URL, d.Command = TransportStdio, "", "x" }, CodeOAuthTransport},
 		"headers": {func(d *ServerDef) { d.Headers = map[string]string{"authorization": "Bearer x"} }, CodeOAuthHeader},
-		"tenant":  {func(d *ServerDef) { d.Origin = OriginTenant }, CodeOAuthTenant},
+		"secret":  {func(d *ServerDef) { d.Origin, d.UserSecret = OriginTenant, true }, CodeOAuthUserSecret},
 		"unknown": {func(d *ServerDef) { d.Auth = "kerberos" }, CodeAuthUnknown},
 	}
 	for name, c := range cases {
@@ -1032,6 +1032,11 @@ func TestValidateOAuthAuth(t *testing.T) {
 		if err := Validate(d); !errors.As(err, &ve) || ve.Code != c.code {
 			t.Errorf("%s: %v, want code %s", name, err, c.code)
 		}
+	}
+	tenant := ok
+	tenant.Origin = OriginTenant
+	if err := Validate(tenant); err != nil {
+		t.Errorf("a tenant-distributed OAuth server is valid: %v", err)
 	}
 	other := ok
 	other.Headers = map[string]string{"X-Team": "a"}
