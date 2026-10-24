@@ -16,11 +16,14 @@ package main
 //     put on PATH (--keep), an exact version saved as the selection (the entrypoint runs
 //     `nvm use` on it under set -e, so removing it would stop the start), and exact
 //     versions named by an nvm alias or by ~/.nvmrc / ~/repos/*/.nvmrc.
-//   - Trees must be self-contained. A major is left alone when any of its entries is a
-//     symlink, or when any symlink inside one of its trees points outside that tree:
-//     following chains to decide what still depends on what proved error-prone (a link
-//     through the old tree and back passed a final-target check), and the trees Node
-//     ships only link within themselves. The newest must also have an executable bin/node.
+//   - Trees must be self-contained, or nothing is pruned at all. Every tree of every
+//     major is checked first; any top-level entry that is a symlink, any directory
+//     symlink inside a tree, or any symlink whose target leaves its own tree stops the
+//     whole pass. Following chains to work out what still depends on what proved
+//     error-prone (a link through the old tree and back passed a final-target check; a
+//     "../" after a directory link escaped a lexical check; one major's link into
+//     another's tree went unseen), and the trees Node ships only hold a few file links
+//     within themselves. The newest of a major must also have an executable bin/node.
 //   - It runs from the entrypoint, before any session exists. A session started earlier
 //     has the old patch's bin on PATH, so a Console update leaves the old tree for the
 //     next start instead of deleting it under a running process.
@@ -79,19 +82,18 @@ func pruneSupersededNodes(keep []string) ([]string, error) {
 		t.marked = merr == nil
 		byMajor[v[0]] = append(byMajor[v[0]], t)
 	}
+	// Check everything before removing anything: a link from one major can point into
+	// another's tree.
+	for _, group := range byMajor {
+		for _, t := range group {
+			if t.link || !selfContained(filepath.Join(root, t.name)) {
+				return nil, nil
+			}
+		}
+	}
 	var removed []string
 	var firstErr error
 	for _, group := range byMajor {
-		safe := true
-		for _, t := range group {
-			if t.link || linksOutside(filepath.Join(root, t.name)) {
-				safe = false
-				break
-			}
-		}
-		if !safe {
-			continue
-		}
 		var newest *tree
 		for _, t := range group {
 			if newest == nil || compareDotted(t.ver, newest.ver) > 0 {
@@ -117,15 +119,16 @@ func pruneSupersededNodes(keep []string) ([]string, error) {
 	return removed, firstErr
 }
 
-// linksOutside reports whether any symlink under dir points outside dir (judged on the
-// link text, joined to the link's directory), or whether dir cannot be fully read. When
-// in doubt it answers true, which keeps the whole major.
-func linksOutside(dir string) bool {
+// selfContained reports whether every symlink under dir is a link to a non-directory
+// whose target, joined to the link's directory, stays inside dir. With no directory
+// links in the tree, that lexical answer matches what the OS resolves. A tree that
+// cannot be fully read is not self-contained.
+func selfContained(dir string) bool {
 	prefix := filepath.Clean(dir) + string(filepath.Separator)
-	outside := false
+	ok := true
 	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
-			outside = true
+			ok = false
 			return filepath.SkipAll
 		}
 		if d.Type()&os.ModeSymlink == 0 {
@@ -133,23 +136,27 @@ func linksOutside(dir string) bool {
 		}
 		target, rerr := os.Readlink(p)
 		if rerr != nil {
-			outside = true
+			ok = false
+			return filepath.SkipAll
+		}
+		if fi, serr := os.Stat(p); serr == nil && fi.IsDir() {
+			ok = false
 			return filepath.SkipAll
 		}
 		if !filepath.IsAbs(target) {
 			target = filepath.Join(filepath.Dir(p), target)
 		}
 		if !strings.HasPrefix(filepath.Clean(target)+string(filepath.Separator), prefix) {
-			outside = true
+			ok = false
 			return filepath.SkipAll
 		}
 		return nil
 	})
-	return outside || err != nil
+	return ok && err == nil
 }
 
 // executableNode reports whether dir/bin/node is an executable regular file (in-tree
-// links are allowed; linksOutside already rejected the others).
+// file links are allowed; selfContained already rejected the others).
 func executableNode(dir string) bool {
 	fi, err := os.Stat(filepath.Join(dir, "bin", "node"))
 	return err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o111 != 0

@@ -159,9 +159,11 @@ trees (an nvm install, or one written before the marker existed) are never remov
 marker only says who installed a tree, so pinned versions stay regardless: the tree
 install-node returned (`--keep`), an exact saved selection, and exact versions named by
 an nvm alias (symlinked aliases included) or by `~/.nvmrc` / `~/repos/*/.nvmrc` (read as
-nvm does: comments, blank and `key=value` lines skipped). A major is left alone when any
-of its entries is a symlink, when any symlink inside one of its trees points outside that
-tree, or when the newest has no executable `bin/node`.
+nvm does: comments, blank and `key=value` lines skipped). Every tree is checked before
+anything is removed: a top-level entry that is a symlink, a directory symlink inside a
+tree, or a symlink whose target leaves its own tree stops the whole pass (Node's own
+trees hold only a few file links within themselves). A major whose newest has no
+executable `bin/node` is skipped.
 
 ## 9.5 The AWS target
 

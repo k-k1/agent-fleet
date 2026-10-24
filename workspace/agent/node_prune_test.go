@@ -402,3 +402,57 @@ func TestPruneFollowsSymlinkedAliases(t *testing.T) {
 		})
 	}
 }
+
+// "../" after a directory link escapes what a lexical check sees: inside -> . makes
+// ../inside/../v22.23.4/bin/node look in-tree while the OS lands in the old tree.
+func TestPruneSkipsOnDirectoryLinkEscape(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := nvmNodeRoot()
+	fakeNode(t, "v22.23.4", true)
+	nodeSymlink(t, ".", filepath.Join(root, "v22.23.5", "inside"))
+	nodeSymlink(t, "../inside/../v22.23.4/bin/node", filepath.Join(root, "v22.23.5", "bin", "node"))
+	if got := pruneLeft(t, filepath.Join(root, "v22.23.5", "bin")); got != "v22.23.4,v22.23.5" {
+		t.Fatalf("left %s", got)
+	}
+}
+
+// One major's link into another's tree protects that tree: nothing is pruned.
+func TestPruneSkipsOnCrossMajorLinks(t *testing.T) {
+	cases := map[string]func(root string){
+		"file link from another major": func(root string) {
+			fakeNode(t, "v24.1.0", false)
+			writePinFile(t, filepath.Join(root, "v22.23.4", "lib", "node_modules", "npm", "bin", "npm-cli.js"), "")
+			nodeSymlink(t, "../../v22.23.4/lib/node_modules/npm/bin/npm-cli.js", filepath.Join(root, "v24.1.0", "bin", "npm"))
+		},
+		"top-level link from another major": func(root string) {
+			nodeSymlink(t, "v22.23.4", filepath.Join(root, "v24.0.0"))
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			fakeNode(t, "v22.23.4", true)
+			fakeNode(t, "v22.23.5", true)
+			setup(nvmNodeRoot())
+			left := pruneLeft(t)
+			if !strings.Contains(left, "v22.23.4") {
+				t.Fatalf("left %s: v22.23.4 removed although another major links into it", left)
+			}
+		})
+	}
+}
+
+// Any directory link stops the pass, even one that stays in its own tree.
+func TestPruneSkipsOnAnyDirectoryLink(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := nvmNodeRoot()
+	fakeNode(t, "v22.23.4", true)
+	fakeNode(t, "v22.23.5", true)
+	if err := os.MkdirAll(filepath.Join(root, "v22.23.5", "lib", "real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nodeSymlink(t, "real", filepath.Join(root, "v22.23.5", "lib", "alias"))
+	if got := pruneLeft(t); got != "v22.23.4,v22.23.5" {
+		t.Fatalf("left %s", got)
+	}
+}
