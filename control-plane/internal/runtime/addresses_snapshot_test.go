@@ -274,3 +274,20 @@ func TestECSAddressSnapshotStopsWithTheSweep(t *testing.T) {
 		t.Errorf("want the sweep's cancellation, got %v", err)
 	}
 }
+
+// With a sweep deadline shorter than the budget (a short recorder interval), the read still
+// ends first and the sweep's context is alive afterwards, so the workspace is marked asked.
+func TestECSAddressSnapshotBudgetStaysInsideTheSweep(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	snap := newECSAddressSnapshot(ctx)
+	snap.timeout = time.Second
+	e := &ecsRuntime{cfg: ecsConfig{cluster: "c"}, ecs: &blockingTasks{}, name: "a"}
+	rep, _ := snap.ReporterFor(e)
+	if _, err := rep.HeldAddresses(context.Background(), nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want a deadline error, got %v", err)
+	}
+	if ctx.Err() != nil {
+		t.Error("the read used up the sweep's whole deadline")
+	}
+}

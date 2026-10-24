@@ -82,7 +82,14 @@ func (s *ecsAddressSnapshot) tasksOf(cluster string, lister ecsTaskLister) (map[
 	}
 	s.mu.Unlock()
 	c.once.Do(func() {
-		ctx, cancel := context.WithTimeout(s.ctx, s.timeout)
+		budget := s.timeout
+		if dl, ok := s.ctx.Deadline(); ok {
+			// Half of what is left of the sweep at most: the read must fail with the sweep
+			// still alive, or the workspace that asked is never marked as asked. The
+			// interval is configurable, and a short one gives a sweep under the 60s.
+			budget = min(budget, time.Until(dl)/2)
+		}
+		ctx, cancel := context.WithTimeout(s.ctx, budget)
 		defer cancel()
 		c.byService, c.err = listClusterTasks(ctx, lister, cluster)
 	})
