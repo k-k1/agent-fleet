@@ -79,6 +79,9 @@ type Config struct {
 	// OnSlotAutoReplace is told when ecs-ec2 moved a home off a slot below the launch
 	// template's $Latest on its own (#1934), so the CP can audit it. nil = not recorded.
 	OnSlotAutoReplace func(context.Context, SlotAutoReplace)
+	// OnAddressesReleasing is told the addresses a docker or Kubernetes workspace holds just
+	// before Stop takes them away (egress attribution). nil = not recorded.
+	OnAddressesReleasing AddressReleaseHook
 }
 
 // rootedDataDir is the adapters' way in. A nil RootDataDir means "the stored path is

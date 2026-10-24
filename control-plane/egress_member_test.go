@@ -64,7 +64,7 @@ func TestEgressCheckVerdicts(t *testing.T) {
 	_ = st.AddAllowlist(ctx, store.AllowlistEntry{ID: store.NewID(), Entry: ".wanted.example", State: "proposed", AddedAt: store.NowTS()})
 	// A retired entry is neither allowed nor pending — it must not read as either.
 	_ = st.AddAllowlist(ctx, store.AllowlistEntry{ID: store.NewID(), Entry: "old.example", State: "retired", AddedAt: store.NowTS()})
-	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil)
+	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil, nil)
 
 	got := runCheck(t, eg, "host=mcp.internal&host=api.anthropic.com&host=srv.wanted.example&host=old.example&host=nope.example")
 	if !got.Configured || got.Enforce || got.Mode != "log-only" {
@@ -100,7 +100,7 @@ func TestEgressCheckVerdicts(t *testing.T) {
 func TestEgressCheckNormalizesInput(t *testing.T) {
 	st, ctx := newEgressMemberFixture(t)
 	_ = st.AddAllowlist(ctx, store.AllowlistEntry{ID: store.NewID(), Entry: "mcp.internal", State: "active", AddedAt: store.NowTS()})
-	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil)
+	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil, nil)
 
 	got := runCheck(t, eg, "host="+"https%3A%2F%2FMCP.Internal%3A8443%2Fmcp")
 	v, ok := got.Hosts["https://MCP.Internal:8443/mcp"]
@@ -116,7 +116,7 @@ func TestEgressCheckNormalizesInput(t *testing.T) {
 // told so rather than warning about a policy this deployment does not apply.
 func TestEgressCheckUnconfiguredDeployment(t *testing.T) {
 	st, _ := newEgressMemberFixture(t)
-	eg := newEgressAPI(&manager{store: st}, "tok", "", nil)
+	eg := newEgressAPI(&manager{store: st}, "tok", "", nil, nil)
 	if got := runCheck(t, eg, "host=nope.example"); got.Configured {
 		t.Fatalf("no AF_EGRESS_PROXY_ADDR must report configured=false: %+v", got)
 	}
@@ -135,7 +135,7 @@ func propose(t *testing.T, eg egressAPI, body string) (int, map[string]any) {
 // The whole point of the member face: it can ask, it cannot allow.
 func TestEgressProposeNeverBecomesEffective(t *testing.T) {
 	st, ctx := newEgressMemberFixture(t)
-	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil)
+	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil, nil)
 
 	code, out := propose(t, eg, `{"entry":"MCP.Example.COM.","reason":"wiki MCP server"}`)
 	if code != 200 || out["state"] != "proposed" || out["entry"] != "mcp.example.com" {
@@ -175,7 +175,7 @@ func TestEgressProposeNeverBecomesEffective(t *testing.T) {
 
 func TestEgressProposeCollapsesDuplicates(t *testing.T) {
 	st, ctx := newEgressMemberFixture(t)
-	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil)
+	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil, nil)
 
 	if code, _ := propose(t, eg, `{"entry":"dup.example"}`); code != 200 {
 		t.Fatalf("first: %d", code)
@@ -211,7 +211,7 @@ func TestEgressProposeCollapsesDuplicates(t *testing.T) {
 
 func TestEgressProposeRejectsBadEntries(t *testing.T) {
 	st, ctx := newEgressMemberFixture(t)
-	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil)
+	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil, nil)
 
 	for _, tc := range []struct{ entry, code string }{
 		{"https://mcp.example.com/mcp", codeEgressEntryInvalid}, // a URL never matches as an entry
