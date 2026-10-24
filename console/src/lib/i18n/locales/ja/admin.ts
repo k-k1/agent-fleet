@@ -702,6 +702,9 @@ export const admin = {
   "admin.mcp_save_add": "配布する",
   "admin.mcp_disabled": "無効",
   "admin.mcp_user_secret_badge": "値は各自入力",
+  "admin.mcp_oauth_badge": "各自サインイン",
+  "admin.mcp_oauth_note":
+    "資格情報は配布しません。各メンバーが「設定 > MCP サーバー」から自分のアカウントでサインインし、サインインした人のセッションにだけこのサーバーが届きます。",
   "admin.mcp_secret_policy": "資格情報の扱い",
   "admin.mcp_user_secret": "認証の値は各メンバーが入力する",
   "admin.mcp_headers_hint":
@@ -1368,7 +1371,7 @@ export const admin = {
   "clean.stage2_run_title": "「安全」（マージ済み・クリーン等）と判定されたものだけを削除します",
   "clean.stage2_empty": "削除できる作業コピー・ブランチはありません。",
   "clean.stage2_confirm_title": "作業コピー・ブランチを一括削除",
-  "clean.stage2_confirm_body": "「安全」と判定された {count} 件を削除します。ブランチは削除前にごみ箱へ退避されます。作業コピーの中の停止中セッションはアーカイブへ（shell/ssm はごみ箱へ）移ります。worktree の削除は取り消せません。",
+  "clean.stage2_confirm_body": "「安全」と判定された {count} 件を削除します。ブランチは削除前にごみ箱へ退避されます。作業コピーの中の停止中セッションはアーカイブへ（shell/ssm はごみ箱へ）移ります。削除した worktree もごみ箱に入り、「復元」でコミットと未コミットの変更ごと作り直せます。ただし git が無視するファイル（ビルド成果物や .env など）と、どの変更をステージしていたかは戻りません。",
   "clean.shelf_n": "アーカイブ済みセッションが {count} 件あります（掃除の対象外）。",
   "clean.open_shelf": "アーカイブ一覧を開く",
   "clean.safety_safe": "安全",

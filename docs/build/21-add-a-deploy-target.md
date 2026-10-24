@@ -1,7 +1,6 @@
 ---
 audience: "someone adding a way to run workspaces"
 source_of_truth: "`control-plane/internal/runtime/` — the `Runtime` port and `NewFactory` in `runtime.go`, the optional capabilities the CP probes for, and the adapters themselves (`runtime_*.go`)"
-updated: "2026-10"
 ---
 
 # 21. Adding a deployment target

@@ -13,7 +13,6 @@ import { useT } from "../../../lib/i18n/index.ts";
 // mcpWire.test.ts rather than by this component.
 import {
   NAME_RE,
-  TENANT_AUTH_MODES,
   useMcpKinds,
   advancedIsDefault,
   bodyOfTenant,
@@ -47,7 +46,8 @@ import type { Tenant } from "../parts/adminShared.ts";
 // Header values are write-only from here: they come back masked ("***") and sending them
 // back unchanged keeps the stored value. The secret that CANNOT be protected is the one
 // distributed with values — every member can read it in their own container — which is
-// what the "each member supplies the value" toggle (user_secret) exists to avoid.
+// what the "each member supplies the value" toggle (user_secret) exists to avoid. An OAuth
+// server distributes no credential at all: each member signs in for themselves (ADR 0119).
 
 export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
   const tr = useT();
@@ -168,6 +168,9 @@ export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
                   </span>
                   {s.user_secret && (
                     <span className="mcp-origin mcp-origin-tenant">{tr("admin.mcp_user_secret_badge")}</span>
+                  )}
+                  {s.auth === "oauth" && (
+                    <span className="mcp-origin mcp-origin-tenant">{tr("admin.mcp_oauth_badge")}</span>
                   )}
                   {!s.enabled && <span className="muted">{tr("admin.mcp_disabled")}</span>}
                   <span className="allow-acts">
@@ -291,14 +294,17 @@ export function McpAdminForm({
           </Field>
 
           {/* The credential decision comes BEFORE the authentication, because it decides what
-              the rows even ask for (name+value vs name only). */}
-          <Field label={tr("admin.mcp_secret_policy")} wide hint={tr("admin.mcp_user_secret_hint")}>
-            <CheckRow>
-              <Check checked={form.userSecret} onChange={(v) => patch({ userSecret: v })}>
-                {tr("admin.mcp_user_secret")}
-              </Check>
-            </CheckRow>
-          </Field>
+              the rows even ask for (name+value vs name only). OAuth distributes no credential,
+              so there is nothing to decide. */}
+          {form.auth !== "oauth" && (
+            <Field label={tr("admin.mcp_secret_policy")} wide hint={tr("admin.mcp_user_secret_hint")}>
+              <CheckRow>
+                <Check checked={form.userSecret} onChange={(v) => patch({ userSecret: v })}>
+                  {tr("admin.mcp_user_secret")}
+                </Check>
+              </CheckRow>
+            </Field>
+          )}
           <AuthFields
             auth={form.auth}
             onAuth={(auth) => patch(switchAuth(form, auth, form.userSecret))}
@@ -308,7 +314,7 @@ export function McpAdminForm({
             onRows={(headers) => patch({ headers })}
             tokenStored={hasStoredBearer(form.headers)}
             namesOnly={form.userSecret}
-            modes={TENANT_AUTH_MODES}
+            oauthNote={tr("admin.mcp_oauth_note")}
             headersHint={form.userSecret ? tr("admin.mcp_headers_names_hint") : tr("admin.mcp_headers_hint")}
           />
 

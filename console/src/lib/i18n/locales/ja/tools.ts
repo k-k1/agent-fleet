@@ -261,6 +261,25 @@ export const tools = {
   "env.node_update": "{v} に更新",
   "env.node_update_note":
     "Node.js {v} が出ています（このワークスペースは {cur}）。「{v} に更新」で home ボリュームへ取得し、完了後に起動したセッションから使われます（Stop → Start は不要）。Agent Fleet が入れた古いパッチは次のワークスペース起動時に削除されます。",
+  "env.installed_title": "インストール済みのバージョン",
+  "env.installed_note":
+    "ディスクにある JDK と Node.js です。使わなくなったバージョンをアンインストールすると home ボリュームの容量が空きます。ワークスペースのイメージが持っているものは残ります。",
+  "env.installed_th_version": "版",
+  "env.installed_th_where": "場所",
+  "env.installed_th_size": "サイズ",
+  "env.installed_in_use": "（使用中）",
+  "env.installed_src_home": "home ボリューム",
+  "env.installed_src_system": "ワークスペースのイメージ",
+  "env.uninstall": "アンインストール",
+  "env.uninstalling": "アンインストール中…",
+  "env.uninstall_no_selected": "選択中（先に別のバージョンを選んでください）",
+  "env.uninstall_no_installing": "インストール中",
+  "env.uninstall_title": "{name} をアンインストールしますか？",
+  "env.uninstall_body_jdk":
+    "{name} を home ボリュームから削除します（{size} GiB）。ワークスペースのイメージにも同じバージョンがあれば、以後のセッションはそちらを使います。このコピーで先に起動していたセッションやシェルは、再起動するまで存在しないパスを指したままになります。",
+  "env.uninstall_body_node":
+    "{name} のパッチを home ボリュームからすべて削除します（{size} GiB。nvm で入れたものも含みます）。これで先に起動していたセッションやシェルは、再起動するまで存在しないパスを指したままになります。",
+  "env.uninstall_failed": "アンインストールに失敗しました: {msg}",
   "env.node_install_failed": "Node.js のインストールに失敗しました: {msg}",
   "env.node_install_timeout": "時間内にダウンロードが終わりませんでした",
   "env.go_default": "既定 (image の go)",
@@ -845,7 +864,7 @@ export const tools = {
   "git.browse_title": "参照（クローン不要）",
   "git.rename": "リネーム",
   "git.rename_cancel": "取消",
-  "git.github_oauth_unconfigured": "このテナントに GitHub の OAuth アプリが登録されていません。テナント管理者に「テナント設定 › 連携 › git プロバイダ OAuth」での登録を依頼するか、アクセストークンの貼付で接続してください。",
+  "git.github_oauth_unconfigured": "このテナントに GitHub の OAuth アプリが登録されていません。テナント管理者に「テナント設定 › 連携 › 連携アプリの OAuth」での登録を依頼するか、アクセストークンの貼付で接続してください。",
   "git.github_app_install_hint": "このテナントは GitHub App で接続します。GitHub App はインストールされたリポジトリにしか届きません。接続の前後どちらでもよいので、自分のアカウントや organization にインストールしてリポジトリを選んでください。",
   "git.github_app_install_link": "アプリをインストール / リポジトリを選ぶ",
   "git.github_app_not_installed": "接続しましたが、GitHub App があなたから見えるどのアカウントにもインストールされていないため、まだどのリポジトリにも届きません。インストールしてリポジトリを選んでください。",
@@ -854,7 +873,7 @@ export const tools = {
   "git.github_reconnect_needed": "GitHub の接続を更新できませんでした。認可が期限切れになったか、取り消されています。切断してから、もう一度 GitHub に接続してください。",
   // OAuth の導線そのものを出さないときの説明（docs/log/71）。押せないボタンを置いても、
   // 押した本人には直せない（設定はテナント管理者のもの）。
-  "git.oauth_unregistered": "このテナントには OAuth アプリが登録されていないため、OAuth での接続は出していません。テナント管理者に「テナント設定 › 連携 › git プロバイダ OAuth」での登録を依頼してください。",
+  "git.oauth_unregistered": "このテナントには OAuth アプリが登録されていないため、OAuth での接続は出していません。テナント管理者に「テナント設定 › 連携 › 連携アプリの OAuth」での登録を依頼してください。",
   "git.oauth_start_failed": "OAuth 開始に失敗: {msg}",
   "git.oauth_waiting": "承認待ち…",
   "git.oauth_expired": "期限切れ。やり直してください",
@@ -870,7 +889,7 @@ export const tools = {
   "git.github_token_hint_read": "（プライベートリポジトリのクローン・push 両対応。パブリックのみなら ",
   "git.github_token_hint_pub": " で可）。fine-grained トークンの場合は Repository permissions で ",
   "git.github_token_hint_fg": " を付与（クローンのみなら Read-only）。",
-  "git.bitbucket_oauth_unconfigured": "このテナントに Bitbucket の OAuth アプリが登録されていません。テナント管理者に「テナント設定 › 連携 › git プロバイダ OAuth」での登録を依頼するか、メール＋アプリトークンで接続してください。",
+  "git.bitbucket_oauth_unconfigured": "このテナントに Bitbucket の OAuth アプリが登録されていません。テナント管理者に「テナント設定 › 連携 › 連携アプリの OAuth」での登録を依頼するか、メール＋アプリトークンで接続してください。",
   "git.bb_waiting": "別タブで承認してください…",
   "git.bb_timeout": "タイムアウト。やり直してください",
   "git.bitbucket_desc": "OAuth（コードグラント）か メール＋アプリトークンで接続します。",

@@ -1,7 +1,6 @@
 ---
 audience: "a deployment administrator who already runs llama.cpp somewhere on the network (or is about to) and wants sessions' chat completions to use it"
 source_of_truth: "the environment variables the Control Plane reads at startup; llama-server's own `--help` for its startup flags"
-updated: "2026-09"
 ---
 
 # 10. Chat inference on your own llama.cpp

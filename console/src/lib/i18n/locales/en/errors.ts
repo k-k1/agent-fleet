@@ -195,7 +195,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.mcp_auth_unknown": "That authentication method is not known.",
   "err.mcp_oauth_remote_only": "OAuth sign-in is only for remote servers.",
   "err.mcp_oauth_authorization_header": "An OAuth server takes no static headers. Remove them, or choose another authentication.",
-  "err.mcp_oauth_not_distributed": "A tenant-distributed server cannot use OAuth yet.",
+  "err.mcp_oauth_user_secret": "An OAuth server asks members for no header values. Turn off \"Each member enters the credential\", or choose another authentication.",
   "err.oauth_not_required": "The server did not ask for OAuth.",
   "err.oauth_discovery_failed": "The server's OAuth metadata could not be used. Run the connection test to see why.",
   "err.as_endpoints_unusable": "The authorization server's authorization or token endpoint is missing or not https.",

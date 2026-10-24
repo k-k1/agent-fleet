@@ -1,7 +1,6 @@
 ---
 audience: "whoever installs, upgrades and protects a deployment — IT / SRE with shell access to the host and deployment-administrator rights"
 source_of_truth: "the scripts under `deploy/` for commands; this shelf for what each step decides"
-updated: "2026-08"
 ---
 
 # Operating a deployment

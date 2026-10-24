@@ -1,6 +1,5 @@
 ---
 audience: "a tenant administrator setting the team's defaults: branch names, and the agent new members are pointed at"
-updated: "2026-10"
 ---
 
 # 06. Team defaults

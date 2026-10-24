@@ -1,6 +1,5 @@
 ---
 audience: "a tenant administrator deciding how people get in"
-updated: "2026-08"
 ---
 
 # 05. Who may sign in, and from where

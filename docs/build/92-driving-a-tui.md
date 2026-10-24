@@ -1,7 +1,6 @@
 ---
 audience: "anyone driving a CLI's interactive screen from code"
 source_of_truth: "the code; this is the method for verifying it against a real TUI"
-updated: "2026-09"
 ---
 
 # 92. Driving a CLI's modal TUI — the verification playbook

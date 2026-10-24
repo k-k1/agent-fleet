@@ -1,6 +1,5 @@
 ---
 audience: "anyone running several pieces of work at once"
-updated: "2026-10"
 ---
 
 # 11. Running many sessions at once — overview, child sessions, the Fleet Operator
@@ -156,10 +155,11 @@ Once it is on, a session starts a child when it judges the work splits, and tell
 doing so and what for. You can also ask for one ("have a codex session write the tests for
 this in parallel").
 
-- **A child can be any agent that is not a raw shell**: claude, codex, opencode, agy, copilot,
-  cursor, kiro, lcpp or muse, with any model you have not excluded. A claude session can start
-  a codex child, so different agents can work on one job together. shell and ssm cannot be
-  started this way.
+- **A child can be any agent that is not a raw shell**, with any model you have not excluded.
+  A claude session can start a codex child, so different agents can work on one job together.
+  shell and ssm cannot be started this way. Which agents can start children at all is the
+  "Starts child sessions and messages other sessions" row of the
+  [Agents reference](../ref/agents.md).
 - **The parent can choose the child's effort** (a reviewer at high effort, say) when it also
   names the model, among the efforts that model offers; any other value is refused. It **cannot choose the
   child's permission mode**: the child follows your per-kind default in Settings > Agents.
@@ -238,7 +238,8 @@ keep their current tools until they restart.
 Once it is on, an agent sends a message when it judges one is needed, and you can also ask for
 one ("tell the session next door what we just did").
 
-- **Messages cross agent kinds**: claude to codex, opencode to cursor, and so on.
+- **Messages cross agent kinds**: claude to codex, opencode to cursor, and so on. Which agents
+  can send and receive is the same row of the [Agents reference](../ref/agents.md).
 - **They reach a stopped session**: it is resumed first, then the message is delivered.
 - **Delivery is confirmed; being read or acted on is not.** A reply is not guaranteed either.
   A **Managed** session that is in the middle of a turn gets the message as its next turn, once
@@ -296,7 +297,7 @@ is why `/list-agents` does nothing here; use the Agent Fleet version above inste
 
 | | Claude Code's | Agent Fleet's |
 |---|---|---|
-| Which agents you can reach | claude only | claude / codex / opencode / cursor / kiro / agy / copilot / lcpp / muse |
+| Which agents you can reach | claude only | every agent that can message ([Agents reference](../ref/agents.md)) |
 | A stopped session | Can't be reached | **Resumed, then delivered** |
 | Record of it | One collapsed line in the terminal | A badge with the sender in the chat view |
 | Sessions on another machine or the web | Can reply to them | **Not supported** (same workspace only) |
@@ -477,13 +478,13 @@ next run time, so check that it matches your intent.
 - By default each run uses a fresh session. If you ask "reuse the same session and build up
   context," **long-lived session reuse** (with rebuild conditions such as every N runs or
   per time period) is also possible.
-- It can also **stop when it is done**. Tick **"Stop when done"** in Details & edit (ask the
+- It can also **stop when it is done**. Tick **"Stop when done"** in "Details / edit" (ask the
   operator for `stop_after_run`) and the session stops once that run has finished: report
   first, stop after, and resumable. It keeps the session an unattended run leaves behind from
   holding its memory for the rest of the night (it does not change when the workspace itself
   stops; a finished session was never what kept it awake).
 - **Where the report goes** is chosen per schedule. With the report on, **"Deliver to"** in
-  Details & edit (`deliver_to` for the operator) takes any of: the **assistant conversation**
+  "Details / edit" (`deliver_to` for the operator) takes any of: the **assistant conversation**
   (the default, and what every schedule did before), the **notification center**, and your
   **Discord** / **Slack** connection. A chat post carries the run's answer under a heading that
   names the schedule, even when the connection is not in full-text mode. Only your own

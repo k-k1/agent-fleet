@@ -1,7 +1,6 @@
 ---
 audience: "anyone using Agent Fleet — members, tenant administrators, deployment administrators"
 source_of_truth: "the Console itself — if a screen disagrees with this guide, the screen is right"
-updated: "2026-09"
 ---
 
 # Agent Fleet user guide

@@ -45,7 +45,6 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // RelayKeyHeader carries the relay key in a materialized config. It is a plain static header, which
@@ -191,7 +190,13 @@ func relayDef(d ServerDef) (ServerDef, bool) {
 	if !ok {
 		return ServerDef{}, false
 	}
-	if g := currentGrant(d.ID); g == nil || g.SignInAgain || (g.AccessToken == "" && g.RefreshToken == "") {
+	g := currentGrant(d.ID)
+	if g == nil || g.SignInAgain || (g.AccessToken == "" && g.RefreshToken == "") {
+		return ServerDef{}, false
+	}
+	// A grant made for another URL is not live for this one: the relay would refuse every
+	// request (relayBound), so the CLI is better off not seeing the server at all.
+	if u, err := url.Parse(d.URL); err != nil || !relayBound(g.Resource, u) {
 		return ServerDef{}, false
 	}
 	d.URL = base + d.ID
@@ -361,15 +366,16 @@ func noteInsufficientScope(id string, challenges []string) {
 	}
 }
 
-// relayTarget resolves the registered URL to forward to. The id is looked up in the user's own
-// store: a path that names anything else (a tenant row, a builtin, a server with a static
-// header) is not a relayed server.
+// relayTarget resolves the registered URL to forward to. The id is looked up in the effective
+// registry, so a member's own row and a tenant-distributed one are relayed alike (a member's
+// opt-out reads as switched off), and a path that names anything else (a builtin, a server with
+// a static header, a user row shadowed by a tenant one) is not a relayed server.
 func relayTarget(id string) (*url.URL, error) {
-	s, err := secrets.Load()
+	reg, err := Load()
 	if err != nil {
 		return nil, errors.New("the credential store could not be read")
 	}
-	for _, d := range s.MCP {
+	for _, d := range reg.Servers {
 		if d.ID != id || d.Auth != AuthOAuth || d.Transport != TransportHTTP {
 			continue
 		}

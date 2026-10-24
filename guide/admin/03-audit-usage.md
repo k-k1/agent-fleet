@@ -1,6 +1,5 @@
 ---
 audience: "a tenant administrator reviewing what happened and what it cost"
-updated: "2026-09"
 ---
 
 # 03. Audit log and usage

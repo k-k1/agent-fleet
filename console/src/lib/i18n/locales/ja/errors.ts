@@ -193,7 +193,7 @@ export const errors = {
   "err.mcp_auth_unknown": "その認証方式は不明です",
   "err.mcp_oauth_remote_only": "OAuth のサインインはリモートサーバー専用です",
   "err.mcp_oauth_authorization_header": "OAuth のサーバーには固定のヘッダを付けられません。外すか、別の認証を選んでください",
-  "err.mcp_oauth_not_distributed": "テナント配布のサーバーはまだ OAuth を使えません",
+  "err.mcp_oauth_user_secret": "OAuth のサーバーでは、メンバーにヘッダの値を入力させられません。「認証の値は各メンバーが入力する」を外すか、別の認証を選んでください",
   "err.oauth_not_required": "このサーバーは OAuth を求めていません",
   "err.oauth_discovery_failed": "サーバーの OAuth メタデータを使えませんでした。接続テストで理由を確認してください",
   "err.as_endpoints_unusable": "認可サーバーの認可エンドポイントかトークンエンドポイントが無いか、https ではありません",

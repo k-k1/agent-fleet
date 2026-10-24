@@ -1,6 +1,5 @@
 ---
 audience: "anyone connecting a session to services outside the workspace"
-updated: "2026-10"
 ---
 
 # 15. External services and signed-in CLIs — gh / bkt / jira, Discord / Slack, ops tooling

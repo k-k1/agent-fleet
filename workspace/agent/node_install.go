@@ -163,6 +163,12 @@ func installNode(major string) (string, error) {
 		return "", err
 	}
 	root := nvmNodeRoot()
+	// Same lock as uninstall takes; see installJDK.
+	unlock, _, err := installLock(root, true)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	dest := filepath.Join(root, version)
 	if _, err := os.Stat(filepath.Join(dest, "bin", "node")); err == nil {
 		fmt.Fprintf(os.Stderr, "[install-node] node %s already installed at %s\n", version, dest)

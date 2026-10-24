@@ -1002,3 +1002,81 @@ func TestAtomicWriteIgnoresAStaleWideTemp(t *testing.T) {
 		t.Errorf("content = %q", b)
 	}
 }
+
+// A grant belongs to the URL it was made for. One that names another resource would be refused
+// by the relay on every request, so the CLI is not handed the server at all.
+func TestForSessionLeavesOutAGrantMadeForAnotherURL(t *testing.T) {
+	up := newUpstream(t, okFor("tok-initial"))
+	newRelayEnv(t, up)
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.MCPOAuth[0].Resource = "https://elsewhere.example.com/mcp"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defs, err := ForSession(session.KindClaude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range defs {
+		if d.Name == "hosted" {
+			t.Fatalf("written through the relay with a grant for another URL: %+v", d)
+		}
+	}
+}
+
+// A tenant-distributed OAuth server reaches the CLIs the same way a member's own does: through
+// the relay, once the member has signed in, and not before.
+func TestForSessionWritesATenantOAuthServerThroughTheRelay(t *testing.T) {
+	up := newUpstream(t, okFor("tok-initial"))
+	e := newRelayEnv(t, up)
+	var grant secrets.MCPOAuthGrant
+	if err := secrets.Update(func(s *secrets.Data) error {
+		grant = s.MCPOAuth[0]
+		s.MCP, s.MCPOAuth = nil, nil
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	td := tenantDef("hosted")
+	td.ID, td.URL, td.Auth = relayTestID, up.srv.URL+"/mcp?tenant=a", AuthOAuth
+	kept, dropped := acceptTenant([]ServerDef{td})
+	if dropped != 0 {
+		t.Fatalf("a tenant OAuth definition was dropped")
+	}
+	if err := writeTenantCache(kept, time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
+	hosted := func() *ServerDef {
+		defs, err := ForSession(session.KindClaude)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range defs {
+			if defs[i].Name == "hosted" {
+				return &defs[i]
+			}
+		}
+		return nil
+	}
+	if d := hosted(); d != nil {
+		t.Fatalf("written before the member signed in: %+v", d)
+	}
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.MCPOAuth = []secrets.MCPOAuthGrant{grant}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := hosted()
+	if d == nil || d.URL != e.base+relayPath() || !reflect.DeepEqual(d.Headers, map[string]string{RelayKeyHeader: e.key}) {
+		t.Fatalf("a signed-in tenant server is written as %+v, want the relay URL and key", d)
+	}
+	resp := e.do(http.MethodPost, relayPath(), strings.NewReader(`{}`), nil)
+	if body := readAll(t, resp); resp.StatusCode != http.StatusOK || up.count() != 1 {
+		t.Fatalf("relay to the tenant server: %d %s, upstream saw %d request(s)", resp.StatusCode, body, up.count())
+	}
+	if got := up.at(0).Header.Get("Authorization"); got != "Bearer tok-initial" {
+		t.Fatalf("upstream saw Authorization %q", got)
+	}
+}

@@ -1,7 +1,6 @@
 ---
 audience: "everyone, and specifically an agent deciding how to show a running web app to a person"
 source_of_truth: "this file for terminology and what the pane can and cannot do; member/14 for states and recovery; limits.md for the numbers; the Console for what a button is called"
-updated: "2026-10"
 ---
 
 # Browser pane — the usage contract

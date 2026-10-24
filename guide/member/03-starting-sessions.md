@@ -1,6 +1,5 @@
 ---
 audience: "anyone starting and following AI conversations"
-updated: "2026-10"
 ---
 
 # 03. Starting a session — kinds, execution method, the Start dialog, the issue tracker

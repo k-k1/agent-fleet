@@ -1,6 +1,5 @@
 ---
 audience: "anyone looking at a web app running in the workspace, or at a browser an agent opened"
-updated: "2026-10"
 ---
 
 # 14. Preview and browser — browser pane, preview URLs, dev sign-in, an agent's browser

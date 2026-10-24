@@ -1,6 +1,5 @@
 ---
 audience: "anyone wondering what a mark on the screen means"
-updated: "2026-10"
 ---
 
 # Icons, badges, and menus — common Console reference
@@ -44,7 +43,7 @@ merely opening the bell marks nothing as read. This is the one place that descri
 (which notifications raise it: [Settings › Notifications](20-settings.md#notifications)).
 
 A row can also carry **"Shared"** (visible to another member;
-see [12](12-collaboration.md#sharing-a-conversation-shared-sessions)) and **"Delete-locked"** (excluded from deletion and
+see [12](12-collaboration.md#sharing-a-conversation-shared-sessions)) and **"Locked against deletion"** (excluded from deletion and
 automatic tidying; see [05](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup)).
 
 A row can grow a **second line** with links. The first is the GitHub pull request of the
@@ -122,13 +121,9 @@ connection. Not this deployment's engine."** together with the model the last ch
 ## Other badges
 
 - **The AWS and Google Cloud badges** in the WS bar (the AWS mark, the Google mark): your Settings profiles'
-  logins, shown only while the workspace runs and you have such profiles. The badge names the one logged-in
-  profile, or counts them ("1/3"); green when something is logged in, plain when nothing is, amber when an AWS
-  login ends soon. Press it for each profile's state and its **Log in** button (AWS: **Log out** too). Neither badge
-  picks a default profile: each command names one. An AWS profile that assumes a role from another has no
-  login of its own, so the count leaves it out ([16](16-cloud-accounts.md#profile-type-assume-a-role-from-another-profile)).
-  The Google Cloud badge (amber while an agent waits for a login, **Log in again** and **Log out**) is described in
-  [16](16-cloud-accounts.md#the-google-cloud-badge-in-the-ws-bar).
+  logins. What the name, count and colours mean and what the list offers are in
+  [16](16-cloud-accounts.md#the-aws-badge-in-the-ws-bar) (AWS) and
+  [16](16-cloud-accounts.md#the-google-cloud-badge-in-the-ws-bar) (Google Cloud).
 - **Restart needed**, beside the workspace power button in the WS bar: the workspace is still running the
   pre-update backend. Clicking it offers **Restart now**, which stops running sessions (resumable); it goes away
   once the workspace is current ([01](01-first-day.md#a-new-version-is-available-and-the-restart-needed-badge)).
@@ -147,7 +142,7 @@ connection. Not this deployment's engine."** together with the model the last ch
   (**"Started from an inbox request (sender: …)"**), a memo taken in from the inbox reads **"Inbox: …"**,
   and a shared session with a handoff for you has a branch mark, **"A handoff is waiting"**.
 - "LFS pointer": a file with only the Git LFS pointer present, not the actual content.
-- **"From the operator", "Scheduled", "Manual run", "Auto-resume", "From <name>"** in the chat view: where a
+- **"From operator", "Scheduled", "Manual fire", "Auto-resume", "From <name>"** in the chat view: where a
   prompt you did not type came from: the fleet operator, a schedule, an auto-resume after an interruption, and
   [a message from another session](11-many-sessions.md#messages-between-sessions). **"Via MCP: <name>"** (a
   plug icon; just **"Via MCP"** when the name is unknown) marks a prompt that came in through the MCP connection

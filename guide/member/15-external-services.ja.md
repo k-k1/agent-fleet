@@ -1,6 +1,5 @@
 ---
 audience: "セッションをワークスペースの外のサービスとつなぐ人"
-updated: "2026-10"
 ---
 
 # 15. 外部サービスとログイン済み CLI — gh / bkt / jira・Discord / Slack・運用ツール

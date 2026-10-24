@@ -1,6 +1,5 @@
 ---
 audience: "ワークスペースから AWS や Google Cloud を使う人"
-updated: "2026-10"
 ---
 
 # 16. クラウドのアカウント — AWS プロファイル・SSM ホスト・Google Cloud

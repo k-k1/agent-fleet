@@ -333,9 +333,37 @@ func handleToolchainsPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b, _ := json.MarshalIndent(req, "", "  ")
-	if err := os.WriteFile(p, append(b, '\n'), 0o600); err != nil {
+	// Under toolchainsMu, so an uninstall cannot remove a major between reading the
+	// selection and staging it; and replaced atomically, so no reader ever sees a
+	// truncated file and takes it for "nothing selected".
+	toolchainsMu.Lock()
+	err := writeToolchainsAtomic(p, append(b, '\n'))
+	toolchainsMu.Unlock()
+	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
 	handleToolchainsGet(w, r)
+}
+
+// writeToolchainsAtomic replaces p with b through a temp file and a rename.
+func writeToolchainsAtomic(p string, b []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(p), ".toolchains-*.json")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
 }

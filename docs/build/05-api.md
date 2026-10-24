@@ -1,7 +1,6 @@
 ---
 audience: "someone touching an API boundary"
 source_of_truth: "the code (this is the map and the invariants; individual request and response shapes are code-as-contract)"
-updated: "2026-09"
 ---
 
 # 05. API boundaries and relaying — the code is the contract

@@ -154,6 +154,7 @@ export function AuthFields({
   tokenStored,
   namesOnly,
   headersHint,
+  oauthNote,
   modes = AUTH_MODES,
 }: {
   auth: AuthMode;
@@ -165,7 +166,9 @@ export function AuthFields({
   tokenStored: boolean;
   namesOnly?: boolean;
   headersHint?: ReactNode;
-  // The modes offered; the tenant form passes TENANT_AUTH_MODES (no OAuth yet).
+  // What the OAuth mode says; the tenant form replaces the member's "sign in on the row" note.
+  oauthNote?: ReactNode;
+  // The modes offered.
   modes?: readonly AuthMode[];
 }) {
   const tr = useT();
@@ -201,7 +204,7 @@ export function AuthFields({
       )}
       {auth === "oauth" && (
         <p className="ps-note" data-testid="mcp-auth-oauth-note">
-          {tr("mcp.auth_oauth_note")}
+          {oauthNote ?? tr("mcp.auth_oauth_note")}
         </p>
       )}
       {auth === "headers" && (

@@ -74,6 +74,10 @@ type rotation struct {
 	at         int64
 }
 
+// serverLockKey is the lock that orders a sign-in's completion against a disconnect of the same
+// server. It is separate from the grant's key (server id + issuer), which refreshes hold.
+func serverLockKey(serverID string) string { return "server\n" + serverID }
+
 func lockFor(key string) *sync.Mutex {
 	grantLocksMu.Lock()
 	defer grantLocksMu.Unlock()
@@ -340,6 +344,11 @@ type DisconnectResult struct {
 // DisconnectOAuth revokes the grant at the authorization server when it offers revocation,
 // then deletes it locally whatever the answer.
 func DisconnectOAuth(ctx context.Context, serverID string) (DisconnectResult, error) {
+	// The server's lock first: a sign-in completing now either stores before this reads the
+	// grant (and is removed) or checks the definition after (and refuses).
+	smu := lockFor(serverLockKey(serverID))
+	smu.Lock()
+	defer smu.Unlock()
 	res := DisconnectResult{ServerID: serverID}
 	dropPendingFor(serverID)
 	g := currentGrant(serverID)
@@ -381,6 +390,21 @@ func DisconnectOAuth(ctx context.Context, serverID string) (DisconnectResult, er
 		return nil
 	})
 	return res, err
+}
+
+// revokeUnstored revokes, best effort, the tokens of a grant that is not going to be stored, so
+// they do not stay live at the AS with nothing on this side able to end them.
+func revokeUnstored(ctx context.Context, g secrets.MCPOAuthGrant) {
+	token, hint := g.RefreshToken, "refresh_token"
+	if token == "" {
+		token, hint = g.AccessToken, "access_token"
+	}
+	if token == "" || g.RevocationEndpoint == "" {
+		return
+	}
+	rctx, cancel := context.WithTimeout(ctx, oauthHTTPTimeout)
+	defer cancel()
+	revokeToken(rctx, g, token, hint)
 }
 
 func dropPendingFor(serverID string) {

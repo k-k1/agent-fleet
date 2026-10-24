@@ -4,9 +4,9 @@ English | [日本語](0119-mcp-client-oauth.ja.md)
 
 - Status: **accepted** (2026-10-23; proposed 2026-10-22). P1-P3 are built and ship in 0.34.0:
   the probe (#2485), sign-in (#2549, #2568) and the relay with materialization for every kind
-  (#2580). Not built: tenant distribution with `auth: oauth` (decision 9) and pre-registered
-  confidential clients. No live run against a real authorization server yet. All three stay
-  on #2479; the dated notes at the end record what was measured.
+  (#2580). Tenant distribution with `auth: oauth` (decision 9) is built after 0.34.0. Not built:
+  pre-registered confidential clients. No live run against a real authorization server yet. Both
+  stay on #2479; the dated notes at the end record what was measured.
 - Tracking: #2479
 - Related: [0031](0031-mcp-registry.md) (the registry; its "Left over" says OAuth MCPs are not
   driven from af, and its rejected options include "af acts as an MCP proxy", which decision 6
@@ -265,3 +265,19 @@ naming the server and the AS issuer. No token, code or verifier is logged or aud
     says "connected" yet the listener saw no request, so its header is not established). All seven kinds have a
     loopback-URL-plus-header drift case in `materialize_drift_test.go`; the cases that compare with `mcp add`
     (claude, opencode, copilot, kiro) pass, cursor and agy only check that the CLI lists what af wrote.
+
+- 2026-10-24, P4 built: tenant distribution with `auth: oauth` (decision 9). The CP table gains an `auth` column
+  (sqlite 0109, pg 0094), and the admin API and the Agent's `acceptTenant` both refuse an OAuth definition that
+  carries a header (`mcp_oauth_authorization_header`) or `user_secret` (`mcp_oauth_user_secret`): there is no
+  value left for a member to supply. Switching a distribution to OAuth drops its stored header values, as
+  `user_secret` does. Facts the decisions above did not pin down:
+  - **The relay serves tenant rows.** It resolved its target from the member's own store only, so a signed-in
+    tenant server would have been written into every config and then answered 404 on every request. It now
+    resolves through the effective registry (a member's opt-out reads as switched off).
+  - **A tenant change ends the sign-in.** A grant belongs to the URL it was made for (decision 5). A member's
+    own edit already disconnected it; for a tenant row the edit happens in the CP, so the Agent compares each
+    fetch with its cache and disconnects (revoking where the AS offers it) the OAuth rows the tenant removed,
+    moved to another URL or took OAuth off. A member's opt-out ends nothing.
+  - **Materialization checks the grant's resource too.** A grant whose resource is not the definition's URL is
+    not written (the relay would refuse it on every request anyway), so a disconnect that failed to write
+    cannot leave a dead server in a CLI's config.

@@ -1,7 +1,6 @@
 ---
 audience: "a deployment administrator (super_admin) running the self-hosted inference engines and the speech engine"
 source_of_truth: "the Admin modal's Inference engines, API tokens and Read aloud sections; the engine stack's declarations for what exists"
-updated: "2026-10"
 ---
 
 # 07. Inference engines and read aloud: the Admin panel

@@ -1,7 +1,6 @@
 ---
 audience: "Console からエージェントを動かす人"
 source_of_truth: "Console そのもの（画面と食い違ったら画面が正）"
-updated: "2026-10"
 ---
 
 # Agent Fleet を使う
