@@ -27,6 +27,15 @@ paste** under Settings > Display > Terminal; the other [shortcuts](02-console-ba
 - **Copy**: **left-drag to select, and it is copied automatically the moment you release**. From the keyboard: `Ctrl+Shift+C` (macOS: `⌘+Shift+C`; `⌘C` also works when there is a selection), `Ctrl+Insert`. A short "Copied" notice confirms a keyboard copy, and a notice appears if the browser refuses clipboard access.
 - **Paste**: **right-click** or **middle-click** to paste. From the keyboard: `Ctrl+Shift+V` (macOS: `⌘+Shift+V` / `⌘V`), `Shift+Insert`.
 
+**Paste confirmation.** When the program is reading a plain prompt (a shell, say), a paste with a
+newline in it would run line by line, and a very large one floods the pane. So if the clipboard
+text contains a newline or is longer than 1,000 characters, a **"Paste into the terminal?"** dialog
+shows how many characters (and lines) are about to go in, and warns that a shell may execute text
+with newlines directly; **Paste** goes ahead, cancelling pastes nothing. It applies to every paste
+gesture above. Short single-line text is pasted without asking, and so is anything pasted into a
+program that accepts pasted text safely (the agent CLIs, vim, most readline prompts), where a
+paste is not executed line by line.
+
 URLs that appear in the terminal (like claude sign-in links) open **in a new tab on click**,
 even when they're displayed wrapped. No need to copy a long URL and paste it back together.
 

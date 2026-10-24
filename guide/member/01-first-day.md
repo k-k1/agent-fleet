@@ -26,7 +26,7 @@ off. The first time, a card titled **"Welcome to Agent Fleet"** sits at the top 
 are checked off automatically. Only the top two items are required for everyone.
 
 1. **Start workspace**: the "Start" button brings up your own private work environment. While it's starting you'll see "Starting…", and when it finishes it shows "Running" and the item is checked off. Nothing that follows (including connecting) works until you do this.
-2. **Connect an agent**: from "Connect", sign in to Claude, Codex, or opencode. Connecting at least one checks the item off (see [09 Agents](09-agents.md) for connection details). If your administrator has chosen the team's agent, the step names it ("Your team's default is Claude"). Start with that one; any other agent still completes the step.
+2. **Connect an agent**: from "Connect", sign in to the agent you want to use. Connecting at least one checks the item off (see [09 Agents](09-agents.md) for connection details). If your administrator has chosen the team's agent, the step names it ("Your team's default is Claude"). Start with that one; any other agent still completes the step.
 
 Next comes a two-way choice: **"Where do you want to start?"** (you can use both later).
 
@@ -65,21 +65,15 @@ The regular guide for looking up operations opens from **"User guide"** in the s
 ## Clone your first repository
 
 To put an agent to work, first bring the repository you'll work on into the workspace.
-Open **"Add"** from **Repositories** in the left pane and leave **Kind** on **Git**.
+Open **"Add"** from **Repositories** in the left pane, leave **Kind** on **Git**, pick the
+repository (or paste its clone URL) and press **"Clone"**. When it finishes, the repository
+appears in the **Repositories** list, and **"Launch"** on that row starts your first session. Private
+repositories need the "Connect a git provider" step above. The options (branch, folder name),
+the pitfalls, and the built-in git provider are in [06 Repositories and git](06-code.md#clone-a-repository).
 
-- If you have a connected GitHub / Bitbucket, **"Pick from connections"** (the default) lets you choose the repository and branch from a list.
-- For anything not in the list, or not connected, use **"Enter URL"** and paste the clone URL.
-- Private repositories require the "Connect a git provider" step from the development track.
-
-Press **"Clone"** and the fetch starts; when it finishes, the repository appears in the
-**Repositories** list. From **"Launch"** on that row you can start your first session right
-away. See [06 Repositories and git](06-code.md) for detailed steps and
-common pitfalls.
-
-If you are starting something that does not exist anywhere yet, there is nothing to clone. Use
-**"+ Start" → "Start in a new folder…"** (or "Add" → Kind "New folder") to create an empty
-folder. It is `git init`ed as it is created, so from then on it behaves like any other
-repository.
+Starting something that does not exist anywhere yet? There is nothing to clone: use
+**"+ Start" → "Start in a new folder…"** to create an empty folder that is already a git repository
+([06](06-code.md#starting-with-nothing-to-import-from-a-new-folder)).
 
 ## At the end of the day — is it OK to stop the workspace?
 

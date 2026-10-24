@@ -37,9 +37,11 @@ shown as text as well, not just an icon.
 The speaker icon means an answer is being read aloud; the warning plus a branch name means the working copy has
 switched to a branch different from the one it started on. A **red dot on the corner of the kind icon** (and on
 the session's tab) is a notification for that session you have not read yet; a collapsed project row or section
-shows it for anything folded inside. It clears when the session is on screen (a report: when its operator
-conversation is), or with **"Mark all as read"** in the notification centre
-([03](03-starting-sessions.md#reading-state-badges-and-notifications)).
+shows it for anything folded inside. In the left pane a session with unread news also has a bold title. It
+clears when the session is on screen in one of your panes (a report: when its operator conversation is, or
+when you open it from the notification centre), or with **"Mark all as read"** in the notification centre;
+merely opening the bell marks nothing as read. This is the one place that describes the dot
+(which notifications raise it: [Settings › Notifications](20-settings.md#notifications)).
 
 A row can also carry **"Shared"** (visible to another member;
 see [12](12-collaboration.md#sharing-a-conversation-shared-sessions)) and **"Delete-locked"** (excluded from deletion and
@@ -119,15 +121,17 @@ connection. Not this deployment's engine."** together with the model the last ch
 
 ## Other badges
 
-- **The AWS and Google Cloud badges** in the WS bar (the AWS mark, the Google mark): your Settings profiles' logins,
-  shown only while the workspace runs and you have such profiles. The badge names the one logged-in profile, or
-  counts them ("1/3"); green when something is logged in, plain when nothing is, amber when an AWS login ends soon
-  or an agent waits for a Google Cloud login. Press it for each profile's state and its **Log in** button (AWS:
-  **Log out** too; Google Cloud: **Log in again** and **Log out**). Neither picks a default profile: each command names one
-  ([16](16-cloud-accounts.md#the-google-cloud-badge-in-the-ws-bar)). An AWS profile that assumes a role from
-  another has no login of its own, so the count leaves it out; its row reads **"Follows {source}'s login"**,
-  or **"Source unavailable"** when that profile is missing, and has no Log out
-  ([16](16-cloud-accounts.md#profile-type-assume-a-role-from-another-profile)).
+- **The AWS and Google Cloud badges** in the WS bar (the AWS mark, the Google mark): your Settings profiles'
+  logins, shown only while the workspace runs and you have such profiles. The badge names the one logged-in
+  profile, or counts them ("1/3"); green when something is logged in, plain when nothing is, amber when an AWS
+  login ends soon. Press it for each profile's state and its **Log in** button (AWS: **Log out** too). Neither badge
+  picks a default profile: each command names one. An AWS profile that assumes a role from another has no
+  login of its own, so the count leaves it out ([16](16-cloud-accounts.md#profile-type-assume-a-role-from-another-profile)).
+  The Google Cloud badge (amber while an agent waits for a login, **Log in again** and **Log out**) is described in
+  [16](16-cloud-accounts.md#the-google-cloud-badge-in-the-ws-bar).
+- **Restart needed**, beside the workspace power button in the WS bar: the workspace is still running the
+  pre-update backend. Clicking it offers **Restart now**, which stops running sessions (resumable); it goes away
+  once the workspace is current ([01](01-first-day.md#a-new-version-is-available-and-the-restart-needed-badge)).
 - Colored `1`, `2`…: the number of the pane it is shown in. Press to jump to that pane.
 - "Untracked", "Added", "Modified", "Renamed", "Deleted": the file's Git change type.
 - The number on an assistant row: the conversation's message count.
@@ -145,7 +149,10 @@ connection. Not this deployment's engine."** together with the model the last ch
 - "LFS pointer": a file with only the Git LFS pointer present, not the actual content.
 - **"From the operator", "Scheduled", "Manual run", "Auto-resume", "From <name>"** in the chat view: where a
   prompt you did not type came from: the fleet operator, a schedule, an auto-resume after an interruption, and
-  [a message from another session](11-many-sessions.md#messages-between-sessions). **"Started by <name>"** marks the
+  [a message from another session](11-many-sessions.md#messages-between-sessions). **"Via MCP: <name>"** (a
+  plug icon; just **"Via MCP"** when the name is unknown) marks a prompt that came in through the MCP connection
+  of an outside assistant or client rather than from you: the agent is told it is not an instruction from you and
+  will not treat it as your approval. **"Started by <name>"** marks the
   first prompt of a session another session started, and **"Stalled-tree notice"** the one Agent Fleet sends a
   parent whose children have all gone quiet ([11](11-many-sessions.md#starting-sessions-from-a-session-child-sessions)).
 - **"Paused"** on a schedule row: that schedule is suspended ([11](11-many-sessions.md)).
@@ -164,7 +171,11 @@ Depending on state and kind you'll see resume, re-login to SSM, stop, open the r
 rename, rename the branch, hand the conversation off, **move it to another agent**
 ([05](05-stopping-and-tidying.md#moving-a-session-to-another-agent-move)), **Share…**, **set / clear the delete lock**,
 **"Export as Markdown"** (three choices, [04](04-conversation.md#saving-a-conversation-as-markdown)),
-archive / delete, and recreate. While Agent memory has session suggestions turned on, **"Suggest memories now"**
+archive / delete, and recreate. **"Menu of repository {name}"** moves to the left pane and opens the menu of
+the repository the session belongs to (not shown for a session without a repository, on a phone, or while the
+workspace is stopped; if the left pane is hiding that repository, a notice says why). On a stopped session whose
+worktree has been deleted, **"Recreate working copy (worktree)…"** recreates the worktree at its original path
+so the session can resume ([05](05-stopping-and-tidying.md#when-you-can-and-cant-resume)). While Agent memory has session suggestions turned on, **"Suggest memories now"**
 asks for suggestions from this conversation; it is greyed out when no agent that can run without tools is
 available ([18](18-agent-memory.md#settings)). A session that was moved carries a line under its row,
 **"Moved to …"** (click to open the target) or **"Move to … unfinished"** (click to retry or cancel), and its
@@ -196,6 +207,7 @@ Ctrl / ⌘+click or middle-click opens the commit graph in a new pane.
 ### Files / folders
 
 You can create a new file, create a new folder, copy the name, copy the relative path, rename, and delete.
+Folders also show **"Open shell here"**, which starts a shell session in that folder ([07](07-files.md#open-a-shell-from-a-folder)).
 Files additionally show "Open in reader", "Download", "Translate with assistant" and "Summarize with assistant"; **folders show "Download as zip"** (the same
 item is in the gallery's folder menu; a touch long-press on a folder row opens the menu;
 [07](07-files.md#download-a-folder-as-zip)). Folders and **image files** also show
