@@ -85,12 +85,25 @@ func TestEgressAttributionOf(t *testing.T) {
 
 type addressStub struct {
 	hibernateStub
-	held []runtime.HeldAddress
-	err  error
+	held  []runtime.HeldAddress
+	err   error
+	asked int
+	open  []string
 }
 
-func (r *addressStub) HeldAddresses(context.Context) ([]runtime.HeldAddress, error) {
+func (r *addressStub) HeldAddresses(_ context.Context, open []string) ([]runtime.HeldAddress, error) {
+	r.asked++
+	r.open = open
 	return r.held, r.err
+}
+
+func openAddressRefs(t *testing.T, st *store.SQL, m string) []string {
+	t.Helper()
+	refs, err := st.OpenWorkspaceAddressRefs(context.Background(), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return refs
 }
 
 // The recorder end to end: a running workspace's address is opened, a failed read leaves it
@@ -103,26 +116,29 @@ func TestAddressRecorderKeepsIntervals(t *testing.T) {
 	base := time.Now().Add(-time.Minute).UnixMilli()
 	mgr.rtFactory = stubFactory{rt: rt}
 	clock := time.UnixMilli(base + 10_000)
-	ar := &addressRecorder{mgr: mgr, now: func() time.Time { return clock }}
+	ar := &addressRecorder{mgr: mgr, interval: time.Minute, holder: "cp-1", now: func() time.Time { return clock }}
 	eg := newEgressAPI(mgr, "tok", "", nil, nil)
 
 	rt.held = []runtime.HeldAddress{{Address: "10.0.1.5", Ref: "task/1", From: time.UnixMilli(base + 1_000)}}
-	ar.sweep(ctx)
-	if open, _ := st.HasOpenWorkspaceAddress(ctx, ws.MembershipID); !open {
+	ar.tick(ctx)
+	if open := openAddressRefs(t, st, ws.MembershipID); len(open) != 1 {
 		t.Fatal("a reported address must be recorded open")
 	}
 
 	rt.held, rt.err = nil, errors.New("throttled")
 	clock = time.UnixMilli(base + 20_000)
-	ar.sweep(ctx)
-	if open, _ := st.HasOpenWorkspaceAddress(ctx, ws.MembershipID); !open {
+	ar.tick(ctx)
+	if open := openAddressRefs(t, st, ws.MembershipID); len(open) != 1 {
 		t.Fatal("a failed read must not close the interval")
+	}
+	if len(rt.open) != 1 || rt.open[0] != "task/1" {
+		t.Errorf("the runtime must be told which refs are still open, got %v", rt.open)
 	}
 
 	rt.err = nil
 	clock = time.UnixMilli(base + 30_000)
-	ar.sweep(ctx)
-	if open, _ := st.HasOpenWorkspaceAddress(ctx, ws.MembershipID); open {
+	ar.tick(ctx)
+	if open := openAddressRefs(t, st, ws.MembershipID); len(open) != 0 {
 		t.Fatal("a holder no longer reported must be closed")
 	}
 
@@ -151,13 +167,50 @@ func TestAddressRecorderKeepsIntervals(t *testing.T) {
 		t.Errorf("event after the close: %+v", e)
 	}
 
-	// Stopped with nothing open: the runtime is not asked at all.
+	// Stopped with nothing open and idle for long: the runtime is not asked at all.
 	if err := st.SetWorkspaceState(ctx, ws.ID, "stopped"); err != nil {
 		t.Fatal(err)
 	}
-	rt.held = []runtime.HeldAddress{{Address: "10.0.1.6", Ref: "task/2", From: time.UnixMilli(base + 35_000)}}
-	ar.sweep(ctx)
-	if open, _ := st.HasOpenWorkspaceAddress(ctx, ws.MembershipID); open {
-		t.Error("a stopped workspace with no open address was polled")
+	setLastActive(t, st, ws.ID, clock.Add(-2*time.Hour))
+	rt.held, rt.asked = []runtime.HeldAddress{{Address: "10.0.1.6", Ref: "task/2", From: time.UnixMilli(base + 35_000)}}, 0
+	ar.tick(ctx)
+	if rt.asked != 0 {
+		t.Error("an idle stopped workspace with no open address was polled")
+	}
+	// Stopped but active a moment ago: a task that came and went between two sweeps is
+	// still recovered.
+	setLastActive(t, st, ws.ID, clock.Add(-time.Minute))
+	ar.tick(ctx)
+	if rt.asked != 1 || len(openAddressRefs(t, st, ws.MembershipID)) != 1 {
+		t.Errorf("a recently active stopped workspace must be polled (asked %d)", rt.asked)
+	}
+
+	// Another CP holds the lease: this one does nothing.
+	if ok, err := st.AcquireCPLease(ctx, addressRecorderLease, "cp-2", time.Hour); err == nil && ok {
+		t.Fatal("cp-1's lease is still live; cp-2 must not get it")
+	}
+	if err := st.ReleaseCPLease(ctx, addressRecorderLease, "cp-1"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := st.AcquireCPLease(ctx, addressRecorderLease, "cp-2", time.Hour); err != nil || !ok {
+		t.Fatalf("cp-2 lease: %v %v", ok, err)
+	}
+	rt.asked = 0
+	ar.tick(ctx)
+	if rt.asked != 0 {
+		t.Error("a CP without the lease swept")
+	}
+	if err := st.ReleaseCPLease(ctx, addressRecorderLease, "cp-2"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The workspace is destroyed with its row still open: the row is closed, not left to
+	// claim the address forever.
+	if err := st.DeleteWorkspace(ctx, ws.ID); err != nil {
+		t.Fatal(err)
+	}
+	ar.tick(ctx)
+	if open := openAddressRefs(t, st, ws.MembershipID); len(open) != 0 {
+		t.Errorf("an orphan row stayed open: %v", open)
 	}
 }

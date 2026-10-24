@@ -379,7 +379,7 @@ func main() {
 	// Egress attribution (ADR 0122, addendum 2026-10-24): only a deployment that ingests
 	// egress events has anything to attribute, and the recorder costs orchestrator reads.
 	if os.Getenv("AF_EGRESS_TOKEN") != "" {
-		iv := envx.DurationOr(os.Getenv("AF_EGRESS_ADDRESS_INTERVAL"), 30*time.Second)
+		iv := envx.DurationOr(os.Getenv("AF_EGRESS_ADDRESS_INTERVAL"), time.Minute)
 		go newAddressRecorder(mgr, iv).run(context.Background())
 	}
 	// Home operations a CP restart interrupted (ecs, home_operation.go): their task may

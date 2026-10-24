@@ -41,12 +41,15 @@ type EgressAttributionStore interface {
 	// ListAttributedEgressEvents returns the newest events at or after since, each with the
 	// address rows that held its source at its time.
 	ListAttributedEgressEvents(ctx context.Context, since int64, limit int) ([]AttributedEgressEvent, error)
-	// ObserveWorkspaceAddresses records what one membership's runtime reports now: each
-	// reported row is inserted or updated, and every row of the membership still open but
-	// not reported is closed at now.
+	// ObserveWorkspaceAddresses records what one membership's runtime reports now: a reported
+	// row is inserted, or has its end set or moved earlier, and every row of the membership
+	// still open but not reported is closed at now. A closed row is never opened again: the
+	// observation that would reopen it can only be an older one applied late.
 	ObserveWorkspaceAddresses(ctx context.Context, membershipID string, seen []WorkspaceAddress, now int64) error
-	// HasOpenWorkspaceAddress reports whether the membership holds an address still open.
-	HasOpenWorkspaceAddress(ctx context.Context, membershipID string) (bool, error)
+	// OpenWorkspaceAddressRefs returns the refs of the membership's rows still open.
+	OpenWorkspaceAddressRefs(ctx context.Context, membershipID string) ([]string, error)
+	// OpenAddressMemberships returns every membership that has a row still open.
+	OpenAddressMemberships(ctx context.Context) ([]string, error)
 }
 
 func (s *SQL) RecordEgressEvent(ctx context.Context, day string, e EgressEvent, receivedAt int64) (bool, error) {
@@ -131,12 +134,15 @@ func (s *SQL) ObserveWorkspaceAddresses(ctx context.Context, membershipID string
 	defer tx.Rollback()
 	keep := map[string]bool{}
 	for _, a := range seen {
-		// A row seen again replaces its end: a stopped task gains its stop time, and a row a
-		// failed read had closed is opened again (until 0) once its holder is seen.
+		// An end only ever appears or moves earlier: a stopped task's reported stop time
+		// replaces the later time its absence was noticed, and a report without an end
+		// changes nothing on a row already closed.
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO workspace_address(membership_id, workspace_id, address, ref, from_at, until_at)
 			 VALUES(?, ?, ?, ?, ?, ?)
-			 ON CONFLICT(ref, address, from_at) DO UPDATE SET until_at = excluded.until_at`,
+			 ON CONFLICT(ref, address, from_at) DO UPDATE SET until_at = CASE
+			   WHEN excluded.until_at <> 0 AND (workspace_address.until_at = 0 OR excluded.until_at < workspace_address.until_at)
+			   THEN excluded.until_at ELSE workspace_address.until_at END`,
 			membershipID, a.WorkspaceID, a.Address, a.Ref, a.From, a.Until); err != nil {
 			return err
 		}
@@ -174,11 +180,31 @@ func (s *SQL) ObserveWorkspaceAddresses(ctx context.Context, membershipID string
 	return tx.Commit()
 }
 
-func (s *SQL) HasOpenWorkspaceAddress(ctx context.Context, membershipID string) (bool, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM workspace_address WHERE membership_id=? AND until_at=0`, membershipID).Scan(&n)
-	return n > 0, err
+func (s *SQL) OpenWorkspaceAddressRefs(ctx context.Context, membershipID string) ([]string, error) {
+	return s.queryStrings(ctx,
+		`SELECT DISTINCT ref FROM workspace_address WHERE membership_id=? AND until_at=0 ORDER BY ref`, membershipID)
+}
+
+func (s *SQL) OpenAddressMemberships(ctx context.Context) ([]string, error) {
+	return s.queryStrings(ctx,
+		`SELECT DISTINCT membership_id FROM workspace_address WHERE until_at=0 ORDER BY membership_id`)
+}
+
+func (s *SQL) queryStrings(ctx context.Context, q string, args ...any) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 func addressKey(ref, address string, from int64) string {

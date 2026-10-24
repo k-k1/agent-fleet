@@ -79,53 +79,78 @@ func TestEgressAttributionFollowsAddressReuse(t *testing.T) {
 	}
 }
 
-func TestObserveWorkspaceAddressesClosesAndReopens(t *testing.T) {
+func openRefs(t *testing.T, st *SQL, m string) []string {
+	t.Helper()
+	refs, err := st.OpenWorkspaceAddressRefs(context.Background(), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return refs
+}
+
+func TestObserveWorkspaceAddressesEndsOnlyMoveEarlier(t *testing.T) {
 	ctx := context.Background()
 	for name, st := range homeOpStores(t) {
-		row := WorkspaceAddress{WorkspaceID: "w1", Address: "10.0.1.7", Ref: "pod-uid", From: 100}
+		row := WorkspaceAddress{WorkspaceID: "w1", Address: "10.0.1.7", Ref: "task-1", From: 100}
 		if err := st.ObserveWorkspaceAddresses(ctx, "m1", []WorkspaceAddress{row}, 110); err != nil {
 			t.Fatal(err)
 		}
-		if open, _ := st.HasOpenWorkspaceAddress(ctx, "m1"); !open {
-			t.Errorf("%s: a reported address must be open", name)
+		if got := openRefs(t, st, "m1"); !equalStrings(got, []string{"task-1"}) {
+			t.Errorf("%s: open refs %v", name, got)
 		}
-		if err := st.ObserveWorkspaceAddresses(ctx, "m1", nil, 120); err != nil {
+		if err := st.ObserveWorkspaceAddresses(ctx, "m1", nil, 300); err != nil {
 			t.Fatal(err)
 		}
-		if open, _ := st.HasOpenWorkspaceAddress(ctx, "m1"); open {
-			t.Errorf("%s: an address no longer reported must be closed", name)
+		if got := openRefs(t, st, "m1"); len(got) != 0 {
+			t.Errorf("%s: an address no longer reported must be closed, open %v", name, got)
 		}
-		// Seen again with the same incarnation: the close was wrong, open it again.
-		if err := st.ObserveWorkspaceAddresses(ctx, "m1", []WorkspaceAddress{row}, 130); err != nil {
+		// The task's reported stop time is earlier than the noticed absence: it wins.
+		stopped := row
+		stopped.Until = 200
+		if err := st.ObserveWorkspaceAddresses(ctx, "m1", []WorkspaceAddress{stopped}, 310); err != nil {
 			t.Fatal(err)
 		}
-		if open, _ := st.HasOpenWorkspaceAddress(ctx, "m1"); !open {
-			t.Errorf("%s: the same holder seen again must be open again", name)
-		}
-		// A reported end (a stopped ECS task) closes the row at that time, not at now.
-		row.Until = 125
-		if err := st.ObserveWorkspaceAddresses(ctx, "m1", []WorkspaceAddress{row}, 140); err != nil {
+		// An older observation applied late (the task still running) must neither reopen the
+		// row nor push its end back.
+		if err := st.ObserveWorkspaceAddresses(ctx, "m1", []WorkspaceAddress{row}, 320); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := st.RecordEgressEvent(ctx, "d", EgressEvent{ID: "x", At: 130, Source: row.Address, Count: 1}, 150); err != nil {
+		late := row
+		late.Until = 250
+		if err := st.ObserveWorkspaceAddresses(ctx, "m1", []WorkspaceAddress{late}, 330); err != nil {
 			t.Fatal(err)
+		}
+		if got := openRefs(t, st, "m1"); len(got) != 0 {
+			t.Errorf("%s: a closed row was opened again: %v", name, got)
+		}
+		for _, e := range []EgressEvent{
+			{ID: "during", At: 150, Source: row.Address, Count: 1},
+			{ID: "after-stop", At: 210, Source: row.Address, Count: 1},
+		} {
+			if _, err := st.RecordEgressEvent(ctx, "d", e, 400); err != nil {
+				t.Fatal(err)
+			}
 		}
 		got, err := st.ListAttributedEgressEvents(ctx, 0, 10)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(got) != 1 || len(got[0].Holders) != 0 {
-			t.Errorf("%s: an event after the reported stop must be unattributed, got %+v", name, got)
+		holders := map[string]int{}
+		for _, e := range got {
+			holders[e.ID] = len(e.Holders)
+		}
+		if holders["during"] != 1 || holders["after-stop"] != 0 {
+			t.Errorf("%s: the interval must end at the reported stop (200): %v", name, holders)
 		}
 		// Another membership's rows are never closed by this one's report.
 		if err := st.ObserveWorkspaceAddresses(ctx, "m2", []WorkspaceAddress{{Address: "10.0.1.8", Ref: "other", From: 1}}, 1); err != nil {
 			t.Fatal(err)
 		}
-		if err := st.ObserveWorkspaceAddresses(ctx, "m1", nil, 200); err != nil {
+		if err := st.ObserveWorkspaceAddresses(ctx, "m1", nil, 500); err != nil {
 			t.Fatal(err)
 		}
-		if open, _ := st.HasOpenWorkspaceAddress(ctx, "m2"); !open {
-			t.Errorf("%s: m1's report closed m2's address", name)
+		if got, err := st.OpenAddressMemberships(ctx); err != nil || !equalStrings(got, []string{"m2"}) {
+			t.Errorf("%s: open memberships %v, %v", name, got, err)
 		}
 	}
 }

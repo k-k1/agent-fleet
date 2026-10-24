@@ -352,8 +352,9 @@ The design and the staged rollout — log-only → allowlist → enforce — are
   recorded to the audit log. An event that carries an `id` (the egress gateway's, ADR
   [0122](../decisions/0122-egress-gateway.md)) is also kept raw with its `at`, `source` and
   `dest`, and is stored and counted once however often it is resent.
-- **Attribution** — when `AF_EGRESS_TOKEN` is set, a recorder asks each workspace's runtime
-  every `AF_EGRESS_ADDRESS_INTERVAL` (default 30s) which addresses it holds: the ECS task ENI,
+- **Attribution** — when `AF_EGRESS_TOKEN` is set, a recorder (one CP at a time, under a CP
+  lease) asks each workspace's runtime every `AF_EGRESS_ADDRESS_INTERVAL` (default 60s) which
+  addresses it holds: the ECS task ENI,
   the pod IP, or the container's address on the per-user network. It keeps them as time ranges.
   `GET /api/admin/egress/events` joins each raw event to them on address and time and reports
   the event as attributed, ambiguous, unattributed, or infrastructure (a source inside

@@ -29,23 +29,54 @@ type HeldAddress struct {
 
 // AddressReporter is the optional capability behind egress attribution. HeldAddresses
 // answers every address the workspace holds now, plus any it held recently that the
-// orchestrator still reports with an end time. An address missing from the answer is one
-// the workspace no longer holds, so an error must be returned rather than a partial list
-// whenever the orchestrator could not be read: a partial list closes intervals that are
-// still open.
+// orchestrator still reports with an end time. open is the refs the caller still has as
+// holding an address; each of them must come back, with an end if it has one, unless the
+// orchestrator positively says it is gone.
+//
+// An address missing from the answer is taken as no longer held, so an error must be
+// returned rather than a partial list whenever the orchestrator could not be read, or could
+// not account for a ref in open: a partial list closes intervals that are still running.
 type AddressReporter interface {
-	HeldAddresses(ctx context.Context) ([]HeldAddress, error)
+	HeldAddresses(ctx context.Context, open []string) ([]HeldAddress, error)
 }
 
 // HeldAddresses lists the service's tasks, running and recently stopped, and reports each
 // one's ENI address from creation to stop. A task's ENI is created after the task and is
 // gone by STOPPED, so two tasks' intervals for one address do not overlap.
-func (e *ecsRuntime) HeldAddresses(ctx context.Context) ([]HeldAddress, error) {
+//
+// ListTasks and DescribeTasks are eventually consistent and can leave out a task that is
+// running, so a task in open that the listing missed is described by ARN. Only a STOPPED
+// answer ends it; MISSING proves nothing (the same rule as waitServiceTasksGone) and fails
+// the read.
+func (e *ecsRuntime) HeldAddresses(ctx context.Context, open []string) ([]HeldAddress, error) {
 	lister, ok := e.ecs.(ecsTaskLister)
 	if !ok {
 		return nil, errors.New("ecs client cannot list tasks")
 	}
 	var out []HeldAddress
+	seen := map[string]bool{}
+	describe := func(arns []string) error {
+		for len(arns) > 0 {
+			n := min(len(arns), 100) // DescribeTasks takes at most 100 tasks
+			described, err := lister.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+				Cluster: aws.String(e.cfg.cluster),
+				Tasks:   arns[:n],
+			})
+			if err != nil {
+				return err
+			}
+			if len(described.Failures) > 0 {
+				f := described.Failures[0]
+				return fmt.Errorf("describe task %s: %s", aws.ToString(f.Arn), aws.ToString(f.Reason))
+			}
+			for _, t := range described.Tasks {
+				seen[aws.ToString(t.TaskArn)] = true
+			}
+			out = append(out, taskHeldAddresses(described.Tasks)...)
+			arns = arns[n:]
+		}
+		return nil
+	}
 	for _, status := range []ecstypes.DesiredStatus{ecstypes.DesiredStatusRunning, ecstypes.DesiredStatusStopped} {
 		var next *string
 		for {
@@ -62,27 +93,23 @@ func (e *ecsRuntime) HeldAddresses(ctx context.Context) ([]HeldAddress, error) {
 				}
 				return nil, err
 			}
-			// DescribeTasks takes at most 100 tasks; ListTasks pages at 100 by default.
-			if len(listed.TaskArns) > 0 {
-				described, err := lister.DescribeTasks(ctx, &ecs.DescribeTasksInput{
-					Cluster: aws.String(e.cfg.cluster),
-					Tasks:   listed.TaskArns,
-				})
-				if err != nil {
-					return nil, err
-				}
-				for _, f := range described.Failures {
-					if aws.ToString(f.Reason) != "MISSING" {
-						return nil, fmt.Errorf("describe task %s: %s", aws.ToString(f.Arn), aws.ToString(f.Reason))
-					}
-				}
-				out = append(out, taskHeldAddresses(described.Tasks)...)
+			if err := describe(listed.TaskArns); err != nil {
+				return nil, err
 			}
 			if listed.NextToken == nil {
 				break
 			}
 			next = listed.NextToken
 		}
+	}
+	var missed []string
+	for _, arn := range open {
+		if !seen[arn] {
+			missed = append(missed, arn)
+		}
+	}
+	if err := describe(missed); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -119,14 +146,15 @@ func taskHeldAddresses(tasks []ecstypes.Task) []HeldAddress {
 
 // HeldAddresses: an ecs-ec2 workspace task is an awsvpc task of the same service shape, so
 // its ENI is read the same way. The slot instance's own address is not the workspace's.
-func (e *ecsEC2Runtime) HeldAddresses(ctx context.Context) ([]HeldAddress, error) {
-	return e.base.HeldAddresses(ctx)
+func (e *ecsEC2Runtime) HeldAddresses(ctx context.Context, open []string) ([]HeldAddress, error) {
+	return e.base.HeldAddresses(ctx, open)
 }
 
 // HeldAddresses reports the StatefulSet's pods that have an address. A pod deleted since the
 // last look is simply absent, and the caller closes its interval when it sees that, which
-// is later than the pod went; an overlap with the next holder then shows as ambiguous.
-func (k *kubeRuntime) HeldAddresses(ctx context.Context) ([]HeldAddress, error) {
+// is later than the pod went; an overlap with the next holder then shows as ambiguous. open
+// is not needed: a list is served from the API server's current state, not a lagging index.
+func (k *kubeRuntime) HeldAddresses(ctx context.Context, _ []string) ([]HeldAddress, error) {
 	pods, err := k.workspacePods(ctx)
 	if err != nil {
 		return nil, err
@@ -158,8 +186,9 @@ func podHeldAddresses(pods []kPod) []HeldAddress {
 // as opposed to docker not answering at all.
 var errDockerNoSuchObject = errors.New("no such object")
 
-// HeldAddresses reports the container's address on its per-user network while it runs.
-func (d *dockerRuntime) HeldAddresses(ctx context.Context) ([]HeldAddress, error) {
+// HeldAddresses reports the container's address on its per-user network while it runs. open
+// is not needed: docker answers for the one container by name.
+func (d *dockerRuntime) HeldAddresses(ctx context.Context, _ []string) ([]HeldAddress, error) {
 	network := d.network
 	if network == "" {
 		network = "bridge"

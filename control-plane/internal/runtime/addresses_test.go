@@ -15,10 +15,13 @@ import (
 // addressTasks is an ECS client that lists a fixed set of tasks per desired status.
 type addressTasks struct {
 	fakeECS
-	byStatus  map[ecstypes.DesiredStatus][]ecstypes.Task
-	failures  []ecstypes.Failure
-	listErr   error
-	described int
+	byStatus map[ecstypes.DesiredStatus][]ecstypes.Task
+	// unlisted are tasks DescribeTasks knows but ListTasks leaves out, as an eventually
+	// consistent listing can.
+	unlisted []ecstypes.Task
+	// missing are ARNs DescribeTasks answers MISSING for.
+	missing map[string]bool
+	listErr error
 }
 
 func (f *addressTasks) ListTasks(_ context.Context, in *ecs.ListTasksInput, _ ...func(*ecs.Options)) (*ecs.ListTasksOutput, error) {
@@ -33,14 +36,19 @@ func (f *addressTasks) ListTasks(_ context.Context, in *ecs.ListTasksInput, _ ..
 }
 
 func (f *addressTasks) DescribeTasks(_ context.Context, in *ecs.DescribeTasksInput, _ ...func(*ecs.Options)) (*ecs.DescribeTasksOutput, error) {
-	f.described++
-	out := &ecs.DescribeTasksOutput{Failures: f.failures}
+	out := &ecs.DescribeTasksOutput{}
+	all := append([]ecstypes.Task{}, f.unlisted...)
 	for _, ts := range f.byStatus {
-		for _, t := range ts {
-			for _, arn := range in.Tasks {
-				if arn == aws.ToString(t.TaskArn) {
-					out.Tasks = append(out.Tasks, t)
-				}
+		all = append(all, ts...)
+	}
+	for _, arn := range in.Tasks {
+		if f.missing[arn] {
+			out.Failures = append(out.Failures, ecstypes.Failure{Arn: aws.String(arn), Reason: aws.String("MISSING")})
+			continue
+		}
+		for _, t := range all {
+			if arn == aws.ToString(t.TaskArn) {
+				out.Tasks = append(out.Tasks, t)
 			}
 		}
 	}
@@ -70,7 +78,7 @@ func TestECSHeldAddressesReadsTheTaskENI(t *testing.T) {
 		ecstypes.DesiredStatusStopped: {eniTask("arn:task/old", "10.0.1.5", t0, &stop)},
 	}}
 	e := &ecsRuntime{cfg: ecsConfig{cluster: "c"}, ecs: f, name: "ws"}
-	got, err := e.HeldAddresses(context.Background())
+	got, err := e.HeldAddresses(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,19 +95,40 @@ func TestECSHeldAddressesReadsTheTaskENI(t *testing.T) {
 		}
 	}
 
-	// A task that could not be described must fail the read, not shorten the list: a
-	// missing task reads as one that stopped holding its address.
-	f.failures = []ecstypes.Failure{{Arn: aws.String("arn:task/new"), Reason: aws.String("INTERNAL")}}
-	if _, err := e.HeldAddresses(context.Background()); err == nil {
-		t.Error("a describe failure must be an error")
+	// A task the caller still has open, left out of the listing: described by ARN, and its
+	// stop time reported, rather than read as gone.
+	late := t0.Add(3 * time.Hour)
+	f.unlisted = []ecstypes.Task{eniTask("arn:task/unlisted", "10.0.1.7", t0, &late)}
+	got, err = e.HeldAddresses(context.Background(), []string{"arn:task/new", "arn:task/unlisted"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	f.failures = nil
+	var found bool
+	for _, h := range got {
+		if h.Ref == "arn:task/unlisted" && h.Until.Equal(late) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("an open task missing from the listing must be described: %+v", got)
+	}
+
+	// MISSING proves nothing: the read fails rather than closing the task's interval.
+	f.missing = map[string]bool{"arn:task/ghost": true}
+	if _, err := e.HeldAddresses(context.Background(), []string{"arn:task/ghost"}); err == nil {
+		t.Error("an open task answered MISSING must fail the read")
+	}
+	f.missing = map[string]bool{"arn:task/new": true}
+	if _, err := e.HeldAddresses(context.Background(), nil); err == nil {
+		t.Error("a listed task answered MISSING must fail the read")
+	}
+	f.missing = nil
 	f.listErr = errors.New("throttled")
-	if _, err := e.HeldAddresses(context.Background()); err == nil {
+	if _, err := e.HeldAddresses(context.Background(), nil); err == nil {
 		t.Error("a list failure must be an error")
 	}
 	f.listErr = &ecstypes.ServiceNotFoundException{}
-	if got, err := e.HeldAddresses(context.Background()); err != nil || len(got) != 0 {
+	if got, err := e.HeldAddresses(context.Background(), nil); err != nil || len(got) != 0 {
 		t.Errorf("no service holds nothing: got %+v, %v", got, err)
 	}
 }
@@ -128,7 +157,7 @@ func TestDockerHeldAddresses(t *testing.T) {
 		asked = format
 		return "abc123|2026-10-24T09:00:00.123456789Z|172.19.0.2"
 	}}
-	got, err := d.HeldAddresses(context.Background())
+	got, err := d.HeldAddresses(context.Background(), nil)
 	if err != nil || len(got) != 1 || got[0].Ref != "abc123" || got[0].Address != "172.19.0.2" {
 		t.Fatalf("got %+v, %v", got, err)
 	}
@@ -137,12 +166,12 @@ func TestDockerHeldAddresses(t *testing.T) {
 	}
 	// Stopped: no address on the network, nothing held.
 	d.inspect = func(context.Context, string, string, string) string { return "abc123|2026-10-24T09:00:00Z|" }
-	if got, err := d.HeldAddresses(context.Background()); err != nil || len(got) != 0 {
+	if got, err := d.HeldAddresses(context.Background(), nil); err != nil || len(got) != 0 {
 		t.Errorf("stopped container: %+v, %v", got, err)
 	}
 	// Gone: nothing held, not an error.
 	d.inspect = func(context.Context, string, string, string) string { return "" }
-	if got, err := d.HeldAddresses(context.Background()); err != nil || len(got) != 0 {
+	if got, err := d.HeldAddresses(context.Background(), nil); err != nil || len(got) != 0 {
 		t.Errorf("missing container: %+v, %v", got, err)
 	}
 	if _, err := dockerHeldAddresses("garbage"); err == nil {
