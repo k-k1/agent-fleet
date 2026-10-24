@@ -10,7 +10,9 @@ package mcpreg
 
 import (
 	"fmt"
+	"net/netip"
 	"net/url"
+	"path"
 	"regexp"
 	"strings"
 
@@ -97,6 +99,7 @@ const (
 	CodeURLScheme       = "mcp_url_scheme"
 	CodeURLHost         = "mcp_url_host"
 	CodeURLCredentials  = "mcp_url_credentials"
+	CodeURLOwnMCP       = "mcp_url_own_endpoint"
 	CodeHTTPNoCommand   = "mcp_http_no_command"
 	CodeEnvName         = "mcp_env_name_invalid"
 	CodeHeaderName      = "mcp_header_name_invalid"
@@ -404,4 +407,66 @@ func Ready(d ServerDef) bool {
 		return true
 	}
 	return false
+}
+
+// ownMCPPath is where every deployment serves its external MCP endpoint.
+const ownMCPPath = "/mcp"
+
+// RefuseOwnMCP refuses a URL that is this deployment's own /mcp endpoint (the public
+// or the internal CP base). That endpoint carries the member's full authority, so
+// registering it would lift the session surface's own-children-only, no-delete limits.
+// It is a guardrail against the self-loop, not a security boundary: it runs only when a
+// definition is created or edited, never when stored ones are loaded, and an unset base
+// refuses nothing. A different host, or another deployment, passes.
+func RefuseOwnMCP(raw string, bases ...string) error {
+	for _, b := range bases {
+		if SameMCPEndpoint(raw, b) {
+			return invalid(CodeURLOwnMCP, "this is this deployment's own /mcp endpoint: connecting it would give sessions the member's full /mcp authority")
+		}
+	}
+	return nil
+}
+
+// SameMCPEndpoint reports whether raw reaches base's /mcp endpoint. The scheme is
+// ignored, an absent port equals 80 and 443, hosts compare without a trailing dot and as
+// parsed IPs, and both paths are cleaned because the server's mux redirects /mcp/../mcp
+// and //mcp to /mcp. An empty or unparsable base never matches.
+func SameMCPEndpoint(raw, base string) bool {
+	if strings.TrimSpace(base) == "" {
+		return false
+	}
+	a, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	b, err := url.Parse(strings.TrimSpace(base))
+	if err != nil || b.Hostname() == "" || a.Hostname() == "" {
+		return false
+	}
+	return endpointHost(a) == endpointHost(b) && endpointPort(a) == endpointPort(b) &&
+		cleanEndpointPath(a.Path) == cleanEndpointPath(b.Path)+ownMCPPath
+}
+
+func cleanEndpointPath(p string) string {
+	if c := path.Clean("/" + p); c != "/" {
+		return c
+	}
+	return ""
+}
+
+func endpointHost(u *url.URL) string {
+	h := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	if ip, err := netip.ParseAddr(h); err == nil {
+		return ip.Unmap().String()
+	}
+	return h
+}
+
+func endpointPort(u *url.URL) string {
+	switch p := u.Port(); p {
+	case "", "80", "443":
+		return ""
+	default:
+		return p
+	}
 }

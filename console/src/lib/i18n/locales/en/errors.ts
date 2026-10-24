@@ -192,6 +192,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.mcp_url_scheme": "The URL must be http or https.",
   "err.mcp_url_host": "The URL has no host.",
   "err.mcp_url_credentials": "Do not embed credentials in the URL. Use a header.",
+  "err.mcp_url_own_endpoint": "This is this deployment's own /mcp endpoint. Connecting it would give sessions your full /mcp authority (any session, delete, admin tools). Another Agent Fleet deployment is fine.",
   "err.mcp_auth_unknown": "That authentication method is not known.",
   "err.mcp_oauth_remote_only": "OAuth sign-in is only for remote servers.",
   "err.mcp_oauth_authorization_header": "An OAuth server takes no static headers. Remove them, or choose another authentication.",
