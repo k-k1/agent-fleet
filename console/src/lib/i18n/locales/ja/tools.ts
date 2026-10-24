@@ -261,6 +261,25 @@ export const tools = {
   "env.node_update": "{v} に更新",
   "env.node_update_note":
     "Node.js {v} が出ています（このワークスペースは {cur}）。「{v} に更新」で home ボリュームへ取得し、完了後に起動したセッションから使われます（Stop → Start は不要）。Agent Fleet が入れた古いパッチは次のワークスペース起動時に削除されます。",
+  "env.installed_title": "インストール済みのバージョン",
+  "env.installed_note":
+    "ディスクにある JDK と Node.js です。使わなくなったバージョンをアンインストールすると home ボリュームの容量が空きます。ワークスペースのイメージが持っているものは残ります。",
+  "env.installed_th_version": "版",
+  "env.installed_th_where": "場所",
+  "env.installed_th_size": "サイズ",
+  "env.installed_in_use": "（使用中）",
+  "env.installed_src_home": "home ボリューム",
+  "env.installed_src_system": "ワークスペースのイメージ",
+  "env.uninstall": "アンインストール",
+  "env.uninstalling": "アンインストール中…",
+  "env.uninstall_no_selected": "選択中（先に別のバージョンを選んでください）",
+  "env.uninstall_no_installing": "インストール中",
+  "env.uninstall_title": "{name} をアンインストールしますか？",
+  "env.uninstall_body_jdk":
+    "{name} を home ボリュームから削除します（{size} GiB）。ワークスペースのイメージにも同じバージョンがあれば、以後のセッションはそちらを使います。このコピーで先に起動していたセッションやシェルは、再起動するまで存在しないパスを指したままになります。",
+  "env.uninstall_body_node":
+    "{name} のパッチを home ボリュームからすべて削除します（{size} GiB。nvm で入れたものも含みます）。これで先に起動していたセッションやシェルは、再起動するまで存在しないパスを指したままになります。",
+  "env.uninstall_failed": "アンインストールに失敗しました: {msg}",
   "env.node_install_failed": "Node.js のインストールに失敗しました: {msg}",
   "env.node_install_timeout": "時間内にダウンロードが終わりませんでした",
   "env.go_default": "既定 (image の go)",

@@ -259,6 +259,25 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.node_installing": "Installing…",
   "env.node_install_note":
     "Node.js v{v} is not in this workspace yet. Install downloads it into your home volume, where it persists across restarts; sessions started afterwards use it, with no Stop → Start.",
+  "env.installed_title": "Installed versions",
+  "env.installed_note":
+    "JDKs and Node.js versions on disk. Uninstall gives back the home-volume space of a version you no longer use; the ones provided by the workspace image stay.",
+  "env.installed_th_version": "Version",
+  "env.installed_th_where": "Where",
+  "env.installed_th_size": "Size",
+  "env.installed_in_use": "(in use)",
+  "env.installed_src_home": "Home volume",
+  "env.installed_src_system": "Workspace image",
+  "env.uninstall": "Uninstall",
+  "env.uninstalling": "Uninstalling…",
+  "env.uninstall_no_selected": "Selected — pick another version first",
+  "env.uninstall_no_installing": "Being installed",
+  "env.uninstall_title": "Uninstall {name}?",
+  "env.uninstall_body_jdk":
+    "Removes {name} from your home volume ({size} GiB). If the workspace image also has this version, sessions use that one from now on. Sessions and shells started earlier with this copy keep a path that no longer exists until they are restarted.",
+  "env.uninstall_body_node":
+    "Removes every {name} patch from your home volume ({size} GiB), including ones installed with nvm. Sessions and shells started earlier with it keep a path that no longer exists until they are restarted.",
+  "env.uninstall_failed": "Uninstall failed: {msg}",
   "env.node_install_failed": "Node.js install failed: {msg}",
   "env.node_install_busy": "Node.js v{v} is being installed right now. Try again when it has finished.",
   "env.node_update": "Update to {v}",

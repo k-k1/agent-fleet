@@ -147,6 +147,18 @@ alias（symlink の alias も含む）や `~/.nvmrc` / `~/repos/*/.nvmrc`（nvm 
 絶対パスの symlink・途中で一度でも自ツリーより上へ出る相対 symlink が一つでもあれば、その回は何も消さない（Node
 自身のツリーには自ツリー内のファイルへの相対リンクが数本あるだけ）。最新に実行できる `bin/node` が無いメジャーは見送る。
 
+`GET /env/toolchain-installs` は JDK の全ツリー（home ボリュームと `/usr/lib/jvm`）と `~/.nvm` 配下の Node の
+メジャーを、版・サイズ・削除できるかと一緒に返す。`DELETE /env/jdk/{major}` / `DELETE /env/node/{major}` は
+home ボリュームのツリーだけを消す（`toolchain_uninstall.go`）。選択中のメジャー（厳密な `22.23.4` も 22 とみなす）は、
+独立した `/usr/lib/jvm` のコピー（上位のパスにも symlink が無い、home の外にある実ディレクトリで、home のコピーと
+同じディレクトリ（デバイスと inode）を一つも共有しない＝bind mount ではないもので、Node の prune と同じリンク検査を通り、`bin/java` が
+動くもの。Temurin 21/25 は通る。Temurin 8 はディレクトリのリンクがあるので代わりにならない）が残る場合を除いて拒否する。インストール中も拒否し、端末から
+起動したものも含む（install-jdk / install-node はインストールの間ずっと置き場の flock を持つ）。判定と
+`<root>/.agent-fleet-trash` への改名は、その flock・インストーラの mutex・選択の PUT と共有するロック（PUT は
+`toolchains.json` を原子的に書き換えるようにした）の内側で行い、削除は外側で行う。掃除するのはごみ箱ディレクトリだけで、
+それが実ディレクトリのときに限り、空になっても残す。一覧と DELETE は同じ「置き場が使用中」判定を使うので、一覧が
+削除できると示したものを DELETE が断ることはない。
+
 ## 9.5 aws ターゲット
 
 CloudFormation スタックは 7 本で、配備順は `00-network → 10-data → 20-platform →

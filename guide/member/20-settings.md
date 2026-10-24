@@ -563,6 +563,9 @@ not installed yet, the button names the version it will install (for example
 **Install 17.0.21+9**). Older Node.js patches that Agent Fleet installed are removed at the next
 workspace start; versions you installed yourself with nvm, and exact versions pinned by an
 nvm alias or a `.nvmrc`, are kept.
+**Installed versions** lists the JDKs and Node.js versions on disk with their size. **Uninstall**
+removes one from your home volume, after asking. Versions provided by the workspace image, the
+selected version (unless the image also has it) and one being installed cannot be removed.
 → [17 Workspace environment](17-workspace-environment.md#environment-settings-and-recreating-the-workspace)
 
 ### Databases
