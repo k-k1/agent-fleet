@@ -22,7 +22,8 @@ package main
 //   - the root's install flock (installLock), which install-jdk / install-node hold for
 //     the whole install even when run from a terminal, i.e. from another process.
 // The delete then runs outside all of them (seconds for a JDK; the status poll must not
-// wait). Only the trash directory is ever swept, never a name pattern elsewhere.
+// wait). Only the trash directory is ever swept, never a name pattern elsewhere, and only
+// when it is a real directory.
 
 import (
 	"crypto/rand"
@@ -99,18 +100,13 @@ func homeNodeTrees(major string) []string {
 	return out
 }
 
-func installing(inst interface {
-	snapshot() (string, string, string)
-}, major string) bool {
-	state, m, _ := inst.snapshot()
-	return state == "installing" && m == major
-}
-
 func listToolchainInstalls() toolchainInstallsReply {
 	sweepTrash(jvmHomeRoot())
 	sweepTrash(nvmNodeRoot())
 	sel := readToolchains()
 	selJava, selNode := selectedMajor(sel.Java), selectedMajor(sel.Node)
+	jdkBusy := rootBusy(jvmHomeRoot(), &jdkInstaller)
+	nodeBusy := rootBusy(nvmNodeRoot(), &nodeInstaller)
 	reply := toolchainInstallsReply{Java: []toolchainInstall{}, Node: []toolchainInstall{}}
 
 	for _, major := range installedJavaMajors() {
@@ -122,7 +118,7 @@ func listToolchainInstalls() toolchainInstallsReply {
 			switch {
 			case selJava == major && !independentJDK(sys, home):
 				e.Reason = "selected"
-			case installing(&jdkInstaller, major):
+			case jdkBusy:
 				e.Reason = "installing"
 			default:
 				e.Removable = true
@@ -151,7 +147,7 @@ func listToolchainInstalls() toolchainInstallsReply {
 		switch {
 		case selNode == major:
 			e.Reason = "selected"
-		case installing(&nodeInstaller, major):
+		case nodeBusy:
 			e.Reason = "installing"
 		default:
 			e.Removable = true
@@ -176,30 +172,49 @@ func selectedMajor(sel string) string {
 	return ""
 }
 
-// independentJDK reports whether sys is a usable JDK that does not live in, or reach
-// through, home: removing home must leave it working. A /usr/lib/jvm entry that is a
-// link to the home copy is no fallback.
+// independentJDK reports whether sys is a usable JDK that removing home leaves intact.
+// Final targets are not enough (a link can pass through home and come back), so sys
+// must be a real directory outside home and self-contained by the same rule the Node
+// prune uses: only relative file links that never climb above the tree, no directory
+// links. Temurin 21/25 trees pass (in-tree file links only); a tree that does not is no
+// fallback, which only means its home copy cannot go while that major is selected.
 func independentJDK(sys, home string) bool {
 	if sys == "" {
+		return false
+	}
+	if fi, err := os.Lstat(sys); err != nil || !fi.IsDir() {
 		return false
 	}
 	realHome, err := filepath.EvalSymlinks(home)
 	if err != nil {
 		realHome = filepath.Clean(home)
 	}
-	inHome := func(p string) bool {
-		return p == realHome || strings.HasPrefix(p, realHome+string(filepath.Separator))
-	}
 	realSys, err := filepath.EvalSymlinks(sys)
-	if err != nil || inHome(realSys) {
+	if err != nil || realSys == realHome || strings.HasPrefix(realSys, realHome+string(filepath.Separator)) {
 		return false
 	}
-	java, err := filepath.EvalSymlinks(filepath.Join(sys, "bin", "java"))
-	if err != nil || inHome(java) {
+	if !selfContained(sys) {
 		return false
 	}
-	fi, err := os.Stat(java)
+	fi, err := os.Stat(filepath.Join(sys, "bin", "java"))
 	return err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o111 != 0
+}
+
+// rootBusy reports whether an install into root is running: the root's flock is held
+// (any process, the CLI included) or the Agent's own job is past its start. The listing
+// and the DELETE handlers share it, so a row never offers what the DELETE would refuse.
+func rootBusy(root string, inst interface {
+	snapshot() (string, string, string)
+}) bool {
+	if state, _, _ := inst.snapshot(); state == "installing" {
+		return true
+	}
+	unlock, free, err := installLock(root, false)
+	if err != nil || !free {
+		return true
+	}
+	unlock()
+	return false
 }
 
 // installLock takes the root's install flock, shared by install-jdk / install-node in
@@ -229,9 +244,31 @@ func installLock(root string, wait bool) (unlock func(), ok bool, err error) {
 	}, true, nil
 }
 
-// sweepTrash deletes what an interrupted removal left in root's trash directory.
-func sweepTrash(root string) {
+// trashPath returns root's trash directory, creating it when asked, but only as a real
+// directory: a symlink there (or anything else) is refused, so neither a sweep nor a
+// staged rename can reach outside root.
+func trashPath(root string, create bool) (string, bool) {
 	dir := filepath.Join(root, trashDir)
+	fi, err := os.Lstat(dir)
+	if os.IsNotExist(err) && create {
+		if err := os.Mkdir(dir, 0o755); err != nil && !os.IsExist(err) {
+			return "", false
+		}
+		fi, err = os.Lstat(dir)
+	}
+	if err != nil || !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
+		return "", false
+	}
+	return dir, true
+}
+
+// sweepTrash deletes what an interrupted removal left in root's trash directory. The
+// directory itself stays: removing it could pull it from under a concurrent staging.
+func sweepTrash(root string) {
+	dir, ok := trashPath(root, false)
+	if !ok {
+		return
+	}
 	ents, _ := os.ReadDir(dir)
 	for _, e := range ents {
 		_ = removeTree(filepath.Join(dir, e.Name()))
@@ -241,9 +278,9 @@ func sweepTrash(root string) {
 // stageRemoval moves dir into its root's trash directory under a unique name, so
 // discovery stops seeing it at once, and returns the new path.
 func stageRemoval(dir string) (string, error) {
-	trash := filepath.Join(filepath.Dir(dir), trashDir)
-	if err := os.MkdirAll(trash, 0o755); err != nil {
-		return "", err
+	trash, ok := trashPath(filepath.Dir(dir), true)
+	if !ok {
+		return "", fmt.Errorf("%s is not a plain directory", filepath.Join(filepath.Dir(dir), trashDir))
 	}
 	var rnd [6]byte
 	if _, err := rand.Read(rnd[:]); err != nil {
@@ -281,7 +318,7 @@ func handleJDKUninstall(w http.ResponseWriter, r *http.Request) {
 		code, msg = "not_installed", "Temurin "+major+" is not installed in the home volume"
 	case selectedMajor(readToolchains().Java) == major && !independentJDK(systemJDKFor(major), home):
 		code, msg = "selected", "Temurin "+major+" is the selected JDK; select another one first"
-	case !free || (jdkInstaller.state == "installing" && jdkInstaller.major == major):
+	case !free || jdkInstaller.state == "installing":
 		code, msg = "installing", "a JDK is being installed; try again when it has finished"
 	default:
 		var err error
@@ -302,7 +339,6 @@ func handleJDKUninstall(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "remove_failed", err.Error())
 		return
 	}
-	_ = os.Remove(filepath.Dir(staged)) // the trash directory, once empty
 	httpx.WriteJSON(w, http.StatusOK, listToolchainInstalls())
 }
 
@@ -327,7 +363,7 @@ func handleNodeUninstall(w http.ResponseWriter, r *http.Request) {
 		code, msg = "not_installed", "node "+major+" is not installed"
 	case selectedMajor(readToolchains().Node) == major:
 		code, msg = "selected", "node "+major+" is the selected version; select another one first"
-	case !free || (nodeInstaller.state == "installing" && nodeInstaller.major == major):
+	case !free || nodeInstaller.state == "installing":
 		code, msg = "installing", "a Node.js version is being installed; try again when it has finished"
 	default:
 		for _, t := range trees {
@@ -350,9 +386,6 @@ func handleNodeUninstall(w http.ResponseWriter, r *http.Request) {
 		if err := removeTree(s); err != nil && code == "" {
 			code, msg = "remove_failed", err.Error()
 		}
-	}
-	if len(staged) > 0 {
-		_ = os.Remove(filepath.Dir(staged[0])) // the trash directory, once empty
 	}
 	if code != "" {
 		httpx.WriteErr(w, uninstallStatus(code), code, msg)

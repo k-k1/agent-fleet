@@ -170,12 +170,16 @@ executable `bin/node` is skipped.
 every Node major under `~/.nvm` with version, size and whether it may be removed;
 `DELETE /env/jdk/{major}` / `DELETE /env/node/{major}` remove home-volume trees only
 (`toolchain_uninstall.go`). They refuse the selected major (an exact `22.23.4` counts as
-22) unless an independent `/usr/lib/jvm` copy with a working `bin/java` remains, and refuse
+22) unless an independent `/usr/lib/jvm` copy remains — a real directory outside home that
+passes the same self-contained link check as the Node prune and has a working `bin/java`
+(Temurin 21/25 do; Temurin 8's directory link means it is no fallback) — and refuse
 while an install runs, including one started from a terminal: install-jdk / install-node
 hold a flock on their root for the whole install. The check and a rename into
 `<root>/.agent-fleet-trash` happen under that flock, the installer's mutex and the lock
 the selection PUT takes (which now also writes `toolchains.json` atomically); the delete
-runs outside them, and only the trash directory is ever swept.
+runs outside them. Only the trash directory is ever swept, only when it is a real
+directory, and it is left in place once empty. The listing and DELETE share one "root
+busy" test, so a row never offers what the DELETE would refuse.
 
 ## 9.5 The AWS target
 

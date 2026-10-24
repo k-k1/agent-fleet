@@ -149,8 +149,9 @@ func TestJDKUninstallGuards(t *testing.T) {
 	if left := visible(t, home); len(left) != 0 {
 		t.Fatalf("left in home: %v", left)
 	}
-	if exists(filepath.Join(home, trashDir)) {
-		t.Fatal("trash directory left behind")
+	// The trash directory stays (removing it could race a concurrent staging), empty.
+	if left, _ := os.ReadDir(filepath.Join(home, trashDir)); len(left) != 0 {
+		t.Fatalf("trash not emptied: %v", left)
 	}
 }
 
@@ -369,5 +370,129 @@ func TestWriteToolchainsAtomicLeavesNoTemp(t *testing.T) {
 	ents, _ := os.ReadDir(filepath.Dir(toolchainsPath()))
 	if len(ents) != 1 {
 		t.Fatalf("left %v", ents)
+	}
+}
+
+// A fallback that reaches through home, even part-way, is no fallback: removing home
+// would break it.
+func TestIndependentJDKRejectsPathsThroughHome(t *testing.T) {
+	for name, setup := range map[string]func(sys, home string){
+		"bin/java absolute into home": func(sys, home string) {
+			if err := os.MkdirAll(filepath.Join(home, "bridge"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(home, "bridge", "java"), filepath.Join(sys, "bin", "java")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"lib relative out of the tree": func(sys, home string) {
+			if err := os.WriteFile(filepath.Join(sys, "bin", "java"), nil, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("../../elsewhere/libjvm.so", filepath.Join(sys, "lib", "libjvm.so")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"directory link inside": func(sys, home string) {
+			if err := os.WriteFile(filepath.Join(sys, "bin", "java"), nil, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(".", filepath.Join(sys, "lib", "inside")); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			sysRoot, homeRoot := jdkRoots(t)
+			arch := "-" + runtime.GOARCH
+			home := fakeJDK(t, homeRoot, "temurin-21-jdk"+arch, "21.0.13+9")
+			sys := fakeJDK(t, sysRoot, "temurin-21-jdk"+arch, "21.0.11+10")
+			for _, d := range []string{"bin", "lib"} {
+				if err := os.MkdirAll(filepath.Join(sys, d), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			setup(sys, home)
+			if independentJDK(sys, home) {
+				t.Fatal("counted as an independent fallback")
+			}
+		})
+	}
+}
+
+// A trash directory that is a symlink is never swept or staged into: the linked
+// directory's content stays.
+func TestTrashSymlinkIsRefused(t *testing.T) {
+	_, home := jdkRoots(t)
+	jdk := fakeJDK(t, home, "temurin-17-jdk-"+runtime.GOARCH, "17.0.21+9")
+	elsewhere := t.TempDir()
+	keep := filepath.Join(elsewhere, "precious.txt")
+	if err := os.WriteFile(keep, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(home, trashDir)); err != nil {
+		t.Fatal(err)
+	}
+	selectToolchains(t, "", "")
+	listToolchainInstalls()
+	if !exists(keep) {
+		t.Fatal("the sweep followed a symlinked trash directory")
+	}
+	if code, _ := uninstallReq(t, handleJDKUninstall, "jdk", "17"); code != http.StatusInternalServerError {
+		t.Fatalf("want 500 got %d", code)
+	}
+	if !exists(jdk) || !exists(keep) {
+		t.Fatal("staged through a symlinked trash directory")
+	}
+	if ents, _ := os.ReadDir(elsewhere); len(ents) != 1 {
+		t.Fatalf("something was moved into the linked directory: %v", ents)
+	}
+}
+
+// Two removals in a row both succeed: the first leaves the trash directory for the next.
+func TestConsecutiveUninstallsShareTrash(t *testing.T) {
+	_, home := jdkRoots(t)
+	arch := "-" + runtime.GOARCH
+	fakeJDK(t, home, "temurin-17-jdk"+arch, "17.0.21+9")
+	fakeJDK(t, home, "temurin-11-jdk"+arch, "11.0.32+1")
+	selectToolchains(t, "", "")
+	for _, m := range []string{"17", "11"} {
+		if code, body := uninstallReq(t, handleJDKUninstall, "jdk", m); code != http.StatusOK {
+			t.Fatalf("%s: %d %s", m, code, body)
+		}
+	}
+}
+
+// The listing reports a root as busy exactly when DELETE would refuse: another major's
+// HTTP job, or an install lock held elsewhere (the CLI).
+func TestListingMatchesDeleteWhileInstalling(t *testing.T) {
+	_, home := jdkRoots(t)
+	fakeJDK(t, home, "temurin-8-jdk-"+runtime.GOARCH, "8.0.504+1")
+	selectToolchains(t, "", "")
+	check := func(label string) {
+		t.Helper()
+		e := listToolchainInstalls().Java[0]
+		if e.Removable || e.Reason != "installing" {
+			t.Fatalf("%s: listing %+v", label, e)
+		}
+		if code, _ := uninstallReq(t, handleJDKUninstall, "jdk", "8"); code != http.StatusConflict {
+			t.Fatalf("%s: DELETE %d", label, code)
+		}
+	}
+	jdkInstaller.mu.Lock()
+	jdkInstaller.state, jdkInstaller.major = "installing", "17"
+	jdkInstaller.mu.Unlock()
+	check("HTTP job for another major")
+	jdkInstaller.mu.Lock()
+	jdkInstaller.state, jdkInstaller.major = "", ""
+	jdkInstaller.mu.Unlock()
+	unlock, ok, err := installLock(jvmHomeRoot(), false)
+	if err != nil || !ok {
+		t.Fatal(err)
+	}
+	check("lock held elsewhere")
+	unlock()
+	if e := listToolchainInstalls().Java[0]; !e.Removable {
+		t.Fatalf("idle: %+v", e)
 	}
 }

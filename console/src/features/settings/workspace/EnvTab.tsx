@@ -29,6 +29,9 @@ export function EnvTab() {
   const wsState = useWorkspaceStore((s) => s.state);
   const running = wsState === "running";
   const [d, setD] = useState<any>(null);
+  // Bumped on every completed toolchains load. A 304 hands back the very same object, so
+  // the payload alone cannot tell the Installed versions list to refetch.
+  const [gen, setGen] = useState(0);
   const [err, setErr] = useState("");
   // CP-owned per-workspace settings: the agent CLI self-update opt-in + its operator
   // gate. DB-backed, so it loads/saves whether the workspace is running or stopped.
@@ -45,6 +48,7 @@ export function EnvTab() {
       .then((res) => {
         if (res && res.error) throw new Error(res.error.message || "");
         setD(res);
+        setGen((g) => g + 1);
         try {
           localStorage.setItem(cacheKey, JSON.stringify(res));
         } catch {
@@ -90,6 +94,7 @@ export function EnvTab() {
       return;
     }
     setD(res);
+    setGen((g) => g + 1);
   };
 
   return (
@@ -98,7 +103,7 @@ export function EnvTab() {
       {d ? (
         <>
           <Toolchains d={d} update={update} running={running} reload={load} />
-          <InstalledVersions d={d} running={running} reload={load} />
+          <InstalledVersions gen={gen} running={running} reload={load} />
         </>
       ) : err ? (
         <p className="muted pad">{err}</p>
@@ -716,10 +721,10 @@ type ToolchainInstall = {
 // and removes home-volume ones, so a member gets back the space of versions they no
 // longer use. The agent decides what may go (never /usr/lib/jvm, never the selected
 // major without a fallback, never one being installed); this only shows its answer and
-// asks before deleting. It refetches on every toolchains reload (a new payload object,
-// even with the same values), so a finished or failed install, an update or a new
+// asks before deleting. It refetches on every completed toolchains load (gen), even one
+// that returns the same values, so a finished or failed install, an update or a new
 // selection shows here at once.
-function InstalledVersions({ d, running, reload }: { d: any; running: boolean; reload: () => void }) {
+function InstalledVersions({ gen, running, reload }: { gen: number; running: boolean; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
   const askConfirm = useConfirm();
@@ -739,7 +744,7 @@ function InstalledVersions({ d, running, reload }: { d: any; running: boolean; r
     return () => {
       live = false;
     };
-  }, [running, d, nonce]);
+  }, [running, gen, nonce]);
   if (!running || !list || list.java.length + list.node.length === 0) return null;
 
   const remove = async (kind: "jdk" | "node", e: ToolchainInstall) => {

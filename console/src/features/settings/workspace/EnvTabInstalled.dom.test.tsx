@@ -132,7 +132,17 @@ describe("EnvTab installed versions", () => {
     confirm.mockResolvedValue(true);
     const after = listing();
     after.node = after.node.filter((e) => e.major !== "24");
-    apiJSON.mockResolvedValue(after);
+    let removed = false;
+    api.mockImplementation((path: string) => {
+      if (path === "api/env/toolchains") return Promise.resolve(toolchains);
+      // The agent's listing reflects the removal from then on.
+      if (path === "api/env/toolchain-installs") return Promise.resolve(removed ? after : listing());
+      return Promise.resolve({});
+    });
+    apiJSON.mockImplementation(async () => {
+      removed = true;
+      return after;
+    });
     await mount();
     const before = api.mock.calls.filter((c) => c[0] === "api/env/toolchains").length;
     await act(async () => {
@@ -189,7 +199,8 @@ describe("EnvTab installed versions", () => {
   it("refetches on every toolchains reload, even with identical values", async () => {
     let installing = true;
     api.mockImplementation((path: string) => {
-      if (path === "api/env/toolchains") return Promise.resolve({ ...toolchains });
+      // The same object every time, as the client's 304 path returns it.
+      if (path === "api/env/toolchains") return Promise.resolve(toolchains);
       if (path === "api/env/toolchain-installs") {
         const l = listing();
         if (installing) l.java[0] = { ...l.java[0], removable: false, reason: "installing" } as never;
