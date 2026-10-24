@@ -1,6 +1,6 @@
 ---
 audience: "everyone, and specifically an agent deciding how to show a running web app to a person"
-source_of_truth: "this file for terminology, states and recovery; limits.md for the numbers; the Console for what a button is called"
+source_of_truth: "this file for terminology and what the pane can and cannot do; member/14 for states and recovery; limits.md for the numbers; the Console for what a button is called"
 updated: "2026-10"
 ---
 
@@ -28,26 +28,19 @@ opened, because the Agent itself uses it.
 
 ## Which route, by example
 
-| Setup | Input | Choose |
-|---|---|---|
-| Node / Vite | `5173` + `/` | Browser pane: the HMR WebSocket needs it. |
-| Spring Boot | `8080` + `/`, or `/actuator/health` | Browser pane for screens with redirects, absolute `/assets/*` or cookies. Lightweight preview to read health JSON once. |
-| API only | `8080` + `/api/health` | Lightweight preview for a one-off JSON or status check. Browser pane for SSE, auth cookies, redirects, or anything interactive. |
-| Frontend + API | frontend `5173`, API `8080` | Open the frontend's `5173` in the pane. Fetch, WebSocket and SSE to another loopback port work, but CORS still applies exactly as in a normal browser. Open the API as a second Page if needed. |
+The setup-by-setup table (Node / Vite, Spring Boot, API only, frontend + API) is in
+[member/14 Examples by setup](../member/14-preview-browser.md#examples-by-setup). The rule behind
+it: anything that needs HMR, WebSocket, SSE, cookies, redirects or absolute asset paths goes to the
+browser pane; a single look at one HTTP response goes to the lightweight preview.
 
 ## States and recovery
 
-| State | Means | What to do |
-|---|---|---|
-| `target-unreachable` | Chromium started, but nothing answers HTTP at that port and path. Waiting for a dev server to boot looks like this too. When the port is listening but does not speak HTTP, or serves HTTPS, the pane says so (the Agent probes the port once per failed navigation); with nothing listening the message stays generic. | Check the port, the path and that the server is listening; **Reload** once it is up. **Reconnect** if it persists. |
-| `disconnected` | The browser WebSocket between Console, Control Plane and Agent dropped. This does not necessarily mean Chromium died. | Check the Workspace is running and connectivity is back, then **Reconnect**. |
-| `crashed` | Chromium inside the Workspace died and the existing Page cannot continue. | **Reconnect** to get a new Page. If it repeats, look at the Workspace's memory use and at the app itself. |
-
-Connecting while the Workspace is stopping or starting shows its own overlay; wait
-until it is running, then reconnect.
-
-Reconnect, a Console reload and a Workspace stop/start all create a *new* Page at the
-current port and path. Cookies, storage and half-typed input are not restored.
+The three states the pane can show (`target-unreachable`, `disconnected`, `crashed`), what each
+means and what to do are in
+[member/14 Status display and recovery](../member/14-preview-browser.md#status-display-and-recovery).
+The contract behind them: every recovery action (Reconnect, a Console reload, a Workspace
+stop/start) creates a *new* Page at the current port and path, so cookies, storage and half-typed
+input are not restored.
 
 ## Lifecycle and resource limits
 

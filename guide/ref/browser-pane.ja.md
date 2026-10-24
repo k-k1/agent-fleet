@@ -1,6 +1,6 @@
 ---
 audience: "全員（とくに「動いている Web アプリを人に見せる」判断をするエージェント）"
-source_of_truth: "用語・状態と復旧はこのファイル、数値は limits.ja.md、ボタンの名前は Console"
+source_of_truth: "用語とペインにできること／できないことはこのファイル、状態と復旧は member/14、数値は limits.ja.md、ボタンの名前は Console"
 updated: "2026-10"
 ---
 
@@ -27,26 +27,16 @@ Workspace の中で動いている Web アプリを見せる手段は 2 つあ�
 
 ## どちらを選ぶか（代表例）
 
-| 構成 | 入力例 | 選択 |
-|---|---|---|
-| Node / Vite | `5173` + `/` | ブラウザペイン。HMR の WebSocket に必要。|
-| Spring Boot | `8080` + `/` または `/actuator/health` | redirect・絶対 `/assets/*`・cookie を含む画面はブラウザペイン。health JSON を一度見るだけなら軽量プレビュー。|
-| API のみ | `8080` + `/api/health` | JSON / status の 1 回確認は軽量プレビュー。SSE・認証 cookie・redirect・対話的な確認はブラウザペイン。|
-| frontend + API | frontend `5173`、API `8080` | frontend の `5173` をペインで開く。別 loopback port への fetch / WS / SSE は使えるが、**通常のブラウザと同様に CORS 設定は必要**。必要なら API を第 2 Page で開く。|
+構成別の表（Node / Vite、Spring Boot、API のみ、frontend + API）は
+[member/14 構成別の例](../member/14-preview-browser.ja.md#構成別の例)にあります。原則は、HMR・WebSocket・SSE・
+cookie・redirect・絶対パスのアセットが要るものはブラウザペイン、HTTP 応答を 1 回見るだけなら軽量プレビューです。
 
 ## 状態と復旧
 
-| 状態 | 意味 | 利用者の操作 |
-|---|---|---|
-| `target-unreachable` | Chromium は起動したが、その port/path で HTTP に応答が無い。**開発サーバーの起動待ちもこの状態**。ポートが待ち受けているのに HTTP を話さない／HTTPS で動いている場合は、その旨をペインに表示（失敗した遷移ごとに Agent がポートを 1 回調べます）。何も待ち受けていないときは汎用の文言のまま。| port・path・listen 状態を確認し、サーバーが上がってから**再読み込み**。残るなら**再接続**。|
-| `disconnected` | Console―CP―Agent の browser WebSocket が切れた。**Chromium の crash とは限らない**。| Workspace が稼働中か、通信が戻ったかを確認して**再接続**。|
-| `crashed` | Workspace 内 Chromium が異常終了し、既存 Page を継続できない。| **再接続**で新しい Page を作る。繰り返すなら Workspace のメモリ使用量と対象アプリを見る。|
-
-Workspace の停止／起動中に接続しようとすると専用の overlay が出ます。稼働中になってから
-再接続してください。
-
-再接続・Console のリロード・Workspace の Stop→Start は、いずれも現在の port/path から
-**新しい Page を作る**操作です。cookie・storage・入力途中の状態は復元されません。
+ペインに出る 3 つの状態（`target-unreachable`・`disconnected`・`crashed`）の意味と対処は
+[member/14 状態表示と復旧](../member/14-preview-browser.ja.md#状態表示と復旧)にあります。その前提となる契約：
+復旧のための操作（再接続・Console のリロード・Workspace の Stop→Start）はどれも、現在の port/path から
+**新しい Page を作る**ので、cookie・storage・入力途中の状態は復元されません。
 
 ## lifecycle と資源の上限
 

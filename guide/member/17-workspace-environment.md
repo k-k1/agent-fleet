@@ -39,23 +39,21 @@ the workspace from the workspace bar works everywhere.
   Claude etc.), `~/.local` (claude / node etc.), and your settings and caches are preserved, because the home
   volume is reattached to the recreated container.
 
-In short: "**only `~/repos` is deleted, and the container is rebuilt from the latest image. The rest of home
-(logins, connections, `~/.local`, etc.) stays**". Use it when you want to pick up an image update or the
-environment is broken. **Uncommitted changes are lost**, so push / commit before running it ([06](06-code.md)).
+Use it when you want to pick up an image update or the environment is broken. **Uncommitted changes are
+lost**, so push / commit before running it ([06](06-code.md)).
 
 ### Cleaning home (an even deeper reset)
 
 Since recreating deletes only `~/repos`, it won't fix problems on the home side (a broken claude install in
 `~/.local`, corrupted caches or config files, and so on). In that case use **"Clean home"**, in the same
-"Danger zone" tab. It deletes **your entire home except logins and connections** (`~/repos`, `~/.local`, caches,
-settings) and rebuilds from the latest image, a deeper reset.
+"Danger zone" tab. It rebuilds from the latest image after deleting nearly all of home, a deeper reset.
 
 - **What stays**: logins and connections (GitHub / Bitbucket / Claude) **only**.
 - **What is lost**: running sessions, cloned repositories, and **everything else in home**, including
   `~/.local`, caches, and settings.
 
-Try "Recreate" first to see if it fixes things, and use "Clean" only when that doesn't.
-Both operations **lose uncommitted changes**.
+Try "Recreate" first to see if it fixes things, and use "Clean" only when that doesn't. Push / commit
+first here too.
 
 ## Running database-backed tests
 

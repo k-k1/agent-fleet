@@ -87,11 +87,9 @@ prototypes and in-team sharing.
 
 Cloned repositories are listed under **Repositories**. The **"Launch"** button on a row opens
 the **"Start working"** screen, where you choose the agent, model, **location**, and the first
-prompt, then launch. For **location**, the default is **"New worktree"** (isolated · safe across
-branch switches); the other option is **"Directly in this copy"**.
-
-- **New worktree** (default): carves out an independent working copy dedicated to that task. Since edits never collide with other sessions, this is the safe choice for parallel work (you can pick the base branch and branch name; if left empty, a provisional name `temp/…` is used).
-- **Directly in this copy**: works directly in the folder currently open.
+prompt, then launch. The location defaults to an isolated **"New worktree"**; what each choice
+does, the base branch and branch name, and the working folder are in
+[Worktrees and new branches](03-starting-sessions.md#worktrees-and-new-branches-the-key-to-parallel-work).
 
 The **▾** to the right of "Launch" lets you pick a kind (claude / codex / cursor / copilot / kiro / agy / opencode / lcpp / muse / shell) and
 **launch instantly** without opening the settings screen (Ctrl / middle-click launches in a new pane).
@@ -150,14 +148,18 @@ Right-clicking a repository or worktree row shows the following actions. Some it
 depending on state and location.
 
 - **Open commit graph** / **Open the folder** / **Commit changes**
-- **Switch branch** / **Copy the branch name** / **Fast-Forward** (on a worktree, **"Fast-forward from origin/develop"** or similar)
+- **Switch branch** / **Copy the branch name** / **Copy the directory name** / **Fast-Forward** (on a worktree, **"Fast-forward from origin/develop"** or similar)
 - **Initialize Git Flow** (a git repository's base copy only); see [below](#initialize-git-flow)
 - **Project settings**: the MCP definitions committed in that repository, with per-agent status and warnings ([20](20-settings.md#mcp-servers))
 - **Share…**: share this working copy's (project's) sessions with another member ([12](12-collaboration.md#sharing-a-conversation-shared-sessions))
 - **Assignment to a working set** ([11](11-many-sessions.md#narrowing-the-view-with-working-sets))
-- Per-kind session launch: claude, codex, opencode, shell, and so on
-- **Stop the sessions below**: stops every session running in that copy and in the copies nested under it, from one modal ([05](05-stopping-and-tidying.md#stopping-and-tidying-up-sessions))
-- **Delete the working copy** (only for working copies that can be deleted)
+- **Launch shell**: opens a shell session in that copy (the other kinds launch from the **▾** next to "Launch")
+- **Start an image studio**: begins an image studio in that copy ([13](13-images.md#studio-refine-the-draft-by-talking-to-an-agent)); shown only while the workspace is running and image generation is available
+- **Stop the sessions below**: stops every session running in that copy and in the copies nested under it, from one modal ([05](05-stopping-and-tidying.md#stopping-and-tidying-up-sessions)); shown while any is running, with the count
+- **Archive all stopped sessions**: archives every stopped session of that copy in one go; shown while any is stopped, with the count ([05](05-stopping-and-tidying.md#stopping-and-tidying-up-sessions))
+- **Archived sessions of this working copy**: opens the archive list narrowed to that copy, to restore or delete from
+- **Lock against deletion** / **Unlock (allow deletion)**: marks the working copy (worktrees included) as one that must not go away. A lock icon appears on the row and automatic tidying skips it ([05](05-stopping-and-tidying.md#locking-something-against-deletion)); **Delete the working copy** stays greyed out until you unlock
+- **Delete the working copy** (only for working copies that can be deleted; [05](05-stopping-and-tidying.md#deleting-a-working-copy))
 
 ### Initialize Git Flow
 
