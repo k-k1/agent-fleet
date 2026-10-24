@@ -90,6 +90,49 @@ var (
 	tomlArgsRE    = regexp.MustCompile(`^\s*args\s*=\s*\[\s*("(?:[^"\\]|\\.)*")`)
 )
 
+// tomlLinesInMultilineString marks the lines that BEGIN inside a `"""` or `”'` string, where
+// a header-looking or `command = …` line is data. Without it a user's value could be read as
+// a table boundary, and the next server's table dropped along with it.
+func tomlLinesInMultilineString(lines []string) []bool {
+	out := make([]bool, len(lines))
+	delim := "" // the open multi-line delimiter, or "" outside one
+	for n, line := range lines {
+		out[n] = delim != ""
+		for i := 0; i < len(line); {
+			if delim != "" {
+				if delim == `"""` && line[i] == '\\' {
+					i += 2
+				} else if strings.HasPrefix(line[i:], delim) {
+					delim = ""
+					i += 3
+				} else {
+					i++
+				}
+				continue
+			}
+			switch c := line[i]; {
+			case c == '#':
+				i = len(line)
+			case strings.HasPrefix(line[i:], `"""`), strings.HasPrefix(line[i:], `'''`):
+				delim = line[i : i+3]
+				i += 3
+			case c == '"' || c == '\'':
+				i++
+				for i < len(line) && line[i] != c {
+					if c == '"' && line[i] == '\\' {
+						i++
+					}
+					i++
+				}
+				i++
+			default:
+				i++
+			}
+		}
+	}
+	return out
+}
+
 // codexLegacyAF reports whether src holds a `[mcp_servers.af]` table that is af's own
 // leftover (StaleLegacyAFEntry). Only the single-line `command = "…"` / `args = ["…", …]`
 // spelling af itself writes is read; a table spelled any other way is taken to be the
@@ -97,7 +140,12 @@ var (
 func codexLegacyAF(src string, keep map[string]bool) bool {
 	in := false
 	var command, first string
-	for _, line := range strings.Split(src, "\n") {
+	lines := strings.Split(src, "\n")
+	inString := tomlLinesInMultilineString(lines)
+	for i, line := range lines {
+		if inString[i] {
+			continue // text inside a multi-line string is a value, not a table or key
+		}
 		if m := tomlHeaderRE.FindStringSubmatch(line); m != nil {
 			in = strings.TrimSpace(m[1]) == "mcp_servers."+BuiltinAF
 			continue
@@ -142,8 +190,10 @@ func stripCodexServers(src string, drop func(name string) bool) string {
 	}
 	var out []string
 	skipping := false
-	for _, line := range strings.Split(src, "\n") {
-		if m := tomlHeaderRE.FindStringSubmatch(line); m != nil {
+	lines := strings.Split(src, "\n")
+	inString := tomlLinesInMultilineString(lines)
+	for i, line := range lines {
+		if m := tomlHeaderRE.FindStringSubmatch(line); m != nil && !inString[i] {
 			skipping = drop(mcpServerTableName(m[1]))
 			if skipping {
 				for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {

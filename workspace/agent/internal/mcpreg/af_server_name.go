@@ -123,15 +123,12 @@ func StaleLegacyAFEntry(name string, keep map[string]bool, command string, args 
 	return isAgentBinary(command)
 }
 
-// isAgentBinary reports whether command launches this Agent: by base name, which survives
-// the install path moving (the config outlives any one build), or by the exact path of the
-// running or configured executable, which covers a dev build under another name.
+// isAgentBinary reports whether command is a path this Agent runs from: the running
+// executable, the one written into configs, or the installed one. A file merely NAMED
+// workspace-agent elsewhere is someone else's — the name alone proves nothing.
 func isAgentBinary(command string) bool {
-	if command == "" {
-		return false
-	}
-	return filepath.Base(command) == "workspace-agent" ||
-		command == paths.ConfigExePath() || command == paths.ExePath()
+	return command != "" && (command == paths.ConfigExePath() ||
+		command == paths.ExePath() || command == paths.InstalledExePath())
 }
 
 // afClientToolRE matches the name a CLIENT sees for one of af's own tools. A client

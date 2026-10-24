@@ -19,15 +19,17 @@ func TestStaleLegacyAFEntryOnlyMatchesAfsOwnLaunchLine(t *testing.T) {
 		want    bool
 	}{
 		{"af", keep, "/usr/local/bin/workspace-agent", []string{"mcp-stdio", "--self-report"}, true},
-		{"af", keep, "workspace-agent", []string{"mcp-stdio"}, true},
-		{"af", keep, "/home/dev/.local/bin/workspace-agent", []string{"mcp-stdio"}, true},
+		{"af", keep, paths.ConfigExePath(), []string{"mcp-stdio"}, true},
+		// A file merely named workspace-agent, in a directory that is not ours, is not ours.
+		{"af", keep, "workspace-agent", []string{"mcp-stdio"}, false},
+		{"af", keep, "/opt/my-project/bin/workspace-agent", []string{"mcp-stdio"}, false},
 		{"af", keep, "/usr/bin/node", []string{"mcp-stdio"}, false},
 		{"af", keep, "/usr/local/bin/workspace-agent", []string{"mcp-run", "aws"}, false},
 		{"af", keep, "/usr/local/bin/workspace-agent", nil, false},
 		{"af", keep, "", []string{"mcp-stdio"}, false},
-		{"af", map[string]bool{"af": true}, "workspace-agent", []string{"mcp-stdio"}, false},
-		{"af_11111111", keep, "workspace-agent", []string{"mcp-stdio"}, false},
-		{"mine", keep, "workspace-agent", []string{"mcp-stdio"}, false},
+		{"af", map[string]bool{"af": true}, "/usr/local/bin/workspace-agent", []string{"mcp-stdio"}, false},
+		{"af_11111111", keep, "/usr/local/bin/workspace-agent", []string{"mcp-stdio"}, false},
+		{"mine", keep, "/usr/local/bin/workspace-agent", []string{"mcp-stdio"}, false},
 	}
 	for _, c := range cases {
 		if got := StaleLegacyAFEntry(c.name, c.keep, c.command, c.args); got != c.want {
@@ -95,7 +97,7 @@ func TestMaterializeOpencodeSweepsTheLegacyBareAFEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(file, []byte(`{"mcp":{`+
-		`"af":{"type":"local","command":["workspace-agent","mcp-stdio","--self-report"],"enabled":true}}}`), 0o600); err != nil {
+		`"af":{"type":"local","command":["`+paths.InstalledExePath()+`","mcp-stdio","--self-report"],"enabled":true}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, removed, _, err := materializeOpencode([]ServerDef{rotatedAFDef()}, nil); err != nil || len(removed) != 1 {
@@ -152,5 +154,39 @@ func TestMaterializeCodexKeepsAUsersOwnServerNamedAF(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(file); !strings.Contains(string(b), "[mcp_servers.af]") || !strings.Contains(string(b), "/opt/my-af") {
 		t.Fatalf("user's af table was lost:\n%s", b)
+	}
+}
+
+func TestMaterializeCodexIgnoresAFLookalikesInsideMultilineStrings(t *testing.T) {
+	resetAFName(t)
+	dir := paths.CodexHome()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "config.toml")
+	src := "[mcp_servers.af]\ncommand = \"/opt/my-af\"\nargs = [\"serve\"]\n\n" +
+		"[mcp_servers.af.env]\nHELP = '''\n[mcp_servers.af]\ncommand = \"" + paths.InstalledExePath() +
+		"\"\nargs = [\"mcp-stdio\"]\n'''\n\n[mcp_servers.mine]\ncommand = \"/bin/true\"\n"
+	if err := os.WriteFile(file, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := materializeCodex([]ServerDef{rotatedAFDef()}, nil); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(file)
+	got := string(b)
+	for _, want := range []string{"/opt/my-af", "HELP = '''", "[mcp_servers.mine]"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("%q lost to a header-looking line inside a string:\n%s", want, got)
+		}
+	}
+}
+
+func TestStripCodexServersDoesNotSplitOnHeadersInsideStrings(t *testing.T) {
+	src := "[mcp_servers.a]\nx = \"\"\"\n[mcp_servers.b]\n\"\"\"\n[mcp_servers.c]\ncommand = \"c\"\n"
+	got := stripCodexServers(src, func(n string) bool { return n == "a" })
+	if strings.Contains(got, "mcp_servers.a") || strings.Contains(got, "mcp_servers.b") ||
+		!strings.Contains(got, "[mcp_servers.c]") {
+		t.Fatalf("got:\n%s", got)
 	}
 }
