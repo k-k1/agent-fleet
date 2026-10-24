@@ -469,7 +469,7 @@ var mcpErrCatalogue = map[string]mcpErrStrings{
 	"ja": {
 		HostLabel:       "拒否された戻り先",
 		ClientHostLabel: "信頼されていないアプリのホスト",
-		ClientHost:      mcpErrText{"このアプリのホストは信頼されていません", "このアプリのホストは、この Agent Fleet では信頼するクライアントのホストに登録されていないため、接続できません。", "このデプロイの管理者に、管理画面の「MCP サインインのホスト」（信頼するクライアントのホスト）への追加を依頼してください。手順は運用者ガイド「セキュリティ」章の「信頼するクライアントのホスト」にあります。"},
+		ClientHost:      mcpErrText{"このアプリのホストは信頼されていません", "このアプリのホストは、この Agent Fleet では信頼するクライアントのホストに登録されていないため、接続できません。", "このデプロイの管理者に、「管理 → 配備 → MCP ログイン許可ホスト」（信頼するクライアントのホスト）への追加を依頼してください。手順は運用者ガイド「セキュリティ運用」章の「信頼するクライアントのホスト」にあります。"},
 		Refused:         mcpErrText{"接続を開始できません", "この接続要求は受け付けられませんでした。", "アプリ側からもう一度接続を始めてください。"},
 		Redirect:        mcpErrText{"戻り先のアドレスが許可されていません", "アプリが、この Agent Fleet では許可されていないアドレスへの戻りを求めました。", "接続先アプリの管理者に確認するか、アプリからもう一度接続を始めてください。"},
 		Expired:         mcpErrText{"確認が無効です", "この確認は拒否されたか、期限が切れたか、すでに使われています。", "アプリからもう一度接続を始めてください。"},
@@ -479,7 +479,7 @@ var mcpErrCatalogue = map[string]mcpErrStrings{
 	"en": {
 		HostLabel:       "Rejected callback",
 		ClientHostLabel: "Untrusted app host",
-		ClientHost:      mcpErrText{"This app's host is not trusted here", "This app's host is not in this Agent Fleet's trusted client hosts, so it cannot connect.", "Ask this deployment's administrator to add it to the trusted client hosts setting (Admin: MCP sign-in hosts). See \"Trusted client hosts\" in the operator guide's Secure chapter."},
+		ClientHost:      mcpErrText{"This app's host is not trusted here", "This app's host is not in this Agent Fleet's trusted client hosts, so it cannot connect.", "Ask this deployment's administrator to add it to the trusted client hosts setting (Admin → Deployment → MCP sign-in hosts). See \"Trusted client hosts\" in the Security Operations chapter of the operator guide."},
 		Refused:         mcpErrText{"Can't start the connection", "This connection request was refused.", "Start the connection again from the app."},
 		Redirect:        mcpErrText{"Callback address not allowed", "The app asked to return to an address this Agent Fleet does not allow.", "Ask whoever runs the app, or start the connection again from the app."},
 		Expired:         mcpErrText{"Confirmation is no longer valid", "This confirmation was refused, has expired, or was already used.", "Start the connection again from the app."},

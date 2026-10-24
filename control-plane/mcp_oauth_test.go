@@ -1507,8 +1507,13 @@ func TestMCPOAuthAuthorizeNamesAnUntrustedClientHost(t *testing.T) {
 			}
 		}
 	}
-	if rec := get("https://app.example.org/c.json", "ja"); !strings.Contains(rec.Body.String(), "信頼されていません") {
+	// The setting is named as the Console and the guides spell it, route included.
+	if rec := get("https://app.example.org/c.json", "ja"); !strings.Contains(rec.Body.String(), "信頼されていません") ||
+		!strings.Contains(rec.Body.String(), "管理 → 配備 → MCP ログイン許可ホスト") {
 		t.Errorf("ja page missing: %s", rec.Body)
+	}
+	if rec := get("https://app.example.org/c.json", "en"); !strings.Contains(rec.Body.String(), "Admin → Deployment → MCP sign-in hosts") {
+		t.Errorf("en page lacks the setting route: %s", rec.Body)
 	}
 
 	// Markup in the host never reaches the page unescaped.
