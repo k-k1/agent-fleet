@@ -148,11 +148,22 @@ func endedOAuth(prev, next []ServerDef) []string {
 		if p.Auth != AuthOAuth {
 			continue
 		}
-		if n, ok := now[p.ID]; !ok || n.Auth != AuthOAuth || n.URL != p.URL {
+		if n, ok := now[p.ID]; !ok || n.Auth != AuthOAuth || !sameURL(n.URL, p.URL) {
 			out = append(out, p.ID)
 		}
 	}
 	return out
+}
+
+// sameURL compares two server URLs the way a grant's resource is compared, so an edit that only
+// changes the spelling (host case, a default port) ends no sign-in.
+func sameURL(a, b string) bool {
+	x, ok1 := canonicalResource(a)
+	y, ok2 := canonicalResource(b)
+	if !ok1 || !ok2 {
+		return a == b
+	}
+	return x == y
 }
 
 // saveTenantCache writes the cache only when the server set differs from what is already

@@ -9,12 +9,14 @@ package mcpreg
 //   - a user_secret is filled with the member's own value (the tenant distributes only the name).
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -314,5 +316,42 @@ func TestFetchTenantNamesTheSignInsItEnded(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, map[string]bool{"t-gone": true, "t-moved": true, "t-plain": true}) {
 		t.Fatalf("ended %v, want t-gone, t-moved and t-plain", res.EndedOAuth)
+	}
+}
+
+// A sign-in that finishes after the tenant moved the server is not stored, and the tokens it got
+// are revoked: a disconnect that ran in between found nothing to end.
+func TestCompleteRefusesWhenTheURLMovedMeanwhile(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, nil)
+	put := func(url string) {
+		t.Helper()
+		d := ServerDef{ID: "t-hosted", Name: "hosted", Origin: OriginTenant, Transport: TransportHTTP, URL: url,
+			Auth: AuthOAuth, Enabled: true, Targets: Targets{Session: true}}
+		if err := writeTenantCache([]ServerDef{d}, time.Now().Unix()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(f.url("/mcp"))
+	t.Cleanup(func() { _ = os.Remove(tenantCachePath()) })
+	req := startReq(nil)
+	mustStart(t, "t-hosted", req)
+	put(f.url("/v2/mcp"))
+	_, err := CompleteOAuth(context.Background(), "t-hosted", CompleteRequest{State: req.State, Code: "c", Iss: f.url("")})
+	wantCode(t, err, OAuthErrStateMismatch)
+	if g := currentGrant("t-hosted"); g != nil {
+		t.Fatalf("a grant for the old URL was stored: %+v", g)
+	}
+	if len(f.revokes) != 1 || f.revokes[0].Get("token") != "rt-0" {
+		t.Errorf("the unstored tokens were not revoked: %v", f.revokes)
+	}
+}
+
+func TestEndedOAuthIgnoresURLSpelling(t *testing.T) {
+	p := ServerDef{ID: "t1", Auth: AuthOAuth, URL: "https://M.Example.com:443/mcp"}
+	n := p
+	n.URL = "https://m.example.com/mcp"
+	if got := endedOAuth([]ServerDef{p}, []ServerDef{n}); len(got) != 0 {
+		t.Errorf("a respelled URL ended %v", got)
 	}
 }
