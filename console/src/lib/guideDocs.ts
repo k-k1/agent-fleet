@@ -13,7 +13,7 @@ import { getLocale } from "./i18n/index.ts";
 
 const GUIDE_ROOT = "/usr/local/share/agent-fleet/docs";
 
-// `page` is the path under the guide root without extension, e.g. "README" or "member/10-integrations".
+// `page` is the path under the guide root without extension, e.g. "README" or "member/14-preview-browser".
 export function openGuidePage(page: string): void {
   const root = useWorkspaceStore.getState().docsRoot.replace(/\/+$/, "") || GUIDE_ROOT;
   useLayoutStore.getState().openTargetInNew(

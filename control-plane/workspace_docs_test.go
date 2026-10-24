@@ -15,7 +15,7 @@ func buildDocsSrc(t *testing.T) string {
 		// The tree's own README is the entry point the Console opens; it ships too.
 		"README.md",
 		"README.ja.md",
-		"member/02-sessions.md",
+		"member/03-starting-sessions.md",
 		"ref/agents.md",
 		"admin/02-limits.md",
 		"operate/01-install.md",
@@ -79,7 +79,7 @@ func TestStageWorkspaceDocs_ShipsTheGuideOnly(t *testing.T) {
 		// page, which is the only one that branches by reader. Staging the shelves
 		// without it leaves that button opening a file that does not exist.
 		"README.md", "README.ja.md",
-		"member/02-sessions.md", "ref/agents.md", "admin/02-limits.md",
+		"member/03-starting-sessions.md", "ref/agents.md", "admin/02-limits.md",
 		"operate/01-install.md", "assets/architecture.drawio",
 	} {
 		if !got[filepath.FromSlash(f)] {
@@ -115,7 +115,7 @@ func TestStageWorkspaceDocs_RestageReplaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := staged(t, dataDir)
-	if !got[filepath.FromSlash("member/02-sessions.md")] {
+	if !got[filepath.FromSlash("member/03-starting-sessions.md")] {
 		t.Error("re-stage must keep the member shelf")
 	}
 	if got[filepath.FromSlash("member/99-removed.md")] {

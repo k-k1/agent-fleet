@@ -30,8 +30,8 @@ describe("openGuidePage", () => {
     openGuidePage("README");
     expect(openedPath()).toBe("/data/ws/docs/README.md");
     locale = "ja";
-    openGuidePage("member/10-integrations");
-    expect(openedPath()).toBe("/data/ws/docs/member/10-integrations.ja.md");
+    openGuidePage("member/14-preview-browser");
+    expect(openedPath()).toBe("/data/ws/docs/member/14-preview-browser.ja.md");
   });
 
   it("does not double the slash after a trailing-slash root", () => {
