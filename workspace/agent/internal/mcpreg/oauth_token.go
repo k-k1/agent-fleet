@@ -276,7 +276,7 @@ func OAuthStatusOf(serverID string) (OAuthStatus, error) {
 	st := OAuthStatus{ServerID: serverID, State: OAuthStateNotSignedIn}
 	if g := findGrant(data, serverID); g != nil {
 		st.Issuer, st.Registration = g.Issuer, g.Registration
-		st.Scopes = strings.Fields(g.Scope)
+		st.Scopes = splitScopes(g.Scope)
 		st.ExpiresAt, st.ConnectedAt, st.StepUpScope = g.ExpiresAt, g.ConnectedAt, g.StepUpScope
 		switch {
 		case g.SignInAgain:
