@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -239,6 +240,38 @@ func TestEgressPurgeIsBatchedAndKeepsWhatIsInWindow(t *testing.T) {
 		}
 		if refs, _ := st.OpenWorkspaceAddressRefs(ctx, "m"); !equalStrings(refs, []string{"open"}) {
 			t.Errorf("%s: the open row must stay, got %v", name, refs)
+		}
+	}
+}
+
+// The floor a purge commits refuses older events from then on, on every store handle, and
+// never goes back down.
+func TestEgressFloorRefusesAndNeverLowers(t *testing.T) {
+	ctx := context.Background()
+	for name, st := range homeOpStores(t) {
+		e := EgressEvent{ID: "x", At: 100, Source: "10.0.1.5", Host: "a.example", Allowed: true, Count: 1}
+		if ok, err := st.RecordEgressEvent(ctx, "2026-10-24", e, 1); err != nil || !ok {
+			t.Fatalf("%s: first record: %v %v", name, ok, err)
+		}
+		if err := st.RaiseEgressEventFloor(ctx, 200); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := st.PurgeEgressEvents(ctx, 200, 10); err != nil || n != 1 {
+			t.Fatalf("%s: purge %d %v", name, n, err)
+		}
+		if err := st.RaiseEgressEventFloor(ctx, 50); err != nil { // a longer retention
+			t.Fatal(err)
+		}
+		if ok, err := st.RecordEgressEvent(ctx, "2026-10-24", e, 1); !errors.Is(err, ErrEgressEventExpired) || ok {
+			t.Errorf("%s: purged event came back: %v %v", name, ok, err)
+		}
+		if stats, _ := st.ListEgress(ctx, "2026-10-24", 10); len(stats) != 1 || stats[0].Allowed != 1 {
+			t.Errorf("%s: counted once, got %+v", name, stats)
+		}
+		fresh := e
+		fresh.ID, fresh.At = "y", 300
+		if ok, err := st.RecordEgressEvent(ctx, "2026-10-24", fresh, 1); err != nil || !ok {
+			t.Errorf("%s: an event above the floor must be stored: %v %v", name, ok, err)
 		}
 	}
 }

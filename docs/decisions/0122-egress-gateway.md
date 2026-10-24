@@ -410,10 +410,13 @@ events/s the former takes about 8.6M rows a day. The maintainer decided:
 - **The bound on resends.** Dedup on `id` only holds while the row exists, and the gateway agent
   resends from its committed offset, so after a long outage it can resend lines older than the
   window. Ingest therefore refuses to store, and to count into `egress_daily`, an event that
-  carries an `id` and whose `at` is older than now minus the retention. It logs how many it
-  refused and still answers 2xx, so the gateway does not retry for ever. The purge deletes only
-  events older than the retention plus one hour, so a deleted event is always one ingest
-  already refuses, even between two CPs whose clocks differ by less than that hour. Events
+  carries an `id` and whose `at` is older than now minus the retention, or older than the
+  **purge floor**. The floor is a monotone cutoff kept in the database (`cp_counter`,
+  `egress-event-floor`): a purge raises it, and commits it, before it deletes, and
+  `RecordEgressEvent` reads it in the same transaction as the insert (`FOR SHARE` on Postgres, so
+  a raise waits for ingests in flight). So a deleted event is refused by every CP whatever its
+  clock or its retention setting, and a later longer retention, or `0`, never lowers it. It logs
+  how many it refused and still answers 2xx, so the gateway does not retry for ever. Events
   without an `id` (the own proxy's) were never deduplicated and are not affected.
   **Consequence:** an event arriving later than the retention window after it happened is
   lost, from the raw table and from the aggregate. That is the price of not keeping a table of

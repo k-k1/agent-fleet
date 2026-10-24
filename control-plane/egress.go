@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"net/netip"
@@ -177,9 +178,11 @@ func (a egressAPI) ingest(w http.ResponseWriter, r *http.Request) {
 	now := clock().UTC()
 	day := now.Format("2006-01-02")
 	// Dedup on id only holds while the row exists, and the purge deletes rows past the
-	// retention window. An event older than the window is therefore refused, not stored and
-	// not counted: it could be the resend of one already purged and counted. It is still
-	// answered with a 2xx, or the gateway would resend it for ever.
+	// retention window. An event older than the window, or than the floor a purge has
+	// persisted (RecordEgressEvent checks that one, for every CP and every retention setting),
+	// is therefore refused, not stored and not counted: it could be the resend of one already
+	// purged and counted. It is still answered with a 2xx, or the gateway would resend it for
+	// ever.
 	var oldest int64
 	expired := 0
 	var notBefore int64
@@ -212,6 +215,13 @@ func (a egressAPI) ingest(w http.ResponseWriter, r *http.Request) {
 			evDay := time.UnixMilli(ev.At).UTC().Format("2006-01-02")
 			inserted, err := a.store.RecordEgressEvent(ctx, evDay, ev, now.UnixMilli())
 			if err != nil {
+				if errors.Is(err, store.ErrEgressEventExpired) {
+					if expired == 0 || ev.At < oldest {
+						oldest = ev.At
+					}
+					expired++
+					continue
+				}
 				log.Printf("egress ingest: record event %s: %v", e.ID, err)
 				http.Error(w, "record failed", http.StatusInternalServerError)
 				return

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"math"
 	"strconv"
 	"time"
 
@@ -19,12 +20,6 @@ import (
 // AF_EGRESS_EVENT_RETENTION_DAYS is not set.
 const egressEventRetentionDefault = 30 * 24 * time.Hour
 
-// egressPurgeSkew is how much further back than the retention window the purge reaches
-// before it deletes. Ingest refuses an event older than the window, so a purged row can
-// never be stored again by a resend; the margin keeps that true between two CPs whose clocks
-// differ by less than this.
-const egressPurgeSkew = time.Hour
-
 const (
 	egressPurgeInterval = 10 * time.Minute
 	// egressPurgeBatch bounds one DELETE, so it holds its locks for milliseconds and the
@@ -35,16 +30,20 @@ const (
 	egressPurgeLease = "egress-event-purge"
 )
 
+// egressRetentionMaxDays keeps days*24h inside time.Duration's int64 nanoseconds.
+const egressRetentionMaxDays = int(math.MaxInt64 / int64(24*time.Hour))
+
 // parseEgressRetention reads AF_EGRESS_EVENT_RETENTION_DAYS: whole days raw events are kept.
-// Empty means the default and 0 means keep forever (no purge, and ingest refuses nothing as
-// too old). Anything else that is not a positive number is logged and replaced by the
-// default: a typo must not silently switch deletion off or on.
+// Empty means the default and 0 means keep forever (no purge; what was purged earlier stays
+// refused, see RaiseEgressEventFloor). Anything else that is not a number of days, including
+// one too large for a time.Duration, is logged and replaced by the default: a typo must not
+// silently switch deletion off or on.
 func parseEgressRetention(v string) time.Duration {
 	if v == "" {
 		return egressEventRetentionDefault
 	}
 	n, err := strconv.Atoi(v)
-	if err != nil || n < 0 {
+	if err != nil || n < 0 || n > egressRetentionMaxDays {
 		log.Printf("egress: ignoring AF_EGRESS_EVENT_RETENTION_DAYS %q: want a number of days, 0 to keep forever", v)
 		return egressEventRetentionDefault
 	}
@@ -106,35 +105,47 @@ func (p *egressPurger) tick(ctx context.Context) {
 	p.purge(pctx)
 }
 
-// purge deletes events first, then the address rows: an interval is never gone while an
-// event it attributes is still there.
+// purge raises the persistent floor first, then deletes events, then the address rows. The
+// floor makes ingest on every CP refuse what is about to go, whatever its own clock or
+// retention setting says, and it never falls back. An address row is deleted only after its
+// events were deleted without error: otherwise a kept event would lose its holder.
 func (p *egressPurger) purge(ctx context.Context) {
-	before := p.now().Add(-p.retention - egressPurgeSkew).UnixMilli()
-	events := p.drain(ctx, "events", func() (int, error) { return p.st.PurgeEgressEvents(ctx, before, p.batch) })
-	addrs := p.drain(ctx, "address rows", func() (int, error) { return p.st.PurgeWorkspaceAddresses(ctx, before, p.batch) })
+	before := p.now().Add(-p.retention).UnixMilli()
+	if err := p.st.RaiseEgressEventFloor(ctx, before); err != nil {
+		log.Printf("egress purge: raise floor: %v", err)
+		return
+	}
+	events, err := p.drain(ctx, func() (int, error) { return p.st.PurgeEgressEvents(ctx, before, p.batch) })
+	var addrs int
+	if err == nil && ctx.Err() == nil {
+		addrs, err = p.drain(ctx, func() (int, error) { return p.st.PurgeWorkspaceAddresses(ctx, before, p.batch) })
+	}
+	if err != nil {
+		log.Printf("egress purge: %v", err)
+	}
 	if events+addrs > 0 {
 		log.Printf("egress purge: deleted %d events and %d address rows older than %s", events, addrs,
 			time.UnixMilli(before).UTC().Format(time.RFC3339))
 	}
 }
 
-// drain runs one bounded delete after another until a batch comes back short.
-func (p *egressPurger) drain(ctx context.Context, what string, del func() (int, error)) int {
+// drain runs one bounded delete after another until a batch comes back short, the context
+// ends or a delete fails.
+func (p *egressPurger) drain(ctx context.Context, del func() (int, error)) (int, error) {
 	total := 0
 	for ctx.Err() == nil {
 		n, err := del()
 		total += n
 		if err != nil {
-			log.Printf("egress purge: %s: %v", what, err)
-			return total
+			return total, err
 		}
 		if n < p.batch {
-			return total
+			return total, nil
 		}
 		select {
 		case <-ctx.Done():
 		case <-time.After(p.pause):
 		}
 	}
-	return total
+	return total, nil
 }
