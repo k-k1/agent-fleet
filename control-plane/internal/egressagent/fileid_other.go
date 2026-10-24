@@ -1,8 +1,13 @@
-//go:build !unix
+//go:build !linux
 
 package egressagent
 
-import "os"
+import (
+	"errors"
+	"os"
+)
 
-// fileID has nothing to offer where there are no inodes; the gateway runs Linux.
-func fileID(*os.File) (uint64, int64, error) { return 0, 0, nil }
+// fileGen needs Linux extended attributes; the gateway runs Linux.
+func fileGen(*os.File) (string, error) {
+	return "", errors.New("egress-agent identifies log files by an extended attribute and runs on Linux only")
+}

@@ -375,11 +375,15 @@ tested with fixture lines and files.
   connection started (`%tS`, not the time the line was written: a tunnel is logged when it
   closes, possibly after the workspace released its address), source and server address,
   Squid's status and bump mode, and the SNI and request domain, URL-encoded so a hostile SNI
-  cannot add fields. Each line is one event. Its id is the file's identity plus the line's byte
-  offset. The identity is the gateway (the host's machine id, so two gateways never share an id
-  and a restart keeps it), the inode, the file's birth time and a hash of the first line: a new
-  file can reuse a deleted one's inode and even start with the same line, and a collision makes
-  the CP drop real events as duplicates. The offset is committed only after a 2xx. A line whose tail is damaged is still sent with its time and source
+  cannot add fields. Each line is one event. Its id is the file's generation plus the line's byte
+  offset. The generation is a random id the agent writes into the file's extended attribute
+  `user.af-egress.gen` the first time it sees the file: it survives a rename and a restart, and
+  a newly created file has none. Nothing derived from the file itself is unique: a new file can
+  reuse a deleted one's inode, the birth time has the kernel clock's few-millisecond resolution
+  (or is not recorded), and two files can start with the same line. A collision makes the agent
+  resume at the wrong offset and the CP drop real events as duplicates. The agent therefore needs
+  write access to Squid's log files and a filesystem with user xattrs, and refuses to start
+  without them. The offset is committed only after a 2xx. A line whose tail is damaged is still sent with its time and source
   and no name. Rotation must be Squid's own (`logfile_rotate` >= 1); `copytruncate` is not
   supported.
 - **Verdict.** `allowed` is the policy's verdict on the name, and false when Squid denied or

@@ -44,6 +44,11 @@
 //	%#ssl::>sni       TLS SNI, URL-encoded so a hostile SNI cannot add fields
 //	%#>rd             request domain (Host header or CONNECT target), URL-encoded
 //
+// The agent tags each log file it reads with a random generation id in the extended
+// attribute user.af-egress.gen, and an event's id is "<generation>@<offset>". It therefore
+// needs write access to Squid's log files (run it as Squid's user, or in its group with the
+// files group-writable) and a filesystem with user xattrs; it refuses to start otherwise.
+//
 // Rotation must be Squid's own (`squid -k rotate` with logfile_rotate >= 1, which renames
 // the file to .0, .1, ...): the agent finds a rotated file by its identity and finishes
 // it. copytruncate is not supported; the lines written between the copy and the truncate

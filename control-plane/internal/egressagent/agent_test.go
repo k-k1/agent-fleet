@@ -6,11 +6,15 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
 
 func TestRunEndToEnd(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("log files are identified by an xattr; the agent runs on Linux only")
+	}
 	dir := t.TempDir()
 	policy := &fakeCP{allowlist: []string{".github.com"}}
 	ingest := &ingestCP{}
@@ -21,7 +25,7 @@ func TestRunEndToEnd(t *testing.T) {
 	defer srv.Close()
 
 	cfg := Config{
-		PolicyURL: srv.URL + "/internal/egress/policy", IngestURL: srv.URL + "/internal/egress", Token: "tok", GatewayID: "gw1",
+		PolicyURL: srv.URL + "/internal/egress/policy", IngestURL: srv.URL + "/internal/egress", Token: "tok",
 		AllowFile: filepath.Join(dir, "allow.txt"), ModeFile: filepath.Join(dir, "mode.conf"),
 		LogPath: filepath.Join(dir, "af-egress.log"), StatePath: filepath.Join(dir, "state", "state.json"),
 		PolicyEvery: 20 * time.Millisecond, ShipEvery: 20 * time.Millisecond,
@@ -64,10 +68,7 @@ func TestRunRefusesUnusableConfig(t *testing.T) {
 	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := Run(context.Background(), Config{PolicyURL: "http://x", IngestURL: "http://x", Token: "t"}); err == nil {
-		t.Fatal("an empty gateway id must be refused")
-	}
-	cfg := Config{PolicyURL: "http://x", IngestURL: "http://x", Token: "t", GatewayID: "gw1", StatePath: filepath.Join(blocker, "state.json")}
+	cfg := Config{PolicyURL: "http://x", IngestURL: "http://x", Token: "t", StatePath: filepath.Join(blocker, "state.json")}
 	if err := Run(context.Background(), cfg); err == nil {
 		t.Fatal("a state path that cannot be written must be refused at start")
 	}

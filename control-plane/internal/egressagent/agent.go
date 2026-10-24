@@ -24,11 +24,6 @@ type Config struct {
 	ModeFile  string   // the include holding the log-only / enforce decisions
 	ReloadCmd []string // run after either file changed; empty = do not reload
 
-	// GatewayID names this gateway in every event id, so two gateways never produce the
-	// same id. It must stay the same across restarts of the agent on one host, or a resend
-	// after a lost state file would be stored twice: FromEnv takes the machine id.
-	GatewayID string
-
 	LogPath   string // Squid's access_log in LogFormat
 	StatePath string // committed offsets, by log file identity
 
@@ -47,7 +42,6 @@ func FromEnv() Config {
 		AllowFile:   envx.Or("AF_EGRESS_SQUID_ALLOW_FILE", "/etc/squid/af-allow.txt"),
 		ModeFile:    envx.Or("AF_EGRESS_SQUID_MODE_FILE", "/etc/squid/af-mode.conf"),
 		ReloadCmd:   strings.Fields(envx.Or("AF_EGRESS_SQUID_RELOAD", "squid -k reconfigure")),
-		GatewayID:   envx.Or("AF_EGRESS_GATEWAY_ID", machineID()),
 		LogPath:     envx.Or("AF_EGRESS_SQUID_LOG", "/var/log/squid/af-egress.log"),
 		StatePath:   envx.Or("AF_EGRESS_AGENT_STATE", "/var/lib/af-egress-agent/state.json"),
 		PolicyEvery: 30 * time.Second,
@@ -55,15 +49,22 @@ func FromEnv() Config {
 	}
 }
 
-// machineID is the host's systemd machine id, or its host name where there is none.
-func machineID() string {
-	if b, err := os.ReadFile("/etc/machine-id"); err == nil {
-		if id := strings.TrimSpace(string(b)); id != "" {
-			return id
-		}
+// checkLogTaggable refuses to start when the log exists but cannot carry a generation id
+// (no permission to set an xattr on it, or a filesystem without user xattrs): every pass
+// would fail the same way. A log that does not exist yet is checked when Squid creates it.
+func checkLogTaggable(path string) error {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
-	h, _ := os.Hostname()
-	return h
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := fileGen(f); err != nil {
+		return fmt.Errorf("%s: %w (the agent needs write access to Squid's log files and a filesystem with user xattrs)", path, err)
+	}
+	return nil
 }
 
 // requestTimeout bounds one CP request; a hung CP must not wedge either loop.
@@ -77,11 +78,17 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.PolicyURL == "" || cfg.IngestURL == "" || cfg.Token == "" {
 		return errors.New("AF_EGRESS_POLICY_URL, AF_EGRESS_INGEST_URL and AF_EGRESS_TOKEN are required")
 	}
-	if cfg.GatewayID == "" {
-		return errors.New("no gateway id: set AF_EGRESS_GATEWAY_ID (no /etc/machine-id or host name)")
+	if err := checkLogTaggable(cfg.LogPath); err != nil {
+		return err
 	}
 	if cfg.Client == nil {
 		cfg.Client = &http.Client{Timeout: requestTimeout}
+	}
+	if cfg.PolicyEvery <= 0 {
+		cfg.PolicyEvery = 30 * time.Second
+	}
+	if cfg.ShipEvery <= 0 {
+		cfg.ShipEvery = 5 * time.Second
 	}
 	st, err := loadState(cfg.StatePath)
 	if err != nil {

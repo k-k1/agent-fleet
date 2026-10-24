@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,9 +23,6 @@ const maxBatchBytes = 256 << 10
 // maxLine bounds one log line. The format's fields are short; a longer line is not one
 // Squid wrote in it, and is skipped rather than buffered without limit.
 const maxLine = 64 << 10
-
-// identPrefix is how much of a file's start identifies it when its first line is longer.
-const identPrefix = maxLine
 
 // shipState is what survives a restart: for each log file still on disk, by identity, the
 // offset up to which every line has been accepted by the CP.
@@ -95,33 +90,14 @@ func logFiles(path string) []string {
 	return append(out, path)
 }
 
-// fileIdent identifies a log file by the gateway, its inode, its birth time and a hash of
-// its first line. All four survive a rename and a restart. A colliding identity makes the
-// CP drop a real file's events as duplicates, and each part closes one way to collide: two
-// gateways can write the same line; two connections that started in the same millisecond
-// from one source to one name can be the first lines of two files; and a new file can
-// reuse a deleted one's inode, which only the birth time tells apart. "" means the file
-// has no complete first line yet and is not read.
-func fileIdent(f *os.File, gateway string) (string, error) {
-	buf := make([]byte, identPrefix)
-	n, err := f.ReadAt(buf, 0)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return "", err
-	}
-	buf = buf[:n]
-	if i := bytes.IndexByte(buf, '\n'); i >= 0 {
-		buf = buf[:i+1]
-	} else if n < identPrefix {
-		return "", nil
-	}
-	ino, btime, err := fileID(f)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(buf)
-	return gateway + "." + strconv.FormatUint(ino, 36) + "." + strconv.FormatInt(btime, 36) + "." +
-		hex.EncodeToString(sum[:8]), nil
-}
+// genXattr is the extended attribute that holds a log file's generation id. The ids of
+// a file's events are "<generation>@<offset>". Every identity derived from the file
+// itself collides somewhere: a new file can reuse a deleted one's inode, the birth time
+// has the kernel clock's few-millisecond resolution (or is not recorded at all), and two
+// files can start with the same line. A colliding identity makes the agent resume at the
+// wrong offset and the CP drop real events as duplicates, so the agent writes the
+// identity onto the file instead. Copying a log with its xattrs copies its identity.
+const genXattr = "user.af-egress.gen"
 
 // errShipFailed stops a pass at the first rejected POST; the offset stays where the CP
 // last accepted, and the next pass resends from there.
@@ -170,9 +146,9 @@ func (s *shipper) shipFile(ctx context.Context, path string, snap *snapshot) (st
 		return "", err
 	}
 	defer f.Close()
-	id, err := fileIdent(f, s.cfg.GatewayID)
-	if err != nil || id == "" {
-		return id, err
+	id, err := fileGen(f)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", path, err)
 	}
 	fi, err := f.Stat()
 	if err != nil {
