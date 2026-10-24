@@ -120,3 +120,22 @@ Control Plane の起動前に設定します。注釈つきの一覧は
 | `AF_MCP_OAUTH_TRUSTED_HOSTS` | MCP OAuth が信頼するクライアントのホスト（カンマ区切り）。既定は `claude.ai`・`claude.com`・`chatgpt.com`、`none` でループバックのクライアントだけ。管理モーダルの **MCP ログイン許可ホスト** で保存した一覧がこの変数に優先する（[operate/04](../operate/04-secure.ja.md#信頼するクライアントのホスト配備全体-superadmin-のみ)）|
 | `AF_EFS_BACKUP` | 手で設定しない。`ecs` / `ecs-ec2` で `update.sh` と `standup.sh` が ingress スタックの `EfsBackup` パラメータ（`present`・`off`・`missing`）から埋め、`missing` なら管理画面に「日次の EFS バックアップがない」バナーが出る（[operate/03](../operate/03-run.ja.md#アップグレード)） |
 | `AF_SESSION_IDLE_TIMEOUT`・`AF_WS_IDLE_TIMEOUT`・`AF_BACKGROUND_HOLD_MAX`・`AF_WORKSPACE_START_DEADLINE` | アイドルのセッションと Workspace を止めるタイミング。既定値は [上限](limits.ja.md#配備が決めるもの)、動きは [operate/03](../operate/03-run.ja.md#アイドル停止と-force-stop) |
+
+### AWS ECS の場合
+
+ECS のスタックは自由形式の環境変数を受け付けません。Control Plane の変数がタスクに届くのは、`30-ingress.yaml`
+のパラメータ経由だけです。下のパラメータはどれも既定が空（または `off`）で、空なら環境変数を足さないので、
+Control Plane は自分の既定値のままです。
+
+| 変数 | スタックのパラメータ |
+|---|---|
+| `AF_SESSION_IDLE_TIMEOUT`・`AF_INTERACTION_IDLE_TIMEOUT`・`AF_WS_IDLE_TIMEOUT`・`AF_PRESENCE_IDLE_TIMEOUT`・`AF_BACKGROUND_HOLD_MAX`・`AF_WORKSPACE_START_DEADLINE`・`AF_USAGE_SAMPLE_INTERVAL` | `SessionIdleTimeout`・`InteractionIdleTimeout`・`WsIdleTimeout`・`PresenceIdleTimeout`・`BackgroundHoldMax`・`WorkspaceStartDeadline`・`UsageSampleInterval`（Go の期間表記。`0` でそのタイマーを止める） |
+| `AF_GITHUB_LOGIN_CLIENT_ID`・`AF_GITHUB_LABEL_JA`・`AF_GITHUB_LABEL_EN`・`AF_GITHUB_MEMBERSHIP_TTL`・`AF_GITHUB_MEMBERSHIP_GRACE` | `GithubLoginClientId`・`GithubLabelJa`・`GithubLabelEn`・`GithubMembershipTtl`・`GithubMembershipGrace` |
+| `AF_LLM_URL`・`AF_COMFY_URL`・`AF_REMOTE_ENGINE_URL`・`AF_REMOTE_ENGINE_KEYS` | `LlmUrl`・`ComfyUrl`・`RemoteEngineUrl`・`RemoteEngineKeys` |
+| `AF_GITHUB_LOGIN_CLIENT_SECRET`・`AF_COMFY_API_KEY`・`AF_REMOTE_ENGINE_TOKEN` | スイッチ `GithubLoginSecret`・`ComfyApiKey`・`RemoteEngineToken`（`on`）。値は SSM SecureString の `<SsmPrefix>/github-login-client-secret`・`/comfy-api-key`・`/remote-engine-token` から読むので、先に作っておきます |
+
+`WS_ENV` には ECS 用のパラメータを意図して用意していません。自由形式の `KEY=VAL` で、秘密の値も平文の環境変数に載るためです。パラメータは
+`30-ingress.yaml` に対する個別の `aws cloudformation deploy` で設定します（`update.sh` が上書きするのは `ImageTag` と `EfsBackup` だけです）。
+詳しくは
+[`deploy/aws/ecs/cfn/PARAMETERS.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/PARAMETERS.md#control-plane-timers-github-sign-in-extras-and-lan--borrowed-engines)。
+LAN のエンジンに ECS から届くのは、VPC にそこへの経路（VPN やピアリング）がある場合だけです。

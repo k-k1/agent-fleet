@@ -288,6 +288,8 @@ case "$args" in
   # real stand-up would fail at the engine task with a ResourceNotFoundException that reads
   # as a broken stack.
   *"ssm get-parameter --name /af-ws/engine-llm-key"*) [ "${STUB_ENGINE_KEY_EXISTS:-0}" = 1 ] || exit 1 ;;
+  *"ssm get-parameter --name /af-cp/github-client-secret"*) [ "${STUB_NO_GH_KEY:-0}" = 1 ] && exit 1; echo ok ;;
+  *"ssm get-parameter --name /af-cp/comfy-api-key"*) [ "${STUB_NO_COMFY_KEY:-0}" = 1 ] && exit 1; echo ok ;;
   *"ssm get-parameter"*) echo "ok" ;;
   *"iam get-role"*) echo "ok" ;;
   *"route53 get-hosted-zone"*) echo "ok" ;;
@@ -1374,6 +1376,38 @@ for t in "$ECS"/cfn/*.yaml; do
     exit 1
   fi
 done
+
+echo "== case 3b-3: a secret switch that is on needs its SSM parameter before anything is created =="
+# 30-ingress wires AF_COMFY_API_KEY only when ComfyApiKey=on, and a Secrets entry whose parameter
+# does not exist stops the CP task from starting -- after 00-20 are already up.
+cp "$STATE/params/30-ingress" "$WORK/params-30-saved"
+echo "ComfyApiKey=on" >> "$STATE/params/30-ingress"
+: > "$LOG"
+if STUB_NO_COMFY_KEY=1 "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes \
+     > "$WORK/out3b3" 2>&1 </dev/null; then
+  fail "standup went on although ComfyApiKey=on and the SSM parameter is missing"
+fi
+grep -q "no SSM /af-cp/comfy-api-key (ComfyApiKey=on)" "$WORK/out3b3" \
+  || fail "the missing secret was not named: $(tail -3 "$WORK/out3b3")"
+hasnt "cloudformation deploy --stack-name t-network"
+: > "$LOG"
+"$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3b3b" 2>&1 </dev/null \
+  || fail "ComfyApiKey=on with the SSM parameter present was refused: $(tail -3 "$WORK/out3b3b")"
+grep -q "deploy --stack-name t-ingress .*ComfyApiKey=on" "$LOG" || fail "ComfyApiKey=on did not reach 30-ingress"
+# GitHub: the dedicated sign-in App replaces github-client-secret, so standup must not demand it
+# then -- but must when the switch is off (the template injects it for GithubAllowedOrgs).
+printf 'GithubAllowedOrgs=example-org\n' >> "$STATE/params/30-ingress"
+: > "$LOG"
+if STUB_NO_GH_KEY=1 "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes \
+     > "$WORK/out3b4" 2>&1 </dev/null; then
+  fail "standup went on although GithubAllowedOrgs is set and github-client-secret is missing"
+fi
+grep -q "no SSM /af-cp/github-client-secret" "$WORK/out3b4" || fail "the missing github-client-secret was not named"
+printf 'GithubLoginSecret=on\n' >> "$STATE/params/30-ingress"
+: > "$LOG"
+STUB_NO_GH_KEY=1 "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3b5" 2>&1 </dev/null \
+  || fail "GithubLoginSecret=on was refused for the missing legacy github-client-secret: $(tail -3 "$WORK/out3b5")"
+cp "$WORK/params-30-saved" "$STATE/params/30-ingress"
 
 echo "== case 3c: teardown empties the bucket before deleting 20-platform =="
 # CFN cannot delete a bucket that still has contents. Skip this and 20-platform stops at

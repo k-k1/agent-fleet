@@ -330,6 +330,27 @@ that adds these parameters turns nothing on; run the targeted deploy above to tu
 Details: [`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#mcp-mcp-and-mcp-oauth) and
 `guide/operate/04-secure.md`, "Sign-in for remote MCP clients".
 
+### Timers, GitHub sign-in extras and LAN / borrowed engines (optional, empty by default)
+
+```bash
+aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides WsIdleTimeout=4h ComfyUrl=http://10.0.0.5:8188 ComfyApiKey=on
+```
+
+Control Plane variables that the operator guide calls configurable have a parameter each:
+`SessionIdleTimeout`, `InteractionIdleTimeout`, `WsIdleTimeout`, `PresenceIdleTimeout`,
+`BackgroundHoldMax`, `WorkspaceStartDeadline`, `UsageSampleInterval`; `GithubLoginClientId`,
+`GithubLabelJa`, `GithubLabelEn`, `GithubMembershipTtl`, `GithubMembershipGrace`; `LlmUrl`,
+`ComfyUrl`, `RemoteEngineUrl`, `RemoteEngineKeys`. Empty (the default) adds no environment entry,
+so an existing stack is unchanged and `update.sh` (which overrides only `ImageTag` and
+`EfsBackup`) neither sets nor clears them. The three secrets (`AF_GITHUB_LOGIN_CLIENT_SECRET`,
+`AF_COMFY_API_KEY`, `AF_REMOTE_ENGINE_TOKEN`) are read from SSM SecureString parameters
+`<SsmPrefix>/github-login-client-secret`, `/comfy-api-key`, `/remote-engine-token` when their own
+switch (`GithubLoginSecret`, `ComfyApiKey`, `RemoteEngineToken` = `on`) is set; create the SSM
+parameter first. `WS_ENV` is deliberately not exposed. A LAN engine needs a VPC route to it.
+Details and IAM: [`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#control-plane-timers-github-sign-in-extras-and-lan--borrowed-engines).
+
 ### Alarms — the Control Plane cannot reach its database (set this one)
 
 ```bash
