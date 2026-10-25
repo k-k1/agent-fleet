@@ -348,10 +348,10 @@ func (g *egressArchiveGCS) Get(ctx context.Context, key string) (io.ReadCloser, 
 // upload is cancelled, not closed, when the copy fails: closing a writer finalizes what it
 // has, which would publish a truncated object.
 //
-// A key that already exists fails the precondition. The one case that is not an error is an
-// object with the same length and CRC32C: a retried upload whose first attempt landed but
-// whose response was lost sees exactly that, and the object is then the one this Put meant to
-// write. Anything else is left for the archiver, which verifies and never overwrites.
+// A key that already exists fails the precondition and is an error whatever it holds: a
+// length and CRC32C match proves nothing (CRC32C collides on short inputs), and a nil here
+// would skip the archiver's verify and database comparison. The next run opens the existing
+// object with Get and checks it in full, as for any key found by Exists.
 func (g *egressArchiveGCS) Put(ctx context.Context, key string, body io.ReadSeeker, size int64) error {
 	sum := crc32.New(crc32.MakeTable(crc32.Castagnoli))
 	if n, err := io.Copy(sum, body); err != nil {
@@ -382,14 +382,10 @@ func (g *egressArchiveGCS) Put(ctx context.Context, key string, body io.ReadSeek
 		return err
 	}
 	if err := w.Close(); err != nil {
-		if !isGCSPreconditionFailed(err) {
-			return err
+		if isGCSPreconditionFailed(err) {
+			return fmt.Errorf("archive %s already exists: %w", key, err)
 		}
-		// Same content: the object is there and whole. Otherwise report the conflict.
-		if cur, aerr := o.Attrs(ctx); aerr == nil && cur.Size == size && cur.CRC32C == want {
-			return nil
-		}
-		return fmt.Errorf("archive %s already exists: %w", key, err)
+		return err
 	}
 	attrs := w.Attrs()
 	if attrs == nil {

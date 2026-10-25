@@ -405,9 +405,10 @@ The design and the staged rollout — log-only → allowlist → enforce — are
   `roles/storage.objectViewer` on the bucket (create and get, never list, delete or overwrite),
   through Application Default Credentials only (Workload Identity on GKE; no key file is read
   from configuration). The sink never replaces a key: a Put on an existing one fails the
-  precondition and is an error, unless the object there has the same length and CRC32C (a
-  retried upload whose first attempt landed), and the archiver then verifies the existing
-  object as for any other sink. Local: the file and every directory above it, up to the filesystem root, are fsynced on every Put and every
+  precondition and is always an error, even when the object there has the same length and
+  CRC32C (a retried upload whose first attempt landed looks like that, and so does a CRC32C
+  collision); the next run finds the key with `Exists` and the archiver verifies the object
+  against the database as for any other sink. Local: the file and every directory above it, up to the filesystem root, are fsynced on every Put and every
   read-back of an existing object, so a failed fsync is retried by the next run and a readable
   file is never taken as proof it is durable.
   A bad URL stops the CP at startup rather than deleting without an archive.

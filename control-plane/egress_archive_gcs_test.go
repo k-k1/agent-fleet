@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,11 +41,13 @@ type fakeGCS struct {
 	objs map[string]*fakeGCSObject // "bucket/name"
 	gen  int64
 	// Fault injection.
-	truncate   bool // store one byte fewer than was sent, and say so (a 2xx that lost data)
-	dropReply  bool // finalize the upload, answer 500 (the response is lost)
-	failStatus int  // answer every request with this status
-	uploads    int  // finalized uploads that created an object
-	resumable  int  // resumable sessions opened
+	truncate   bool   // store one byte fewer than was sent, and say so (a 2xx that lost data)
+	dropReply  bool   // finalize the upload, answer 500 (the response is lost)
+	failStatus int    // answer every request with this status
+	uploads    int    // finalized uploads that created an object
+	resumable  int    // resumable sessions opened
+	finalizes  int    // upload requests that carried the object\'s total length
+	crcSent    []bool // per upload: did the client send the object\'s CRC32C
 	sessions   map[string]*fakeGCSSession
 	requests   []string
 }
@@ -52,6 +55,8 @@ type fakeGCS struct {
 type fakeGCSSession struct {
 	bucket, name string
 	cond0        bool
+	crc          uint32
+	sendCRC      bool
 	buf          []byte
 }
 
@@ -130,11 +135,14 @@ func (f *fakeGCS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		cond0 := q.Get("ifGenerationMatch") == "0"
 		if q.Get("uploadType") == "resumable" {
 			var meta struct {
-				Name string `json:"name"`
+				Name   string `json:"name"`
+				CRC32C string `json:"crc32c"`
 			}
 			json.NewDecoder(r.Body).Decode(&meta)
 			id := fmt.Sprintf("s%d", len(f.sessions)+1)
-			f.sessions[id] = &fakeGCSSession{bucket: bucket, name: meta.Name, cond0: cond0}
+			crc, sendCRC := decodeCRC(meta.CRC32C)
+			f.crcSent = append(f.crcSent, sendCRC)
+			f.sessions[id] = &fakeGCSSession{bucket: bucket, name: meta.Name, cond0: cond0, crc: crc, sendCRC: sendCRC}
 			f.resumable++
 			w.Header().Set("Location", "http://"+r.Host+"/resumable/"+id)
 			w.WriteHeader(200)
@@ -155,14 +163,30 @@ func (f *fakeGCS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		part, _ = mr.NextPart()
 		data, _ := io.ReadAll(part)
 		wantCRC, sendCRC := decodeCRC(meta.CRC32C)
+		f.crcSent = append(f.crcSent, sendCRC)
+		f.finalizes++
 		f.create(w, bucket, meta.Name, cond0, data, wantCRC, sendCRC)
 	case strings.HasPrefix(p, "/resumable/"):
 		s := f.sessions[strings.TrimPrefix(p, "/resumable/")]
 		chunk, _ := io.ReadAll(r.Body)
-		s.buf = append(s.buf, chunk...)
 		// Content-Range: bytes 0-8388607/* while more follows, bytes 0-N/total at the end.
+		// Each chunk must start where the previous one ended: a resent or skipped range is
+		// rejected rather than appended.
 		cr := r.Header.Get("Content-Range")
 		total := cr[strings.LastIndex(cr, "/")+1:]
+		var start, end int
+		if n, _ := fmt.Sscanf(cr, "bytes %d-%d/", &start, &end); n != 2 || start != len(s.buf) || end-start+1 != len(chunk) {
+			f.apiErr(w, 400, "bad Content-Range "+cr+" at offset "+strconv.Itoa(len(s.buf)))
+			return
+		}
+		s.buf = append(s.buf, chunk...)
+		if total != "*" {
+			f.finalizes++
+			if n, _ := strconv.Atoi(total); n != len(s.buf) {
+				f.apiErr(w, 400, "total length "+total+" does not match the bytes sent")
+				return
+			}
+		}
 		if total == "*" {
 			w.Header().Set("Range", fmt.Sprintf("bytes=0-%d", len(s.buf)-1))
 			// The client sends X-GUploader-No-308, so "resume incomplete" travels as a 200.
@@ -170,7 +194,7 @@ func (f *fakeGCS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(200)
 			return
 		}
-		f.create(w, s.bucket, s.name, s.cond0, s.buf, 0, false)
+		f.create(w, s.bucket, s.name, s.cond0, s.buf, s.crc, s.sendCRC)
 	case strings.HasPrefix(p, "/storage/v1/b/") && r.Method == http.MethodGet:
 		rest := strings.TrimPrefix(p, "/storage/v1/b/")
 		bucket, name, _ := strings.Cut(rest, "/o/")
@@ -232,6 +256,9 @@ func TestEgressArchiveGCSSink(t *testing.T) {
 	if o := f.objs["bkt/pre/fix/egress/k"]; o == nil || string(o.data) != "data" {
 		t.Fatalf("objects = %v", f.objs)
 	}
+	if len(f.crcSent) != 1 || !f.crcSent[0] {
+		t.Errorf("the multipart upload must carry the object's CRC32C: %v", f.crcSent)
+	}
 	if ok, err := s.Exists(ctx, "egress/k"); !ok || err != nil {
 		t.Errorf("stored object: %v %v", ok, err)
 	}
@@ -268,26 +295,52 @@ func TestEgressArchiveGCSSinkNeverOverwrites(t *testing.T) {
 	if string(f.objs["bkt/p/k"].data) != "first" || f.uploads != 1 {
 		t.Errorf("object = %q after %d uploads", f.objs["bkt/p/k"].data, f.uploads)
 	}
-	// The same bytes are the object this Put meant to write, so there is nothing to refuse.
-	if err := s.Put(ctx, "k", strings.NewReader("first"), 5); err != nil {
-		t.Errorf("identical content: %v", err)
+	// Identical bytes are refused as well: only the archiver's verify may call an existing
+	// object good.
+	if err := s.Put(ctx, "k", strings.NewReader("first"), 5); err == nil {
+		t.Error("an existing key must fail even with identical content")
 	}
 	if f.uploads != 1 {
 		t.Errorf("uploads = %d, want 1", f.uploads)
 	}
 }
 
-// The upload landed and its response was lost: the client retries (a conditional create is
-// idempotent), sees 412, and the object it finds is the one that was sent.
+// The upload landed and its response was lost: the client retries and sees 412. That is an
+// error, not a confirmation; the next run finds the key with Exists and the archiver
+// verifies the object in full.
 func TestEgressArchiveGCSSinkLostResponse(t *testing.T) {
 	f, _ := newFakeGCS(t)
 	f.dropReply = true
 	s := newTestGCSSink(t, "")
-	if err := s.Put(context.Background(), "k", strings.NewReader("data"), 4); err != nil {
+	if err := s.Put(context.Background(), "k", strings.NewReader("data"), 4); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("Put = %v", err)
 	}
 	if f.uploads != 1 || string(f.objs["bkt/k"].data) != "data" {
 		t.Errorf("uploads = %d, objects = %v", f.uploads, f.objs)
+	}
+	if ok, err := s.Exists(context.Background(), "k"); !ok || err != nil {
+		t.Errorf("Exists after the lost response = %v, %v", ok, err)
+	}
+}
+
+// Two different 16-byte bodies with the same length and CRC32C: an existing object that
+// matches on both is still not the object this Put meant to write.
+func TestEgressArchiveGCSSinkSameLengthAndCRCIsNotTheSameObject(t *testing.T) {
+	a, _ := hex.DecodeString("e6cb34fca0141702e74dd811c186ec5f")
+	b, _ := hex.DecodeString("20335ae4340d837fa06eac7ef3cc961f")
+	if gcsCRC(a) != gcsCRC(b) || bytes.Equal(a, b) {
+		t.Fatalf("fixture does not collide: %08x %08x", gcsCRC(a), gcsCRC(b))
+	}
+	f, _ := newFakeGCS(t)
+	s := newTestGCSSink(t, "")
+	if err := s.Put(context.Background(), "k", bytes.NewReader(a), 16); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put(context.Background(), "k", bytes.NewReader(b), 16); err == nil {
+		t.Error("a colliding body must not be reported as stored")
+	}
+	if !bytes.Equal(f.objs["bkt/k"].data, a) {
+		t.Error("the existing object changed")
 	}
 }
 
@@ -347,6 +400,9 @@ func TestEgressArchiveGCSSinkResumableUpload(t *testing.T) {
 	if err := s.Put(ctx, "big", bytes.NewReader(data), int64(len(data))); err != nil {
 		t.Fatal(err)
 	}
+	if len(f.crcSent) != 1 || !f.crcSent[0] {
+		t.Errorf("the resumable upload must carry the object's CRC32C: %v", f.crcSent)
+	}
 	if f.resumable != 1 || !bytes.Equal(f.objs["bkt/big"].data, data) {
 		t.Errorf("resumable sessions = %d, stored %d of %d bytes", f.resumable, len(f.objs["bkt/big"].data), len(data))
 	}
@@ -364,6 +420,11 @@ func TestEgressArchiveGCSSinkResumableUpload(t *testing.T) {
 	}
 	if f.objs["bkt/broken"] != nil {
 		t.Error("a failed upload left an object behind")
+	}
+	// Cancelled before it was finished: no request ever announced the object's total length,
+	// so the outcome does not hang on the service rejecting a partial body by its CRC32C.
+	if f.finalizes != 1 {
+		t.Errorf("finalizing requests = %d, want 1 (the good upload only)", f.finalizes)
 	}
 }
 

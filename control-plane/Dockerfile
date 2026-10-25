@@ -56,8 +56,10 @@ ARG VERSION=dev
 # builder's own GOARCH rather than to a hardcoded one — an empty GOARCH would
 # otherwise mean "amd64" on any host and quietly mis-build on an arm64 laptop.
 ARG TARGETARCH
+# disable_grpc_modules drops the gRPC transport of the GCS client (the egress archive uses
+# its HTTP one): measured, -13 MB on the stripped binary.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH:-$(go env GOARCH)}" \
-    go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o /out/af-cp .
+    go build -trimpath -tags=disable_grpc_modules -ldflags="-s -w -X main.buildVersion=${VERSION}" -o /out/af-cp .
 
 # --- 3. the user guide -------------------------------------------------------
 # The tree a workspace receives: guide/ plus the runbooks and the release history,

@@ -553,20 +553,20 @@ Follow-ups: #2728, #2729, #2687 (real Squid; the README gives the steps on this 
 
 `AF_EGRESS_ARCHIVE_URL` also takes `gs://bucket/prefix`: a third implementation of the archive
 sink interface (#2699), through the official `cloud.google.com/go/storage` client, which is the
-only new direct dependency. Layout and the verify-and-never-rewrite rules are unchanged.
+only new client library (`google.golang.org/api` comes in with it as a direct import). Layout and the verify-and-never-rewrite rules are unchanged.
 
 - **Credentials are Application Default Credentials only** (Workload Identity on GKE); there is
   no key-file setting. The role is `roles/storage.objectCreator` plus `roles/storage.objectViewer`
   on the bucket. The sink never lists, deletes or overwrites.
 - **A key is never replaced.** The upload carries `ifGenerationMatch=0`, so a second Put to a
-  key fails with 412 and the object there stays. It is not an error only when the stored length
-  and CRC32C equal what was sent (the client retries a conditional create, and a retry after a
-  lost response sees exactly that); anything else is returned and the archiver verifies the
-  existing object on the next run, as for S3.
+  key fails with 412 and the object there stays. The 412 is always an error, even when the
+  stored length and CRC32C equal what was sent: a retry after a lost response looks like that
+  and so does a CRC32C collision, and a nil would skip the archiver's verify and database
+  comparison. The next run finds the key with `Exists` and verifies it, as for S3.
 - **Confirmed means the stored object matches.** The upload is sent with the body's CRC32C
   (the service rejects other bytes) and Put compares the finalized object's length and CRC32C
   before returning nil. A failed copy cancels the upload instead of closing it, since closing
   finalizes what was sent.
 - **Not run against real GCS.** The tests use a fake of the JSON API behind
   `STORAGE_EMULATOR_HOST`. The CP binary grew by the client and its gRPC and OpenTelemetry
-  dependencies (sizes in the PR).
+  dependencies (sizes in the PR); the release build uses the `disable_grpc_modules` tag, which drops the unused gRPC transport.
