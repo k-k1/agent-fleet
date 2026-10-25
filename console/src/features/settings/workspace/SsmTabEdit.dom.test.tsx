@@ -64,6 +64,7 @@ vi.mock("../../../ui/ConfirmProvider.tsx", () => ({
 
 const { SsmTab, awsProfileName, resetReloginMarks } = await import("./SsmTab.tsx");
 const { t } = await import("../../../lib/i18n/index.ts");
+const { useAwsLoginStore } = await import("../../awslogin/store.ts");
 
 const prod: Json = {
   id: "p1",
@@ -120,6 +121,7 @@ beforeEach(() => {
   writes.length = 0;
   toasts.length = 0;
   confirms.length = 0;
+  useAwsLoginStore.getState().reset(); // no list carried over from an earlier test
   profiles = [prod, stg];
   hosts = [web];
   writeReply = { ok: true, status: 200, body: {} };
@@ -784,9 +786,15 @@ describe("SsmTab assume-role profile", () => {
     it("refuses to log out when the profile list cannot be read now, even if an older one is stored", async () => {
       signedIn();
       confirmAnswer = true;
-      await mount(); // the store now holds the signed-in list
+      await mount();
+      // SsmTab keeps its states locally, so load the store's list explicitly and pin it.
+      await act(async () => {
+        await useAwsLoginStore.getState().refreshExpiry();
+      });
+      expect(useAwsLoginStore.getState().profiles?.map((x) => x.name)).toEqual(["prod", "stg", "deploy"]);
       failGet.add("api/aws-login/profiles");
       await click(btn(rows(0)[0], t("awslogin.logout")));
+      expect(confirms).toEqual([]); // refused before asking, not after
       expect(logoutPosts()).toEqual([]);
       expect(toasts).toEqual([t("awslogin.logout_unreadable")]);
     });
