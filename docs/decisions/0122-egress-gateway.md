@@ -504,7 +504,11 @@ gateway, which therefore stays in both modes. Not run on a real account.
   `ModeEnforce` decides CONNECT by SNI in `ssl_bump`, and a CONNECT on a port without
   `ssl-bump` would pass `http_access` unchecked. Nothing is forwarded (`ip_forward=0`); the
   security group admits only the workspace subnets on 80/443/3128, so other protocols are
-  dropped unrecorded in this stage.
+  dropped unrecorded in this stage. Whatever the mode, Squid refuses loopback, link-local
+  (the gateway's own metadata service, whose role a workspace could otherwise read through
+  the explicit proxy), the VPC and ports other than 80/443, and nftables drops Squid's own
+  connections to 169.254.0.0/16. Until the agent's first policy, Squid refuses everything: a
+  replacement instance or an unreachable CP fails closed, not into log-only.
 - **The agent** is the CP binary copied out of the CP image, run as Squid's user; its
   configuration (image, public URL) comes from an SSM parameter 30-ingress writes, rechecked
   every 10 minutes, so a release updates it without replacing the instance.

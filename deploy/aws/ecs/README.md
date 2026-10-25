@@ -874,10 +874,27 @@ aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-net
 The route moves to `GatewayEni` as soon as the first command finishes, before the instance
 has attached it: workspaces have no egress until the instance is up (a few minutes, see
 `/var/log/af-egress-gateway.log` on it), and the agent has nothing to ship until `update.sh`
-has written its configuration (`/af-egress/<network stack>/agent`). Running workspaces get the
-proxy variables on their next Start. `GatewayInstanceType` must match the CP image's
-architecture (30-ingress `CpArch`): the agent is the CP binary. Back to the NAT gateway: the
-same two commands with `EgressRoute=nat-gateway`; `GatewayEip` is retained.
+has written its configuration (`/af-egress/<network stack>/agent`) and fetched a first policy:
+until then Squid refuses everything (also after an instance replacement), so a gateway that
+cannot reach the CP stays closed rather than open. Running workspaces get the proxy variables
+on their next Start (until then they are intercepted). `GatewayInstanceType` must match the
+CP image's architecture (30-ingress `CpArch`): the agent is the CP binary.
+
+**Back to the NAT gateway** is a maintenance window, not the same two commands in reverse: a
+running workspace keeps `HTTP(S)_PROXY` pointing at the gateway until it is restarted, and once
+the gateway is gone every proxy-aware client in it times out. So take the proxy away first:
+
+1. Deploy 30-ingress with the proxy cleared, everything else at its previous value:
+   `aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml
+   --capabilities CAPABILITY_NAMED_IAM --parameter-overrides EgressProxyAddr= EgressTokenSecretArn=`
+   (not `update.sh`, which would hand the gateway's outputs back while it exists).
+2. Stop and start every running workspace (`pause.sh --status` lists them) and check that its
+   task definition no longer has the variables:
+   `aws ecs describe-task-definition --task-definition <family> --query "taskDefinition.containerDefinitions[0].environment[?name=='HTTPS_PROXY']"` is empty.
+   Their traffic is still intercepted by the gateway meanwhile.
+3. Deploy 00-network with `EgressRoute=nat-gateway` (`--capabilities CAPABILITY_IAM`). The
+   workspace route moves back to the NAT gateway; `GatewayEip` is retained.
+4. Run `update.sh` (it passes the now-empty outputs and changes nothing else).
 
 **Limits of this first stage.** `pause.sh` refuses a stack with `EgressRoute=gateway` and
 `standup.sh` warns (#2729). Workspaces egress from `GatewayEip`, not `NatEip`; moving one
@@ -894,7 +911,8 @@ run on a real account**.
    `sudo squid -k parse` (prints the parsed configuration, fails on an error);
    `ip route show default` (the first default route is the attached interface).
 3. Policy: `sudo cat /var/lib/af-egress-agent/af-allow.txt /var/lib/af-egress-agent/af-mode.conf`
-   (the agent's header and the CP's allowlist, not the boot placeholders);
+   (the agent's header and the CP's allowlist, not the boot placeholder, which refuses
+   everything: `# bootstrap: closed until the first policy`);
    `journalctl -u af-egress-agent` shows the reload.
 4. From a workspace terminal: `curl -sI https://example.com` (explicit proxy) and
    `curl -sI --noproxy '*' https://example.com` (intercepted). On the gateway,
@@ -904,7 +922,10 @@ run on a real account**.
    and the Admin Egress tab (or `GET /api/admin/egress/events`) the two events, attributed.
 5. Rotation: `sudo squid -k rotate`, make one more request, and check that the agent finished
    `af-egress.log.0` and continued on the new file (no duplicate, no gap in the events).
-6. Enforce: switch the mode in the Admin Egress tab, wait for the agent's reload
+6. Metadata: from a workspace, `curl -s -x <EgressProxyAddr> -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token`
+   must be refused (Squid's `to_linklocal`, and nftables drops Squid's own connections to
+   `169.254.0.0/16`); otherwise a workspace could read the gateway role's credentials.
+7. Enforce: switch the mode in the Admin Egress tab, wait for the agent's reload
    (`af-mode.conf` now has `ssl_bump terminate all`), and check that a name outside the
    allowlist fails from the workspace (explicit and intercepted) and is logged as denied.
 

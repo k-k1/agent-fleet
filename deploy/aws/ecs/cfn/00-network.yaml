@@ -604,21 +604,43 @@ Resources:
                 sleep 2
               done
               [ -n "$DEV" ]
-              # All traffic leaves through it (the Elastic IP): its default route wins.
-              mkdir -p "/etc/systemd/network/70-$DEV.network.d"
-              printf '[DHCPv4]\nRouteMetric=100\n' > "/etc/systemd/network/70-$DEV.network.d/af-egress.conf"
+              # All traffic leaves through it (the Elastic IP): its default route must win, on
+              # this boot and every later one. amazon-ec2-net-utils writes RouteMetric=512+n in
+              # /run/systemd/network/70-<dev>.network.d/eni.conf; drop-ins merge in file-name
+              # order whatever their directory, so ours is named to sort after eni.conf.
+              mkdir -p /etc/af-egress "/etc/systemd/network/70-$DEV.network.d"
+              echo "$DEV" > /etc/af-egress/dev
+              printf '[DHCPv4]\nRouteMetric=100\n' > "/etc/systemd/network/70-$DEV.network.d/zz-af-egress.conf"
               networkctl reload
               networkctl reconfigure "$DEV"
+              # And a check on every boot that sets the route by hand if the drop-in did not take.
+              cat > /usr/local/sbin/af-egress-route <<'EOF'
+              #!/bin/bash
+              set -euo pipefail
+              DEV=$(cat /etc/af-egress/dev)
               for _ in $(seq 1 30); do
-                ip route show default | head -1 | grep -q "dev $DEV" && break
+                ip route show default | head -1 | grep -q "dev $DEV" && exit 0
                 sleep 2
               done
-              # If the network configuration did not take (another file name), set it by hand.
-              if ! ip route show default | head -1 | grep -q "dev $DEV"; then
-                CIDR=$(imds "network/interfaces/macs/$MAC/subnet-ipv4-cidr-block")
-                GW=$(python3 -c 'import ipaddress, sys; print(ipaddress.ip_network(sys.argv[1])[1])' "$CIDR")
-                ip route replace default via "$GW" dev "$DEV" metric 50
-              fi
+              CIDR=$(ip -o -4 addr show dev "$DEV" | awk '{ print $4; exit }')
+              GW=$(python3 -c 'import ipaddress, sys; print(ipaddress.ip_network(sys.argv[1], strict=False)[1])' "$CIDR")
+              ip route replace default via "$GW" dev "$DEV" metric 50
+              EOF
+              chmod 0755 /usr/local/sbin/af-egress-route
+              cat > /etc/systemd/system/af-egress-route.service <<EOF
+              [Unit]
+              Wants=network-online.target
+              After=network-online.target systemd-networkd.service
+              Before=squid.service af-egress-install.service
+              [Service]
+              Type=oneshot
+              RemainAfterExit=yes
+              ExecStart=/usr/local/sbin/af-egress-route
+              [Install]
+              WantedBy=multi-user.target
+              EOF
+              systemctl daemon-reload
+              systemctl enable --now af-egress-route.service
               # Workspace packets arrive on $DEV from addresses the main table routes elsewhere:
               # loose reverse-path filtering. No forwarding at all: Squid is the only way out.
               cat > /etc/sysctl.d/90-af-egress.conf <<EOF
@@ -632,9 +654,12 @@ Resources:
               # 2. Squid, nftables, and docker (only to copy the agent out of the CP image).
               dnf install -y squid nftables docker
               install -d -o squid -g squid -m 0750 /var/lib/af-egress-agent
-              # Placeholders until the agent's first policy: log-only, nothing allowed.
+              # Until the agent's first policy, refuse everything: a replacement must not open
+              # the egress the CP has in enforce, and a CP the agent cannot reach must not leave
+              # it open. The agent's own calls do not pass Squid.
               printf '.invalid\n' > /var/lib/af-egress-agent/af-allow.txt
-              printf 'ssl_bump peek af_step1\nssl_bump splice all\n' > /var/lib/af-egress-agent/af-mode.conf
+              printf '# bootstrap: closed until the first policy\nssl_bump peek af_step1\nssl_bump terminate all\nhttp_access deny all\n' \
+                > /var/lib/af-egress-agent/af-mode.conf
               chown squid:squid /var/lib/af-egress-agent/af-allow.txt /var/lib/af-egress-agent/af-mode.conf
               # ssl-bump ports need a certificate even though nothing is ever decrypted
               # (peek, then splice or terminate).
@@ -652,11 +677,18 @@ Resources:
               acl af_allowed dstdomain "/var/lib/af-egress-agent/af-allow.txt"
               acl af_allowed_sni ssl::server_name "/var/lib/af-egress-agent/af-allow.txt"
               acl af_step1 at_step SslBump1
+              acl Safe_ports port 80 443
+              acl to_vpc dst ${VpcCidr}
               http_port 3128 ssl-bump tls-cert=/etc/squid/af-bump.pem generate-host-certificates=off
               http_port 3129 intercept
               https_port 3130 intercept ssl-bump tls-cert=/etc/squid/af-bump.pem generate-host-certificates=off
-              include /var/lib/af-egress-agent/af-mode.conf
               http_access deny !workspaces
+              http_access deny manager
+              http_access deny to_localhost
+              http_access deny to_linklocal
+              http_access deny to_vpc
+              http_access deny !Safe_ports
+              include /var/lib/af-egress-agent/af-mode.conf
               http_access deny CONNECT !SSL_ports
               http_access allow workspaces
               http_access deny all
@@ -698,6 +730,15 @@ Resources:
                   type filter hook forward priority filter; policy drop;
                   limit rate 10/second log prefix "af-egress-drop "
                 }
+                # Squid (and the agent, same user) never reach the instance metadata service:
+                # through the explicit proxy that would hand GatewayRole to a workspace. The
+                # Amazon DNS address stays open in case resolv.conf names it.
+                chain output {
+                  type filter hook output priority filter; policy accept;
+                  meta skuid "squid" ip daddr 169.254.169.253 meta l4proto { udp, tcp } th dport 53 accept
+                  meta skuid "squid" ip daddr 169.254.0.0/16 drop
+                  meta skuid "squid" ip6 daddr fe80::/10 drop
+                }
               }
               EOF
               cat > /etc/systemd/system/af-egress-nft.service <<EOF
@@ -731,13 +772,14 @@ Resources:
               changed=0
               if [ "$(cat /var/lib/af-egress-agent/image 2>/dev/null || true)" != "$IMAGE" ]; then
                 systemctl start docker
-                aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "${!IMAGE%%/*}"
+                REGISTRY=$(printf '%s' "$IMAGE" | cut -d/ -f1)
+                aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$REGISTRY"
                 docker pull "$IMAGE"
                 c=$(docker create "$IMAGE")
                 docker cp "$c:/usr/local/bin/af-cp" /usr/local/bin/af-cp.new
                 docker rm "$c"
                 docker rmi "$IMAGE"
-                docker logout "${!IMAGE%%/*}"
+                docker logout "$REGISTRY"
                 systemctl stop docker docker.socket
                 install -m 0755 /usr/local/bin/af-cp.new /usr/local/bin/af-cp
                 rm -f /usr/local/bin/af-cp.new

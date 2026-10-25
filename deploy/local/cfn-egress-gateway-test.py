@@ -257,6 +257,50 @@ def check(net, ingress, platform, doc_lines):
                  "acl workspaces src $WS_SQUID", 'WS_SQUID="${Ws0} ${Ws1}"'):
         if must not in ud:
             f.append("user data lacks %r" % must)
+    f += check_hardening(ud)
+    return f
+
+
+# Denied before the mode include and before "allow workspaces", so no mode (log-only included)
+# can proxy a workspace to the gateway's own metadata service, loopback or the VPC.
+GUARD_DENIES = ("http_access deny manager", "http_access deny to_localhost", "http_access deny to_linklocal",
+                "http_access deny to_vpc", "http_access deny !Safe_ports")
+
+
+def check_hardening(ud):
+    f = []
+    lines = [ln.strip() for ln in ud.splitlines()]
+
+    def pos(s):
+        return lines.index(s) if s in lines else None
+    inc = pos("include %s" % MODE_FILE)
+    allow = pos("http_access allow workspaces")
+    for d in GUARD_DENIES:
+        p = pos(d)
+        if p is None or inc is None or allow is None or not p < inc < allow:
+            f.append("squid: %r is missing or not before the mode include and the allow" % d)
+    if "acl to_vpc dst ${VpcCidr}" not in lines or "acl Safe_ports port 80 443" not in lines:
+        f.append("squid: to_vpc / Safe_ports are not the VPC CIDR / ports 80 and 443")
+    for nft in ('meta skuid "squid" ip daddr 169.254.0.0/16 drop', 'meta skuid "squid" ip6 daddr fe80::/10 drop'):
+        if nft not in lines:
+            f.append("nftables does not drop Squid's own %s" % nft)
+    # The placeholder mode file is closed: a new instance must not open what the CP enforces.
+    boot = re.findall(r"printf '([^']*)'[\s\\]*> /var/lib/af-egress-agent/af-mode\.conf", ud)
+    boot_text = " ".join(boot)
+    if len(boot) != 1 or "http_access deny all" not in boot_text or "ssl_bump terminate all" not in boot_text \
+            or "splice" in boot_text:
+        f.append("the bootstrap mode file is not closed (deny all, terminate all, no splice)")
+    # Literals that survive Fn::Sub as "${...}" are emptied in a launch template's user data.
+    rendered = re.sub(r"\$\{(?!!)[^}]+\}", "X", ud)
+    if "${" in rendered:
+        f.append("user data keeps a literal ${...} after Fn::Sub (emptied in a launch template)")
+    # The route drop-in must sort after amazon-ec2-net-utils' eni.conf, and the check run each boot.
+    m = re.search(r"70-\$DEV\.network\.d/([\w.-]+\.conf)", ud)
+    if not m or not m.group(1) > "eni.conf":
+        f.append("the route-metric drop-in does not sort after eni.conf")
+    unit = ud.split("af-egress-route.service <<EOF", 1)[-1].split("\nEOF", 1)[0]
+    if "WantedBy=multi-user.target" not in unit or "systemctl enable --now af-egress-route.service" not in ud:
+        f.append("the default-route check does not run on every boot")
     return f
 
 
@@ -350,6 +394,17 @@ def main():
         ("open proxy", m(lambda t: set_ud(t, lambda s: s.replace("http_access deny !workspaces\n", "")))),
         ("forwarding on", m(lambda t: set_ud(t, lambda s: s.replace("net.ipv4.ip_forward = 0", "net.ipv4.ip_forward = 1")))),
         ("agent as root", m(lambda t: set_ud(t, lambda s: s.replace("User=squid", "User=root")))),
+        ("metadata reachable through the proxy", m(lambda t: set_ud(t, lambda s: s.replace("http_access deny to_linklocal\n", "")))),
+        ("loopback reachable through the proxy", m(lambda t: set_ud(t, lambda s: s.replace("http_access deny to_localhost\n", "")))),
+        ("guard after the mode include", m(lambda t: set_ud(t, lambda s: s.replace(
+            "http_access deny to_linklocal\n", "").replace("http_access allow workspaces\n", "http_access deny to_linklocal\nhttp_access allow workspaces\n")))),
+        ("Squid may reach IMDS", m(lambda t: set_ud(t, lambda s: s.replace('meta skuid "squid" ip daddr 169.254.0.0/16 drop', "")))),
+        ("bootstrap opens log-only", m(lambda t: set_ud(t, lambda s: s.replace(
+            "ssl_bump terminate all\\nhttp_access deny all\\n", "ssl_bump splice all\\n")))),
+        ("bash literal left for Fn::Sub", m(lambda t: set_ud(t, lambda s: s.replace('"$REGISTRY"', '"${!IMAGE%%/*}"', 1)))),
+        ("drop-in sorts before eni.conf", m(lambda t: set_ud(t, lambda s: s.replace("zz-af-egress.conf", "af-egress.conf")))),
+        ("route check only on first boot", m(lambda t: set_ud(t, lambda s: s.replace(
+            "[Install]\nWantedBy=multi-user.target\nEOF\nsystemctl daemon-reload\nsystemctl enable --now af-egress-route.service", "EOF\nsystemctl daemon-reload\nsystemctl enable --now af-egress-route.service")))),
     ]
     for label, (n, i, p) in controls:
         if check(n, i, p, doc_lines):
