@@ -9,10 +9,8 @@ Description: >-
   its MetadataStore is RDS Postgres (stage 3a) so state survives task replacement.
 
 Parameters:
-  # Anything too long for one line is in PARAMETERS.md next door (measurements, trade-offs,
-  # traps). These are terse because of the 51,200-byte template limit: a YAML comment counts
-  # toward the body exactly like a Description, so moving prose into a `#` does not shrink
-  # the template - only moving it out of the file does.
+  # Long prose lives in PARAMETERS.md: a comment counts toward the 51,200-byte limit like a
+  # Description does.
   NetworkStackName:
     Type: String
     Default: af-ecs-network
@@ -72,6 +70,11 @@ Parameters:
     Type: String
     Default: ""
     Description: 00-network's EgressTokenSecretArn output, set like WorkspaceSubnets.
+  EgressArchiveBucket:
+    Type: String
+    Default: ""
+    AllowedPattern: "^([a-z0-9][a-z0-9.-]{1,61}[a-z0-9])?$"
+    Description: 10-data's EgressArchiveBucket output, set like WorkspaceSubnets. Empty = archive off. PARAMETERS.md.
   Ec2SlotLaunchTemplate:
     Type: String
     Default: ""
@@ -409,6 +412,7 @@ Rules:
 Conditions:
   HasWorkspaceSubnets: !Not [ !Equals [ !Ref WorkspaceSubnets, "" ] ]
   HasEgressGw: !Not [ !Equals [ !Ref EgressTokenSecretArn, "" ] ]
+  HasEgressArchive: !Not [ !Equals [ !Ref EgressArchiveBucket, "" ] ]
   # Each IdP's client secret is pulled from SSM, and a Secrets entry pointing at a
   # parameter that doesn't exist stops the task from starting - so wire each one in
   # only when that IdP is actually configured.
@@ -431,10 +435,7 @@ Conditions:
   HasScheduleWakeTimeout: !Not [ !Equals [ !Ref ScheduleWakeTimeout, "" ] ]
   HasScheduleSettle: !Not [ !Equals [ !Ref ScheduleSettle, "" ] ]
   HasScheduleJitter: !Not [ !Equals [ !Ref ScheduleJitter, "" ] ]
-  # Speech (ADR 0070). Each is passed ONLY when 50-tts was deployed, so a deployment
-  # without the engine stack carries neither variable and the CP keeps its own defaults -
-  # no managed engine, and Polly reads. The two are separate conditions because they are
-  # separately meaningful: a URL alone points at an engine somebody else runs.
+  # Speech (ADR 0070): passed only when 50-tts was deployed; a URL alone is somebody else's engine.
   HasTtsEcsService: !Not [ !Equals [ !Ref TtsEcsService, "" ] ]
   HasVoicevoxUrl: !Not [ !Equals [ !Ref VoicevoxUrl, "" ] ]
   # Self-hosted inference engines (ADR 0071). One parameter, so one condition.
@@ -695,14 +696,8 @@ Resources:
       RetentionInDays: 7
 
   # --- The home task: Recreate, Clean home and Destroy on an EFS home (ecs; #1260) ---
-  # The CP cannot mount EFS (the EFS SG admits only the workspace SG), so Recreate, Clean home
-  # and Destroy run as a one-shot RunTask of `af-cp efs-home-op` from the CP's own image
-  # (control-plane/internal/runtime/home_task.go); the CP reads the exit code back.
-  #
-  # !! The file system ROOT as uid 0, not an access point: PARAMETERS.md, "Home task (volume root)".
-  #
-  # No task role: the command calls no AWS API. The execution role pulls the image and
-  # writes the log; the CP may already pass it (PassTaskRoles, 20-platform).
+  # A one-shot RunTask of `af-cp efs-home-op` (the CP cannot mount EFS). No task role: it
+  # calls no AWS API. PARAMETERS.md, "Home task (volume root)".
   HomeOpsTaskDef:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -917,6 +912,7 @@ Resources:
             - { Name: AF_ECS_SUBNETS, Value: !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } }
             - !If [ HasWorkspaceSubnets, { Name: AF_ECS_WORKSPACE_SUBNETS, Value: !Ref WorkspaceSubnets }, !Ref "AWS::NoValue" ]
             - !If [ HasEgressGw, { Name: AF_EGRESS_PROXY_ADDR, Value: !Ref EgressProxyAddr }, !Ref "AWS::NoValue" ]
+            - !If [ HasEgressArchive, { Name: AF_EGRESS_ARCHIVE_URL, Value: !Sub "s3://${EgressArchiveBucket}" }, !Ref "AWS::NoValue" ]
             - { Name: AF_ECS_SECURITY_GROUP, Value: !ImportValue { "Fn::Sub": "${NetworkStackName}-WsSgId" } }
             - { Name: AF_EFS_BACKUP, Value: !Ref EfsBackup }
             - { Name: AF_ECS_EFS_ID, Value: !ImportValue { "Fn::Sub": "${DataStackName}-EfsId" } }

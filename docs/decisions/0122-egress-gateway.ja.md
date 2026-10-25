@@ -459,3 +459,15 @@ ecs と ecs-ec2 の決定 5 は、置き換えではなく選択として作っ�
 - 未決事項 5 と 7 はゲートウェイについて残る。`pause.sh` は `EgressRoute=gateway` を拒み、`standup.sh` は警告する（#2729）。Workspace は NAT ゲートウェイではなくゲートウェイ自身の Elastic IP から出る。1 つのアドレスを両者の間で移すのは #2728。
 
 Follow-ups: #2728, #2729, #2687（実 Squid。手順は README にある）。
+
+## 追記（2026-10-25）— AWS のテンプレートがアーカイブをつなぐ（#2732）
+
+#2699 のアーカイブには AWS 側の配線が無く、同一リージョンの `s3://` バケットを手で指定しても 2 か所で失敗していた。S3 エンドポイントのポリシーが拒否し（NAT 経由にはならず AccessDenied）、CP のタスクロールにもそのバケットへの権限が無い。作業と合わせて次のように決めた。まだ実アカウントでは動かしていない。
+
+- **スタックが持つバケットだけにする。** 10-data が `EgressArchive=create` で作る（Retain、SSE-S3、バージョニングなし、`egress/` に有効期限）。既定はバケットなしで、アーカイブは無効のまま。運用者自身のバケットは対象外とした。エンドポイントのポリシーは 00-network にあり、10-data のバケットを名指しできないので、モデル用バケットと同じく `s3:ResourceAccount` を付けて `af-*-egress-archive-<アカウント ID>` を許可している。外部のバケット名はそこで拒否される。
+- **CP の権限は `egress/*` への `PutObject` と `GetObject`、バケットへの `ListBucket`。** 20-platform のマネージドポリシーにした（CP ロールのインライン合計には上限がある、#1576）。`ListBucket` に `s3:prefix` 条件は付けない。存在しないキーへの HeadObject を 403 でなく 404 にする判定はプレフィックス無しで行われ、sink は 403 をエラーとして扱うため。このバケットにはアーカイブしか入らない。エンドポイントの文も同じ操作にしてある。
+- **URL は接頭辞なしの `s3://<バケット>`。** CP のキーがすでに `egress/` で始まるため。`standup.sh` と `update.sh` は 10-data の出力からバケット名を取り、20-platform と 30-ingress に渡す。
+
+詳細は `deploy/aws/ecs/cfn/PARAMETERS.md` の "The egress archive"。`deploy/local/cfn-s3-endpoint-test.py` と `deploy/local/cfn-egress-archive-test.py` が固定している。
+
+Follow-ups: #2734

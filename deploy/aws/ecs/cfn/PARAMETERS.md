@@ -117,6 +117,50 @@ must too. With `EgressTokenSecretArn` set:
   the public URL, no secret), which the gateway's agent reads at boot and every 10 minutes, so
   a release reaches the agent without replacing the instance.
 
+### The egress archive
+
+`AF_EGRESS_ARCHIVE_URL` (#2699, ADR 0122) makes the CP write each past UTC day of raw egress
+events to an object store before it purges them. The templates wire an optional bucket that
+10-data owns (#2732); the default is no bucket and the archive stays off.
+
+| Stack | Parameter | Default | Meaning |
+|---|---|---|---|
+| 10-data | `EgressArchive` | empty | `create` makes the bucket `af-<data stack>-egress-archive-<account id>` and outputs `EgressArchiveBucket`. Capture and restore carry it like any other input. |
+| 10-data | `EgressArchiveRetentionDays` | `365` | Days before S3 expires an archived day (prefix `egress/`). Only read with `EgressArchive=create`. |
+| 20-platform | `EgressArchiveBucket` | empty | The 10-data output. Non-empty adds the managed policy `CpEgressArchivePolicy` to the CP task role. |
+| 30-ingress | `EgressArchiveBucket` | empty | The same output. Non-empty sets `AF_EGRESS_ARCHIVE_URL=s3://<bucket>` on the CP. |
+
+The last two are derived facts, like `WorkspaceSubnets`: `standup.sh` reads the data stack's
+output after deploying it (never the capture, so a rebuilt data stack cannot leave a stale
+name), and `update.sh` passes it to the 20-platform change set and to 30-ingress, and clears
+both when the data stack no longer has the output. A deploy by hand must pass it to both. The
+CP writes keys that start with `egress/` itself, so the URL has no prefix of its own.
+
+- **The bucket** blocks public access, encrypts with SSE-S3, has versioning off (the CP replaces
+  a day's object whole and never deletes), expires `egress/` after `EgressArchiveRetentionDays`
+  and aborts incomplete uploads after a day. It is `Retain`: stack deletion leaves the
+  archive behind, and creating a stack with the same name again fails on the existing bucket
+  until it is emptied and deleted, or the data stack gets another name. A data stack name longer
+  than 32 characters does not fit S3's 63-character bucket name limit.
+- **The CP grant** is `s3:PutObject` and `s3:GetObject` on `<bucket>/egress/*` (HeadObject is
+  authorised by `GetObject`) and `s3:ListBucket` on the bucket, nothing else: no delete, and no
+  list of its own. `ListBucket` has no `s3:prefix` condition because the permission that turns
+  HeadObject on an absent key into a 404 instead of a 403 is checked without a prefix; the
+  sink treats a 403 as an error, not as "absent". The bucket holds only the archive. The
+  grant is a managed policy because the CP role's inline policies share IAM's 10,240-character
+  total (#1576).
+- **The S3 endpoint** (00-network) admits the same bucket by name pattern, because the CP runs
+  on the private route table and a refusal there is AccessDenied, not NAT traffic. The
+  statements `EgressArchiveObjects` and `EgressArchiveList` match
+  `af-*-egress-archive-<account id>` (the data stack name is not known to 00-network) and
+  require `s3:ResourceAccount` to be this account, as for the models bucket. An existing
+  00-network stack has to be updated for them before the first archive write, or the CP gets
+  AccessDenied and the purger keeps (does not delete) the events. Order: 00-network, 10-data
+  (`EgressArchive=create`), then `update.sh` (20-platform and 30-ingress).
+- **Bring your own bucket**: not supported by these templates. The endpoint policy would need a
+  parameter in 00-network for it, and a bucket outside this account would also fail the
+  `s3:ResourceAccount` condition. Use `file:///...` or an out-of-band setup if you need one.
+
 ## EC2 slot pool (`WsRuntime=ecs-ec2`)
 
 ### `Ec2SlotLaunchTemplate`

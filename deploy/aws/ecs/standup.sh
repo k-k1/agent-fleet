@@ -347,6 +347,10 @@ deploy_stack() {  # deploy_stack <stack> <template> <slug> [capability...]
      af_stack_exists "$stack" && [ -z "$(af_stack_param "$stack" S3EndpointEnabled)" ]; then
     af_param_override S3EndpointEnabled false
   fi
+  if [ "$slug" = 20-platform ] && grep -q '^  EgressArchiveBucket:' "$CFN_DIR/$tpl"; then
+    af_param_drop EgressArchiveBucket
+    [ -z "${AF_ARCHIVE_BUCKET:-}" ] || af_param_override EgressArchiveBucket "$AF_ARCHIVE_BUCKET"
+  fi
   local caps=()
   [ $# -gt 0 ] && caps=(--capabilities "$@")
   echo "==> deploy $stack ($slug)"
@@ -366,6 +370,13 @@ deploy_stack() {  # deploy_stack <stack> <template> <slug> [capability...]
 
 deploy_stack "$AF_STACK_NETWORK"  00-network.yaml  00-network     CAPABILITY_IAM
 deploy_stack "$AF_STACK_DATA"     10-data.yaml     10-data     CAPABILITY_AUTO_EXPAND CAPABILITY_IAM
+# The egress archive bucket (#2732) is a fact of the data stack just deployed, so 20-platform's
+# grant and 30-ingress's URL both follow its output, never the capture (a rebuilt data stack
+# has a new bucket, or none). The deploy_stack call reads this variable for 20-platform only.
+AF_ARCHIVE_BUCKET=""
+if [ "$AF_DRY" != 1 ]; then
+  AF_ARCHIVE_BUCKET="$(af_stack_output "$AF_STACK_DATA" EgressArchiveBucket)"
+fi
 deploy_stack "$AF_STACK_PLATFORM" 20-platform.yaml 20-platform CAPABILITY_NAMED_IAM
 
 # --- 4) images (ECR starts out empty) ----------------------------------------
@@ -758,6 +769,9 @@ if [ "$AF_DRY" != 1 ]; then
     echo "         from its own address, not the NAT gateway's (#2728), and pause.sh refuses it (#2729)." >&2
   fi
 fi
+# The egress archive bucket (#2732): the data stack's output, never the capture. Empty = off.
+af_param_drop EgressArchiveBucket
+[ -z "${AF_ARCHIVE_BUCKET:-}" ] || af_param_override EgressArchiveBucket "$AF_ARCHIVE_BUCKET"
 if [ -n "$AF_STACK_POOL" ] && [ "$AF_DRY" != 1 ]; then
   lt="$(af_stack_output "$AF_STACK_POOL" SlotLaunchTemplateId)"
   ami="$(af_stack_output "$AF_STACK_POOL" SlotAmiIdArm64)"
