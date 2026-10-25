@@ -29,6 +29,9 @@ var agentMemForgottenMax = 300
 // budget is spent, so only the oldest published ones can fall outside it.
 var agentMemTombJudgeMax = 2000
 
+// agentMemSeqTrailer carries the write time in nanoseconds; see agentMemTombCand.seq.
+const agentMemSeqTrailer = "AF-Seq"
+
 const (
 	// agentMemTombMaxSize: a tombstone holds a revision number. Anything bigger is not one.
 	agentMemTombMaxSize = 64
@@ -91,30 +94,32 @@ type agentMemTombCand struct {
 	scope, project, name, rel string
 	commit                    string
 	at                        time.Time
-	// ord is the commit's place counted from the oldest agent-memory commit: larger is newer.
-	// Commit times have one-second resolution, so ord is what orders two changes of one second.
-	ord int
+	// seq is the AF-Seq trailer of the commit (nanoseconds at write time, 0 when absent). Commit
+	// times have one-second resolution, so seq is what orders two changes of one second. It lives
+	// in the message, so a purge that rewrites history keeps it; a position counted in commits
+	// would shift when the purge drops some.
+	seq int64
 }
 
 // agentMemTombBefore is the list order: newest change first. Two changes in the same second go
-// by commit order (a forget made later lists first), and only then does the path digest break a
+// by the AF-Seq trailer (a forget made later lists first), and only then does the path digest break a
 // tie. The cursor carries all three, so a position is a point in this order and does not depend
 // on the cursor's own row still being there.
 func agentMemTombBefore(a, b agentMemTombCand) bool {
 	if !a.at.Equal(b.at) {
 		return a.at.After(b.at)
 	}
-	if a.ord != b.ord {
-		return a.ord > b.ord
+	if a.seq != b.seq {
+		return a.seq > b.seq
 	}
 	return agentMemTombDigest(a.rel) < agentMemTombDigest(b.rel)
 }
 
-// agentMemTombCursor names a position in that order: the time of the newest change, its commit
-// order and a digest of the path. The path itself never goes in: the cursor may name a candidate that was withheld (a
+// agentMemTombCursor names a position in that order: the time of the newest change, its write
+// sequence and a digest of the path. The path itself never goes in: the cursor may name a candidate that was withheld (a
 // token-shaped project id, or text that fails the scan), and the answer must not carry either.
 func agentMemTombCursor(c agentMemTombCand) string {
-	return c.at.UTC().Format(time.RFC3339Nano) + "|" + strconv.Itoa(c.ord) + "|" + agentMemTombDigest(c.rel)
+	return c.at.UTC().Format(time.RFC3339Nano) + "|" + strconv.FormatInt(c.seq, 10) + "|" + agentMemTombDigest(c.rel)
 }
 
 func agentMemTombDigest(rel string) string {
@@ -124,7 +129,7 @@ func agentMemTombDigest(rel string) string {
 
 type agentMemTombPos struct {
 	at     time.Time
-	ord    int
+	seq    int64
 	digest string
 }
 
@@ -134,15 +139,15 @@ func agentMemParseTombCursor(s string) (agentMemTombPos, bool) {
 		return agentMemTombPos{}, false
 	}
 	ordS, dig, ok := strings.Cut(rest, "|")
-	ord, ordErr := strconv.Atoi(ordS)
-	if _, err := hex.DecodeString(dig); !ok || len(dig) != 32 || err != nil || ordErr != nil || ord < 0 {
+	seq, ordErr := strconv.ParseInt(ordS, 10, 64)
+	if _, err := hex.DecodeString(dig); !ok || len(dig) != 32 || err != nil || ordErr != nil || seq < 0 {
 		return agentMemTombPos{}, false
 	}
 	at, err := time.Parse(time.RFC3339Nano, ts)
 	if err != nil {
 		return agentMemTombPos{}, false
 	}
-	return agentMemTombPos{at: at, ord: ord, digest: dig}, true
+	return agentMemTombPos{at: at, seq: seq, digest: dig}, true
 }
 
 // agentMemTombResume is the index of the first candidate ordered after the cursor, whether or not
@@ -153,8 +158,8 @@ func agentMemTombResume(found []agentMemTombCand, p agentMemTombPos) int {
 		if !c.at.Equal(p.at) {
 			return c.at.Before(p.at)
 		}
-		if c.ord != p.ord {
-			return c.ord < p.ord
+		if c.seq != p.seq {
+			return c.seq < p.seq
 		}
 		return agentMemTombDigest(c.rel) > p.digest
 	})
@@ -173,8 +178,7 @@ func agentMemNewestCommits(want map[string]bool) (map[string]agentMemTombCand, e
 	if err != nil {
 		return nil, err
 	}
-	recs := strings.Split(log, memoryRecSep)
-	for i, rec := range recs {
+	for _, rec := range strings.Split(log, memoryRecSep) {
 		f := strings.SplitN(strings.TrimSpace(rec), memoryFldSep, 3)
 		if len(f) < 3 {
 			continue
@@ -188,7 +192,9 @@ func agentMemNewestCommits(want map[string]bool) (map[string]agentMemTombCand, e
 			continue
 		}
 		at, _ := time.Parse(time.RFC3339, f[1])
-		out[path] = agentMemTombCand{commit: f[0], at: at, ord: len(recs) - i}
+		seq, _ := strconv.ParseInt(tr[agentMemSeqTrailer], 10, 64)
+		seq = max(seq, 0)
+		out[path] = agentMemTombCand{commit: f[0], at: at, seq: seq}
 	}
 	return out, nil
 }
@@ -201,7 +207,7 @@ func agentMemNewestCommits(want map[string]bool) (map[string]agentMemTombCand, e
 // counted here, never listed. agentMemMu is taken per memory, not across the request.
 //
 // before is the cursor of an earlier answer's Next: the candidates ordered after it are listed. The
-// order is (time of the newest change, commit order, path), a total order that a write between two pages cannot
+// order is (time of the newest change, write sequence, path), a total order that a write between two pages cannot
 // shift, so a page neither repeats a row nor skips one. A memory forgotten again after page one
 // moves to the front instead.
 func agentMemMemberForgotten(scope, project, before string) (agentMemForgottenWire, error) {
@@ -261,7 +267,7 @@ func agentMemMemberForgotten(scope, project, before string) (agentMemForgottenWi
 	found := cands[:0]
 	for _, c := range cands {
 		if n, ok := newest[agentMemRepoPrefix+"/"+c.rel]; ok {
-			c.commit, c.at, c.ord = n.commit, n.at, n.ord
+			c.commit, c.at, c.seq = n.commit, n.at, n.seq
 			found = append(found, c)
 		}
 	}

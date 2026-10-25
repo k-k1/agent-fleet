@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -203,7 +204,7 @@ func forgeForgotten(t *testing.T, rel, name, when string, secret bool) {
 	}
 	path := "af/" + rel + "/" + name + ".md"
 	tr := func(op string) string {
-		return "agent-memory: " + op + "\n\nAF-Trigger: agent-memory\nAF-Op: " + op + "\nAF-Memory: " + path + "\nAF-Author-Kind: claude\nAF-Author-Session: s\n"
+		return "agent-memory: " + op + "\n\nAF-Trigger: agent-memory\nAF-Op: " + op + "\nAF-Memory: " + path + "\nAF-Author-Kind: claude\nAF-Author-Session: s\n" + agentMemSeqTrailer + ": " + strconv.FormatInt(time.Now().UnixNano(), 10) + "\n"
 	}
 	agentMemCommitRaw(t, map[string]string{path: "---\nname: " + name + "\ndescription: " + desc + "\nrevision: 1\n---\nb\n"}, tr("create"))
 	if _, err := memoryGitRun("rm", "--quiet", "--", path); err != nil {
@@ -405,5 +406,44 @@ func TestAgentMemoryMemberForgottenSameSecondGoesByCommitOrder(t *testing.T) {
 	}
 	if _, p2, body2 := forgottenGet(t, "?before="+p1.Next); namesOf(p2) != older {
 		t.Fatalf("page 2: %s", body2)
+	}
+}
+
+// A purge between two pages rewrites history and drops commits. The cursor must not depend on
+// where a commit sits in the history, or a row already listed comes back on the next page.
+func TestAgentMemoryMemberForgottenPagingSurvivesAPurge(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	const when = "2026-10-04T09:00:00Z"
+	forgeForgotten(t, "user", "purged-1", when, false)
+	forgeForgotten(t, "user", "purged-2", when, false)
+	forgeForgotten(t, "user", "purged-3", when, false)
+	for _, n := range []string{"tie-a", "tie-b", "tie-c"} {
+		forgeForgotten(t, "user", n, when, false)
+	}
+	setForgottenMax(t, 1)
+	_, p1, body := forgottenGet(t, "")
+	if namesOf(p1) != "tie-c" || p1.Next == "" {
+		t.Fatalf("page 1: %s", body)
+	}
+	for _, n := range []string{"purged-1", "purged-2", "purged-3"} {
+		pv, err := agentMemPurgePreview(agentMemScopeUser, "", n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := agentMemPurge(agentMemPurgeReq{Scope: agentMemScopeUser, Name: n, Plan: pv.Plan, Confirm: n}); err != nil {
+			t.Fatalf("purge %s: %v", n, err)
+		}
+	}
+	var got []string
+	for next, pages := p1.Next, 0; next != "" && pages < 10; pages++ {
+		_, p, body := forgottenGet(t, "?before="+next)
+		if len(p.Forgotten) == 0 {
+			t.Fatalf("empty page: %s", body)
+		}
+		got = append(got, namesOf(p))
+		next = p.Next
+	}
+	if strings.Join(got, " ") != "tie-b tie-a" {
+		t.Fatalf("pages after the purge: %v", got)
 	}
 }
