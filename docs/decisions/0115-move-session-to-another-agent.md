@@ -501,3 +501,9 @@ Decision 9 computes the handover path from the target's name because a managed t
 config for codex), but the path is still computed from the name: the Agent writes the file before
 the target has started, and the directory is the same `~/.af-work/<name>` either way. Managed
 opencode still has no variable (#2710).
+
+## Note (2026-10-25): Managed opencode 2 has the variable too
+
+#2710 closed the last gap: a Managed opencode 2 session's shell gets `AF_WORK_DIR` and
+`AF_SESSION_NAME` through its own shell environment on the shared serve. The path is unchanged.
+opencode 1.x has no per-session channel and still runs without the variable.

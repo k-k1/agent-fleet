@@ -36,6 +36,7 @@ type sharedDaemon struct {
 	failSwitch bool                // model/agent switches answer 500
 	messageIDs map[string][]string // session id → message ids GET .../message answers with
 	failEnv    int                 // fail this many environment PUTs with 503 before accepting
+	failPatch  int                 // fail this many metadata PATCHes with 503 before accepting
 }
 
 func newSharedDaemon(t *testing.T) *sharedDaemon {
@@ -119,6 +120,11 @@ func (d *sharedDaemon) handle(w http.ResponseWriter, r *http.Request) {
 		case len(parts) == 3 && r.Method == "GET":
 			reply(map[string]any{"data": map[string]any{"id": id, "metadata": cur}})
 		case len(parts) == 3 && r.Method == "PATCH":
+			if d.failPatch > 0 {
+				d.failPatch--
+				http.Error(w, "starting", http.StatusServiceUnavailable)
+				return
+			}
 			m, _ := body["metadata"].(map[string]any)
 			d.sessions[id] = md(m) // replaces, as the real server does
 			w.WriteHeader(http.StatusNoContent)

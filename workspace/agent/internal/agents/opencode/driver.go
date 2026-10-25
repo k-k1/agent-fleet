@@ -154,21 +154,9 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	if ses == "" {
 		ses = sids.Read(ocSid)
 	}
-	if ses != "" && !serveSessionExists(addr, ses, cwd) {
-		ses = "" // pruned/imported-away conversation — start fresh
-	}
-	if ses == "" {
-		if m.ForkFrom != "" {
-			ses, err = serveForkSession(addr, m.ForkFrom, cwd, m.ForkAt)
-		} else {
-			ses, err = serveCreateSession(addr, cwd, session.Display(m))
-		}
-		if err != nil {
-			return nil, err
-		}
-		// The same per-slot mapping claude/codex use: the read layer's activeSession
-		// consults it first, and with no plugin in managed mode the driver is the writer.
-		sids.Write(ocSid, ses)
+	ses, err = managedSession(addr, m, cwd, ocSid, ses)
+	if err != nil {
+		return nil, err
 	}
 
 	h.mu.Lock()
@@ -187,6 +175,37 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	base, _ := status.OOMKillCount()
 	status.PersistExit(m.Name, status.ExitInfo{OOMBase: base})
 	return h, nil
+}
+
+// managedSession returns the opencode session m runs in: ses when the daemon still has it, else a
+// fork of m.ForkFrom or a new one, recorded under ocSid. Either way it is stamped with m's name
+// for the shell's AF_WORK_DIR / AF_SESSION_NAME (agent-fleet-shared.js), and it fails when it
+// cannot: a fork carries its source's name, so a session left unstamped would run its shell as
+// that other session. The next Resume finds the recorded session and stamps it again.
+func managedSession(addr string, m session.Meta, cwd, ocSid, ses string) (string, error) {
+	var err error
+	if ses != "" && !serveSessionExists(addr, ses, cwd) {
+		ses = "" // pruned/imported-away conversation — start fresh
+	}
+	if ses == "" {
+		if m.ForkFrom != "" {
+			ses, err = serveForkSession(addr, m.ForkFrom, cwd, m.ForkAt)
+		} else {
+			ses, err = serveCreateSession(addr, cwd, session.Display(m))
+		}
+		if err != nil {
+			return "", err
+		}
+		// The same per-slot mapping claude/codex use: the read layer's activeSession
+		// consults it first, and with no plugin in managed mode the driver is the writer.
+		sids.Write(ocSid, ses)
+	}
+	if isV2() {
+		if err := tagManagedSession(addr, ses, m.Name); err != nil {
+			return "", fmt.Errorf("opencode session %s could not be named for its shell environment: %w", ses, err)
+		}
+	}
+	return ses, nil
 }
 
 // LiveHandle returns the session's handle without starting anything (agents.LiveHandles): the
