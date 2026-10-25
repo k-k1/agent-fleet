@@ -136,6 +136,7 @@ type ecsConfig struct {
 	region         string
 	cluster        string   // ECS cluster ARN/name hosting the workspace services
 	subnets        []string // awsvpc private subnets for the tasks
+	wsSubnets      []string // AF_ECS_WORKSPACE_SUBNETS: the workspace task ENIs' own subnets; empty = subnets (see workspaceSubnets)
 	securityGroup  string   // ws SG: CP -> Agent:7700 + egress to git/Anthropic
 	efsFileSystem  string   // EFS id; two per-membership access points back each home
 	namespaceArn   string   // Service Connect (Cloud Map) namespace ARN
@@ -309,6 +310,7 @@ func newECSFactory(mcfg Config) (RuntimeFactory, error) {
 		region:         region,
 		cluster:        os.Getenv("AF_ECS_CLUSTER"),
 		subnets:        splitCSV(os.Getenv("AF_ECS_SUBNETS")),
+		wsSubnets:      splitCSV(os.Getenv("AF_ECS_WORKSPACE_SUBNETS")),
 		securityGroup:  os.Getenv("AF_ECS_SECURITY_GROUP"),
 		efsFileSystem:  os.Getenv("AF_ECS_EFS_ID"),
 		namespaceArn:   os.Getenv("AF_ECS_NAMESPACE_ARN"),
@@ -1007,6 +1009,30 @@ func efsVolume(name, fsID, apID string) ecstypes.Volume {
 	}
 }
 
+// workspaceSubnets is where a workspace task's ENI goes: AF_ECS_WORKSPACE_SUBNETS, or
+// AF_ECS_SUBNETS when that is unset. Only the workspace itself moves; the home-op task,
+// the slot instances and the engines stay in AF_ECS_SUBNETS, behind the S3 endpoint.
+func (c ecsConfig) workspaceSubnets() []string {
+	if len(c.wsSubnets) > 0 {
+		return c.wsSubnets
+	}
+	return c.subnets
+}
+
+// netConfig is the Fargate workspace service's awsvpc configuration. Fargate pulls the
+// image through the task ENI too, so in the workspace subnets the pull crosses the NAT;
+// left on the private route table, the workspace's own S3 would meet the endpoint's
+// policy, which refuses rather than falls back to the NAT.
+func (e *ecsRuntime) netConfig() *ecstypes.NetworkConfiguration {
+	return &ecstypes.NetworkConfiguration{
+		AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
+			Subnets:        e.cfg.workspaceSubnets(),
+			SecurityGroups: []string{e.cfg.securityGroup},
+			AssignPublicIp: ecstypes.AssignPublicIpDisabled,
+		},
+	}
+}
+
 // upsertService creates the service on first use or updates it to desiredCount 1
 // with the new task definition. The service advertises itself over Service Connect
 // under its ContainerName so the CP can reach the Agent at Endpoint().
@@ -1023,6 +1049,9 @@ func (e *ecsRuntime) upsertService(ctx context.Context, taskDefArn string) error
 			TaskDefinition:       aws.String(taskDefArn),
 			ForceNewDeployment:   true,
 			VolumeConfigurations: e.volumeConfigurations(),
+			// Sent on every update, not only at creation, so an existing service follows a
+			// change of the workspace subnets on its next Start.
+			NetworkConfiguration: e.netConfig(),
 		})
 		return err
 	}
@@ -1052,13 +1081,7 @@ func (e *ecsRuntime) upsertService(ctx context.Context, taskDefArn string) error
 			{Key: aws.String("af-membership"), Value: aws.String(e.membershipID)},
 			{Key: aws.String("af-role"), Value: aws.String("workspace")},
 		}),
-		NetworkConfiguration: &ecstypes.NetworkConfiguration{
-			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets:        e.cfg.subnets,
-				SecurityGroups: []string{e.cfg.securityGroup},
-				AssignPublicIp: ecstypes.AssignPublicIpDisabled,
-			},
-		},
+		NetworkConfiguration: e.netConfig(),
 		ServiceConnectConfiguration: &ecstypes.ServiceConnectConfiguration{
 			Enabled:   true,
 			Namespace: strOrNil(e.cfg.namespaceArn),

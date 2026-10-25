@@ -54,6 +54,26 @@ So:
 - **Isolation or per-user availability requirements → ECS**, accepting the floor cost
   and the fact that idle auto-stop has to actually work for the numbers above to hold.
 
+### Fargate starts are billed by the NAT
+
+The table above does not include this. On the AWS stack a Fargate workspace keeps no image
+cache, so **every start pulls the whole workspace image (about 918 MiB compressed) through
+the NAT gateway**, and the NAT bills data processing per GB. As an illustration at
+$0.045–0.062 per GB, that is roughly $0.04–0.06 per start, or about $120–180 a month at 100
+starts a day. Rates differ by region; check the NAT Gateway section of
+[Amazon VPC pricing](https://aws.amazon.com/vpc/pricing/) for yours. Model downloads for
+self-hosted engines (`60-engines`) from Hugging Face or Civitai cross the NAT too.
+
+Where starts are frequent, choose **ecs-ec2**: the image cache lives on the slot's own disk,
+so restarting on an existing slot that already has the same image avoids the pull (a cached
+start measured about 65 MiB of NAT traffic in total). A new slot, a slot recreated after
+retirement, a cache miss or an image update pulls the image again, but on ecs-ec2 the layers
+come through a free S3 VPC endpoint rather than the NAT, because workspaces have subnets of
+their own (#2716; not yet measured on a deployed stack). The golden snapshot is separate: it
+saves the CLI boot-install time, not NAT traffic. Planned, not yet available: a choice between
+a NAT gateway and an egress gateway (#2717). The setup details are in
+[deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md).
+
 ## When Kubernetes, and when not
 
 > **Preview.** The `kubernetes` runtime is a preview, not yet supported for production. Its known

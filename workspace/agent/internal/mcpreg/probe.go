@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -80,16 +81,84 @@ const affinityBudget = 5 * time.Second
 
 // errSessionRejected is the verdict for a server that refuses the session id it just issued
 // (several instances, in-memory sessions, no affinity).
-const errSessionRejected = "サーバーが、自ら発行したセッション ID を拒否しました。複数インスタンスで動作していて、セッションの親和性（同じセッションを同じインスタンスへ振り分ける設定）がない可能性があります。サーバーをステートレスにするか、同じセッションのリクエストを必ず同じインスタンスへ振り分けてください"
+const errSessionRejected = "The server rejected the session ID it just issued. It may be running as several instances without session affinity (routing a session to the same instance). Make the server stateless, or route every request of a session to the same instance"
 
 // errOAuthRequired is the Error of a recognised OAuth-protected server. The Console keys off
 // ProbeResult.OAuth, not this text; it is what an older Console shows, so it names where
 // sign-in happens today (the server's row) rather than anything the Console would explain.
-const errOAuthRequired = "OAuth によるサインインが必要なサーバーです。認証で OAuth を選んで保存し、サーバーの行からサインインしてください"
+const errOAuthRequired = "This server requires OAuth sign-in. Choose OAuth as the authentication, save, then sign in from the server's row"
+
+// Stable failure codes of ProbeResult.Code. The Console renders them from its catalogues
+// (mcp.probe_err.<code>) with ProbeResult.Params; Error stays the English fallback for an
+// older Console or a caller that has no catalogue. Adding or renaming a code means changing
+// the Console's en and ja catalogues together.
+const (
+	codeUnsupportedTransport = "unsupported_transport" // params: transport
+	codeUnreachable          = "unreachable"
+	codeStartFailed          = "start_failed" // params: error
+	codeProcessExited        = "process_exited"
+	codeTimeout              = "timeout"      // params: timeoutMs
+	codeRPCRejected          = "rpc_rejected" // params: method, message
+	codeSSENoResponse        = "sse_no_response"
+	codeBadResponse          = "bad_response" // params: error
+	codeSessionRejected      = "session_rejected"
+	codeOAuthRequired        = "oauth_required"
+)
+
+// probeErr is an error that carries its ProbeResult code and parameters, so a failure raised
+// deep in an exchange keeps its identity up to the result.
+type probeErr struct {
+	code   string
+	params map[string]string
+	msg    string
+}
+
+func (e *probeErr) Error() string { return e.msg }
 
 // errProbeTimeout distinguishes "no answer in time" from "the process died", so the
-// era probe can fall back on the former and fail fast on the latter.
-var errProbeTimeout = errors.New("タイムアウトしました")
+// era probe can fall back on the former and fail fast on the latter. Probe adds the
+// timeoutMs parameter once it knows the budget.
+var errProbeTimeout error = &probeErr{code: codeTimeout, msg: "timed out"}
+
+// coded builds a failed result with a code, its parameters (key, value pairs) and the English
+// fallback text.
+func coded(code, msg string, kv ...string) ProbeResult {
+	r := ProbeResult{Error: msg, Code: code}
+	for i := 0; i+1 < len(kv); i += 2 {
+		if r.Params == nil {
+			r.Params = map[string]string{}
+		}
+		r.Params[kv[i]] = kv[i+1]
+	}
+	return r
+}
+
+// rejected is the failure for a JSON-RPC error answer to method.
+func rejected(method, message string) ProbeResult {
+	return coded(codeRPCRejected, fmt.Sprintf("%s was rejected: %s", method, message), "method", method, "message", message)
+}
+
+// failOf turns an exchange error into a result, keeping its code when it has one.
+func failOf(err error) ProbeResult {
+	var pe *probeErr
+	if errors.As(err, &pe) {
+		r := coded(pe.code, pe.msg)
+		for k, v := range pe.params {
+			if r.Params == nil {
+				r.Params = map[string]string{}
+			}
+			r.Params[k] = v
+		}
+		return r
+	}
+	return ProbeResult{Error: err.Error()}
+}
+
+// withDetail returns r with Detail set.
+func withDetail(r ProbeResult, detail string) ProbeResult {
+	r.Detail = detail
+	return r
+}
 
 // ProbeResult is the outcome of one connection test.
 type ProbeResult struct {
@@ -105,6 +174,11 @@ type ProbeResult struct {
 	// SupportedVersions is what server/discover advertised (stateless servers only).
 	SupportedVersions []string `json:"supportedVersions,omitempty"`
 	Error             string   `json:"error,omitempty"`
+	// Code and Params are the stable, language-free form of Error: the Console renders its
+	// own text from them (mcp.probe_err.<code>). Error is the English fallback for a Console
+	// that does not know the code. Empty when Error is the server's or the OS's own text.
+	Code   string            `json:"code,omitempty"`
+	Params map[string]string `json:"params,omitempty"`
 	// Detail carries the server's stderr / response body tail on failure. Truncated,
 	// and shown verbatim to the user — a broken command usually explains itself there.
 	Detail string `json:"detail,omitempty"`
@@ -237,11 +311,15 @@ func Probe(ctx context.Context, d ServerDef) ProbeResult {
 	case TransportHTTP:
 		res = probeHTTP(ctx, d)
 	default:
-		res = ProbeResult{Error: fmt.Sprintf("未対応のトランスポートです: %s", d.Transport)}
+		res = coded(codeUnsupportedTransport, fmt.Sprintf("unsupported transport: %s", d.Transport), "transport", string(d.Transport))
 	}
 	res.ElapsedMS = time.Since(start).Milliseconds()
 	if !res.OK && res.Error == "" {
-		res.Error = "接続できませんでした"
+		res = coded(codeUnreachable, "could not connect")
+		res.ElapsedMS = time.Since(start).Milliseconds()
+	}
+	if res.Code == codeTimeout {
+		res.Params = map[string]string{"timeoutMs": strconv.FormatInt(timeout.Milliseconds(), 10)}
 	}
 	return res
 }
@@ -265,7 +343,7 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 	var errBuf bytes.Buffer
 	cmd.Stderr = &errBuf
 	if err := cmd.Start(); err != nil {
-		return ProbeResult{Error: fmt.Sprintf("起動できませんでした: %v", err), Detail: tail(errBuf.String())}
+		return withDetail(coded(codeStartFailed, fmt.Sprintf("failed to start: %v", err), "error", err.Error()), tail(errBuf.String()))
 	}
 	defer func() {
 		_ = stdin.Close()
@@ -303,15 +381,13 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 				}
 			}
 			if err != nil {
-				readErr <- fmt.Errorf("応答がありませんでした（プロセスが終了しました）")
+				readErr <- &probeErr{code: codeProcessExited, msg: "no response (the process exited)"}
 				return
 			}
 		}
 	}()
 
-	fail := func(msg string) ProbeResult {
-		return ProbeResult{Error: msg, Detail: tail(errBuf.String())}
-	}
+	fail := func(r ProbeResult) ProbeResult { return withDetail(r, tail(errBuf.String())) }
 	exchangeCtx := func(c context.Context, id int, m rpcMsg) (rpcMsg, error) {
 		if err := writeRPC(stdin, m); err != nil {
 			return rpcMsg{}, err
@@ -332,10 +408,10 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 		_ = json.Unmarshal(msg.Result, &dr)
 		msg, err = exchange(2, statelessReq(2, "tools/list"))
 		if err != nil {
-			return fail(err.Error())
+			return fail(failOf(err))
 		}
 		if msg.Error != nil {
-			return fail(fmt.Sprintf("tools/list が拒否されました: %s", msg.Error.Message))
+			return fail(rejected("tools/list", msg.Error.Message))
 		}
 		res := okResult(dr.info(), msg.Result)
 		res.Revision, res.SupportedVersions = ProtocolVersion, dr.SupportedVersions
@@ -344,30 +420,30 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 		// Silence, but the overall budget is intact: a server that ignores unknown
 		// methods instead of answering -32601. Treat it as the legacy era.
 	case err != nil:
-		return fail(err.Error()) // process died, or the whole probe timed out
+		return fail(failOf(err)) // process died, or the whole probe timed out
 	case !isLegacyEraSignal(msg.Error):
-		return fail(fmt.Sprintf("server/discover が拒否されました: %s", msg.Error.Message))
+		return fail(rejected("server/discover", msg.Error.Message))
 	}
 
 	// Legacy era: the full initialize handshake.
 	msg, err = exchange(3, rpcMsg{JSONRPC: "2.0", ID: 3, Method: "initialize", Params: legacyInitParams()})
 	if err != nil {
-		return fail(err.Error())
+		return fail(failOf(err))
 	}
 	if msg.Error != nil {
-		return fail(fmt.Sprintf("initialize が拒否されました: %s", msg.Error.Message))
+		return fail(rejected("initialize", msg.Error.Message))
 	}
 	var ir legacyInitResult
 	_ = json.Unmarshal(msg.Result, &ir)
 	if err := writeRPC(stdin, rpcMsg{JSONRPC: "2.0", Method: "notifications/initialized"}); err != nil {
-		return fail(err.Error())
+		return fail(failOf(err))
 	}
 	msg, err = exchange(4, rpcMsg{JSONRPC: "2.0", ID: 4, Method: "tools/list", Params: map[string]any{}})
 	if err != nil {
-		return fail(err.Error())
+		return fail(failOf(err))
 	}
 	if msg.Error != nil {
-		return fail(fmt.Sprintf("tools/list が拒否されました: %s", msg.Error.Message))
+		return fail(rejected("tools/list", msg.Error.Message))
 	}
 	res := okResult(ir.ServerInfo, msg.Result)
 	res.Revision = ProtocolVersionLegacy
@@ -446,7 +522,9 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 		if !ok {
 			return ProbeResult{}, false
 		}
-		return ProbeResult{Error: errOAuthRequired, OAuth: &rep}, true
+		res := coded(codeOAuthRequired, errOAuthRequired)
+		res.OAuth = &rep
+		return res, true
 	}
 
 	reqCtx := ctx
@@ -506,17 +584,14 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 	// modern error means "modern server, fix the request" — do NOT fall back then.
 	ex, err := post(statelessReq(1, "server/discover"), true)
 	if err != nil && ex.status == 0 {
-		return ProbeResult{Error: err.Error(), Detail: tail(ex.raw)}
+		return withDetail(failOf(err), tail(ex.raw))
 	}
 	if res, ok := oauthFrom(ex); ok {
 		return res
 	}
 	statelessServer := ex.msg.Error == nil && len(ex.msg.Result) > 0
 	if !statelessServer && isModernErr(ex.msg.Error) && !isLegacyEraSignal(ex.msg.Error) {
-		return ProbeResult{
-			Error:  fmt.Sprintf("server/discover が拒否されました: %s", ex.msg.Error.Message),
-			Detail: tail(ex.raw),
-		}
+		return withDetail(rejected("server/discover", ex.msg.Error.Message), tail(ex.raw))
 	}
 
 	if statelessServer {
@@ -524,7 +599,7 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 		_ = json.Unmarshal(ex.msg.Result, &dr)
 		ex, err = post(statelessReq(2, "tools/list"), true)
 		if err != nil {
-			return ProbeResult{Error: err.Error(), Detail: tail(ex.raw)}
+			return withDetail(failOf(err), tail(ex.raw))
 		}
 		if res, ok := oauthFrom(ex); ok {
 			return res
@@ -533,7 +608,7 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 			return ProbeResult{Error: fmt.Sprintf("HTTP %d", ex.status), Detail: tail(ex.raw)}
 		}
 		if ex.msg.Error != nil {
-			return ProbeResult{Error: fmt.Sprintf("tools/list が拒否されました: %s", ex.msg.Error.Message), Detail: tail(ex.raw)}
+			return withDetail(rejected("tools/list", ex.msg.Error.Message), tail(ex.raw))
 		}
 		res := okResult(dr.info(), ex.msg.Result)
 		res.Revision, res.SupportedVersions = ProtocolVersion, dr.SupportedVersions
@@ -543,7 +618,7 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 	// Legacy era.
 	ex, err = post(rpcMsg{JSONRPC: "2.0", ID: 3, Method: "initialize", Params: legacyInitParams()}, false)
 	if err != nil {
-		return ProbeResult{Error: err.Error(), Detail: tail(ex.raw)}
+		return withDetail(failOf(err), tail(ex.raw))
 	}
 	if res, ok := oauthFrom(ex); ok {
 		return res
@@ -552,7 +627,7 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 		return ProbeResult{Error: fmt.Sprintf("HTTP %d", ex.status), Detail: tail(ex.raw)}
 	}
 	if ex.msg.Error != nil {
-		return ProbeResult{Error: fmt.Sprintf("initialize が拒否されました: %s", ex.msg.Error.Message), Detail: tail(ex.raw)}
+		return withDetail(rejected("initialize", ex.msg.Error.Message), tail(ex.raw))
 	}
 	var ir legacyInitResult
 	_ = json.Unmarshal(ex.msg.Result, &ir)
@@ -565,10 +640,7 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 			return res
 		}
 		if stateful && sessionRejected(ex) {
-			return ProbeResult{
-				Error:  errSessionRejected,
-				Detail: fmt.Sprintf("HTTP %d: %s", ex.status, tail(ex.raw)),
-			}
+			return withDetail(coded(codeSessionRejected, errSessionRejected), fmt.Sprintf("HTTP %d: %s", ex.status, tail(ex.raw)))
 		}
 		return ProbeResult{Error: fmt.Sprintf("HTTP %d", ex.status), Detail: tail(ex.raw)}
 	}
@@ -582,13 +654,13 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 	// The first tools/list is the real check and its answer is the result.
 	ex, err = post(rpcMsg{JSONRPC: "2.0", ID: 4, Method: "tools/list", Params: map[string]any{}}, false)
 	if err != nil {
-		return ProbeResult{Error: err.Error(), Detail: tail(ex.raw)}
+		return withDetail(failOf(err), tail(ex.raw))
 	}
 	if ex.status < 200 || ex.status >= 300 {
 		return failStatus(ex)
 	}
 	if ex.msg.Error != nil {
-		return ProbeResult{Error: fmt.Sprintf("tools/list が拒否されました: %s", ex.msg.Error.Message), Detail: tail(ex.raw)}
+		return withDetail(rejected("tools/list", ex.msg.Error.Message), tail(ex.raw))
 	}
 	first := ex
 	if stateful {
@@ -677,11 +749,11 @@ func decodeHTTPPayload(contentType string, body []byte) (rpcMsg, error) {
 				return m, nil
 			}
 		}
-		return rpcMsg{}, fmt.Errorf("SSE 応答に JSON-RPC 応答が含まれていません")
+		return rpcMsg{}, &probeErr{code: codeSSENoResponse, msg: "the SSE response contains no JSON-RPC response"}
 	}
 	var m rpcMsg
 	if err := json.Unmarshal(bytes.TrimSpace(body), &m); err != nil {
-		return rpcMsg{}, fmt.Errorf("応答を解釈できません: %v", err)
+		return rpcMsg{}, &probeErr{code: codeBadResponse, msg: fmt.Sprintf("cannot parse the response: %v", err), params: map[string]string{"error": err.Error()}}
 	}
 	return m, nil
 }

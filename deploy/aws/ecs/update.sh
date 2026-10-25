@@ -240,6 +240,18 @@ af_efs_backup_check "$DATA_STACK" "$PROFILE" "$REGION"
 # EfsBackup, so an operator who never reads this output still sees the warning. Empty = unknown,
 # in which case the parameter is not passed at all.
 EFS_BACKUP_MARKER="$(af_efs_backup_marker "$AF_EFS_BACKUP_VERDICT" || true)"
+
+# Workspace subnets (#2716): a fact of the network stack, passed on every update so the CP
+# follows it. This script does not deploy 00-network, so a network stack older than the
+# subnets has no such output: nothing is passed and the workspaces stay where they are.
+NETWORK_STACK="$(af_stack_param "$STACK" NetworkStackName)"
+: "${NETWORK_STACK:=af-ecs-network}"
+WS_SUBNETS="$(af_stack_output "$NETWORK_STACK" WorkspaceSubnets)"
+if [ -z "$WS_SUBNETS" ]; then
+  echo "NOTE: $NETWORK_STACK has no WorkspaceSubnets output; workspaces keep their subnets." >&2
+  echo "      To move them: deploy cfn/00-network.yaml with S3EndpointEnabled=false, run this" >&2
+  echo "      script again, restart the running workspaces, then S3EndpointEnabled=true (README, NAT bullet)." >&2
+fi
 # The pin only applies to the copy above. Said here, before anything runs, so a pin that would
 # otherwise do nothing is not mistaken for one that was checked.
 if [ -n "$COMFY_DIGEST" ] && { [ "$COMFY_REPAIR" != 1 ] || [ "$COMFY_PULLED" != 1 ]; }; then
@@ -629,7 +641,7 @@ fi
 echo "==> cloudformation deploy $STACK (ImageTag=$VERSION)"
 deploy_out=""
 if [ "$DRY" = 1 ]; then
-  echo "DRY: aws cloudformation deploy --stack-name $STACK --template-file $TEMPLATE --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ImageTag=$VERSION${EFS_BACKUP_MARKER:+ EfsBackup=$EFS_BACKUP_MARKER}"
+  echo "DRY: aws cloudformation deploy --stack-name $STACK --template-file $TEMPLATE --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ImageTag=$VERSION${EFS_BACKUP_MARKER:+ EfsBackup=$EFS_BACKUP_MARKER}${WS_SUBNETS:+ WorkspaceSubnets=$WS_SUBNETS}"
 else
   set +e
   # Always go through af_cfn_deploy (env.sh): it switches to S3 once a template passes 51,200
@@ -639,6 +651,7 @@ else
   deploy_out="$(af_cfn_deploy "$STACK" "$TEMPLATE" \
     --capabilities CAPABILITY_NAMED_IAM \
     --parameter-overrides "ImageTag=$VERSION" ${EFS_BACKUP_MARKER:+"EfsBackup=$EFS_BACKUP_MARKER"} \
+      ${WS_SUBNETS:+"WorkspaceSubnets=$WS_SUBNETS"} \
     --no-fail-on-empty-changeset 2>&1)"
   rc=$?
   set -e

@@ -16,7 +16,7 @@ source_of_truth: "この表（行は Control Plane が受け付ける runtime �
 | docker | ホストの Docker デーモン上のコンテナ | ホスト上の bind mount したディレクトリ | オンプレの既定。1 台をチームで共有する |
 | native | Docker を使わない、サンドボックスされたホストプロセス | ホスト上のディレクトリ | Docker を入れられない（素の WSL2 など）。**単独利用のみ**。コンテナ境界が無いので、共有モードでは起動を拒否する |
 | ecs | AWS ECS / Fargate のタスク | EFS | AWS で、インスタンスを管理したくない |
-| ecs-ec2 | プールから取った EC2 スロット上のタスク | ユーザー毎の EBS ボリューム | AWS で、起動レイテンシとディスク性能がインスタンス管理に見合う |
+| ecs-ec2 | プールから取った EC2 スロット上のタスク | ユーザー毎の EBS ボリューム | AWS で、起動レイテンシとディスク性能がインスタンス管理に見合う、または起動が多く Fargate の NAT 経由イメージ取得費用が無視できない（[選び方](../operate/01-choose.ja.md)） |
 | kubernetes | Kubernetes クラスタ上の、ワークスペース専用の StatefulSet の Pod | ユーザー毎の永続ボリューム（ブロックストレージ）。ログインと Claude の状態はもう 1 本の専用ボリューム | **プレビュー。** すでに Kubernetes を運用している、または Google Cloud で、使わないときは 0 台に縮むワークスペースが欲しい。最初に検証するクラスタは GKE Standard |
 
 > **プレビュー。** `kubernetes` ランタイムはプレビューです。GKE Standard クラスタで受け入れを確かめて
