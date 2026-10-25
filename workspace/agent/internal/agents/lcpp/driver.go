@@ -648,6 +648,7 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 
 	rt := &harness.Runtime{
 		Cwd:          h.cwd,
+		Env:          agents.WithSessionEnv(os.Environ(), h.name),
 		Plan:         settings.Mode == "plan",
 		AskUser:      h.askUser,
 		Todos:        todos,

@@ -110,9 +110,10 @@ assistant chat, the document viewer), it turns these into links:
 - **External URLs** open in a new tab.
 - **A path to a file or folder in your workspace**, as a Markdown link (`[text](src/app.ts)`) or in
   backticks (`` `src/app.ts` ``): a file opens in the viewer, a folder shows in **Files**.
-- **`$AF_WORK_DIR/…`** in a reply of a Terminal (CLI) session means that session's scratch folder
-  (`~/.af-work/<session>`), and it is linked when the file or folder exists there. It stays plain
-  text in a Managed session, in the chat and in the document viewer.
+- **`$AF_WORK_DIR/…`** in a reply of a session (Terminal (CLI) or Managed) means that session's
+  scratch folder (`~/.af-work/<session>`), and it is linked when the file or folder exists there.
+  It stays plain text in Managed opencode sessions (they do not get the variable), in the chat and
+  in the document viewer.
 - **Ticket numbers** (`#956`, `owner/name#956`, a Jira key, and both ends of a range such as
   `#573-#598`) open the ticket's details, by the rules in
   [03 Starting sessions](03-starting-sessions.md#from-a-ticket-number-in-the-conversation). In a file's preview a

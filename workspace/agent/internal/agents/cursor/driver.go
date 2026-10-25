@@ -411,7 +411,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	// cursor scrubs its MCP children's environment (measured: they get HOME, PATH, SHELL and
 	// TERM only), so the name reaches the af server through the ${env:…} references mcpreg
 	// writes into ~/.cursor/mcp.json, which cursor expands from THIS process's environment.
-	cmd.Env = agents.WithSessionName(EnvWithoutCI(os.Environ()), h.name)
+	cmd.Env = agents.WithSessionEnv(EnvWithoutCI(os.Environ()), h.name)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err

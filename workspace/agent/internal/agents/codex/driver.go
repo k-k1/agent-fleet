@@ -83,8 +83,10 @@ func (managedDriver) Capabilities() agents.Capabilities {
 // with -c.
 var threadFeatures = map[string]any{"default_mode_request_user_input": true}
 
-// threadConfig is the per-thread config: the features above, plus the MCP servers
-// scoped to THIS session (docs/log/27 §9.3.1).
+// threadConfig is the per-thread config: the features above, AF_WORK_DIR for the thread's
+// shell tool calls (shell_environment_policy.set — the shared app-server's own environment
+// cannot carry a per-session value), plus the MCP servers scoped to THIS session
+// (docs/log/27 §9.3.1).
 //
 // A managed session's MCP child is spawned by the one shared app-server, so the
 // process environment cannot carry a per-session AF_SESSION_NAME the way tmux does
@@ -101,6 +103,11 @@ var threadFeatures = map[string]any{"default_mode_request_user_input": true}
 // registry — the session name degrades to the cwd fallback and nothing else changes.
 func threadConfig(slot string) map[string]any {
 	cfg := map[string]any{"features": threadFeatures}
+	if wd := agents.SessionWorkDir(slot); wd != "" {
+		cfg["shell_environment_policy"] = map[string]any{
+			"set": map[string]any{agents.WorkDirEnvVar: wd},
+		}
+	}
 	if servers, ok := threadMCPServers(slot); ok {
 		cfg["mcp_servers"] = servers
 	}

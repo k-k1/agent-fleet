@@ -418,7 +418,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	}
 	// One child per session, and copilot hands its own environment to MCP children
 	// (measured), so this is how the af server learns which session it serves.
-	cmd.Env = agents.WithSessionName(env, h.name)
+	cmd.Env = agents.WithSessionEnv(env, h.name)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err

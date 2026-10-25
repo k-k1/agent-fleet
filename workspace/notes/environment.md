@@ -74,11 +74,18 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
 - **Check before a big install** — `df -h ~`. The volume is shared with everything else you do,
   and caches grow without bound (`~/.npm`, `~/.cache` reach tens of GB).
 - **Where throwaway work goes**: `$AF_WORK_DIR` — `~/.af-work/<session>/`, which the Agent
-  creates when a Terminal (CLI) session launches and removes when the session is deleted (not
-  archived, not restored). Managed sessions do not get the variable yet (issue #978); there use
+  creates when a session launches and removes when the session is deleted (not archived, not
+  restored). Terminal (CLI) sessions get it from the launch environment; Managed sessions get it
+  per kind: the child process's environment for copilot, cursor, kiro and muse, and the thread
+  config (`shell_environment_policy.set`) for codex, whose one shared app-server cannot carry a
+  per-session value. lcpp's bash tool gets it from the harness runtime. Managed opencode has no
+  channel yet and runs without the variable (one shared `opencode serve`; its per-session
+  environment would replace the whole shell environment; #2710). Whenever `$AF_WORK_DIR` is
+  actually empty (that case, or a directory that could not be created), use
   `mkdir -p ~/.af-work/"$(basename "$(git rev-parse --show-toplevel)")"` and remove it when the
   task is done (an unmarked directory is kept at boot but offered for deletion in Settings >
-  Machine). One directory
+  Machine). The name is the session's slug and a rename changes only the title, so the directory
+  never moves. One directory
   per session means the owner is obvious and one `rm -rf` cleans up; files dropped straight into
   `~` were measured at 190+ unowned directories in one home. Not `/tmp` (shared by every session,
   wiped on restart) and not `~/.cache`, which is for tools' own caches.

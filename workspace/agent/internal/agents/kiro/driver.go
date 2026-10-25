@@ -509,7 +509,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	// "You are not logged in" on stderr (fail-fast).
 	// One child per session, and kiro hands its own environment to MCP children (measured),
 	// so this is how the af server learns which session it serves.
-	cmd.Env = agents.WithSessionName(os.Environ(), h.name)
+	cmd.Env = agents.WithSessionEnv(os.Environ(), h.name)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err

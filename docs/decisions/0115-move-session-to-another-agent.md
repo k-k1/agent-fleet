@@ -493,3 +493,11 @@ it is not yet.
   there.
 - **Decision.** Kiro is now a move target. Cursor stays off, reported as `not_measured`, until it
   can be measured through the Managed driver. Follow-ups: #2252.
+
+## Note (2026-10-25): managed sessions now have `AF_WORK_DIR`
+
+Decision 9 computes the handover path from the target's name because a managed target had no
+`$AF_WORK_DIR`. Since #2431 most managed kinds get the variable (child environment, or the thread
+config for codex), but the path is still computed from the name: the Agent writes the file before
+the target has started, and the directory is the same `~/.af-work/<name>` either way. Managed
+opencode still has no variable (#2710).

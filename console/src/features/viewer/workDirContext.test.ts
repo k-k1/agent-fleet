@@ -1,16 +1,21 @@
-// Which sessions get a $AF_WORK_DIR expansion: Terminal only. A Managed session's directory is
-// named after its working copy, so the session-named one must never be linked for it.
+// Which sessions get a $AF_WORK_DIR expansion: every known session, Terminal or Managed, except managed opencode.
 import { describe, expect, it } from "vitest";
 import { mirrorWorkDir } from "./workDirContext.ts";
 
 describe("mirrorWorkDir", () => {
   it("expands for a Terminal session (driver absent or tui)", () => {
-    expect(mirrorWorkDir("s123", { driver: undefined })).toBe("~/.af-work/s123");
-    expect(mirrorWorkDir("s123", { driver: "tui" })).toBe("~/.af-work/s123");
+    expect(mirrorWorkDir("s123", { driver: undefined, kind: "opencode" })).toBe("~/.af-work/s123");
+    expect(mirrorWorkDir("s123", { driver: "tui", kind: "opencode" })).toBe("~/.af-work/s123");
   });
 
-  it("stays empty for a Managed session, so a stale ~/.af-work/s123/a.png is not linked", () => {
-    expect(mirrorWorkDir("s123", { driver: "managed" })).toBe("");
+  it("expands for a Managed session of a kind that gets the variable", () => {
+    for (const kind of ["codex", "cursor", "copilot", "kiro", "muse", "lcpp"] as const) {
+      expect(mirrorWorkDir("s123", { driver: "managed", kind })).toBe("~/.af-work/s123");
+    }
+  });
+
+  it("stays empty for Managed opencode, so a stale file from an earlier Terminal run is not linked", () => {
+    expect(mirrorWorkDir("s123", { driver: "managed", kind: "opencode" })).toBe("");
   });
 
   it("stays empty when the session is unknown", () => {

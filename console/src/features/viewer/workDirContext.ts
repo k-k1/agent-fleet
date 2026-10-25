@@ -16,12 +16,13 @@ export function useSessionWorkDir(): string {
 }
 
 /**
- * The $AF_WORK_DIR a session's replies mean. Only a Terminal session gets the variable (the
- * Agent injects ~/.af-work/<name> at tmux launch); a Managed one falls back to a directory named
- * after its working copy, which the session name does not give. Unknown metadata or a Managed
- * driver answers "" — plain code beats linking a stale ~/.af-work/<name> left by an earlier
- * Terminal run to the wrong file.
+ * The $AF_WORK_DIR a session's replies mean: ~/.af-work/<name>. The Agent hands it to every
+ * Terminal session and to every Managed kind but opencode (one shared server, no per-session
+ * environment; #2710), where the session writes a fallback directory instead — so a leftover
+ * ~/.af-work/<name> from an earlier Terminal run must not be linked for it. Unknown metadata
+ * answers "" too: plain code beats linking a path that may belong to something else.
  */
-export function mirrorWorkDir(name: string, meta: Pick<Session, "driver"> | null | undefined): string {
-  return meta && !isManagedSession(meta) ? sessionWorkDir(name) : "";
+export function mirrorWorkDir(name: string, meta: Pick<Session, "driver" | "kind"> | null | undefined): string {
+  if (!meta || (isManagedSession(meta) && meta.kind === "opencode")) return "";
+  return sessionWorkDir(name);
 }

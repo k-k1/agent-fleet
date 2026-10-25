@@ -15,7 +15,8 @@ import (
 
 // The handover file lives in the target's throwaway directory, ~/.af-work/<target>, never in
 // the working copy, so it cannot be committed (ADR 0115 decision 9). The path is computed from
-// the name, not read from $AF_WORK_DIR, because a managed target has no such variable.
+// the name, not read from $AF_WORK_DIR: this runs in the Agent, whose own environment belongs to
+// no session, and the target may not have started yet.
 
 const handoverPrefix, handoverSuffix = "handover-", ".md"
 
