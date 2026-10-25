@@ -7,9 +7,9 @@ af_cfn_deploy (env.sh) switches to `--s3-bucket` past 51,200 bytes, but the buck
 of 20-platform. So a template that is sent by direct upload while no bucket exists stops the
 deploy with a CLI error when it crosses the limit:
 
-  - 00-network, 10-data and 20-platform on a first stand-up (pause.sh and update.sh reach
-    00-network only through an existing platform stack and AF_CFN_BUCKET, which is not
-    something to rely on);
+  - 00-network, 10-data and 20-platform on a first stand-up (update.sh deploys neither 00 nor
+    10; only pause.sh updates 00-network, through af_cfn_deploy, which can use an existing
+    bucket but is not something to rely on);
   - 40-ec2-pool in deploy/aws/ecs/harness/setup.sh, which sends it with a plain
     `aws cloudformation deploy --template-file` against dummy network / platform exports.
 
