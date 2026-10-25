@@ -31,7 +31,7 @@ skip and say so.
   Details: `notes/environment.md`.
 - **Throwaway files go in `$AF_WORK_DIR`** (probes, review checkouts, bundles, screenshots,
   scratch clones) — `~/.af-work/<session>/`, created at launch and **deleted with the session**.
-  Where it is actually unset (managed opencode, or a directory that could not be created), use `~/.af-work/<working copy's directory name>/`
+  Where it is actually unset (a directory that could not be created, or a Managed opencode on 1.x or a `AF_OPENCODE_TUI_STANDALONE=1` server), use `~/.af-work/<working copy's directory name>/`
   and delete it yourself. It is throwaway: never keep files there that the user wants to keep. Never loose in `~` or `~/.cache`: nobody can tell later whose they were
   and they pile up by the hundred. `/tmp` is shared and wiped on restart.
   Details: `notes/environment.md`.

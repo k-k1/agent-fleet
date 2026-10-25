@@ -23,9 +23,13 @@
 //    — this plugin lives in the server process, so its memory is exactly one generation — and the
 //    command is REFUSED when the Agent cannot confirm it. The Agent PUTs the pane's environment
 //    only onto a session carrying that slot's af.sid and af.name.
+//    A Managed session (af.managed) has no pane: its af.managed.name names the af session, and the
+//    Agent PUTs this server's own environment plus that session's AF_WORK_DIR and AF_SESSION_NAME
+//    (a PUT replaces the whole shell environment, so nothing else may change). The server's
+//    environment is the one the helper inherits from this process, never looked up by pid.
 //    A new session nobody has tagged yet is waited for (the TUI plugin PUTs and tags it); one that
-//    stays untagged for the bound, an old untagged session, and a Managed one (af.managed) have no
-//    pane to take an environment from and run as they always did.
+//    stays untagged for the bound, an old untagged session, and a Managed one made before
+//    af.managed.name existed have no pane to take an environment from and run as they always did.
 //
 // opencode 1 has no shared server; the module only keeps the file loadable there.
 import { execFile } from "node:child_process";
@@ -106,7 +110,9 @@ export default {
           throw new Error("agent-fleet: the session could not be read, so its environment is unknown; the command was not run");
         }
         const md = (info && info.metadata) || {};
-        if (md["af.managed"]) return;
+        // A Managed session names its af session itself (af.managed.name); one made before that
+        // existed has no name and runs as it always did.
+        if (md["af.managed"]) return md["af.managed.name"] || undefined;
         if (md["af.sid"] && md["af.name"]) return md["af.name"];
         const created = info && info.time && info.time.created;
         const old = typeof created === "number" && Date.now() - created > NEW_SESSION_MS;

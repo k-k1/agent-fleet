@@ -2024,7 +2024,10 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
     ENI in a private subnet, so the ~918 MiB compressed workspace image (see the start-latency
     measurement below) goes through the endpoint. **Fargate cannot split**: it pulls through
     the task ENI, so a Fargate workspace start still pays NAT data processing for its layers.
-    The models bucket reads of `60-engines` use the endpoint.
+    The models bucket reads of `60-engines` use the endpoint. The raw egress event archive
+    (`AF_EGRESS_ARCHIVE_URL`, #2699) is not wired by these templates: the CP writes from the
+    private route table, so a same-region `s3://` archive bucket would be refused at the endpoint
+    until its policy (and the CP task role) admits it (#2732).
     The endpoint has a switch, `S3EndpointEnabled` (default `true`). It must stay `false`
     while any workspace still runs in a private subnet, because the policy refuses that
     workspace's own S3 (AccessDenied) until it is restarted into a workspace subnet.

@@ -398,7 +398,20 @@ func main() {
 	// Raw events are deleted whether or not this deployment still ingests: retention must not
 	// depend on AF_EGRESS_TOKEN staying set.
 	if cfg.egressEventRetention > 0 {
-		go newEgressPurger(mgr, cfg.egressEventRetention).run(context.Background())
+		purger := newEgressPurger(mgr, cfg.egressEventRetention)
+		if raw := os.Getenv("AF_EGRESS_ARCHIVE_URL"); raw != "" {
+			// A misconfigured archive stops the CP rather than falling back to deleting
+			// events the operator asked to keep.
+			sink, err := newEgressArchiveSink(context.Background(), raw)
+			if err != nil {
+				log.Fatalf("egress archive: %v", err)
+			}
+			purger.archive = newEgressArchiver(mgr.store, sink)
+			log.Printf("egress archive: raw events are archived per UTC day before the purge")
+		}
+		go purger.run(context.Background())
+	} else if os.Getenv("AF_EGRESS_ARCHIVE_URL") != "" {
+		log.Printf("egress archive: ignored, AF_EGRESS_EVENT_RETENTION_DAYS=0 keeps raw events and nothing is purged")
 	}
 	// Home operations a CP restart interrupted (ecs, home_operation.go): their task may
 	// still be running, and the step after it is owed. Not behind any switch either: an
