@@ -119,6 +119,49 @@ ws_services() {
   done
 }
 
+# ws_tasks_alive — Workspace tasks that have not reached STOPPED, whatever their service's desired
+# count: a workspace its user stopped a moment ago, or one an earlier pause cut short, still has
+# connections open through the egress gateway. Fails when it cannot tell.
+ws_tasks_alive() {
+  local st arns all="" batch i got
+  for st in RUNNING STOPPED; do
+    arns="$("${AWS[@]}" ecs list-tasks --cluster "$CLUSTER" --desired-status "$st" \
+      --query taskArns --output text)" || return 1
+    case "$arns" in None) arns="" ;; esac
+    all="$all $arns"
+  done
+  # shellcheck disable=SC2086  # word splitting is the batching
+  set -- $all
+  while [ $# -gt 0 ]; do
+    batch=""; i=0
+    while [ $# -gt 0 ] && [ $i -lt 100 ]; do batch="$batch $1"; shift; i=$((i + 1)); done
+    # shellcheck disable=SC2086
+    got="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks $batch \
+      --query "tasks[?starts_with(group,'service:af-ws-') && lastStatus!='STOPPED'].taskArn" --output text)" || return 1
+    case "$got" in None) got="" ;; esac
+    [ -z "$got" ] || echo "$got"
+  done
+}
+
+# ws_tasks_wait — until no Workspace task is left (AF_WS_TASK_WAIT_SEC, default 600). Fails on
+# timeout and when the tasks cannot be read.
+ws_tasks_wait() {
+  local left deadline
+  deadline=$(( $(date +%s) + ${AF_WS_TASK_WAIT_SEC:-600} ))
+  while :; do
+    if ! left="$(ws_tasks_alive)"; then
+      echo "    could not list the cluster's tasks" >&2
+      return 1
+    fi
+    [ -n "${left//[[:space:]]/}" ] || return 0
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      echo "    still running: $(printf '%s\n' "$left" | tr -s '[:space:]' ' ')" >&2
+      return 1
+    fi
+    sleep "${AF_GATEWAY_POLL_SEC:-15}"
+  done
+}
+
 slots() {  # <state> ...
   "${AWS[@]}" ec2 describe-instances \
     --filters "Name=tag:af-pool,Values=$CLUSTER" "Name=tag:af-role,Values=slot" \
@@ -493,15 +536,26 @@ EOF
     fi
 
     # The egress gateway before the CP: a tunnel is logged when it closes and the agent ships
-    # the log to the CP every few seconds, so the stopped workspaces' last connections are
-    # recorded only while both are up. Its instance and disk go with the scale-in.
+    # the log to the CP, so the workspaces' last connections are recorded only while both are
+    # up, and the scale-in destroys the instance's disk with whatever it had not shipped. So:
+    # no workspace task left, then the CP has accepted the whole log, then the scale-in. Any
+    # of these that cannot be confirmed stops here with the gateway and the CP still running.
     if [ "$(af_gateway_state "$AF_STACK_NETWORK")" = on ]; then
-      if [ -n "${ws// /}" ] && [ "$AF_DRY" != 1 ]; then
-        echo "==> waiting for the stopped Workspaces' tasks to end, so the gateway can ship their last connections"
-        for s in $ws; do
-          "${AWS[@]}" ecs wait services-stable --cluster "$CLUSTER" --services "$s" || true
-        done
-        sleep "${AF_GATEWAY_DRAIN_SEC:-15}"
+      if [ "$AF_DRY" != 1 ]; then
+        echo "==> waiting until no Workspace task is left (the egress gateway must see their connections close)"
+        if ! ws_tasks_wait; then
+          echo "ERROR: Workspace tasks may still be running, so the egress gateway and the control plane are" >&2
+          echo "       left running. Run pause.sh again once they have stopped." >&2
+          exit 1
+        fi
+        echo "==> draining the egress gateway: Squid stopped, waiting until the CP has accepted all of its log"
+        if ! af_gateway_drain "$AF_STACK_NETWORK"; then
+          echo "ERROR: the CP has not accepted all of the egress gateway's log, so the gateway and the CP are" >&2
+          echo "       left running (stopping it now would destroy those records). Check the agent" >&2
+          echo "       (journalctl -u af-egress-agent on the instance) and run pause.sh again. To give the records" >&2
+          echo "       up, deploy $AF_STACK_NETWORK with GatewayEnabled=false yourself." >&2
+          exit 1
+        fi
       fi
       echo "==> stopping the egress gateway through $AF_STACK_NETWORK (its interface and Elastic IP are kept)"
       net_set GatewayEnabled=false

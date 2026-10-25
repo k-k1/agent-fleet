@@ -555,7 +555,9 @@ Follow-ups: #2728, #2729, #2687 (real Squid; the README gives the steps on this 
 Not run on a real account.
 
 - **The switch is the group's size, nothing else.** `00-network`'s `GatewayEnabled` (default
-  `true`) sets the Auto Scaling group's minimum, maximum and desired count to 1 or 0. `GatewayEni`,
+  `true`) sets the Auto Scaling group's minimum and desired count to 1 or 0; the maximum stays 1,
+  because the rolling update requires `MinInstancesInService` (0) below it and a paused group can
+  still receive a new launch template. `GatewayEni`,
   `GatewayEip`, the workspace route and the token stay under `GatewayOn` alone, so a pause can never
   release the egress address or move the route target; the terminated instance releases the
   interface and the next one attaches it. It is a stack parameter rather than an
@@ -566,15 +568,19 @@ Not run on a real account.
 - **A paused gateway blackholes the workspace route.** The route stays on `GatewayEni`, and never
   falls back to the NAT gateway (that would be unrecorded egress). It is harmless only because
   every workspace is stopped first.
-- **Order.** Down: the Workspaces are stopped and their tasks waited for, then the gateway,
-  then the CP: a tunnel is logged when it closes and the agent ships to the CP, so the last
-  connections are recorded only while both run. Up: the gateway starts in the same deploy as the
+- **Order.** Down: the Workspaces are stopped, then pause.sh waits until no workspace task is
+  left in the cluster (whatever its service's desired count), stops Squid (an open tunnel is
+  logged only when it closes) and waits until every byte of its logs is under the offset the
+  agent committed after the CP accepted it. Only then the gateway, then the CP. The scale-in
+  destroys the instance's disk, so anything unconfirmed fails the pause with both still up. Up: the gateway starts in the same deploy as the
   NAT gateway (it boots through its own public address), `pause.sh` waits before the CP until an
   instance has attached the interface and Squid and the agent run, and after the CP until the
   agent has applied its first policy. The second wait cannot come before the CP, which serves the
   policy; a workspace started in between is refused by the closed bootstrap policy, not let out.
-- **Readiness is read through SSM Run Command**: the services' state, and the mode file carrying
-  the agent's `# mode: ` header, which the closed bootstrap file lacks. A probe from outside the
-  instance cannot tell the bootstrap policy from a real one.
+- **Readiness and the drain are read through SSM Run Command.** Ready is a policy Squid has
+  applied in the agent's current run: the mode file carries the agent's `# mode: ` header (the
+  closed bootstrap file does not) and the unit's current invocation has logged `policy applied`,
+  which the agent writes only after Squid's reload succeeded. A written file alone is not
+  applied. A probe from outside the instance cannot tell the bootstrap policy from a real one.
 
 Open point 5 is closed for AWS by this; open point 7 (#2728) stays open.

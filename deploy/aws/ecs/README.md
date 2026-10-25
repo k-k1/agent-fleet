@@ -900,16 +900,23 @@ the gateway is gone every proxy-aware client in it times out. So take the proxy 
 `false` scales the group to zero instances (never by hand with `aws autoscaling`, which the
 next deploy of the stack undoes). `GatewayEni` and `GatewayEip` stay, so `--up` brings back the
 same route target, proxy address and egress address; the Elastic IP keeps billing ($0.005/h).
-The gateway goes once the stopped Workspaces' tasks have ended (so the agent ships their last
-connections to the CP) and before the CP. While it is off the workspace route **blackholes**:
-that is harmless only because no workspace runs, so do not start one on a stack with
-`GatewayEnabled=false`. `--up` starts it in the same deploy as the NAT gateway and waits for it
-twice, through SSM Run Command (the operator needs `ssm:SendCommand`; the instance role already
-has `AmazonSSMManagedInstanceCore`): before the CP starts, until an instance has attached
-`GatewayEni` and Squid and `af-egress-agent` run; after the CP is up, until the agent has
-applied its first policy, which only the CP can give it (Squid refuses everything until then).
-A gateway that does not come up keeps the CP down; `AF_GATEWAY_WAIT_SEC` (default 1200) bounds
-each wait. `--status` shows the gateway. `standup.sh` overrides a captured
+The gateway goes before the CP, and only after two things are confirmed: no Workspace task is
+left in the cluster, whatever its service's desired count (`AF_WS_TASK_WAIT_SEC`, default 600),
+and, with Squid stopped so every tunnel is logged, the CP has accepted the whole log (each log
+file's size is under the offset the agent committed in `state.json`; `AF_GATEWAY_DRAIN_SEC`,
+default 300). The scale-in destroys the instance's disk, so if either cannot be confirmed
+`pause.sh` fails and leaves the gateway and the CP running. While the gateway is off the
+workspace route **blackholes**: that is harmless only because no workspace runs, so do not
+start one on a stack with `GatewayEnabled=false`. `--up` starts it in the same deploy as the NAT
+gateway and waits for it twice: before the CP starts, until an instance has attached
+`GatewayEni` and Squid and `af-egress-agent` run; after the CP is up, until the agent's current
+run has applied a policy (written the mode file and logged `policy applied`, which it does only
+after Squid's reload succeeded). Only the CP can give it that policy, and Squid refuses
+everything until then. A gateway that does not come up keeps the CP down;
+`AF_GATEWAY_WAIT_SEC` (default 1200) bounds each wait. The checks on the instance run through
+SSM Run Command: the operator needs `ssm:SendCommand` (document `AWS-RunShellScript`, on the
+instance tagged `af-egress-gateway=<network stack>`) and `ssm:GetCommandInvocation`; the
+instance role already has `AmazonSSMManagedInstanceCore`. `--status` shows the gateway. `standup.sh` overrides a captured
 `GatewayEnabled=false` to `true` and waits for the first policy at its end.
 
 **Limits of this first stage.** Workspaces egress from `GatewayEip`, not `NatEip`; moving one
@@ -967,7 +974,7 @@ service supports it:
 | route53 | DNS validation + alias | ChangeResourceRecordSets/GetHostedZone/ListResourceRecordSets (on the zone) |
 | logs | log groups | CreateLogGroup/DeleteLogGroup/PutRetentionPolicy/Describe* |
 | iam | 20-platform named roles, 10-data's EFS backup role, the managed policies 30/40/60 attach to the CP task role | CreateRole/DeleteRole/Get/PassRole, Put/Delete/Attach/DetachRolePolicy, CreatePolicy/DeletePolicy/GetPolicy, Create/Delete/ListPolicyVersions (→ `CAPABILITY_NAMED_IAM`; `CAPABILITY_IAM` for 10-data) |
-| ssm | CP secrets (out-of-band) | PutParameter/DeleteParameter under `/af-cp/*` |
+| ssm | CP secrets (out-of-band); the egress gateway's readiness and drain checks (`pause.sh`, `standup.sh`, `EgressRoute=gateway` only) | PutParameter/DeleteParameter under `/af-cp/*`; `SendCommand` on `arn:aws:ssm:<region>::document/AWS-RunShellScript` and on instances tagged `af-egress-gateway=<network stack>` (`ssm:resourceTag/af-egress-gateway`), and `GetCommandInvocation` |
 | sts | account resolution in release-ecr.sh | GetCallerIdentity |
 
 ## Workspace size (CPU / memory / working disk)

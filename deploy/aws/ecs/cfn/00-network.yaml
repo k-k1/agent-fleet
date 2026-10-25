@@ -849,7 +849,9 @@ Resources:
   # An Auto Scaling group of ONE: it replaces a failed instance, and the replacement attaches
   # GatewayEni. One AZ only (the interface's). Terminate before launch on every update: two
   # instances cannot share the interface. GatewayEnabled=false (pause.sh) makes it a group of
-  # zero; the terminated instance releases GatewayEni, which keeps its address.
+  # zero; the terminated instance releases GatewayEni, which keeps its address. MaxSize stays 1
+  # either way: the rolling update requires MinInstancesInService (0) below MaxSize, and an
+  # update to a paused group can carry a new launch template (the AMI is re-resolved).
   GatewayAsg:
     Type: AWS::AutoScaling::AutoScalingGroup
     Condition: GatewayOn
@@ -858,7 +860,7 @@ Resources:
       AutoScalingRollingUpdate: { MinInstancesInService: 0, MaxBatchSize: 1 }
     Properties:
       MinSize: !If [ GatewayUp, "1", "0" ]
-      MaxSize: !If [ GatewayUp, "1", "0" ]
+      MaxSize: "1"
       DesiredCapacity: !If [ GatewayUp, "1", "0" ]
       VPCZoneIdentifier: [ !Ref PublicSubnet0 ]
       LaunchTemplate:

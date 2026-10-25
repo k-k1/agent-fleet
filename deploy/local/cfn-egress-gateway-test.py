@@ -29,7 +29,10 @@ parses. So this fails when
   - pause.sh's switch (GatewayEnabled, #2729) does more than size the group: it must never
     reach GatewayEni, its Elastic IP or the route, and it must default to on;
   - the readiness probe pause.sh / standup.sh run on the gateway (env.sh AF_GATEWAY_PROBE) no
-    longer tells the agent's mode files from the user data's closed bootstrap file.
+    longer tells an applied policy (the agent's mode header and its post-reload "policy applied"
+    line, in its current run) from a written one or the closed bootstrap file, or the drain
+    (AF_GATEWAY_DRAIN) reads offsets, logs or xattrs other than the agent's;
+  - the group's MaxSize drops below MinInstancesInService + 1 in either branch of the switch.
 
 The positive controls at the end run the same checks against broken copies.
 
@@ -169,12 +172,18 @@ def check(net, ingress, platform, doc_lines):
     asg = res.get("GatewayAsg") or {}
     ap = asg.get("Properties") or {}
     one_or_none = {"!If": ["GatewayUp", "1", "0"]}
-    if any(ap.get(k) != one_or_none for k in ("MinSize", "MaxSize", "DesiredCapacity")) \
+    if any(ap.get(k) != one_or_none for k in ("MinSize", "DesiredCapacity")) or ap.get("MaxSize") != "1" \
             or ap.get("VPCZoneIdentifier") != [{"!Ref": "PublicSubnet0"}]:
-        f.append("GatewayAsg is not one instance (zero under GatewayEnabled=false) in GatewayEni's subnet")
+        f.append("GatewayAsg is not one instance (zero under GatewayEnabled=false, MaxSize 1) in GatewayEni's subnet")
     ru = (asg.get("UpdatePolicy") or {}).get("AutoScalingRollingUpdate") or {}
     if ru.get("MinInstancesInService") != 0:
         f.append("GatewayAsg does not terminate before it launches (two instances cannot share GatewayEni)")
+    # CloudFormation requires MinInstancesInService < MaxSize, in the paused branch too.
+    maxes = [ap.get("MaxSize")]
+    if isinstance(maxes[0], dict) and "!If" in maxes[0]:
+        maxes = maxes[0]["!If"][1:]
+    if any(not str(mx).isdigit() or not ru.get("MinInstancesInService", 0) < int(mx) for mx in maxes):
+        f.append("GatewayAsg's MinInstancesInService is not below MaxSize in every branch (%s)" % maxes)
 
     # Instance role.
     role = (res.get("GatewayRole") or {}).get("Properties") or {}
@@ -312,7 +321,7 @@ def check_hardening(ud):
     return f
 
 
-def check_pause(net, env_src, policy_src):
+def check_pause(net, env_src, policy_src, agent_src="", ship_src=""):
     """pause.sh's on/off switch (GatewayEnabled) and the readiness probe it waits with."""
     f = []
     p = net.get("Parameters", {}).get("GatewayEnabled", {})
@@ -333,10 +342,10 @@ def check_pause(net, env_src, policy_src):
     for c, v in net.get("Conditions", {}).items():
         if c != "GatewayUp" and ("'GatewayUp'" in repr(v) or refs(v, "GatewayEnabled")):
             f.append("condition %s follows GatewayEnabled" % c)
-    # The probe: "ready" is the agent's mode header, which the bootstrap file must not carry.
-    m = re.search(r'^AF_GATEWAY_PROBE="([^"]*)"', env_src, re.M)
-    probe = m.group(1) if m else ""
-    hm = re.search(r"grep -q '\^([^']+)' (\S+) && echo af-gw-ready", probe)
+    # The probe: "ready" is the agent's mode header, which the bootstrap file must not carry,
+    # plus the agent's own "applied" line from its current run (written after the reload).
+    probe, drain = env_script(env_src, "PROBE"), env_script(env_src, "DRAIN")
+    hm = re.search(r"grep -q '\^([^']+)' (\S+)", probe)
     if not hm or hm.group(2) != MODE_FILE:
         f.append("env.sh AF_GATEWAY_PROBE does not read the agent's mode file %s for readiness" % MODE_FILE)
         return f
@@ -352,12 +361,33 @@ def check_pause(net, env_src, policy_src):
     boot = re.findall(r"printf '([^']*)'[\s\\]*> /var/lib/af-egress-agent/af-mode\.conf", ud)
     if not boot or any(header in b.replace("\\n", "\n") for b in boot):
         f.append("the bootstrap mode file carries the probe's header %r: a closed gateway reads as ready" % header)
+    applied = 'log.Printf("egress-agent: policy applied (%s)"'
+    idx = policy_src.find(applied)
+    if "grep -q 'egress-agent: policy applied ('" not in probe or idx < 0 \
+            or "s.reload(ctx)" not in policy_src[max(0, idx - 300):idx]:
+        f.append("env.sh AF_GATEWAY_PROBE does not look for the line egressagent logs right after a successful reload")
+    if "_SYSTEMD_INVOCATION_ID=" not in probe or "InvocationID" not in probe:
+        f.append("env.sh AF_GATEWAY_PROBE does not limit the applied line to the agent's current run")
     for unit in ("squid", "af-egress-agent"):
         if "systemctl is-active --quiet %s" % unit not in probe:
             f.append("env.sh AF_GATEWAY_PROBE does not check that %s runs" % unit)
-    if '"' in probe or "\\" in probe:
-        f.append("env.sh AF_GATEWAY_PROBE holds a quote or backslash (it is sent inside JSON)")
+    # The drain reads what the agent commits, where the agent and Squid put it.
+    gm = re.search(r'const genXattr = "([^"]+)"', ship_src)
+    lm = re.search(r'"AF_EGRESS_SQUID_LOG", "([^"]+)"', agent_src)
+    sm = re.search(r'"AF_EGRESS_AGENT_STATE", "([^"]+)"', agent_src)
+    for what, m in (("the generation xattr", gm), ("the log path", lm), ("the state path", sm)):
+        if not m or "'%s'" % m.group(1) not in drain:
+            f.append("env.sh AF_GATEWAY_DRAIN does not read egressagent's %s (%s)" % (what, m and m.group(1)))
+    if lm and "access_log stdio:%s af_egress" % lm.group(1) not in ud:
+        f.append("Squid's access_log in the user data is not where the drain reads it")
+    if "systemctl stop squid" not in drain or "systemctl start squid" not in probe:
+        f.append("the drain does not stop Squid (open tunnels are logged only when they close), or the probe never starts it again")
     return f
+
+
+def env_script(env_src, name):
+    m = re.search(r"^AF_GATEWAY_%s=\"\$\(cat <<'SH'\n(.*?)\nSH\n\)\"" % name, env_src, re.M | re.S)
+    return m.group(1) if m else ""
 
 
 def refs(node, name):
@@ -375,10 +405,14 @@ def main():
             env_src = fh.read()
         with open(POLICY) as fh:
             policy_src = fh.read()
+        with open(os.path.join(os.path.dirname(POLICY), "agent.go")) as fh:
+            agent_src = fh.read()
+        with open(os.path.join(os.path.dirname(POLICY), "ship.go")) as fh:
+            ship_src = fh.read()
     except (OSError, KeyError, ValueError, IndexError, yaml.YAMLError) as e:
         print("cfn-egress-gateway-test: cannot run: %s" % e, file=sys.stderr)
         return 2
-    fails = check(net, ingress, platform, doc_lines) + check_pause(net, env_src, policy_src)
+    fails = check(net, ingress, platform, doc_lines) + check_pause(net, env_src, policy_src, agent_src, ship_src)
     for x in fails:
         print("FAIL  " + x)
     failed = bool(fails)
@@ -433,6 +467,7 @@ def main():
         ("source/dest check on", m(lambda t: r(t)["GatewayEni"]["Properties"].update(SourceDestCheck=True))),
         ("IMDSv1 allowed", m(lambda t: r(t)["GatewayLaunchTemplate"]["Properties"]["LaunchTemplateData"]["MetadataOptions"].update(HttpTokens="optional"))),
         ("two instances", m(lambda t: r(t)["GatewayAsg"]["Properties"].update(MaxSize="2"))),
+        ("paused group with MaxSize 0 under the rolling update", m(lambda t: r(t)["GatewayAsg"]["Properties"].update(MaxSize={"!If": ["GatewayUp", "1", "0"]}))),
         ("group stays at one when switched off", m(lambda t: r(t)["GatewayAsg"]["Properties"].update(DesiredCapacity="1"))),
         ("group in another subnet", m(lambda t: r(t)["GatewayAsg"]["Properties"].update(VPCZoneIdentifier=[{"!Ref": "PublicSubnet1"}]))),
         ("launch before terminate", m(lambda t: r(t)["GatewayAsg"]["UpdatePolicy"]["AutoScalingRollingUpdate"].update(MinInstancesInService=1))),
@@ -492,13 +527,19 @@ def main():
         ("Elastic IP behind a combined condition", pause_ctl(eip_paused)),
         ("route follows the switch", pause_ctl(route_paused)),
         ("readiness from a file the bootstrap writes too", pause_ctl(fn_env=lambda e: e.replace("'^# mode: '", "'^# '"))),
-        ("readiness from another file", pause_ctl(fn_env=lambda e: e.replace("/var/lib/af-egress-agent/af-mode.conf && echo af-gw-ready", "/etc/squid/af-mode.conf && echo af-gw-ready"))),
+        ("readiness from another file", pause_ctl(fn_env=lambda e: e.replace("/var/lib/af-egress-agent/af-mode.conf &&", "/etc/squid/af-mode.conf &&"))),
+        ("written taken for applied", pause_ctl(fn_env=lambda e: e.replace(" &&\n   journalctl -q -o cat _SYSTEMD_INVOCATION_ID=\"$inv\" | grep -q 'egress-agent: policy applied ('", ""))),
+        ("an earlier run's applied line counts", pause_ctl(fn_env=lambda e: e.replace(' _SYSTEMD_INVOCATION_ID="$inv"', " -u af-egress-agent"))),
+        ("agent logs applied before the reload", pause_ctl(fn_policy=lambda p: p.replace("s.reload(ctx)", "s.reloadLater(ctx)"))),
+        ("drain reads another state file", pause_ctl(fn_env=lambda e: e.replace("'/var/lib/af-egress-agent/state.json'", "'/tmp/state.json'"))),
+        ("drain ignores the generation xattr", pause_ctl(fn_env=lambda e: e.replace("'user.af-egress.gen'", "'user.gen'"))),
+        ("drain leaves Squid running", pause_ctl(fn_env=lambda e: e.replace("systemctl stop squid", "true"))),
         ("agent's header renamed", pause_ctl(fn_policy=lambda p: p.replace('"# mode: enforce\\n"', '"# enforce\\n"'))),
         ("bootstrap looks ready", pause_ctl(lambda t: set_ud(t, lambda u: u.replace("# bootstrap: closed until the first policy", "# mode: bootstrap")))),
         ("agent not checked", pause_ctl(fn_env=lambda e: e.replace("systemctl is-active --quiet af-egress-agent", "true"))),
     ]
     for label, (n, e, p) in pause_controls:
-        if check_pause(n, e, p):
+        if check_pause(n, e, p, agent_src, ship_src):
             print("ok    control: %s fails" % label)
         else:
             print("FAIL  control: %s passed - the check cannot see it" % label)
