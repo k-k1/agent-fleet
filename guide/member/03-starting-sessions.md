@@ -216,7 +216,9 @@ five-minute refreshes, and a stale copy of them is worse than none.
   disabled, with the reason beside it, while GitHub does not accept a merge (blocked by required reviews or
   checks, behind its base, conflicts, failing checks, a draft, or not decided yet), and while the
   workspace is stopped (the GitHub credentials live in it; it is never started for this). It is not drawn
-  at all when the connection cannot write to the repository. **Bitbucket pull requests have no Merge
+  at all unless the connection is known to be able to merge: a classic token (what the GitHub device-flow
+  login gives) with the `repo` scope. A fine-grained token or a GitHub App connection does not report what
+  it may do, so it gets no Merge button; merge on GitHub. **Bitbucket pull requests have no Merge
   button**, and neither does any agent: merging is something you press. The branch is not deleted
   afterwards.
 - **Starting a session** is one fold away, and here **Start is a review button**: a new worktree

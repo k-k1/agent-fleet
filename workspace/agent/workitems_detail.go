@@ -133,8 +133,9 @@ type workItemDetailOut struct {
 	// no stored per-repository preference to read.
 	DefaultMergeMethod string `json:"defaultMergeMethod"`
 	// CanMerge is true only when the repository reports push access for the connection's user
-	// and, for a classic token, its scopes include what a merge needs. Not a guarantee: a GitHub
-	// App user token's own permissions are not visible, so GitHub may still refuse on press.
+	// AND the token is a classic one whose scopes include what a merge needs. A token that does
+	// not report scopes (fine-grained, GitHub App user) is unknown and therefore false: the merge
+	// needs Contents: write of it, which cannot be read before the press.
 	CanMerge bool `json:"canMerge"`
 	// private is the repository's visibility, kept only to pick the scope a classic token needs.
 	private bool
@@ -184,14 +185,17 @@ func applyGitHubRepoMerge(out *workItemDetailOut, repoBody []byte) {
 	}
 }
 
-// githubScopesCanMerge checks a classic token's scopes against what a merge writes. Only a
-// token that reports scopes at all is judged: a fine-grained token or a GitHub App user token
-// sends no X-OAuth-Scopes, and its own permissions cannot be read, so it is given the benefit
-// of repository permissions alone (see CanMerge).
+// githubScopesCanMerge says whether the token is known to be able to write to the repository.
+// Only a classic token answers that: it reports its scopes in X-OAuth-Scopes, and `repo` (or
+// `public_repo` on a public repository) is what a merge needs. A fine-grained token or a GitHub
+// App user token sends no such header and its granted permissions cannot be read back, while the
+// merge endpoint needs Contents: write of it — and the repository's `permissions` describe the
+// user, not the token. So no header is "unknown", and unknown is false: the button is withheld
+// rather than drawn for a press that would end in a 403.
 func githubScopesCanMerge(h http.Header, private bool) bool {
 	vals, reported := h["X-Oauth-Scopes"]
 	if !reported {
-		return true
+		return false
 	}
 	for _, v := range vals {
 		for _, sc := range strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' }) {

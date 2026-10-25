@@ -217,8 +217,9 @@ export interface WorkItemDetail {
   mergeMethods: string[];
   /** The method the dialog starts on ("" when none is allowed). */
   defaultMergeMethod: string;
-  /** The Agent's word that this connection looks able to merge here (repository permission and,
-   * for a classic token, its scopes). Absent or false: no Merge button is drawn. */
+  /** The Agent's word that this connection is known to be able to merge here (push access, and a
+   * classic token's `repo` scope). Absent or false — including every token that reports no
+   * scopes — means no Merge button is drawn. */
   canMerge: boolean;
 }
 

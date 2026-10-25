@@ -1366,7 +1366,7 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
     expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_why_draft"));
   });
 
-  it("draws no Merge button when the connection looks unable to merge", async () => {
+  it("draws no Merge button when the connection is not known to be able to merge", async () => {
     workItemDetail.mockResolvedValue({ ...mergeable, canMerge: false });
     const modal = await open();
     expect(mergeBtn(modal)).toBeUndefined();

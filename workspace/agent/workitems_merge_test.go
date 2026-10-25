@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin/memberorigintest"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -45,16 +47,34 @@ func seedGitHubToken(t *testing.T) {
 	})
 }
 
-func postMerge(body string) *httptest.ResponseRecorder {
+// mergeReq is the request the CP relays: JSON, AGENT_TOKEN as the bearer.
+func mergeReq(body string) *http.Request {
+	r := httptest.NewRequest("POST", "/work-items/merge", strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer agent-token")
+	r.Header.Set("Content-Type", "application/json")
+	return r
+}
+
+// serveMerge sends r through the real route table.
+func serveMerge(r *http.Request) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
-	handleWorkItemsMerge(w, httptest.NewRequest("POST", "/work-items/merge", strings.NewReader(body)))
+	buildMux().ServeHTTP(w, r)
 	return w
+}
+
+// postMerge is the CP's relay of a member's press: a valid mark over the exact body.
+func postMerge(t *testing.T, s *memberorigintest.Signer, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := mergeReq(body)
+	s.Sign(r, []byte(body))
+	return serveMerge(r)
 }
 
 func TestWorkItemsMergeSendsDisplayedSHAAndMethod(t *testing.T) {
 	seedGitHubToken(t)
+	signer := memberorigintest.Install(t)
 	calls := fakeGitHubMerge(t, 200, `{"sha":"feedface","merged":true,"message":"Pull Request successfully merged"}`)
-	w := postMerge(`{"provider":"github","key":"acme/web#12","sha":"` + mergeSHA + `","method":"squash"}`)
+	w := postMerge(t, signer, `{"provider":"github","key":"acme/web#12","sha":"`+mergeSHA+`","method":"squash"}`)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"merged":true`) {
 		t.Fatalf("got %d %s", w.Code, w.Body.String())
 	}
@@ -82,8 +102,9 @@ func TestWorkItemsMergeSendsDisplayedSHAAndMethod(t *testing.T) {
 // A moved head is the case the SHA exists for: GitHub answers 409 and nothing is merged.
 func TestWorkItemsMergeRefusesStaleHead(t *testing.T) {
 	seedGitHubToken(t)
+	signer := memberorigintest.Install(t)
 	fakeGitHubMerge(t, 409, `{"message":"Head branch was modified. Review and try the merge again."}`)
-	w := postMerge(`{"key":"acme/web#12","sha":"` + mergeSHA + `","method":"merge"}`)
+	w := postMerge(t, signer, `{"key":"acme/web#12","sha":"`+mergeSHA+`","method":"merge"}`)
 	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"head_changed"`) {
 		t.Fatalf("got %d %s, want 409 head_changed", w.Code, w.Body.String())
 	}
@@ -93,8 +114,9 @@ func TestWorkItemsMergeRefusesStaleHead(t *testing.T) {
 // forbids); rewriting it would hide which of them it was.
 func TestWorkItemsMergeSurfacesNotMergeable(t *testing.T) {
 	seedGitHubToken(t)
+	signer := memberorigintest.Install(t)
 	fakeGitHubMerge(t, 405, `{"message":"Required status check \"ci\" is expected."}`)
-	w := postMerge(`{"key":"acme/web#12","sha":"` + mergeSHA + `","method":"rebase"}`)
+	w := postMerge(t, signer, `{"key":"acme/web#12","sha":"`+mergeSHA+`","method":"rebase"}`)
 	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"not_mergeable"`) ||
 		!strings.Contains(w.Body.String(), "Required status check") {
 		t.Fatalf("got %d %s", w.Code, w.Body.String())
@@ -103,8 +125,9 @@ func TestWorkItemsMergeSurfacesNotMergeable(t *testing.T) {
 
 func TestWorkItemsMergePermissionRefusalIsAProviderError(t *testing.T) {
 	seedGitHubToken(t)
+	signer := memberorigintest.Install(t)
 	fakeGitHubMerge(t, 403, `{"message":"Resource not accessible by integration"}`)
-	w := postMerge(`{"key":"acme/web#12","sha":"` + mergeSHA + `","method":"merge"}`)
+	w := postMerge(t, signer, `{"key":"acme/web#12","sha":"`+mergeSHA+`","method":"merge"}`)
 	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "provider_error") {
 		t.Fatalf("got %d %s", w.Code, w.Body.String())
 	}
@@ -116,6 +139,7 @@ func TestWorkItemsMergePermissionRefusalIsAProviderError(t *testing.T) {
 // Everything that can be refused locally is refused before any network call.
 func TestWorkItemsMergeValidation(t *testing.T) {
 	seedGitHubToken(t)
+	signer := memberorigintest.Install(t)
 	calls := fakeGitHubMerge(t, 200, `{"merged":true}`)
 	for name, body := range map[string]string{
 		"bitbucket":    `{"provider":"bitbucket","key":"ws/repo#1","sha":"` + mergeSHA + `","method":"merge"}`,
@@ -128,7 +152,7 @@ func TestWorkItemsMergeValidation(t *testing.T) {
 		"not json":     `nope`,
 		"path escapes": `{"key":"acme/../web#1","sha":"` + mergeSHA + `","method":"merge"}`,
 	} {
-		if w := postMerge(body); w.Code != http.StatusBadRequest {
+		if w := postMerge(t, signer, body); w.Code != http.StatusBadRequest {
 			t.Errorf("%s: got %d %s, want 400", name, w.Code, w.Body.String())
 		}
 	}
@@ -139,13 +163,96 @@ func TestWorkItemsMergeValidation(t *testing.T) {
 
 func TestWorkItemsMergeNeedsAConnection(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	signer := memberorigintest.Install(t)
 	calls := fakeGitHubMerge(t, 200, `{"merged":true}`)
-	w := postMerge(`{"key":"acme/web#1","sha":"` + mergeSHA + `","method":"merge"}`)
+	w := postMerge(t, signer, `{"key":"acme/web#1","sha":"`+mergeSHA+`","method":"merge"}`)
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "not_connected") {
 		t.Fatalf("got %d %s", w.Code, w.Body.String())
 	}
 	if len(*calls) != 0 {
 		t.Errorf("GitHub was reached without a token: %+v", *calls)
+	}
+}
+
+// --- who may call it ---------------------------------------------------------
+
+// AGENT_TOKEN is in every session's shell, so a session can make the HTTP call itself. The route
+// takes only a request the CP marked as this workspace's own member's press; everything else is
+// refused before the provider is reached.
+func TestWorkItemsMergeRequiresTheMemberOriginMark(t *testing.T) {
+	seedGitHubToken(t)
+	forger := memberorigintest.Install(t) // a key pair the Agent stops trusting once s is installed
+	s := memberorigintest.Install(t)
+	calls := fakeGitHubMerge(t, 200, `{"sha":"f","merged":true}`)
+	body := `{"provider":"github","key":"acme/web#12","sha":"` + mergeSHA + `","method":"merge"}`
+	want := func(name string, w *httptest.ResponseRecorder, code string) {
+		t.Helper()
+		if w.Code < 400 || !strings.Contains(w.Body.String(), code) {
+			t.Errorf("%s: %d %s, want a refusal with %q", name, w.Code, w.Body.String(), code)
+		}
+	}
+
+	// AGENT_TOKEN alone, with and without the relay hint any caller can set.
+	want("token only", serveMerge(mergeReq(body)), memberorigin.CodeRequired)
+	hint := mergeReq(body)
+	hint.Header.Set("X-AF-Relay", "cp")
+	want("relay hint", serveMerge(hint), memberorigin.CodeRequired)
+	// A mark signed with a key the Agent does not trust.
+	forged := mergeReq(body)
+	forged.Header.Set(memberorigin.Header, forger.Mark(memberorigintest.Claims(forged, []byte(body))))
+	want("forged", serveMerge(forged), memberorigin.CodeInvalid)
+	// A real mark over a different body (the sha swapped after signing).
+	tampered := mergeReq(strings.Replace(body, mergeSHA, strings.Repeat("a", 40), 1))
+	tampered.Header.Set(memberorigin.Header, s.Mark(memberorigintest.Claims(mergeReq(body), []byte(body))))
+	want("tampered body", serveMerge(tampered), memberorigin.CodeInvalid)
+	// A real mark for another workspace / another member.
+	for name, edit := range map[string]func(*memberorigin.Claims){
+		"other workspace":  func(c *memberorigin.Claims) { c.Workspace = "ws-someone-else" },
+		"other membership": func(c *memberorigin.Claims) { c.Membership = "mb-someone-else" },
+		"other path":       func(c *memberorigin.Claims) { c.Path = "/work-items/comment" },
+	} {
+		r := mergeReq(body)
+		c := memberorigintest.Claims(r, []byte(body))
+		edit(&c)
+		r.Header.Set(memberorigin.Header, s.Mark(c))
+		if w := serveMerge(r); w.Code < 400 {
+			t.Errorf("%s: %d %s", name, w.Code, w.Body.String())
+		}
+	}
+	// text/plain is what a cross-origin page sends without a preflight.
+	plain := mergeReq(body)
+	plain.Header.Set("Content-Type", "text/plain")
+	s.Sign(plain, []byte(body))
+	if w := serveMerge(plain); w.Code != http.StatusUnsupportedMediaType {
+		t.Errorf("text/plain: %d %s", w.Code, w.Body.String())
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("GitHub was reached by a request that should have been refused: %+v", *calls)
+	}
+
+	// The CP's own relay gets through, once; the same mark replayed does not.
+	ok := mergeReq(body)
+	mark := s.Mark(memberorigintest.Claims(ok, []byte(body)))
+	ok.Header.Set(memberorigin.Header, mark)
+	if w := serveMerge(ok); w.Code != http.StatusOK || len(*calls) != 1 {
+		t.Fatalf("signed: %d %s (calls %d)", w.Code, w.Body.String(), len(*calls))
+	}
+	replay := mergeReq(body)
+	replay.Header.Set(memberorigin.Header, mark)
+	if w := serveMerge(replay); w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "replayed") || len(*calls) != 1 {
+		t.Fatalf("replayed: %d %s (calls %d)", w.Code, w.Body.String(), len(*calls))
+	}
+}
+
+// A handler registered without the wrapper still refuses.
+func TestWorkItemsMergeHandlerRefusesWithoutAMark(t *testing.T) {
+	seedGitHubToken(t)
+	memberorigintest.Install(t)
+	calls := fakeGitHubMerge(t, 200, `{"merged":true}`)
+	w := httptest.NewRecorder()
+	handleWorkItemsMerge(w, mergeReq(`{"key":"acme/web#12","sha":"`+mergeSHA+`","method":"merge"}`))
+	if w.Code != http.StatusForbidden || len(*calls) != 0 {
+		t.Fatalf("%d %s (calls %d)", w.Code, w.Body.String(), len(*calls))
 	}
 }
 
@@ -208,7 +315,7 @@ func TestGithubScopesCanMerge(t *testing.T) {
 		private bool
 		want    bool
 	}{
-		{"fine-grained (no header)", h("", false), true, true},
+		{"fine-grained / App token (no header)", h("", false), true, false},
 		{"repo scope", h("repo, workflow", true), true, true},
 		{"read:user only", h("read:user", true), false, false},
 		{"empty scopes", h("", true), false, false},
@@ -223,9 +330,33 @@ func TestGithubScopesCanMerge(t *testing.T) {
 
 // When the pull request object carries no merge settings the repository is read once more; a
 // failure there still leaves a usable panel with no button.
+// fakeGitHubScopes is fakeGitHub whose every answer carries X-OAuth-Scopes: a classic token.
+// scopes == nil sends no such header, which is what a fine-grained or GitHub App token looks like.
+func fakeGitHubScopes(t *testing.T, scopes *string, routes map[string]string) *[]string {
+	t.Helper()
+	var hits []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits = append(hits, r.URL.Path)
+		if scopes != nil {
+			w.Header().Set("X-OAuth-Scopes", *scopes)
+		}
+		body, ok := routes[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	old := githubAPIBase
+	githubAPIBase = srv.URL
+	t.Cleanup(func() { githubAPIBase = old; srv.Close() })
+	return &hits
+}
+
 func TestGitHubPullRequestDetailFallsBackToRepo(t *testing.T) {
 	pr := string(mergePR(``))
-	hits := fakeGitHub(t, map[string]string{
+	classic := "repo, workflow"
+	hits := fakeGitHubScopes(t, &classic, map[string]string{
 		"/repos/acme/web/pulls/3": pr,
 		"/repos/acme/web":         `{"private":false,"allow_merge_commit":true,"allow_squash_merge":false,"allow_rebase_merge":false,"permissions":{"push":true}}`,
 	})
@@ -236,7 +367,7 @@ func TestGitHubPullRequestDetailFallsBackToRepo(t *testing.T) {
 	if strings.Join(out.MergeMethods, ",") != "merge" || !out.CanMerge {
 		t.Errorf("fallback not applied: %v %v (hits %v)", out.MergeMethods, out.CanMerge, *hits)
 	}
-	fakeGitHub(t, map[string]string{"/repos/acme/web/pulls/3": pr})
+	fakeGitHubScopes(t, &classic, map[string]string{"/repos/acme/web/pulls/3": pr})
 	out, err = githubPullRequestDetail("tok", "acme/web#3")
 	if err != nil {
 		t.Fatalf("a failed repository read must not fail the panel: %v", err)
@@ -249,7 +380,8 @@ func TestGitHubPullRequestDetailFallsBackToRepo(t *testing.T) {
 // The embedded repository may carry the merge settings but no permissions block; the repository
 // read then decides, so a writer is not left without the button.
 func TestGitHubPullRequestDetailReadsPermissionsWhenEmbeddedOnesAreMissing(t *testing.T) {
-	hits := fakeGitHub(t, map[string]string{
+	classic := "repo"
+	hits := fakeGitHubScopes(t, &classic, map[string]string{
 		"/repos/acme/web/pulls/3": string(mergePR(`,"allow_merge_commit":true`)),
 		"/repos/acme/web":         `{"allow_merge_commit":true,"permissions":{"push":true}}`,
 	})
@@ -283,5 +415,23 @@ func TestGitHubPullRequestDetailChecksTokenScopes(t *testing.T) {
 	}
 	if out.CanMerge {
 		t.Error("a token without the repo scope drew a Merge button")
+	}
+}
+
+// A token that reports no scopes (fine-grained, GitHub App user) may push as a user and still lack
+// the Contents: write the merge needs, and that cannot be read back: unknown is no button.
+func TestGitHubPullRequestDetailWithholdsMergeFromTokensThatReportNoScopes(t *testing.T) {
+	fakeGitHubScopes(t, nil, map[string]string{
+		"/repos/acme/web/pulls/3": string(mergePR(`,"private":true,"allow_merge_commit":true,"permissions":{"push":true}`)),
+	})
+	out, err := githubPullRequestDetail("tok", "acme/web#3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.CanMerge {
+		t.Error("a token that does not report its scopes drew a Merge button")
+	}
+	if len(out.MergeMethods) == 0 || out.HeadSHA == "" {
+		t.Errorf("the rest of the panel must be unaffected: %+v", out)
 	}
 }

@@ -12,15 +12,17 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // Merging a GitHub pull request from the detail modal (ADR 0061, 2026-10-25 note on #2632).
 //
-// The second write af performs against a tracker, and like the report comment it is reachable
-// only from a human pressing a confirm button in the Console, through the Control Plane. There is
-// deliberately no MCP tool for it and no automatic trigger. GitHub only: Bitbucket stays
-// read-only (decision 19) and a Jira key has nothing to merge.
+// The second write af performs against a tracker. It is reachable only from a human pressing a
+// confirm button in the Console, through the Control Plane, and the Agent enforces that itself:
+// every session holds AGENT_TOKEN, so the route takes only a member-origin mark the CP signed for
+// this workspace's own member (ADR 0113). There is also no MCP tool and no automatic trigger.
+// GitHub only: Bitbucket stays read-only (decision 19) and a Jira key has nothing to merge.
 
 // workItemMergeMethods are the three values GitHub accepts for `merge_method`.
 var workItemMergeMethods = map[string]bool{"merge": true, "squash": true, "rebase": true}
@@ -39,6 +41,9 @@ type githubMergeError struct {
 
 func (e *githubMergeError) Error() string { return e.msg }
 
+// workItemMergeMaxRequest bounds the body memberorigin.Require buffers: four short strings.
+const workItemMergeMaxRequest = 4 << 10
+
 // workItemMergeOut is the success body. The Console counts only a literal merged:true as a merge.
 type workItemMergeOut struct {
 	Merged bool   `json:"merged"`
@@ -47,6 +52,11 @@ type workItemMergeOut struct {
 
 // handleWorkItemsMerge — POST /work-items/merge {provider, key, sha, method}.
 func handleWorkItemsMerge(w http.ResponseWriter, r *http.Request) {
+	// Registered behind memberorigin.Require; refusing here as well keeps a route that is ever
+	// registered without the wrapper closed rather than open.
+	if !memberorigin.RefuseUnverified(w, r) {
+		return
+	}
 	var in struct {
 		Provider string `json:"provider"`
 		Key      string `json:"key"`

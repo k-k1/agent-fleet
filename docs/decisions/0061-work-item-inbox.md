@@ -539,7 +539,11 @@ from widening what af does on its own:
 - **Never reachable by agents.** No MCP tool is created and nothing triggers it (no "session finished →
   merge"); the only caller is the Console's confirm button, through the Control Plane's relay to the Agent.
   This is the same stance as 6.1. A pull request's text is written by third parties, and anything that lets
-  that text steer a merge would close the loop decision 6 keeps open.
+  that text steer a merge would close the loop decision 6 keeps open. "No MCP tool" alone does not keep a
+  session out, because every session's shell holds AGENT_TOKEN and can call the Agent's HTTP route: so the
+  Agent takes the route only with a member-origin mark (ADR 0113) that the Control Plane signs over the exact
+  body for the workspace's own member, and the Control Plane signs only after the Console-origin check
+  (JSON body, same-origin `Sec-Fetch-Site` / `Origin`), which a same-site page's no-cors POST fails.
 - **GitHub only.** Bitbucket stays as decision 19 and its 2026-10-25 note left it: no merge, and no Merge button
   on a Bitbucket row. Jira has no pull request to merge.
 - **Only when GitHub says it would succeed.** The live read now carries `mergeable_state`; the button is
@@ -550,10 +554,15 @@ from widening what af does on its own:
 - **Only a method the repository allows.** The default is the first of merge, squash, rebase that the repository
   allows: GitHub exposes no stored preference to read.
 - **A stopped Workspace answers 409** like the live read, and is not started for it.
-- **The button is drawn only when the token looks able to merge**: the repository's `permissions` for the
-  token's user, and for a classic token the `X-OAuth-Scopes` header. Not measured against a real token: whether
-  a GitHub App user token that lacks the *Pull requests: write* permission is caught before the press (GitHub
-  reports the user's role, not the app's permissions); it then fails on press with GitHub's own refusal.
+- **The button is drawn only when the token is known to be able to merge**: the repository's `permissions`
+  must show push access for the connection's user, and the token must report its scopes in `X-OAuth-Scopes`
+  with `repo` (`public_repo` on a public repository), which is what a classic token (the device flow's
+  `repo workflow`) does. A fine-grained token or a GitHub App user token reports no scopes, and the
+  *Contents: write* permission this endpoint needs of it cannot be read back before the press, so it is
+  treated as unknown and the button is withheld. This departs from "draw it for every connection that can
+  merge": the safe direction was chosen over a button that ends in a 403. Not measured against a real token:
+  the `X-OAuth-Scopes` header on the pull request read, and the shape of `base.repo.permissions` in that
+  payload (a repository read settles it when the payload lacks it).
 - Branch deletion after the merge stays out of scope.
 
-The decisions above stand as written.
+The decisions above stand as written. Follow-ups: #2752, #2753.
