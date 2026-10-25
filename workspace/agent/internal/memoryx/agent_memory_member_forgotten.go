@@ -7,6 +7,8 @@ package memoryx
 // the switch; a restore still goes through the revert route with its own checks.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"os"
@@ -106,21 +108,45 @@ func agentMemTombTie(rel string) string {
 	return "1" + rel
 }
 
-// agentMemTombCursor names a position in that order: the time of the newest change and the path.
+// agentMemTombCursor names a position in that order: the time of the newest change and a digest of
+// the path. The path itself never goes in: the cursor may name a candidate that was withheld (a
+// token-shaped project id, or text that fails the scan), and the answer must not carry either.
 func agentMemTombCursor(c agentMemTombCand) string {
-	return c.at.UTC().Format(time.RFC3339Nano) + "|" + c.rel
+	return c.at.UTC().Format(time.RFC3339Nano) + "|" + agentMemTombDigest(c.rel)
 }
 
-func agentMemParseTombCursor(s string) (agentMemTombCand, bool) {
-	ts, rel, ok := strings.Cut(s, "|")
-	if !ok || rel == "" || len(s) > 512 {
-		return agentMemTombCand{}, false
+func agentMemTombDigest(rel string) string {
+	sum := sha256.Sum256([]byte(rel))
+	return hex.EncodeToString(sum[:16])
+}
+
+type agentMemTombPos struct {
+	at     time.Time
+	digest string
+}
+
+func agentMemParseTombCursor(s string) (agentMemTombPos, bool) {
+	ts, dig, ok := strings.Cut(s, "|")
+	if _, err := hex.DecodeString(dig); !ok || len(dig) != 32 || err != nil {
+		return agentMemTombPos{}, false
 	}
 	at, err := time.Parse(time.RFC3339Nano, ts)
 	if err != nil {
-		return agentMemTombCand{}, false
+		return agentMemTombPos{}, false
 	}
-	return agentMemTombCand{at: at, rel: rel}, true
+	return agentMemTombPos{at: at, digest: dig}, true
+}
+
+// agentMemTombResume is the index of the first candidate after the cursor. The cursor's own
+// candidate is found by time and digest; when it is gone (its tombstone was removed since), the
+// list resumes at the first candidate with an older time, which can skip a sibling of the same time.
+func agentMemTombResume(found []agentMemTombCand, p agentMemTombPos) int {
+	for i, c := range found {
+		if c.at.Equal(p.at) && agentMemTombDigest(c.rel) == p.digest {
+			return i + 1
+		}
+	}
+	return sort.Search(len(found), func(i int) bool { return found[i].at.Before(p.at) })
 }
 
 // agentMemNewestCommits returns, for each wanted "af/..." path, the newest agent-memory commit
@@ -168,7 +194,7 @@ func agentMemNewestCommits(want map[string]bool) (map[string]agentMemTombCand, e
 // moves to the front instead.
 func agentMemMemberForgotten(scope, project, before string) (agentMemForgottenWire, error) {
 	out := agentMemForgottenWire{Forgotten: []agentMemChangeView{}, Projects: []*agentMemProject{}}
-	var cursor *agentMemTombCand
+	var cursor *agentMemTombPos
 	if before != "" {
 		c, ok := agentMemParseTombCursor(before)
 		if !ok {
@@ -229,8 +255,7 @@ func agentMemMemberForgotten(scope, project, before string) (agentMemForgottenWi
 	}
 	sort.SliceStable(found, func(i, j int) bool { return agentMemTombBefore(found[i], found[j]) })
 	if cursor != nil {
-		k := sort.Search(len(found), func(i int) bool { return agentMemTombBefore(*cursor, found[i]) })
-		found = found[k:]
+		found = found[agentMemTombResume(found, *cursor):]
 	}
 
 	projects := map[string]bool{}

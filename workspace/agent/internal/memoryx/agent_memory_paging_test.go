@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -141,9 +142,49 @@ func TestAgentMemoryMemberForgottenPaging(t *testing.T) {
 
 func TestAgentMemoryMemberForgottenPagingRefusesABadCursor(t *testing.T) {
 	_, _, _ = agentMemTestEnv(t)
-	for _, b := range []string{"x", "2026-01-01|", "nope|user/a.md"} {
+	for _, b := range []string{"x", "2026-01-01|", "nope|user/a.md", "2026-01-01T00:00:00Z|user/a.md"} {
 		if code, _, _ := forgottenGet(t, "?before="+b); code != http.StatusBadRequest {
 			t.Fatalf("%q: %d", b, code)
 		}
+	}
+}
+
+// The cursor never carries a path: a candidate withheld at the judging-budget boundary (a
+// token-shaped project id, or a name whose text fails the scan) must not leak through `next`, and
+// the next page still advances past it, even when every row of a page is withheld.
+func TestAgentMemoryMemberForgottenCursorLeaksNoWithheldPath(t *testing.T) {
+	secretID := "ghp_" + strings.Repeat("q7zx", 9)
+	if agentMemCleanText(secretID) || !agentMemValidProjectID(secretID) {
+		t.Fatalf("fixture: %q", secretID)
+	}
+	_, _, _ = agentMemTestEnv(t)
+	old := agentMemTombJudgeMax
+	agentMemTombJudgeMax = 1
+	t.Cleanup(func() { agentMemTombJudgeMax = old })
+	if _, err := agentMemCheckDir("projects/"+secretID, true); err != nil {
+		t.Fatal(err)
+	}
+	forgeForgotten(t, "projects/"+secretID, "hidden", "2026-03-01T00:00:00Z", false)
+	forgeForgotten(t, "user", "leaky", "2026-02-01T00:00:00Z", true) // withheld by its text
+	forgeForgotten(t, "user", "older", "2026-01-01T00:00:00Z", false)
+	var got []string
+	next, pages := "", 0
+	for {
+		q := ""
+		if next != "" {
+			q = "?before=" + next
+		}
+		code, w, body := forgottenGet(t, q)
+		if code != http.StatusOK || strings.Contains(body, secretID) || strings.Contains(body, "leaky") && w.Next != "" && strings.Contains(w.Next, "leaky") {
+			t.Fatalf("page %d: %d %s", pages, code, body)
+		}
+		got = append(got, namesOf(w))
+		if next = w.Next; next == "" || pages > 5 {
+			break
+		}
+		pages++
+	}
+	if strings.Join(got, "|") != "||older" {
+		t.Fatalf("pages %v: a page of only withheld rows must still advance", got)
 	}
 }
