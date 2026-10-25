@@ -222,7 +222,7 @@ func (errHead) HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Opti
 }
 
 func TestNewEgressArchiveSinkRejectsBadURLs(t *testing.T) {
-	for _, u := range []string{"gs://b/p", "s3:///p", "file://host/x", "file:///", "/plain/path", "ftp://x"} {
+	for _, u := range []string{"gs:///p", "s3:///p", "file://host/x", "file:///", "/plain/path", "ftp://x"} {
 		if u == "file:///" {
 			continue // the filesystem root is absolute, so it parses; operators choose their directory
 		}
