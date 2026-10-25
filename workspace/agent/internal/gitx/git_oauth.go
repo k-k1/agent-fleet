@@ -54,6 +54,8 @@ type bitbucketStoreReq struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int64  `json:"expires_in"`
+	// Scopes is what Bitbucket granted, forwarded by the CP. An older CP sends none.
+	Scopes string `json:"scopes,omitempty"`
 	// Key/Secret are the tenant's OAuth app. The CP stopped sending them in docs/log/71
 	// §71.8 — the refresh grant runs there now — and they are accepted-and-ignored
 	// rather than removed so an older CP talking to this Agent still connects instead
@@ -84,7 +86,7 @@ func HandleBitbucketStore(w http.ResponseWriter, r *http.Request) {
 	}
 	c := secrets.BitbucketCreds{
 		AccessToken: req.AccessToken, RefreshToken: req.RefreshToken,
-		Expiry: time.Now().Unix() + exp,
+		Expiry: time.Now().Unix() + exp, Scopes: strings.TrimSpace(req.Scopes),
 	}
 	if err := writeBitbucketCreds(c); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
@@ -281,6 +283,7 @@ func refreshBitbucketViaCP(b secrets.CPBridge, c secrets.BitbucketCreds) (secret
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int64  `json:"expires_in"`
+		Scopes       string `json:"scopes"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return c, err
@@ -291,6 +294,9 @@ func refreshBitbucketViaCP(b secrets.CPBridge, c secrets.BitbucketCreds) (secret
 	c.AccessToken = out.AccessToken
 	if out.RefreshToken != "" {
 		c.RefreshToken = out.RefreshToken
+	}
+	if sc := strings.TrimSpace(out.Scopes); sc != "" {
+		c.Scopes = sc // a refresh that names no scopes keeps what was recorded
 	}
 	exp := out.ExpiresIn
 	if exp == 0 {
@@ -343,6 +349,7 @@ func refreshBitbucketDirect(c secrets.BitbucketCreds) (secrets.BitbucketCreds, e
 			AccessToken  string `json:"access_token"`
 			RefreshToken string `json:"refresh_token"`
 			ExpiresIn    int64  `json:"expires_in"`
+			Scopes       string `json:"scopes"`
 		}
 		derr := json.NewDecoder(resp.Body).Decode(&out)
 		resp.Body.Close()
@@ -355,6 +362,9 @@ func refreshBitbucketDirect(c secrets.BitbucketCreds) (secrets.BitbucketCreds, e
 		c.AccessToken = out.AccessToken
 		if out.RefreshToken != "" {
 			c.RefreshToken = out.RefreshToken
+		}
+		if sc := strings.TrimSpace(out.Scopes); sc != "" {
+			c.Scopes = sc
 		}
 		exp := out.ExpiresIn
 		if exp == 0 {

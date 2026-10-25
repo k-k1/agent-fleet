@@ -177,6 +177,7 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int64  `json:"expires_in"`
+		Scopes       string `json:"scopes"` // space-separated; the Agent records it for the work-item comment gate
 		Error        string `json:"error"`
 		ErrorDesc    string `json:"error_description"`
 	}
@@ -194,7 +195,7 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 	// /internal/git-oauth/bitbucket/refresh instead (git_oauth_bridge.go).
 	payload, _ := json.Marshal(map[string]any{
 		"access_token": tok.AccessToken, "refresh_token": tok.RefreshToken,
-		"expires_in": tok.ExpiresIn,
+		"expires_in": tok.ExpiresIn, "scopes": strings.TrimSpace(tok.Scopes),
 	})
 	rt, aerr := c.mgr.resolve(r.Context(), st.user, "", st.tenant)
 	if aerr != nil {

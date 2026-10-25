@@ -36,6 +36,10 @@ export interface WorkItem {
    * tracker has none or an older CP or Agent sent the row. The branch-name resolver maps it to a
    * kind before the labels (ADR 0103 decision 4). */
   type?: string;
+  /** The Agent's word that this row's connection may post the report-back comment. Only Bitbucket
+   * rows depend on it (the scope is recorded per connection, #2709); absent or false when the
+   * scope is unknown or an older CP or Agent sent the row. */
+  canComment?: boolean;
 }
 
 export interface WorkItemQuery {
@@ -136,6 +140,8 @@ function normalizeItem(raw: unknown): WorkItem {
     updatedAt: str(r.updatedAt),
     checks: readChecks(r.checks),
     mergeable: oneOf(r.mergeable, MERGEABLE),
+    // Strictly `true`: anything else (absent, null, "true") reads as "not granted".
+    canComment: r.canComment === true,
   };
 }
 
@@ -672,12 +678,14 @@ export function workItemLaunchBranch(o: { useExisting?: boolean; base: string; n
 
 /** Whether af can post the report comment back to this item's tracker.
  *
- * No control is offered for a provider that lacks the capability. Bitbucket was added read-only
- * (posting needs `pullrequest:write`, which means the tenant admin re-registering the connection
- * and everyone re-authorising — docs/log/80 §80.19.3), so a comment button on such a row would
- * always be refused once pressed. */
+ * No control is offered for a row that lacks the capability. GitHub and Jira always have it.
+ * Bitbucket needs `pullrequest:write`, so the row offers it only when the Agent reports the
+ * connection holds that scope (`canComment`). An unknown scope (an older Agent, never recorded)
+ * stays read-only: this must never be true for a token that lacks the scope, because the button
+ * would always be refused once pressed (#2709). */
 export function canComment(item: WorkItem): boolean {
-  return item.provider !== "bitbucket";
+  if (item.provider === "bitbucket") return item.canComment === true;
+  return true;
 }
 
 /** Session title suggestion: the key plus a trimmed title, so the rail and the session

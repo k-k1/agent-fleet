@@ -462,3 +462,13 @@ Workspace は再起動するまで「クエリを解釈できない」と出る�
 のような恒久的な 4xx は従来どおり即座に返す。更新グラントの総予算（14 秒）は、Agent がブリッジに掛ける
 20 秒より短い。同じトークンでの更新の再試行は、Atlassian のドキュメントにあるローテーション済み更新トークンの
 再利用間隔（既定 10 分）に依拠する。実際のテナントでは計測していない。上の決定はそのまま有効。
+
+## 追記（2026-10-25, #2709）: スコープが付与されていれば Bitbucket の行にもコメントできる
+
+決定 19（Bitbucket は読み取りだけ）は、`pullrequest:write` を持たない接続については変わらない。Agent は
+Bitbucket のプルリクエストへコメントを投稿できるようになり
+（`POST /2.0/repositories/{workspace}/{repo}/pullrequests/{id}/comments`）、付与されたスコープを記録し
+（OAuth のトークン・更新応答、貼り付けトークンは接続時の `X-OAuth-Scopes`、これより前の接続は作業項目取得の
+応答ヘッダ）、Bitbucket の各行に `canComment` を載せる。Console は `canComment: true` のときだけ報告ボタンを出し、
+スコープが不明なら読み取り専用のまま。実際の Bitbucket では未計測: トークン・更新応答が `scopes` を返すこと、
+bearer トークンに `X-OAuth-Scopes` が付くこと。Bitbucket の課題は引き続き一覧に出さない。

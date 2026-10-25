@@ -649,6 +649,7 @@ type WorkItem struct {
 	Checks                              string // JSON object {state,total,failed,pending}; "" when not read
 	Mergeable                           string // clean / conflict / unknown; "" when not read
 	ItemType                            string // the tracker's issue type (GitHub type, Jira issuetype); "" when none
+	CanComment                          bool   // the Agent says the connection may post a comment (Bitbucket rows only)
 }
 
 // WorkItemSession is the ledger row written when a session is started from an item.

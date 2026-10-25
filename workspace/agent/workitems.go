@@ -82,6 +82,11 @@ type workItemOut struct {
 	// the same as "no checks", and never as green.
 	Checks    workItemChecksOut `json:"checks"`
 	Mergeable string            `json:"mergeable"`
+	// CanComment is set on Bitbucket rows only, and only when the stored connection is known to
+	// hold the pull request write scope (gitx.BitbucketCanComment). Absent or false = the Console
+	// draws no report-back control. GitHub and Jira rows leave it false: their comment path has
+	// never been gated on a recorded scope.
+	CanComment bool `json:"canComment"`
 
 	// nodeID is GitHub's global ID, the key the enrichment call looks rows up by. Not on the wire.
 	nodeID string

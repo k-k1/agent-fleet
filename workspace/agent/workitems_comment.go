@@ -68,13 +68,8 @@ func handleWorkItemsComment(w http.ResponseWriter, r *http.Request) {
 		}
 		url, err = jiraPostIssueComment(s.Jira, key, body)
 	case "bitbucket":
-		// Read access only (docs/log/80 §80.19). Posting needs `pullrequest:write`, which means the
-		// tenant admin widening the app's permissions and everyone re-authorising - not a price worth
-		// paying just to list items. The Console draws no report button on bitbucket rows, so only an
-		// old Console reaches here.
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_provider",
-			"posting a comment to Bitbucket is not supported yet (the connection is read-only)")
-		return
+		// Pull requests only: Bitbucket work items are PRs, and issue comments are out of scope.
+		url, err = bitbucketPostPullRequestComment(s, key, body)
 	default:
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_provider", "unsupported provider: "+in.Provider)
 		return
@@ -142,6 +137,75 @@ func githubPostIssueComment(token, key, body string) (string, error) {
 	}
 	_ = json.Unmarshal(raw, &out)
 	return out.HTMLURL, nil
+}
+
+// bitbucketPostPullRequestComment posts a comment on "<workspace>/<repo>#<id>". Needs
+// `pullrequest:write` (OAuth) or `write:pullrequest:bitbucket` (API token); a connection
+// without it gets a 403 here, which is reported as such rather than as a success.
+func bitbucketPostPullRequestComment(s *secrets.Data, key, body string) (string, error) {
+	repo, number, ok := parseGitHubIssueKey(key)
+	if !ok {
+		return "", fmt.Errorf("cannot post to %q (expected workspace/repo#number)", key)
+	}
+	auth, err := gitx.BitbucketAuthHeader(s)
+	if err != nil {
+		return "", fmt.Errorf("Bitbucket is not connected")
+	}
+	var link string
+	post := func(a string) error {
+		var e error
+		link, e = bitbucketPostComment(a, repo, number, key, body)
+		return e
+	}
+	err = post(auth)
+	err = gitx.RefreshBitbucketAndRetry(s, err, post)
+	if err != nil {
+		if errors.Is(err, gitx.ErrBitbucketUnauthorized) {
+			return "", fmt.Errorf("bitbucket rejected the connection (401) — re-connect Bitbucket")
+		}
+		return "", err
+	}
+	return link, nil
+}
+
+func bitbucketPostComment(auth, repo string, number int, key, body string) (string, error) {
+	payload, _ := json.Marshal(map[string]any{"content": map[string]string{"raw": body}})
+	u := fmt.Sprintf("%s/2.0/repositories/%s/pullrequests/%d/comments", bitbucketAPIBase, gitx.EscapeRepoPath(repo), number)
+	req, err := http.NewRequest("POST", u, bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", auth)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := workItemHTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("could not reach %s", bitbucketAPIBase)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch resp.StatusCode {
+	case http.StatusCreated, http.StatusOK:
+		var out struct {
+			Links struct {
+				HTML struct {
+					Href string `json:"href"`
+				} `json:"html"`
+			} `json:"links"`
+		}
+		_ = json.Unmarshal(raw, &out)
+		return out.Links.HTML.Href, nil
+	case http.StatusUnauthorized:
+		return "", gitx.ErrBitbucketUnauthorized // refreshed and retried by the caller
+	case http.StatusForbidden:
+		// Reads can succeed while only the post gets a 403: the connection lacks the write scope.
+		return "", fmt.Errorf("bitbucket refused the comment (403) — the connection lacks the pull request " +
+			"write permission (`pullrequest:write` on the OAuth consumer, `write:pullrequest:bitbucket` on an API token). " +
+			"A tenant administrator adds it to the app; then re-connect Bitbucket")
+	case http.StatusNotFound:
+		return "", fmt.Errorf("bitbucket has no %s visible to this connection", key)
+	}
+	return "", fmt.Errorf("bitbucket comment %d: %s", resp.StatusCode, gitx.BitbucketErrText(raw))
 }
 
 func jiraPostIssueComment(c *secrets.JiraCreds, key, body string) (string, error) {

@@ -177,6 +177,36 @@ func TestWorkItemsPartialFailureKeepsOtherRows(t *testing.T) {
 	}
 }
 
+// #2709: the Agent's canComment flag survives the cache and reaches the DTO; a row from an Agent
+// that sends none (every row before this field) stays false, so the Console keeps it read-only.
+func TestWorkItemsCanCommentThroughTheCache(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	ctx := context.Background()
+	env.addQuery(t, "bb", "Bitbucket", "acme/web", true)
+	env.body = func() string {
+		return `{"items":[
+		  {"queryId":"bb","provider":"bitbucket","kind":"pr","key":"acme/web#1","title":"a","state":"open","labels":[],"labelColors":{},"canComment":true},
+		  {"queryId":"bb","provider":"bitbucket","kind":"pr","key":"acme/web#2","title":"b","state":"open","labels":[],"labelColors":{},"canComment":false},
+		  {"queryId":"bb","provider":"bitbucket","kind":"pr","key":"acme/web#3","title":"c","state":"open","labels":[],"labelColors":{}}],
+		 "errors":[]}`
+	}
+	env.api.refreshNow(ctx, env.res, true)
+	items, err := env.st.ListWorkItems(ctx, env.mid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, it := range items {
+		got[it.Key] = workItemToDTO(it).CanComment
+	}
+	want := map[string]bool{"acme/web#1": true, "acme/web#2": false, "acme/web#3": false}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s canComment = %v, want %v (all: %v)", k, got[k], v, got)
+		}
+	}
+}
+
 // #1095: a query whose page left matches out says so, and keeps saying so while the Workspace is
 // stopped. Three cases in one refresh — a known count, a full page without a count, and a query
 // that fit — then a refresh that fails, which must keep the note next to the rows it kept.

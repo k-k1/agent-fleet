@@ -409,6 +409,17 @@ describe("canComment", () => {
     expect(canComment(item({ provider: "jira", key: "PROJ-1" }))).toBe(true);
     expect(canComment(item({ provider: "bitbucket" }))).toBe(false);
   });
+
+  it("follows the Agent's canComment flag for Bitbucket, and only a literal true opens it", () => {
+    expect(canComment(item({ provider: "bitbucket", canComment: true }))).toBe(true);
+    expect(canComment(item({ provider: "bitbucket", canComment: false }))).toBe(false);
+    // A payload from an older Agent or CP carries no flag; a malformed one must not open it either.
+    const { payload } = readWorkItems({
+      items: [{ provider: "bitbucket" }, { provider: "bitbucket", canComment: "true" }, { provider: "bitbucket", canComment: true }],
+      queries: [],
+    });
+    expect(payload!.items.map(canComment)).toEqual([false, false, true]);
+  });
 });
 
 describe("sessionsForItem", () => {

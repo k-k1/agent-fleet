@@ -1044,9 +1044,9 @@ func handlePutGitConn(w http.ResponseWriter, r *http.Request) {
 	// Verify a pasted Bitbucket credential at connect time so a scopeless token / wrong
 	// email / missing scope is reported on the spot, not as a later opaque list/clone
 	// failure. Hard failures block the save; a missing push scope connects with a warning.
-	var warn string
+	var warn, scopes string
 	if host == "bitbucket.org" {
-		w2, verr := gitx.BitbucketConnectCheck(user, token)
+		w2, sc, verr := gitx.BitbucketConnectCheck(user, token)
 		if verr != nil {
 			code := "bb_verify_failed"
 			switch {
@@ -1058,10 +1058,10 @@ func handlePutGitConn(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusBadRequest, code, verr.Error())
 			return
 		}
-		warn = w2
+		warn, scopes = w2, sc
 	}
 
-	entry := secrets.GitEntry{User: user, Token: token}
+	entry := secrets.GitEntry{User: user, Token: token, Scopes: scopes}
 	if rt := strings.TrimSpace(req.RefreshToken); rt != "" && host == "github.com" {
 		// Without the OAuth app's client id the refresh grant cannot be asked for, so a
 		// pair without one is stored as a plain token rather than half-renewable.
