@@ -154,3 +154,42 @@ func TestMemberStatsDoesNotWaitOnDU(t *testing.T) {
 		t.Errorf("after refresh: %v", out)
 	}
 }
+
+// A slow background du finishing after a newer synchronous one must not roll the cache back.
+func TestDiskPutRefusesOlderSample(t *testing.T) {
+	resetDiskBG(t, nil)
+	t1 := time.Now()
+	diskUsages.put("/d/home", 200, t1)
+	diskUsages.put("/d/home", 100, t1.Add(-time.Minute)) // started earlier, landed later
+	s, _ := diskUsages.peek("/d/home")
+	if s.bytes != 200 || !s.at.Equal(t1) {
+		t.Errorf("cache = %d @ %v, want 200 @ %v", s.bytes, s.at, t1)
+	}
+}
+
+// End to end: background du A starts first and lands last; the synchronous du B in between
+// wins for both the value and the timestamp.
+func TestSyncAndBackgroundDUKeepTheNewerSample(t *testing.T) {
+	releaseA := make(chan struct{})
+	var n atomic.Int32
+	resetDiskBG(t, func(ctx context.Context, _ string) ([]byte, error) {
+		if n.Add(1) == 1 { // A: the background one
+			<-releaseA
+			return []byte("100\tx"), nil
+		}
+		return []byte("200\tx"), nil
+	})
+	dirDiskUsageNoWait("/d")
+	for n.Load() < 1 {
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if v, ok := dirDiskUsage(context.Background(), "/d"); !ok || v != 200 {
+		t.Fatalf("sync du = %d %v, want 200", v, ok)
+	}
+	close(releaseA)
+	waitDiskIdle(t)
+	if v, _, _ := dirDiskUsageNoWait("/d"); v != 200 {
+		t.Errorf("after the slow du landed: %d, want 200 kept", v)
+	}
+}

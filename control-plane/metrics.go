@@ -466,6 +466,11 @@ func (c *diskUsageCache) put(key string, bytes uint64, now time.Time) {
 	if f, ok := c.forgotten[key]; ok && now.Before(f) {
 		return
 	}
+	// A du that started earlier than the cached sample (a slow background one overtaken by
+	// a synchronous one) must not roll the figure and its timestamp back.
+	if cur, ok := c.m[key]; ok && now.Before(cur.at) {
+		return
+	}
 	c.m[key] = diskSample{bytes: bytes, at: now}
 }
 

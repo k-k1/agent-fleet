@@ -24,6 +24,7 @@ import { MemberCostPanel } from "../../cost/CloudCostView.tsx";
 import { MemberUptimePanel } from "../../usage/UptimeHeatmap.tsx";
 import { tCount, useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, relTime, DATETIME_FULL } from "../../../lib/intl.ts";
+import { useNow } from "../../../lib/useNow.ts";
 import { useTenantStore } from "../../../core/store/tenant.ts";
 import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
 import type { HomeResize, Member, WsSizing, WsSlot } from "../parts/adminShared.ts";
@@ -233,7 +234,9 @@ export function MemberView({
   const homeFigures = homeFullFigures(stats);
   const fmtGiB = (b: number) => (b / 1024 ** 3).toFixed(1);
   const diskNote = diskFigureNote(stats);
-  const diskAge = diskNote?.kind === "observed" ? tr("admin.roster_observed", { ago: relTime(diskNote.at) }) : "";
+  // Re-rendered on a clock: an unchanged /stats body never reaches setStats, so without it the age would freeze.
+  const now = useNow(15000);
+  const diskAge = diskNote?.kind === "observed" ? tr("admin.roster_observed", { ago: relTime(diskNote.at, now) }) : "";
   const diskRatio = diskTotal && stats?.disk_used != null ? stats.disk_used / diskTotal : null;
 
   // --- how to describe the three size axes on THIS runtime (ADR 0045 decision 21) ------
