@@ -206,7 +206,7 @@ export const ProjectTree = memo(function ProjectTree() {
         {jobs.map((j) => (
           <RepoJobRow key={j.id} job={j} />
         ))}
-        {repos.length > 0 && loadState === "unreachable" && (
+        {repos.length > 0 && (loadState === "unreachable" || loadState === "failed") && (
           <li className="proj-sub-empty" role="status">
             {tr("pj.repos_stale")}
           </li>
@@ -222,6 +222,10 @@ export const ProjectTree = memo(function ProjectTree() {
             <EmptyState icon="repo" title={tr("pj.ws_stopped")} hint={tr("pj.ws_stopped_hint")} />
           ) : loadState === "loading" ? (
             <EmptyState icon="repo" title={tr("pj.loading_repos")} />
+          ) : loadState === "failed" ? (
+            // Terminal: the workspace answered, with something that is not a list. Nothing retries
+            // this, so it says what to do instead of promising the list comes back.
+            <EmptyState icon="repo" title={tr("pj.repos_failed")} hint={tr("pj.repos_failed_hint")} />
           ) : loadState === "unreachable" ? (
             <EmptyState icon="repo" title={tr("pj.repos_unreachable")} hint={running ? tr("pj.repos_unreachable_hint") : undefined} />
           ) : (

@@ -52,9 +52,10 @@ export interface Repo {
 }
 
 /** Outcome of the last load: "loading" until the first answer (or after clear()), "ok" once a
- * 2xx result carrying a repos array was committed, "unreachable" when the last attempt could
- * not produce one (transient 5xx, dropped fetch, 4xx, a non-JSON body). */
-export type ReposLoadState = "loading" | "ok" | "unreachable";
+ * 2xx result carrying a repos array was committed, "unreachable" when the last attempt failed
+ * TRANSIENTLY (5xx, dropped fetch) and the caller retries, "failed" when the answer was terminal
+ * (a 4xx, a non-JSON body): retrying will not change it, so the UI must not promise it will. */
+export type ReposLoadState = "loading" | "ok" | "unreachable" | "failed";
 
 interface ReposStore {
   repos: Repo[];
@@ -106,7 +107,7 @@ export const useReposStore = create<ReposStore>((set) => ({
     // A 4xx body carries `error`; an HTML page from an auth gateway resolves as {}. Neither is
     // a list.
     if (!d || d.error || !Array.isArray(d.repos)) {
-      set({ loadState: "unreachable" });
+      set({ loadState: "failed" });
       return true;
     }
     set({ repos: d.repos as Repo[], loadState: "ok" });

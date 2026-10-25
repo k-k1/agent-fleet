@@ -204,6 +204,8 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "pj.loading_repos": "Loading repositories…",
   "pj.repos_unreachable": "Can't reach the workspace",
   "pj.repos_unreachable_hint": "Retrying — the list will come back by itself",
+  "pj.repos_failed": "Couldn't load the repository list",
+  "pj.repos_failed_hint": "The workspace answered with an error, so it will not retry. Reload the page, or check your access to this workspace.",
   "pj.repos_stale": "Couldn't refresh the list — showing the last known one",
   "pj.collapse": "Collapse",
   "pj.peek_more": "Also running:\n{names}",
