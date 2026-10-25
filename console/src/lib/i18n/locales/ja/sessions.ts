@@ -373,7 +373,7 @@ export const sessions = {
   "srow.memory_review_unreadable": "会話を読み取れませんでした",
   "srow.memory_review_failed": "レビューは、この区間から提案を得られませんでした",
   "srow.memory_review_still_running": "レビューはまだ実行中です。数分後にメモリの提案をもう一度確認してください",
-  "srow.memory_review_off": "メモリのレビューがオフです（設定の Agent メモリでオンにします）",
+  "srow.memory_review_off": "メモリのレビューがオフです（設定の エージェントメモリでオンにします）",
   "srow.memory_review_busy": "別のレビューが実行中です",
   "srow.memory_review_daily_cap": "今日のレビュー回数の上限に達しました",
   "srow.memory_review_queue_full": "保留中の提案がいっぱいです",

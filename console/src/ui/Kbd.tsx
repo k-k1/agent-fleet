@@ -30,7 +30,8 @@ function keyLabel(key: string): string {
 // (e.g. Shift+/ = ?). Rendered as one keycap without a separate Shift chip.
 const SHIFT_SYMBOL: Record<string, string> = { "/": "?" };
 
-export function Kbd({ chord, className }: { chord: string; className?: string }) {
+// chordCaps: the per-platform keycap labels of a chord, for chips and for plain-text hints.
+export function chordCaps(chord: string): string[] {
   const mac = isMac();
   const c = parseChord(chord);
   const shifted = c.shift ? SHIFT_SYMBOL[c.key] : undefined;
@@ -39,6 +40,14 @@ export function Kbd({ chord, className }: { chord: string; className?: string })
   if (c.alt) caps.push(mac ? "⌥" : "Alt");
   if (c.shift && !shifted) caps.push(mac ? "⇧" : "Shift");
   if (c.key) caps.push(shifted ?? keyLabel(c.key));
+  return caps;
+}
+
+// chordText: chordCaps joined with "+" for running text ("Ctrl+P", "⌘+P").
+export const chordText = (chord: string): string => chordCaps(chord).join("+");
+
+export function Kbd({ chord, className }: { chord: string; className?: string }) {
+  const caps = chordCaps(chord);
   return (
     <span className={"ui-kbd" + (className ? " " + className : "")} aria-hidden="true">
       {caps.map((k, i) => (
