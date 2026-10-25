@@ -19,9 +19,11 @@ it in their own workspace ([below](#handing-a-session-to-another-member)).
 
 ## Handing a session to another member
 
-**Hand off to a member** is a button on the handoff proposal card in the conversation: the
-card that **Hand off to another agent…** produces, or that an agent proposes on its own. It
-does not start anything for you. It offers the proposal to one member, who starts the new
+**Hand off to a member…** is in the session's ⋯ menu (for sessions with a conversation, while
+your workspace is running and the session's folder still exists), and a button on the handoff
+proposal card in the conversation: the card that **Hand off to another agent…** produces, or
+that an agent proposes on its own. From the menu the dialog opens with an empty handoff text
+for you to write; from the card it carries the proposal. It does not start anything for you. It offers the proposal to one member, who starts the new
 session in their own workspace if they accept.
 
 - **Who can receive it**: only members this session is already shared with (read-only is

@@ -264,7 +264,7 @@ handoff proposal: the key points, unfinished tasks, changed files, and next step
 You review the proposal, the working folder, and the agent to start, and the new session is
 created only after you explicitly agree. The original session stays as it is. In a long
 conversation, this lets you hand off to another agent or try a different direction without
-using up the new conversation's context. The proposal card also offers **"Hand off to a member"**,
+using up the new conversation's context. The proposal card, and the session's ⋯ menu, also offer **"Hand off to a member"**,
 which offers the session to someone it is shared with instead
 ([12](12-collaboration.md#handing-a-session-to-another-member)).
 
