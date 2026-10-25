@@ -100,6 +100,8 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "tokens.direction_link": "MCP servers (used by sessions)",
   "tokens.intro":
     "A token for driving workspace sessions over MCP from your local Claude (Claude Code / Desktop). It inherits the issuer's permissions; pick the scope here.",
+  "tokens.session_warning":
+    "Do not give this token to sessions in this Workspace: within its scope it gives them access to all of your sessions here (with write, they can operate and delete them), plus admin tools if you are an admin. Use it from an outside client.",
   "tokens.issued_head": "Token issued (you can't see it again once you close this).",
   "tokens.copy_token": "Copy token",
   "tokens.mcp_json_head_1": "For Claude Code: ",
@@ -585,7 +587,9 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "keys.palette.placeholder_sessions": "Search sessions…",
   "keys.palette.sessions_empty": "No sessions yet",
   "keys.palette.mode_file": "Files",
-  "keys.palette.mode_hint": "Tab / Ctrl+P to switch (Shift: back) · PgUp / PgDn to page",
+  "keys.palette.mode_hint": "Tab / {chord} to switch (Shift: back) · PgUp / PgDn to page",
+  "keys.palette.mode_hint_nobackward": "Tab / {chord} to switch · PgUp / PgDn to page",
+  "keys.palette.mode_hint_tab": "Tab to switch (Shift: back) · PgUp / PgDn to page",
   "keys.palette.changed_loading": "Loading…",
   "keys.palette.changed_empty": "No changed files",
   "keys.palette.file_hint": "Type to search files",

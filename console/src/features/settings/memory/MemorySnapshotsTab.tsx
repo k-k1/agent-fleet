@@ -37,6 +37,7 @@ import type { RestoreScopeState } from "./memoryRestore.tsx";
 import { RestorePanel } from "./memoryRestore.tsx";
 import { TransferSection } from "./memoryTransfer.tsx";
 import { ViewNav, useSectionView, type ViewDef } from "./viewNav.tsx";
+import { useSettings } from "../../../lib/settings.ts";
 import { useSettingsUI, lastSnapshotsShowAf, rememberSnapshotsShowAf } from "../store.ts";
 
 // Trigger label. The trailer value the Agent returns (auto/manual/pre-restore/restore/import/agent-memory)
@@ -85,6 +86,7 @@ export function MemorySnapshotsTab() {
   const [view, setView] = useSectionView(SNAPSHOTS_SECTION, VIEWS, "history");
   const [showAf, setShowAf] = useState(lastSnapshotsShowAf);
   const openSettings = useSettingsUI((s) => s.openSettings);
+  const agentMemoryOn = useSettings().agentMemory;
 
   const load = useCallback(
     async (signal: AbortSignal) => {
@@ -371,6 +373,11 @@ export function MemorySnapshotsTab() {
             Say so right next to the toggle so it does not look like "just a switch". */}
             {data?.inactive?.some((r) => r.toggleable && !r.enabled) && (
               <p className="muted ds-hint">{tr("mem.codex_cost_hint")}</p>
+            )}
+            {/* By design codex's own memory keeps running beside Agent Fleet memory (agent_memory_autosync.go
+            leaves the flag as the member set it); say so, or the two read as one. */}
+            {agentMemoryOn && [...(data?.roots ?? []), ...(data?.inactive ?? [])].some((r) => r.toggleable && r.enabled) && (
+              <p className="muted ds-hint">{tr("mem.codex_dual_hint")}</p>
             )}
             <Row label={tr("mem.auto_label")}>
               <OnOff value={!!data?.auto} onChange={(v) => void setAuto(v)} />

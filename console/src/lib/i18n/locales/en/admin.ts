@@ -1022,7 +1022,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.roster_sessions_label": "Live sessions against the limit",
   "admin.roster_observed": "as of {ago}",
   "admin.roster_last_active": "Last active {ago}",
-  "admin.roster_search_ph": "Search name or e-mail",
+  "admin.roster_search_ph": "Search e-mail or user key",
   "admin.roster_no_match": "No member matches.",
   "admin.roster_attention": "Needs attention",
   "admin.roster_attn_auto_stop": "The Control Plane stopped this workspace",

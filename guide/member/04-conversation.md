@@ -283,7 +283,7 @@ to "Changed files", reaches the same list.
 Each row carries a badge: **Untracked**, **Unstaged**, **Staged**, **Committed** or **No diff**
 for a file in the working copy, **Session scratch** for a file in the session's own scratch folder (deleted with
 the session), **Outside working copy** for anything else. A file in an agent's own memory folder
-is badged **Claude memory**, **Codex memory** or, for another agent, **Agent memory**, and opens
+is badged **Claude memory**, **Codex memory** or, for another agent, **Agent's own memory**, and opens
 read-only. That badge means the agent kind's own memory files, not Agent Fleet's
 [agent memory](18-agent-memory.md).
 

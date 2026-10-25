@@ -37,7 +37,7 @@ Above the cards are the counts ("N of M running", where starting workspaces coun
 "N need attention"), a filter (All / Running / Needs attention / Stopped / Removed), a sort and a
 search box. The sort is "Needs attention first" (the default), "Name", "Last active" (members
 with no activity recorded last) or "Disk usage" (fullest first, members with no percentage to show last). The
-search box ("Search name or e-mail") matches the email address and the `user_key`; the roster
+search box ("Search e-mail or user key") matches the email address and the `user_key`; the roster
 holds no other name to match.
 
 ### Needs attention

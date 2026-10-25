@@ -70,6 +70,9 @@ type config struct {
 	// egressInfra mirrors AF_EGRESS_INFRA_CIDRS: the stack's own source ranges, which egress
 	// attribution reports as infrastructure (ADR 0122, addendum 2026-10-24).
 	egressInfra []netip.Prefix
+	// egressEventRetention mirrors AF_EGRESS_EVENT_RETENTION_DAYS: how long raw egress events
+	// and the address intervals that attribute them are kept (egress_purge.go). 0 = forever.
+	egressEventRetention time.Duration
 	// TTS read-aloud (docs/log/24 + ADR0013): base URL of the VOICEVOX engine the CP calls
 	// directly. In dev the CP runs on the host and reaches docker's published
 	// 127.0.0.1:50021; on AWS the fixed ECS + Cloud Map DNS name is injected (Phase 2).
@@ -315,8 +318,9 @@ func main() {
 		egressToken: os.Getenv("AF_EGRESS_TOKEN"),
 		egressDedup: &egressAuditDedup{},
 		// Whether containers are actually routed through the proxy (docs/log/48 §9).
-		egressProxyAddr: egressProxyAddr,
-		egressInfra:     parseEgressInfraCIDRs(os.Getenv("AF_EGRESS_INFRA_CIDRS")),
+		egressProxyAddr:      egressProxyAddr,
+		egressInfra:          parseEgressInfraCIDRs(os.Getenv("AF_EGRESS_INFRA_CIDRS")),
+		egressEventRetention: parseEgressRetention(os.Getenv("AF_EGRESS_EVENT_RETENTION_DAYS")),
 		// docs/log/24 TTS: the default is dev's docker-published endpoint (host loopback).
 		voicevoxURL: envx.Or("AF_VOICEVOX_URL", "http://127.0.0.1:50021"),
 		// docs/log/81: the parent of the preview subdomains. Empty = host-mode preview is
@@ -388,6 +392,11 @@ func main() {
 	if os.Getenv("AF_EGRESS_TOKEN") != "" {
 		iv := envx.DurationOr(os.Getenv("AF_EGRESS_ADDRESS_INTERVAL"), time.Minute)
 		go newAddressRecorder(mgr, iv).run(context.Background())
+	}
+	// Raw events are deleted whether or not this deployment still ingests: retention must not
+	// depend on AF_EGRESS_TOKEN staying set.
+	if cfg.egressEventRetention > 0 {
+		go newEgressPurger(mgr, cfg.egressEventRetention).run(context.Background())
 	}
 	// Home operations a CP restart interrupted (ecs, home_operation.go): their task may
 	// still be running, and the step after it is owed. Not behind any switch either: an

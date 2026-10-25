@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"strconv"
 	"strings"
 )
@@ -32,11 +34,26 @@ type AttributedEgressEvent struct {
 	Holders []WorkspaceAddress
 }
 
+// ErrEgressEventExpired is RecordEgressEvent's answer for an event older than the floor the
+// purge has raised: it may be the resend of one already deleted, so it is neither stored nor
+// counted.
+var ErrEgressEventExpired = errors.New("egress event is older than the purged floor")
+
+// egressFloorCounter is the cp_counter row holding the floor: the newest cutoff any purge
+// has deleted up to, in unix milliseconds. It only ever rises.
+const egressFloorCounter = "egress-event-floor"
+
 // EgressAttributionStore keeps raw egress events and the address intervals they are
 // attributed through.
 type EgressAttributionStore interface {
 	// RecordEgressEvent stores e unless an event with its ID is already stored, and adds it
-	// to egress_daily under day only when it was new. inserted reports which happened.
+	// to egress_daily under day only when it was new. inserted reports which happened. An
+	// event older than the purge floor is refused with ErrEgressEventExpired: the floor is
+	// read in the same transaction, so every CP honours what any other has purged.
+	// RaiseEgressEventFloor commits the cutoff a purge is about to delete up to. It must run
+	// before the delete and never lowers the floor, so a longer or disabled retention later
+	// cannot let a purged event in again.
+	RaiseEgressEventFloor(ctx context.Context, before int64) error
 	RecordEgressEvent(ctx context.Context, day string, e EgressEvent, receivedAt int64) (inserted bool, err error)
 	// ListAttributedEgressEvents returns the newest events at or after since, each with the
 	// address rows that held its source at its time.
@@ -54,6 +71,13 @@ type EgressAttributionStore interface {
 	OpenWorkspaceAddressRefs(ctx context.Context, membershipID string) ([]string, error)
 	// OpenAddressMemberships returns every membership that has a row still open.
 	OpenAddressMemberships(ctx context.Context) ([]string, error)
+	// PurgeEgressEvents deletes at most limit raw events whose time is before the cutoff
+	// (unix milliseconds), oldest first, and returns how many it deleted. One call is one
+	// bounded statement: the caller loops until it returns less than limit.
+	PurgeEgressEvents(ctx context.Context, before int64, limit int) (int, error)
+	// PurgeWorkspaceAddresses deletes at most limit closed address rows that ended before the
+	// cutoff and returns how many. A row still open is never deleted: it has no end.
+	PurgeWorkspaceAddresses(ctx context.Context, before int64, limit int) (int, error)
 }
 
 func (s *SQL) RecordEgressEvent(ctx context.Context, day string, e EgressEvent, receivedAt int64) (bool, error) {
@@ -66,6 +90,13 @@ func (s *SQL) RecordEgressEvent(ctx context.Context, day string, e EgressEvent, 
 		return false, err
 	}
 	defer tx.Rollback()
+	floor, err := s.egressFloor(ctx, tx)
+	if err != nil {
+		return false, err
+	}
+	if e.At < floor {
+		return false, ErrEgressEventExpired
+	}
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO egress_event(id, at, source, dest, host, allowed, count, received_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
@@ -88,6 +119,40 @@ func (s *SQL) RecordEgressEvent(ctx context.Context, day string, e EgressEvent, 
 		}
 	}
 	return true, tx.Commit()
+}
+
+// egressFloor reads the floor inside tx. On Postgres the row is locked FOR SHARE, which a
+// purge raising it waits for: an ingest that read the old floor commits before the purge
+// deletes, so its row is deleted rather than re-stored after the delete. The row is created
+// on first use so there is always one to lock.
+func (s *SQL) egressFloor(ctx context.Context, tx *sqlTx) (int64, error) {
+	lock := ""
+	if s.dialect == "postgres" {
+		lock = " FOR SHARE"
+	}
+	q := `SELECT value FROM cp_counter WHERE name=?` + lock
+	var v int64
+	err := tx.QueryRowContext(ctx, q, egressFloorCounter).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO cp_counter(name, value) VALUES(?, 0) ON CONFLICT(name) DO NOTHING`, egressFloorCounter); err != nil {
+			return 0, err
+		}
+		err = tx.QueryRowContext(ctx, q, egressFloorCounter).Scan(&v)
+	}
+	return v, err
+}
+
+func (s *SQL) RaiseEgressEventFloor(ctx context.Context, before int64) error {
+	greatest := "MAX"
+	if s.dialect == "postgres" {
+		greatest = "GREATEST"
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO cp_counter(name, value) VALUES(?, ?)
+		 ON CONFLICT(name) DO UPDATE SET value = `+greatest+`(cp_counter.value, excluded.value)`,
+		egressFloorCounter, before)
+	return err
 }
 
 func (s *SQL) ListAttributedEgressEvents(ctx context.Context, since int64, limit int) ([]AttributedEgressEvent, error) {
@@ -207,6 +272,33 @@ func (s *SQL) OpenWorkspaceAddressRefs(ctx context.Context, membershipID string)
 func (s *SQL) OpenAddressMemberships(ctx context.Context) ([]string, error) {
 	return s.queryStrings(ctx,
 		`SELECT DISTINCT membership_id FROM workspace_address WHERE until_at=0 ORDER BY membership_id`)
+}
+
+func (s *SQL) PurgeEgressEvents(ctx context.Context, before int64, limit int) (int, error) {
+	// The id subquery keeps the delete to one batch on both dialects (a bare DELETE ... LIMIT
+	// is SQLite-only) and walks egress_event_at, so the oldest rows go first.
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM egress_event WHERE id IN
+		 (SELECT id FROM egress_event WHERE at < ? ORDER BY at LIMIT ?)`, before, limit)
+	return rowsDeleted(res, err)
+}
+
+func (s *SQL) PurgeWorkspaceAddresses(ctx context.Context, before int64, limit int) (int, error) {
+	// No index covers until_at; the table holds one row per address interval, not per
+	// connection, so the scan stays small next to egress_event.
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM workspace_address WHERE (ref, address, from_at) IN
+		 (SELECT ref, address, from_at FROM workspace_address WHERE until_at > 0 AND until_at < ? LIMIT ?)`,
+		before, limit)
+	return rowsDeleted(res, err)
+}
+
+func rowsDeleted(res sql.Result, err error) (int, error) {
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 func (s *SQL) queryStrings(ctx context.Context, q string, args ...any) ([]string, error) {

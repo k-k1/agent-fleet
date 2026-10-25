@@ -340,6 +340,7 @@ The view you leave open is remembered. It needs the running workspace.
     (the restore has no secret scan). When the bundle you picked carries some, a line under it says "This bundle
     also contains Agent Fleet memory — import it in Agent memory › Import & export." (with an **Open Import &
     export** link); the import itself is **Agent Fleet memory in this bundle** under Agent memory > Import & export.
+  - **Size limit**: a bundle or tar.gz up to 64 MiB is taken in. An administrator can raise that to at most 128 MiB with `AF_MEMORY_IMPORT_MAX` ([ref/limits.md](../ref/limits.md)); a larger value is clamped, because the Control Plane refuses bigger uploads.
 
 ## Using Agent Fleet memory from an external agent
 

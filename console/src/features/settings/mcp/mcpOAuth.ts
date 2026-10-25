@@ -84,8 +84,8 @@ export function safeAuthorizeUrl(raw: unknown): string | null {
 // --- the return from the authorization server ---------------------------------------------
 
 // The reasons the callback's redirect may carry (control-plane/oauth_mcp_client.go
-// mcpClientOAuthReasons). Each has a text under mcp.oauth_return_<reason>; anything else reads as
-// "failed".
+// mcpClientOAuthReasons). Each has a text under mcp.oauth_return_reason_<reason> (except "failed", which
+// shows mcp.oauth_return_failed_generic); anything else reads as "failed".
 export const RETURN_REASONS = [
   "state_unknown",
   "state_expired",

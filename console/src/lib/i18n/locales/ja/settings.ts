@@ -97,6 +97,8 @@ export const settings = {
   "tokens.direction_link": "MCP サーバー（セッションで使う）",
   "tokens.intro":
     "手元の Claude（Claude Code / Desktop）から MCP でワークスペースのセッションを操作するためのトークンです。発行者の権限を継承し、スコープはここで選びます。",
+  "tokens.session_warning":
+    "このトークンを、このワークスペースのセッションに渡さないでください。渡すと、選んだスコープの範囲で、あなたのこのワークスペースの全セッションにアクセスでき（write なら操作・削除も可能）、管理者の場合は管理者ツールも使えてしまいます。外部のクライアントから使ってください。",
   "tokens.issued_head": "トークンを発行しました（この画面を閉じると再表示できません）",
   "tokens.copy_token": "トークンをコピー",
   "tokens.mcp_json_head_1": "Claude Code 用 ",
@@ -579,7 +581,9 @@ export const settings = {
   "keys.palette.placeholder_sessions": "セッションを検索",
   "keys.palette.sessions_empty": "セッションがありません",
   "keys.palette.mode_file": "ファイル",
-  "keys.palette.mode_hint": "Tab / Ctrl+P で切替（Shift で逆順）・PgUp / PgDn でページ移動",
+  "keys.palette.mode_hint": "Tab / {chord} で切替（Shift で逆順）・PgUp / PgDn でページ移動",
+  "keys.palette.mode_hint_nobackward": "Tab / {chord} で切替・PgUp / PgDn でページ移動",
+  "keys.palette.mode_hint_tab": "Tab で切替（Shift で逆順）・PgUp / PgDn でページ移動",
   "keys.palette.changed_loading": "読み込み中…",
   "keys.palette.changed_empty": "変更ファイルはありません",
   "keys.palette.file_hint": "文字を入力してファイルを検索",
