@@ -210,8 +210,10 @@ case "$args" in
   # The stack name appears before --query. Get the glob order wrong and everything falls
   # through to the catch-all branch below, and the test lies in the shape of "nothing
   # happens".
-  *"t-network"*"Parameters[].join"*) printf 'VpcCidr=10.20.0.0/16\nNatEipAllocationId=\n' ;;
-  *"t-network"*"Outputs[].join"*)    printf 'NatEipAllocationId=eipalloc-REAL\nVpcId=vpc-1\n' ;;
+  # The egress gateway's address (#2728) has the same shape: created by the stack, so empty as
+  # parameters and real in the outputs.
+  *"t-network"*"Parameters[].join"*) printf 'VpcCidr=10.20.0.0/16\nNatEipAllocationId=\nGatewayEipAllocationId=\nGatewayEipAddress=\n' ;;
+  *"t-network"*"Outputs[].join"*)    printf 'NatEipAllocationId=eipalloc-REAL\nVpcId=vpc-1\nGatewayEipAllocationId=eipalloc-GW\nGatewayEipAddress=203.0.113.7\n' ;;
   *"Parameters[].join"*)             printf 'Fqdn=af.example.test\n' ;;
   *"Outputs[].join"*)                printf '\n' ;;
   # pause.sh: whether 00-network's NAT gateway is on, and whether 10-data carries the re-stop Lambda.
@@ -316,6 +318,14 @@ case "$args" in
       late) [ "$(grep -c "ecs describe-tasks" "$STUB_LOG")" -ge 2 ] && echo "" || echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
       fail) echo "An error occurred (AccessDeniedException) when calling the DescribeTasks operation" >&2; exit 254 ;;
       *) echo "" ;;
+    esac ;;
+  # The workspace egress address handed back to standup.sh (#2728): its address and the
+  # interface holding it. STUB_GW_EIP: free (default), elsewhere (another interface), gone.
+  *"ec2 describe-addresses --allocation-ids"*)
+    case "${STUB_GW_EIP:-free}" in
+      gone) echo "An error occurred (InvalidAllocationID.NotFound)" >&2; exit 254 ;;
+      elsewhere) printf '203.0.113.7\teni-other\n' ;;
+      *) printf '203.0.113.7\tNone\n' ;;
     esac ;;
   *"ec2 describe-volumes"*) echo "vol-1" ;;
   *"ec2 describe-snapshots"*) echo "snap-1" ;;
@@ -1543,6 +1553,8 @@ grep -q "^NatEipAllocationId=eipalloc-REAL$" "$CAPFILE" \
   || fail "the empty parameter was not filled in from the output (the stand-up would orphan the EIP): $(grep NatEip "$CAPFILE" || echo '<no such line>')"
 # Outputs that are not parameters must not be copied across (CFN rejects parameters it does not know)
 if grep -q "^VpcId=" "$CAPFILE"; then fail "an output that is not a parameter was copied into the capture"; fi
+{ grep -q "^GatewayEipAllocationId=eipalloc-GW$" "$CAPFILE" && grep -q "^GatewayEipAddress=203.0.113.7$" "$CAPFILE"; } \
+  || fail "the workspace egress address was not captured from the outputs (a rebuild would allocate a new one): $(grep GatewayEip "$CAPFILE" || echo '<no such line>')"
 
 echo "== case 3e: the preflight required-parameter check does not miss because of formatting =="
 #
@@ -1995,6 +2007,38 @@ echo "GatewayEnabled=false" >> "$STATE6/params/00-network"
 "$ECS/standup.sh" --profile p6 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4l2" </dev/null
 grep -q "GatewayEnabled=true" "$WORK/out4l2" || fail "standup did not force GatewayEnabled=true"
 if grep -q "GatewayEnabled=false" "$WORK/out4l2"; then fail "standup passed the captured GatewayEnabled=false on"; fi
+
+echo "== case 4l-eip: a handed-back workspace egress address is checked before anything is built (#2728) =="
+STATE7="$AF_DEPLOY_STATE_DIR/p7.ap-northeast-1.t-ingress"
+mkdir -p "$STATE7/params"
+cp -a "$STATE/params/." "$STATE7/params/"
+cp "$STATE/env" "$STATE7/env"
+printf 'EgressRoute=gateway\nGatewayEipAllocationId=eipalloc-GW\nGatewayEipAddress=203.0.113.7\n' >> "$STATE7/params/00-network"
+: > "$LOG"
+"$ECS/standup.sh" --profile p7 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4le" 2>&1 </dev/null \
+  || { cat "$WORK/out4le"; fail "standup refused a free, matching workspace egress address"; }
+has "ec2 describe-addresses --allocation-ids eipalloc-GW"
+{ grep -q "GatewayEipAllocationId=eipalloc-GW" "$WORK/out4le" && grep -q "GatewayEipAddress=203.0.113.7" "$WORK/out4le"; } \
+  || fail "standup did not hand the captured workspace egress address back to 00-network"
+for knob in STUB_GW_EIP=gone STUB_GW_EIP=elsewhere; do
+  : > "$LOG"
+  if env "$knob" "$ECS/standup.sh" --profile p7 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4le2" 2>&1 </dev/null; then
+    fail "standup passed preflight with $knob"
+  fi
+  hasnt "cloudformation deploy"
+done
+grep -q "associated with eni-other" "$WORK/out4le2" || fail "standup did not say where the address is held"
+sed -i 's/^GatewayEipAddress=.*/GatewayEipAddress=198.51.100.9/' "$STATE7/params/00-network"
+: > "$LOG"
+if "$ECS/standup.sh" --profile p7 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4le3" 2>&1 </dev/null; then
+  fail "standup passed preflight with an address that is not the allocation's"
+fi
+grep -q "GatewayEipAddress '198.51.100.9' is not the address of eipalloc-GW (203.0.113.7)" "$WORK/out4le3" \
+  || fail "standup did not say the captured address does not match"
+# Without the parameter (every capture so far) nothing is looked up.
+: > "$LOG"
+"$ECS/standup.sh" --profile p6 --region ap-northeast-1 --stack t-ingress --yes --dry-run > /dev/null 2>&1 </dev/null
+hasnt "describe-addresses"
 
 echo "== case 4m: a tag that cannot be written is an error, not a quiet success =="
 : > "$LOG"
