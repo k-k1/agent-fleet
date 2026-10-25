@@ -671,6 +671,12 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 		s.MCPOAuth = append(kept, g)
 		return nil
 	})
+	if err == nil {
+		// An abandoned attempt on another registration path (a CIMD sign-in that never came back,
+		// then a DCR retry) would otherwise outlive the grant and show as a stale pending marker
+		// next to "connected". Per server: another server's attempt is untouched.
+		dropPendingFor(p.serverID)
+	}
 	mu.Unlock()
 	if err != nil {
 		return fail(http.StatusInternalServerError, OAuthErrInternal, "the secret store could not be written")

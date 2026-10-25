@@ -155,6 +155,27 @@ describe("row states", () => {
     }
   });
 
+  it("words the connected row by target: kept but unused when neither target is on", async () => {
+    for (const state of ["connected", "needs_more_permission"]) {
+      setStatus({ state });
+      await mount(row({ s: server({ targets: { assistant: false, session: false } }) }));
+      const note = host!.querySelector('[data-testid="mcp-oauth-relay-note"]')!.textContent!;
+      expect(note).toContain("Sign-in is kept");
+      expect(note).toContain("once you enable a target");
+      expect(note).not.toContain("through a relay");
+      act(() => root!.unmount());
+      host!.remove();
+    }
+    setStatus({ state: "connected" });
+    await mount(row({ s: server({ targets: { assistant: false, session: true } }) }));
+    expect(host!.querySelector('[data-testid="mcp-oauth-relay-note"]')!.textContent).toContain("through a relay");
+    act(() => root!.unmount());
+    host!.remove();
+    setStatus({ state: "connected" });
+    await mount(row({ s: server({ targets: { assistant: false, session: false } }) }), "ja");
+    expect(host!.querySelector('[data-testid="mcp-oauth-relay-note"]')!.textContent).toContain("対象を有効にすると");
+  });
+
   it("sign in again", async () => {
     setStatus({ state: "sign_in_again" });
     await mount(row());
@@ -764,6 +785,8 @@ describe("cross-tab completion", () => {
     await act(async () => announce({ server: "mcp-1", outcome: "token_exchange_failed" }));
     await act(async () => {});
     expect(button("Retry with dynamic registration")).toBeTruthy();
+    // Styled like Sign in, not the text-like ghost button.
+    expect(button("Retry with dynamic registration")!.className).toContain("primary");
   });
 
   it("a failure of a DCR sign-in offers no DCR retry", async () => {
