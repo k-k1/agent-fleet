@@ -369,6 +369,46 @@ The design and the staged rollout — log-only → allowlist → enforce — are
   its retention setting, and it never falls: lengthening the retention or setting it to `0`
   does not let a purged event back in. An address row is deleted only after the event delete
   finished without error.
+- **Archive (optional)** — with `AF_EGRESS_ARCHIVE_URL` set (`s3://bucket/prefix`, or
+  `file:///absolute/dir` for a mounted volume; empty = off), the purger archives before it
+  deletes. Only whole UTC days are archived, so the cutoff becomes the UTC midnight at or before
+  now minus the retention (the retention is effectively up to 24 hours longer, and the floor is
+  raised to that midnight, before the archive is read). One object per day,
+  `<prefix>/egress/yyyy=YYYY/mm=MM/dd=DD/events-YYYY-MM-DD.jsonl.gz`: gzip JSON lines, a `header`
+  line (schema version, day), the `address` rows whose interval meets the day, the `event` rows
+  in `(at, id)` order, and a closing `manifest` line (row counts, id and time range). The manifest
+  is last because the counts are known only after the rows were streamed (a day is millions of
+  rows, paged 5000 at a time and staged in a temporary file, never held in memory); an object
+  without it, or whose counts disagree, is damaged. An object is complete or absent (S3: a single
+  PutObject confirmed by a HeadObject length check; local: temp file, fsync, rename), so a partial
+  object cannot exist. A day whose object exists is read back and verified (header, counts,
+  gzip checksum) and never rewritten: after a crash between write and delete, or a delete cut off
+  midway, the retry skips the write and deletes, and a rewrite could not replace the full day
+  with the part that is left. A damaged existing object (zero bytes, truncated, wrong header)
+  stops the purge at its day and is never overwritten by the CP; an operator removes it.
+  **A day that fails to archive (or is not confirmed) is not deleted, nor is any later day.**
+  Earlier days are, and the next run (10 minutes later) retries. Address rows are not closed to
+  writers by the floor (one can arrive, or change its end, after its day was written), so the
+  closed rows to delete are written as an address supplement object
+  (`<prefix>/egress/addresses/yyyy=/mm=/dd=/addresses-<sha256>.jsonl.gz`, kind `addresses`)
+  immediately before, and exactly those row versions are deleted (a row that changed since is
+  kept for the next run). A day object holds the address rows meeting the day as they were then, so read-back must
+  normalise them (below). An existing day object is also merged against the events the database
+  still has for that day (both in `(at, id)` order, ids compared bytewise): one that lacks any of
+  them, or holds different content, stops the purge, so a well-formed partial day cannot
+  authorise a delete. A day with only some events left (a delete cut off midway) passes.
+  Role permissions: `s3:PutObject` and `s3:GetObject` on the prefix, and `s3:ListBucket` on the
+  bucket: without it S3 answers a HeadObject for a missing key with 403 instead of 404, and the
+  archive stops at the first day. Local: the file and every directory above it, up to the filesystem root, are fsynced on every Put and every
+  read-back of an existing object, so a failed fsync is retried by the next run and a readable
+  file is never taken as proof it is durable.
+  A bad URL stops the CP at startup rather than deleting without an archive.
+  **Reading back is offline:** download the day objects and the address supplements, collapse their `address` rows to one
+  per `(ref, address, from)` with the smallest non-zero `until` (0 = open; the store only ever
+  shortens an end, and a stale open copy in a day object would keep matching events after the
+  end a supplement recorded), and attribute each event to those rows by source and time (`from <= at < until`, `until` 0 = open), as the Console does.
+  Archived events are never re-ingested: ingest still refuses an event older than the window or
+  the floor, so the archive and `egress_daily` cannot double count.
 - **Attribution** — when `AF_EGRESS_TOKEN` is set, a recorder (one CP at a time, under a CP
   lease) asks each workspace's runtime every `AF_EGRESS_ADDRESS_INTERVAL` (default 60s) which
   addresses it holds: the ECS task ENI,

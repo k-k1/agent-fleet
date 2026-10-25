@@ -78,6 +78,23 @@ type EgressAttributionStore interface {
 	// PurgeWorkspaceAddresses deletes at most limit closed address rows that ended before the
 	// cutoff and returns how many. A row still open is never deleted: it has no end.
 	PurgeWorkspaceAddresses(ctx context.Context, before int64, limit int) (int, error)
+	// OldestEgressEvent returns the time of the oldest raw event; ok is false when there is none.
+	OldestEgressEvent(ctx context.Context) (at int64, ok bool, err error)
+	// EachPurgeableWorkspaceAddress calls fn for every closed address row that ended before
+	// the cutoff, in (from, ref, address) order: the rows PurgeWorkspaceAddresses would delete.
+	EachPurgeableWorkspaceAddress(ctx context.Context, before int64, fn func(WorkspaceAddress) error) error
+	// DeleteWorkspaceAddressVersions deletes exactly the given rows, each only while its end
+	// still equals the one given, and returns how many went. A row that arrived or changed
+	// after the caller read it is not matched, so it is never deleted unseen.
+	DeleteWorkspaceAddressVersions(ctx context.Context, rows []WorkspaceAddress) (int, error)
+	// EachEgressEvent calls fn for every event with from <= at < to in (at, id) order, ids
+	// compared bytewise. It
+	// pages by key, batch rows per query, so a day of events is never held in memory and no
+	// cursor stays open between calls. An error from fn stops the walk and is returned.
+	EachEgressEvent(ctx context.Context, from, to int64, batch int, fn func(EgressEvent) error) error
+	// EachWorkspaceAddressOverlapping calls fn for every address row whose interval meets
+	// [from, to): the rows an event inside that window can be attributed through.
+	EachWorkspaceAddressOverlapping(ctx context.Context, from, to int64, fn func(WorkspaceAddress) error) error
 }
 
 func (s *SQL) RecordEgressEvent(ctx context.Context, day string, e EgressEvent, receivedAt int64) (bool, error) {
@@ -326,4 +343,123 @@ func addressKey(ref, address string, from int64) string {
 	b.WriteByte(0)
 	b.WriteString(strconv.FormatInt(from, 10))
 	return b.String()
+}
+
+func (s *SQL) oldest(ctx context.Context, q string, args ...any) (int64, bool, error) {
+	var v sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&v); err != nil {
+		return 0, false, err
+	}
+	return v.Int64, v.Valid, nil
+}
+
+func (s *SQL) OldestEgressEvent(ctx context.Context) (int64, bool, error) {
+	return s.oldest(ctx, `SELECT MIN(at) FROM egress_event`)
+}
+
+func (s *SQL) EachPurgeableWorkspaceAddress(ctx context.Context, before int64, fn func(WorkspaceAddress) error) error {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT membership_id, workspace_id, address, ref, from_at, until_at FROM workspace_address
+		 WHERE until_at > 0 AND until_at < ? ORDER BY from_at, ref, address`, before)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var a WorkspaceAddress
+		if err := rows.Scan(&a.MembershipID, &a.WorkspaceID, &a.Address, &a.Ref, &a.From, &a.Until); err != nil {
+			return err
+		}
+		if err := fn(a); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func (s *SQL) DeleteWorkspaceAddressVersions(ctx context.Context, rows []WorkspaceAddress) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	total := 0
+	for _, a := range rows {
+		res, err := tx.ExecContext(ctx,
+			`DELETE FROM workspace_address WHERE ref=? AND address=? AND from_at=? AND until_at=?`,
+			a.Ref, a.Address, a.From, a.Until)
+		n, err := rowsDeleted(res, err)
+		if err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return total, tx.Commit()
+}
+
+func (s *SQL) EachEgressEvent(ctx context.Context, from, to int64, batch int, fn func(EgressEvent) error) error {
+	if batch <= 0 {
+		batch = 5000
+	}
+	// The row-value comparison walks egress_event_at from the last key; an empty id sorts
+	// before every real one, so the first page starts at from.
+	afterAt, afterID := from, ""
+	// Ids order bytewise on both dialects (Postgres would otherwise follow the database's
+	// locale), so the order is one a verifier outside the database can reproduce.
+	id := "id"
+	if s.dialect == "postgres" {
+		id = `id COLLATE "C"`
+	}
+	for {
+		rows, err := s.db.QueryContext(ctx,
+			`SELECT id, at, source, dest, host, allowed, count FROM egress_event
+			 WHERE at < ? AND (at, `+id+`) > (?, ?) ORDER BY at, `+id+` LIMIT ?`, to, afterAt, afterID, batch)
+		if err != nil {
+			return err
+		}
+		n := 0
+		for rows.Next() {
+			var e EgressEvent
+			var allowed int
+			if err := rows.Scan(&e.ID, &e.At, &e.Source, &e.Dest, &e.Host, &allowed, &e.Count); err != nil {
+				rows.Close()
+				return err
+			}
+			e.Allowed = allowed == 1
+			afterAt, afterID = e.At, e.ID
+			n++
+			if err := fn(e); err != nil {
+				rows.Close()
+				return err
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		if n < batch {
+			return nil
+		}
+	}
+}
+
+func (s *SQL) EachWorkspaceAddressOverlapping(ctx context.Context, from, to int64, fn func(WorkspaceAddress) error) error {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT membership_id, workspace_id, address, ref, from_at, until_at FROM workspace_address
+		 WHERE from_at < ? AND (until_at = 0 OR until_at > ?) ORDER BY from_at, ref, address`, to, from)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var a WorkspaceAddress
+		if err := rows.Scan(&a.MembershipID, &a.WorkspaceID, &a.Address, &a.Ref, &a.From, &a.Until); err != nil {
+			return err
+		}
+		if err := fn(a); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }
