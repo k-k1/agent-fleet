@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   agent-fleet ECS adapter (P3-7) - network substrate: VPC, 2-AZ public/private/workspace
-  subnets, IGW, one NAT gateway, the S3 gateway endpoint, and the base
-  security groups (alb -> cp -> ws).
+  subnets, IGW, one NAT gateway, the S3 gateway endpoint, the optional egress
+  gateway (EgressRoute=gateway, ADR 0122), and the base security groups (alb -> cp -> ws).
   Static substrate only; per-workspace resources are created by the Control Plane
   at runtime. Later stacks (10-data, 20-platform) import these via exports.
 
@@ -68,6 +68,30 @@ Parameters:
     Default: 10.20.48.0/20
     Description: CIDR of the workspace subnet in the second AZ; see WorkspaceSubnet0Cidr.
 
+  EgressRoute:
+    Type: String
+    Default: nat-gateway
+    AllowedValues: [ nat-gateway, gateway ]
+    Description: >-
+      Where the WORKSPACE route table's default route goes. nat-gateway = the NAT gateway, as
+      the private route table. gateway = the ADR 0122 egress gateway: an Auto Scaling group of
+      one EC2 instance running Squid and `control-plane egress-agent`, which records (and in
+      enforce, decides) every workspace connection. The CP, the slots and the engines stay on
+      the NAT gateway either way. Workspaces then egress from GatewayEip, not the NAT
+      address (#2728), and pause.sh refuses the stack (#2729). README, "Egress gateway".
+  GatewayInstanceType:
+    Type: String
+    Default: t3.small
+    Description: >-
+      Instance type of the egress gateway (EgressRoute=gateway). Its architecture must match
+      GatewayAmiId's and the CP image's (30-ingress CpArch): the gateway runs the CP binary.
+  GatewayAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: >-
+      AL2023 AMI of the egress gateway, resolved at each deploy: a deploy that resolves a
+      newer AMI replaces the gateway instance (a few minutes without workspace egress).
+
 Mappings:
   Subnets:
     Public0:  { Cidr: 10.20.0.0/24 }
@@ -80,6 +104,12 @@ Conditions:
   CreateNatEip: !Equals [ !Ref NatEipAllocationId, "" ]
   NatOn: !Equals [ !Ref NatEnabled, "true" ]
   S3EndpointOn: !Equals [ !Ref S3EndpointEnabled, "true" ]
+  GatewayOn: !Equals [ !Ref EgressRoute, gateway ]
+  # The workspace default route exists while its target does: the gateway, or the NAT
+  # gateway (which NatEnabled=false deletes). One resource for both targets, so switching
+  # EgressRoute replaces the route's target in place instead of creating a second
+  # 0.0.0.0/0 route next to the first (CreateRoute would fail with RouteAlreadyExists).
+  WorkspaceRouteOn: !Or [ !Condition GatewayOn, !Condition NatOn ]
 
 Resources:
   Vpc:
@@ -213,9 +243,10 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties: { SubnetId: !Ref PrivateSubnet1, RouteTableId: !Ref PrivateRt }
 
-  # The workspace route table: the default route to the NAT and NO S3 endpoint route, so a
-  # workspace's S3 is never refused by the endpoint policy below and never skips the NAT
-  # (#2657). Under NatEnabled=false it loses its default route with the private one.
+  # The workspace route table: the default route to the NAT (or the egress gateway, below)
+  # and NO S3 endpoint route, so a workspace's S3 is never refused by the endpoint policy
+  # below and never skips the NAT or the gateway (#2657). Under NatEnabled=false the NAT
+  # route goes with the private one.
   # deploy/local/cfn-s3-endpoint-test.py pins both route tables.
   WorkspaceRt:
     Type: AWS::EC2::RouteTable
@@ -224,11 +255,12 @@ Resources:
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-workspace-rt" } ]
   WorkspaceDefaultRoute:
     Type: AWS::EC2::Route
-    Condition: NatOn
+    Condition: WorkspaceRouteOn
     Properties:
       RouteTableId: !Ref WorkspaceRt
       DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref Nat
+      NatGatewayId: !If [ GatewayOn, !Ref "AWS::NoValue", !Ref Nat ]
+      NetworkInterfaceId: !If [ GatewayOn, !Ref GatewayEni, !Ref "AWS::NoValue" ]
   WorkspaceAssoc0:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties: { SubnetId: !Ref WorkspaceSubnet0, RouteTableId: !Ref WorkspaceRt }
@@ -378,6 +410,411 @@ Resources:
           Description: Agent port from CP only (no ALB, no cross-workspace)
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-ws-sg" } ]
 
+  # --- Egress gateway (EgressRoute=gateway; ADR 0122 decision 5, README "Egress gateway") ---
+  #
+  # The route follows instance replacement through a FIXED network interface: the workspace
+  # route table points at GatewayEni, which this stack owns together with its Elastic IP, and
+  # each instance the group launches attaches it at boot as its second interface. So the
+  # route target, the proxy address the CP hands to workspaces and the egress address never
+  # change, and no instance needs ec2:ReplaceRoute or address permissions. The price: the
+  # interface is bound to PublicSubnet0's AZ, so the group launches there only, and during a
+  # replacement the route blackholes until the new instance has attached it (minutes).
+  GatewaySg:
+    Type: AWS::EC2::SecurityGroup
+    Condition: GatewayOn
+    Properties:
+      GroupDescription: !Sub "af-${AWS::StackName} egress gateway (workspace subnets only)"
+      VpcId: !Ref Vpc
+      # Only the workspace subnets, only the ports Squid serves: 80/443 arrive by the route
+      # (intercepted), 3128 is the explicit proxy (AF_EGRESS_PROXY_ADDR). Anything else a
+      # workspace sends to the internet is dropped here, unrecorded.
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: !Ref WorkspaceSubnet0Cidr, Description: intercepted HTTP }
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: !Ref WorkspaceSubnet1Cidr, Description: intercepted HTTP }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: !Ref WorkspaceSubnet0Cidr, Description: intercepted TLS }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: !Ref WorkspaceSubnet1Cidr, Description: intercepted TLS }
+        - { IpProtocol: tcp, FromPort: 3128, ToPort: 3128, CidrIp: !Ref WorkspaceSubnet0Cidr, Description: explicit proxy }
+        - { IpProtocol: tcp, FromPort: 3128, ToPort: 3128, CidrIp: !Ref WorkspaceSubnet1Cidr, Description: explicit proxy }
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-egress-gateway-sg" } ]
+  # The instance's own first interface: outbound only (package install, the AWS APIs before
+  # GatewayEni is attached, SSM).
+  GatewayHostSg:
+    Type: AWS::EC2::SecurityGroup
+    Condition: GatewayOn
+    Properties:
+      GroupDescription: !Sub "af-${AWS::StackName} egress gateway host (outbound only)"
+      VpcId: !Ref Vpc
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-egress-gateway-host-sg" } ]
+
+  GatewayEni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: GatewayOn
+    Properties:
+      Description: !Sub "af-${AWS::StackName} egress gateway (workspace route target)"
+      SubnetId: !Ref PublicSubnet0
+      GroupSet: [ !Ref GatewaySg ]
+      # It receives packets addressed to the internet (it is a route target).
+      SourceDestCheck: false
+      Tags:
+        - { Key: Name, Value: !Sub "af-${AWS::StackName}-egress-gateway" }
+        - { Key: af-egress-gateway, Value: !Ref AWS::StackName }
+  # Retained for the same reason as NatEip: it is an address an organisation may allow-list.
+  # It is NOT the NAT gateway's address; moving one address between the two is #2728.
+  GatewayEip:
+    Type: AWS::EC2::EIP
+    Condition: GatewayOn
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Domain: vpc
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-egress-gateway-eip" } ]
+  GatewayEipAssoc:
+    Type: AWS::EC2::EIPAssociation
+    Condition: GatewayOn
+    Properties:
+      AllocationId: !GetAtt GatewayEip.AllocationId
+      NetworkInterfaceId: !Ref GatewayEni
+  # Workspaces reach the CP's public URL through the gateway now, and the agent ships to it,
+  # so a narrowed AlbIngressCidr must still admit the gateway's address.
+  AlbFromGateway:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: GatewayOn
+    Properties:
+      GroupId: !Ref AlbSg
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: !Sub "${GatewayEip}/32"
+      Description: HTTPS from the egress gateway (workspaces and its agent)
+
+  # The bearer the gateway's agent and the CP share (AF_EGRESS_TOKEN). Generated here, never
+  # a parameter or an output: only its ARN travels (30-ingress EgressTokenSecretArn; the CP's
+  # execution role reads af-*-egress-token-*, 20-platform).
+  EgressTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    Condition: GatewayOn
+    Properties:
+      # A deleted secret keeps its name for its recovery window, so a name that repeated on
+      # gateway -> nat-gateway -> gateway would fail the second create; the interface id makes
+      # it new each time the gateway is created.
+      Name: !Sub "af-${AWS::StackName}-egress-token-${GatewayEni}"
+      Description: !Sub "af-${AWS::StackName}: bearer of the egress gateway agent (AF_EGRESS_TOKEN)"
+      GenerateSecretString: { PasswordLength: 48, ExcludePunctuation: true }
+
+  GatewayRole:
+    Type: AWS::IAM::Role
+    Condition: GatewayOn
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: ec2.amazonaws.com }, Action: sts:AssumeRole }
+      # Session Manager is how an operator reaches the box (no SSH, no inbound port).
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+      Policies:
+        - PolicyName: egress-gateway
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Attach THE interface to an instance of THIS gateway: both carry the tag.
+              - Effect: Allow
+                Action: ec2:AttachNetworkInterface
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/${GatewayEni}"
+                  - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+                Condition:
+                  StringEquals: { "aws:ResourceTag/af-egress-gateway": !Ref AWS::StackName }
+              # Describe* takes no resource; it reads the interface's MAC to find the device.
+              - Effect: Allow
+                Action: ec2:DescribeNetworkInterfaces
+                Resource: "*"
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref EgressTokenSecret
+              # Written by 30-ingress: the CP image and URL the agent uses.
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-egress/${AWS::StackName}/agent"
+              # The agent is the CP binary, copied out of the CP image (20-platform's repository).
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action: [ ecr:BatchGetImage, ecr:GetDownloadUrlForLayer ]
+                Resource: !Sub "arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/af-control-plane"
+  GatewayInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Condition: GatewayOn
+    Properties:
+      Roles: [ !Ref GatewayRole ]
+
+  GatewayLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Condition: GatewayOn
+    Properties:
+      LaunchTemplateData:
+        ImageId: !Ref GatewayAmiId
+        InstanceType: !Ref GatewayInstanceType
+        IamInstanceProfile: { Arn: !GetAtt GatewayInstanceProfile.Arn }
+        # IMDSv2 only; hop limit 1, nothing on the box runs in a container that needs it.
+        MetadataOptions: { HttpEndpoint: enabled, HttpTokens: required, HttpPutResponseHopLimit: 1 }
+        # A public address on the first interface for the boot steps that run before
+        # GatewayEni is attached; afterwards all traffic leaves through GatewayEni (EIP).
+        NetworkInterfaces:
+          - { DeviceIndex: 0, AssociatePublicIpAddress: true, Groups: [ !Ref GatewayHostSg ], DeleteOnTermination: true }
+        BlockDeviceMappings:
+          - { DeviceName: /dev/xvda, Ebs: { VolumeSize: 16, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true } }
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - { Key: Name, Value: !Sub "af-${AWS::StackName}-egress-gateway" }
+              - { Key: af-egress-gateway, Value: !Ref AWS::StackName }
+        UserData:
+          Fn::Base64: !Sub
+            - |
+              #!/bin/bash
+              # agent-fleet egress gateway (ADR 0122). Log: /var/log/af-egress-gateway.log.
+              exec > /var/log/af-egress-gateway.log 2>&1
+              set -euxo pipefail
+              REGION=${AWS::Region}
+              ENI=${GatewayEni}
+              WS_SQUID="${Ws0} ${Ws1}"
+              WS_NFT="${Ws0}, ${Ws1}"
+              imds() {
+                local t
+                t=$(curl -sf -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)
+                curl -sf -H "X-aws-ec2-metadata-token: $t" "http://169.254.169.254/latest/meta-data/$1"
+              }
+              IID=$(imds instance-id)
+
+              # 1. Attach the fixed interface. The previous gateway may hold it until it has
+              #    terminated, so keep trying.
+              for _ in $(seq 1 90); do
+                aws ec2 attach-network-interface --region "$REGION" --network-interface-id "$ENI" \
+                  --instance-id "$IID" --device-index 1 && break
+                sleep 10
+              done
+              MAC=$(aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$ENI" \
+                --query 'NetworkInterfaces[0].MacAddress' --output text)
+              DEV=""
+              for _ in $(seq 1 90); do
+                DEV=$(ip -o link | awk -v m="$MAC" 'index($0, m) { sub(":", "", $2); print $2 }')
+                [ -n "$DEV" ] && break
+                sleep 2
+              done
+              [ -n "$DEV" ]
+              # All traffic leaves through it (the Elastic IP): its default route wins.
+              mkdir -p "/etc/systemd/network/70-$DEV.network.d"
+              printf '[DHCPv4]\nRouteMetric=100\n' > "/etc/systemd/network/70-$DEV.network.d/af-egress.conf"
+              networkctl reload
+              networkctl reconfigure "$DEV"
+              for _ in $(seq 1 30); do
+                ip route show default | head -1 | grep -q "dev $DEV" && break
+                sleep 2
+              done
+              # If the network configuration did not take (another file name), set it by hand.
+              if ! ip route show default | head -1 | grep -q "dev $DEV"; then
+                CIDR=$(imds "network/interfaces/macs/$MAC/subnet-ipv4-cidr-block")
+                GW=$(python3 -c 'import ipaddress, sys; print(ipaddress.ip_network(sys.argv[1])[1])' "$CIDR")
+                ip route replace default via "$GW" dev "$DEV" metric 50
+              fi
+              # Workspace packets arrive on $DEV from addresses the main table routes elsewhere:
+              # loose reverse-path filtering. No forwarding at all: Squid is the only way out.
+              cat > /etc/sysctl.d/90-af-egress.conf <<EOF
+              net.ipv4.ip_forward = 0
+              net.ipv4.conf.all.rp_filter = 2
+              net.ipv4.conf.default.rp_filter = 2
+              net.ipv4.conf.$DEV.rp_filter = 2
+              EOF
+              sysctl --system
+
+              # 2. Squid, nftables, and docker (only to copy the agent out of the CP image).
+              dnf install -y squid nftables docker
+              install -d -o squid -g squid -m 0750 /var/lib/af-egress-agent
+              # Placeholders until the agent's first policy: log-only, nothing allowed.
+              printf '.invalid\n' > /var/lib/af-egress-agent/af-allow.txt
+              printf 'ssl_bump peek af_step1\nssl_bump splice all\n' > /var/lib/af-egress-agent/af-mode.conf
+              chown squid:squid /var/lib/af-egress-agent/af-allow.txt /var/lib/af-egress-agent/af-mode.conf
+              # ssl-bump ports need a certificate even though nothing is ever decrypted
+              # (peek, then splice or terminate).
+              openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj /CN=af-egress-gateway \
+                -keyout /etc/squid/af-bump.key -out /etc/squid/af-bump.crt
+              cat /etc/squid/af-bump.crt /etc/squid/af-bump.key > /etc/squid/af-bump.pem
+              chown root:squid /etc/squid/af-bump.pem /etc/squid/af-bump.key
+              chmod 0640 /etc/squid/af-bump.pem /etc/squid/af-bump.key
+              # The configuration control-plane/internal/egressagent/doc.go expects; the
+              # allow and mode files live where the agent (user squid) can rename into.
+              cat > /etc/squid/squid.conf <<EOF
+              acl workspaces src $WS_SQUID
+              acl SSL_ports port 443
+              acl CONNECT method CONNECT
+              acl af_allowed dstdomain "/var/lib/af-egress-agent/af-allow.txt"
+              acl af_allowed_sni ssl::server_name "/var/lib/af-egress-agent/af-allow.txt"
+              acl af_step1 at_step SslBump1
+              http_port 3128 ssl-bump tls-cert=/etc/squid/af-bump.pem generate-host-certificates=off
+              http_port 3129 intercept
+              https_port 3130 intercept ssl-bump tls-cert=/etc/squid/af-bump.pem generate-host-certificates=off
+              include /var/lib/af-egress-agent/af-mode.conf
+              http_access deny !workspaces
+              http_access deny CONNECT !SSL_ports
+              http_access allow workspaces
+              http_access deny all
+              logformat af_egress af1 %tS %>a %<a %Ss %ssl::bump_mode %#ssl::>sni %#>rd
+              access_log stdio:/var/log/squid/af-egress.log af_egress
+              logfile_rotate 10
+              cache deny all
+              via off
+              forwarded_for delete
+              shutdown_lifetime 5 seconds
+              EOF
+              # Squid's own rotation (renames to .0, .1, ...), which the agent follows; the
+              # package's logrotate entry is replaced by a daily `squid -k rotate`.
+              rm -f /etc/logrotate.d/squid
+              cat > /etc/systemd/system/af-squid-rotate.service <<EOF
+              [Service]
+              Type=oneshot
+              ExecStart=/usr/sbin/squid -k rotate
+              EOF
+              cat > /etc/systemd/system/af-squid-rotate.timer <<EOF
+              [Timer]
+              OnCalendar=daily
+              [Install]
+              WantedBy=timers.target
+              EOF
+              # 80/443 from the workspace subnets go to Squid's intercept ports. Nothing is
+              # forwarded (ip_forward=0); the forward chain only logs what would have been.
+              mkdir -p /etc/af-egress
+              cat > /etc/af-egress/nft.conf <<EOF
+              table inet af_egress
+              delete table inet af_egress
+              table inet af_egress {
+                chain prerouting {
+                  type nat hook prerouting priority dstnat; policy accept;
+                  iifname "$DEV" ip saddr { $WS_NFT } tcp dport 80 redirect to :3129
+                  iifname "$DEV" ip saddr { $WS_NFT } tcp dport 443 redirect to :3130
+                }
+                chain forward {
+                  type filter hook forward priority filter; policy drop;
+                  limit rate 10/second log prefix "af-egress-drop "
+                }
+              }
+              EOF
+              cat > /etc/systemd/system/af-egress-nft.service <<EOF
+              [Unit]
+              Before=squid.service
+              [Service]
+              Type=oneshot
+              RemainAfterExit=yes
+              ExecStart=/usr/sbin/nft -f /etc/af-egress/nft.conf
+              [Install]
+              WantedBy=multi-user.target
+              EOF
+              echo 'squid ALL=(root) NOPASSWD: /usr/sbin/squid -k reconfigure' > /etc/sudoers.d/af-egress
+              chmod 0440 /etc/sudoers.d/af-egress
+
+              # 3. The agent: `af-cp egress-agent` as user squid (it tags Squid's log files
+              #    with an xattr and rewrites the two policy files), reloading through sudo.
+              cat > /usr/local/sbin/af-egress-install <<'EOF'
+              #!/bin/bash
+              # Fetch the agent's configuration (30-ingress), the token (Secrets Manager) and,
+              # when the CP image changed, the binary. Runs at boot and every 10 minutes.
+              set -euo pipefail
+              REGION=${AWS::Region}
+              cfg=$(aws ssm get-parameter --region "$REGION" --name /af-egress/${AWS::StackName}/agent \
+                --query Parameter.Value --output text)
+              IMAGE=$(printf '%s\n' "$cfg" | sed -n 's/^AF_EGRESS_IMAGE=//p')
+              CP=$(printf '%s\n' "$cfg" | sed -n 's/^AF_EGRESS_CP_URL=//p')
+              [ -n "$IMAGE" ] && [ -n "$CP" ]
+              tok=$(aws secretsmanager get-secret-value --region "$REGION" --secret-id ${EgressTokenSecret} \
+                --query SecretString --output text)
+              changed=0
+              if [ "$(cat /var/lib/af-egress-agent/image 2>/dev/null || true)" != "$IMAGE" ]; then
+                systemctl start docker
+                aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "${!IMAGE%%/*}"
+                docker pull "$IMAGE"
+                c=$(docker create "$IMAGE")
+                docker cp "$c:/usr/local/bin/af-cp" /usr/local/bin/af-cp.new
+                docker rm "$c"
+                docker rmi "$IMAGE"
+                docker logout "${!IMAGE%%/*}"
+                systemctl stop docker docker.socket
+                install -m 0755 /usr/local/bin/af-cp.new /usr/local/bin/af-cp
+                rm -f /usr/local/bin/af-cp.new
+                echo "$IMAGE" > /var/lib/af-egress-agent/image
+                changed=1
+              fi
+              umask 077
+              new=$(mktemp)
+              {
+                echo "AF_EGRESS_POLICY_URL=$CP/internal/egress/policy"
+                echo "AF_EGRESS_INGEST_URL=$CP/internal/egress"
+                echo "AF_EGRESS_TOKEN=$tok"
+                echo "AF_EGRESS_SQUID_ALLOW_FILE=/var/lib/af-egress-agent/af-allow.txt"
+                echo "AF_EGRESS_SQUID_MODE_FILE=/var/lib/af-egress-agent/af-mode.conf"
+                echo "AF_EGRESS_SQUID_RELOAD=sudo -n /usr/sbin/squid -k reconfigure"
+              } > "$new"
+              if ! cmp -s "$new" /etc/af-egress-agent.env; then
+                install -m 0600 -o squid -g squid "$new" /etc/af-egress-agent.env
+                changed=1
+              fi
+              rm -f "$new"
+              if [ "$changed" = 1 ]; then systemctl restart af-egress-agent; else systemctl start af-egress-agent; fi
+              EOF
+              chmod 0755 /usr/local/sbin/af-egress-install
+              cat > /etc/systemd/system/af-egress-agent.service <<EOF
+              [Unit]
+              Description=agent-fleet egress agent (Squid <-> control plane)
+              After=squid.service network-online.target
+              [Service]
+              User=squid
+              Group=squid
+              EnvironmentFile=/etc/af-egress-agent.env
+              ExecStart=/usr/local/bin/af-cp egress-agent
+              Restart=always
+              RestartSec=15
+              EOF
+              cat > /etc/systemd/system/af-egress-install.service <<EOF
+              [Service]
+              Type=oneshot
+              ExecStart=/usr/local/sbin/af-egress-install
+              EOF
+              cat > /etc/systemd/system/af-egress-install.timer <<EOF
+              [Timer]
+              OnActiveSec=0
+              OnUnitInactiveSec=10min
+              [Install]
+              WantedBy=timers.target
+              EOF
+              systemctl daemon-reload
+              systemctl enable --now af-egress-nft.service
+              squid -k parse
+              systemctl enable --now squid
+              systemctl enable --now af-squid-rotate.timer af-egress-install.timer
+            - { Ws0: !Ref WorkspaceSubnet0Cidr, Ws1: !Ref WorkspaceSubnet1Cidr }
+
+  # An Auto Scaling group of ONE: it replaces a failed instance, and the replacement attaches
+  # GatewayEni. One AZ only (the interface's). Terminate before launch on every update: two
+  # instances cannot share the interface.
+  GatewayAsg:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Condition: GatewayOn
+    DependsOn: GatewayEipAssoc
+    UpdatePolicy:
+      AutoScalingRollingUpdate: { MinInstancesInService: 0, MaxBatchSize: 1 }
+    Properties:
+      MinSize: "1"
+      MaxSize: "1"
+      DesiredCapacity: "1"
+      VPCZoneIdentifier: [ !Ref PublicSubnet0 ]
+      LaunchTemplate:
+        LaunchTemplateId: !Ref GatewayLaunchTemplate
+        Version: !GetAtt GatewayLaunchTemplate.LatestVersionNumber
+      Tags:
+        - { Key: Name, Value: !Sub "af-${AWS::StackName}-egress-gateway", PropagateAtLaunch: true }
+        - { Key: af-egress-gateway, Value: !Ref AWS::StackName, PropagateAtLaunch: true }
+
+
 Outputs:
   # The egress source IP's allocation, whoever created it. Capture it (capture-env.sh
   # stores it as a 00-network parameter) and pass it back as NatEipAllocationId to
@@ -409,3 +846,13 @@ Outputs:
   WsSgId:
     Value: !Ref WsSg
     Export: { Name: !Sub "${AWS::StackName}-WsSgId" }
+  # EgressRoute=gateway only. standup.sh / update.sh hand both to 30-ingress (README).
+  EgressProxyAddr:
+    Condition: GatewayOn
+    Value: !Sub "${GatewayEni.PrimaryPrivateIpAddress}:3128"
+  EgressTokenSecretArn:
+    Condition: GatewayOn
+    Value: !Ref EgressTokenSecret
+  GatewayEipAddress:
+    Condition: GatewayOn
+    Value: !Ref GatewayEip

@@ -353,6 +353,11 @@ jobs:
       # policy; workspace task ENIs have their own route table without it (#2716).
       - name: S3 endpoint on the private route table only, pinned policy (ECS templates)
         run: python3 ./deploy/local/cfn-s3-endpoint-test.py
+      # The egress gateway (EgressRoute=gateway, #2717) only runs on a real account: its route,
+      # security groups, instance role, token wiring and the Squid lines the agent parses are
+      # held against the templates here.
+      - name: Egress gateway routes, SGs, IAM, token and Squid configuration (ECS templates)
+        run: python3 ./deploy/local/cfn-egress-gateway-test.py
       # pause.sh deletes the NAT gateway through 00-network's NatEnabled and re-stops a long-paused
       # database through 10-data's Lambda; a gateway outside its condition, or a Lambda that stops
       # an instance pause.sh did not tag, only shows on a real deployment.

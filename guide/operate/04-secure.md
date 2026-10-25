@@ -113,7 +113,11 @@ in the Console.
 > traffic through it (an internal network or security-group egress rule that leaves the proxy as
 > the only way out, and templates that run the proxy), so a process that ignores the variables
 > still goes straight out, and **switching to enforce does not yet constrain a workspace**.
-> For now, understand that you can operate up to the "observe and grow the allowlist" stage.
+> The exception is AWS (`ecs` / `ecs-ec2`) with `00-network`'s `EgressRoute=gateway`: the
+> workspace route table then goes through an egress gateway (Squid), so a workspace has no other
+> way out and enforce applies to it. That option is new and **not yet verified on a real
+> account** (see "Choosing the egress route on AWS" in [choosing a target](01-choose.md)).
+> Elsewhere, understand that you can operate up to the "observe and grow the allowlist" stage.
 > The full design picture is in `docs/build/07-security.md` §7.8.
 
 ## MCP servers and external connections

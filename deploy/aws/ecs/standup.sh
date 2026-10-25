@@ -364,7 +364,7 @@ deploy_stack() {  # deploy_stack <stack> <template> <slug> [capability...]
     --no-fail-on-empty-changeset
 }
 
-deploy_stack "$AF_STACK_NETWORK"  00-network.yaml  00-network
+deploy_stack "$AF_STACK_NETWORK"  00-network.yaml  00-network     CAPABILITY_IAM
 deploy_stack "$AF_STACK_DATA"     10-data.yaml     10-data     CAPABILITY_AUTO_EXPAND CAPABILITY_IAM
 deploy_stack "$AF_STACK_PLATFORM" 20-platform.yaml 20-platform CAPABILITY_NAMED_IAM
 
@@ -744,6 +744,19 @@ af_param_drop WorkspaceSubnets
 if [ "$AF_DRY" != 1 ]; then
   ws_subnets="$(af_stack_output "$AF_STACK_NETWORK" WorkspaceSubnets)"
   [ -z "$ws_subnets" ] || af_param_override WorkspaceSubnets "$ws_subnets"
+fi
+# The egress gateway's proxy address and token secret (EgressRoute=gateway): outputs, never the
+# capture (a rebuilt network has a new interface and a new secret). Empty = no gateway.
+af_param_drop EgressProxyAddr
+af_param_drop EgressTokenSecretArn
+if [ "$AF_DRY" != 1 ]; then
+  eg_secret="$(af_stack_output "$AF_STACK_NETWORK" EgressTokenSecretArn)"
+  if [ -n "$eg_secret" ]; then
+    af_param_override EgressProxyAddr "$(af_stack_output "$AF_STACK_NETWORK" EgressProxyAddr)"
+    af_param_override EgressTokenSecretArn "$eg_secret"
+    echo "WARNING: $AF_STACK_NETWORK runs the egress gateway (EgressRoute=gateway). Workspaces egress" >&2
+    echo "         from its own address, not the NAT gateway's (#2728), and pause.sh refuses it (#2729)." >&2
+  fi
 fi
 if [ -n "$AF_STACK_POOL" ] && [ "$AF_DRY" != 1 ]; then
   lt="$(af_stack_output "$AF_STACK_POOL" SlotLaunchTemplateId)"

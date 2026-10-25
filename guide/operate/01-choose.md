@@ -74,6 +74,26 @@ saves the CLI boot-install time, not NAT traffic. Planned, not yet available: a 
 a NAT gateway and an egress gateway (#2717). The setup details are in
 [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md).
 
+### Choosing the egress route on AWS
+
+`00-network`'s `EgressRoute` decides how **workspaces** reach the internet. The Control Plane and
+the AWS hosts stay on the NAT gateway either way.
+
+| | NAT gateway (`nat-gateway`, the default) | Egress gateway (`gateway`) |
+|---|---|---|
+| Recording | nothing: the Admin Egress tab stays empty | every workspace connection, by name and address, attributed to the workspace |
+| Allowlist | not enforced | log-only, or enforce |
+| Hourly cost | the NAT gateway | the NAT gateway (still used by the Control Plane and hosts) plus a small instance and its address |
+| Per-GB cost | NAT data processing on all workspace traffic, S3 included | none for workspace traffic, only normal data transfer |
+| Operations | managed by AWS | an instance to run; replacing it leaves workspaces without egress for a few minutes |
+| Availability | AWS-managed, one Availability Zone | one instance in one Availability Zone, replaced automatically |
+| Non-HTTP traffic (SSH git) | works | blocked |
+| Address to allow-list | the NAT gateway's | a separate address for workspaces |
+
+The egress gateway is new and **not yet verified on a real account**; `pause.sh` does not
+support it yet. Setup and limits: "Egress gateway" in
+[deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md).
+
 ## When Kubernetes, and when not
 
 > **Preview.** The `kubernetes` runtime is a preview, not yet supported for production. Its known

@@ -90,6 +90,15 @@ af_env_init "$PROFILE" "$REGION" "$STACK"
 CLUSTER="$(af_cluster)"
 CP_SERVICE="af-$AF_STACK_INGRESS-cp"
 
+# EgressRoute=gateway (00-network, ADR 0122): this script only knows the NAT gateway. Pausing
+# would delete the NAT gateway under the CP and the hosts and leave the egress gateway billing;
+# resuming knows nothing to wait for. Refused until #2729; --status still reports.
+if [ "$MODE" != status ] && [ "$(af_stack_param "$AF_STACK_NETWORK" EgressRoute)" = gateway ]; then
+  echo "ERROR: $AF_STACK_NETWORK runs the egress gateway (EgressRoute=gateway); pause.sh supports" >&2
+  echo "       EgressRoute=nat-gateway only (#2729). Switch back first, or stop by hand (README, \"Egress gateway\")." >&2
+  exit 1
+fi
+
 # ws_services — Workspace services with desired>0, i.e. the ones somebody is using.
 # Leave list-services' paging to the CLI: adding --max-items truncates silently and reads
 # as "we looked at everyone". describe-services takes at most 10 per call.
@@ -252,7 +261,9 @@ nat_set() {
     echo "DRY: cloudformation deploy --stack-name $AF_STACK_NETWORK --template-file $HERE/cfn/00-network.yaml --parameter-overrides NatEnabled=$1${extra[*]:+ ${extra[*]}}"
     return 0
   fi
-  af_cfn_deploy "$AF_STACK_NETWORK" "$HERE/cfn/00-network.yaml" \
+  # CAPABILITY_IAM: the template declares the egress gateway's role (only created with
+  # EgressRoute=gateway, but CloudFormation asks for the capability regardless).
+  af_cfn_deploy "$AF_STACK_NETWORK" "$HERE/cfn/00-network.yaml" --capabilities CAPABILITY_IAM \
     --parameter-overrides "NatEnabled=$1" ${extra[@]+"${extra[@]}"} --no-fail-on-empty-changeset
 }
 
