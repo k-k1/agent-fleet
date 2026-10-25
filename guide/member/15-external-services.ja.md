@@ -22,6 +22,8 @@ git と同じ要領で更新されます。
   `write:pipeline:bitbucket`。write は read を含みません）が必要です。プルリクエストのスコープが無いトークンは
   リポジトリ一覧は取れても `bkt pr list` が `403 Forbidden` になります。OAuth アプリのスコープは
   テナント管理者が設定します。
+  これらのスコープは `bkt` のためのものです。Console の作業項目パネルは、スコープに関係なく Bitbucket のプルリクエストへコメントを投稿しません
+  （報告コメントを出せるのは GitHub と Jira の行だけです）。
 - **Bitbucket Data Center**（bitbucket.org 以外のホスト）は設定画面からは接続できません。
   自分で設定してください（`bkt auth login`、または `BKT_HOST` と `BKT_TOKEN`）。設定があると
   その場合 `bkt` は、保存済みの接続を使わず、あなたの設定どおりに動きます。
