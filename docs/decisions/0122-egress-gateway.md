@@ -548,3 +548,33 @@ gateway, which therefore stays in both modes. Not run on a real account.
   gateway's, and moving one address between the two is #2728.
 
 Follow-ups: #2728, #2729, #2687 (real Squid; the README gives the steps on this instance).
+
+## Addendum (2026-10-25) — open point 5 on AWS: pausing and resuming the gateway (#2729)
+
+`pause.sh` no longer refuses `EgressRoute=gateway`, and `standup.sh` no longer warns about it.
+Not run on a real account.
+
+- **The switch is the group's size, nothing else.** `00-network`'s `GatewayEnabled` (default
+  `true`) sets the Auto Scaling group's minimum, maximum and desired count to 1 or 0. `GatewayEni`,
+  `GatewayEip`, the workspace route and the token stay under `GatewayOn` alone, so a pause can never
+  release the egress address or move the route target; the terminated instance releases the
+  interface and the next one attaches it. It is a stack parameter rather than an
+  `autoscaling update-auto-scaling-group` call so that the next deploy of the stack does not scale
+  it back, and so that a capture records it (`standup.sh` overrides a captured `false` to `true`,
+  as it does `NatEnabled`). `deploy/local/cfn-egress-gateway-test.py` pins that only `GatewayAsg`
+  follows it.
+- **A paused gateway blackholes the workspace route.** The route stays on `GatewayEni`, and never
+  falls back to the NAT gateway (that would be unrecorded egress). It is harmless only because
+  every workspace is stopped first.
+- **Order.** Down: the Workspaces are stopped and their tasks waited for, then the gateway,
+  then the CP: a tunnel is logged when it closes and the agent ships to the CP, so the last
+  connections are recorded only while both run. Up: the gateway starts in the same deploy as the
+  NAT gateway (it boots through its own public address), `pause.sh` waits before the CP until an
+  instance has attached the interface and Squid and the agent run, and after the CP until the
+  agent has applied its first policy. The second wait cannot come before the CP, which serves the
+  policy; a workspace started in between is refused by the closed bootstrap policy, not let out.
+- **Readiness is read through SSM Run Command**: the services' state, and the mode file carrying
+  the agent's `# mode: ` header, which the closed bootstrap file lacks. A probe from outside the
+  instance cannot tell the bootstrap policy from a real one.
+
+Open point 5 is closed for AWS by this; open point 7 (#2728) stays open.

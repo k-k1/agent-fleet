@@ -896,10 +896,25 @@ the gateway is gone every proxy-aware client in it times out. So take the proxy 
    workspace route moves back to the NAT gateway; `GatewayEip` is retained.
 4. Run `update.sh` (it passes the now-empty outputs and changes nothing else).
 
-**Limits of this first stage.** `pause.sh` refuses a stack with `EgressRoute=gateway` and
-`standup.sh` warns (#2729). Workspaces egress from `GatewayEip`, not `NatEip`; moving one
-address between the two is #2728. Squid, the agent and this configuration have **not been
-run on a real account**.
+**Pausing (#2729).** `pause.sh` stops the gateway through `00-network`'s `GatewayEnabled`:
+`false` scales the group to zero instances (never by hand with `aws autoscaling`, which the
+next deploy of the stack undoes). `GatewayEni` and `GatewayEip` stay, so `--up` brings back the
+same route target, proxy address and egress address; the Elastic IP keeps billing ($0.005/h).
+The gateway goes once the stopped Workspaces' tasks have ended (so the agent ships their last
+connections to the CP) and before the CP. While it is off the workspace route **blackholes**:
+that is harmless only because no workspace runs, so do not start one on a stack with
+`GatewayEnabled=false`. `--up` starts it in the same deploy as the NAT gateway and waits for it
+twice, through SSM Run Command (the operator needs `ssm:SendCommand`; the instance role already
+has `AmazonSSMManagedInstanceCore`): before the CP starts, until an instance has attached
+`GatewayEni` and Squid and `af-egress-agent` run; after the CP is up, until the agent has
+applied its first policy, which only the CP can give it (Squid refuses everything until then).
+A gateway that does not come up keeps the CP down; `AF_GATEWAY_WAIT_SEC` (default 1200) bounds
+each wait. `--status` shows the gateway. `standup.sh` overrides a captured
+`GatewayEnabled=false` to `true` and waits for the first policy at its end.
+
+**Limits of this first stage.** Workspaces egress from `GatewayEip`, not `NatEip`; moving one
+address between the two is #2728. Squid, the agent and this configuration, pausing and
+resuming included, have **not been run on a real account**.
 
 **Checking the agent against a real Squid (#2687).** On a sandbox with `EgressRoute=gateway`:
 
@@ -2253,8 +2268,10 @@ hardcoded default gets wrong (one names its pool stack `af-ecs-pool`, another
     (`S3EndpointEnabled=false`, passed when the stack has never had the switch), and `--up`
     warns, before any workspace can start, when the CP is not using the network's workspace
     subnets: run `update.sh`, then follow the migration in the NAT bullet below.
-    With `EgressRoute=gateway` (ADR 0122) `pause.sh` refuses to pause or resume and `standup.sh`
-    warns: neither stops or restores the egress gateway yet (#2729, "Egress gateway").
+    With `EgressRoute=gateway` (ADR 0122) the egress gateway is scaled to zero through
+    `GatewayEnabled=false` after the Workspaces and before the CP; `--up` starts it with the NAT
+    gateway and waits for it before and after the CP ("Egress gateway", "Pausing"). Its
+    interface and Elastic IP are never touched.
   - 🔴 **AWS starts a stopped RDS instance again after 7 days** (event `RDS-EVENT-0154`) and
     cannot be told not to. `10-data` (`RdsRestopOnForcedStart`, default `true`) therefore carries
     an EventBridge rule (`RDS-EVENT-0154` forced start, and `RDS-EVENT-0088` started, which covers

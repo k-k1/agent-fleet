@@ -244,6 +244,90 @@ af_stack_output() {
   echo "$v"
 }
 
+# --- The egress gateway (00-network EgressRoute=gateway, ADR 0122) ---------------------------
+
+# af_gateway_state <network stack> — "on", "off" (GatewayEnabled=false: pause.sh scaled it to
+# zero), or nothing when the stack runs no gateway (nat-gateway, or older than EgressRoute).
+# A gateway stack older than GatewayEnabled has its gateway on.
+af_gateway_state() {
+  [ "$(af_stack_param "$1" EgressRoute)" = gateway ] || return 0
+  local v
+  v="$(af_stack_param "$1" GatewayEnabled)"
+  if [ "${v:-true}" = true ]; then echo on; else echo off; fi
+}
+
+# af_gateway_eni <network stack> — GatewayEni's id (empty when the stack has none).
+af_gateway_eni() {
+  local v
+  v="$("${AWS[@]}" cloudformation describe-stack-resource --stack-name "$1" \
+    --logical-resource-id GatewayEni --query 'StackResourceDetail.PhysicalResourceId' --output text 2>/dev/null || true)"
+  case "$v" in None) v="" ;; esac
+  echo "$v"
+}
+
+# af_gateway_instance <eni> — the instance GatewayEni is attached to (empty while it is not).
+af_gateway_instance() {
+  local v
+  v="$("${AWS[@]}" ec2 describe-network-interfaces --network-interface-ids "$1" \
+    --query 'NetworkInterfaces[0].Attachment.[Status,InstanceId]' --output text 2>/dev/null || true)"
+  case "$v" in attached*i-*) echo "${v##*[[:space:]]}" ;; esac
+}
+
+# What the gateway is asked through SSM. "# mode: " heads both files the agent writes
+# (egressagent ModeLogOnly / ModeEnforce); the bootstrap file of the user data, which refuses
+# everything, does not have it. deploy/local/cfn-egress-gateway-test.py pins both sides.
+AF_GATEWAY_PROBE="systemctl is-active --quiet squid && systemctl is-active --quiet af-egress-agent || { echo af-gw-starting; exit 0; }; grep -q '^# mode: ' /var/lib/af-egress-agent/af-mode.conf && echo af-gw-ready || echo af-gw-up"
+
+# af_gateway_probe <instance> — af-gw-starting, af-gw-up (Squid and the agent run, no policy
+# yet) or af-gw-ready; nothing while the instance cannot answer (not registered with SSM yet).
+af_gateway_probe() {
+  local cid out _
+  cid="$("${AWS[@]}" ssm send-command --instance-ids "$1" --document-name AWS-RunShellScript \
+    --comment "agent-fleet egress gateway readiness" \
+    --parameters "$(printf '{"commands":["%s"]}' "$AF_GATEWAY_PROBE")" \
+    --query Command.CommandId --output text 2>/dev/null || true)"
+  case "$cid" in ""|None) return 0 ;; esac
+  for _ in $(seq 1 15); do
+    out="$("${AWS[@]}" ssm get-command-invocation --command-id "$cid" --instance-id "$1" \
+      --query '[Status,StandardOutputContent]' --output text 2>/dev/null || true)"
+    case "$out" in
+      Success*) printf '%s\n' "$out" | grep -o 'af-gw-[a-z]*' | head -1; return 0 ;;
+      ""|Pending*|InProgress*|Delayed*) sleep 2 ;;
+      *) return 0 ;;
+    esac
+  done
+}
+
+# af_gateway_wait <network stack> <up|ready> — wait for the egress gateway. up: an instance has
+# attached GatewayEni and Squid and the agent run. ready: the agent has also applied a first
+# policy; Squid refuses everything until then, and the policy comes from the CP, so `ready` can
+# only be reached once the CP is up. Bounded by AF_GATEWAY_WAIT_SEC (a boot installs packages
+# and pulls the CP image); on timeout it says what it saw last and fails.
+af_gateway_wait() {
+  local net="$1" want="$2" eni iid out last deadline
+  eni="$(af_gateway_eni "$net")"
+  [ -n "$eni" ] || { echo "    egress gateway: $net has no GatewayEni" >&2; return 1; }
+  deadline=$(( $(date +%s) + ${AF_GATEWAY_WAIT_SEC:-1200} ))
+  while :; do
+    iid="$(af_gateway_instance "$eni")"
+    if [ -z "$iid" ]; then
+      last="$eni is not attached to an instance"
+    else
+      out="$(af_gateway_probe "$iid")"
+      case "$out" in
+        af-gw-ready) return 0 ;;
+        af-gw-up) [ "$want" != up ] || return 0 ;;
+      esac
+      last="$iid answers '${out:-nothing (SSM)}'"
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      echo "    egress gateway: $last" >&2
+      return 1
+    fi
+    sleep "${AF_GATEWAY_POLL_SEC:-20}"
+  done
+}
+
 # --- Does the restore point (the captured AF_IMAGE_TAG) actually exist? -------------
 #
 # The captured state only guarantees that the arguments are complete. It does not guarantee

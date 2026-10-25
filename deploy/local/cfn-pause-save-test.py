@@ -15,6 +15,8 @@ So this fails when
     name Nat while NatOn is false (it targets the egress gateway under EgressRoute=gateway), or something else still points at
     Nat unconditionally (the stack would refuse to update while NatEnabled=false);
   - the egress address is no longer retained (NatEip) or no longer exported;
+  - a switch pause.sh flips on 00-network (NatEnabled, GatewayEnabled) is not a parameter of
+    the template, or does not default to on (a stack older than it must stay as it was);
   - the re-stop rule stops matching RDS-EVENT-0154 for this instance, or the role can do more
     than describe / list tags / stop on this one instance;
   - the Lambda stops an instance that lacks the af-paused=true tag pause.sh sets, stops one
@@ -173,6 +175,16 @@ def check(net, data, pause_src):
     p = net["Parameters"].get("NatEnabled", {})
     if p.get("Default") != "true" or p.get("AllowedValues") != ["true", "false"]:
         f.append("00-network: NatEnabled must default to true and allow only true/false")
+    # `cloudformation deploy` refuses an override the template does not declare, on real AWS only.
+    switches = set(re.findall(r"(?:net_set|ups\+=\()\s*\"?([A-Za-z]+)=", pause_src))
+    if not {"NatEnabled", "GatewayEnabled"} <= switches:
+        f.append("pause.sh no longer switches NatEnabled and GatewayEnabled through net_set (%s)" % sorted(switches))
+    for k in sorted(switches):
+        sp = net["Parameters"].get(k)
+        if sp is None:
+            f.append("pause.sh switches %s, which 00-network does not declare" % k)
+        elif sp.get("Default") != "true":
+            f.append("00-network: %s does not default to true (a stack older than it would change)" % k)
 
     # --- 10-data
     dres = data["Resources"]
@@ -326,6 +338,10 @@ def main():
     def m_stopped(n, d, s):
         c = code_of(d)
         c["ZipFile"] = c["ZipFile"].replace('if st in ("stopped", "stopping"):', 'if False:')
+    def m_gw_renamed(n, d, s):
+        n["Parameters"]["GatewaySwitch"] = n["Parameters"].pop("GatewayEnabled")
+    def m_gw_default_off(n, d, s):
+        n["Parameters"]["GatewayEnabled"]["Default"] = "false"
     def m_tagkey(n, d, s):
         return n, d, s.replace("Key=af-paused,Value=true", "Key=x,Value=y")
 
@@ -352,6 +368,8 @@ def main():
         ("starting not waited for", m_nowait, "did not wait"),
         ("stopping a stopped one", m_stopped, "alone"),
         ("pause.sh tag renamed", m_tagkey, "pause.sh no longer"),
+        ("gateway switch renamed in the template", m_gw_renamed, "does not declare"),
+        ("gateway switch off by default", m_gw_default_off, "GatewayEnabled does not default to true"),
     ):
         ok = broken(label, fn, want) and ok
     if not ok:
