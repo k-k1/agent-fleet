@@ -1934,10 +1934,13 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
     on top of the gateway's own hourly charge. The rate varies by region and changes:
     take it from the "NAT Gateway" section of
     [Amazon VPC pricing](https://aws.amazon.com/vpc/pricing/) for your region; the figures
-    here are an illustration, not a quote. `ecs-ec2` slots reuse the golden snapshot and the
-    slot's own image cache, so a start normally pulls nothing: a cached start measured
-    **~65 MiB of NAT traffic in total** in a sandbox. Where many starts a day are expected,
-    prefer `ecs-ec2`. The `60-engines` model downloads cross the NAT as well, at the same
+    here are an illustration, not a quote. On `ecs-ec2` the image cache is the slot's own
+    root volume, so restarting on an existing slot that already holds the same image avoids
+    the layer pull: a cached start measured **~65 MiB of NAT traffic in total** in a sandbox.
+    A new slot, a recreated one after retirement, a cache miss or an image update still pays
+    the NAT pull. (The golden snapshot is a different thing: a home that already paid CLI
+    boot-install, which saves time, not NAT bytes.) Where many starts a day are expected,
+    prefer `ecs-ec2`, and expect the saving to shrink with slot churn. The `60-engines` model downloads cross the NAT as well, at the same
     per-GB rate, so a large checkpoint costs about the same per GB. Planned, not merged:
     workspace subnets that keep `ecs-ec2` pulls on a VPC endpoint (#2716), and the choice
     between a NAT gateway and an egress gateway (#2717).
