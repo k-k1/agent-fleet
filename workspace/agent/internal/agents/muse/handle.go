@@ -179,7 +179,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	// One host per session: this puts the name in the model's own shell as well, the way a
 	// Terminal session has it. The af server gets it on the wire (mcp.go), since muse scrubs
 	// its MCP children's environment.
-	cmd.Env = agents.WithSessionName(childEnv(os.Environ()), h.name)
+	cmd.Env = agents.WithSessionEnv(childEnv(os.Environ()), h.name)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err

@@ -39,7 +39,7 @@ vi.mock("../files/store.ts", () => ({
 
 const { MarkdownView } = await import("./MarkdownView.tsx");
 const { clearPathRefCache } = await import("./pathResolve.ts");
-const { SessionWorkDirProvider } = await import("./workDirContext.ts");
+const { SessionWorkDirProvider, mirrorWorkDir } = await import("./workDirContext.ts");
 
 let host: HTMLDivElement;
 let root: Root;
@@ -222,6 +222,13 @@ describe("$AF_WORK_DIR in inline code", () => {
     expect(opened).toEqual([{ path: ".af-work/sukbq4s/shots/x.png", line: undefined, openInNew: false }]);
     await click(pathLinks()[1]);
     expect(revealed).toEqual([{ path: ".af-work/sukbq4s", focus: true }]);
+  });
+
+  it("links in a Managed session's reply as it does in a Terminal one", async () => {
+    resolved[`${WD}/shots/x.png`] = { path: ".af-work/sukbq4s/shots/x.png", type: "file" };
+    await render("`$AF_WORK_DIR/shots/x.png`", {}, mirrorWorkDir("sukbq4s", { driver: "managed" }));
+    expect(pathLinks().map((a) => a.textContent)).toEqual(["$AF_WORK_DIR/shots/x.png"]);
+    expect(asked[0].refs).toEqual([`${WD}/shots/x.png`]);
   });
 
   it("is not split into commit links when it names a hex-looking file", async () => {

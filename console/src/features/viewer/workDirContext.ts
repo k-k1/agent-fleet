@@ -4,7 +4,7 @@
 // `$AF_WORK_DIR/…` stays plain code there.
 import { createContext, useContext } from "react";
 import { sessionWorkDir } from "../../lib/pathref.ts";
-import { isManagedSession, type Session } from "../../types/session.ts";
+import type { Session } from "../../types/session.ts";
 
 const SessionWorkDirContext = createContext<string>("");
 
@@ -16,12 +16,11 @@ export function useSessionWorkDir(): string {
 }
 
 /**
- * The $AF_WORK_DIR a session's replies mean. Only a Terminal session gets the variable (the
- * Agent injects ~/.af-work/<name> at tmux launch); a Managed one falls back to a directory named
- * after its working copy, which the session name does not give. Unknown metadata or a Managed
- * driver answers "" — plain code beats linking a stale ~/.af-work/<name> left by an earlier
- * Terminal run to the wrong file.
+ * The $AF_WORK_DIR a session's replies mean: ~/.af-work/<name>, for Terminal and Managed alike
+ * (the Agent hands every kind its directory; paths.SessionWorkDir). Unknown metadata answers "" —
+ * the mirror has not learned what the session is yet, and plain code beats linking a path that
+ * may belong to something else.
  */
 export function mirrorWorkDir(name: string, meta: Pick<Session, "driver"> | null | undefined): string {
-  return meta && !isManagedSession(meta) ? sessionWorkDir(name) : "";
+  return meta ? sessionWorkDir(name) : "";
 }
