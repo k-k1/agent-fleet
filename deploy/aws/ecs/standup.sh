@@ -212,9 +212,11 @@ command -v crane >/dev/null || say_missing "no crane (needed to carry GHCR -> EC
 # The workspace egress address handed back (00-network GatewayEipAllocationId, #2728): it must
 # still exist, be the address captured with it (the ALB admits the gateway by that address), and
 # be held by nothing but this deployment's own gateway interface, or the association fails
-# half-way through the network stack.
+# half-way through the network stack. Only when the gateway is built (EgressRoute=gateway; the
+# template's default is nat-gateway): otherwise the stack does not use the address, which may
+# since have been released, and must not stop a NAT-only rebuild.
 gw_alloc="$(af_read_one_param 00-network GatewayEipAllocationId)"
-if [ -n "$gw_alloc" ]; then
+if [ -n "$gw_alloc" ] && [ "$(af_read_one_param 00-network EgressRoute)" = gateway ]; then
   gw_addr="$(af_read_one_param 00-network GatewayEipAddress)"
   gw_got="$("${AWS[@]}" ec2 describe-addresses --allocation-ids "$gw_alloc" \
     --query 'Addresses[0].[PublicIp,NetworkInterfaceId]' --output text 2>/dev/null || true)"

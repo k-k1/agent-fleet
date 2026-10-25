@@ -941,8 +941,8 @@ registers both. The workspace address is handled like the NAT's:
 - **It survives a rebuild.** An address the stack allocated itself is retained
   (`DeletionPolicy: Retain`); the outputs `GatewayEipAllocationId` and `GatewayEipAddress`
   carry it whoever allocated it, and `capture-env.sh` fills the two parameters from them when
-  they were captured empty, as it does `NatEipAllocationId`. `standup.sh` checks before
-  building that the allocation still exists, that its address is the captured one, and that
+  they were captured empty, as it does `NatEipAllocationId`. With `EgressRoute=gateway`,
+  `standup.sh` checks before building that the allocation still exists, that its address is the captured one, and that
   nothing but this deployment's gateway interface holds it.
 - **Handing back a retained address.** A gateway that was switched back to `nat-gateway`, or a
   torn-down deployment, leaves its address allocated and unassociated (it keeps billing,

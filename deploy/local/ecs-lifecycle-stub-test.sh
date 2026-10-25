@@ -2035,6 +2035,16 @@ if "$ECS/standup.sh" --profile p7 --region ap-northeast-1 --stack t-ingress --ye
 fi
 grep -q "GatewayEipAddress '198.51.100.9' is not the address of eipalloc-GW (203.0.113.7)" "$WORK/out4le3" \
   || fail "standup did not say the captured address does not match"
+# Back on nat-gateway (or a capture from before EgressRoute) the stack does not use the address,
+# which may have been released since: no lookup, and the rebuild goes on.
+for route in EgressRoute=nat-gateway ""; do
+  sed -i -e '/^EgressRoute=/d' -e 's/^GatewayEipAddress=.*/GatewayEipAddress=203.0.113.7/' "$STATE7/params/00-network"
+  [ -z "$route" ] || echo "$route" >> "$STATE7/params/00-network"
+  : > "$LOG"
+  STUB_GW_EIP=gone "$ECS/standup.sh" --profile p7 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4le4" 2>&1 </dev/null \
+    || { cat "$WORK/out4le4"; fail "standup refused a NAT-only rebuild over a released gateway address (${route:-no EgressRoute})"; }
+  hasnt "describe-addresses"
+done
 # Without the parameter (every capture so far) nothing is looked up.
 : > "$LOG"
 "$ECS/standup.sh" --profile p6 --region ap-northeast-1 --stack t-ingress --yes --dry-run > /dev/null 2>&1 </dev/null

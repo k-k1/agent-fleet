@@ -627,7 +627,7 @@ Not run on a real account.
   require the two together.
 - **A rebuild keeps it.** Outputs of the same names carry the address whoever allocated it, so
   `capture-env.sh` fills the two parameters captured empty, as it does `NatEipAllocationId`.
-  `standup.sh` refuses to build when the allocation is gone, its address is not the captured
+  With `EgressRoute=gateway`, `standup.sh` refuses to build when the allocation is gone, its address is not the captured
   one, or another interface holds it. An address retained by an earlier gateway is found by its
   `af-<stack>-egress-gateway-eip` tag and handed back the same way (README, "Two egress
   addresses").
