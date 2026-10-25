@@ -380,3 +380,30 @@ func TestAgentMemoryMemberForgottenWithholdsSecretProjectIDOutsideTheBudget(t *t
 		})
 	}
 }
+
+// Commit times have one-second resolution, so two forgets in one second tie on time. They list by
+// commit order, newest first, whichever way the path digests happen to sort: the names are picked
+// so that the digest order alone would put the earlier forget first.
+func TestAgentMemoryMemberForgottenSameSecondGoesByCommitOrder(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	const when = "2026-10-04T09:00:00Z"
+	older, newer := "tie-a", "tie-b"
+	if agentMemTombDigest("user/"+older+".md") > agentMemTombDigest("user/"+newer+".md") {
+		older, newer = newer, older
+	}
+	forgeForgotten(t, "user", older, when, false)
+	forgeForgotten(t, "user", newer, when, false)
+	_, w, body := forgottenGet(t, "")
+	if namesOf(w) != newer+","+older {
+		t.Fatalf("same-second forgets, newest first: %s", body)
+	}
+	// Paging by the cursor keeps the order.
+	setForgottenMax(t, 1)
+	_, p1, body1 := forgottenGet(t, "")
+	if namesOf(p1) != newer || p1.Next == "" {
+		t.Fatalf("page 1: %s", body1)
+	}
+	if _, p2, body2 := forgottenGet(t, "?before="+p1.Next); namesOf(p2) != older {
+		t.Fatalf("page 2: %s", body2)
+	}
+}
