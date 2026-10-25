@@ -977,3 +977,119 @@ strip and a phone launcher. Two caveats worth knowing before you rely on it:
   it to pick up a change.
 - The login page carries the label too. That is deliberate — signing in to the wrong
   environment is what this parameter exists to prevent.
+
+## `00-network.yaml` — notes moved out of the template
+
+`00-network.yaml` is deployed by direct upload before the S3 hand-off bucket exists, so it
+cannot fall back to `--template-url` and has to stay under CloudFormation's 51,200-byte limit
+(`deploy/local/cfn-template-size-test.py` keeps 4 KiB of headroom). The explanations below used
+to be comments in the template; the template keeps the one-line invariants at the resource they
+guard and points here.
+
+### Workspace subnets
+
+The workspace task ENIs, and nothing else (#2716). They have a route table of their own because
+routing is per route table: the private one keeps the S3 endpoint for image pulls (the ECS agent
+on an ecs-ec2 slot pulls through the instance's ENI in a private subnet), while a workspace's own
+S3 leaves through the NAT, later the egress gateway of ADR 0122, where it can be recorded. One
+per AZ of the private subnets: the CP refuses a home in an AZ without one rather than fall back
+to the private subnet.
+
+### NAT egress address
+
+One NAT gateway (single-AZ) is the main standing cost. Enough for a dev loop; a prod environment
+would put one NAT per AZ. Workspaces egress to git and the model APIs through it.
+
+`NatEip` is retained on purpose. The address is the deployment's ONLY egress source IP (every
+workspace reaches git and the model APIs through it), so it is the value a customer registers in a
+corporate firewall allow-list. Releasing it silently cuts everyone's outbound traffic and the
+replacement is a different address, so the stack must never take it away: not on delete, not on
+replacement. Retaining it is also what makes the address reusable: hand it back as
+`NatEipAllocationId` and the rebuilt deployment egresses from the same IP.
+
+### S3 endpoint
+
+The gateway endpoint sits on the PRIVATE route table only (CP, ecs-ec2 slot hosts, engines,
+home-op tasks). ECR stores layer blobs in S3, so an ecs-ec2 cold pull (made by the ECS agent
+through the slot instance's ENI) stays off the NAT's data processing: about 918 MiB compressed per
+workspace image (`deploy/aws/ecs/README.md`). Workspace tasks are not on this route table
+(`WorkspaceRt`, which has the default route and no endpoint route; under `NatEnabled=false` the
+NAT route goes with the private one), so the policy never decides their S3. Fargate workspaces
+pull through their own task ENI and so still pull through the NAT.
+
+Interface endpoints (ecr.api / ecr.dkr / logs / ssm) are deliberately NOT used: at $0.01 per AZ
+per hour for each of 2 AZs they cost more than the NAT gateway they would relieve.
+
+### S3 endpoint policy
+
+Only what the stack itself needs is admitted. A request the policy denies does NOT fall back to
+the NAT: the S3 prefix-list route is more specific than `0.0.0.0/0`, so a same-region S3 request
+from a private subnet that the policy refuses is AccessDenied (S3 in another region is outside the
+prefix list and still leaves through the NAT). That is acceptable only because nothing a user
+drives runs on this route table. When the stack starts using another bucket from a private
+subnet, add it to the policy (`deploy/local/cfn-s3-endpoint-test.py` pins the list).
+
+- **`EcrLayerBucket`** — ECR serves layer blobs from an AWS-owned bucket in the region. This is
+  the resource AWS documents for the endpoint policy in "Amazon ECR interface VPC endpoints (AWS
+  PrivateLink)", section "Create a VPC endpoint for Amazon S3". Read-only.
+- **`Al2023Repos`** — the Amazon Linux 2023 package repositories (dnf on the ecs-ec2 slot
+  instances, which sit on the private route table). AWS documents the repo bucket as
+  `al2023-repos-<region>-de612dc2` ("Amazon Linux 2023 User Guide", "Package repository").
+  Read-only; nothing in the templates runs dnf today, so this keeps an operator's package install
+  or an AMI refresh from needing the NAT.
+- **`SsmAgentUpdate`** — SSM Agent updates on the slot and engine instances, which the CP drives
+  through SSM (home mount, unmount, stop recovery). AWS-UpdateSSMAgent, also as a State Manager
+  auto-update, reads the manifest and package from `amazon-ssm-<region>` and its document module
+  from `aws-ssm-<region>` ("SSM Agent communications with AWS managed S3 buckets", Systems Manager
+  User Guide). Without them the update is AccessDenied instead of using the NAT. The patching,
+  Distributor and Windows buckets of the same table are left out: nothing here uses them.
+- **`EcsAgentDownload`** — the ECS agent image, which ecs-init downloads before it starts the
+  agent when the instance's cache is missing or empty (ecs-init `cache.go`, `AgentCacheStatus` /
+  `DownloadAgent`): the partition bucket `amazon-ecs-agent` (in us-east-1, so on this endpoint
+  only in us-east-1) and the regional `amazon-ecs-agent-<region>`.
+- **`ModelsObjects` / `ModelsList`** — the optional models bucket of 60-engines
+  (`af-<engines stack>-models-<account>`): the CP lists and reads it, the ingest tasks write it and
+  the engine VMs read it. This stack cannot name the engines stack, so the stack-name part is a
+  wildcard. The account id in the name is not an ownership proof (anyone can create
+  `af-x-models-<this account id>` in their own account), so the statements also require
+  `s3:ResourceAccount` to be this account, which AWS sets from the bucket's owner. Other stacks'
+  buckets in this account match too; IAM on each role is what narrows them. The actions are the
+  union of what those IAM roles hold (IAM still decides per role); multipart and tagging are what
+  `aws s3 mv/cp` of a large model uses.
+- **`EgressArchiveObjects` / `EgressArchiveList`** — the optional egress event archive bucket of
+  10-data (`af-<data stack>-egress-archive-<account>-<region>`, ADR 0122): the CP puts and reads
+  one object per UTC day under `egress/` and checks it with HeadObject. Same-account test as the
+  models bucket, for the same reason.
+
+### Egress gateway
+
+The route follows instance replacement through a FIXED network interface: the workspace route
+table points at `GatewayEni`, which this stack owns together with its Elastic IP, and each
+instance the group launches attaches it at boot as its second interface. So the route target, the
+proxy address the CP hands to workspaces and the egress address never change, and no instance
+needs `ec2:ReplaceRoute` or address permissions. The price: the interface is bound to
+`PublicSubnet0`'s AZ, so the group launches there only, and during a replacement the route
+blackholes until the new instance has attached it (minutes).
+
+### Egress gateway group
+
+An Auto Scaling group of ONE: it replaces a failed instance, and the replacement attaches
+`GatewayEni`. One AZ only (the interface's). Terminate before launch on every update: two
+instances cannot share the interface. `GatewayEnabled=false` (`pause.sh`) makes it a group of
+zero; the terminated instance releases `GatewayEni`, which keeps its address. `MaxSize` stays 1
+either way: the rolling update requires `MinInstancesInService` (0) below `MaxSize`, and an update
+to a paused group can carry a new launch template (the AMI is re-resolved).
+
+### ALB rules
+
+Workspaces reach the CP's public URL through the gateway now, and the agent ships to it, so a
+narrowed `AlbIngressCidr` must still admit the gateway's address. One rule per source of the
+address: a handed-in allocation's address is a parameter (`GatewayEipAddress`).
+
+### Egress token
+
+The bearer the gateway's agent and the CP share (`AF_EGRESS_TOKEN`). Generated in 00-network,
+never a parameter or an output: only its ARN travels (30-ingress `EgressTokenSecretArn`; the CP's
+execution role reads `af-*-egress-token-*`, 20-platform). A deleted secret keeps its name for its
+recovery window, so a name that repeated on gateway → nat-gateway → gateway would fail the second
+create; the interface id makes it new each time the gateway is created.
