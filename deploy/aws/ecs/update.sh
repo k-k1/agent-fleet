@@ -249,7 +249,8 @@ NETWORK_STACK="$(af_stack_param "$STACK" NetworkStackName)"
 WS_SUBNETS="$(af_stack_output "$NETWORK_STACK" WorkspaceSubnets)"
 if [ -z "$WS_SUBNETS" ]; then
   echo "NOTE: $NETWORK_STACK has no WorkspaceSubnets output; workspaces keep their subnets." >&2
-  echo "      Deploy cfn/00-network.yaml, then run this script again right away (README, NAT bullet)." >&2
+  echo "      To move them: deploy cfn/00-network.yaml with S3EndpointEnabled=false, run this" >&2
+  echo "      script again, restart the running workspaces, then S3EndpointEnabled=true (README, NAT bullet)." >&2
 fi
 # The pin only applies to the copy above. Said here, before anything runs, so a pin that would
 # otherwise do nothing is not mistaken for one that was checked.

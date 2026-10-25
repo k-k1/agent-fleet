@@ -463,7 +463,11 @@ must not decide a workspace's S3. What changes is where the workspaces sit:
   pool; the CP, the slot instances and the engines stay off the gateway. The CP is handed the
   subnets as `AF_ECS_WORKSPACE_SUBNETS` (30-ingress `WorkspaceSubnets`, from 00-network's output).
 - **The S3 gateway endpoint is back on the private route table only**, with the policy reviewed
-  in commit `6829e6e` (ECR layers, the AL2023 repositories, the models bucket). Nothing a user
+  in commit `6829e6e` (ECR layers, the AL2023 repositories, the models bucket) plus the SSM
+  Agent update buckets (`amazon-ssm-<region>`, `aws-ssm-<region>`), which the slot and engine
+  instances need for `AWS-UpdateSSMAgent`. It sits behind `S3EndpointEnabled`, which stays
+  `false` on a running stack until every workspace has been restarted into the workspace
+  subnets, and is the rollback. Nothing a user
   drives runs on that route table, so a refusal there breaks no workspace. On ecs-ec2 the ECS
   agent pulls the image through the slot instance's ENI, so a cold pull stays on the endpoint.
 - **Fargate workspaces move too.** They gain nothing on pulls (Fargate pulls through the task

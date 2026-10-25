@@ -82,7 +82,7 @@ The `WorkspaceSubnets` output of 00-network, passed to the CP as `AF_ECS_WORKSPA
 (#2716). Workspace task ENIs go there; the CP, the ecs-ec2 slot instances, the home task and
 the engines stay in the private subnets. The two subnet kinds differ only in their route
 table: the private one has the S3 gateway endpoint, whose policy admits only ECR layers, the
-AL2023 repositories and the models bucket; the workspace one has no endpoint route, so a
+AL2023 repositories, the SSM Agent update buckets and the models bucket; the workspace one has no endpoint route, so a
 workspace's own S3 leaves through the NAT. On ecs-ec2 the image pull is made by the ECS
 agent through the slot instance's ENI, so it stays on the endpoint. A Fargate workspace pulls
 through its task ENI, so its pull crosses the NAT either way; it is moved too, because on the
@@ -97,7 +97,8 @@ describe-stacks --stack-name <network stack> --query "Stacks[0].Outputs[?OutputK
 
 Every AZ of the private subnets needs a workspace subnet: the CP refuses to start a workspace
 in an AZ without one rather than fall back to the private subnet, and puts no new home there.
-An existing workspace moves on its next Start.
+An existing workspace moves on its next Start, which is why 00-network's `S3EndpointEnabled`
+stays `false` until every running workspace has been restarted (README, NAT bullet).
 
 ## EC2 slot pool (`WsRuntime=ecs-ec2`)
 

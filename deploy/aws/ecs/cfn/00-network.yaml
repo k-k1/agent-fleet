@@ -44,6 +44,17 @@ Parameters:
       while a deployment sleeps: a NAT gateway bills by the hour and has no stop). The
       egress address survives - see NatEip - so "true" brings the same source IP back.
       Nothing in a private subnet can reach ECR, logs, S3 or the internet while it is false.
+  S3EndpointEnabled:
+    Type: String
+    Default: "true"
+    AllowedValues: [ "true", "false" ]
+    Description: >-
+      "true" puts the S3 gateway endpoint on the private route table. Its policy refuses
+      (AccessDenied, no NAT fallback) what it does not list, so it must stay "false" while any
+      workspace still runs in a private subnet: an existing stack moves with "false" first, then
+      update.sh, then every workspace stopped and started again, then "true" (README, NAT
+      bullet). "false" again is the rollback. pause.sh passes "false" to a stack that has never
+      had this parameter.
   WorkspaceSubnet0Cidr:
     Type: String
     Default: 10.20.32.0/20
@@ -68,6 +79,7 @@ Conditions:
   # No allocation handed in -> the stack owns the address (and retains it, below).
   CreateNatEip: !Equals [ !Ref NatEipAllocationId, "" ]
   NatOn: !Equals [ !Ref NatEnabled, "true" ]
+  S3EndpointOn: !Equals [ !Ref S3EndpointEnabled, "true" ]
 
 Resources:
   Vpc:
@@ -234,6 +246,7 @@ Resources:
   # $0.01/AZ/hour x 2 AZ each they cost more than the NAT gateway they'd relieve.
   S3Endpoint:
     Type: AWS::EC2::VPCEndpoint
+    Condition: S3EndpointOn
     Properties:
       VpcId: !Ref Vpc
       ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
@@ -270,6 +283,20 @@ Resources:
             Principal: "*"
             Action: [ "s3:GetObject" ]
             Resource: !Sub "arn:${AWS::Partition}:s3:::al2023-repos-${AWS::Region}-de612dc2/*"
+          # SSM Agent updates on the slot and engine instances, which the CP drives through
+          # SSM (home mount, unmount, stop recovery). AWS-UpdateSSMAgent, also as a State
+          # Manager auto-update, reads the manifest and package from amazon-ssm-<region> and
+          # its document module from aws-ssm-<region> ("SSM Agent communications with AWS
+          # managed S3 buckets", Systems Manager User Guide). Without them the update is
+          # AccessDenied here instead of using the NAT. Read-only. The patching, Distributor
+          # and Windows buckets of the same table are left out: nothing here uses them.
+          - Sid: SsmAgentUpdate
+            Effect: Allow
+            Principal: "*"
+            Action: [ "s3:GetObject" ]
+            Resource:
+              - !Sub "arn:${AWS::Partition}:s3:::amazon-ssm-${AWS::Region}/*"
+              - !Sub "arn:${AWS::Partition}:s3:::aws-ssm-${AWS::Region}/*"
           # The optional models bucket of 60-engines (af-<engines stack>-models-<account>):
           # the CP lists and reads it, the ingest tasks write it and the engine VMs read
           # it. This stack cannot name the engines stack, so the stack-name part is a

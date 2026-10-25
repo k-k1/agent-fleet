@@ -338,6 +338,15 @@ deploy_stack() {  # deploy_stack <stack> <template> <slug> [capability...]
   if [ "$slug" = 00-network ] && grep -q '^  NatEnabled:' "$CFN_DIR/$tpl"; then
     af_param_override NatEnabled true
   fi
+  # A LIVE network stack older than the S3 endpoint switch (#2716) may still have workspaces in
+  # its private subnets, whose own S3 the endpoint's policy would refuse: it gets "false", and
+  # switching it on stays the migration's last step (README, NAT bullet). A new stack, or a
+  # capture that names the switch, keeps the template default / the captured value.
+  if [ "$slug" = 00-network ] && grep -q '^  S3EndpointEnabled:' "$CFN_DIR/$tpl" &&
+     ! printf '%s\n' ${AF_PARAMS[@]+"${AF_PARAMS[@]}"} | grep -q '^S3EndpointEnabled=' &&
+     af_stack_exists "$stack" && [ -z "$(af_stack_param "$stack" S3EndpointEnabled)" ]; then
+    af_param_override S3EndpointEnabled false
+  fi
   local caps=()
   [ $# -gt 0 ] && caps=(--capabilities "$@")
   echo "==> deploy $stack ($slug)"

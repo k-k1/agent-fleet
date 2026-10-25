@@ -14,7 +14,8 @@ ENIs have their own subnets and route table with no endpoint route (#2716). This
 
   - the templates declare an S3 VPC endpoint other than 00-network's S3Endpoint (or one whose
     ServiceName is built from parts, which cannot be told from S3), or any prefix-list route;
-  - S3Endpoint is not a gateway endpoint on exactly the private route table;
+  - S3Endpoint is not a gateway endpoint on exactly the private route table, or is not behind
+    S3EndpointEnabled (default "true"; "false" is the migration step and the rollback);
   - its policy is missing, or differs from the pinned statements below (a new bucket is a
     decision, made here and in the template), or its models-bucket pattern stops matching the
     bucket 60-engines creates;
@@ -57,6 +58,9 @@ EXPECTED = {
                        {"arn:${AWS::Partition}:s3:::prod-${AWS::Region}-starport-layer-bucket/*"}, None),
     "Al2023Repos": ({"s3:GetObject"},
                     {"arn:${AWS::Partition}:s3:::al2023-repos-${AWS::Region}-de612dc2/*"}, None),
+    "SsmAgentUpdate": ({"s3:GetObject"},
+                       {"arn:${AWS::Partition}:s3:::amazon-ssm-${AWS::Region}/*",
+                        "arn:${AWS::Partition}:s3:::aws-ssm-${AWS::Region}/*"}, None),
     "ModelsObjects": ({"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload",
                        "s3:ListMultipartUploadParts", "s3:GetObjectTagging", "s3:PutObjectTagging"},
                       {MODELS + "/*"}, OWNER),
@@ -284,8 +288,14 @@ def check(templates):
             fails.append("00-network: S3Endpoint is not a gateway endpoint")
         if p.get("RouteTableIds") != [{"!Ref": "PrivateRt"}]:
             fails.append("00-network: S3Endpoint is on %r, want exactly [PrivateRt]" % (p.get("RouteTableIds"),))
-        if ep.get("Condition"):
-            fails.append("00-network: S3Endpoint has a condition")
+        # The one switch is S3EndpointEnabled, on by default: off is the migration step for a
+        # running stack and the rollback, never a silent state.
+        if ep.get("Condition") != "S3EndpointOn":
+            fails.append("00-network: S3Endpoint is not behind S3EndpointOn (%r)" % (ep.get("Condition"),))
+        if net.get("Conditions", {}).get("S3EndpointOn") != {"!Equals": [{"!Ref": "S3EndpointEnabled"}, "true"]}:
+            fails.append("00-network: S3EndpointOn is not exactly S3EndpointEnabled == \"true\"")
+        if net.get("Parameters", {}).get("S3EndpointEnabled", {}).get("Default") != "true":
+            fails.append("00-network: S3EndpointEnabled does not default to \"true\"")
         fails += check_policy(p, templates[ENGINES])
     fails += check_routes(net)
     fails += check_cidrs(net)
@@ -326,7 +336,7 @@ def main():
 
     def swap_resources(t):
         s = stmts(t)
-        s[2]["Resource"], s[3]["Resource"] = s[3]["Resource"], s[2]["Resource"]
+        s[3]["Resource"], s[4]["Resource"] = s[4]["Resource"], s[3]["Resource"]
 
     gateway = {"Type": "AWS::EC2::VPCEndpoint", "Properties": {
         "VpcId": {"!Ref": "Vpc"}, "ServiceName": {"!Sub": "com.amazonaws.${AWS::Region}.s3"},
@@ -392,8 +402,14 @@ def main():
         ("ECR bucket dropped", mutated(lambda t: stmts(t).pop(0))),
         ("models resources swapped", mutated(swap_resources)),
         ("principal dropped", mutated(lambda t: stmts(t)[0].pop("Principal"))),
-        ("owner condition dropped (objects)", mutated(lambda t: stmts(t)[2].pop("Condition"))),
-        ("owner condition dropped (list)", mutated(lambda t: stmts(t)[3].pop("Condition"))),
+        ("owner condition dropped (objects)", mutated(lambda t: stmts(t)[3].pop("Condition"))),
+        ("owner condition dropped (list)", mutated(lambda t: stmts(t)[4].pop("Condition"))),
+        ("SSM agent buckets dropped", mutated(lambda t: stmts(t).pop(2))),
+        ("SSM agent statement narrowed to one bucket", mutated(lambda t: stmts(t)[2].update(Resource=stmts(t)[2]["Resource"][:1]))),
+        ("endpoint unconditional", mutated(lambda t: res(t)["S3Endpoint"].pop("Condition"))),
+        ("endpoint off by default", mutated(lambda t: t["Parameters"]["S3EndpointEnabled"].update(Default="false"))),
+        ("S3EndpointOn inverted", mutated(lambda t: t["Conditions"].update(
+            S3EndpointOn={"!Equals": [{"!Ref": "S3EndpointEnabled"}, "false"]}))),
         ("owner condition on an AWS-owned bucket", mutated(lambda t: stmts(t)[0].update(Condition=OWNER))),
         ("models bucket renamed", mutated(lambda t: res(t)["ModelsBucket"]["Properties"]["BucketName"].update(
             {"!Sub": "models-${AWS::StackName}"}), ENGINES)),

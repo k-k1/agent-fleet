@@ -1915,7 +1915,8 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
     workspace task ENIs there (`AF_ECS_WORKSPACE_SUBNETS`, from 30-ingress's
     `WorkspaceSubnets`). The **S3 gateway endpoint** is back on the **private route table
     only** (CP, ecs-ec2 slot instances, engines, the home task), with a policy that admits
-    ECR layers, the AL2023 repositories and the models bucket and nothing else. A refused
+    ECR layers, the AL2023 repositories, the SSM Agent update buckets and the models bucket
+    and nothing else. A refused
     same-region request there is AccessDenied, not NAT traffic, which is why no workspace may
     sit on that route table: a workspace's own S3 always leaves through the NAT (later the
     egress gateway, ADR 0122), where it can be recorded (#2657).
@@ -1924,16 +1925,37 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
     measurement below) goes through the endpoint. **Fargate cannot split**: it pulls through
     the task ENI, so a Fargate workspace start still pays NAT data processing for its layers.
     The models bucket reads of `60-engines` use the endpoint.
-    **Updating a running stack**: deploy `cfn/00-network.yaml` (its change set must only *Add*:
-    two subnets, three associations, a route table, its route and `S3Endpoint`; stop on any
-    Modify or Replacement of an existing subnet or route table), then run `update.sh` right
-    away: it passes the new subnets to the CP, and until it has, workspaces on the private
-    route table meet the endpoint's policy for their own S3. A workspace moves on its next
-    Start. Adding the endpoint moves private-subnet S3 from the NAT route to the endpoint
-    route, and open TCP connections do not survive that, so do it when no large model
-    fetch/ingest or image pull is running. While paused (`NatEnabled=false`) S3 is still
-    reachable from the private subnets through the endpoint (for what its policy admits),
-    unlike ECR's API, logs and the workspace route table's way out.
+    The endpoint has a switch, `S3EndpointEnabled` (default `true`). It must stay `false`
+    while any workspace still runs in a private subnet, because the policy refuses that
+    workspace's own S3 (AccessDenied) until it is restarted into a workspace subnet.
+    **Moving a running stack** (a maintenance window; every running workspace is restarted):
+    1. Deploy `cfn/00-network.yaml` with `S3EndpointEnabled=false` through a change set
+       (`aws cloudformation deploy … --parameter-overrides S3EndpointEnabled=false
+       --no-execute-changeset`, then `describe-change-set`). It must be *Add* only — six
+       resources: two subnets, the workspace route table, its default route and two
+       associations — and nothing existing modified or replaced. Execute it.
+    2. Run `update.sh`. It passes the network stack's `WorkspaceSubnets` to the CP
+       (`AF_ECS_WORKSPACE_SUBNETS`). New Starts now go to the workspace subnets.
+    3. Stop and start every workspace that was running (`pause.sh --status` lists them, or
+       `aws ecs list-services` with `desiredCount > 0`). A running task keeps its ENI: it
+       moves only on a new Start. Check that each task's ENI is in a workspace subnet:
+       `aws ecs describe-tasks --cluster <c> --tasks <t> --query
+       "tasks[].attachments[].details[?name=='subnetId'].value"`.
+    4. Deploy `cfn/00-network.yaml` with `S3EndpointEnabled=true` (one *Add*: `S3Endpoint`).
+       Private-subnet S3 moves from the NAT route to the endpoint route, and open TCP
+       connections do not survive that, so do it when no large model fetch/ingest or image
+       pull is running.
+    **Rollback**: `S3EndpointEnabled=false` (a stack update that removes only `S3Endpoint`)
+    puts every private-subnet S3 request back on the NAT. Leave the workspace subnets and
+    route table in place while any workspace service may still use them; removing them is a
+    template change, not a parameter. A new stack (`standup.sh` on no existing network stack)
+    gets the endpoint on from the start, before any workspace exists. `pause.sh` and
+    `standup.sh` pass `S3EndpointEnabled=false` to a live network stack that has never had
+    the switch, so neither turns it on as a side effect, and `pause.sh --up` warns when the
+    network has workspace subnets the CP is not using.
+    While paused (`NatEnabled=false`) S3 is still reachable from the private subnets through
+    the endpoint (for what its policy admits), unlike ECR's API, logs and the workspace route
+    table's way out.
     **Interface** endpoints (ecr.api, ecr.dkr, logs, ssm) are left out on purpose: $0.01/AZ/hour
     × 2 AZ each adds up past the NAT Gateway they would relieve.
   - What still crosses the NAT: git / Anthropic / npm / package registries (the real
@@ -2123,7 +2145,11 @@ hardcoded default gets wrong (one names its pool stack `af-ecs-pool`, another
     is 1–2 minutes each way and the egress IP is unchanged, because `NatEip` is retained.
     Nothing in a private subnet reaches ECR, logs or the internet while the gateway is gone.
     A capture taken while paused records `NatEnabled=false`; `standup.sh` overrides it to
-    `true`.
+    `true`. It deploys the template of *this checkout*, so a network stack older than it gains
+    the workspace subnets (#2716) on a pause or a resume. It gains the S3 endpoint only off
+    (`S3EndpointEnabled=false`, passed when the stack has never had the switch), and `--up`
+    warns, before any workspace can start, when the CP is not using the network's workspace
+    subnets: run `update.sh`, then follow the migration in the NAT bullet below.
   - 🔴 **AWS starts a stopped RDS instance again after 7 days** (event `RDS-EVENT-0154`) and
     cannot be told not to. `10-data` (`RdsRestopOnForcedStart`, default `true`) therefore carries
     an EventBridge rule (`RDS-EVENT-0154` forced start, and `RDS-EVENT-0088` started, which covers

@@ -209,6 +209,9 @@ case "$args" in
   *"Outputs[].join"*)                printf '\n' ;;
   # pause.sh: whether 00-network's NAT gateway is on, and whether 10-data carries the re-stop Lambda.
   *"ParameterKey=='NatEnabled'"*) echo "${STUB_NAT_ENABLED:-true}" ;;
+  # #2716: unset = a network / ingress stack older than the S3 endpoint switch / workspace subnets.
+  *"ParameterKey=='S3EndpointEnabled'"*) echo "${STUB_S3EP:-None}" ;;
+  *"ParameterKey=='WorkspaceSubnets'"*) echo "${STUB_ING_WS:-None}" ;;
   *"Outputs[?OutputKey=='RdsRestopFunction']"*) echo "${STUB_RESTOP:-}" ;;
   *"ParameterKey=='Fqdn'"*) echo "af.example.test" ;;
   *"ParameterKey=='NetworkStackName'"*) echo "t-network" ;;
@@ -944,6 +947,12 @@ grep -q "has no WorkspaceSubnets output" "$WORK/out3h" \
 efs_standup p STUB_WS_SUBNETS=subnet-0a,subnet-0b
 grep -q "deploy --stack-name t-ingress .*WorkspaceSubnets=subnet-0a,subnet-0b" "$LOG" \
   || fail "standup.sh did not pass the network stack's WorkspaceSubnets to 30-ingress"
+# A live network stack without S3EndpointEnabled may still run workspaces in its private subnets:
+# standup must not switch the endpoint on for it; one that has the switch keeps its value.
+grep -q "deploy --stack-name t-network .*S3EndpointEnabled=false" "$LOG" \
+  || fail "standup.sh switched the S3 endpoint on for a live network stack older than the switch"
+efs_standup p STUB_S3EP=true
+if grep -q "S3EndpointEnabled=" "$LOG"; then fail "standup.sh overrode a live S3EndpointEnabled"; fi
 # The capture's value is a snapshot of old subnet ids; it must never reach the deploy.
 echo "WorkspaceSubnets=subnet-stale" >> "$STATE/params/30-ingress"
 efs_standup p
@@ -1628,6 +1637,37 @@ has "--tag-keys af-paused"
 : > "$LOG"
 "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4j2" </dev/null
 hasnt "$NAT_DEL"   # the gateway is already there: nothing to recreate
+
+echo "== case 4j-ws: pause/--up on a network stack older than #2716 never switches the S3 endpoint on =="
+# The checkout's 00-network adds the workspace subnets and S3Endpoint; the endpoint's policy would
+# refuse the own S3 of every workspace still in a private subnet, so an old stack gets "false".
+: > "$LOG"
+STUB_NAT_ENABLED=false \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4jw" 2>&1 </dev/null
+grep -q "$NAT_DEL .*NatEnabled=true S3EndpointEnabled=false" "$LOG" \
+  || fail "--up on a stack without S3EndpointEnabled did not pass S3EndpointEnabled=false"
+: > "$LOG"
+"$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4jw2" 2>&1 </dev/null
+grep -q "$NAT_DEL .*NatEnabled=false S3EndpointEnabled=false" "$LOG" \
+  || fail "pause on a stack without S3EndpointEnabled did not pass S3EndpointEnabled=false"
+# A stack that already has the switch keeps its value: the operator's step, not pause.sh's.
+: > "$LOG"
+STUB_NAT_ENABLED=false STUB_S3EP=true \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4jw3" 2>&1 </dev/null
+has "NatEnabled=true"
+if grep -q "S3EndpointEnabled=" "$LOG"; then fail "--up overrode an existing S3EndpointEnabled"; fi
+# --up says so, before the CP is back, when the CP is not using the network's workspace subnets.
+grep -q "WARNING: .* has workspace subnets" "$WORK/out4jw" && fail "warned without workspace subnets in the network"
+: > "$LOG"
+STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=true \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4jw4" 2>&1 </dev/null
+grep -q "WARNING: t-network has workspace subnets (subnet-0a,subnet-0b) that the CP is not using" "$WORK/out4jw4" \
+  || { cat "$WORK/out4jw4"; fail "--up did not warn that the CP lacks the workspace subnets"; }
+grep -q "The S3 endpoint is ON" "$WORK/out4jw4" || fail "--up did not say the endpoint refuses workspace S3"
+: > "$LOG"
+STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_ING_WS=subnet-0a,subnet-0b STUB_S3EP=true \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4jw5" 2>&1 </dev/null
+if grep -q "WARNING: .* has workspace subnets" "$WORK/out4jw5"; then fail "warned although the CP uses the workspace subnets"; fi
 
 echo "== case 4k: --status shows the NAT, and names the re-stop Lambda when the stack has one =="
 : > "$LOG"
