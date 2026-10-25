@@ -247,6 +247,15 @@ EFS_BACKUP_MARKER="$(af_efs_backup_marker "$AF_EFS_BACKUP_VERDICT" || true)"
 NETWORK_STACK="$(af_stack_param "$STACK" NetworkStackName)"
 : "${NETWORK_STACK:=af-ecs-network}"
 WS_SUBNETS="$(af_stack_output "$NETWORK_STACK" WorkspaceSubnets)"
+# The egress gateway (EgressRoute=gateway, ADR 0122): its proxy address and token secret, also
+# facts of the network stack. Passed whenever the network has them or the ingress stack still
+# does, so switching back to nat-gateway clears them.
+EGRESS_ADDR="$(af_stack_output "$NETWORK_STACK" EgressProxyAddr)"
+EGRESS_SECRET="$(af_stack_output "$NETWORK_STACK" EgressTokenSecretArn)"
+EGRESS_OVR=()
+if [ -n "$EGRESS_SECRET" ] || [ -n "$(af_stack_param "$STACK" EgressTokenSecretArn)" ]; then
+  EGRESS_OVR=("EgressProxyAddr=$EGRESS_ADDR" "EgressTokenSecretArn=$EGRESS_SECRET")
+fi
 if [ -z "$WS_SUBNETS" ]; then
   echo "NOTE: $NETWORK_STACK has no WorkspaceSubnets output; workspaces keep their subnets." >&2
   echo "      To move them: deploy cfn/00-network.yaml with S3EndpointEnabled=false, run this" >&2
@@ -641,7 +650,7 @@ fi
 echo "==> cloudformation deploy $STACK (ImageTag=$VERSION)"
 deploy_out=""
 if [ "$DRY" = 1 ]; then
-  echo "DRY: aws cloudformation deploy --stack-name $STACK --template-file $TEMPLATE --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ImageTag=$VERSION${EFS_BACKUP_MARKER:+ EfsBackup=$EFS_BACKUP_MARKER}${WS_SUBNETS:+ WorkspaceSubnets=$WS_SUBNETS}"
+  echo "DRY: aws cloudformation deploy --stack-name $STACK --template-file $TEMPLATE --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ImageTag=$VERSION${EFS_BACKUP_MARKER:+ EfsBackup=$EFS_BACKUP_MARKER}${WS_SUBNETS:+ WorkspaceSubnets=$WS_SUBNETS}${EGRESS_OVR[*]:+ ${EGRESS_OVR[*]}}"
 else
   set +e
   # Always go through af_cfn_deploy (env.sh): it switches to S3 once a template passes 51,200
@@ -651,7 +660,7 @@ else
   deploy_out="$(af_cfn_deploy "$STACK" "$TEMPLATE" \
     --capabilities CAPABILITY_NAMED_IAM \
     --parameter-overrides "ImageTag=$VERSION" ${EFS_BACKUP_MARKER:+"EfsBackup=$EFS_BACKUP_MARKER"} \
-      ${WS_SUBNETS:+"WorkspaceSubnets=$WS_SUBNETS"} \
+      ${WS_SUBNETS:+"WorkspaceSubnets=$WS_SUBNETS"} ${EGRESS_OVR[@]+"${EGRESS_OVR[@]}"} \
     --no-fail-on-empty-changeset 2>&1)"
   rc=$?
   set -e

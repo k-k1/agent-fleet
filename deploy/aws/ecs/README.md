@@ -748,13 +748,15 @@ Two rough edges found on the way, **both since closed**:
 
 ## Egress IP (the address a customer allow-lists)
 
-A deployment egresses from **exactly one address**: the Elastic IP on `00-network`'s
-NAT gateway. Everything outbound goes through it — every workspace's git, model API
-and package traffic, and the CP's own calls — because the slots and the CP task sit
-in private subnets with **no public IPv4** (`AssignPublicIp: DISABLED`; the slot
-launch template deliberately assigns none, ADR 0045 decision 3-3) and there is no VPC
-endpoint (S3 included, #2657). So this is the value to hand to a corporate
-firewall or a SaaS IP allow-list.
+With the default `EgressRoute=nat-gateway`, a deployment egresses from **exactly one
+address**: the Elastic IP on `00-network`'s NAT gateway. Everything outbound to the internet
+goes through it — every workspace's git, model API and package traffic, and the CP's own
+calls — because the slots and the CP task sit in private subnets with **no public IPv4**
+(`AssignPublicIp: DISABLED`; the slot launch template deliberately assigns none, ADR 0045
+decision 3-3). The only VPC endpoint is the S3 gateway endpoint on the private route table,
+which reaches AWS's own S3 without an address of its own (#2716). So this is the value to
+hand to a corporate firewall or a SaaS IP allow-list. With `EgressRoute=gateway` workspaces
+egress from the gateway's own address instead (next section, #2728).
 
 ```bash
 alloc=$(aws cloudformation describe-stacks --stack-name af-ecs-network \
@@ -810,7 +812,7 @@ aws ec2 describe-addresses --output text --query \
 
 ```bash
 aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-network.yaml \
-  --parameter-overrides NatEipAllocationId=eipalloc-...
+  --capabilities CAPABILITY_IAM --parameter-overrides NatEipAllocationId=eipalloc-...
 ```
 
 🔴 **Do NOT set that parameter on a running deployment — not even to the address the
@@ -828,6 +830,104 @@ second AZ. Adding a NAT per AZ is the fix — and it makes the deployment egress
 **two** addresses. Decide before the allow-list is published: an unattached EIP costs
 ~$3.6/month, so allocating the second address up front and registering both is the
 cheap way to keep that door open.
+
+## Egress gateway (`EgressRoute=gateway`, ADR 0122)
+
+`00-network`'s `EgressRoute` chooses where the **workspace** route table's default route goes
+(#2717). The CP, the slot instances, the engines and the home task stay on the NAT gateway
+either way: only workspaces go through the gateway.
+
+| | `nat-gateway` (default) | `gateway` |
+|---|---|---|
+| Recording | none: the Admin Egress tab stays empty | every workspace connection, by name (SNI / Host) and address, attributed to the workspace (#2674) |
+| Allowlist | not enforced | log-only, or enforce (a name outside it is refused) |
+| Hourly cost | the NAT gateway (~$0.045–0.062/h by region) | the NAT gateway (the CP and hosts still use it) + the gateway instance (`t3.small` ≈ $0.02–0.03/h) + its Elastic IP ($0.005/h) |
+| Per-GB cost | NAT data processing ($0.045–0.062/GB) on all workspace traffic, S3 included | none for workspace traffic (normal data transfer only; same-region S3 transfer is free) |
+| Operations | managed by AWS | an instance to run: AMI updates replace it, a replacement leaves workspaces without egress for a few minutes |
+| Availability | AWS-managed, one AZ | one instance in one AZ (an Auto Scaling group of one replaces it) |
+| Non-HTTP egress (SSH git, other ports) | works | dropped (ADR 0122 consequences) |
+| Workspace egress address | `NatEip` | `GatewayEip`, a different address (#2728) |
+
+**How it works.** An Auto Scaling group of one AL2023 instance in `PublicSubnet0`. At boot it
+attaches `GatewayEni`, a network interface the stack owns: the workspace route table points at
+it, its Elastic IP (`GatewayEip`) is the workspace egress address, and its private address is
+the explicit proxy (`EgressProxyAddr`, `:3128`). A replacement instance attaches the same
+interface, so neither the route, the proxy address nor the egress address ever moves. Squid
+intercepts 80/443 from the workspace subnets and serves the explicit proxy; nothing else is
+forwarded (`ip_forward=0`). `af-cp egress-agent` (the CP binary, copied out of the CP image) runs
+as user `squid`, writes Squid's allow and mode files from the CP's policy and ships the log to
+`/internal/egress` with `AF_EGRESS_TOKEN`, which the stack generates in Secrets Manager. The
+CP gets `AF_EGRESS_PROXY_ADDR` and `AF_EGRESS_TOKEN` (30-ingress `EgressProxyAddr` /
+`EgressTokenSecretArn`), so Fargate and ecs-ec2 workspace task definitions carry the proxy
+variables, with the task-role credential endpoint (`169.254.170.2`), instance metadata
+(`169.254.169.254`) and the CP's internal host in `NO_PROXY`, and the address recorder
+(#2674) runs. The token itself never reaches a workspace: it is the agent's credential.
+
+**Turning it on** (an existing stack keeps `nat-gateway` until you do this):
+
+```bash
+aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-network.yaml \
+  --capabilities CAPABILITY_IAM --parameter-overrides EgressRoute=gateway
+./update.sh --profile <p> --region <r>    # 20-platform (the token read) and 30-ingress
+```
+
+The route moves to `GatewayEni` as soon as the first command finishes, before the instance
+has attached it: workspaces have no egress until the instance is up (a few minutes, see
+`/var/log/af-egress-gateway.log` on it), and the agent has nothing to ship until `update.sh`
+has written its configuration (`/af-egress/<network stack>/agent`) and fetched a first policy:
+until then Squid refuses everything (also after an instance replacement), so a gateway that
+cannot reach the CP stays closed rather than open. Running workspaces get the proxy variables
+on their next Start (until then they are intercepted). `GatewayInstanceType` must match the
+CP image's architecture (30-ingress `CpArch`): the agent is the CP binary.
+
+**Back to the NAT gateway** is a maintenance window, not the same two commands in reverse: a
+running workspace keeps `HTTP(S)_PROXY` pointing at the gateway until it is restarted, and once
+the gateway is gone every proxy-aware client in it times out. So take the proxy away first:
+
+1. Deploy 30-ingress with the proxy cleared, everything else at its previous value:
+   `aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml
+   --capabilities CAPABILITY_NAMED_IAM --parameter-overrides EgressProxyAddr= EgressTokenSecretArn=`
+   (not `update.sh`, which would hand the gateway's outputs back while it exists).
+2. Stop and start every running workspace (`pause.sh --status` lists them) and check that its
+   task definition no longer has the variables:
+   `aws ecs describe-task-definition --task-definition <family> --query "taskDefinition.containerDefinitions[0].environment[?name=='HTTPS_PROXY']"` is empty.
+   Their traffic is still intercepted by the gateway meanwhile.
+3. Deploy 00-network with `EgressRoute=nat-gateway` (`--capabilities CAPABILITY_IAM`). The
+   workspace route moves back to the NAT gateway; `GatewayEip` is retained.
+4. Run `update.sh` (it passes the now-empty outputs and changes nothing else).
+
+**Limits of this first stage.** `pause.sh` refuses a stack with `EgressRoute=gateway` and
+`standup.sh` warns (#2729). Workspaces egress from `GatewayEip`, not `NatEip`; moving one
+address between the two is #2728. Squid, the agent and this configuration have **not been
+run on a real account**.
+
+**Checking the agent against a real Squid (#2687).** On a sandbox with `EgressRoute=gateway`:
+
+1. Find the instance and open a shell:
+   `aws ec2 describe-instances --filters Name=tag:af-egress-gateway,Values=<network stack> Name=instance-state-name,Values=running --query 'Reservations[].Instances[].InstanceId' --output text`,
+   then `aws ssm start-session --target <id>`.
+2. Boot and services: `sudo tail -50 /var/log/af-egress-gateway.log`;
+   `systemctl status squid af-egress-agent af-egress-nft af-egress-install.timer`;
+   `sudo squid -k parse` (prints the parsed configuration, fails on an error);
+   `ip route show default` (the first default route is the attached interface).
+3. Policy: `sudo cat /var/lib/af-egress-agent/af-allow.txt /var/lib/af-egress-agent/af-mode.conf`
+   (the agent's header and the CP's allowlist, not the boot placeholder, which refuses
+   everything: `# bootstrap: closed until the first policy`);
+   `journalctl -u af-egress-agent` shows the reload.
+4. From a workspace terminal: `curl -sI https://example.com` (explicit proxy) and
+   `curl -sI --noproxy '*' https://example.com` (intercepted). On the gateway,
+   `sudo tail /var/log/squid/af-egress.log` shows one `af1` line each, with the workspace's
+   address, `TCP_TUNNEL` and the SNI. `sudo getfattr -n user.af-egress.gen /var/log/squid/af-egress.log`
+   shows the generation, `sudo cat /var/lib/af-egress-agent/state.json` the committed offset,
+   and the Admin Egress tab (or `GET /api/admin/egress/events`) the two events, attributed.
+5. Rotation: `sudo squid -k rotate`, make one more request, and check that the agent finished
+   `af-egress.log.0` and continued on the new file (no duplicate, no gap in the events).
+6. Metadata: from a workspace, `curl -s -x <EgressProxyAddr> -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token`
+   must be refused (Squid's `to_linklocal`, and nftables drops Squid's own connections to
+   `169.254.0.0/16`); otherwise a workspace could read the gateway role's credentials.
+7. Enforce: switch the mode in the Admin Egress tab, wait for the agent's reload
+   (`af-mode.conf` now has `ssl_bump terminate all`), and check that a name outside the
+   allowlist fails from the workspace (explicit and intercepted) and is logged as denied.
 
 ## Minimal IAM (deploying principal)
 
@@ -1924,14 +2024,17 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
     ENI in a private subnet, so the ~918 MiB compressed workspace image (see the start-latency
     measurement below) goes through the endpoint. **Fargate cannot split**: it pulls through
     the task ENI, so a Fargate workspace start still pays NAT data processing for its layers.
-    The models bucket reads of `60-engines` use the endpoint.
+    The models bucket reads of `60-engines` use the endpoint. The raw egress event archive
+    (`AF_EGRESS_ARCHIVE_URL`, #2699) is not wired by these templates: the CP writes from the
+    private route table, so a same-region `s3://` archive bucket would be refused at the endpoint
+    until its policy (and the CP task role) admits it (#2732).
     The endpoint has a switch, `S3EndpointEnabled` (default `true`). It must stay `false`
     while any workspace still runs in a private subnet, because the policy refuses that
     workspace's own S3 (AccessDenied) until it is restarted into a workspace subnet.
     **Moving a running stack** (a maintenance window; every running workspace is restarted):
     1. Deploy `cfn/00-network.yaml` with `S3EndpointEnabled=false` through a change set
-       (`aws cloudformation deploy … --parameter-overrides S3EndpointEnabled=false
-       --no-execute-changeset`, then `describe-change-set`). It must be *Add* only — six
+       (`aws cloudformation deploy … --capabilities CAPABILITY_IAM --parameter-overrides
+       S3EndpointEnabled=false --no-execute-changeset`, then `describe-change-set`). It must be *Add* only — six
        resources: two subnets, the workspace route table, its default route and two
        associations — and nothing existing modified or replaced. Execute it.
     2. Run `update.sh`. It passes the network stack's `WorkspaceSubnets` to the CP
@@ -2150,6 +2253,8 @@ hardcoded default gets wrong (one names its pool stack `af-ecs-pool`, another
     (`S3EndpointEnabled=false`, passed when the stack has never had the switch), and `--up`
     warns, before any workspace can start, when the CP is not using the network's workspace
     subnets: run `update.sh`, then follow the migration in the NAT bullet below.
+    With `EgressRoute=gateway` (ADR 0122) `pause.sh` refuses to pause or resume and `standup.sh`
+    warns: neither stops or restores the egress gateway yet (#2729, "Egress gateway").
   - 🔴 **AWS starts a stopped RDS instance again after 7 days** (event `RDS-EVENT-0154`) and
     cannot be told not to. `10-data` (`RdsRestopOnForcedStart`, default `true`) therefore carries
     an EventBridge rule (`RDS-EVENT-0154` forced start, and `RDS-EVENT-0088` started, which covers

@@ -64,6 +64,14 @@ Parameters:
     Default: ""
     AllowedPattern: "^(subnet-[0-9a-f]+(,subnet-[0-9a-f]+)*)?$"
     Description: 00-network's WorkspaceSubnets output, set by standup.sh/update.sh. PARAMETERS.md.
+  EgressProxyAddr:
+    Type: String
+    Default: ""
+    Description: 00-network's EgressProxyAddr output, set like WorkspaceSubnets. PARAMETERS.md.
+  EgressTokenSecretArn:
+    Type: String
+    Default: ""
+    Description: 00-network's EgressTokenSecretArn output, set like WorkspaceSubnets.
   Ec2SlotLaunchTemplate:
     Type: String
     Default: ""
@@ -130,10 +138,7 @@ Parameters:
     Description: "Deterministic spread on CRON fires (Go duration, default 2m; 0 = exact). PARAMETERS.md."
 
   # --- WAF (optional, OFF by default) ---------------------------------------
-  # !! ONLY rate limiting and IP reputation. The signature rule sets (Core rule set, SQLi,
-  # XSS, LFI) are deliberately NOT offered: this product carries source code and shell
-  # commands in ordinary request bodies, so they would 403 real work at random and look like
-  # a product bug. The stronger control is upstream - 00-network's AlbIngressCidr.
+  # !! ONLY rate limiting and IP reputation, never the signature rule sets: PARAMETERS.md, "WAF".
   WafRateLimitPer5Min:
     Type: Number
     Default: 0
@@ -403,6 +408,7 @@ Rules:
 
 Conditions:
   HasWorkspaceSubnets: !Not [ !Equals [ !Ref WorkspaceSubnets, "" ] ]
+  HasEgressGw: !Not [ !Equals [ !Ref EgressTokenSecretArn, "" ] ]
   # Each IdP's client secret is pulled from SSM, and a Secrets entry pointing at a
   # parameter that doesn't exist stops the task from starting - so wire each one in
   # only when that IdP is actually configured.
@@ -564,10 +570,7 @@ Resources:
           TargetGroupArn: !Ref TargetGroup
 
   # --- preview subdomains (docs/81), only when PreviewDomain is set -----------
-  # Never touch the existing Cert: adding a SAN replaces the certificate, rebuilding the TLS
-  # the Console already serves just to add previews. A listener can pick extra certificates
-  # by SNI, so attach this as a second one - turning previews off is then only a removal
-  # (decision 4).
+  # !! A second certificate, never a SAN on Cert: PARAMETERS.md, "Preview resources".
   PreviewCert:
     Type: AWS::CertificateManager::Certificate
     Condition: HasPreviewDomain
@@ -589,10 +592,7 @@ Resources:
       Certificates:
         - CertificateArn: !Ref PreviewCert
 
-  # One wildcard covers every workspace and every port. Never write a record per workspace:
-  # that puts an API round trip and a propagation wait on every start and runs into the
-  # record-count quota. Zero issuance cost and zero propagation wait are the one plain win
-  # host mode has, and giving it up leaves only the complexity (decision 5).
+  # !! One wildcard, never a record per workspace: PARAMETERS.md, "Preview resources".
   PreviewDnsRecord:
     Type: AWS::Route53::RecordSet
     Condition: HasPreviewDomain
@@ -621,10 +621,19 @@ Resources:
       LogGroupName: !Sub "/af/${AWS::StackName}/cp"
       RetentionInDays: 7
 
-  # --- "the Control Plane cannot reach its database", made visible -------------
-  # The only signal in the 2026-09-01 outage was a line in this log group (README, "Alarms").
-  # The marker is shared with control-plane/store_postgres_secret.go (logDBUnavailable):
-  # change both or neither. Unconditional: a filter matching nothing costs nothing.
+  # The egress gateway's agent reads this (00-network GatewayRole). PARAMETERS.md.
+  EgressAgentConfig:
+    Type: AWS::SSM::Parameter
+    Condition: HasEgressGw
+    Properties:
+      Name: !Sub "/af-egress/${NetworkStackName}/agent"
+      Type: String
+      Value: !Sub
+        - "AF_EGRESS_IMAGE=${R}:${ImageTag}\nAF_EGRESS_CP_URL=https://${Fqdn}\n"
+        - R: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrControlPlaneUri" }
+
+  # --- "the Control Plane cannot reach its database", made visible (README, "Alarms") ---
+  # The marker is control-plane/store_postgres_secret.go's logDBUnavailable: change both or neither.
   CpDbUnavailableFilter:
     Type: AWS::Logs::MetricFilter
     Properties:
@@ -907,6 +916,7 @@ Resources:
             - { Name: AF_ECS_CLUSTER, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
             - { Name: AF_ECS_SUBNETS, Value: !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } }
             - !If [ HasWorkspaceSubnets, { Name: AF_ECS_WORKSPACE_SUBNETS, Value: !Ref WorkspaceSubnets }, !Ref "AWS::NoValue" ]
+            - !If [ HasEgressGw, { Name: AF_EGRESS_PROXY_ADDR, Value: !Ref EgressProxyAddr }, !Ref "AWS::NoValue" ]
             - { Name: AF_ECS_SECURITY_GROUP, Value: !ImportValue { "Fn::Sub": "${NetworkStackName}-WsSgId" } }
             - { Name: AF_EFS_BACKUP, Value: !Ref EfsBackup }
             - { Name: AF_ECS_EFS_ID, Value: !ImportValue { "Fn::Sub": "${DataStackName}-EfsId" } }
@@ -963,6 +973,7 @@ Resources:
               ValueFrom: !Sub
                 - "${Arn}:password::"
                 - Arn: !ImportValue { "Fn::Sub": "${DataStackName}-DbSecretArn" }
+            - !If [ HasEgressGw, { Name: AF_EGRESS_TOKEN, ValueFrom: !Ref EgressTokenSecretArn }, !Ref "AWS::NoValue" ]
             - !If
               - HasGoogle
               - Name: GOOGLE_OAUTH_CLIENT_SECRET

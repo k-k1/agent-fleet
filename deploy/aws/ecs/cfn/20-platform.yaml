@@ -180,6 +180,11 @@ Resources:
               - Effect: Allow
                 Action: [ secretsmanager:GetSecretValue ]
                 Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rds!*"
+              # AF_EGRESS_TOKEN for the CP task, when 00-network runs the egress gateway
+              # (EgressRoute=gateway generates af-<network stack>-egress-token-<eni>).
+              - Effect: Allow
+                Action: [ secretsmanager:GetSecretValue ]
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:af-*-egress-token-*"
 
   # --- IAM: workspace task role - Agent needs NO AWS APIs (least privilege) ---
   WsTaskRole:

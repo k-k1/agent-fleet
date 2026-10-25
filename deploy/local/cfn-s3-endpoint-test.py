@@ -70,6 +70,8 @@ EXPECTED = {
     "ModelsList": ({"s3:ListBucket", "s3:ListBucketMultipartUploads"}, {MODELS}, OWNER),
 }
 WS_SUBNETS = {"WorkspaceSubnet0", "WorkspaceSubnet1"}
+NAT_UNLESS_GW = {"!If": ["GatewayOn", {"!Ref": "AWS::NoValue"}, {"!Ref": "Nat"}]}
+ENI_IF_GW = {"!If": ["GatewayOn", {"!Ref": "GatewayEni"}, {"!Ref": "AWS::NoValue"}]}
 PRIVATE_SUBNETS = {"PrivateSubnet0", "PrivateSubnet1"}
 
 
@@ -190,9 +192,12 @@ def check_routes(net):
         p = r.get("Properties") or {}
         if ref(p.get("RouteTableId")) != "WorkspaceRt":
             continue
-        if p.get("DestinationCidrBlock") != "0.0.0.0/0" or ref(p.get("NatGatewayId")) != "Nat" \
-                or set(p) - {"RouteTableId", "DestinationCidrBlock", "NatGatewayId"}:
-            fails.append("00-network: %s routes something other than 0.0.0.0/0 to the NAT on WorkspaceRt" % rid)
+        # The NAT gateway, or under EgressRoute=gateway the egress gateway's interface (#2717).
+        nat_ok = p.get("NatGatewayId") in ({"!Ref": "Nat"}, NAT_UNLESS_GW)
+        eni_ok = p.get("NetworkInterfaceId", ENI_IF_GW) == ENI_IF_GW
+        if p.get("DestinationCidrBlock") != "0.0.0.0/0" or not nat_ok or not eni_ok \
+                or set(p) - {"RouteTableId", "DestinationCidrBlock", "NatGatewayId", "NetworkInterfaceId"}:
+            fails.append("00-network: %s routes something other than 0.0.0.0/0 to the NAT or the egress gateway on WorkspaceRt" % rid)
     defaults = [rid for rid, r in res.items() if r.get("Type") == "AWS::EC2::Route"
                 and ref((r.get("Properties") or {}).get("RouteTableId")) == "WorkspaceRt"]
     if not defaults:

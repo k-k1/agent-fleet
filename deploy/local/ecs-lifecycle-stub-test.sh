@@ -141,6 +141,9 @@ case "$args" in
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EfsId']"*) echo "fs-1" ;;
   # 00-network's workspace subnets (#2716). Unset = a network stack older than them.
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='WorkspaceSubnets']"*) echo "${STUB_WS_SUBNETS:-None}" ;;
+  # 00-network's egress gateway outputs (EgressRoute=gateway, #2717). Unset = nat-gateway.
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EgressProxyAddr']"*) echo "${STUB_EGRESS_ADDR:-None}" ;;
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EgressTokenSecretArn']"*) echo "${STUB_EGRESS_SECRET:-None}" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotLaunchTemplateId']"*) echo "${STUB_POOL_LT_OUTPUT:-lt-NEW}" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='CfnTemplatesBucket']"*) echo "t-cfn-bucket" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotAmiIdArm64']"*) echo "None" ;;
@@ -212,6 +215,8 @@ case "$args" in
   # #2716: unset = a network / ingress stack older than the S3 endpoint switch / workspace subnets.
   *"ParameterKey=='S3EndpointEnabled'"*) echo "${STUB_S3EP:-None}" ;;
   *"ParameterKey=='WorkspaceSubnets'"*) echo "${STUB_ING_WS:-None}" ;;
+  *"ParameterKey=='EgressRoute'"*) echo "${STUB_EGRESS_ROUTE:-None}" ;;
+  *"ParameterKey=='EgressTokenSecretArn'"*) echo "${STUB_ING_EGRESS:-None}" ;;
   *"Outputs[?OutputKey=='RdsRestopFunction']"*) echo "${STUB_RESTOP:-}" ;;
   *"ParameterKey=='Fqdn'"*) echo "af.example.test" ;;
   *"ParameterKey=='NetworkStackName'"*) echo "t-network" ;;
@@ -959,6 +964,30 @@ efs_standup p
 if grep -q "WorkspaceSubnets=subnet-stale" "$LOG"; then fail "standup.sh passed the captured WorkspaceSubnets"; fi
 sed -i '/^WorkspaceSubnets=/d' "$STATE/params/30-ingress"
 
+echo "== case 3h-egress: the egress gateway's address and token secret reach 30-ingress (#2717) =="
+SECRET_ARN="arn:aws:secretsmanager:ap-northeast-1:123456789012:secret:af-t-network-egress-token-eni-1-AbCdEf"
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_EGRESS_ADDR=10.20.0.50:3128 STUB_EGRESS_SECRET="$SECRET_ARN" \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3he" 2>&1 \
+  || { cat "$WORK/out3he"; fail "update.sh failed with an egress gateway"; }
+grep -q "deploy --stack-name t-ingress .*EgressProxyAddr=10.20.0.50:3128 EgressTokenSecretArn=$SECRET_ARN" "$LOG" \
+  || fail "update.sh did not pass the egress gateway's address and secret to 30-ingress"
+# Back on nat-gateway: the network has no outputs, the ingress stack still has the secret -> cleared.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ING_EGRESS="$SECRET_ARN" \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3he2" 2>&1 \
+  || { cat "$WORK/out3he2"; fail "update.sh failed clearing the egress gateway"; }
+grep -q "deploy --stack-name t-ingress .*EgressProxyAddr= EgressTokenSecretArn= " "$LOG" \
+  || fail "update.sh did not clear the egress parameters after a switch back to nat-gateway"
+efs_standup p STUB_EGRESS_ADDR=10.20.0.50:3128 STUB_EGRESS_SECRET="$SECRET_ARN"
+grep -q "deploy --stack-name t-ingress .*EgressProxyAddr=10.20.0.50:3128.*EgressTokenSecretArn=$SECRET_ARN" "$LOG" \
+  || fail "standup.sh did not pass the egress gateway's outputs to 30-ingress"
+grep -q "runs the egress gateway" "$WORK/out3e" || fail "standup.sh did not warn about the egress gateway"
+echo "EgressTokenSecretArn=arn:stale" >> "$STATE/params/30-ingress"
+efs_standup p
+if grep -q "EgressTokenSecretArn=arn:stale" "$LOG"; then fail "standup.sh passed the captured EgressTokenSecretArn"; fi
+sed -i '/^EgressTokenSecretArn=/d' "$STATE/params/30-ingress"
+
 echo "== case 3h-pool: update.sh never skips the slot pool on ecs-ec2 without saying so =="
 #
 # The pool's user data carries ECS_AWSVPC_BLOCK_IMDS. A lookup that fails (no
@@ -1668,6 +1697,20 @@ grep -q "The S3 endpoint is ON" "$WORK/out4jw4" || fail "--up did not say the en
 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_ING_WS=subnet-0a,subnet-0b STUB_S3EP=true \
   "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4jw5" 2>&1 </dev/null
 if grep -q "WARNING: .* has workspace subnets" "$WORK/out4jw5"; then fail "warned although the CP uses the workspace subnets"; fi
+
+echo "== case 4j-egress: pause.sh refuses a network stack running the egress gateway (#2729) =="
+: > "$LOG"
+if STUB_EGRESS_ROUTE=gateway "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4je" 2>&1 </dev/null; then
+  fail "pause.sh paused a stack with EgressRoute=gateway"
+fi
+grep -q "EgressRoute=nat-gateway only (#2729)" "$WORK/out4je" || fail "pause.sh did not say why it refused"
+hasnt "cloudformation deploy"; hasnt "update-service"
+: > "$LOG"
+if STUB_EGRESS_ROUTE=gateway "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4je2" 2>&1 </dev/null; then
+  fail "pause.sh --up ran on a stack with EgressRoute=gateway"
+fi
+STUB_EGRESS_ROUTE=gateway "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4je3" 2>&1 </dev/null \
+  || fail "pause.sh --status refused a stack with EgressRoute=gateway"
 
 echo "== case 4k: --status shows the NAT, and names the re-stop Lambda when the stack has one =="
 : > "$LOG"

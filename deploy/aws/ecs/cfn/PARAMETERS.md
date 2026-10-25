@@ -100,6 +100,23 @@ in an AZ without one rather than fall back to the private subnet, and puts no ne
 An existing workspace moves on its next Start, which is why 00-network's `S3EndpointEnabled`
 stays `false` until every running workspace has been restarted (README, NAT bullet).
 
+### `EgressProxyAddr` / `EgressTokenSecretArn`
+
+00-network's outputs of the same names, present only with `EgressRoute=gateway` (ADR 0122,
+#2717; README, "Egress gateway"). Derived facts like `WorkspaceSubnets`: `standup.sh` and
+`update.sh` pass them (empty once the network is back on `nat-gateway`), and a deploy by hand
+must too. With `EgressTokenSecretArn` set:
+
+- the CP gets `AF_EGRESS_PROXY_ADDR` (the gateway interface's private address, `:3128`), so
+  workspace task definitions on both runtimes carry the proxy variables, with the task-role
+  credential and instance metadata addresses and the CP's internal host in `NO_PROXY`;
+- the CP gets `AF_EGRESS_TOKEN` from that Secrets Manager secret (`Secrets`, never
+  `Environment`; 20-platform's execution role reads `af-*-egress-token-*`), which turns on
+  ingest, the policy endpoint and the address recorder (#2674);
+- `EgressAgentConfig` writes `/af-egress/<NetworkStackName>/agent` (String: the CP image and
+  the public URL, no secret), which the gateway's agent reads at boot and every 10 minutes, so
+  a release reaches the agent without replacing the instance.
+
 ## EC2 slot pool (`WsRuntime=ecs-ec2`)
 
 ### `Ec2SlotLaunchTemplate`
@@ -489,6 +506,18 @@ recommend cannot be expressed in this template at all.
 
 ⚠️ The Console side (`Cert` / `DnsRecord`) always stays on `HostedZoneId`; this only affects the
 preview certificate's validation and the wildcard A record.
+
+### Preview resources (`PreviewCert`, `PreviewDnsRecord`)
+
+Never touch the existing `Cert`: adding a SAN replaces the certificate, rebuilding the TLS the
+Console already serves just to add previews. A listener can pick extra certificates by SNI, so
+`PreviewCert` is attached as a second one, and turning previews off is then only a removal
+(ADR 0062 decision 4).
+
+One wildcard record covers every workspace and every port. Never write a record per
+workspace: that puts an API round trip and a propagation wait on every start and runs into the
+record-count quota. Zero issuance cost and zero propagation wait are the one plain win host
+mode has, and giving it up leaves only the complexity (ADR 0062 decision 5).
 
 ## Control Plane task
 
