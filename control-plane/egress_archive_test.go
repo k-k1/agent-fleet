@@ -888,3 +888,38 @@ func TestEgressArchiveLocalSinkRetriesFsync(t *testing.T) {
 	}
 	rc.Close()
 }
+
+// The root's own ancestors are retried too: a directory created above the root whose parent's
+// fsync failed is not skipped just because it exists on the next attempt.
+func TestEgressArchiveLocalSinkRetriesFsyncAboveTheRoot(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	root := filepath.Join(base, "a", "b", "archive")
+	l, _ := newEgressArchiveLocal("", root)
+	synced := map[string]int{}
+	failBase := true
+	orig := fsync
+	t.Cleanup(func() { fsync = orig })
+	fsync = func(f *os.File) error {
+		synced[f.Name()]++
+		if failBase && f.Name() == base {
+			return errors.New("fsync failed")
+		}
+		return f.Sync()
+	}
+	if err := l.Put(ctx, "egress/x", strings.NewReader("z"), 1); err == nil {
+		t.Fatal("a failed fsync of the first created directory's parent must fail the Put")
+	}
+	failBase = false
+	before := synced[base]
+	if err := l.Put(ctx, "egress/x", strings.NewReader("z"), 1); err != nil {
+		t.Fatal(err)
+	}
+	if synced[base] <= before {
+		t.Error("the retry did not fsync the root's ancestor again")
+	}
+	failBase = true
+	if _, err := l.Get(ctx, "egress/x"); err == nil {
+		t.Error("Get must fail while an ancestor cannot be synced")
+	}
+}

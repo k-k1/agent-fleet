@@ -399,7 +399,7 @@ The design and the staged rollout — log-only → allowlist → enforce — are
   authorise a delete. A day with only some events left (a delete cut off midway) passes.
   Role permissions: `s3:PutObject` and `s3:GetObject` on the prefix, and `s3:ListBucket` on the
   bucket: without it S3 answers a HeadObject for a missing key with 403 instead of 404, and the
-  archive stops at the first day. Local: the file and every directory down to it are fsynced on every Put and every
+  archive stops at the first day. Local: the file and every directory above it, up to the filesystem root, are fsynced on every Put and every
   read-back of an existing object, so a failed fsync is retried by the next run and a readable
   file is never taken as proof it is durable.
   A bad URL stops the CP at startup rather than deleting without an archive.

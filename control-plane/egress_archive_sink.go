@@ -117,14 +117,18 @@ func (l *egressArchiveLocal) Get(_ context.Context, key string) (io.ReadCloser, 
 // fsync is swapped in tests to fail a given file or directory.
 var fsync = func(f *os.File) error { return f.Sync() }
 
-// syncChain fsyncs dir and every directory above it up to the root's parent, whether or not
-// they already existed: an earlier attempt may have created them and failed to sync.
+// syncChain fsyncs dir and every directory above it up to the filesystem root, whether or not
+// they already existed: an earlier attempt may have created any of them (the root's own
+// ancestors included) and failed to sync, and the existence check that follows a failure
+// cannot tell. A directory above the root's parent that this user may not open is skipped:
+// it cannot be one this process created.
 func (l *egressArchiveLocal) syncChain(dir string) error {
 	for d := dir; ; d = filepath.Dir(d) {
-		if err := syncDir(d); err != nil {
+		err := syncDir(d)
+		if err != nil && !(errors.Is(err, os.ErrPermission) && len(d) < len(filepath.Dir(l.root))) {
 			return err
 		}
-		if d == filepath.Dir(l.root) || d == filepath.Dir(d) {
+		if d == filepath.Dir(d) {
 			return nil
 		}
 	}
