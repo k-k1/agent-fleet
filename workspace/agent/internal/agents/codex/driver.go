@@ -104,7 +104,7 @@ var threadFeatures = map[string]any{"default_mode_request_user_input": true}
 func threadConfig(slot string) map[string]any {
 	cfg := map[string]any{"features": threadFeatures}
 	set := map[string]any{}
-	if slot != "" {
+	if session.ValidName(slot) {
 		set[agents.SessionNameEnvVar] = slot
 	}
 	if wd := agents.SessionWorkDir(slot); wd != "" {

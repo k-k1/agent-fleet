@@ -107,7 +107,7 @@ func TestThreadConfigSetsWorkDirForShellCalls(t *testing.T) {
 		t.Fatal("two sessions share one work dir")
 	}
 	// A name that could leave ~/.af-work gets no work dir.
-	if esc, _ := threadConfig("../x")["shell_environment_policy"].(map[string]any); esc["set"].(map[string]any)["AF_WORK_DIR"] != nil {
+	if _, present := threadConfig("../x")["shell_environment_policy"]; present {
 		t.Fatal("an escaping name got a work dir")
 	}
 }
@@ -116,6 +116,7 @@ func TestThreadConfigSetsWorkDirForShellCalls(t *testing.T) {
 // carries no per-session AF_SESSION_NAME, and each session (a fork included) passes its own slot.
 func TestThreadConfigSetsSessionNameForShellCalls(t *testing.T) {
 	stubSessionMCPDefs(t, nil, nil)
+	t.Setenv("HOME", t.TempDir())
 	for _, slot := range []string{"slot01", "slot02"} {
 		pol, _ := threadConfig(slot)["shell_environment_policy"].(map[string]any)
 		set, _ := pol["set"].(map[string]any)
@@ -123,7 +124,12 @@ func TestThreadConfigSetsSessionNameForShellCalls(t *testing.T) {
 			t.Fatalf("shell_environment_policy.set = %v, want AF_SESSION_NAME=%q beside AF_WORK_DIR", set, slot)
 		}
 	}
-	if _, present := threadConfig("")["shell_environment_policy"]; present {
-		t.Fatal("an empty slot got shell variables")
+	// An invalid identifier is never handed to the shell as a session name.
+	for _, bad := range []string{"", "../x", "a b", "a/b", "a\nb"} {
+		pol, _ := threadConfig(bad)["shell_environment_policy"].(map[string]any)
+		set, _ := pol["set"].(map[string]any)
+		if _, present := set["AF_SESSION_NAME"]; present {
+			t.Fatalf("slot %q was handed to the shell as a session name", bad)
+		}
 	}
 }
