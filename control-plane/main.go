@@ -293,6 +293,9 @@ func main() {
 	}
 	// Full public base (scheme+host) for the in-container memo bridge (AF_CP_BASE_URL).
 	mgr.publicBaseURL = strings.TrimRight(publicBaseURL, "/")
+	if _, refused := cpEgressHostsOf(mgr.publicBaseURL, mgr.internalBaseURL); len(refused) > 0 && egressProxyAddr != "" {
+		log.Printf("WARNING: egress: %v not admitted as the CP's own host (not http(s), not one exact host, or an IPv6 literal): in enforce, workspaces cannot reach the CP there", refused)
+	}
 	// docs/log/81: the parent of the preview subdomains (e.g. pv.example.com). A leading
 	// "." and upper case are normalised away so it can be compared — reading a slightly
 	// mistyped setting charitably beats having the whole feature go dead.

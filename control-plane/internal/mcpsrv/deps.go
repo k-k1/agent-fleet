@@ -100,8 +100,8 @@ type CP interface {
 	HashPAT(token string) string
 	// TenantLimits parses tenant.limits JSON. mcpsrv only reports two of the quotas.
 	TenantLimits(raw string) (maxWorkspaces, maxSessions int)
-	// EgressDefaults is the product's built-in egress allowlist (egress_policy.go),
-	// reported verbatim by the list_allowlist tool.
+	// EgressDefaults is the built-in egress allowlist (egress_policy.go): the product
+	// defaults and the CP's own hosts, reported verbatim by the list_allowlist tool.
 	EgressDefaults() []string
 	// HostStats is the super_admin-only host load/memory reading (metrics.go).
 	HostStats() (load1 float64, ncpu int, memUsed, memTotal uint64)
