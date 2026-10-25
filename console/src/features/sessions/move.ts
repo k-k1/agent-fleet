@@ -150,14 +150,22 @@ export function usedFromRemaining(remainingPct: number): number {
 export function readMoveUsage(d: unknown): MoveUsage | null {
   type Win = { pct?: number; stale?: boolean };
   type Rem = { remainingPct?: number; stale?: boolean };
-  const r = d as { ok?: boolean; fiveHour?: Win; sevenDay?: Win; groups?: (Rem & { fiveHour?: Rem })[]; quotas?: Rem[] } | null;
+  const r = d as { ok?: boolean; fiveHour?: Win; sevenDay?: Win; groups?: (Rem & { fiveHour?: Rem })[]; quotas?: Rem[]; error?: string; resetsAt?: string } | null;
   if (!r || !r.ok) return null;
   // A stale window rolled over after its capture: its percentage is a guess, not a reading.
   const pct = (w?: Win) => (w && !w.stale && typeof w.pct === "number" ? Math.round(w.pct) : undefined);
   const rem = (w?: Rem) => (w && !w.stale && typeof w.remainingPct === "number" ? usedFromRemaining(w.remainingPct) : undefined);
+  // copilot and agy answer {ok:true, error} with the last cached pools when a refresh fails; that
+  // reading is of unknown age, so it is no judgement.
+  if ((Array.isArray(r.groups) || Array.isArray(r.quotas)) && r.error) return null;
   let u: MoveUsage;
   if (Array.isArray(r.groups)) u = { fiveHour: rem(r.groups[0]?.fiveHour), sevenDay: rem(r.groups[0]) };
-  else if (Array.isArray(r.quotas)) u = { monthly: rem(r.quotas[0]) };
+  else if (Array.isArray(r.quotas)) {
+    // copilot has no stale flag: pools cached from before the shared monthly reset are a guess. A
+    // missing or unparsable resetsAt is taken as readable.
+    const reset = r.resetsAt ? Date.parse(r.resetsAt) : NaN;
+    u = { monthly: reset <= Date.now() ? undefined : rem(r.quotas[0]) };
+  }
   else u = { fiveHour: pct(r.fiveHour), sevenDay: pct(r.sevenDay) };
   return Object.values(u).every((n) => n === undefined) ? null : u;
 }

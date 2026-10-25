@@ -78,6 +78,16 @@ describe("readMoveUsage for copilot and agy", () => {
     expect(readMoveUsage({ ok: true, groups: [{ label: "G", remainingPct: 0, stale: true }] })).toBeNull();
     expect(quotaState(readMoveUsage({ ok: true, quotas: [] }) ?? undefined)).toBe("unknown");
   });
+  it("ignores the cached pools a failed refresh serves next to its error", () => {
+    expect(readMoveUsage({ ok: true, error: "boom", quotas: [{ id: "chat", remainingPct: 80 }] })).toBeNull();
+    expect(readMoveUsage({ ok: true, error: "boom", groups: [{ label: "G", remainingPct: 0 }] })).toBeNull();
+  });
+  it("ignores copilot pools whose monthly reset has passed, and trusts a missing reset", () => {
+    const quotas = [{ id: "chat", remainingPct: 0 }];
+    expect(readMoveUsage({ ok: true, resetsAt: "2020-01-01T00:00:00Z", quotas })).toBeNull();
+    expect(readMoveUsage({ ok: true, resetsAt: "2999-01-01T00:00:00Z", quotas })).toEqual({ monthly: 100 });
+    expect(readMoveUsage({ ok: true, quotas })).toEqual({ monthly: 100 });
+  });
   it("orders them by quota like the other kinds", () => {
     const full = readMoveUsage({ ok: true, quotas: [{ id: "chat", remainingPct: 0 }] })!;
     const room = readMoveUsage({ ok: true, groups: [{ label: "G", remainingPct: 80 }] })!;
