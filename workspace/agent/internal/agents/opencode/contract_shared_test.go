@@ -39,6 +39,8 @@ import (
 type sharedStub struct {
 	mu   sync.Mutex
 	auth []string // "<text>|<authorization>"
+	// command, when set, is what an ENVQ turn runs in the shell instead of the variable filter.
+	command string
 }
 
 func (s *sharedStub) handler(w http.ResponseWriter, r *http.Request) {
@@ -67,8 +69,13 @@ func (s *sharedStub) handler(w http.ResponseWriter, r *http.Request) {
 		w.(http.Flusher).Flush()
 	}
 	if strings.HasPrefix(text, "ENVQ") && !afterTool {
+		args := `{"command":"env | grep -E '^(AF_SESSION_SID|AF_SESSION_NAME|AF_ENGINE_TOKEN|OPENCODE_SERVER|PANE_MARK|TOOLCHAIN_MARK)=' | sort","description":"env"}`
+		if s.command != "" {
+			b, _ := json.Marshal(map[string]string{"command": s.command, "description": "env"})
+			args = string(b)
+		}
 		send(map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"index": 0, "id": "call_1", "type": "function",
-			"function": map[string]any{"name": "shell", "arguments": `{"command":"env | grep -E '^(AF_SESSION_SID|AF_SESSION_NAME|AF_ENGINE_TOKEN|OPENCODE_SERVER|PANE_MARK|TOOLCHAIN_MARK)=' | sort","description":"env"}`}}}}, nil)
+			"function": map[string]any{"name": "shell", "arguments": args}}}}, nil)
 		send(map[string]any{}, "tool_calls")
 	} else {
 		send(map[string]any{"role": "assistant", "content": "ok"}, nil)

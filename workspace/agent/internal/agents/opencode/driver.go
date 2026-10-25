@@ -170,6 +170,13 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 		// consults it first, and with no plugin in managed mode the driver is the writer.
 		sids.Write(ocSid, ses)
 	}
+	if isV2() {
+		// Names the af session for the shell's AF_WORK_DIR / AF_SESSION_NAME (agent-fleet-shared.js).
+		// A failure leaves the shell with the server's environment, as before; it never blocks a turn.
+		if err := tagManagedSession(addr, ses, m.Name); err != nil {
+			log.Printf("opencode: %s: could not name the session for its shell environment: %v", m.Name, err)
+		}
+	}
 
 	h.mu.Lock()
 	h.addr, h.gen, h.ses, h.alive = addr, gen, ses, true

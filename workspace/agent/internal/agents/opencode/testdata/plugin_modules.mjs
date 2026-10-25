@@ -311,6 +311,8 @@ const now = Date.now();
         ses_new: { time: { created: Date.now() }, metadata: {} },
         ses_old: { time: { created: now - 3600_000 }, metadata: {} },
         ses_managed: { time: { created: Date.now() }, metadata: { "af.managed": "1" } },
+        ses_named: { time: { created: Date.now() }, metadata: { "af.managed": "1", "af.managed.name": "mgdA" } },
+        ses_namedkid: { time: { created: Date.now() }, parentID: "ses_named", metadata: { "af.managed": "1", "af.managed.name": "mgdA" } },
         ses_root: { time: { created: now - 3600_000 }, metadata: { "af.sid": "sidR", "af.name": "slotR" } },
         // a subagent session inherits the tag, not the environment; a fork copies the tag too
         ses_kid: { time: { created: Date.now() }, parentID: "ses_root", metadata: { "af.sid": "sidR", "af.name": "slotR" } },
@@ -335,6 +337,9 @@ const now = Date.now();
       await run("shell", "ses_oldkid");
       await run("shell", "ses_managed");
       assert.equal(asked().length, before + 3, "old untagged and Managed sessions have no pane to ask for");
+      await run("shell", "ses_named");
+      await run("bash", "ses_namedkid");
+      assert.deepEqual(asked().slice(before + 3), ["opencode-put-env mgdA ses_named", "opencode-put-env mgdA ses_namedkid"], "a Managed session that names its af session is confirmed under that name, subagents included");
 
       const waiting = run("shell", "ses_new");
       assert.equal(await pending(waiting), true, "a new untagged session is held until it is claimed");
