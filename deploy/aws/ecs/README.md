@@ -1949,13 +1949,14 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
     here are an illustration, not a quote. On `ecs-ec2` the image cache is the slot's own
     root volume, so restarting on an existing slot that already holds the same image avoids
     the layer pull: a cached start measured **~65 MiB of NAT traffic in total** in a sandbox.
-    A new slot, a recreated one after retirement, a cache miss or an image update still pays
-    the NAT pull. (The golden snapshot is a different thing: a home that already paid CLI
-    boot-install, which saves time, not NAT bytes.) Where many starts a day are expected,
-    prefer `ecs-ec2`, and expect the saving to shrink with slot churn. The `60-engines` model downloads cross the NAT as well, at the same
-    per-GB rate, so a large checkpoint costs about the same per GB. Planned, not merged:
-    workspace subnets that keep `ecs-ec2` pulls on a VPC endpoint (#2716), and the choice
-    between a NAT gateway and an egress gateway (#2717).
+    A new slot, a recreated one after retirement, a cache miss or an image update pulls the
+    layers again, but through the S3 gateway endpoint (the workspace-subnet bullet above,
+    #2716; not yet measured on a deployed stack), so only the small ECR auth and manifest
+    calls cross the NAT. (The golden snapshot is a different thing: a home that already paid
+    CLI boot-install, which saves time, not NAT bytes.) Where many starts a day are expected,
+    prefer `ecs-ec2`. The `60-engines` ingest downloads from Hugging Face / Civitai cross the
+    NAT at the same per-GB rate; the engines' reads of the models bucket use the endpoint.
+    Planned, not merged: the choice between a NAT gateway and an egress gateway (#2717).
   - Replacing the NAT Gateway with a **NAT instance** (t4g.nano $3.9 + 8 GB gp3
     $0.8 + its public IPv4 $3.7 ≈ **$8/mo**, vs **$45** for the managed gateway) is
     the biggest single lever, at the price of running it yourself (source/dest check
