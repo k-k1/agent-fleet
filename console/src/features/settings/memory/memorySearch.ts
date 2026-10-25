@@ -8,17 +8,33 @@ export const scopeKey = (m: { scope: string; project?: { id: string } }) =>
   m.scope === "user" ? "user" : "project:" + (m.project?.id ?? "");
 export const keyOf = (m: { scope: string; project?: { id: string }; name: string }) => scopeKey(m) + "/" + m.name;
 
+/** The words of a query (already lower-cased): what `memory_search` splits on too. */
+export const queryWords = (q: string): string[] => q.split(/\s+/).filter(Boolean);
+
+/** Whether every word of `q` occurs in `text` (lower-case). An empty query matches. */
+export const hasEveryWord = (text: string, q: string): boolean => queryWords(q).every((w) => text.includes(w));
+
+export interface MemoryMatch {
+  rows: MemoryListed[];
+  /** The rows are the body search's partial matches: no memory held every word (its `fallback: "any"`). */
+  partial: boolean;
+}
+
 /**
  * The memories of `rows` that `q` (already trimmed and lower-cased; empty = all) finds: first the
- * ones whose listed fields match, as listed, then those only the body search found, in its rank
- * order. A hit that is not among `rows` is dropped, so a scope or a withheld memory never leaks in
- * through the search side.
+ * ones whose listed fields hold every word of it, as listed, then those only the body search found,
+ * in its rank order. A hit that is not among `rows` is dropped, so a scope or a withheld memory never
+ * leaks in through the search side. When the server fell back to memories holding only some of the
+ * words (`fallback` "any"), those are shown only if no row matches in full, so a partial match never
+ * sits among exact ones; `partial` then says so.
  */
-export function matchMemories(rows: MemoryListed[], hits: MemorySearchHit[], q: string): MemoryListed[] {
-  if (!q) return rows;
+export function matchMemoriesDetail(rows: MemoryListed[], hits: MemorySearchHit[], q: string, fallback = ""): MemoryMatch {
+  if (!q) return { rows, partial: false };
   const byField = (m: MemoryListed) =>
-    `${m.name}\n${m.description}\n${m.type ?? ""}\n${m.authorKind}\n${m.authorSession}`.toLowerCase().includes(q);
+    hasEveryWord(`${m.name}\n${m.description}\n${m.type ?? ""}\n${m.authorKind}\n${m.authorSession}`.toLowerCase(), q);
   const fieldRows = rows.filter(byField);
+  const partialHits = fallback === "any";
+  if (partialHits && fieldRows.length > 0) return { rows: fieldRows, partial: false };
   const seen = new Set(fieldRows.map(keyOf));
   const byKey = new Map(rows.map((m) => [keyOf(m), m]));
   const bodyRows = hits.flatMap((h) => {
@@ -27,8 +43,11 @@ export function matchMemories(rows: MemoryListed[], hits: MemorySearchHit[], q: 
     seen.add(keyOf(h));
     return [m];
   });
-  return [...fieldRows, ...bodyRows];
+  return { rows: [...fieldRows, ...bodyRows], partial: partialHits && bodyRows.length > 0 };
 }
+
+export const matchMemories = (rows: MemoryListed[], hits: MemorySearchHit[], q: string, fallback = ""): MemoryListed[] =>
+  matchMemoriesDetail(rows, hits, q, fallback).rows;
 
 /** One memory, named for `openSettings("memory:memories", { target })`. */
 export interface MemoryTarget {

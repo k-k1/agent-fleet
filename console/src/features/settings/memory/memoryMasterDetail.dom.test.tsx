@@ -115,6 +115,21 @@ const btn = (key: Parameters<typeof t>[0]) => text(t(key));
 const pickRow = (i: number) => click(listRows()[i].querySelector(".mem-md-pick"));
 const chip = (key: Parameters<typeof t>[0]) => click(btn(key));
 const select = () => document.body.querySelector<HTMLSelectElement>(".mem-br-bar select")!;
+const remount = async () => {
+  await act(async () => root!.unmount());
+  root = createRoot(host!);
+  await act(async () => {
+    root!.render(
+      <ToastProvider>
+        <ConfirmProvider>
+          <MemoriesMasterDetail reload={0} onChanged={onChanged} onOpenChanges={onOpenChanges} />
+        </ConfirmProvider>
+      </ToastProvider>,
+    );
+  });
+  await flush();
+};
+
 async function setValue(el: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement, v: string) {
   const proto = Object.getPrototypeOf(el);
   await act(async () => {
@@ -518,30 +533,82 @@ describe("MemoriesMasterDetail", () => {
     expect(document.body.textContent).toContain("old-note");
   });
 
-  it("counts withheld forgotten memories and says when the list is cut", async () => {
+  it("counts withheld forgotten memories and offers the next page when the list is cut", async () => {
     api.mockImplementation(async (url: string) => {
       if (url.startsWith("api/agents/memory/entries/list")) return { entries };
       if (url.startsWith("api/agents/memory/entries/member-forgotten"))
-        return { forgotten: [changes[2]], withheld: 3, truncated: true };
+        return { forgotten: [changes[2]], withheld: 3, truncated: true, next: "cur1" };
       return {};
     });
-    await act(async () => root!.unmount());
-    root = createRoot(host!);
-    await act(async () => {
-      root!.render(
-        <ToastProvider>
-          <ConfirmProvider>
-            <MemoriesMasterDetail reload={0} onChanged={onChanged} onOpenChanges={onOpenChanges} />
-          </ConfirmProvider>
-        </ToastProvider>,
-      );
-    });
-    await flush();
+    await remount();
     await chip("mem.md_f_forgotten");
     const warns = Array.from(document.body.querySelectorAll(".mem-warn")).map((e) => e.textContent ?? "");
     expect(warns.some((w) => w.includes("3"))).toBe(true);
-    expect(warns.some((w) => w.includes("1"))).toBe(true);
     expect(document.body.textContent).toContain("old-note");
+    expect(btn("mem.br_forgotten_more")).toBeTruthy();
+  });
+
+  it("pages the forgotten list with the cursor and never repeats a row", async () => {
+    const older = { ...changes[2], commit: "oldercommit", name: "older-note" };
+    const again = { ...changes[2], commit: "newercommit2" }; // forgotten again since page one
+    api.mockImplementation(async (url: string) => {
+      if (url.startsWith("api/agents/memory/entries/list")) return { entries };
+      if (url === "api/agents/memory/entries/member-forgotten") return { forgotten: [changes[2]], projects: [project], next: "cur 1|x" };
+      if (url === "api/agents/memory/entries/member-forgotten?before=cur%201%7Cx")
+        return { forgotten: [again, older], projects: [project] };
+      return {};
+    });
+    await remount();
+    await chip("mem.md_f_forgotten");
+    await click(btn("mem.br_forgotten_more"));
+    expect(api).toHaveBeenCalledWith("api/agents/memory/entries/member-forgotten?before=cur%201%7Cx");
+    const names = Array.from(document.body.querySelectorAll(".mem-br-list")[0].querySelectorAll(".mem-af-name")).map((e) => e.textContent);
+    expect(names).toEqual(["old-note", "older-note"]);
+    // The list is complete now: no more button.
+    expect(btn("mem.br_forgotten_more")).toBeUndefined();
+  });
+
+  it("adds the cursor after the scope parameters when a scoped forgotten list is paged", async () => {
+    api.mockImplementation(async (url: string) => {
+      if (url.startsWith("api/agents/memory/entries/list")) return { entries };
+      if (url === "api/agents/memory/entries/member-forgotten?scope=user") return { forgotten: [], next: "c2" };
+      return {};
+    });
+    await remount();
+    await chip("mem.md_f_forgotten");
+    await setValue(select(), "user");
+    await click(btn("mem.br_forgotten_more"));
+    expect(api).toHaveBeenCalledWith("api/agents/memory/entries/member-forgotten?scope=user&before=c2");
+  });
+
+  it("requires every word of a multi-word query and says when only some words matched", async () => {
+    const input = document.body.querySelector<HTMLInputElement>('input[type="search"]')!;
+    // "house" is in rules, "build" in build-cmd: no single row holds both words in its fields.
+    api.mockImplementation(async (url: string) => {
+      if (url.startsWith("api/agents/memory/entries/list")) return { entries };
+      if (url.startsWith("api/agents/memory/entries/member-search"))
+        return { hits: [{ ...entries[0], snippets: ["house rules here"] }], fallback: "any" };
+      return {};
+    });
+    await remount();
+    const input2 = document.body.querySelector<HTMLInputElement>('input[type="search"]')!;
+    await setValue(input2, "house build");
+    expect(listRows()).toHaveLength(0);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 400));
+    });
+    await flush();
+    expect(listRows()).toHaveLength(1);
+    expect(document.body.textContent).toContain(t("mem.br_search_partial"));
+    // An exact match among the fields hides the partial hits and the notice.
+    await setValue(input2, "house rules");
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 400));
+    });
+    await flush();
+    expect(listRows().map((r) => r.querySelector(".mem-af-name")!.textContent)).toEqual(["rules"]);
+    expect(document.body.textContent).not.toContain(t("mem.br_search_partial"));
+    void input;
   });
 
   it("keeps offering a project that holds only forgotten memories, even when its rows were cut or another scope is selected", async () => {
@@ -654,21 +721,6 @@ describe("MemoriesMasterDetail master-detail", () => {
       return base(url);
     });
   };
-  const remount = async () => {
-    await act(async () => root!.unmount());
-    root = createRoot(host!);
-    await act(async () => {
-      root!.render(
-        <ToastProvider>
-          <ConfirmProvider>
-            <MemoriesMasterDetail reload={0} onChanged={onChanged} onOpenChanges={onOpenChanges} />
-          </ConfirmProvider>
-        </ToastProvider>,
-      );
-    });
-    await flush();
-  };
-
   it("filters with the chips: All and Pinned list live memories, Forgotten lists the forgotten ones", async () => {
     expect(listRows().map((r) => r.querySelector(".mem-af-name")!.textContent)).toEqual(["rules", "build-cmd"]);
     expect(btn("mem.md_f_all")!.getAttribute("aria-pressed")).toBe("true");
@@ -751,16 +803,24 @@ describe("MemoriesMasterDetail master-detail", () => {
     expect(onOpenChanges).toHaveBeenCalledTimes(1);
   });
 
-  it("says when the history may be cut by the page limit", async () => {
+  it("says the history is cut and loads older pages by cursor until it ends", async () => {
     const full = Array.from({ length: 300 }, (_, i) => ({ ...changes[1], commit: "c" + i }));
+    const older = [{ ...changes[1], commit: "older0" }];
     const base = api.getMockImplementation()!;
-    api.mockImplementation(async (url: string) =>
-      url.startsWith("api/agents/memory/entries/changes") ? { changes: full } : base(url),
-    );
+    api.mockImplementation(async (url: string) => {
+      if (url === "api/agents/memory/entries/changes?limit=300") return { changes: full, next: "c299" };
+      if (url === "api/agents/memory/entries/changes?limit=300&before=c299") return { changes: older };
+      return base(url);
+    });
     await remount();
     await pickRow(0);
     expect(detail().querySelector(".mem-md-history")!.textContent).toContain("300");
     expect(detail().querySelectorAll(".mem-md-hist-list button")).toHaveLength(300);
+    await click(btn("mem.md_hist_more"));
+    expect(detail().querySelectorAll(".mem-md-hist-list button")).toHaveLength(301);
+    // Nothing older: the cut note and the button go.
+    expect(btn("mem.md_hist_more")).toBeUndefined();
+    expect(detail().querySelector(".mem-md-history")!.textContent).not.toContain(t("mem.md_hist_capped", { n: 300 }));
   });
 
   it("purges from the overflow menu through the existing purge dialog", async () => {

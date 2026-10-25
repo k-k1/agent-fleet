@@ -345,6 +345,13 @@ func TestAgentMemoryMemberForgottenBudgetSpendsOnTheNewestFirst(t *testing.T) {
 	if code != http.StatusOK || namesOf(w) != "z,b" || w.Truncated || !w.Incomplete || len(w.Projects) != 1 || w.Projects[0].ID != c.Project.ID {
 		t.Fatalf("budget: %d %s", code, body)
 	}
+	// The unjudged rest is reachable: the next page starts after the last judged memory.
+	if w.Next == "" {
+		t.Fatalf("budget: no cursor for the unjudged rest: %s", body)
+	}
+	if _, p2, body2 := forgottenGet(t, "?before="+w.Next); namesOf(p2) != "a,oldest" || p2.Next != "" {
+		t.Fatalf("budget, next page: %s", body2)
+	}
 }
 
 // A token-shaped project id passes the form check, so the id of an unjudged (over-budget) memory

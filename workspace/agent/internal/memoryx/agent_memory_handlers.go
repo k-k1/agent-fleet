@@ -189,8 +189,9 @@ func HandleAgentMemoryForget(w http.ResponseWriter, r *http.Request) {
 
 // HandleAgentMemoryChanges lists the published changes for the Console (ADR 0108 decision 8).
 func HandleAgentMemoryChanges(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	out, err := agentMemListChanges(limit)
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	out, err := agentMemListChangesPage(limit, q.Get("before"))
 	if err != nil {
 		agentMemWriteErr(w, err)
 		return

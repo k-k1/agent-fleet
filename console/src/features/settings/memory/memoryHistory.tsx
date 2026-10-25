@@ -1,11 +1,11 @@
 // MemoryHistory — "History of this memory" in the Memories detail pane: the change entries of one
 // memory, picked out of the changes list the Changes view reads. The Agent has no per-memory
-// history route, so the newest HISTORY_LIMIT changes of every memory are asked for and filtered
-// here; when the answer filled that limit the list may be missing older entries of this memory,
-// and the pane says so and points to the Changes view rather than paging through everything.
+// history route, so the changes of every memory are asked for page by page and filtered here;
+// while older pages remain the list may be missing entries of this memory, and the pane says so
+// and offers to load the next page.
 // An entry's diff is the Changes view's own ChangeDiffBody.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errText, isTransientErr } from "../../../core/api/client.ts";
 import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -25,30 +25,66 @@ export interface HistoryTarget {
 
 /** The newest HISTORY_LIMIT changes of every memory, read once by the Memories view and shared by the
  *  history of whichever memory is picked: picking another memory only filters this array. Read again
- *  when `version` moves (a write of this view, or the parent's reload). */
+ *  when `version` moves (a write of this view, or the parent's reload). Older pages are read on
+ *  demand (`loadOlder`), by the commit cursor the Agent gives, so the history is reachable all the
+ *  way back. */
 export interface AllChanges {
   /** null: not read yet. */
   changes: MemoryChange[] | null;
+  /** Older changes exist that are not loaded yet. */
   capped: boolean;
   err: string;
+  loadOlder?: () => void;
+  loadingOlder?: boolean;
+  olderErr?: boolean;
 }
 
 export function useAllChanges(version: number): AllChanges {
   const [state, setState] = useState<AllChanges>({ changes: null, capped: false, err: "" });
+  const [next, setNext] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [olderErr, setOlderErr] = useState(false);
+  // An answer for an older read (a reload moved on meanwhile) is dropped.
+  const gen = useRef(0);
   const load = useCallback(async (signal: AbortSignal) => {
     const res = await api(`api/agents/memory/entries/changes?limit=${HISTORY_LIMIT}`);
     if (signal.aborted) return true;
     if (isTransientErr(res)) return false;
+    gen.current++;
+    setBusy(false);
+    setOlderErr(false);
     const all: MemoryChange[] = res?.error ? [] : (res?.changes ?? []);
+    setNext(res?.error ? "" : (res?.next ?? ""));
     setState({
       changes: all,
-      capped: !res?.error && (all.length >= HISTORY_LIMIT || (res?.withheld ?? 0) > 0),
+      capped: !res?.error && !!res?.next,
       err: res?.error ? errText(res.error) : "",
     });
     return true;
   }, []);
   useRetryLoad(load, [version]);
-  return state;
+  const loadOlder = useCallback(async () => {
+    const g = gen.current;
+    setBusy(true);
+    setOlderErr(false);
+    const res = await api(`api/agents/memory/entries/changes?limit=${HISTORY_LIMIT}&before=${encodeURIComponent(next)}`).catch(
+      () => ({ error: true }),
+    );
+    if (g !== gen.current) return;
+    setBusy(false);
+    if (res?.error) return setOlderErr(true);
+    const older: MemoryChange[] = res?.changes ?? [];
+    setNext(res?.next ?? "");
+    setState((prev) => {
+      const have = new Set((prev.changes ?? []).map((c) => c.commit));
+      return {
+        ...prev,
+        changes: [...(prev.changes ?? []), ...older.filter((c) => !have.has(c.commit))],
+        capped: !!res?.next,
+      };
+    });
+  }, [next]);
+  return { ...state, loadOlder, loadingOlder: busy, olderErr };
 }
 
 export function MemoryHistory({
@@ -63,7 +99,7 @@ export function MemoryHistory({
   const tr = useT();
   const [sel, setSel] = useState("");
   const { scope, project, name } = target;
-  const { capped, err } = data;
+  const { capped, err, loadOlder, loadingOlder, olderErr } = data;
   const entries = useMemo(
     () =>
       data.changes?.filter(
@@ -83,7 +119,8 @@ export function MemoryHistory({
     <section className="mem-md-history" aria-labelledby="mem-md-history-h">
       <h5 id="mem-md-history-h">{tr("mem.md_hist_title")}</h5>
       {err && <p className="mem-warn">{err}</p>}
-      {capped && <p className="muted ds-hint">{tr("mem.md_hist_capped", { n: HISTORY_LIMIT })}</p>}
+      {capped && <p className="muted ds-hint">{tr("mem.md_hist_capped", { n: data.changes?.length ?? 0 })}</p>}
+      {olderErr && <p className="mem-warn">{tr("mem.md_hist_more_failed")}</p>}
       <ul className="mem-list mem-md-hist-list">
         {entries === null ? (
           <li className="muted pad">{tr("common.loading")}</li>
@@ -110,6 +147,11 @@ export function MemoryHistory({
         <div className="mem-diff">
           <ChangeDiffBody commit={sel} />
         </div>
+      )}
+      {capped && loadOlder && (
+        <button type="button" className="mem-md-link" disabled={loadingOlder} onClick={loadOlder}>
+          {tr("mem.md_hist_more")}
+        </button>
       )}
       {onOpenChanges && (
         <button type="button" className="mem-md-link" onClick={onOpenChanges}>
