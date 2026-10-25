@@ -451,3 +451,33 @@ The interval rules do not change. An open ref the cluster listing does not retur
 described by ARN, as before, and MISSING stays unresolved. A failed page or batch fails the
 read of every workspace in that cluster for the sweep, so none of their intervals is closed
 on a partial listing. Follow-ups: #2674 (acceptance on a real account).
+
+## Addendum (2026-10-25) — workspace subnets, and the S3 endpoint back on the private route table (#2716)
+
+The decisions above stand, and so does the one of 2026-10-25 that a policy-limited endpoint
+must not decide a workspace's S3. What changes is where the workspaces sit:
+
+- **Workspace task ENIs have subnets of their own**, one per AZ, on a workspace route table
+  whose only route out is the NAT gateway. Decision 5's gateway replaces the NAT as the default
+  route of *this* route table only, as the GKE design scopes the route to the workspace node
+  pool; the CP, the slot instances and the engines stay off the gateway. The CP is handed the
+  subnets as `AF_ECS_WORKSPACE_SUBNETS` (30-ingress `WorkspaceSubnets`, from 00-network's output).
+- **The S3 gateway endpoint is back on the private route table only**, with the policy reviewed
+  in commit `6829e6e` (ECR layers, the AL2023 repositories, the models bucket) plus the SSM
+  Agent update buckets (`amazon-ssm-<region>`, `aws-ssm-<region>`), which the slot and engine
+  instances need for `AWS-UpdateSSMAgent`, and the ECS agent download buckets
+  (`amazon-ecs-agent`, `amazon-ecs-agent-<region>`), which ecs-init reads when its cache is
+  missing. It sits behind `S3EndpointEnabled`, which stays
+  `false` on a running stack until every workspace has been restarted into the workspace
+  subnets, and is the rollback. Nothing a user
+  drives runs on that route table, so a refusal there breaks no workspace. On ecs-ec2 the ECS
+  agent pulls the image through the slot instance's ENI, so a cold pull stays on the endpoint.
+- **Fargate workspaces move too.** They gain nothing on pulls (Fargate pulls through the task
+  ENI), but left on the private route table their own S3 would meet the endpoint's policy, and
+  one route table for every workspace is what the gateway needs.
+- **An AZ with no workspace subnet is refused**, never filled from the private subnets, and gets
+  no new home.
+
+Open point 5 is unchanged in substance: `pause.sh` drops both default routes through
+`NatEnabled`. Not verified on a deployed account (cold pull through the endpoint, a
+workspace's S3 through the NAT, the CP reaching the agent across the subnets). Follow-ups: #2716.

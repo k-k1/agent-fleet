@@ -233,14 +233,46 @@ nat_enabled() {
 
 # nat_set <true|false> — move the NAT gateway through the stack that owns it. Every other
 # parameter keeps its live value (`deploy` leaves what it is not given at UsePreviousValue).
-# The wait is the point: on `--up` nothing may start until the route exists again.
+# The wait is the point: on `--up` nothing may start until the route exists again. Both default
+# routes (private and workspace route table) follow NatEnabled.
+#
+# This deploys the checkout's template, so a network stack older than it gains what it adds. The
+# workspace subnets are harmless before the CP uses them, but the S3 endpoint is not: its policy
+# refuses the own S3 of every workspace still in a private subnet (#2716). So a stack that has
+# never had S3EndpointEnabled gets "false"; switching it on is the last step of the migration
+# (README, NAT bullet), never a side effect of a pause.
 nat_set() {
+  local extra=()
+  if grep -q '^  S3EndpointEnabled:' "$HERE/cfn/00-network.yaml" &&
+     af_stack_exists "$AF_STACK_NETWORK" &&
+     [ -z "$(af_stack_param "$AF_STACK_NETWORK" S3EndpointEnabled)" ]; then
+    extra=("S3EndpointEnabled=false")
+  fi
   if [ "$AF_DRY" = 1 ]; then
-    echo "DRY: cloudformation deploy --stack-name $AF_STACK_NETWORK --template-file $HERE/cfn/00-network.yaml --parameter-overrides NatEnabled=$1"
+    echo "DRY: cloudformation deploy --stack-name $AF_STACK_NETWORK --template-file $HERE/cfn/00-network.yaml --parameter-overrides NatEnabled=$1${extra[*]:+ ${extra[*]}}"
     return 0
   fi
   af_cfn_deploy "$AF_STACK_NETWORK" "$HERE/cfn/00-network.yaml" \
-    --parameter-overrides "NatEnabled=$1" --no-fail-on-empty-changeset
+    --parameter-overrides "NatEnabled=$1" ${extra[@]+"${extra[@]}"} --no-fail-on-empty-changeset
+}
+
+# ws_subnets_check — say, before any workspace can start again, when the network has workspace
+# subnets the CP has not been given: until update.sh runs, a started workspace lands in a private
+# subnet (and, with the S3 endpoint on, its own S3 is refused).
+ws_subnets_check() {
+  local net ing ep
+  net="$(af_stack_output "$AF_STACK_NETWORK" WorkspaceSubnets)"
+  [ -n "$net" ] || return 0
+  ing="$(af_stack_param "$AF_STACK_INGRESS" WorkspaceSubnets)"
+  [ "$ing" != "$net" ] || return 0
+  ep="$(af_stack_param "$AF_STACK_NETWORK" S3EndpointEnabled)"
+  echo "WARNING: $AF_STACK_NETWORK has workspace subnets ($net) that the CP is not using" >&2
+  echo "         (30-ingress WorkspaceSubnets='${ing}'). Run update.sh before anyone starts a" >&2
+  echo "         workspace, then restart the running ones (README, NAT bullet)." >&2
+  if [ "${ep:-true}" = true ]; then
+    echo "         The S3 endpoint is ON: until then a workspace's own S3 is refused (AccessDenied)." >&2
+    echo "         Rollback: deploy 00-network with S3EndpointEnabled=false." >&2
+  fi
 }
 
 status() {
@@ -291,6 +323,7 @@ case "$MODE" in
       echo "==> recreating the NAT gateway (same egress address; typically 1-2 min)"
       nat_set true
     fi
+    [ "$AF_DRY" = 1 ] || ws_subnets_check
     # The database next: a CP that comes up before it answers 500 until it is reachable.
     # The tag comes off before anything else touches it, so the re-stop Lambda cannot stop
     # the database under the CP that is about to start. A stop the Lambda issued just before

@@ -59,6 +59,11 @@ Parameters:
     Default: ecs
     AllowedValues: [ ecs, ecs-ec2 ]
     Description: "ecs = Fargate (default); ecs-ec2 = EC2 slot pool, needs 40-ec2-pool. PARAMETERS.md."
+  WorkspaceSubnets:
+    Type: String
+    Default: ""
+    AllowedPattern: "^(subnet-[0-9a-f]+(,subnet-[0-9a-f]+)*)?$"
+    Description: 00-network's WorkspaceSubnets output, set by standup.sh/update.sh. PARAMETERS.md.
   Ec2SlotLaunchTemplate:
     Type: String
     Default: ""
@@ -397,6 +402,7 @@ Rules:
         AssertDescription: WorkspaceDekRandom=on needs CustodianKmsKeyArn (AF_KEY_CUSTODIAN=kms).
 
 Conditions:
+  HasWorkspaceSubnets: !Not [ !Equals [ !Ref WorkspaceSubnets, "" ] ]
   # Each IdP's client secret is pulled from SSM, and a Secrets entry pointing at a
   # parameter that doesn't exist stops the task from starting - so wire each one in
   # only when that IdP is actually configured.
@@ -684,9 +690,7 @@ Resources:
   # and Destroy run as a one-shot RunTask of `af-cp efs-home-op` from the CP's own image
   # (control-plane/internal/runtime/home_task.go); the CP reads the exit code back.
   #
-  # !! The file system ROOT as uid 0, not a member's access point: volumes cannot be
-  # overridden per RunTask, and an access point (uid 1000) cannot remove read-only trees or
-  # its own root. The confinement is the command's (PARAMETERS.md, "Home task").
+  # !! The file system ROOT as uid 0, not an access point: PARAMETERS.md, "Home task (volume root)".
   #
   # No task role: the command calls no AWS API. The execution role pulls the image and
   # writes the log; the CP may already pass it (PassTaskRoles, 20-platform).
@@ -731,10 +735,7 @@ Resources:
               awslogs-region: !Ref "AWS::Region"
               awslogs-stream-prefix: home-ops
 
-  # The CP's grant for the task above, in this stack because only this stack can name the
-  # family: RunTask fenced to that family and this cluster, and the cost tags authorized as
-  # ecs:TagResource on the new task only (PARAMETERS.md, "Home task grant").
-  # deploy/local/cfn-cp-ec2-scope-test.py holds the allowed calls and the denied ones.
+  # The CP's grant for the task above: PARAMETERS.md, "Home task grant".
   # Managed (inline total is capped, #1576); names are account-wide, hence the region.
   CpHomeOpsManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -899,13 +900,13 @@ Resources:
             - !If [ HasRemoteEngineKeys, { Name: AF_REMOTE_ENGINE_KEYS, Value: !Ref RemoteEngineKeys }, !Ref "AWS::NoValue" ]
             # No BITBUCKET_OAUTH_* / workspace GITHUB_OAUTH_CLIENT_ID: git OAuth apps are
             # per-tenant rows (docs/log/71); the Bitbucket callback derives from PUBLIC_BASE_URL.
-            # AF_RUNTIME: ecs = Fargate, ecs-ec2 = EC2 slots with a per-user EBS home (needs
-            # 40-ec2-pool + Ec2SlotLaunchTemplate; docs/log/64, ADR 0045 decision 10). Rolling
-            # back is this one parameter. The AF_ECS_* below are shared by both.
+            # AF_RUNTIME: PARAMETERS.md, `WsRuntime`. The AF_ECS_* below are shared by both
+            # (AF_ECS_WORKSPACE_SUBNETS: `WorkspaceSubnets`).
             - { Name: AF_RUNTIME, Value: !Ref WsRuntime }
             - { Name: AF_ECS_REGION, Value: !Ref "AWS::Region" }
             - { Name: AF_ECS_CLUSTER, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
             - { Name: AF_ECS_SUBNETS, Value: !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } }
+            - !If [ HasWorkspaceSubnets, { Name: AF_ECS_WORKSPACE_SUBNETS, Value: !Ref WorkspaceSubnets }, !Ref "AWS::NoValue" ]
             - { Name: AF_ECS_SECURITY_GROUP, Value: !ImportValue { "Fn::Sub": "${NetworkStackName}-WsSgId" } }
             - { Name: AF_EFS_BACKUP, Value: !Ref EfsBackup }
             - { Name: AF_ECS_EFS_ID, Value: !ImportValue { "Fn::Sub": "${DataStackName}-EfsId" } }

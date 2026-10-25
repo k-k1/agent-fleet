@@ -338,6 +338,15 @@ deploy_stack() {  # deploy_stack <stack> <template> <slug> [capability...]
   if [ "$slug" = 00-network ] && grep -q '^  NatEnabled:' "$CFN_DIR/$tpl"; then
     af_param_override NatEnabled true
   fi
+  # A LIVE network stack older than the S3 endpoint switch (#2716) may still have workspaces in
+  # its private subnets, whose own S3 the endpoint's policy would refuse: it gets "false", and
+  # switching it on stays the migration's last step (README, NAT bullet). A new stack, or a
+  # capture that names the switch, keeps the template default / the captured value.
+  if [ "$slug" = 00-network ] && grep -q '^  S3EndpointEnabled:' "$CFN_DIR/$tpl" &&
+     ! printf '%s\n' ${AF_PARAMS[@]+"${AF_PARAMS[@]}"} | grep -q '^S3EndpointEnabled=' &&
+     af_stack_exists "$stack" && [ -z "$(af_stack_param "$stack" S3EndpointEnabled)" ]; then
+    af_param_override S3EndpointEnabled false
+  fi
   local caps=()
   [ $# -gt 0 ] && caps=(--capabilities "$@")
   echo "==> deploy $stack ($slug)"
@@ -729,6 +738,13 @@ fi
 # would work and then builds x86_64 (measured — the CP that came up had runtimePlatform
 # x86_64). Some captures have no CpArch line at all, so the override has to add it.
 af_param_override CpArch "$CP_ARCH"
+# Workspace subnets (#2716): a rebuilt 00-network has new subnet ids, so the output, never the
+# capture. A network stack without the output passes nothing (workspaces in the private subnets).
+af_param_drop WorkspaceSubnets
+if [ "$AF_DRY" != 1 ]; then
+  ws_subnets="$(af_stack_output "$AF_STACK_NETWORK" WorkspaceSubnets)"
+  [ -z "$ws_subnets" ] || af_param_override WorkspaceSubnets "$ws_subnets"
+fi
 if [ -n "$AF_STACK_POOL" ] && [ "$AF_DRY" != 1 ]; then
   lt="$(af_stack_output "$AF_STACK_POOL" SlotLaunchTemplateId)"
   ami="$(af_stack_output "$AF_STACK_POOL" SlotAmiIdArm64)"

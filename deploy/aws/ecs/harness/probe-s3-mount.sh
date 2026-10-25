@@ -13,7 +13,9 @@
 #
 # EFS was rejected for this job on price — Elastic Throughput bills $0.04/GB read, i.e. $0.74 a
 # cold start, 17-21x the GPU time it saves. **S3 has no per-GB read charge at all**, and the
-# gateway VPC endpoint keeps the bytes off the NAT, so the same objection does not apply here.
+# engines' private subnets reach the models bucket through 00-network's S3 gateway endpoint (its
+# policy admits af-*-models-<account>, #2716), which keeps the bytes off the NAT, so the same
+# objection does not apply here.
 # That is why this is worth a box and EFS was not.
 #
 # ## Three things have to hold, and they fail in this order

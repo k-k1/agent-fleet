@@ -1015,15 +1015,16 @@ func parseSlotSizes(spec string) []ec2Slot {
 	return out
 }
 
-// subnetAZs maps the deployment's task subnets to their AZ, once. EBS volumes are
-// AZ-bound, so nearly every placement decision starts here.
+// subnetAZs maps the deployment's subnets (AF_ECS_SUBNETS and AF_ECS_WORKSPACE_SUBNETS) to
+// their AZ, once. EBS volumes are AZ-bound, so nearly every placement decision starts here.
 func (f *ecsEC2Factory) subnetAZs(ctx context.Context) (map[string]string, error) {
 	f.subnetMu.Lock()
 	defer f.subnetMu.Unlock()
 	if f.subnetAZ != nil {
 		return f.subnetAZ, nil
 	}
-	out, err := f.ec2.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{SubnetIds: f.base.cfg.subnets})
+	ids := append(append([]string(nil), f.base.cfg.subnets...), f.base.cfg.wsSubnets...)
+	out, err := f.ec2.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{SubnetIds: ids})
 	if err != nil {
 		return nil, err
 	}
@@ -3779,6 +3780,35 @@ func (e *ecsEC2Runtime) subnetIn(ctx context.Context, az string) (string, error)
 	return "", fmt.Errorf("no configured subnet in %s (AF_ECS_SUBNETS)", az)
 }
 
+// taskSubnetIn is the subnet of az a workspace task's ENI goes to. The slot instance stays
+// in AF_ECS_SUBNETS (subnetIn): the ECS agent pulls the image through the instance's ENI,
+// so the pull keeps the private route table's S3 endpoint while the task's own traffic
+// takes the workspace route table (#2716). An ENI may sit in any subnet of the instance's
+// AZ. Without AF_ECS_WORKSPACE_SUBNETS this is subnetIn.
+//
+// An AZ with slots but no workspace subnet is an error, never a fallback to the private
+// subnet: that would put the workspace behind the endpoint's policy and off the egress
+// route without anyone noticing. poolAZs keeps new homes out of such an AZ.
+func (e *ecsEC2Runtime) taskSubnetIn(ctx context.Context, az string) (string, error) {
+	if len(e.base.cfg.wsSubnets) == 0 {
+		return e.subnetIn(ctx, az)
+	}
+	azs, err := e.azOfSubnet(ctx)
+	if err != nil {
+		return "", err
+	}
+	// Sorted for the same reason as subnetIn: a stable answer whatever order the operator
+	// wrote, and independent of the order of AF_ECS_SUBNETS; only the AZ pairs them.
+	subnets := append([]string(nil), e.base.cfg.wsSubnets...)
+	sort.Strings(subnets)
+	for _, s := range subnets {
+		if az == "" || azs[s] == az {
+			return s, nil
+		}
+	}
+	return "", fmt.Errorf("no workspace subnet in %s (AF_ECS_WORKSPACE_SUBNETS); add one for every AZ of AF_ECS_SUBNETS", az)
+}
+
 // poolAZs is every AZ the pool may use, in the order a new home tries them: the configured
 // subnets sorted by SUBNET ID, deduplicated.
 //
@@ -3794,11 +3824,22 @@ func (e *ecsEC2Runtime) poolAZs(ctx context.Context) ([]string, error) {
 	}
 	subnets := append([]string(nil), e.base.cfg.subnets...)
 	sort.Strings(subnets)
+	// With workspace subnets configured, an AZ that has none could hold a home that can
+	// never start (taskSubnetIn refuses it), so it is not offered.
+	var wsAZ map[string]bool
+	if len(e.base.cfg.wsSubnets) > 0 {
+		wsAZ = map[string]bool{}
+		for _, s := range e.base.cfg.wsSubnets {
+			if az := bySubnet[s]; az != "" {
+				wsAZ[az] = true
+			}
+		}
+	}
 	seen := map[string]bool{}
 	var azs []string
 	for _, s := range subnets {
 		az := bySubnet[s]
-		if az == "" || seen[az] {
+		if az == "" || seen[az] || (wsAZ != nil && !wsAZ[az]) {
 			continue
 		}
 		seen[az] = true
@@ -4392,9 +4433,10 @@ func (e *ecsEC2Runtime) buildTaskDef(ctx context.Context, p ec2Placement, prep e
 }
 
 // netConfig is the awsvpc configuration every service call carries. The ENI must land in
-// the slot's own AZ, so it names only that AZ's subnet.
+// the slot's own AZ, so it names only that AZ's subnet: its workspace subnet when
+// AF_ECS_WORKSPACE_SUBNETS is set (taskSubnetIn).
 func (e *ecsEC2Runtime) netConfig(ctx context.Context, p ec2Placement) (*ecstypes.NetworkConfiguration, error) {
-	subnet, err := e.subnetIn(ctx, p.az)
+	subnet, err := e.taskSubnetIn(ctx, p.az)
 	if err != nil {
 		return nil, err
 	}
