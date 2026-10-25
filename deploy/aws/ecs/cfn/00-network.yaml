@@ -78,7 +78,16 @@ Parameters:
       one EC2 instance running Squid and `control-plane egress-agent`, which records (and in
       enforce, decides) every workspace connection. The CP, the slots and the engines stay on
       the NAT gateway either way. Workspaces then egress from GatewayEip, not the NAT
-      address (#2728), and pause.sh refuses the stack (#2729). README, "Egress gateway".
+      address (#2728). README, "Egress gateway".
+  GatewayEnabled:
+    Type: String
+    Default: "true"
+    AllowedValues: [ "true", "false" ]
+    Description: >-
+      "false" scales the egress gateway's group (EgressRoute=gateway) to 0 instances; pause.sh
+      does this while a deployment sleeps. GatewayEni and GatewayEip stay, so "true" brings back
+      the same route target, proxy address and egress address. While it is false the workspace
+      route blackholes: fine only while every workspace is stopped.
   GatewayInstanceType:
     Type: String
     Default: t3.small
@@ -105,6 +114,8 @@ Conditions:
   NatOn: !Equals [ !Ref NatEnabled, "true" ]
   S3EndpointOn: !Equals [ !Ref S3EndpointEnabled, "true" ]
   GatewayOn: !Equals [ !Ref EgressRoute, gateway ]
+  # Only the group's size follows it: the interface, its address and the route never do.
+  GatewayUp: !Equals [ !Ref GatewayEnabled, "true" ]
   # The workspace default route exists while its target does: the gateway, or the NAT
   # gateway (which NatEnabled=false deletes). One resource for both targets, so switching
   # EgressRoute replaces the route's target in place instead of creating a second
@@ -837,7 +848,10 @@ Resources:
 
   # An Auto Scaling group of ONE: it replaces a failed instance, and the replacement attaches
   # GatewayEni. One AZ only (the interface's). Terminate before launch on every update: two
-  # instances cannot share the interface.
+  # instances cannot share the interface. GatewayEnabled=false (pause.sh) makes it a group of
+  # zero; the terminated instance releases GatewayEni, which keeps its address. MaxSize stays 1
+  # either way: the rolling update requires MinInstancesInService (0) below MaxSize, and an
+  # update to a paused group can carry a new launch template (the AMI is re-resolved).
   GatewayAsg:
     Type: AWS::AutoScaling::AutoScalingGroup
     Condition: GatewayOn
@@ -845,9 +859,9 @@ Resources:
     UpdatePolicy:
       AutoScalingRollingUpdate: { MinInstancesInService: 0, MaxBatchSize: 1 }
     Properties:
-      MinSize: "1"
+      MinSize: !If [ GatewayUp, "1", "0" ]
       MaxSize: "1"
-      DesiredCapacity: "1"
+      DesiredCapacity: !If [ GatewayUp, "1", "0" ]
       VPCZoneIdentifier: [ !Ref PublicSubnet0 ]
       LaunchTemplate:
         LaunchTemplateId: !Ref GatewayLaunchTemplate

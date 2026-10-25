@@ -571,6 +571,46 @@ only new client library (`google.golang.org/api` comes in with it as a direct im
   `STORAGE_EMULATOR_HOST`. The CP binary grew by the client and its gRPC and OpenTelemetry
   dependencies (sizes in the PR); the release build uses the `disable_grpc_modules` tag, which drops the unused gRPC transport.
 
+## Addendum (2026-10-25) — open point 5 on AWS: pausing and resuming the gateway (#2729)
+
+`pause.sh` no longer refuses `EgressRoute=gateway`, and `standup.sh` no longer warns about it.
+Not run on a real account.
+
+- **The switch is the group's size, nothing else.** `00-network`'s `GatewayEnabled` (default
+  `true`) sets the Auto Scaling group's minimum and desired count to 1 or 0; the maximum stays 1,
+  because the rolling update requires `MinInstancesInService` (0) below it and a paused group can
+  still receive a new launch template. `GatewayEni`,
+  `GatewayEip`, the workspace route and the token stay under `GatewayOn` alone, so a pause can never
+  release the egress address or move the route target; the terminated instance releases the
+  interface and the next one attaches it. It is a stack parameter rather than an
+  `autoscaling update-auto-scaling-group` call so that the next deploy of the stack does not scale
+  it back, and so that a capture records it (`standup.sh` overrides a captured `false` to `true`,
+  as it does `NatEnabled`). `deploy/local/cfn-egress-gateway-test.py` pins that only `GatewayAsg`
+  follows it.
+- **A paused gateway blackholes the workspace route.** The route stays on `GatewayEni`, and never
+  falls back to the NAT gateway (that would be unrecorded egress). It is harmless only because
+  every workspace is stopped first.
+- **Order.** Down: the Workspaces are stopped, then pause.sh waits until no workspace task is
+  left in the cluster (whatever its service's desired count), stops Squid (an open tunnel is
+  logged only when it closes) and waits until every byte of its logs is under the offset the
+  agent committed after the CP accepted it. Only then the gateway, then the CP. The scale-in
+  destroys the instance's disk, so anything unconfirmed fails the pause with both still up. Up: the gateway starts in the same deploy as the
+  NAT gateway (it boots through its own public address), `pause.sh` waits before the CP until an
+  instance has attached the interface and Squid and the agent run, and after the CP until the
+  agent has applied its first policy. The second wait cannot come before the CP, which serves the
+  policy; a workspace started in between is refused by the closed bootstrap policy, not let out.
+- **Readiness and the drain are read through SSM Run Command.** Ready is a policy Squid has
+  applied in the agent's current run: the mode file carries the agent's `# mode: ` header (the
+  closed bootstrap file does not) and the unit's current invocation has logged `policy applied`
+  or, for a run that started while the CP was down, `reloaded Squid with the policy on disk`; the
+  agent writes either only after Squid's reload succeeded, and the last such line must be no
+  older than the policy files (a new instance reloads the bootstrap file before the CP's policy
+  is written). The drain counts only with Squid
+  stopped, and an interface it cannot read fails it rather than reading as "no instance". A written file alone is not
+  applied. A probe from outside the instance cannot tell the bootstrap policy from a real one.
+
+Open point 5 is closed for AWS by this; open point 7 (#2728) stays open.
+
 ## Addendum (2026-10-26) — the CP's own hosts are always in the served policy (#2742)
 
 On the sandbox (ecs-ec2, `EgressRoute=gateway`, log-only) the deployment's own console host was

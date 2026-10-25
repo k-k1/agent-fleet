@@ -90,8 +90,8 @@ the AWS hosts stay on the NAT gateway either way.
 | Non-HTTP traffic (SSH git) | works | blocked |
 | Address to allow-list | the NAT gateway's | a separate address for workspaces |
 
-The egress gateway is new and **not yet verified on a real account**; `pause.sh` does not
-support it yet. Setup and limits: "Egress gateway" in
+The egress gateway is new and **not yet verified on a real account**; `pause.sh` stops it and
+brings it back with the same egress address. Setup and limits: "Egress gateway" in
 [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md).
 
 ## When Kubernetes, and when not

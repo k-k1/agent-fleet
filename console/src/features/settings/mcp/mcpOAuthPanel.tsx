@@ -235,7 +235,7 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
   // refused the client on its own error page, where it cannot redirect to us).
   const unfinished = status?.state !== "connected" && !!status?.pendingRegistration;
 
-  return { active, status, unfinished, statusErr, busy, clientFor, setClientFor, signIn, submitClient, disconnect, reload, cimdUnfinished };
+  return { active, targets: s.targets, status, unfinished, statusErr, busy, clientFor, setClientFor, signIn, submitClient, disconnect, reload, cimdUnfinished };
 }
 
 export type OAuthFlow = ReturnType<typeof useOAuthFlow>;
@@ -270,6 +270,9 @@ export function OAuthPanel({ flow }: { flow: OAuthFlow }) {
   const signedIn = state === "connected" || state === "sign_in_again" || state === "needs_more_permission";
   const again = state === "sign_in_again";
   const stepUp = stepUpRequest(status);
+  // A grant on a server no target receives is kept but unused: promising session use would be wrong.
+  const noTarget = !flow.targets?.assistant && !flow.targets?.session;
+  const relayNote = signedIn && state !== "sign_in_again" && noTarget ? "mcp.oauth_relay_note_no_target" : RELAY_NOTE[state];
   return (
     <div className={"mcp-oauth mcp-oauth-" + state} data-testid="mcp-oauth-panel" data-state={state}>
       <div className="mcp-oauth-head">
@@ -333,7 +336,7 @@ export function OAuthPanel({ flow }: { flow: OAuthFlow }) {
         </div>
       )}
       <p className="muted" data-testid="mcp-oauth-relay-note">
-        {tr(RELAY_NOTE[state])}
+        {tr(relayNote)}
       </p>
       {(flow.unfinished || flow.cimdUnfinished) && !clientFor && (
         <div className="ps-note" data-testid="mcp-oauth-unfinished">
@@ -344,7 +347,7 @@ export function OAuthPanel({ flow }: { flow: OAuthFlow }) {
             <li>{tr("mcp.oauth_unfinished_trust")}</li>
           </ul>
           {flow.cimdUnfinished && (
-            <button className="ghost mcp-btn" disabled={busy} onClick={() => void flow.signIn({ registration: "dcr" })}>
+            <button className="primary mcp-btn" disabled={busy} onClick={() => void flow.signIn({ registration: "dcr" })}>
               {tr("mcp.oauth_btn_dcr")}
             </button>
           )}
