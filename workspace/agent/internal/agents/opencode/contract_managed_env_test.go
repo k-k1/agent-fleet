@@ -12,12 +12,14 @@ package opencode
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -103,23 +105,28 @@ func TestContractManagedShellEnvPerSessionAndAcrossRestart(t *testing.T) {
 		return h.(*threadHandle)
 	}
 	st := agents.ThreadSettings{Model: "stub/m"}
-	// shell runs `env` in the session and returns what it printed.
-	shell := func(h *threadHandle, text string) map[string]string {
-		t.Helper()
-		req, err := newTurnRequest(h.addr, h.ses, work, agents.TurnInput{Prompt: text}, st)
+	// shell runs `env` in the session as one turn and returns what THAT turn's command printed:
+	// the output is matched by the turn's nonce, never by "the latest one", so a refused command
+	// cannot pass on an earlier generation's output. The turn must also end without an error.
+	shell := func(h *threadHandle, nonce string) (map[string]string, error) {
+		req, err := newTurnRequest(h.addr, h.ses, work, agents.TurnInput{Prompt: "ENVQ " + nonce}, st)
 		if err != nil {
-			t.Fatal(err)
+			return nil, err
 		}
 		res, err := sendTurn(h.addr, h.ses, work, req, st)
 		if err != nil {
-			t.Fatalf("turn %q: %v", text, err)
+			return nil, fmt.Errorf("turn %s: %w", nonce, err)
 		}
-		res.Body.Close()
+		defer res.Body.Close()
+		if e, has := decodeTurnError(res.Body); has {
+			return nil, fmt.Errorf("turn %s failed: %+v", nonce, e)
+		}
 		var w struct {
 			Data []struct {
 				Content []struct {
 					Type  string `json:"type"`
 					State struct {
+						Status  string `json:"status"`
 						Content []struct {
 							Text string `json:"text"`
 						} `json:"content"`
@@ -127,29 +134,40 @@ func TestContractManagedShellEnvPerSessionAndAcrossRestart(t *testing.T) {
 				} `json:"content"`
 			} `json:"data"`
 		}
-		for deadline := time.Now().Add(20 * time.Second); ; time.Sleep(300 * time.Millisecond) {
-			var last map[string]string
-			if err := apiJSON("GET", h.addr+"/api/session/"+h.ses+"/message?order=asc&limit=200", nil, &w); err == nil {
-				for _, m := range w.Data {
-					for _, c := range m.Content {
-						if c.Type == "tool" && len(c.State.Content) > 0 && strings.Contains(c.State.Content[0].Text, "TOOLCHAIN_MARK=") {
-							last = map[string]string{}
-							for _, ln := range strings.Split(c.State.Content[0].Text, "\n") {
-								if k, v, ok := strings.Cut(ln, "="); ok {
-									last[k] = v
-								}
-							}
+		var last string
+		for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(300 * time.Millisecond) {
+			if err := apiJSON("GET", h.addr+"/api/session/"+h.ses+"/message?order=asc&limit=200", nil, &w); err != nil {
+				continue
+			}
+			for _, m := range w.Data {
+				for _, c := range m.Content {
+					if c.Type != "tool" || len(c.State.Content) == 0 {
+						continue
+					}
+					text := c.State.Content[0].Text
+					last = text
+					if !strings.Contains(text, "TURN_NONCE="+nonce+"\n") && !strings.HasSuffix(text, "TURN_NONCE="+nonce) {
+						continue
+					}
+					out := map[string]string{}
+					for _, ln := range strings.Split(text, "\n") {
+						if k, v, ok := strings.Cut(ln, "="); ok {
+							out[k] = v
 						}
 					}
+					return out, nil
 				}
 			}
-			if last != nil {
-				return last
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("session %s never printed its environment", h.ses)
-			}
 		}
+		return nil, fmt.Errorf("session %s never printed turn %s's environment (last tool output: %d bytes; not shown, it is an environment)", h.ses, nonce, len(last))
+	}
+	mustShell := func(h *threadHandle, nonce string) map[string]string {
+		t.Helper()
+		out, err := shell(h, nonce)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
 	}
 	// A shell that PUT nothing is the baseline: the server's own environment, as it is today.
 	// A session of a version without the name is exactly that (the plugin lets it run).
@@ -158,7 +176,7 @@ func TestContractManagedShellEnvPerSessionAndAcrossRestart(t *testing.T) {
 		if err := apiJSON("PATCH", sessionPathURL(h.addr, h.ses), map[string]any{"metadata": map[string]string{metaManaged: "1"}}, nil); err != nil {
 			t.Fatal(err)
 		}
-		return shell(h, "ENVQ baseline")
+		return mustShell(h, "baseline")
 	}()
 	for _, k := range []string{"AF_WORK_DIR", "AF_SESSION_NAME"} {
 		if v, has := baseline[k]; has {
@@ -177,11 +195,13 @@ func TestContractManagedShellEnvPerSessionAndAcrossRestart(t *testing.T) {
 			t.Errorf("%s %s: OPENCODE_SESSION_ID = %q", when, name, got["OPENCODE_SESSION_ID"])
 		}
 		delete(got, "OPENCODE_SESSION_ID")
+		delete(got, "TURN_NONCE") // matched to its turn in shell
 		want := map[string]string{}
 		for k, v := range baseline {
 			want[k] = v
 		}
 		delete(want, "OPENCODE_SESSION_ID")
+		delete(want, "TURN_NONCE")
 		want["AF_SESSION_NAME"], want["AF_WORK_DIR"] = name, paths.SessionWorkDir(name)
 		for k, v := range want {
 			if got[k] != v {
@@ -198,8 +218,23 @@ func TestContractManagedShellEnvPerSessionAndAcrossRestart(t *testing.T) {
 		}
 	}
 	a, b := start("mgda"), start("mgdb")
-	check("first", "mgda", shell(a, "ENVQ a1"))
-	check("first", "mgdb", shell(b, "ENVQ b1"))
+	// Both sessions run their shell at the same moment, on the one server.
+	both := func(when, na, nb string) {
+		t.Helper()
+		var ga, gb map[string]string
+		var ea, eb error
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); ga, ea = shell(a, na) }()
+		go func() { defer wg.Done(); gb, eb = shell(b, nb) }()
+		wg.Wait()
+		if ea != nil || eb != nil {
+			t.Fatalf("%s: %v / %v", when, ea, eb)
+		}
+		check(when, "mgda", ga)
+		check(when, "mgdb", gb)
+	}
+	both("first", "a1", "b1")
 
 	gen := Serve().Generation()
 	if !Serve().Restart("contract: managed env") {
@@ -210,6 +245,5 @@ func TestContractManagedShellEnvPerSessionAndAcrossRestart(t *testing.T) {
 	if Serve().Generation() == gen {
 		t.Fatal("the sessions are still on the first server generation")
 	}
-	check("after restart", "mgda", shell(a, "ENVQ a2"))
-	check("after restart", "mgdb", shell(b, "ENVQ b2"))
+	both("after restart", "a2", "b2")
 }

@@ -19,9 +19,9 @@ func managedMeta(t *testing.T, name string) session.Meta {
 
 func stubServeEnviron(t *testing.T, env ...string) {
 	t.Helper()
-	old := serveEnviron
-	serveEnviron = func(string) ([]string, error) { return env, nil }
-	t.Cleanup(func() { serveEnviron = old })
+	old := callerEnviron
+	callerEnviron = func() []string { return env }
+	t.Cleanup(func() { callerEnviron = old })
 }
 
 // The environment a Managed session's shell gets is the server's, whole, plus its own two
@@ -83,11 +83,11 @@ func TestPutEnvironmentForAManagedSession(t *testing.T) {
 	if _, has := d.envs["ses_legacy"]; has {
 		t.Error("an unnamed Managed session got an environment")
 	}
-	// An unreadable server environment refuses rather than PUTting a stripped one.
+	// An empty environment refuses rather than PUTting a stripped one.
 	delete(d.envs, "ses_a")
-	serveEnviron = func(string) ([]string, error) { return nil, os.ErrNotExist }
+	callerEnviron = func() []string { return nil }
 	if err := putEnvironmentFor(d.srv.URL, "mgdA", "ses_a"); err == nil {
-		t.Error("no server environment must be an error")
+		t.Error("no environment must be an error")
 	}
 	if _, has := d.envs["ses_a"]; has {
 		t.Error("a stripped environment was put")
@@ -114,5 +114,38 @@ func TestTagManagedSessionRestampsAForkAndLegacy(t *testing.T) {
 	n := len(d.calls)
 	if err := tagManagedSession(d.srv.URL, "ses_old", "mine"); err != nil || len(d.calls) != n+1 {
 		t.Errorf("an already stamped session is read, not written: %v %v", err, d.calls[n:])
+	}
+}
+
+// A fork of a Managed session copies the source's name. When the re-stamp fails, the launch fails
+// and nothing may run as the source; the retry finds the recorded fork and stamps it.
+func TestManagedForkThatCannotBeRestampedFailsAndRetries(t *testing.T) {
+	d := newSharedDaemon(t)
+	managedMeta(t, "src")
+	b := managedMeta(t, "forked")
+	b.ForkFrom = "ses_src"
+	d.sessions["ses_src"] = map[string]string{metaManaged: "1", metaManagedName: "src"}
+	stubServeEnviron(t, "PATH=/x")
+	ocSid := session.UUID(b.Dir, b.Name)
+	t.Cleanup(func() { sids.Remove(ocSid) })
+
+	d.failPatch = 1
+	if ses, err := managedSession(d.srv.URL, b, b.Dir, ocSid, ""); err == nil {
+		t.Fatalf("a fork that kept its source's name was handed out: %s", ses)
+	}
+	fork := sids.Read(ocSid)
+	if fork == "" || d.sessions[fork][metaManagedName] != "src" {
+		t.Fatalf("expected a recorded fork still named after its source, got %q %v", fork, d.sessions[fork])
+	}
+
+	ses, err := managedSession(d.srv.URL, b, b.Dir, ocSid, sids.Read(ocSid))
+	if err != nil || ses != fork {
+		t.Fatalf("retry: %q %v, want the recorded fork %s", ses, err, fork)
+	}
+	if err := putEnvironmentFor(d.srv.URL, "forked", ses); err != nil || d.envs[ses]["AF_SESSION_NAME"] != "forked" {
+		t.Fatalf("env after the retry: %v %v", err, d.envs[ses])
+	}
+	if err := putEnvironmentFor(d.srv.URL, "src", ses); err == nil {
+		t.Error("the fork must no longer answer to its source's name")
 	}
 }

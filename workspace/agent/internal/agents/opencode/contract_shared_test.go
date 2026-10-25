@@ -71,7 +71,12 @@ func (s *sharedStub) handler(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(text, "ENVQ") && !afterTool {
 		args := `{"command":"env | grep -E '^(AF_SESSION_SID|AF_SESSION_NAME|AF_ENGINE_TOKEN|OPENCODE_SERVER|PANE_MARK|TOOLCHAIN_MARK)=' | sort","description":"env"}`
 		if s.command != "" {
-			b, _ := json.Marshal(map[string]string{"command": s.command, "description": "env"})
+			// The word after ENVQ is the turn's nonce, echoed so a reader can tell this turn's output.
+			nonce := ""
+			if f := strings.Fields(text); len(f) > 1 {
+				nonce = f[1]
+			}
+			b, _ := json.Marshal(map[string]string{"command": s.command + "; echo TURN_NONCE=" + nonce, "description": "env"})
 			args = string(b)
 		}
 		send(map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"index": 0, "id": "call_1", "type": "function",

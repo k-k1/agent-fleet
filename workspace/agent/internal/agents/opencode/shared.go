@@ -773,19 +773,11 @@ func tagManagedSession(addr, ses, name string) error {
 	return apiJSON("PATCH", sessionPathURL(addr, ses), map[string]any{"metadata": md}, nil)
 }
 
-// serveEnviron is the environment the daemon at addr runs with, which is what a shell sees until
-// its session has one of its own. A var so tests need no /proc.
-var serveEnviron = func(addr string) ([]string, error) {
-	pid := readDaemonInfo(addr).PID
-	if pid <= 0 {
-		return nil, errors.New("the server's pid is unknown")
-	}
-	env := processEnviron("/proc", pid)
-	if len(env) == 0 {
-		return nil, fmt.Errorf("the environment of server %d cannot be read", pid)
-	}
-	return env, nil
-}
+// callerEnviron is the environment of this process. `opencode-put-env` is run by the server's
+// plugin, whose child inherits the SERVER's environment, so this is exactly what a shell sees
+// until its session has one, with the process that holds it as the guarantee of origin: nothing
+// is looked up by pid. A var so tests can name it.
+var callerEnviron = os.Environ
 
 // managedShellEnvironment is the server's environment plus the session's own AF_WORK_DIR and
 // AF_SESSION_NAME. PUT /environment replaces the whole shell environment, so the base has to be
@@ -811,9 +803,9 @@ func putManagedEnvironment(addr, name, ses string) error {
 	if info.Metadata[metaManaged] == "" || info.Metadata[metaManagedName] != name {
 		return fmt.Errorf("session %s does not belong to %s", ses, name)
 	}
-	env, err := serveEnviron(addr)
-	if err != nil {
-		return err
+	env := callerEnviron()
+	if len(env) == 0 {
+		return errors.New("no environment to put")
 	}
 	return putEnvironment(addr, ses, managedShellEnvironment(env, name))
 }

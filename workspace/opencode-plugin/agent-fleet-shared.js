@@ -25,7 +25,8 @@
 //    only onto a session carrying that slot's af.sid and af.name.
 //    A Managed session (af.managed) has no pane: its af.managed.name names the af session, and the
 //    Agent PUTs this server's own environment plus that session's AF_WORK_DIR and AF_SESSION_NAME
-//    (a PUT replaces the whole shell environment, so nothing else may change).
+//    (a PUT replaces the whole shell environment, so nothing else may change). The server's
+//    environment is the one the helper inherits from this process, never looked up by pid.
 //    A new session nobody has tagged yet is waited for (the TUI plugin PUTs and tags it); one that
 //    stays untagged for the bound, an old untagged session, and a Managed one made before
 //    af.managed.name existed have no pane to take an environment from and run as they always did.
