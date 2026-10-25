@@ -183,6 +183,7 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	tn := newTenantAPI(cfg.mgr)
 	adm := newAdminAPI(cfg.mgr)
 	eg := newEgressAPI(cfg.mgr, cfg.egressToken, cfg.egressProxyAddr, cfg.egressDedup, cfg.egressInfra)
+	eg.retention = cfg.egressEventRetention
 	mux.HandleFunc("GET /api/tenants", tn.withIdentity(tn.list))
 	mux.HandleFunc("GET /api/admin/tenants", adm.withIdentity(adm.listTenants))
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members", adm.listMembers)
