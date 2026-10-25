@@ -29,9 +29,9 @@ Home and End move between them.
 - **List and detail**: the left side lists the memories of **All scopes** (the default: the user-wide scope and every
   project together, each row tagged with where it lives) or of one scope (**User-wide**, which every project receives,
   or one project), with their author, last update, how often agents read them and a **pinned** marker. The chips
-  **All**, **Pinned** and **Forgotten** narrow it. Search looks for what you typed, as one piece of text, in the name,
-  description, type, author and author session at once; after a short pause it also searches the bodies, and
-  memories only the body search found are listed after those, ranked like the agents' `memory_search`; searching is not a use and does not change how
+  **All**, **Pinned** and **Forgotten** narrow it. Search needs every word you typed (in any order) to appear in the name,
+  description, type, author and author session taken together; after a short pause it also searches the bodies, and
+  memories only the body search found are listed after those, ranked like the agents' `memory_search`. When no memory holds every word, the body search returns the ones that hold some of them, and the list then shows only those, under a "some words only" notice (a memory that matches in full by name, description, type or author always wins over them); searching is not a use and does not change how
   often a memory is read. The command palette's **Memory** scope searches the same memories from anywhere
   ([02](02-console-basics.md#memory)). Pick a row and the right side shows that memory: its text, scope, type, author, last update
   and how often agents read it, with **Edit**, **Pin** / **Unpin**, **Forget this memory** and, under **More actions**
@@ -58,12 +58,11 @@ Home and End move between them.
   the Changes view, recorded as made by you and undoable. Forget works on any listed memory whose history holds a change: its newest
   change is looked up when you press it, however old. A memory file that was put in place by hand, with no change
   in the history, cannot be forgotten from here. **Forgotten** lists every memory forgotten in the scope you have selected (all scopes
-  by default), however long ago, up to 300 at a time. With all scopes shown, picking one scope shows more of
-  it; one scope also shows only its newest 300. With a very large number of
-  forgotten memories (over about 2000) the oldest are not checked: the list says so, may then be missing some, and the
-  hidden count is a minimum. **History of this memory**, at the bottom of the detail pane, lists that memory's own
-  changes; pick one to see its diff, as in the Changes view. It is read from the newest 300 changes of all memories, so
-  for a memory last changed long ago it can be incomplete: it then says so, and **See all in Changes** opens the Changes
+  by default), however long ago, 300 at a time, newest first; **Load older forgotten memories** reads the next 300 until the list ends. With a very large number of
+  forgotten memories (over about 2000) one request does not check them all: the list says so, the
+  hidden count is a minimum, and the older ones are checked as you load more. **History of this memory**, at the bottom of the detail pane, lists that memory's own
+  changes; pick one to see its diff, as in the Changes view. It is read from the changes of all memories, newest 300 first, so
+  for a memory last changed long ago it can be incomplete until you press **Load older changes** (300 more each time, back to the first change): it says so while older changes remain, and **See all in Changes** opens the Changes
   view. Saves are the same revision check and secret scan as an agent's save, recorded as written by you and undoable from
   the Changes view. A memory can be written into a project only once that project holds memory. An edit keeps the kinds
   the memory was limited to. The Control Plane signs pin, revert, forget and save, and the workspace accepts
@@ -92,7 +91,7 @@ Home and End move between them.
 
 ### Changes
 
-The list shows the newest 100 changes (when, which agent and session, what), newest first;
+The list shows the newest 100 changes (when, which agent and session, what), newest first, and **Load older changes** adds 100 more each time, back to the first change;
 `af-memory changes --limit N` lists up to 300 from a terminal. On a memory's newest change
 you can **revert it** (the earlier text comes back) or **forget the memory**; either is recorded as a new
 change, so it can be undone too. If the text you bring back looks like a secret, you are shown the masked

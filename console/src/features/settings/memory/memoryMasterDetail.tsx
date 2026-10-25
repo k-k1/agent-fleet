@@ -31,7 +31,7 @@ import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { PurgeHistoryDialog, type PurgeTarget } from "./memoryPurge.tsx";
 import { MemoryHistory, useAllChanges } from "./memoryHistory.tsx";
 import { useSettingsUI } from "../store.ts";
-import { keyOf, matchMemories, parseMemoryTarget, scopeKey } from "./memorySearch.ts";
+import { hasEveryWord, keyOf, matchMemoriesDetail, parseMemoryTarget, scopeKey } from "./memorySearch.ts";
 import type { MemoryBody, MemoryChange, MemoryListed, MemorySearchHit, SecretFinding } from "./memoryTypes.ts";
 
 const TYPES = ["user", "feedback", "project", "reference"] as const;
@@ -109,7 +109,12 @@ export function MemoriesMasterDetail({
   const [forgotten, setForgotten] = useState<MemoryChange[]>([]);
   const [goneLoaded, setGoneLoaded] = useState(false);
   const [goneWithheld, setGoneWithheld] = useState(0);
-  const [goneTruncated, setGoneTruncated] = useState(false);
+  // The cursor of the next page of forgotten memories ("" = the list is complete), and whether one
+  // is being read. `goneGen` drops an answer that a reload or a scope change has outdated.
+  const [goneNext, setGoneNext] = useState("");
+  const [goneMoreBusy, setGoneMoreBusy] = useState(false);
+  const [goneMoreErr, setGoneMoreErr] = useState(false);
+  const goneGen = useRef(0);
   const [goneErr, setGoneErr] = useState(false);
   const [goneIncomplete, setGoneIncomplete] = useState(false);
   // The projects that hold a forgotten memory, as the Agent last named them (it names them even
@@ -126,6 +131,8 @@ export function MemoriesMasterDetail({
   const [findings, setFindings] = useState<SecretFinding[]>([]);
   const [formErr, setFormErr] = useState("");
   const [hits, setHits] = useState<MemorySearchHit[]>([]);
+  // "any": no memory held every word, so the hits hold only some of them (member-search).
+  const [fallback, setFallback] = useState("");
   const [searching, setSearching] = useState(false);
   const [searchErr, setSearchErr] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -163,14 +170,20 @@ export function MemoriesMasterDetail({
   // The forgotten memories of the scope on screen ("all" sends no scope param, which makes the Agent
   // list the user scope and every project). Each memory's newest change is the one that took it
   // away; its revert brings the memory back.
+  const goneScopeQ = useCallback(() => {
+    const [kind, projectId = ""] = scope.split(":");
+    return kind === ALL ? "" : kind === "user" ? "?scope=user" : `?scope=project&project=${encodeURIComponent(projectId)}`;
+  }, [scope]);
   const loadGone = useCallback(
     async (signal: AbortSignal) => {
-      const [kind, projectId = ""] = scope.split(":");
-      const scopeQ =
-        kind === ALL ? "" : kind === "user" ? "?scope=user" : `?scope=project&project=${encodeURIComponent(projectId)}`;
-      const res = await api("api/agents/memory/entries/member-forgotten" + scopeQ);
+      const [kind] = scope.split(":");
+      const res = await api("api/agents/memory/entries/member-forgotten" + goneScopeQ());
       if (signal.aborted) return true;
       if (isTransientErr(res)) return false;
+      goneGen.current++;
+      setGoneMoreBusy(false);
+      setGoneMoreErr(false);
+      setGoneNext(res?.error ? "" : (res?.next ?? ""));
       setGoneErr(!!res?.error);
       setForgotten(res?.error ? [] : (res?.forgotten ?? []));
       setGoneLoaded(true);
@@ -184,13 +197,41 @@ export function MemoriesMasterDetail({
         });
       }
       setGoneWithheld(res?.error ? 0 : (res?.withheld ?? 0));
-      setGoneTruncated(!res?.error && !!res?.truncated);
       setGoneIncomplete(!res?.error && !!res?.incomplete);
       return true;
     },
-    [scope],
+    [scope, goneScopeQ],
   );
   useRetryLoad(loadGone, [reload, mine, scope]);
+
+  // The next page of the forgotten list, appended. A memory forgotten again since the first page is
+  // already in the list under its newer row, so a row is replaced by key rather than repeated.
+  const loadMoreGone = async () => {
+    const gen = goneGen.current;
+    const scopeQ = goneScopeQ();
+    setGoneMoreBusy(true);
+    setGoneMoreErr(false);
+    const res = await api(
+      "api/agents/memory/entries/member-forgotten" + scopeQ + (scopeQ ? "&" : "?") + "before=" + encodeURIComponent(goneNext),
+    ).catch(() => ({ error: true }));
+    if (gen !== goneGen.current) return;
+    setGoneMoreBusy(false);
+    if (res?.error) return setGoneMoreErr(true);
+    const more: MemoryChange[] = res?.forgotten ?? [];
+    setForgotten((prev) => {
+      const again = new Set(more.map(keyOf));
+      return [...prev.filter((c) => !again.has(keyOf(c))), ...more];
+    });
+    const named: { id: string; display: string }[] = res?.projects ?? [];
+    if (named.length) {
+      setGoneProjects((prev) => {
+        const next = new Map(prev);
+        for (const p of named) next.set("project:" + p.id, p.display);
+        return next;
+      });
+    }
+    setGoneNext(res?.next ?? "");
+  };
 
   // The scopes there is something to browse in. "All scopes" comes first and is the default: a
   // query is expected to cover everything, and the user scope alone is often empty. User scope is
@@ -222,6 +263,7 @@ export function MemoriesMasterDetail({
   useEffect(() => {
     const seq = ++searchSeq.current;
     setHits([]);
+    setFallback("");
     setSearchErr(false);
     if (!q) {
       setSearching(false);
@@ -236,7 +278,10 @@ export function MemoriesMasterDetail({
         .then((res) => {
           if (seq !== searchSeq.current) return;
           if (res?.error) setSearchErr(true);
-          else setHits(res?.hits ?? []);
+          else {
+            setHits(res?.hits ?? []);
+            setFallback(res?.fallback ?? "");
+          }
         })
         .catch(() => {
           if (seq === searchSeq.current) setSearchErr(true);
@@ -252,7 +297,7 @@ export function MemoriesMasterDetail({
   // brings its matching lines. Order: listed matches as listed, then body-only hits in rank order.
   const snippets = new Map(hits.map((h) => [keyOf(h), h.snippets ?? []]));
   const inScope = (rows ?? []).filter((m) => scope === ALL || scopeKey(m) === scope);
-  const matched = matchMemories(inScope, hits, q);
+  const { rows: matched, partial: partialMatch } = matchMemoriesDetail(inScope, hits, q, fallback);
   const shown = filter === "pinned" ? matched.filter((m) => m.pinned) : matched;
   // The answer may be for the scope shown before a switch while the new one is still loading: a row of
   // another scope must never be on screen, since its Unforget writes that scope.
@@ -263,7 +308,7 @@ export function MemoriesMasterDetail({
     m.authorKind === "member" ? tr("mem.af_by_member") : `${m.authorKind} · ${m.authorSession}`;
   // Forgotten rows carry no description or body, so the search is over name, scope and author.
   const goneShown = q
-    ? goneInScope.filter((c) => `${c.name}\n${whereOf(c)}\n${c.authorKind}\n${c.authorSession}`.toLowerCase().includes(q))
+    ? goneInScope.filter((c) => hasEveryWord(`${c.name}\n${whereOf(c)}\n${c.authorKind}\n${c.authorSession}`.toLowerCase(), q))
     : goneInScope;
 
   // The pick must still exist: a scope change, forget, unforget or purge can take it away.
@@ -588,6 +633,7 @@ export function MemoriesMasterDetail({
             ))}
           </div>
           {searchErr && <p className="mem-warn">{tr("mem.br_search_failed")}</p>}
+          {partialMatch && filter !== "forgotten" && <p className="muted ds-hint">{tr("mem.br_search_partial")}</p>}
           {filter !== "forgotten" ? (
             <ul className="mem-pin-list mem-br-list">
               {rows === null ? (
@@ -634,7 +680,6 @@ export function MemoriesMasterDetail({
               {goneErr && <p className="mem-warn">{tr("mem.br_forgotten_failed")}</p>}
               {goneWithheld > 0 && <p className="mem-warn">{tr("mem.br_forgotten_withheld", { n: goneWithheld })}</p>}
               {goneIncomplete && <p className="mem-warn">{tr("mem.br_forgotten_incomplete")}</p>}
-              {goneTruncated && <p className="mem-warn">{tr("mem.br_forgotten_truncated", { n: goneInScope.length })}</p>}
               <ul className="mem-pin-list mem-br-list">
                 {!goneLoaded ? (
                   <li className="muted pad">{tr("common.loading")}</li>
@@ -670,6 +715,12 @@ export function MemoriesMasterDetail({
                   ))
                 )}
               </ul>
+              {goneMoreErr && <p className="mem-warn">{tr("mem.br_forgotten_more_failed")}</p>}
+              {goneNext && (
+                <button type="button" className="mem-md-link" disabled={goneMoreBusy} onClick={() => void loadMoreGone()}>
+                  {tr("mem.br_forgotten_more")}
+                </button>
+              )}
             </>
           )}
         </div>

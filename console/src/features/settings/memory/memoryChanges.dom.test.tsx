@@ -16,6 +16,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
 import { AgentChangesPanel } from "./memoryChanges.tsx";
 import { ConfirmProvider } from "../../../ui/ConfirmProvider.tsx";
 import { ToastProvider } from "../../../ui/ToastProvider.tsx";
+import { t } from "../../../lib/i18n/index.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -95,6 +96,25 @@ afterEach(() => {
 });
 
 describe("AgentChangesPanel", () => {
+  it("loads older changes by cursor, back to the start of the history", async () => {
+    const older = [{ ...changes[1], commit: "old1old1old1", name: "ancient" }];
+    api.mockImplementation((path: string) => {
+      if (path === "api/agents/memory/entries/changes?limit=100") return Promise.resolve({ changes, next: "c2c2c2c2c2c2" });
+      if (path === "api/agents/memory/entries/changes?limit=100&before=c2c2c2c2c2c2")
+        return Promise.resolve({ changes: older, withheld: 1 });
+      return Promise.resolve({ diff: "+line" });
+    });
+    await mount();
+    const more = () => buttons().find((b) => b.textContent === t("mem.af_changes_more"));
+    expect(host!.querySelectorAll(".mem-list .mem-snap")).toHaveLength(2);
+    await click(more());
+    const rows = Array.from(host!.querySelectorAll(".mem-list .mem-snap"));
+    expect(rows).toHaveLength(3);
+    expect(rows[2].textContent).toContain("ancient");
+    expect(more()).toBeUndefined();
+    expect(host!.textContent).toContain(t("mem.af_withheld", { n: 1 }));
+  });
+
   it("lists who changed what and offers the way back on the newest change only", async () => {
     await mount();
     const rows = Array.from(host!.querySelectorAll(".mem-list .mem-snap"));

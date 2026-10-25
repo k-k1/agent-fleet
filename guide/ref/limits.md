@@ -34,7 +34,7 @@ These do not vary by deployment.
 | A question, plan or permission left by a stopped session | 14 days | The carried card is dropped ([04](../member/04-conversation.md#questions-and-plans-left-by-a-stopped-session)) |
 | Agent memory: one memory | 200 KiB body, 2,000-character description | Refused ([member/18](../member/18-agent-memory.md)) |
 | Agent memory: the index a session receives | described part 24 KiB by default (the `memory_index` tool's `budget` takes 4–64 KiB), each description cut to 150 characters; then names only, within 8 KiB | Past the names budget the rest is only counted ("and N more") |
-| Agent memory: Changes / Forgotten | the Console's Changes view shows the newest 100; `af-memory changes` lists 30 by default and `--limit` up to 300; 300 forgotten memories at a time | Older ones are not listed |
+| Agent memory: Changes / Forgotten | the Console's Changes view shows the newest 100 and the memory history 300, and **Load older changes** pages back to the first change; `af-memory changes` lists 30 by default and `--limit` up to 300; the forgotten list shows 300 at a time with **Load older forgotten memories** | Nothing is out of reach in the Console; `af-memory changes` does not page |
 | Agent memory: suggestions from sessions | 250 review calls a day, one at a time; 100 proposals waiting | "Today's review limit has been reached" / "The pending proposals are full" |
 | Jumping to an older turn from a search hit | 8,000 transcript positions back, in at most 4 requests | The turn is not reached; a notice says it is too far back, and scrolling up loads it |
 

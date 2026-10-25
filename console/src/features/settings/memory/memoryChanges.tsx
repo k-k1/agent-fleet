@@ -6,7 +6,7 @@
 // Only the newest change of a memory offers the way back; the Agent refuses an older one
 // anyway, because undoing it would silently drop what came after.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJSON, errDetail, errText, isTransientErr } from "../../../core/api/client.ts";
 import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -101,6 +101,9 @@ export function ChangeDiffBody({ commit }: { commit: string }) {
   return <Diff text={diff.diff} embedded wrap />;
 }
 
+/** Rows per page of the Changes view. */
+const PAGE = 100;
+
 export function AgentChangesPanel({ reload, onChanged }: { reload: number; onChanged: () => void }) {
   const tr = useT();
   const toast = useToast();
@@ -109,6 +112,12 @@ export function AgentChangesPanel({ reload, onChanged }: { reload: number; onCha
   // Rows the Agent left out because a value in them failed the scan; only the count is sent.
   const [withheld, setWithheld] = useState(0);
   const [loadErr, setLoadErr] = useState("");
+  // The cursor of the next, older page ("" = the history ends here). `gen` drops the answer of a
+  // "load older" that a reload has outdated.
+  const [next, setNext] = useState("");
+  const [moreBusy, setMoreBusy] = useState(false);
+  const [moreErr, setMoreErr] = useState(false);
+  const gen = useRef(0);
   const [sel, setSel] = useState("");
   const [busy, setBusy] = useState(false);
   const [mine, setMine] = useState(0);
@@ -116,9 +125,13 @@ export function AgentChangesPanel({ reload, onChanged }: { reload: number; onCha
   const [runReport, setRunReport] = useState<RunRevertReport | null>(null);
 
   const load = useCallback(async (signal: AbortSignal) => {
-    const res = await api("api/agents/memory/entries/changes?limit=100");
+    const res = await api(`api/agents/memory/entries/changes?limit=${PAGE}`);
     if (signal.aborted) return true;
     if (isTransientErr(res)) return false;
+    gen.current++;
+    setMoreBusy(false);
+    setMoreErr(false);
+    setNext(res?.error ? "" : (res?.next ?? ""));
     // A failed read is said, not shown as an empty history.
     setLoadErr(res?.error ? errText(res.error) : "");
     setChanges(res?.error ? [] : (res?.changes ?? []));
@@ -126,6 +139,26 @@ export function AgentChangesPanel({ reload, onChanged }: { reload: number; onCha
     return true;
   }, []);
   useRetryLoad(load, [reload, mine]);
+
+  // The next page is a commit cursor, so a change published meanwhile cannot repeat or skip a row.
+  const loadOlder = async () => {
+    const g = gen.current;
+    setMoreBusy(true);
+    setMoreErr(false);
+    const res = await api(`api/agents/memory/entries/changes?limit=${PAGE}&before=${encodeURIComponent(next)}`).catch(
+      () => ({ error: true }),
+    );
+    if (g !== gen.current) return;
+    setMoreBusy(false);
+    if (res?.error) return setMoreErr(true);
+    const older: MemoryChange[] = res?.changes ?? [];
+    setChanges((prev) => {
+      const have = new Set((prev ?? []).map((c) => c.commit));
+      return [...(prev ?? []), ...older.filter((c) => !have.has(c.commit))];
+    });
+    setWithheld((n) => n + (res?.withheld ?? 0));
+    setNext(res?.next ?? "");
+  };
 
   useEffect(() => {
     if (!changes?.length) {
@@ -265,6 +298,14 @@ export function AgentChangesPanel({ reload, onChanged }: { reload: number; onCha
                 </button>
               </li>
             ))
+          )}
+          {moreErr && <li className="mem-warn pad">{tr("mem.af_changes_more_failed")}</li>}
+          {next && (
+            <li>
+              <button type="button" className="mem-md-link" disabled={moreBusy} onClick={() => void loadOlder()}>
+                {tr("mem.af_changes_more")}
+              </button>
+            </li>
           )}
         </ul>
         <div className="mem-diff">

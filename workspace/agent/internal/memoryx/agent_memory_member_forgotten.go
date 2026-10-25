@@ -18,7 +18,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-// agentMemForgottenMax bounds the rows of one answer (a variable so a test can use a small one).
+// agentMemForgottenMax bounds the rows of one page (a variable so a test can use a small one).
 var agentMemForgottenMax = 300
 
 // agentMemTombJudgeMax bounds how many memories one request judges (a few git calls each).
@@ -43,6 +43,11 @@ type agentMemForgottenWire struct {
 	Projects  []*agentMemProject   `json:"projects"`
 	Withheld  int                  `json:"withheld,omitempty"`
 	Truncated bool                 `json:"truncated,omitempty"`
+	// Next is the cursor to pass as `before` for the following page, set whenever candidates remain
+	// that this page did not list: past the page size, or past the judging budget. Withheld, Projects
+	// and Incomplete describe the first page's scan; the Console takes them from there and only adds
+	// the projects of later pages.
+	Next string `json:"next,omitempty"`
 	// Incomplete says the request ran out of judging budget: the oldest published tombstones were
 	// not judged, so rows may be missing even after narrowing the scope, and Withheld is a lower
 	// bound.
@@ -85,6 +90,39 @@ type agentMemTombCand struct {
 	at                        time.Time
 }
 
+// agentMemTombBefore is the list order: newest change first; a tie keeps the order the scopes are
+// read in (the user scope, then the projects by id) and then the name.
+func agentMemTombBefore(a, b agentMemTombCand) bool {
+	if !a.at.Equal(b.at) {
+		return a.at.After(b.at)
+	}
+	return agentMemTombTie(a.rel) < agentMemTombTie(b.rel)
+}
+
+func agentMemTombTie(rel string) string {
+	if strings.HasPrefix(rel, "user/") {
+		return "0" + rel
+	}
+	return "1" + rel
+}
+
+// agentMemTombCursor names a position in that order: the time of the newest change and the path.
+func agentMemTombCursor(c agentMemTombCand) string {
+	return c.at.UTC().Format(time.RFC3339Nano) + "|" + c.rel
+}
+
+func agentMemParseTombCursor(s string) (agentMemTombCand, bool) {
+	ts, rel, ok := strings.Cut(s, "|")
+	if !ok || rel == "" || len(s) > 512 {
+		return agentMemTombCand{}, false
+	}
+	at, err := time.Parse(time.RFC3339Nano, ts)
+	if err != nil {
+		return agentMemTombCand{}, false
+	}
+	return agentMemTombCand{at: at, rel: rel}, true
+}
+
 // agentMemNewestCommits returns, for each wanted "af/..." path, the newest agent-memory commit
 // that names it with its author time, deciding "newest" by the trailer parsing of
 // agentMemLatestChange. A commit whose time does not parse sorts as the zero time.
@@ -123,8 +161,21 @@ func agentMemNewestCommits(want map[string]bool) (map[string]agentMemTombCand, e
 // while the memory is absent and has a published change; the newest change is judged by
 // agentMemMemberLatest's scan, raw and decoded, so a name or text that would be withheld there is
 // counted here, never listed. agentMemMu is taken per memory, not across the request.
-func agentMemMemberForgotten(scope, project string) (agentMemForgottenWire, error) {
+//
+// before is the cursor of an earlier answer's Next: the candidates ordered after it are listed. The
+// order is (time of the newest change, path), a total order that a write between two pages cannot
+// shift, so a page neither repeats a row nor skips one. A memory forgotten again after page one
+// moves to the front instead.
+func agentMemMemberForgotten(scope, project, before string) (agentMemForgottenWire, error) {
 	out := agentMemForgottenWire{Forgotten: []agentMemChangeView{}, Projects: []*agentMemProject{}}
+	var cursor *agentMemTombCand
+	if before != "" {
+		c, ok := agentMemParseTombCursor(before)
+		if !ok {
+			return out, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "before is not a cursor of this list")
+		}
+		cursor = &c
+	}
 	type src struct{ scope, project, rel string }
 	var srcs []src
 	switch scope {
@@ -176,7 +227,11 @@ func agentMemMemberForgotten(scope, project string) (agentMemForgottenWire, erro
 			found = append(found, c)
 		}
 	}
-	sort.SliceStable(found, func(i, j int) bool { return found[i].at.After(found[j].at) })
+	sort.SliceStable(found, func(i, j int) bool { return agentMemTombBefore(found[i], found[j]) })
+	if cursor != nil {
+		k := sort.Search(len(found), func(i int) bool { return agentMemTombBefore(*cursor, found[i]) })
+		found = found[k:]
+	}
 
 	projects := map[string]bool{}
 	// A project id is shown to the Console, and its form check does not scan it: a token-shaped
@@ -192,8 +247,12 @@ func agentMemMemberForgotten(scope, project string) (agentMemForgottenWire, erro
 		out.Projects = append(out.Projects, agentMemProjectInfo(id))
 		return true
 	}
+	var last agentMemTombCand // the newest row of this page that is listed
 	for i, c := range found {
 		if i >= agentMemTombJudgeMax {
+			if out.Next == "" && i > 0 {
+				out.Next = agentMemTombCursor(found[i-1])
+			}
 			// Out of judging budget, oldest first. The project is still offered (unless the
 			// memory is plainly live), and the answer says it is incomplete.
 			out.Incomplete = true
@@ -220,9 +279,11 @@ func agentMemMemberForgotten(scope, project string) (agentMemForgottenWire, erro
 		addProject(c.project) // already scanned by agentMemChangeFrom
 		if len(out.Forgotten) >= agentMemForgottenMax {
 			out.Truncated = true
+			out.Next = agentMemTombCursor(last)
 			continue
 		}
 		out.Forgotten = append(out.Forgotten, v)
+		last = c
 	}
 	return out, nil
 }
@@ -230,7 +291,7 @@ func agentMemMemberForgotten(scope, project string) (agentMemForgottenWire, erro
 // HandleAgentMemoryMemberForgotten lists the forgotten memories to the Console. Read-only.
 func HandleAgentMemoryMemberForgotten(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	out, err := agentMemMemberForgotten(q.Get("scope"), q.Get("project"))
+	out, err := agentMemMemberForgotten(q.Get("scope"), q.Get("project"), q.Get("before"))
 	if err != nil {
 		agentMemWriteErr(w, err)
 		return

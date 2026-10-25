@@ -1,7 +1,7 @@
 // What the Memories view and the command palette share (#2407): which listed memories a query
 // finds and in what order, and the round trip of a memory's name through a settings target.
 import { describe, it, expect } from "vitest";
-import { keyOf, matchMemories, memoryTarget, parseMemoryTarget, scopeKey } from "./memorySearch.ts";
+import { keyOf, matchMemories, matchMemoriesDetail, memoryTarget, parseMemoryTarget, scopeKey } from "./memorySearch.ts";
 import type { MemoryListed, MemorySearchHit } from "./memoryTypes.ts";
 
 const proj = { id: "app-1", root: "/r/app", vcs: "git", display: "app" };
@@ -38,6 +38,24 @@ describe("matchMemories", () => {
     expect(matchMemories(rows, [hit(c), hit(a), hit(a)], "zzz").map((m) => m.name)).toEqual(["gamma", "alpha"]);
     // alpha matches by field AND is a hit: it stays first and is not repeated.
     expect(matchMemories(rows, [hit(c), hit(a)], "build").map((m) => m.name)).toEqual(["alpha", "gamma"]);
+  });
+  it("needs every word of a multi-word query, in any order and across fields", () => {
+    // "build" is in alpha's description, "alpha" in its name; gamma has neither word pair.
+    expect(matchMemories(rows, [], "steps alpha").map((m) => m.name)).toEqual(["alpha"]);
+    expect(matchMemories(rows, [], "build gamma")).toEqual([]);
+  });
+  it("shows the some-words hits only when no row matches in full, and says so", () => {
+    const some = matchMemoriesDetail(rows, [hit(c)], "build gamma", "any");
+    expect(some.rows.map((m) => m.name)).toEqual(["gamma"]);
+    expect(some.partial).toBe(true);
+    // alpha matches both words by its fields: the partial hit is dropped, no notice.
+    const exact = matchMemoriesDetail(rows, [hit(c)], "build steps", "any");
+    expect(exact.rows.map((m) => m.name)).toEqual(["alpha"]);
+    expect(exact.partial).toBe(false);
+    // Without the fallback marker body hits are full matches: kept, no notice.
+    const full = matchMemoriesDetail(rows, [hit(c)], "zzz yyy");
+    expect(full.rows.map((m) => m.name)).toEqual(["gamma"]);
+    expect(full.partial).toBe(false);
   });
   it("drops a hit that is not among the rows", () => {
     expect(matchMemories([a], [hit(b)], "zzz")).toEqual([]);
