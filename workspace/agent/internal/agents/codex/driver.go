@@ -83,8 +83,8 @@ func (managedDriver) Capabilities() agents.Capabilities {
 // with -c.
 var threadFeatures = map[string]any{"default_mode_request_user_input": true}
 
-// threadConfig is the per-thread config: the features above, AF_WORK_DIR for the thread's
-// shell tool calls (shell_environment_policy.set — the shared app-server's own environment
+// threadConfig is the per-thread config: the features above, AF_SESSION_NAME and AF_WORK_DIR
+// for the thread's shell tool calls (shell_environment_policy.set — the shared app-server's own environment
 // cannot carry a per-session value), plus the MCP servers scoped to THIS session
 // (docs/log/27 §9.3.1).
 //
@@ -103,10 +103,15 @@ var threadFeatures = map[string]any{"default_mode_request_user_input": true}
 // registry — the session name degrades to the cwd fallback and nothing else changes.
 func threadConfig(slot string) map[string]any {
 	cfg := map[string]any{"features": threadFeatures}
+	set := map[string]any{}
+	if session.ValidName(slot) {
+		set[agents.SessionNameEnvVar] = slot
+	}
 	if wd := agents.SessionWorkDir(slot); wd != "" {
-		cfg["shell_environment_policy"] = map[string]any{
-			"set": map[string]any{agents.WorkDirEnvVar: wd},
-		}
+		set[agents.WorkDirEnvVar] = wd
+	}
+	if len(set) > 0 {
+		cfg["shell_environment_policy"] = map[string]any{"set": set}
 	}
 	if servers, ok := threadMCPServers(slot); ok {
 		cfg["mcp_servers"] = servers
