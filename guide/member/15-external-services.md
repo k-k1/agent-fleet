@@ -20,7 +20,7 @@ the way git does.
   and `account`, plus `pipeline:write` to start or stop a pipeline; a pasted API token needs the
   matching `read:` / `write:` scopes (for example `read:pullrequest:bitbucket`, and
   `write:pipeline:bitbucket` to start or stop a pipeline — write does not imply read). A token without the pull-request scopes can list repositories
-  but gets `403 Forbidden` from `bkt pr list`. The OAuth app's scopes are set by the tenant administrator.
+  but gets `403 Forbidden` from `bkt pr list`. The OAuth app's scopes are set by the tenant administrator. These scopes are for `bkt` only: the Console's work-item panel does not post comments to Bitbucket pull requests whatever the scopes (only GitHub and Jira rows offer a report-back comment).
 - **Bitbucket Data Center** (or any host other than bitbucket.org) is not connected through
   Settings. Set it up yourself (`bkt auth login`, or `BKT_HOST` and `BKT_TOKEN`); the
   `bkt` then runs as you configured it, without the saved connection.

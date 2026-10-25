@@ -38,7 +38,7 @@ If a feature ships and does not appear here, it is not done
 | Move a session to another agent | member | session ⋯ menu → Move to another agent…, or the usage-limit band in the chat | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md#moving-a-session-to-another-agent-move) |
 | Export a conversation as Markdown | member | session ⋯ menu → Export as Markdown | [04 Conversation](../member/04-conversation.md#saving-a-conversation-as-markdown) |
 | Fork from a past message | member | mirror, on a past message | [04 Conversation](../member/04-conversation.md); [agents.md](agents.md) for which agents |
-| Hand a session to another member | member | handoff proposal card in the chat → Hand off to a member | [12 Working with others](../member/12-collaboration.md#handing-a-session-to-another-member) |
+| Hand a session to another member | member | session ⋯ menu or handoff proposal card → Hand off to a member | [12 Working with others](../member/12-collaboration.md#handing-a-session-to-another-member) |
 | Share a session read-only | member | Shared sessions | [12 Working with others](../member/12-collaboration.md) |
 | Highlights | member | mirror, on a selection | [04 Conversation](../member/04-conversation.md) |
 | Changed files | member | strip under the mirror header | [04 Conversation](../member/04-conversation.md) |

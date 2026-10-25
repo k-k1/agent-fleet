@@ -10,7 +10,7 @@ import { useT, t, type MsgKey } from "../../../lib/i18n/index.ts";
 import { Field, Meta } from "../parts/mcpForm.tsx";
 import { RegionSelect } from "../parts/RegionSelect.tsx";
 import { ProfileLoginModal, type LoginProfile } from "../../awslogin/ProfileLoginModal.tsx";
-import { useProfileLogout } from "../../awslogin/useProfileLogout.ts";
+import { useProfileLogout } from "../../awslogin/useProfileLogout.tsx";
 import { validExternalId, validRoleArn, validSessionName } from "../../../lib/awsRoleChain.ts";
 import { useAwsLoginStore } from "../../awslogin/store.ts";
 
@@ -566,7 +566,9 @@ function ProfileSection({
                 >
                   {tr("ssm.login")}
                 </button>
-                {p.name && !isChained(p) && !reloginNeeded.has(p.id) && (states[p.name] === "signed_in" || states[p.name] === "renew") && (
+                {/* A chain has no login of its own: its button ends the source's (after a confirmation that
+                    names the source and the chains following it), so it needs a source to end. */}
+                {p.name && !reloginNeeded.has(loginTarget(p).id) && !(isChained(p) && isChained(loginTarget(p))) && (states[p.name] === "signed_in" || states[p.name] === "renew") && (
                   <button
                     className="ghost ssm-logout"
                     title={tr("awslogin.logout_title")}

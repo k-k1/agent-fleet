@@ -202,6 +202,8 @@ export const repos = {
   "pj.loading_repos": "リポジトリを読み込み中…",
   "pj.repos_unreachable": "ワークスペースに接続できません",
   "pj.repos_unreachable_hint": "再試行中です。つながると自動で戻ります",
+  "pj.repos_failed": "リポジトリの一覧を読み込めません",
+  "pj.repos_failed_hint": "ワークスペースがエラーを返したため、自動では再試行しません。ページを再読み込みするか、このワークスペースへのアクセス権を確認してください。",
   "pj.repos_stale": "一覧を更新できません（最後に取得した一覧を表示中）",
   "pj.collapse": "折りたたむ",
   "pj.peek_more": "ほかに稼働中:\n{names}",

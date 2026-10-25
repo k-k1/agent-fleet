@@ -37,6 +37,7 @@ import { reviewSessionNow } from "./memoryReviewNow.ts";
 import { RecreateWorktreeModal } from "./RecreateWorktreeModal.tsx";
 import { recreatableGroup } from "./ArchivedModal.tsx";
 import { ShareCreateModal } from "../sharing/ShareCreateModal.tsx";
+import { HandoffOfferModal } from "../sharing/HandoffOfferModal.tsx";
 import type { SessionActions } from "./useSessionActions.tsx";
 import type { Session } from "../../types/session.ts";
 
@@ -80,6 +81,7 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
   const menuElRef = useRef<HTMLDivElement>(null);
   const [handoffOpen, setHandoffOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [memberHandoffOpen, setMemberHandoffOpen] = useState(false);
   const [recreateWtOpen, setRecreateWtOpen] = useState(false);
   useDismiss([menuElRef, ...(keepOpenRefs ?? [])], open, onClose);
   useMenuRoving(menuElRef, open);
@@ -314,6 +316,18 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
             onClose();
             openMove(s);
           }, <Icon name="arrow-swap" />, tr(s.movedTo ? "srow.move_reopen" : s.moving ? "srow.move_pending" : "srow.move")),
+        // Handoff to a member (ADR 0057): the same offer the proposal card's "Hand off to a member"
+        // opens, minus the proposal. The CP refuses it while the owner's Workspace is stopped and
+        // reads the working copy's state from the Agent, so the gate is the one above: a transcript
+        // kind, a session whose folder still exists, a reachable Agent. Who it can go to (and
+        // "not shared yet") is the modal's to say.
+        caps.transcript &&
+          !dead &&
+          running &&
+          item("handoff-member", () => {
+            onClose();
+            setMemberHandoffOpen(true);
+          }, <Icon name="broadcast" />, tr("srow.handoff_member")),
         // Session sharing: share the conversation with another user in the same tenant.
         // shell/SSM have no transcript, so they are out of scope (docs/log/59).
         caps.transcript &&
@@ -466,6 +480,14 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
           document.body,
         )}
       {handoffOpen && <HandoffModal session={s} actions={actions} onClose={() => setHandoffOpen(false)} />}
+      {memberHandoffOpen && (
+        <HandoffOfferModal
+          session={s.name}
+          initialTitle={displayName(s)}
+          initialPrompt=""
+          onClose={() => setMemberHandoffOpen(false)}
+        />
+      )}
       {recreateWtOpen && (
         // This session is still on the active list, so there is nothing to restore: the modal
         // closes once the folder exists, and the next list refresh makes the row resumable.

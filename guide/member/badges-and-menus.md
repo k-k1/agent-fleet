@@ -163,7 +163,7 @@ connection. Not this deployment's engine."** together with the model the last ch
 ### Sessions
 
 Depending on state and kind you'll see resume, re-login to SSM, stop, open the remote session, copy the ID,
-rename, rename the branch, hand the conversation off, **move it to another agent**
+rename, rename the branch, hand the conversation off (to another agent, or **Hand off to a member…**), **move it to another agent**
 ([05](05-stopping-and-tidying.md#moving-a-session-to-another-agent-move)), **Share…**, **set / clear the delete lock**,
 **"Export as Markdown"** (three choices, [04](04-conversation.md#saving-a-conversation-as-markdown)),
 archive / delete, and recreate. **"Menu of repository {name}"** moves to the left pane and opens the menu of

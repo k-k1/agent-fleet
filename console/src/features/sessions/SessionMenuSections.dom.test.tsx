@@ -181,6 +181,7 @@ describe("session menu sections", () => {
     expect(inGroup("keep")).toEqual([
       t("srow.handoff"),
       t("srow.move"),
+      t("srow.handoff_member"),
       t("srow.share"),
       t("srow.export_none"),
       t("srow.export_names"),
