@@ -61,7 +61,7 @@ case "$1" in
   has-session) exit 0 ;;
   list-panes)
     case "$*" in
-      *session_created*) printf '%s 0\n' "$TMUX_TEST_CREATED" ;;
+      *session_created*) printf '%s %s %%7\n' "$TMUX_TEST_CREATED" "${TMUX_TEST_PANE_PID:-0}" ;;
       *) printf '1 %%7\n' ;;
     esac ;;
   send-keys)
@@ -113,7 +113,7 @@ func (b bootingClaude) launchedNow(t *testing.T) {
 
 func forgetBootHolds() {
 	bootMu.Lock()
-	bootEnded = map[string]time.Time{}
+	bootEnded = map[string]bootHoldEnd{}
 	bootMu.Unlock()
 }
 
@@ -273,9 +273,12 @@ func TestPeerBootHoldSurvivesAnAgentRestart(t *testing.T) {
 	b.booted(t)
 	settled.Store(true)
 	waitFor(t, "the carried message to become a turn", func() bool { return b.turns(t, raceMsg) == 1 })
-	// The next message waits for that turn to end; the fake pane has no Stop hook, so end it.
+	// The next message waits for that turn to end; the fake pane has no Stop hook, so end it,
+	// after the delivery's own optimistic working, or that write lands on top of the end.
 	m, _ := session.ReadMeta(b.name)
-	status.PersistTurnEnd(session.UUID(m.Dir, m.Name), "idle")
+	sid := session.UUID(m.Dir, m.Name)
+	waitFor(t, "the delivery to mark the turn working", func() bool { return status.LiveState(sid) == "working" })
+	status.PersistTurnEnd(sid, "idle")
 	waitFor(t, "the new message to become a turn", func() bool { return b.turns(t, "and the tag too") == 1 })
 }
 
@@ -283,11 +286,11 @@ func TestPeerBootHoldSurvivesAnAgentRestart(t *testing.T) {
 func TestPeerBootHoldEndsAtItsCap(t *testing.T) {
 	launched := time.Unix(1_800_000_000, 0)
 	now := launched
-	prevNow, prevSettled, prevLaunched := peerBootNow, peerBootSettled, peerBootLaunchedAt
+	prevNow, prevSettled, prevLaunch := peerBootNow, peerBootSettled, peerBootLaunch
 	peerBootNow = func() time.Time { return now }
 	peerBootSettled = func(string) bool { return false }
-	peerBootLaunchedAt = func(string) (time.Time, bool) { return launched, true }
-	t.Cleanup(func() { peerBootNow, peerBootSettled, peerBootLaunchedAt = prevNow, prevSettled, prevLaunched })
+	peerBootLaunch = func(string) (string, time.Time, bool) { return "1800000000 0 %7", launched, true }
+	t.Cleanup(func() { peerBootNow, peerBootSettled, peerBootLaunch = prevNow, prevSettled, prevLaunch })
 	forgetBootHolds()
 	m := session.Meta{Name: "hold_cap", Kind: session.KindClaude}
 	if got := peerBootBlocker(m); got != peerBlockedStarting {
@@ -299,5 +302,44 @@ func TestPeerBootHoldEndsAtItsCap(t *testing.T) {
 	now = now.Add(peerBootHoldMax)
 	if got := peerBootBlocker(m); got != "" {
 		t.Fatalf("past the cap: %q, want no hold", got)
+	}
+}
+
+// The review of #2741, round 2: on Linux a launch's start comes from /proc and is recomputed
+// against the clock on every read, so two reads of one launch differ by milliseconds. A hold
+// remembered by that time never matched again, and every later send within the cap was held
+// for another settle window. The fake pane reports a real pid (this test process) so the
+// jittering /proc path is the one read; a hold that ended stays ended for that launch, and the
+// next launch is held again.
+func TestPeerBootHoldEndsOnceForALaunchWithARealPid(t *testing.T) {
+	pendingTestEnv(t)
+	b := fakeBootingClaudeTmux(t, "race_real_pid", "")
+	b.launchedNow(t)
+	t.Setenv("TMUX_TEST_PANE_PID", strconv.Itoa(os.Getpid()))
+	m, _ := session.ReadMeta(b.name)
+	settled := stubBootSettled(t)
+
+	if _, at1, ok := peerBootLaunch(m.Name); !ok {
+		t.Fatal("the fake pane's launch is unreadable")
+	} else if _, at2, _ := peerBootLaunch(m.Name); at1.Equal(at2) {
+		t.Log("two reads of the launch start agree on this host; the identity check still holds")
+	}
+	if got := peerBootBlocker(m); got != peerBlockedStarting {
+		t.Fatalf("a booting launch: %q, want %q", got, peerBlockedStarting)
+	}
+	settled.Store(true)
+	if got := peerBootBlocker(m); got != "" {
+		t.Fatalf("a settled launch: %q, want no hold", got)
+	}
+	settled.Store(false) // the delivered message's turn runs: the pane no longer sits still
+	for i := 0; i < 3; i++ {
+		if got := peerBootBlocker(m); got != "" {
+			t.Fatalf("read %d: the ended hold reopened for the same launch: %q", i, got)
+		}
+	}
+
+	t.Setenv("TMUX_TEST_CREATED", strconv.FormatInt(time.Now().Unix()+1, 10)) // a relaunch
+	if got := peerBootBlocker(m); got != peerBlockedStarting {
+		t.Fatalf("the next launch: %q, want %q", got, peerBlockedStarting)
 	}
 }

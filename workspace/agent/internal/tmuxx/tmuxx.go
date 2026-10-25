@@ -244,6 +244,36 @@ func CLIStartedAfter(tn string) (time.Time, bool) {
 	return time.Unix(sec, 0), true
 }
 
+// PaneLaunch identifies the launch running in session tn's pane. id is tmux's creation stamp,
+// the pane id and the pane process's pid read verbatim, so it stays equal for as long as that
+// launch lives and changes with the next one; at is when it started, as CLIRecordsSince puts
+// it. Compare launches by id, never by at: where /proc has the start, at is recomputed against
+// the clock on every read and moves by milliseconds between two reads of one launch.
+func PaneLaunch(tn string) (id string, at time.Time, ok bool) {
+	out, err := Cmd("list-panes", "-t", session.ExactTarget(tn), "-F", "#{session_created} #{pane_pid} #{pane_id}").Output()
+	if err != nil {
+		return "", time.Time{}, false
+	}
+	first, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+	f := strings.Fields(first)
+	if len(f) == 0 {
+		return "", time.Time{}, false
+	}
+	sec, err := strconv.ParseInt(f[0], 10, 64)
+	if err != nil || sec <= 0 {
+		return "", time.Time{}, false
+	}
+	at = time.Unix(sec+1, 0)
+	if len(f) > 1 {
+		if pid, err := strconv.Atoi(f[1]); err == nil {
+			if start, ok := ProcessStart(pid); ok {
+				at = start
+			}
+		}
+	}
+	return strings.Join(f, " "), at, true
+}
+
 // paneStart reads tmux session tn's creation stamp (whole seconds) and, where /proc has it,
 // the start of the pane's process (exact). ok is false when there is no such session.
 func paneStart(tn string) (sec int64, start time.Time, exact, ok bool) {
