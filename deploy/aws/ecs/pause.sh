@@ -43,6 +43,14 @@
 # up: a CP that starts before it answers 500 until it is reachable. The NAT gateway is the very
 # last to go (the sweep and the sleeping slots may still need to reach out) and the very first
 # to come back (the CP's own image pull and logs go through it).
+#
+# The egress gateway (00-network EgressRoute=gateway, ADR 0122) carries workspace traffic only.
+# It is scaled to zero through GatewayEnabled once the Workspaces are stopped and before the CP,
+# whose agent endpoint takes the last of Squid's log. Its interface and Elastic IP stay, so the
+# route target and the egress address are unchanged; the workspace route blackholes meanwhile,
+# which is harmless only because no workspace runs. `--up` starts it with the NAT gateway and
+# waits for it twice: up (interface attached, Squid and the agent running) before the CP, and
+# its first policy, which needs the CP, before reporting the deployment up.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -90,15 +98,6 @@ af_env_init "$PROFILE" "$REGION" "$STACK"
 CLUSTER="$(af_cluster)"
 CP_SERVICE="af-$AF_STACK_INGRESS-cp"
 
-# EgressRoute=gateway (00-network, ADR 0122): this script only knows the NAT gateway. Pausing
-# would delete the NAT gateway under the CP and the hosts and leave the egress gateway billing;
-# resuming knows nothing to wait for. Refused until #2729; --status still reports.
-if [ "$MODE" != status ] && [ "$(af_stack_param "$AF_STACK_NETWORK" EgressRoute)" = gateway ]; then
-  echo "ERROR: $AF_STACK_NETWORK runs the egress gateway (EgressRoute=gateway); pause.sh supports" >&2
-  echo "       EgressRoute=nat-gateway only (#2729). Switch back first, or stop by hand (README, \"Egress gateway\")." >&2
-  exit 1
-fi
-
 # ws_services — Workspace services with desired>0, i.e. the ones somebody is using.
 # Leave list-services' paging to the CLI: adding --max-items truncates silently and reads
 # as "we looked at everyone". describe-services takes at most 10 per call.
@@ -117,6 +116,49 @@ ws_services() {
     got="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services $batch \
       --query 'services[?desiredCount>`0`].serviceName' --output text 2>/dev/null || true)"
     for g in $got; do echo "$g"; done
+  done
+}
+
+# ws_tasks_alive — Workspace tasks that have not reached STOPPED, whatever their service's desired
+# count: a workspace its user stopped a moment ago, or one an earlier pause cut short, still has
+# connections open through the egress gateway. Fails when it cannot tell.
+ws_tasks_alive() {
+  local st arns all="" batch i got
+  for st in RUNNING STOPPED; do
+    arns="$("${AWS[@]}" ecs list-tasks --cluster "$CLUSTER" --desired-status "$st" \
+      --query taskArns --output text)" || return 1
+    case "$arns" in None) arns="" ;; esac
+    all="$all $arns"
+  done
+  # shellcheck disable=SC2086  # word splitting is the batching
+  set -- $all
+  while [ $# -gt 0 ]; do
+    batch=""; i=0
+    while [ $# -gt 0 ] && [ $i -lt 100 ]; do batch="$batch $1"; shift; i=$((i + 1)); done
+    # shellcheck disable=SC2086
+    got="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks $batch \
+      --query "tasks[?starts_with(group,'service:af-ws-') && lastStatus!='STOPPED'].taskArn" --output text)" || return 1
+    case "$got" in None) got="" ;; esac
+    [ -z "$got" ] || echo "$got"
+  done
+}
+
+# ws_tasks_wait — until no Workspace task is left (AF_WS_TASK_WAIT_SEC, default 600). Fails on
+# timeout and when the tasks cannot be read.
+ws_tasks_wait() {
+  local left deadline
+  deadline=$(( $(date +%s) + ${AF_WS_TASK_WAIT_SEC:-600} ))
+  while :; do
+    if ! left="$(ws_tasks_alive)"; then
+      echo "    could not list the cluster's tasks" >&2
+      return 1
+    fi
+    [ -n "${left//[[:space:]]/}" ] || return 0
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      echo "    still running: $(printf '%s\n' "$left" | tr -s '[:space:]' ' ')" >&2
+      return 1
+    fi
+    sleep "${AF_GATEWAY_POLL_SEC:-15}"
   done
 }
 
@@ -240,17 +282,19 @@ nat_enabled() {
   echo "${v:-true}"
 }
 
-# nat_set <true|false> — move the NAT gateway through the stack that owns it. Every other
-# parameter keeps its live value (`deploy` leaves what it is not given at UsePreviousValue).
-# The wait is the point: on `--up` nothing may start until the route exists again. Both default
-# routes (private and workspace route table) follow NatEnabled.
+# net_set <Key=value>... — switch the NAT gateway (NatEnabled) or the egress gateway
+# (GatewayEnabled) through the stack that owns them. Every other parameter keeps its live value
+# (`deploy` leaves what it is not given at UsePreviousValue). For the NAT the wait is the point:
+# on `--up` nothing may start until the route exists again. Both default routes (private and
+# workspace route table) follow NatEnabled, except that under EgressRoute=gateway the workspace
+# route stays on GatewayEni whatever either switch says.
 #
 # This deploys the checkout's template, so a network stack older than it gains what it adds. The
 # workspace subnets are harmless before the CP uses them, but the S3 endpoint is not: its policy
 # refuses the own S3 of every workspace still in a private subnet (#2716). So a stack that has
 # never had S3EndpointEnabled gets "false"; switching it on is the last step of the migration
 # (README, NAT bullet), never a side effect of a pause.
-nat_set() {
+net_set() {
   local extra=()
   if grep -q '^  S3EndpointEnabled:' "$HERE/cfn/00-network.yaml" &&
      af_stack_exists "$AF_STACK_NETWORK" &&
@@ -258,13 +302,13 @@ nat_set() {
     extra=("S3EndpointEnabled=false")
   fi
   if [ "$AF_DRY" = 1 ]; then
-    echo "DRY: cloudformation deploy --stack-name $AF_STACK_NETWORK --template-file $HERE/cfn/00-network.yaml --parameter-overrides NatEnabled=$1${extra[*]:+ ${extra[*]}}"
+    echo "DRY: cloudformation deploy --stack-name $AF_STACK_NETWORK --template-file $HERE/cfn/00-network.yaml --parameter-overrides $*${extra[*]:+ ${extra[*]}}"
     return 0
   fi
   # CAPABILITY_IAM: the template declares the egress gateway's role (only created with
   # EgressRoute=gateway, but CloudFormation asks for the capability regardless).
   af_cfn_deploy "$AF_STACK_NETWORK" "$HERE/cfn/00-network.yaml" --capabilities CAPABILITY_IAM \
-    --parameter-overrides "NatEnabled=$1" ${extra[@]+"${extra[@]}"} --no-fail-on-empty-changeset
+    --parameter-overrides "$@" ${extra[@]+"${extra[@]}"} --no-fail-on-empty-changeset
 }
 
 # ws_subnets_check — say, before any workspace can start again, when the network has workspace
@@ -287,12 +331,17 @@ ws_subnets_check() {
 }
 
 status() {
-  local running stopped ws boxes helpers db cp nat restop
+  local running stopped ws boxes helpers db cp nat gw gwi eni restop
   running="$(slots pending running | tr '\t' ' ')"; stopped="$(slots stopping stopped | tr '\t' ' ')"
   ws="$(ws_services | tr '\n' ' ')"
   boxes="$(engine_boxes | tr '\t' ' ')"; helpers="$(helpers_up)"
   db="$(db_status)"; cp="$(cp_counts | tr '\t' '/')"
   nat="$(nat_enabled)"
+  gw="$(af_gateway_state "$AF_STACK_NETWORK")"; gwi=""
+  if [ "$gw" = on ]; then
+    eni="$(af_gateway_eni "$AF_STACK_NETWORK")"
+    if [ -n "$eni" ]; then gwi="$(af_gateway_instance "$eni")" || gwi="its interface could not be read"; fi
+  fi
   restop=""; af_stack_exists "$AF_STACK_DATA" && restop="$(af_stack_output "$AF_STACK_DATA" RdsRestopFunction)"
   echo "==> $AF_FQDN (profile=$AF_PROFILE region=$AF_REGION)"
   echo "    control plane : desired/running = $cp"
@@ -303,12 +352,21 @@ status() {
   echo "    engine / tts services up : ${helpers:-(none)}"
   [ -z "$DB_ID" ] || echo "    database      : $DB_ID ${db:-?}"
   [ -z "$nat" ] || echo "    nat gateway   : $([ "$nat" = true ] && echo present || echo deleted)"
+  case "$gw" in
+    on)  echo "    egress gateway: on (${gwi:-no instance has attached its interface yet})" ;;
+    off) echo "    egress gateway: stopped (the workspace route blackholes until --up)" ;;
+  esac
   # A paused CP with a running database is almost always RDS's own 7-day restart.
   if [ -n "$DB_ID" ] && [ "${cp%%/*}" = 0 ] && [ "$db" = available ]; then
     echo ""
     echo "    WARN: the database is running while the control plane is paused. AWS restarts a"
     echo "          stopped instance after 7 days; run pause.sh again to stop it."
     [ -z "$restop" ] || echo "          (10-data's re-stop Lambda $restop only acts on a database tagged af-paused.)"
+  fi
+  if [ "${cp%%/*}" = 0 ] && [ "$gw" = on ]; then
+    echo ""
+    echo "    WARN: the egress gateway is on while the control plane is paused (an earlier pause"
+    echo "          stopped part way?). Run pause.sh again: it stops it."
   fi
   if [ "${cp%%/*}" = 0 ] && [ -n "${boxes// /}" ]; then
     echo ""
@@ -318,6 +376,7 @@ status() {
   echo ""
   echo "    fixed cost that remains while paused: ALB / EFS / RDS storage plus home's EBS"
   [ "$nat" = true ] && echo "    and the NAT gateway (pause.sh deletes it unless --keep-nat)"
+  [ -z "$gw" ] || echo "    and the egress gateway's Elastic IP (kept: it is the workspace egress address)"
   echo "    (AWS cannot stop a load balancer, only delete it)"
 }
 
@@ -329,11 +388,20 @@ case "$MODE" in
 
   up)
     echo "==> resuming $AF_FQDN"
-    # The NAT first: the CP's image pull, logs and secrets all go through it.
+    # The NAT first: the CP's image pull, logs and secrets all go through it. The egress
+    # gateway in the same deploy: it boots through its own public address, not the NAT, and
+    # its boot (packages, the CP image) then overlaps the database's start.
+    ups=()
     if [ "$(nat_enabled)" = false ]; then
       echo "==> recreating the NAT gateway (same egress address; typically 1-2 min)"
-      nat_set true
+      ups+=(NatEnabled=true)
     fi
+    gw="$(af_gateway_state "$AF_STACK_NETWORK")"
+    if [ "$gw" = off ]; then
+      echo "==> starting the egress gateway (same interface and egress address)"
+      ups+=(GatewayEnabled=true)
+    fi
+    [ ${#ups[@]} -eq 0 ] || net_set "${ups[@]}"
     [ "$AF_DRY" = 1 ] || ws_subnets_check
     # The database next: a CP that comes up before it answers 500 until it is reachable.
     # The tag comes off before anything else touches it, so the re-stop Lambda cannot stop
@@ -367,6 +435,17 @@ case "$MODE" in
         fi
         ;;
     esac
+    # No CP, no workspace: the gateway must be carrying traffic before the CP can start one.
+    # Its first policy has to wait for the CP (below).
+    if [ -n "$gw" ] && [ "$AF_DRY" != 1 ]; then
+      echo "==> waiting for the egress gateway: interface attached, Squid and its agent running (a boot takes a few minutes)"
+      if ! af_gateway_wait "$AF_STACK_NETWORK" up; then
+        echo "ERROR: the egress gateway did not come up; the control plane stays down so no workspace starts" >&2
+        echo "       without egress. On the instance: /var/log/af-egress-gateway.log (README, \"Egress gateway\")." >&2
+        echo "       Then run pause.sh --up again." >&2
+        exit 1
+      fi
+    fi
     af_run "${AWS[@]}" ecs update-service --cluster "$CLUSTER" --service "$CP_SERVICE" \
       --desired-count 1 >/dev/null
     if [ "$AF_DRY" != 1 ]; then
@@ -377,6 +456,17 @@ case "$MODE" in
       echo "ERROR: the control plane is up but $DB_ID is '$(db_status)' (a re-stop landed late?)." >&2
       echo "       Run pause.sh --up again: it starts the database, then the control plane." >&2
       exit 1
+    fi
+    # Until its first policy the gateway refuses every workspace connection (fail closed), so a
+    # workspace started in this window has no egress; it is seconds once the CP answers.
+    if [ -n "$gw" ] && [ "$AF_DRY" != 1 ]; then
+      echo "==> waiting for the egress gateway's first policy from the control plane"
+      if ! af_gateway_wait "$AF_STACK_NETWORK" ready; then
+        echo "ERROR: the control plane is up but the egress gateway has no policy from it: workspaces" >&2
+        echo "       have no egress (it refuses everything). Check the agent (journalctl -u af-egress-agent" >&2
+        echo "       on the instance, README \"Egress gateway\"), then run pause.sh --up again." >&2
+        exit 1
+      fi
     fi
     cat <<EOF
 
@@ -393,7 +483,8 @@ EOF
       echo ""
       dbstep=""; [ -z "$DB_ID" ] || [ "$KEEP_DB" = 1 ] || dbstep=" -> database stopped"
       natstep=""; [ "$KEEP_NAT" = 1 ] || [ "$(nat_enabled)" != true ] || natstep=" -> NAT gateway deleted"
-      echo "plan: ${ws:-(no Workspace to stop)} -> slots asleep, engines idle -> CP desired 0 -> leftover engines ended$dbstep$natstep"
+      gwstep=""; [ "$(af_gateway_state "$AF_STACK_NETWORK")" != on ] || gwstep=" -> egress gateway stopped"
+      echo "plan: ${ws:-(no Workspace to stop)} -> slots asleep, engines idle$gwstep -> CP desired 0 -> leftover engines ended$dbstep$natstep"
       exit 0
     fi
 
@@ -444,6 +535,32 @@ EOF
       echo "==> slots are asleep and engines are idle"
     fi
 
+    # The egress gateway before the CP: a tunnel is logged when it closes and the agent ships
+    # the log to the CP, so the workspaces' last connections are recorded only while both are
+    # up, and the scale-in destroys the instance's disk with whatever it had not shipped. So:
+    # no workspace task left, then the CP has accepted the whole log, then the scale-in. Any
+    # of these that cannot be confirmed stops here with the gateway and the CP still running.
+    if [ "$(af_gateway_state "$AF_STACK_NETWORK")" = on ]; then
+      if [ "$AF_DRY" != 1 ]; then
+        echo "==> waiting until no Workspace task is left (the egress gateway must see their connections close)"
+        if ! ws_tasks_wait; then
+          echo "ERROR: Workspace tasks may still be running, so the egress gateway and the control plane are" >&2
+          echo "       left running. Run pause.sh again once they have stopped." >&2
+          exit 1
+        fi
+        echo "==> draining the egress gateway: Squid stopped, waiting until the CP has accepted all of its log"
+        if ! af_gateway_drain "$AF_STACK_NETWORK"; then
+          echo "ERROR: the CP has not accepted all of the egress gateway's log, so the gateway and the CP are" >&2
+          echo "       left running (stopping it now would destroy those records). Check the agent" >&2
+          echo "       (journalctl -u af-egress-agent on the instance) and run pause.sh again. To give the records" >&2
+          echo "       up, deploy $AF_STACK_NETWORK with GatewayEnabled=false yourself." >&2
+          exit 1
+        fi
+      fi
+      echo "==> stopping the egress gateway through $AF_STACK_NETWORK (its interface and Elastic IP are kept)"
+      net_set GatewayEnabled=false
+    fi
+
     echo "==> stopping the control plane"
     af_run "${AWS[@]}" ecs update-service --cluster "$CLUSTER" --service "$CP_SERVICE" \
       --desired-count 0 >/dev/null
@@ -492,7 +609,7 @@ EOF
         natnote="NAT (kept: --keep-nat)"
       else
         echo "==> deleting the NAT gateway through $AF_STACK_NETWORK (the egress address is kept)"
-        nat_set false
+        net_set NatEnabled=false
       fi
     fi
     cat <<EOF

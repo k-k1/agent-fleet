@@ -367,7 +367,9 @@ Workspace をすべて止めても、配備の床の費用は残ります。Cont
   ゲートウェイが無い間、プライベートサブネットからは外へ出られません。AWS は止めた RDS インスタンスを
   7 日後に自動で起動します。データスタックの再停止の仕組み（`RdsRestopOnForcedStart`、既定で有効）が、
   一時停止のタグが付いている間はもう一度止めます。古いデータスタックには、そのスタックを 1 回デプロイ
-  すると入ります。`--up` は NAT ゲートウェイ、データベース、Control Plane を戻し、Workspace はメンバーが
+  すると入ります。egress ゲートウェイ（`EgressRoute=gateway`）がある配備では、Control Plane より先に
+  ゲートウェイのインスタンスも止め（アドレスは残します）、`--up` はゲートウェイが通信を通せるようになるまで待ちます。
+  `--up` は NAT ゲートウェイ、データベース、Control Plane を戻し、Workspace はメンバーが
   自分で起動します。ロードバランサ、EFS、データベースのストレージは課金が続きます。
 - **GKE（`kubernetes`）**: `deploy/gcp/gke/pause.sh --project <p> --location <リージョンまたはゾーン> --prefix <name_prefix>`。
   kubectl がそのクラスタを指すシェルで実行します。コンテキストのサーバーと CA がそのクラスタのもの

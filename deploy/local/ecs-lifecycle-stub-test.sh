@@ -96,6 +96,8 @@ sed -e 's/^AF_PERSISTENCE=delete$/AF_PERSISTENCE=retain/' \
 echo "Persistence=retain" > "$STATE5/params/10-data"
 
 export AF_TAG_GRACE_SEC=0   # pause.sh --up waits this long after clearing the af-paused tag
+# The egress gateway's polls (readiness, drain, Workspace tasks): no sleeping in between.
+export AF_GATEWAY_POLL_SEC=0
 
 # --- fake aws. Answers queries in the same shape the real one does ----------
 cat > "$STUB/aws" <<'FAKE'
@@ -136,6 +138,8 @@ case "$args" in
   *"backup get-backup-selection"*"BackupSelection.Resources"*)
     [ "${STUB_VAULT:-}" = noplan ] && echo "arn:aws:elasticfilesystem:ap-northeast-1:111122223333:file-system/fs-other" \
       || echo "arn:aws:elasticfilesystem:ap-northeast-1:111122223333:file-system/fs-1" ;;
+  # 00-network's GatewayEni (EgressRoute=gateway), before the database lookup below.
+  *"logical-resource-id GatewayEni"*) echo "eni-gw" ;;
   *"--profile p2"*"describe-stack-resource"*) echo "t-db" ;;
   *"describe-stack-resource"*) echo "None" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EfsId']"*) echo "fs-1" ;;
@@ -223,6 +227,8 @@ case "$args" in
   *"ParameterKey=='S3EndpointEnabled'"*) echo "${STUB_S3EP:-None}" ;;
   *"ParameterKey=='WorkspaceSubnets'"*) echo "${STUB_ING_WS:-None}" ;;
   *"ParameterKey=='EgressRoute'"*) echo "${STUB_EGRESS_ROUTE:-None}" ;;
+  # Unset = a gateway stack older than the switch (its gateway is on).
+  *"ParameterKey=='GatewayEnabled'"*) echo "${STUB_GW_ENABLED:-None}" ;;
   *"ParameterKey=='EgressTokenSecretArn'"*) echo "${STUB_ING_EGRESS:-None}" ;;
   *"--stack-name t-platform"*"ParameterKey=='EgressArchiveBucket'"*) echo "${STUB_PLAT_ARCHIVE:-None}" ;;
   *"ParameterKey=='EgressArchiveBucket'"*) echo "${STUB_ING_ARCHIVE:-None}" ;;
@@ -269,7 +275,9 @@ case "$args" in
   # scale a Workspace down and report it as an engine.
   *"ecs describe-services"*"af-af-ecs-engines-"*)
     [ "${STUB_ENGINE_SVC_UP:-0}" = 1 ] && echo "af-af-ecs-engines-image" || echo "" ;;
-  *"ecs describe-services"*) echo "af-ws-alice" ;;
+  # STUB_WS_DESIRED0=1: every workspace service is already at desired 0 (stopped by its user a
+  # moment ago, or by an earlier pause cut short), while its task may still be running.
+  *"ecs describe-services"*) [ "${STUB_WS_DESIRED0:-0}" = 1 ] && echo "" || echo "af-ws-alice" ;;
   *"ecs list-container-instances"*) echo "arn:aws:ecs:x:1:container-instance/ci-1" ;;
   *"ecs list-task-definitions"*) echo "arn:aws:ecs:x:1:task-definition/af-ws-alice:1" ;;
   # The engines' GPU boxes (af-role=engine-*), before the slot branch that answers everything.
@@ -283,6 +291,41 @@ case "$args" in
     esac ;;
   *"ec2 describe-instances"*)
     if [ "${STUB_NO_SLOTS:-0}" = 1 ]; then echo ""; else echo "i-1"; fi ;;
+  # The egress gateway's interface and its checks through SSM. STUB_GW_ATTACH= (empty) is an
+  # interface no instance has attached. STUB_GW_PROBE is what the readiness check answers;
+  # "model" is a gateway whose agent gets its first policy only once the CP is up (the log is
+  # the clock). STUB_GW_DRAIN is the drain's answer: drained, pending (never), or late (pending
+  # on the first ask, a CP report that failed once).
+  *"ec2 describe-network-interfaces"*)
+    [ "${STUB_ENI_FAIL:-0}" = 1 ] && { echo "An error occurred (UnauthorizedOperation)" >&2; exit 254; }
+    printf '%s\n' "${STUB_GW_ATTACH-attached	i-gw}" ;;
+  *"ssm send-command"*"egress gateway drain"*) echo "cmd-drain" ;;
+  *"ssm send-command"*) echo "cmd-probe" ;;
+  *"ssm get-command-invocation --command-id cmd-drain"*)
+    case "${STUB_GW_DRAIN:-drained}" in
+      pending) printf 'Success\taf-gw-pending 120 bytes not yet accepted by the CP\n' ;;
+      late) [ "$(grep -c "get-command-invocation --command-id cmd-drain" "$STUB_LOG")" -ge 2 ] \
+              && printf 'Success\taf-gw-drained\n' || printf 'Success\taf-gw-pending 120 bytes\n' ;;
+      *) printf 'Success\taf-gw-drained\n' ;;
+    esac ;;
+  *"ssm get-command-invocation"*)
+    probe="${STUB_GW_PROBE:-af-gw-ready}"
+    if [ "$probe" = model ]; then
+      grep -q "af-t-ingress-cp --desired-count 1" "$STUB_LOG" && probe=af-gw-ready || probe=af-gw-up
+    fi
+    printf 'Success\t%s\n' "$probe" ;;
+  # Workspace tasks still alive (pause.sh before it stops the egress gateway). One task of a
+  # workspace service; STUB_WS_TASKS: gone (default), stuck, late (alive on the first look),
+  # fail (the read is refused).
+  *"ecs list-tasks"*"--desired-status RUNNING"*) echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
+  *"ecs list-tasks"*) echo "None" ;;
+  *"ecs describe-tasks"*)
+    case "${STUB_WS_TASKS:-gone}" in
+      stuck) echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
+      late) [ "$(grep -c "ecs describe-tasks" "$STUB_LOG")" -ge 2 ] && echo "" || echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
+      fail) echo "An error occurred (AccessDeniedException) when calling the DescribeTasks operation" >&2; exit 254 ;;
+      *) echo "" ;;
+    esac ;;
   *"ec2 describe-volumes"*) echo "vol-1" ;;
   *"ec2 describe-snapshots"*) echo "snap-1" ;;
   *"efs describe-access-points"*) echo "fsap-1" ;;
@@ -992,6 +1035,12 @@ efs_standup p STUB_EGRESS_ADDR=10.20.0.50:3128 STUB_EGRESS_SECRET="$SECRET_ARN"
 grep -q "deploy --stack-name t-ingress .*EgressProxyAddr=10.20.0.50:3128.*EgressTokenSecretArn=$SECRET_ARN" "$LOG" \
   || fail "standup.sh did not pass the egress gateway's outputs to 30-ingress"
 grep -q "runs the egress gateway" "$WORK/out3e" || fail "standup.sh did not warn about the egress gateway"
+grep -q "pause.sh refuses" "$WORK/out3e" && fail "standup.sh still says pause.sh refuses the gateway (#2729)"
+# It waits for the gateway's first policy once the CP is up, and says when it has none.
+order "cloudformation deploy --stack-name t-ingress" "ssm send-command --instance-ids i-gw"
+grep -q "first policy applied" "$WORK/out3e" || fail "standup.sh did not report the egress gateway ready"
+efs_standup p STUB_EGRESS_ADDR=10.20.0.50:3128 STUB_EGRESS_SECRET="$SECRET_ARN" STUB_GW_PROBE=af-gw-up AF_GATEWAY_WAIT_SEC=0
+grep -q "the egress gateway is not ready" "$WORK/out3e" || fail "standup.sh did not warn about a gateway without a policy"
 echo "EgressTokenSecretArn=arn:stale" >> "$STATE/params/30-ingress"
 efs_standup p
 if grep -q "EgressTokenSecretArn=arn:stale" "$LOG"; then fail "standup.sh passed the captured EgressTokenSecretArn"; fi
@@ -1779,19 +1828,229 @@ STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_ING_WS=subnet-0a,subnet-0b STUB_S3EP=tr
   "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4jw5" 2>&1 </dev/null
 if grep -q "WARNING: .* has workspace subnets" "$WORK/out4jw5"; then fail "warned although the CP uses the workspace subnets"; fi
 
-echo "== case 4j-egress: pause.sh refuses a network stack running the egress gateway (#2729) =="
+echo "== case 4j-egress: pause stops the egress gateway after the Workspaces and before the CP (#2729) =="
+GW_DOWN="--parameter-overrides GatewayEnabled=false"
 : > "$LOG"
-if STUB_EGRESS_ROUTE=gateway "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4je" 2>&1 </dev/null; then
-  fail "pause.sh paused a stack with EgressRoute=gateway"
-fi
-grep -q "EgressRoute=nat-gateway only (#2729)" "$WORK/out4je" || fail "pause.sh did not say why it refused"
-hasnt "cloudformation deploy"; hasnt "update-service"
+STUB_EGRESS_ROUTE=gateway \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4je" 2>&1 </dev/null \
+  || { cat "$WORK/out4je"; fail "pause.sh failed on a stack with EgressRoute=gateway"; }
+order "ecs update-service --cluster t-cluster --service af-ws-alice --desired-count 0" "ecs describe-tasks"
+order "ecs describe-tasks" "ssm send-command --instance-ids i-gw"
+grep -q "ssm send-command .*egress gateway drain" "$LOG" || fail "pause.sh did not drain the gateway"
+order "get-command-invocation --command-id cmd-drain" "$GW_DOWN"
+order "$GW_DOWN" "$CP_DOWN"
+grep -q "$NAT_DEL .*--capabilities CAPABILITY_IAM $GW_DOWN" "$LOG" || fail "the gateway was not stopped through the network stack"
+# The NAT still goes last, in its own deploy that leaves the gateway switch alone.
+order "$CP_DOWN" "--parameter-overrides NatEnabled=false"
+grep "NatEnabled=false" "$LOG" | grep -q "GatewayEnabled" && fail "the NAT deploy touched GatewayEnabled"
+# Never the interface or the address: they are the route target and the egress address.
+hasnt "release-address"; hasnt "disassociate-address"; hasnt "delete-network-interface"; hasnt "detach-network-interface"
+hasnt "autoscaling "   # through the stack only, or the next deploy scales it back
+
+echo "== case 4j-egress-scripts: what the gateway runs: applied (not just written) policy, and the drain =="
+# The two scripts env.sh sends through SSM, run here with fake systemctl / journalctl and their
+# paths moved under $GW. Python is the real one (the drain reads xattrs and state.json).
+GW="$WORK/gw"; mkdir -p "$GW/bin" "$GW/lib" "$GW/log" "$GW/run"
+gw_script() { # gw_script PROBE|DRAIN -> the script with its paths under $GW
+  # shellcheck disable=SC1091  # only the two variables are read
+  ( . "$ECS/env.sh"; eval "printf '%s\n' \"\$AF_GATEWAY_$1\"" ) |
+    sed -e "s#/var/lib/af-egress-agent#$GW/lib#g" -e "s#/var/log/squid#$GW/log#g" -e "s#/run/#$GW/run/#g"
+}
+# Squid's state is a file: stop creates it (GW_STOP=fail fails, GW_STOP=noop leaves Squid
+# running), start removes it.
+cat > "$GW/bin/systemctl" <<'FAKE'
+#!/usr/bin/env bash
+echo "systemctl $*" >> "$GW_LOG"
+case "$1" in
+  is-active) [ "${*: -1}" = squid ] && [ -e "$GW_STATE/squid-stopped" ] && exit 3
+             [ "${GW_ACTIVE:-1}" = 1 ] ;;
+  stop) case "${GW_STOP:-ok}" in
+          fail) echo "injected stop failure" >&2; exit 1 ;;
+          noop) ;;
+          *) touch "$GW_STATE/squid-stopped" ;;
+        esac ;;
+  start) rm -f "$GW_STATE/squid-stopped" ;;
+  show) echo "${GW_INV:-inv-now}" ;;
+esac
+FAKE
+cat > "$GW/bin/journalctl" <<'FAKE'
+#!/usr/bin/env bash
+for a in "$@"; do case "$a" in _SYSTEMD_INVOCATION_ID=*) cat "$GW_JOURNAL/${a#*=}" 2>/dev/null ;; esac; done
+FAKE
+chmod +x "$GW/bin/systemctl" "$GW/bin/journalctl"
+mkdir -p "$GW/journal"
+gw_run() { GW_LOG="$GW/calls" GW_JOURNAL="$GW/journal" GW_STATE="$GW/run" PATH="$GW/bin:$PATH" bash -c "$(gw_script "$1")"; }
+MODE_AGENT='# Generated by control-plane egress-agent. Do not edit: the next policy change overwrites it.
+# mode: enforce'
+# Journal lines as `journalctl -o short-unix` prints them; the files' mtimes are set to match.
+jl() { echo "$1 ip-10-20-0-5 af-cp[812]: 2026/10/25 09:00:00 egress-agent: $2"; }
+policy_at() { # policy_at <unix time> [bootstrap]: the two policy files, last written then
+  if [ "${2:-}" = bootstrap ]; then printf '# bootstrap: closed until the first policy\nhttp_access deny all\n' > "$GW/lib/af-mode.conf"
+  else printf '%s\n' "$MODE_AGENT" > "$GW/lib/af-mode.conf"; fi
+  echo .example.com > "$GW/lib/af-allow.txt"
+  touch -d "@$1" "$GW/lib/af-mode.conf" "$GW/lib/af-allow.txt"
+}
+APPLIED='policy applied (enforce)'
+policy_at 1000 bootstrap; jl 1100 "$APPLIED" > "$GW/journal/inv-now"
+[ "$(gw_run PROBE)" = af-gw-up ] || fail "probe: the bootstrap mode file read as ready"
+policy_at 1000; : > "$GW/journal/inv-now"; jl 1100 "$APPLIED" > "$GW/journal/inv-old"
+[ "$(gw_run PROBE)" = af-gw-up ] || fail "probe: a policy applied by an earlier run of the agent read as ready"
+jl 1100 'policy not updated, keeping the last one that worked: reload: exit status 1' > "$GW/journal/inv-now"
+[ "$(gw_run PROBE)" = af-gw-up ] || fail "probe: a written policy whose reload failed read as ready"
+jl 1100 "$APPLIED" > "$GW/journal/inv-now"
+[ "$(gw_run PROBE)" = af-gw-ready ] || fail "probe: an applied policy did not read as ready"
+# Started while the CP was down: the policy on disk (written by an earlier run) reloaded; the CP
+# later answers with the same policy, so no "policy applied" ever follows. Ready all the same.
+{ jl 1100 'reloaded Squid with the policy on disk (enforce)'
+  jl 1130 'policy not updated, keeping the last one that worked: dial tcp: connection refused'; } > "$GW/journal/inv-now"
+[ "$(gw_run PROBE)" = af-gw-ready ] || fail "probe: a policy reloaded from disk in this run (CP answers the same) did not read as ready"
+# A new instance: the bootstrap files reloaded from disk while the CP was down, then the CP's
+# policy written and its reload failed, or not run yet. Squid still has the bootstrap policy.
+policy_at 1150; { jl 1100 'reloaded Squid with the policy on disk (log-only)'
+  jl 1160 'policy not updated, keeping the last one that worked: reload: exit status 1'; } > "$GW/journal/inv-now"
+[ "$(gw_run PROBE)" = af-gw-up ] || fail "probe: a bootstrap reload followed by a failed reload of the CP's policy read as ready"
+jl 1100 'reloaded Squid with the policy on disk (log-only)' > "$GW/journal/inv-now"
+[ "$(gw_run PROBE)" = af-gw-up ] || fail "probe: a bootstrap reload with the CP's policy written but not yet reloaded read as ready"
+jl 1170 "$APPLIED" >> "$GW/journal/inv-now"
+[ "$(gw_run PROBE)" = af-gw-ready ] || fail "probe: the CP's policy reloaded after it was written did not read as ready"
+# Only the allow file changed (same mode): its write counts too.
+touch -d @1200 "$GW/lib/af-allow.txt"
+[ "$(gw_run PROBE)" = af-gw-up ] || fail "probe: an allow file written after the last reload read as ready"
+policy_at 1000; jl 1100 "$APPLIED" > "$GW/journal/inv-now"
+[ "$(GW_ACTIVE=0 gw_run PROBE)" = af-gw-starting ] || fail "probe: stopped services did not read as starting"
+: > "$GW/calls"; touch "$GW/run/af-egress-drained"
+gw_run PROBE > /dev/null
+grep -q "systemctl start squid" "$GW/calls" && [ ! -e "$GW/run/af-egress-drained" ] \
+  || fail "probe: Squid stopped by a drain was not started again"
+: > "$GW/calls"; gw_run PROBE > /dev/null
+grep -q "systemctl start" "$GW/calls" && fail "probe: started Squid without the drain's marker (a booting box would run the default config)"
+# The drain: the log against the committed offsets, by generation id.
+printf 'a\nbb\n' > "$GW/log/af-egress.log"; printf 'old\n' > "$GW/log/af-egress.log.0"
+python3 -c "import os,sys; os.setxattr(sys.argv[1],'user.af-egress.gen',b'g1'); os.setxattr(sys.argv[2],'user.af-egress.gen',b'g0')" \
+  "$GW/log/af-egress.log" "$GW/log/af-egress.log.0" || fail "drain: this filesystem has no user xattrs (the check cannot run)"
+echo '{"offsets":{"g1":2,"g0":4}}' > "$GW/lib/state.json"
+: > "$GW/calls"
+gw_run DRAIN | grep -q '^af-gw-pending 3 ' || fail "drain: a log line the CP has not accepted read as drained"
+grep -q "systemctl stop squid" "$GW/calls" && [ -e "$GW/run/af-egress-drained" ] || fail "drain: Squid was not stopped behind its marker"
+echo '{"offsets":{"g1":5}}' > "$GW/lib/state.json"
+gw_run DRAIN | grep -q '^af-gw-pending 4 ' || fail "drain: an unshipped rotated log read as drained"
+echo '{"offsets":{"g1":5,"g0":4}}' > "$GW/lib/state.json"
+[ "$(gw_run DRAIN)" = af-gw-drained ] || fail "drain: a fully accepted log did not read as drained"
+# A Squid that did not stop has no final log, however much of it was accepted.
+rm -f "$GW/run/squid-stopped"
+out="$(GW_STOP=fail gw_run DRAIN 2>/dev/null)"
+case "$out" in af-gw-error*) ;; *) fail "drain: a failed Squid stop read as '$out'" ;; esac
+out="$(GW_STOP=noop gw_run DRAIN)"
+case "$out" in af-gw-error*) ;; *) fail "drain: a Squid still running read as '$out'" ;; esac
+rm -f "$GW/run/af-egress-drained" "$GW/run/squid-stopped"; chmod 0555 "$GW/run"
+out="$(gw_run DRAIN 2>/dev/null)"; chmod 0755 "$GW/run"
+[ "$out" = 'af-gw-error: cannot write the drain marker' ] || fail "drain: an unwritable marker read as '$out'"
+rm "$GW/lib/state.json"
+gw_run DRAIN | grep -q '^af-gw-pending' || fail "drain: no state file read as drained"
+
+echo "== case 4j-egress-drain: nothing unconfirmed is destroyed: tasks, task reads and the log =="
+# A workspace already at desired 0 (no service to stop) whose task is still up is waited for.
 : > "$LOG"
-if STUB_EGRESS_ROUTE=gateway "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4je2" 2>&1 </dev/null; then
-  fail "pause.sh --up ran on a stack with EgressRoute=gateway"
+STUB_EGRESS_ROUTE=gateway STUB_WS_DESIRED0=1 STUB_WS_TASKS=late \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4jd" 2>&1 </dev/null \
+  || { cat "$WORK/out4jd"; fail "pause.sh failed waiting for a desired-0 workspace task"; }
+hasnt "ecs update-service --cluster t-cluster --service af-ws-alice"
+[ "$(grep -c "ecs describe-tasks" "$LOG")" -ge 2 ] || fail "the desired-0 task was not waited for"
+order_again "ecs describe-tasks" "$GW_DOWN"
+# A task that stays, a task read that is refused, a log the CP has not accepted: the gateway
+# and the CP are both left running, and the run fails.
+for knob in STUB_WS_TASKS=stuck STUB_WS_TASKS=fail STUB_ENI_FAIL=1 STUB_GW_DRAIN=pending; do
+  : > "$LOG"
+  if env STUB_EGRESS_ROUTE=gateway "$knob" AF_WS_TASK_WAIT_SEC=0 AF_GATEWAY_DRAIN_SEC=0 \
+       "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4jd2" 2>&1 </dev/null; then
+    fail "pause.sh exited 0 with $knob"
+  fi
+  hasnt "GatewayEnabled="; hasnt "$CP_DOWN"; hasnt "NatEnabled=false"
+  grep -q "left running" "$WORK/out4jd2" || fail "$knob: pause.sh did not say the gateway and the CP were left running"
+done
+grep -q "not accepted all of the egress gateway's log" "$WORK/out4jd2" || fail "the drain failure did not say why"
+# A report that failed once (the agent backs off) is waited out, not given up on.
+: > "$LOG"
+STUB_EGRESS_ROUTE=gateway STUB_GW_DRAIN=late \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4jd3" 2>&1 </dev/null \
+  || { cat "$WORK/out4jd3"; fail "pause.sh gave up on a drain that completes on the second look"; }
+order_again "get-command-invocation --command-id cmd-drain" "$GW_DOWN"
+: > "$LOG"
+STUB_EGRESS_ROUTE=gateway STUB_GW_ENABLED=false \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4je2" 2>&1 </dev/null
+hasnt "GatewayEnabled="   # already stopped
+: > "$LOG"
+STUB_EGRESS_ROUTE=gateway \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --fast > "$WORK/out4je3" 2>&1 </dev/null
+grep -q "engines idle -> egress gateway stopped -> CP desired 0" "$WORK/out4je3" || fail "the plan did not show the gateway step"
+hasnt "cloudformation deploy"
+: > "$LOG"
+STUB_EGRESS_ROUTE=gateway \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast --dry-run > "$WORK/out4je4" 2>&1 </dev/null
+grep -q "DRY: cloudformation deploy --stack-name t-network .*GatewayEnabled=false" "$WORK/out4je4" || fail "dry-run did not print the gateway step"
+hasnt "cloudformation deploy"
+
+echo "== case 4j-egress2: --up starts the gateway with the NAT and waits for it before and after the CP =="
+: > "$LOG"
+STUB_EGRESS_ROUTE=gateway STUB_GW_ENABLED=false STUB_NAT_ENABLED=false STUB_GW_PROBE=model \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4je5" 2>&1 </dev/null \
+  || { cat "$WORK/out4je5"; fail "pause.sh --up failed on a stack with EgressRoute=gateway"; }
+grep -q "$NAT_DEL .*--parameter-overrides NatEnabled=true GatewayEnabled=true" "$LOG" \
+  || fail "--up did not start the NAT and the gateway in one network deploy"
+order "GatewayEnabled=true" "ssm send-command --instance-ids i-gw"
+order "ssm send-command --instance-ids i-gw" "$CP_UP"   # up before any workspace can start
+order_again "$CP_UP" "ssm send-command --instance-ids i-gw"   # and its first policy after the CP
+grep -q "first policy from the control plane" "$WORK/out4je5" || fail "--up did not say it waits for the first policy"
+# A gateway that is already on is still waited for (an earlier --up may have stopped half way).
+: > "$LOG"
+STUB_EGRESS_ROUTE=gateway \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4je6" 2>&1 </dev/null
+hasnt "$NAT_DEL"
+order "ssm send-command --instance-ids i-gw" "$CP_UP"
+# An interface nobody attaches: the CP stays down.
+: > "$LOG"
+if STUB_EGRESS_ROUTE=gateway STUB_GW_ENABLED=false STUB_GW_ATTACH='' AF_GATEWAY_WAIT_SEC=0 \
+     "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4je7" 2>&1 </dev/null; then
+  fail "--up exited 0 although the gateway never attached its interface"
 fi
-STUB_EGRESS_ROUTE=gateway "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4je3" 2>&1 </dev/null \
-  || fail "pause.sh --status refused a stack with EgressRoute=gateway"
+hasnt "$CP_UP"
+grep -q "eni-gw is not attached" "$WORK/out4je7" || fail "--up did not say what it last saw of the gateway"
+# Up, but no policy once the CP is there: a failure, after the CP.
+: > "$LOG"
+if STUB_EGRESS_ROUTE=gateway STUB_GW_PROBE=af-gw-up AF_GATEWAY_WAIT_SEC=0 \
+     "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4je8" 2>&1 </dev/null; then
+  fail "--up exited 0 although the gateway never got a policy"
+fi
+has "$CP_UP"
+grep -q "has no policy from it" "$WORK/out4je8" || fail "--up did not say the gateway has no policy"
+# Squid or the agent not running is not "up".
+: > "$LOG"
+if STUB_EGRESS_ROUTE=gateway STUB_GW_PROBE=af-gw-starting AF_GATEWAY_WAIT_SEC=0 \
+     "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4je9" 2>&1 </dev/null; then
+  fail "--up exited 0 although Squid / the agent were not running"
+fi
+hasnt "$CP_UP"
+
+echo "== case 4j-egress3: --status shows the gateway; a stack without one is paused exactly as before =="
+: > "$LOG"
+STUB_EGRESS_ROUTE=gateway \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4je10" 2>&1 </dev/null
+grep -q "egress gateway: on (i-gw)" "$WORK/out4je10" || fail "status did not show the running gateway"
+grep -q "the egress gateway is on while the control plane is paused" "$WORK/out4je10" || fail "status did not flag a gateway left on"
+hasnt "cloudformation deploy"; hasnt "ssm send-command"
+: > "$LOG"
+STUB_EGRESS_ROUTE=gateway STUB_GW_ENABLED=false \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4je11" 2>&1 </dev/null
+grep -q "egress gateway: stopped" "$WORK/out4je11" || fail "status did not show the stopped gateway"
+: > "$LOG"
+"$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4je12" 2>&1 </dev/null
+grep -q "egress gateway" "$WORK/out4je12" && fail "status showed a gateway on a stack without one"
+for mode in --fast --up; do
+  : > "$LOG"
+  STUB_NAT_ENABLED=false STUB_GW_ENABLED=false \
+    "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes "$mode" > "$WORK/out4je13" 2>&1 </dev/null
+  hasnt "GatewayEnabled="; hasnt "ssm send-command"; hasnt "describe-network-interfaces"; hasnt "ecs describe-tasks"
+done
 
 echo "== case 4k: --status shows the NAT, and names the re-stop Lambda when the stack has one =="
 : > "$LOG"
@@ -1811,6 +2070,12 @@ echo "NatEnabled=false" >> "$STATE6/params/00-network"
 "$ECS/standup.sh" --profile p6 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4l" </dev/null
 grep -q "NatEnabled=true" "$WORK/out4l" || fail "standup did not force NatEnabled=true"
 if grep -q "NatEnabled=false" "$WORK/out4l"; then fail "standup passed the captured NatEnabled=false on"; fi
+# The same for a capture taken with the egress gateway stopped.
+echo "GatewayEnabled=false" >> "$STATE6/params/00-network"
+: > "$LOG"
+"$ECS/standup.sh" --profile p6 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4l2" </dev/null
+grep -q "GatewayEnabled=true" "$WORK/out4l2" || fail "standup did not force GatewayEnabled=true"
+if grep -q "GatewayEnabled=false" "$WORK/out4l2"; then fail "standup passed the captured GatewayEnabled=false on"; fi
 
 echo "== case 4m: a tag that cannot be written is an error, not a quiet success =="
 : > "$LOG"

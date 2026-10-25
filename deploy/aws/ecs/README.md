@@ -896,6 +896,30 @@ the gateway is gone every proxy-aware client in it times out. So take the proxy 
    workspace route moves back to the NAT gateway; `GatewayEip` is retained.
 4. Run `update.sh` (it passes the now-empty outputs and changes nothing else).
 
+**Pausing (#2729).** `pause.sh` stops the gateway through `00-network`'s `GatewayEnabled`:
+`false` scales the group to zero instances (never by hand with `aws autoscaling`, which the
+next deploy of the stack undoes). `GatewayEni` and `GatewayEip` stay, so `--up` brings back the
+same route target, proxy address and egress address; the Elastic IP keeps billing ($0.005/h).
+The gateway goes before the CP, and only after two things are confirmed: no Workspace task is
+left in the cluster, whatever its service's desired count (`AF_WS_TASK_WAIT_SEC`, default 600),
+and, with Squid stopped so every tunnel is logged, the CP has accepted the whole log (each log
+file's size is under the offset the agent committed in `state.json`; `AF_GATEWAY_DRAIN_SEC`,
+default 300). The scale-in destroys the instance's disk, so if either cannot be confirmed
+`pause.sh` fails and leaves the gateway and the CP running. While the gateway is off the
+workspace route **blackholes**: that is harmless only because no workspace runs, so do not
+start one on a stack with `GatewayEnabled=false`. `--up` starts it in the same deploy as the NAT
+gateway and waits for it twice: before the CP starts, until an instance has attached
+`GatewayEni` and Squid and `af-egress-agent` run; after the CP is up, until the agent's current
+run has applied a policy (written the mode file and logged `policy applied`, or `reloaded Squid
+with the policy on disk` for a run that started while the CP was down; both only after Squid's
+reload succeeded), and the last such line is no older than the policy files. Only the CP can give it that policy, and Squid refuses
+everything until then. A gateway that does not come up keeps the CP down;
+`AF_GATEWAY_WAIT_SEC` (default 1200) bounds each wait. The checks on the instance run through
+SSM Run Command: the operator needs `ssm:SendCommand` (document `AWS-RunShellScript`, on the
+instance tagged `af-egress-gateway=<network stack>`) and `ssm:GetCommandInvocation`; the
+instance role already has `AmazonSSMManagedInstanceCore`. `--status` shows the gateway. `standup.sh` overrides a captured
+`GatewayEnabled=false` to `true` and waits for the first policy at its end.
+
 **Egress event archive (optional, #2732).** The CP can write each past UTC day of raw egress
 events to S3 before it purges them (`AF_EGRESS_ARCHIVE_URL`, #2699; `docs/build/03-control-plane.md`
 §3.8). It is off until 10-data owns a bucket for it:
@@ -916,10 +940,9 @@ only, and the endpoint policy admits the same bucket for this account. Only a bu
 way works: a bucket of your own is refused at the endpoint. Parameters, the grant and the
 reasoning: `cfn/PARAMETERS.md`, "The egress archive". Not yet run on a real account.
 
-**Limits of this first stage.** `pause.sh` refuses a stack with `EgressRoute=gateway` and
-`standup.sh` warns (#2729). Workspaces egress from `GatewayEip`, not `NatEip`; moving one
-address between the two is #2728. Squid, the agent and this configuration have **not been
-run on a real account**.
+**Limits of this first stage.** Workspaces egress from `GatewayEip`, not `NatEip`; moving one
+address between the two is #2728. Squid, the agent and this configuration, pausing and
+resuming included, have **not been run on a real account**.
 
 **Checking the agent against a real Squid (#2687).** On a sandbox with `EgressRoute=gateway`:
 
@@ -972,7 +995,7 @@ service supports it:
 | route53 | DNS validation + alias | ChangeResourceRecordSets/GetHostedZone/ListResourceRecordSets (on the zone) |
 | logs | log groups | CreateLogGroup/DeleteLogGroup/PutRetentionPolicy/Describe* |
 | iam | 20-platform named roles, 10-data's EFS backup role, the managed policies 30/40/60 attach to the CP task role | CreateRole/DeleteRole/Get/PassRole, Put/Delete/Attach/DetachRolePolicy, CreatePolicy/DeletePolicy/GetPolicy, Create/Delete/ListPolicyVersions (→ `CAPABILITY_NAMED_IAM`; `CAPABILITY_IAM` for 10-data) |
-| ssm | CP secrets (out-of-band) | PutParameter/DeleteParameter under `/af-cp/*` |
+| ssm | CP secrets (out-of-band); the egress gateway's readiness and drain checks (`pause.sh`, `standup.sh`, `EgressRoute=gateway` only) | PutParameter/DeleteParameter under `/af-cp/*`; `SendCommand` on `arn:aws:ssm:<region>::document/AWS-RunShellScript` and on instances tagged `af-egress-gateway=<network stack>` (`ssm:resourceTag/af-egress-gateway`), and `GetCommandInvocation` |
 | sts | account resolution in release-ecr.sh | GetCallerIdentity |
 
 ## Workspace size (CPU / memory / working disk)
@@ -2272,8 +2295,10 @@ hardcoded default gets wrong (one names its pool stack `af-ecs-pool`, another
     (`S3EndpointEnabled=false`, passed when the stack has never had the switch), and `--up`
     warns, before any workspace can start, when the CP is not using the network's workspace
     subnets: run `update.sh`, then follow the migration in the NAT bullet below.
-    With `EgressRoute=gateway` (ADR 0122) `pause.sh` refuses to pause or resume and `standup.sh`
-    warns: neither stops or restores the egress gateway yet (#2729, "Egress gateway").
+    With `EgressRoute=gateway` (ADR 0122) the egress gateway is scaled to zero through
+    `GatewayEnabled=false` after the Workspaces and before the CP; `--up` starts it with the NAT
+    gateway and waits for it before and after the CP ("Egress gateway", "Pausing"). Its
+    interface and Elastic IP are never touched.
   - 🔴 **AWS starts a stopped RDS instance again after 7 days** (event `RDS-EVENT-0154`) and
     cannot be told not to. `10-data` (`RdsRestopOnForcedStart`, default `true`) therefore carries
     an EventBridge rule (`RDS-EVENT-0154` forced start, and `RDS-EVENT-0088` started, which covers

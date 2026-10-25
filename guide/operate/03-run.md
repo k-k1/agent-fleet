@@ -395,7 +395,9 @@ nothing. `--keep-db` leaves the database running.
   source IP is the same after `--up`. Nothing in a private subnet reaches out while it is gone. AWS
   starts a stopped RDS instance again by itself after 7 days; the data stack's re-stop function
   (`RdsRestopOnForcedStart`, on by default) stops it again while the instance carries the pause tag,
-  and an older data stack gets it with one deploy of that stack. `--up` brings back the NAT gateway,
+  and an older data stack gets it with one deploy of that stack. With the egress gateway
+  (`EgressRoute=gateway`) it also stops the gateway instance before the Control Plane, keeping its
+  address, and `--up` waits until the gateway carries traffic again. `--up` brings back the NAT gateway,
   the database and the Control Plane; members start their own Workspaces. The load balancer, EFS and
   the database's storage keep billing.
 - **GKE (`kubernetes`)**: `deploy/gcp/gke/pause.sh --project <p> --location <region or zone> --prefix <name_prefix>`,
