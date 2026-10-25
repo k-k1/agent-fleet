@@ -72,6 +72,7 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	if out, err := tmuxx.Cmd(args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
 	}
+	noteSessionLaunched(m.Name) // a peer message waits out the boot (peer_boot.go)
 	// Record pane output even when no browser is attached. The helper owns the
 	// size cap; failure here must not prevent the actual session from starting.
 	if pane := tmuxx.SessionPaneID(session.TmuxName(m.Name)); pane != "" {

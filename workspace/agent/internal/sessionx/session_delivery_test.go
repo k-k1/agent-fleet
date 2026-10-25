@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 func TestPromptDraftVisible(t *testing.T) {
@@ -157,5 +159,87 @@ func TestConfirmPromptDeliveryReportsQueuedAsHeld(t *testing.T) {
 	held, err = confirmPromptDelivery(m, "no-such-pane", prompt, base)
 	if err != nil || held {
 		t.Fatalf("enqueue then user line: held=%v err=%v, want delivered", held, err)
+	}
+}
+
+// #2741: a resumed claude replays the notification of a background task that ended while it
+// was stopped, and its turn puts the spinner up. Neither the notification's user line nor that
+// spinner is evidence that the typed prompt started a turn. With nothing appended at all, the
+// spinner keeps its old role as insurance against a delayed jsonl flush.
+func TestDeliveryEvidencedIgnoresATurnClaudeStartedItself(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	m := session.Meta{Name: "resumed_claude", Dir: t.TempDir(), Kind: session.KindClaude}
+	proj := filepath.Join(cfg, "projects", "-resumed")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(proj, session.UUID(m.Dir, m.Name)+".jsonl")
+	if err := os.WriteFile(log, []byte(`{"type":"assistant","message":{"content":[]}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	busy := false
+	orig := deliveryPaneBusy
+	deliveryPaneBusy = func(string) bool { return busy }
+	t.Cleanup(func() { deliveryPaneBusy = orig })
+
+	const prompt = "[agent-fleet:peer from=sparent intent=question reply=required] push the branch"
+	base := deliveryBaseline(m)
+	busy = true
+	if got := deliveryEvidenced(m, base, prompt); got != claude.PromptStarted {
+		t.Fatalf("spinner with nothing appended (a delayed flush): got %v, want started", got)
+	}
+
+	b, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user",
+		"content": "<task-notification>\n<task-id>m1</task-id>\n<status>killed</status>\n</task-notification>"}})
+	f, err := os.OpenFile(log, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Write(append(b, '\n'))
+	f.Close()
+	if got := deliveryEvidenced(m, base, prompt); got != claude.PromptAbsent {
+		t.Fatalf("a replayed task notification running with its spinner up: got %v, want absent", got)
+	}
+}
+
+// #2741: delivery_unconfirmed used to leave the "working" submitPromptTUI wrote on typing, so
+// the session read working while it sat idle with the message lost. The withdrawal writes the
+// unknown idle (never a turn end), and leaves alone a record a hook wrote since and a pane that
+// was busy before the send.
+func TestWithdrawOptimisticWorking(t *testing.T) {
+	isolateAgentState(t)
+	busy := false
+	orig := deliveryPaneBusy
+	deliveryPaneBusy = func(string) bool { return busy }
+	t.Cleanup(func() { deliveryPaneBusy = orig })
+	m := session.Meta{Name: "unconfirmed", Dir: t.TempDir(), Kind: session.KindClaude}
+	sid := session.UUID(m.Dir, m.Name)
+	mark := func() status.SessionStatus {
+		status.Persist(sid, "working")
+		st, _ := status.Read(sid)
+		return st
+	}
+
+	withdrawOptimisticWorking(m, deliverySnapshot{}, mark())
+	if st, _ := status.Read(sid); st.State != "idle" || st.TurnEnd {
+		t.Fatalf("after an unconfirmed send: %+v, want the unknown idle", st)
+	}
+
+	marked := mark()
+	status.Persist(sid, "working") // a hook's write after ours
+	withdrawOptimisticWorking(m, deliverySnapshot{}, marked)
+	if got := status.LiveState(sid); got != "working" {
+		t.Fatalf("a record written since was overwritten: %q", got)
+	}
+
+	withdrawOptimisticWorking(m, deliverySnapshot{paneBusy: true}, mark())
+	if got := status.LiveState(sid); got != "working" {
+		t.Fatalf("a pane busy before the send is working: got %q", got)
+	}
+	busy = true
+	withdrawOptimisticWorking(m, deliverySnapshot{}, mark())
+	if got := status.LiveState(sid); got != "working" {
+		t.Fatalf("a pane busy now is working: got %q", got)
 	}
 }

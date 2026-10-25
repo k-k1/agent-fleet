@@ -272,6 +272,13 @@ const (
 // Once our enqueue is seen, "started" needs a later user line carrying the prompt's text:
 // a running turn appends user lines of its own (tool results), and those must not turn a
 // held prompt into a started one.
+//
+// Without an enqueue the same holds for the lines claude writes on its own: a tool result, an
+// isMeta line, or the <task-notification> a resumed session replays for a background task that
+// ended while it was stopped. Counting any user line let that replay pass for a peer message
+// that never arrived (#2741). A user line that does not carry the prompt's head still counts
+// when it is shaped like a typed prompt, because a slash command with arguments is stored
+// rewritten (<command-name>/x</command-name><command-args>…) and a miss there would retype it.
 func PromptStateSince(sid string, snap map[string]int64, prompt string) PromptState {
 	needle := jsonNeedle(prompt)
 	state := PromptAbsent
@@ -292,8 +299,16 @@ func PromptStateSince(sid string, snap map[string]int64, prompt string) PromptSt
 			}
 		}
 		if queuedAt < 0 {
-			if bytes.Contains(appended, []byte(`"type":"user"`)) {
-				return PromptStarted
+			if needle == nil {
+				if bytes.Contains(appended, []byte(`"type":"user"`)) {
+					return PromptStarted // nothing distinctive to tell our line from another
+				}
+			} else {
+				for _, l := range lines {
+					if userLineCarries(l, needle) || promptShapedUserLine(l) {
+						return PromptStarted
+					}
+				}
 			}
 			// The needle in a line that is neither queue-operation nor user (a format this
 			// code has not met) keeps the old reading: received, and queued is the
@@ -311,6 +326,21 @@ func PromptStateSince(sid string, snap map[string]int64, prompt string) PromptSt
 		}
 	}
 	return state
+}
+
+// promptShapedUserLine reports whether l is a user line something typed into the composer
+// could have produced: not isMeta, not a sidechain or compact summary, no tool_result block,
+// and not a task notification claude injected itself.
+func promptShapedUserLine(l []byte) bool {
+	if !bytes.Contains(l, []byte(`"type":"user"`)) {
+		return false
+	}
+	var fl forkLine
+	if json.Unmarshal(l, &fl) != nil || fl.Type != "user" {
+		return false
+	}
+	return !fl.IsMeta && !fl.IsSidechain && !fl.IsCompactSummary && isUserPrompt(fl.Message.Content) &&
+		!strings.HasPrefix(strings.TrimSpace(contentText(fl.Message.Content)), "<task-notification>")
 }
 
 // appendedSince returns the bytes written to p after off (capped). Appends are whole

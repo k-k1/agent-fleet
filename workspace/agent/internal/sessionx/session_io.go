@@ -364,6 +364,21 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		delivery, isDelivery := pendingDeliveryOf(r)
+		armedAt := time.Now()
+		if !isDelivery {
+			// allow arms the duplicate guard before the outcome is known. A send that ends in an
+			// error (delivery_unconfirmed included) is not known to have arrived, so it disarms
+			// again: refusing the retry as a duplicate is what left the sender with no way to
+			// get the message through (#2741). A 2xx, queued included, keeps it armed.
+			rw := &statusRecorder{ResponseWriter: w}
+			w = rw
+			msg := strings.TrimSpace(body.Prompt)
+			defer func() {
+				if rw.status >= 300 {
+					peerRate.release(body.PeerFrom, name, msg, armedAt)
+				}
+			}()
+		}
 		if isDelivery {
 			// A queued message (peer_pending.go) was counted when it was queued; the rate is
 			// re-checked here, not counted again.
@@ -374,7 +389,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			// them in order (peer_pending.go).
 			blockedOn, n, qerr := enqueueDecision(name, dst, body.PeerFrom, strings.TrimSpace(body.PeerIntent), body.Prompt,
 				func() error {
-					return peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), time.Now())
+					return peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), armedAt)
 				})
 			if _, ok := qerr.(*peerRejection); ok {
 				writePeerErr(w, qerr)
@@ -387,7 +402,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 				writePendingQueued(w, name, blockedOn, n)
 				return
 			}
-			err = peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), time.Now())
+			err = peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), armedAt)
 		}
 		if err != nil {
 			writePeerErr(w, err)
@@ -634,6 +649,12 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	if !submitPromptTUI(lease, w, name, pane, body.Prompt) {
 		return
 	}
+	// The record submitPromptTUI's optimistic "working" wrote, read back so an unconfirmed
+	// delivery can withdraw exactly that write and nothing a hook wrote since.
+	var marked status.SessionStatus
+	if confirmMeta.Name != "" {
+		marked, _ = status.Read(session.UUID(confirmMeta.Dir, name))
+	}
 	rememberCodexTUIMode(name, body.Prompt, nil)
 	held, heldReason := false, ""
 	if cursorTUI {
@@ -643,6 +664,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	} else if body.Confirm && confirmMeta.Name != "" {
 		var err error
 		if held, err = confirmPromptDelivery(confirmMeta, pane, body.Prompt, confirmBase); err != nil {
+			withdrawOptimisticWorking(confirmMeta, confirmBase, marked)
 			// Never dress an unconfirmed delivery up as success: the caller (the CP
 			// scheduler / the operator MCP) records and notifies it as an error instead
 			// of manufacturing a false "fired" (docs/log/38, delivery confirmation).
