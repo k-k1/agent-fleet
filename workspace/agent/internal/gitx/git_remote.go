@@ -484,34 +484,64 @@ func scopeList(set map[string]bool) string {
 	return strings.Join(names, " ")
 }
 
+// bitbucketStoredAuth is the Authorization header the STORED connection would send, in the
+// form BitbucketAuthHeader builds it ("" = not connected). It is the identity of a credential:
+// a response is only evidence about the connection whose header produced it.
+func bitbucketStoredAuth(d *secrets.Data) string {
+	if d.Bitbucket != nil && d.Bitbucket.AccessToken != "" {
+		return "Bearer " + d.Bitbucket.AccessToken
+	}
+	if e, ok := d.Git["bitbucket.org"]; ok && e.Token != "" {
+		return "Basic " + base64.StdEncoding.EncodeToString([]byte(e.User+":"+e.Token))
+	}
+	return ""
+}
+
+var errScopesUnchanged = errors.New("bitbucket scopes unchanged")
+
 // BitbucketGrantedScopes is the stored Bitbucket connection's scope list, space-separated: the
 // recorded one (connect / refresh) when there is one, else `observed` — the X-OAuth-Scopes header
-// of a response the caller already received, so a connection from before scopes were recorded
-// learns them without an extra request. A non-empty observed list is stored. "" = unknown.
-func BitbucketGrantedScopes(s *secrets.Data, observed string) string {
-	oauth := s.Bitbucket != nil && s.Bitbucket.AccessToken != ""
-	if oauth && s.Bitbucket.Scopes != "" {
-		return s.Bitbucket.Scopes
-	}
-	if e, ok := s.Git["bitbucket.org"]; !oauth && ok && e.Scopes != "" {
-		return e.Scopes
-	}
+// of a response the caller already received with `auth`, so a connection from before scopes were
+// recorded learns them without an extra request. "" = unknown.
+//
+// `auth` is the Authorization header that request used. Everything is decided against the store
+// as it is NOW, under its lock: if the connection was replaced while the request was in flight
+// (a different token), the answer is "" and nothing is recorded, so one connection's scopes can
+// never be attributed to another. A non-empty observed list is stored only for the connection
+// that produced it.
+func BitbucketGrantedScopes(auth, observed string) string {
 	observed = scopeList(oauthScopeSet(observed))
-	if observed == "" {
-		return ""
-	}
-	// Written under the store's lock against a fresh read, so recording cannot clobber a token a
-	// concurrent refresh just wrote. A failed save only costs learning it again.
-	_ = secrets.Update(func(d *secrets.Data) error {
-		if oauth && d.Bitbucket != nil && d.Bitbucket.Scopes == "" {
+	var out string
+	err := secrets.Update(func(d *secrets.Data) error {
+		if auth == "" || bitbucketStoredAuth(d) != auth {
+			return errScopesUnchanged // a different connection than the one that answered
+		}
+		oauth := d.Bitbucket != nil && d.Bitbucket.AccessToken != ""
+		if oauth && d.Bitbucket.Scopes != "" {
+			out = d.Bitbucket.Scopes
+			return errScopesUnchanged
+		}
+		e, hasEntry := d.Git["bitbucket.org"]
+		if !oauth && hasEntry && e.Scopes != "" {
+			out = e.Scopes
+			return errScopesUnchanged
+		}
+		if observed == "" {
+			return errScopesUnchanged
+		}
+		if oauth {
 			d.Bitbucket.Scopes = observed
-		} else if e, ok := d.Git["bitbucket.org"]; !oauth && ok && e.Scopes == "" {
+		} else {
 			e.Scopes = observed
 			d.Git["bitbucket.org"] = e
 		}
+		out = observed
 		return nil
 	})
-	return observed
+	if err != nil && !errors.Is(err, errScopesUnchanged) {
+		return "" // the store could not be read: unknown is the safe answer
+	}
+	return out
 }
 
 // BitbucketScopesCanComment reports whether a scope list holds what posting a pull request

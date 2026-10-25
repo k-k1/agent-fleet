@@ -197,11 +197,15 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 		"access_token": tok.AccessToken, "refresh_token": tok.RefreshToken,
 		"expires_in": tok.ExpiresIn, "scopes": strings.TrimSpace(tok.Scopes),
 	})
-	rt, aerr := c.mgr.resolve(r.Context(), st.user, "", st.tenant)
+	res, aerr := c.mgr.resolveFull(r.Context(), st.user, "", st.tenant)
 	if aerr != nil {
 		bbCallbackPage(w, t.workspaceResolveFailed+aerr.message)
 		return
 	}
+	rt := res.rt
+	// Withdraw the cached posting capability before and after the Agent stores the new token (#2709).
+	resetWorkItemCommentCapability(r.Context(), c.mgr.store, res.mv.MembershipID)
+	defer resetWorkItemCommentCapability(r.Context(), c.mgr.store, res.mv.MembershipID)
 	areq, _ := http.NewRequest("PUT", rt.Endpoint()+"/connections/git/bitbucket/oauth", strings.NewReader(string(payload)))
 	areq.Header.Set("Content-Type", "application/json")
 	if rt.Token() != "" {

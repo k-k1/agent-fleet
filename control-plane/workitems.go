@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
@@ -49,6 +50,24 @@ var workItemProviders = map[string]bool{"github": true, "jira": true, "bitbucket
 // Package level (not a field) because the REST face and the events face construct
 // separate workItemsAPI values but share the same memberships.
 var workItemFetchInFlight sync.Map // membershipID -> struct{}
+
+// workItemCommentEpoch counts, per membership, the changes of the Bitbucket connection (connect,
+// reconnect, disconnect). A fetch that began before a change carries the OLD connection's scopes, so
+// its rows must not bring posting capability back into the cache.
+var workItemCommentEpoch sync.Map // membershipID -> *atomic.Int64
+
+func commentEpoch(mid string) *atomic.Int64 {
+	v, _ := workItemCommentEpoch.LoadOrStore(mid, new(atomic.Int64))
+	return v.(*atomic.Int64)
+}
+
+// resetWorkItemCommentCapability withdraws every cached row's posting capability for a membership
+// whose Bitbucket connection just changed or went away. The rows stay (the rail keeps listing
+// them); the next successful fetch under the new connection says what it may post.
+func resetWorkItemCommentCapability(ctx context.Context, st store.WorkItemStore, mid string) {
+	commentEpoch(mid).Add(1)
+	_ = st.ClearWorkItemCanComment(ctx, mid, nil)
+}
 
 type workItemsAPI struct {
 	memberAuth
@@ -351,6 +370,7 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 	if len(due) == 0 {
 		return
 	}
+	epoch := commentEpoch(mid).Load()
 	rows, errs, truncs, err := fetchWorkItemsFromAgent(ctx, res.rt, due)
 	now := store.NowTS()
 	if err != nil {
@@ -369,6 +389,9 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 			// Keep a failed query's cached rows. Dropping them empties the rail on a
 			// single 401.
 			_ = a.store.MarkWorkItemQueryFetched(ctx, q.ID, now, msg)
+			// The kept rows no longer say what the current connection may post: a failed read can
+			// mean the connection changed or lost access.
+			_ = a.store.ClearWorkItemCanComment(ctx, mid, []string{q.ID})
 			continue
 		}
 		ok = append(ok, q.ID)
@@ -383,6 +406,12 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 		_ = a.store.SetWorkItemQueryMatchTotal(ctx, q.ID, truncs[q.ID])
 	}
 	if len(ok) > 0 {
+		if commentEpoch(mid).Load() != epoch {
+			// The connection changed while this fetch was in flight: its flags describe the old one.
+			for i := range items {
+				items[i].CanComment = false
+			}
+		}
 		_ = a.store.ReplaceWorkItems(ctx, mid, ok, items)
 	}
 }

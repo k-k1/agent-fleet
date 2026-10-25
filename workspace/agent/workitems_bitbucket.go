@@ -93,6 +93,7 @@ func bitbucketSearchWorkItems(s *secrets.Data, queryID, query string) ([]workIte
 	rows, scopes, err := bitbucketFetchPullRequests(auth, q, queryID)
 	err = gitx.RefreshBitbucketAndRetry(s, err, func(a string) error {
 		var e error
+		auth = a
 		rows, scopes, e = bitbucketFetchPullRequests(a, q, queryID)
 		return e
 	})
@@ -101,7 +102,7 @@ func bitbucketSearchWorkItems(s *secrets.Data, queryID, query string) ([]workIte
 	}
 	// One answer for the whole page: every row of this connection is commentable or none is. The
 	// scopes are the recorded ones, else the header of this very response.
-	if len(rows) > 0 && gitx.BitbucketScopesCanComment(gitx.BitbucketGrantedScopes(s, scopes)) {
+	if len(rows) > 0 && gitx.BitbucketScopesCanComment(gitx.BitbucketGrantedScopes(auth, scopes)) {
 		for i := range rows {
 			rows[i].CanComment = true
 		}

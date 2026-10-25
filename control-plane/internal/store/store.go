@@ -1772,6 +1772,10 @@ type WorkItemStore interface {
 	// keeps the other queries' rows instead of blanking the rail.
 	ReplaceWorkItems(ctx context.Context, membershipID string, queryIDs []string, items []WorkItem) error
 
+	// ClearWorkItemCanComment withdraws the posting capability of cached rows (the rows stay).
+	// queryIDs empty = every row of the membership.
+	ClearWorkItemCanComment(ctx context.Context, membershipID string, queryIDs []string) error
+
 	ListWorkItemSessions(ctx context.Context, membershipID string) ([]WorkItemSession, error)
 	CreateWorkItemSession(ctx context.Context, s WorkItemSession) error
 	DeleteWorkItemSession(ctx context.Context, id, membershipID string) error

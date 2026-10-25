@@ -161,6 +161,9 @@ func TestBitbucketRowsCanCommentFollowGrantedScope(t *testing.T) {
 			newBBScopeStub(t, tc.header)
 			s := &secrets.Data{Bitbucket: &secrets.BitbucketCreds{AccessToken: "a", RefreshToken: "r",
 				Expiry: 1 << 40, Scopes: tc.recorded}}
+			if err := s.Save(); err != nil {
+				t.Fatal(err)
+			}
 			rows, err := bitbucketSearchWorkItems(s, "q", "acme/web")
 			if err != nil || len(rows) != 1 {
 				t.Fatalf("rows=%v err=%v", rows, err)
@@ -185,6 +188,9 @@ func TestBitbucketTokenRowsCanComment(t *testing.T) {
 		e := s.Git["bitbucket.org"]
 		e.Scopes = scopes
 		s.Git["bitbucket.org"] = e
+		if err := s.Save(); err != nil {
+			t.Fatal(err)
+		}
 		rows, err := bitbucketSearchWorkItems(s, "q", "acme/web")
 		if err != nil || len(rows) != 1 {
 			t.Fatalf("rows=%v err=%v", rows, err)
@@ -218,5 +224,60 @@ func TestBitbucketObservedScopesArePersisted(t *testing.T) {
 	var old secrets.BitbucketCreds
 	if err := json.Unmarshal([]byte(`{"access_token":"a","refresh_token":"r","expiry":1}`), &old); err != nil || old.Scopes != "" {
 		t.Fatalf("old store: %+v %v", old, err)
+	}
+}
+
+// A response is evidence about the connection that sent it. If the member reconnects while the
+// fetch is in flight, the late `pullrequest:write` header must neither be stored on the NEW
+// connection nor open the button for it.
+func TestBitbucketScopesNotLearnedAcrossAReconnect(t *testing.T) {
+	for _, kind := range []string{"oauth", "basic"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			a := &secrets.Data{}
+			b := &secrets.Data{}
+			if kind == "oauth" {
+				a.Bitbucket = &secrets.BitbucketCreds{AccessToken: "tok-A", Expiry: 1 << 40}
+				b.Bitbucket = &secrets.BitbucketCreds{AccessToken: "tok-B", Expiry: 1 << 40} // scopes unknown
+			} else {
+				a.Git = map[string]secrets.GitEntry{"bitbucket.org": {User: "a@example.com", Token: "tok-A"}}
+				b.Git = map[string]secrets.GitEntry{"bitbucket.org": {User: "b@example.com", Token: "tok-B"}}
+			}
+			if err := a.Save(); err != nil {
+				t.Fatal(err)
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := b.Save(); err != nil { // the reconnect lands while A's request is answered
+					t.Error(err)
+				}
+				w.Header().Set("X-OAuth-Scopes", "pullrequest:write")
+				_, _ = w.Write([]byte(bbOnePR))
+			}))
+			defer srv.Close()
+			prev := bitbucketAPIBase
+			bitbucketAPIBase = srv.URL
+			defer func() { bitbucketAPIBase = prev }()
+
+			rows, err := bitbucketSearchWorkItems(a, "q", "acme/web")
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("rows=%v err=%v", rows, err)
+			}
+			if rows[0].CanComment {
+				t.Error("the row is commentable although the connection changed mid-fetch")
+			}
+			cur, err := secrets.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cur.Bitbucket != nil && cur.Bitbucket.Scopes != "" || cur.Git["bitbucket.org"].Scopes != "" {
+				t.Errorf("A's scopes were stored on B: %+v %+v", cur.Bitbucket, cur.Git["bitbucket.org"])
+			}
+			// B's own next fetch, with no header, stays read-only.
+			newBBScopeStub(t, "")
+			rows, err = bitbucketSearchWorkItems(cur, "q", "acme/web")
+			if err != nil || len(rows) != 1 || rows[0].CanComment {
+				t.Errorf("B must stay read-only: rows=%+v err=%v", rows, err)
+			}
+		})
 	}
 }

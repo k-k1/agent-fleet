@@ -207,6 +207,63 @@ func TestWorkItemsCanCommentThroughTheCache(t *testing.T) {
 	}
 }
 
+// #2709: a cached true must not outlive the evidence for it. A failed read, a reconnect or a
+// disconnect withdraws it (rows stay), and a fetch that began before the connection changed cannot
+// bring it back.
+func TestWorkItemsCanCommentIsWithdrawnWhenTheConnectionChanges(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	ctx := context.Background()
+	env.addQuery(t, "bb", "Bitbucket", "acme/web", true)
+	granted := `{"items":[{"queryId":"bb","provider":"bitbucket","kind":"pr","key":"acme/web#1","title":"a","state":"open","labels":[],"labelColors":{},"canComment":true}],"errors":[]}`
+	env.body = func() string { return granted }
+	can := func() bool {
+		t.Helper()
+		items, err := env.st.ListWorkItems(ctx, env.mid)
+		if err != nil || len(items) != 1 {
+			t.Fatalf("items=%v err=%v", items, err)
+		}
+		return workItemToDTO(items[0]).CanComment
+	}
+	env.api.refreshNow(ctx, env.res, true)
+	if !can() {
+		t.Fatal("setup: the granted row must be commentable")
+	}
+
+	// 1. The next read fails (not connected, no access): the kept row loses the capability.
+	env.body = func() string {
+		return `{"items":[],"errors":[{"queryId":"bb","message":"Bitbucket is not connected"}]}`
+	}
+	env.api.refreshNow(ctx, env.res, true)
+	if can() {
+		t.Error("a failed query kept its stale canComment=true")
+	}
+
+	// 2. A reconnect/disconnect withdraws it from rows that are otherwise cached fine.
+	env.body = func() string { return granted }
+	env.api.refreshNow(ctx, env.res, true)
+	if !can() {
+		t.Fatal("setup: regranted")
+	}
+	resetWorkItemCommentCapability(ctx, env.st, env.mid)
+	if can() {
+		t.Error("a connection change left canComment=true in the cache")
+	}
+
+	// 3. A fetch that was already in flight when the connection changed carries the OLD scopes.
+	env.body = func() string {
+		resetWorkItemCommentCapability(ctx, env.st, env.mid) // the reconnect lands during the fetch
+		return granted
+	}
+	env.api.refreshNow(ctx, env.res, true)
+	if can() {
+		t.Error("an in-flight fetch from before the reconnect restored canComment=true")
+	}
+	// The row itself is still listed.
+	if items, _ := env.st.ListWorkItems(ctx, env.mid); len(items) != 1 {
+		t.Errorf("rows were dropped: %d", len(items))
+	}
+}
+
 // #1095: a query whose page left matches out says so, and keeps saying so while the Workspace is
 // stopped. Three cases in one refresh — a known count, a full page without a count, and a query
 // that fit — then a refresh that fails, which must keep the note next to the rows it kept.

@@ -4288,6 +4288,22 @@ func (s *SQL) ReplaceWorkItems(ctx context.Context, membershipID string, queryID
 	return tx.Commit()
 }
 
+func (s *SQL) ClearWorkItemCanComment(ctx context.Context, membershipID string, queryIDs []string) error {
+	if len(queryIDs) == 0 {
+		_, err := s.db.ExecContext(ctx,
+			`UPDATE work_item_cache SET can_comment=0 WHERE membership_id=? AND can_comment<>0`, membershipID)
+		return err
+	}
+	for _, qid := range queryIDs {
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE work_item_cache SET can_comment=0 WHERE membership_id=? AND query_id=? AND can_comment<>0`,
+			membershipID, qid); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *SQL) ListWorkItemSessions(ctx context.Context, membershipID string) ([]WorkItemSession, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, membership_id, provider, item_key, session_name, repo, branch, created_at
