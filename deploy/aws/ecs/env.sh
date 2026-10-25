@@ -235,6 +235,17 @@ af_stack_param() {
   echo "$v"
 }
 
+# af_stack_output_strict <stack> <key> — af_stack_output, except that a failed read (network,
+# permissions) returns 1 instead of "". Use it where "no such output" and "could not read" must
+# not be the same answer, e.g. a value whose absence switches something off.
+af_stack_output_strict() {
+  local v
+  v="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$1" \
+    --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" --output text 2>/dev/null)" || return 1
+  case "$v" in None) v="" ;; esac
+  echo "$v"
+}
+
 # af_stack_output <stack> <key>
 af_stack_output() {
   local v

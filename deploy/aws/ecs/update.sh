@@ -258,11 +258,16 @@ if [ -n "$EGRESS_SECRET" ] || [ -n "$(af_stack_param "$STACK" EgressTokenSecretA
 fi
 # The egress event archive bucket (#2732), a fact of the data stack like the two above: passed
 # when 10-data has one or the ingress stack still names one (so dropping the bucket clears it),
-# and not at all when the data stack is unknown, so an unreadable read never switches it off.
+# and not at all when the data stack is unknown. A failed read of the output stops the run: the
+# purger deletes events once the archive is off, so "could not read" must never mean "none".
 # 20-platform carries the CP's grant on it, so that stack's change set below gets it too.
 ARCHIVE_OVR=(); PLATFORM_ARCHIVE_OVR=()
 if [ -n "$DATA_STACK" ]; then
-  ARCHIVE_BUCKET="$(af_stack_output "$DATA_STACK" EgressArchiveBucket)"
+  if ! ARCHIVE_BUCKET="$(af_stack_output_strict "$DATA_STACK" EgressArchiveBucket)"; then
+    echo "ERROR: could not read the EgressArchiveBucket output of $DATA_STACK; stopping so that a" >&2
+    echo "       transient failure cannot switch the egress archive off. Re-run." >&2
+    exit 1
+  fi
   if [ -n "$ARCHIVE_BUCKET" ] || [ -n "$(af_stack_param "$STACK" EgressArchiveBucket)" ]; then
     ARCHIVE_OVR=("EgressArchiveBucket=$ARCHIVE_BUCKET")
   fi

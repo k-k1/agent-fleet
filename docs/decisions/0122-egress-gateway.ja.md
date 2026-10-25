@@ -471,3 +471,5 @@ Follow-ups: #2728, #2729, #2687（実 Squid。手順は README にある）。
 詳細は `deploy/aws/ecs/cfn/PARAMETERS.md` の "The egress archive"。`deploy/local/cfn-s3-endpoint-test.py` と `deploy/local/cfn-egress-archive-test.py` が固定している。
 
 Follow-ups: #2734
+
+同日のレビューによる変更：バケット名にリージョンを含める（S3 の名前は全体で一意、スタック名はリージョンごと）。バケットポリシーで平文 HTTP を拒否する。`EgressArchive=existing` で、無効化や teardown のあとも保持されたバケットを再利用できる（再有効化のためにアーカイブのデータを捨てなくて済む）。バケットの出力を読めないときは両スクリプトとも止まる（アーカイブが無効だと purger がイベントを削除するため）。

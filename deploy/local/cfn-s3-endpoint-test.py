@@ -54,7 +54,7 @@ DATA = "10-data.yaml"
 # ownership (anyone can create af-x-models-<this account id> elsewhere).
 OWNER = {"StringEquals": {"s3:ResourceAccount": {"!Ref": "AWS::AccountId"}}}
 MODELS = "arn:${AWS::Partition}:s3:::af-*-models-${AWS::AccountId}"
-ARCHIVE = "arn:${AWS::Partition}:s3:::af-*-egress-archive-${AWS::AccountId}"
+ARCHIVE = "arn:${AWS::Partition}:s3:::af-*-egress-archive-${AWS::AccountId}-${AWS::Region}"
 EXPECTED = {
     "EcrLayerBucket": ({"s3:GetObject"},
                        {"arn:${AWS::Partition}:s3:::prod-${AWS::Region}-starport-layer-bucket/*"}, None),
@@ -187,11 +187,12 @@ def check_policy(props, engines, data):
     # Likewise the archive bucket 10-data creates: a rename there is AccessDenied on the CP's
     # first archive write, on a real deployment only.
     name = data["Resources"]["EgressArchiveBucket"]["Properties"]["BucketName"]["!Sub"]
-    sample = name.replace("${AWS::StackName}", "af-ecs-data").replace("${AWS::AccountId}", "123456789012")
+    sample = (name.replace("${AWS::StackName}", "af-ecs-data").replace("${AWS::AccountId}", "123456789012")
+              .replace("${AWS::Region}", "ap-northeast-1"))
     for r in sorted(resources):
         if "-egress-archive-" not in r:
             continue
-        pat = r.split(":s3:::")[1].replace("${AWS::AccountId}", "123456789012")
+        pat = r.split(":s3:::")[1].replace("${AWS::AccountId}", "123456789012").replace("${AWS::Region}", "ap-northeast-1")
         pat = pat[:-len("/egress/*")] if pat.endswith("/egress/*") else pat
         if not fnmatch.fnmatchcase(sample, pat):
             fails.append("egress archive bucket %r does not match the endpoint pattern %r" % (sample, pat))
@@ -449,6 +450,8 @@ def main():
         ("archive owner condition dropped (list)", mutated(lambda t: stmts(t)[7].pop("Condition"))),
         ("archive objects statement dropped", mutated(lambda t: stmts(t).pop(6))),
         ("archive list statement dropped", mutated(lambda t: stmts(t).pop(7))),
+        ("archive pattern loses the region", mutated(lambda t: stmts(t)[6].update(
+            Resource={"!Sub": "arn:${AWS::Partition}:s3:::af-*-egress-archive-${AWS::AccountId}/egress/*"}))),
         ("archive bucket renamed", mutated(lambda t: res(t)["EgressArchiveBucket"]["Properties"]["BucketName"].update(
             {"!Sub": "archive-${AWS::StackName}"}), DATA)),
         ("models bucket renamed", mutated(lambda t: res(t)["ModelsBucket"]["Properties"]["BucketName"].update(

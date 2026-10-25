@@ -573,3 +573,9 @@ Details: `deploy/aws/ecs/cfn/PARAMETERS.md`, "The egress archive". Pinned by
 `deploy/local/cfn-s3-endpoint-test.py` and `deploy/local/cfn-egress-archive-test.py`.
 
 Follow-ups: #2734
+
+Review of the same day: the bucket name now carries the region (S3 names are global, stack names
+are per region); the bucket policy refuses plain HTTP; `EgressArchive=existing` reuses the
+retained bucket after a disable or a teardown, so the archive's data is never the price of
+re-enabling it; both scripts stop when the bucket output cannot be read, since the purger deletes
+events once the archive is off.

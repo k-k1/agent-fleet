@@ -145,7 +145,12 @@ case "$args" in
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EgressProxyAddr']"*) echo "${STUB_EGRESS_ADDR:-None}" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EgressTokenSecretArn']"*) echo "${STUB_EGRESS_SECRET:-None}" ;;
   # 10-data's egress archive bucket (#2732). Unset = no bucket.
-  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EgressArchiveBucket']"*) echo "${STUB_ARCHIVE:-None}" ;;
+  # STUB_ARCHIVE_FAIL=1: the read itself fails (network, permissions), unlike an absent output.
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EgressArchiveBucket']"*)
+    [ "${STUB_ARCHIVE_FAIL:-0}" = 1 ] && { echo "An error occurred (Throttling)" >&2; exit 254; }
+    echo "${STUB_ARCHIVE:-None}" ;;
+  # The retained archive bucket after a teardown: present only when the case says so.
+  *"s3api head-bucket"*) [ "${STUB_BUCKET_EXISTS:-0}" = 1 ] || exit 254 ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotLaunchTemplateId']"*) echo "${STUB_POOL_LT_OUTPUT:-lt-NEW}" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='CfnTemplatesBucket']"*) echo "t-cfn-bucket" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotAmiIdArm64']"*) echo "None" ;;
@@ -993,7 +998,7 @@ if grep -q "EgressTokenSecretArn=arn:stale" "$LOG"; then fail "standup.sh passed
 sed -i '/^EgressTokenSecretArn=/d' "$STATE/params/30-ingress"
 
 echo "== case 3h-archive: the egress archive bucket reaches 20-platform and 30-ingress (#2732) =="
-ARCH_B="t-data-egress-archive-123456789012"
+ARCH_B="t-data-egress-archive-123456789012-ap-northeast-1"
 : > "$LOG"
 VERSION=9.9.9-dev-test STUB_ECR_HAS=1 "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3ha0" 2>&1 \
   || { cat "$WORK/out3ha0"; fail "update.sh failed without an archive bucket"; }
@@ -1030,6 +1035,39 @@ order "deploy --stack-name t-platform" "deploy --stack-name t-ingress"
 efs_standup p
 if grep -q "stale-bucket" "$LOG"; then fail "standup.sh passed the captured EgressArchiveBucket"; fi
 sed -i '/^EgressArchiveBucket=/d' "$STATE/params/30-ingress" "$STATE/params/20-platform"
+
+# A failed read of the output is not "no bucket": nothing may be deployed, or the next purge
+# deletes events with the archive switched off.
+: > "$LOG"
+if VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ARCHIVE_FAIL=1 STUB_ING_ARCHIVE=$ARCH_B STUB_PLAT_ARCHIVE=$ARCH_B \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3ha3" 2>&1; then
+  fail "update.sh went on after the archive output could not be read"
+fi
+if grep -q "deploy --stack-name t-ingress\|deploy --stack-name t-platform" "$LOG"; then
+  fail "update.sh deployed after the archive output could not be read"
+fi
+: > "$LOG"
+if env STUB_ARCHIVE_FAIL=1 "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3ha4" 2>&1 </dev/null; then
+  fail "standup.sh went on after the archive output could not be read"
+fi
+if grep -q "deploy --stack-name t-platform\|deploy --stack-name t-ingress" "$LOG"; then
+  fail "standup.sh deployed 20-platform / 30-ingress after the archive output could not be read"
+fi
+# No bucket any more: an omitted parameter would keep the previous value, so it is named empty.
+efs_standup p
+grep -qE "deploy --stack-name t-platform .*EgressArchiveBucket=( |$)" "$LOG" \
+  || fail "standup.sh did not clear 20-platform's EgressArchiveBucket explicitly"
+grep -qE "deploy --stack-name t-ingress .*EgressArchiveBucket=( |$)" "$LOG" \
+  || fail "standup.sh did not clear 30-ingress's EgressArchiveBucket explicitly"
+# A capture with EgressArchive=create and the retained bucket still there: reuse, never a second create.
+echo "EgressArchive=create" >> "$STATE/params/10-data"
+efs_standup p STUB_BUCKET_EXISTS=1
+grep -q "deploy --stack-name t-data .*EgressArchive=existing" "$LOG" \
+  || fail "standup.sh did not reuse the retained archive bucket"
+efs_standup p
+grep -q "deploy --stack-name t-data .*EgressArchive=create" "$LOG" \
+  || fail "standup.sh changed EgressArchive=create although no bucket survived"
+sed -i '/^EgressArchive=/d' "$STATE/params/10-data"
 
 echo "== case 3h-pool: update.sh never skips the slot pool on ecs-ec2 without saying so =="
 #

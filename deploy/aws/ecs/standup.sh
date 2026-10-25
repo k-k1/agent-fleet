@@ -348,8 +348,20 @@ deploy_stack() {  # deploy_stack <stack> <template> <slug> [capability...]
     af_param_override S3EndpointEnabled false
   fi
   if [ "$slug" = 20-platform ] && grep -q '^  EgressArchiveBucket:' "$CFN_DIR/$tpl"; then
-    af_param_drop EgressArchiveBucket
-    [ -z "${AF_ARCHIVE_BUCKET:-}" ] || af_param_override EgressArchiveBucket "$AF_ARCHIVE_BUCKET"
+    # Always named, empty included: an omitted parameter keeps its previous value, and an old
+    # grant would outlive a bucket that is gone.
+    af_param_override EgressArchiveBucket "${AF_ARCHIVE_BUCKET:-}"
+  fi
+  # A capture with EgressArchive=create from before a teardown: the retained bucket is still
+  # there and a second create of the same name fails. Reuse it (existing) unless this very
+  # stack already manages it.
+  if [ "$slug" = 10-data ] && [ "$AF_DRY" != 1 ] && printf '%s\n' ${AF_PARAMS[@]+"${AF_PARAMS[@]}"} | grep -qx 'EgressArchive=create' &&
+     ! { af_stack_exists "$stack" && [ "$(af_stack_param "$stack" EgressArchive)" = create ]; }; then
+    arch_acct="$("${AWS[@]}" sts get-caller-identity --query Account --output text)"
+    if "${AWS[@]}" s3api head-bucket --bucket "af-${stack}-egress-archive-${arch_acct}-${AF_REGION}" >/dev/null 2>&1; then
+      echo "    · the archive bucket of $stack survived the teardown: EgressArchive=existing (the data is kept)"
+      af_param_override EgressArchive existing
+    fi
   fi
   local caps=()
   [ $# -gt 0 ] && caps=(--capabilities "$@")
@@ -375,7 +387,11 @@ deploy_stack "$AF_STACK_DATA"     10-data.yaml     10-data     CAPABILITY_AUTO_E
 # has a new bucket, or none). The deploy_stack call reads this variable for 20-platform only.
 AF_ARCHIVE_BUCKET=""
 if [ "$AF_DRY" != 1 ]; then
-  AF_ARCHIVE_BUCKET="$(af_stack_output "$AF_STACK_DATA" EgressArchiveBucket)"
+  if ! AF_ARCHIVE_BUCKET="$(af_stack_output_strict "$AF_STACK_DATA" EgressArchiveBucket)"; then
+    echo "ERROR: could not read the EgressArchiveBucket output of $AF_STACK_DATA; stopping so that a" >&2
+    echo "       transient failure cannot switch the egress archive off. Re-run." >&2
+    exit 1
+  fi
 fi
 deploy_stack "$AF_STACK_PLATFORM" 20-platform.yaml 20-platform CAPABILITY_NAMED_IAM
 
@@ -770,8 +786,7 @@ if [ "$AF_DRY" != 1 ]; then
   fi
 fi
 # The egress archive bucket (#2732): the data stack's output, never the capture. Empty = off.
-af_param_drop EgressArchiveBucket
-[ -z "${AF_ARCHIVE_BUCKET:-}" ] || af_param_override EgressArchiveBucket "$AF_ARCHIVE_BUCKET"
+af_param_override EgressArchiveBucket "${AF_ARCHIVE_BUCKET:-}"
 if [ -n "$AF_STACK_POOL" ] && [ "$AF_DRY" != 1 ]; then
   lt="$(af_stack_output "$AF_STACK_POOL" SlotLaunchTemplateId)"
   ami="$(af_stack_output "$AF_STACK_POOL" SlotAmiIdArm64)"

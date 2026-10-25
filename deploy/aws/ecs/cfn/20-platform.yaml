@@ -20,7 +20,7 @@ Parameters:
   EgressArchiveBucket:
     Type: String
     Default: ""
-    AllowedPattern: "^(af-[a-z0-9.-]{1,32}-egress-archive-[0-9]{12})?$"
+    AllowedPattern: "^(af-[a-z0-9.-]{1,17}-egress-archive-[0-9]{12}-[a-z]{2}-[a-z]+-[0-9])?$"
     Description: >-
       10-data's EgressArchiveBucket output, set by standup.sh. Empty (default) = the CP task role
       gets no archive grant. cfn/PARAMETERS.md, "The egress archive".

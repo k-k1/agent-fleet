@@ -909,8 +909,8 @@ aws cloudformation deploy --stack-name af-ecs-data --template-file cfn/10-data.y
 ```
 
 `standup.sh` does the same on a rebuild when the capture has `EgressArchive=create`. The bucket
-(`af-<data stack>-egress-archive-<account id>`) is encrypted, unversioned, expires archived days
-after `EgressArchiveRetentionDays` (365) and is **retained** when the stack is deleted. The CP
+(`af-<data stack>-egress-archive-<account id>-<region>`) is encrypted, TLS-only, unversioned, expires archived days
+after `EgressArchiveRetentionDays` (365) and is **retained** when the stack is deleted (a rebuild reuses it with `EgressArchive=existing`, which `standup.sh` sets by itself). The CP
 task role gets `s3:PutObject` / `s3:GetObject` on `egress/*` and `s3:ListBucket` on that bucket
 only, and the endpoint policy admits the same bucket for this account. Only a bucket made this
 way works: a bucket of your own is refused at the endpoint. Parameters, the grant and the

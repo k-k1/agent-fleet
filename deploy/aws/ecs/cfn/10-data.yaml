@@ -85,11 +85,12 @@ Parameters:
   EgressArchive:
     Type: String
     Default: ""
-    AllowedValues: [ "", create ]
+    AllowedValues: [ "", create, existing ]
     Description: >-
       create = a bucket for the Control Plane's raw egress event archive (AF_EGRESS_ARCHIVE_URL,
-      ADR 0122), output as EgressArchiveBucket for 20-platform and 30-ingress. Empty (default)
-      = no bucket, archive off. See cfn/PARAMETERS.md, "The egress archive".
+      ADR 0122), output as EgressArchiveBucket for 20-platform and 30-ingress. existing = the
+      retained bucket a former create left (same name, not managed here). Empty (default) = off.
+      See cfn/PARAMETERS.md, "The egress archive".
   EgressArchiveRetentionDays:
     Type: Number
     Default: 365
@@ -109,6 +110,7 @@ Conditions:
   IsRetain: !Equals [ !Ref Persistence, retain ]
   CreateCustodianKey: !Equals [ !Ref CustodianKmsKey, create ]
   CreateEgressArchive: !Equals [ !Ref EgressArchive, create ]
+  HasEgressArchive: !Or [ !Condition CreateEgressArchive, !Equals [ !Ref EgressArchive, existing ] ]
   IsProvisionedTp: !Equals [ !Ref EfsThroughputMode, provisioned ]
 
 Resources:
@@ -442,8 +444,9 @@ Resources:
       TargetKeyId: !Ref CustodianKey
 
   # --- Egress event archive (ADR 0122; cfn/PARAMETERS.md, "The egress archive") ---
-  # The name must match 00-network's S3Endpoint pattern af-*-egress-archive-<account>, or the
-  # CP's write is AccessDenied at the endpoint. Retain: the archive is what the purger deletes
+  # The name must match 00-network's S3Endpoint pattern af-*-egress-archive-<account>-<region>,
+  # or the CP's write is AccessDenied at the endpoint; the region keeps one name per region
+  # (S3 names are global). Retain: the archive is what the purger deletes
   # events against. Versioning stays off (the CP replaces a day's object whole); the CP never
   # deletes, so S3 expiry is the only retention.
   EgressArchiveBucket:
@@ -452,7 +455,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      BucketName: !Sub "af-${AWS::StackName}-egress-archive-${AWS::AccountId}"
+      BucketName: !Sub "af-${AWS::StackName}-egress-archive-${AWS::AccountId}-${AWS::Region}"
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -472,11 +475,33 @@ Resources:
             AbortIncompleteMultipartUpload: { DaysAfterInitiation: 1 }
       Tags: [ { Key: af-role, Value: egress-archive } ]
 
+  # Refuses plain HTTP: SSE-S3 and the public access block do not. Retained with the bucket, so
+  # a switch from create to existing leaves it in place.
+  EgressArchiveBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: CreateEgressArchive
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Bucket: !Ref EgressArchiveBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt EgressArchiveBucket.Arn
+              - !Sub "${EgressArchiveBucket.Arn}/*"
+            Condition:
+              Bool: { "aws:SecureTransport": "false" }
+
 Outputs:
   EgressArchiveBucket:
-    Condition: CreateEgressArchive
+    Condition: HasEgressArchive
     Description: Pass to 20-platform and 30-ingress as EgressArchiveBucket (standup.sh / update.sh do).
-    Value: !Ref EgressArchiveBucket
+    Value: !Sub "af-${AWS::StackName}-egress-archive-${AWS::AccountId}-${AWS::Region}"
   RdsRestopFunction:
     Condition: RestopOn
     Description: Lambda that stops the paused database again after RDS's 7-day forced start.

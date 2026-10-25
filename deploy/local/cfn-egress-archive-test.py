@@ -74,12 +74,15 @@ def check_data(t):
     fails = []
     params, res = t.get("Parameters", {}), t["Resources"]
     p = params.get("EgressArchive", {})
-    if p.get("Default") != "" or p.get("AllowedValues") != ["", "create"]:
-        fails.append("10-data: EgressArchive must default to empty with AllowedValues ['', create]")
+    if p.get("Default") != "" or p.get("AllowedValues") != ["", "create", "existing"]:
+        fails.append("10-data: EgressArchive must default to empty with AllowedValues ['', create, existing]")
     if t.get("Conditions", {}).get("CreateEgressArchive") != {"!Equals": [{"!Ref": "EgressArchive"}, "create"]}:
         fails.append("10-data: CreateEgressArchive is not EgressArchive == create")
     if params.get("EgressArchiveRetentionDays", {}).get("Type") != "Number":
         fails.append("10-data: no numeric EgressArchiveRetentionDays")
+    if t.get("Conditions", {}).get("HasEgressArchive") != {"!Or": [
+            {"!Condition": "CreateEgressArchive"}, {"!Equals": [{"!Ref": "EgressArchive"}, "existing"]}]}:
+        fails.append("10-data: HasEgressArchive is not create or existing")
     b = res.get("EgressArchiveBucket")
     if not b or b.get("Type") != "AWS::S3::Bucket":
         return fails + ["10-data: no EgressArchiveBucket"]
@@ -88,8 +91,10 @@ def check_data(t):
     if b.get("DeletionPolicy") != "Retain" or b.get("UpdateReplacePolicy") != "Retain":
         fails.append("10-data: the archive bucket is not Retain / Retain")
     bp = b.get("Properties", {})
-    if bp.get("BucketName") != {"!Sub": "af-${AWS::StackName}-egress-archive-${AWS::AccountId}"}:
-        fails.append("10-data: bucket name is not af-<stack>-egress-archive-<account> (00-network's endpoint pattern)")
+    name = {"!Sub": "af-${AWS::StackName}-egress-archive-${AWS::AccountId}-${AWS::Region}"}
+    if bp.get("BucketName") != name:
+        fails.append("10-data: bucket name is not af-<stack>-egress-archive-<account>-<region> "
+                     "(00-network's endpoint pattern; S3 names are global, so the region keeps them apart)")
     if "VersioningConfiguration" in bp:
         fails.append("10-data: the archive bucket is versioned (the CP replaces a day's object whole)")
     pab = bp.get("PublicAccessBlockConfiguration", {})
@@ -106,9 +111,21 @@ def check_data(t):
         fails.append("10-data: no enabled expiry rule on egress/ driven by EgressArchiveRetentionDays")
     if not any("AbortIncompleteMultipartUpload" in r and r.get("Status") == "Enabled" for r in rules):
         fails.append("10-data: no rule aborting incomplete multipart uploads")
+    # TLS only: SSE-S3 and the public access block do not refuse plain HTTP.
+    pol = res.get("EgressArchiveBucketPolicy")
+    if not pol or pol.get("Condition") != "CreateEgressArchive" or pol.get("DeletionPolicy") != "Retain":
+        fails.append("10-data: no retained EgressArchiveBucketPolicy behind CreateEgressArchive")
+    else:
+        deny = [s for s in pol["Properties"]["PolicyDocument"]["Statement"]
+                if s.get("Effect") == "Deny" and s.get("Condition") == {"Bool": {"aws:SecureTransport": "false"}}
+                and s.get("Principal") == "*" and s.get("Action") == "s3:*"]
+        want = [{"!GetAtt": "EgressArchiveBucket.Arn"}, {"!Sub": "${EgressArchiveBucket.Arn}/*"}]
+        if len(deny) != 1 or deny[0].get("Resource") != want:
+            fails.append("10-data: the bucket policy does not deny aws:SecureTransport=false on the bucket and its objects")
+    # The output is the name itself, so create and existing (a retained bucket) both have it.
     out = t.get("Outputs", {}).get("EgressArchiveBucket", {})
-    if out.get("Condition") != "CreateEgressArchive" or out.get("Value") != {"!Ref": "EgressArchiveBucket"}:
-        fails.append("10-data: output EgressArchiveBucket is missing or not the bucket behind the same condition")
+    if out.get("Condition") != "HasEgressArchive" or out.get("Value") != name:
+        fails.append("10-data: output EgressArchiveBucket is not the bucket name behind HasEgressArchive")
     if "Export" in out:
         fails.append("10-data: EgressArchiveBucket is exported (it would pin the data stack; scripts pass it)")
     clash = set(t.get("Outputs", {})) & set(params)
@@ -265,6 +282,20 @@ def main():
         ("bucket unconditional", mutated(lambda t: bucket(t).pop("Condition"), DATA)),
         ("bucket not retained", mutated(lambda t: bucket(t).update(DeletionPolicy="Delete"), DATA)),
         ("bucket replacement not retained", mutated(lambda t: bucket(t).pop("UpdateReplacePolicy"), DATA)),
+        ("bucket name loses the region", mutated(lambda t: bucket(t)["Properties"].update(
+            BucketName={"!Sub": "af-${AWS::StackName}-egress-archive-${AWS::AccountId}"}), DATA)),
+        ("no TLS-only policy", mutated(lambda t: t["Resources"].pop("EgressArchiveBucketPolicy"), DATA)),
+        ("TLS policy allows instead of denies", mutated(lambda t: t["Resources"]["EgressArchiveBucketPolicy"][
+            "Properties"]["PolicyDocument"]["Statement"][0].update(Effect="Allow"), DATA)),
+        ("TLS policy covers only the objects", mutated(lambda t: t["Resources"]["EgressArchiveBucketPolicy"][
+            "Properties"]["PolicyDocument"]["Statement"][0].update(
+                Resource=[{"!Sub": "${EgressArchiveBucket.Arn}/*"}]), DATA)),
+        ("TLS policy not retained", mutated(lambda t: t["Resources"]["EgressArchiveBucketPolicy"].pop(
+            "DeletionPolicy"), DATA)),
+        ("existing cannot be chosen", mutated(lambda t: t["Parameters"]["EgressArchive"].update(
+            AllowedValues=["", "create"]), DATA)),
+        ("output only while the bucket is created", mutated(lambda t: t["Outputs"]["EgressArchiveBucket"].update(
+            Condition="CreateEgressArchive"), DATA)),
         ("bucket renamed", mutated(lambda t: bucket(t)["Properties"].update(BucketName="archive"), DATA)),
         ("bucket versioned", mutated(lambda t: bucket(t)["Properties"].update(
             VersioningConfiguration={"Status": "Enabled"}), DATA)),
@@ -293,7 +324,7 @@ def main():
             Roles=[{"!Ref": "WsTaskRole"}]), PLATFORM)),
         ("grant removed", mutated(lambda t: t["Resources"].pop("CpEgressArchivePolicy"), PLATFORM)),
         ("platform parameter defaults on", mutated(lambda t: t["Parameters"]["EgressArchiveBucket"].update(
-            Default="af-x-egress-archive-123456789012"), PLATFORM)),
+            Default="af-x-egress-archive-123456789012-ap-northeast-1"), PLATFORM)),
         ("URL carries a prefix", mutated(lambda t: env_if(t)[1].update(
             Value={"!Sub": "s3://${EgressArchiveBucket}/egress"}), INGRESS)),
         ("URL unconditional", mutated(lambda t: env_if(t).__setitem__(0, "HasEgressGw"), INGRESS)),
