@@ -102,6 +102,8 @@ export interface Session {
   // How far the create's initial prompt got (ADR 0100 decision 2). The studio pane offers a
   // resend on failed / unknown, and never while it is pending.
   initialPromptState?: "pending" | "delivered" | "failed" | "unknown";
+  // Why a failed initial prompt failed, when known: "auth_expired" = the Claude login has expired.
+  initialPromptReason?: string;
   // A move to another agent kind (ADR 0115 decision 11): `moving` names the target while the
   // move runs or waits for retry / cancel, `movedTo` once the target exists. Either closes the
   // session's input; only "resume here anyway" (POST …/move/reopen) clears movedTo.

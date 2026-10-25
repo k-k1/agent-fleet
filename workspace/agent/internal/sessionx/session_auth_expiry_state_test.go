@@ -140,3 +140,29 @@ func TestTypeInitialPromptRefusedWhenAuthExpired(t *testing.T) {
 		t.Errorf("the prompt was typed into an expired claude; tmux calls:\n%s", b)
 	}
 }
+
+// TestInitialPromptFailsWithAuthExpiredReason: a create's initial prompt that is refused
+// because the login has expired settles failed AND says why, so the Console can toast the
+// reason instead of showing a bare failure. A prompt that is not a create's (state not
+// pending) must not grow a reason.
+func TestInitialPromptFailsWithAuthExpiredReason(t *testing.T) {
+	isolateAgentState(t)
+	writeClaudeCreds(t, -8*24*time.Hour+8*time.Hour, -8*24*time.Hour)
+	session.WriteMeta(session.Meta{Name: "ipreason1", Dir: t.TempDir(), Kind: session.KindClaude,
+		InitialPromptState: session.InitialPromptPending})
+	session.WriteMeta(session.Meta{Name: "ipreason2", Dir: t.TempDir(), Kind: session.KindClaude})
+
+	deliverInitialPrompt("ipreason1", "first task")
+	deliverInitialPrompt("ipreason2", "not a create's prompt")
+
+	m, _ := session.ReadMeta("ipreason1")
+	if m.InitialPromptState != session.InitialPromptFailed || m.InitialPromptReason != session.InitialPromptReasonAuthExpired {
+		t.Errorf("state/reason = %q/%q, want failed/%q", m.InitialPromptState, m.InitialPromptReason, session.InitialPromptReasonAuthExpired)
+	}
+	if got := wireSession(m, false).InitialPromptReason; got != session.InitialPromptReasonAuthExpired {
+		t.Errorf("list wire reason = %q, want it carried", got)
+	}
+	if m2, _ := session.ReadMeta("ipreason2"); m2.InitialPromptState != "" || m2.InitialPromptReason != "" {
+		t.Errorf("a non-create prompt got state/reason %q/%q, want none", m2.InitialPromptState, m2.InitialPromptReason)
+	}
+}

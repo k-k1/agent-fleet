@@ -102,6 +102,7 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, peek, a
     <RepoRow
       r={r}
       kinds={ctx.launchKinds}
+      claudeExpired={ctx.claudeExpired}
       running={ctx.running}
       active={ctx.scmRepo === r.name}
       selected={r.name === ctx.activeRepo}
