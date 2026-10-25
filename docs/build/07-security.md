@@ -547,6 +547,9 @@ Implemented:
   (`cpEgressHosts`), as exact hosts outside that table: a workspace reaches the public base
   through the egress path (on the AWS gateway its 443 is intercepted whatever `NO_PROXY` says),
   so no allowlist edit may cut it off from its CP (#2742). The Admin list shows them as built-in.
+  The entry is a whole host (any port or path), it lifts none of the gateway's port and
+  internal-address refusals, and a URL whose host is not one exact name, or is an IPv6 literal
+  (#2754), is not admitted and is logged at start.
 - **Enforce blocks at the proxy**: outside the allowlist the answer is a 403.
 - `AF_EGRESS_PROXY_ADDR` injects the proxy variables (`http_proxy`, `https_proxy`,
   `no_proxy`, and their upper-case forms) into every workspace, on every target. `docker`,

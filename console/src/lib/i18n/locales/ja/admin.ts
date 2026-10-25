@@ -756,7 +756,7 @@ export const admin = {
   "admin.add": "追加",
   "admin.egress_builtin": "組み込み",
   "admin.egress_builtin_cp": "このデプロイの Control Plane です。enforce でもワークスペースから届くよう常に許可され、取り消せません。",
-  "admin.egress_no_entries": "追加の許可エントリはありません（製品既定の許可だけが有効です）。",
+  "admin.egress_no_entries": "追加の許可エントリはありません。",
   "admin.retire": "取消",
   "admin.egress_observed": "観測された宛先",
   "admin.period": "期間",

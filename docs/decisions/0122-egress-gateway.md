@@ -586,10 +586,20 @@ their CP.
   them as built-in. Exact hosts only, so enforce is not opened for their parent domain. This holds
   for every runtime, because the gateway agent and the own forward proxy both enforce what this
   endpoint serves: docker and native workspaces reach the public URL through the proxy as well.
+- **What the built-in entry covers, and what it does not.** The allowlist is by host, so every
+  port and path of a CP host is admitted: the own proxy then accepts a CONNECT to any port of it,
+  and another service behind the same name (a shared ALB or CDN) passes too. A CP should
+  therefore have a hostname of its own. The entry admits a name and lifts none of the gateway's
+  other refusals: it still serves only ports 80 and 443 and still refuses loopback, link-local
+  and VPC destinations, so a CP on another port, or one whose public name resolves inside the
+  VPC, is not reached through the gateway by this change. A URL that is not http(s), whose host
+  is not one exact name (a leading `.` or `*`), or that is an IPv6 literal is not admitted and
+  is logged at start: the first two would open siblings, and the agent's allow file cannot
+  carry the third (#2754).
 - **Not done here: an in-VPC CP URL for ECS** (option b in #2742). It would keep CP traffic off
   the gateway, but it needs a CP internal listener, a security group rule and template bytes,
   and it would not remove the need for the above: the public URL stays in use for links a person
   opens and as the internal git host.
 - Not run on a real account; the enforce check on the sandbox is still owed.
 
-Follow-ups: #2746
+Follow-ups: #2746, #2754

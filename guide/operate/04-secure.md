@@ -90,8 +90,11 @@ in the Console.
    reason, and are **retired** when no longer needed; with no added entries only the product's built-in
    allowances apply. This deployment's own Control Plane host (the public URL, and the internal
    URL where one is set) is always allowed and listed as **Built-in**: workspaces reach the
-   Control Plane through the egress path, so it cannot be retired and enforce never cuts them off
-   from it. A member's request from ⚙ Settings → MCP servers (used by sessions) arrives as a proposal too, and the
+   Control Plane through the egress path, so it cannot be retired, and enforce does not cut them
+   off from a Control Plane served on ports 80/443 under a name of its own. The entry is a whole
+   host, every port and path of it, so give the Control Plane a hostname no other service
+   shares. It lifts none of the gateway's other refusals (other ports, internal addresses). An
+   IPv6-literal URL is not admitted, and the Control Plane logs a warning at start. A member's request from ⚙ Settings → MCP servers (used by sessions) arrives as a proposal too, and the
    member sees "waiting for an administrator's approval" until you decide.
 
    **Reading the observations:** counts are approximate. A report that is retried after a

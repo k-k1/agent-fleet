@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -42,20 +43,44 @@ func newEgressPolicy(entries []string) *egressPolicy { return egressallow.New(en
 // PUBLIC_BASE_URL (AF_CP_BASE_URL, also the internal git host) and AF_CP_INTERNAL_URL.
 // effectivePolicy always admits them, outside the admin allowlist, so no edit there can
 // lock workspaces out of their own CP. A workspace's requests to the public base pass the
-// egress gateway, whose intercept sees port 443 whatever NO_PROXY says. Exact
-// hosts only: enforce is not opened for their parent domain.
+// egress gateway, whose intercept sees port 443 whatever NO_PROXY says.
+//
+// The allowlist is by host: every port and path of these hosts is admitted, so the CP
+// should have a hostname of its own rather than share one with another service.
 func (m *manager) cpEgressHosts() []string {
-	var out []string
-	for _, raw := range []string{m.publicBaseURL, m.internalBaseURL} {
-		u, err := url.Parse(strings.TrimSpace(raw))
-		if err != nil {
+	hosts, _ := cpEgressHostsOf(m.publicBaseURL, m.internalBaseURL)
+	return hosts
+}
+
+// cpHostRe is one exact host name or IPv4 address. A leading "." or "*" would make
+// egressallow and Squid read the entry as a suffix and open every sibling for good.
+var cpHostRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
+
+// cpEgressHostsOf is cpEgressHosts for the given URLs, plus each set URL it refused: not
+// http(s), or a host that is not one exact name. An IPv6 literal is refused too, because
+// the gateway agent's allow file cannot carry one (#2754) and listing it as admitted
+// would be false. When in doubt, refuse: a refused host is only as unreachable as it was
+// before the built-in entries existed.
+func cpEgressHostsOf(urls ...string) (hosts, refused []string) {
+	for _, raw := range urls {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
 			continue
 		}
-		if h := strings.ToLower(u.Hostname()); h != "" && !slices.Contains(out, h) {
-			out = append(out, h)
+		u, err := url.Parse(raw)
+		h := ""
+		if err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+			h = strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+		}
+		if !cpHostRe.MatchString(h) {
+			refused = append(refused, raw)
+			continue
+		}
+		if !slices.Contains(hosts, h) {
+			hosts = append(hosts, h)
 		}
 	}
-	return out
+	return hosts, refused
 }
 
 // egressBuiltin is every entry the admin allowlist cannot remove: the product defaults and

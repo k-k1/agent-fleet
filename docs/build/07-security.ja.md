@@ -463,6 +463,8 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
   `AF_CP_INTERNAL_URL` のもの、`cpEgressHosts`）が完全一致のホストとして必ず入る。Workspace は
   公開 base に egress の経路を通って届く（AWS の gateway では `NO_PROXY` に関係なく 443 が横取り
   される）ので、allowlist の編集で CP から切り離されてはならない（#2742）。Admin の一覧では組み込みと表示する。
+  エントリはホスト全体（どのポート・パスも）で、gateway のポートと内部アドレスの拒否は解除しない。ホストが完全一致の
+  1 つの名前でない URL と IPv6 リテラル（#2754）は許可せず、起動時にログに出す。
 - **enforce は proxy で遮断する**: allowlist の外は 403。
 - `AF_EGRESS_PROXY_ADDR` がどのターゲットでも全 Workspace に proxy の変数（`http_proxy`・
   `https_proxy`・`no_proxy`、と大文字の同名変数）を注入する。`docker`・`native`・Kubernetes は

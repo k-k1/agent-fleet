@@ -474,7 +474,8 @@ Follow-ups: #2728, #2729, #2687（実 Squid。手順は README にある）。
 サンドボックス（ecs-ec2、`EgressRoute=gateway`、log-only）で、デプロイ自身の console ホストが Workspace からの全接続で would-block と判定された。ECS の Workspace は公開 URL（`AF_CP_BASE_URL`）しか持たず、`NO_PROXY` に CP のホストが入るのは `AF_CP_INTERNAL_URL` からだけで、それを設定するのは Kubernetes だけである。さらに gateway は Workspace のルートテーブルで 443 を横取りするので、`NO_PROXY` だけでは Squid を避けられない。enforce にすると Workspace は CP を失っていた。
 
 - **CP が配る policy は `PUBLIC_BASE_URL` と `AF_CP_INTERNAL_URL` のホストを常に許可する**（`cpEgressHosts`）。製品既定と並ぶ完全一致のホストで、allowlist の表の外にある。管理者の編集では外せず、Admin の一覧と `list_allowlist` には組み込みとして出る。完全一致だけなので、親ドメインまで enforce が開くことはない。gateway のエージェントも自前の forward proxy もこのエンドポイントが配るものを強制するので、どのランタイムでも成り立つ。docker と native の Workspace も公開 URL へは proxy を通る。
+- **組み込みのエントリが覆うもの、覆わないもの。** allowlist はホスト単位なので、CP のホストはどのポートもどのパスも許可される。自前の proxy はそのホストの任意のポートへの CONNECT を受け付け、同じ名前の裏にある別のサービス（共有の ALB や CDN）も通る。したがって CP には専用のホスト名を持たせる。このエントリは名前を許可するだけで、gateway のほかの拒否は何も解除しない。gateway が扱うのは 80 と 443 だけで、ループバック・リンクローカル・VPC 内の宛先は引き続き拒否する。そのため、別のポートの CP や、公開名が VPC 内に解決される CP には、この変更だけでは gateway 経由で届かない。http(s) でない URL、ホストが完全一致の 1 つの名前でないもの（先頭の `.` や `*`）、IPv6 リテラルは許可せず、起動時にログに出す。前の 2 つは兄弟まで開いてしまい、3 つ目はエージェントの allow ファイルに書けない（#2754）。
 - **ここでしていないこと：ECS 向けの VPC 内の CP URL**（#2742 の案 b）。CP への通信を gateway から外せるが、CP の内部リスナー、セキュリティグループの規則、テンプレートのバイトが要り、しかも上の対処は不要にならない。公開 URL は人が開くリンクと内部 git ホストとして使われ続ける。
 - 実アカウントでは動かしていない。サンドボックスでの enforce の確認は未実施。
 
-Follow-ups: #2746
+Follow-ups: #2746, #2754

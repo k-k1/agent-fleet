@@ -318,7 +318,8 @@ func TestEgressPolicyAlwaysAdmitsCPHosts(t *testing.T) {
 			}
 		}
 		// Only the CP's own hosts: enforce is not weakened for their neighbours.
-		for _, h := range []string{"other.example.test", "example.test", "evil.cluster.local"} {
+		for _, h := range []string{"other.example.test", "example.test", "x.console.example.test",
+			"console.example.test.evil", "evil.cluster.local", "x.af-cp.af.svc.cluster.local"} {
 			if p.Allows(h) {
 				t.Errorf("%s: the served policy admits %s, which is not a CP host", when, h)
 			}
@@ -351,5 +352,50 @@ func TestEgressPolicyAlwaysAdmitsCPHosts(t *testing.T) {
 	bare := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil, nil)
 	if hosts := bare.mgr.cpEgressHosts(); len(hosts) != 0 {
 		t.Fatalf("cpEgressHosts without URLs = %v, want none", hosts)
+	}
+}
+
+// Only a URL whose host is one plain name or IPv4 address becomes a built-in entry. Anything
+// egressallow would read as a suffix ("*.x", ".x") would open every sibling for good, and a
+// form Squid cannot be given (an IPv6 literal) would be shown as allowed while the gateway
+// drops it, so both are refused and reported instead.
+func TestCPEgressHostsOnlyExactHosts(t *testing.T) {
+	cases := []struct {
+		name             string
+		public, internal string
+		want, refused    []string
+	}{
+		{"trailing FQDN dot", "https://Console.Example.test.", "http://af-cp.af.svc.cluster.local.:8081/",
+			[]string{"console.example.test", "af-cp.af.svc.cluster.local"}, nil},
+		{"port and path dropped", "https://console.example.test:8443/cp", "",
+			[]string{"console.example.test"}, nil},
+		{"same host twice", "https://console.example.test", "http://CONSOLE.example.test.:8081",
+			[]string{"console.example.test"}, nil},
+		{"wildcard host", "https://*.example.test", "", nil, []string{"https://*.example.test"}},
+		{"leading dot", "https://.example.test", "", nil, []string{"https://.example.test"}},
+		{"IPv6 literal", "https://[2001:db8::5]", "http://10.0.1.5:8081",
+			[]string{"10.0.1.5"}, []string{"https://[2001:db8::5]"}},
+		{"not http", "ftp://console.example.test", "", nil, []string{"ftp://console.example.test"}},
+		{"unset", "", "", nil, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, refused := cpEgressHostsOf(c.public, c.internal)
+			if !slices.Equal(got, c.want) || !slices.Equal(refused, c.refused) {
+				t.Fatalf("cpEgressHostsOf(%q, %q) = %v, refused %v; want %v, refused %v",
+					c.public, c.internal, got, refused, c.want, c.refused)
+			}
+			p := newEgressPolicy(got)
+			for _, h := range got {
+				if !p.Allows(h) || !p.Allows(h+".") {
+					t.Errorf("%s is not admitted by its own entry", h)
+				}
+			}
+			for _, h := range []string{"other.example.test", "example.test", "x.console.example.test"} {
+				if p.Allows(h) {
+					t.Errorf("%s admitted by %v", h, got)
+				}
+			}
+		})
 	}
 }
