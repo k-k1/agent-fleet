@@ -58,6 +58,7 @@ source_of_truth: "固定値はこの表、テナント / 配備が決めるも�
 | クラウド費用の集計窓 | 7 日 | `AF_CLOUD_COST_WINDOW_DAYS` |
 | 親セッションと稼働中の子がすべて静かなまま、親が動いていない子を挙げた通知を 1 回受け取るまで | 15 分 | ワークスペースの環境の `AF_STALLED_TREE_MINUTES`。`0` で無効 |
 | アイドルの掃除 | 有効 | `AF_IDLE_SWEEP_INTERVAL`：**`0` は掃除を完全に止める**ので、アイドルで停止されることが一切なくなる |
+| メモリのインポート: bundle / tar.gz の大きさ | 64 MiB、上限は 128 MiB | Workspace の環境の `AF_MEMORY_IMPORT_MAX`（バイト）。これより大きい値は 128 MiB に丸め、Agent のログに警告を出す（Control Plane が一時保存するのは 1 回のアップロードで 130 MiB までで、超えると 413 を返すため）。上限を超えたアップロードは「大きすぎる」として断る（[member/18](../member/18-agent-memory.ja.md)）|
 | アイドルのセッションを止めるまで | 1 時間 | `AF_SESSION_IDLE_TIMEOUT`。`0` で無効 |
 | 判断待ち（質問・承認）のセッションを止めるまで | セッションの値 | `AF_INTERACTION_IDLE_TIMEOUT` |
 | アイドルの Workspace を止めるまで | 2 時間 | `AF_WS_IDLE_TIMEOUT`。`0` で無効 |

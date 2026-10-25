@@ -1033,6 +1033,8 @@ export const tools = {
   "mem.reason_absent": "この環境では見つかりません",
   "mem.codex_cost_hint":
     "オンにすると Codex がバックグラウンドで会話からメモリを抽出・統合します。その分のトークンを継続的に消費します。",
+  "mem.codex_dual_hint":
+    "Agent Fleet のメモリがオンなので、Codex 自身のメモリ機能もそのまま並行して動きます。両者は別物で、Codex は自分のメモリを書き続け、Agent Fleet のメモリはすべてのエージェント種別で共有されます。",
   "mem.codex_enabled": "Codex のメモリ機能をオンにしました。次に Codex が動くと履歴の対象になります。",
   "mem.codex_disabled_toast": "Codex のメモリ機能をオフにしました。取得済みの履歴は残ります。",
   "mem.history_empty": "スナップショットはまだありません。",
