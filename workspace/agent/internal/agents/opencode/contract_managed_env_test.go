@@ -180,11 +180,12 @@ func TestContractManagedShellEnvPerSessionAndAcrossRestart(t *testing.T) {
 	}()
 	for _, k := range []string{"AF_WORK_DIR", "AF_SESSION_NAME"} {
 		if v, has := baseline[k]; has {
-			t.Fatalf("the baseline shell already has %s=%s, the probe proves nothing", k, v)
+			t.Fatalf("the baseline shell already has %s (%d bytes), the probe proves nothing", k, len(v))
 		}
 	}
 	if baseline["TOOLCHAIN_MARK"] != "tc-server" || baseline["OPENAI_API_KEY"] == "" {
-		t.Fatalf("the baseline shell is not the server's environment: %v", baseline)
+		t.Fatalf("the baseline shell is not the server's environment (TOOLCHAIN_MARK ok: %v, OPENAI_API_KEY present: %v, %d keys)",
+			baseline["TOOLCHAIN_MARK"] == "tc-server", baseline["OPENAI_API_KEY"] != "", len(baseline))
 	}
 
 	// expect is the baseline plus the session's two variables, nothing else changed.
@@ -205,7 +206,14 @@ func TestContractManagedShellEnvPerSessionAndAcrossRestart(t *testing.T) {
 		want["AF_SESSION_NAME"], want["AF_WORK_DIR"] = name, paths.SessionWorkDir(name)
 		for k, v := range want {
 			if got[k] != v {
-				t.Errorf("%s %s: %s = %q, want %q", when, name, k, got[k], v)
+				// The environment holds real tokens (the serve inherits this process's), so a
+				// mismatch names the key and never prints a value; the two variables under
+				// test are the only values that are safe to show.
+				if k == "AF_SESSION_NAME" || k == "AF_WORK_DIR" {
+					t.Errorf("%s %s: %s = %q, want %q", when, name, k, got[k], v)
+				} else {
+					t.Errorf("%s %s: %s differs from the baseline (present: %v)", when, name, k, got[k] != "")
+				}
 			}
 		}
 		for k := range got {
