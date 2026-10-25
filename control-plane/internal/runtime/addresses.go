@@ -90,31 +90,6 @@ func (e *ecsRuntime) HeldAddresses(ctx context.Context, open []string) (AddressR
 	}
 	var out AddressReport
 	seen := map[string]bool{}
-	describe := func(arns []string) error {
-		for len(arns) > 0 {
-			n := min(len(arns), 100) // DescribeTasks takes at most 100 tasks
-			described, err := lister.DescribeTasks(ctx, &ecs.DescribeTasksInput{
-				Cluster: aws.String(e.cfg.cluster),
-				Tasks:   arns[:n],
-			})
-			if err != nil {
-				return err
-			}
-			for _, f := range described.Failures {
-				if aws.ToString(f.Reason) != "MISSING" {
-					return fmt.Errorf("describe task %s: %s", aws.ToString(f.Arn), aws.ToString(f.Reason))
-				}
-				seen[aws.ToString(f.Arn)] = true
-				out.Unresolved = append(out.Unresolved, aws.ToString(f.Arn))
-			}
-			for _, t := range described.Tasks {
-				seen[aws.ToString(t.TaskArn)] = true
-			}
-			out.Held = append(out.Held, taskHeldAddresses(described.Tasks)...)
-			arns = arns[n:]
-		}
-		return nil
-	}
 	for _, status := range []ecstypes.DesiredStatus{ecstypes.DesiredStatusRunning, ecstypes.DesiredStatusStopped} {
 		var next *string
 		for {
@@ -131,7 +106,7 @@ func (e *ecsRuntime) HeldAddresses(ctx context.Context, open []string) (AddressR
 				}
 				return AddressReport{}, err
 			}
-			if err := describe(listed.TaskArns); err != nil {
+			if err := describeAddressTasks(ctx, lister, e.cfg.cluster, listed.TaskArns, seen, &out); err != nil {
 				return AddressReport{}, err
 			}
 			if listed.NextToken == nil {
@@ -140,16 +115,50 @@ func (e *ecsRuntime) HeldAddresses(ctx context.Context, open []string) (AddressR
 			next = listed.NextToken
 		}
 	}
+	if err := describeMissedOpen(ctx, lister, e.cfg.cluster, open, seen, &out); err != nil {
+		return AddressReport{}, err
+	}
+	return out, nil
+}
+
+// describeAddressTasks describes arns in batches (DescribeTasks takes at most 100 tasks) and
+// adds what it finds to out. MISSING is unresolved; any other failure is an error.
+func describeAddressTasks(ctx context.Context, lister ecsTaskLister, cluster string, arns []string, seen map[string]bool, out *AddressReport) error {
+	for len(arns) > 0 {
+		n := min(len(arns), 100)
+		described, err := lister.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+			Cluster: aws.String(cluster),
+			Tasks:   arns[:n],
+		})
+		if err != nil {
+			return err
+		}
+		for _, f := range described.Failures {
+			if aws.ToString(f.Reason) != "MISSING" {
+				return fmt.Errorf("describe task %s: %s", aws.ToString(f.Arn), aws.ToString(f.Reason))
+			}
+			seen[aws.ToString(f.Arn)] = true
+			out.Unresolved = append(out.Unresolved, aws.ToString(f.Arn))
+		}
+		for _, t := range described.Tasks {
+			seen[aws.ToString(t.TaskArn)] = true
+		}
+		out.Held = append(out.Held, taskHeldAddresses(described.Tasks)...)
+		arns = arns[n:]
+	}
+	return nil
+}
+
+// describeMissedOpen describes by ARN the open refs a listing did not return, so a task the
+// eventually consistent listing left out is still resolved (or kept open as unresolved).
+func describeMissedOpen(ctx context.Context, lister ecsTaskLister, cluster string, open []string, seen map[string]bool, out *AddressReport) error {
 	var missed []string
 	for _, arn := range open {
 		if !seen[arn] {
 			missed = append(missed, arn)
 		}
 	}
-	if err := describe(missed); err != nil {
-		return AddressReport{}, err
-	}
-	return out, nil
+	return describeAddressTasks(ctx, lister, cluster, missed, seen, out)
 }
 
 // taskHeldAddresses reads the ENI address out of each awsvpc task's attachment details.

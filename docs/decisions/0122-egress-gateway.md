@@ -6,7 +6,7 @@ English | [日本語](0122-egress-gateway.ja.md)
   template facts were read from the tree on this date. Squid's behaviour was read from its
   published documentation and an AWS blog post, **not run**; no Docker and no cloud account were
   available while writing this.
-- Follow-ups: #1181, #2603, #2604, #2657, #2658, #2687, #2699
+- Follow-ups: #1181, #2603, #2604, #2657, #2658, #2674, #2687, #2699
 - Related: [0047](0047-tenant-network-restriction.md) (inbound IP restriction; this record does
   not touch it) / #1056 (credential injection, needs this fence first) / #1067 (why an OS sandbox
   is not the answer)
@@ -437,3 +437,17 @@ events/s the former takes about 8.6M rows a day. The maintainer decided:
   lost, from the raw table and from the aggregate. That is the price of not keeping a table of
   purged ids.
 - **No archive in this change.** Archiving to object storage before the purge is #2699.
+
+## Addendum (2026-10-25) — the address recorder reads ECS once per cluster
+
+The recorder asked ECS about each workspace's own service (`ListTasks` RUNNING and STOPPED,
+then `DescribeTasks`), about three requests per running workspace per sweep against the
+account-shared ECS read throttle. A factory that implements `runtime.AddressSnapshotter` now
+serves a whole sweep from one read per cluster: `ListTasks` per desired status (paged),
+`DescribeTasks` in batches of 100, grouped by the task's `service:<name>` group. A factory
+without it, and every other runtime, keeps the per-workspace path.
+
+The interval rules do not change. An open ref the cluster listing does not return is
+described by ARN, as before, and MISSING stays unresolved. A failed page or batch fails the
+read of every workspace in that cluster for the sweep, so none of their intervals is closed
+on a partial listing. Follow-ups: #2674 (acceptance on a real account).

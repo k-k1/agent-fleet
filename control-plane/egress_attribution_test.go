@@ -351,3 +351,53 @@ func equalRefs(got []string, want ...string) bool {
 	}
 	return true
 }
+
+// snapshotFactory is a factory with the sweep-snapshot capability: the runtime it builds
+// reports through the snapshot's reporter, not through its own HeldAddresses.
+type snapshotFactory struct {
+	stubFactory
+	snapshots *int
+	reporter  runtime.AddressReporter
+}
+
+func (f snapshotFactory) AddressSnapshot(context.Context) runtime.AddressSnapshot {
+	*f.snapshots++
+	return snapshotOf{f.reporter}
+}
+
+type snapshotOf struct{ rep runtime.AddressReporter }
+
+func (s snapshotOf) ReporterFor(runtime.Runtime) (runtime.AddressReporter, bool) { return s.rep, true }
+
+// A factory with the snapshot capability is asked once per sweep, the workspaces are
+// answered from it, and a snapshot that fails closes nothing.
+func TestAddressRecorderReadsFromTheSweepSnapshot(t *testing.T) {
+	ctx := context.Background()
+	st, ws, mgr := reaperLifecycleFixture(t)
+	own := &addressStub{}
+	snapRep := &addressStub{}
+	var snapshots int
+	mgr.rtFactory = snapshotFactory{stubFactory{rt: own}, &snapshots, snapRep}
+	clock := time.Now()
+	ar := &addressRecorder{mgr: mgr, interval: time.Minute, holder: "cp-1", now: func() time.Time { return clock }}
+
+	snapRep.held = []runtime.HeldAddress{{Address: "10.0.1.5", Ref: "task/1", From: clock.Add(-time.Minute)}}
+	ar.tick(ctx)
+	if snapshots != 1 || snapRep.asked != 1 || own.asked != 0 {
+		t.Fatalf("one snapshot per sweep, answered through it: snapshots %d, snapshot reads %d, own reads %d", snapshots, snapRep.asked, own.asked)
+	}
+	if got := openAddressRefs(t, st, ws.MembershipID); !equalRefs(got, "task/1") {
+		t.Fatalf("the snapshot's address must be recorded: %v", got)
+	}
+
+	// The snapshot could not be read (a page failed): the interval is not closed.
+	snapRep.held, snapRep.err = nil, errors.New("throttled")
+	clock = clock.Add(time.Minute)
+	ar.tick(ctx)
+	if got := openAddressRefs(t, st, ws.MembershipID); !equalRefs(got, "task/1") {
+		t.Errorf("a failed snapshot must not close the open interval: %v", got)
+	}
+	if snapshots != 2 || len(snapRep.open) != 1 || snapRep.open[0] != "task/1" {
+		t.Errorf("a new snapshot per sweep, told the open refs: snapshots %d, open %v", snapshots, snapRep.open)
+	}
+}

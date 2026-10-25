@@ -154,11 +154,17 @@ func (ar *addressRecorder) sweep(ctx context.Context) {
 		return ar.lastPolled[all[i].MembershipID].Before(ar.lastPolled[all[j].MembershipID])
 	})
 	unresolved := map[string]bool{}
+	// A runtime family that can answer many workspaces from one read does so for the whole
+	// sweep (ECS: one listing per cluster instead of three requests per workspace).
+	var snap runtime.AddressSnapshot
+	if s, ok := ar.mgr.rtFactory.(runtime.AddressSnapshotter); ok {
+		snap = s.AddressSnapshot(ctx)
+	}
 	for _, ws := range all {
 		if ctx.Err() != nil {
 			return
 		}
-		ar.recordWorkspace(ctx, ws, unresolved)
+		ar.recordWorkspace(ctx, ws, unresolved, snap)
 	}
 	// Only a sweep that reached every workspace knows which refs are still unresolved.
 	for ref := range ar.unresolvedSince {
@@ -177,7 +183,7 @@ func (ar *addressRecorder) sweep(ctx context.Context) {
 // as stopped is still asked while it has an open row, so the row is closed (with the stop
 // time ECS reports, where it does), and while it was active recently, so a task that came
 // and went between two sweeps is still recorded.
-func (ar *addressRecorder) recordWorkspace(ctx context.Context, ws store.Workspace, unresolved map[string]bool) {
+func (ar *addressRecorder) recordWorkspace(ctx context.Context, ws store.Workspace, unresolved map[string]bool, snap runtime.AddressSnapshot) {
 	open, err := ar.mgr.store.OpenWorkspaceAddressRefs(ctx, ws.MembershipID)
 	if err != nil {
 		log.Printf("egress address recorder: open rows of %s: %v", ws.ContainerName, err)
@@ -186,9 +192,16 @@ func (ar *addressRecorder) recordWorkspace(ctx context.Context, ws store.Workspa
 	if ws.State != "running" && len(open) == 0 && !ar.recentlyActive(ws) {
 		return
 	}
-	rep, ok := ar.mgr.runtimeFor(ws, noSecretKeys).(runtime.AddressReporter)
-	if !ok {
-		return
+	rt := ar.mgr.runtimeFor(ws, noSecretKeys)
+	var rep runtime.AddressReporter
+	if snap != nil {
+		rep, _ = snap.ReporterFor(rt)
+	}
+	if rep == nil {
+		var ok bool
+		if rep, ok = rt.(runtime.AddressReporter); !ok {
+			return
+		}
 	}
 	rctx, cancel := context.WithTimeout(ctx, addressReadTimeout)
 	report, err := rep.HeldAddresses(rctx, open)
