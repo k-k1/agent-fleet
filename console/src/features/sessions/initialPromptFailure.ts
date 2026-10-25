@@ -1,34 +1,59 @@
 // The one place a create-time initial prompt that failed because the Claude login expired turns
-// into a toast. The Agent settles the prompt in the background (pending -> failed), long after
-// the create call returned, so the only observable moment is the list update that carries the
-// change. A session first SEEN as failed (page reload, another member's earlier create) is not
-// announced: that failure is old news, and the toast would re-fire on every reload.
-import { toastInitialPromptAuthExpired } from "../../lib/authExpiredToast.tsx";
+// into a toast. The Agent settles the prompt in the background, long after the create call
+// returned, and with the login already dead it settles within milliseconds of the create — so the
+// first list that carries the session may already say failed, with no pending in between. The
+// rule is therefore not "pending -> failed" but "failed that was not in the list we last saw":
+// a session first SEEN failed in the opening snapshot of a scope (page reload, workspace switch)
+// is old news and stays quiet, while one that appears or changes to failed afterwards is new.
+//
+// Everything observed belongs to one (user, tenant) scope. Another workspace can hold a session
+// of the same name, so a scope change drops both the observations and the sticky toasts shown
+// for the old scope.
+import { getTenant, getUser } from "../../core/api/client.ts";
+import { initialPromptToastKey, toastInitialPromptAuthExpired } from "../../lib/authExpiredToast.tsx";
 import { t as tr } from "../../lib/i18n/index.ts";
-import { toast } from "../../ui/toast.ts";
+import { dismissToast, toast } from "../../ui/toast.ts";
 import type { Session } from "../../types/session.ts";
 
 const REASON_AUTH_EXPIRED = "auth_expired";
 
-let pending = new Set<string>();
+const scopeNow = () => `${getUser()}\u0000${getTenant()}`;
 
-/** noteInitialPromptFailures compares each arriving list against the sessions it last saw
- *  pending. No poll of its own: applyList already sees every list. */
-export function noteInitialPromptFailures(list: Session[]): void {
-  // An empty list is also the startup value and what a failed fetch leaves behind; keep what
-  // was observed rather than forgetting the pending sessions.
-  if (!list.length) return;
-  const next = new Set<string>();
-  for (const s of list) {
-    if (s.initialPromptState === "pending") next.add(s.name);
-    else if (s.initialPromptState === "failed" && s.initialPromptReason === REASON_AUTH_EXPIRED && pending.has(s.name)) {
-      toastInitialPromptAuthExpired(toast, s.name, tr("start.initial_prompt_auth_expired", { name: s.name }));
-    }
-  }
-  pending = next;
+let scope = "";
+let baselined = false;
+let seen = new Map<string, string>(); // session name -> initialPromptState in the last list
+let shown = new Set<string>(); // sticky toast keys raised for the current scope
+
+function reset(next: string): void {
+  for (const k of shown) dismissToast(k);
+  shown = new Set();
+  seen = new Map();
+  baselined = false;
+  scope = next;
 }
 
-/** Test seam: forget the observed pending sessions. */
+/** noteInitialPromptFailures compares each arriving list against the previous one. No poll of its
+ *  own: applyList already sees every list. */
+export function noteInitialPromptFailures(list: Session[]): void {
+  const now = scopeNow();
+  if (now !== scope) reset(now);
+  // An empty list is also the startup value and what a failed fetch leaves behind; it carries
+  // no observation, so it neither baselines nor forgets.
+  if (!list.length) return;
+  const next = new Map<string, string>();
+  for (const s of list) {
+    const st = s.initialPromptState ?? "";
+    next.set(s.name, st);
+    if (baselined && st === "failed" && s.initialPromptReason === REASON_AUTH_EXPIRED && seen.get(s.name) !== "failed") {
+      shown.add(initialPromptToastKey(now, s.name));
+      toastInitialPromptAuthExpired(toast, now, s.name, tr("start.initial_prompt_auth_expired", { name: s.name }));
+    }
+  }
+  seen = next;
+  baselined = true;
+}
+
+/** Test seam: forget everything observed. */
 export function resetInitialPromptFailuresForTest(): void {
-  pending = new Set();
+  reset("");
 }

@@ -52,10 +52,15 @@ export function toastSendFailure(toast: ToastSink, fail: { code?: string; messag
 }
 
 
+/** initialPromptToastKey is the sticky toast's key. It carries the (user, tenant) scope the
+ *  failure was observed in: the same session name in another workspace is another failure, and
+ *  its toast must neither replace nor be dismissed by this one. */
+export const initialPromptToastKey = (scope: string, session: string) => `${INITIAL_PROMPT_TOAST_KEY}:${scope}:${session}`;
+
 /** toastInitialPromptAuthExpired reports a create-time initial prompt the Agent refused to type
  *  because the Claude login has expired: nothing was sent, and no send of the member's own was
  *  involved, so no other path would tell them why the session sits idle. */
-export function toastInitialPromptAuthExpired(toast: ToastSink, session: string, text: string): void {
-  const toastKey = `${INITIAL_PROMPT_TOAST_KEY}:${session}`;
+export function toastInitialPromptAuthExpired(toast: ToastSink, scope: string, session: string, text: string): void {
+  const toastKey = initialPromptToastKey(scope, session);
   toast(<AuthExpiredToast text={text} toastKey={toastKey} />, { kind: "error", duration: 0, key: toastKey });
 }
