@@ -338,6 +338,10 @@ deploy_stack() {  # deploy_stack <stack> <template> <slug> [capability...]
   if [ "$slug" = 00-network ] && grep -q '^  NatEnabled:' "$CFN_DIR/$tpl"; then
     af_param_override NatEnabled true
   fi
+  # The same for the egress gateway pause.sh scaled to zero (GatewayEnabled=false).
+  if [ "$slug" = 00-network ] && grep -q '^  GatewayEnabled:' "$CFN_DIR/$tpl"; then
+    af_param_override GatewayEnabled true
+  fi
   # A LIVE network stack older than the S3 endpoint switch (#2716) may still have workspaces in
   # its private subnets, whose own S3 the endpoint's policy would refuse: it gets "false", and
   # switching it on stays the migration's last step (README, NAT bullet). A new stack, or a
@@ -755,7 +759,7 @@ if [ "$AF_DRY" != 1 ]; then
     af_param_override EgressProxyAddr "$(af_stack_output "$AF_STACK_NETWORK" EgressProxyAddr)"
     af_param_override EgressTokenSecretArn "$eg_secret"
     echo "WARNING: $AF_STACK_NETWORK runs the egress gateway (EgressRoute=gateway). Workspaces egress" >&2
-    echo "         from its own address, not the NAT gateway's (#2728), and pause.sh refuses it (#2729)." >&2
+    echo "         from its own address, not the NAT gateway's (#2728)." >&2
   fi
 fi
 if [ -n "$AF_STACK_POOL" ] && [ "$AF_DRY" != 1 ]; then
@@ -802,6 +806,17 @@ if [ "$AF_DRY" != 1 ]; then
     - the CP task cannot be placed (CpArch vs the image architecture — unlikely if the check above passed)
     - the CP is stuck at startup: aws logs tail /af/$AF_STACK_INGRESS/cp --follow
 EOF
+  # The egress gateway refuses every workspace connection until its agent has a first policy,
+  # which it can only fetch from the CP that just came up.
+  if [ -n "${eg_secret:-}" ]; then
+    echo "==> egress gateway"
+    if af_gateway_wait "$AF_STACK_NETWORK" ready; then
+      echo "    ✓ interface attached, Squid and the agent running, first policy applied"
+    else
+      echo "⚠️  the egress gateway is not ready: workspaces have no egress until it is." >&2
+      echo "    On the instance: /var/log/af-egress-gateway.log, journalctl -u af-egress-agent (README, \"Egress gateway\")." >&2
+    fi
+  fi
 fi
 
 cat <<EOF
