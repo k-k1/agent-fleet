@@ -458,7 +458,11 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
   CP に届かない間 proxy が保持するのは host/verdict 最大 5000 件で、超過分は `dropped` として
   報告され `egress.dropped` で監査される。保持中の件数はメモリ上のみで、proxy 再起動で失われる。
 - **allowlist は版管理**（`egress_allowlist`: active / proposed / retired）+ デプロイ全体のモード
-  （`egress_mode`）。**AI は提案のみ・人間が承認**（自動適用しない）。
+  （`egress_mode`）。**AI は提案のみ・人間が承認**（自動適用しない）。配る policy
+  （`GET /internal/egress/policy`）には、この表と別に CP 自身のホスト（`PUBLIC_BASE_URL` と
+  `AF_CP_INTERNAL_URL` のもの、`cpEgressHosts`）が完全一致のホストとして必ず入る。Workspace は
+  公開 base に egress の経路を通って届く（AWS の gateway では `NO_PROXY` に関係なく 443 が横取り
+  される）ので、allowlist の編集で CP から切り離されてはならない（#2742）。Admin の一覧では組み込みと表示する。
 - **enforce は proxy で遮断する**: allowlist の外は 403。
 - `AF_EGRESS_PROXY_ADDR` がどのターゲットでも全 Workspace に proxy の変数（`http_proxy`・
   `https_proxy`・`no_proxy`、と大文字の同名変数）を注入する。`docker`・`native`・Kubernetes は

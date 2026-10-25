@@ -570,3 +570,26 @@ only new client library (`google.golang.org/api` comes in with it as a direct im
 - **Not run against real GCS.** The tests use a fake of the JSON API behind
   `STORAGE_EMULATOR_HOST`. The CP binary grew by the client and its gRPC and OpenTelemetry
   dependencies (sizes in the PR); the release build uses the `disable_grpc_modules` tag, which drops the unused gRPC transport.
+
+## Addendum (2026-10-26) — the CP's own hosts are always in the served policy (#2742)
+
+On the sandbox (ecs-ec2, `EgressRoute=gateway`, log-only) the deployment's own console host was
+would-block for every workspace connection. ECS workspaces have only the public URL
+(`AF_CP_BASE_URL`); `NO_PROXY` gains the CP host only from `AF_CP_INTERNAL_URL`, which only
+Kubernetes sets; and the gateway intercepts 443 on the workspace route table, so `NO_PROXY` alone
+would not have kept the traffic away from Squid either. In enforce, workspaces would have lost
+their CP.
+
+- **The policy the CP serves always admits the hosts of `PUBLIC_BASE_URL` and
+  `AF_CP_INTERNAL_URL`** (`cpEgressHosts`), as exact hosts next to the product defaults, outside
+  the allowlist table. No admin edit can remove them; the Admin list and `list_allowlist` show
+  them as built-in. Exact hosts only, so enforce is not opened for their parent domain. This holds
+  for every runtime, because the gateway agent and the own forward proxy both enforce what this
+  endpoint serves: docker and native workspaces reach the public URL through the proxy as well.
+- **Not done here: an in-VPC CP URL for ECS** (option b in #2742). It would keep CP traffic off
+  the gateway, but it needs a CP internal listener, a security group rule and template bytes,
+  and it would not remove the need for the above: the public URL stays in use for links a person
+  opens and as the internal git host.
+- Not run on a real account; the enforce check on the sandbox is still owed.
+
+Follow-ups: #2746

@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -266,5 +268,88 @@ func TestEffectivePolicyEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "extra.internal") || !strings.Contains(w.Body.String(), `"enforce":true`) {
 		t.Fatalf("policy body: %s", w.Body.String())
+	}
+}
+
+// The policy the gateway and the own proxy enforce must always admit the Control Plane's
+// own hosts: a workspace reaches the CP through the egress path, so an allowlist
+// without them cuts every workspace off from its CP the moment the mode is enforce.
+func TestEgressPolicyAlwaysAdmitsCPHosts(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	_ = st.SetSetting(ctx, "egress_mode", "enforce")
+	m := &manager{store: st,
+		publicBaseURL:   "https://Console.Example.test",
+		internalBaseURL: "http://af-cp.af.svc.cluster.local:8081"}
+	eg := newEgressAPI(m, "tok", "proxy:3128", nil, nil)
+
+	served := func() (allow []string, enforce bool) {
+		t.Helper()
+		r := httptest.NewRequest("GET", "/internal/egress/policy", nil)
+		r.Header.Set("Authorization", "Bearer tok")
+		w := httptest.NewRecorder()
+		eg.policy(w, r)
+		var b struct {
+			Allowlist []string `json:"allowlist"`
+			Enforce   bool     `json:"enforce"`
+		}
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &b) != nil {
+			t.Fatalf("policy: %d %s", w.Code, w.Body.String())
+		}
+		return b.Allowlist, b.Enforce
+	}
+	check := func(when string) {
+		t.Helper()
+		allow, enforce := served()
+		if !enforce {
+			t.Fatalf("%s: enforce should be true", when)
+		}
+		p := newEgressPolicy(allow)
+		for _, h := range []string{"console.example.test", "af-cp.af.svc.cluster.local"} {
+			if !p.Allows(h) {
+				t.Errorf("%s: the served policy does not admit the CP host %s: %v", when, h, allow)
+			}
+		}
+		// Only the CP's own hosts: enforce is not weakened for their neighbours.
+		for _, h := range []string{"other.example.test", "example.test", "evil.cluster.local"} {
+			if p.Allows(h) {
+				t.Errorf("%s: the served policy admits %s, which is not a CP host", when, h)
+			}
+		}
+	}
+	check("empty admin allowlist")
+
+	// An admin who adds the CP host and then retires it does not take it away.
+	id := store.NewID()
+	_ = st.AddAllowlist(ctx, store.AllowlistEntry{ID: id, Entry: "console.example.test", State: "active", AddedAt: store.NowTS()})
+	if err := st.SetAllowlistState(ctx, id, "retired"); err != nil {
+		t.Fatalf("retire: %v", err)
+	}
+	check("CP host retired by an admin")
+
+	// The admin list shows them as built-in, apart from the product defaults.
+	w := httptest.NewRecorder()
+	eg.allowlistList(w, httptest.NewRequest("GET", "/api/admin/egress/allowlist", nil), store.Identity{})
+	var lb struct {
+		Builtin []string `json:"builtin"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &lb); err != nil {
+		t.Fatalf("allowlist list: %v", err)
+	}
+	if want := []string{"console.example.test", "af-cp.af.svc.cluster.local"}; !slices.Equal(lb.Builtin, want) {
+		t.Fatalf("builtin = %v, want %v", lb.Builtin, want)
+	}
+
+	// No public base and no internal URL: nothing extra, and no empty entry.
+	bare := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil, nil)
+	if hosts := bare.mgr.cpEgressHosts(); len(hosts) != 0 {
+		t.Fatalf("cpEgressHosts without URLs = %v, want none", hosts)
 	}
 }

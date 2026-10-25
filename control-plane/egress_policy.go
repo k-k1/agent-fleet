@@ -1,6 +1,12 @@
 package main
 
-import "github.com/k-k1/agent-fleet/control-plane/internal/egressallow"
+import (
+	"net/url"
+	"slices"
+	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/egressallow"
+)
 
 // egressPolicy is the allowlist the egress proxy checks each destination against
 // (docs/log/20 M2). The matcher lives in internal/egressallow because the gateway agent
@@ -31,3 +37,29 @@ var defaultEgressAllowlist = []string{
 // newEgressPolicy builds a policy from a list of entries (blank lines and "#"
 // comments ignored). Passing nil yields an empty (deny-all) policy.
 func newEgressPolicy(entries []string) *egressPolicy { return egressallow.New(entries) }
+
+// cpEgressHosts are the hosts a workspace reaches this Control Plane by: those of
+// PUBLIC_BASE_URL (AF_CP_BASE_URL, also the internal git host) and AF_CP_INTERNAL_URL.
+// effectivePolicy always admits them, outside the admin allowlist, so no edit there can
+// lock workspaces out of their own CP. A workspace's requests to the public base pass the
+// egress gateway, whose intercept sees port 443 whatever NO_PROXY says. Exact
+// hosts only: enforce is not opened for their parent domain.
+func (m *manager) cpEgressHosts() []string {
+	var out []string
+	for _, raw := range []string{m.publicBaseURL, m.internalBaseURL} {
+		u, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil {
+			continue
+		}
+		if h := strings.ToLower(u.Hostname()); h != "" && !slices.Contains(out, h) {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// egressBuiltin is every entry the admin allowlist cannot remove: the product defaults and
+// the CP's own hosts.
+func (m *manager) egressBuiltin() []string {
+	return append(slices.Clip(defaultEgressAllowlist), m.cpEgressHosts()...)
+}

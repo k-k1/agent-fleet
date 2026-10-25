@@ -754,6 +754,8 @@ export const admin = {
   "admin.egress_entry_ph": "host か .suffix.example.com",
   "admin.egress_reason_ph": "理由（任意）",
   "admin.add": "追加",
+  "admin.egress_builtin": "組み込み",
+  "admin.egress_builtin_cp": "このデプロイの Control Plane です。enforce でもワークスペースから届くよう常に許可され、取り消せません。",
   "admin.egress_no_entries": "追加の許可エントリはありません（製品既定の許可だけが有効です）。",
   "admin.retire": "取消",
   "admin.egress_observed": "観測された宛先",

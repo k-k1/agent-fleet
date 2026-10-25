@@ -88,7 +88,10 @@ in the Console.
    AI only **proposes; approval is done by humans** (approve/reject under "Proposed (needs
    approval)" in the Admin panel). Entries are a **host** or a **`.suffix.example.com`**, with an optional
    reason, and are **retired** when no longer needed; with no added entries only the product's built-in
-   allowances apply. A member's request from ⚙ Settings → MCP servers (used by sessions) arrives as a proposal too, and the
+   allowances apply. This deployment's own Control Plane host (the public URL, and the internal
+   URL where one is set) is always allowed and listed as **Built-in**: workspaces reach the
+   Control Plane through the egress path, so it cannot be retired and enforce never cuts them off
+   from it. A member's request from ⚙ Settings → MCP servers (used by sessions) arrives as a proposal too, and the
    member sees "waiting for an administrator's approval" until you decide.
 
    **Reading the observations:** counts are approximate. A report that is retried after a

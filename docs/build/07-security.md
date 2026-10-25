@@ -542,7 +542,11 @@ Implemented:
   `egress.dropped`. Pending counts live in memory and are lost when the proxy restarts.
 - **The allowlist is versioned** (`egress_allowlist`: active / proposed / retired) with a
   deployment-wide mode (`egress_mode`). **An AI may only propose; a human approves** —
-  nothing is applied automatically.
+  nothing is applied automatically. The served policy (`GET /internal/egress/policy`) also
+  always carries the CP's own hosts, those of `PUBLIC_BASE_URL` and `AF_CP_INTERNAL_URL`
+  (`cpEgressHosts`), as exact hosts outside that table: a workspace reaches the public base
+  through the egress path (on the AWS gateway its 443 is intercepted whatever `NO_PROXY` says),
+  so no allowlist edit may cut it off from its CP (#2742). The Admin list shows them as built-in.
 - **Enforce blocks at the proxy**: outside the allowlist the answer is a 403.
 - `AF_EGRESS_PROXY_ADDR` injects the proxy variables (`http_proxy`, `https_proxy`,
   `no_proxy`, and their upper-case forms) into every workspace, on every target. `docker`,

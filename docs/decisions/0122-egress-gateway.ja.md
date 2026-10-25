@@ -468,3 +468,13 @@ Follow-ups: #2728, #2729, #2687（実 Squid。手順は README にある）。
 - **キーは置き換えない。** アップロードに `ifGenerationMatch=0` を付けるので、既にあるキーへの 2 回目の Put は 412 で失敗し、そこにあるオブジェクトはそのまま残る。412 は、保存済みの長さと CRC32C が送ったものと等しくても常にエラーにする。応答を失った後の再試行はそう見え、CRC32C の衝突もそう見えるうえ、nil を返すとアーカイバの検証と DB との突き合わせが飛ばされるため。次の実行が `Exists` でそのキーを見つけ、S3 と同じく検証する。
 - **確認とは、保存されたオブジェクトが一致していること。** アップロードは本文の CRC32C を付けて送り（異なるバイト列はサービスが拒否する）、Put は確定したオブジェクトの長さと CRC32C を比べてから nil を返す。コピーが失敗したときは、閉じずに取り消す。閉じると、そこまで送った分が確定してしまうため。
 - **実際の GCS では動かしていない。** テストは `STORAGE_EMULATOR_HOST` の向こうに置いた JSON API の偽物を使う。CP のバイナリはクライアントとその gRPC・OpenTelemetry の依存分だけ大きくなった（サイズは PR に記載）。リリースビルドは `disable_grpc_modules` タグで使わない gRPC トランスポートを外す。
+
+## 追記（2026-10-26）— 配る policy には CP 自身のホストが常に入る（#2742）
+
+サンドボックス（ecs-ec2、`EgressRoute=gateway`、log-only）で、デプロイ自身の console ホストが Workspace からの全接続で would-block と判定された。ECS の Workspace は公開 URL（`AF_CP_BASE_URL`）しか持たず、`NO_PROXY` に CP のホストが入るのは `AF_CP_INTERNAL_URL` からだけで、それを設定するのは Kubernetes だけである。さらに gateway は Workspace のルートテーブルで 443 を横取りするので、`NO_PROXY` だけでは Squid を避けられない。enforce にすると Workspace は CP を失っていた。
+
+- **CP が配る policy は `PUBLIC_BASE_URL` と `AF_CP_INTERNAL_URL` のホストを常に許可する**（`cpEgressHosts`）。製品既定と並ぶ完全一致のホストで、allowlist の表の外にある。管理者の編集では外せず、Admin の一覧と `list_allowlist` には組み込みとして出る。完全一致だけなので、親ドメインまで enforce が開くことはない。gateway のエージェントも自前の forward proxy もこのエンドポイントが配るものを強制するので、どのランタイムでも成り立つ。docker と native の Workspace も公開 URL へは proxy を通る。
+- **ここでしていないこと：ECS 向けの VPC 内の CP URL**（#2742 の案 b）。CP への通信を gateway から外せるが、CP の内部リスナー、セキュリティグループの規則、テンプレートのバイトが要り、しかも上の対処は不要にならない。公開 URL は人が開くリンクと内部 git ホストとして使われ続ける。
+- 実アカウントでは動かしていない。サンドボックスでの enforce の確認は未実施。
+
+Follow-ups: #2746

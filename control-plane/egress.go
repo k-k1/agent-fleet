@@ -131,10 +131,10 @@ func (a egressAPI) auditAdmin(ctx context.Context, ident store.Identity, action,
 }
 
 // effectivePolicy is what the proxy enforces: the built-in product-critical defaults
-// (docs/log/20 §B.5) plus every ACTIVE allowlist entry, and the deployment egress mode
-// (log-only unless set to enforce).
+// (docs/log/20 §B.5), the CP's own hosts, every ACTIVE allowlist entry, and the deployment
+// egress mode (log-only unless set to enforce).
 func (a egressAPI) effectivePolicy(ctx context.Context) (entries []string, enforce bool) {
-	entries = append(entries, defaultEgressAllowlist...)
+	entries = a.mgr.egressBuiltin()
 	if extra, err := a.store.EffectiveAllowlist(ctx); err == nil {
 		entries = append(entries, extra...)
 	}
@@ -323,7 +323,7 @@ func (a egressAPI) allowlistList(w http.ResponseWriter, r *http.Request, _ store
 			"reason": e.Reason, "added_by": e.AddedBy, "added_at": e.AddedAt,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"allowlist": out, "defaults": defaultEgressAllowlist})
+	writeJSON(w, http.StatusOK, map[string]any{"allowlist": out, "defaults": defaultEgressAllowlist, "builtin": a.mgr.cpEgressHosts()})
 }
 
 // allowlistAdd (POST /api/admin/egress/allowlist) adds an ACTIVE entry.

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -129,6 +130,38 @@ func TestPolicySyncWritesAndReloadsOnlyOnChange(t *testing.T) {
 	}
 	if reloads() != 4 {
 		t.Fatalf("restart: %d reloads, want 4", reloads())
+	}
+}
+
+// The CP's served policy carries its own hosts in the forms a workspace addresses
+// it by: the public console name, a cluster-local service name and an address. Each must
+// survive into the file Squid's af_allowed and af_allowed_sni ACLs read in enforce, and
+// nothing next to them may be opened with them.
+func TestPolicyEnforceAdmitsTheCPHosts(t *testing.T) {
+	cpHosts := []string{"console.example.test", "af-cp.af.svc.cluster.local", "10.0.1.5"}
+	cp := &fakeCP{allowlist: append([]string{"github.com", ".example.org"}, cpHosts...), enforce: true}
+	s, _ := newPolicyFixture(t, cp)
+	if err := s.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(s.cfg.ModeFile); string(b) != ModeEnforce {
+		t.Fatalf("mode file = %q, want enforce", b)
+	}
+	allow, _ := os.ReadFile(s.cfg.AllowFile)
+	lines := strings.Split(string(allow), "\n")
+	snap := s.cur.Load()
+	for _, h := range cpHosts {
+		if !slices.Contains(lines, h) {
+			t.Errorf("allow file lacks the CP host %s:\n%s", h, allow)
+		}
+		if !snap.match.Allows(h) {
+			t.Errorf("the reported verdict for the CP host %s is would-block", h)
+		}
+	}
+	for _, h := range []string{"other.example.test", "example.test", "x.svc.cluster.local", "10.0.1.6"} {
+		if snap.match.Allows(h) {
+			t.Errorf("%s is admitted, but only the CP's own hosts were added", h)
+		}
 	}
 }
 

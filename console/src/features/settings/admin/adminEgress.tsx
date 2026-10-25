@@ -8,6 +8,8 @@ export function EgressView() {
   const tr = useT();
   const [data, setData] = useState<any | null>(null); // { egress, mode, enforce }
   const [list, setList] = useState<any[] | null>(null); // allowlist entries
+  // The CP's own hosts: the server always admits them, outside the editable list.
+  const [builtin, setBuiltin] = useState<string[]>([]);
   const [err, setErr] = useState("");
   const [days, setDays] = useState(7);
   const [entry, setEntry] = useState("");
@@ -27,6 +29,7 @@ export function EgressView() {
       }
       setData(d);
       setList(al?.allowlist || []);
+      setBuiltin(al?.builtin || []);
     } catch {
       setErr(tr("admin.load_error"));
     }
@@ -148,6 +151,14 @@ export function EgressView() {
           />
           <button type="submit" className="btn" disabled={busy || !entry.trim()}>{tr("admin.add")}</button>
         </form>
+        {builtin.map((h) => (
+          <div key={"builtin:" + h} className="adm-allow-row">
+            <span className="as-name mono" title={h}>{h}</span>
+            <span className="as-repo muted" title={tr("admin.egress_builtin_cp")}>{tr("admin.egress_builtin_cp")}</span>
+            <span className="muted">{tr("admin.egress_builtin")}</span>
+            <span className="allow-acts" />
+          </div>
+        ))}
         {active.length === 0 ? (
           <p className="muted">{tr("admin.egress_no_entries")}</p>
         ) : (

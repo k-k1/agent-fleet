@@ -16,7 +16,7 @@ cloudcost.go adminAPI.cloudCost x1 {attributed_micro,from,members,meta,shared_gr
 cloudcost.go adminAPI.oneMemberCloudCost x1 {days,from,meta,services,to,total_micro}
 drawio_stencils.go drawioStencils.index x1 {cached,sets,version}
 egress.go egressAPI.allowlistAdd x1 {entry,id,state}
-egress.go egressAPI.allowlistList x1 {allowlist,defaults}
+egress.go egressAPI.allowlistList x1 {allowlist,builtin,defaults}
 egress.go egressAPI.mode x2 {enforce,mode}
 egress.go egressAPI.policy x1 {allowlist,enforce}
 egress.go egressAPI.stats x1 {days,egress,enforce,mode}

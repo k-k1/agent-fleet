@@ -765,6 +765,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.egress_entry_ph": "host or .suffix.example.com",
   "admin.egress_reason_ph": "Reason (optional)",
   "admin.add": "Add",
+  "admin.egress_builtin": "Built-in",
+  "admin.egress_builtin_cp": "This deployment's Control Plane. Always allowed, so workspaces keep reaching it in enforce; it cannot be retired.",
   "admin.egress_no_entries": "No added allow entries (only the product defaults are active).",
   "admin.retire": "Retire",
   "admin.egress_observed": "Observed destinations",

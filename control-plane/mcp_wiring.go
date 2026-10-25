@@ -38,7 +38,7 @@ func (d cpDeps) ServerIdentity(ctx context.Context) mcpsrv.ServerIdentity {
 		PublicBaseURL: d.m.publicBaseURL,
 	}
 }
-func (d cpDeps) EgressDefaults() []string { return defaultEgressAllowlist }
+func (d cpDeps) EgressDefaults() []string { return d.m.egressBuiltin() }
 func (d cpDeps) StopWorkspaceByMembership(ctx context.Context, mid string) error {
 	return d.m.stopWorkspaceByMembership(ctx, mid)
 }
