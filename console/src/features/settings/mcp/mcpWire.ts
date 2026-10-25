@@ -4,6 +4,7 @@
 // "the transport decides which half is sent", the CLI-narrowest name charset — are
 // pinned by unit tests instead of only by a running browser.
 
+import { tMaybe } from "../../../lib/i18n/index.ts";
 import { catalogKinds, kindFacts, useKindCatalogVersion } from "../../../agents/kindCatalog.ts";
 
 // The agent kinds a definition may be scoped to when no kind catalog has been loaded: the
@@ -125,10 +126,27 @@ export interface ProbeResult {
   revision?: string;
   supportedVersions?: string[];
   error?: string;
+  // code + params are the language-free form of `error` (mcp.probe_err.<code> in the catalogues);
+  // `error` stays the Agent's English fallback for a code this Console does not know.
+  code?: string;
+  params?: Record<string, string>;
   detail?: string;
   oauth?: OAuthReport;
   elapsedMs: number;
 }
+
+// probeErrText is the text of a failed test: the catalogue's wording for the Agent's code, or
+// the Agent's own English `error` when the code is absent, newer than this Console, or arrives
+// without a parameter its template needs (the placeholders are read from the template, not the
+// result, because a server message may itself contain braces).
+export const probeErrText = (p: ProbeResult): string | undefined => {
+  const key = "mcp.probe_err." + p.code;
+  const template = p.code ? tMaybe(key) : undefined;
+  if (template === undefined) return p.error;
+  const need = [...template.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
+  if (need.some((k) => typeof p.params?.[k] !== "string")) return p.error;
+  return tMaybe(key, p.params);
+};
 
 // isOAuthRequired: the test reached an OAuth-protected server. It is not a failure — the
 // server answered and wants a sign-in — so the Console shows it apart from a red error.

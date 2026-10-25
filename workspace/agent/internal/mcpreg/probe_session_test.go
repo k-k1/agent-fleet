@@ -98,7 +98,7 @@ func TestProbeHTTPSessionRejected(t *testing.T) {
 			if res.OK {
 				t.Fatalf("a rejected session id was treated as success: %+v", res)
 			}
-			if res.Error != errSessionRejected {
+			if res.Code != codeSessionRejected || res.Error != errSessionRejected {
 				t.Fatalf("error = %q, want the dedicated session message", res.Error)
 			}
 			if !strings.Contains(res.Detail, "HTTP "+strconv.Itoa(c.status)) || !strings.Contains(res.Detail, "Session") {
@@ -156,7 +156,7 @@ const javaSessionErr = `{"cause":null,"jsonRpcError":null,"localizedMessage":"Se
 func TestProbeHTTPSessionRejectedNonRPCBody(t *testing.T) {
 	res := probeLegacy(t, &legacyFake{issueID: true, status: 404, body: javaSessionErr,
 		reject: func(n int, _ string) bool { return n >= 2 }})
-	if res.OK || res.Error != errSessionRejected || !strings.Contains(res.Detail, "HTTP 404") {
+	if res.OK || res.Code != codeSessionRejected || res.Error != errSessionRejected || !strings.Contains(res.Detail, "HTTP 404") {
 		t.Fatalf("got %+v", res)
 	}
 }
@@ -213,7 +213,7 @@ func TestProbeHTTPSessionAffinityNeedsFreshConnections(t *testing.T) {
 	defer srv.Close()
 
 	res := Probe(context.Background(), httpDef("remote", srv.URL))
-	if res.OK || res.Error != errSessionRejected {
+	if res.OK || res.Code != codeSessionRejected || res.Error != errSessionRejected {
 		t.Fatalf("the instance without the session went unnoticed: %+v", res)
 	}
 }
@@ -278,7 +278,7 @@ func TestProbeHTTPSessionRejectedDetailKeepsStatusForLongBody(t *testing.T) {
 	body := `{"message":"Session not found"}` + strings.Repeat(" ", 2000) + "END"
 	res := probeLegacy(t, &legacyFake{issueID: true, status: 404, body: body,
 		reject: func(n int, _ string) bool { return n >= 2 }})
-	if res.Error != errSessionRejected || !strings.HasPrefix(res.Detail, "HTTP 404: ") {
+	if res.Code != codeSessionRejected || res.Error != errSessionRejected || !strings.HasPrefix(res.Detail, "HTTP 404: ") {
 		t.Fatalf("got %+v", res)
 	}
 }
