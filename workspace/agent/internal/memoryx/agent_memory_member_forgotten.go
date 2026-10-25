@@ -92,20 +92,14 @@ type agentMemTombCand struct {
 	at                        time.Time
 }
 
-// agentMemTombBefore is the list order: newest change first; a tie keeps the order the scopes are
-// read in (the user scope, then the projects by id) and then the name.
+// agentMemTombBefore is the list order: newest change first, the path digest breaking a tie. The
+// digest is also what the cursor carries, so a position is a point in this order and does not
+// depend on the cursor's own row still being there.
 func agentMemTombBefore(a, b agentMemTombCand) bool {
 	if !a.at.Equal(b.at) {
 		return a.at.After(b.at)
 	}
-	return agentMemTombTie(a.rel) < agentMemTombTie(b.rel)
-}
-
-func agentMemTombTie(rel string) string {
-	if strings.HasPrefix(rel, "user/") {
-		return "0" + rel
-	}
-	return "1" + rel
+	return agentMemTombDigest(a.rel) < agentMemTombDigest(b.rel)
 }
 
 // agentMemTombCursor names a position in that order: the time of the newest change and a digest of
@@ -137,16 +131,16 @@ func agentMemParseTombCursor(s string) (agentMemTombPos, bool) {
 	return agentMemTombPos{at: at, digest: dig}, true
 }
 
-// agentMemTombResume is the index of the first candidate after the cursor. The cursor's own
-// candidate is found by time and digest; when it is gone (its tombstone was removed since), the
-// list resumes at the first candidate with an older time, which can skip a sibling of the same time.
+// agentMemTombResume is the index of the first candidate ordered after the cursor, whether or not
+// the candidate the cursor named still exists.
 func agentMemTombResume(found []agentMemTombCand, p agentMemTombPos) int {
-	for i, c := range found {
-		if c.at.Equal(p.at) && agentMemTombDigest(c.rel) == p.digest {
-			return i + 1
+	return sort.Search(len(found), func(i int) bool {
+		c := found[i]
+		if !c.at.Equal(p.at) {
+			return c.at.Before(p.at)
 		}
-	}
-	return sort.Search(len(found), func(i int) bool { return found[i].at.Before(p.at) })
+		return agentMemTombDigest(c.rel) > p.digest
+	})
 }
 
 // agentMemNewestCommits returns, for each wanted "af/..." path, the newest agent-memory commit

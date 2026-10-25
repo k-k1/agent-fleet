@@ -3,6 +3,8 @@ package memoryx
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -125,7 +127,12 @@ func TestAgentMemoryMemberForgottenPaging(t *testing.T) {
 		got = append(got, namesOf(p))
 		next = p.Next
 	}
-	want := []string{"e,d", "c,b", "a,tie-x", "tie-y"}
+	// Equal times are ordered by the digest of the path (the cursor's own key).
+	first, second := "tie-x", "tie-y"
+	if agentMemTombDigest("user/tie-y.md") < agentMemTombDigest("user/tie-x.md") {
+		first, second = second, first
+	}
+	want := []string{"e,d", "c,b", "a," + first, second}
 	if len(got) != len(want) {
 		t.Fatalf("pages %v, want %v", got, want)
 	}
@@ -186,5 +193,43 @@ func TestAgentMemoryMemberForgottenCursorLeaksNoWithheldPath(t *testing.T) {
 	}
 	if strings.Join(got, "|") != "||older" {
 		t.Fatalf("pages %v: a page of only withheld rows must still advance", got)
+	}
+}
+
+// A cursor is a point in the list order, not a row: when the row it named is gone (unforgotten) or
+// moved (forgotten again), the same-time rows after it are still reached, none skipped.
+func TestAgentMemoryMemberForgottenCursorSurvivesItsRowChanging(t *testing.T) {
+	for _, how := range []string{"removed", "moved"} {
+		t.Run(how, func(t *testing.T) {
+			_, _, _ = agentMemTestEnv(t)
+			setForgottenMax(t, 1)
+			for _, n := range []string{"a", "b", "c"} {
+				forgeForgotten(t, "user", n, "2026-02-01T00:00:00Z", false)
+			}
+			_, p1, _ := forgottenGet(t, "")
+			if len(p1.Forgotten) != 1 || p1.Next == "" {
+				t.Fatalf("page 1: %+v", p1)
+			}
+			gone := p1.Forgotten[0].Name
+			if how == "removed" {
+				tomb, _ := agentMemCheckDir("user/"+agentMemTombDir, false)
+				if err := os.Remove(filepath.Join(tomb, gone)); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				forgeForgotten(t, "user", gone, "2026-04-01T00:00:00Z", false)
+			}
+			var rest []string
+			for next, n := p1.Next, 0; next != "" && n < 5; n++ {
+				_, p, _ := forgottenGet(t, "?before="+next)
+				for _, v := range p.Forgotten {
+					rest = append(rest, v.Name)
+				}
+				next = p.Next
+			}
+			if len(rest) != 2 {
+				t.Fatalf("%s: %q was page 1; later pages gave %v, want the other two", how, gone, rest)
+			}
+		})
 	}
 }
