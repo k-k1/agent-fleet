@@ -446,18 +446,29 @@ func (c *diskUsageCache) forget(key string, now time.Time) {
 }
 
 func (c *diskUsageCache) get(key string, now time.Time) (uint64, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if s, ok := c.m[key]; ok && now.Sub(s.at) < diskTTL {
+	if s, ok := c.peek(key); ok && now.Sub(s.at) < diskTTL {
 		return s.bytes, true
 	}
 	return 0, false
+}
+
+// peek returns the cached sample whatever its age; the caller decides what stale means.
+func (c *diskUsageCache) peek(key string) (diskSample, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s, ok := c.m[key]
+	return s, ok
 }
 
 func (c *diskUsageCache) put(key string, bytes uint64, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if f, ok := c.forgotten[key]; ok && now.Before(f) {
+		return
+	}
+	// A du that started earlier than the cached sample (a slow background one overtaken by
+	// a synchronous one) must not roll the figure and its timestamp back.
+	if cur, ok := c.m[key]; ok && now.Before(cur.at) {
 		return
 	}
 	c.m[key] = diskSample{bytes: bytes, at: now}
@@ -493,4 +504,89 @@ func dirDiskUsage(ctx context.Context, dataDir string) (uint64, bool) {
 	}
 	diskUsages.put(home, v, now)
 	return v, true
+}
+
+// diskRefreshTimeout bounds one background du, so a hung filesystem costs a stuck child
+// for at most this long and then frees the single-flight slot for the next attempt.
+var diskRefreshTimeout = 5 * time.Minute
+
+// diskRefresher runs du off the request path: at most one per home, tied to a lifecycle
+// context so CP shutdown kills the child instead of leaving it walking the tree.
+type diskRefresher struct {
+	mu       sync.Mutex
+	inflight map[string]bool
+	wg       sync.WaitGroup
+	ctx      context.Context
+	cancel   context.CancelFunc
+}
+
+func newDiskRefresher() *diskRefresher {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &diskRefresher{inflight: map[string]bool{}, ctx: ctx, cancel: cancel}
+}
+
+var diskBG = newDiskRefresher()
+
+// stopDiskRefresh cancels every background du and waits (bounded) for the children to go.
+func stopDiskRefresh() {
+	diskBG.cancel()
+	done := make(chan struct{})
+	go func() { diskBG.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+	}
+}
+
+// kick starts a du for home unless one is already running or the refresher is stopped.
+func (r *diskRefresher) kick(home string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.inflight[home] || r.ctx.Err() != nil {
+		return
+	}
+	r.inflight[home] = true
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		defer func() {
+			r.mu.Lock()
+			delete(r.inflight, home)
+			r.mu.Unlock()
+		}()
+		ctx, cancel := context.WithTimeout(r.ctx, diskRefreshTimeout)
+		defer cancel()
+		// dirDiskUsage's own cache check is bypassed on purpose: the caller kicks only
+		// when the entry is stale, and put() stamps the START time so a wipe in between
+		// (forget) still refuses the result.
+		now := time.Now()
+		out, err := runDU(ctx, home)
+		if err != nil {
+			return
+		}
+		f := strings.Fields(string(out))
+		if len(f) == 0 {
+			return
+		}
+		if v, err := strconv.ParseUint(f[0], 10, 64); err == nil {
+			diskUsages.put(home, v, now)
+		}
+	}()
+}
+
+// dirDiskUsageNoWait is the request-path read of the home size: it never runs or waits on
+// du. It returns the last sample with the time it was taken, and starts a background
+// refresh when that sample is missing or older than diskTTL. !ok means nothing is known
+// yet (first call, or du keeps failing) — callers must report "pending", never 0, which
+// would read as an empty home.
+func dirDiskUsageNoWait(dataDir string) (bytes uint64, at time.Time, ok bool) {
+	home := dataDir + "/home"
+	s, have := diskUsages.peek(home)
+	if !have || time.Since(s.at) >= diskTTL {
+		diskBG.kick(home)
+	}
+	if !have {
+		return 0, time.Time{}, false
+	}
+	return s.bytes, s.at, true
 }

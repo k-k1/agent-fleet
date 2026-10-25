@@ -89,6 +89,11 @@ The member detail gathers that member's workspace resources, running sessions, a
 operations. Resources and sessions, force-stop, and limit settings are covered in
 [02-limits.md](02-limits.md).
 
+Where the Control Plane reads the home folder's size itself (local, native), the detail's disk tile
+never waits for that measurement: it shows the last one with how old it is ("as of 3 minutes ago"),
+refreshes it in the background about once a minute, and says "measuring…" until the first
+measurement lands on a very large home.
+
 Its **"Size and limits"** card names each CLI that failed to install at the last start, with the
 reason. On ECS on EC2, where the home is the member's own volume, it also shows a notice when the
 home is nearly full. That notice uses the member's own thresholds: it appears above 90 % or with

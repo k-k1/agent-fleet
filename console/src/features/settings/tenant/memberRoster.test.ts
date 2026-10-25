@@ -1,6 +1,6 @@
 // The roster's state words, "needs attention" and the filter / sort / search (#2385 phase 1).
 import { describe, it, expect } from "vitest";
-import { attentionReasons, bootFailures, bootSkipped, diskLevel, homeFullFigures, memberStopAvailable, nextMemberHomePressure, matchesFilter, matchesQuery, rosterCounts, rosterState, sortMembers } from "./memberRoster.ts";
+import { attentionReasons, bootFailures, bootSkipped, diskFigureNote, diskLevel, homeFullFigures, memberStopAvailable, nextMemberHomePressure, matchesFilter, matchesQuery, rosterCounts, rosterState, sortMembers } from "./memberRoster.ts";
 import type { Member } from "../parts/adminShared.ts";
 
 const NOW = Date.parse("2026-10-20T12:00:00Z");
@@ -231,5 +231,22 @@ describe("memberStopAvailable", () => {
     expect(memberStopAvailable({ running: false })).toBe(false);
     expect(memberStopAvailable({})).toBe(false);
     expect(memberStopAvailable(null)).toBe(false);
+  });
+});
+
+describe("diskFigureNote", () => {
+  it("states the age of a host-side sample", () => {
+    expect(diskFigureNote({ disk_used: 5, disk_observed_at: "2026-10-25T01:00:00Z" })).toEqual({
+      kind: "observed",
+      at: "2026-10-25T01:00:00Z",
+    });
+  });
+  it("says pending, not 0, while nothing is measured yet", () => {
+    expect(diskFigureNote({ disk_pending: true })).toEqual({ kind: "pending" });
+  });
+  it("has no note for the Agent's own reading or an opted-out poll", () => {
+    expect(diskFigureNote({ disk_used: 5 })).toBeNull();
+    expect(diskFigureNote({})).toBeNull();
+    expect(diskFigureNote(null)).toBeNull();
   });
 });

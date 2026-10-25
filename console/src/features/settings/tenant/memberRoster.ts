@@ -93,6 +93,19 @@ export function nextMemberHomePressure(
   return nextHomeDiskPressure(prev, s.disk_used, s.disk_total);
 }
 
+/** What the detail's disk tile says about how current its figure is. The CP never waits on a
+ *  host-side du: it serves the last sample with `disk_observed_at`, or `disk_pending` while
+ *  nothing has been measured yet (never 0, which would read as an empty home). A figure with
+ *  neither (the Agent's own statfs reading) carries no age. */
+export function diskFigureNote(
+  stats: { disk_used?: number | null; disk_observed_at?: string; disk_pending?: boolean } | null | undefined,
+): { kind: "pending" } | { kind: "observed"; at: string } | null {
+  if (!stats) return null;
+  if (stats.disk_used != null && stats.disk_observed_at) return { kind: "observed", at: stats.disk_observed_at };
+  if (stats.disk_used == null && stats.disk_pending) return { kind: "pending" };
+  return null;
+}
+
 /** The numbers the home-full notice prints, only when the current poll carries both: the flag
  *  keeps its state across a poll without a reading, but a notice with no figures to show must not
  *  print "NaN GiB". */

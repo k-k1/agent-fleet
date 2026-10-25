@@ -949,6 +949,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.res_memory": "Memory",
   "admin.res_disk": "Disk",
   "admin.disk_home_sub": "(home usage)",
+  "admin.disk_pending": "measuring…",
   "admin.cpu_sub": "1 core = 100%",
   "admin.sessions_heading": "Sessions",
   "admin.no_sessions": "No sessions",

@@ -121,8 +121,14 @@ func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 	// the CP at all, so out already carries the disk_used / disk_total the Agent
 	// returned from statfs (the persistent home's own EBS volume).
 	if r.URL.Query().Get("disk") != "0" {
-		if used, ok := dirDiskUsage(ctx, a.mgr.rootedDataDir(ws)); ok {
+		// Never waits on du: a 178 GiB home took 13 s to walk and the detail polls every
+		// 4 s. The last sample is served with its age and a refresh runs in the
+		// background; with nothing sampled yet the answer is "pending", not 0.
+		if used, at, ok := dirDiskUsageNoWait(a.mgr.rootedDataDir(ws)); ok {
 			out["disk_used"] = used
+			out["disk_observed_at"] = at.UTC().Format(time.RFC3339)
+		} else if _, agent := out["disk_used"]; !agent {
+			out["disk_pending"] = true
 		}
 	}
 	if ul, ok, _ := a.mgr.store.GetUserLimit(ctx, mem.ID); ok && ul.DiskGB > 0 {

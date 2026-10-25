@@ -242,8 +242,14 @@ func TestMemberStatsDiskOptOutSkipsDU(t *testing.T) {
 		t.Errorf("mem/cpu = %v/%v, want 100/3 regardless of the opt-out", out["mem_used"], out["cpu_pct"])
 	}
 
+	// Without the parameter the first answer is "pending" and the du lands in the background.
 	out = memberStatsJSON(t, mgr)
-	if calls != 1 || out["disk_used"] != float64(4096) {
-		t.Errorf("without the parameter: du calls=%d disk_used=%v, want 1 and 4096", calls, out["disk_used"])
+	if out["disk_pending"] != true || out["disk_used"] != nil {
+		t.Errorf("first call: disk_pending=%v disk_used=%v, want pending and no figure", out["disk_pending"], out["disk_used"])
+	}
+	waitDiskIdle(t)
+	out = memberStatsJSON(t, mgr)
+	if calls != 1 || out["disk_used"] != float64(4096) || out["disk_observed_at"] == nil {
+		t.Errorf("after the refresh: du calls=%d disk_used=%v observed_at=%v, want 1, 4096 and a timestamp", calls, out["disk_used"], out["disk_observed_at"])
 	}
 }
