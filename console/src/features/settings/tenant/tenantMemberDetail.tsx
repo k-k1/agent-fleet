@@ -23,13 +23,13 @@ import { kindLabel, kindClass, kindIcon } from "../../../lib/sessionkind.ts";
 import { MemberCostPanel } from "../../cost/CloudCostView.tsx";
 import { MemberUptimePanel } from "../../usage/UptimeHeatmap.tsx";
 import { tCount, useT } from "../../../lib/i18n/index.ts";
-import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
+import { fmtDateTime, relTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { useTenantStore } from "../../../core/store/tenant.ts";
 import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
 import type { HomeResize, Member, WsSizing, WsSlot } from "../parts/adminShared.ts";
 import { fmtG, fmtPct, fmtGbHint, ladderFor, memberClassID, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
 import { bootReasonKey } from "../../../core/store/bootInstallReason.ts";
-import { bootFailures, bootSkipped, homeFullFigures, memberStopAvailable, nextMemberHomePressure } from "./memberRoster.ts";
+import { bootFailures, bootSkipped, diskFigureNote, homeFullFigures, memberStopAvailable, nextMemberHomePressure } from "./memberRoster.ts";
 import { MemberAutoStopDetail, MemberIdleDetail, MemberSizeChips } from "./tenantMembers.tsx";
 import { MemberEngineAccessPanel } from "./tenantEngineAccess.tsx";
 
@@ -232,6 +232,8 @@ export function MemberView({
   const bootSkippedTools = bootSkipped(stats?.boot_failed);
   const homeFigures = homeFullFigures(stats);
   const fmtGiB = (b: number) => (b / 1024 ** 3).toFixed(1);
+  const diskNote = diskFigureNote(stats);
+  const diskAge = diskNote?.kind === "observed" ? tr("admin.roster_observed", { ago: relTime(diskNote.at) }) : "";
   const diskRatio = diskTotal && stats?.disk_used != null ? stats.disk_used / diskTotal : null;
 
   // --- how to describe the three size axes on THIS runtime (ADR 0045 decision 21) ------
@@ -539,7 +541,12 @@ export function MemberView({
           <ResTile
             label={tr("admin.res_disk")}
             value={stats?.disk_used != null ? fmtG(stats.disk_used) : "–"}
-            sub={diskTotal ? `/ ${fmtG(diskTotal)} · ${fmtPct(diskRatio == null ? null : diskRatio * 100)}` : tr("admin.disk_home_sub")}
+            sub={
+              (diskTotal
+                ? `/ ${fmtG(diskTotal)} · ${fmtPct(diskRatio == null ? null : diskRatio * 100)}`
+                : tr("admin.disk_home_sub")) +
+              (diskNote?.kind === "pending" ? ` · ${tr("admin.disk_pending")}` : diskAge ? ` · ${diskAge}` : "")
+            }
             ratio={diskRatio}
             warn={0.75}
             crit={0.9}

@@ -937,6 +937,7 @@ export const admin = {
   "admin.res_memory": "メモリ",
   "admin.res_disk": "ディスク",
   "admin.disk_home_sub": "（ホーム使用量）",
+  "admin.disk_pending": "計測中…",
   "admin.cpu_sub": "1 コア = 100%",
   "admin.sessions_heading": "セッション",
   "admin.no_sessions": "セッションなし",

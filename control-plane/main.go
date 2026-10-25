@@ -15,9 +15,11 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
@@ -627,6 +629,19 @@ func main() {
 	} else if mgr.internalBaseURL != "" {
 		log.Printf("WARNING: AF_CP_INTERNAL_URL is set without AF_CP_INTERNAL_LISTEN — workspaces are sent to an address this CP does not serve")
 	}
+	// Background du children must not outlive the CP: on a signal, cancel them (killing du)
+	// and then exit as the default handler would have.
+	go func() {
+		sigc := make(chan os.Signal, 1)
+		signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
+		sig := <-sigc
+		stopDiskRefresh()
+		code := 130
+		if sig == syscall.SIGTERM {
+			code = 143
+		}
+		os.Exit(code)
+	}()
 	srv := &http.Server{Addr: cfg.addr, Handler: withClientIP(logRequests(served)), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
