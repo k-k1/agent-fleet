@@ -4,9 +4,9 @@ package sessionx
 //
 // send_to_peer_session resumes a stopped peer and waits for sessionInputReady, which a claude
 // pane passes as soon as its composer footer is drawn. That is not the moment it takes input:
-// of three sends that resumed a peer, two typed prompts vanished without a turn and the third
-// was reported delivered on a turn the resume itself started (the notification of a background
-// task that ended while the session was stopped). A busy session needs no such hold, because
+// in the sends that resumed a peer, typed prompts vanished without a turn, and one was reported
+// delivered on a turn the resume itself started (the notification of a background task that
+// ended while the session was stopped). A busy session needs no such hold, because
 // claude queues what is typed mid-turn; the boot is the window where typed text is dropped.
 //
 // So a peer send to a claude session whose CLI was launched less than peerBootHoldMax ago goes
@@ -15,6 +15,11 @@ package sessionx
 // still booting, or running the turn the resume started, sits still that long. Past
 // peerBootHoldMax the hold ends anyway and the spool's own readiness rule (idle, input ready,
 // two looks in a row) decides, so a pane that never settles holds a message minutes, not a day.
+//
+// The launch time is read from tmux, which outlives an Agent restart: the pane's own creation
+// stamp, not a note the Agent keeps, so a restart while the CLI still boots neither loses the
+// hold nor moves its cap. Only "this launch's hold has ended" is kept in memory; a restart
+// forgets it and the hold is decided again, which costs at most one more settle window.
 
 import (
 	"sync"
@@ -32,26 +37,17 @@ const peerBlockedStarting = "starting"
 const peerBootHoldMax = 3 * time.Minute
 
 var (
-	bootMu     sync.Mutex
-	bootStarts = map[string]time.Time{}
-	// peerBootNow and peerBootSettled are the clock and the pane read of the hold. Variables so
-	// tests stub them.
-	peerBootNow     = time.Now
+	bootMu    sync.Mutex
+	bootEnded = map[string]time.Time{} // session -> the launch whose hold has ended
+	// peerBootNow, peerBootLaunchedAt and peerBootSettled are the clock, the launch time and the
+	// pane read of the hold. Variables so tests stub them. CLIRecordsSince rounds a launch known
+	// only to the second up, which errs towards holding.
+	peerBootNow        = time.Now
+	peerBootLaunchedAt = func(name string) (time.Time, bool) {
+		return tmuxx.CLIRecordsSince(session.TmuxName(name))
+	}
 	peerBootSettled = func(name string) bool { return tmuxx.ReadPane(name).IdleSettled }
 )
-
-// noteSessionLaunched records that name's CLI was just (re)launched in its pane.
-func noteSessionLaunched(name string) {
-	bootMu.Lock()
-	defer bootMu.Unlock()
-	now := peerBootNow()
-	for n, at := range bootStarts {
-		if now.Sub(at) >= peerBootHoldMax {
-			delete(bootStarts, n)
-		}
-	}
-	bootStarts[name] = now
-}
 
 // peerBootBlocker answers peerBlockedStarting while m is a claude Terminal session still inside
 // its boot hold, "" otherwise. The first answer of "" ends the hold for that launch.
@@ -59,19 +55,27 @@ func peerBootBlocker(m session.Meta) string {
 	if m.DriverKind() == session.DriverManaged || NormalizeKind(m.Kind) != session.KindClaude {
 		return ""
 	}
-	bootMu.Lock()
-	at, ok := bootStarts[m.Name]
-	bootMu.Unlock()
-	if !ok {
+	at, ok := peerBootLaunchedAt(m.Name)
+	if !ok || peerBootNow().Sub(at) >= peerBootHoldMax {
 		return ""
 	}
-	if peerBootNow().Sub(at) < peerBootHoldMax && !peerBootSettled(m.Name) {
+	bootMu.Lock()
+	ended := bootEnded[m.Name].Equal(at)
+	bootMu.Unlock()
+	if ended {
+		return ""
+	}
+	if !peerBootSettled(m.Name) {
 		return peerBlockedStarting
 	}
 	bootMu.Lock()
-	if cur, ok := bootStarts[m.Name]; ok && cur.Equal(at) {
-		delete(bootStarts, m.Name)
+	now := peerBootNow()
+	for n, t := range bootEnded {
+		if now.Sub(t) >= peerBootHoldMax {
+			delete(bootEnded, n)
+		}
 	}
+	bootEnded[m.Name] = at
 	bootMu.Unlock()
 	return ""
 }

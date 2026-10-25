@@ -355,12 +355,16 @@ previous addendum, not by env.
 drawn, which is not when it takes input: typed prompts vanished (`502 delivery_unconfirmed`, the
 status left at `working`, the retry refused as `peer_duplicate`), and once a turn the resume
 itself started (the replayed notification of a background task) passed for the message
-(`delivered:true`, no turn). Four changes. (1) A peer send to a claude Terminal (CLI) session the
-Agent launched less than 3 min ago joins the pending spool above with `blocked_on: "starting"`
+(`delivered:true`, no turn). Four changes. (1) A peer send to a claude Terminal (CLI) session whose
+CLI was launched less than 3 min ago (tmux's own creation stamp, so an Agent restart keeps the
+hold) joins the pending spool above with `blocked_on: "starting"`
 and is delivered once the pane has stood on its idle prompt for the idle-settle window, or at the
 cap through the spool's usual readiness rule (`sessionx/peer_boot.go`). (2) Delivery evidence is a
 user line carrying the prompt, or one shaped like a typed prompt (a slash command is stored
-rewritten); tool results, `isMeta` lines and `<task-notification>` do not count, and nor does the
-spinner once such a line has appeared. (3) A send that ends in an error does not arm the
+rewritten). The lines claude writes itself (`isMeta`, `<task-notification>` in its enqueue or its
+user line) are set aside before any text match, since a notification can quote an earlier
+envelope; tool results do not count either, and nor does the spinner once such a line has
+appeared. (3) A send that ends in an error does not arm the
 duplicate guard; the rate count stays. (4) `delivery_unconfirmed` withdraws the optimistic
-`working` the send wrote, as the unknown idle, unless a hook wrote since or the pane is busy.
+`working` the send wrote, as the unknown idle, by the Rev that write returned, so a hook's record
+written since is never taken back; a busy pane keeps working.

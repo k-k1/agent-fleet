@@ -166,11 +166,16 @@ func ExitReasonFor(code, sig int, oom bool) string {
 // Persist writes {state, ts} keyed by sid. Errors are logged (not
 // swallowed): a failed write leaves the Console's working / answered badge silently
 // stale, so a log line is the only breadcrumb the write ever failed.
-func Persist(sid, state string) {
-	persist(sid, SessionStatus{State: state})
+func Persist(sid, state string) { PersistRev(sid, state) }
+
+// PersistRev is Persist that returns the Rev of the record it wrote, so a caller can later
+// take back exactly that write (PersistIf) and never one a hook made since.
+func PersistRev(sid, state string) string {
+	rev := persist(sid, SessionStatus{State: state})
 	if state == "working" {
 		RemoveCompletionKey(sid) // new turn started; the next end will mint a fresh key
 	}
+	return rev
 }
 
 // PersistOpen is Persist for a write made by a hook of turn promptID (UserPromptSubmit,
@@ -299,18 +304,19 @@ func ObservedTurnEnd(sid string) string {
 	return rec.At
 }
 
-func persist(sid string, s SessionStatus) {
+func persist(sid string, s SessionStatus) string {
 	// A timeout still writes: the hook's record is authoritative, and only the conditional
 	// heal (PersistIf) is allowed to give way.
 	unlock, _ := lockSid(sid)
 	defer unlock()
-	persistLocked(sid, s)
+	return persistLocked(sid, s)
 }
 
-func persistLocked(sid string, s SessionStatus) {
+func persistLocked(sid string, s SessionStatus) string {
 	s.TS = time.Now().Format(time.RFC3339)
 	s.Rev = newRev()
 	write(sid, s)
+	return s.Rev
 }
 
 // newRev mints the identity of one write of the record (see SessionStatus.Rev). Not crypto:

@@ -12,11 +12,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -57,7 +59,11 @@ func fakeBootingClaudeTmux(t *testing.T, name, replay string) bootingClaude {
 printf '%s\n' "$*" >> "$TMUX_TEST_LOG"
 case "$1" in
   has-session) exit 0 ;;
-  list-panes) printf '1 %%7\n' ;;
+  list-panes)
+    case "$*" in
+      *session_created*) printf '%s 0\n' "$TMUX_TEST_CREATED" ;;
+      *) printf '1 %%7\n' ;;
+    esac ;;
   send-keys)
     last=""; for a in "$@"; do last="$a"; done
     case " $* " in *" -l "*) printf '%s' "$last" > "$TMUX_TEST_LOG.draft"; exit 0 ;; esac
@@ -88,12 +94,40 @@ esac
 	t.Setenv("TMUX_TEST_BOOT", b.boot)
 	t.Setenv("TMUX_TEST_JSONL", b.jsonl)
 	t.Setenv("TMUX_TEST_REPLAY", replay)
+	t.Setenv("TMUX_TEST_CREATED", "1") // launched long ago: no boot hold unless a test says so
 	t.Setenv("AGENT_INPUT_SUBMIT_DELAY_MS", "0")
 
 	pc, pr, pp := deliveryConfirmWindow, deliveryRetryWindow, deliveryPoll
 	deliveryConfirmWindow, deliveryRetryWindow, deliveryPoll = 300*time.Millisecond, 300*time.Millisecond, 20*time.Millisecond
 	t.Cleanup(func() { deliveryConfirmWindow, deliveryRetryWindow, deliveryPoll = pc, pr, pp })
 	return b
+}
+
+// launchedNow makes tmux report the session as created this second, the way it does right
+// after a start, and forgets every hold the Agent has ended, as a restarted Agent would.
+func (b bootingClaude) launchedNow(t *testing.T) {
+	t.Helper()
+	t.Setenv("TMUX_TEST_CREATED", strconv.FormatInt(time.Now().Unix(), 10))
+	forgetBootHolds()
+}
+
+func forgetBootHolds() {
+	bootMu.Lock()
+	bootEnded = map[string]time.Time{}
+	bootMu.Unlock()
+}
+
+// stubBootSettled replaces the pane's idle-settle read with a switch the test flips.
+func stubBootSettled(t *testing.T) *atomic.Bool {
+	t.Helper()
+	var settled atomic.Bool
+	prev := peerBootSettled
+	peerBootSettled = func(string) bool { return settled.Load() }
+	t.Cleanup(func() {
+		drainPendingLoops()
+		peerBootSettled = prev
+	})
+	return &settled
 }
 
 // booted ends the fake boot: from here a submitted prompt becomes a turn.
@@ -186,14 +220,8 @@ func TestPeerSendToJustLaunchedClaudeIsHeldUntilItSettles(t *testing.T) {
 	pendingTestEnv(t)
 	b := fakeBootingClaudeTmux(t, "race_hold", "")
 	session.WriteMeta(session.Meta{Name: raceFrom, Dir: t.TempDir(), Kind: session.KindClaude})
-	var settled atomic.Bool
-	prevSettled := peerBootSettled
-	peerBootSettled = func(string) bool { return settled.Load() }
-	t.Cleanup(func() {
-		drainPendingLoops()
-		peerBootSettled = prevSettled
-	})
-	noteSessionLaunched(b.name)
+	settled := stubBootSettled(t)
+	b.launchedNow(t)
 
 	b2, _ := json.Marshal(map[string]string{"prompt": raceMsg, "peer_from": raceFrom, "peer_intent": "request"})
 	q, blocked := decodeQueued(t, postInput(t, b.name, string(b2)))
@@ -214,15 +242,54 @@ func TestPeerSendToJustLaunchedClaudeIsHeldUntilItSettles(t *testing.T) {
 	}
 }
 
+// The review of #2741: the launch time is tmux's, so an Agent restart while the CLI still boots
+// keeps the hold. A message the spool carried across the restart is not typed until the pane
+// settles, and a new send after the restart is held too.
+func TestPeerBootHoldSurvivesAnAgentRestart(t *testing.T) {
+	pendingTestEnv(t)
+	b := fakeBootingClaudeTmux(t, "race_restart", "")
+	session.WriteMeta(session.Meta{Name: raceFrom, Dir: t.TempDir(), Kind: session.KindClaude})
+	settled := stubBootSettled(t)
+	b.launchedNow(t) // forgets every in-memory hold, as the restarted Agent starts with none
+
+	carried := agents.PendingPeer{ID: agents.NormalizeMsgID(""), From: raceFrom, Intent: "request",
+		Message: raceMsg, BlockedOn: peerBlockedStarting, QueuedAt: time.Now()}
+	if err := agents.PutPendingPeer(b.name, carried); err != nil {
+		t.Fatal(err)
+	}
+	ResumePendingPeers()
+	settle()
+	if got := typedPeerLines(t, b.log); len(got) != 0 {
+		t.Fatalf("after the restart the carried message was typed into the booting pane: %v", got)
+	}
+	if n := len(agents.PendingPeers(b.name)); n != 1 {
+		t.Fatalf("after the restart the spool holds %d messages, want the carried one still waiting", n)
+	}
+	b2, _ := json.Marshal(map[string]string{"prompt": "and the tag too", "peer_from": raceFrom, "peer_intent": "request"})
+	if _, blocked := decodeQueued(t, postInput(t, b.name, string(b2))); blocked != peerBlockedStarting {
+		t.Fatalf("a new send after the restart: blocked_on=%q, want %q", blocked, peerBlockedStarting)
+	}
+
+	b.booted(t)
+	settled.Store(true)
+	waitFor(t, "the carried message to become a turn", func() bool { return b.turns(t, raceMsg) == 1 })
+	// The next message waits for that turn to end; the fake pane has no Stop hook, so end it.
+	m, _ := session.ReadMeta(b.name)
+	status.PersistTurnEnd(session.UUID(m.Dir, m.Name), "idle")
+	waitFor(t, "the new message to become a turn", func() bool { return b.turns(t, "and the tag too") == 1 })
+}
+
 // A hold that never sees the pane settle ends at peerBootHoldMax.
 func TestPeerBootHoldEndsAtItsCap(t *testing.T) {
-	now := time.Unix(1_800_000_000, 0)
-	prevNow, prevSettled := peerBootNow, peerBootSettled
+	launched := time.Unix(1_800_000_000, 0)
+	now := launched
+	prevNow, prevSettled, prevLaunched := peerBootNow, peerBootSettled, peerBootLaunchedAt
 	peerBootNow = func() time.Time { return now }
 	peerBootSettled = func(string) bool { return false }
-	t.Cleanup(func() { peerBootNow, peerBootSettled = prevNow, prevSettled })
+	peerBootLaunchedAt = func(string) (time.Time, bool) { return launched, true }
+	t.Cleanup(func() { peerBootNow, peerBootSettled, peerBootLaunchedAt = prevNow, prevSettled, prevLaunched })
+	forgetBootHolds()
 	m := session.Meta{Name: "hold_cap", Kind: session.KindClaude}
-	noteSessionLaunched(m.Name)
 	if got := peerBootBlocker(m); got != peerBlockedStarting {
 		t.Fatalf("just launched: %q, want %q", got, peerBlockedStarting)
 	}

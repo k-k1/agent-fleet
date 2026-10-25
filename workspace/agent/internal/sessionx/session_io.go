@@ -646,14 +646,11 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			recordFleetGraphInstruct(name, src, body.ReportTo, "", body.Prompt)
 		}
 	}
-	if !submitPromptTUI(lease, w, name, pane, body.Prompt) {
+	// workingRev names the optimistic "working" this send wrote, the one write an unconfirmed
+	// delivery may take back: a record read back afterwards could already be a hook's.
+	workingRev, ok := submitPromptTUIRev(lease, w, name, pane, body.Prompt)
+	if !ok {
 		return
-	}
-	// The record submitPromptTUI's optimistic "working" wrote, read back so an unconfirmed
-	// delivery can withdraw exactly that write and nothing a hook wrote since.
-	var marked status.SessionStatus
-	if confirmMeta.Name != "" {
-		marked, _ = status.Read(session.UUID(confirmMeta.Dir, name))
 	}
 	rememberCodexTUIMode(name, body.Prompt, nil)
 	held, heldReason := false, ""
@@ -664,7 +661,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	} else if body.Confirm && confirmMeta.Name != "" {
 		var err error
 		if held, err = confirmPromptDelivery(confirmMeta, pane, body.Prompt, confirmBase); err != nil {
-			withdrawOptimisticWorking(confirmMeta, confirmBase, marked)
+			withdrawOptimisticWorking(confirmMeta, confirmBase, workingRev)
 			// Never dress an unconfirmed delivery up as success: the caller (the CP
 			// scheduler / the operator MCP) records and notifies it as an error instead
 			// of manufacturing a false "fired" (docs/log/38, delivery confirmation).
@@ -864,9 +861,16 @@ func handleManagedInputPrompt(lease *lifegate.Lease, w http.ResponseWriter, meta
 // on failure the HTTP error is already written and false is returned. The caller holds the
 // session's lease (ADR 0115 decision 11.1).
 func submitPromptTUI(lease *lifegate.Lease, w http.ResponseWriter, name, pane, prompt string) bool {
+	_, ok := submitPromptTUIRev(lease, w, name, pane, prompt)
+	return ok
+}
+
+// submitPromptTUIRev is submitPromptTUI that also returns the Rev of the optimistic "working"
+// it wrote ("" when it wrote none), the one write an unconfirmed delivery may take back.
+func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane, prompt string) (workingRev string, ok bool) {
 	if err := lease.Check(name); err != nil {
 		writeGateErr(w, err)
-		return false
+		return "", false
 	}
 	// While ANY interaction is pending (question / plan approval / permission), the TUI
 	// is showing a modal that swallows typed text and lets the trailing Enter confirm
@@ -876,7 +880,7 @@ func submitPromptTUI(lease *lifegate.Lease, w http.ResponseWriter, name, pane, p
 	// (tui), /plan-respond (plan) or /respond (managed). See promptBlocker.
 	if st := promptBlocker(name); st != "" {
 		writeBlockedErr(w, st)
-		return false
+		return "", false
 	}
 	// agy: the "Signing in..." boot screen eats typed text entirely (docs/log/32) — a
 	// send_to_session right after create (no initial_prompt) would vanish. Its
@@ -900,18 +904,18 @@ func submitPromptTUI(lease *lifegate.Lease, w http.ResponseWriter, name, pane, p
 	// is not swallowed while their input widget is still consuming the paste.
 	if err := typeLineAndSubmit(name, pane, prompt); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
-		return false
+		return "", false
 	}
 	// A slash command (/plan, /model, …) isn't a turn — don't optimistically mark the
 	// session working, or codex sticks on "in progress" (no Stop hook fires to clear it).
 	// Real prompts still mark working so the chip reacts before the agent's own hook.
 	if !slashCmdRe.MatchString(strings.TrimSpace(prompt)) {
-		markSessionWorking(name)
+		workingRev = markSessionWorking(name)
 		// The same predicate decides that a stop-after-turn arm is superseded (docs/log/85):
 		// what releases the arm is new WORK arriving, and a slash command starts none.
 		cancelStopArmOnNewPrompt(name)
 	}
-	return true
+	return workingRev, true
 }
 
 // slashCmdRe matches a single-token slash command like "/plan" or "/model foo" (but not a
@@ -1380,12 +1384,12 @@ func writeBlockedErr(w http.ResponseWriter, state string) {
 
 // markSessionWorking optimistically marks the session working so a poll immediately
 // after a send doesn't read a stale idle before claude's UserPromptSubmit hook fires.
-func markSessionWorking(name string) {
+func markSessionWorking(name string) (rev string) {
 	meta, ok := session.ReadMeta(name)
 	if !ok {
-		return
+		return ""
 	}
-	status.Persist(session.UUID(meta.Dir, name), "working")
+	return status.PersistRev(session.UUID(meta.Dir, name), "working")
 }
 
 // viewNavKeys are the keys claude's TUI reads as VIEW navigation when no dialog is up:

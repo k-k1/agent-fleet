@@ -213,6 +213,64 @@ func TestPromptStateSince(t *testing.T) {
 	})
 }
 
+// The review of #2741: claude's own lines are set aside BEFORE any text match. A notification
+// that quotes an earlier peer envelope carries the same head as the new message (the envelope
+// opens every peer message from one sender alike), and so does an isMeta line echoing it; read
+// by their text they passed for the typed prompt, as started or as queued.
+func TestPromptStateSinceIgnoresClaudeLinesQuotingThePrompt(t *testing.T) {
+	const (
+		sid    = "88888888-8888-4888-8888-888888888888"
+		prompt = "[agent-fleet:peer from=sparent intent=question reply=required] did you push?"
+		quoted = "[agent-fleet:peer from=sparent intent=request reply=only-if-blocked] push it"
+	)
+	setup := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		t.Setenv("CLAUDE_CONFIG_DIR", dir)
+		proj := filepath.Join(dir, "projects", "-q")
+		if err := os.MkdirAll(proj, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(proj, sid+".jsonl")
+		writeJSONL(t, p, `{"type":"assistant","message":{"content":[]}}`+"\n")
+		return p
+	}
+	notification := "<task-notification>\n<task-id>m1</task-id>\n<output>" + quoted + "</output>\n</task-notification>"
+	for name, lines := range map[string][]map[string]any{
+		"notification user line": {{"type": "user", "message": map[string]any{"role": "user", "content": notification}}},
+		"notification enqueue":   {{"type": "queue-operation", "operation": "enqueue", "content": notification}},
+		"notification enqueue then its user line": {
+			{"type": "queue-operation", "operation": "enqueue", "content": notification},
+			{"type": "user", "message": map[string]any{"role": "user", "content": notification}},
+		},
+		"notification in a record of another type": {{"type": "attachment", "attachment": map[string]any{"type": "queued_command"}, "content": notification}},
+		"meta line": {{"type": "user", "isMeta": true, "message": map[string]any{"role": "user", "content": quoted}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := setup(t)
+			snap := TranscriptSnapshot(sid)
+			for _, l := range lines {
+				b, _ := json.Marshal(l)
+				appendJSONL(t, p, string(b)+"\n")
+			}
+			if got := PromptStateSince(sid, snap, prompt); got != PromptAbsent {
+				t.Fatalf("claude's own line quoting the prompt's head: got %v, want absent", got)
+			}
+		})
+	}
+
+	t.Run("a typed prompt that mentions the tag still counts", func(t *testing.T) {
+		p := setup(t)
+		snap := TranscriptSnapshot(sid)
+		typed := prompt + " (the <task-notification> line came first)"
+		b, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": typed}})
+		appendJSONL(t, p, string(b)+"\n")
+		if got := PromptStateSince(sid, snap, typed); got != PromptStarted {
+			t.Fatalf("got %v, want started", got)
+		}
+	})
+}
+
 // TestSubagentReceivedSince pins the misdelivery detector: the prompt landing in a
 // BACKGROUND AGENT's transcript means the pane's input box was bound to that agent, so
 // the self-heal must not retype (it would steer the agent a second time).

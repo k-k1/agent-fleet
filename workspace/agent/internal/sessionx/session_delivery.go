@@ -191,13 +191,13 @@ func confirmPromptDelivery(m session.Meta, pane, prompt string, base deliverySna
 // once delivery_unconfirmed has shown no turn started: left in place, the status reads working
 // for a session that sits idle, and a sender polling it takes the lost message for one being
 // worked on (#2741). It writes the unknown idle the SessionStart reset writes, never a turn
-// end, and only when nothing else wrote the record since (marked is the write it withdraws) and
-// the pane was not already busy before the send, when working is the truth.
-func withdrawOptimisticWorking(m session.Meta, base deliverySnapshot, marked status.SessionStatus) {
-	if base.paneBusy || marked.State != "working" || marked.Rev == "" || deliveryPaneBusy(m.Name) {
+// end, and only when the record is still the one the send wrote (workingRev, returned by that
+// write itself) and the pane was not already busy before the send, when working is the truth.
+func withdrawOptimisticWorking(m session.Meta, base deliverySnapshot, workingRev string) {
+	if base.paneBusy || workingRev == "" || deliveryPaneBusy(m.Name) {
 		return
 	}
-	status.PersistIf(session.UUID(m.Dir, m.Name), "idle", marked.Rev, true)
+	status.PersistIf(session.UUID(m.Dir, m.Name), "idle", workingRev, true)
 }
 
 // promptDraftVisible reports whether the captured pane still shows the typed prompt as

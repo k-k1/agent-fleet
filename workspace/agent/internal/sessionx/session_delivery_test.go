@@ -209,37 +209,43 @@ func TestDeliveryEvidencedIgnoresATurnClaudeStartedItself(t *testing.T) {
 // was busy before the send.
 func TestWithdrawOptimisticWorking(t *testing.T) {
 	isolateAgentState(t)
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
 	busy := false
 	orig := deliveryPaneBusy
 	deliveryPaneBusy = func(string) bool { return busy }
 	t.Cleanup(func() { deliveryPaneBusy = orig })
 	m := session.Meta{Name: "unconfirmed", Dir: t.TempDir(), Kind: session.KindClaude}
+	session.WriteMeta(m)
 	sid := session.UUID(m.Dir, m.Name)
-	mark := func() status.SessionStatus {
-		status.Persist(sid, "working")
-		st, _ := status.Read(sid)
-		return st
-	}
 
-	withdrawOptimisticWorking(m, deliverySnapshot{}, mark())
+	withdrawOptimisticWorking(m, deliverySnapshot{}, markSessionWorking(m.Name))
 	if st, _ := status.Read(sid); st.State != "idle" || st.TurnEnd {
 		t.Fatalf("after an unconfirmed send: %+v, want the unknown idle", st)
 	}
 
-	marked := mark()
-	status.Persist(sid, "working") // a hook's write after ours
-	withdrawOptimisticWorking(m, deliverySnapshot{}, marked)
-	if got := status.LiveState(sid); got != "working" {
-		t.Fatalf("a record written since was overwritten: %q", got)
+	// The order the review pinned: the send marks working, a hook of a turn that really runs
+	// writes its own working, and only then is the withdrawal decided. The Rev the mark itself
+	// returned is what keeps the hook's record; one read back after the mark would be the
+	// hook's and would be withdrawn.
+	rev := markSessionWorking(m.Name)
+	status.PersistOpen(sid, "working", "prompt-1")
+	withdrawOptimisticWorking(m, deliverySnapshot{}, rev)
+	if st, _ := status.Read(sid); st.State != "working" || st.PromptID != "prompt-1" {
+		t.Fatalf("the hook's record written after the mark was overwritten: %+v", st)
 	}
 
-	withdrawOptimisticWorking(m, deliverySnapshot{paneBusy: true}, mark())
+	withdrawOptimisticWorking(m, deliverySnapshot{paneBusy: true}, markSessionWorking(m.Name))
 	if got := status.LiveState(sid); got != "working" {
 		t.Fatalf("a pane busy before the send is working: got %q", got)
 	}
 	busy = true
-	withdrawOptimisticWorking(m, deliverySnapshot{}, mark())
+	withdrawOptimisticWorking(m, deliverySnapshot{}, markSessionWorking(m.Name))
 	if got := status.LiveState(sid); got != "working" {
 		t.Fatalf("a pane busy now is working: got %q", got)
+	}
+	busy = false
+	withdrawOptimisticWorking(m, deliverySnapshot{}, "")
+	if got := status.LiveState(sid); got != "working" {
+		t.Fatalf("a send that wrote no working (a slash command) withdraws nothing: got %q", got)
 	}
 }
