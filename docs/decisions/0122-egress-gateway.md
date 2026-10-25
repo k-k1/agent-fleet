@@ -610,3 +610,34 @@ Not run on a real account.
   applied. A probe from outside the instance cannot tell the bootstrap policy from a real one.
 
 Open point 5 is closed for AWS by this; open point 7 (#2728) stays open.
+
+## Addendum (2026-10-25) — the AWS templates wire the archive (#2732)
+
+The archive of #2699 had no AWS wiring, and a same-region `s3://` bucket set by hand would have
+failed twice: the S3 endpoint policy refuses it (AccessDenied, not NAT traffic) and the CP task
+role has no grant on it. Decided with the work, not run on an account yet:
+
+- **A stack-owned bucket only.** 10-data creates it on `EgressArchive=create` (retained,
+  SSE-S3, unversioned, expiry on `egress/`); the default is no bucket and the archive stays
+  off. A bucket of the operator's own is not supported: the endpoint policy lives in 00-network,
+  which cannot name 10-data's bucket, so it admits `af-*-egress-archive-<account id>` with
+  `s3:ResourceAccount` (as for the models bucket) and a foreign name would be refused there.
+- **The CP grant is `PutObject` and `GetObject` on `egress/*` plus `ListBucket` on the bucket**,
+  a managed policy in 20-platform (the CP role's inline total is capped, #1576). `ListBucket`
+  carries no `s3:prefix` condition: the check that makes HeadObject of an absent key a 404 is
+  made without a prefix, and the sink reports a 403 as an error. The bucket holds only the
+  archive. The same two actions plus `ListBucket` are the endpoint statements.
+- **The URL is `s3://<bucket>` with no prefix**, because the CP's keys already start with
+  `egress/`. `standup.sh` and `update.sh` derive the bucket name from 10-data's output and pass
+  it to 20-platform and 30-ingress.
+
+Details: `deploy/aws/ecs/cfn/PARAMETERS.md`, "The egress archive". Pinned by
+`deploy/local/cfn-s3-endpoint-test.py` and `deploy/local/cfn-egress-archive-test.py`.
+
+Follow-ups: #2734
+
+Review of the same day: the bucket name now carries the region (S3 names are global, stack names
+are per region); the bucket policy refuses plain HTTP; `EgressArchive=existing` reuses the
+retained bucket after a disable or a teardown, so the archive's data is never the price of
+re-enabling it; both scripts stop when the bucket output cannot be read, since the purger deletes
+events once the archive is off.

@@ -18,7 +18,7 @@ ENIs have their own subnets and route table with no endpoint route (#2716). This
     S3EndpointEnabled (default "true"; "false" is the migration step and the rollback);
   - its policy is missing, or differs from the pinned statements below (a new bucket is a
     decision, made here and in the template), or its models-bucket pattern stops matching the
-    bucket 60-engines creates;
+    bucket 60-engines creates, or its egress-archive pattern the bucket 10-data creates;
   - the workspace route table routes anything but 0.0.0.0/0 to the NAT, or its subnets are
     not exactly the workspace subnets, or a workspace subnet is on another route table;
   - a workspace subnet's default CIDR overlaps another subnet or leaves VpcCidr;
@@ -46,6 +46,7 @@ except ImportError:
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CFN = os.path.join(ROOT, "deploy", "aws", "ecs", "cfn")
 NET, INGRESS, ENGINES = "00-network.yaml", "30-ingress.yaml", "60-engines.yaml"
+DATA = "10-data.yaml"
 
 # What each statement may admit: Sid -> (actions, resources, owner condition required).
 # Resources are spelled with the CloudFormation pseudo parameters left in. The AWS-owned
@@ -53,6 +54,7 @@ NET, INGRESS, ENGINES = "00-network.yaml", "30-ingress.yaml", "60-engines.yaml"
 # ownership (anyone can create af-x-models-<this account id> elsewhere).
 OWNER = {"StringEquals": {"s3:ResourceAccount": {"!Ref": "AWS::AccountId"}}}
 MODELS = "arn:${AWS::Partition}:s3:::af-*-models-${AWS::AccountId}"
+ARCHIVE = "arn:${AWS::Partition}:s3:::af-*-egress-archive-${AWS::AccountId}-${AWS::Region}"
 EXPECTED = {
     "EcrLayerBucket": ({"s3:GetObject"},
                        {"arn:${AWS::Partition}:s3:::prod-${AWS::Region}-starport-layer-bucket/*"}, None),
@@ -68,6 +70,10 @@ EXPECTED = {
                        "s3:ListMultipartUploadParts", "s3:GetObjectTagging", "s3:PutObjectTagging"},
                       {MODELS + "/*"}, OWNER),
     "ModelsList": ({"s3:ListBucket", "s3:ListBucketMultipartUploads"}, {MODELS}, OWNER),
+    # The egress event archive (#2732): the CP puts, reads and HEADs one object per UTC day under
+    # egress/ and lists nothing; ListBucket is what makes HeadObject on an absent key a 404.
+    "EgressArchiveObjects": ({"s3:GetObject", "s3:PutObject"}, {ARCHIVE + "/egress/*"}, OWNER),
+    "EgressArchiveList": ({"s3:ListBucket"}, {ARCHIVE}, OWNER),
 }
 WS_SUBNETS = {"WorkspaceSubnet0", "WorkspaceSubnet1"}
 NAT_UNLESS_GW = {"!If": ["GatewayOn", {"!Ref": "AWS::NoValue"}, {"!Ref": "Nat"}]}
@@ -131,7 +137,7 @@ def is_s3_or_unknown(service):
     return any(tok.startswith("s3") for tok in text.lower().replace("-", ".").split("."))
 
 
-def check_policy(props, engines):
+def check_policy(props, engines, data):
     fails = []
     doc = props.get("PolicyDocument")
     if not doc:
@@ -177,6 +183,19 @@ def check_policy(props, engines):
     pat = pat[0].split(":s3:::")[1][:-2].replace("${AWS::AccountId}", "123456789012") if pat else ""
     if not fnmatch.fnmatchcase(sample, pat):
         fails.append("models bucket %r does not match the endpoint pattern %r" % (sample, pat))
+
+    # Likewise the archive bucket 10-data creates: a rename there is AccessDenied on the CP's
+    # first archive write, on a real deployment only.
+    name = data["Resources"]["EgressArchiveBucket"]["Properties"]["BucketName"]["!Sub"]
+    sample = (name.replace("${AWS::StackName}", "af-ecs-data").replace("${AWS::AccountId}", "123456789012")
+              .replace("${AWS::Region}", "ap-northeast-1"))
+    for r in sorted(resources):
+        if "-egress-archive-" not in r:
+            continue
+        pat = r.split(":s3:::")[1].replace("${AWS::AccountId}", "123456789012").replace("${AWS::Region}", "ap-northeast-1")
+        pat = pat[:-len("/egress/*")] if pat.endswith("/egress/*") else pat
+        if not fnmatch.fnmatchcase(sample, pat):
+            fails.append("egress archive bucket %r does not match the endpoint pattern %r" % (sample, pat))
     return fails
 
 
@@ -304,7 +323,7 @@ def check(templates):
             fails.append("00-network: S3EndpointOn is not exactly S3EndpointEnabled == \"true\"")
         if net.get("Parameters", {}).get("S3EndpointEnabled", {}).get("Default") != "true":
             fails.append("00-network: S3EndpointEnabled does not default to \"true\"")
-        fails += check_policy(p, templates[ENGINES])
+        fails += check_policy(p, templates[ENGINES], templates[DATA])
     fails += check_routes(net)
     fails += check_cidrs(net)
     fails += check_wiring(net, templates[INGRESS])
@@ -314,7 +333,7 @@ def check(templates):
 def main():
     try:
         templates = load_all()
-        for n in (NET, INGRESS, ENGINES):
+        for n in (NET, INGRESS, ENGINES, DATA):
             if n not in templates:
                 raise OSError("%s not found" % n)
     except (OSError, yaml.YAMLError) as e:
@@ -422,6 +441,19 @@ def main():
         ("S3EndpointOn inverted", mutated(lambda t: t["Conditions"].update(
             S3EndpointOn={"!Equals": [{"!Ref": "S3EndpointEnabled"}, "false"]}))),
         ("owner condition on an AWS-owned bucket", mutated(lambda t: stmts(t)[0].update(Condition=OWNER))),
+        ("archive objects widened to the whole bucket", mutated(lambda t: stmts(t)[6].update(
+            Resource={"!Sub": ARCHIVE + "/*"}))),
+        ("archive objects gain DeleteObject", mutated(lambda t: stmts(t)[6]["Action"].append("s3:DeleteObject"))),
+        ("archive list gains ListBucketMultipartUploads", mutated(lambda t: stmts(t)[7]["Action"].append(
+            "s3:ListBucketMultipartUploads"))),
+        ("archive owner condition dropped (objects)", mutated(lambda t: stmts(t)[6].pop("Condition"))),
+        ("archive owner condition dropped (list)", mutated(lambda t: stmts(t)[7].pop("Condition"))),
+        ("archive objects statement dropped", mutated(lambda t: stmts(t).pop(6))),
+        ("archive list statement dropped", mutated(lambda t: stmts(t).pop(7))),
+        ("archive pattern loses the region", mutated(lambda t: stmts(t)[6].update(
+            Resource={"!Sub": "arn:${AWS::Partition}:s3:::af-*-egress-archive-${AWS::AccountId}/egress/*"}))),
+        ("archive bucket renamed", mutated(lambda t: res(t)["EgressArchiveBucket"]["Properties"]["BucketName"].update(
+            {"!Sub": "archive-${AWS::StackName}"}), DATA)),
         ("models bucket renamed", mutated(lambda t: res(t)["ModelsBucket"]["Properties"]["BucketName"].update(
             {"!Sub": "models-${AWS::StackName}"}), ENGINES)),
     ]

@@ -383,6 +383,24 @@ Resources:
             Resource: !Sub "arn:${AWS::Partition}:s3:::af-*-models-${AWS::AccountId}"
             Condition:
               StringEquals: { "s3:ResourceAccount": !Ref AWS::AccountId }
+          # The optional egress event archive bucket of 10-data (af-<data stack>-egress-archive-
+          # <account>-<region>, ADR 0122): the CP puts and reads one object per UTC day under egress/ and
+          # checks it with HeadObject. Same-account test as the models bucket, for the same reason.
+          # Refused here, the CP's archive write is AccessDenied, not NAT traffic.
+          - Sid: EgressArchiveObjects
+            Effect: Allow
+            Principal: "*"
+            Action: [ s3:GetObject, s3:PutObject ]
+            Resource: !Sub "arn:${AWS::Partition}:s3:::af-*-egress-archive-${AWS::AccountId}-${AWS::Region}/egress/*"
+            Condition:
+              StringEquals: { "s3:ResourceAccount": !Ref AWS::AccountId }
+          - Sid: EgressArchiveList
+            Effect: Allow
+            Principal: "*"
+            Action: [ s3:ListBucket ]
+            Resource: !Sub "arn:${AWS::Partition}:s3:::af-*-egress-archive-${AWS::AccountId}-${AWS::Region}"
+            Condition:
+              StringEquals: { "s3:ResourceAccount": !Ref AWS::AccountId }
 
   # --- Security groups: linear alb -> cp -> ws (no cycle) ---
   AlbSg:
