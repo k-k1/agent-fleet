@@ -785,3 +785,37 @@
     animation: none;
   }
 }
+
+/* --- merge (ADR 0061, 2026-10-25 note on #2632) ----------------------------- */
+
+/* The reason beside the footer's Merge button. One line however long the wording: a wrapped note
+   would grow the footer and move the buttons when the live read answers (#2631); the whole text is
+   the element's title. */
+.wi-dmergewhy {
+  flex: 1;
+  min-width: 0;
+  align-self: center;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wi-dmergewhy.bad {
+  color: var(--warn);
+}
+/* Keeps Merge's room while the read is in flight, and when the answer says no button. */
+.wi-dmergehold {
+  visibility: hidden;
+}
+.wi-mname {
+  margin: 0 0 8px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.wi-merr {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--err);
+  overflow-wrap: anywhere;
+}

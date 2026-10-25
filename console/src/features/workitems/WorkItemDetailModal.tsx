@@ -33,14 +33,21 @@
 // the seeded prompt says so and asks for a review, not an implementation plan. This only
 // fires when the live read actually resolved a head branch; an existing copy the user picked
 // by hand is left on whatever branch it already has (§80.24.4).
+//
+// A GitHub pull request that GitHub says can be merged also gets a Merge button in the footer
+// (ADR 0061, 2026-10-25 note on #2632). It is the one write this panel makes: it opens a confirm
+// dialog naming the pull request, base ← head and the method, and merges only the head commit this
+// panel displayed. It is drawn only for a connection that looks able to merge, never for Bitbucket,
+// and its footer slot is reserved from the first render so the answer does not move the buttons.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
+import { ConfirmDialog } from "../../ui/ConfirmDialog.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
 import type { Repo } from "../repos/store.ts";
-import { workItemDetail } from "./api.ts";
+import { workItemDetail, workItemMerge } from "./api.ts";
 import { LabelBadge } from "./LabelBadge.tsx";
 import type { ResolvedSessionRef } from "./sessionRefs.ts";
 import {
@@ -51,6 +58,8 @@ import {
   detailStateTone,
   checksTone,
   fullLocal,
+  mergeGate,
+  readMergeResult,
   readWorkItemDetail,
   relTime,
   reviewCounts,
@@ -164,6 +173,25 @@ function PendingRow({ label }: { label: string }) {
   );
 }
 
+/** What the confirm dialog shows and sends: a snapshot taken when it opened. The live read is
+ * re-run after a merge attempt and blanks `detail` while it runs, so the dialog must not read the
+ * panel's current state — and it must send the SHA that was on screen when it opened. */
+interface MergeDialog {
+  key: string;
+  title: string;
+  base: string;
+  head: string;
+  sha: string;
+  methods: string[];
+  method: string;
+}
+
+const MERGE_METHOD_LABEL = {
+  merge: "wi.merge_method_merge",
+  squash: "wi.merge_method_squash",
+  rebase: "wi.merge_method_rebase",
+} as const;
+
 const PROVIDER_NAMES: Record<string, string> = { github: "GitHub", bitbucket: "Bitbucket", jira: "Jira" };
 
 interface Props {
@@ -248,6 +276,56 @@ export function WorkItemDetailModal({
   const rel = relTime(view.updatedAt);
   const d = live.detail;
 
+  const gate = mergeGate(d);
+  const [mergeDlg, setMergeDlg] = useState<MergeDialog | null>(null);
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [mergeErr, setMergeErr] = useState("");
+  // The outcome of the last attempt, kept in the footer next to the button: the dialog is gone
+  // by then, and the panel re-reads and redraws everything else.
+  const [mergeNote, setMergeNote] = useState<{ text: string; bad: boolean } | null>(null);
+
+  const openMerge = () => {
+    if (!d || !gate.enabled) return;
+    setMergeErr("");
+    setMergeNote(null);
+    setMergeDlg({
+      key: item.key,
+      title: d.title || item.title,
+      base: d.baseBranch,
+      head: d.headBranch,
+      sha: d.headSha,
+      methods: d.mergeMethods,
+      method: d.defaultMergeMethod || d.mergeMethods[0] || "",
+    });
+  };
+  const confirmMerge = async () => {
+    if (!mergeDlg || mergeBusy) return;
+    setMergeBusy(true);
+    setMergeErr("");
+    let result = readMergeResult(null);
+    try {
+      result = readMergeResult(
+        await workItemMerge({ provider: "github", key: mergeDlg.key, sha: mergeDlg.sha, method: mergeDlg.method }),
+      );
+    } catch (e) {
+      // A rejected request cannot say whether GitHub saw it, so the read below is what settles it.
+      result = { ok: false, code: "", message: e instanceof Error ? e.message : String(e) };
+    }
+    setMergeBusy(false);
+    // Every outcome re-reads the pull request: success must show "Merged", a refusal must show
+    // why, and a request that died in transit may have merged anyway.
+    live.retry();
+    if (result.ok) {
+      setMergeDlg(null);
+      setMergeNote({ text: tr("wi.merge_done"), bad: false });
+    } else if (result.code === "head_changed") {
+      setMergeDlg(null);
+      setMergeNote({ text: tr("wi.merge_head_changed"), bad: true });
+    } else {
+      setMergeErr(tr("wi.merge_failed", { message: result.message || "?" }));
+    }
+  };
+
   // Only a fresh worktree checks the head branch out — an existing copy the user picked by
   // hand keeps whatever branch it is already on (§80.24.4: never launch off a value the user
   // cannot see). "" when the live read never resolved one (stopped, failed, or not a PR).
@@ -309,6 +387,21 @@ export function WorkItemDetailModal({
     const c = reviewCounts(pr.reviews);
     return tr("wi.detail_reviews_sum", { ok: c.approved, ng: c.changes, waiting: c.pending });
   };
+
+  // The footer's Merge slot. GitHub pull requests only: Bitbucket is read-only (decision 19) and
+  // an issue has nothing to merge.
+  //   enabled  GitHub says the merge would succeed
+  //   disabled the button is shown with the reason (a state GitHub will not merge, or no read)
+  //   hold     reserve the room, draw nothing: still reading, or the answer says no button
+  // The reason sits in the footer beside the button; the full text is also its title.
+  const mergeSlot: { button: "none" | "hold" | "enabled" | "disabled"; note: { text: string; bad: boolean } | null } = (() => {
+    if (mergeNote) return { button: gate.show ? (gate.enabled ? "enabled" : "disabled") : "hold", note: mergeNote };
+    if (item.provider !== "github" || !isPR || neutral) return { button: "none", note: null };
+    if (gate.show) return { button: gate.enabled ? "enabled" : "disabled", note: gate.whyKey ? { text: tr(gate.whyKey), bad: false } : null };
+    if (live.stopped) return { button: "disabled", note: { text: tr("wi.merge_why_stopped"), bad: false } };
+    if (live.err) return { button: "disabled", note: { text: tr("wi.merge_why_unread"), bad: false } };
+    return { button: "hold", note: null };
+  })();
 
   return (
     // The heading never shortens the key. The rail row drops the repo and shows just `#312`,
@@ -619,9 +712,37 @@ export function WorkItemDetailModal({
         )}
       </div>
       <footer className="ui-modal-foot">
+        {mergeSlot.note && (
+          <span
+            id="wi-dmerge-why"
+            className={"wi-dmergewhy" + (mergeSlot.note.bad ? " bad" : "")}
+            title={mergeSlot.note.text}
+            role="status"
+          >
+            {mergeSlot.note.text}
+          </span>
+        )}
         <Button variant="ghost" onClick={onClose}>
           {tr("common.cancel")}
         </Button>
+        {mergeSlot.button === "hold" && (
+          // Takes the room Merge will (or would) occupy, so the answer to the live read never
+          // moves Cancel and the main button. Invisible and inert: nothing to press or announce.
+          <Button className="wi-dmergehold" disabled aria-hidden="true" tabIndex={-1}>
+            <Icon name="git-merge" />
+            {tr("wi.merge")}
+          </Button>
+        )}
+        {(mergeSlot.button === "enabled" || mergeSlot.button === "disabled") && (
+          <Button
+            onClick={openMerge}
+            disabled={mergeSlot.button === "disabled" || !!mergeDlg}
+            aria-describedby={mergeSlot.note ? "wi-dmerge-why" : undefined}
+          >
+            <Icon name="git-merge" />
+            {tr("wi.merge")}
+          </Button>
+        )}
         {neutral ? (
           // No label: "Start" and "Open in GitHub" are both wrong for half of the answers.
           <Button disabled>{tr("common.loading")}</Button>
@@ -639,6 +760,50 @@ export function WorkItemDetailModal({
           </Button>
         )}
       </footer>
+      {mergeDlg && (
+        <ConfirmDialog
+          title={tr("wi.merge_title")}
+          confirmLabel={tr("wi.merge_confirm")}
+          danger={false}
+          busy={mergeBusy}
+          onConfirm={() => void confirmMerge()}
+          onCancel={() => setMergeDlg(null)}
+        >
+          <p className="wi-mname">{tr("wi.merge_pr", { key: mergeDlg.key, title: mergeDlg.title })}</p>
+          <dl className="wi-dfacts">
+            <dt>{tr("wi.merge_branches")}</dt>
+            <dd className="wi-dbranches">
+              <code>{mergeDlg.base}</code>
+              <Icon name="arrow-left" />
+              <code>{mergeDlg.head}</code>
+            </dd>
+            <dt>{tr("wi.merge_method")}</dt>
+            <dd>
+              {mergeDlg.methods.length > 1 ? (
+                <select
+                  value={mergeDlg.method}
+                  disabled={mergeBusy}
+                  onChange={(e) => setMergeDlg({ ...mergeDlg, method: e.target.value })}
+                >
+                  {mergeDlg.methods.map((m) => (
+                    <option key={m} value={m}>
+                      {tr(MERGE_METHOD_LABEL[m as keyof typeof MERGE_METHOD_LABEL] ?? "wi.merge_method_merge")}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                tr(MERGE_METHOD_LABEL[mergeDlg.method as keyof typeof MERGE_METHOD_LABEL] ?? "wi.merge_method_merge")
+              )}
+            </dd>
+          </dl>
+          <p className="wi-shint">{tr("wi.merge_note", { sha: mergeDlg.sha.slice(0, 7) })}</p>
+          {mergeErr && (
+            <p className="wi-merr" role="alert">
+              {mergeErr}
+            </p>
+          )}
+        </ConfirmDialog>
+      )}
     </Modal>
   );
 }

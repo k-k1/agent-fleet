@@ -11,7 +11,9 @@ import {
   checksTone,
   dedupeWorkItems,
   matchWorkItem,
+  mergeGate,
   promptForItem,
+  readMergeResult,
   readWorkItemDetail,
   readWorkItems,
   reviewCounts,
@@ -659,5 +661,86 @@ describe("detailStateLabel (#1697)", () => {
   it("does not call a finished Jira issue completed: Jira has no close reason", () => {
     const jira = detailStateLabel({ ...base, kind: "issue", provider: "jira" });
     expect(jira).not.toBe(detailStateLabel({ ...base, kind: "issue", provider: "github", stateReason: "completed" }));
+  });
+});
+
+// The merge gate (ADR 0061, 2026-10-25 note on #2632). The Merge button is a write against GitHub,
+// so the rule is "when in doubt, do not draw it", and a press needs a state GitHub accepts.
+describe("mergeGate", () => {
+  const SHA = "0123456789abcdef0123456789abcdef01234567";
+  const pr = (over: Record<string, unknown> = {}) =>
+    readWorkItemDetail({
+      provider: "github",
+      key: "acme/web#1",
+      kind: "pr",
+      state: "open",
+      headSha: SHA,
+      mergeableState: "clean",
+      mergeMethods: ["merge", "squash", "rebase"],
+      defaultMergeMethod: "merge",
+      canMerge: true,
+      ...over,
+    }).detail;
+
+  it("enables Merge only for the states GitHub accepts a green merge for", () => {
+    expect(mergeGate(pr())).toEqual({ show: true, enabled: true, whyKey: "" });
+    expect(mergeGate(pr({ mergeableState: "has_hooks" })).enabled).toBe(true);
+    for (const state of ["blocked", "behind", "dirty", "unstable", "draft", "unknown", "", "newstate"]) {
+      const g = mergeGate(pr({ mergeableState: state }));
+      expect(g.show, state).toBe(true);
+      expect(g.enabled, state).toBe(false);
+      expect(g.whyKey, state).not.toBe("");
+    }
+  });
+
+  it("names the reason per state", () => {
+    expect(mergeGate(pr({ mergeableState: "blocked" })).whyKey).toBe("wi.merge_why_blocked");
+    expect(mergeGate(pr({ mergeableState: "behind" })).whyKey).toBe("wi.merge_why_behind");
+    expect(mergeGate(pr({ mergeableState: "dirty" })).whyKey).toBe("wi.merge_why_dirty");
+    expect(mergeGate(pr({ mergeableState: "unstable" })).whyKey).toBe("wi.merge_why_unstable");
+    expect(mergeGate(pr({ mergeableState: "unknown" })).whyKey).toBe("wi.merge_why_unknown");
+    expect(mergeGate(pr({ mergeableState: "newstate" })).whyKey).toBe("wi.merge_why_other");
+    // A draft is a draft whatever mergeable_state says.
+    expect(mergeGate(pr({ draft: true })).whyKey).toBe("wi.merge_why_draft");
+    expect(mergeGate(pr({ draft: true })).enabled).toBe(false);
+  });
+
+  it("draws nothing without a live read, outside GitHub pull requests, or once finished", () => {
+    expect(mergeGate(null).show).toBe(false);
+    expect(mergeGate(pr({ provider: "bitbucket" })).show).toBe(false);
+    expect(mergeGate(pr({ kind: "issue" })).show).toBe(false);
+    expect(mergeGate(pr({ merged: true })).show).toBe(false);
+    expect(mergeGate(pr({ state: "done" })).show).toBe(false);
+  });
+
+  it("draws nothing without the Agent's word, a head SHA or an allowed method", () => {
+    expect(mergeGate(pr({ canMerge: false })).show).toBe(false);
+    expect(mergeGate(pr({ canMerge: "true" })).show).toBe(false); // only a literal true
+    expect(mergeGate(pr({ headSha: "" })).show).toBe(false);
+    expect(mergeGate(pr({ mergeMethods: [] })).show).toBe(false);
+    // An Agent from before this feature sends none of the fields.
+    const old = readWorkItemDetail({ provider: "github", key: "acme/web#1", kind: "pr", state: "open" }).detail;
+    expect(mergeGate(old).show).toBe(false);
+  });
+
+  it("keeps only methods the console knows", () => {
+    const d = pr({ mergeMethods: ["squash", "ff-only", 3, null], defaultMergeMethod: "ff-only" })!;
+    expect(d.mergeMethods).toEqual(["squash"]);
+    expect(d.defaultMergeMethod).toBe("");
+  });
+});
+
+describe("readMergeResult", () => {
+  it("counts only a literal merged:true as a merge", () => {
+    expect(readMergeResult({ merged: true, sha: "abc" }).ok).toBe(true);
+    expect(readMergeResult({ merged: "true" }).ok).toBe(false);
+    expect(readMergeResult({}).ok).toBe(false);
+    expect(readMergeResult(null).ok).toBe(false);
+    expect(readMergeResult({ merged: true, error: { code: "x" } }).ok).toBe(false);
+  });
+
+  it("carries the code and the provider's wording", () => {
+    expect(readMergeResult({ error: { code: "head_changed", message: "moved" } })).toEqual({ ok: false, code: "head_changed", message: "moved" });
+    expect(readMergeResult({ error: "plain" })).toEqual({ ok: false, code: "", message: "plain" });
   });
 });

@@ -58,6 +58,13 @@ export function workItemDetail(rec: { provider: string; key: string; kind?: stri
   return apiJSON("api/work-items/detail", "POST", rec);
 }
 
+/** Merge a GitHub pull request (ADR 0061, 2026-10-25 note on #2632). Only from the detail modal's
+ * confirm dialog. `sha` is the head commit the panel displayed: GitHub refuses the merge when the
+ * branch has moved since. A stopped workspace answers 409 rather than being started. */
+export function workItemMerge(rec: { provider: string; key: string; sha: string; method: string }): Promise<unknown> {
+  return apiJSON("api/work-items/merge", "POST", rec);
+}
+
 /** Ledger: record that a session was started for an item. Idempotent per
  * (itemKey, sessionName) on the CP, so a retried launch does not double the row. */
 export function workItemSessionCreate(rec: {
