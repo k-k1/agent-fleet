@@ -2,7 +2,7 @@ import { Icon } from "../../../ui/Icon.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { agentOf } from "../../../agents/registry.ts";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
-import { isOAuthRequired, needsMemberSecrets } from "./mcpWire.ts";
+import { isOAuthRequired, needsMemberSecrets, probeErrText } from "./mcpWire.ts";
 import type { McpServer, OAuthReport, ProbeResult } from "./mcpWire.ts";
 import { Meta } from "../parts/mcpForm.tsx";
 import { EgressNote } from "./EgressNote.tsx";
@@ -159,7 +159,7 @@ export function ProbeView({ probe, onSignIn }: { probe?: ProbeResult; onSignIn?:
       <div className="mcp-probe bad">
         <Icon name="error" />
         <div>
-          <div>{probe.error || tr("mcp.test_failed")}</div>
+          <div>{probeErrText(probe) || tr("mcp.test_failed")}</div>
           {probe.detail && <pre className="mcp-probe-detail">{probe.detail}</pre>}
         </div>
       </div>
