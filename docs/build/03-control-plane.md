@@ -381,16 +381,25 @@ The design and the staged rollout — log-only → allowlist → enforce — are
   rows, paged 5000 at a time and staged in a temporary file, never held in memory); an object
   without it, or whose counts disagree, is damaged. An object is complete or absent (S3: a single
   PutObject confirmed by a HeadObject length check; local: temp file, fsync, rename), so a partial
-  object cannot exist. A day whose object exists is never rewritten: after a crash between write
-  and delete, or a delete cut off midway, the retry skips the write and deletes, and a rewrite
-  could not replace the full day with the part that is left. **A day that fails to archive
-  (or is not confirmed) is not deleted, nor is any later day or an address row ending in it;**
-  earlier days are, and the next run (10 minutes later) retries. A day with no events is written
-  only when a closed address row ends in it, so every deleted row is in some object. Role
-  permissions: `s3:PutObject` and `s3:GetObject` (for the HeadObject checks) on the prefix, and
-  nothing else. A bad URL stops the CP at startup rather than deleting without an archive.
-  **Reading back is offline:** download the day objects and attribute each event to the
-  `address` rows by source and time (`from <= at < until`, `until` 0 = open), as the Console does.
+  object cannot exist. A day whose object exists is read back and verified (header, counts,
+  gzip checksum) and never rewritten: after a crash between write and delete, or a delete cut off
+  midway, the retry skips the write and deletes, and a rewrite could not replace the full day
+  with the part that is left. A damaged existing object (zero bytes, truncated, wrong header)
+  stops the purge at its day and is never overwritten by the CP; an operator removes it.
+  **A day that fails to archive (or is not confirmed) is not deleted, nor is any later day.**
+  Earlier days are, and the next run (10 minutes later) retries. Address rows are not closed to
+  writers by the floor (one can arrive, or change its end, after its day was written), so the
+  closed rows to delete are written as an address supplement object
+  (`<prefix>/egress/addresses/yyyy=/mm=/dd=/addresses-<sha256>.jsonl.gz`, kind `addresses`)
+  immediately before, and exactly those row versions are deleted (a row that changed since is
+  kept for the next run). A day object holds the address rows meeting the day as they were then.
+  Role permissions: `s3:PutObject` and `s3:GetObject` on the prefix, and `s3:ListBucket` on the
+  bucket: without it S3 answers a HeadObject for a missing key with 403 instead of 404, and the
+  archive stops at the first day. Local: the directories created on the way are fsynced up to the
+  existing ancestor.
+  A bad URL stops the CP at startup rather than deleting without an archive.
+  **Reading back is offline:** download the day objects and the address supplements and attribute each event to the
+  `address` rows (of all of them) by source and time (`from <= at < until`, `until` 0 = open), as the Console does.
   Archived events are never re-ingested: ingest still refuses an event older than the window or
   the floor, so the archive and `egress_daily` cannot double count.
 - **Attribution** — when `AF_EGRESS_TOKEN` is set, a recorder (one CP at a time, under a CP

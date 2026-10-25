@@ -35,6 +35,9 @@ func (m *memSink) Exists(_ context.Context, k string) (bool, error) {
 	_, ok := m.objs[k]
 	return ok, nil
 }
+func (m *memSink) Get(_ context.Context, k string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(m.objs[k])), nil
+}
 func (m *memSink) Put(_ context.Context, k string, b io.ReadSeeker, size int64) error {
 	m.puts++
 	if m.failPut != nil {
@@ -64,6 +67,13 @@ func readArchive(t *testing.T, data []byte) map[string][]map[string]any {
 		}
 		out[m["type"].(string)] = append(out[m["type"].(string)], m)
 	}
+	// The gzip footer (CRC, length) is only checked when the stream is read to its end.
+	if err := sc.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := zr.Close(); err != nil {
+		t.Fatal(err)
+	}
 	return out
 }
 
@@ -85,6 +95,19 @@ func TestEgressArchiveLocalSink(t *testing.T) {
 	}
 	if ok, _ := l.Exists(ctx, "a/b/x.gz"); !ok {
 		t.Error("stored object not found")
+	}
+	if rc, err := l.Get(ctx, "a/b/x.gz"); err != nil {
+		t.Fatal(err)
+	} else if b, _ := io.ReadAll(rc); string(b) != "hello" {
+		t.Errorf("Get = %q", b)
+	}
+	// A root that does not exist yet is created, with every level beneath it.
+	deep, _ := newEgressArchiveLocal("", filepath.Join(root, "new", "root"))
+	if err := deep.Put(ctx, "egress/yyyy=2026/mm=09/dd=01/x", strings.NewReader("z"), 1); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "new/root/egress/yyyy=2026/mm=09/dd=01/x")); string(b) != "z" {
+		t.Errorf("nested put = %q", b)
 	}
 	// A failed Put leaves neither the key nor a temp file, and keeps the old object.
 	if err := l.Put(ctx, "a/b/x.gz", strings.NewReader("hel"), 5); err == nil {
@@ -134,6 +157,14 @@ func (f *fakeArchiveS3) PutObject(_ context.Context, in *s3.PutObjectInput, _ ..
 	return &s3.PutObjectOutput{}, nil
 }
 
+func (f *fakeArchiveS3) GetObject(_ context.Context, in *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	b, ok := f.objs[aws.ToString(in.Key)]
+	if !ok {
+		return nil, &smithy.GenericAPIError{Code: "NoSuchKey", Message: "no"}
+	}
+	return &s3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(b))}, nil
+}
+
 func (f *fakeArchiveS3) HeadObject(_ context.Context, in *s3.HeadObjectInput, _ ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
 	b, ok := f.objs[aws.ToString(in.Key)]
 	if !ok {
@@ -161,6 +192,11 @@ func TestEgressArchiveS3Sink(t *testing.T) {
 	}
 	if ok, _ := s.Exists(ctx, "egress/k"); !ok {
 		t.Error("stored object not found")
+	}
+	if rc, err := s.Get(ctx, "egress/k"); err != nil {
+		t.Fatal(err)
+	} else if b, _ := io.ReadAll(rc); string(b) != "data" {
+		t.Errorf("Get = %q", b)
 	}
 	api.putErr = &smithy.GenericAPIError{Code: "AccessDenied", Message: "denied"}
 	if err := s.Put(ctx, "egress/j", strings.NewReader("data"), 4); err == nil {
@@ -321,19 +357,16 @@ func TestEgressPurgeArchivesThenDeletes(t *testing.T) {
 		if len(b["event"]) != 1 || len(b["address"]) != 2 {
 			t.Errorf("day 21: %d events, %d addresses (r1 and r2 meet it)", len(b["event"]), len(b["address"]))
 		}
-		// Day 22 has no events, but r2 (ending at midnight of the 23rd) ends in it: archived, then
-		// deleted. r1 ends at midnight of the 22nd, so its last day is the 21st.
-		if sink.objs["egress/yyyy=2026/mm=09/dd=22/events-2026-09-22.jsonl.gz"] == nil {
-			t.Errorf("address-only days missing: %v", keysOf(sink.objs))
+		// The closed rows r1 and r2 go in one supplement, which is what authorises deleting them.
+		supp := supplementsOf(sink.objs)
+		if len(supp) != 1 {
+			t.Fatalf("objects = %v", keysOf(sink.objs))
 		}
-		if sink.objs["egress/yyyy=2026/mm=09/dd=24/events-2026-09-24.jsonl.gz"] != nil {
-			t.Error("a day with no event and no ending address must not be written")
-		}
-		if sink.objs["egress/yyyy=2026/mm=09/dd=23/events-2026-09-23.jsonl.gz"] != nil {
-			t.Error("day 23 holds nothing that is deleted and must not be written")
+		if s := readArchive(t, sink.objs[supp[0]]); len(s["address"]) != 2 || len(s["event"]) != 0 {
+			t.Errorf("supplement = %v", s)
 		}
 		if len(sink.objs) != 3 {
-			t.Errorf("objects = %v", keysOf(sink.objs))
+			t.Errorf("a day without events must not be written: %v", keysOf(sink.objs))
 		}
 		if ids := remainingEventIDs(t, st); len(ids) != 2 || !ids["d"] || !ids["e"] {
 			t.Errorf("events left = %v, want d and e (the crossing day stays whole)", ids)
@@ -403,13 +436,14 @@ func TestEgressArchiveIsNotRewrittenAfterAPartialDelete(t *testing.T) {
 		if n, err := st.PurgeEgressEvents(ctx, before, 1); err != nil || n != 1 {
 			t.Fatalf("partial delete %d %v", n, err)
 		}
-		puts := sink.puts
+		days := len(sink.objs)
 		p.purge(ctx)
 		if !bytes.Equal(sink.objs[key], full) {
 			t.Error("the full day object was replaced")
 		}
-		if sink.puts != puts {
-			t.Errorf("re-ran %d puts for days that already exist", sink.puts-puts)
+		// Only the address supplement is new.
+		if len(sink.objs)-days != len(supplementsOf(sink.objs)) {
+			t.Errorf("day objects were written again: %v", keysOf(sink.objs))
 		}
 		if ids := remainingEventIDs(t, st); len(ids) != 2 {
 			t.Errorf("left = %v", ids)
@@ -450,4 +484,214 @@ func keysOf(m map[string][]byte) []string {
 		k = append(k, key)
 	}
 	return k
+}
+
+func supplementsOf(m map[string][]byte) []string {
+	var out []string
+	for k := range m {
+		if strings.HasPrefix(k, "egress/addresses/") {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// hookSink runs fn inside every Put, as a writer racing the archive would.
+type hookSink struct {
+	*memSink
+	fn func()
+}
+
+func (h hookSink) Put(ctx context.Context, k string, b io.ReadSeeker, n int64) error {
+	if h.fn != nil {
+		h.fn()
+	}
+	return h.memSink.Put(ctx, k, b, n)
+}
+
+// Address rows are not closed to writers by the floor. A row that arrives, or an open row that
+// is closed, while the archive is being written must survive the purge and be archived by the
+// next one, never deleted without being in an object.
+func TestEgressPurgeKeepsAddressRowsThatChangedDuringTheArchive(t *testing.T) {
+	archiveDialects(t, func(t *testing.T, st *store.SQL) {
+		ctx := context.Background()
+		seedArchive(t, st)
+		day := func(d int) int64 { return time.Date(2026, 9, d, 0, 0, 0, 0, time.UTC).UnixMilli() }
+		injected := false
+		sink := hookSink{memSink: newMemSink()}
+		sink.fn = func() {
+			if injected {
+				return
+			}
+			injected = true
+			// A late closed interval inside day 20, and the open row r3 closing at day 22.
+			if err := st.UpsertWorkspaceAddresses(ctx, "m", []store.WorkspaceAddress{
+				{WorkspaceID: "w9", Address: "10.0.1.9", Ref: "late", From: day(20) + 1000, Until: day(20) + 5000},
+				{WorkspaceID: "w3", Address: "10.0.1.5", Ref: "r3", From: day(22), Until: day(22) + 1000},
+			}); err != nil {
+				t.Error(err)
+			}
+		}
+		archivePurger(st, sink).purge(ctx)
+		// Day objects were written before the injection or during it; the supplement was
+		// taken after the day objects, so what matters is the state of the table now.
+		left := map[string]bool{}
+		_ = st.EachWorkspaceAddressOverlapping(ctx, 0, 1<<60, func(a store.WorkspaceAddress) error {
+			left[a.Ref] = true
+			return nil
+		})
+		// The supplement ran after the injection here, so "late" and the closed r3 are in it and
+		// are deleted with it: whatever was deleted must be in a verified object.
+		archived := map[string]bool{}
+		for _, k := range supplementsOf(sink.objs) {
+			for _, a := range readArchive(t, sink.objs[k])["address"] {
+				archived[a["ref"].(string)] = true
+			}
+		}
+		for _, r := range []string{"r1", "r2", "late", "r3"} {
+			if !left[r] && !archived[r] {
+				t.Errorf("row %s was deleted but is in no supplement", r)
+			}
+		}
+		// A row written after the supplement was read is not deleted by it.
+		sink2 := hookSink{memSink: newMemSink()}
+		p := archivePurger(st, sink2)
+		if err := st.UpsertWorkspaceAddresses(ctx, "m", []store.WorkspaceAddress{
+			{WorkspaceID: "w8", Address: "10.0.1.8", Ref: "after", From: day(1), Until: day(2)}}); err != nil {
+			t.Fatal(err)
+		}
+		rows, err := p.archive.archiveAddresses(ctx, day(25))
+		if err != nil || len(rows) != 1 || rows[0].Ref != "after" {
+			t.Fatalf("rows = %+v (%v)", rows, err)
+		}
+		if err := st.UpsertWorkspaceAddresses(ctx, "m", []store.WorkspaceAddress{
+			{WorkspaceID: "w7", Address: "10.0.1.7", Ref: "later", From: day(1), Until: day(2)},
+			{WorkspaceID: "w8", Address: "10.0.1.8", Ref: "after", From: day(1), Until: day(1) + 500}}); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := st.DeleteWorkspaceAddressVersions(ctx, rows); err != nil || n != 0 {
+			t.Errorf("the changed version must not match: deleted %d (%v)", n, err)
+		}
+		if n, _ := st.PurgeWorkspaceAddresses(ctx, day(25), 10); n != 2 {
+			t.Errorf("both rows must still be there, %d deleted", n)
+		}
+	})
+}
+
+func gz(t *testing.T, lines ...string) []byte {
+	t.Helper()
+	var b bytes.Buffer
+	zw := gzip.NewWriter(&b)
+	zw.Write([]byte(strings.Join(lines, "\n") + "\n"))
+	zw.Close()
+	return b.Bytes()
+}
+
+const (
+	vHdr = `{"type":"header","schema":1,"kind":"events-day","day":"2026-09-20","from":1,"to":2}`
+	vEv  = `{"type":"event","id":"a","at":1,"source":"s","dest":"","host":"h","allowed":true,"count":1}`
+	vMan = `{"type":"manifest","schema":1,"events":1,"addresses":0,"first_id":"a","last_id":"a","first_at":1,"last_at":1}`
+)
+
+func TestVerifyArchiveRejectsDamagedObjects(t *testing.T) {
+	want := egressArchiveHeader{"header", 1, egressKindDay, "2026-09-20", 1, 2}
+	if _, err := verifyArchive(bytes.NewReader(gz(t, vHdr, vEv, vMan)), want); err != nil {
+		t.Fatalf("a whole object must verify: %v", err)
+	}
+	whole := gz(t, vHdr, vEv, vMan)
+	corrupt := append([]byte(nil), whole...)
+	corrupt[len(corrupt)-6] ^= 0xff // inside the CRC/length footer
+	for name, data := range map[string][]byte{
+		"empty":         {},
+		"truncated":     whole[:len(whole)/2],
+		"footer":        corrupt,
+		"no manifest":   gz(t, vHdr, vEv),
+		"wrong day":     gz(t, strings.Replace(vHdr, "09-20", "09-21", 1), vEv, vMan),
+		"wrong schema":  gz(t, strings.Replace(vHdr, `"schema":1`, `"schema":2`, 1), vEv, vMan),
+		"count":         gz(t, vHdr, vMan),
+		"after the end": gz(t, vHdr, vEv, vMan, vEv),
+	} {
+		if _, err := verifyArchive(bytes.NewReader(data), want); err == nil {
+			t.Errorf("%s: a damaged object verified", name)
+		}
+	}
+}
+
+// A key that exists is not proof of a whole object: a zero-byte or truncated one (left by an
+// unconfirmed Put or an older bug) stops the purge at its day and is not trusted or overwritten.
+func TestEgressPurgeDoesNotTrustADamagedExistingObject(t *testing.T) {
+	archiveDialects(t, func(t *testing.T, st *store.SQL) {
+		ctx := context.Background()
+		seedArchive(t, st)
+		sink := newMemSink()
+		key := "egress/yyyy=2026/mm=09/dd=21/events-2026-09-21.jsonl.gz"
+		sink.objs[key] = []byte{}
+		archivePurger(st, sink).purge(ctx)
+		if ids := remainingEventIDs(t, st); len(ids) != 3 || !ids["c"] {
+			t.Errorf("day 21 and later must be kept, left = %v", ids)
+		}
+		if len(sink.objs[key]) != 0 {
+			t.Error("the damaged object was overwritten without an operator")
+		}
+		// The operator removes it; the next run archives and deletes.
+		delete(sink.objs, key)
+		archivePurger(st, sink).purge(ctx)
+		if ids := remainingEventIDs(t, st); len(ids) != 2 {
+			t.Errorf("left = %v", ids)
+		}
+	})
+}
+
+// A Put the sink could not confirm leaves its key behind. The next run must verify it rather
+// than treat the key as proof; a whole object passes, so an object that was in fact stored is
+// then confirmed, and a truncated one stops the purge.
+func TestEgressPurgeAfterAnUnconfirmedPut(t *testing.T) {
+	archiveDialects(t, func(t *testing.T, st *store.SQL) {
+		ctx := context.Background()
+		seedArchive(t, st)
+		key := "egress/yyyy=2026/mm=09/dd=20/events-2026-09-20.jsonl.gz"
+		sink := newMemSink()
+		unconfirmed := unconfirmedSink{sink, false}
+		archivePurger(st, unconfirmed).purge(ctx)
+		if ids := remainingEventIDs(t, st); len(ids) != 5 {
+			t.Fatalf("an unconfirmed day must delete nothing, left = %v", ids)
+		}
+		if sink.objs[key] == nil {
+			t.Fatal("setup: the unconfirmed put should have left the object")
+		}
+		// It was stored whole: verification confirms it and the purge proceeds.
+		archivePurger(st, sink).purge(ctx)
+		if ids := remainingEventIDs(t, st); len(ids) != 2 {
+			t.Errorf("left = %v", ids)
+		}
+	})
+	archiveDialects(t, func(t *testing.T, st *store.SQL) {
+		ctx := context.Background()
+		seedArchive(t, st)
+		key := "egress/yyyy=2026/mm=09/dd=20/events-2026-09-20.jsonl.gz"
+		sink := newMemSink()
+		unconfirmed := unconfirmedSink{sink, true}
+		archivePurger(st, unconfirmed).purge(ctx)
+		archivePurger(st, sink).purge(ctx)
+		if ids := remainingEventIDs(t, st); len(ids) != 5 {
+			t.Errorf("a truncated leftover must stop the purge, left = %v", ids)
+		}
+		if len(sink.objs[key]) == 0 {
+			t.Error("setup: truncated leftover missing")
+		}
+	})
+}
+
+// unconfirmedSink stores the object (whole, or cut in half) and then reports failure.
+type unconfirmedSink struct {
+	*memSink
+	truncate bool
+}
+
+func (u unconfirmedSink) Put(ctx context.Context, k string, b io.ReadSeeker, n int64) error {
+	_ = u.memSink.Put(ctx, k, b, n)
+	if u.truncate {
+		u.objs[k] = u.objs[k][:len(u.objs[k])/2]
+	}
+	return errors.New("not confirmed")
 }

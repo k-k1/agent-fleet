@@ -139,7 +139,11 @@ func (p *egressPurger) purge(ctx context.Context) {
 	events, err := p.drain(ctx, func() (int, error) { return p.st.PurgeEgressEvents(ctx, before, p.batch) })
 	var addrs int
 	if err == nil && ctx.Err() == nil {
-		addrs, err = p.drain(ctx, func() (int, error) { return p.st.PurgeWorkspaceAddresses(ctx, before, p.batch) })
+		if p.archive != nil {
+			addrs, err = p.purgeArchivedAddresses(ctx, before)
+		} else {
+			addrs, err = p.drain(ctx, func() (int, error) { return p.st.PurgeWorkspaceAddresses(ctx, before, p.batch) })
+		}
 	}
 	if err != nil {
 		log.Printf("egress purge: %v", err)
@@ -167,6 +171,28 @@ func (p *egressPurger) drain(ctx context.Context, del func() (int, error)) (int,
 		case <-ctx.Done():
 		case <-time.After(p.pause):
 		}
+	}
+	return total, nil
+}
+
+// purgeArchivedAddresses archives the closed address rows older than the cutoff as one
+// supplement object, then deletes exactly the row versions that went into it. Address rows
+// are not closed to new writers by the floor, so deleting by time could take a row that
+// arrived or changed after its day object was written.
+func (p *egressPurger) purgeArchivedAddresses(ctx context.Context, before int64) (int, error) {
+	rows, err := p.archive.archiveAddresses(ctx, before)
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for len(rows) > 0 && ctx.Err() == nil {
+		n := min(p.batch, len(rows))
+		d, err := p.st.DeleteWorkspaceAddressVersions(ctx, rows[:n])
+		total += d
+		if err != nil {
+			return total, err
+		}
+		rows = rows[n:]
 	}
 	return total, nil
 }

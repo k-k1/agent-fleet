@@ -436,7 +436,7 @@ events/s the former takes about 8.6M rows a day. The maintainer decided:
   **Consequence:** an event arriving later than the retention window after it happened is
   lost, from the raw table and from the aggregate. That is the price of not keeping a table of
   purged ids.
-- **No archive in this change.** Archiving to object storage before the purge is #2699 (see the addendum of 2026-10-26).
+- **No archive in this change.** Archiving to object storage before the purge is #2699.
 
 ## Addendum (2026-10-25) — the address recorder reads ECS once per cluster
 
@@ -452,7 +452,7 @@ described by ARN, as before, and MISSING stays unresolved. A failed page or batc
 read of every workspace in that cluster for the sweep, so none of their intervals is closed
 on a partial listing. Follow-ups: #2674 (acceptance on a real account).
 
-## Addendum (2026-10-26) — optional archive of raw events before the purge (#2699)
+## Addendum (2026-10-25) — optional archive of raw events before the purge (#2699)
 
 The decisions above stand. A deployment that must keep the per-connection record longer than
 the retention can set `AF_EGRESS_ARCHIVE_URL` (`s3://bucket/prefix` or `file:///dir`; empty,
@@ -469,8 +469,9 @@ the default, is off). The maintainer decided:
   not deleted unarchived. Days are archived oldest first; the first failed or unconfirmed day
   stops the deletable range at its start, and the next run retries. Storage is a two-method
   interface (`Exists`, an atomic `Put`) with S3 and local-directory implementations; a day whose
-  object exists is not rewritten, which makes the crash-after-write retry safe and keeps a
+  object exists is verified (header, counts, gzip checksum) and not rewritten, which makes the crash-after-write retry safe and keeps a
   delete cut off midway from replacing a full day with the remainder.
+- **Address rows are archived by version.** The floor does not close `workspace_address` to writers, so the closed rows to delete are written as a supplement object right before, and exactly those row versions are deleted.
 - **Read-back is offline** (download, attribute by source and time). Archived events are not
   re-ingested: the ingest bound above is unchanged, so the archive and `egress_daily` never
   double count.

@@ -80,9 +80,13 @@ type EgressAttributionStore interface {
 	PurgeWorkspaceAddresses(ctx context.Context, before int64, limit int) (int, error)
 	// OldestEgressEvent returns the time of the oldest raw event; ok is false when there is none.
 	OldestEgressEvent(ctx context.Context) (at int64, ok bool, err error)
-	// OldestPurgeableAddressEnd returns the earliest end among the closed address rows
-	// PurgeWorkspaceAddresses would delete for the same cutoff; ok is false when there is none.
-	OldestPurgeableAddressEnd(ctx context.Context, before int64) (until int64, ok bool, err error)
+	// EachPurgeableWorkspaceAddress calls fn for every closed address row that ended before
+	// the cutoff, in (from, ref, address) order: the rows PurgeWorkspaceAddresses would delete.
+	EachPurgeableWorkspaceAddress(ctx context.Context, before int64, fn func(WorkspaceAddress) error) error
+	// DeleteWorkspaceAddressVersions deletes exactly the given rows, each only while its end
+	// still equals the one given, and returns how many went. A row that arrived or changed
+	// after the caller read it is not matched, so it is never deleted unseen.
+	DeleteWorkspaceAddressVersions(ctx context.Context, rows []WorkspaceAddress) (int, error)
 	// EachEgressEvent calls fn for every event with from <= at < to in (at, id) order. It
 	// pages by key, batch rows per query, so a day of events is never held in memory and no
 	// cursor stays open between calls. An error from fn stops the walk and is returned.
@@ -352,8 +356,44 @@ func (s *SQL) OldestEgressEvent(ctx context.Context) (int64, bool, error) {
 	return s.oldest(ctx, `SELECT MIN(at) FROM egress_event`)
 }
 
-func (s *SQL) OldestPurgeableAddressEnd(ctx context.Context, before int64) (int64, bool, error) {
-	return s.oldest(ctx, `SELECT MIN(until_at) FROM workspace_address WHERE until_at > 0 AND until_at < ?`, before)
+func (s *SQL) EachPurgeableWorkspaceAddress(ctx context.Context, before int64, fn func(WorkspaceAddress) error) error {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT membership_id, workspace_id, address, ref, from_at, until_at FROM workspace_address
+		 WHERE until_at > 0 AND until_at < ? ORDER BY from_at, ref, address`, before)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var a WorkspaceAddress
+		if err := rows.Scan(&a.MembershipID, &a.WorkspaceID, &a.Address, &a.Ref, &a.From, &a.Until); err != nil {
+			return err
+		}
+		if err := fn(a); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func (s *SQL) DeleteWorkspaceAddressVersions(ctx context.Context, rows []WorkspaceAddress) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	total := 0
+	for _, a := range rows {
+		res, err := tx.ExecContext(ctx,
+			`DELETE FROM workspace_address WHERE ref=? AND address=? AND from_at=? AND until_at=?`,
+			a.Ref, a.Address, a.From, a.Until)
+		n, err := rowsDeleted(res, err)
+		if err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return total, tx.Commit()
 }
 
 func (s *SQL) EachEgressEvent(ctx context.Context, from, to int64, batch int, fn func(EgressEvent) error) error {

@@ -24,6 +24,8 @@ import (
 // (GCS, say) implements these two methods and nothing else changes.
 type egressArchiveSink interface {
 	Exists(ctx context.Context, key string) (bool, error)
+	// Get opens an object that Exists reported, so it can be verified before it is trusted.
+	Get(ctx context.Context, key string) (io.ReadCloser, error)
 	// Put stores size bytes read from body, which is seekable so a client may retry or sign it.
 	Put(ctx context.Context, key string, body io.ReadSeeker, size int64) error
 }
@@ -86,13 +88,55 @@ func (l *egressArchiveLocal) Exists(_ context.Context, key string) (bool, error)
 	return err == nil, err
 }
 
+func (l *egressArchiveLocal) Get(_ context.Context, key string) (io.ReadCloser, error) {
+	p, err := l.path(key)
+	if err != nil {
+		return nil, err
+	}
+	return os.Open(p)
+}
+
+// mkdirAllSync creates dir and every missing ancestor, and fsyncs each directory it created
+// together with its parent, so the whole path to a file renamed into it survives a crash
+// (an fsync of the leaf alone does not persist the entries above it).
+func mkdirAllSync(dir string) error {
+	if st, err := os.Stat(dir); err == nil {
+		if !st.IsDir() {
+			return fmt.Errorf("%s is not a directory", dir)
+		}
+		return nil
+	}
+	parent := filepath.Dir(dir)
+	if parent != dir {
+		if err := mkdirAllSync(parent); err != nil {
+			return err
+		}
+	}
+	if err := os.Mkdir(dir, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	if err := syncDir(dir); err != nil {
+		return err
+	}
+	return syncDir(parent)
+}
+
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
+}
+
 func (l *egressArchiveLocal) Put(ctx context.Context, key string, body io.ReadSeeker, size int64) (err error) {
 	p, err := l.path(key)
 	if err != nil {
 		return err
 	}
 	dir := filepath.Dir(p)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := mkdirAllSync(dir); err != nil {
 		return err
 	}
 	f, err := os.CreateTemp(dir, ".egress-archive-*.tmp")
@@ -124,12 +168,7 @@ func (l *egressArchiveLocal) Put(ctx context.Context, key string, body io.ReadSe
 	if err = os.Rename(f.Name(), p); err != nil {
 		return err
 	}
-	d, derr := os.Open(dir)
-	if derr != nil {
-		return derr
-	}
-	defer d.Close()
-	return d.Sync()
+	return syncDir(dir)
 }
 
 // ctxReader stops a copy when the purge's deadline (the lease) has passed.
@@ -148,12 +187,15 @@ func (c *ctxReader) Read(p []byte) (int, error) {
 type egressArchiveS3API interface {
 	PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 	HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
 }
 
 // egressArchiveS3 stores objects under bucket/prefix. A single PutObject replaces the key
 // atomically, so a reader sees the old object or the whole new one. The task role needs
-// s3:PutObject and s3:GetObject (HeadObject) on the prefix, and nothing else: the CP never
-// lists, overwrites a good object, or deletes.
+// s3:PutObject and s3:GetObject (HeadObject and read-back) on the prefix, and s3:ListBucket on
+// the bucket: without it S3 answers HeadObject for a missing key with 403, not 404, which
+// Exists must (and does) report as an error rather than as "absent". The CP never lists,
+// overwrites a good object, or deletes.
 type egressArchiveS3 struct {
 	bucket, prefix string
 	api            egressArchiveS3API
@@ -179,6 +221,14 @@ func (s *egressArchiveS3) Exists(ctx context.Context, key string) (bool, error) 
 		return false, nil
 	}
 	return false, err
+}
+
+func (s *egressArchiveS3) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	out, err := s.api.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(s.key(key))})
+	if err != nil {
+		return nil, err
+	}
+	return out.Body, nil
 }
 
 // Put uploads, then asks the bucket for the object's length: a 2xx that did not store what
