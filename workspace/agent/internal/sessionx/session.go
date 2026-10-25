@@ -144,7 +144,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		// server's steering gate and per-parent budget, and the Console's mirror attribution
 		// for a spawned session's first turn.
 		Origin: session.OriginOf(m), OriginSession: m.OriginSession,
-		Studio: m.Studio, InitialPromptState: m.InitialPromptState,
+		Studio: m.Studio, InitialPromptState: m.InitialPromptState, InitialPromptReason: m.InitialPromptReason,
 		Moving: m.Moving, MovedTo: m.MovedTo,
 		// An outstanding handoff proposal is work this session has already described and
 		// handed on, and it is the row's only trace: the card lives in the mirror and nothing

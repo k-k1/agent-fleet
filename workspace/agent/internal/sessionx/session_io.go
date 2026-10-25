@@ -1043,6 +1043,7 @@ func typeInitialPrompt(name, prompt string) string {
 	// Settling failed instead keeps the loss visible (the same refusal promptBlocker gives).
 	if m, ok := session.ReadMeta(name); (!ok || NormalizeKind(m.Kind) == session.KindClaude) && claude.AuthExpired() {
 		log.Printf("initial prompt NOT typed for %s: the claude login has expired", name)
+		noteInitialPromptReason(name, session.InitialPromptReasonAuthExpired)
 		return session.InitialPromptFailed
 	}
 	tn := session.TmuxName(name)

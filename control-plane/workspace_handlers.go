@@ -960,6 +960,10 @@ type sessionWire struct {
 	// while it is pending. No DB-mirror column: a delivery only happens in a running
 	// Workspace, and the Agent turns a pending it can no longer finish into unknown on start.
 	InitialPromptState string `json:"initialPromptState,omitempty"`
+	// InitialPromptReason: why a failed initial prompt failed, when the Agent knows
+	// ("auth_expired": the Claude login has expired). The Console toasts it once, on seeing the
+	// state move from pending to failed. No DB-mirror column, like the state.
+	InitialPromptReason string `json:"initialPromptReason,omitempty"`
 	// Moving / MovedTo: the session this one is being moved to, or was moved to (ADR 0115
 	// decision 11.7). Dropped here, a moved source's row cannot say where the conversation
 	// went or offer "resume here anyway", and a pending move offers neither retry nor cancel.
