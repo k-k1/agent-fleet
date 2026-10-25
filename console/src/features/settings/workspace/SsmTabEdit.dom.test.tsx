@@ -781,6 +781,16 @@ describe("SsmTab assume-role profile", () => {
       expect(logoutPosts()).toEqual([]);
     });
 
+    it("refuses to log out when the profile list cannot be read now, even if an older one is stored", async () => {
+      signedIn();
+      confirmAnswer = true;
+      await mount(); // the store now holds the signed-in list
+      failGet.add("api/aws-login/profiles");
+      await click(btn(rows(0)[0], t("awslogin.logout")));
+      expect(logoutPosts()).toEqual([]);
+      expect(toasts).toEqual([t("awslogin.logout_unreadable")]);
+    });
+
     it("offers none while the chain's source is not signed in", async () => {
       profiles = [prod, stg, deploy];
       states = [{ name: "deploy", state: "source_unavailable", source: "prod" }];

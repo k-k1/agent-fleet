@@ -25,8 +25,10 @@ export function useProfileLogout(): (p: Pick<AwsLoginTarget, "name" | "label">) 
     async (p) => {
       // The list the confirmation names must be the Agent's answer to this very ask, not the
       // store's: without it the confirmation could leave out a chain the logout signs out.
-      await refreshExpiry();
-      const list = useAwsLoginStore.getState().profiles;
+      // A failed ask returns null and leaves the previous list in the store, which must not be
+      // mistaken for this answer (an empty array is a real answer, null is not).
+      const fresh = await refreshExpiry();
+      const list = fresh === null ? null : useAwsLoginStore.getState().profiles;
       if (!list) {
         toast(tr("awslogin.logout_unreadable"));
         return false;
