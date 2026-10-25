@@ -17,6 +17,7 @@ import { openImagegen } from "../features/imagegen/open.ts";
 import { useImagegenAvailable } from "../features/imagegen/available.ts";
 import { isBlankPane, MAX_TAB_COLS } from "../layout/ops.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
+import { usedFromRemaining } from "../features/sessions/move.ts";
 import { hintSuffix } from "../features/keys/keyHint.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/Icon.tsx";
@@ -749,7 +750,7 @@ export function AgyUsageChip({ tenant }: { tenant: string | null }) {
   });
 
   // Flatten groups into rows: per group the weekly window, then the 5h one.
-  const used = (remainingPct: number) => Math.round(Math.min(100, Math.max(0, 100 - remainingPct)));
+  const used = usedFromRemaining;
   const wins: { label: string; pct: number; resetsAt?: string; stale?: boolean }[] = [];
   for (const g of (usage?.ok && Array.isArray(usage.groups) && usage.groups) || []) {
     wins.push({ label: tr("wsbar.usage.agy.week_row", { group: g.label }), pct: used(g.remainingPct), resetsAt: g.resetsAt, stale: !!g.stale });
@@ -865,7 +866,7 @@ export function CopilotUsageChip({ tenant }: { tenant: string | null }) {
     reveal();
   });
 
-  const used = (remainingPct: number) => Math.round(Math.min(100, Math.max(0, 100 - remainingPct)));
+  const used = usedFromRemaining;
   // Localized pool names; unknown ids fall back to the raw id.
   const poolLabel = (id: string) =>
     id === "chat"

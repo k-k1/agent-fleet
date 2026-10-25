@@ -442,6 +442,7 @@ function usageText(u: MoveUsage, tr: ReturnType<typeof useT>): string {
   const parts: string[] = [];
   if (u.fiveHour !== undefined) parts.push(tr("move.usage_five", { pct: u.fiveHour }));
   if (u.sevenDay !== undefined) parts.push(tr("move.usage_week", { pct: u.sevenDay }));
+  if (u.monthly !== undefined) parts.push(tr("move.usage_month", { pct: u.monthly }));
   return parts.join(" · ");
 }
 
