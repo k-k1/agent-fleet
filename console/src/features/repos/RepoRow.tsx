@@ -52,6 +52,8 @@ const providerLabel = (p: string) => PROVIDER_LABEL[p] || p;
 export interface RepoRowProps {
   r: Repo;
   kinds?: string[];
+  /** The workspace's Claude login has expired; forwarded to the launch dialog's notice. */
+  claudeExpired?: boolean;
   running?: boolean;
   active?: boolean;
   selected?: boolean;
@@ -129,7 +131,7 @@ function RepoPeek({ s }: { s: Session }) {
   );
 }
 
-export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, unread, peek, alsoRunning, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onGitflowInit, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0, onOpenArchived, onStopSessions, aliveCount = 0 }: RepoRowProps) {
+export function RepoRow({ r, kinds = repoLaunchKinds, claudeExpired = false, running = true, active, selected, sess, unread, peek, alsoRunning, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onGitflowInit, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0, onOpenArchived, onStopSessions, aliveCount = 0 }: RepoRowProps) {
   // SVN working copies (docs/log/41) are flat: no branch/SCM view/worktree, so the card
   // never opens Source Control and the menu shows svn actions (update/cleanup) instead
   // of git ones (branch switch / FF / commit).
@@ -677,6 +679,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
           branch={r.branch}
           path={r.path}
           kinds={agentKinds}
+          claudeExpired={claudeExpired}
           // From a worktree, only in-place launch is offered — spawning a worktree
           // OFF a worktree yields a confusing double-@ name off the wrong base. New
           // worktrees are created from the base clone (any base branch). SVN has no

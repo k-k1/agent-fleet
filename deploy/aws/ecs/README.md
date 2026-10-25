@@ -967,6 +967,26 @@ registers both. The workspace address is handled like the NAT's:
   itself onto the gateway (option C) is rejected: the NAT would need a new address for the CP
   and hosts, so the allow-list changes anyway, after a window with no egress at all.
 
+**Egress event archive (optional, #2732).** The CP can write each past UTC day of raw egress
+events to S3 before it purges them (`AF_EGRESS_ARCHIVE_URL`, #2699; `docs/build/03-control-plane.md`
+§3.8). It is off until 10-data owns a bucket for it:
+
+```bash
+aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-network.yaml \
+  --capabilities CAPABILITY_IAM            # the S3 endpoint policy admits the bucket
+aws cloudformation deploy --stack-name af-ecs-data --template-file cfn/10-data.yaml \
+  --capabilities CAPABILITY_AUTO_EXPAND CAPABILITY_IAM --parameter-overrides EgressArchive=create
+./update.sh --profile <p> --region <r>     # 20-platform's CP grant, then 30-ingress's URL
+```
+
+`standup.sh` does the same on a rebuild when the capture has `EgressArchive=create`. The bucket
+(`af-<data stack>-egress-archive-<account id>-<region>`) is encrypted, TLS-only, unversioned, expires archived days
+after `EgressArchiveRetentionDays` (365) and is **retained** when the stack is deleted (a rebuild reuses it with `EgressArchive=existing`, which `standup.sh` sets by itself). The CP
+task role gets `s3:PutObject` / `s3:GetObject` on `egress/*` and `s3:ListBucket` on that bucket
+only, and the endpoint policy admits the same bucket for this account. Only a bucket made this
+way works: a bucket of your own is refused at the endpoint. Parameters, the grant and the
+reasoning: `cfn/PARAMETERS.md`, "The egress archive". Not yet run on a real account.
+
 **Limits of this first stage.** Squid, the agent and this configuration, pausing, resuming and
 a handed-in address included, have **not been run on a real account**.
 
@@ -2093,10 +2113,9 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
     ENI in a private subnet, so the ~918 MiB compressed workspace image (see the start-latency
     measurement below) goes through the endpoint. **Fargate cannot split**: it pulls through
     the task ENI, so a Fargate workspace start still pays NAT data processing for its layers.
-    The models bucket reads of `60-engines` use the endpoint. The raw egress event archive
-    (`AF_EGRESS_ARCHIVE_URL`, #2699) is not wired by these templates: the CP writes from the
-    private route table, so a same-region `s3://` archive bucket would be refused at the endpoint
-    until its policy (and the CP task role) admits it (#2732).
+    The models bucket reads of `60-engines` use the endpoint, and so do the CP's writes to the
+    optional raw egress event archive bucket ("Egress event archive" below, #2732); a bucket
+    the policy does not name is refused.
     The endpoint has a switch, `S3EndpointEnabled` (default `true`). It must stay `false`
     while any workspace still runs in a private subnet, because the policy refuses that
     workspace's own S3 (AccessDenied) until it is restarted into a workspace subnet.

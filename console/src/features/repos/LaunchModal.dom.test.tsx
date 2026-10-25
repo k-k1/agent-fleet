@@ -85,13 +85,14 @@ const rowFor = (name: string) => must(branchRows().find((b) => b.textContent?.in
 const dirRow = (name: string) =>
   must([...document.querySelectorAll(".dirpick-row")].find((b) => b.textContent?.includes(name)), `folder row "${name}"`);
 
-async function render(kinds = ["claude"], extra: { repo?: string; initialPrompt?: string } = {}): Promise<void> {
+async function render(kinds = ["claude"], extra: { repo?: string; initialPrompt?: string; claudeExpired?: boolean } = {}): Promise<void> {
   await act(async () => {
     root!.render(
       <LaunchModal
         repo={extra.repo ?? "app"}
         branch="main"
         kinds={kinds}
+        claudeExpired={extra.claudeExpired}
         initialPrompt={extra.initialPrompt}
         onClose={onClose}
         onLaunch={onLaunch}
@@ -201,6 +202,22 @@ describe("LaunchModal branch mode", () => {
     const kinds = ["claude", "codex", "cursor", "copilot", "kiro", "opencode"];
     await render(kinds);
     expect(document.querySelectorAll(".ui-seg.big .seg-btn")).toHaveLength(kinds.length);
+  });
+
+  // An expired workspace login is a notice here, as in the start hub (StartModal): claude stays
+  // launchable (/login in the pane recovers). It shows for claude only, and only when expired.
+  it("notes an expired Claude login while claude is the picked agent", async () => {
+    await render(["claude"], { claudeExpired: true });
+    expect(document.body.textContent).toContain("Claude login has expired");
+    await render(["claude"], { claudeExpired: false });
+    expect(document.body.textContent).not.toContain("Claude login has expired");
+  });
+
+  it("does not show the expired-login note for another agent kind", async () => {
+    await render(["codex", "claude"], { claudeExpired: true });
+    expect(document.body.textContent).not.toContain("Claude login has expired");
+    await click(must([...document.querySelectorAll<HTMLButtonElement>(".ui-seg.big .seg-btn")].find((b) => b.textContent?.includes("Claude")), "claude card"));
+    expect(document.body.textContent).toContain("Claude login has expired");
   });
 
   // Location is collapsed by default, so the summary line is the ONLY thing telling the user

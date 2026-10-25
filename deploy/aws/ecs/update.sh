@@ -256,6 +256,25 @@ EGRESS_OVR=()
 if [ -n "$EGRESS_SECRET" ] || [ -n "$(af_stack_param "$STACK" EgressTokenSecretArn)" ]; then
   EGRESS_OVR=("EgressProxyAddr=$EGRESS_ADDR" "EgressTokenSecretArn=$EGRESS_SECRET")
 fi
+# The egress event archive bucket (#2732), a fact of the data stack like the two above: passed
+# when 10-data has one or the ingress stack still names one (so dropping the bucket clears it),
+# and not at all when the data stack is unknown. A failed read of the output stops the run: the
+# purger deletes events once the archive is off, so "could not read" must never mean "none".
+# 20-platform carries the CP's grant on it, so that stack's change set below gets it too.
+ARCHIVE_OVR=(); PLATFORM_ARCHIVE_OVR=()
+if [ -n "$DATA_STACK" ]; then
+  if ! ARCHIVE_BUCKET="$(af_stack_output_strict "$DATA_STACK" EgressArchiveBucket)"; then
+    echo "ERROR: could not read the EgressArchiveBucket output of $DATA_STACK; stopping so that a" >&2
+    echo "       transient failure cannot switch the egress archive off. Re-run." >&2
+    exit 1
+  fi
+  if [ -n "$ARCHIVE_BUCKET" ] || [ -n "$(af_stack_param "$STACK" EgressArchiveBucket)" ]; then
+    ARCHIVE_OVR=("EgressArchiveBucket=$ARCHIVE_BUCKET")
+  fi
+  if [ -n "$ARCHIVE_BUCKET" ] || [ -n "$(af_stack_param "$AF_STACK_PLATFORM" EgressArchiveBucket)" ]; then
+    PLATFORM_ARCHIVE_OVR=(--parameter-overrides "EgressArchiveBucket=$ARCHIVE_BUCKET")
+  fi
+fi
 if [ -z "$WS_SUBNETS" ]; then
   echo "NOTE: $NETWORK_STACK has no WorkspaceSubnets output; workspaces keep their subnets." >&2
   echo "      To move them: deploy cfn/00-network.yaml with S3EndpointEnabled=false, run this" >&2
@@ -333,13 +352,14 @@ fi
 if ! af_stack_exists "$AF_STACK_PLATFORM"; then
   echo "==> no $AF_STACK_PLATFORM stack — skipping 20-platform (standup.sh is what creates it)"
 elif [ "$DRY" = 1 ]; then
-  echo "DRY: aws cloudformation deploy --stack-name $AF_STACK_PLATFORM --template-file $HERE/cfn/20-platform.yaml --no-execute-changeset"
+  echo "DRY: aws cloudformation deploy --stack-name $AF_STACK_PLATFORM --template-file $HERE/cfn/20-platform.yaml --no-execute-changeset${PLATFORM_ARCHIVE_OVR[*]:+ ${PLATFORM_ARCHIVE_OVR[*]}}"
   echo "     (then describe-change-set, printed here, and execute-change-set only when nothing is replaced)"
 else
   echo "==> 20-platform: building a change set for $AF_STACK_PLATFORM"
   set +e
   cs_out="$(af_cfn_deploy "$AF_STACK_PLATFORM" "$HERE/cfn/20-platform.yaml" \
-    --capabilities CAPABILITY_NAMED_IAM --no-execute-changeset --no-fail-on-empty-changeset 2>&1)"
+    --capabilities CAPABILITY_NAMED_IAM --no-execute-changeset --no-fail-on-empty-changeset \
+    ${PLATFORM_ARCHIVE_OVR[@]+"${PLATFORM_ARCHIVE_OVR[@]}"} 2>&1)"
   cs_rc=$?
   set -e
   printf '%s\n' "$cs_out" | while IFS= read -r l; do echo "    $l"; done
@@ -650,7 +670,7 @@ fi
 echo "==> cloudformation deploy $STACK (ImageTag=$VERSION)"
 deploy_out=""
 if [ "$DRY" = 1 ]; then
-  echo "DRY: aws cloudformation deploy --stack-name $STACK --template-file $TEMPLATE --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ImageTag=$VERSION${EFS_BACKUP_MARKER:+ EfsBackup=$EFS_BACKUP_MARKER}${WS_SUBNETS:+ WorkspaceSubnets=$WS_SUBNETS}${EGRESS_OVR[*]:+ ${EGRESS_OVR[*]}}"
+  echo "DRY: aws cloudformation deploy --stack-name $STACK --template-file $TEMPLATE --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ImageTag=$VERSION${EFS_BACKUP_MARKER:+ EfsBackup=$EFS_BACKUP_MARKER}${WS_SUBNETS:+ WorkspaceSubnets=$WS_SUBNETS}${EGRESS_OVR[*]:+ ${EGRESS_OVR[*]}}${ARCHIVE_OVR[*]:+ ${ARCHIVE_OVR[*]}}"
 else
   set +e
   # Always go through af_cfn_deploy (env.sh): it switches to S3 once a template passes 51,200
@@ -661,6 +681,7 @@ else
     --capabilities CAPABILITY_NAMED_IAM \
     --parameter-overrides "ImageTag=$VERSION" ${EFS_BACKUP_MARKER:+"EfsBackup=$EFS_BACKUP_MARKER"} \
       ${WS_SUBNETS:+"WorkspaceSubnets=$WS_SUBNETS"} ${EGRESS_OVR[@]+"${EGRESS_OVR[@]}"} \
+      ${ARCHIVE_OVR[@]+"${ARCHIVE_OVR[@]}"} \
     --no-fail-on-empty-changeset 2>&1)"
   rc=$?
   set -e

@@ -11,6 +11,9 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -592,6 +595,169 @@ func TestWorkItemDetailRejectsUnknownKind(t *testing.T) {
 	}
 	if *env.hits != 0 {
 		t.Errorf("reached the agent %d times", *env.hits)
+	}
+}
+
+// The merge relay (ADR 0061, 2026-10-25 note on #2632).
+
+// mergeRes is a resolved workspace owned by the env's member, whose Agent is srv.
+func mergeRes(env *workItemEnv, endpoint, state string) *resolved {
+	return &resolved{
+		rt:    stubRuntime{endpoint: endpoint, token: "tok", state: state},
+		ws:    store.Workspace{ID: "ws1", MembershipID: env.mid},
+		ident: store.Identity{ID: "user1"},
+		mv:    store.MembershipView{MembershipID: env.mid},
+	}
+}
+
+// consoleMergeReq is the request the Console itself sends: JSON, no cross-site markers.
+func consoleMergeReq(body string) *http.Request {
+	r := httptest.NewRequest("POST", "/api/work-items/merge", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	return r
+}
+
+const mergeBody = `{"provider":"github","key":"acme/web#518","sha":"abc","method":"merge"}`
+
+// A stopped Workspace answers 409 and is not started, and nothing reaches the Agent.
+func TestWorkItemMergeStoppedDoesNotStart(t *testing.T) {
+	env := newWorkItemEnv(t, "stopped")
+	var reached int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached++ }))
+	defer srv.Close()
+	w := httptest.NewRecorder()
+	env.api.merge(w, consoleMergeReq(mergeBody), mergeRes(env, srv.URL, "stopped"))
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "workspace_stopped") {
+		t.Fatalf("got %d %s, want 409 workspace_stopped", w.Code, w.Body.String())
+	}
+	if reached != 0 {
+		t.Errorf("reached the agent %d times while stopped", reached)
+	}
+}
+
+func TestWorkItemMergeRefusesLocally(t *testing.T) {
+	for name, body := range map[string]string{
+		"bitbucket": `{"provider":"bitbucket","key":"ws/r#1","sha":"abc","method":"merge"}`,
+		"jira":      `{"provider":"jira","key":"PROJ-1","sha":"abc","method":"merge"}`,
+		"no sha":    `{"provider":"github","key":"acme/web#1","method":"merge"}`,
+		"no key":    `{"provider":"github","sha":"abc","method":"merge"}`,
+		"no method": `{"provider":"github","key":"acme/web#1","sha":"abc"}`,
+		"bad":       `{"provider":"github","key":"acme/web#1","sha":"abc","method":"ff"}`,
+		"not json":  `x`,
+	} {
+		env := newWorkItemEnv(t, "running")
+		w := httptest.NewRecorder()
+		env.api.merge(w, consoleMergeReq(body), mergeRes(env, "http://127.0.0.1:1", "running"))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d %s, want 400", name, w.Code, w.Body.String())
+		}
+	}
+}
+
+// The Agent receives exactly the four fields (provider pinned to github) under a member-origin
+// mark that covers that exact body, and its answer (here a moved head) passes through with its
+// status and code intact.
+func TestWorkItemMergeRelaysSignedAndPassesRefusalThrough(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	var raw []byte
+	var path, auth, mark string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, auth, mark = r.URL.Path, r.Header.Get("Authorization"), r.Header.Get(memberOriginHeader)
+		raw, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"head_changed","message":"moved"}}`))
+	}))
+	defer srv.Close()
+	w := httptest.NewRecorder()
+	env.api.merge(w, consoleMergeReq(`{"key":"acme/web#518","sha":"abc","method":"squash","extra":"x"}`), mergeRes(env, srv.URL, "running"))
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "head_changed") {
+		t.Fatalf("got %d %s", w.Code, w.Body.String())
+	}
+	if path != "/work-items/merge" || auth != "Bearer tok" {
+		t.Errorf("agent saw %s with %q", path, auth)
+	}
+	var got map[string]string
+	_ = json.Unmarshal(raw, &got)
+	if got["provider"] != "github" || got["key"] != "acme/web#518" || got["sha"] != "abc" || got["method"] != "squash" || len(got) != 4 {
+		t.Errorf("agent body = %s", raw)
+	}
+	pub := memberOriginKey(env.api.mgr.tokenSignMaster(), memberOriginKeyVersion()).Public().(ed25519.PublicKey)
+	c := decodeMark(t, pub, mark)
+	sum := sha256.Sum256(raw)
+	if c.Method != "POST" || c.Path != "/work-items/merge" || c.Query != "" || c.BodySHA256 != hex.EncodeToString(sum[:]) ||
+		c.Membership != env.mid || c.Workspace != "ws1" || c.Subject != "user1" {
+		t.Errorf("claims = %+v — the mark must cover the body that was sent, for this member", c)
+	}
+}
+
+// A page other than the Console could have made this request with the member's cookie (a
+// same-site preview app, text/plain no-cors): it is refused before anything is read, signed or
+// sent. The Console's own JSON request still goes through.
+func TestWorkItemMergeRefusesCrossOriginRequests(t *testing.T) {
+	for name, mod := range map[string]func(*http.Request){
+		"text/plain":      func(r *http.Request) { r.Header.Set("Content-Type", "text/plain") },
+		"no content type": func(r *http.Request) { r.Header.Del("Content-Type") },
+		"same-site":       func(r *http.Request) { r.Header.Set("Sec-Fetch-Site", "same-site") },
+		"cross-site":      func(r *http.Request) { r.Header.Set("Sec-Fetch-Site", "cross-site") },
+		"foreign origin":  func(r *http.Request) { r.Header.Set("Origin", "https://preview.example.test") },
+	} {
+		env := newWorkItemEnv(t, "running")
+		var reached int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached++ }))
+		r := consoleMergeReq(mergeBody)
+		mod(r)
+		w := httptest.NewRecorder()
+		env.api.merge(w, r, mergeRes(env, srv.URL, "running"))
+		srv.Close()
+		if w.Code != http.StatusUnsupportedMediaType && w.Code != http.StatusForbidden {
+			t.Errorf("%s: got %d %s, want 415/403", name, w.Code, w.Body.String())
+		}
+		if reached != 0 {
+			t.Errorf("%s: the Agent was reached", name)
+		}
+	}
+	env := newWorkItemEnv(t, "running")
+	var reached int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached++
+		_, _ = w.Write([]byte(`{"merged":true,"sha":"f"}`))
+	}))
+	defer srv.Close()
+	r := consoleMergeReq(mergeBody)
+	r.Host = "console.example.test"
+	r.Header.Set("Origin", "https://console.example.test")
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	env.api.merge(w, r, mergeRes(env, srv.URL, "running"))
+	if w.Code != http.StatusOK || reached != 1 {
+		t.Fatalf("the Console's own request: %d %s (agent reached %d)", w.Code, w.Body.String(), reached)
+	}
+}
+
+// The mark speaks for the workspace's own member only.
+func TestWorkItemMergeRefusesAnotherMembersWorkspace(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	var reached int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached++ }))
+	defer srv.Close()
+	res := mergeRes(env, srv.URL, "running")
+	res.ws.MembershipID = "someone-else"
+	w := httptest.NewRecorder()
+	env.api.merge(w, consoleMergeReq(mergeBody), res)
+	if w.Code != http.StatusForbidden || reached != 0 {
+		t.Fatalf("got %d %s (agent reached %d)", w.Code, w.Body.String(), reached)
+	}
+}
+
+// An Agent from before this feature has no route; that must not read as "pull request gone".
+func TestWorkItemMergeOldAgentSaysSo(t *testing.T) {
+	env := newWorkItemEnv(t, "running") // the stub agent serves /work-items/fetch only
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) }))
+	defer srv.Close()
+	w := httptest.NewRecorder()
+	env.api.merge(w, consoleMergeReq(mergeBody), mergeRes(env, srv.URL, "running"))
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "agent_outdated") {
+		t.Fatalf("got %d %s", w.Code, w.Body.String())
 	}
 }
 

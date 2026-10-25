@@ -526,3 +526,43 @@ at connect, or the header of a work-item fetch for a connection that predates th
 on each Bitbucket row. The Console offers the report button only on `canComment: true`; unknown scopes stay
 read-only. Not measured against a real Bitbucket: that the token and refresh responses carry `scopes` and that
 `X-OAuth-Scopes` is sent for bearer tokens. Bitbucket issues are still not listed. Follow-ups: none.
+
+## Note (2026-10-25, #2632): a person can merge a GitHub pull request from the detail modal
+
+Decision 6 ("no writing back by default") and decision 6.1 (the report comment) stand. A second human-gated
+write is added: the detail modal's **Merge** button for a **GitHub** pull request, which the Agent sends as
+`PUT /repos/{owner}/{repo}/pulls/{n}/merge`. Why it is allowed: a merge that a person presses and then
+confirms in a dialog naming the pull request, base ← head and the method is not automatic, and it replaces a
+single button press on another site, so it adds no capability the person did not already have. What keeps it
+from widening what af does on its own:
+
+- **Never reachable by agents.** No MCP tool is created and nothing triggers it (no "session finished →
+  merge"); the only caller is the Console's confirm button, through the Control Plane's relay to the Agent.
+  This is the same stance as 6.1. A pull request's text is written by third parties, and anything that lets
+  that text steer a merge would close the loop decision 6 keeps open. "No MCP tool" alone does not keep a
+  session out, because every session's shell holds AGENT_TOKEN and can call the Agent's HTTP route: so the
+  Agent takes the route only with a member-origin mark (ADR 0113) that the Control Plane signs over the exact
+  body for the workspace's own member, and the Control Plane signs only after the Console-origin check
+  (JSON body, same-origin `Sec-Fetch-Site` / `Origin`), which a same-site page's no-cors POST fails.
+- **GitHub only.** Bitbucket stays as decision 19 and its 2026-10-25 note left it: no merge, and no Merge button
+  on a Bitbucket row. Jira has no pull request to merge.
+- **Only when GitHub says it would succeed.** The live read now carries `mergeable_state`; the button is
+  enabled for `clean` and `has_hooks` only, and any other state is shown as the reason next to the disabled
+  button. The request carries the head SHA the modal displayed, so a pull request that moved after the panel
+  was drawn is refused (GitHub answers 409) instead of merged unseen. `unstable` (non-required checks failing)
+  is deliberately not offered although GitHub would accept it.
+- **Only a method the repository allows.** The default is the first of merge, squash, rebase that the repository
+  allows: GitHub exposes no stored preference to read.
+- **A stopped Workspace answers 409** like the live read, and is not started for it.
+- **The button is drawn only when the token is known to be able to merge**: the repository's `permissions`
+  must show push access for the connection's user, and the token must report its scopes in `X-OAuth-Scopes`
+  with `repo` (`public_repo` on a public repository), which is what a classic token (the device flow's
+  `repo workflow`) does. A fine-grained token or a GitHub App user token reports no scopes, and the
+  *Contents: write* permission this endpoint needs of it cannot be read back before the press, so it is
+  treated as unknown and the button is withheld. This departs from "draw it for every connection that can
+  merge": the safe direction was chosen over a button that ends in a 403. Not measured against a real token:
+  the `X-OAuth-Scopes` header on the pull request read, and the shape of `base.repo.permissions` in that
+  payload (a repository read settles it when the payload lacks it).
+- Branch deletion after the merge stays out of scope.
+
+The decisions above stand as written. Follow-ups: #2752, #2753.

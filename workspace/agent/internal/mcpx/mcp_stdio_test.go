@@ -1100,6 +1100,17 @@ func TestSendToPeerSessionReportsQueuedAsNotDelivered(t *testing.T) {
 		t.Errorf("note = %q, want peerBlockedNote", note)
 	}
 
+	// A peer still booting (#2741): held until its CLI settles, and the note says so rather
+	// than claiming the peer waits on its user.
+	answer = `{"queued":"child1","blocked_on":"starting","pending":1}`
+	got = send()
+	if got["delivered"] != false || got["queued"] != true || got["blocked_on"] != "starting" {
+		t.Errorf("send to a booting peer = %v, want delivered=false queued=true blocked_on=starting", got)
+	}
+	if note, _ := got["note"].(string); note != peerStartingNote {
+		t.Errorf("note = %q, want peerStartingNote", note)
+	}
+
 	// A cursor terminal that handed the prompt back at submit: not delivered, the TUI's error
 	// as the reason, and the note says the message sits unread in the input box.
 	answer = `{"sent":"child1","held":true,"held_reason":"Error: Named models unavailable"}`

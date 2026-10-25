@@ -51,6 +51,7 @@ import { SkillButton, SkillList } from "../mirror/parts/SkillList.tsx";
 import { PromptTemplateButton, PromptTemplatePopover } from "./PromptTemplatePicker.tsx";
 import { bitbucketPending, warningText } from "./branchRule.ts";
 import type { BranchItem } from "./branchRule.ts";
+import { ClaudeExpiredHint } from "./ClaudeExpiredHint.tsx";
 
 // LaunchOpts: agent + optional first prompt, plus WHERE to run. For a worktree,
 // base is the start point and newBranch the branch to create ("" => the server
@@ -107,6 +108,9 @@ interface LaunchModalProps {
   branch?: string;
   path?: string;
   kinds: string[]; // available agent kinds (shell/ssm already excluded)
+  /** The workspace's Claude login has expired (RepoRailContext.claudeExpired): a notice under
+   * the agent picker while claude is the picked kind, not a gate. */
+  claudeExpired?: boolean;
   /** The connection check hasn't settled — kinds is empty because we don't know yet,
    * not because nothing is available. Shows a checking note and blocks launching. */
   settling?: boolean;
@@ -203,7 +207,7 @@ export function LaunchModal(props: LaunchModalProps) {
   );
 }
 
-function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch, busy, setBusy }: LaunchModalProps & { busy: boolean; setBusy: (v: boolean) => void }) {
+function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch, busy, setBusy }: LaunchModalProps & { busy: boolean; setBusy: (v: boolean) => void }) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
@@ -630,6 +634,8 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
             })}
           </div>
         </div>
+
+        <ClaudeExpiredHint kind={kind} expired={claudeExpired} />
 
         {hasModel && (
           <div className="ui-field">

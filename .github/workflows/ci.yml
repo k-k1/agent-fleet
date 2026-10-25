@@ -353,6 +353,11 @@ jobs:
       # policy; workspace task ENIs have their own route table without it (#2716).
       - name: S3 endpoint on the private route table only, pinned policy (ECS templates)
         run: python3 ./deploy/local/cfn-s3-endpoint-test.py
+      # The egress event archive (AF_EGRESS_ARCHIVE_URL, #2732) needs three stacks to agree: the
+      # optional bucket, the CP role's grant on egress/* and the URL. A mismatch is AccessDenied
+      # on the first archive write, on a real deployment only, and the purger then keeps events.
+      - name: Egress archive bucket, CP grant and URL (ECS templates, Go call sites)
+        run: python3 ./deploy/local/cfn-egress-archive-test.py
       # The egress gateway (EgressRoute=gateway, #2717) only runs on a real account: its route,
       # security groups, instance role, token wiring and the Squid lines the agent parses are
       # held against the templates here.

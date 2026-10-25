@@ -695,6 +695,9 @@ func registerWorkItemRoutes(mux *http.ServeMux, cfg config) {
 	// relays it to the Agent.
 	mux.HandleFunc("POST /api/work-items/comment", wi.withResolved(wi.comment))
 	mux.HandleFunc("POST /api/work-items/detail", wi.withResolved(wi.detail))
+	// The second write-back (ADR 0061, 2026-10-25 note on #2632): a confirmed merge of a GitHub
+	// pull request. Console only; there is deliberately no MCP tool for it.
+	mux.HandleFunc("POST /api/work-items/merge", wi.withResolved(wi.merge))
 	mux.HandleFunc("GET /api/work-items/jira-projects", wi.withResolved(wi.jiraProjectsList))
 	mux.HandleFunc("POST /api/work-items/search", wi.withResolved(wi.search))
 	mux.HandleFunc("GET /api/work-item-queries", wi.withMembership(wi.listQueries))
