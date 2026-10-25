@@ -460,18 +460,18 @@ the default, is off). The maintainer decided:
 
 - **One gzip JSON-lines object per UTC day**, partitioned `egress/yyyy=/mm=/dd=`, holding the
   day's events and the `workspace_address` rows whose interval meets the day, so a day can be
-  read and attributed alone. A `header` line opens it and a `manifest` line (counts, id and time
+  read and attributed (with the address supplements, below). A `header` line opens it and a `manifest` line (counts, id and time
   range, schema version) closes it, so a partial or wrong object is detectable. Layout and
   operation: `docs/build/03-control-plane.md` §3.8.
 - **Never delete what was not archived.** Only whole UTC days before the cutoff are archived, so
   with an archive the cutoff is the UTC midnight at or before now minus the retention. The floor
   is raised to it before the archive is read, so a late event for an archived day is refused,
   not deleted unarchived. Days are archived oldest first; the first failed or unconfirmed day
-  stops the deletable range at its start, and the next run retries. Storage is a two-method
-  interface (`Exists`, an atomic `Put`) with S3 and local-directory implementations; a day whose
+  stops the deletable range at its start, and the next run retries. Storage is a three-method
+  interface (`Exists`, `Get`, an atomic `Put`) with S3 and local-directory implementations; a day whose
   object exists is verified (header, counts, gzip checksum) and not rewritten, which makes the crash-after-write retry safe and keeps a
   delete cut off midway from replacing a full day with the remainder.
-- **Address rows are archived by version.** The floor does not close `workspace_address` to writers, so the closed rows to delete are written as a supplement object right before, and exactly those row versions are deleted.
+- **Address rows are archived by version.** The floor does not close `workspace_address` to writers, so the closed rows to delete are written as a supplement object right before, and exactly those row versions are deleted. Read-back collapses the address rows of the day objects and supplements to one per (ref, address, from), taking the smallest non-zero `until` (0 is open, as the store only ever shortens an end), and attributes after that.
 - **Read-back is offline** (download, attribute by source and time). Archived events are not
   re-ingested: the ingest bound above is unchanged, so the archive and `egress_daily` never
   double count.

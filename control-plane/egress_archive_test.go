@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -694,4 +695,196 @@ func (u unconfirmedSink) Put(ctx context.Context, k string, b io.ReadSeeker, n i
 		u.objs[k] = u.objs[k][:len(u.objs[k])/2]
 	}
 	return errors.New("not confirmed")
+}
+
+// craftDay writes a self-consistent day object holding only the given events, as an older bug
+// or a day archived after part of it was deleted would leave.
+func craftDay(t *testing.T, day string, events ...store.EgressEvent) []byte {
+	t.Helper()
+	d, _ := time.Parse("2006-01-02", day)
+	from := d.UnixMilli()
+	var b bytes.Buffer
+	w := newArchiveWriter(&b, egressArchiveHeader{"header", egressArchiveSchema, egressKindDay, day, from, from + 24*3600*1000})
+	for _, e := range events {
+		w.event(e)
+	}
+	if err := w.close(); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
+}
+
+// A verified object can still lack events the database has. A well-formed partial day must stop
+// the purge; a whole day with only some events left in the database (a delete cut off midway)
+// must pass.
+func TestEgressPurgeChecksAnExistingObjectAgainstTheDatabase(t *testing.T) {
+	archiveDialects(t, func(t *testing.T, st *store.SQL) {
+		ctx := context.Background()
+		seedArchive(t, st)
+		all, _ := st.ListAttributedEgressEvents(ctx, 0, 100)
+		byID := map[string]store.EgressEvent{}
+		for _, e := range all {
+			byID[e.ID] = e.EgressEvent
+		}
+		key := "egress/yyyy=2026/mm=09/dd=20/events-2026-09-20.jsonl.gz"
+		partial := newMemSink()
+		partial.objs[key] = craftDay(t, "2026-09-20", byID["a"]) // b is missing
+		archivePurger(st, partial).purge(ctx)
+		if ids := remainingEventIDs(t, st); len(ids) != 5 {
+			t.Fatalf("a partial day object must stop the purge, left = %v", ids)
+		}
+		// A different content for the same id is also a mismatch.
+		wrong := byID["b"]
+		wrong.Host = "other.example"
+		partial.objs[key] = craftDay(t, "2026-09-20", byID["a"], wrong)
+		archivePurger(st, partial).purge(ctx)
+		if ids := remainingEventIDs(t, st); len(ids) != 5 {
+			t.Fatalf("an object with other content must stop the purge, left = %v", ids)
+		}
+		// The whole day in the object, one event already deleted from the database.
+		whole := newMemSink()
+		whole.objs[key] = craftDay(t, "2026-09-20", byID["a"], byID["b"])
+		if n, err := st.PurgeEgressEvents(ctx, byID["a"].At+1, 1); err != nil || n != 1 {
+			t.Fatalf("partial delete %d %v", n, err)
+		}
+		archivePurger(st, whole).purge(ctx)
+		if ids := remainingEventIDs(t, st); len(ids) != 2 || !ids["d"] {
+			t.Errorf("a whole object with a partly deleted day must pass, left = %v", ids)
+		}
+	})
+}
+
+func TestVerifyArchiveChecksEventsAndRanges(t *testing.T) {
+	want := egressArchiveHeader{"header", 1, egressKindDay, "2026-09-20", 1, 10}
+	ev := func(id string, at int) string {
+		return `{"type":"event","id":"` + id + `","at":` + strconv.Itoa(at) + `,"source":"s","dest":"","host":"h","allowed":true,"count":1}`
+	}
+	man := func(n int, first, last string, fa, la int) string {
+		return `{"type":"manifest","schema":1,"events":` + strconv.Itoa(n) + `,"addresses":0,"first_id":"` + first + `","last_id":"` + last + `","first_at":` + strconv.Itoa(fa) + `,"last_at":` + strconv.Itoa(la) + `}`
+	}
+	hdr := `{"type":"header","schema":1,"kind":"events-day","day":"2026-09-20","from":1,"to":10}`
+	if _, err := verifyArchive(bytes.NewReader(gz(t, hdr, ev("a", 2), ev("b", 2), ev("c", 5), man(3, "a", "c", 2, 5))), want); err != nil {
+		t.Fatalf("whole object: %v", err)
+	}
+	for name, lines := range map[string][]string{
+		"outside the window": {hdr, ev("a", 10), man(1, "a", "a", 10, 10)},
+		"out of order":       {hdr, ev("b", 2), ev("a", 2), man(2, "a", "b", 2, 2)},
+		"duplicate":          {hdr, ev("a", 2), ev("a", 2), man(2, "a", "a", 2, 2)},
+		"id range":           {hdr, ev("a", 2), ev("b", 3), man(2, "a", "z", 2, 3)},
+		"time range":         {hdr, ev("a", 2), ev("b", 3), man(2, "a", "b", 2, 9)},
+	} {
+		if _, err := verifyArchive(bytes.NewReader(gz(t, lines...)), want); err == nil {
+			t.Errorf("%s: verified", name)
+		}
+	}
+}
+
+// The reader's rule: a stale open copy of a row in a day object must not keep attributing events
+// after the end a supplement recorded for the same interval.
+func TestNormalizeArchivedAddresses(t *testing.T) {
+	rows := []store.WorkspaceAddress{
+		{WorkspaceID: "w", Address: "10.0.0.1", Ref: "r", From: 100},             // day object: still open
+		{WorkspaceID: "w", Address: "10.0.0.1", Ref: "r", From: 100, Until: 500}, // supplement: closed
+		{WorkspaceID: "w", Address: "10.0.0.1", Ref: "r", From: 100, Until: 700}, // an older, later end
+		{WorkspaceID: "x", Address: "10.0.0.1", Ref: "s", From: 500},
+	}
+	got := normalizeArchivedAddresses(rows)
+	if len(got) != 2 || got[0].Until != 500 {
+		t.Fatalf("normalized = %+v", got)
+	}
+	holders := func(at int64) (n int) {
+		for _, r := range got {
+			if r.From <= at && (r.Until == 0 || at < r.Until) {
+				n++
+			}
+		}
+		return
+	}
+	if holders(600) != 1 || got[0].Ref != "r" {
+		t.Errorf("at 600 only s holds the address, got %d holders", holders(600))
+	}
+	// Without the rule the stale open copy matches too.
+	raw := 0
+	for _, r := range rows {
+		if r.From <= 600 && (r.Until == 0 || 600 < r.Until) {
+			raw++
+		}
+	}
+	if raw != 3 {
+		t.Errorf("setup: the raw union should misattribute (%d)", raw)
+	}
+}
+
+// A failed fsync is retried on the next attempt, for the file's directory chain and for an
+// object that already exists: being able to read a file proves nothing about the rename.
+func TestEgressArchiveLocalSinkRetriesFsync(t *testing.T) {
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), "arch")
+	l, _ := newEgressArchiveLocal("", root)
+	synced := map[string]int{}
+	failOn := ""
+	orig := fsync
+	t.Cleanup(func() { fsync = orig })
+	fsync = func(f *os.File) error {
+		synced[f.Name()]++
+		if failOn != "" && f.Name() == failOn {
+			return errors.New("fsync failed")
+		}
+		return f.Sync()
+	}
+	key := "egress/yyyy=2026/mm=09/dd=20/x"
+	mm := filepath.Join(root, "egress/yyyy=2026/mm=09")
+
+	// The parent's fsync fails on first creation: Put errors. The retry finds every directory
+	// present and must still sync the chain.
+	failOn = mm
+	if err := l.Put(ctx, key, strings.NewReader("z"), 1); err == nil {
+		t.Fatal("a failed directory fsync must fail the Put")
+	}
+	failOn = ""
+	before := synced[mm]
+	if err := l.Put(ctx, key, strings.NewReader("z"), 1); err != nil {
+		t.Fatal(err)
+	}
+	if synced[mm] <= before {
+		t.Error("the retry did not fsync the existing directory again")
+	}
+
+	// The rename landed but the final directory fsync failed: the next run finds the object
+	// and reads it through Get, which must sync again and fail while the sync still fails.
+	leaf := filepath.Join(root, "egress/yyyy=2026/mm=09/dd=20")
+	key2 := "egress/yyyy=2026/mm=09/dd=20/y"
+	n := 0
+	fsync = func(f *os.File) error {
+		synced[f.Name()]++
+		if f.Name() == leaf {
+			n++
+			if n == 2 { // the chain sync before the write passes; the one after the rename fails
+				return errors.New("fsync failed")
+			}
+		}
+		return f.Sync()
+	}
+	if err := l.Put(ctx, key2, strings.NewReader("z"), 1); err == nil {
+		t.Fatal("a failed fsync after the rename must fail the Put")
+	}
+	if ok, _ := l.Exists(ctx, key2); !ok {
+		t.Fatal("setup: the renamed object should exist")
+	}
+	failOn = leaf
+	fsync = func(f *os.File) error {
+		if f.Name() == failOn {
+			return errors.New("still failing")
+		}
+		return f.Sync()
+	}
+	if _, err := l.Get(ctx, key2); err == nil {
+		t.Error("Get must not hand out an object whose directory cannot be synced")
+	}
+	failOn = ""
+	rc, err := l.Get(ctx, key2)
+	if err != nil {
+		t.Fatalf("Get after the fsync works: %v", err)
+	}
+	rc.Close()
 }

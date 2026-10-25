@@ -36,7 +36,12 @@ import (
 // object; it is in an address supplement (kind "addresses", one object per purge run that had
 // closed rows to delete, keyed by the SHA-256 of its rows), which the purge writes and verifies
 // immediately before deleting exactly those row versions. A reader attributing an archived day
-// takes the address rows of every object, day and supplement alike. Read-back is offline: download, then attribute by source and time exactly as
+// takes the address rows of every object, day and supplement alike and normalises them first
+// (normalizeArchivedAddresses): one row per (ref, address, from), its end the smallest non-zero
+// end seen (0 is open), as the store only ever shortens an end. A stale open copy in a day
+// object would otherwise keep matching events after the end a supplement recorded. A day
+// object alone is therefore attributable only up to the rows that were still changing when it
+// was written. Read-back is offline: download, then attribute by source and time exactly as
 // ListAttributedEgressEvents does. Archived events are never re-ingested.
 const (
 	egressArchiveSchema = 1
@@ -153,8 +158,10 @@ func (a *egressArchiver) archiveDay(ctx context.Context, from int64) error {
 	if ok, err := a.sink.Exists(ctx, key); err != nil {
 		return err
 	} else if ok {
-		_, err := a.verify(ctx, key, hdr)
-		return err
+		if _, err := a.verify(ctx, key, hdr); err != nil {
+			return err
+		}
+		return a.covers(ctx, key, from, to)
 	}
 	// Staged on disk: the object is streamed once, and a seekable file is what S3 needs to
 	// sign and retry the upload. Memory stays one page of rows plus the gzip window.
@@ -184,6 +191,58 @@ func (a *egressArchiver) archiveDay(ctx context.Context, from int64) error {
 		return nil
 	}
 	return a.put(ctx, f, w, key)
+}
+
+// covers checks that the existing object for [from, to) holds every event the database still
+// has in that window, with the same content. A well-formed object is not necessarily a whole
+// one: a day written after part of it was deleted, or by an older bug, is consistent with
+// itself and still missing events the purge is about to delete. The object and the database
+// are both read in (at, id) order and merged, so nothing is held in memory. A delete cut off
+// midway leaves a subset of the object in the database, which passes; an event the object
+// lacks stops the purge at this day, and nothing is rewritten.
+func (a *egressArchiver) covers(ctx context.Context, key string, from, to int64) error {
+	rc, err := a.sink.Get(ctx, key)
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	zr, err := gzip.NewReader(rc)
+	if err != nil {
+		return err
+	}
+	sc := bufio.NewScanner(zr)
+	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	next := func() (e egressArchiveEvent, ok bool, err error) {
+		for sc.Scan() {
+			var t struct {
+				Type string `json:"type"`
+			}
+			if err := json.Unmarshal(sc.Bytes(), &t); err != nil {
+				return e, false, err
+			}
+			if t.Type == "event" {
+				return e, true, json.Unmarshal(sc.Bytes(), &e)
+			}
+		}
+		return e, false, sc.Err()
+	}
+	cur, have, err := next()
+	if err != nil {
+		return err
+	}
+	err = a.st.EachEgressEvent(ctx, from, to, a.batch, func(e store.EgressEvent) error {
+		for have && egressEventLess(cur.At, cur.ID, e.At, e.ID) {
+			if cur, have, err = next(); err != nil {
+				return err
+			}
+		}
+		want := egressArchiveEvent{"event", e.ID, e.At, e.Source, e.Dest, e.Host, e.Allowed, e.Count}
+		if !have || cur != want {
+			return fmt.Errorf("existing archive %s does not hold event %q as the database has it (remove it to have it rewritten)", key, e.ID)
+		}
+		return nil
+	})
+	return err
 }
 
 // archiveAddresses writes, verifies and returns the closed address rows that ended before
@@ -317,6 +376,11 @@ func (a *egressArchiver) verify(ctx context.Context, key string, want egressArch
 	return sum, nil
 }
 
+// egressEventLess is the archive's event order: time, then id bytewise.
+func egressEventLess(aAt int64, aID string, bAt int64, bID string) bool {
+	return aAt < bAt || (aAt == bAt && aID < bID)
+}
+
 func verifyArchive(r io.Reader, want egressArchiveHeader) (string, error) {
 	zr, err := gzip.NewReader(r)
 	if err != nil {
@@ -326,6 +390,8 @@ func verifyArchive(r io.Reader, want egressArchiveHeader) (string, error) {
 	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
 	h := sha256.New()
 	var events, addrs int
+	var first, prev egressArchiveEvent
+	var minID, maxID string
 	var man *egressArchiveManifest
 	for n := 0; sc.Scan(); n++ {
 		if man != nil {
@@ -347,6 +413,24 @@ func verifyArchive(r io.Reader, want egressArchiveHeader) (string, error) {
 				return "", fmt.Errorf("header %+v, want %+v", got, want)
 			}
 		case t.Type == "event":
+			var e egressArchiveEvent
+			if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
+				return "", err
+			}
+			if want.Kind != egressKindDay || e.At < want.From || e.At >= want.To {
+				return "", fmt.Errorf("event %q at %d is outside the object's window", e.ID, e.At)
+			}
+			if events > 0 && !egressEventLess(prev.At, prev.ID, e.At, e.ID) {
+				return "", fmt.Errorf("event %q is out of (at, id) order", e.ID)
+			}
+			if events == 0 {
+				first = e
+			}
+			prev = e
+			minID, maxID = min(minID, e.ID), max(maxID, e.ID)
+			if events == 0 {
+				minID, maxID = e.ID, e.ID
+			}
 			events++
 		case t.Type == "address":
 			addrs++
@@ -370,8 +454,36 @@ func verifyArchive(r io.Reader, want egressArchiveHeader) (string, error) {
 	if man.Schema != egressArchiveSchema || man.Events != events || man.Addresses != addrs {
 		return "", fmt.Errorf("manifest says %d events and %d addresses, object has %d and %d", man.Events, man.Addresses, events, addrs)
 	}
+	if man.FirstID != minID || man.LastID != maxID || man.FirstAt != first.At || man.LastAt != prev.At {
+		return "", errors.New("manifest id or time range does not match the events")
+	}
 	if want.Kind == egressKindDay && events == 0 {
 		return "", errors.New("a day object without events")
 	}
 	return hex.EncodeToString(h.Sum(nil))[:32], nil
+}
+
+// normalizeArchivedAddresses is the read-back rule for address rows gathered from day objects
+// and supplements: duplicates of one interval (ref, address, from) collapse to one whose end is
+// the smallest non-zero end seen, 0 meaning still open. Attribute events only after this.
+func normalizeArchivedAddresses(rows []store.WorkspaceAddress) []store.WorkspaceAddress {
+	type key struct {
+		ref, address string
+		from         int64
+	}
+	at := map[key]int{}
+	var out []store.WorkspaceAddress
+	for _, r := range rows {
+		k := key{r.Ref, r.Address, r.From}
+		i, seen := at[k]
+		if !seen {
+			at[k] = len(out)
+			out = append(out, r)
+			continue
+		}
+		if r.Until != 0 && (out[i].Until == 0 || r.Until < out[i].Until) {
+			out[i].Until = r.Until
+		}
+	}
+	return out
 }

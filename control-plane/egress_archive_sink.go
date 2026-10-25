@@ -16,12 +16,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-// egressArchiveSink is where the egress archive objects go. Put is complete-or-nothing: when
-// it returns nil the whole object is stored and readable, and when it fails no object, and
-// no partial one, is left under key. The purge deletes the rows an object holds as soon as
-// Put returns nil, so an implementation that cannot say "confirmed" must return an error.
-// Keys are slash-separated and relative to the sink's own root; a sink for another store
-// (GCS, say) implements these two methods and nothing else changes.
+// egressArchiveSink is where the egress archive objects go. Put replaces the key atomically:
+// a reader sees the old object or the whole new one. The purge deletes the rows an object
+// holds as soon as Put returns nil, so an implementation that cannot say "confirmed" must
+// return an error. A failed Put may still leave an object behind (the upload landed, the
+// confirmation did not), which is why the caller never trusts an existing key: it opens it
+// with Get and verifies it. Get must only succeed for an object the sink has made durable, so
+// a verified read is also a durable one. Keys are slash-separated and relative to the sink's
+// own root; a sink for another store (GCS, say) implements Exists, Get and Put and nothing
+// else changes.
 type egressArchiveSink interface {
 	Exists(ctx context.Context, key string) (bool, error)
 	// Get opens an object that Exists reported, so it can be verified before it is trusted.
@@ -88,17 +91,49 @@ func (l *egressArchiveLocal) Exists(_ context.Context, key string) (bool, error)
 	return err == nil, err
 }
 
+// Get fsyncs the file and every directory down to it before it returns: a read that
+// succeeded is not proof the rename survives a power cut, and a Put whose own fsync failed
+// leaves exactly such an object for the next run to find.
 func (l *egressArchiveLocal) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	p, err := l.path(key)
 	if err != nil {
 		return nil, err
 	}
-	return os.Open(p)
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	if err := fsync(f); err != nil {
+		f.Close()
+		return nil, err
+	}
+	if err := l.syncChain(filepath.Dir(p)); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+// fsync is swapped in tests to fail a given file or directory.
+var fsync = func(f *os.File) error { return f.Sync() }
+
+// syncChain fsyncs dir and every directory above it up to the root's parent, whether or not
+// they already existed: an earlier attempt may have created them and failed to sync.
+func (l *egressArchiveLocal) syncChain(dir string) error {
+	for d := dir; ; d = filepath.Dir(d) {
+		if err := syncDir(d); err != nil {
+			return err
+		}
+		if d == filepath.Dir(l.root) || d == filepath.Dir(d) {
+			return nil
+		}
+	}
 }
 
 // mkdirAllSync creates dir and every missing ancestor, and fsyncs each directory it created
 // together with its parent, so the whole path to a file renamed into it survives a crash
-// (an fsync of the leaf alone does not persist the entries above it).
+// (an fsync of the leaf alone does not persist the entries above it). A directory that
+// already exists is left to syncChain, which the callers run every time.
 func mkdirAllSync(dir string) error {
 	if st, err := os.Stat(dir); err == nil {
 		if !st.IsDir() {
@@ -127,7 +162,7 @@ func syncDir(dir string) error {
 		return err
 	}
 	defer d.Close()
-	return d.Sync()
+	return fsync(d)
 }
 
 func (l *egressArchiveLocal) Put(ctx context.Context, key string, body io.ReadSeeker, size int64) (err error) {
@@ -137,6 +172,9 @@ func (l *egressArchiveLocal) Put(ctx context.Context, key string, body io.ReadSe
 	}
 	dir := filepath.Dir(p)
 	if err := mkdirAllSync(dir); err != nil {
+		return err
+	}
+	if err := l.syncChain(dir); err != nil {
 		return err
 	}
 	f, err := os.CreateTemp(dir, ".egress-archive-*.tmp")
@@ -156,7 +194,7 @@ func (l *egressArchiveLocal) Put(ctx context.Context, key string, body io.ReadSe
 	if n != size {
 		return fmt.Errorf("archive %s: copied %d of %d bytes", key, n, size)
 	}
-	if err = f.Sync(); err != nil {
+	if err = fsync(f); err != nil {
 		return err
 	}
 	if err = f.Close(); err != nil {

@@ -392,14 +392,21 @@ The design and the staged rollout — log-only → allowlist → enforce — are
   closed rows to delete are written as an address supplement object
   (`<prefix>/egress/addresses/yyyy=/mm=/dd=/addresses-<sha256>.jsonl.gz`, kind `addresses`)
   immediately before, and exactly those row versions are deleted (a row that changed since is
-  kept for the next run). A day object holds the address rows meeting the day as they were then.
+  kept for the next run). A day object holds the address rows meeting the day as they were then, so read-back must
+  normalise them (below). An existing day object is also merged against the events the database
+  still has for that day (both in `(at, id)` order, ids compared bytewise): one that lacks any of
+  them, or holds different content, stops the purge, so a well-formed partial day cannot
+  authorise a delete. A day with only some events left (a delete cut off midway) passes.
   Role permissions: `s3:PutObject` and `s3:GetObject` on the prefix, and `s3:ListBucket` on the
   bucket: without it S3 answers a HeadObject for a missing key with 403 instead of 404, and the
-  archive stops at the first day. Local: the directories created on the way are fsynced up to the
-  existing ancestor.
+  archive stops at the first day. Local: the file and every directory down to it are fsynced on every Put and every
+  read-back of an existing object, so a failed fsync is retried by the next run and a readable
+  file is never taken as proof it is durable.
   A bad URL stops the CP at startup rather than deleting without an archive.
-  **Reading back is offline:** download the day objects and the address supplements and attribute each event to the
-  `address` rows (of all of them) by source and time (`from <= at < until`, `until` 0 = open), as the Console does.
+  **Reading back is offline:** download the day objects and the address supplements, collapse their `address` rows to one
+  per `(ref, address, from)` with the smallest non-zero `until` (0 = open; the store only ever
+  shortens an end, and a stale open copy in a day object would keep matching events after the
+  end a supplement recorded), and attribute each event to those rows by source and time (`from <= at < until`, `until` 0 = open), as the Console does.
   Archived events are never re-ingested: ingest still refuses an event older than the window or
   the floor, so the archive and `egress_daily` cannot double count.
 - **Attribution** — when `AF_EGRESS_TOKEN` is set, a recorder (one CP at a time, under a CP

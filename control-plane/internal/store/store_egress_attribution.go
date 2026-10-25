@@ -87,7 +87,8 @@ type EgressAttributionStore interface {
 	// still equals the one given, and returns how many went. A row that arrived or changed
 	// after the caller read it is not matched, so it is never deleted unseen.
 	DeleteWorkspaceAddressVersions(ctx context.Context, rows []WorkspaceAddress) (int, error)
-	// EachEgressEvent calls fn for every event with from <= at < to in (at, id) order. It
+	// EachEgressEvent calls fn for every event with from <= at < to in (at, id) order, ids
+	// compared bytewise. It
 	// pages by key, batch rows per query, so a day of events is never held in memory and no
 	// cursor stays open between calls. An error from fn stops the walk and is returned.
 	EachEgressEvent(ctx context.Context, from, to int64, batch int, fn func(EgressEvent) error) error
@@ -403,10 +404,16 @@ func (s *SQL) EachEgressEvent(ctx context.Context, from, to int64, batch int, fn
 	// The row-value comparison walks egress_event_at from the last key; an empty id sorts
 	// before every real one, so the first page starts at from.
 	afterAt, afterID := from, ""
+	// Ids order bytewise on both dialects (Postgres would otherwise follow the database's
+	// locale), so the order is one a verifier outside the database can reproduce.
+	id := "id"
+	if s.dialect == "postgres" {
+		id = `id COLLATE "C"`
+	}
 	for {
 		rows, err := s.db.QueryContext(ctx,
 			`SELECT id, at, source, dest, host, allowed, count FROM egress_event
-			 WHERE at < ? AND (at, id) > (?, ?) ORDER BY at, id LIMIT ?`, to, afterAt, afterID, batch)
+			 WHERE at < ? AND (at, `+id+`) > (?, ?) ORDER BY at, `+id+` LIMIT ?`, to, afterAt, afterID, batch)
 		if err != nil {
 			return err
 		}
