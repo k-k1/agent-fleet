@@ -33,7 +33,8 @@ never warned about.
 
 **Logging out of one profile.** A row that is signed in (or renews on use) has **Log out**, both here and in the
 popover of the WS bar's AWS badge. After you confirm, the workspace ends that profile's login with AWS and deletes
-its cached login and role credentials; your other profiles stay signed in. Credentials a running command already
+its cached login and role credentials; profiles that do not follow it stay signed in. If chained profiles follow this
+one (see below), the confirmation names them first: they are signed out with it. Credentials a running command already
 received stay valid until they expire (AWS cannot recall them), so stop that command if it matters. An expired
 access token (a **Renews on use** row) is renewed first so that the logout reaches AWS; if AWS answers that the
 login has already ended, the logout is a normal one. If AWS cannot be reached, the renewal fails for any other
@@ -78,7 +79,8 @@ like any other Settings profile, and an SSM host can point at it too.
 - The target role's trust policy must allow your Identity Center role (`AWSReservedSSO_<permission set>_*`) in the
   source account.
 - It has no sign-in of its own. **Log in** on its row signs in to the source profile, and its state follows the source's.
-  Its row has no **Log out**; logging out of the source ends it. In the popover of the WS bar's AWS badge it reads
+  Its row's **Log out** ends the source's login (a chain has none of its own), so it signs the source out and every chain
+  following it; the confirmation names the source and those chains first, and nothing is logged out unless you confirm. In the popover of the WS bar's AWS badge it reads
   **"Follows <source>'s login"**, or **Source unavailable** when the source is missing or not exported. The badge
   counts logins, so its count of signed-in profiles (such as "1/3") leaves chained profiles out.
   `af-aws-exec --profile <name> -- <command>` needs no `--account` (the role's account is checked against what AWS
@@ -302,8 +304,8 @@ tooltip then reads "AWS profiles: a login ends soon". Press it for the list: eac
 (**Signed in**, **Renews on use**, **Not signed in**), its name, account and role, **Ends {time}** on a row whose
 end is known (amber when it ends soon), **Log in** on a row that is not signed in or ends soon, and **Log out** on
 a signed-in row (see above). A chained profile's row reads **"Follows {source}'s login"**, or **Source
-unavailable** when the source is missing or not exported; it has no **Log out**, and its **Log in** signs in to
-the source. There is no default profile: every logged-in profile can be used at the same time, and each command
+unavailable** when the source is missing or not exported; its **Log in** signs in to the source, and its **Log out**
+ends the source's login (after a confirmation naming it). There is no default profile: every logged-in profile can be used at the same time, and each command
 picks one with `af-aws-exec --profile <name>`. **AWS profile settings** at the bottom opens the Settings tab.
 The list is refreshed when the workspace comes up, when you open it, after a login or logout, and when a known
 login end passes.

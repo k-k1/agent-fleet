@@ -16,7 +16,7 @@ import { useT, type MsgKey } from "../../lib/i18n/index.ts";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useAwsLoginStore, type AwsProfileState } from "./store.ts";
-import { useProfileLogout } from "./useProfileLogout.ts";
+import { useProfileLogout } from "./useProfileLogout.tsx";
 
 const STATE_KEYS: Record<string, { label: MsgKey; title: MsgKey }> = {
   signed_in: { label: "ssm.state_signed_in", title: "ssm.state_signed_in_title" },
@@ -171,7 +171,7 @@ export function AwsProfilesChip({ hidden = false, passive = false }: { hidden?: 
                             {tr("wsbar.aws.login")}
                           </Button>
                         )}
-                        {isActive(p) && ownsLogin(p) && (
+                        {isActive(p) && (ownsLogin(p) || !!src) && (
                           <Button
                             variant="ghost"
                             className="ws-aws-logout"

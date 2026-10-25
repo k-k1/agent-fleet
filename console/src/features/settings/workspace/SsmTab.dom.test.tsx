@@ -12,6 +12,7 @@ let startReply: Json = { attempt: "att1" };
 let attemptReplies: Json[] = [];
 let states: Json[] = [];
 let logoutGate: Promise<void> = Promise.resolve();
+let statesAfterLogout: Json[] | null = null;
 
 vi.mock("../../../core/api/client.ts", () => ({
   getTenant: () => "",
@@ -19,6 +20,7 @@ vi.mock("../../../core/api/client.ts", () => ({
     calls.push({ path, method: opts?.method ?? "GET" });
     if (path.endsWith("/logout")) {
       await logoutGate;
+      if (statesAfterLogout) states = statesAfterLogout;
       return { revoked: true };
     }
     if (path === "api/ssm/profiles") return profiles;
@@ -91,6 +93,7 @@ beforeEach(() => {
   attemptReplies = [{ phase: "starting" }];
   states = [];
   logoutGate = Promise.resolve();
+  statesAfterLogout = null;
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -198,7 +201,7 @@ describe("SsmTab profile row Log out", () => {
     await mount();
     const logouts = () => Array.from(host.querySelectorAll<HTMLButtonElement>("button.ssm-logout"));
     expect(logouts()).toHaveLength(2);
-    states = [
+    statesAfterLogout = [
       { name: "prod-app", state: "none" },
       { name: "dev", state: "renew" },
       { name: "stg", state: "none" },

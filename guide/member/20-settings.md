@@ -415,7 +415,7 @@ search.
 
 Your AWS profiles (shared settings), which `af-aws-exec` and SSM sessions sign in with, and SSM hosts (individual)
 for logging in to another in-house host. A profile is **IAM Identity Center (SSO)** or **Assume a role from another
-profile**; an SSO row has **Log in** and, when signed in, **Log out**; an assume-role row has no **Log out**. How logging
+profile**; an SSO row has **Log in** and, when signed in, **Log out**; an assume-role row's **Log out** ends its source's login, after a confirmation that names it. How logging
 in and out work, and the two types, is in [16 Cloud accounts](16-cloud-accounts.md#logging-in-to-another-in-house-host-ssm).
 
 ### Google Cloud
