@@ -64,7 +64,7 @@ describe("parseOAuthReturn", () => {
     const src = JSON.stringify(en);
     for (const r of RETURN_REASONS) {
       if (r === "failed") continue; // the generic text is mcp.oauth_return_failed_generic
-      expect(src).toContain('"mcp.oauth_return_' + r + '"');
+      expect(src).toContain('"mcp.oauth_return_reason_' + r + '"');
     }
   });
 });
