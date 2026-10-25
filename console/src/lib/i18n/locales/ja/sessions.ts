@@ -429,6 +429,7 @@ export const sessions = {
   "move.usage_five": "短期枠 {pct}%",
   "move.quota_left": "枠に余裕あり",
   "move.usage_week": "週 {pct}%",
+  "move.usage_month": "月 {pct}%",
   "move.confirm": "移す",
   "move.busy_move": "移動しています（移動先を起動中）…",
   "move.busy_retry": "移動をやり直しています…",
