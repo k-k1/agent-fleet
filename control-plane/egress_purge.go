@@ -64,6 +64,8 @@ type egressPurger struct {
 	pause     time.Duration
 	holder    string
 	now       func() time.Time
+	// archive, when set, stores every UTC day before the cutoff before it is deleted.
+	archive *egressArchiver
 }
 
 func newEgressPurger(mgr *manager, retention time.Duration) *egressPurger {
@@ -105,15 +107,34 @@ func (p *egressPurger) tick(ctx context.Context) {
 	p.purge(pctx)
 }
 
-// purge raises the persistent floor first, then deletes events, then the address rows. The
+// purge raises the persistent floor first, then (when archiving) archives, then deletes
+// events, then the address rows. The
 // floor makes ingest on every CP refuse what is about to go, whatever its own clock or
 // retention setting says, and it never falls back. An address row is deleted only after its
 // events were deleted without error: otherwise a kept event would lose its holder.
 func (p *egressPurger) purge(ctx context.Context) {
 	before := p.now().Add(-p.retention).UnixMilli()
+	if p.archive != nil {
+		// Only whole UTC days are archived, so the cutoff is the midnight at or before the
+		// retention instant: events in the day still crossing it stay until it is whole.
+		before = egressDayStart(before)
+	}
+	// The floor goes up before the archive is read, so no event of an archived day can arrive
+	// afterwards and be deleted without being in the object.
 	if err := p.st.RaiseEgressEventFloor(ctx, before); err != nil {
 		log.Printf("egress purge: raise floor: %v", err)
 		return
+	}
+	if p.archive != nil {
+		upTo, err := p.archive.archive(ctx, before)
+		if err != nil {
+			log.Printf("egress purge: %v (nothing from that day on is deleted; retried next run)", err)
+		}
+		// A failed or unconfirmed day ends the deletable range: never delete what was not archived.
+		before = upTo
+		if ctx.Err() != nil {
+			return
+		}
 	}
 	events, err := p.drain(ctx, func() (int, error) { return p.st.PurgeEgressEvents(ctx, before, p.batch) })
 	var addrs int
