@@ -361,9 +361,13 @@ def check_pause(net, env_src, policy_src, agent_src="", ship_src=""):
     boot = re.findall(r"printf '([^']*)'[\s\\]*> /var/lib/af-egress-agent/af-mode\.conf", ud)
     if not boot or any(header in b.replace("\\n", "\n") for b in boot):
         f.append("the bootstrap mode file carries the probe's header %r: a closed gateway reads as ready" % header)
-    # Both lines egressagent logs right after a successful reload: one per path that applies.
-    if "grep -qE 'egress-agent: (policy applied|reloaded Squid with the policy on disk) \\('" not in probe:
+    # Both lines egressagent logs right after a successful reload: one per path that applies,
+    # and only the last one, compared with when the policy files were last written.
+    if "grep -E 'egress-agent: (policy applied|reloaded Squid with the policy on disk) \\(' | tail -1" not in probe:
         f.append("env.sh AF_GATEWAY_PROBE does not look for both lines egressagent logs after a successful reload")
+    if "-o short-unix" not in probe or "exit !(a >= w)" not in probe \
+            or not all(x in probe for x in (MODE_FILE, ALLOW_FILE, "st_mtime")):
+        f.append("env.sh AF_GATEWAY_PROBE does not require the last successful reload to postdate both policy files")
     for line in ("policy applied (%s)", "reloaded Squid with the policy on disk (%s)"):
         idx = policy_src.find('log.Printf("egress-agent: %s"' % line)
         if idx < 0 or "s.reload(ctx)" not in policy_src[max(0, idx - 300):idx]:
@@ -535,6 +539,8 @@ def main():
         ("written taken for applied", pause_ctl(fn_env=lambda e: e.replace("(policy applied|reloaded Squid with the policy on disk)", "(policy|reload)"))),
         ("drain ignores a failed stop", pause_ctl(fn_env=lambda e: e.replace("systemctl stop squid || {", "systemctl stop squid; {"))),
         ("drain does not check Squid stopped", pause_ctl(fn_env=lambda e: e.replace("if systemctl is-active --quiet squid; then", "if false; then"))),
+        ("a reload older than the files counts", pause_ctl(fn_env=lambda e: e.replace("exit !(a >= w)", "exit !(a > 0)"))),
+        ("the allow file's write ignored", pause_ctl(fn_env=lambda e: e.replace(" /var/lib/af-egress-agent/af-allow.txt 2>/dev/null)", " 2>/dev/null)"))),
         ("an earlier run's applied line counts", pause_ctl(fn_env=lambda e: e.replace(' _SYSTEMD_INVOCATION_ID="$inv"', " -u af-egress-agent"))),
         ("agent logs applied before the reload", pause_ctl(fn_policy=lambda p: p.replace("s.reload(ctx)", "s.reloadLater(ctx)"))),
         ("disk reload line renamed", pause_ctl(fn_policy=lambda p: p.replace("reloaded Squid with the policy on disk", "reused the policy on disk"))),

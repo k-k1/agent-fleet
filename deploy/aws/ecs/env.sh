@@ -280,20 +280,25 @@ af_gateway_instance() {
 #
 # Readiness. Ready means a policy Squid has APPLIED in the agent's current run: the mode file
 # carries the agent's "# mode: " header (the bootstrap file, which refuses everything, does not),
-# and the current invocation of the unit has logged a successful reload of it: "policy applied"
-# (a policy from the CP) or "reloaded Squid with the policy on disk" (a run that started while
-# the CP was down; when the CP then answers with the same policy nothing changes and nothing
-# more is logged). The header alone is only "written": a failed reload leaves Squid on the
-# bootstrap policy. A gateway paused part way (the drain below stopped
+# and the current invocation of the unit has logged a successful reload no older than the newer
+# of the two policy files: "policy applied" (a policy from the CP) or "reloaded Squid with the
+# policy on disk" (a run that started while the CP was down; when the CP then answers with the
+# same policy nothing changes and nothing more is logged). The header alone is only "written",
+# and a success logged before the files were last written may have been the bootstrap file's:
+# either way a failed or pending reload leaves Squid on the bootstrap policy. The journal stamps
+# a line when it receives it, after the reload and so after the files it read were written. A gateway paused part way (the drain below stopped
 # Squid and left its marker) gets Squid back; without the marker it is never started from here,
 # because during the boot it would run the package's default configuration.
 AF_GATEWAY_PROBE="$(cat <<'SH'
 if [ -e /run/af-egress-drained ]; then systemctl start squid && rm -f /run/af-egress-drained; fi
 systemctl is-active --quiet squid && systemctl is-active --quiet af-egress-agent || { echo af-gw-starting; exit 0; }
 inv=$(systemctl show -p InvocationID --value af-egress-agent)
-if grep -q '^# mode: ' /var/lib/af-egress-agent/af-mode.conf &&
-   journalctl -q -o cat _SYSTEMD_INVOCATION_ID="$inv" |
-     grep -qE 'egress-agent: (policy applied|reloaded Squid with the policy on disk) \('; then
+written=$(python3 -c 'import os, sys; print("%.6f" % max(os.stat(p).st_mtime for p in sys.argv[1:]))' \
+  /var/lib/af-egress-agent/af-mode.conf /var/lib/af-egress-agent/af-allow.txt 2>/dev/null)
+applied=$(journalctl -q -o short-unix _SYSTEMD_INVOCATION_ID="$inv" |
+  grep -E 'egress-agent: (policy applied|reloaded Squid with the policy on disk) \(' | tail -1 | cut -d' ' -f1)
+if grep -q '^# mode: ' /var/lib/af-egress-agent/af-mode.conf && [ -n "$written" ] && [ -n "$applied" ] &&
+   awk -v a="$applied" -v w="$written" 'BEGIN { exit !(a >= w) }'; then
   echo af-gw-ready
 else
   echo af-gw-up

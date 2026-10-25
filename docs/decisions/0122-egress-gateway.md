@@ -581,7 +581,9 @@ Not run on a real account.
   applied in the agent's current run: the mode file carries the agent's `# mode: ` header (the
   closed bootstrap file does not) and the unit's current invocation has logged `policy applied`
   or, for a run that started while the CP was down, `reloaded Squid with the policy on disk`; the
-  agent writes either only after Squid's reload succeeded. The drain counts only with Squid
+  agent writes either only after Squid's reload succeeded, and the last such line must be no
+  older than the policy files (a new instance reloads the bootstrap file before the CP's policy
+  is written). The drain counts only with Squid
   stopped, and an interface it cannot read fails it rather than reading as "no instance". A written file alone is not
   applied. A probe from outside the instance cannot tell the bootstrap policy from a real one.
 
