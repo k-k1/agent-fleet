@@ -5,11 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
@@ -51,22 +51,19 @@ var workItemProviders = map[string]bool{"github": true, "jira": true, "bitbucket
 // separate workItemsAPI values but share the same memberships.
 var workItemFetchInFlight sync.Map // membershipID -> struct{}
 
-// workItemCommentEpoch counts, per membership, the changes of the Bitbucket connection (connect,
-// reconnect, disconnect). A fetch that began before a change carries the OLD connection's scopes, so
-// its rows must not bring posting capability back into the cache.
-var workItemCommentEpoch sync.Map // membershipID -> *atomic.Int64
-
-func commentEpoch(mid string) *atomic.Int64 {
-	v, _ := workItemCommentEpoch.LoadOrStore(mid, new(atomic.Int64))
-	return v.(*atomic.Int64)
-}
-
 // resetWorkItemCommentCapability withdraws every cached row's posting capability for a membership
-// whose Bitbucket connection just changed or went away. The rows stay (the rail keeps listing
-// them); the next successful fetch under the new connection says what it may post.
+// whose Bitbucket connection just changed or went away, and starts a new generation so a fetch that
+// began under the old connection cannot write its flags back (ReplaceWorkItemsAt). The generation
+// lives in the database, so it holds across Control Plane processes. The rows stay (the rail keeps
+// listing them); the next successful fetch under the new connection says what it may post.
+//
+// Not tied to the request: a client that hangs up must not leave the old capability in place.
 func resetWorkItemCommentCapability(ctx context.Context, st store.WorkItemStore, mid string) {
-	commentEpoch(mid).Add(1)
-	_ = st.ClearWorkItemCanComment(ctx, mid, nil)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := st.BumpWorkItemCommentGen(ctx, mid); err != nil {
+		log.Printf("work items: withdrawing the comment capability of membership %s failed: %v", mid, err)
+	}
 }
 
 type workItemsAPI struct {
@@ -370,7 +367,7 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 	if len(due) == 0 {
 		return
 	}
-	epoch := commentEpoch(mid).Load()
+	gen, gerr := a.store.WorkItemCommentGen(ctx, mid)
 	rows, errs, truncs, err := fetchWorkItemsFromAgent(ctx, res.rt, due)
 	now := store.NowTS()
 	if err != nil {
@@ -406,13 +403,15 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 		_ = a.store.SetWorkItemQueryMatchTotal(ctx, q.ID, truncs[q.ID])
 	}
 	if len(ok) > 0 {
-		if commentEpoch(mid).Load() != epoch {
-			// The connection changed while this fetch was in flight: its flags describe the old one.
+		if gerr != nil {
+			// Without the generation there is no telling whether the connection changed.
 			for i := range items {
 				items[i].CanComment = false
 			}
+			_ = a.store.ReplaceWorkItems(ctx, mid, ok, items)
+			return
 		}
-		_ = a.store.ReplaceWorkItems(ctx, mid, ok, items)
+		_ = a.store.ReplaceWorkItemsAt(ctx, mid, ok, items, gen)
 	}
 }
 

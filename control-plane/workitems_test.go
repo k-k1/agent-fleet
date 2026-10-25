@@ -264,6 +264,41 @@ func TestWorkItemsCanCommentIsWithdrawnWhenTheConnectionChanges(t *testing.T) {
 	}
 }
 
+// racingStore runs `before` right at the entrance of the commit, i.e. after the caller's own checks
+// and before its rows land: the window an in-process comparison cannot see.
+type racingStore struct {
+	store.WorkItemStore
+	before func()
+}
+
+func (r racingStore) ReplaceWorkItemsAt(ctx context.Context, mid string, qids []string, items []store.WorkItem, gen int64) error {
+	r.before()
+	return r.WorkItemStore.ReplaceWorkItemsAt(ctx, mid, qids, items, gen)
+}
+
+// The whole connection change (before-reset, new token, after-reset) completes between the fetch's
+// last check and its write; the old connection's true must still not land.
+func TestWorkItemsCanCommentCannotBeRestoredByACommitRace(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	ctx := context.Background()
+	env.addQuery(t, "bb", "Bitbucket", "acme/web", true)
+	env.body = func() string {
+		return `{"items":[{"queryId":"bb","provider":"bitbucket","kind":"pr","key":"acme/web#1","title":"a","state":"open","labels":[],"labelColors":{},"canComment":true}],"errors":[]}`
+	}
+	env.api.store = racingStore{env.st, func() {
+		resetWorkItemCommentCapability(ctx, env.st, env.mid)
+		resetWorkItemCommentCapability(ctx, env.st, env.mid)
+	}}
+	env.api.refreshNow(ctx, env.res, true)
+	items, err := env.st.ListWorkItems(ctx, env.mid)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items=%v err=%v", items, err)
+	}
+	if items[0].CanComment {
+		t.Error("a fetch from before the reconnect restored canComment=true after both resets")
+	}
+}
+
 // #1095: a query whose page left matches out says so, and keeps saying so while the Workspace is
 // stopped. Three cases in one refresh — a known count, a full page without a count, and a query
 // that fit — then a refresh that fails, which must keep the note next to the rows it kept.

@@ -1398,6 +1398,7 @@ func membershipCascade(membershipID string) []struct {
 		{`DELETE FROM work_item_cache WHERE membership_id=?`, id},
 		{`DELETE FROM work_item_query WHERE membership_id=?`, id},
 		{`DELETE FROM work_item_session WHERE membership_id=?`, id},
+		{`DELETE FROM work_item_comment_gen WHERE membership_id=?`, id},
 		{`DELETE FROM notification WHERE membership_id=?`, id},
 		{`DELETE FROM notification_usage_state WHERE membership_id=?`, id},
 		{`DELETE FROM notification_usage_epoch WHERE membership_id=?`, id},
@@ -4259,6 +4260,44 @@ func (s *SQL) ListWorkItems(ctx context.Context, membershipID string) ([]WorkIte
 // ★ Only the named queries are cleared: a refresh where one query failed must keep the
 // other queries' rows, otherwise one 401 blanks the whole rail.
 func (s *SQL) ReplaceWorkItems(ctx context.Context, membershipID string, queryIDs []string, items []WorkItem) error {
+	return s.replaceWorkItems(ctx, membershipID, queryIDs, items, nil)
+}
+
+func (s *SQL) ReplaceWorkItemsAt(ctx context.Context, membershipID string, queryIDs []string, items []WorkItem, gen int64) error {
+	return s.replaceWorkItems(ctx, membershipID, queryIDs, items, &gen)
+}
+
+func (s *SQL) WorkItemCommentGen(ctx context.Context, membershipID string) (int64, error) {
+	var g int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT gen FROM work_item_comment_gen WHERE membership_id=?`, membershipID).Scan(&g)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return g, err
+}
+
+func (s *SQL) BumpWorkItemCommentGen(ctx context.Context, membershipID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO work_item_comment_gen(membership_id, gen) VALUES(?, 1)
+		 ON CONFLICT(membership_id) DO UPDATE SET gen = work_item_comment_gen.gen + 1`, membershipID); err != nil {
+		return err
+	}
+	// The upsert holds the row's lock until commit, so a concurrent replaceWorkItems either
+	// committed before it (and is cleared here) or waits and then sees the new generation.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE work_item_cache SET can_comment=0 WHERE membership_id=? AND can_comment<>0`, membershipID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *SQL) replaceWorkItems(ctx context.Context, membershipID string, queryIDs []string, items []WorkItem, gen *int64) error {
 	if len(queryIDs) == 0 {
 		return nil
 	}
@@ -4267,6 +4306,30 @@ func (s *SQL) ReplaceWorkItems(ctx context.Context, membershipID string, queryID
 		return err
 	}
 	defer tx.Rollback()
+	if gen != nil {
+		// Lock the generation row (creating it at 0 when absent) before reading it, so the check
+		// and the write below sit on one side of any concurrent bump.
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO work_item_comment_gen(membership_id, gen) VALUES(?, 0) ON CONFLICT(membership_id) DO NOTHING`,
+			membershipID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE work_item_comment_gen SET gen=gen WHERE membership_id=?`, membershipID); err != nil {
+			return err
+		}
+		var cur int64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT gen FROM work_item_comment_gen WHERE membership_id=?`, membershipID).Scan(&cur); err != nil {
+			return err
+		}
+		if cur != *gen {
+			items = append([]WorkItem(nil), items...)
+			for i := range items {
+				items[i].CanComment = false
+			}
+		}
+	}
 	for _, qid := range queryIDs {
 		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM work_item_cache WHERE membership_id=? AND query_id=?`, membershipID, qid); err != nil {
