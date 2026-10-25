@@ -136,9 +136,17 @@ export interface ProbeResult {
 }
 
 // probeErrText is the text of a failed test: the catalogue's wording for the Agent's code, or
-// the Agent's own English `error` when the code is absent or newer than this Console.
-export const probeErrText = (p: ProbeResult): string | undefined =>
-  (p.code ? tMaybe("mcp.probe_err." + p.code, p.params) : undefined) ?? p.error;
+// the Agent's own English `error` when the code is absent, newer than this Console, or arrives
+// without a parameter its template needs (the placeholders are read from the template, not the
+// result, because a server message may itself contain braces).
+export const probeErrText = (p: ProbeResult): string | undefined => {
+  const key = "mcp.probe_err." + p.code;
+  const template = p.code ? tMaybe(key) : undefined;
+  if (template === undefined) return p.error;
+  const need = [...template.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
+  if (need.some((k) => typeof p.params?.[k] !== "string")) return p.error;
+  return tMaybe(key, p.params);
+};
 
 // isOAuthRequired: the test reached an OAuth-protected server. It is not a failure — the
 // server answered and wants a sign-in — so the Console shows it apart from a red error.

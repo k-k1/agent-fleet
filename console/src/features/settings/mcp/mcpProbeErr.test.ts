@@ -25,6 +25,20 @@ describe("probeErrText", () => {
     expect(probeErrText(failed({ code: "timeout", params: { timeoutMs: "30000" } }))).toContain("30000");
   });
 
+  it.each(["en", "ja"])("falls back to error when a known code lacks a param its text needs (%s)", (loc) => {
+    setLocale(loc);
+    const partial = failed({ code: "rpc_rejected", params: { method: "tools/list" }, error: "tools/list was rejected: boom" });
+    expect(probeErrText(partial)).toBe("tools/list was rejected: boom");
+    expect(probeErrText(failed({ code: "rpc_rejected", error: "fallback" }))).toBe("fallback");
+    expect(probeErrText(failed({ code: "timeout", error: "timed out" }))).toBe("timed out");
+  });
+
+  it("is not fooled by braces inside a param value", () => {
+    setLocale("en");
+    const p = failed({ code: "rpc_rejected", params: { method: "tools/list", message: "bad {x}" }, error: "fb" });
+    expect(probeErrText(p)).toBe("tools/list was rejected: bad {x}");
+  });
+
   it("falls back to the Agent's text for a code from a newer Agent", () => {
     expect(probeErrText(failed({ code: "brand_new", error: "Something new happened" }))).toBe("Something new happened");
   });
