@@ -899,6 +899,12 @@ const peerRejectedNote = "相手の端末が送信を受け付けませんでし
 const peerBlockedNote = "相手は利用者の回答（質問・プラン承認・権限確認）を待っています。メッセージは回答のあと、" +
 	"そのターンが終わってから届きます（まだ読まれていません）。再送しないでください。"
 
+// peerStartingNote is peerQueuedNote for a peer that was just started (blocked_on "starting",
+// sessionx/peer_boot.go): typed during its boot the message could be lost, so it waits until
+// the CLI has settled.
+const peerStartingNote = "相手は起動したばかりです。メッセージは相手の CLI が入力を受け付けられる状態になってから、" +
+	"次のターンとして届きます（まだ読まれていません）。再送しないでください。"
+
 // mcpStdioFleetObserveTools — the fleet-observation tools, part of every session's surface
 // (docs/log/86 stage 1; unconditional since 2026-09-09).
 //
@@ -2917,6 +2923,10 @@ func mcpStdioCall(req mcpReq) []byte {
 		queued := sent.Held || sent.BlockedOn != ""
 		result := map[string]any{"delivered": !queued, "resumed": resumed, "session": a.Name, "from": self}
 		switch {
+		case sent.BlockedOn == "starting":
+			result["queued"] = true
+			result["blocked_on"] = sent.BlockedOn
+			result["note"] = peerStartingNote
 		case sent.BlockedOn != "":
 			result["queued"] = true
 			result["blocked_on"] = sent.BlockedOn

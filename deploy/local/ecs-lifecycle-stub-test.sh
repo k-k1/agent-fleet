@@ -148,6 +148,13 @@ case "$args" in
   # 00-network's egress gateway outputs (EgressRoute=gateway, #2717). Unset = nat-gateway.
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EgressProxyAddr']"*) echo "${STUB_EGRESS_ADDR:-None}" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EgressTokenSecretArn']"*) echo "${STUB_EGRESS_SECRET:-None}" ;;
+  # 10-data's egress archive bucket (#2732). Unset = no bucket.
+  # STUB_ARCHIVE_FAIL=1: the read itself fails (network, permissions), unlike an absent output.
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EgressArchiveBucket']"*)
+    [ "${STUB_ARCHIVE_FAIL:-0}" = 1 ] && { echo "An error occurred (Throttling)" >&2; exit 254; }
+    echo "${STUB_ARCHIVE:-None}" ;;
+  # The retained archive bucket after a teardown: present only when the case says so.
+  *"s3api head-bucket"*) [ "${STUB_BUCKET_EXISTS:-0}" = 1 ] || exit 254 ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotLaunchTemplateId']"*) echo "${STUB_POOL_LT_OUTPUT:-lt-NEW}" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='CfnTemplatesBucket']"*) echo "t-cfn-bucket" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotAmiIdArm64']"*) echo "None" ;;
@@ -210,8 +217,10 @@ case "$args" in
   # The stack name appears before --query. Get the glob order wrong and everything falls
   # through to the catch-all branch below, and the test lies in the shape of "nothing
   # happens".
-  *"t-network"*"Parameters[].join"*) printf 'VpcCidr=10.20.0.0/16\nNatEipAllocationId=\n' ;;
-  *"t-network"*"Outputs[].join"*)    printf 'NatEipAllocationId=eipalloc-REAL\nVpcId=vpc-1\n' ;;
+  # The egress gateway's address (#2728) has the same shape: created by the stack, so empty as
+  # parameters and real in the outputs.
+  *"t-network"*"Parameters[].join"*) printf 'VpcCidr=10.20.0.0/16\nNatEipAllocationId=\nGatewayEipAllocationId=\nGatewayEipAddress=\n' ;;
+  *"t-network"*"Outputs[].join"*)    printf 'NatEipAllocationId=eipalloc-REAL\nVpcId=vpc-1\nGatewayEipAllocationId=eipalloc-GW\nGatewayEipAddress=203.0.113.7\n' ;;
   *"Parameters[].join"*)             printf 'Fqdn=af.example.test\n' ;;
   *"Outputs[].join"*)                printf '\n' ;;
   # pause.sh: whether 00-network's NAT gateway is on, and whether 10-data carries the re-stop Lambda.
@@ -223,6 +232,8 @@ case "$args" in
   # Unset = a gateway stack older than the switch (its gateway is on).
   *"ParameterKey=='GatewayEnabled'"*) echo "${STUB_GW_ENABLED:-None}" ;;
   *"ParameterKey=='EgressTokenSecretArn'"*) echo "${STUB_ING_EGRESS:-None}" ;;
+  *"--stack-name t-platform"*"ParameterKey=='EgressArchiveBucket'"*) echo "${STUB_PLAT_ARCHIVE:-None}" ;;
+  *"ParameterKey=='EgressArchiveBucket'"*) echo "${STUB_ING_ARCHIVE:-None}" ;;
   *"Outputs[?OutputKey=='RdsRestopFunction']"*) echo "${STUB_RESTOP:-}" ;;
   *"ParameterKey=='Fqdn'"*) echo "af.example.test" ;;
   *"ParameterKey=='NetworkStackName'"*) echo "t-network" ;;
@@ -316,6 +327,14 @@ case "$args" in
       late) [ "$(grep -c "ecs describe-tasks" "$STUB_LOG")" -ge 2 ] && echo "" || echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
       fail) echo "An error occurred (AccessDeniedException) when calling the DescribeTasks operation" >&2; exit 254 ;;
       *) echo "" ;;
+    esac ;;
+  # The workspace egress address handed back to standup.sh (#2728): its address and the
+  # interface holding it. STUB_GW_EIP: free (default), elsewhere (another interface), gone.
+  *"ec2 describe-addresses --allocation-ids"*)
+    case "${STUB_GW_EIP:-free}" in
+      gone) echo "An error occurred (InvalidAllocationID.NotFound)" >&2; exit 254 ;;
+      elsewhere) printf '203.0.113.7\teni-other\n' ;;
+      *) printf '203.0.113.7\tNone\n' ;;
     esac ;;
   *"ec2 describe-volumes"*) echo "vol-1" ;;
   *"ec2 describe-snapshots"*) echo "snap-1" ;;
@@ -1037,6 +1056,78 @@ efs_standup p
 if grep -q "EgressTokenSecretArn=arn:stale" "$LOG"; then fail "standup.sh passed the captured EgressTokenSecretArn"; fi
 sed -i '/^EgressTokenSecretArn=/d' "$STATE/params/30-ingress"
 
+echo "== case 3h-archive: the egress archive bucket reaches 20-platform and 30-ingress (#2732) =="
+ARCH_B="t-data-egress-archive-123456789012-ap-northeast-1"
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3ha0" 2>&1 \
+  || { cat "$WORK/out3ha0"; fail "update.sh failed without an archive bucket"; }
+if grep "deploy --stack-name" "$LOG" | grep -q "EgressArchiveBucket"; then
+  fail "update.sh passed EgressArchiveBucket on a stack that has no archive"
+fi
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ARCHIVE=$ARCH_B \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3ha1" 2>&1 \
+  || { cat "$WORK/out3ha1"; fail "update.sh failed with an archive bucket"; }
+grep -q "deploy --stack-name t-ingress .*--parameter-overrides ImageTag=9.9.9-dev-test .*EgressArchiveBucket=$ARCH_B --no-fail" "$LOG" \
+  || fail "update.sh did not pass the data stack's archive bucket to 30-ingress"
+grep -q "deploy --stack-name t-platform .*--parameter-overrides EgressArchiveBucket=$ARCH_B" "$LOG" \
+  || fail "update.sh did not pass the data stack's archive bucket to 20-platform's change set"
+order "deploy --stack-name t-platform" "deploy --stack-name t-ingress"
+# Bucket gone from 10-data while both stacks still name one: both are cleared, not left dangling.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ING_ARCHIVE=$ARCH_B STUB_PLAT_ARCHIVE=$ARCH_B \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3ha2" 2>&1 \
+  || { cat "$WORK/out3ha2"; fail "update.sh failed clearing the archive bucket"; }
+grep -q "deploy --stack-name t-ingress .*EgressArchiveBucket= --no-fail" "$LOG" \
+  || fail "update.sh did not clear EgressArchiveBucket on 30-ingress"
+grep -qE "deploy --stack-name t-platform .*--parameter-overrides EgressArchiveBucket=( |$)" "$LOG" \
+  || fail "update.sh did not clear EgressArchiveBucket on 20-platform"
+# standup.sh: the output of the data stack it just deployed, never the capture.
+echo "EgressArchiveBucket=stale-bucket" >> "$STATE/params/30-ingress"
+echo "EgressArchiveBucket=stale-bucket" >> "$STATE/params/20-platform"
+efs_standup p STUB_ARCHIVE=$ARCH_B
+grep -q "deploy --stack-name t-platform .*EgressArchiveBucket=$ARCH_B" "$LOG" \
+  || fail "standup.sh did not pass the archive bucket to 20-platform"
+grep -q "deploy --stack-name t-ingress .*EgressArchiveBucket=$ARCH_B" "$LOG" \
+  || fail "standup.sh did not pass the archive bucket to 30-ingress"
+order "deploy --stack-name t-platform" "deploy --stack-name t-ingress"
+efs_standup p
+if grep -q "stale-bucket" "$LOG"; then fail "standup.sh passed the captured EgressArchiveBucket"; fi
+sed -i '/^EgressArchiveBucket=/d' "$STATE/params/30-ingress" "$STATE/params/20-platform"
+
+# A failed read of the output is not "no bucket": nothing may be deployed, or the next purge
+# deletes events with the archive switched off.
+: > "$LOG"
+if VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ARCHIVE_FAIL=1 STUB_ING_ARCHIVE=$ARCH_B STUB_PLAT_ARCHIVE=$ARCH_B \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3ha3" 2>&1; then
+  fail "update.sh went on after the archive output could not be read"
+fi
+if grep -q "deploy --stack-name t-ingress\|deploy --stack-name t-platform" "$LOG"; then
+  fail "update.sh deployed after the archive output could not be read"
+fi
+: > "$LOG"
+if env STUB_ARCHIVE_FAIL=1 "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3ha4" 2>&1 </dev/null; then
+  fail "standup.sh went on after the archive output could not be read"
+fi
+if grep -q "deploy --stack-name t-platform\|deploy --stack-name t-ingress" "$LOG"; then
+  fail "standup.sh deployed 20-platform / 30-ingress after the archive output could not be read"
+fi
+# No bucket any more: an omitted parameter would keep the previous value, so it is named empty.
+efs_standup p
+grep -qE "deploy --stack-name t-platform .*EgressArchiveBucket=( |$)" "$LOG" \
+  || fail "standup.sh did not clear 20-platform's EgressArchiveBucket explicitly"
+grep -qE "deploy --stack-name t-ingress .*EgressArchiveBucket=( |$)" "$LOG" \
+  || fail "standup.sh did not clear 30-ingress's EgressArchiveBucket explicitly"
+# A capture with EgressArchive=create and the retained bucket still there: reuse, never a second create.
+echo "EgressArchive=create" >> "$STATE/params/10-data"
+efs_standup p STUB_BUCKET_EXISTS=1
+grep -q "deploy --stack-name t-data .*EgressArchive=existing" "$LOG" \
+  || fail "standup.sh did not reuse the retained archive bucket"
+efs_standup p
+grep -q "deploy --stack-name t-data .*EgressArchive=create" "$LOG" \
+  || fail "standup.sh changed EgressArchive=create although no bucket survived"
+sed -i '/^EgressArchive=/d' "$STATE/params/10-data"
+
 echo "== case 3h-pool: update.sh never skips the slot pool on ecs-ec2 without saying so =="
 #
 # The pool's user data carries ECS_AWSVPC_BLOCK_IMDS. A lookup that fails (no
@@ -1543,6 +1634,8 @@ grep -q "^NatEipAllocationId=eipalloc-REAL$" "$CAPFILE" \
   || fail "the empty parameter was not filled in from the output (the stand-up would orphan the EIP): $(grep NatEip "$CAPFILE" || echo '<no such line>')"
 # Outputs that are not parameters must not be copied across (CFN rejects parameters it does not know)
 if grep -q "^VpcId=" "$CAPFILE"; then fail "an output that is not a parameter was copied into the capture"; fi
+{ grep -q "^GatewayEipAllocationId=eipalloc-GW$" "$CAPFILE" && grep -q "^GatewayEipAddress=203.0.113.7$" "$CAPFILE"; } \
+  || fail "the workspace egress address was not captured from the outputs (a rebuild would allocate a new one): $(grep GatewayEip "$CAPFILE" || echo '<no such line>')"
 
 echo "== case 3e: the preflight required-parameter check does not miss because of formatting =="
 #
@@ -1995,6 +2088,48 @@ echo "GatewayEnabled=false" >> "$STATE6/params/00-network"
 "$ECS/standup.sh" --profile p6 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4l2" </dev/null
 grep -q "GatewayEnabled=true" "$WORK/out4l2" || fail "standup did not force GatewayEnabled=true"
 if grep -q "GatewayEnabled=false" "$WORK/out4l2"; then fail "standup passed the captured GatewayEnabled=false on"; fi
+
+echo "== case 4l-eip: a handed-back workspace egress address is checked before anything is built (#2728) =="
+STATE7="$AF_DEPLOY_STATE_DIR/p7.ap-northeast-1.t-ingress"
+mkdir -p "$STATE7/params"
+cp -a "$STATE/params/." "$STATE7/params/"
+cp "$STATE/env" "$STATE7/env"
+printf 'EgressRoute=gateway\nGatewayEipAllocationId=eipalloc-GW\nGatewayEipAddress=203.0.113.7\n' >> "$STATE7/params/00-network"
+: > "$LOG"
+"$ECS/standup.sh" --profile p7 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4le" 2>&1 </dev/null \
+  || { cat "$WORK/out4le"; fail "standup refused a free, matching workspace egress address"; }
+has "ec2 describe-addresses --allocation-ids eipalloc-GW"
+{ grep -q "GatewayEipAllocationId=eipalloc-GW" "$WORK/out4le" && grep -q "GatewayEipAddress=203.0.113.7" "$WORK/out4le"; } \
+  || fail "standup did not hand the captured workspace egress address back to 00-network"
+for knob in STUB_GW_EIP=gone STUB_GW_EIP=elsewhere; do
+  : > "$LOG"
+  if env "$knob" "$ECS/standup.sh" --profile p7 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4le2" 2>&1 </dev/null; then
+    fail "standup passed preflight with $knob"
+  fi
+  hasnt "cloudformation deploy"
+done
+grep -q "associated with eni-other" "$WORK/out4le2" || fail "standup did not say where the address is held"
+sed -i 's/^GatewayEipAddress=.*/GatewayEipAddress=198.51.100.9/' "$STATE7/params/00-network"
+: > "$LOG"
+if "$ECS/standup.sh" --profile p7 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4le3" 2>&1 </dev/null; then
+  fail "standup passed preflight with an address that is not the allocation's"
+fi
+grep -q "GatewayEipAddress '198.51.100.9' is not the address of eipalloc-GW (203.0.113.7)" "$WORK/out4le3" \
+  || fail "standup did not say the captured address does not match"
+# Back on nat-gateway (or a capture from before EgressRoute) the stack does not use the address,
+# which may have been released since: no lookup, and the rebuild goes on.
+for route in EgressRoute=nat-gateway ""; do
+  sed -i -e '/^EgressRoute=/d' -e 's/^GatewayEipAddress=.*/GatewayEipAddress=203.0.113.7/' "$STATE7/params/00-network"
+  [ -z "$route" ] || echo "$route" >> "$STATE7/params/00-network"
+  : > "$LOG"
+  STUB_GW_EIP=gone "$ECS/standup.sh" --profile p7 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4le4" 2>&1 </dev/null \
+    || { cat "$WORK/out4le4"; fail "standup refused a NAT-only rebuild over a released gateway address (${route:-no EgressRoute})"; }
+  hasnt "describe-addresses"
+done
+# Without the parameter (every capture so far) nothing is looked up.
+: > "$LOG"
+"$ECS/standup.sh" --profile p6 --region ap-northeast-1 --stack t-ingress --yes --dry-run > /dev/null 2>&1 </dev/null
+hasnt "describe-addresses"
 
 echo "== case 4m: a tag that cannot be written is an error, not a quiet success =="
 : > "$LOG"

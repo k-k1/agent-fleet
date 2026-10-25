@@ -81,6 +81,7 @@ export function StartHost() {
           branch={launch.branch}
           path={launch.path}
           kinds={agentKinds}
+          claudeExpired={ctx.claudeExpired}
           settling={ctx.connsSettling}
           allowWorktree={!launch.worktree && launch.vcs !== "svn" && !launch.unborn}
           isSvn={launch.vcs === "svn"}

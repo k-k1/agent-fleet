@@ -54,8 +54,12 @@ DOC = os.path.join(ROOT, "control-plane", "internal", "egressagent", "doc.go")
 POLICY = os.path.join(ROOT, "control-plane", "internal", "egressagent", "policy.go")
 ENV_SH = os.path.join(ROOT, "deploy", "aws", "ecs", "env.sh")
 
-GATEWAY_RESOURCES = {"GatewaySg", "GatewayHostSg", "GatewayEni", "GatewayEip", "GatewayEipAssoc",
-                     "AlbFromGateway", "EgressTokenSecret", "GatewayRole", "GatewayInstanceProfile",
+# The gateway's own Elastic IP and the ALB rule naming it exist only when the stack allocates
+# the address; a handed-in one (GatewayEipAllocationId, #2728) has a rule of its own.
+EIP_CONDITIONS = {"GatewayEip": "CreateGatewayEip", "AlbFromGateway": "CreateGatewayEip",
+                  "AlbFromGivenGateway": "GivenGatewayEip"}
+GATEWAY_RESOURCES = {"GatewaySg", "GatewayHostSg", "GatewayEni", "GatewayEipAssoc",
+                     "EgressTokenSecret", "GatewayRole", "GatewayInstanceProfile",
                      "GatewayLaunchTemplate", "GatewayAsg"}
 WS_CIDRS = [{"!Ref": "WorkspaceSubnet0Cidr"}, {"!Ref": "WorkspaceSubnet1Cidr"}]
 PROXY_PORTS = {80, 443, 3128}
@@ -129,6 +133,12 @@ def check(net, ingress, platform, doc_lines):
             f.append("%s is missing" % rid)
         elif res[rid].get("Condition") != "GatewayOn":
             f.append("%s exists without GatewayOn" % rid)
+    for rid, cond in sorted(EIP_CONDITIONS.items()):
+        if rid not in res:
+            f.append("%s is missing" % rid)
+        elif res[rid].get("Condition") != cond:
+            f.append("%s is not behind %s" % (rid, cond))
+    f += check_eip(net)
     for oid in ("EgressProxyAddr", "EgressTokenSecretArn", "GatewayEipAddress"):
         if net.get("Outputs", {}).get(oid, {}).get("Condition") != "GatewayOn":
             f.append("output %s exists without GatewayOn" % oid)
@@ -321,6 +331,51 @@ def check_hardening(ud):
     return f
 
 
+def check_eip(net):
+    """GatewayEipAllocationId (#2728): a handed-in workspace address is used, never owned."""
+    f = []
+    params, conds, res = net.get("Parameters", {}), net.get("Conditions", {}), net["Resources"]
+    for pid in ("GatewayEipAllocationId", "GatewayEipAddress"):
+        if params.get(pid, {}).get("Default") != "":
+            f.append("%s is missing or not empty by default (an existing stack would change)" % pid)
+    given = {"!Not": [{"!Equals": [{"!Ref": "GatewayEipAllocationId"}, ""]}]}
+    if conds.get("CreateGatewayEip") != {"!And": [{"!Condition": "GatewayOn"}, {"!Equals": [{"!Ref": "GatewayEipAllocationId"}, ""]}]}:
+        f.append("CreateGatewayEip is not exactly GatewayOn and no GatewayEipAllocationId")
+    if conds.get("GivenGatewayEip") != {"!And": [{"!Condition": "GatewayOn"}, given]}:
+        f.append("GivenGatewayEip is not exactly GatewayOn and a GatewayEipAllocationId")
+    eip = res.get("GatewayEip") or {}
+    if eip.get("DeletionPolicy") != "Retain" or eip.get("UpdateReplacePolicy") != "Retain":
+        f.append("GatewayEip is no longer retained (the workspace egress address would be released)")
+    assoc = ((res.get("GatewayEipAssoc") or {}).get("Properties") or {}).get("AllocationId")
+    if assoc != {"!If": ["CreateGatewayEip", {"!GetAtt": "GatewayEip.AllocationId"}, {"!Ref": "GatewayEipAllocationId"}]}:
+        f.append("GatewayEipAssoc does not take the handed-in allocation when there is one")
+    given_rule = ((res.get("AlbFromGivenGateway") or {}).get("Properties") or {}).get("CidrIp")
+    if given_rule != {"!Sub": "${GatewayEipAddress}/32"}:
+        f.append("AlbFromGivenGateway does not admit GatewayEipAddress")
+    outs = net.get("Outputs") or {}
+    for oid, created, passed in (("GatewayEipAllocationId", {"!GetAtt": "GatewayEip.AllocationId"}, {"!Ref": "GatewayEipAllocationId"}),
+                                 ("GatewayEipAddress", {"!Ref": "GatewayEip"}, {"!Ref": "GatewayEipAddress"})):
+        # capture-env.sh fills a parameter captured empty from the Output of the same name.
+        if outs.get(oid, {}).get("Value") != {"!If": ["CreateGatewayEip", created, passed]}:
+            f.append("output %s is not the address in use whoever allocated it" % oid)
+    rules = net.get("Rules") or {}
+    pairs = set()
+    for r in rules.values():
+        rc = r.get("RuleCondition")
+        for a in r.get("Assertions", []):
+            for x, y in (("GatewayEipAllocationId", "GatewayEipAddress"), ("GatewayEipAddress", "GatewayEipAllocationId")):
+                if rc == {"!Not": [{"!Equals": [{"!Ref": x}, ""]}]} and a.get("Assert") == {"!Not": [{"!Equals": [{"!Ref": y}, ""]}]}:
+                    pairs.add(x)
+    if pairs != {"GatewayEipAllocationId", "GatewayEipAddress"}:
+        f.append("the Rules do not require GatewayEipAllocationId and GatewayEipAddress together")
+    # The NAT address stays the CP's and the hosts': nothing of the gateway's address reaches it.
+    for rid in ("Nat", "NatEip"):
+        r = repr(res.get(rid))
+        if "GatewayEip" in r:
+            f.append("%s refers to the gateway's address (the CP and hosts keep NatEip)" % rid)
+    return f
+
+
 def check_pause(net, env_src, policy_src, agent_src="", ship_src=""):
     """pause.sh's on/off switch (GatewayEnabled) and the readiness probe it waits with."""
     f = []
@@ -461,6 +516,15 @@ def main():
 
     controls = [
         ("default gateway", m(lambda t: t["Parameters"]["EgressRoute"].update(Default="gateway"))),
+        ("stack allocates although an address is handed in", m(lambda t: r(t)["GatewayEip"].update(Condition="GatewayOn"))),
+        ("handed-in address not used", m(lambda t: r(t)["GatewayEipAssoc"]["Properties"].update(AllocationId={"!GetAtt": "GatewayEip.AllocationId"}))),
+        ("workspace address not retained", m(lambda t: r(t)["GatewayEip"].pop("DeletionPolicy"))),
+        ("allocation parameter with a default", m(lambda t: t["Parameters"]["GatewayEipAllocationId"].update(Default="eipalloc-0"))),
+        ("allocation output only for a created address", m(lambda t: t["Outputs"]["GatewayEipAllocationId"].update(Value={"!GetAtt": "GatewayEip.AllocationId"}))),
+        ("address without its allocation allowed", m(lambda t: t["Rules"].pop("GatewayEipAllocationWithAddress"))),
+        ("ALB rule for a handed-in address missing", m(lambda t: r(t).pop("AlbFromGivenGateway"))),
+        ("ALB rule for a handed-in address on the wrong address", m(lambda t: r(t)["AlbFromGivenGateway"]["Properties"].update(CidrIp="0.0.0.0/0"))),
+        ("NAT on the gateway's address", m(lambda t: r(t)["Nat"]["Properties"].update(AllocationId={"!Ref": "GatewayEipAllocationId"}))),
         ("ASG without a condition", m(lambda t: r(t)["GatewayAsg"].pop("Condition"))),
         ("secret output without a condition", m(lambda t: t["Outputs"]["EgressTokenSecretArn"].pop("Condition"))),
         ("private route table through the gateway", m(private_via_gateway)),

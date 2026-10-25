@@ -611,6 +611,67 @@ Not run on a real account.
 
 Open point 5 is closed for AWS by this; open point 7 (#2728) stays open.
 
+## Addendum (2026-10-25) — the AWS templates wire the archive (#2732)
+
+The archive of #2699 had no AWS wiring, and a same-region `s3://` bucket set by hand would have
+failed twice: the S3 endpoint policy refuses it (AccessDenied, not NAT traffic) and the CP task
+role has no grant on it. Decided with the work, not run on an account yet:
+
+- **A stack-owned bucket only.** 10-data creates it on `EgressArchive=create` (retained,
+  SSE-S3, unversioned, expiry on `egress/`); the default is no bucket and the archive stays
+  off. A bucket of the operator's own is not supported: the endpoint policy lives in 00-network,
+  which cannot name 10-data's bucket, so it admits `af-*-egress-archive-<account id>` with
+  `s3:ResourceAccount` (as for the models bucket) and a foreign name would be refused there.
+- **The CP grant is `PutObject` and `GetObject` on `egress/*` plus `ListBucket` on the bucket**,
+  a managed policy in 20-platform (the CP role's inline total is capped, #1576). `ListBucket`
+  carries no `s3:prefix` condition: the check that makes HeadObject of an absent key a 404 is
+  made without a prefix, and the sink reports a 403 as an error. The bucket holds only the
+  archive. The same two actions plus `ListBucket` are the endpoint statements.
+- **The URL is `s3://<bucket>` with no prefix**, because the CP's keys already start with
+  `egress/`. `standup.sh` and `update.sh` derive the bucket name from 10-data's output and pass
+  it to 20-platform and 30-ingress.
+
+Details: `deploy/aws/ecs/cfn/PARAMETERS.md`, "The egress archive". Pinned by
+`deploy/local/cfn-s3-endpoint-test.py` and `deploy/local/cfn-egress-archive-test.py`.
+
+Follow-ups: #2734
+
+Review of the same day: the bucket name now carries the region (S3 names are global, stack names
+are per region); the bucket policy refuses plain HTTP; `EgressArchive=existing` reuses the
+retained bucket after a disable or a teardown, so the archive's data is never the price of
+re-enabling it; both scripts stop when the bucket output cannot be read, since the purger deletes
+events once the archive is off.
+
+## Addendum (2026-10-26) — open point 7 on AWS: two egress addresses (#2728)
+
+Decided with the maintainer (2026-10-25, recorded on #2728): with `EgressRoute=gateway` a
+deployment egresses from **two permanent addresses**. The CP, the slot hosts and the engines
+keep the NAT gateway's (`NatEip`); workspaces use the gateway's. An organisation registers both.
+Not run on a real account.
+
+- **`GatewayEipAllocationId` / `GatewayEipAddress`** (`00-network`), the counterpart of
+  `NatEipAllocationId`. An address allocated outside the stack can be allow-listed before the
+  switch to `gateway`, so there is no gap. Without them the stack allocates the address and
+  retains it. With them the stack never creates, replaces or releases it (`GatewayEip` exists
+  only under `CreateGatewayEip`). The public address is a parameter too: the ALB admits the gateway
+  by it, and CloudFormation cannot read the address of an allocation it did not create. Rules
+  require the two together.
+- **A rebuild keeps it.** Outputs of the same names carry the address whoever allocated it, so
+  `capture-env.sh` fills the two parameters captured empty, as it does `NatEipAllocationId`.
+  With `EgressRoute=gateway`, `standup.sh` refuses to build when the allocation is gone, its address is not the captured
+  one, or another interface holds it. An address retained by an earlier gateway is found by its
+  `af-<stack>-egress-gateway-eip` tag and handed back the same way (README, "Two egress
+  addresses").
+- **Set when the gateway is created**, not on a stack that runs it: the change replaces
+  `GatewayEipAssoc` under the workspaces (not measured).
+- **Rejected:** moving `NatEip` onto the gateway (option C). A NAT gateway's address cannot change
+  in place, so the CP and hosts would get a new address anyway, after a window with no egress.
+  **Not built, documented as the alternative** for an organisation that cannot register a second
+  address: the gateway egressing through the NAT gateway (option B). That gives one address, but
+  NAT data processing returns on all workspace traffic.
+
+Open point 7 is closed for AWS by this.
+
 ## Addendum (2026-10-26) — the CP's own hosts are always in the served policy (#2742)
 
 On the sandbox (ecs-ec2, `EgressRoute=gateway`, log-only) the deployment's own console host was

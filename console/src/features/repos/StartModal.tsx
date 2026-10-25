@@ -14,7 +14,7 @@ import { Trans } from "../../lib/i18n/Trans.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
 import { useKindCatalogVersion } from "../../agents/kindCatalog.ts";
-import { openAgentsSettings } from "../../lib/authExpiredToast.tsx";
+import { ClaudeExpiredHint } from "./ClaudeExpiredHint.tsx";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { resolveEffort, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings, setSetting } from "../../lib/settings.ts";
@@ -562,14 +562,7 @@ export function StartModal({ kinds, claudeExpired = false, onClose, onPickRepo }
                 })}
               </div>
             </div>
-            {kind === "claude" && claudeExpired && (
-              <span className="ui-field-hint">
-                {tr("start.claude_expired")}
-                <button type="button" className="linklike" onClick={openAgentsSettings}>
-                  {tr("mirror.error_auth_action")}
-                </button>
-              </span>
-            )}
+            <ClaudeExpiredHint kind={kind} expired={claudeExpired} />
             {agentOf(kind).caps.model && (
               <div className="ui-field">
                 <span className="ui-field-label">{tr("launch.field.model")}</span>

@@ -10,6 +10,7 @@ import { pushHealthy, pushStamp } from "../../core/push/events.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { dismissToast, toast } from "../../ui/toast.ts";
 import { t as tr, tMaybe } from "../../lib/i18n/index.ts";
+import { noteInitialPromptFailures } from "./initialPromptFailure.ts";
 import { noteSessions } from "./waiting.ts";
 import type { Session } from "../../types/session.ts";
 
@@ -56,6 +57,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     // comparison below so every arriving list is seen, whether or not it gets published;
     // with no transition nothing is written, so the 4s calls cost only a comparison.
     noteSessions(list);
+    noteInitialPromptFailures(list);
     const s = JSON.stringify(list);
     if (!get().loaded) set({ loaded: true });
     if (s !== ser) {

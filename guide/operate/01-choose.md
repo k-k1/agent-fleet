@@ -88,7 +88,7 @@ the AWS hosts stay on the NAT gateway either way.
 | Operations | managed by AWS | an instance to run; replacing it leaves workspaces without egress for a few minutes |
 | Availability | AWS-managed, one Availability Zone | one instance in one Availability Zone, replaced automatically |
 | Non-HTTP traffic (SSH git) | works | blocked |
-| Address to allow-list | the NAT gateway's | a separate address for workspaces |
+| Address to allow-list | the NAT gateway's | two: the NAT gateway's (Control Plane and hosts) and the gateway's (workspaces), which you can allocate and register before switching |
 
 The egress gateway is new and **not yet verified on a real account**; `pause.sh` stops it and
 brings it back with the same egress address. Setup and limits: "Egress gateway" in

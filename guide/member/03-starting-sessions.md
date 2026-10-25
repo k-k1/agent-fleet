@@ -208,6 +208,19 @@ five-minute refreshes, and a stale copy of them is worse than none.
   "Try again" appears.
 - The main button is **Open in GitHub / Bitbucket**. The diff and the review thread live there, not
   in Agent Fleet.
+- **Merge (GitHub only).** A GitHub pull request that GitHub says can be merged has a **Merge** button
+  next to the main button. It opens a confirmation that names the pull request, **base ← head** and the
+  merge method (only the methods the repository allows; the first of merge / squash / rebase is
+  preselected), and nothing is merged until you confirm. Only the commit the panel displayed is merged: if
+  the branch has moved since, GitHub refuses and the panel reads the pull request again. The button is
+  disabled, with the reason beside it, while GitHub does not accept a merge (blocked by required reviews or
+  checks, behind its base, conflicts, failing checks, a draft, or not decided yet), and while the
+  workspace is stopped (the GitHub credentials live in it; it is never started for this). It is not drawn
+  at all unless the connection is known to be able to merge: a classic token (what the GitHub device-flow
+  login gives) with the `repo` scope. A fine-grained token or a GitHub App connection does not report what
+  it may do, so it gets no Merge button; merge on GitHub. **Bitbucket pull requests have no Merge
+  button**, and neither does any agent: merging is something you press. The branch is not deleted
+  afterwards.
 - **Starting a session** is one fold away, and here **Start is a review button**: a new worktree
   checks out **the pull request's own head branch** rather than cutting a fresh one, and the first
   instruction asks for a review, not a plan. When a working copy on that branch already exists,

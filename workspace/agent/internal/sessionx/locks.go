@@ -331,6 +331,19 @@ func settleInitialPrompt(name, state string) {
 	session.WriteMeta(m)
 }
 
+// noteInitialPromptReason records why a pending initial prompt is about to settle failed. Like
+// settleInitialPrompt it acts only while the state is pending, so a prompt that is not a
+// create's initial one never grows a reason.
+func noteInitialPromptReason(name, reason string) {
+	UpdateSessionMeta(name, func(m *session.Meta) bool {
+		if m.InitialPromptState != session.InitialPromptPending {
+			return false
+		}
+		m.InitialPromptReason = reason
+		return true
+	})
+}
+
 // RecoverPendingInitialPrompts turns every pending initial prompt into unknown. Called once at
 // Agent start: the delivery goroutine died with the previous process, the meta did not, and a
 // state nothing will ever settle would hold the studio pane on "sending" forever. A resend

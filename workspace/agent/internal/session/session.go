@@ -199,9 +199,11 @@ type Session struct {
 	// the list; the Control Plane's sessionWire has to carry them too or they vanish there.
 	Studio             string `json:"studio,omitempty"`
 	InitialPromptState string `json:"initialPromptState,omitempty"`
-	Repo               string `json:"repo"` // working dir basename (display)
-	WorkingCopyID      string `json:"workingCopyId,omitempty"`
-	Title              string `json:"title"` // user-supplied display title (optional, any kind)
+	// InitialPromptReason says why InitialPromptState is failed when the Agent knows (Meta's).
+	InitialPromptReason string `json:"initialPromptReason,omitempty"`
+	Repo                string `json:"repo"` // working dir basename (display)
+	WorkingCopyID       string `json:"workingCopyId,omitempty"`
+	Title               string `json:"title"` // user-supplied display title (optional, any kind)
 	// Moving / MovedTo mirror Meta's (ADR 0115 decision 11.7): the row of a source whose move
 	// is under way or pending offers retry and cancel, and a moved one says where the
 	// conversation went. The Control Plane's sessionWire has to carry them too.
@@ -657,6 +659,11 @@ type Meta struct {
 	// a second persona turn, so none is offered. A pending left by a previous Agent process can
 	// never finish — RecoverPendingInitialPrompts turns it into unknown at start.
 	InitialPromptState string `json:"initialPromptState,omitempty"`
+	// InitialPromptReason names why the state is failed, when it is known: only
+	// InitialPromptReasonAuthExpired today. Empty for every other failure and for any other state;
+	// it is written just before the state settles to failed and cleared whenever a delivery
+	// starts again, so a stale reason never outlives its failure.
+	InitialPromptReason string `json:"initialPromptReason,omitempty"`
 	// SSM holds the (non-secret) coordinates for a kind=ssm session: which instance,
 	// run-as document, region, and the SSO profile to authenticate with. Persisted so
 	// a relaunch regenerates ~/.aws/config and re-runs `aws sso login` (if the cached
@@ -692,6 +699,10 @@ const (
 	InitialPromptFailed    = "failed"
 	InitialPromptUnknown   = "unknown"
 )
+
+// InitialPromptReasonAuthExpired is Meta.InitialPromptReason for a prompt that was not typed
+// because the workspace's Claude login has expired.
+const InitialPromptReasonAuthExpired = "auth_expired"
 
 // SSMMeta is the persisted, non-secret description of an SSM login target.
 type SSMMeta struct {

@@ -480,6 +480,38 @@ Follow-ups: #2728, #2729, #2687（実 Squid。手順は README にある）。
 
 これで AWS の未決事項 5 は閉じる。未決事項 7（#2728）は残る。
 
+## 追記（2026-10-25）— AWS のテンプレートがアーカイブをつなぐ（#2732）
+
+#2699 のアーカイブには AWS 側の配線が無く、同一リージョンの `s3://` バケットを手で指定しても 2 か所で失敗していた。S3 エンドポイントのポリシーが拒否し（NAT 経由にはならず AccessDenied）、CP のタスクロールにもそのバケットへの権限が無い。作業と合わせて次のように決めた。まだ実アカウントでは動かしていない。
+
+- **スタックが持つバケットだけにする。** 10-data が `EgressArchive=create` で作る（Retain、SSE-S3、バージョニングなし、`egress/` に有効期限）。既定はバケットなしで、アーカイブは無効のまま。運用者自身のバケットは対象外とした。エンドポイントのポリシーは 00-network にあり、10-data のバケットを名指しできないので、モデル用バケットと同じく `s3:ResourceAccount` を付けて `af-*-egress-archive-<アカウント ID>` を許可している。外部のバケット名はそこで拒否される。
+- **CP の権限は `egress/*` への `PutObject` と `GetObject`、バケットへの `ListBucket`。** 20-platform のマネージドポリシーにした（CP ロールのインライン合計には上限がある、#1576）。`ListBucket` に `s3:prefix` 条件は付けない。存在しないキーへの HeadObject を 403 でなく 404 にする判定はプレフィックス無しで行われ、sink は 403 をエラーとして扱うため。このバケットにはアーカイブしか入らない。エンドポイントの文も同じ操作にしてある。
+- **URL は接頭辞なしの `s3://<バケット>`。** CP のキーがすでに `egress/` で始まるため。`standup.sh` と `update.sh` は 10-data の出力からバケット名を取り、20-platform と 30-ingress に渡す。
+
+詳細は `deploy/aws/ecs/cfn/PARAMETERS.md` の "The egress archive"。`deploy/local/cfn-s3-endpoint-test.py` と `deploy/local/cfn-egress-archive-test.py` が固定している。
+
+Follow-ups: #2734
+
+同日のレビューによる変更：バケット名にリージョンを含める（S3 の名前は全体で一意、スタック名はリージョンごと）。バケットポリシーで平文 HTTP を拒否する。`EgressArchive=existing` で、無効化や teardown のあとも保持されたバケットを再利用できる（再有効化のためにアーカイブのデータを捨てなくて済む）。バケットの出力を読めないときは両スクリプトとも止まる（アーカイブが無効だと purger がイベントを削除するため）。
+
+## 追記（2026-10-26）— AWS の未決事項 7：2 つの送信元アドレス（#2728）
+
+メンテナと決めた（2026-10-25、#2728 に記録）。`EgressRoute=gateway` の配備は **2 つの恒久的なアドレス** から外へ出る。CP、スロットのホスト、エンジンは NAT ゲートウェイのアドレス（`NatEip`）のまま、Workspace はゲートウェイのアドレスを使う。組織は両方を登録する。実アカウントでは動かしていない。
+
+- **`GatewayEipAllocationId` / `GatewayEipAddress`**（`00-network`）は `NatEipAllocationId` に対応するもの。
+  - スタックの外で確保したアドレスを渡せば、`gateway` へ切り替える前に許可リストへ登録でき、空白は生じない。
+  - 渡さなければスタックがアドレスを確保して保持する。渡したときはスタックがそれを作ることも、置き換えることも、手放すこともない（`GatewayEip` は `CreateGatewayEip` のときだけ存在する）。
+  - 公開アドレスもパラメータにした。ALB はこのアドレスでゲートウェイを通すが、CloudFormation は自分で作っていない割り当てのアドレスを読めないからである。2 つを揃えて渡すことは Rules で強制する。
+- **作り直しても残る。**
+  - 同じ名前の出力が、誰が確保したかにかかわらずアドレスを運ぶ。そのため `capture-env.sh` は、`NatEipAllocationId` と同じく、空でキャプチャされた 2 つのパラメータを埋める。
+  - `EgressRoute=gateway` のとき、`standup.sh` は次のときには構築を始めない：割り当てが無くなっている、アドレスがキャプチャと違う、別のインターフェースが持っている。
+  - 以前のゲートウェイが残したアドレスは `af-<stack>-egress-gateway-eip` のタグで見つけ、同じ方法で渡し直す（README の "Two egress addresses"）。
+- **ゲートウェイを作るときに設定する。** すでにゲートウェイが動いているスタックで設定すると、Workspace が使っている最中に `GatewayEipAssoc` が置き換わる（未計測）。
+- **却下：** `NatEip` をゲートウェイへ移す案（C）。NAT ゲートウェイのアドレスはその場では変えられないので、どのみち CP とホストは新しいアドレスになり、その前に通信できない時間ができる。
+- **作らず、代替として記すもの：** ゲートウェイが NAT ゲートウェイ経由で外へ出る案（B）。2 つ目のアドレスを登録できない組織向けで、アドレスは 1 つになるが、Workspace の全通信に NAT のデータ処理料金が戻る。
+
+これで AWS の未決事項 7 は閉じる。
+
 ## 追記（2026-10-26）— 配る policy には CP 自身のホストが常に入る（#2742）
 
 サンドボックス（ecs-ec2、`EgressRoute=gateway`、log-only）で、デプロイ自身の console ホストが Workspace からの全接続で would-block と判定された。ECS の Workspace は公開 URL（`AF_CP_BASE_URL`）しか持たず、`NO_PROXY` に CP のホストが入るのは `AF_CP_INTERNAL_URL` からだけで、それを設定するのは Kubernetes だけである。さらに gateway は Workspace のルートテーブルで 443 を横取りするので、`NO_PROXY` だけでは Squid を避けられない。enforce にすると Workspace は CP を失っていた。

@@ -348,3 +348,23 @@ because Remote Control will not start while that variable is set (#1254; measure
 docs/log/58 §58.18). `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING` and `DISABLE_AUTOUPDATER` are
 kept in every case, and the native peer channel stays closed by the launch settings of the
 previous addendum, not by env.
+
+## Addendum (2026-10-26) — a peer message to a booting claude waits; delivery evidence is the prompt's own line
+
+#2741. A send that resumed a stopped claude peer was typed as soon as its composer footer was
+drawn, which is not when it takes input: typed prompts vanished (`502 delivery_unconfirmed`, the
+status left at `working`, the retry refused as `peer_duplicate`), and once a turn the resume
+itself started (the replayed notification of a background task) passed for the message
+(`delivered:true`, no turn). Four changes. (1) A peer send to a claude Terminal (CLI) session whose
+CLI was launched less than 3 min ago (tmux's own creation stamp, so an Agent restart keeps the
+hold) joins the pending spool above with `blocked_on: "starting"`
+and is delivered once the pane has stood on its idle prompt for the idle-settle window, or at the
+cap through the spool's usual readiness rule (`sessionx/peer_boot.go`). (2) Delivery evidence is a
+user line carrying the prompt, or one shaped like a typed prompt (a slash command is stored
+rewritten). The lines claude writes itself (`isMeta`, `<task-notification>` in its enqueue or its
+user line) are set aside before any text match, since a notification can quote an earlier
+envelope; tool results do not count either, and nor does the spinner once such a line has
+appeared. (3) A send that ends in an error does not arm the
+duplicate guard; the rate count stays. (4) `delivery_unconfirmed` withdraws the optimistic
+`working` the send wrote, as the unknown idle, by the Rev that write returned, so a hook's record
+written since is never taken back; a busy pane keeps working.

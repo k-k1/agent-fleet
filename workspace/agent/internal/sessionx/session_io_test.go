@@ -360,7 +360,7 @@ esac
 case "$*" in
   *" -l "*)
     /bin/cp "$AF_TEST_STORE" "$AF_TEST_SNAPSHOT" 2>/dev/null
-    printf '{"type":"user"}\n' >> "$AF_TEST_JSONL"
+    printf '{"type":"user","message":{"role":"user","content":"typed"}}\n' >> "$AF_TEST_JSONL"
     ;;
 esac
 exit 0

@@ -141,6 +141,7 @@ func HandleSessionMoveDeliver(w http.ResponseWriter, r *http.Request) {
 	prev := st.InitialPromptState
 	UpdateSessionMeta(name, func(m *session.Meta) bool {
 		m.InitialPromptState = session.InitialPromptPending
+		m.InitialPromptReason = ""
 		return true
 	})
 	answer := moveDeliverWire{Target: name, MayDuplicate: prev == session.InitialPromptUnknown}

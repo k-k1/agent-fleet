@@ -756,7 +756,8 @@ calls — because the slots and the CP task sit in private subnets with **no pub
 decision 3-3). The only VPC endpoint is the S3 gateway endpoint on the private route table,
 which reaches AWS's own S3 without an address of its own (#2716). So this is the value to
 hand to a corporate firewall or a SaaS IP allow-list. With `EgressRoute=gateway` workspaces
-egress from the gateway's own address instead (next section, #2728).
+egress from a second address, the gateway's own (`GatewayEipAllocationId`): register both
+("Egress gateway", "Two egress addresses", #2728).
 
 ```bash
 alloc=$(aws cloudformation describe-stacks --stack-name af-ecs-network \
@@ -846,7 +847,7 @@ either way: only workspaces go through the gateway.
 | Operations | managed by AWS | an instance to run: AMI updates replace it, a replacement leaves workspaces without egress for a few minutes |
 | Availability | AWS-managed, one AZ | one instance in one AZ (an Auto Scaling group of one replaces it) |
 | Non-HTTP egress (SSH git, other ports) | works | dropped (ADR 0122 consequences) |
-| Workspace egress address | `NatEip` | `GatewayEip`, a different address (#2728) |
+| Workspace egress address | `NatEip` | the gateway's own address, a second one to allow-list (#2728) |
 
 **How it works.** An Auto Scaling group of one AL2023 instance in `PublicSubnet0`. At boot it
 attaches `GatewayEni`, a network interface the stack owns: the workspace route table points at
@@ -863,13 +864,18 @@ variables, with the task-role credential endpoint (`169.254.170.2`), instance me
 (`169.254.169.254`) and the CP's internal host in `NO_PROXY`, and the address recorder
 (#2674) runs. The token itself never reaches a workspace: it is the agent's credential.
 
-**Turning it on** (an existing stack keeps `nat-gateway` until you do this):
+**Turning it on** (an existing stack keeps `nat-gateway` until you do this). Allocate the
+workspace address first and have it allow-listed (next paragraph), then:
 
 ```bash
 aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-network.yaml \
-  --capabilities CAPABILITY_IAM --parameter-overrides EgressRoute=gateway
+  --capabilities CAPABILITY_IAM --parameter-overrides EgressRoute=gateway \
+  GatewayEipAllocationId=eipalloc-... GatewayEipAddress=<its public address>
 ./update.sh --profile <p> --region <r>    # 20-platform (the token read) and 30-ingress
 ```
+
+Without the two `GatewayEip*` parameters the stack allocates the address itself (and retains
+it), so it is only known once workspaces already egress from it.
 
 The route moves to `GatewayEni` as soon as the first command finishes, before the instance
 has attached it: workspaces have no egress until the instance is up (a few minutes, see
@@ -920,9 +926,69 @@ instance tagged `af-egress-gateway=<network stack>`) and `ssm:GetCommandInvocati
 instance role already has `AmazonSSMManagedInstanceCore`. `--status` shows the gateway. `standup.sh` overrides a captured
 `GatewayEnabled=false` to `true` and waits for the first policy at its end.
 
-**Limits of this first stage.** Workspaces egress from `GatewayEip`, not `NatEip`; moving one
-address between the two is #2728. Squid, the agent and this configuration, pausing and
-resuming included, have **not been run on a real account**.
+**Two egress addresses (#2728, decided 2026-10-25).** With the gateway a deployment egresses
+from two permanent addresses: the CP, the slot hosts and the engines from the NAT gateway's
+(`NatEip`), every workspace from the gateway's. An organisation that allow-lists the deployment
+registers both. The workspace address is handled like the NAT's:
+
+- **Allocate it before the switch** so it can be allow-listed while nothing uses it:
+  `aws ec2 allocate-address --domain vpc --tag-specifications 'ResourceType=elastic-ip,Tags=[{Key=Name,Value=af-<network stack>-egress-gateway-eip}]'`
+  gives the `AllocationId` and `PublicIp` to pass as `GatewayEipAllocationId` and
+  `GatewayEipAddress` (both, or neither: the template's Rules refuse one alone). The ALB
+  admits the gateway by `GatewayEipAddress`, which CloudFormation cannot read from an
+  allocation it did not create. A handed-in address is never created, replaced or released by
+  the stack.
+- **It survives a rebuild.** An address the stack allocated itself is retained
+  (`DeletionPolicy: Retain`); the outputs `GatewayEipAllocationId` and `GatewayEipAddress`
+  carry it whoever allocated it, and `capture-env.sh` fills the two parameters from them when
+  they were captured empty, as it does `NatEipAllocationId`. With `EgressRoute=gateway`,
+  `standup.sh` checks before building that the allocation still exists, that its address is the captured one, and that
+  nothing but this deployment's gateway interface holds it.
+- **Handing back a retained address.** A gateway that was switched back to `nat-gateway`, or a
+  torn-down deployment, leaves its address allocated and unassociated (it keeps billing,
+  $0.005/h). Find it by its tag and pass it with the next switch to `gateway` or the next
+  stand-up, instead of letting the stack allocate a new one:
+
+  ```bash
+  aws ec2 describe-addresses --output text --query \
+    "Addresses[?Tags[?Key=='Name' && Value=='af-<network stack>-egress-gateway-eip']].[AllocationId,PublicIp,AssociationId]"
+  # one row with AssociationId None: pass AllocationId and PublicIp as
+  # GatewayEipAllocationId= GatewayEipAddress= (with EgressRoute=gateway), or write both lines
+  # into ~/.config/agent-fleet/deploy/<p>.<r>/params/00-network before standup.sh
+  ```
+- 🔴 **Set the two parameters when the gateway is created** (the switch to `gateway`, or a
+  stand-up), not on a stack that already runs it. There the change replaces `GatewayEipAssoc`,
+  so the interface's address is re-associated while workspaces use it. That is not measured.
+  An address the stack created is already retained without them.
+- **One address for everything instead** (option B, only for an organisation that cannot
+  register a second address): put the gateway in a subnet routed through the NAT gateway, so
+  Squid's connections leave from `NatEip`. That costs NAT data processing on all workspace
+  traffic again ($0.045–0.062/GB), the per-GB saving above. It is not built. Moving `NatEip`
+  itself onto the gateway (option C) is rejected: the NAT would need a new address for the CP
+  and hosts, so the allow-list changes anyway, after a window with no egress at all.
+
+**Egress event archive (optional, #2732).** The CP can write each past UTC day of raw egress
+events to S3 before it purges them (`AF_EGRESS_ARCHIVE_URL`, #2699; `docs/build/03-control-plane.md`
+§3.8). It is off until 10-data owns a bucket for it:
+
+```bash
+aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-network.yaml \
+  --capabilities CAPABILITY_IAM            # the S3 endpoint policy admits the bucket
+aws cloudformation deploy --stack-name af-ecs-data --template-file cfn/10-data.yaml \
+  --capabilities CAPABILITY_AUTO_EXPAND CAPABILITY_IAM --parameter-overrides EgressArchive=create
+./update.sh --profile <p> --region <r>     # 20-platform's CP grant, then 30-ingress's URL
+```
+
+`standup.sh` does the same on a rebuild when the capture has `EgressArchive=create`. The bucket
+(`af-<data stack>-egress-archive-<account id>-<region>`) is encrypted, TLS-only, unversioned, expires archived days
+after `EgressArchiveRetentionDays` (365) and is **retained** when the stack is deleted (a rebuild reuses it with `EgressArchive=existing`, which `standup.sh` sets by itself). The CP
+task role gets `s3:PutObject` / `s3:GetObject` on `egress/*` and `s3:ListBucket` on that bucket
+only, and the endpoint policy admits the same bucket for this account. Only a bucket made this
+way works: a bucket of your own is refused at the endpoint. Parameters, the grant and the
+reasoning: `cfn/PARAMETERS.md`, "The egress archive". Not yet run on a real account.
+
+**Limits of this first stage.** Squid, the agent and this configuration, pausing, resuming and
+a handed-in address included, have **not been run on a real account**.
 
 **Checking the agent against a real Squid (#2687).** On a sandbox with `EgressRoute=gateway`:
 
@@ -2047,10 +2113,9 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
     ENI in a private subnet, so the ~918 MiB compressed workspace image (see the start-latency
     measurement below) goes through the endpoint. **Fargate cannot split**: it pulls through
     the task ENI, so a Fargate workspace start still pays NAT data processing for its layers.
-    The models bucket reads of `60-engines` use the endpoint. The raw egress event archive
-    (`AF_EGRESS_ARCHIVE_URL`, #2699) is not wired by these templates: the CP writes from the
-    private route table, so a same-region `s3://` archive bucket would be refused at the endpoint
-    until its policy (and the CP task role) admits it (#2732).
+    The models bucket reads of `60-engines` use the endpoint, and so do the CP's writes to the
+    optional raw egress event archive bucket ("Egress event archive" below, #2732); a bucket
+    the policy does not name is refused.
     The endpoint has a switch, `S3EndpointEnabled` (default `true`). It must stay `false`
     while any workspace still runs in a private subnet, because the policy refuses that
     workspace's own S3 (AccessDenied) until it is restarted into a workspace subnet.
