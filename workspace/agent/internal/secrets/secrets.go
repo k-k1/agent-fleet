@@ -37,6 +37,10 @@ type GitEntry struct {
 	Token string `json:"token"`
 	Login string `json:"login,omitempty"` // cached real provider account/handle (resolved from the API)
 	Email string `json:"email,omitempty"` // cached account email (resolved from the API)
+	// Scopes is the space-separated scope list a pasted Bitbucket API token was granted, as the
+	// API echoed it at connect time. "" = never recorded (a store from before this field, or an
+	// unverified connect), which callers treat as unknown, never as granted.
+	Scopes string `json:"scopes,omitempty"`
 
 	// Renewal state of an expiring GitHub App user token from the device flow. All empty
 	// for a pasted PAT and for a non-expiring app token, which is how those keep their
@@ -75,6 +79,10 @@ type BitbucketCreds struct {
 	Secret       string `json:"secret,omitempty"`  // legacy: pre-docs/log/71 stores only
 	Account      string `json:"account,omitempty"` // cached real Bitbucket handle (resolved from the API)
 	Email        string `json:"email,omitempty"`   // cached account email (resolved from the API)
+	// Scopes is the space-separated scope list the token was granted, from the token and refresh
+	// responses. "" = never recorded (a store from before this field), which callers treat as
+	// unknown, never as granted.
+	Scopes string `json:"scopes,omitempty"`
 }
 
 // CPBridge is how a SEPARATE process reaches the Control Plane's /internal face: the

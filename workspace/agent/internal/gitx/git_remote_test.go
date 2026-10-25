@@ -134,7 +134,7 @@ func TestBitbucketConnectCheck(t *testing.T) {
 				w.WriteHeader(c.status)
 			}))
 			defer srv.Close()
-			warn, err := bitbucketConnectCheckAt(srv.URL, "me@example.com", "tok")
+			warn, _, err := bitbucketConnectCheckAt(srv.URL, "me@example.com", "tok")
 			if c.wantErr != nil {
 				if !errors.Is(err, c.wantErr) {
 					t.Fatalf("err = %v, want %v", err, c.wantErr)

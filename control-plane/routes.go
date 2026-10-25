@@ -1105,9 +1105,20 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/connections", rest)
 	mux.HandleFunc("GET /api/connections/git/{host}/repos", rest)
 	mux.HandleFunc("GET /api/connections/git/{host}/branches", rest)
-	mux.HandleFunc("PUT /api/connections/git/{host}", rest)
+	// A Bitbucket connect or disconnect changes what the member may post, so the cached
+	// posting capability is withdrawn on both sides of the Agent's answer (#2709).
+	bbReset := proxy.withResolved(func(w http.ResponseWriter, r *http.Request, res *resolved) {
+		if r.PathValue("host") != "bitbucket.org" {
+			rest(w, r)
+			return
+		}
+		resetWorkItemCommentCapability(r.Context(), cfg.mgr.store, res.mv.MembershipID)
+		rest(w, r)
+		resetWorkItemCommentCapability(r.Context(), cfg.mgr.store, res.mv.MembershipID)
+	})
+	mux.HandleFunc("PUT /api/connections/git/{host}", bbReset)
 	mux.HandleFunc("PUT /api/connections/git/{host}/identity", rest)
-	mux.HandleFunc("DELETE /api/connections/git/{host}", rest)
+	mux.HandleFunc("DELETE /api/connections/git/{host}", bbReset)
 	// Git provider OAuth — CP-native for BOTH providers since docs/log/71: the OAuth app is
 	// the tenant's, and the tenant's row lives in the CP's database. GitHub's device
 	// flow used to be proxied to the Agent (restLogin), which is why the paths keep

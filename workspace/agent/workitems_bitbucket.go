@@ -90,14 +90,22 @@ func bitbucketSearchWorkItems(s *secrets.Data, queryID, query string) ([]workIte
 	if err != nil {
 		return nil, err
 	}
-	rows, err := bitbucketFetchPullRequests(auth, q, queryID)
+	rows, scopes, err := bitbucketFetchPullRequests(auth, q, queryID)
 	err = gitx.RefreshBitbucketAndRetry(s, err, func(a string) error {
 		var e error
-		rows, e = bitbucketFetchPullRequests(a, q, queryID)
+		auth = a
+		rows, scopes, e = bitbucketFetchPullRequests(a, q, queryID)
 		return e
 	})
 	if err != nil {
 		return nil, err
+	}
+	// One answer for the whole page: every row of this connection is commentable or none is. The
+	// scopes are the recorded ones, else the header of this very response.
+	if len(rows) > 0 && gitx.BitbucketScopesCanComment(gitx.BitbucketGrantedScopes(auth, scopes)) {
+		for i := range rows {
+			rows[i].CanComment = true
+		}
 	}
 	return rows, nil
 }
@@ -107,13 +115,13 @@ func bitbucketSearchWorkItems(s *secrets.Data, queryID, query string) ([]workIte
 // One call, not N. Walking the member's repositories to fake a cross-workspace search
 // would turn a saved query into an unbounded fan-out and quietly break the budget
 // workItemFetchQueries × workItemFetchPerQuery exists to bound (ADR 0061 decision 17).
-func bitbucketFetchPullRequests(auth string, q bitbucketWorkItemQuery, queryID string) ([]workItemOut, error) {
+func bitbucketFetchPullRequests(auth string, q bitbucketWorkItemQuery, queryID string) ([]workItemOut, string, error) {
 	filter := q.Filter
 	endpoint := bitbucketAPIBase + "/2.0/repositories/" + url.PathEscape(q.Workspace) + "/" + url.PathEscape(q.Repo) + "/pullrequests"
 	if q.Repo == "" || strings.Contains(filter, bbMeToken) {
 		uuid, err := bitbucketSelfUUID(auth)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		filter = strings.ReplaceAll(filter, bbMeToken, uuid)
 		if q.Repo == "" {
@@ -137,14 +145,15 @@ func bitbucketFetchPullRequests(auth string, q bitbucketWorkItemQuery, queryID s
 	if filter != "" {
 		params.Set("q", filter)
 	}
-	body, status, err := gitx.BitbucketGetStatus(workItemHTTPClient, auth, endpoint+"?"+params.Encode())
+	body, status, hdr, err := gitx.BitbucketGetStatusHeader(workItemHTTPClient, auth, endpoint+"?"+params.Encode())
 	if err != nil {
-		return nil, fmt.Errorf("could not reach %s", bitbucketAPIBase)
+		return nil, "", fmt.Errorf("could not reach %s", bitbucketAPIBase)
 	}
 	if status != http.StatusOK {
-		return nil, bitbucketWorkItemError(status, body, q)
+		return nil, "", bitbucketWorkItemError(status, body, q)
 	}
-	return parseBitbucketPullRequests(body, queryID)
+	rows, err := parseBitbucketPullRequests(body, queryID)
+	return rows, hdr.Get("X-OAuth-Scopes"), err
 }
 
 // bitbucketWorkItemError turns a refused fetch into the sentence the member reads on that

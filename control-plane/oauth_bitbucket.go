@@ -177,6 +177,7 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int64  `json:"expires_in"`
+		Scopes       string `json:"scopes"` // space-separated; the Agent records it for the work-item comment gate
 		Error        string `json:"error"`
 		ErrorDesc    string `json:"error_description"`
 	}
@@ -194,13 +195,17 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 	// /internal/git-oauth/bitbucket/refresh instead (git_oauth_bridge.go).
 	payload, _ := json.Marshal(map[string]any{
 		"access_token": tok.AccessToken, "refresh_token": tok.RefreshToken,
-		"expires_in": tok.ExpiresIn,
+		"expires_in": tok.ExpiresIn, "scopes": strings.TrimSpace(tok.Scopes),
 	})
-	rt, aerr := c.mgr.resolve(r.Context(), st.user, "", st.tenant)
+	res, aerr := c.mgr.resolveFull(r.Context(), st.user, "", st.tenant)
 	if aerr != nil {
 		bbCallbackPage(w, t.workspaceResolveFailed+aerr.message)
 		return
 	}
+	rt := res.rt
+	// Withdraw the cached posting capability before and after the Agent stores the new token (#2709).
+	resetWorkItemCommentCapability(r.Context(), c.mgr.store, res.mv.MembershipID)
+	defer resetWorkItemCommentCapability(r.Context(), c.mgr.store, res.mv.MembershipID)
 	areq, _ := http.NewRequest("PUT", rt.Endpoint()+"/connections/git/bitbucket/oauth", strings.NewReader(string(payload)))
 	areq.Header.Set("Content-Type", "application/json")
 	if rt.Token() != "" {

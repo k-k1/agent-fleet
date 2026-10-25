@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -50,6 +51,21 @@ var workItemProviders = map[string]bool{"github": true, "jira": true, "bitbucket
 // separate workItemsAPI values but share the same memberships.
 var workItemFetchInFlight sync.Map // membershipID -> struct{}
 
+// resetWorkItemCommentCapability withdraws every cached row's posting capability for a membership
+// whose Bitbucket connection just changed or went away, and starts a new generation so a fetch that
+// began under the old connection cannot write its flags back (ReplaceWorkItemsAt). The generation
+// lives in the database, so it holds across Control Plane processes. The rows stay (the rail keeps
+// listing them); the next successful fetch under the new connection says what it may post.
+//
+// Not tied to the request: a client that hangs up must not leave the old capability in place.
+func resetWorkItemCommentCapability(ctx context.Context, st store.WorkItemStore, mid string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := st.BumpWorkItemCommentGen(ctx, mid); err != nil {
+		log.Printf("work items: withdrawing the comment capability of membership %s failed: %v", mid, err)
+	}
+}
+
 type workItemsAPI struct {
 	memberAuth
 	store store.WorkItemStore
@@ -83,6 +99,10 @@ type workItemDTO struct {
 	// Type is the tracker's issue type, which the branch-name resolver maps to a kind (ADR 0103
 	// decision 4). "" for a tracker without types, a pull request, or an older Agent.
 	Type string `json:"type"`
+	// CanComment is the Agent's word that the connection may post the report-back comment. Only
+	// Bitbucket rows depend on it; false for an older Agent or a scope never recorded, and the
+	// Console keeps such a row read-only.
+	CanComment bool `json:"canComment"`
 }
 
 // workItemChecksDTO is the head commit's checks folded into counts. State is "success" /
@@ -125,7 +145,7 @@ func workItemToDTO(w store.WorkItem) workItemDTO {
 		Key: w.Key, Title: w.Title, State: w.State, URL: w.URL, Assignee: w.Assignee,
 		Labels: splitLabels(w.Labels), LabelColors: decodeLabelColors(w.LabelColors),
 		Repo: w.Repo, UpdatedAt: w.UpdatedAt,
-		Checks: decodeWorkItemChecks(w.Checks), Mergeable: w.Mergeable, Type: w.ItemType}
+		Checks: decodeWorkItemChecks(w.Checks), Mergeable: w.Mergeable, Type: w.ItemType, CanComment: w.CanComment}
 }
 
 func workItemQueryToDTO(q store.WorkItemQuery) workItemQueryDTO {
@@ -347,6 +367,7 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 	if len(due) == 0 {
 		return
 	}
+	gen, gerr := a.store.WorkItemCommentGen(ctx, mid)
 	rows, errs, truncs, err := fetchWorkItemsFromAgent(ctx, res.rt, due)
 	now := store.NowTS()
 	if err != nil {
@@ -365,6 +386,9 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 			// Keep a failed query's cached rows. Dropping them empties the rail on a
 			// single 401.
 			_ = a.store.MarkWorkItemQueryFetched(ctx, q.ID, now, msg)
+			// The kept rows no longer say what the current connection may post: a failed read can
+			// mean the connection changed or lost access.
+			_ = a.store.ClearWorkItemCanComment(ctx, mid, []string{q.ID})
 			continue
 		}
 		ok = append(ok, q.ID)
@@ -379,7 +403,15 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 		_ = a.store.SetWorkItemQueryMatchTotal(ctx, q.ID, truncs[q.ID])
 	}
 	if len(ok) > 0 {
-		_ = a.store.ReplaceWorkItems(ctx, mid, ok, items)
+		if gerr != nil {
+			// Without the generation there is no telling whether the connection changed.
+			for i := range items {
+				items[i].CanComment = false
+			}
+			_ = a.store.ReplaceWorkItems(ctx, mid, ok, items)
+			return
+		}
+		_ = a.store.ReplaceWorkItemsAt(ctx, mid, ok, items, gen)
 	}
 }
 
@@ -412,6 +444,7 @@ type agentWorkItemsResp struct {
 		Checks      workItemChecksDTO `json:"checks"`
 		Mergeable   string            `json:"mergeable"`
 		Type        string            `json:"type"`
+		CanComment  bool              `json:"canComment"`
 	} `json:"items"`
 	Errors []struct {
 		QueryID string `json:"queryId"`
@@ -467,7 +500,7 @@ func fetchWorkItemsFromAgent(ctx context.Context, rt runtime.Runtime, queries []
 			State: it.State, URL: it.URL, Assignee: it.Assignee,
 			Labels: strings.Join(it.Labels, ","), LabelColors: encodeLabelColors(it.LabelColors),
 			Repo: it.Repo, UpdatedAt: it.UpdatedAt,
-			Checks: encodeWorkItemChecks(it.Checks), Mergeable: it.Mergeable, ItemType: it.Type,
+			Checks: encodeWorkItemChecks(it.Checks), Mergeable: it.Mergeable, ItemType: it.Type, CanComment: it.CanComment,
 		})
 	}
 	errs := map[string]string{}

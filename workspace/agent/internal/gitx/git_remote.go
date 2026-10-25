@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -473,6 +474,84 @@ func scopeGranted(set map[string]bool, granular, short string) bool {
 	return set[granular] || set[short]
 }
 
+// scopeList is the canonical stored form of a scope set: sorted, space-separated.
+func scopeList(set map[string]bool) string {
+	names := make([]string, 0, len(set))
+	for n := range set {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return strings.Join(names, " ")
+}
+
+// bitbucketStoredAuth is the Authorization header the STORED connection would send, in the
+// form BitbucketAuthHeader builds it ("" = not connected). It is the identity of a credential:
+// a response is only evidence about the connection whose header produced it.
+func bitbucketStoredAuth(d *secrets.Data) string {
+	if d.Bitbucket != nil && d.Bitbucket.AccessToken != "" {
+		return "Bearer " + d.Bitbucket.AccessToken
+	}
+	if e, ok := d.Git["bitbucket.org"]; ok && e.Token != "" {
+		return "Basic " + base64.StdEncoding.EncodeToString([]byte(e.User+":"+e.Token))
+	}
+	return ""
+}
+
+var errScopesUnchanged = errors.New("bitbucket scopes unchanged")
+
+// BitbucketGrantedScopes is the stored Bitbucket connection's scope list, space-separated: the
+// recorded one (connect / refresh) when there is one, else `observed` — the X-OAuth-Scopes header
+// of a response the caller already received with `auth`, so a connection from before scopes were
+// recorded learns them without an extra request. "" = unknown.
+//
+// `auth` is the Authorization header that request used. Everything is decided against the store
+// as it is NOW, under its lock: if the connection was replaced while the request was in flight
+// (a different token), the answer is "" and nothing is recorded, so one connection's scopes can
+// never be attributed to another. A non-empty observed list is stored only for the connection
+// that produced it.
+func BitbucketGrantedScopes(auth, observed string) string {
+	observed = scopeList(oauthScopeSet(observed))
+	var out string
+	err := secrets.Update(func(d *secrets.Data) error {
+		if auth == "" || bitbucketStoredAuth(d) != auth {
+			return errScopesUnchanged // a different connection than the one that answered
+		}
+		oauth := d.Bitbucket != nil && d.Bitbucket.AccessToken != ""
+		if oauth && d.Bitbucket.Scopes != "" {
+			out = d.Bitbucket.Scopes
+			return errScopesUnchanged
+		}
+		e, hasEntry := d.Git["bitbucket.org"]
+		if !oauth && hasEntry && e.Scopes != "" {
+			out = e.Scopes
+			return errScopesUnchanged
+		}
+		if observed == "" {
+			return errScopesUnchanged
+		}
+		if oauth {
+			d.Bitbucket.Scopes = observed
+		} else {
+			e.Scopes = observed
+			d.Git["bitbucket.org"] = e
+		}
+		out = observed
+		return nil
+	})
+	if err != nil && !errors.Is(err, errScopesUnchanged) {
+		return "" // the store could not be read: unknown is the safe answer
+	}
+	return out
+}
+
+// BitbucketScopesCanComment reports whether a scope list holds what posting a pull request
+// comment needs: `pullrequest:write` (OAuth consumer) or `write:pullrequest:bitbucket` (API
+// token). Only a positive match opens the Console's report-back control, so an empty or unknown
+// list answers false. Read scopes never imply it.
+func BitbucketScopesCanComment(list string) bool {
+	return scopeGranted(oauthScopeSet(list), "write:pullrequest:bitbucket", "pullrequest:write")
+}
+
 // Connect-time check outcomes for a pasted Bitbucket credential.
 var (
 	ErrBBScopeless  = errors.New("Bitbucket rejected the token — create a scoped API token and use your Atlassian account email")
@@ -486,40 +565,44 @@ var (
 // a non-fatal gap (currently "no_write": clone works but push won't); a nil error with an
 // empty warn means the credential is fully usable. Transient failures are treated as
 // "unverified" (allow the connect) rather than blocking a good token on a hiccup.
-func BitbucketConnectCheck(user, token string) (warn string, err error) {
+//
+// scopes is the granted list as Bitbucket echoed it (space-separated, "" when the response
+// carried none), for the caller to record.
+func BitbucketConnectCheck(user, token string) (warn, scopes string, err error) {
 	return bitbucketConnectCheckAt("https://api.bitbucket.org", user, token)
 }
 
 // bitbucketConnectCheckAt is BitbucketConnectCheck with an overridable API base (tests).
-func bitbucketConnectCheckAt(base, user, token string) (warn string, err error) {
+func bitbucketConnectCheckAt(base, user, token string) (warn, scopes string, err error) {
 	client := &http.Client{Timeout: 12 * time.Second}
 	req, err := http.NewRequest("GET", base+"/2.0/user/workspaces?pagelen=1", nil)
 	if err != nil {
-		return "", nil // can't build the probe: don't block the connect
+		return "", "", nil // can't build the probe: don't block the connect
 	}
 	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(user+":"+token)))
 	req.Header.Set("Accept", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", nil // transport error: unverified — allow (list/clone reports later)
+		return "", "", nil // transport error: unverified — allow (list/clone reports later)
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == http.StatusUnauthorized {
-		return "", ErrBBScopeless
+		return "", "", ErrBBScopeless
 	}
 	// When the credential is recognized, Bitbucket echoes its scopes regardless of the
 	// status — enforce the minimum (repo read) and warn on a missing push (write) scope.
 	if set := oauthScopeSet(resp.Header.Get("X-OAuth-Scopes")); len(set) > 0 {
+		scopes = scopeList(set)
 		if !scopeGranted(set, "read:repository:bitbucket", "repository") {
-			return "", ErrBBNoRepoRead
+			return "", scopes, ErrBBNoRepoRead
 		}
 		if !scopeGranted(set, "write:repository:bitbucket", "repository:write") {
-			return "no_write", nil
+			return "no_write", scopes, nil
 		}
-		return "", nil
+		return "", scopes, nil
 	}
-	return "", nil // no scope header to inspect: leave unverified rather than false-block
+	return "", "", nil // no scope header to inspect: leave unverified rather than false-block
 }
 
 // BitbucketGetStatus does an authorized GET and returns the body AND the HTTP status
@@ -532,9 +615,17 @@ func bitbucketConnectCheckAt(base, user, token string) (warn string, err error) 
 // repo is private" to the picker and "this connection has no pull request permission" to
 // the work item rail (workitems_bitbucket.go). Same split as jiraRequest / jiraGet.
 func BitbucketGetStatus(client *http.Client, auth, url string) ([]byte, int, error) {
+	body, status, _, err := BitbucketGetStatusHeader(client, auth, url)
+	return body, status, err
+}
+
+// BitbucketGetStatusHeader is BitbucketGetStatus that also returns the final response's headers
+// (X-OAuth-Scopes among them).
+func BitbucketGetStatusHeader(client *http.Client, auth, url string) ([]byte, int, http.Header, error) {
 	const attempts = 3
 	var lastErr error
 	var lastBody []byte
+	var lastHeader http.Header
 	lastStatus := 0
 	for i := 0; i < attempts; i++ {
 		if i > 0 {
@@ -542,7 +633,7 @@ func BitbucketGetStatus(client *http.Client, auth, url string) ([]byte, int, err
 		}
 		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
-			return nil, 0, err // malformed request URL: not retriable
+			return nil, 0, nil, err // malformed request URL: not retriable
 		}
 		req.Header.Set("Authorization", auth)
 		req.Header.Set("Accept", "application/json")
@@ -553,16 +644,16 @@ func BitbucketGetStatus(client *http.Client, auth, url string) ([]byte, int, err
 		}
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		resp.Body.Close()
-		lastBody, lastStatus, lastErr = body, resp.StatusCode, nil
+		lastBody, lastStatus, lastHeader, lastErr = body, resp.StatusCode, resp.Header, nil
 		if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
-			return body, resp.StatusCode, nil // 2xx and permanent 4xx: the caller decides
+			return body, resp.StatusCode, resp.Header, nil // 2xx and permanent 4xx: the caller decides
 		}
 		// 429 / 5xx: transient — fall through to the next attempt
 	}
 	if lastErr != nil {
-		return nil, 0, lastErr
+		return nil, 0, nil, lastErr
 	}
-	return lastBody, lastStatus, nil
+	return lastBody, lastStatus, lastHeader, nil
 }
 
 // bitbucketGet does an authorized GET and returns the body, mapping common errors — the

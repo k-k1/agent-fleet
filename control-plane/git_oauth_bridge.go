@@ -228,13 +228,15 @@ func jiraRefreshGrant(ctx context.Context, key, secret, refreshToken string) (bb
 	return out, nil
 }
 
-// bbRefreshToken is the wire shape returned to the Agent — deliberately only the three
-// fields it has to store. The app's key/secret are NOT among them: putting them here
-// would re-create the very distribution this bridge removes.
+// bbRefreshToken is the wire shape returned to the Agent — deliberately only the fields it
+// has to store. The app's key/secret are NOT among them: putting them here would re-create
+// the very distribution this bridge removes. Scopes is Bitbucket's own space-separated grant
+// ("" when the answer names none, which the Agent reads as "keep what is recorded").
 type bbRefreshToken struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token,omitempty"`
 	ExpiresIn    int64  `json:"expires_in"`
+	Scopes       string `json:"scopes,omitempty"`
 }
 
 // bbRefreshGrant exchanges a refresh token for a fresh access token.

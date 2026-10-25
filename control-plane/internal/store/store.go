@@ -649,6 +649,7 @@ type WorkItem struct {
 	Checks                              string // JSON object {state,total,failed,pending}; "" when not read
 	Mergeable                           string // clean / conflict / unknown; "" when not read
 	ItemType                            string // the tracker's issue type (GitHub type, Jira issuetype); "" when none
+	CanComment                          bool   // the Agent says the connection may post a comment (Bitbucket rows only)
 }
 
 // WorkItemSession is the ledger row written when a session is started from an item.
@@ -1770,6 +1771,19 @@ type WorkItemStore interface {
 	// transaction. Only the listed queries are touched, so a partially failed refresh
 	// keeps the other queries' rows instead of blanking the rail.
 	ReplaceWorkItems(ctx context.Context, membershipID string, queryIDs []string, items []WorkItem) error
+
+	// WorkItemCommentGen is the membership's Bitbucket-connection generation (0 = never changed).
+	WorkItemCommentGen(ctx context.Context, membershipID string) (int64, error)
+	// BumpWorkItemCommentGen starts a new generation and withdraws every cached row's posting
+	// capability in one transaction (the rows stay).
+	BumpWorkItemCommentGen(ctx context.Context, membershipID string) error
+	// ReplaceWorkItemsAt is ReplaceWorkItems for a fetch that began under generation `gen`: in the
+	// same transaction that writes the rows it checks the generation, and when it moved, the rows
+	// are stored with CanComment cleared. Serialised against BumpWorkItemCommentGen by a row lock.
+	ReplaceWorkItemsAt(ctx context.Context, membershipID string, queryIDs []string, items []WorkItem, gen int64) error
+	// ClearWorkItemCanComment withdraws the posting capability of cached rows (the rows stay).
+	// queryIDs empty = every row of the membership.
+	ClearWorkItemCanComment(ctx context.Context, membershipID string, queryIDs []string) error
 
 	ListWorkItemSessions(ctx context.Context, membershipID string) ([]WorkItemSession, error)
 	CreateWorkItemSession(ctx context.Context, s WorkItemSession) error

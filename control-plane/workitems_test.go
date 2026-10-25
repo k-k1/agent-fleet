@@ -177,6 +177,128 @@ func TestWorkItemsPartialFailureKeepsOtherRows(t *testing.T) {
 	}
 }
 
+// #2709: the Agent's canComment flag survives the cache and reaches the DTO; a row from an Agent
+// that sends none (every row before this field) stays false, so the Console keeps it read-only.
+func TestWorkItemsCanCommentThroughTheCache(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	ctx := context.Background()
+	env.addQuery(t, "bb", "Bitbucket", "acme/web", true)
+	env.body = func() string {
+		return `{"items":[
+		  {"queryId":"bb","provider":"bitbucket","kind":"pr","key":"acme/web#1","title":"a","state":"open","labels":[],"labelColors":{},"canComment":true},
+		  {"queryId":"bb","provider":"bitbucket","kind":"pr","key":"acme/web#2","title":"b","state":"open","labels":[],"labelColors":{},"canComment":false},
+		  {"queryId":"bb","provider":"bitbucket","kind":"pr","key":"acme/web#3","title":"c","state":"open","labels":[],"labelColors":{}}],
+		 "errors":[]}`
+	}
+	env.api.refreshNow(ctx, env.res, true)
+	items, err := env.st.ListWorkItems(ctx, env.mid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, it := range items {
+		got[it.Key] = workItemToDTO(it).CanComment
+	}
+	want := map[string]bool{"acme/web#1": true, "acme/web#2": false, "acme/web#3": false}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s canComment = %v, want %v (all: %v)", k, got[k], v, got)
+		}
+	}
+}
+
+// #2709: a cached true must not outlive the evidence for it. A failed read, a reconnect or a
+// disconnect withdraws it (rows stay), and a fetch that began before the connection changed cannot
+// bring it back.
+func TestWorkItemsCanCommentIsWithdrawnWhenTheConnectionChanges(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	ctx := context.Background()
+	env.addQuery(t, "bb", "Bitbucket", "acme/web", true)
+	granted := `{"items":[{"queryId":"bb","provider":"bitbucket","kind":"pr","key":"acme/web#1","title":"a","state":"open","labels":[],"labelColors":{},"canComment":true}],"errors":[]}`
+	env.body = func() string { return granted }
+	can := func() bool {
+		t.Helper()
+		items, err := env.st.ListWorkItems(ctx, env.mid)
+		if err != nil || len(items) != 1 {
+			t.Fatalf("items=%v err=%v", items, err)
+		}
+		return workItemToDTO(items[0]).CanComment
+	}
+	env.api.refreshNow(ctx, env.res, true)
+	if !can() {
+		t.Fatal("setup: the granted row must be commentable")
+	}
+
+	// 1. The next read fails (not connected, no access): the kept row loses the capability.
+	env.body = func() string {
+		return `{"items":[],"errors":[{"queryId":"bb","message":"Bitbucket is not connected"}]}`
+	}
+	env.api.refreshNow(ctx, env.res, true)
+	if can() {
+		t.Error("a failed query kept its stale canComment=true")
+	}
+
+	// 2. A reconnect/disconnect withdraws it from rows that are otherwise cached fine.
+	env.body = func() string { return granted }
+	env.api.refreshNow(ctx, env.res, true)
+	if !can() {
+		t.Fatal("setup: regranted")
+	}
+	resetWorkItemCommentCapability(ctx, env.st, env.mid)
+	if can() {
+		t.Error("a connection change left canComment=true in the cache")
+	}
+
+	// 3. A fetch that was already in flight when the connection changed carries the OLD scopes.
+	env.body = func() string {
+		resetWorkItemCommentCapability(ctx, env.st, env.mid) // the reconnect lands during the fetch
+		return granted
+	}
+	env.api.refreshNow(ctx, env.res, true)
+	if can() {
+		t.Error("an in-flight fetch from before the reconnect restored canComment=true")
+	}
+	// The row itself is still listed.
+	if items, _ := env.st.ListWorkItems(ctx, env.mid); len(items) != 1 {
+		t.Errorf("rows were dropped: %d", len(items))
+	}
+}
+
+// racingStore runs `before` right at the entrance of the commit, i.e. after the caller's own checks
+// and before its rows land: the window an in-process comparison cannot see.
+type racingStore struct {
+	store.WorkItemStore
+	before func()
+}
+
+func (r racingStore) ReplaceWorkItemsAt(ctx context.Context, mid string, qids []string, items []store.WorkItem, gen int64) error {
+	r.before()
+	return r.WorkItemStore.ReplaceWorkItemsAt(ctx, mid, qids, items, gen)
+}
+
+// The whole connection change (before-reset, new token, after-reset) completes between the fetch's
+// last check and its write; the old connection's true must still not land.
+func TestWorkItemsCanCommentCannotBeRestoredByACommitRace(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	ctx := context.Background()
+	env.addQuery(t, "bb", "Bitbucket", "acme/web", true)
+	env.body = func() string {
+		return `{"items":[{"queryId":"bb","provider":"bitbucket","kind":"pr","key":"acme/web#1","title":"a","state":"open","labels":[],"labelColors":{},"canComment":true}],"errors":[]}`
+	}
+	env.api.store = racingStore{env.st, func() {
+		resetWorkItemCommentCapability(ctx, env.st, env.mid)
+		resetWorkItemCommentCapability(ctx, env.st, env.mid)
+	}}
+	env.api.refreshNow(ctx, env.res, true)
+	items, err := env.st.ListWorkItems(ctx, env.mid)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items=%v err=%v", items, err)
+	}
+	if items[0].CanComment {
+		t.Error("a fetch from before the reconnect restored canComment=true after both resets")
+	}
+}
+
 // #1095: a query whose page left matches out says so, and keeps saying so while the Workspace is
 // stopped. Three cases in one refresh — a known count, a full page without a count, and a query
 // that fit — then a refresh that fails, which must keep the note next to the rows it kept.

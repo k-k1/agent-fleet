@@ -516,3 +516,13 @@ token calls now retry transport errors, 429 and 5xx with a jittered exponential 
 grant's total budget (14 s) stays well under the Agent's 20 s call to the bridge. Retrying a refresh with the
 same token relies on Atlassian's rotating-refresh-token reuse interval (default 10 minutes), per its
 documentation; it has not been measured against a real tenant. The decisions above stand as written.
+
+## Note (2026-10-25, #2709): Bitbucket rows can be commented on once the scope is granted
+
+Decision 19 (Bitbucket read-only) stands for connections that lack `pullrequest:write`. The Agent now posts a
+comment on a Bitbucket pull request (`POST /2.0/repositories/{workspace}/{repo}/pullrequests/{id}/comments`),
+records the scopes Bitbucket granted (OAuth token and refresh responses; a pasted token's `X-OAuth-Scopes`
+at connect, or the header of a work-item fetch for a connection that predates this), and sends `canComment`
+on each Bitbucket row. The Console offers the report button only on `canComment: true`; unknown scopes stay
+read-only. Not measured against a real Bitbucket: that the token and refresh responses carry `scopes` and that
+`X-OAuth-Scopes` is sent for bearer tokens. Bitbucket issues are still not listed. Follow-ups: none.
