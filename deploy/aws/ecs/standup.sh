@@ -209,6 +209,29 @@ if [ -n "$HOSTED_ZONE" ]; then
 fi
 command -v crane >/dev/null || say_missing "no crane (needed to carry GHCR -> ECR with the index intact)"
 
+# The workspace egress address handed back (00-network GatewayEipAllocationId, #2728): it must
+# still exist, be the address captured with it (the ALB admits the gateway by that address), and
+# be held by nothing but this deployment's own gateway interface, or the association fails
+# half-way through the network stack. Only when the gateway is built (EgressRoute=gateway; the
+# template's default is nat-gateway): otherwise the stack does not use the address, which may
+# since have been released, and must not stop a NAT-only rebuild.
+gw_alloc="$(af_read_one_param 00-network GatewayEipAllocationId)"
+if [ -n "$gw_alloc" ] && [ "$(af_read_one_param 00-network EgressRoute)" = gateway ]; then
+  gw_addr="$(af_read_one_param 00-network GatewayEipAddress)"
+  gw_got="$("${AWS[@]}" ec2 describe-addresses --allocation-ids "$gw_alloc" \
+    --query 'Addresses[0].[PublicIp,NetworkInterfaceId]' --output text 2>/dev/null || true)"
+  read -r gw_ip gw_ni <<<"$gw_got" || true
+  case "${gw_ip:-None}" in
+    None) say_missing "GatewayEipAllocationId $gw_alloc is not an address in $AF_PROFILE/$AF_REGION (README, \"Egress gateway\")" ;;
+    "$gw_addr") ;;
+    *) say_missing "GatewayEipAddress '$gw_addr' is not the address of $gw_alloc ($gw_ip)" ;;
+  esac
+  case "${gw_ni:-None}" in
+    None|"$(af_gateway_eni "$AF_STACK_NETWORK")") ;;
+    *) say_missing "$gw_alloc ($gw_ip) is associated with $gw_ni, not this deployment's gateway interface" ;;
+  esac
+fi
+
 # Do the captured parameters still fit the templates as they are now?
 #
 # Without this, CFN refuses with "missing required parameter" only after 00-20 are already

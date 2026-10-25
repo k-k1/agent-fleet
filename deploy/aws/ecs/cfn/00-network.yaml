@@ -77,8 +77,29 @@ Parameters:
       the private route table. gateway = the ADR 0122 egress gateway: an Auto Scaling group of
       one EC2 instance running Squid and `control-plane egress-agent`, which records (and in
       enforce, decides) every workspace connection. The CP, the slots and the engines stay on
-      the NAT gateway either way. Workspaces then egress from GatewayEip, not the NAT
-      address (#2728). README, "Egress gateway".
+      the NAT gateway either way. Workspaces then egress from the gateway's own address
+      (GatewayEipAllocationId), not the NAT address: two addresses to allow-list (#2728).
+      README, "Egress gateway".
+  GatewayEipAllocationId:
+    Type: String
+    Default: ""
+    AllowedPattern: "^(eipalloc-[0-9a-f]+)?$"
+    Description: >-
+      Elastic IP allocation id (eipalloc-...) for the egress gateway (EgressRoute=gateway): the
+      WORKSPACE egress address, the second one an organisation allow-lists (the CP and hosts keep
+      the NAT address). Empty = the stack allocates one and retains it. Allocate it outside the
+      stack (or reuse one retained from an earlier gateway) to allow-list it before switching
+      EgressRoute=gateway, and pass it again to keep it across a rebuild. Set it together with
+      GatewayEipAddress, when the gateway is created (switching to gateway, or a stand-up);
+      changing it on a stack that already runs the gateway re-associates the interface's address.
+  GatewayEipAddress:
+    Type: String
+    Default: ""
+    AllowedPattern: "^([0-9]{1,3}\\.){3}[0-9]{1,3}$|^$"
+    Description: >-
+      The public address of GatewayEipAllocationId (aws ec2 describe-addresses), required with
+      it and empty without it. The ALB admits the gateway by this address (AlbFromGateway), and
+      CloudFormation cannot read it from an allocation it did not create.
   GatewayEnabled:
     Type: String
     Default: "true"
@@ -101,6 +122,18 @@ Parameters:
       AL2023 AMI of the egress gateway, resolved at each deploy: a deploy that resolves a
       newer AMI replaces the gateway instance (a few minutes without workspace egress).
 
+Rules:
+  GatewayEipAddressWithAllocation:
+    RuleCondition: !Not [ !Equals [ !Ref GatewayEipAllocationId, "" ] ]
+    Assertions:
+      - Assert: !Not [ !Equals [ !Ref GatewayEipAddress, "" ] ]
+        AssertDescription: GatewayEipAllocationId needs GatewayEipAddress (its public address).
+  GatewayEipAllocationWithAddress:
+    RuleCondition: !Not [ !Equals [ !Ref GatewayEipAddress, "" ] ]
+    Assertions:
+      - Assert: !Not [ !Equals [ !Ref GatewayEipAllocationId, "" ] ]
+        AssertDescription: GatewayEipAddress is only for an address passed as GatewayEipAllocationId.
+
 Mappings:
   Subnets:
     Public0:  { Cidr: 10.20.0.0/24 }
@@ -114,6 +147,9 @@ Conditions:
   NatOn: !Equals [ !Ref NatEnabled, "true" ]
   S3EndpointOn: !Equals [ !Ref S3EndpointEnabled, "true" ]
   GatewayOn: !Equals [ !Ref EgressRoute, gateway ]
+  # No allocation handed in -> the stack owns the workspace address (and retains it, below).
+  CreateGatewayEip: !And [ !Condition GatewayOn, !Equals [ !Ref GatewayEipAllocationId, "" ] ]
+  GivenGatewayEip: !And [ !Condition GatewayOn, !Not [ !Equals [ !Ref GatewayEipAllocationId, "" ] ] ]
   # Only the group's size follows it: the interface, its address and the route never do.
   GatewayUp: !Equals [ !Ref GatewayEnabled, "true" ]
   # The workspace default route exists while its target does: the gateway, or the NAT
@@ -487,11 +523,13 @@ Resources:
       Tags:
         - { Key: Name, Value: !Sub "af-${AWS::StackName}-egress-gateway" }
         - { Key: af-egress-gateway, Value: !Ref AWS::StackName }
-  # Retained for the same reason as NatEip: it is an address an organisation may allow-list.
-  # It is NOT the NAT gateway's address; moving one address between the two is #2728.
+  # Retained for the same reason as NatEip: it is an address an organisation allow-lists. It is
+  # NOT the NAT gateway's address: workspaces and the CP egress from two addresses (#2728).
+  # Created only when no GatewayEipAllocationId is handed in; a handed-in address is never
+  # created, replaced or released by this stack.
   GatewayEip:
     Type: AWS::EC2::EIP
-    Condition: GatewayOn
+    Condition: CreateGatewayEip
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -501,19 +539,33 @@ Resources:
     Type: AWS::EC2::EIPAssociation
     Condition: GatewayOn
     Properties:
-      AllocationId: !GetAtt GatewayEip.AllocationId
+      AllocationId: !If [ CreateGatewayEip, !GetAtt GatewayEip.AllocationId, !Ref GatewayEipAllocationId ]
       NetworkInterfaceId: !Ref GatewayEni
   # Workspaces reach the CP's public URL through the gateway now, and the agent ships to it,
-  # so a narrowed AlbIngressCidr must still admit the gateway's address.
+  # so a narrowed AlbIngressCidr must still admit the gateway's address. One rule per source of
+  # the address: a handed-in allocation's address is a parameter (GatewayEipAddress).
   AlbFromGateway:
     Type: AWS::EC2::SecurityGroupIngress
-    Condition: GatewayOn
+    Condition: CreateGatewayEip
     Properties:
       GroupId: !Ref AlbSg
       IpProtocol: tcp
       FromPort: 443
       ToPort: 443
       CidrIp: !Sub "${GatewayEip}/32"
+      Description: HTTPS from the egress gateway (workspaces and its agent)
+  AlbFromGivenGateway:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: GivenGatewayEip
+    # cfn-lint resolves GatewayEipAddress to its empty default ("/32"); this resource exists only
+    # with an allocation, and the Rules then require the address.
+    Metadata: { cfn-lint: { config: { ignore_checks: [ W1031 ] } } }
+    Properties:
+      GroupId: !Ref AlbSg
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: !Sub "${GatewayEipAddress}/32"
       Description: HTTPS from the egress gateway (workspaces and its agent)
 
   # The bearer the gateway's agent and the CP share (AF_EGRESS_TOKEN). Generated here, never
@@ -927,6 +979,11 @@ Outputs:
   EgressTokenSecretArn:
     Condition: GatewayOn
     Value: !Ref EgressTokenSecret
+  # The workspace egress address, whoever allocated it. Named like the parameters so that
+  # capture-env.sh fills a parameter captured empty from them, and a rebuild keeps the address.
   GatewayEipAddress:
     Condition: GatewayOn
-    Value: !Ref GatewayEip
+    Value: !If [ CreateGatewayEip, !Ref GatewayEip, !Ref GatewayEipAddress ]
+  GatewayEipAllocationId:
+    Condition: GatewayOn
+    Value: !If [ CreateGatewayEip, !GetAtt GatewayEip.AllocationId, !Ref GatewayEipAllocationId ]

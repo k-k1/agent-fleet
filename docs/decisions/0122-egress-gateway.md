@@ -641,3 +641,33 @@ are per region); the bucket policy refuses plain HTTP; `EgressArchive=existing` 
 retained bucket after a disable or a teardown, so the archive's data is never the price of
 re-enabling it; both scripts stop when the bucket output cannot be read, since the purger deletes
 events once the archive is off.
+
+## Addendum (2026-10-26) — open point 7 on AWS: two egress addresses (#2728)
+
+Decided with the maintainer (2026-10-25, recorded on #2728): with `EgressRoute=gateway` a
+deployment egresses from **two permanent addresses**. The CP, the slot hosts and the engines
+keep the NAT gateway's (`NatEip`); workspaces use the gateway's. An organisation registers both.
+Not run on a real account.
+
+- **`GatewayEipAllocationId` / `GatewayEipAddress`** (`00-network`), the counterpart of
+  `NatEipAllocationId`. An address allocated outside the stack can be allow-listed before the
+  switch to `gateway`, so there is no gap. Without them the stack allocates the address and
+  retains it. With them the stack never creates, replaces or releases it (`GatewayEip` exists
+  only under `CreateGatewayEip`). The public address is a parameter too: the ALB admits the gateway
+  by it, and CloudFormation cannot read the address of an allocation it did not create. Rules
+  require the two together.
+- **A rebuild keeps it.** Outputs of the same names carry the address whoever allocated it, so
+  `capture-env.sh` fills the two parameters captured empty, as it does `NatEipAllocationId`.
+  With `EgressRoute=gateway`, `standup.sh` refuses to build when the allocation is gone, its address is not the captured
+  one, or another interface holds it. An address retained by an earlier gateway is found by its
+  `af-<stack>-egress-gateway-eip` tag and handed back the same way (README, "Two egress
+  addresses").
+- **Set when the gateway is created**, not on a stack that runs it: the change replaces
+  `GatewayEipAssoc` under the workspaces (not measured).
+- **Rejected:** moving `NatEip` onto the gateway (option C). A NAT gateway's address cannot change
+  in place, so the CP and hosts would get a new address anyway, after a window with no egress.
+  **Not built, documented as the alternative** for an organisation that cannot register a second
+  address: the gateway egressing through the NAT gateway (option B). That gives one address, but
+  NAT data processing returns on all workspace traffic.
+
+Open point 7 is closed for AWS by this.
