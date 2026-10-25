@@ -177,7 +177,7 @@ declare.
 
 - **Workloads reach the internet from the CP's address.** Workspace tasks get no
   public IP; the private subnets send internet-bound traffic through one NAT gateway,
-  which the CP uses too (S3 goes through a gateway endpoint instead). An outside
+  which the CP uses too (S3 too: there is no S3 gateway endpoint, see ADR 0122). An outside
   service that trusts that address (a git host's IP allowlist, for example) trusts
   every member's workload, not just the CP.
 

@@ -315,6 +315,21 @@ gateway. The fix, an endpoint policy limited to the buckets the stack needs, or 
 the workspace subnets, is #2657. Even with a policy, access through the endpoint is not
 attributed per workspace.
 
+### AWS: no S3 gateway endpoint for now (decided with the maintainer, 2026-10-25)
+
+`S3Endpoint` is removed from `00-network.yaml` (#2657). A policy on it was written and reviewed
+(commit `6829e6e`, in the history of PR #2697): the ECR layer bucket, the AL2023 repositories and
+the models bucket, the latter limited to this account's buckets. It does not do what the
+first plan assumed. A request the policy refuses does not fall back to the NAT gateway, because
+the S3 prefix-list route is more specific than the default route; it is AccessDenied, which would
+break any same-region S3 use by a workspace. So S3 now leaves through the NAT gateway like other
+egress, and through the egress gateway once decision 5 lands, where it can be recorded. The
+cost: ECR layer bytes cross the NAT, about 918 MiB compressed per Fargate workspace start
+(`deploy/aws/ecs/README.md`, start-latency measurement), at NAT data-processing rates. The end
+state, an endpoint limited to ECR layers and the stack's buckets with workspace S3 through the
+gateway's explicit proxy, is #2700 and lands with the AWS gateway's first stage. Not yet verified
+on a deployed account.
+
 ### Open point 4: SSH git and DNS (decided with the maintainer, 2026-10-24)
 
 - **SSH git is off by default and a deploying organisation can turn it on per host.** The gateway
