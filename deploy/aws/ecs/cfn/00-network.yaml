@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  agent-fleet ECS adapter (P3-7) - network substrate: VPC, 2-AZ public/private
-  subnets, IGW, one NAT gateway, and the base
+  agent-fleet ECS adapter (P3-7) - network substrate: VPC, 2-AZ public/private/workspace
+  subnets, IGW, one NAT gateway, the S3 gateway endpoint, and the base
   security groups (alb -> cp -> ws).
   Static substrate only; per-workspace resources are created by the Control Plane
   at runtime. Later stacks (10-data, 20-platform) import these via exports.
@@ -44,6 +44,18 @@ Parameters:
       while a deployment sleeps: a NAT gateway bills by the hour and has no stop). The
       egress address survives - see NatEip - so "true" brings the same source IP back.
       Nothing in a private subnet can reach ECR, logs, S3 or the internet while it is false.
+  WorkspaceSubnet0Cidr:
+    Type: String
+    Default: 10.20.32.0/20
+    Description: >-
+      CIDR of the workspace subnet in the first AZ: workspace task ENIs only (#2716). Must sit
+      inside VpcCidr and clear of the public (10.20.0.0/24, 10.20.1.0/24) and private
+      (10.20.10.0/24, 10.20.11.0/24) subnets. A /20 because every workspace task takes an
+      address of its own. Changing it on a live stack replaces the subnet.
+  WorkspaceSubnet1Cidr:
+    Type: String
+    Default: 10.20.48.0/20
+    Description: CIDR of the workspace subnet in the second AZ; see WorkspaceSubnet0Cidr.
 
 Mappings:
   Subnets:
@@ -106,6 +118,26 @@ Resources:
       AvailabilityZone: !Select [ 1, !GetAZs "" ]
       CidrBlock: !FindInMap [ Subnets, Private1, Cidr ]
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-private-1" } ]
+  # Workspace subnets (#2716): the workspace task ENIs, and nothing else. They have a route
+  # table of their own because routing is per route table: the private one keeps the S3
+  # endpoint for image pulls (the ECS agent on an ecs-ec2 slot pulls through the instance's
+  # ENI in a private subnet), while a workspace's own S3 leaves through the NAT, later the
+  # egress gateway of ADR 0122, where it can be recorded. One per AZ of the private subnets:
+  # the CP refuses a home in an AZ without one rather than fall back to the private subnet.
+  WorkspaceSubnet0:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [ 0, !GetAZs "" ]
+      CidrBlock: !Ref WorkspaceSubnet0Cidr
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-workspace-0" } ]
+  WorkspaceSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [ 1, !GetAZs "" ]
+      CidrBlock: !Ref WorkspaceSubnet1Cidr
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-workspace-1" } ]
 
   PublicRt:
     Type: AWS::EC2::RouteTable
@@ -169,18 +201,106 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties: { SubnetId: !Ref PrivateSubnet1, RouteTableId: !Ref PrivateRt }
 
-  # No S3 gateway endpoint on purpose. An endpoint without a policy is full access: a
-  # workspace could reach any bucket in the region without crossing the NAT gateway (or the
-  # egress gateway of ADR 0122), unrecorded (#2657). One with a policy does not fall back
-  # to the NAT for what it refuses (the S3 prefix-list route is more specific than
-  # 0.0.0.0/0), so it would break same-region S3 for workspaces. So all S3 leaves through
-  # the NAT. Cost: ECR layer bytes cross it, ~918 MiB compressed per Fargate workspace
-  # start at the NAT data-processing rate (deploy/aws/ecs/README.md, NAT bullet). The end state - an endpoint
-  # limited to ECR layers and the stack's buckets, workspace S3 through the gateway's
-  # proxy - is #2700; the reviewed policy is in this file at commit 6829e6e.
-  # Interface endpoints (ecr.api / ecr.dkr / logs / ssm) are deliberately NOT here either:
-  # at $0.01/AZ/hour x 2 AZ each they cost more than the NAT gateway they'd relieve.
-  # deploy/local/cfn-no-s3-endpoint-test.py pins this.
+  # The workspace route table: the default route to the NAT and NO S3 endpoint route, so a
+  # workspace's S3 is never refused by the endpoint policy below and never skips the NAT
+  # (#2657). Under NatEnabled=false it loses its default route with the private one.
+  # deploy/local/cfn-s3-endpoint-test.py pins both route tables.
+  WorkspaceRt:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-workspace-rt" } ]
+  WorkspaceDefaultRoute:
+    Type: AWS::EC2::Route
+    Condition: NatOn
+    Properties:
+      RouteTableId: !Ref WorkspaceRt
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref Nat
+  WorkspaceAssoc0:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref WorkspaceSubnet0, RouteTableId: !Ref WorkspaceRt }
+  WorkspaceAssoc1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref WorkspaceSubnet1, RouteTableId: !Ref WorkspaceRt }
+
+  # S3 gateway endpoint on the PRIVATE route table only (CP, ecs-ec2 slot hosts, engines,
+  # home-op tasks). ECR stores layer blobs in S3, so an ecs-ec2 cold pull (made by the ECS
+  # agent through the slot instance's ENI) stays off the NAT's data processing: ~918 MiB
+  # compressed per workspace image (deploy/aws/ecs/README.md). Workspace tasks are not on
+  # this route table (WorkspaceRt), so the policy never decides their S3. Fargate workspaces
+  # pull through their own task ENI and so still pull through the NAT.
+  # Interface endpoints (ecr.api / ecr.dkr / logs / ssm) are deliberately NOT here: at
+  # $0.01/AZ/hour x 2 AZ each they cost more than the NAT gateway they'd relieve.
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcEndpointType: Gateway
+      RouteTableIds: [ !Ref PrivateRt ]
+      # Only what the stack itself needs is admitted. A request the policy denies does NOT
+      # fall back to the NAT: the S3 prefix-list route is more specific than 0.0.0.0/0, so
+      # a same-region S3 request from a private subnet that the policy refuses is
+      # AccessDenied (S3 in another region is outside the prefix list and still leaves
+      # through the NAT). That is acceptable here only because nothing a user drives runs on
+      # this route table. When the stack starts using another bucket from a private subnet,
+      # add it here (deploy/local/cfn-s3-endpoint-test.py pins this list).
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          # ECR image layers. ECR serves layer blobs from an AWS-owned bucket in the region;
+          # this is the resource AWS documents for the endpoint policy in "Amazon ECR
+          # interface VPC endpoints (AWS PrivateLink)", section "Create a VPC endpoint for
+          # Amazon S3" (the S3 gateway endpoint ECR image pulls need). Read-only. Drop this
+          # statement and every image pull is refused at the endpoint: a refused request does
+          # not fall back to the NAT.
+          - Sid: EcrLayerBucket
+            Effect: Allow
+            Principal: "*"
+            Action: [ "s3:GetObject" ]
+            Resource: !Sub "arn:${AWS::Partition}:s3:::prod-${AWS::Region}-starport-layer-bucket/*"
+          # Amazon Linux 2023 package repositories (dnf on the ecs-ec2 slot instances, which
+          # sit on the private route table). AWS documents the repo bucket as
+          # al2023-repos-<region>-de612dc2 ("Amazon Linux 2023 User Guide", "Package
+          # repository"). Read-only; nothing in the templates runs dnf today, so this keeps
+          # an operator's package install or an AMI refresh from needing the NAT.
+          - Sid: Al2023Repos
+            Effect: Allow
+            Principal: "*"
+            Action: [ "s3:GetObject" ]
+            Resource: !Sub "arn:${AWS::Partition}:s3:::al2023-repos-${AWS::Region}-de612dc2/*"
+          # The optional models bucket of 60-engines (af-<engines stack>-models-<account>):
+          # the CP lists and reads it, the ingest tasks write it and the engine VMs read
+          # it. This stack cannot name the engines stack, so the stack-name part is a
+          # wildcard. The account id in the name is not an ownership proof (anyone can
+          # create af-x-models-<this account id> in their own account), so the statements
+          # also require s3:ResourceAccount to be this account, which AWS sets from the
+          # bucket's owner. Other stacks' buckets in this account match too; IAM on each
+          # role is what narrows them.
+          # Actions are the union of what those IAM roles hold (IAM still decides per
+          # role); multipart and tagging are what `aws s3 mv/cp` of a large model uses.
+          - Sid: ModelsObjects
+            Effect: Allow
+            Principal: "*"
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:AbortMultipartUpload
+              - s3:ListMultipartUploadParts
+              - s3:GetObjectTagging
+              - s3:PutObjectTagging
+            Resource: !Sub "arn:${AWS::Partition}:s3:::af-*-models-${AWS::AccountId}/*"
+            Condition:
+              StringEquals: { "s3:ResourceAccount": !Ref AWS::AccountId }
+          - Sid: ModelsList
+            Effect: Allow
+            Principal: "*"
+            Action: [ "s3:ListBucket", "s3:ListBucketMultipartUploads" ]
+            Resource: !Sub "arn:${AWS::Partition}:s3:::af-*-models-${AWS::AccountId}"
+            Condition:
+              StringEquals: { "s3:ResourceAccount": !Ref AWS::AccountId }
 
   # --- Security groups: linear alb -> cp -> ws (no cycle) ---
   AlbSg:
@@ -236,6 +356,11 @@ Outputs:
   PrivateSubnets:
     Value: !Join [ ",", [ !Ref PrivateSubnet0, !Ref PrivateSubnet1 ] ]
     Export: { Name: !Sub "${AWS::StackName}-PrivateSubnets" }
+  # Workspace task ENIs only (30-ingress hands it to the CP as AF_ECS_WORKSPACE_SUBNETS).
+  # update.sh reads this output's presence to tell whether the stack has them.
+  WorkspaceSubnets:
+    Value: !Join [ ",", [ !Ref WorkspaceSubnet0, !Ref WorkspaceSubnet1 ] ]
+    Export: { Name: !Sub "${AWS::StackName}-WorkspaceSubnets" }
   AlbSgId:
     Value: !Ref AlbSg
     Export: { Name: !Sub "${AWS::StackName}-AlbSgId" }

@@ -729,6 +729,13 @@ fi
 # would work and then builds x86_64 (measured — the CP that came up had runtimePlatform
 # x86_64). Some captures have no CpArch line at all, so the override has to add it.
 af_param_override CpArch "$CP_ARCH"
+# Workspace subnets (#2716): a rebuilt 00-network has new subnet ids, so the output, never the
+# capture. A network stack without the output passes nothing (workspaces in the private subnets).
+af_param_drop WorkspaceSubnets
+if [ "$AF_DRY" != 1 ]; then
+  ws_subnets="$(af_stack_output "$AF_STACK_NETWORK" WorkspaceSubnets)"
+  [ -z "$ws_subnets" ] || af_param_override WorkspaceSubnets "$ws_subnets"
+fi
 if [ -n "$AF_STACK_POOL" ] && [ "$AF_DRY" != 1 ]; then
   lt="$(af_stack_output "$AF_STACK_POOL" SlotLaunchTemplateId)"
   ami="$(af_stack_output "$AF_STACK_POOL" SlotAmiIdArm64)"

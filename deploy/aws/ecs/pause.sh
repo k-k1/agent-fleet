@@ -233,7 +233,10 @@ nat_enabled() {
 
 # nat_set <true|false> — move the NAT gateway through the stack that owns it. Every other
 # parameter keeps its live value (`deploy` leaves what it is not given at UsePreviousValue).
-# The wait is the point: on `--up` nothing may start until the route exists again.
+# The wait is the point: on `--up` nothing may start until the route exists again. Both default
+# routes (private and workspace route table) follow NatEnabled. This deploys the checkout's
+# template, so a network stack older than it gains what it adds (the workspace subnets and the
+# S3 endpoint, #2716); run update.sh afterwards so the CP is handed the workspace subnets.
 nat_set() {
   if [ "$AF_DRY" = 1 ]; then
     echo "DRY: cloudformation deploy --stack-name $AF_STACK_NETWORK --template-file $HERE/cfn/00-network.yaml --parameter-overrides NatEnabled=$1"

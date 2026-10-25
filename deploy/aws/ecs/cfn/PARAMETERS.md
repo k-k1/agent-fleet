@@ -76,6 +76,29 @@ against Fargate's ~105s. The price is six resource kinds per workspace on a subs
 no production mileage. Requires the 40-ec2-pool stack and `Ec2SlotLaunchTemplate`. Falling
 back is this one value.
 
+### `WorkspaceSubnets`
+
+The `WorkspaceSubnets` output of 00-network, passed to the CP as `AF_ECS_WORKSPACE_SUBNETS`
+(#2716). Workspace task ENIs go there; the CP, the ecs-ec2 slot instances, the home task and
+the engines stay in the private subnets. The two subnet kinds differ only in their route
+table: the private one has the S3 gateway endpoint, whose policy admits only ECR layers, the
+AL2023 repositories and the models bucket; the workspace one has no endpoint route, so a
+workspace's own S3 leaves through the NAT. On ecs-ec2 the image pull is made by the ECS
+agent through the slot instance's ENI, so it stays on the endpoint. A Fargate workspace pulls
+through its task ENI, so its pull crosses the NAT either way; it is moved too, because on the
+private route table its own S3 would meet the endpoint policy, which refuses (AccessDenied)
+rather than falls back to the NAT.
+
+It is a derived fact, not a choice: `standup.sh` and `update.sh` pass the network stack's
+output on every run (a rebuilt network has new subnet ids). Empty, the default, means
+workspaces in the private subnets, which is only right on a network stack without the
+endpoint. A deploy by hand must pass it: `WorkspaceSubnets=$(aws cloudformation
+describe-stacks --stack-name <network stack> --query "Stacks[0].Outputs[?OutputKey=='WorkspaceSubnets'].OutputValue" --output text)`.
+
+Every AZ of the private subnets needs a workspace subnet: the CP refuses to start a workspace
+in an AZ without one rather than fall back to the private subnet, and puts no new home there.
+An existing workspace moves on its next Start.
+
 ## EC2 slot pool (`WsRuntime=ecs-ec2`)
 
 ### `Ec2SlotLaunchTemplate`

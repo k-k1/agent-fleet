@@ -324,8 +324,8 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 `McpEnabled=on`; the Rule fails the operation otherwise) and `McpOAuthTrustedHosts` sets the
 fallback host list `AF_MCP_OAUTH_TRUSTED_HOSTS`. All three default to off / empty and then
 add no environment entry, so an existing stack is unchanged until you set them. **`update.sh`
-overrides only `ImageTag` (plus `EfsBackup`)**, every other parameter keeps its previous
-value and a parameter the stack has never had takes the template default, so a release
+overrides only `ImageTag` (plus `EfsBackup` and `WorkspaceSubnets`)**, every other parameter
+keeps its previous value and a parameter the stack has never had takes the template default, so a release
 that adds these parameters turns nothing on; run the targeted deploy above to turn them on.
 Details: [`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#mcp-mcp-and-mcp-oauth) and
 `guide/operate/04-secure.md`, "Sign-in for remote MCP clients".
@@ -343,8 +343,8 @@ Control Plane variables that the operator guide calls configurable have a parame
 `BackgroundHoldMax`, `WorkspaceStartDeadline`, `UsageSampleInterval`; `GithubLoginClientId`,
 `GithubLabelJa`, `GithubLabelEn`, `GithubMembershipTtl`, `GithubMembershipGrace`; `LlmUrl`,
 `ComfyUrl`, `RemoteEngineUrl`, `RemoteEngineKeys`. Empty (the default) adds no environment entry,
-so an existing stack is unchanged and `update.sh` (which overrides only `ImageTag` and
-`EfsBackup`) neither sets nor clears them. The three secrets (`AF_GITHUB_LOGIN_CLIENT_SECRET`,
+so an existing stack is unchanged and `update.sh` (which overrides only `ImageTag`,
+`EfsBackup` and `WorkspaceSubnets`) neither sets nor clears them. The three secrets (`AF_GITHUB_LOGIN_CLIENT_SECRET`,
 `AF_COMFY_API_KEY`, `AF_REMOTE_ENGINE_TOKEN`) are read from SSM SecureString parameters
 `<SsmPrefix>/github-login-client-secret`, `/comfy-api-key`, `/remote-engine-token` when their own
 switch (`GithubLoginSecret`, `ComfyApiKey`, `RemoteEngineToken` = `on`) is set; create the SSM
@@ -839,7 +839,7 @@ service supports it:
 | Service | Why | Actions (summary) |
 |---|---|---|
 | cloudformation | stack CRUD | Create/Update/Delete/Describe stacks + change sets |
-| ec2 | 00-network (VPC/subnets/NAT/SG/endpoint) | Create/Delete/Describe VPC, subnets, IGW, NAT, EIP, routes, security groups, VPC endpoints |
+| ec2 | 00-network (VPC/subnets/NAT/SG/S3 gateway endpoint) | Create/Delete/Describe VPC, subnets, IGW, NAT, EIP, route tables and routes, security groups, VPC endpoints (the S3 gateway endpoint with its policy: `ec2:CreateVpcEndpoint`/`ModifyVpcEndpoint`/`DeleteVpcEndpoints`) |
 | ecr | 20-platform repos + image push | CreateRepository/DeleteRepository/Describe*, GetAuthorizationToken, BatchCheckLayerAvailability, InitiateLayerUpload, UploadLayerPart, CompleteLayerUpload, PutImage |
 | ecs | 20-platform cluster + 30-ingress service | Create/Delete/Describe cluster & service, RegisterTaskDefinition, plus `iam:CreateServiceLinkedRole` once per account |
 | servicediscovery | Service Connect namespace | Create/Delete/Get namespace |
@@ -1910,18 +1910,30 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
   and every private-subnet task also reaches ECR / CloudWatch Logs / SSM through it
   (there is no public IP on those tasks) — so the NAT is on the **workspace start
   path**, not just the user's internet access.
-  - There is **no S3 gateway endpoint** (#2657): it would let a workspace reach any bucket
-    in the region around the NAT, unrecorded, and a policy on it makes refused same-region
-    S3 requests fail with AccessDenied instead of using the NAT. So **all S3 traffic crosses
-    the NAT, ECR layer blobs included**: a Fargate workspace start pulls ~918 MiB compressed
-    (see the start-latency measurement below) through NAT data processing, and the models
-    bucket reads of `60-engines` do too. The end state (an endpoint limited to ECR layers
-    and the stack's buckets, workspace S3 through the egress gateway's proxy) is #2700.
-    **When updating a running stack that still has the endpoint**: deleting it switches S3
-    from the endpoint route to the NAT (source address private IP → NAT EIP), and existing TCP
-    connections do not survive that. Update when no large model fetch/ingest or image pull is
-    running, or verify that the clients reconnect and re-run. While paused (`NatEnabled=false`)
-    S3 is unreachable too, like ECR and logs.
+  - **Workspaces have subnets of their own** (#2716): `00-network` gives each AZ a workspace
+    subnet on a workspace route table whose only route out is the NAT, and the CP puts
+    workspace task ENIs there (`AF_ECS_WORKSPACE_SUBNETS`, from 30-ingress's
+    `WorkspaceSubnets`). The **S3 gateway endpoint** is back on the **private route table
+    only** (CP, ecs-ec2 slot instances, engines, the home task), with a policy that admits
+    ECR layers, the AL2023 repositories and the models bucket and nothing else. A refused
+    same-region request there is AccessDenied, not NAT traffic, which is why no workspace may
+    sit on that route table: a workspace's own S3 always leaves through the NAT (later the
+    egress gateway, ADR 0122), where it can be recorded (#2657).
+    **ecs-ec2 cold pulls stay off the NAT**: the ECS agent pulls through the slot instance's
+    ENI in a private subnet, so the ~918 MiB compressed workspace image (see the start-latency
+    measurement below) goes through the endpoint. **Fargate cannot split**: it pulls through
+    the task ENI, so a Fargate workspace start still pays NAT data processing for its layers.
+    The models bucket reads of `60-engines` use the endpoint.
+    **Updating a running stack**: deploy `cfn/00-network.yaml` (its change set must only *Add*:
+    two subnets, three associations, a route table, its route and `S3Endpoint`; stop on any
+    Modify or Replacement of an existing subnet or route table), then run `update.sh` right
+    away: it passes the new subnets to the CP, and until it has, workspaces on the private
+    route table meet the endpoint's policy for their own S3. A workspace moves on its next
+    Start. Adding the endpoint moves private-subnet S3 from the NAT route to the endpoint
+    route, and open TCP connections do not survive that, so do it when no large model
+    fetch/ingest or image pull is running. While paused (`NatEnabled=false`) S3 is still
+    reachable from the private subnets through the endpoint (for what its policy admits),
+    unlike ECR's API, logs and the workspace route table's way out.
     **Interface** endpoints (ecr.api, ecr.dkr, logs, ssm) are left out on purpose: $0.01/AZ/hour
     × 2 AZ each adds up past the NAT Gateway they would relieve.
   - What still crosses the NAT: git / Anthropic / npm / package registries (the real

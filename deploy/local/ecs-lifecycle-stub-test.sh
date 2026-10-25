@@ -139,6 +139,8 @@ case "$args" in
   *"--profile p2"*"describe-stack-resource"*) echo "t-db" ;;
   *"describe-stack-resource"*) echo "None" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EfsId']"*) echo "fs-1" ;;
+  # 00-network's workspace subnets (#2716). Unset = a network stack older than them.
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='WorkspaceSubnets']"*) echo "${STUB_WS_SUBNETS:-None}" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotLaunchTemplateId']"*) echo "${STUB_POOL_LT_OUTPUT:-lt-NEW}" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='CfnTemplatesBucket']"*) echo "t-cfn-bucket" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotAmiIdArm64']"*) echo "None" ;;
@@ -925,6 +927,28 @@ VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ENGINES_PRE_P6=1 
 grep -q "DRY: aws cloudformation deploy --stack-name af-ecs-engines .*--parameter-overrides LlmEnabled=true ImageEnabled=true" "$WORK/out3h3" \
   || fail "--dry-run did not show the planned translation"
 hasnt "cloudformation deploy --stack-name af-ecs-engines --template-file"   # nothing was run
+
+echo "== case 3h-ws: update.sh and standup.sh hand 00-network's workspace subnets to 30-ingress (#2716) =="
+# A fact of the network stack, passed on every run; a network stack without the output passes
+# nothing (the case above pins that byte for byte) and says so.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_WS_SUBNETS=subnet-0a,subnet-0b \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3hw" 2>&1 \
+  || { cat "$WORK/out3hw"; fail "update.sh failed with workspace subnets"; }
+grep -q "describe-stacks --stack-name t-network .*OutputKey=='WorkspaceSubnets'" "$LOG" \
+  || fail "update.sh did not read the workspace subnets from the ingress stack's NetworkStackName"
+grep -q "deploy --stack-name t-ingress .*--parameter-overrides ImageTag=9.9.9-dev-test EfsBackup=off WorkspaceSubnets=subnet-0a,subnet-0b --no-fail" "$LOG" \
+  || fail "update.sh did not pass WorkspaceSubnets to 30-ingress"
+grep -q "has no WorkspaceSubnets output" "$WORK/out3h" \
+  || fail "update.sh against a network stack without workspace subnets did not say so"
+efs_standup p STUB_WS_SUBNETS=subnet-0a,subnet-0b
+grep -q "deploy --stack-name t-ingress .*WorkspaceSubnets=subnet-0a,subnet-0b" "$LOG" \
+  || fail "standup.sh did not pass the network stack's WorkspaceSubnets to 30-ingress"
+# The capture's value is a snapshot of old subnet ids; it must never reach the deploy.
+echo "WorkspaceSubnets=subnet-stale" >> "$STATE/params/30-ingress"
+efs_standup p
+if grep -q "WorkspaceSubnets=subnet-stale" "$LOG"; then fail "standup.sh passed the captured WorkspaceSubnets"; fi
+sed -i '/^WorkspaceSubnets=/d' "$STATE/params/30-ingress"
 
 echo "== case 3h-pool: update.sh never skips the slot pool on ecs-ec2 without saying so =="
 #

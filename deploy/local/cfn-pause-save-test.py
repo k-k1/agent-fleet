@@ -11,7 +11,7 @@ deployment: a NAT gateway left outside the condition is re-created by every upda
 Lambda that stops a database it should not leaves a running Control Plane with no database.
 So this fails when
 
-  - Nat or the private default route is not behind NatOn, or something else still points at
+  - Nat or a default route to it (private, workspace) is not behind NatOn, or something else still points at
     Nat unconditionally (the stack would refuse to update while NatEnabled=false);
   - the egress address is no longer retained (NatEip) or no longer exported;
   - the re-stop rule stops matching RDS-EVENT-0154 for this instance, or the role can do more
@@ -133,17 +133,21 @@ def run_lambda(code, steps, remaining_ms=900000, stop_error=""):
     return out, ctx
 
 
+# The NAT gateway and every default route to it (the workspace route table's too, #2716).
+NAT_ROUTED = ("Nat", "PrivateDefaultRoute", "WorkspaceDefaultRoute")
+
+
 def check(net, data, pause_src):
     f = []
     # --- 00-network
     res, conds = net["Resources"], net.get("Conditions", {})
     if "NatOn" not in conds:
         f.append("00-network: no NatOn condition")
-    for rid in ("Nat", "PrivateDefaultRoute"):
+    for rid in NAT_ROUTED:
         if res[rid].get("Condition") != "NatOn":
             f.append("00-network: %s is not behind NatOn" % rid)
     for rid, r in res.items():
-        if rid not in ("Nat", "PrivateDefaultRoute") and refs_to(r, "Nat"):
+        if rid not in NAT_ROUTED and refs_to(r, "Nat"):
             f.append("00-network: %s still points at Nat unconditionally" % rid)
     for oid, o in (net.get("Outputs") or {}).items():
         if refs_to(o, "Nat"):
@@ -265,6 +269,8 @@ def main():
 
     def m_route(n, d, s):
         del n["Resources"]["PrivateDefaultRoute"]["Condition"]
+    def m_ws_route(n, d, s):
+        del n["Resources"]["WorkspaceDefaultRoute"]["Condition"]
     def m_eip(n, d, s):
         del n["Resources"]["NatEip"]["DeletionPolicy"]
     def m_event(n, d, s):
@@ -311,6 +317,7 @@ def main():
     ok = True
     for label, fn, want in (
         ("route unconditional", m_route, "PrivateDefaultRoute is not behind NatOn"),
+        ("workspace route unconditional", m_ws_route, "WorkspaceDefaultRoute is not behind NatOn"),
         ("EIP not retained", m_eip, "no longer retained"),
         ("wrong event", m_event, "RDS-EVENT-0088"),
         ("wider role", m_act, "role's actions"),
