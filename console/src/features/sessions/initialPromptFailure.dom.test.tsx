@@ -64,6 +64,20 @@ describe("noteInitialPromptFailures", () => {
     expect(toastMock).toHaveBeenCalledTimes(1);
   });
 
+  it("toasts the first session of an empty workspace that arrives already failed", () => {
+    noteInitialPromptFailures([]); // a successful empty list is the opening snapshot
+    noteInitialPromptFailures([]);
+    noteInitialPromptFailures([s("failed", "auth_expired")]);
+    expect(toastMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not read the sessions of a full list as new after a stray empty list", () => {
+    noteInitialPromptFailures([s("failed", "auth_expired")]); // opening snapshot
+    noteInitialPromptFailures([]);
+    noteInitialPromptFailures([s("failed", "auth_expired")]);
+    expect(toastMock).not.toHaveBeenCalled();
+  });
+
   it("stays quiet for failures in the opening snapshot, without the reason, and for a delivery", () => {
     noteInitialPromptFailures([s("failed", "auth_expired")]); // e.g. after a reload
     noteInitialPromptFailures([s("failed", "auth_expired")]);

@@ -37,9 +37,15 @@ function reset(next: string): void {
 export function noteInitialPromptFailures(list: Session[]): void {
   const now = scopeNow();
   if (now !== scope) reset(now);
-  // An empty list is also the startup value and what a failed fetch leaves behind; it carries
-  // no observation, so it neither baselines nor forgets.
-  if (!list.length) return;
+  // A fetch that fails never reaches applyList (store.refresh keeps the last list), so an empty
+  // list here is a real answer. As the opening snapshot it baselines an empty workspace: the
+  // first session ever created there must be announced when it arrives failed. After a baseline
+  // it is ignored rather than remembered, or the next full list would read every session in it
+  // as new.
+  if (!list.length) {
+    baselined = true;
+    return;
+  }
   const next = new Map<string, string>();
   for (const s of list) {
     const st = s.initialPromptState ?? "";
