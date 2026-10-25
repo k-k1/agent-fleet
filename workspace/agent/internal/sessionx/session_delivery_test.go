@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 func TestPromptDraftVisible(t *testing.T) {
@@ -157,5 +159,93 @@ func TestConfirmPromptDeliveryReportsQueuedAsHeld(t *testing.T) {
 	held, err = confirmPromptDelivery(m, "no-such-pane", prompt, base)
 	if err != nil || held {
 		t.Fatalf("enqueue then user line: held=%v err=%v, want delivered", held, err)
+	}
+}
+
+// #2741: a resumed claude replays the notification of a background task that ended while it
+// was stopped, and its turn puts the spinner up. Neither the notification's user line nor that
+// spinner is evidence that the typed prompt started a turn. With nothing appended at all, the
+// spinner keeps its old role as insurance against a delayed jsonl flush.
+func TestDeliveryEvidencedIgnoresATurnClaudeStartedItself(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	m := session.Meta{Name: "resumed_claude", Dir: t.TempDir(), Kind: session.KindClaude}
+	proj := filepath.Join(cfg, "projects", "-resumed")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(proj, session.UUID(m.Dir, m.Name)+".jsonl")
+	if err := os.WriteFile(log, []byte(`{"type":"assistant","message":{"content":[]}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	busy := false
+	orig := deliveryPaneBusy
+	deliveryPaneBusy = func(string) bool { return busy }
+	t.Cleanup(func() { deliveryPaneBusy = orig })
+
+	const prompt = "[agent-fleet:peer from=sparent intent=question reply=required] push the branch"
+	base := deliveryBaseline(m)
+	busy = true
+	if got := deliveryEvidenced(m, base, prompt); got != claude.PromptStarted {
+		t.Fatalf("spinner with nothing appended (a delayed flush): got %v, want started", got)
+	}
+
+	b, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user",
+		"content": "<task-notification>\n<task-id>m1</task-id>\n<status>killed</status>\n</task-notification>"}})
+	f, err := os.OpenFile(log, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Write(append(b, '\n'))
+	f.Close()
+	if got := deliveryEvidenced(m, base, prompt); got != claude.PromptAbsent {
+		t.Fatalf("a replayed task notification running with its spinner up: got %v, want absent", got)
+	}
+}
+
+// #2741: delivery_unconfirmed used to leave the "working" submitPromptTUI wrote on typing, so
+// the session read working while it sat idle with the message lost. The withdrawal writes the
+// unknown idle (never a turn end), and leaves alone a record a hook wrote since and a pane that
+// was busy before the send.
+func TestWithdrawOptimisticWorking(t *testing.T) {
+	isolateAgentState(t)
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	busy := false
+	orig := deliveryPaneBusy
+	deliveryPaneBusy = func(string) bool { return busy }
+	t.Cleanup(func() { deliveryPaneBusy = orig })
+	m := session.Meta{Name: "unconfirmed", Dir: t.TempDir(), Kind: session.KindClaude}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	withdrawOptimisticWorking(m, deliverySnapshot{}, markSessionWorking(m.Name))
+	if st, _ := status.Read(sid); st.State != "idle" || st.TurnEnd {
+		t.Fatalf("after an unconfirmed send: %+v, want the unknown idle", st)
+	}
+
+	// The order the review pinned: the send marks working, a hook of a turn that really runs
+	// writes its own working, and only then is the withdrawal decided. The Rev the mark itself
+	// returned is what keeps the hook's record; one read back after the mark would be the
+	// hook's and would be withdrawn.
+	rev := markSessionWorking(m.Name)
+	status.PersistOpen(sid, "working", "prompt-1")
+	withdrawOptimisticWorking(m, deliverySnapshot{}, rev)
+	if st, _ := status.Read(sid); st.State != "working" || st.PromptID != "prompt-1" {
+		t.Fatalf("the hook's record written after the mark was overwritten: %+v", st)
+	}
+
+	withdrawOptimisticWorking(m, deliverySnapshot{paneBusy: true}, markSessionWorking(m.Name))
+	if got := status.LiveState(sid); got != "working" {
+		t.Fatalf("a pane busy before the send is working: got %q", got)
+	}
+	busy = true
+	withdrawOptimisticWorking(m, deliverySnapshot{}, markSessionWorking(m.Name))
+	if got := status.LiveState(sid); got != "working" {
+		t.Fatalf("a pane busy now is working: got %q", got)
+	}
+	busy = false
+	withdrawOptimisticWorking(m, deliverySnapshot{}, "")
+	if got := status.LiveState(sid); got != "working" {
+		t.Fatalf("a send that wrote no working (a slash command) withdraws nothing: got %q", got)
 	}
 }

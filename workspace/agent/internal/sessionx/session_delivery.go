@@ -36,10 +36,12 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-const (
+// The evidence waits. Variables so tests shorten them.
+var (
 	// deliveryConfirmWindow is how long the first evidence wait runs. A healthy claude
 	// appends the user line in <1s; the window is generous for a cold resume on a busy
 	// host, because a premature retry is worse than a slow confirm.
@@ -47,6 +49,9 @@ const (
 	// deliveryRetryWindow is the evidence wait after the one self-heal attempt.
 	deliveryRetryWindow = 12 * time.Second
 	deliveryPoll        = 500 * time.Millisecond
+)
+
+const (
 	// deliveryQueuedGrace is how long a prompt claude has only enqueued may still turn into a
 	// started turn before it is reported held. An idle claude can write the enqueue and the
 	// user line back to back; a busy one holds it for minutes, and waiting out the whole
@@ -78,9 +83,12 @@ func deliveryBaseline(m session.Meta) deliverySnapshot {
 	return deliverySnapshot{
 		logs:      claude.TranscriptSnapshot(sid),
 		subagents: claude.SubagentSnapshot(sid),
-		paneBusy:  tmuxx.IsBusy(m.Name),
+		paneBusy:  deliveryPaneBusy(m.Name),
 	}
 }
+
+// deliveryPaneBusy is the spinner read of delivery verification. A variable so tests stub it.
+var deliveryPaneBusy = tmuxx.IsBusy
 
 // deliveryEvidenced reports how far the prompt provably got. The jsonl half also catches
 // a turn that already FINISHED between polls (the user line persists). The queued case
@@ -91,9 +99,15 @@ func deliveryBaseline(m session.Meta) deliverySnapshot {
 // when the baseline was already busy: that rotation has nothing to do with our prompt.
 // Measured: the spinner on screen was a background subagent's, and an instruction that never
 // reached the main conversation was judged delivered.
+//
+// Nor does it count once the log gained a user line that is not ours (PromptStateSince already
+// passed over it): a turn claude started itself is running, such as the task notification a
+// resumed session replays, and the spinner is that turn's (#2741).
 func deliveryEvidenced(m session.Meta, base deliverySnapshot, prompt string) claude.PromptState {
-	st := claude.PromptStateSince(session.UUID(m.Dir, m.Name), base.logs, prompt)
-	if st == claude.PromptAbsent && !base.paneBusy && tmuxx.IsBusy(m.Name) {
+	sid := session.UUID(m.Dir, m.Name)
+	st := claude.PromptStateSince(sid, base.logs, prompt)
+	if st == claude.PromptAbsent && !base.paneBusy && deliveryPaneBusy(m.Name) &&
+		!claude.UserTurnAppendedSince(sid, base.logs) {
 		return claude.PromptStarted
 	}
 	return st
@@ -171,6 +185,19 @@ func confirmPromptDelivery(m session.Meta, pane, prompt string, base deliverySna
 		return st == claude.PromptQueued, nil
 	}
 	return false, fmt.Errorf("prompt did not become a turn (no user turn appended, pane not working)")
+}
+
+// withdrawOptimisticWorking takes back the "working" a send wrote on typing (submitPromptTUI)
+// once delivery_unconfirmed has shown no turn started: left in place, the status reads working
+// for a session that sits idle, and a sender polling it takes the lost message for one being
+// worked on (#2741). It writes the unknown idle the SessionStart reset writes, never a turn
+// end, and only when the record is still the one the send wrote (workingRev, returned by that
+// write itself) and the pane was not already busy before the send, when working is the truth.
+func withdrawOptimisticWorking(m session.Meta, base deliverySnapshot, workingRev string) {
+	if base.paneBusy || workingRev == "" || deliveryPaneBusy(m.Name) {
+		return
+	}
+	status.PersistIf(session.UUID(m.Dir, m.Name), "idle", workingRev, true)
 }
 
 // promptDraftVisible reports whether the captured pane still shows the typed prompt as

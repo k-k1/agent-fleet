@@ -62,12 +62,13 @@ var (
 // queueableBlocker reports whether a peer send to a target in state st waits instead of being
 // refused.
 func queueableBlocker(st string) bool {
-	return st == "question" || st == "plan" || st == "permission"
+	return st == "question" || st == "plan" || st == "permission" || st == peerBlockedStarting
 }
 
 // peerQueueBlocker is promptBlocker plus a Managed handle's pending interaction: Managed
 // codex keeps its question on the handle, where promptBlocker does not look (its Send refuses
-// with ErrQuestionPending instead). A variable so tests stub the blocker.
+// with ErrQuestionPending instead). It also holds a message for a claude session that is still
+// booting (peer_boot.go). A variable so tests stub the blocker.
 var peerQueueBlocker = func(m session.Meta) string {
 	// claude's usage-limit menu is guarded by /input itself, not by promptBlocker; it has to be
 	// seen here too, or a target with a waiting queue would take the message instead of refusing.
@@ -76,6 +77,9 @@ var peerQueueBlocker = func(m session.Meta) string {
 		return agents.StateBlocked
 	}
 	if st := promptBlocker(m.Name); st != "" {
+		return st
+	}
+	if st := peerBootBlocker(m); st != "" {
 		return st
 	}
 	if m.DriverKind() != session.DriverManaged {
