@@ -344,6 +344,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "srow.rename": "Rename",
   "srow.rename_branch": "Rename the branch",
   "srow.handoff": "Hand off to another agent…",
+  "srow.handoff_member": "Hand off to a member…",
   "srow.handoff_title": "Handoff from {name}",
   "srow.share": "Share…",
   "srow.section_run": "Run",

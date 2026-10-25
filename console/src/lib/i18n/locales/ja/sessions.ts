@@ -352,6 +352,7 @@ export const sessions = {
   "srow.rename": "タイトルを変更",
   "srow.rename_branch": "ブランチ名を変更",
   "srow.handoff": "別のエージェントへ引き継ぐ…",
+  "srow.handoff_member": "メンバーへ引き継ぐ…",
   "srow.handoff_title": "{name} の引き継ぎ",
   "srow.share": "共有する…",
   "srow.section_run": "実行",
