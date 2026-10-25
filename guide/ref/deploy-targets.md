@@ -16,7 +16,7 @@ deployment" is the most expensive kind of documentation error here.
 | docker | a container on the host's Docker daemon | a bind-mounted directory on the host | the on-prem default: one host, a team sharing it |
 | native | sandboxed host processes, no Docker at all | a directory on the host | Docker cannot be installed (a plain WSL2 machine). **Single user only**: without container isolation it refuses to run in a shared mode |
 | ecs | a task on AWS ECS / Fargate | EFS | AWS, without managing instances |
-| ecs-ec2 | a task on an EC2 slot taken from a pool | a per-user EBS volume | AWS, when start latency and disk performance matter enough to manage instances |
+| ecs-ec2 | a task on an EC2 slot taken from a pool | a per-user EBS volume | AWS, when start latency and disk performance matter enough to manage instances, or when frequent starts make Fargate's NAT image pulls costly (see [choosing a target](../operate/01-choose.md)) |
 | kubernetes | a pod of its own StatefulSet on a Kubernetes cluster | a per-user persistent volume (block storage), plus a second one for logins and Claude's state | **Preview.** You already run Kubernetes, or want Agent Fleet on Google Cloud with workspaces that scale to zero. GKE Standard is the first cluster it is verified on |
 
 > **Preview.** The `kubernetes` runtime is a preview: it has been accepted on a GKE Standard
