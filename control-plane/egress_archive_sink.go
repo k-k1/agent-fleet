@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"net/url"
 	"os"
@@ -11,20 +12,21 @@ import (
 	"path/filepath"
 	"strings"
 
+	"cloud.google.com/go/storage"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"google.golang.org/api/googleapi"
 )
 
-// egressArchiveSink is where the egress archive objects go. Put replaces the key atomically:
-// a reader sees the old object or the whole new one. The purge deletes the rows an object
-// holds as soon as Put returns nil, so an implementation that cannot say "confirmed" must
-// return an error. A failed Put may still leave an object behind (the upload landed, the
+// egressArchiveSink is where the egress archive objects go. Put stores the key atomically:
+// a reader sees no object or the whole one (the S3 and local sinks may replace an older one).
+// The purge deletes the rows an object holds as soon as Put returns nil, so an implementation
+// that cannot say "confirmed" must return an error. A failed Put may still leave an object behind (the upload landed, the
 // confirmation did not), which is why the caller never trusts an existing key: it opens it
 // with Get and verifies it. Get must only succeed for an object the sink has made durable, so
 // a verified read is also a durable one. Keys are slash-separated and relative to the sink's
-// own root; a sink for another store (GCS, say) implements Exists, Get and Put and nothing
-// else changes.
+// own root; a sink for another store implements Exists, Get and Put and nothing else changes.
 type egressArchiveSink interface {
 	Exists(ctx context.Context, key string) (bool, error)
 	// Get opens an object that Exists reported, so it can be verified before it is trusted.
@@ -33,8 +35,8 @@ type egressArchiveSink interface {
 	Put(ctx context.Context, key string, body io.ReadSeeker, size int64) error
 }
 
-// newEgressArchiveSink builds the sink AF_EGRESS_ARCHIVE_URL names: s3://bucket[/prefix] or
-// file:///absolute/dir.
+// newEgressArchiveSink builds the sink AF_EGRESS_ARCHIVE_URL names: s3://bucket[/prefix],
+// gs://bucket[/prefix] or file:///absolute/dir.
 func newEgressArchiveSink(ctx context.Context, raw string) (egressArchiveSink, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -53,8 +55,19 @@ func newEgressArchiveSink(ctx context.Context, raw string) (egressArchiveSink, e
 			return nil, fmt.Errorf("AF_EGRESS_ARCHIVE_URL: aws config: %w", err)
 		}
 		return newEgressArchiveS3(s3.NewFromConfig(ac), u.Host, u.Path), nil
+	case "gs":
+		if u.Host == "" {
+			return nil, errors.New("AF_EGRESS_ARCHIVE_URL: gs:// needs a bucket")
+		}
+		// Application Default Credentials only (Workload Identity on GKE); no key file is read
+		// from configuration.
+		c, err := storage.NewClient(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("AF_EGRESS_ARCHIVE_URL: gcs client: %w", err)
+		}
+		return newEgressArchiveGCS(c, u.Host, u.Path), nil
 	}
-	return nil, fmt.Errorf("AF_EGRESS_ARCHIVE_URL: want s3://bucket/prefix or file:///dir, got scheme %q", u.Scheme)
+	return nil, fmt.Errorf("AF_EGRESS_ARCHIVE_URL: want s3://bucket/prefix, gs://bucket/prefix or file:///dir, got scheme %q", u.Scheme)
 }
 
 // egressArchiveLocal writes under a directory: a temporary file in the target's own
@@ -291,4 +304,105 @@ func (s *egressArchiveS3) Put(ctx context.Context, key string, body io.ReadSeeke
 		return fmt.Errorf("archive %s not confirmed: stored %d bytes, sent %d", key, got, size)
 	}
 	return nil
+}
+
+// egressArchiveGCS stores objects under bucket/prefix. Unlike the S3 sink it refuses to
+// replace a key (ifGenerationMatch=0): a finalized upload is the only thing that makes an
+// object appear, so a reader sees the whole object or none, and a good object is never
+// overwritten. The service account needs storage.objects.create (roles/storage.objectCreator)
+// and storage.objects.get (roles/storage.objectViewer) on the bucket; it never lists, deletes
+// or overwrites. A missing object is a clean 404 for Exists without list permission.
+type egressArchiveGCS struct {
+	bucket *storage.BucketHandle
+	prefix string
+	chunk  int // upload chunk size; 0 keeps the client's default (tests shrink it)
+}
+
+func newEgressArchiveGCS(c *storage.Client, bucket, prefix string) *egressArchiveGCS {
+	return &egressArchiveGCS{bucket: c.Bucket(bucket), prefix: strings.Trim(prefix, "/")}
+}
+
+func (g *egressArchiveGCS) obj(k string) *storage.ObjectHandle {
+	if g.prefix != "" {
+		k = path.Join(g.prefix, k)
+	}
+	return g.bucket.Object(k)
+}
+
+func (g *egressArchiveGCS) Exists(ctx context.Context, key string) (bool, error) {
+	_, err := g.obj(key).Attrs(ctx)
+	if errors.Is(err, storage.ErrObjectNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// Get verifies the object's CRC32C as the body is read to its end; the archiver reads it to
+// the end to verify it.
+func (g *egressArchiveGCS) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	return g.obj(key).NewReader(ctx)
+}
+
+// Put uploads with the body's CRC32C, so the service rejects bytes that differ from what was
+// sent, then compares the finalized object's length and checksum before it returns nil. The
+// upload is cancelled, not closed, when the copy fails: closing a writer finalizes what it
+// has, which would publish a truncated object.
+//
+// A key that already exists fails the precondition. The one case that is not an error is an
+// object with the same length and CRC32C: a retried upload whose first attempt landed but
+// whose response was lost sees exactly that, and the object is then the one this Put meant to
+// write. Anything else is left for the archiver, which verifies and never overwrites.
+func (g *egressArchiveGCS) Put(ctx context.Context, key string, body io.ReadSeeker, size int64) error {
+	sum := crc32.New(crc32.MakeTable(crc32.Castagnoli))
+	if n, err := io.Copy(sum, body); err != nil {
+		return err
+	} else if n != size {
+		return fmt.Errorf("archive %s: read %d of %d bytes", key, n, size)
+	}
+	if _, err := body.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	want := sum.Sum32()
+
+	o := g.obj(key)
+	wctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	w := o.If(storage.Conditions{DoesNotExist: true}).NewWriter(wctx)
+	w.ContentType = "application/gzip"
+	w.CRC32C, w.SendCRC32C = want, true
+	if g.chunk > 0 {
+		w.ChunkSize = g.chunk
+	}
+	if n, err := io.Copy(w, &ctxReader{ctx, body}); err != nil || n != size {
+		cancel()
+		w.Close()
+		if err == nil {
+			err = fmt.Errorf("archive %s: copied %d of %d bytes", key, n, size)
+		}
+		return err
+	}
+	if err := w.Close(); err != nil {
+		if !isGCSPreconditionFailed(err) {
+			return err
+		}
+		// Same content: the object is there and whole. Otherwise report the conflict.
+		if cur, aerr := o.Attrs(ctx); aerr == nil && cur.Size == size && cur.CRC32C == want {
+			return nil
+		}
+		return fmt.Errorf("archive %s already exists: %w", key, err)
+	}
+	attrs := w.Attrs()
+	if attrs == nil {
+		return fmt.Errorf("archive %s not confirmed: no attributes returned", key)
+	}
+	if attrs.Size != size || attrs.CRC32C != want {
+		return fmt.Errorf("archive %s not confirmed: stored %d bytes crc32c %08x, sent %d bytes crc32c %08x",
+			key, attrs.Size, attrs.CRC32C, size, want)
+	}
+	return nil
+}
+
+func isGCSPreconditionFailed(err error) bool {
+	var ge *googleapi.Error
+	return errors.As(err, &ge) && ge.Code == 412
 }
