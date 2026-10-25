@@ -117,28 +117,57 @@ export function fmtSize(n: number): string {
 
 /**
  * Subscription usage the Console already reads, by kind: the same endpoints the WS bar's chips
- * poll (app/WsBar.tsx USAGE_SOURCES), all answering {ok, fiveHour, sevenDay}. A kind missing
- * here has no usage source, and the dialog says nothing about its quota rather than guess.
+ * poll (app/WsBar.tsx USAGE_SOURCES, CopilotUsageChip, AgyUsageChip). claude/codex/muse answer
+ * {ok, fiveHour, sevenDay}; copilot and agy answer remaining-based pools, read by readMoveUsage.
+ * A kind missing here has no usage source, and the dialog says nothing about its quota rather
+ * than guess.
  */
 export const MOVE_USAGE_ENDPOINTS: Partial<Record<SessionKind, string>> = {
   claude: "api/claude/usage",
   codex: "api/codex/usage",
   muse: "api/muse/usage",
+  copilot: "api/copilot/usage",
+  agy: "api/connections/agy/usage",
 };
 
 export interface MoveUsage {
   fiveHour?: number;
   sevenDay?: number;
+  /** copilot's one monthly pool, which is neither of the two windows above. */
+  monthly?: number;
 }
 
-/** Reads a usage answer; null when it carries no observation worth showing. */
+/** Used percent from a remaining percent, as the WS bar chips show it (clamped to 0..100). */
+export function usedFromRemaining(remainingPct: number): number {
+  return Math.round(Math.min(100, Math.max(0, 100 - remainingPct)));
+}
+
+/**
+ * Reads a usage answer; null when it carries no observation worth showing. Like the chips, a
+ * remaining-based answer is judged on its primary pool only: agy's first group (the default
+ * model's) and copilot's first quota.
+ */
 export function readMoveUsage(d: unknown): MoveUsage | null {
-  const r = d as { ok?: boolean; fiveHour?: { pct?: number; stale?: boolean }; sevenDay?: { pct?: number; stale?: boolean } } | null;
+  type Win = { pct?: number; stale?: boolean };
+  type Rem = { remainingPct?: number; stale?: boolean };
+  const r = d as { ok?: boolean; fiveHour?: Win; sevenDay?: Win; groups?: (Rem & { fiveHour?: Rem })[]; quotas?: Rem[]; error?: string; resetsAt?: string } | null;
   if (!r || !r.ok) return null;
   // A stale window rolled over after its capture: its percentage is a guess, not a reading.
-  const pct = (w?: { pct?: number; stale?: boolean }) => (w && !w.stale && typeof w.pct === "number" ? Math.round(w.pct) : undefined);
-  const u = { fiveHour: pct(r.fiveHour), sevenDay: pct(r.sevenDay) };
-  return u.fiveHour === undefined && u.sevenDay === undefined ? null : u;
+  const pct = (w?: Win) => (w && !w.stale && typeof w.pct === "number" ? Math.round(w.pct) : undefined);
+  const rem = (w?: Rem) => (w && !w.stale && typeof w.remainingPct === "number" ? usedFromRemaining(w.remainingPct) : undefined);
+  // copilot and agy answer {ok:true, error} with the last cached pools when a refresh fails; that
+  // reading is of unknown age, so it is no judgement.
+  if ((Array.isArray(r.groups) || Array.isArray(r.quotas)) && r.error) return null;
+  let u: MoveUsage;
+  if (Array.isArray(r.groups)) u = { fiveHour: rem(r.groups[0]?.fiveHour), sevenDay: rem(r.groups[0]) };
+  else if (Array.isArray(r.quotas)) {
+    // copilot has no stale flag: pools cached from before the shared monthly reset are a guess. A
+    // missing or unparsable resetsAt is taken as readable.
+    const reset = r.resetsAt ? Date.parse(r.resetsAt) : NaN;
+    u = { monthly: reset <= Date.now() ? undefined : rem(r.quotas[0]) };
+  }
+  else u = { fiveHour: pct(r.fiveHour), sevenDay: pct(r.sevenDay) };
+  return Object.values(u).every((n) => n === undefined) ? null : u;
 }
 
 /** Where a candidate stands on quota: some reading and none at 100% is "left". */
@@ -146,7 +175,7 @@ export type QuotaState = "left" | "full" | "unknown";
 
 /** A kind with no usage source or no reading is "unknown": it is never judged, only left unmarked. */
 export function quotaState(u: MoveUsage | undefined): QuotaState {
-  const w = [u?.fiveHour, u?.sevenDay].filter((n): n is number => n !== undefined);
+  const w = [u?.fiveHour, u?.sevenDay, u?.monthly].filter((n): n is number => n !== undefined);
   if (w.length === 0) return "unknown";
   return w.some((n) => n >= 100) ? "full" : "left";
 }
@@ -158,7 +187,7 @@ export function quotaState(u: MoveUsage | undefined): QuotaState {
  */
 export function orderByQuota(kinds: SessionKind[], usage: Partial<Record<SessionKind, MoveUsage>>): SessionKind[] {
   const rank = { left: 0, unknown: 1, full: 2 } as const;
-  const used = (k: SessionKind) => Math.max(usage[k]?.fiveHour ?? 0, usage[k]?.sevenDay ?? 0);
+  const used = (k: SessionKind) => Math.max(usage[k]?.fiveHour ?? 0, usage[k]?.sevenDay ?? 0, usage[k]?.monthly ?? 0);
   return kinds
     .map((k, i) => ({ k, i, q: quotaState(usage[k]) }))
     .sort((a, b) => rank[a.q] - rank[b.q] || (a.q === "left" ? used(a.k) - used(b.k) : 0) || a.i - b.i)

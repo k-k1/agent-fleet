@@ -421,6 +421,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "move.usage_five": "short window {pct}%",
   "move.quota_left": "quota left",
   "move.usage_week": "week {pct}%",
+  "move.usage_month": "month {pct}%",
   "move.confirm": "Move",
   "move.busy_move": "Moving (starting the target)…",
   "move.busy_retry": "Retrying the move…",
