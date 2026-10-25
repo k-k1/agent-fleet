@@ -1303,9 +1303,9 @@ func agentMemApplyLocked(changes []agentMemChange, op, memRel string, c agentMem
 	if op == agentMemOpProjectInfo {
 		trigger = memoryTriggerAgentMemoryMeta
 	}
-	msg := fmt.Sprintf("agent-memory: %s %s (%s)\n\nAF-Trigger: %s\nAF-Op: %s\nAF-Memory: %s\nAF-Author-Kind: %s\nAF-Author-Session: %s\n",
+	msg := fmt.Sprintf("agent-memory: %s %s (%s)\n\nAF-Trigger: %s\nAF-Op: %s\nAF-Memory: %s\nAF-Author-Kind: %s\nAF-Author-Session: %s\n%s: %d\n",
 		op, memRel, now.Format(time.RFC3339),
-		trigger, op, agentMemRepoPrefix+"/"+memRel, c.Kind, c.Session)
+		trigger, op, agentMemRepoPrefix+"/"+memRel, c.Kind, c.Session, agentMemSeqTrailer, time.Now().UnixNano())
 	for _, t := range append(extra[:len(extra):len(extra)], c.trailers...) {
 		msg += t + "\n"
 	}
