@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -195,6 +196,8 @@ func TestForceStopPoolSlotPassesTheAdaptersRefusalsThrough(t *testing.T) {
 		{runtime.ErrSlotNotRunning, http.StatusConflict, "slot_not_running"},
 		{runtime.ErrSlotQuarantined, http.StatusConflict, "slot_quarantined"},
 		{runtime.ErrSlotHealthy, http.StatusConflict, "slot_healthy"},
+		{fmt.Errorf("not stopping: %w", runtime.ErrSlotTaskENIHeld), http.StatusConflict, "slot_task_eni_held"},
+		{runtime.ErrSlotStartedAgain, http.StatusConflict, "slot_started_again"},
 	} {
 		st, adm := poolSlotFixture(t, &forceStopFactory{fsErr: tc.err})
 		w := callForceStop(adm, "i-x", "boss@acme.co.jp", "")
