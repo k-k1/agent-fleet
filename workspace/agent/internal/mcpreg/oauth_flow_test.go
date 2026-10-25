@@ -1160,3 +1160,44 @@ func TestStepUpUnionDedupesAgainstACommaSeparatedGrant(t *testing.T) {
 		t.Errorf("step-up scope = %q", got)
 	}
 }
+
+// A completed sign-in ends every other attempt of the same server, whichever registration path
+// it took, so the status never reports connected next to a stale pending marker.
+func TestCompleteClearsThePendingMarkerOfThatServerOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name, first, second string
+	}{
+		{"cimd abandoned then dcr completed", OAuthRegCIMD, OAuthRegDCR},
+		{"dcr abandoned then cimd completed", OAuthRegDCR, OAuthRegCIMD},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetOAuthState(t)
+			f := newASFake(t, map[string]any{"client_id_metadata_document_supported": true})
+			id := registerServer(t, f)
+			fo := newASFake(t, map[string]any{"client_id_metadata_document_supported": true})
+			od, err := Create(ServerDef{Name: "elsewhere", Transport: TransportHTTP, URL: fo.url("/mcp"), Auth: AuthOAuth, Enabled: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = Delete(od.ID) })
+			other := od.ID
+			mustStart(t, other, startReq(nil))
+			mustStart(t, id, startReq(func(r *StartRequest) { r.Registration = tc.first }))
+			if st, _ := OAuthStatusOf(id); st.PendingRegistration != tc.first {
+				t.Fatalf("setup: pending = %q, want %q", st.PendingRegistration, tc.first)
+			}
+			req := startReq(func(r *StartRequest) { r.Registration = tc.second })
+			mustStart(t, id, req)
+			if _, err := CompleteOAuth(context.Background(), id, CompleteRequest{State: req.State, Code: "c", Iss: f.url("")}); err != nil {
+				t.Fatalf("complete: %v", err)
+			}
+			st, _ := OAuthStatusOf(id)
+			if st.State != OAuthStateConnected || st.PendingRegistration != "" {
+				t.Errorf("status = %+v, want connected with no pending marker", st)
+			}
+			if o, _ := OAuthStatusOf(other); o.PendingRegistration != OAuthRegCIMD {
+				t.Errorf("another server's marker = %q, want it kept", o.PendingRegistration)
+			}
+		})
+	}
+}
