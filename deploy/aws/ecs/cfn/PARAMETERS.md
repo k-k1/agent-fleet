@@ -82,7 +82,7 @@ The `WorkspaceSubnets` output of 00-network, passed to the CP as `AF_ECS_WORKSPA
 (#2716). Workspace task ENIs go there; the CP, the ecs-ec2 slot instances, the home task and
 the engines stay in the private subnets. The two subnet kinds differ only in their route
 table: the private one has the S3 gateway endpoint, whose policy admits only ECR layers, the
-AL2023 repositories, the SSM Agent update buckets and the models bucket; the workspace one has no endpoint route, so a
+AL2023 repositories, the SSM Agent update and ECS agent download buckets and the models bucket; the workspace one has no endpoint route, so a
 workspace's own S3 leaves through the NAT. On ecs-ec2 the image pull is made by the ECS
 agent through the slot instance's ENI, so it stays on the endpoint. A Fargate workspace pulls
 through its task ENI, so its pull crosses the NAT either way; it is moved too, because on the

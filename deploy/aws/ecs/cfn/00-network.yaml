@@ -297,6 +297,18 @@ Resources:
             Resource:
               - !Sub "arn:${AWS::Partition}:s3:::amazon-ssm-${AWS::Region}/*"
               - !Sub "arn:${AWS::Partition}:s3:::aws-ssm-${AWS::Region}/*"
+          # The ECS agent image, which ecs-init downloads before it starts the agent when the
+          # instance's cache is missing or empty (ecs-init cache.go, AgentCacheStatus /
+          # DownloadAgent): the partition bucket amazon-ecs-agent (in us-east-1, so on this
+          # endpoint only in us-east-1) and the regional amazon-ecs-agent-<region>. Refused
+          # here, the slot or engine instance never registers with the cluster. Read-only.
+          - Sid: EcsAgentDownload
+            Effect: Allow
+            Principal: "*"
+            Action: [ "s3:GetObject" ]
+            Resource:
+              - !Sub "arn:${AWS::Partition}:s3:::amazon-ecs-agent/*"
+              - !Sub "arn:${AWS::Partition}:s3:::amazon-ecs-agent-${AWS::Region}/*"
           # The optional models bucket of 60-engines (af-<engines stack>-models-<account>):
           # the CP lists and reads it, the ingest tasks write it and the engine VMs read
           # it. This stack cannot name the engines stack, so the stack-name part is a

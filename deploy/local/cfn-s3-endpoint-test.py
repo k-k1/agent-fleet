@@ -61,6 +61,9 @@ EXPECTED = {
     "SsmAgentUpdate": ({"s3:GetObject"},
                        {"arn:${AWS::Partition}:s3:::amazon-ssm-${AWS::Region}/*",
                         "arn:${AWS::Partition}:s3:::aws-ssm-${AWS::Region}/*"}, None),
+    "EcsAgentDownload": ({"s3:GetObject"},
+                         {"arn:${AWS::Partition}:s3:::amazon-ecs-agent/*",
+                          "arn:${AWS::Partition}:s3:::amazon-ecs-agent-${AWS::Region}/*"}, None),
     "ModelsObjects": ({"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload",
                        "s3:ListMultipartUploadParts", "s3:GetObjectTagging", "s3:PutObjectTagging"},
                       {MODELS + "/*"}, OWNER),
@@ -336,7 +339,7 @@ def main():
 
     def swap_resources(t):
         s = stmts(t)
-        s[3]["Resource"], s[4]["Resource"] = s[4]["Resource"], s[3]["Resource"]
+        s[4]["Resource"], s[5]["Resource"] = s[5]["Resource"], s[4]["Resource"]
 
     gateway = {"Type": "AWS::EC2::VPCEndpoint", "Properties": {
         "VpcId": {"!Ref": "Vpc"}, "ServiceName": {"!Sub": "com.amazonaws.${AWS::Region}.s3"},
@@ -402,9 +405,12 @@ def main():
         ("ECR bucket dropped", mutated(lambda t: stmts(t).pop(0))),
         ("models resources swapped", mutated(swap_resources)),
         ("principal dropped", mutated(lambda t: stmts(t)[0].pop("Principal"))),
-        ("owner condition dropped (objects)", mutated(lambda t: stmts(t)[3].pop("Condition"))),
-        ("owner condition dropped (list)", mutated(lambda t: stmts(t)[4].pop("Condition"))),
+        ("owner condition dropped (objects)", mutated(lambda t: stmts(t)[4].pop("Condition"))),
+        ("owner condition dropped (list)", mutated(lambda t: stmts(t)[5].pop("Condition"))),
         ("SSM agent buckets dropped", mutated(lambda t: stmts(t).pop(2))),
+        ("ECS agent buckets dropped", mutated(lambda t: stmts(t).pop(3))),
+        ("ECS agent statement loses the partition bucket", mutated(lambda t: stmts(t)[3].update(Resource=stmts(t)[3]["Resource"][1:]))),
+        ("ECS agent statement loses the regional bucket", mutated(lambda t: stmts(t)[3].update(Resource=stmts(t)[3]["Resource"][:1]))),
         ("SSM agent statement narrowed to one bucket", mutated(lambda t: stmts(t)[2].update(Resource=stmts(t)[2]["Resource"][:1]))),
         ("endpoint unconditional", mutated(lambda t: res(t)["S3Endpoint"].pop("Condition"))),
         ("endpoint off by default", mutated(lambda t: t["Parameters"]["S3EndpointEnabled"].update(Default="false"))),

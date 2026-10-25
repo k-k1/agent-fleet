@@ -465,7 +465,9 @@ must not decide a workspace's S3. What changes is where the workspaces sit:
 - **The S3 gateway endpoint is back on the private route table only**, with the policy reviewed
   in commit `6829e6e` (ECR layers, the AL2023 repositories, the models bucket) plus the SSM
   Agent update buckets (`amazon-ssm-<region>`, `aws-ssm-<region>`), which the slot and engine
-  instances need for `AWS-UpdateSSMAgent`. It sits behind `S3EndpointEnabled`, which stays
+  instances need for `AWS-UpdateSSMAgent`, and the ECS agent download buckets
+  (`amazon-ecs-agent`, `amazon-ecs-agent-<region>`), which ecs-init reads when its cache is
+  missing. It sits behind `S3EndpointEnabled`, which stays
   `false` on a running stack until every workspace has been restarted into the workspace
   subnets, and is the rollback. Nothing a user
   drives runs on that route table, so a refusal there breaks no workspace. On ecs-ec2 the ECS

@@ -1915,8 +1915,8 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
     workspace task ENIs there (`AF_ECS_WORKSPACE_SUBNETS`, from 30-ingress's
     `WorkspaceSubnets`). The **S3 gateway endpoint** is back on the **private route table
     only** (CP, ecs-ec2 slot instances, engines, the home task), with a policy that admits
-    ECR layers, the AL2023 repositories, the SSM Agent update buckets and the models bucket
-    and nothing else. A refused
+    ECR layers, the AL2023 repositories, the SSM Agent update and ECS agent download buckets
+    and the models bucket, and nothing else. A refused
     same-region request there is AccessDenied, not NAT traffic, which is why no workspace may
     sit on that route table: a workspace's own S3 always leaves through the NAT (later the
     egress gateway, ADR 0122), where it can be recorded (#2657).
