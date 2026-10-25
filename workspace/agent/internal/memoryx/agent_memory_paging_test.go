@@ -99,7 +99,7 @@ func TestAgentMemoryChangesPagingRefusesABadCursor(t *testing.T) {
 	}
 }
 
-// The forgotten list pages by (time, path): every memory once, the newest first, and one forgotten
+// The forgotten list pages by (time, commit order, path): every memory once, the newest first, and one forgotten
 // between two pages moves to the front rather than repeating or skipping an older row.
 func TestAgentMemoryMemberForgottenPaging(t *testing.T) {
 	_, _, _ = agentMemTestEnv(t)
@@ -107,7 +107,7 @@ func TestAgentMemoryMemberForgottenPaging(t *testing.T) {
 	for i, n := range []string{"a", "b", "c", "d", "e"} {
 		forgeForgotten(t, "user", n, "2026-02-0"+strconv.Itoa(i+1)+"T00:00:00Z", false)
 	}
-	// Two forgotten in the same second: the path decides, so the order is total.
+	// Two forgotten in the same second: commit order decides, so the order is total.
 	forgeForgotten(t, "user", "tie-y", "2026-01-01T00:00:00Z", false)
 	forgeForgotten(t, "user", "tie-x", "2026-01-01T00:00:00Z", false)
 
@@ -127,11 +127,8 @@ func TestAgentMemoryMemberForgottenPaging(t *testing.T) {
 		got = append(got, namesOf(p))
 		next = p.Next
 	}
-	// Equal times are ordered by the digest of the path (the cursor's own key).
+	// Equal times go by commit order: tie-x was forgotten last, so it lists first.
 	first, second := "tie-x", "tie-y"
-	if agentMemTombDigest("user/tie-y.md") < agentMemTombDigest("user/tie-x.md") {
-		first, second = second, first
-	}
 	want := []string{"e,d", "c,b", "a," + first, second}
 	if len(got) != len(want) {
 		t.Fatalf("pages %v, want %v", got, want)

@@ -369,8 +369,8 @@ The design and the staged rollout — log-only → allowlist → enforce — are
   its retention setting, and it never falls: lengthening the retention or setting it to `0`
   does not let a purged event back in. An address row is deleted only after the event delete
   finished without error.
-- **Archive (optional)** — with `AF_EGRESS_ARCHIVE_URL` set (`s3://bucket/prefix`, or
-  `file:///absolute/dir` for a mounted volume; empty = off), the purger archives before it
+- **Archive (optional)** — with `AF_EGRESS_ARCHIVE_URL` set (`s3://bucket/prefix`,
+  `gs://bucket/prefix`, or `file:///absolute/dir` for a mounted volume; empty = off), the purger archives before it
   deletes. Only whole UTC days are archived, so the cutoff becomes the UTC midnight at or before
   now minus the retention (the retention is effectively up to 24 hours longer, and the floor is
   raised to that midnight, before the archive is read). One object per day,
@@ -380,7 +380,9 @@ The design and the staged rollout — log-only → allowlist → enforce — are
   is last because the counts are known only after the rows were streamed (a day is millions of
   rows, paged 5000 at a time and staged in a temporary file, never held in memory); an object
   without it, or whose counts disagree, is damaged. An object is complete or absent (S3: a single
-  PutObject confirmed by a HeadObject length check; local: temp file, fsync, rename), so a partial
+  PutObject confirmed by a HeadObject length check; GCS: one upload finalized under
+  `ifGenerationMatch=0`, sent with its CRC32C and compared with the stored length and CRC32C;
+  local: temp file, fsync, rename), so a partial
   object cannot exist. A day whose object exists is read back and verified (header, counts,
   gzip checksum) and never rewritten: after a crash between write and delete, or a delete cut off
   midway, the retry skips the write and deletes, and a rewrite could not replace the full day
@@ -399,7 +401,14 @@ The design and the staged rollout — log-only → allowlist → enforce — are
   authorise a delete. A day with only some events left (a delete cut off midway) passes.
   Role permissions: `s3:PutObject` and `s3:GetObject` on the prefix, and `s3:ListBucket` on the
   bucket: without it S3 answers a HeadObject for a missing key with 403 instead of 404, and the
-  archive stops at the first day. Local: the file and every directory above it, up to the filesystem root, are fsynced on every Put and every
+  archive stops at the first day. GCS: `roles/storage.objectCreator` and
+  `roles/storage.objectViewer` on the bucket (create and get, never list, delete or overwrite),
+  through Application Default Credentials only (Workload Identity on GKE; no key file is read
+  from configuration). The sink never replaces a key: a Put on an existing one fails the
+  precondition and is always an error, even when the object there has the same length and
+  CRC32C (a retried upload whose first attempt landed looks like that, and so does a CRC32C
+  collision); the next run finds the key with `Exists` and the archiver verifies the object
+  against the database as for any other sink. Local: the file and every directory above it, up to the filesystem root, are fsynced on every Put and every
   read-back of an existing object, so a failed fsync is retried by the next run and a readable
   file is never taken as proof it is durable.
   A bad URL stops the CP at startup rather than deleting without an archive.
