@@ -4,12 +4,19 @@
     python3 deploy/local/cfn-template-size-test.py
 
 af_cfn_deploy (env.sh) switches to `--s3-bucket` past 51,200 bytes, but the bucket is an output
-of 20-platform. So the three stacks that exist before it - 00-network, 10-data and 20-platform
-itself - are deployed by direct upload on a stand-up, pause.sh and update.sh, and a template
-that crosses the limit there stops the whole deploy with a CLI error. 30-ingress and the rest
-come after the bucket; 30-ingress keeps its own budget in cfn-cp-settings-env-test.py.
+of 20-platform. So a template that is sent by direct upload while no bucket exists stops the
+deploy with a CLI error when it crosses the limit:
 
-Fails when one of the three is within 4 KiB of 51,200 bytes (measured on the file, which is what
+  - 00-network, 10-data and 20-platform on a first stand-up (pause.sh and update.sh reach
+    00-network only through an existing platform stack and AF_CFN_BUCKET, which is not
+    something to rely on);
+  - 40-ec2-pool in deploy/aws/ecs/harness/setup.sh, which sends it with a plain
+    `aws cloudformation deploy --template-file` against dummy network / platform exports.
+
+30-ingress and the rest come after the bucket; 30-ingress keeps its own budget in
+cfn-cp-settings-env-test.py.
+
+Fails when one of them is within 4 KiB of 51,200 bytes (measured on the file, which is what
 the AWS CLI measures). Long prose belongs in cfn/PARAMETERS.md: a YAML comment counts exactly
 like a Description.
 
@@ -25,7 +32,7 @@ CFN = os.path.join(HERE, "..", "aws", "ecs", "cfn")
 LIMIT = 51200
 HEADROOM = 4096
 BUDGET = LIMIT - HEADROOM
-PRE_BUCKET = ["00-network.yaml", "10-data.yaml", "20-platform.yaml"]
+PRE_BUCKET = ["00-network.yaml", "10-data.yaml", "20-platform.yaml", "40-ec2-pool.yaml"]
 
 
 def check(name, size):

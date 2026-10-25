@@ -244,8 +244,9 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties: { SubnetId: !Ref PublicSubnet1, RouteTableId: !Ref PublicRt }
 
-  # One NAT gateway (single-AZ). !! NatEip is retained on purpose: it is the deployment's ONLY
-  # egress source IP, which a customer allow-lists. The stack must never release it, on delete or
+  # One NAT gateway (single-AZ). !! NatEip is retained on purpose: it is the egress source IP of
+  # the CP and hosts (and of workspaces unless EgressRoute=gateway, which adds GatewayEip as a
+  # second address), which a customer allow-lists. The stack must never release it, on delete or
   # replacement; handing it back as NatEipAllocationId rebuilds behind the same IP.
   # PARAMETERS.md, 00-network: "NAT egress address".
   NatEip:
@@ -492,7 +493,9 @@ Resources:
     Properties:
       AllocationId: !If [ CreateGatewayEip, !GetAtt GatewayEip.AllocationId, !Ref GatewayEipAllocationId ]
       NetworkInterfaceId: !Ref GatewayEni
-  # One rule per source of the gateway's address (PARAMETERS.md, 00-network: "ALB rules").
+  # Must admit the gateway's address even when AlbIngressCidr is narrowed: workspaces and the
+  # gateway agent reach the CP's public URL through it. Do not remove (PARAMETERS.md, 00-network:
+  # "ALB rules").
   AlbFromGateway:
     Type: AWS::EC2::SecurityGroupIngress
     Condition: CreateGatewayEip
@@ -863,8 +866,9 @@ Resources:
               systemctl enable --now af-squid-rotate.timer af-egress-install.timer
             - { Ws0: !Ref WorkspaceSubnet0Cidr, Ws1: !Ref WorkspaceSubnet1Cidr }
 
-  # Group of ONE; terminate-before-launch (two instances cannot share GatewayEni); MaxSize
-  # stays 1 on purpose. PARAMETERS.md, 00-network: "Egress gateway group".
+  # Group of ONE; terminate-before-launch (two instances cannot share GatewayEni). MaxSize stays 1
+  # even at DesiredCapacity 0: the rolling update needs MinInstancesInService (0) < MaxSize, or an
+  # update to a paused group fails. PARAMETERS.md, 00-network: "Egress gateway group".
   GatewayAsg:
     Type: AWS::AutoScaling::AutoScalingGroup
     Condition: GatewayOn

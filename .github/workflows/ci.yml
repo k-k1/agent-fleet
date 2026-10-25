@@ -381,8 +381,9 @@ jobs:
       # entry, each secret has its own switch, and 30-ingress keeps 1 KiB under the wall.
       - name: CP settings parameters (offline template evaluation)
         run: python3 ./deploy/local/cfn-cp-settings-env-test.py
-      # 00-network, 10-data and 20-platform are deployed before the S3 hand-off bucket exists, so
-      # they cannot go through --template-url: each keeps 4 KiB under the 51,200-byte wall (#2756).
+      # 00-network, 10-data and 20-platform are deployed before the S3 hand-off bucket exists, and
+      # the harness sends 40-ec2-pool by direct upload, so none can go through --template-url:
+      # each keeps 4 KiB under the 51,200-byte wall (#2756).
       - name: Pre-bucket CFN templates keep their byte budget
         run: python3 ./deploy/local/cfn-template-size-test.py
       # IAM caps a role's inline policies at 10,240 characters in total and each managed one

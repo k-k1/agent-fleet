@@ -1000,9 +1000,11 @@ to the private subnet.
 One NAT gateway (single-AZ) is the main standing cost. Enough for a dev loop; a prod environment
 would put one NAT per AZ. Workspaces egress to git and the model APIs through it.
 
-`NatEip` is retained on purpose. The address is the deployment's ONLY egress source IP (every
-workspace reaches git and the model APIs through it), so it is the value a customer registers in a
-corporate firewall allow-list. Releasing it silently cuts everyone's outbound traffic and the
+`NatEip` is retained on purpose. With `EgressRoute=nat-gateway` the address is the deployment's
+ONLY egress source IP (every workspace reaches git and the model APIs through it); with
+`EgressRoute=gateway` workspaces egress from `GatewayEip` instead and the NAT address is the CP's
+and the hosts' only, so a customer allow-lists BOTH addresses (#2728). Either way it is a value a
+customer registers in a corporate firewall allow-list. Releasing it silently cuts everyone's outbound traffic and the
 replacement is a different address, so the stack must never take it away: not on delete, not on
 replacement. Retaining it is also what makes the address reusable: hand it back as
 `NatEipAllocationId` and the rebuilt deployment egresses from the same IP.
@@ -1083,7 +1085,8 @@ to a paused group can carry a new launch template (the AMI is re-resolved).
 ### ALB rules
 
 Workspaces reach the CP's public URL through the gateway now, and the agent ships to it, so a
-narrowed `AlbIngressCidr` must still admit the gateway's address. One rule per source of the
+narrowed `AlbIngressCidr` must still admit the gateway's address: removing this rule cuts
+workspace -> CP and gateway agent -> CP. One rule per source of the
 address: a handed-in allocation's address is a parameter (`GatewayEipAddress`).
 
 ### Egress token
