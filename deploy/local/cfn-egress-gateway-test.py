@@ -361,11 +361,13 @@ def check_pause(net, env_src, policy_src, agent_src="", ship_src=""):
     boot = re.findall(r"printf '([^']*)'[\s\\]*> /var/lib/af-egress-agent/af-mode\.conf", ud)
     if not boot or any(header in b.replace("\\n", "\n") for b in boot):
         f.append("the bootstrap mode file carries the probe's header %r: a closed gateway reads as ready" % header)
-    applied = 'log.Printf("egress-agent: policy applied (%s)"'
-    idx = policy_src.find(applied)
-    if "grep -q 'egress-agent: policy applied ('" not in probe or idx < 0 \
-            or "s.reload(ctx)" not in policy_src[max(0, idx - 300):idx]:
-        f.append("env.sh AF_GATEWAY_PROBE does not look for the line egressagent logs right after a successful reload")
+    # Both lines egressagent logs right after a successful reload: one per path that applies.
+    if "grep -qE 'egress-agent: (policy applied|reloaded Squid with the policy on disk) \\('" not in probe:
+        f.append("env.sh AF_GATEWAY_PROBE does not look for both lines egressagent logs after a successful reload")
+    for line in ("policy applied (%s)", "reloaded Squid with the policy on disk (%s)"):
+        idx = policy_src.find('log.Printf("egress-agent: %s"' % line)
+        if idx < 0 or "s.reload(ctx)" not in policy_src[max(0, idx - 300):idx]:
+            f.append("egressagent no longer logs %r right after Squid's reload" % line)
     if "_SYSTEMD_INVOCATION_ID=" not in probe or "InvocationID" not in probe:
         f.append("env.sh AF_GATEWAY_PROBE does not limit the applied line to the agent's current run")
     for unit in ("squid", "af-egress-agent"):
@@ -380,8 +382,10 @@ def check_pause(net, env_src, policy_src, agent_src="", ship_src=""):
             f.append("env.sh AF_GATEWAY_DRAIN does not read egressagent's %s (%s)" % (what, m and m.group(1)))
     if lm and "access_log stdio:%s af_egress" % lm.group(1) not in ud:
         f.append("Squid's access_log in the user data is not where the drain reads it")
-    if "systemctl stop squid" not in drain or "systemctl start squid" not in probe:
-        f.append("the drain does not stop Squid (open tunnels are logged only when they close), or the probe never starts it again")
+    if "systemctl stop squid || {" not in drain or "if systemctl is-active --quiet squid; then" not in drain \
+            or "touch /run/af-egress-drained || {" not in drain or "systemctl start squid" not in probe:
+        f.append("the drain does not insist on a stopped Squid behind its marker (open tunnels are logged only "
+                 "when they close), or the probe never starts it again")
     return f
 
 
@@ -528,9 +532,12 @@ def main():
         ("route follows the switch", pause_ctl(route_paused)),
         ("readiness from a file the bootstrap writes too", pause_ctl(fn_env=lambda e: e.replace("'^# mode: '", "'^# '"))),
         ("readiness from another file", pause_ctl(fn_env=lambda e: e.replace("/var/lib/af-egress-agent/af-mode.conf &&", "/etc/squid/af-mode.conf &&"))),
-        ("written taken for applied", pause_ctl(fn_env=lambda e: e.replace(" &&\n   journalctl -q -o cat _SYSTEMD_INVOCATION_ID=\"$inv\" | grep -q 'egress-agent: policy applied ('", ""))),
+        ("written taken for applied", pause_ctl(fn_env=lambda e: e.replace("(policy applied|reloaded Squid with the policy on disk)", "(policy|reload)"))),
+        ("drain ignores a failed stop", pause_ctl(fn_env=lambda e: e.replace("systemctl stop squid || {", "systemctl stop squid; {"))),
+        ("drain does not check Squid stopped", pause_ctl(fn_env=lambda e: e.replace("if systemctl is-active --quiet squid; then", "if false; then"))),
         ("an earlier run's applied line counts", pause_ctl(fn_env=lambda e: e.replace(' _SYSTEMD_INVOCATION_ID="$inv"', " -u af-egress-agent"))),
         ("agent logs applied before the reload", pause_ctl(fn_policy=lambda p: p.replace("s.reload(ctx)", "s.reloadLater(ctx)"))),
+        ("disk reload line renamed", pause_ctl(fn_policy=lambda p: p.replace("reloaded Squid with the policy on disk", "reused the policy on disk"))),
         ("drain reads another state file", pause_ctl(fn_env=lambda e: e.replace("'/var/lib/af-egress-agent/state.json'", "'/tmp/state.json'"))),
         ("drain ignores the generation xattr", pause_ctl(fn_env=lambda e: e.replace("'user.af-egress.gen'", "'user.gen'"))),
         ("drain leaves Squid running", pause_ctl(fn_env=lambda e: e.replace("systemctl stop squid", "true"))),

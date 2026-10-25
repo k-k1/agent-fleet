@@ -910,8 +910,9 @@ workspace route **blackholes**: that is harmless only because no workspace runs,
 start one on a stack with `GatewayEnabled=false`. `--up` starts it in the same deploy as the NAT
 gateway and waits for it twice: before the CP starts, until an instance has attached
 `GatewayEni` and Squid and `af-egress-agent` run; after the CP is up, until the agent's current
-run has applied a policy (written the mode file and logged `policy applied`, which it does only
-after Squid's reload succeeded). Only the CP can give it that policy, and Squid refuses
+run has applied a policy (written the mode file and logged `policy applied`, or `reloaded Squid
+with the policy on disk` for a run that started while the CP was down; both only after Squid's
+reload succeeded). Only the CP can give it that policy, and Squid refuses
 everything until then. A gateway that does not come up keeps the CP down;
 `AF_GATEWAY_WAIT_SEC` (default 1200) bounds each wait. The checks on the instance run through
 SSM Run Command: the operator needs `ssm:SendCommand` (document `AWS-RunShellScript`, on the

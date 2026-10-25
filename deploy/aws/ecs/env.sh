@@ -266,10 +266,11 @@ af_gateway_eni() {
 }
 
 # af_gateway_instance <eni> — the instance GatewayEni is attached to (empty while it is not).
+# Fails when the interface cannot be read: "not attached" and "could not look" must differ.
 af_gateway_instance() {
   local v
   v="$("${AWS[@]}" ec2 describe-network-interfaces --network-interface-ids "$1" \
-    --query 'NetworkInterfaces[0].Attachment.[Status,InstanceId]' --output text 2>/dev/null || true)"
+    --query 'NetworkInterfaces[0].Attachment.[Status,InstanceId]' --output text 2>/dev/null)" || return 1
   case "$v" in attached*i-*) echo "${v##*[[:space:]]}" ;; esac
 }
 
@@ -279,9 +280,11 @@ af_gateway_instance() {
 #
 # Readiness. Ready means a policy Squid has APPLIED in the agent's current run: the mode file
 # carries the agent's "# mode: " header (the bootstrap file, which refuses everything, does not),
-# and the current invocation of the unit has logged "policy applied", which the agent writes
-# only after Squid's reload succeeded. The header alone is only "written": a failed reload
-# leaves Squid on the bootstrap policy. A gateway paused part way (the drain below stopped
+# and the current invocation of the unit has logged a successful reload of it: "policy applied"
+# (a policy from the CP) or "reloaded Squid with the policy on disk" (a run that started while
+# the CP was down; when the CP then answers with the same policy nothing changes and nothing
+# more is logged). The header alone is only "written": a failed reload leaves Squid on the
+# bootstrap policy. A gateway paused part way (the drain below stopped
 # Squid and left its marker) gets Squid back; without the marker it is never started from here,
 # because during the boot it would run the package's default configuration.
 AF_GATEWAY_PROBE="$(cat <<'SH'
@@ -289,7 +292,8 @@ if [ -e /run/af-egress-drained ]; then systemctl start squid && rm -f /run/af-eg
 systemctl is-active --quiet squid && systemctl is-active --quiet af-egress-agent || { echo af-gw-starting; exit 0; }
 inv=$(systemctl show -p InvocationID --value af-egress-agent)
 if grep -q '^# mode: ' /var/lib/af-egress-agent/af-mode.conf &&
-   journalctl -q -o cat _SYSTEMD_INVOCATION_ID="$inv" | grep -q 'egress-agent: policy applied ('; then
+   journalctl -q -o cat _SYSTEMD_INVOCATION_ID="$inv" |
+     grep -qE 'egress-agent: (policy applied|reloaded Squid with the policy on disk) \('; then
   echo af-gw-ready
 else
   echo af-gw-up
@@ -300,10 +304,12 @@ SH
 # Drain. Squid logs a tunnel when it closes, so it is stopped (closing every connection) once no
 # workspace runs; then every byte of its log and rotated logs must be under the offset the agent
 # committed after the CP accepted it (state.json, by the file's user.af-egress.gen xattr). Only
-# then may the scale-in destroy the disk. Idempotent: it is asked again until it answers drained.
+# then may the scale-in destroy the disk. A Squid that did not stop is never drained: its log is
+# not final. Idempotent: it is asked again until it answers drained.
 AF_GATEWAY_DRAIN="$(cat <<'SH'
-touch /run/af-egress-drained
-systemctl stop squid
+touch /run/af-egress-drained || { echo 'af-gw-error: cannot write the drain marker'; exit 0; }
+systemctl stop squid || { echo 'af-gw-error: stopping Squid failed'; exit 0; }
+if systemctl is-active --quiet squid; then echo 'af-gw-error: Squid is still running'; exit 0; fi
 python3 - <<'PY'
 import glob, json, os
 log = '/var/log/squid/af-egress.log'
@@ -361,14 +367,16 @@ af_gateway_drain() {
   [ -n "$eni" ] || { echo "    egress gateway: $1 has no GatewayEni" >&2; return 1; }
   deadline=$(( $(date +%s) + ${AF_GATEWAY_DRAIN_SEC:-300} ))
   while :; do
-    iid="$(af_gateway_instance "$eni")"
-    if [ -z "$iid" ]; then
+    if ! iid="$(af_gateway_instance "$eni")"; then
+      last="$eni could not be read (ec2:DescribeNetworkInterfaces)"
+    elif [ -z "$iid" ]; then
       echo "    egress gateway: no instance has $eni attached: nothing to drain"
       return 0
+    else
+      out="$(af_gateway_run "$iid" drain "$AF_GATEWAY_DRAIN")"
+      [ "$out" = af-gw-drained ] && return 0
+      last="$iid answers '${out:-nothing (SSM)}'"
     fi
-    out="$(af_gateway_run "$iid" drain "$AF_GATEWAY_DRAIN")"
-    [ "$out" = af-gw-drained ] && return 0
-    last="$iid answers '${out:-nothing (SSM)}'"
     if [ "$(date +%s)" -ge "$deadline" ]; then
       echo "    egress gateway: $last" >&2
       return 1
@@ -388,8 +396,9 @@ af_gateway_wait() {
   [ -n "$eni" ] || { echo "    egress gateway: $net has no GatewayEni" >&2; return 1; }
   deadline=$(( $(date +%s) + ${AF_GATEWAY_WAIT_SEC:-1200} ))
   while :; do
-    iid="$(af_gateway_instance "$eni")"
-    if [ -z "$iid" ]; then
+    if ! iid="$(af_gateway_instance "$eni")"; then
+      iid=""; last="$eni could not be read (ec2:DescribeNetworkInterfaces)"
+    elif [ -z "$iid" ]; then
       last="$eni is not attached to an instance"
     else
       out="$(af_gateway_run "$iid" readiness "$AF_GATEWAY_PROBE")"

@@ -579,8 +579,10 @@ Not run on a real account.
   policy; a workspace started in between is refused by the closed bootstrap policy, not let out.
 - **Readiness and the drain are read through SSM Run Command.** Ready is a policy Squid has
   applied in the agent's current run: the mode file carries the agent's `# mode: ` header (the
-  closed bootstrap file does not) and the unit's current invocation has logged `policy applied`,
-  which the agent writes only after Squid's reload succeeded. A written file alone is not
+  closed bootstrap file does not) and the unit's current invocation has logged `policy applied`
+  or, for a run that started while the CP was down, `reloaded Squid with the policy on disk`; the
+  agent writes either only after Squid's reload succeeded. The drain counts only with Squid
+  stopped, and an interface it cannot read fails it rather than reading as "no instance". A written file alone is not
   applied. A probe from outside the instance cannot tell the bootstrap policy from a real one.
 
 Open point 5 is closed for AWS by this; open point 7 (#2728) stays open.

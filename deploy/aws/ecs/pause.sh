@@ -340,7 +340,7 @@ status() {
   gw="$(af_gateway_state "$AF_STACK_NETWORK")"; gwi=""
   if [ "$gw" = on ]; then
     eni="$(af_gateway_eni "$AF_STACK_NETWORK")"
-    [ -z "$eni" ] || gwi="$(af_gateway_instance "$eni")"
+    if [ -n "$eni" ]; then gwi="$(af_gateway_instance "$eni")" || gwi="its interface could not be read"; fi
   fi
   restop=""; af_stack_exists "$AF_STACK_DATA" && restop="$(af_stack_output "$AF_STACK_DATA" RdsRestopFunction)"
   echo "==> $AF_FQDN (profile=$AF_PROFILE region=$AF_REGION)"
