@@ -74,7 +74,7 @@ func TestWithSessionEnvRefusesAnEscapingName(t *testing.T) {
 // os.Environ()) silently loses AF_WORK_DIR, which no behavioural test of the launch would notice
 // without the vendor binary.
 func TestPerSessionManagedKindsUseWithSessionEnv(t *testing.T) {
-	for _, f := range []string{"copilot/driver.go", "cursor/driver.go", "kiro/driver.go", "muse/handle.go"} {
+	for _, f := range []string{"copilot/driver.go", "cursor/driver.go", "kiro/driver.go", "muse/handle.go", "lcpp/driver.go"} {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)

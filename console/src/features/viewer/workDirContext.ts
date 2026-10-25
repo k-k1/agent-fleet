@@ -4,7 +4,7 @@
 // `$AF_WORK_DIR/…` stays plain code there.
 import { createContext, useContext } from "react";
 import { sessionWorkDir } from "../../lib/pathref.ts";
-import type { Session } from "../../types/session.ts";
+import { isManagedSession, type Session } from "../../types/session.ts";
 
 const SessionWorkDirContext = createContext<string>("");
 
@@ -16,11 +16,13 @@ export function useSessionWorkDir(): string {
 }
 
 /**
- * The $AF_WORK_DIR a session's replies mean: ~/.af-work/<name>, for Terminal and Managed alike
- * (the Agent hands every kind its directory; paths.SessionWorkDir). Unknown metadata answers "" —
- * the mirror has not learned what the session is yet, and plain code beats linking a path that
- * may belong to something else.
+ * The $AF_WORK_DIR a session's replies mean: ~/.af-work/<name>. The Agent hands it to every
+ * Terminal session and to every Managed kind but opencode (one shared server, no per-session
+ * environment; #2710), where the session writes a fallback directory instead — so a leftover
+ * ~/.af-work/<name> from an earlier Terminal run must not be linked for it. Unknown metadata
+ * answers "" too: plain code beats linking a path that may belong to something else.
  */
-export function mirrorWorkDir(name: string, meta: Pick<Session, "driver"> | null | undefined): string {
-  return meta ? sessionWorkDir(name) : "";
+export function mirrorWorkDir(name: string, meta: Pick<Session, "driver" | "kind"> | null | undefined): string {
+  if (!meta || (isManagedSession(meta) && meta.kind === "opencode")) return "";
+  return sessionWorkDir(name);
 }

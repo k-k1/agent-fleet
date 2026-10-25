@@ -78,9 +78,10 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
   restored). Terminal (CLI) sessions get it from the launch environment; Managed sessions get it
   per kind: the child process's environment for copilot, cursor, kiro and muse, and the thread
   config (`shell_environment_policy.set`) for codex, whose one shared app-server cannot carry a
-  per-session value. Two kinds have no channel yet and run without the variable: opencode
-  (one shared `opencode serve`; its per-session environment would replace the whole shell
-  environment) and lcpp (no shell tool at all). There, when `$AF_WORK_DIR` is empty, use
+  per-session value. lcpp's bash tool gets it from the harness runtime. Managed opencode has no
+  channel yet and runs without the variable (one shared `opencode serve`; its per-session
+  environment would replace the whole shell environment; #2710). Whenever `$AF_WORK_DIR` is
+  actually empty (that case, or a directory that could not be created), use
   `mkdir -p ~/.af-work/"$(basename "$(git rev-parse --show-toplevel)")"` and remove it when the
   task is done (an unmarked directory is kept at boot but offered for deletion in Settings >
   Machine). The name is the session's slug and a rename changes only the title, so the directory

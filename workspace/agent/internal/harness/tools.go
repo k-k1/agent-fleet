@@ -69,6 +69,9 @@ type Runtime struct {
 	// filesystem tool call (resolvePath) rather than silently defaulting to the
 	// host process's own directory.
 	Cwd string
+	// Env is the environment bash runs with. nil inherits the host process's own, which belongs
+	// to no session; a per-session caller sets it (AF_SESSION_NAME, AF_WORK_DIR).
+	Env []string
 	// Plan, when true, removes Mutates tools from Registry.Defs and refuses to
 	// execute one even if the model calls it anyway (ADR 0093 decision 5's plan
 	// mode — a stale advertised list or a model that ignores its own tool list

@@ -226,9 +226,16 @@ describe("$AF_WORK_DIR in inline code", () => {
 
   it("links in a Managed session's reply as it does in a Terminal one", async () => {
     resolved[`${WD}/shots/x.png`] = { path: ".af-work/sukbq4s/shots/x.png", type: "file" };
-    await render("`$AF_WORK_DIR/shots/x.png`", {}, mirrorWorkDir("sukbq4s", { driver: "managed" }));
+    await render("`$AF_WORK_DIR/shots/x.png`", {}, mirrorWorkDir("sukbq4s", { driver: "managed", kind: "codex" }));
     expect(pathLinks().map((a) => a.textContent)).toEqual(["$AF_WORK_DIR/shots/x.png"]);
     expect(asked[0].refs).toEqual([`${WD}/shots/x.png`]);
+  });
+
+  it("stays plain in a Managed opencode reply even when a Terminal run left the file", async () => {
+    resolved[`${WD}/shots/x.png`] = { path: ".af-work/sukbq4s/shots/x.png", type: "file" };
+    await render("`$AF_WORK_DIR/shots/x.png`", {}, mirrorWorkDir("sukbq4s", { driver: "managed", kind: "opencode" }));
+    expect(pathLinks()).toHaveLength(0);
+    expect(asked).toEqual([]);
   });
 
   it("is not split into commit links when it names a hex-looking file", async () => {
