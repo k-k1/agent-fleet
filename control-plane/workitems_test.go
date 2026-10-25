@@ -595,6 +595,87 @@ func TestWorkItemDetailRejectsUnknownKind(t *testing.T) {
 	}
 }
 
+// The merge relay (ADR 0061, 2026-10-25 note on #2632): a stopped Workspace answers 409 and is not
+// started, and nothing reaches the Agent for a request that can be refused here.
+func TestWorkItemMergeStoppedDoesNotStart(t *testing.T) {
+	env := newWorkItemEnv(t, "stopped")
+	var reached int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached++ }))
+	defer srv.Close()
+	env.res = &resolved{rt: stubRuntime{endpoint: srv.URL, token: "tok", state: "stopped"}, mv: env.res.mv}
+	req := httptest.NewRequest("POST", "/api/work-items/merge",
+		strings.NewReader(`{"provider":"github","key":"acme/web#518","sha":"abc","method":"merge"}`))
+	w := httptest.NewRecorder()
+	env.api.merge(w, req, env.res)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "workspace_stopped") {
+		t.Fatalf("got %d %s, want 409 workspace_stopped", w.Code, w.Body.String())
+	}
+	if reached != 0 {
+		t.Errorf("reached the agent %d times while stopped", reached)
+	}
+}
+
+func TestWorkItemMergeRefusesLocally(t *testing.T) {
+	for name, body := range map[string]string{
+		"bitbucket": `{"provider":"bitbucket","key":"ws/r#1","sha":"abc","method":"merge"}`,
+		"jira":      `{"provider":"jira","key":"PROJ-1","sha":"abc","method":"merge"}`,
+		"no sha":    `{"provider":"github","key":"acme/web#1","method":"merge"}`,
+		"no key":    `{"provider":"github","sha":"abc","method":"merge"}`,
+		"no method": `{"provider":"github","key":"acme/web#1","sha":"abc"}`,
+		"bad":       `{"provider":"github","key":"acme/web#1","sha":"abc","method":"ff"}`,
+		"not json":  `x`,
+	} {
+		env := newWorkItemEnv(t, "running")
+		w := httptest.NewRecorder()
+		env.api.merge(w, httptest.NewRequest("POST", "/api/work-items/merge", strings.NewReader(body)), env.res)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d %s, want 400", name, w.Code, w.Body.String())
+		}
+		if *env.hits != 0 {
+			t.Errorf("%s: reached the agent", name)
+		}
+	}
+}
+
+// The Agent receives exactly the four fields, with the provider pinned to github, and its
+// answer (here a moved head) passes through with its status and code intact.
+func TestWorkItemMergeRelaysAndPassesRefusalThrough(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	var got map[string]string
+	var path, auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, auth = r.URL.Path, r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"head_changed","message":"moved"}}`))
+	}))
+	defer srv.Close()
+	env.res = &resolved{rt: stubRuntime{endpoint: srv.URL, token: "tok", state: "running"}, mv: env.res.mv}
+	w := httptest.NewRecorder()
+	env.api.merge(w, httptest.NewRequest("POST", "/api/work-items/merge",
+		strings.NewReader(`{"key":"acme/web#518","sha":"abc","method":"squash","extra":"x"}`)), env.res)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "head_changed") {
+		t.Fatalf("got %d %s", w.Code, w.Body.String())
+	}
+	if path != "/work-items/merge" || auth != "Bearer tok" {
+		t.Errorf("agent saw %s with %q", path, auth)
+	}
+	if got["provider"] != "github" || got["key"] != "acme/web#518" || got["sha"] != "abc" || got["method"] != "squash" || len(got) != 4 {
+		t.Errorf("agent body = %v", got)
+	}
+}
+
+// An Agent from before this feature has no route; that must not read as "pull request gone".
+func TestWorkItemMergeOldAgentSaysSo(t *testing.T) {
+	env := newWorkItemEnv(t, "running") // the stub agent serves /work-items/fetch only
+	w := httptest.NewRecorder()
+	env.api.merge(w, httptest.NewRequest("POST", "/api/work-items/merge",
+		strings.NewReader(`{"key":"acme/web#518","sha":"abc","method":"merge"}`)), env.res)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "agent_outdated") {
+		t.Fatalf("got %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestWorkItemWireNeverCarriesNullArrays(t *testing.T) {
 	if got := splitLabels(""); got == nil {
 		t.Error("splitLabels(\"\") returned nil — it marshals as JSON null")

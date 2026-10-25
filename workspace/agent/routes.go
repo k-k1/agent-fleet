@@ -58,6 +58,9 @@ func buildMux() *http.ServeMux {
 	// Relayed by the CP like the comment above, and like it, only ever on a human's action —
 	// the timer-driven job is /work-items/fetch.
 	mux.HandleFunc("POST /work-items/detail", handleWorkItemsDetail)
+	// The second write-back (ADR 0061, 2026-10-25 note on #2632): merge a GitHub pull request.
+	// Relayed by the CP on a confirm press only; no MCP tool, so an agent cannot reach it.
+	mux.HandleFunc("POST /work-items/merge", handleWorkItemsMerge)
 	// The Jira project keys the member can browse, for the mirror's ticket links (docs/log/80 §80.25).
 	mux.HandleFunc("POST /work-items/jira-projects", handleWorkItemsJiraProjects)
 	// The fleet's own inference engines (ADR 0071 decision 9): the CP is the only party

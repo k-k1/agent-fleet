@@ -18,7 +18,9 @@ const workItemQueryCreate = vi.fn();
 const bitbucketRepoList = vi.fn();
 const workItemDetail = vi.fn();
 const workItemSearch = vi.fn();
+const workItemMerge = vi.fn();
 vi.mock("./api.ts", () => ({
+  workItemMerge: (...a: unknown[]) => workItemMerge(...a),
   workItemSearch: (...a: unknown[]) => workItemSearch(...a),
   workItemList: (...a: unknown[]) => workItemList(...a),
   workItemDetail: (...a: unknown[]) => workItemDetail(...a),
@@ -142,6 +144,7 @@ beforeEach(() => {
   openTerminal.mockReset();
   useSessionsStore.setState({ sessions: [], refresh: vi.fn(async () => {}) });
   workItemList.mockReset();
+  workItemMerge.mockReset();
   workItemSearch.mockReset();
   workItemQueryCreate.mockReset();
   workItemQueryCreate.mockResolvedValue({ id: "new" });
@@ -1217,6 +1220,226 @@ describe("WorkItemDetailModal — a pull request", () => {
     expect(useLaunchTarget.getState().target?.name).toBe("web@wip-abc");
     expect(useLaunchTarget.getState().existingBranch).toBe("");
     expect(useLaunchTarget.getState().inPlace).toBe(true);
+  });
+});
+
+// Merging a GitHub pull request from the panel (ADR 0061, 2026-10-25 note on #2632). The button is
+// a write against GitHub, so what is pinned is when it is NOT there: Bitbucket, a connection that
+// cannot merge, and any state GitHub would refuse — plus that a press sends the SHA the panel
+// displayed, only after a confirm that names what will be merged.
+describe("WorkItemDetailModal — merging a GitHub pull request", () => {
+  const SHA = "0123456789abcdef0123456789abcdef01234567";
+  const pr = (over: Record<string, unknown> = {}) =>
+    item({ id: "pr1", kind: "pr", key: "acme/web#518", title: "埋め込みシェルを出す", url: "https://github.com/acme/web/pull/518", ...over });
+  const mergeable = {
+    provider: "github",
+    key: "acme/web#518",
+    kind: "pr",
+    title: "埋め込みシェルを出す",
+    state: "open",
+    url: "https://github.com/acme/web/pull/518",
+    author: "taro",
+    assignee: "",
+    labels: [],
+    repo: "acme/web",
+    updatedAt: "2026-09-11T01:00:00Z",
+    draft: false,
+    merged: false,
+    mergeable: "clean",
+    baseBranch: "develop",
+    headBranch: "feature/x",
+    additions: 1,
+    deletions: 1,
+    changedFiles: 1,
+    comments: 0,
+    reviews: [],
+    checks: { state: "success", total: 2, failed: 0, pending: 0 },
+    headSha: SHA,
+    mergeableState: "clean",
+    mergeMethods: ["merge", "squash"],
+    defaultMergeMethod: "merge",
+    canMerge: true,
+  };
+  const open = async (row = pr()) => {
+    workItemList.mockResolvedValue({ items: [row], queries: [query], sessions: [], fetchedAt: "", running: true });
+    await render();
+    await openRow();
+    return document.querySelector(".wi-dmodal")!;
+  };
+  const footer = (m: Element) => m.querySelector(".ui-modal-foot")!;
+  /** The visible Merge button; the invisible placeholder that holds its room is not it. */
+  const mergeBtn = (m: Element) =>
+    [...footer(m).querySelectorAll<HTMLButtonElement>("button:not(.wi-dmergehold)")].find((b) => b.textContent?.includes(t("wi.merge")) && !b.textContent.includes(t("common.cancel")));
+  const dialog = () => document.querySelector(".confirm");
+  const confirmBtn = () => document.querySelector<HTMLButtonElement>(".confirm-actions button[data-autofocus]")!;
+  const settle = async () => {
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+  };
+
+  it("draws an enabled Merge button when GitHub says the merge would succeed", async () => {
+    workItemDetail.mockResolvedValue(mergeable);
+    const modal = await open();
+    expect(mergeBtn(modal)?.disabled).toBe(false);
+    expect(footer(modal).querySelector(".wi-dmergewhy")).toBeNull();
+  });
+
+  it("opens a dialog naming the pull request, base ← head and the method, and merges nothing until confirmed", async () => {
+    workItemDetail.mockResolvedValue(mergeable);
+    const modal = await open();
+    await act(async () => mergeBtn(modal)!.click());
+    expect(workItemMerge).not.toHaveBeenCalled();
+    const d = dialog()!;
+    expect(d.textContent).toContain("acme/web#518");
+    expect(d.textContent).toContain("埋め込みシェルを出す");
+    const codes = [...d.querySelectorAll(".wi-dbranches code")].map((c) => c.textContent);
+    expect(codes).toEqual(["develop", "feature/x"]);
+    const sel = d.querySelector<HTMLSelectElement>("select")!;
+    expect([...sel.options].map((o) => o.value)).toEqual(["merge", "squash"]);
+    expect(sel.value).toBe("merge"); // the Agent's default
+    expect(d.textContent).toContain(SHA.slice(0, 7));
+  });
+
+  it("sends the displayed head SHA and the chosen method, then re-reads the pull request", async () => {
+    workItemDetail.mockResolvedValue(mergeable);
+    workItemMerge.mockResolvedValue({ merged: true, sha: "feedface" });
+    const modal = await open();
+    await act(async () => mergeBtn(modal)!.click());
+    const sel = dialog()!.querySelector<HTMLSelectElement>("select")!;
+    await act(async () => {
+      sel.value = "squash";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    workItemDetail.mockResolvedValue({ ...mergeable, state: "done", merged: true });
+    await act(async () => confirmBtn().click());
+    await settle();
+    expect(workItemMerge).toHaveBeenCalledWith({ provider: "github", key: "acme/web#518", sha: SHA, method: "squash" });
+    expect(dialog()).toBeNull();
+    expect(workItemDetail).toHaveBeenCalledTimes(2); // the read after the merge
+    expect(modal.textContent).toContain(t("wi.detail_merge_merged"));
+    expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_done"));
+    expect(mergeBtn(modal)).toBeUndefined(); // merged: nothing left to press
+  });
+
+  it("refuses a moved pull request: says nothing was merged and shows the latest", async () => {
+    workItemDetail.mockResolvedValue(mergeable);
+    workItemMerge.mockResolvedValue({ error: { code: "head_changed", message: "moved" } });
+    const modal = await open();
+    await act(async () => mergeBtn(modal)!.click());
+    workItemDetail.mockResolvedValue({ ...mergeable, headSha: "f".repeat(40) });
+    await act(async () => confirmBtn().click());
+    await settle();
+    expect(dialog()).toBeNull();
+    expect(workItemDetail).toHaveBeenCalledTimes(2);
+    expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_head_changed"));
+  });
+
+  it("keeps the dialog open with GitHub's own words when the merge fails", async () => {
+    workItemDetail.mockResolvedValue(mergeable);
+    workItemMerge.mockResolvedValue({ error: { code: "not_mergeable", message: "GitHub did not accept the merge: Required status check" } });
+    const modal = await open();
+    await act(async () => mergeBtn(modal)!.click());
+    await act(async () => confirmBtn().click());
+    await settle();
+    expect(dialog()?.querySelector("[role=alert]")?.textContent).toContain("Required status check");
+  });
+
+  it.each([
+    ["blocked", "wi.merge_why_blocked"],
+    ["behind", "wi.merge_why_behind"],
+    ["dirty", "wi.merge_why_dirty"],
+    ["unstable", "wi.merge_why_unstable"],
+    ["unknown", "wi.merge_why_unknown"],
+    ["something_new", "wi.merge_why_other"],
+  ] as const)("disables Merge for %s and says why next to it", async (state, why) => {
+    workItemDetail.mockResolvedValue({ ...mergeable, mergeableState: state });
+    const modal = await open();
+    expect(mergeBtn(modal)?.disabled).toBe(true);
+    expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t(why));
+    await act(async () => mergeBtn(modal)!.click());
+    expect(dialog()).toBeNull();
+  });
+
+  it("disables Merge for a draft", async () => {
+    workItemDetail.mockResolvedValue({ ...mergeable, draft: true, state: "in_progress", mergeableState: "draft" });
+    const modal = await open();
+    expect(mergeBtn(modal)?.disabled).toBe(true);
+    expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_why_draft"));
+  });
+
+  it("draws no Merge button when the connection looks unable to merge", async () => {
+    workItemDetail.mockResolvedValue({ ...mergeable, canMerge: false });
+    const modal = await open();
+    expect(mergeBtn(modal)).toBeUndefined();
+    expect(footer(modal).querySelector(".wi-dmergewhy")).toBeNull();
+  });
+
+  it("draws no Merge button for an Agent that sends no merge facts, or no allowed method", async () => {
+    for (const patch of [{ canMerge: undefined, headSha: undefined, mergeMethods: undefined }, { mergeMethods: [] }, { headSha: "" }]) {
+      workItemDetail.mockResolvedValue({ ...mergeable, ...patch });
+      const modal = await open();
+      expect(mergeBtn(modal)).toBeUndefined();
+      await act(async () => root!.unmount());
+      root = createRoot(host);
+    }
+  });
+
+  it("never draws Merge on a Bitbucket row, even if the answer claims it can", async () => {
+    workItemDetail.mockResolvedValue({ ...mergeable, provider: "bitbucket", key: "ws/repo#3" });
+    const modal = await open(pr({ provider: "bitbucket", key: "ws/repo#3", url: "https://bitbucket.org/ws/repo/pull-requests/3" }));
+    expect(mergeBtn(modal)).toBeUndefined();
+    expect(footer(modal).querySelector(".wi-dmergehold")).toBeNull();
+  });
+
+  it("draws no Merge on a merged or closed pull request", async () => {
+    for (const patch of [{ merged: true, state: "done" }, { state: "done" }]) {
+      workItemDetail.mockResolvedValue({ ...mergeable, ...patch });
+      const modal = await open();
+      expect(mergeBtn(modal)).toBeUndefined();
+      await act(async () => root!.unmount());
+      root = createRoot(host);
+    }
+  });
+
+  it("does not offer Merge on an issue", async () => {
+    const modal = await open(item());
+    expect(workItemDetail).not.toHaveBeenCalled();
+    expect(mergeBtn(modal)).toBeUndefined();
+  });
+
+  it("shows Merge disabled with the stopped wording when the workspace is stopped, and sends nothing", async () => {
+    workItemDetail.mockResolvedValue({ error: { code: "workspace_stopped" } });
+    const modal = await open();
+    expect(mergeBtn(modal)?.disabled).toBe(true);
+    expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_why_stopped"));
+    await act(async () => mergeBtn(modal)!.click());
+    expect(workItemMerge).not.toHaveBeenCalled();
+  });
+
+  // #2631: the answer must not move the footer's other buttons. The slot Merge fills is reserved
+  // (invisibly) from the first render, so the same number of buttons stands in the footer before
+  // and after, whether or not the answer brings a button.
+  it("holds Merge's room in the footer while reading, so the answer does not move the buttons", async () => {
+    let release: (v: unknown) => void = () => {};
+    workItemDetail.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    const modal = await open();
+    const count = () => footer(modal).querySelectorAll("button, a").length;
+    const before = count();
+    expect(footer(modal).querySelector(".wi-dmergehold")?.getAttribute("aria-hidden")).toBe("true");
+    expect(mergeBtn(modal)).toBeUndefined();
+    await act(async () => release(mergeable));
+    expect(count()).toBe(before);
+    expect(footer(modal).querySelector(".wi-dmergehold")).toBeNull();
+    expect(mergeBtn(modal)?.disabled).toBe(false);
+  });
+
+  it("keeps the room, drawing nothing, when the answer says no button", async () => {
+    let release: (v: unknown) => void = () => {};
+    workItemDetail.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    const modal = await open();
+    const before = footer(modal).querySelectorAll("button, a").length;
+    await act(async () => release({ ...mergeable, canMerge: false }));
+    expect(footer(modal).querySelectorAll("button, a").length).toBe(before);
+    expect(footer(modal).querySelector(".wi-dmergehold")).not.toBeNull();
   });
 });
 

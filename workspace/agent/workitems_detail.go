@@ -115,6 +115,92 @@ type workItemDetailOut struct {
 	Comments     int                 `json:"comments"`
 	Reviews      []workItemReviewOut `json:"reviews"`
 	Checks       workItemChecksOut   `json:"checks"`
+	// The fields below are a GitHub pull request's merge gate (ADR 0061, 2026-10-25 note on
+	// #2632). Everywhere else they stay at their zero values, which the Console reads as "no
+	// Merge button": Bitbucket is read-only and an issue has nothing to merge.
+	//
+	// HeadSHA is the commit the panel was drawn from; the merge request sends it back so that a
+	// pull request that moved in the meantime is refused rather than merged unseen.
+	HeadSHA string `json:"headSha"`
+	// MergeableState is GitHub's `mergeable_state` verbatim, lower-cased ("clean", "blocked",
+	// "behind", "dirty", "unstable", "has_hooks", "draft", "unknown"). Unlike Mergeable it
+	// folds in required reviews, required checks and branch protection.
+	MergeableState string `json:"mergeableState"`
+	// MergeMethods is the subset of "merge" / "squash" / "rebase" the repository allows, in that
+	// order. Never nil. Empty also means "could not be read", which the Console treats as no Merge.
+	MergeMethods []string `json:"mergeMethods"`
+	// DefaultMergeMethod is the first of MergeMethods ("" when there are none). GitHub exposes
+	// no stored per-repository preference to read.
+	DefaultMergeMethod string `json:"defaultMergeMethod"`
+	// CanMerge is true only when the repository reports push access for the connection's user
+	// and, for a classic token, its scopes include what a merge needs. Not a guarantee: a GitHub
+	// App user token's own permissions are not visible, so GitHub may still refuse on press.
+	CanMerge bool `json:"canMerge"`
+	// private is the repository's visibility, kept only to pick the scope a classic token needs.
+	private bool
+}
+
+// githubRepoMerge is what the Agent reads of a repository to decide whether Merge is offered. It
+// is the same shape inside a pull request's base.repo and in a repository read.
+type githubRepoMerge struct {
+	Private          bool  `json:"private"`
+	AllowMergeCommit *bool `json:"allow_merge_commit"`
+	AllowSquashMerge *bool `json:"allow_squash_merge"`
+	AllowRebaseMerge *bool `json:"allow_rebase_merge"`
+	// A pointer: absent (an unauthenticated read, or a token that is not told) is "unknown",
+	// which must not read as "no push access" or as "push access".
+	Permissions *struct {
+		Admin    bool `json:"admin"`
+		Maintain bool `json:"maintain"`
+		Push     bool `json:"push"`
+	} `json:"permissions"`
+}
+
+// apply copies the merge gate onto a detail. A flag GitHub left out counts as not allowed:
+// offering a method the repository never confirmed is how a press ends in a refusal.
+func (r githubRepoMerge) apply(out *workItemDetailOut) {
+	out.private = r.Private
+	out.MergeMethods = []string{}
+	for _, m := range []struct {
+		name string
+		ok   *bool
+	}{{"merge", r.AllowMergeCommit}, {"squash", r.AllowSquashMerge}, {"rebase", r.AllowRebaseMerge}} {
+		if m.ok != nil && *m.ok {
+			out.MergeMethods = append(out.MergeMethods, m.name)
+		}
+	}
+	out.DefaultMergeMethod = ""
+	if len(out.MergeMethods) > 0 {
+		out.DefaultMergeMethod = out.MergeMethods[0]
+	}
+	out.CanMerge = r.Permissions != nil && (r.Permissions.Push || r.Permissions.Maintain || r.Permissions.Admin)
+}
+
+// applyGitHubRepoMerge is githubRepoMerge.apply for a repository object read on its own.
+func applyGitHubRepoMerge(out *workItemDetailOut, repoBody []byte) {
+	var r githubRepoMerge
+	if err := json.Unmarshal(repoBody, &r); err == nil {
+		r.apply(out)
+	}
+}
+
+// githubScopesCanMerge checks a classic token's scopes against what a merge writes. Only a
+// token that reports scopes at all is judged: a fine-grained token or a GitHub App user token
+// sends no X-OAuth-Scopes, and its own permissions cannot be read, so it is given the benefit
+// of repository permissions alone (see CanMerge).
+func githubScopesCanMerge(h http.Header, private bool) bool {
+	vals, reported := h["X-Oauth-Scopes"]
+	if !reported {
+		return true
+	}
+	for _, v := range vals {
+		for _, sc := range strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' }) {
+			if sc == "repo" || (!private && sc == "public_repo") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // handleWorkItemsDetail — POST /work-items/detail {provider, key}.
@@ -239,6 +325,7 @@ func jiraReferenceDetail(c *secrets.JiraCreds, key string) (*workItemDetailOut, 
 		Provider: "jira", Key: r.Key, Kind: "issue", Title: r.Title, State: r.State, URL: r.URL,
 		Assignee: r.Assignee, Labels: r.Labels, LabelColors: map[string]string{},
 		UpdatedAt: r.UpdatedAt, Mergeable: "unknown", Assignees: []string{}, Reviews: []workItemReviewOut{},
+		MergeMethods: []string{},
 	}
 	if r.Assignee != "" {
 		out.Assignees = append(out.Assignees, r.Assignee)
@@ -305,7 +392,7 @@ func parseGitHubIssue(body []byte, key string) (out *workItemDetailOut, isPR boo
 		State: normalizeGitHubState(is.State, false), StateReason: is.StateReason, URL: is.HTMLURL,
 		Author: is.User.Login, Repo: repo, UpdatedAt: is.UpdatedAt, Comments: is.Comments,
 		Mergeable: "unknown", Labels: []string{}, LabelColors: gitHubLabelColors(is.Labels),
-		Assignees: []string{}, Reviews: []workItemReviewOut{},
+		Assignees: []string{}, Reviews: []workItemReviewOut{}, MergeMethods: []string{},
 	}
 	for _, a := range is.Assignees {
 		out.Assignees = append(out.Assignees, a.Login)
@@ -331,7 +418,7 @@ func githubPullRequestDetail(token, key string) (*workItemDetailOut, error) {
 		return nil, fmt.Errorf("cannot read %q (expected owner/name#number)", key)
 	}
 	base := githubAPIBase + "/repos/" + gitx.EscapeRepoPath(repo)
-	body, err := githubGetJSON(token, fmt.Sprintf("%s/pulls/%d", base, number), key)
+	body, hdr, err := githubGetJSONHeader(token, fmt.Sprintf("%s/pulls/%d", base, number), key)
 	if err != nil {
 		return nil, err
 	}
@@ -339,6 +426,16 @@ func githubPullRequestDetail(token, key string) (*workItemDetailOut, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The pull request's embedded repository normally carries the merge settings and the user's
+	// permissions. When it lacks either (or the user has no push access, which is also what a
+	// missing block looks like), one more best-effort read of the repository settles it; a
+	// failure leaves the panel without a Merge button, never without the pull request.
+	if out.State == "open" && (len(out.MergeMethods) == 0 || !out.CanMerge) {
+		if rb, err := githubGetJSON(token, base, key); err == nil {
+			applyGitHubRepoMerge(out, rb)
+		}
+	}
+	out.CanMerge = out.CanMerge && githubScopesCanMerge(hdr, out.private)
 	if rv, err := githubGetJSON(token, fmt.Sprintf("%s/pulls/%d/reviews?per_page=%d", base, number, workItemDetailReviews), key); err == nil {
 		out.Reviews = mergeGitHubReviews(parseGitHubReviews(rv), out.Reviews)
 	}
@@ -351,14 +448,21 @@ func githubPullRequestDetail(token, key string) (*workItemDetailOut, error) {
 }
 
 func githubGetJSON(token, u, key string) ([]byte, error) {
+	body, _, err := githubGetJSONHeader(token, u, key)
+	return body, err
+}
+
+// githubGetJSONHeader is githubGetJSON that also returns the response headers (the pull request
+// read needs X-OAuth-Scopes).
+func githubGetJSONHeader(token, u, key string) ([]byte, http.Header, error) {
 	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	gitx.GithubHeaders(req, token)
 	resp, err := workItemHTTPClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
@@ -366,19 +470,19 @@ func githubGetJSON(token, u, key string) ([]byte, error) {
 		switch resp.StatusCode {
 		case http.StatusUnauthorized, http.StatusForbidden:
 			if strings.Contains(strings.ToLower(string(body)), "rate limit") {
-				return nil, fmt.Errorf("github rate limit reached")
+				return nil, nil, fmt.Errorf("github rate limit reached")
 			}
 			if resp.StatusCode == http.StatusUnauthorized {
-				return nil, gitx.NewGitHubUnauthorized(fmt.Sprintf("github refused this read (%d)", resp.StatusCode))
+				return nil, nil, gitx.NewGitHubUnauthorized(fmt.Sprintf("github refused this read (%d)", resp.StatusCode))
 			}
-			return nil, fmt.Errorf("github refused this read (%d)", resp.StatusCode)
+			return nil, nil, fmt.Errorf("github refused this read (%d)", resp.StatusCode)
 		case http.StatusNotFound:
 			// Also what a private repository the token cannot see answers, so do not say "deleted".
-			return nil, fmt.Errorf("github has no %s visible to this connection", key)
+			return nil, nil, fmt.Errorf("github has no %s visible to this connection", key)
 		}
-		return nil, fmt.Errorf("github answered %d", resp.StatusCode)
+		return nil, nil, fmt.Errorf("github answered %d", resp.StatusCode)
 	}
-	return body, nil
+	return body, resp.Header, nil
 }
 
 // parseGitHubPullRequest maps the pull request object. Returns the head SHA as well, which is
@@ -409,10 +513,14 @@ func parseGitHubPullRequest(body []byte, key string) (*workItemDetailOut, string
 			Login string `json:"login"`
 		} `json:"requested_reviewers"`
 		Labels []gitHubLabel `json:"labels"`
-		Base   struct {
+		// "clean" / "blocked" / "behind" / "dirty" / "unstable" / "has_hooks" / "draft" /
+		// "unknown"; absent while GitHub is still computing.
+		MergeableState string `json:"mergeable_state"`
+		Base           struct {
 			Ref  string `json:"ref"`
 			Repo struct {
 				FullName string `json:"full_name"`
+				githubRepoMerge
 			} `json:"repo"`
 		} `json:"base"`
 		Head struct {
@@ -436,8 +544,10 @@ func parseGitHubPullRequest(body []byte, key string) (*workItemDetailOut, string
 		// Empty slices, never nil: a nil slice marshals to JSON null and the Console iterates
 		// these (the null-labels white screen, docs/log/80 §80.17.5).
 		Labels: []string{}, LabelColors: gitHubLabelColors(pr.Labels), Reviews: []workItemReviewOut{},
-		Assignees: []string{},
+		Assignees: []string{}, MergeMethods: []string{},
+		HeadSHA: pr.Head.SHA, MergeableState: strings.ToLower(strings.TrimSpace(pr.MergeableState)),
 	}
+	pr.Base.Repo.githubRepoMerge.apply(out)
 	for _, a := range pr.Assignees {
 		out.Assignees = append(out.Assignees, a.Login)
 	}
@@ -698,14 +808,15 @@ func parseBitbucketPullRequest(body []byte, key string) (*workItemDetailOut, err
 		Draft:     pr.Draft,
 		Merged:    strings.EqualFold(pr.State, "MERGED"),
 		// Bitbucket does not report whether a PR merges cleanly without starting a merge task.
-		Mergeable:   "unknown",
-		BaseBranch:  pr.Destination.Branch.Name,
-		HeadBranch:  pr.Source.Branch.Name,
-		Comments:    pr.CommentCount,
-		Assignees:   []string{},
-		Labels:      []string{},
-		LabelColors: map[string]string{},
-		Reviews:     []workItemReviewOut{},
+		Mergeable:    "unknown",
+		BaseBranch:   pr.Destination.Branch.Name,
+		HeadBranch:   pr.Source.Branch.Name,
+		Comments:     pr.CommentCount,
+		Assignees:    []string{},
+		Labels:       []string{},
+		LabelColors:  map[string]string{},
+		Reviews:      []workItemReviewOut{},
+		MergeMethods: []string{},
 	}
 	// Only reviewers. A Bitbucket participant list also holds everyone who commented, and
 	// "6 reviewers" that is really 4 bystanders is worse than no line at all.

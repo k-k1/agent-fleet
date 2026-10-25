@@ -647,6 +647,79 @@ func (a workItemsAPI) detail(w http.ResponseWriter, r *http.Request, res *resolv
 	_, _ = w.Write(body)
 }
 
+// merge relays "merge this GitHub pull request" to the Agent (ADR 0061, 2026-10-25 note on #2632).
+//
+// The second human-gated write, and it follows the report comment's rules: it requires a running
+// Workspace and does NOT start one (the token lives there, and a merge is made when the member is
+// present), it is not reachable through any MCP tool, and the Agent's answer passes through
+// verbatim — GitHub's own refusal is what tells a moved head from a protected branch.
+//
+// GitHub only. Bitbucket is read-only (decision 19) and is refused here rather than at the Agent,
+// so an old and a new Agent behave the same. `sha` is mandatory: it is the head commit the panel
+// displayed, and without it the Agent would merge whatever the head is by now.
+func (a workItemsAPI) merge(w http.ResponseWriter, r *http.Request, res *resolved) {
+	var in struct {
+		Provider string `json:"provider"`
+		Key      string `json:"key"`
+		SHA      string `json:"sha"`
+		Method   string `json:"method"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&in); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
+		return
+	}
+	switch in.Provider {
+	case "", "github":
+	default:
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_provider", "merging is available for GitHub pull requests only"})
+		return
+	}
+	if strings.TrimSpace(in.Key) == "" || strings.TrimSpace(in.SHA) == "" {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "key and sha are required"})
+		return
+	}
+	switch in.Method {
+	case "merge", "squash", "rebase":
+	default:
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "method must be merge, squash or rebase"})
+		return
+	}
+	ctx := r.Context()
+	if res.rt.State(ctx) != "running" {
+		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_stopped",
+			"start the workspace to merge the pull request (the GitHub credentials live in it)"})
+		return
+	}
+	in.Provider = "github"
+	payload, _ := json.Marshal(in)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, res.rt.Endpoint()+"/work-items/merge", bytes.NewReader(payload))
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if tok := res.rt.Token(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := agentHTTPClient.Do(req)
+	if err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadGateway, "agent_unreachable", err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		// An Agent from before this feature has no such route. Say so instead of letting a bare
+		// 404 read as a deleted pull request.
+		writeAPIErr(w, &apiError{http.StatusConflict, "agent_outdated",
+			"this workspace agent cannot merge pull requests yet — restart the workspace"})
+		return
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(body)
+}
+
 // --- saved queries -----------------------------------------------------------
 
 func (a workItemsAPI) listQueries(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
