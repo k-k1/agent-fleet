@@ -88,11 +88,11 @@ describe("noticeText (ADR 0033)", () => {
     const text = noticeText({
       content: "",
       notice_key: "chat.notice.agent_failover",
-      notice_args: { from: "claude", to: "codex" },
+      notice_args: { from: "codex", to: "opencode", agent: "claude" },
     });
     expect(text).toContain("Codex");
     expect(text).toMatch(/Claude/);
-    expect(text).not.toMatch(/\{from\}|\{to\}/);
+    expect(text).not.toMatch(/\{from\}|\{to\}|\{agent\}/);
     expect(text).not.toMatch(/\bcodex\b/);
   });
 

@@ -96,6 +96,7 @@ func runOperatorTurnAs(conv, text, source string, tag usagex.Tag) (string, error
 		reply, err = prov.Send(ctx, c, prompt)
 	}
 	// A rate-limited backend re-runs the turn on the next usable one (chatx/chat_route.go).
+	var failover []chatx.ChatMessage
 	if next, kind, notice, ok := chatx.FailoverTurn(c, actualAgent, chatx.NoteTurnResult(ctx, c, actualAgent, err)); ok {
 		prov, actualAgent = next, kind
 		prompt, pendingReports = chatx.InjectPendingReports(c, text)
@@ -103,9 +104,7 @@ func runOperatorTurnAs(conv, text, source string, tag usagex.Tag) (string, error
 		prompt = chatx.SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 		reply, err = prov.Send(ctx, c, prompt)
 		chatx.NoteTurnResult(ctx, c, actualAgent, err)
-		if err == nil {
-			c.Messages = append(c.Messages, notice)
-		}
+		failover = append(failover, notice)
 	}
 	if err != nil {
 		if chatx.IsContextOverflowErr(err) {
@@ -120,6 +119,8 @@ func runOperatorTurnAs(conv, text, source string, tag usagex.Tag) (string, error
 	if handoff {
 		c.PendingHandoff = ""
 	}
+	// After the reports are marked: they point into c.Messages (see chatx.HandleChatSend).
+	c.Messages = append(c.Messages, failover...)
 	c.Messages = append(c.Messages, chatx.ChatMessage{Role: "assistant", Content: reply, Agent: actualAgent, Model: c.TurnModel, TS: chatx.NowMs()})
 	c.ActiveAgent = actualAgent
 	chatx.MarkProviderSynced(c, actualAgent, len(c.Messages))

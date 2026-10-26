@@ -512,6 +512,7 @@ func HandleChatSend(w http.ResponseWriter, r *http.Request) {
 		reply, err = prov.Send(ctx, c, prompt)
 	}
 	// A rate-limited backend re-runs the turn on the next usable one (chat_route.go).
+	var failover []ChatMessage
 	if next, kind, notice, ok := FailoverTurn(c, actualAgent, NoteTurnResult(ctx, c, actualAgent, err)); ok {
 		prov, actualAgent = next, kind
 		prompt, pendingReports = InjectPendingReports(c, content)
@@ -519,11 +520,7 @@ func HandleChatSend(w http.ResponseWriter, r *http.Request) {
 		prompt = SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 		reply, err = prov.Send(ctx, c, prompt)
 		NoteTurnResult(ctx, c, actualAgent, err)
-		if err == nil {
-			// Only on success: a failed turn must still end in its user message for a retry
-			// to reuse it (reusesFailedUserTurn).
-			c.Messages = append(c.Messages, notice)
-		}
+		failover = append(failover, notice)
 	}
 	if err != nil {
 		if IsContextOverflowErr(err) {
@@ -539,6 +536,11 @@ func HandleChatSend(w http.ResponseWriter, r *http.Request) {
 	if handoff {
 		c.PendingHandoff = "" // carried into the new session — done
 	}
+	// The failover notice goes in only now: pendingReports point into c.Messages, so an append
+	// before MarkReportsDelivered could move the slice and leave them marking a stale copy.
+	// And only on success, so a failed turn still ends in its user message for a retry to
+	// reuse (reusesFailedUserTurn).
+	c.Messages = append(c.Messages, failover...)
 
 	assistant := ChatMessage{Role: "assistant", Content: reply, Agent: actualAgent, Model: c.TurnModel, TS: NowMs()}
 	c.Messages = append(c.Messages, assistant)
@@ -666,6 +668,7 @@ func HandleChatStream(w http.ResponseWriter, r *http.Request) {
 	if streamed {
 		v = routehealth.Verdict{} // reported above; only the re-run is off
 	}
+	var failover []ChatMessage
 	if next, kind, notice, ok := FailoverTurn(c, actualAgent, v); ok {
 		prov, actualAgent = next, kind
 		emit(map[string]any{"agent": actualAgent})
@@ -674,9 +677,7 @@ func HandleChatStream(w http.ResponseWriter, r *http.Request) {
 		prompt = SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 		runTurn(prompt)
 		NoteTurnResult(ctx, c, actualAgent, err)
-		if err == nil {
-			c.Messages = append(c.Messages, notice) // see HandleChatSend
-		}
+		failover = append(failover, notice)
 	}
 	if err != nil {
 		if IsContextOverflowErr(err) {
@@ -691,6 +692,7 @@ func HandleChatStream(w http.ResponseWriter, r *http.Request) {
 	if handoff {
 		c.PendingHandoff = "" // carried into the new session — done
 	}
+	c.Messages = append(c.Messages, failover...) // after the reports are marked; see HandleChatSend
 
 	assistant := ChatMessage{Role: "assistant", Content: reply, Steps: steps, Agent: actualAgent, Model: c.TurnModel, TS: NowMs()}
 	c.Messages = append(c.Messages, assistant)

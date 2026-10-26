@@ -35,7 +35,12 @@ export function noticeText(m: Pick<ChatMessage, "content" | "notice_key" | "noti
     args = { ...args, agent: agentName(args.agent) };
   }
   if (key === AGENT_FAILOVER) {
-    args = { ...args, from: agentName(args.from ?? ""), to: agentName(args.to ?? "") };
+    args = {
+      ...args,
+      from: agentName(args.from ?? ""),
+      to: agentName(args.to ?? ""),
+      agent: agentName(args.agent ?? ""),
+    };
   }
   if (key === AUTO_PAUSED) {
     const pending = Number(args.pending ?? 0);

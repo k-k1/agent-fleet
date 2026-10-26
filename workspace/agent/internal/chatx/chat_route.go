@@ -44,11 +44,12 @@ func NoteTurnResult(ctx context.Context, c *ChatConversation, kind string, err e
 }
 
 // FailoverTurn decides whether a turn that failed on from with verdict v is re-run on another
-// backend. It is only when the failure parks the backend for longer than NearRecovery and the priority
-// order has another usable backend; the caller then rebuilds the prompt for kind (the
+// backend. It is only when the failure parks the backend for longer than NearRecovery and the
+// priority order has another usable backend; the caller then rebuilds the prompt for kind (the
 // provider-context sync carries the history over) and sends again. notice tells the user the
 // turn moved; the conversation's own agent setting is left as it is, so the next turn goes back
-// once the park ends.
+// once the park ends. The caller appends notice only after a successful re-run, and only after
+// MarkReportsDelivered: the pending reports point into c.Messages.
 func FailoverTurn(c *ChatConversation, from string, v routehealth.Verdict) (next ChatProvider, kind string, notice ChatMessage, ok bool) {
 	if !v.Cools() {
 		return nil, "", ChatMessage{}, false
@@ -58,7 +59,13 @@ func FailoverTurn(c *ChatConversation, from string, v routehealth.Verdict) (next
 		return nil, "", ChatMessage{}, false
 	}
 	log.Printf("chat %s: %s failed (%s), re-running the turn on %s", c.ID, from, v.Class, kind)
-	notice = newNotice(noticeKeyAgentFailover, map[string]string{"from": from, "to": kind},
-		from+" が利用制限または一時的な障害で使えなかったため、このターンは "+kind+" で応答しました。会話のエージェント設定は "+from+" のままです。")
+	// from is the backend that failed, which need not be the conversation's own: that one may
+	// already have been passed over before this turn started.
+	agent := c.Agent
+	if agent == "" {
+		agent = from
+	}
+	notice = newNotice(noticeKeyAgentFailover, map[string]string{"from": from, "to": kind, "agent": agent},
+		from+" が利用制限または一時的な障害で使えなかったため、このターンは "+kind+" で応答しました。この会話のエージェント設定（"+agent+"）は変わらず、使えるようになれば次のターンから "+agent+" に戻ります。")
 	return next, kind, notice, true
 }

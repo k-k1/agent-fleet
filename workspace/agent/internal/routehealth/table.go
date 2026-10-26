@@ -97,37 +97,42 @@ func (t *Table) Succeed(kind, model string) {
 // Until reports when (kind, model) becomes usable again and why it is parked. ok=false means
 // it is usable now. A kind-wide park covers every model; the later of the two ends wins.
 func (t *Table) Until(kind, model string, now time.Time) (until time.Time, class Class, ok bool) {
-	e := t.park(kind, model, now)
-	if e == nil {
-		return time.Time{}, "", false
+	for _, e := range t.parks(kind, model, now) {
+		if e.until.After(until) {
+			until, class, ok = e.until, e.class, true
+		}
 	}
-	return e.until, e.class, true
+	return until, class, ok
 }
 
 // Avoid reports whether a resolver should pass over (kind, model) for the next candidate. A
 // park that ends within NearRecovery does not count, unless it is a usage window or spend cap
 // whose end is only a backoff guess: those last hours, and the short first backoff step says
-// nothing about when they really lift.
+// nothing about when they really lift. Each live park is judged on its own: the one that ends
+// last can be a near 5xx while a kind-wide window with a guessed end sits under it.
 func (t *Table) Avoid(kind, model string, now time.Time) bool {
-	e := t.park(kind, model, now)
-	if e == nil {
-		return false
+	for _, e := range t.parks(kind, model, now) {
+		if !e.named && (e.class == ClassWindow || e.class == ClassSpend) {
+			return true
+		}
+		if e.until.Sub(now) > NearRecovery {
+			return true
+		}
 	}
-	if !e.named && (e.class == ClassWindow || e.class == ClassSpend) {
-		return true
-	}
-	return e.until.Sub(now) > NearRecovery
+	return false
 }
 
-// park returns a copy of the live park that ends last, or nil.
-func (t *Table) park(kind, model string, now time.Time) *entry {
+// parks returns copies of the live kind-wide and model parks.
+func (t *Table) parks(kind, model string, now time.Time) []entry {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	var out *entry
+	var out []entry
 	for _, k := range []Key{{Kind: kind}, {Kind: kind, Model: model}} {
-		if e := t.m[k]; e != nil && e.until.After(now) && (out == nil || e.until.After(out.until)) {
-			c := *e
-			out = &c
+		if e := t.m[k]; e != nil && e.until.After(now) {
+			out = append(out, *e)
+		}
+		if model == "" {
+			break // the model key is the kind-wide one
 		}
 	}
 	return out

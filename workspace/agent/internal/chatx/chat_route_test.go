@@ -113,7 +113,8 @@ func TestFailoverTurnOnlyOnACoolingVerdict(t *testing.T) {
 		t.Fatalf("usage window: failover = (%q, %v), want codex", kind, ok)
 	}
 	if notice.Role != "notice" || notice.NoticeKey != noticeKeyAgentFailover ||
-		notice.NoticeArgs["from"] != session.KindClaude || notice.NoticeArgs["to"] != session.KindCodex {
+		notice.NoticeArgs["from"] != session.KindClaude || notice.NoticeArgs["to"] != session.KindCodex ||
+		notice.NoticeArgs["agent"] != session.KindClaude {
 		t.Fatalf("notice = %+v", notice)
 	}
 	// A stopped turn says nothing about the backend.
@@ -288,4 +289,108 @@ func TestDenyAllWaitsOutAParkedPin(t *testing.T) {
 	if _, err := resolveDenyAllKind("memory.review", OneShotProse); !errors.Is(err, ErrDenyAllUnavailable) {
 		t.Fatalf("parked pin: err = %v, want ErrDenyAllUnavailable", err)
 	}
+}
+
+// TestHandleChatSendFailoverMarksReportsDelivered: the pending reports point into c.Messages,
+// so the failover notice must not be appended before they are marked. Run across history
+// lengths so that some of them hit len == cap and the append moves the slice.
+func TestHandleChatSendFailoverMarksReportsDelivered(t *testing.T) {
+	writeUIPrefs(t, `{}`)
+	t.Cleanup(WaitInterimDeliveries)
+	useRouteTable(t)
+	stubChatProvider(t, session.KindClaude, scriptedProvider{err: errors.New(limitErr)})
+	stubChatProvider(t, session.KindCodex, scriptedProvider{reply: "codex answer"})
+	for filler := 0; filler < 10; filler++ {
+		routehealth.Default = routehealth.NewTable()
+		msgs := []ChatMessage{{Role: "report", Content: "session report", TS: NowMs()}}
+		for i := 0; i < filler; i++ {
+			msgs = append(msgs, ChatMessage{Role: "notice", Content: "filler", TS: NowMs()})
+		}
+		conv := &ChatConversation{ID: RandUUID(), Slug: NewConvSlug(), Agent: session.KindClaude, Model: "model-a", Messages: msgs}
+		if err := SaveConv(conv); err != nil {
+			t.Fatal(err)
+		}
+		if rec := sendTurn(t, conv.ID, "hello"); rec.Code != http.StatusOK {
+			t.Fatalf("filler %d: status = %d, body = %s", filler, rec.Code, rec.Body.String())
+		}
+		c, err := LoadConv(conv.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !c.Messages[0].Delivered {
+			t.Fatalf("filler %d: the report the re-run delivered is still undelivered", filler)
+		}
+	}
+}
+
+// TestAutoTurnModelKeysTheRoute: the auto-turn model is what runs on claude, so a park on it
+// moves the auto turn, while the conversation's own model stays unaffected; and it never leaks
+// onto another kind.
+func TestAutoTurnModelKeysTheRoute(t *testing.T) {
+	writeUIPrefs(t, `{"assistantModels":{"codex":"gpt-custom"}}`)
+	tb := useRouteTable(t)
+	tb.Park(session.KindClaude, "model-auto",
+		routehealth.Verdict{Class: routehealth.ClassServer, Scope: routehealth.ScopeModel, ResetAt: routeT0.Add(time.Hour)}, routeT0)
+	c := &ChatConversation{Agent: session.KindClaude, Model: "model-conv"}
+
+	if _, k := chatRoute(c); k != session.KindClaude {
+		t.Fatalf("user turn: route = %q, want claude (its own model is healthy)", k)
+	}
+	c.modelOverride = "model-auto"
+	if _, k := chatRoute(c); k != session.KindCodex {
+		t.Fatalf("auto turn: route = %q, want codex (the auto-turn model is parked)", k)
+	}
+	if got := chatModelFor(c, session.KindCodex); got != "gpt-custom" {
+		t.Fatalf("codex model under an auto-turn override = %q, want its own row", got)
+	}
+}
+
+// TestAutoTurnRoutesOnItsOwnModel drives runReportAutoTurn: the pick that starts the auto turn
+// keys on the auto-turn model, and a turn that fails over still marks its reports delivered.
+func TestAutoTurnRoutesOnItsOwnModel(t *testing.T) {
+	newConv := func(t *testing.T) *ChatConversation {
+		t.Helper()
+		conv := &ChatConversation{ID: RandUUID(), Slug: NewConvSlug(), Agent: session.KindClaude, Model: "model-conv",
+			Messages: []ChatMessage{{Role: "report", Content: "session report", TS: NowMs()}}}
+		if err := SaveConv(conv); err != nil {
+			t.Fatal(err)
+		}
+		return conv
+	}
+	t.Run("parked auto-turn model", func(t *testing.T) {
+		writeUIPrefs(t, `{"assistantAutoTurnModel":"model-auto"}`)
+		t.Cleanup(WaitInterimDeliveries)
+		tb := useRouteTable(t)
+		tb.Park(session.KindClaude, "model-auto",
+			routehealth.Verdict{Class: routehealth.ClassServer, Scope: routehealth.ScopeModel, ResetAt: routeT0.Add(time.Hour)}, routeT0)
+		var claudePrompts, codexPrompts []string
+		stubChatProvider(t, session.KindClaude, scriptedProvider{reply: "claude answer", prompts: &claudePrompts})
+		stubChatProvider(t, session.KindCodex, scriptedProvider{reply: "codex answer", prompts: &codexPrompts})
+		conv := newConv(t)
+
+		runReportAutoTurn(conv.ID)
+		if len(claudePrompts) != 0 || len(codexPrompts) != 1 {
+			t.Fatalf("claude ran %d, codex ran %d; want the auto turn on codex", len(claudePrompts), len(codexPrompts))
+		}
+	})
+	t.Run("failover marks the reports", func(t *testing.T) {
+		writeUIPrefs(t, `{}`)
+		t.Cleanup(WaitInterimDeliveries)
+		useRouteTable(t)
+		stubChatProvider(t, session.KindClaude, scriptedProvider{err: errors.New(limitErr)})
+		stubChatProvider(t, session.KindCodex, scriptedProvider{reply: "codex answer"})
+		conv := newConv(t)
+
+		runReportAutoTurn(conv.ID)
+		c, err := LoadConv(conv.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !c.Messages[0].Delivered {
+			t.Fatal("the report the re-run delivered is still undelivered")
+		}
+		if n := len(c.Messages); n != 3 || c.Messages[1].NoticeKey != noticeKeyAgentFailover || c.Messages[2].Agent != session.KindCodex {
+			t.Fatalf("messages = %+v", c.Messages)
+		}
+	})
 }

@@ -97,7 +97,7 @@ export const chat: Record<keyof typeof jaChat, string> = {
   "chat.notice.agent_switched":
     "This conversation switched to “{agent}”. From here on {agent} answers. The history so far is handed over with your next message, so that first turn costs extra tokens. The model was re-resolved from the {agent} row in Settings > Assistant.",
   "chat.notice.agent_failover":
-    "{from} was unavailable (a usage limit or a temporary outage), so {to} answered this turn. The conversation stays set to {from} and goes back to it once the limit lifts.",
+    "{from} was unavailable (a usage limit or a temporary outage), so {to} answered this turn. The conversation stays set to {agent} and goes back to it once it can be used again.",
   "chat.notice.plan_updated":
     "Work plan updated. It is carried into every new session verbatim, never summarized.\n\n---\n\n{plan}",
   "chat.plan.title": "Work plan",
