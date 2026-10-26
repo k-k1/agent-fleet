@@ -83,7 +83,7 @@ func TestNoticeKeysExistInConsoleCatalogs(t *testing.T) {
 	keys := []string{
 		noticeKeyCtxPressure, noticeKeyCtxOverflow,
 		noticeKeyCompactManual, noticeKeyCompactAuto, noticeKeyCompactRecovery,
-		noticeKeyAgentSwitched,
+		noticeKeyAgentSwitched, noticeKeyAgentFailover,
 	}
 	// auto_paused is assembled Console-side from three fragments (head, pending count, tail).
 	autoPaused := []string{

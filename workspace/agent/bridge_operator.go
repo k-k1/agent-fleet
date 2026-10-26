@@ -95,6 +95,18 @@ func runOperatorTurnAs(conv, text, source string, tag usagex.Tag) (string, error
 		prompt = chatx.SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 		reply, err = prov.Send(ctx, c, prompt)
 	}
+	// A rate-limited backend re-runs the turn on the next usable one (chatx/chat_route.go).
+	if next, kind, notice, ok := chatx.FailoverTurn(c, actualAgent, chatx.NoteTurnResult(ctx, c, actualAgent, err)); ok {
+		prov, actualAgent = next, kind
+		prompt, pendingReports = chatx.InjectPendingReports(c, text)
+		prompt, handoff = chatx.InjectCarryover(c, actualAgent, prompt)
+		prompt = chatx.SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
+		reply, err = prov.Send(ctx, c, prompt)
+		chatx.NoteTurnResult(ctx, c, actualAgent, err)
+		if err == nil {
+			c.Messages = append(c.Messages, notice)
+		}
+	}
 	if err != nil {
 		if chatx.IsContextOverflowErr(err) {
 			chatx.NoteContextOverflow(c)

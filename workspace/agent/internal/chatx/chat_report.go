@@ -636,6 +636,21 @@ func runReportAutoTurn(convID string) {
 		reply, err = prov.Send(ctx, c, prompt)
 		c.modelOverride = ""
 	}
+	// A rate-limited backend re-runs the turn on the next usable one (chat_route.go). The
+	// verdict is keyed on the model that ran, so the override is raised while reporting.
+	c.modelOverride = override
+	v := NoteTurnResult(ctx, c, actualAgent, err)
+	c.modelOverride = ""
+	if next, kind, notice, ok := FailoverTurn(c, actualAgent, v); ok {
+		prov, actualAgent = next, kind
+		prompt, handoff = InjectCarryover(c, actualAgent, reportsPrompt(pending))
+		prompt = SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages))
+		reply, err = prov.Send(ctx, c, prompt) // the auto-turn model is claude's alone
+		NoteTurnResult(ctx, c, actualAgent, err)
+		if err == nil {
+			c.Messages = append(c.Messages, notice)
+		}
+	}
 	if err != nil {
 		if IsContextOverflowErr(err) {
 			// Close the black hole: an overflow too large even to compact is always

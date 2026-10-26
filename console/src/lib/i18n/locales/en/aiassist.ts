@@ -8,7 +8,7 @@ import type { aiassist as jaAiassist } from "../ja/aiassist.ts";
 export const aiassist: Record<keyof typeof jaAiassist, string> = {
   "aiassist.agent_order": "Agent priority",
   "aiassist.note_agent_order":
-    "Priority order of the CLIs that run AI assistance. The first CONNECTED CLI from the top is used (unconnected ones are skipped). This is ranked separately from the assistant chat: the chat wants the strongest model, while assistance runs constantly and wants the cheapest one that works. Changes apply to the very next generation.",
+    "Priority order of the CLIs that run AI assistance. The first usable CLI from the top is used (unconnected and rate-limited ones are skipped; a generation that hits a limit is retried once on the next CLI). This is ranked separately from the assistant chat: the chat wants the strongest model, while assistance runs constantly and wants the cheapest one that works. Changes apply to the very next generation.",
 
   "aiassist.short_models": "Model for short labels",
   "aiassist.note_short_models":
