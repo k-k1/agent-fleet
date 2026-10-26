@@ -173,3 +173,29 @@ func ResetAt(sid string, now time.Time) (time.Time, string, bool) {
 	a, _ := AbortInfo(sid)
 	return resolveResetAt(a.Msg, a.At, capturedResets(), now)
 }
+
+// LimitInMessage reads the error text of a headless run (`claude -p`'s is_error result, or its
+// stderr) with the same markers a session's transcript is read with, so the router and the
+// session auto-resume never disagree on what a limit looks like. resetAt is zero when the
+// text names no time that can be pinned down; a spend cap never has one.
+func LimitInMessage(msg string, now time.Time) (kind LimitKind, resetAt time.Time, ok bool) {
+	return limitInMessage(msg, now, capturedResets())
+}
+
+func limitInMessage(msg string, now time.Time, captured []time.Time) (LimitKind, time.Time, bool) {
+	// A retryable verdict covers "temporarily limiting requests (not your usage limit)",
+	// which also carries the limit markers.
+	if classifyAbort(msg, 0, "") {
+		return "", time.Time{}, false
+	}
+	_, kind, ok := limitKindOf(msg, Abort{})
+	if !ok {
+		return "", time.Time{}, false
+	}
+	if kind == LimitWindow {
+		if at, _, found := resolveResetAt(msg, now, captured, now); found {
+			return kind, at, true
+		}
+	}
+	return kind, time.Time{}, true
+}

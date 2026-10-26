@@ -116,3 +116,11 @@ func limitOf(name string) (usageLimit, bool) {
 	}
 	return *h.limit, true
 }
+
+// LimitInMessage applies usageLimitOf to bare error text, for a headless run whose failure
+// arrives as a message rather than as a turn's typed error. resetAt is zero when the text
+// names no instant.
+func LimitInMessage(msg string) (resetAt time.Time, ok bool) {
+	lim, ok := usageLimitOf(&msp.TurnError{Message: msg})
+	return lim.resetAt, ok
+}

@@ -256,3 +256,13 @@ func TestFreshStartDropsTheOldConversationsLimit(t *testing.T) {
 		t.Errorf("IsRateLimited = %v, lastTurn = %q after a fresh start, want false / empty", IsRateLimited(h.name), last)
 	}
 }
+
+func TestLimitInMessage(t *testing.T) {
+	at, ok := LimitInMessage(measuredQuotaMessage)
+	if !ok || !at.Equal(time.Date(2026, 10, 6, 4, 25, 21, 0, time.UTC)) {
+		t.Errorf("quota message: got (%v, %v)", at, ok)
+	}
+	if _, ok := LimitInMessage("API error 500: internal"); ok {
+		t.Error("a non-quota failure read as a limit")
+	}
+}

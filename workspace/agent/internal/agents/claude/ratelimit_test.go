@@ -174,3 +174,30 @@ func TestResolveResetAt(t *testing.T) {
 		}
 	})
 }
+
+// TestLimitInMessage pins the headless reading to the session markers: a window with its
+// reset, a spend cap without one, and the 429 that says it is not a usage limit.
+func TestLimitInMessage(t *testing.T) {
+	tokyo := mustLoc(t, "Asia/Tokyo")
+	now := time.Date(2026, 10, 26, 18, 0, 0, 0, tokyo)
+	cases := []struct {
+		name    string
+		msg     string
+		kind    LimitKind
+		resetAt time.Time
+		ok      bool
+	}{
+		{"session window", "You've hit your session limit · resets 7:50pm (Asia/Tokyo)", LimitWindow,
+			time.Date(2026, 10, 26, 19, 50, 0, 0, tokyo), true},
+		{"per-model window, no time", "You've reached your Fable 5 limit. Run /usage-credits to continue", LimitWindow, time.Time{}, true},
+		{"spend cap", "You've hit your org's monthly spend limit · run /usage-credits to raise it", LimitSpend, time.Time{}, true},
+		{"temporary 429", "API Error: 429 temporarily limiting requests (not your usage limit)", "", time.Time{}, false},
+		{"overloaded", "API Error: 529 Overloaded", "", time.Time{}, false},
+	}
+	for _, c := range cases {
+		kind, at, ok := limitInMessage(c.msg, now, nil)
+		if kind != c.kind || !at.Equal(c.resetAt) || ok != c.ok {
+			t.Errorf("%s: got (%q, %v, %v), want (%q, %v, %v)", c.name, kind, at, ok, c.kind, c.resetAt, c.ok)
+		}
+	}
+}
