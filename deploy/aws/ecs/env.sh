@@ -699,11 +699,11 @@ af_cfn_clear_params() {
       --query "Stacks[0].Parameters[?ParameterKey=='$k'].ParameterValue" --output text)" || {
       echo "ERROR: could not read $k of $stack, so it cannot be cleared. Re-run." >&2; return 1; }
     case "$v" in ""|None) continue ;; esac
-    # JSON keeps an absent Default (null) apart from an empty one ("").
+    # JSON keeps an absent Default (null) apart from an empty one (""); compared as printed, so a
+    # Default of blanks (" ") is refused too.
     d="$("${AWS[@]}" cloudformation get-template-summary --stack-name "$stack" \
       --query "Parameters[?ParameterKey=='$k'] | [0].DefaultValue" --output json)" || {
       echo "ERROR: could not read the template $stack runs, so $k cannot be cleared. Re-run." >&2; return 1; }
-    d="$(printf '%s' "$d" | tr -d '[:space:]')"
     if [ "$d" != '""' ]; then
       echo "ERROR: in the template $stack runs, $k's Default is $d, not \"\"; leaving it out would not clear it." >&2
       return 1

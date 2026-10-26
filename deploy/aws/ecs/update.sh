@@ -766,12 +766,15 @@ while [ $# -gt 0 ]; do
   batch=""
   i=0
   while [ $# -gt 0 ] && [ $i -lt 10 ]; do batch="$batch $1"; shift; i=$((i + 1)); done
+  # describe-services answers 200 with failures[] (or fewer services) for some it cannot
+  # describe; a batch that does not come back whole is an incomplete list, not fewer workspaces.
   # shellcheck disable=SC2086
-  # shellcheck disable=SC2016  # backticks are JMESPath's literal syntax, not a subshell
-  got="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services $batch \
-    --query 'services[?desiredCount>`0`].serviceName' --output text 2>/dev/null)" \
-    || { got=""; ws_enum_failed=1; }
-  running="$running $got"
+  r="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services $batch \
+    --query "[length(failures), length(services), join(' ', services[?desiredCount>\`0\`].serviceName)]" \
+    --output text 2>/dev/null)" || { r=""; ws_enum_failed=1; }
+  IFS=$'\t' read -r nf ns got <<<"$r" || true
+  if [ -n "$r" ] && { [ "$nf" != 0 ] || [ "$ns" != "$i" ]; }; then ws_enum_failed=1; fi
+  running="$running ${got:-}"
 done
 
 # --- 5b) running workspaces still in a private subnet (#2763) ----------------

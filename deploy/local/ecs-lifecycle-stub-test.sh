@@ -123,7 +123,7 @@ case "$args" in
   # The Default of the template the stack runs, before the ParameterKey branches below match its query (JSON: null = no Default). STUB_LIVE_DEFAULT unset
   # is "", none is no Default, anything else that value.
   *"cloudformation get-template-summary"*)
-    case "${STUB_LIVE_DEFAULT-}" in "") echo '""' ;; none) echo null ;; *) echo "\"$STUB_LIVE_DEFAULT\"" ;; esac ;;
+    case "${STUB_LIVE_DEFAULT-}" in "") echo '""' ;; none) echo null ;; blank) echo '" "' ;; *) echo "\"$STUB_LIVE_DEFAULT\"" ;; esac ;;
   # STUB_POOL_DEPLOY_FAIL=1: the slot pool's stack update fails (a rollback, a refused
   # capability). update.sh must then leave 20-platform untouched.
   *"cloudformation deploy --stack-name t-pool"*)
@@ -298,6 +298,13 @@ case "$args" in
   # services whose desired count is > 0. Return a name for the former and the wait loop
   # spins for five minutes.
   *"ecs describe-services"*"runningCount"*) echo "0" ;;
+  # update.sh's listing: [failures, services, names above desired 0]. STUB_SVC_FAILURES=1 answers
+  # 200 with the service in failures[]; STUB_SVC_PARTIAL=1 answers 200 with it simply missing.
+  *"ecs describe-services"*"length(failures), length(services)"*)
+    if [ "${STUB_SVC_FAILURES:-0}" = 1 ]; then printf '1\t0\t\n'
+    elif [ "${STUB_SVC_PARTIAL:-0}" = 1 ]; then printf '0\t0\t\n'
+    elif [ "${STUB_WS_DESIRED0:-0}" = 1 ]; then printf '0\t1\t\n'
+    else printf '0\t1\taf-ws-alice\n'; fi ;;
   # pause.sh asks which engine / speech services are above desired 0. Answer the generic
   # branch below and a Workspace name comes back as an "engine service" — the sweep would then
   # scale a Workspace down and report it as an engine.
@@ -1233,7 +1240,7 @@ STUB_ING_EGRESS="$SECRET_ARN" "$ECS/clear-params.sh" --profile p4 --region ap-no
 [ -n "$(cs_line t-ingress)" ] || fail "clear-params.sh built no change set"
 # The template the stack RUNS decides, before anything changes: a Default that is not "" (or
 # none at all) is refused, whatever the local template says.
-for d in subnet-other none; do
+for d in subnet-other none blank; do
   : > "$LOG"
   if STUB_ING_EGRESS="$SECRET_ARN" STUB_LIVE_DEFAULT=$d "$ECS/clear-params.sh" --profile p4 \
     --region ap-northeast-1 --stack t-ingress EgressProxyAddr > "$WORK/outc9" 2>&1; then
@@ -1243,6 +1250,12 @@ for d in subnet-other none; do
   grep -q "Default is" "$WORK/outc9" || { cat "$WORK/outc9"; fail "clear-params.sh did not say why it refused ($d)"; }
   hasnt "create-change-set"
 done
+# The same refusal in a dry run, which must not announce a clear either.
+if STUB_ING_EGRESS="$SECRET_ARN" STUB_LIVE_DEFAULT=blank "$ECS/clear-params.sh" --profile p4 \
+  --region ap-northeast-1 --stack t-ingress --dry-run EgressProxyAddr > "$WORK/outc9" 2>&1; then
+  fail "clear-params.sh --dry-run accepted a Default of blanks"
+fi
+grep -q "DRY: clear" "$WORK/outc9" && fail "clear-params.sh --dry-run announced clearing to a Default of blanks"
 # A read-back that fails after the change set ran is a failure, not "now empty".
 : > "$LOG"
 if STUB_ING_EGRESS="$SECRET_ARN" STUB_READBACK_FAIL=1 "$ECS/clear-params.sh" --profile p4 \
@@ -1282,6 +1295,11 @@ grep -q 'af-ws-alice (its task could not be read' "$WORK/outm7" || fail "update.
 # The services could not be listed: said, never "nothing left".
 upd outm8 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false STUB_LIST_SERVICES_FAIL=1
 grep -q 'could not all be listed' "$WORK/outm8" || fail "update.sh hid a failed service listing"
+for k in STUB_SVC_FAILURES STUB_SVC_PARTIAL; do
+  upd outm9 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false $k=1
+  grep -q 'could not all be listed' "$WORK/outm9" || fail "update.sh took describe-services' $k answer as complete"
+done
+grep -q 'could not all be listed' "$WORK/outm2" && fail "update.sh called a complete service listing incomplete"
 
 echo "== case 3h-pool: update.sh never skips the slot pool on ecs-ec2 without saying so =="
 #
