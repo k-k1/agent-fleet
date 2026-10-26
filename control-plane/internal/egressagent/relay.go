@@ -47,6 +47,8 @@ type Relay struct {
 	// CloseGrace is how long the client may keep its side open after Squid's side ended;
 	// 0 is defaultCloseGrace.
 	CloseGrace time.Duration
+	// WriteStall is how long one write to either side may block; 0 is defaultWriteStall.
+	WriteStall time.Duration
 }
 
 // defaultMaxConns stays under the file limit systemd gives the relay (two descriptors per
@@ -57,6 +59,11 @@ const defaultMaxConns = 4096
 // has nowhere left to send. Without a bound, a client that never closes holds the
 // connection and its goroutines forever.
 const defaultCloseGrace = 10 * time.Second
+
+// defaultWriteStall bounds a write the receiver does not drain: a workspace that stops
+// reading would otherwise hold the connection even after Squid closed, since the relay
+// never reaches Squid's EOF while it cannot hand on the bytes before it.
+const defaultWriteStall = 2 * time.Minute
 
 // upstreamTimeout bounds the dial to Squid and Squid's answer to the CONNECT. The TLS
 // handshake after it is Squid's to time out.
@@ -137,7 +144,11 @@ func (r Relay) serve(c *net.TCPConn) {
 	if grace <= 0 {
 		grace = defaultCloseGrace
 	}
-	pipe(c, u.(*net.TCPConn), br, grace)
+	stall := r.WriteStall
+	if stall <= 0 {
+		stall = defaultWriteStall
+	}
+	pipe(c, u.(*net.TCPConn), br, grace, stall)
 }
 
 // connect sends the PROXY header and the CONNECT, and returns the reader positioned after
@@ -169,19 +180,20 @@ func connect(u net.Conn, src, dst netip.AddrPort) (*bufio.Reader, error) {
 
 // pipe copies both ways. The client's half-close is passed on and Squid's answer still
 // flows back for as long as Squid keeps its side open (Squid's own timeouts bound that).
-// Once Squid's side ended, the client gets grace to finish; an error either way closes both.
-func pipe(c, u *net.TCPConn, fromU io.Reader, grace time.Duration) {
+// Once Squid's side ended, the client gets grace to finish; a write stalled past stall, or
+// any other error either way, closes both.
+func pipe(c, u *net.TCPConn, fromU io.Reader, grace, stall time.Duration) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if _, err := io.Copy(u, c); err != nil {
+		if err := copyStall(u, c, stall); err != nil {
 			c.Close()
 			u.Close()
 			return
 		}
 		u.CloseWrite()
 	}()
-	if _, err := io.Copy(c, fromU); err != nil {
+	if err := copyStall(c, fromU, stall); err != nil {
 		c.Close()
 		u.Close()
 	} else {
@@ -189,4 +201,26 @@ func pipe(c, u *net.TCPConn, fromU io.Reader, grace time.Duration) {
 		c.SetReadDeadline(time.Now().Add(grace))
 	}
 	<-done
+}
+
+// copyStall copies until src's EOF, giving each write at most stall.
+func copyStall(dst *net.TCPConn, src io.Reader, stall time.Duration) error {
+	buf := make([]byte, 32<<10)
+	for {
+		n, rerr := src.Read(buf)
+		if n > 0 {
+			if err := dst.SetWriteDeadline(time.Now().Add(stall)); err != nil {
+				return err
+			}
+			if _, err := dst.Write(buf[:n]); err != nil {
+				return err
+			}
+		}
+		if rerr == io.EOF {
+			return nil
+		}
+		if rerr != nil {
+			return rerr
+		}
+	}
 }

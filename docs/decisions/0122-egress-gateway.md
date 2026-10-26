@@ -744,8 +744,8 @@ forgery detected ... (local IP does not match any domain IP)".
 - **This replaces decision 2 for intercepted 443, and only there.** Decision 2 said the gateway
   is off-the-shelf software and not our own proxy. On this path our own code now carries every
   intercepted TLS connection: accepting it, the PROXY header and CONNECT, copying the bytes, and
-  how long a connection may live (a close grace once Squid's side ended, a cap on open
-  connections). The allow decision, the SNI, the guard denies and the log stay with Squid; the
+  how long a connection may live (a close grace once Squid's side ended, a limit on a stalled
+  write, a cap on open connections). The allow decision, the SNI, the guard denies and the log stay with Squid; the
   relay decides nothing, so a bug in it can break or cut connections but cannot admit a name
   Squid refuses. Port 80 and the explicit proxy stay pure Squid. It is ours to maintain, and an
   outage of the relay is an outage of intercepted HTTPS.

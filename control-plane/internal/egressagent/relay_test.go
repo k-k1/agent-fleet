@@ -84,6 +84,7 @@ func dialRelay(t *testing.T, upstream string, dst netip.AddrPort, dstErr error) 
 		Logf:     t.Logf,
 		// Short, so a test that relies on it fails fast; longer than any wait below.
 		CloseGrace: 300 * time.Millisecond,
+		WriteStall: 300 * time.Millisecond,
 	}
 	done := make(chan struct{})
 	go func() { r.serve(s.(*net.TCPConn)); close(done) }()
@@ -286,5 +287,22 @@ func TestRelayMaxConns(t *testing.T) {
 	defer mu.Unlock()
 	if len(logged) != 1 || !strings.Contains(logged[0], "refused") {
 		t.Errorf("logged %q", logged)
+	}
+}
+
+// A client that stops reading while Squid sends, after which Squid closes: the relay can
+// neither hand on the rest nor reach Squid's EOF, and must still let go within WriteStall.
+func TestRelayReleasesClientThatStopsReading(t *testing.T) {
+	up := rawSquid(t, func(c net.Conn, _ *bufio.Reader) {
+		c.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
+		c.Write(make([]byte, 32<<20)) // stops when the buffers are full and the deadline hits
+	})
+	c, _, done := dialRelay(t, up, netip.MustParseAddrPort("203.0.113.7:443"), nil)
+	c.(*net.TCPConn).SetReadBuffer(1024)
+	// The client never reads.
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("serve still blocked writing to a client that stopped reading, after Squid closed")
 	}
 }
