@@ -325,7 +325,7 @@ RUN set -eux; \
 # Bump RTK_VERSION to upgrade (ARG change busts the cache; same idiom as GH_VERSION).
 # The AF_AGENT_SELF_UPDATE opt-in also updates rtk in place at start (entrypoint).
 ARG BAKE_RTK=1
-ARG RTK_VERSION=1.0.1
+ARG RTK_VERSION=1.1.0
 RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
