@@ -6,8 +6,12 @@
 // by plan FILE path, so every device of the user offers the shortcut. This browser's
 // localStorage stays as a cache and fallback: an Agent without the route (older build) never
 // returns the field, and a write that failed here is still remembered for this browser. The
-// precedence is: a write this tab has not yet seen come back in the list, then the Agent's
-// record, then localStorage. The path is half the key because one planner session can hold two
+// precedence is: a write of this tab the list has not yet shown back, then the Agent's record.
+// Below that, localStorage counts only where the Agent cannot speak: when the planner's row
+// carries the field (an Agent that knows it), a link this browser once saw confirmed there and
+// that is now gone was unlinked or evicted, so the stale cached copy is dropped rather than
+// offered; a link never confirmed (made before the Agent stored them, or by a failed write) is
+// still offered from the cache. Nothing is uploaded on its own. The path is half the key because one planner session can hold two
 // plans (claude names the file per plan), and a revision rewrites the SAME file, which is what
 // makes the second round find the first round's reviewer.
 //
@@ -43,13 +47,39 @@ function load(): Store {
   }
 }
 
-/** Writes of this tab the session list has not confirmed yet ("" = unlinked). Without it the
- *  Agent's older record would win for the seconds until the next list poll, or for good when the
- *  write failed. */
+/** Writes of this tab the session list has not shown back yet ("" = unlinked). A refresh that
+ *  returns an older list must not count as confirmation, so a marker goes only when a list
+ *  carries exactly the value written (reconcile). */
 const pending = new Map<string, string>();
 
+const SYNCED_KEY = "af.plan-reviewers-synced";
+/** Keys of links this browser has seen at the Agent, so their later absence there means
+ *  "unlinked", not "never uploaded". Bounded like the store itself. */
+function loadSynced(): Set<string> {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SYNCED_KEY) || "null") as unknown;
+    return new Set(Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string").slice(-MAX_ENTRIES) : []);
+  } catch {
+    return new Set();
+  }
+}
+let synced = loadSynced();
+function saveSynced() {
+  try {
+    localStorage.setItem(SYNCED_KEY, JSON.stringify([...synced].slice(-MAX_ENTRIES)));
+  } catch {
+    /* quota / private mode: the cache just stays unconfirmed */
+  }
+}
+
+/** The planner's row says whether its Agent knows the field: an array (possibly empty) = yes. */
+const plannerLinks = (sessions: Session[], planner: string) => {
+  const l = sessions.find((s) => s.name === planner)?.planReviewers;
+  return Array.isArray(l) ? l : null;
+};
+
 const serverReviewer = (sessions: Session[], planner: string, planPath: string): string =>
-  sessions.find((s) => s.name === planner)?.planReviewers?.find((e) => e.path === planPath)?.reviewer || "";
+  plannerLinks(sessions, planner)?.find((e) => e.path === planPath)?.reviewer || "";
 
 let store: Store = load();
 const listeners = new Set<() => void>();
@@ -78,20 +108,54 @@ function commit(next: Store) {
   listeners.forEach((l) => l());
 }
 
-/** Tell the Agent, then drop the pending marker once a fresh list carries the answer. A failed
- *  write keeps the marker, so this tab keeps its own newer choice over the Agent's older one. */
+/** Tell the Agent. The pending marker stays until a list shows the value (reconcile), so a
+ *  failed write, or a refresh that returned an older list, keeps this tab's own newer choice. */
 function syncToAgent(planner: string, planPath: string, reviewer: string) {
-  const k = reviewerKey(planner, planPath);
-  pending.set(k, reviewer);
+  pending.set(reviewerKey(planner, planPath), reviewer);
   void sessionPlanReviewerSet(planner, planPath, reviewer)
-    .then(async (ok) => {
-      if (!ok || pending.get(k) !== reviewer) return;
-      await useSessionsStore.getState().refresh();
-      if (pending.get(k) === reviewer) pending.delete(k);
-    })
+    .then((ok) => (ok ? useSessionsStore.getState().refresh() : undefined))
     .catch(() => {})
     .finally(() => listeners.forEach((l) => l()));
 }
+
+/** Fold a session list into the local state: a pending write the list now shows is confirmed;
+ *  a link the Agent holds is remembered as confirmed; a confirmed link the Agent no longer
+ *  holds is dropped from the cache. Only planners whose row carries the field are judged. */
+function reconcile(sessions: Session[]) {
+  let storeChanged = false;
+  let syncedChanged = false;
+  const next = { ...store };
+  const planners = new Set<string>();
+  for (const s of sessions) if (Array.isArray(s.planReviewers)) planners.add(s.name);
+  for (const [k, v] of [...pending]) {
+    const [planner, path] = k.split("\u0000");
+    if (planners.has(planner) && serverReviewer(sessions, planner, path) === v) pending.delete(k);
+  }
+  for (const s of sessions) {
+    if (!Array.isArray(s.planReviewers)) continue;
+    for (const e of s.planReviewers) {
+      const k = reviewerKey(s.name, e.path);
+      if (!synced.has(k)) {
+        synced.add(k);
+        syncedChanged = true;
+      }
+    }
+  }
+  for (const k of [...synced]) {
+    const [planner, path] = k.split("\u0000");
+    if (!planners.has(planner) || pending.has(k) || serverReviewer(sessions, planner, path)) continue;
+    synced.delete(k);
+    syncedChanged = true;
+    if (k in next) {
+      delete next[k];
+      storeChanged = true;
+    }
+  }
+  if (syncedChanged) saveSynced();
+  if (storeChanged) commit(next);
+  else listeners.forEach((l) => l());
+}
+if (typeof window !== "undefined") useSessionsStore.subscribe((st, prev) => st.sessions !== prev.sessions && reconcile(st.sessions));
 
 /** Record that `reviewer` reviewed the plan at `planPath` of `planner`. A later launch for the
  *  same plan replaces it: the newest reviewer is the one holding the latest round's context. */
@@ -118,24 +182,33 @@ export function forgetReviewer(planner: string, planPath: string) {
   syncToAgent(planner, planPath, "");
 }
 
-/** Does `planner` have any remembered reviewer? Gates the plan-file lookup behind the card. */
-export const hasRememberedReviewer = (planner: string, sessions: Session[] = useSessionsStore.getState().sessions): boolean =>
-  Object.keys(store).some((k) => k.startsWith(planner + "\u0000") && pending.get(k) !== "") ||
-  [...pending].some(([k, v]) => v && k.startsWith(planner + "\u0000")) ||
-  !!sessions.find((s) => s.name === planner)?.planReviewers?.length;
-
 export const rememberedReviewer = (
   planner: string,
   planPath: string,
   sessions: Session[] = useSessionsStore.getState().sessions,
 ): string => {
   const k = reviewerKey(planner, planPath);
-  return pending.has(k) ? pending.get(k)! : serverReviewer(sessions, planner, planPath) || store[k] || "";
+  if (pending.has(k)) return pending.get(k)!;
+  const server = serverReviewer(sessions, planner, planPath);
+  if (server) return server;
+  // The Agent speaks for this planner and holds no link: a link it once confirmed is gone.
+  if (plannerLinks(sessions, planner) && synced.has(k)) return "";
+  return store[k] || "";
+};
+
+/** Does `planner` have any remembered reviewer? Gates the plan-file lookup behind the card. */
+export const hasRememberedReviewer = (planner: string, sessions: Session[] = useSessionsStore.getState().sessions): boolean => {
+  const prefix = planner + "\u0000";
+  const paths = new Set<string>();
+  for (const k of [...Object.keys(store), ...pending.keys()]) if (k.startsWith(prefix)) paths.add(k.slice(prefix.length));
+  for (const e of plannerLinks(sessions, planner) ?? []) paths.add(e.path);
+  return [...paths].some((p) => rememberedReviewer(planner, p, sessions) !== "");
 };
 
 /** Test seam: re-read storage (the module reads it once at import). */
 export function reloadReviewersForTest() {
   pending.clear();
+  synced = loadSynced();
   store = load();
   listeners.forEach((l) => l());
 }

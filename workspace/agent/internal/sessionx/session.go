@@ -130,7 +130,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	s := session.Session{
 		Name: m.Name, Tmux: session.TmuxName(m.Name), Dir: m.Dir, Subdir: m.Subdir, Kind: m.Kind, Driver: m.Driver,
 		Repo: m.Repo, WorkingCopyID: gitx.WorkingCopyID(m.Dir), Title: m.Title, TitleSetBy: m.TitleSetBy,
-		PlanReviewers: m.PlanReviewers,
+		PlanReviewers: planReviewersOrEmpty(m.PlanReviewers),
 		Display:       session.Display(m), Color: m.Color, Label: m.Label,
 		Started: started, CreatedAt: m.CreatedAt, Branch: m.Branch,
 		RemoteUrl: li.RemoteURL, State: li.State, Alive: alive, Resumable: li.Resumable,

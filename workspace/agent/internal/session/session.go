@@ -216,8 +216,10 @@ type Session struct {
 	TitleSetBy string `json:"titleSetBy,omitempty"`
 	// PlanReviewers mirrors Meta.PlanReviewers: which session reviewed each plan this one
 	// wrote. It rides the list so every device that reads the list offers "Review again";
-	// the Control Plane's sessionWire has to carry it too or it vanishes there.
-	PlanReviewers []PlanReviewer `json:"planReviewers,omitempty"`
+	// the Control Plane's sessionWire has to carry it too or it vanishes there. Always emitted
+	// (never omitted, [] when empty): its presence tells the Console this Agent knows the
+	// field, so an absent link means "unlinked", not "an older Agent".
+	PlanReviewers []PlanReviewer `json:"planReviewers"`
 	Display       string         `json:"display"`   // human-readable name (title → claude label → repo@time); never the slug alone
 	Color         string         `json:"color"`     // terminal background hue (hex); SSM carries its host color
 	Label         string         `json:"label"`     // claude --name display name (claude only)

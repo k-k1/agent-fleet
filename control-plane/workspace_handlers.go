@@ -785,10 +785,11 @@ type sessionWire struct {
 	TitleSetBy string `json:"titleSetBy,omitempty"`
 	// PlanReviewers: which session reviewed each plan file this session wrote (the Agent's
 	// Meta.PlanReviewers), so "Review again" is offered on every device. Same relay caveat as
-	// its neighbours; no DB-mirror column, since the link is only useful with the Agent up
-	// (the reviewer has to take a message).
-	PlanReviewers []planReviewerWire `json:"planReviewers,omitempty"`
-	Display       string             `json:"display"` // human-readable name from the Agent (title → label → repo@time)
+	// its neighbours. A pointer: absent = an Agent that predates the field (the Console then
+	// trusts its local cache), [] = the Agent knows the field and holds no link. No DB-mirror column: the link is only
+	// useful with the Agent up (the reviewer has to take a message).
+	PlanReviewers *[]planReviewerWire `json:"planReviewers,omitempty"`
+	Display       string              `json:"display"` // human-readable name from the Agent (title → label → repo@time)
 	// Color: terminal background hue (hex; SSM sessions carry their host color).
 	// Dropped in the relay, an SSM session's background always arrives through the CP as
 	// the default colour. The DB mirror has no column for it, so it is absent while stopped.

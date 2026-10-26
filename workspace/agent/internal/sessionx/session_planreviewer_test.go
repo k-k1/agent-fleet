@@ -1,6 +1,7 @@
 package sessionx
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -94,5 +95,18 @@ func TestPlanReviewerIsBoundedOldestFirst(t *testing.T) {
 	}
 	if list[0].Path != "/p/5.md" || list[len(list)-1].Path != fmt.Sprintf("/p/%d.md", session.MaxPlanReviewers+4) {
 		t.Fatalf("kept %v ... %v", list[0], list[len(list)-1])
+	}
+}
+
+// An Agent that knows the field always emits it, [] included: the Console reads the field's
+// presence as "an absent link means unlinked", not "an older Agent".
+func TestPlanReviewersAlwaysOnTheListRow(t *testing.T) {
+	row := wireSession(session.Meta{Name: "planner", Dir: t.TempDir(), Kind: session.KindClaude}, false)
+	b, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"planReviewers":[]`) {
+		t.Fatalf("row without links must carry an empty list: %s", b)
 	}
 }

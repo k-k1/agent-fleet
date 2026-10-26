@@ -75,3 +75,11 @@ func HandleSetPlanReviewer(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusOK, wireSession(m, SessionAlive(m)))
 }
+
+// planReviewersOrEmpty makes the list row carry [] rather than null (see session.Session).
+func planReviewersOrEmpty(l []session.PlanReviewer) []session.PlanReviewer {
+	if l == nil {
+		return []session.PlanReviewer{}
+	}
+	return l
+}
