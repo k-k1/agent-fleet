@@ -884,7 +884,11 @@ has attached it: workspaces have no egress until the instance is up (a few minut
 `/var/log/af-egress-gateway.log` on it), and the agent has nothing to ship until `update.sh`
 has written its configuration (`/af-egress/<network stack>/agent`) and fetched a first policy:
 until then Squid refuses everything (also after an instance replacement), so a gateway that
-cannot reach the CP stays closed rather than open. Running workspaces get the proxy variables
+cannot reach the CP stays closed rather than open. Until that first policy, `af-egress-install`
+fails and runs again 30 s later (a missing configuration fails at once; a missing policy after
+a 30 s wait for the agent), so the gap after `update.sh` writes the configuration is about a
+minute, plus the first pull of the CP image and the CP's own start. Afterwards it runs every
+10 minutes, which is how a new CP image reaches the agent (#2758). Running workspaces get the proxy variables
 on their next Start (until then they are intercepted). `GatewayInstanceType` must match the
 CP image's architecture (30-ingress `CpArch`): the agent is the CP binary.
 
