@@ -3,6 +3,13 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.35.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.35.0) — 2026-10-26
+
+AWS では、ワークスペースの通信を任意の egress ゲートウェイ経由にでき、すべての接続を発信元のワークスペースと
+一緒に記録し、許可リストを強制できます。テナント管理者は OAuth でサインインする MCP サーバーを配布でき、
+Agent Fleet のメモリには専用の MCP エンドポイントができました。ツールチェーンでは JDK と Node.js のパッチを
+最新に保てます。
+
 ## [0.34.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.1) — 2026-10-23
 
 0.34.0 で出た `/mcp` エンドポイントと MCP のサインイン（OAuth）を、ECS のデプロイでも有効にできるように

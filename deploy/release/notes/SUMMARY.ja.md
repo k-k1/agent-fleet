@@ -12,6 +12,42 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.35.0](0.35.0.ja.md) — 2026-10-26
+
+**CLI ピン** — Claude Code 2.1.310 / Codex 0.164.0 / Antigravity 1.4.7 / OpenCode 2.1.4 / Muse Code 1.4.13-R6996.1 / rtk 1.1.0
+
+**New / Improved**
+
+- **[AWS / egress]** 任意の egress ゲートウェイ（`EgressRoute=gateway`、プレビュー）。ワークスペースの通信が専用の Elastic IP から出て、通信の許可リストが ECS のワークスペースにも効き、すべての接続をワークスペースと一緒に記録する。`pause.sh` / `standup.sh` で止めて戻す ([#2717](https://github.com/k-k1/agent-fleet/issues/2717), [#2728](https://github.com/k-k1/agent-fleet/issues/2728), [#2729](https://github.com/k-k1/agent-fleet/issues/2729), [#2742](https://github.com/k-k1/agent-fleet/issues/2742), [#2759](https://github.com/k-k1/agent-fleet/issues/2759), [#2665](https://github.com/k-k1/agent-fleet/issues/2665))
+- **[AWS / ネットワーク]** ワークスペースに専用のサブネット、S3 エンドポイントに制限的なポリシー ([#2716](https://github.com/k-k1/agent-fleet/issues/2716), [#2657](https://github.com/k-k1/agent-fleet/issues/2657), [#2763](https://github.com/k-k1/agent-fleet/issues/2763))
+- **[egress]** egress の生イベントを 30 日保存（`AF_EGRESS_EVENT_RETENTION_DAYS`）し、削除の前に S3 へアーカイブできる ([#2675](https://github.com/k-k1/agent-fleet/issues/2675), [#2699](https://github.com/k-k1/agent-fleet/issues/2699), [#2732](https://github.com/k-k1/agent-fleet/issues/2732))
+- **[MCP]** テナント管理者が OAuth の MCP サーバーを配布する。事前登録したクライアントも付けられる ([#2479](https://github.com/k-k1/agent-fleet/issues/2479))
+- **[MCP / メモリ]** メモリのツールにしか届かない `/mcp/memory`。外部から呼ぶメモリのツールはリポジトリの URL でプロジェクトを選ぶ ([#2764](https://github.com/k-k1/agent-fleet/issues/2764), [#2765](https://github.com/k-k1/agent-fleet/issues/2765), [#2766](https://github.com/k-k1/agent-fleet/issues/2766))
+- **[MCP]** MCP トークンを 設定 › 外部からのアクセス › MCP トークン・接続アプリ へ移し、セッションにトークンを渡すことへの警告を表示。この配備自身の `/mcp` はセッションの MCP サーバーとして登録できない ([#2680](https://github.com/k-k1/agent-fleet/issues/2680), [#2696](https://github.com/k-k1/agent-fleet/issues/2696), [#2677](https://github.com/k-k1/agent-fleet/issues/2677))
+- **[作業項目]** 作業項目から GitHub のプルリクエストをマージする ([#2632](https://github.com/k-k1/agent-fleet/issues/2632))
+- **[作業項目]** `pullrequest:write` があれば Bitbucket のプルリクエストに作業の報告をコメントする ([#2709](https://github.com/k-k1/agent-fleet/issues/2709))
+- **[ツールチェーン]** JDK / Node.js の正確なパッチ・パッチの更新・インストールで取得する版の表示・古いパッチの整理・アンインストール ([#2624](https://github.com/k-k1/agent-fleet/issues/2624), [#2625](https://github.com/k-k1/agent-fleet/issues/2625), [#2646](https://github.com/k-k1/agent-fleet/issues/2646), [#2647](https://github.com/k-k1/agent-fleet/issues/2647), [#2648](https://github.com/k-k1/agent-fleet/issues/2648))
+- **[セッション]** マネージドのセッションにも `$AF_WORK_DIR` と `$AF_SESSION_NAME` ([#2431](https://github.com/k-k1/agent-fleet/issues/2431), [#2710](https://github.com/k-k1/agent-fleet/issues/2710), [#2715](https://github.com/k-k1/agent-fleet/issues/2715))
+- **[opencode]** opencode 2 のターミナルのセッションで過去のメッセージから分岐。to-do を ToDo に表示 ([#2493](https://github.com/k-k1/agent-fleet/issues/2493))
+- **[メモリ]** メモリブラウザで変更履歴と忘れたメモリを最後までさかのぼる。複数語の検索はすべての語を含むもの ([#2486](https://github.com/k-k1/agent-fleet/issues/2486))
+- **[セッション]** 移動ダイアログに copilot と Antigravity のクォータ ([#2492](https://github.com/k-k1/agent-fleet/issues/2492))
+- **[claude]** ログイン期限切れをリポジトリからの起動ダイアログにも表示。そのせいで送れなかった最初の指示に再認証ボタン ([#2494](https://github.com/k-k1/agent-fleet/issues/2494))
+- **[ECS]** `30-ingress` でアイドルのタイマー・GitHub サインインの追加設定・LAN のエンジンを設定できる ([#2596](https://github.com/k-k1/agent-fleet/issues/2596))
+- **[docker]** ワークスペース用リスナー（`AF_CP_INTERNAL_URL`）に対応 ([#2776](https://github.com/k-k1/agent-fleet/issues/2776))
+
+**Fixed**
+
+- **[ピアメッセージ]** 停止中の claude へのメッセージが再開時に失われても配達済みと報告されることがあった ([#2741](https://github.com/k-k1/agent-fleet/issues/2741))
+- **[セッション]** ターミナルの停止がどのエージェントにも Escape を送っていた。opencode・cursor・copilot にはそれぞれのキー ([#2491](https://github.com/k-k1/agent-fleet/issues/2491))
+- **[MCP]** 古い版からのアップグレード後、claude のセッションごとに `af` MCP サーバーが 2 つ動いていた ([#2678](https://github.com/k-k1/agent-fleet/issues/2678))
+- **[多言語]** MCP の接続テストを含むエラーメッセージが表示言語にかかわらず日本語だった ([#2483](https://github.com/k-k1/agent-fleet/issues/2483), [#2721](https://github.com/k-k1/agent-fleet/issues/2721))
+- **[ecs-ec2]** 停止（強制）でスロットのネットワークインターフェイスが残ることがあった ([#2524](https://github.com/k-k1/agent-fleet/issues/2524))
+- **[管理]** ホームの容量を測る間、メンバー詳細が止まっていた ([#2425](https://github.com/k-k1/agent-fleet/issues/2425))
+- **[egress]** Control Plane への報告に失敗すると観測が失われていた ([#2603](https://github.com/k-k1/agent-fleet/issues/2603))
+- **[プレビュー]** 開発用 OIDC IdP がオーナーだけが開いたポートへのコールバックを拒否していた ([#2500](https://github.com/k-k1/agent-fleet/issues/2500))
+- **[その他]** MCP のサインイン・メモリの提案・メモリのインポートの上限・受信箱の添付・ツールチェーンの更新の見送り・表記 ([#2586](https://github.com/k-k1/agent-fleet/issues/2586), [#2689](https://github.com/k-k1/agent-fleet/issues/2689), [#2695](https://github.com/k-k1/agent-fleet/issues/2695), [#2690](https://github.com/k-k1/agent-fleet/issues/2690), [#2584](https://github.com/k-k1/agent-fleet/issues/2584), [#2487](https://github.com/k-k1/agent-fleet/issues/2487), [#2489](https://github.com/k-k1/agent-fleet/issues/2489), [#2499](https://github.com/k-k1/agent-fleet/issues/2499), [#2502](https://github.com/k-k1/agent-fleet/issues/2502), [#2484](https://github.com/k-k1/agent-fleet/issues/2484), [#2505](https://github.com/k-k1/agent-fleet/issues/2505))
+
+
 ## [0.34.1](0.34.1.ja.md) — 2026-10-23
 
 **New / Improved**
