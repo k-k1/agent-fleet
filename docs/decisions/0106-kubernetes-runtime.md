@@ -1003,3 +1003,16 @@ cluster (2026-10-02/05; GKE 1.35.8, Dataplane V2, `asia-northeast1`); the figure
   Not verified on a real cluster.
 - `AF_K8S_HOME_SHARED_FS=1` withholds `home_own` for a StorageClass that backs homes with one
   shared filesystem; the block-storage expectation is not checked. Follow-ups: #2620.
+
+## Note 2026-10-26 — the workspace listener on docker (#2776)
+
+Decision 8's second listener is now a supported, opt-in setup on `docker` too, for hosts whose
+public front end refuses the Docker bridges. The CP binds the docker0 gateway address, never a
+wildcard (a wildcard on `docker` is logged at start), and workspaces use
+`AF_CP_INTERNAL_URL=http://host.docker.internal:<port>`; the docker adapter adds
+`--add-host host.docker.internal:host-gateway` when the URL names that host, and adds the host
+to `NO_PROXY` when the egress proxy is set, as on Kubernetes. The docker0 address is local to
+the host, so every per-user network reaches it without crossing the inter-network isolation.
+Binding each per-user network's gateway was not chosen: those networks come and go with
+workspaces, and one CP socket per network would follow them. Compose leaves it off by default.
+Decision 8 itself is unchanged. Not verified on a live Docker deployment yet.

@@ -91,7 +91,7 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
 > Control Plane に `AF_EGRESS_PROXY_ADDR` を設定すると、どのターゲットでも
 > すべての Workspace に `http_proxy` / `https_proxy` / `no_proxy`（と大文字の同名変数）が注入され
 > （既定はオフ）、これらの変数に従うプログラムは proxy を通ります。CP の内部アドレス
-> （`AF_CP_INTERNAL_URL`）は Kubernetes・ecs・ecs-ec2 で proxy の対象から外され、ecs / ecs-ec2 では
+> （`AF_CP_INTERNAL_URL`）は docker・Kubernetes・ecs・ecs-ec2 で proxy の対象から外され、ecs / ecs-ec2 では
 > proxy がリンクローカル宛を拒否するため、タスク／インスタンスのメタデータアドレス
 > （`169.254.170.2`・`169.254.169.254`）も対象から外されます。**まだ無い**のは、proxy を通ることの強制（proxy だけを出口に残す内部網や
 > セキュリティグループの egress ルール、proxy を動かすテンプレート）です。変数を無視する

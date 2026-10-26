@@ -376,7 +376,11 @@ data from a place they should not**.
   [09 §9.3](09-deploy.md)). Its client is the connection's own address whatever the hop
   count says, and it removes the identity header and every forwarded-for/-host/-proto
   header before a handler runs — a workspace that connects to it can name neither a user
-  nor a source address. It serves only the token-authenticated routes listed above.
+  nor a source address. It serves only the token-authenticated routes listed above. On
+  `docker` it binds the docker0 gateway address, which every workspace on the host reaches and
+  no LAN interface carries; a workspace gains nothing there that the public URL does not give
+  it, since every route still asks for that membership's own token (a wildcard bind on
+  `docker` is logged as a warning at start).
 - **Escape hatches against locking yourself out**: a deployment administrator is exempt;
   a save that would shut out the editor's current address is refused
   (`would_lock_out`); and so is a save when the forwarded-for header arrives while no
@@ -556,7 +560,7 @@ Implemented:
   `native` and Kubernetes pass the whole deployment env on; `ecs` and `ecs-ec2` take only
   these variables (the ones generated from `AF_EGRESS_PROXY_ADDR`, never a same-named `WS_ENV` entry), because they deliberately do not pass `WS_ENV` (it may hold a
   credential and a task definition's plain environment is readable). Where
-  `AF_CP_INTERNAL_URL` is set, its host joins `NO_PROXY` on Kubernetes, ecs and ecs-ec2, and
+  `AF_CP_INTERNAL_URL` is set, its host joins `NO_PROXY` on docker, Kubernetes, ecs and ecs-ec2, and
   ecs / ecs-ec2 add the task and instance metadata addresses (`169.254.170.2`,
   `169.254.169.254`) too, since the proxy refuses link-local destinations. A per-start
   variable of the same name wins over the deployment-wide one.

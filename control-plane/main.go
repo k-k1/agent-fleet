@@ -647,6 +647,9 @@ func main() {
 	// The workspace-only listener (ADR 0106 decision 8). Unset = no second port, today's
 	// behaviour.
 	if addr := strings.TrimSpace(os.Getenv("AF_CP_INTERNAL_LISTEN")); addr != "" {
+		if workspaceListenerOnEveryInterface(rtProfile, addr) {
+			log.Printf("WARNING: AF_CP_INTERNAL_LISTEN=%s binds every interface of this docker host, so the workspace listener is reachable from the LAN as well as from workspaces — bind the docker0 gateway address instead (09 §9.3)", addr)
+		}
 		serveWorkspaceListener(addr, mux, cfg.mgr.emailHeader)
 	} else if mgr.internalBaseURL != "" {
 		log.Printf("WARNING: AF_CP_INTERNAL_URL is set without AF_CP_INTERNAL_LISTEN — workspaces are sent to an address this CP does not serve")
