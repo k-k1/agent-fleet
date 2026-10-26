@@ -61,7 +61,7 @@ export function TokensTab() {
     setBusy(true);
     const res = await apiJSON("api/pat", "POST", {
       name: name.trim(),
-      scope: endpoint === "memory" && scope === "admin:dangerous" ? "write" : scope,
+      scope,
       ttl_days: parseInt(ttl, 10),
       endpoint,
     });
@@ -85,6 +85,13 @@ export function TokensTab() {
     if (!ok) return;
     await raw(`api/pat/${encodeURIComponent(id)}`, { method: "DELETE" });
     load();
+  };
+
+  // The memory endpoint offers no admin tier, so leaving it selected would show one scope and
+  // send another; the state itself is lowered, and stays lowered if the endpoint is switched back.
+  const changeEndpoint = (next: string) => {
+    setEndpoint(next);
+    if (next === "memory" && scope === "admin:dangerous") setScope("write");
   };
 
   const scopeOptions = ["read", "write"];
@@ -164,7 +171,7 @@ export function TokensTab() {
           />
         </Row>
         <Row label={tr("tokens.endpoint")}>
-          <select value={endpoint} onChange={(e) => setEndpoint(e.target.value)}>
+          <select value={endpoint} onChange={(e) => changeEndpoint(e.target.value)}>
             <option value="mcp">{tr("tokens.endpoint_mcp")}</option>
             <option value="memory">{tr("tokens.endpoint_memory")}</option>
           </select>

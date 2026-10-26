@@ -111,4 +111,40 @@ describe("TokensTab what-this-token-can-do section", () => {
     expect(snippet).toContain("/mcp/memory");
     expect(snippet).toContain("agent-fleet-memory");
   });
+
+  // The scope shown is the scope sent: switching an admin:dangerous form to the memory endpoint
+  // lowers the state itself, and switching back does not bring the hidden tier back.
+  it("keeps the shown scope and the sent scope the same across endpoint changes", async () => {
+    api.mockImplementation(async () => ({ tokens: [], ceiling: "admin:dangerous" }));
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => root!.render(<TokensTab />));
+    const selects = () => Array.from(host!.querySelectorAll("select"));
+    const endpointSelect = () => selects().find((s) => Array.from(s.options).some((o) => o.value === "memory"))!;
+    const scopeSelect = () => selects().find((s) => Array.from(s.options).some((o) => o.value === "read"))!;
+    const change = async (el: HTMLSelectElement, v: string) => {
+      await act(async () => {
+        el.value = v;
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+    const issue = async () => {
+      const b = Array.from(host!.querySelectorAll("button")).find((x) => x.textContent === t("tokens.issue"));
+      apiJSON.mockResolvedValueOnce({ token: "afp_x" });
+      await act(async () => b!.click());
+      return (apiJSON.mock.calls.at(-1) as unknown[])[2] as { scope: string; endpoint: string };
+    };
+    await change(scopeSelect(), "admin:dangerous");
+    await change(endpointSelect(), "memory");
+    const shown = scopeSelect().value;
+    expect(shown).not.toBe("admin:dangerous");
+    let sent = await issue();
+    expect(sent).toMatchObject({ endpoint: "memory", scope: shown });
+
+    await change(endpointSelect(), "mcp");
+    expect(scopeSelect().value).toBe(shown);
+    sent = await issue();
+    expect(sent).toMatchObject({ endpoint: "mcp", scope: shown });
+  });
 });
