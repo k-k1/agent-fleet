@@ -69,7 +69,7 @@ source_of_truth: "個人/テナント設定は Console、配備の変数は `dep
 | 連携アプリの OAuth | テナント自身の GitHub / Bitbucket OAuth アプリ |
 | MCP 配布 | 全メンバーへ渡す連携サーバー |
 | ブランチ命名ルール | 新しいブランチの名前と起点の、テナントとしての既定（リポジトリのパターンごと・JSON の一覧）。メンバーのワークスペースは 5 分以内に取り込む。**助言のみ**——外れた名前は警告になるだけで拒否されない |
-| 外部からのメモリ利用 | メンバーが `/mcp` 経由で Agent Fleet の外のエージェントから自分のメモリを使えるか。許可（既定）ならメンバーが各自で有効にでき、ブロックするとテナント全体からメモリのツールを引き上げる（[管理 04](../admin/04-mcp-outside.ja.md#agent-fleet-の外からのメモリ利用)） |
+| 外部からのメモリ利用 | メンバーが `/mcp`（またはメモリ専用の `/mcp/memory`）経由で Agent Fleet の外のエージェントから自分のメモリを使えるか。許可（既定）ならメンバーが各自で有効にでき、ブロックするとテナント全体からメモリのツールを引き上げる（[管理 04](../admin/04-mcp-outside.ja.md#agent-fleet-の外からのメモリ利用)） |
 | メンバーの既定 | 初回のようこそカードが「エージェントを接続」で名指しするエージェント（Claude・Codex・opencode・Cursor・Copilot・Kiro・Muse・指定しない）。メンバーは Console を読み込むたびに読む。**案内のみ**——ほかのエージェントで接続しても手順は完了になる（[管理 06](../admin/06-team-defaults.ja.md#メンバーの既定)） |
 | 監査 | 誰が・いつ・何を変えたか |
 | 稼働時間 | メンバー毎のワークスペース稼働時間（書き出し可）＋テナント全体の時間別ヒートマップ |
@@ -115,7 +115,7 @@ Control Plane の起動前に設定します。注釈つきの一覧は
 | `WS_MEMORY` | ワークスペースの既定メモリ上限 |
 | `AF_PREVIEW_DOMAIN` | プレビュー用サブドメイン（`<ワークスペース>-<ポート>.<ドメイン>`）の親ドメイン。そのためのワイルドカードの DNS 名と証明書が要る。未設定ならプレビュー用サブドメインは無く、Console 自身のプレビューのパスだけになる。`AF_COOKIE_SECRET` と `PUBLIC_BASE_URL` も一緒に設定する。どちらかが無いと、プレビューのサインインを信頼できないか戻る先の Console が無いため、Control Plane が起動時に警告する |
 | `AF_DEV_IDP` | `0` にすると、開発用ログイン（プレビュー用サブドメイン上のメンバーのアプリが Google の代わりにサインインに使える、Console のオリジン上の OIDC プロバイダ）を、配備管理者のスイッチにかかわらずオフに固定する。未設定ならそのスイッチに従い、スイッチは既定でオン。提供するのは `AF_PREVIEW_DOMAIN` と `PUBLIC_BASE_URL` があるときだけ |
-| `AF_MCP_ENABLED` | `true` で `/mcp` エンドポイント（Personal Access Token）を提供する。それ以外（`1` を含む）はオフ。テナント単位のメモリのスイッチ（[admin 04](../admin/04-mcp-outside.ja.md#agent-fleet-の外からのメモリ利用)）は別の、もっと狭いスイッチ |
+| `AF_MCP_ENABLED` | `true` で `/mcp` エンドポイントとメモリ専用の `/mcp/memory`（Personal Access Token）を提供する。それ以外（`1` を含む）はオフ。テナント単位のメモリのスイッチ（[admin 04](../admin/04-mcp-outside.ja.md#agent-fleet-の外からのメモリ利用)）は別の、もっと狭いスイッチ |
 | `AF_MCP_OAUTH` | `1` で、Control Plane が `/mcp` の OAuth 認可サーバーにもなり、ホスト型のクライアントはメンバーのサインインで接続できる。`AF_MCP_ENABLED=true` と `https` の `PUBLIC_BASE_URL` が要り、どれか欠けると OAuth のパスは 404。各テナントは自分の分をオフにもできる（[admin 04](../admin/04-mcp-outside.ja.md#mcp-oauth)）。残りは [operate/04](../operate/04-secure.ja.md#リモート-mcp-クライアント向けのサインインoauth) |
 | `AF_MCP_OAUTH_TRUSTED_HOSTS` | MCP OAuth が信頼するクライアントのホスト（カンマ区切り）。既定は `claude.ai`・`claude.com`・`chatgpt.com`、`none` でループバックのクライアントだけ。管理モーダルの **MCP ログイン許可ホスト** で保存した一覧がこの変数に優先する（[operate/04](../operate/04-secure.ja.md#信頼するクライアントのホスト配備全体-superadmin-のみ)）|
 | `AF_EFS_BACKUP` | 手で設定しない。`ecs` / `ecs-ec2` で `update.sh` と `standup.sh` が ingress スタックの `EfsBackup` パラメータ（`present`・`off`・`missing`）から埋め、`missing` なら管理画面に「日次の EFS バックアップがない」バナーが出る（[operate/03](../operate/03-run.ja.md#アップグレード)） |
