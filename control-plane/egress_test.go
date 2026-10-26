@@ -357,8 +357,9 @@ func TestEgressPolicyAlwaysAdmitsCPHosts(t *testing.T) {
 
 // Only a URL whose host is one plain name or IPv4 address becomes a built-in entry. Anything
 // egressallow would read as a suffix ("*.x", ".x") would open every sibling for good, and a
-// form Squid cannot be given (an IPv6 literal) would be shown as allowed while the gateway
-// drops it, so both are refused and reported instead.
+// form the allow file cannot carry (a zone ID, an IPv4-mapped address) would be shown as
+// allowed while the gateway drops it, so those are refused and reported instead. An IPv6
+// literal is admitted in its canonical bare form (#2754).
 func TestCPEgressHostsOnlyExactHosts(t *testing.T) {
 	cases := []struct {
 		name             string
@@ -373,8 +374,13 @@ func TestCPEgressHostsOnlyExactHosts(t *testing.T) {
 			[]string{"console.example.test"}, nil},
 		{"wildcard host", "https://*.example.test", "", nil, []string{"https://*.example.test"}},
 		{"leading dot", "https://.example.test", "", nil, []string{"https://.example.test"}},
-		{"IPv6 literal", "https://[2001:db8::5]", "http://10.0.1.5:8081",
-			[]string{"10.0.1.5"}, []string{"https://[2001:db8::5]"}},
+		{"IPv6 literal", "https://[2001:DB8:0:0:0:0:0:5]:8443/x", "http://10.0.1.5:8081",
+			[]string{"2001:db8::5", "10.0.1.5"}, nil},
+		{"IPv6 two spellings", "https://[2001:db8::5]", "http://[2001:0db8::0005]:8081",
+			[]string{"2001:db8::5"}, nil},
+		{"IPv6 zone ID", "https://[fe80::1%25eth0]", "", nil, []string{"https://[fe80::1%25eth0]"}},
+		{"IPv6 IPv4-mapped", "https://[::ffff:10.0.1.5]", "", nil, []string{"https://[::ffff:10.0.1.5]"}},
+		{"IPv6 loopback", "https://[::1]", "", nil, []string{"https://[::1]"}},
 		{"not http", "ftp://console.example.test", "", nil, []string{"ftp://console.example.test"}},
 		{"unset", "", "", nil, nil},
 	}
@@ -397,5 +403,19 @@ func TestCPEgressHostsOnlyExactHosts(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A bracketed IPv6 literal is looked up in the same canonical form the built-in CP host
+// entry is stored in, so two spellings of one address get the same verdict.
+func TestNormalizeEgressHostCanonicalisesIPv6(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://[2001:DB8:0:0:0:0:0:5]:8443/x": "2001:db8::5",
+		"[2001:db8::0005]":                      "2001:db8::5",
+		"Example.test.":                         "example.test",
+	} {
+		if got := normalizeEgressHost(in); got != want {
+			t.Errorf("normalizeEgressHost(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

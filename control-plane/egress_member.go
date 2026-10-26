@@ -23,6 +23,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/control-plane/internal/egressallow"
 	"net"
 	"net/http"
 	"regexp"
@@ -95,6 +96,9 @@ func normalizeEgressHost(raw string) string {
 	// A bracketed IPv6 literal with no port survives SplitHostPort untouched; the
 	// allowlist holds the bare address, so unwrap it here (the Console does the same).
 	h = strings.TrimSuffix(strings.TrimPrefix(h, "["), "]")
+	if c, ok := egressallow.CanonicalIPv6(h); ok {
+		return c // the form the built-in CP host entry is stored in
+	}
 	return strings.TrimSuffix(h, ".")
 }
 

@@ -440,3 +440,27 @@ func TestShipNothingBeforeTheGenerationIsDurable(t *testing.T) {
 		t.Fatalf("%d events, %d syncs: want 1 event and one sync per generation per process", n, syncs)
 	}
 }
+
+// An allowed IPv6 CP is listed by address, and an intercepted connection to it has no SNI
+// and the address as request domain: the event must carry that address as its host and be
+// allowed, the neighbouring address must not.
+func TestShipIPv6LiteralHostIsAllowedOnlyWhenListed(t *testing.T) {
+	f := newShipFixture(t)
+	f.sh.pol.cur.Store(&snapshot{match: parseAllow(renderAllow([]string{"2001:DB8:0:0:0:0:0:5", "github.com"}))})
+	l := func(sec int, sni, rd string) string {
+		return fmt.Sprintf("af1 %d.000 10.0.1.5 2001:db8::5 TCP_TUNNEL splice %s %s\n", 1761300000+sec, sni, rd)
+	}
+	appendFile(t, f.log, l(1, "-", "%5B2001:db8::5%5D")+l(2, "-", "%5B2001:db8::6%5D")+
+		l(3, "-", "%5B2001:0DB8::5%5D")+l(4, "-", "%5B%3A%3A1%5D"))
+	if err := f.sh.pass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.cp.got) != 4 {
+		t.Fatalf("got %d events, want 4", len(f.cp.got))
+	}
+	for i, want := range []bool{true, false, true, false} {
+		if e := f.cp.got[i]; e.Allowed != want {
+			t.Errorf("event %d = %+v, want Allowed=%v", i, e, want)
+		}
+	}
+}
