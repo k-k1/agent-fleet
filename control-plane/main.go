@@ -108,6 +108,12 @@ func main() {
 		runEgressAgent()
 		return
 	}
+	// Subcommand: `control-plane egress-relay` hands the gateway's intercepted port 443 to
+	// Squid as explicit CONNECTs (internal/egressagent.Relay).
+	if len(os.Args) > 1 && os.Args[1] == "egress-relay" {
+		runEgressRelay()
+		return
+	}
 	// Subcommand: `control-plane drawio-preseed` fills the stencil cache ahead of
 	// time (docs/log/65 §65.5.5). It runs where the cache lives and reuses the embedded
 	// manifest, so it cannot drift from what the server will verify against.

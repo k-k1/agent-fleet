@@ -522,3 +522,18 @@ Follow-ups: #2734
 - 実アカウントでは動かしていない。サンドボックスでの enforce の確認は未実施。
 
 Follow-ups: #2746, #2754
+
+## 追記（2026-10-26）— 横取りした TLS はリレーを通して Squid に渡す（#2759）
+
+サンドボックス（ecs-ec2、`EgressRoute=gateway`、log-only と enforce）で、横取り経路の S3・ECR・STS への HTTPS が curl rc=35 で失敗した。同じリクエストを明示プロキシ経由で送ると成功し、`checkip.amazonaws.com` はおよそ 8 回に 1 回失敗した。Squid の `cache.log` には「Host header forgery detected ... (local IP does not match any domain IP)」が出ていた。
+
+- **原因**（Squid のソース。v5・v6・v7 で同じ。2026-10-26 に確認）。横取りする `https_port` では、peek の後の splice が SNI 宛ての偽の CONNECT を作り（`ConnStateData::splice`、`fakeAConnectRequest`）、宛先を Squid 自身によるその名前の名前解決と照合する（`hostHeaderVerify`、`hostHeaderIpVerify`）。CONNECT で一致しなければ `host_verify_strict` の値にかかわらず必ず 409 になり（「For now suspicious intercepted CONNECT requests are always responded to with an HTTP 409」）、`client_dst_passthru` は照合に通った後にしか効かない。Squid は回答を最低でも `negative_dns_ttl`（1 分）保持し、これらのサービスは問い合わせごとに違うアドレスの部分集合を返すので、Workspace が接続したアドレスはたいてい Squid の集合に入っていない。`host_verify_strict off` と `client_dst_passthru on` はもともと既定値である。
+- **却下：共有のキャッシュリゾルバ。** ECS の `awsvpc` タスクは VPC のリゾルバを使う。変えるには VPC の DHCP オプションを変えることになり、CP やホストにも及ぶ。しかもクライアント側のキャッシュは Squid のものとずれ続ける。
+- **却下：ステップ 2 で peek、ステップ 3 で splice。** 偽の CONNECT は避けられるが、Squid は判定の前に接続してクライアントの hello を送るので、拒否する名前でもその宛先に届く。拒否する名前をステップ 2 で先に terminate すればそれは防げるが、今度はゲートウェイの OpenSSL がすべてのサーバー hello を解析することになり、知らない鍵交換グループで失敗しうる。それはオフラインでは確かめられない。
+- **決定。** nftables は引き続き Workspace の 443 を `:3130` へリダイレクトする。そこで `af-cp egress-relay`（`egressagent.Relay`、ユーザー `squid`）が conntrack から元の宛先を読み、ループバック限定の `http_port 127.0.0.1:3131 require-proxy-header ssl-bump` に PROXY ヘッダ（送信元は Workspace）と `CONNECT <元のアドレス>:443` を送る。Squid はこれを明示プロキシと同じに扱う。ガードの拒否はアドレスに効き、`ssl_bump` が SNI で判定し、splice は Workspace が接続したアドレスへ向かう。Squid から見て横取りではないので、ホストの照合は走らない。Squid が PROXY ヘッダを信じるのは localhost からだけ（`proxy_protocol_access`）。`af1` の行には Workspace のアドレスと SNI が残り、`%>rd` は元のアドレスになる。CP は SNI を優先して帰属させる。80 番は変えていない。平文 HTTP で照合に失敗してもログに出るだけで、リクエストは元の宛先へ送られる。
+- **横取りした 443 に限り、決定 2 を置き換える。** 決定 2 は、ゲートウェイは既製のソフトウェアで自前のプロキシではない、としていた。この経路では、横取りしたすべての TLS 接続を自前のコードが運ぶ。接続の受け付け、PROXY ヘッダと CONNECT への変換、バイトのコピー、接続の寿命（Squid 側が終わった後の猶予、止まった書き込みの上限、同時接続数の上限）がそれにあたる。許可の判定、SNI、ガードの拒否、ログは Squid に残る。リレーは何も判定しないので、不具合があれば接続が失敗したり切れたりはしても、Squid が拒否する名前を通すことはない。80 番と明示プロキシは Squid だけのまま。保守するのは自分たちで、リレーが止まれば横取り経路の HTTPS も止まる。
+- **強制は弱まらない。** 拒否する SNI は、どのアドレスに送っても terminate される（同じ `af_allowed_sni` の規則）。許可された SNI なら 443 番の任意の公開アドレスに届くが、これは明示プロキシ（アドレス宛ての CONNECT）ですでにそうだった。範囲は 443 番（nftables とセキュリティグループ）、アドレスへのガードの拒否（ループバック、リンクローカル、VPC）、`ip_forward=0` で限られる。名前とアドレスを結びつけるには復号が要る。
+- **代償。** リレーは CP イメージに入っていてエージェントと一緒に起動するので、最初のインストールまで新しいゲートウェイは横取りした 443 を拒否する（どのみち最初の policy までは全部拒否している）。新しいイメージでリレーが再起動し、そのとき開いている横取り経路の TLS 接続は切れる。
+- 実際の Squid では動かしていない。サンドボックスでの確認（log-only と enforce で、横取り経路の S3・ECR・STS と `checkip` 100 回、許可アドレスへの拒否 SNI とその逆）は #2759 に書いた。
+
+Follow-ups: #2759

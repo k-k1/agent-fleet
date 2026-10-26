@@ -12,7 +12,8 @@
 //     only after a 2xx. Nothing is held only in memory: a crash re-reads from the last
 //     committed offset.
 //
-// Run as `control-plane egress-agent`.
+// Run as `control-plane egress-agent`. `control-plane egress-relay` (Relay) is its
+// companion for intercepted TLS.
 //
 // # The Squid configuration this agent expects
 //
@@ -26,9 +27,13 @@
 //	logformat af_egress af1 %tS %>a %<a %Ss %ssl::bump_mode %#ssl::>sni %#>rd
 //	access_log stdio:/var/log/squid/af-egress.log af_egress
 //	logfile_rotate 10
+//	http_port 127.0.0.1:3131 require-proxy-header ssl-bump tls-cert=/etc/squid/af-bump.pem generate-host-certificates=off
+//	proxy_protocol_access allow localhost
 //
 // The include sits where the ssl_bump and http_access decisions go; ModeLogOnly and
-// ModeEnforce are its two contents.
+// ModeEnforce are its two contents. The http_port is RelayUpstream: intercepted port 443
+// goes to the relay at RelayListen, never to an intercepting https_port, whose host
+// verification refuses names with rotating DNS answers (see Relay).
 //
 // The log format, field by field (Squid writes "-" for a value it does not have):
 //
