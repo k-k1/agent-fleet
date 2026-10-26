@@ -13,6 +13,43 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
+## [0.35.0](0.35.0.md) — 2026-10-26
+
+**CLI pins** — Claude Code 2.1.310, Codex 0.164.0, Antigravity 1.4.7, OpenCode 2.1.4, Muse Code 1.4.13-R6996.1, rtk 1.1.0
+
+**New / Improved**
+
+- **[AWS / egress]** Optional egress gateway (`EgressRoute=gateway`, preview): workspace HTTP(S) traffic leaves through its own Elastic IP, the Egress allowlist applies to ECS workspaces, and each connection is recorded with the workspace it is matched to; paused and restored by `pause.sh` / `standup.sh` ([#2717](https://github.com/k-k1/agent-fleet/issues/2717), [#2728](https://github.com/k-k1/agent-fleet/issues/2728), [#2729](https://github.com/k-k1/agent-fleet/issues/2729), [#2742](https://github.com/k-k1/agent-fleet/issues/2742), [#2759](https://github.com/k-k1/agent-fleet/issues/2759), [#2665](https://github.com/k-k1/agent-fleet/issues/2665))
+- **[AWS / networking]** Workspaces get their own subnets and the S3 endpoint gets a restrictive policy ([#2716](https://github.com/k-k1/agent-fleet/issues/2716), [#2657](https://github.com/k-k1/agent-fleet/issues/2657), [#2763](https://github.com/k-k1/agent-fleet/issues/2763))
+- **[egress]** Raw egress events are kept 30 days (`AF_EGRESS_EVENT_RETENTION_DAYS`) and can be archived to S3, Google Cloud Storage or a local directory before the purge ([#2675](https://github.com/k-k1/agent-fleet/issues/2675), [#2699](https://github.com/k-k1/agent-fleet/issues/2699), [#2720](https://github.com/k-k1/agent-fleet/issues/2720), [#2732](https://github.com/k-k1/agent-fleet/issues/2732), [#2734](https://github.com/k-k1/agent-fleet/issues/2734))
+- **[MCP]** Tenant admins distribute OAuth MCP servers, optionally with a pre-registered client ([#2479](https://github.com/k-k1/agent-fleet/issues/2479))
+- **[MCP / memory]** `/mcp/memory`, an endpoint that reaches only the memory tools; outside memory tools pick the project by repository URL ([#2764](https://github.com/k-k1/agent-fleet/issues/2764), [#2765](https://github.com/k-k1/agent-fleet/issues/2765), [#2766](https://github.com/k-k1/agent-fleet/issues/2766))
+- **[MCP]** MCP tokens moved to Settings › Outside access › MCP tokens & apps, with a warning that a token given to a session reaches all your sessions within its scope; this deployment's own `/mcp` cannot be registered as a session's MCP server ([#2680](https://github.com/k-k1/agent-fleet/issues/2680), [#2696](https://github.com/k-k1/agent-fleet/issues/2696), [#2677](https://github.com/k-k1/agent-fleet/issues/2677))
+- **[work items]** Merge a GitHub pull request from its work item ([#2632](https://github.com/k-k1/agent-fleet/issues/2632))
+- **[work items]** Report back on Bitbucket pull requests with `pullrequest:write` ([#2709](https://github.com/k-k1/agent-fleet/issues/2709))
+- **[toolchains]** Exact JDK / Node.js patch, patch updates, the version Install fetches, pruning and Uninstall ([#2624](https://github.com/k-k1/agent-fleet/issues/2624), [#2625](https://github.com/k-k1/agent-fleet/issues/2625), [#2646](https://github.com/k-k1/agent-fleet/issues/2646), [#2647](https://github.com/k-k1/agent-fleet/issues/2647), [#2648](https://github.com/k-k1/agent-fleet/issues/2648))
+- **[sessions]** Managed sessions get `$AF_WORK_DIR` and `$AF_SESSION_NAME` (opencode 2 on the shared server) ([#2431](https://github.com/k-k1/agent-fleet/issues/2431), [#2710](https://github.com/k-k1/agent-fleet/issues/2710), [#2715](https://github.com/k-k1/agent-fleet/issues/2715))
+- **[opencode]** opencode 2 Terminal sessions on the shared server branch from a past message; to-dos show as ToDo ([#2493](https://github.com/k-k1/agent-fleet/issues/2493))
+- **[memory]** The memory browser pages back through all changes and forgotten memories; multi-word search shows full matches, or marked partial ones when none ([#2486](https://github.com/k-k1/agent-fleet/issues/2486))
+- **[sessions]** The move dialog shows copilot and Antigravity quota ([#2492](https://github.com/k-k1/agent-fleet/issues/2492))
+- **[claude]** Login expiry shown in the repository launch dialog; a first prompt lost to it offers Re-authenticate ([#2494](https://github.com/k-k1/agent-fleet/issues/2494))
+- **[ECS]** `30-ingress` sets the idle timers, GitHub sign-in extras and LAN engines ([#2596](https://github.com/k-k1/agent-fleet/issues/2596))
+- **[docker]** The workspace listener (`AF_CP_INTERNAL_URL`) is supported ([#2776](https://github.com/k-k1/agent-fleet/issues/2776))
+
+**Fixed**
+
+- **[peer messages]** A message to a stopped claude could be lost on resume while reported delivered ([#2741](https://github.com/k-k1/agent-fleet/issues/2741))
+- **[sessions]** Terminal Stop could fail to interrupt opencode, cursor and copilot ([#2491](https://github.com/k-k1/agent-fleet/issues/2491))
+- **[MCP]** Every claude session ran two `af` MCP servers after an upgrade from an old version ([#2678](https://github.com/k-k1/agent-fleet/issues/2678))
+- **[i18n]** Error messages, the MCP connection test's included, were Japanese whatever the display language ([#2483](https://github.com/k-k1/agent-fleet/issues/2483), [#2721](https://github.com/k-k1/agent-fleet/issues/2721))
+- **[ecs-ec2]** Stop (force) could leave the slot's network interface attached ([#2524](https://github.com/k-k1/agent-fleet/issues/2524))
+- **[admin]** Member detail stalled while a home's size was measured ([#2425](https://github.com/k-k1/agent-fleet/issues/2425))
+- **[egress]** Observations were lost when the report to the Control Plane failed ([#2603](https://github.com/k-k1/agent-fleet/issues/2603))
+- **[preview]** The development OIDC IdP refused callbacks on owner-only ports ([#2500](https://github.com/k-k1/agent-fleet/issues/2500))
+- **[kubernetes]** AWS instance-metadata lookups from workspaces are disabled by default; the home-nearly-full notice was missing ([#2498](https://github.com/k-k1/agent-fleet/issues/2498))
+- **[misc]** MCP sign-in, memory suggestions, memory import limit, inbox attachments, skipped toolchain upgrades, labels ([#2586](https://github.com/k-k1/agent-fleet/issues/2586), [#2689](https://github.com/k-k1/agent-fleet/issues/2689), [#2695](https://github.com/k-k1/agent-fleet/issues/2695), [#2690](https://github.com/k-k1/agent-fleet/issues/2690), [#2584](https://github.com/k-k1/agent-fleet/issues/2584), [#2487](https://github.com/k-k1/agent-fleet/issues/2487), [#2489](https://github.com/k-k1/agent-fleet/issues/2489), [#2499](https://github.com/k-k1/agent-fleet/issues/2499), [#2502](https://github.com/k-k1/agent-fleet/issues/2502), [#2484](https://github.com/k-k1/agent-fleet/issues/2484), [#2505](https://github.com/k-k1/agent-fleet/issues/2505))
+
+
 ## [0.34.1](0.34.1.md) — 2026-10-23
 
 **New / Improved**
