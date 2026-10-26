@@ -2,7 +2,7 @@
 // endpoint (ADR 0118), so remote MCP clients connect by signing the member in to the Console
 // instead of pasting a PAT.
 //
-//	client (claude.ai, ChatGPT, Claude Code) ──► /mcp                       401 + resource_metadata
+//	client (claude.ai, ChatGPT, Claude Code) ──► /mcp, /mcp/memory           401 + resource_metadata
 //	                                         ──► /.well-known/…            discovery (no session)
 //	member's browser                         ──► /mcp-oauth/authorize       (inside authGate)
 //	                                         ──► /mcp-oauth/consent         (inside authGate, same-origin POST)
@@ -11,6 +11,12 @@
 // The issuer is {PUBLIC_BASE_URL}/mcp-oauth, separate from /dev-idp: its own keys-free tables,
 // audit actions and clients. Served only when AF_MCP_ENABLED=true, AF_MCP_OAUTH=1 and
 // PUBLIC_BASE_URL is https; otherwise every path here answers 404 and /mcp keeps its bare 401.
+//
+// One issuer serves two protected resources (#2764): /mcp, the full member surface, and
+// /mcp/memory, the external memory tools alone. A code, a grant and every token carry the one
+// resource the client asked for, each endpoint accepts only its own, and a refresh keeps the
+// binding. That is what lets a member hand claude.ai a connector that cannot reach the session
+// tools when claude.ai syncs it into their Workspace sessions.
 package main
 
 import (
@@ -47,6 +53,7 @@ const (
 	mcpOAuthRegister     = mcpOAuthPath + "/register"
 	mcpOAuthRevoke       = mcpOAuthPath + "/revoke"
 	mcpOAuthPRMPath      = "/.well-known/oauth-protected-resource/mcp"
+	mcpOAuthMemPRMPath   = "/.well-known/oauth-protected-resource" + mcpsrv.MemoryPath
 	mcpOAuthMetadataPath = "/.well-known/oauth-authorization-server" + mcpOAuthPath
 
 	mcpOAuthCodeTTL      = 60 * time.Second
@@ -70,8 +77,9 @@ type mcpOAuthAPI struct {
 	now   func() time.Time
 	brand *brandResolver
 
-	// issuer and resource are "" while the deployment does not serve OAuth for /mcp.
-	issuer, resource string
+	// issuer, resource and memoryResource are "" while the deployment does not serve OAuth for
+	// /mcp. resource is /mcp's URL, memoryResource /mcp/memory's.
+	issuer, resource, memoryResource string
 	// fallback is the list in force while no super admin has saved one: the env var, else the
 	// built-in default (fallbackSource says which). The list a request uses comes from
 	// trustedNow.
@@ -93,7 +101,7 @@ func newMCPOAuthAPI(cfg config) *mcpOAuthAPI {
 	a.fetch = fetchCIMDDocument
 	base := strings.TrimRight(m.publicBaseURL, "/")
 	if envx.Or("AF_MCP_ENABLED", "") == "true" && envx.Or("AF_MCP_OAUTH", "") == "1" && strings.HasPrefix(base, "https://") {
-		a.issuer, a.resource = base+mcpOAuthPath, base+"/mcp"
+		a.issuer, a.resource, a.memoryResource = base+mcpOAuthPath, base+"/mcp", base+mcpsrv.MemoryPath
 	}
 	m.mcpOAuthServed.Store(a.issuer != "")
 	return a
@@ -107,6 +115,32 @@ func (a *mcpOAuthAPI) withOAuth(h mcpsrv.API) mcpsrv.API {
 	return h.WithOAuth(a.resource, strings.TrimSuffix(a.resource, "/mcp")+mcpOAuthPRMPath)
 }
 
+// withMemoryOAuth is withOAuth for the memory-only handler: its own resource and its own
+// metadata document, so a client that is given /mcp/memory discovers and is bound to exactly that.
+func (a *mcpOAuthAPI) withMemoryOAuth(h mcpsrv.API) mcpsrv.API {
+	if a.issuer == "" {
+		return h
+	}
+	return h.WithOAuth(a.memoryResource, strings.TrimSuffix(a.resource, "/mcp")+mcpOAuthMemPRMPath)
+}
+
+// mountMCP registers the two MCP endpoints over one handler set: /mcp with everything, and
+// /mcp/memory with the memory tools alone.
+func (a *mcpOAuthAPI) mountMCP(mux *http.ServeMux, h mcpsrv.API) {
+	mux.HandleFunc("/mcp", a.withOAuth(h).HandleMCP)
+	mux.HandleFunc(mcpsrv.MemoryPath, a.withMemoryOAuth(h.MemoryOnly()).HandleMCP)
+}
+
+// knownResource reports whether res is one of the two resources a token may be bound to.
+func (a *mcpOAuthAPI) knownResource(res string) bool {
+	return res != "" && (res == a.resource || res == a.memoryResource)
+}
+
+// resourceHint is the invalid_target description: which values would have been accepted.
+func (a *mcpOAuthAPI) resourceHint() string {
+	return "resource must be " + a.resource + " or " + a.memoryResource
+}
+
 func registerMCPOAuthRoutes(mux *http.ServeMux, cfg config) *mcpOAuthAPI {
 	a := newMCPOAuthAPI(cfg)
 	a.mount(mux)
@@ -114,8 +148,9 @@ func registerMCPOAuthRoutes(mux *http.ServeMux, cfg config) *mcpOAuthAPI {
 }
 
 func (a *mcpOAuthAPI) mount(mux *http.ServeMux) {
-	exemptExact(mcpOAuthPRMPath, mcpOAuthMetadataPath, mcpOAuthToken, mcpOAuthRegister, mcpOAuthRevoke)
-	mux.HandleFunc(mcpOAuthPRMPath, a.gate(http.MethodGet, a.protectedResource))
+	exemptExact(mcpOAuthPRMPath, mcpOAuthMemPRMPath, mcpOAuthMetadataPath, mcpOAuthToken, mcpOAuthRegister, mcpOAuthRevoke)
+	mux.HandleFunc(mcpOAuthPRMPath, a.gate(http.MethodGet, a.protectedResource(a.resource)))
+	mux.HandleFunc(mcpOAuthMemPRMPath, a.gate(http.MethodGet, a.protectedResource(a.memoryResource)))
 	mux.HandleFunc(mcpOAuthMetadataPath, a.gate(http.MethodGet, a.metadata))
 	mux.HandleFunc(mcpOAuthAuthorize, a.gatePage(http.MethodGet, a.authorize))
 	mux.HandleFunc(mcpOAuthConsent, a.gatePage(http.MethodPost, a.consent))
@@ -162,11 +197,14 @@ type mcpProtectedResource struct {
 	BearerMethodsSupported []string `json:"bearer_methods_supported"`
 }
 
-func (a *mcpOAuthAPI) protectedResource(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Cache-Control", "public, max-age=300")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	writeJSON(w, http.StatusOK, mcpProtectedResource{Resource: a.resource, AuthorizationServers: []string{a.issuer},
-		ScopesSupported: []string{scopeRead, scopeWrite}, BearerMethodsSupported: []string{"header"}})
+// protectedResource serves the RFC 9728 document of one resource.
+func (a *mcpOAuthAPI) protectedResource(resource string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		writeJSON(w, http.StatusOK, mcpProtectedResource{Resource: resource, AuthorizationServers: []string{a.issuer},
+			ScopesSupported: []string{scopeRead, scopeWrite}, BearerMethodsSupported: []string{"header"}})
+	}
 }
 
 // mcpASMetadata is the RFC 8414 document.

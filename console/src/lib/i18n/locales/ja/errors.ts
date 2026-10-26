@@ -191,6 +191,7 @@ export const errors = {
   "err.mcp_url_host": "URL にホストがありません",
   "err.mcp_url_credentials": "URL に資格情報を埋め込まないでください（ヘッダを使ってください）",
   "err.mcp_url_own_endpoint": "これはこのデプロイ自身の /mcp エンドポイントです。接続するとセッションにあなたの /mcp の全権限（任意セッションの操作・削除・管理ツール）が渡るため登録できません。別の Agent Fleet デプロイなら接続できます",
+  "err.mcp_url_own_memory_endpoint": "これはこのデプロイ自身の /mcp/memory エンドポイントです。セッションは組み込みの af ツールで Agent Fleet のメモリをすでに使えるため、接続しても同じツールが重複するだけです。",
   "err.mcp_auth_unknown": "その認証方式は不明です",
   "err.mcp_oauth_remote_only": "OAuth のサインインはリモートサーバー専用です",
   "err.mcp_oauth_authorization_header": "OAuth のサーバーには固定のヘッダを付けられません。外すか、別の認証を選んでください",

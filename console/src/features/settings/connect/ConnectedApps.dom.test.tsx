@@ -41,6 +41,15 @@ describe("connected apps", () => {
     expect(raw).toHaveBeenCalledWith("api/mcp-oauth/grants/grant%2F1", { method: "DELETE" });
     expect(api).toHaveBeenCalledTimes(2);
   });
+  // #2764: the list says which endpoint each connection reaches.
+  it("names the endpoint each connection is bound to", async () => {
+    api.mockResolvedValue({ enabled: true, grants: [{ ...grant, id: "g-mem", endpoint: "memory" }, { ...grant, id: "g-full", endpoint: "mcp" }] });
+    await mount(<ConnectedApps />);
+    const rows = Array.from(host.querySelectorAll("tbody tr:first-child")).map((r) => r.textContent ?? "");
+    expect(rows[0]).toContain("/mcp/memory (memory only)");
+    expect(rows[1]).toContain("/mcp (full)");
+    expect(rows[1]).not.toContain("memory only");
+  });
   it("keeps the grant visible and reports a failed revoke", async () => {
     api.mockResolvedValue({ enabled: true, grants: [grant] }); raw.mockResolvedValue({ ok: false });
     await mount(<ConnectedApps />); await click(host.querySelector("button")!);
@@ -64,7 +73,7 @@ describe("connected apps", () => {
       api.mockResolvedValue({ enabled: true, grants: [{ ...grant, last_used_at: grant.created_at }] });
       await mount(<ConnectedApps />);
       const cells = Array.from(host.querySelectorAll("tbody td")).map((cell) => cell.textContent);
-      expect(cells.slice(4, 6)).toEqual(["2023-11-14", "2023-11-14"]);
+      expect(cells.slice(5, 7)).toEqual(["2023-11-14", "2023-11-14"]);
       expect(browserDate).not.toHaveBeenCalled();
     } finally { browserDate.mockRestore(); }
   });

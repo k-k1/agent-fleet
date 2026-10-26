@@ -170,8 +170,18 @@ func TestPostgresStore(t *testing.T) {
 	if err := st.CreatePAT(ctx, pat, "hash1"); err != nil {
 		t.Fatalf("create pat: %v", err)
 	}
-	if p, ok, err := st.GetPATByHash(ctx, "hash1"); err != nil || !ok || p.ID != pat.ID {
+	if p, ok, err := st.GetPATByHash(ctx, "hash1"); err != nil || !ok || p.ID != pat.ID || p.Resource != PATResourceMCP {
 		t.Fatalf("get pat: ok=%v err=%v %+v", ok, err, p)
+	}
+	mem := PAT{ID: NewID(), IdentityID: i2.ID, MembershipID: m1.ID, Scope: "read", Name: "memory", CreatedAt: NowTS(), Resource: PATResourceMemory}
+	if err := st.CreatePAT(ctx, mem, "hash2"); err != nil {
+		t.Fatalf("create memory pat: %v", err)
+	}
+	if p, ok, err := st.GetPATByHash(ctx, "hash2"); err != nil || !ok || p.Resource != PATResourceMemory {
+		t.Fatalf("get memory pat: ok=%v err=%v %+v", ok, err, p)
+	}
+	if ps, err := st.ListPATsByIdentity(ctx, i2.ID); err != nil || len(ps) != 2 {
+		t.Fatalf("list pats: %v %+v", err, ps)
 	}
 
 	// audit

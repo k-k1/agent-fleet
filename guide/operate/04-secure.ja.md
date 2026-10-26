@@ -144,7 +144,7 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
   これらを有効にも無効にもしません（パラメータは前回の値を保ち、スタックにまだ無いパラメータはオフで始まります）。
   詳しくは [`deploy/aws/ecs/README.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/README.md) を参照してください。
 - **提供されるパス**（issuer は `{PUBLIC_BASE_URL}/mcp-oauth`）: `/.well-known/oauth-protected-resource/mcp`、
-  `/.well-known/oauth-authorization-server/mcp-oauth`、`/mcp-oauth/authorize`、`/mcp-oauth/consent`、
+  `/.well-known/oauth-protected-resource/mcp/memory`、`/.well-known/oauth-authorization-server/mcp-oauth`、`/mcp-oauth/authorize`、`/mcp-oauth/consent`、
   `/mcp-oauth/token`、`/mcp-oauth/register`、`/mcp-oauth/revoke`。`/mcp` の 401 には
   `WWW-Authenticate: Bearer resource_metadata="…"` が付きます（提示されたトークンが無効な場合は `, error="invalid_token"` が付きます）。
   スコープはクライアントが要求し、同意ページは `read` を初期選択して、要求された場合だけ `write` を表示します。
@@ -152,12 +152,17 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
   到達できる必要があります。VPN の内側や ALB の ingress CIDR を絞った配備では、コマンドライン（ループバック）のクライアントだけが使えます。これは仕様であり不具合ではありません。
   `AUTH=oauth` と `AUTH=dev` では Console 自身のセッションゲートが、探索・`token`・`register`・`revoke` を素通しにし、`authorize` と `consent` はゲートの内側に置きます。
   **`AUTH=proxy`** ではゲートウェイ側で同じ設定が必要です。`/mcp-oauth/authorize` と `/mcp-oauth/consent` はゲートウェイを**通し**（メンバーの
-  識別ヘッダーはそこで付きます）、残りの 5 パスと `/mcp` はゲートウェイを**迂回**させます。
+  識別ヘッダーはそこで付きます）、残りの 6 パスと `/mcp`・`/mcp/memory` はゲートウェイを**迂回**させます。
+- **2 つのリソース。** `/mcp` はすべてのツールを、`/mcp/memory` は外部メモリの 6 つのツールだけを提供します。後者は、claude.ai が
+  メンバーのワークスペースのセッションにも渡してしまうコネクタ向けです。それぞれ専用のメタデータ文書と 401 チャレンジを持ち、相手のトークンを
+  拒否します。OAuth のコード・グラント・トークンはクライアントが求めたリソースに結び付き（リフレッシュでも変わりません）、Personal Access Token は
+  1 つのエンドポイント向けに発行されます（既定は `mcp`。分離前に発行したトークンもすべて `mcp`）。テナントのスイッチ、メンバーのメモリ設定、
+  スコープの段階、監査記録は両方で同じです。
 - **クライアントになれるもの。** 登録は誰でもできますが（動的クライアント登録は送信元ごとのレート制限と総数の上限があり、グラントが一度も生まれない登録は 30 日で削除されます）、
   登録で決められるのはコードの*送り先*だけなので、リダイレクトはループバックか、信頼リスト上のホストの `https` アドレスで、表記も正規形
   （大文字・末尾のドット・明示ポート・ユーザー情報・フラグメントなし）に限ります。メタデータ文書の URL でクライアントを示す場合は、その URL が同じリストにあるときだけ取得し、
   リダイレクトは追わず、短いタイムアウトとサイズ上限を課し、公開アドレス以外には接続しません。
-- **トークン。** アクセストークンは不透明で 1 時間有効、`{PUBLIC_BASE_URL}/mcp` に結び付きます。リフレッシュトークンは使うたびに更新され、使用済みのものが
+- **トークン。** アクセストークンは不透明で 1 時間有効、`{PUBLIC_BASE_URL}/mcp` か `{PUBLIC_BASE_URL}/mcp/memory` に結び付きます。リフレッシュトークンは使うたびに更新され、使用済みのものが
   再提示されると接続全体が取り消されます。接続は 30 日間使われないか、90 日たつと終わります。保存されるのはハッシュだけで、PAT の行ではないため 20 個の PAT 上限には数えません。
 - **監査。** `mcp.oauth.grant`（作成・取り消し・再利用による取り消し）と `mcp.oauth.token`（発行のたび）は、応答を返す前に書き込まれます。接続を使った呼び出しは、
   接続 ID を実行者として `mcp` で記録されます。監査ストアが止まっているときはトークンを発行しません。
@@ -204,11 +209,12 @@ Control Plane はそのために 2 つの公開パスを持ち、どちらも到
 1 件ごとに Control Plane のログへ 1 行出ます。接続はできるのにツールが出ないクライアントでも、実際に何をしたかから原因を追えます。
 
 ```
-mcp-call http_method="POST" status=400 latency_ms=2 principal="grant:<id>" client_id="<id>" header_version="2026-07-28" mcp_method_header=false mcp_name_header=false accept="application/json, text/event-stream" content_type="application/json" user_agent="…" items=[{"method":"tools/list","era":"stateless","meta_version":"2026-07-28","client_name":"…","status":400,"error_code":-32020,"error_message":"header mismatch: Mcp-Method (absent) does not match body method \"tools/list\""}]
+mcp-call endpoint="/mcp" http_method="POST" status=400 latency_ms=2 principal="grant:<id>" client_id="<id>" header_version="2026-07-28" mcp_method_header=false mcp_name_header=false accept="application/json, text/event-stream" content_type="application/json" user_agent="…" items=[{"method":"tools/list","era":"stateless","meta_version":"2026-07-28","client_name":"…","status":400,"error_code":-32020,"error_message":"header mismatch: Mcp-Method (absent) does not match body method \"tools/list\""}]
 ```
 
+- `endpoint` はリクエスト先のパスで、`/mcp` か `/mcp/memory` です。
 - `principal` は `pat:<id>`、`grant:<id>`（OAuth。続けて `client_id`）、`unauthenticated` のいずれかで、拒否したときは `reason=` に理由が入ります
-  （Bearer なし、不明・期限切れのトークン、別リソース向けの OAuth トークン、`method not allowed`）。
+  （Bearer なし、不明・期限切れのトークン、別リソース向けの OAuth トークン、別エンドポイント向けの PAT、`method not allowed`）。
 - `era` は `legacy`（`initialize` ハンドシェイク）か `stateless`（2026-07-28。毎回 `_meta` を付ける）です。stateless で拒否されたときは
   JSON-RPC の `error_code`（-32020 ヘッダ不一致、-32022 非対応バージョン、-32602 `_meta` の欠落（`clientInfo` と `clientCapabilities` を含む））と、`Mcp-Method` / `Mcp-Name` ヘッダの有無が出ます。
   `tools/list` の要素には返したツール数 `tools` が付きます。実行して失敗した `tools/call`（200 で `isError`）には、本文なしで `tool_error:true` が付きます。

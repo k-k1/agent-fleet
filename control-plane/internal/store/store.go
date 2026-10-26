@@ -107,11 +107,19 @@ type MemberInfo struct {
 // the MCP endpoint. role is NOT stored — it is resolved live from identity +
 // membership at call time so a demotion/revocation takes effect immediately.
 // scope is fixed at issuance (read | write | admin:dangerous), clamped to the
-// issuer's ceiling. Timestamps are RFC3339 ("" = unset).
+// issuer's ceiling. Timestamps are RFC3339 ("" = unset). Resource is the endpoint the token
+// is for (PATResourceMCP or PATResourceMemory); "" on create means PATResourceMCP.
 type PAT struct {
 	ID, IdentityID, MembershipID, Scope, Name   string
 	CreatedAt, ExpiresAt, RevokedAt, LastUsedAt string
+	Resource                                    string
 }
+
+// The two endpoints a PAT can be bound to (#2764). Each endpoint refuses the other's tokens.
+const (
+	PATResourceMCP    = "mcp"    // /mcp: sessions, memory and admin tools
+	PATResourceMemory = "memory" // /mcp/memory: the external memory tools only
+)
 
 // AuditLog records one administrative action (docs/decisions/0006, P3-6).
 // ActorKind ∈ user | admin | mcp | system; ActorID is the identity/PAT id behind

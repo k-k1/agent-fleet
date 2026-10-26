@@ -100,6 +100,7 @@ const (
 	CodeURLHost         = "mcp_url_host"
 	CodeURLCredentials  = "mcp_url_credentials"
 	CodeURLOwnMCP       = "mcp_url_own_endpoint"
+	CodeURLOwnMemory    = "mcp_url_own_memory_endpoint"
 	CodeHTTPNoCommand   = "mcp_http_no_command"
 	CodeEnvName         = "mcp_env_name_invalid"
 	CodeHeaderName      = "mcp_header_name_invalid"
@@ -409,8 +410,12 @@ func Ready(d ServerDef) bool {
 	return false
 }
 
-// ownMCPPath is where every deployment serves its external MCP endpoint.
-const ownMCPPath = "/mcp"
+// ownMCPPath is where every deployment serves its external MCP endpoint, and
+// ownMemoryPath its memory-only endpoint.
+const (
+	ownMCPPath    = "/mcp"
+	ownMemoryPath = "/mcp/memory"
+)
 
 // RefuseOwnMCP refuses a URL that is this deployment's own /mcp endpoint (the public
 // or the internal CP base). That endpoint carries the member's full authority, so
@@ -418,10 +423,16 @@ const ownMCPPath = "/mcp"
 // It is a guardrail against the self-loop, not a security boundary: it runs only when a
 // definition is created or edited, never when stored ones are loaded, and an unset base
 // refuses nothing. A different host, or another deployment, passes.
+//
+// The memory-only endpoint is refused as well: sessions already reach the same memory
+// through the local af server, so registering it only adds a second copy of those tools.
 func RefuseOwnMCP(raw string, bases ...string) error {
 	for _, b := range bases {
 		if SameMCPEndpoint(raw, b) {
 			return invalid(CodeURLOwnMCP, "this is this deployment's own /mcp endpoint: connecting it would give sessions the member's full /mcp authority")
+		}
+		if sameEndpointPath(raw, b, ownMemoryPath) {
+			return invalid(CodeURLOwnMemory, "this is this deployment's own /mcp/memory endpoint: sessions already have Agent Fleet memory through their local af tools")
 		}
 	}
 	return nil
@@ -431,7 +442,10 @@ func RefuseOwnMCP(raw string, bases ...string) error {
 // ignored, an absent port equals 80 and 443, hosts compare without a trailing dot and as
 // parsed IPs, and both paths are cleaned because the server's mux redirects /mcp/../mcp
 // and //mcp to /mcp. An empty or unparsable base never matches.
-func SameMCPEndpoint(raw, base string) bool {
+func SameMCPEndpoint(raw, base string) bool { return sameEndpointPath(raw, base, ownMCPPath) }
+
+// sameEndpointPath is SameMCPEndpoint for any path below base.
+func sameEndpointPath(raw, base, endpoint string) bool {
 	if strings.TrimSpace(base) == "" {
 		return false
 	}
@@ -444,7 +458,7 @@ func SameMCPEndpoint(raw, base string) bool {
 		return false
 	}
 	return endpointHost(a) == endpointHost(b) && endpointPort(a) == endpointPort(b) &&
-		cleanEndpointPath(a.Path) == cleanEndpointPath(b.Path)+ownMCPPath
+		cleanEndpointPath(a.Path) == cleanEndpointPath(b.Path)+endpoint
 }
 
 func cleanEndpointPath(p string) string {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
@@ -18,8 +19,11 @@ type mcpConnectedGrant struct {
 	RedirectHost string `json:"redirect_host"`
 	Tenant       string `json:"tenant"`
 	Scope        string `json:"scope"`
-	CreatedAt    int64  `json:"created_at"`
-	LastUsedAt   int64  `json:"last_used_at"`
+	// Endpoint is the resource the connection is bound to, by name: "mcp" or "memory" (#2764).
+	// The resource URL itself stays off the wire.
+	Endpoint   string `json:"endpoint"`
+	CreatedAt  int64  `json:"created_at"`
+	LastUsedAt int64  `json:"last_used_at"`
 }
 
 type mcpConnectedList struct {
@@ -45,7 +49,8 @@ func (a mcpConnectedAPI) list(w http.ResponseWriter, r *http.Request, ident stor
 			writeAPIErr(w, internalErr(err))
 			return
 		}
-		out.Grants = append(out.Grants, mcpConnectedGrant{g.ID, g.ClientName, g.RedirectHost, tenant.Slug, g.Scope, g.CreatedAt, g.LastUsedAt})
+		out.Grants = append(out.Grants, mcpConnectedGrant{g.ID, g.ClientName, g.RedirectHost, tenant.Slug, g.Scope,
+			grantResourceKind(g.Resource), g.CreatedAt, g.LastUsedAt})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -69,6 +74,15 @@ func (a mcpConnectedAPI) calls(w http.ResponseWriter, r *http.Request, ident sto
 		}
 	}
 	writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "unknown connection"})
+}
+
+// grantResourceKind names a grant's resource URL the way a PAT's binding is named. Grants made
+// before the memory endpoint existed are all bound to /mcp.
+func grantResourceKind(resource string) string {
+	if strings.HasSuffix(resource, mcpsrv.MemoryPath) {
+		return store.PATResourceMemory
+	}
+	return store.PATResourceMCP
 }
 
 // mcpCallsOut is the body of the two "recent calls" endpoints.

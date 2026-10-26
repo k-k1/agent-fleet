@@ -41,6 +41,29 @@ const mcpSessionOutputTailBytes = 32 << 10
 type API struct {
 	cp    CP
 	oauth oauthChallenge
+	// memoryOnly makes this the /mcp/memory handler (#2764): it lists and runs the external
+	// memory tools and nothing else, and it accepts only tokens bound to it. A claude.ai
+	// connector to it is synced into every Claude Code session of the account, Workspace
+	// sessions included; those already hold the same memory through the local af server, so
+	// the leak hands them nothing new. The full /mcp would hand them any-session stop and delete.
+	memoryOnly bool
+}
+
+// MemoryPath is where the memory-only handler is served, below the full endpoint.
+const MemoryPath = "/mcp/memory"
+
+// MemoryOnly returns the handler set of the memory-only endpoint (MemoryPath).
+func (a API) MemoryOnly() API {
+	a.memoryOnly = true
+	return a
+}
+
+// patResource is the PAT binding this handler accepts.
+func (a API) patResource() string {
+	if a.memoryOnly {
+		return store.PATResourceMemory
+	}
+	return store.PATResourceMCP
 }
 
 // oauthChallenge is set when the CP serves an OAuth authorization server for /mcp (ADR 0118):
@@ -150,7 +173,7 @@ func rpcErr(id json.RawMessage, code int, msg string) *rpcResponse {
 // ring entry — see mcp_calls.go. The record is written on the way out so it carries the
 // status the client actually got.
 func (a API) HandleMCP(w http.ResponseWriter, r *http.Request) {
-	tr := newCallTrace(r)
+	tr := newCallTrace(r, a.endpoint())
 	sw := &statusWriter{ResponseWriter: w}
 	defer func() { a.finish(tr, sw.status) }()
 	w = sw
@@ -284,6 +307,17 @@ func (a API) authMCP(r *http.Request, tr *callTrace) (*mcpPrincipal, *APIError) 
 			return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "token expired"}
 		}
 	}
+	// The binding is checked like an OAuth token's audience: each endpoint refuses the other's
+	// tokens, so a memory PAT never reaches the session tools and a full one never has to be
+	// handed to a client that only needs memory.
+	res := p.Resource
+	if res == "" {
+		res = store.PATResourceMCP
+	}
+	if res != a.patResource() {
+		tr.rec.Reason = "pat bound to another endpoint"
+		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid token"}
+	}
 	_ = a.cp.Store().TouchPAT(r.Context(), p.ID) // best-effort last-used
 	return &mcpPrincipal{patID: p.ID, identityID: p.IdentityID, membershipID: p.MembershipID, scope: p.Scope, name: p.Name}, nil
 }
@@ -331,13 +365,32 @@ const mcpInstructions = "Agent Fleet operations MCP. It lets you observe and ste
 	"read the memory shared by every agent kind (memory_projects, memory_index, memory_search, memory_read), " +
 	"and, for administrators, manage workspaces."
 
+// mcpMemoryInstructions is mcpInstructions for the memory-only endpoint.
+const mcpMemoryInstructions = "Agent Fleet memory MCP. It serves only the memory shared by every agent kind " +
+	"(memory_projects, memory_index, memory_search, memory_read; memory_save and memory_forget with write access)."
+
+func (a API) instructions() string {
+	if a.memoryOnly {
+		return mcpMemoryInstructions
+	}
+	return mcpInstructions
+}
+
+// endpoint is the path this handler set serves, for the call record.
+func (a API) endpoint() string {
+	if a.memoryOnly {
+		return MemoryPath
+	}
+	return "/mcp"
+}
+
 func (a API) dispatchMCPMethod(ctx context.Context, prin *mcpPrincipal, req rpcRequest) *rpcResponse {
 	switch req.Method {
 	case "server/discover":
 		// 2026-07-28: servers MUST implement this. It replaces initialize as the way a
 		// client learns versions/capabilities, and is what a stdio client probes with.
 		return rpcOK(req.ID, mcpDiscoverResult(serverInfo(a.identity(ctx)),
-			mcpInstructions))
+			a.instructions()))
 	case "initialize":
 		// Initialize-era clients (2025-*) only. Removed in 2026-07-28, but a server that
 		// wants to serve both eras MAY keep it (SEP-2575 Backward Compatibility), and
@@ -797,11 +850,16 @@ func memberTools() []mcpTool {
 // scope, and a demotion takes effect immediately (role is resolved live, not
 // frozen in the token). The capability filter is UX — authz is re-checked in
 // mcpToolCall before any admin tool runs.
+//
+// The memory-only endpoint stops after the memory tools. That is the whole of its boundary:
+// mcpToolCall picks from this list, so a session or admin tool is refused by name as well.
 func (a API) toolsFor(ctx context.Context, prin *mcpPrincipal) []mcpTool {
 	var out []mcpTool
-	for _, t := range memberTools() {
-		if a.cp.ScopeRank(prin.scope) >= a.cp.ScopeRank(t.minScope) {
-			out = append(out, t)
+	if !a.memoryOnly {
+		for _, t := range memberTools() {
+			if a.cp.ScopeRank(prin.scope) >= a.cp.ScopeRank(t.minScope) {
+				out = append(out, t)
+			}
 		}
 	}
 	// mcpToolCall picks its tool out of this same list, so withholding the memory tools here
@@ -812,6 +870,9 @@ func (a API) toolsFor(ctx context.Context, prin *mcpPrincipal) []mcpTool {
 				out = append(out, t)
 			}
 		}
+	}
+	if a.memoryOnly {
+		return out
 	}
 	if ac, _ := a.adminPrincipal(ctx, prin); ac != nil && ac.isAdmin {
 		for _, t := range adminTools() {

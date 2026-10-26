@@ -275,7 +275,7 @@ refused.
 - **From outside Agent Fleet** (setting "Use Agent Fleet memory from outside Agent Fleet", **off by default**
   and independent of the switch above; **Read only** or **Read and write**): lets your own Claude Code or Claude
   Desktop on another machine, or an app you connected with OAuth (such as claude.ai), use this memory through the
-  Control Plane's `/mcp`. The setting is
+  Control Plane's `/mcp`, or its memory-only `/mcp/memory`. The setting is
   your own; your tenant administrator can still block it for the whole tenant. What it allows, and what is
   recorded, is in [Using Agent Fleet memory from an external agent](#using-agent-fleet-memory-from-an-external-agent).
 
@@ -351,6 +351,11 @@ memory → Settings → "Use Agent Fleet memory from outside Agent Fleet"** (`Of
 The "MCP tokens & apps" tab (under Outside access) lists what the token can do (including that a tenant Block hides these tools) and links to that setting; the setting has a "How to connect"
 link back.
 
+- **Use the memory-only endpoint for claude.ai.** `https://<your Console address>/mcp/memory` serves these tools and
+  nothing else, and only tokens and connections made for it work there. claude.ai passes its connectors on to the
+  Claude Code sessions in your Workspace; a connector to `/mcp/memory` gives them nothing they do not already have,
+  while one to `/mcp` would give them your full authority
+  ([19 Using it from outside](19-outside-access.md#a-memory-only-connector-for-claudeai)).
 - **Your tenant administrator can block it.** If they have, the memory tools are not offered at all, whatever your
   setting and scope say ([admin 04](../admin/04-mcp-outside.md#memory-from-outside-agent-fleet)).
 - **Tools**: `memory_projects`, `memory_index`, `memory_search` and `memory_read` need a read (or higher) token or OAuth connection;
@@ -369,4 +374,4 @@ link back.
   controls. The secret scan stops credentials, not customer names or internal context.
 - **Saves** go through the same revision check, secret scan and limits as an agent's save inside the workspace.
 - **A stopped workspace** answers that it must be started first; start it in the Console and ask again.
-- A deployment that does not serve `/mcp` has no outside access at all.
+- A deployment that does not serve `/mcp` has no outside access at all, `/mcp/memory` included.

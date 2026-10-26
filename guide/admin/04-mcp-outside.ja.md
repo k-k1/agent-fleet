@@ -96,7 +96,7 @@ OAuth 接続の `read` と `write` のスコープは、トークンと同じく
 
 ブロック中は次のとおりです。
 
-- `/mcp` は、テナントの誰に対しても `memory_projects`・`memory_index`・`memory_search`・`memory_read`・`memory_save`・
+- `/mcp` と `/mcp/memory` は、テナントの誰に対しても `memory_projects`・`memory_index`・`memory_search`・`memory_read`・`memory_save`・
   `memory_forget` を一覧に出さず、名前を指定した呼び出しも未知のツールとして拒否します。メンバー自身の設定やトークンのスコープは関係ありません。
 - 次のリクエストから、再起動なしで、すでに発行済みのトークンにも効きます。
 - メンバーの設定は保持されるので、許可に戻せば各自が選んでいた状態に戻ります。

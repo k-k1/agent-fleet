@@ -118,8 +118,9 @@ func (a *mcpOAuthAPI) auditGrant(ctx context.Context, grantID, identityID, detai
 
 func (a *mcpOAuthAPI) exchangeCode(w http.ResponseWriter, r *http.Request, clientID string, trusted trustedHosts) {
 	ctx := r.Context()
-	if r.PostForm.Get("resource") != a.resource {
-		mcpTokenErr(w, http.StatusBadRequest, "invalid_target", "resource must be "+a.resource)
+	resource := r.PostForm.Get("resource")
+	if !a.knownResource(resource) {
+		mcpTokenErr(w, http.StatusBadRequest, "invalid_target", a.resourceHint())
 		return
 	}
 	now := a.now()
@@ -148,7 +149,7 @@ func (a *mcpOAuthAPI) exchangeCode(w http.ResponseWriter, r *http.Request, clien
 	case r.PostForm.Get("redirect_uri") != c.RedirectURI:
 		mcpTokenErr(w, http.StatusBadRequest, "invalid_grant", "redirect_uri does not match the authorization request")
 		return
-	case c.Resource != a.resource:
+	case c.Resource != resource:
 		mcpTokenErr(w, http.StatusBadRequest, "invalid_target", "the code is bound to another resource")
 		return
 	case !pkceMatches(r.PostForm.Get("code_verifier"), c.Challenge):
@@ -192,7 +193,7 @@ func (a *mcpOAuthAPI) exchangeCode(w http.ResponseWriter, r *http.Request, clien
 	g := store.MCPOAuthGrant{
 		ID: store.NewID(), ClientID: c.ClientID, ClientName: c.ClientName, RedirectHost: host,
 		IdentityID: c.IdentityID, MembershipID: c.MembershipID, TenantID: mv.TenantID,
-		Scope: scopeString(scopeLevel(c.Scope)), Resource: a.resource, CodeHash: codeHash,
+		Scope: scopeString(scopeLevel(c.Scope)), Resource: c.Resource, CodeHash: codeHash,
 		CreatedAt: now.Unix(), IdleExpiresAt: now.Add(mcpOAuthIdleTTL).Unix(), AbsExpiresAt: now.Add(mcpOAuthAbsoluteTTL).Unix(),
 	}
 	// Audited before anything leaves: no row, no token. The rows name the client, the grant and
@@ -260,7 +261,7 @@ func (a *mcpOAuthAPI) issueTokens(w http.ResponseWriter, r *http.Request, g stor
 		return
 	}
 	base := store.MCPOAuthToken{GrantID: g.ID, ClientID: g.ClientID, IdentityID: g.IdentityID,
-		MembershipID: g.MembershipID, Resource: a.resource}
+		MembershipID: g.MembershipID, Resource: g.Resource}
 	at, rt := base, base
 	at.Hash, at.Kind, at.Scope, at.ExpiresAt = devIdPHash(access), store.MCPOAuthAccessKind, accessScope, capped(mcpOAuthAccessTTL)
 	rt.Hash, rt.Kind, rt.Scope, rt.ExpiresAt = devIdPHash(refresh), store.MCPOAuthRefresh, g.Scope, capped(mcpOAuthIdleTTL)
@@ -294,8 +295,11 @@ func (a *mcpOAuthAPI) issueTokens(w http.ResponseWriter, r *http.Request, g stor
 
 func (a *mcpOAuthAPI) refresh(w http.ResponseWriter, r *http.Request, clientID string, trusted trustedHosts) {
 	ctx := r.Context()
-	if res := r.PostForm.Get("resource"); res != "" && res != a.resource {
-		mcpTokenErr(w, http.StatusBadRequest, "invalid_target", "resource must be "+a.resource)
+	// An unknown resource is refused before anything is read; the grant's own binding is
+	// checked once the grant is known, below.
+	res := r.PostForm.Get("resource")
+	if res != "" && !a.knownResource(res) {
+		mcpTokenErr(w, http.StatusBadRequest, "invalid_target", a.resourceHint())
 		return
 	}
 	now := a.now()
@@ -329,6 +333,12 @@ func (a *mcpOAuthAPI) refresh(w http.ResponseWriter, r *http.Request, clientID s
 	}
 	if !enabled || g.RevokedAt != 0 || g.AbsExpiresAt <= now.Unix() || g.IdleExpiresAt <= now.Unix() {
 		mcpTokenErr(w, http.StatusBadRequest, "invalid_grant", "the connection has ended")
+		return
+	}
+	// A refresh keeps the grant's binding (RFC 8707 §2.2): a memory-only connection cannot be
+	// refreshed into a token for /mcp, or the other way round.
+	if res != "" && res != g.Resource {
+		mcpTokenErr(w, http.StatusBadRequest, "invalid_target", "the connection is bound to "+g.Resource)
 		return
 	}
 	// A DCR grant outlives the trusted list it was made under; removing its redirect host must
