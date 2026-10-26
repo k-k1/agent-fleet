@@ -97,15 +97,19 @@ Main features:
   Grafana / CloudWatch / Agent Toolkit for AWS) that connect by entering
   credentials; ② **your own MCP servers** (stdio or remote HTTP) registered and
   handed to assistants and sessions; values are stored with envelope encryption
-  and passed only when the server starts, a tenant admin can distribute one to
-  everybody, and on an egress-restricted deployment a host goes through an
-  approval flow; ③ **from an external Claude Code / Claude Desktop**, drive your
-  own workspace with a scoped, expiring token.
+  and passed only when the server starts, servers that require OAuth are signed
+  in to from Settings, a tenant admin can distribute one to everybody, and on an
+  egress-restricted deployment a host goes through an approval flow; ③ **from
+  outside**, claude.ai, ChatGPT, Claude Code and other MCP clients sign in (OAuth)
+  or use a scoped, expiring token to drive your own workspace, or reach only
+  your Agent Fleet memory through `/mcp/memory`.
 - **Keep agent behaviour consistent across the org**: fleet-wide policy
   (distributed by the operator) and per-user instructions are delivered to every
-  agent kind in each CLI's own idiom. The memory an agent accumulates by itself
-  (Claude's auto-memory, Codex's memories) is snapshotted and can be rolled back
-  to any point.
+  agent kind in each CLI's own idiom. **Agent Fleet memory** (opt-in) is one
+  memory every agent kind reads and writes, per project, so what one agent learns
+  survives a switch of kind or a handoff. The memory an agent accumulates by
+  itself (Claude's auto-memory, Codex's memories) is snapshotted and can be
+  rolled back to any point.
 - **Operable**: backup/restore scripts, forward-only DB migrations for
   upgrades, and air-gap installation paths. A turn cut short by a dropped
   connection or a temporary rate limit resumes itself, and a session stopped by
