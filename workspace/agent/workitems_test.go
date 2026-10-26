@@ -386,3 +386,23 @@ func TestGitHubErrorTextDropsBidiOverrides(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// #2779: the list response's comment count reaches the row, so the Console can show it without a
+// request per row. A response without it (or a nonsense negative) reads as 0.
+func TestParseGitHubSearchItemsComments(t *testing.T) {
+	body := []byte(`{"items":[
+	  {"number":1,"title":"a","state":"open","comments":7,"repository_url":"https://api.github.com/repos/acme/web"},
+	  {"number":2,"title":"b","state":"open","repository_url":"https://api.github.com/repos/acme/web"},
+	  {"number":3,"title":"c","state":"open","comments":-4,"repository_url":"https://api.github.com/repos/acme/web"}]}`)
+	rows, err := parseGitHubSearchItems(body, "q")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].CommentCount != 7 || rows[1].CommentCount != 0 || rows[2].CommentCount != 0 {
+		t.Errorf("comments = %d,%d,%d, want 7,0,0", rows[0].CommentCount, rows[1].CommentCount, rows[2].CommentCount)
+	}
+	out, _ := json.Marshal(rows[0])
+	if !strings.Contains(string(out), `"commentCount":7`) {
+		t.Errorf("wire form lacks comments: %s", out)
+	}
+}

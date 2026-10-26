@@ -285,3 +285,16 @@ func TestFetchWorkItemQueryRoutesBitbucket(t *testing.T) {
 		t.Fatal("unknown provider must be refused")
 	}
 }
+
+// #2779: Bitbucket's pull request list carries comment_count, and the fields projection must ask
+// for it (a projection without it silently yields 0).
+func TestParseBitbucketPullRequestsComments(t *testing.T) {
+	rows, err := parseBitbucketPullRequests([]byte(`{"values":[{"id":3,"title":"t","state":"OPEN","comment_count":5,
+	  "destination":{"repository":{"full_name":"acme/web"}}}]}`), "q")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].CommentCount != 5 {
+		t.Errorf("comments = %d, want 5", rows[0].CommentCount)
+	}
+}

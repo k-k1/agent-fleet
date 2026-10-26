@@ -77,6 +77,10 @@ type workItemOut struct {
 	LabelColors map[string]string `json:"labelColors"`
 	Repo        string            `json:"repo"`
 	UpdatedAt   string            `json:"updatedAt"`
+	// Comments is the comment count the provider's LIST response already carries (GitHub search's
+	// `comments`, Bitbucket's `comment_count`). 0 means none or not exposed (Jira's search does not
+	// return it); the Console shows a count only when it is above 0 and never asks per row.
+	CommentCount int `json:"commentCount"`
 	// Checks and Mergeable are filled for open GitHub pull requests only (see
 	// githubEnrichPullRequests). Zero values mean "not read", which the rail draws as nothing —
 	// the same as "no checks", and never as green.
@@ -368,6 +372,7 @@ func parseGitHubSearchItems(body []byte, queryID string) ([]workItemOut, error) 
 			HTMLURL     string `json:"html_url"`
 			RepoURL     string `json:"repository_url"`
 			UpdatedAt   string `json:"updated_at"`
+			Comments    int    `json:"comments"`
 			Draft       bool   `json:"draft"`
 			PullRequest *struct {
 				URL string `json:"url"`
@@ -412,7 +417,7 @@ func parseGitHubSearchItems(body []byte, queryID string) ([]workItemOut, error) 
 			QueryID: queryID, Provider: "github", Kind: kind, Key: key,
 			Title: it.Title, State: normalizeGitHubState(it.State, it.Draft),
 			URL: it.HTMLURL, Assignee: assignee, Labels: labels, Type: typ,
-			LabelColors: gitHubLabelColors(it.Labels), Repo: repo, UpdatedAt: it.UpdatedAt,
+			LabelColors: gitHubLabelColors(it.Labels), Repo: repo, UpdatedAt: it.UpdatedAt, CommentCount: max(it.Comments, 0),
 			nodeID: it.NodeID,
 		})
 	}

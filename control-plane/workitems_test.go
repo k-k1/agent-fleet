@@ -798,3 +798,29 @@ func TestWorkItemWireNeverCarriesNullArrays(t *testing.T) {
 		t.Error("no checks must store as '' so an issue row costs nothing")
 	}
 }
+
+// #2779: the list response's comment count survives the cache and reaches the DTO; a row from an
+// Agent that sends none stays 0.
+func TestWorkItemsCommentsThroughTheCache(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	ctx := context.Background()
+	env.addQuery(t, "gh", "GitHub", "acme/web", true)
+	env.body = func() string {
+		return `{"items":[
+		  {"queryId":"gh","provider":"github","kind":"issue","key":"acme/web#1","title":"a","state":"open","labels":[],"labelColors":{},"commentCount":7},
+		  {"queryId":"gh","provider":"github","kind":"issue","key":"acme/web#2","title":"b","state":"open","labels":[],"labelColors":{}}],
+		 "errors":[]}`
+	}
+	env.api.refreshNow(ctx, env.res, true)
+	items, err := env.st.ListWorkItems(ctx, env.mid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int{}
+	for _, it := range items {
+		got[it.Key] = workItemToDTO(it).CommentCount
+	}
+	if got["acme/web#1"] != 7 || got["acme/web#2"] != 0 {
+		t.Errorf("comments = %v, want #1=7 #2=0", got)
+	}
+}

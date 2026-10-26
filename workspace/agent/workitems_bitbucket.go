@@ -138,7 +138,7 @@ func bitbucketFetchPullRequests(auth string, q bitbucketWorkItemQuery, queryID s
 		// The fetch is capped at 50 items, so do not leave the choice of WHICH 50 to the provider
 		// (the same reason ADR 0061 decision 15 added ORDER BY to the JQL).
 		"sort": {"-updated_on"},
-		"fields": {"values.id,values.title,values.state,values.draft,values.updated_on," +
+		"fields": {"values.id,values.title,values.state,values.draft,values.updated_on,values.comment_count," +
 			"values.links.html.href,values.author.display_name,values.author.nickname," +
 			"values.destination.repository.full_name"},
 	}
@@ -201,6 +201,7 @@ func parseBitbucketPullRequests(body []byte, queryID string) ([]workItemOut, err
 			State     string `json:"state"`
 			Draft     bool   `json:"draft"`
 			UpdatedOn string `json:"updated_on"`
+			Comments  int    `json:"comment_count"`
 			Author    struct {
 				DisplayName string `json:"display_name"`
 				Nickname    string `json:"nickname"`
@@ -240,6 +241,7 @@ func parseBitbucketPullRequests(body []byte, queryID string) ([]workItemOut, err
 			// cannot treat as an array and renders as a blank screen (docs/log/80 §80.17.5).
 			Labels: []string{}, LabelColors: map[string]string{},
 			Repo: repo, UpdatedAt: bitbucketTimeToRFC3339(pr.UpdatedOn),
+			CommentCount: max(pr.Comments, 0),
 		})
 	}
 	return out, nil
