@@ -147,7 +147,8 @@ directory belongs to someone else.
   the options with their descriptions, so make each question readable without the header and put
   per-option detail in the descriptions. A card that arrives cold risks being dismissed, and the
   user has to ask you to restate it.
-- **Add MCP servers through Settings → MCP**; hand-edited CLI configuration is overwritten.
+- **Add MCP servers through Settings → Connections → MCP servers (used by sessions)**; hand-edited
+  CLI configuration is overwritten.
   Read `notes/agent-fleet.md` before changing agent configuration.
 
 ## Command-environment quirks that have burned sessions

@@ -186,6 +186,10 @@ reports to the sender:
 - A message to a claude session in the middle of a turn is reported as queued, not delivered:
   claude keeps it in memory only, so ending the pane before the turn ends (stopping, archiving or
   recreating the session) loses it.
+- A message to a claude session whose CLI was launched less than three minutes ago (for example one
+  the send just resumed) is reported as queued, waiting on `starting`: text typed while claude
+  boots can be lost, so the message is held and delivered once the pane has sat idle at its prompt
+  for about 45 seconds.
 - A message to a cursor session whose CLI refuses it at submit (for example a model the plan
   cannot use) is reported the same way, with the CLI's error text: the message stays in the input
   box and nothing runs it, so the sender is told not to resend.
