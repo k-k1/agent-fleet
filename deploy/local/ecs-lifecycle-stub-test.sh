@@ -106,8 +106,12 @@ echo "aws $*" >> "$STUB_LOG"
 args="$*"
 # af_cfn_clear_params (env.sh) reads every value back after its change set. A stack's live value
 # is "None" once such a change set ran on it, unless STUB_CLEAR_STICKS=1 (CloudFormation kept
-# the value, the way `deploy --parameter-overrides Key=` did in #2763).
+# the value, the way `deploy --parameter-overrides Key=` did in the #2763 rehearsal), and
+# STUB_READBACK_FAIL=1 makes the read after it fail (Throttling) instead.
 live() { # live <stack> <value>
+  if grep -q "execute-change-set --stack-name $1 --change-set-name af-clear-" "$STUB_LOG"; then
+    [ "${STUB_READBACK_FAIL:-0}" = 1 ] && { echo "An error occurred (Throttling)" >&2; exit 254; }
+  fi
   if [ "${STUB_CLEAR_STICKS:-0}" != 1 ] && grep -q "execute-change-set --stack-name $1 --change-set-name af-clear-" "$STUB_LOG"; then
     echo None
   else
@@ -116,6 +120,10 @@ live() { # live <stack> <value>
 }
 case "$args" in
   *"sts get-caller-identity"*) echo "123456789012" ;;
+  # The Default of the template the stack runs, before the ParameterKey branches below match its query (JSON: null = no Default). STUB_LIVE_DEFAULT unset
+  # is "", none is no Default, anything else that value.
+  *"cloudformation get-template-summary"*)
+    case "${STUB_LIVE_DEFAULT-}" in "") echo '""' ;; none) echo null ;; *) echo "\"$STUB_LIVE_DEFAULT\"" ;; esac ;;
   # STUB_POOL_DEPLOY_FAIL=1: the slot pool's stack update fails (a rollback, a refused
   # capability). update.sh must then leave 20-platform untouched.
   *"cloudformation deploy --stack-name t-pool"*)
@@ -283,7 +291,9 @@ case "$args" in
     [ "${STUB_PLATFORM_REPLACE:-0}" = 1 ] && printf 'Modify\tEcrControlPlane\tTrue\n'
     : ;;
   *"cloudformation describe-stacks"*) echo "STACK" ;;
-  *"ecs list-services"*) echo "arn:aws:ecs:x:1:service/t-cluster/af-ws-alice" ;;
+  *"ecs list-services"*)
+    [ "${STUB_LIST_SERVICES_FAIL:-0}" = 1 ] && { echo "An error occurred (Throttling)" >&2; exit 254; }
+    echo "arn:aws:ecs:x:1:service/t-cluster/af-ws-alice" ;;
   # Do not confuse the runningCount query (waiting for the CP to stop) with the listing of
   # services whose desired count is > 0. Return a name for the former and the wait loop
   # spins for five minutes.
@@ -338,9 +348,11 @@ case "$args" in
   *"ecs list-tasks"*"--desired-status RUNNING"*) echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
   *"ecs list-tasks"*) echo "None" ;;
   # update.sh's closing hint: the subnet of each running workspace task's ENI.
+  # [failures, tasks, subnet]. STUB_TASK_FAILURES=1: answered 200 with the task in failures[].
   *"ecs describe-tasks"*"subnetId"*)
     [ "${STUB_TASK_SUBNET_FAIL:-0}" = 1 ] && exit 254
-    echo "${STUB_TASK_SUBNET:-subnet-priv0}" ;;
+    if [ "${STUB_TASK_FAILURES:-0}" = 1 ]; then printf '1\t0\tNone\n'
+    else printf '0\t1\t%s\n' "${STUB_TASK_SUBNET:-subnet-priv0}"; fi ;;
   *"ecs describe-tasks"*)
     case "${STUB_WS_TASKS:-gone}" in
       stuck) echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
@@ -1216,14 +1228,29 @@ cs_line t-ingress | grep -q 'af-clear-' || fail "standup.sh did not clear a live
 # clear-params.sh is the same step for an operator (README, "Back to the NAT gateway").
 : > "$LOG"
 STUB_ING_EGRESS="$SECRET_ARN" "$ECS/clear-params.sh" --profile p4 --region ap-northeast-1 --stack t-ingress \
-  --template "$ECS/cfn/30-ingress.yaml" EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8" 2>&1 \
+  EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8" 2>&1 \
   || { cat "$WORK/outc8"; fail "clear-params.sh failed"; }
 [ -n "$(cs_line t-ingress)" ] || fail "clear-params.sh built no change set"
-if STUB_ING_EGRESS="$SECRET_ARN" "$ECS/clear-params.sh" --profile p4 --region ap-northeast-1 --stack t-ingress \
-  --template "$ECS/cfn/30-ingress.yaml" ImageTag > "$WORK/outc9" 2>&1; then
-  fail "clear-params.sh cleared a parameter whose Default is not empty"
+# The template the stack RUNS decides, before anything changes: a Default that is not "" (or
+# none at all) is refused, whatever the local template says.
+for d in subnet-other none; do
+  : > "$LOG"
+  if STUB_ING_EGRESS="$SECRET_ARN" STUB_LIVE_DEFAULT=$d "$ECS/clear-params.sh" --profile p4 \
+    --region ap-northeast-1 --stack t-ingress EgressProxyAddr > "$WORK/outc9" 2>&1; then
+    fail "clear-params.sh cleared a parameter whose live Default is '$d'"
+  fi
+  grep -q "get-template-summary --stack-name t-ingress" "$LOG" || fail "clear-params.sh did not read the live template's Default"
+  grep -q "Default is" "$WORK/outc9" || { cat "$WORK/outc9"; fail "clear-params.sh did not say why it refused ($d)"; }
+  hasnt "create-change-set"
+done
+# A read-back that fails after the change set ran is a failure, not "now empty".
+: > "$LOG"
+if STUB_ING_EGRESS="$SECRET_ARN" STUB_READBACK_FAIL=1 "$ECS/clear-params.sh" --profile p4 \
+  --region ap-northeast-1 --stack t-ingress EgressProxyAddr EgressTokenSecretArn > "$WORK/outc10" 2>&1; then
+  fail "clear-params.sh succeeded although the value could not be read back"
 fi
-grep -q "defaults to" "$WORK/outc9" || { cat "$WORK/outc9"; fail "clear-params.sh did not say why it refused"; }
+grep -q "could not be read back" "$WORK/outc10" || { cat "$WORK/outc10"; fail "clear-params.sh did not say the read-back failed"; }
+grep -q "now empty" "$WORK/outc10" && fail "clear-params.sh reported 'now empty' without reading it back"
 
 echo "== case 3h-move: update.sh on the way to the workspace subnets (#2763) =="
 # A network without the subnets: the NOTE names the runbook and the trap of the default deploy.
@@ -1247,6 +1274,14 @@ grep -q 'private subnet' "$WORK/outm4" && fail "update.sh listed a workspace tha
 # A task that cannot be read is said so, not taken as moved.
 upd outm5 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false STUB_TASK_SUBNET_FAIL=1
 grep -q 'af-ws-alice (its task could not be read' "$WORK/outm5" || fail "update.sh took an unreadable task as moved"
+# 200 with the task in failures[], or no subnet in the answer: unknown too.
+upd outm6 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false STUB_TASK_FAILURES=1
+grep -q 'af-ws-alice (its task could not be read' "$WORK/outm6" || fail "update.sh took a task in failures[] as moved"
+upd outm7 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false STUB_TASK_SUBNET=None
+grep -q 'af-ws-alice (its task could not be read' "$WORK/outm7" || fail "update.sh took a task without a subnet as moved"
+# The services could not be listed: said, never "nothing left".
+upd outm8 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false STUB_LIST_SERVICES_FAIL=1
+grep -q 'could not all be listed' "$WORK/outm8" || fail "update.sh hid a failed service listing"
 
 echo "== case 3h-pool: update.sh never skips the slot pool on ecs-ec2 without saying so =="
 #

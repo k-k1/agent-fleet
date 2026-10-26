@@ -679,27 +679,33 @@ af_cfn_deploy() {
     --template-file "$tpl" ${extra[@]+"${extra[@]}"} "$@"
 }
 
-# af_cfn_clear_params <stack> <template> <capability> <key>... — make each <key> empty on a live
-# stack and leave every other parameter and the template as they are.
+# af_cfn_clear_params <stack> <capability> <key>... — make each <key> empty on a live stack and
+# leave every other parameter and the template as they are.
 #
-# `cloudformation deploy --parameter-overrides Key=` is not a way to do that: on a live stack it
-# kept the previous value and reported "No changes" (#2763), although the CLI does put the empty
-# value on the wire (checked against a recording endpoint, aws-cli 2.36). So an empty value is
-# never trusted to clear anything. Here the key is left out of a change set on the previous
-# template, every other parameter is UsePreviousValue, and the key falls to its Default, which
-# must be "" in <template> (refused otherwise). Each value is read back afterwards. Call it after
-# the stack's deploy; a key that is already empty costs one read and nothing else.
+# In the #2763 rehearsal, `cloudformation deploy --parameter-overrides Key=` did not clear Key on
+# a live stack (it reported "No changes"). Why is not known: aws-cli 2.36 does send the override
+# as ParameterValue="", the same request create-change-set would make. So the value is not set
+# here at all: the key is left out of a change set on the stack's own template, which gives it
+# that template's Default, every other parameter is UsePreviousValue, and each key is read back.
+# The live template's Default must exist and be exactly "" (GetTemplateSummary), checked before
+# anything changes; a local template file may differ from what the stack runs. Call it after the
+# stack's deploy; a key that is already empty costs one read and nothing else. Every read that
+# fails is a failure, never "empty".
 af_cfn_clear_params() {
-  local stack="$1" tpl="$2" cap="$3"; shift 3
+  local stack="$1" cap="$2"; shift 2
   local k v d todo=() keys json="" sep="" name changes
   for k in "$@"; do
     v="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$stack" \
       --query "Stacks[0].Parameters[?ParameterKey=='$k'].ParameterValue" --output text)" || {
       echo "ERROR: could not read $k of $stack, so it cannot be cleared. Re-run." >&2; return 1; }
     case "$v" in ""|None) continue ;; esac
-    d="$(af_cfn_param_default "$tpl" "$k")"
-    if [ -n "$d" ]; then
-      echo "ERROR: $k of $(basename "$tpl") defaults to '$d', not empty; af_cfn_clear_params cannot clear it." >&2
+    # JSON keeps an absent Default (null) apart from an empty one ("").
+    d="$("${AWS[@]}" cloudformation get-template-summary --stack-name "$stack" \
+      --query "Parameters[?ParameterKey=='$k'] | [0].DefaultValue" --output json)" || {
+      echo "ERROR: could not read the template $stack runs, so $k cannot be cleared. Re-run." >&2; return 1; }
+    d="$(printf '%s' "$d" | tr -d '[:space:]')"
+    if [ "$d" != '""' ]; then
+      echo "ERROR: in the template $stack runs, $k's Default is $d, not \"\"; leaving it out would not clear it." >&2
       return 1
     fi
     todo+=("$k")
@@ -734,11 +740,14 @@ af_cfn_clear_params() {
   "${AWS[@]}" cloudformation execute-change-set --stack-name "$stack" --change-set-name "$name" >/dev/null || return 1
   "${AWS[@]}" cloudformation wait stack-update-complete --stack-name "$stack" || return 1
   for k in "${todo[@]}"; do
-    v="$(af_stack_param "$stack" "$k")"
-    if [ -n "$v" ]; then
+    v="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$stack" \
+      --query "Stacks[0].Parameters[?ParameterKey=='$k'].ParameterValue" --output text)" || {
+      echo "ERROR: the change set $name ran, but $k of $stack could not be read back. Check it by hand." >&2
+      return 1; }
+    case "$v" in ""|None) ;; *)
       echo "ERROR: $k of $stack is still '$v' after the change set $name." >&2
-      return 1
-    fi
+      return 1 ;;
+    esac
   done
   echo "    · $stack: ${todo[*]} now empty"
 }

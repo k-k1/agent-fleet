@@ -405,9 +405,9 @@ deploy_stack() {  # deploy_stack <stack> <template> <slug> [capability...]
     ${caps[@]+"${caps[@]}"} \
     --parameter-overrides ${AF_PARAMS[@]+"${AF_PARAMS[@]}"} \
     --no-fail-on-empty-changeset
-  # The empty EgressArchiveBucket above does not take a live stack's grant away (#2763).
+  # The empty EgressArchiveBucket above is not trusted to clear a live stack's grant (#2763).
   if [ "$slug" = 20-platform ] && [ -z "${AF_ARCHIVE_BUCKET:-}" ] && grep -q '^  EgressArchiveBucket:' "$CFN_DIR/$tpl"; then
-    af_cfn_clear_params "$stack" "$CFN_DIR/$tpl" CAPABILITY_NAMED_IAM EgressArchiveBucket
+    af_cfn_clear_params "$stack" CAPABILITY_NAMED_IAM EgressArchiveBucket
   fi
 }
 
@@ -799,8 +799,8 @@ af_param_override CpArch "$CP_ARCH"
 # Workspace subnets (#2716): a rebuilt 00-network has new subnet ids, so the output, never the
 # capture. A network stack without the output passes nothing (workspaces in the private subnets).
 # What comes out empty here while a live 30-ingress still holds a value is cleared after its
-# deploy (ING_CLEAR, af_cfn_clear_params): leaving it out, or passing it empty, keeps the old
-# value. So these reads must not swallow a failure.
+# deploy (ING_CLEAR, af_cfn_clear_params): leaving it out keeps the old value, and passing it
+# empty did not clear it in the #2763 rehearsal. So these reads must not swallow a failure.
 ING_CLEAR=()
 network_output() {  # <output>
   af_stack_output_strict "$AF_STACK_NETWORK" "$1" || {
@@ -859,7 +859,7 @@ else
     --parameter-overrides ${AF_PARAMS[@]+"${AF_PARAMS[@]}"} \
     --no-fail-on-empty-changeset
   if [ ${#ING_CLEAR[@]} -gt 0 ]; then
-    af_cfn_clear_params "$AF_STACK_INGRESS" "$CFN_DIR/30-ingress.yaml" CAPABILITY_NAMED_IAM "${ING_CLEAR[@]}"
+    af_cfn_clear_params "$AF_STACK_INGRESS" CAPABILITY_NAMED_IAM "${ING_CLEAR[@]}"
   fi
 fi
 

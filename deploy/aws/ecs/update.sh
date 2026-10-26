@@ -248,8 +248,8 @@ NETWORK_STACK="$(af_stack_param "$STACK" NetworkStackName)"
 : "${NETWORK_STACK:=af-ecs-network}"
 WS_SUBNETS="$(af_stack_output "$NETWORK_STACK" WorkspaceSubnets)"
 # Every value below that comes out empty while the ingress stack still holds one is cleared after
-# the deploy by af_cfn_clear_params (env.sh): an empty --parameter-overrides value keeps the old
-# one. Before clearing, the empty answer is read again strictly, so a failed read stops the run
+# the deploy by af_cfn_clear_params (env.sh): an empty --parameter-overrides value did not clear
+# one in the #2763 rehearsal. Before clearing, the empty answer is read again strictly, so a failed read stops the run
 # instead of moving workspaces back to the private subnets or dropping the egress proxy.
 CLEAR_INGRESS=()
 network_output_empty() {  # <output>: 0 when the network stack really has no such output
@@ -434,10 +434,9 @@ else
     echo "    · $AF_STACK_PLATFORM updated"
   fi
 fi
-# The CP's grant on an archive bucket 10-data no longer has: the empty value above does not take
-# it away.
+# The CP's grant on an archive bucket 10-data no longer has, not trusted to the empty value above.
 if [ "$PLATFORM_CLEAR" = 1 ] && af_stack_exists "$AF_STACK_PLATFORM"; then
-  af_cfn_clear_params "$AF_STACK_PLATFORM" "$HERE/cfn/20-platform.yaml" CAPABILITY_NAMED_IAM EgressArchiveBucket
+  af_cfn_clear_params "$AF_STACK_PLATFORM" CAPABILITY_NAMED_IAM EgressArchiveBucket
 fi
 
 # --- 1b) push (optional) ----------------------------------------------------
@@ -728,7 +727,7 @@ else
 fi
 # The values that went empty above (a network or data stack that no longer has them).
 if [ ${#CLEAR_INGRESS[@]} -gt 0 ]; then
-  af_cfn_clear_params "$STACK" "$TEMPLATE" CAPABILITY_NAMED_IAM "${CLEAR_INGRESS[@]}"
+  af_cfn_clear_params "$STACK" CAPABILITY_NAMED_IAM "${CLEAR_INGRESS[@]}"
 fi
 
 # --- 3) what a mutable tag's "no changes" would drop (pitfall 2) -------------
@@ -750,8 +749,11 @@ fi
 # --- 5) list the running workspaces (pitfall 3) ------------------------------
 # Nothing is stopped here; this only reports who is still running the old image.
 # Leave list-services' paging to the CLI (--max-items truncates silently and then reads as
-# "everyone was seen"). describe-services takes 10 at a time, so batch them.
-arns="$("${AWS[@]}" ecs list-services --cluster "$CLUSTER" --query 'serviceArns' --output text 2>/dev/null || true)"
+# "everyone was seen"). describe-services takes 10 at a time, so batch them. A failed read
+# leaves the list short, so it is remembered (ws_enum_failed) and said with the subnet check.
+ws_enum_failed=0
+arns="$("${AWS[@]}" ecs list-services --cluster "$CLUSTER" --query 'serviceArns' --output text 2>/dev/null)" \
+  || { arns=""; ws_enum_failed=1; }
 names=""
 for arn in $arns; do
   name="${arn##*/}"
@@ -767,7 +769,8 @@ while [ $# -gt 0 ]; do
   # shellcheck disable=SC2086
   # shellcheck disable=SC2016  # backticks are JMESPath's literal syntax, not a subshell
   got="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services $batch \
-    --query 'services[?desiredCount>`0`].serviceName' --output text 2>/dev/null || true)"
+    --query 'services[?desiredCount>`0`].serviceName' --output text 2>/dev/null)" \
+    || { got=""; ws_enum_failed=1; }
   running="$running $got"
 done
 
@@ -781,13 +784,22 @@ if [ -n "$WS_SUBNETS" ]; then
     t="$("${AWS[@]}" ecs list-tasks --cluster "$CLUSTER" --service-name "$n" --desired-status RUNNING \
       --query 'taskArns' --output text 2>/dev/null)" || { ws_unknown="$ws_unknown $n"; continue; }
     case "$t" in ""|None) continue ;; esac
-    # shellcheck disable=SC2086  # one argument per task ARN
-    subs="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks $t \
-      --query "tasks[].attachments[].details[?name=='subnetId'].value[]" --output text 2>/dev/null)" \
-      || { ws_unknown="$ws_unknown $n"; continue; }
-    for s in $subs; do
-      case ",$WS_SUBNETS," in *",$s,"*) ;; *) ws_private="$ws_private $n"; break ;; esac
+    # One task at a time: describe-tasks answers 200 with a failures[] entry for a task it cannot
+    # describe, and a task without an ENI subnet is no answer either. Both are "unknown", never
+    # "moved".
+    state=""
+    for ta in $t; do
+      r="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks "$ta" \
+        --query "[length(failures), length(tasks), (tasks[0].attachments[].details[?name=='subnetId'].value)[] | [0]]" \
+        --output text 2>/dev/null)" || { state=unknown; break; }
+      read -r nf nt s <<<"$r"
+      if [ "$nf" != 0 ] || [ "$nt" != 1 ] || [ -z "$s" ] || [ "$s" = None ]; then state=unknown; break; fi
+      case ",$WS_SUBNETS," in *",$s,"*) ;; *) state=private ;; esac
     done
+    case "$state" in
+      unknown) ws_unknown="$ws_unknown $n" ;;
+      private) ws_private="$ws_private $n" ;;
+    esac
   done
 fi
 
@@ -833,6 +845,12 @@ else
   echo "No workspaces are running (the next Start picks up the new image)."
 fi
 
+if [ -n "$WS_SUBNETS" ] && [ "$ws_enum_failed" = 1 ]; then
+  echo
+  echo "WARNING: the workspace services of $CLUSTER could not all be listed, so the check below for"
+  echo "         workspaces still in a private subnet is incomplete. Do not take it as \"none left\";"
+  echo "         re-run (--dry-run is enough) before 00-network gets S3EndpointEnabled=true."
+fi
 if [ -n "${ws_private// /}" ] || [ -n "${ws_unknown// /}" ]; then
   echo
   if [ "$(af_stack_param "$NETWORK_STACK" S3EndpointEnabled)" = false ]; then

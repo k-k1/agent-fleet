@@ -541,12 +541,13 @@ close it.
 **`00-network` and `10-data` are never part of this runbook or of `update.sh`.** A release that
 needs either says so in its release notes, and the block below is the one that does.
 
-**A parameter cannot be cleared with `deploy`.** `aws cloudformation deploy --parameter-overrides
-Key=` on a live stack kept the previous value and reported "No changes" (#2763). Where a value
-has to become empty, `update.sh` and `standup.sh` do it themselves; by hand, use
-`./clear-params.sh --profile <p> --region <r> --stack <stack> --template cfn/<NN-x>.yaml <Key>...`
-(a change set on the stack's current template that leaves the keys out, so their empty Default
-applies, and keeps every other parameter; it reads each value back).
+**Clearing a parameter: do not rely on `deploy`.** In the #2763 rehearsal `aws cloudformation
+deploy --parameter-overrides Key=` did not clear `Key` on a live stack ("No changes"). The cause
+is not known: the CLI does send the empty value. Where a value has to become empty, `update.sh`
+and `standup.sh` do it themselves and read it back; by hand, use
+`./clear-params.sh --profile <p> --region <r> --stack <stack> <Key>...` (a change set on the
+stack's current template that leaves the keys out, so their Default applies once it is checked
+to be exactly `""` there, keeps every other parameter, and reads each value back).
 
 ### Upgrading from v0.34.x
 
@@ -644,8 +645,8 @@ It does the things the hand-typed sequence gets wrong:
 - **Clears what went empty.** A value the network or data stack no longer has
   (`WorkspaceSubnets` after a downgrade, the egress gateway's after a switch back, the archive
   bucket) is cleared on 30-ingress and 20-platform with a change set and read back, because an
-  empty `--parameter-overrides` value keeps the old one. A failed read of the network stack
-  stops the run rather than clear anything.
+  empty `--parameter-overrides` value did not clear one in the #2763 rehearsal. A failed read
+  of the network stack stops the run rather than clear anything.
 - **Keeps the ECR repository, the image and the stack in that order.** A release can
   need a repository that did not exist and an image nothing has copied in: 0.19.0 moved
   the engine's fetch and ingest steps into `af-engine-tools`. So `update.sh` deploys
@@ -965,11 +966,11 @@ running workspace keeps `HTTP(S)_PROXY` pointing at the gateway until it is rest
 the gateway is gone every proxy-aware client in it times out. So take the proxy away first:
 
 1. Clear the proxy on 30-ingress, everything else at its previous value:
-   `./clear-params.sh --profile <p> --region <r> --stack <ingress stack> --template cfn/30-ingress.yaml
-   EgressProxyAddr EgressTokenSecretArn`
+   `./clear-params.sh --profile <p> --region <r> --stack <ingress stack> EgressProxyAddr
+   EgressTokenSecretArn`
    (not `update.sh`, which would hand the gateway's outputs back while it exists, and not
-   `deploy --parameter-overrides EgressProxyAddr= EgressTokenSecretArn=`, which keeps both
-   values: "Upgrade (runbook)").
+   `deploy --parameter-overrides EgressProxyAddr= EgressTokenSecretArn=`, which did not clear
+   them in the #2763 rehearsal: "Upgrade (runbook)").
 2. Stop and start every running workspace (`pause.sh --status` lists them) and check that its
    task definition no longer has the variables:
    `aws ecs describe-task-definition --task-definition <family> --query "taskDefinition.containerDefinitions[0].environment[?name=='HTTPS_PROXY']"` is empty.
