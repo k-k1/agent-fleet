@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routehealth"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // routeNow is the routing clock, a seam for tests.
@@ -24,7 +25,18 @@ func routeAvoid(kind, model string) bool {
 // chatKindUsable is the send-time test for one backend of c: logged in, and not parked for the
 // model this conversation would run on it.
 func chatKindUsable(c *ChatConversation, kind string) bool {
-	return headlessAgentAvailable(kind) && !routeAvoid(kind, chatModelFor(c, kind))
+	return headlessAgentAvailable(kind) && !routeAvoid(kind, chatRouteModel(c, kind))
+}
+
+// chatRouteModel is the model a turn of c on kind is parked and looked up under: chatModelFor,
+// except that muse never runs on its CLI default (the contributor row) — museChatModel turns ""
+// into the safe model, so the key has to name that one, as oneShotRouteModel does.
+func chatRouteModel(c *ChatConversation, kind string) string {
+	m := chatModelFor(c, kind)
+	if m == "" && kind == session.KindMuse {
+		m = museSafeOneShotModel(prefsVisibility)
+	}
+	return m
 }
 
 // NoteTurnResult reports one chat call's outcome to the cooldown table and returns the verdict
@@ -32,7 +44,7 @@ func chatKindUsable(c *ChatConversation, kind string) bool {
 // about the backend and is not reported. kind is the backend that ran (the caller's
 // actualAgent).
 func NoteTurnResult(ctx context.Context, c *ChatConversation, kind string, err error) routehealth.Verdict {
-	model := chatModelFor(c, kind)
+	model := chatRouteModel(c, kind)
 	if err == nil {
 		routehealth.Default.Succeed(kind, model)
 		return routehealth.Verdict{}

@@ -411,3 +411,34 @@ func TestOneShotRouteKindSeesTheMuseSafeModel(t *testing.T) {
 		t.Fatal("a park on the safe model muse runs did not move the call")
 	}
 }
+
+// TestChatRouteSeesTheMuseSafeModel: a muse conversation with no model runs on the safe model,
+// so the route is looked up, failed and cleared under that model, never under "" (which is the
+// kind-wide key and would park every muse model).
+func TestChatRouteSeesTheMuseSafeModel(t *testing.T) {
+	writeUIPrefs(t, `{}`)
+	tb := useRouteTable(t)
+	forceHeadlessAvailable(t, session.KindMuse, true)
+	stubMuseSafeModels(t, "muse-safe-a")
+	c := &ChatConversation{Agent: session.KindMuse}
+
+	if _, k := chatRoute(c); k != session.KindMuse {
+		t.Fatalf("unparked: route = %q, want the muse pin", k)
+	}
+	tb.Park(session.KindMuse, "muse-safe-a",
+		routehealth.Verdict{Class: routehealth.ClassServer, Scope: routehealth.ScopeModel, ResetAt: routeT0.Add(time.Hour)}, routeT0)
+	if _, k := chatRoute(c); k == session.KindMuse {
+		t.Fatal("a park on the safe model muse runs did not move the turn")
+	}
+	NoteTurnResult(context.Background(), c, session.KindMuse, nil)
+	if _, _, ok := tb.Until(session.KindMuse, "muse-safe-a", routeT0); ok {
+		t.Fatal("a success did not clear the safe model's park")
+	}
+	NoteTurnResult(context.Background(), c, session.KindMuse, errors.New("503 Service Unavailable"))
+	if _, _, ok := tb.Until(session.KindMuse, "muse-other", routeT0); ok {
+		t.Fatal("a model-scoped failure parked every muse model (recorded under the kind-wide key)")
+	}
+	if _, _, ok := tb.Until(session.KindMuse, "muse-safe-a", routeT0); !ok {
+		t.Fatal("the failure was not recorded under the safe model")
+	}
+}
