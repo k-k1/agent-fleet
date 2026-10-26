@@ -688,13 +688,33 @@ af_cfn_cs_drop() {
     return 1; }
 }
 
+# af_cfn_params_tsv — stdin: `--output json` of a Parameter list (a stack's or a change set's);
+# stdout: key, UsePreviousValue, ParameterValue, ResolvedValue per line, tab-separated, each
+# as its JSON text ("abc", "", null, true) or `-` when the field is absent. JSON text keeps
+# null, "" and the string "None" apart, and no field is ever empty, so `read` cannot swallow one.
+af_cfn_params_tsv() {
+  awk '
+    function val(s) { sub(/^ *"[A-Za-z]+": /, "", s); sub(/,$/, "", s); return s }
+    /^ *\{ *$/ { k = "-"; u = "-"; p = "-"; r = "-"; next }
+    /^ *"ParameterKey": /      { k = val($0); next }
+    /^ *"UsePreviousValue": /  { u = val($0); next }
+    /^ *"ParameterValue": /    { p = val($0); next }
+    /^ *"ResolvedValue": /     { r = val($0); next }
+    /^ *\},? *$/ { if (k != "-") printf "%s\t%s\t%s\t%s\n", k, u, p, r }
+  '
+}
+
 # af_cfn_cs_show <stack> <change set> <key>... — print what a clearing change set does (the
 # resource changes and the parameter diff against the live stack), and fail unless the keys it
-# clears are exactly <key>... and every other parameter is unchanged (UsePreviousValue, or the
-# live value). An unreadable change set is a failure, never "nothing to show".
+# clears are exactly <key>... and every other parameter is provably unchanged. Fails closed:
+#  - a value shown as **** (NoEcho) is never compared, since two masks are equal whatever is
+#    behind them; such a parameter passes only as UsePreviousValue=true;
+#  - UsePreviousValue keeps an SSM-typed parameter's key, not what it resolves to, so
+#    ResolvedValue must be the same on both sides (and present on both, if on either);
+#  - a read that fails is a failure, never "nothing to show".
 af_cfn_cs_show() {
   local stack="$1" name="$2"; shift 2
-  local changes live cs k lv ck cu cval act lid repl found cleared=() bad=() same=0 want
+  local changes live cs k lk lv lr ck cu cv cr found cleared=() bad=() same=0 want act lid repl
   changes="$("${AWS[@]}" cloudformation describe-change-set --stack-name "$stack" --change-set-name "$name" \
     --query 'Changes[].ResourceChange.[Action,LogicalResourceId,Replacement]' --output text)" || {
     echo "ERROR: could not read the changes of $name on $stack." >&2; return 1; }
@@ -702,36 +722,43 @@ af_cfn_cs_show() {
     if [ -n "$act" ] && [ "$act" != None ]; then echo "    · $act $lid (replacement: ${repl:-None})"; fi
   done <<<"$changes"
   live="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$stack" \
-    --query 'Stacks[0].Parameters[].[ParameterKey,ParameterValue]' --output text)" || {
+    --query 'Stacks[0].Parameters' --output json)" || {
     echo "ERROR: could not read the parameters of $stack." >&2; return 1; }
+  live="$(af_cfn_params_tsv <<<"$live")"
   cs="$("${AWS[@]}" cloudformation describe-change-set --stack-name "$stack" --change-set-name "$name" \
-    --query 'Parameters[].[ParameterKey,UsePreviousValue,ParameterValue]' --output text)" || {
+    --query 'Parameters' --output json)" || {
     echo "ERROR: could not read the parameters of $name on $stack." >&2; return 1; }
-  while IFS=$'\t' read -r k lv; do
-    [ -n "$k" ] || continue
-    case "$lv" in None) lv="" ;; esac
-    found=0; cu=""; cval=""
-    while IFS=$'\t' read -r ck cu cval; do
-      if [ "$ck" = "$k" ]; then found=1; break; fi
+  cs="$(af_cfn_params_tsv <<<"$cs")"
+  [ -n "$live" ] || { echo "ERROR: $stack reported no parameters." >&2; return 1; }
+  while IFS=$'\t' read -r lk _ lv lr; do
+    k="${lk#\"}"; k="${k%\"}"
+    found=0; cu=""; cv=""; cr=""
+    while IFS=$'\t' read -r ck cu cv cr; do
+      if [ "$ck" = "$lk" ]; then found=1; break; fi
     done <<<"$cs"
-    case "$cval" in None) cval="" ;; esac
     if [ "$found" = 0 ]; then
       # Left out of the change set: the template's Default applies, which is the clear.
-      if [ -n "$lv" ]; then cleared+=("$k"); else bad+=("$k (left out although it is already empty)"); fi
-    elif [ "$cu" = True ] || [ "$cval" = "$lv" ]; then
+      case "$lv" in '""'|-|null) bad+=("$k (left out although it is already empty)") ;; *) cleared+=("$k") ;; esac
+    elif [ "$cu" = true ]; then
+      if [ "$lr" != "$cr" ]; then bad+=("$k (resolves to $lr, would resolve to $cr)")
+      else same=$((same + 1)); fi
+    elif [ "$lv" = '"****"' ] || [ "$cv" = '"****"' ]; then
+      bad+=("$k (a masked value, which cannot be compared, and the change set does not say UsePreviousValue)")
+    elif [ "$cv" = "$lv" ] && [ "$lr" = "$cr" ]; then
       same=$((same + 1))
-    elif [ -z "$cval" ] && [ -n "$lv" ]; then
+    elif [ "$cv" = '""' ] && [ "$lv" != '""' ] && [ "$lv" != null ] && [ "$lv" != - ]; then
       cleared+=("$k")
     else
-      bad+=("$k ('$lv' -> '$cval')")
+      bad+=("$k ($lv -> $cv)")
     fi
   done <<<"$live"
-  while IFS=$'\t' read -r ck cu cval; do
+  while IFS=$'\t' read -r ck cu cv cr; do
     [ -n "$ck" ] || continue
     printf '%s\n' "$live" | cut -f1 | grep -qxF -- "$ck" || bad+=("$ck (not a parameter of $stack)")
   done <<<"$cs"
   for k in ${cleared[@]+"${cleared[@]}"}; do
-    lv="$(printf '%s\n' "$live" | awk -F'\t' -v k="$k" '$1==k{print $2; exit}')"
+    lv="$(printf '%s\n' "$live" | awk -F'\t' -v k="\"$k\"" '$1==k{print $3; exit}')"
+    lv="${lv#\"}"; lv="${lv%\"}"
     # Parameter values can be credentials by name; show the old value only for the rest.
     case "$k" in *Secret*|*Password*|*Token*|*OauthKey*|*PrivateKey*) lv="***" ;; esac
     echo "    · parameter $k: '$lv' -> (empty)"
@@ -768,7 +795,8 @@ af_cfn_cs_show() {
 #   discard  delete it, change nothing
 #   run      do not build: execute the change set named by AF_CLEAR_CS, but only if it is
 #            CREATE_COMPLETE/AVAILABLE and clears exactly these keys
-# Whatever the mode, a change set that did not build, or is not exactly the clear, is deleted.
+# Whatever the mode, a change set that did not build, is not exactly the clear, or could not be
+# started is deleted (one that is gone, unreadable or already running is left alone).
 af_cfn_clear_params() {
   local stack="$1" cap="$2"; shift 2
   local k v d todo=() keys json="" sep="" name mode st cstat cexec
@@ -811,12 +839,14 @@ af_cfn_clear_params() {
       IFS=$'\t' read -r cstat cexec <<<"$st" || true
       if [ "${cstat:-}" != CREATE_COMPLETE ] || [ "${cexec:-}" != AVAILABLE ]; then
         echo "ERROR: change set $name of $stack is ${cstat:-?}/${cexec:-?}, not CREATE_COMPLETE/AVAILABLE; nothing was executed." >&2
+        # Not one that has started to run: that one is not ours to delete.
+        case "${cexec:-}" in EXECUTE_*|"") ;; *) af_cfn_cs_drop "$stack" "$name" >&2 || true ;; esac
         return 1
       fi
       echo "==> $stack: executing change set $name (clearing ${todo[*]})"
       af_cfn_cs_show "$stack" "$name" "${todo[@]}" || {
         echo "ERROR: change set $name was not built for exactly ${todo[*]}; nothing was executed." >&2
-        echo "       Delete it if it is stale: aws cloudformation delete-change-set --stack-name $stack --change-set-name $name" >&2
+        af_cfn_cs_drop "$stack" "$name" >&2 || true
         return 1; }
       ;;
     *) echo "ERROR: AF_CLEAR_MODE '$mode' is not execute, keep, discard or run." >&2; return 1 ;;
@@ -858,7 +888,10 @@ af_cfn_clear_params() {
         return 0 ;;
     esac
   fi
-  "${AWS[@]}" cloudformation execute-change-set --stack-name "$stack" --change-set-name "$name" >/dev/null || return 1
+  # A refused start leaves the change set unexecuted; once it has started, it is no longer ours to delete.
+  "${AWS[@]}" cloudformation execute-change-set --stack-name "$stack" --change-set-name "$name" >/dev/null || {
+    af_cfn_cs_drop "$stack" "$name" >&2 || true
+    return 1; }
   "${AWS[@]}" cloudformation wait stack-update-complete --stack-name "$stack" || return 1
   for k in "${todo[@]}"; do
     v="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$stack" \

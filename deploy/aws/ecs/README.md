@@ -551,7 +551,7 @@ to be exactly `""` there, with every other parameter at its previous value. It i
 change set: with no flag it builds it, prints the resource changes and which keys go to empty,
 keeps it, prints the command that executes it and stops. Read it; if it is what you want, run
 that command (`--execute <change-set-name> <Key>...`, which refuses a change set that is gone,
-not `AVAILABLE`, or not exactly the clear of those keys, then reads each value back). `--yes`
+not `AVAILABLE`, or not exactly the clear of those keys (it deletes such a change set unless it is gone or already running), then reads each value back). A masked (`NoEcho`) parameter passes only as `UsePreviousValue`, and an SSM-typed one only if it resolves to the same value; anything else it cannot prove unchanged is refused. `--yes`
 builds, prints and executes in one go; `--dry-run` builds, prints and deletes the change set. A
 change set that fails to build (for example "didn't contain changes") is reported and deleted.
 
