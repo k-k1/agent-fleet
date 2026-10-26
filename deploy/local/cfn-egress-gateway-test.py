@@ -32,7 +32,11 @@ parses. So this fails when
     longer tells an applied policy (the agent's mode header and its post-reload "policy applied"
     line, in its current run) from a written one or the closed bootstrap file, or the drain
     (AF_GATEWAY_DRAIN) reads offsets, logs or xattrs other than the agent's;
-  - the group's MaxSize drops below MinInstancesInService + 1 in either branch of the switch.
+  - the group's MaxSize drops below MinInstancesInService + 1 in either branch of the switch;
+  - intercepted 443 reaches an intercepting https_port again instead of egress-relay (whose
+    host verification refuses S3, ECR and STS, #2759), the relay and Squid disagree on its
+    two ports, Squid trusts a PROXY header from anything but loopback, or the relay is not
+    installed, started, or run as squid.
 
 The positive controls at the end run the same checks against broken copies.
 
@@ -52,6 +56,9 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CFN = os.path.join(ROOT, "deploy", "aws", "ecs", "cfn")
 DOC = os.path.join(ROOT, "control-plane", "internal", "egressagent", "doc.go")
 POLICY = os.path.join(ROOT, "control-plane", "internal", "egressagent", "policy.go")
+RELAY = os.path.join(ROOT, "control-plane", "internal", "egressagent", "relay.go")
+MAIN_GO = os.path.join(ROOT, "control-plane", "main.go")
+SRC = {}  # relay.go and main.go, read once by main()
 ENV_SH = os.path.join(ROOT, "deploy", "aws", "ecs", "env.sh")
 
 # The gateway's own Elastic IP and the ALB rule naming it exist only when the stack allocates
@@ -285,6 +292,7 @@ def check(net, ingress, platform, doc_lines):
         if must not in ud:
             f.append("user data lacks %r" % must)
     f += check_hardening(ud)
+    f += check_relay(ud)
     return f
 
 
@@ -292,6 +300,35 @@ def check(net, ingress, platform, doc_lines):
 # can proxy a workspace to the gateway's own metadata service, loopback or the VPC.
 GUARD_DENIES = ("http_access deny manager", "http_access deny to_localhost", "http_access deny to_linklocal",
                 "http_access deny to_vpc", "http_access deny !Safe_ports")
+
+
+def check_relay(ud):
+    """Intercepted TLS goes through egress-relay to Squid as a CONNECT to the original address."""
+    f = []
+    lines = [ln.strip() for ln in ud.splitlines()]
+    if any(re.match(r"https_port\b.*\bintercept\b", ln) for ln in lines):
+        f.append("squid: an intercepting https_port is back; its host verification refuses rotating names (#2759)")
+    listen = re.search(r'RelayListen\s*=\s*"(:\d+)"', SRC["relay"])
+    upstream = re.search(r'RelayUpstream\s*=\s*"(127\.0\.0\.1:\d+)"', SRC["relay"])
+    if not listen or not upstream:
+        return f + ["relay.go: RelayListen / RelayUpstream not found (or upstream not on loopback)"]
+    if not any(re.fullmatch(r'iifname "\$DEV" ip saddr \{ \$WS_NFT \} tcp dport 443 redirect to ' + listen.group(1), ln)
+               for ln in lines):
+        f.append("nftables does not redirect the workspaces' 443 to the relay (%s)" % listen.group(1))
+    if not any(ln.startswith("http_port %s require-proxy-header ssl-bump " % upstream.group(1)) for ln in lines):
+        f.append("squid: no loopback require-proxy-header ssl-bump port at the relay's %s" % upstream.group(1))
+    ppa = [ln for ln in lines if ln.startswith("proxy_protocol_access")]
+    if ppa != ["proxy_protocol_access allow localhost"]:
+        f.append("squid: PROXY headers must be trusted from localhost only, got %r" % ppa)
+    unit = re.search(r"af-egress-relay\.service <<EOF\n(.*?)\nEOF", ud, re.S)
+    if not unit or "User=squid" not in unit.group(1).split("\n") \
+            or "ExecStart=/usr/local/bin/af-cp egress-relay" not in unit.group(1) or "Restart=always" not in unit.group(1):
+        f.append("the relay unit is missing, not run as squid, or not restarted")
+    if "systemctl start af-egress-relay" not in lines:
+        f.append("af-egress-install never starts the relay")
+    if 'os.Args[1] == "egress-relay"' not in SRC["main"]:
+        f.append("control-plane has no egress-relay subcommand")
+    return f
 
 
 def check_hardening(ud):
@@ -468,6 +505,9 @@ def main():
             env_src = fh.read()
         with open(POLICY) as fh:
             policy_src = fh.read()
+        for k, path in (("relay", RELAY), ("main", MAIN_GO)):
+            with open(path) as fh:
+                SRC[k] = fh.read()
         with open(os.path.join(os.path.dirname(POLICY), "agent.go")) as fh:
             agent_src = fh.read()
         with open(os.path.join(os.path.dirname(POLICY), "ship.go")) as fh:
@@ -576,6 +616,15 @@ def main():
             "ssl_bump terminate all\\nhttp_access deny all\\n", "ssl_bump splice all\\n")))),
         ("bash literal left for Fn::Sub", m(lambda t: set_ud(t, lambda s: s.replace('"$REGISTRY"', '"${!IMAGE%%/*}"', 1)))),
         ("drop-in sorts before eni.conf", m(lambda t: set_ud(t, lambda s: s.replace("zz-af-egress.conf", "af-egress.conf")))),
+        ("intercepting https_port for 443 again", m(lambda t: set_ud(t, lambda s: s.replace(
+            "http_port 127.0.0.1:3131 require-proxy-header", "https_port 3130 intercept require-proxy-header")))),
+        ("443 redirected past the relay", m(lambda t: set_ud(t, lambda s: s.replace("dport 443 redirect to :3130", "dport 443 redirect to :3131")))),
+        ("relay upstream on every address", m(lambda t: set_ud(t, lambda s: s.replace("http_port 127.0.0.1:3131", "http_port 3131")))),
+        ("PROXY header trusted from anyone", m(lambda t: set_ud(t, lambda s: s.replace(
+            "proxy_protocol_access allow localhost", "proxy_protocol_access allow all")))),
+        ("relay as root", m(lambda t: set_ud(t, lambda s: s.replace(
+            "[Service]\nUser=squid\nExecStart=/usr/local/bin/af-cp egress-relay", "[Service]\nUser=root\nExecStart=/usr/local/bin/af-cp egress-relay")))),
+        ("relay never started", m(lambda t: set_ud(t, lambda s: s.replace("systemctl start af-egress-relay\n", "")))),
         ("route check only on first boot", m(lambda t: set_ud(t, lambda s: s.replace(
             "[Install]\nWantedBy=multi-user.target\nEOF\nsystemctl daemon-reload\nsystemctl enable --now af-egress-route.service", "EOF\nsystemctl daemon-reload\nsystemctl enable --now af-egress-route.service")))),
     ]

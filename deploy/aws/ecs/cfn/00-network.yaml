@@ -712,7 +712,9 @@ Resources:
               acl to_vpc dst ${VpcCidr}
               http_port 3128 ssl-bump tls-cert=/etc/squid/af-bump.pem generate-host-certificates=off
               http_port 3129 intercept
-              https_port 3130 intercept ssl-bump tls-cert=/etc/squid/af-bump.pem generate-host-certificates=off
+              # egress-relay's CONNECTs to the original address of intercepted 443 (doc.go).
+              http_port 127.0.0.1:3131 require-proxy-header ssl-bump tls-cert=/etc/squid/af-bump.pem generate-host-certificates=off
+              proxy_protocol_access allow localhost
               http_access deny !workspaces
               http_access deny manager
               http_access deny to_localhost
@@ -745,7 +747,7 @@ Resources:
               [Install]
               WantedBy=timers.target
               EOF
-              # 80/443 from the workspace subnets go to Squid's intercept ports. Nothing is
+              # 80 from the workspace subnets goes to Squid, 443 to egress-relay. Nothing is
               # forwarded (ip_forward=0); the forward chain only logs what would have been.
               mkdir -p /etc/af-egress
               cat > /etc/af-egress/nft.conf <<EOF
@@ -813,6 +815,7 @@ Resources:
                 docker logout "$REGISTRY"
                 systemctl stop docker docker.socket
                 install -m 0755 /usr/local/bin/af-cp.new /usr/local/bin/af-cp
+                systemctl try-restart af-egress-relay
                 rm -f /usr/local/bin/af-cp.new
                 echo "$IMAGE" > /var/lib/af-egress-agent/image
                 changed=1
@@ -833,6 +836,7 @@ Resources:
               fi
               rm -f "$new"
               if [ "$changed" = 1 ]; then systemctl restart af-egress-agent; else systemctl start af-egress-agent; fi
+              systemctl start af-egress-relay
               EOF
               chmod 0755 /usr/local/sbin/af-egress-install
               cat > /etc/systemd/system/af-egress-agent.service <<EOF
@@ -846,6 +850,13 @@ Resources:
               ExecStart=/usr/local/bin/af-cp egress-agent
               Restart=always
               RestartSec=15
+              EOF
+              cat > /etc/systemd/system/af-egress-relay.service <<EOF
+              [Service]
+              User=squid
+              ExecStart=/usr/local/bin/af-cp egress-relay
+              Restart=always
+              RestartSec=5
               EOF
               cat > /etc/systemd/system/af-egress-install.service <<EOF
               [Service]

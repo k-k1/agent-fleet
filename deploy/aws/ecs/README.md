@@ -854,10 +854,12 @@ attaches `GatewayEni`, a network interface the stack owns: the workspace route t
 it, its Elastic IP (`GatewayEip`) is the workspace egress address, and its private address is
 the explicit proxy (`EgressProxyAddr`, `:3128`). A replacement instance attaches the same
 interface, so neither the route, the proxy address nor the egress address ever moves. Squid
-intercepts 80/443 from the workspace subnets and serves the explicit proxy; nothing else is
-forwarded (`ip_forward=0`). `af-cp egress-agent` (the CP binary, copied out of the CP image) runs
-as user `squid`, writes Squid's allow and mode files from the CP's policy and ships the log to
-`/internal/egress` with `AF_EGRESS_TOKEN`, which the stack generates in Secrets Manager. The
+intercepts port 80 from the workspace subnets and serves the explicit proxy; intercepted 443 goes
+to `af-cp egress-relay`, which hands it to Squid as a CONNECT to the address the workspace
+dialled (#2759). Nothing else is forwarded (`ip_forward=0`). `af-cp egress-agent` (the CP
+binary, copied out of the CP image) runs as user `squid`, writes Squid's allow and mode files
+from the CP's policy and ships the log to `/internal/egress` with `AF_EGRESS_TOKEN`, which the
+stack generates in Secrets Manager. The
 CP gets `AF_EGRESS_PROXY_ADDR` and `AF_EGRESS_TOKEN` (30-ingress `EgressProxyAddr` /
 `EgressTokenSecretArn`), so Fargate and ecs-ec2 workspace task definitions carry the proxy
 variables, with the task-role credential endpoint (`169.254.170.2`), instance metadata
@@ -990,13 +992,26 @@ reasoning: `cfn/PARAMETERS.md`, "The egress archive". Not yet run on a real acco
 **Limits of this first stage.** Squid, the agent and this configuration, pausing, resuming and
 a handed-in address included, have **not been run on a real account**.
 
+- **Enforce decides on the TLS name (SNI), not on the address.** A workspace can send an allowed
+  SNI to any public address on port 443, through the explicit proxy and, since #2759, on the
+  intercepted path too. It cannot reach another port, loopback, link-local or the VPC that way,
+  and a name outside the allowlist is refused whatever address it is sent to. Binding a name to
+  its addresses would mean decrypting, which the gateway never does.
+- **Intercepted 443 passes `af-cp egress-relay`.** Squid's own intercepting HTTPS port re-resolves
+  the SNI and refuses the connection when the workspace's address is not in its own answer (409,
+  "Host header forgery" in `cache.log`), whatever `host_verify_strict` says. Names whose DNS
+  answers rotate (S3, ECR, STS) failed that way most of the time. The relay is in the CP image and
+  starts with the agent, so before the first install a fresh gateway refuses intercepted 443
+  (it refuses everything until its first policy anyway). A new CP image restarts it, which
+  cuts the intercepted TLS connections open at that moment.
+
 **Checking the agent against a real Squid (#2687).** On a sandbox with `EgressRoute=gateway`:
 
 1. Find the instance and open a shell:
    `aws ec2 describe-instances --filters Name=tag:af-egress-gateway,Values=<network stack> Name=instance-state-name,Values=running --query 'Reservations[].Instances[].InstanceId' --output text`,
    then `aws ssm start-session --target <id>`.
 2. Boot and services: `sudo tail -50 /var/log/af-egress-gateway.log`;
-   `systemctl status squid af-egress-agent af-egress-nft af-egress-install.timer`;
+   `systemctl status squid af-egress-agent af-egress-relay af-egress-nft af-egress-install.timer`;
    `sudo squid -k parse` (prints the parsed configuration, fails on an error);
    `ip route show default` (the first default route is the attached interface).
 3. Policy: `sudo cat /var/lib/af-egress-agent/af-allow.txt /var/lib/af-egress-agent/af-mode.conf`

@@ -20,3 +20,14 @@ func runEgressAgent() {
 		log.Fatalf("egress-agent: %v", err)
 	}
 }
+
+// runEgressRelay is `control-plane egress-relay`. SIGTERM stops accepting; tunnels already
+// open end with the process.
+func runEgressRelay() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	r := egressagent.Relay{Listen: egressagent.RelayListen, Upstream: egressagent.RelayUpstream}
+	if err := r.Run(ctx); err != nil {
+		log.Fatalf("egress-relay: %v", err)
+	}
+}

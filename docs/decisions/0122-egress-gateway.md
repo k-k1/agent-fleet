@@ -704,3 +704,53 @@ their CP.
 - Not run on a real account; the enforce check on the sandbox is still owed.
 
 Follow-ups: #2746, #2754
+
+## Addendum (2026-10-26) — intercepted TLS reaches Squid through a relay (#2759)
+
+On the sandbox (ecs-ec2, `EgressRoute=gateway`, log-only and enforce) intercepted HTTPS to S3,
+ECR and STS failed with curl rc=35 while the same requests through the explicit proxy worked,
+and `checkip.amazonaws.com` failed about 1 call in 8. Squid's `cache.log` said "Host header
+forgery detected ... (local IP does not match any domain IP)".
+
+- **Cause** (Squid source, the same in v5, v6 and v7, read 2026-10-26). On an intercepting
+  `https_port`, a splice after the peek builds a fake CONNECT to the SNI
+  (`ConnStateData::splice`, `fakeAConnectRequest`) and checks the destination against Squid's own
+  lookup of that name (`hostHeaderVerify`, `hostHeaderIpVerify`). A mismatch on a CONNECT is always
+  a 409, whatever `host_verify_strict` says ("For now suspicious intercepted CONNECT requests are
+  always responded to with an HTTP 409"), and `client_dst_passthru` only applies once the check
+  passed. Squid keeps an answer for at least `negative_dns_ttl` (1 minute), and these services
+  give each lookup a different subset of their addresses, so the workspace's address is usually
+  not in Squid's set. `host_verify_strict off` and `client_dst_passthru on` are already the
+  defaults.
+- **Rejected: a shared caching resolver.** ECS `awsvpc` tasks use the VPC resolver; changing it
+  means the VPC's DHCP options, for the CP and the hosts as well, and the clients' own caches
+  would still drift from Squid's.
+- **Rejected: peek at step 2 and splice at step 3,** which avoids the fake CONNECT. Squid then
+  connects and sends the client's hello before it decides, so a refused name still reaches its
+  address; terminating refused names at step 2 first fixes that, but the gateway's OpenSSL then
+  parses every server hello, which can fail on key-exchange groups it does not know, and nothing
+  offline can test that.
+- **Decision.** nftables still redirects the workspaces' 443 to `:3130`, where
+  `af-cp egress-relay` (`egressagent.Relay`, user `squid`) takes the original destination from
+  conntrack and opens Squid's loopback-only `http_port 127.0.0.1:3131 require-proxy-header
+  ssl-bump` with a PROXY header (the workspace as source) and `CONNECT <original address>:443`.
+  Squid handles that like the explicit proxy: the guard denies apply to the address, `ssl_bump`
+  decides on the SNI, and a splice goes to the address the workspace dialled. No host check runs,
+  because the connection is not intercepted as far as Squid knows. Squid trusts a PROXY header
+  from localhost only (`proxy_protocol_access`). The `af1` line keeps the workspace's address and
+  the SNI; `%>rd` becomes the original address, and the CP attributes by the SNI first. Port 80
+  is unchanged: a failed check on plain HTTP is only logged, and the request goes to the original
+  destination.
+- **Enforcement does not get weaker.** A refused SNI is terminated whatever address it is sent to
+  (the same `af_allowed_sni` rule). An allowed SNI can reach any public address on 443; that was
+  already true of the explicit proxy (a CONNECT to an address), and it stays bounded by port 443
+  (nftables, the security group), the guard denies on the address (loopback, link-local, the
+  VPC) and `ip_forward=0`. Tying a name to its addresses would take decryption.
+- **Costs.** The relay is in the CP image and starts with the agent, so before the first install
+  a fresh gateway refuses intercepted 443 (it refuses everything until the first policy anyway).
+  A new image restarts it, which cuts the intercepted TLS connections open at that moment.
+- Not run against a real Squid. The sandbox check (intercepted S3, ECR and STS and 100
+  `checkip` calls in log-only and enforce, and an allowed address with a refused SNI and the
+  reverse) is in #2759.
+
+Follow-ups: #2759
