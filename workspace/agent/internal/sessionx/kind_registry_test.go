@@ -80,3 +80,19 @@ func TestMCPKindAlternateSpellingsRefused(t *testing.T) {
 		}
 	}
 }
+
+// A writer and a MaterializedKinds entry go together, for every REGISTERED kind: one added
+// without the other is either skipped by MaterializeAll for ever or never run. Walking the real
+// registry (not a copy of its names) is what catches a kind registered later.
+func TestMaterializedKindsMatchWritersForEveryRegisteredKind(t *testing.T) {
+	for _, k := range RegisteredKinds() {
+		if has, listed := mcpreg.HasWriter(k), slices.Contains(mcpreg.MaterializedKinds, k); has != listed {
+			t.Errorf("%s: has an MCP config writer=%v, in mcpreg.MaterializedKinds=%v", k, has, listed)
+		}
+	}
+	for _, k := range mcpreg.MaterializedKinds {
+		if _, ok := agentRegistry[k]; !ok {
+			t.Errorf("mcpreg.MaterializedKinds has %q, which is not a registered kind", k)
+		}
+	}
+}
