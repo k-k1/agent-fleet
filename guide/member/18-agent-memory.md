@@ -365,7 +365,8 @@ link back.
   host all find the same project. `project` (an id from `memory_projects`) still works; if both are given they must
   name the same project. A remote that matches no project, or more than one, is refused with a message saying so (a
   project must already hold memory; new projects are started from inside the workspace). ssh and `git@` spellings
-  are matched on github.com, gitlab.com, bitbucket.org and codeberg.org; on any other host pass the `https://` URL.
+  and `https://` remotes are matched on github.com, gitlab.com, bitbucket.org and codeberg.org only. A self-hosted host is
+  refused (the stored remote does not keep the port, so two services on one host name could be confused): pass `project`.
 - **Saving and forgetting need a scope**: `memory_save` and `memory_forget` require `scope`: `project` (with
   `repository` or `project`) for a fact about one repository, `user` only for a fact that holds in every project.
   A call without `scope` is refused with a message naming what to pass, so a forgotten project can no longer

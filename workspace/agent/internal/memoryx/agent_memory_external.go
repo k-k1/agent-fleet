@@ -95,7 +95,14 @@ func agentMemExternalResolve(project, repository string) (string, error) {
 	want := agentMemNormalizeRemote(repository)
 	if want == "" {
 		return "", memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest,
-			"repository %q is not a remote this memory can match: pass the https or ssh URL printed by `git remote get-url origin` (ssh forms are matched for github.com, gitlab.com, bitbucket.org and codeberg.org only; elsewhere use the https URL), or pass `project` from memory_projects", repository)
+			"repository %q is not a remote this memory can match: pass the https or ssh URL printed by `git remote get-url origin` (only github.com, gitlab.com, bitbucket.org and codeberg.org remotes are matched), or pass `project` from memory_projects", repository)
+	}
+	// The normaliser drops the port, so on a self-hosted host "forge:8443/x" and "forge:9443/x" (or
+	// a port-less one) are one string yet can be different services. Only the big forges, whose
+	// host names one service, are trusted to pick a write target; elsewhere the id is the answer.
+	if host, _, _ := strings.Cut(want, "/"); !forgeHosts[host] {
+		return "", memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest,
+			"repository on %q cannot be matched safely (the remote does not tell self-hosted services on different ports apart): pass `project` from memory_projects instead", host)
 	}
 	all, err := agentMemMemberProjects()
 	if err != nil {

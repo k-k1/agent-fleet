@@ -916,9 +916,10 @@ The decisions above are unchanged. This records how an outside caller addresses 
 - **`repository` argument.** `memory_index`, `memory_search`, `memory_read`, `memory_save` and `memory_forget` accept the
   output of `git remote get-url origin`. The Agent (not the CP, which stays a relay) normalises it with the function that
   produced each project's `Remote` and matches it against the projects that hold memory. `project` stays accepted; the two
-  must agree. A remote that matches nothing, matches more than one project, or cannot be normalised (including an ssh remote
-  on a host outside the forge list) is refused, never guessed. A GitHub Enterprise host is therefore a different project from
-  github.com.
+  must agree. A remote that matches nothing, matches more than one project, or cannot be normalised is refused, never guessed. Only the forge hosts
+  (github.com, gitlab.com, bitbucket.org, codeberg.org) resolve: the stored `Remote` drops the port, so on a self-hosted host
+  `forge:8443/x`, `forge:9443/x` and `forge/x` are one string for possibly different services. Such a host is refused with a
+  pointer to `project`.
 - **Writes name their scope.** An external save or forget without `scope` is refused (it used to fall to the user scope,
   so a model that forgot the project published a repository-specific fact to every project). `scope: project` needs
   `repository` or `project`. The in-workspace tools are unchanged: they derive the project from the working copy.

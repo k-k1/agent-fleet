@@ -230,7 +230,7 @@ func TestAgentMemoryExternalRepositoryRefusals(t *testing.T) {
 	home, _, _ := agentMemTestEnv(t)
 	a := extRepo(t, home, "alpha", "https://github.com/k-k1/alpha.git")
 	b := extRepo(t, home, "beta", "https://github.com/k-k1/beta.git")
-	extRepo(t, home, "ghe", "https://ghe.example.com/k-k1/alpha.git")
+	ghe := extRepo(t, home, "ghe", "https://ghe.example.com:8443/k-k1/alpha.git")
 	externalMode(t, ExternalMemoryWrite)
 
 	for _, c := range []struct {
@@ -260,9 +260,20 @@ func TestAgentMemoryExternalRepositoryRefusals(t *testing.T) {
 			t.Errorf("%s search: %d %s", c.name, code, out)
 		}
 	}
-	// The GHE host is a different project from github.com's, matched by its https remote.
-	if code, out := extSave(t, map[string]any{"scope": "project", "repository": "https://ghe.example.com/k-k1/alpha"}); code != 200 || strings.Contains(string(out), a.Project.ID) {
-		t.Errorf("ghe save: %d %s", code, out)
+	// A self-hosted host is never resolved from a remote (its port is not kept), with or without
+	// a port, in either direction; the id still works.
+	for _, repo := range []string{
+		"https://ghe.example.com/k-k1/alpha", "https://ghe.example.com:8443/k-k1/alpha.git", "https://ghe.example.com:9443/k-k1/alpha.git",
+	} {
+		if code, out := extSave(t, map[string]any{"scope": "project", "repository": repo, "name": "ghe"}); code != 400 || !strings.Contains(out, "cannot be matched safely") {
+			t.Errorf("ghe save %s: %d %s", repo, code, out)
+		}
+	}
+	if _, err := agentMemRead(ghe, "project", "ghe"); err == nil {
+		t.Error("a repository on a self-hosted host wrote into a project")
+	}
+	if code, out := extSave(t, map[string]any{"scope": "project", "project": ghe.Project.ID, "name": "ghe"}); code != 200 {
+		t.Errorf("ghe by id: %d %s", code, out)
 	}
 
 	// Two projects with one remote are ambiguous, never picked between.
