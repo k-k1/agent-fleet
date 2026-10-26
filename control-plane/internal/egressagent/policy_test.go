@@ -27,6 +27,20 @@ func TestRenderAllowIsMinimalSortedAndSafe(t *testing.T) {
 	}
 }
 
+// An IPv6 literal is written bare, lowercase and compressed (the form Squid documents for
+// ssl::server_name), once per address however it was spelled; anything that would make
+// the file ambiguous or unreadable is dropped without costing the other entries.
+func TestRenderAllowIPv6Literal(t *testing.T) {
+	got := string(renderAllow([]string{
+		"2001:DB8:0:0:0:0:0:5", "[2001:db8::5]", "2001:db8::5", "fd00::7", "github.com",
+		"fe80::1%eth0", "::ffff:10.0.1.5", "::1", "::", "ff02::1", "2001:db8::5:80x", ".2001:db8::5", "[2001:db8::5]:443",
+	}))
+	want := generatedHeader + "2001:db8::5\nfd00::7\ngithub.com\n"
+	if got != want {
+		t.Fatalf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // fakeCP serves a policy that the test can change and break.
 type fakeCP struct {
 	mu        sync.Mutex

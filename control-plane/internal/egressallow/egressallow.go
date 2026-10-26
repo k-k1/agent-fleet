@@ -4,9 +4,30 @@
 package egressallow
 
 import (
+	"net/netip"
 	"sort"
 	"strings"
 )
+
+// CanonicalIPv6 returns the one spelling of an IPv6 literal that the allow file, the
+// matcher and Squid all read the same way: bare (no brackets), lowercase, compressed
+// ("2001:DB8:0:0:0:0:0:5" and "[2001:db8::5]" both give "2001:db8::5"). It refuses what
+// would make an entry unsafe or ambiguous: a zone ID, an IPv4-mapped address (it would
+// alias an IPv4 entry and Squid sees it as the IPv4 address), and the unspecified,
+// loopback, link-local and multicast ranges, which are never a Control Plane's address.
+// Unique-local (fc00::/7) is allowed: a CP inside a VPC lives there.
+func CanonicalIPv6(s string) (string, bool) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+		s = s[1 : len(s)-1]
+	}
+	a, err := netip.ParseAddr(s)
+	if err != nil || !a.Is6() || a.Zone() != "" || a.Is4In6() ||
+		a.IsUnspecified() || a.IsLoopback() || a.IsLinkLocalUnicast() || a.IsMulticast() {
+		return "", false
+	}
+	return a.String(), true
+}
 
 // Policy is a compiled allowlist. Matching is case-insensitive. An entry starting with
 // "." (or "*.", normalised to a leading ".") is a suffix match covering that domain and
