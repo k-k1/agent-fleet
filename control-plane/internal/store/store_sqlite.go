@@ -4229,14 +4229,14 @@ func (s *SQL) SetWorkItemQueryMatchTotal(ctx context.Context, id string, matchTo
 }
 
 const workItemCols = `SELECT id, membership_id, query_id, provider, item_kind, item_key,
-	title, state, url, assignee, labels, label_colors, repo, updated_at, fetched_at, checks, mergeable, item_type, can_comment FROM work_item_cache`
+	title, state, url, assignee, labels, label_colors, repo, updated_at, fetched_at, checks, mergeable, item_type, can_comment, comments FROM work_item_cache`
 
 func scanWorkItem(sc interface{ Scan(...any) error }) (WorkItem, error) {
 	var w WorkItem
 	var canComment int
 	err := sc.Scan(&w.ID, &w.MembershipID, &w.QueryID, &w.Provider, &w.Kind, &w.Key,
 		&w.Title, &w.State, &w.URL, &w.Assignee, &w.Labels, &w.LabelColors, &w.Repo, &w.UpdatedAt, &w.FetchedAt,
-		&w.Checks, &w.Mergeable, &w.ItemType, &canComment)
+		&w.Checks, &w.Mergeable, &w.ItemType, &canComment, &w.Comments)
 	w.CanComment = canComment != 0
 	return w, err
 }
@@ -4343,11 +4343,11 @@ func (s *SQL) replaceWorkItems(ctx context.Context, membershipID string, queryID
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO work_item_cache(id, membership_id, query_id, provider, item_kind, item_key,
 			 title, state, url, assignee, labels, label_colors, repo, updated_at, fetched_at,
-			 checks, mergeable, item_type, can_comment)
-			 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			 checks, mergeable, item_type, can_comment, comments)
+			 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			w.ID, membershipID, w.QueryID, w.Provider, w.Kind, w.Key, w.Title, w.State,
 			w.URL, w.Assignee, w.Labels, w.LabelColors, w.Repo, w.UpdatedAt, w.FetchedAt,
-			w.Checks, w.Mergeable, w.ItemType, b2i(w.CanComment)); err != nil {
+			w.Checks, w.Mergeable, w.ItemType, b2i(w.CanComment), w.Comments); err != nil {
 			return err
 		}
 	}

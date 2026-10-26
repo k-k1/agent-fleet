@@ -59,6 +59,7 @@ const { WorkItemModalHost } = await import("./WorkItemModalHost.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { useWorkItemStore } = await import("./store.ts");
 const { useWorkItemModal } = await import("./modal.ts");
+const { useSeenStore } = await import("./seen.ts");
 const { resolveWorkItemRef } = await import("./refs.ts");
 const { useLaunchSeed, useLaunchTarget, useReposStore } = await import("../repos/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
@@ -153,6 +154,8 @@ beforeEach(() => {
   workItemDetail.mockReset();
   workItemDetail.mockResolvedValue({ error: { code: "workspace_stopped" } });
   useWorkItemStore.getState().reset();
+  localStorage.clear();
+  useSeenStore.setState({ map: {} });
   useWorkItemModal.getState().close();
   useLaunchSeed.getState().clear();
   useLaunchTarget.getState().clear();
@@ -169,6 +172,30 @@ afterEach(() => {
 });
 
 describe("WorkItemsSection", () => {
+  // #2779: the first load seeds the baseline (nothing marked); a later move past it marks the row,
+  // says "comments" only when the count grew, and opening the detail clears it.
+  it("marks a row that moved since it was last seen, and clears it on open", async () => {
+    const payload = (over: Record<string, unknown>) => ({
+      items: [item({ commentCount: 2, ...over })], queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true,
+    });
+    workItemList.mockResolvedValue(payload({}));
+    await render();
+    expect(host.querySelectorAll(".wi-unread").length).toBe(0);
+    expect(host.querySelector(".wi-comments")?.textContent).toBe("2");
+    await act(async () => {
+      useWorkItemStore.getState().applyPush(payload({ updatedAt: "2026-08-27T00:00:00Z" }));
+    });
+    expect(host.querySelector(".wi-unread")?.getAttribute("title")).toBe(t("wi.unread_updated"));
+    expect(host.querySelector(".wi-unread-total")?.textContent).toBe(t("wi.unread_total", { n: 1 }));
+    await act(async () => {
+      useWorkItemStore.getState().applyPush(payload({ updatedAt: "2026-08-27T00:00:00Z", commentCount: 3 }));
+    });
+    expect(host.querySelector(".wi-unread")?.getAttribute("title")).toBe(t("wi.unread_comments"));
+    await openRow();
+    expect(host.querySelectorAll(".wi-unread").length).toBe(0);
+    expect(host.querySelector(".wi-unread-total")).toBeNull();
+  });
+
   it("shows cached rows while stopped, with the last-fetched stamp and the stopped note", async () => {
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: false });
     await render();
