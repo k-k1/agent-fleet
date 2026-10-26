@@ -294,7 +294,7 @@ func TestParseBitbucketPullRequestsComments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rows[0].CommentCount != 5 {
+	if rows[0].CommentCount == nil || *rows[0].CommentCount != 5 {
 		t.Errorf("comments = %d, want 5", rows[0].CommentCount)
 	}
 }

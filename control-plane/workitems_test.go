@@ -799,8 +799,9 @@ func TestWorkItemWireNeverCarriesNullArrays(t *testing.T) {
 	}
 }
 
-// #2779: the list response's comment count survives the cache and reaches the DTO; a row from an
-// Agent that sends none stays 0.
+// #2779: the comment count survives the cache and reaches the DTO, and a row whose Agent sent none
+// (Jira, an older Agent) stays unknown (null) rather than becoming a known 0. A refresh from an
+// older Agent replaces a known count with unknown, never with 0.
 func TestWorkItemsCommentsThroughTheCache(t *testing.T) {
 	env := newWorkItemEnv(t, "running")
 	ctx := context.Background()
@@ -808,19 +809,30 @@ func TestWorkItemsCommentsThroughTheCache(t *testing.T) {
 	env.body = func() string {
 		return `{"items":[
 		  {"queryId":"gh","provider":"github","kind":"issue","key":"acme/web#1","title":"a","state":"open","labels":[],"labelColors":{},"commentCount":7},
-		  {"queryId":"gh","provider":"github","kind":"issue","key":"acme/web#2","title":"b","state":"open","labels":[],"labelColors":{}}],
+		  {"queryId":"gh","provider":"github","kind":"issue","key":"acme/web#2","title":"b","state":"open","labels":[],"labelColors":{}},
+		  {"queryId":"gh","provider":"github","kind":"issue","key":"acme/web#3","title":"c","state":"open","labels":[],"labelColors":{},"commentCount":0}],
 		 "errors":[]}`
 	}
-	env.api.refreshNow(ctx, env.res, true)
-	items, err := env.st.ListWorkItems(ctx, env.mid)
-	if err != nil {
-		t.Fatal(err)
+	read := func() map[string]*int {
+		env.api.refreshNow(ctx, env.res, true)
+		items, err := env.st.ListWorkItems(ctx, env.mid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]*int{}
+		for _, it := range items {
+			got[it.Key] = workItemToDTO(it).CommentCount
+		}
+		return got
 	}
-	got := map[string]int{}
-	for _, it := range items {
-		got[it.Key] = workItemToDTO(it).CommentCount
+	got := read()
+	if got["acme/web#1"] == nil || *got["acme/web#1"] != 7 || got["acme/web#2"] != nil || got["acme/web#3"] == nil || *got["acme/web#3"] != 0 {
+		t.Fatalf("comment counts = %v, want #1=7 #2=nil #3=0", got)
 	}
-	if got["acme/web#1"] != 7 || got["acme/web#2"] != 0 {
-		t.Errorf("comments = %v, want #1=7 #2=0", got)
+	env.body = func() string {
+		return `{"items":[{"queryId":"gh","provider":"github","kind":"issue","key":"acme/web#1","title":"a","state":"open","labels":[],"labelColors":{}}],"errors":[]}`
+	}
+	if got := read(); got["acme/web#1"] != nil {
+		t.Errorf("an older Agent's refresh turned a count into %d, want unknown", *got["acme/web#1"])
 	}
 }

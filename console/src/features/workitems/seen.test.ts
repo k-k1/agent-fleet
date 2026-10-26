@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { markSeenIn, parseSeen, SEEN_MAX, seedSeen, unreadOf, type SeenMap } from "./seen.ts";
 import type { WorkItem } from "./read.ts";
 
-const item = (key: string, updatedAt: string, comments = 0): WorkItem =>
+const item = (key: string, updatedAt: string, comments: number | null = 0): WorkItem =>
   ({ provider: "github", key, updatedAt, commentCount: comments }) as unknown as WorkItem;
 
 describe("work item unread baseline (#2779)", () => {
@@ -41,6 +41,21 @@ describe("work item unread baseline (#2779)", () => {
     m = markSeenIn(m, keep);
     m = markSeenIn(m, item("a/b#new", "2026-10-01T00:00:00Z"));
     expect(m["github:a/b#20"]).toBeDefined();
+  });
+
+  it("does not read unknown -> known as new comments, and fills the count in quietly", () => {
+    // Baseline taken from an older Agent's row (no count).
+    const m = seedSeen({}, [item("a/b#1", "2026-10-01T00:00:00Z", null)]);
+    expect(m["github:a/b#1"].c).toBeNull();
+    // Upgraded Agent: count 7 appears with a label-edit updatedAt bump.
+    expect(unreadOf(m, item("a/b#1", "2026-10-03T00:00:00Z", 7))).toBe("updated");
+    // Without newer activity the count is adopted as the baseline...
+    const m2 = seedSeen(m, [item("a/b#1", "2026-10-01T00:00:00Z", 7)]);
+    expect(m2["github:a/b#1"].c).toBe(7);
+    // ...so real growth after that is recognised, and a known 0 stays a number.
+    expect(unreadOf(m2, item("a/b#1", "2026-10-04T00:00:00Z", 8))).toBe("comments");
+    expect(seedSeen({}, [item("a/b#2", "2026-10-01T00:00:00Z", 0)])["github:a/b#2"].c).toBe(0);
+    expect(parseSeen('{"github:x#1":{"u":"2026-10-01T00:00:00Z","c":null}}')["github:x#1"].c).toBeNull();
   });
 
   it("survives corrupt storage", () => {

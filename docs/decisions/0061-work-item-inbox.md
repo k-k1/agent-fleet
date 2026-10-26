@@ -581,6 +581,7 @@ comment count on the row. No decision above changes.
   and state too).
 - The count comes from the list response, so there is no request per row: GitHub search's `comments` and
   Bitbucket's `comment_count` (added to the `fields` projection), carried as `commentCount` and cached in
-  `work_item_cache.comments`. Jira's search does not return it, so Jira rows get the updated marker but no
-  count. The wire key is `commentCount` because the existing guard that no row carries comment text
+  `work_item_cache.comments` (-1 = unknown, never a stored 0). Jira's search does not return it, so Jira rows get the updated marker but no
+  count. Unknown is kept distinct from a known 0 end to end (null on the wire), and growth is read only when
+  both the remembered and the current count are known. The wire key is `commentCount` because the existing guard that no row carries comment text
   matches the substring `"comments"`.

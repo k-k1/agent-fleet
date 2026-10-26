@@ -15,7 +15,8 @@ export const SEEN_MAX = 500;
 
 export interface SeenBaseline {
   u: string;
-  c: number;
+  /** null = the count was unknown when last seen (Jira, an older Agent); never a stand-in 0. */
+  c: number | null;
 }
 /** Insertion order is the age order: a touched entry is re-inserted last. Keys are
  * "provider:key", never integer-like, so the engine preserves that order. */
@@ -24,7 +25,7 @@ export type SeenMap = Record<string, SeenBaseline>;
 export type Unread = "" | "updated" | "comments";
 
 export const seenId = (i: Pick<WorkItem, "provider" | "key">) => `${i.provider}:${i.key}`;
-const commentsOf = (i: WorkItem) => (typeof i.commentCount === "number" && i.commentCount > 0 ? i.commentCount : 0);
+const commentsOf = (i: WorkItem): number | null => (typeof i.commentCount === "number" ? i.commentCount : null);
 
 /** Reads the stored map; anything that is not the expected shape (corrupt JSON, a stale format,
  * hand-edited values) is dropped — whole when the container is wrong, entry by entry otherwise. */
@@ -40,7 +41,7 @@ export function parseSeen(raw: string | null): SeenMap {
   const out: SeenMap = {};
   for (const [k, e] of Object.entries(v as Record<string, unknown>)) {
     const b = e as Partial<SeenBaseline> | null;
-    if (b && typeof b.u === "string" && typeof b.c === "number" && Number.isFinite(b.c)) out[k] = { u: b.u, c: b.c };
+    if (b && typeof b.u === "string" && (b.c === null || (typeof b.c === "number" && Number.isFinite(b.c)))) out[k] = { u: b.u, c: b.c };
   }
   return out;
 }
@@ -53,13 +54,24 @@ function trim(m: SeenMap): SeenMap {
   return out;
 }
 
-/** Adds a baseline for every item not yet known; known ones are left alone. Returns the same
+/** Adds a baseline for every item not yet known; known ones are left alone, except that an unknown
+ * count is filled in once the item is known to have no newer activity (so the first count an
+ * upgraded Agent sends is not read as growth). Returns the same
  * object when nothing was added, so callers can skip the write. */
 export function seedSeen(m: SeenMap, items: WorkItem[]): SeenMap {
   let next: SeenMap | null = null;
   for (const i of items) {
     const id = seenId(i);
-    if (id in m || (next && id in next)) continue;
+    if (next && id in next) continue;
+    const b = m[id];
+    if (b) {
+      const c = commentsOf(i);
+      if (b.c === null && c !== null && unreadOf(m, i) === "") {
+        next ??= { ...m };
+        next[id] = { u: b.u, c };
+      }
+      continue;
+    }
     next ??= { ...m };
     next[id] = { u: i.updatedAt, c: commentsOf(i) };
   }
@@ -87,7 +99,9 @@ export function unreadOf(m: SeenMap, item: WorkItem): Unread {
   const was = stamp(b.u);
   const moved = a !== null && was !== null ? a > was : false;
   if (!moved) return "";
-  return commentsOf(item) > b.c ? "comments" : "updated";
+  // Growth is evidence only when both counts are known.
+  const c = commentsOf(item);
+  return c !== null && b.c !== null && c > b.c ? "comments" : "updated";
 }
 
 function load(): SeenMap {

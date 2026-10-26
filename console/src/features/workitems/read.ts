@@ -27,9 +27,9 @@ export interface WorkItem {
   /** "owner/name" when the provider has one — seeds the launch target. */
   repo: string;
   updatedAt: string;
-  /** Comment count from the provider's list response (GitHub, Bitbucket); 0 or absent when there
-   * are none, the provider does not say (Jira) or an older CP or Agent sent the row. */
-  commentCount?: number;
+  /** Comment count from the provider's list response (GitHub, Bitbucket). null = unknown: Jira, an
+   * older CP or Agent, a row cached before the count existed. Not the same as a known 0. */
+  commentCount?: number | null;
   /** CI of an open pull request's head commit (#1113). An empty state is "not read or none ran":
    * issues, closed pull requests, Jira and Bitbucket rows, an older CP or Agent. */
   checks: WorkItemChecks;
@@ -141,7 +141,7 @@ function normalizeItem(raw: unknown): WorkItem {
     labelColors: readLabelColors(r.labelColors),
     repo: str(r.repo),
     updatedAt: str(r.updatedAt),
-    commentCount: num(r.commentCount),
+    commentCount: typeof r.commentCount === "number" && r.commentCount >= 0 ? r.commentCount : null,
     checks: readChecks(r.checks),
     mergeable: oneOf(r.mergeable, MERGEABLE),
     // Strictly `true`: anything else (absent, null, "true") reads as "not granted".

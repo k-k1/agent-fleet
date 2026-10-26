@@ -201,7 +201,7 @@ func parseBitbucketPullRequests(body []byte, queryID string) ([]workItemOut, err
 			State     string `json:"state"`
 			Draft     bool   `json:"draft"`
 			UpdatedOn string `json:"updated_on"`
-			Comments  int    `json:"comment_count"`
+			Comments  *int   `json:"comment_count"`
 			Author    struct {
 				DisplayName string `json:"display_name"`
 				Nickname    string `json:"nickname"`
@@ -241,7 +241,7 @@ func parseBitbucketPullRequests(body []byte, queryID string) ([]workItemOut, err
 			// cannot treat as an array and renders as a blank screen (docs/log/80 §80.17.5).
 			Labels: []string{}, LabelColors: map[string]string{},
 			Repo: repo, UpdatedAt: bitbucketTimeToRFC3339(pr.UpdatedOn),
-			CommentCount: max(pr.Comments, 0),
+			CommentCount: knownCount(pr.Comments),
 		})
 	}
 	return out, nil

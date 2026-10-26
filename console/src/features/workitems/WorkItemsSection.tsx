@@ -98,7 +98,7 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, unif
   const ciText = item.checks.state ? `${tr("wi.detail_checks")}: ${checksText(item.checks)}` : "";
   const conflictText = item.mergeable === "conflict" ? tr("wi.detail_merge_conflict") : "";
   const unreadText = unread ? tr(unread === "comments" ? "wi.unread_comments" : "wi.unread_updated") : "";
-  const commentCount = item.commentCount && item.commentCount > 0 ? item.commentCount : 0;
+  const commentCount = item.commentCount ?? 0;
   const label = [tr("wi.open_detail", { key: item.key }), unreadText, ciText, conflictText].filter(Boolean).join(" — ");
   return (
     // The whole row opens the detail modal. The external link and the started badge nested

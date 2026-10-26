@@ -91,9 +91,9 @@ type workItemDTO struct {
 	LabelColors map[string]string `json:"labelColors"`
 	Repo        string            `json:"repo"`
 	UpdatedAt   string            `json:"updatedAt"`
-	// Comments is the comment count from the provider's list response (GitHub, Bitbucket); 0 when
-	// there are none, the provider does not say (Jira) or the Agent predates the field.
-	CommentCount int `json:"commentCount"`
+	// Comments is the comment count from the provider's list response (GitHub, Bitbucket); null when
+	// the provider does not say (Jira) or the Agent predates the field. Never 0 for "unknown".
+	CommentCount *int `json:"commentCount"`
 	// Checks and Mergeable are a pull request's CI and merge-conflict status (#1113). A row the
 	// Agent did not read them for (an issue, a closed PR, Jira, Bitbucket, an older Agent) carries
 	// the zero values: an empty checks state and "".
@@ -143,11 +143,26 @@ type workItemSessionDTO struct {
 	CreatedAt   string `json:"createdAt"`
 }
 
+// store.WorkItem.Comments is -1 when the count is unknown; the wire carries null.
+func commentCountOut(n int) *int {
+	if n < 0 {
+		return nil
+	}
+	return &n
+}
+
+func commentCountIn(p *int) int {
+	if p == nil || *p < 0 {
+		return -1
+	}
+	return *p
+}
+
 func workItemToDTO(w store.WorkItem) workItemDTO {
 	return workItemDTO{ID: w.ID, QueryID: w.QueryID, Provider: w.Provider, Kind: w.Kind,
 		Key: w.Key, Title: w.Title, State: w.State, URL: w.URL, Assignee: w.Assignee,
 		Labels: splitLabels(w.Labels), LabelColors: decodeLabelColors(w.LabelColors),
-		Repo: w.Repo, UpdatedAt: w.UpdatedAt, CommentCount: w.Comments,
+		Repo: w.Repo, UpdatedAt: w.UpdatedAt, CommentCount: commentCountOut(w.Comments),
 		Checks: decodeWorkItemChecks(w.Checks), Mergeable: w.Mergeable, Type: w.ItemType, CanComment: w.CanComment}
 }
 
@@ -444,7 +459,7 @@ type agentWorkItemsResp struct {
 		LabelColors  map[string]string `json:"labelColors"`
 		Repo         string            `json:"repo"`
 		UpdatedAt    string            `json:"updatedAt"`
-		CommentCount int               `json:"commentCount"`
+		CommentCount *int              `json:"commentCount"`
 		Checks       workItemChecksDTO `json:"checks"`
 		Mergeable    string            `json:"mergeable"`
 		Type         string            `json:"type"`
@@ -503,7 +518,7 @@ func fetchWorkItemsFromAgent(ctx context.Context, rt runtime.Runtime, queries []
 			Provider: it.Provider, Kind: it.Kind, Key: it.Key, Title: it.Title,
 			State: it.State, URL: it.URL, Assignee: it.Assignee,
 			Labels: strings.Join(it.Labels, ","), LabelColors: encodeLabelColors(it.LabelColors),
-			Repo: it.Repo, UpdatedAt: it.UpdatedAt, Comments: it.CommentCount,
+			Repo: it.Repo, UpdatedAt: it.UpdatedAt, Comments: commentCountIn(it.CommentCount),
 			Checks: encodeWorkItemChecks(it.Checks), Mergeable: it.Mergeable, ItemType: it.Type, CanComment: it.CanComment,
 		})
 	}

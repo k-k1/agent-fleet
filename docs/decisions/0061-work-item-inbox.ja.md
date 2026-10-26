@@ -521,5 +521,5 @@ bearer トークンに `X-OAuth-Scopes` が付くこと。Bitbucket の課題は
 - 印は「更新あり」、コメント数も増えていれば「新しいコメント」と言う（`updatedAt` はラベルや状態でも動く）。
 - 件数は一覧の応答から取るので行ごとの要求は増えない。GitHub 検索の `comments` と Bitbucket の
   `comment_count`（`fields` に追加）を `commentCount` として運び、`work_item_cache.comments` に保存する。
-  Jira の検索は件数を返さないので、Jira の行は更新の印だけで件数は出ない。ワイヤのキーが `commentCount` なのは、
+  Jira の検索は件数を返さないので、Jira の行は更新の印だけで件数は出ない。不明は既知の 0 と区別して端から端まで保つ（ワイヤでは null、DB では -1）。増加の判定は、記憶した件数と現在の件数が両方わかる場合だけ行う。ワイヤのキーが `commentCount` なのは、
   行にコメント本文を含めない既存の検査が部分文字列 `"comments"` を見ているため。
