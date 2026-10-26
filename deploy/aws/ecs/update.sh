@@ -17,8 +17,8 @@
 #     An update re-pushed to the same tag has zero template diff, so the CP keeps running the
 #     old task. The empty changeset is detected and turned into an ECS force-new-deployment.
 #  3. Workspaces do not update themselves. The adapter rebuilds the task definition on every
-#     Start, so a running workspace stays on the old image until it is stopped and started
-#     again. Who is in that state is listed at the end (in the Console the same fact reaches
+#     Start, so a running workspace picks the release up only when it is stopped and started
+#     again. Who is running now is listed at the end (in the Console the same fact reaches
 #     each user as the "restart required" badge on the WS bar —
 #     control-plane/runtime_ecs_stale.go).
 #  4. A release can need a NEW ECR repository and a new image in it, and CloudFormation will
@@ -747,7 +747,7 @@ if [ "$DRY" != 1 ]; then
 fi
 
 # --- 5) list the running workspaces (pitfall 3) ------------------------------
-# Nothing is stopped here; this only reports who is still running the old image.
+# Nothing is stopped here; this only reports who is running now.
 # Leave list-services' paging to the CLI (--max-items truncates silently and then reads as
 # "everyone was seen"). describe-services takes 10 at a time, so batch them. A failed read
 # leaves the list short, so it is remembered (ws_enum_failed) and said with the subnet check.
@@ -833,16 +833,17 @@ The Console (in each user's browser) shows "a new version is available" within a
 and a reload is all it takes (sessions are not interrupted).
 
 Workspaces are NOT replaced automatically. The adapter rebuilds the task definition on every
-Start, so anything running now keeps the old image until it is stopped and started again. The
-affected users get the "restart required" badge on the WS bar in their Console (they press it
-themselves — stopping kills their sessions).
+Start, so anything running now picks this release up only when it is stopped and started again
+(on a re-run of the same tag that is a forced redeploy, not a new image). Where the image did
+change, the affected users get the "restart required" badge on the WS bar in their Console
+(they press it themselves — stopping kills their sessions).
 
 Note: if nobody gets the badge, 20-platform is out of date. Without ecr:BatchGetImage on
    CpTaskRole the drift check falls to "unknown" and the badge just disappears, with no error.
    Step 1a above deploys it, so this only remains when that step was skipped or handed back.
 EOF
 if [ -n "${running// /}" ]; then
-  echo "Workspaces running now (on the old image until stopped and started again):"
+  echo "Workspaces running now (they pick up this release on their next Start):"
   for n in $running; do echo "  - $n"; done
 else
   echo "No workspaces are running (the next Start picks up the new image)."
@@ -854,11 +855,15 @@ if [ -n "$WS_SUBNETS" ] && [ "$ws_enum_failed" = 1 ]; then
   echo "         workspaces still in a private subnet is incomplete. Do not take it as \"none left\";"
   echo "         re-run (--dry-run is enough) before 00-network gets S3EndpointEnabled=true."
 fi
+if [ -n "$WS_SUBNETS" ] && [ "$ws_enum_failed" = 0 ] && [ -z "${ws_private// /}" ] && [ -z "${ws_unknown// /}" ]; then
+  echo
+  echo "Still in a private subnet, not in WorkspaceSubnets ($WS_SUBNETS): none."
+fi
 if [ -n "${ws_private// /}" ] || [ -n "${ws_unknown// /}" ]; then
   echo
   if [ "$(af_stack_param "$NETWORK_STACK" S3EndpointEnabled)" = false ]; then
-    echo "Still in a private subnet, not in WorkspaceSubnets ($WS_SUBNETS). Stop and start each"
-    echo "before 00-network gets S3EndpointEnabled=true (README \"Upgrading from v0.34.x\"):"
+    echo "WARNING: still in a private subnet, not in WorkspaceSubnets ($WS_SUBNETS). Stop and start each"
+    echo "         before 00-network gets S3EndpointEnabled=true (README \"Upgrading from v0.34.x\"):"
   else
     echo "WARNING: still in a private subnet, not in WorkspaceSubnets ($WS_SUBNETS), while $NETWORK_STACK"
     echo "         has the S3 endpoint on: their own S3 requests are refused (AccessDenied) until each"

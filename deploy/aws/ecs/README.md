@@ -523,8 +523,8 @@ the adapter launches. To move a deployment to a new release:
 4. What happens: the **CP/Console service rolls** to the new image (brief
    blue/green replacement behind the ALB). **Workspaces are not touched** — the
    adapter builds task definitions statelessly from `AF_ECS_WORKSPACE_IMAGE`, so
-   each workspace picks the new image up **on its next Start**; running workspaces
-   keep their current image until stopped. No EFS/RDS change; state carries over.
+   each workspace picks the new image up **on its next Start**; a running workspace
+   keeps its task until it is stopped and started. No EFS/RDS change; state carries over.
 
 Rollback is the same operation with the previous tag. Convention: never re-push a
 different image under an already-released version tag (the repos stay `MUTABLE`
@@ -545,9 +545,15 @@ needs either says so in its release notes, and the block below is the one that d
 deploy --parameter-overrides Key=` did not clear `Key` on a live stack ("No changes"). The cause
 is not known: the CLI does send the empty value. Where a value has to become empty, `update.sh`
 and `standup.sh` do it themselves and read it back; by hand, use
-`./clear-params.sh --profile <p> --region <r> --stack <stack> <Key>...` (a change set on the
+`./clear-params.sh --profile <p> --region <r> --stack <stack> <Key>...`: a change set on the
 stack's current template that leaves the keys out, so their Default applies once it is checked
-to be exactly `""` there, keeps every other parameter, and reads each value back).
+to be exactly `""` there, with every other parameter at its previous value. It is gated on that
+change set: with no flag it builds it, prints the resource changes and which keys go to empty,
+keeps it, prints the command that executes it and stops. Read it; if it is what you want, run
+that command (`--execute <change-set-name> <Key>...`, which refuses a change set that is gone,
+not `AVAILABLE`, or not exactly the clear of those keys, then reads each value back). `--yes`
+builds, prints and executes in one go; `--dry-run` builds, prints and deletes the change set. A
+change set that fails to build (for example "didn't contain changes") is reported and deleted.
 
 ### Upgrading from v0.34.x
 
@@ -582,7 +588,8 @@ at once.
    `wait stack-update-complete --stack-name af-ecs-network`.
 3. **Run `update.sh`** (`VERSION=<v> ./update.sh --profile <p> --region <r>`). It passes the
    network stack's `WorkspaceSubnets` to 30-ingress, so every Start from then on lands in a
-   workspace subnet, and it ends by listing the running workspaces still in a private subnet.
+   workspace subnet, and it ends by listing the running workspaces still in a private subnet
+   (`WARNING:` when there are any, an explicit "none" when the check ran and found none).
 4. **Stop and start every running workspace** (that list, or `pause.sh --status`). A running task
    keeps its ENI. Check each one:
    `aws ecs describe-tasks --cluster <c> --tasks <t> --query "tasks[].attachments[].details[?name=='subnetId'].value"`
@@ -967,7 +974,9 @@ the gateway is gone every proxy-aware client in it times out. So take the proxy 
 
 1. Clear the proxy on 30-ingress, everything else at its previous value:
    `./clear-params.sh --profile <p> --region <r> --stack <ingress stack> EgressProxyAddr
-   EgressTokenSecretArn`
+   EgressTokenSecretArn` builds and prints the change set (expect `Modify` of the CP task
+   definition and the two keys going to empty, nothing else), then run the `--execute` command
+   it prints (or `--yes` to skip the look)
    (not `update.sh`, which would hand the gateway's outputs back while it exists, and not
    `deploy --parameter-overrides EgressProxyAddr= EgressTokenSecretArn=`, which did not clear
    them in the #2763 rehearsal: "Upgrade (runbook)").
