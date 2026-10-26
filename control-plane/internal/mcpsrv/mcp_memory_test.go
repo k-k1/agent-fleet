@@ -305,3 +305,17 @@ func TestMemoryToolsFailClosedWithoutAMembership(t *testing.T) {
 		}
 	}
 }
+
+// Every external memory tool ends with the note steering sessions inside the Workspace to the af
+// server's own tools (#2766).
+func TestMemoryToolsSteerSessionsToTheLocalTools(t *testing.T) {
+	tools := memoryTools()
+	if len(tools) != 6 {
+		t.Fatalf("memory tools: %d", len(tools))
+	}
+	for _, tl := range tools {
+		if !strings.HasSuffix(tl.desc, memoryOutsideNote) || !strings.Contains(tl.desc, "Inside an Agent Fleet session, use the af server's own memory tools instead") {
+			t.Errorf("%s description lacks the note: %s", tl.name, tl.desc)
+		}
+	}
+}
