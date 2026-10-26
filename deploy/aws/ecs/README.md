@@ -1003,7 +1003,8 @@ a handed-in address included, have **not been run on a real account**.
   answers rotate (S3, ECR, STS) failed that way most of the time. The relay is in the CP image and
   starts with the agent, so before the first install a fresh gateway refuses intercepted 443
   (it refuses everything until its first policy anyway). A new CP image restarts it, which
-  cuts the intercepted TLS connections open at that moment.
+  cuts the intercepted TLS connections open at that moment. It holds at most 4,096 connections
+  and closes one 10 s after Squid ended its side.
 
 **Checking the agent against a real Squid (#2687).** On a sandbox with `EgressRoute=gateway`:
 

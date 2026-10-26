@@ -3,7 +3,6 @@ package egressagent
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -11,7 +10,6 @@ import (
 	"net/netip"
 	"net/textproto"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -44,7 +42,21 @@ type Relay struct {
 	OrigDst func(*net.TCPConn) (netip.AddrPort, error)
 	// Logf reports a connection the relay dropped; nil is log.Printf.
 	Logf func(format string, args ...any)
+	// MaxConns caps open connections; one past it is closed at once. 0 is defaultMaxConns.
+	MaxConns int
+	// CloseGrace is how long the client may keep its side open after Squid's side ended;
+	// 0 is defaultCloseGrace.
+	CloseGrace time.Duration
 }
+
+// defaultMaxConns stays under the file limit systemd gives the relay (two descriptors per
+// connection), so overload refuses new connections instead of failing accept for all.
+const defaultMaxConns = 4096
+
+// defaultCloseGrace: Squid closes a tunnel as a whole, so once its side ended the client
+// has nowhere left to send. Without a bound, a client that never closes holds the
+// connection and its goroutines forever.
+const defaultCloseGrace = 10 * time.Second
 
 // upstreamTimeout bounds the dial to Squid and Squid's answer to the CONNECT. The TLS
 // handshake after it is Squid's to time out.
@@ -58,6 +70,10 @@ func (r Relay) Run(ctx context.Context) error {
 	if r.Logf == nil {
 		r.Logf = log.Printf
 	}
+	if r.MaxConns <= 0 {
+		r.MaxConns = defaultMaxConns
+	}
+	sem := make(chan struct{}, r.MaxConns)
 	ln, err := net.Listen("tcp4", r.Listen)
 	if err != nil {
 		return err
@@ -76,7 +92,16 @@ func (r Relay) Run(ctx context.Context) error {
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
-		go r.serve(c.(*net.TCPConn))
+		select {
+		case sem <- struct{}{}:
+			go func() {
+				defer func() { <-sem }()
+				r.serve(c.(*net.TCPConn))
+			}()
+		default:
+			r.Logf("egress-relay: %s: %d connections open, refused", c.RemoteAddr(), r.MaxConns)
+			c.Close()
+		}
 	}
 }
 
@@ -108,7 +133,11 @@ func (r Relay) serve(c *net.TCPConn) {
 		r.Logf("egress-relay: %s -> %s: %v", src, dst, err)
 		return
 	}
-	pipe(c, u.(*net.TCPConn), br)
+	grace := r.CloseGrace
+	if grace <= 0 {
+		grace = defaultCloseGrace
+	}
+	pipe(c, u.(*net.TCPConn), br, grace)
 }
 
 // connect sends the PROXY header and the CONNECT, and returns the reader positioned after
@@ -138,22 +167,26 @@ func connect(u net.Conn, src, dst netip.AddrPort) (*bufio.Reader, error) {
 	return br, u.SetDeadline(time.Time{})
 }
 
-// pipe copies both ways, passing each half-close on, until both directions ended. An error
-// on either side closes both, so the other copy does not wait forever.
-func pipe(c, u *net.TCPConn, fromU io.Reader) {
-	var wg sync.WaitGroup
-	var once sync.Once
-	abort := func() { once.Do(func() { c.Close(); u.Close() }) }
-	cp := func(dst *net.TCPConn, src io.Reader) {
-		defer wg.Done()
-		if _, err := io.Copy(dst, src); err != nil && !errors.Is(err, net.ErrClosed) {
-			abort()
+// pipe copies both ways. The client's half-close is passed on and Squid's answer still
+// flows back for as long as Squid keeps its side open (Squid's own timeouts bound that).
+// Once Squid's side ended, the client gets grace to finish; an error either way closes both.
+func pipe(c, u *net.TCPConn, fromU io.Reader, grace time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if _, err := io.Copy(u, c); err != nil {
+			c.Close()
+			u.Close()
 			return
 		}
-		dst.CloseWrite()
+		u.CloseWrite()
+	}()
+	if _, err := io.Copy(c, fromU); err != nil {
+		c.Close()
+		u.Close()
+	} else {
+		c.CloseWrite()
+		c.SetReadDeadline(time.Now().Add(grace))
 	}
-	wg.Add(2)
-	go cp(u, c)
-	go cp(c, fromU)
-	wg.Wait()
+	<-done
 }

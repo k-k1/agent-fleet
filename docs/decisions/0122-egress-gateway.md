@@ -741,6 +741,14 @@ forgery detected ... (local IP does not match any domain IP)".
   the SNI; `%>rd` becomes the original address, and the CP attributes by the SNI first. Port 80
   is unchanged: a failed check on plain HTTP is only logged, and the request goes to the original
   destination.
+- **This replaces decision 2 for intercepted 443, and only there.** Decision 2 said the gateway
+  is off-the-shelf software and not our own proxy. On this path our own code now carries every
+  intercepted TLS connection: accepting it, the PROXY header and CONNECT, copying the bytes, and
+  how long a connection may live (a close grace once Squid's side ended, a cap on open
+  connections). The allow decision, the SNI, the guard denies and the log stay with Squid; the
+  relay decides nothing, so a bug in it can break or cut connections but cannot admit a name
+  Squid refuses. Port 80 and the explicit proxy stay pure Squid. It is ours to maintain, and an
+  outage of the relay is an outage of intercepted HTTPS.
 - **Enforcement does not get weaker.** A refused SNI is terminated whatever address it is sent to
   (the same `af_allowed_sni` rule). An allowed SNI can reach any public address on 443; that was
   already true of the explicit proxy (a CONNECT to an address), and it stays bounded by port 443

@@ -2,11 +2,14 @@ package egressagent
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"io"
 	"net"
 	"net/netip"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -58,8 +61,8 @@ func newFakeSquid(t *testing.T, reply string) *fakeSquid {
 }
 
 // dialRelay connects a client to Relay.serve with OrigDst returning dst (or err), and
-// returns the client side and the client's own address.
-func dialRelay(t *testing.T, upstream string, dst netip.AddrPort, dstErr error) (net.Conn, string) {
+// returns the client side, the client's own address, and a channel closed when serve returned.
+func dialRelay(t *testing.T, upstream string, dst netip.AddrPort, dstErr error) (net.Conn, string, chan struct{}) {
 	t.Helper()
 	ln, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -79,17 +82,20 @@ func dialRelay(t *testing.T, upstream string, dst netip.AddrPort, dstErr error) 
 		Upstream: upstream,
 		OrigDst:  func(*net.TCPConn) (netip.AddrPort, error) { return dst, dstErr },
 		Logf:     t.Logf,
+		// Short, so a test that relies on it fails fast; longer than any wait below.
+		CloseGrace: 300 * time.Millisecond,
 	}
-	go r.serve(s.(*net.TCPConn))
+	done := make(chan struct{})
+	go func() { r.serve(s.(*net.TCPConn)); close(done) }()
 	c.SetDeadline(time.Now().Add(5 * time.Second))
-	return c, c.LocalAddr().String()
+	return c, c.LocalAddr().String(), done
 }
 
 func TestRelay(t *testing.T) {
 	dst := netip.MustParseAddrPort("203.0.113.7:443")
 	t.Run("allowed", func(t *testing.T) {
 		sq := newFakeSquid(t, "HTTP/1.1 200 Connection established\r\n\r\n")
-		c, local := dialRelay(t, sq.ln.Addr().String(), dst, nil)
+		c, local, _ := dialRelay(t, sq.ln.Addr().String(), dst, nil)
 		io.WriteString(c, "client-hello")
 		c.(*net.TCPConn).CloseWrite()
 		got, _ := io.ReadAll(c)
@@ -107,7 +113,7 @@ func TestRelay(t *testing.T) {
 	})
 	t.Run("refused", func(t *testing.T) {
 		sq := newFakeSquid(t, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
-		c, _ := dialRelay(t, sq.ln.Addr().String(), dst, nil)
+		c, _, _ := dialRelay(t, sq.ln.Addr().String(), dst, nil)
 		io.WriteString(c, "client-hello")
 		got, _ := io.ReadAll(c)
 		<-sq.head
@@ -154,7 +160,7 @@ func TestRelay(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			sq := newFakeSquid(t, "HTTP/1.1 200 Connection established\r\n\r\n")
-			c, _ := dialRelay(t, sq.ln.Addr().String(), tc.dst, tc.err)
+			c, _, _ := dialRelay(t, sq.ln.Addr().String(), tc.dst, tc.err)
 			got, _ := io.ReadAll(c)
 			if len(got) != 0 {
 				t.Errorf("client got %q", got)
@@ -173,10 +179,112 @@ func portOf(addr string) string {
 	return p
 }
 
-func TestSockaddrIn4(t *testing.T) {
-	// AF_INET (2, host order), port 443 (network order), 203.0.113.7, zero padding.
-	b := [16]byte{2, 0, 0x01, 0xbb, 203, 0, 113, 7}
-	if got := sockaddrIn4(b); got != netip.MustParseAddrPort("203.0.113.7:443") {
-		t.Errorf("sockaddrIn4 = %s", got)
+// rawSquid answers the CONNECT with 200 and then runs fn on the tunnel.
+func rawSquid(t *testing.T, fn func(c net.Conn, br *bufio.Reader)) string {
+	t.Helper()
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		br := bufio.NewReader(c)
+		for {
+			line, err := br.ReadString('\n')
+			if err != nil || line == "\r\n" {
+				break
+			}
+		}
+		io.WriteString(c, "HTTP/1.1 200 Connection established\r\n\r\n")
+		fn(c, br)
+	}()
+	return ln.Addr().String()
+}
+
+// After the client's half-close, Squid's answer still comes back, however long after the
+// close grace it takes: the grace starts only when Squid's side ended.
+func TestRelayAnswerAfterClientHalfClose(t *testing.T) {
+	up := rawSquid(t, func(c net.Conn, br *bufio.Reader) {
+		b, _ := io.ReadAll(br)
+		time.Sleep(time.Second)
+		io.WriteString(c, "late:"+string(b))
+	})
+	c, _, done := dialRelay(t, up, netip.MustParseAddrPort("203.0.113.7:443"), nil)
+	io.WriteString(c, "req")
+	c.(*net.TCPConn).CloseWrite()
+	if got, _ := io.ReadAll(c); string(got) != "late:req" {
+		t.Errorf("client got %q", got)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Error("serve did not return after both sides ended")
+	}
+}
+
+// Squid closed the tunnel and the client neither sends nor closes: the relay must still
+// let go of the connection, within the close grace.
+func TestRelayReleasesSilentClientAfterSquidClosed(t *testing.T) {
+	up := rawSquid(t, func(net.Conn, *bufio.Reader) {})
+	c, _, done := dialRelay(t, up, netip.MustParseAddrPort("203.0.113.7:443"), nil)
+	if got, err := io.ReadAll(c); err != nil || len(got) != 0 {
+		t.Fatalf("client got %q, %v; want a clean EOF", got, err)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("serve still holds a client that never closes after Squid closed")
+	}
+}
+
+// One connection past MaxConns is closed at once, without reaching Squid.
+func TestRelayMaxConns(t *testing.T) {
+	hold := make(chan struct{})
+	t.Cleanup(func() { close(hold) })
+	up := rawSquid(t, func(net.Conn, *bufio.Reader) { <-hold })
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	var logged []string
+	var mu sync.Mutex
+	r := Relay{Listen: addr, Upstream: up, MaxConns: 1,
+		OrigDst: func(*net.TCPConn) (netip.AddrPort, error) { return netip.MustParseAddrPort("203.0.113.7:443"), nil },
+		Logf:    func(f string, a ...any) { mu.Lock(); logged = append(logged, f); mu.Unlock() }}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go r.Run(ctx)
+	var first net.Conn
+	for i := 0; i < 100; i++ {
+		if first, err = net.Dial("tcp4", addr); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if first == nil {
+		t.Fatal("relay did not start")
+	}
+	defer first.Close()
+	time.Sleep(100 * time.Millisecond) // the first one now holds the only slot
+	second, err := net.Dial("tcp4", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	second.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := second.Read(make([]byte, 1)); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("connection past MaxConns was not closed: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(logged) != 1 || !strings.Contains(logged[0], "refused") {
+		t.Errorf("logged %q", logged)
 	}
 }
