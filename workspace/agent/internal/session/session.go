@@ -214,15 +214,19 @@ type Session struct {
 	// a parent wrote — the same reason Origin / OriginSession are here. Display-only for now;
 	// the refusal itself is enforced at the Agent's rename endpoint, never on the wire.
 	TitleSetBy string `json:"titleSetBy,omitempty"`
-	Display    string `json:"display"`   // human-readable name (title → claude label → repo@time); never the slug alone
-	Color      string `json:"color"`     // terminal background hue (hex); SSM carries its host color
-	Label      string `json:"label"`     // claude --name display name (claude only)
-	Started    string `json:"started"`   // "01/02 15:04" local time, for the list
-	CreatedAt  string `json:"createdAt"` // RFC3339
-	RemoteUrl  string `json:"remoteUrl"` // claude.ai Remote Control URL, when RC is bridged
-	State      string `json:"state"`     // claude live state: working | idle | question | ""
-	Alive      bool   `json:"alive"`     // true = live tmux session; false = stopped
-	Resumable  bool   `json:"resumable"` // false = stopped agent session whose working dir is gone (shell/ssm stay true)
+	// PlanReviewers mirrors Meta.PlanReviewers: which session reviewed each plan this one
+	// wrote. It rides the list so every device that reads the list offers "Review again";
+	// the Control Plane's sessionWire has to carry it too or it vanishes there.
+	PlanReviewers []PlanReviewer `json:"planReviewers,omitempty"`
+	Display       string         `json:"display"`   // human-readable name (title → claude label → repo@time); never the slug alone
+	Color         string         `json:"color"`     // terminal background hue (hex); SSM carries its host color
+	Label         string         `json:"label"`     // claude --name display name (claude only)
+	Started       string         `json:"started"`   // "01/02 15:04" local time, for the list
+	CreatedAt     string         `json:"createdAt"` // RFC3339
+	RemoteUrl     string         `json:"remoteUrl"` // claude.ai Remote Control URL, when RC is bridged
+	State         string         `json:"state"`     // claude live state: working | idle | question | ""
+	Alive         bool           `json:"alive"`     // true = live tmux session; false = stopped
+	Resumable     bool           `json:"resumable"` // false = stopped agent session whose working dir is gone (shell/ssm stay true)
 	// BackgroundBusy: state is idle (turn done) but work an earlier turn started is still
 	// running — claude: a run_in_background task under the pane; muse: a tool call still in
 	// progress; managed codex: a background terminal. Lets the Console mark a session that is
@@ -476,6 +480,15 @@ func ExactTarget(tn string) string { return "=" + tn }
 // working dir is usually gone, so it is listed as not resumable; shell and ssm sessions
 // stay resumable (shell falls back to home, ssm starts there). The dir is denylisted in the file
 // browser.
+// MaxPlanReviewers bounds Meta.PlanReviewers; the oldest link is dropped first.
+const MaxPlanReviewers = 16
+
+// PlanReviewer links one plan file of a planner session to the session that reviewed it.
+type PlanReviewer struct {
+	Path     string `json:"path"`
+	Reviewer string `json:"reviewer"`
+}
+
 type Meta struct {
 	Name string `json:"name"`
 	Dir  string `json:"dir"`
@@ -531,9 +544,15 @@ type Meta struct {
 	// Clearing the title resets this to "", for the same reason it re-opens auto-suggestion:
 	// the session is back in the state a fresh one is in, and nothing is being overwritten.
 	TitleSetBy string `json:"titleSetBy,omitempty"`
-	Color      string `json:"color"` // terminal background hue (hex); set at create (SSM host color)
-	Label      string `json:"label"` // claude --name (display); derived from Title at create/recreate
-	Repo       string `json:"repo"`  // working dir basename
+	// PlanReviewers remembers which session reviewed each plan FILE this session wrote, newest
+	// last, at most MaxPlanReviewers. It lives here (not in the browser) so the "Review again
+	// in <reviewer>" shortcut follows the user to another device. Only the reviewer's NAME is
+	// stored; the Console labels it from the live list, and a name that is no longer in the
+	// list is never offered.
+	PlanReviewers []PlanReviewer `json:"planReviewers,omitempty"`
+	Color         string         `json:"color"` // terminal background hue (hex); set at create (SSM host color)
+	Label         string         `json:"label"` // claude --name (display); derived from Title at create/recreate
+	Repo          string         `json:"repo"`  // working dir basename
 	// Branch is the git branch the working copy (Dir) was on when this session was
 	// created/recreated. Compared against Dir's current branch on each list to flag
 	// drift — a `git checkout` that slipped past the checkout guard (agent/manual

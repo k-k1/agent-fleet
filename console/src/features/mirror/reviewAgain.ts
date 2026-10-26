@@ -1,19 +1,23 @@
 // "Review again in <reviewer>": remember which session reviewed a plan, and send the revised
 // plan back to it as a peer message instead of launching a cold reviewer.
 //
-// Where the memory lives: this Console's localStorage, keyed by planner session + plan FILE
-// path. The launch dialog is a Console flow and the reviewer's name is only known to it
-// (LaunchResult.name), so no server record exists to read it back from. The cost is that
-// another browser does not see the link and falls back to the launch dialog — a missed
-// shortcut, never a wrong send. The path is half the key because one planner session can hold
-// two plans (claude names the file per plan), and a revision rewrites the SAME file, which is
-// what makes the second round find the first round's reviewer.
+// Where the memory lives: on the planner session's record at the Agent (Session.planReviewers,
+// written by POST /api/sessions/{name}/plan-reviewer and read back with the session list), keyed
+// by plan FILE path, so every device of the user offers the shortcut. This browser's
+// localStorage stays as a cache and fallback: an Agent without the route (older build) never
+// returns the field, and a write that failed here is still remembered for this browser. The
+// precedence is: a write this tab has not yet seen come back in the list, then the Agent's
+// record, then localStorage. The path is half the key because one planner session can hold two
+// plans (claude names the file per plan), and a revision rewrites the SAME file, which is what
+// makes the second round find the first round's reviewer.
 //
-// Only the NAME is stored. The label shown on the button is read from the live session list
-// each render, so a renamed reviewer shows its new title and a deleted one is not offered
-// (names are immutable slugs, never reused).
+// Only the NAME is stored, on both sides, and bounded (MAX_ENTRIES here, MaxPlanReviewers at the
+// Agent). The label shown on the button is read from the live session list each render, so a
+// renamed reviewer shows its new title and a deleted one is not offered (names are immutable
+// slugs, never reused). Any miss, from either store, falls back to the launch dialog: a missed
+// shortcut, never a wrong send.
 import { useSyncExternalStore } from "react";
-import { sessionAlive, sessionPeerSend, sessionReady } from "../../core/api/client.ts";
+import { sessionAlive, sessionPeerSend, sessionPlanReviewerSet, sessionReady } from "../../core/api/client.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import type { Session } from "../../types/session.ts";
 import { planFingerprint } from "./planComments.ts";
@@ -39,6 +43,14 @@ function load(): Store {
   }
 }
 
+/** Writes of this tab the session list has not confirmed yet ("" = unlinked). Without it the
+ *  Agent's older record would win for the seconds until the next list poll, or for good when the
+ *  write failed. */
+const pending = new Map<string, string>();
+
+const serverReviewer = (sessions: Session[], planner: string, planPath: string): string =>
+  sessions.find((s) => s.name === planner)?.planReviewers?.find((e) => e.path === planPath)?.reviewer || "";
+
 let store: Store = load();
 const listeners = new Set<() => void>();
 
@@ -47,7 +59,11 @@ const listeners = new Set<() => void>();
 if (typeof window !== "undefined") {
   window.addEventListener("storage", (e) => {
     if (e.key !== null && e.key !== LS_KEY) return;
+    const before = store;
     store = load();
+    // Another tab chose a different reviewer for a plan: that is newer than this tab's
+    // unconfirmed write.
+    for (const k of [...pending.keys()]) if (before[k] !== store[k]) pending.delete(k);
     listeners.forEach((l) => l());
   });
 }
@@ -62,6 +78,21 @@ function commit(next: Store) {
   listeners.forEach((l) => l());
 }
 
+/** Tell the Agent, then drop the pending marker once a fresh list carries the answer. A failed
+ *  write keeps the marker, so this tab keeps its own newer choice over the Agent's older one. */
+function syncToAgent(planner: string, planPath: string, reviewer: string) {
+  const k = reviewerKey(planner, planPath);
+  pending.set(k, reviewer);
+  void sessionPlanReviewerSet(planner, planPath, reviewer)
+    .then(async (ok) => {
+      if (!ok || pending.get(k) !== reviewer) return;
+      await useSessionsStore.getState().refresh();
+      if (pending.get(k) === reviewer) pending.delete(k);
+    })
+    .catch(() => {})
+    .finally(() => listeners.forEach((l) => l()));
+}
+
 /** Record that `reviewer` reviewed the plan at `planPath` of `planner`. A later launch for the
  *  same plan replaces it: the newest reviewer is the one holding the latest round's context. */
 export function rememberReviewer(planner: string, planPath: string, reviewer: string) {
@@ -73,24 +104,38 @@ export function rememberReviewer(planner: string, planPath: string, reviewer: st
   const keys = Object.keys(next);
   for (const old of keys.slice(0, Math.max(0, keys.length - MAX_ENTRIES))) delete next[old];
   commit(next);
+  syncToAgent(planner, planPath, reviewer);
 }
 
 export function forgetReviewer(planner: string, planPath: string) {
   const k = reviewerKey(planner, planPath);
   const next = load();
-  if (!(k in next)) return;
-  delete next[k];
-  commit(next);
+  if (k in next) {
+    delete next[k];
+    commit(next);
+  }
+  // Even when this browser held nothing: the link may live only at the Agent.
+  syncToAgent(planner, planPath, "");
 }
 
 /** Does `planner` have any remembered reviewer? Gates the plan-file lookup behind the card. */
-export const hasRememberedReviewer = (planner: string): boolean =>
-  Object.keys(store).some((k) => k.startsWith(planner + "\u0000"));
+export const hasRememberedReviewer = (planner: string, sessions: Session[] = useSessionsStore.getState().sessions): boolean =>
+  Object.keys(store).some((k) => k.startsWith(planner + "\u0000") && pending.get(k) !== "") ||
+  [...pending].some(([k, v]) => v && k.startsWith(planner + "\u0000")) ||
+  !!sessions.find((s) => s.name === planner)?.planReviewers?.length;
 
-export const rememberedReviewer = (planner: string, planPath: string): string => store[reviewerKey(planner, planPath)] || "";
+export const rememberedReviewer = (
+  planner: string,
+  planPath: string,
+  sessions: Session[] = useSessionsStore.getState().sessions,
+): string => {
+  const k = reviewerKey(planner, planPath);
+  return pending.has(k) ? pending.get(k)! : serverReviewer(sessions, planner, planPath) || store[k] || "";
+};
 
 /** Test seam: re-read storage (the module reads it once at import). */
 export function reloadReviewersForTest() {
+  pending.clear();
   store = load();
   listeners.forEach((l) => l());
 }
@@ -107,7 +152,7 @@ export function liveReviewer(
   planner: string,
   planPath: string,
   sessions: Session[],
-  remembered = rememberedReviewer(planner, planPath),
+  remembered = rememberedReviewer(planner, planPath, sessions),
 ): Session | null {
   if (!planPath || !remembered || remembered === planner) return null;
   const s = sessions.find((x) => x.name === remembered);
@@ -117,14 +162,16 @@ export function liveReviewer(
 
 export const reviewerLabel = (s: Session) => s.title || s.label || s.name;
 
-export const useHasRememberedReviewer = (planner: string): boolean =>
-  useSyncExternalStore(subscribe, () => hasRememberedReviewer(planner));
+export const useHasRememberedReviewer = (planner: string): boolean => {
+  const sessions = useSessionsStore((s) => s.sessions);
+  return useSyncExternalStore(subscribe, () => hasRememberedReviewer(planner, sessions));
+};
 
 /** The reviewer for the plan at `planPath` of `planner`, reactive to both the memory and the
  *  session list. */
 export function useReviewer(planner: string, planPath: string): Session | null {
-  const remembered = useSyncExternalStore(subscribe, () => rememberedReviewer(planner, planPath));
   const sessions = useSessionsStore((s) => s.sessions);
+  const remembered = useSyncExternalStore(subscribe, () => rememberedReviewer(planner, planPath, sessions));
   return liveReviewer(planner, planPath, sessions, remembered);
 }
 

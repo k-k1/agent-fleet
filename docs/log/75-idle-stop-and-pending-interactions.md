@@ -669,3 +669,10 @@ Review round (2026-10-16): the follow-up carries a revision id (the Agent drops 
 to the same target for 2 minutes), a press holds a per-card lock, a failed interrupt stops the
 send, a send that fails after the reject offers a retry in the toast, and the reviewer memory
 follows `storage` events and merges onto storage on write.
+Note (2026-10-27): the reviewer link now lives at the Agent (#2496, piece 1). The planner's
+session meta holds `planReviewers` (plan-file path to reviewer NAME, newest last, at most 16),
+written by `POST /api/sessions/{name}/plan-reviewer` and returned with the session list, so
+another device offers "Review again" too. localStorage stays as a cache and the fallback for an
+Agent without the route; a write this tab has not yet seen come back wins over the Agent's older
+record. The label still comes from the live list and an unknown reviewer is never offered. The
+N-round review loop (#2219 piece 2) is still not built.

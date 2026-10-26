@@ -39,6 +39,10 @@ export interface Session {
   // dialog does not send it — the Agent reads a body without it as the user, so the Console
   // only ever writes this side of the pair (docs/log/89 §89.11).
   titleSetBy?: "user" | "parent" | string;
+  // Which session reviewed each plan FILE this planner wrote (the Agent's Meta.PlanReviewers),
+  // newest last. Only the reviewer's NAME is stored; the "Review again" shortcut labels it from
+  // the live list (features/mirror/reviewAgain.ts).
+  planReviewers?: { path: string; reviewer: string }[];
   color?: string; // terminal background hue (hex); SSM sessions carry their host color
   label?: string; // claude --name (with an "[AF] " tag); absent for shell
   repo?: string | null; // working-copy folder the (agent) session runs in
