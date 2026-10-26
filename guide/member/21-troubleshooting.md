@@ -108,7 +108,10 @@ trash). See [05](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup).
 
 If the **Repositories** section of the left pane says **"Couldn't refresh the list — showing the
 last known one"**, nothing is gone: the Console could not read the repository list just now and
-shows the last one it had. While the workspace runs, the list comes back by itself.
+shows the last one it had. When the workspace could not be reached, the Console keeps retrying
+and the list comes back by itself. When the workspace answered with an error instead (with no
+list to show, the section says **"Couldn't load the repository list"**), nothing retries: reload
+the page, or check your access to this workspace.
 
 ### A session won't resume / is shown struck through
 
@@ -263,6 +266,11 @@ That is why the Console shows the **Login expired** chip instead of Ready and re
 outright (without the refusal, a prompt looks delivered and then simply never runs). Fix it from
 ⚙ Settings → Agents → the Claude card's **Re-authenticate**. You don't need to stop the session;
 it continues once you are signed in again.
+
+The launch dialog warns about the expired login too, but still lets you launch (you can run
+`/login` in the pane). A session launched with a first prompt while the login is expired does not
+receive that prompt: a toast with **Re-authenticate** says the first prompt was not sent, once.
+Re-authenticate, then send the task again.
 
 The same card warns ahead of time with **"Expires in N day(s)"** (within three days). The CLI's
 own warning only appears with a day left and disappears after 15 seconds, so this card is the
@@ -493,8 +501,7 @@ Work through ⚙ Settings → MCP servers (used by sessions) in this order
    shows the request flow).
 
 **The connection test passes (or now fails, saying the server rejected the session id it had just
-issued), but the session reports `Session not found`.** The test's messages are in Japanese
-whatever the display language. The server keeps MCP sessions in
+issued), but the session reports `Session not found`.** The server keeps MCP sessions in
 memory (a stateful Streamable HTTP server) and runs as **several instances without session
 affinity**: `initialize` lands on one instance, which issues the session id, and the next
 request lands on another that has never heard of it. Agent Fleet can't fix the server. The
