@@ -46,7 +46,7 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 - **[admin]** Member detail stalled while a home's size was measured ([#2425](https://github.com/k-k1/agent-fleet/issues/2425))
 - **[egress]** Observations were lost when the report to the Control Plane failed ([#2603](https://github.com/k-k1/agent-fleet/issues/2603))
 - **[preview]** The development OIDC IdP refused callbacks on owner-only ports ([#2500](https://github.com/k-k1/agent-fleet/issues/2500))
-- **[kubernetes]** Workspaces could reach the node's instance metadata; the home-nearly-full notice was missing ([#2498](https://github.com/k-k1/agent-fleet/issues/2498))
+- **[kubernetes]** AWS instance-metadata lookups from workspaces are disabled by default; the home-nearly-full notice was missing ([#2498](https://github.com/k-k1/agent-fleet/issues/2498))
 - **[misc]** MCP sign-in, memory suggestions, memory import limit, inbox attachments, skipped toolchain upgrades, labels ([#2586](https://github.com/k-k1/agent-fleet/issues/2586), [#2689](https://github.com/k-k1/agent-fleet/issues/2689), [#2695](https://github.com/k-k1/agent-fleet/issues/2695), [#2690](https://github.com/k-k1/agent-fleet/issues/2690), [#2584](https://github.com/k-k1/agent-fleet/issues/2584), [#2487](https://github.com/k-k1/agent-fleet/issues/2487), [#2489](https://github.com/k-k1/agent-fleet/issues/2489), [#2499](https://github.com/k-k1/agent-fleet/issues/2499), [#2502](https://github.com/k-k1/agent-fleet/issues/2502), [#2484](https://github.com/k-k1/agent-fleet/issues/2484), [#2505](https://github.com/k-k1/agent-fleet/issues/2505))
 
 

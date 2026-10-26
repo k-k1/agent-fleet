@@ -45,7 +45,7 @@
 - **[管理]** ホームの容量を測る間、メンバー詳細が止まっていた ([#2425](https://github.com/k-k1/agent-fleet/issues/2425))
 - **[egress]** Control Plane への報告に失敗すると観測が失われていた ([#2603](https://github.com/k-k1/agent-fleet/issues/2603))
 - **[プレビュー]** 開発用 OIDC IdP がオーナーだけが開いたポートへのコールバックを拒否していた ([#2500](https://github.com/k-k1/agent-fleet/issues/2500))
-- **[kubernetes]** ワークスペースからノードのインスタンスメタデータに届いた。ホームの空き不足の通知が出なかった ([#2498](https://github.com/k-k1/agent-fleet/issues/2498))
+- **[kubernetes]** ワークスペースからの AWS のインスタンスメタデータの探索を既定で無効に。ホームの空き不足の通知が出なかった ([#2498](https://github.com/k-k1/agent-fleet/issues/2498))
 - **[その他]** MCP のサインイン・メモリの提案・メモリのインポートの上限・受信箱の添付・ツールチェーンの更新の見送り・表記 ([#2586](https://github.com/k-k1/agent-fleet/issues/2586), [#2689](https://github.com/k-k1/agent-fleet/issues/2689), [#2695](https://github.com/k-k1/agent-fleet/issues/2695), [#2690](https://github.com/k-k1/agent-fleet/issues/2690), [#2584](https://github.com/k-k1/agent-fleet/issues/2584), [#2487](https://github.com/k-k1/agent-fleet/issues/2487), [#2489](https://github.com/k-k1/agent-fleet/issues/2489), [#2499](https://github.com/k-k1/agent-fleet/issues/2499), [#2502](https://github.com/k-k1/agent-fleet/issues/2502), [#2484](https://github.com/k-k1/agent-fleet/issues/2484), [#2505](https://github.com/k-k1/agent-fleet/issues/2505))
 
 
