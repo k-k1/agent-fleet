@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -336,6 +337,7 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 	if d.network != "" {
 		args = append(args, "--network", d.network)
 	}
+	args = append(args, d.hostArgs()...)
 	// AGENT_TOKEN / AF_SECRET_KEY (the DEK) passed as argv `-e` would be readable in
 	// /proc/<pid>/cmdline, so they go through a 0600 temporary --env-file instead,
 	// removed once docker run has returned.
@@ -464,7 +466,55 @@ func (d *dockerRuntime) envArgs() []string {
 	for _, e := range d.extraEnv {
 		args = append(args, "-e", e)
 	}
+	// Last on the line, so they win over the copies extraEnv already carries.
+	for _, kv := range d.cpProxyBypass() {
+		args = append(args, "-e", kv)
+	}
 	return args
+}
+
+// dockerEnvValues is env as the container sees it: the last entry of a key wins.
+func dockerEnvValues(env []string) map[string]string {
+	vals := map[string]string{}
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k != "" {
+			vals[k] = v
+		}
+	}
+	return vals
+}
+
+// cpProxyBypass is NO_PROXY and no_proxy with the host of AF_CP_INTERNAL_URL added, when the
+// workspace's egress goes through the proxy; nil otherwise, and when the host is already
+// listed. The proxy runs outside the workspace's network and cannot resolve
+// host.docker.internal, which exists only in the container's /etc/hosts, so without this
+// every Agent → CP call would fail once the egress proxy is on.
+func (d *dockerRuntime) cpProxyBypass() []string {
+	vals := dockerEnvValues(d.extraEnv)
+	before := [2]string{vals["NO_PROXY"], vals["no_proxy"]}
+	bypassProxyForCP(vals)
+	if before == [2]string{vals["NO_PROXY"], vals["no_proxy"]} {
+		return nil
+	}
+	return []string{"NO_PROXY=" + vals["NO_PROXY"], "no_proxy=" + vals["no_proxy"]}
+}
+
+// dockerHostGateway is the name a docker workspace reaches the CP's workspace listener by
+// (AF_CP_INTERNAL_URL=http://host.docker.internal:<port>, 09 §9.3).
+const dockerHostGateway = "host.docker.internal"
+
+// hostArgs maps host.docker.internal to the daemon's host-gateway address when
+// AF_CP_INTERNAL_URL names it. On Linux that address is docker0's gateway (or the daemon's
+// host-gateway-ip), which is local to the host and so reachable from every per-user
+// network: the packet is delivered to the host, not forwarded between bridges, so Docker's
+// inter-network isolation does not apply. Any other host is left to DNS: overriding a name
+// the operator chose would send the Agent somewhere they did not ask for.
+func (d *dockerRuntime) hostArgs() []string {
+	u, err := url.Parse(dockerEnvValues(d.extraEnv)["AF_CP_INTERNAL_URL"])
+	if err != nil || !strings.EqualFold(u.Hostname(), dockerHostGateway) {
+		return nil
+	}
+	return []string{"--add-host", dockerHostGateway + ":host-gateway"}
 }
 
 // ensureNetwork creates the per-user network if it does not already exist.

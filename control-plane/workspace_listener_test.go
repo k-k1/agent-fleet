@@ -392,3 +392,26 @@ func TestRepoDTOCloneURLStaysPublicWithInternalURL(t *testing.T) {
 		t.Errorf("clone_url = %q, want the public one", dto.CloneURL)
 	}
 }
+
+// On a docker host a wildcard bind puts the workspace listener on the LAN; the CP says so at
+// start. Kubernetes binds the pod's every interface on purpose and must stay quiet.
+func TestWorkspaceListenerOnEveryInterface(t *testing.T) {
+	for _, tc := range []struct {
+		profile, addr string
+		want          bool
+	}{
+		{"local", ":8098", true},
+		{"", "0.0.0.0:8098", true},
+		{"docker", "[::]:8098", true},
+		{"local", "172.17.0.1:8098", false},
+		{"local", "127.0.0.1:8098", false},
+		{"local", "not-an-address", false},
+		{"kubernetes", ":8098", false},
+		{"ecs", ":8098", false},
+		{"native", ":8098", false},
+	} {
+		if got := workspaceListenerOnEveryInterface(tc.profile, tc.addr); got != tc.want {
+			t.Errorf("workspaceListenerOnEveryInterface(%q, %q) = %v, want %v", tc.profile, tc.addr, got, tc.want)
+		}
+	}
+}

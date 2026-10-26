@@ -112,7 +112,7 @@ in the Console.
 > proxy itself can block (enforce)**. Setting `AF_EGRESS_PROXY_ADDR` on the Control Plane
 > injects `http_proxy` / `https_proxy` / `no_proxy` (and their upper-case forms) into every workspace
 > on every target (off by default), so programs that honour those variables go through the proxy.
-> The CP's internal address (`AF_CP_INTERNAL_URL`) is kept out of the proxy on Kubernetes, ecs and
+> The CP's internal address (`AF_CP_INTERNAL_URL`) is kept out of the proxy on docker, Kubernetes, ecs and
 > ecs-ec2, and the ecs / ecs-ec2 targets also keep the link-local task and instance metadata
 > addresses (`169.254.170.2`, `169.254.169.254`) out of it, because the proxy refuses link-local
 > destinations. What is **not built yet** is forcing

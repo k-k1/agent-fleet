@@ -721,3 +721,15 @@ Pod を止めていた。いまは両方の消去（init コンテナと erase P
   実クラスタでは未検証。
 - `AF_K8S_HOME_SHARED_FS=1` は、StorageClass が 1 つの共有ファイルシステムでホームを支える場合に `home_own` を出さない。
   ブロックストレージの前提は検査していない。残件: #2620。
+
+## 追記 2026-10-26 — docker での Workspace 専用リスナー（#2776）
+
+決定 8 の 2 本目のリスナーを、公開側の入口が Docker のブリッジを拒むホスト向けに、`docker` でも
+任意で使える構成として支える。CP は docker0 のゲートウェイアドレスに bind し、ワイルドカードには
+bind しない（`docker` でワイルドカードを指定すると起動時にログに出す）。Workspace は
+`AF_CP_INTERNAL_URL=http://host.docker.internal:<port>` を使い、URL がその名前を使うとき docker アダプタが
+`--add-host host.docker.internal:host-gateway` を付け、egress プロキシがあれば Kubernetes と同じく
+そのホストを `NO_PROXY` に加える。docker0 のアドレスはホスト自身のものなので、どのユーザー別
+ネットワークからもネットワーク間分離を越えずに届く。ユーザー別ネットワークごとのゲートウェイに bind する
+案は採らなかった。それらのネットワークは Workspace とともに増減し、CP のソケットをそれに追従させる
+ことになる。compose の既定では無効。決定 8 そのものは変えない。実際の Docker 配備での確認はまだ。

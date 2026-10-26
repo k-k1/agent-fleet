@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"time"
 )
@@ -142,4 +143,23 @@ func serveWorkspaceListener(addr string, full *http.ServeMux, identityHeader str
 			log.Fatalf("workspace listener (AF_CP_INTERNAL_LISTEN=%s): %v", addr, err)
 		}
 	}()
+}
+
+// workspaceListenerOnEveryInterface reports a docker deployment whose workspace listener binds
+// every interface. On Kubernetes that is the pod's own address and the Service decides who
+// reaches it; on a docker host it is the LAN and the tailnet too, and nothing but the bearer
+// tokens stands in front of the routes. The supported docker setup binds the docker0 gateway
+// address (09 §9.3).
+func workspaceListenerOnEveryInterface(profile, addr string) bool {
+	switch profile {
+	case "", "local", "docker":
+	default:
+		return false
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return host == "" || (ip != nil && ip.IsUnspecified())
 }

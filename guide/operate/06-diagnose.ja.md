@@ -34,6 +34,7 @@ source_of_truth: "`deploy/` 配下のスクリプト（記述がスクリプト�
 | docker.sock で "permission denied" | `DOCKER_GID` がホストの docker グループ GID と一致しているか（DooD 制約 C）|
 | Workspace は起動するのに home が空 | `DATA_DIR` が CP の内外で同一絶対パスか。リストア時も同じパスか（DooD 制約 B）|
 | 起動した Workspace に到達できない | CP と Caddy が両方 `network_mode: host` か（DooD 制約 A）|
+| ホストからは届く CP の URL に Workspace から届かない（ドキュメント取得・ブランチ規則・MCP レジストリ・CP 経由の git が一斉に失敗し、Workspace から `PUBLIC_BASE_URL` への `curl` が拒否／リセットされる） | 公開 URL を受けるもの（トンネルやリバースプロキシ）が Docker のブリッジからの接続を受けなくなっている（特定のホストインタフェースに bind し直された、など）。Workspace 専用リスナーを設定し（`AF_CP_INTERNAL_LISTEN` を docker0 のアドレスに、`AF_CP_INTERNAL_URL=http://host.docker.internal:<port>`）、各 Workspace を停止して起動し直す（[deploy/compose/README.md](../../deploy/compose/README.md) の "Workspace listener"） |
 | サインインが常に拒否される | 許可リストが空で、**かつまだ誰も招待していない**（fail-closed）。`AF_OAUTH_ALLOWED_DOMAINS` / `_EMAILS` を設定するか、招待する |
 | 特定の人だけ「このテナントには別のサインインが必要です」 | そのテナントの**サインイン方法**の面で、その人が使った IdP の「受け入れる」が外れている。`/login/<slug>` を案内する |
 | 外したはずの人がまだ使える | IdP 側で止めてもセッションは切れない。名簿から外す（管理 → テナント → メンバー → **メンバーを外す**）か許可リストから消す |

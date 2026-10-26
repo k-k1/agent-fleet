@@ -344,6 +344,60 @@ encodes them, but if you customize it, keep them:
   owned by uid 1000 (the workspace `dev` user), and the CP needs the host docker
   group to use the socket. A wrong `DOCKER_GID` = "permission denied" on the socket.
 
+## Workspace listener (optional): when workspaces cannot reach `PUBLIC_BASE_URL`
+
+The Agent in each workspace calls the CP back — the docs pull, branch rules, the tenant
+MCP registry, AWS / Google Cloud profiles, memos, schedules, git over the CP. By default
+it does so at `PUBLIC_BASE_URL`: out through the Docker bridge's NAT and back in through
+whatever serves the public URL. If that front end stops accepting traffic from the
+Docker bridges (seen with a tunnel daemon whose `:443` socket became bound to one host
+interface: containers got an immediate RST while the host and browsers were fine), every
+one of those calls fails at once although the CP is healthy.
+
+The workspace listener gives workspaces a way to the CP that does not leave the host:
+
+```bash
+# the docker0 gateway address (normally 172.17.0.1):
+docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}'
+# .env
+AF_CP_INTERNAL_LISTEN=172.17.0.1:8098
+AF_CP_INTERNAL_URL=http://host.docker.internal:8098
+```
+
+`docker compose up -d` (the CP reads both from `.env`), then Stop and Start each
+workspace — the setting reaches a workspace at its next start.
+
+- **What it serves.** Only the routes the Agent calls, each behind its own per-membership
+  bearer token; the Console, the admin API, sign-in and the egress proxy's routes answer 404.
+  It drops the identity header and every forwarding header. Links a person opens, and
+  `af-curl` / `af-shot`, stay on `PUBLIC_BASE_URL`.
+- **Bind the docker0 address, never `0.0.0.0` or `:8098`.** The docker0 address is local
+  to the host, so every per-user network reaches it (the packet is delivered to the host,
+  not forwarded between bridges), while no LAN or tailnet interface carries it. A wildcard
+  bind would put the listener on the LAN too; the CP logs a `WARNING` at start if you do.
+  (Linux still accepts a packet for that address on any interface, so a LAN machine that
+  deliberately routes the docker0 range through this host could reach it; a firewall that
+  admits the port only from the Docker bridges closes that too.) If docker0 does not exist
+  when the CP starts, the bind fails and the CP exits.
+- **`host.docker.internal`.** When `AF_CP_INTERNAL_URL` names it, the CP starts each
+  workspace with `--add-host host.docker.internal:host-gateway` (Docker Engine 20.10 or
+  later). `host-gateway` is docker0's address unless the daemon sets `host-gateway-ip`; in
+  that case bind that address instead. Any other host in the URL is left to DNS.
+- **Host firewall.** A host whose INPUT policy drops (ufw's default) must admit TCP to
+  that address and port from the Docker networks.
+- **Egress proxy.** With `AF_EGRESS_PROXY_ADDR` set, the host of `AF_CP_INTERNAL_URL` is
+  added to the workspaces' `NO_PROXY`, and it is on the built-in egress allowlist.
+- **Not on by default.** The address depends on the host's Docker configuration and
+  firewall, and a listen address that does not exist stops the CP, so a deployment that
+  works today should not have to change. Unset, there is no second port and nothing
+  changes.
+- **Docker Desktop** maps `host-gateway` to the desktop machine, not to the engine where
+  the CP listens, so this setup does not apply there. With **rootless Docker**, docker0 and
+  the CP's host network are both inside the rootless network namespace; this is expected to
+  work but has not been tried.
+
+Full reference: `docs/build/09-deploy.md` §9.3.
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -352,6 +406,7 @@ encodes them, but if you customize it, keep them:
 | "permission denied" on docker.sock | `DOCKER_GID` matches `getent group docker`? |
 | Workspace starts but home is empty | DooD (B): `DATA_DIR` identical inside/outside; same path on restore |
 | Can't reach a started workspace | DooD (A): CP + Caddy both `network_mode: host` |
+| Workspaces cannot reach `PUBLIC_BASE_URL` while the host can (docs, branch rules, git over the CP all fail at once) | the front end serving the public URL refuses the Docker bridges — set up the [workspace listener](#workspace-listener-optional-when-workspaces-cannot-reach-public_base_url) |
 | Login always denied | allowlist empty **and nobody invited yet** (fail-closed) — set `AF_OAUTH_ALLOWED_DOMAINS`/`_EMAILS`, or invite somebody |
 | "this tenant needs a different sign-in" | the tenant's Login rules → sign-in methods excludes the IdP they used; send them `<PUBLIC_BASE_URL>/login/<slug>` |
 | A removed person still has access | the IdP block doesn't end their session — remove the member (Admin → tenant → member) or rotate `AF_COOKIE_SECRET` |

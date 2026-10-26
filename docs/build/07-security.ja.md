@@ -318,7 +318,10 @@ membership の 2 段（[06 §6.2](06-data.ja.md)）。
 - **Workspace 専用リスナーは転送ヘッダを一切読まない**（`AF_CP_INTERNAL_LISTEN`・
   [09 §9.3](09-deploy.ja.md)）。ホップ数の設定にかかわらず接続そのもののアドレスを送信元とし、
   識別ヘッダと forwarded-for/-host/-proto 系のヘッダをハンドラの前で全部消す——そこへ接続した
-  Workspace は利用者も送信元も名乗れない。配るのはトークンで認証する上記の面だけ。
+  Workspace は利用者も送信元も名乗れない。配るのはトークンで認証する上記の面だけ。`docker` では
+  docker0 のゲートウェイアドレスに bind し、ホスト上のどの Workspace からも届くが LAN のインタフェース
+  には載らない。どの経路もそのメンバーシップ自身のトークンを求めるので、公開 URL で得られる以上のものを
+  Workspace が得ることはない（`docker` で全インタフェースに bind すると起動時に警告を出す）。
 - **締め出しの逃げ道**: デプロイ管理者は対象外。編集者の現在のアドレスを締め出す保存は拒否
   （`would_lock_out`）。プロキシのホップ未申告なのに forwarded-for が届いた場合
   （`proxy_not_configured`）と、チェーンが申告より短い場合（`client_ip_unknown`）も保存を拒否する。
@@ -470,7 +473,7 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
   `https_proxy`・`no_proxy`、と大文字の同名変数）を注入する。`docker`・`native`・Kubernetes は
   配備全体の env をそのまま渡し、`ecs` と `ecs-ec2` はこれらの変数（`AF_EGRESS_PROXY_ADDR` から生成したものだけで、同名の `WS_ENV` の項目は取らない）だけを取る
   （`WS_ENV` は資格情報を含みうるうえ、タスク定義の平文 env は読めてしまうため、意図して渡さない）。
-  `AF_CP_INTERNAL_URL` があれば、そのホストを Kubernetes・ecs・ecs-ec2 で `NO_PROXY` に加え、
+  `AF_CP_INTERNAL_URL` があれば、そのホストを docker・Kubernetes・ecs・ecs-ec2 で `NO_PROXY` に加え、
   ecs / ecs-ec2 は proxy がリンクローカル宛を拒否するため、タスク／インスタンスのメタデータ
   アドレス（`169.254.170.2`・`169.254.169.254`）も加える。起動ごとの同名の変数は、配備全体の値に優先する。
 
