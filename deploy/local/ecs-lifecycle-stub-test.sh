@@ -118,6 +118,52 @@ live() { # live <stack> <value>
     echo "$2"
   fi
 }
+# One Parameter of describe-stacks / describe-change-set as the CLI prints it (--output json):
+# jparam <key> <ParameterValue as JSON> [UsePreviousValue] [ResolvedValue as JSON]. Called once
+# per parameter; the list brackets come from jparam_open / jparam_close in extra_params.
+JP_N=0
+jparam() {
+  [ "$JP_N" = 0 ] && echo "["; [ "$JP_N" -gt 0 ] && echo "    ,"
+  JP_N=$((JP_N + 1))
+  echo "    {"
+  echo "        \"ParameterKey\": \"$1\","
+  [ -n "${3:-}" ] && echo "        \"UsePreviousValue\": $3,"
+  [ -n "${4:-}" ] && echo "        \"ResolvedValue\": $4,"
+  echo "        \"ParameterValue\": $2"
+  echo "    }"
+}
+# Extra parameters, by knob: STUB_PW (NoEcho AdminPassword: prev | mask), STUB_SSM (SSM-typed
+# GatewayAmiId: same | changed | missing), STUB_NONE (live-none | cs-none: the string "None"
+# against empty), STUB_SPECIAL=1 (a value with spaces | ( ) , and an equal resolved value).
+# They are in the stack's key list too, so the change set built by the script names them.
+extra_params() { # extra_params live|cs
+  local side="$1"
+  case "${STUB_PW:-}" in
+    prev) [ "$side" = cs ] && jparam AdminPassword '"****"' true || jparam AdminPassword '"****"' ;;
+    mask) [ "$side" = cs ] && jparam AdminPassword '"****"' false || jparam AdminPassword '"****"' ;;
+  esac
+  if [ -n "${STUB_SSM:-}" ]; then
+    if [ "$side" = live ]; then jparam GatewayAmiId '"/aws/service/ami"' "" '"ami-111"'
+    else case "$STUB_SSM" in
+      same) jparam GatewayAmiId '"/aws/service/ami"' true '"ami-111"' ;;
+      plain-changed) jparam GatewayAmiId '"/aws/service/ami"' false '"ami-222"' ;;
+      changed) jparam GatewayAmiId '"/aws/service/ami"' true '"ami-222"' ;;
+      missing) jparam GatewayAmiId '"/aws/service/ami"' true ;;
+    esac; fi
+  fi
+  if [ "${STUB_SECRET_DIFF:-0}" = 1 ]; then
+    if [ "$side" = cs ]; then jparam BitbucketOauthKey '"REVIEW_NEW_SECRET"' false '"REVIEW_NEW_SECRET"'
+    else jparam BitbucketOauthKey '"REVIEW_OLD_SECRET"' "" '"REVIEW_OLD_SECRET"'; fi
+  fi
+  case "${STUB_NONE:-}" in
+    live-none) [ "$side" = cs ] && jparam Foo '""' false || jparam Foo '"None"' ;;
+    cs-none) [ "$side" = cs ] && jparam Foo '"None"' false || jparam Foo '""' ;;
+  esac
+  if [ "${STUB_SPECIAL:-0}" = 1 ]; then
+    jparam Ec2SlotTypes '"standard|Standard (Intel)|x86_64|m7i.large:8192:2,b"' false '"standard|Standard (Intel)|x86_64|m7i.large:8192:2,b"'
+  fi
+  [ "$JP_N" = 0 ] && echo "[" ; echo "]"
+}
 case "$args" in
   *"sts get-caller-identity"*) echo "123456789012" ;;
   # The Default of the template the stack runs, before the ParameterKey branches below match its query (JSON: null = no Default). STUB_LIVE_DEFAULT unset
@@ -256,8 +302,54 @@ case "$args" in
   *"--stack-name t-platform"*"ParameterKey=='EgressArchiveBucket'"*) live t-platform "${STUB_PLAT_ARCHIVE:-None}" ;;
   *"ParameterKey=='EgressArchiveBucket'"*) live t-ingress "${STUB_ING_ARCHIVE:-None}" ;;
   # The clearing change set: every parameter of the stack, then the change set itself.
-  *"Stacks[0].Parameters[].ParameterKey"*) printf 'ImageTag\tWorkspaceSubnets\tEgressProxyAddr\tEgressTokenSecretArn\tEgressArchiveBucket\tFqdn\n' ;;
-  *"cloudformation describe-change-set"*"af-clear-"*) printf 'Modify\tCpTaskDef\tTrue\n' ;;
+  *"Stacks[0].Parameters[].ParameterKey"*)
+    printf 'ImageTag\tWorkspaceSubnets\tEgressProxyAddr\tEgressTokenSecretArn\tEgressArchiveBucket\tFqdn'
+    [ -n "${STUB_PW:-}" ] && printf '\tAdminPassword'
+    [ -n "${STUB_SSM:-}" ] && printf '\tGatewayAmiId'
+    [ -n "${STUB_NONE:-}" ] && printf '\tFoo'
+    [ "${STUB_SECRET_DIFF:-0}" = 1 ] && printf '\tBitbucketOauthKey'
+    [ "${STUB_SPECIAL:-0}" = 1 ] && printf '\tEc2SlotTypes'
+    echo ;;
+  # The clearing change set's state is read off the log: built by create-change-set, gone after
+  # delete-change-set. STUB_CS_FAIL=1: it ends FAILED ("didn't contain changes"); STUB_CS_STATUS /
+  # STUB_CS_EXEC override Status / ExecutionStatus.
+  *"cloudformation execute-change-set"*)
+    [ "${STUB_EXEC_FAIL:-0}" = 1 ] && { echo "An error occurred (InvalidChangeSetStatus) when calling the ExecuteChangeSet operation" >&2; exit 254; }
+    : ;;
+  *"cloudformation wait change-set-create-complete"*)
+    [ "${STUB_CS_FAIL:-0}" = 1 ] && { echo "Waiter ChangeSetCreateComplete failed: Waiter encountered a terminal failure state" >&2; exit 255; }
+    : ;;
+  *"cloudformation describe-stacks"*"Stacks[0].Parameters --output json"*)
+    jparam ImageTag '"9.9.9"'
+    jparam WorkspaceSubnets "\"${STUB_ING_WS:-}\""
+    jparam EgressProxyAddr "\"${STUB_ING_EGRESS_ADDR:-${STUB_ING_EGRESS:+10.20.0.50:3128}}\""
+    jparam EgressTokenSecretArn "\"${STUB_ING_EGRESS:-}\""
+    jparam EgressArchiveBucket "\"${STUB_ING_ARCHIVE:-}\""
+    jparam Fqdn '"af.example.test"'
+    extra_params live ;;
+  *"cloudformation describe-change-set"*"af-clear-"*)
+    cs="$(sed -n 's/.*--change-set-name \([^ ]*\).*/\1/p' <<<"$args" | head -1)"
+    if ! grep -q "create-change-set .*--change-set-name $cs " "$STUB_LOG" \
+      || grep -qE "delete-change-set .*--change-set-name $cs\$" "$STUB_LOG"; then
+      echo "An error occurred (ValidationError) when calling the DescribeChangeSet operation: ChangeSet [$cs] does not exist" >&2; exit 254
+    fi
+    case "$args" in
+      *StatusReason*) echo "The submitted information didn't contain changes. Submit different information to create a change set." ;;
+      *"[Status,ExecutionStatus]"*) printf '%s\t%s\n' "${STUB_CS_STATUS:-CREATE_COMPLETE}" "${STUB_CS_EXEC:-AVAILABLE}" ;;
+      # Parameters as the change set holds them: the ones it was given with UsePreviousValue
+      # (the cleared keys are left out). STUB_CS_DIFF=<key> sets that key to a new value.
+      *"Parameters --output json"*)
+        csl="$(grep "create-change-set .*--change-set-name $cs " "$STUB_LOG" | head -1)"
+        for k in ImageTag WorkspaceSubnets EgressProxyAddr EgressTokenSecretArn EgressArchiveBucket Fqdn; do
+          case "$csl" in *"\"ParameterKey\":\"$k\""*)
+            if [ "${STUB_CS_DIFF:-}" = "$k" ]; then jparam "$k" '"something-else"' false
+            else jparam "$k" null true; fi ;;
+          esac
+        done
+        extra_params cs ;;
+      # 30-ingress's real logical IDs: the new TaskDef revision is replaced, and Service follows it.
+      *) printf 'Modify\tTaskDef\tTrue\nModify\tService\tFalse\n' ;;
+    esac ;;
   *"Outputs[?OutputKey=='RdsRestopFunction']"*) echo "${STUB_RESTOP:-}" ;;
   *"ParameterKey=='Fqdn'"*) echo "af.example.test" ;;
   *"ParameterKey=='NetworkStackName'"*) echo "t-network" ;;
@@ -1232,12 +1324,147 @@ hasnt "create-change-set"
 # standup.sh against a live ingress stack with stale subnets and a network without them.
 efs_standup p STUB_ING_WS=subnet-stale
 cs_line t-ingress | grep -q 'af-clear-' || fail "standup.sh did not clear a live WorkspaceSubnets"
-# clear-params.sh is the same step for an operator (README, "Back to the NAT gateway").
+# clear-params.sh is the same step for an operator (README, "Back to the NAT gateway"), gated on
+# the change set: the default builds it, shows it and executes nothing.
+cp4() { "$ECS/clear-params.sh" --profile p4 --region ap-northeast-1 --stack t-ingress "$@"; }
 : > "$LOG"
-STUB_ING_EGRESS="$SECRET_ARN" "$ECS/clear-params.sh" --profile p4 --region ap-northeast-1 --stack t-ingress \
-  EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8" 2>&1 \
+STUB_ING_EGRESS="$SECRET_ARN" cp4 EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8" 2>&1 \
   || { cat "$WORK/outc8"; fail "clear-params.sh failed"; }
 [ -n "$(cs_line t-ingress)" ] || fail "clear-params.sh built no change set"
+hasnt "execute-change-set"
+hasnt "delete-change-set"
+hasnt "wait stack-update-complete"
+grep -q "Modify TaskDef" "$WORK/outc8" || { cat "$WORK/outc8"; fail "clear-params.sh did not print the TaskDef change"; }
+grep -q "Modify Service" "$WORK/outc8" || { cat "$WORK/outc8"; fail "clear-params.sh did not print the Service change"; }
+grep -q "parameter EgressProxyAddr: '10.20.0.50:3128' -> (empty)" "$WORK/outc8" \
+  || { cat "$WORK/outc8"; fail "clear-params.sh did not print which key goes to empty"; }
+grep -q "parameter EgressTokenSecretArn: '\*\*\*' -> (empty)" "$WORK/outc8" \
+  || { cat "$WORK/outc8"; fail "clear-params.sh did not print (masked) the second key"; }
+grep -q "4 others unchanged" "$WORK/outc8" || { cat "$WORK/outc8"; fail "clear-params.sh did not say the rest is unchanged"; }
+cs_name="$(sed -n 's/.*--change-set-name \(af-clear-[0-9]*\) .*/\1/p' <<<"$(cs_line t-ingress)" | head -1)"
+grep -q -- "--execute $cs_name EgressProxyAddr EgressTokenSecretArn" "$WORK/outc8" \
+  || { cat "$WORK/outc8"; fail "clear-params.sh did not print the command that executes the change set"; }
+# --execute runs exactly that change set (the log of the build above is kept), then reads back.
+STUB_ING_EGRESS="$SECRET_ARN" cp4 --execute "$cs_name" EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8x" 2>&1 \
+  || { cat "$WORK/outc8x"; fail "clear-params.sh --execute of its own change set failed"; }
+has "execute-change-set --stack-name t-ingress --change-set-name $cs_name"
+order "describe-change-set --stack-name t-ingress --change-set-name $cs_name --query Parameters" "execute-change-set --stack-name t-ingress"
+grep -q "t-ingress: EgressProxyAddr EgressTokenSecretArn now empty" "$WORK/outc8x" || fail "--execute did not read the keys back"
+# --execute refuses a change set that does not exist (nothing to delete), is not ours, or is
+# not exactly the clear; one of ours that did not start is deleted, one that is running is not.
+: > "$LOG"
+if STUB_ING_EGRESS="$SECRET_ARN" cp4 --execute af-clear-1 EgressProxyAddr > "$WORK/outc8y" 2>&1; then
+  fail "clear-params.sh --execute accepted a change set that does not exist"
+fi
+hasnt "execute-change-set"
+hasnt "delete-change-set"
+case "$(cat "$WORK/outc8y")" in *"nothing was executed"*) ;; *) cat "$WORK/outc8y"; fail "--execute (missing) did not say nothing ran" ;; esac
+if STUB_ING_EGRESS="$SECRET_ARN" cp4 --execute "not-ours" EgressProxyAddr > "$WORK/outc8y" 2>&1; then
+  fail "clear-params.sh --execute accepted a change set it did not build"
+fi
+hasnt "execute-change-set"
+hasnt "delete-change-set"
+build_cs() { # a kept change set for both keys; its name in cs_name
+  : > "$LOG"
+  env STUB_ING_EGRESS="$SECRET_ARN" "$ECS/clear-params.sh" --profile p4 --region ap-northeast-1 \
+    --stack t-ingress EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8" 2>&1 || { cat "$WORK/outc8"; fail "clear-params.sh (build) failed"; }
+  cs_name="$(sed -n 's/.*--change-set-name \(af-clear-[0-9]*\) .*/\1/p' <<<"$(cs_line t-ingress)" | head -1)"
+}
+refuse() { # refuse <deleted|kept> <message part> [VAR=val ...] -- <key>...: --execute must refuse, then delete or not
+  local want="$1" msg="$2"; shift 2
+  local envs=()
+  while [ "$1" != -- ]; do envs+=("$1"); shift; done; shift
+  if env STUB_ING_EGRESS="$SECRET_ARN" ${envs[@]+"${envs[@]}"} "$ECS/clear-params.sh" --profile p4 --region ap-northeast-1 \
+    --stack t-ingress --execute "$cs_name" "$@" > "$WORK/outc8y" 2>&1; then
+    fail "clear-params.sh --execute accepted a change set it must refuse ($msg)"
+  fi
+  hasnt "execute-change-set"
+  grep -qF -- "$msg" "$WORK/outc8y" || { cat "$WORK/outc8y"; fail "--execute did not say '$msg'"; }
+  if [ "$want" = deleted ]; then has "delete-change-set --stack-name t-ingress --change-set-name $cs_name"
+  else hasnt "delete-change-set"; fi
+}
+build_cs
+refuse deleted "not CREATE_COMPLETE/AVAILABLE" STUB_CS_STATUS=FAILED -- EgressProxyAddr EgressTokenSecretArn
+build_cs
+refuse kept "not CREATE_COMPLETE/AVAILABLE" STUB_CS_EXEC=EXECUTE_COMPLETE -- EgressProxyAddr EgressTokenSecretArn
+# Built for two keys, executed with one: the change set would also clear the other. Refused, deleted.
+build_cs
+refuse deleted "EgressTokenSecretArn (cleared, but not asked for)" -- EgressProxyAddr
+# A change set that also changes another parameter is not a clear.
+build_cs
+refuse deleted "ImageTag" STUB_CS_DIFF=ImageTag -- EgressProxyAddr EgressTokenSecretArn
+# A change set whose execution cannot start (the API refuses) is deleted too.
+build_cs
+if STUB_ING_EGRESS="$SECRET_ARN" STUB_EXEC_FAIL=1 cp4 --execute "$cs_name" EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8y" 2>&1; then
+  fail "clear-params.sh --execute went on after execute-change-set failed"
+fi
+has "delete-change-set --stack-name t-ingress --change-set-name $cs_name"
+# What the change set shows cannot be taken as proof (#2772 review): a masked NoEcho value is
+# equal to every other mask, so it passes only as UsePreviousValue=true; an SSM-typed value is
+# a key, so what it resolves to must be the same; "None" is a string, not an absent value.
+build_cs
+refuse deleted "AdminPassword (a masked value" STUB_PW=mask -- EgressProxyAddr EgressTokenSecretArn
+build_cs
+STUB_ING_EGRESS="$SECRET_ARN" STUB_PW=prev cp4 --execute "$cs_name" EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8y" 2>&1 \
+  || { cat "$WORK/outc8y"; fail "--execute refused a masked parameter kept with UsePreviousValue=true"; }
+build_cs
+refuse deleted "GatewayAmiId (resolves to" STUB_SSM=changed -- EgressProxyAddr EgressTokenSecretArn
+build_cs
+refuse deleted "GatewayAmiId (" STUB_SSM=plain-changed -- EgressProxyAddr EgressTokenSecretArn
+build_cs
+refuse deleted "GatewayAmiId (resolves to" STUB_SSM=missing -- EgressProxyAddr EgressTokenSecretArn
+build_cs
+STUB_ING_EGRESS="$SECRET_ARN" STUB_SSM=same cp4 --execute "$cs_name" EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8y" 2>&1 \
+  || { cat "$WORK/outc8y"; fail "--execute refused an SSM parameter that resolves to the same value"; }
+build_cs
+refuse deleted "Foo (" STUB_NONE=live-none -- EgressProxyAddr EgressTokenSecretArn
+build_cs
+refuse deleted "Foo (" STUB_NONE=cs-none -- EgressProxyAddr EgressTokenSecretArn
+# A refused change that touches a credential-named parameter says which one, never its values.
+build_cs
+refuse deleted "BitbucketOauthKey (*** -> ***)" STUB_SECRET_DIFF=1 -- EgressProxyAddr EgressTokenSecretArn
+grep -q "REVIEW_OLD_SECRET\|REVIEW_NEW_SECRET" "$WORK/outc8y" && fail "--execute printed a credential's value in its refusal"
+# Values with spaces, | ( ) and commas compare as they are.
+build_cs
+STUB_ING_EGRESS="$SECRET_ARN" STUB_SPECIAL=1 cp4 --execute "$cs_name" EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8y" 2>&1 \
+  || { cat "$WORK/outc8y"; fail "--execute refused a parameter whose value has spaces, |, ( ) and commas"; }
+# --yes: build, show, execute, read back.
+: > "$LOG"
+STUB_ING_EGRESS="$SECRET_ARN" cp4 --yes EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8z" 2>&1 \
+  || { cat "$WORK/outc8z"; fail "clear-params.sh --yes failed"; }
+order "create-change-set --stack-name t-ingress" "describe-change-set --stack-name t-ingress"
+order "describe-change-set --stack-name t-ingress" "execute-change-set --stack-name t-ingress"
+order "execute-change-set --stack-name t-ingress" "wait stack-update-complete --stack-name t-ingress"
+grep -q "t-ingress: EgressProxyAddr EgressTokenSecretArn now empty" "$WORK/outc8z" || fail "--yes did not read the keys back"
+grep -q "parameter EgressProxyAddr:" "$WORK/outc8z" || fail "--yes did not print the change set before executing"
+# --dry-run: build, show, delete; the stack is untouched.
+: > "$LOG"
+STUB_ING_EGRESS="$SECRET_ARN" cp4 --dry-run EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8d" 2>&1 \
+  || { cat "$WORK/outc8d"; fail "clear-params.sh --dry-run failed"; }
+[ -n "$(cs_line t-ingress)" ] || fail "clear-params.sh --dry-run built no change set"
+hasnt "execute-change-set"
+order "create-change-set --stack-name t-ingress" "delete-change-set --stack-name t-ingress --change-set-name af-clear-"
+grep -q "parameter EgressProxyAddr:" "$WORK/outc8d" || fail "--dry-run did not print the change set"
+# A change set that FAILED ("didn't contain changes") is reported and deleted, in every mode.
+for m in "" "--yes" "--dry-run"; do
+  : > "$LOG"
+  # shellcheck disable=SC2086
+  if STUB_ING_EGRESS="$SECRET_ARN" STUB_CS_FAIL=1 cp4 $m EgressProxyAddr > "$WORK/outc8f" 2>&1; then
+    fail "clear-params.sh $m succeeded with a change set that failed to build"
+  fi
+  grep -q "didn't contain changes" "$WORK/outc8f" || { cat "$WORK/outc8f"; fail "clear-params.sh $m did not report why the change set failed"; }
+  has "delete-change-set --stack-name t-ingress --change-set-name af-clear-"
+  hasnt "execute-change-set"
+done
+# Nothing to clear: no change set in any mode.
+for m in "" "--yes" "--dry-run"; do
+  : > "$LOG"
+  # shellcheck disable=SC2086
+  cp4 $m EgressProxyAddr > "$WORK/outc8n" 2>&1 || fail "clear-params.sh $m failed with nothing to clear"
+  hasnt "create-change-set"
+done
+# The modes exclude each other.
+if cp4 --yes --dry-run EgressProxyAddr > "$WORK/outc8n" 2>&1; then fail "clear-params.sh took --yes and --dry-run together"; fi
 # The template the stack RUNS decides, before anything changes: a Default that is not "" (or
 # none at all) is refused, whatever the local template says.
 for d in subnet-other none blank; do
@@ -1259,7 +1486,7 @@ grep -q "DRY: clear" "$WORK/outc9" && fail "clear-params.sh --dry-run announced 
 # A read-back that fails after the change set ran is a failure, not "now empty".
 : > "$LOG"
 if STUB_ING_EGRESS="$SECRET_ARN" STUB_READBACK_FAIL=1 "$ECS/clear-params.sh" --profile p4 \
-  --region ap-northeast-1 --stack t-ingress EgressProxyAddr EgressTokenSecretArn > "$WORK/outc10" 2>&1; then
+  --region ap-northeast-1 --stack t-ingress --yes EgressProxyAddr EgressTokenSecretArn > "$WORK/outc10" 2>&1; then
   fail "clear-params.sh succeeded although the value could not be read back"
 fi
 grep -q "could not be read back" "$WORK/outc10" || { cat "$WORK/outc10"; fail "clear-params.sh did not say the read-back failed"; }
@@ -1271,19 +1498,29 @@ upd outm1
 grep -q 'Upgrading from v0.34.x' "$WORK/outm1" || fail "the NOTE does not point at the upgrade block"
 grep -q 'S3EndpointEnabled defaults to true' "$WORK/outm1" || fail "the NOTE does not warn about the default deploy"
 grep -q 'Still in a private subnet' "$WORK/outm1" && fail "update.sh listed private-subnet workspaces with no workspace subnets"
+grep -qi ': none\.$' "$WORK/outm1" && fail "update.sh said none with no workspace subnets to check against"
 # Subnets in use, the endpoint still off, alice's task in a private subnet: listed, step 4 waits.
 upd outm2 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false
-grep -q 'Still in a private subnet, not in WorkspaceSubnets (subnet-0a,subnet-0b)' "$WORK/outm2" \
-  || fail "update.sh did not list the workspaces still in a private subnet"
+grep -q '^WARNING: still in a private subnet, not in WorkspaceSubnets (subnet-0a,subnet-0b)' "$WORK/outm2" \
+  || { cat "$WORK/outm2"; fail "update.sh did not start the private-subnet list with WARNING: (endpoint off)"; }
+grep -qi ': none\.$' "$WORK/outm2" && fail "update.sh said none while a workspace is in a private subnet"
 grep -qx '  - af-ws-alice' "$WORK/outm2" || fail "update.sh did not name af-ws-alice"
 grep -q "ecs list-tasks --cluster .* --service-name af-ws-alice --desired-status RUNNING" "$LOG" \
   || fail "update.sh did not look up the workspace's running task"
 # The endpoint already on: the same list is a warning.
 upd outm3 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=true
-grep -q 'WARNING: still in a private subnet' "$WORK/outm3" || fail "update.sh did not warn with the endpoint on"
+grep -q '^WARNING: still in a private subnet' "$WORK/outm3" || fail "update.sh did not warn with the endpoint on"
+grep -qi ': none\.$' "$WORK/outm3" && fail "update.sh said none while a workspace is in a private subnet (endpoint on)"
 # Moved: nothing listed.
 upd outm4 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false STUB_TASK_SUBNET=subnet-0b
-grep -q 'private subnet' "$WORK/outm4" && fail "update.sh listed a workspace that is in a workspace subnet"
+grep -q '^  - af-ws-alice$' "$WORK/outm4" || fail "update.sh did not list the running workspace"
+grep -q 'WARNING: still in a private subnet' "$WORK/outm4" && fail "update.sh listed a workspace that is in a workspace subnet"
+grep -qx 'Still in a private subnet, not in WorkspaceSubnets (subnet-0a,subnet-0b): none.' "$WORK/outm4" \
+  || { cat "$WORK/outm4"; fail "update.sh did not say that none is left in a private subnet"; }
+# The old-image list is true for a forced redeploy of the same tag too.
+grep -q 'Workspaces running now (they pick up this release on their next Start):' "$WORK/outm4" \
+  || fail "update.sh's running list still claims the old image"
+grep -q 'old image' "$WORK/outm4" && fail "update.sh still talks about the old image"
 # A task that cannot be read is said so, not taken as moved.
 upd outm5 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false STUB_TASK_SUBNET_FAIL=1
 grep -q 'af-ws-alice (its task could not be read' "$WORK/outm5" || fail "update.sh took an unreadable task as moved"
@@ -1295,9 +1532,11 @@ grep -q 'af-ws-alice (its task could not be read' "$WORK/outm7" || fail "update.
 # The services could not be listed: said, never "nothing left".
 upd outm8 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false STUB_LIST_SERVICES_FAIL=1
 grep -q 'could not all be listed' "$WORK/outm8" || fail "update.sh hid a failed service listing"
+grep -qi ': none\.$' "$WORK/outm8" && fail "update.sh said none after a failed service listing"
 for k in STUB_SVC_FAILURES STUB_SVC_PARTIAL; do
   upd outm9 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false $k=1
   grep -q 'could not all be listed' "$WORK/outm9" || fail "update.sh took describe-services' $k answer as complete"
+  grep -qi ': none\.$' "$WORK/outm9" && fail "update.sh said none after an incomplete listing ($k)"
 done
 grep -q 'could not all be listed' "$WORK/outm2" && fail "update.sh called a complete service listing incomplete"
 
