@@ -60,9 +60,14 @@ func New(entries []string) *Policy {
 	return p
 }
 
-// Allows reports whether host is permitted. The caller strips any port first.
+// Allows reports whether host is permitted. The caller strips any port first. An IPv6
+// literal is compared in its canonical bare form, so "[2001:DB8::5]" and the expanded
+// spelling meet the entry the built-in CP host is stored as.
 func (p *Policy) Allows(host string) bool {
 	host = strings.ToLower(strings.TrimSuffix(host, ".")) // drop a trailing FQDN dot
+	if c, ok := CanonicalIPv6(host); ok {
+		host = c
+	}
 	if p.exact[host] {
 		return true
 	}

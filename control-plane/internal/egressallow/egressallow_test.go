@@ -45,3 +45,19 @@ func TestCanonicalIPv6(t *testing.T) {
 		}
 	}
 }
+
+// A listed IPv6 address is allowed however the caller spells it (bare, bracketed, expanded,
+// upper case), and its neighbour is not.
+func TestAllowsIPv6InAnySpelling(t *testing.T) {
+	p := New([]string{"2001:db8::5", "github.com"})
+	for _, h := range []string{"2001:db8::5", "[2001:db8::5]", "[2001:DB8:0:0:0:0:0:5]", "2001:0db8::0005"} {
+		if !p.Allows(h) {
+			t.Errorf("Allows(%q) = false, want true", h)
+		}
+	}
+	for _, h := range []string{"2001:db8::6", "[2001:db8::6]", "2001:db8::", "::1"} {
+		if p.Allows(h) {
+			t.Errorf("Allows(%q) = true, want false", h)
+		}
+	}
+}
