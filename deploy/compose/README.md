@@ -392,9 +392,11 @@ workspace — the setting reaches a workspace at its next start.
   works today should not have to change. Unset, there is no second port and nothing
   changes.
 - **Docker Desktop** maps `host-gateway` to the desktop machine, not to the engine where
-  the CP listens, so this setup does not apply there. With **rootless Docker**, docker0 and
-  the CP's host network are both inside the rootless network namespace; this is expected to
-  work but has not been tried.
+  the CP listens, so this setup does not apply there. This setup is written for **rootful
+  Docker on Linux**. With **rootless Docker** it is unverified, and the two addresses need not
+  share a network namespace: docker0 lives in RootlessKit's namespace, while from Docker Engine
+  29.5 `network_mode: host` is the real host's, where that address does not exist and the CP
+  would fail to bind.
 
 Full reference: `docs/build/09-deploy.md` §9.3.
 
