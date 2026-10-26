@@ -24,8 +24,16 @@ vi.mock("../../viewer/MarkdownView.tsx", () => ({
   MarkdownView: ({ source }: { source: string }) => (
     <div className="md-stub">
       <span className="md-text">{source}</span>
-      <a href="refs/notes.md" className="md-link" onClick={(e) => (e.preventDefault(), viewerLinkClicks())}>
+      <a
+        href="refs/notes.md"
+        className="md-link"
+        onClick={(e) => (e.preventDefault(), viewerLinkClicks())}
+        onAuxClick={(e) => (e.preventDefault(), viewerLinkClicks())}
+      >
         notes
+      </a>
+      <a href="//example.com/docs" className="md-ext" onClick={(e) => (e.preventDefault(), viewerLinkClicks())}>
+        ext
       </a>
     </div>
   ),
@@ -214,6 +222,33 @@ describe("SkillsTab", () => {
   });
 });
 
+describe("SkillsTab links", () => {
+  it("takes a middle click on a relative link too", async () => {
+    await mount();
+    await act(async () => rowNamed("handoff").click());
+    await flush();
+    await act(async () => {
+      document
+        .querySelector(".md-link")!
+        .dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }));
+    });
+    await flush();
+    expect(viewerLinkClicks).not.toHaveBeenCalled();
+    expect(document.querySelector(".md-text")?.textContent).toBe("content of " + C + "/skills/handoff/refs/notes.md");
+  });
+
+  it("leaves an external link to the viewer", async () => {
+    await mount();
+    await act(async () => rowNamed("handoff").click());
+    await flush();
+    const before = api.mock.calls.length;
+    await act(async () => document.querySelector<HTMLAnchorElement>(".md-ext")!.click());
+    await flush();
+    expect(viewerLinkClicks).toHaveBeenCalledTimes(1);
+    expect(api.mock.calls.length).toBe(before);
+  });
+});
+
 describe("resolveSkillLink", () => {
   const from = "/cfg/skills/handoff/SKILL.md";
   it("resolves against the showing file's folder", () => {
@@ -225,5 +260,6 @@ describe("resolveSkillLink", () => {
     expect(resolveSkillLink("https://example.com/x.md", from)).toBeNull();
     expect(resolveSkillLink("#usage", from)).toBeNull();
     expect(resolveSkillLink("mailto:a@b", from)).toBeNull();
+    expect(resolveSkillLink("//example.com/docs", from)).toBeNull();
   });
 });

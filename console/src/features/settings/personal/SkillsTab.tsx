@@ -16,6 +16,7 @@ import { Button } from "../../../ui/Button.tsx";
 import { EmptyState } from "../../../ui/EmptyState.tsx";
 import { agentOf } from "../../../agents/registry.ts";
 import { copyText } from "../../../lib/clipboard.ts";
+import { isExternalUrl } from "../../../lib/filemeta.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { MarkdownView } from "../../viewer/MarkdownView.tsx";
 import { ViewNav, useSectionView } from "../memory/viewNav.tsx";
@@ -59,7 +60,7 @@ const dirOf = (p: string) => p.slice(0, p.lastIndexOf("/"));
 /** The file a relative link in a skill's Markdown points at, resolved against the directory of
  *  the file showing; null for anything that is not a file reference (URLs, in-page anchors). */
 export function resolveSkillLink(href: string, fromFile: string): string | null {
-  if (!href || href.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(href)) return null;
+  if (!href || href.startsWith("#") || isExternalUrl(href)) return null;
   let ref = href.split("#")[0].split("?")[0];
   try {
     ref = decodeURIComponent(ref);
@@ -241,7 +242,9 @@ function SkillDetail({ skill }: { skill: CatalogSkill }) {
   // Relative links in a skill point at its own files, which the Files viewer cannot open (the
   // folders are outside the browse root). Taken in the capture phase, before MarkdownView's own
   // link handler, and opened here through the skills file route instead.
+  // A middle click arrives as auxclick, which MarkdownView also handles, so both are taken.
   const onLinkClick = (e: MouseEvent<HTMLDivElement>) => {
+    if (e.type === "auxclick" && e.button !== 1) return;
     const a = (e.target as HTMLElement).closest?.("a");
     if (!a || !file) return;
     const target = resolveSkillLink(a.getAttribute("href") ?? "", file.path);
@@ -290,7 +293,7 @@ function SkillDetail({ skill }: { skill: CatalogSkill }) {
       {err && <div className="form-err">{err}</div>}
       {file &&
         (file.path.endsWith(".md") ? (
-          <div className="skills-body" onClickCapture={onLinkClick}>
+          <div className="skills-body" onClickCapture={onLinkClick} onAuxClickCapture={onLinkClick}>
             <MarkdownView source={file.content} />
           </div>
         ) : (
