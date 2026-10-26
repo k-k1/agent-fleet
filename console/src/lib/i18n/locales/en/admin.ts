@@ -724,7 +724,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mcp_oauth_secret_drop": "Remove the stored secret",
   "admin.mcp_oauth_secret_reenter": "The issuer or client ID changed, so the stored secret no longer applies. Enter the secret again, or remove it to make this a public client.",
   "admin.mcp_oauth_note":
-    "No credential is distributed. Each member signs in with their own account from Settings > MCP servers, and the server reaches their sessions only after they have.",
+    "No credential is distributed. Each member signs in with their own account from Settings > Connections > MCP servers (used by sessions), and the server reaches their sessions only after they have.",
   "admin.mcp_secret_policy": "Credentials",
   "admin.mcp_user_secret": "Each member enters the credential",
   "admin.mcp_headers_hint":

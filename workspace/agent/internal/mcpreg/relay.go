@@ -234,7 +234,7 @@ func relayFail(w http.ResponseWriter, status int, msg string) {
 	_, _ = io.WriteString(w, "Agent Fleet: "+msg+"\n")
 }
 
-const consoleHint = "open the Agent Fleet Console, Settings > MCP servers, and sign in to this server again"
+const consoleHint = "open the Agent Fleet Console, Settings > Connections > MCP servers (used by sessions), and sign in to this server again"
 
 // relayGrantProblem says what the CLI is told when the grant cannot serve the request. It is a
 // 502, not a 401: a CLI answers a 401 by trying OAuth against the relay's own origin, and a 403

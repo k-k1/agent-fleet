@@ -714,7 +714,7 @@ export const admin = {
   "admin.mcp_oauth_secret_drop": "保存したシークレットを削除する",
   "admin.mcp_oauth_secret_reenter": "issuer かクライアント ID を変えたので、保存したシークレットは使えません。シークレットを入力し直すか、削除して public クライアントにしてください。",
   "admin.mcp_oauth_note":
-    "資格情報は配布しません。各メンバーが「設定 > MCP サーバー」から自分のアカウントでサインインし、サインインした人のセッションにだけこのサーバーが届きます。",
+    "資格情報は配布しません。各メンバーが「設定 > 接続 > MCP サーバー（セッションで使う）」から自分のアカウントでサインインし、サインインした人のセッションにだけこのサーバーが届きます。",
   "admin.mcp_secret_policy": "資格情報の扱い",
   "admin.mcp_user_secret": "認証の値は各メンバーが入力する",
   "admin.mcp_headers_hint":
