@@ -36,7 +36,10 @@ parses. So this fails when
   - intercepted 443 reaches an intercepting https_port again instead of egress-relay (whose
     host verification refuses S3, ECR and STS, #2759), the relay and Squid disagree on its
     two ports, Squid trusts a PROXY header from anything but loopback, or the relay is not
-    installed, started, or run as squid.
+    installed, started, or run as squid;
+  - af-egress-install stops retrying within a minute before the agent has its first policy
+    (a missing configuration or token, or no policy yet), or the 10-minute timer that picks up
+    releases goes away (#2758).
 
 The positive controls at the end run the same checks against broken copies.
 
@@ -293,6 +296,7 @@ def check(net, ingress, platform, doc_lines):
             f.append("user data lacks %r" % must)
     f += check_hardening(ud)
     f += check_relay(ud)
+    f += check_first_policy(ud)
     return f
 
 
@@ -328,6 +332,24 @@ def check_relay(ud):
         f.append("af-egress-install never starts the relay")
     if 'os.Args[1] == "egress-relay"' not in SRC["main"]:
         f.append("control-plane has no egress-relay subcommand")
+    return f
+
+
+def check_first_policy(ud):
+    """A fresh gateway retries the install every 30-60 s until the agent wrote a first policy."""
+    f = []
+    unit = re.search(r"af-egress-install\.service <<EOF\n(.*?)\nEOF", ud, re.S)
+    lines = unit.group(1).split("\n") if unit else []
+    sec = [int(m.group(1)) for ln in lines for m in [re.fullmatch(r"RestartSec=(\d+)", ln)] if m]
+    if "Type=oneshot" not in lines or "Restart=on-failure" not in lines or len(sec) != 1 or not 0 < sec[0] <= 60:
+        f.append("af-egress-install.service does not retry a failed install within 60 s")
+    script = re.search(r"af-egress-install <<'EOF'\n(.*?)\nEOF", ud, re.S)
+    tail = script.group(1).strip().split("\n")[-2:] if script else []
+    if tail != ["for _ in $(seq 15); do grep -q '^# mode: ' %s && exit 0; sleep 2; done" % MODE_FILE, "exit 1"]:
+        f.append("af-egress-install does not end by failing until the agent's mode header (a first policy) is there")
+    timer = re.search(r"af-egress-install\.timer <<EOF\n(.*?)\nEOF", ud, re.S)
+    if not timer or "OnActiveSec=0" not in timer.group(1) or "OnUnitInactiveSec=10min" not in timer.group(1):
+        f.append("af-egress-install.timer no longer runs at boot and every 10 minutes")
     return f
 
 
@@ -625,6 +647,11 @@ def main():
         ("relay as root", m(lambda t: set_ud(t, lambda s: s.replace(
             "[Service]\nUser=squid\nExecStart=/usr/local/bin/af-cp egress-relay", "[Service]\nUser=root\nExecStart=/usr/local/bin/af-cp egress-relay")))),
         ("relay never started", m(lambda t: set_ud(t, lambda s: s.replace("systemctl start af-egress-relay\n", "")))),
+        ("install not retried", m(lambda t: set_ud(t, lambda s: s.replace("Restart=on-failure\nRestartSec=30\n", "")))),
+        ("install retried only after 10 minutes", m(lambda t: set_ud(t, lambda s: s.replace("RestartSec=30\n", "RestartSec=600\n")))),
+        ("install succeeds without a policy", m(lambda t: set_ud(t, lambda s: s.replace("sleep 2; done\nexit 1\nEOF", "sleep 2; done\nEOF")))),
+        ("bootstrap file taken for a policy", m(lambda t: set_ud(t, lambda s: s.replace("grep -q '^# mode: '", "grep -q '^# '")))),
+        ("release timer gone", m(lambda t: set_ud(t, lambda s: s.replace("OnUnitInactiveSec=10min", "OnUnitInactiveSec=30s")))),
         ("route check only on first boot", m(lambda t: set_ud(t, lambda s: s.replace(
             "[Install]\nWantedBy=multi-user.target\nEOF\nsystemctl daemon-reload\nsystemctl enable --now af-egress-route.service", "EOF\nsystemctl daemon-reload\nsystemctl enable --now af-egress-route.service")))),
     ]

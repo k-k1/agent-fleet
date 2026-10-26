@@ -792,7 +792,8 @@ Resources:
               cat > /usr/local/sbin/af-egress-install <<'EOF'
               #!/bin/bash
               # Fetch the agent's configuration (30-ingress), the token (Secrets Manager) and,
-              # when the CP image changed, the binary. Runs at boot and every 10 minutes.
+              # when the CP image changed, the binary. Runs at boot and every 10 minutes; fails, and
+              # is retried in 30 s, until the agent has a first policy (#2758).
               set -euo pipefail
               REGION=${AWS::Region}
               cfg=$(aws ssm get-parameter --region "$REGION" --name /af-egress/${AWS::StackName}/agent \
@@ -837,6 +838,8 @@ Resources:
               rm -f "$new"
               if [ "$changed" = 1 ]; then systemctl restart af-egress-agent; else systemctl start af-egress-agent; fi
               systemctl start af-egress-relay
+              for _ in $(seq 15); do grep -q '^# mode: ' /var/lib/af-egress-agent/af-mode.conf && exit 0; sleep 2; done
+              exit 1
               EOF
               chmod 0755 /usr/local/sbin/af-egress-install
               cat > /etc/systemd/system/af-egress-agent.service <<EOF
@@ -862,6 +865,8 @@ Resources:
               [Service]
               Type=oneshot
               ExecStart=/usr/local/sbin/af-egress-install
+              Restart=on-failure
+              RestartSec=30
               EOF
               cat > /etc/systemd/system/af-egress-install.timer <<EOF
               [Timer]
