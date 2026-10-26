@@ -22,6 +22,9 @@ func CanonicalIPv6(s string) (string, bool) {
 		s = s[1 : len(s)-1]
 	}
 	a, err := netip.ParseAddr(s)
+	if err == nil && a.Is6() && [12]byte(a.AsSlice()[:12]) == [12]byte{} {
+		return "", false
+	}
 	if err != nil || !a.Is6() || a.Zone() != "" || a.Is4In6() ||
 		a.IsUnspecified() || a.IsLoopback() || a.IsLinkLocalUnicast() || a.IsMulticast() {
 		return "", false

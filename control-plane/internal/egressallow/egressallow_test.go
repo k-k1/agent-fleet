@@ -39,7 +39,7 @@ func TestCanonicalIPv6(t *testing.T) {
 		}
 	}
 	for _, in := range []string{"", "10.0.1.5", "example.com", "fe80::1%eth0", "::ffff:10.0.1.5",
-		"::", "::1", "fe80::1", "ff02::1", "[2001:db8::5", "2001:db8::5]:443"} {
+		"::", "::1", "::192.0.2.5", "::c000:205", "fe80::1", "ff02::1", "[2001:db8::5", "2001:db8::5]:443"} {
 		if got, ok := CanonicalIPv6(in); ok {
 			t.Errorf("CanonicalIPv6(%q) = %q, want refusal", in, got)
 		}

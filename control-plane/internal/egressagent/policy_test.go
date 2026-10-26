@@ -33,9 +33,9 @@ func TestRenderAllowIsMinimalSortedAndSafe(t *testing.T) {
 func TestRenderAllowIPv6Literal(t *testing.T) {
 	got := string(renderAllow([]string{
 		"2001:DB8:0:0:0:0:0:5", "[2001:db8::5]", "2001:db8::5", "fd00::7", "github.com",
-		"fe80::1%eth0", "::ffff:10.0.1.5", "::1", "::", "ff02::1", "2001:db8::5:80x", ".2001:db8::5", "[2001:db8::5]:443",
+		"fe80::1%eth0", "::ffff:10.0.1.5", "::1", "::", "::192.0.2.5", "ff02::1", "2001:db8::5:80x", ".2001:db8::5", "[2001:db8::5]:443",
 	}))
-	want := generatedHeader + "2001:db8::5\nfd00::7\ngithub.com\n"
+	want := generatedHeader + "2001:db8::5\n[2001:db8::5]\n[fd00::7]\nfd00::7\ngithub.com\n"
 	if got != want {
 		t.Fatalf("got\n%s\nwant\n%s", got, want)
 	}

@@ -94,7 +94,7 @@ in the Console.
    off from a Control Plane served on ports 80/443 under a name of its own. The entry is a whole
    host, every port and path of it, so give the Control Plane a hostname no other service
    shares. It lifts none of the gateway's other refusals (other ports, internal addresses). An
-   IPv6-literal URL (`https://[2001:db8::5]`) is admitted as the address in its compressed lowercase form; one with a zone ID, an IPv4-mapped address, or a loopback / link-local / multicast address is not, and the Control Plane logs a warning at start. Entries you add yourself stay host names and `.suffix` entries; an IPv6 literal cannot be added by hand. A member's request from ⚙ Settings → MCP servers (used by sessions) arrives as a proposal too, and the
+   IPv6-literal URL (`https://[2001:db8::5]`) is listed as the address in its compressed lowercase form, written to the gateway in both the bare and the bracketed spelling (not yet confirmed against a real Squid, so check that workspaces reach such a Control Plane before relying on it); one with a zone ID, an IPv4-mapped or IPv4-compatible address, or a loopback / link-local / multicast address is not, and the Control Plane logs a warning at start. Entries you add yourself stay host names and `.suffix` entries; an IPv6 literal cannot be added by hand. A member's request from ⚙ Settings → MCP servers (used by sessions) arrives as a proposal too, and the
    member sees "waiting for an administrator's approval" until you decide.
 
    **Reading the observations:** counts are approximate. A report that is retried after a

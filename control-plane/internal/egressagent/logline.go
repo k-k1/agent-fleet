@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/egressallow"
 )
 
 // LogFormat is the Squid logformat the parser reads (see the package doc). Changing it
@@ -98,6 +100,11 @@ func hostOf(sni, rd string) string {
 			continue
 		}
 		if _, err := netip.ParseAddr(strings.Trim(h, "[]")); err == nil {
+			// A usable IPv6 literal is a host in its own right (an allowed IPv6 CP is
+			// listed by address); any other address carries no name.
+			if c, ok := egressallow.CanonicalIPv6(h); ok {
+				return c
+			}
 			continue
 		}
 		if len(h) > maxHost {
