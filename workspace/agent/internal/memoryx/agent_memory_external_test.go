@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -374,13 +375,42 @@ func TestAgentMemoryForgetMissHintsOtherScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := agentMemForget(c, agentMemForgetReq{Scope: agentMemScopeProject, Name: "in-user", Revision: 1}, now)
-	if agentMemCode(err) != errCodeMemoryNotFound || err == nil || !strings.Contains(err.Error(), `in scope project; one exists in scope user (pass scope "user")`) {
+	if agentMemCode(err) != errCodeMemoryNotFound || err == nil || !strings.Contains(err.Error(), `in scope project; one exists in scope user (read it there first and forget it with that revision)`) {
 		t.Fatalf("forget hint: %v", err)
 	}
 	if _, err := agentMemForget(c, agentMemForgetReq{Scope: agentMemScopeProject, Name: "nowhere", Revision: 1}, now); err == nil || strings.Contains(err.Error(), "exists") {
 		t.Fatalf("forget hint where nothing exists: %v", err)
 	}
+	// A same-named memory at another revision: the hint must not suggest reusing this revision.
+	if _, err := agentMemForget(c, agentMemForgetReq{Scope: agentMemScopeProject, Name: "in-user", Revision: 1}, now); err == nil || strings.Contains(err.Error(), "pass scope") {
+		t.Fatalf("hint tells the caller to retry with the same revision: %v", err)
+	}
 	if res, err := agentMemForget(c, agentMemForgetReq{Scope: agentMemScopeUser, Name: "in-user", Revision: 99}, now); err == nil || agentMemCode(err) != errCodeMemoryConflict {
 		t.Fatalf("revision check lost: %+v %v", res, err)
+	}
+}
+
+// A file the secret scan withheld is not offered by the hint, for a member-kind or an external
+// caller; the fixture is checked to be withheld by a direct read.
+func TestAgentMemoryMissHintSkipsWithheldFile(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	key := agentMemFakeAWS()
+	memoryMkdirAll(t, filepath.Join(agentMemDir(), "user"))
+	memoryWrite(t, filepath.Join(agentMemDir(), "user", "manual.md"), "---\nname: manual\ndescription: key "+key+"\n---\nbody\n")
+	if _, err := agentMemRead(c, agentMemScopeUser, "manual"); agentMemCode(err) != errCodeMemorySecretDetected {
+		t.Fatalf("fixture is not withheld: %v", err)
+	}
+	ext := c
+	ext.Kind = agentMemExternalKind
+	for _, cc := range []agentMemCaller{c, ext} {
+		_, err := agentMemRead(cc, agentMemScopeProject, "manual")
+		if agentMemCode(err) != errCodeMemoryNotFound || strings.Contains(err.Error(), "exists") {
+			t.Fatalf("read hint (%s): %v", cc.Kind, err)
+		}
+		_, err = agentMemForget(cc, agentMemForgetReq{Scope: agentMemScopeProject, Name: "manual", Revision: 1}, time.Now())
+		if agentMemCode(err) != errCodeMemoryNotFound || strings.Contains(err.Error(), "exists") {
+			t.Fatalf("forget hint (%s): %v", cc.Kind, err)
+		}
 	}
 }

@@ -1126,7 +1126,7 @@ func agentMemForget(c agentMemCaller, req agentMemForgetReq, now time.Time) (age
 	if !exists {
 		if other := agentMemOtherScopeHolding(c, req.Scope, req.Name); other != "" {
 			return agentMemWriteResult{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound,
-				"no memory by that name in scope %s; one exists in scope %s (pass scope %q)", req.Scope, other, other)
+				"no memory by that name in scope %s; one exists in scope %s (read it there first and forget it with that revision)", req.Scope, other)
 		}
 		return agentMemWriteResult{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound, "no memory by that name in scope %s", req.Scope)
 	}
