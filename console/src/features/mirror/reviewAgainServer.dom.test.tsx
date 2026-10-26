@@ -170,4 +170,14 @@ describe("reviewer link held by the Agent", () => {
     expect(rememberedReviewer("planner", "/p/a.md")).toBe("rev-new");
     expect(JSON.parse(localStorage.getItem("af.plan-reviewers")!)[k]).toBe("rev-new");
   });
+
+  it("does not put back a cache entry another tab removed when this tab's older list repeats", () => {
+    const k = "planner\u0000/p/a.md";
+    useSessionsStore.setState({ sessions: [planner([{ path: "/p/a.md", reviewer: "rev-old" }])] });
+    localStorage.setItem("af.plan-reviewers", JSON.stringify({})); // another tab unlinked
+    window.dispatchEvent(new StorageEvent("storage", { key: "af.plan-reviewers" }));
+    expect(JSON.parse(localStorage.getItem("af.plan-reviewers")!)[k]).toBeUndefined();
+    useSessionsStore.setState({ sessions: [planner([{ path: "/p/a.md", reviewer: "rev-old" }]), sess({ name: "unrelated" })] });
+    expect(JSON.parse(localStorage.getItem("af.plan-reviewers")!)[k]).toBeUndefined();
+  });
 });

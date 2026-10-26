@@ -155,10 +155,12 @@ function reconcile(sessions: Session[], fromStorage = false) {
         synced.add(k);
         syncedChanged = true;
       }
+      // First sighting seeds an empty cache entry; after that only a change seen in this tab
+      // writes, so a link another tab removed from the cache is not put back by a repeat.
       // Keep the cache on the newest confirmed reviewer, so a later list without the field
       // (the Control Plane's mirror while the Agent is unreachable) cannot bring back an older one.
       const prev = lastServer.get(k);
-      if (!fromStorage && !pending.has(k) && next[k] !== e.reviewer && (next[k] === undefined || (prev !== undefined && prev !== e.reviewer))) {
+      if (!fromStorage && !pending.has(k) && next[k] !== e.reviewer && (prev === undefined ? next[k] === undefined : prev !== e.reviewer)) {
         delete next[k];
         next[k] = e.reviewer;
         storeChanged = true;
