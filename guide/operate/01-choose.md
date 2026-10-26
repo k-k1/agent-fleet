@@ -69,9 +69,9 @@ so restarting on an existing slot that already has the same image avoids the pul
 start measured about 65 MiB of NAT traffic in total). A new slot, a slot recreated after
 retirement, a cache miss or an image update pulls the image again, but on ecs-ec2 the layers
 come through a free S3 VPC endpoint rather than the NAT, because workspaces have subnets of
-their own (#2716; not yet measured on a deployed stack). The golden snapshot is separate: it
-saves the CLI boot-install time, not NAT traffic. Planned, not yet available: a choice between
-a NAT gateway and an egress gateway (#2717). The setup details are in
+their own (#2716; verified on a test deployment, not yet in production). The golden snapshot is
+separate: it saves the CLI boot-install time, not NAT traffic. Workspaces can also leave through
+an egress gateway instead of the NAT gateway (below). The setup details are in
 [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md).
 
 ### Choosing the egress route on AWS
@@ -81,7 +81,7 @@ the AWS hosts stay on the NAT gateway either way.
 
 | | NAT gateway (`nat-gateway`, the default) | Egress gateway (`gateway`) |
 |---|---|---|
-| Recording | nothing: the Admin Egress tab stays empty | every workspace connection, by name and address, attributed to the workspace |
+| Recording | nothing: the Admin Egress tab stays empty | every workspace connection, by name and address, attributed to the workspace (the Admin Egress tab shows counts per host; the attributed events are `GET /api/admin/egress/events`) |
 | Allowlist | not enforced | log-only, or enforce |
 | Hourly cost | the NAT gateway | the NAT gateway (still used by the Control Plane and hosts) plus a small instance and its address |
 | Per-GB cost | NAT data processing on all workspace traffic, S3 included | none for workspace traffic, only normal data transfer |
@@ -90,7 +90,7 @@ the AWS hosts stay on the NAT gateway either way.
 | Non-HTTP traffic (SSH git) | works | blocked |
 | Address to allow-list | the NAT gateway's | two: the NAT gateway's (Control Plane and hosts) and the gateway's (workspaces), which you can allocate and register before switching |
 
-The egress gateway is new and **not yet verified on a real account**; `pause.sh` stops it and
+The egress gateway is new and was verified on a test deployment only, **not yet in production**; `pause.sh` stops it and
 brings it back with the same egress address. Setup and limits: "Egress gateway" in
 [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md).
 

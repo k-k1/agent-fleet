@@ -70,7 +70,7 @@ value you set is not the value in force, look one layer out.
 | Integration OAuth apps | your tenant's own OAuth apps for GitHub / Bitbucket |
 | MCP distribution | integration servers handed to every member |
 | Branch naming rules | the tenant's default for naming new branches and choosing their base, per repository pattern (a JSON list); members' Workspaces pick it up within five minutes. Advice only: a name that does not follow it gets a warning, never a refusal |
-| External memory access | whether members may use their Agent Fleet memory from an agent outside Agent Fleet through `/mcp`. Allow (default) lets members opt in; Block withholds the memory tools from the whole tenant ([admin 04](../admin/04-mcp-outside.md#memory-from-outside-agent-fleet)) |
+| External memory access | whether members may use their Agent Fleet memory from an agent outside Agent Fleet through `/mcp` or the memory-only `/mcp/memory`. Allow (default) lets members opt in; Block withholds the memory tools from the whole tenant ([admin 04](../admin/04-mcp-outside.md#memory-from-outside-agent-fleet)) |
 | Member defaults | the agent the first-run card names in its "Connect an agent" step (Claude, Codex, opencode, Cursor, Copilot, Kiro, Muse, or none). Members read it whenever the Console loads. It names, never restricts: connecting any other agent completes the step ([admin 06](../admin/06-team-defaults.md#member-defaults)) |
 | Audit | who changed what, when |
 | Running time | per-member workspace uptime, exportable, plus an hour-by-hour heatmap of the whole tenant |
@@ -117,7 +117,7 @@ everything else:
 | `WS_MEMORY` | the default memory ceiling for a workspace |
 | `AF_PREVIEW_DOMAIN` | the parent domain of the preview subdomains (`<workspace>-<port>.<domain>`), which needs a wildcard DNS name and certificate for it. Unset means no preview subdomains, only the Console's own preview path. Set `AF_COOKIE_SECRET` and `PUBLIC_BASE_URL` with it: the Control Plane warns at start when either is missing, because preview sign-in then cannot be trusted or has no Console to return to |
 | `AF_DEV_IDP` | `0` locks the development sign-in (an OIDC provider on the Console's origin that a member's app on a preview subdomain can sign in with in place of Google) off, whatever the deployment administrator's switch says. Unset leaves it to that switch, which is on by default. It is only served where `AF_PREVIEW_DOMAIN` and `PUBLIC_BASE_URL` are set |
-| `AF_MCP_ENABLED` | `true` serves the `/mcp` endpoint (Personal Access Tokens); anything else, including `1`, leaves it off. The tenant-level memory switch ([admin 04](../admin/04-mcp-outside.md#memory-from-outside-agent-fleet)) is a different, narrower switch |
+| `AF_MCP_ENABLED` | `true` serves the `/mcp` endpoint and the memory-only `/mcp/memory` (Personal Access Tokens); anything else, including `1`, leaves it off. The tenant-level memory switch ([admin 04](../admin/04-mcp-outside.md#memory-from-outside-agent-fleet)) is a different, narrower switch |
 | `AF_MCP_OAUTH` | `1` also makes the Control Plane an OAuth authorization server for `/mcp`, so hosted clients connect by signing the member in. Needs `AF_MCP_ENABLED=true` and an `https` `PUBLIC_BASE_URL`; with any of the three missing the OAuth paths answer 404. Each tenant can still switch it off for itself ([admin 04](../admin/04-mcp-outside.md#mcp-oauth)); [operate/04](../operate/04-secure.md#sign-in-for-remote-mcp-clients-oauth) has the rest |
 | `AF_MCP_OAUTH_TRUSTED_HOSTS` | the client hosts MCP OAuth trusts, comma-separated; the default is `claude.ai`, `claude.com` and `chatgpt.com`, and `none` leaves loopback clients only. A list saved in the Admin modal (**MCP sign-in hosts**) wins over this variable ([operate/04](../operate/04-secure.md#trusted-client-hosts-deployment-wide-superadmin-only)) |
 | `AF_EFS_BACKUP` | not set by hand: on `ecs` / `ecs-ec2`, `update.sh` and `standup.sh` fill it from the ingress stack's `EfsBackup` parameter (`present`, `off` or `missing`), and `missing` raises the Admin screen's "no daily EFS backup" banner ([operate/03](../operate/03-run.md#upgrade)) |
@@ -138,6 +138,7 @@ empty one adds no environment entry, so the Control Plane keeps its own default.
 
 `WS_ENV` has no parameter on ECS on purpose: it carries free-form `KEY=VAL` pairs, secrets
 included, in plain environment. The parameters are set with a targeted `aws cloudformation deploy` of `30-ingress.yaml`
-(`update.sh` overrides only `ImageTag` and `EfsBackup`); see
+(`update.sh` overrides only `ImageTag` and the facts it reads from the other stacks:
+`EfsBackup`, `WorkspaceSubnets`, `EgressProxyAddr`, `EgressTokenSecretArn` and `EgressArchiveBucket`); see
 [`deploy/aws/ecs/cfn/PARAMETERS.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/PARAMETERS.md#control-plane-timers-github-sign-in-extras-and-lan--borrowed-engines).
 A LAN engine is reachable from ECS only when the VPC has a route to it (VPN, peering).

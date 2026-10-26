@@ -82,6 +82,10 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
    監査ログの `egress.dropped` に出ます）、proxy を再起動するとメモリ上の分は失われます。
    載っていないホストは「見ていない」だけで「使われていない」ではありません。enforce に
    する前に `egress.dropped` が無いか監査ログで確認してください。
+   egress ゲートウェイが接続を記録する構成（AWS で `EgressRoute=gateway`）では、接続ごとにワークスペースへ
+   紐づけた生イベントも残り、`GET /api/admin/egress/events`（super_admin）で読めます（Admin の画面に出るのは
+   ホストごとの件数だけです）。生イベントは `AF_EGRESS_EVENT_RETENTION_DAYS`（既定 30 日、`0` で無期限）を過ぎると
+   削除され、ホストごとの件数は残ります。
 3. **enforce へ切替**：許可リストが十分に固まってから、モードを enforce に切り替えます。以降は
    許可リスト外の通信を**遮断**します。いきなり enforce にするとエージェントの更新取得や MCP の接続先など必要な通信まで落ちるので、log-only のうちに
    「観測された宛先」の遮断候補を解消しておくと切替えが穏やかに済みます。Admin の UI も「先に log-only で実態を
@@ -95,11 +99,10 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
 > proxy がリンクローカル宛を拒否するため、タスク／インスタンスのメタデータアドレス
 > （`169.254.170.2`・`169.254.169.254`）も対象から外されます。**まだ無い**のは、proxy を通ることの強制（proxy だけを出口に残す内部網や
 > セキュリティグループの egress ルール、proxy を動かすテンプレート）です。変数を無視する
-> プロセスはそのまま外へ出るので、**enforce へ切り替えても、まだ Workspace は縛られません**
-> 
+> プロセスはそのまま外へ出るので、**enforce へ切り替えても、まだ Workspace は縛られません**。
 > 例外は AWS（`ecs` / `ecs-ec2`）で `00-network` の `EgressRoute=gateway` を選んだ場合です。
 > Workspace のルートテーブルが egress ゲートウェイ（Squid）を通るので、Workspace に他の出口は無く、
-> enforce が効きます。この選択肢は新しく、**実アカウントではまだ検証していません**
+> enforce が効きます。この選択肢は新しく、テスト用の配備でだけ確認済みで、**本番ではまだ使っていません**
 > （[配備形態の選び方](01-choose.ja.md) の「AWS の出口経路の選び方」）。
 > それ以外では「観測して許可リストを育てる」段階まで運用できる、と理解してください。設計の全体像は
 > `docs/build/07-security.ja.md` §7.8。
@@ -140,7 +143,7 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
   `AF_MCP_ENABLED` に `1` は通りません）、必要なら `AF_MCP_OAUTH_TRUSTED_HOSTS` を設定します。Kubernetes: Control Plane の
   環境ファイル（`cp.env`）に追記します。**ECS:** 30-ingress のパラメータ `McpEnabled=on`、`McpOAuth=on`、必要なら
   `McpOAuthTrustedHosts` を、`30-ingress.yaml` に対する個別の `aws cloudformation deploy`
-  （`--parameter-overrides McpEnabled=on McpOAuth=on`）で設定します。`update.sh` は `ImageTag` しか上書きしないので、
+  （`--parameter-overrides McpEnabled=on McpOAuth=on`）で設定します。`update.sh` が上書きするのは `ImageTag` と、ほかのスタックから読む事実（`EfsBackup`・`WorkspaceSubnets`・egress のパラメータ）だけなので、
   これらを有効にも無効にもしません（パラメータは前回の値を保ち、スタックにまだ無いパラメータはオフで始まります）。
   詳しくは [`deploy/aws/ecs/README.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/README.md) を参照してください。
 - **提供されるパス**（issuer は `{PUBLIC_BASE_URL}/mcp-oauth`）: `/.well-known/oauth-protected-resource/mcp`、

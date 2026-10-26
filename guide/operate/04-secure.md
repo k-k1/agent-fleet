@@ -102,6 +102,10 @@ in the Console.
    while the Control Plane is unreachable (overflow shows up as an `egress.dropped` audit
    entry), and loses what it held in memory if it restarts. Treat a missing host as "not
    seen", not "never used", and check the audit log for `egress.dropped` before enforcing.
+   Where the egress gateway records connections (AWS with `EgressRoute=gateway`), each one is also
+   kept as a raw event attributed to its workspace, read through `GET /api/admin/egress/events`
+   (super_admin; the Admin panel shows only the per-host counts). Raw events are deleted after
+   `AF_EGRESS_EVENT_RETENTION_DAYS` (default 30, `0` keeps them forever); the per-host counts stay.
 3. **Switch to enforce**: once the allowlist is sufficiently solid, switch the mode to
    enforce. From then on, traffic outside the allowlist is **blocked**. Switching straight to enforce also
    kills the traffic you need (agent CLI updates, MCP endpoints), and clearing the block candidates under
@@ -121,8 +125,8 @@ in the Console.
 > still goes straight out, and **switching to enforce does not yet constrain a workspace**.
 > The exception is AWS (`ecs` / `ecs-ec2`) with `00-network`'s `EgressRoute=gateway`: the
 > workspace route table then goes through an egress gateway (Squid), so a workspace has no other
-> way out and enforce applies to it. That option is new and **not yet verified on a real
-> account** (see "Choosing the egress route on AWS" in [choosing a target](01-choose.md)).
+> way out and enforce applies to it. That option is new and was verified on a test deployment
+> only, **not yet in production** (see "Choosing the egress route on AWS" in [choosing a target](01-choose.md)).
 > Elsewhere, understand that you can operate up to the "observe and grow the allowlist" stage.
 > The full design picture is in `docs/build/07-security.md` §7.8.
 
@@ -168,7 +172,8 @@ working for CI and clients without OAuth.
   environment. Kubernetes: add them to the Control Plane's environment file (`cp.env`). **ECS:** the 30-ingress
   parameters `McpEnabled=on`, `McpOAuth=on` and optionally `McpOAuthTrustedHosts`, set with a targeted
   `aws cloudformation deploy` of `30-ingress.yaml` (`--parameter-overrides McpEnabled=on McpOAuth=on`).
-  `update.sh` overrides only `ImageTag`, so it neither turns them on nor turns them off: parameters keep their
+  `update.sh` overrides only `ImageTag` and the facts it reads from the other stacks (`EfsBackup`, `WorkspaceSubnets`
+  and the egress parameters), so it neither turns them on nor turns them off: parameters keep their
   previous value, and one a stack has not had yet starts off. See [`deploy/aws/ecs/README.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/README.md).
 - **What is served** (issuer `{PUBLIC_BASE_URL}/mcp-oauth`): `/.well-known/oauth-protected-resource/mcp`,
   `/.well-known/oauth-protected-resource/mcp/memory`, `/.well-known/oauth-authorization-server/mcp-oauth`, `/mcp-oauth/authorize`, `/mcp-oauth/consent`,

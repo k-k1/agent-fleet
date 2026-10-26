@@ -566,7 +566,9 @@ administrator's to set.
 
 Timezone, Node.js / Java / Go versions, the table of effective tool versions (a CLI whose install at the workspace's start failed shows
 "install failed" with the reason and is tried again at the next start; what to do is in
-[21](21-troubleshooting.md#starting-a-session-says-the-agents-cli-could-not-be-installed)), **agent CLI updates** (off by
+[21](21-troubleshooting.md#starting-a-session-says-the-agents-cli-could-not-be-installed); one whose upgrade at the start was
+skipped because the home disk was full shows "upgrade skipped: home disk full, old version in use" and keeps working at the
+installed version), **agent CLI updates** (off by
 default), and applying an Agent Fleet update.
 The Java and Node.js rows show the exact version in use (for example `21.0.11+10`, `v22.23.4`).
 When a newer patch of that version is out, an **Update to …** button downloads it into your home volume;
@@ -576,7 +578,8 @@ not installed yet, the button names the version it will install (for example
 workspace start; versions you installed yourself with nvm, and exact versions pinned by an
 nvm alias or a `.nvmrc`, are kept.
 **Installed versions** lists the JDKs and Node.js versions on disk with their size. **Uninstall**
-removes one from your home volume, after asking. Versions provided by the workspace image, the
+removes one from your home volume, after asking; for Node.js that is every patch of the major, including
+ones you installed with nvm. Versions provided by the workspace image, the
 selected version (unless the image also has it) and one being installed cannot be removed.
 → [17 Workspace environment](17-workspace-environment.md#environment-settings-and-recreating-the-workspace)
 

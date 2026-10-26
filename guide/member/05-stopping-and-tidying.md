@@ -303,8 +303,9 @@ The dialog shows, before you confirm:
   [Agents reference](../ref/agents.md#moving-a-session-to-another-agent). The same
   agent is never offered (it draws on the same account's quota); to continue in the same kind,
   use **"Branch here"** ([04 Conversation](04-conversation.md#branch-from-a-past-message)) where the kind supports it. Agents that cannot read the file, or
-  are not connected, are listed with the reason. For claude, codex and muse the
-  dialog also shows each agent's current usage; for the others it says nothing about quota.
+  are not connected, are listed with the reason. For claude, codex, muse, copilot and agy the
+  dialog also shows each agent's current usage (copilot's as its one monthly pool); for the
+  others it says nothing about quota.
 - **"Model"** and **"Execution method"** for the new session, as when you start one.
 - **Uncommitted changes** in the working copy. The move never commits, stashes or discards them;
   the new session takes them over as they are, so tidy them first if you need to.

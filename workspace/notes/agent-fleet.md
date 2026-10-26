@@ -63,7 +63,9 @@ it is blocked on got settled, a long run it waits for finished. Plain text only 
 files (that's what `propose_session_handoff` is for). The result says `delivered` when the message
 reached the peer's agent, or `queued` when the peer is mid-turn and gets it as its next turn once
 the current one ends — or, with `blocked_on`, is waiting on its user's question, plan or permission
-answer and gets it once that is answered and the turn ends — don't resend a queued message. Neither means it was **read or acted on**, so
+answer and gets it once that is answered and the turn ends, or with `blocked_on: "starting"` is a
+claude Terminal session launched under 3 minutes ago (one your send just resumed, say) and gets it
+once its pane has sat idle about 45 s — don't resend a queued message. Neither means it was **read or acted on**, so
 don't proceed as if the peer agreed. A message interrupts its work: no status updates, no
 acknowledgements, nothing that could have waited for the user.
 
@@ -227,7 +229,8 @@ not offered at all, and a call by name answers `browser_unavailable`.
 
 ## Adding an MCP server is a Console action
 
-Settings → MCP, not a config edit. Agent Fleet owns and rewrites its entries in `~/.claude.json`,
+Settings → Connections → **MCP servers (used by sessions)**, not a config edit (Outside access →
+MCP tokens & apps is the other direction: clients reaching this workspace's `/mcp`). Agent Fleet owns and rewrites its entries in `~/.claude.json`,
 `~/.codex/config.toml` and opencode's config, so hand-added servers get wiped. The fleet-policy
 blocks it writes into `~/.codex/AGENTS.md`, `~/.config/opencode/AGENTS.md` and `~/.gemini/AGENTS.md`
 are re-composed at every start between `<!-- agent-fleet:… -->` markers; text outside the markers
