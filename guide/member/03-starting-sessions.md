@@ -190,8 +190,9 @@ workspace is stopped.
   branches gets the name the dialog would show instead of inventing its own.
 - Once work is under way, **Comment the work back** appears in the details. The draft holds the
   branch and the changed files, and **the sentence is yours**: it is posted exactly as written and
-  nothing is written for you. Bitbucket items have no such button, because Agent Fleet only reads from
-  Bitbucket.
+  nothing is written for you. On a Bitbucket pull request the button appears only when the
+  connection is known to hold the pull request write scope (`pullrequest:write`; see
+  [15](15-external-services.md)); otherwise Agent Fleet only reads from Bitbucket.
 
 While the workspace runs the list refreshes about every 5 minutes; **⟳** fetches immediately.
 
@@ -217,7 +218,7 @@ five-minute refreshes, and a stale copy of them is worse than none.
   checks, behind its base, conflicts, failing checks, a draft, or not decided yet), and while the
   workspace is stopped (the GitHub credentials live in it; it is never started for this). It is not drawn
   at all unless the connection is known to be able to merge: a classic token (what the GitHub device-flow
-  login gives) with the `repo` scope. A fine-grained token or a GitHub App connection does not report what
+  login gives) with the `repo` scope (`public_repo` is enough on a public repository). A fine-grained token or a GitHub App connection does not report what
   it may do, so it gets no Merge button; merge on GitHub. **Bitbucket pull requests have no Merge
   button**, and neither does any agent: merging is something you press. The branch is not deleted
   afterwards.
