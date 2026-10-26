@@ -35,11 +35,12 @@ main cause of OOM trouble — this has caused real incidents. Your own limit:
   changed selection applies at the next launch (no Stop → Start). With no selection — the default
   for a fresh workspace — both are absent; select a version instead of working around it. Check
   with `echo "$JAVA_HOME"` / `command -v java`.
-- Setting `JAVA_HOME` by hand is the fallback, and **never as `ls … | head -1`**: both dirs use
-  `temurin-<major>-jdk-<arch>` and `amd64` sorts before `arm64`, so a home volume filled on x86
-  and later attached to an arm64 box makes the first match the one whose `bin/java` cannot exec.
-  Pin your arch:
-  `a=$(dpkg --print-architecture); JAVA_HOME=$(ls -d /usr/lib/jvm/temurin-21-jdk-$a ~/.local/share/agent-fleet/jvm/temurin-21-jdk-$a 2>/dev/null | head -1)`.
+- Setting `JAVA_HOME` by hand is the fallback: `JAVA_HOME=$(workspace-agent java-home 21)` (it
+  applies both rules above and exits 1 when that major is not installed for this arch). **Never
+  pick it with `ls … | head -1`**: both dirs use `temurin-<major>-jdk-<arch>` and `amd64` sorts
+  before `arm64`, so a home volume filled on x86 and later attached to an arm64 box makes the
+  first match the one whose `bin/java` cannot exec, and even an arch-pinned glob ignores the
+  newer-patch rule.
 
 ## Gradle / Maven
 
