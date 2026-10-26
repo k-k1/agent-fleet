@@ -207,12 +207,9 @@ Resources:
       AvailabilityZone: !Select [ 1, !GetAZs "" ]
       CidrBlock: !FindInMap [ Subnets, Private1, Cidr ]
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-private-1" } ]
-  # Workspace subnets (#2716): the workspace task ENIs, and nothing else. They have a route
-  # table of their own because routing is per route table: the private one keeps the S3
-  # endpoint for image pulls (the ECS agent on an ecs-ec2 slot pulls through the instance's
-  # ENI in a private subnet), while a workspace's own S3 leaves through the NAT, later the
-  # egress gateway of ADR 0122, where it can be recorded. One per AZ of the private subnets:
-  # the CP refuses a home in an AZ without one rather than fall back to the private subnet.
+  # Workspace subnets (#2716): task ENIs only, on a route table of their own (PARAMETERS.md,
+  # 00-network: "Workspace subnets"). One per AZ of the private subnets: the CP refuses a home
+  # in an AZ without one rather than fall back to the private subnet.
   WorkspaceSubnet0:
     Type: AWS::EC2::Subnet
     Properties:
@@ -247,15 +244,11 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties: { SubnetId: !Ref PublicSubnet1, RouteTableId: !Ref PublicRt }
 
-  # One NAT gateway (single-AZ) - the main standing cost. Enough for a dev loop;
-  # a prod env would put one NAT per AZ. Workspaces egress to git/Anthropic through it.
-  # !! Retained on purpose. This address is the deployment's ONLY egress source IP
-  # (every workspace reaches git / the model APIs through it), so it is the value a
-  # customer registers in a corporate firewall allow-list. Releasing it silently cuts
-  # everyone's outbound traffic and the replacement is a different address, so the
-  # stack must never take it away - not on delete, not on replacement. Retaining it
-  # is also what makes the address reusable: hand it back as NatEipAllocationId and
-  # the rebuilt deployment egresses from the same IP.
+  # One NAT gateway (single-AZ). !! NatEip is retained on purpose: it is the egress source IP of
+  # the CP and hosts (and of workspaces unless EgressRoute=gateway, which adds GatewayEip as a
+  # second address), which a customer allow-lists. The stack must never release it, on delete or
+  # replacement; handing it back as NatEipAllocationId rebuilds behind the same IP.
+  # PARAMETERS.md, 00-network: "NAT egress address".
   NatEip:
     Type: AWS::EC2::EIP
     Condition: CreateNatEip
@@ -290,10 +283,8 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties: { SubnetId: !Ref PrivateSubnet1, RouteTableId: !Ref PrivateRt }
 
-  # The workspace route table: the default route to the NAT (or the egress gateway, below)
-  # and NO S3 endpoint route, so a workspace's S3 is never refused by the endpoint policy
-  # below and never skips the NAT or the gateway (#2657). Under NatEnabled=false the NAT
-  # route goes with the private one.
+  # The workspace route table: default route to the NAT (or the egress gateway) and NO S3 endpoint
+  # route, so a workspace's S3 is never refused by the endpoint policy (#2657).
   # deploy/local/cfn-s3-endpoint-test.py pins both route tables.
   WorkspaceRt:
     Type: AWS::EC2::RouteTable
@@ -315,14 +306,9 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties: { SubnetId: !Ref WorkspaceSubnet1, RouteTableId: !Ref WorkspaceRt }
 
-  # S3 gateway endpoint on the PRIVATE route table only (CP, ecs-ec2 slot hosts, engines,
-  # home-op tasks). ECR stores layer blobs in S3, so an ecs-ec2 cold pull (made by the ECS
-  # agent through the slot instance's ENI) stays off the NAT's data processing: ~918 MiB
-  # compressed per workspace image (deploy/aws/ecs/README.md). Workspace tasks are not on
-  # this route table (WorkspaceRt), so the policy never decides their S3. Fargate workspaces
-  # pull through their own task ENI and so still pull through the NAT.
-  # Interface endpoints (ecr.api / ecr.dkr / logs / ssm) are deliberately NOT here: at
-  # $0.01/AZ/hour x 2 AZ each they cost more than the NAT gateway they'd relieve.
+  # S3 gateway endpoint on the PRIVATE route table only; workspace tasks are not on it (WorkspaceRt),
+  # so the policy never decides their S3. Interface endpoints are deliberately NOT here: they cost
+  # more than the NAT they would relieve (PARAMETERS.md, 00-network: "S3 endpoint").
   S3Endpoint:
     Type: AWS::EC2::VPCEndpoint
     Condition: S3EndpointOn
@@ -331,44 +317,28 @@ Resources:
       ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
       VpcEndpointType: Gateway
       RouteTableIds: [ !Ref PrivateRt ]
-      # Only what the stack itself needs is admitted. A request the policy denies does NOT
-      # fall back to the NAT: the S3 prefix-list route is more specific than 0.0.0.0/0, so
-      # a same-region S3 request from a private subnet that the policy refuses is
-      # AccessDenied (S3 in another region is outside the prefix list and still leaves
-      # through the NAT). That is acceptable here only because nothing a user drives runs on
-      # this route table. When the stack starts using another bucket from a private subnet,
-      # add it here (deploy/local/cfn-s3-endpoint-test.py pins this list).
+      # Only what the stack itself needs is admitted. A refused request does NOT fall back to the
+      # NAT (the S3 prefix-list route is more specific): it is AccessDenied, acceptable only because
+      # nothing a user drives runs on this route table. A new bucket used from a private subnet
+      # must be added here (deploy/local/cfn-s3-endpoint-test.py pins this list).
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          # ECR image layers. ECR serves layer blobs from an AWS-owned bucket in the region;
-          # this is the resource AWS documents for the endpoint policy in "Amazon ECR
-          # interface VPC endpoints (AWS PrivateLink)", section "Create a VPC endpoint for
-          # Amazon S3" (the S3 gateway endpoint ECR image pulls need). Read-only. Drop this
-          # statement and every image pull is refused at the endpoint: a refused request does
-          # not fall back to the NAT.
+          # AWS-owned ECR layer bucket. Read-only. Drop this statement and every image pull is
+          # refused at the endpoint: a refused request does not fall back to the NAT.
           - Sid: EcrLayerBucket
             Effect: Allow
             Principal: "*"
             Action: [ "s3:GetObject" ]
             Resource: !Sub "arn:${AWS::Partition}:s3:::prod-${AWS::Region}-starport-layer-bucket/*"
-          # Amazon Linux 2023 package repositories (dnf on the ecs-ec2 slot instances, which
-          # sit on the private route table). AWS documents the repo bucket as
-          # al2023-repos-<region>-de612dc2 ("Amazon Linux 2023 User Guide", "Package
-          # repository"). Read-only; nothing in the templates runs dnf today, so this keeps
-          # an operator's package install or an AMI refresh from needing the NAT.
+          # Amazon Linux 2023 package repositories. Read-only; nothing runs dnf today.
           - Sid: Al2023Repos
             Effect: Allow
             Principal: "*"
             Action: [ "s3:GetObject" ]
             Resource: !Sub "arn:${AWS::Partition}:s3:::al2023-repos-${AWS::Region}-de612dc2/*"
-          # SSM Agent updates on the slot and engine instances, which the CP drives through
-          # SSM (home mount, unmount, stop recovery). AWS-UpdateSSMAgent, also as a State
-          # Manager auto-update, reads the manifest and package from amazon-ssm-<region> and
-          # its document module from aws-ssm-<region> ("SSM Agent communications with AWS
-          # managed S3 buckets", Systems Manager User Guide). Without them the update is
-          # AccessDenied here instead of using the NAT. Read-only. The patching, Distributor
-          # and Windows buckets of the same table are left out: nothing here uses them.
+          # SSM Agent updates on the slot and engine instances. Read-only; the other buckets of
+          # the AWS table are left out because nothing here uses them.
           - Sid: SsmAgentUpdate
             Effect: Allow
             Principal: "*"
@@ -376,11 +346,8 @@ Resources:
             Resource:
               - !Sub "arn:${AWS::Partition}:s3:::amazon-ssm-${AWS::Region}/*"
               - !Sub "arn:${AWS::Partition}:s3:::aws-ssm-${AWS::Region}/*"
-          # The ECS agent image, which ecs-init downloads before it starts the agent when the
-          # instance's cache is missing or empty (ecs-init cache.go, AgentCacheStatus /
-          # DownloadAgent): the partition bucket amazon-ecs-agent (in us-east-1, so on this
-          # endpoint only in us-east-1) and the regional amazon-ecs-agent-<region>. Refused
-          # here, the slot or engine instance never registers with the cluster. Read-only.
+          # ECS agent image download by ecs-init. Refused here, the slot or engine instance never
+          # registers with the cluster. Read-only.
           - Sid: EcsAgentDownload
             Effect: Allow
             Principal: "*"
@@ -388,16 +355,9 @@ Resources:
             Resource:
               - !Sub "arn:${AWS::Partition}:s3:::amazon-ecs-agent/*"
               - !Sub "arn:${AWS::Partition}:s3:::amazon-ecs-agent-${AWS::Region}/*"
-          # The optional models bucket of 60-engines (af-<engines stack>-models-<account>):
-          # the CP lists and reads it, the ingest tasks write it and the engine VMs read
-          # it. This stack cannot name the engines stack, so the stack-name part is a
-          # wildcard. The account id in the name is not an ownership proof (anyone can
-          # create af-x-models-<this account id> in their own account), so the statements
-          # also require s3:ResourceAccount to be this account, which AWS sets from the
-          # bucket's owner. Other stacks' buckets in this account match too; IAM on each
-          # role is what narrows them.
-          # Actions are the union of what those IAM roles hold (IAM still decides per
-          # role); multipart and tagging are what `aws s3 mv/cp` of a large model uses.
+          # Optional models bucket of 60-engines. The stack-name part is a wildcard, so the
+          # s3:ResourceAccount test below is what ties it to this account (PARAMETERS.md,
+          # 00-network: "S3 endpoint policy"). IAM on each role narrows it further.
           - Sid: ModelsObjects
             Effect: Allow
             Principal: "*"
@@ -419,10 +379,8 @@ Resources:
             Resource: !Sub "arn:${AWS::Partition}:s3:::af-*-models-${AWS::AccountId}"
             Condition:
               StringEquals: { "s3:ResourceAccount": !Ref AWS::AccountId }
-          # The optional egress event archive bucket of 10-data (af-<data stack>-egress-archive-
-          # <account>-<region>, ADR 0122): the CP puts and reads one object per UTC day under egress/ and
-          # checks it with HeadObject. Same-account test as the models bucket, for the same reason.
-          # Refused here, the CP's archive write is AccessDenied, not NAT traffic.
+          # Optional egress archive bucket of 10-data (ADR 0122); same-account test as the models
+          # bucket. Refused here, the CP's archive write is AccessDenied, not NAT traffic.
           - Sid: EgressArchiveObjects
             Effect: Allow
             Principal: "*"
@@ -476,14 +434,10 @@ Resources:
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-ws-sg" } ]
 
   # --- Egress gateway (EgressRoute=gateway; ADR 0122 decision 5, README "Egress gateway") ---
-  #
-  # The route follows instance replacement through a FIXED network interface: the workspace
-  # route table points at GatewayEni, which this stack owns together with its Elastic IP, and
-  # each instance the group launches attaches it at boot as its second interface. So the
-  # route target, the proxy address the CP hands to workspaces and the egress address never
-  # change, and no instance needs ec2:ReplaceRoute or address permissions. The price: the
-  # interface is bound to PublicSubnet0's AZ, so the group launches there only, and during a
-  # replacement the route blackholes until the new instance has attached it (minutes).
+  # The workspace route targets the fixed GatewayEni, which each instance attaches at boot, so the
+  # route target, proxy address and egress address survive replacement. The interface is bound to
+  # PublicSubnet0's AZ and the route blackholes during a replacement (PARAMETERS.md, 00-network:
+  # "Egress gateway").
   GatewaySg:
     Type: AWS::EC2::SecurityGroup
     Condition: GatewayOn
@@ -523,10 +477,8 @@ Resources:
       Tags:
         - { Key: Name, Value: !Sub "af-${AWS::StackName}-egress-gateway" }
         - { Key: af-egress-gateway, Value: !Ref AWS::StackName }
-  # Retained for the same reason as NatEip: it is an address an organisation allow-lists. It is
-  # NOT the NAT gateway's address: workspaces and the CP egress from two addresses (#2728).
-  # Created only when no GatewayEipAllocationId is handed in; a handed-in address is never
-  # created, replaced or released by this stack.
+  # Retained like NatEip; NOT the NAT address (#2728). Created only without a
+  # GatewayEipAllocationId; a handed-in address is never created, replaced or released here.
   GatewayEip:
     Type: AWS::EC2::EIP
     Condition: CreateGatewayEip
@@ -541,9 +493,9 @@ Resources:
     Properties:
       AllocationId: !If [ CreateGatewayEip, !GetAtt GatewayEip.AllocationId, !Ref GatewayEipAllocationId ]
       NetworkInterfaceId: !Ref GatewayEni
-  # Workspaces reach the CP's public URL through the gateway now, and the agent ships to it,
-  # so a narrowed AlbIngressCidr must still admit the gateway's address. One rule per source of
-  # the address: a handed-in allocation's address is a parameter (GatewayEipAddress).
+  # Must admit the gateway's address even when AlbIngressCidr is narrowed: workspaces and the
+  # gateway agent reach the CP's public URL through it. Do not remove (PARAMETERS.md, 00-network:
+  # "ALB rules").
   AlbFromGateway:
     Type: AWS::EC2::SecurityGroupIngress
     Condition: CreateGatewayEip
@@ -568,16 +520,14 @@ Resources:
       CidrIp: !Sub "${GatewayEipAddress}/32"
       Description: HTTPS from the egress gateway (workspaces and its agent)
 
-  # The bearer the gateway's agent and the CP share (AF_EGRESS_TOKEN). Generated here, never
-  # a parameter or an output: only its ARN travels (30-ingress EgressTokenSecretArn; the CP's
-  # execution role reads af-*-egress-token-*, 20-platform).
+  # Generated here, never a parameter or an output: only its ARN travels (30-ingress
+  # EgressTokenSecretArn). PARAMETERS.md, 00-network: "Egress token".
   EgressTokenSecret:
     Type: AWS::SecretsManager::Secret
     Condition: GatewayOn
     Properties:
-      # A deleted secret keeps its name for its recovery window, so a name that repeated on
-      # gateway -> nat-gateway -> gateway would fail the second create; the interface id makes
-      # it new each time the gateway is created.
+      # The interface id keeps the name new on every gateway create (a deleted secret holds
+      # its name for the recovery window).
       Name: !Sub "af-${AWS::StackName}-egress-token-${GatewayEni}"
       Description: !Sub "af-${AWS::StackName}: bearer of the egress gateway agent (AF_EGRESS_TOKEN)"
       GenerateSecretString: { PasswordLength: 48, ExcludePunctuation: true }
@@ -916,12 +866,9 @@ Resources:
               systemctl enable --now af-squid-rotate.timer af-egress-install.timer
             - { Ws0: !Ref WorkspaceSubnet0Cidr, Ws1: !Ref WorkspaceSubnet1Cidr }
 
-  # An Auto Scaling group of ONE: it replaces a failed instance, and the replacement attaches
-  # GatewayEni. One AZ only (the interface's). Terminate before launch on every update: two
-  # instances cannot share the interface. GatewayEnabled=false (pause.sh) makes it a group of
-  # zero; the terminated instance releases GatewayEni, which keeps its address. MaxSize stays 1
-  # either way: the rolling update requires MinInstancesInService (0) below MaxSize, and an
-  # update to a paused group can carry a new launch template (the AMI is re-resolved).
+  # Group of ONE; terminate-before-launch (two instances cannot share GatewayEni). MaxSize stays 1
+  # even at DesiredCapacity 0: the rolling update needs MinInstancesInService (0) < MaxSize, or an
+  # update to a paused group fails. PARAMETERS.md, 00-network: "Egress gateway group".
   GatewayAsg:
     Type: AWS::AutoScaling::AutoScalingGroup
     Condition: GatewayOn
