@@ -88,13 +88,16 @@ const listeners = new Set<() => void>();
 // holds NOW (not this tab's copy from import time), or a write for another plan would erase it.
 if (typeof window !== "undefined") {
   window.addEventListener("storage", (e) => {
-    if (e.key !== null && e.key !== LS_KEY) return;
+    if (e.key !== null && e.key !== LS_KEY && e.key !== SYNCED_KEY) return;
+    // The confirmation set is synced between tabs too (union: another tab's older copy must not
+    // erase a confirmation this tab holds), and the current list is judged against it again.
+    for (const k of loadSynced()) synced.add(k);
     const before = store;
     store = load();
     // Another tab chose a different reviewer for a plan: that is newer than this tab's
     // unconfirmed write.
     for (const k of [...pending.keys()]) if (before[k] !== store[k]) pending.delete(k);
-    listeners.forEach((l) => l());
+    reconcile(useSessionsStore.getState().sessions); // also notifies subscribers
   });
 }
 
@@ -112,6 +115,9 @@ function commit(next: Store) {
  *  failed write, or a refresh that returned an older list, keeps this tab's own newer choice. */
 function syncToAgent(planner: string, planPath: string, reviewer: string) {
   pending.set(reviewerKey(planner, planPath), reviewer);
+  // Subscribers must see the marker now, not when the POST settles: commit() above notified
+  // before it existed, and a snapshot that still reads the Agent's older record schedules no render.
+  listeners.forEach((l) => l());
   void sessionPlanReviewerSet(planner, planPath, reviewer)
     .then((ok) => (ok ? useSessionsStore.getState().refresh() : undefined))
     .catch(() => {})
@@ -139,6 +145,13 @@ function reconcile(sessions: Session[]) {
         synced.add(k);
         syncedChanged = true;
       }
+      // Keep the cache on the newest confirmed reviewer, so a later list without the field
+      // (the Control Plane's mirror while the Agent is unreachable) cannot bring back an older one.
+      if (!pending.has(k) && next[k] !== e.reviewer) {
+        delete next[k];
+        next[k] = e.reviewer;
+        storeChanged = true;
+      }
     }
   }
   for (const k of [...synced]) {
@@ -151,6 +164,8 @@ function reconcile(sessions: Session[]) {
       storeChanged = true;
     }
   }
+  const keys = Object.keys(next);
+  for (const old of keys.slice(0, Math.max(0, keys.length - MAX_ENTRIES))) delete next[old];
   if (syncedChanged) saveSynced();
   if (storeChanged) commit(next);
   else listeners.forEach((l) => l());
