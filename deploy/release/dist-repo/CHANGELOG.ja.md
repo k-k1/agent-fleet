@@ -5,10 +5,9 @@
 
 ## [0.35.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.35.0) — 2026-10-26
 
-AWS では、ワークスペースの通信を任意の egress ゲートウェイ経由にでき、すべての接続を発信元のワークスペースと
-一緒に記録し、許可リストを強制できます。テナント管理者は OAuth でサインインする MCP サーバーを配布でき、
-Agent Fleet のメモリには専用の MCP エンドポイントができました。ツールチェーンでは JDK と Node.js のパッチを
-最新に保てます。
+AWS では、ワークスペースの Web の通信を任意の egress ゲートウェイ経由にして記録し、許可リストを強制できます。
+テナント管理者は OAuth の MCP サーバーを配布でき、メモリには専用の MCP エンドポイントができ、ツールチェーンでは
+JDK と Node.js のパッチを最新に保てます。
 
 ## [0.34.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.1) — 2026-10-23
 
