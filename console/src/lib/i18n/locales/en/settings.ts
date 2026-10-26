@@ -1,5 +1,5 @@
 // English カタログ / ドメイン: settings
-// キー接頭辞: settings, set, display, instr, backup, tokens, account, provider, conn, auth, notprov, keys, agents
+// キー接頭辞: settings, set, display, instr, skills, backup, tokens, account, provider, conn, auth, notprov, keys, agents
 //
 // ⚠️ 追記は**自分のドメインのファイルだけ**に行う（ADR 0067 決定 4）。分割前は 4,700 行の
 // 1 ファイルで、フロントの並列セッションが全員ここへ追記＝毎回確実に衝突していた。
@@ -782,4 +782,28 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "instr.ws_required_hint": "Your instructions live in files inside the workspace, so they can only be edited while it runs.",
   "instr.start_ws": "Start the workspace",
   "keys.cmd.newImagegenStudio": "New image studio",
+  "set.tab_skills": "Skills",
+  "skills.intro": "The personal skills each agent reads in every session: where each one lives, which copy wins, and what it says. Read-only; edit the files and sessions started afterwards pick the change up. Skills kept in a repository are not listed here.",
+  "skills.ws_required_hint": "Skills are files inside the workspace, so they can only be shown while it runs.",
+  "skills.load_failed": "Could not load the skills",
+  "skills.kind_nav": "Agent",
+  "skills.roots_head": "Folders read",
+  "skills.form_skills": "skills",
+  "skills.form_commands": "command",
+  "skills.root_missing": "not created",
+  "skills.none": "This agent has no personal skills yet. Put <name>/SKILL.md in one of the folders above to add one.",
+  "skills.scope_user": "Your skills",
+  "skills.scope_fleet": "Agent Fleet skills",
+  "skills.scope_cli": "Bundled with the CLI",
+  "skills.fleet_hint": "Agent Fleet writes these at every start; edits to them are overwritten.",
+  "skills.shadowed": "shadowed",
+  "skills.shadowed_by": "Not used: {by} has the same name and wins.",
+  "skills.not_invocable": "not user-invocable",
+  "skills.bundled_hint": "Built into the CLI; there is no file.",
+  "skills.copy_path": "Copy path",
+  "skills.path_copied": "Path copied",
+  "skills.copy_failed": "Could not copy",
+  "skills.argument_hint": "Arguments:",
+  "skills.files": "Files in the folder:",
+  "skills.other_kinds": "Cursor, Antigravity, Kiro and Copilot have no personal skills folder (a session's skill list offers the other agents' skills to them to read).",
 };

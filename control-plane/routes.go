@@ -951,6 +951,9 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/user-notes", rest)
 	mux.HandleFunc("PUT /api/user-notes", rest)
 	mux.HandleFunc("GET /api/user-notes/preview", rest)
+	// Personal skills catalog (#2792) — read-only, answered inside the container.
+	mux.HandleFunc("GET /api/skills/catalog", rest)
+	mux.HandleFunc("GET /api/skills/file", rest)
 	// codex / opencode model catalogs (launch model picker) — proxied to the Agent.
 	mux.HandleFunc("GET /api/agents/{kind}/models", rest)
 	// The Agent's kind catalog (#1077) — proxied to the Agent.

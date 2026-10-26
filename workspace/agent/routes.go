@@ -276,6 +276,10 @@ func buildMux() *http.ServeMux {
 	// user-level .claude/skills and commands.
 	// control-plane/routes.go needs the same path registered: the CP is an explicit allowlist.
 	mux.HandleFunc("GET /sessions/{name}/skills", sessionx.HandleSessionSkills)
+	// Settings "Skills" view (#2792): every kind's personal skill roots, and one file from them.
+	// The file route serves only what lies inside those roots; registered in control-plane too.
+	mux.HandleFunc("GET /skills/catalog", sessionx.HandleSkillCatalog)
+	mux.HandleFunc("GET /skills/file", sessionx.HandleSkillFile)
 	// The "committed" verdict for the changed-files bar (docs/log/68 P2). Separate from the
 	// transcript's own list: it returns only paths that appeared in a commit made since the
 	// session started.

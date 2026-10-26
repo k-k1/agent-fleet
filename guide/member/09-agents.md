@@ -425,8 +425,9 @@ Instructions come in three layers, and this setting is the **middle** one.
 ## Bringing your personal Claude Code setup
 
 Two settings cover part of this: **⚙Settings → "Agent instructions"** is your global `CLAUDE.md`
-(see above) and **⚙Settings → "MCP servers (used by sessions)"** covers MCP. Personal **hooks, skills and subagents**
-have no settings screen. In a Workspace they are plain files in Claude Code's configuration
+(see above) and **⚙Settings → "MCP servers (used by sessions)"** covers MCP. Personal **skills** can be viewed in
+**⚙Settings → "Skills"** (read-only; Codex, OpenCode and Muse as well as Claude, with where each file
+lives, which copy wins and what it says). Personal **hooks and subagents** have no settings screen. In a Workspace they are plain files in Claude Code's configuration
 folder, `/var/lib/af/claude` (run `echo $CLAUDE_CONFIG_DIR` in a shell to confirm the path on your
 deployment). It is what `~/.claude` is on your own machine.
 
@@ -437,8 +438,8 @@ deployment). It is what `~/.claude` is on your own machine.
 | Your own subagents | `<configuration folder>/agents/<name>.md` | No |
 | Your own hooks | the `hooks` key of `<configuration folder>/settings.json` | No |
 
-- **It works, but it is a Claude Code feature you drive by hand.** Agent Fleet has no screen for
-  these files and does not check them. Checked on Claude Code 2.1.293 with a throwaway
+- **It works, but it is a Claude Code feature you drive by hand.** Agent Fleet does not check
+  these files (the Skills screen only lists them). Checked on Claude Code 2.1.293 with a throwaway
   configuration folder: a `SessionStart` hook ran, and the skill and the subagent showed up in the
   session's list. A skill in `skills/` also appears in the session view's skill picker.
   Try yours in a real session before relying on it. Claude reads these files **when a session

@@ -1,5 +1,5 @@
 // 日本語 カタログ / ドメイン: settings
-// キー接頭辞: settings, set, display, instr, backup, tokens, account, provider, conn, auth, notprov, keys, agents
+// キー接頭辞: settings, set, display, instr, skills, backup, tokens, account, provider, conn, auth, notprov, keys, agents
 //
 // ⚠️ 追記は**自分のドメインのファイルだけ**に行う（ADR 0067 決定 4）。分割前は 4,700 行の
 // 1 ファイルで、フロントの並列セッションが全員ここへ追記＝毎回確実に衝突していた。
@@ -776,4 +776,28 @@ export const settings = {
   "instr.ws_required_hint": "指示の実体はワークスペース内のファイルなので、起動中だけ編集できます。",
   "instr.start_ws": "ワークスペースを起動",
   "keys.cmd.newImagegenStudio": "新しい画像スタジオ",
+  "set.tab_skills": "スキル",
+  "skills.intro": "各エージェントが読む個人スキル（全セッション共通）の一覧です。置き場所・どれが優先されるか・中身を確認できます。読み取り専用で、ファイルを編集すると次に起動するセッションから反映されます。リポジトリに置いたスキルはここには出ません。",
+  "skills.ws_required_hint": "スキルはワークスペース内のファイルなので、起動中にだけ表示できます。",
+  "skills.load_failed": "スキルを読み込めませんでした",
+  "skills.kind_nav": "エージェント",
+  "skills.roots_head": "読み込まれるフォルダ",
+  "skills.form_skills": "スキル",
+  "skills.form_commands": "コマンド",
+  "skills.root_missing": "未作成",
+  "skills.none": "このエージェントの個人スキルはまだありません。上のフォルダに <名前>/SKILL.md を置くと追加されます。",
+  "skills.scope_user": "自分のスキル",
+  "skills.scope_fleet": "Agent Fleet のスキル",
+  "skills.scope_cli": "CLI 同梱",
+  "skills.fleet_hint": "Agent Fleet が起動のたびに書き込むスキルです。編集しても上書きされます。",
+  "skills.shadowed": "上書きされている",
+  "skills.shadowed_by": "同名の {by} が優先されるため、このスキルは使われません。",
+  "skills.not_invocable": "手動では呼べない",
+  "skills.bundled_hint": "CLI に組み込まれたスキルで、ファイルはありません。",
+  "skills.copy_path": "パスをコピー",
+  "skills.path_copied": "パスをコピーしました",
+  "skills.copy_failed": "コピーできませんでした",
+  "skills.argument_hint": "引数:",
+  "skills.files": "フォルダ内のファイル:",
+  "skills.other_kinds": "Cursor・Antigravity・Kiro・Copilot には個人スキルのフォルダがありません（セッションのスキル一覧には、他のエージェントのスキルが読み込み用として出ます）。",
 };

@@ -618,32 +618,11 @@ func readSkillEntries(root, source string) []sessionSkill {
 // extension: in claude a subdirectory only shows up as a namespace label and is not part of the
 // name you type.
 func readCommandEntries(root, source string) []sessionSkill {
-	out := []sessionSkill{}
-	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil // unreadable subtree — skip, don't abort the walk
-		}
-		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
-			return nil
-		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return nil
-		}
-		meta, _ := splitFrontmatter(string(b))
-		out = append(out, sessionSkill{
-			Name:         strings.TrimSuffix(d.Name(), ".md"),
-			Description:  meta["description"],
-			ArgumentHint: meta["argument-hint"],
-			Source:       source,
-			Type:         "command",
-		})
-		if len(out) >= maxSessionSkills {
-			return filepath.SkipAll
-		}
-		return nil
-	})
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	out := readCommandEntriesWithPath(root)
+	for i := range out {
+		// Path on a picker entry means "foreign, inject this file" — a native command has none.
+		out[i].Path, out[i].Source, out[i].Type = "", source, "command"
+	}
 	return out
 }
 
