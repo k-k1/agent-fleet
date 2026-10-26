@@ -1080,7 +1080,7 @@ func mcpStdioMemoryTools() []map[string]any {
 		},
 		{
 			"name":        "memory_read",
-			"description": "Agent Fleet memory: read one memory in full, with its revision and author. " + mcpMemoryEvidence,
+			"description": "Agent Fleet memory: read one memory in full, with its revision and author. Omit scope when unsure: the project is searched first, then the user scope; pass scope only to pick one of two memories that share a name. " + mcpMemoryEvidence,
 			"inputSchema": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
