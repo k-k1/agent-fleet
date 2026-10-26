@@ -394,3 +394,20 @@ func TestAutoTurnRoutesOnItsOwnModel(t *testing.T) {
 		}
 	})
 }
+
+// TestOneShotRouteKindSeesTheMuseSafeModel: a muse feature set to "" runs on the safe model,
+// not on the CLI default, so a park on that model must move the call.
+func TestOneShotRouteKindSeesTheMuseSafeModel(t *testing.T) {
+	writeResolvePrefs(t, `{"aiFeatureAgents":{"title.session":"muse"},"aiFeatureModels":{"title.session":{"muse":""}}}`)
+	tb := useRouteTable(t)
+	forceHeadlessAvailable(t, session.KindMuse, true)
+	stubMuseSafeModels(t, "muse-safe-a")
+	if k := oneShotRouteKind("title.session", OneShotShort, ""); k != session.KindMuse {
+		t.Fatalf("unparked: kind = %q, want the muse pin", k)
+	}
+	tb.Park(session.KindMuse, "muse-safe-a",
+		routehealth.Verdict{Class: routehealth.ClassServer, Scope: routehealth.ScopeModel, ResetAt: routeT0.Add(time.Hour)}, routeT0)
+	if k := oneShotRouteKind("title.session", OneShotShort, ""); k == session.KindMuse {
+		t.Fatal("a park on the safe model muse runs did not move the call")
+	}
+}

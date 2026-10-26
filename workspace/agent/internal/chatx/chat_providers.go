@@ -2202,15 +2202,23 @@ func oneShotRouteKind(feature string, tier OneShotTier, claudeModel string) stri
 // lands on the kind-wide key, which this lookup sees whatever model it names.
 func oneShotRouteModel(feature string, tier OneShotTier, kind, claudeModel string) string {
 	selected, configured := resolveOneShotModel(feature, tier, kind)
+	var m string
 	switch {
 	case selected == AssistantRecommendedModel:
-		return recommendedOneShotModel(kind, tier)
+		m = recommendedOneShotModel(kind, tier)
 	case configured:
-		return strings.TrimSpace(selected)
+		m = strings.TrimSpace(selected)
 	case kind == session.KindClaude:
-		return claudeModel
+		m = claudeModel
+	default:
+		m = recommendedOneShotModel(kind, tier)
 	}
-	return recommendedOneShotModel(kind, tier)
+	// muse never runs on its CLI default (the contributor row): museOneShot turns "" into the
+	// safe model and records that, so the lookup has to name the same one.
+	if m == "" && kind == session.KindMuse {
+		m = museSafeOneShotModel(prefsVisibility)
+	}
+	return m
 }
 
 // noteOneShotResult reports a one-shot's outcome to the cooldown table, as NoteTurnResult does
