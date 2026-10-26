@@ -3,6 +3,7 @@ package mcpsrv
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -63,6 +64,33 @@ func TestMemoryOnlyHandlerInstructions(t *testing.T) {
 		resp := c.a.dispatchMCPMethod(context.Background(), &cp.prin, rpcRequest{ID: json.RawMessage(`1`), Method: "server/discover"})
 		if got := resp.Result.(map[string]any)["instructions"]; got != c.want {
 			t.Errorf("instructions = %v, want %q", got, c.want)
+		}
+	}
+}
+
+// /mcp/memory serves memoryTools() itself, not a copy: the same descriptions and schemas as /mcp,
+// so a change to the tool table (repository, required write scope) reaches both endpoints.
+func TestMemoryOnlyHandlerServesTheSameToolDefinitions(t *testing.T) {
+	st := memStore(t)
+	cp := newMemCP(t, st, "running")
+	ctx := context.Background()
+	if err := st.SetTenantExternalMemory(ctx, cp.tenantID, true); err != nil {
+		t.Fatal(err)
+	}
+	prin := cp.prin
+	prin.scope = scopeWrite
+	want := map[string]mcpTool{}
+	for _, tl := range memoryTools() {
+		want[tl.name] = tl
+	}
+	got := New(cp).MemoryOnly().mcpToolList(ctx, &prin)
+	if len(got) != len(want) {
+		t.Fatalf("memory endpoint lists %d tools, want %d", len(got), len(want))
+	}
+	for _, g := range got {
+		w, ok := want[g["name"].(string)]
+		if !ok || g["description"] != w.desc || !reflect.DeepEqual(g["inputSchema"], w.schema) {
+			t.Errorf("%v differs from memoryTools()", g["name"])
 		}
 	}
 }
