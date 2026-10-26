@@ -2,7 +2,9 @@ package memoryx
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -155,5 +157,160 @@ func TestAgentMemoryExternalReadHonoursKinds(t *testing.T) {
 	}
 	if code, _ := memberDo(t, http.MethodGet, q+"for-outside", nil); code != http.StatusOK {
 		t.Fatalf("external-kind read: %d", code)
+	}
+}
+
+// extRepo seeds a project with one memory whose working copy has the given origin.
+func extRepo(t *testing.T, home, name, origin string) agentMemCaller {
+	t.Helper()
+	remoteRepo(t, home, name, origin)
+	c := agentMemCallerT(t, "claude-"+name)
+	agentMemSaveN(t, c, "seed", "project", time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC))
+	return c
+}
+
+func extSave(t *testing.T, m map[string]any) (int, string) {
+	t.Helper()
+	body := map[string]any{"name": "fact", "description": "d", "type": "project", "body": "b"}
+	for k, v := range m {
+		body[k] = v
+	}
+	code, b := memberDo(t, http.MethodPost, extBase+"entries", body)
+	return code, string(b)
+}
+
+// Every spelling of one repository's remote reaches the same project, on reads and on writes, and
+// the write's answer names the project for the CP's audit.
+func TestAgentMemoryExternalRepositorySelectsTheProject(t *testing.T) {
+	home, _, _ := agentMemTestEnv(t)
+	a := extRepo(t, home, "alpha", "https://github.com/k-k1/alpha.git")
+	b := extRepo(t, home, "beta", "git@github.com:k-k1/beta.git")
+	externalMode(t, ExternalMemoryWrite)
+	for i, repo := range []string{
+		"https://github.com/k-k1/alpha", "https://GitHub.com/k-k1/alpha.git/", "git@github.com:k-k1/alpha.git",
+		"ssh://git@github.com/k-k1/alpha.git", "https://tok:x@github.com:443/k-k1/alpha",
+	} {
+		name := fmt.Sprintf("via-remote-%d", i)
+		code, out := extSave(t, map[string]any{"scope": "project", "repository": repo, "name": name})
+		if code != 200 || !strings.Contains(out, `"project":"`+a.Project.ID+`"`) {
+			t.Fatalf("%s: %d %s", repo, code, out)
+		}
+		if _, err := agentMemRead(a, "project", name); err != nil {
+			t.Fatalf("%s: not saved into alpha: %v", repo, err)
+		}
+		if _, err := agentMemRead(b, "project", name); err == nil {
+			t.Fatalf("%s: leaked into beta", repo)
+		}
+	}
+	for _, repo := range []string{"https://github.com/k-k1/alpha", "https://GitHub.com/k-k1/alpha.git/", "git@github.com:k-k1/alpha.git", "ssh://git@github.com/k-k1/alpha.git"} {
+		code, out := memberDo(t, http.MethodGet, extBase+"read?scope=project&name=seed&repository="+url.QueryEscape(repo), nil)
+		if code != 200 || !strings.Contains(string(out), `"name":"seed"`) {
+			t.Errorf("read via %s: %d %s", repo, code, out)
+		}
+	}
+	code, out := memberDo(t, http.MethodGet, extBase+"entries?repository="+url.QueryEscape("git@github.com:k-k1/beta"), nil)
+	if code != 200 || !strings.Contains(string(out), "seed") {
+		t.Errorf("index via repository: %d %s", code, out)
+	}
+	code, out = memberDo(t, http.MethodGet, extBase+"search?q=seed&repository="+url.QueryEscape("https://github.com/k-k1/beta"), nil)
+	if code != 200 || !strings.Contains(string(out), b.Project.ID) {
+		t.Errorf("search via repository: %d %s", code, out)
+	}
+	// project and repository that agree are fine; forget answers the project too.
+	code, out = memberDo(t, http.MethodPost, extBase+"forget", map[string]any{
+		"scope": "project", "project": a.Project.ID, "repository": "https://github.com/k-k1/alpha", "name": "seed", "revision": 1})
+	if code != 200 || !strings.Contains(string(out), `"project":"`+a.Project.ID+`"`) {
+		t.Errorf("forget: %d %s", code, out)
+	}
+}
+
+// A remote that matches no project, matches two, names a different project than `project`, or is
+// not a remote at all is refused; a self-hosted host is not github.com.
+func TestAgentMemoryExternalRepositoryRefusals(t *testing.T) {
+	home, _, _ := agentMemTestEnv(t)
+	a := extRepo(t, home, "alpha", "https://github.com/k-k1/alpha.git")
+	b := extRepo(t, home, "beta", "https://github.com/k-k1/beta.git")
+	ghe := extRepo(t, home, "ghe", "https://ghe.example.com:8443/k-k1/alpha.git")
+	externalMode(t, ExternalMemoryWrite)
+
+	for _, c := range []struct {
+		name string
+		m    map[string]any
+		code int
+		sub  string
+	}{
+		{"unmatched", map[string]any{"repository": "https://github.com/k-k1/nosuch"}, 404, "no project"},
+		{"other host", map[string]any{"repository": "https://gitlab.com/k-k1/alpha"}, 404, "no project"},
+		{"conflict", map[string]any{"repository": "https://github.com/k-k1/alpha", "project": b.Project.ID}, 400, "different projects"},
+		{"not a remote", map[string]any{"repository": "/home/dev/repos/alpha"}, 400, "not a remote"},
+		{"ssh on an unknown host", map[string]any{"repository": "git@ghe.example.com:k-k1/alpha.git"}, 400, "not a remote"},
+	} {
+		m := map[string]any{"scope": "project"}
+		for k, v := range c.m {
+			m[k] = v
+		}
+		if code, out := extSave(t, m); code != c.code || !strings.Contains(out, c.sub) {
+			t.Errorf("%s save: %d %s", c.name, code, out)
+		}
+		q := url.Values{"q": {"seed"}}
+		for k, v := range c.m {
+			q.Set(k, v.(string))
+		}
+		if code, out := memberDo(t, http.MethodGet, extBase+"search?"+q.Encode(), nil); code != c.code {
+			t.Errorf("%s search: %d %s", c.name, code, out)
+		}
+	}
+	// A self-hosted host is never resolved from a remote (its port is not kept), with or without
+	// a port, in either direction; the id still works.
+	for _, repo := range []string{
+		"https://ghe.example.com/k-k1/alpha", "https://ghe.example.com:8443/k-k1/alpha.git", "https://ghe.example.com:9443/k-k1/alpha.git",
+	} {
+		if code, out := extSave(t, map[string]any{"scope": "project", "repository": repo, "name": "ghe"}); code != 400 || !strings.Contains(out, "cannot be matched safely") {
+			t.Errorf("ghe save %s: %d %s", repo, code, out)
+		}
+	}
+	if _, err := agentMemRead(ghe, "project", "ghe"); err == nil {
+		t.Error("a repository on a self-hosted host wrote into a project")
+	}
+	if code, out := extSave(t, map[string]any{"scope": "project", "project": ghe.Project.ID, "name": "ghe"}); code != 200 {
+		t.Errorf("ghe by id: %d %s", code, out)
+	}
+
+	// Two projects with one remote are ambiguous, never picked between.
+	remoteRepo(t, home, "alpha-copy", "https://github.com/k-k1/alpha.git")
+	c2 := agentMemCallerT(t, "claude-alpha-copy")
+	agentMemSaveN(t, c2, "seed", "project", time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC))
+	if c2.Project.ID == a.Project.ID {
+		t.Skip("the two working copies share a project id")
+	}
+	code, out := extSave(t, map[string]any{"scope": "project", "repository": "https://github.com/k-k1/alpha"})
+	if code != http.StatusConflict || !strings.Contains(out, a.Project.ID) || !strings.Contains(out, c2.Project.ID) {
+		t.Errorf("ambiguous: %d %s", code, out)
+	}
+}
+
+// A write must say where it goes: an omitted scope used to default to the user scope.
+func TestAgentMemoryExternalWriteRequiresScope(t *testing.T) {
+	home, _, _ := agentMemTestEnv(t)
+	a := extRepo(t, home, "alpha", "https://github.com/k-k1/alpha.git")
+	externalMode(t, ExternalMemoryWrite)
+	for _, m := range []map[string]any{{}, {"project": a.Project.ID}, {"repository": "https://github.com/k-k1/alpha"}} {
+		code, out := extSave(t, m)
+		if code != 400 || !strings.Contains(out, "scope is required") || !strings.Contains(out, "git remote get-url origin") {
+			t.Errorf("save %v: %d %s", m, code, out)
+		}
+		code, fb := memberDo(t, http.MethodPost, extBase+"forget", map[string]any{"name": "seed", "revision": 1, "project": m["project"], "repository": m["repository"]})
+		if out = string(fb); code != 400 || !strings.Contains(out, "scope is required") {
+			t.Errorf("forget %v: %d %s", m, code, out)
+		}
+	}
+	if code, out := extSave(t, map[string]any{"scope": "project"}); code != 400 || !strings.Contains(out, "needs `repository`") {
+		t.Errorf("project scope without a project: %d %s", code, out)
+	}
+	if code, out := extSave(t, map[string]any{"scope": "user", "type": "user"}); code != 200 || strings.Contains(out, `"project"`) {
+		t.Errorf("explicit user scope: %d %s", code, out)
+	}
+	if _, err := agentMemRead(a, "project", "fact"); err == nil {
+		t.Error("a refused save wrote into the project")
 	}
 }

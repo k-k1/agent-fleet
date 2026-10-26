@@ -358,8 +358,19 @@ link back.
   to allow a call: the narrower one wins.
 - **Asking the agent**: just say it in plain words in your local client, e.g. "search my Agent Fleet memory for how
   we run the integration tests" or "save to Agent Fleet memory that this repo's lint step needs `make gen` first".
-  The agent picks the project with `memory_projects` (a project must already hold memory; new projects are
-  started from inside the workspace) and writes facts, not secrets: text that looks like one is refused.
+  The agent writes facts, not secrets: text that looks like one is refused.
+- **Choosing the project**: the tools take `repository`, the output of `git remote get-url origin` in the
+  repository the agent is working in. Agent Fleet matches it against each project's remote (`memory_projects` lists
+  them), so `https://`, `ssh://` and `git@host:owner/repo` spellings, a trailing `.git` or `/`, and the case of the
+  host all find the same project. `project` (an id from `memory_projects`) still works; if both are given they must
+  name the same project. A remote that matches no project, or more than one, is refused with a message saying so (a
+  project must already hold memory; new projects are started from inside the workspace). ssh and `git@` spellings
+  and `https://` remotes are matched on github.com, gitlab.com, bitbucket.org and codeberg.org only. A self-hosted host is
+  refused (the stored remote does not keep the port, so two services on one host name could be confused): pass `project`.
+- **Saving and forgetting need a scope**: `memory_save` and `memory_forget` require `scope`: `project` (with
+  `repository` or `project`) for a fact about one repository, `user` only for a fact that holds in every project.
+  A call without `scope` is refused with a message naming what to pass, so a forgotten project can no longer
+  publish a repository-specific fact to every project.
 - **What is recorded**: a save shows in the Agent memory list as written by author kind `external`, and the
   commit message carries an `AF-External-Client: <name>` trailer with the client's self-declared name (for
   information only). Each external save and forget is also written to the audit log as `memory.entry.save` /
