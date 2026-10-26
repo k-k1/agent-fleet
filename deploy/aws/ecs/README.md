@@ -324,7 +324,8 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 `McpEnabled=on`; the Rule fails the operation otherwise) and `McpOAuthTrustedHosts` sets the
 fallback host list `AF_MCP_OAUTH_TRUSTED_HOSTS`. All three default to off / empty and then
 add no environment entry, so an existing stack is unchanged until you set them. **`update.sh`
-overrides only `ImageTag` (plus `EfsBackup` and `WorkspaceSubnets`)**, every other parameter
+overrides only `ImageTag` (plus the facts it reads from the other stacks: `EfsBackup`,
+`WorkspaceSubnets`, `EgressProxyAddr`, `EgressTokenSecretArn`, `EgressArchiveBucket`)**, every other parameter
 keeps its previous value and a parameter the stack has never had takes the template default, so a release
 that adds these parameters turns nothing on; run the targeted deploy above to turn them on.
 Details: [`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#mcp-mcp-and-mcp-oauth) and
@@ -344,7 +345,7 @@ Control Plane variables that the operator guide calls configurable have a parame
 `GithubLabelJa`, `GithubLabelEn`, `GithubMembershipTtl`, `GithubMembershipGrace`; `LlmUrl`,
 `ComfyUrl`, `RemoteEngineUrl`, `RemoteEngineKeys`. Empty (the default) adds no environment entry,
 so an existing stack is unchanged and `update.sh` (which overrides only `ImageTag`,
-`EfsBackup` and `WorkspaceSubnets`) neither sets nor clears them. The three secrets (`AF_GITHUB_LOGIN_CLIENT_SECRET`,
+`EfsBackup`, `WorkspaceSubnets` and the egress parameters) neither sets nor clears them. The three secrets (`AF_GITHUB_LOGIN_CLIENT_SECRET`,
 `AF_COMFY_API_KEY`, `AF_REMOTE_ENGINE_TOKEN`) are read from SSM SecureString parameters
 `<SsmPrefix>/github-login-client-secret`, `/comfy-api-key`, `/remote-engine-token` when their own
 switch (`GithubLoginSecret`, `ComfyApiKey`, `RemoteEngineToken` = `on`) is set; create the SSM
@@ -916,7 +917,7 @@ either way: only workspaces go through the gateway.
 
 | | `nat-gateway` (default) | `gateway` |
 |---|---|---|
-| Recording | none: the Admin Egress tab stays empty | every workspace connection, by name (SNI / Host) and address, attributed to the workspace (#2674) |
+| Recording | none: the Admin Egress tab stays empty | every workspace connection, by name (SNI / Host) and address, attributed to the workspace (#2674). The Admin Egress tab shows counts per host; the attributed events are `GET /api/admin/egress/events` (super_admin), not shown in the Console |
 | Allowlist | not enforced | log-only, or enforce (a name outside it is refused) |
 | Hourly cost | the NAT gateway (~$0.045–0.062/h by region) | the NAT gateway (the CP and hosts still use it) + the gateway instance (`t3.small` ≈ $0.02–0.03/h) + its Elastic IP ($0.005/h) |
 | Per-GB cost | NAT data processing ($0.045–0.062/GB) on all workspace traffic, S3 included | none for workspace traffic (normal data transfer only; same-region S3 transfer is free) |
@@ -1075,8 +1076,13 @@ only, and the endpoint policy admits the same bucket for this account. Only a bu
 way works: a bucket of your own is refused at the endpoint. Parameters, the grant and the
 reasoning: `cfn/PARAMETERS.md`, "The egress archive". Not yet run on a real account.
 
-**Limits of this first stage.** Squid, the agent and this configuration, pausing, resuming and
-a handed-in address included, have **not been run on a real account**.
+**Limits of this first stage.** Squid, the agent, the relay and this configuration, pausing and
+resuming included, were verified on a test deployment only, **not yet in production**.
+
+- **Raw events are kept 30 days.** The CP deletes raw egress events (and the address intervals
+  that attribute them) older than `AF_EGRESS_EVENT_RETENTION_DAYS` (default 30, `0` keeps them
+  forever); the per-host daily counts stay. The ECS templates have no parameter for it, so a
+  deployment keeps the default. Use the archive above to keep the raw days longer.
 
 - **Enforce decides on the TLS name (SNI), not on the address.** A workspace can send an allowed
   SNI to any public address on port 443, through the explicit proxy and, since #2759, on the
@@ -1110,7 +1116,8 @@ a handed-in address included, have **not been run on a real account**.
    `sudo tail /var/log/squid/af-egress.log` shows one `af1` line each, with the workspace's
    address, `TCP_TUNNEL` and the SNI. `sudo getfattr -n user.af-egress.gen /var/log/squid/af-egress.log`
    shows the generation, `sudo cat /var/lib/af-egress-agent/state.json` the committed offset,
-   and the Admin Egress tab (or `GET /api/admin/egress/events`) the two events, attributed.
+   the Admin Egress tab the host's count, and `GET /api/admin/egress/events` the two events,
+   attributed.
 5. Rotation: `sudo squid -k rotate`, make one more request, and check that the agent finished
    `af-egress.log.0` and continued on the new file (no duplicate, no gap in the events).
 6. Metadata: from a workspace, `curl -s -x <EgressProxyAddr> -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token`
@@ -2277,12 +2284,12 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
     the layer pull: a cached start measured **~65 MiB of NAT traffic in total** in a sandbox.
     A new slot, a recreated one after retirement, a cache miss or an image update pulls the
     layers again, but through the S3 gateway endpoint (the workspace-subnet bullet above,
-    #2716; not yet measured on a deployed stack), so only the small ECR auth and manifest
+    #2716; verified on a test deployment, not yet in production), so only the small ECR auth and manifest
     calls cross the NAT. (The golden snapshot is a different thing: a home that already paid
     CLI boot-install, which saves time, not NAT bytes.) Where many starts a day are expected,
     prefer `ecs-ec2`. The `60-engines` ingest downloads from Hugging Face / Civitai cross the
     NAT at the same per-GB rate; the engines' reads of the models bucket use the endpoint.
-    Planned, not merged: the choice between a NAT gateway and an egress gateway (#2717).
+    The choice between a NAT gateway and an egress gateway (#2717) is §Egress gateway.
   - Replacing the NAT Gateway with a **NAT instance** (t4g.nano $3.9 + 8 GB gp3
     $0.8 + its public IPv4 $3.7 ≈ **$8/mo**, vs **$45** for the managed gateway) is
     the biggest single lever, at the price of running it yourself (source/dest check
@@ -2635,12 +2642,16 @@ off a record you never created, so an issuance bug goes unnoticed. Delete it wit
 300).
 
 **12. What deliberately survives** anything above: the hosted zone itself, the
-`/af-cp/*` secrets if you kept them, **the NAT gateway's Elastic IP** — and nothing
-else. ⚠️ The EIP is new to this list: it is retained on purpose so a rebuild can
-egress from the same address (see §Egress IP), which also means an unattached EIP is
-now billed (~$3.6/month) until you release it. Finishing with a deployment for good
-is therefore one extra deliberate step: `aws ec2 release-address --allocation-id
-eipalloc-...`. Sweep to confirm the rest: EC2
+`/af-cp/*` secrets if you kept them, **the NAT gateway's Elastic IP**, **the egress
+gateway's Elastic IP** (`GatewayEip`, when the stack allocated it for `EgressRoute=gateway`),
+**the egress archive bucket** (`EgressArchiveBucket`, with `EgressArchive=create`) and
+the `60-engines` models bucket — and nothing else. All of them are `Retain` on purpose (the
+addresses so a rebuild egresses from the same ones, see §Egress IP and §Egress gateway; the
+buckets so what they hold outlives the stacks), and `teardown.sh` touches none of them. An unattached EIP is billed (~$3.6/month each) until you release it, and the
+buckets bill for what they hold. Finishing with a deployment for good is therefore one
+extra deliberate step per address and bucket: `aws ec2 release-address --allocation-id
+eipalloc-...` for each EIP, and empty then delete each bucket (`aws s3 rb s3://<bucket>
+--force`). Sweep to confirm the rest: EC2
 instances / volumes / snapshots / AMIs / EIPs, ECS clusters + task definitions,
 EFS, RDS instances + manual snapshots, ALB, ACM, NAT, ECR, Cloud Map namespaces,
 `/af` log groups, `af-*` IAM roles and instance profiles, non-default VPCs.

@@ -830,7 +830,8 @@ hosts); the saved list wins and this parameter is the fallback while nothing is 
 leaves loopback clients only. Operator view: `guide/operate/04-secure.md`, "Sign-in for remote
 MCP clients".
 
-Turning it on (`update.sh` overrides only `ImageTag`, so it is not the way to set these):
+Turning it on (`update.sh` overrides only `ImageTag` and the facts it reads from the other
+stacks, so it is not the way to set these):
 
 ```
 aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml \
@@ -931,7 +932,8 @@ execution role's `ssm-read` policy to your prefix (least privilege: the prefix, 
 a pass-through would be a way around the per-Workspace settings. Compose, Kubernetes and native
 keep it; ECS deliberately does not.
 
-Setting any of these (`update.sh` overrides only `ImageTag` and `EfsBackup`, so it never does):
+Setting any of these (`update.sh` overrides only `ImageTag` and the facts it reads from the
+other stacks, `EfsBackup`, `WorkspaceSubnets`, `EgressProxyAddr`, `EgressTokenSecretArn` and `EgressArchiveBucket`, so it never does):
 
 ```
 aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml \

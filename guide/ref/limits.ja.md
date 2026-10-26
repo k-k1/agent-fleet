@@ -66,6 +66,7 @@ source_of_truth: "固定値はこの表、テナント / 配備が決めるも�
 | 打鍵の無い端末を在席と数える猶予 | 30 分 | `AF_PRESENCE_IDLE_TIMEOUT` |
 | 起動中のまま止めるまで | 30 分 | `AF_WORKSPACE_START_DEADLINE`。`0` で無効（[operate/03](../operate/03-run.ja.md#終わらない起動)）|
 | ホームと状態のボリューム（kubernetes）| 50 GiB と 5 GiB | `AF_K8S_HOME_GIB`・`AF_K8S_STATE_GIB` |
+| egress の生イベント（egress ゲートウェイを通ったワークスペースの接続ごとに 1 件）を残す期間 | 30 日 | `AF_EGRESS_EVENT_RETENTION_DAYS`。`0` で無期限。ホストごとの日次の件数は残る。AWS のテンプレートにはこのパラメータが無い（[operate/04](../operate/04-secure.ja.md#egress-統制の運用)） |
 
 セルフホストのエンジン自身の自動停止はこの表にはありません。「**自動停止まで**」を管理モーダル →
 推論エンジンで役ごとに決め、保存した値はコントローラの次の巡回からエンジンのスタックの既定より

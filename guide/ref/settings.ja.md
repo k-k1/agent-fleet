@@ -135,7 +135,7 @@ Control Plane は自分の既定値のままです。
 | `AF_GITHUB_LOGIN_CLIENT_SECRET`・`AF_COMFY_API_KEY`・`AF_REMOTE_ENGINE_TOKEN` | スイッチ `GithubLoginSecret`・`ComfyApiKey`・`RemoteEngineToken`（`on`）。値は SSM SecureString の `<SsmPrefix>/github-login-client-secret`・`/comfy-api-key`・`/remote-engine-token` から読むので、先に作っておきます |
 
 `WS_ENV` には ECS 用のパラメータを意図して用意していません。自由形式の `KEY=VAL` で、秘密の値も平文の環境変数に載るためです。パラメータは
-`30-ingress.yaml` に対する個別の `aws cloudformation deploy` で設定します（`update.sh` が上書きするのは `ImageTag` と `EfsBackup` だけです）。
+`30-ingress.yaml` に対する個別の `aws cloudformation deploy` で設定します（`update.sh` が上書きするのは `ImageTag` と、ほかのスタックから読む事実 `EfsBackup`・`WorkspaceSubnets`・`EgressProxyAddr`・`EgressTokenSecretArn`・`EgressArchiveBucket` だけです）。
 詳しくは
 [`deploy/aws/ecs/cfn/PARAMETERS.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/PARAMETERS.md#control-plane-timers-github-sign-in-extras-and-lan--borrowed-engines)。
 LAN のエンジンに ECS から届くのは、VPC にそこへの経路（VPN やピアリング）がある場合だけです。
