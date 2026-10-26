@@ -97,10 +97,10 @@ https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com/   → port 8080 (e.g. Spring B
   because it belongs to the URL of that start. At most **16** ports can be open this way per workspace; past
   that the page says "Too many temporarily opened ports" until a server stops or you list the port. It needs
   the port to answer plain HTTP (a database, SSH or an HTTPS-only dev server is refused with the reason), and
-  it does not set `AF_PREVIEW_URL_<port>`. The development OIDC IdP does not accept a sign-in callback on such
-  a port either ([below](#signing-in-with-google-on-a-preview-url-development-oidc-idp)). List the port (the
-  menu's **Expose this port…**) when the app has to know its public URL, signs in through that IdP, or someone
-  else should see it.
+  it does not set `AF_PREVIEW_URL_<port>`. The development OIDC IdP accepts a sign-in callback on such a port
+  for you alone, and only while the opening lasts
+  ([below](#signing-in-with-google-on-a-preview-url-development-oidc-idp)). List the port (the menu's **Expose
+  this port…**) when the app has to know its public URL, or someone else should see it or sign in to it.
 
 #### What the app has to get right
 
@@ -227,10 +227,11 @@ client secret); no code, and nothing to register in the Google Cloud console.
   to the Console with Google, the app sees your **real Google `sub` and address**, so the user rows it already
   has still match. Otherwise it sees your Console address and a stable `sub` of the form `af-…`. A colleague
   opening your shared preview ([above](#showing-it-to-someone-else-three-steps)) signs in as themselves.
-- **Where it may send the browser back to**: only your **current** preview URL on a **listed port**, and
-  `http://localhost:<port>` / `http://127.0.0.1:<port>` (so the browser pane works too). Anything else, including
-  the URL from before a restart and a port you opened for yourself without listing it, gets an error page and is
-  never redirected to. Set the app's own URL from
+- **Where it may send the browser back to**: only your **current** preview URL on a **listed port**, the same
+  URL on a port you opened for yourself without listing it (while that opening lasts, and only when you are the
+  one signing in), and `http://localhost:<port>` / `http://127.0.0.1:<port>` (so the browser pane works too).
+  Anything else, including the URL from before a restart and a colleague signing in on a port you did not list,
+  gets an error page and is never redirected to. Set the app's own URL from
   `AF_PREVIEW_URL_<port>` (for example `AUTH_URL`) so the callback it sends is exactly that.
 
 Settings › Preview subdomains › **"App configuration examples"** writes the configuration for you, for Spring
