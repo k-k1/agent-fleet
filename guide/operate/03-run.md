@@ -123,6 +123,11 @@ The commands are in the runbook's "Upgrade" section.
   when the backup is there or the deployment does not need one (`Persistence=delete`).
   **On `ecs-ec2`, a release that changes the slot launch template** reaches the slots you already
   have only when they are replaced ([chapter 11](11-slot-pool.md#ecs-ec2-replacing-slots-after-a-launch-template-change)).
+  **The network stack (`00-network`) is never updated by `update.sh`.** Coming from v0.34.x, it
+  is updated by hand first, in a window in which every running workspace is restarted: see
+  `deploy/aws/ecs/README.md`, "Upgrading from v0.34.x". Do not deploy the new network template
+  with its defaults: its S3 endpoint would refuse (AccessDenied) the S3 requests of every
+  workspace that has not been restarted yet.
 
 ## Installing into an air-gapped network
 
