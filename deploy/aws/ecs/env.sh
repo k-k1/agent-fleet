@@ -704,6 +704,13 @@ af_cfn_params_tsv() {
   '
 }
 
+# af_cfn_shown <key> <value> — what may be printed of a parameter's value: parameters whose
+# names look like credentials are not NoEcho in every template, and diagnostics land in the
+# terminal and session logs. The key and the reason for a refusal stay visible.
+af_cfn_shown() {
+  case "$1" in *Secret*|*Password*|*Token*|*OauthKey*|*PrivateKey*) echo '***' ;; *) echo "$2" ;; esac
+}
+
 # af_cfn_cs_show <stack> <change set> <key>... — print what a clearing change set does (the
 # resource changes and the parameter diff against the live stack), and fail unless the keys it
 # clears are exactly <key>... and every other parameter is provably unchanged. Fails closed:
@@ -740,7 +747,7 @@ af_cfn_cs_show() {
       # Left out of the change set: the template's Default applies, which is the clear.
       case "$lv" in '""'|-|null) bad+=("$k (left out although it is already empty)") ;; *) cleared+=("$k") ;; esac
     elif [ "$cu" = true ]; then
-      if [ "$lr" != "$cr" ]; then bad+=("$k (resolves to $lr, would resolve to $cr)")
+      if [ "$lr" != "$cr" ]; then bad+=("$k (resolves to $(af_cfn_shown "$k" "$lr"), would resolve to $(af_cfn_shown "$k" "$cr"))")
       else same=$((same + 1)); fi
     elif [ "$lv" = '"****"' ] || [ "$cv" = '"****"' ]; then
       bad+=("$k (a masked value, which cannot be compared, and the change set does not say UsePreviousValue)")
@@ -749,7 +756,7 @@ af_cfn_cs_show() {
     elif [ "$cv" = '""' ] && [ "$lv" != '""' ] && [ "$lv" != null ] && [ "$lv" != - ]; then
       cleared+=("$k")
     else
-      bad+=("$k ($lv -> $cv)")
+      bad+=("$k ($(af_cfn_shown "$k" "$lv") -> $(af_cfn_shown "$k" "$cv"))")
     fi
   done <<<"$live"
   while IFS=$'\t' read -r ck cu cv cr; do
@@ -759,9 +766,7 @@ af_cfn_cs_show() {
   for k in ${cleared[@]+"${cleared[@]}"}; do
     lv="$(printf '%s\n' "$live" | awk -F'\t' -v k="\"$k\"" '$1==k{print $3; exit}')"
     lv="${lv#\"}"; lv="${lv%\"}"
-    # Parameter values can be credentials by name; show the old value only for the rest.
-    case "$k" in *Secret*|*Password*|*Token*|*OauthKey*|*PrivateKey*) lv="***" ;; esac
-    echo "    · parameter $k: '$lv' -> (empty)"
+    echo "    · parameter $k: '$(af_cfn_shown "$k" "$lv")' -> (empty)"
   done
   echo "    · parameters: $same others unchanged (UsePreviousValue)"
   want=" $* "

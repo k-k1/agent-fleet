@@ -151,6 +151,10 @@ extra_params() { # extra_params live|cs
       missing) jparam GatewayAmiId '"/aws/service/ami"' true ;;
     esac; fi
   fi
+  if [ "${STUB_SECRET_DIFF:-0}" = 1 ]; then
+    if [ "$side" = cs ]; then jparam BitbucketOauthKey '"REVIEW_NEW_SECRET"' false '"REVIEW_NEW_SECRET"'
+    else jparam BitbucketOauthKey '"REVIEW_OLD_SECRET"' "" '"REVIEW_OLD_SECRET"'; fi
+  fi
   case "${STUB_NONE:-}" in
     live-none) [ "$side" = cs ] && jparam Foo '""' false || jparam Foo '"None"' ;;
     cs-none) [ "$side" = cs ] && jparam Foo '"None"' false || jparam Foo '""' ;;
@@ -303,6 +307,7 @@ case "$args" in
     [ -n "${STUB_PW:-}" ] && printf '\tAdminPassword'
     [ -n "${STUB_SSM:-}" ] && printf '\tGatewayAmiId'
     [ -n "${STUB_NONE:-}" ] && printf '\tFoo'
+    [ "${STUB_SECRET_DIFF:-0}" = 1 ] && printf '\tBitbucketOauthKey'
     [ "${STUB_SPECIAL:-0}" = 1 ] && printf '\tEc2SlotTypes'
     echo ;;
   # The clearing change set's state is read off the log: built by create-change-set, gone after
@@ -342,7 +347,8 @@ case "$args" in
           esac
         done
         extra_params cs ;;
-      *) printf 'Modify\tCpTaskDef\tTrue\n' ;;
+      # 30-ingress's real logical IDs: the new TaskDef revision is replaced, and Service follows it.
+      *) printf 'Modify\tTaskDef\tTrue\nModify\tService\tFalse\n' ;;
     esac ;;
   *"Outputs[?OutputKey=='RdsRestopFunction']"*) echo "${STUB_RESTOP:-}" ;;
   *"ParameterKey=='Fqdn'"*) echo "af.example.test" ;;
@@ -1328,7 +1334,8 @@ STUB_ING_EGRESS="$SECRET_ARN" cp4 EgressProxyAddr EgressTokenSecretArn > "$WORK/
 hasnt "execute-change-set"
 hasnt "delete-change-set"
 hasnt "wait stack-update-complete"
-grep -q "Modify CpTaskDef" "$WORK/outc8" || { cat "$WORK/outc8"; fail "clear-params.sh did not print the resource changes"; }
+grep -q "Modify TaskDef" "$WORK/outc8" || { cat "$WORK/outc8"; fail "clear-params.sh did not print the TaskDef change"; }
+grep -q "Modify Service" "$WORK/outc8" || { cat "$WORK/outc8"; fail "clear-params.sh did not print the Service change"; }
 grep -q "parameter EgressProxyAddr: '10.20.0.50:3128' -> (empty)" "$WORK/outc8" \
   || { cat "$WORK/outc8"; fail "clear-params.sh did not print which key goes to empty"; }
 grep -q "parameter EgressTokenSecretArn: '\*\*\*' -> (empty)" "$WORK/outc8" \
@@ -1413,6 +1420,10 @@ build_cs
 refuse deleted "Foo (" STUB_NONE=live-none -- EgressProxyAddr EgressTokenSecretArn
 build_cs
 refuse deleted "Foo (" STUB_NONE=cs-none -- EgressProxyAddr EgressTokenSecretArn
+# A refused change that touches a credential-named parameter says which one, never its values.
+build_cs
+refuse deleted "BitbucketOauthKey (*** -> ***)" STUB_SECRET_DIFF=1 -- EgressProxyAddr EgressTokenSecretArn
+grep -q "REVIEW_OLD_SECRET\|REVIEW_NEW_SECRET" "$WORK/outc8y" && fail "--execute printed a credential's value in its refusal"
 # Values with spaces, | ( ) and commas compare as they are.
 build_cs
 STUB_ING_EGRESS="$SECRET_ARN" STUB_SPECIAL=1 cp4 --execute "$cs_name" EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8y" 2>&1 \

@@ -974,8 +974,9 @@ the gateway is gone every proxy-aware client in it times out. So take the proxy 
 
 1. Clear the proxy on 30-ingress, everything else at its previous value:
    `./clear-params.sh --profile <p> --region <r> --stack <ingress stack> EgressProxyAddr
-   EgressTokenSecretArn` builds and prints the change set (expect `Modify` of the CP task
-   definition and the two keys going to empty, nothing else), then run the `--execute` command
+   EgressTokenSecretArn` builds and prints the change set (expect `Modify` of `TaskDef`, the CP
+   task definition, and of `Service`, which follows its new revision, and the two keys going to
+   empty; every other parameter unchanged), then run the `--execute` command
    it prints (or `--yes` to skip the look)
    (not `update.sh`, which would hand the gateway's outputs back while it exists, and not
    `deploy --parameter-overrides EgressProxyAddr= EgressTokenSecretArn=`, which did not clear
