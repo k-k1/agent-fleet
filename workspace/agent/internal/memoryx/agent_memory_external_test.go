@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -312,5 +313,104 @@ func TestAgentMemoryExternalWriteRequiresScope(t *testing.T) {
 	}
 	if _, err := agentMemRead(a, "project", "fact"); err == nil {
 		t.Error("a refused save wrote into the project")
+	}
+}
+
+// An explicit scope that misses names the other readable scope holding the name, and a read of
+// the hinted scope still works. No hint when the other scope misses too, when the memory there is
+// limited to other kinds, or when the caller has no project.
+func TestAgentMemoryReadMissHintsOtherScope(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	now := time.Now()
+	if _, err := agentMemSave(c, agentMemSaveReq{Scope: agentMemScopeUser, Name: "in-user", Description: "d", Type: "user", Body: "b"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentMemSave(c, agentMemSaveReq{Scope: agentMemScopeUser, Name: "user-claude-only", Description: "d", Type: "user", Body: "b", Kinds: []string{"claude"}}, now); err != nil {
+		t.Fatal(err)
+	}
+	agentMemSaveN(t, c, "in-project", "project", now)
+
+	_, err := agentMemRead(c, agentMemScopeProject, "in-user")
+	want := `no memory by that name in scope project; one exists in scope user (pass scope "user" or omit scope)`
+	if agentMemCode(err) != errCodeMemoryNotFound || err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("hint: %v", err)
+	}
+	if _, err := agentMemRead(c, agentMemScopeUser, "in-project"); err == nil || !strings.Contains(err.Error(), `one exists in scope project`) {
+		t.Fatalf("reverse hint: %v", err)
+	}
+	if _, err := agentMemRead(c, "", "in-user"); err != nil {
+		t.Fatalf("omitted scope: %v", err)
+	}
+	if _, err := agentMemRead(c, agentMemScopeProject, "nowhere"); err == nil || strings.Contains(err.Error(), "exists") {
+		t.Fatalf("hint where the other scope misses too: %v", err)
+	}
+
+	ext := c
+	ext.Kind = agentMemExternalKind
+	if _, err := agentMemRead(ext, agentMemScopeProject, "user-claude-only"); err == nil || strings.Contains(err.Error(), "exists") {
+		t.Fatalf("hint revealed a kinds-hidden memory: %v", err)
+	}
+
+	usesBefore := agentMemLoadUsage("user")["in-user"]
+	_, _ = agentMemRead(c, agentMemScopeProject, "in-user")
+	if got := agentMemLoadUsage("user")["in-user"]; got != usesBefore {
+		t.Fatalf("the probe counted a use: %d -> %d", usesBefore, got)
+	}
+
+	noProject := c
+	noProject.Project = nil
+	if _, err := agentMemRead(noProject, agentMemScopeUser, "in-project"); err == nil || strings.Contains(err.Error(), "exists") {
+		t.Fatalf("hint for a scope the caller cannot read: %v", err)
+	}
+}
+
+// A forget that misses its explicit scope names the other scope, and the revision check is not
+// reached or loosened.
+func TestAgentMemoryForgetMissHintsOtherScope(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	now := time.Now()
+	if _, err := agentMemSave(c, agentMemSaveReq{Scope: agentMemScopeUser, Name: "in-user", Description: "d", Type: "user", Body: "b"}, now); err != nil {
+		t.Fatal(err)
+	}
+	_, err := agentMemForget(c, agentMemForgetReq{Scope: agentMemScopeProject, Name: "in-user", Revision: 1}, now)
+	if agentMemCode(err) != errCodeMemoryNotFound || err == nil || !strings.Contains(err.Error(), `in scope project; one exists in scope user (read it there first and forget it with that revision)`) {
+		t.Fatalf("forget hint: %v", err)
+	}
+	if _, err := agentMemForget(c, agentMemForgetReq{Scope: agentMemScopeProject, Name: "nowhere", Revision: 1}, now); err == nil || strings.Contains(err.Error(), "exists") {
+		t.Fatalf("forget hint where nothing exists: %v", err)
+	}
+	// A same-named memory at another revision: the hint must not suggest reusing this revision.
+	if _, err := agentMemForget(c, agentMemForgetReq{Scope: agentMemScopeProject, Name: "in-user", Revision: 1}, now); err == nil || strings.Contains(err.Error(), "pass scope") {
+		t.Fatalf("hint tells the caller to retry with the same revision: %v", err)
+	}
+	if res, err := agentMemForget(c, agentMemForgetReq{Scope: agentMemScopeUser, Name: "in-user", Revision: 99}, now); err == nil || agentMemCode(err) != errCodeMemoryConflict {
+		t.Fatalf("revision check lost: %+v %v", res, err)
+	}
+}
+
+// A file the secret scan withheld is not offered by the hint, for a member-kind or an external
+// caller; the fixture is checked to be withheld by a direct read.
+func TestAgentMemoryMissHintSkipsWithheldFile(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	key := agentMemFakeAWS()
+	memoryMkdirAll(t, filepath.Join(agentMemDir(), "user"))
+	memoryWrite(t, filepath.Join(agentMemDir(), "user", "manual.md"), "---\nname: manual\ndescription: key "+key+"\n---\nbody\n")
+	if _, err := agentMemRead(c, agentMemScopeUser, "manual"); agentMemCode(err) != errCodeMemorySecretDetected {
+		t.Fatalf("fixture is not withheld: %v", err)
+	}
+	ext := c
+	ext.Kind = agentMemExternalKind
+	for _, cc := range []agentMemCaller{c, ext} {
+		_, err := agentMemRead(cc, agentMemScopeProject, "manual")
+		if agentMemCode(err) != errCodeMemoryNotFound || strings.Contains(err.Error(), "exists") {
+			t.Fatalf("read hint (%s): %v", cc.Kind, err)
+		}
+		_, err = agentMemForget(cc, agentMemForgetReq{Scope: agentMemScopeProject, Name: "manual", Revision: 1}, time.Now())
+		if agentMemCode(err) != errCodeMemoryNotFound || strings.Contains(err.Error(), "exists") {
+			t.Fatalf("forget hint (%s): %v", cc.Kind, err)
+		}
 	}
 }

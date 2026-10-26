@@ -364,3 +364,17 @@ func TestMemoryToolsSteerSessionsToTheLocalTools(t *testing.T) {
 		}
 	}
 }
+
+// memory_read says that an omitted scope searches the project, then the user scope (#2775).
+func TestMemoryReadDescriptionSaysOmittedScopeSearchesBoth(t *testing.T) {
+	for _, tl := range memoryTools() {
+		if tl.name != "memory_read" {
+			continue
+		}
+		if !strings.Contains(tl.desc, "omit `scope`: the project is searched first, then the user scope") {
+			t.Errorf("memory_read description: %s", tl.desc)
+		}
+		return
+	}
+	t.Fatal("no memory_read tool")
+}

@@ -770,7 +770,34 @@ func agentMemRead(c agentMemCaller, scope, name string) (agentMemEntry, error) {
 		agentMemRecordUses(c, l.Entry)
 		return l.Entry, nil
 	}
+	if scope != "" {
+		if other := agentMemOtherScopeHolding(c, scope, name); other != "" {
+			return agentMemEntry{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound,
+				"no memory by that name in scope %s; one exists in scope %s (pass scope %q or omit scope)", scope, other, other)
+		}
+	}
 	return agentMemEntry{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound, "no memory by that name")
+}
+
+// agentMemOtherScopeHolding names the other scope this caller may read that holds name, or "" when
+// there is none. It applies the visibility of a read (the kinds filter of an outside client, and a
+// withheld file is not offered) and never counts a use, so a miss reveals nothing a read of that
+// scope would not. The caller holds agentMemMu.
+func agentMemOtherScopeHolding(c agentMemCaller, missed, name string) string {
+	for _, s := range agentMemScopes(c) {
+		if s == missed {
+			continue
+		}
+		l, ok, err := agentMemLoadOne(c, s, name)
+		if err != nil || !ok || l.Withheld {
+			continue
+		}
+		if c.Kind == agentMemExternalKind && !agentMemAppliesTo(l.Entry, c.Kind) {
+			continue
+		}
+		return s
+	}
+	return ""
 }
 
 func agentMemLoadOne(c agentMemCaller, scope, name string) (agentMemLoaded, bool, error) {
@@ -1097,6 +1124,10 @@ func agentMemForget(c agentMemCaller, req agentMemForgetReq, now time.Time) (age
 		}
 	}
 	if !exists {
+		if other := agentMemOtherScopeHolding(c, req.Scope, req.Name); other != "" {
+			return agentMemWriteResult{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound,
+				"no memory by that name in scope %s; one exists in scope %s (read it there first and forget it with that revision)", req.Scope, other)
+		}
 		return agentMemWriteResult{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound, "no memory by that name in scope %s", req.Scope)
 	}
 	if cur.Withheld {
