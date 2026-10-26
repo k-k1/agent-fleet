@@ -7,7 +7,7 @@
 // The view keeps what the session's skill picker drops on purpose: entries another root
 // shadows, `user-invocable: false` ones and Agent Fleet's own `af-*` skills, because "why is my
 // skill not used" is exactly what someone opens this screen to answer.
-import { useCallback, useState } from "react";
+import { useCallback, useState, type MouseEvent } from "react";
 import { api, errText, isTransientErr } from "../../../core/api/client.ts";
 import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
@@ -28,6 +28,8 @@ export interface CatalogRoot {
 }
 export interface CatalogSkill {
   name: string;
+  /** opencode's frontmatter name when it differs from the path-derived ID in `name`. */
+  title?: string;
   description?: string;
   argumentHint?: string;
   type: string;
@@ -53,6 +55,27 @@ const SCOPES = ["user", "fleet", "cli"] as const;
 const KINDS = ["claude", "codex", "opencode", "muse"];
 
 const dirOf = (p: string) => p.slice(0, p.lastIndexOf("/"));
+
+/** The file a relative link in a skill's Markdown points at, resolved against the directory of
+ *  the file showing; null for anything that is not a file reference (URLs, in-page anchors). */
+export function resolveSkillLink(href: string, fromFile: string): string | null {
+  if (!href || href.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(href)) return null;
+  let ref = href.split("#")[0].split("?")[0];
+  try {
+    ref = decodeURIComponent(ref);
+  } catch {
+    /* keep the raw spelling */
+  }
+  if (!ref) return null;
+  const parts = (ref.startsWith("/") ? ref : dirOf(fromFile) + "/" + ref).split("/");
+  const out: string[] = [];
+  for (const seg of parts) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") out.pop();
+    else out.push(seg);
+  }
+  return "/" + out.join("/");
+}
 
 export function SkillsTab() {
   const tr = useT();
@@ -169,6 +192,7 @@ function KindPanel({
                       onClick={() => onSelect(active ? null : s)}
                     >
                       <span className="skills-name">{s.name}</span>
+                      {s.title && <span className="skills-title">{s.title}</span>}
                       {s.type === "command" && <span className="skills-badge">{tr("skills.form_commands")}</span>}
                       {s.shadowedBy && <span className="skills-badge">{tr("skills.shadowed")}</span>}
                       {!s.userInvocable && <span className="skills-badge">{tr("skills.not_invocable")}</span>}
@@ -189,29 +213,43 @@ function KindPanel({
 function SkillDetail({ skill }: { skill: CatalogSkill }) {
   const tr = useT();
   const toast = useToast();
-  // The file showing: the skill's own SKILL.md (or command file) first, then whichever of its
-  // folder's files was picked.
+  // One selected path drives the fetch, so a slower answer for an earlier pick can never land
+  // over a later one: useRetryLoad aborts the previous request whenever `want` changes.
+  const [want, setWant] = useState(skill.path ?? "");
   const [file, setFile] = useState<{ path: string; content: string } | null>(null);
   const [err, setErr] = useState("");
   const folder = skill.type === "skill" && skill.path ? dirOf(skill.path) : "";
 
-  const open = useCallback(async (path: string, signal?: AbortSignal) => {
-    const r = await api("api/skills/file?path=" + encodeURIComponent(path));
-    if (signal?.aborted) return true;
-    if (isTransientErr(r)) return false;
-    if (r?.error || typeof r?.content !== "string") {
-      setErr(r?.error ? errText(r.error) : tr("skills.load_failed"));
+  const load = useCallback(
+    async (signal: AbortSignal) => {
+      if (!want) return true;
+      const r = await api("api/skills/file?path=" + encodeURIComponent(want));
+      if (signal.aborted) return true;
+      if (isTransientErr(r)) return false;
+      if (r?.error || typeof r?.content !== "string") {
+        setErr(r?.error ? errText(r.error) : tr("skills.load_failed"));
+        return true;
+      }
+      setErr("");
+      setFile({ path: want, content: r.content });
       return true;
-    }
-    setErr("");
-    setFile({ path, content: r.content });
-    return true;
-  }, [tr]);
-  const loadMain = useCallback(
-    async (signal: AbortSignal) => (skill.path ? open(skill.path, signal) : true),
-    [skill.path, open],
+    },
+    [want, tr],
   );
-  useRetryLoad(loadMain, [skill.path]);
+  useRetryLoad(load, [want]);
+
+  // Relative links in a skill point at its own files, which the Files viewer cannot open (the
+  // folders are outside the browse root). Taken in the capture phase, before MarkdownView's own
+  // link handler, and opened here through the skills file route instead.
+  const onLinkClick = (e: MouseEvent<HTMLDivElement>) => {
+    const a = (e.target as HTMLElement).closest?.("a");
+    if (!a || !file) return;
+    const target = resolveSkillLink(a.getAttribute("href") ?? "", file.path);
+    if (!target) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setWant(target);
+  };
 
   const copy = async (p: string) => toast(tr((await copyText(p)) ? "skills.path_copied" : "skills.copy_failed"));
 
@@ -236,13 +274,13 @@ function SkillDetail({ skill }: { skill: CatalogSkill }) {
       {folder && (skill.files?.length ?? 0) > 0 && (
         <div className="skills-files">
           <span>{tr("skills.files")}</span>
-          <Button variant="ghost" onClick={() => void open(skill.path!)} disabled={file?.path === skill.path}>
+          <Button variant="ghost" onClick={() => setWant(skill.path!)} disabled={want === skill.path}>
             SKILL.md
           </Button>
           {skill.files!.map((f) => {
             const p = folder + "/" + f;
             return (
-              <Button key={f} variant="ghost" onClick={() => void open(p)} disabled={file?.path === p}>
+              <Button key={f} variant="ghost" onClick={() => setWant(p)} disabled={want === p}>
                 {f}
               </Button>
             );
@@ -252,7 +290,7 @@ function SkillDetail({ skill }: { skill: CatalogSkill }) {
       {err && <div className="form-err">{err}</div>}
       {file &&
         (file.path.endsWith(".md") ? (
-          <div className="skills-body">
+          <div className="skills-body" onClickCapture={onLinkClick}>
             <MarkdownView source={file.content} />
           </div>
         ) : (

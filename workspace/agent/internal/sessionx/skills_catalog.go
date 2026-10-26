@@ -38,12 +38,19 @@ type catalogRoot struct {
 	Scope  string `json:"scope"` // user | cli
 	Form   string `json:"form"`  // skills (<dir>/*/SKILL.md) | commands (<dir>/**/*.md)
 	Exists bool   `json:"exists"`
+	// opencode marks opencode's skills root, which is discovered by its own rules
+	// (opencodeSkillFiles) rather than as a flat <dir>/*/SKILL.md tree.
+	opencode bool
 }
 
 // catalogSkill is one entry. Path and Root are empty for a CLI-bundled skill that is no file
 // anywhere (claude's, see claude.BundledSkills).
 type catalogSkill struct {
-	Name          string `json:"name"`
+	// Name is what the CLI identifies the entry by: the frontmatter name (or folder) for
+	// claude/codex/muse, the path-derived ID for opencode, whose frontmatter name is only a label.
+	Name string `json:"name"`
+	// Title is opencode's frontmatter name when it differs from the ID.
+	Title         string `json:"title,omitempty"`
 	Description   string `json:"description,omitempty"`
 	ArgumentHint  string `json:"argumentHint,omitempty"`
 	Type          string `json:"type"`  // skill | command
@@ -53,6 +60,7 @@ type catalogSkill struct {
 	UserInvocable bool   `json:"userInvocable"`
 	// ShadowedBy is the Path (or, for a bundled winner, the name) of the entry the CLI uses
 	// instead: within a kind the first root that has the name wins, as in scanSkillRoots.
+	// claude has one slash namespace for skills and commands; every other kind keeps them apart.
 	ShadowedBy string `json:"shadowedBy,omitempty"`
 	// Files are the other files of a skill folder, relative to it (reference docs, scripts).
 	Files []string `json:"files,omitempty"`
@@ -92,7 +100,7 @@ func personalSkillRoots() []struct {
 			{Dir: filepath.Join(chome, "skills", ".system"), Scope: "cli", Form: "skills"},
 		}},
 		{session.KindOpencode, []catalogRoot{
-			{Dir: filepath.Join(ocfg, "skills"), Scope: "user", Form: "skills"},
+			{Dir: filepath.Join(ocfg, "skills"), Scope: "user", Form: "skills", opencode: true},
 			{Dir: filepath.Join(ocfg, "command"), Scope: "user", Form: "commands"},
 			{Dir: filepath.Join(ocfg, "commands"), Scope: "user", Form: "commands"},
 		}},
@@ -138,10 +146,14 @@ func skillCatalog() []catalogKind {
 				if len(ck.Skills) >= maxCatalogPerKind {
 					break
 				}
-				if w, ok := winner[it.Name]; ok {
+				key := it.Name
+				if k.kind != session.KindClaude {
+					key = it.Type + ":" + it.Name
+				}
+				if w, ok := winner[key]; ok {
 					it.ShadowedBy = w
 				} else {
-					winner[it.Name] = it.Path
+					winner[key] = it.Path
 				}
 				ck.Skills = append(ck.Skills, it)
 			}
@@ -169,6 +181,9 @@ func skillCatalog() []catalogKind {
 // catalogSkillEntries reads <root>/*/SKILL.md like readSkillEntries, but keeps the entries the
 // picker hides and marks AF's own fleet skills.
 func catalogSkillEntries(root catalogRoot) []catalogSkill {
+	if root.opencode {
+		return opencodeCatalogEntries(root)
+	}
 	ents, err := os.ReadDir(root.Dir)
 	if err != nil {
 		return nil
@@ -222,6 +237,110 @@ func catalogCommandEntries(root catalogRoot) []catalogSkill {
 			Root:          root.Dir,
 			Path:          it.Path,
 			UserInvocable: true,
+		})
+	}
+	return out
+}
+
+// opencodeSkillDepth is opencode's own limit on how deep below the root a SKILL.md is looked
+// for (the binary's discovery walk, measured on 2.1.4).
+const opencodeSkillDepth = 6
+
+// opencodeIgnoredDirs are the directories opencode's walk never enters, besides hidden ones.
+var opencodeIgnoredDirs = map[string]bool{"node_modules": true, ".git": true, ".venv": true, "venv": true, "__pycache__": true}
+
+// opencodeSkillFiles mirrors opencode 2.x discovery (measured in the 2.1.4 binary): breadth
+// first from the root; a directory holding SKILL.md yields that file and is not descended
+// further; loose *.md files count only directly in the root; directories are followed up to
+// opencodeSkillDepth; hidden entries are skipped.
+func opencodeSkillFiles(root string) []string {
+	type level struct {
+		dir   string
+		depth int
+	}
+	out := []string{}
+	queue := []level{{root, 0}}
+	for len(queue) > 0 && len(out) < maxSessionSkills {
+		cur := queue[0]
+		queue = queue[1:]
+		ents, err := os.ReadDir(cur.dir)
+		if err != nil {
+			continue
+		}
+		var files, dirs []string
+		hasSkill := false
+		for _, e := range ents {
+			if strings.HasPrefix(e.Name(), ".") || opencodeIgnoredDirs[e.Name()] {
+				continue
+			}
+			p := filepath.Join(cur.dir, e.Name())
+			fi, err := os.Stat(p) // follows links, as opencode's walk does
+			if err != nil {
+				continue
+			}
+			switch {
+			case fi.Mode().IsRegular() && e.Name() == "SKILL.md":
+				hasSkill = true
+			case fi.Mode().IsRegular() && strings.HasSuffix(e.Name(), ".md"):
+				files = append(files, p)
+			case fi.IsDir():
+				dirs = append(dirs, p)
+			}
+		}
+		if hasSkill {
+			out = append(out, filepath.Join(cur.dir, "SKILL.md"))
+			continue
+		}
+		if cur.depth == 0 {
+			out = append(out, files...)
+		}
+		if cur.depth < opencodeSkillDepth {
+			for _, d := range dirs {
+				queue = append(queue, level{d, cur.depth + 1})
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// opencodeCatalogEntries lists opencode's skills root. The ID is the file name for a loose
+// <root>/<id>.md and the folder name otherwise; the frontmatter name is a display label only.
+func opencodeCatalogEntries(root catalogRoot) []catalogSkill {
+	out := []catalogSkill{}
+	for _, p := range opencodeSkillFiles(root.Dir) {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		fm, _ := splitFrontmatter(string(b))
+		dir := filepath.Dir(p)
+		id := filepath.Base(dir)
+		var files []string
+		if filepath.Base(p) == "SKILL.md" {
+			files = skillFolderFiles(dir)
+		} else {
+			id = strings.TrimSuffix(filepath.Base(p), ".md")
+		}
+		scope := root.Scope
+		if strings.Contains(string(b), fleetskills.Marker) {
+			scope = "fleet"
+		}
+		title := fm["name"]
+		if title == id {
+			title = ""
+		}
+		out = append(out, catalogSkill{
+			Name:          id,
+			Title:         title,
+			Description:   fm["description"],
+			ArgumentHint:  fm["argument-hint"],
+			Type:          "skill",
+			Scope:         scope,
+			Root:          root.Dir,
+			Path:          p,
+			UserInvocable: !isNo(fm["user-invocable"]),
+			Files:         files,
 		})
 	}
 	return out
@@ -347,6 +466,10 @@ func skillFilePath(p string) (string, bool) {
 			continue
 		}
 		if root.Form == "skills" && strings.Contains(rel, string(filepath.Separator)) {
+			lexical = true
+		}
+		// opencode also reads a loose <root>/<id>.md as a skill.
+		if root.opencode && strings.HasSuffix(rel, ".md") {
 			lexical = true
 		}
 		if root.Form == "commands" && strings.HasSuffix(rel, ".md") {

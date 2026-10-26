@@ -184,3 +184,52 @@ func TestSkillFileStaysInsideSkillRoots(t *testing.T) {
 		}
 	}
 }
+
+// opencode 2.x: IDs come from the path (the frontmatter name is a label), a loose <root>/<id>.md
+// and a nested <dir>/<id>/SKILL.md are both skills, and skills and commands are separate
+// namespaces, so neither shadows the other.
+func TestSkillCatalogOpencodeDiscovery(t *testing.T) {
+	home, _, _ := catalogEnv(t)
+	oc := filepath.Join(home, ".config", "opencode")
+	writeFile(t, filepath.Join(oc, "skills", "alpha", "SKILL.md"), "---\nname: Review\ndescription: a\n---\n")
+	writeFile(t, filepath.Join(oc, "skills", "beta", "SKILL.md"), "---\nname: Review\ndescription: b\n---\n")
+	writeFile(t, filepath.Join(oc, "skills", "review.md"), "---\ndescription: loose\n---\n")
+	writeFile(t, filepath.Join(oc, "skills", "teams", "release", "SKILL.md"), "---\ndescription: nested\n---\n")
+	// Below a SKILL.md nothing is a skill of its own, and loose files count only at the root.
+	writeFile(t, filepath.Join(oc, "skills", "alpha", "inner", "SKILL.md"), "---\n---\n")
+	writeFile(t, filepath.Join(oc, "skills", "teams", "notes.md"), "not a skill")
+	writeFile(t, filepath.Join(oc, "skills", ".hidden", "SKILL.md"), "---\n---\n")
+	writeFile(t, filepath.Join(oc, "commands", "review.md"), "---\ndescription: cmd\n---\n")
+
+	k := catalogOf(t, session.KindOpencode)
+	got := map[string]catalogSkill{}
+	for _, s := range k.Skills {
+		got[s.Type+":"+s.Name] = s
+	}
+	want := []string{"skill:alpha", "skill:beta", "skill:review", "skill:release", "command:review"}
+	if len(got) != len(want) || len(k.Skills) != len(want) {
+		t.Fatalf("opencode entries = %#v, want %v", k.Skills, want)
+	}
+	for _, w := range want {
+		s, ok := got[w]
+		if !ok {
+			t.Fatalf("missing %s in %#v", w, k.Skills)
+		}
+		if s.ShadowedBy != "" {
+			t.Errorf("%s is shadowed by %s", w, s.ShadowedBy)
+		}
+	}
+	if got["skill:alpha"].Title != "Review" || got["skill:review"].Title != "" {
+		t.Errorf("titles: alpha=%q review=%q", got["skill:alpha"].Title, got["skill:review"].Title)
+	}
+	loose := filepath.Join(oc, "skills", "review.md")
+	if got["skill:review"].Path != loose {
+		t.Errorf("loose skill path = %q", got["skill:review"].Path)
+	}
+	if rec := getSkillFile(t, loose); rec.Code != http.StatusOK {
+		t.Errorf("loose opencode skill: %d %s", rec.Code, rec.Body)
+	}
+	if rec := getSkillFile(t, filepath.Join(oc, "skills", "teams", "release", "SKILL.md")); rec.Code != http.StatusOK {
+		t.Errorf("nested opencode skill: %d %s", rec.Code, rec.Body)
+	}
+}

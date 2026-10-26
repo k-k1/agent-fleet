@@ -516,6 +516,10 @@
   font-weight: 600;
 }
 
+.skills-title {
+  color: var(--muted);
+}
+
 .skills-desc {
   flex-basis: 100%;
   color: var(--muted);
