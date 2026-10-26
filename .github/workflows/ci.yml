@@ -353,6 +353,12 @@ jobs:
       # policy; workspace task ENIs have their own route table without it (#2716).
       - name: S3 endpoint on the private route table only, pinned policy (ECS templates)
         run: python3 ./deploy/local/cfn-s3-endpoint-test.py
+      # A running v0.34.x stack reaches this tree's 00-network through a change set the README
+      # describes (Add 6 + Remove S3Endpoint at S3EndpointEnabled=false; the defaults switch the
+      # restricting policy on at once). The two templates are diffed here so the text stays true
+      # (#2763); v0.34.1's is a frozen copy because this checkout has no tags.
+      - name: 00-network upgrade from v0.34.x (change-set shapes vs README)
+        run: python3 ./deploy/local/cfn-network-upgrade-test.py
       # The egress event archive (AF_EGRESS_ARCHIVE_URL, #2732) needs three stacks to agree: the
       # optional bucket, the CP role's grant on egress/* and the URL. A mismatch is AccessDenied
       # on the first archive write, on a real deployment only, and the purger then keeps events.

@@ -679,6 +679,79 @@ af_cfn_deploy() {
     --template-file "$tpl" ${extra[@]+"${extra[@]}"} "$@"
 }
 
+# af_cfn_clear_params <stack> <capability> <key>... — make each <key> empty on a live stack and
+# leave every other parameter and the template as they are.
+#
+# In the #2763 rehearsal, `cloudformation deploy --parameter-overrides Key=` did not clear Key on
+# a live stack (it reported "No changes"). Why is not known: aws-cli 2.36 does send the override
+# as ParameterValue="", the same request create-change-set would make. So the value is not set
+# here at all: the key is left out of a change set on the stack's own template, which gives it
+# that template's Default, every other parameter is UsePreviousValue, and each key is read back.
+# The live template's Default must exist and be exactly "" (GetTemplateSummary), checked before
+# anything changes; a local template file may differ from what the stack runs. Call it after the
+# stack's deploy; a key that is already empty costs one read and nothing else. Every read that
+# fails is a failure, never "empty".
+af_cfn_clear_params() {
+  local stack="$1" cap="$2"; shift 2
+  local k v d todo=() keys json="" sep="" name changes
+  for k in "$@"; do
+    v="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$stack" \
+      --query "Stacks[0].Parameters[?ParameterKey=='$k'].ParameterValue" --output text)" || {
+      echo "ERROR: could not read $k of $stack, so it cannot be cleared. Re-run." >&2; return 1; }
+    case "$v" in ""|None) continue ;; esac
+    # JSON keeps an absent Default (null) apart from an empty one (""); compared as printed, so a
+    # Default of blanks (" ") is refused too.
+    d="$("${AWS[@]}" cloudformation get-template-summary --stack-name "$stack" \
+      --query "Parameters[?ParameterKey=='$k'] | [0].DefaultValue" --output json)" || {
+      echo "ERROR: could not read the template $stack runs, so $k cannot be cleared. Re-run." >&2; return 1; }
+    if [ "$d" != '""' ]; then
+      echo "ERROR: in the template $stack runs, $k's Default is $d, not \"\"; leaving it out would not clear it." >&2
+      return 1
+    fi
+    todo+=("$k")
+  done
+  [ ${#todo[@]} -gt 0 ] || return 0
+  if [ "${AF_DRY:-0}" = 1 ]; then
+    echo "DRY: clear ${todo[*]} on $stack (create-change-set --use-previous-template without them, the rest UsePreviousValue)"
+    return 0
+  fi
+  keys="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$stack" \
+    --query 'Stacks[0].Parameters[].ParameterKey' --output text)" || return 1
+  for k in $keys; do
+    case " ${todo[*]} " in *" $k "*) continue ;; esac
+    json="$json$sep{\"ParameterKey\":\"$k\",\"UsePreviousValue\":true}"; sep=","
+  done
+  name="af-clear-$(date +%s)"
+  echo "==> $stack: clearing ${todo[*]} (a change set on the current template; nothing else moves)"
+  "${AWS[@]}" cloudformation create-change-set --stack-name "$stack" --change-set-name "$name" \
+    --change-set-type UPDATE --use-previous-template --capabilities "$cap" \
+    --parameters "[$json]" >/dev/null || return 1
+  if ! "${AWS[@]}" cloudformation wait change-set-create-complete --stack-name "$stack" --change-set-name "$name"; then
+    echo "ERROR: the change set $name on $stack did not build:" >&2
+    "${AWS[@]}" cloudformation describe-change-set --stack-name "$stack" --change-set-name "$name" \
+      --query StatusReason --output text >&2 || true
+    return 1
+  fi
+  changes="$("${AWS[@]}" cloudformation describe-change-set --stack-name "$stack" --change-set-name "$name" \
+    --query 'Changes[].ResourceChange.[Action,LogicalResourceId,Replacement]' --output text 2>/dev/null || true)"
+  printf '%s\n' "$changes" | while IFS=$'\t' read -r act lid repl; do
+    if [ -n "$act" ]; then echo "    · $act $lid (replacement: ${repl:-None})"; fi
+  done
+  "${AWS[@]}" cloudformation execute-change-set --stack-name "$stack" --change-set-name "$name" >/dev/null || return 1
+  "${AWS[@]}" cloudformation wait stack-update-complete --stack-name "$stack" || return 1
+  for k in "${todo[@]}"; do
+    v="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$stack" \
+      --query "Stacks[0].Parameters[?ParameterKey=='$k'].ParameterValue" --output text)" || {
+      echo "ERROR: the change set $name ran, but $k of $stack could not be read back. Check it by hand." >&2
+      return 1; }
+    case "$v" in ""|None) ;; *)
+      echo "ERROR: $k of $stack is still '$v' after the change set $name." >&2
+      return 1 ;;
+    esac
+  done
+  echo "    · $stack: ${todo[*]} now empty"
+}
+
 # af_params_file <slug> — file of captured Key=Value lines (one parameter per line).
 #
 # This format is chosen because values contain spaces, parentheses, `|` and commas. A real

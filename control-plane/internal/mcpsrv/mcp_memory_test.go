@@ -30,6 +30,8 @@ type memCP struct {
 	gotPath   string
 	gotBody   string
 	calls     int
+	// answer is the Agent's reply; empty means {"ok":true}.
+	answer string
 	// prin and tenantID are the seeded member and tenant behind the PAT (newMemCP).
 	prin     mcpPrincipal
 	tenantID string
@@ -42,6 +44,9 @@ func (c *memCP) ResolveByMembership(context.Context, string, string) (*Resolved,
 func (c *memCP) AgentText(_ context.Context, _ runtime.Runtime, method, path string, body []byte) (string, error) {
 	c.calls++
 	c.gotMethod, c.gotPath, c.gotBody = method, path, string(body)
+	if c.answer != "" {
+		return c.answer, c.agentErr
+	}
 	return `{"ok":true}`, c.agentErr
 }
 
@@ -163,16 +168,20 @@ func TestMemoryToolsRelayTheAgentsRefusal(t *testing.T) {
 	}
 }
 
-// External writes are audited with an id-shaped target only; the memory's name never reaches the
-// ledger, and a failed write is not recorded.
+// External writes are audited with the project id the Agent resolved (the CP cannot resolve a
+// repository itself), an id-shaped target only; the memory's name never reaches the ledger, and a
+// failed write is not recorded.
 func TestMemoryWritesAreAudited(t *testing.T) {
 	st := memStore(t)
 	cp := newMemCP(t, st, "running")
 	secretName := "ghp-looking-name"
+	cp.answer = `{"name":"x","scope":"user","revision":1}`
 	memCall(t, cp, "write", "memory_save", map[string]any{"name": secretName, "description": "d", "type": "user", "body": "b", "scope": "user"})
-	memCall(t, cp, "write", "memory_forget", map[string]any{"name": secretName, "revision": 1, "scope": "project", "project": "demo-0123456789ab"})
-	memCall(t, cp, "write", "memory_save", map[string]any{"name": "y", "description": "d", "type": "user", "body": "b", "project": "Not An ID/../x"})
-	cp.agentErr = errors.New("agent 409: {}")
+	cp.answer = `{"name":"x","scope":"project","revision":1,"project":"demo-0123456789ab"}`
+	memCall(t, cp, "write", "memory_forget", map[string]any{"name": secretName, "revision": 1, "scope": "project", "repository": "https://github.com/k-k1/demo"})
+	cp.answer = `{"scope":"project","project":"Not An ID/../x"}`
+	memCall(t, cp, "write", "memory_save", map[string]any{"name": "y", "description": "d", "type": "user", "body": "b", "scope": "project", "project": "demo-0123456789ab"})
+	cp.agentErr = errors.New("agent 400: {}")
 	memCall(t, cp, "write", "memory_save", map[string]any{"name": "z", "description": "d", "type": "user", "body": "b"})
 
 	rows, err := st.ListAuditByTenant(context.Background(), cp.tenantID, 10)
@@ -209,34 +218,70 @@ func TestMCPClientName(t *testing.T) {
 	}
 }
 
-// With scope omitted the Agent works in the project when one is named, so the audit says project;
-// an explicit user scope stays user.
-func TestMemoryAuditUsesTheAgentsDefaultScope(t *testing.T) {
+// The audit detail follows the scope the Agent reports, and the target is the project it resolved
+// from `repository`.
+func TestMemoryAuditUsesTheAgentsScopeAndProject(t *testing.T) {
 	st := memStore(t)
 	cp := newMemCP(t, st, "running")
-	base := map[string]any{"name": "n", "description": "d", "type": "user", "body": "b"}
-	with := func(extra map[string]any) map[string]any {
-		m := map[string]any{}
-		for k, v := range base {
-			m[k] = v
-		}
-		for k, v := range extra {
-			m[k] = v
-		}
-		return m
-	}
-	memCall(t, cp, "write", "memory_save", with(map[string]any{"project": "demo-0123456789ab"}))
-	memCall(t, cp, "write", "memory_save", with(map[string]any{"project": "demo-0123456789ab", "scope": "user"}))
-	memCall(t, cp, "write", "memory_save", with(nil))
-	memCall(t, cp, "write", "memory_forget", map[string]any{"name": "n", "revision": 1, "project": "demo-0123456789ab"})
+	cp.answer = `{"scope":"project","project":"demo-0123456789ab"}`
+	memCall(t, cp, "write", "memory_save", map[string]any{"name": "n", "description": "d", "type": "user", "body": "b", "scope": "project", "repository": "git@github.com:k-k1/demo.git"})
+	cp.answer = `{"scope":"user"}`
+	memCall(t, cp, "write", "memory_save", map[string]any{"name": "n", "description": "d", "type": "user", "body": "b", "scope": "user"})
 	rows, _ := st.ListAuditByTenant(context.Background(), cp.tenantID, 10)
 	n := map[string]int{}
 	for _, r := range rows {
-		n[r.Action+" "+r.Detail]++
+		n[r.Action+" "+r.Detail+" "+r.Target]++
 	}
-	if n["memory.entry.save external scope=project"] != 1 || n["memory.entry.save external scope=user"] != 2 ||
-		n["memory.entry.forget external scope=project"] != 1 {
+	if n["memory.entry.save external scope=project demo-0123456789ab"] != 1 || n["memory.entry.save external scope=user "] != 1 {
 		t.Fatalf("audit details: %v", n)
+	}
+}
+
+// `repository` is relayed to the Agent as is (the Agent resolves it), on every tool that takes a
+// project; the writes must declare scope, and the descriptions tell the model what to pass.
+func TestMemoryToolsRelayRepositoryAndRequireScopeOnWrites(t *testing.T) {
+	cp := newMemCP(t, memStore(t), "running")
+	const repo = "git@github.com:k-k1/demo.git"
+	for _, c := range []struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		{"memory_index", map[string]any{"repository": repo}, "/agents/memory/external/entries?repository=git%40github.com%3Ak-k1%2Fdemo.git"},
+		{"memory_search", map[string]any{"query": "q", "repository": repo}, "/agents/memory/external/search?q=q&repository=git%40github.com%3Ak-k1%2Fdemo.git"},
+		{"memory_read", map[string]any{"name": "n", "scope": "project", "repository": repo}, "/agents/memory/external/read?name=n&repository=git%40github.com%3Ak-k1%2Fdemo.git&scope=project"},
+	} {
+		if text, isErr := memCall(t, cp, "read", c.tool, c.args); isErr || cp.gotPath != c.want {
+			t.Errorf("%s: %q %v path %s", c.tool, text, isErr, cp.gotPath)
+		}
+	}
+	memCall(t, cp, "write", "memory_save", map[string]any{"name": "n", "description": "d", "type": "project", "body": "b", "scope": "project", "repository": repo})
+	var got map[string]any
+	if json.Unmarshal([]byte(cp.gotBody), &got) != nil || got["repository"] != repo || got["scope"] != "project" {
+		t.Errorf("save body: %s", cp.gotBody)
+	}
+	memCall(t, cp, "write", "memory_forget", map[string]any{"name": "n", "revision": 1, "scope": "project", "repository": repo})
+	if json.Unmarshal([]byte(cp.gotBody), &got) != nil || got["repository"] != repo {
+		t.Errorf("forget body: %s", cp.gotBody)
+	}
+
+	for _, tl := range memoryTools() {
+		props, _ := tl.schema["properties"].(map[string]any)
+		if tl.name == "memory_projects" {
+			continue
+		}
+		if _, ok := props["repository"]; !ok {
+			t.Errorf("%s has no repository argument", tl.name)
+		}
+		if tl.name == "memory_save" || tl.name == "memory_forget" {
+			req, _ := tl.schema["required"].([]string)
+			if !strings.Contains(strings.Join(req, ","), "scope") {
+				t.Errorf("%s does not require scope: %v", tl.name, req)
+			}
+		}
+		if !strings.Contains(tl.desc, "git remote get-url origin") {
+			t.Errorf("%s description does not tell the model to pass the origin URL: %s", tl.name, tl.desc)
+		}
 	}
 }
 
@@ -302,6 +347,20 @@ func TestMemoryToolsFailClosedWithoutAMembership(t *testing.T) {
 	for _, tl := range New(cp).toolsFor(context.Background(), &prin) {
 		if strings.HasPrefix(tl.name, "memory_") {
 			t.Fatalf("%s listed for an unknown membership", tl.name)
+		}
+	}
+}
+
+// Every external memory tool ends with the note steering sessions inside the Workspace to the af
+// server's own tools (#2766).
+func TestMemoryToolsSteerSessionsToTheLocalTools(t *testing.T) {
+	tools := memoryTools()
+	if len(tools) != 6 {
+		t.Fatalf("memory tools: %d", len(tools))
+	}
+	for _, tl := range tools {
+		if !strings.HasSuffix(tl.desc, memoryOutsideNote) || !strings.Contains(tl.desc, "Inside an Agent Fleet session, use the af server's own memory tools instead") {
+			t.Errorf("%s description lacks the note: %s", tl.name, tl.desc)
 		}
 	}
 }
