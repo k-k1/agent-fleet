@@ -97,7 +97,7 @@ if (typeof window !== "undefined") {
     // Another tab chose a different reviewer for a plan: that is newer than this tab's
     // unconfirmed write.
     for (const k of [...pending.keys()]) if (before[k] !== store[k]) pending.delete(k);
-    reconcile(useSessionsStore.getState().sessions); // also notifies subscribers
+    reconcile(useSessionsStore.getState().sessions, true); // notifies subscribers, writes no cache
   });
 }
 
@@ -124,10 +124,18 @@ function syncToAgent(planner: string, planPath: string, reviewer: string) {
     .finally(() => listeners.forEach((l) => l()));
 }
 
+/** What the previous list said per key (absent = the Agent held no link). The shared cache is
+ *  rewritten only when THIS list shows a change against it, never because a list merely repeats
+ *  an older value: two tabs holding different lists would otherwise overwrite each other's cache
+ *  in turn, through each other's storage events. */
+const lastServer = new Map<string, string>();
+
 /** Fold a session list into the local state: a pending write the list now shows is confirmed;
- *  a link the Agent holds is remembered as confirmed; a confirmed link the Agent no longer
- *  holds is dropped from the cache. Only planners whose row carries the field are judged. */
-function reconcile(sessions: Session[]) {
+ *  a link the Agent holds is remembered as confirmed and, when it changed, moved into the
+ *  cache; a confirmed link the Agent dropped is removed from the cache. Only planners whose row
+ *  carries the field are judged. `fromStorage` (another tab's write arrived, the list is the
+ *  one already seen) confirms and notifies but never writes the shared cache. */
+function reconcile(sessions: Session[], fromStorage = false) {
   let storeChanged = false;
   let syncedChanged = false;
   const next = { ...store };
@@ -137,32 +145,40 @@ function reconcile(sessions: Session[]) {
     const [planner, path] = k.split("\u0000");
     if (planners.has(planner) && serverReviewer(sessions, planner, path) === v) pending.delete(k);
   }
+  const seen = new Map<string, string>();
   for (const s of sessions) {
     if (!Array.isArray(s.planReviewers)) continue;
     for (const e of s.planReviewers) {
       const k = reviewerKey(s.name, e.path);
+      seen.set(k, e.reviewer);
       if (!synced.has(k)) {
         synced.add(k);
         syncedChanged = true;
       }
       // Keep the cache on the newest confirmed reviewer, so a later list without the field
       // (the Control Plane's mirror while the Agent is unreachable) cannot bring back an older one.
-      if (!pending.has(k) && next[k] !== e.reviewer) {
+      const prev = lastServer.get(k);
+      if (!fromStorage && !pending.has(k) && next[k] !== e.reviewer && (next[k] === undefined || (prev !== undefined && prev !== e.reviewer))) {
         delete next[k];
         next[k] = e.reviewer;
         storeChanged = true;
       }
     }
   }
-  for (const k of [...synced]) {
-    const [planner, path] = k.split("\u0000");
-    if (!planners.has(planner) || pending.has(k) || serverReviewer(sessions, planner, path)) continue;
-    synced.delete(k);
-    syncedChanged = true;
-    if (k in next) {
-      delete next[k];
-      storeChanged = true;
+  if (!fromStorage) {
+    for (const k of [...synced]) {
+      const [planner, path] = k.split("\u0000");
+      if (!planners.has(planner) || pending.has(k) || serverReviewer(sessions, planner, path)) continue;
+      if (!lastServer.has(k)) continue; // not seen going away in this tab: reads already return ""
+      synced.delete(k);
+      syncedChanged = true;
+      if (k in next) {
+        delete next[k];
+        storeChanged = true;
+      }
     }
+    for (const k of [...lastServer.keys()]) if (planners.has(k.split("\u0000")[0])) lastServer.delete(k);
+    for (const [k, v] of seen) lastServer.set(k, v);
   }
   const keys = Object.keys(next);
   for (const old of keys.slice(0, Math.max(0, keys.length - MAX_ENTRIES))) delete next[old];
@@ -223,6 +239,7 @@ export const hasRememberedReviewer = (planner: string, sessions: Session[] = use
 /** Test seam: re-read storage (the module reads it once at import). */
 export function reloadReviewersForTest() {
   pending.clear();
+  lastServer.clear();
   synced = loadSynced();
   store = load();
   listeners.forEach((l) => l());

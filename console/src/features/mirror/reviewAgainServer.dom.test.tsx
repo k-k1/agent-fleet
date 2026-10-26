@@ -145,4 +145,29 @@ describe("reviewer link held by the Agent", () => {
     expect(host.textContent).toBe("none");
     await act(async () => root.unmount());
   });
+
+  it("does not rewrite another tab's newer cache from this tab's older list, nor loop on storage events", () => {
+    const k = "planner\u0000/p/a.md";
+    useSessionsStore.setState({ sessions: [planner([{ path: "/p/a.md", reviewer: "rev-old" }])] });
+    // tab B chose rev-new and wrote the shared cache; this tab's list still says rev-old
+    localStorage.setItem("af.plan-reviewers", JSON.stringify({ [k]: "rev-new" }));
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    window.dispatchEvent(new StorageEvent("storage", { key: "af.plan-reviewers" }));
+    expect(setItem.mock.calls.filter(([key]) => key === "af.plan-reviewers")).toHaveLength(0);
+    // an unrelated list change here repeats the old value: still no write of rev-old
+    useSessionsStore.setState({ sessions: [planner([{ path: "/p/a.md", reviewer: "rev-old" }]), sess({ name: "x" })] });
+    setItem.mockRestore();
+    expect(JSON.parse(localStorage.getItem("af.plan-reviewers")!)[k]).toBe("rev-new");
+  });
+
+  it("keeps this tab's pending choice when another tab's older cache write arrives with an older list", async () => {
+    const k = "planner\u0000/p/a.md";
+    useSessionsStore.setState({ sessions: [planner([{ path: "/p/a.md", reviewer: "rev-old" }])] });
+    setLink.mockImplementation(() => new Promise(() => {}));
+    rememberReviewer("planner", "/p/a.md", "rev-new");
+    // a storage event that carries the same value this tab wrote must not clear the marker
+    window.dispatchEvent(new StorageEvent("storage", { key: "af.plan-reviewers" }));
+    expect(rememberedReviewer("planner", "/p/a.md")).toBe("rev-new");
+    expect(JSON.parse(localStorage.getItem("af.plan-reviewers")!)[k]).toBe("rev-new");
+  });
 });
