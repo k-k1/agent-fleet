@@ -59,6 +59,19 @@ func TestCreateAndUpdateRefuseOwnMCP(t *testing.T) {
 	if _, err := Update(d.ID, in); !errors.As(err, &ve) || ve.Code != CodeURLOwnMCP {
 		t.Fatalf("Update to own endpoint = %v", err)
 	}
+	for _, u := range []string{"https://af.example.com/mcp/memory", "http://cp.internal:8080/mcp/memory/"} {
+		if _, err := Create(mk(u)); !errors.As(err, &ve) || ve.Code != CodeURLOwnMemory {
+			t.Fatalf("Create(%s) = %v, want %s", u, err, CodeURLOwnMemory)
+		}
+	}
+	if _, err := Update(d.ID, mk("https://af.example.com/mcp/memory")); !errors.As(err, &ve) || ve.Code != CodeURLOwnMemory {
+		t.Fatalf("Update to own memory endpoint = %v", err)
+	}
+	other := mk("https://other.example.com/mcp/memory")
+	other.Name = "other-memory"
+	if _, err := Create(other); err != nil {
+		t.Fatalf("another deployment's memory endpoint must pass: %v", err)
+	}
 	// A stored row keeps its URL on Update (rename), only a changed URL is checked.
 	// An unset base refuses nothing.
 	t.Setenv("AF_CP_BASE_URL", "")

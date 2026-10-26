@@ -182,8 +182,9 @@ func (a *mcpOAuthAPI) authorize(w http.ResponseWriter, r *http.Request) {
 		fail("invalid_request", "only response_mode=query is supported")
 		return
 	}
-	if p.get("resource") != a.resource {
-		fail("invalid_target", "resource must be "+a.resource)
+	resource := p.get("resource")
+	if !a.knownResource(resource) {
+		fail("invalid_target", a.resourceHint())
 		return
 	}
 	challenge := p.get("code_challenge")
@@ -218,10 +219,11 @@ func (a *mcpOAuthAPI) authorize(w http.ResponseWriter, r *http.Request) {
 		fail("access_denied", "no tenant is available from here")
 		return
 	}
-	req := mcpAuthRequest{cl: cl, redirectURI: redirectURI, state: state, challenge: challenge, level: level}
+	req := mcpAuthRequest{cl: cl, redirectURI: redirectURI, state: state, challenge: challenge, level: level, resource: resource}
 	if prompt == "none" {
 		// Silent only for a client that already holds a live grant of this member at an equal
-		// or wider scope; anything else needs the member to look at the page.
+		// or wider scope, for the same resource: a memory-only grant must never turn silently
+		// into one for the full /mcp. Anything else needs the member to look at the page.
 		grants, err := a.mgr.store.ListMCPOAuthGrantsByIdentity(ctx, ident.ID, a.now().Unix())
 		if err != nil {
 			log.Printf("mcp oauth: list grants: %v", err)
@@ -229,7 +231,7 @@ func (a *mcpOAuthAPI) authorize(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, g := range grants {
-			if g.ClientID != cl.ID || scopeLevel(g.Scope) < level {
+			if g.ClientID != cl.ID || g.Resource != resource || scopeLevel(g.Scope) < level {
 				continue
 			}
 			for _, mv := range ms {
@@ -250,6 +252,8 @@ type mcpAuthRequest struct {
 	cl                            mcpClient
 	redirectURI, state, challenge string
 	level                         int
+	// resource is the one the code and everything minted from it are bound to.
+	resource string
 }
 
 func (a *mcpOAuthAPI) issueCode(w http.ResponseWriter, r *http.Request, req mcpAuthRequest, identityID, membershipID string) {
@@ -257,7 +261,7 @@ func (a *mcpOAuthAPI) issueCode(w http.ResponseWriter, r *http.Request, req mcpA
 	err := a.mgr.store.InsertMCPOAuthToken(r.Context(), store.MCPOAuthToken{
 		Hash: devIdPHash(code), Kind: store.MCPOAuthCode, ClientID: req.cl.ID, ClientName: req.cl.Name,
 		IdentityID: identityID, MembershipID: membershipID, RedirectURI: req.redirectURI,
-		Challenge: req.challenge, Scope: scopeString(req.level), Resource: a.resource,
+		Challenge: req.challenge, Scope: scopeString(req.level), Resource: req.resource,
 		ExpiresAt: a.now().Add(mcpOAuthCodeTTL).Unix(),
 	})
 	if err != nil {
@@ -276,7 +280,7 @@ func (a *mcpOAuthAPI) askConsent(w http.ResponseWriter, r *http.Request, req mcp
 	err := a.mgr.store.InsertMCPOAuthToken(r.Context(), store.MCPOAuthToken{
 		Hash: devIdPHash(ticket), Kind: store.MCPOAuthConsent, ClientID: req.cl.ID, ClientName: req.cl.Name,
 		IdentityID: ident.ID, RedirectURI: req.redirectURI, Challenge: req.challenge,
-		Scope: scopeString(req.level), Resource: a.resource, State: req.state,
+		Scope: scopeString(req.level), Resource: req.resource, State: req.state,
 		ExpiresAt: a.now().Add(mcpOAuthConsentTTL).Unix(),
 	})
 	if err != nil {
@@ -298,6 +302,12 @@ func (a *mcpOAuthAPI) askConsent(w http.ResponseWriter, r *http.Request, req mcp
 		Host: callbackHost(req.redirectURI), ClientName: req.cl.Name,
 		Loopback: a.classifyRedirect(nil /* loopback needs no trusted list */, req.redirectURI) == redirectLoopback,
 		CanWrite: req.level >= scopeRank(scopeWrite), Scope: scopeRead,
+	}
+	if req.resource == a.memoryResource {
+		// The memory endpoint's grant reaches the memory tools and nothing else, so the page
+		// says that instead of describing sessions the client will never see.
+		data.T.Heading, data.T.Lead = data.T.MemoryHeading, data.T.MemoryLead
+		data.T.ReadHelp, data.T.WriteHelp = data.T.MemoryReadHelp, data.T.MemoryWriteHelp
 	}
 	for _, mv := range ms {
 		label := mv.TenantName
@@ -377,7 +387,7 @@ func (a *mcpOAuthAPI) consent(w http.ResponseWriter, r *http.Request) {
 		a.consentRefuse(w, r, http.StatusBadRequest, "client or redirect_uri")
 		return
 	}
-	req := mcpAuthRequest{cl: cl, redirectURI: g.RedirectURI, state: g.State, challenge: g.Challenge, level: scopeLevel(g.Scope)}
+	req := mcpAuthRequest{cl: cl, redirectURI: g.RedirectURI, state: g.State, challenge: g.Challenge, level: scopeLevel(g.Scope), resource: g.Resource}
 	// Cancel answers with the parked request's redirect and state, never the form's.
 	if r.PostForm.Get("action") == "cancel" {
 		a.redirectBack(w, r, req.redirectURI, req.state, redirectErr("access_denied", "the member declined"))
@@ -542,6 +552,8 @@ func (a *mcpOAuthAPI) refuse(w http.ResponseWriter, r *http.Request, why string)
 type mcpConsentStrings struct {
 	Title, Heading, Lead, GoesTo, Local, Client, SelfDeclared, Tenant, Scope string
 	Read, ReadHelp, Write, WriteHelp, Allow, Cancel, Footer                  string
+	// The memory endpoint's replacements for Heading, Lead, ReadHelp and WriteHelp.
+	MemoryHeading, MemoryLead, MemoryReadHelp, MemoryWriteHelp string
 }
 
 var mcpConsentText = map[string]mcpConsentStrings{
@@ -552,7 +564,11 @@ var mcpConsentText = map[string]mcpConsentStrings{
 		Tenant: "接続するテナント", Scope: "許可する範囲",
 		Read: "read", ReadHelp: "セッションの状態や出力を読み取る。Agent Fleet のメモリ（一覧・検索・読み取り）も、テナントとあなたの設定で許されていれば読み取る", Write: "write", WriteHelp: "読み取りに加えて、セッションへの送信など操作を行う。許されていれば、メモリの保存と忘却もできる",
 		Allow: "許可する", Cancel: "キャンセル",
-		Footer: "いつでも接続を取り消せます。admin:dangerous の権限は OAuth では付与されません。",
+		Footer:          "いつでも接続を取り消せます。admin:dangerous の権限は OAuth では付与されません。",
+		MemoryHeading:   "アプリが Agent Fleet のメモリに接続しようとしています",
+		MemoryLead:      "許可すると、このアプリはあなたとして Agent Fleet のメモリだけを使えます。セッションの操作や管理ツールには届きません。心当たりがなければキャンセルしてください。",
+		MemoryReadHelp:  "メモリの一覧・検索・読み取り。テナントとあなたの設定で許されている場合に限る",
+		MemoryWriteHelp: "読み取りに加えて、メモリの保存と忘却。テナントとあなたの設定で許されている場合に限る",
 	},
 	"en": {
 		Title: "Allow app to connect · Agent Fleet", Heading: "An app wants to connect to Agent Fleet",
@@ -561,7 +577,11 @@ var mcpConsentText = map[string]mcpConsentStrings{
 		Tenant: "Tenant to connect", Scope: "What to allow",
 		Read: "read", ReadHelp: "Read session status and output. Also reads your Agent Fleet memory (list, search, read) when your tenant and your own setting allow it", Write: "write", WriteHelp: "Read, plus act: send to sessions and similar. Also saves and forgets memories when allowed",
 		Allow: "Allow", Cancel: "Cancel",
-		Footer: "You can revoke the connection at any time. The admin:dangerous tier is never granted over OAuth.",
+		Footer:          "You can revoke the connection at any time. The admin:dangerous tier is never granted over OAuth.",
+		MemoryHeading:   "An app wants to connect to your Agent Fleet memory",
+		MemoryLead:      "If you allow it, this app can use your Agent Fleet memory as you, and nothing else: it cannot reach sessions or admin tools. Cancel if you don't recognise it.",
+		MemoryReadHelp:  "List, search and read your memories, when your tenant and your own setting allow it",
+		MemoryWriteHelp: "Read, plus save and forget memories, when your tenant and your own setting allow it",
 	},
 }
 

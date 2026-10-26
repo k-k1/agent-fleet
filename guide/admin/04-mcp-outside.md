@@ -109,7 +109,7 @@ tenant altogether.
 
 While it is blocked:
 
-- the `/mcp` endpoint does not list `memory_projects`, `memory_index`, `memory_search`,
+- the `/mcp` and `/mcp/memory` endpoints do not list `memory_projects`, `memory_index`, `memory_search`,
   `memory_read`, `memory_save` or `memory_forget` for anyone in the tenant, and a call to one by
   name is refused as an unknown tool, whatever the member's own setting or token scope says;
 - it applies from the next request, with no restart, to tokens already issued;

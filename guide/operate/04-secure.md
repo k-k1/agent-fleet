@@ -171,7 +171,7 @@ working for CI and clients without OAuth.
   `update.sh` overrides only `ImageTag`, so it neither turns them on nor turns them off: parameters keep their
   previous value, and one a stack has not had yet starts off. See [`deploy/aws/ecs/README.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/README.md).
 - **What is served** (issuer `{PUBLIC_BASE_URL}/mcp-oauth`): `/.well-known/oauth-protected-resource/mcp`,
-  `/.well-known/oauth-authorization-server/mcp-oauth`, `/mcp-oauth/authorize`, `/mcp-oauth/consent`,
+  `/.well-known/oauth-protected-resource/mcp/memory`, `/.well-known/oauth-authorization-server/mcp-oauth`, `/mcp-oauth/authorize`, `/mcp-oauth/consent`,
   `/mcp-oauth/token`, `/mcp-oauth/register` and `/mcp-oauth/revoke`. The `/mcp` 401 now carries
   `WWW-Authenticate: Bearer resource_metadata="…"` (with `, error="invalid_token"` appended when a presented token is invalid).
   The client requests the scopes; the consent page starts with `read` selected and offers `write` only when requested.
@@ -181,14 +181,20 @@ working for CI and clients without OAuth.
   Under `AUTH=oauth` or `AUTH=dev` the Console's own session gate already lets the discovery, `token`, `register`
   and `revoke` paths through and keeps `authorize` and `consent` behind it. Under **`AUTH=proxy`** the gateway has
   to do the same: `/mcp-oauth/authorize` and `/mcp-oauth/consent` must pass **through** it (the member's identity header comes from
-  there), and the other five paths plus `/mcp` must **bypass** it.
+  there), and the other six paths plus `/mcp` and `/mcp/memory` must **bypass** it.
+- **Two resources.** `/mcp` serves every tool; `/mcp/memory` serves the six external memory tools and nothing else, for
+  a claude.ai connector that claude.ai also hands to the member's Workspace sessions. Each has its own metadata
+  document and 401 challenge, and each refuses the other's tokens: OAuth codes, grants and tokens are bound to the
+  resource the client asked for (a refresh keeps it), and a Personal Access Token is issued for one endpoint
+  (`mcp` by default, which every token issued before the split is). The tenant switch, the member's memory
+  setting, the scope tiers and the audit entries are the same on both.
 - **Who may be a client.** Registration is open (dynamic client registration is rate-limited per source, capped in
   number, and a registration that never produces a grant is deleted after 30 days) but a registration only chooses
   where a code is *sent*, so a redirect must be loopback or an `https` address on the trusted list, spelled
   canonically (no upper case, trailing dot, explicit port, user info or fragment). A client identified by a metadata
   document URL is fetched only when that URL is on the same list, without following redirects, with a short timeout
   and a size cap, and never to a non-public address.
-- **Tokens.** Access tokens are opaque, last one hour and are bound to `{PUBLIC_BASE_URL}/mcp`; refresh tokens rotate on
+- **Tokens.** Access tokens are opaque, last one hour and are bound to `{PUBLIC_BASE_URL}/mcp` or `{PUBLIC_BASE_URL}/mcp/memory`; refresh tokens rotate on
   every use and presenting a used one revokes the whole connection. A connection ends after 30 idle days or 90 days.
   Only hashes are stored. They are not PAT rows and do not count toward the 20-token PAT limit.
 - **Audit.** `mcp.oauth.grant` (created, revoked, reuse-revoked) and `mcp.oauth.token` (each issuance) are written before
@@ -246,11 +252,12 @@ item of a batch — writes one Control Plane log line, so a client that connects
 diagnosed from what it actually did:
 
 ```
-mcp-call http_method="POST" status=400 latency_ms=2 principal="grant:<id>" client_id="<id>" header_version="2026-07-28" mcp_method_header=false mcp_name_header=false accept="application/json, text/event-stream" content_type="application/json" user_agent="…" items=[{"method":"tools/list","era":"stateless","meta_version":"2026-07-28","client_name":"…","status":400,"error_code":-32020,"error_message":"header mismatch: Mcp-Method (absent) does not match body method \"tools/list\""}]
+mcp-call endpoint="/mcp" http_method="POST" status=400 latency_ms=2 principal="grant:<id>" client_id="<id>" header_version="2026-07-28" mcp_method_header=false mcp_name_header=false accept="application/json, text/event-stream" content_type="application/json" user_agent="…" items=[{"method":"tools/list","era":"stateless","meta_version":"2026-07-28","client_name":"…","status":400,"error_code":-32020,"error_message":"header mismatch: Mcp-Method (absent) does not match body method \"tools/list\""}]
 ```
 
+- `endpoint` is `/mcp` or `/mcp/memory`, the path the request was made to.
 - `principal` is `pat:<id>`, `grant:<id>` (OAuth; `client_id` follows) or `unauthenticated`, with `reason=` saying why
-  (no bearer token, unknown or expired token, an OAuth token bound to another resource, `method not allowed`).
+  (no bearer token, unknown or expired token, an OAuth token bound to another resource, a PAT bound to another endpoint, `method not allowed`).
 - `era` is `legacy` (an `initialize` handshake) or `stateless` (2026-07-28: `_meta` on every request). A stateless request
   the server rejects shows the JSON-RPC `error_code` (-32020 header mismatch, -32022 unsupported version, -32602 a missing `_meta` field, `clientInfo` and `clientCapabilities` included)
   and the `Mcp-Method` / `Mcp-Name` presence flags; `tools/list` items carry `tools`, the number returned. A `tools/call` that ran and failed (answered 200 with `isError`) shows `tool_error:true`, without the text.

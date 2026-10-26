@@ -4,8 +4,8 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-const api = vi.fn(async () => ({ tokens: [], ceiling: "write" }));
-const apiJSON = vi.fn(async () => ({ token: "" }));
+const api = vi.fn(async (): Promise<{ tokens: Array<Record<string, string>>; ceiling: string }> => ({ tokens: [], ceiling: "write" }));
+const apiJSON = vi.fn(async (): Promise<{ token: string; endpoint?: string }> => ({ token: "" }));
 vi.mock("../../../core/api/client.ts", async (importActual) => ({
   ...(await importActual<typeof import("../../../core/api/client.ts")>()),
   apiJSON: (...args: unknown[]) => (apiJSON as (...a: unknown[]) => unknown)(...args),
@@ -75,5 +75,76 @@ describe("TokensTab what-this-token-can-do section", () => {
     await act(async () => issue!.click());
     expect(host.querySelector(".pat-issued")?.textContent).toContain(warn);
     expect(count()).toBe(2);
+  });
+
+  // #2764: a memory-only token is minted for /mcp/memory, its snippet points there, the
+  // admin tier is not offered for it, and the list names each token's endpoint.
+  it("issues a memory-only token for /mcp/memory and labels the endpoint", async () => {
+    api.mockImplementation(async () => ({
+      tokens: [{ id: "p1", name: "claude-ai", scope: "write", endpoint: "memory" }, { id: "p2", name: "desktop", scope: "read", endpoint: "mcp" }],
+      ceiling: "admin:dangerous",
+    }));
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => root!.render(<TokensTab />));
+    const selects = () => Array.from(host!.querySelectorAll("select"));
+    const endpointSelect = selects().find((s) => Array.from(s.options).some((o) => o.value === "memory"))!;
+    expect(endpointSelect).toBeTruthy();
+    const scopeOptions = () => Array.from(selects().find((s) => Array.from(s.options).some((o) => o.value === "read"))!.options).map((o) => o.value);
+    expect(scopeOptions()).toContain("admin:dangerous");
+    await act(async () => {
+      endpointSelect.value = "memory";
+      endpointSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(scopeOptions()).not.toContain("admin:dangerous");
+
+    const rows = Array.from(host.querySelectorAll(".pat-table tbody tr:first-child")).map((r) => r.textContent ?? "");
+    expect(rows[0]).toContain(t("tokens.endpoint_short_memory"));
+    expect(rows[1]).toContain(t("tokens.endpoint_short_mcp"));
+
+    apiJSON.mockResolvedValueOnce({ token: "afp_mem", endpoint: "memory" });
+    const issue = Array.from(host.querySelectorAll("button")).find((b) => b.textContent === t("tokens.issue"));
+    await act(async () => issue!.click());
+    expect(apiJSON).toHaveBeenLastCalledWith("api/pat", "POST", expect.objectContaining({ endpoint: "memory" }));
+    const snippet = host.querySelector(".pat-tmpl")?.textContent ?? "";
+    expect(snippet).toContain("/mcp/memory");
+    expect(snippet).toContain("agent-fleet-memory");
+  });
+
+  // The scope shown is the scope sent: switching an admin:dangerous form to the memory endpoint
+  // lowers the state itself, and switching back does not bring the hidden tier back.
+  it("keeps the shown scope and the sent scope the same across endpoint changes", async () => {
+    api.mockImplementation(async () => ({ tokens: [], ceiling: "admin:dangerous" }));
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => root!.render(<TokensTab />));
+    const selects = () => Array.from(host!.querySelectorAll("select"));
+    const endpointSelect = () => selects().find((s) => Array.from(s.options).some((o) => o.value === "memory"))!;
+    const scopeSelect = () => selects().find((s) => Array.from(s.options).some((o) => o.value === "read"))!;
+    const change = async (el: HTMLSelectElement, v: string) => {
+      await act(async () => {
+        el.value = v;
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+    const issue = async () => {
+      const b = Array.from(host!.querySelectorAll("button")).find((x) => x.textContent === t("tokens.issue"));
+      apiJSON.mockResolvedValueOnce({ token: "afp_x" });
+      await act(async () => b!.click());
+      return (apiJSON.mock.calls.at(-1) as unknown[])[2] as { scope: string; endpoint: string };
+    };
+    await change(scopeSelect(), "admin:dangerous");
+    await change(endpointSelect(), "memory");
+    const shown = scopeSelect().value;
+    expect(shown).not.toBe("admin:dangerous");
+    let sent = await issue();
+    expect(sent).toMatchObject({ endpoint: "memory", scope: shown });
+
+    await change(endpointSelect(), "mcp");
+    expect(scopeSelect().value).toBe(shown);
+    sent = await issue();
+    expect(sent).toMatchObject({ endpoint: "mcp", scope: shown });
   });
 });

@@ -58,7 +58,9 @@ type CallItem struct {
 
 // CallRecord is one /mcp request as the member and the operator see it.
 type CallRecord struct {
-	At         string `json:"at"`
+	At string `json:"at"`
+	// Endpoint is the path the request was made to: /mcp or /mcp/memory.
+	Endpoint   string `json:"endpoint"`
 	HTTPMethod string `json:"http_method"`
 	Status     int    `json:"status"`
 	LatencyMs  int64  `json:"latency_ms"`
@@ -176,8 +178,9 @@ type callTrace struct {
 	key   string // ring key; empty until the caller authenticates
 }
 
-func newCallTrace(r *http.Request) *callTrace {
+func newCallTrace(r *http.Request, endpoint string) *callTrace {
 	return &callTrace{start: time.Now(), rec: CallRecord{
+		Endpoint:        endpoint,
 		HTTPMethod:      clip(r.Method, 16),
 		Principal:       "unauthenticated",
 		HeaderVersion:   clip(r.Header.Get("MCP-Protocol-Version"), 40),
@@ -282,6 +285,7 @@ func callLogLine(c CallRecord) string {
 	var b strings.Builder
 	b.WriteString("mcp-call")
 	kv := func(k, v string) { b.WriteString(" " + k + "=" + strconv.Quote(v)) }
+	kv("endpoint", c.Endpoint)
 	kv("http_method", c.HTTPMethod)
 	b.WriteString(" status=" + strconv.Itoa(c.Status))
 	b.WriteString(" latency_ms=" + strconv.FormatInt(c.LatencyMs, 10))

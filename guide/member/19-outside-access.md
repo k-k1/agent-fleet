@@ -10,9 +10,12 @@ This chapter is for using your workspace from outside the Console: driving it fr
 
 ## Using your workspace from an external agent (MCP)
 
-Your workspace answers MCP at one address, `https://<your Console address>/mcp`. An MCP client on your own
+Your workspace answers MCP at `https://<your Console address>/mcp`. An MCP client on your own
 computer connects there and works with your sessions, and with Agent Fleet memory if you allow it. Every call is
 checked against your role at that moment.
+
+A second address, `https://<your Console address>/mcp/memory`, serves Agent Fleet memory and nothing else. Use it
+for a claude.ai connector: see [A memory-only connector (for claude.ai)](#a-memory-only-connector-for-claudeai).
 
 ### Driving your workspace from an external Claude (MCP)
 
@@ -20,14 +23,17 @@ From Claude Code / Claude Desktop on your local PC you can **remotely drive** se
 Think "from my own Claude while I'm out, check on the session running in the company workspace and send it the
 next instruction". Issue the token for this in **⚙ Settings → Outside access → the "MCP tokens & apps" tab**.
 
-1. Choose a **name** (e.g. `laptop-claude`), a **scope**, and an **expiry**, then press **"Issue token"**.
+1. Choose a **name** (e.g. `laptop-claude`), an **endpoint**, a **scope**, and an **expiry**, then press **"Issue token"**.
+   - The endpoint is **/mcp** (sessions, memory and admin tools; the default) or **/mcp/memory** (Agent Fleet
+     memory only). A token works only at the endpoint it was issued for; the token list shows which.
    - Scopes are **read (view only)** / **write (drive sessions; the default)** / **admin:dangerous (elevated / admin)**. You cannot pick a scope beyond your own permissions. If all you want is to drive sessions remotely, write is enough.
    - Expiry is 90 days (default) / 30 days / 365 days / no expiry.
 2. On issue you'll see **"Token issued (you can't see it again once you close this)."**: **the token is shown
    only this once**. Save it with "Copy token".
 3. The same screen also shows a **`.mcp.json`** template for your local Claude Code. Copy it with
    "Copy .mcp.json" and save it at the project root (or add `agent-fleet` to an existing file). The endpoint is
-   `/mcp`, with `Authorization: Bearer <token>` in the header.
+   `/mcp` (`/mcp/memory`, under the name `agent-fleet-memory`, for a memory-only token), with
+   `Authorization: Bearer <token>` in the header.
 
 **What the session sees.** A prompt sent with `send_to_session` does not look like your own typing. The session
 receives it behind a one-line header, `[agent-fleet:mcp via=<connection name> connection=<id> reply=none]`,
@@ -49,9 +55,10 @@ Where your administrator has turned it on, claude.ai, ChatGPT, Claude Code and C
 **without a token**: you sign in to the Console, look at what the app asks for, and allow it. If the deployment has
 not turned it on, the client asks for a token as before and the section above applies.
 
-1. In the client, add a custom connector / remote MCP server whose address is `https://<your Console address>/mcp`.
-   For claude.ai and ChatGPT that is the same address you would have used with a token; leave any client ID and
-   secret fields empty.
+1. In the client, add a custom connector / remote MCP server whose address is `https://<your Console address>/mcp`,
+   or `https://<your Console address>/mcp/memory` when the app should reach Agent Fleet memory only. **For
+   claude.ai, use `/mcp/memory`** ([why](#a-memory-only-connector-for-claudeai)). Leave any client ID and secret
+   fields empty.
 2. The client sends you to the Console. Sign in if you are not already, and the **consent page** opens. It shows:
    - **Where you are sent back to**, in large type: `claude.ai`, `chatgpt.com`, or "this computer itself" for a
      command-line client. Allow only what you started yourself.
@@ -78,7 +85,7 @@ callback is anywhere else is refused with an error page and is never sent your c
 
 #### Connected apps
 
-Open **Settings → Outside access → MCP tokens & apps** and look below your Personal Access Tokens for **Connected apps**. Each OAuth connection shows the app name (self-declared, unverified), redirect host, tenant, scope, connection date and last use. Choose **Revoke** and confirm to end that connection immediately, including its refresh token. Reconnect from the app if you want to use it again. The section appears only when this deployment serves MCP OAuth.
+Open **Settings → Outside access → MCP tokens & apps** and look below your Personal Access Tokens for **Connected apps**. Each OAuth connection shows the app name (self-declared, unverified), redirect host, tenant, endpoint (`/mcp` or `/mcp/memory`), scope, connection date and last use. Choose **Revoke** and confirm to end that connection immediately, including its refresh token. Reconnect from the app if you want to use it again. The section appears only when this deployment serves MCP OAuth.
 
 Your tenant administrator can disable MCP OAuth for the tenant. This revokes its existing OAuth connections and prevents new ones. Personal Access Tokens continue to work.
 
@@ -88,11 +95,32 @@ Under each connected app, and under each Personal Access Token, choose **Recent 
 
 The list is kept in memory by the Control Plane only. It disappears when the Control Plane restarts, and with several Control Plane replicas each one keeps its own list, so you see only the requests that replica served — press **Refresh** a few times, or ask your operator to read the Control Plane log, where every request is recorded, including those refused before sign-in.
 
+### A memory-only connector (for claude.ai)
+
+claude.ai hands every connector you add there to all the Claude Code sessions of your account, and that includes
+the sessions running in this Workspace. A claude.ai connector to `/mcp` would therefore give those sessions your
+full member authority (see the next section). A connector to **`/mcp/memory`** does not:
+
+- A token or OAuth connection made for `/mcp/memory` lists and runs the six memory tools (`memory_projects`,
+  `memory_index`, `memory_search`, `memory_read`, `memory_save`, `memory_forget`) and nothing else. `/mcp`
+  refuses it, and `/mcp/memory` refuses a `/mcp` token or connection, so switching means connecting again.
+- Your Workspace sessions already reach the same memory through their built-in af tools, so a copy of this
+  connector inside a session adds nothing they did not have.
+- The consent page says the app is asking for your memory only. Your memory setting, your tenant administrator's
+  block, the `read` / `write` scope and the audit log apply exactly as on `/mcp`
+  ([18 Agent memory](18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent)).
+
+A claude.ai connector you already have on `/mcp` keeps working. To move it, remove it in claude.ai and add a new
+one with the `/mcp/memory` address. Keep `/mcp` for a client that runs only on your own computer, such as Claude
+Desktop or a command-line client, and needs the session tools.
+
 ### Do not connect this deployment's /mcp to a session
 
 A session normally sees only its own narrow tool set: it can steer its own child sessions and cannot delete anything. This deployment's external `/mcp` endpoint is different, because it acts with your full member authority (any of your sessions, delete, and the administrator tools if you are one). Connecting it to a session lifts those limits, so a session could stop or delete its siblings.
 
-Agent Fleet therefore refuses to register this deployment's own `/mcp` URL as a remote MCP server, both in your Workspace and as a tenant-distributed server (error "This is this deployment's own /mcp endpoint"). This is a guardrail against doing it by accident, not a security boundary. It cannot see a connector you add in claude.ai, and connecting this deployment's `/mcp` that way lifts the same limits, so don't.
+Agent Fleet therefore refuses to register this deployment's own `/mcp` URL as a remote MCP server, both in your Workspace and as a tenant-distributed server (error "This is this deployment's own /mcp endpoint"). This is a guardrail against doing it by accident, not a security boundary. It cannot see a connector you add in claude.ai, and connecting this deployment's `/mcp` that way lifts the same limits, so use [`/mcp/memory`](#a-memory-only-connector-for-claudeai) for a claude.ai connector instead.
+
+The memory-only `/mcp/memory` is refused as a remote MCP server too (error "This is this deployment's own /mcp/memory endpoint"), for a smaller reason: sessions already have that memory through their built-in af tools, so it would only add a second copy of them.
 
 The same goes for the other ways of handing that authority to a session. A personal access token (Settings → Outside access → MCP tokens & apps) given to a session, whether pasted into a prompt or left in a file, bypasses the session limits the same way, up to the token's scope: a read token exposes all your sessions in this Workspace for viewing, a write token also lets the session operate and delete them. A Console session cookie placed in the container is at least as strong, because it is your full signed-in identity. Agent Fleet cannot detect either, so keep tokens and cookies out of the Workspace and use them only from an outside client.
 
@@ -100,5 +128,6 @@ Connecting a **different** Agent Fleet deployment is fine: to that deployment th
 
 ### Using Agent Fleet memory from an external agent
 
-Your own Claude Code or Claude Desktop can use Agent Fleet memory through the same MCP token. See
+Your own Claude Code or Claude Desktop can use Agent Fleet memory through the same MCP token, and claude.ai through
+a [memory-only connector](#a-memory-only-connector-for-claudeai). See
 [18 Agent memory](18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent).

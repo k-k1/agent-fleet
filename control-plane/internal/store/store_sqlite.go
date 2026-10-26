@@ -2079,10 +2079,13 @@ func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRo
 // --- Personal Access Tokens (docs/decisions/0006, P3-6) ---
 
 func (s *SQL) CreatePAT(ctx context.Context, p PAT, tokenHash string) error {
+	if p.Resource == "" {
+		p.Resource = PATResourceMCP
+	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO pat(id, identity_id, membership_id, token_hash, scope, name, created_at, expires_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.ID, p.IdentityID, nullable(p.MembershipID), tokenHash, p.Scope, p.Name, p.CreatedAt, nullable(p.ExpiresAt))
+		`INSERT INTO pat(id, identity_id, membership_id, token_hash, scope, name, created_at, expires_at, resource)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.ID, p.IdentityID, nullable(p.MembershipID), tokenHash, p.Scope, p.Name, p.CreatedAt, nullable(p.ExpiresAt), p.Resource)
 	return err
 }
 
@@ -2091,8 +2094,8 @@ func (s *SQL) GetPATByHash(ctx context.Context, tokenHash string) (PAT, bool, er
 	var mid, exp, rev, last sql.NullString
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, identity_id, COALESCE(membership_id,''), scope, name, created_at,
-		        expires_at, revoked_at, last_used_at FROM pat WHERE token_hash=?`, tokenHash).
-		Scan(&p.ID, &p.IdentityID, &mid, &p.Scope, &p.Name, &p.CreatedAt, &exp, &rev, &last)
+		        expires_at, revoked_at, last_used_at, resource FROM pat WHERE token_hash=?`, tokenHash).
+		Scan(&p.ID, &p.IdentityID, &mid, &p.Scope, &p.Name, &p.CreatedAt, &exp, &rev, &last, &p.Resource)
 	if err == sql.ErrNoRows {
 		return PAT{}, false, nil
 	}
@@ -2106,7 +2109,7 @@ func (s *SQL) GetPATByHash(ctx context.Context, tokenHash string) (PAT, bool, er
 func (s *SQL) ListPATsByIdentity(ctx context.Context, identityID string) ([]PAT, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, identity_id, COALESCE(membership_id,''), scope, name, created_at,
-		        COALESCE(expires_at,''), COALESCE(revoked_at,''), COALESCE(last_used_at,'')
+		        COALESCE(expires_at,''), COALESCE(revoked_at,''), COALESCE(last_used_at,''), resource
 		 FROM pat WHERE identity_id=? ORDER BY created_at DESC`, identityID)
 	if err != nil {
 		return nil, err
@@ -2116,7 +2119,7 @@ func (s *SQL) ListPATsByIdentity(ctx context.Context, identityID string) ([]PAT,
 	for rows.Next() {
 		var p PAT
 		if err := rows.Scan(&p.ID, &p.IdentityID, &p.MembershipID, &p.Scope, &p.Name,
-			&p.CreatedAt, &p.ExpiresAt, &p.RevokedAt, &p.LastUsedAt); err != nil {
+			&p.CreatedAt, &p.ExpiresAt, &p.RevokedAt, &p.LastUsedAt, &p.Resource); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

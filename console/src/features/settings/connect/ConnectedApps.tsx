@@ -5,6 +5,7 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { fmtDate } from "./tokenDate.ts";
 import { RecentCalls } from "./RecentCalls.tsx";
+import { endpointLabel } from "./tokenEndpoint.ts";
 
 interface Grant {
   id: string;
@@ -12,6 +13,8 @@ interface Grant {
   redirect_host: string;
   tenant: string;
   scope: string;
+  // The endpoint the connection is bound to (#2764).
+  endpoint?: string;
   created_at: number;
   last_used_at: number;
 }
@@ -74,15 +77,15 @@ export function ConnectedApps() {
           <table className="pat-table">
             <thead><tr>
               <th>{tr("tokens.apps_client")}</th><th>{tr("tokens.apps_redirect")}</th>
-              <th>{tr("tokens.apps_tenant")}</th><th>{tr("tokens.scope")}</th>
+              <th>{tr("tokens.apps_tenant")}</th><th>{tr("tokens.endpoint")}</th><th>{tr("tokens.scope")}</th>
               <th>{tr("tokens.apps_created")}</th><th>{tr("tokens.th_last_used")}</th><th />
             </tr></thead>
             {view.grants.map((g) => <tbody key={g.id}><tr>
               <td>{g.client_name || tr("tokens.unnamed")}<small className="muted" style={{ display: "block" }}>{tr("tokens.apps_self_declared")}</small></td>
-              <td>{g.redirect_host}</td><td>{g.tenant}</td><td>{g.scope}</td>
+              <td>{g.redirect_host}</td><td>{g.tenant}</td><td>{endpointLabel(tr, g.endpoint)}</td><td>{g.scope}</td>
               <td>{date(g.created_at)}</td><td>{date(g.last_used_at)}</td>
               <td><button type="button" className="btn-ghost" disabled={busy !== null} onClick={() => revoke(g)}>{tr("tokens.revoke")}</button></td>
-            </tr><tr><td colSpan={7}><RecentCalls url={`api/mcp-oauth/grants/${encodeURIComponent(g.id)}/calls`} /></td></tr></tbody>)}
+            </tr><tr><td colSpan={8}><RecentCalls url={`api/mcp-oauth/grants/${encodeURIComponent(g.id)}/calls`} /></td></tr></tbody>)}
           </table>
         </div>
       )}

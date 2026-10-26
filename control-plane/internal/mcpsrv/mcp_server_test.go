@@ -533,6 +533,32 @@ func TestRefuseOwnMCP(t *testing.T) {
 	}
 }
 
+// The memory-only endpoint is refused with its own code, through the same spellings.
+func TestRefuseOwnMemoryEndpoint(t *testing.T) {
+	const base = "https://af.example.com"
+	for _, c := range []struct {
+		name, url, base string
+		refused         bool
+	}{
+		{"exact", "https://af.example.com/mcp/memory", base, true},
+		{"trailing slash", "https://af.example.com/mcp/memory/", base, true},
+		{"scheme, case and default port", "http://AF.example.com:443/mcp/memory", base, true},
+		{"dot segment", "https://af.example.com/mcp/x/../memory", base, true},
+		{"double slash", "https://af.example.com//mcp//memory", base, true},
+		{"base prefix", "https://af.example.com/af/mcp/memory", "https://af.example.com/af/", true},
+		{"other host", "https://other.example.com/mcp/memory", base, false},
+		{"other path below /mcp", "https://af.example.com/mcp/other", base, false},
+		{"unset base refuses nothing", "https://af.example.com/mcp/memory", "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			aerr := refuseOwnMCP(c.url, c.base)
+			if c.refused != (aerr != nil) || (aerr != nil && aerr.Code != codeMCPURLOwnMemory) {
+				t.Fatalf("refuseOwnMCP(%q, %q) = %+v, refused want %v", c.url, c.base, aerr, c.refused)
+			}
+		})
+	}
+}
+
 func TestAdminUpsertRefusesOwnMCPEndpoint(t *testing.T) {
 	a, _ := newMCPServerAPITest(t, true)
 	tn := store.Tenant{ID: "tenant-a", Slug: "a"}
@@ -547,6 +573,9 @@ func TestAdminUpsertRefusesOwnMCPEndpoint(t *testing.T) {
 	}
 	if w := post("https://af.example.com/mcp"); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), codeMCPURLOwnMCP) {
 		t.Fatalf("own endpoint: %d %s", w.Code, w.Body)
+	}
+	if w := post("https://af.example.com/mcp/memory"); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), codeMCPURLOwnMemory) {
+		t.Fatalf("own memory endpoint: %d %s", w.Code, w.Body)
 	}
 	if w := post("https://other.example.com/mcp"); w.Code != http.StatusOK {
 		t.Fatalf("other deployment: %d %s", w.Code, w.Body)

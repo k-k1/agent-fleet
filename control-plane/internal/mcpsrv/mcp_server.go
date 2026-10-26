@@ -51,6 +51,7 @@ const (
 	codeMCPURLHost        = "mcp_url_host"
 	codeMCPURLCredentials = "mcp_url_credentials"
 	codeMCPURLOwnMCP      = "mcp_url_own_endpoint"
+	codeMCPURLOwnMemory   = "mcp_url_own_memory_endpoint"
 	codeMCPHeaderName     = "mcp_header_name_invalid"
 	codeMCPHeaderValue    = "mcp_header_value_invalid"
 	codeMCPKindUnknown    = "mcp_kind_unknown"
@@ -742,10 +743,18 @@ func (a ServerAPI) Distribute(w http.ResponseWriter, r *http.Request, mv store.M
 // the self-loop, not a security boundary; an unset public base refuses nothing, and another
 // deployment passes. The scheme is ignored, an absent port equals 80 and 443, and a trailing
 // slash does not matter.
+//
+// The memory-only endpoint (MemoryPath) is refused too, for a smaller reason: sessions already
+// reach the same memory through their local af server, so it would only add a second copy of
+// those tools.
 func refuseOwnMCP(raw, publicBase string) *APIError {
 	if sameMCPEndpoint(raw, publicBase) {
 		return &APIError{http.StatusBadRequest, codeMCPURLOwnMCP,
 			"this is this deployment's own /mcp endpoint: distributing it would give sessions the member's full /mcp authority"}
+	}
+	if sameEndpointPath(raw, publicBase, MemoryPath) {
+		return &APIError{http.StatusBadRequest, codeMCPURLOwnMemory,
+			"this is this deployment's own /mcp/memory endpoint: sessions already have Agent Fleet memory through their local af tools"}
 	}
 	return nil
 }
@@ -753,7 +762,10 @@ func refuseOwnMCP(raw, publicBase string) *APIError {
 // sameMCPEndpoint reports whether raw reaches base's /mcp. Hosts compare without a trailing
 // dot and as parsed IPs, and both paths are cleaned because the server's mux redirects
 // /mcp/../mcp and //mcp to /mcp. An empty or unparsable base never matches.
-func sameMCPEndpoint(raw, base string) bool {
+func sameMCPEndpoint(raw, base string) bool { return sameEndpointPath(raw, base, "/mcp") }
+
+// sameEndpointPath is sameMCPEndpoint for any path below base.
+func sameEndpointPath(raw, base, endpoint string) bool {
 	if strings.TrimSpace(base) == "" {
 		return false
 	}
@@ -766,7 +778,7 @@ func sameMCPEndpoint(raw, base string) bool {
 		return false
 	}
 	return mcpEndpointHost(a) == mcpEndpointHost(b) && mcpEndpointPort(a) == mcpEndpointPort(b) &&
-		mcpCleanPath(a.Path) == mcpCleanPath(b.Path)+"/mcp"
+		mcpCleanPath(a.Path) == mcpCleanPath(b.Path)+endpoint
 }
 
 func mcpCleanPath(p string) string {

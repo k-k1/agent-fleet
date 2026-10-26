@@ -785,3 +785,28 @@ Desktop）でもエージェントを動かし、CP の `/mcp` 用の PAT を持
   リクエストごとに読み、読めないときはツールを出さない。Agent 側のメンバー設定の確認は変えない。
 - **管理画面。** テナント管理者向けの `GET`/`PUT /api/admin/tenants/{slug}/external-memory`。テナント設定の「外部からのメモリ利用」に
   表示し、`tenant.external_memory`（`enabled=true|false`）として監査する。ガイド：`admin/08-external-memory`。
+
+## ノート（2026-10-26）：claude.ai のコネクタ向けにメモリ専用の MCP リソース（#2764）
+
+claude.ai はメンバーのコネクタをアカウントのすべての Claude Code セッションに同期し、ワークスペースのセッションも含む。
+メモリのために `/mcp` を claude.ai のコネクタにすると、それらのセッションにメンバーの全機能（任意セッションの停止・削除・管理ツール）が渡る。
+#2677 が設定 → MCP では拒否している自己ループだが、この経路は CP から見えない。このノートは 2 つ目のリソースを足すもので、上の決定と
+#2318 のノートは変えない。
+
+- **リソース。** `/mcp/memory` は外部メモリの 6 つのツールだけを提供する（`mcpsrv.API.MemoryOnly`。`toolsFor` はメモリツールで止まり、
+  `mcpToolCall` は同じ一覧から引くので、セッションや管理のツールは名前指定でも拒否される）。ワークスペースのセッションはローカルの af
+  サーバーで同じメモリにすでに届くので、コネクタがセッションに渡っても新しく渡るものはない。
+- **URL だけでなくトークンを分ける。** OAuth サーバーは 1 つの issuer で両リソースを扱う。`/mcp/memory` は専用の RFC 9728 文書
+  （`/.well-known/oauth-protected-resource/mcp/memory`）と 401 チャレンジを持つ。コード・グラント・アクセス／リフレッシュトークンは
+  クライアントが求めた RFC 8707 の resource を持ち、各エンドポイントは自分のものだけを受け付ける。リフレッシュはグラントの結び付きを
+  保ち（別のリソースを求めると、トークンを消費する前に `invalid_target`）、`prompt=none` は同じリソースのグラントだけを再利用する。
+  `/mcp` のトークンは `/mcp/memory` では**拒否**する（狭い用途として受け付けはしない）。トークン 1 つに宛先 1 つなら、規則が両方向で同じになる。
+- **PAT。** `pat.resource`（マイグレーション SQLite 0114、Postgres 0099）。既定は `'mcp'` で、既存のトークンはすべて `/mcp` 向けのまま。
+  `POST /api/pat` は `endpoint: "mcp" | "memory"` を受け、メモリ用 PAT のスコープは `write` までに丸める。
+- **互換。** メモリツールは `/mcp` にも残す。既存の OAuth 接続（保存されている resource は `/mcp` の URL）と PAT はそのまま動く。
+- **既存のゲートは変えない。** テナントのスイッチ（#2318）、Agent が強制するメンバーの `externalMemory` 設定、read/write の段階、
+  `memory.entry.*` の監査は両エンドポイントで同じ。
+- **自己ループのガード。** ワークスペースの登録とテナント配布の自エンドポイント拒否は `/mcp/memory` も専用コード
+  （`mcp_url_own_memory_endpoint`）で拒否する。そこではローカルのツールが重複するだけだからである。
+- **見え方。** 「MCP トークン・接続アプリ」は PAT と OAuth 接続ごとにエンドポイントを出す。`mcp-call` のログ行と最近の呼び出しの記録は
+  `endpoint` を持つ。ガイド：`member/19-outside-access` は claude.ai に `/mcp/memory` を勧める。

@@ -90,7 +90,7 @@ func newMCPOAuthEnv(t *testing.T) *mcpOAuthEnv {
 	}
 	e.mux = http.NewServeMux()
 	e.api.mount(e.mux)
-	e.mux.HandleFunc("/mcp", e.api.withOAuth(mcpsrv.New(cpDeps{mgr})).HandleMCP)
+	e.api.mountMCP(e.mux, mcpsrv.New(cpDeps{mgr}))
 	return e
 }
 
@@ -197,8 +197,15 @@ type tokens struct{ Access, Refresh, Scope, Code, Verifier string }
 // connect walks authorize, consent and the code exchange as the signed-in member.
 func (e *mcpOAuthEnv) connect(clientID, redirect, scope string) tokens {
 	e.t.Helper()
+	return e.connectTo(clientID, redirect, scope, testResource)
+}
+
+// connectTo is connect for a given resource.
+func (e *mcpOAuthEnv) connectTo(clientID, redirect, scope, resource string) tokens {
+	e.t.Helper()
 	verifier, challenge := pkcePair()
 	q := e.authQuery(clientID, redirect, challenge)
+	q.Set("resource", resource)
 	if scope != "" {
 		q.Set("scope", scope)
 	}
@@ -213,7 +220,7 @@ func (e *mcpOAuthEnv) connect(clientID, redirect, scope string) tokens {
 		e.t.Fatalf("no code in %v", lq)
 	}
 	rec := e.post(mcpOAuthToken, url.Values{"grant_type": {"authorization_code"}, "client_id": {clientID},
-		"code": {code}, "redirect_uri": {redirect}, "code_verifier": {verifier}, "resource": {testResource}})
+		"code": {code}, "redirect_uri": {redirect}, "code_verifier": {verifier}, "resource": {resource}})
 	if rec.Code != http.StatusOK {
 		e.t.Fatalf("token: %d %s", rec.Code, rec.Body)
 	}

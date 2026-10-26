@@ -6,6 +6,7 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Row } from "../parts/controls.tsx";
 import { fmtDate } from "./tokenDate.ts";
+import { endpointLabel } from "./tokenEndpoint.ts";
 import { ConnectedApps } from "./ConnectedApps.tsx";
 import { RecentCalls } from "./RecentCalls.tsx";
 import { TokenCapabilities } from "./TokenCapabilities.tsx";
@@ -20,6 +21,8 @@ interface PatToken {
   id: string;
   name?: string;
   scope?: string;
+  // The endpoint the token is bound to (#2764); absent on a Control Plane that predates it.
+  endpoint?: string;
   expires_at?: string;
   last_used_at?: string;
   revoked?: boolean;
@@ -35,7 +38,8 @@ export function TokensTab() {
   const [name, setName] = useState("");
   const [scope, setScope] = useState("write");
   const [ttl, setTtl] = useState("90");
-  const [issued, setIssued] = useState<{ token: string } | null>(null); // the once-shown secret
+  const [endpoint, setEndpoint] = useState("mcp");
+  const [issued, setIssued] = useState<{ token: string; endpoint?: string } | null>(null); // the once-shown secret
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
@@ -59,6 +63,7 @@ export function TokensTab() {
       name: name.trim(),
       scope,
       ttl_days: parseInt(ttl, 10),
+      endpoint,
     });
     setBusy(false);
     if (res && res.error) {
@@ -82,17 +87,35 @@ export function TokensTab() {
     load();
   };
 
+  // The memory endpoint offers no admin tier, so leaving it selected would show one scope and
+  // send another; the state itself is lowered, and stays lowered if the endpoint is switched back.
+  const changeEndpoint = (next: string) => {
+    setEndpoint(next);
+    if (next === "memory" && scope === "admin:dangerous") setScope("write");
+  };
+
   const scopeOptions = ["read", "write"];
-  if (ceiling === "admin:dangerous") scopeOptions.push("admin:dangerous");
+  // The memory tools stop at write, so the memory endpoint never offers more.
+  if (ceiling === "admin:dangerous" && endpoint !== "memory") scopeOptions.push("admin:dangerous");
 
   const mcpURL = rel("mcp");
+  const memoryURL = rel("mcp/memory");
+  const issuedMemory = issued?.endpoint === "memory";
 
   // A ready-to-paste .mcp.json for Claude Code (Streamable HTTP server). The PAT
   // already carries the issuer's identity+membership, so no tenant header is needed
   // — just the Bearer. Built only while the once-shown secret is in hand.
   const mcpJson = issued
     ? JSON.stringify(
-        { mcpServers: { "agent-fleet": { type: "http", url: mcpURL, headers: { Authorization: `Bearer ${issued.token}` } } } },
+        {
+          mcpServers: {
+            [issuedMemory ? "agent-fleet-memory" : "agent-fleet"]: {
+              type: "http",
+              url: issuedMemory ? memoryURL : mcpURL,
+              headers: { Authorization: `Bearer ${issued.token}` },
+            },
+          },
+        },
         null,
         2,
       )
@@ -124,7 +147,7 @@ export function TokensTab() {
             {tr("tokens.mcp_json_head_1")}
             <code>.mcp.json</code>
             {tr("tokens.mcp_json_head_2")}
-            <code>agent-fleet</code>
+            <code>{issuedMemory ? "agent-fleet-memory" : "agent-fleet"}</code>
             {tr("tokens.mcp_json_head_3")}
           </div>
           <pre className="pat-tmpl">{mcpJson}</pre>
@@ -146,6 +169,12 @@ export function TokensTab() {
             placeholder={tr("tokens.name_placeholder")}
             onChange={(e) => setName(e.target.value)}
           />
+        </Row>
+        <Row label={tr("tokens.endpoint")}>
+          <select value={endpoint} onChange={(e) => changeEndpoint(e.target.value)}>
+            <option value="mcp">{tr("tokens.endpoint_mcp")}</option>
+            <option value="memory">{tr("tokens.endpoint_memory")}</option>
+          </select>
         </Row>
         <Row label={tr("tokens.scope")}>
           <select value={scope} onChange={(e) => setScope(e.target.value)}>
@@ -183,6 +212,11 @@ export function TokensTab() {
         <code>Authorization: Bearer &lt;token&gt;</code>
         {tr("tokens.mcp_endpoint_mid2")}
       </p>
+      <p className="muted ds-note">
+        {tr("tokens.mcp_memory_endpoint_pre")}
+        <code>{memoryURL}</code>
+        {tr("tokens.mcp_memory_endpoint_post")}
+      </p>
 
       <TokenCapabilities />
 
@@ -192,6 +226,7 @@ export function TokensTab() {
           <thead>
             <tr>
               <th>{tr("tokens.name")}</th>
+              <th>{tr("tokens.endpoint")}</th>
               <th>{tr("tokens.scope")}</th>
               <th>{tr("tokens.th_expiry")}</th>
               <th>{tr("tokens.th_last_used")}</th>
@@ -202,6 +237,7 @@ export function TokensTab() {
             <tbody key={t.id}>
               <tr className={t.revoked ? "pat-revoked" : ""}>
                 <td>{t.name || tr("tokens.unnamed")}</td>
+                <td>{endpointLabel(tr, t.endpoint)}</td>
                 <td>{t.scope}</td>
                 <td>{fmtDate(t.expires_at) || tr("tokens.ttl_never")}</td>
                 <td>{fmtDate(t.last_used_at) || "—"}</td>
@@ -217,7 +253,7 @@ export function TokensTab() {
               </tr>
               {!t.revoked && (
                 <tr>
-                  <td colSpan={5}><RecentCalls url={`api/pat/${encodeURIComponent(t.id)}/calls`} /></td>
+                  <td colSpan={6}><RecentCalls url={`api/pat/${encodeURIComponent(t.id)}/calls`} /></td>
                 </tr>
               )}
             </tbody>

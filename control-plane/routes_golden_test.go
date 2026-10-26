@@ -51,7 +51,7 @@ type routeSwitch struct {
 func routeSwitches(t *testing.T) []routeSwitch {
 	return []routeSwitch{
 		{name: "mcp", env: map[string]string{"AF_MCP_ENABLED": "true"},
-			routes: []string{"ANY /mcp"}},
+			routes: []string{"ANY /mcp", "ANY /mcp/memory"}},
 		// Native self-update (registerUpdateRoutes). Registration only checks that the variable
 		// is set; the link itself is read per request.
 		{name: "update", env: map[string]string{"AF_SELF_LINK": filepath.Join(t.TempDir(), "af")},

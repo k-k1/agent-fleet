@@ -349,8 +349,8 @@ func registerMCPRoutes(mux *http.ServeMux, cfg config) {
 		mux.HandleFunc(m+" /api/admin/mcp-oauth/trusted-hosts", trusted.withSuperAdmin(oauth.trustedAdmin)) // trusted MCP OAuth client hosts (super_admin, ADR 0118)
 	}
 	if envx.Or("AF_MCP_ENABLED", "") == "true" {
-		mux.HandleFunc("/mcp", oauth.withOAuth(mcpsrv.New(cpDeps{cfg.mgr})).HandleMCP)
-		log.Printf("MCP endpoint enabled at /mcp")
+		oauth.mountMCP(mux, mcpsrv.New(cpDeps{cfg.mgr}))
+		log.Printf("MCP endpoint enabled at /mcp and %s", mcpsrv.MemoryPath)
 	}
 }
 

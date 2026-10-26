@@ -924,3 +924,31 @@ The decisions above are unchanged. This records how an outside caller addresses 
   so a model that forgot the project published a repository-specific fact to every project). `scope: project` needs
   `repository` or `project`. The in-workspace tools are unchanged: they derive the project from the working copy.
 - **Audit.** The Agent's write answer now carries the resolved `project`, and the CP records that id as the audit target.
+
+## Note (2026-10-26): a memory-only MCP resource for claude.ai connectors (#2764)
+
+claude.ai syncs a member's connectors into every Claude Code session of the account, Workspace sessions included. A
+claude.ai connector to `/mcp` for memory therefore hands those sessions the full member surface (any-session stop,
+delete, admin tools), the self-loop #2677 refuses for Settings → MCP but cannot see on this route. This note adds a
+second resource; the decisions above and the #2318 note are unchanged.
+
+- **The resource.** `/mcp/memory` serves the six external memory tools and nothing else (`mcpsrv.API.MemoryOnly`;
+  `toolsFor` stops after the memory tools, and `mcpToolCall` resolves from that list, so a session or admin tool is
+  refused by name too). Workspace sessions already reach the same memory through the local af server, so a copy of
+  the connector inside a session hands them nothing new.
+- **The token is separated, not only the URL.** The OAuth server serves both resources from one issuer. `/mcp/memory`
+  has its own RFC 9728 document (`/.well-known/oauth-protected-resource/mcp/memory`) and 401 challenge. A code, its
+  grant and every access and refresh token carry the RFC 8707 resource the client asked for; each endpoint accepts
+  only its own, a refresh keeps the grant's binding (asking for the other resource is `invalid_target`, before the
+  token is spent), and `prompt=none` reuses only a grant for the same resource. A `/mcp` token is **refused** at
+  `/mcp/memory`, not accepted as a narrower use: one audience per token keeps the rule the same in both directions.
+- **PATs.** `pat.resource` (migration 0114 SQLite, 0099 Postgres), `'mcp'` by default, so every existing token stays a
+  `/mcp` token; `POST /api/pat` takes `endpoint: "mcp" | "memory"`, and a memory PAT's scope stops at `write`.
+- **Compatibility.** The memory tools stay on `/mcp`; existing OAuth connections (their stored resource is `/mcp`'s
+  URL) and PATs work unchanged.
+- **Gates unchanged.** The tenant switch (#2318), the member's `externalMemory` setting enforced by the Agent, the
+  read/write tiers and the `memory.entry.*` audit apply on both endpoints.
+- **Self-loop guard.** The own-endpoint refusal of the Workspace registry and the tenant distribution also refuses
+  `/mcp/memory`, with its own code (`mcp_url_own_memory_endpoint`): there it would only duplicate the local tools.
+- **Visibility.** "MCP tokens & apps" shows each PAT's and OAuth connection's endpoint; the `mcp-call` log line and
+  the recent-calls record carry `endpoint`. Guide: `member/19-outside-access` recommends `/mcp/memory` for claude.ai.
