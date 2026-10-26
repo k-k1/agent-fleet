@@ -786,6 +786,21 @@ Desktop）でもエージェントを動かし、CP の `/mcp` 用の PAT を持
 - **管理画面。** テナント管理者向けの `GET`/`PUT /api/admin/tenants/{slug}/external-memory`。テナント設定の「外部からのメモリ利用」に
   表示し、`tenant.external_memory`（`enabled=true|false`）として監査する。ガイド：`admin/08-external-memory`。
 
+## ノート（2026-10-26）：外部の呼び出し元はリポジトリの remote でプロジェクトを選び、書き込みはスコープを明示する（#2765）
+
+上の決定は変えない。外部の呼び出し元がプロジェクトをどう指すかの記録。
+
+- **`repository` 引数。** `memory_index`・`memory_search`・`memory_read`・`memory_save`・`memory_forget` は
+  `git remote get-url origin` の出力を受け付ける。Agent（中継に徹する CP ではない）が、各プロジェクトの `Remote` を作ったのと同じ関数で
+  正規化し、メモリを持つプロジェクトと突き合わせる。`project` も引き続き受け付け、両方を渡すなら一致していなければならない。
+  どれにも当たらない・複数に当たる・正規化できない remote は拒否し、推測はしない。解決するのは forge のホスト（github.com、gitlab.com、
+  bitbucket.org、codeberg.org）だけ：保存された `Remote` はポートを落とすので、自己ホストでは `forge:8443/x`・`forge:9443/x`・`forge/x` が
+  別のサービスかもしれないのに同じ文字列になる。そうしたホストは `project` を案内して拒否する。
+- **書き込みはスコープを明示する。** `scope` のない外部の保存・忘却は拒否する（以前はユーザースコープに落ちたので、プロジェクトを
+  渡し忘れたモデルがリポジトリ固有の事実を全プロジェクトに公開していた）。`scope: project` には `repository` か `project` が要る。
+  ワークスペース内のツールは変えない：プロジェクトは作業コピーから決まる。
+- **監査。** Agent の書き込みの応答が解決した `project` を返し、CP はその ID を監査の対象として記録する。
+
 ## ノート（2026-10-26）：claude.ai のコネクタ向けにメモリ専用の MCP リソース（#2764）
 
 claude.ai はメンバーのコネクタをアカウントのすべての Claude Code セッションに同期し、ワークスペースのセッションも含む。
