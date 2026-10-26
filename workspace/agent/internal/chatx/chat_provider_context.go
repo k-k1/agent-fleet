@@ -3,6 +3,8 @@ package chatx
 import (
 	"fmt"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // providerSyncPreamble marks replayed canonical turns as context, not new user
@@ -64,28 +66,41 @@ func providerCursor(c *ChatConversation, agent string) int {
 	return 0
 }
 
+// providerResumeHandles is the one place that says which ChatConversation field holds each
+// backend's native resume handle. providerHasResume, anyProviderResume, clearProviderSessions
+// and providerResumeKinds all read it, because a hand-written condition repeated per kind loses
+// an entry every time a kind is added: cursor (docs/log/40) reached providerHasResume but was
+// missed by the compaction side, so compacting a cursor conversation left its handle behind.
+// TestEveryResumeHandleFieldIsListed fails on a handle field no entry points at.
+var providerResumeHandles = []struct {
+	kind   string
+	handle func(*ChatConversation) *string
+}{
+	{session.KindClaude, func(c *ChatConversation) *string { return &c.ClaudeSessionID }},
+	{session.KindCodex, func(c *ChatConversation) *string { return &c.CodexSessionID }},
+	{session.KindOpencode, func(c *ChatConversation) *string { return &c.OpencodeSessionID }},
+	{session.KindAgy, func(c *ChatConversation) *string { return &c.AgyConversationID }},
+	{session.KindCursor, func(c *ChatConversation) *string { return &c.CursorSessionID }},
+}
+
+// providerResumeKinds lists every backend that holds a resume handle, in providerResumeHandles
+// order.
+var providerResumeKinds = func() []string {
+	kinds := make([]string, len(providerResumeHandles))
+	for i, h := range providerResumeHandles {
+		kinds[i] = h.kind
+	}
+	return kinds
+}()
+
 func providerHasResume(c *ChatConversation, agent string) bool {
-	switch agent {
-	case "claude":
-		return c.ClaudeSessionID != ""
-	case "codex":
-		return c.CodexSessionID != ""
-	case "opencode":
-		return c.OpencodeSessionID != ""
-	case "agy":
-		return c.AgyConversationID != ""
-	case "cursor":
-		return c.CursorSessionID != ""
+	for _, h := range providerResumeHandles {
+		if h.kind == agent {
+			return *h.handle(c) != ""
+		}
 	}
 	return false
 }
-
-// providerResumeKinds lists every backend that holds a resume handle. The bulk operations
-// over those handles (anyProviderResume / clearProviderSessions) all iterate this one list
-// because a hand-written condition repeated per kind loses an entry every time a kind is
-// added: cursor (docs/log/40) reached providerHasResume but was missed by the compaction
-// side, so compacting a cursor conversation left its handle behind.
-var providerResumeKinds = []string{"claude", "codex", "opencode", "agy", "cursor"}
 
 // anyProviderResume reports whether ANY backend still holds a native session to summarize.
 func anyProviderResume(c *ChatConversation) bool {
@@ -100,8 +115,9 @@ func anyProviderResume(c *ChatConversation) bool {
 // clearProviderSessions drops every backend's resume handle, so the next prompt opens a
 // fresh native session on whichever backend runs it (compaction — chat_compact.go).
 func clearProviderSessions(c *ChatConversation) {
-	c.ClaudeSessionID, c.CodexSessionID, c.OpencodeSessionID = "", "", ""
-	c.AgyConversationID, c.CursorSessionID = "", ""
+	for _, h := range providerResumeHandles {
+		*h.handle(c) = ""
+	}
 }
 
 func MarkProviderSynced(c *ChatConversation, agent string, cursor int) {
