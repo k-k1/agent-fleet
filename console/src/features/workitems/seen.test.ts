@@ -58,6 +58,18 @@ describe("work item unread baseline (#2779)", () => {
     expect(parseSeen('{"github:x#1":{"u":"2026-10-01T00:00:00Z","c":null}}')["github:x#1"].c).toBeNull();
   });
 
+  it("fills several unknown baselines in one pass", () => {
+    const old = [item("a/b#1", "2026-10-01T00:00:00Z", null), item("a/b#2", "2026-10-01T00:00:00Z", null)];
+    const m = seedSeen({}, old);
+    const next = seedSeen(m, [
+      item("a/b#1", "2026-10-01T00:00:00Z", 7),
+      item("a/b#2", "2026-10-01T00:00:00Z", 4),
+      item("a/b#9", "2026-10-01T00:00:00Z", 1),
+    ]);
+    expect([next["github:a/b#1"].c, next["github:a/b#2"].c, next["github:a/b#9"].c]).toEqual([7, 4, 1]);
+    expect(unreadOf(next, item("a/b#2", "2026-10-05T00:00:00Z", 5))).toBe("comments");
+  });
+
   it("survives corrupt storage", () => {
     expect(parseSeen("{not json")).toEqual({});
     expect(parseSeen("[1,2]")).toEqual({});

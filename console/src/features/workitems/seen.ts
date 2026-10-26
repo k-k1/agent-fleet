@@ -62,11 +62,13 @@ export function seedSeen(m: SeenMap, items: WorkItem[]): SeenMap {
   let next: SeenMap | null = null;
   for (const i of items) {
     const id = seenId(i);
-    if (next && id in next) continue;
-    const b = m[id];
+    // Read through the working copy: once one entry was added or filled, `next` holds every key,
+    // and a plain `id in next` skip would leave later unknown baselines unfilled in the same pass.
+    const cur = next ?? m;
+    const b = cur[id];
     if (b) {
       const c = commentsOf(i);
-      if (b.c === null && c !== null && unreadOf(m, i) === "") {
+      if (b.c === null && c !== null && unreadOf(cur, i) === "") {
         next ??= { ...m };
         next[id] = { u: b.u, c };
       }
