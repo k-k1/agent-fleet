@@ -104,6 +104,16 @@ cat > "$STUB/aws" <<'FAKE'
 #!/usr/bin/env bash
 echo "aws $*" >> "$STUB_LOG"
 args="$*"
+# af_cfn_clear_params (env.sh) reads every value back after its change set. A stack's live value
+# is "None" once such a change set ran on it, unless STUB_CLEAR_STICKS=1 (CloudFormation kept
+# the value, the way `deploy --parameter-overrides Key=` did in #2763).
+live() { # live <stack> <value>
+  if [ "${STUB_CLEAR_STICKS:-0}" != 1 ] && grep -q "execute-change-set --stack-name $1 --change-set-name af-clear-" "$STUB_LOG"; then
+    echo None
+  else
+    echo "$2"
+  fi
+}
 case "$args" in
   *"sts get-caller-identity"*) echo "123456789012" ;;
   # STUB_POOL_DEPLOY_FAIL=1: the slot pool's stack update fails (a rollback, a refused
@@ -144,7 +154,9 @@ case "$args" in
   *"describe-stack-resource"*) echo "None" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EfsId']"*) echo "fs-1" ;;
   # 00-network's workspace subnets (#2716). Unset = a network stack older than them.
-  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='WorkspaceSubnets']"*) echo "${STUB_WS_SUBNETS:-None}" ;;
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='WorkspaceSubnets']"*)
+    [ "${STUB_WS_SUBNETS_FAIL:-0}" = 1 ] && { echo "An error occurred (Throttling)" >&2; exit 254; }
+    echo "${STUB_WS_SUBNETS:-None}" ;;
   # 00-network's egress gateway outputs (EgressRoute=gateway, #2717). Unset = nat-gateway.
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EgressProxyAddr']"*) echo "${STUB_EGRESS_ADDR:-None}" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EgressTokenSecretArn']"*) echo "${STUB_EGRESS_SECRET:-None}" ;;
@@ -227,13 +239,17 @@ case "$args" in
   *"ParameterKey=='NatEnabled'"*) echo "${STUB_NAT_ENABLED:-true}" ;;
   # #2716: unset = a network / ingress stack older than the S3 endpoint switch / workspace subnets.
   *"ParameterKey=='S3EndpointEnabled'"*) echo "${STUB_S3EP:-None}" ;;
-  *"ParameterKey=='WorkspaceSubnets'"*) echo "${STUB_ING_WS:-None}" ;;
+  *"ParameterKey=='WorkspaceSubnets'"*) live t-ingress "${STUB_ING_WS:-None}" ;;
   *"ParameterKey=='EgressRoute'"*) echo "${STUB_EGRESS_ROUTE:-None}" ;;
   # Unset = a gateway stack older than the switch (its gateway is on).
   *"ParameterKey=='GatewayEnabled'"*) echo "${STUB_GW_ENABLED:-None}" ;;
-  *"ParameterKey=='EgressTokenSecretArn'"*) echo "${STUB_ING_EGRESS:-None}" ;;
-  *"--stack-name t-platform"*"ParameterKey=='EgressArchiveBucket'"*) echo "${STUB_PLAT_ARCHIVE:-None}" ;;
-  *"ParameterKey=='EgressArchiveBucket'"*) echo "${STUB_ING_ARCHIVE:-None}" ;;
+  *"ParameterKey=='EgressTokenSecretArn'"*) live t-ingress "${STUB_ING_EGRESS:-None}" ;;
+  *"ParameterKey=='EgressProxyAddr'"*) live t-ingress "${STUB_ING_EGRESS_ADDR:-${STUB_ING_EGRESS:+10.20.0.50:3128}}" ;;
+  *"--stack-name t-platform"*"ParameterKey=='EgressArchiveBucket'"*) live t-platform "${STUB_PLAT_ARCHIVE:-None}" ;;
+  *"ParameterKey=='EgressArchiveBucket'"*) live t-ingress "${STUB_ING_ARCHIVE:-None}" ;;
+  # The clearing change set: every parameter of the stack, then the change set itself.
+  *"Stacks[0].Parameters[].ParameterKey"*) printf 'ImageTag\tWorkspaceSubnets\tEgressProxyAddr\tEgressTokenSecretArn\tEgressArchiveBucket\tFqdn\n' ;;
+  *"cloudformation describe-change-set"*"af-clear-"*) printf 'Modify\tCpTaskDef\tTrue\n' ;;
   *"Outputs[?OutputKey=='RdsRestopFunction']"*) echo "${STUB_RESTOP:-}" ;;
   *"ParameterKey=='Fqdn'"*) echo "af.example.test" ;;
   *"ParameterKey=='NetworkStackName'"*) echo "t-network" ;;
@@ -321,6 +337,10 @@ case "$args" in
   # fail (the read is refused).
   *"ecs list-tasks"*"--desired-status RUNNING"*) echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
   *"ecs list-tasks"*) echo "None" ;;
+  # update.sh's closing hint: the subnet of each running workspace task's ENI.
+  *"ecs describe-tasks"*"subnetId"*)
+    [ "${STUB_TASK_SUBNET_FAIL:-0}" = 1 ] && exit 254
+    echo "${STUB_TASK_SUBNET:-subnet-priv0}" ;;
   *"ecs describe-tasks"*)
     case "${STUB_WS_TASKS:-gone}" in
       stuck) echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
@@ -1127,6 +1147,106 @@ efs_standup p
 grep -q "deploy --stack-name t-data .*EgressArchive=create" "$LOG" \
   || fail "standup.sh changed EgressArchive=create although no bucket survived"
 sed -i '/^EgressArchive=/d' "$STATE/params/10-data"
+
+echo "== case 3h-clear: an empty value is cleared through a change set, never by deploy alone (#2763) =="
+# `deploy --parameter-overrides Key=` kept the old value on a live stack. Whatever empties a
+# parameter is followed by af_cfn_clear_params: a change set on the previous template that
+# leaves the key out (Default "") and keeps everything else at UsePreviousValue, then a read-back.
+upd() { # upd <out> [VAR=val ...]: update.sh on p4; fails the test when it fails
+  local out="$1"; shift
+  : > "$LOG"
+  env VERSION=9.9.9-dev-test STUB_ECR_HAS=1 "$@" "$ECS/update.sh" --profile p4 --region ap-northeast-1 \
+    --stack t-ingress > "$WORK/$out" 2>&1 || { cat "$WORK/$out"; fail "update.sh failed ($out)"; }
+}
+cs_line() { grep "create-change-set --stack-name $1 --change-set-name af-clear-" "$LOG" || true; }
+# The switch back to nat-gateway: the ingress stack still has the gateway's secret.
+upd outc1 STUB_ING_EGRESS="$SECRET_ARN"
+l="$(cs_line t-ingress)"
+[ -n "$l" ] || fail "update.sh did not clear EgressProxyAddr / EgressTokenSecretArn through a change set"
+case "$l" in *--use-previous-template*) ;; *) fail "the clearing change set does not keep the template: $l" ;; esac
+case "$l" in *'"ParameterKey":"EgressProxyAddr"'*|*'"ParameterKey":"EgressTokenSecretArn"'*)
+  fail "the clearing change set names the keys it clears (their Default must apply): $l" ;; esac
+case "$l" in *'{"ParameterKey":"ImageTag","UsePreviousValue":true}'*) ;; *)
+  fail "the clearing change set does not keep the other parameters: $l" ;; esac
+order "cloudformation deploy --stack-name t-ingress" "create-change-set --stack-name t-ingress"
+order "create-change-set --stack-name t-ingress" "execute-change-set --stack-name t-ingress --change-set-name af-clear-"
+order "execute-change-set --stack-name t-ingress --change-set-name af-clear-" "wait stack-update-complete --stack-name t-ingress"
+grep -q "t-ingress: EgressProxyAddr EgressTokenSecretArn now empty" "$WORK/outc1" \
+  || fail "update.sh did not confirm the cleared egress parameters"
+# Nothing to clear: no change set at all.
+upd outc2
+[ -z "$(cs_line t-ingress)$(cs_line t-platform)" ] || fail "update.sh built a clearing change set with nothing to clear"
+# CloudFormation keeps the value anyway: the read-back stops the run.
+: > "$LOG"
+if env VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ING_EGRESS="$SECRET_ARN" STUB_CLEAR_STICKS=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/outc3" 2>&1; then
+  fail "update.sh succeeded although EgressTokenSecretArn was not cleared"
+fi
+grep -q "EgressProxyAddr of t-ingress is still" "$WORK/outc3" || fail "update.sh did not say which value stayed"
+# 00-network back on a template without workspace subnets: the ids the CP holds are gone.
+upd outc4 STUB_ING_WS=subnet-0a,subnet-0b
+grep -q "deploy --stack-name t-ingress .*WorkspaceSubnets= " "$LOG" || fail "update.sh did not pass WorkspaceSubnets empty"
+cs_line t-ingress | grep -q '"ParameterKey":"EgressProxyAddr","UsePreviousValue":true' \
+  || fail "update.sh did not clear WorkspaceSubnets through a change set (or cleared more)"
+cs_line t-ingress | grep -q '"ParameterKey":"WorkspaceSubnets"' && fail "the clearing change set kept WorkspaceSubnets"
+# ... unless the network stack could not be read: then nothing is deployed.
+: > "$LOG"
+if env VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ING_WS=subnet-0a STUB_WS_SUBNETS_FAIL=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/outc5" 2>&1; then
+  fail "update.sh went on after the WorkspaceSubnets output could not be read"
+fi
+if grep -q "deploy --stack-name t-ingress\|create-change-set" "$LOG"; then
+  fail "update.sh deployed after the WorkspaceSubnets output could not be read"
+fi
+# The archive bucket gone from 10-data: both 20-platform and 30-ingress are cleared.
+upd outc6 STUB_ING_ARCHIVE=$ARCH_B STUB_PLAT_ARCHIVE=$ARCH_B
+[ -n "$(cs_line t-platform)" ] || fail "update.sh did not clear 20-platform's EgressArchiveBucket"
+[ -n "$(cs_line t-ingress)" ] || fail "update.sh did not clear 30-ingress's EgressArchiveBucket"
+grep -q "create-change-set --stack-name t-platform .*--capabilities CAPABILITY_NAMED_IAM" "$LOG" \
+  || fail "the 20-platform clearing change set lacks CAPABILITY_NAMED_IAM"
+# --dry-run says what it would clear and builds nothing.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ING_EGRESS="$SECRET_ARN" "$ECS/update.sh" --profile p4 \
+  --region ap-northeast-1 --stack t-ingress --dry-run > "$WORK/outc7" 2>&1 || { cat "$WORK/outc7"; fail "update.sh --dry-run failed"; }
+grep -q "DRY: clear EgressProxyAddr EgressTokenSecretArn on t-ingress" "$WORK/outc7" || fail "update.sh --dry-run did not show the clear"
+hasnt "create-change-set"
+# standup.sh against a live ingress stack with stale subnets and a network without them.
+efs_standup p STUB_ING_WS=subnet-stale
+cs_line t-ingress | grep -q 'af-clear-' || fail "standup.sh did not clear a live WorkspaceSubnets"
+# clear-params.sh is the same step for an operator (README, "Back to the NAT gateway").
+: > "$LOG"
+STUB_ING_EGRESS="$SECRET_ARN" "$ECS/clear-params.sh" --profile p4 --region ap-northeast-1 --stack t-ingress \
+  --template "$ECS/cfn/30-ingress.yaml" EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8" 2>&1 \
+  || { cat "$WORK/outc8"; fail "clear-params.sh failed"; }
+[ -n "$(cs_line t-ingress)" ] || fail "clear-params.sh built no change set"
+if STUB_ING_EGRESS="$SECRET_ARN" "$ECS/clear-params.sh" --profile p4 --region ap-northeast-1 --stack t-ingress \
+  --template "$ECS/cfn/30-ingress.yaml" ImageTag > "$WORK/outc9" 2>&1; then
+  fail "clear-params.sh cleared a parameter whose Default is not empty"
+fi
+grep -q "defaults to" "$WORK/outc9" || { cat "$WORK/outc9"; fail "clear-params.sh did not say why it refused"; }
+
+echo "== case 3h-move: update.sh on the way to the workspace subnets (#2763) =="
+# A network without the subnets: the NOTE names the runbook and the trap of the default deploy.
+upd outm1
+grep -q 'Upgrading from v0.34.x' "$WORK/outm1" || fail "the NOTE does not point at the upgrade block"
+grep -q 'S3EndpointEnabled defaults to true' "$WORK/outm1" || fail "the NOTE does not warn about the default deploy"
+grep -q 'Still in a private subnet' "$WORK/outm1" && fail "update.sh listed private-subnet workspaces with no workspace subnets"
+# Subnets in use, the endpoint still off, alice's task in a private subnet: listed, step 4 waits.
+upd outm2 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false
+grep -q 'Still in a private subnet, not in WorkspaceSubnets (subnet-0a,subnet-0b)' "$WORK/outm2" \
+  || fail "update.sh did not list the workspaces still in a private subnet"
+grep -qx '  - af-ws-alice' "$WORK/outm2" || fail "update.sh did not name af-ws-alice"
+grep -q "ecs list-tasks --cluster .* --service-name af-ws-alice --desired-status RUNNING" "$LOG" \
+  || fail "update.sh did not look up the workspace's running task"
+# The endpoint already on: the same list is a warning.
+upd outm3 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=true
+grep -q 'WARNING: still in a private subnet' "$WORK/outm3" || fail "update.sh did not warn with the endpoint on"
+# Moved: nothing listed.
+upd outm4 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false STUB_TASK_SUBNET=subnet-0b
+grep -q 'private subnet' "$WORK/outm4" && fail "update.sh listed a workspace that is in a workspace subnet"
+# A task that cannot be read is said so, not taken as moved.
+upd outm5 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false STUB_TASK_SUBNET_FAIL=1
+grep -q 'af-ws-alice (its task could not be read' "$WORK/outm5" || fail "update.sh took an unreadable task as moved"
 
 echo "== case 3h-pool: update.sh never skips the slot pool on ecs-ec2 without saying so =="
 #

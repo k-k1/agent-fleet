@@ -405,6 +405,10 @@ deploy_stack() {  # deploy_stack <stack> <template> <slug> [capability...]
     ${caps[@]+"${caps[@]}"} \
     --parameter-overrides ${AF_PARAMS[@]+"${AF_PARAMS[@]}"} \
     --no-fail-on-empty-changeset
+  # The empty EgressArchiveBucket above does not take a live stack's grant away (#2763).
+  if [ "$slug" = 20-platform ] && [ -z "${AF_ARCHIVE_BUCKET:-}" ] && grep -q '^  EgressArchiveBucket:' "$CFN_DIR/$tpl"; then
+    af_cfn_clear_params "$stack" "$CFN_DIR/$tpl" CAPABILITY_NAMED_IAM EgressArchiveBucket
+  fi
 }
 
 deploy_stack "$AF_STACK_NETWORK"  00-network.yaml  00-network     CAPABILITY_IAM
@@ -794,17 +798,29 @@ fi
 af_param_override CpArch "$CP_ARCH"
 # Workspace subnets (#2716): a rebuilt 00-network has new subnet ids, so the output, never the
 # capture. A network stack without the output passes nothing (workspaces in the private subnets).
+# What comes out empty here while a live 30-ingress still holds a value is cleared after its
+# deploy (ING_CLEAR, af_cfn_clear_params): leaving it out, or passing it empty, keeps the old
+# value. So these reads must not swallow a failure.
+ING_CLEAR=()
+network_output() {  # <output>
+  af_stack_output_strict "$AF_STACK_NETWORK" "$1" || {
+    echo "ERROR: could not read the $1 output of $AF_STACK_NETWORK; stopping so that a transient" >&2
+    echo "       failure cannot clear it on $AF_STACK_INGRESS. Re-run." >&2
+    exit 1
+  }
+}
 af_param_drop WorkspaceSubnets
 if [ "$AF_DRY" != 1 ]; then
-  ws_subnets="$(af_stack_output "$AF_STACK_NETWORK" WorkspaceSubnets)"
-  [ -z "$ws_subnets" ] || af_param_override WorkspaceSubnets "$ws_subnets"
+  ws_subnets="$(network_output WorkspaceSubnets)"
+  if [ -n "$ws_subnets" ]; then af_param_override WorkspaceSubnets "$ws_subnets"; else ING_CLEAR+=(WorkspaceSubnets); fi
 fi
 # The egress gateway's proxy address and token secret (EgressRoute=gateway): outputs, never the
 # capture (a rebuilt network has a new interface and a new secret). Empty = no gateway.
 af_param_drop EgressProxyAddr
 af_param_drop EgressTokenSecretArn
 if [ "$AF_DRY" != 1 ]; then
-  eg_secret="$(af_stack_output "$AF_STACK_NETWORK" EgressTokenSecretArn)"
+  eg_secret="$(network_output EgressTokenSecretArn)"
+  [ -n "$eg_secret" ] || ING_CLEAR+=(EgressProxyAddr EgressTokenSecretArn)
   if [ -n "$eg_secret" ]; then
     af_param_override EgressProxyAddr "$(af_stack_output "$AF_STACK_NETWORK" EgressProxyAddr)"
     af_param_override EgressTokenSecretArn "$eg_secret"
@@ -814,6 +830,7 @@ if [ "$AF_DRY" != 1 ]; then
 fi
 # The egress archive bucket (#2732): the data stack's output, never the capture. Empty = off.
 af_param_override EgressArchiveBucket "${AF_ARCHIVE_BUCKET:-}"
+[ "$AF_DRY" = 1 ] || [ -n "${AF_ARCHIVE_BUCKET:-}" ] || ING_CLEAR+=(EgressArchiveBucket)
 if [ -n "$AF_STACK_POOL" ] && [ "$AF_DRY" != 1 ]; then
   lt="$(af_stack_output "$AF_STACK_POOL" SlotLaunchTemplateId)"
   ami="$(af_stack_output "$AF_STACK_POOL" SlotAmiIdArm64)"
@@ -841,6 +858,9 @@ else
     --capabilities CAPABILITY_NAMED_IAM \
     --parameter-overrides ${AF_PARAMS[@]+"${AF_PARAMS[@]}"} \
     --no-fail-on-empty-changeset
+  if [ ${#ING_CLEAR[@]} -gt 0 ]; then
+    af_cfn_clear_params "$AF_STACK_INGRESS" "$CFN_DIR/30-ingress.yaml" CAPABILITY_NAMED_IAM "${ING_CLEAR[@]}"
+  fi
 fi
 
 # --- 7) did it come up? ------------------------------------------------------

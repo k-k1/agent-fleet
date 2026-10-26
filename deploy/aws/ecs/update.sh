@@ -247,6 +247,28 @@ EFS_BACKUP_MARKER="$(af_efs_backup_marker "$AF_EFS_BACKUP_VERDICT" || true)"
 NETWORK_STACK="$(af_stack_param "$STACK" NetworkStackName)"
 : "${NETWORK_STACK:=af-ecs-network}"
 WS_SUBNETS="$(af_stack_output "$NETWORK_STACK" WorkspaceSubnets)"
+# Every value below that comes out empty while the ingress stack still holds one is cleared after
+# the deploy by af_cfn_clear_params (env.sh): an empty --parameter-overrides value keeps the old
+# one. Before clearing, the empty answer is read again strictly, so a failed read stops the run
+# instead of moving workspaces back to the private subnets or dropping the egress proxy.
+CLEAR_INGRESS=()
+network_output_empty() {  # <output>: 0 when the network stack really has no such output
+  local v
+  v="$(af_stack_output_strict "$NETWORK_STACK" "$1")" || {
+    echo "ERROR: could not read the $1 output of $NETWORK_STACK; stopping so that a transient" >&2
+    echo "       failure cannot clear it on $STACK. Re-run." >&2
+    exit 1
+  }
+  [ -z "$v" ]
+}
+WS_SUBNETS_LIVE="$(af_stack_param "$STACK" WorkspaceSubnets)"
+WS_OVR=()
+if [ -n "$WS_SUBNETS" ]; then
+  WS_OVR=("WorkspaceSubnets=$WS_SUBNETS")
+elif [ -n "$WS_SUBNETS_LIVE" ] && network_output_empty WorkspaceSubnets; then
+  # 00-network went back to a template without workspace subnets: the ids the CP has are gone.
+  WS_OVR=("WorkspaceSubnets="); CLEAR_INGRESS+=(WorkspaceSubnets)
+fi
 # The egress gateway (EgressRoute=gateway, ADR 0122): its proxy address and token secret, also
 # facts of the network stack. Passed whenever the network has them or the ingress stack still
 # does, so switching back to nat-gateway clears them.
@@ -254,6 +276,9 @@ EGRESS_ADDR="$(af_stack_output "$NETWORK_STACK" EgressProxyAddr)"
 EGRESS_SECRET="$(af_stack_output "$NETWORK_STACK" EgressTokenSecretArn)"
 EGRESS_OVR=()
 if [ -n "$EGRESS_SECRET" ] || [ -n "$(af_stack_param "$STACK" EgressTokenSecretArn)" ]; then
+  if [ -z "$EGRESS_SECRET" ] && network_output_empty EgressTokenSecretArn; then
+    CLEAR_INGRESS+=(EgressProxyAddr EgressTokenSecretArn)
+  fi
   EGRESS_OVR=("EgressProxyAddr=$EGRESS_ADDR" "EgressTokenSecretArn=$EGRESS_SECRET")
 fi
 # The egress event archive bucket (#2732), a fact of the data stack like the two above: passed
@@ -261,7 +286,7 @@ fi
 # and not at all when the data stack is unknown. A failed read of the output stops the run: the
 # purger deletes events once the archive is off, so "could not read" must never mean "none".
 # 20-platform carries the CP's grant on it, so that stack's change set below gets it too.
-ARCHIVE_OVR=(); PLATFORM_ARCHIVE_OVR=()
+ARCHIVE_OVR=(); PLATFORM_ARCHIVE_OVR=(); PLATFORM_CLEAR=0
 if [ -n "$DATA_STACK" ]; then
   if ! ARCHIVE_BUCKET="$(af_stack_output_strict "$DATA_STACK" EgressArchiveBucket)"; then
     echo "ERROR: could not read the EgressArchiveBucket output of $DATA_STACK; stopping so that a" >&2
@@ -270,15 +295,23 @@ if [ -n "$DATA_STACK" ]; then
   fi
   if [ -n "$ARCHIVE_BUCKET" ] || [ -n "$(af_stack_param "$STACK" EgressArchiveBucket)" ]; then
     ARCHIVE_OVR=("EgressArchiveBucket=$ARCHIVE_BUCKET")
+    [ -n "$ARCHIVE_BUCKET" ] || CLEAR_INGRESS+=(EgressArchiveBucket)
   fi
   if [ -n "$ARCHIVE_BUCKET" ] || [ -n "$(af_stack_param "$AF_STACK_PLATFORM" EgressArchiveBucket)" ]; then
     PLATFORM_ARCHIVE_OVR=(--parameter-overrides "EgressArchiveBucket=$ARCHIVE_BUCKET")
+    [ -n "$ARCHIVE_BUCKET" ] || PLATFORM_CLEAR=1
   fi
 fi
 if [ -z "$WS_SUBNETS" ]; then
-  echo "NOTE: $NETWORK_STACK has no WorkspaceSubnets output; workspaces keep their subnets." >&2
-  echo "      To move them: deploy cfn/00-network.yaml with S3EndpointEnabled=false, run this" >&2
-  echo "      script again, restart the running workspaces, then S3EndpointEnabled=true (README, NAT bullet)." >&2
+  cat >&2 <<EOF
+NOTE: $NETWORK_STACK has no WorkspaceSubnets output (its 00-network template has no workspace
+      subnets), so workspaces run in the private subnets. This script never deploys 00-network.
+      To move them, follow README "Upgrading from v0.34.x": 00-network with S3EndpointEnabled=false
+      through a change set, this script again, every running workspace stopped and started, and
+      only then S3EndpointEnabled=true. Do not deploy the new 00-network with its defaults:
+      S3EndpointEnabled defaults to true, and the endpoint's policy then refuses (AccessDenied) the
+      S3 requests of every workspace still in a private subnet.
+EOF
 fi
 # The pin only applies to the copy above. Said here, before anything runs, so a pin that would
 # otherwise do nothing is not mistaken for one that was checked.
@@ -400,6 +433,11 @@ else
     "${AWS[@]}" cloudformation wait stack-update-complete --stack-name "$AF_STACK_PLATFORM"
     echo "    · $AF_STACK_PLATFORM updated"
   fi
+fi
+# The CP's grant on an archive bucket 10-data no longer has: the empty value above does not take
+# it away.
+if [ "$PLATFORM_CLEAR" = 1 ] && af_stack_exists "$AF_STACK_PLATFORM"; then
+  af_cfn_clear_params "$AF_STACK_PLATFORM" "$HERE/cfn/20-platform.yaml" CAPABILITY_NAMED_IAM EgressArchiveBucket
 fi
 
 # --- 1b) push (optional) ----------------------------------------------------
@@ -670,7 +708,7 @@ fi
 echo "==> cloudformation deploy $STACK (ImageTag=$VERSION)"
 deploy_out=""
 if [ "$DRY" = 1 ]; then
-  echo "DRY: aws cloudformation deploy --stack-name $STACK --template-file $TEMPLATE --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ImageTag=$VERSION${EFS_BACKUP_MARKER:+ EfsBackup=$EFS_BACKUP_MARKER}${WS_SUBNETS:+ WorkspaceSubnets=$WS_SUBNETS}${EGRESS_OVR[*]:+ ${EGRESS_OVR[*]}}${ARCHIVE_OVR[*]:+ ${ARCHIVE_OVR[*]}}"
+  echo "DRY: aws cloudformation deploy --stack-name $STACK --template-file $TEMPLATE --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ImageTag=$VERSION${EFS_BACKUP_MARKER:+ EfsBackup=$EFS_BACKUP_MARKER}${WS_OVR[*]:+ ${WS_OVR[*]}}${EGRESS_OVR[*]:+ ${EGRESS_OVR[*]}}${ARCHIVE_OVR[*]:+ ${ARCHIVE_OVR[*]}}"
 else
   set +e
   # Always go through af_cfn_deploy (env.sh): it switches to S3 once a template passes 51,200
@@ -680,13 +718,17 @@ else
   deploy_out="$(af_cfn_deploy "$STACK" "$TEMPLATE" \
     --capabilities CAPABILITY_NAMED_IAM \
     --parameter-overrides "ImageTag=$VERSION" ${EFS_BACKUP_MARKER:+"EfsBackup=$EFS_BACKUP_MARKER"} \
-      ${WS_SUBNETS:+"WorkspaceSubnets=$WS_SUBNETS"} ${EGRESS_OVR[@]+"${EGRESS_OVR[@]}"} \
+      ${WS_OVR[@]+"${WS_OVR[@]}"} ${EGRESS_OVR[@]+"${EGRESS_OVR[@]}"} \
       ${ARCHIVE_OVR[@]+"${ARCHIVE_OVR[@]}"} \
     --no-fail-on-empty-changeset 2>&1)"
   rc=$?
   set -e
   echo "$deploy_out"
   [ $rc -eq 0 ] || exit $rc
+fi
+# The values that went empty above (a network or data stack that no longer has them).
+if [ ${#CLEAR_INGRESS[@]} -gt 0 ]; then
+  af_cfn_clear_params "$STACK" "$TEMPLATE" CAPABILITY_NAMED_IAM "${CLEAR_INGRESS[@]}"
 fi
 
 # --- 3) what a mutable tag's "no changes" would drop (pitfall 2) -------------
@@ -729,6 +771,26 @@ while [ $# -gt 0 ]; do
   running="$running $got"
 done
 
+# --- 5b) running workspaces still in a private subnet (#2763) ----------------
+# A task keeps its ENI until it is stopped, so after the network grows workspace subnets the
+# ones that were running stay where they were. With S3EndpointEnabled=true the endpoint policy
+# refuses their own S3 requests (AccessDenied, no NAT fallback); before it, they block the switch.
+ws_private=""; ws_unknown=""
+if [ -n "$WS_SUBNETS" ]; then
+  for n in $running; do
+    t="$("${AWS[@]}" ecs list-tasks --cluster "$CLUSTER" --service-name "$n" --desired-status RUNNING \
+      --query 'taskArns' --output text 2>/dev/null)" || { ws_unknown="$ws_unknown $n"; continue; }
+    case "$t" in ""|None) continue ;; esac
+    # shellcheck disable=SC2086  # one argument per task ARN
+    subs="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks $t \
+      --query "tasks[].attachments[].details[?name=='subnetId'].value[]" --output text 2>/dev/null)" \
+      || { ws_unknown="$ws_unknown $n"; continue; }
+    for s in $subs; do
+      case ",$WS_SUBNETS," in *",$s,"*) ;; *) ws_private="$ws_private $n"; break ;; esac
+    done
+  done
+fi
+
 # --- 6) the ecs-ec2 golden snapshot (the other thing an update quietly makes stale) ---------
 # It seeds a new user's home. When the image moves, the af-image mismatch makes the CP fall to
 # "do not use the golden, create an empty home" (ADR 0045 decision 9). Nothing breaks, but a
@@ -769,6 +831,20 @@ if [ -n "${running// /}" ]; then
   for n in $running; do echo "  - $n"; done
 else
   echo "No workspaces are running (the next Start picks up the new image)."
+fi
+
+if [ -n "${ws_private// /}" ] || [ -n "${ws_unknown// /}" ]; then
+  echo
+  if [ "$(af_stack_param "$NETWORK_STACK" S3EndpointEnabled)" = false ]; then
+    echo "Still in a private subnet, not in WorkspaceSubnets ($WS_SUBNETS). Stop and start each"
+    echo "before 00-network gets S3EndpointEnabled=true (README \"Upgrading from v0.34.x\"):"
+  else
+    echo "WARNING: still in a private subnet, not in WorkspaceSubnets ($WS_SUBNETS), while $NETWORK_STACK"
+    echo "         has the S3 endpoint on: their own S3 requests are refused (AccessDenied) until each"
+    echo "         is stopped and started (README \"Upgrading from v0.34.x\"; rollback: S3EndpointEnabled=false):"
+  fi
+  for n in $ws_private; do echo "  - $n"; done
+  for n in $ws_unknown; do echo "  - $n (its task could not be read; check its ENI by hand)"; done
 fi
 
 case "${AF_EFS_BACKUP_VERDICT:-}" in

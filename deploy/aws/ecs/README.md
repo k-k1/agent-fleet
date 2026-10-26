@@ -538,6 +538,66 @@ once after upgrading past 0.26.0; `EfsBackupVaultName` appearing in the data sta
 outputs and a daily recovery point the next morning (`aws backup list-recovery-points-by-backup-vault`)
 close it.
 
+**`00-network` and `10-data` are never part of this runbook or of `update.sh`.** A release that
+needs either says so in its release notes, and the block below is the one that does.
+
+**A parameter cannot be cleared with `deploy`.** `aws cloudformation deploy --parameter-overrides
+Key=` on a live stack kept the previous value and reported "No changes" (#2763). Where a value
+has to become empty, `update.sh` and `standup.sh` do it themselves; by hand, use
+`./clear-params.sh --profile <p> --region <r> --stack <stack> --template cfn/<NN-x>.yaml <Key>...`
+(a change set on the stack's current template that leaves the keys out, so their empty Default
+applies, and keeps every other parameter; it reads each value back).
+
+### Upgrading from v0.34.x
+
+v0.34.x's `00-network` has an S3 gateway endpoint without a policy and no workspace subnets.
+This release's gives workspaces subnets of their own and the endpoint a policy that refuses
+(AccessDenied, with no NAT fallback) every S3 request it does not list, a workspace's own S3
+included while that workspace still runs in a private subnet (the NAT bullet under "Cost &
+ephemerality" has the reasons). `update.sh` does not deploy `00-network`, so this is done by hand,
+in a maintenance window in which every running workspace is restarted.
+
+⚠️ **Do not deploy the new `00-network` with its defaults.** `S3EndpointEnabled` defaults to
+`true`: the change set is *Add* of the six workspace resources plus *Modify* `S3Endpoint` (its
+policy), and executing it refuses the S3 requests of every workspace still in a private subnet
+at once.
+
+1. **Back up** (step 1 of the runbook above).
+2. **Deploy `00-network` with `S3EndpointEnabled=false`, through a change set.** The stack now
+   needs `CAPABILITY_IAM` (it declares the egress gateway's instance role, built only with
+   `EgressRoute=gateway`):
+   ```bash
+   aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-network.yaml \
+     --capabilities CAPABILITY_IAM --parameter-overrides S3EndpointEnabled=false \
+     --no-execute-changeset --profile <p> --region <r>
+   aws cloudformation describe-change-set --change-set-name <the ARN it printed> \
+     --query 'Changes[].ResourceChange.[Action,LogicalResourceId,Replacement]' --output text
+   ```
+   Expect *Add* of six resources, `WorkspaceSubnet0`, `WorkspaceSubnet1`, `WorkspaceRt`,
+   `WorkspaceDefaultRoute`, `WorkspaceAssoc0` and `WorkspaceAssoc1`, and *Remove* `S3Endpoint`.
+   The removal is expected: until step 5 the private subnets' S3 (image pulls on ecs-ec2, model
+   fetches) goes through the NAT gateway and pays its data processing. Anything else added,
+   modified or replaced: stop. Otherwise `execute-change-set --change-set-name <ARN>` and
+   `wait stack-update-complete --stack-name af-ecs-network`.
+3. **Run `update.sh`** (`VERSION=<v> ./update.sh --profile <p> --region <r>`). It passes the
+   network stack's `WorkspaceSubnets` to 30-ingress, so every Start from then on lands in a
+   workspace subnet, and it ends by listing the running workspaces still in a private subnet.
+4. **Stop and start every running workspace** (that list, or `pause.sh --status`). A running task
+   keeps its ENI. Check each one:
+   `aws ecs describe-tasks --cluster <c> --tasks <t> --query "tasks[].attachments[].details[?name=='subnetId'].value"`
+   names a workspace subnet; `update.sh --dry-run` repeats the list and changes nothing.
+5. **Deploy `00-network` with `S3EndpointEnabled=true`**, again through a change set: one *Add*,
+   `S3Endpoint`. Private-subnet S3 moves from the NAT route to the endpoint and open TCP
+   connections do not survive that, so do it when no large model fetch or image pull is running.
+
+**Rollback.** Before step 5 the private subnets' S3 already goes through the NAT. After it, `S3EndpointEnabled=false`
+is *Remove* `S3Endpoint` only. Taking `00-network` back to v0.34.x's template removes the six
+resources and modifies `S3Endpoint` back to no policy, so first stop every workspace that runs
+in a workspace subnet; then `update.sh` clears 30-ingress's `WorkspaceSubnets` (the ids are gone).
+That downgrade also drops the parameters v0.34.x does not know, `GatewayEipAllocationId` and
+`GatewayEipAddress` among them: the next switch to `EgressRoute=gateway` must pass both again
+("Egress gateway", "Handing back a retained address").
+
 ### One command: `update.sh`
 
 `./update.sh` is the runbook above as a script — the ECS counterpart of compose's
@@ -578,6 +638,14 @@ It does the things the hand-typed sequence gets wrong:
 - **Lists the workspaces that are still on the old image**, because nothing moves
   them automatically. It never stops one: stopping kills that user's sessions, and
   when to take that is their call.
+- **Lists the running workspaces still in a private subnet** once the network stack has
+  workspace subnets, as a warning when `S3EndpointEnabled` is already `true` (their own S3 is
+  refused until they restart). It never deploys `00-network` itself.
+- **Clears what went empty.** A value the network or data stack no longer has
+  (`WorkspaceSubnets` after a downgrade, the egress gateway's after a switch back, the archive
+  bucket) is cleared on 30-ingress and 20-platform with a change set and read back, because an
+  empty `--parameter-overrides` value keeps the old one. A failed read of the network stack
+  stops the run rather than clear anything.
 - **Keeps the ECR repository, the image and the stack in that order.** A release can
   need a repository that did not exist and an image nothing has copied in: 0.19.0 moved
   the engine's fetch and ingest steps into `af-engine-tools`. So `update.sh` deploys
@@ -896,17 +964,20 @@ CP image's architecture (30-ingress `CpArch`): the agent is the CP binary.
 running workspace keeps `HTTP(S)_PROXY` pointing at the gateway until it is restarted, and once
 the gateway is gone every proxy-aware client in it times out. So take the proxy away first:
 
-1. Deploy 30-ingress with the proxy cleared, everything else at its previous value:
-   `aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml
-   --capabilities CAPABILITY_NAMED_IAM --parameter-overrides EgressProxyAddr= EgressTokenSecretArn=`
-   (not `update.sh`, which would hand the gateway's outputs back while it exists).
+1. Clear the proxy on 30-ingress, everything else at its previous value:
+   `./clear-params.sh --profile <p> --region <r> --stack <ingress stack> --template cfn/30-ingress.yaml
+   EgressProxyAddr EgressTokenSecretArn`
+   (not `update.sh`, which would hand the gateway's outputs back while it exists, and not
+   `deploy --parameter-overrides EgressProxyAddr= EgressTokenSecretArn=`, which keeps both
+   values: "Upgrade (runbook)").
 2. Stop and start every running workspace (`pause.sh --status` lists them) and check that its
    task definition no longer has the variables:
    `aws ecs describe-task-definition --task-definition <family> --query "taskDefinition.containerDefinitions[0].environment[?name=='HTTPS_PROXY']"` is empty.
    Their traffic is still intercepted by the gateway meanwhile.
 3. Deploy 00-network with `EgressRoute=nat-gateway` (`--capabilities CAPABILITY_IAM`). The
    workspace route moves back to the NAT gateway; `GatewayEip` is retained.
-4. Run `update.sh` (it passes the now-empty outputs and changes nothing else).
+4. Run `update.sh` (it finds the network's outputs and 30-ingress's values both empty and changes
+   nothing else).
 
 **Pausing (#2729).** `pause.sh` stops the gateway through `00-network`'s `GatewayEnabled`:
 `false` scales the group to zero instances (never by hand with `aws autoscaling`, which the
@@ -1048,7 +1119,10 @@ service supports it:
 | Service | Why | Actions (summary) |
 |---|---|---|
 | cloudformation | stack CRUD | Create/Update/Delete/Describe stacks + change sets |
-| ec2 | 00-network (VPC/subnets/NAT/SG/S3 gateway endpoint) | Create/Delete/Describe VPC, subnets, IGW, NAT, EIP, route tables and routes, security groups, VPC endpoints (the S3 gateway endpoint with its policy: `ec2:CreateVpcEndpoint`/`ModifyVpcEndpoint`/`DeleteVpcEndpoints`) |
+| ec2 | 00-network (VPC/subnets/NAT/SG/S3 gateway endpoint; the egress gateway with `EgressRoute=gateway`) | Create/Delete/Describe VPC, subnets, IGW, NAT, EIP, route tables and routes, security groups, VPC endpoints (the S3 gateway endpoint with its policy: `ec2:CreateVpcEndpoint`/`ModifyVpcEndpoint`/`DeleteVpcEndpoints`); for the gateway also network interfaces, `AssociateAddress`/`DisassociateAddress` (its Elastic IP, `DescribeAddresses` for a handed-in one), launch templates (`CreateLaunchTemplate`/`CreateLaunchTemplateVersion`/`DeleteLaunchTemplate`), and `RunInstances`/`CreateTags` (checked when the Auto Scaling group is created from the launch template) |
+| autoscaling | 00-network's egress gateway (`EgressRoute=gateway`; `pause.sh` scales it through the stack) | Create/Update/Delete/Describe AutoScalingGroups, plus `iam:CreateServiceLinkedRole` for `autoscaling.amazonaws.com` once per account |
+| secretsmanager | 00-network's egress agent token (`EgressRoute=gateway`) | CreateSecret/DeleteSecret/DescribeSecret, GetRandomPassword (the stack generates the value) |
+| s3 | 10-data's egress event archive bucket (`EgressArchive=create`, off by default) | CreateBucket/DeleteBucket, Put/GetBucketPolicy, PutBucketEncryption, PutLifecycleConfiguration, PutBucketPublicAccessBlock, PutBucketTagging |
 | ecr | 20-platform repos + image push | CreateRepository/DeleteRepository/Describe*, GetAuthorizationToken, BatchCheckLayerAvailability, InitiateLayerUpload, UploadLayerPart, CompleteLayerUpload, PutImage |
 | ecs | 20-platform cluster + 30-ingress service | Create/Delete/Describe cluster & service, RegisterTaskDefinition, plus `iam:CreateServiceLinkedRole` once per account |
 | servicediscovery | Service Connect namespace | Create/Delete/Get namespace |
@@ -1060,7 +1134,7 @@ service supports it:
 | acm | 30-ingress cert | RequestCertificate/DeleteCertificate/DescribeCertificate |
 | route53 | DNS validation + alias | ChangeResourceRecordSets/GetHostedZone/ListResourceRecordSets (on the zone) |
 | logs | log groups | CreateLogGroup/DeleteLogGroup/PutRetentionPolicy/Describe* |
-| iam | 20-platform named roles, 10-data's EFS backup role, the managed policies 30/40/60 attach to the CP task role | CreateRole/DeleteRole/Get/PassRole, Put/Delete/Attach/DetachRolePolicy, CreatePolicy/DeletePolicy/GetPolicy, Create/Delete/ListPolicyVersions (→ `CAPABILITY_NAMED_IAM`; `CAPABILITY_IAM` for 10-data) |
+| iam | 20-platform named roles, 10-data's EFS backup role, 00-network's egress gateway role and instance profile, the managed policies 30/40/60 attach to the CP task role | CreateRole/DeleteRole/Get/PassRole, Put/Delete/Attach/DetachRolePolicy, CreatePolicy/DeletePolicy/GetPolicy, Create/Delete/ListPolicyVersions, Create/Delete InstanceProfile and Add/RemoveRoleFromInstanceProfile (→ `CAPABILITY_NAMED_IAM`; `CAPABILITY_IAM` for 10-data and 00-network) |
 | ssm | CP secrets (out-of-band); the egress gateway's readiness and drain checks (`pause.sh`, `standup.sh`, `EgressRoute=gateway` only) | PutParameter/DeleteParameter under `/af-cp/*`; `SendCommand` on `arn:aws:ssm:<region>::document/AWS-RunShellScript` and on instances tagged `af-egress-gateway=<network stack>` (`ssm:resourceTag/af-egress-gateway`), and `GetCommandInvocation` |
 | sts | account resolution in release-ecr.sh | GetCallerIdentity |
 
@@ -2139,14 +2213,21 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
     The endpoint has a switch, `S3EndpointEnabled` (default `true`). It must stay `false`
     while any workspace still runs in a private subnet, because the policy refuses that
     workspace's own S3 (AccessDenied) until it is restarted into a workspace subnet.
-    **Moving a running stack** (a maintenance window; every running workspace is restarted):
+    **Moving a running stack** (a maintenance window; every running workspace is restarted;
+    from v0.34.x, "Upgrading from v0.34.x" under the upgrade runbook is the same with the backup
+    and the commands):
     1. Deploy `cfn/00-network.yaml` with `S3EndpointEnabled=false` through a change set
        (`aws cloudformation deploy … --capabilities CAPABILITY_IAM --parameter-overrides
-       S3EndpointEnabled=false --no-execute-changeset`, then `describe-change-set`). It must be *Add* only — six
+       S3EndpointEnabled=false --no-execute-changeset`, then `describe-change-set`). It adds six
        resources: two subnets, the workspace route table, its default route and two
-       associations — and nothing existing modified or replaced. Execute it.
+       associations. A stack that already has an S3 endpoint (any v0.34.x) also shows *Remove*
+       `S3Endpoint`; that is expected and puts private-subnet S3 on the NAT for the window.
+       Anything else modified or replaced: stop. Otherwise execute it. Never skip this step
+       with a deploy at the defaults: `S3EndpointEnabled=true` would *Modify* `S3Endpoint` to
+       the restricted policy while every workspace is still in a private subnet.
     2. Run `update.sh`. It passes the network stack's `WorkspaceSubnets` to the CP
-       (`AF_ECS_WORKSPACE_SUBNETS`). New Starts now go to the workspace subnets.
+       (`AF_ECS_WORKSPACE_SUBNETS`). New Starts now go to the workspace subnets, and it ends
+       by listing the running workspaces still in a private subnet.
     3. Stop and start every workspace that was running (`pause.sh --status` lists them, or
        `aws ecs list-services` with `desiredCount > 0`). A running task keeps its ENI: it
        moves only on a new Start. Check that each task's ENI is in a workspace subnet:
@@ -2156,8 +2237,9 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
        Private-subnet S3 moves from the NAT route to the endpoint route, and open TCP
        connections do not survive that, so do it when no large model fetch/ingest or image
        pull is running.
-    **Rollback**: `S3EndpointEnabled=false` (a stack update that removes only `S3Endpoint`)
-    puts every private-subnet S3 request back on the NAT. Leave the workspace subnets and
+    **Rollback**: `S3EndpointEnabled=false` puts every private-subnet S3 request back on the
+    NAT; once the workspace subnets exist (after step 1) that is a stack update that removes
+    only `S3Endpoint`. Leave the workspace subnets and
     route table in place while any workspace service may still use them; removing them is a
     template change, not a parameter. A new stack (`standup.sh` on no existing network stack)
     gets the endpoint on from the start, before any workspace exists. `pause.sh` and

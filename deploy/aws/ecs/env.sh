@@ -679,6 +679,70 @@ af_cfn_deploy() {
     --template-file "$tpl" ${extra[@]+"${extra[@]}"} "$@"
 }
 
+# af_cfn_clear_params <stack> <template> <capability> <key>... — make each <key> empty on a live
+# stack and leave every other parameter and the template as they are.
+#
+# `cloudformation deploy --parameter-overrides Key=` is not a way to do that: on a live stack it
+# kept the previous value and reported "No changes" (#2763), although the CLI does put the empty
+# value on the wire (checked against a recording endpoint, aws-cli 2.36). So an empty value is
+# never trusted to clear anything. Here the key is left out of a change set on the previous
+# template, every other parameter is UsePreviousValue, and the key falls to its Default, which
+# must be "" in <template> (refused otherwise). Each value is read back afterwards. Call it after
+# the stack's deploy; a key that is already empty costs one read and nothing else.
+af_cfn_clear_params() {
+  local stack="$1" tpl="$2" cap="$3"; shift 3
+  local k v d todo=() keys json="" sep="" name changes
+  for k in "$@"; do
+    v="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$stack" \
+      --query "Stacks[0].Parameters[?ParameterKey=='$k'].ParameterValue" --output text)" || {
+      echo "ERROR: could not read $k of $stack, so it cannot be cleared. Re-run." >&2; return 1; }
+    case "$v" in ""|None) continue ;; esac
+    d="$(af_cfn_param_default "$tpl" "$k")"
+    if [ -n "$d" ]; then
+      echo "ERROR: $k of $(basename "$tpl") defaults to '$d', not empty; af_cfn_clear_params cannot clear it." >&2
+      return 1
+    fi
+    todo+=("$k")
+  done
+  [ ${#todo[@]} -gt 0 ] || return 0
+  if [ "${AF_DRY:-0}" = 1 ]; then
+    echo "DRY: clear ${todo[*]} on $stack (create-change-set --use-previous-template without them, the rest UsePreviousValue)"
+    return 0
+  fi
+  keys="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$stack" \
+    --query 'Stacks[0].Parameters[].ParameterKey' --output text)" || return 1
+  for k in $keys; do
+    case " ${todo[*]} " in *" $k "*) continue ;; esac
+    json="$json$sep{\"ParameterKey\":\"$k\",\"UsePreviousValue\":true}"; sep=","
+  done
+  name="af-clear-$(date +%s)"
+  echo "==> $stack: clearing ${todo[*]} (a change set on the current template; nothing else moves)"
+  "${AWS[@]}" cloudformation create-change-set --stack-name "$stack" --change-set-name "$name" \
+    --change-set-type UPDATE --use-previous-template --capabilities "$cap" \
+    --parameters "[$json]" >/dev/null || return 1
+  if ! "${AWS[@]}" cloudformation wait change-set-create-complete --stack-name "$stack" --change-set-name "$name"; then
+    echo "ERROR: the change set $name on $stack did not build:" >&2
+    "${AWS[@]}" cloudformation describe-change-set --stack-name "$stack" --change-set-name "$name" \
+      --query StatusReason --output text >&2 || true
+    return 1
+  fi
+  changes="$("${AWS[@]}" cloudformation describe-change-set --stack-name "$stack" --change-set-name "$name" \
+    --query 'Changes[].ResourceChange.[Action,LogicalResourceId,Replacement]' --output text 2>/dev/null || true)"
+  printf '%s\n' "$changes" | while IFS=$'\t' read -r act lid repl; do
+    if [ -n "$act" ]; then echo "    · $act $lid (replacement: ${repl:-None})"; fi
+  done
+  "${AWS[@]}" cloudformation execute-change-set --stack-name "$stack" --change-set-name "$name" >/dev/null || return 1
+  "${AWS[@]}" cloudformation wait stack-update-complete --stack-name "$stack" || return 1
+  for k in "${todo[@]}"; do
+    v="$(af_stack_param "$stack" "$k")"
+    if [ -n "$v" ]; then
+      echo "ERROR: $k of $stack is still '$v' after the change set $name." >&2
+      return 1
+    fi
+  done
+  echo "    · $stack: ${todo[*]} now empty"
+}
+
 # af_params_file <slug> — file of captured Key=Value lines (one parameter per line).
 #
 # This format is chosen because values contain spaces, parentheses, `|` and commas. A real

@@ -401,13 +401,14 @@ jobs:
           for f in deploy/aws/ecs/release-ecr.sh deploy/aws/ecs/update.sh \
                    deploy/aws/ecs/dev-deploy.sh deploy/aws/ecs/capture-env.sh \
                    deploy/aws/ecs/standup.sh deploy/aws/ecs/teardown.sh \
-                   deploy/aws/ecs/pause.sh; do
+                   deploy/aws/ecs/pause.sh deploy/aws/ecs/clear-params.sh; do
             bash -n "$f"
           done
           # -x so the sourced env.sh is followed rather than warned about.
           shellcheck -x deploy/aws/ecs/release-ecr.sh deploy/aws/ecs/update.sh \
             deploy/aws/ecs/dev-deploy.sh deploy/aws/ecs/capture-env.sh \
-            deploy/aws/ecs/standup.sh deploy/aws/ecs/teardown.sh deploy/aws/ecs/pause.sh
+            deploy/aws/ecs/standup.sh deploy/aws/ecs/teardown.sh deploy/aws/ecs/pause.sh \
+            deploy/aws/ecs/clear-params.sh
 
       - name: release-ecr.sh stub run (call-sequence gate)
         run: deploy/local/release-ecr-stub-test.sh
