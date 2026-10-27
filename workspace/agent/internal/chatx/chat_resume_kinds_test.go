@@ -8,8 +8,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // legacyResumeFields is the old providerHasResume switch plus clearProviderSessions, as data.
@@ -19,10 +17,11 @@ var legacyResumeFields = map[string]string{
 	"opencode": "OpencodeSessionID",
 	"agy":      "AgyConversationID",
 	"cursor":   "CursorSessionID",
+	"muse":     "MuseSessionID",
 }
 
 func TestResumeKindsAreUnchanged(t *testing.T) {
-	if want := []string{"claude", "codex", "opencode", "agy", "cursor"}; !slices.Equal(providerResumeKinds, want) {
+	if want := []string{"claude", "codex", "opencode", "agy", "cursor", "muse"}; !slices.Equal(providerResumeKinds, want) {
 		t.Fatalf("providerResumeKinds = %v, want %v", providerResumeKinds, want)
 	}
 	for kind, field := range legacyResumeFields {
@@ -58,12 +57,6 @@ func TestProviderHasResumeRefusesAlternateSpellings(t *testing.T) {
 	}
 }
 
-// resumeHandleOutsideTable are handle fields that deliberately have no providerResumeHandles
-// entry. muse is a gap, not a decision: its handle is neither counted by anyProviderResume nor
-// cleared by clearProviderSessions, so compacting a muse conversation keeps the old native
-// session (#2790). Fixing it is a behaviour change, kept out of the slice that introduced this guard.
-var resumeHandleOutsideTable = []string{"MuseSessionID"}
-
 // Every *SessionID / *ConversationID field of ChatConversation is a resume handle and must be
 // in the table; a new backend's field fails here instead of surviving compaction.
 func TestEveryResumeHandleFieldIsListed(t *testing.T) {
@@ -85,7 +78,7 @@ func TestEveryResumeHandleFieldIsListed(t *testing.T) {
 		if !strings.HasSuffix(name, "SessionID") && !strings.HasSuffix(name, "ConversationID") {
 			continue
 		}
-		if !listed[name] && !slices.Contains(resumeHandleOutsideTable, name) {
+		if !listed[name] {
 			t.Errorf("ChatConversation.%s looks like a resume handle but is not in providerResumeHandles", name)
 		}
 	}
@@ -93,7 +86,7 @@ func TestEveryResumeHandleFieldIsListed(t *testing.T) {
 
 // Every chat provider either holds a handle (in the table) or is named as one that does not.
 func TestEveryChatProviderIsResumableOrExcluded(t *testing.T) {
-	noHandle := []string{lcppKind, session.KindMuse}
+	noHandle := []string{lcppKind}
 	for k := range ChatProviders {
 		if slices.Contains(providerResumeKinds, k) == slices.Contains(noHandle, k) {
 			t.Errorf("chat provider %q: in providerResumeKinds=%v, in the exclusion list=%v — exactly one must hold",

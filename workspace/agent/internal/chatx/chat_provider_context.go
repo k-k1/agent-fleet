@@ -29,6 +29,8 @@ func providerCursor(c *ChatConversation, agent string) int {
 		cursor = c.AgyMessageCursor
 	case "cursor":
 		cursor = c.CursorMessageCursor
+	case "muse":
+		cursor = c.MuseMessageCursor
 	}
 	if cursor > 0 {
 		return cursor
@@ -70,7 +72,8 @@ func providerCursor(c *ChatConversation, agent string) int {
 // backend's native resume handle. providerHasResume, anyProviderResume, clearProviderSessions
 // and providerResumeKinds all read it, because a hand-written condition repeated per kind loses
 // an entry every time a kind is added: cursor (docs/log/40) reached providerHasResume but was
-// missed by the compaction side, so compacting a cursor conversation left its handle behind.
+// missed by the compaction side, so compacting a cursor conversation left its handle behind
+// (muse repeated it until it was listed here).
 // TestEveryResumeHandleFieldIsListed fails on a handle field no entry points at.
 var providerResumeHandles = []struct {
 	kind   string
@@ -81,6 +84,7 @@ var providerResumeHandles = []struct {
 	{session.KindOpencode, func(c *ChatConversation) *string { return &c.OpencodeSessionID }},
 	{session.KindAgy, func(c *ChatConversation) *string { return &c.AgyConversationID }},
 	{session.KindCursor, func(c *ChatConversation) *string { return &c.CursorSessionID }},
+	{session.KindMuse, func(c *ChatConversation) *string { return &c.MuseSessionID }},
 }
 
 // providerResumeKinds lists every backend that holds a resume handle, in providerResumeHandles
@@ -132,13 +136,15 @@ func MarkProviderSynced(c *ChatConversation, agent string, cursor int) {
 		c.AgyMessageCursor = cursor
 	case "cursor":
 		c.CursorMessageCursor = cursor
+	case "muse":
+		c.MuseMessageCursor = cursor
 	}
 }
 
 func resetProviderCursors(c *ChatConversation) {
 	c.ClaudeMessageCursor, c.CodexMessageCursor = 0, 0
 	c.OpencodeMessageCursor, c.AgyMessageCursor = 0, 0
-	c.CursorMessageCursor = 0
+	c.CursorMessageCursor, c.MuseMessageCursor = 0, 0
 }
 
 // syncProviderPrompt prepends canonical user/assistant turns in [cursor, upto).
