@@ -369,7 +369,7 @@ ARG OPENCODE_VERSION=2.1.4
 # OPENCODE_VERSION=1.19.0, nothing else) leaves it at the last 2.x the contracts passed on.
 ARG OPENCODE_V2_VERSION=2.1.4
 ARG CODEX_VERSION=0.164.0
-ARG COPILOT_VERSION=1.0.103
+ARG COPILOT_VERSION=1.0.104
 # opencode's npm package follows the pin's major: `opencode-ai` for 1.x, `@opencode/cli` for
 # 2.x (which also installs an `opencode2` bin). The pin has been 2.x since the v2 cut-over
 # (#2101); rolling back is OPENCODE_VERSION=1.19.0, nothing else (docs/log/119). entrypoint.sh,
@@ -401,10 +401,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.4.7
-ARG AGY_RELEASE_BUILD=5900205422411776
-ARG AGY_SHA256_X64=67fd4e70be739b1f8b18f90b511da8cd2a7aef24e888e5837402e025bf7fdbfc
-ARG AGY_SHA256_ARM64=b273c791b7647f680598fa1dbdf9c8086bdc42374b2276fa70e900bf8120e1d5
+ARG AGY_VERSION=1.4.8
+ARG AGY_RELEASE_BUILD=5447777392656384
+ARG AGY_SHA256_X64=8b165f0fc584f0f92dd1318dc3a090706ae18aade7d36b0b8623b85aeaf86c52
+ARG AGY_SHA256_ARM64=bbe34c56bdfdcfd9b9a4fd24f7430f7a807777b356b216b41862fb6dd9450c80
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
