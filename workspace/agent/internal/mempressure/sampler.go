@@ -70,7 +70,7 @@ type Wire struct {
 type Sources struct {
 	ReadFile func(path string) ([]byte, error)
 	Probe    func() (time.Duration, error)
-	Live     func() []Live
+	Live     func() ([]Live, error)
 	Procs    func() map[int]procx.Info
 	Rollup   func(pid int) (string, error)
 	Now      func() time.Time
@@ -121,12 +121,18 @@ func (s *Sampler) Tick() {
 	}
 	var pass *Pass
 	switch {
-	case cur.Full10 != nil && *cur.Full10 >= SkipFullAvg10:
-		pass = &Pass{Skipped: "pressure"}
 	case s.src.Live == nil:
+	case cur.Full10 == nil:
+		// Unknown pressure is not low pressure: a PSI that fails to read is likely the
+		// moment the box is worst off, and the pass takes mmap locks.
+		pass = &Pass{Skipped: "pressure_unknown"}
+	case *cur.Full10 >= SkipFullAvg10:
+		pass = &Pass{Skipped: "pressure"}
 	default:
-		live := s.src.Live()
-		if len(live) > 0 {
+		live, err := s.src.Live()
+		if err != nil {
+			pass = &Pass{Skipped: "live_unavailable"}
+		} else if len(live) > 0 {
 			p := s.rotor.runPass(live, s.src.Procs(), s.src.Rollup)
 			pass = &p
 		}

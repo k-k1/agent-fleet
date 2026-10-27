@@ -168,7 +168,10 @@ func (r *rotor) runPass(live []Live, tab map[int]procx.Info, rollup func(pid int
 			for _, pid := range pids {
 				txt, err := rollup(pid)
 				if errors.Is(err, fs.ErrNotExist) {
-					continue // exited since the table was read
+					// Exited since the table was read: the sum would be partial (or zero if
+					// the whole tree went), and a partial sum is never an observation.
+					o.Missing = "exited"
+					break
 				}
 				if err != nil {
 					o.Missing = "unreadable"

@@ -19,9 +19,12 @@ type Boundary struct {
 // mount ("0::/") is a private cgroup namespace.
 //
 // selfCgroup is /proc/self/cgroup, mountinfo is /proc/self/mountinfo, dir is the directory the
-// sampler reads. When in doubt the answer is !OK: the cost of a false "not verified" is a missing
+// sampler reads. memMaxPresent says whether dir/memory.max exists: the root cgroup of a host has
+// no memory.max (the kernel does not create it there), while a container's own cgroup does even
+// with no limit set, which is the one piece of evidence beyond the path that separates a private
+// cgroup namespace from the host's root when both read "0::/". When in doubt the answer is !OK: the cost of a false "not verified" is a missing
 // axis, the cost of a false "verified" is a number about somebody else's memory.
-func CheckBoundary(dir, selfCgroup, mountinfo string) Boundary {
+func CheckBoundary(dir, selfCgroup, mountinfo string, memMaxPresent bool) Boundary {
 	own, ok := unifiedPath(selfCgroup)
 	if !ok {
 		return Boundary{Reason: "no cgroup v2 entry in /proc/self/cgroup (cgroup v1 or hybrid host)"}
@@ -37,6 +40,9 @@ func CheckBoundary(dir, selfCgroup, mountinfo string) Boundary {
 	resolved := filepath.Join("/", root, rel)
 	if resolved != own {
 		return Boundary{Reason: "cgroup directory resolves to " + resolved + ", not this process's cgroup " + own}
+	}
+	if resolved == "/" && !memMaxPresent {
+		return Boundary{Reason: "the root cgroup has no memory.max: this is the host's cgroup, not a private cgroup namespace"}
 	}
 	return Boundary{OK: true}
 }

@@ -63,6 +63,17 @@ const (
 	escapedMnt = "532 531 0:30 / /sys/fs/cg\\040root ro - cgroup2 cgroup rw\n"
 )
 
+// A host's root cgroup reads exactly like a private namespace root ("0::/" on a root mount);
+// the only difference is that the kernel creates no memory.max there.
+func TestCheckBoundaryHostRoot(t *testing.T) {
+	if b := CheckBoundary("/sys/fs/cgroup", nsRootCg, nsRootMnt, false); b.OK || !strings.Contains(b.Reason, "no memory.max") {
+		t.Fatalf("host root accepted: %+v", b)
+	}
+	if b := CheckBoundary("/sys/fs/cgroup", nsRootCg, nsRootMnt, true); !b.OK {
+		t.Fatalf("private namespace root rejected: %+v", b)
+	}
+}
+
 func TestCheckBoundary(t *testing.T) {
 	cases := []struct {
 		name, dir, cg, mnt string
@@ -83,7 +94,7 @@ func TestCheckBoundary(t *testing.T) {
 		{"nothing readable", "/sys/fs/cgroup", "", "", false, "no cgroup v2"},
 	}
 	for _, c := range cases {
-		b := CheckBoundary(c.dir, c.cg, c.mnt)
+		b := CheckBoundary(c.dir, c.cg, c.mnt, true)
 		if b.OK != c.ok || (!c.ok && !strings.Contains(b.Reason, c.why)) {
 			t.Errorf("%s: got %+v, want ok=%v why~%q", c.name, b, c.ok, c.why)
 		}
@@ -341,7 +352,7 @@ func TestPassUnreadableProcessMakesObservationMissing(t *testing.T) {
 	if o.Missing != "unreadable" || o.PssAnon != nil || p.Coverage["claude"].Measured != 0 {
 		t.Fatalf("obs = %+v coverage = %+v", o, p.Coverage)
 	}
-	// A process that exited since the table was read is skipped, not fatal.
+	// A process that exited since the table was read makes the sum partial: missing, not skipped.
 	n = 0
 	p = r.runPass(live, tab, func(pid int) (string, error) {
 		n++
@@ -350,8 +361,13 @@ func TestPassUnreadableProcessMakesObservationMissing(t *testing.T) {
 		}
 		return okRollup(pid)
 	})
-	if o := p.Obs[0]; o.Missing != "" || *o.PssAnon != 100<<10 {
-		t.Fatalf("obs = %+v", o)
+	if o := p.Obs[0]; o.Missing != "exited" || o.PssAnon != nil || p.Coverage["claude"].Measured != 0 {
+		t.Fatalf("partial sum recorded: obs = %+v coverage = %+v", o, p.Coverage)
+	}
+	// Every process gone: not a measured zero.
+	p = r.runPass(live, tab, func(int) (string, error) { return "", fs.ErrNotExist })
+	if o := p.Obs[0]; o.Missing != "exited" || o.PssAnon != nil || p.Coverage["claude"].Measured != 0 {
+		t.Fatalf("all-exited recorded as measured: obs = %+v coverage = %+v", o, p.Coverage)
 	}
 	// A kernel without Pss_Anon.
 	p = r.runPass(live, tab, func(int) (string, error) { return "Pss: 1 kB\n", nil })
@@ -366,7 +382,7 @@ func TestPassSkippedWhilePressureIsHigh(t *testing.T) {
 	live, tab := mkLive(map[string]int{"claude": 2})
 	reads := 0
 	s := testSampler(fixture(t, f), &clock{time.Unix(1, 0)}, NewSeries(filepath.Join(t.TempDir(), "s.jsonl"), 0))
-	s.src.Live = func() []Live { return live }
+	s.src.Live = func() ([]Live, error) { return live, nil }
 	s.src.Procs = func() map[int]procx.Info { return tab }
 	s.src.Rollup = func(int) (string, error) { reads++; return okRollup(0) }
 	for i := 0; i < recordEvery; i++ {
@@ -415,7 +431,7 @@ func TestSamplerCostIsBounded(t *testing.T) {
 		ReadFile: func(p string) ([]byte, error) { reads++; return os.ReadFile(p) },
 		Now:      c.now,
 		Probe:    func() (time.Duration, error) { return time.Millisecond, nil },
-		Live:     func() []Live { return live },
+		Live:     func() ([]Live, error) { return live, nil },
 		Procs:    func() map[int]procx.Info { return tab },
 		Rollup:   func(int) (string, error) { rollups++; return okRollup(0) },
 	}, series)
@@ -459,5 +475,53 @@ func TestTickAllocationsAreSmallAndFlat(t *testing.T) {
 	})
 	if a > 150 {
 		t.Fatalf("%.0f allocations per tick", a)
+	}
+}
+
+// PSI that cannot be read is not "low pressure": the pass must not run on a guess.
+func TestPassSkippedWhenPressureUnknown(t *testing.T) {
+	f := fullFixture()
+	delete(f, "memory.pressure")
+	live, tab := mkLive(map[string]int{"claude": 2})
+	reads := 0
+	s := testSampler(fixture(t, f), &clock{time.Unix(1, 0)}, NewSeries(filepath.Join(t.TempDir(), "s.jsonl"), 0))
+	s.src.Live = func() ([]Live, error) { return live, nil }
+	s.src.Procs = func() map[int]procx.Info { return tab }
+	s.src.Rollup = func(int) (string, error) { reads++; return okRollup(0) }
+	for i := 0; i < recordEvery; i++ {
+		s.Tick()
+	}
+	b, _ := os.ReadFile(s.series.path)
+	if reads != 0 || !strings.Contains(string(b), `"skipped":"pressure_unknown"`) {
+		t.Fatalf("%d rollup reads; series: %s", reads, b)
+	}
+}
+
+// A tmux server stalled by the pressure being measured must cost one deadline, not the sampler.
+func TestLiveSessionsTimesOut(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	old := tmuxTimeout
+	tmuxTimeout = 200 * time.Millisecond
+	defer func() { tmuxTimeout = old }()
+	start := time.Now()
+	live, err := liveSessions()
+	if err == nil || live != nil || time.Since(start) > 5*time.Second {
+		t.Fatalf("live=%v err=%v after %s", live, err, time.Since(start))
+	}
+}
+
+func TestPassSkippedWhenTmuxUnavailable(t *testing.T) {
+	s := testSampler(fixture(t, fullFixture()), &clock{time.Unix(1, 0)}, NewSeries(filepath.Join(t.TempDir(), "s.jsonl"), 0))
+	s.src.Live = func() ([]Live, error) { return nil, errors.New("timed out") }
+	for i := 0; i < recordEvery; i++ {
+		s.Tick()
+	}
+	b, _ := os.ReadFile(s.series.path)
+	if !strings.Contains(string(b), `"skipped":"live_unavailable"`) {
+		t.Fatalf("series: %s", b)
 	}
 }

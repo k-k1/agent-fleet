@@ -1,13 +1,16 @@
 package mempressure
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -33,7 +36,8 @@ func Start(agentAddr string) {
 	}
 	self, _ := os.ReadFile("/proc/self/cgroup")
 	mi, _ := os.ReadFile("/proc/self/mountinfo")
-	b := CheckBoundary(cgroupDir(), string(self), string(mi))
+	_, statErr := os.Stat(cgroupDir() + "/memory.max")
+	b := CheckBoundary(cgroupDir(), string(self), string(mi), statErr == nil)
 	if !b.OK {
 		b.Reason = "cgroup not verified as this container's own: " + b.Reason
 	}
@@ -82,11 +86,37 @@ func liveSources(agentAddr string) Sources {
 // liveSessions lists the tmux sessions with their pane root pid in one tmux call. Managed
 // sessions have no pane and are not attributable in phase 0 (the process tree under the pane is
 // the only attribution built), so they are absent from coverage rather than counted as measured.
-func liveSessions() []Live {
-	out, err := tmuxx.Cmd("list-panes", "-a", "-F", "#{session_name} #{pane_pid}").Output()
-	if err != nil {
-		return nil
+//
+// The call has a deadline: a tmux server stalled by the very pressure being measured must not
+// stall the sampler with it. A timeout is an error, recorded as a missing pass; "no server" is
+// just no sessions.
+func liveSessions() ([]Live, error) {
+	cmd := tmuxx.Cmd("list-panes", "-a", "-F", "#{session_name} #{pane_pid}")
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	if err := cmd.Start(); err != nil {
+		return nil, nil
 	}
+	timedOut := false
+	var mu sync.Mutex
+	timer := time.AfterFunc(tmuxTimeout, func() {
+		mu.Lock()
+		timedOut = true
+		mu.Unlock()
+		_ = cmd.Process.Kill()
+	})
+	werr := cmd.Wait()
+	timer.Stop()
+	mu.Lock()
+	to := timedOut
+	mu.Unlock()
+	if to {
+		return nil, errors.New("tmux list-panes timed out")
+	}
+	if werr != nil {
+		return nil, nil
+	}
+	out := buf.Bytes()
 	seen := map[string]bool{}
 	var live []Live
 	for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -106,5 +136,8 @@ func liveSessions() []Live {
 		}
 		live = append(live, Live{Name: name, Kind: kind, Root: pid})
 	}
-	return live
+	return live, nil
 }
+
+// tmuxTimeout bounds the once-a-minute tmux call.
+var tmuxTimeout = 2 * time.Second
