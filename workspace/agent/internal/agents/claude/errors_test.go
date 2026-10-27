@@ -125,3 +125,38 @@ func TestParseTurnNormalAssistantUnchanged(t *testing.T) {
 		t.Fatalf("turn = %+v", tn)
 	}
 }
+
+// A mistyped slash command is logged only as system warnings (cliWarning). They must reach the
+// mirror as error parts, or the Console's echo of the send never resolves; the notice-level
+// records of the same subtype and the other system bookkeeping must stay hidden.
+func TestParseTurnCLIWarningBecomesErrorPart(t *testing.T) {
+	const msg = "Unknown command: /issue_to_pr. Did you mean /issue-to-pr?"
+	line := []byte(`{"type":"system","subtype":"informational","content":"` + msg + `","isMeta":false,` +
+		`"timestamp":"2026-10-27T14:18:23.082Z","uuid":"64e4c989","level":"warning"}`)
+	tn, ok := parseTurn(line, 223)
+	if !ok {
+		t.Fatal("parseTurn ok = false, want true")
+	}
+	if len(tn.Parts) != 1 || tn.Parts[0].Kind != "error" || tn.Parts[0].Text != msg || tn.Parts[0].Info != "warning" {
+		t.Fatalf("parts = %+v, want one error part carrying the CLI's text", tn.Parts)
+	}
+	if tn.Role != "assistant" || tn.Idx != 223 || tn.AnchorID != "" {
+		t.Errorf("turn = %+v", tn)
+	}
+	if tn.Text != "[error] warning: "+msg {
+		t.Errorf("flattened text = %q", tn.Text)
+	}
+
+	hidden := []string{
+		`{"type":"system","subtype":"informational","level":"notice","content":"Usage limit reached · continuing automatically at 3:30am"}`,
+		`{"type":"system","subtype":"informational","level":"warning","content":"  "}`,
+		`{"type":"system","subtype":"stop_hook_summary","level":"suggestion","content":"x"}`,
+		`{"type":"system","subtype":"turn_duration","durationMs":1200}`,
+		`{"type":"system","subtype":"informational","level":"warning","isMeta":true,"content":"meta"}`,
+	}
+	for _, l := range hidden {
+		if tn, ok := parseTurn([]byte(l), 1); ok {
+			t.Errorf("%s: surfaced as %+v, want hidden", l, tn)
+		}
+	}
+}

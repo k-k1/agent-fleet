@@ -137,3 +137,40 @@ func (e apiError) summary() string {
 func (e apiError) part() transcript.Part {
 	return transcript.Part{Kind: "error", Info: e.label(), Text: e.detail(), Cause: e.cause()}
 }
+
+// cliWarning is a warning the CLI wrote as a system record instead of sending anything to the
+// model. The one producer seen so far is a mistyped slash command, which never becomes a user
+// turn: without this record the Console's optimistic echo of what was sent has nothing to
+// reconcile against and sits at "Pending" forever, while the reason is visible only in the
+// terminal. An error part logged after the send is what releases that echo (pendingEcho.ts
+// echoLanded).
+//
+// Measured (claude 2.1.311), one record per line:
+//
+//	{"type":"system","subtype":"informational","level":"warning","isMeta":false,
+//	 "content":"Unknown command: /issue_to_pr. Did you mean /issue-to-pr?"}
+//	{"type":"system","subtype":"informational","level":"warning","isMeta":false,
+//	 "content":"Args from unknown skill: 通しで2827"}
+//
+// Only level "warning" is surfaced. The same subtype at level "notice" carries routine status
+// (a usage-limit wait, which instruction file was loaded) and is far more frequent; drawn as
+// an error it would cry wolf.
+type cliWarning struct{ msg string }
+
+// cliWarningLabel is the code shown next to the error heading.
+const cliWarningLabel = "warning"
+
+func cliWarningOf(subtype, level, content string) (cliWarning, bool) {
+	msg := strings.TrimSpace(content)
+	if subtype != "informational" || level != "warning" || msg == "" {
+		return cliWarning{}, false
+	}
+	return cliWarning{msg: msg}, true
+}
+
+// summary carries the same `[error] ` tag as apiError.summary for the flattened readers.
+func (w cliWarning) summary() string { return "[error] " + cliWarningLabel + ": " + w.msg }
+
+func (w cliWarning) part() transcript.Part {
+	return transcript.Part{Kind: "error", Info: cliWarningLabel, Text: w.msg}
+}

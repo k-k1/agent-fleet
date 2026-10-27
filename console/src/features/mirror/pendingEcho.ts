@@ -91,7 +91,8 @@ export function echoLanded(e: PendingEcho, turns: TranscriptTurn[], isNoise: (t:
       // so the text/attachment match below can never fire and the echo would sit at
       // "Pending" forever. Any error turn landing after the send explains what happened
       // to it, so treat it as the resolution too (driver.go's managedEnrich / opencode's
-      // errors.go both emit kind="error" for exactly this).
+      // errors.go both emit kind="error" for exactly this; claude's errors.go does the same for
+      // the warning it logs instead of a turn when a slash command is mistyped).
       return t.idx !== undefined && t.idx > e.sinceIdx && hasErrorPart(t);
     }
     // Slash-command / skill echo: reconcile against the parsed <command-name> turn

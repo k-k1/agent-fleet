@@ -544,7 +544,11 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		IsAPIError     bool   `json:"isApiErrorMessage"`
 		APIErrorStatus int    `json:"apiErrorStatus"`
 		Error          string `json:"error"`
-		Attachment     struct {
+		// A type:"system" record's kind and severity, and its bare-string body (cliWarning).
+		Subtype       string `json:"subtype"`
+		Level         string `json:"level"`
+		SystemContent string `json:"content"`
+		Attachment    struct {
 			Type   string     `json:"type"`
 			Prompt string     `json:"prompt"`
 			Origin lineOrigin `json:"origin"`
@@ -620,6 +624,17 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		// offering the affordance is the right answer.
 		return transcript.Turn{
 			Role: "user", Parts: []transcript.Part{{Kind: "text", Text: txt}}, Text: txt,
+			Idx: idx, TS: ev.Timestamp, Sidechain: ev.IsSidechain, Branch: ev.GitBranch, Cwd: ev.Cwd,
+		}, true
+	}
+	if ev.Type == "system" {
+		w, ok := cliWarningOf(ev.Subtype, ev.Level, ev.SystemContent)
+		if !ok {
+			return transcript.Turn{}, false
+		}
+		// No AnchorID: forkat.go's cutIndex accepts only type:"user" lines.
+		return transcript.Turn{
+			Role: "assistant", Parts: []transcript.Part{w.part()}, Text: w.summary(),
 			Idx: idx, TS: ev.Timestamp, Sidechain: ev.IsSidechain, Branch: ev.GitBranch, Cwd: ev.Cwd,
 		}, true
 	}
