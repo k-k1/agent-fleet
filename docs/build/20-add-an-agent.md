@@ -271,8 +271,10 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
 
 **Kind-specific — only when the kind has the feature:**
 
-- [ ] Terminal: `BuildLaunch`, and `agents.PromptPaste` when the composer eats an Enter that
-      follows literal keys (measure it; `pasteKinds` in `prompt_paste_test.go` holds the set)
+- [ ] Terminal: `BuildLaunch`, and the paste decision: `agents.PromptPaste` when the composer
+      eats an Enter that follows literal keys, otherwise the kind goes in `literalKinds` in
+      `prompt_paste_test.go` (measure it; `TestPromptPasteClassifiesEveryRegisteredKind` fails
+      for a kind in neither list)
 - [ ] Managed: a `Driver`, `managedDrivers`, and `agents.ManagedRuntime` on the Agent
       (`TestManagedRuntimeFollowsCaps` fails without it; add the kind's row to `wantRuntime`)
 - [ ] sign-in handlers and their CP relays; credentials hidden by `fsDeny`
