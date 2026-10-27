@@ -196,13 +196,18 @@ async function bundle() {
   fs.writeFileSync(
     entry,
     `import { createRoot } from "react-dom/client";
+     import { useState } from "react";
      import { PdfView } from ${JSON.stringify(path.join(CONSOLE, "src/features/viewer/PdfView.tsx"))};
      const params = new URLSearchParams(location.search);
      const src = params.get("src") || "/sample.pdf";
      window.__meta = null;
-     createRoot(document.getElementById("root")).render(
-       <PdfView src={src} onMeta={(m) => { window.__meta = m; }} />,
-     );`,
+     // window.__setSrc swaps the document in place, as opening another PDF in the same pane does.
+     function App() {
+       const [cur, setCur] = useState(src);
+       window.__setSrc = setCur;
+       return <PdfView src={cur} onMeta={(m) => { window.__meta = m; }} />;
+     }
+     createRoot(document.getElementById("root")).render(<App />);`,
   );
   // `?url` is a suffix esbuild does not know. A small plugin resolves it by copying the worker
   // into www and returning its URL, which is what vite's `?url` means.
@@ -480,6 +485,8 @@ try {
   check(down === `1/${total}` && /^1 \//.test(backTop), "the down button moves to the next match and scrolls to it",
     `count=${down} bar=${JSON.stringify(backTop)}`);
 
+  // From a button, not the input: Escape is handled by the whole bar.
+  await b.evaluate("[...document.querySelectorAll('.pdfview-find button')][1].focus()");
   await key("Escape", "Escape", 27);
   const closed = await until(
     b.evaluate,
@@ -487,7 +494,28 @@ try {
     (v) => v === "0 painted",
     PDF_BEHAVIOR_TRIES,
   );
-  check(closed === "0 painted", "Escape closes the find bar and clears its highlights", closed);
+  check(closed === "0 painted", "Escape on a find-bar button closes it and clears its highlights", closed);
+
+  // 12. Swapping the document while its text layers are still being built. Page indices repeat
+  // across documents, so a late job for the old one must not claim or tear down a page of the new
+  // one: after a burst of swaps, every page of the final document still gets its text layer.
+  // Timing-dependent, but the staggered swaps below hit it reliably (measured: without the
+  // generation check, 3 runs out of 3 ended with 5/6 pages).
+  // Each round lets the sample start building its layers, then swaps to another copy of it at a
+  // slightly later moment, so some swap lands while a page of the old copy is mid-render.
+  for (let k = 0; k < 12; k++) {
+    await b.evaluate(`window.__setSrc("/sample.pdf?swap=${k}")`);
+    await sleep(40 + 15 * k);
+  }
+  await b.evaluate(`window.__setSrc("/sample.pdf?swap=final")`);
+  const swapped = await until(
+    b.evaluate,
+    `[...document.querySelectorAll('.pdfview-page .textLayer')].filter((d) =>
+       [...d.querySelectorAll('span')].some((e) => ${HEAD}.test(e.textContent))).length`,
+    (n) => n === 6,
+    PDF_BEHAVIOR_TRIES,
+  );
+  check(swapped === 6, "after swapping documents mid-build every page has its text layer", `pages with a heading span=${swapped}/6`);
 
   if (SHOT) {
     await b.evaluate("document.querySelector('.pdfview-scroll').scrollTop = 0");
