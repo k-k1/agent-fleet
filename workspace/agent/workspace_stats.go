@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mempressure"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/resources"
 )
 
@@ -24,8 +25,18 @@ import (
 // The only caller is the CP (`/api/workspace/stats`, the stats stream on `/api/events`, and
 // the admin member detail). It does not need adding to the control-plane proxy allowlist for
 // direct Console calls: both CP entry points call this themselves.
+//
+// mem_pressure (ADR 0120 phase 0) is the latest memory-pressure sample. It is absent before the
+// first sample, and present with available=false when pressure cannot be measured here.
 func handleWorkspaceStats(w http.ResponseWriter, r *http.Request) {
 	s := resources.Read()
 	s.BootInstallFailed = bootInstallFailed()
-	httpx.WriteJSON(w, http.StatusOK, s)
+	httpx.WriteJSON(w, http.StatusOK, workspaceStatsBody{Stats: s, MemPressure: mempressure.Current()})
+}
+
+// workspaceStatsBody is the stats wire: resources.Stats plus the axis that comes from the
+// sampler rather than from a one-shot read.
+type workspaceStatsBody struct {
+	resources.Stats
+	MemPressure *mempressure.Wire `json:"mem_pressure,omitempty"`
 }

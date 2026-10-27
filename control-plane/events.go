@@ -79,7 +79,39 @@ func roundStats(m map[string]any) map[string]any {
 	if v, ok := m["cpu_pct"].(float64); ok {
 		m["cpu_pct"] = math.Round(v)
 	}
+	if mp, ok := m["mem_pressure"].(*memPressure); ok {
+		m["mem_pressure"] = roundMemPressure(mp)
+	}
 	return m
+}
+
+// roundMemPressure coarsens the pressure axis for the same reason mem_used is floored: a frame
+// is sent whenever the payload changes, and PSI averages and a latency in microseconds change on
+// every tick. Whole percent / whole milliseconds keep an idle workspace silent. The sample time
+// is dropped from the push (the Console stamps frames itself) for the same reason.
+func roundMemPressure(mp *memPressure) *memPressure {
+	c := *mp
+	c.SampledAtMs = 0
+	r := func(p **float64) {
+		if *p != nil {
+			v := math.Round(**p)
+			*p = &v
+		}
+	}
+	r(&c.SomeAvg10)
+	r(&c.SomeAvg60)
+	r(&c.FullAvg10)
+	r(&c.FullAvg60)
+	r(&c.AgentLatencyMs)
+	if c.WorkingSet != nil {
+		v := *c.WorkingSet &^ (8<<20 - 1)
+		c.WorkingSet = &v
+	}
+	if c.RefaultRate != nil {
+		v := math.Round(*c.RefaultRate)
+		c.RefaultRate = &v
+	}
+	return &c
 }
 
 // stream serves one subscriber: initial full snapshot, then diff-only pushes.

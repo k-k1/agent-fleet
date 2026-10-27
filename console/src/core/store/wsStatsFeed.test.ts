@@ -85,4 +85,27 @@ describe("wsStatsFeed", () => {
     __test.sample();
     expect(__test.samples().map((s) => s.oom)).toEqual([true, false]);
   });
+
+  // ADR 0120 phase 0: an unreadable pressure signal is "cannot measure", never a calm 0.
+  it("carries mem_pressure per sample and never turns an unavailable one into zeros", () => {
+    __test.setLatest({
+      ...RUNNING,
+      mem_pressure: { available: true, some_avg10: 0, full_avg10: 3, agent_latency_ms: 2 },
+    });
+    __test.sample();
+    __test.setLatest({ ...RUNNING, mem_pressure: { available: false, reason: "host root", some_avg10: 9 } });
+    __test.sample();
+    __test.setLatest({ ...RUNNING }); // an Agent from before the axis
+    __test.sample();
+    const [a, b, c] = __test.samples().map((s) => s.memPressure);
+    expect(a).toEqual({ available: true, some10: 0, full10: 3, latencyMs: 2, probeFailed: false });
+    expect(b).toEqual({ available: false, some10: null, full10: null, latencyMs: null, probeFailed: false });
+    expect(c).toBeNull();
+  });
+
+  it("keeps pressure out of a stopped workspace's sample", () => {
+    __test.setLatest({ running: false, mem_pressure: { available: true, some_avg10: 1, full_avg10: 1 } });
+    __test.sample();
+    expect(__test.samples()[0].memPressure).toBeNull();
+  });
 });

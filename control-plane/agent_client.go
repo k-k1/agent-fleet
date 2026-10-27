@@ -133,6 +133,7 @@ func (m *manager) agentStats(ctx context.Context, rt runtime.Runtime) (map[strin
 		DiskTotal    *uint64  `json:"disk_total"`
 		// Only failures, tool to reason; absent when none or unknown (Agent boot_install_status.go).
 		BootInstallFailed map[string]string `json:"boot_install_failed"`
+		MemPressure       *memPressure      `json:"mem_pressure"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, agentStatsMaxBytes)).Decode(&body); err != nil {
 		return nil, err
@@ -159,10 +160,37 @@ func (m *manager) agentStats(ctx context.Context, rt runtime.Runtime) (map[strin
 	if body.DiskTotal != nil {
 		out["disk_total"] = *body.DiskTotal
 	}
+	// An Agent from before the sampler sends none; one that cannot measure sends available=false.
+	// Either way the Console is told only what the Agent said, never a filled-in zero.
+	if body.MemPressure != nil {
+		out["mem_pressure"] = body.MemPressure
+	}
 	// Always present once the Agent has answered, possibly empty: "answered and nothing failed"
 	// must be told apart from "not asked", or a stored failure would outlive a clean start.
 	out["boot_install_failed"] = sanitizeBootFailed(body.BootInstallFailed)
 	return out, nil
+}
+
+// memPressure is the Agent's `mem_pressure` axis (ADR 0120 phase 0), passed through to the
+// Console. The json tags must stay identical to the Agent's mempressure.Wire; a drifted tag
+// arrives as an absent figure, which the Console shows as "-" and not as a wrong number.
+// Pointers and omitempty because an unreadable signal is absent, never zero.
+type memPressure struct {
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+
+	SomeAvg10 *float64 `json:"some_avg10,omitempty"`
+	SomeAvg60 *float64 `json:"some_avg60,omitempty"`
+	FullAvg10 *float64 `json:"full_avg10,omitempty"`
+	FullAvg60 *float64 `json:"full_avg60,omitempty"`
+
+	WorkingSet  *uint64  `json:"working_set,omitempty"`
+	RefaultRate *float64 `json:"refault_rate,omitempty"`
+
+	AgentLatencyMs   *float64 `json:"agent_latency_ms,omitempty"`
+	AgentProbeFailed bool     `json:"agent_probe_failed,omitempty"`
+
+	SampledAtMs int64 `json:"sampled_at_ms,omitempty"`
 }
 
 // machineMeasured is what the workspace itself could establish about the machine it is

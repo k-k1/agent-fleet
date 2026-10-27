@@ -550,6 +550,11 @@ administrator's to set.
   count), so "70% of what?" is answered on the same screen. The chart keeps moving while a value is
   unchanged (the control plane is what guarantees it is unchanged) but **breaks the line for any period
   it could not read**, and it says so when a process was killed for memory during the window.
+- **Memory pressure** (under the usage charts): the share of time tasks in your workspace waited on memory
+  (Linux pressure-stall information, "some" and "full"), next to how quickly the workspace's own Agent
+  answers. It is for measurement only: nothing is warned, refused or stopped because of it, and it is not
+  coloured. Where the machine cannot report it (a cgroup the Agent cannot confirm is its own, an older
+  kernel), the row says "Cannot be measured on this machine" instead of drawing a calm line.
 - **Disk used by Agent Fleet**: what Agent Fleet itself keeps under `~/.cache/agent-fleet`, broken
   down (generated images, thumbnails, pasted and attached files, …), how much of it belongs to deleted
   sessions, and the size of the cleanup trash. Generated images expire after 30 days and thumbnails after

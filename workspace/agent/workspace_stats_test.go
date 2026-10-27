@@ -2,12 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mempressure"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWorkspaceStatsRouteRegistered(t *testing.T) {
@@ -97,5 +99,64 @@ func TestWorkspaceStatsBootInstallFailed(t *testing.T) {
 	bootInstallStatusPath = filepath.Join(dir, "missing.tsv")
 	if v, ok := stats()["boot_install_failed"]; ok {
 		t.Errorf("unknown status: boot_install_failed = %v, want the key absent", v)
+	}
+}
+
+// The mem_pressure axis (ADR 0120 phase 0): absent while no sampler runs, an explicit
+// available=false (with no figures) when pressure cannot be measured, and the latest reading
+// otherwise. Never a zero for an unreadable signal.
+func TestWorkspaceStatsMemPressure(t *testing.T) {
+	cg := t.TempDir()
+	t.Setenv("AF_CGROUP_DIR", cg)
+	get := func() map[string]any {
+		w := httptest.NewRecorder()
+		handleWorkspaceStats(w, httptest.NewRequest(http.MethodGet, "/workspace/stats", nil))
+		var out map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	t.Cleanup(func() { mempressure.Default = nil })
+
+	mempressure.Default = nil
+	if v, ok := get()["mem_pressure"]; ok {
+		t.Fatalf("no sampler: mem_pressure = %v, want the key absent", v)
+	}
+
+	sampler := func(b mempressure.Boundary) *mempressure.Sampler {
+		return mempressure.New(cg, b, mempressure.Sources{ReadFile: os.ReadFile, Now: time.Now}, nil)
+	}
+
+	// Unverified cgroup: present, unavailable, no figure.
+	s := sampler(mempressure.Boundary{Reason: "host root"})
+	s.Tick()
+	mempressure.Default = s
+	mp, _ := get()["mem_pressure"].(map[string]any)
+	if mp == nil || mp["available"] != false || mp["reason"] != "host root" || mp["some_avg10"] != nil {
+		t.Fatalf("unverified: mem_pressure = %v", mp)
+	}
+
+	// Verified but PSI missing: unavailable, not zero.
+	s = sampler(mempressure.Boundary{OK: true})
+	s.Tick()
+	mempressure.Default = s
+	mp, _ = get()["mem_pressure"].(map[string]any)
+	if mp == nil || mp["available"] != false {
+		t.Fatalf("no PSI: mem_pressure = %v", mp)
+	}
+	if _, ok := mp["some_avg10"]; ok {
+		t.Fatalf("no PSI: some_avg10 present: %v", mp)
+	}
+
+	// Readable: the figures, with an honest zero being a zero.
+	psi := "some avg10=0.00 avg60=1.25 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1\n"
+	if err := os.WriteFile(filepath.Join(cg, "memory.pressure"), []byte(psi), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.Tick()
+	mp, _ = get()["mem_pressure"].(map[string]any)
+	if mp == nil || mp["available"] != true || mp["some_avg10"] != float64(0) || mp["some_avg60"] != 1.25 {
+		t.Fatalf("readable: mem_pressure = %v", mp)
 	}
 }
