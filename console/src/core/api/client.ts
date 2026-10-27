@@ -1345,6 +1345,15 @@ export async function sessionPeerSend(
   return { ok: true, queued: !!r?.queued };
 }
 
+/** sessionPlanReviewerSet links (or, with an empty `reviewer`, unlinks) the session that
+ *  reviewed the plan file `path` of `planner`, on the Agent, so every device offers "Review
+ *  again" (features/mirror/reviewAgain.ts). false = not stored (an old Agent has no such route,
+ *  or the call failed); the caller keeps its local copy either way. */
+export async function sessionPlanReviewerSet(planner: string, path: string, reviewer: string): Promise<boolean> {
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(planner)}/plan-reviewer`, "POST", { path, reviewer }).catch(() => null);
+  return !!r && !r.error;
+}
+
 /** sessionAlive reads whether the session is running NOW (null = the read failed). The session
  *  list lags by seconds and a held Session snapshot lags by as long as a card sits on screen. */
 export async function sessionAlive(session: string): Promise<boolean | null> {
