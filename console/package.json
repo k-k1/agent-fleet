@@ -16,6 +16,7 @@
     "lint": "oxlint -c .oxlintrc.json src",
     "shots": "node scripts/shots/capture.mjs",
     "panes:heads": "node scripts/pane-heads/check.mjs",
+    "settings:headings": "node scripts/settings-headings/check.mjs",
     "mirror:scroll": "node scripts/mirror-scroll/check.mjs",
     "mirror:handoff": "node scripts/mirror-handoff/check.mjs",
     "mirror:poll": "node scripts/mirror-poll/check.mjs",

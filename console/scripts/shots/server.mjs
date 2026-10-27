@@ -161,6 +161,24 @@ const exact = {
   "/api/agents/rtk/gain": () => fx.rtkGain(),
   "/api/stats": () => fx.stats(),
   "/api/ssm/hosts": () => ({ hosts: [] }),
+  // Settings > Skills (#2792): one kind with every scope group, so the tab renders all its
+  // headings (the heading-spacing check walks them, #2813).
+  "/api/skills/catalog": () => ({
+    kinds: [
+      {
+        kind: "claude",
+        roots: [
+          { dir: "/home/dev/.claude/skills", scope: "user", form: "skills", exists: true },
+          { dir: "/home/dev/.claude/commands", scope: "user", form: "commands", exists: false },
+        ],
+        skills: [
+          { name: "handoff", description: "Hand the session over", type: "skill", scope: "user", path: "/home/dev/.claude/skills/handoff/SKILL.md", userInvocable: true },
+          { name: "af-build", description: "Build memory and toolchains", type: "skill", scope: "fleet", path: "/home/dev/.claude/skills/af-build/SKILL.md", userInvocable: false },
+          { name: "simplify", type: "skill", scope: "cli", userInvocable: true },
+        ],
+      },
+    ],
+  }),
   "/api/ssm/profiles": () => ({ profiles: [] }),
   // MCP registry (docs/log/48). One row per origin so the settings tab shows all three
   // editability states (user = full CRUD, tenant = disable-only, builtin = code).
