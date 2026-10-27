@@ -687,6 +687,12 @@ describe("a slash command sent with an attachment (#2823)", () => {
     expect(el.querySelector(".mt-attach-file-name")?.textContent).toBe("paste-8-notes.txt");
   });
 
+  it("keeps a typed pasted path as args when nothing was attached", () => {
+    const el = render(cmd(`${p} を調べて`), caps);
+    expect(el.querySelector(".mt-cmd-args")?.textContent).toBe(`${p} を調べて`);
+    expect(el.querySelector(".mt-imgs")).toBeNull();
+  });
+
   it("leaves plain args untouched", () => {
     const el = render(cmd("review 1110"), caps);
     expect(el.querySelector(".mt-cmd-args")?.textContent).toBe("review 1110");

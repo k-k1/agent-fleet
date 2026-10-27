@@ -14,7 +14,7 @@ import FileIcon from "../../../ui/FileIcon.tsx";
 import { fmtTok } from "../../../lib/fmttok.ts";
 import { prettyModel } from "../../../lib/modelName.ts";
 import { t as tr } from "../../../lib/i18n/index.ts";
-import { splitPastedImages } from "../../../lib/pastedImages.ts";
+import { FILE_PROMPT, splitPastedImages } from "../../../lib/pastedImages.ts";
 import { MarkdownView } from "../../viewer/MarkdownView.tsx";
 import { textOfParts, workSplit, type WorkSplit } from "../mirrorParts.ts";
 import { looksForeign, translatableTexts, turnTranslateKey } from "../translate.ts";
@@ -552,9 +552,14 @@ function TranscriptTurnImpl({
         ) : isUser && turn.cmd ? (
           // A `/`-run slash command / skill invocation: a compact chip marking the action.
           // Args sent with an attachment carry the machine-facing Read instruction and paths;
-          // split them off like a plain prompt so the chip shows the user's words only.
+          // split them off like a plain prompt so the chip shows the user's words only. Only
+          // claude logs command args, and its attachments always come with FILE_PROMPT, so args
+          // without it are left whole: a pasted path the member typed is not an attachment.
           turn.parts.map((p, i) => {
-            const { text, images, files } = splitPastedImages(p.info || "");
+            const args = p.info || "";
+            const { text, images, files } = args.includes(FILE_PROMPT)
+              ? splitPastedImages(args)
+              : { text: args, images: [], files: [] };
             return (
               <Fragment key={i}>
                 <CmdChip name={p.text} args={text} />
