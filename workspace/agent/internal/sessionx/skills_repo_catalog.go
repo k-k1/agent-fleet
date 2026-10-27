@@ -8,7 +8,6 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/pathguard"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -30,66 +29,104 @@ type repoSkillCatalogWire struct {
 	Kinds  []catalogKind `json:"kinds"`
 }
 
-// resolveRepoSkillScope validates ?repo= and ?subdir= like HandleRepoSkills, and in addition
-// refuses a Subdir that does not exist: the picker may fall back to the root, but a view whose
-// point is "what does this folder change" must not silently answer for another one.
-func resolveRepoSkillScope(w http.ResponseWriter, r *http.Request) (dir, cwd, sub string, ok bool) {
-	name := r.URL.Query().Get("repo")
-	dir, ok = gitx.ResolveRepoDir(name)
-	if !ok {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_repo", "invalid repo name")
-		return
-	}
-	// Lstat, not Stat: a link in ~/repos (alias -> $HOME) would make the target the "working
-	// copy" and every fence below would then be drawn around the wrong tree. A plain folder is
-	// no working copy either.
-	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() || !isWorkingCopy(dir) {
-		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such repo: "+name)
-		return "", "", "", false
-	}
-	sub, ok = session.CleanSubdir(r.URL.Query().Get("subdir"))
-	if ok && sub != "" {
-		_, ok = pathguard.ResolveUnder(filepath.Join(dir, filepath.FromSlash(sub)), dir)
-	}
-	if !ok {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_subdir", "subdir must be a relative path inside the working copy")
-		return "", "", "", false
-	}
-	cwd = session.Meta{Dir: dir, Subdir: sub}.CWD()
-	if sub != "" && cwd == dir {
-		httpx.WriteErr(w, http.StatusNotFound, "no_subdir", "no such subdir: "+sub)
-		return "", "", "", false
-	}
-	return dir, cwd, sub, true
+// repoScope is one request's view of a working copy. wc is the working copy opened ONCE, from
+// the repos root, without following a link out of it; every later read goes through that handle,
+// so renaming the folder away and putting a link in its place cannot move the fence.
+type repoScope struct {
+	dir, cwd, sub string
+	wc            *os.Root
 }
 
-// isWorkingCopy: a git or svn working copy, by its marker.
-func isWorkingCopy(dir string) bool {
-	if gitx.IsGitRepo(dir) {
+func (sc *repoScope) close() { _ = sc.wc.Close() }
+
+// beforeRepoOpen lets a test swap the repository folder between name validation and the open.
+var beforeRepoOpen func()
+
+// resolveRepoSkillScope validates ?repo= and ?subdir= like HandleRepoSkills, and in addition
+// refuses a Subdir that does not exist: the picker may fall back to the root, but a view whose
+// point is "what does this folder change" must not silently answer for another one. A link in
+// ~/repos (alias -> $HOME) and a folder with no .git/.svn are no working copy.
+func resolveRepoSkillScope(w http.ResponseWriter, r *http.Request) (*repoScope, bool) {
+	name := r.URL.Query().Get("repo")
+	dir, ok := gitx.ResolveRepoDir(name)
+	if !ok {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_repo", "invalid repo name")
+		return nil, false
+	}
+	sub, ok := session.CleanSubdir(r.URL.Query().Get("subdir"))
+	if !ok {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_subdir", "subdir must be a relative path inside the working copy")
+		return nil, false
+	}
+	notFound := func() (*repoScope, bool) {
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such repo: "+name)
+		return nil, false
+	}
+	repos, err := os.OpenRoot(gitx.ReposRoot())
+	if err != nil {
+		return notFound()
+	}
+	defer repos.Close()
+	if beforeRepoOpen != nil {
+		beforeRepoOpen()
+	}
+	wc, err := repos.OpenRoot(name)
+	if err != nil {
+		return notFound()
+	}
+	if fi, err := repos.Lstat(name); err != nil || !fi.IsDir() || !wcHasMarker(wc) {
+		_ = wc.Close()
+		return notFound()
+	}
+	sc := &repoScope{dir: dir, cwd: dir, sub: sub, wc: wc}
+	if sub != "" {
+		fi, err := wc.Stat(filepath.FromSlash(sub))
+		switch {
+		case err != nil && !os.IsNotExist(err):
+			sc.close()
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_subdir", "subdir must be a relative path inside the working copy")
+			return nil, false
+		case err != nil || !fi.IsDir():
+			sc.close()
+			httpx.WriteErr(w, http.StatusNotFound, "no_subdir", "no such subdir: "+sub)
+			return nil, false
+		}
+		sc.cwd = filepath.Join(dir, filepath.FromSlash(sub))
+	}
+	return sc, true
+}
+
+// wcHasMarker: a git or svn working copy, by its marker.
+func wcHasMarker(wc *os.Root) bool {
+	if fi, err := wc.Stat(".git"); err == nil && (fi.IsDir() || fi.Mode().IsRegular()) {
 		return true
 	}
-	fi, err := os.Stat(filepath.Join(dir, ".svn"))
+	fi, err := wc.Stat(".svn")
 	return err == nil && fi.IsDir()
 }
 
 // repoCatalogRoots is one kind's repository roots as catalog roots, each fenced.
-func repoCatalogRoots(kind, cwd, dir string) []catalogRoot {
+func repoCatalogRoots(kind string, sc *repoScope) []catalogRoot {
+	dir := sc.dir
 	roots := []catalogRoot{}
-	for _, sr := range projectSkillRoots(kind, cwd, dir) {
+	for _, sr := range projectSkillRoots(kind, sc.cwd, dir) {
 		rel, err := filepath.Rel(dir, sr.dir)
 		if err != nil {
 			continue
 		}
-		fence := sr.dir
-		if under(dir, sr.dir) {
-			fence = dir
+		cr := catalogRoot{Dir: sr.dir, Scope: sr.source, Form: sr.form, Rel: filepath.ToSlash(rel), fence: dir, fenceRoot: sc.wc}
+		if !under(dir, sr.dir) {
+			// A level above the working copy: fenced at the folder that holds the .claude /
+			// .codex / .agents directory, so a link at the root itself cannot lead out either.
+			cr.fence, cr.fenceRoot = filepath.Dir(filepath.Dir(sr.dir)), nil
 		}
-		roots = append(roots, catalogRoot{Dir: sr.dir, Scope: sr.source, Form: sr.form, Rel: filepath.ToSlash(rel), fence: fence})
+		roots = append(roots, cr)
 	}
 	return roots
 }
 
-func repoSkillCatalog(dir, cwd string) []catalogKind {
+func repoSkillCatalog(sc *repoScope) []catalogKind {
+	dir := sc.dir
 	// Personal names per kind, keyed like the shadowing keys, for the "also in your personal
 	// skills" link. The bundled-skill probe is skipped: those are not personal.
 	personal := map[string]map[string]bool{}
@@ -105,7 +142,7 @@ func repoSkillCatalog(dir, cwd string) []catalogKind {
 	}
 	out := []catalogKind{}
 	for _, kind := range repoSkillKinds {
-		ck, _ := fillCatalogKind(kind, repoCatalogRoots(kind, cwd, dir))
+		ck, _ := fillCatalogKind(kind, repoCatalogRoots(kind, sc))
 		for i := range ck.Skills {
 			s := &ck.Skills[i]
 			if rel, err := filepath.Rel(dir, s.Path); err == nil {
@@ -120,40 +157,48 @@ func repoSkillCatalog(dir, cwd string) []catalogKind {
 }
 
 func handleRepoSkillCatalog(w http.ResponseWriter, r *http.Request) {
-	dir, cwd, sub, ok := resolveRepoSkillScope(w, r)
+	sc, ok := resolveRepoSkillScope(w, r)
 	if !ok {
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, repoSkillCatalogWire{Repo: r.URL.Query().Get("repo"), Subdir: sub, Kinds: repoSkillCatalog(dir, cwd)})
+	defer sc.close()
+	httpx.WriteJSON(w, http.StatusOK, repoSkillCatalogWire{Repo: r.URL.Query().Get("repo"), Subdir: sc.sub, Kinds: repoSkillCatalog(sc)})
 }
 
 // handleRepoSkillFile serves one file by its working-copy-relative path. It is accepted only
 // when it has the shape of a skill file of a root listed for this (repo, subdir) AND resolves,
 // after symlinks, inside that root's fence.
 func handleRepoSkillFile(w http.ResponseWriter, r *http.Request) {
-	dir, cwd, _, ok := resolveRepoSkillScope(w, r)
+	sc, ok := resolveRepoSkillScope(w, r)
 	if !ok {
 		return
 	}
+	defer sc.close()
 	rel := r.URL.Query().Get("path")
 	if rel == "" || filepath.IsAbs(rel) {
 		httpx.WriteErr(w, http.StatusForbidden, "not_a_skill_file", "path is not inside a skills folder")
 		return
 	}
-	full := filepath.Join(dir, filepath.FromSlash(rel))
+	full := filepath.Join(sc.dir, filepath.FromSlash(rel))
 	for _, kind := range repoSkillKinds {
-		for _, root := range repoCatalogRoots(kind, cwd, dir) {
+		for _, root := range repoCatalogRoots(kind, sc) {
 			if !root.lexicallyHolds(full) {
 				continue
 			}
 			// Opened beneath the fence in one step, so a link swapped in after the shape check
 			// still cannot lead out.
-			f, err := openBeneath(root.fence, full)
+			sf, err := root.openFS()
 			if err != nil {
 				continue
 			}
-			defer f.Close()
+			f, err := sf.open(full)
+			if err != nil {
+				sf.close()
+				continue
+			}
 			serveSkillFile(w, f, rel)
+			_ = f.Close()
+			sf.close()
 			return
 		}
 	}

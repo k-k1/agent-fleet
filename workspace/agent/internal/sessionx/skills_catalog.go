@@ -2,6 +2,7 @@ package sessionx
 
 import (
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -45,6 +46,9 @@ type catalogRoot struct {
 	// fence, when set, is the directory every file of this root must resolve inside after
 	// symlinks (repository view only). An entry that leaves it is listed without being read.
 	fence string
+	// fenceRoot, when set, is the already opened fence directory; the request holds it so the
+	// fence cannot be renamed away and replaced by a link between the checks and the reads.
+	fenceRoot *os.Root
 	// opencode marks opencode's skills root, which is discovered by its own rules
 	// (opencodeSkillFiles) rather than as a flat <dir>/*/SKILL.md tree.
 	opencode bool
@@ -174,8 +178,7 @@ func fillCatalogKind(kind string, roots []catalogRoot) (catalogKind, map[string]
 	ck := catalogKind{Kind: kind, Roots: []catalogRoot{}, Skills: []catalogSkill{}}
 	winner := map[string]string{}
 	for _, root := range roots {
-		fi, err := os.Stat(root.Dir)
-		root.Exists = err == nil && fi.IsDir()
+		root.Exists = root.dirExists()
 		ck.Roots = append(ck.Roots, root)
 		if !root.Exists {
 			continue
@@ -202,34 +205,45 @@ func fillCatalogKind(kind string, roots []catalogRoot) (catalogKind, map[string]
 	return ck, winner
 }
 
+// dirExists reports whether the root is a directory, resolved inside the fence when it has one.
+func (r catalogRoot) dirExists() bool {
+	sf, err := r.openFS()
+	if err != nil {
+		return false
+	}
+	defer sf.close()
+	return sf.isDir(r.Dir)
+}
+
 // catalogSkillEntries reads <root>/*/SKILL.md like readSkillEntries, but keeps the entries the
 // picker hides and marks AF's own fleet skills.
 func catalogSkillEntries(root catalogRoot) []catalogSkill {
 	if root.opencode {
 		return opencodeCatalogEntries(root)
 	}
-	ents, err := os.ReadDir(root.Dir)
+	sf, err := root.openFS()
+	if err != nil {
+		return nil
+	}
+	defer sf.close()
+	ents, err := sf.readDir(root.Dir)
 	if err != nil {
 		return nil
 	}
 	out := []catalogSkill{}
 	for _, e := range ents {
 		dir := filepath.Join(root.Dir, e.Name())
-		// A skill folder may be a symlink (codex's .codex/skills bridge links are), so Stat
+		// A skill folder may be a symlink (codex's .codex/skills bridge links are), so stat
 		// rather than trusting the dirent type.
-		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		if !sf.isDir(dir) {
 			continue
 		}
 		p := filepath.Join(dir, "SKILL.md")
-		if root.escapes(p) {
-			if _, err := os.Stat(p); err == nil {
-				out = append(out, catalogSkill{Name: e.Name(), Type: "skill", Scope: root.Scope, Root: root.Dir, Path: p, UserInvocable: true, Outside: true})
-			}
-			continue
-		}
-		b, err := root.read(p)
+		b, err := sf.read(p)
 		if err != nil {
-			if _, lerr := os.Lstat(p); root.fence != "" && lerr == nil {
+			// Present but not openable beneath the fence: a link leading out (an absolute link
+			// counts, even to a place inside). Listed by name only.
+			if sf.fenced() && sf.present(p) {
 				out = append(out, catalogSkill{Name: e.Name(), Type: "skill", Scope: root.Scope, Root: root.Dir, Path: p, UserInvocable: true, Outside: true})
 			}
 			continue
@@ -242,7 +256,7 @@ func catalogSkillEntries(root catalogRoot) []catalogSkill {
 		scope := root.Scope
 		// A repository's own SKILL.md may quote the marker; only the personal view tells the
 		// files Agent Fleet wrote apart by it.
-		if root.fence == "" && strings.Contains(string(b), fleetskills.Marker) {
+		if !sf.fenced() && strings.Contains(string(b), fleetskills.Marker) {
 			scope = "fleet"
 		}
 		out = append(out, catalogSkill{
@@ -254,72 +268,54 @@ func catalogSkillEntries(root catalogRoot) []catalogSkill {
 			Root:          root.Dir,
 			Path:          p,
 			UserInvocable: !isNo(fm["user-invocable"]),
-			Files:         skillFolderFiles(dir),
+			Files:         sf.folderFiles(dir),
 		})
 	}
 	return out
 }
 
 func catalogCommandEntries(root catalogRoot) []catalogSkill {
+	sf, err := root.openFS()
+	if err != nil {
+		return []catalogSkill{}
+	}
+	defer sf.close()
 	out := []catalogSkill{}
-	for _, it := range readCommandEntriesWithPath(root.Dir, root.read, root.escapes) {
+	base := sf.name(root.Dir)
+	if base == "" {
+		return out
+	}
+	_ = fs.WalkDir(sf.fsys, base, func(n string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
+			return nil
+		}
+		p := filepath.Join(root.Dir, filepath.FromSlash(strings.TrimPrefix(strings.TrimPrefix(n, base), "/")))
+		name := strings.TrimSuffix(d.Name(), ".md")
+		b, err := sf.read(p)
+		if err != nil {
+			if sf.fenced() && sf.present(p) {
+				out = append(out, catalogSkill{Name: name, Type: "command", Scope: root.Scope, Root: root.Dir, Path: p, UserInvocable: true, Outside: true})
+			}
+			return nil
+		}
+		meta, _ := splitFrontmatter(string(b))
 		out = append(out, catalogSkill{
-			Name:          it.Name,
-			Description:   it.Description,
-			ArgumentHint:  it.ArgumentHint,
+			Name:          name,
+			Description:   meta["description"],
+			ArgumentHint:  meta["argument-hint"],
 			Type:          "command",
 			Scope:         root.Scope,
 			Root:          root.Dir,
-			Path:          it.Path,
+			Path:          p,
 			UserInvocable: true,
-			Outside:       it.outside,
 		})
-	}
+		if len(out) >= maxSessionSkills {
+			return fs.SkipAll
+		}
+		return nil
+	})
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
-}
-
-// beforeFenceOpen lets a test swap a path for a link between a caller's check and the open.
-var beforeFenceOpen func()
-
-// openBeneath opens p for reading with every component resolved inside fence, atomically: a
-// symlink swapped in after any earlier check still cannot lead out (os.Root uses openat2 /
-// RESOLVE_BENEATH-style resolution rather than resolving the path and opening it afterwards).
-func openBeneath(fence, p string) (*os.File, error) {
-	rel, err := filepath.Rel(fence, p)
-	if err != nil {
-		return nil, err
-	}
-	root, err := os.OpenRoot(fence)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
-	if beforeFenceOpen != nil {
-		beforeFenceOpen()
-	}
-	return root.Open(rel)
-}
-
-// read returns a file's content, confined to the root's fence when it has one.
-func (r catalogRoot) read(p string) ([]byte, error) {
-	if r.fence == "" {
-		return os.ReadFile(p)
-	}
-	f, err := openBeneath(r.fence, p)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	return io.ReadAll(io.LimitReader(f, 1<<20))
-}
-
-// escapes reports whether p resolves outside the root's fence. Always false without one.
-func (r catalogRoot) escapes(p string) bool {
-	if r.fence == "" {
-		return false
-	}
-	_, ok := pathguard.ResolveUnder(p, r.fence)
-	return !ok
 }
 
 // opencodeSkillDepth is opencode's own limit on how deep below the root a SKILL.md is looked
@@ -427,12 +423,7 @@ func opencodeCatalogEntries(root catalogRoot) []catalogSkill {
 }
 
 // readCommandEntriesWithPath is readCommandEntries with each file's path kept.
-// outside, when non-nil, is asked about every file first; one it rejects is listed by name only
-// and flagged, so its content (a link into somewhere private) is never read.
-func readCommandEntriesWithPath(root string, read func(string) ([]byte, error), outside func(string) bool) []sessionSkill {
-	if read == nil {
-		read = os.ReadFile
-	}
+func readCommandEntriesWithPath(root string) []sessionSkill {
 	out := []sessionSkill{}
 	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -441,17 +432,8 @@ func readCommandEntriesWithPath(root string, read func(string) ([]byte, error), 
 		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
 			return nil
 		}
-		if outside != nil && outside(p) {
-			out = append(out, sessionSkill{Name: strings.TrimSuffix(d.Name(), ".md"), Path: p, outside: true})
-			return nil
-		}
-		b, err := read(p)
+		b, err := os.ReadFile(p)
 		if err != nil {
-			// Fenced and present but not openable beneath the fence: a link leading out (an
-			// absolute link counts, even to a place inside).
-			if _, lerr := os.Lstat(p); outside != nil && lerr == nil {
-				out = append(out, sessionSkill{Name: strings.TrimSuffix(d.Name(), ".md"), Path: p, outside: true})
-			}
 			return nil
 		}
 		meta, _ := splitFrontmatter(string(b))
@@ -530,7 +512,7 @@ func HandleSkillFile(w http.ResponseWriter, r *http.Request) {
 
 // serveSkillFile answers with an already opened, already authorised file under the caller's
 // name for the path.
-func serveSkillFile(w http.ResponseWriter, f *os.File, name string) {
+func serveSkillFile(w http.ResponseWriter, f fs.File, name string) {
 	fi, err := f.Stat()
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such file")

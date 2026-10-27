@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetskills"
@@ -309,5 +310,80 @@ func TestRepoSkillMarkerDoesNotMakeItAFleetSkill(t *testing.T) {
 	m := entriesByRel(t, repoKind(t, w, session.KindClaude))[".claude/skills/m/SKILL.md"]
 	if m.Scope != "project" {
 		t.Errorf("scope = %q, want project", m.Scope)
+	}
+}
+
+// A root ABOVE the working copy is fenced at the folder holding it, so a link at the root itself
+// (~/repos/.claude/commands -> /) cannot reach files the personal endpoint would refuse.
+func TestRepoSkillAboveRootLinkCannotLeadOut(t *testing.T) {
+	home, _ := repoSkillsEnv(t)
+	writeFile(t, filepath.Join(home, "private.md"), "---\ndescription: private\n---\n")
+	writeFile(t, filepath.Join(home, "repos", ".claude", "skills", "shared", "SKILL.md"), "---\ndescription: shared\n---\n")
+	if err := os.Symlink("/", filepath.Join(home, "repos", ".claude", "commands")); err != nil {
+		t.Fatal(err)
+	}
+	leak := "../.claude/commands/" + filepath.ToSlash(home)[1:] + "/private.md"
+	if rec := getRepoSkillFile(t, "repo=demo&path="+url.QueryEscape(leak)); rec.Code == http.StatusOK {
+		t.Errorf("served through a root link: %s", rec.Body)
+	}
+	if rec := getRepoSkillFile(t, "repo=demo&path="+url.QueryEscape("../.claude/skills/shared/SKILL.md")); rec.Code != http.StatusOK {
+		t.Errorf("a real above-root skill should still be served: %d %s", rec.Code, rec.Body)
+	}
+	_, w := getRepoCatalog(t, "repo=demo")
+	for _, s := range repoKind(t, w, session.KindClaude).Skills {
+		if s.Description == "private" {
+			t.Errorf("listed content from outside: %#v", s)
+		}
+	}
+}
+
+// The repository folder is opened once from the repos root: replacing it by a link to $HOME after
+// its name was validated must not turn $HOME into the fence.
+func TestRepoSkillFolderSwappedForALink(t *testing.T) {
+	home, dir := repoSkillsEnv(t)
+	writeFile(t, filepath.Join(home, ".git", "HEAD"), "ref: x")
+	writeFile(t, filepath.Join(home, ".claude", "skills", "x", "SKILL.md"), "---\ndescription: home\n---\n")
+	beforeRepoOpen = func() {
+		if err := os.Rename(dir, dir+".bak"); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.Symlink(home, dir); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { beforeRepoOpen = nil })
+	if code, _ := getRepoCatalog(t, "repo=demo"); code != http.StatusNotFound {
+		t.Errorf("catalog after the swap: %d, want 404", code)
+	}
+	_ = os.Remove(dir)
+	_ = os.Rename(dir+".bak", dir)
+	beforeRepoOpen = func() {
+		_ = os.Rename(dir, dir+".bak")
+		_ = os.Symlink(home, dir)
+	}
+	if rec := getRepoSkillFile(t, "repo=demo&path="+url.QueryEscape(".claude/skills/x/SKILL.md")); rec.Code == http.StatusOK {
+		t.Errorf("file after the swap: %s", rec.Body)
+	}
+}
+
+// The folder's file list is read through the same fence: a skill folder swapped for a link to an
+// outside tree after SKILL.md was read exposes none of its names.
+func TestRepoSkillFolderFilesSwappedForALink(t *testing.T) {
+	home, dir := repoSkillsEnv(t)
+	outside := filepath.Join(home, "outside")
+	writeFile(t, filepath.Join(outside, "private-name.txt"), "x")
+	skill := filepath.Join(dir, ".claude", "skills", "a")
+	beforeFolderFiles = func() {
+		_ = os.RemoveAll(skill)
+		_ = os.Symlink(outside, skill)
+	}
+	t.Cleanup(func() { beforeFolderFiles = nil })
+	_, w := getRepoCatalog(t, "repo=demo")
+	a := entriesByRel(t, repoKind(t, w, session.KindClaude))[".claude/skills/a/SKILL.md"]
+	for _, f := range a.Files {
+		if strings.Contains(f, "private-name.txt") {
+			t.Errorf("outside file name exposed: %v", a.Files)
+		}
 	}
 }
