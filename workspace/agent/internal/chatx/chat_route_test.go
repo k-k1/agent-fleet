@@ -442,3 +442,17 @@ func TestChatRouteSeesTheMuseSafeModel(t *testing.T) {
 		t.Fatal("the failure was not recorded under the safe model")
 	}
 }
+
+// TestNoteTurnResultKeepsAParkSetDuringTheCall: the call began before another request parked
+// the backend, so its success does not lift that park; StartTurn stamps the start.
+func TestNoteTurnResultKeepsAParkSetDuringTheCall(t *testing.T) {
+	writeUIPrefs(t, `{}`)
+	tb := useRouteTable(t)
+	c := &ChatConversation{Agent: session.KindCodex, Model: "model-a"}
+	c.StartTurn() // routeNow() = routeT0
+	tb.Fail(session.KindCodex, "model-a", "You've hit your usage limit.", routeT0.Add(time.Second))
+	NoteTurnResult(context.Background(), c, session.KindCodex, nil)
+	if _, _, ok := tb.Until(session.KindCodex, "model-a", routeT0.Add(2*time.Second)); !ok {
+		t.Fatal("a success that started before the park lifted it")
+	}
+}

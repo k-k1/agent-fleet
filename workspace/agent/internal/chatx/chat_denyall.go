@@ -195,6 +195,7 @@ func runClaudeDenyAll(ctx context.Context, persona, prompt, selected string) (st
 	}
 	call := usagex.Call{Kind: session.KindClaude, ModelReq: selected}
 	defer usagex.RecordCall(ctx, &call, time.Now())
+	started := routeNow()
 	cmd := claudeOneShotCmd(ctx, claudeOneShotArgsFormat(persona, selected, true))
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.WaitDelay = time.Second // a child that outlives the killed CLI must not keep the call (and the caller's slot) open
@@ -227,7 +228,7 @@ func runClaudeDenyAll(ctx context.Context, persona, prompt, selected string) (st
 		return "", errors.New("claude returned an invalid response/error")
 	}
 	call.OK = true
-	routehealth.Default.Succeed(session.KindClaude, selected)
+	routehealth.Default.Succeed(session.KindClaude, selected, started)
 	return strings.TrimRight(r.Result, "\n"), nil
 }
 

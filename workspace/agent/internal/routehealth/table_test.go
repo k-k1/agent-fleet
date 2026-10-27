@@ -93,7 +93,7 @@ func TestSucceedClearsModelAndKind(t *testing.T) {
 	tb := NewTable()
 	tb.Fail("codex", "model-a", "You've hit your usage limit.", t0)
 	tb.Fail("codex", "model-a", "429", t0)
-	tb.Succeed("codex", "model-a")
+	tb.Succeed("codex", "model-a", time.Time{})
 	if _, _, ok := tb.Until("codex", "model-a", t0); ok {
 		t.Error("a success left the route parked")
 	}
@@ -141,5 +141,63 @@ func TestAvoidJudgesEachPark(t *testing.T) {
 	}
 	if until, class, _ := tb.Until("codex", "model-a", t0); class != ClassServer || until.Sub(t0) != 90*time.Second {
 		t.Errorf("Until = (%v, %s), want the later model park", until.Sub(t0), class)
+	}
+}
+
+// TestDefaultModelAndKindWideAreSeparate: a model-scoped failure on the CLI default ("")
+// neither overwrites an account window nor parks the named models.
+func TestDefaultModelAndKindWideAreSeparate(t *testing.T) {
+	tb := NewTable()
+	day := t0.Add(20 * time.Hour)
+	tb.Park("codex", "", Verdict{Class: ClassWindow, Scope: ScopeKind, ResetAt: day}, t0)
+	tb.Fail("codex", "", "upstream returned 503", t0.Add(time.Second))
+	if until, class, _ := tb.Until("codex", "model-a", t0.Add(time.Second)); !until.Equal(day) || class != ClassWindow {
+		t.Errorf("a default-model 503 replaced the account window: (%v, %s)", until, class)
+	}
+	if !tb.Avoid("codex", "model-a", t0.Add(time.Second)) {
+		t.Error("the account window stopped being avoided")
+	}
+
+	tb2 := NewTable()
+	tb2.Park("codex", "", Verdict{Class: ClassServer, Scope: ScopeModel, ResetAt: t0.Add(time.Hour)}, t0)
+	if _, _, ok := tb2.Until("codex", "model-a", t0); ok {
+		t.Error("a default-model park parked a named model")
+	}
+	if _, _, ok := tb2.Until("codex", "", t0); !ok {
+		t.Error("the default model itself is not parked")
+	}
+}
+
+// TestAGuessNeverShortensANamedReset: a concurrent failure that names no reset arrives right
+// after one that named 12:00; the park keeps 12:00.
+func TestAGuessNeverShortensANamedReset(t *testing.T) {
+	tb := NewTable()
+	noon := t0.Add(3 * time.Hour)
+	tb.Park("muse", "", Verdict{Class: ClassWindow, Scope: ScopeKind, ResetAt: noon}, t0)
+	tb.Park("muse", "", Verdict{Class: ClassWindow, Scope: ScopeKind}, t0.Add(time.Second))
+	if until, _, _ := tb.Until("muse", "", t0.Add(time.Second)); !until.Equal(noon) {
+		t.Errorf("until = %v, want the named reset %v kept", until, noon)
+	}
+	// A newer named reset still replaces it, earlier or not.
+	earlier := t0.Add(time.Hour)
+	tb.Park("muse", "", Verdict{Class: ClassWindow, Scope: ScopeKind, ResetAt: earlier}, t0.Add(2*time.Second))
+	if until, _, _ := tb.Until("muse", "", t0.Add(2*time.Second)); !until.Equal(earlier) {
+		t.Errorf("until = %v, want the newer named reset %v", until, earlier)
+	}
+}
+
+// TestAStaleSuccessKeepsANewerPark: request A starts, B fails and parks, A succeeds; A's
+// success proves nothing about B's limit.
+func TestAStaleSuccessKeepsANewerPark(t *testing.T) {
+	tb := NewTable()
+	startA := t0
+	tb.Fail("codex", "model-a", "You've hit your usage limit.", t0.Add(time.Second)) // B
+	tb.Succeed("codex", "model-a", startA)                                           // A
+	if _, _, ok := tb.Until("codex", "model-a", t0.Add(2*time.Second)); !ok {
+		t.Fatal("a success that started before the park lifted it")
+	}
+	tb.Succeed("codex", "model-a", t0.Add(3*time.Second)) // a call that started after B
+	if _, _, ok := tb.Until("codex", "model-a", t0.Add(4*time.Second)); ok {
+		t.Fatal("a success that started after the park did not lift it")
 	}
 }

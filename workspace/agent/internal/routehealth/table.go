@@ -19,15 +19,18 @@ const (
 	maxResetAhead = 8 * 24 * time.Hour
 )
 
-// Key names one backend route. Model "" is the kind as a whole: a ScopeKind park, or a call
-// whose model the CLI picked by itself.
+// Key names one backend route. Wide is the kind as a whole (a ScopeKind park); otherwise Model
+// names one model, and Model "" is the CLI's own default model. The two are separate keys: a
+// 5xx on the default model must not overwrite an account window, nor park the named models.
 type Key struct {
 	Kind  string
 	Model string
+	Wide  bool
 }
 
 type entry struct {
 	until   time.Time
+	at      time.Time // when the park was last set; a success that started before it cannot lift it
 	class   Class
 	named   bool // until is a reset the provider named, not a backoff guess
 	strikes int  // consecutive cooling failures; drives the backoff
@@ -62,7 +65,7 @@ func (t *Table) Park(kind, model string, v Verdict, now time.Time) {
 	}
 	k := Key{Kind: kind, Model: model}
 	if v.Scope == ScopeKind {
-		k.Model = ""
+		k = Key{Kind: kind, Wide: true}
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -74,24 +77,39 @@ func (t *Table) Park(kind, model string, v Verdict, now time.Time) {
 		t.m[k] = e
 	}
 	e.strikes++
-	e.class, e.named = v.Class, false
+	e.at = now
+	var until time.Time
+	named := false
 	switch {
 	case v.Class == ClassSpend:
-		e.until = now.Add(BackoffMax)
+		until = now.Add(BackoffMax)
 	case !v.ResetAt.IsZero() && v.ResetAt.After(now) && v.ResetAt.Sub(now) <= maxResetAhead:
-		e.until, e.named = v.ResetAt, true
+		until, named = v.ResetAt, true
 	default:
-		e.until = now.Add(backoff(e.strikes))
+		until = now.Add(backoff(e.strikes))
 	}
+	// A guess never shortens a live park: a concurrent request's "quota exhausted" with no
+	// reset, arriving just after one that named 12:00, says nothing new about when it lifts. A
+	// named reset always replaces, as the newer word from the provider.
+	if !named && e.until.After(until) {
+		return
+	}
+	e.until, e.named, e.class = until, named, v.Class
 }
 
-// Succeed records a successful call on (kind, model). It clears that model's park and the
-// kind-wide one: a call that went through proves the account window is open again.
-func (t *Table) Succeed(kind, model string) {
+// Succeed records a successful call on (kind, model) that started at started. It clears that
+// model's park and the kind-wide one, since a call that went through proves the account window
+// open again, but only parks set before the call started: a request accepted before the limit
+// can still succeed after another one hit it, and that proves nothing about the limit. A zero
+// started clears unconditionally.
+func (t *Table) Succeed(kind, model string, started time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	delete(t.m, Key{Kind: kind, Model: model})
-	delete(t.m, Key{Kind: kind})
+	for _, k := range []Key{{Kind: kind, Model: model}, {Kind: kind, Wide: true}} {
+		if e := t.m[k]; e != nil && (started.IsZero() || e.at.Before(started)) {
+			delete(t.m, k)
+		}
+	}
 }
 
 // Until reports when (kind, model) becomes usable again and why it is parked. ok=false means
@@ -127,12 +145,9 @@ func (t *Table) parks(kind, model string, now time.Time) []entry {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	var out []entry
-	for _, k := range []Key{{Kind: kind}, {Kind: kind, Model: model}} {
+	for _, k := range []Key{{Kind: kind, Wide: true}, {Kind: kind, Model: model}} {
 		if e := t.m[k]; e != nil && e.until.After(now) {
 			out = append(out, *e)
-		}
-		if model == "" {
-			break // the model key is the kind-wide one
 		}
 	}
 	return out

@@ -100,13 +100,18 @@ var (
 		"credit balance",
 		"insufficient credit",
 		"insufficient_quota",
+		"insufficient balance",        // opencode corpus (agents/opencode/retry_test.go)
+		"exceeded your current quota", // "… please check your plan and billing details."
+		"billing details",
 	}
+	// windowMarkers name a subscription usage window. A bare "quota" is not one: per-minute
+	// request quotas and disk quotas say "quota exceeded" too (see quotaClass).
 	windowMarkers = []string{
 		"usage limit",
 		"session limit",
 		"weekly limit",
-		"quota exhausted",
-		"quota exceeded",
+		"subscription quota",
+		"usage quota",
 		"usagelimitexceeded",
 	}
 	rateLimitMarkers = []string{
@@ -125,9 +130,11 @@ var (
 	}
 )
 
-// statusRe takes an HTTP status as a whole word, so "404" inside a request id or a token count
-// does not read as one.
-var statusRe = regexp.MustCompile(`\b([45]\d\d)\b`)
+// statusRe reads an HTTP status only where the text says it is one: right after HTTP, status,
+// statusCode, code, error, returned or "failed with", or as the first word of the message. A
+// bare whole-word number is not enough: "max_tokens must be greater than 512" names no status,
+// and in "request_id=req-401-abc: HTTP 503" the 401 is part of an id.
+var statusRe = regexp.MustCompile(`(?i)(?:^\s*|\b(?:http(?:/[\d.]+)?|status(?:[ _-]?code)?|code|error|returned|failed with)\W{0,3})([45]\d\d)\b`)
 
 // Classify reads one failed call's error text. kind selects the measured reader for providers
 // that have one; now anchors a reset time that the text gives as a wall clock only.
@@ -143,6 +150,9 @@ func Classify(kind, msg string, now time.Time) Verdict {
 		if lk, at, ok := claude.LimitInMessage(msg, now); ok {
 			if lk == claude.LimitSpend {
 				return Verdict{Class: ClassSpend, Scope: ScopeKind}
+			}
+			if claude.IsPerModelLimit(msg) {
+				return Verdict{Class: ClassWindow, Scope: ScopeModel, ResetAt: at}
 			}
 			return Verdict{Class: ClassWindow, Scope: ScopeKind, ResetAt: at}
 		}
@@ -163,7 +173,7 @@ func Classify(kind, msg string, now time.Time) Verdict {
 		return Verdict{Class: ClassSpend, Scope: ScopeKind}
 	case containsAny(low, windowMarkers):
 		return Verdict{Class: ClassWindow, Scope: ScopeKind}
-	case containsAny(low, rateLimitMarkers):
+	case containsAny(low, rateLimitMarkers), quotaIsRate(low):
 		return Verdict{Class: ClassRateLimit, Scope: ScopeModel}
 	case containsAny(low, serverMarkers):
 		return Verdict{Class: ClassServer, Scope: ScopeModel}
@@ -181,6 +191,21 @@ func Classify(kind, msg string, now time.Time) Verdict {
 		}
 	}
 	return Verdict{Class: ClassOther}
+}
+
+// quotaIsRate reports whether a "quota exceeded / exhausted" text that named no subscription
+// window (windowMarkers) and no billing (spendMarkers) is read as a request-rate quota: one
+// model, a short wait. "Quota exceeded for requests per minute" is the common shape, and
+// nothing in a bare quota text says it is account-wide or long. A disk quota is no LLM limit
+// at all (the muse reader rejects it too).
+func quotaIsRate(low string) bool {
+	if strings.Contains(low, "disk quota") {
+		return false
+	}
+	if !strings.Contains(low, "quota exceeded") && !strings.Contains(low, "quota exhausted") {
+		return false
+	}
+	return true
 }
 
 func containsAny(s string, subs []string) bool {

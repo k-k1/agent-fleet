@@ -42,11 +42,12 @@ func chatRouteModel(c *ChatConversation, kind string) string {
 // NoteTurnResult reports one chat call's outcome to the cooldown table and returns the verdict
 // (the zero Verdict on success). A turn the user stopped or that ran out of time says nothing
 // about the backend and is not reported. kind is the backend that ran (the caller's
-// actualAgent).
+// actualAgent). A success lifts only parks set before the call started (c.turnStart, stamped by
+// the provider's StartTurn).
 func NoteTurnResult(ctx context.Context, c *ChatConversation, kind string, err error) routehealth.Verdict {
 	model := chatRouteModel(c, kind)
 	if err == nil {
-		routehealth.Default.Succeed(kind, model)
+		routehealth.Default.Succeed(kind, model, c.turnStart)
 		return routehealth.Verdict{}
 	}
 	if ctx.Err() != nil {

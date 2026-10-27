@@ -2161,8 +2161,9 @@ func OneShotHeadless(ctx context.Context, feature string, tier OneShotTier, pers
 // the priority order; the pin gives way to it the same way it gives way to a logged-out CLI.
 func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, persona, prompt, claudeModel string) (reply, kind, model string, err error) {
 	first := oneShotRouteKind(feature, tier, claudeModel)
+	started := routeNow()
 	reply, kind, model, err = oneShotRunOn(ctx, first, feature, tier, persona, prompt, claudeModel)
-	v := noteOneShotResult(ctx, first, model, err)
+	v := noteOneShotResult(ctx, first, model, started, err)
 	if !v.Cools() {
 		return reply, kind, model, err
 	}
@@ -2171,8 +2172,9 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 		return reply, kind, model, err
 	}
 	log.Printf("one-shot %s: %s failed (%s), retrying on %s", feature, first, v.Class, next)
+	started = routeNow()
 	reply, kind, model, err = oneShotRunOn(ctx, next, feature, tier, persona, prompt, claudeModel)
-	noteOneShotResult(ctx, next, model, err)
+	noteOneShotResult(ctx, next, model, started, err)
 	return reply, kind, model, err
 }
 
@@ -2198,8 +2200,9 @@ func oneShotRouteKind(feature string, tier OneShotTier, claudeModel string) stri
 // oneShotRouteModel is the model a one-shot on kind is looked up under in the cooldown table
 // before it runs: the same choice oneShotRunOn starts from. A per-CLI adjustment can still
 // change what runs (codex dropping an auto-picked -m, agy matching an id to its catalogue);
-// the outcome is recorded under the model that ran, and a run on the CLI's own default ("")
-// lands on the kind-wide key, which this lookup sees whatever model it names.
+// the outcome is recorded under the model that ran. A run that fell back to the CLI's own
+// default ("") is recorded under that default, which is its own key: a lookup for a named model
+// does not see it, so the next call tries the named model first again.
 func oneShotRouteModel(feature string, tier OneShotTier, kind, claudeModel string) string {
 	selected, configured := resolveOneShotModel(feature, tier, kind)
 	var m string
@@ -2224,9 +2227,10 @@ func oneShotRouteModel(feature string, tier OneShotTier, kind, claudeModel strin
 // noteOneShotResult reports a one-shot's outcome to the cooldown table, as NoteTurnResult does
 // for chat turns. model is what the run requested (oneShotRunOn's own answer), not a fresh
 // resolution of the settings: a CLI that fell back to another model failed or succeeded on that.
-func noteOneShotResult(ctx context.Context, kind, model string, err error) routehealth.Verdict {
+// started is when the run began (routehealth.Table.Succeed).
+func noteOneShotResult(ctx context.Context, kind, model string, started time.Time, err error) routehealth.Verdict {
 	if err == nil {
-		routehealth.Default.Succeed(kind, model)
+		routehealth.Default.Succeed(kind, model, started)
 		return routehealth.Verdict{}
 	}
 	if ctx.Err() != nil {
