@@ -96,6 +96,8 @@ func TestAppUserTokenMergeButton(t *testing.T) {
 		{"repositories 404", "ghu_a", fakeAppCfg{inst: instBody("write"), repos: `{}`, reposCode: 404}, false},
 		{"repositories 500", "ghu_a", fakeAppCfg{inst: instBody("write"), repos: `{}`, reposCode: 500}, false},
 		{"installations null", "ghu_a", fakeAppCfg{inst: `{"installations":null}`, repos: good}, false},
+		{"installation without permissions", "ghu_a", fakeAppCfg{inst: `{"installations":[{"id":7}]}`, repos: good}, false},
+		{"installation permissions null", "ghu_a", fakeAppCfg{inst: `{"installations":[{"id":7,"permissions":null}]}`, repos: good}, false},
 		{"installations absent", "ghu_a", fakeAppCfg{inst: `{}`, repos: good}, false},
 		{"repositories absent", "ghu_a", fakeAppCfg{inst: instBody("write"), repos: `{}`}, false},
 		{"repo listed without permissions", "ghu_a", fakeAppCfg{inst: instBody("write"), repos: `{"repositories":[{"full_name":"acme/web"}]}`}, false},
@@ -211,7 +213,7 @@ func TestAppUserTokenUnexpectedShapeIsNotCached(t *testing.T) {
 		switch r.URL.Path {
 		case "/user/installations":
 			if n.Add(1) == 1 {
-				_, _ = w.Write([]byte(`{}`))
+				_, _ = w.Write([]byte(`{"installations":[{"id":7}]}`))
 				return
 			}
 			_, _ = w.Write([]byte(instBody("write")))

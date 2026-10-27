@@ -87,12 +87,13 @@ func githubAppUserCanMerge(token, repo string) bool {
 // a positive answer, so a transient error is neither cached nor read as "no".
 func githubAppUserCanWriteContents(ctx context.Context, token, repo string) (can, definitive bool) {
 	var writers []int64
+	unknownShape := false
 	for page := 1; page <= appPermMaxPages; page++ {
 		var res struct {
 			// A pointer to the slice: null or absent is not "zero installations".
 			Installations *[]struct {
 				ID          int64             `json:"id"`
-				Permissions map[string]string `json:"permissions"`
+				Permissions *map[string]string `json:"permissions"`
 			} `json:"installations"`
 		}
 		if err := githubGetAppJSON(ctx, token, fmt.Sprintf("%s/user/installations?per_page=%d&page=%d", githubAPIBase, appPermPageSize, page), &res); err != nil {
@@ -102,7 +103,9 @@ func githubAppUserCanWriteContents(ctx context.Context, token, repo string) (can
 			return false, false // not the documented shape: unknown
 		}
 		for _, in := range *res.Installations {
-			if in.Permissions["contents"] == "write" {
+			if in.Permissions == nil || *in.Permissions == nil {
+				unknownShape = true // no permissions map at all: unknown, not "no contents"
+			} else if (*in.Permissions)["contents"] == "write" {
 				writers = append(writers, in.ID)
 			}
 		}
@@ -113,7 +116,7 @@ func githubAppUserCanWriteContents(ctx context.Context, token, repo string) (can
 			return false, false // more installations than we read: unknown
 		}
 	}
-	definitive = true
+	definitive = !unknownShape
 	if len(writers) > appPermMaxInstal {
 		writers = writers[:appPermMaxInstal]
 		definitive = false // installations left unchecked: a "no" would be a guess
