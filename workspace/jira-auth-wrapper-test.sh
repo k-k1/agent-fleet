@@ -662,6 +662,23 @@ for form in "-p AAA -P AAA-1" "-p BBB -P AAA-1"; do
   done
 done
 
+# The replace route: a 0400 config holding AAA's types, `-p BBB -P ..`: AAA's types are cut, BBB's
+# and next-gen are in, and both derived files are 0400.
+reset; oauth; types
+config "$MANAGED/config.yml" $'project:\n  key: AAA\n  type: classic\nissue:\n  types:\n    - id: "7"\n      name: Task'
+chmod 400 "$MANAGED/config.yml"
+run -- issue create -t Task -s x -p BBB -P AAA-1
+expect_ng parent-replace400
+d="$(seen CONFIG)"
+grep -q '"7"' "$d" && fail "parent-replace400: AAA's types survived"
+grep -q '"10001"' "$d" && grep -qx '  type: next-gen' "$d" && ! grep -q classic "$d" || fail "parent-replace400: $(cat "$d")"
+n=0
+for f in "$CGEN"/derived/config-*.yml; do
+  n=$((n + 1))
+  [ "$(stat -c %a "$f")" = 400 ] || fail "parent-replace400: $f is $(stat -c %a "$f")"
+done
+[ "$n" = 2 ] || fail "parent-replace400: $n derived files, want 2"
+
 # 13f. The user's own setup is never touched, hinted at or fetched for: another config, jira's
 #      default location, an explicit token or server, a debug run, other subcommands.
 reset
@@ -1680,6 +1697,21 @@ Task" ] || fail "required [${spec%%|*}]: lookup argv '$(cat "$T/req.argv" 2>/dev
   grep -q 'requires a description at create time' "$T/err" || fail "required [${spec%%|*}]: no note"
   [ -z "$(ls -A "$T/tmp")" ] || fail "required [${spec%%|*}] left files behind: $(ls -A "$T/tmp")"
 done
+rm -f "$T/req.out"
+# -P together with a body: the parent stays in jira's argv on the next-gen config, and the
+# description goes the same way as without it (set afterwards, or on stdin when required).
+reset; desc_reset; oauth; types; created AB-12
+run -- issue create -p AB -t Task -s sum -P AB-1 -b body --no-input
+expect_ng "parent+body"
+[ "$rc" = 0 ] && [ "$(args_of)" = "issue create -p AB -t Task -s sum -P AB-1 --no-input " ] || fail "parent+body: rc=$rc jira argv '$(args_of)'"
+[ "$(cat "$T/desc.argv" 2>/dev/null)" = AB-12 ] && [ "$(cat "$T/desc.stdin" 2>/dev/null)" = body ] || fail "parent+body: description not set"
+reset; desc_reset; oauth; types; rm -f "$T/req.argv"; echo required >"$T/req.out"
+plan 1 0 "$ROUTE/browse/AB-7
+" ""
+run STUB_READ_STDIN=1 -- issue create -p AB -t Task -s sum -P AB-1 -b body
+expect_ng "parent+required"
+[ "$rc" = 0 ] && [ ! -f "$T/desc.argv" ] && [ "$(args_of)" = "issue create -p AB -t Task -s sum -P AB-1 " ] || fail "parent+required: rc=$rc jira argv '$(args_of)'"
+[ "$(cat "$T/stdin.seen" 2>/dev/null)" = body ] || fail "parent+required: body on stdin '$(cat "$T/stdin.seen" 2>/dev/null)'"
 rm -f "$T/req.out"
 # The type may come as -tTask / --type=Task, the project from the config.
 reset; desc_reset; oauth; rm -f "$T/req.argv"; echo optional >"$T/req.out"; created AB-1
