@@ -16,7 +16,7 @@ vi.mock("../../viewer/MarkdownView.tsx", () => ({
 
 import { TranscriptView } from "./TranscriptView.tsx";
 import { THINKING_FOOT_MIN_PX, thinkingPreview } from "./blocks.tsx";
-import { groupTurns } from "./model.ts";
+import { coalesceUserActions, groupTurns } from "./model.ts";
 import type { TranscriptCaps } from "./capabilities.ts";
 import type { Part, Turn } from "./types.ts";
 import { t as tr, setLocale } from "../../../lib/i18n/index.ts";
@@ -662,5 +662,34 @@ describe("an undecided question or plan never claims it was decided", () => {
     const turns: Turn[] = [{ role: "assistant", idx: 1, parts: [{ kind: "plan", plan: "# 移行計画" }] }];
     const el = render(turns, { ...OWNER, isRejectedPlan: () => true });
     expect(el.querySelector(".mt-plan-badge")?.textContent).toBe(tr("mirror.rejected"));
+  });
+});
+
+describe("a slash command sent with an attachment (#2823)", () => {
+  const p = "/home/dev/.cache/agent-fleet/pasted/k1/paste-7.png";
+  const f = "/home/dev/.cache/agent-fleet/pasted/k1/paste-8-notes.txt";
+  const cmd = (args: string): Turn[] =>
+    coalesceUserActions([
+      {
+        role: "user",
+        idx: 1,
+        text: `<command-message>issue-to-pr</command-message><command-name>/issue-to-pr</command-name><command-args>${args}</command-args>`,
+      },
+    ]);
+  const caps: TranscriptCaps = { ...RECIPIENT, loadPastedImage: () => new Promise<Blob | null>(() => {}) };
+
+  it("keeps the Read instruction out of the chip and shows the attachments under it", () => {
+    const el = render(cmd(`直して Open the following file(s) with the Read tool: \`${p}\` \`${f}\``), caps);
+    expect(el.querySelector(".mt-cmd-name")?.textContent).toBe("/issue-to-pr");
+    expect(el.querySelector(".mt-cmd-args")?.textContent).toBe("直して");
+    expect(el.textContent).not.toContain("Read tool");
+    expect(el.querySelectorAll(".mt-imgs .mt-img")).toHaveLength(1);
+    expect(el.querySelector(".mt-attach-file-name")?.textContent).toBe("paste-8-notes.txt");
+  });
+
+  it("leaves plain args untouched", () => {
+    const el = render(cmd("review 1110"), caps);
+    expect(el.querySelector(".mt-cmd-args")?.textContent).toBe("review 1110");
+    expect(el.querySelector(".mt-imgs")).toBeNull();
   });
 });

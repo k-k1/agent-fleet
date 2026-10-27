@@ -248,6 +248,31 @@ function TranscriptTurnImpl({
     flush();
     return out;
   };
+  // What the member attached to a prompt (split off by splitPastedImages): thumbnails for
+  // images, a name chip for anything else.
+  const renderAttachments = (images: string[], files: string[]) => (
+    <>
+      {images.length > 0 && caps.loadPastedImage && (
+        <div className="mt-imgs">
+          {images.map((nm) => (
+            <PastedThumb key={nm} name={nm} load={caps.loadPastedImage!} onOpen={caps.openImage} />
+          ))}
+        </div>
+      )}
+      {files.length > 0 && (
+        // Non-image attachments (drag & drop, or the + button): a name chip — the
+        // file itself lives under the session's pasted dir for the agent to read.
+        <div className="mt-attach-files">
+          {files.map((nm) => (
+            <span className="mt-attach-file" key={nm} title={nm}>
+              <FileIcon name={nm} />
+              <span className="mt-attach-file-name">{nm}</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </>
+  );
   const renderUserFile = (p: Part, key: number) =>
     // Files the agent shared via SendUserFile, and the picture cards af's generate_image
     // synthesizes from its result — a panel; a card opens in a pane, an image card enlarges
@@ -526,7 +551,17 @@ function TranscriptTurnImpl({
           ))
         ) : isUser && turn.cmd ? (
           // A `/`-run slash command / skill invocation: a compact chip marking the action.
-          turn.parts.map((p, i) => <CmdChip key={i} name={p.text} args={p.info} />)
+          // Args sent with an attachment carry the machine-facing Read instruction and paths;
+          // split them off like a plain prompt so the chip shows the user's words only.
+          turn.parts.map((p, i) => {
+            const { text, images, files } = splitPastedImages(p.info || "");
+            return (
+              <Fragment key={i}>
+                <CmdChip name={p.text} args={text} />
+                {renderAttachments(images, files)}
+              </Fragment>
+            );
+          })
         ) : isUser ? (
           (() => {
             // Split off any pasted-image references so the bubble shows the user's words
@@ -549,25 +584,7 @@ function TranscriptTurnImpl({
                     markKind=""
                   />
                 )}
-                {images.length > 0 && caps.loadPastedImage && (
-                  <div className="mt-imgs">
-                    {images.map((nm) => (
-                      <PastedThumb key={nm} name={nm} load={caps.loadPastedImage!} onOpen={caps.openImage} />
-                    ))}
-                  </div>
-                )}
-                {files.length > 0 && (
-                  // Non-image attachments (drag & drop, or the + button): a name chip — the
-                  // file itself lives under the session's pasted dir for the agent to read.
-                  <div className="mt-attach-files">
-                    {files.map((nm) => (
-                      <span className="mt-attach-file" key={nm} title={nm}>
-                        <FileIcon name={nm} />
-                        <span className="mt-attach-file-name">{nm}</span>
-                      </span>
-                    ))}
-                  </div>
-                )}
+                {renderAttachments(images, files)}
               </>
             );
           })()
