@@ -6,6 +6,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin/memberorigintest"
 )
 
 // docs/log/80 §80.10 - the one write-back path. Break it and you get either "posted but not
@@ -66,10 +69,9 @@ func TestJiraADF(t *testing.T) {
 
 func TestWorkItemsCommentValidation(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	s := memberorigintest.Install(t)
 	post := func(body string) *httptest.ResponseRecorder {
-		w := httptest.NewRecorder()
-		handleWorkItemsComment(w, httptest.NewRequest("POST", "/work-items/comment", strings.NewReader(body)))
-		return w
+		return postComment(t, s, body)
 	}
 	if w := post(`{"provider":"github","key":"","body":"x"}`); w.Code != http.StatusBadRequest {
 		t.Errorf("empty key = %d", w.Code)
@@ -98,5 +100,107 @@ func TestGitHubCommentSurfacesProviderRefusal(t *testing.T) {
 	// validation - that a malformed key never reaches the network - not the route.
 	if _, err := githubPostIssueComment("tok", "not-a-key", "body"); err == nil {
 		t.Error("a malformed key was sent to the API instead of being refused locally")
+	}
+}
+
+// commentReq is the request the CP relays: JSON, AGENT_TOKEN as the bearer.
+func commentReq(body string) *http.Request {
+	r := httptest.NewRequest("POST", "/work-items/comment", strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer agent-token")
+	r.Header.Set("Content-Type", "application/json")
+	return r
+}
+
+// postComment is the CP's relay of a member's press, through the real route table: a valid mark
+// over the exact body.
+func postComment(t *testing.T, s *memberorigintest.Signer, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := commentReq(body)
+	s.Sign(r, []byte(body))
+	w := httptest.NewRecorder()
+	buildMux().ServeHTTP(w, r)
+	return w
+}
+
+func serveComment(r *http.Request) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	buildMux().ServeHTTP(w, r)
+	return w
+}
+
+// AGENT_TOKEN is in every session's shell, so a session can make the HTTP call itself. The route
+// takes only a request the CP marked as this workspace's own member's press; everything else is
+// refused before the tracker is reached.
+func TestWorkItemsCommentRequiresTheMemberOriginMark(t *testing.T) {
+	seedGitHubToken(t)
+	forger := memberorigintest.Install(t) // a key pair the Agent stops trusting once s is installed
+	s := memberorigintest.Install(t)
+	calls := fakeGitHubMerge(t, 201, `{"html_url":"https://github.com/acme/web/issues/12#c1"}`)
+	body := `{"provider":"github","key":"acme/web#12","body":"hello"}`
+	want := func(name string, w *httptest.ResponseRecorder, code string) {
+		t.Helper()
+		if w.Code < 400 || !strings.Contains(w.Body.String(), code) {
+			t.Errorf("%s: %d %s, want a refusal with %q", name, w.Code, w.Body.String(), code)
+		}
+	}
+
+	want("token only", serveComment(commentReq(body)), memberorigin.CodeRequired)
+	hint := commentReq(body)
+	hint.Header.Set("X-AF-Relay", "cp")
+	want("relay hint", serveComment(hint), memberorigin.CodeRequired)
+	forged := commentReq(body)
+	forged.Header.Set(memberorigin.Header, forger.Mark(memberorigintest.Claims(forged, []byte(body))))
+	want("forged", serveComment(forged), memberorigin.CodeInvalid)
+	// A real mark over a different body (the text swapped after signing).
+	tampered := commentReq(strings.Replace(body, "hello", "evil", 1))
+	tampered.Header.Set(memberorigin.Header, s.Mark(memberorigintest.Claims(commentReq(body), []byte(body))))
+	want("tampered body", serveComment(tampered), memberorigin.CodeInvalid)
+	for name, edit := range map[string]func(*memberorigin.Claims){
+		"other workspace":  func(c *memberorigin.Claims) { c.Workspace = "ws-someone-else" },
+		"other membership": func(c *memberorigin.Claims) { c.Membership = "mb-someone-else" },
+		"other path":       func(c *memberorigin.Claims) { c.Path = "/work-items/merge" },
+	} {
+		r := commentReq(body)
+		c := memberorigintest.Claims(r, []byte(body))
+		edit(&c)
+		r.Header.Set(memberorigin.Header, s.Mark(c))
+		if w := serveComment(r); w.Code < 400 {
+			t.Errorf("%s: %d %s", name, w.Code, w.Body.String())
+		}
+	}
+	// text/plain is what a cross-origin page sends without a preflight.
+	plain := commentReq(body)
+	plain.Header.Set("Content-Type", "text/plain")
+	s.Sign(plain, []byte(body))
+	if w := serveComment(plain); w.Code != http.StatusUnsupportedMediaType {
+		t.Errorf("text/plain: %d %s", w.Code, w.Body.String())
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("GitHub was reached by a request that should have been refused: %+v", *calls)
+	}
+
+	// The CP's own relay gets through, once; the same mark replayed does not.
+	ok := commentReq(body)
+	mark := s.Mark(memberorigintest.Claims(ok, []byte(body)))
+	ok.Header.Set(memberorigin.Header, mark)
+	if w := serveComment(ok); w.Code != http.StatusOK || len(*calls) != 1 {
+		t.Fatalf("signed: %d %s (calls %d)", w.Code, w.Body.String(), len(*calls))
+	}
+	replay := commentReq(body)
+	replay.Header.Set(memberorigin.Header, mark)
+	if w := serveComment(replay); w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "replayed") || len(*calls) != 1 {
+		t.Fatalf("replayed: %d %s (calls %d)", w.Code, w.Body.String(), len(*calls))
+	}
+}
+
+// A handler registered without the wrapper still refuses.
+func TestWorkItemsCommentHandlerRefusesWithoutAMark(t *testing.T) {
+	seedGitHubToken(t)
+	memberorigintest.Install(t)
+	calls := fakeGitHubMerge(t, 201, `{}`)
+	w := httptest.NewRecorder()
+	handleWorkItemsComment(w, commentReq(`{"provider":"github","key":"acme/web#12","body":"x"}`))
+	if w.Code != http.StatusForbidden || len(*calls) != 0 {
+		t.Fatalf("%d %s (calls %d)", w.Code, w.Body.String(), len(*calls))
 	}
 }

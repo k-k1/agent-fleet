@@ -12,13 +12,16 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // Posting a comment back to the ticket (docs/log/80 §80.10 / ADR 0061 decision 6).
 //
-// This is the ONLY write af performs against a tracker, and it is reachable only from a human
-// clicking Post on a draft they have just read. There is deliberately:
+// The first write af performs against a tracker, and it is reachable only from a human
+// clicking Post on a draft they have just read. Every session holds AGENT_TOKEN, so the Agent
+// enforces that itself: the route takes only a member-origin mark the CP signed for this
+// workspace's own member (ADR 0113). There is deliberately:
 //   - no MCP tool for it (an agent cannot reach this path),
 //   - no automatic trigger (no "session finished → comment"),
 //   - no state transition, no close, no assignee change.
@@ -28,8 +31,17 @@ import (
 // write back into the tracker closes a loop we do not want closed. A human reading the
 // draft is the gate.
 
+// workItemCommentMaxRequest bounds the body memberorigin.Require buffers: a drafted comment is
+// long-form text, and the provider limits (GitHub 65536 characters) sit below this.
+const workItemCommentMaxRequest = 256 << 10
+
 // handleWorkItemsComment — POST /work-items/comment {provider, key, body}.
 func handleWorkItemsComment(w http.ResponseWriter, r *http.Request) {
+	// Registered behind memberorigin.Require; refusing here as well keeps a route that is ever
+	// registered without the wrapper closed rather than open.
+	if !memberorigin.RefuseUnverified(w, r) {
+		return
+	}
 	var in struct {
 		Provider string `json:"provider"`
 		Key      string `json:"key"`
@@ -104,7 +116,7 @@ func githubPostIssueComment(token, key, body string) (string, error) {
 		return "", fmt.Errorf("cannot post to %q (expected owner/name#number)", key)
 	}
 	payload, _ := json.Marshal(map[string]string{"body": body})
-	u := fmt.Sprintf("https://api.github.com/repos/%s/issues/%d/comments", gitx.EscapeRepoPath(repo), number)
+	u := fmt.Sprintf("%s/repos/%s/issues/%d/comments", githubAPIBase, gitx.EscapeRepoPath(repo), number)
 	req, err := http.NewRequest("POST", u, bytes.NewReader(payload))
 	if err != nil {
 		return "", err

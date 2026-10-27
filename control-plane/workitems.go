@@ -552,7 +552,16 @@ func (e *httpStatusError) Error() string { return e.msg }
 // honest — posting is a write against someone else's tracker, so it happens when the
 // user is present and their workspace is up, not as a side effect of pressing a button
 // on a stopped one.
+//
+// Held to the merge route's standard (ADR 0061, ADR 0113): the request must be the Console's own
+// JSON request (the session cookie is SameSite=Lax, so a same-site page could otherwise send a
+// text/plain no-cors POST), and the Agent is told it is a member's press by a member-origin mark
+// signed over the exact body, because every session holds AGENT_TOKEN.
 func (a workItemsAPI) comment(w http.ResponseWriter, r *http.Request, res *resolved) {
+	if aerr := memberOriginRequestCheck(r); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	var in struct {
 		Provider string `json:"provider"`
 		Key      string `json:"key"`
@@ -566,19 +575,34 @@ func (a workItemsAPI) comment(w http.ResponseWriter, r *http.Request, res *resol
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "key and body are required"})
 		return
 	}
+	// The mark speaks for the workspace's own member.
+	if res.ws.MembershipID == "" || res.ws.MembershipID != res.mv.MembershipID {
+		writeAPIErr(w, &apiError{http.StatusForbidden, "forbidden", "only the workspace's own member can post from it"})
+		return
+	}
 	ctx := r.Context()
 	if res.rt.State(ctx) != "running" {
 		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_stopped",
 			"start the workspace to post the comment (the tracker credentials live in it)"})
 		return
 	}
+	// What is signed is what is sent: the normalised body, not the browser's bytes.
 	payload, _ := json.Marshal(in)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, res.rt.Endpoint()+"/work-items/comment", bytes.NewReader(payload))
+	const agentPath = "/work-items/comment"
+	mark, aerr := a.mgr.memberOriginSign(res, http.MethodPost, agentPath, "", payload, time.Now())
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, res.rt.Endpoint()+agentPath, bytes.NewReader(payload))
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if mark != "" {
+		req.Header.Set(memberOriginHeader, mark)
+	}
 	if tok := res.rt.Token(); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
