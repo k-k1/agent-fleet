@@ -264,6 +264,40 @@ const now = Date.now();
     sessions.ses_c.metadata = { "af.sid": "sidC" };
     h.push(ev("session.execution.started", { sessionID: "ses_c" }));
     await until(() => statusLines().includes("session-status working sidC"), "C reports once tagged");
+
+    // /new: the turn starts before the pane tags its session. The start is held
+    // and reported once the tag appears, the turn's end after it.
+    sessions.ses_new = { metadata: {} };
+    let mark = statusLines().length;
+    h.push(ev("session.created", { sessionID: "ses_new" }), ev("session.execution.started", { sessionID: "ses_new" }));
+    await sleep(200);
+    assert.deepEqual(statusLines().slice(mark), [], "nothing is reported before the tag");
+    sessions.ses_new.metadata = { "af.sid": "sidN" };
+    await until(() => statusLines().length >= mark + 1, "the held start once tagged");
+    h.push(ev("session.execution.succeeded", { sessionID: "ses_new" }));
+    await until(() => statusLines().length >= mark + 2, "the turn's end");
+    assert.deepEqual(statusLines().slice(mark), ["session-status working sidN", "session-status idle sidN"]);
+    assert.equal(readFileSync(join(sidDirOf(), "sidN"), "utf8"), "ses_new", "the slot follows the held session");
+
+    // A turn that ended before the tag appeared is still reported whole, in order.
+    sessions.ses_quick = { metadata: {} };
+    mark = statusLines().length;
+    h.push(ev("session.execution.started", { sessionID: "ses_quick" }), ev("session.execution.succeeded", { sessionID: "ses_quick" }));
+    await sleep(200);
+    sessions.ses_quick.metadata = { "af.sid": "sidQ" };
+    await until(() => statusLines().length >= mark + 2, "the replayed turn");
+    assert.deepEqual(statusLines().slice(mark), ["session-status working sidQ", "session-status idle sidQ"]);
+
+    // A session that is never tagged, and a Managed one, report nothing; the hold ends with the
+    // wait (AF_OPENCODE_TAG_WAIT_MS) and a later tag does not resurrect the old turn.
+    sessions.ses_never = { metadata: {} };
+    sessions.ses_managed = { metadata: { "af.managed": "1" } };
+    mark = statusLines().length;
+    h.push(ev("session.execution.started", { sessionID: "ses_never" }), ev("session.execution.started", { sessionID: "ses_managed" }));
+    await sleep(900);
+    sessions.ses_never.metadata = { "af.sid": "sidX" };
+    await sleep(300);
+    assert.deepEqual(statusLines().slice(mark), [], "an expired hold or a Managed session must not report");
     stop();
   } finally {
     if (saved !== undefined) process.env.AF_SESSION_SID = saved;

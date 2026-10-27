@@ -53,6 +53,11 @@ const GRACE_MS = 1500; // ignore message.* this long after session.idle (trailin
 // The override exists for tests (plugin_modules_test.go): they must observe the reported states
 // without touching a real Agent.
 const AGENT_BIN = process.env.AF_WORKSPACE_AGENT_BIN || "/usr/local/bin/workspace-agent";
+// How long an untagged session's turn waits for its tag; the shared-server plugin waits as long
+// before a shell command in such a session.
+const TAG_WAIT_MS = Number(process.env.AF_OPENCODE_TAG_WAIT_MS) || 5000;
+const TAG_POLL_MS = 100;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const bridge = () => {
   const envSid = process.env.AF_SESSION_SID;
@@ -145,8 +150,9 @@ const bridge = () => {
   //
   // owner(id) is the af sid a session reports under: undefined = not known yet or not ours (a
   // failed lookup, a session af has not tagged yet — the next event asks again), null = a
-  // subagent session. A tagged root session is remembered for good; a tag does not change.
-  const known = new Map(); // session id -> af sid | null (subagent)
+  // subagent or Managed session. A tagged root session is remembered for good; a tag does not
+  // change, and a Managed session (af.managed) is never given an af.sid.
+  const known = new Map(); // session id -> af sid | null (subagent, Managed)
   const remember = (id, sid) => (known.set(id, sid), sid);
   const owner = async (id, lookup, created) => {
     if (known.has(id)) return known.get(id);
@@ -158,12 +164,43 @@ const bridge = () => {
     try {
       const info = await lookup({ sessionID: id });
       if (info && info.parentID) return remember(id, null);
-      const sid = envSid || (info && info.metadata && info.metadata["af.sid"]);
+      const md = (info && info.metadata) || {};
+      if (!envSid && md["af.managed"]) return remember(id, null);
+      const sid = envSid || md["af.sid"];
       if (typeof sid !== "string" || !sid) return undefined;
       return remember(id, sid);
     } catch {
       return undefined;
     }
+  };
+
+  // A session made with /new is tagged by the pane's TUI plugin only once the pane shows it, and
+  // opencode creates it on the first submit, so its turn starts before it has an af.sid
+  // (measured on 2.1.4 and 2.2.0: session.created, then execution.started 160-250 ms later, both
+  // untagged; tagged by execution.succeeded). Dropping that start loses the turn's working report, and its idle is
+  // then a repeat of the previous turn's and is debounced away, so the badge never moves. An
+  // untagged start is therefore held, the session asked about again for TAG_WAIT_MS, and the
+  // turn replayed (working, then idle if it has already ended) once the tag appears.
+  const unowned = new Map(); // session id -> { done } of a turn that started untagged
+  const replay = (id, sid) => {
+    const turn = unowned.get(id);
+    if (!turn) return;
+    unowned.delete(id);
+    recordOcid(sid, id);
+    set(sid, "working");
+    if (turn.done) idle(sid);
+  };
+  const awaitTag = async (id, lookup) => {
+    const until = Date.now() + TAG_WAIT_MS;
+    while (Date.now() < until) {
+      await sleep(TAG_POLL_MS);
+      if (stopped || !unowned.has(id)) return;
+      const sid = await owner(id, lookup);
+      if (stopped) return;
+      if (sid === null) return void unowned.delete(id);
+      if (typeof sid === "string") return replay(id, sid);
+    }
+    unowned.delete(id); // never tagged in time: not a pane's session, as before
   };
   const onV2 = async (event, lookup) => {
     const t = event && event.type;
@@ -182,7 +219,19 @@ const bridge = () => {
       t === "session.idle";
     if (!working && !done) return;
     const sid = await owner(data.sessionID, lookup);
-    if (stopped || typeof sid !== "string") return;
+    if (stopped) return;
+    if (sid === undefined) {
+      const turn = unowned.get(data.sessionID);
+      if (working && !turn) {
+        unowned.set(data.sessionID, { done: false });
+        void awaitTag(data.sessionID, lookup);
+      } else if (turn) {
+        turn.done = done;
+      }
+      return;
+    }
+    if (sid === null) return void unowned.delete(data.sessionID);
+    replay(data.sessionID, sid);
     if (working) {
       recordOcid(sid, data.sessionID);
       set(sid, "working");
