@@ -51,6 +51,7 @@ func parseJiraCommentArgs(args []string) (jiraCommentArgs, error) {
 		"-c": true, "--config": true, "-p": true, "--project": true}
 	boolean := map[string]bool{"--no-input": true, "--internal": true, "--web": true, "--debug": true, "--help": true, "-h": true}
 	seen := map[string]bool{}
+	jiraCLIOnly := map[string]bool{}
 	setFlag := func(name, val string) {
 		seen[name] = true
 		switch name {
@@ -70,9 +71,12 @@ func parseJiraCommentArgs(args []string) (jiraCommentArgs, error) {
 		case "--internal":
 			a.internal = b
 		case "--web", "--debug", "--help", "-h":
-			if b {
-				return fmt.Errorf("%s is handled by jira-cli, not here", name)
+			// The last value wins, as in pflag: judged once argv has been read.
+			key := strings.TrimLeft(name, "-")
+			if key == "h" {
+				key = "help"
 			}
+			jiraCLIOnly[key] = b
 		}
 		seen[name] = true
 		return nil
@@ -115,6 +119,11 @@ func parseJiraCommentArgs(args []string) (jiraCommentArgs, error) {
 			return a, fmt.Errorf("unknown flag: %s", s)
 		default:
 			pos = append(pos, s)
+		}
+	}
+	for _, name := range []string{"help", "web", "debug"} {
+		if jiraCLIOnly[name] {
+			return a, fmt.Errorf("--%s is handled by jira-cli, not here", name)
 		}
 	}
 	isAdd := len(pos) >= 3 && pos[2] == "add"

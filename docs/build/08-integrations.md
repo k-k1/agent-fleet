@@ -317,7 +317,7 @@ those variables in for one `exec`:
   wrapper exits 3 (124 on a timeout) and says the issue exists, never re-running the create.
   Before a create, `workspace-agent jira-description-required PROJECT TYPE` reads createmeta (the
   paged `/issue/createmeta/{project}/issuetypes[/{id}]`); when the description is required, the
-  body goes with the create through jira-cli's own conversion (`-T` before any `--`). A create
+  body goes with the create through jira-cli's own conversion (on stdin, argv untouched). A create
   that is still refused with `- description:` is not re-sent: jira-cli prints field errors
   without their status, so "refused, nothing created" cannot be told from a failure after the
   issue was made; the wrapper names `AF_JIRA_ADF=0`, which turns the three ADF paths off. A read

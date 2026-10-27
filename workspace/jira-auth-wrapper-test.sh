@@ -1528,20 +1528,22 @@ for flag in -s --summary -t --type -P --parent -y --priority -r --reporter -a --
   [ "$(cat "$T/desc.stdin" 2>/dev/null)" = actual ] || fail "strip [$flag]: body '$(cat "$T/desc.stdin" 2>/dev/null)'"
 done
 # An issue type that requires a description (createmeta, asked first) gets its body with the
-# create, through jira-cli's conversion; -T goes before a `--`. No description PUT follows.
-for spec in "plain|issue create -p AB -t Task -s sum -b body|issue create -p AB -t Task -s sum --template=" \
-  "dashdash|issue create -p AB -t Task -s sum -b body -- x|issue create -p AB -t Task -s sum --template="; do
+# create, through jira-cli's conversion: on stdin, argv untouched (a `--` may be a flag's value).
+# No description PUT follows.
+for spec in "plain|issue create -p AB -t Task -s sum -b body|issue create -p AB -t Task -s sum " \
+  "dashdash|issue create -p AB -t Task -s sum -b body -- x|issue create -p AB -t Task -s sum -- x " \
+  "value|issue create -p AB -t Task --summary -- -b body|issue create -p AB -t Task --summary -- "; do
   reset; desc_reset; oauth; rm -f "$T/req.argv"; echo required >"$T/req.out"
   plan 1 0 "$ROUTE/browse/AB-7
 " ""
   cmdline="${spec#*|}"; cmdline="${cmdline%|*}"
   # shellcheck disable=SC2086
-  run -- $cmdline
+  run STUB_READ_STDIN=1 -- $cmdline
   [ "$rc" = 0 ] && [ "$(count)" = 1 ] && [ ! -f "$T/desc.argv" ] || fail "required [${spec%%|*}]: rc=$rc attempts=$(count)"
   [ "$(cat "$T/req.argv" 2>/dev/null)" = "AB
 Task" ] || fail "required [${spec%%|*}]: lookup argv '$(cat "$T/req.argv" 2>/dev/null)'"
-  case "$(args_of)" in "${spec##*|}$T/tmp/"*) ;; *) fail "required [${spec%%|*}]: jira argv '$(args_of)'" ;; esac
-  [ "${spec%%|*}" != dashdash ] || args_of | grep -q -- "--template=[^ ]* -- x $" || fail "required [dashdash]: -T after --: '$(args_of)'"
+  [ "$(args_of)" = "${spec##*|}" ] || fail "required [${spec%%|*}]: jira argv '$(args_of)'"
+  [ "$(cat "$T/stdin.seen" 2>/dev/null)" = body ] || fail "required [${spec%%|*}]: body on stdin '$(cat "$T/stdin.seen" 2>/dev/null)'"
   grep -q 'requires a description at create time' "$T/err" || fail "required [${spec%%|*}]: no note"
   [ -z "$(ls -A "$T/tmp")" ] || fail "required [${spec%%|*}] left files behind: $(ls -A "$T/tmp")"
 done

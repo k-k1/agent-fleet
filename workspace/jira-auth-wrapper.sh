@@ -78,7 +78,7 @@ set +xa
 unset comment_cmd cred tok server auth login cfg sub sub2 sub3 proj cfg_argv own_init debug prev conf managed gen
 unset parent eff key cdir types derived yaml hint basekey soft npos ikey haveproj hasasg dd pv site why
 unset sbody stmpl spos spbody ssum injected fpid fsig fout spos3 spos4 nobody brc bin bout
-unset dkey dfile dout derr withbody skip rest lim rc berr bwhat snoinput sweb sskip sbad shelp
+unset dkey dfile dout derr skip rest lim rc berr bwhat snoinput sweb sskip sbad shelp
 
 real="${AF_JIRA_REAL:-/usr/local/libexec/jira}"
 
@@ -881,16 +881,12 @@ if describe_cmd "$@"; then
       fi
       if [ "$sub2" = create ] && [ "$(description_required)" = required ]; then
         # The create would be refused without its description, so it carries the body, through
-        # jira-cli's own conversion. -T goes before a `--`: after it pflag reads it as an argument.
+        # jira-cli's own conversion. It goes in on stdin, which a non-terminal create reads when no
+        # -b / -T is left: an added flag would have to be placed by pflag's rules (a `--` can be a
+        # flag's value).
         echo "jira: this issue type requires a description at create time, so it is sent through jira-cli's wiki conversion (inline code or bold next to Japanese text may show literally; repair it afterwards with \`jira issue edit KEY --no-input -b \"...\"\`)" >&2
-        withbody=() dd=""
-        for a in "${nobody[@]}"; do
-          if [ -z "$dd" ] && [ "$a" = -- ]; then withbody+=("--template=$dfile"); dd=1; fi
-          withbody+=("$a")
-        done
-        [ -n "$dd" ] || withbody+=("--template=$dfile")
-        bin=/dev/null
-        run_write "$real" "${withbody[@]}"
+        bin="$dfile"
+        run_write "$real" "${nobody[@]}"
         exit "$brc"
       fi
       if [ "$sub2" = create ] || [ -n "$rest" ]; then

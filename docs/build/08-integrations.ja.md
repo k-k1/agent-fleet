@@ -297,7 +297,7 @@ Jira は git でなく作業項目インボックス
   PUT が失敗したときは、課題はあると伝えて終了コード 3（時間切れなら 124）で終わり、create は決して再実行しない。
   create の前に `workspace-agent jira-description-required PROJECT TYPE` が createmeta（ページ分割された
   `/issue/createmeta/{project}/issuetypes[/{id}]`）を読み、説明文が必須なら本文を create に付けて jira-cli 自身の
-  変換で送る（`-T` は `--` より前に置く）。それでも `- description:` で拒否された create は再送しない。jira-cli は
+  変換で送る（本文は標準入力から渡し、argv は変えない）。それでも `- description:` で拒否された create は再送しない。jira-cli は
   フィールドのエラーを HTTP ステータスなしで出すので、「拒否されて未作成」と「作成後の失敗」を区別できないため。
   代わりに、3 つの ADF 経路をすべて止める `AF_JIRA_ADF=0` を案内する。本文の読み取りエラーでは何も送らずに止める。
   本文だけを変える edit は jira-cli を動かさない。フラグは pflag と同じ規則で読む（最後の値が勝つ、`-h=v`、
