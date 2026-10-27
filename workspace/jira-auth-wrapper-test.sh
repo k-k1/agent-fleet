@@ -646,6 +646,22 @@ chmod 644 "$MANAGED/config.yml"
 run -- issue create -t Task -s x -P AAA-1
 [ "$(stat -c %a "$(seen CONFIG)")" = 600 ] || fail "parent-mode644: $(stat -c %a "$(seen CONFIG)")"
 
+# A 0400 managed config without types: the types derivation and the parent derivation (also the
+# other-project route) both keep it 0400.
+for form in "-p AAA -P AAA-1" "-p BBB -P AAA-1"; do
+  reset; oauth; types
+  config "$MANAGED/config.yml" $'project:\n  key: AAA\n  type: classic'
+  chmod 400 "$MANAGED/config.yml"
+  # shellcheck disable=SC2086
+  run -- issue create -t Task -s x $form
+  expect_ng "parent-chain400 [$form]"
+  [ "$(stat -c %a "$(seen CONFIG)")" = 400 ] || fail "parent-chain400 [$form]: $(stat -c %a "$(seen CONFIG)")"
+  grep -q '"10001"' "$(seen CONFIG)" || fail "parent-chain400 [$form]: types lost"
+  for f in "$CGEN"/derived/config-*.yml; do
+    [ "$(stat -c %a "$f")" = 400 ] || fail "parent-chain400 [$form]: $f is $(stat -c %a "$f")"
+  done
+done
+
 # 13f. The user's own setup is never touched, hinted at or fetched for: another config, jira's
 #      default location, an explicit token or server, a debug run, other subcommands.
 reset

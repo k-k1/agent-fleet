@@ -601,8 +601,15 @@ project_key() {
 # per connection (a hash of the server URL, which holds no secret) and project.
 # With "replace" the base already holds another project's issue block: it is dropped (its type
 # IDs and custom fields belong to that project only) and the -p project's types take its place.
+# The mode of a derived copy of $1: its owner read/write bits only, never wider than the base.
+# Fails when that leaves no access at all.
+copy_mode() {
+  local m
+  m="$(stat -c %a "$1" 2>/dev/null)" && m="$(printf '%03o' "$((8#$m & 8#600))")" && [ "$m" != 000 ] && printf '%s' "$m"
+}
 derive_types_config() {
-  local base="$1" mode="${2:-}" ddir types derived yaml sh ch snap
+  local base="$1" mode="${2:-}" ddir types derived yaml sh ch snap cmode
+  cmode="$(copy_mode "$base")" || return 1
   appendable "$base" ${mode:+"$mode"} || return 1
   key="${proj:-}"
   [ -n "$key" ] || key="$(project_key "$base")"
@@ -630,13 +637,15 @@ derive_types_config() {
   } >"$snap") 2>/dev/null || { rm -f "$snap"; return 1; }
   ch="$(sha256sum <"$snap" 2>/dev/null | cut -c1-16)"
   [ -n "$ch" ] || { rm -f "$snap"; return 1; }
-  derived="$ddir/config-$key-$ch.yml"
+  # The mode is part of the name: a cached copy of the same content is never wider than this base.
+  derived="$ddir/config-$key-$cmode-$ch.yml"
   if [ -s "$derived" ]; then
     rm -f "$snap"
     touch -c "$derived" 2>/dev/null
   else
-    mv -f "$snap" "$derived" 2>/dev/null || { rm -f "$snap"; return 1; }
+    chmod "$cmode" "$snap" 2>/dev/null && mv -f "$snap" "$derived" 2>/dev/null || { rm -f "$snap"; return 1; }
   fi
+  chmod "$cmode" "$derived" 2>/dev/null
   # Never the file this run is about to hand to jira; the age limit protects other runs' files.
   find "$ddir" -name 'config-*.yml' ! -name "${derived##*/}" -mtime +1 -delete 2>/dev/null
   export JIRA_CONFIG_FILE="$derived"
@@ -792,9 +801,7 @@ with_nextgen() {
 parent_config() {
   local base="$1" ddir snap ch derived mode
   plain_layout "$base" && project_block_ok "$base" || return 1
-  # Never wider than the base: its owner bits, read and write only.
-  mode="$(stat -c %a "$base" 2>/dev/null)" && mode="$(printf '%03o' "$((8#$mode & 8#600))")" || return 1
-  [ "$mode" != 000 ] || return 1
+  mode="$(copy_mode "$base")" || return 1
   ddir="${XDG_CACHE_HOME:-${HOME:-/nonexistent}/.cache}/agent-fleet/jira/derived"
   (umask 077; mkdir -p "$ddir" 2>/dev/null) && chmod 700 "$ddir" 2>/dev/null || return 1
   snap="$ddir/snap.$$"
