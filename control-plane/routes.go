@@ -513,6 +513,10 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/sessions/{name}/title/dismiss", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/title/suggest", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/title/set", rest)
+	// Changes which session "Review again" sends to, so it takes the same JSON + same-origin
+	// check as the member writes: a text/plain no-cors POST from a same-site preview origin
+	// would otherwise carry the member's cookie.
+	mux.HandleFunc("POST /api/sessions/{name}/plan-reviewer", jsonSameOriginOnly(rest))
 	mux.HandleFunc("POST /api/sessions/{name}/suggest-branch", rest)  // LLM branch-name suggestion (this session's convo)
 	mux.HandleFunc("POST /api/sessions/{name}/suggest-replies", rest) // LLM reply suggestion v2 (this session's convo)
 	mux.HandleFunc("GET /api/sessions/{name}/skills", rest)           // mirror skill picker (docs/log/50 / ADR0034)
@@ -1399,4 +1403,17 @@ func registerStatic(mux *http.ServeMux, cfg config) {
 		}
 		fs.ServeHTTP(w, r)
 	}))
+}
+
+// jsonSameOriginOnly refuses, before next reads anything, a body that is not JSON or a request a
+// page other than the Console made (memberOriginRequestCheck), for relayed writes that are not
+// member-origin signed but must not be forgeable from a same-site preview origin.
+func jsonSameOriginOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if aerr := memberOriginRequestCheck(r); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+		next(w, r)
+	}
 }

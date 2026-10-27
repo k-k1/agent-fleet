@@ -53,7 +53,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /work-items/fetch", handleWorkItemsFetch)
 	// The only write-back (docs/log/80 §80.10). It arrives via the CP only once a human has
 	// read the draft and pressed the button. There is no MCP tool, so an agent cannot reach it.
-	mux.HandleFunc("POST /work-items/comment", handleWorkItemsComment)
+	mux.Handle("POST /work-items/comment", memberorigin.Require(workItemCommentMaxRequest, http.HandlerFunc(handleWorkItemsComment)))
 	// One pull request, read live because a member opened its panel (docs/log/80 §80.24).
 	// Relayed by the CP like the comment above, and like it, only ever on a human's action —
 	// the timer-driven job is /work-items/fetch.
@@ -263,6 +263,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/title/dismiss", sessionx.HandleDismissSuggestedTitle)
 	mux.HandleFunc("POST /sessions/{name}/title/suggest", sessionx.HandleSuggestTitle)
 	mux.HandleFunc("POST /sessions/{name}/title/set", sessionx.HandleSetTitle)
+	mux.HandleFunc("POST /sessions/{name}/plan-reviewer", sessionx.HandleSetPlanReviewer)
 	mux.HandleFunc("POST /sessions/{name}/suggest-branch", sessionx.HandleSessionSuggestBranch)
 	mux.HandleFunc("POST /sessions/{name}/suggest-replies", sessionx.HandleSuggestReplies) // LLM reply suggestion v2 (preview only)
 	// Per-answer translation (session_translate.go, docs/log/97). The reader's own button, so

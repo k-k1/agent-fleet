@@ -545,6 +545,10 @@ func (e *httpStatusError) Error() string { return e.msg }
 
 // --- comment back to the ticket ----------------------------------------------
 
+// workItemCommentMaxIn bounds the raw request the Console sends. The Agent accepts twice the
+// worst-case escaped growth of this (6 bytes per byte), so a body read here always fits there.
+const workItemCommentMaxIn = 256 << 10
+
 // comment relays a human-approved draft to the Agent, which holds the tokens.
 //
 // Requires a running Workspace and does NOT start one. Everywhere else in this file
@@ -552,12 +556,22 @@ func (e *httpStatusError) Error() string { return e.msg }
 // honest — posting is a write against someone else's tracker, so it happens when the
 // user is present and their workspace is up, not as a side effect of pressing a button
 // on a stopped one.
+//
+// Held to the merge route's standard (ADR 0061, ADR 0113): the request must be the Console's own
+// JSON request (the session cookie is SameSite=Lax, so a same-site page could otherwise send a
+// text/plain no-cors POST), and the Agent is told it is a member's press by a member-origin mark
+// signed over the exact body, because every session holds AGENT_TOKEN.
 func (a workItemsAPI) comment(w http.ResponseWriter, r *http.Request, res *resolved) {
+	if aerr := memberOriginRequestCheck(r); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	var in struct {
 		Provider string `json:"provider"`
 		Key      string `json:"key"`
 		Body     string `json:"body"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, workItemCommentMaxIn)
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
 		return
@@ -566,19 +580,40 @@ func (a workItemsAPI) comment(w http.ResponseWriter, r *http.Request, res *resol
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "key and body are required"})
 		return
 	}
+	// The mark speaks for the workspace's own member.
+	if res.ws.MembershipID == "" || res.ws.MembershipID != res.mv.MembershipID {
+		writeAPIErr(w, &apiError{http.StatusForbidden, "forbidden", "only the workspace's own member can post from it"})
+		return
+	}
 	ctx := r.Context()
 	if res.rt.State(ctx) != "running" {
 		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_stopped",
 			"start the workspace to post the comment (the tracker credentials live in it)"})
 		return
 	}
-	payload, _ := json.Marshal(in)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, res.rt.Endpoint()+"/work-items/comment", bytes.NewReader(payload))
+	// What is signed is what is sent: the normalised body, not the browser's bytes.
+	// HTML escaping is off: it would turn every "<" into six bytes and push a body the provider
+	// accepts past the Agent's cap.
+	var pb bytes.Buffer
+	enc := json.NewEncoder(&pb)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(in)
+	payload := bytes.TrimRight(pb.Bytes(), "\n")
+	const agentPath = "/work-items/comment"
+	mark, aerr := a.mgr.memberOriginSign(res, http.MethodPost, agentPath, "", payload, time.Now())
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, res.rt.Endpoint()+agentPath, bytes.NewReader(payload))
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if mark != "" {
+		req.Header.Set(memberOriginHeader, mark)
+	}
 	if tok := res.rt.Token(); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
@@ -592,6 +627,13 @@ func (a workItemsAPI) comment(w http.ResponseWriter, r *http.Request, res *resol
 	// refusal is the most informative thing here; rephrasing it in the CP erases whether
 	// the problem was permission or a missing issue.
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	// A comment is a write against someone else's tracker: record who pressed Post, where, and how
+	// it came out. The detail names the provider only: no token, no comment text.
+	if a.mgr != nil && a.mgr.store != nil {
+		_ = a.mgr.store.InsertAudit(context.Background(), store.AuditLog{ID: store.NewID(), TenantID: res.mv.TenantID,
+			ActorKind: "user", ActorID: res.ident.ID, Action: "work_item.comment", Target: in.Key,
+			Detail: "provider=" + in.Provider, HTTPStatus: resp.StatusCode, At: store.NowTS()})
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)

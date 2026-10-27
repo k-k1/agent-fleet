@@ -267,3 +267,68 @@ func TestChatAutoCompactThresholdEnvOverride(t *testing.T) {
 		t.Fatalf("invalid env must fall back: %v", got)
 	}
 }
+
+// A muse conversation holds its native resume handle in MuseSessionID. Compaction must see it
+// (anyProviderResume), summarize on that session, and then drop it so the next turn opens a
+// fresh native session carrying the handoff (#2790).
+func TestCompactConversationMuse(t *testing.T) {
+	withTempHome(t)
+	c := &ChatConversation{
+		ID: RandUUID(), Agent: "muse", MuseSessionID: "old-muse",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "hi", TS: 1},
+			{Role: "assistant", Agent: "muse", Content: "hello", TS: 2},
+		},
+	}
+	if !anyProviderResume(c) {
+		t.Fatal("anyProviderResume false with only MuseSessionID set")
+	}
+	prov := &stubProvider{reply: "muse summary"}
+	if err := compactConversation(context.Background(), c, prov, CompactReasonManual); err != nil {
+		t.Fatal(err)
+	}
+	if len(prov.prompts) != 1 || !strings.HasSuffix(prov.prompts[0], CompactSummaryPromptFor("ja")) {
+		t.Fatalf("summary prompt not sent: %+v", prov.prompts)
+	}
+	if c.MuseSessionID != "" {
+		t.Fatalf("MuseSessionID = %q after compaction, want cleared", c.MuseSessionID)
+	}
+	if c.PendingHandoff != "muse summary" {
+		t.Fatalf("PendingHandoff = %q", c.PendingHandoff)
+	}
+	// Fresh native session: the handoff replaces the history replay.
+	if got := SyncProviderPrompt(c, "muse", "next", len(c.Messages)); got != "next" {
+		t.Fatalf("post-compaction prompt replays history: %q", got)
+	}
+}
+
+// After compacting a muse conversation that once fell back to another provider, the foreign
+// gap is already inside the handoff; it must not be replayed on the turns that follow.
+func TestMuseCompactionDoesNotReplayOldForeignGap(t *testing.T) {
+	withTempHome(t)
+	c := &ChatConversation{
+		ID: RandUUID(), Agent: "muse", MuseSessionID: "old-muse",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "q1", TS: 1},
+			{Role: "assistant", Agent: "muse", Content: "a1", TS: 2},
+			{Role: "user", Content: "old fallback question", TS: 3},
+			{Role: "assistant", Agent: "claude", Content: "old fallback reply", TS: 4},
+		},
+		MuseMessageCursor: 2,
+	}
+	if err := compactConversation(context.Background(), c, &stubProvider{reply: "sum"}, CompactReasonManual); err != nil {
+		t.Fatal(err)
+	}
+	if c.MuseMessageCursor != 0 {
+		t.Fatalf("MuseMessageCursor = %d after compaction, want 0", c.MuseMessageCursor)
+	}
+	// First post-compaction turn succeeds on a fresh session.
+	c.Messages = append(c.Messages, ChatMessage{Role: "user", Content: "q2", TS: 5},
+		ChatMessage{Role: "assistant", Agent: "muse", Content: "a2", TS: 6})
+	c.MuseSessionID = "new-muse"
+	MarkProviderSynced(c, "muse", len(c.Messages))
+	got := SyncProviderPrompt(c, "muse", "q3", len(c.Messages))
+	if strings.Contains(got, "old fallback") {
+		t.Fatalf("old foreign gap replayed: %q", got)
+	}
+}

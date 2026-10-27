@@ -21,6 +21,7 @@ const (
 	noticeKeyCompactAuto     = "chat.notice.compact_auto"
 	noticeKeyCompactRecovery = "chat.notice.compact_recovery"
 	noticeKeyAgentSwitched   = "chat.notice.agent_switched"
+	noticeKeyAgentFailover   = "chat.notice.agent_failover"
 	noticeKeyPlanUpdated     = "chat.notice.plan_updated" // the work plan moved (docs/log/33 stage 5)
 )
 

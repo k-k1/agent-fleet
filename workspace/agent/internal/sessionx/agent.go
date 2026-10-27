@@ -59,6 +59,14 @@ func AgentOf(kind string) agents.Agent {
 	return agentRegistry[session.KindClaude]
 }
 
+// RegisteredAgent is AgentOf without the claude fallback: the agent registered under exactly
+// this key. Optional capabilities (agents.Instructions and the like) are resolved through it,
+// so an unknown or alternate spelling never answers with claude's.
+func RegisteredAgent(kind string) (agents.Agent, bool) {
+	a, ok := agentRegistry[kind]
+	return a, ok
+}
+
 // RegisteredKinds lists every kind in the registry, sorted. It is the source the kind
 // catalog (GET /agents/kinds) and the drift guards iterate: a hand-kept list of kinds is
 // exactly what drifted before. AgentOf's claude fallback is not a kind, so an unknown or

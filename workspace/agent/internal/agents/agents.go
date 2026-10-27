@@ -504,3 +504,68 @@ type NoGenericTranscript struct{}
 func (NoGenericTranscript) Transcript(session.Meta) (TranscriptData, bool) {
 	return TranscriptData{}, false
 }
+
+// PromptPaste is an optional Agent capability: the kind's composer needs a prompt as a
+// bracketed paste rather than literal keys, for the texts PasteNeeded answers true. A kind
+// without it gets literal send-keys. sessionx resolves it by exact registry key, so an alias or
+// alternate spelling gets literal keys, as an unregistered kind always did.
+type PromptPaste interface {
+	// PasteNeeded reports whether text must reach the composer as a paste.
+	PasteNeeded(text string) bool
+}
+
+// PasteAlways is the PromptPaste answer for a kind that wants every prompt pasted (measured
+// per kind: a literal Enter right after the text is eaten by the TUI's paste coalescing).
+func PasteAlways(string) bool { return true }
+
+// How a kind receives the member's instructions (InstructionsShape.Delivery). The Console
+// picks its wording from the value.
+const (
+	DeliveryFile    = "file"    // drop a file AF owns outright
+	DeliveryCompose = "compose" // compose into a file shared with others, between markers
+	DeliveryConfig  = "config"  // an AF-owned file, referenced from the CLI's own config
+	DeliveryPrompt  = "prompt"  // no artifact: AF's own harness folds it into the system prompt
+)
+
+// What instrState checks on disk to say an instruction is "applied" (InstructionsShape.Measure).
+const (
+	MeasureBlock  = "block"  // the user-notes block is present in Path
+	MeasureFile   = "file"   // Path exists
+	MeasureConfig = "config" // Path exists and the CLI's config refers to it
+	MeasurePrompt = "prompt" // nothing on disk: what is saved is what the next turn sends
+)
+
+// InstructionsShape is where one kind's instructions go. Delivery and Measure are separate on
+// purpose: claude drops an AF-owned file's worth of text (DeliveryFile) into a CLAUDE.md the
+// member also writes, so "applied" has to be the block's presence, not the file's.
+type InstructionsShape struct {
+	Delivery, Measure string
+	// Path is the artifact the state row shows; "" for DeliveryPrompt.
+	Path string
+	// PreviewPath is what the Console's preview reads; "" means Path.
+	PreviewPath string
+}
+
+// Instructions is an optional Agent capability: the kind takes the member's instructions
+// (Settings > Agent instructions). A kind without it is either listed as unsupported with a
+// reason or runs no agent CLI. The agent resolves it by exact registry key
+// (workspace/agent agent_instructions.go).
+type Instructions interface {
+	Instructions() InstructionsOps
+}
+
+// InstructionsOps are the kind package's own apply functions. Each func-valued field may be nil
+// where the kind has nothing to write there; the body of every apply is "" to remove.
+type InstructionsOps struct {
+	// Shape is evaluated per call: opencode's depends on the installed major version.
+	Shape func() InstructionsShape
+	// Fleet composes the baked workspace guide; nil for a kind that gets it from the image
+	// (claude's managed policy) or builds its own system prompt.
+	Fleet func(fleet string) error
+	// SkillsDir is the user skills root the fleet topic files are registered in; nil when the
+	// CLI has none to write into.
+	SkillsDir func() string
+	// User writes the member's instructions; Memory the memory guidance. nil for lcpp, whose
+	// harness reads both on every turn.
+	User, Memory func(body string) error
+}

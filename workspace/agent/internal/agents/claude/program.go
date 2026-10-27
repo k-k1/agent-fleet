@@ -110,6 +110,19 @@ func launchSettings() string {
 	return nativePeerSettings
 }
 
+// ChatAutoMemorySettings is the `--settings` JSON the headless assistant chat adds to its
+// `claude -p` call, or "" when it adds none. It answers "" exactly when launchSettings would not
+// switch auto-memory off, and returns the same constant otherwise. The chat passes
+// `--setting-sources ""`, which keeps the user's own settings out but is not an off switch for
+// auto-memory: that key is only read from a settings source, and the flag layer is the one source
+// that survives an empty list.
+func ChatAutoMemorySettings() string {
+	if AutoMemoryOff != nil && AutoMemoryOff() {
+		return nativePeerSettingsNoAutoMemory
+	}
+	return ""
+}
+
 // buildProgram returns the shell command tmux should run for a session.
 // AGENT_SESSION_CMD overrides claude entirely (e.g. "bash") for plumbing tests.
 // Otherwise it resumes when a session jsonl already exists, else starts new.

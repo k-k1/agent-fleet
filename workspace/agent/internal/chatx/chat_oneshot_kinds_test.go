@@ -17,7 +17,7 @@ import (
 )
 
 // notOneShotKinds are the ChatProviders kinds deliberately left without a one-shot runner.
-// Adding a kind to ChatProviders forces a choice: a case in OneShotHeadlessRun plus an
+// Adding a kind to ChatProviders forces a choice: a case in oneShotRunOn plus an
 // oneShotKinds entry, or an entry here.
 var notOneShotKinds = []string{lcppKind}
 
@@ -48,7 +48,7 @@ func TestOneShotKindsMatchTheRunnerSwitch(t *testing.T) {
 	sawDefault := false
 	for _, d := range f.Decls {
 		fn, ok := d.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "OneShotHeadlessRun" {
+		if !ok || fn.Name.Name != "oneShotRunOn" {
 			continue
 		}
 		for _, st := range fn.Body.List {

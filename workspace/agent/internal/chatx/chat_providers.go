@@ -31,6 +31,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/modelfallback"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routehealth"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
@@ -292,7 +293,7 @@ func PreferredHeadlessAgent() string { return preferredFrom(assistantAgentOrderP
 // works (docs/log/84).
 func PreferredAssistAgent() string { return preferredFrom(oneShotOrder()) }
 
-// oneShotKinds are exactly the kinds OneShotHeadlessRun has a case for. A kind outside this list
+// oneShotKinds are exactly the kinds oneShotRunOn has a case for. A kind outside this list
 // is never selected for a one-shot — neither by a feature pin nor from the priority order — even
 // when ChatProviders knows it: the run used to fall through to the claude path for any kind
 // without a case, so a Muse pick ran and was billed on claude (#1020). lcpp is left out on
@@ -309,19 +310,37 @@ func oneShotOrder() []string {
 }
 
 // ChatProviderFor resolves the provider driving this conversation: the pinned agent
-// while its CLI is authenticated, else the preferred available backend — so a
-// claude-less (codex-only / opencode-only) workspace still gets working assistants.
+// while its CLI is authenticated and not rate-limited (chat_route.go), else the first
+// such backend in the priority order — so a claude-less (codex-only / opencode-only)
+// workspace still gets working assistants, and a limit on one backend moves the turn
+// instead of failing it. When every backend is parked the turn still goes somewhere,
+// exactly as before the cooldowns existed: a refused turn helps no one.
 // Each provider keeps its own resume handle on the conversation. The canonical
 // message cursor synchronizes turns handled by another backend before that handle is
 // resumed (chat_provider_context.go).
 func ChatProviderFor(c *ChatConversation) ChatProvider {
+	prov, _ := chatRoute(c)
+	return prov
+}
+
+// chatRoute is ChatProviderFor plus the kind it chose, which a test provider cannot report
+// through ChatProviderKind.
+func chatRoute(c *ChatConversation) (ChatProvider, string) {
+	if prov, ok := ChatProviders[c.Agent]; ok && chatKindUsable(c, c.Agent) {
+		return prov, c.Agent
+	}
+	for _, k := range assistantAgentOrderPref() {
+		if prov, ok := ChatProviders[k]; ok && chatKindUsable(c, k) {
+			return prov, k
+		}
+	}
 	if prov, ok := ChatProviders[c.Agent]; ok && headlessAgentAvailable(c.Agent) {
-		return prov
+		return prov, c.Agent
 	}
-	if prov, ok := ChatProviders[PreferredHeadlessAgent()]; ok {
-		return prov
+	if k := PreferredHeadlessAgent(); ChatProviders[k] != nil {
+		return ChatProviders[k], k
 	}
-	return ChatProviders[session.KindClaude]
+	return ChatProviders[session.KindClaude], session.KindClaude
 }
 
 // ChatProviderKind returns the concrete backend selected by ChatProviderFor. Keeping
@@ -1864,10 +1883,11 @@ func WaitForWarmsForTest() { warmWG.Wait() }
 // rule). configured mirrors oneShotModelPref's own (value, ok): ok distinguishes "nothing
 // set, fall through further" from "explicitly cleared to the CLI default".
 //
-// OneShotHeadlessRun calls this, which is what keeps its answer identical to
-// oneShotKindCached's whenever the availability cache happens to already be warm. What it does
-// NOT cover is ③ (the per-backend fallback inside each OneShotHeadlessRun case), because that
-// step already differs by CLI in ways only the actual call site can apply.
+// Its kind matches oneShotKindCached's whenever the availability cache happens to already be
+// warm. OneShotHeadlessRun resolves the same chain with the cooldown table on top
+// (oneShotRouteKind), so the two differ only while a backend is rate-limited. What neither
+// covers is ③ (the per-backend fallback inside each oneShotRunOn case), because that step
+// already differs by CLI in ways only the actual call site can apply.
 func resolveOneShot(feature string, tier OneShotTier) (kind, model string, configured bool, source string) {
 	kind, source = oneShotKind(feature)
 	model, configured = resolveOneShotModel(feature, tier, kind)
@@ -1981,7 +2001,7 @@ func recommendedUtilityModelV(v visibility, kind string) string {
 	// falling back to what they did before prices were read. claude needs no ranking: the
 	// "haiku" alias already moves to each new Haiku. opencode is deliberately NOT ranked: its
 	// cheapest rows are the $0 "-free" promotions, which are retired every few weeks and are a
-	// listing rather than an entitlement (see OneShotHeadlessRun's opencode branch).
+	// listing rather than an entitlement (see oneShotRunOn's opencode branch).
 	switch kind {
 	case session.KindClaude:
 		return claudeFirstVisible(v, claudeShortTiers)
@@ -2004,7 +2024,7 @@ func recommendedUtilityModelV(v visibility, kind string) string {
 
 // codexOneShotModel is the -m a codex one-shot runs with ("" = none, the CLI default), and
 // whether it is OUR pick (so a failure may retry without it — CodexOneShotWithRetry).
-// selected / configured / auto are what OneShotHeadlessRun resolved from the settings, the
+// selected / configured / auto are what oneShotRunOn resolved from the settings, the
 // "recommended" sentinel already replaced (auto marks that).
 //
 //   - nothing configured ⇒ the recommendation exactly as "recommended" gives it (which is
@@ -2136,7 +2156,87 @@ func OneShotHeadless(ctx context.Context, feature string, tier OneShotTier, pers
 // the return, so there is no cost to keeping them — and a caller that needs "what actually ran"
 // for something other than a cache key (a ledger cross-check, say) has a place to get it without
 // re-deriving resolveOneShot's own logic.
+//
+// A failure that parks the backend (routehealth) is retried once on the next usable backend of
+// the priority order; the pin gives way to it the same way it gives way to a logged-out CLI.
 func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, persona, prompt, claudeModel string) (reply, kind, model string, err error) {
+	first := oneShotRouteKind(feature, tier, claudeModel)
+	reply, kind, model, err = oneShotRunOn(ctx, first, feature, tier, persona, prompt, claudeModel)
+	v := noteOneShotResult(ctx, first, model, err)
+	if !v.Cools() {
+		return reply, kind, model, err
+	}
+	next := oneShotRouteKind(feature, tier, claudeModel)
+	if next == first {
+		return reply, kind, model, err
+	}
+	log.Printf("one-shot %s: %s failed (%s), retrying on %s", feature, first, v.Class, next)
+	reply, kind, model, err = oneShotRunOn(ctx, next, feature, tier, persona, prompt, claudeModel)
+	noteOneShotResult(ctx, next, model, err)
+	return reply, kind, model, err
+}
+
+// oneShotRouteKind is oneShotKind with the cooldown table applied: a pin or an order entry
+// whose model is parked is passed over. When everything usable is parked it answers what
+// oneShotKind does, so a call is never refused for the cooldowns alone.
+func oneShotRouteKind(feature string, tier OneShotTier, claudeModel string) string {
+	usable := func(k string) bool {
+		return headlessAgentAvailable(k) && !routeAvoid(k, oneShotRouteModel(feature, tier, k, claudeModel))
+	}
+	if pin := aiFeatureAgentPref(feature); oneShotRunnable(pin) && usable(pin) {
+		return pin
+	}
+	for _, k := range oneShotOrder() {
+		if usable(k) {
+			return k
+		}
+	}
+	kind, _ := oneShotKind(feature)
+	return kind
+}
+
+// oneShotRouteModel is the model a one-shot on kind is looked up under in the cooldown table
+// before it runs: the same choice oneShotRunOn starts from. A per-CLI adjustment can still
+// change what runs (codex dropping an auto-picked -m, agy matching an id to its catalogue);
+// the outcome is recorded under the model that ran, and a run on the CLI's own default ("")
+// lands on the kind-wide key, which this lookup sees whatever model it names.
+func oneShotRouteModel(feature string, tier OneShotTier, kind, claudeModel string) string {
+	selected, configured := resolveOneShotModel(feature, tier, kind)
+	var m string
+	switch {
+	case selected == AssistantRecommendedModel:
+		m = recommendedOneShotModel(kind, tier)
+	case configured:
+		m = strings.TrimSpace(selected)
+	case kind == session.KindClaude:
+		m = claudeModel
+	default:
+		m = recommendedOneShotModel(kind, tier)
+	}
+	// muse never runs on its CLI default (the contributor row): museOneShot turns "" into the
+	// safe model and records that, so the lookup has to name the same one.
+	if m == "" && kind == session.KindMuse {
+		m = museSafeOneShotModel(prefsVisibility)
+	}
+	return m
+}
+
+// noteOneShotResult reports a one-shot's outcome to the cooldown table, as NoteTurnResult does
+// for chat turns. model is what the run requested (oneShotRunOn's own answer), not a fresh
+// resolution of the settings: a CLI that fell back to another model failed or succeeded on that.
+func noteOneShotResult(ctx context.Context, kind, model string, err error) routehealth.Verdict {
+	if err == nil {
+		routehealth.Default.Succeed(kind, model)
+		return routehealth.Verdict{}
+	}
+	if ctx.Err() != nil {
+		return routehealth.Verdict{}
+	}
+	return routehealth.Default.Fail(kind, model, err.Error(), routeNow())
+}
+
+// oneShotRunOn runs one one-shot on kind.
+func oneShotRunOn(ctx context.Context, kind, feature string, tier OneShotTier, persona, prompt, claudeModel string) (reply, ranKind, model string, err error) {
 	// Usage ledger (ADR 0029 §3). This function takes the first usable backend out of
 	// the priority order (oneShotKinds), so kind is filled in inside the branch, as a
 	// result of what ran: writing the requested value instead would turn all consumption of a
@@ -2145,8 +2245,8 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 	// is in here anyway.
 	call := usagex.Call{}
 	defer usagex.RecordCall(ctx, &call, time.Now())
-	defer func() { kind, model = call.Kind, call.ModelReq }()
-	kind, selected, configured, _ := resolveOneShot(feature, tier)
+	defer func() { ranKind, model = call.Kind, call.ModelReq }()
+	selected, configured := resolveOneShotModel(feature, tier, kind)
 	selected = strings.TrimSpace(selected)
 	// Our own pick — retried without -m if it fails — only when the recommendation was computed;
 	// an operator's AF_TITLE_MODEL_* is theirs and is never dropped behind their back.
@@ -2327,6 +2427,12 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 	// returning the error.
 	call.Models, call.CostUSD = UsageModelRows(r.ModelUsage), r.TotalCostUSD
 	call.FallbackTotals(r.Usage.LedgerTokens(), "") // degrade for a response with no modelUsage
+	// An error result carries claude's own message (a usage limit, say) and comes with a
+	// non-zero exit, so it is read before the exit error, which would hide it: the cooldown
+	// classifier needs that text.
+	if perr == nil && r.IsError && strings.TrimSpace(r.Result) != "" {
+		return "", "", "", fmt.Errorf("claude returned an error: %s", strings.TrimSpace(r.Result))
+	}
 	if err != nil {
 		return "", "", "", fmt.Errorf("claude execution failed: %s", cliErr(err))
 	}
@@ -2513,7 +2619,12 @@ func chatToolLimits() []string {
 // auth and provider-native resume state remain shared and race-free.
 func chatClaudeCmd(ctx context.Context, args ...string) *exec.Cmd {
 	migrateLegacyChatClaudeProjects()
-	args = append([]string{"--setting-sources", ""}, args...)
+	pre := []string{"--setting-sources", ""}
+	// Same rule as a session launch: native auto-memory is off while Agent memory is on.
+	if st := claude.ChatAutoMemorySettings(); st != "" {
+		pre = append(pre, "--settings", st)
+	}
+	args = append(pre, args...)
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = chatWorkdir()
 	cmd.Env = envWith("CLAUDE_CONFIG_DIR=" + claude.ConfigDir())
