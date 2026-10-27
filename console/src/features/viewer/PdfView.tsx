@@ -523,10 +523,12 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
   // Paints the matches and, when asked, brings the active one into view. A match on a page with
   // no text layer yet is reached by scrolling to its page, once per request; the layer built there
   // bumps layerTick and this runs again to place it exactly, unless the reader has meanwhile
-  // scrolled away from that page. Matches are indexed by page, so a layer being built only turns
+  // scrolled at all. Matches are indexed by page, so a layer being built only turns
   // its own page's matches into ranges and adds them (pdfFindHighlight.ts is incremental too).
   const revealedRef = useRef(0);
   const pagedRef = useRef(0);
+  // Where the placeholder scroll left the pane; any other position later means the reader moved.
+  const pagedTopRef = useRef(0);
   const rangesRef = useRef<{ of: FindMatch[]; ranges: (Range | null)[]; waiting: Map<number, number[]> }>({
     of: [],
     ranges: [],
@@ -565,14 +567,16 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
       if (pagedRef.current !== reveal && layout.tops[m.page] !== undefined) {
         pagedRef.current = reveal;
         el.scrollTop = layout.tops[m.page];
+        pagedTopRef.current = el.scrollTop;
         setScrollTop(el.scrollTop);
       }
       return;
     }
     revealedRef.current = reveal;
-    // The pane was already sent to this page; a reader who has since scrolled elsewhere keeps
-    // their place instead of being pulled back when the layer finally arrives.
-    if (pagedRef.current === reveal && (m.page < rangeRef.current.start || m.page >= rangeRef.current.end)) return;
+    // The pane was already sent to this page; a reader who has since scrolled at all (to the next
+    // page, or within this one) keeps their place instead of being pulled back when the layer
+    // finally arrives. The rendered range cannot tell: it reaches half a viewport beyond the view.
+    if (pagedRef.current === reveal && Math.abs(el.scrollTop - pagedTopRef.current) > 1) return;
     const r = current.getBoundingClientRect();
     const view = el.getBoundingClientRect();
     if (r.top < view.top || r.bottom > view.bottom) el.scrollTop += r.top - view.top - el.clientHeight / 3;
