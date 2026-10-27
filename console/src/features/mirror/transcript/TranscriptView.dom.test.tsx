@@ -712,6 +712,12 @@ describe("a slash command sent with an attachment (#2823)", () => {
     expect(el.querySelector(".mt-imgs")).toBeNull();
   });
 
+  it("still splits the attachment when the image studio's signal follows it", () => {
+    const el = render(cmd(`直して Open the following file(s) with the Read tool: \`${p}\`\n\n[studio v4 · draft changed → get_image_studio]`), caps);
+    expect(el.querySelector(".mt-cmd-args")?.textContent).toBe("直して");
+    expect(el.querySelectorAll(".mt-imgs .mt-img")).toHaveLength(1);
+  });
+
   it("leaves plain args untouched", () => {
     const el = render(cmd("review 1110"), caps);
     expect(el.querySelector(".mt-cmd-args")?.textContent).toBe("review 1110");

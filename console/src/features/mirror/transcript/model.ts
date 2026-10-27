@@ -189,7 +189,9 @@ export function parseCommand(t: Turn): { name: string; args: string } | null {
   const name = s.match(/<command-name>([\s\S]*?)<\/command-name>/);
   if (!name || !name[1].trim()) return null;
   const args = s.match(/<command-args>([\s\S]*?)<\/command-args>/);
-  return { name: name[1].trim(), args: args ? args[1].trim() : "" };
+  // The image studio's signal is appended to a slash command too (composerSend), and it lands
+  // inside the args, where withoutStudioSignal does not look.
+  return { name: name[1].trim(), args: args ? stripStudioSignal(args[1]).trim() : "" };
 }
 
 // composerHistory is what ↑/↓ and reverse-i-search walk in the composer: the prompts the user
