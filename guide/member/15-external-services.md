@@ -54,19 +54,16 @@ session. You can view, list, create, edit, comment on and transition issues:
   then use `jira -c ~/.config/agent-fleet/jira/other-board.yml …`. Your connection is used only with
   configuration files in that folder; one anywhere else runs without it. (When `jira` itself suggests such a
   command, for example for another project's issue types, run it as printed.)
-- **Markdown in comments and descriptions**: the CLI converts Markdown to Jira markup, and until the
-  first piece of markup (a heading, a list, bold, a link) a list, heading,
-  code block or quote that follows a plain paragraph is glued onto it (two paragraphs in a row are
-  fine). A paragraph, a blank line and a list are sent as:
-
-  ```
-  Intro.          →  Intro.* a
-  (blank line)
-  - a
-  ```
-
-  Open the body with a heading or a list, or put inline markup (bold, a link, `code`) in the first
-  paragraph, and always leave a blank line before a list. Agents are told this too.
+- **Markdown in comments and descriptions**: `comment add`, and the description of `issue create`
+  (`-b`, `-T`, or a pipe) and `issue edit -b`, are converted from Markdown to Jira's document format
+  by Agent Fleet, so `code` and **bold** right next to Japanese text, and a list straight after a
+  paragraph, show as written. When the issue is created but its description cannot be set, `jira`
+  says so and exits with status 3: the issue exists, so do not create it again; set the
+  description with `jira issue edit PROJ-1 --no-input -b "…"`. One CommonMark rule remains: bold
+  that starts or ends with a bracket or other punctuation and touches a letter on the outside
+  (`**「…」**です`) is not bold; put the brackets outside the `**`. In an interactive terminal
+  without `--no-input`, and with `--debug` or a configuration of your own, the Jira CLI's own
+  conversion is used as before.
 - **Flaky network to Atlassian**: reading commands (`issue view` / `issue list`, `board`, `sprint`,
   `epic` and `project list`, `me`) are re-run up to twice after a connection reset or timeout, and
   only the last attempt's output is shown. Commands that change something are never re-run, so after

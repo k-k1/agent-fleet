@@ -242,12 +242,20 @@ var subcommands = []subcommand{
 		run:     runJiraFindCreated,
 	},
 	{
-		// `jira issue comment edit|delete`, which jira-cli lacks, for the PATH wrapper at
-		// /usr/local/bin/jira. See jira_comment.go.
+		// `jira issue comment add|edit|delete` for the PATH wrapper at /usr/local/bin/jira:
+		// edit and delete are missing from jira-cli, add is sent as ADF. See jira_comment.go.
 		name:    "jira-comment",
-		summary: "Jira comment edit / delete for the jira wrapper",
+		summary: "Jira comment add / edit / delete for the jira wrapper",
 		hidden:  true,
 		run:     runJiraComment,
+	},
+	{
+		// The description of `jira issue create|edit`, set as ADF for the PATH wrapper at
+		// /usr/local/bin/jira. See jira_description.go.
+		name:    "jira-description",
+		summary: "Jira issue description for the jira wrapper",
+		hidden:  true,
+		run:     runJiraDescription,
 	},
 	{
 		// Transparent SVN auth: the PATH shim at /usr/local/bin/svn re-enters this binary,

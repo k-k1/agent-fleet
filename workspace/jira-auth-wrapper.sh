@@ -36,6 +36,10 @@
 #   `workspace-agent jira-comment`, which holds the token itself and calls REST v3 (the body is
 #   Markdown converted to ADF there); the wrapper never sees the token for it. A user-owned
 #   config or an explicit token never gets here: those exec jira unchanged, as for everything else.
+# - Bodies are sent as ADF, not as jira-cli's v2 wiki markup, where `{{code}}` and `*bold*` next to
+#   Japanese text stay literal: `comment add` goes to `workspace-agent jira-comment` as well, and
+#   the description of `issue create|edit` is set by `workspace-agent jira-description` after
+#   jira-cli ran without it (describe_cmd below).
 # - Fails closed: any helper error leaves jira running with no injected auth. The one exception
 #   is a connection the Agent reports as unusable (`unusable=<reason>` on jira-cred's stderr: an
 #   OAuth authorization that expired and could not be renewed, or was revoked): jira would
@@ -73,7 +77,8 @@
 set +xa
 unset comment_cmd cred tok server auth login cfg sub sub2 sub3 proj cfg_argv own_init debug prev conf managed gen
 unset parent eff key cdir types derived yaml hint basekey soft npos ikey haveproj hasasg dd pv site why
-unset sbody stmpl spos spbody ssum injected fpid fsig fout
+unset sbody stmpl spos spbody ssum injected fpid fsig fout spos3 spos4 nobody brc bin bout
+unset dkey dfile skip rest tcmd lim rc
 
 real="${AF_JIRA_REAL:-/usr/local/libexec/jira}"
 
@@ -104,7 +109,8 @@ timed_out() {
 # it: -b, -bX, -b=X, -b X, --body=X, --body X (same for -T / --template), skipping the values of the
 # other flags so that `-s -b` (a summary of "-b") is not read as a body. The last one wins, and an
 # empty value is no value (jira-cli then reads stdin for the body). The summary (-s, --summary) is
-# read the same way into ssum, for find_created.
+# read the same way into ssum, for find_created. The 3rd and 4th positional words (the issue key
+# of `issue edit KEY` and of `issue comment add KEY`) land in spos3 / spos4.
 stdin_cmd() {
   case "$sub" in
     issue | issues)
@@ -118,7 +124,7 @@ stdin_cmd() {
 }
 scan_body_args() {
   local a nx="" dd="" k rest
-  sbody="" stmpl="" spos=0 spbody="" ssum=""
+  sbody="" stmpl="" spos=0 spbody="" ssum="" spos3="" spos4=""
   for a in "$@"; do
     if [ -n "$nx" ]; then
       case "$nx" in body) sbody="$a" ;; template) stmpl="$a" ;; summary) ssum="$a" ;; esac
@@ -148,8 +154,44 @@ scan_body_args() {
       esac
     fi
     spos=$((spos + 1))
-    [ "$spos" -ne 5 ] || spbody="$a"
+    case "$spos" in 3) spos3="$a" ;; 4) spos4="$a" ;; 5) spbody="$a" ;; esac
   done
+}
+# argv without -b / --body / -T / --template and their values, parsed as scan_body_args does,
+# into the array nobody.
+strip_body_args() {
+  local a nx="" dd=""
+  nobody=()
+  for a in "$@"; do
+    if [ -n "$nx" ]; then
+      [ "$nx" = drop ] || nobody+=("$a")
+      nx=""; continue
+    fi
+    if [ -z "$dd" ]; then
+      case "$a" in
+        --) dd=1 ;;
+        --body=* | --template=*) continue ;;
+        --body | --template) nx=drop; continue ;;
+        --type | --parent | --priority | --reporter | --assignee | --label | --component | \
+          --fix-version | --affects-version | --original-estimate | --custom | --config | --project)
+          nx=keep ;;
+        --*) ;;
+        -[bT]*) [ -n "${a:2}" ] || nx=drop; continue ;;
+        -[tPsyraelCcp]) nx=keep ;;
+      esac
+    fi
+    nobody+=("$a")
+  done
+}
+# True when the body jira-cli would read from stdin can be there: not a terminal, and not a
+# character device (/dev/null holds nothing, /dev/zero never ends).
+stdin_body() { [ ! -t 0 ] && ! [ -c /dev/stdin ]; }
+# True when the key is a full issue key; jira-cli also takes a bare number and prefixes the
+# config's project, which only jira-cli itself resolves.
+issue_key() {
+  case "$1" in [A-Za-z]*-[0-9]*) ;; *) return 1 ;; esac
+  case "${1%-*}" in *[!A-Za-z0-9_]*) return 1 ;; esac
+  case "${1##*-}" in "" | *[!0-9]*) return 1 ;; esac
 }
 # For a run with no terminal: take stdin away from jira-cli when it would only block there.
 # - A character device other than /dev/null (/dev/zero never ends) cannot be a body.
@@ -165,21 +207,39 @@ stdin_guard() {
 }
 
 # A write that has no terminal runs under timeout(1) as a child, so that its exit status can be
-# told from a timeout; everything it prints goes straight through. Signals meant for the wrapper
-# are forwarded: a bash that dies on TERM would leave timeout and jira behind. Returns (and the
-# caller execs as before) when there is nothing to enforce.
+# told from a timeout; everything it prints goes straight through. Returns (and the caller execs as
+# before) when there is nothing to enforce.
 run_bounded() {
+  [ -n "$(attempt_limit 120)" ] && command -v timeout >/dev/null 2>&1 || return 0
+  run_write "$real" "$@"
+  exit "$brc"
+}
+# run_write CMD ARGS...: runs a write, bounded by timeout(1) when no terminal is attached, and
+# leaves its exit status in brc. bin / bout, when set, are its stdin / stdout files (bout is
+# replayed before the timeout message). Signals meant for the wrapper are forwarded: a bash that
+# dies on TERM would leave timeout and jira behind. A timeout or a signal ends the wrapper here.
+run_write() {
   local lim pid="" rc start sig="" what
   lim="$(attempt_limit 120)"
-  [ -n "$lim" ] && command -v timeout >/dev/null 2>&1 || return 0
+  # Duplicated, not reopened: /dev/stdin cannot be reopened when it is a socket.
+  if [ -n "${bin:-}" ]; then exec 3<"$bin"; else exec 3<&0; fi
+  if [ -n "${bout:-}" ]; then exec 4>"$bout"; else exec 4>&1; fi
+  if ! nontty || [ -z "$lim" ] || ! command -v timeout >/dev/null 2>&1; then
+    "$@" <&3 >&4 3<&- 4>&-; brc=$?
+    exec 3<&- 4>&-
+    [ -z "${bout:-}" ] || cat "$bout"
+    return 0
+  fi
   start=$SECONDS
   trap 'sig=1; [ -z "$pid" ] || kill -TERM "$pid" 2>/dev/null' INT TERM HUP
-  timeout -k "$(kill_grace)" "$lim" "$real" "$@" <&0 &
+  timeout -k "$(kill_grace)" "$lim" "$@" <&3 >&4 3<&- 4>&- &
   pid=$!
+  exec 3<&- 4>&-
   [ -z "$sig" ] || kill -TERM "$pid" 2>/dev/null
   wait "$pid"; rc=$?
   while kill -0 "$pid" 2>/dev/null; do wait "$pid"; rc=$?; done
   trap - INT TERM HUP
+  [ -z "${bout:-}" ] || cat "$bout"
   [ -z "$sig" ] || exit "$rc"
   if timed_out "$rc" "$start" "$lim"; then
     case "$sub2" in
@@ -189,10 +249,10 @@ run_bounded() {
     esac
     echo "jira: jira did not answer within $lim s; the $what - check Jira before running it again" >&2
     pid=""
-    find_created "$@"
+    [ "$1" != "$real" ] || find_created "${@:2}"
     exit 124
   fi
-  exit "$rc"
+  brc=$rc
 }
 # After a timed-out `issue create`: name the issues this connection created in the last 15 minutes
 # with exactly the summary of the command, so the caller can tell "created" from "lost" before
@@ -342,6 +402,25 @@ if [ -n "$debug" ]; then
   fi
   echo "jira: debug output prints the Authorization header, so this run gets no credential from the connection" >&2
   exec_real "$@"
+fi
+
+# `comment add` goes to the Agent too, so that its body is sent as ADF rather than through
+# jira-cli's wiki converter (where `{{code}}` and `*bold*` next to Japanese text stay literal).
+# Only when jira-cli would not prompt: a body on the command line, -T, or stdin that can hold one.
+# --web (open a browser) and a key jira-cli has to complete from the config stay with jira-cli.
+if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && { [ "$sub2" = comment ] || [ "$sub2" = comments ]; } &&
+  [ "$sub3" = add ] && ! printf '%s\n' "$@" | grep -qxe '--web' -e '--web=.*'; then
+  scan_body_args "$@"
+  if issue_key "$spos4" && { [ -n "$spbody" ] || [ -n "$sbody" ] || [ -n "$stmpl" ] || [ ! -t 0 ]; }; then
+    # The helper reads stdin only for want of a body on the command line, but a stdin it never
+    # reads must not be one that cannot end either.
+    if { [ -c /dev/stdin ] && [ ! -t 0 ]; } || [ -n "$spbody" ] || [ -n "$sbody" ]; then exec </dev/null; fi
+    if [ -n "$(attempt_limit 120)" ] && command -v timeout >/dev/null 2>&1; then
+      run_write workspace-agent jira-comment "$@"
+      exit "$brc"
+    fi
+    exec workspace-agent jira-comment "$@"
+  fi
 fi
 
 # Not a jira-cli command: the Agent makes the call with its own copy of the credential.
@@ -651,6 +730,97 @@ run_read_only() {
   cat "$d/err" >&2
   exit "$rc"
 }
+# The description of `issue create -b/-T` and `issue edit -b`: jira-cli sends it as v2 wiki
+# markup, where `{{code}}` and `*bold*` next to Japanese text stay literal. jira-cli runs without
+# the body, and the Agent then sets it as ADF (`workspace-agent jira-description`, REST v3).
+# - Only when jira-cli would not prompt (stdin not a terminal, or --no-input): without the body it
+#   would otherwise open the description editor. `edit -T` (no such flag), a bare-number key and a
+#   body that turns out empty run jira-cli as before.
+# - A created issue is never created again: when its key cannot be read or the description cannot
+#   be set, this exits 3 naming the issue and the command that sets it.
+# - `edit` with nothing but the body skips jira-cli: its PUT would change nothing.
+describe_cmd() {
+  { [ "$sub" = issue ] || [ "$sub" = issues ]; } || return 1
+  case "$sub2" in create | edit | update | modify) ;; *) return 1 ;; esac
+  [ ! -t 0 ] || printf '%s\n' "$@" | grep -qxe '--no-input' -e '--no-input=[tT1]*'
+}
+if describe_cmd "$@"; then
+  scan_body_args "$@"
+  dkey="" dfile=""
+  if [ "$sub2" = create ] || { [ -z "$stmpl" ] && issue_key "$spos3"; }; then
+    [ "$sub2" = create ] || dkey="$spos3"
+    dfile="$(mktemp 2>/dev/null)" || dfile=""
+  fi
+  if [ -n "$dfile" ]; then
+    trap 'rm -f "$dfile" "${bout:-}"' EXIT
+    # jira-cli's precedence: -b, then -T (`-` is stdin), then stdin.
+    if [ -n "$sbody" ]; then
+      printf '%s' "$sbody" >"$dfile"
+    elif [ -n "$stmpl" ] && [ "$stmpl" != - ]; then
+      if ! cat -- "$stmpl" >"$dfile" 2>/dev/null; then
+        echo "jira: Error: cannot read the template $stmpl" >&2
+        exit 1
+      fi
+    elif [ "$stmpl" = - ] || stdin_body; then
+      cat >"$dfile"
+    fi
+    strip_body_args "$@"
+    if [ -z "$(tr -d '[:space:]' <"$dfile")" ]; then
+      # No description after all: jira-cli as before, with the stdin already read taken away.
+      set -- "${nobody[@]}"
+      exec </dev/null
+      rm -f "$dfile"; trap - EXIT
+    else
+      skip=""
+      printf '%s\n' "$@" | grep -qxe '--skip-notify' -e '--skip-notify=[tT1]*' && skip=--skip-notify
+      if [ "$sub2" != create ]; then
+        # Anything besides the key, -p / -c and the flags without an effect of their own is a change
+        # for jira-cli to make.
+        rest="" dd="" pv=""
+        for a in "${nobody[@]}"; do
+          if [ -n "$pv" ]; then pv=""; continue; fi
+          case "$a" in
+            issue | issues | edit | update | modify | "$dkey" | --no-input | --no-input=* | --skip-notify | --skip-notify=* | --) ;;
+            -c | --config | -p | --project) pv=1 ;;
+            -c?* | -p?* | --config=* | --project=*) ;;
+            *) rest=1 ;;
+          esac
+        done
+      fi
+      if [ "$sub2" = create ] || [ -n "$rest" ]; then
+        bin=/dev/null
+        if [ "$sub2" = create ]; then bout="$(mktemp 2>/dev/null)" || bout=/dev/null; fi
+        run_write "$real" "${nobody[@]}"
+        bin=""
+        [ "$brc" -eq 0 ] || exit "$brc"
+        if [ "$sub2" = create ]; then
+          dkey="$(grep -oE '/browse/[A-Za-z][A-Za-z0-9_]*-[0-9]+|"key":"[A-Za-z][A-Za-z0-9_]*-[0-9]+"' "$bout" 2>/dev/null |
+            head -n1 | sed -E 's#^/browse/##; s#^"key":"##; s#"$##')"
+          if [ -z "$dkey" ]; then
+            echo "jira: the issue was created, but its key could not be read from jira's output, so its description was NOT set. Do not run create again: find the issue and run \`jira issue edit KEY --no-input -b \"...\"\`." >&2
+            exit 3
+          fi
+        fi
+      else
+        printf '\n\342\234\223 Issue updated\n%s/browse/%s\n' "${site:-$server}" "$dkey"
+      fi
+      lim="$(attempt_limit 120)"
+      tcmd=()
+      if [ -n "$lim" ] && nontty && command -v timeout >/dev/null 2>&1; then tcmd=(timeout -k "$(kill_grace)" "$lim"); fi
+      # The helper reads the store itself: the token exported for jira is kept out of its env.
+      env -u JIRA_API_TOKEN "${tcmd[@]}" workspace-agent jira-description "$dkey" $skip <"$dfile"
+      rc=$?
+      [ "$rc" -eq 0 ] && exit 0
+      if [ "$sub2" = create ]; then
+        echo "jira: $dkey was created, but its description was NOT set (see above). Do not run create again: set it with \`jira issue edit $dkey --no-input -b \"...\"\` (or \`< FILE\`)." >&2
+      else
+        echo "jira: the description of $dkey was NOT set (see above)${rest:+; the other changes were applied}." >&2
+      fi
+      exit 3
+    fi
+  fi
+fi
+
 if readonly_cmd && [ ! -t 1 ] && [ ! -t 2 ]; then
   run_read_only "$@"
 fi

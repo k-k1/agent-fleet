@@ -26,7 +26,12 @@ case "$1" in
   jira-cred) [ ! -f "$STUB_DIR/agent.why" ] || { cat "$STUB_DIR/agent.why" >&2; exit 0; }
     [ -f "$STUB_DIR/agent.out" ] || exit 1; cat "$STUB_DIR/agent.out" ;;
   jira-comment) printf '%s\n' "$@" >"$STUB_DIR/comment.argv"; cat >"$STUB_DIR/comment.stdin"
+    cat "/proc/$PPID/comm" >"$STUB_DIR/comment.parent" 2>/dev/null
+    [ ! -f "$STUB_DIR/comment.hang" ] || exec sleep 60
     [ ! -f "$STUB_DIR/comment.exit" ] || exit "$(cat "$STUB_DIR/comment.exit")"; echo "stub: comment done" ;;
+  jira-description) shift; printf '%s\n' "$@" >"$STUB_DIR/desc.argv"; cat >"$STUB_DIR/desc.stdin"
+    [ ! -f "$STUB_DIR/desc.err" ] || cat "$STUB_DIR/desc.err" >&2
+    [ ! -f "$STUB_DIR/desc.exit" ] || exit "$(cat "$STUB_DIR/desc.exit")"; exit 0 ;;
   jira-find-created) shift; printf '%s\n' "$@" >"$STUB_DIR/find.argv"
     [ ! -f "$STUB_DIR/find.delay" ] || sleep "$(cat "$STUB_DIR/find.delay")"
     [ ! -f "$STUB_DIR/find.hang" ] || exec sleep 60
@@ -80,7 +85,8 @@ run() {
   local envs=()
   while [ "$1" != -- ]; do envs+=("$1"); shift; done
   shift
-  rm -f "$T/jira.seen" "$T/agent.calls" "$T/agent.leak" "$T/jira.count" "$T/jira.parent" "$T/stdin.seen"
+  rm -f "$T/jira.seen" "$T/agent.calls" "$T/agent.leak" "$T/jira.count" "$T/jira.parent" "$T/stdin.seen" \
+    "$T/desc.argv" "$T/desc.stdin" "$T/comment.argv" "$T/comment.stdin" "$T/comment.parent"
   "${RUN_PRE[@]}" env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" \
     TMPDIR="$T/tmp" AF_JIRA_RETRY_WAIT=0 "${envs[@]}" bash "$WRAPPER" "$@" >"$T/out" 2>"$T/err" <"${RUN_IN:-/dev/null}"
   rc=$?
@@ -823,12 +829,37 @@ for setup in default other token server; do
   [ -f "$T/jira.seen" ] && [ ! -f "$T/comment.argv" ] || fail "comment $setup: not passed to the real jira"
   [ "$(seen TOKEN)" != fake-oauth-tok ] || fail "comment $setup: connection token injected"
 done
-# Other comment subcommands are untouched.
+# comment add goes to the helper too (its body is sent as ADF), argv untouched and no token.
 reset
 oauth
 run -- issue comment add K-1 hi
-[ -f "$T/jira.seen" ] && [ ! -f "$T/comment.argv" ] || fail "comment add was intercepted"
-expect comment-add TOKEN fake-oauth-tok
+[ ! -f "$T/jira.seen" ] && [ "$(cat "$T/comment.argv" 2>/dev/null)" = "jira-comment
+issue
+comment
+add
+K-1
+hi" ] || fail "comment add: not forwarded: '$(cat "$T/comment.argv" 2>/dev/null)'"
+[ ! -f "$T/agent.leak" ] || fail "comment add: the helper saw a token"
+no_leak "comment add" fake-oauth-tok
+# A piped body or -T reaches the helper; --web, a bare-number key and the user's own setup stay
+# with jira-cli.
+reset; oauth
+RUN_IN=<(printf 'from pipe') run -- issue comment add K-1
+[ "$(cat "$T/comment.stdin" 2>/dev/null)" = "from pipe" ] && [ ! -f "$T/jira.seen" ] || fail "comment add (pipe): '$(cat "$T/comment.stdin" 2>/dev/null)'"
+for spec in "web|issue comment add K-1 hi --web" "number|issue comment add 1 hi" "no key|issue comment add"; do
+  reset; oauth
+  # shellcheck disable=SC2086
+  run -- ${spec#*|}
+  [ -f "$T/jira.seen" ] && [ ! -f "$T/comment.argv" ] || fail "comment add [${spec%%|*}]: not left to jira-cli"
+done
+reset; oauth
+config "$DEFCFG" "installation: Cloud"
+run -- issue comment add K-1 hi
+[ -f "$T/jira.seen" ] && [ ! -f "$T/comment.argv" ] || fail "comment add (own config): not left to jira-cli"
+reset; oauth
+run -- issue comment add K-1 hi --debug
+[ -f "$T/jira.seen" ] && [ ! -f "$T/comment.argv" ] || fail "comment add (debug): not left to jira-cli"
+expect "comment add (debug)" TOKEN '<unset>'
 
 # 12. The helper runs before the export, so it never sees a token in its environment.
 reset
@@ -896,7 +927,7 @@ done
 
 # 14. A write, init, or anything unknown is run once, whatever the stderr says, and by exec.
 for cmdline in "issue create -s x" "issue edit K-1 -s x" "issue move K-1 Done" "issue assign K-1 me" \
-  "issue comment add K-1 hi" "issue link K-1 K-2 Blocks" "issue delete K-1" "issue clone K-1" "issue watch K-1" \
+  "issue link K-1 K-2 Blocks" "issue delete K-1" "issue clone K-1" "issue watch K-1" \
   "issue worklog add K-1 1h" "epic add E-1 K-1" "epic create" "sprint add 1 K-1" "init" "open K-1" "release list" "frobnicate"; do
   reset
   oauth
@@ -1018,8 +1049,9 @@ finishes() { # finishes <label> <env…> -- <jira args…>: stdin is the open pi
   RUN_IN="$T/fifo"; RUN_PRE=(timeout -k 1 3)
   run STUB_READ_STDIN=1 "$@"
   RUN_PRE=() RUN_IN=
-  [ "$rc" != 124 ] && [ "$rc" != 137 ] && [ -f "$T/jira.seen" ] || fail "stdin [$label]: blocked on an open pipe (rc=$rc)"
-  [ ! -s "$T/stdin.seen" ] || fail "stdin [$label]: jira got stdin data"
+  [ "$rc" != 124 ] && [ "$rc" != 137 ] && { [ -f "$T/jira.seen" ] || [ -f "$T/comment.argv" ] || [ -f "$T/desc.argv" ]; } ||
+    fail "stdin [$label]: blocked on an open pipe (rc=$rc)"
+  [ ! -s "$T/stdin.seen" ] && [ ! -s "$T/comment.stdin" ] || fail "stdin [$label]: jira got stdin data"
 }
 for cmdline in "issue create -tTask -s sum -b body --no-input" "issue create -tTask -s sum --body body" \
   "issue create -s sum --body=body" "issue create -s sum -b=body" "issue create -s sum -bbody" \
@@ -1032,23 +1064,33 @@ for cmdline in "issue create -tTask -s sum -b body --no-input" "issue create -tT
   # shellcheck disable=SC2086
   finishes "$cmdline" -- $cmdline
 done
-# A summary that looks like a flag is not a body: -s -b swallows the next word, so stdin stays.
+# A summary that looks like a flag is not a body: -s -b swallows the next word, so stdin stays
+# the description.
 reset; oauth
 echo data >"$T/body.in"
+plan 1 0 "$ROUTE/browse/K-9
+" ""
 RUN_IN="$T/body.in" run STUB_READ_STDIN=1 -- issue create -s -b x
-[ "$(cat "$T/stdin.seen")" = data ] || fail "stdin: '-s -b x' was taken for a body"
+[ "$(cat "$T/desc.stdin" 2>/dev/null)" = data ] && [ "$(args_of)" = "issue create -s -b x " ] || fail "stdin: '-s -b x' was taken for a body"
 exec 9>&-
-# Bodies that come from stdin reach jira: -T -, a pipe with no -b, an empty -b, and comment add
-# with no text. (The pipe is a fifo with a writer, so it ends.)
-for cmdline in "issue create -s sum -T -" "issue create -s sum --template=-" \
-  "issue create -s sum" "issue create -s sum -b ''" "issue edit K-1 -s x" "issue comment add K-1" \
-  "issue comment add K-1 -T -" "issue create -s sum -- -b body" "issue create -s sum -T $T/body.in -b body"; do
+# Bodies that come from stdin are read: -T -, a pipe with no -b, an empty -b, and comment add
+# with no text. They become the description (or the comment) the helper sends; jira-cli gets none.
+# (The pipe is a fifo with a writer, so it ends.)
+for spec in "issue create -s sum -T -|piped body" "issue create -s sum --template=-|piped body" \
+  "issue create -s sum|piped body" "issue create -s sum -b ''|piped body" "issue edit K-1 -s x|piped body" \
+  "issue comment add K-1|piped body" "issue comment add K-1 -T -|piped body" \
+  "issue create -s sum -- -b body|piped body" "issue create -s sum -T $T/body.in -b body|body"; do
+  cmdline="${spec%|*}" want="${spec#*|}"
   reset; oauth
+  plan 1 0 "$ROUTE/browse/K-9
+" ""
   (printf 'piped body' >"$T/fifo") &
   # shellcheck disable=SC2086
   eval "RUN_IN='$T/fifo' run STUB_READ_STDIN=1 -- $cmdline"
   wait
-  [ "$(cat "$T/stdin.seen" 2>/dev/null)" = "piped body" ] || fail "stdin [$cmdline]: piped body did not reach jira: '$(cat "$T/stdin.seen" 2>/dev/null)'"
+  got="$(cat "$T/desc.stdin" "$T/comment.stdin" 2>/dev/null)"
+  [ "$got" = "$want" ] || fail "stdin [$cmdline]: body '$got', want '$want'"
+  [ ! -s "$T/stdin.seen" ] || fail "stdin [$cmdline]: jira-cli got the body too"
 done
 # Other commands never lose stdin.
 reset; oauth
@@ -1070,11 +1112,15 @@ sys.exit(subprocess.run(sys.argv[3:],stdin=a).returncode)' "$data" "$close")
     RUN_PRE=()
   }
   reset; oauth
+  plan 1 0 "$ROUTE/browse/K-9
+" ""
   sockrun "" 0 -- issue create -s sum -b body --no-input
   [ "$rc" = 0 ] && [ ! -s "$T/stdin.seen" ] && [ -f "$T/jira.seen" ] || fail "stdin: a socket blocked jira despite -b (rc=$rc)"
   reset; oauth
+  plan 1 0 "$ROUTE/browse/K-9
+" ""
   sockrun "sock body" 1 -- issue create -s sum --no-input
-  [ "$(cat "$T/stdin.seen" 2>/dev/null)" = "sock body" ] || fail "stdin: a socket body was dropped: '$(cat "$T/stdin.seen" 2>/dev/null)'"
+  [ "$(cat "$T/desc.stdin" 2>/dev/null)" = "sock body" ] || fail "stdin: a socket body was dropped: '$(cat "$T/desc.stdin" 2>/dev/null)'"
 else
   echo "SKIP: no python3, socket stdin case not run" >&2
 fi
@@ -1088,7 +1134,7 @@ RUN_PRE=() RUN_IN=
 #     per attempt for a read, AF_JIRA_TIMEOUT overriding both (0 = off). Small values here.
 errl() { grep -v '^jira: this config has no issue types' "$T/err"; } # the config-less create hint is not under test
 # A write is never re-run: 124, one line on stderr, the issue/comment may exist.
-for cmdline in "issue create -s x -b y" "issue comment add K-1 hi" "issue edit K-1 -s x" "issue move K-1 Done"; do
+for cmdline in "issue create -s x -b y" "issue edit K-1 -s x" "issue move K-1 Done"; do
   reset; oauth
   echo 60 >"$T/plan.1.hang"
   # shellcheck disable=SC2086
@@ -1103,9 +1149,12 @@ done
 reset; oauth; echo 60 >"$T/plan.1.hang"
 run AF_JIRA_TIMEOUT=0.5 -- issue create -s x
 grep -q 'the issue may have been created' "$T/err" || fail "write timeout: create wording '$(cat "$T/err")'"
-reset; oauth; echo 60 >"$T/plan.1.hang"
+# comment add is the helper's call, bounded the same way.
+reset; oauth; touch "$T/comment.hang"
 run AF_JIRA_TIMEOUT=0.5 -- issue comment add K-1 hi
-grep -q 'the comment may have been added' "$T/err" || fail "write timeout: comment wording '$(cat "$T/err")'"
+[ "$rc" = 124 ] && [ "$(cat "$T/comment.parent")" = timeout ] || fail "write timeout [comment add]: rc=$rc parent=$(cat "$T/comment.parent" 2>/dev/null)"
+[ "$(cat "$T/err")" = "jira: jira did not answer within 0.5 s; the comment may have been added - check Jira before running it again" ] || fail "write timeout: comment wording '$(cat "$T/err")'"
+rm -f "$T/comment.hang"
 # A jira that ignores TERM is killed after the grace period, and still reported as a timeout.
 reset; oauth; echo 60 >"$T/plan.1.deaf"
 run AF_JIRA_TIMEOUT=0.5 AF_JIRA_KILL_GRACE=1 -- issue create -s x
@@ -1342,11 +1391,112 @@ nolookup "own token" JIRA_API_TOKEN=own -- issue create -p AB -s x
 nolookup "own server" JIRA_SERVER=https://own.example.net -- issue create -p AB -s x
 nolookup "debug" -- issue create --debug -p AB -s x
 nolookup "edit" -- issue edit AB-1 -s x
-nolookup "comment" -- issue comment add AB-1 hi
+nolookup "comment" -- issue comment add 1 hi
 reset; find_reset; oauth; plan 1 0 "AB-1
 " ""
 run -- issue create -p AB -s "done"
 [ "$rc" = 0 ] && [ ! -e "$T/find.argv" ] || fail "find: a create that answered was looked up"
+
+# 21. The description of `issue create -b/-T` and `issue edit -b` is set by the Agent as ADF
+#     (`workspace-agent jira-description KEY`, body on stdin): jira-cli runs without it.
+desc_reset() { rm -f "$T"/desc.*; }
+created() { plan 1 0 "
+✓ Issue created
+$ROUTE/browse/$1
+" ""; }
+reset; desc_reset; oauth; created AB-12
+run -- issue create -p AB -t Task -s sum -b '認証（`/api/auth`）で送る' --no-input
+[ "$rc" = 0 ] || fail "describe create: rc=$rc err='$(cat "$T/err")'"
+[ "$(args_of)" = "issue create -p AB -t Task -s sum --no-input " ] && expect "describe create" TOKEN fake-oauth-tok || fail "describe create: jira argv '$(args_of)'"
+[ "$(cat "$T/desc.argv")" = AB-12 ] || fail "describe create: helper argv '$(cat "$T/desc.argv")'"
+[ "$(cat "$T/desc.stdin")" = '認証（`/api/auth`）で送る' ] || fail "describe create: body '$(cat "$T/desc.stdin")'"
+grep -q "browse/AB-12" "$T/out" || fail "describe create: jira's output lost: '$(cat "$T/out")'"
+[ ! -f "$T/agent.leak" ] || fail "describe create: the helper saw a token"
+no_leak "describe create" fake-oauth-tok
+[ -z "$(ls -A "$T/tmp")" ] || fail "describe create left files behind: $(ls -A "$T/tmp")"
+# Every spelling of the body flags is taken out of jira's argv; -T reads the file.
+printf 'from file\n' >"$T/tmpl.md"
+for spec in "-bX|X" "-b=X|X" "--body=X|X" "--body X|X" "-T $T/tmpl.md|from file" "--template=$T/tmpl.md|from file" "-T $T/tmpl.md -b X|X"; do
+  reset; desc_reset; oauth; created AB-3
+  # shellcheck disable=SC2086
+  run -- issue create -p AB -s sum ${spec%|*}
+  [ "$(args_of)" = "issue create -p AB -s sum " ] || fail "describe [${spec%|*}]: jira argv '$(args_of)'"
+  [ "$(cat "$T/desc.stdin" 2>/dev/null)" = "$(printf '%s' "${spec#*|}")" ] || [ "$(cat "$T/desc.stdin" 2>/dev/null)" = "${spec#*|}
+" ] || fail "describe [${spec%|*}]: body '$(cat "$T/desc.stdin" 2>/dev/null)'"
+done
+# --raw prints JSON; the key is read from it.
+reset; desc_reset; oauth
+plan 1 0 '{"id":"10042","key":"AB-42","self":"x"}
+' ""
+run -- issue create -p AB -s sum -b x --raw
+[ "$rc" = 0 ] && [ "$(cat "$T/desc.argv" 2>/dev/null)" = AB-42 ] || fail "describe --raw: rc=$rc argv '$(cat "$T/desc.argv" 2>/dev/null)'"
+# A template that cannot be read stops before anything is created.
+reset; desc_reset; oauth
+run -- issue create -p AB -s sum -T "$T/missing.md"
+[ "$rc" = 1 ] && [ ! -f "$T/jira.seen" ] || fail "describe: unreadable template: rc=$rc"
+# A failed create is not described; a created issue is never created again: an unreadable key or a
+# failed description exits 3 and names what to run instead.
+reset; desc_reset; oauth
+plan 1 1 "" "Error: 400 Bad Request"
+run -- issue create -p AB -s sum -b x
+[ "$rc" = 1 ] && [ ! -f "$T/desc.argv" ] || fail "describe: failed create was described (rc=$rc)"
+reset; desc_reset; oauth
+plan 1 0 "done
+" ""
+run -- issue create -p AB -s sum -b x
+[ "$rc" = 3 ] && [ "$(count)" = 1 ] && [ ! -f "$T/desc.argv" ] && grep -q 'Do not run create again' "$T/err" || fail "describe: no key: rc=$rc err='$(cat "$T/err")'"
+reset; desc_reset; oauth; created AB-12
+echo "jira: Jira refused (403)" >"$T/desc.err"; echo 1 >"$T/desc.exit"
+run -- issue create -p AB -s sum -b x
+[ "$rc" = 3 ] && [ "$(count)" = 1 ] || fail "describe: failed description: rc=$rc attempts=$(count)"
+grep -q 'Jira refused (403)' "$T/err" && grep -q '^jira: AB-12 was created, but its description was NOT set' "$T/err" || fail "describe: failed description: err='$(cat "$T/err")'"
+desc_reset
+# A create that times out exits 124 as before and is not described.
+reset; desc_reset; oauth; echo 60 >"$T/plan.1.hang"
+run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s sum -b x
+[ "$rc" = 124 ] && [ ! -f "$T/desc.argv" ] || fail "describe: timed-out create: rc=$rc"
+# A helper that never answers is cut off and reported, not left hanging.
+reset; desc_reset; oauth; created AB-12
+printf '#!/bin/sh\n[ "$1" != jira-description ] || exec sleep 60\nexec "%s/bin/workspace-agent.real" "$@"\n' "$T" >"$T/bin/wa.hang"
+mv "$T/bin/workspace-agent" "$T/bin/workspace-agent.real"; cp "$T/bin/wa.hang" "$T/bin/workspace-agent"; chmod +x "$T/bin/workspace-agent"
+run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s sum -b x
+mv "$T/bin/workspace-agent.real" "$T/bin/workspace-agent"
+[ "$rc" = 3 ] && grep -q 'AB-12 was created' "$T/err" || fail "describe: stuck helper: rc=$rc err='$(cat "$T/err")'"
+# edit with nothing but the body skips jira-cli; with other changes jira-cli makes them first.
+reset; desc_reset; oauth
+run -- issue edit AB-5 -b '- **すべて**。次へ' --no-input
+[ "$rc" = 0 ] && [ ! -f "$T/jira.seen" ] && [ "$(cat "$T/desc.argv")" = AB-5 ] || fail "describe edit: rc=$rc jira=$( [ -f "$T/jira.seen" ] && echo ran) argv='$(cat "$T/desc.argv" 2>/dev/null)'"
+grep -q "Issue updated" "$T/out" && grep -q "$SITE/browse/AB-5" "$T/out" || fail "describe edit: stdout '$(cat "$T/out")'"
+reset; desc_reset; oauth
+run -- issue edit AB-5 -s new -b body --skip-notify
+[ "$(args_of)" = "issue edit AB-5 -s new --skip-notify " ] && [ "$(cat "$T/desc.argv")" = "AB-5
+--skip-notify" ] || fail "describe edit with changes: jira '$(args_of)' helper '$(cat "$T/desc.argv" 2>/dev/null)'"
+reset; desc_reset; oauth
+plan 1 1 "" "Error: 404"
+run -- issue edit AB-5 -s new -b body
+[ "$rc" = 1 ] && [ ! -f "$T/desc.argv" ] || fail "describe edit: described after jira-cli failed"
+reset; desc_reset; oauth
+echo 1 >"$T/desc.exit"
+run -- issue edit AB-5 -s new -b body
+[ "$rc" = 3 ] && grep -q 'the description of AB-5 was NOT set (see above); the other changes were applied' "$T/err" || fail "describe edit failure: rc=$rc err='$(cat "$T/err")'"
+desc_reset
+# Left to jira-cli as before: a bare-number key, edit -T (no such flag), an empty body, the user's
+# own config or token, a debug run.
+for spec in "number|-- issue edit 5 -b x" "edit -T|-- issue edit AB-5 -T $T/tmpl.md" "empty|-- issue create -p AB -s sum -b ''" \
+  "own config|-- -c $T/other.yml issue create -s sum -b x" "own token|JIRA_API_TOKEN=own -- issue create -s sum -b x" \
+  "debug|-- issue create --debug -s sum -b x"; do
+  reset; desc_reset; oauth; created AB-1
+  config "$T/other.yml" "installation: Cloud"
+  eval "run ${spec#*|}"
+  [ -f "$T/jira.seen" ] && [ ! -f "$T/desc.argv" ] || fail "describe [${spec%%|*}]: not left to jira-cli (rc=$rc)"
+done
+args_of | grep -q -- '-b x' || fail "describe [debug]: body taken out of a jira-cli run"
+# A terminal without --no-input keeps jira-cli's prompts (and the body) as they were.
+if command -v script >/dev/null 2>&1; then
+  reset; desc_reset; oauth; created AB-1
+  script -qec "env -i PATH='$T/bin:/usr/bin:/bin' HOME='$T/home' STUB_DIR='$T' AF_JIRA_REAL='$T/bin/jira-real' TMPDIR='$T/tmp' bash '$WRAPPER' issue create -s sum -b x" /dev/null >"$T/out" 2>&1 </dev/null
+  [ ! -f "$T/desc.argv" ] && grep -q '^ARG=x$' "$T/jira.seen" || fail "describe tty: body taken from jira-cli"
+fi
 
 if [ "$fails" != 0 ]; then
   echo "jira-auth-wrapper-test: $fails failure(s)" >&2

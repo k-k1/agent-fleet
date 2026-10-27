@@ -301,6 +301,19 @@ those variables in for one `exec`:
   ADF (`jira_adf.go`, goldmark) rather than through jira-cli's wiki converter (#2476), so an edit
   repairs a garbled comment. A `--debug` run is refused. The user's own setup (next bullet) is
   exec'd unchanged, where jira answers that it has no such command.
+- **Bodies as ADF (`comment add`, `issue create -b/-T`, `issue edit -b`)** (#2809): jira-cli sends
+  them as v2 wiki markup, where `{{code}}` and `*bold*` only work at a word boundary, which
+  Japanese text and full-width brackets are not. For a config of ours, `comment add` with a body
+  on the command line, `-T` or a non-terminal stdin goes to `workspace-agent jira-comment` (POST
+  `/rest/api/3/issue/KEY/comment`, `--internal` as the `sd.public.comment` property; a POST is
+  never re-sent). `create` / `edit` with a body and no prompt to make (stdin not a terminal, or
+  `--no-input`) run jira-cli with `-b` / `-T` taken out and stdin `/dev/null`, then pipe the body
+  to `workspace-agent jira-description KEY [--skip-notify]` (PUT `fields.description`). The key of
+  a create is read from jira-cli's `/browse/KEY` line or `--raw` JSON; when it cannot be read or
+  the PUT fails the wrapper exits 3 and says the issue exists, never re-running the create. An
+  edit whose only change is the body skips jira-cli. `--web`, a bare-number key (jira-cli
+  completes it from the config) and `edit -T` stay with jira-cli. Known gap: goldmark follows
+  CommonMark's flanking rules, so `**「x」**です` is not bold.
 - **The user's own setup wins**: an explicit `JIRA_API_TOKEN` or `JIRA_SERVER`, a `jira init`
   given its own `--server` / `--login` / `--installation` / `--auth-type`, or any config outside
   the managed directory (`-c` in any spelling, `JIRA_CONFIG_FILE`, or jira's own default

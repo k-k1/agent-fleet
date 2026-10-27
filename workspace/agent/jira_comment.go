@@ -1,12 +1,13 @@
 package main
 
-// `workspace-agent jira-comment issue comment edit|delete KEY ID …` — the two comment
-// operations jira-cli lacks, for the jira wrapper (workspace/jira-auth-wrapper.sh), which hands
-// over its own argv untouched.
+// `workspace-agent jira-comment issue comment add|edit|delete KEY …` — the comment operations of
+// the jira wrapper (workspace/jira-auth-wrapper.sh), which hands over its own argv untouched.
+// jira-cli lacks edit and delete; add is taken over because jira-cli sends its body as v2 wiki
+// markup, where `{{code}}` and `*bold*` next to Japanese text stay literal.
 //
 // The call is made here, in the process that may hold the token, so the token never reaches the
 // wrapper's argv or output. The body is Markdown converted to ADF (jira_adf.go) and sent through
-// REST v3, not through jira-cli's wiki converter, so an edit also repairs a comment that
+// REST v3, not through jira-cli's wiki converter, so an edit also repairs a comment that an older
 // `comment add` garbled.
 
 import (
@@ -31,13 +32,14 @@ var (
 // the body sources.
 type jiraCommentArgs struct {
 	verb, key, id string
-	body          *string // -b / --body
+	body          *string // -b / --body, or add's positional body
 	template      string  // -T / --template; "-" is stdin
+	internal      bool    // add --internal (a JSM internal comment)
 }
 
-// parseJiraCommentArgs reads jira's argv: `issue|issues comment edit|delete KEY ID`, with jira's
-// global -c / -p (accepted, unused) and the body flags of `comment add`. Boolean flags such as
-// --no-input are skipped.
+// parseJiraCommentArgs reads jira's argv: `issue|issues comment add KEY [BODY]` or
+// `issue|issues comment edit|delete KEY ID`, with jira's global -c / -p (accepted, unused) and the
+// body flags. Other boolean flags such as --no-input are skipped.
 func parseJiraCommentArgs(args []string) (jiraCommentArgs, error) {
 	var a jiraCommentArgs
 	var pos []string
@@ -50,6 +52,8 @@ func parseJiraCommentArgs(args []string) (jiraCommentArgs, error) {
 			a.body = &v
 		case "-T", "--template":
 			a.template = val
+		case "--internal":
+			a.internal = val != "false" && val != "0" && val != "f" && val != "F"
 		}
 	}
 	for i := 0; i < len(args); i++ {
@@ -69,14 +73,28 @@ func parseJiraCommentArgs(args []string) (jiraCommentArgs, error) {
 			setFlag(name, val)
 		case len(s) > 2 && s[0] == '-' && s[1] != '-' && (s[1] == 'b' || s[1] == 'T'):
 			setFlag(s[:2], strings.TrimPrefix(s[2:], "="))
+		case s == "--internal":
+			a.internal = true
 		case strings.HasPrefix(s, "-") && s != "-":
 		default:
 			pos = append(pos, s)
 		}
 	}
+	if len(pos) >= 3 && (pos[0] == "issue" || pos[0] == "issues") && (pos[1] == "comment" || pos[1] == "comments") &&
+		pos[2] == "add" && (len(pos) == 4 || len(pos) == 5) {
+		a.verb, a.key = "add", pos[3]
+		// jira-cli: a positional body wins over -T, and an empty one is no body.
+		if len(pos) == 5 && pos[4] != "" {
+			a.body = &pos[4]
+		}
+		if !jiraCommentKeyRe.MatchString(a.key) {
+			return a, fmt.Errorf("%q is not an issue key", a.key)
+		}
+		return a, nil
+	}
 	if len(pos) != 5 || (pos[0] != "issue" && pos[0] != "issues") || pos[1] != "comment" ||
 		(pos[2] != "edit" && pos[2] != "delete") {
-		return a, fmt.Errorf("usage: jira issue comment edit|delete KEY ID [-b BODY | -T FILE]")
+		return a, fmt.Errorf("usage: jira issue comment add KEY [BODY] | edit KEY ID [-b BODY | -T FILE] | delete KEY ID")
 	}
 	a.verb, a.key, a.id = pos[2], pos[3], pos[4]
 	if !jiraCommentKeyRe.MatchString(a.key) {
@@ -112,7 +130,7 @@ func jiraCommentRun(c *secrets.JiraCreds, args []string, stdin io.Reader, stdout
 		return 2
 	}
 	var md string
-	if a.verb == "edit" {
+	if a.verb == "edit" || a.verb == "add" {
 		var err error
 		if md, err = jiraCommentBody(a, stdin); err != nil {
 			fmt.Fprintln(stderr, "jira:", err)
@@ -129,6 +147,9 @@ func jiraCommentRun(c *secrets.JiraCreds, args []string, stdin io.Reader, stdout
 	if c.AuthKind == "oauth" && c.CloudID == "" {
 		fmt.Fprintln(stderr, "jira: no Jira site selected for the connection")
 		return 1
+	}
+	if a.verb == "add" {
+		return jiraCommentAdd(c, a, md, stdout, stderr)
 	}
 	method := "DELETE"
 	var payload []byte
@@ -185,7 +206,37 @@ func jiraCommentRun(c *secrets.JiraCreds, args []string, stdin io.Reader, stdout
 	return 0
 }
 
-// jiraCommentBody is -b, else -T (`-` is stdin), else piped stdin, as `comment add` takes it.
+// jiraCommentAdd posts a new comment. A POST is never re-sent (jira_retry.go), so a transport
+// failure says the comment may exist instead of inviting a re-run that would post it twice.
+func jiraCommentAdd(c *secrets.JiraCreds, a jiraCommentArgs, md string, stdout, stderr io.Writer) int {
+	body := map[string]any{"body": jiraMarkdownADF(md)}
+	if a.internal {
+		body["properties"] = []any{map[string]any{"key": "sd.public.comment", "value": map[string]any{"internal": true}}}
+	}
+	payload, _ := json.Marshal(body)
+	raw, status, _, err := jiraCommentCall(c, "POST", jiraAPIBase(c)+"/rest/api/3/issue/"+a.key+"/comment", payload)
+	if err != nil {
+		fmt.Fprintf(stderr, "jira: %v; the comment may have been added - check %s before running it again\n", err, a.key)
+		return 1
+	}
+	if status != http.StatusCreated && status != http.StatusOK {
+		fmt.Fprintln(stderr, "jira:", jiraCommentFailure(a, status, raw))
+		return 1
+	}
+	var out struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(raw, &out)
+	u := c.Site + "/browse/" + a.key
+	if out.ID != "" {
+		u += "?focusedCommentId=" + out.ID
+	}
+	fmt.Fprintf(stdout, "Comment added to issue %q\n%s\n", a.key, u)
+	return 0
+}
+
+// jiraCommentBody is -b (or add's positional body), else -T (`-` is stdin), else piped stdin, as
+// `comment add` takes it.
 func jiraCommentBody(a jiraCommentArgs, stdin io.Reader) (string, error) {
 	var body string
 	switch {
@@ -233,6 +284,15 @@ func jiraCommentCall(c *secrets.JiraCreds, method, u string, payload []byte) ([]
 // jiraCommentFailure words a refusal in one line, without the token or the request.
 func jiraCommentFailure(a jiraCommentArgs, status int, raw []byte) string {
 	what := fmt.Sprintf("%s comment %s on %s", a.verb, a.id, a.key)
+	if a.verb == "add" {
+		what = "add a comment to " + a.key
+		switch status {
+		case http.StatusForbidden:
+			return fmt.Sprintf("Jira refused to %s (403): the account may lack the Add Comments permission, and an OAuth connection needs write:jira-work", what)
+		case http.StatusNotFound:
+			return fmt.Sprintf("cannot %s (404): there is no issue %s, or it is not visible to this account", what, a.key)
+		}
+	}
 	switch status {
 	case http.StatusUnauthorized:
 		return "Jira rejected the credentials (re-connect Jira)"
