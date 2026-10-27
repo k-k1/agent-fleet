@@ -551,15 +551,16 @@ function TranscriptTurnImpl({
           ))
         ) : isUser && turn.cmd ? (
           // A `/`-run slash command / skill invocation: a compact chip marking the action.
-          // Args sent with an attachment carry the machine-facing Read instruction and paths;
-          // split them off like a plain prompt so the chip shows the user's words only. Only
-          // claude logs command args, and its attachments always come with FILE_PROMPT, so args
-          // without it are left whole: a pasted path the member typed is not an attachment.
+          // Args sent with an attachment end with the machine-facing Read instruction and paths
+          // (buildImagePrompt appends them); split them off so the chip shows the user's words
+          // only. Only claude logs command args and its attachments always come with FILE_PROMPT,
+          // so the cut is at its LAST occurrence: a pasted path or the instruction the member
+          // typed before it stays in the args and is not taken for an attachment.
           turn.parts.map((p, i) => {
             const args = p.info || "";
-            const { text, images, files } = args.includes(FILE_PROMPT)
-              ? splitPastedImages(args)
-              : { text: args, images: [], files: [] };
+            const at = args.lastIndexOf(FILE_PROMPT);
+            const { images, files } = at >= 0 ? splitPastedImages(args.slice(at)) : { images: [], files: [] };
+            const text = at >= 0 ? args.slice(0, at).trim() : args;
             return (
               <Fragment key={i}>
                 <CmdChip name={p.text} args={text} />
