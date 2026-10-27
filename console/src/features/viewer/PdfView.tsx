@@ -32,7 +32,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { documentAssetParams, loadPdfjs, type Pdfjs } from "./pdfjs.ts";
 import { clipboardText } from "./pdfText.ts";
 import { findMatches, firstMatchFrom, pageText, stepMatch, type FindMatch, type PageText } from "./pdfFind.ts";
-import { setFindHighlights } from "./pdfFindHighlight.ts";
+import { addFindHits, clearFindHits, setFindCurrent } from "./pdfFindHighlight.ts";
 import {
   anchorOf,
   canvasPixelRatio,
@@ -521,25 +521,43 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
   }, []);
 
   // Paints the matches and, when asked, brings the active one into view. A match on a page with
-  // no text layer yet is reached by scrolling to its page, once per request so the reader can
-  // scroll away if that page never gets a layer; the layer built there bumps layerTick and this
-  // runs again to place it exactly. Ranges are cached per match list, so a layer being built
-  // only computes the matches still missing one.
+  // no text layer yet is reached by scrolling to its page, once per request; the layer built there
+  // bumps layerTick and this runs again to place it exactly, unless the reader has meanwhile
+  // scrolled away from that page. Matches are indexed by page, so a layer being built only turns
+  // its own page's matches into ranges and adds them (pdfFindHighlight.ts is incremental too).
   const revealedRef = useRef(0);
   const pagedRef = useRef(0);
-  const rangesRef = useRef<{ of: FindMatch[]; ranges: (Range | null)[] }>({ of: [], ranges: [] });
+  const rangesRef = useRef<{ of: FindMatch[]; ranges: (Range | null)[]; waiting: Map<number, number[]> }>({
+    of: [],
+    ranges: [],
+    waiting: new Map(),
+  });
   useEffect(() => {
     const owner = scrollRef;
-    if (rangesRef.current.of !== matches) rangesRef.current = { of: matches, ranges: matches.map(() => null) };
-    const { ranges } = rangesRef.current;
-    const all: Range[] = [];
-    matches.forEach((m, k) => {
-      ranges[k] ??= rangeOf(m);
-      const r = ranges[k];
-      if (r) all.push(r);
-    });
-    const current = ranges[active] ?? null;
-    setFindHighlights(owner, all, current);
+    let cache = rangesRef.current;
+    if (cache.of !== matches) {
+      clearFindHits(owner);
+      const waiting = new Map<number, number[]>();
+      matches.forEach((m, k) => {
+        const list = waiting.get(m.page);
+        if (list) list.push(k);
+        else waiting.set(m.page, [k]);
+      });
+      cache = rangesRef.current = { of: matches, ranges: matches.map(() => null), waiting };
+    }
+    const added: Range[] = [];
+    for (const [page, ks] of cache.waiting) {
+      if (!textLayersRef.current.has(page)) continue;
+      cache.waiting.delete(page);
+      for (const k of ks) {
+        const r = rangeOf(matches[k]);
+        cache.ranges[k] = r;
+        if (r) added.push(r);
+      }
+    }
+    addFindHits(owner, added);
+    const current = cache.ranges[active] ?? null;
+    setFindCurrent(owner, current);
     const el = scrollRef.current;
     const m = matches[active];
     if (!el || !m || revealedRef.current === reveal) return;
@@ -552,6 +570,9 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
       return;
     }
     revealedRef.current = reveal;
+    // The pane was already sent to this page; a reader who has since scrolled elsewhere keeps
+    // their place instead of being pulled back when the layer finally arrives.
+    if (pagedRef.current === reveal && (m.page < rangeRef.current.start || m.page >= rangeRef.current.end)) return;
     const r = current.getBoundingClientRect();
     const view = el.getBoundingClientRect();
     if (r.top < view.top || r.bottom > view.bottom) el.scrollTop += r.top - view.top - el.clientHeight / 3;
@@ -561,7 +582,7 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
 
   useEffect(() => {
     const owner = scrollRef;
-    return () => setFindHighlights(owner, [], null);
+    return () => clearFindHits(owner);
   }, []);
 
   const openFind = () => {
