@@ -181,6 +181,9 @@ func AggregateUsage(turns []transcript.Turn) sessionUsage {
 		if t.CostOnly {
 			continue // tokens only here, and an accounting row must not split a logical turn
 		}
+		if claude.IsCLIWarning(t) {
+			continue // no model response and no prompt either, so it neither counts nor splits a turn
+		}
 		if t.Role != "assistant" {
 			fold()
 			continue
