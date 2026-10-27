@@ -392,10 +392,7 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 	// probe budget is spent the context kill is the cause of all of them, so the
 	// answer is timeout whichever symptom surfaced first.
 	failErr := func(err error) ProbeResult {
-		if ctx.Err() != nil {
-			err = errProbeTimeout
-		}
-		return fail(failOf(err))
+		return fail(failOf(budgetErr(ctx, err)))
 	}
 	exchangeCtx := func(c context.Context, id int, m rpcMsg) (rpcMsg, error) {
 		if err := writeRPC(stdin, m); err != nil {
@@ -484,17 +481,36 @@ const writeExitGrace = 2 * time.Second
 // gone or going, so wait for the reader's exit error (or the budget) instead of
 // depending on goroutine scheduling; werr is returned only if neither shows up.
 func classifyWriteErr(budget context.Context, readErr <-chan error, grace time.Duration, werr error) error {
+	if budget.Err() != nil {
+		return errProbeTimeout // the write itself failed after the deadline
+	}
 	t := time.NewTimer(grace)
 	defer t.Stop()
 	select {
 	case re := <-readErr:
 		return re
 	case <-budget.Done():
-		return errProbeTimeout
 	case <-t.C:
-		return werr
 	}
+	// The write failed inside the budget; running out of time while waiting for a
+	// diagnosis must not rewrite that into a timeout.
+	return &settledErr{werr}
 }
+
+// budgetErr maps a transport error to errProbeTimeout once the probe context has expired.
+func budgetErr(ctx context.Context, err error) error {
+	var se *settledErr
+	if ctx.Err() != nil && !errors.As(err, &se) {
+		return errProbeTimeout
+	}
+	return err
+}
+
+// settledErr is a failure that was decided within the budget; failErr leaves it alone
+// even if the context has expired by the time it is reported.
+type settledErr struct{ error }
+
+func (e *settledErr) Unwrap() error { return e.error }
 
 // readRPCFor waits for the response with the wanted id, discarding anything else that
 // arrives (late answers to an abandoned exchange, stray notifications). ctx bounds this

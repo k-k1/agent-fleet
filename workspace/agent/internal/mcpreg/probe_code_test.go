@@ -200,12 +200,29 @@ func TestClassifyWriteErrWaitsForDelayedExit(t *testing.T) {
 
 func TestClassifyWriteErrFallsBackAfterGrace(t *testing.T) {
 	werr := errors.New("write |1: broken pipe")
-	if err := classifyWriteErr(context.Background(), make(chan error), 20*time.Millisecond, werr); err != werr {
+	if err := classifyWriteErr(context.Background(), make(chan error), 20*time.Millisecond, werr); !errors.Is(err, werr) || errors.Is(err, errProbeTimeout) {
 		t.Fatalf("got %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := classifyWriteErr(ctx, make(chan error), time.Minute, werr); !errors.Is(err, errProbeTimeout) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// A write that failed inside the budget stays a write failure even when the budget runs
+// out while waiting for the exit notification (stdin closed, stdout still open).
+func TestClassifyWriteErrBudgetExpiringDuringWaitIsNotTimeout(t *testing.T) {
+	werr := errors.New("write |1: broken pipe")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	err := classifyWriteErr(ctx, make(chan error), time.Minute, werr)
+	if errors.Is(err, errProbeTimeout) || !errors.Is(err, werr) {
+		t.Fatalf("got %v", err)
+	}
+	<-ctx.Done() // expired by the time the caller reports it
+	res := failOf(budgetErr(ctx, err))
+	if res.Code == codeTimeout || res.Error == "" {
+		t.Fatalf("got %+v", res)
 	}
 }
