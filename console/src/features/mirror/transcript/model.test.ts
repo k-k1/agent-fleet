@@ -68,6 +68,13 @@ describe("coalesceUserActions", () => {
     expect(parseCommand(t)).toEqual({ name: "/scout", args: "" });
     expect(coalesceUserActions([t])[0].cmd).toBe(true);
   });
+
+  it("drops the image studio's signal from the args", () => {
+    const sig = STUDIO_SIGNAL_PREFIX + "v4 · draft changed → get_image_studio]";
+    const t = user(`<command-name>/review</command-name><command-args>見て Open the following file(s) with the Read tool: \`/x/pasted/k/paste-1.png\`\n\n${sig}</command-args>`);
+    expect(parseCommand(t)?.args).toBe("見て Open the following file(s) with the Read tool: `/x/pasted/k/paste-1.png`");
+    expect(composerHistory([t])).toEqual(["/review 見て Open the following file(s) with the Read tool: `/x/pasted/k/paste-1.png`"]);
+  });
 });
 
 describe("groupTurns", () => {
