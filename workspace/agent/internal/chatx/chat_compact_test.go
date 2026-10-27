@@ -267,3 +267,37 @@ func TestChatAutoCompactThresholdEnvOverride(t *testing.T) {
 		t.Fatalf("invalid env must fall back: %v", got)
 	}
 }
+
+// A muse conversation holds its native resume handle in MuseSessionID. Compaction must see it
+// (anyProviderResume), summarize on that session, and then drop it so the next turn opens a
+// fresh native session carrying the handoff (#2790).
+func TestCompactConversationMuse(t *testing.T) {
+	withTempHome(t)
+	c := &ChatConversation{
+		ID: RandUUID(), Agent: "muse", MuseSessionID: "old-muse",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "hi", TS: 1},
+			{Role: "assistant", Agent: "muse", Content: "hello", TS: 2},
+		},
+	}
+	if !anyProviderResume(c) {
+		t.Fatal("anyProviderResume false with only MuseSessionID set")
+	}
+	prov := &stubProvider{reply: "muse summary"}
+	if err := compactConversation(context.Background(), c, prov, CompactReasonManual); err != nil {
+		t.Fatal(err)
+	}
+	if len(prov.prompts) != 1 || !strings.HasSuffix(prov.prompts[0], CompactSummaryPromptFor("ja")) {
+		t.Fatalf("summary prompt not sent: %+v", prov.prompts)
+	}
+	if c.MuseSessionID != "" {
+		t.Fatalf("MuseSessionID = %q after compaction, want cleared", c.MuseSessionID)
+	}
+	if c.PendingHandoff != "muse summary" {
+		t.Fatalf("PendingHandoff = %q", c.PendingHandoff)
+	}
+	// Fresh native session: the handoff replaces the history replay.
+	if got := SyncProviderPrompt(c, "muse", "next", len(c.Messages)); got != "next" {
+		t.Fatalf("post-compaction prompt replays history: %q", got)
+	}
+}
