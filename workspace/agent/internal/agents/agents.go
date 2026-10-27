@@ -150,7 +150,18 @@ type LaunchPlan struct {
 	// /proc/*/cmdline and tmux's pane_start_command, readable by anything in the
 	// container.
 	Env []string
+	// Notices are user-visible facts the launch itself caused (the Notice* keys). The
+	// caller records them for the mirror; nil for a launch that has nothing to say, which
+	// is every kind but the ones that name a notice below.
+	Notices []string
 }
+
+// Notice keys a LaunchPlan can carry. The Console owns the wording per key.
+const (
+	// NoticeTranscriptRestored: the conversation log was gone and the Agent's backup copy
+	// was put back. Reported only for a restore that succeeded.
+	NoticeTranscriptRestored = "transcript_restored"
+)
 
 // LiveInfo is the slice of a wire Session whose values depend on the kind and live
 // state. wireSession fills the static fields and asks the agent for this.

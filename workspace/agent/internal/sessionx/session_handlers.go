@@ -1701,6 +1701,7 @@ func ForgetRuntime(m session.Meta) {
 	status.Remove(sid)
 	status.RemoveExit(m.Name)
 	status.RemoveCarried(sid)
+	status.RemoveRestoreNotes(sid)
 }
 
 // RemoveManagedLedger is removeManagedLedger for package main. The trash keeps the ledger (a

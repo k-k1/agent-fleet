@@ -46,6 +46,7 @@ import { echoLanded } from "./pendingEcho.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { canBranchFrom, canBranchInSession, carriedUserTurns } from "./forkAt.ts";
 import { HandoffProposal } from "./HandoffProposal.tsx";
+import { restoreNoteCards } from "./parts/RestoreNote.tsx";
 import { DiscardNotice } from "./parts/DiscardNotice.tsx";
 import { PendingPeersNotice } from "./parts/PendingPeersNotice.tsx";
 import { FileChangeStrip } from "./FileChangeStrip.tsx";
@@ -177,7 +178,7 @@ function MirrorViewBody({
   const {
     turns, pendingSends, applyEchoes, loaded, handoffs, updateHandoff, termState, compactProg, retry, status, bgBusy,
     bgBusyReason, finalizing, busy, tasks, files, queuedPrompts, pendingPeers, queueShown, discardView, alive,
-    dirGone, pending, liveText, pendingPlan, pendingPerm, pendingApproval, carried, mode, agentCtx,
+    dirGone, pending, liveText, pendingPlan, pendingPerm, pendingApproval, carried, restoredAt, mode, agentCtx,
     suggestedTitle, titleActing, setManagedSettingsOpen, managedSettings, setForkAtTarget, draft, setDraft,
     dragging, setHistIdx, hasMore, loadingOlder, topSentinelRef, statusRef, tickRef, inputRef,
   } = st;
@@ -649,7 +650,7 @@ function MirrorViewBody({
               {tr("mirror.ws_stopped_history")}
             </div>
           )
-        ) : groups.length === 0 && !pending && !pendingPlan && !pendingPerm && !pendingApproval && !carried && handoffs.length === 0 ? (
+        ) : groups.length === 0 && !pending && !pendingPlan && !pendingPerm && !pendingApproval && !carried && handoffs.length === 0 && restoredAt.length === 0 ? (
           // handoffs.length === 0: with an empty transcript the proposals are the only
           // thing to show, and they now live inside renderGroups (which the empty branch
           // would skip).
@@ -664,7 +665,7 @@ function MirrorViewBody({
             caps={caps}
             working={busy}
             autoCollapseWork={atBottomRef.current}
-            inlineCards={handoffs.map((h) => ({
+            inlineCards={[...restoreNoteCards(restoredAt), ...handoffs.map((h) => ({
               at: h.created_at,
               node: (
                 <HandoffProposal
@@ -675,7 +676,7 @@ function MirrorViewBody({
                   onChange={(next) => updateHandoff(h.id, next)}
                 />
               ),
-            }))}
+            }))]}
           />
         )}
         <MirrorPendingCards

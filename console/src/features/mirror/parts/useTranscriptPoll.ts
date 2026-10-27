@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSendQueueStore } from "../sendQueue/store.ts";
 import type { RefObject } from "react";
 import { api, parseDiscards, parseQueueItems } from "../../../core/api/client.ts";
+import { restoreNoteStamps } from "./RestoreNote.tsx";
 import type { CarriedInteraction } from "../../../core/api/client.ts";
 import type { Session } from "../../../types/session.ts";
 import { t as tr } from "../../../lib/i18n/index.ts";
@@ -51,7 +52,7 @@ export function useTranscriptPoll({
     setCompactProg, setRetry, setStatus, setBgBusy, setBgBusyReason, setFinalizing, finalizingRef, wasWorkingRef,
     setTasks, setFiles, setQueuedPrompts, setQueuedItems, setDiscards, setDiscardNotices, setPendingPeers,
     queueOpsRef, setAlive, setPending, setPendingText, liveOnRef, setLiveText, setPendingPlan, setPendingPerm,
-    setPendingApproval, setCarried, rejectedPlansRef, setMode, lastNonPlanMode, setAgentCtx,
+    setPendingApproval, setCarried, setRestoredAt, rejectedPlansRef, setMode, lastNonPlanMode, setAgentCtx,
     setSuggestedTitle, setTitleActing, setManagedSettingsOpen, setManagedSettings, setPasting, setLightbox,
     setHistIdx, cursorRef, firstLineRef, setHasMore, setLoadingOlder, loadingOlderRef, diagRef, statusRef,
     bgBusyRef, lastPayloadRef, unchangedRef, lastPollAtRef, aggSigRef, tickRef,
@@ -278,6 +279,7 @@ export function useTranscriptPoll({
             setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
             setPendingApproval(isPendingApproval(d.pendingApproval) ? d.pendingApproval : null);
             setCarried(d.carried && typeof d.carried === "object" ? (d.carried as CarriedInteraction) : null);
+            setRestoredAt(restoreNoteStamps(d.transcriptRestoredAt));
             // Mode comes from the terminal (paneMode) in real time, so trust every poll —
             // the optimistic set on click just gives instant feedback until this confirms.
             const nextMode = typeof d.mode === "string" ? d.mode : "";

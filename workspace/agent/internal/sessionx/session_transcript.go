@@ -218,6 +218,11 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		resp["firstLine"] = firstLine
 		resp["hasMore"] = firstLine > 0
 	}
+	// When the Agent put a deleted log back from its backup (one stamp per restore), so the
+	// mirror can leave a note at that point of the conversation. See status/restore_notes.go.
+	if at := status.ReadRestoreNotes(sid); len(at) > 0 {
+		resp["transcriptRestoredAt"] = at
+	}
 	for k, v := range pending { // pendingQuestions / pendingText / pendingPlan / pendingPermission
 		resp[k] = v
 	}
