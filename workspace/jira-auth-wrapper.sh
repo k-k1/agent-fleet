@@ -76,7 +76,7 @@
 #   otherwise the assignments below would be echoed, or exported to every helper.
 set +xa
 unset comment_cmd cred tok server auth login cfg sub sub2 sub3 proj cfg_argv own_init debug prev conf managed gen
-unset parent eff key cdir types derived yaml hint basekey soft npos ikey haveproj hasasg dd pv site why
+unset eff key cdir types derived yaml hint basekey soft npos ikey haveproj hasasg dd pv site why
 unset sbody stmpl spos spbody ssum injected fpid fsig fout spos3 spos4 nobody brc bin bout
 unset dkey dfile dout derr skip rest lim rc berr bwhat snoinput sweb sskip sbad shelp
 
@@ -115,7 +115,7 @@ timed_out() {
 # "false" or empty); a value pflag would refuse sets sbad, and -h / --help sets shelp. Short flags
 # are read as pflag reads them: a cluster of booleans (only -h here) may end in one that takes a
 # value (`-hpAB`), and `-h=v` is a boolean with a value; a shorthand this does not know sets sbad.
-# The issue type (-t / --type) lands in stype.
+# The issue type (-t / --type) lands in stype, the parent (-P / --parent) in sparent.
 stdin_cmd() {
   case "$sub" in
     issue | issues)
@@ -141,10 +141,10 @@ flag_bool() {
 }
 scan_body_args() {
   local a nx="" dd="" k rest
-  sbody="" stmpl="" spos=0 spbody="" ssum="" spos3="" spos4="" snoinput="" sweb="" sskip="" sbad="" shelp="" stype=""
+  sbody="" stmpl="" spos=0 spbody="" ssum="" spos3="" spos4="" snoinput="" sweb="" sskip="" sbad="" shelp="" stype="" sparent=""
   for a in "$@"; do
     if [ -n "$nx" ]; then
-      case "$nx" in body) sbody="$a" ;; template) stmpl="$a" ;; summary) ssum="$a" ;; type) stype="$a" ;; esac
+      case "$nx" in body) sbody="$a" ;; template) stmpl="$a" ;; summary) ssum="$a" ;; type) stype="$a" ;; parent) sparent="$a" ;; esac
       nx=""; continue
     fi
     if [ -z "$dd" ]; then
@@ -158,7 +158,9 @@ scan_body_args() {
         --summary) nx=summary; continue ;;
         --type=*) stype="${a#--type=}"; continue ;;
         --type) nx=type; continue ;;
-        --parent | --priority | --reporter | --assignee | --label | --component | \
+        --parent=*) sparent="${a#--parent=}"; continue ;;
+        --parent) nx=parent; continue ;;
+        --priority | --reporter | --assignee | --label | --component | \
           --fix-version | --affects-version | --original-estimate | --custom | --config | --project)
           nx=other; continue ;;
         --help) shelp=1; continue ;;
@@ -180,10 +182,10 @@ scan_body_args() {
                   shelp=1
                 fi ;;
               [tPsbyraelCTcp])
-                case "$k" in b) k=body ;; T) k=template ;; s) k=summary ;; t) k=type ;; *) k=other ;; esac
+                case "$k" in b) k=body ;; T) k=template ;; s) k=summary ;; t) k=type ;; P) k=parent ;; *) k=other ;; esac
                 if [ -z "$rest" ]; then nx="$k"; break; fi
                 rest="${rest#=}"
-                case "$k" in body) sbody="$rest" ;; template) stmpl="$rest" ;; summary) ssum="$rest" ;; type) stype="$rest" ;; esac
+                case "$k" in body) sbody="$rest" ;; template) stmpl="$rest" ;; summary) ssum="$rest" ;; type) stype="$rest" ;; parent) sparent="$rest" ;; esac
                 rest="" ;;
               *) sbad=1; rest="" ;;
             esac
@@ -401,7 +403,7 @@ fi
 # The config jira will read, the subcommand (and the word after it), the project, and whether
 # this is a debug run, from argv. Cobra takes the last -c, in any of -c X, -cX, -c=X, --config X,
 # --config=X; -p / --project the same way.
-cfg="" sub="" sub2="" sub3="" proj="" own_init="" debug="" prev="" parent=""
+cfg="" sub="" sub2="" sub3="" proj="" own_init="" debug="" prev=""
 for a in "$@"; do
   case "$prev" in
     -c | --config) cfg="$a"; prev=""; continue ;;
@@ -416,7 +418,6 @@ for a in "$@"; do
     --project=*) proj="${a#--project=}" ;;
     -p=*) proj="${a#-p=}" ;;
     -p?*) proj="${a#-p}" ;;
-    -P | -P?* | --parent | --parent=*) parent=1 ;;
     --debug | --debug=[tT1]* ) debug=1 ;;
     --server | --server=* | --login | --login=* | --installation | --installation=* | --auth-type | --auth-type=*)
       own_init=1 ;;
@@ -743,6 +744,28 @@ plain_layout() {
   n="$(grep -Eic '^project[[:space:]]*:' "$1" 2>/dev/null)"
   case "$n" in 0) ;; 1) grep -Eiq '^project:[[:space:]]*(#.*)?$' "$1" 2>/dev/null ;; *) return 1 ;; esac
 }
+# True when the project block is a flat list of `key: scalar` lines at one space indent (no tabs,
+# quoted or spaced keys, block scalars, flow style, anchors, tags or nesting) with at most one
+# `type` key, so that the one line can be replaced or added without leaving an orphan.
+project_block_ok() {
+  awk '{ sub(/\r$/, "") }
+       tolower($0) ~ /^project:[ \t]*(#.*)?$/ { inp = 1; next }
+       inp && /^[^ \t#]/ { inp = 0 }
+       inp && /^[ \t]*(#.*)?$/ { next }
+       inp {
+         if (!match($0, /^ +/)) { bad = 1; next }
+         ind = substr($0, 1, RLENGTH)
+         if (want == "") want = ind
+         if (ind != want) { bad = 1; next }
+         v = substr($0, RLENGTH + 1)
+         if (v !~ /^[A-Za-z0-9_-]+:([ ]|$)/) { bad = 1; next }
+         k = tolower(substr(v, 1, index(v, ":") - 1))
+         val = substr(v, index(v, ":") + 1); sub(/^ +/, "", val)
+         if (val ~ /^[|>&*!{\[@`%]/) bad = 1
+         if (k == "type" && ++nt > 1) bad = 1
+       }
+       END { exit bad }' "$1"
+}
 # The base with `type: next-gen` set in its project block (added when there is none, and the block
 # when there is no project at all).
 with_nextgen() {
@@ -767,8 +790,11 @@ with_nextgen() {
     END { flush(); if (!seen) { print "project:"; print "  type: next-gen" } }' "$1"
 }
 parent_config() {
-  local base="$1" ddir snap ch derived
-  plain_layout "$base" || return 1
+  local base="$1" ddir snap ch derived mode
+  plain_layout "$base" && project_block_ok "$base" || return 1
+  # Never wider than the base: its owner bits, read and write only.
+  mode="$(stat -c %a "$base" 2>/dev/null)" && mode="$(printf '%03o' "$((8#$mode & 8#600))")" || return 1
+  [ "$mode" != 000 ] || return 1
   ddir="${XDG_CACHE_HOME:-${HOME:-/nonexistent}/.cache}/agent-fleet/jira/derived"
   (umask 077; mkdir -p "$ddir" 2>/dev/null) && chmod 700 "$ddir" 2>/dev/null || return 1
   snap="$ddir/snap.$$"
@@ -776,17 +802,19 @@ parent_config() {
   if cmp -s "$base" "$snap"; then rm -f "$snap"; return 0; fi
   ch="$(sha256sum <"$snap" 2>/dev/null | cut -c1-16)"
   [ -n "$ch" ] || { rm -f "$snap"; return 1; }
-  derived="$ddir/config-nextgen-$ch.yml"
+  # The mode is part of the name: a cached copy of the same content is never wider than this base.
+  derived="$ddir/config-nextgen-$mode-$ch.yml"
   if [ -s "$derived" ]; then
     rm -f "$snap"
     touch -c "$derived" 2>/dev/null
   else
-    mv -f "$snap" "$derived" 2>/dev/null || { rm -f "$snap"; return 1; }
+    chmod "$mode" "$snap" 2>/dev/null && mv -f "$snap" "$derived" 2>/dev/null || { rm -f "$snap"; return 1; }
   fi
+  chmod "$mode" "$derived" 2>/dev/null
   find "$ddir" -name 'config-*.yml' ! -name "${derived##*/}" -mtime +1 -delete 2>/dev/null
   export JIRA_CONFIG_FILE="$derived"
 }
-if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && [ "$sub2" = create ] && [ -n "$parent" ]; then
+if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && [ "$sub2" = create ] && scan_body_args "$@" && [ -n "$sparent" ]; then
   eff="${cfg_argv:-${JIRA_CONFIG_FILE:-}}"
   # -c wins over the environment and cannot be redirected from here; a missing or odd config
   # cannot be edited safely. Either way the parent may be lost, which is said before the create.

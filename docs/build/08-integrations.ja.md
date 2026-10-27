@@ -285,7 +285,7 @@ Jira は git でなく作業項目インボックス
   `-c`、`JIRA_SERVER` / `JIRA_API_TOKEN` の実行にも触れない。管理ディレクトリ内の `-c` や安全に編集できない
   書式（フロースタイル・アンカー・`project` キーが複数）は、親が落ちうると標準エラーに警告してそのまま動かす。
   対象は `issue create` のみ。jira-cli v1.7.0 で `project.type` を読む他の処理（`epic list|create|add|remove`、
-  `issue clone`）は派生コピーではなく元の設定を読むので従来どおり。`issue edit` に `--parent` はない。
+  `issue clone`）は派生コピーではなく元の設定を読むので従来どおり。`issue edit -P` もあるが対応不要: edit は `project.type` に関係なく常に `fields.parent` を送る（pkg/jira/edit.go）ので、型が効くのは create だけ。派生コピーのモードは元ファイルの所有者権限を 0600 でマスクしたもの（0400 の元なら 0400。モードはファイル名に含まれるので、キャッシュが元より広くなることはない）。親の判定はラッパーのフラグ走査で行い（他のフラグの値、`--`、`-hPKEY` のような pflag の結合は pflag と同じに読む）、`project` ブロックは、素直な `key: scalar` 行だけで `type` キーが高々 1 つのときに限って編集する。
   実機（チーム管理・会社管理プロジェクト）では未検証: Jira Cloud は両方で fields.parent を受け付ける想定。
 - **`issue comment edit|delete KEY ID`**（jira-cli にあるのは `comment add` だけ）: 当方の設定なら、
   ラッパーは資格情報を取りに行く前に、自分の argv のまま `workspace-agent jira-comment` へ `exec`

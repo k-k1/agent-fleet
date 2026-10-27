@@ -306,7 +306,7 @@ those variables in for one `exec`:
   be edited safely (flow style, anchors, two `project` keys), runs unchanged after a stderr warning
   that the parent may be dropped. Scope: only `issue create`. Other users of `project.type` in
   jira-cli v1.7.0 (`epic list|create|add|remove`, `issue clone`) read the config, not the derived
-  copy, so they keep working as before; `issue edit` has no `--parent` flag. Not verified against a
+  copy, so they keep working as before; `issue edit -P` exists too but needs nothing: jira-cli always sends `fields.parent` for an edit, whatever `project.type` says (pkg/jira/edit.go), so the type only matters for create. Derived copies are written with the base's owner mode masked to 0600 (a 0400 base gives a 0400 copy; the mode is part of the file name, so a cached copy is never wider). A parent is detected by the wrapper's flag scanner (values of other flags, `--` and pflag clusters such as `-hPKEY` are read as pflag reads them), and the project block is only edited when it is a flat list of plain `key: scalar` lines with at most one `type` key. Not verified against a
   live Jira (team-managed and company-managed): fields.parent is accepted by Jira Cloud for both.
 - **`issue comment edit|delete KEY ID`** (jira-cli has only `comment add`): for a config of ours
   the wrapper `exec`s `workspace-agent jira-comment` with its own argv, before it asks for the

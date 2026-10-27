@@ -605,6 +605,47 @@ rm -f "$DEFCFG"
 run JIRA_SERVER=https://own.example.net -- issue create -t Task -s x -P AAA-1
 expect parent-server CONFIG "<unset>"
 
+# Only a parent that jira-cli would read counts: a flag's value, anything after `--` and the
+# value of another flag are not; a pflag cluster ending in -P is. An empty parent is none.
+for form in "-s -P" "-s --parent=X" "-y --parent=X" "-l -PX" "-t Task -- -P AB-1" "-P" "--parent=" "-P="; do
+  reset; oauth; types
+  # shellcheck disable=SC2086
+  run -- issue create -p KEY $form
+  grep -q 'next-gen' "$(seen CONFIG)" 2>/dev/null && fail "parent-false-positive [$form]: next-gen written"
+  [ ! -s "$T/err" ] || fail "parent-false-positive [$form]: stderr: $(cat "$T/err")"
+done
+for form in "-hPAB-1" "-hP AB-1" "-hP=AB-1" "-s x -P AB-1" "-s x --parent AB-1"; do
+  # shellcheck disable=SC2086
+  run -- issue create -p KEY $form
+  expect_ng "parent-cluster [$form]"
+done
+# A project block jira would read differently once a second type is added, or whose type line
+# is not one plain line: no derived copy, a warning, the config as it was.
+reset; oauth; types
+for blk in $'project:\n  key: AAA\n  "type": classic' $'project:\n  key: AAA\n  type : classic' \
+  $'project:\n  key: AAA\n  type: |\n    classic\n  name: x' $'project:\n  key: AAA\n  type: classic\n  Type: classic' \
+  $'project:\n  key: AAA\n  nested:\n    type: classic' $'project:\n  key: AAA\n  type: &t classic' \
+  $'project:\n\tkey: AAA' $'project:\n  key: AAA\n    type: classic' $'project:\n  "key": AAA'; do
+  config "$MANAGED/config.yml" "$blk"$'\nissue:\n  types:\n    - id: "7"'
+  run -- issue create -t Task -s x -P AAA-1
+  expect "parent-unsafe [$blk]" CONFIG "$MANAGED/config.yml"
+  grep -q 'fields.parent' "$T/err" || fail "parent-unsafe [$blk]: no warning"
+done
+# Safe variants: a different case of the key and a quoted value are replaced in place.
+config "$MANAGED/config.yml" $'Project:\n  key: AAA\n  Type: "classic" # note\nissue:\n  types:\n    - id: "7"'
+run -- issue create -t Task -s x -P AAA-1
+expect_ng parent-case
+[ "$(grep -ci "type:" "$(seen CONFIG)")" = 1 ] || fail "parent-case: type duplicated: $(cat "$(seen CONFIG)")"
+# The derived copy is never wider than its base, a reused cache included.
+config "$MANAGED/config.yml" $'project:\n  key: AAA\n  type: classic\nissue:\n  types:\n    - id: "7"'
+chmod 400 "$MANAGED/config.yml"
+run -- issue create -t Task -s x -P AAA-1
+expect_ng parent-mode400
+[ "$(stat -c %a "$(seen CONFIG)")" = 400 ] || fail "parent-mode400: $(stat -c %a "$(seen CONFIG)")"
+chmod 644 "$MANAGED/config.yml"
+run -- issue create -t Task -s x -P AAA-1
+[ "$(stat -c %a "$(seen CONFIG)")" = 600 ] || fail "parent-mode644: $(stat -c %a "$(seen CONFIG)")"
+
 # 13f. The user's own setup is never touched, hinted at or fetched for: another config, jira's
 #      default location, an explicit token or server, a debug run, other subcommands.
 reset

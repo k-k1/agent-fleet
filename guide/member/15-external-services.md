@@ -39,9 +39,10 @@ session. You can view, list, create, edit, comment on and transition issues:
   one-line hint and fails with `invalid issue types in config`. Run the `jira init` command the hint
   names, as printed; `jira board list -p PROJ` shows the exact board name it wants.
 - **Parent issues**: `jira issue create … -P PARENT-1` (or `--parent`) sets the parent (epic or
-  parent of a sub-task). `jira` alone would drop it without an error when its config has no epic
-  link; the wrapper makes it send the parent properly. If the config cannot be adjusted (for example
-  a `-c` file), it warns that the parent may be missing: check the new issue.
+  parent of a sub-task). `jira` alone can drop it without an error when its config has no epic
+  link; the wrapper adjusts its config so that the parent is sent as the standard parent field. This has
+  not been confirmed against every kind of Jira project yet, so check the parent of the new issue.
+  If the config cannot be adjusted (for example a `-c` file), the wrapper warns that the parent may be missing.
 - **Assigning**: looking up an assignee (`jira issue assign`, and `-a` / `--assignee` of
   `issue edit`, `create` and `move`) searches users in the default or `-p` project, so it needs a
   project. With no default project (no `jira init` yet), `jira issue assign PROJ-1 <user>`
