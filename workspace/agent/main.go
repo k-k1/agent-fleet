@@ -34,6 +34,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mempressure"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
@@ -357,6 +358,10 @@ func serve() {
 	// bound user's thread replies back into sessions. No-op until a user opts into receive
 	// (Discord.Receive) — bounds the WSS connection to opted-in users only.
 	sessionx.StartBridgeReceiver()
+
+	// Memory-pressure sampler (ADR 0120 phase 0): measure only, no behaviour change.
+	// AF_MEM_PRESSURE=off disables it.
+	mempressure.Start(addr)
 
 	// af-db idle-stop: polls every 60 s and stops servers with no client backends for 30 min.
 	afdb.StartIdleLoop()

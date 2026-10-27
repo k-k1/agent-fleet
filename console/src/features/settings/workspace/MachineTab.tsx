@@ -14,7 +14,7 @@ import { Row } from "../parts/controls.tsx";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { fmtGiB } from "../../../lib/bytes.ts";
 import { TrendChart } from "../../../ui/TrendChart.tsx";
-import { useWsStatsSeries } from "../../../core/store/wsStatsFeed.ts";
+import { useWsStatsSeries, type StatSample } from "../../../core/store/wsStatsFeed.ts";
 import {
   machineArch,
   machineDisk,
@@ -220,6 +220,7 @@ function UsageSection({ memMax, vcpu, own }: { memMax: number; vcpu: number; own
         </div>
         <TrendChart points={samples.map((s) => ({ t: s.t, v: s.cpu }))} max={cpuCeil} spanMs={spanMs} />
       </div>
+      <PressureChart samples={samples} spanMs={spanMs} />
       {/* Disk is a level, not a rate: it moves in steps over hours, so a trend line of it
           says nothing a bar does not.
           The figure is a statfs of the filesystem home sits on. Only on a box of one's own is
@@ -245,6 +246,40 @@ function UsageSection({ memMax, vcpu, own }: { memMax: number; vcpu: number; own
       )}
       <p className="muted ds-note">{tr("machine.usage_note")}</p>
     </section>
+  );
+}
+
+// PressureChart — memory pressure (PSI) beside the Agent's own latency. Measurement only: no
+// threshold tints it, because the thresholds are exactly what the data is being collected to fix
+// (ADR 0120). An Agent that cannot measure it says so instead of drawing a calm line.
+function PressureChart({ samples, spanMs }: { samples: StatSample[]; spanMs: number }) {
+  const tr = useT();
+  const last = samples[samples.length - 1]?.memPressure;
+  if (!last) return null; // an Agent from before the axis: nothing to say
+  const peak = Math.max(0, ...samples.map((s) => s.memPressure?.some10 ?? 0));
+  return (
+    <div className="mu-chart">
+      <div className="mu-head">
+        <span className="mu-k">{tr("machine.pressure")}</span>
+        <span className="mu-v">
+          {last.available && last.some10 != null && last.full10 != null
+            ? tr("machine.pressure_of", {
+                some: String(Math.round(last.some10)),
+                full: String(Math.round(last.full10)),
+                lat: last.latencyMs != null ? String(Math.round(last.latencyMs)) : "–",
+              })
+            : tr("machine.pressure_unavailable")}
+        </span>
+      </div>
+      {last.available && (
+        <TrendChart
+          points={samples.map((s) => ({ t: s.t, v: s.memPressure?.available ? s.memPressure.some10 : null }))}
+          max={Math.max(10, peak)}
+          spanMs={spanMs}
+        />
+      )}
+      <p className="muted ds-note">{tr("machine.pressure_note")}</p>
+    </div>
   );
 }
 

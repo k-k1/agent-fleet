@@ -418,3 +418,11 @@ These are not decisions and have no owner yet.
   as long as it takes to learn whether they read PSI.
 - **Not decided here:** the thresholds' final values, the default for each phase after phase 0, the
   protection of the Agent itself, and any change to `memory.high`.
+
+## Note (2026-10-27)
+
+Phase 0 is built (#2516): the Agent samples its own cgroup every 5 s, verifies the cgroup boundary,
+keeps a capped per-minute series, and reports the `mem_pressure` Stats axis. The decision above is
+unchanged; nothing here warns, refuses or stops a session.
+
+Follow-ups: #2816.

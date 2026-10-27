@@ -468,6 +468,11 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "machine.usage_oom": "A process was killed for memory during this window (the container itself survived).",
   "machine.usage_note":
     "One sample every 4 seconds, up to an hour. The chart keeps moving while a value is unchanged (the control plane is what guarantees it is unchanged) and breaks the line for any period it could not read.",
+  "machine.pressure": "Memory pressure",
+  "machine.pressure_of": "some {some}% · full {full}% · Agent response {lat} ms",
+  "machine.pressure_unavailable": "Cannot be measured on this machine",
+  "machine.pressure_note":
+    "The share of time tasks waited on memory (the chart is “some”). For measurement only: nothing is warned, refused or stopped because of it.",
   "machine.disk_title": "Disk used by Agent Fleet",
   "machine.disk_failed": "Couldn't read the disk breakdown.",
   "machine.disk_cache": "Cache",

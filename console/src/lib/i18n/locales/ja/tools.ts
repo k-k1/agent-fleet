@@ -465,6 +465,11 @@ export const tools = {
   "machine.usage_oom": "この間にメモリ不足でプロセスが強制終了されました（コンテナ自体は生きています）。",
   "machine.usage_note":
     "4 秒ごとに 1 点、最大 1 時間ぶん。値が変わらない間もグラフは進みます（変化がないことは制御側が保証しています）。取得できなかった時間は線を切って表しています。",
+  "machine.pressure": "メモリ逼迫",
+  "machine.pressure_of": "some {some}% ・ full {full}% ・ Agent 応答 {lat} ms",
+  "machine.pressure_unavailable": "このマシンでは測定できません",
+  "machine.pressure_note":
+    "タスクがメモリ待ちで止まっていた時間の割合です（グラフは some）。計測のみで、これを理由に警告・拒否・停止は行いません。",
   "machine.disk_title": "Agent Fleet が使っているディスク",
   "machine.disk_failed": "ディスクの内訳を取得できませんでした。",
   "machine.disk_cache": "キャッシュ",

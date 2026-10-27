@@ -253,3 +253,35 @@ func TestMemberStatsDiskOptOutSkipsDU(t *testing.T) {
 		t.Errorf("after the refresh: du calls=%d disk_used=%v observed_at=%v, want 1, 4096 and a timestamp", calls, out["disk_used"], out["disk_observed_at"])
 	}
 }
+
+// The Agent's mem_pressure axis (ADR 0120 phase 0) reaches the stats map as the Agent sent it:
+// a measured 0 stays 0, an unreadable signal stays absent, and available=false is passed on
+// instead of being dropped (the Console tells "cannot measure" from "calm" by it).
+func TestMemPressurePassesThroughAsSent(t *testing.T) {
+	srv := statsAgent(t, http.StatusOK, `{"mem_used":100,"mem_pressure":{"available":true,"some_avg10":0,"some_avg60":1.5,"full_avg10":0,"full_avg60":0,"working_set":1048576,"agent_latency_ms":2.5}}`)
+	_, mgr, _, _ := destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
+	mp, _ := memberStatsJSON(t, mgr)["mem_pressure"].(map[string]any)
+	if mp == nil || mp["available"] != true || mp["some_avg60"] != 1.5 || mp["working_set"] != float64(1048576) {
+		t.Fatalf("mem_pressure = %v", mp)
+	}
+	if v, ok := mp["some_avg10"]; !ok || v != float64(0) {
+		t.Errorf("some_avg10 = %v (present=%v), want a present 0", v, ok)
+	}
+	if _, ok := mp["refault_rate"]; ok {
+		t.Errorf("refault_rate present although the Agent sent none: %v", mp)
+	}
+
+	srv = statsAgent(t, http.StatusOK, `{"mem_used":100,"mem_pressure":{"available":false,"reason":"host root"}}`)
+	_, mgr, _, _ = destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
+	mp, _ = memberStatsJSON(t, mgr)["mem_pressure"].(map[string]any)
+	if mp == nil || mp["available"] != false || mp["reason"] != "host root" || mp["some_avg10"] != nil {
+		t.Fatalf("unavailable: mem_pressure = %v", mp)
+	}
+
+	// An Agent from before the sampler sends nothing: the key stays absent.
+	srv = statsAgent(t, http.StatusOK, `{"mem_used":100}`)
+	_, mgr, _, _ = destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
+	if v, ok := memberStatsJSON(t, mgr)["mem_pressure"]; ok {
+		t.Errorf("old Agent: mem_pressure = %v, want absent", v)
+	}
+}
