@@ -2619,7 +2619,12 @@ func chatToolLimits() []string {
 // auth and provider-native resume state remain shared and race-free.
 func chatClaudeCmd(ctx context.Context, args ...string) *exec.Cmd {
 	migrateLegacyChatClaudeProjects()
-	args = append([]string{"--setting-sources", ""}, args...)
+	pre := []string{"--setting-sources", ""}
+	// Same rule as a session launch: native auto-memory is off while Agent memory is on.
+	if st := claude.ChatAutoMemorySettings(); st != "" {
+		pre = append(pre, "--settings", st)
+	}
+	args = append(pre, args...)
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = chatWorkdir()
 	cmd.Env = envWith("CLAUDE_CONFIG_DIR=" + claude.ConfigDir())
