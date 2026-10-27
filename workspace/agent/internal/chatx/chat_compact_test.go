@@ -301,3 +301,34 @@ func TestCompactConversationMuse(t *testing.T) {
 		t.Fatalf("post-compaction prompt replays history: %q", got)
 	}
 }
+
+// After compacting a muse conversation that once fell back to another provider, the foreign
+// gap is already inside the handoff; it must not be replayed on the turns that follow.
+func TestMuseCompactionDoesNotReplayOldForeignGap(t *testing.T) {
+	withTempHome(t)
+	c := &ChatConversation{
+		ID: RandUUID(), Agent: "muse", MuseSessionID: "old-muse",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "q1", TS: 1},
+			{Role: "assistant", Agent: "muse", Content: "a1", TS: 2},
+			{Role: "user", Content: "old fallback question", TS: 3},
+			{Role: "assistant", Agent: "claude", Content: "old fallback reply", TS: 4},
+		},
+		MuseMessageCursor: 2,
+	}
+	if err := compactConversation(context.Background(), c, &stubProvider{reply: "sum"}, CompactReasonManual); err != nil {
+		t.Fatal(err)
+	}
+	if c.MuseMessageCursor != 0 {
+		t.Fatalf("MuseMessageCursor = %d after compaction, want 0", c.MuseMessageCursor)
+	}
+	// First post-compaction turn succeeds on a fresh session.
+	c.Messages = append(c.Messages, ChatMessage{Role: "user", Content: "q2", TS: 5},
+		ChatMessage{Role: "assistant", Agent: "muse", Content: "a2", TS: 6})
+	c.MuseSessionID = "new-muse"
+	MarkProviderSynced(c, "muse", len(c.Messages))
+	got := SyncProviderPrompt(c, "muse", "q3", len(c.Messages))
+	if strings.Contains(got, "old fallback") {
+		t.Fatalf("old foreign gap replayed: %q", got)
+	}
+}

@@ -29,6 +29,8 @@ func providerCursor(c *ChatConversation, agent string) int {
 		cursor = c.AgyMessageCursor
 	case "cursor":
 		cursor = c.CursorMessageCursor
+	case "muse":
+		cursor = c.MuseMessageCursor
 	}
 	if cursor > 0 {
 		return cursor
@@ -134,13 +136,15 @@ func MarkProviderSynced(c *ChatConversation, agent string, cursor int) {
 		c.AgyMessageCursor = cursor
 	case "cursor":
 		c.CursorMessageCursor = cursor
+	case "muse":
+		c.MuseMessageCursor = cursor
 	}
 }
 
 func resetProviderCursors(c *ChatConversation) {
 	c.ClaudeMessageCursor, c.CodexMessageCursor = 0, 0
 	c.OpencodeMessageCursor, c.AgyMessageCursor = 0, 0
-	c.CursorMessageCursor = 0
+	c.CursorMessageCursor, c.MuseMessageCursor = 0, 0
 }
 
 // syncProviderPrompt prepends canonical user/assistant turns in [cursor, upto).
