@@ -399,13 +399,7 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 	}
 	exchangeCtx := func(c context.Context, id int, m rpcMsg) (rpcMsg, error) {
 		if err := writeRPC(stdin, m); err != nil {
-			// A dead server is the cause of the broken pipe: prefer its exit error.
-			select {
-			case re := <-readErr:
-				return rpcMsg{}, re
-			default:
-			}
-			return rpcMsg{}, err
+			return rpcMsg{}, classifyWriteErr(ctx, readErr, writeExitGrace, err)
 		}
 		return readRPCFor(c, ctx, msgs, readErr, id)
 	}
@@ -457,7 +451,7 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 	var ir legacyInitResult
 	_ = json.Unmarshal(msg.Result, &ir)
 	if err := writeRPC(stdin, rpcMsg{JSONRPC: "2.0", Method: "notifications/initialized"}); err != nil {
-		return failErr(err)
+		return failErr(classifyWriteErr(ctx, readErr, writeExitGrace, err))
 	}
 	msg, err = exchange(4, rpcMsg{JSONRPC: "2.0", ID: 4, Method: "tools/list", Params: map[string]any{}})
 	if err != nil {
@@ -478,6 +472,28 @@ func writeRPC(w io.Writer, m rpcMsg) error {
 	}
 	_, err = w.Write(append(b, '\n'))
 	return err
+}
+
+// writeExitGrace bounds how long a failed write waits for the reader to report the exit
+// behind it. The kernel closes the pipe before the reader goroutine is scheduled, so an
+// EPIPE routinely arrives first; the grace only matters for a server that closed stdin
+// and keeps running.
+const writeExitGrace = 2 * time.Second
+
+// classifyWriteErr names the cause of a failed write. A broken pipe means the server is
+// gone or going, so wait for the reader's exit error (or the budget) instead of
+// depending on goroutine scheduling; werr is returned only if neither shows up.
+func classifyWriteErr(budget context.Context, readErr <-chan error, grace time.Duration, werr error) error {
+	t := time.NewTimer(grace)
+	defer t.Stop()
+	select {
+	case re := <-readErr:
+		return re
+	case <-budget.Done():
+		return errProbeTimeout
+	case <-t.C:
+		return werr
+	}
 }
 
 // readRPCFor waits for the response with the wanted id, discarding anything else that

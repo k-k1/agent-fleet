@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The probe reports every failure of its own as a stable code plus parameters, so the Console
@@ -179,5 +180,32 @@ func TestProbeStdioExitDuringDiscoverIsProcessExited(t *testing.T) {
 		if res.Code != codeProcessExited {
 			t.Fatalf("iteration %d: got %+v", i, res)
 		}
+	}
+}
+
+// The exit notification can trail the EPIPE arbitrarily; the write failure must still be
+// classified as the exit, not returned as an uncoded error.
+func TestClassifyWriteErrWaitsForDelayedExit(t *testing.T) {
+	readErr := make(chan error, 1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		readErr <- &probeErr{code: codeProcessExited, msg: "no response (the process exited)"}
+	}()
+	err := classifyWriteErr(context.Background(), readErr, 5*time.Second, errors.New("write |1: broken pipe"))
+	var pe *probeErr
+	if !errors.As(err, &pe) || pe.code != codeProcessExited {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestClassifyWriteErrFallsBackAfterGrace(t *testing.T) {
+	werr := errors.New("write |1: broken pipe")
+	if err := classifyWriteErr(context.Background(), make(chan error), 20*time.Millisecond, werr); err != werr {
+		t.Fatalf("got %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := classifyWriteErr(ctx, make(chan error), time.Minute, werr); !errors.Is(err, errProbeTimeout) {
+		t.Fatalf("got %v", err)
 	}
 }
