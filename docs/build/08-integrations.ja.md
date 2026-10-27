@@ -272,10 +272,21 @@ Jira は git でなく作業項目インボックス
     を作る。ただし元設定の 0 桁目の `issue:` ブロックを先に取り除いてから B の課題タイプを足す。
     このブロックには jira-cli が create で送る `fields.custom` も含まれ、A のカスタムフィールドを
     B に送ってはならないので、B では捨てる（ボードやエピックなど他のキーは残す）。取り除くのは、
-    裸の `issue:` 行（大文字小文字は問わない）がちょうど 1 つで、YAML のアンカー・エイリアス・`<<` を含まず、`--parent` / `-P` も指定されていないときだけ（取り除くとエイリアスが未定義になりうる。親課題はプロジェクトの種別により `fields.parent` かエピックリンクのカスタムフィールドで送られ、その種別を表す `project.type` / `epic.*` は元のプロジェクトのものしかない）。そうでないとき、または取得に
+    裸の `issue:` 行（大文字小文字は問わない）がちょうど 1 つで、YAML のアンカー・エイリアス・`<<` を含まずときだけ（取り除くとエイリアスが未定義になりうる）。`--parent` / `-P` があっても取り除く（親課題は下の手順が `project.type` を上書きする）。そうでないとき、または取得に
     失敗してキャッシュもないときは、元の設定のまま jira を動かし、
     `jira init -c ~/.config/agent-fleet/jira/<名前>.yml --project B --board "<名前>"` を案内する
     ヒントを出す。`project.key` を単純に読めない設定や `-p` なしの実行は、そのまま使う。
+- **`issue create -P KEY` / `--parent`**（#2812）: jira-cli v1.7.0 は `project.type: next-gen`（またはサブタスク型）
+  のときだけ `fields.parent` を送る。それ以外は `epic.link` が指すエピックリンクのカスタムフィールドに入れ、
+  `epic.link` が空だとリクエストから黙って落ち、親なしで課題が作られたうえ成功と表示される。当方の設定には
+  `epic.link` がない。そこで親を伴う create は、実効の設定（当方のもの）に `project.type: next-gen` を設定した
+  派生コピー（`config-nextgen-<ハッシュ>.yml`、キャッシュと権限は同じ）で動かす（`classic` は置換、なければ追加、
+  `project:` ブロックがなければブロックごと追加）。元のファイルは変更せず、利用者自身の設定、管理ディレクトリ外の
+  `-c`、`JIRA_SERVER` / `JIRA_API_TOKEN` の実行にも触れない。管理ディレクトリ内の `-c` や安全に編集できない
+  書式（フロースタイル・アンカー・`project` キーが複数）は、親が落ちうると標準エラーに警告してそのまま動かす。
+  対象は `issue create` のみ。jira-cli v1.7.0 で `project.type` を読む他の処理（`epic list|create|add|remove`、
+  `issue clone`）は派生コピーではなく元の設定を読むので従来どおり。`issue edit` に `--parent` はない。
+  実機（チーム管理・会社管理プロジェクト）では未検証: Jira Cloud は両方で fields.parent を受け付ける想定。
 - **`issue comment edit|delete KEY ID`**（jira-cli にあるのは `comment add` だけ）: 当方の設定なら、
   ラッパーは資格情報を取りに行く前に、自分の argv のまま `workspace-agent jira-comment` へ `exec`
   する。トークンがシェルを通ることはない。ヘルパーは `/rest/api/3/issue/KEY/comment/ID` に

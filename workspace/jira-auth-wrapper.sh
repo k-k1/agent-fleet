@@ -658,10 +658,9 @@ if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && [ "$sub2" = create ]; then
     # projects. For another -p project use that project's types and none of the custom fields.
     basekey="$(project_key "$eff")"
     if [ -n "$basekey" ] && [ "${basekey,,}" != "${proj,,}" ]; then
-      # A parent is sent as fields.parent in a team-managed project and as the epic-link custom
-      # field in a classic one; the config's project.type and epic.* are the base project's and the
-      # other project's kind is not known here, so such a create stays on the base config.
-      if [ -n "$parent" ] || ! derive_types_config "$eff" replace; then
+      # The base's project.type belongs to the base project; a parent is forced to fields.parent
+      # below (parent_config), whatever kind the -p project is.
+      if ! derive_types_config "$eff" replace; then
         echo "jira: $eff holds the issue types of project $basekey, not ${proj}; run \`jira init -c ~/.config/agent-fleet/jira/${proj,,}.yml --project ${proj} --board \"<board name>\"\` to give it its own" >&2
       fi
     fi
@@ -723,6 +722,77 @@ if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && [ -z "$proj" ]; then
       fi
     fi ;;
   esac
+fi
+
+# `issue create -P KEY`: jira-cli sends the parent as fields.parent only for `project.type:
+# next-gen` (or a sub-task type). Otherwise the key goes to the epic-link custom field, named by
+# epic.link, and with that empty it is deleted from the request and the issue is created without a
+# parent, reporting success. The configs of ours (generated, or written by `jira init`) have no
+# epic.link, so a create that carries a parent gets a derived copy of the config with
+# `project.type: next-gen`. Only the create: epic list|create|add|remove and `issue clone` also
+# read project.type and keep the config as it was. fields.parent is accepted by Jira Cloud for
+# team-managed and company-managed projects alike.
+# True when the file provably holds one plain layout (see appendable) and at most one bare
+# `project:` block, so that a line can be set in it or the block added.
+plain_layout() {
+  local first n
+  first="$(sed -n '/^[[:space:]]*\(#.*\)\{0,1\}$/d;p;q' "$1" 2>/dev/null)"
+  case "$first" in "" | [[:space:]]*) return 1 ;; esac
+  grep -Ev '^([[:space:]]|#|$)' "$1" 2>/dev/null | grep -Evq '^[A-Za-z_][A-Za-z0-9_-]*:([[:space:]]|$)' && return 1
+  ! grep -Eq '<<[[:space:]]*:|(^|[[:space:]:,{[-])[&*][^[:space:]]' "$1" 2>/dev/null || return 1
+  n="$(grep -Eic '^project[[:space:]]*:' "$1" 2>/dev/null)"
+  case "$n" in 0) ;; 1) grep -Eiq '^project:[[:space:]]*(#.*)?$' "$1" 2>/dev/null ;; *) return 1 ;; esac
+}
+# The base with `type: next-gen` set in its project block (added when there is none, and the block
+# when there is no project at all).
+with_nextgen() {
+  awk '
+    function flush() {
+      if (inp && !done) print (want == "" ? "  " : want) "type: next-gen" cr
+      inp = 0
+    }
+    { l = $0; cr = (l ~ /\r$/) ? "\r" : ""; sub(/\r$/, "", l) }
+    inp && l ~ /^[^ \t#]/ { flush() }
+    tolower(l) ~ /^project:[ \t]*(#.*)?$/ { print; inp = 1; seen = 1; want = ""; done = 0; next }
+    inp && l !~ /^[ \t]*(#.*)?$/ {
+      match(l, /^[ \t]+/); ind = substr(l, 1, RLENGTH)
+      if (want == "") want = ind
+      if (ind == want && tolower(substr(l, RLENGTH + 1)) ~ /^type:/) {
+        if (tolower(substr(l, RLENGTH + 1)) ~ /^type:[ \t]*["\047]?next-gen["\047]?[ \t]*(#.*)?$/) print
+        else print ind "type: next-gen" cr
+        done = 1; next
+      }
+    }
+    { print }
+    END { flush(); if (!seen) { print "project:"; print "  type: next-gen" } }' "$1"
+}
+parent_config() {
+  local base="$1" ddir snap ch derived
+  plain_layout "$base" || return 1
+  ddir="${XDG_CACHE_HOME:-${HOME:-/nonexistent}/.cache}/agent-fleet/jira/derived"
+  (umask 077; mkdir -p "$ddir" 2>/dev/null) && chmod 700 "$ddir" 2>/dev/null || return 1
+  snap="$ddir/snap.$$"
+  (umask 077; with_nextgen "$base" >"$snap") 2>/dev/null || { rm -f "$snap"; return 1; }
+  if cmp -s "$base" "$snap"; then rm -f "$snap"; return 0; fi
+  ch="$(sha256sum <"$snap" 2>/dev/null | cut -c1-16)"
+  [ -n "$ch" ] || { rm -f "$snap"; return 1; }
+  derived="$ddir/config-nextgen-$ch.yml"
+  if [ -s "$derived" ]; then
+    rm -f "$snap"
+    touch -c "$derived" 2>/dev/null
+  else
+    mv -f "$snap" "$derived" 2>/dev/null || { rm -f "$snap"; return 1; }
+  fi
+  find "$ddir" -name 'config-*.yml' ! -name "${derived##*/}" -mtime +1 -delete 2>/dev/null
+  export JIRA_CONFIG_FILE="$derived"
+}
+if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && [ "$sub2" = create ] && [ -n "$parent" ]; then
+  eff="${cfg_argv:-${JIRA_CONFIG_FILE:-}}"
+  # -c wins over the environment and cannot be redirected from here; a missing or odd config
+  # cannot be edited safely. Either way the parent may be lost, which is said before the create.
+  if [ -n "$cfg_argv" ] || [ -z "$eff" ] || [ ! -r "$eff" ] || ! parent_config "$eff"; then
+    echo "jira: could not make this config send the parent as fields.parent; jira-cli may drop -P/--parent without an error. Set \`project.type: next-gen\` in the config (or run without -c), and check the parent of the new issue" >&2
+  fi
 fi
 
 if [ "$sub" = init ]; then
