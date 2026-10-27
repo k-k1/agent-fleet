@@ -39,6 +39,7 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	if err != nil {
 		return err
 	}
+	recordLaunchNotices(m, plan)
 	// Session-side MCP tools need a provider-neutral owner identity. Native IDs differ
 	// across CLIs, while this slug is stable for every Agent Fleet session.
 	plan.Env = append(plan.Env, "AF_SESSION_NAME="+m.Name)
@@ -84,6 +85,19 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	base, _ := status.OOMKillCount()
 	status.PersistExit(m.Name, status.ExitInfo{OOMBase: base})
 	return nil
+}
+
+// recordLaunchNotices stores what the launch told the mirror. It runs before the pane is
+// created: the restore it reports has already happened, and a failed tmux start must not
+// swallow the note, because the next resume finds the log in place and never restores again.
+func recordLaunchNotices(m session.Meta, plan agents.LaunchPlan) {
+	for _, n := range plan.Notices {
+		if n == agents.NoticeTranscriptRestored {
+			if err := status.AddRestoreNote(session.UUID(m.Dir, m.Name)); err != nil {
+				log.Printf("session %s: recording the transcript-restore note: %v", m.Name, err)
+			}
+		}
+	}
 }
 
 // ensureSessionTmux (re)creates the tmux session from its recorded meta when it is

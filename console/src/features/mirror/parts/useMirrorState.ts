@@ -148,6 +148,8 @@ export function useMirrorState({
   // as prose rather than keys. The server withholds `carried` while anything is pending, so
   // the two are never set at once.
   const [carried, setCarried] = useState<CarriedInteraction | null>(null);
+  // When the Agent restored this session's conversation log from its backup, one stamp per time.
+  const [restoredAt, setRestoredAt] = useState<string[]>([]);
   // Plans the user just rejected (keyed by plan text). Lets the historical plan badge read
   // "rejected" immediately, before the interrupt tool_result (its real signal) lands a poll
   // or two later — otherwise it sits at the neutral "decided" until then.
@@ -243,7 +245,7 @@ export function useMirrorState({
     setDiscardNotices, pendingPeers, setPendingPeers, queueOpsRef, queueShown, queuedCount, discardView,
     alive, setAlive, dirGone, pending, setPending, pendingText, setPendingText, liveMode, liveOn, liveOnRef,
     liveText, setLiveText, pendingPlan, setPendingPlan, pendingPerm, setPendingPerm, pendingApproval,
-    setPendingApproval, carried, setCarried, rejectedPlansRef, rejectedGen, setRejectedGen, markRejected,
+    setPendingApproval, carried, setCarried, restoredAt, setRestoredAt, rejectedPlansRef, rejectedGen, setRejectedGen, markRejected,
     mode, setMode, lastNonPlanMode, agentCtx, setAgentCtx, suggestedTitle, setSuggestedTitle, titleActing,
     setTitleActing, managedSettingsOpen, setManagedSettingsOpen, managedSettings, setManagedSettings,
     forkAtTarget, setForkAtTarget, draftKey, draft, setDraft, sending, setSending, sendingRef, attach,

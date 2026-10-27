@@ -82,6 +82,9 @@ var Entries = []string{
 	"codex-released-threads.json",
 	"session-handoffs",
 	"carried-interaction",
+	// One stamp per time a deleted claude log was restored from backup (status/restore_notes.go).
+	// Introduced directly under AgentStateDir.
+	"transcript-restore-notes",
 	"pending-question",
 	"pending-plan",
 	"pending-perm",

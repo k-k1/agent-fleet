@@ -106,6 +106,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// The slot held a conversation and its log is gone: never fall through to a blank
 	// `--session-id` start under the old session (see ErrTranscriptLost). Checked before
 	// anything else so an older slot log cannot stand in for a deleted live one.
+	var notices []string
 	if lostTranscript(sid) {
 		// The Agent's own copy of the log (backup.go) stands in for the deleted one. A restore
 		// that fails on I/O is returned as such: it is not evidence that there is no backup.
@@ -116,6 +117,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		if !restored || lostTranscript(sid) {
 			return agents.LaunchPlan{}, ErrTranscriptLost
 		}
+		notices = append(notices, agents.NoticeTranscriptRestored)
 	}
 	if JSONLResumable(sid) {
 		// Covers slots that talked before the marker existed.
@@ -141,6 +143,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	return agents.LaunchPlan{
 		Program: buildProgram(sid, m.Model, m.Effort, m.Mode, m.Label, m.ForkFrom, agents.BypassPermissions(m)),
 		Cwd:     m.CWD(),
+		Notices: notices,
 	}, nil
 }
 

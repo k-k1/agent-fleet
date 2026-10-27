@@ -335,8 +335,14 @@ function fromSession(t: { source?: string; text?: string }): boolean {
 // the footer shows. claude/codex write one turn as many rows — thinking, each tool call,
 // then the answer — so the first row is the moment the model started, minutes or a day
 // before the text being read. The footer must not claim that as the reply's time.
-export function groupTurns(turns: Turn[]): Group[] {
+//
+// `breaks` are instants (ms epoch) a block must not span: a row stamped before one and the
+// next stamped at or after it start separate blocks, even for the same role. The mirror passes
+// the times the Agent restored the log from backup, so a note placed at that time has the
+// restored history before it and the continuation after it, not one merged assistant block.
+export function groupTurns(turns: Turn[], breaks: number[] = []): Group[] {
   const out: Group[] = [];
+  let lastMs = NaN; // timestamp of the newest row folded into the last block
   for (const raw of turns) {
     const t = withoutStudioSignal(raw);
     // A child agent's raw prompt, reasoning, chatter and tool log are implementation
@@ -347,10 +353,14 @@ export function groupTurns(turns: Turn[]): Group[] {
     const parts = partsOf(t);
     if (!parts.length) continue;
     const last = out[out.length - 1];
+    const ms = t.ts ? Date.parse(t.ts) : NaN;
+    const crossesBreak = breaks.some((b) => lastMs < b && b <= ms);
+    if (Number.isFinite(ms)) lastMs = ms;
     // A compaction summary, a `!` bash-command block, and a `/` command chip are each
     // standalone — never merged into an adjacent turn (nor a normal turn into them).
     if (
       last &&
+      !crossesBreak &&
       last.role === t.role &&
       last.sidechain === !!t.sidechain &&
       !last.compact &&

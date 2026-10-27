@@ -406,6 +406,7 @@ export const mirror = {
   "mirror.carried_plan": "停止時に承認待ちだった計画",
   "mirror.carried_permission": "停止時に許可を求めていた操作",
   "mirror.carried_note": "セッションが停止したため、この回答は届いていません。ここで答えるとセッションを再開して届けます。",
+  "mirror.transcript_restored_note": "会話ログが削除されていたため、Agent のバックアップから会話を復元しました。バックアップが失われたログより古い場合、直近のやり取りが欠けていることがあります。",
   "mirror.carried_send": "回答して再開",
   "mirror.carried_discard": "破棄",
   "mirror.carried_continue": "続けて再開",

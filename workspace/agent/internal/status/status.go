@@ -105,6 +105,7 @@ var (
 	lastTools        = fstore.Strings(paths.AgentStateDir, "pending-perm", ".tool")
 	pendingTexts     = fstore.Strings(paths.AgentStateDir, "pending-text", ".txt")
 	carriedFiles     = fstore.JSON[Carried](paths.AgentStateDir, "carried-interaction", ".json")
+	restoreNoteFiles = fstore.JSON[RestoreNotes](paths.AgentStateDir, "transcript-restore-notes", ".json")
 	// observedEnds holds the end of turn a POLL saw, apart from the status record so that
 	// recording it can never overwrite one — see ObservedTurnEnd for why that separation is
 	// load-bearing rather than tidy.

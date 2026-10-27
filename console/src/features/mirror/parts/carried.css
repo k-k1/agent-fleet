@@ -44,3 +44,18 @@
   opacity: 1;
   font-weight: 600;
 }
+
+/* Note left in the conversation where the Agent put a deleted log back from its backup. Same
+   neutral dashed frame as a carried exchange: it is the Agent speaking, not the model. */
+.mt-restore-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 16px;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  border: 1px dashed color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+}

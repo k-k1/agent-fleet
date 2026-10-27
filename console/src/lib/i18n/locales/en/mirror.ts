@@ -378,6 +378,7 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.carried_plan": "Plan awaiting approval at stop",
   "mirror.carried_permission": "Permission requested at stop",
   "mirror.carried_note": "The session was stopped, so this answer never reached it. Answering here resumes the session and delivers it.",
+  "mirror.transcript_restored_note": "This conversation was recovered from the Agent's backup because its log was deleted. If the backup was older than the lost log, the latest part may be missing.",
   "mirror.carried_send": "Answer and resume",
   "mirror.carried_discard": "Discard",
   "mirror.carried_continue": "Resume and continue",

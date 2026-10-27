@@ -134,6 +134,23 @@ describe("groupTurns", () => {
   });
 });
 
+describe("groupTurns breaks", () => {
+  const rows = () => [
+    asst("old", { ts: "2026-08-13T10:00:00Z", idx: 1 }),
+    asst("new", { ts: "2026-08-13T12:00:00Z", idx: 2 }),
+  ];
+  it("keeps same-role rows in one block without a break", () => {
+    expect(groupTurns(rows())).toHaveLength(1);
+  });
+  it("splits a block that spans a break, so a note can sit between the halves", () => {
+    const g = groupTurns(rows(), [Date.parse("2026-08-13T11:00:00Z")]);
+    expect(g.map((x) => x.text)).toEqual(["old", "new"]);
+  });
+  it("ignores a break outside the rows' span", () => {
+    expect(groupTurns(rows(), [Date.parse("2026-08-13T09:00:00Z"), Date.parse("2026-08-13T13:00:00Z")])).toHaveLength(1);
+  });
+});
+
 describe("foldParts", () => {
   it("groups consecutive tools into one toolrun and passes everything else through", () => {
     const items = foldParts([
