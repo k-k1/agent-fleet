@@ -11,10 +11,15 @@
 // stub (scripts/shots/server.mjs), so no CP, agent or database is involved.
 //
 // The gap is taken to the nearest preceding visible block: the heading's previous sibling, or
-// its wrapper's, climbing until .settings-content. A heading with nothing above it in the
-// section (the first one) is not measured. Sections whose stub data renders no heading are
-// listed, so a run that measured nothing cannot pass silently.
+// its wrapper's, climbing until .settings-content. A heading with nothing visible above it is
+// the top of its section and must stay there (at most TOP_SLACK px below the section's start):
+// a rule that matches a hidden sibling, such as the desktop-hidden breadcrumb, pushes it down.
+//
+// What must render is pinned, so a slow or broken fixture cannot pass by measuring less: the
+// Skills headings (#2813's case) must all be measured at both sizes, and only the sections in
+// NO_HEADINGS may render none.
 import { spawn } from "node:child_process";
+import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { checker, sleep, startBrowser, until } from "../lib/headless.mjs";
@@ -27,13 +32,36 @@ const arg = (n, d) => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : d;
 };
 const LOCALE = arg("locale", "en");
-const PORT = Number(arg("port", 8793));
 const MIN_GAP = Number(arg("min", 16));
-const BASE = `http://127.0.0.1:${PORT}/`;
+const TOP_SLACK = 4;
+// Sections whose stub data renders no .ds-title at all. Anything else rendering none is a
+// failure: it means the section broke, not that it has no headings.
+const NO_HEADINGS = new Set([
+  "Account", "Agent memory", "Memory snapshots", "Issue tracker", "Chat", "MCP servers (used by sessions)",
+  "MCP tokens & apps", "Agent usage", "Cloud cost", "Running time", "Internal repos",
+  "アカウント", "エージェントメモリ", "メモリのスナップショット", "課題管理", "チャット連携", "MCP サーバー（セッションで使う）",
+  "MCP トークンとアプリ", "エージェントの使用量", "クラウド費用", "稼働時間", "社内リポジトリ",
+]);
+const SKILLS = /^(Skills|スキル)$/;
+const SKILLS_HEADINGS = 4;
 // The stub has no fixture for these, and the section takes the whole dialog down without one.
 const SKIP = /^(Limit board|利用枠ボード)$/;
 
 const ACCOUNT_BTN = "[...document.querySelectorAll('button')].find((b) => (b.textContent || '').includes('@'))";
+
+// A free port, asked of the OS rather than fixed: the other check scripts and other sessions'
+// stubs use fixed ones, and answering from someone else's server would measure the wrong bundle.
+const freePort = () =>
+  new Promise((res, rej) => {
+    const s = net.createServer();
+    s.once("error", rej);
+    s.listen(0, "127.0.0.1", () => {
+      const { port } = s.address();
+      s.close(() => res(port));
+    });
+  });
+const PORT = Number(arg("port", 0)) || (await freePort());
+const BASE = `http://127.0.0.1:${PORT}/`;
 
 async function openSettings(cdp) {
   await cdp.goto(BASE);
@@ -52,9 +80,16 @@ const MEASURE = `(() => {
     }
     return null;
   };
+  const content = document.querySelector(".settings-content");
+  const crumb = content.querySelector(".settings-crumb");
+  // On a phone the section starts under the back row and its own bottom margin.
+  const start = crumb && vis(crumb)
+    ? crumb.getBoundingClientRect().bottom + parseFloat(getComputedStyle(crumb).marginBottom)
+    : content.getBoundingClientRect().top;
   return [...document.querySelectorAll(".settings-content .ds-title")].filter(vis).map((h) => {
     const p = above(h);
-    return [(h.textContent || "").trim().slice(0, 40), p ? Math.round(h.getBoundingClientRect().top - p.getBoundingClientRect().bottom) : null];
+    const top = h.getBoundingClientRect().top;
+    return [(h.textContent || "").trim().slice(0, 40), p ? Math.round(top - p.getBoundingClientRect().bottom) : null, Math.round(top - start)];
   });
 })()`;
 
@@ -63,25 +98,38 @@ async function walk(size, check) {
   try {
     const n = await openSettings(cdp);
     let measured = 0;
-    const empty = [];
     for (let i = 0; i < n; i++) {
       if (!(await cdp.evaluate("!!document.querySelector('.settings-rail-item')"))) await openSettings(cdp);
       const name = await cdp.evaluate(`(document.querySelectorAll('.settings-rail-item')[${i}]?.textContent || '').trim()`);
       if (!name || SKIP.test(name)) continue;
       await cdp.evaluate(`document.querySelectorAll('.settings-rail-item')[${i}].click()`);
       await sleep(1500);
+      if (SKILLS.test(name)) {
+        // The catalog loads after the click; wait for every scope group rather than a fixed time.
+        await until(cdp.evaluate, "document.querySelectorAll('.settings-content .ds-title').length", (v) => v >= SKILLS_HEADINGS, 100);
+      }
       const rows = await cdp.evaluate(MEASURE);
-      if (!rows.length) empty.push(name);
-      for (const [heading, gap] of rows) {
-        if (gap === null) continue;
+      if (NO_HEADINGS.has(name)) {
+        check(rows.length === 0, `${size} ${name}: renders no heading on the stub (allow-listed)`, `${rows.length} headings${rows.length ? " (update NO_HEADINGS)" : ""}`);
+      } else {
+        check(rows.length > 0, `${size} ${name}: renders its headings`, `${rows.length}`);
+      }
+      let gaps = 0;
+      for (const [heading, gap, top] of rows) {
+        if (gap === null) {
+          check(top <= TOP_SLACK, `${size} ${name} › ${heading} stays at the top of the section`, `${top}px below its start`);
+          continue;
+        }
         measured++;
+        gaps++;
         check(gap >= MIN_GAP, `${size} ${name} › ${heading}`, `${gap}px`);
       }
+      if (SKILLS.test(name)) check(gaps === SKILLS_HEADINGS, `${size} Skills: all ${SKILLS_HEADINGS} headings measured`, `${gaps}`);
       // Phone: the drill-down shows one section at a time; go back to the rail.
       await cdp.evaluate("document.querySelector('.settings-layout.entered .settings-back')?.click()");
       await sleep(300);
     }
-    check(measured > 20, `${size}: measured a meaningful number of headings`, `${measured} measured; no headings in: ${empty.join(", ")}`);
+    check(measured > 20, `${size}: measured a meaningful number of headings`, `${measured}`);
     for (const l of cdp.logs) console.log("[page]", l);
   } finally {
     cdp.close();
@@ -89,8 +137,34 @@ async function walk(size, check) {
 }
 
 const server = spawn(process.execPath, [path.join(ROOT, "console/scripts/shots/server.mjs"), "--port", String(PORT), "--locale", LOCALE], {
-  stdio: ["ignore", "ignore", "inherit"],
+  stdio: ["ignore", "pipe", "inherit"],
 });
+// Wait for the stub's own "listening" line; a stub that dies first (EADDRINUSE, a broken
+// fixture) fails the run instead of leaving it to measure whatever answers on the port.
+await new Promise((res, rej) => {
+  let out = "";
+  const timer = setTimeout(() => rej(new Error("the stub did not start within 15 s")), 15000);
+  server.stdout.on("data", (d) => {
+    out += d;
+    if (out.includes(`127.0.0.1:${PORT}`)) {
+      clearTimeout(timer);
+      res();
+    }
+  });
+  server.once("exit", (c) => {
+    clearTimeout(timer);
+    rej(new Error(`the stub exited (${c}) before listening`));
+  });
+  server.once("error", (e) => {
+    clearTimeout(timer);
+    rej(e);
+  });
+}).catch((e) => {
+  console.error(e.message);
+  server.kill();
+  process.exit(2);
+});
+server.stdout.resume();
 let code = 1;
 try {
   const { check, report } = checker();

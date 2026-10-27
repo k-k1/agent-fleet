@@ -59,8 +59,11 @@
    view-nav, a list section): the sibling rule above cannot see across the wrapper, and such a
    heading sat flush against the block above it (#2813). A .ds-group already carries its own
    spacing (28px between groups, 18px after an intro paragraph), so it is left to those rules —
-   measured: without the :not, the 18px under the AWS / Google Cloud intro grew to 28px. */
-* + :not(.ds-group) > .ds-title:first-child {
+   measured: without the :not, the 18px under the AWS / Google Cloud intro grew to 28px.
+   A section's own root is left out too: its only predecessor can be the breadcrumb, which is
+   hidden on the desktop yet still matches `* +`, and the Git tab's opening heading (first in a
+   flex column, so nothing collapses) was pushed 28px down. */
+:not(.settings-content) > * + :not(.ds-group) > .ds-title:first-child {
   margin-top: 28px;
 }
 
