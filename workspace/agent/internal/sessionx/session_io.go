@@ -961,7 +961,7 @@ func typeLineAndSubmit(name, pane, text string) error {
 		return err
 	}
 	delay := inputSubmitDelay(name)
-	if m, ok := session.ReadMeta(name); ok && claudeNeedsPaste(m.Kind, text) && os.Getenv("AGENT_INPUT_SUBMIT_DELAY_MS") == "" {
+	if m, ok := session.ReadMeta(name); ok && pasteNeeded(m.Kind, text) && os.Getenv("AGENT_INPUT_SUBMIT_DELAY_MS") == "" {
 		// The paste path waits the 200 ms the other paste kinds get, not claude's 20 ms
 		// (a guess at what the composer needs; unverified live).
 		delay = 200 * time.Millisecond
@@ -973,28 +973,19 @@ func typeLineAndSubmit(name, pane, text string) error {
 	return nil
 }
 
-// claudePasteMinBytes is the length from which claude gets its prompt as a bracketed paste
-// even when it has no line break. claude's own notes treat a long literal-key chunk as a
-// paste (agents/claude/image_paste.go), so one explicit paste is the predictable form. The
-// threshold is a guess, unverified against a live TUI; short single-line prompts keep the
-// literal-key path.
-const claudePasteMinBytes = 2048
-
-// claudeNeedsPaste reports whether a prompt must reach claude's composer as a bracketed paste
-// rather than literal keys. A line break in a literal stream is an Enter (docs/build/92), so a
-// multi-line prompt is submitted line by line. Suspected, not confirmed on a live TUI, to be
-// what left a busy session with only the tail of a peer message (issue #2195); a paste carries
-// the breaks as text and ends in one submit either way.
-func claudeNeedsPaste(kind, text string) bool {
-	return kind == session.KindClaude &&
-		(len(text) >= claudePasteMinBytes || strings.ContainsAny(text, "\r\n"))
+// pasteNeeded reports whether kind's composer takes this prompt as a bracketed paste
+// (agents.PromptPaste). The lookup is exact: an unregistered kind or an alternate spelling gets
+// literal keys.
+func pasteNeeded(kind, text string) bool {
+	p, ok := agentRegistry[kind].(agents.PromptPaste)
+	return ok && p.PasteNeeded(text)
 }
 
 // typePromptText puts text in an agent's composer. Codex and OpenCode treat a fast
 // stream of literal key events as an in-progress paste and may consume a following
 // Enter as part of that paste. tmux paste-buffer -p uses the terminal's bracketed-paste
 // protocol, which gives the TUI an explicit end-of-paste marker before Enter arrives.
-// Claude keeps the literal-key path for short single-line prompts only (claudeNeedsPaste).
+// Which kinds paste, and for which texts, is agents.PromptPaste; the rest get literal keys.
 func typePromptText(name, pane, text string) error {
 	kind := session.KindClaude
 	if meta, ok := session.ReadMeta(name); ok {
@@ -1005,11 +996,7 @@ func typePromptText(name, pane, text string) error {
 		// would turn the attached image paths into [Image #N] and split the text.
 		text = claude.QuoteImagePaths(text)
 	}
-	// copilot needs bracketed paste too: measured on v1.0.73, the Enter inside the same
-	// literal-keys send-keys is eaten by the paste coalescing and the prompt is never
-	// submitted.
-	if (kind != session.KindCodex && kind != session.KindOpencode && kind != session.KindCopilot &&
-		kind != session.KindCursor && kind != session.KindKiro) && !claudeNeedsPaste(kind, text) {
+	if !pasteNeeded(kind, text) {
 		if out, err := tmuxx.Cmd("send-keys", "-t", pane, "-l", "--", text).CombinedOutput(); err != nil {
 			return fmt.Errorf("%v: %s", err, out)
 		}

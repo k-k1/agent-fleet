@@ -60,14 +60,13 @@ unless they name another tree.
 | Sign-in | the agent's `/connections/<kind>/…` handlers, **and** each route relayed by name in `control-plane/routes.go` (`restLogin` for a login flow) | No kind needs a CP callback ([08 §8.6](08-integrations.md)); a kind with nothing to sign in to has no flow |
 | Credential location and the filesystem denylist | your package, plus `fsDeny` (`fs.go`) | Anything the CLI writes credentials or state into must be **hidden from the file browser** |
 | MCP | `internal/mcpreg`: a writer in `writerFor` and an entry in `MaterializedKinds` when the CLI reads a config file; `ServedKinds` when servers reach it another way (on the wire, or in-process); `Caps().MCPClient`. `knownKinds` is derived from `ServedKinds`, and the CP's `mcpKnownKinds` from the kind catalog snapshot (§20.7) | Each CLI has its own config shape and placeholder dialect. A config-file kind whose CLI can run in CI goes into `mcp-config-contract.yml` too |
-| Agent instructions | `agent_instructions.go`: `instrSupportedKinds` and the per-kind apply, or `instrUnsupported` with a reason code | The Console's list of targets is built from these two lists. If the CLI has no per-user place, **list it with the reason** rather than silently dropping it. A kind that writes its own system prompt reads the layers there instead (lcpp does, each turn, through `harness.SystemPrompt`); list it in `instrSupportedKinds` with the `prompt` delivery, no path and `Applied` true, so its row is the switch the harness reads, and give it a preview case |
+| Agent instructions | `agents.Instructions` on the Agent (an `instructions_ops.go` in your package: shape, apply functions) and the kind in `instrSupportedKinds` (display order), or `instrUnsupported` with a reason code | The Console's list of targets is built from these two lists; `agent_instructions.go` has no per-kind switch left. If the CLI has no per-user place, **list it with the reason** rather than silently dropping it. A kind that writes its own system prompt reads the layers there instead (lcpp does, each turn, through `harness.SystemPrompt`): `prompt` delivery, no path, no apply functions |
 | Console descriptor | `SESSION_KINDS` in `console/src/types/session.ts`, and one descriptor in `console/src/agents/registry.ts` | The descriptor's `caps` decide the affordances; the driver facts (`managedDriver`, `terminalDriver`) are read from the catalog, with `FALLBACK_KIND_FACTS` in `console/src/agents/kindCatalog.ts` answering until it loads. Some screens still switch on the kind name, so grep them (below) |
 | Version pin | an ARG in `workspace/Dockerfile`, the `versions.json` it writes, and a row in `deploy/local/cli-drift-check.sh` | [10 §10.2.1](10-development.md). A kind that runs no vendor CLI has nothing to pin |
 | A contract workflow | its own file under `.github/workflows/`, for a kind whose CLI or host the workspace image pins | **One file per agent**, registered with the release watcher. lcpp pins nothing in the image and has a manual check instead (§20.5) |
 
 The table is not a complete list of where kind names appear. Some lists are still kept
-by hand: for example the bracketed-paste kinds in `internal/sessionx/session_io.go` and
-`isDynamic` (the kinds with a live model catalogue) in `console/src/lib/agentModels.ts`.
+by hand: for example `isDynamic` (the kinds with a live model catalogue) in `console/src/lib/agentModels.ts`.
 The Agent's measured-per-kind lists (`moveTargetKinds`, `oneShotKinds`,
 `usageMeasuredForKind`) are hand-kept on purpose, since they record a measurement and not a
 capability; each has a test that fails until a newly registered kind is classified (§20.7).
@@ -253,8 +252,10 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
       `testdata/wire.golden` if the catalog's shape changed
 - [ ] the column in [ref/agents.md](../../guide/ref/agents.md) — `scripts/docs-check.py`
       holds the `CAPS_ROWS` rows, MCP included, to `Caps()`
-- [ ] instructions: `instrSupportedKinds` plus an `instrDeliveryOf` case, or
-      `instrUnsupported` with a reason (`TestKindCatalogCoversRegistry`)
+- [ ] instructions: `agents.Instructions` plus `instrSupportedKinds`, or `instrUnsupported`
+      with a reason, or `noInstructionTargets` for a kind that runs no CLI
+      (`TestInstructionsClassifyEveryRegisteredKind`; add the row to `legacyInstr` in
+      `agent_instructions_kinds_test.go` only to pin a new shape)
 - [ ] MCP: `MaterializedKinds` (and a writer) or `ServedKinds`, matching `Caps().MCPClient`;
       the CP follows through the snapshot
 - [ ] the Console's fallbacks, used until `GET /api/agents/kinds` answers:
@@ -270,7 +271,8 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
 
 **Kind-specific — only when the kind has the feature:**
 
-- [ ] Terminal: `BuildLaunch`, the bracketed-paste list in `internal/sessionx/session_io.go`
+- [ ] Terminal: `BuildLaunch`, and `agents.PromptPaste` when the composer eats an Enter that
+      follows literal keys (measure it; `pasteKinds` in `prompt_paste_test.go` holds the set)
 - [ ] Managed: a `Driver`, `managedDrivers`, and `agents.ManagedRuntime` on the Agent
       (`TestManagedRuntimeFollowsCaps` fails without it; add the kind's row to `wantRuntime`)
 - [ ] sign-in handlers and their CP relays; credentials hidden by `fsDeny`
