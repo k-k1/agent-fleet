@@ -92,7 +92,7 @@ func githubAppUserCanWriteContents(ctx context.Context, token, repo string) (can
 		var res struct {
 			// A pointer to the slice: null or absent is not "zero installations".
 			Installations *[]struct {
-				ID          int64             `json:"id"`
+				ID          int64              `json:"id"`
 				Permissions *map[string]string `json:"permissions"`
 			} `json:"installations"`
 		}
