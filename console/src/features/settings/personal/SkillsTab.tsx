@@ -19,6 +19,7 @@ import { copyText } from "../../../lib/clipboard.ts";
 import { isExternalUrl } from "../../../lib/filemeta.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { MarkdownView } from "../../viewer/MarkdownView.tsx";
+import { openFileMode } from "../../viewer/openFile.ts";
 import { ViewNav, useSectionView } from "../memory/viewNav.tsx";
 
 export interface CatalogRoot {
@@ -26,6 +27,8 @@ export interface CatalogRoot {
   scope: string;
   form: string;
   exists: boolean;
+  /** Repository view only: the folder relative to the working copy ("../" above it). */
+  rel?: string;
 }
 export interface CatalogSkill {
   name: string;
@@ -40,6 +43,18 @@ export interface CatalogSkill {
   userInvocable: boolean;
   shadowedBy?: string;
   files?: string[];
+  /** Repository view only: `path` relative to the working copy, which is what its file route takes. */
+  rel?: string;
+  /** Repository view only: the file resolves outside the working copy, so it is named, not read. */
+  outside?: boolean;
+  /** Repository view only: the same kind has a personal skill of this name. */
+  alsoPersonal?: boolean;
+}
+
+/** Where a skill's files are read from: the personal routes, or one repository (+ Subdir). */
+export interface SkillSource {
+  repo: string;
+  subdir: string;
 }
 export interface CatalogKind {
   kind: string;
@@ -76,6 +91,13 @@ export function resolveSkillLink(href: string, fromFile: string): string | null 
     else out.push(seg);
   }
   return "/" + out.join("/");
+}
+
+/** The route one file of a skill is read from. */
+export function skillFileUrl(path: string, src?: SkillSource): string {
+  return src
+    ? "api/skills/file?repo=" + encodeURIComponent(src.repo) + "&subdir=" + encodeURIComponent(src.subdir) + "&path=" + encodeURIComponent(path)
+    : "api/skills/file?path=" + encodeURIComponent(path);
 }
 
 export function SkillsTab() {
@@ -211,20 +233,23 @@ function KindPanel({
   );
 }
 
-function SkillDetail({ skill }: { skill: CatalogSkill }) {
+export function SkillDetail({ skill, source }: { skill: CatalogSkill; source?: SkillSource }) {
   const tr = useT();
   const toast = useToast();
+  // The id the file route takes: absolute for a personal skill, working-copy-relative for a
+  // repository one.
+  const loc = (source ? skill.rel : skill.path) ?? "";
   // One selected path drives the fetch, so a slower answer for an earlier pick can never land
   // over a later one: useRetryLoad aborts the previous request whenever `want` changes.
-  const [want, setWant] = useState(skill.path ?? "");
+  const [want, setWant] = useState(loc);
   const [file, setFile] = useState<{ path: string; content: string } | null>(null);
   const [err, setErr] = useState("");
-  const folder = skill.type === "skill" && skill.path ? dirOf(skill.path) : "";
+  const folder = skill.type === "skill" && loc ? dirOf(loc) : "";
 
   const load = useCallback(
     async (signal: AbortSignal) => {
-      if (!want) return true;
-      const r = await api("api/skills/file?path=" + encodeURIComponent(want));
+      if (!want || skill.outside) return true;
+      const r = await api(skillFileUrl(want, source));
       if (signal.aborted) return true;
       if (isTransientErr(r)) return false;
       if (r?.error || typeof r?.content !== "string") {
@@ -235,7 +260,7 @@ function SkillDetail({ skill }: { skill: CatalogSkill }) {
       setFile({ path: want, content: r.content });
       return true;
     },
-    [want, tr],
+    [want, source, skill.outside, tr],
   );
   useRetryLoad(load, [want]);
 
@@ -247,8 +272,9 @@ function SkillDetail({ skill }: { skill: CatalogSkill }) {
     if (e.type === "auxclick" && e.button !== 1) return;
     const a = (e.target as HTMLElement).closest?.("a");
     if (!a || !file) return;
-    const target = resolveSkillLink(a.getAttribute("href") ?? "", file.path);
-    if (!target) return;
+    const resolved = resolveSkillLink(a.getAttribute("href") ?? "", file.path);
+    if (!resolved) return;
+    const target = source ? resolved.slice(1) : resolved;
     e.preventDefault();
     e.stopPropagation();
     setWant(target);
@@ -258,12 +284,19 @@ function SkillDetail({ skill }: { skill: CatalogSkill }) {
 
   return (
     <div className="skills-detail">
-      {skill.path ? (
+      {skill.outside ? (
+        <p className="ds-hint">{tr("repo_skills.outside")}</p>
+      ) : loc ? (
         <div className="skills-where">
-          <code title={skill.path}>{skill.path}</code>
-          <Button variant="ghost" icon="copy" onClick={() => void copy(skill.path!)}>
+          <code title={skill.path}>{loc}</code>
+          <Button variant="ghost" icon="copy" onClick={() => void copy(loc)}>
             {tr("skills.copy_path")}
           </Button>
+          {source && !loc.startsWith("../") && (
+            <Button variant="ghost" icon="go-to-file" onClick={() => openFileMode(`repos/${source.repo}/${want}`, "view")}>
+              {tr("repo_skills.open_in_viewer")}
+            </Button>
+          )}
         </div>
       ) : (
         <p className="ds-hint">{tr("skills.bundled_hint")}</p>
@@ -277,7 +310,7 @@ function SkillDetail({ skill }: { skill: CatalogSkill }) {
       {folder && (skill.files?.length ?? 0) > 0 && (
         <div className="skills-files">
           <span>{tr("skills.files")}</span>
-          <Button variant="ghost" onClick={() => setWant(skill.path!)} disabled={want === skill.path}>
+          <Button variant="ghost" onClick={() => setWant(loc)} disabled={want === loc}>
             SKILL.md
           </Button>
           {skill.files!.map((f) => {

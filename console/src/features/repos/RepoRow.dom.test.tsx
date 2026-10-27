@@ -18,6 +18,9 @@ vi.mock("../../core/api/client.ts", () => ({
   isTransientErr: () => false,
 }));
 
+// The real modal pulls the skills viewer (and its own client calls); the row only has to open it.
+vi.mock("./RepoSkillsModal.tsx", () => ({ RepoSkillsModal: ({ repo }: { repo: string }) => <div>skills-modal:{repo}</div> }));
+
 const { RepoRow } = await import("./RepoRow.tsx");
 import { setLocale } from "../../lib/i18n/index.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
@@ -99,6 +102,16 @@ describe("RepoRow worktree row", () => {
     expect(itemFor("Shell を起動")).toBeTruthy();
     expect(itemFor("Claude を起動")).toBeUndefined();
     expect(itemFor("Codex を起動")).toBeUndefined();
+  });
+
+  it("has a Skills entry that opens the repository's skills view", async () => {
+    await render(WT);
+    await openMenu();
+    expect(itemFor("スキル…")).toBeTruthy();
+    await act(async () => {
+      itemFor("スキル…")!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await vi.waitFor(() => expect(document.body.textContent).toContain("skills-modal:app@wip-x"));
   });
 
   it("offers to start an image studio only while the fleet has an image engine", async () => {

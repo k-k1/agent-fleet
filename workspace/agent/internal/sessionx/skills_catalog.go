@@ -24,8 +24,8 @@ import (
 //
 // The roots are the user-level halves of the picker's own tables (claudeSkills, codexSkills,
 // opencodeSkills, userSkillRoots) plus opencode's skills root, where fleetskills writes. A kind
-// with no user root of its own (cursor, agy, kiro, copilot, lcpp) is not listed. Repository
-// roots are #2795.
+// with no user root of its own (cursor, agy, kiro, copilot, lcpp) is not listed. The
+// repository's roots are the same shapes answered on ?repo= (skills_repo_catalog.go).
 //
 // The Files viewer cannot show these: $CLAUDE_CONFIG_DIR is outside the browse root and
 // ~/.codex is denylisted, because credentials and transcripts sit next to the skills. So the
@@ -38,6 +38,12 @@ type catalogRoot struct {
 	Scope  string `json:"scope"` // user | cli
 	Form   string `json:"form"`  // skills (<dir>/*/SKILL.md) | commands (<dir>/**/*.md)
 	Exists bool   `json:"exists"`
+	// Rel is the root's path relative to the working copy (repository view only; "../" for a
+	// level above it).
+	Rel string `json:"rel,omitempty"`
+	// fence, when set, is the directory every file of this root must resolve inside after
+	// symlinks (repository view only). An entry that leaves it is listed without being read.
+	fence string
 	// opencode marks opencode's skills root, which is discovered by its own rules
 	// (opencodeSkillFiles) rather than as a flat <dir>/*/SKILL.md tree.
 	opencode bool
@@ -58,6 +64,14 @@ type catalogSkill struct {
 	Root          string `json:"root,omitempty"`
 	Path          string `json:"path,omitempty"`
 	UserInvocable bool   `json:"userInvocable"`
+	// Rel is Path relative to the working copy (repository view only).
+	Rel string `json:"rel,omitempty"`
+	// Outside marks an entry whose file resolves outside the root's fence (a symlink leaving the
+	// working copy): it is listed by name only, never read or served.
+	Outside bool `json:"outside,omitempty"`
+	// AlsoPersonal says the same kind has a personal skill of this name (repository view only);
+	// for claude and codex the repository copy wins.
+	AlsoPersonal bool `json:"alsoPersonal,omitempty"`
 	// ShadowedBy is the Path (or, for a bundled winner, the name) of the entry the CLI uses
 	// instead: within a kind the first root that has the name wins, as in scanSkillRoots.
 	// claude has one slash namespace for skills and commands; every other kind keeps them apart.
@@ -121,43 +135,17 @@ type skillFileWire struct {
 }
 
 func HandleSkillCatalog(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Has("repo") {
+		handleRepoSkillCatalog(w, r)
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, skillCatalogWire{Kinds: skillCatalog()})
 }
 
 func skillCatalog() []catalogKind {
 	out := []catalogKind{}
 	for _, k := range personalSkillRoots() {
-		ck := catalogKind{Kind: k.kind, Roots: []catalogRoot{}, Skills: []catalogSkill{}}
-		winner := map[string]string{}
-		for _, root := range k.roots {
-			fi, err := os.Stat(root.Dir)
-			root.Exists = err == nil && fi.IsDir()
-			ck.Roots = append(ck.Roots, root)
-			if !root.Exists {
-				continue
-			}
-			var items []catalogSkill
-			if root.Form == "skills" {
-				items = catalogSkillEntries(root)
-			} else {
-				items = catalogCommandEntries(root)
-			}
-			for _, it := range items {
-				if len(ck.Skills) >= maxCatalogPerKind {
-					break
-				}
-				key := it.Name
-				if k.kind != session.KindClaude {
-					key = it.Type + ":" + it.Name
-				}
-				if w, ok := winner[key]; ok {
-					it.ShadowedBy = w
-				} else {
-					winner[key] = it.Path
-				}
-				ck.Skills = append(ck.Skills, it)
-			}
-		}
+		ck, winner := fillCatalogKind(k.kind, k.roots)
 		if k.kind == session.KindClaude {
 			for _, nm := range claudeBundledSkills() {
 				if nm == "" || len(ck.Skills) >= maxCatalogPerKind {
@@ -176,6 +164,41 @@ func skillCatalog() []catalogKind {
 		out = append(out, ck)
 	}
 	return out
+}
+
+// fillCatalogKind reads one kind's roots in precedence order and marks the entries an earlier
+// root already claimed. It is shared by the personal and the repository view. The returned map
+// is the winner's Path by shadowing key.
+func fillCatalogKind(kind string, roots []catalogRoot) (catalogKind, map[string]string) {
+	ck := catalogKind{Kind: kind, Roots: []catalogRoot{}, Skills: []catalogSkill{}}
+	winner := map[string]string{}
+	for _, root := range roots {
+		fi, err := os.Stat(root.Dir)
+		root.Exists = err == nil && fi.IsDir()
+		ck.Roots = append(ck.Roots, root)
+		if !root.Exists {
+			continue
+		}
+		var items []catalogSkill
+		if root.Form == "skills" {
+			items = catalogSkillEntries(root)
+		} else {
+			items = catalogCommandEntries(root)
+		}
+		for _, it := range items {
+			if len(ck.Skills) >= maxCatalogPerKind {
+				break
+			}
+			key := shadowKey(kind, it)
+			if w, ok := winner[key]; ok {
+				it.ShadowedBy = w
+			} else {
+				winner[key] = it.Path
+			}
+			ck.Skills = append(ck.Skills, it)
+		}
+	}
+	return ck, winner
 }
 
 // catalogSkillEntries reads <root>/*/SKILL.md like readSkillEntries, but keeps the entries the
@@ -197,6 +220,12 @@ func catalogSkillEntries(root catalogRoot) []catalogSkill {
 			continue
 		}
 		p := filepath.Join(dir, "SKILL.md")
+		if root.escapes(p) {
+			if _, err := os.Stat(p); err == nil {
+				out = append(out, catalogSkill{Name: e.Name(), Type: "skill", Scope: root.Scope, Root: root.Dir, Path: p, UserInvocable: true, Outside: true})
+			}
+			continue
+		}
 		b, err := os.ReadFile(p)
 		if err != nil {
 			continue
@@ -227,7 +256,7 @@ func catalogSkillEntries(root catalogRoot) []catalogSkill {
 
 func catalogCommandEntries(root catalogRoot) []catalogSkill {
 	out := []catalogSkill{}
-	for _, it := range readCommandEntriesWithPath(root.Dir) {
+	for _, it := range readCommandEntriesWithPath(root.Dir, root.escapes) {
 		out = append(out, catalogSkill{
 			Name:          it.Name,
 			Description:   it.Description,
@@ -237,9 +266,19 @@ func catalogCommandEntries(root catalogRoot) []catalogSkill {
 			Root:          root.Dir,
 			Path:          it.Path,
 			UserInvocable: true,
+			Outside:       it.outside,
 		})
 	}
 	return out
+}
+
+// escapes reports whether p resolves outside the root's fence. Always false without one.
+func (r catalogRoot) escapes(p string) bool {
+	if r.fence == "" {
+		return false
+	}
+	_, ok := pathguard.ResolveUnder(p, r.fence)
+	return !ok
 }
 
 // opencodeSkillDepth is opencode's own limit on how deep below the root a SKILL.md is looked
@@ -347,13 +386,19 @@ func opencodeCatalogEntries(root catalogRoot) []catalogSkill {
 }
 
 // readCommandEntriesWithPath is readCommandEntries with each file's path kept.
-func readCommandEntriesWithPath(root string) []sessionSkill {
+// outside, when non-nil, is asked about every file first; one it rejects is listed by name only
+// and flagged, so its content (a link into somewhere private) is never read.
+func readCommandEntriesWithPath(root string, outside func(string) bool) []sessionSkill {
 	out := []sessionSkill{}
 	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
+			return nil
+		}
+		if outside != nil && outside(p) {
+			out = append(out, sessionSkill{Name: strings.TrimSuffix(d.Name(), ".md"), Path: p, outside: true})
 			return nil
 		}
 		b, err := os.ReadFile(p)
@@ -415,12 +460,22 @@ func skillFolderFiles(dir string) []string {
 // listed root (codex's bridge links point at claude's skills) but never out of them, which is
 // what keeps $CLAUDE_CONFIG_DIR/.credentials.json and ~/.codex/auth.json unreachable.
 func HandleSkillFile(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Has("repo") {
+		handleRepoSkillFile(w, r)
+		return
+	}
 	p := r.URL.Query().Get("path")
 	full, ok := skillFilePath(p)
 	if !ok {
 		httpx.WriteErr(w, http.StatusForbidden, "not_a_skill_file", "path is not inside a skills folder")
 		return
 	}
+	serveSkillFile(w, full, p)
+}
+
+// serveSkillFile reads full (already authorised) and answers with it under the caller's name
+// for the path.
+func serveSkillFile(w http.ResponseWriter, full, name string) {
 	fi, err := os.Stat(full)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such file")
@@ -443,7 +498,7 @@ func HandleSkillFile(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusUnsupportedMediaType, "binary", "not a text file")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, skillFileWire{Path: p, Content: string(b), Size: len(b)})
+	httpx.WriteJSON(w, http.StatusOK, skillFileWire{Path: name, Content: string(b), Size: len(b)})
 }
 
 // skillFilePath decides whether p may be served. Lexically it must be below a skills-form root
@@ -461,18 +516,7 @@ func skillFilePath(p string) (string, bool) {
 	}
 	lexical := false
 	for _, root := range roots {
-		rel, err := filepath.Rel(root.Dir, p)
-		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			continue
-		}
-		if root.Form == "skills" && strings.Contains(rel, string(filepath.Separator)) {
-			lexical = true
-		}
-		// opencode also reads a loose <root>/<id>.md as a skill.
-		if root.opencode && strings.HasSuffix(rel, ".md") {
-			lexical = true
-		}
-		if root.Form == "commands" && strings.HasSuffix(rel, ".md") {
+		if root.lexicallyHolds(p) {
 			lexical = true
 		}
 	}
@@ -485,4 +529,23 @@ func skillFilePath(p string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// lexicallyHolds reports whether the cleaned absolute p has the shape of a skill file of this
+// root: <root>/<skill>/<file> for a skills root, a .md for a commands root (or opencode's loose
+// <id>.md). The root directory itself and a loose file in a skills root do not.
+func (r catalogRoot) lexicallyHolds(p string) bool {
+	rel, err := filepath.Rel(r.Dir, p)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	switch {
+	case r.Form == "skills" && strings.Contains(rel, string(filepath.Separator)):
+		return true
+	case r.opencode && strings.HasSuffix(rel, ".md"):
+		return true
+	case r.Form == "commands" && strings.HasSuffix(rel, ".md"):
+		return true
+	}
+	return false
 }

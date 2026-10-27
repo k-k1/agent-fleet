@@ -1,5 +1,5 @@
 // English カタログ / ドメイン: repos
-// キー接頭辞: rp, repo, scm, pj, igb, proj, gitflow
+// キー接頭辞: rp, repo, repo_skills, scm, pj, igb, proj, gitflow
 //
 // ⚠️ 追記は**自分のドメインのファイルだけ**に行う（ADR 0067 決定 4）。分割前は 4,700 行の
 // 1 ファイルで、フロントの並列セッションが全員ここへ追記＝毎回確実に衝突していた。
@@ -509,4 +509,23 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "gitflow.err_invalid": "Not a valid value: {detail}",
   "gitflow.err_failed": "Could not write the settings: {err}",
   "gitflow.err_partial": "Writing stopped part-way ({err}). Already written: {keys}. Save again to write them all.",
+  "repo.skills": "Skills…",
+  "repo_skills.title": "Skills in {repo}",
+  "repo_skills.intro": "What each agent would find in this working copy: the folders it reads, which copy of a name wins, and what each file says. Read-only; the files are part of the repository, so edit them there. Your own skills are under Settings > Skills.",
+  "repo_skills.subdir": "Subdir",
+  "repo_skills.subdir_ph": "empty = the working copy root (e.g. packages/app)",
+  "repo_skills.show": "Show",
+  "repo_skills.no_subdir": "There is no folder \"{subdir}\" in this working copy.",
+  "repo_skills.no_roots": "This agent reads no skills from a repository.",
+  "repo_skills.scope_user": "above the working copy",
+  "repo_skills.not_present": "not present",
+  "repo_skills.create": "create e.g. {path}",
+  "repo_skills.none": "No skills found in the folders above.",
+  "repo_skills.group_project": "In this repository",
+  "repo_skills.group_user": "In folders above the working copy",
+  "repo_skills.outside_badge": "outside the working copy",
+  "repo_skills.outside": "This entry is a link that leaves the working copy, so it is not read or shown.",
+  "repo_skills.also_personal": "Also defined in your personal skills.",
+  "repo_skills.open_personal": "Open your skills",
+  "repo_skills.open_in_viewer": "Open in viewer",
 };
