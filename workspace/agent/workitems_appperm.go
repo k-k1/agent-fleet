@@ -31,8 +31,10 @@ import (
 // Runs on the detail read only (never the list), bounded by one overall timeout, and a definitive
 // answer is cached briefly per token and repository so reopening a panel does not repeat it.
 
+// appPermTimeout is a variable so a test can shorten the overall bound.
+var appPermTimeout = 6 * time.Second
+
 const (
-	appPermTimeout   = 6 * time.Second
 	appPermTTL       = time.Minute
 	appPermPageSize  = 100
 	appPermMaxPages  = 5
@@ -87,7 +89,8 @@ func githubAppUserCanWriteContents(ctx context.Context, token, repo string) (can
 	var writers []int64
 	for page := 1; page <= appPermMaxPages; page++ {
 		var res struct {
-			Installations []struct {
+			// A pointer to the slice: null or absent is not "zero installations".
+			Installations *[]struct {
 				ID          int64             `json:"id"`
 				Permissions map[string]string `json:"permissions"`
 			} `json:"installations"`
@@ -95,27 +98,31 @@ func githubAppUserCanWriteContents(ctx context.Context, token, repo string) (can
 		if err := githubGetAppJSON(ctx, token, fmt.Sprintf("%s/user/installations?per_page=%d&page=%d", githubAPIBase, appPermPageSize, page), &res); err != nil {
 			return false, false
 		}
-		for _, in := range res.Installations {
+		if res.Installations == nil {
+			return false, false // not the documented shape: unknown
+		}
+		for _, in := range *res.Installations {
 			if in.Permissions["contents"] == "write" {
 				writers = append(writers, in.ID)
 			}
 		}
-		if len(res.Installations) < appPermPageSize {
+		if len(*res.Installations) < appPermPageSize {
 			break
 		}
 		if page == appPermMaxPages {
 			return false, false // more installations than we read: unknown
 		}
 	}
+	definitive = true
 	if len(writers) > appPermMaxInstal {
 		writers = writers[:appPermMaxInstal]
+		definitive = false // installations left unchecked: a "no" would be a guess
 	}
-	definitive = true
 	for _, id := range writers {
 		found := false
 		for page := 1; page <= appPermMaxPages; page++ {
 			var res struct {
-				Repositories []struct {
+				Repositories *[]struct {
 					FullName    string `json:"full_name"`
 					Permissions *struct {
 						Admin    bool `json:"admin"`
@@ -128,15 +135,21 @@ func githubAppUserCanWriteContents(ctx context.Context, token, repo string) (can
 				definitive = false
 				break
 			}
-			for _, r := range res.Repositories {
+			if res.Repositories == nil {
+				definitive = false // not the documented shape: unknown
+				break
+			}
+			for _, r := range *res.Repositories {
 				if strings.EqualFold(r.FullName, repo) {
 					found = true
-					if p := r.Permissions; p != nil && (p.Push || p.Maintain || p.Admin) {
+					if r.Permissions == nil {
+						definitive = false // listed without the user's permissions: unknown
+					} else if p := r.Permissions; p.Push || p.Maintain || p.Admin {
 						return true, true
 					}
 				}
 			}
-			if found || len(res.Repositories) < appPermPageSize {
+			if found || len(*res.Repositories) < appPermPageSize {
 				break
 			}
 			if page == appPermMaxPages {

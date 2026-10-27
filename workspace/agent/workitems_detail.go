@@ -439,11 +439,11 @@ func githubPullRequestDetail(token, key string) (*workItemDetailOut, error) {
 			applyGitHubRepoMerge(out, rb)
 		}
 	}
-	if _, reported := hdr["X-Oauth-Scopes"]; out.CanMerge && !reported {
-		// No scopes reported: a fine-grained token (stays false) or a GitHub App user token,
-		// which has a positive pre-check (workitems_appperm.go). Open pull requests only, so a
-		// closed one costs no extra requests.
-		out.CanMerge = out.State == "open" && githubAppUserCanMerge(token, repo)
+	if strings.HasPrefix(token, "ghu_") {
+		// A GitHub App user token is chosen by its prefix, not by whether a scopes header is
+		// present or empty: it has a positive pre-check (workitems_appperm.go). Open pull
+		// requests only, so a closed one costs no extra requests.
+		out.CanMerge = out.CanMerge && out.State == "open" && githubAppUserCanMerge(token, repo)
 	} else {
 		out.CanMerge = out.CanMerge && githubScopesCanMerge(hdr, out.private)
 	}

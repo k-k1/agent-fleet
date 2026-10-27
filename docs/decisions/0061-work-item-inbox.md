@@ -595,7 +595,7 @@ installation's permissions are readable through `GET /user/installations`, and `
 lists the repositories the user can reach through an installation with the user's own `permissions` on each. The detail
 read draws the button for such a token only when an installation has `contents: write`, lists the repository, and the
 user has push there. An error, a rate limit, a timeout, an unread page or any other shape is unknown, and unknown stays
-"no button". The extra requests run on the detail read of an open pull request only (never the list), under one 6 s bound,
+"no button". The extra requests run on the detail read of an open pull request only (never the list), under one 6 s bound; a `ghu_` token is chosen by its prefix whatever `X-OAuth-Scopes` says, and an unexpected response shape or an unchecked installation is unknown and not cached,
 and a definitive answer is cached for a minute per token hash and repository. A fine-grained personal access token stays
 without a button: GitHub documents no endpoint that reads its granted permissions back (`X-Accepted-GitHub-Permissions`
 says what an endpoint needs, not what the token holds). Merge itself is unchanged.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -21,12 +22,16 @@ type fakeAppCfg struct {
 	inst, repos         string
 	instCode, reposCode int
 	delay               time.Duration
+	scopes              *string // X-OAuth-Scopes on every answer; nil sends none
 }
 
 func fakeApp(t *testing.T, c fakeAppCfg) *atomic.Int32 {
 	t.Helper()
 	var n atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if c.scopes != nil {
+			w.Header().Set("X-OAuth-Scopes", *c.scopes)
+		}
 		write := func(code int, body string) {
 			if code != 0 {
 				w.WriteHeader(code)
@@ -90,6 +95,10 @@ func TestAppUserTokenMergeButton(t *testing.T) {
 		{"repositories 403", "ghu_a", fakeAppCfg{inst: instBody("write"), repos: `{}`, reposCode: 403}, false},
 		{"repositories 404", "ghu_a", fakeAppCfg{inst: instBody("write"), repos: `{}`, reposCode: 404}, false},
 		{"repositories 500", "ghu_a", fakeAppCfg{inst: instBody("write"), repos: `{}`, reposCode: 500}, false},
+		{"installations null", "ghu_a", fakeAppCfg{inst: `{"installations":null}`, repos: good}, false},
+		{"installations absent", "ghu_a", fakeAppCfg{inst: `{}`, repos: good}, false},
+		{"repositories absent", "ghu_a", fakeAppCfg{inst: instBody("write"), repos: `{}`}, false},
+		{"repo listed without permissions", "ghu_a", fakeAppCfg{inst: instBody("write"), repos: `{"repositories":[{"full_name":"acme/web"}]}`}, false},
 		{"fine-grained token", "github_pat_x", fakeAppCfg{inst: instBody("write"), repos: good}, false},
 		{"unknown token kind", "tok", fakeAppCfg{inst: instBody("write"), repos: good}, false},
 	} {
@@ -111,10 +120,12 @@ func TestAppUserTokenMergeButton(t *testing.T) {
 // A slow endpoint ends in "no button" within the bound rather than hanging the panel.
 func TestAppUserTokenTimeoutIsNoButton(t *testing.T) {
 	resetAppPermCache()
-	old := workItemHTTPClient
-	workItemHTTPClient = &http.Client{Timeout: 100 * time.Millisecond}
-	t.Cleanup(func() { workItemHTTPClient = old })
-	fakeApp(t, fakeAppCfg{inst: instBody("write"), repos: reposBody("acme/web", `{"push":true}`), delay: 400 * time.Millisecond})
+	// The client's own timeout is long: only the overall context bound can end this early.
+	old, oldBound := workItemHTTPClient, appPermTimeout
+	workItemHTTPClient = &http.Client{Timeout: 10 * time.Second}
+	appPermTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { workItemHTTPClient, appPermTimeout = old, oldBound })
+	fakeApp(t, fakeAppCfg{inst: instBody("write"), repos: reposBody("acme/web", `{"push":true}`), delay: 1500 * time.Millisecond})
 	start := time.Now()
 	out, err := githubPullRequestDetail("ghu_a", "acme/web#3")
 	if err != nil {
@@ -123,7 +134,7 @@ func TestAppUserTokenTimeoutIsNoButton(t *testing.T) {
 	if out.CanMerge {
 		t.Error("a timed-out pre-check drew a button")
 	}
-	if time.Since(start) > 3*time.Second {
+	if time.Since(start) > 1200*time.Millisecond {
 		t.Errorf("took %v", time.Since(start))
 	}
 }
@@ -169,5 +180,82 @@ func TestAppUserTokenCacheKeyHoldsNoToken(t *testing.T) {
 		if strings.Contains(k, "secretvalue") {
 			t.Errorf("cache key holds the token: %q", k)
 		}
+	}
+}
+
+// An empty or present X-OAuth-Scopes header does not take a ghu_ token off the pre-check path.
+func TestAppUserTokenIsChosenByPrefixNotByScopesHeader(t *testing.T) {
+	for _, hdr := range []*string{nil, new(string), ptrStr("repo")} {
+		resetAppPermCache()
+		fakeApp(t, fakeAppCfg{inst: instBody("write"), repos: reposBody("acme/web", `{"push":true}`), scopes: hdr})
+		out, err := githubPullRequestDetail("ghu_a", "acme/web#3")
+		if err != nil || !out.CanMerge {
+			t.Errorf("scopes header %v: canMerge=%v err=%v, want true", hdr, out != nil && out.CanMerge, err)
+		}
+		resetAppPermCache()
+		fakeApp(t, fakeAppCfg{inst: instBody("read"), repos: reposBody("acme/web", `{"push":true}`), scopes: hdr})
+		if out, err := githubPullRequestDetail("ghu_a", "acme/web#3"); err != nil || out.CanMerge {
+			t.Errorf("scopes header %v with contents:read: canMerge=%v err=%v, want false", hdr, out != nil && out.CanMerge, err)
+		}
+	}
+}
+
+func ptrStr(s string) *string { return &s }
+
+// An unexpected shape is unknown, not a cached "no": the next open asks again and gets the answer.
+// A well-formed empty list, by contrast, is a definitive no and is cached.
+func TestAppUserTokenUnexpectedShapeIsNotCached(t *testing.T) {
+	resetAppPermCache()
+	var n atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/user/installations":
+			if n.Add(1) == 1 {
+				_, _ = w.Write([]byte(`{}`))
+				return
+			}
+			_, _ = w.Write([]byte(instBody("write")))
+		case "/user/installations/7/repositories":
+			_, _ = w.Write([]byte(reposBody("acme/web", `{"push":true}`)))
+		}
+	}))
+	defer srv.Close()
+	old := githubAPIBase
+	githubAPIBase = srv.URL
+	t.Cleanup(func() { githubAPIBase = old })
+	if githubAppUserCanMerge("ghu_a", "acme/web") {
+		t.Fatal("an unexpected shape drew a button")
+	}
+	if !githubAppUserCanMerge("ghu_a", "acme/web") {
+		t.Error("the re-open after an unexpected shape did not ask again")
+	}
+
+	resetAppPermCache()
+	e := fakeApp(t, fakeAppCfg{inst: `{"total_count":0,"installations":[]}`})
+	can, definitive := githubAppUserCanWriteContents(context.Background(), "ghu_a", "acme/web")
+	if can || !definitive || e.Load() != 1 {
+		t.Errorf("empty installations list: can=%v definitive=%v (requests %d), want false/true", can, definitive, e.Load())
+	}
+}
+
+// More writing installations than are checked leaves the rest unknown.
+func TestAppUserTokenTruncatedInstallationsAreUnknown(t *testing.T) {
+	var parts []string
+	for i := 1; i <= appPermMaxInstal+1; i++ {
+		parts = append(parts, fmt.Sprintf(`{"id":%d,"permissions":{"contents":"write"}}`, 100+i))
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user/installations" {
+			_, _ = w.Write([]byte(`{"installations":[` + strings.Join(parts, ",") + `]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"repositories":[]}`))
+	}))
+	defer srv.Close()
+	old := githubAPIBase
+	githubAPIBase = srv.URL
+	t.Cleanup(func() { githubAPIBase = old })
+	if can, definitive := githubAppUserCanWriteContents(context.Background(), "ghu_a", "acme/web"); can || definitive {
+		t.Errorf("can=%v definitive=%v, want false/false", can, definitive)
 	}
 }
