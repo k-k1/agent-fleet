@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetskills"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -164,7 +165,8 @@ func TestRepoSkillFileStaysInsideTheWorkingCopy(t *testing.T) {
 	writeFile(t, secret, "do not serve")
 	writeFile(t, filepath.Join(dir, "notes.md"), "not in a skill root")
 	// A file symlink and a folder symlink inside skill folders, both leaving the working copy,
-	// and one link that stays inside it (a bridge to another root) and must keep working.
+	// and one relative link that stays inside it (a bridge to another root) and must keep working.
+	// (Absolute links are refused even when they point inside: the open is confined to the tree.)
 	if err := os.Symlink(secret, filepath.Join(dir, ".claude", "skills", "a", "leak.md")); err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +177,7 @@ func TestRepoSkillFileStaysInsideTheWorkingCopy(t *testing.T) {
 	if err := os.Symlink(secret, filepath.Join(dir, ".claude", "commands", "bad.md")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(dir, ".agents", "skills", "b"), filepath.Join(dir, ".codex", "skills", "b")); err != nil {
+	if err := os.Symlink("../../.agents/skills/b", filepath.Join(dir, ".codex", "skills", "b")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -244,5 +246,68 @@ func TestRepoSkillCatalogSkillMdSymlinkOut(t *testing.T) {
 	}
 	if rec := getRepoSkillFile(t, "repo=demo&path="+url.QueryEscape(".claude/skills/sneaky/SKILL.md")); rec.Code != http.StatusForbidden {
 		t.Errorf("served: %d", rec.Code)
+	}
+}
+
+// A link in ~/repos, or a plain folder there, is no working copy: the fence would otherwise be
+// drawn around whatever the link points at.
+func TestRepoSkillScopeNeedsARealWorkingCopy(t *testing.T) {
+	home, _ := repoSkillsEnv(t)
+	writeFile(t, filepath.Join(home, ".claude", "skills", "x", "id_rsa"), "private")
+	writeFile(t, filepath.Join(home, ".claude", "skills", "x", "SKILL.md"), "---\n---\n")
+	if err := os.Symlink(home, filepath.Join(home, "repos", "alias")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(home, "repos", "plain", ".claude", "skills", "p", "SKILL.md"), "x")
+	for _, repo := range []string{"alias", "plain"} {
+		if code, _ := getRepoCatalog(t, "repo="+repo); code != http.StatusNotFound {
+			t.Errorf("catalog %s: %d, want 404", repo, code)
+		}
+		if rec := getRepoSkillFile(t, "repo="+repo+"&path="+url.QueryEscape(".claude/skills/x/id_rsa")); rec.Code != http.StatusNotFound {
+			t.Errorf("file %s: %d %s", repo, rec.Code, rec.Body)
+		}
+	}
+}
+
+// The check and the open are one step: a file swapped for a link after the shape check, on the
+// file endpoint and while the catalog reads frontmatter, still does not leak.
+func TestRepoSkillSymlinkSwappedAfterTheCheck(t *testing.T) {
+	home, dir := repoSkillsEnv(t)
+	secret := filepath.Join(home, "secret.txt")
+	writeFile(t, secret, "---\ndescription: leaked\n---\n")
+	target := filepath.Join(dir, ".claude", "skills", "a", "SKILL.md")
+	swap := func() {
+		_ = os.Remove(target)
+		if err := os.Symlink(secret, target); err != nil {
+			t.Error(err)
+		}
+	}
+	beforeFenceOpen = swap
+	t.Cleanup(func() { beforeFenceOpen = nil })
+	if rec := getRepoSkillFile(t, "repo=demo&path="+url.QueryEscape(".claude/skills/a/SKILL.md")); rec.Code == http.StatusOK {
+		t.Errorf("file endpoint served a swapped link: %s", rec.Body)
+	}
+
+	writeFile(t, filepath.Join(dir, ".claude", "skills", "a", "SKILL.md"), "---\ndescription: root a\n---\n")
+	_ = os.Remove(target)
+	writeFile(t, target, "---\ndescription: root a\n---\n")
+	_, w := getRepoCatalog(t, "repo=demo")
+	a := entriesByRel(t, repoKind(t, w, session.KindClaude))[".claude/skills/a/SKILL.md"]
+	if a.Description == "leaked" {
+		t.Errorf("catalog read through a swapped link: %#v", a)
+	}
+	if !a.Outside {
+		t.Errorf("swapped entry should be flagged outside: %#v", a)
+	}
+}
+
+// A repository's SKILL.md that quotes the marker stays a project skill in this view.
+func TestRepoSkillMarkerDoesNotMakeItAFleetSkill(t *testing.T) {
+	_, dir := repoSkillsEnv(t)
+	writeFile(t, filepath.Join(dir, ".claude", "skills", "m", "SKILL.md"), "---\ndescription: m\n---\n"+fleetskills.Marker+"\n")
+	_, w := getRepoCatalog(t, "repo=demo")
+	m := entriesByRel(t, repoKind(t, w, session.KindClaude))[".claude/skills/m/SKILL.md"]
+	if m.Scope != "project" {
+		t.Errorf("scope = %q, want project", m.Scope)
 	}
 }

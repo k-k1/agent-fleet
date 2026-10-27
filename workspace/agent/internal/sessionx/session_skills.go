@@ -643,7 +643,7 @@ func readSkillEntries(root, source string) []sessionSkill {
 // extension: in claude a subdirectory only shows up as a namespace label and is not part of the
 // name you type.
 func readCommandEntries(root, source string) []sessionSkill {
-	out := readCommandEntriesWithPath(root, nil)
+	out := readCommandEntriesWithPath(root, nil, nil)
 	for i := range out {
 		// Path on a picker entry means "foreign, inject this file" — a native command has none.
 		out[i].Path, out[i].Source, out[i].Type = "", source, "command"

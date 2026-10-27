@@ -83,14 +83,20 @@ export function resolveSkillLink(href: string, fromFile: string): string | null 
     /* keep the raw spelling */
   }
   if (!ref) return null;
+  // A working-copy-relative file (repository view) stays relative and keeps a leading "..": a
+  // skill in a folder above the working copy is addressed as "../.claude/skills/…".
+  const relative = !fromFile.startsWith("/");
+  if (relative && ref.startsWith("/")) return null;
   const parts = (ref.startsWith("/") ? ref : dirOf(fromFile) + "/" + ref).split("/");
   const out: string[] = [];
   for (const seg of parts) {
     if (seg === "" || seg === ".") continue;
-    if (seg === "..") out.pop();
-    else out.push(seg);
+    if (seg === "..") {
+      if (relative && (out.length === 0 || out[out.length - 1] === "..")) out.push("..");
+      else out.pop();
+    } else out.push(seg);
   }
-  return "/" + out.join("/");
+  return relative ? out.join("/") : "/" + out.join("/");
 }
 
 /** The route one file of a skill is read from. */
@@ -272,9 +278,8 @@ export function SkillDetail({ skill, source }: { skill: CatalogSkill; source?: S
     if (e.type === "auxclick" && e.button !== 1) return;
     const a = (e.target as HTMLElement).closest?.("a");
     if (!a || !file) return;
-    const resolved = resolveSkillLink(a.getAttribute("href") ?? "", file.path);
-    if (!resolved) return;
-    const target = source ? resolved.slice(1) : resolved;
+    const target = resolveSkillLink(a.getAttribute("href") ?? "", file.path);
+    if (!target) return;
     e.preventDefault();
     e.stopPropagation();
     setWant(target);

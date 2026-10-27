@@ -2,6 +2,7 @@ package sessionx
 
 import (
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 
@@ -39,7 +40,10 @@ func resolveRepoSkillScope(w http.ResponseWriter, r *http.Request) (dir, cwd, su
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_repo", "invalid repo name")
 		return
 	}
-	if !session.DirExists(dir) {
+	// Lstat, not Stat: a link in ~/repos (alias -> $HOME) would make the target the "working
+	// copy" and every fence below would then be drawn around the wrong tree. A plain folder is
+	// no working copy either.
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() || !isWorkingCopy(dir) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such repo: "+name)
 		return "", "", "", false
 	}
@@ -57,6 +61,15 @@ func resolveRepoSkillScope(w http.ResponseWriter, r *http.Request) (dir, cwd, su
 		return "", "", "", false
 	}
 	return dir, cwd, sub, true
+}
+
+// isWorkingCopy: a git or svn working copy, by its marker.
+func isWorkingCopy(dir string) bool {
+	if gitx.IsGitRepo(dir) {
+		return true
+	}
+	fi, err := os.Stat(filepath.Join(dir, ".svn"))
+	return err == nil && fi.IsDir()
 }
 
 // repoCatalogRoots is one kind's repository roots as catalog roots, each fenced.
@@ -133,10 +146,15 @@ func handleRepoSkillFile(w http.ResponseWriter, r *http.Request) {
 			if !root.lexicallyHolds(full) {
 				continue
 			}
-			if _, ok := pathguard.ResolveUnder(full, root.fence); ok {
-				serveSkillFile(w, full, rel)
-				return
+			// Opened beneath the fence in one step, so a link swapped in after the shape check
+			// still cannot lead out.
+			f, err := openBeneath(root.fence, full)
+			if err != nil {
+				continue
 			}
+			defer f.Close()
+			serveSkillFile(w, f, rel)
+			return
 		}
 	}
 	httpx.WriteErr(w, http.StatusForbidden, "not_a_skill_file", "path is not inside a skills folder")
