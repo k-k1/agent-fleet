@@ -65,6 +65,23 @@ export function splitPastedImages(text: string): { text: string; images: string[
   return { text: cleaned, images, files };
 }
 
+// The tail buildImagePrompt appends for claude: the instruction, then attachment paths only
+// (claude's transcript wraps each in backticks, see image_paste.go).
+const CLAUDE_ATTACH_TAIL_RE = new RegExp(
+  "^" + FILE_PROMPT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:\\s+`?\\S*/pasted/[^\\s/]+/paste-\\d+[\\w.-]*`?)+\\s*$",
+);
+
+// splitCommandArgs is splitPastedImages for a slash command's args. Only claude logs command
+// args, so an attachment is exactly a trailing FILE_PROMPT followed by nothing but pasted
+// paths; anything else (a quoted instruction, a pasted path the member typed) is their own
+// words and stays in the args.
+export function splitCommandArgs(args: string): { text: string; images: string[]; files: string[] } {
+  const at = args.lastIndexOf(FILE_PROMPT);
+  if (at < 0 || !CLAUDE_ATTACH_TAIL_RE.test(args.slice(at))) return { text: args, images: [], files: [] };
+  const { images, files } = splitPastedImages(args.slice(at));
+  return { text: args.slice(0, at).trim(), images, files };
+}
+
 // samePastedPrompt compares the user-authored portion of two prompt renderings.
 // Codex's rollout adds <image …> transport markers that the optimistic Console
 // echo does not contain; ignoring those markers lets the real turn replace the echo.

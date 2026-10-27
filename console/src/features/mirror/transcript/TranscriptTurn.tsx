@@ -14,7 +14,7 @@ import FileIcon from "../../../ui/FileIcon.tsx";
 import { fmtTok } from "../../../lib/fmttok.ts";
 import { prettyModel } from "../../../lib/modelName.ts";
 import { t as tr } from "../../../lib/i18n/index.ts";
-import { FILE_PROMPT, splitPastedImages } from "../../../lib/pastedImages.ts";
+import { splitCommandArgs, splitPastedImages } from "../../../lib/pastedImages.ts";
 import { MarkdownView } from "../../viewer/MarkdownView.tsx";
 import { textOfParts, workSplit, type WorkSplit } from "../mirrorParts.ts";
 import { looksForeign, translatableTexts, turnTranslateKey } from "../translate.ts";
@@ -551,17 +551,10 @@ function TranscriptTurnImpl({
           ))
         ) : isUser && turn.cmd ? (
           // A `/`-run slash command / skill invocation: a compact chip marking the action.
-          // Args sent with an attachment end with the machine-facing Read instruction and paths
-          // (buildImagePrompt appends them); split them off so the chip shows the user's words
-          // only. Only claude logs command args and its attachments always come with FILE_PROMPT,
-          // so the cut is at its LAST occurrence: a pasted path or the instruction the member
-          // typed before it stays in the args and is not taken for an attachment.
+          // Args sent with an attachment end with the machine-facing Read instruction and paths;
+          // split them off so the chip shows the user's words only.
           turn.parts.map((p, i) => {
-            const args = p.info || "";
-            const at = args.lastIndexOf(FILE_PROMPT);
-            const { images, files } = at >= 0 ? splitPastedImages(args.slice(at)) : { images: [], files: [] };
-            // An instruction with no attachment path after it is the member's own words.
-            const text = images.length || files.length ? args.slice(0, at).trim() : args;
+            const { text, images, files } = splitCommandArgs(p.info || "");
             return (
               <Fragment key={i}>
                 <CmdChip name={p.text} args={text} />

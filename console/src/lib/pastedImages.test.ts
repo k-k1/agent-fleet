@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildImagePrompt,
   samePastedPrompt,
+  splitCommandArgs,
   splitPastedImages,
   FILE_PROMPT,
   FILE_PROMPT_GENERIC,
@@ -87,5 +88,35 @@ describe("splitPastedImages", () => {
       files: [],
     });
     expect(samePastedPrompt(landed, "確認して")).toBe(true);
+  });
+});
+
+describe("splitCommandArgs", () => {
+  const none = (args: string) => ({ text: args, images: [], files: [] });
+
+  it("splits the appended instruction and paths, raw or backticked", () => {
+    expect(splitCommandArgs(buildImagePrompt("直して", [P1, F1]))).toEqual({ text: "直して", images: ["paste-1.png"], files: ["paste-3-server.log"] });
+    expect(splitCommandArgs(`直して ${FILE_PROMPT} \`${P1}\` \`${P2}\``)).toEqual({
+      text: "直して",
+      images: ["paste-1.png", "paste-2.jpg"],
+      files: [],
+    });
+    expect(splitCommandArgs(buildImagePrompt("", [P1]))).toEqual({ text: "", images: ["paste-1.png"], files: [] });
+  });
+
+  it("collects only the paths after the last instruction", () => {
+    const head = `${P1} と "${FILE_PROMPT}" を比べて`;
+    expect(splitCommandArgs(`${head} ${FILE_PROMPT} \`${P2}\``)).toEqual({ text: head, images: ["paste-2.jpg"], files: [] });
+  });
+
+  it("keeps args whole when no generated attachment tail is there", () => {
+    for (const args of [
+      "review 1110",
+      `${P1} を調べて`,
+      `"${FILE_PROMPT}" という指示を検討して`,
+      `"${FILE_PROMPT}" は ${P1} に使う指示です`,
+      `${FILE_PROMPT} ${P1} を開いて`,
+    ])
+      expect(splitCommandArgs(args)).toEqual(none(args));
   });
 });

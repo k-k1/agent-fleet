@@ -705,6 +705,13 @@ describe("a slash command sent with an attachment (#2823)", () => {
     expect(el.querySelector(".mt-cmd-args")?.textContent).toBe(`"Open the following file(s) with the Read tool:" という指示を検討して`);
   });
 
+  it("keeps a quoted instruction followed by a typed path as args", () => {
+    const args = `"Open the following file(s) with the Read tool:" は ${p} に使う指示です`;
+    const el = render(cmd(args), caps);
+    expect(el.querySelector(".mt-cmd-args")?.textContent).toBe(args);
+    expect(el.querySelector(".mt-imgs")).toBeNull();
+  });
+
   it("leaves plain args untouched", () => {
     const el = render(cmd("review 1110"), caps);
     expect(el.querySelector(".mt-cmd-args")?.textContent).toBe("review 1110");
