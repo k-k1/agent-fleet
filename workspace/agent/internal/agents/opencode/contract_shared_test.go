@@ -565,6 +565,9 @@ func TestContractSharedServeTerminalSessions(t *testing.T) {
 	}
 
 	// --- a session made with /new inside the TUI is tagged and gets its pane's environment ---
+	// Its reports are counted from here: opencode 2.1.4 runs the status plugin twice in this setup
+	// (measured: every report doubled), so a total count passed on the first turn's reports alone.
+	statusBefore, _ := os.ReadFile(statusLog)
 	typeInto("t1", "/new")
 	time.Sleep(time.Second) // the slash menu has to be up before the Enter picks its entry
 	typeInto("t1", "Enter")
@@ -593,13 +596,14 @@ func TestContractSharedServeTerminalSessions(t *testing.T) {
 	if got := sids.Read(session.UUID(work, "t1")); got != second {
 		t.Errorf("slot t1 = %s after /new, want %s", got, second)
 	}
-	for d := time.Now().Add(10 * time.Second); time.Now().Before(d); time.Sleep(200 * time.Millisecond) {
-		if b, _ := os.ReadFile(statusLog); strings.Count(string(b), "session-status idle "+session.UUID(work, "t1")+"\n") >= 2 {
-			break
+	{
+		read := func() string {
+			b, _ := os.ReadFile(statusLog)
+			return strings.TrimPrefix(string(b), string(statusBefore))
 		}
-	}
-	if b, _ := os.ReadFile(statusLog); strings.Count(string(b), "session-status working "+session.UUID(work, "t1")+"\n") < 2 {
-		t.Errorf("the /new turn was not reported under t1:\n%s", b)
+		if miss, last := awaitStatusReports(read, session.UUID(work, "t1"), []string{"working", "idle"}, statusWaitTimeout, 100*time.Millisecond); len(miss) > 0 {
+			t.Errorf("the /new turn was not reported under t1 (no %v) in:\n%s", miss, last)
+		}
 	}
 
 	// --- fork keeps identity: the copy belongs to the new slot, not to the source ---
