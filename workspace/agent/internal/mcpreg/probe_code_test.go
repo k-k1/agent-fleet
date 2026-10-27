@@ -2,6 +2,7 @@ package mcpreg
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -112,5 +113,31 @@ func assertEnglish(t *testing.T, res ProbeResult) {
 		if r > 0x2fff {
 			t.Fatalf("fallback is not English: %q", res.Error)
 		}
+	}
+}
+
+// After the budget expires the context kill closes stdout, so the context and the reader's
+// error are both ready and select picks at random. The expired context must always win.
+func TestReadRPCForExpiredContextBeatsReadError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for i := 0; i < 500; i++ {
+		msgs := make(chan rpcMsg)
+		readErr := make(chan error, 1)
+		readErr <- &probeErr{code: codeProcessExited, msg: "no response (the process exited)"}
+		if _, err := readRPCFor(ctx, msgs, readErr, 1); !errors.Is(err, errProbeTimeout) {
+			t.Fatalf("iteration %d: got %v, want errProbeTimeout", i, err)
+		}
+	}
+}
+
+// A server that dies while the budget is intact is still process_exited.
+func TestReadRPCForReadErrorBeforeDeadlineIsProcessExited(t *testing.T) {
+	msgs := make(chan rpcMsg)
+	readErr := make(chan error, 1)
+	readErr <- &probeErr{code: codeProcessExited, msg: "no response (the process exited)"}
+	_, err := readRPCFor(context.Background(), msgs, readErr, 1)
+	if err == nil || errors.Is(err, errProbeTimeout) {
+		t.Fatalf("got %v, want the process-exited error", err)
 	}
 }
