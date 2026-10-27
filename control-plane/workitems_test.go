@@ -871,6 +871,74 @@ func TestWorkItemCommentStoppedDoesNotStart(t *testing.T) {
 	}
 }
 
+// HTML characters are not escaped in the signed body (a "<" would grow six-fold and could push a
+// body the provider accepts past the Agent's cap), and a request beyond the Console's own cap is
+// refused before it is read in full, signed or relayed.
+func TestWorkItemCommentBodySizeBounds(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	var raw []byte
+	var reached int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached++
+		raw, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`{"url":"u"}`))
+	}))
+	defer srv.Close()
+	lt := strings.Repeat("<", 50000)
+	w := httptest.NewRecorder()
+	env.api.comment(w, consoleCommentReq(`{"provider":"github","key":"acme/web#1","body":"`+lt+`"}`), mergeRes(env, srv.URL, "running"))
+	if w.Code != http.StatusOK || reached != 1 {
+		t.Fatalf("50000 '<': %d %s (agent reached %d)", w.Code, w.Body.String(), reached)
+	}
+	if strings.Contains(string(raw), `\u003c`) || len(raw) > 60000 {
+		t.Errorf("the relayed body was HTML-escaped: %d bytes", len(raw))
+	}
+	huge := strings.Repeat("a", workItemCommentMaxIn)
+	w = httptest.NewRecorder()
+	env.api.comment(w, consoleCommentReq(`{"provider":"github","key":"acme/web#1","body":"`+huge+`"}`), mergeRes(env, srv.URL, "running"))
+	if w.Code != http.StatusBadRequest || reached != 1 {
+		t.Fatalf("oversize: %d (agent reached %d)", w.Code, reached)
+	}
+}
+
+// A post leaves an audit row naming who, where and the outcome, and never the text.
+func TestWorkItemCommentWritesAnAuditRow(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	ctx := context.Background()
+	tenant, _ := env.st.EnsureDefaultTenant(ctx)
+	for _, status := range []int{http.StatusOK, http.StatusBadGateway} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`{}`))
+		}))
+		res := mergeRes(env, srv.URL, "running")
+		res.mv.TenantID = tenant.ID
+		w := httptest.NewRecorder()
+		env.api.comment(w, consoleCommentReq(`{"provider":"jira","key":"PROJ-7","body":"secret draft text"}`), res)
+		srv.Close()
+		if w.Code != status {
+			t.Fatalf("status %d, got %d", status, w.Code)
+		}
+	}
+	rows, err := env.st.ListAuditByTenant(ctx, tenant.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[int]bool{}
+	for _, a := range rows {
+		if a.Action != "work_item.comment" {
+			continue
+		}
+		seen[a.HTTPStatus] = true
+		if a.Target != "PROJ-7" || a.ActorID != "user1" || a.Detail != "provider=jira" || strings.Contains(a.Detail+a.Target, "secret") {
+			t.Errorf("audit row = %+v", a)
+		}
+	}
+	if !seen[http.StatusOK] || !seen[http.StatusBadGateway] {
+		t.Errorf("want a row for the success and the refusal, got %v (%d rows)", seen, len(rows))
+	}
+}
+
 func TestWorkItemWireNeverCarriesNullArrays(t *testing.T) {
 	if got := splitLabels(""); got == nil {
 		t.Error("splitLabels(\"\") returned nil — it marshals as JSON null")

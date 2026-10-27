@@ -31,9 +31,10 @@ import (
 // write back into the tracker closes a loop we do not want closed. A human reading the
 // draft is the gate.
 
-// workItemCommentMaxRequest bounds the body memberorigin.Require buffers: a drafted comment is
-// long-form text, and the provider limits (GitHub 65536 characters) sit below this.
-const workItemCommentMaxRequest = 256 << 10
+// workItemCommentMaxRequest bounds the body memberorigin.Require buffers. The CP reads at most
+// 256 KiB from the Console and a JSON control character escapes to six bytes, so 1.5 MiB is the
+// worst case the CP can send; 2 MiB leaves room.
+const workItemCommentMaxRequest = 2 << 20
 
 // handleWorkItemsComment — POST /work-items/comment {provider, key, body}.
 func handleWorkItemsComment(w http.ResponseWriter, r *http.Request) {

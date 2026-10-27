@@ -204,3 +204,19 @@ func TestWorkItemsCommentHandlerRefusesWithoutAMark(t *testing.T) {
 		t.Fatalf("%d %s (calls %d)", w.Code, w.Body.String(), len(*calls))
 	}
 }
+
+// The cap is sized for what the CP can send, not for the text the member typed: a body of 50,000
+// "<" is 300 KB once a JSON encoder escapes it, and must still be posted; past the cap it is refused.
+func TestWorkItemsCommentRequestSizeCap(t *testing.T) {
+	seedGitHubToken(t)
+	s := memberorigintest.Install(t)
+	calls := fakeGitHubMerge(t, 201, `{"html_url":"u"}`)
+	escaped := `{"provider":"github","key":"acme/web#12","body":"` + strings.Repeat(`\u003c`, 50000) + `"}`
+	if w := postComment(t, s, escaped); w.Code != http.StatusOK || len(*calls) != 1 {
+		t.Fatalf("escaped 300 KB body: %d %.200s (calls %d)", w.Code, w.Body.String(), len(*calls))
+	}
+	huge := `{"provider":"github","key":"acme/web#12","body":"` + strings.Repeat("a", workItemCommentMaxRequest) + `"}`
+	if w := postComment(t, s, huge); w.Code != http.StatusRequestEntityTooLarge || len(*calls) != 1 {
+		t.Fatalf("oversize: %d (calls %d)", w.Code, len(*calls))
+	}
+}

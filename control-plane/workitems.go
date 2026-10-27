@@ -545,6 +545,10 @@ func (e *httpStatusError) Error() string { return e.msg }
 
 // --- comment back to the ticket ----------------------------------------------
 
+// workItemCommentMaxIn bounds the raw request the Console sends. The Agent accepts twice the
+// worst-case escaped growth of this (6 bytes per byte), so a body read here always fits there.
+const workItemCommentMaxIn = 256 << 10
+
 // comment relays a human-approved draft to the Agent, which holds the tokens.
 //
 // Requires a running Workspace and does NOT start one. Everywhere else in this file
@@ -567,6 +571,7 @@ func (a workItemsAPI) comment(w http.ResponseWriter, r *http.Request, res *resol
 		Key      string `json:"key"`
 		Body     string `json:"body"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, workItemCommentMaxIn)
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
 		return
@@ -587,7 +592,13 @@ func (a workItemsAPI) comment(w http.ResponseWriter, r *http.Request, res *resol
 		return
 	}
 	// What is signed is what is sent: the normalised body, not the browser's bytes.
-	payload, _ := json.Marshal(in)
+	// HTML escaping is off: it would turn every "<" into six bytes and push a body the provider
+	// accepts past the Agent's cap.
+	var pb bytes.Buffer
+	enc := json.NewEncoder(&pb)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(in)
+	payload := bytes.TrimRight(pb.Bytes(), "\n")
 	const agentPath = "/work-items/comment"
 	mark, aerr := a.mgr.memberOriginSign(res, http.MethodPost, agentPath, "", payload, time.Now())
 	if aerr != nil {
@@ -616,6 +627,13 @@ func (a workItemsAPI) comment(w http.ResponseWriter, r *http.Request, res *resol
 	// refusal is the most informative thing here; rephrasing it in the CP erases whether
 	// the problem was permission or a missing issue.
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	// A comment is a write against someone else's tracker: record who pressed Post, where, and how
+	// it came out. The detail names the provider only: no token, no comment text.
+	if a.mgr != nil && a.mgr.store != nil {
+		_ = a.mgr.store.InsertAudit(context.Background(), store.AuditLog{ID: store.NewID(), TenantID: res.mv.TenantID,
+			ActorKind: "user", ActorID: res.ident.ID, Action: "work_item.comment", Target: in.Key,
+			Detail: "provider=" + in.Provider, HTTPStatus: resp.StatusCode, At: store.NowTS()})
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
