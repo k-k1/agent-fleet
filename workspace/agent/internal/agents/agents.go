@@ -542,8 +542,9 @@ type InstructionsShape struct {
 	Delivery, Measure string
 	// Path is the artifact the state row shows; "" for DeliveryPrompt.
 	Path string
-	// PreviewPath is what the Console's preview reads; "" means Path.
-	PreviewPath string
+	// PreviewBlock names the marker block of Path the Console's preview shows ("user-notes"),
+	// for a kind whose file also carries other text it should not echo. "" means the whole file.
+	PreviewBlock string
 }
 
 // Instructions is an optional Agent capability: the kind takes the member's instructions
