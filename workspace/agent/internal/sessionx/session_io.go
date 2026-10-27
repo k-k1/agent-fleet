@@ -1587,7 +1587,11 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 		var sb strings.Builder
 		cursor = len(tlines)
 		for i := since; i < len(tlines); i++ {
-			if t := claude.AssistantText(tlines[i]); t != "" {
+			t := claude.AssistantText(tlines[i])
+			if t == "" {
+				t = claude.CLIWarningText(tlines[i])
+			}
+			if t != "" {
 				if sb.Len() > 0 {
 					sb.WriteString("\n")
 				}

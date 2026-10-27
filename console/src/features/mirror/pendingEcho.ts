@@ -42,13 +42,19 @@ interface TranscriptTurn {
   role: string;
   text?: string;
   idx?: number;
-  parts?: { kind: string }[];
+  parts?: { kind: string; cause?: string }[];
 }
 
-// hasErrorPart reports whether a turn carries a kind="error" part (opencode's provider
-// failure, or codex's synthetic turn-rejection turn — see errors.go / managedEnrich).
-function hasErrorPart(t: TranscriptTurn): boolean {
-  return !!t.parts?.some((p) => p.kind === "error");
+// The cause claude's errors.go puts on a warning the CLI logged instead of a turn (a mistyped
+// slash command). Twin of CauseCLIWarning there.
+const CLI_WARNING_CAUSE = "cli_warning";
+
+// errorResolves reports whether a turn's error parts explain what happened to this echo: opencode's
+// provider failure or codex's synthetic turn-rejection turn (errors.go / managedEnrich) resolve any
+// echo. A CLI warning resolves only a slash-command echo: a plain prompt sent alongside the
+// mistyped command is still on its way, and dropping its bubble would read as lost.
+function errorResolves(t: TranscriptTurn, slash: boolean): boolean {
+  return !!t.parts?.some((p) => p.kind === "error" && (slash || p.cause !== CLI_WARNING_CAUSE));
 }
 
 // A `/`-run slash command / skill invocation is never logged as the raw "/foo …" the
@@ -93,7 +99,7 @@ export function echoLanded(e: PendingEcho, turns: TranscriptTurn[], isNoise: (t:
       // to it, so treat it as the resolution too (driver.go's managedEnrich / opencode's
       // errors.go both emit kind="error" for exactly this; claude's errors.go does the same for
       // the warning it logs instead of a turn when a slash command is mistyped).
-      return t.idx !== undefined && t.idx > e.sinceIdx && hasErrorPart(t);
+      return t.idx !== undefined && t.idx > e.sinceIdx && errorResolves(t, !!echoCmd);
     }
     // Slash-command / skill echo: reconcile against the parsed <command-name> turn
     // logged after the send. isNoise hides that turn and its text never equals the typed

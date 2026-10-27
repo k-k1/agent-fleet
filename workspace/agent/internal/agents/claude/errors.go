@@ -21,6 +21,7 @@ package claude
 //	   "text":"Please run /login · API Error: 401 OAuth access token has expired. Re-authenticate to continue."}]}}
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -160,6 +161,36 @@ type cliWarning struct{ msg string }
 // cliWarningLabel is the code shown next to the error heading.
 const cliWarningLabel = "warning"
 
+// CauseCLIWarning marks a cliWarning part (transcript.Part.Cause). The Console resolves only a
+// slash-command echo against it — a plain prompt sent alongside is still on its way — and the
+// usage tally skips the turn, which is no model response.
+const CauseCLIWarning = "cli_warning"
+
+// IsCLIWarning reports whether a turn is a cliWarning record rather than a model response.
+func IsCLIWarning(t transcript.Turn) bool {
+	return len(t.Parts) == 1 && t.Parts[0].Kind == "error" && t.Parts[0].Cause == CauseCLIWarning
+}
+
+// CLIWarningText is the flattened form of a raw transcript line that is a cliWarning, "" for any
+// other line. get_session_output reads raw lines, not turns, so without it a poller never learns
+// that its slash command was refused.
+func CLIWarningText(line []byte) string {
+	var ev struct {
+		Type    string `json:"type"`
+		Subtype string `json:"subtype"`
+		Level   string `json:"level"`
+		IsMeta  bool   `json:"isMeta"`
+		Content string `json:"content"`
+	}
+	if json.Unmarshal(line, &ev) != nil || ev.Type != "system" || ev.IsMeta {
+		return ""
+	}
+	if w, ok := cliWarningOf(ev.Subtype, ev.Level, ev.Content); ok {
+		return w.summary()
+	}
+	return ""
+}
+
 func cliWarningOf(subtype, level, content string) (cliWarning, bool) {
 	msg := strings.TrimSpace(content)
 	if subtype != "informational" || level != "warning" || msg == "" {
@@ -172,5 +203,5 @@ func cliWarningOf(subtype, level, content string) (cliWarning, bool) {
 func (w cliWarning) summary() string { return "[error] " + cliWarningLabel + ": " + w.msg }
 
 func (w cliWarning) part() transcript.Part {
-	return transcript.Part{Kind: "error", Info: cliWarningLabel, Text: w.msg}
+	return transcript.Part{Kind: "error", Info: cliWarningLabel, Text: w.msg, Cause: CauseCLIWarning}
 }

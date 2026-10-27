@@ -11,7 +11,8 @@ type Part struct {
 	Tool string `json:"tool,omitempty"` // kind=tool/delegation/question/plan/userfile: tool name
 	Info string `json:"info,omitempty"` // kind=tool/delegation: short human-facing label / kind=error: error name + HTTP status
 	// Cause is kind=error only: the machine-readable reason the Console keys its
-	// recovery guidance off ("auth" = signing in again clears it; "" = no guidance).
+	// recovery guidance off ("auth" = signing in again clears it; "cli_warning" = the CLI
+	// refused the input itself, e.g. an unknown slash command; "" = no guidance).
 	// The label above is the provider's own name and changes between versions, so the
 	// Console must not pattern-match it; this field is the stable axis. Optional —
 	// an agent that cannot classify its failures simply omits it.

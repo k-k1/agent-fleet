@@ -160,3 +160,29 @@ func TestParseTurnCLIWarningBecomesErrorPart(t *testing.T) {
 		}
 	}
 }
+
+// get_session_output flattens raw lines, so the refusal has to be readable there too, and the
+// turn has to carry the cause the Console and the usage tally key off.
+func TestCLIWarningTextAndCause(t *testing.T) {
+	line := []byte(`{"type":"system","subtype":"informational","level":"warning","content":"Unknown command: /x"}`)
+	if got, want := CLIWarningText(line), "[error] warning: Unknown command: /x"; got != want {
+		t.Errorf("CLIWarningText = %q, want %q", got, want)
+	}
+	tn, ok := parseTurn(line, 1)
+	if !ok || !IsCLIWarning(tn) || tn.Parts[0].Cause != CauseCLIWarning {
+		t.Errorf("turn = %+v, want a cli_warning turn", tn)
+	}
+	for _, l := range []string{
+		`{"type":"system","subtype":"informational","level":"notice","content":"Usage limit reached"}`,
+		`{"type":"system","subtype":"informational","level":"warning","isMeta":true,"content":"meta"}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`,
+	} {
+		if got := CLIWarningText([]byte(l)); got != "" {
+			t.Errorf("%s: CLIWarningText = %q, want empty", l, got)
+		}
+	}
+	apiErr := []byte(`{"type":"assistant","isApiErrorMessage":true,"error":"server_error","message":{"content":[{"type":"text","text":"boom"}]}}`)
+	if tn, _ := parseTurn(apiErr, 2); IsCLIWarning(tn) {
+		t.Error("an API error is not a CLI warning")
+	}
+}
