@@ -447,6 +447,113 @@
   word-break: break-word;
 }
 
+/* ── Skills (#2792) ─────────────────────────────────────────────────────────
+   Read-only list per kind. A shadowed entry is dimmed rather than hidden: "why is my skill not
+   used" is the question this screen answers. */
+.skills-roots,
+.skills-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.skills-roots li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.skills-roots code,
+.skills-where code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  font-size: 11px;
+}
+
+.skills-missing {
+  opacity: 0.6;
+}
+
+.skills-badge,
+.skills-count {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.skills-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 4px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.skills-row:hover,
+.skills-row.active {
+  background: var(--hover, var(--panel));
+}
+
+.skills-name {
+  font-family: var(--mono);
+  font-weight: 600;
+}
+
+.skills-title {
+  color: var(--muted);
+}
+
+.skills-desc {
+  flex-basis: 100%;
+  color: var(--muted);
+}
+
+.skills-shadowed .skills-name {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.skills-detail {
+  padding: 8px 4px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.skills-where,
+.skills-files {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.skills-body {
+  margin-top: 8px;
+  max-height: 32em;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+}
+
 /* AI assist: one box per feature (title suggestion, branch name, …). Each holds its own on/off,
    agent and model rows, and without a boundary the eight ran together as one list where the
    feature name read as just another row label. */

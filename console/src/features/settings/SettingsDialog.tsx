@@ -39,6 +39,7 @@ import { AgentsTab } from "./agents/AgentsTab.tsx";
 import { AssistantTab } from "./personal/AssistantTab.tsx";
 import { AiAssistTab } from "./personal/AiAssistTab.tsx";
 import { InstructionsTab } from "./personal/InstructionsTab.tsx";
+import { SkillsTab } from "./personal/SkillsTab.tsx";
 import { TtsTab } from "./personal/TtsTab.tsx";
 import { GitTab } from "./connect/GitTab.tsx";
 import { SsmTab } from "./workspace/SsmTab.tsx";
@@ -87,6 +88,9 @@ export const GROUPS: { key: string; label: string; items: [string, string][] }[]
       // rather than a chat.
       ["aiassist", "set.tab_aiassist"],
       ["instructions", "set.tab_instructions"],
+      // Personal skills (#2792): the other half of "what the member set up for every session",
+      // next to the instructions.
+      ["skills", "set.tab_skills"],
       // Agent memory sits next to the instructions rather than under workspace infra:
       // both answer "what does the agent carry into a session", one written by the member
       // and one accumulated by the agent. That its bytes live in the workspace does not
@@ -271,6 +275,7 @@ export function SettingsDialog() {
             {section === "assistant" && <AssistantTab />}
             {section === "aiassist" && <AiAssistTab />}
             {section === "instructions" && <InstructionsTab />}
+            {section === "skills" && <SkillsTab />}
             {section === "tts" && <TtsTab />}
             {section === "notifications" && <NotificationsTab />}
             {section === "limits" && <LimitBoardView />}

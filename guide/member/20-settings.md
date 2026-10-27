@@ -251,9 +251,19 @@ Adds your own standing instructions to every agent newly started in this workspa
 showing which file it was written to and whether it is in effect.
 See [09 Agents](09-agents.md#agent-instructions-write-down-how-you-work-once).
 
-This covers instructions only. Personal Claude Code hooks, skills and subagents have no settings screen: they
-are files in claude's configuration folder, which survives Recreate. See
+This covers instructions only. Personal skills have the next entry; personal Claude Code hooks and subagents
+have no settings screen: they are files in claude's configuration folder, which survives Recreate. See
 [09 Agents](09-agents.md#bringing-your-personal-claude-code-setup).
+
+### Skills
+
+Lists each agent's personal skills, read-only: Claude (`$CLAUDE_CONFIG_DIR/skills` and `commands`), Codex
+(`$CODEX_HOME/skills`), OpenCode and Muse, one tab per agent. Each tab shows the folders that agent reads (a
+missing one is marked, with the path to create), then the skills grouped as yours, Agent Fleet's own (`af-*`,
+rewritten at every start) and the ones bundled with the CLI. An entry another copy of the same name overrides is
+struck through and names the winner. Open an entry for its path, its `SKILL.md` and the other files in its
+folder. Edit the files themselves; sessions started afterwards pick the change up. Skills kept in a repository
+are not listed here.
 
 ### Agent memory
 
