@@ -2,7 +2,7 @@
 // section sits at least MIN_GAP px below it, at desktop and at phone width (#2813).
 //
 //   npm --prefix console run build
-//   node console/scripts/settings-headings/check.mjs [--locale ja|en] [--min 16]
+//   node console/scripts/settings-headings/check.mjs [--locale en|ja] [--min 16] [--port N]
 //
 // Why a browser: the spacing comes from margin rules that only match some markup shapes
 // (`* + .ds-title`, `.ds-group`, `* + :not(.ds-group) > .ds-title:first-child`), and a heading
@@ -32,20 +32,25 @@ const arg = (n, d) => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : d;
 };
 const LOCALE = arg("locale", "en");
+// Only the locales with a catalog: any other value is stored as-is and the UI falls back to
+// English, so the run would measure something other than what was asked.
+if (!["en", "ja"].includes(LOCALE)) {
+  console.error(`--locale must be en or ja, not ${LOCALE}`);
+  process.exit(2);
+}
 const MIN_GAP = Number(arg("min", 16));
 const TOP_SLACK = 4;
 // Sections whose stub data renders no .ds-title at all. Anything else rendering none is a
 // failure: it means the section broke, not that it has no headings.
 const NO_HEADINGS = new Set([
-  "Account", "Agent memory", "Memory snapshots", "Issue tracker", "Chat", "MCP servers (used by sessions)",
-  "MCP tokens & apps", "Agent usage", "Cloud cost", "Running time", "Internal repos",
-  "アカウント", "エージェントメモリ", "メモリのスナップショット", "課題管理", "チャット連携", "MCP サーバー（セッションで使う）",
-  "MCP トークンとアプリ", "エージェントの使用量", "クラウド費用", "稼働時間", "社内リポジトリ",
+  "account", "memory", "memorysnapshots", "tracker", "chat", "mcp", "tokens", "usage", "cost", "uptime", "internalrepos",
 ]);
-const SKILLS = /^(Skills|スキル)$/;
+const SKILLS = "skills";
 const SKILLS_HEADINGS = 4;
-// The stub has no fixture for these, and the section takes the whole dialog down without one.
-const SKIP = /^(Limit board|利用枠ボード)$/;
+// Sections are named by their key (the rail's data-section), never by label: labels change
+// with the locale and with copy edits, and a stale one silently drops out of these lists.
+// The stub has no fixture for the limit board, and that section takes the dialog down without one.
+const SKIP = new Set(["limits"]);
 
 const ACCOUNT_BTN = "[...document.querySelectorAll('button')].find((b) => (b.textContent || '').includes('@'))";
 
@@ -65,6 +70,10 @@ const BASE = `http://127.0.0.1:${PORT}/`;
 
 async function openSettings(cdp) {
   await cdp.goto(BASE);
+  // The locale is seeded before the first load (walk); make sure it took, or a run asked for
+  // ja would measure the English UI and pass.
+  const lang = await until(cdp.evaluate, "document.documentElement.lang", (v) => v === LOCALE, 100);
+  if (lang !== LOCALE) throw new Error(`the Console came up in "${lang}", not "${LOCALE}"`);
   await until(cdp.evaluate, `!!${ACCOUNT_BTN}`, (v) => v, 200);
   await cdp.evaluate(`${ACCOUNT_BTN}.click()`);
   await sleep(600);
@@ -96,20 +105,25 @@ const MEASURE = `(() => {
 async function walk(size, check) {
   const cdp = await startBrowser({ size });
   try {
+    // The UI language comes from the stored display settings, else the browser's own language;
+    // seed it the way scripts/shots/capture.mjs does so --locale is what gets measured.
+    await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+      source: `try { localStorage.setItem("af-display-settings", ${JSON.stringify(JSON.stringify({ locale: LOCALE }))}); } catch (e) {}`,
+    });
     const n = await openSettings(cdp);
     let measured = 0;
     for (let i = 0; i < n; i++) {
       if (!(await cdp.evaluate("!!document.querySelector('.settings-rail-item')"))) await openSettings(cdp);
-      const name = await cdp.evaluate(`(document.querySelectorAll('.settings-rail-item')[${i}]?.textContent || '').trim()`);
-      if (!name || SKIP.test(name)) continue;
+      const [key, name] = await cdp.evaluate(`(() => { const it = document.querySelectorAll('.settings-rail-item')[${i}]; return it ? [it.dataset.section || "", (it.textContent || "").trim()] : ["", ""]; })()`);
+      if (!key || SKIP.has(key)) continue;
       await cdp.evaluate(`document.querySelectorAll('.settings-rail-item')[${i}].click()`);
       await sleep(1500);
-      if (SKILLS.test(name)) {
+      if (key === SKILLS) {
         // The catalog loads after the click; wait for every scope group rather than a fixed time.
         await until(cdp.evaluate, "document.querySelectorAll('.settings-content .ds-title').length", (v) => v >= SKILLS_HEADINGS, 100);
       }
       const rows = await cdp.evaluate(MEASURE);
-      if (NO_HEADINGS.has(name)) {
+      if (NO_HEADINGS.has(key)) {
         check(rows.length === 0, `${size} ${name}: renders no heading on the stub (allow-listed)`, `${rows.length} headings${rows.length ? " (update NO_HEADINGS)" : ""}`);
       } else {
         check(rows.length > 0, `${size} ${name}: renders its headings`, `${rows.length}`);
@@ -124,7 +138,7 @@ async function walk(size, check) {
         gaps++;
         check(gap >= MIN_GAP, `${size} ${name} › ${heading}`, `${gap}px`);
       }
-      if (SKILLS.test(name)) check(gaps === SKILLS_HEADINGS, `${size} Skills: all ${SKILLS_HEADINGS} headings measured`, `${gaps}`);
+      if (key === SKILLS) check(gaps === SKILLS_HEADINGS, `${size} Skills: all ${SKILLS_HEADINGS} headings measured`, `${gaps}`);
       // Phone: the drill-down shows one section at a time; go back to the rail.
       await cdp.evaluate("document.querySelector('.settings-layout.entered .settings-back')?.click()");
       await sleep(300);

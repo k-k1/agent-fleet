@@ -252,6 +252,7 @@ export function SettingsDialog() {
                       key={key}
                       type="button"
                       className={"settings-rail-item" + (section === key ? " active" : "")}
+                      data-section={key}
                       aria-current={section === key ? "page" : undefined}
                       onClick={() => pick(key)}
                     >
