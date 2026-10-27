@@ -224,13 +224,16 @@ type ChatConversation struct {
 	// conversation model's cache — auto turns are sporadic and cold anyway (measured), so
 	// the unit-price gain dominates.
 	modelOverride string
+	// turnStart is when the current provider call began (StartTurn). Never persisted. A
+	// success reported for this call does not lift a park set after it (routehealth).
+	turnStart time.Time
 }
 
 // StartTurn resets the per-turn scratch state. Called at the top of every provider
 // send/sendStream — including the ones that end up not reporting a model at all, so a
 // previous call in the same request (an auto-compaction turn, a retry after recovery)
 // cannot leak its model into this turn's message.
-func (c *ChatConversation) StartTurn() { c.TurnModel = "" }
+func (c *ChatConversation) StartTurn() { c.TurnModel, c.turnStart = "", routeNow() }
 
 // NoteTurnModel records the model that actually drove this turn. Providers call it at
 // their success point only.

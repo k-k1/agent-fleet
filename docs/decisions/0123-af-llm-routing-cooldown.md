@@ -5,7 +5,7 @@ English | [日本語](0123-af-llm-routing-cooldown.ja.md)
 - Status: **accepted** (2026-10-26). Built in `workspace/agent/internal/routehealth` and wired into
   the chatx resolvers. Verified by unit and handler tests with stub providers; **not yet seen on a
   real usage limit**.
-- Issues: #1564, #2780
+- Issues: #1564, #2780, #2805
 - Related: [0030](0030-turn-abort-auto-resume.md) (CLI sessions wait for the reset instead) /
   [0117](0117-background-memory-skill-review.md) (the deny-all memory review)
 
@@ -32,10 +32,18 @@ The rate-limit knowledge that existed (`agents/claude` abort markers and reset p
    surfaced, never parked: parking would turn a deterministic bug into a flapping availability
    signal. Auth failures are left to the existing login check; unexplained failures do not park.
 3. **Scope follows the quota.** Subscription windows and spend caps are account-wide, so they park
-   the whole kind. A 429 or 5xx parks one (kind, model).
-4. **Duration.** Until the reset the provider named (ignored beyond 8 days, a misread); otherwise
-   1 minute doubling to 4 hours per consecutive strike; a spend cap parks 4 hours. A success clears
-   the model's park and the kind's. A streak whose last park ended more than 4 hours ago starts over.
+   the whole kind. A per-model usage limit ("You've reached your <model> limit"), a 429 or a 5xx
+   parks one (kind, model). The CLI's own default model is a model key of its own, never the
+   kind-wide one. A bare "quota exceeded" with no subscription or billing wording is read as a
+   request-rate limit; a status number counts only with HTTP/status context or at the start of the
+   text.
+4. **Duration.** Until the reset the provider named (ignored beyond 8 days, a misread). A reset is
+   taken only from a time the text itself names, and a wall clock read just after its minute is
+   not rolled over to tomorrow. Otherwise 1 minute doubling to 4 hours per consecutive strike; a
+   spend cap parks 4 hours. A guess never shortens a live park; a newly named reset replaces it. A
+   success clears the model's park and the kind's, but only parks set before that call started:
+   a request accepted before the limit can succeed after another one hit it. A streak whose last
+   park ended more than 4 hours ago starts over.
 5. **Do not switch when recovery is near.** A park ending within 2 minutes does not move a call,
    except a usage window or spend cap whose end is only a backoff guess: those last hours.
 6. **Where it applies.**

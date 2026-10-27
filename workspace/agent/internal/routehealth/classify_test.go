@@ -33,6 +33,18 @@ func TestClassify(t *testing.T) {
 		{"bare 503", session.KindOpencode, "upstream returned 503", ClassServer, ScopeModel},
 		{"status inside an id is no status", session.KindCodex, "failed: request id ab4049f2", ClassOther, ""},
 		{"unexplained", session.KindCodex, "exit status 1", ClassOther, ""},
+		// Post-merge review of #2784.
+		{"claude per-model limit", session.KindClaude, "You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model.", ClassWindow, ScopeModel},
+		{"a number that is no status", session.KindCodex, "max_tokens must be greater than 512", ClassOther, ""},
+		{"a status inside an id", session.KindCodex, "request_id=req-401-abc: HTTP 503", ClassServer, ScopeModel},
+		{"status code in JSON", session.KindOpencode, `{"statusCode":429,"message":"slow down"}`, ClassRateLimit, ScopeModel},
+		{"leading status", session.KindAgy, "502: upstream hiccup", ClassServer, ScopeModel},
+		{"per-minute quota", session.KindCodex, "429: Quota exceeded for requests per minute", ClassRateLimit, ScopeModel},
+		{"disk quota", session.KindMuse, "disk quota exceeded", ClassOther, ""},
+		{"subscription quota (not muse)", session.KindCodex, "Subscription quota exhausted.", ClassWindow, ScopeKind},
+		{"billing quota", session.KindOpencode, "You exceeded your current quota, please check your plan and billing details.", ClassSpend, ScopeKind},
+		{"billing quota with a 429", session.KindOpencode, "API error 429: You exceeded your current quota, please check your plan and billing details.", ClassSpend, ScopeKind},
+		{"insufficient balance", session.KindOpencode, "Insufficient balance. Manage your billing here.", ClassSpend, ScopeKind},
 	}
 	for _, c := range cases {
 		v := Classify(c.kind, c.msg, now)
