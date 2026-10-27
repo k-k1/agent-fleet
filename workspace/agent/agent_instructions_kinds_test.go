@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/userinstr"
 )
 
 // noInstructionTargets are the registered kinds that run no agent CLI, so there is nothing to
@@ -30,7 +32,7 @@ var noInstructionTargets = []string{"shell", "ssm"}
 // carried as per-kind switches before agents.Instructions: one row per supported kind.
 type legacyInstrRow struct {
 	delivery, measure, path string
-	preview                 string // "" = path
+	preview                 string // marker block the preview shows; "" = the whole file
 	fleet, skills, user     bool   // which apply steps the kind took part in
 }
 
@@ -38,7 +40,7 @@ func legacyInstr(opencodeV2 bool) map[string]legacyInstrRow {
 	oc := legacyInstrRow{delivery: agents.DeliveryConfig, measure: agents.MeasureConfig, path: instrOpencodeFile(),
 		fleet: true, skills: true, user: true}
 	if opencodeV2 {
-		oc.delivery, oc.measure, oc.path, oc.preview = agents.DeliveryCompose, agents.MeasureBlock, opencode.AgentsPath(), instrOpencodeFile()
+		oc.delivery, oc.measure, oc.path, oc.preview = agents.DeliveryCompose, agents.MeasureBlock, opencode.AgentsPath(), "user-notes"
 	}
 	return map[string]legacyInstrRow{
 		"claude":   {agents.DeliveryFile, agents.MeasureBlock, claude.UserInstructionsPath(), "", false, true, true},
@@ -73,7 +75,7 @@ func TestInstructionsShapeMatchesLegacySwitches(t *testing.T) {
 				continue
 			}
 			s := ops.Shape()
-			if s.Delivery != row.delivery || s.Measure != row.measure || s.Path != row.path || s.PreviewPath != row.preview {
+			if s.Delivery != row.delivery || s.Measure != row.measure || s.Path != row.path || s.PreviewBlock != row.preview {
 				t.Errorf("v2=%v %q: shape %+v, legacy %+v", v2, kind, s, row)
 			}
 			if (ops.Fleet != nil) != row.fleet || (ops.SkillsDir != nil) != row.skills ||
@@ -179,5 +181,100 @@ func TestInstructionsRefuseAlternateSpellings(t *testing.T) {
 		if w := doJSON(t, "GET", "/user-notes/preview?kind="+url.QueryEscape(kind), ""); w.Code != http.StatusBadRequest {
 			t.Errorf("preview kind=%q: status %d, want 400", kind, w.Code)
 		}
+	}
+}
+
+type previewWire struct {
+	Kind    string `json:"kind"`
+	Path    string `json:"path"`
+	Exists  bool   `json:"exists"`
+	Content string `json:"content"`
+}
+
+func previewOf(t *testing.T, kind string) previewWire {
+	t.Helper()
+	w := doJSON(t, "GET", "/user-notes/preview?kind="+kind, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("preview %s: status %d: %s", kind, w.Code, w.Body.String())
+	}
+	var p previewWire
+	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// The preview and the state row must describe the same artifact for every kind: same path, and
+// once the member's text is applied the artifact the row calls applied exists in the preview.
+func TestInstructionsPreviewAgreesWithState(t *testing.T) {
+	for _, v2 := range []bool{false, true} {
+		instrEnv(t)
+		if v2 {
+			useOpencodeV2(t)
+		}
+		if err := userinstr.SaveText("AGREEME\n"); err != nil {
+			t.Fatal(err)
+		}
+		reconcileAgentInstructions()
+		for _, row := range instrState().Targets {
+			if !row.Supported {
+				continue
+			}
+			p := previewOf(t, row.Kind)
+			if p.Path != row.Path {
+				t.Errorf("v2=%v %s: preview path %q, state path %q", v2, row.Kind, p.Path, row.Path)
+			}
+			if !row.Applied || !p.Exists || !strings.Contains(p.Content, "AGREEME") {
+				t.Errorf("v2=%v %s: applied=%v preview exists=%v content has text=%v", v2, row.Kind, row.Applied, p.Exists,
+					strings.Contains(p.Content, "AGREEME"))
+			}
+		}
+	}
+}
+
+// opencode 2 keeps the member's text in the user-notes block of the global AGENTS.md, next to
+// the fleet and memory blocks: the preview shows that block alone.
+func TestInstructionsPreviewOpencode2ShowsOnlyTheUserBlock(t *testing.T) {
+	instrEnv(t)
+	useOpencodeV2(t)
+
+	// AGENTS.md missing.
+	if p := previewOf(t, "opencode"); p.Path != opencode.AgentsPath() || p.Exists || p.Content != "" {
+		t.Errorf("no AGENTS.md: %+v", p)
+	}
+
+	// The file exists with the fleet block only.
+	reconcileAgentInstructions()
+	if !fileHasBlock(opencode.AgentsPath(), "fleet") {
+		t.Fatal("setup: the fleet block was not written")
+	}
+	if p := previewOf(t, "opencode"); p.Exists || p.Content != "" {
+		t.Errorf("AGENTS.md without a user block: %+v", p)
+	}
+
+	// With the member's text: the block's content, not the fleet policy beside it.
+	if err := userinstr.SaveText("Always report in Japanese.\n"); err != nil {
+		t.Fatal(err)
+	}
+	reconcileAgentInstructions()
+	p := previewOf(t, "opencode")
+	if p.Path != opencode.AgentsPath() || !p.Exists || !strings.Contains(p.Content, "Always report in Japanese.") {
+		t.Errorf("with a user block: %+v", p)
+	}
+	if strings.Contains(p.Content, "do not delete other sessions") || strings.Contains(p.Content, "agent-fleet:") {
+		t.Errorf("preview echoes more than the user block:\n%s", p.Content)
+	}
+}
+
+// opencode 1 is unchanged: the preview reads the AF-owned file its config points at.
+func TestInstructionsPreviewOpencode1ReadsTheOwnedFile(t *testing.T) {
+	instrEnv(t)
+	if err := userinstr.SaveText("Always report in Japanese.\n"); err != nil {
+		t.Fatal(err)
+	}
+	reconcileAgentInstructions()
+	p := previewOf(t, "opencode")
+	if p.Path != instrOpencodeFile() || !p.Exists || !strings.Contains(p.Content, "Always report in Japanese.") {
+		t.Errorf("opencode 1 preview: %+v", p)
 	}
 }

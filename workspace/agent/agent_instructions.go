@@ -367,7 +367,7 @@ func handleUserNotesPut(w http.ResponseWriter, r *http.Request) {
 // apart from "in effect", the one that lets the user check with their own eyes.
 func handleUserNotesPreview(w http.ResponseWriter, r *http.Request) {
 	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
-	var path string
+	var path, block string
 	if kind == "fleet" {
 		path = paths.FleetNotesPath()
 	} else if ops, ok := instrOpsOf(kind); ok {
@@ -375,9 +375,7 @@ func handleUserNotesPreview(w http.ResponseWriter, r *http.Request) {
 		// harness would send, minus the project layer, which depends on the session's working
 		// copy.
 		shape := ops.Shape()
-		if path = shape.PreviewPath; path == "" {
-			path = shape.Path
-		}
+		path, block = shape.Path, shape.PreviewBlock
 	} else {
 		httpx.WriteErr(w, http.StatusBadRequest, "unknown_kind", "no instruction target for this kind")
 		return
@@ -393,8 +391,16 @@ func handleUserNotesPreview(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "read_failed", err.Error())
 		return
 	}
+	exists := err == nil
+	if block != "" {
+		// Only the member's block: a file that exists without it has nothing to show.
+		var found bool
+		var content string
+		content, found = mdblock.Get(string(body), block)
+		body, exists = []byte(content), exists && found
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"kind": kind, "path": path, "exists": err == nil, "content": string(body),
+		"kind": kind, "path": path, "exists": exists, "content": string(body),
 	})
 }
 

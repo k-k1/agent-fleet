@@ -20,9 +20,10 @@ func (agentImpl) Instructions() agents.InstructionsOps {
 	return agents.InstructionsOps{
 		Shape: func() agents.InstructionsShape {
 			if UserInstructionsInAgentsMD() {
-				// The preview still reads the AF-owned file, not the AGENTS.md block.
+				// The global AGENTS.md also holds the fleet and memory blocks, so the preview
+				// shows the member's block only.
 				return agents.InstructionsShape{Delivery: agents.DeliveryCompose, Measure: agents.MeasureBlock,
-					Path: AgentsPath(), PreviewPath: InstructionsFile()}
+					Path: AgentsPath(), PreviewBlock: "user-notes"}
 			}
 			return agents.InstructionsShape{Delivery: agents.DeliveryConfig, Measure: agents.MeasureConfig, Path: InstructionsFile()}
 		},
