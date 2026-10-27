@@ -388,11 +388,17 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 	}()
 
 	fail := func(r ProbeResult) ProbeResult { return withDetail(r, tail(errBuf.String())) }
+	// failErr reports a transport-level error (read, write, process exit). Once the
+	// probe budget is spent the context kill is the cause of all of them, so the
+	// answer is timeout whichever symptom surfaced first.
+	failErr := func(err error) ProbeResult {
+		return fail(failOf(budgetErr(ctx, err)))
+	}
 	exchangeCtx := func(c context.Context, id int, m rpcMsg) (rpcMsg, error) {
 		if err := writeRPC(stdin, m); err != nil {
-			return rpcMsg{}, err
+			return rpcMsg{}, classifyWriteErr(ctx, readErr, writeExitGrace, err)
 		}
-		return readRPCFor(c, msgs, readErr, id)
+		return readRPCFor(c, ctx, msgs, readErr, id)
 	}
 	exchange := func(id int, m rpcMsg) (rpcMsg, error) { return exchangeCtx(ctx, id, m) }
 
@@ -408,7 +414,7 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 		_ = json.Unmarshal(msg.Result, &dr)
 		msg, err = exchange(2, statelessReq(2, "tools/list"))
 		if err != nil {
-			return fail(failOf(err))
+			return failErr(err)
 		}
 		if msg.Error != nil {
 			return fail(rejected("tools/list", msg.Error.Message))
@@ -418,9 +424,15 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 		return res
 	case errors.Is(err, errProbeTimeout) && ctx.Err() == nil:
 		// Silence, but the overall budget is intact: a server that ignores unknown
-		// methods instead of answering -32601. Treat it as the legacy era.
+		// methods instead of answering -32601. Treat it as the legacy era, unless the
+		// server exited meanwhile: the era deadline may have beaten a pending EOF.
+		select {
+		case re := <-readErr:
+			return failErr(re)
+		default:
+		}
 	case err != nil:
-		return fail(failOf(err)) // process died, or the whole probe timed out
+		return failErr(err) // process died, or the whole probe timed out
 	case !isLegacyEraSignal(msg.Error):
 		return fail(rejected("server/discover", msg.Error.Message))
 	}
@@ -428,7 +440,7 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 	// Legacy era: the full initialize handshake.
 	msg, err = exchange(3, rpcMsg{JSONRPC: "2.0", ID: 3, Method: "initialize", Params: legacyInitParams()})
 	if err != nil {
-		return fail(failOf(err))
+		return failErr(err)
 	}
 	if msg.Error != nil {
 		return fail(rejected("initialize", msg.Error.Message))
@@ -436,11 +448,11 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 	var ir legacyInitResult
 	_ = json.Unmarshal(msg.Result, &ir)
 	if err := writeRPC(stdin, rpcMsg{JSONRPC: "2.0", Method: "notifications/initialized"}); err != nil {
-		return fail(failOf(err))
+		return failErr(classifyWriteErr(ctx, readErr, writeExitGrace, err))
 	}
 	msg, err = exchange(4, rpcMsg{JSONRPC: "2.0", ID: 4, Method: "tools/list", Params: map[string]any{}})
 	if err != nil {
-		return fail(failOf(err))
+		return failErr(err)
 	}
 	if msg.Error != nil {
 		return fail(rejected("tools/list", msg.Error.Message))
@@ -459,14 +471,63 @@ func writeRPC(w io.Writer, m rpcMsg) error {
 	return err
 }
 
+// writeExitGrace bounds how long a failed write waits for the reader to report the exit
+// behind it. The kernel closes the pipe before the reader goroutine is scheduled, so an
+// EPIPE routinely arrives first; the grace only matters for a server that closed stdin
+// and keeps running.
+const writeExitGrace = 2 * time.Second
+
+// classifyWriteErr names the cause of a failed write. A broken pipe means the server is
+// gone or going, so wait for the reader's exit error (or the budget) instead of
+// depending on goroutine scheduling; werr is returned only if neither shows up.
+func classifyWriteErr(budget context.Context, readErr <-chan error, grace time.Duration, werr error) error {
+	if budget.Err() != nil {
+		return errProbeTimeout // the write itself failed after the deadline
+	}
+	t := time.NewTimer(grace)
+	defer t.Stop()
+	select {
+	case re := <-readErr:
+		return re
+	case <-budget.Done():
+	case <-t.C:
+	}
+	// The write failed inside the budget; running out of time while waiting for a
+	// diagnosis must not rewrite that into a timeout.
+	return &settledErr{werr}
+}
+
+// budgetErr maps a transport error to errProbeTimeout once the probe context has expired.
+func budgetErr(ctx context.Context, err error) error {
+	var se *settledErr
+	if ctx.Err() != nil && !errors.As(err, &se) {
+		return errProbeTimeout
+	}
+	return err
+}
+
+// settledErr is a failure that was decided within the budget; failErr leaves it alone
+// even if the context has expired by the time it is reported.
+type settledErr struct{ error }
+
+func (e *settledErr) Unwrap() error { return e.error }
+
 // readRPCFor waits for the response with the wanted id, discarding anything else that
-// arrives (late answers to an abandoned exchange, stray notifications).
-func readRPCFor(ctx context.Context, msgs <-chan rpcMsg, readErr <-chan error, wantID int) (rpcMsg, error) {
+// arrives (late answers to an abandoned exchange, stray notifications). ctx bounds this
+// wait (it may be a short sub-deadline); budget is the whole probe's context. Only the
+// budget expiring turns a reader error into a timeout — an exit seen under a mere
+// sub-deadline stays a process exit.
+func readRPCFor(ctx, budget context.Context, msgs <-chan rpcMsg, readErr <-chan error, wantID int) (rpcMsg, error) {
 	for {
 		select {
 		case <-ctx.Done():
 			return rpcMsg{}, errProbeTimeout
 		case err := <-readErr:
+			// The context kill closes stdout, so after the deadline both channels are
+			// ready and select picks at random: an expired context wins.
+			if budget.Err() != nil {
+				return rpcMsg{}, errProbeTimeout
+			}
 			return rpcMsg{}, err
 		case m := <-msgs:
 			if idEquals(m.ID, wantID) {
