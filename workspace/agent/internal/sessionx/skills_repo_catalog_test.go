@@ -216,7 +216,7 @@ func TestRepoSkillFileStaysInsideTheWorkingCopy(t *testing.T) {
 	// The listing names an escaping entry but never reads it.
 	_, root := getRepoCatalog(t, "repo=demo")
 	cl := entriesByRel(t, repoKind(t, root, session.KindClaude))
-	if h := cl[".claude/skills/home/SKILL.md"]; h.Rel != "" && (!h.Outside || h.Description != "") {
+	if h, ok := cl[".claude/skills/home/SKILL.md"]; !ok || !h.Outside || h.Description != "" {
 		t.Errorf("escaping folder = %#v", h)
 	}
 	if b := cl[".claude/commands/bad.md"]; !b.Outside || b.Description != "" {
@@ -385,5 +385,45 @@ func TestRepoSkillFolderFilesSwappedForALink(t *testing.T) {
 		if strings.Contains(f, "private-name.txt") {
 			t.Errorf("outside file name exposed: %v", a.Files)
 		}
+	}
+}
+
+// A skill folder that is itself a link keeps its helper files listed: in the personal view (the
+// Codex bridge shape) and in a repository when the link stays inside the working copy.
+func TestSkillFolderLinkKeepsItsFileList(t *testing.T) {
+	home, dir := repoSkillsEnv(t)
+	real := filepath.Join(home, "real", "h")
+	writeFile(t, filepath.Join(real, "SKILL.md"), "---\n---\n")
+	writeFile(t, filepath.Join(real, "refs", "n.md"), "x")
+	if err := os.Symlink(real, filepath.Join(home, "claude-config", "skills", "h")); err != nil {
+		t.Fatal(err)
+	}
+	if f := skillNamed(t, catalogOf(t, session.KindClaude), "h", "user").Files; strings.Join(f, ",") != "refs/n.md" {
+		t.Errorf("personal linked folder files = %v", f)
+	}
+
+	writeFile(t, filepath.Join(dir, "shared", "h", "SKILL.md"), "---\n---\n")
+	writeFile(t, filepath.Join(dir, "shared", "h", "refs", "n.md"), "x")
+	if err := os.Symlink("../../shared/h", filepath.Join(dir, ".claude", "skills", "h")); err != nil {
+		t.Fatal(err)
+	}
+	_, w := getRepoCatalog(t, "repo=demo")
+	h := entriesByRel(t, repoKind(t, w, session.KindClaude))[".claude/skills/h/SKILL.md"]
+	if h.Outside || strings.Join(h.Files, ",") != "refs/n.md" {
+		t.Errorf("repo linked folder = %#v", h)
+	}
+}
+
+// A skill folder that is a link out of the working copy is named, flagged outside and never read.
+func TestRepoSkillFolderLinkingOutIsListedAsOutside(t *testing.T) {
+	home, dir := repoSkillsEnv(t)
+	writeFile(t, filepath.Join(home, "elsewhere", "SKILL.md"), "---\ndescription: private\n---\n")
+	if err := os.Symlink(filepath.Join(home, "elsewhere"), filepath.Join(dir, ".claude", "skills", "away")); err != nil {
+		t.Fatal(err)
+	}
+	_, w := getRepoCatalog(t, "repo=demo")
+	e, ok := entriesByRel(t, repoKind(t, w, session.KindClaude))[".claude/skills/away/SKILL.md"]
+	if !ok || !e.Outside || e.Description != "" || e.Name != "away" || len(e.Files) != 0 {
+		t.Errorf("away = %#v (listed %v)", e, ok)
 	}
 }

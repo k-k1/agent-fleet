@@ -236,6 +236,11 @@ func catalogSkillEntries(root catalogRoot) []catalogSkill {
 		// A skill folder may be a symlink (codex's .codex/skills bridge links are), so stat
 		// rather than trusting the dirent type.
 		if !sf.isDir(dir) {
+			// A link that does not resolve inside the fence (out of the working copy, or an
+			// absolute one): named, never read.
+			if sf.fenced() && sf.isLink(dir) {
+				out = append(out, catalogSkill{Name: e.Name(), Type: "skill", Scope: root.Scope, Root: root.Dir, Path: filepath.Join(dir, "SKILL.md"), UserInvocable: true, Outside: true})
+			}
 			continue
 		}
 		p := filepath.Join(dir, "SKILL.md")

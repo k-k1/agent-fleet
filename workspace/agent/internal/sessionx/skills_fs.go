@@ -108,6 +108,16 @@ func (s *skillFS) present(p string) bool {
 	return err == nil
 }
 
+// isLink reports whether p itself is a symbolic link (not followed).
+func (s *skillFS) isLink(p string) bool {
+	n := s.name(p)
+	if n == "" {
+		return false
+	}
+	fi, err := fs.Lstat(s.fsys, n)
+	return err == nil && fi.Mode()&fs.ModeSymlink != 0
+}
+
 // folderFiles lists a skill folder's regular files other than SKILL.md, relative to it, hidden
 // entries skipped (a skill checked out with its .git would otherwise list hundreds).
 func (s *skillFS) folderFiles(dir string) []string {
