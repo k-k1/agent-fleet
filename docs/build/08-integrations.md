@@ -290,10 +290,24 @@ those variables in for one `exec`:
     GC) but with the base's column-0 `issue:` block cut out first and B's types appended. That
     block also holds `fields.custom`, which jira-cli sends on create, and A's custom fields must not
     reach B, so they are dropped for B (the other keys, board and epic included, stay). The cut is
-    made only when the file has exactly one bare `issue:` line (any case) and defines no YAML anchor, alias or `<<` merge (the cut could leave an alias undefined), and the run has no `--parent` / `-P` (a parent goes out as `fields.parent` or as the epic-link custom field depending on the project kind, which `project.type` / `epic.*` hold for the base project only); otherwise, or when the
+    made only when the file has exactly one bare `issue:` line (any case) and defines no YAML anchor, alias or `<<` merge (the cut could leave an alias undefined) (a `--parent` / `-P` no longer blocks the cut: the parent step below overrides `project.type` anyway); otherwise, or when the
     fetch fails with nothing cached, jira runs on the base and a hint names
     `jira init -c ~/.config/agent-fleet/jira/<name>.yml --project B --board "<name>"`. A config
     whose `project.key` cannot be read plainly, or that has no `-p`, is used as is.
+- **`issue create -P KEY` / `--parent`** (#2812): jira-cli v1.7.0 sends `fields.parent` only for
+  `project.type: next-gen` (or a sub-task type); otherwise the key goes to the epic-link custom field
+  named by `epic.link`, and with that empty it is dropped from the request, so the issue is created
+  without a parent and success is reported. The configs of ours have no `epic.link`. A create that
+  carries a parent therefore runs on a derived copy (`config-nextgen-<hash>.yml`, same cache and
+  modes) with `project.type: next-gen` set in the effective config of ours (replaced when
+  `classic`, added when absent, the `project:` block added when there is none); the base file is
+  never modified and a user-owned config, `-c` outside the managed directory, `JIRA_SERVER` and
+  `JIRA_API_TOKEN` runs are not touched. `-c` inside the managed directory, or a layout that cannot
+  be edited safely (flow style, anchors, two `project` keys), runs unchanged after a stderr warning
+  that the parent may be dropped. Scope: only `issue create`. Other users of `project.type` in
+  jira-cli v1.7.0 (`epic list|create|add|remove`, `issue clone`) read the config, not the derived
+  copy, so they keep working as before; `issue edit -P` exists too but needs nothing: jira-cli always sends `fields.parent` for an edit, whatever `project.type` says (pkg/jira/edit.go), so the type only matters for create. Derived copies are written with the base's owner mode masked to 0600 (a 0400 base gives a 0400 copy; the mode is part of the file name, so a cached copy is never wider). A parent is detected by the wrapper's flag scanner (values of other flags, `--` and pflag clusters such as `-hPKEY` are read as pflag reads them), and the project block is only edited when it is a flat list of plain `key: scalar` lines with at most one `type` key. Not verified against a
+  live Jira (team-managed and company-managed): fields.parent is accepted by Jira Cloud for both.
 - **`issue comment edit|delete KEY ID`** (jira-cli has only `comment add`): for a config of ours
   the wrapper `exec`s `workspace-agent jira-comment` with its own argv, before it asks for the
   credential, so the token never passes through the shell. The helper does `PUT` / `DELETE` on

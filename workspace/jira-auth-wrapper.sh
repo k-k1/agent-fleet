@@ -76,7 +76,7 @@
 #   otherwise the assignments below would be echoed, or exported to every helper.
 set +xa
 unset comment_cmd cred tok server auth login cfg sub sub2 sub3 proj cfg_argv own_init debug prev conf managed gen
-unset parent eff key cdir types derived yaml hint basekey soft npos ikey haveproj hasasg dd pv site why
+unset eff key cdir types derived yaml hint basekey soft npos ikey haveproj hasasg dd pv site why
 unset sbody stmpl spos spbody ssum injected fpid fsig fout spos3 spos4 nobody brc bin bout
 unset dkey dfile dout derr skip rest lim rc berr bwhat snoinput sweb sskip sbad shelp
 
@@ -115,7 +115,7 @@ timed_out() {
 # "false" or empty); a value pflag would refuse sets sbad, and -h / --help sets shelp. Short flags
 # are read as pflag reads them: a cluster of booleans (only -h here) may end in one that takes a
 # value (`-hpAB`), and `-h=v` is a boolean with a value; a shorthand this does not know sets sbad.
-# The issue type (-t / --type) lands in stype.
+# The issue type (-t / --type) lands in stype, the parent (-P / --parent) in sparent.
 stdin_cmd() {
   case "$sub" in
     issue | issues)
@@ -141,10 +141,10 @@ flag_bool() {
 }
 scan_body_args() {
   local a nx="" dd="" k rest
-  sbody="" stmpl="" spos=0 spbody="" ssum="" spos3="" spos4="" snoinput="" sweb="" sskip="" sbad="" shelp="" stype=""
+  sbody="" stmpl="" spos=0 spbody="" ssum="" spos3="" spos4="" snoinput="" sweb="" sskip="" sbad="" shelp="" stype="" sparent=""
   for a in "$@"; do
     if [ -n "$nx" ]; then
-      case "$nx" in body) sbody="$a" ;; template) stmpl="$a" ;; summary) ssum="$a" ;; type) stype="$a" ;; esac
+      case "$nx" in body) sbody="$a" ;; template) stmpl="$a" ;; summary) ssum="$a" ;; type) stype="$a" ;; parent) sparent="$a" ;; esac
       nx=""; continue
     fi
     if [ -z "$dd" ]; then
@@ -158,7 +158,9 @@ scan_body_args() {
         --summary) nx=summary; continue ;;
         --type=*) stype="${a#--type=}"; continue ;;
         --type) nx=type; continue ;;
-        --parent | --priority | --reporter | --assignee | --label | --component | \
+        --parent=*) sparent="${a#--parent=}"; continue ;;
+        --parent) nx=parent; continue ;;
+        --priority | --reporter | --assignee | --label | --component | \
           --fix-version | --affects-version | --original-estimate | --custom | --config | --project)
           nx=other; continue ;;
         --help) shelp=1; continue ;;
@@ -180,10 +182,10 @@ scan_body_args() {
                   shelp=1
                 fi ;;
               [tPsbyraelCTcp])
-                case "$k" in b) k=body ;; T) k=template ;; s) k=summary ;; t) k=type ;; *) k=other ;; esac
+                case "$k" in b) k=body ;; T) k=template ;; s) k=summary ;; t) k=type ;; P) k=parent ;; *) k=other ;; esac
                 if [ -z "$rest" ]; then nx="$k"; break; fi
                 rest="${rest#=}"
-                case "$k" in body) sbody="$rest" ;; template) stmpl="$rest" ;; summary) ssum="$rest" ;; type) stype="$rest" ;; esac
+                case "$k" in body) sbody="$rest" ;; template) stmpl="$rest" ;; summary) ssum="$rest" ;; type) stype="$rest" ;; parent) sparent="$rest" ;; esac
                 rest="" ;;
               *) sbad=1; rest="" ;;
             esac
@@ -401,7 +403,7 @@ fi
 # The config jira will read, the subcommand (and the word after it), the project, and whether
 # this is a debug run, from argv. Cobra takes the last -c, in any of -c X, -cX, -c=X, --config X,
 # --config=X; -p / --project the same way.
-cfg="" sub="" sub2="" sub3="" proj="" own_init="" debug="" prev="" parent=""
+cfg="" sub="" sub2="" sub3="" proj="" own_init="" debug="" prev=""
 for a in "$@"; do
   case "$prev" in
     -c | --config) cfg="$a"; prev=""; continue ;;
@@ -416,7 +418,6 @@ for a in "$@"; do
     --project=*) proj="${a#--project=}" ;;
     -p=*) proj="${a#-p=}" ;;
     -p?*) proj="${a#-p}" ;;
-    -P | -P?* | --parent | --parent=*) parent=1 ;;
     --debug | --debug=[tT1]* ) debug=1 ;;
     --server | --server=* | --login | --login=* | --installation | --installation=* | --auth-type | --auth-type=*)
       own_init=1 ;;
@@ -600,8 +601,15 @@ project_key() {
 # per connection (a hash of the server URL, which holds no secret) and project.
 # With "replace" the base already holds another project's issue block: it is dropped (its type
 # IDs and custom fields belong to that project only) and the -p project's types take its place.
+# The mode of a derived copy of $1: its owner read/write bits only, never wider than the base.
+# Fails when that leaves no access at all.
+copy_mode() {
+  local m
+  m="$(stat -c %a "$1" 2>/dev/null)" && m="$(printf '%03o' "$((8#$m & 8#600))")" && [ "$m" != 000 ] && printf '%s' "$m"
+}
 derive_types_config() {
-  local base="$1" mode="${2:-}" ddir types derived yaml sh ch snap
+  local base="$1" mode="${2:-}" ddir types derived yaml sh ch snap cmode
+  cmode="$(copy_mode "$base")" || return 1
   appendable "$base" ${mode:+"$mode"} || return 1
   key="${proj:-}"
   [ -n "$key" ] || key="$(project_key "$base")"
@@ -629,13 +637,15 @@ derive_types_config() {
   } >"$snap") 2>/dev/null || { rm -f "$snap"; return 1; }
   ch="$(sha256sum <"$snap" 2>/dev/null | cut -c1-16)"
   [ -n "$ch" ] || { rm -f "$snap"; return 1; }
-  derived="$ddir/config-$key-$ch.yml"
+  # The mode is part of the name: a cached copy of the same content is never wider than this base.
+  derived="$ddir/config-$key-$cmode-$ch.yml"
   if [ -s "$derived" ]; then
     rm -f "$snap"
     touch -c "$derived" 2>/dev/null
   else
-    mv -f "$snap" "$derived" 2>/dev/null || { rm -f "$snap"; return 1; }
+    chmod "$cmode" "$snap" 2>/dev/null && mv -f "$snap" "$derived" 2>/dev/null || { rm -f "$snap"; return 1; }
   fi
+  chmod "$cmode" "$derived" 2>/dev/null
   # Never the file this run is about to hand to jira; the age limit protects other runs' files.
   find "$ddir" -name 'config-*.yml' ! -name "${derived##*/}" -mtime +1 -delete 2>/dev/null
   export JIRA_CONFIG_FILE="$derived"
@@ -658,10 +668,9 @@ if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && [ "$sub2" = create ]; then
     # projects. For another -p project use that project's types and none of the custom fields.
     basekey="$(project_key "$eff")"
     if [ -n "$basekey" ] && [ "${basekey,,}" != "${proj,,}" ]; then
-      # A parent is sent as fields.parent in a team-managed project and as the epic-link custom
-      # field in a classic one; the config's project.type and epic.* are the base project's and the
-      # other project's kind is not known here, so such a create stays on the base config.
-      if [ -n "$parent" ] || ! derive_types_config "$eff" replace; then
+      # The base's project.type belongs to the base project; a parent is forced to fields.parent
+      # below (parent_config), whatever kind the -p project is.
+      if ! derive_types_config "$eff" replace; then
         echo "jira: $eff holds the issue types of project $basekey, not ${proj}; run \`jira init -c ~/.config/agent-fleet/jira/${proj,,}.yml --project ${proj} --board \"<board name>\"\` to give it its own" >&2
       fi
     fi
@@ -723,6 +732,102 @@ if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && [ -z "$proj" ]; then
       fi
     fi ;;
   esac
+fi
+
+# `issue create -P KEY`: jira-cli sends the parent as fields.parent only for `project.type:
+# next-gen` (or a sub-task type). Otherwise the key goes to the epic-link custom field, named by
+# epic.link, and with that empty it is deleted from the request and the issue is created without a
+# parent, reporting success. The configs of ours (generated, or written by `jira init`) have no
+# epic.link, so a create that carries a parent gets a derived copy of the config with
+# `project.type: next-gen`. Only the create: epic list|create|add|remove and `issue clone` also
+# read project.type and keep the config as it was. fields.parent is accepted by Jira Cloud for
+# team-managed and company-managed projects alike.
+# True when the file provably holds one plain layout (see appendable) and at most one bare
+# `project:` block, so that a line can be set in it or the block added.
+plain_layout() {
+  local first n
+  first="$(sed -n '/^[[:space:]]*\(#.*\)\{0,1\}$/d;p;q' "$1" 2>/dev/null)"
+  case "$first" in "" | [[:space:]]*) return 1 ;; esac
+  grep -Ev '^([[:space:]]|#|$)' "$1" 2>/dev/null | grep -Evq '^[A-Za-z_][A-Za-z0-9_-]*:([[:space:]]|$)' && return 1
+  ! grep -Eq '<<[[:space:]]*:|(^|[[:space:]:,{[-])[&*][^[:space:]]' "$1" 2>/dev/null || return 1
+  n="$(grep -Eic '^project[[:space:]]*:' "$1" 2>/dev/null)"
+  case "$n" in 0) ;; 1) grep -Eiq '^project:[[:space:]]*(#.*)?$' "$1" 2>/dev/null ;; *) return 1 ;; esac
+}
+# True when the project block is a flat list of `key: scalar` lines at one space indent (no tabs,
+# quoted or spaced keys, block scalars, flow style, anchors, tags or nesting) with at most one
+# `type` key, so that the one line can be replaced or added without leaving an orphan.
+project_block_ok() {
+  awk '{ sub(/\r$/, "") }
+       tolower($0) ~ /^project:[ \t]*(#.*)?$/ { inp = 1; next }
+       inp && /^[^ \t#]/ { inp = 0 }
+       inp && /^[ \t]*(#.*)?$/ { next }
+       inp {
+         if (!match($0, /^ +/)) { bad = 1; next }
+         ind = substr($0, 1, RLENGTH)
+         if (want == "") want = ind
+         if (ind != want) { bad = 1; next }
+         v = substr($0, RLENGTH + 1)
+         if (v !~ /^[A-Za-z0-9_-]+:([ ]|$)/) { bad = 1; next }
+         k = tolower(substr(v, 1, index(v, ":") - 1))
+         val = substr(v, index(v, ":") + 1); sub(/^ +/, "", val)
+         if (val ~ /^[|>&*!{\[@`%]/) bad = 1
+         if (k == "type" && ++nt > 1) bad = 1
+       }
+       END { exit bad }' "$1"
+}
+# The base with `type: next-gen` set in its project block (added when there is none, and the block
+# when there is no project at all).
+with_nextgen() {
+  awk '
+    function flush() {
+      if (inp && !done) print (want == "" ? "  " : want) "type: next-gen" cr
+      inp = 0
+    }
+    { l = $0; cr = (l ~ /\r$/) ? "\r" : ""; sub(/\r$/, "", l) }
+    inp && l ~ /^[^ \t#]/ { flush() }
+    tolower(l) ~ /^project:[ \t]*(#.*)?$/ { print; inp = 1; seen = 1; want = ""; done = 0; next }
+    inp && l !~ /^[ \t]*(#.*)?$/ {
+      match(l, /^[ \t]+/); ind = substr(l, 1, RLENGTH)
+      if (want == "") want = ind
+      if (ind == want && tolower(substr(l, RLENGTH + 1)) ~ /^type:/) {
+        if (tolower(substr(l, RLENGTH + 1)) ~ /^type:[ \t]*["\047]?next-gen["\047]?[ \t]*(#.*)?$/) print
+        else print ind "type: next-gen" cr
+        done = 1; next
+      }
+    }
+    { print }
+    END { flush(); if (!seen) { print "project:"; print "  type: next-gen" } }' "$1"
+}
+parent_config() {
+  local base="$1" ddir snap ch derived mode
+  plain_layout "$base" && project_block_ok "$base" || return 1
+  mode="$(copy_mode "$base")" || return 1
+  ddir="${XDG_CACHE_HOME:-${HOME:-/nonexistent}/.cache}/agent-fleet/jira/derived"
+  (umask 077; mkdir -p "$ddir" 2>/dev/null) && chmod 700 "$ddir" 2>/dev/null || return 1
+  snap="$ddir/snap.$$"
+  (umask 077; with_nextgen "$base" >"$snap") 2>/dev/null || { rm -f "$snap"; return 1; }
+  if cmp -s "$base" "$snap"; then rm -f "$snap"; return 0; fi
+  ch="$(sha256sum <"$snap" 2>/dev/null | cut -c1-16)"
+  [ -n "$ch" ] || { rm -f "$snap"; return 1; }
+  # The mode is part of the name: a cached copy of the same content is never wider than this base.
+  derived="$ddir/config-nextgen-$mode-$ch.yml"
+  if [ -s "$derived" ]; then
+    rm -f "$snap"
+    touch -c "$derived" 2>/dev/null
+  else
+    chmod "$mode" "$snap" 2>/dev/null && mv -f "$snap" "$derived" 2>/dev/null || { rm -f "$snap"; return 1; }
+  fi
+  chmod "$mode" "$derived" 2>/dev/null
+  find "$ddir" -name 'config-*.yml' ! -name "${derived##*/}" -mtime +1 -delete 2>/dev/null
+  export JIRA_CONFIG_FILE="$derived"
+}
+if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && [ "$sub2" = create ] && scan_body_args "$@" && [ -n "$sparent" ]; then
+  eff="${cfg_argv:-${JIRA_CONFIG_FILE:-}}"
+  # -c wins over the environment and cannot be redirected from here; a missing or odd config
+  # cannot be edited safely. Either way the parent may be lost, which is said before the create.
+  if [ -n "$cfg_argv" ] || [ -z "$eff" ] || [ ! -r "$eff" ] || ! parent_config "$eff"; then
+    echo "jira: could not make this config send the parent as fields.parent; jira-cli may drop -P/--parent without an error. Set \`project.type: next-gen\` in the config (or run without -c), and check the parent of the new issue" >&2
+  fi
 fi
 
 if [ "$sub" = init ]; then

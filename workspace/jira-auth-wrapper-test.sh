@@ -344,6 +344,12 @@ expect_d() { # expect_d <label> <KEY>: CONFIG is a derived config for KEY
   got="$(seen CONFIG)"
   case "$got" in "$CGEN/derived/config-$2-"*.yml) ;; *) fail "$1: CONFIG = '$got'" ;; esac
 }
+expect_ng() { # expect_ng <label>: CONFIG is a derived config carrying project.type: next-gen
+  local got
+  got="$(seen CONFIG)"
+  case "$got" in "$CGEN/derived/config-nextgen-"*.yml) ;; *) fail "$1: CONFIG = '$got'"; return ;; esac
+  grep -Eq '^[[:space:]]+type: next-gen' "$got" || fail "$1: no project.type: next-gen in $got"
+}
 helper_calls() { grep -c '^jira-issue-types' "$T/agent.calls" 2>/dev/null; }
 reset
 oauth
@@ -507,13 +513,17 @@ grep -q '"7"' "$(seen CONFIG)" && fail "other-crlf: A's type ID survived"
 config "$MANAGED/config.yml" "$(printf 'installation: Cloud\r\nproject:\r\n    key: AAA\r\n')"
 run -- issue create -t Task
 expect_d crlf-default AAA
-# --parent depends on the other project's kind (project.type, epic.*), unknown here: not merged.
+# A parent is forced to fields.parent whatever the base project's kind: the other project gets its
+# types (A's gone) and the derived config says project.type: next-gen.
 config "$MANAGED/config.yml" "$A_CFG"
 for form in "--parent BBB-1" "-P BBB-1" "--parent=BBB-1"; do
   # shellcheck disable=SC2086
   run -- issue create -p BBB $form
-  expect "other-parent $form" CONFIG "$MANAGED/config.yml"
-  grep -q 'jira init' "$T/err" || fail "other-parent $form: no hint"
+  expect_ng "other-parent $form"
+  d="$(seen CONFIG)"
+  grep -qx '    type: next-gen' "$d" && ! grep -q 'type: classic' "$d" || fail "other-parent $form: project.type not next-gen"
+  grep -qx '    - id: "10001"' "$d" && ! grep -q '"7"' "$d" || fail "other-parent $form: types are not BBB's"
+  [ ! -s "$T/err" ] || fail "other-parent $form: stderr: $(cat "$T/err")"
 done
 # -c, a user's own config, JIRA_SERVER: untouched.
 config "$MANAGED/config.yml" "$A_CFG"
@@ -528,6 +538,146 @@ expect other-server CONFIG "<unset>"
 run -- issue create --debug -p BBB
 expect other-debug CONFIG "$MANAGED/config.yml"
 [ ! -e "$T/agent.calls" ] || fail "other-debug: helper was asked"
+
+# 13e3. `issue create` with a parent (jira-cli drops it without project.type: next-gen, as no
+#       epic.link is set): a config of ours gets a derived copy that says so; everything else is
+#       left as it was, and the user's own configs are never read or changed.
+reset
+oauth
+types
+for form in "-P AB-1" "-PAB-1" "--parent AB-1" "--parent=AB-1"; do
+  # shellcheck disable=SC2086
+  run -- issue create -p KEY -t Task -s x $form
+  expect_ng "parent-generated $form"
+  grep -q '^installation: Cloud$' "$(seen CONFIG)" || fail "parent-generated $form: base lost"
+  grep -q '^    - id: "10001"$' "$(seen CONFIG)" || fail "parent-generated $form: types lost"
+  [ ! -s "$T/err" ] || fail "parent-generated $form: stderr: $(cat "$T/err")"
+  [ "$(sed -n "s/^ARG=//p" "$T/jira.seen" | tr "\n" " ")" = "issue create -p KEY -t Task -s x $form " ] || fail "parent-generated $form: argv changed"
+done
+grep -q 'next-gen' "$GEN" && fail "parent-generated: the generated base config was modified"
+no_leak parent-generated fake-oauth-tok
+# No parent: no next-gen.
+run -- issue create -p KEY -t Task -s x
+grep -q 'next-gen' "$(seen CONFIG)" && fail "no-parent: next-gen written"
+# Other commands with a parent flag-like word keep the config.
+run -- issue list -P AB-1
+expect list-parent CONFIG "$GEN"
+# Managed config: classic type replaced, other keys kept, the managed file itself untouched.
+config "$MANAGED/config.yml" $'installation: Cloud\nproject:\n    key: AAA\n    type: classic\nepic:\n    name: customfield_1\n    link: ""\nissue:\n    types:\n        - id: "7"\n          name: Task'
+cp "$MANAGED/config.yml" "$T/m.before"
+run -- issue create -t Task -s x -P AAA-1
+expect_ng parent-managed
+d="$(seen CONFIG)"
+grep -qx '    type: next-gen' "$d" && ! grep -q 'classic' "$d" && grep -qx '    key: AAA' "$d" && grep -qx '    name: customfield_1' "$d" || fail "parent-managed: derived config wrong: $(cat "$d")"
+cmp -s "$MANAGED/config.yml" "$T/m.before" || fail "parent-managed: the managed config was modified"
+[ "$(stat -c %a "$d")" = 600 ] || fail "parent-managed: derived config mode"
+# Already next-gen: used as is.
+config "$MANAGED/config.yml" $'project:\n    key: AAA\n    type: next-gen\nissue:\n    types:\n        - id: "7"'
+run -- issue create -t Task -s x -P AAA-1
+expect parent-already CONFIG "$MANAGED/config.yml"
+# A project block without a type: the type is added at the block's own indent.
+config "$MANAGED/config.yml" $'project:\n  key: AAA\n# note\nissue:\n  types:\n    - id: "7"'
+run -- issue create -t Task -s x -P AAA-1
+expect_ng parent-notype
+grep -qx '  type: next-gen' "$(seen CONFIG)" && grep -qx '  key: AAA' "$(seen CONFIG)" || fail "parent-notype: $(cat "$(seen CONFIG)")"
+# Not a layout that can be edited safely, or -c: the create still runs, with a warning.
+config "$MANAGED/config.yml" $'project: {key: AAA}\nissue:\n    types:\n        - id: "7"'
+run -- issue create -t Task -s x -P AAA-1
+expect parent-flow CONFIG "$MANAGED/config.yml"
+grep -q 'fields.parent' "$T/err" || fail "parent-flow: no warning"
+config "$MANAGED/board-b.yml" $'project:\n    key: AAA\nissue:\n    types:\n        - id: "7"'
+run -- issue create -c "$MANAGED/board-b.yml" -t Task -s x -P AAA-1
+expect parent-c TOKEN fake-oauth-tok
+grep -q 'fields.parent' "$T/err" || fail "parent-c: no warning"
+# The user's own config is never touched, read or warned about.
+config "$T/other.yml" $'project:\n    key: AAA\n    type: classic'
+cp "$T/other.yml" "$T/o.before"
+run -- issue create -c "$T/other.yml" -t Task -s x -P AAA-1
+expect parent-own TOKEN '<unset>'
+cmp -s "$T/other.yml" "$T/o.before" && [ ! -s "$T/err" ] || fail "parent-own: touched or warned: $(cat "$T/err")"
+run JIRA_CONFIG_FILE="$T/other.yml" -- issue create -t Task -s x -P AAA-1
+expect parent-own-env CONFIG "$T/other.yml"
+cmp -s "$T/other.yml" "$T/o.before" || fail "parent-own-env: modified"
+config "$DEFCFG" $'project:\n    key: AAA\n    type: classic'
+run -- issue create -t Task -s x -P AAA-1
+expect parent-default TOKEN '<unset>'
+rm -f "$DEFCFG"
+run JIRA_SERVER=https://own.example.net -- issue create -t Task -s x -P AAA-1
+expect parent-server CONFIG "<unset>"
+
+# Only a parent that jira-cli would read counts: a flag's value, anything after `--` and the
+# value of another flag are not; a pflag cluster ending in -P is. An empty parent is none.
+for form in "-s -P" "-s --parent=X" "-y --parent=X" "-l -PX" "-t Task -- -P AB-1" "-P" "--parent=" "-P="; do
+  reset; oauth; types
+  # shellcheck disable=SC2086
+  run -- issue create -p KEY $form
+  grep -q 'next-gen' "$(seen CONFIG)" 2>/dev/null && fail "parent-false-positive [$form]: next-gen written"
+  [ ! -s "$T/err" ] || fail "parent-false-positive [$form]: stderr: $(cat "$T/err")"
+done
+for form in "-hPAB-1" "-hP AB-1" "-hP=AB-1" "-s x -P AB-1" "-s x --parent AB-1"; do
+  # shellcheck disable=SC2086
+  run -- issue create -p KEY $form
+  expect_ng "parent-cluster [$form]"
+done
+# A project block jira would read differently once a second type is added, or whose type line
+# is not one plain line: no derived copy, a warning, the config as it was.
+reset; oauth; types
+for blk in $'project:\n  key: AAA\n  "type": classic' $'project:\n  key: AAA\n  type : classic' \
+  $'project:\n  key: AAA\n  type: |\n    classic\n  name: x' $'project:\n  key: AAA\n  type: classic\n  Type: classic' \
+  $'project:\n  key: AAA\n  nested:\n    type: classic' $'project:\n  key: AAA\n  type: &t classic' \
+  $'project:\n\tkey: AAA' $'project:\n  key: AAA\n    type: classic' $'project:\n  "key": AAA'; do
+  config "$MANAGED/config.yml" "$blk"$'\nissue:\n  types:\n    - id: "7"'
+  run -- issue create -t Task -s x -P AAA-1
+  expect "parent-unsafe [$blk]" CONFIG "$MANAGED/config.yml"
+  grep -q 'fields.parent' "$T/err" || fail "parent-unsafe [$blk]: no warning"
+done
+# Safe variants: a different case of the key and a quoted value are replaced in place.
+config "$MANAGED/config.yml" $'Project:\n  key: AAA\n  Type: "classic" # note\nissue:\n  types:\n    - id: "7"'
+run -- issue create -t Task -s x -P AAA-1
+expect_ng parent-case
+[ "$(grep -ci "type:" "$(seen CONFIG)")" = 1 ] || fail "parent-case: type duplicated: $(cat "$(seen CONFIG)")"
+# The derived copy is never wider than its base, a reused cache included.
+config "$MANAGED/config.yml" $'project:\n  key: AAA\n  type: classic\nissue:\n  types:\n    - id: "7"'
+chmod 400 "$MANAGED/config.yml"
+run -- issue create -t Task -s x -P AAA-1
+expect_ng parent-mode400
+[ "$(stat -c %a "$(seen CONFIG)")" = 400 ] || fail "parent-mode400: $(stat -c %a "$(seen CONFIG)")"
+chmod 644 "$MANAGED/config.yml"
+run -- issue create -t Task -s x -P AAA-1
+[ "$(stat -c %a "$(seen CONFIG)")" = 600 ] || fail "parent-mode644: $(stat -c %a "$(seen CONFIG)")"
+
+# A 0400 managed config without types: the types derivation and the parent derivation (also the
+# other-project route) both keep it 0400.
+for form in "-p AAA -P AAA-1" "-p BBB -P AAA-1"; do
+  reset; oauth; types
+  config "$MANAGED/config.yml" $'project:\n  key: AAA\n  type: classic'
+  chmod 400 "$MANAGED/config.yml"
+  # shellcheck disable=SC2086
+  run -- issue create -t Task -s x $form
+  expect_ng "parent-chain400 [$form]"
+  [ "$(stat -c %a "$(seen CONFIG)")" = 400 ] || fail "parent-chain400 [$form]: $(stat -c %a "$(seen CONFIG)")"
+  grep -q '"10001"' "$(seen CONFIG)" || fail "parent-chain400 [$form]: types lost"
+  for f in "$CGEN"/derived/config-*.yml; do
+    [ "$(stat -c %a "$f")" = 400 ] || fail "parent-chain400 [$form]: $f is $(stat -c %a "$f")"
+  done
+done
+
+# The replace route: a 0400 config holding AAA's types, `-p BBB -P ..`: AAA's types are cut, BBB's
+# and next-gen are in, and both derived files are 0400.
+reset; oauth; types
+config "$MANAGED/config.yml" $'project:\n  key: AAA\n  type: classic\nissue:\n  types:\n    - id: "7"\n      name: Task'
+chmod 400 "$MANAGED/config.yml"
+run -- issue create -t Task -s x -p BBB -P AAA-1
+expect_ng parent-replace400
+d="$(seen CONFIG)"
+grep -q '"7"' "$d" && fail "parent-replace400: AAA's types survived"
+grep -q '"10001"' "$d" && grep -qx '  type: next-gen' "$d" && ! grep -q classic "$d" || fail "parent-replace400: $(cat "$d")"
+n=0
+for f in "$CGEN"/derived/config-*.yml; do
+  n=$((n + 1))
+  [ "$(stat -c %a "$f")" = 400 ] || fail "parent-replace400: $f is $(stat -c %a "$f")"
+done
+[ "$n" = 2 ] || fail "parent-replace400: $n derived files, want 2"
 
 # 13f. The user's own setup is never touched, hinted at or fetched for: another config, jira's
 #      default location, an explicit token or server, a debug run, other subcommands.
@@ -1547,6 +1697,21 @@ Task" ] || fail "required [${spec%%|*}]: lookup argv '$(cat "$T/req.argv" 2>/dev
   grep -q 'requires a description at create time' "$T/err" || fail "required [${spec%%|*}]: no note"
   [ -z "$(ls -A "$T/tmp")" ] || fail "required [${spec%%|*}] left files behind: $(ls -A "$T/tmp")"
 done
+rm -f "$T/req.out"
+# -P together with a body: the parent stays in jira's argv on the next-gen config, and the
+# description goes the same way as without it (set afterwards, or on stdin when required).
+reset; desc_reset; oauth; types; created AB-12
+run -- issue create -p AB -t Task -s sum -P AB-1 -b body --no-input
+expect_ng "parent+body"
+[ "$rc" = 0 ] && [ "$(args_of)" = "issue create -p AB -t Task -s sum -P AB-1 --no-input " ] || fail "parent+body: rc=$rc jira argv '$(args_of)'"
+[ "$(cat "$T/desc.argv" 2>/dev/null)" = AB-12 ] && [ "$(cat "$T/desc.stdin" 2>/dev/null)" = body ] || fail "parent+body: description not set"
+reset; desc_reset; oauth; types; rm -f "$T/req.argv"; echo required >"$T/req.out"
+plan 1 0 "$ROUTE/browse/AB-7
+" ""
+run STUB_READ_STDIN=1 -- issue create -p AB -t Task -s sum -P AB-1 -b body
+expect_ng "parent+required"
+[ "$rc" = 0 ] && [ ! -f "$T/desc.argv" ] && [ "$(args_of)" = "issue create -p AB -t Task -s sum -P AB-1 " ] || fail "parent+required: rc=$rc jira argv '$(args_of)'"
+[ "$(cat "$T/stdin.seen" 2>/dev/null)" = body ] || fail "parent+required: body on stdin '$(cat "$T/stdin.seen" 2>/dev/null)'"
 rm -f "$T/req.out"
 # The type may come as -tTask / --type=Task, the project from the config.
 reset; desc_reset; oauth; rm -f "$T/req.argv"; echo optional >"$T/req.out"; created AB-1
