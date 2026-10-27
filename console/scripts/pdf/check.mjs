@@ -13,14 +13,15 @@
 //   5. That the text is selectable and copyable: the transparent text layer sits over the glyphs
 //      it stands for (a layer that exists but is offset selects the wrong words), a real mouse
 //      drag selects the heading, and a copy puts that text on the clipboard.
-//   6. That the browser's find reaches every page and its highlight does not hide the match.
+//   6. That the browser's find reaches every page and its highlight does not hide the match, and
+//      that the pane's own find bar (Ctrl+F in the pane) finds, steps through and shows matches.
 //
 // Needs neither a real backend nor the CP: PdfView and React are bundled into one file with
 // esbuild, served by a plain http server and driven over CDP. The sample PDFs are produced on
 // the spot with chromium's --print-to-pdf, so no binary is committed to the repository.
 //
 //   npm --prefix console run pdf:check
-//   node console/scripts/pdf/check.mjs --screenshot /tmp/pdf.png
+//   node console/scripts/pdf/check.mjs --screenshot /tmp/pdf.png   (also writes /tmp/pdf-find.png)
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -422,6 +423,71 @@ try {
   // box hides the glyphs it found.
   const blend = await b.evaluate("getComputedStyle(document.querySelector('.pdfview-page .textLayer')).mixBlendMode");
   check(blend === "multiply", "a find highlight leaves the glyphs under it visible", `mix-blend-mode=${blend}`);
+
+  // 11. The pane's own find bar. Driven with real key events, because the browser's find cannot
+  // be driven from here at all. "18" is page 6's table cell only (quantities are 3 x page), and
+  // "1" is on page 1 and on later pages (headings and body numbers survive a runner without Japanese
+  // fonts; see check 9).
+  const key = (k, code, vk, modifiers = 0, text) =>
+    b.send("Input.dispatchKeyEvent", { type: "keyDown", key: k, code, windowsVirtualKeyCode: vk, modifiers, text })
+      .then(() => b.send("Input.dispatchKeyEvent", { type: "keyUp", key: k, code, windowsVirtualKeyCode: vk, modifiers }));
+  const PAGE_NO = "document.querySelector('.pdfview-pageno').textContent";
+  const COUNT = "document.querySelector('.pdfview-find-count')?.textContent ?? null";
+  await b.evaluate("(() => { const s = document.querySelector('.pdfview-scroll'); s.scrollTop = 0; s.focus(); })()");
+  await until(b.evaluate, PAGE_NO, (t) => /^1 \//.test(t), PDF_BEHAVIOR_TRIES);
+  await key("f", "KeyF", 70, 2);
+  const focused = await until(b.evaluate, "document.activeElement?.closest('.pdfview-find') ? 'input' : document.activeElement?.className", (v) => v === "input", PDF_BEHAVIOR_TRIES);
+  check(focused === "input", "Ctrl+F in the pane opens its find bar and focuses it", `active=${focused}`);
+
+  await b.send("Input.insertText", { text: "18" });
+  const one = await until(b.evaluate, COUNT, (t) => t === "1/1", PDF_BEHAVIOR_TRIES);
+  const far = await until(b.evaluate, PAGE_NO, (t) => /^6 \//.test(t), PDF_BEHAVIOR_TRIES);
+  // The current match is painted and on screen, not only the page scrolled to.
+  const shown = await until(
+    b.evaluate,
+    `(() => { const h = CSS.highlights.get('pdf-find-current'); if (!h || h.size !== 1) return 'unpainted';
+       const r = [...h][0].getBoundingClientRect(), v = document.querySelector('.pdfview-scroll').getBoundingClientRect();
+       return r.width > 0 && r.top >= v.top && r.bottom <= v.bottom ? 'visible' : 'off-screen'; })()`,
+    (v) => v === "visible",
+    PDF_BEHAVIOR_TRIES,
+  );
+  check(one === "1/1" && /^6 \//.test(far) && shown === "visible", "find reaches a match on a far page and shows it",
+    `count=${one} bar=${JSON.stringify(far)} current=${shown}`);
+  if (SHOT) await b.screenshot(SHOT.replace(/(\.png)?$/, "-find.png"));
+
+  await b.evaluate("document.getSelection().removeAllRanges()");
+  // Back to page 1 first: a new query starts from the page being read.
+  await b.evaluate("document.querySelector('.pdfview-scroll').scrollTop = 0");
+  await until(b.evaluate, PAGE_NO, (t) => /^1 \//.test(t), PDF_BEHAVIOR_TRIES);
+  await b.evaluate("(() => { const i = document.querySelector('.pdfview-find input'); i.focus(); i.select(); })()");
+  await b.send("Input.insertText", { text: "1" });
+  const many = await until(b.evaluate, COUNT, (t) => /^\d+\/(\d+)$/.test(t ?? "") && Number(t.split("/")[1]) >= 4, PDF_BEHAVIOR_TRIES);
+  const total = Number(String(many).split("/")[1]);
+  await key("Enter", "Enter", 13, 0, "\r");
+  const stepped = await b.evaluate(COUNT);
+  await key("Enter", "Enter", 13, 8, "\r"); // Shift+Enter: back
+  await key("Enter", "Enter", 13, 8, "\r"); // and once more wraps past the first to the last
+  const wrapped = await until(b.evaluate, COUNT, (t) => t === `${total}/${total}`, PDF_BEHAVIOR_TRIES);
+  const lastPage = await until(b.evaluate, PAGE_NO, (t) => /^6 \//.test(t), PDF_BEHAVIOR_TRIES);
+  check(
+    many?.startsWith("1/") && stepped === `2/${total}` && wrapped === `${total}/${total}` && /^6 \//.test(lastPage),
+    "Enter and Shift+Enter step through the matches, wrapping and scrolling",
+    `start=${many} enter=${stepped} shift+enter x2=${wrapped} bar=${JSON.stringify(lastPage)}`,
+  );
+  await b.evaluate("[...document.querySelectorAll('.pdfview-find button')][1].click()"); // down: wraps to the first
+  const down = await until(b.evaluate, COUNT, (t) => t === `1/${total}`, PDF_BEHAVIOR_TRIES);
+  const backTop = await until(b.evaluate, PAGE_NO, (t) => /^1 \//.test(t), PDF_BEHAVIOR_TRIES);
+  check(down === `1/${total}` && /^1 \//.test(backTop), "the down button moves to the next match and scrolls to it",
+    `count=${down} bar=${JSON.stringify(backTop)}`);
+
+  await key("Escape", "Escape", 27);
+  const closed = await until(
+    b.evaluate,
+    "document.querySelector('.pdfview-find') ? 'open' : (CSS.highlights.get('pdf-find')?.size ?? 0) + ' painted'",
+    (v) => v === "0 painted",
+    PDF_BEHAVIOR_TRIES,
+  );
+  check(closed === "0 painted", "Escape closes the find bar and clears its highlights", closed);
 
   if (SHOT) {
     await b.evaluate("document.querySelector('.pdfview-scroll').scrollTop = 0");

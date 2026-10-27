@@ -10,15 +10,29 @@
 // the stock pdf.js viewer. Unlike the canvas it is kept for every page, or find would only see
 // the pages near the viewport.
 //
+// With focus in the pane, Ctrl/Cmd+F opens the pane's own find bar instead (pdfFind.ts): the
+// browser's find loses its place as text layers are built under it, and cannot be tested.
+//
 // The bytes are fetched by pdf.js itself from the download endpoint (via `url`). That path
 // supports Range, so a large PDF starts rendering without loading the whole file into JS memory
 // (the Agent serves with http.ServeContent and the CP proxy relays the headers unchanged).
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as RKeyboardEvent,
+} from "react";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask, TextLayer } from "pdfjs-dist";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { documentAssetParams, loadPdfjs, type Pdfjs } from "./pdfjs.ts";
 import { clipboardText } from "./pdfText.ts";
+import { findMatches, firstMatchFrom, pageText, stepMatch, type FindMatch, type PageText } from "./pdfFind.ts";
+import { setFindHighlights } from "./pdfFindHighlight.ts";
 import {
   anchorOf,
   canvasPixelRatio,
@@ -76,6 +90,8 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
   const textDivsRef = useRef(new Map<number, HTMLDivElement>());
   const textLayersRef = useRef(new Map<number, TextLayer>());
   const docRef = useRef<PDFDocumentProxy | null>(null);
+  // Every page's searchable text, extracted once per document when the find bar first searches.
+  const pageTextsRef = useRef<Promise<PageText[]> | null>(null);
   const pdfjsRef = useRef<Pdfjs | null>(null);
   const jobRef = useRef<{ cancelled: boolean; task: RenderTask | null } | null>(null);
   const anchorRef = useRef<ScrollAnchor | null>(null);
@@ -128,6 +144,16 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
   // Version counter telling the render side that the document was swapped. The
   // PDFDocumentProxy itself is not state: it never changes, so it cannot be a redraw dependency.
   const [docEpoch, setDocEpoch] = useState(0);
+  // Bumped whenever a page's text layer is built, so find can paint matches that just got spans.
+  const [layerTick, setLayerTick] = useState(0);
+  const [findOpen, setFindOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [matches, setMatches] = useState<FindMatch[]>([]);
+  const [active, setActive] = useState(-1);
+  // Bumped to scroll the active match into view; a counter, because stepping through a single
+  // match leaves `active` unchanged and must still bring it back.
+  const [reveal, setReveal] = useState(0);
+  const findInputRef = useRef<HTMLInputElement>(null);
 
   // --- Loading ---------------------------------------------------------------
   useEffect(() => {
@@ -147,6 +173,9 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
     }
     textLayersRef.current.clear();
     docRef.current = null;
+    pageTextsRef.current = null;
+    setMatches([]);
+    setActive(-1);
     const run = async () => {
       const pdfjs = await loadPdfjs();
       if (!alive) return;
@@ -358,6 +387,7 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
         end.className = "endOfContent";
         textDiv.append(end);
         textLayersRef.current.set(i, layer);
+        setLayerTick((n) => n + 1);
       }
     };
     void run();
@@ -396,6 +426,147 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
       window.removeEventListener("blur", onUp);
     };
   }, []);
+
+  // --- Find ---------------------------------------------------------------------
+  const pageNoRef = useRef(1);
+  pageNoRef.current = pageNo;
+
+  const pageTexts = useCallback((): Promise<PageText[]> => {
+    const doc = docRef.current;
+    if (!doc) return Promise.resolve([]);
+    pageTextsRef.current ??= (async () => {
+      const out: PageText[] = [];
+      for (let n = 1; n <= doc.numPages; n++) {
+        const page = await doc.getPage(n);
+        // The same options as the text layer, and the same filter as TextLayer (items carrying
+        // `str`), so item k here is span k there.
+        const content = await page.getTextContent({ includeMarkedContent: true, disableNormalization: true });
+        out.push(pageText(content.items.flatMap((it) => ("str" in it ? [it.str] : []))));
+      }
+      return out;
+    })();
+    return pageTextsRef.current;
+  }, []);
+
+  useEffect(() => {
+    if (!findOpen || !query.trim()) {
+      setMatches([]);
+      setActive(-1);
+      return;
+    }
+    let alive = true;
+    pageTexts().then(
+      (texts) => {
+        if (!alive) return;
+        const found = findMatches(texts, query);
+        setMatches(found);
+        setActive(firstMatchFrom(found, pageNoRef.current - 1));
+        setReveal((n) => n + 1);
+      },
+      () => {
+        if (alive) setMatches([]);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [findOpen, query, docEpoch, pageTexts]);
+
+  // A match as a DOM range over its page's text-layer spans; null while that page has no layer.
+  const rangeOf = useCallback((m: FindMatch): Range | null => {
+    const layer = textLayersRef.current.get(m.page);
+    const a = layer?.textDivs[m.startItem]?.firstChild;
+    const b = layer?.textDivs[m.endItem]?.firstChild;
+    if (!a || !b) return null;
+    try {
+      const r = document.createRange();
+      r.setStart(a, m.startOffset);
+      r.setEnd(b, m.endOffset);
+      return r;
+    } catch {
+      return null; // the layer holds different text than was searched; leave it unpainted
+    }
+  }, []);
+
+  // Paints the matches and, when asked, brings the active one into view. A match on a page with
+  // no text layer yet is reached by scrolling to its page; the layer built there bumps layerTick
+  // and this runs again to place it exactly.
+  const revealedRef = useRef(0);
+  useEffect(() => {
+    const owner = scrollRef;
+    const all: Range[] = [];
+    let current: Range | null = null;
+    matches.forEach((m, k) => {
+      const r = rangeOf(m);
+      if (!r) return;
+      all.push(r);
+      if (k === active) current = r;
+    });
+    setFindHighlights(owner, all, current);
+    const el = scrollRef.current;
+    const m = matches[active];
+    if (!el || !m || revealedRef.current === reveal) return;
+    if (!current) {
+      if (layout.tops[m.page] !== undefined) {
+        el.scrollTop = layout.tops[m.page];
+        setScrollTop(el.scrollTop);
+      }
+      return;
+    }
+    revealedRef.current = reveal;
+    const r = (current as Range).getBoundingClientRect();
+    const view = el.getBoundingClientRect();
+    if (r.top < view.top || r.bottom > view.bottom) el.scrollTop += r.top - view.top - el.clientHeight / 3;
+    if (r.left < view.left || r.right > view.right) el.scrollLeft += r.left - view.left - el.clientWidth / 3;
+    setScrollTop(el.scrollTop);
+  }, [matches, active, reveal, layerTick, layout, rangeOf]);
+
+  useEffect(() => {
+    const owner = scrollRef;
+    return () => setFindHighlights(owner, [], null);
+  }, []);
+
+  const openFind = () => {
+    setFindOpen(true);
+    // The bar mounts on this render; focus it once it is there.
+    requestAnimationFrame(() => {
+      findInputRef.current?.focus();
+      findInputRef.current?.select();
+    });
+  };
+
+  const closeFind = () => {
+    setFindOpen(false);
+    scrollRef.current?.focus();
+  };
+
+  const stepFind = (dir: 1 | -1) => {
+    if (matches.length === 0) return;
+    setActive((i) => stepMatch(i, matches.length, dir));
+    setReveal((n) => n + 1);
+  };
+
+  // Ctrl/Cmd+F anywhere in the pane, the find bar included, opens (or re-selects) the pane's
+  // find instead of the browser's.
+  const onPaneKeyDown = (e: RKeyboardEvent<HTMLDivElement>) => {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "f" || e.key === "F")) {
+      e.preventDefault();
+      openFind();
+    }
+  };
+
+  const onFindKeyDown = (e: RKeyboardEvent<HTMLInputElement>) => {
+    // Enter that confirms an IME conversion is not a request for the next match.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      stepFind(e.shiftKey ? -1 : 1);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      closeFind();
+    }
+  };
 
   // --- Controls ---------------------------------------------------------------
   const applyZoom = useCallback(
@@ -447,7 +618,33 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
 
   const pages = pageSizes.length;
   return (
-    <div className="pdfview">
+    <div className="pdfview" onKeyDown={onPaneKeyDown}>
+      {findOpen && (
+        <div className="pdfview-find" role="search">
+          <input
+            ref={findInputRef}
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={onFindKeyDown}
+            placeholder={tr("view.pdf.find")}
+            aria-label={tr("view.pdf.find")}
+            spellCheck={false}
+          />
+          <span className="pdfview-find-count" aria-live="polite">
+            {query.trim() ? `${matches.length ? active + 1 : 0}/${matches.length}` : ""}
+          </span>
+          <button type="button" onClick={() => stepFind(-1)} disabled={matches.length === 0} title={tr("view.pdf.find_prev")}>
+            <Icon name="chevron-up" />
+          </button>
+          <button type="button" onClick={() => stepFind(1)} disabled={matches.length === 0} title={tr("view.pdf.find_next")}>
+            <Icon name="chevron-down" />
+          </button>
+          <button type="button" onClick={closeFind} title={tr("view.pdf.find_close")}>
+            <Icon name="close" />
+          </button>
+        </div>
+      )}
       <div className="pdfview-scroll" ref={attachScroll} tabIndex={0} aria-label={tr("view.pdf.aria")}>
         {pages === 0 ? (
           <p className="pdfview-loading muted">{tr("view.pdf.loading")}</p>
@@ -476,6 +673,9 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
             <Icon name="chevron-down" />
           </button>
           <span className="pdfview-sep" />
+          <button type="button" className="pdfview-findbtn" onClick={openFind} title={tr("view.pdf.find")}>
+            <Icon name="search" />
+          </button>
           <button type="button" onClick={() => applyZoom(stepZoom(zoom, -1))} title={tr("view.pdf.zoom_out")}>
             <Icon name="dash" />
           </button>
