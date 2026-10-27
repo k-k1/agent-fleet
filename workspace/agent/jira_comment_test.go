@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -165,7 +166,7 @@ func TestJiraCommentBodySources(t *testing.T) {
 func TestParseJiraCommentArgsRejects(t *testing.T) {
 	for _, args := range [][]string{
 		{"issue", "comment", "edit", "T-1"},
-		{"issue", "comment", "add", "T-1", "5"},
+		{"issue", "comment", "frob", "T-1", "5"},
 		{"issue", "comment", "edit", "../x", "5"},
 		{"issue", "comment", "edit", "T-1", "5/../6"},
 		{"issue", "comment", "edit", "T-1", "5", "-b"},
@@ -225,6 +226,161 @@ func TestJiraMarkdownADFEmailLink(t *testing.T) {
 		raw, _ := json.Marshal(jiraMarkdownADF(md))
 		if !strings.Contains(string(raw), `"href":"mailto:x@y.example"`) {
 			t.Errorf("%q: %s", md, raw)
+		}
+	}
+}
+
+func TestJiraCommentAddPostsADF(t *testing.T) {
+	c, calls := commentStub(t, 201, `{"id":"10077"}`)
+	rc, out, errs := runComment(c, "", "issue", "comment", "add", "T-1", "認証（`/api/auth`）で送る", "--no-input")
+	if rc != 0 {
+		t.Fatalf("rc=%d err=%q", rc, errs)
+	}
+	if len(*calls) != 1 || (*calls)[0].method != "POST" || (*calls)[0].path != "/rest/api/3/issue/T-1/comment" {
+		t.Fatalf("calls = %+v", *calls)
+	}
+	got, _ := json.Marshal((*calls)[0].body["body"].(map[string]any)["content"])
+	want := `[{"content":[{"text":"認証（","type":"text"},{"marks":[{"type":"code"}],"text":"/api/auth","type":"text"},{"text":"）で送る","type":"text"}],"type":"paragraph"}]`
+	if string(got) != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+	if _, ok := (*calls)[0].body["properties"]; ok {
+		t.Errorf("properties sent without --internal")
+	}
+	if !strings.Contains(out, "?focusedCommentId=10077") {
+		t.Errorf("stdout %q", out)
+	}
+}
+
+// jira-cli's precedence: a positional body wins over -T, then stdin; --internal is the JSM flag.
+func TestJiraCommentAddBodySources(t *testing.T) {
+	dir := t.TempDir()
+	tmpl := dir + "/c.md"
+	if err := os.WriteFile(tmpl, []byte("fromfile"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		stdin, want string
+		args        []string
+	}{
+		{"", "arg", []string{"T-1", "arg", "-T", tmpl}},
+		{"", "fromfile", []string{"T-1", "--template", tmpl}},
+		{"piped", "piped", []string{"T-1"}},
+		{"piped", "piped", []string{"T-1", "-T", "-"}},
+		{"piped", "piped", []string{"T-1", ""}},
+	} {
+		c, calls := commentStub(t, 201, `{"id":"1"}`)
+		rc, _, errs := runComment(c, tc.stdin, append([]string{"issue", "comment", "add"}, tc.args...)...)
+		if rc != 0 || len(*calls) != 1 {
+			t.Fatalf("%v: rc=%d err=%q", tc.args, rc, errs)
+		}
+		got, _ := json.Marshal((*calls)[0].body["body"])
+		if !strings.Contains(string(got), `"text":"`+tc.want+`"`) {
+			t.Errorf("%v: body %s, want %q", tc.args, got, tc.want)
+		}
+	}
+	c, calls := commentStub(t, 201, `{"id":"1"}`)
+	if rc, _, errs := runComment(c, "", "issue", "comment", "add", "T-1", "x", "--internal"); rc != 0 {
+		t.Fatalf("--internal: rc=%d err=%q", rc, errs)
+	}
+	props, _ := json.Marshal((*calls)[0].body["properties"])
+	if string(props) != `[{"key":"sd.public.comment","value":{"internal":true}}]` {
+		t.Errorf("--internal: properties %s", props)
+	}
+}
+
+func TestJiraCommentAddRefusals(t *testing.T) {
+	c, calls := commentStub(t, 201, `{}`)
+	for _, args := range [][]string{
+		{"issue", "comment", "add", "T-1"},           // no body at all
+		{"issue", "comment", "add", "T-1", "x", "y"}, // too many words
+		{"issue", "comment", "add", "1", "x"},        // a bare number is jira-cli's to complete
+	} {
+		if rc, _, _ := runComment(c, "", args...); rc != 2 {
+			t.Errorf("%v: rc=%d, want 2", args, rc)
+		}
+	}
+	if len(*calls) != 0 {
+		t.Errorf("a refused command line made calls: %+v", *calls)
+	}
+	c, _ = commentStub(t, 403, `{"errorMessages":["no"]}`)
+	rc, _, errs := runComment(c, "", "issue", "comment", "add", "T-1", "x")
+	if rc != 1 || !strings.Contains(errs, "add a comment to T-1 (403)") {
+		t.Errorf("403: rc=%d err=%q", rc, errs)
+	}
+}
+
+// A POST cut off in transport is not re-sent, and the message says the comment may exist.
+func TestJiraCommentAddTransportFailureIsNotRetried(t *testing.T) {
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		hj, _ := w.(http.Hijacker)
+		conn, _, _ := hj.Hijack()
+		conn.Close()
+	}))
+	t.Cleanup(srv.Close)
+	c := &secrets.JiraCreds{Site: srv.URL, Email: "me@example.com", Token: "fake-api-tok"}
+	rc, _, errs := runComment(c, "", "issue", "comment", "add", "T-1", "x")
+	if rc != 1 || n != 1 || !strings.Contains(errs, "may have been added") {
+		t.Errorf("rc=%d attempts=%d err=%q", rc, n, errs)
+	}
+}
+
+// An unknown or malformed flag is refused before any call, as cobra refuses it: a mistyped
+// --internal must not turn into a public comment.
+func TestJiraCommentAddRejectsUnknownFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"issue", "comment", "add", "T-1", "secret", "--internl"},
+		{"issue", "comment", "add", "T-1", "secret", "--internal=maybe"},
+		{"issue", "comment", "add", "T-1", "secret", "--help"},
+		{"issue", "comment", "add", "T-1", "secret", "-h"},
+		{"issue", "comment", "add", "T-1", "secret", "-h=true"},
+		{"issue", "comment", "add", "T-1", "secret", "--debug"},
+		{"issue", "comment", "add", "T-1", "secret", "--web=false", "--web"},
+		{"issue", "comment", "add", "T-1", "secret", "--help=false", "-h"},
+		{"issue", "comment", "add", "T-1", "secret", "--web"},
+		{"issue", "comment", "add", "T-1", "-b", "secret"},
+		{"issue", "comment", "add", "T-1", "secret", "-x"},
+		{"issue", "comment", "edit", "T-1", "5", "-b", "x", "--internal"},
+	} {
+		c, calls := commentStub(t, 201, `{"id":"1"}`)
+		if rc, _, errs := runComment(c, "", args...); rc != 2 || len(*calls) != 0 {
+			t.Errorf("%v: rc=%d calls=%d err=%q, want 2 and no call", args, rc, len(*calls), errs)
+		}
+	}
+	for _, tc := range []struct {
+		flag     string
+		internal bool
+	}{{"--internal=FALSE", false}, {"--internal=0", false}, {"--internal=T", true}, {"--no-input=false", false},
+		{"--web=false", false}, {"--debug=false", false}, {"--help=false", false}, {"-h=false", false},
+		{"--web --web=false", false}, {"--web=true --web=false", false}, {"-h --help=false", false}} {
+		c, calls := commentStub(t, 201, `{"id":"1"}`)
+		args := append([]string{"issue", "comment", "add", "T-1", "x"}, strings.Fields(tc.flag)...)
+		if rc, _, errs := runComment(c, "", args...); rc != 0 || len(*calls) != 1 {
+			t.Fatalf("%s: rc=%d err=%q", tc.flag, rc, errs)
+		}
+		if _, got := (*calls)[0].body["properties"]; got != tc.internal {
+			t.Errorf("%s: internal property sent=%v, want %v", tc.flag, got, tc.internal)
+		}
+	}
+}
+
+// Emphasis that starts or ends with full-width punctuation next to Japanese text is still
+// emphasis (the CJK-friendly flanking rules); ASCII text parses as plain CommonMark.
+func TestJiraMarkdownADFCJKFriendlyEmphasis(t *testing.T) {
+	for _, tc := range []struct{ md, want string }{
+		{"**「すべて」**です", `{"marks":[{"type":"strong"}],"text":"「すべて」","type":"text"}`},
+		{"これは**「強調」**。", `{"marks":[{"type":"strong"}],"text":"「強調」","type":"text"}`},
+		{"*（注）*を参照", `{"marks":[{"type":"em"}],"text":"（注）","type":"text"}`},
+		{"~~「旧」~~です", `{"marks":[{"type":"strike"}],"text":"「旧」","type":"text"}`},
+		{"- **すべて**。次へ", `{"marks":[{"type":"strong"}],"text":"すべて","type":"text"}`},
+		{"a**b**c", `{"marks":[{"type":"strong"}],"text":"b","type":"text"}`},
+		{"foo**bar", `[{"text":"foo**","type":"text"},{"text":"bar","type":"text"}]`},
+	} {
+		got, _ := json.Marshal(jiraMarkdownADF(tc.md)["content"])
+		if !strings.Contains(string(got), tc.want) {
+			t.Errorf("%s: %s\nlacks %s", tc.md, got, tc.want)
 		}
 	}
 }

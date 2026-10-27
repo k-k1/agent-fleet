@@ -13,6 +13,7 @@ package main
 import (
 	"strings"
 
+	cjkfriendly "github.com/tats-u/goldmark-cjk-friendly/v2"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
@@ -23,7 +24,12 @@ import (
 
 // jiraMarkdown parses what jira-cli's own converter accepted, tables aside: strikethrough and
 // bare URLs. A table degrades to text.
-var jiraMarkdown = goldmark.New(goldmark.WithExtensions(extension.Strikethrough, extension.Linkify))
+//
+// Emphasis and strikethrough follow the CJK-friendly amendment to CommonMark's flanking rules:
+// under the plain rules `**「すべて」**です` is not bold, because a delimiter run that touches
+// punctuation inside and a letter outside cannot open or close, and Japanese has no spaces to put
+// there. ASCII text parses as before.
+var jiraMarkdown = goldmark.New(goldmark.WithExtensions(cjkfriendly.CJKFriendlyEmphasisAndStrikethrough, extension.Linkify))
 
 // adfUnescape resolves what the source still holds raw (a backslash escape, a character
 // reference): goldmark's renderer does it, but this reads the segments directly.

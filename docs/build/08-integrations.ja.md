@@ -283,6 +283,27 @@ Jira は git でなく作業項目インボックス
   （`jira_adf.go`、goldmark）。jira-cli の wiki 変換は通さない（#2476）ので、編集で崩れたコメントを
   直せる。`--debug` の実行は断る。利用者自身の設定（次の項目）はそのまま `exec` し、jira が
   「そのコマンドはない」と答える。
+- **本文を ADF で送る（`comment add`、`issue create -b/-T`、`issue edit -b`）**（#2809）: jira-cli は
+  これらを v2 の wiki 記法で送る。wiki 記法の `{{code}}` と `*bold*` は単語の区切りでしか効かず、
+  日本語の文字や全角の括弧は区切りにならない。当方の設定なら、コマンドラインの本文・`-T`・端末でない
+  標準入力のどれかがあり、jira-cli が確認を出さない（標準入力が端末でない、`-T -`、または有効な `--no-input`）
+  `comment add` は `workspace-agent jira-comment` へ渡す（`/rest/api/3/issue/KEY/comment` に POST。
+  `--internal` は `sd.public.comment` プロパティ。POST は再送しない。知らないフラグや pflag が受け付けない
+  真偽値は、送る前に拒否する）。本文があり、プロンプトが出ない（標準入力が端末でないか、有効な `--no-input`）
+  `create` / `edit` は、まず本文を読む。この読み取りも書き込みと同じ時間制限の下で行い、閉じないパイプなら
+  何も送らずに 124 で終える。次に `-b` / `-T` を抜き、標準入力を `/dev/null` にして jira-cli を動かし、そのあと本文を
+  `workspace-agent jira-description KEY [--skip-notify]` に渡す（`fields.description` を PUT。時間制限と
+  シグナルの転送は同じ）。create のキーは jira-cli の `/browse/KEY` 行か `--raw` の JSON から読む。読めないときや
+  PUT が失敗したときは、課題はあると伝えて終了コード 3（時間切れなら 124）で終わり、create は決して再実行しない。
+  create の前に `workspace-agent jira-description-required PROJECT TYPE` が createmeta（ページ分割された
+  `/issue/createmeta/{project}/issuetypes[/{id}]`）を読み、説明文が必須なら本文を create に付けて jira-cli 自身の
+  変換で送る（本文は標準入力から渡し、argv は変えない）。それでも `- description:` で拒否された create は再送しない。jira-cli は
+  フィールドのエラーを HTTP ステータスなしで出すので、「拒否されて未作成」と「作成後の失敗」を区別できないため。
+  代わりに、3 つの ADF 経路をすべて止める `AF_JIRA_ADF=0` を案内する。本文の読み取りエラーでは何も送らずに止める。
+  本文だけを変える edit は jira-cli を動かさない。フラグは pflag と同じ規則で読む（最後の値が勝つ、`-h=v`、
+  `-hpAB` のような短縮フラグのまとまり。知らない短縮フラグがあれば jira-cli に任せる）。ヘルプ、有効な `--web`、数字だけのキー（jira-cli が設定から補う）、`edit -T` は
+  jira-cli に任せる。Markdown の解析は CommonMark の flanking 規則に CJK 向けの修正を加えたもの
+  （`goldmark-cjk-friendly`）なので、`**「x」**です` も太字になる。
 - **利用者自身の設定が勝つ**: 明示の `JIRA_API_TOKEN` か `JIRA_SERVER`、自分で `--server` /
   `--login` / `--installation` / `--auth-type` を渡した `jira init`、または管理ディレクトリの
   外の設定（どの書き方の `-c` でも、`JIRA_CONFIG_FILE` でも、jira 自身の既定の
