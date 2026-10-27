@@ -132,6 +132,8 @@ func startFreshLocked(slot string) error {
 	status.Remove(slot)
 	status.RemoveCompletionKey(slot)
 	sids.Remove(slot)
+	// The notes describe the conversation just set aside; they must not label the new one.
+	status.RemoveRestoreNotes(slot)
 	return nil
 }
 

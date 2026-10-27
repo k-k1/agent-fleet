@@ -354,7 +354,10 @@ function MirrorViewBody({
   // block, and MirrorView re-renders for reasons that have nothing to do with the conversation —
   // a keystroke in the composer, a scroll flag, a chip. Recomputing then also hands every block a
   // new identity, which is what makes the memoized TranscriptTurn below actually skip.
-  const grouped = useMemo(() => groupWithQueue(turns, pendingSends, queueShown), [turns, pendingSends, queueShown]);
+  const grouped = useMemo(
+    () => groupWithQueue(turns, pendingSends, queueShown, restoredAt.map((s) => Date.parse(s)).filter(Number.isFinite)),
+    [turns, pendingSends, queueShown, restoredAt],
+  );
   // useStableBlockIds, not groupTurns' own numbering: a backward page can prepend older rows of
   // the block the reader is IN, and the block must not change its name (React key / data-turn-idx)
   // under them when it does. See blockIdentity.ts.

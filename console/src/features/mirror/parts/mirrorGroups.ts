@@ -17,7 +17,12 @@ import type { SendEcho } from "./sendEcho.ts";
 //
 // With queuedItems (ADR 0105) each entry also brings its id — the bubble's actions act on it —
 // and its origin, so a queued peer or schedule input wears the badge it will wear once it runs.
-export function groupWithQueue(turns: Turn[], pendingSends: SendEcho[], queueShown: ReturnType<typeof queueEntries>) {
+export function groupWithQueue(
+  turns: Turn[],
+  pendingSends: SendEcho[],
+  queueShown: ReturnType<typeof queueEntries>,
+  breaks: number[] = [],
+) {
   const queuedLeft = [...queueShown];
   const takeQueued = (text: string) => {
     const i = queuedLeft.findIndex((q) => q.text.trim() === text);
@@ -59,5 +64,5 @@ export function groupWithQueue(turns: Turn[], pendingSends: SendEcho[], queueSho
   });
   const extras = inQueueOrder([...queuedRows, ...echoRows], queueShown);
   const baseTurns = coalesceUserActions(turns);
-  return groupTurns(extras.length ? [...baseTurns, ...extras] : baseTurns);
+  return groupTurns(extras.length ? [...baseTurns, ...extras] : baseTurns, breaks);
 }

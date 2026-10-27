@@ -279,7 +279,10 @@ export function useTranscriptPoll({
             setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
             setPendingApproval(isPendingApproval(d.pendingApproval) ? d.pendingApproval : null);
             setCarried(d.carried && typeof d.carried === "object" ? (d.carried as CarriedInteraction) : null);
-            setRestoredAt(restoreNoteStamps(d.transcriptRestoredAt));
+            // Keep the old array when nothing changed: it keys the block memo in MirrorView, and a fresh
+            // array every poll would rebuild every block each time.
+            const stamps = restoreNoteStamps(d.transcriptRestoredAt);
+            setRestoredAt((prev) => (prev.join("|") === stamps.join("|") ? prev : stamps));
             // Mode comes from the terminal (paneMode) in real time, so trust every poll —
             // the optimistic set on click just gives instant feedback until this confirms.
             const nextMode = typeof d.mode === "string" ? d.mode : "";

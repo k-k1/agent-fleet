@@ -10,6 +10,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 // backupFixture is a claude session with a meta, a finished turn on record and one log in its
@@ -237,6 +238,34 @@ func TestStartFreshSetsAsideBackupAndRemoveClearsIt(t *testing.T) {
 	}
 	if left, _ := filepath.Glob(slotDir + "*"); len(left) != 0 {
 		t.Fatalf("backup left after removal: %v", left)
+	}
+}
+
+// A fresh start replaces the conversation the restore notes talk about, so they go with it;
+// a StartFresh that finds the log in place changes nothing and keeps them.
+func TestStartFreshClearsRestoreNotesOnlyWhenItResets(t *testing.T) {
+	_, m, sid, logPath := backupFixture(t, "bk-fresh-notes")
+	mustBackup(t, m)
+	if err := os.Remove(logPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := launchOf(t, m); err != nil { // restores
+		t.Fatal(err)
+	}
+	if err := status.AddRestoreNote(sid); err != nil {
+		t.Fatal(err)
+	}
+	if started, err := StartFreshIfLost(sid); err != nil || started { // log is back: nothing to reset
+		t.Fatalf("StartFreshIfLost = %v, %v; want no reset", started, err)
+	}
+	if len(status.ReadRestoreNotes(sid)) != 1 {
+		t.Fatalf("a stale fresh request dropped the notes: %v", status.ReadRestoreNotes(sid))
+	}
+	if err := StartFresh(sid); err != nil {
+		t.Fatal(err)
+	}
+	if got := status.ReadRestoreNotes(sid); len(got) != 0 {
+		t.Fatalf("notes survived a fresh start: %v", got)
 	}
 }
 
