@@ -700,6 +700,11 @@ describe("a slash command sent with an attachment (#2823)", () => {
     expect(el.querySelectorAll(".mt-imgs .mt-img")).toHaveLength(1);
   });
 
+  it("keeps a quoted instruction as args when nothing was attached", () => {
+    const el = render(cmd(`"Open the following file(s) with the Read tool:" という指示を検討して`), caps);
+    expect(el.querySelector(".mt-cmd-args")?.textContent).toBe(`"Open the following file(s) with the Read tool:" という指示を検討して`);
+  });
+
   it("leaves plain args untouched", () => {
     const el = render(cmd("review 1110"), caps);
     expect(el.querySelector(".mt-cmd-args")?.textContent).toBe("review 1110");

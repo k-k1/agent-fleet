@@ -560,7 +560,8 @@ function TranscriptTurnImpl({
             const args = p.info || "";
             const at = args.lastIndexOf(FILE_PROMPT);
             const { images, files } = at >= 0 ? splitPastedImages(args.slice(at)) : { images: [], files: [] };
-            const text = at >= 0 ? args.slice(0, at).trim() : args;
+            // An instruction with no attachment path after it is the member's own words.
+            const text = images.length || files.length ? args.slice(0, at).trim() : args;
             return (
               <Fragment key={i}>
                 <CmdChip name={p.text} args={text} />
