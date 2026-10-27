@@ -783,7 +783,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "instr.start_ws": "Start the workspace",
   "keys.cmd.newImagegenStudio": "New image studio",
   "set.tab_skills": "Skills",
-  "skills.intro": "The personal skills each agent reads in every session: where each one lives, which copy wins, and what it says. Read-only; edit the files and sessions started afterwards pick the change up. Skills kept in a repository are not listed here.",
+  "skills.intro": "The personal skills each agent reads in every session: where each one lives, which copy wins, and what it says. Read-only; edit the files and sessions started afterwards pick the change up. Skills kept in a repository are not listed here; the repository's right-click menu has its own \"Skills…\" view.",
   "skills.ws_required_hint": "Skills are files inside the workspace, so they can only be shown while it runs.",
   "skills.load_failed": "Could not load the skills",
   "skills.kind_nav": "Agent",

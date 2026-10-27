@@ -427,7 +427,10 @@ Instructions come in three layers, and this setting is the **middle** one.
 Two settings cover part of this: **⚙Settings → "Agent instructions"** is your global `CLAUDE.md`
 (see above) and **⚙Settings → "MCP servers (used by sessions)"** covers MCP. Personal **skills** can be viewed in
 **⚙Settings → "Skills"** (read-only; Codex, OpenCode and Muse as well as Claude, with where each file
-lives, which copy wins and what it says). Personal **hooks and subagents** have no settings screen. In a Workspace they are plain files in Claude Code's configuration
+lives, which copy wins and what it says). The skills a **repository** gives each agent are under the
+repository's right-click menu → **"Skills…"** in the project tree (read-only; per agent, the folders it reads
+and whether they exist, which copy wins, the file's content, and a Subdir field that shows how a Subdir launch
+changes the set; same-named personal skills link back to the screen above). Personal **hooks and subagents** have no settings screen. In a Workspace they are plain files in Claude Code's configuration
 folder, `/var/lib/af/claude` (run `echo $CLAUDE_CONFIG_DIR` in a shell to confirm the path on your
 deployment). It is what `~/.claude` is on your own machine.
 

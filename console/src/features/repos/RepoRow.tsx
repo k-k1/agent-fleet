@@ -41,6 +41,9 @@ const StartStudioModal = lazy(() =>
   import("../imagegen/parts/StartStudioModal.tsx").then((m) => ({ default: m.StartStudioModal })),
 );
 
+// Loaded on first use too: it carries the skills viewer (Markdown renderer included).
+const RepoSkillsModal = lazy(() => import("./RepoSkillsModal.tsx").then((m) => ({ default: m.RepoSkillsModal })));
+
 // Provider display: known SaaS hosts get a friendly label; unknown slugs show as-is.
 const PROVIDER_LABEL: Record<string, string> = {
   github: "GitHub",
@@ -148,6 +151,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, claudeExpired = false, run
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [branchOpen, setBranchOpen] = useState(false);
   const [projectOpen, setProjectOpen] = useState(false);
+  const [skillsOpen, setSkillsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const myShares = useMySharesStore((st) => st.shares);
   const isShared = myShares.some((sh) => (sh.scope.type === "repo" || sh.scope.type === "worktree") && sh.scope.key === r.workingCopyId);
@@ -546,6 +550,12 @@ export function RepoRow({ r, kinds = repoLaunchKinds, claudeExpired = false, run
                 <Icon name="gear" /> {tr("repo.project_settings")}
               </button>
             </li>
+            {/* Read-only view of the skills this working copy gives each agent (#2795). */}
+            <li>
+              <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); setSkillsOpen(true); }}>
+                <Icon name="book" /> {tr("repo.skills")}
+              </button>
+            </li>
             {/* Session sharing (docs/log/59): a working copy that cannot hold a persistent
                 marker (read-only, corrupted, …) has no workingCopyId and so cannot be a
                 repo/worktree-level share target (the same constraint as ShareCreateModal's
@@ -667,6 +677,11 @@ export function RepoRow({ r, kinds = repoLaunchKinds, claudeExpired = false, run
         />
       )}
       {projectOpen && <ProjectModal repo={r.name} onClose={() => setProjectOpen(false)} />}
+      {skillsOpen && (
+        <Suspense fallback={null}>
+          <RepoSkillsModal repo={r.name} onClose={() => setSkillsOpen(false)} />
+        </Suspense>
+      )}
       {shareOpen && r.workingCopyId && (
         <ShareCreateModal
           initialTarget={`${r.worktree ? "worktree" : "repo"}:${r.workingCopyId}`}

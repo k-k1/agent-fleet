@@ -1,6 +1,8 @@
 package sessionx
 
 import (
+	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,8 +26,8 @@ import (
 //
 // The roots are the user-level halves of the picker's own tables (claudeSkills, codexSkills,
 // opencodeSkills, userSkillRoots) plus opencode's skills root, where fleetskills writes. A kind
-// with no user root of its own (cursor, agy, kiro, copilot, lcpp) is not listed. Repository
-// roots are #2795.
+// with no user root of its own (cursor, agy, kiro, copilot, lcpp) is not listed. The
+// repository's roots are the same shapes answered on ?repo= (skills_repo_catalog.go).
 //
 // The Files viewer cannot show these: $CLAUDE_CONFIG_DIR is outside the browse root and
 // ~/.codex is denylisted, because credentials and transcripts sit next to the skills. So the
@@ -38,6 +40,15 @@ type catalogRoot struct {
 	Scope  string `json:"scope"` // user | cli
 	Form   string `json:"form"`  // skills (<dir>/*/SKILL.md) | commands (<dir>/**/*.md)
 	Exists bool   `json:"exists"`
+	// Rel is the root's path relative to the working copy (repository view only; "../" for a
+	// level above it).
+	Rel string `json:"rel,omitempty"`
+	// fence, when set, is the directory every file of this root must resolve inside after
+	// symlinks (repository view only). An entry that leaves it is listed without being read.
+	fence string
+	// fenceRoot, when set, is the already opened fence directory; the request holds it so the
+	// fence cannot be renamed away and replaced by a link between the checks and the reads.
+	fenceRoot *os.Root
 	// opencode marks opencode's skills root, which is discovered by its own rules
 	// (opencodeSkillFiles) rather than as a flat <dir>/*/SKILL.md tree.
 	opencode bool
@@ -58,6 +69,14 @@ type catalogSkill struct {
 	Root          string `json:"root,omitempty"`
 	Path          string `json:"path,omitempty"`
 	UserInvocable bool   `json:"userInvocable"`
+	// Rel is Path relative to the working copy (repository view only).
+	Rel string `json:"rel,omitempty"`
+	// Outside marks an entry whose file resolves outside the root's fence (a symlink leaving the
+	// working copy): it is listed by name only, never read or served.
+	Outside bool `json:"outside,omitempty"`
+	// AlsoPersonal says the same kind has a personal skill of this name (repository view only);
+	// for claude and codex the repository copy wins.
+	AlsoPersonal bool `json:"alsoPersonal,omitempty"`
 	// ShadowedBy is the Path (or, for a bundled winner, the name) of the entry the CLI uses
 	// instead: within a kind the first root that has the name wins, as in scanSkillRoots.
 	// claude has one slash namespace for skills and commands; every other kind keeps them apart.
@@ -121,43 +140,17 @@ type skillFileWire struct {
 }
 
 func HandleSkillCatalog(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Has("repo") {
+		handleRepoSkillCatalog(w, r)
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, skillCatalogWire{Kinds: skillCatalog()})
 }
 
 func skillCatalog() []catalogKind {
 	out := []catalogKind{}
 	for _, k := range personalSkillRoots() {
-		ck := catalogKind{Kind: k.kind, Roots: []catalogRoot{}, Skills: []catalogSkill{}}
-		winner := map[string]string{}
-		for _, root := range k.roots {
-			fi, err := os.Stat(root.Dir)
-			root.Exists = err == nil && fi.IsDir()
-			ck.Roots = append(ck.Roots, root)
-			if !root.Exists {
-				continue
-			}
-			var items []catalogSkill
-			if root.Form == "skills" {
-				items = catalogSkillEntries(root)
-			} else {
-				items = catalogCommandEntries(root)
-			}
-			for _, it := range items {
-				if len(ck.Skills) >= maxCatalogPerKind {
-					break
-				}
-				key := it.Name
-				if k.kind != session.KindClaude {
-					key = it.Type + ":" + it.Name
-				}
-				if w, ok := winner[key]; ok {
-					it.ShadowedBy = w
-				} else {
-					winner[key] = it.Path
-				}
-				ck.Skills = append(ck.Skills, it)
-			}
-		}
+		ck, winner := fillCatalogKind(k.kind, k.roots)
 		if k.kind == session.KindClaude {
 			for _, nm := range claudeBundledSkills() {
 				if nm == "" || len(ck.Skills) >= maxCatalogPerKind {
@@ -178,27 +171,86 @@ func skillCatalog() []catalogKind {
 	return out
 }
 
+// fillCatalogKind reads one kind's roots in precedence order and marks the entries an earlier
+// root already claimed. It is shared by the personal and the repository view. The returned map
+// is the winner's Path by shadowing key.
+func fillCatalogKind(kind string, roots []catalogRoot) (catalogKind, map[string]string) {
+	ck := catalogKind{Kind: kind, Roots: []catalogRoot{}, Skills: []catalogSkill{}}
+	winner := map[string]string{}
+	for _, root := range roots {
+		root.Exists = root.dirExists()
+		ck.Roots = append(ck.Roots, root)
+		if !root.Exists {
+			continue
+		}
+		var items []catalogSkill
+		if root.Form == "skills" {
+			items = catalogSkillEntries(root)
+		} else {
+			items = catalogCommandEntries(root)
+		}
+		for _, it := range items {
+			if len(ck.Skills) >= maxCatalogPerKind {
+				break
+			}
+			key := shadowKey(kind, it)
+			if w, ok := winner[key]; ok {
+				it.ShadowedBy = w
+			} else {
+				winner[key] = it.Path
+			}
+			ck.Skills = append(ck.Skills, it)
+		}
+	}
+	return ck, winner
+}
+
+// dirExists reports whether the root is a directory, resolved inside the fence when it has one.
+func (r catalogRoot) dirExists() bool {
+	sf, err := r.openFS()
+	if err != nil {
+		return false
+	}
+	defer sf.close()
+	return sf.isDir(r.Dir)
+}
+
 // catalogSkillEntries reads <root>/*/SKILL.md like readSkillEntries, but keeps the entries the
 // picker hides and marks AF's own fleet skills.
 func catalogSkillEntries(root catalogRoot) []catalogSkill {
 	if root.opencode {
 		return opencodeCatalogEntries(root)
 	}
-	ents, err := os.ReadDir(root.Dir)
+	sf, err := root.openFS()
+	if err != nil {
+		return nil
+	}
+	defer sf.close()
+	ents, err := sf.readDir(root.Dir)
 	if err != nil {
 		return nil
 	}
 	out := []catalogSkill{}
 	for _, e := range ents {
 		dir := filepath.Join(root.Dir, e.Name())
-		// A skill folder may be a symlink (codex's .codex/skills bridge links are), so Stat
+		// A skill folder may be a symlink (codex's .codex/skills bridge links are), so stat
 		// rather than trusting the dirent type.
-		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		if !sf.isDir(dir) {
+			// A link that does not resolve inside the fence (out of the working copy, or an
+			// absolute one): named, never read.
+			if sf.fenced() && sf.isLink(dir) {
+				out = append(out, catalogSkill{Name: e.Name(), Type: "skill", Scope: root.Scope, Root: root.Dir, Path: filepath.Join(dir, "SKILL.md"), UserInvocable: true, Outside: true})
+			}
 			continue
 		}
 		p := filepath.Join(dir, "SKILL.md")
-		b, err := os.ReadFile(p)
+		b, err := sf.read(p)
 		if err != nil {
+			// Present but not openable beneath the fence: a link leading out (an absolute link
+			// counts, even to a place inside). Listed by name only.
+			if sf.fenced() && sf.present(p) {
+				out = append(out, catalogSkill{Name: e.Name(), Type: "skill", Scope: root.Scope, Root: root.Dir, Path: p, UserInvocable: true, Outside: true})
+			}
 			continue
 		}
 		fm, _ := splitFrontmatter(string(b))
@@ -207,7 +259,9 @@ func catalogSkillEntries(root catalogRoot) []catalogSkill {
 			nm = e.Name()
 		}
 		scope := root.Scope
-		if strings.Contains(string(b), fleetskills.Marker) {
+		// A repository's own SKILL.md may quote the marker; only the personal view tells the
+		// files Agent Fleet wrote apart by it.
+		if !sf.fenced() && strings.Contains(string(b), fleetskills.Marker) {
 			scope = "fleet"
 		}
 		out = append(out, catalogSkill{
@@ -219,26 +273,53 @@ func catalogSkillEntries(root catalogRoot) []catalogSkill {
 			Root:          root.Dir,
 			Path:          p,
 			UserInvocable: !isNo(fm["user-invocable"]),
-			Files:         skillFolderFiles(dir),
+			Files:         sf.folderFiles(dir),
 		})
 	}
 	return out
 }
 
 func catalogCommandEntries(root catalogRoot) []catalogSkill {
+	sf, err := root.openFS()
+	if err != nil {
+		return []catalogSkill{}
+	}
+	defer sf.close()
 	out := []catalogSkill{}
-	for _, it := range readCommandEntriesWithPath(root.Dir) {
+	base := sf.name(root.Dir)
+	if base == "" {
+		return out
+	}
+	_ = fs.WalkDir(sf.fsys, base, func(n string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
+			return nil
+		}
+		p := filepath.Join(root.Dir, filepath.FromSlash(strings.TrimPrefix(strings.TrimPrefix(n, base), "/")))
+		name := strings.TrimSuffix(d.Name(), ".md")
+		b, err := sf.read(p)
+		if err != nil {
+			if sf.fenced() && sf.present(p) {
+				out = append(out, catalogSkill{Name: name, Type: "command", Scope: root.Scope, Root: root.Dir, Path: p, UserInvocable: true, Outside: true})
+			}
+			return nil
+		}
+		meta, _ := splitFrontmatter(string(b))
 		out = append(out, catalogSkill{
-			Name:          it.Name,
-			Description:   it.Description,
-			ArgumentHint:  it.ArgumentHint,
+			Name:          name,
+			Description:   meta["description"],
+			ArgumentHint:  meta["argument-hint"],
 			Type:          "command",
 			Scope:         root.Scope,
 			Root:          root.Dir,
-			Path:          it.Path,
+			Path:          p,
 			UserInvocable: true,
 		})
-	}
+		if len(out) >= maxSessionSkills {
+			return fs.SkipAll
+		}
+		return nil
+	})
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
@@ -415,13 +496,29 @@ func skillFolderFiles(dir string) []string {
 // listed root (codex's bridge links point at claude's skills) but never out of them, which is
 // what keeps $CLAUDE_CONFIG_DIR/.credentials.json and ~/.codex/auth.json unreachable.
 func HandleSkillFile(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Has("repo") {
+		handleRepoSkillFile(w, r)
+		return
+	}
 	p := r.URL.Query().Get("path")
 	full, ok := skillFilePath(p)
 	if !ok {
 		httpx.WriteErr(w, http.StatusForbidden, "not_a_skill_file", "path is not inside a skills folder")
 		return
 	}
-	fi, err := os.Stat(full)
+	f, err := os.Open(full)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such file")
+		return
+	}
+	defer f.Close()
+	serveSkillFile(w, f, p)
+}
+
+// serveSkillFile answers with an already opened, already authorised file under the caller's
+// name for the path.
+func serveSkillFile(w http.ResponseWriter, f fs.File, name string) {
+	fi, err := f.Stat()
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such file")
 		return
@@ -434,8 +531,8 @@ func HandleSkillFile(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusRequestEntityTooLarge, "too_large", "file is too large to show")
 		return
 	}
-	b, err := os.ReadFile(full)
-	if err != nil {
+	b, err := io.ReadAll(io.LimitReader(f, maxSkillFileBytes+1))
+	if err != nil || len(b) > maxSkillFileBytes {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "cannot read file")
 		return
 	}
@@ -443,7 +540,7 @@ func HandleSkillFile(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusUnsupportedMediaType, "binary", "not a text file")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, skillFileWire{Path: p, Content: string(b), Size: len(b)})
+	httpx.WriteJSON(w, http.StatusOK, skillFileWire{Path: name, Content: string(b), Size: len(b)})
 }
 
 // skillFilePath decides whether p may be served. Lexically it must be below a skills-form root
@@ -461,18 +558,7 @@ func skillFilePath(p string) (string, bool) {
 	}
 	lexical := false
 	for _, root := range roots {
-		rel, err := filepath.Rel(root.Dir, p)
-		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			continue
-		}
-		if root.Form == "skills" && strings.Contains(rel, string(filepath.Separator)) {
-			lexical = true
-		}
-		// opencode also reads a loose <root>/<id>.md as a skill.
-		if root.opencode && strings.HasSuffix(rel, ".md") {
-			lexical = true
-		}
-		if root.Form == "commands" && strings.HasSuffix(rel, ".md") {
+		if root.lexicallyHolds(p) {
 			lexical = true
 		}
 	}
@@ -485,4 +571,23 @@ func skillFilePath(p string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// lexicallyHolds reports whether the cleaned absolute p has the shape of a skill file of this
+// root: <root>/<skill>/<file> for a skills root, a .md for a commands root (or opencode's loose
+// <id>.md). The root directory itself and a loose file in a skills root do not.
+func (r catalogRoot) lexicallyHolds(p string) bool {
+	rel, err := filepath.Rel(r.Dir, p)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	switch {
+	case r.Form == "skills" && strings.Contains(rel, string(filepath.Separator)):
+		return true
+	case r.opencode && strings.HasSuffix(rel, ".md"):
+		return true
+	case r.Form == "commands" && strings.HasSuffix(rel, ".md"):
+		return true
+	}
+	return false
 }

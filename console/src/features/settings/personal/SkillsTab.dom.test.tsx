@@ -251,6 +251,15 @@ describe("SkillsTab links", () => {
 
 describe("resolveSkillLink", () => {
   const from = "/cfg/skills/handoff/SKILL.md";
+  it("keeps a working-copy-relative path relative, and its leading .. (a folder above the copy)", () => {
+    const above = "../.claude/skills/a/SKILL.md";
+    expect(resolveSkillLink("detail.md", above)).toBe("../.claude/skills/a/detail.md");
+    expect(resolveSkillLink("../../../x.md", above)).toBe("../x.md");
+    expect(resolveSkillLink("../../../../x.md", above)).toBe("../../x.md");
+    expect(resolveSkillLink("refs/n.md", ".claude/skills/a/SKILL.md")).toBe(".claude/skills/a/refs/n.md");
+    expect(resolveSkillLink("/etc/passwd", above)).toBeNull();
+  });
+
   it("resolves against the showing file's folder", () => {
     expect(resolveSkillLink("refs/notes.md", from)).toBe("/cfg/skills/handoff/refs/notes.md");
     expect(resolveSkillLink("./a%20b.md#top", from)).toBe("/cfg/skills/handoff/a b.md");

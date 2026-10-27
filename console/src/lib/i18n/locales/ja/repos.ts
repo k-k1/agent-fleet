@@ -1,5 +1,5 @@
 // 日本語 カタログ / ドメイン: repos
-// キー接頭辞: rp, repo, scm, pj, igb, proj, gitflow
+// キー接頭辞: rp, repo, repo_skills, scm, pj, igb, proj, gitflow
 //
 // ⚠️ 追記は**自分のドメインのファイルだけ**に行う（ADR 0067 決定 4）。分割前は 4,700 行の
 // 1 ファイルで、フロントの並列セッションが全員ここへ追記＝毎回確実に衝突していた。
@@ -506,4 +506,23 @@ export const repos = {
   "gitflow.err_invalid": "使えない値です: {detail}",
   "gitflow.err_failed": "設定を書き込めませんでした: {err}",
   "gitflow.err_partial": "書き込みが途中で止まりました（{err}）。書き込み済み: {keys}。もう一度保存するとすべて書き直します。",
+  "repo.skills": "スキル…",
+  "repo_skills.title": "{repo} のスキル",
+  "repo_skills.intro": "このワーキングコピーで各エージェントが見つけるもの（読むフォルダ・同名のうち優先される方・ファイルの中身）です。読み取り専用で、ファイルはリポジトリの一部なのでそちらで編集します。自分用のスキルは 設定 > スキル にあります。",
+  "repo_skills.subdir": "サブディレクトリ",
+  "repo_skills.subdir_ph": "空 = ワーキングコピーの直下（例: packages/app）",
+  "repo_skills.show": "表示",
+  "repo_skills.no_subdir": "このワーキングコピーに「{subdir}」というフォルダはありません。",
+  "repo_skills.no_roots": "このエージェントはリポジトリからスキルを読みません。",
+  "repo_skills.scope_user": "ワーキングコピーより上",
+  "repo_skills.not_present": "未作成",
+  "repo_skills.create": "例: {path} を作ると有効になります",
+  "repo_skills.none": "上のフォルダにスキルはありません。",
+  "repo_skills.group_project": "このリポジトリ内",
+  "repo_skills.group_user": "ワーキングコピーより上のフォルダ",
+  "repo_skills.outside_badge": "ワーキングコピー外",
+  "repo_skills.outside": "このエントリはワーキングコピーの外へ出るリンクなので、読み込みも表示もしません。",
+  "repo_skills.also_personal": "同名の個人スキルもあります。",
+  "repo_skills.open_personal": "個人スキルを開く",
+  "repo_skills.open_in_viewer": "ビューアで開く",
 };

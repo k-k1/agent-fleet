@@ -457,23 +457,62 @@ func claudeSkillDirs(cwd, dir string) []string {
 // working copy are real to the CLI but belong to the environment rather than to this repo, so
 // they are labelled "user".
 func claudeSkills(cwd, dir string) []sessionSkill {
-	roots := []skillRoot{}
-	for _, d := range claudeSkillDirs(cwd, dir) {
-		src := "project"
-		if !under(dir, d) {
-			src = "user"
-		}
-		base := filepath.Join(d, ".claude")
-		roots = append(roots,
-			skillRoot{filepath.Join(base, "skills"), src, "skills"},
-			skillRoot{filepath.Join(base, "commands"), src, "commands"},
-		)
-	}
 	userBase := claude.ConfigDir()
-	return scanSkillRoots(append(roots,
+	return scanSkillRoots(append(projectSkillRoots(session.KindClaude, cwd, dir),
 		skillRoot{filepath.Join(userBase, "skills"), "user", "skills"},
 		skillRoot{filepath.Join(userBase, "commands"), "user", "commands"},
 	), "/")
+}
+
+// projectSkillRoots is the repository side of every kind's discovery, in the CLI's precedence
+// order. The picker (claudeSkills and friends) and the Repository "Skills" view (#2795) both
+// start from this table, so the two cannot drift. A level above the working copy is real to the
+// CLI but belongs to the environment, hence source "user". Kinds with no repository roots return
+// nothing.
+//
+// opencode and cursor read the working copy root only: their discovery under a Subdir has not
+// been measured (see opencodeSkills). muse's native list comes from its live host, so the picker
+// never calls this for it; the view shows the one repository tree muse documents.
+func projectSkillRoots(kind, cwd, dir string) []skillRoot {
+	var roots []skillRoot
+	switch kind {
+	case session.KindClaude:
+		for _, d := range claudeSkillDirs(cwd, dir) {
+			src := "project"
+			if !under(dir, d) {
+				src = "user"
+			}
+			base := filepath.Join(d, ".claude")
+			roots = append(roots,
+				skillRoot{filepath.Join(base, "skills"), src, "skills"},
+				skillRoot{filepath.Join(base, "commands"), src, "commands"},
+			)
+		}
+	case session.KindCodex:
+		for _, d := range codexSkillDirs(cwd) {
+			src := "project"
+			if !under(dir, d) {
+				src = "user"
+			}
+			roots = append(roots,
+				skillRoot{filepath.Join(d, ".codex", "skills"), src, "skills"},
+				skillRoot{filepath.Join(d, ".agents", "skills"), src, "skills"},
+			)
+		}
+	case session.KindOpencode:
+		roots = []skillRoot{
+			{filepath.Join(dir, ".opencode", "command"), "project", "commands"},
+			{filepath.Join(dir, ".opencode", "commands"), "project", "commands"},
+		}
+	case session.KindCursor:
+		roots = []skillRoot{
+			{filepath.Join(dir, ".cursor", "commands"), "project", "commands"},
+			{filepath.Join(dir, ".cursor", "skills"), "project", "skills"},
+		}
+	case session.KindMuse:
+		roots = []skillRoot{{filepath.Join(dir, ".agents", "skills"), "project", "skills"}}
+	}
+	return roots
 }
 
 // codexSkillDirs: codex resolves project skills from the CWD up to the GIT ROOT and no further,
@@ -512,19 +551,8 @@ func gitRoot(p string) (string, bool) {
 // .codex/skills also holds the links the skill bridge (docs/log/50 §8) laid to claude skills;
 // os.ReadFile follows them like any other file, so they need no special case.
 func codexSkills(cwd, dir string) []sessionSkill {
-	roots := []skillRoot{}
-	for _, d := range codexSkillDirs(cwd) {
-		src := "project"
-		if !under(dir, d) {
-			src = "user"
-		}
-		roots = append(roots,
-			skillRoot{filepath.Join(d, ".codex", "skills"), src, "skills"},
-			skillRoot{filepath.Join(d, ".agents", "skills"), src, "skills"},
-		)
-	}
 	home := paths.CodexHome()
-	return scanSkillRoots(append(roots,
+	return scanSkillRoots(append(projectSkillRoots(session.KindCodex, cwd, dir),
 		skillRoot{filepath.Join(home, "skills"), "user", "skills"},
 		skillRoot{filepath.Join(home, "skills", ".system"), "cli", "skills"},
 	), "$")
@@ -540,12 +568,10 @@ func codexSkills(cwd, dir string) []sessionSkill {
 // is authoritative anyway.
 func opencodeSkills(dir string) []sessionSkill {
 	cfg := paths.OpencodeConfigDir()
-	return scanSkillRoots([]skillRoot{
-		{filepath.Join(dir, ".opencode", "command"), "project", "commands"},
-		{filepath.Join(dir, ".opencode", "commands"), "project", "commands"},
-		{filepath.Join(cfg, "command"), "user", "commands"},
-		{filepath.Join(cfg, "commands"), "user", "commands"},
-	}, "/")
+	return scanSkillRoots(append(projectSkillRoots(session.KindOpencode, dir, dir),
+		skillRoot{filepath.Join(cfg, "command"), "user", "commands"},
+		skillRoot{filepath.Join(cfg, "commands"), "user", "commands"},
+	), "/")
 }
 
 // cursorSkills: the CLI's advertised list (ACP available_commands_update, shared by the driver
@@ -570,10 +596,7 @@ func cursorSkills(live, dir string) []sessionSkill {
 		sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 		return out
 	}
-	return scanSkillRoots([]skillRoot{
-		{filepath.Join(dir, ".cursor", "commands"), "project", "commands"},
-		{filepath.Join(dir, ".cursor", "skills"), "project", "skills"},
-	}, "/")
+	return scanSkillRoots(projectSkillRoots(session.KindCursor, dir, dir), "/")
 }
 
 // readSkillEntries reads <root>/*/SKILL.md. The invocation name is the frontmatter name, or the
