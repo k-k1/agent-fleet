@@ -70,6 +70,10 @@
   transform-origin: 0 0;
   caret-color: CanvasText;
   z-index: 0;
+  /* The browser's find paints an opaque box behind a match, and the glyphs it stands for are on
+     the canvas below, so a plain composite hides exactly the word found. Multiplied onto the
+     white paper the box tints the page and the black glyphs stay readable. */
+  mix-blend-mode: multiply;
   --min-font-size: 1;
   --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
   --min-font-size-inv: calc(1 / var(--min-font-size));

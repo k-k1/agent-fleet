@@ -5,9 +5,10 @@
 // narrow, so scrolling beats page buttons. Canvases of pages far from the viewport are dropped
 // to give their area back.
 //
-// Text is selectable and copyable through pdf.js's TextLayer: transparent spans laid over each
-// rendered page at the glyph positions, the same mechanism as the stock pdf.js viewer. It lives
-// and dies with the page's canvas.
+// Text is selectable, copyable and findable with the browser's Ctrl+F through pdf.js's
+// TextLayer: transparent spans laid over each page at the glyph positions, the same mechanism as
+// the stock pdf.js viewer. Unlike the canvas it is kept for every page, or find would only see
+// the pages near the viewport.
 //
 // The bytes are fetched by pdf.js itself from the download endpoint (via `url`). That path
 // supports Range, so a large PDF starts rendering without loading the whole file into JS memory
@@ -275,38 +276,10 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
         job.task = null;
         if (job.cancelled) return;
         // The text layer is laid out in CSS pixels (the canvas ratio above is only bitmap
-        // density); its font sizes follow --total-scale-factor on the page element.
-        const textDiv = textDivsRef.current.get(i);
-        if (textDiv) {
-          const textViewport = page.getViewport({ scale });
-          const existing = textLayersRef.current.get(i);
-          if (existing) {
-            existing.update({ viewport: textViewport });
-          } else {
-            dropTextLayer(textLayersRef.current, i, textDiv);
-            const layer = new pdfjs.TextLayer({
-              textContentSource: page.streamTextContent({ includeMarkedContent: true, disableNormalization: true }),
-              container: textDiv,
-              viewport: textViewport,
-            });
-            try {
-              await layer.render();
-            } catch {
-              dropTextLayer(textLayersRef.current, i, textDiv);
-              return; // cancelled or unreadable text; the canvas stays, the page is retried later
-            }
-            if (job.cancelled) {
-              dropTextLayer(textLayersRef.current, i, textDiv);
-              return;
-            }
-            // Without this block, dragging across a gap between lines jumps the selection to the
-            // end of the layer; `.selecting` stretches it over the whole page (see pdf.css).
-            const end = document.createElement("div");
-            end.className = "endOfContent";
-            textDiv.append(end);
-            textLayersRef.current.set(i, layer);
-          }
-        }
+        // density); its font sizes follow --total-scale-factor on the page element. Building it
+        // is the text effect's job; here an existing one is only refitted to the new scale.
+        const textViewport = page.getViewport({ scale });
+        textLayersRef.current.get(i)?.update({ viewport: textViewport });
         renderedRef.current.set(i, scale);
       }
     };
@@ -326,9 +299,72 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
       canvas.width = 0;
       canvas.height = 0;
       renderedRef.current.delete(i);
-      dropTextLayer(textLayersRef.current, i, textDivsRef.current.get(i));
     }
   }, [range.start, range.end]);
+
+  // --- Text layers for every page ----------------------------------------------
+  // The browser's own find (Ctrl+F) searches only text that is in the DOM, so a layer that lived
+  // and died with its canvas made find report "1/1" and Enter never reached another page. Every
+  // page gets one, nearest to the viewport first, and keeps it when its canvas is released. A
+  // layer sizes itself from --total-scale-factor, so one built at an earlier zoom still lines up;
+  // the render pass refits the visible ones.
+  const rangeRef = useRef(range);
+  rangeRef.current = range;
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
+  useEffect(() => {
+    const doc = docRef.current;
+    const pdfjs = pdfjsRef.current;
+    if (!doc || !pdfjs) return;
+    let cancelled = false;
+    // A page whose text cannot be read is skipped for this document, or the loop would retry it
+    // forever.
+    const failed = new Set<number>();
+    const next = () => {
+      const from = rangeRef.current.start;
+      let best = -1;
+      for (let i = 0; i < doc.numPages; i++) {
+        if (textLayersRef.current.has(i) || failed.has(i) || !textDivsRef.current.has(i)) continue;
+        if (best < 0 || Math.abs(i - from) < Math.abs(best - from)) best = i;
+      }
+      return best;
+    };
+    const run = async () => {
+      for (let i = next(); i >= 0 && !cancelled; i = next()) {
+        const page = await doc.getPage(i + 1);
+        const textDiv = textDivsRef.current.get(i);
+        if (cancelled || !textDiv || !(scaleRef.current > 0)) return;
+        dropTextLayer(textLayersRef.current, i, textDiv);
+        const layer = new pdfjs.TextLayer({
+          textContentSource: page.streamTextContent({ includeMarkedContent: true, disableNormalization: true }),
+          container: textDiv,
+          viewport: page.getViewport({ scale: scaleRef.current }),
+        });
+        try {
+          await layer.render();
+        } catch {
+          dropTextLayer(textLayersRef.current, i, textDiv);
+          if (cancelled) return;
+          failed.add(i);
+          continue;
+        }
+        if (cancelled) {
+          dropTextLayer(textLayersRef.current, i, textDiv);
+          return;
+        }
+        // Without this block, dragging across a gap between lines jumps the selection to the
+        // end of the layer; `.selecting` stretches it over the whole page (see pdf.css).
+        const end = document.createElement("div");
+        end.className = "endOfContent";
+        textDiv.append(end);
+        textLayersRef.current.set(i, layer);
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [docEpoch]);
 
   // Selection support, mirroring pdf.js's TextLayerBuilder: `.selecting` while the pointer is
   // down, and a copy handler that normalises what goes to the clipboard (pdfText.ts).

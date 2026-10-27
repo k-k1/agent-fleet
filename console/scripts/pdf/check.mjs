@@ -13,6 +13,7 @@
 //   5. That the text is selectable and copyable: the transparent text layer sits over the glyphs
 //      it stands for (a layer that exists but is offset selects the wrong words), a real mouse
 //      drag selects the heading, and a copy puts that text on the clipboard.
+//   6. That the browser's find reaches every page and its highlight does not hide the match.
 //
 // Needs neither a real backend nor the CP: PdfView and React are bundled into one file with
 // esbuild, served by a plain http server and driven over CDP. The sample PDFs are produced on
@@ -402,6 +403,25 @@ try {
     PDF_BEHAVIOR_TRIES,
   );
   check(freed > 0, "off-screen pages release their canvas", `freed=${freed}`);
+
+  // 10. The browser's find (Ctrl+F) only searches text in the DOM, so every page keeps its text
+  // layer, released canvas or not. With the layer tied to the canvas, find saw only the pages
+  // near the viewport and Enter never moved to a match on another page.
+  const headed = await until(
+    b.evaluate,
+    `[...document.querySelectorAll('.pdfview-page .textLayer')].filter((d) =>
+       [...d.querySelectorAll('span')].some((e) => ${HEAD}.test(e.textContent))).length`,
+    (n) => n === 6,
+    PDF_BEHAVIOR_TRIES,
+  );
+  const releasedWithText = await b.evaluate(`[...document.querySelectorAll('.pdfview-page')].filter((p) =>
+    p.querySelector('.pdfview-canvas').width === 0 && p.querySelector('.textLayer span')).length`);
+  check(headed === 6 && releasedWithText > 0, "every page keeps a findable text layer, released canvas included",
+    `pages with a heading span=${headed}/6, released pages with text=${releasedWithText}`);
+  // Find paints an opaque box behind a match; the layer has to multiply onto the canvas or the
+  // box hides the glyphs it found.
+  const blend = await b.evaluate("getComputedStyle(document.querySelector('.pdfview-page .textLayer')).mixBlendMode");
+  check(blend === "multiply", "a find highlight leaves the glyphs under it visible", `mix-blend-mode=${blend}`);
 
   if (SHOT) {
     await b.evaluate("document.querySelector('.pdfview-scroll').scrollTop = 0");
