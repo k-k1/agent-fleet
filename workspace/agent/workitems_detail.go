@@ -134,8 +134,8 @@ type workItemDetailOut struct {
 	DefaultMergeMethod string `json:"defaultMergeMethod"`
 	// CanMerge is true only when the repository reports push access for the connection's user
 	// AND the token is a classic one whose scopes include what a merge needs. A token that does
-	// not report scopes (fine-grained, GitHub App user) is unknown and therefore false: the merge
-	// needs Contents: write of it, which cannot be read before the press.
+	// not report scopes is false unless it is a GitHub App user token that githubAppUserCanMerge
+	// positively shows to hold Contents: write; a fine-grained token cannot be read back.
 	CanMerge bool `json:"canMerge"`
 	// private is the repository's visibility, kept only to pick the scope a classic token needs.
 	private bool
@@ -439,7 +439,14 @@ func githubPullRequestDetail(token, key string) (*workItemDetailOut, error) {
 			applyGitHubRepoMerge(out, rb)
 		}
 	}
-	out.CanMerge = out.CanMerge && githubScopesCanMerge(hdr, out.private)
+	if _, reported := hdr["X-Oauth-Scopes"]; out.CanMerge && !reported {
+		// No scopes reported: a fine-grained token (stays false) or a GitHub App user token,
+		// which has a positive pre-check (workitems_appperm.go). Open pull requests only, so a
+		// closed one costs no extra requests.
+		out.CanMerge = out.State == "open" && githubAppUserCanMerge(token, repo)
+	} else {
+		out.CanMerge = out.CanMerge && githubScopesCanMerge(hdr, out.private)
+	}
 	if rv, err := githubGetJSON(token, fmt.Sprintf("%s/pulls/%d/reviews?per_page=%d", base, number, workItemDetailReviews), key); err == nil {
 		out.Reviews = mergeGitHubReviews(parseGitHubReviews(rv), out.Reviews)
 	}

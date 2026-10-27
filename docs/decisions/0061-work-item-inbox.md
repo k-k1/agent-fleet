@@ -585,3 +585,17 @@ comment count on the row. No decision above changes.
   count. Unknown is kept distinct from a known 0 end to end (null on the wire), and growth is read only when
   both the remembered and the current count are known. The wire key is `commentCount` because the existing guard that no row carries comment text
   matches the substring `"comments"`.
+
+## Note (2026-10-27, #2753): a GitHub App connection gets the Merge button on a positive pre-check
+
+The 2026-10-25 note on #2632 withheld the button from every token that reports no `X-OAuth-Scopes`. For a GitHub App
+user token (`ghu_`) there is a positive pre-check: the merge endpoint needs the **Contents** permission with write
+access (GitHub's "Permissions required for GitHub Apps" and "...fine-grained personal access tokens" pages), the
+installation's permissions are readable through `GET /user/installations`, and `GET /user/installations/{id}/repositories`
+lists the repositories the user can reach through an installation with the user's own `permissions` on each. The detail
+read draws the button for such a token only when an installation has `contents: write`, lists the repository, and the
+user has push there. An error, a rate limit, a timeout, an unread page or any other shape is unknown, and unknown stays
+"no button". The extra requests run on the detail read of an open pull request only (never the list), under one 6 s bound,
+and a definitive answer is cached for a minute per token hash and repository. A fine-grained personal access token stays
+without a button: GitHub documents no endpoint that reads its granted permissions back (`X-Accepted-GitHub-Permissions`
+says what an endpoint needs, not what the token holds). Merge itself is unchanged.
