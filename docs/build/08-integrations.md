@@ -306,14 +306,20 @@ those variables in for one `exec`:
   Japanese text and full-width brackets are not. For a config of ours, `comment add` with a body
   on the command line, `-T` or a non-terminal stdin goes to `workspace-agent jira-comment` (POST
   `/rest/api/3/issue/KEY/comment`, `--internal` as the `sd.public.comment` property; a POST is
-  never re-sent). `create` / `edit` with a body and no prompt to make (stdin not a terminal, or
-  `--no-input`) run jira-cli with `-b` / `-T` taken out and stdin `/dev/null`, then pipe the body
-  to `workspace-agent jira-description KEY [--skip-notify]` (PUT `fields.description`). The key of
-  a create is read from jira-cli's `/browse/KEY` line or `--raw` JSON; when it cannot be read or
-  the PUT fails the wrapper exits 3 and says the issue exists, never re-running the create. An
-  edit whose only change is the body skips jira-cli. `--web`, a bare-number key (jira-cli
-  completes it from the config) and `edit -T` stay with jira-cli. Known gap: goldmark follows
-  CommonMark's flanking rules, so `**「x」**です` is not bold.
+  never re-sent; any flag it does not know, or a boolean pflag would refuse, is refused before the
+  call). `create` / `edit` with a body and no prompt to make (stdin not a terminal, or an effective
+  `--no-input`) read the body first, bounded like the write (a pipe that never closes exits 124
+  before anything is sent), run jira-cli with `-b` / `-T` taken out and stdin `/dev/null`, then
+  pipe the body to `workspace-agent jira-description KEY [--skip-notify]` (PUT
+  `fields.description`) under the same timeout and signal forwarding. The key of a create is read
+  from jira-cli's `/browse/KEY` line or `--raw` JSON; when it cannot be read or the PUT fails the
+  wrapper exits 3 (124 on a timeout) and says the issue exists, never re-running the create. A
+  create refused with `- description:` (a project that requires one; a 400, so nothing exists) is
+  made again with the body through jira-cli's own conversion. An edit whose only change is the
+  body skips jira-cli. Boolean flags are read the way pflag reads them (last value wins). Help,
+  an effective `--web`, a bare-number key (jira-cli completes it from the config) and `edit -T`
+  stay with jira-cli. The Markdown parser applies the CJK-friendly amendment to CommonMark's
+  flanking rules (`goldmark-cjk-friendly`), so `**「x」**です` is bold.
 - **The user's own setup wins**: an explicit `JIRA_API_TOKEN` or `JIRA_SERVER`, a `jira init`
   given its own `--server` / `--login` / `--installation` / `--auth-type`, or any config outside
   the managed directory (`-c` in any spelling, `JIRA_CONFIG_FILE`, or jira's own default

@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
@@ -38,23 +39,38 @@ type jiraCommentArgs struct {
 }
 
 // parseJiraCommentArgs reads jira's argv: `issue|issues comment add KEY [BODY]` or
-// `issue|issues comment edit|delete KEY ID`, with jira's global -c / -p (accepted, unused) and the
-// body flags. Other boolean flags such as --no-input are skipped.
+// `issue|issues comment edit|delete KEY ID`, with jira's global -c / -p (accepted, unused), the
+// body flags, --no-input and add's --internal. Any other flag, or a boolean value
+// strconv.ParseBool refuses, is an error, as cobra makes it: a mistyped `--internl` posted
+// publicly would be a comment nobody meant to publish. Help and --web are jira-cli's; the
+// wrapper never sends them here.
 func parseJiraCommentArgs(args []string) (jiraCommentArgs, error) {
 	var a jiraCommentArgs
 	var pos []string
 	valued := map[string]bool{"-b": true, "--body": true, "-T": true, "--template": true,
 		"-c": true, "--config": true, "-p": true, "--project": true}
+	boolean := map[string]bool{"--no-input": true, "--internal": true}
+	seen := map[string]bool{}
 	setFlag := func(name, val string) {
+		seen[name] = true
 		switch name {
 		case "-b", "--body":
 			v := val
 			a.body = &v
 		case "-T", "--template":
 			a.template = val
-		case "--internal":
-			a.internal = val != "false" && val != "0" && val != "f" && val != "F"
 		}
+	}
+	setBool := func(name, val string) error {
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("invalid argument %q for %q flag", val, name)
+		}
+		seen[name] = true
+		if name == "--internal" {
+			a.internal = b
+		}
+		return nil
 	}
 	for i := 0; i < len(args); i++ {
 		s := args[i]
@@ -64,21 +80,38 @@ func parseJiraCommentArgs(args []string) (jiraCommentArgs, error) {
 			i = len(args)
 		case valued[s]:
 			if i+1 >= len(args) {
-				return a, fmt.Errorf("flag %s needs a value", s)
+				return a, fmt.Errorf("flag needs an argument: %s", s)
 			}
 			i++
 			setFlag(s, args[i])
+		case boolean[s]:
+			_ = setBool(s, "true")
 		case strings.HasPrefix(s, "--") && strings.Contains(s, "="):
 			name, val, _ := strings.Cut(s, "=")
-			setFlag(name, val)
-		case len(s) > 2 && s[0] == '-' && s[1] != '-' && (s[1] == 'b' || s[1] == 'T'):
+			switch {
+			case valued[name]:
+				setFlag(name, val)
+			case boolean[name]:
+				if err := setBool(name, val); err != nil {
+					return a, err
+				}
+			default:
+				return a, fmt.Errorf("unknown flag: %s", name)
+			}
+		case len(s) > 2 && s[0] == '-' && s[1] != '-' && valued[s[:2]]:
 			setFlag(s[:2], strings.TrimPrefix(s[2:], "="))
-		case s == "--internal":
-			a.internal = true
 		case strings.HasPrefix(s, "-") && s != "-":
+			return a, fmt.Errorf("unknown flag: %s", s)
 		default:
 			pos = append(pos, s)
 		}
+	}
+	isAdd := len(pos) >= 3 && pos[2] == "add"
+	if isAdd && (seen["-b"] || seen["--body"]) {
+		return a, fmt.Errorf("unknown flag: --body (comment add takes the body as an argument, -T FILE or stdin)")
+	}
+	if !isAdd && seen["--internal"] {
+		return a, fmt.Errorf("unknown flag: --internal")
 	}
 	if len(pos) >= 3 && (pos[0] == "issue" || pos[0] == "issues") && (pos[1] == "comment" || pos[1] == "comments") &&
 		pos[2] == "add" && (len(pos) == 4 || len(pos) == 5) {

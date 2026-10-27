@@ -326,3 +326,54 @@ func TestJiraCommentAddTransportFailureIsNotRetried(t *testing.T) {
 		t.Errorf("rc=%d attempts=%d err=%q", rc, n, errs)
 	}
 }
+
+// An unknown or malformed flag is refused before any call, as cobra refuses it: a mistyped
+// --internal must not turn into a public comment.
+func TestJiraCommentAddRejectsUnknownFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"issue", "comment", "add", "T-1", "secret", "--internl"},
+		{"issue", "comment", "add", "T-1", "secret", "--internal=maybe"},
+		{"issue", "comment", "add", "T-1", "secret", "--help"},
+		{"issue", "comment", "add", "T-1", "secret", "-h"},
+		{"issue", "comment", "add", "T-1", "secret", "--web"},
+		{"issue", "comment", "add", "T-1", "-b", "secret"},
+		{"issue", "comment", "add", "T-1", "secret", "-x"},
+		{"issue", "comment", "edit", "T-1", "5", "-b", "x", "--internal"},
+	} {
+		c, calls := commentStub(t, 201, `{"id":"1"}`)
+		if rc, _, errs := runComment(c, "", args...); rc != 2 || len(*calls) != 0 {
+			t.Errorf("%v: rc=%d calls=%d err=%q, want 2 and no call", args, rc, len(*calls), errs)
+		}
+	}
+	for _, tc := range []struct {
+		flag     string
+		internal bool
+	}{{"--internal=FALSE", false}, {"--internal=0", false}, {"--internal=T", true}, {"--no-input=false", false}} {
+		c, calls := commentStub(t, 201, `{"id":"1"}`)
+		if rc, _, errs := runComment(c, "", "issue", "comment", "add", "T-1", "x", tc.flag); rc != 0 || len(*calls) != 1 {
+			t.Fatalf("%s: rc=%d err=%q", tc.flag, rc, errs)
+		}
+		if _, got := (*calls)[0].body["properties"]; got != tc.internal {
+			t.Errorf("%s: internal property sent=%v, want %v", tc.flag, got, tc.internal)
+		}
+	}
+}
+
+// Emphasis that starts or ends with full-width punctuation next to Japanese text is still
+// emphasis (the CJK-friendly flanking rules); ASCII text parses as plain CommonMark.
+func TestJiraMarkdownADFCJKFriendlyEmphasis(t *testing.T) {
+	for _, tc := range []struct{ md, want string }{
+		{"**「すべて」**です", `{"marks":[{"type":"strong"}],"text":"「すべて」","type":"text"}`},
+		{"これは**「強調」**。", `{"marks":[{"type":"strong"}],"text":"「強調」","type":"text"}`},
+		{"*（注）*を参照", `{"marks":[{"type":"em"}],"text":"（注）","type":"text"}`},
+		{"~~「旧」~~です", `{"marks":[{"type":"strike"}],"text":"「旧」","type":"text"}`},
+		{"- **すべて**。次へ", `{"marks":[{"type":"strong"}],"text":"すべて","type":"text"}`},
+		{"a**b**c", `{"marks":[{"type":"strong"}],"text":"b","type":"text"}`},
+		{"foo**bar", `[{"text":"foo**","type":"text"},{"text":"bar","type":"text"}]`},
+	} {
+		got, _ := json.Marshal(jiraMarkdownADF(tc.md)["content"])
+		if !strings.Contains(string(got), tc.want) {
+			t.Errorf("%s: %s\nlacks %s", tc.md, got, tc.want)
+		}
+	}
+}
