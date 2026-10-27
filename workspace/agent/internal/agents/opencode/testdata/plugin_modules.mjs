@@ -282,7 +282,7 @@ const now = Date.now();
     h.push(ev("session.execution.succeeded", { sessionID: "ses_new" }));
     await until(() => statusLines().length >= mark + 2, "the turn's end");
     assert.deepEqual(statusLines().slice(mark), ["session-status working sidN", "session-status idle sidN"]);
-    assert.equal(readFileSync(join(sidDirOf(), "sidN"), "utf8"), "ses_new", "the slot follows the held session");
+    assert.ok(!existsSync(join(sidDirOf(), "sidN")), "a replay is late and leaves the slot to the TUI plugin");
 
     // A turn that ended before the tag appeared is still reported whole, in order.
     sessions.ses_quick = { metadata: {} };

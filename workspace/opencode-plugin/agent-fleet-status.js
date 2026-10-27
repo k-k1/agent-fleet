@@ -194,7 +194,8 @@ const bridge = () => {
     const turn = unowned.get(id);
     if (!turn) return;
     unowned.delete(id);
-    recordOcid(sid, id);
+    // No recordOcid: on the shared server the slot is the TUI plugin's (it records the session it
+    // claims and follows the screen), and a replay is late — the pane may have moved on since.
     set(sid, "working");
     if (turn.done) idle(sid);
   };
