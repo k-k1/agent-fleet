@@ -29,7 +29,8 @@ type Key struct {
 type entry struct {
 	until   time.Time
 	class   Class
-	strikes int // consecutive cooling failures; drives the backoff
+	named   bool // until is a reset the provider named, not a backoff guess
+	strikes int  // consecutive cooling failures; drives the backoff
 }
 
 // Table holds the cooldowns. It lives in memory only: every park ends within BackoffMax or
@@ -73,12 +74,12 @@ func (t *Table) Park(kind, model string, v Verdict, now time.Time) {
 		t.m[k] = e
 	}
 	e.strikes++
-	e.class = v.Class
+	e.class, e.named = v.Class, false
 	switch {
 	case v.Class == ClassSpend:
 		e.until = now.Add(BackoffMax)
 	case !v.ResetAt.IsZero() && v.ResetAt.After(now) && v.ResetAt.Sub(now) <= maxResetAhead:
-		e.until = v.ResetAt
+		e.until, e.named = v.ResetAt, true
 	default:
 		e.until = now.Add(backoff(e.strikes))
 	}
@@ -96,10 +97,8 @@ func (t *Table) Succeed(kind, model string) {
 // Until reports when (kind, model) becomes usable again and why it is parked. ok=false means
 // it is usable now. A kind-wide park covers every model; the later of the two ends wins.
 func (t *Table) Until(kind, model string, now time.Time) (until time.Time, class Class, ok bool) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for _, k := range []Key{{Kind: kind}, {Kind: kind, Model: model}} {
-		if e := t.m[k]; e != nil && e.until.After(now) && e.until.After(until) {
+	for _, e := range t.parks(kind, model, now) {
+		if e.until.After(until) {
 			until, class, ok = e.until, e.class, true
 		}
 	}
@@ -107,10 +106,36 @@ func (t *Table) Until(kind, model string, now time.Time) (until time.Time, class
 }
 
 // Avoid reports whether a resolver should pass over (kind, model) for the next candidate. A
-// park that ends within NearRecovery does not count.
+// park that ends within NearRecovery does not count, unless it is a usage window or spend cap
+// whose end is only a backoff guess: those last hours, and the short first backoff step says
+// nothing about when they really lift. Each live park is judged on its own: the one that ends
+// last can be a near 5xx while a kind-wide window with a guessed end sits under it.
 func (t *Table) Avoid(kind, model string, now time.Time) bool {
-	until, _, ok := t.Until(kind, model, now)
-	return ok && until.Sub(now) > NearRecovery
+	for _, e := range t.parks(kind, model, now) {
+		if !e.named && (e.class == ClassWindow || e.class == ClassSpend) {
+			return true
+		}
+		if e.until.Sub(now) > NearRecovery {
+			return true
+		}
+	}
+	return false
+}
+
+// parks returns copies of the live kind-wide and model parks.
+func (t *Table) parks(kind, model string, now time.Time) []entry {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var out []entry
+	for _, k := range []Key{{Kind: kind}, {Kind: kind, Model: model}} {
+		if e := t.m[k]; e != nil && e.until.After(now) {
+			out = append(out, *e)
+		}
+		if model == "" {
+			break // the model key is the kind-wide one
+		}
+	}
+	return out
 }
 
 func backoff(strikes int) time.Duration {

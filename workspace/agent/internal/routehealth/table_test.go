@@ -113,3 +113,33 @@ func TestAvoidIgnoresANearRecovery(t *testing.T) {
 		t.Error("an expired park still avoided")
 	}
 }
+
+// TestAvoidAGuessedWindowAtOnce: a usage window with no named reset parks for the short first
+// backoff step, yet it lasts hours, so it must cause a switch at once.
+func TestAvoidAGuessedWindowAtOnce(t *testing.T) {
+	tb := NewTable()
+	tb.Fail("codex", "model-a", "You've hit your usage limit.", t0)
+	if !tb.Avoid("codex", "model-a", t0) {
+		t.Error("a usage window without a named reset did not cause a switch")
+	}
+	// A named reset that is near is honoured: waiting beats switching.
+	tb2 := NewTable()
+	tb2.Park("muse", "", Verdict{Class: ClassWindow, Scope: ScopeKind, ResetAt: t0.Add(time.Minute)}, t0)
+	if tb2.Avoid("muse", "", t0) {
+		t.Error("a window named to reset within NearRecovery caused a switch")
+	}
+}
+
+// TestAvoidJudgesEachPark: a near model park that ends later must not hide a kind-wide window
+// whose end is only a guess.
+func TestAvoidJudgesEachPark(t *testing.T) {
+	tb := NewTable()
+	tb.Fail("codex", "model-a", "You've hit your usage limit.", t0) // kind-wide, guessed, 1 min
+	tb.Park("codex", "model-a", Verdict{Class: ClassServer, Scope: ScopeModel, ResetAt: t0.Add(90 * time.Second)}, t0)
+	if !tb.Avoid("codex", "model-a", t0) {
+		t.Error("a kind-wide guessed window was hidden by a later, near model park")
+	}
+	if until, class, _ := tb.Until("codex", "model-a", t0); class != ClassServer || until.Sub(t0) != 90*time.Second {
+		t.Errorf("Until = (%v, %s), want the later model park", until.Sub(t0), class)
+	}
+}

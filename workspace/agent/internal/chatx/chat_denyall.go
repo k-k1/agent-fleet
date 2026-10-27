@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routehealth"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
@@ -131,24 +132,39 @@ var denyAllProbeBudget = 45 * time.Second
 const denyAllProbePrompt = "/help"
 
 // resolveDenyAllKind picks the backend for feature. A feature pin names a vendor the member
-// chose: if that vendor cannot run deny-all the call fails rather than moving the transcript
-// to another one. Without a usable pin the shared order is walked and kinds that cannot run
-// deny-all are skipped.
-func resolveDenyAllKind(feature string) (string, error) {
+// chose: if that vendor cannot run deny-all, or is rate-limited (routehealth), the call fails
+// rather than moving the transcript to another one. Without a usable pin the shared order is
+// walked and kinds that cannot run deny-all or are rate-limited are skipped. Refusing while
+// parked costs the caller nothing (no attempt is spent on ErrDenyAllUnavailable), where a call
+// sent anyway would spend one on a near-certain failure.
+func resolveDenyAllKind(feature string, tier OneShotTier) (string, error) {
+	parked := func(k string) bool { return routeAvoid(k, denyAllModel(feature, tier, k)) }
 	if pin := aiFeatureAgentPref(feature); oneShotRunnable(pin) {
 		if !DenyAllKind(pin) {
 			return "", fmt.Errorf("%w: the pinned backend %q cannot run without tools", ErrDenyAllUnavailable, pin)
 		}
 		if headlessAgentAvailable(pin) {
+			if parked(pin) {
+				return "", fmt.Errorf("%w: the pinned backend %q is rate-limited", ErrDenyAllUnavailable, pin)
+			}
 			return pin, nil
 		}
 	}
 	for _, k := range oneShotOrder() {
-		if DenyAllKind(k) && headlessAgentAvailable(k) {
+		if DenyAllKind(k) && headlessAgentAvailable(k) && !parked(k) {
 			return k, nil
 		}
 	}
 	return "", ErrDenyAllUnavailable
+}
+
+// denyAllModel is the model OneShotDenyAll runs on kind.
+func denyAllModel(feature string, tier OneShotTier, kind string) string {
+	selected, configured := resolveOneShotModel(feature, tier, kind)
+	if !configured || selected == AssistantRecommendedModel {
+		selected = recommendedOneShotModel(kind, tier)
+	}
+	return strings.TrimSpace(selected)
 }
 
 // OneShotDenyAll runs one prompt on a backend that is verified to have no tool and no MCP
@@ -158,15 +174,11 @@ func resolveDenyAllKind(feature string) (string, error) {
 //
 // Errors wrap ErrDenyAllUnavailable when nothing was sent to a model.
 func OneShotDenyAll(ctx context.Context, feature string, tier OneShotTier, persona, prompt string) (reply string, err error) {
-	kind, err := resolveDenyAllKind(feature)
+	kind, err := resolveDenyAllKind(feature, tier)
 	if err != nil {
 		return "", err
 	}
-	selected, configured := resolveOneShotModel(feature, tier, kind)
-	if !configured || selected == AssistantRecommendedModel {
-		selected = recommendedOneShotModel(kind, tier)
-	}
-	selected = strings.TrimSpace(selected)
+	selected := denyAllModel(feature, tier, kind)
 
 	run := denyAllBackends[kind]
 	if run == nil {
@@ -191,6 +203,12 @@ func runClaudeDenyAll(ctx context.Context, persona, prompt, selected string) (st
 	r := ev.result
 	call.Models, call.CostUSD = UsageModelRows(r.ModelUsage), r.TotalCostUSD
 	call.FallbackTotals(r.Usage.LedgerTokens(), "")
+	// The error result is classified here, where its text is at hand: the errors below
+	// deliberately never quote what the run printed. Only an error result is reported; an exit
+	// with no result says nothing about the backend's availability.
+	if r.IsError && ctx.Err() == nil {
+		routehealth.Default.Fail(session.KindClaude, selected, r.Result, routeNow())
+	}
 	if !ev.initSeen {
 		// Without the init event nothing says what the run had, so the reply is not trusted.
 		return "", errors.New("claude deny-all run: no init event, the reply was discarded")
@@ -209,6 +227,7 @@ func runClaudeDenyAll(ctx context.Context, persona, prompt, selected string) (st
 		return "", errors.New("claude returned an invalid response/error")
 	}
 	call.OK = true
+	routehealth.Default.Succeed(session.KindClaude, selected)
 	return strings.TrimRight(r.Result, "\n"), nil
 }
 

@@ -18,6 +18,12 @@ const AUTO_PAUSED = "chat.notice.auto_paused";
 // The agent-switch notice carries the backend KIND ("codex"); the card shows the product
 // name the rest of the UI uses (registry = the single source of display naming).
 const AGENT_SWITCHED = "chat.notice.agent_switched";
+// A turn that moved off a rate-limited backend names both kinds the same way.
+const AGENT_FAILOVER = "chat.notice.agent_failover";
+
+function agentName(kind: string): string {
+  return AGENTS[kind as SessionKind]?.assistantName || kind;
+}
 
 export function noticeText(m: Pick<ChatMessage, "content" | "notice_key" | "notice_args">): string {
   const key = m.notice_key;
@@ -26,7 +32,15 @@ export function noticeText(m: Pick<ChatMessage, "content" | "notice_key" | "noti
   if (key === AGENT_SWITCHED && args.agent) {
     // A kind the Console doesn't know (older/newer Agent) keeps its raw value rather than
     // borrowing another agent's name — agentOf() would silently answer "Claude".
-    args = { ...args, agent: AGENTS[args.agent as SessionKind]?.assistantName || args.agent };
+    args = { ...args, agent: agentName(args.agent) };
+  }
+  if (key === AGENT_FAILOVER) {
+    args = {
+      ...args,
+      from: agentName(args.from ?? ""),
+      to: agentName(args.to ?? ""),
+      agent: agentName(args.agent ?? ""),
+    };
   }
   if (key === AUTO_PAUSED) {
     const pending = Number(args.pending ?? 0);

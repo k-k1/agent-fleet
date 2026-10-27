@@ -595,8 +595,15 @@ func runReportAutoTurn(convID string) {
 		noteAutoTurnPaused(c, limit)
 		return
 	}
-	prov := ChatProviderFor(c)
-	actualAgent := ChatProviderKind(c, prov)
+	// The auto-turn-only model (Settings > Assistant). Raised for the send and for the routing
+	// that picks the backend of that send (a park on the auto-turn model must be seen), and
+	// not applied to compaction (the summary turns of maybeAutoCompact / recoverForRetry): the
+	// quality of the handover summary is held by the conversation's own model. claude only
+	// (chatModelFor ignores it for every other kind).
+	override := chatAutoTurnModel()
+	c.modelOverride = override
+	prov, actualAgent := chatRoute(c)
+	c.modelOverride = ""
 	ctx, cancel := context.WithTimeout(context.Background(), chatTimeout)
 	defer cancel()
 	// Usage ledger (ADR 0029 §3): an auto turn on a completion report is unattended
@@ -615,14 +622,6 @@ func runReportAutoTurn(convID string) {
 	// up front (the new session knows nothing of the earlier instructions and context).
 	prompt, handoff := InjectCarryover(c, actualAgent, reportsPrompt(pending))
 	prompt = SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages))
-	// The auto-turn-only model (Settings > Assistant). Raised for the send alone and not
-	// applied to compaction (the summary turns of maybeAutoCompact / recoverForRetry): the
-	// quality of the handover summary is held by the conversation's own model. claude only
-	// (via chatModel).
-	override := ""
-	if actualAgent == session.KindClaude {
-		override = chatAutoTurnModel()
-	}
 	c.modelOverride = override
 	reply, err := prov.Send(ctx, c, prompt)
 	c.modelOverride = ""
@@ -636,6 +635,21 @@ func runReportAutoTurn(convID string) {
 		reply, err = prov.Send(ctx, c, prompt)
 		c.modelOverride = ""
 	}
+	// A rate-limited backend re-runs the turn on the next usable one (chat_route.go). The
+	// verdict, the next choice and the re-run all key on the auto-turn model, as the send did.
+	var failover []ChatMessage
+	c.modelOverride = override
+	if next, kind, notice, ok := FailoverTurn(c, actualAgent, NoteTurnResult(ctx, c, actualAgent, err)); ok {
+		prov, actualAgent = next, kind
+		c.modelOverride = ""
+		prompt, handoff = InjectCarryover(c, actualAgent, reportsPrompt(pending))
+		prompt = SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages))
+		c.modelOverride = override
+		reply, err = prov.Send(ctx, c, prompt)
+		NoteTurnResult(ctx, c, actualAgent, err)
+		failover = append(failover, notice)
+	}
+	c.modelOverride = ""
 	if err != nil {
 		if IsContextOverflowErr(err) {
 			// Close the black hole: an overflow too large even to compact is always
@@ -654,6 +668,8 @@ func runReportAutoTurn(convID string) {
 	if handoff {
 		c.PendingHandoff = "" // carried into the new session — done
 	}
+	// After the reports are marked: pending points into c.Messages (see HandleChatSend).
+	c.Messages = append(c.Messages, failover...)
 	c.AutoTurns++
 	c.Messages = append(c.Messages, ChatMessage{Role: "assistant", Content: reply, Agent: actualAgent, Model: c.TurnModel, TS: NowMs()})
 	c.ActiveAgent = actualAgent
