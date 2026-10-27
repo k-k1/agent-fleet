@@ -125,7 +125,7 @@ func TestReadRPCForExpiredContextBeatsReadError(t *testing.T) {
 		msgs := make(chan rpcMsg)
 		readErr := make(chan error, 1)
 		readErr <- &probeErr{code: codeProcessExited, msg: "no response (the process exited)"}
-		if _, err := readRPCFor(ctx, msgs, readErr, 1); !errors.Is(err, errProbeTimeout) {
+		if _, err := readRPCFor(ctx, ctx, msgs, readErr, 1); !errors.Is(err, errProbeTimeout) {
 			t.Fatalf("iteration %d: got %v, want errProbeTimeout", i, err)
 		}
 	}
@@ -136,8 +136,48 @@ func TestReadRPCForReadErrorBeforeDeadlineIsProcessExited(t *testing.T) {
 	msgs := make(chan rpcMsg)
 	readErr := make(chan error, 1)
 	readErr <- &probeErr{code: codeProcessExited, msg: "no response (the process exited)"}
-	_, err := readRPCFor(context.Background(), msgs, readErr, 1)
+	_, err := readRPCFor(context.Background(), context.Background(), msgs, readErr, 1)
 	if err == nil || errors.Is(err, errProbeTimeout) {
 		t.Fatalf("got %v, want the process-exited error", err)
+	}
+}
+
+// An era sub-deadline that expires while the reader's EOF is also ready must not eat the
+// exit: the budget is intact, so the error stays process_exited.
+func TestReadRPCForSubDeadlineKeepsReadError(t *testing.T) {
+	sub, cancel := context.WithCancel(context.Background())
+	cancel()
+	for i := 0; i < 500; i++ {
+		msgs := make(chan rpcMsg)
+		readErr := make(chan error, 1)
+		readErr <- &probeErr{code: codeProcessExited, msg: "no response (the process exited)"}
+		_, err := readRPCFor(sub, context.Background(), msgs, readErr, 1)
+		if errors.Is(err, errProbeTimeout) {
+			select {
+			case re := <-readErr: // left pending for the caller to find
+				err = re
+			default:
+				t.Fatalf("iteration %d: read error was consumed", i)
+			}
+		}
+		var pe *probeErr
+		if !errors.As(err, &pe) || pe.code != codeProcessExited {
+			t.Fatalf("iteration %d: got %v", i, err)
+		}
+	}
+}
+
+// Server exits during server/discover but ignores nothing else: end to end it must
+// report process_exited, never a timeout or an uncoded write error.
+func TestProbeStdioExitDuringDiscoverIsProcessExited(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		d := stdioDef("dies")
+		d.Command = "sh"
+		d.Args = []string{"-c", "read line; exit 0"}
+		d.TimeoutMS = 5000
+		res := Probe(context.Background(), d)
+		if res.Code != codeProcessExited {
+			t.Fatalf("iteration %d: got %+v", i, res)
+		}
 	}
 }

@@ -399,9 +399,15 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 	}
 	exchangeCtx := func(c context.Context, id int, m rpcMsg) (rpcMsg, error) {
 		if err := writeRPC(stdin, m); err != nil {
+			// A dead server is the cause of the broken pipe: prefer its exit error.
+			select {
+			case re := <-readErr:
+				return rpcMsg{}, re
+			default:
+			}
 			return rpcMsg{}, err
 		}
-		return readRPCFor(c, msgs, readErr, id)
+		return readRPCFor(c, ctx, msgs, readErr, id)
 	}
 	exchange := func(id int, m rpcMsg) (rpcMsg, error) { return exchangeCtx(ctx, id, m) }
 
@@ -427,7 +433,13 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 		return res
 	case errors.Is(err, errProbeTimeout) && ctx.Err() == nil:
 		// Silence, but the overall budget is intact: a server that ignores unknown
-		// methods instead of answering -32601. Treat it as the legacy era.
+		// methods instead of answering -32601. Treat it as the legacy era, unless the
+		// server exited meanwhile: the era deadline may have beaten a pending EOF.
+		select {
+		case re := <-readErr:
+			return failErr(re)
+		default:
+		}
 	case err != nil:
 		return failErr(err) // process died, or the whole probe timed out
 	case !isLegacyEraSignal(msg.Error):
@@ -469,8 +481,11 @@ func writeRPC(w io.Writer, m rpcMsg) error {
 }
 
 // readRPCFor waits for the response with the wanted id, discarding anything else that
-// arrives (late answers to an abandoned exchange, stray notifications).
-func readRPCFor(ctx context.Context, msgs <-chan rpcMsg, readErr <-chan error, wantID int) (rpcMsg, error) {
+// arrives (late answers to an abandoned exchange, stray notifications). ctx bounds this
+// wait (it may be a short sub-deadline); budget is the whole probe's context. Only the
+// budget expiring turns a reader error into a timeout — an exit seen under a mere
+// sub-deadline stays a process exit.
+func readRPCFor(ctx, budget context.Context, msgs <-chan rpcMsg, readErr <-chan error, wantID int) (rpcMsg, error) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -478,7 +493,7 @@ func readRPCFor(ctx context.Context, msgs <-chan rpcMsg, readErr <-chan error, w
 		case err := <-readErr:
 			// The context kill closes stdout, so after the deadline both channels are
 			// ready and select picks at random: an expired context wins.
-			if ctx.Err() != nil {
+			if budget.Err() != nil {
 				return rpcMsg{}, errProbeTimeout
 			}
 			return rpcMsg{}, err
