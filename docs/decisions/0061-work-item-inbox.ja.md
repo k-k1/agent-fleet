@@ -531,3 +531,15 @@ bearer トークンに `X-OAuth-Scopes` が付くこと。Bitbucket の課題は
 merge と同じ規則に揃えた（2026-10-25 の #2632 の追記を参照）。Agent は、そのワークスペース自身のメンバーのために本文そのものへ署名した
 member-origin マーク（ADR 0113）がある要求だけを受け付け、Control Plane は Console 由来のチェック（JSON 本文、同一オリジンの
 `Sec-Fetch-Site` / `Origin`）を通ったあとにだけ署名する。呼び出し元は Console の Post ボタンだけで、変更はない。決定 6.1 自体は変わらない。
+
+## 追記（2026-10-27、#2753）: GitHub App 接続は肯定的な事前確認ができたときにマージボタンを出す
+
+2026-10-25 の #2632 の追記は、`X-OAuth-Scopes` を返さないトークンすべてからボタンを外していた。GitHub App のユーザートークン（`ghu_`）には
+肯定的な事前確認がある。マージのエンドポイントは **Contents** 権限の write を要し（GitHub の「Permissions required for GitHub Apps」と
+「...fine-grained personal access tokens」）、インストールの権限は `GET /user/installations` で読め、
+`GET /user/installations/{id}/repositories` はインストール経由で届くリポジトリを、各リポジトリでのユーザー自身の `permissions` と
+ともに返す。詳細の読み取りは、あるインストールが `contents: write` を持ち、そのリポジトリを列挙し、ユーザーが push できる場合に限りボタンを出す。
+エラー、レート制限、タイムアウト、読み切れなかったページ、想定外の形はすべて不明で、不明は「ボタンなし」のまま。追加のリクエストは
+オープンな PR の詳細の読み取りだけで（一覧では行わない）、全体で 6 秒の上限がある。`ghu_` のトークンは `X-OAuth-Scopes` が何であれトークンの接頭辞で選び、想定外の応答の形（リスト・`permissions` の欠落や null）や確認しきれなかったインストールは不明として扱いキャッシュしない。確定した答えはトークンのハッシュとリポジトリごとに 1 分キャッシュする。
+fine-grained の personal access token は引き続きボタンなし: 付与された権限を読み返す API を GitHub は文書化していない
+（`X-Accepted-GitHub-Permissions` はエンドポイントが要る権限を示すもので、トークンが持つ権限ではない）。マージ自体は変更しない。
