@@ -61,6 +61,7 @@ import {
 } from "./read.ts";
 import { workItemSearch } from "./api.ts";
 import { errText } from "../../core/api/client.ts";
+import { unreadOf, useSeenStore, type Unread } from "./seen.ts";
 import "./workitems.css";
 
 interface RowProps {
@@ -71,13 +72,15 @@ interface RowProps {
   startedName: string;
   /** Meta this query repeats on every row — dropped from the line (docs/log/80 §80.18.2). */
   uniform: { repo: boolean; assignee: boolean };
+  /** What changed since the user last looked (#2779); "" = nothing. */
+  unread: Unread;
   onOpen(item: WorkItem): void;
   onOpenSession(name: string): void;
 }
 
 const CHECK_ICON: Record<string, string> = { success: "pass", failure: "error", pending: "clock" };
 
-const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, uniform, onOpen, onOpenSession }: RowProps) {
+const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, uniform, unread, onOpen, onOpenSession }: RowProps) {
   const tr = useT();
   const tone = stateTone(item.state);
   const busy = started.length > 0;
@@ -94,13 +97,15 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, unif
   // are not read out. The CI and conflict status therefore go into the label as well.
   const ciText = item.checks.state ? `${tr("wi.detail_checks")}: ${checksText(item.checks)}` : "";
   const conflictText = item.mergeable === "conflict" ? tr("wi.detail_merge_conflict") : "";
-  const label = [tr("wi.open_detail", { key: item.key }), ciText, conflictText].filter(Boolean).join(" — ");
+  const unreadText = unread ? tr(unread === "comments" ? "wi.unread_comments" : "wi.unread_updated") : "";
+  const commentCount = item.commentCount ?? 0;
+  const label = [tr("wi.open_detail", { key: item.key }), unreadText, ciText, conflictText].filter(Boolean).join(" — ");
   return (
     // The whole row opens the detail modal. The external link and the started badge nested
     // inside it are controls of their own, so each stops propagation before acting; otherwise
     // one press would open two things.
     <div
-      className={"wi-row" + (item.state === "done" ? " done" : "")}
+      className={"wi-row" + (item.state === "done" ? " done" : "") + (unread ? " unread" : "")}
       role="button"
       tabIndex={0}
       aria-label={label}
@@ -117,6 +122,7 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, unif
       </span>
       <div className="wi-info">
         <div className="wi-head">
+          {unread && <span className="wi-unread" role="img" aria-label={unreadText} title={unreadText} />}
           <span className="wi-key" title={item.key}>
             {shortKey(item.key)}
           </span>
@@ -136,6 +142,14 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, unif
           {conflictText && (
             <span className="wi-flag tone-bad" title={conflictText}>
               <Icon name="git-merge" />
+            </span>
+          )}
+          {/* The count comes with the list response (GitHub, Bitbucket), so it costs no request per
+              row; Jira's list does not carry one and its rows simply have none. */}
+          {commentCount > 0 && (
+            <span className="wi-comments" title={tr("wi.comment_count", { n: commentCount })}>
+              <Icon name="comment" />
+              {commentCount}
             </span>
           )}
           {/* Shown only on rows that have been sitting: for anything touched today the sort
@@ -261,6 +275,13 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   const items = useMemo(() => dedupeWorkItems(sortWorkItems(payload?.items || [])), [payload]);
   const ledger = payload?.sessions || [];
 
+  // Rows seen for the first time get their current state as the baseline, so the first load (or a
+  // newly listed ticket) is not drawn as unread; only a later move past it is.
+  const seen = useSeenStore((s) => s.map);
+  useEffect(() => {
+    if (payload) useSeenStore.getState().seed(payload.items);
+  }, [payload]);
+
   // The volume wall (measured at 41 rows, docs/log/80 §80.18.4). Filter first, then fold: what
   // someone typing in the box wants is the top 10 of the filtered result, not the matches within
   // the top 10. Folding is display only and the payload is kept whole, because a stopped
@@ -307,6 +328,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   };
 
   const count = items.filter((i) => i.state !== "done").length;
+  const unreadCount = items.filter((i) => unreadOf(seen, i) !== "").length;
   const stamp = shortLocal(payload?.fetchedAt || "");
 
   return (
@@ -342,6 +364,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
           (ADR 0061 decision 1). */}
       <div className="wi-stamp">
         {stamp ? tr("wi.fetched_at", { at: stamp }) : tr("wi.never_fetched")}
+        {unreadCount > 0 && <span className="wi-unread-total">{tr("wi.unread_total", { n: unreadCount })}</span>}
         {payload && !payload.running && <span className="wi-stopped">{tr("wi.stopped_note")}</span>}
       </div>
       {loadErr && (
@@ -432,6 +455,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
                 started={sessionsForItem(ledger, item.key)}
                 startedName={startedNameFor(item)}
                 uniform={uniform[item.queryId] || { repo: false, assignee: false }}
+                unread={unreadOf(seen, item)}
                 onOpen={openDetail}
                 onOpenSession={openSession}
               />
@@ -468,6 +492,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
                   started={sessionsForItem(ledger, item.key)}
                   startedName={startedNameFor(item)}
                   uniform={{ repo: false, assignee: false }}
+                  unread=""
                   onOpen={openDetail}
                   onOpenSession={openSession}
                 />

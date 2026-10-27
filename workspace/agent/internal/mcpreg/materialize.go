@@ -86,6 +86,10 @@ type MaterializeResult struct {
 // must not touch any name outside (defs ∪ prev).
 type writer func(defs []ServerDef, prev []string) (written, removed []string, changed bool, err error)
 
+// HasWriter reports whether af writes a native MCP config file for the kind, so a test outside
+// this package can hold the writers to the real kind registry.
+func HasWriter(kind string) bool { return writerFor(kind) != nil }
+
 func writerFor(kind string) writer {
 	switch kind {
 	case session.KindClaude:

@@ -386,3 +386,30 @@ func TestGitHubErrorTextDropsBidiOverrides(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// #2779: the list response's comment count reaches the row, so the Console can show it without a
+// request per row. Absent (or negative) is unknown (nil), which is not a known 0.
+func TestParseGitHubSearchItemsComments(t *testing.T) {
+	body := []byte(`{"items":[
+	  {"number":1,"title":"a","state":"open","comments":7,"repository_url":"https://api.github.com/repos/acme/web"},
+	  {"number":2,"title":"b","state":"open","repository_url":"https://api.github.com/repos/acme/web"},
+	  {"number":3,"title":"c","state":"open","comments":0,"repository_url":"https://api.github.com/repos/acme/web"},
+	  {"number":4,"title":"d","state":"open","comments":-4,"repository_url":"https://api.github.com/repos/acme/web"}]}`)
+	rows, err := parseGitHubSearchItems(body, "q")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].CommentCount == nil || *rows[0].CommentCount != 7 {
+		t.Errorf("row 1 = %v, want 7", rows[0].CommentCount)
+	}
+	if rows[1].CommentCount != nil || rows[3].CommentCount != nil {
+		t.Errorf("absent/negative must stay unknown, got %v / %v", rows[1].CommentCount, rows[3].CommentCount)
+	}
+	if rows[2].CommentCount == nil || *rows[2].CommentCount != 0 {
+		t.Errorf("a sent 0 must stay a known 0, got %v", rows[2].CommentCount)
+	}
+	out, _ := json.Marshal(rows[:3])
+	if !strings.Contains(string(out), `"commentCount":7`) || !strings.Contains(string(out), `"commentCount":null`) {
+		t.Errorf("wire form: %s", out)
+	}
+}

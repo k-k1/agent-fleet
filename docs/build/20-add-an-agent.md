@@ -66,9 +66,11 @@ unless they name another tree.
 | A contract workflow | its own file under `.github/workflows/`, for a kind whose CLI or host the workspace image pins | **One file per agent**, registered with the release watcher. lcpp pins nothing in the image and has a manual check instead (§20.5) |
 
 The table is not a complete list of where kind names appear. Some lists are still kept
-by hand: for example the bracketed-paste kinds in `internal/sessionx/session_io.go`,
-`usageMeasuredForKind` in `usage_fold.go`, and `isDynamic` (the kinds with a live model
-catalogue) in `console/src/lib/agentModels.ts`.
+by hand: for example the bracketed-paste kinds in `internal/sessionx/session_io.go` and
+`isDynamic` (the kinds with a live model catalogue) in `console/src/lib/agentModels.ts`.
+The Agent's measured-per-kind lists (`moveTargetKinds`, `oneShotKinds`,
+`usageMeasuredForKind`) are hand-kept on purpose, since they record a measurement and not a
+capability; each has a test that fails until a newly registered kind is classified (§20.7).
 Grep `workspace/agent`, `control-plane` and `console/src` for an existing kind with the
 same drivers as yours, and decide each hit.
 
@@ -259,6 +261,12 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
       `FALLBACK_KIND_FACTS` (`console/src/agents/kindCatalog.ts`) and, for an MCP client,
       `MCP_KINDS` (`console/src/features/settings/mcp/mcpWire.ts`). `kindCatalog.test.ts`
       holds both, and `SESSION_KINDS`, equal to the catalog snapshot
+- [ ] the measured-per-kind lists, each held by a test that names the kind it is missing:
+      `usageMeasuredForKind` (`usage_fold.go`; `usageMeasuredByKind` in `kind_lists_test.go`),
+      move target (`moveTargetKinds` / `moveUnmeasuredTargets`; `moveClassification` in
+      `session_move_kinds_test.go`), and a chat provider or its entry in `noChatProvider`
+      (`kind_lists_test.go`; with one, `oneShotKinds` and `providerResumeHandles` in `chatx`
+      follow their own tests). `providerResumeKinds` is derived from `providerResumeHandles`
 
 **Kind-specific — only when the kind has the feature:**
 
@@ -266,7 +274,6 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
 - [ ] Managed: a `Driver`, `managedDrivers`, and `agents.ManagedRuntime` on the Agent
       (`TestManagedRuntimeFollowsCaps` fails without it; add the kind's row to `wantRuntime`)
 - [ ] sign-in handlers and their CP relays; credentials hidden by `fsDeny`
-- [ ] usage: `usageMeasuredForKind` (`usage_fold.go`)
 - [ ] a pinned CLI: the version pin, a contract workflow and the release-watcher
       registration (§20.5)
 

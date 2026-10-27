@@ -657,6 +657,7 @@ type WorkItem struct {
 	Checks                              string // JSON object {state,total,failed,pending}; "" when not read
 	Mergeable                           string // clean / conflict / unknown; "" when not read
 	ItemType                            string // the tracker's issue type (GitHub type, Jira issuetype); "" when none
+	Comments                            int    // comment count from the provider's list response; -1 = unknown (provider does not say, or an older Agent)
 	CanComment                          bool   // the Agent says the connection may post a comment (Bitbucket rows only)
 }
 
