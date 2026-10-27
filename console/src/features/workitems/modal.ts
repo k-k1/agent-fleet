@@ -4,6 +4,7 @@
 // (ADR 0061 decision 20).
 import { create } from "zustand";
 import type { WorkItem } from "./read.ts";
+import { useSeenStore } from "./seen.ts";
 
 export interface WorkItemDetailTarget {
   item: WorkItem;
@@ -24,8 +25,12 @@ interface WorkItemModalState {
 export const useWorkItemModal = create<WorkItemModalState>((set) => ({
   detail: null,
   report: null,
-  openDetail: (item, opts) =>
-    set({ detail: { item, reference: !!opts?.reference, repoHint: opts?.repoHint || "" }, report: null }),
+  openDetail: (item, opts) => {
+    // Opening the detail counts as seeing the item (#2779). A reference stand-in carries no
+    // updatedAt of its own, so it must not overwrite a real baseline.
+    if (!opts?.reference) useSeenStore.getState().mark(item);
+    set({ detail: { item, reference: !!opts?.reference, repoHint: opts?.repoHint || "" }, report: null });
+  },
   openReport: (item) => set({ detail: null, report: item }),
   close: () => set({ detail: null, report: null }),
 }));

@@ -16,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routehealth"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
@@ -247,12 +248,19 @@ func HandleChatAsk(w http.ResponseWriter, r *http.Request) {
 		Persona: a.Persona, Tools: assistants.ToolsNone, Knowledge: a.Knowledge,
 	}
 	prov := ChatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
+	actualAgent := ChatProviderKind(c, prov)
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
 	// Usage ledger (ADR 0029 §3). The conversation is not persisted, so ref stays empty:
 	// there is nothing to attribute it to.
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureAssistantAsk, Trigger: usagex.TriggerUser})
 	reply, err := prov.Send(ctx, c, prompt)
+	// The conversation is throwaway and has no history to sync, so the re-run needs no notice.
+	if next, kind, _, ok := FailoverTurn(c, actualAgent, NoteTurnResult(ctx, c, actualAgent, err)); ok {
+		prov, actualAgent = next, kind
+		reply, err = prov.Send(ctx, c, prompt)
+		NoteTurnResult(ctx, c, actualAgent, err)
+	}
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadGateway, "provider", err.Error())
 		return
@@ -503,6 +511,17 @@ func HandleChatSend(w http.ResponseWriter, r *http.Request) {
 		prompt = SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 		reply, err = prov.Send(ctx, c, prompt)
 	}
+	// A rate-limited backend re-runs the turn on the next usable one (chat_route.go).
+	var failover []ChatMessage
+	if next, kind, notice, ok := FailoverTurn(c, actualAgent, NoteTurnResult(ctx, c, actualAgent, err)); ok {
+		prov, actualAgent = next, kind
+		prompt, pendingReports = InjectPendingReports(c, content)
+		prompt, handoff = InjectCarryover(c, actualAgent, prompt)
+		prompt = SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
+		reply, err = prov.Send(ctx, c, prompt)
+		NoteTurnResult(ctx, c, actualAgent, err)
+		failover = append(failover, notice)
+	}
 	if err != nil {
 		if IsContextOverflowErr(err) {
 			NoteContextOverflow(c) // close the black hole (even compaction was impossible)
@@ -517,6 +536,11 @@ func HandleChatSend(w http.ResponseWriter, r *http.Request) {
 	if handoff {
 		c.PendingHandoff = "" // carried into the new session — done
 	}
+	// The failover notice goes in only now: pendingReports point into c.Messages, so an append
+	// before MarkReportsDelivered could move the slice and leave them marking a stale copy.
+	// And only on success, so a failed turn still ends in its user message for a retry to
+	// reuse (reusesFailedUserTurn).
+	c.Messages = append(c.Messages, failover...)
 
 	assistant := ChatMessage{Role: "assistant", Content: reply, Agent: actualAgent, Model: c.TurnModel, TS: NowMs()}
 	c.Messages = append(c.Messages, assistant)
@@ -596,13 +620,18 @@ func HandleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	var reply string
 	var steps []chatStep
+	// streamed is whether any delta or step reached the client. A failed turn is re-run on
+	// another backend only while it is false: past that, the client would show both attempts.
+	streamed := false
 	runTurn := func(p string) {
 		steps = nil
 		if sp, ok := prov.(streamingProvider); ok {
 			reply, steps, err = sp.SendStream(ctx, c, p, func(ev ChatStreamEvent) {
 				if ev.Step != nil {
+					streamed = true
 					emit(map[string]any{"step": ev.Step}) // a completed work-trail item
 				} else if ev.Delta != "" {
+					streamed = true
 					emit(map[string]string{"delta": ev.Delta})
 				}
 			})
@@ -633,6 +662,23 @@ func HandleChatStream(w http.ResponseWriter, r *http.Request) {
 		prompt = SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 		runTurn(prompt)
 	}
+	// A rate-limited backend re-runs the turn on the next usable one (chat_route.go). A limit
+	// fails the CLI before its first token, so in practice nothing has been streamed yet.
+	v := NoteTurnResult(ctx, c, actualAgent, err)
+	if streamed {
+		v = routehealth.Verdict{} // reported above; only the re-run is off
+	}
+	var failover []ChatMessage
+	if next, kind, notice, ok := FailoverTurn(c, actualAgent, v); ok {
+		prov, actualAgent = next, kind
+		emit(map[string]any{"agent": actualAgent})
+		prompt, pendingReports = InjectPendingReports(c, content)
+		prompt, handoff = InjectCarryover(c, actualAgent, prompt)
+		prompt = SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
+		runTurn(prompt)
+		NoteTurnResult(ctx, c, actualAgent, err)
+		failover = append(failover, notice)
+	}
 	if err != nil {
 		if IsContextOverflowErr(err) {
 			NoteContextOverflow(c) // close the black hole (even compaction was impossible)
@@ -646,6 +692,7 @@ func HandleChatStream(w http.ResponseWriter, r *http.Request) {
 	if handoff {
 		c.PendingHandoff = "" // carried into the new session — done
 	}
+	c.Messages = append(c.Messages, failover...) // after the reports are marked; see HandleChatSend
 
 	assistant := ChatMessage{Role: "assistant", Content: reply, Steps: steps, Agent: actualAgent, Model: c.TurnModel, TS: NowMs()}
 	c.Messages = append(c.Messages, assistant)

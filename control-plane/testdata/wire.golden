@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 384
+# count: 389
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -55,6 +55,8 @@ agentCatalogWire.sessions[].moving string,omitempty
 agentCatalogWire.sessions[].name string
 agentCatalogWire.sessions[].origin string,omitempty
 agentCatalogWire.sessions[].originSession string,omitempty
+agentCatalogWire.sessions[].planReviewers[].path string
+agentCatalogWire.sessions[].planReviewers[].reviewer string
 agentCatalogWire.sessions[].ports [number],omitempty
 agentCatalogWire.sessions[].pr raw,omitempty
 agentCatalogWire.sessions[].progressAgeSec number,omitempty
@@ -283,6 +285,8 @@ sessionWire.moving string,omitempty
 sessionWire.name string
 sessionWire.origin string,omitempty
 sessionWire.originSession string,omitempty
+sessionWire.planReviewers[].path string
+sessionWire.planReviewers[].reviewer string
 sessionWire.ports [number],omitempty
 sessionWire.pr raw,omitempty
 sessionWire.progressAgeSec number,omitempty
@@ -337,6 +341,7 @@ workItemDTO.checks.failed number
 workItemDTO.checks.pending number
 workItemDTO.checks.state string
 workItemDTO.checks.total number
+workItemDTO.commentCount number
 workItemDTO.id string
 workItemDTO.key string
 workItemDTO.kind string

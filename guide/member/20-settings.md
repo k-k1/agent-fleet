@@ -174,8 +174,11 @@ The behaviour of assistant chat and the fleet operator ([10](10-chat-memo.md), [
 
 - **Output language**: follow the input / 日本語 / English. It changes chat replies only (the read-aloud
   language lives on the **Read aloud** tab).
-- **Agent priority**: the first connected CLI from the top of this list runs the assistants. Titles, reply
-  suggestions and the like are ranked separately (the **AI assistance** tab).
+- **Agent priority**: a new conversation starts on the first connected CLI from the top of this list. The
+  conversation stays on that CLI; when it cannot be used (not connected, or at a usage or rate limit) the first
+  usable CLI in this order answers that turn instead, which may be one ranked above it, and a note in the
+  thread says so. The next turn goes back once the limit lifts. Titles, reply suggestions and the like are
+  ranked separately (the **AI assistance** tab).
 - **Assistant models**: per CLI. "Recommended (currently: …)" picks a safe default from the live catalogue and
   shows what it currently resolves to; prices and context window are described in
   [09](09-agents.md#model-prices-and-usage-chips).
@@ -201,7 +204,10 @@ Settings for the **one-shot AI generations** that appear on sessions, the mirror
 the assistant conversation: they share an implementation, but they surface somewhere else.
 
 - **Agent priority**: the CLI order used for assistance, ranked separately from the assistant. The chat wants
-  the strongest model; assistance runs constantly and wants the cheapest one that works.
+  the strongest model; assistance runs constantly and wants the cheapest one that works. CLIs that are not
+  connected or are at a usage or rate limit are skipped, and a generation that hits a limit is retried once on
+  the next CLI. Background memory review is the exception: pinned to a CLI at its limit, it waits rather than
+  moving to another.
 - **Model for short labels** / **Model for prose**: short covers titles, branch names and reply suggestions;
   prose covers File pane edit suggestions and chat plan updates. Different needs, so different defaults.
   "Recommended" for short labels is **the model with the lowest models.dev list price** among the ones that CLI

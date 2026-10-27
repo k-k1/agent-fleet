@@ -819,3 +819,28 @@
   color: var(--err);
   overflow-wrap: anywhere;
 }
+
+/* Unread marker (#2779): a dot before the key, and the comment count beside the time. */
+.wi-unread {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent, #3794ff);
+}
+.wi-comments {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.wi-row.unread .wi-title {
+  font-weight: 600;
+}
+.wi-unread-total {
+  margin-left: 8px;
+  color: var(--accent, #3794ff);
+}

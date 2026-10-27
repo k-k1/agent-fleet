@@ -57,9 +57,10 @@ func (m *manager) cpEgressHosts() []string {
 var cpHostRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
 
 // cpEgressHostsOf is cpEgressHosts for the given URLs, plus each set URL it refused: not
-// http(s), or a host that is not one exact name. An IPv6 literal is refused too, because
-// the gateway agent's allow file cannot carry one (#2754) and listing it as admitted
-// would be false. When in doubt, refuse: a refused host is only as unreachable as it was
+// http(s), or a host that is not one exact name. An IPv6 literal is admitted in its
+// canonical bare form (egressallow.CanonicalIPv6, the form the gateway agent writes into
+// the allow file); a zone ID, an IPv4-mapped or a non-routable address is refused. When
+// in doubt, refuse: a refused host is only as unreachable as it was
 // before the built-in entries existed.
 func cpEgressHostsOf(urls ...string) (hosts, refused []string) {
 	for _, raw := range urls {
@@ -72,7 +73,9 @@ func cpEgressHostsOf(urls ...string) (hosts, refused []string) {
 		if err == nil && (u.Scheme == "http" || u.Scheme == "https") {
 			h = strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
 		}
-		if !cpHostRe.MatchString(h) {
+		if c, ok := egressallow.CanonicalIPv6(h); ok {
+			h = c
+		} else if !cpHostRe.MatchString(h) {
 			refused = append(refused, raw)
 			continue
 		}

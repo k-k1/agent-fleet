@@ -566,3 +566,22 @@ from widening what af does on its own:
 - Branch deletion after the merge stays out of scope.
 
 The decisions above stand as written. Follow-ups: #2752, #2753.
+
+## Note (2026-10-27, #2779): rows show what changed since the user last looked
+
+The rail marks a row when its `updatedAt` has moved past what this browser last saw, and shows the
+comment count on the row. No decision above changes.
+
+- The baseline (`updatedAt` and count per `provider:key`) lives in the browser's `localStorage`, not in
+  the CP: a reading aid with no server-side per-user state. A key seen for the first time is seeded with
+  its current values, so a first load or a newly listed ticket is never drawn as unread. The map is
+  bounded (oldest evicted) and unreadable storage reads as empty. Opening the detail modal counts as
+  seeing the item.
+- The marker says "updated", or "new comments" when the count also grew (`updatedAt` moves for labels
+  and state too).
+- The count comes from the list response, so there is no request per row: GitHub search's `comments` and
+  Bitbucket's `comment_count` (added to the `fields` projection), carried as `commentCount` and cached in
+  `work_item_cache.comments` (-1 = unknown, never a stored 0). Jira's search does not return it, so Jira rows get the updated marker but no
+  count. Unknown is kept distinct from a known 0 end to end (null on the wire), and growth is read only when
+  both the remembered and the current count are known. The wire key is `commentCount` because the existing guard that no row carries comment text
+  matches the substring `"comments"`.

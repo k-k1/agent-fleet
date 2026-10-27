@@ -27,3 +27,37 @@ func TestMinimalAllowsTheSame(t *testing.T) {
 		}
 	}
 }
+
+func TestCanonicalIPv6(t *testing.T) {
+	for in, want := range map[string]string{
+		"2001:DB8:0:0:0:0:0:5": "2001:db8::5",
+		"[2001:db8::5]":        "2001:db8::5",
+		"fd00::0007":           "fd00::7",
+	} {
+		if got, ok := CanonicalIPv6(in); !ok || got != want {
+			t.Errorf("CanonicalIPv6(%q) = %q, %v; want %q", in, got, ok, want)
+		}
+	}
+	for _, in := range []string{"", "10.0.1.5", "example.com", "fe80::1%eth0", "::ffff:10.0.1.5",
+		"::", "::1", "::192.0.2.5", "::c000:205", "fe80::1", "ff02::1", "[2001:db8::5", "2001:db8::5]:443"} {
+		if got, ok := CanonicalIPv6(in); ok {
+			t.Errorf("CanonicalIPv6(%q) = %q, want refusal", in, got)
+		}
+	}
+}
+
+// A listed IPv6 address is allowed however the caller spells it (bare, bracketed, expanded,
+// upper case), and its neighbour is not.
+func TestAllowsIPv6InAnySpelling(t *testing.T) {
+	p := New([]string{"2001:db8::5", "github.com"})
+	for _, h := range []string{"2001:db8::5", "[2001:db8::5]", "[2001:DB8:0:0:0:0:0:5]", "2001:0db8::0005"} {
+		if !p.Allows(h) {
+			t.Errorf("Allows(%q) = false, want true", h)
+		}
+	}
+	for _, h := range []string{"2001:db8::6", "[2001:db8::6]", "2001:db8::", "::1"} {
+		if p.Allows(h) {
+			t.Errorf("Allows(%q) = true, want false", h)
+		}
+	}
+}

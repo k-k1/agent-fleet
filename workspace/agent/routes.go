@@ -263,6 +263,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/title/dismiss", sessionx.HandleDismissSuggestedTitle)
 	mux.HandleFunc("POST /sessions/{name}/title/suggest", sessionx.HandleSuggestTitle)
 	mux.HandleFunc("POST /sessions/{name}/title/set", sessionx.HandleSetTitle)
+	mux.HandleFunc("POST /sessions/{name}/plan-reviewer", sessionx.HandleSetPlanReviewer)
 	mux.HandleFunc("POST /sessions/{name}/suggest-branch", sessionx.HandleSessionSuggestBranch)
 	mux.HandleFunc("POST /sessions/{name}/suggest-replies", sessionx.HandleSuggestReplies) // LLM reply suggestion v2 (preview only)
 	// Per-answer translation (session_translate.go, docs/log/97). The reader's own button, so

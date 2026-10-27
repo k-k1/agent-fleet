@@ -27,15 +27,11 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetskills"
@@ -45,6 +41,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mdblock"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/userinstr"
 )
@@ -58,12 +55,12 @@ var instrMu sync.Mutex
 // in effect" instead of showing a green row for a write that failed.
 var instrErrs = map[string]string{}
 
-// The kinds of distribution. The Console picks its wording from this.
+// The kinds of distribution (agents.Delivery*); the Console picks its wording from them.
 const (
-	deliveryFile    = "file"    // drop a file AF owns outright
-	deliveryCompose = "compose" // compose into a file shared with others, between markers
-	deliveryConfig  = "config"  // an AF-owned file, referenced from the CLI's own config
-	deliveryPrompt  = "prompt"  // no artifact: AF's own harness folds it into the system prompt
+	deliveryFile    = agents.DeliveryFile
+	deliveryCompose = agents.DeliveryCompose
+	deliveryConfig  = agents.DeliveryConfig
+	deliveryPrompt  = agents.DeliveryPrompt
 )
 
 // instrTarget is where one kind's instructions go. Unsupported kinds are LISTED as rows
@@ -89,25 +86,29 @@ type instrTarget struct {
 // display order.
 var instrSupportedKinds = []string{"claude", "codex", "opencode", "copilot", "agy", "kiro", "lcpp", "muse"}
 
-// instrDeliveryOf is how a supported kind receives the body (the deliveryX constants), ""
-// for a kind outside instrSupportedKinds. Shared by the instructions screen and the kind
-// catalog so the two cannot answer differently.
-func instrDeliveryOf(kind string) string {
-	switch kind {
-	case "claude", "copilot", "kiro":
-		return deliveryFile
-	case "codex", "agy", "muse":
-		return deliveryCompose
-	case "opencode":
-		// opencode 2 does not apply the config's `instructions` array.
-		if opencode.UserInstructionsInAgentsMD() {
-			return deliveryCompose
-		}
-		return deliveryConfig
-	case "lcpp":
-		return deliveryPrompt
+// instrOpsOf resolves a kind's instruction functions (agents.Instructions). The match is exact:
+// no NormalizeKind and no claude fallback, so an alternate spelling has none.
+func instrOpsOf(kind string) (agents.InstructionsOps, bool) {
+	a, ok := sessionx.RegisteredAgent(kind)
+	if !ok {
+		return agents.InstructionsOps{}, false
 	}
-	return ""
+	i, ok := a.(agents.Instructions)
+	if !ok {
+		return agents.InstructionsOps{}, false
+	}
+	return i.Instructions(), true
+}
+
+// instrDeliveryOf is how a supported kind receives the body (the deliveryX constants), ""
+// for a kind that takes none. Shared by the instructions screen and the kind catalog so the
+// two cannot answer differently.
+func instrDeliveryOf(kind string) string {
+	ops, ok := instrOpsOf(kind)
+	if !ok {
+		return ""
+	}
+	return ops.Shape().Delivery
 }
 
 // instrUnsupported are the kinds it cannot reach, with the reason (measured, docs/log/60
@@ -120,11 +121,7 @@ var instrUnsupported = []struct{ kind, reason string }{
 	{"cursor", "no_user_scope"},
 }
 
-// instrOpencodeFile is the AF-owned body opencode's config points at. It lives under
-// ~/.config/agent-fleet so the only writer is af (opencode just reads it).
-func instrOpencodeFile() string {
-	return filepath.Join(paths.AgentConfigDir(), "instructions", "opencode.md")
-}
+func instrOpencodeFile() string { return opencode.InstructionsFile() }
 
 // reconcileAgentInstructions applies the durable state to every artifact. Called at
 // startup (after the entrypoint) and on every Console save.
@@ -144,20 +141,23 @@ func applyInstructionsLocked() {
 		}
 	}
 
+	// Each step walks the kinds' own functions (agents.Instructions); a kind with nothing to
+	// write at a step leaves that function nil. The kinds are independent files, so only the
+	// ORDER OF THE STEPS matters.
+	//
 	// 1. The fleet policy, before the user instructions because the order matters. claude
-	// is left alone: its copy is baked into the image as managed policy
+	// has none: its copy is baked into the image as managed policy
 	// (/etc/claude-code/CLAUDE.md). cursor cannot be reached at all (no local user scope).
-	// For the other five this is the only distribution path — agy / copilot / kiro read no
+	// For the others this is the only distribution path — agy / copilot / kiro read no
 	// operating policy whatsoever until docs/log/60 §60.13 P2.
-	note("codex", codex.ApplyFleetNotes(fleet))
-	note("opencode", opencode.ApplyFleetNotes(fleet))
-	note("agy", agy.ApplyFleetNotes(fleet))
-	note("copilot", copilot.ApplyFleetNotes(fleet))
-	note("kiro", kiro.ApplyFleetNotes(fleet))
-	// muse shares ONE file between both apply paths (ADR 0095 decision 12), so the two notes
-	// below are two marker blocks in the same AGENTS.md rather than two artefacts. The order
-	// they land in is this call order, which is why fleet stays above user here.
-	note("muse", muse.ApplyFleetNotes(fleet))
+	// muse shares ONE file between both apply paths (ADR 0095 decision 12), so its fleet and
+	// user notes are two marker blocks in the same AGENTS.md rather than two artefacts; the
+	// order they land in is the step order, which is why fleet stays above user here.
+	for _, kind := range instrSupportedKinds {
+		if ops, ok := instrOpsOf(kind); ok && ops.Fleet != nil {
+			note(kind, ops.Fleet(fleet))
+		}
+	}
 
 	// 1b. The topic files behind the policy, registered as skills where the CLI has a user
 	// skills root, so its own index (description at start, body on demand) carries an agent
@@ -165,22 +165,19 @@ func applyInstructionsLocked() {
 	// mount, unlike the policy file under /etc. The other kinds keep the index in the policy
 	// text as their only route (see package fleetskills for what was measured).
 	topics := fleetskills.Load(paths.FleetNotesDir())
-	note("claude", fleetskills.Apply(filepath.Join(paths.ClaudeConfigDir(), "skills"), topics))
-	note("codex", fleetskills.Apply(filepath.Join(paths.CodexHome(), "skills"), topics))
-	note("opencode", fleetskills.Apply(filepath.Join(paths.OpencodeConfigDir(), "skills"), topics))
-	// muse's user skills root needs no install step and no lock-file entry: a hand-dropped
-	// SKILL.md is listed by `muse skills list --source user` (measured, gate B1-5).
-	note("muse", fleetskills.Apply(muse.SkillsDir(), topics))
+	for _, kind := range instrSupportedKinds {
+		if ops, ok := instrOpsOf(kind); ok && ops.SkillsDir != nil {
+			note(kind, fleetskills.Apply(ops.SkillsDir(), topics))
+		}
+	}
 
-	// 2. The user's own instructions.
-	note("claude", claude.ApplyUserInstructions(st.Body("claude")))
-	note("codex", codex.ApplyUserInstructions(st.Body("codex")))
-	note("opencode", opencode.ApplyUserInstructions(instrOpencodeFile(), st.Body("opencode")))
-	note("copilot", copilot.ApplyUserInstructions(st.Body("copilot")))
-	note("agy", agy.ApplyUserInstructions(st.Body("agy")))
-	note("kiro", kiro.ApplyUserInstructions(st.Body("kiro")))
-	note("muse", muse.ApplyUserInstructions(st.Body("muse")))
-	// lcpp has nothing to write: harness.SystemPrompt reads userinstr on every turn.
+	// 2. The user's own instructions. lcpp has nothing to write: harness.SystemPrompt reads
+	// userinstr on every turn.
+	for _, kind := range instrSupportedKinds {
+		if ops, ok := instrOpsOf(kind); ok && ops.User != nil {
+			note(kind, ops.User(st.Body(kind)))
+		}
+	}
 
 	// 2b. The memory guidance (ADR 0108 decision 5): fixed text, present exactly while the Agent
 	// memory switch is on, in a block or file of its own so the switch never touches the user's
@@ -190,13 +187,11 @@ func applyInstructionsLocked() {
 	if uiprefs.AgentMemory() {
 		guide = userinstr.MemoryGuide
 	}
-	note("claude", claude.ApplyMemoryGuide(guide))
-	note("codex", codex.ApplyMemoryGuide(guide))
-	note("opencode", opencode.ApplyMemoryGuide(guide))
-	note("copilot", copilot.ApplyMemoryGuide(guide))
-	note("agy", agy.ApplyMemoryGuide(guide))
-	note("kiro", kiro.ApplyMemoryGuide(guide))
-	note("muse", muse.ApplyMemoryGuide(guide))
+	for _, kind := range instrSupportedKinds {
+		if ops, ok := instrOpsOf(kind); ok && ops.Memory != nil {
+			note(kind, ops.Memory(guide))
+		}
+	}
 
 	// 3. rtk is always last (it comes last within the file too).
 	applyRTKLocked()
@@ -250,43 +245,10 @@ func instrState() instrStateWire {
 	for _, kind := range instrSupportedKinds {
 		t := instrTarget{Kind: kind, Supported: true, On: st.TargetOn(kind), Error: instrErrs[kind]}
 		want := st.Body(kind) != ""
-		t.Delivery = instrDeliveryOf(kind)
-		switch kind {
-		case "claude":
-			t.Path = claude.UserInstructionsPath()
-			t.Applied = fileHasBlock(t.Path, "user-notes") == want
-		case "codex":
-			t.Path = codex.AgentsPath()
-			t.Applied = fileHasBlock(t.Path, "user-notes") == want
-		case "opencode":
-			if t.Delivery == deliveryCompose {
-				t.Path = opencode.AgentsPath()
-				t.Applied = fileHasBlock(t.Path, "user-notes") == want
-				break
-			}
-			t.Path = instrOpencodeFile()
-			t.Applied = fileExists(t.Path) == want && opencodeRefers(t.Path) == want
-		case "copilot":
-			t.Path = copilot.UserInstructionsPath()
-			t.Applied = fileExists(t.Path) == want
-		case "agy":
-			t.Path = agy.AgentsPath()
-			t.Applied = fileHasBlock(t.Path, "user-notes") == want
-		case "kiro":
-			t.Path = kiro.UserInstructionsPath()
-			t.Applied = fileExists(t.Path) == want
-		case "lcpp":
-			// Nothing on disk to measure: the harness re-reads the saved state at the start of
-			// every turn, so what is saved is what the next turn sends — running sessions
-			// included.
-			t.Applied = true
-		case "muse":
-			// The same shape as codex and agy: one AGENTS.md shared with the fleet policy, so
-			// the measurement has to be the BLOCK's presence. `fileExists` would report
-			// "applied" for a file that holds only the fleet block, or only the member's own
-			// text (ADR 0095 decision 12).
-			t.Path = muse.AgentsPath()
-			t.Applied = fileHasBlock(t.Path, "user-notes") == want
+		if ops, ok := instrOpsOf(kind); ok {
+			shape := ops.Shape()
+			t.Delivery, t.Path = shape.Delivery, shape.Path
+			t.Applied = instrApplied(shape, want)
 		}
 		targets = append(targets, t)
 	}
@@ -304,6 +266,23 @@ func instrState() instrStateWire {
 		// overwritten.
 		FleetBytes: len(userinstr.FleetNotes()),
 	}
+}
+
+// instrApplied measures one kind's artifact the way its shape says. A kind whose file is shared
+// with the member's own text has to be measured by the block, never by the file's existence
+// (see agents.InstructionsShape).
+func instrApplied(shape agents.InstructionsShape, want bool) bool {
+	switch shape.Measure {
+	case agents.MeasureBlock:
+		return fileHasBlock(shape.Path, "user-notes") == want
+	case agents.MeasureFile:
+		return fileExists(shape.Path) == want
+	case agents.MeasureConfig:
+		return fileExists(shape.Path) == want && opencodeRefers(shape.Path) == want
+	case agents.MeasurePrompt:
+		return true
+	}
+	return false
 }
 
 func fileExists(path string) bool {
@@ -389,27 +368,17 @@ func handleUserNotesPut(w http.ResponseWriter, r *http.Request) {
 func handleUserNotesPreview(w http.ResponseWriter, r *http.Request) {
 	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
 	var path string
-	switch kind {
-	case "claude":
-		path = claude.UserInstructionsPath()
-	case "codex":
-		path = codex.AgentsPath()
-	case "opencode":
-		path = instrOpencodeFile()
-	case "copilot":
-		path = copilot.UserInstructionsPath()
-	case "agy":
-		path = agy.AgentsPath()
-	case "kiro":
-		path = kiro.UserInstructionsPath()
-	case "muse":
-		path = muse.AgentsPath()
-	case "lcpp":
-		// No file: path stays empty and the content below is the system prompt the harness
-		// would send, minus the project layer, which depends on the session's working copy.
-	case "fleet":
+	if kind == "fleet" {
 		path = paths.FleetNotesPath()
-	default:
+	} else if ops, ok := instrOpsOf(kind); ok {
+		// lcpp has no file: path stays empty and the content below is the system prompt the
+		// harness would send, minus the project layer, which depends on the session's working
+		// copy.
+		shape := ops.Shape()
+		if path = shape.PreviewPath; path == "" {
+			path = shape.Path
+		}
+	} else {
 		httpx.WriteErr(w, http.StatusBadRequest, "unknown_kind", "no instruction target for this kind")
 		return
 	}

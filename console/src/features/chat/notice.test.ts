@@ -83,6 +83,19 @@ describe("noticeText (ADR 0033)", () => {
     expect(text).not.toContain("「codex」"); // never surface the raw kind
   });
 
+  // The failover notice names both backends by product name, never by raw kind.
+  it("renders the failover notice with both agents' display names", () => {
+    const text = noticeText({
+      content: "",
+      notice_key: "chat.notice.agent_failover",
+      notice_args: { from: "codex", to: "opencode", agent: "claude" },
+    });
+    expect(text).toContain("Codex");
+    expect(text).toMatch(/Claude/);
+    expect(text).not.toMatch(/\{from\}|\{to\}|\{agent\}/);
+    expect(text).not.toMatch(/\bcodex\b/);
+  });
+
   // A kind the Console does not know stays verbatim: agentOf() defaults to Claude, so
   // borrowing a name would produce a card that lies about which agent was switched to.
   it("keeps an unknown agent kind verbatim", () => {

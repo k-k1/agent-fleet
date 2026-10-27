@@ -186,8 +186,9 @@ there, so you can show the plan to a different model than the one that wrote it.
   ends. On a live card the plan is rejected as with the first review, and if the send fails after
   that, the error toast offers **"Send again"**. On the card of a stopped session nothing is
   rejected, and the card is removed only once the plan has been sent. The link between plan and
-  reviewer is kept in this browser only, so another browser or device shows only "Review in
-  another session".
+  reviewer is kept with the planner session, so any browser or device offers the button. Against
+  an older Agent that cannot store it, the link stays in the browser that launched the reviewer,
+  and other browsers show only "Review in another session".
 
 ### Calling a skill or a command
 

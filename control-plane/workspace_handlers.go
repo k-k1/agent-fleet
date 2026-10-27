@@ -745,6 +745,12 @@ func (a workspaceAPI) stop(w http.ResponseWriter, r *http.Request, res *resolved
 	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.Name(), "state": "stopped"})
 }
 
+// planReviewerWire is one plan file → reviewer session link of sessionWire.PlanReviewers.
+type planReviewerWire struct {
+	Path     string `json:"path"`
+	Reviewer string `json:"reviewer"`
+}
+
 // sessionWire is the session shape exchanged with the Agent and the Console. The
 // CP mirrors it into the DB so it can be re-served while the container is down.
 type sessionWire struct {
@@ -777,7 +783,13 @@ type sessionWire struct {
 	// wrote. No DB-mirror column — it describes a title whose writers both need the Agent
 	// running, and a stale copy would claim authorship for a rename that has since changed.
 	TitleSetBy string `json:"titleSetBy,omitempty"`
-	Display    string `json:"display"` // human-readable name from the Agent (title → label → repo@time)
+	// PlanReviewers: which session reviewed each plan file this session wrote (the Agent's
+	// Meta.PlanReviewers), so "Review again" is offered on every device. Same relay caveat as
+	// its neighbours. A pointer: absent = an Agent that predates the field (the Console then
+	// trusts its local cache), [] = the Agent knows the field and holds no link. No DB-mirror column: the link is only
+	// useful with the Agent up (the reviewer has to take a message).
+	PlanReviewers *[]planReviewerWire `json:"planReviewers,omitempty"`
+	Display       string              `json:"display"` // human-readable name from the Agent (title → label → repo@time)
 	// Color: terminal background hue (hex; SSM sessions carry their host color).
 	// Dropped in the relay, an SSM session's background always arrives through the CP as
 	// the default colour. The DB mirror has no column for it, so it is absent while stopped.

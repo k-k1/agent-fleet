@@ -77,6 +77,11 @@ type workItemOut struct {
 	LabelColors map[string]string `json:"labelColors"`
 	Repo        string            `json:"repo"`
 	UpdatedAt   string            `json:"updatedAt"`
+	// Comments is the comment count the provider's LIST response already carries (GitHub search's
+	// `comments`, Bitbucket's `comment_count`). null means the provider's list does not say (Jira's
+	// search returns none), which is not the same as a known 0: the Console only reads growth when
+	// both the remembered and the current count are known. It never asks per row.
+	CommentCount *int `json:"commentCount"`
 	// Checks and Mergeable are filled for open GitHub pull requests only (see
 	// githubEnrichPullRequests). Zero values mean "not read", which the rail draws as nothing —
 	// the same as "no checks", and never as green.
@@ -354,6 +359,14 @@ func githubSearchOnce(token, queryID, query string) ([]workItemOut, int, error) 
 	return rows, tc.TotalCount, nil
 }
 
+// knownCount keeps a count the provider actually sent. Absent or negative stays nil, never 0.
+func knownCount(p *int) *int {
+	if p == nil || *p < 0 {
+		return nil
+	}
+	return p
+}
+
 // parseGitHubSearchItems maps a /search/issues body onto the shared row shape. Split out
 // from the HTTP call so the mapping — the part that actually decides what the rail shows
 // — is testable without a network.
@@ -368,6 +381,7 @@ func parseGitHubSearchItems(body []byte, queryID string) ([]workItemOut, error) 
 			HTMLURL     string `json:"html_url"`
 			RepoURL     string `json:"repository_url"`
 			UpdatedAt   string `json:"updated_at"`
+			Comments    *int   `json:"comments"`
 			Draft       bool   `json:"draft"`
 			PullRequest *struct {
 				URL string `json:"url"`
@@ -412,7 +426,7 @@ func parseGitHubSearchItems(body []byte, queryID string) ([]workItemOut, error) 
 			QueryID: queryID, Provider: "github", Kind: kind, Key: key,
 			Title: it.Title, State: normalizeGitHubState(it.State, it.Draft),
 			URL: it.HTMLURL, Assignee: assignee, Labels: labels, Type: typ,
-			LabelColors: gitHubLabelColors(it.Labels), Repo: repo, UpdatedAt: it.UpdatedAt,
+			LabelColors: gitHubLabelColors(it.Labels), Repo: repo, UpdatedAt: it.UpdatedAt, CommentCount: knownCount(it.Comments),
 			nodeID: it.NodeID,
 		})
 	}

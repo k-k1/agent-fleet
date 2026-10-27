@@ -40,6 +40,13 @@ const ModeEnforce = generatedHeader + "# mode: enforce\n" +
 // squidEntryRe is a dstdomain entry Squid reads as one token: a host or a ".suffix". The
 // CP validates entries on the way in (normalizeEgressEntry); this guards the file against
 // anything that slipped past, since one bad line can make Squid refuse the whole file.
+// An IPv6 literal is not matched here: renderAllow takes it through
+// egressallow.CanonicalIPv6 and writes it twice, bare and bracketed. Squid keeps a
+// numeric URL host in the bracketed form ("[2001:db8::5]", Ip::Address::toHostStr), and
+// dstdomain, and ssl::server_name when there is no SNI (it falls back to the CONNECT
+// target), compare that string; ssl::server_name documents the bare "::" form for an IP
+// in a certificate or SNI. One file serves both ACLs, each form matching only its own
+// reader, and the unmatched form is inert. Not yet verified against a real Squid (#2754).
 var squidEntryRe = regexp.MustCompile(`^\.?[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 
 // snapshot is a policy as the agent applied it: what Squid was told, and the matcher the
@@ -56,6 +63,15 @@ func renderAllow(entries []string) []byte {
 	for _, e := range entries {
 		e = strings.TrimSuffix(strings.TrimPrefix(strings.ToLower(strings.TrimSpace(e)), "*"), ".")
 		if e == "" || strings.HasPrefix(e, "#") {
+			continue
+		}
+		if strings.Contains(e, ":") {
+			c, ok := egressallow.CanonicalIPv6(e)
+			if !ok {
+				log.Printf("egress-agent: dropping allowlist entry %q: not a usable IPv6 literal", e)
+				continue
+			}
+			valid = append(valid, c, "["+c+"]")
 			continue
 		}
 		if strings.Contains(e, "..") || !squidEntryRe.MatchString(e) {

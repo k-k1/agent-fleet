@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -583,8 +584,8 @@ func TestTypeLineAndSubmitClaudePastesMultilineAndLongPrompts(t *testing.T) {
 		{"short single line", "こんにちは", ""},
 		{"multi line", envelope + "1行目\n2行目", envelope + "1行目\n2行目"},
 		{"crlf becomes one LF", "a\r\nb", "a\nb"},
-		{"just under the threshold", strings.Repeat("a", claudePasteMinBytes-1), ""},
-		{"at the threshold", strings.Repeat("a", claudePasteMinBytes), strings.Repeat("a", claudePasteMinBytes)},
+		{"just under the threshold", strings.Repeat("a", claude.PasteMinBytes-1), ""},
+		{"at the threshold", strings.Repeat("a", claude.PasteMinBytes), strings.Repeat("a", claude.PasteMinBytes)},
 		{"long multi line", envelope + strings.Repeat("レビュー結果: bundle には問題あり\n", 400),
 			envelope + strings.Repeat("レビュー結果: bundle には問題あり\n", 400)},
 	}
