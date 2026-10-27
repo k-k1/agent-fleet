@@ -32,11 +32,16 @@ const v2Host = (sessions = {}) => {
     },
     ctx: {
       tool: { hook: async (name, cb) => void (hooks[name] = cb) },
-      // Like ctx.session.get: the session's info, a rejection for one that does not exist.
+      // Like ctx.session.get: the session's info, a rejection for one that does not exist. A
+      // session's `delay` (ms) slows the answer down: with `snapshot` the answer is what the
+      // session was when asked, otherwise what it is when the answer arrives.
       session: {
         get: async ({ sessionID }) => {
           if (!(sessionID in sessions)) throw new Error("Session.NotFoundError");
-          return { id: sessionID, ...sessions[sessionID] };
+          const asked = { id: sessionID, ...sessions[sessionID], metadata: { ...sessions[sessionID].metadata } };
+          if (!asked.delay) return asked;
+          await sleep(asked.delay);
+          return asked.snapshot ? asked : { id: sessionID, ...sessions[sessionID] };
         },
         hook: async (name, cb) => void (hooks["session." + name] = cb),
       },
@@ -265,8 +270,8 @@ const now = Date.now();
     h.push(ev("session.execution.started", { sessionID: "ses_c" }));
     await until(() => statusLines().includes("session-status working sidC"), "C reports once tagged");
 
-    // /new: the turn starts before the pane tags its session. The start is held
-    // and reported once the tag appears, the turn's end after it.
+    // /new: the session is created untagged and its turn starts before the pane tags it. The start
+    // is held and reported once the tag appears, the turn's end after it.
     sessions.ses_new = { metadata: {} };
     let mark = statusLines().length;
     h.push(ev("session.created", { sessionID: "ses_new" }), ev("session.execution.started", { sessionID: "ses_new" }));
@@ -282,21 +287,61 @@ const now = Date.now();
     // A turn that ended before the tag appeared is still reported whole, in order.
     sessions.ses_quick = { metadata: {} };
     mark = statusLines().length;
-    h.push(ev("session.execution.started", { sessionID: "ses_quick" }), ev("session.execution.succeeded", { sessionID: "ses_quick" }));
+    h.push(
+      ev("session.created", { sessionID: "ses_quick" }),
+      ev("session.execution.started", { sessionID: "ses_quick" }),
+      ev("session.execution.succeeded", { sessionID: "ses_quick" }),
+    );
     await sleep(200);
     sessions.ses_quick.metadata = { "af.sid": "sidQ" };
     await until(() => statusLines().length >= mark + 2, "the replayed turn");
     assert.deepEqual(statusLines().slice(mark), ["session-status working sidQ", "session-status idle sidQ"]);
 
-    // A session that is never tagged, and a Managed one, report nothing; the hold ends with the
-    // wait (AF_OPENCODE_TAG_WAIT_MS) and a later tag does not resurrect the old turn.
+    // The turn ends while the poller's lookup is in flight and slow: the end must not be lost to
+    // an untagged answer that arrives after the tag (a working with no idle sticks the badge).
+    sessions.ses_slow = { metadata: {} };
+    mark = statusLines().length;
+    h.push(ev("session.created", { sessionID: "ses_slow" }), ev("session.execution.started", { sessionID: "ses_slow" }));
+    await sleep(150);
+    Object.assign(sessions.ses_slow, { delay: 300, snapshot: true });
+    h.push(ev("session.execution.succeeded", { sessionID: "ses_slow" }));
+    await sleep(30);
+    sessions.ses_slow.metadata = { "af.sid": "sidS" };
+    await until(() => statusLines().length >= mark + 2, "the slow turn");
+    await sleep(400);
+    assert.deepEqual(statusLines().slice(mark), ["session-status working sidS", "session-status idle sidS"]);
+
+    // An untagged session this server did not see created moments ago (an old one a pane picks
+    // and claims later) ran its turn before it was anyone's: that turn is not replayed.
+    sessions.ses_old = { metadata: {} };
+    mark = statusLines().length;
+    h.push(ev("session.execution.started", { sessionID: "ses_old" }), ev("session.execution.succeeded", { sessionID: "ses_old" }));
+    await sleep(100);
+    sessions.ses_old.metadata = { "af.sid": "sidO" };
+    await sleep(300);
+    assert.deepEqual(statusLines().slice(mark), [], "an old session's earlier turn must not be replayed");
+    assert.ok(!existsSync(join(sidDirOf(), "sidO")), "nor may it move the slot");
+
+    // A session that is never tagged in time, one whose lookup outlasts the wait, and a Managed
+    // one report nothing; the hold ends with the wait (AF_OPENCODE_TAG_WAIT_MS = 700 here).
     sessions.ses_never = { metadata: {} };
+    sessions.ses_hang = { metadata: {} };
     sessions.ses_managed = { metadata: { "af.managed": "1" } };
     mark = statusLines().length;
-    h.push(ev("session.execution.started", { sessionID: "ses_never" }), ev("session.execution.started", { sessionID: "ses_managed" }));
-    await sleep(900);
+    h.push(
+      ev("session.created", { sessionID: "ses_never" }),
+      ev("session.created", { sessionID: "ses_hang" }),
+      ev("session.created", { sessionID: "ses_managed" }),
+      ev("session.execution.started", { sessionID: "ses_never" }),
+      ev("session.execution.started", { sessionID: "ses_hang" }),
+      ev("session.execution.started", { sessionID: "ses_managed" }),
+    );
+    await sleep(100);
+    sessions.ses_hang.delay = 1500; // answered after the wait, tagged by then
+    await sleep(800);
     sessions.ses_never.metadata = { "af.sid": "sidX" };
-    await sleep(300);
+    sessions.ses_hang.metadata = { "af.sid": "sidH" };
+    await sleep(1000);
     assert.deepEqual(statusLines().slice(mark), [], "an expired hold or a Managed session must not report");
     stop();
   } finally {
