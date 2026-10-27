@@ -53,7 +53,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /work-items/fetch", handleWorkItemsFetch)
 	// The only write-back (docs/log/80 §80.10). It arrives via the CP only once a human has
 	// read the draft and pressed the button. There is no MCP tool, so an agent cannot reach it.
-	mux.HandleFunc("POST /work-items/comment", handleWorkItemsComment)
+	mux.Handle("POST /work-items/comment", memberorigin.Require(workItemCommentMaxRequest, http.HandlerFunc(handleWorkItemsComment)))
 	// One pull request, read live because a member opened its panel (docs/log/80 §80.24).
 	// Relayed by the CP like the comment above, and like it, only ever on a human's action —
 	// the timer-driven job is /work-items/fetch.

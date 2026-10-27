@@ -523,3 +523,11 @@ bearer トークンに `X-OAuth-Scopes` が付くこと。Bitbucket の課題は
   `comment_count`（`fields` に追加）を `commentCount` として運び、`work_item_cache.comments` に保存する。
   Jira の検索は件数を返さないので、Jira の行は更新の印だけで件数は出ない。不明は既知の 0 と区別して端から端まで保つ（ワイヤでは null、DB では -1）。増加の判定は、記憶した件数と現在の件数が両方わかる場合だけ行う。ワイヤのキーが `commentCount` なのは、
   行にコメント本文を含めない既存の検査が部分文字列 `"comments"` を見ているため。
+
+## 追記（2026-10-27、#2752）: 報告コメントの書き込みも merge と同じ member-origin ゲートに通す
+
+決定 6.1 は MCP ツールを作らないとしているが、どのセッションのシェルも AGENT_TOKEN を持つので Agent の
+`POST /work-items/comment` を直接呼べ、Control Plane の中継も Console 由来のチェックをしていなかった。コメント書き込みを
+merge と同じ規則に揃えた（2026-10-25 の #2632 の追記を参照）。Agent は、そのワークスペース自身のメンバーのために本文そのものへ署名した
+member-origin マーク（ADR 0113）がある要求だけを受け付け、Control Plane は Console 由来のチェック（JSON 本文、同一オリジンの
+`Sec-Fetch-Site` / `Origin`）を通ったあとにだけ署名する。呼び出し元は Console の Post ボタンだけで、変更はない。決定 6.1 自体は変わらない。

@@ -761,6 +761,184 @@ func TestWorkItemMergeOldAgentSaysSo(t *testing.T) {
 	}
 }
 
+// The comment relay is held to the merge relay's standard (ADR 0061, ADR 0113, #2752).
+
+const commentBody = `{"provider":"github","key":"acme/web#518","body":"hello"}`
+
+func consoleCommentReq(body string) *http.Request {
+	r := consoleMergeReq(body)
+	r.URL.Path = "/api/work-items/comment"
+	return r
+}
+
+// The Agent receives the normalised body under a member-origin mark that covers it, for this
+// member.
+func TestWorkItemCommentRelaysSigned(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	var raw []byte
+	var path, auth, mark string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, auth, mark = r.URL.Path, r.Header.Get("Authorization"), r.Header.Get(memberOriginHeader)
+		raw, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":{"code":"provider_error","message":"refused"}}`))
+	}))
+	defer srv.Close()
+	w := httptest.NewRecorder()
+	env.api.comment(w, consoleCommentReq(`{"key":"acme/web#518","body":"hello","extra":"x"}`), mergeRes(env, srv.URL, "running"))
+	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "provider_error") {
+		t.Fatalf("got %d %s", w.Code, w.Body.String())
+	}
+	if path != "/work-items/comment" || auth != "Bearer tok" {
+		t.Errorf("agent saw %s with %q", path, auth)
+	}
+	if strings.Contains(string(raw), "extra") {
+		t.Errorf("agent body = %s, want the normalised body", raw)
+	}
+	pub := memberOriginKey(env.api.mgr.tokenSignMaster(), memberOriginKeyVersion()).Public().(ed25519.PublicKey)
+	c := decodeMark(t, pub, mark)
+	sum := sha256.Sum256(raw)
+	if c.Method != "POST" || c.Path != "/work-items/comment" || c.Query != "" || c.BodySHA256 != hex.EncodeToString(sum[:]) ||
+		c.Membership != env.mid || c.Workspace != "ws1" || c.Subject != "user1" {
+		t.Errorf("claims = %+v — the mark must cover the body that was sent, for this member", c)
+	}
+}
+
+func TestWorkItemCommentRefusesCrossOriginRequests(t *testing.T) {
+	for name, mod := range map[string]func(*http.Request){
+		"text/plain":      func(r *http.Request) { r.Header.Set("Content-Type", "text/plain") },
+		"no content type": func(r *http.Request) { r.Header.Del("Content-Type") },
+		"same-site":       func(r *http.Request) { r.Header.Set("Sec-Fetch-Site", "same-site") },
+		"cross-site":      func(r *http.Request) { r.Header.Set("Sec-Fetch-Site", "cross-site") },
+		"foreign origin":  func(r *http.Request) { r.Header.Set("Origin", "https://preview.example.test") },
+	} {
+		env := newWorkItemEnv(t, "running")
+		var reached int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached++ }))
+		r := consoleCommentReq(commentBody)
+		mod(r)
+		w := httptest.NewRecorder()
+		env.api.comment(w, r, mergeRes(env, srv.URL, "running"))
+		srv.Close()
+		if w.Code != http.StatusUnsupportedMediaType && w.Code != http.StatusForbidden {
+			t.Errorf("%s: got %d %s, want 415/403", name, w.Code, w.Body.String())
+		}
+		if reached != 0 {
+			t.Errorf("%s: the Agent was reached", name)
+		}
+	}
+	env := newWorkItemEnv(t, "running")
+	var reached int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached++
+		_, _ = w.Write([]byte(`{"url":"u"}`))
+	}))
+	defer srv.Close()
+	r := consoleCommentReq(commentBody)
+	r.Host = "console.example.test"
+	r.Header.Set("Origin", "https://console.example.test")
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	env.api.comment(w, r, mergeRes(env, srv.URL, "running"))
+	if w.Code != http.StatusOK || reached != 1 {
+		t.Fatalf("the Console's own request: %d %s (agent reached %d)", w.Code, w.Body.String(), reached)
+	}
+}
+
+func TestWorkItemCommentRefusesAnotherMembersWorkspace(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	var reached int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached++ }))
+	defer srv.Close()
+	res := mergeRes(env, srv.URL, "running")
+	res.ws.MembershipID = "someone-else"
+	w := httptest.NewRecorder()
+	env.api.comment(w, consoleCommentReq(commentBody), res)
+	if w.Code != http.StatusForbidden || reached != 0 {
+		t.Fatalf("got %d %s (agent reached %d)", w.Code, w.Body.String(), reached)
+	}
+}
+
+func TestWorkItemCommentStoppedDoesNotStart(t *testing.T) {
+	env := newWorkItemEnv(t, "stopped")
+	var reached int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached++ }))
+	defer srv.Close()
+	w := httptest.NewRecorder()
+	env.api.comment(w, consoleCommentReq(commentBody), mergeRes(env, srv.URL, "stopped"))
+	if w.Code != http.StatusConflict || reached != 0 {
+		t.Fatalf("got %d %s (agent reached %d)", w.Code, w.Body.String(), reached)
+	}
+}
+
+// HTML characters are not escaped in the signed body (a "<" would grow six-fold and could push a
+// body the provider accepts past the Agent's cap), and a request beyond the Console's own cap is
+// refused before it is read in full, signed or relayed.
+func TestWorkItemCommentBodySizeBounds(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	var raw []byte
+	var reached int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached++
+		raw, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`{"url":"u"}`))
+	}))
+	defer srv.Close()
+	lt := strings.Repeat("<", 50000)
+	w := httptest.NewRecorder()
+	env.api.comment(w, consoleCommentReq(`{"provider":"github","key":"acme/web#1","body":"`+lt+`"}`), mergeRes(env, srv.URL, "running"))
+	if w.Code != http.StatusOK || reached != 1 {
+		t.Fatalf("50000 '<': %d %s (agent reached %d)", w.Code, w.Body.String(), reached)
+	}
+	if strings.Contains(string(raw), `\u003c`) || len(raw) > 60000 {
+		t.Errorf("the relayed body was HTML-escaped: %d bytes", len(raw))
+	}
+	huge := strings.Repeat("a", workItemCommentMaxIn)
+	w = httptest.NewRecorder()
+	env.api.comment(w, consoleCommentReq(`{"provider":"github","key":"acme/web#1","body":"`+huge+`"}`), mergeRes(env, srv.URL, "running"))
+	if w.Code != http.StatusBadRequest || reached != 1 {
+		t.Fatalf("oversize: %d (agent reached %d)", w.Code, reached)
+	}
+}
+
+// A post leaves an audit row naming who, where and the outcome, and never the text.
+func TestWorkItemCommentWritesAnAuditRow(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	ctx := context.Background()
+	tenant, _ := env.st.EnsureDefaultTenant(ctx)
+	for _, status := range []int{http.StatusOK, http.StatusBadGateway} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`{}`))
+		}))
+		res := mergeRes(env, srv.URL, "running")
+		res.mv.TenantID = tenant.ID
+		w := httptest.NewRecorder()
+		env.api.comment(w, consoleCommentReq(`{"provider":"jira","key":"PROJ-7","body":"secret draft text"}`), res)
+		srv.Close()
+		if w.Code != status {
+			t.Fatalf("status %d, got %d", status, w.Code)
+		}
+	}
+	rows, err := env.st.ListAuditByTenant(ctx, tenant.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[int]bool{}
+	for _, a := range rows {
+		if a.Action != "work_item.comment" {
+			continue
+		}
+		seen[a.HTTPStatus] = true
+		if a.Target != "PROJ-7" || a.ActorID != "user1" || a.Detail != "provider=jira" || strings.Contains(a.Detail+a.Target, "secret") {
+			t.Errorf("audit row = %+v", a)
+		}
+	}
+	if !seen[http.StatusOK] || !seen[http.StatusBadGateway] {
+		t.Errorf("want a row for the success and the refusal, got %v (%d rows)", seen, len(rows))
+	}
+}
+
 func TestWorkItemWireNeverCarriesNullArrays(t *testing.T) {
 	if got := splitLabels(""); got == nil {
 		t.Error("splitLabels(\"\") returned nil — it marshals as JSON null")

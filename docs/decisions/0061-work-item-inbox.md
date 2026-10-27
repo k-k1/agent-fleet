@@ -585,3 +585,12 @@ comment count on the row. No decision above changes.
   count. Unknown is kept distinct from a known 0 end to end (null on the wire), and growth is read only when
   both the remembered and the current count are known. The wire key is `commentCount` because the existing guard that no row carries comment text
   matches the substring `"comments"`.
+
+## Note (2026-10-27, #2752): the report comment write takes the same member-origin gate as merge
+
+Decision 6.1 says no MCP tool is created, but every session's shell holds AGENT_TOKEN and could call the Agent's
+`POST /work-items/comment` directly, and the Control Plane's relay ran no Console-origin check. The comment write now
+follows the merge write's rules (see the 2026-10-25 note on #2632): the Agent takes the route only with a
+member-origin mark (ADR 0113) signed over the exact body for the workspace's own member, and the Control Plane signs
+only after the Console-origin check (JSON body, same-origin `Sec-Fetch-Site` / `Origin`). The Console's Post button is
+the only caller and is unchanged. Decision 6.1 itself stands.

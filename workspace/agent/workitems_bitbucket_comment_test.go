@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin/memberorigintest"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -100,14 +101,13 @@ func TestBitbucketPostCommentRejectsBadKeyAndNoConnection(t *testing.T) {
 // The handler no longer answers 400 bad_provider for bitbucket.
 func TestWorkItemsCommentHandlerRoutesBitbucket(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	signer := memberorigintest.Install(t)
 	st := newBBCommentStub(t, http.StatusCreated, `{"links":{"html":{"href":"https://bitbucket.org/x"}}}`)
 	s := bbTokenStore()
 	if err := s.Save(); err != nil {
 		t.Fatal(err)
 	}
-	w := httptest.NewRecorder()
-	handleWorkItemsComment(w, httptest.NewRequest("POST", "/work-items/comment",
-		strings.NewReader(`{"provider":"bitbucket","key":"acme/web#7","body":"hi"}`)))
+	w := postComment(t, signer, `{"provider":"bitbucket","key":"acme/web#7","body":"hi"}`)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "https://bitbucket.org/x") {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
 	}
@@ -116,9 +116,7 @@ func TestWorkItemsCommentHandlerRoutesBitbucket(t *testing.T) {
 	}
 	st2 := newBBCommentStub(t, http.StatusForbidden, `{}`)
 	_ = st2
-	w = httptest.NewRecorder()
-	handleWorkItemsComment(w, httptest.NewRequest("POST", "/work-items/comment",
-		strings.NewReader(`{"provider":"bitbucket","key":"acme/web#7","body":"hi"}`)))
+	w = postComment(t, signer, `{"provider":"bitbucket","key":"acme/web#7","body":"hi"}`)
 	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "provider_error") {
 		t.Fatalf("a refused post must be a 502 provider_error, got %d %s", w.Code, w.Body.String())
 	}
