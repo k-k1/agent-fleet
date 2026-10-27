@@ -59,10 +59,11 @@ session. You can view, list, create, edit, comment on and transition issues:
   by Agent Fleet, so `code` and **bold** right next to Japanese text, and a list straight after a
   paragraph, show as written. When the issue is created but its description cannot be set, `jira`
   says so and exits with status 3: the issue exists, so do not create it again; set the
-  description with `jira issue edit PROJ-1 --no-input -b "…"`. If the project requires a description
-  when an issue is created, `create` falls back to the Jira CLI's own conversion and says so. In an
-  interactive terminal without `--no-input`, with `--help`, `--web`, `--debug` or a configuration of
-  your own, the Jira CLI is used as before.
+  description with `jira issue edit PROJ-1 --no-input -b "…"`. If the issue type requires a
+  description when an issue is created, `create` sends it through the Jira CLI's own conversion and
+  says so. In an interactive terminal without `--no-input`, with `--help`, `--web`, `--debug` or a
+  configuration of your own, the Jira CLI is used as before. To turn the conversion off entirely,
+  set `AF_JIRA_ADF=0`.
 - **Flaky network to Atlassian**: reading commands (`issue view` / `issue list`, `board`, `sprint`,
   `epic` and `project list`, `me`) are re-run up to twice after a connection reset or timeout, and
   only the last attempt's output is shown. Commands that change something are never re-run, so after

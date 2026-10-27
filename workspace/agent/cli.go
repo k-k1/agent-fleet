@@ -258,6 +258,14 @@ var subcommands = []subcommand{
 		run:     runJiraDescription,
 	},
 	{
+		// Whether a create must carry its description, asked before the wrapper creates an issue
+		// without one. See jira_description_required.go.
+		name:    "jira-description-required",
+		summary: "whether a Jira issue type requires a description at create",
+		hidden:  true,
+		run:     runJiraDescriptionRequired,
+	},
+	{
 		// Transparent SVN auth: the PATH shim at /usr/local/bin/svn re-enters this binary,
 		// which fills in the credential and execs the real svn — so the process svn's caller
 		// sees is still svn. See svn_wrapper.go.

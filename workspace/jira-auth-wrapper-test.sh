@@ -29,6 +29,8 @@ case "$1" in
     cat "/proc/$PPID/comm" >"$STUB_DIR/comment.parent" 2>/dev/null
     [ ! -f "$STUB_DIR/comment.hang" ] || exec sleep 60
     [ ! -f "$STUB_DIR/comment.exit" ] || exit "$(cat "$STUB_DIR/comment.exit")"; echo "stub: comment done" ;;
+  jira-description-required) shift; printf '%s\n' "$@" >"$STUB_DIR/req.argv"
+    [ ! -f "$STUB_DIR/req.out" ] || cat "$STUB_DIR/req.out"; exit 0 ;;
   jira-description) shift; printf '%s\n' "$@" >"$STUB_DIR/desc.argv"; cat >"$STUB_DIR/desc.stdin"
     [ ! -f "$STUB_DIR/desc.err" ] || cat "$STUB_DIR/desc.err" >&2
     [ ! -f "$STUB_DIR/desc.exit" ] || exit "$(cat "$STUB_DIR/desc.exit")"; exit 0 ;;
@@ -1525,26 +1527,74 @@ for flag in -s --summary -t --type -P --parent -y --priority -r --reporter -a --
   [ "$(args_of)" = "issue create -p AB -s sum $flag --body=literal " ] || fail "strip [$flag]: jira argv '$(args_of)'"
   [ "$(cat "$T/desc.stdin" 2>/dev/null)" = actual ] || fail "strip [$flag]: body '$(cat "$T/desc.stdin" 2>/dev/null)'"
 done
-# A project that requires a description refuses the create without one (400, nothing created):
-# the create is made again with the body through jira-cli's conversion, and not described.
+# An issue type that requires a description (createmeta, asked first) gets its body with the
+# create, through jira-cli's conversion; -T goes before a `--`. No description PUT follows.
+for spec in "plain|issue create -p AB -t Task -s sum -b body|issue create -p AB -t Task -s sum --template=" \
+  "dashdash|issue create -p AB -t Task -s sum -b body -- x|issue create -p AB -t Task -s sum --template="; do
+  reset; desc_reset; oauth; rm -f "$T/req.argv"; echo required >"$T/req.out"
+  plan 1 0 "$ROUTE/browse/AB-7
+" ""
+  cmdline="${spec#*|}"; cmdline="${cmdline%|*}"
+  # shellcheck disable=SC2086
+  run -- $cmdline
+  [ "$rc" = 0 ] && [ "$(count)" = 1 ] && [ ! -f "$T/desc.argv" ] || fail "required [${spec%%|*}]: rc=$rc attempts=$(count)"
+  [ "$(cat "$T/req.argv" 2>/dev/null)" = "AB
+Task" ] || fail "required [${spec%%|*}]: lookup argv '$(cat "$T/req.argv" 2>/dev/null)'"
+  case "$(args_of)" in "${spec##*|}$T/tmp/"*) ;; *) fail "required [${spec%%|*}]: jira argv '$(args_of)'" ;; esac
+  [ "${spec%%|*}" != dashdash ] || args_of | grep -q -- "--template=[^ ]* -- x $" || fail "required [dashdash]: -T after --: '$(args_of)'"
+  grep -q 'requires a description at create time' "$T/err" || fail "required [${spec%%|*}]: no note"
+  [ -z "$(ls -A "$T/tmp")" ] || fail "required [${spec%%|*}] left files behind: $(ls -A "$T/tmp")"
+done
+rm -f "$T/req.out"
+# The type may come as -tTask / --type=Task, the project from the config.
+reset; desc_reset; oauth; rm -f "$T/req.argv"; echo optional >"$T/req.out"; created AB-1
+config "$MANAGED/config.yml" 'project:
+  key: CFG
+issue:
+  types:
+    - id: "1"'
+run -- issue create --type=Task -s sum -b body
+[ "$(cat "$T/req.argv" 2>/dev/null)" = "CFG
+Task" ] && [ -f "$T/desc.argv" ] || fail "required lookup from config: '$(cat "$T/req.argv" 2>/dev/null)'"
+rm -f "$T/req.out"
+# A create refused with a description error is never re-sent: the status is not known (a 500 with
+# the same field error may follow a created issue), so the wrapper says what to check instead.
 reset; desc_reset; oauth
 plan 1 1 "" "
 Error:
   - description: Description is required."
 plan 2 0 "$ROUTE/browse/AB-7
 " ""
-run -- issue create -p AB -s sum -b body
-[ "$rc" = 0 ] && [ "$(count)" = 2 ] && [ ! -f "$T/desc.argv" ] || fail "required description: rc=$rc attempts=$(count)"
-args_of | grep -q -- "--template=$T/tmp/" || fail "required description: second create '$(args_of)'"
-grep -q 'requires a description at create time' "$T/err" || fail "required description: no note: '$(cat "$T/err")'"
-[ -z "$(ls -A "$T/tmp")" ] || fail "required description left files behind: $(ls -A "$T/tmp")"
-# Any other refusal is not retried.
+run -- issue create -p AB -t Task -s sum -b body
+[ "$rc" = 1 ] && [ "$(count)" = 1 ] && [ ! -f "$T/desc.argv" ] || fail "description refusal: rc=$rc attempts=$(count)"
+grep -q 'is not re-sent automatically' "$T/err" && grep -q 'AF_JIRA_ADF=0' "$T/err" || fail "description refusal: '$(cat "$T/err")'"
+# AF_JIRA_ADF=0 leaves all three to jira-cli as before.
+for cmdline in "issue create -p AB -s sum -b body" "issue edit AB-1 -b body" "issue comment add AB-1 hi"; do
+  reset; desc_reset; oauth; created AB-1
+  # shellcheck disable=SC2086
+  run AF_JIRA_ADF=0 -- $cmdline
+  [ -f "$T/jira.seen" ] && [ ! -f "$T/desc.argv" ] && [ ! -f "$T/comment.argv" ] || fail "AF_JIRA_ADF=0 [$cmdline]: taken over"
+done
+# Short flags as pflag reads them: -h=true and a cluster that starts with -h are help, -h=false is not.
+for cmdline in "issue edit AB-1 -b body -h=true" "issue edit AB-1 -b body -hpAB" "issue comment add AB-1 hi -hpAB" "issue edit AB-1 -b body -x"; do
+  reset; desc_reset; oauth
+  # shellcheck disable=SC2086
+  run -- $cmdline
+  [ -f "$T/jira.seen" ] && [ ! -f "$T/desc.argv" ] && [ ! -f "$T/comment.argv" ] || fail "short flags [$cmdline]: taken over"
+done
 reset; desc_reset; oauth
-plan 1 1 "" "
-Error:
-  - summary: Summary is required."
-run -- issue create -p AB -s sum -b body
-[ "$rc" = 1 ] && [ "$(count)" = 1 ] || fail "other refusal: rc=$rc attempts=$(count)"
+run -- issue edit AB-1 -b body -h=false
+[ -f "$T/desc.argv" ] || fail "short flags: -h=false not taken over"
+# A false --web / --debug is not in effect: comment add still goes to the helper, which accepts it.
+for flag in --web=false --debug=false; do
+  reset; oauth
+  run -- issue comment add AB-1 hi "$flag"
+  [ -f "$T/comment.argv" ] && [ ! -f "$T/jira.seen" ] || fail "comment add $flag: not taken over"
+done
+# A stdin that cannot be read stops before anything is sent.
+reset; desc_reset; oauth; created AB-1
+RUN_IN="$T/tmp" run -- issue create -p AB -s sum
+[ "$rc" = 1 ] && [ ! -f "$T/jira.seen" ] && [ ! -f "$T/desc.argv" ] && grep -q 'cannot read the body from stdin' "$T/err" || fail "unreadable stdin: rc=$rc jira=$( [ -f "$T/jira.seen" ] && echo ran) err='$(cat "$T/err")'"
 # A body source that never ends (a pipe or a -T FIFO whose writer stays) is bounded like the write
 # it feeds, and nothing is created.
 exec 9<>"$T/fifo"

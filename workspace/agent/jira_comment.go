@@ -42,14 +42,14 @@ type jiraCommentArgs struct {
 // `issue|issues comment edit|delete KEY ID`, with jira's global -c / -p (accepted, unused), the
 // body flags, --no-input and add's --internal. Any other flag, or a boolean value
 // strconv.ParseBool refuses, is an error, as cobra makes it: a mistyped `--internl` posted
-// publicly would be a comment nobody meant to publish. Help and --web are jira-cli's; the
-// wrapper never sends them here.
+// publicly would be a comment nobody meant to publish. Help, --web and --debug are jira-cli's
+// (the wrapper never sends them here in effect); only their false values are accepted.
 func parseJiraCommentArgs(args []string) (jiraCommentArgs, error) {
 	var a jiraCommentArgs
 	var pos []string
 	valued := map[string]bool{"-b": true, "--body": true, "-T": true, "--template": true,
 		"-c": true, "--config": true, "-p": true, "--project": true}
-	boolean := map[string]bool{"--no-input": true, "--internal": true}
+	boolean := map[string]bool{"--no-input": true, "--internal": true, "--web": true, "--debug": true, "--help": true, "-h": true}
 	seen := map[string]bool{}
 	setFlag := func(name, val string) {
 		seen[name] = true
@@ -66,10 +66,15 @@ func parseJiraCommentArgs(args []string) (jiraCommentArgs, error) {
 		if err != nil {
 			return fmt.Errorf("invalid argument %q for %q flag", val, name)
 		}
-		seen[name] = true
-		if name == "--internal" {
+		switch name {
+		case "--internal":
 			a.internal = b
+		case "--web", "--debug", "--help", "-h":
+			if b {
+				return fmt.Errorf("%s is handled by jira-cli, not here", name)
+			}
 		}
+		seen[name] = true
 		return nil
 	}
 	for i := 0; i < len(args); i++ {
@@ -85,7 +90,9 @@ func parseJiraCommentArgs(args []string) (jiraCommentArgs, error) {
 			i++
 			setFlag(s, args[i])
 		case boolean[s]:
-			_ = setBool(s, "true")
+			if err := setBool(s, "true"); err != nil {
+				return a, err
+			}
 		case strings.HasPrefix(s, "--") && strings.Contains(s, "="):
 			name, val, _ := strings.Cut(s, "=")
 			switch {
@@ -97,6 +104,10 @@ func parseJiraCommentArgs(args []string) (jiraCommentArgs, error) {
 				}
 			default:
 				return a, fmt.Errorf("unknown flag: %s", name)
+			}
+		case strings.HasPrefix(s, "-h="):
+			if err := setBool("-h", s[3:]); err != nil {
+				return a, err
 			}
 		case len(s) > 2 && s[0] == '-' && s[1] != '-' && valued[s[:2]]:
 			setFlag(s[:2], strings.TrimPrefix(s[2:], "="))
@@ -141,8 +152,12 @@ func parseJiraCommentArgs(args []string) (jiraCommentArgs, error) {
 
 // runJiraComment exits 0 on success, 1 on a failed call and 2 on a bad command line.
 func runJiraComment(args []string) {
+	// Implicit stdin is a body only when it is not a terminal or another character device, as
+	// jira-cli reads it; an explicit `-T -` reads it whatever it is (a terminal until EOF).
 	var stdin io.Reader
 	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 {
+		stdin = os.Stdin
+	} else if a, err := parseJiraCommentArgs(args); err == nil && a.template == "-" {
 		stdin = os.Stdin
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), jiraCredStoreWait)

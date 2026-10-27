@@ -335,6 +335,9 @@ func TestJiraCommentAddRejectsUnknownFlags(t *testing.T) {
 		{"issue", "comment", "add", "T-1", "secret", "--internal=maybe"},
 		{"issue", "comment", "add", "T-1", "secret", "--help"},
 		{"issue", "comment", "add", "T-1", "secret", "-h"},
+		{"issue", "comment", "add", "T-1", "secret", "-h=true"},
+		{"issue", "comment", "add", "T-1", "secret", "--debug"},
+		{"issue", "comment", "add", "T-1", "secret", "--web=false", "--web"},
 		{"issue", "comment", "add", "T-1", "secret", "--web"},
 		{"issue", "comment", "add", "T-1", "-b", "secret"},
 		{"issue", "comment", "add", "T-1", "secret", "-x"},
@@ -348,7 +351,8 @@ func TestJiraCommentAddRejectsUnknownFlags(t *testing.T) {
 	for _, tc := range []struct {
 		flag     string
 		internal bool
-	}{{"--internal=FALSE", false}, {"--internal=0", false}, {"--internal=T", true}, {"--no-input=false", false}} {
+	}{{"--internal=FALSE", false}, {"--internal=0", false}, {"--internal=T", true}, {"--no-input=false", false},
+		{"--web=false", false}, {"--debug=false", false}, {"--help=false", false}, {"-h=false", false}} {
 		c, calls := commentStub(t, 201, `{"id":"1"}`)
 		if rc, _, errs := runComment(c, "", "issue", "comment", "add", "T-1", "x", tc.flag); rc != 0 || len(*calls) != 1 {
 			t.Fatalf("%s: rc=%d err=%q", tc.flag, rc, errs)

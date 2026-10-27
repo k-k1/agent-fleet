@@ -304,7 +304,8 @@ those variables in for one `exec`:
 - **Bodies as ADF (`comment add`, `issue create -b/-T`, `issue edit -b`)** (#2809): jira-cli sends
   them as v2 wiki markup, where `{{code}}` and `*bold*` only work at a word boundary, which
   Japanese text and full-width brackets are not. For a config of ours, `comment add` with a body
-  on the command line, `-T` or a non-terminal stdin goes to `workspace-agent jira-comment` (POST
+  (on the command line, `-T`, or stdin) that jira-cli would not prompt or confirm for (stdin not a
+  terminal, `-T -`, or an effective `--no-input`) goes to `workspace-agent jira-comment` (POST
   `/rest/api/3/issue/KEY/comment`, `--internal` as the `sd.public.comment` property; a POST is
   never re-sent; any flag it does not know, or a boolean pflag would refuse, is refused before the
   call). `create` / `edit` with a body and no prompt to make (stdin not a terminal, or an effective
@@ -313,10 +314,16 @@ those variables in for one `exec`:
   pipe the body to `workspace-agent jira-description KEY [--skip-notify]` (PUT
   `fields.description`) under the same timeout and signal forwarding. The key of a create is read
   from jira-cli's `/browse/KEY` line or `--raw` JSON; when it cannot be read or the PUT fails the
-  wrapper exits 3 (124 on a timeout) and says the issue exists, never re-running the create. A
-  create refused with `- description:` (a project that requires one; a 400, so nothing exists) is
-  made again with the body through jira-cli's own conversion. An edit whose only change is the
-  body skips jira-cli. Boolean flags are read the way pflag reads them (last value wins). Help,
+  wrapper exits 3 (124 on a timeout) and says the issue exists, never re-running the create.
+  Before a create, `workspace-agent jira-description-required PROJECT TYPE` reads createmeta (the
+  paged `/issue/createmeta/{project}/issuetypes[/{id}]`); when the description is required, the
+  body goes with the create through jira-cli's own conversion (`-T` before any `--`). A create
+  that is still refused with `- description:` is not re-sent: jira-cli prints field errors
+  without their status, so "refused, nothing created" cannot be told from a failure after the
+  issue was made; the wrapper names `AF_JIRA_ADF=0`, which turns the three ADF paths off. A read
+  error on the body stops before anything is sent. An edit whose only change is the
+  body skips jira-cli. Flags are read the way pflag reads them (last value wins, `-h=v`, short
+  clusters such as `-hpAB`; a shorthand it does not know leaves the run to jira-cli). Help,
   an effective `--web`, a bare-number key (jira-cli completes it from the config) and `edit -T`
   stay with jira-cli. The Markdown parser applies the CJK-friendly amendment to CommonMark's
   flanking rules (`goldmark-cjk-friendly`), so `**「x」**です` is bold.

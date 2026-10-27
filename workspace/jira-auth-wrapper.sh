@@ -78,7 +78,7 @@ set +xa
 unset comment_cmd cred tok server auth login cfg sub sub2 sub3 proj cfg_argv own_init debug prev conf managed gen
 unset parent eff key cdir types derived yaml hint basekey soft npos ikey haveproj hasasg dd pv site why
 unset sbody stmpl spos spbody ssum injected fpid fsig fout spos3 spos4 nobody brc bin bout
-unset dkey dfile dout derr skip rest lim rc berr bwhat snoinput sweb sskip sbad shelp
+unset dkey dfile dout derr withbody skip rest lim rc berr bwhat snoinput sweb sskip sbad shelp
 
 real="${AF_JIRA_REAL:-/usr/local/libexec/jira}"
 
@@ -112,7 +112,10 @@ timed_out() {
 # read the same way into ssum, for find_created. The 3rd and 4th positional words (the issue key
 # of `issue edit KEY` and of `issue comment add KEY`) land in spos3 / spos4. The boolean flags the
 # ADF paths depend on keep their last value, as pflag does (snoinput / sweb / sskip: "true",
-# "false" or empty); a value pflag would refuse sets sbad, and -h / --help sets shelp.
+# "false" or empty); a value pflag would refuse sets sbad, and -h / --help sets shelp. Short flags
+# are read as pflag reads them: a cluster of booleans (only -h here) may end in one that takes a
+# value (`-hpAB`), and `-h=v` is a boolean with a value; a shorthand this does not know sets sbad.
+# The issue type (-t / --type) lands in stype.
 stdin_cmd() {
   case "$sub" in
     issue | issues)
@@ -138,10 +141,10 @@ flag_bool() {
 }
 scan_body_args() {
   local a nx="" dd="" k rest
-  sbody="" stmpl="" spos=0 spbody="" ssum="" spos3="" spos4="" snoinput="" sweb="" sskip="" sbad="" shelp=""
+  sbody="" stmpl="" spos=0 spbody="" ssum="" spos3="" spos4="" snoinput="" sweb="" sskip="" sbad="" shelp="" stype=""
   for a in "$@"; do
     if [ -n "$nx" ]; then
-      case "$nx" in body) sbody="$a" ;; template) stmpl="$a" ;; summary) ssum="$a" ;; esac
+      case "$nx" in body) sbody="$a" ;; template) stmpl="$a" ;; summary) ssum="$a" ;; type) stype="$a" ;; esac
       nx=""; continue
     fi
     if [ -z "$dd" ]; then
@@ -153,22 +156,39 @@ scan_body_args() {
         --body) nx=body; continue ;;
         --template) nx=template; continue ;;
         --summary) nx=summary; continue ;;
-        --type | --parent | --priority | --reporter | --assignee | --label | --component | \
+        --type=*) stype="${a#--type=}"; continue ;;
+        --type) nx=type; continue ;;
+        --parent | --priority | --reporter | --assignee | --label | --component | \
           --fix-version | --affects-version | --original-estimate | --custom | --config | --project)
           nx=other; continue ;;
-        -h | --help | --help=*) shelp=1; continue ;;
+        --help) shelp=1; continue ;;
+        --help=*) case "$(flag_bool "$a")" in true) shelp=1 ;; false) ;; *) sbad=1 ;; esac; continue ;;
         --no-input | --no-input=*) snoinput="$(flag_bool "$a")" || sbad=1; continue ;;
         --web | --web=*) sweb="$(flag_bool "$a")" || sbad=1; continue ;;
         --skip-notify | --skip-notify=*) sskip="$(flag_bool "$a")" || sbad=1; continue ;;
         --*) continue ;;
-        -[tPsbyraelCTcp]*)
-          k="${a:1:1}" rest="${a:2}"
-          case "$k" in b) k=body ;; T) k=template ;; s) k=summary ;; *) k=other ;; esac
-          if [ -z "$rest" ]; then nx="$k"; continue; fi
-          rest="${rest#=}"
-          case "$k" in body) sbody="$rest" ;; template) stmpl="$rest" ;; summary) ssum="$rest" ;; esac
+        -[!-]*)
+          rest="${a:1}"
+          while [ -n "$rest" ]; do
+            k="${rest:0:1}" rest="${rest:1}"
+            case "$k" in
+              h)
+                if [ "${rest:0:1}" = = ]; then
+                  case "$(flag_bool "-h$rest")" in true) shelp=1 ;; false) ;; *) sbad=1 ;; esac
+                  rest=""
+                else
+                  shelp=1
+                fi ;;
+              [tPsbyraelCTcp])
+                case "$k" in b) k=body ;; T) k=template ;; s) k=summary ;; t) k=type ;; *) k=other ;; esac
+                if [ -z "$rest" ]; then nx="$k"; break; fi
+                rest="${rest#=}"
+                case "$k" in body) sbody="$rest" ;; template) stmpl="$rest" ;; summary) ssum="$rest" ;; type) stype="$rest" ;; esac
+                rest="" ;;
+              *) sbad=1; rest="" ;;
+            esac
+          done
           continue ;;
-        -?*) continue ;;
       esac
     fi
     spos=$((spos + 1))
@@ -464,7 +484,7 @@ fi
 if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && { [ "$sub2" = comment ] || [ "$sub2" = comments ]; } &&
   [ "$sub3" = add ]; then
   scan_body_args "$@"
-  if [ -z "$shelp" ] && [ -z "$sbad" ] && [ "$sweb" != true ] && issue_key "$spos4" &&
+  if [ "${AF_JIRA_ADF:-1}" != 0 ] && [ -z "$shelp" ] && [ -z "$sbad" ] && [ "$sweb" != true ] && issue_key "$spos4" &&
     { [ ! -t 0 ] || [ "$stmpl" = - ] || [ "$snoinput" = true ]; } &&
     { [ -n "$spbody" ] || [ -n "$sbody" ] || [ -n "$stmpl" ] || [ ! -t 0 ]; }; then
     # The helper reads stdin only for want of a body on the command line, but a stdin it never
@@ -794,9 +814,21 @@ run_read_only() {
 # - A created issue is never created again: when its key cannot be read or the description cannot
 #   be set, this exits 3 naming the issue and the command that sets it.
 # - `edit` with nothing but the body skips jira-cli: its PUT would change nothing.
+# description_required: "required" when the project and issue type of this create must carry a
+# description (`workspace-agent jira-description-required`, createmeta); anything else, an unknown
+# project or type or a failed lookup included, keeps the ADF path. The project is -p, else the
+# config's project.key, as find_created reads them.
+description_required() {
+  local key="${proj:-}" eff
+  eff="${cfg_argv:-${JIRA_CONFIG_FILE:-}}"
+  if [ -z "$key" ] && [ -n "$eff" ]; then key="$(project_key "$eff")"; fi
+  [ -n "$key" ] && [ -n "$stype" ] || return 0
+  bounded env -u JIRA_API_TOKEN workspace-agent jira-description-required "$key" "$stype" 2>/dev/null </dev/null | head -n1
+}
 describe_cmd() {
   { [ "$sub" = issue ] || [ "$sub" = issues ]; } || return 1
   case "$sub2" in create | edit | update | modify) ;; *) return 1 ;; esac
+  [ "${AF_JIRA_ADF:-1}" != 0 ] || return 1
   scan_body_args "$@"
   [ -z "$shelp" ] && [ -z "$sbad" ] && [ "$sweb" != true ] && { [ ! -t 0 ] || [ "$snoinput" = true ]; }
 }
@@ -819,7 +851,10 @@ if describe_cmd "$@"; then
         exit 1
       fi
     elif [ "$stmpl" = - ] || stdin_body; then
-      read_body -
+      if ! read_body -; then
+        echo "jira: Error: cannot read the body from stdin" >&2
+        exit 1
+      fi
     fi
     strip_body_args "$@"
     if [ -z "$(tr -d '[:space:]' <"$dfile")" ]; then
@@ -844,6 +879,20 @@ if describe_cmd "$@"; then
           esac
         done
       fi
+      if [ "$sub2" = create ] && [ "$(description_required)" = required ]; then
+        # The create would be refused without its description, so it carries the body, through
+        # jira-cli's own conversion. -T goes before a `--`: after it pflag reads it as an argument.
+        echo "jira: this issue type requires a description at create time, so it is sent through jira-cli's wiki conversion (inline code or bold next to Japanese text may show literally; repair it afterwards with \`jira issue edit KEY --no-input -b \"...\"\`)" >&2
+        withbody=() dd=""
+        for a in "${nobody[@]}"; do
+          if [ -z "$dd" ] && [ "$a" = -- ]; then withbody+=("--template=$dfile"); dd=1; fi
+          withbody+=("$a")
+        done
+        [ -n "$dd" ] || withbody+=("--template=$dfile")
+        bin=/dev/null
+        run_write "$real" "${withbody[@]}"
+        exit "$brc"
+      fi
       if [ "$sub2" = create ] || [ -n "$rest" ]; then
         bin=/dev/null
         if [ "$sub2" = create ]; then
@@ -852,11 +901,9 @@ if describe_cmd "$@"; then
         fi
         run_write "$real" "${nobody[@]}"
         if [ "$brc" -ne 0 ] && [ -n "${berr:-}" ] && grep -q '^  - description: ' "$berr" 2>/dev/null; then
-          # A project that requires a description refused the create without one (a 400: nothing
-          # was created). Create it with the body after all, through jira-cli's own conversion.
-          echo "jira: this project requires a description at create time, so it is sent through jira-cli's wiki conversion (inline code or bold next to Japanese text may show literally; fix it afterwards with \`jira issue edit KEY --no-input -b \"...\"\`)" >&2
-          bout="" berr=""
-          run_write "$real" "${nobody[@]}" "--template=$dfile"
+          # jira-cli prints a field error without its HTTP status, so "refused, nothing created"
+          # cannot be told from a failure after the issue was made: never re-send the create here.
+          echo "jira: Jira refused the description-less create (see above). This is not re-sent automatically: check Jira for the issue, and if it was not created, run the same command again with AF_JIRA_ADF=0 (the description then goes through jira-cli's own conversion)" >&2
           exit "$brc"
         fi
         bin=""

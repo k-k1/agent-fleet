@@ -295,9 +295,13 @@ Jira は git でなく作業項目インボックス
   `workspace-agent jira-description KEY [--skip-notify]` に渡す（`fields.description` を PUT。時間制限と
   シグナルの転送は同じ）。create のキーは jira-cli の `/browse/KEY` 行か `--raw` の JSON から読む。読めないときや
   PUT が失敗したときは、課題はあると伝えて終了コード 3（時間切れなら 124）で終わり、create は決して再実行しない。
-  `- description:` で拒否された create（説明文が必須のプロジェクト。400 なので課題はできていない）は、本文を
-  付けて jira-cli 自身の変換で作り直す。本文だけを変える edit は jira-cli を動かさない。真偽値フラグは pflag と
-  同じく最後の値で読む。ヘルプ、有効な `--web`、数字だけのキー（jira-cli が設定から補う）、`edit -T` は
+  create の前に `workspace-agent jira-description-required PROJECT TYPE` が createmeta（ページ分割された
+  `/issue/createmeta/{project}/issuetypes[/{id}]`）を読み、説明文が必須なら本文を create に付けて jira-cli 自身の
+  変換で送る（`-T` は `--` より前に置く）。それでも `- description:` で拒否された create は再送しない。jira-cli は
+  フィールドのエラーを HTTP ステータスなしで出すので、「拒否されて未作成」と「作成後の失敗」を区別できないため。
+  代わりに、3 つの ADF 経路をすべて止める `AF_JIRA_ADF=0` を案内する。本文の読み取りエラーでは何も送らずに止める。
+  本文だけを変える edit は jira-cli を動かさない。フラグは pflag と同じ規則で読む（最後の値が勝つ、`-h=v`、
+  `-hpAB` のような短縮フラグのまとまり。知らない短縮フラグがあれば jira-cli に任せる）。ヘルプ、有効な `--web`、数字だけのキー（jira-cli が設定から補う）、`edit -T` は
   jira-cli に任せる。Markdown の解析は CommonMark の flanking 規則に CJK 向けの修正を加えたもの
   （`goldmark-cjk-friendly`）なので、`**「x」**です` も太字になる。
 - **利用者自身の設定が勝つ**: 明示の `JIRA_API_TOKEN` か `JIRA_SERVER`、自分で `--server` /
