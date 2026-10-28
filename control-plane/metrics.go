@@ -75,7 +75,7 @@ func (a adminAPI) hostStats(w http.ResponseWriter, _ *http.Request, _ store.Iden
 }
 
 // hostStatsWire is the GET /api/admin/host-stats response (the Console's `HostStats` in
-// console/src/app/WsBar.tsx).
+// console/src/app/wsbar/resourceStats.ts).
 //
 // was: map[string]any{"load1":…, "ncpu":…, "mem_used":…, "mem_total":…}
 //

@@ -117,7 +117,7 @@ export function fmtSize(n: number): string {
 
 /**
  * Subscription usage the Console already reads, by kind: the same endpoints the WS bar's chips
- * poll (app/WsBar.tsx USAGE_SOURCES, CopilotUsageChip, AgyUsageChip). claude/codex/muse answer
+ * poll (app/wsbar/: USAGE_SOURCES, CopilotUsageChip, AgyUsageChip). claude/codex/muse answer
  * {ok, fiveHour, sevenDay}; copilot and agy answer remaining-based pools, read by readMoveUsage.
  * A kind missing here has no usage source, and the dialog says nothing about its quota rather
  * than guess.
