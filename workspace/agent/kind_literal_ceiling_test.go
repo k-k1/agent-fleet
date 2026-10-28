@@ -1,15 +1,17 @@
 package main
 
 import (
+	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -105,37 +107,71 @@ func countKindLiteralBranches(t *testing.T, root string, re *regexp.Regexp) (int
 	return total, perFile
 }
 
-// sessionKindConsts returns the values of the Kind* string constants in
-// internal/session, the persisted kind list.
-func sessionKindConsts(t *testing.T) []string {
+// kindConsts returns the values of the package-level Kind* constants of the
+// Go package in dir, across all of its non-test files. go/types evaluates each
+// value, so `KindX = "p" + "i"` or a constant in another file is not missed. A
+// Kind* constant whose value is not a known string is reported in bad rather
+// than skipped: skipping it would let that kind's branches go uncounted.
+// Imports are not resolved; nothing a kind constant is built from needs them.
+func kindConsts(t *testing.T, dir string) (vals, bad []string) {
 	t.Helper()
-	f, err := parser.ParseFile(token.NewFileSet(), filepath.Join("internal", "session", "session.go"), nil, 0)
+	fset := token.NewFileSet()
+	ents, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out []string
-	for _, decl := range f.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok || gd.Tok != token.CONST {
+	var files []*ast.File
+	for _, e := range ents {
+		n := e.Name()
+		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
 			continue
 		}
-		for _, spec := range gd.Specs {
-			vs := spec.(*ast.ValueSpec)
-			for i, name := range vs.Names {
-				if !strings.HasPrefix(name.Name, "Kind") || i >= len(vs.Values) {
-					continue
-				}
-				if lit, ok := vs.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-					v, _ := strconv.Unquote(lit.Value)
-					out = append(out, v)
-				}
-			}
+		f, err := parser.ParseFile(fset, filepath.Join(dir, n), nil, 0)
+		if err != nil {
+			t.Fatal(err)
 		}
+		files = append(files, f)
 	}
-	if len(out) == 0 {
-		t.Fatal("no Kind* constants found in internal/session/session.go")
+	if len(files) == 0 {
+		t.Fatalf("no Go files in %s", dir)
 	}
-	return out
+	conf := types.Config{
+		Importer: noImporter{},
+		Error:    func(error) {}, // unresolved imports; the constants are checked below
+	}
+	pkg, _ := conf.Check(files[0].Name.Name, fset, files, nil)
+	for _, name := range pkg.Scope().Names() {
+		c, ok := pkg.Scope().Lookup(name).(*types.Const)
+		if !ok || !strings.HasPrefix(name, "Kind") {
+			continue
+		}
+		if c.Val().Kind() != constant.String {
+			bad = append(bad, fmt.Sprintf("%s (%s)", name, c.Val()))
+			continue
+		}
+		vals = append(vals, constant.StringVal(c.Val()))
+	}
+	return vals, bad
+}
+
+type noImporter struct{}
+
+func (noImporter) Import(path string) (*types.Package, error) {
+	return nil, fmt.Errorf("not resolved: %s", path)
+}
+
+// sessionKindConsts returns the Kind* constants of internal/session, the
+// persisted kind list.
+func sessionKindConsts(t *testing.T) []string {
+	t.Helper()
+	vals, bad := kindConsts(t, filepath.Join("internal", "session"))
+	for _, b := range bad {
+		t.Errorf("internal/session constant %s is not a string the test can evaluate; a Kind* constant must be a constant string expression", b)
+	}
+	if len(vals) == 0 {
+		t.Fatal("no Kind* constants found in internal/session")
+	}
+	return vals
 }
 
 func TestKindLiteralCeiling(t *testing.T) {
@@ -208,5 +244,27 @@ func TestKindLiteralNewKindCounted(t *testing.T) {
 	}
 	if n, _ := countKindLiteralBranches(t, dir, kindLiteralBranch(append(kinds, "pi"))); n != 2 {
 		t.Fatalf("with pi in the kind set: %d branches, want 2", n)
+	}
+}
+
+// TestKindConstsEvaluated: a Kind* constant in any file of the package, or one
+// built from an expression, is found; one that cannot be evaluated is reported.
+func TestKindConstsEvaluated(t *testing.T) {
+	dir := t.TempDir()
+	for name, src := range map[string]string{
+		"a.go": "package session\n\nimport \"example.com/x\"\n\nconst KindA = \"a\"\n\nvar _ = x.Y\n",
+		"b.go": "package session\n\nconst (\n\tKindPi = \"p\" + \"i\"\n\tKindBad = x.Z\n\tkindLower = \"no\"\n)\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	vals, bad := kindConsts(t, dir)
+	slices.Sort(vals)
+	if !slices.Equal(vals, []string{"a", "pi"}) {
+		t.Errorf("vals = %v, want [a pi]", vals)
+	}
+	if len(bad) != 1 || !strings.HasPrefix(bad[0], "KindBad") {
+		t.Errorf("bad = %v, want KindBad", bad)
 	}
 }
