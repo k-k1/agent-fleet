@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -124,14 +125,35 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 // declaredMCPToolNames finds the source-of-truth tool literals independently of
 // capability gates. This makes a newly declared tool visible to the test even when
 // its new gate defaults to false in every variant above.
+//
+// Every non-test file of the package is read, because the tool literals live next to
+// their handlers; a file left out would hide its tools from this gate.
 func declaredMCPToolNames() (map[string]struct{}, error) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "mcp_stdio.go", nil, 0)
-	if err != nil {
-		return nil, fmt.Errorf("parse mcp_stdio.go: %w", err)
+	files, err := filepath.Glob("*.go")
+	if err != nil || len(files) == 0 {
+		return nil, fmt.Errorf("no source files read: %v", err)
 	}
-
+	fset := token.NewFileSet()
 	names := make(map[string]struct{})
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") || path == declaredToolsSkippedFile {
+			continue
+		}
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", path, err)
+		}
+		collectDeclaredMCPToolNames(file, names)
+	}
+	return names, nil
+}
+
+// declaredToolsSkippedFile holds the session-search tools, whose gate (mcpSessionSearchEnabled)
+// no variant of walkAdvertisedToolVariants turns on; reading it would report them as declared
+// and never advertised.
+const declaredToolsSkippedFile = "mcp_session_search.go"
+
+func collectDeclaredMCPToolNames(file *ast.File, names map[string]struct{}) {
 	ast.Inspect(file, func(node ast.Node) bool {
 		literal, ok := node.(*ast.CompositeLit)
 		if !ok {
@@ -167,7 +189,6 @@ func declaredMCPToolNames() (map[string]struct{}, error) {
 		}
 		return true
 	})
-	return names, nil
 }
 
 // TestMCPInputSchemaValidationRejectsKnownBadShapes is the negative control for
