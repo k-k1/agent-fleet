@@ -242,7 +242,7 @@ Resources:
               # Budget (MiB): ecs-init 64 + agent 192 + SSM 192 + docker 256 + containerd 128 =
               # 832, carried by system.slice (a child's floor only counts up to its parent's). It
               # must stay within the smallest host reserve (ec2HostReserveFloorMiB, 1024 in
-              # runtime_ecs_ec2.go) or the protection just moves the starvation onto the workspace.
+              # runtime_ecs_ec2_pool.go) or the protection just moves the starvation onto the workspace.
               # cgroup v2 is the AL2023 default and
               # DefaultMemoryAccounting is on, so the memory controller reaches system.slice and
               # its children once these are set. OOMScoreAdjust covers the global OOM killer,

@@ -50,7 +50,7 @@ manual step (93.3). What does happen automatically:
 **Who gets `$AF_WS_SCRATCH`.** The control plane sets it in the `ecs` adapter only
 (`registerTaskDef` in `control-plane/internal/runtime/runtime_ecs.go`). The `ecs-ec2`
 adapter leaves it out on purpose — home is already on local EBS there
-(`runtime_ecs_ec2.go`, the note citing ADR 0045 decision 10-3) — and the docker and native
+(`runtime_ecs_ec2_taskdef.go`, the note citing ADR 0045 decision 10-3) — and the docker and native
 adapters do not set it. The workspace image creates a `/scratch` directory
 (`workspace/Dockerfile`), so it exists on docker and `ecs-ec2` too; the traditional native
 mode runs a host-built agent without the image. So the directory's existence says

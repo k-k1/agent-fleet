@@ -24,7 +24,7 @@ const homeWipeDestroy HomeWipe = "destroy"
 
 // homeTaskDirs are the top-level EFS directories a member's directories live in, and the
 // ones Destroy removes the member's from: the Fargate home, the Claude state, and the
-// ecs-ec2 keep-list (runtime_ecs_ec2.go, ensureKeepAccessPoint).
+// ecs-ec2 keep-list (runtime_ecs_ec2_release.go, ensureKeepAccessPoint).
 var homeTaskDirs = []string{"home", "claude-config", "home-keep"}
 
 // membershipIDRe is what a membership id may be for its EFS paths. Store ids are 32 hex
