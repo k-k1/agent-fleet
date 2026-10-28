@@ -20,9 +20,9 @@ func (m Message) Text(lang string) string {
 	b.WriteString(m.headline(en))
 	if m.DisplayName != "" {
 		if en {
-			b.WriteString("\n\"" + m.DisplayName + "\" (" + kindLabel(m.SessionKind) + ")")
+			b.WriteString("\n\"" + m.DisplayName + "\" (" + productLabel(m.SessionKind) + ")")
 		} else {
-			b.WriteString("\n「" + m.DisplayName + "」（" + kindLabel(m.SessionKind) + "）")
+			b.WriteString("\n「" + m.DisplayName + "」（" + productLabel(m.SessionKind) + "）")
 		}
 	}
 	// The public base, never AF_CP_INTERNAL_URL: a person's browser opens this link.
@@ -41,9 +41,9 @@ func (m Message) textSlack(lang string) string {
 	b.WriteString(m.headline(en))
 	if m.DisplayName != "" {
 		if en {
-			b.WriteString("\n\"" + m.DisplayName + "\" (" + kindLabel(m.SessionKind) + ")")
+			b.WriteString("\n\"" + m.DisplayName + "\" (" + productLabel(m.SessionKind) + ")")
 		} else {
-			b.WriteString("\n「" + m.DisplayName + "」（" + kindLabel(m.SessionKind) + "）")
+			b.WriteString("\n「" + m.DisplayName + "」（" + productLabel(m.SessionKind) + "）")
 		}
 	}
 	if base := os.Getenv("AF_CP_BASE_URL"); base != "" && m.SessionName != "" {
@@ -104,31 +104,6 @@ func (m Message) headline(en bool) string {
 		return "定時実行の結果です"
 	}
 	return "状態が変化しました（" + m.Kind + "）"
-}
-
-// kindLabel maps a session kind to its outward product name (the Console's
-// agent registry is the naming source of truth — keep in sync with
-// console/src/agents/registry.ts).
-func kindLabel(kind string) string {
-	switch kind {
-	case "claude":
-		return "Claude Code"
-	case "codex":
-		return "Codex"
-	case "opencode":
-		return "opencode"
-	case "copilot":
-		return "GitHub Copilot"
-	case "cursor":
-		return "Cursor"
-	case "kiro":
-		return "Kiro"
-	case "agy":
-		return "Antigravity"
-	case "muse":
-		return "Muse Code"
-	}
-	return kind
 }
 
 // exitLabel mirrors record_exit's reason vocabulary (status.ExitReasonFor).

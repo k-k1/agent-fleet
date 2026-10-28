@@ -103,3 +103,26 @@ func TestKnownIsExact(t *testing.T) {
 		}
 	}
 }
+
+// The product names the notification bridge writes into a chat message. A label edited here
+// changes what every connected Discord / Slack channel reads, so the set is pinned.
+func TestLabels(t *testing.T) {
+	want := map[string]string{
+		"claude": "Claude Code", "opencode": "opencode", "codex": "Codex", "copilot": "GitHub Copilot",
+		"cursor": "Cursor", "kiro": "Kiro", "agy": "Antigravity", "muse": "Muse Code",
+		"lcpp": "", "shell": "", "ssm": "",
+	}
+	for _, k := range All() {
+		l, ok := want[k]
+		if !ok {
+			t.Errorf("%q has no expected label; add it to this table", k)
+			continue
+		}
+		if got := Label(k); got != l {
+			t.Errorf("Label(%q) = %q, want %q", k, got, l)
+		}
+	}
+	if got := Label("pi"); got != "" {
+		t.Errorf(`Label("pi") = %q, want ""`, got)
+	}
+}
