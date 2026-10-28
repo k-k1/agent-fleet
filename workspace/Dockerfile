@@ -369,7 +369,7 @@ ARG OPENCODE_VERSION=2.2.0
 # OPENCODE_VERSION=1.19.0, nothing else) leaves it at the last 2.x the contracts passed on.
 ARG OPENCODE_V2_VERSION=2.2.0
 ARG CODEX_VERSION=0.165.0
-ARG COPILOT_VERSION=1.0.104
+ARG COPILOT_VERSION=1.0.105
 # opencode's npm package follows the pin's major: `opencode-ai` for 1.x, `@opencode/cli` for
 # 2.x (which also installs an `opencode2` bin). The pin has been 2.x since the v2 cut-over
 # (#2101); rolling back is OPENCODE_VERSION=1.19.0, nothing else (docs/log/119). entrypoint.sh,
@@ -490,9 +490,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.34.2
-ARG KIRO_SHA256_X64=9ca439783c2ed66c725b23bcc5655a60369a898b689b945c33043f121a6060cf
-ARG KIRO_SHA256_ARM64=33bd085b0a6f65f5502f8762d7b6fa4e77b974c223093ccb20abf27047ade342
+ARG KIRO_VERSION=2.35.1
+ARG KIRO_SHA256_X64=9896a0849ea6abe259f7b3e742d6637dd413bbd8d6fa0afdf241c6c5614d4366
+ARG KIRO_SHA256_ARM64=59758f69080a341184c520aa34d2245c24ae4d3859f231f591f477709420851f
 # Muse Code（kind="muse"、ADR 0095 決定 8）。プロプライエタリなので **配布イメージには
 # 入らない**（BAKE_AGENT_CLIS=0 既定・理由は本ファイル冒頭と NOTICE）。既定の経路は
 # per-user のオンデマンド導入（workspace-agent install-muse）で、ここのピンは
