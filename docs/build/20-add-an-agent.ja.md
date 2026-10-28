@@ -253,5 +253,5 @@ Agent のイメージを先に、または同時に配備し、その間は断�
 - [ ] 色・アイコン・文言。i18n の文字列を両言語で
 - [ ] 記述子の一覧向けの事実: `caps.liveModels` / `caps.concreteModel`（モデル選択）、
       `caps.skillsCatalog`（設定 > スキル）、`caps.memberDefault`（CP の `memberDefaultAgents` と
-      一致させる。`derivedKindLists.test.ts`）、加わる一覧ごとの `listOrder` の順位
-      （`caps.headlessChat` なら `listOrder.assistant` が要る）
+      一致させる。`derivedKindLists.test.ts`）、`caps.headlessChat` なら `assistantRank`
+      （アシスタントの既定の優先順位）

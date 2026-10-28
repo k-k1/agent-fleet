@@ -1,9 +1,9 @@
 // The kind lists that used to be typed out by hand are derived from the registry (ADR 0124
-// Phase 3). Each one is pinned here to the literal it replaced, as an ordered list where a user
-// sees the order, so the derivation is shown equal to what shipped before it.
+// Phase 3). Each one is pinned here as an ordered list where a user sees the order: the literal
+// it replaced, except MCP_KINDS and MEMBER_DEFAULT_AGENTS, which moved to SESSION_KINDS order.
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { AGENTS, MEMBER_DEFAULT_AGENTS, inListOrder, repoLaunchKinds, skillsCatalogKinds } from "./registry.ts";
+import { AGENTS, MEMBER_DEFAULT_AGENTS, repoLaunchKinds, skillsCatalogKinds } from "./registry.ts";
 import { ASSISTANT_AGENT_KINDS } from "../lib/settings/options.ts";
 import { MCP_KINDS, mcpKinds } from "../features/settings/mcp/mcpWire.ts";
 import { copyTargetKinds, type ProjectKindInfo } from "../features/repos/projectMcpWire.ts";
@@ -21,14 +21,16 @@ describe("derived kind lists equal the literals they replaced", () => {
     expect(ASSISTANT_AGENT_KINDS).toEqual(["claude", "codex", "opencode", "cursor", "agy", "muse"]);
   });
 
-  it("MCP_KINDS, and mcpKinds() before a catalog arrives", () => {
-    const old = ["claude", "codex", "opencode", "cursor", "kiro", "copilot", "agy", "muse", "lcpp"];
-    expect(MCP_KINDS).toEqual(old);
-    expect(mcpKinds()).toEqual(old);
+  it("MCP_KINDS, and mcpKinds() before a catalog arrives, in SESSION_KINDS order", () => {
+    // was: claude codex opencode cursor kiro copilot agy muse lcpp
+    const want = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse"];
+    expect(MCP_KINDS).toEqual(want);
+    expect(mcpKinds()).toEqual(want);
   });
 
-  it("MEMBER_DEFAULT_AGENTS", () => {
-    expect(MEMBER_DEFAULT_AGENTS).toEqual(["claude", "codex", "opencode", "cursor", "copilot", "kiro", "muse"]);
+  it("MEMBER_DEFAULT_AGENTS, in SESSION_KINDS order", () => {
+    // was: claude codex opencode cursor copilot kiro muse
+    expect(MEMBER_DEFAULT_AGENTS).toEqual(["claude", "codex", "cursor", "copilot", "kiro", "opencode", "muse"]);
   });
 
   it("the Skills tab's kinds", () => {
@@ -57,21 +59,11 @@ describe("derived kind lists equal the literals they replaced", () => {
   });
 });
 
-describe("inListOrder", () => {
-  it("puts ranked kinds first and keeps the input order of the rest", () => {
-    expect(inListOrder(["shell", "agy", "zeta", "claude", "opencode"], "assistant")).toEqual(["claude", "opencode", "agy", "shell", "zeta"]);
-  });
-
-  it("ranks a kind only in a list it is in, and every rank is unique per list", () => {
-    for (const list of ["assistant", "mcp", "memberDefault"] as const) {
-      const ranks = SESSION_KINDS.map((k) => AGENTS[k].listOrder?.[list]).filter((r) => r !== undefined);
-      expect(new Set(ranks).size, list).toBe(ranks.length);
-    }
-    for (const k of SESSION_KINDS) {
-      const o = AGENTS[k].listOrder ?? {};
-      expect(o.assistant !== undefined, `${k} assistant rank`).toBe(AGENTS[k].caps.headlessChat);
-      expect(o.memberDefault !== undefined, `${k} memberDefault rank`).toBe(AGENTS[k].caps.memberDefault);
-    }
+describe("assistantRank", () => {
+  it("ranks exactly the headless-chat kinds, each rank once", () => {
+    const ranks = SESSION_KINDS.map((k) => AGENTS[k].assistantRank).filter((r) => r !== undefined);
+    expect(new Set(ranks).size).toBe(ranks.length);
+    for (const k of SESSION_KINDS) expect(AGENTS[k].assistantRank !== undefined, k).toBe(AGENTS[k].caps.headlessChat);
   });
 });
 

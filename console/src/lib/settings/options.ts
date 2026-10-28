@@ -4,7 +4,7 @@
 //
 // This module imports nothing from features/ (ADR 0124: lib/ is the lower layer).
 import type { MsgKey } from "../i18n/index.ts";
-import { AGENTS, inListOrder } from "../../agents/registry.ts";
+import { AGENTS } from "../../agents/registry.ts";
 import { SESSION_KINDS, type SessionKind } from "../../types/session.ts";
 
 export const CODE_FONTS = [
@@ -170,11 +170,11 @@ export const SURFACE_TARGETS: { key: "topbarColor" | "leftpaneColor" | "viewerCo
 export const DEFAULT_MODEL = "sonnet";
 
 // Headless-chat backend kinds (caps.headlessChat) in the built-in priority order, the
-// registry's "assistant" rank (mirrors the Agent's DefaultHeadlessOrder; agy late — its
+// registry's assistantRank (mirrors the Agent's DefaultHeadlessOrder; agy late — its
 // free-plan quota is scarce). Display labels come from the registry (assistantName), not i18n.
-export const ASSISTANT_AGENT_KINDS: readonly SessionKind[] = inListOrder(
-  SESSION_KINDS.filter((k) => AGENTS[k].caps.headlessChat),
-  "assistant",
+const assistantRank = (k: SessionKind) => AGENTS[k].assistantRank ?? Infinity;
+export const ASSISTANT_AGENT_KINDS: readonly SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.headlessChat).sort(
+  (a, b) => assistantRank(a) - assistantRank(b),
 );
 export const ASSISTANT_RECOMMENDED_MODEL = "recommended";
 

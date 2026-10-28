@@ -93,10 +93,6 @@ export interface AgentCaps {
   memberDefault: boolean;
 }
 
-// The lists whose order a user sees and that do not follow SESSION_KINDS. A kind with no rank
-// for a list is ordered after the ranked ones, in SESSION_KINDS order (inListOrder).
-export type KindList = "assistant" | "mcp" | "memberDefault";
-
 // A status chip for a session: codicon + label + color class (+ optional spinner).
 export interface StateInfo {
   cls: string;
@@ -165,10 +161,10 @@ export interface AgentDescriptor {
   // switch UI carry no per-kind branch and just show this measured value (docs/log/27 §12.2-9,
   // appendix B).
   tuiMemoryCost: string;
-  // Rank in each KindList this kind appears in, 1 first. "assistant" is the default priority of
-  // the assistant-chat backends (assistantAgentOrder / aiAssistOrder), which the Agent's
-  // chatx.DefaultHeadlessOrder also follows; the others are display order.
-  listOrder?: Partial<Record<KindList, number>>;
+  // Default priority among the assistant-chat backends (caps.headlessChat), 1 first: the seed of
+  // assistantAgentOrder / aiAssistOrder, which the Agent's chatx.DefaultHeadlessOrder also
+  // follows. Every other kind list is in SESSION_KINDS order.
+  assistantRank?: number;
   caps: AgentCaps;
   // whether this kind is currently launchable given connections / SSM hosts
   available(ctx: AvailCtx): boolean;
@@ -222,7 +218,7 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     defaultModeLabel: "Bypass",
     skillTrigger: "/",
     tuiMemoryCost: "",
-    listOrder: { assistant: 1, mcp: 1, memberDefault: 1 },
+    assistantRank: 1,
     caps: caps({
       skillsCatalog: true,
       memberDefault: true,
@@ -278,7 +274,7 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     // imagePaste: upload + path-in-prompt (claude's flow); codex's view_image fires on
     // a plain path mention — live-verified for both the TUI and `codex exec`.
     tuiMemoryCost: "230MiB",
-    listOrder: { assistant: 2, mcp: 2, memberDefault: 2 },
+    assistantRank: 2,
     caps: caps({
       liveModels: true,
       skillsCatalog: true,
@@ -327,7 +323,7 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     // A per-session child either way, so choosing Terminal (CLI) does not change the number of
     // resident processes (one cursor process per session) — no extra cost shown, as for copilot.
     tuiMemoryCost: "",
-    listOrder: { assistant: 4, mcp: 4, memberDefault: 4 },
+    assistantRank: 4,
     caps: caps({
       liveModels: true,
       memberDefault: true,
@@ -376,7 +372,7 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     // headlessChat: `agy -p` backs assistant-chat conversations (resume via
     // --conversation; plain-text output — no working steps, no context gauge).
     tuiMemoryCost: "",
-    listOrder: { assistant: 5, mcp: 7 },
+    assistantRank: 5,
     caps: caps({
       liveModels: true,
       // the one kind whose scheduled runs shipped while the Console's hand-kept picker never
@@ -424,7 +420,6 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     // A per-session child either way, so choosing Terminal (CLI) does not change the number of
     // resident processes (one copilot process per session) — no extra cost shown.
     tuiMemoryCost: "",
-    listOrder: { mcp: 6, memberDefault: 5 },
     caps: caps({
       liveModels: true,
       memberDefault: true,
@@ -493,7 +488,6 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     // resident processes (one kiro process per session) — no extra cost shown, as for
     // cursor and copilot.
     tuiMemoryCost: "",
-    listOrder: { mcp: 5, memberDefault: 6 },
     caps: caps({
       liveModels: true,
       memberDefault: true,
@@ -537,7 +531,7 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     // reads it directly; big-pickle (free tier) either inspects it agentically (TUI,
     // live-verified) or declines honestly — never a silent failure.
     tuiMemoryCost: "300MiB",
-    listOrder: { assistant: 3, mcp: 3, memberDefault: 3 },
+    assistantRank: 3,
     caps: caps({
       liveModels: true,
       skillsCatalog: true,
@@ -599,7 +593,6 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     // (store.go) landed (ADR 0093 stage 2), so the kind is now launchable. The driver facts
     // (managed-only: no Terminal (CLI) route, ever — decision 2) come from the kind catalog.
     tuiMemoryCost: "",
-    listOrder: { mcp: 9 },
     caps: caps({
       liveModels: true,
       concreteModel: true,
@@ -648,7 +641,7 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     // Managed-only, the same shape as lcpp (the catalog says so): BuildLaunch refuses
     // unconditionally (decision 2).
     tuiMemoryCost: "",
-    listOrder: { assistant: 6, mcp: 8, memberDefault: 7 },
+    assistantRank: 6,
     caps: caps({
       liveModels: true,
       skillsCatalog: true,
@@ -849,18 +842,9 @@ export function availableKinds(ctx: AvailCtx): Record<SessionKind, boolean> {
   return out;
 }
 
-// inListOrder sorts kinds by their rank in list. Unranked kinds, including those with no
-// descriptor (an Agent newer than this Console), keep their input order after the ranked ones.
-export function inListOrder<K extends string>(kinds: readonly K[], list: KindList): K[] {
-  const rank = (k: string) => AGENTS[k as SessionKind]?.listOrder?.[list] ?? Infinity;
-  return [...kinds].sort((a, b) => rank(a) - rank(b));
-}
-
-// The kinds a member connects with an account of their own (caps.memberDefault).
-export const MEMBER_DEFAULT_AGENTS = inListOrder(
-  SESSION_KINDS.filter((k) => AGENTS[k].caps.memberDefault),
-  "memberDefault",
-);
+// The kinds a member connects with an account of their own (caps.memberDefault), in
+// SESSION_KINDS order.
+export const MEMBER_DEFAULT_AGENTS: SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.memberDefault);
 
 // Kinds a schedule may be pointed at, DERIVED from the cap rather than listed: the hand-kept
 // copy of this list in the schedule editor had already lost agy, and a derived one cannot drift.

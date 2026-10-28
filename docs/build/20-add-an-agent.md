@@ -286,5 +286,5 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
 - [ ] colour, icon and wording; the i18n strings in both languages
 - [ ] the descriptor's list facts: `caps.liveModels` / `caps.concreteModel` (model picker),
       `caps.skillsCatalog` (Settings > Skills), `caps.memberDefault` (equal to the CP's
-      `memberDefaultAgents`; `derivedKindLists.test.ts`), and a `listOrder` rank in each list the
-      kind joins (`listOrder.assistant` is required with `caps.headlessChat`)
+      `memberDefaultAgents`; `derivedKindLists.test.ts`), and `assistantRank` with
+      `caps.headlessChat` (the default assistant backend priority)

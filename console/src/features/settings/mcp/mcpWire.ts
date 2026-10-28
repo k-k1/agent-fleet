@@ -6,26 +6,22 @@
 
 import { tMaybe } from "../../../lib/i18n/index.ts";
 import { FALLBACK_KIND_FACTS, catalogKinds, kindFacts, useKindCatalogVersion } from "../../../agents/kindCatalog.ts";
-import { inListOrder } from "../../../agents/registry.ts";
 import { SESSION_KINDS, type SessionKind } from "../../../types/session.ts";
 
 // The agent kinds a definition may be scoped to when no kind catalog has been loaded: the
 // fallback facts' mcpClient "yes" kinds (kindCatalog.test.ts holds those equal to the build-time
-// snapshot, which the CP's mcpKnownKinds reads), in the registry's "mcp" display order. The
-// non-agent session kinds (shell / ssm) run no MCP client, so they are not offered.
+// snapshot, which the CP's mcpKnownKinds reads), in SESSION_KINDS order. The non-agent session
+// kinds (shell / ssm) run no MCP client, so they are not offered.
 // How a kind RECEIVES its servers is not this list's business: every kind here but muse gets a
 // native config file written for it, and muse takes them on the wire at session start.
-export const MCP_KINDS: readonly SessionKind[] = inListOrder(
-  SESSION_KINDS.filter((k) => FALLBACK_KIND_FACTS[k].mcpClient === "yes"),
-  "mcp",
-);
+export const MCP_KINDS: readonly SessionKind[] = SESSION_KINDS.filter((k) => FALLBACK_KIND_FACTS[k].mcpClient === "yes");
 
 // The kinds a definition may be scoped to now: those the kind catalog says take MCP servers
-// ("unverified" counts as no — the Agent refuses a kind it has not verified), in the same order;
-// a kind only the catalog knows follows, in the catalog's order.
+// ("unverified" counts as no — the Agent refuses a kind it has not verified), in SESSION_KINDS
+// order; a kind only the catalog knows follows, in the catalog's order.
 export function mcpKinds(): string[] {
   const known = new Set<string>(SESSION_KINDS);
-  const all = inListOrder([...SESSION_KINDS, ...catalogKinds().filter((k) => !known.has(k))], "mcp");
+  const all = [...SESSION_KINDS, ...catalogKinds().filter((k) => !known.has(k))];
   return all.filter((k) => kindFacts(k)?.mcpClient === "yes");
 }
 
