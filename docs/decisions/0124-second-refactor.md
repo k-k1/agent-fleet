@@ -263,13 +263,23 @@ for f in ('acp.go', 'driver.go'):
 PY
 ```
 
+## Addendum (2026-10-28) — the css-dup ceiling counts what the script counts
 
-## Notes
+Context's "67 class names start rules in more than one file" is not a number `css-dup.mjs`
+prints, and it was not reproducible from it. The Phase 0 ceiling (#2855) therefore uses the
+script's own two counts on `main` at the time: 200 class names defined in two or more files, of
+which 36 are bare (`.name {}` alone) in two or more files. CI runs `npm run css:dup:ci`
+(`--max-dups=200 --max-bare=36`); either count growing fails. A count that falls does not: the
+script prints a hint and lowering the ceiling is a separate, optional edit, so a PR that clears a
+duplicate in passing never has to touch `package.json` (Decision 1).
 
-- 2026-10-28: the Phase 0 ratchets are in place (#2854). `main_files_test.go` in each Go module holds
-  package main to `testdata/main-files.txt`. The kind-literal ceilings
-  (`workspace/agent/kind_literal_ceiling_test.go`, `console/src/test/kindLiteralCeiling.test.ts`) use the
-  expressions above but take the kinds from the registry (`sessionx.RegisteredKinds()`; the Console's
-  `SESSION_KINDS`, held equal to the catalog) minus the non-agent `shell` and `ssm`, and match Go
-  identifiers as `Kind<kind>` in any case, so a new kind is counted from the PR that registers it. The
-  `K`/`KC` lists above are today's expansion of that set; both give 219 and 66.
+## Addendum (2026-10-28) — the ratchets count the registry's kinds
+
+The Phase 0 ratchets are in place (#2854). `main_files_test.go` in each Go module holds
+package main to `testdata/main-files.txt`. The kind-literal ceilings
+(`workspace/agent/kind_literal_ceiling_test.go`, `console/src/test/kindLiteralCeiling.test.ts`) use the
+expressions above but take the kinds from the registry (`sessionx.RegisteredKinds()`; the Console's
+`SESSION_KINDS`, held equal to the catalog) minus the non-agent `shell` and `ssm`, and match Go
+identifiers as `Kind<kind>` in any case, so a new kind is counted from the PR that registers it. The
+`K`/`KC` lists above are today's expansion of that set; both give 219 and 66. As with css-dup, a count
+above the ceiling fails and one below it only logs a hint to lower it.
