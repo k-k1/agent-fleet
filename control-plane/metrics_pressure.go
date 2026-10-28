@@ -32,6 +32,7 @@ const (
 var pressureFetchTimeout = 2 * time.Second
 
 type pressureEntry struct {
+	run      string       // container run this entry belongs to
 	gen      uint64       // identifies this entry; a response for another generation is discarded
 	mp       *memPressure // nil = unmeasured; never a zero-valued stand-in
 	okAt     time.Time    // when mp was fetched
@@ -59,14 +60,16 @@ var memPressures = &pressureCache{m: map[string]*pressureEntry{}}
 // lookup returns the sample to show and whether the caller must start a fetch (and has then
 // claimed the single in-flight slot, identified by gen). The returned pointer is shared and
 // must not be mutated.
-func (c *pressureCache) lookup(key string, now time.Time) (mp *memPressure, gen uint64, fetch bool) {
+func (c *pressureCache) lookup(key, run string, now time.Time) (mp *memPressure, gen uint64, fetch bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.sweepLocked(now)
 	e := c.m[key]
-	if e == nil {
+	if e == nil || e.run != run {
+		// A different run of the container (replaced, or restarted in place) is a different
+		// machine: its predecessor's sample and any fetch still in flight for it are dropped.
 		c.nextGen++
-		e = &pressureEntry{gen: c.nextGen}
+		e = &pressureEntry{gen: c.nextGen, run: run}
 		c.m[key] = e
 	}
 	if e.mp != nil && now.Sub(e.okAt) < pressureMaxAge {
@@ -127,9 +130,9 @@ func (c *pressureCache) finish(key string, gen uint64, mp *memPressure, now time
 
 // agentMemPressure is the local path's mem_pressure: whatever the cache holds, refreshed in
 // the background. nil means absent from the payload.
-func agentMemPressure(ctx context.Context, m *manager, rt runtime.Runtime) *memPressure {
+func agentMemPressure(ctx context.Context, m *manager, rt runtime.Runtime, run string) *memPressure {
 	key := rt.Name()
-	mp, gen, fetch := memPressures.lookup(key, time.Now())
+	mp, gen, fetch := memPressures.lookup(key, run, time.Now())
 	if fetch {
 		// Detached from the tick's context: the tick returns before the fetch does.
 		bg := context.WithoutCancel(ctx)

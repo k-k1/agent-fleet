@@ -15,8 +15,8 @@ import (
 func localDockerStats(t *testing.T) {
 	t.Helper()
 	old := hostStatsHook
-	hostStatsHook = func(context.Context, string) map[string]any {
-		return map[string]any{"running": true, "mem_used": uint64(1 << 30), "cpu_pct": 3.0}
+	hostStatsHook = func(context.Context, string) (map[string]any, string) {
+		return map[string]any{"running": true, "mem_used": uint64(1 << 30), "cpu_pct": 3.0}, "run-1"
 	}
 	memPressures = &pressureCache{m: map[string]*pressureEntry{}}
 	t.Cleanup(func() {
@@ -175,25 +175,25 @@ func TestLocalStatsPressureVanishesOnTheFirstFailureAfterASuccess(t *testing.T) 
 func TestLocalStatsPressureIsInvalidatedByStopAndRejectsOrphanedResponses(t *testing.T) {
 	c := &pressureCache{m: map[string]*pressureEntry{}}
 	now := time.Now()
-	_, oldGen, fetch := c.lookup("w", now)
+	_, oldGen, fetch := c.lookup("w", "r", now)
 	if !fetch {
 		t.Fatal("first lookup must claim a fetch")
 	}
 	c.invalidate("w")
-	_, newGen, _ := c.lookup("w", now)
+	_, newGen, _ := c.lookup("w", "r", now)
 	if newGen == oldGen {
 		t.Fatal("a recreated entry reused the generation")
 	}
 	c.finish("w", oldGen, &memPressure{Available: true}, now)
-	if mp, _, _ := c.lookup("w", now); mp != nil {
+	if mp, _, _ := c.lookup("w", "r", now); mp != nil {
 		t.Error("a response from the previous run was accepted")
 	}
 	c.finish("w", newGen, &memPressure{Available: true}, now)
-	if mp, _, _ := c.lookup("w", now); mp == nil {
+	if mp, _, _ := c.lookup("w", "r", now); mp == nil {
 		t.Error("the current run's response was rejected")
 	}
 	c.invalidate("w")
-	if mp, _, _ := c.lookup("w", now); mp != nil {
+	if mp, _, _ := c.lookup("w", "r", now); mp != nil {
 		t.Error("sample survived invalidate")
 	}
 }
@@ -201,11 +201,11 @@ func TestLocalStatsPressureIsInvalidatedByStopAndRejectsOrphanedResponses(t *tes
 func TestPressureCacheCollectsIdleEntriesButNotInflightOnes(t *testing.T) {
 	c := &pressureCache{m: map[string]*pressureEntry{}}
 	t0 := time.Now()
-	c.lookup("idle", t0)
-	_, g, _ := c.lookup("busy", t0) // claims a fetch, stays in flight
+	c.lookup("idle", "r", t0)
+	_, g, _ := c.lookup("busy", "r", t0) // claims a fetch, stays in flight
 	c.finish("idle", c.m["idle"].gen, &memPressure{Available: true}, t0)
 	later := t0.Add(pressureIdleAfter + 2*pressureSweepEvery)
-	c.lookup("other", later)
+	c.lookup("other", "r", later)
 	if _, ok := c.m["idle"]; ok {
 		t.Error("idle entry was not collected")
 	}
@@ -213,4 +213,24 @@ func TestPressureCacheCollectsIdleEntriesButNotInflightOnes(t *testing.T) {
 		t.Error("an entry with a fetch in flight was collected")
 	}
 	c.finish("busy", g, nil, later) // must not panic or resurrect anything
+}
+
+// The container was replaced (or restarted in place) between two ticks, so the tick never saw
+// it stopped: the run token alone must drop the old sample and orphan the old fetch.
+func TestPressureCacheRunChangeDropsSampleAndOrphansFetch(t *testing.T) {
+	c := &pressureCache{m: map[string]*pressureEntry{}}
+	now := time.Now()
+	_, g1, _ := c.lookup("w", "run-1", now)
+	c.finish("w", g1, &memPressure{Available: true}, now)
+	if mp, _, _ := c.lookup("w", "run-1", now); mp == nil {
+		t.Fatal("same run must keep its sample")
+	}
+	mp, g2, fetch := c.lookup("w", "run-2", now)
+	if mp != nil || !fetch || g2 == g1 {
+		t.Fatalf("new run: mp=%v fetch=%v gen %d->%d", mp, fetch, g1, g2)
+	}
+	c.finish("w", g1, &memPressure{Available: true}, now) // the old run's fetch lands late
+	if mp, _, _ := c.lookup("w", "run-2", now); mp != nil {
+		t.Error("old run's response contaminated the new run")
+	}
 }
