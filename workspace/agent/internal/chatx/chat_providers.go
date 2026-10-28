@@ -13,6 +13,7 @@ import (
 	"hash/fnv"
 	"io"
 	"log"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,11 +26,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/modelfallback"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routehealth"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -44,17 +43,10 @@ type ChatProvider interface {
 	Send(ctx context.Context, c *ChatConversation, prompt string) (string, error)
 }
 
-var ChatProviders = map[string]ChatProvider{
-	session.KindClaude:   ClaudeChat{},
-	session.KindCodex:    codexChat{},
-	session.KindOpencode: opencodeChat{},
-	session.KindAgy:      agyChat{},
-	session.KindCursor:   cursorChat{},
-	// lcppKind is NOT a session.Kind* constant (ADR 0093 phase 1 §2 — the kind is not
-	// registered yet; see chat_providers_lcpp.go's header comment for where and why).
-	lcppKind:         lcppChat{},
-	session.KindMuse: museChat{},
-}
+// ChatProviders is the Send provider per kind. It starts as a copy of chatBackends
+// (chat_backends.go), the one list of backends; tests swap Send stand-ins into it, which never
+// changes the capabilities read from chatBackends.
+var ChatProviders = maps.Clone(chatBackends)
 
 // --- backend availability (claude-less workspaces, docs/log/19) ----------------------
 //
@@ -92,31 +84,8 @@ var (
 // real CLI in a loop (see headlessAvailInFlight's comment for why that matters here
 // specifically).
 var headlessAvailCheck = func(kind string) bool {
-	switch kind {
-	case session.KindClaude:
-		return claude.LoggedIn()
-	case session.KindCodex:
-		return codex.LoggedIn()
-	case session.KindOpencode:
-		// binary present AND actually usable (stored key / oauth / explicit free-tier
-		// opt-in) — opencode.Available() alone used to let assistant chat silently fall
-		// back to opencode's zero-auth free tier for any unconfigured workspace, which
-		// some tenants' security policy forbids. Default OFF, opt-in only.
-		return opencode.Available() && opencode.Connected()
-	case session.KindAgy:
-		return agy.SignedIn()
-	case session.KindCursor:
-		return cursor.LoggedIn()
-	case lcppKind:
-		// Not a CLI login check — there is no CLI (ADR 0093 phase 1 §2). "available" here
-		// means this deployment's self-hosted chat engine exists AND has at least one
-		// enabled model right now; see lcppEngineAvailable's own comment for why that is
-		// the whole check (the Control Plane's catalogue already drops an engine with none).
-		return lcppEngineAvailable()
-	case session.KindMuse:
-		return museAvailable()
-	}
-	return false
+	c, ok := backend(kind).(headlessChecker)
+	return ok && c.headlessAvailable()
 }
 
 // headlessAgentAvailable reports (cached) whether a backend's CLI is authenticated. At most one
@@ -347,24 +316,10 @@ func chatRoute(c *ChatConversation) (ChatProvider, string) {
 // this out of ChatProvider avoids widening every test stub merely for presentation
 // metadata. Production providers are the value types below.
 func ChatProviderKind(c *ChatConversation, prov ChatProvider) string {
-	switch prov.(type) {
-	case ClaudeChat:
-		return session.KindClaude
-	case codexChat:
-		return session.KindCodex
-	case opencodeChat:
-		return session.KindOpencode
-	case agyChat:
-		return session.KindAgy
-	case cursorChat:
-		return session.KindCursor
-	case lcppChat:
-		return lcppKind
-	case museChat:
-		return session.KindMuse
-	default:
-		return c.Agent // test/custom provider: best truthful fallback available
+	if k, ok := prov.(kindedBackend); ok {
+		return k.kind()
 	}
+	return c.Agent // test/custom provider: best truthful fallback available
 }
 
 // ClaudeChat runs `claude -p` (headless), pinning a session id on the first turn
@@ -1774,8 +1729,8 @@ func oneShotEnvModelV(v visibility, kind string) string {
 	if m == "" {
 		return ""
 	}
-	if kind == session.KindAgy {
-		return agyNamedModel(v, m)
+	if n, ok := backend(kind).(envModelNamer); ok {
+		return n.namedEnvModel(v, m)
 	}
 	return v.model(kind, m)
 }
@@ -1791,10 +1746,8 @@ func recommendedOneShotModelV(v visibility, kind string, tier OneShotTier) strin
 	if m := oneShotEnvModelV(v, kind); m != "" {
 		return m
 	}
-	if kind == session.KindMuse {
-		// A muse run with no --model lands on the contributor row (clamp 8), so the
-		// recommendation is the model museOneShot would fall back to anyway.
-		return museSafeOneShotModel(v)
+	if sm, ok := backend(kind).(safeOneShotModeler); ok {
+		return sm.safeOneShotModel(v)
 	}
 	if tier == OneShotProse {
 		return recommendedAssistantModelV(v, kind)
@@ -1995,29 +1948,9 @@ func recommendedUtilityModel(kind string) string {
 
 func recommendedUtilityModelV(v visibility, kind string) string {
 	// A candidate excluded by the hidden-models setting (model_deny.go) is not auto-selected
-	// either.
-	//
-	// codex and agy follow the cheapest priced model their catalog lists (model_recommend.go),
-	// falling back to what they did before prices were read. claude needs no ranking: the
-	// "haiku" alias already moves to each new Haiku. opencode is deliberately NOT ranked: its
-	// cheapest rows are the $0 "-free" promotions, which are retired every few weeks and are a
-	// listing rather than an entitlement (see oneShotRunOn's opencode branch).
-	switch kind {
-	case session.KindClaude:
-		return claudeFirstVisible(v, claudeShortTiers)
-	case session.KindCodex:
-		ids, _ := codexRecommendIDs(v)
-		if m := cheapestListedModel(kind, ids); m != "" {
-			return m
-		}
-		return cheapOneShotModel(ids)
-	case session.KindOpencode:
-		return recommendedCatalogModel(v.ids(kind, opencode.Models()), modelfallback.OneShotOpencodeGo, "")
-	case session.KindAgy:
-		if m := cheapestListedModel(kind, agyRecommendIDs(v)); m != "" {
-			return m
-		}
-		return agyNamedModel(v, defaultAgyChatModel)
+	// either. Each backend's own policy is its recommendedUtility (chat_backends.go).
+	if r, ok := backend(kind).(utilityRecommender); ok {
+		return r.recommendedUtility(v)
 	}
 	return ""
 }
@@ -2211,15 +2144,15 @@ func oneShotRouteModel(feature string, tier OneShotTier, kind, claudeModel strin
 		m = recommendedOneShotModel(kind, tier)
 	case configured:
 		m = strings.TrimSpace(selected)
-	case kind == session.KindClaude:
+	case takesCallerModel(kind):
 		m = claudeModel
 	default:
 		m = recommendedOneShotModel(kind, tier)
 	}
 	// muse never runs on its CLI default (the contributor row): museOneShot turns "" into the
 	// safe model and records that, so the lookup has to name the same one.
-	if m == "" && kind == session.KindMuse {
-		m = museSafeOneShotModel(prefsVisibility)
+	if sm, ok := backend(kind).(safeOneShotModeler); ok && m == "" {
+		m = sm.safeOneShotModel(prefsVisibility)
 	}
 	return m
 }
@@ -2260,31 +2193,22 @@ func oneShotRunOn(ctx context.Context, kind, feature string, tier OneShotTier, p
 	}
 	run := oneShotRun{kind: kind, selected: selected, configured: configured, autoRecommended: autoRecommended,
 		tier: tier, persona: persona, prompt: prompt, claudeModel: claudeModel}
-	switch kind {
-	case session.KindCodex:
-		out, e := oneShotOnCodex(ctx, &call, run)
-		return out, "", "", e
-	case session.KindOpencode:
-		out, e := oneShotOnOpencode(ctx, &call, run)
-		return out, "", "", e
-	case session.KindCursor:
-		out, e := oneShotOnCursor(ctx, &call, run)
-		return out, "", "", e
-	case session.KindAgy:
-		out, e := oneShotOnAgy(ctx, &call, run)
-		return out, "", "", e
-	case session.KindMuse:
-		out, e := oneShotOnMuse(ctx, &call, run)
-		return out, "", "", e
-	case session.KindClaude:
-		out, e := oneShotOnClaude(ctx, &call, run)
-		return out, "", "", e
-	default:
+	r, ok := backend(kind).(oneShotRunner)
+	if !ok {
 		// oneShotKind never returns a kind outside oneShotKinds; this is the backstop that keeps
 		// a new kind from silently running (and being billed) on claude.
 		call.Kind = kind
 		return "", "", "", fmt.Errorf("AI assist cannot run on %q", kind)
 	}
+	out, e := r.runOneShot(ctx, &call, run)
+	return out, "", "", e
+}
+
+// takesCallerModel reports that kind's one-shot runs the caller's model when the settings name
+// none (callerModeler).
+func takesCallerModel(kind string) bool {
+	_, ok := backend(kind).(callerModeler)
+	return ok
 }
 
 // oneShotRun is what one one-shot runs with, once oneShotRunOn has resolved the settings:
