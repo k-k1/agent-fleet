@@ -24,26 +24,34 @@ import (
 // Reading the catalogue off disk is the same idiom as consoleCatalog: a distribution built
 // without console/ skips, but a console/ that is present and unparseable FAILS. A drift test
 // that degrades to a skip when the thing it watches is renamed is the same as not existing.
-func consoleSettingsSource(t *testing.T) string {
+//
+// The Console keeps its preferences under console/src/lib/settings/ (ADR 0124 Phase 2): the
+// choices in options.ts, the defaults in prefs.ts, one descriptor per key.
+func consoleSettingsSource(t *testing.T, name string) string {
 	t.Helper()
-	dir := filepath.Join("..", "..", "console", "src", "lib")
-	if _, err := os.Stat(dir); err != nil {
+	lib := filepath.Join("..", "..", "console", "src", "lib")
+	if _, err := os.Stat(lib); err != nil {
 		t.Skipf("console sources not available (%v)", err)
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "settings.ts"))
+	raw, err := os.ReadFile(filepath.Join(lib, "settings", name))
 	if err != nil {
-		t.Fatalf("console/src/lib exists but settings.ts is unreadable (did it move?): %v", err)
+		t.Fatalf("console/src/lib exists but settings/%s is unreadable (did it move? then update this test): %v", name, err)
 	}
 	return string(raw)
 }
 
+// consoleDefaultRE matches a key's default in prefs.ts, `key: synced(3)` or `key: synced<number>(3)`.
+func consoleDefaultRE(key string) *regexp.Regexp {
+	return regexp.MustCompile(key + `:\s*\w+(?:<[^>]*>)?\(\s*(-?\d+)\s*[,)]`)
+}
+
 // TestDriftSpawnChildLimitChoices: the buttons the Console offers are exactly 1..SpawnChildLimitMax.
 func TestDriftSpawnChildLimitChoices(t *testing.T) {
-	src := consoleSettingsSource(t)
+	src := consoleSettingsSource(t, "options.ts")
 
 	m := regexp.MustCompile(`SPAWN_CHILD_LIMITS\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(src)
 	if m == nil {
-		t.Fatal("no SPAWN_CHILD_LIMITS array in console/src/lib/settings.ts (renamed? then update this test and session.SpawnChildLimitMax together)")
+		t.Fatal("no SPAWN_CHILD_LIMITS array in console/src/lib/settings/options.ts (renamed? then update this test and session.SpawnChildLimitMax together)")
 	}
 
 	var got []int
@@ -86,14 +94,14 @@ func TestDriftSpawnChildLimitChoices(t *testing.T) {
 }
 
 // TestDriftSpawnChildLimitDefault: the Console's stored default is the Agent's unconfigured
-// answer. They are written twice — DEFAULTS in settings.ts and SpawnChildLimitDefault — and a
+// answer. They are written twice — the descriptor in settings/prefs.ts and SpawnChildLimitDefault — and a
 // workspace that never opened the setting must behave the same whichever end is asked.
 func TestDriftSpawnChildLimitDefault(t *testing.T) {
-	src := consoleSettingsSource(t)
+	src := consoleSettingsSource(t, "prefs.ts")
 
-	m := regexp.MustCompile(`sessionSpawnChildLimit:\s*(\d+)`).FindStringSubmatch(src)
+	m := consoleDefaultRE("sessionSpawnChildLimit").FindStringSubmatch(src)
 	if m == nil {
-		t.Fatal("no sessionSpawnChildLimit default in console/src/lib/settings.ts (renamed?)")
+		t.Fatal("no sessionSpawnChildLimit default in console/src/lib/settings/prefs.ts (renamed?)")
 	}
 	got, err := strconv.Atoi(m[1])
 	if err != nil {
