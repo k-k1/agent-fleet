@@ -64,7 +64,7 @@ source_of_truth: "既存の `internal/agents/<kind>` パッケージ（一番近
 
 この表は kind 名が現れる場所の完全な一覧ではありません。手で持っている一覧がまだあります。
 たとえば `internal/sessionx/session_io.go` の bracketed paste を使う種別、`usage_fold.go` の
-`usageMeasuredForKind`、`console/src/lib/agentModels.ts` の `isDynamic`（live のモデルカタログを持つ種別）。
+`usageMeasuredForKind`。
 `workspace/agent`・`control-plane`・`console/src` を、自分と同じ driver を持つ既存種別の名前で grep し、
 当たりを 1 つずつ判断してください。
 
@@ -237,9 +237,8 @@ Agent のイメージを先に、または同時に配備し、その間は断�
 - [ ] モデル一覧: `internal/agents/<kind>/capabilities.go` の `ListModels`（`agents.ModelLister`）。
       `GET /agents/{kind}/models` がこれを返す（`TestEveryAgentKindListsModels`）
 - [ ] Console のフォールバック（`GET /api/agents/kinds` が答えるまで使う）:
-      `console/src/agents/kindCatalog.ts` の `FALLBACK_KIND_FACTS`、MCP クライアントなら
-      `console/src/features/settings/mcp/mcpWire.ts` の `MCP_KINDS`。`kindCatalog.test.ts` が
-      両方と `SESSION_KINDS` をカタログのスナップショットと突き合わせる
+      `console/src/agents/kindCatalog.ts` の `FALLBACK_KIND_FACTS`（`MCP_KINDS` はここから作る）。
+      `kindCatalog.test.ts` がそれと `SESSION_KINDS` をカタログのスナップショットと突き合わせる
 
 **種別固有 — その機能を持つときだけ:**
 
@@ -255,4 +254,7 @@ Agent のイメージを先に、または同時に配備し、その間は断�
 - [ ] `console/src/types/session.ts` の `SESSION_KINDS`（表示順）と `console/src/agents/registry.ts` の記述子
       （`caps`）。記述子が無い種別も汎用アイコンで表示はされるが、Console からは起動できない
 - [ ] 色・アイコン・文言。i18n の文字列を両言語で
-- [ ] 動的なモデル一覧: `console/src/lib/agentModels.ts` の `isDynamic`
+- [ ] 記述子の一覧向けの事実: `caps.liveModels` / `caps.concreteModel`（モデル選択）、
+      `caps.skillsCatalog`（設定 > スキル）、`caps.memberDefault`（CP の `memberDefaultAgents` と
+      一致させる。`derivedKindLists.test.ts`）、`caps.headlessChat` なら `assistantRank`
+      （アシスタントの既定の優先順位）

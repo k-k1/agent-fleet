@@ -63,6 +63,13 @@ export interface ProjectSnapshot {
   warnings?: ProjectWarning[];
 }
 
+// The agent kinds a copy may target, in the snapshot's order: those the Agent reports with a
+// verified project scope. kiro's is unverified (docs/log/56 §4.3, its project-scope write
+// contract is unmeasured) and agy and muse have none, so none of them is a destination.
+export function copyTargetKinds(snap: Pick<ProjectSnapshot, "kinds">): string[] {
+  return snap.kinds.filter((k) => k.hasProjectScope && !k.unverified).map((k) => k.kind);
+}
+
 export const fetchProjectMcpSnapshot = (repo: string): Promise<ProjectSnapshot> =>
   api(`api/repos/${encodeURIComponent(repo)}/mcp`);
 

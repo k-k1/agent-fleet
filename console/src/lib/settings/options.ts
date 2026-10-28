@@ -4,6 +4,8 @@
 //
 // This module imports nothing from features/ (ADR 0124: lib/ is the lower layer).
 import type { MsgKey } from "../i18n/index.ts";
+import { AGENTS } from "../../agents/registry.ts";
+import { SESSION_KINDS, type SessionKind } from "../../types/session.ts";
 
 export const CODE_FONTS = [
   "Source Code Pro",
@@ -167,10 +169,13 @@ export const SURFACE_TARGETS: { key: "topbarColor" | "leftpaneColor" | "viewerCo
 // own release-varying default. Change here to move everyone's baseline tier.
 export const DEFAULT_MODEL = "sonnet";
 
-// Headless-chat backend kinds in the built-in priority order (mirrors the Agent's
-// defaultHeadlessOrder; agy last — its free-plan quota is scarce). Display labels
-// come from the agent registry (assistantName), not i18n.
-export const ASSISTANT_AGENT_KINDS = ["claude", "codex", "opencode", "cursor", "agy", "muse"] as const;
+// Headless-chat backend kinds (caps.headlessChat) in the built-in priority order, the
+// registry's assistantRank (mirrors the Agent's DefaultHeadlessOrder; agy late — its
+// free-plan quota is scarce). Display labels come from the registry (assistantName), not i18n.
+const assistantRank = (k: SessionKind) => AGENTS[k].assistantRank ?? Infinity;
+export const ASSISTANT_AGENT_KINDS: readonly SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.headlessChat).sort(
+  (a, b) => assistantRank(a) - assistantRank(b),
+);
 export const ASSISTANT_RECOMMENDED_MODEL = "recommended";
 
 // The child limits a user may pick (ADR 0073 decision 6). Keep the last entry equal to the
