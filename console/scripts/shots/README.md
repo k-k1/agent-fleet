@@ -123,7 +123,8 @@ node console/scripts/shots/demo.mjs --scenario day --locale en    # and ja, and 
   caption band under the Console, a clock for stories that span hours, and the phone in `day`.
   That phone's Slack thread is **redrawn**, not recorded: its texts and buttons are the chat
   bridge's own strings (`workspace/agent/internal/bridge/format.go`, `slack_interact.go`,
-  `workspace/agent/internal/sessionx/bridge_answer.go`), so update them together.
+  `workspace/agent/internal/sessionx/bridge_answer.go`, and the kind's product name from
+  `workspace/agent/internal/kinds/kinds.go`), so update them together.
 - `sre` streams the assistants' replies: a scenario's `stream()` answers a route as Server-Sent
   Events (the chat's `POST …/stream`), frame by frame.
 - `orchestrate` and `sre` press the rail's repos Refresh behind the scenes after a worktree is

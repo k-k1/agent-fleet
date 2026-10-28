@@ -70,31 +70,59 @@ func TestInModuleDepsSeesTheAgentPackages(t *testing.T) {
 
 func TestAllIsACopyInRegistrationOrder(t *testing.T) {
 	a := All()
-	if len(a) != len(registered) || !slices.Equal(a, registered[:]) {
-		t.Fatalf("All() = %v, want %v", a, registered)
+	if len(a) != len(registered) {
+		t.Fatalf("All() = %v, want %d kinds", a, len(registered))
+	}
+	for i, e := range registered {
+		if a[i] != e.kind {
+			t.Fatalf("All()[%d] = %q, want %q", i, a[i], e.kind)
+		}
 	}
 	a[0] = "changed"
 	if All()[0] == "changed" {
 		t.Fatal("All() returned the package's own array")
 	}
 	seen := map[string]bool{}
-	for _, k := range registered {
-		if seen[k] {
-			t.Errorf("%q is registered twice", k)
+	for _, e := range registered {
+		if seen[e.kind] {
+			t.Errorf("%q is registered twice", e.kind)
 		}
-		seen[k] = true
+		seen[e.kind] = true
 	}
 }
 
 func TestKnownIsExact(t *testing.T) {
-	for _, k := range registered {
-		if !Known(k) {
-			t.Errorf("Known(%q) = false", k)
+	for _, e := range registered {
+		if !Known(e.kind) {
+			t.Errorf("Known(%q) = false", e.kind)
 		}
 	}
 	for _, k := range []string{"", "Claude", " codex", "codex ", "kiro-cli", "llama.cpp", "pi"} {
 		if Known(k) {
 			t.Errorf("Known(%q) = true", k)
 		}
+	}
+}
+
+// The product names the notification bridge writes into a chat message. A label edited here
+// changes what every connected Discord / Slack channel reads, so the set is pinned.
+func TestLabels(t *testing.T) {
+	want := map[string]string{
+		"claude": "Claude Code", "opencode": "opencode", "codex": "Codex", "copilot": "GitHub Copilot",
+		"cursor": "Cursor", "kiro": "Kiro", "agy": "Antigravity", "muse": "Muse Code",
+		"lcpp": "", "shell": "", "ssm": "",
+	}
+	for _, k := range All() {
+		l, ok := want[k]
+		if !ok {
+			t.Errorf("%q has no expected label; add it to this table", k)
+			continue
+		}
+		if got := Label(k); got != l {
+			t.Errorf("Label(%q) = %q, want %q", k, got, l)
+		}
+	}
+	if got := Label("pi"); got != "" {
+		t.Errorf(`Label("pi") = %q, want ""`, got)
 	}
 }

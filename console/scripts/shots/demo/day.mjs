@@ -339,7 +339,8 @@ export const meta = { width: 1280, height: 800, band: 56 };
 
 // The captions are the README's four steps (README.md / README.ja.md "A day with Agent Fleet"),
 // shortened to one line each. The phone texts are the chat bridge's own strings:
-// workspace/agent/internal/bridge/format.go (headline), slack_interact.go (button labels) and
+// workspace/agent/internal/bridge/format.go (headline), workspace/agent/internal/kinds/kinds.go
+// (the kind's product name, "(Claude Code)"), slack_interact.go (button labels) and
 // workspace/agent/internal/sessionx/bridge_answer.go (the line a press leaves behind).
 function text(locale) {
   const [claude] = demoIssues(locale);
