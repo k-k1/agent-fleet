@@ -312,9 +312,14 @@ CSS を持つ。一覧は `ls console/src/features`。製品が画面ごとに�
   で、全部を jsdom で走らせると 10.8 秒 → 51.3 秒と測られている。共有ホストのメモリのため、
   ワーカーは 2 に制限している。
 - **型検査**: `npm run typecheck`（`scripts/typecheck.mjs`）。
-- **lint**: `npm run lint` は規則 1 つ `react/rules-of-hooks` だけの oxlint（`.oxlintrc.json`）。
-  早期 return の下に置いたフックが Console 全体を真っ黒にしたことがある。
-- **CI**（`.github/workflows/ci.yml` の `console` ジョブ）は型検査・lint・i18n lint・vitest・実物の
+- **lint**: `npm run lint` は規則 2 つの oxlint（`.oxlintrc.json`）。`react/rules-of-hooks` は、
+  早期 return の下に置いたフックが Console 全体を真っ黒にしたことがあるため。`src/lib/` への
+  `no-restricted-imports` は、下の層である `lib/` から `features/` を import させないため。まだ
+  import しているファイルは例外として列挙してあり、この一覧は減る一方（ADR 0124）。
+- **CSS の重複**: `npm run css:dup` は 2 つ以上のスタイルシートで定義されたグローバルなクラス名を
+  列挙する。CI は今の件数を上限（`--max-dups` / `--max-bare`）にして走らせるので、件数は減っても
+  増えはしない。重複を解消したら `package.json` の `css:dup:ci` の上限を下げる。
+- **CI**（`.github/workflows/ci.yml` の `console` ジョブ）は型検査・lint・i18n lint・css-dup の上限・vitest・実物の
   headless Chromium での検査 2 つ（`pdf:check`・`doc:check`）・ビルドを走らせる。
 - `package.json` のほかのスクリプト（スクリーンショット・ミラーやビューアのスクロール検査・コントラスト
   検査など）も実物の headless ブラウザを動かすが、手で走らせるもので CI には入っていない。

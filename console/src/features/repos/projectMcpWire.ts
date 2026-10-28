@@ -1,6 +1,6 @@
 // The wire contract for docs/log/56 P0's read-only project-scope MCP snapshot
 // (workspace/agent/internal/mcpproj, GET /api/repos/{name}/mcp). Kept separate from
-// ../settings/mcpWire.ts (the AF REGISTRY's wire contract) on purpose: ADR0040 decision 15
+// ../settings/mcp/mcpWire.ts (the AF REGISTRY's wire contract) on purpose: ADR0040 decision 15
 // keeps the Go types apart too — a project file's "af" entry must be FOUND and
 // flagged here, not treated like an editable registry row — so this file defines
 // its own interfaces rather than reusing/extending McpServer/Registry.

@@ -7,14 +7,16 @@
 // later are overridden, the rest stay as the earlier file left them. This has produced looks
 // that cannot be explained by reading either file on its own.
 //
-// The tool exists to take an inventory of the current duplicates before splitting and moving
-// files (ADR 0067 Phase 0). By default it only lists them and does not fail; whether it becomes
-// a CI gate is a decision for after the inventory.
+// By default it only lists them and does not fail. CI runs it as a ratchet (ADR 0124 Phase 0):
+// the ceilings are today's counts, so a new duplicate fails the build while the existing ones
+// wait for their clean-up. Lower the ceilings in package.json (css:dup:ci) when you clear some.
 //
 // Usage:
-//   node scripts/css-dup.mjs            list them (always exit 0)
-//   node scripts/css-dup.mjs --fail     exit 1 if there is any duplicate (for future CI use)
-//   node scripts/css-dup.mjs --json     machine readable
+//   node scripts/css-dup.mjs                  list them (always exit 0)
+//   node scripts/css-dup.mjs --fail           exit 1 if there is any bare clash (⚠)
+//   node scripts/css-dup.mjs --max-dups=N     exit 1 if more than N names are in two or more files
+//   node scripts/css-dup.mjs --max-bare=N     exit 1 if more than N names are bare clashes (⚠)
+//   node scripts/css-dup.mjs --json           machine readable
 //
 // There is exactly one severity distinction. A same-named class qualified by an ancestor, as in
 // `.parent .active {}`, is effectively local to its file, whereas a selector that is `.active`
@@ -180,5 +182,31 @@ if (process.argv.includes("--json")) {
   }
 }
 
-// --fail is for putting this on CI later; the default only lists, since Phase 0 is an inventory.
-if (process.argv.includes("--fail") && risky.length > 0) process.exit(1);
+// A ceiling, not an exact count: clearing a duplicate must not turn CI red. The message says
+// which way to move so a lowered count gets its ceiling lowered too.
+function ceiling(flag) {
+  const arg = process.argv.find((a) => a.startsWith(`--${flag}=`));
+  if (!arg) return null;
+  const n = Number(arg.slice(flag.length + 3));
+  if (!Number.isInteger(n) || n < 0) {
+    console.error(`css-dup: --${flag} needs a non-negative integer, got ${JSON.stringify(arg)}`);
+    process.exit(2);
+  }
+  return n;
+}
+
+let failed = process.argv.includes("--fail") && risky.length > 0;
+for (const [flag, count, what] of [
+  ["max-dups", dups.length, "class names defined in two or more files"],
+  ["max-bare", risky.length, "bare clashes (⚠)"],
+]) {
+  const max = ceiling(flag);
+  if (max === null) continue;
+  if (count > max) {
+    console.error(`css-dup: ${count} ${what}, above the ceiling of ${max} (--${flag}). Rename or scope the new one.`);
+    failed = true;
+  } else if (count < max) {
+    console.error(`css-dup: ${count} ${what}, below the ceiling of ${max}: lower --${flag} to ${count} in package.json.`);
+  }
+}
+if (failed) process.exit(1);

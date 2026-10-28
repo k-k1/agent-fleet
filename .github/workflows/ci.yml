@@ -467,6 +467,10 @@ jobs:
       # model-id-lint job; both read scripts/model-id-lint/patterns.txt.
       - name: model-id-lint
         run: npm run models:lint
+      # A ceiling, not zero (ADR 0124 Phase 0): a new class name defined in a second stylesheet
+      # fails, the existing duplicates wait for Phase 5. Lower the ceilings when you clear some.
+      - name: css-dup ceiling
+        run: npm run css:dup:ci
       - name: vitest
         run: npm test
       # Real-browser checks (docs/log/82). This is the only place that covers what jsdom
