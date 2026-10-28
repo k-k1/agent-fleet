@@ -1,3 +1,15 @@
+import { useCallback, useRef, useState } from "react";
+import { usedFromRemaining } from "../../features/sessions/move.ts";
+import { Button } from "../../ui/Button.tsx";
+import { Icon } from "../../ui/Icon.tsx";
+import { useDismiss } from "../../lib/useDismiss.ts";
+import { useOpenSignal } from "../../core/store/uiOpen.ts";
+import { kindClass, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
+import { useT } from "../../lib/i18n/index.ts";
+import { pickNearCap } from "../usageNearCap.ts";
+import { agoText, resetChipText, untilText, UsageBreakdownLink, UsageRow, useUsage, whenText } from "./usageCommon.tsx";
+import { placeChip, UsageChipPlace, useChipSlot } from "./usageFold.tsx";
+
 // CopilotUsageChip: GitHub Copilot's account credit chip. Unlike agy this needs no
 // TUI scrape — the backend reads copilot_internal/user (gh transparent auth) and
 // returns structured {plan, sku, resetsAt, quotas:[{id, remainingPct, ...}]}. Each

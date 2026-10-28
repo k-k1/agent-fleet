@@ -1,7 +1,11 @@
+import { type OpenTarget } from "../../core/store/uiOpen.ts";
+import type { SessionKind } from "../../types/session.ts";
+import type { MsgKey } from "../../lib/i18n/index.ts";
+
 // A usage source = one agent's subscription-limit chip (Claude / Codex). Both endpoints
 // return the same {ok, fiveHour, sevenDay, ageSec} shape (codex reads its rate_limits
 // straight from the rollout — no network), so one chip component renders either.
-interface UsageSource {
+export interface UsageSource {
   endpoint: string;
   key: OpenTarget; // keyboard-open target id (uiOpen signal)
   // The agent this chip reports for. Its glyph, color class and short name are READ FROM THE

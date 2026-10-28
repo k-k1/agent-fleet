@@ -1,7 +1,15 @@
+import { useCallback, useEffect, useState } from "react";
+import { api } from "../../core/api/client.ts";
+import { Button } from "../../ui/Button.tsx";
+import { Icon } from "../../ui/Icon.tsx";
+import { fmtDateTime, TIME_HM } from "../../lib/intl.ts";
+import { t, tCount, useT } from "../../lib/i18n/index.ts";
+import { useSettingsUI } from "../../features/settings/store.ts";
+
 // The reading shared by the usage chips (claude/codex/agy/copilot). Each agent uses
 // different fields (fiveHour/sevenDay vs groups vs quotas), expressed as one type with
 // optionals rather than a union, because the chips already branch on field presence.
-interface UsageWindow {
+export interface UsageWindow {
   pct: number;
   resetsAt: string;
   // The window rolled over after the capture, so the % is an estimate assuming zero use
@@ -48,7 +56,7 @@ interface UsageReading {
 // mount / stay in sync across tabs), and on an explicit refresh() (?refresh=1) — never
 // on a fast background timer (the claude endpoint is unofficial/rate-limited; codex is
 // a local rollout read). Kept in WsBar so it doesn't re-render the app.
-function useUsage(tenant: string | null, endpoint: string) {
+export function useUsage(tenant: string | null, endpoint: string) {
   const [usage, setUsage] = useState<UsageReading | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const load = useCallback(
@@ -81,7 +89,7 @@ function useUsage(tenant: string | null, endpoint: string) {
 }
 
 // agoText: seconds since the usage was fetched -> "N seconds/minutes/hours ago" (freshness label).
-function agoText(sec: number | null | undefined) {
+export function agoText(sec: number | null | undefined) {
   if (sec == null) return "";
   if (sec >= 3600) return tCount("wsbar.ago_hour", Math.round(sec / 3600));
   if (sec >= 60) return tCount("wsbar.ago_min", Math.round(sec / 60));
@@ -92,7 +100,7 @@ function agoText(sec: number | null | undefined) {
 // (docs/log/46 §5). The chip answers "how much of the subscription window is left"; "what
 // were the tokens spent on" is a separate question, and this hands the user straight over
 // at the moment they ask it.
-function UsageBreakdownLink({ onNavigate }: { onNavigate: () => void }) {
+export function UsageBreakdownLink({ onNavigate }: { onNavigate: () => void }) {
   const tr = useT();
   const openSettings = useSettingsUI((s) => s.openSettings);
   return (
@@ -114,7 +122,7 @@ function UsageBreakdownLink({ onNavigate }: { onNavigate: () => void }) {
 // agent could not verify) shows "—" and an empty bar instead: a confident 0% next to a
 // reset time is indistinguishable from a real one, which is exactly how a dead capture
 // went unnoticed for hours.
-function UsageRow({ label, w }: { label: string; w: { pct: number; until: string; when: string; stale?: boolean } }) {
+export function UsageRow({ label, w }: { label: string; w: { pct: number; until: string; when: string; stale?: boolean } }) {
   const level = w.stale ? "" : w.pct >= 95 ? " crit" : w.pct >= 80 ? " warn" : "";
   return (
     <div className="wu-row">
@@ -136,7 +144,7 @@ function UsageRow({ label, w }: { label: string; w: { pct: number; until: string
 // untilText: a reset instant -> a compact relative "in N days/hours/minutes" (the weekday+time
 // the app shows is hard to read; relative is glanceable, the absolute date-time goes
 // in the tooltip). whenText: the absolute local "M/D HH:MM".
-function untilText(iso: string) {
+export function untilText(iso: string) {
   const ms = new Date(iso).getTime();
   if (isNaN(ms)) return "";
   const min = Math.max(0, Math.round((ms - Date.now()) / 60000));
@@ -144,9 +152,9 @@ function untilText(iso: string) {
   if (min >= 60) return tCount("wsbar.until_hour", Math.round(min / 60));
   return tCount("wsbar.until_min", min);
 }
-const whenText = (iso: string) => fmtDateTime(iso);
+export const whenText = (iso: string) => fmtDateTime(iso);
 
-function expiryText(iso: string) {
+export function expiryText(iso: string) {
   const ms = new Date(iso).getTime();
   if (isNaN(ms)) return "";
   const days = Math.ceil((ms - Date.now()) / 86400000);
@@ -157,7 +165,7 @@ function expiryText(iso: string) {
 // resetChipText: reset instant → the compact form shown ON the chip when a window is
 // near its cap. Same-day resets drop the date (just HH:MM); a later day keeps M/D so the
 // day is unambiguous.
-function resetChipText(iso: string) {
+export function resetChipText(iso: string) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
   const now = new Date();

@@ -1,3 +1,9 @@
+import { useRef, useState } from "react";
+import { Button } from "../../ui/Button.tsx";
+import { Icon } from "../../ui/Icon.tsx";
+import { useDismiss } from "../../lib/useDismiss.ts";
+import { useT } from "../../lib/i18n/index.ts";
+
 // SlotMoveNotice tells a member that the next start moves their workspace to a new slot
 // (ecs-ec2 replacement reservation, #1473). There is nothing for them to do but know why that
 // start takes longer, so it is a notice with no action, styled like the restart-needed pill.

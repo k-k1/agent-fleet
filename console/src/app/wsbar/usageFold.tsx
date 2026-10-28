@@ -1,3 +1,17 @@
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactElement } from "react";
+import { createPortal } from "react-dom";
+import { useSessionsStore } from "../../features/sessions/store.ts";
+import { Button } from "../../ui/Button.tsx";
+import { Icon } from "../../ui/Icon.tsx";
+import { useDismiss } from "../../lib/useDismiss.ts";
+import { kindLabel } from "../../lib/sessionkind.ts";
+import type { SessionKind } from "../../types/session.ts";
+import { useT } from "../../lib/i18n/index.ts";
+import type { MsgKey } from "../../lib/i18n/index.ts";
+import { AUTO_INLINE, noteSessionKinds, planUsageChips, readKindStamps, type KindStamps } from "../usageChipPlan.ts";
+import { setSettings, useSettings } from "../../lib/settings.ts";
+import { USAGE_SOURCES } from "./usageSources.ts";
+
 // --- usage-chip folding ---------------------------------------------------------------
 // Five agents expose subscription limits and five chips is most of the bar's right half,
 // so the bar keeps the agents actually in use and folds the rest behind one "+N" chip.
@@ -36,7 +50,7 @@ const FoldCtx = createContext<FoldCtxValue | null>(null);
 // closed +N, or its +N closed — keeps its state, so its popover would stay "open" with a
 // dismiss layer that swallows the next click anywhere. Closed on that transition only: a
 // keyboard reveal opens a folded chip one render before the +N body exists to draw it.
-function useChipSlot(kind: string, visible: boolean, urgent: boolean, label: string, open: boolean, close: () => void) {
+export function useChipSlot(kind: string, visible: boolean, urgent: boolean, label: string, open: boolean, close: () => void) {
   const ctx = useContext(FoldCtx);
   const report = ctx?.report;
   useEffect(() => {
@@ -59,7 +73,7 @@ function useChipSlot(kind: string, visible: boolean, urgent: boolean, label: str
 // placeChip: render the chip where the group put it. The folded copy carries the agent's
 // name (the popover is a list, not a row of glyphs) — always in the markup, shown by CSS
 // only inside the popover, so moving a chip never re-renders different children.
-function placeChip(slot: "bar" | "fold", host: HTMLElement | null, chip: ReactElement) {
+export function placeChip(slot: "bar" | "fold", host: HTMLElement | null, chip: ReactElement) {
   if (slot !== "fold") return chip;
   return host ? createPortal(chip, host) : null;
 }
@@ -73,7 +87,7 @@ const PLACE_MODES = [
 // UsageChipPlace: the user's override of the ranking, in the chip's own dropdown — that is
 // the surface you are looking at the moment you think "I never use this one". Pinning is
 // also how you ask for a third chip on the bar, which is why there is no count setting.
-function UsageChipPlace({ kind }: { kind: string }) {
+export function UsageChipPlace({ kind }: { kind: string }) {
   const tr = useT();
   const s = useSettings();
   const pinned = (s.usageChipsPinned || []).includes(kind);

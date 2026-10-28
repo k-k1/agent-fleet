@@ -4,6 +4,46 @@
 //   tenant/superAdmin            → core/store/tenant
 //   layout/splitRight/splitDown/resetToTerminal/activePaneId → layout/store
 //   openNewSession               → features/sessions/store (tick signal)
+import { useEffect, useRef, useState } from "react";
+import { api } from "../../core/api/client.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
+import { useWorkspaceStore, wsBusy, wsPowerStops, wsStartBusy } from "../../core/store/workspace.ts";
+import { useLayoutStore } from "../../layout/store.ts";
+import { openSessionsOverview } from "../../features/overview/open.ts";
+import { openHome } from "../../features/home/open.ts";
+import { openImagegen } from "../../features/imagegen/open.ts";
+import { useImagegenAvailable } from "../../features/imagegen/available.ts";
+import { isBlankPane, MAX_TAB_COLS } from "../../layout/ops.ts";
+import { useSessionsStore } from "../../features/sessions/store.ts";
+import { hintSuffix } from "../../features/keys/keyHint.ts";
+import { Button } from "../../ui/Button.tsx";
+import { Icon } from "../../ui/Icon.tsx";
+import { Sparkline } from "../../ui/Sparkline.tsx";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
+import { useIsMobile } from "../../lib/device.ts";
+import { useWsBarFold, useWsBarPhoneFold } from "../wsBarFold.ts";
+import { machineSummary } from "../../lib/machine.ts";
+import { useDismiss } from "../../lib/useDismiss.ts";
+import { listBrowserAttachments } from "../../features/browser/attachmentService.ts";
+import { openBrowserAttachment } from "../../features/browser/attachmentAction.ts";
+import type { BrowserAttachmentStatus } from "../../features/browser/attachmentController.ts";
+import { useOpenSignal } from "../../core/store/uiOpen.ts";
+import { t, useT } from "../../lib/i18n/index.ts";
+import { fmtGiB as fg } from "../../lib/bytes.ts";
+import { PortOpen, useDefaultPortOpen } from "../../features/preview/PortOpen.tsx";
+import { useCurrentPreviewInfo, usePreviewStore } from "../../features/preview/previewState.ts";
+import { useBrowserUnavailable } from "../../features/browser/availability.ts";
+import { AwsProfilesChip } from "../../features/awslogin/AwsProfilesChip.tsx";
+import { GcpProfilesChip } from "../../features/gcplogin/GcpProfilesChip.tsx";
+import { AgyUsageChip } from "./AgyUsageChip.tsx";
+import { CopilotUsageChip } from "./CopilotUsageChip.tsx";
+import { SlotMoveNotice } from "./SlotMoveNotice.tsx";
+import { UsageChip } from "./UsageChip.tsx";
+import { MachineDetailsLink, useWsMachine } from "./machine.tsx";
+import { useWsResourceChips } from "./resourceStats.ts";
+import { UsageChipFold } from "./usageFold.tsx";
+import { USAGE_SOURCES } from "./usageSources.ts";
+
 // A stable empty list: a selector returning a fresh [] each time re-renders forever.
 const NO_PORTS: number[] = [];
 

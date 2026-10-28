@@ -1,3 +1,15 @@
+import { useCallback, useRef, useState } from "react";
+import { usedFromRemaining } from "../../features/sessions/move.ts";
+import { Button } from "../../ui/Button.tsx";
+import { Icon } from "../../ui/Icon.tsx";
+import { useDismiss } from "../../lib/useDismiss.ts";
+import { useOpenSignal } from "../../core/store/uiOpen.ts";
+import { kindClass, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
+import { useT } from "../../lib/i18n/index.ts";
+import { pickNearCap } from "../usageNearCap.ts";
+import { agoText, resetChipText, untilText, UsageBreakdownLink, UsageRow, useUsage, whenText } from "./usageCommon.tsx";
+import { placeChip, UsageChipPlace, useChipSlot } from "./usageFold.tsx";
+
 // AgyUsageChip: Antigravity's quota chip (docs/log/32 — moved here from the AgyCard so
 // the remaining balance sits beside the Claude / Codex chips). agy's wallet is split into
 // per-model-group pools (Gemini / Claude+GPT), each with a weekly window plus a

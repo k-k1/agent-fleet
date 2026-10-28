@@ -1,3 +1,7 @@
+import { useEffect, useRef, useState } from "react";
+import { api } from "../../core/api/client.ts";
+import { onPush, pushHealthy } from "../../core/push/events.ts";
+
 const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
 
 interface WsHistPoint {
@@ -34,7 +38,7 @@ interface HostStats {
 // every 4s and jank/flicker the cursor. Confined to WsBar, only the small bar
 // re-renders. Container stats are for everyone; host stats are super_admin-only
 // (the CP gates /api/admin/host server-side too).
-function useWsResourceChips(tenant: string | null, superAdmin: boolean) {
+export function useWsResourceChips(tenant: string | null, superAdmin: boolean) {
   const [wsStats, setWsStats] = useState<WsStats | null>(null);
   const [wsHist, setWsHist] = useState<WsHistPoint[]>([]); // [{cpu, mem}]
   const wsKey = useRef("");

@@ -1,3 +1,16 @@
+import { useCallback, useRef, useState } from "react";
+import { Button } from "../../ui/Button.tsx";
+import { Icon } from "../../ui/Icon.tsx";
+import { useDismiss } from "../../lib/useDismiss.ts";
+import { useOpenSignal } from "../../core/store/uiOpen.ts";
+import { kindClass, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
+import { tCount, useT } from "../../lib/i18n/index.ts";
+import { useUsageResetNotify } from "../usageResetNotify.ts";
+import { pickNearCap } from "../usageNearCap.ts";
+import { agoText, expiryText, resetChipText, untilText, UsageBreakdownLink, UsageRow, type UsageWindow, useUsage, whenText } from "./usageCommon.tsx";
+import { placeChip, UsageChipPlace, useChipSlot } from "./usageFold.tsx";
+import { type UsageSource } from "./usageSources.ts";
+
 // UsageChip: a compact per-agent limit chip (glyph + the two window percentages) that
 // opens a dropdown with each window's bar + reset + a reload. Renders null until the
 // agent's endpoint answers with data, so it self-hides for agents the user doesn't use.
