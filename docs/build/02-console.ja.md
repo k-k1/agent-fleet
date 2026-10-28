@@ -318,7 +318,8 @@ CSS を持つ。一覧は `ls console/src/features`。製品が画面ごとに�
   import しているファイルは例外として列挙してあり、この一覧は減る一方（ADR 0124）。
 - **CSS の重複**: `npm run css:dup` は 2 つ以上のスタイルシートで定義されたグローバルなクラス名を
   列挙する。CI は今の件数を上限（`--max-dups` / `--max-bare`）にして走らせるので、件数は減っても
-  増えはしない。重複を解消したら `package.json` の `css:dup:ci` の上限を下げる。
+  増えはしない。減っても落ちず、スクリプトが `package.json` の `css:dup:ci` の上限を下げるよう案内する
+  だけ。下げるのは任意で、整理の PR でまとめてよい。
 - **CI**（`.github/workflows/ci.yml` の `console` ジョブ）は型検査・lint・i18n lint・css-dup の上限・vitest・実物の
   headless Chromium での検査 2 つ（`pdf:check`・`doc:check`）・ビルドを走らせる。
 - `package.json` のほかのスクリプト（スクリーンショット・ミラーやビューアのスクロール検査・コントラスト

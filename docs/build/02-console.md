@@ -371,8 +371,8 @@ result).
   (ADR 0124).
 - **CSS duplicates**: `npm run css:dup` lists global class names defined in more than one
   stylesheet. CI runs it with `--max-dups` / `--max-bare` ceilings at the current counts, so the
-  counts can fall but not grow; lower the ceilings in `package.json` (`css:dup:ci`) when you
-  clear a duplicate.
+  counts can fall but not grow. A fall never fails; the script then suggests lowering the
+  ceilings in `package.json` (`css:dup:ci`), which is optional and can wait for a clean-up PR.
 - **CI** (`.github/workflows/ci.yml`, job `console`) runs typecheck, lint, i18n lint,
   the css-dup ceiling, vitest, two checks in real headless Chromium (`pdf:check`, `doc:check`) and the build.
 - The other scripts in `package.json` (screenshots, mirror and viewer scroll checks, the

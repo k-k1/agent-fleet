@@ -468,7 +468,7 @@ jobs:
       - name: model-id-lint
         run: npm run models:lint
       # A ceiling, not zero (ADR 0124 Phase 0): a new class name defined in a second stylesheet
-      # fails, the existing duplicates wait for Phase 5. Lower the ceilings when you clear some.
+      # fails, the existing duplicates wait for Phase 5. A fall never fails.
       - name: css-dup ceiling
         run: npm run css:dup:ci
       - name: vitest

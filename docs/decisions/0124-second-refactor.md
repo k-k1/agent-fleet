@@ -269,5 +269,6 @@ Context's "67 class names start rules in more than one file" is not a number `cs
 prints, and it was not reproducible from it. The Phase 0 ceiling (#2855) therefore uses the
 script's own two counts on `main` at the time: 200 class names defined in two or more files, of
 which 36 are bare (`.name {}` alone) in two or more files. CI runs `npm run css:dup:ci`
-(`--max-dups=200 --max-bare=36`); either count growing fails, and a test keeps the ceilings equal
-to the current counts so a clean-up lowers them.
+(`--max-dups=200 --max-bare=36`); either count growing fails. A count that falls does not: the
+script prints a hint and lowering the ceiling is a separate, optional edit, so a PR that clears a
+duplicate in passing never has to touch `package.json` (Decision 1).

@@ -9,7 +9,7 @@
 //
 // By default it only lists them and does not fail. CI runs it as a ratchet (ADR 0124 Phase 0):
 // the ceilings are today's counts, so a new duplicate fails the build while the existing ones
-// wait for their clean-up. Lower the ceilings in package.json (css:dup:ci) when you clear some.
+// wait for their clean-up. A count below its ceiling only prints a hint to lower it.
 //
 // Usage:
 //   node scripts/css-dup.mjs                  list them (always exit 0)

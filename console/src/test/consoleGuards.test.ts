@@ -43,13 +43,17 @@ describe("css-dup ceilings", () => {
     expect(cssDup("--max-bare=-1").status).toBe(2);
   });
 
-  it("CI's ceilings in package.json are today's counts", () => {
-    // Above today's count would let a new duplicate in unnoticed; the script's own message
-    // asks for the ceiling to be lowered, and this makes that stick.
+  it("CI's ceilings in package.json hold today's counts", () => {
+    // At or above, never an exact match: a PR that clears a duplicate in passing must not have
+    // to edit package.json, or parallel clean-ups would conflict on it (ADR 0124 Decision 1).
+    // Lowering the ceiling is left to the script's hint.
     const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
-    expect(pkg.scripts["css:dup:ci"]).toBe(
-      `node scripts/css-dup.mjs --max-dups=${dups} --max-bare=${bare}`,
-    );
+    const cmd: string = pkg.scripts["css:dup:ci"];
+    const maxDups = Number(/--max-dups=(\d+)/.exec(cmd)?.[1]);
+    const maxBare = Number(/--max-bare=(\d+)/.exec(cmd)?.[1]);
+    expect(Number.isInteger(maxDups) && Number.isInteger(maxBare), cmd).toBe(true);
+    expect(dups).toBeLessThanOrEqual(maxDups);
+    expect(bare).toBeLessThanOrEqual(maxBare);
   });
 });
 
