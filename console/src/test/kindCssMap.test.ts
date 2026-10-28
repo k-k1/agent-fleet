@@ -26,6 +26,10 @@ const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
 
 // `.kind-<slug>` as a selector, for every registered slug; `.kind-tag` and the like are not kinds.
 const KIND_SELECTOR = new RegExp(`\\.kind-(${SLUGS.join("|")})(?![\\w-])`, "g");
+// A per-kind token read directly. Outside tokens.css that is a colour table of its own under
+// another class name (`.lm-kind.kc-claude { color: var(--kind-claude) }`), which the selector
+// scan cannot see; the use site should read var(--kind) instead.
+const KIND_TOKEN = new RegExp(`var\\(--kind-(${SLUGS.join("|")})\\)`, "g");
 
 describe("kind colour map", () => {
   it("maps exactly the registry's slugs in tokens.css, each to its own token", () => {
@@ -40,21 +44,25 @@ describe("kind colour map", () => {
     }
   });
 
-  it("names no kind in any other stylesheet", () => {
+  it("names no kind and reads no per-kind token in any other stylesheet", () => {
     const sheets = files(SRC, /\.css$/);
     expect(sheets.length).toBeGreaterThan(10);
     const found: string[] = [];
     for (const f of sheets) {
       if (f === TOKENS) continue;
-      for (const m of stripComments(readFileSync(f, "utf8")).matchAll(KIND_SELECTOR)) found.push(`${path.relative(SRC, f)}: ${m[0]}`);
+      const css = stripComments(readFileSync(f, "utf8"));
+      for (const m of [...css.matchAll(KIND_SELECTOR), ...css.matchAll(KIND_TOKEN)]) found.push(`${path.relative(SRC, f)}: ${m[0]}`);
     }
     expect(found).toEqual([]);
   });
 
-  it("the selector scan catches a per-kind rule", () => {
+  it("the scans catch a per-kind rule and a per-kind token", () => {
     expect(".sess-kic.kind-claude { color: red }".match(KIND_SELECTOR)).toEqual([".kind-claude"]);
     expect(".kind-tag.kind { color: var(--kind) } /* .kind-codex */".match(KIND_SELECTOR)).toEqual([".kind-codex"]);
     expect(stripComments(".kind-tag.kind { } /* .kind-codex */").match(KIND_SELECTOR)).toBeNull();
+    expect(".lm-kind.kc-claude { color: var(--kind-claude); }".match(KIND_TOKEN)).toEqual(["var(--kind-claude)"]);
+    expect(".p-badge.pb-muse { background: var(--kind-muse); }".match(KIND_TOKEN)).toEqual(["var(--kind-muse)"]);
+    expect(".x { color: var(--kind); }".match(KIND_TOKEN)).toBeNull();
   });
 
   it("no component builds a kind colour class by hand", () => {
