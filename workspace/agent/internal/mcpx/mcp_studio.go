@@ -322,3 +322,94 @@ func nonEmptyArgs(args json.RawMessage) json.RawMessage {
 	}
 	return args
 }
+
+// mcpStdioStudioTools — the image studio's four tools (ADR 0100 decision 3), offered only to a
+// session bound to a studio, or one whose identity cannot be told apart (mcpStudioAdvertise).
+// run_image_trial is among them even where the studio does not allow it; the call checks.
+// The names are spelled out as literals for the same AST scan as generate_image's.
+//
+// The descriptions are English and short: they are a fixed cost on every turn of every studio
+// session. set_image_draft declares clearing as a `clear` list rather than a nullable type,
+// because Gemini-family clients refuse type arrays; an explicit null is still accepted.
+func mcpStdioStudioTools() []map[string]any {
+	noArgs := map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{}}
+	return []map[string]any{
+		{
+			"name": "get_image_studio",
+			"description": "Agent Fleet image studio: read the draft you are working on with the user - its fields, which are locked, " +
+				"what changed since your last call (the user's edits, rewinds, new results), the model's facts and the knowledge summary. " +
+				"Call it FIRST on every user message, before answering.",
+			"inputSchema": noArgs,
+		},
+		{
+			"name": "set_image_draft",
+			"description": "Agent Fleet image studio: change fields of the draft. Only the fields you send change; list fields in `clear` to empty them. " +
+				"The model, seed, jobs, count, out_dir, label and mask are the user's - propose a model with suggest_model instead. " +
+				"A locked field is not changed and the answer says so. Generating is the user's button, not yours.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"prompt":         map[string]any{"type": "string"},
+					"negativePrompt": map[string]any{"type": "string"},
+					"size":           map[string]any{"type": "string", "description": "<width>x<height>"},
+					"op":             map[string]any{"type": "string", "enum": []string{"generate", "edit", "inpaint", "outpaint", "remove_background", "upscale"}},
+					"strength":       map[string]any{"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+					"inputs":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Reference image paths, under the file browser's root (usually home) or the generated-images folder (not /tmp)"},
+					"params": map[string]any{
+						"type": "object", "additionalProperties": false,
+						"properties": map[string]any{
+							"steps":     map[string]any{"type": "integer", "minimum": 1},
+							"cfg":       map[string]any{"type": "number", "minimum": 0},
+							"sampler":   map[string]any{"type": "string"},
+							"scheduler": map[string]any{"type": "string"},
+							"clip_skip": map[string]any{"type": "integer", "minimum": 1, "maximum": 12, "description": "sd15 and sdxl only"},
+							"guidance":  map[string]any{"type": "number", "minimum": 0, "maximum": 30, "description": "flux1 only: its distilled guidance (it has no cfg)"},
+							"shift":     map[string]any{"type": "number", "minimum": 0, "maximum": 100, "description": "anima only: sampling shift"},
+						},
+					},
+					"loras": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object", "additionalProperties": false,
+							"properties": map[string]any{
+								"name":   map[string]any{"type": "string"},
+								"weight": map[string]any{"type": "number"},
+							},
+							"required": []string{"name"},
+						},
+					},
+					"suggest_model": map[string]any{"type": "string"},
+					"clear": map[string]any{
+						"type": "array", "items": map[string]any{"type": "string",
+							"enum": []string{"prompt", "negativePrompt", "size", "op", "strength", "inputs", "params", "loras", "suggest_model"}},
+					},
+				},
+			},
+		},
+		{
+			"name": "add_image_knowledge",
+			"description": "Agent Fleet image studio: append a note to the knowledge kept for the studio's model or its family - only when the " +
+				"user asks you to remember something, or has just judged a result good or bad. Say what worked or failed and on what evidence. " +
+				"Prompts behave differently per model, so the key is the model the studio has chosen (scope model) or that model's family " +
+				"(scope family); with no model chosen it is refused - ask the user to pick one.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"scope":    map[string]any{"type": "string", "enum": []string{"family", "model"}},
+					"key":      map[string]any{"type": "string", "minLength": 1, "description": "The studio's model id (scope model) or its family (scope family), as get_image_studio shows them"},
+					"note":     map[string]any{"type": "string", "minLength": 1},
+					"evidence": map[string]any{"type": "string"},
+				},
+				"required": []string{"scope", "key", "note"},
+			},
+		},
+		{
+			"name": "run_image_trial",
+			"description": "Agent Fleet image studio: make ONE quick trial picture from the draft exactly as saved - it takes no arguments, so " +
+				"what runs is always what the user sees. Refused unless the user allows agent trials in the studio. " +
+				"Waits up to 2 minutes; a slower picture arrives in get_image_studio later. " +
+				"Each call wakes a GPU: do not repeat it to compare small changes.",
+			"inputSchema": noArgs,
+		},
+	}
+}
