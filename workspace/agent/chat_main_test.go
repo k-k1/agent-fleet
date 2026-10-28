@@ -73,11 +73,3 @@ func awaitReported(t *testing.T, name string) {
 	}
 	t.Fatalf("instruction line should become reported by a delivered report (1 instruction = 1 report): %s", name)
 }
-func containsString(xs []string, want string) bool {
-	for _, x := range xs {
-		if x == want {
-			return true
-		}
-	}
-	return false
-}

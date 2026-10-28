@@ -70,11 +70,10 @@ var serveClient = &http.Client{Timeout: 10 * time.Second, Transport: authTranspo
 // Supervisor owns the shared `opencode serve` daemon: idempotent start, health,
 // generation counter, drain and restart (the RuntimeSupervisor of docs/log/27 §3).
 type Supervisor struct {
-	mu   sync.Mutex
-	addr string
-	gen  int       // runtime generation (§7); ++ every time Ensure starts a new process
-	cmd  *exec.Cmd // this generation's child process (nil for an adopted one)
-	up   bool
+	mu  sync.Mutex
+	gen int       // runtime generation (§7); ++ every time Ensure starts a new process
+	cmd *exec.Cmd // this generation's child process (nil for an adopted one)
+	up  bool
 	// stopping marks a deliberate teardown (Restart/Shutdown) so the waiter doesn't
 	// record it as a crash or trigger reconciliation.
 	stopping bool

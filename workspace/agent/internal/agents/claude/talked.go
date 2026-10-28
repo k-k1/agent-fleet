@@ -149,10 +149,6 @@ func setAside(p string) error {
 	return fmt.Errorf("no free name to set aside %s", p)
 }
 
-// LostTranscript is lostTranscript for callers outside the package: a fresh start may only be
-// honoured while the conversation is still lost, never to discard a log that is healthy.
-func LostTranscript(slot string) bool { return lostTranscript(slot) }
-
 // lostTranscript reports whether slot's conversation is known to have existed but its log
 // (under the id it was last written under) is gone or holds nothing resumable.
 func lostTranscript(slot string) bool {

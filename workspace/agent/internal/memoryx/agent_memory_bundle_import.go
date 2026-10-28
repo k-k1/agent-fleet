@@ -663,9 +663,8 @@ func agentMemBundleApply(req agentMemBundleReq, now time.Time) (agentMemBundleAp
 	}
 	// Group the request by scope so each is written through the shared apply.
 	type group struct {
-		scope  *agentMemBundleScope
-		items  []agentMemImportReqItem
-		target string
+		scope *agentMemBundleScope
+		items []agentMemImportReqItem
 	}
 	groups := map[string]*group{}
 	var order []string

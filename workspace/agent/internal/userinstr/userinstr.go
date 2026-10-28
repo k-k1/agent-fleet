@@ -37,11 +37,10 @@ var ErrTooLarge = errors.New("too_large")
 func notesPath() string { return filepath.Join(paths.AgentConfigDir(), "user-notes.md") }
 func prefsPath() string { return filepath.Join(paths.AgentConfigDir(), "user-notes.json") }
 
-// NotesPath / PrefsPath expose the durable locations (the Console never reads them
+// NotesPath exposes the durable locations (the Console never reads them
 // directly — ~/.config/agent-fleet is denylisted in the file browser — but the REST
 // snapshot names them so the user can see where their text lives).
 func NotesPath() string { return notesPath() }
-func PrefsPath() string { return prefsPath() }
 
 // Prefs selects where the body applies. Pointers distinguish unset (i.e. on by default)
 // from an explicit false, the same way the rtk toggles do.

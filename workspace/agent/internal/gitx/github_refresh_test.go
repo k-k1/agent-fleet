@@ -26,13 +26,12 @@ import (
 // {"error":"bad_refresh_token"}. Nothing here has run against real GitHub.
 
 type fakeGitHubTokens struct {
-	mu      sync.Mutex
-	valid   string // the one refresh token GitHub still honours
-	n       int    // grants served
-	calls   int32  // requests received, whatever the answer
-	forms   []map[string]string
-	status  int // when non-zero, answer every request with this status
-	rotates int
+	mu     sync.Mutex
+	valid  string // the one refresh token GitHub still honours
+	n      int    // grants served
+	calls  int32  // requests received, whatever the answer
+	forms  []map[string]string
+	status int // when non-zero, answer every request with this status
 }
 
 func newFakeGitHubTokens(t *testing.T, validRefresh string) (*fakeGitHubTokens, *httptest.Server) {

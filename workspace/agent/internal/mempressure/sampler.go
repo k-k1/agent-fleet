@@ -90,7 +90,6 @@ type Sampler struct {
 	acc   accum
 	ticks int
 	rotor rotor
-	pass  *Pass // last pass of this minute
 
 	warnedWrite bool
 }

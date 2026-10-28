@@ -223,12 +223,3 @@ func sweepDirFiles(dir string, cutoff time.Time) {
 		}
 	}
 }
-
-// ResetSweepClock rewinds the sweep throttle. A test-only hook, for the same reason
-// usagex.ResetPruneClock exists: the throttle state is unexported and a test that generates
-// twice would otherwise never see the second sweep.
-func ResetSweepClock() {
-	generatedSweep.mu.Lock()
-	generatedSweep.last = time.Time{}
-	generatedSweep.mu.Unlock()
-}

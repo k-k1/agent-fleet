@@ -829,16 +829,6 @@ func (pv *agentMemExportPreview) planIndex(mem *os.File) {
 	}
 }
 
-// agentMemExportExists says whether a name is present in the directory, whatever it is.
-func agentMemExportExists(mem *os.File, name string) bool {
-	fd, err := syscall.Openat(int(mem.Fd()), name, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
-	if err == nil {
-		_ = syscall.Close(fd)
-	}
-	// ELOOP: the name is a symlink, which is still "there".
-	return err == nil || err == syscall.ELOOP
-}
-
 // agentMemExportPreviewFor is the read-only preview.
 func agentMemExportPreviewFor(projectID string) (*agentMemExportPreview, error) {
 	agentMemMu.RLock()

@@ -177,8 +177,6 @@ func terminalMeta(t *testing.T, name string) session.Meta {
 	return session.Meta{Name: name, Dir: dir, Kind: session.KindOpencode, Driver: session.DriverTUI}
 }
 
-func launchEnv(plan agents.LaunchPlan) map[string]string { return shellEnvironment(plan.Env) }
-
 // A fresh Terminal slot: the session is created through the API with its metadata, recorded at
 // once, and the pane program is the attach wrapper — with the password in the pane environment
 // and never on the command line.

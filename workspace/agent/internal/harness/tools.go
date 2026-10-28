@@ -235,9 +235,6 @@ func NewRegistry(tools ...Tool) *Registry {
 	return r
 }
 
-// Add registers or replaces one tool.
-func (r *Registry) Add(t Tool) { r.byName[t.Def.Name] = t }
-
 // Defs returns the []ToolDef to offer the model, sorted by name for a
 // deterministic request body (stable across runs, easier to diff in tests/logs).
 // When plan is true, every Mutates tool is dropped.

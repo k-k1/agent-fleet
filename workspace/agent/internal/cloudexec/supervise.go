@@ -260,14 +260,3 @@ func (o Outcome) Exit() {
 	}
 	os.Exit(o.Code)
 }
-
-// Supervise is Exec for a command that needs something beside it: it runs the command as
-// a child, exits with its status, and returns only by exiting. It exits ExitRefused when
-// the command cannot be started.
-func (w Wrapper) Supervise(s Supervision) {
-	out, err := Supervise(s)
-	if err != nil {
-		w.Fail(ExitRefused, "run "+s.Prog+": "+err.Error())
-	}
-	out.Exit()
-}

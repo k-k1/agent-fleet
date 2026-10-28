@@ -81,6 +81,9 @@ func init() {
 		},
 
 		AbortResumeHolds: sessionx.AbortResumeHolds,
+		// SeedVerb (the translate / summarize threads seeded from Files) is filed as a
+		// sub-dimension of verb rather than a feature of its own: growing the feature enum
+		// ripples through the Console's colours, i18n and filters (docs/log/46 §1-a).
 		ChatTurnUsageTag: func(convID, seedVerb, trigger string) usagex.Tag {
 			return usagex.Tag{
 				Feature: usagex.FeatureAssistantChat, Trigger: trigger, Ref: convID, Verb: seedVerb,
