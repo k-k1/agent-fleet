@@ -12,6 +12,32 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.36.0](0.36.0.ja.md) — 2026-10-28
+
+**CLI ピン** — Claude Code 2.1.312 / Codex 0.165.0 / Copilot 1.0.105 / Antigravity 1.4.8 / Kiro 2.35.1 / OpenCode 2.2.0 / Muse Code 1.4.14-R7309.1
+
+**New / Improved**
+
+- **[スキル]** エージェントのスキルを読み取り専用で表示。個人のもの（Claude Code・Codex・OpenCode・Muse Code）は 設定 › スキル、リポジトリのもの（Cursor も）は行のメニューの スキル… ([#2792](https://github.com/k-k1/agent-fleet/issues/2792), [#2795](https://github.com/k-k1/agent-fleet/issues/2795))
+- **[アシスタント]** 長引く利用上限・レート制限で表示前に失敗したチャットのターンを次のバックエンドで実行し直し、お知らせを残す。AI 補助の単発の生成も避ける。解除が近い制限では切り替えない。制限で失敗した圧縮とメモリのレビューは別のバックエンドで再試行しない ([#2780](https://github.com/k-k1/agent-fleet/issues/2780))
+- **[作業項目]** 行に新しい動きの印、GitHub と Bitbucket の行にはコメント数 ([#2779](https://github.com/k-k1/agent-fleet/issues/2779))
+- **[ワークスペース]** 設定 › マシン にメモリ逼迫のグラフ（測定のみ） ([#2516](https://github.com/k-k1/agent-fleet/issues/2516), [#2837](https://github.com/k-k1/agent-fleet/issues/2837))
+- **[ビューア]** PDF ペインの検索。Ctrl/Cmd+F で全ページを探す専用の検索バー ([#2822](https://github.com/k-k1/agent-fleet/issues/2822))
+- **[作業項目]** 権限の確認が通れば GitHub App でのサインインにも マージ ボタン ([#2753](https://github.com/k-k1/agent-fleet/issues/2753))
+- **[計画レビュー]** この版から始めたレビューの「‹reviewer› で再レビュー」がどの端末でも出る ([#2496](https://github.com/k-k1/agent-fleet/issues/2496))
+- **[ミラー]** Agent のバックアップから復元した Claude の会話にその旨を表示 ([#2740](https://github.com/k-k1/agent-fleet/issues/2740))
+- **[作業項目]** コメントの投稿は Console からメンバー本人のものだけを受け付け、監査ログに記録 ([#2752](https://github.com/k-k1/agent-fleet/issues/2752))
+
+**Fixed**
+
+- **[チャット]** 打ち間違えたスラッシュコマンドが claude でずっと送信待ちだった。警告を表示 ([#2830](https://github.com/k-k1/agent-fleet/issues/2830))
+- **[Jira]** 日本語の隣の Markdown が崩れ、`issue create -P` で親が付かなかった ([#2809](https://github.com/k-k1/agent-fleet/issues/2809), [#2812](https://github.com/k-k1/agent-fleet/issues/2812))
+- **[opencode]** opencode 2 でエージェント指示のプレビューが空、`/new` のセッションの最初のターンで状態が更新されなかった ([#2799](https://github.com/k-k1/agent-fleet/issues/2799), [#2827](https://github.com/k-k1/agent-fleet/issues/2827))
+- **[アシスタント]** Agent Fleet のメモリが有効でも claude 自身の自動メモリが有効だった ([#2488](https://github.com/k-k1/agent-fleet/issues/2488))
+- **[ミラー]** 添付付きのスラッシュコマンドのチップに内部向けの指示が出ていた ([#2823](https://github.com/k-k1/agent-fleet/issues/2823))
+- **[その他]** 通信の許可リストでの IPv6 の Control Plane URL、MCP の接続テストの時間切れ、設定の見出しの間隔 ([#2754](https://github.com/k-k1/agent-fleet/issues/2754), [#2820](https://github.com/k-k1/agent-fleet/issues/2820), [#2813](https://github.com/k-k1/agent-fleet/issues/2813))
+
+
 ## [0.35.0](0.35.0.ja.md) — 2026-10-26
 
 **CLI ピン** — Claude Code 2.1.310 / Codex 0.164.0 / Antigravity 1.4.7 / OpenCode 2.1.4 / Muse Code 1.4.13-R6996.1 / rtk 1.1.0

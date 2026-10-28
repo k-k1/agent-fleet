@@ -91,8 +91,8 @@ session. You can view, list, create, edit, comment on and transition issues:
 - **Editing and deleting comments**: `jira issue comment edit PROJ-1 10001 -b "…"` and
   `jira issue comment delete PROJ-1 10001`. `jira` itself has only `comment add`; these two are
   added by Agent Fleet. `edit` takes the new text from `-b`, `-T FILE` (`-` reads stdin) or a pipe,
-  and sends it as Markdown converted for Jira, so it is also how a garbled comment (see above) is
-  repaired. Find the comment ID with `jira issue view PROJ-1 --raw` (`fields.comment.comments[].id`).
+  and sends it as Markdown converted for Jira, so it is also how a comment posted garbled before
+  0.36.0 is repaired. Find the comment ID with `jira issue view PROJ-1 --raw` (`fields.comment.comments[].id`).
   Jira usually lets you change only your own comments (someone else's answers 403 unless your account may manage all comments), and agents
   are told to edit or delete only a comment they posted in that session or one you named. They
   work with your saved connection only: not with `--debug`, `JIRA_API_TOKEN` or a configuration of your

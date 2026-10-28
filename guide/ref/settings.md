@@ -47,7 +47,7 @@ value you set is not the value in force, look one layer out.
 | Notifications | what you are told about, and how |
 | Limit board | who in this tenant may see where you stand on usage limits, and how much (hidden by default); what teammates publish to you |
 | Read aloud | speech engine and voice |
-| Machine | the instance your workspace runs on (kind, architecture, vCPU, memory, disk) |
+| Machine | the instance your workspace runs on (kind, architecture, vCPU, memory, disk), its usage, and memory pressure (measured only) |
 | Toolchains | JDK and other per-workspace toolchains |
 | Databases | this workspace's PostgreSQL / MySQL for database-backed tests (install, start, stop, create, reset) |
 | Preview subdomains | the URL that opens the app you are building (only where they are issued) |

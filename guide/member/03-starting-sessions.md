@@ -159,6 +159,11 @@ synced in bulk.
 - A row carries **only what differs between rows**: when every row of a query has the same assignee
   or repository, that line is dropped. A relative time appears only on rows that have **not moved
   for a day or more**; for the rest, being near the top already says it.
+- A row that changed since you last looked gets a **dot and a bold title**; its tooltip says whether
+  it was updated or got new comments, and the line under the section name counts them ("N
+  updated"). GitHub and Bitbucket rows also show their **comment count**. What you have seen is
+  kept per browser, opening an item's details counts as seeing it, and an item listed for the first
+  time is never marked.
 - **🔗** opens the item in its own tracker. A **dot badge** means somebody has already started this
   one, and clicking it opens that session. It is there to stop a second person *before* the launch.
 - The details list **Sessions already on this** by name. One that has since been archived can be

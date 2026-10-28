@@ -231,7 +231,7 @@ What the switch **"Let sessions use Agent Fleet memory"**
 
 | Kind | While the switch is on | Carried into Agent Fleet memory | Written back when it goes off |
 |---|---|---|---|
-| claude | New sessions start with Claude Code's auto-memory off | ✓ (imported in the background) | ✓ |
+| claude | New sessions, and the assistant chat, run with Claude Code's auto-memory off | ✓ (imported in the background) | ✓ |
 | codex | codex's `features.memories` is switched off, and your value is restored when the switch goes off | — | — |
 | muse | New hosts start with Muse Code's native memory off | Once, with **Import from muse** | — |
 | other kinds | Nothing is changed | — | — |

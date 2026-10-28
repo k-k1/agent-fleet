@@ -3,6 +3,11 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.36.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.36.0) — 2026-10-28
+
+エージェントのスキルを読み取り専用で一覧できるようになり、アシスタントは利用上限やレート制限で
+止まったバックエンドを避け、作業項目には新しい動きがあると印が付きます。
+
 ## [0.35.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.35.0) — 2026-10-26
 
 AWS では、ワークスペースの Web の通信を任意の egress ゲートウェイ経由にして記録し、許可リストを強制できます。

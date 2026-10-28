@@ -189,7 +189,7 @@ a new one in the same place. When there is no working folder, resume, handoff, a
 
 You can open the commit graph, open the folder, commit changes, switch branches, copy the branch name,
 Fast-Forward (on a worktree, **"Fast-forward from origin/develop"** or similar), project settings, **Share…**, **assignment to
-a working set**, launch a session by kind, **stop the sessions below**, and delete the working copy. **"Archived sessions of this working copy"** opens the archive
+a working set**, **Skills…** (the skills this working copy gives each agent, read-only), launch a session by kind, **stop the sessions below**, and delete the working copy. **"Archived sessions of this working copy"** opens the archive
 filtered to it. A Subversion working copy has **"Update (svn)"**, **"Clean up lock (svn)"**,
 **"Re-authenticate (svn)"**, **"Show log"** and **"Local changes"** instead of the Git items
 ([06](06-code.md#subversion-svn-repositories)). Stop

@@ -93,7 +93,7 @@ Jira を接続していれば（設定の**課題管理**）、Jira CLI の `jir
 - **コメントの編集と削除**: `jira issue comment edit PROJ-1 10001 -b "…"` と
   `jira issue comment delete PROJ-1 10001`。`jira` 本体にあるのは `comment add` だけで、この 2 つは
   Agent Fleet が足したものです。`edit` は新しい本文を `-b`、`-T FILE`（`-` は標準入力）またはパイプで
-  受け取り、Markdown を Jira 用に変換して送るので、崩れたコメント（上記）の直しにも使えます。
+  受け取り、Markdown を Jira 用に変換して送るので、0.36.0 より前に崩れて投稿されたコメントの直しにも使えます。
   コメント ID は `jira issue view PROJ-1 --raw` の `fields.comment.comments[].id` で分かります。
   Jira で変更できるのは通常、自分のコメントだけです（他人のものは、コメント管理の権限がなければ 403）。エージェントには、そのセッションで
   自分が投稿したコメントか、あなたが指名したコメントだけを編集・削除するよう伝えてあります。
