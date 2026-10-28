@@ -29,10 +29,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/ssm"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudbridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
 // PollInterval is how often the Agent pulls the profiles from the CP.
@@ -81,7 +81,7 @@ type SyncResult struct {
 	// render). A collision with the member's own sso-session is SessionShadowed.
 	Shadowed []string
 	// Invalid are profiles whose Settings values the INI allowlist refuses
-	// (sessionx.RenderSSMConfig), by name, with the allowlist's reason (field names only).
+	// (ssm.RenderSSMConfig), by name, with the allowlist's reason (field names only).
 	Invalid map[string]string
 	// Incomplete are Settings profiles without both an account and a role, not exported,
 	// by name, with the reason (IncompleteReason).
@@ -424,7 +424,7 @@ func chainRegion(p, src Profile) string {
 }
 
 func renderChained(p, src Profile) (string, error) {
-	return sessionx.RenderAssumeRoleProfile(session.SSMMeta{
+	return ssm.RenderAssumeRoleProfile(session.SSMMeta{
 		Profile: p.Name, SourceProfile: p.SourceProfile, RoleARN: p.RoleARN, ExternalID: p.ExternalID,
 		RoleSessionName: p.SessionName, DurationSeconds: p.DurationSeconds, Region: chainRegion(p, src),
 	})
@@ -491,13 +491,13 @@ func defaultClashChained(defaults map[string]string, p Profile, region string) s
 }
 
 func renderProfile(p Profile) (string, error) {
-	return sessionx.RenderSSMConfig(session.SSMMeta{
+	return ssm.RenderSSMConfig(session.SSMMeta{
 		Profile: p.Name, StartURL: p.StartURL, SSORegion: p.SSORegion,
 		AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region,
 	})
 }
 
-// invalidFields maps sessionx's allowlist fields to the words a user knows, the Settings
+// invalidFields maps the ssm package's allowlist fields to the words a user knows, the Settings
 // value, and what is allowed. The values are the CP's non-secret SSO settings.
 var invalidFields = []struct {
 	field, words, allowed string

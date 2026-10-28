@@ -109,7 +109,7 @@ func TestHandleSessionDriverRejectsTUITargetForManagedOnlyKind(t *testing.T) {
 
 // TestManagedOnlyCapDoesNotAffectExistingKinds is the registry-wide negative control: Caps's
 // zero value has to mean "has a terminal route" for every kind but lcpp, or agents.Caps{}
-// literals like shellAgent/ssmAgent's (agent_shell_ssm.go) would silently pick up
+// literals like the shell and ssm agents' (internal/agents/{shell,ssm}) would silently pick up
 // ManagedOnly, and every kind that predates ADR 0093 would start refusing a tui target.
 func TestManagedOnlyCapDoesNotAffectExistingKinds(t *testing.T) {
 	for _, k := range []string{

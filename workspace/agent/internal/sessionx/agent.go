@@ -16,6 +16,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/lcpp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/shell"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/ssm"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -39,8 +41,8 @@ var agentRegistry = map[string]agents.Agent{
 	session.KindKiro:     kiro.New(),
 	session.KindAgy:      agy.New(),
 	session.KindCopilot:  copilot.New(),
-	session.KindShell:    shellAgent{},
-	session.KindSSM:      ssmAgent{},
+	session.KindShell:    shell.New(),
+	session.KindSSM:      ssm.New(),
 	session.KindLcpp:     lcpp.New(),
 	session.KindMuse:     muse.New(),
 }

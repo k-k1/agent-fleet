@@ -8,6 +8,7 @@ package main
 //     values. mcpx cannot import main, so this is the only way (internal/mcpx/deps.go).
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/ssm"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
@@ -65,7 +66,7 @@ func init() {
 		AgentFleetShareDir: agentFleetShareDir,
 		InstallGrafanaMCP:  installGrafanaMCP,
 
-		WriteSSMConfig: sessionx.WriteSSMConfig,
+		WriteSSMConfig: ssm.WriteSSMConfig,
 
 		WriteEnabled:              func() bool { return mcpWriteEnabled },
 		SetWriteEnabled:           func(v bool) { mcpWriteEnabled = v },

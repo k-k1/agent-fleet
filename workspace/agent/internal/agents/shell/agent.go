@@ -1,31 +1,32 @@
-package sessionx
+// Package shell is the shell kind: a login shell in the session's directory, no agent CLI.
+package shell
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// shellAgent / ssmAgent — the Agent implementations for the shell and ssm kinds.
+// Agent is the shell kind's agents.Agent.
+type Agent struct{ agents.NoGenericTranscript }
 
-// --- shell ---------------------------------------------------------------------
+// New returns the shell kind's Agent.
+func New() Agent { return Agent{} }
 
-type shellAgent struct{ agents.NoGenericTranscript }
+func (Agent) Kind() string      { return session.KindShell }
+func (Agent) Caps() agents.Caps { return agents.Caps{MCPClient: agents.TriNo} }
 
-func (shellAgent) Kind() string      { return session.KindShell }
-func (shellAgent) Caps() agents.Caps { return agents.Caps{MCPClient: agents.TriNo} }
-
-func (shellAgent) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
+func (Agent) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
 	// A shell falls back to home if its recorded dir is gone.
 	cwd := m.CWD()
 	if !session.DirExists(cwd) {
-		cwd = homeDir()
+		cwd = paths.HomeDir()
 	}
 	return agents.LaunchPlan{Program: "bash -l", Cwd: cwd}, nil
 }
 
-func (shellAgent) WireLive(m session.Meta, alive bool) agents.LiveInfo {
+func (Agent) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	return agents.LiveInfo{Resumable: true}
 }
 
-func (shellAgent) ClearResume(string) {}
-
+func (Agent) ClearResume(string) {}

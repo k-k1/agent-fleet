@@ -1,12 +1,24 @@
 package ssm
 
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+)
+
 // SsmConfigPath is the per-session ~/.aws config file for an SSM session. It is
 // per-session (not shared) so concurrent SSM sessions to different accounts don't
 // clobber each other's AWS_CONFIG_FILE; the SSO token cache stays in the default
 // ~/.aws/sso/cache so one `aws sso login` is reused across sessions of the same
 // portal. The ".aws" tree is denylisted from the file browser (fs.go).
 func SsmConfigPath(name string) string {
-	return filepath.Join(homeDir(), ".aws", "af-sessions", name+".config")
+	return filepath.Join(paths.HomeDir(), ".aws", "af-sessions", name+".config")
 }
 
 // SSM/SSO meta allowlists. These values are written into an INI aws config

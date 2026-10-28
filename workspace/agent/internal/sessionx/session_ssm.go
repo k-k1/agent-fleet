@@ -1,11 +1,7 @@
 package sessionx
 
 import (
-	"errors"
-	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 

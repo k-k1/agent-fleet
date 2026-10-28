@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/ssm"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
 func prof(name string) Profile {
@@ -422,7 +422,7 @@ func TestAProfileWithoutAccountAndRoleFallsToTheWorkloadRole(t *testing.T) {
 	}
 	blank := prof("noacct")
 	blank.AccountID, blank.RoleName = "", ""
-	ini, err := sessionx.RenderSSMConfig(session.SSMMeta{Profile: blank.Name, StartURL: blank.StartURL, SSORegion: blank.SSORegion, Region: blank.Region})
+	ini, err := ssm.RenderSSMConfig(session.SSMMeta{Profile: blank.Name, StartURL: blank.StartURL, SSORegion: blank.SSORegion, Region: blank.Region})
 	if err != nil {
 		t.Fatal(err)
 	}
