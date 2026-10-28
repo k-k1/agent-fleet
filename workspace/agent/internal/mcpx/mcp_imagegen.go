@@ -1,12 +1,8 @@
 package mcpx
 
-// The generate_image tool's own machinery (ADR 0069): the availability question asked at
+// The generate_image tool (ADR 0069): its definition, the availability question asked at
 // tools/list time, the call itself, and the progress heartbeat that keeps a client's per-call
 // clock from cutting a generation in half.
-//
-// The tool DEFINITION stays in mcp_stdio.go, because the advertised-schema test finds the
-// source of truth by parsing that file's literals — a tool declared anywhere else would be
-// invisible to the gate that checks every advertised schema.
 
 import (
 	"encoding/json"
@@ -105,7 +101,7 @@ type mcpImageGenLora struct {
 	// because the moment they are needed is while the prompt is being written: a LoRA applied
 	// without its trigger loads, costs the same generation, and changes nothing visible. A
 	// second tool would move that fact one round trip away and reintroduce the failure as
-	// "forgot to call it" — see the `loras` description in mcp_stdio.go.
+	// "forgot to call it" — see the `loras` description in mcpStdioImageGenTools.
 	TrainedWords []string `json:"trained_words,omitempty"`
 }
 
