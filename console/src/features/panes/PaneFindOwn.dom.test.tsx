@@ -17,22 +17,23 @@ afterEach(() => {
   host = null;
 });
 
-function mount(ownFind: boolean) {
-  function Pane() {
-    const ref = useRef<HTMLDivElement>(null);
-    return (
-      <div ref={ref}>
-        <div className="view" tabIndex={0} {...(ownFind ? { [OWN_FIND_ATTR]: "" } : {})}>
-          text to find
-        </div>
-        <PaneFind rootRef={ref} active enabled />
+function Pane({ ownFind }: { ownFind: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  return (
+    <div ref={ref}>
+      <div className="view" tabIndex={0} {...(ownFind ? { [OWN_FIND_ATTR]: "" } : {})}>
+        text to find
       </div>
-    );
-  }
+      <PaneFind rootRef={ref} active enabled />
+    </div>
+  );
+}
+
+function mount(ownFind: boolean) {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  act(() => root!.render(<Pane />));
+  act(() => root!.render(<Pane ownFind={ownFind} />));
   return host.querySelector<HTMLElement>(".view")!;
 }
 
@@ -67,5 +68,19 @@ describe("PaneFind with a view that has its own find", () => {
     const view = mount(false);
     ctrlF(view);
     expect(host!.querySelector(".pane-find")).not.toBeNull();
+  });
+
+  it("closes a bar opened before the view took over, then hands over", () => {
+    // Ctrl-F while the file is still loading opens the generic bar; once the PDF view is there,
+    // the next Ctrl-F must leave only the view's own bar.
+    mount(false);
+    ctrlF(document.body);
+    expect(host!.querySelector(".pane-find")).not.toBeNull();
+    act(() => root!.render(<Pane ownFind />));
+    const asked = vi.fn();
+    host!.querySelector(".view")!.addEventListener(OWN_FIND_EVENT, asked);
+    ctrlF(document.body);
+    expect(asked).toHaveBeenCalledTimes(1);
+    expect(host!.querySelector(".pane-find")).toBeNull();
   });
 });
