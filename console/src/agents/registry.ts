@@ -76,6 +76,21 @@ export interface AgentCaps {
   launchableFromRepo: boolean; // offered in a repo row's launch menu (ssm is not)
   fixedAliveChip: boolean; // liveness shown as a fixed "running" chip (no state model) — shell
   namedByLabel: boolean; // display name comes from the session label (else repo@time) — non-shell
+  // The launch model picker lists models the Agent serves live (GET /agents/{kind}/models)
+  // rather than claude's fixed alias list.
+  liveModels: boolean;
+  // That live list has no "let the CLI pick" entry, so a launch must name a model (lcpp —
+  // requiresConcreteModel in lib/agentModels.ts says why).
+  concreteModel: boolean;
+  // Has a tab in Settings > Skills. Only gates which remembered tab is restored before the
+  // Agent's catalog loads; the tabs themselves are the kinds the Agent reports.
+  skillsCatalog: boolean;
+  // A member connects it with an account of their own, so a tenant may name it as the default
+  // agent (ADR 0114 decision 8) and connecting it completes the first-run card. shell and ssm
+  // need no connection, lcpp is governed by engine access, and agy is experimental.
+  // control-plane/tenant_member_defaults.go accepts exactly these (memberDefaultAgents;
+  // derivedKindLists.test.ts reads it).
+  memberDefault: boolean;
 }
 
 // A status chip for a session: codicon + label + color class (+ optional spinner).
@@ -146,6 +161,10 @@ export interface AgentDescriptor {
   // switch UI carry no per-kind branch and just show this measured value (docs/log/27 §12.2-9,
   // appendix B).
   tuiMemoryCost: string;
+  // Default priority among the assistant-chat backends (caps.headlessChat), 1 first: the seed of
+  // assistantAgentOrder / aiAssistOrder, which the Agent's chatx.DefaultHeadlessOrder also
+  // follows. Every other kind list is in SESSION_KINDS order.
+  assistantRank?: number;
   caps: AgentCaps;
   // whether this kind is currently launchable given connections / SSM hosts
   available(ctx: AvailCtx): boolean;
@@ -175,6 +194,10 @@ function caps(overrides: Partial<AgentCaps>): AgentCaps {
     launchableFromRepo: false,
     fixedAliveChip: false,
     namedByLabel: true,
+    liveModels: false,
+    concreteModel: false,
+    skillsCatalog: false,
+    memberDefault: false,
     ...overrides,
   };
 }
@@ -195,7 +218,10 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     defaultModeLabel: "Bypass",
     skillTrigger: "/",
     tuiMemoryCost: "",
+    assistantRank: 1,
     caps: caps({
+      skillsCatalog: true,
+      memberDefault: true,
       scheduledRuns: true,
       permissionChoice: true, // approvals are answerable: status-hook permission state + the mirror's permission card
       chat: true,
@@ -248,7 +274,11 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     // imagePaste: upload + path-in-prompt (claude's flow); codex's view_image fires on
     // a plain path mention — live-verified for both the TUI and `codex exec`.
     tuiMemoryCost: "230MiB",
+    assistantRank: 2,
     caps: caps({
+      liveModels: true,
+      skillsCatalog: true,
+      memberDefault: true,
       scheduledRuns: true,
       chat: true,
       headlessChat: true,
@@ -293,7 +323,10 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     // A per-session child either way, so choosing Terminal (CLI) does not change the number of
     // resident processes (one cursor process per session) — no extra cost shown, as for copilot.
     tuiMemoryCost: "",
+    assistantRank: 4,
     caps: caps({
+      liveModels: true,
+      memberDefault: true,
       scheduledRuns: true,
       permissionChoice: true, // approvals are answerable: ACP session/request_permission -> Interaction
       chat: true,
@@ -339,7 +372,9 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     // headlessChat: `agy -p` backs assistant-chat conversations (resume via
     // --conversation; plain-text output — no working steps, no context gauge).
     tuiMemoryCost: "",
+    assistantRank: 5,
     caps: caps({
+      liveModels: true,
       // the one kind whose scheduled runs shipped while the Console's hand-kept picker never
       // learned about them (ADR 0095 P2-13's closing note); see AgentCaps.scheduledRuns.
       scheduledRuns: true,
@@ -386,6 +421,8 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     // resident processes (one copilot process per session) — no extra cost shown.
     tuiMemoryCost: "",
     caps: caps({
+      liveModels: true,
+      memberDefault: true,
       scheduledRuns: true,
       permissionChoice: true, // approvals are answerable: ACP session/request_permission -> Interaction
       chat: true,
@@ -452,6 +489,8 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     // cursor and copilot.
     tuiMemoryCost: "",
     caps: caps({
+      liveModels: true,
+      memberDefault: true,
       scheduledRuns: true,
       permissionChoice: true, // approvals are answerable: ACP request_permission / the TUI's requires-approval
       chat: true,
@@ -492,7 +531,11 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     // reads it directly; big-pickle (free tier) either inspects it agentically (TUI,
     // live-verified) or declines honestly — never a silent failure.
     tuiMemoryCost: "300MiB",
+    assistantRank: 3,
     caps: caps({
+      liveModels: true,
+      skillsCatalog: true,
+      memberDefault: true,
       scheduledRuns: true,
       chat: true,
       headlessChat: true,
@@ -551,6 +594,8 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     // (managed-only: no Terminal (CLI) route, ever — decision 2) come from the kind catalog.
     tuiMemoryCost: "",
     caps: caps({
+      liveModels: true,
+      concreteModel: true,
       // Caps().PermissionChoice on the Go side is true (driver.go's approve() really blocks
       // the tool loop on a Console-answerable question, docs/log/76's condition).
       permissionChoice: true,
@@ -596,7 +641,11 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     // Managed-only, the same shape as lcpp (the catalog says so): BuildLaunch refuses
     // unconditionally (decision 2).
     tuiMemoryCost: "",
+    assistantRank: 6,
     caps: caps({
+      liveModels: true,
+      skillsCatalog: true,
+      memberDefault: true,
       // Live-verified 2026-09-22 (ADR 0095 P2-17), one subscription turn: the driver reads the
       // attached file and sends an MSP `image` part, the host echoed the attachment back on the
       // userMessage item (type=image, mediaType=image/png), and the model reported a token that
@@ -793,21 +842,19 @@ export function availableKinds(ctx: AvailCtx): Record<SessionKind, boolean> {
   return out;
 }
 
+// The kinds a member connects with an account of their own (caps.memberDefault), in
+// SESSION_KINDS order.
+export const MEMBER_DEFAULT_AGENTS: SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.memberDefault);
+
 // Kinds a schedule may be pointed at, DERIVED from the cap rather than listed: the hand-kept
 // copy of this list in the schedule editor had already lost agy, and a derived one cannot drift.
 // The order is the registry's own.
-// The kinds a member connects with an account of their own: what a tenant may name as its
-// default agent (ADR 0114 decision 8), and what completes the first-run card's connect step.
-// control-plane/tenant_member_defaults.go accepts exactly these (memberDefaultAgents; a test
-// there reads this line). shell and ssm need no connection, lcpp is governed by engine access,
-// and agy is experimental.
-export const MEMBER_DEFAULT_AGENTS = ["claude", "codex", "opencode", "cursor", "copilot", "kiro", "muse"] as const;
-
 export const scheduledKinds: SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.scheduledRuns);
 
-// Kinds offered in a repo row's launch menu, in display order. Every entry must
-// carry the launchableFromRepo cap (asserted in availability.test.ts); the order
-// is presentational.
-export const repoLaunchKinds: SessionKind[] = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "shell"];
+// Kinds offered in a repo row's launch menu, in SESSION_KINDS order.
+export const repoLaunchKinds: SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.launchableFromRepo);
+
+// Kinds with a Settings > Skills tab, in SESSION_KINDS order.
+export const skillsCatalogKinds: SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.skillsCatalog);
 
 export type { SsmHost };

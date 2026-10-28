@@ -176,7 +176,7 @@ describe("mcpKinds", () => {
     expect(got).not.toContain("codex");
     expect(got).not.toContain("kiro");
     expect(got.slice(-2)).toEqual(["zeta", "alpha"]);
-    expect(got.slice(0, 3)).toEqual(["claude", "opencode", "cursor"]);
+    expect(got.slice(0, 3)).toEqual(["claude", "cursor", "copilot"]);
     expect(catalogKinds()).toEqual(["codex", "kiro", "zeta", "alpha"]);
   });
 });

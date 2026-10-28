@@ -34,7 +34,8 @@ func kindNames(keep func(agentkinds.Entry) bool) []string {
 	return out
 }
 
-// isTerminalKind is a kind that runs a terminal, not an agent: it has no model to list.
+// isTerminalKind is a kind that runs a terminal, not an agent: it has no model to list. The
+// catalog has no field for this (mcpClient "no" coincides today but answers another question).
 func isTerminalKind(kind string) bool { return kind == "shell" || kind == "ssm" }
 
 // modelKinds is every kind list_models answers for: each one that runs an agent.

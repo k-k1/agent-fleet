@@ -15,7 +15,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -412,32 +411,6 @@ func TestMcpKnownKindsRefuseAlternateSpellings(t *testing.T) {
 		aerr := validateMCPBody(mcpBodyForKind(k))
 		if aerr == nil || aerr.Code != codeMCPKindUnknown {
 			t.Errorf("kind %q: got %v, want %s", k, aerr, codeMCPKindUnknown)
-		}
-	}
-}
-
-// The Console's MCP_KINDS is TypeScript, so it is still a copy; the guard reads it as TEXT, both
-// directions. A missing file skips rather than fails: the check exists to catch drift in the
-// repo, not to make a trimmed checkout red.
-func TestMcpKnownKindsMirrorConsole(t *testing.T) {
-	const rel = "console/src/features/settings/mcp/mcpWire.ts"
-	b, err := os.ReadFile(filepath.Join("..", "..", "..", rel))
-	if err != nil {
-		t.Skipf("%s is not in this checkout: %v", rel, err)
-	}
-	consoleLine := ""
-	for _, line := range strings.Split(string(b), "\n") {
-		if strings.HasPrefix(line, "export const MCP_KINDS") {
-			consoleLine = line
-		}
-	}
-	if consoleLine == "" {
-		t.Fatal("MCP_KINDS has been renamed; this guard is now reading nothing")
-	}
-	for _, e := range agentkinds.All() {
-		inConsole := strings.Contains(consoleLine, `"`+e.Kind+`"`)
-		if mcpKnownKinds[e.Kind] != inConsole {
-			t.Errorf("%q: CP accepts=%v, Console MCP_KINDS lists=%v", e.Kind, mcpKnownKinds[e.Kind], inConsole)
 		}
 	}
 }

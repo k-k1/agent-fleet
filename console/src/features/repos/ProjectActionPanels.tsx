@@ -16,7 +16,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { Field, Meta } from "../settings/parts/mcpForm.tsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { openFileDiff } from "../scm/open.ts";
-import { applyProjectMcp, gateText, opErrorText, planProjectMcp, warningText } from "./projectMcpWire.ts";
+import { applyProjectMcp, copyTargetKinds, gateText, opErrorText, planProjectMcp, warningText } from "./projectMcpWire.ts";
 import type { ProjectFile, ProjectOp, ProjectPlanResult, ProjectServer, ProjectSnapshot } from "./projectMcpWire.ts";
 
 type ApiResult<T> = T | { error: { code: string; message?: string } };
@@ -30,11 +30,6 @@ async function call<T>(fn: () => Promise<T>): Promise<ApiResult<T>> {
 }
 
 // --- copy ----------------------------------------------------------------
-
-// The agent kinds a copy may target — kiro is read-only (docs/log/56 §4.3, its
-// project-scope write contract is unmeasured) and agy has no project scope at
-// all, so neither is offered as a destination.
-const COPY_TARGET_KINDS = ["claude", "codex", "opencode", "cursor", "copilot"];
 
 // v1's file↔kind map is fixed (docs/log/56 §4.3): each kind reads exactly one project
 // file (copilot has a second, .github/mcp.json, but .mcp.json — listed first — is
@@ -59,7 +54,7 @@ export function ProjectCopyPanel({ repo, snap, source, onClose, onApplied }: Cop
   const sourceFile = snap.files.find((f) => f.path === source.file);
   const sourceKinds = new Set(sourceFile?.kinds || []);
 
-  const targets = COPY_TARGET_KINDS.map((kind) => ({ kind, file: fileForKind(snap.files, kind) })).filter(
+  const targets = copyTargetKinds(snap).map((kind) => ({ kind, file: fileForKind(snap.files, kind) })).filter(
     (t): t is { kind: string; file: string } => !!t.file && !sourceKinds.has(t.kind),
   );
 

@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { SESSION_KINDS } from "../types/session.ts";
 
-const KIND_LITERAL_CEILING = 66;
+const KIND_LITERAL_CEILING = 57;
 
 const SRC = path.resolve(__dirname, "..");
 const REGISTRY = path.join(SRC, "agents", "registry.ts");
