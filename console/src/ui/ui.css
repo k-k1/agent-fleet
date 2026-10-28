@@ -764,19 +764,9 @@
 }
 /* Kind tint on the big New Session buttons (matches .kind-tag hues; inactive only —
    the active fill carries its own contrast). */
-/* Hue from tokens.css (--kind-*); the light-theme var already carries the darker
+/* Hue from tokens.css (--kind); the light-theme var already carries the darker
    hue, so no separate light override is needed here. */
-.ui-seg.big .seg-btn.kind-claude:not(.active) .seg-ic { color: var(--kind-claude); }
-.ui-seg.big .seg-btn.kind-codex:not(.active) .seg-ic { color: var(--kind-codex); }
-.ui-seg.big .seg-btn.kind-cursor:not(.active) .seg-ic { color: var(--kind-cursor); }
-.ui-seg.big .seg-btn.kind-opencode:not(.active) .seg-ic { color: var(--kind-opencode); }
-.ui-seg.big .seg-btn.kind-agy:not(.active) .seg-ic { color: var(--kind-agy); }
-.ui-seg.big .seg-btn.kind-copilot:not(.active) .seg-ic { color: var(--kind-copilot); }
-.ui-seg.big .seg-btn.kind-kiro:not(.active) .seg-ic { color: var(--kind-kiro); }
-.ui-seg.big .seg-btn.kind-lcpp:not(.active) .seg-ic { color: var(--kind-lcpp); }
-.ui-seg.big .seg-btn.kind-muse:not(.active) .seg-ic { color: var(--kind-muse); }
-.ui-seg.big .seg-btn.kind-shell:not(.active) .seg-ic { color: var(--kind-shell); }
-.ui-seg.big .seg-btn.kind-ssm:not(.active) .seg-ic { color: var(--kind-ssm); }
+.ui-seg.big .seg-btn.kind:not(.active) .seg-ic { color: var(--kind); }
 
 /* Inline link-styled button (hints that point at another screen). */
 .linklike {

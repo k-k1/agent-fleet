@@ -5,6 +5,7 @@ import { useT } from "../../../lib/i18n/index.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { AGENTS } from "../../../agents/registry.ts";
 import { BRAND_PREFIX, brandClass } from "../../../lib/brandicons.ts";
+import { kindColorClasses } from "../../../lib/sessionkind.ts";
 
 // Shared building blocks for the settings connection cards, used by both the
 // agents tab (Claude / Codex / opencode) and the Git tab (GitHub / Bitbucket).
@@ -139,7 +140,7 @@ export function ProviderCard({
   return (
     <div className="p-card" data-settings-target={id}>
       <div className="p-head">
-        <span className={"p-badge pb-" + id}>
+        <span className={"p-badge pb-" + id + " " + kindColorClasses(id)}>
           {brand ? <Icon name={brand} /> : BADGE_SHORT[id]}
         </span>
         <span className="p-name">{name}</span>

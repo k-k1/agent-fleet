@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errText, rel } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
-import { kindLabel, kindClass, kindIcon } from "../../../lib/sessionkind.ts";
+import { kindClasses, kindIcon, kindLabel } from "../../../lib/sessionkind.ts";
 import { fmtDateTime, DATETIME_FULL, compareText } from "../../../lib/intl.ts";
 import { useLocale, useT } from "../../../lib/i18n/index.ts";
 import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
@@ -126,7 +126,7 @@ export function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSup
                       const st = stateInfo(s);
                       return (
                         <div key={s.tenant + "|" + s.user_key + "|" + s.name} className="adm-session">
-                          <span className={"kind-tag kind-" + kindClass(s.kind)}>
+                          <span className={"kind-tag " + kindClasses(s.kind)}>
                             <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                           </span>
                           <span className="asx-user mono" title={s.email || ""}>{s.user_key || tr("admin.unknown")}</span>

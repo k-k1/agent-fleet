@@ -15,7 +15,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { api } from "../../core/api/client.ts";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
 import { getCachedConns, setCachedConns, subscribeConns } from "../repos/connsCache.ts";
-import { kindDisplayName } from "../../lib/sessionkind.ts";
+import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { displayName } from "../../lib/sessionview.ts";
@@ -124,7 +124,7 @@ export function HandoffModal({ session, actions, onClose }: HandoffModalProps) {
                   key={k}
                   type="button"
                   title={tr(a.launchHintKey)}
-                  className={"seg-btn kind-" + a.cssClass + (target === k ? " active" : "")}
+                  className={"seg-btn " + kindColorClasses(a.cssClass) + (target === k ? " active" : "")}
                   onClick={() => setTarget(k)}
                 >
                   <Icon name={a.icon} className="seg-ic" />

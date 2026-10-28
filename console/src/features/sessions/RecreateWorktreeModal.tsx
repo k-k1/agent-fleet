@@ -17,7 +17,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { api, apiJSON, errText, raw } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { displayName } from "../../lib/sessionview.ts";
-import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.ts";
+import { kindClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import type { Session } from "../../types/session.ts";
 
 /** One way to put the folder back — gitx.RecreateCandidate on the wire. */
@@ -211,7 +211,7 @@ export function RecreateWorktreeModal({ dir, sessions, onClose, onChanged }: Rec
                     <input type="checkbox" checked={chosen.has(s.name)} onChange={() => toggle(s.name)} disabled={busy} />
                     <span className="rwt-session-name">{displayName(s)}</span>
                     <span className="arch-sub">
-                      <span className={"kind-tag kind-" + kindClass(s.kind)}>
+                      <span className={"kind-tag " + kindClasses(s.kind)}>
                         <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                       </span>
                       {s.started ? " · " + s.started : ""}

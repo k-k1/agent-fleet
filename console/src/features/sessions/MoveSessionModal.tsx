@@ -23,7 +23,7 @@ import { ModelPicker } from "../../ui/ModelPicker.tsx";
 import { errText } from "../../core/api/client.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useKindCatalogVersion } from "../../agents/kindCatalog.ts";
-import { kindDisplayName } from "../../lib/sessionkind.ts";
+import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { getSettings, agentLaunchDefault } from "../../lib/settings.ts";
 import { resolveModel } from "../../lib/repoLast.ts";
@@ -300,7 +300,7 @@ function MoveForm({
                 type="button"
                 data-kind={k}
                 title={tr(ag.launchHintKey)}
-                className={"seg-btn kind-" + ag.cssClass + (kind === k ? " active" : "") + (left ? " quota-left" : "")}
+                className={"seg-btn " + kindColorClasses(ag.cssClass) + (kind === k ? " active" : "") + (left ? " quota-left" : "")}
                 onClick={() => {
                   chosen.current = true;
                   setKind(k);
