@@ -255,3 +255,21 @@ for f in ('acp.go', 'driver.go'):
         print(f, a, b, f'{m / max(len(A), len(B)):.0%} of larger, {m / min(len(A), len(B)):.0%} of smaller')
 PY
 ```
+
+## 追記（2026-10-28）— css-dup の上限はスクリプトが数えるものを数える
+
+背景の「67 個のクラス名が 2 つ以上のファイルでルールの先頭に立つ」は `css-dup.mjs` が出す数ではなく、
+そこから再現できなかった。そのため Phase 0 の上限（#2855）は、その時点の `main` でスクリプト自身が
+出す 2 つの数を使う。2 つ以上のファイルで定義されたクラス名が 200、そのうち 2 つ以上のファイルで
+単独（`.name {}` だけ）に現れるものが 36。CI は `npm run css:dup:ci`（`--max-dups=200 --max-bare=36`）
+を走らせ、どちらかが増えると落ちる。減っても落ちない。スクリプトが案内を出すだけで、上限を下げるのは
+別の任意の編集なので、ついでに重複を 1 つ解消した PR が `package.json` を触る必要はない（決定 1）。
+
+## 追記（2026-10-28）— ラチェットはレジストリの kind を数える
+
+Phase 0 のラチェットを入れた (#2854)。各 Go モジュールの `main_files_test.go` が package main を
+`testdata/main-files.txt` に固定する。kind リテラル分岐の上限（`workspace/agent/kind_literal_ceiling_test.go`、
+`console/src/test/kindLiteralCeiling.test.ts`）は上の式を使うが、kind はレジストリ（`sessionx.RegisteredKinds()`、
+Console はカタログと一致を保たれた `SESSION_KINDS`）から非エージェントの `shell` と `ssm` を除いて取り、Go の識別子は
+大文字小文字を問わず `Kind<kind>` で数える。新しい kind は登録した PR から数えられる。上の `K`/`KC` は今日時点の展開で、
+どちらも 219 と 66 になる。css-dup と同じく、上限を超えると落ち、下回ると下げるよう案内を出すだけ。

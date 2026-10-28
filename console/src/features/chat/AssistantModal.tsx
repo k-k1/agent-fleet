@@ -7,7 +7,7 @@ import { SESSION_KINDS } from "../../types/session.ts";
 import type { SessionKind } from "../../types/session.ts";
 import type { Assistant, AssistantInput, ToolGrant } from "../../types/assistant.ts";
 import { api } from "../../core/api/client.ts";
-import type { McpServer } from "../settings/mcpWire.ts";
+import type { McpServer } from "../settings/mcp/mcpWire.ts";
 import { readerVoiceChoices } from "./tts.ts";
 import { loadSpeakers } from "./ttsSpeakers.ts";
 import { useT, type MsgKey } from "../../lib/i18n/index.ts";

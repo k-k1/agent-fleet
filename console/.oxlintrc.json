@@ -5,5 +5,41 @@
   "rules": {
     "react/rules-of-hooks": "error"
   },
+  "overrides": [
+    // lib/ is the lower layer: features/ may import it, never the other way round (ADR 0124
+    // Phase 0). The rule also catches dynamic import().
+    {
+      "files": ["src/lib/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["**/features/**"],
+                "message": "src/lib/ must not import src/features/ (ADR 0124). Move the shared piece down into lib/ instead."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    // Today's exceptions. This list only shrinks: remove a file once it no longer imports
+    // features/, never add one.
+    {
+      "files": [
+        "src/lib/authExpiredToast.tsx",
+        "src/lib/authExpiredToast.dom.test.tsx",
+        "src/lib/notifyPrefsSync.dom.test.tsx",
+        "src/lib/project.ts",
+        "src/lib/project.test.ts",
+        "src/lib/sessionDeepLink.ts",
+        "src/lib/settings.ts",
+        "src/lib/version.ts",
+        "src/lib/workingSets.ts"
+      ],
+      "rules": { "no-restricted-imports": "off" }
+    }
+  ],
   "ignorePatterns": ["dist/**", "node_modules/**", "scripts/**", "public/**"]
 }
