@@ -154,6 +154,15 @@ preview_host_serve.go
 preview_relay_error.go
 proxy.go
 reaper.go
+relays.go
+relays_chat.go
+relays_connections.go
+relays_imagegen.go
+relays_memory.go
+relays_memos.go
+relays_repos.go
+relays_sessions.go
+relays_settings.go
 resolver.go
 rewrap_keys.go
 routes.go

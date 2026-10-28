@@ -22,7 +22,8 @@ const tab = ["./MemoryTab.tsx", "./MemorySnapshotsTab.tsx", "./views/AgentMemory
   .map(read)
   .join("\n");
 const dialog = read("../SettingsDialog.tsx");
-const cpRoutes = read("../../../../../control-plane/routes.go");
+// The CP relays every agent memory route as a row of its relay table.
+const cpRoutes = read("../../../../../control-plane/relays_memory.go");
 const agentRoutes = read("../../../../../workspace/agent/routes.go");
 
 describe("agent memory tab in the settings modal", () => {
@@ -62,7 +63,7 @@ describe("agent memory tab in the settings modal", () => {
       ]),
     );
     for (const p of new Set(paths)) {
-      expect(cpRoutes, `${p} is not registered in control-plane/routes.go`).toContain("/" + p);
+      expect(cpRoutes, `${p} is not relayed in control-plane/relays_memory.go`).toContain("/" + p);
       expect(agentRoutes, `${p} is not registered in workspace/agent/routes.go`).toContain(
         p.replace(/^api\//, "/"),
       );

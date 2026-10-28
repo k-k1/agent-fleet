@@ -11,8 +11,8 @@ package main
 //
 // The signature covers the method, the Agent-side path, the raw query, the body hash, the
 // workspace, the membership, the identity, a 60 s expiry and a nonce the Agent remembers until
-// the expiry. Only memberOriginRoutes are signed; every other relayed request has the header
-// removed.
+// the expiry. Only memberOriginRoutes (the relay rows marked sign, relays.go) are signed; every
+// other relayed request has the header removed.
 
 import (
 	"bytes"
@@ -49,50 +49,13 @@ const (
 	memberOriginKeyVersionEnv = "AF_MEMBER_ORIGIN_KEY_VERSION"
 )
 
-// memberOriginRoutes are the relayed routes the CP signs: the member-only memory writes. A route
-// that is not here never carries a mark, so adding a member route to the Agent without adding it
-// here leaves it refused rather than open.
-var memberOriginRoutes = map[string]bool{
-	// Every settings write is signed, because some settings are the member's alone: turning the
-	// memory review on (ADR 0117) sends other sessions' conversations to a model provider, and a
-	// session holds the same AGENT_TOKEN the relay uses. The Agent asks for the mark only on a
-	// write that arms such a setting (workspace/agent/ui_prefs.go); the rest ignore it.
-	"PUT /api/env/ui-prefs": true,
-	// "Review now" for one session (ADR 0117): it spends tokens and sends an excerpt to a model
-	// provider, so a session's own AGENT_TOKEN must not be able to start it.
-	"POST /api/agents/memory-review/run":           true,
-	"POST /api/agents/memory/entries/pin":          true,
-	"POST /api/agents/memory/entries/revert":       true,
-	"POST /api/agents/memory/entries/member-save":  true,
-	"POST /api/agents/memory/entries/purge":        true,
-	"POST /api/agents/memory/entries/project-move": true,
-	// The member's decisions on what the review proposed (ADR 0117 decision 6): approving
-	// publishes into every kind's memory, and the list returns text nobody has published, so a
-	// session's own AGENT_TOKEN must not be able to do either.
-	"POST /api/agents/memory-review/proposals/list":       true,
-	"POST /api/agents/memory-review/proposals/approve":    true,
-	"POST /api/agents/memory-review/proposals/reject":     true,
-	"POST /api/agents/memory-review/proposals/reject-all": true,
-	"POST /api/agents/memory-review/runs/revert":          true,
-	// Importing AF memory out of a bundle (#1983).
-	"POST /api/agents/memory/af-import": true,
-	// The member's part in what the Agent memory switch does by itself with claude's native
-	// memory (#1972): waking the run after the confirmation, retrying, giving up.
-	"POST /api/agents/memory/auto-sync": true,
-	// The 0022 history routes only the Console calls (ADR 0113, 2026-10-13 note): a manual
-	// snapshot and the apply step of a bundle import.
-	"POST /api/agents/memory/snapshots":    true,
-	"POST /api/agents/memory/import/apply": true,
-	// A multipart upload: signed by body hash (memberOriginHashedRoutes), not buffered.
-	"POST /api/agents/memory/import": true,
-}
-
-// memberOriginHashedRoutes are the signed routes whose body is a multipart upload too large to
-// buffer. The CP spools it to a file while hashing it, signs the hash, and relays the file; the
-// Agent hashes what it receives and checks it against the mark.
-var memberOriginHashedRoutes = map[string]bool{
-	"POST /api/agents/memory/import": true,
-}
+// memberOriginRoutes are the relayed routes the CP signs, and memberOriginHashedRoutes the subset
+// whose body is a multipart upload too large to buffer: the CP spools it to a file while hashing
+// it, signs the hash, and relays the file; the Agent hashes what it receives and checks it against
+// the mark. Both are derived from the relay rows' sign field (relays.go). A route that is not
+// signed there never carries a mark, so adding a member route to the Agent without signing it
+// leaves it refused rather than open.
+var memberOriginRoutes, memberOriginHashedRoutes = signedRelayRoutes()
 
 // memberOriginUploadMax bounds a hashed upload. The Agent's import limit is 64 MiB by default
 // (AF_MEMORY_IMPORT_MAX) and the Agent clamps it to 128 MiB (memoryImportCeiling in

@@ -111,7 +111,8 @@ agent unchanged (§5.3). "CP" means the CP answers it itself, usually from its d
   `401 unauthorized` otherwise ([07 §7.5](07-security.md)).
 - **Path convention: the CP strips `/api` and forwards the rest unchanged**
   (`/api/sessions/x/halt` → `<agent>/sessions/x/halt`). **The CP's route table is an explicit
-  allowlist**: an agent route with no line in `control-plane/routes.go` cannot be reached
+  allowlist**: an agent route with no row in the CP's relay table (`control-plane/relays_*.go`, or
+  a wrapper registered in `routes.go`) cannot be reached
   from the Console. `TestConsoleAPIPathsHaveCPRoutes` (`control-plane/console_routes_test.go`)
   fails when an `api/...` path written in `console/src` has no CP route that could serve it;
   a `${…}` segment matches a route parameter, or any literal segment where there is none.
@@ -216,7 +217,8 @@ one with an `id` but no valid `source` or `at` is skipped. `GET /api/admin/egres
 
 ## 5.5 Where audit is written
 
-The REST relay records **mutating** operations on a 2xx (`auditActionTarget`). The target
+The REST relay records **mutating** operations on a 2xx: the `audit` of the route's row in the relay table
+(`control-plane/relays_*.go`), read by `auditActionTarget`. The target
 comes from the URL path or query. The one exception is `PUT /api/fs/file`: the CP has already
 checked its JSON body, and uses the body's `path`. File contents are never stored in the audit
 log:

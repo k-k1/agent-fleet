@@ -30,7 +30,7 @@ CP は Workspace の外側で動く唯一の常駐バックエンド（Go 単一
   clean-home と、状態の DB 同期。実行基盤は Runtime アダプタ越し（§3.3）。
 - **Agent 中継** — REST / SSE / terminal WS / browser REST+WS / preview の 5 経路
   （[05 §5.3](05-api.ja.md)）。**REST 中継は許可リスト**: 中継する経路はどれも CP が登録したルート
-  （`routes.go` と隣の `register*Routes` 関数群）で、CP にルートの無い Agent エンドポイントには
+  （中継表 `relays_*.go` の行か、`routes.go` で包んで登録したもの）で、CP にルートの無い Agent エンドポイントには
   ブラウザから届かない。preview は `AF_PREVIEW_DOMAIN` があれば Workspace ごとのサブドメインでも答える
   （[decisions/0062](../decisions/0062-preview-subdomain.ja.md)）。
 - **Console へのプッシュ経路** — `GET /api/events` は CP 自身の SSE。workspace・sessions・stats・

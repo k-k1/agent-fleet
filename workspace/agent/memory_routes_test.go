@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -152,46 +153,57 @@ func TestMemberWriteRoutesAdmitAMarkedRequest(t *testing.T) {
 
 // The CP signs exactly the routes the Agent requires a mark on. A route the Agent requires but the CP
 // does not sign locks the member out; one the CP signs but the Agent leaves open signs for nothing.
-// The two modules cannot import each other, so this reads the CP's table from its parsed source and finds
-// the Agent's by asking the real mux: a POST with an unparsable body gets member_origin_required
-// from a wrapped route and a 400 from the handler of an open one, without touching the store.
+// The two modules cannot import each other, so this reads the CP's relay rows (control-plane/relays_*.go)
+// from their parsed source and finds the Agent's by asking the real mux: a POST with an unparsable body
+// gets member_origin_required from a wrapped route and a 400 from the handler of an open one, without
+// touching the store.
 func TestMemberOriginRoutesAgreeWithTheControlPlane(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "../../control-plane/member_origin.go", nil, 0)
+	files, err := filepath.Glob("../../control-plane/relays_*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Read the map literal's real elements: a commented-out or false entry is not signed.
+	// Read the rows' real fields: a commented-out row, or one whose sign is unsigned, is not signed.
 	var cp []string
-	ast.Inspect(file, func(n ast.Node) bool {
-		vs, ok := n.(*ast.ValueSpec)
-		if !ok || len(vs.Names) != 1 || vs.Names[0].Name != "memberOriginRoutes" || len(vs.Values) != 1 {
-			return true
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
 		}
-		lit, ok := vs.Values[0].(*ast.CompositeLit)
-		if !ok {
-			return true
+		file, err := parser.ParseFile(token.NewFileSet(), f, nil, 0)
+		if err != nil {
+			t.Fatal(err)
 		}
-		for _, e := range lit.Elts {
-			kv, ok := e.(*ast.KeyValueExpr)
+		ast.Inspect(file, func(n ast.Node) bool {
+			lit, ok := n.(*ast.CompositeLit)
 			if !ok {
-				continue
+				return true
 			}
-			k, _ := kv.Key.(*ast.BasicLit)
-			v, _ := kv.Value.(*ast.Ident)
-			if k == nil || v == nil || v.Name != "true" {
-				continue
+			var route, sign string
+			for _, e := range lit.Elts {
+				kv, ok := e.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				key, _ := kv.Key.(*ast.Ident)
+				switch {
+				case key == nil:
+				case key.Name == "route":
+					if v, ok := kv.Value.(*ast.BasicLit); ok {
+						route, _ = strconv.Unquote(v.Value)
+					}
+				case key.Name == "sign":
+					if v, ok := kv.Value.(*ast.Ident); ok {
+						sign = v.Name
+					}
+				}
 			}
-			route, err := strconv.Unquote(k.Value)
-			if err != nil {
-				t.Fatal(err)
+			if route != "" && sign != "" && sign != "unsigned" {
+				cp = append(cp, strings.Replace(route, " /api/", " /", 1))
 			}
-			cp = append(cp, strings.Replace(route, " /api/", " /", 1))
-		}
-		return false
-	})
+			return true
+		})
+	}
 	if len(cp) == 0 {
-		t.Fatal("no route parsed from memberOriginRoutes")
+		t.Fatal("no signed route parsed from control-plane/relays_*.go")
 	}
 
 	golden, err := os.ReadFile("testdata/routes.golden")
