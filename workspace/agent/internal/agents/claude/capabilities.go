@@ -3,8 +3,10 @@ package claude
 import (
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // Optional agents capabilities of the claude kind, each delegating to this package's own
@@ -51,5 +53,25 @@ func (agentImpl) SkillsLayout() agents.SkillsLayout {
 		Bundled:     true,
 		NativeConvs: []string{".claude/skills"},
 		Shared:      &agents.SharedSkillRoot{Origin: ".claude", Dir: func() string { return filepath.Join(ConfigDir(), "skills") }},
+	}
+}
+
+// TerminalTraits is agents.TerminalTraiter: claude's TUI traps and live-state verdicts, each
+// delegating to this package or to tmuxx's claude pane probes.
+func (agentImpl) TerminalTraits() agents.TerminalTraits {
+	return agents.TerminalTraits{
+		AuthExpired:      AuthExpired,
+		UsageLimitMenu:   tmuxx.AtRateLimitModal,
+		AgentsViewActive: tmuxx.AgentsViewActive,
+		LeaveAgentsView:  tmuxx.LeaveAgentsView,
+		ModalActive:      tmuxx.ModalActive,
+		ShapePrompt:      QuoteImagePaths,
+		PasteLF:          true,
+		SubmitDelay:      20 * time.Millisecond,
+		RemoteControlURL: RemoteSessionURL,
+		HookPending:      true,
+		TranscriptLines:  true,
+		TerminalScreen:   func(pane string) string { st, _ := ClassifyPane(pane); return st },
+		HealIdle:         HealIdle,
 	}
 }

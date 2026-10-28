@@ -2,8 +2,6 @@ package sessionx
 
 import "testing"
 
-
-
 func TestIsCodexUpdateMenu(t *testing.T) {
 	// Both fixtures are real codex 0.144.3 pane captures (2026-07-14).
 	menu := "  ✨ Update available! 0.144.3 -> 0.999.0\n" +

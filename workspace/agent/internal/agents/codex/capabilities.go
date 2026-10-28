@@ -52,3 +52,21 @@ func (agentImpl) SkillsLayout() agents.SkillsLayout {
 		Shared:      &agents.SharedSkillRoot{Origin: ".codex", Dir: func() string { return filepath.Join(paths.CodexHome(), "skills") }},
 	}
 }
+
+// TerminalTraits is agents.TerminalTraiter: codex 0.145+ shows no mode in its footer (so the
+// mirror's mode changes are remembered), its startup update menu takes keystrokes ("Update now"
+// exits the process), and its hooks miss an Esc interrupt's turn end and the
+// request_user_input dialog, both read off the rollout instead.
+func (agentImpl) TerminalTraits() agents.TerminalTraits {
+	return agents.TerminalTraits{
+		RemembersMode: true,
+		TerminalScreen: func(pane string) string {
+			if PaneScreen(pane) == "update" {
+				return "update"
+			}
+			return ""
+		},
+		MissedTurnEnd:    MissedTurnEnd,
+		TerminalQuestion: TerminalModal,
+	}
+}
