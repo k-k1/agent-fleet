@@ -1,8 +1,7 @@
 // fargate.go — the valid Fargate task sizes.
 //
 // This sits with its one reader, registerTaskDef on the Fargate adapter. The CP keeps
-// the rest of mem.go (parseMemBytes and the 1024-based units) and aliases
-// fargateCPUUnits for the callers that offer a size choice.
+// the rest of mem.go (parseMemBytes and the 1024-based units).
 package runtime
 
 import "strconv"
@@ -60,17 +59,6 @@ func (t fargateTier) snap(reqMiB int64) (int64, bool) {
 		return 0, false
 	}
 	return m, true
-}
-
-// FargateCPUUnits returns the valid Fargate CPU values, smallest first. Callers that
-// present a choice (Console, MCP) use this so the offered sizes cannot be invalid.
-func FargateCPUUnits() []int {
-	out := make([]int, 0, len(fargateTiers))
-	for _, t := range fargateTiers {
-		n, _ := strconv.Atoi(t.cpu)
-		out = append(out, n)
-	}
-	return out
 }
 
 // fargateSize snaps a requested (memory, CPU) onto the smallest VALID Fargate task

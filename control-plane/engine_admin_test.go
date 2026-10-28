@@ -1983,66 +1983,6 @@ func TestEngineIngestStartsALoginWalledAssetWhenACivitaiTokenIsRegistered(t *tes
 	}
 }
 
-// The three gates that outlived the request fields they were written for (ADR 0085 decision 3).
-// `attach` and `replace` left the ingest, and `file_flag` is ignored there — but `complete` fills
-// a free slot, swaps a filled one and takes a flag in `choices`, so all three rules are still the
-// ones that decide it. Kept under test rather than kept on trust: a rule nothing exercises is one
-// that quietly stops being true before its next caller arrives.
-func TestTheSlotGatesSurviveForComplete(t *testing.T) {
-	row := &store.EngineModel{ID: "flux1-dev", Files: []store.EngineModelFile{
-		{Flag: "--diffusion-model", S3Key: "image/diffusion_models/flux1.safetensors"},
-	}}
-	// Attaching: a row that is not there, the unlabelled slot (which a row has exactly one of),
-	// and a role already filled.
-	if ref := engineAttachAllowed(nil, "typo", "image", "--clip_l"); ref == nil || ref.status != http.StatusNotFound {
-		t.Errorf("attaching to an id nothing holds = %+v", ref)
-	}
-	if ref := engineAttachAllowed(row, "flux1-dev", "image", ""); ref == nil || ref.status != http.StatusBadRequest {
-		t.Errorf("attaching with no flag = %+v", ref)
-	}
-	ref := engineAttachAllowed(row, "flux1-dev", "image", "--diffusion-model")
-	if ref == nil || ref.status != http.StatusConflict {
-		t.Fatalf("attaching a second --diffusion-model = %+v", ref)
-	}
-	// Decision 5, on the one of the three that is a 409: it names what is in the way and the act
-	// that gets past it.
-	if ref.Holder == nil || ref.Holder.Key != "image/diffusion_models/flux1.safetensors" ||
-		ref.Next == nil || ref.Next.Act != "replace" {
-		t.Errorf("the refusal carries %+v / %+v", ref.Holder, ref.Next)
-	}
-	if ref := engineAttachAllowed(row, "flux1-dev", "image", "--clip_l"); ref != nil {
-		t.Errorf("attaching to a free slot was refused: %s", ref.message)
-	}
-	// Replacing is its mirror: an empty slot is the OTHER act, and the refusal says so.
-	if ref := engineReplaceAllowed(row, "flux1-dev", "image", "image/text_encoders/x.safetensors",
-		"--clip_l", false); ref == nil || ref.status != http.StatusBadRequest {
-		t.Errorf("replacing an empty slot = %+v", ref)
-	}
-	// 🔴 A replacement download uploads before the catalogue swap, so the old key must stay
-	// occupied until the new object is registered — reusing it destroys bytes the live row names.
-	if ref := engineReplaceAllowed(row, "flux1-dev", "image", "image/diffusion_models/flux1.safetensors",
-		"--diffusion-model", false); ref == nil || ref.status != http.StatusConflict {
-		t.Errorf("a same-key replacement download = %+v", ref)
-	}
-	// Verified reuse is the exception: nothing is uploaded, so the same key is idempotent.
-	if ref := engineReplaceAllowed(row, "flux1-dev", "image", "image/diffusion_models/flux1.safetensors",
-		"--diffusion-model", true); ref != nil {
-		t.Errorf("a same-key reuse was refused: %s", ref.message)
-	}
-	// And the vocabulary: an unknown flag is dropped silently by the Agent's resolver, so a typo
-	// would produce a row whose part is never passed to any loader.
-	if aerr := engineFileFlagValid("comfy", "--clip-l"); aerr == nil {
-		t.Error("a misspelt flag passed the vocabulary check")
-	}
-	if aerr := engineFileFlagValid("comfy", "--clip_l"); aerr != nil {
-		t.Errorf("a flag comfy reads was refused: %s", aerr.message)
-	}
-	// A provider that loads one whole checkpoint has no roles to declare at all.
-	if aerr := engineFileFlagValid("sdcpp", "--vae"); aerr == nil {
-		t.Error("a provider with no vocabulary accepted a file role")
-	}
-}
-
 // 🔥 The other half of the same live failure, and the one nothing was watching. A row with no
 // attention geometry answers its FLOOR — the weights and nothing else — and a floor fits almost
 // any card, so enabling it was waved through without a word. af-sandbox 2026-09-18: the

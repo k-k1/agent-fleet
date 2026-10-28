@@ -1201,7 +1201,7 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 // gen is the Start count read before that DescribeServices. Everything this decides is a
 // snapshot, and a Stop or newer Start can land while the lookups are in flight: writing or
 // clearing a phase then would undo the Stop's clear or erase the newer Start's reason. The
-// check and the write share homeLockClaim with abortStarts/beginStart, and are not applied
+// check and the write share homeLockClaim with beginStart, and are not applied
 // to the lookups themselves, so a Stop never waits on AWS here. Gen 0 is a real count (no
 // Start yet on this process), not "unchecked". An unreadable count (genOK false) writes
 // nothing.
@@ -1863,9 +1863,9 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	// created in — so the AZ is decided by where a slot can actually be had, and the volume
 	// is created last, once that is settled.
 	//
-	// It used to be created first, from anyAZ(). That is the same answer whenever a slot is
-	// free, but it made the two growth paths below unable to look anywhere else: a capacity
-	// shortfall in that one AZ could only be answered by deleting the volume and starting
+	// Creating it first, in the first pool AZ, is the same answer whenever a slot is free,
+	// but it makes the two growth paths below unable to look anywhere else: a capacity
+	// shortfall in that one AZ can only be answered by deleting the volume and starting
 	// over, which is harmless for an empty home and DATA LOSS for a restored one —
 	// createHomeVolume drops the snapshot it restored from as soon as the volume is usable.
 	// Not creating it until the destination is known removes the choice entirely.
@@ -2015,7 +2015,7 @@ func (e *ecsEC2Runtime) finishStart(ctx context.Context, p ec2Placement, prep ec
 
 // ifCurrentStart runs f only while no Stop or newer Start has overtaken the Start that
 // made the placement (gen), and answers whether it did. It is ifOwnedStrict on a context
-// detached from ctx: the check and f share homeLockClaim with abortStarts/beginStart, so a
+// detached from ctx: the check and f share homeLockClaim with beginStart, so a
 // Stop either lands before the check (f is skipped) or after f (it wins afterwards), and the
 // background budget that ended the work is no reason to skip a write that explains why.
 // An unreadable count or a lock that cannot be had answers false. gen 0 means no Start made
@@ -3258,7 +3258,7 @@ func (e *ecsEC2Runtime) listContainerInstanceARNs(ctx context.Context) ([]string
 //
 // Without this, one AZ running out of the slot type stops every NEW user in the deployment
 // (everybody already placed keeps working, so it does not look like an outage) — and the
-// AZ that ran out is the one AZ the adapter ever picks, because anyAZ is deterministic.
+// AZ that ran out is the one AZ the adapter ever picks, because a fixed first-AZ pick is deterministic.
 // docs/log/64 §64.20.4.
 func (e *ecsEC2Runtime) growPool(ctx context.Context, az string) (string, string, error) {
 	if az != "" {
@@ -3896,17 +3896,6 @@ func (e *ecsEC2Runtime) spreadAZs(ctx context.Context) ([]string, error) {
 		return rank[ordered[i]] < rank[ordered[j]]
 	})
 	return ordered, nil
-}
-
-func (e *ecsEC2Runtime) anyAZ(ctx context.Context) (string, error) {
-	azs, err := e.poolAZs(ctx)
-	if err != nil {
-		return "", err
-	}
-	if len(azs) == 0 {
-		return "", fmt.Errorf("no usable subnet/AZ configured (AF_ECS_SUBNETS)")
-	}
-	return azs[0], nil
 }
 
 // wakeSlot starts a dormant slot, waiting first for it to be startable.

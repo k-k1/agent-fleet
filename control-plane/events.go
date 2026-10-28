@@ -3,7 +3,7 @@
 // GET /api/events is SSE (text/event-stream) and folds the four permanent polls the Console
 // used to run separately every 4-5s (workspace / sessions / stats / notifications) into one
 // connection. The server drives the same payload builders (workspacePayload /
-// sessionsPayload / containerStats / listPayload) on a per-connection tick and frames only
+// sessionsPayload / workspaceStats / listPayload) on a per-connection tick and frames only
 // the streams whose JSON changed since the last send, so an unchanged tick costs zero bytes
 // between browser and CP. That beats even 304 polling, because on a mobile link the request
 // headers and cookie round trip are the bulk of the cost.

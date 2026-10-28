@@ -65,7 +65,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -1784,8 +1783,3 @@ func engineLoadedModels(ctx context.Context, eng *engineRuntimeState) []string {
 	}
 	return out
 }
-
-// engineGatewayEnvName is the environment variable the session token is injected under, and
-// the name opencode's config refers to as {env:…}. Named here because the CP hands it to the
-// Agent in the token response's shape and the two must agree.
-var engineGatewayEnvName = envx.Or("AF_ENGINE_TOKEN_ENV", "AF_ENGINE_TOKEN")

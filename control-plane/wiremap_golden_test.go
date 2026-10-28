@@ -119,10 +119,10 @@ func TestWireMapGoldenActuallyOpensMaps(t *testing.T) {
 
 	t.Run("follows a shape function's return value two levels down", func(t *testing.T) {
 		// workspaceAPI.stats is writeJSON(w, 200, workspaceStats(...)), and workspaceStats
-		// returns out := containerStats(...): the keys live in the callee OF the callee.
+		// returns out, run := containerStatsRun(...): the keys live in the callee OF the callee.
 		//
 		// Asserting "green if at least one key" let a real miss through: the recursion
-		// depth limit was too shallow to descend into containerStats and stopped at 3
+		// depth limit was too shallow to descend into containerStatsRun and stopped at 3
 		// keys, still passing. Demand the specific key NAMES, not a key count.
 		//
 		// Take the sample from the exemption table — an exemption means "structurally
@@ -145,12 +145,12 @@ func TestWireMapGoldenActuallyOpensMaps(t *testing.T) {
 			t.Fatal(sample + " was not picked up (the shape function's return value is not being opened)")
 		}
 		// running/starting/oom_recent come from workspaceStats itself (level 1);
-		// exit_code/oom_killed/cpu_pct/mem_max/oom_kill_total from containerStats (level 2).
+		// exit_code/oom_killed/cpu_pct/mem_max/oom_kill_total from containerStatsRun (level 2).
 		want := []string{"running", "starting", "oom_recent", "exit_code", "oom_killed", "cpu_pct", "mem_max"}
 		if !wireMapHasAll(got[0].Keys, want) {
-			t.Errorf("did not descend to the second level (containerStats): %v\n  should contain %v", got[0].Keys, want)
+			t.Errorf("did not descend to the second level (containerStatsRun): %v\n  should contain %v", got[0].Keys, want)
 		}
-		// Even so the key set is not complete: containerStats assigns `out` three separate
+		// Even so the key set is not complete: containerStatsRun assigns `out` three separate
 		// times, and mem_used in the third literal `{"running": true, "mem_used": memUsed}`
 		// is unreachable for this scan. Unless that unreachability itself shows up in the
 		// golden, the reader takes the key set for complete.
@@ -367,7 +367,7 @@ func wireMapPayload(n ast.Node, env *wireMapEnv) (ast.Expr, bool) {
 // A false return means "not a map" (named type, slice, nil, …; not this file's business).
 // depth is a runaway guard, not a semantic limit: cut it short and key sets silently thin
 // out — measured, a limit of 3 stopped at the fourth level of
-// `workspaceStats → out := containerStats() → out := map{...}` and turned 8 keys into 3,
+// `workspaceStats → out, run := containerStatsRun() → out := map{...}` and turned 8 keys into 3,
 // while still looking green. Recursion is spent on function nesting, so cycles are stopped
 // by visited and the depth is left generous.
 func wireMapClassify(s *wireMapSite, e ast.Expr, env *wireMapEnv, funcs map[string]*ast.FuncDecl, visited map[*ast.FuncDecl]bool, depth int) bool {

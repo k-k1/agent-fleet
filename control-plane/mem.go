@@ -5,7 +5,6 @@
 package main
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 )
@@ -58,34 +57,10 @@ func mustMemBytes(s string) int64 {
 	return 0
 }
 
-// formatMemHuman renders bytes as the largest whole 1024-unit (e.g. "8g", "512m"),
-// falling back to the byte count when it is not a clean multiple. Used for logs.
-func formatMemHuman(b int64) string {
-	switch {
-	case b >= gib && b%gib == 0:
-		return strconv.FormatInt(b/gib, 10) + "g"
-	case b >= mib && b%mib == 0:
-		return strconv.FormatInt(b/mib, 10) + "m"
-	case b >= kib && b%kib == 0:
-		return strconv.FormatInt(b/kib, 10) + "k"
-	default:
-		return strconv.FormatInt(b, 10)
-	}
-}
-
-// The Fargate size matrix — fargateTier / fargateTiers / snap / fargateCPUUnits /
+// The Fargate size matrix — fargateTier / fargateTiers / snap /
 // fargateSize / fargateDiskGiB — moved to the adapters' package
 // (internal/runtime/fargate.go). It is read on exactly one path, the Fargate task
 // definition, and that path now lives there; snap() is a method, which an alias cannot
 // carry. Injecting the two functions back from here was tried and rejected: this
 // package's init never runs in internal/runtime's own test binary, so the adapters
 // would have called a nil func under `go test ./internal/runtime`.
-//
-// memClampNote is a short human explanation used in API/audit output when a requested
-// value is clamped, so an admin sees why the effective cap differs from their input.
-func memClampNote(requested, effective int64) string {
-	if requested == effective {
-		return ""
-	}
-	return fmt.Sprintf("clamped %s → %s", formatMemHuman(requested), formatMemHuman(effective))
-}

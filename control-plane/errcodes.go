@@ -85,10 +85,6 @@ const (
 	// so switching the row on offers a model whose every request dies inside ComfyUI after the
 	// checkpoint switch.
 	errCodeEngineVaeMissing = "engine_vae_missing"
-	// The question could not be ASKED: no source to re-read the header from, or an upstream that
-	// refused. Its own code because the two answers send the reader to opposite places — this one
-	// is "nobody knows", which is never a reason to distrust a row that generates today.
-	errCodeEngineVaeUnreadable = "engine_vae_unreadable"
 	// There is no model page behind this row to read a name and an example image off (ADR 0088):
 	// nothing was recorded about where it came from, or what was recorded is a plain URL, which
 	// addresses the weights themselves. Its own code because the answer is neither a mistake nor
