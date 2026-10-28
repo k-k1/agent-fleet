@@ -19,13 +19,13 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 
 **New / Improved**
 
-- **[skills]** Read-only view of every agent kind's skills: personal under Settings › Skills, a repository's under Skills… in its row's menu ([#2792](https://github.com/k-k1/agent-fleet/issues/2792), [#2795](https://github.com/k-k1/agent-fleet/issues/2795))
-- **[assistant]** Chat turns and Agent Fleet's other LLM calls step past a backend that hit a usage or rate limit, with a notice; memory review waits ([#2780](https://github.com/k-k1/agent-fleet/issues/2780))
+- **[skills]** Read-only view of agents' skills: personal (Claude Code, Codex, OpenCode, Muse Code) under Settings › Skills, a repository's (Cursor too) under Skills… in its row's menu ([#2792](https://github.com/k-k1/agent-fleet/issues/2792), [#2795](https://github.com/k-k1/agent-fleet/issues/2795))
+- **[assistant]** A chat turn that fails on a usage or rate limit before any output is re-run on the next backend, with a notice; AI-assist one-offs skip it; compaction and memory review do not switch ([#2780](https://github.com/k-k1/agent-fleet/issues/2780))
 - **[work items]** Rows mark new activity; GitHub and Bitbucket rows show comment counts ([#2779](https://github.com/k-k1/agent-fleet/issues/2779))
 - **[workspace]** Settings › Machine charts memory pressure (measure only) ([#2516](https://github.com/k-k1/agent-fleet/issues/2516), [#2837](https://github.com/k-k1/agent-fleet/issues/2837))
 - **[viewer]** Find in the PDF pane: Ctrl/Cmd+F opens its own find bar over every page ([#2822](https://github.com/k-k1/agent-fleet/issues/2822))
 - **[work items]** The Merge button is offered to GitHub App sign-ins on a positive permission check ([#2753](https://github.com/k-k1/agent-fleet/issues/2753))
-- **[plan review]** "Review again in ‹reviewer›" is offered on every device ([#2496](https://github.com/k-k1/agent-fleet/issues/2496))
+- **[plan review]** "Review again in ‹reviewer›" is offered on every device for reviews started from this version ([#2496](https://github.com/k-k1/agent-fleet/issues/2496))
 - **[mirror]** A Claude conversation restored from the Agent's backup says so ([#2740](https://github.com/k-k1/agent-fleet/issues/2740))
 - **[work items]** Comments are accepted only from the Console by the workspace's member, and audited ([#2752](https://github.com/k-k1/agent-fleet/issues/2752))
 
@@ -33,8 +33,8 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 
 - **[chat]** A mistyped slash command stayed Pending forever on claude; the warning now shows ([#2830](https://github.com/k-k1/agent-fleet/issues/2830))
 - **[jira]** Markdown bodies were garbled next to Japanese text, and `issue create -P` dropped the parent ([#2809](https://github.com/k-k1/agent-fleet/issues/2809), [#2812](https://github.com/k-k1/agent-fleet/issues/2812))
-- **[opencode]** opencode 2: empty Agent instructions preview; a `/new` session's first turn missing from its pane ([#2799](https://github.com/k-k1/agent-fleet/issues/2799), [#2827](https://github.com/k-k1/agent-fleet/issues/2827))
-- **[assistant]** claude's own auto-memory stayed on with Agent Fleet memory; a muse-only conversation could not be compacted ([#2488](https://github.com/k-k1/agent-fleet/issues/2488), [#2790](https://github.com/k-k1/agent-fleet/issues/2790))
+- **[opencode]** opencode 2: empty Agent instructions preview; a `/new` session's first turn did not update its status ([#2799](https://github.com/k-k1/agent-fleet/issues/2799), [#2827](https://github.com/k-k1/agent-fleet/issues/2827))
+- **[assistant]** claude's own auto-memory stayed on with Agent Fleet memory ([#2488](https://github.com/k-k1/agent-fleet/issues/2488))
 - **[mirror]** A slash command with an attachment showed an internal instruction in its chip ([#2823](https://github.com/k-k1/agent-fleet/issues/2823))
 - **[misc]** IPv6 Control Plane URL in the egress allowlist, MCP connection-test timeouts, Settings heading spacing ([#2754](https://github.com/k-k1/agent-fleet/issues/2754), [#2820](https://github.com/k-k1/agent-fleet/issues/2820), [#2813](https://github.com/k-k1/agent-fleet/issues/2813))
 

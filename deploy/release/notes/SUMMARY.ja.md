@@ -18,13 +18,13 @@
 
 **New / Improved**
 
-- **[スキル]** エージェントの種類ごとのスキルを読み取り専用で表示。個人のものは 設定 › スキル、リポジトリのものは行のメニューの スキル… ([#2792](https://github.com/k-k1/agent-fleet/issues/2792), [#2795](https://github.com/k-k1/agent-fleet/issues/2795))
-- **[アシスタント]** チャットと Agent Fleet 自身の LLM 呼び出しが、利用上限・レート制限に達したバックエンドを避けて次で答え、お知らせを残す。メモリのレビューは待つ ([#2780](https://github.com/k-k1/agent-fleet/issues/2780))
+- **[スキル]** エージェントのスキルを読み取り専用で表示。個人のもの（Claude Code・Codex・OpenCode・Muse Code）は 設定 › スキル、リポジトリのもの（Cursor も）は行のメニューの スキル… ([#2792](https://github.com/k-k1/agent-fleet/issues/2792), [#2795](https://github.com/k-k1/agent-fleet/issues/2795))
+- **[アシスタント]** 利用上限・レート制限で表示前に失敗したチャットのターンを次のバックエンドで実行し直し、お知らせを残す。AI 補助の単発の生成も避ける。圧縮とメモリのレビューは切り替えない ([#2780](https://github.com/k-k1/agent-fleet/issues/2780))
 - **[作業項目]** 行に新しい動きの印、GitHub と Bitbucket の行にはコメント数 ([#2779](https://github.com/k-k1/agent-fleet/issues/2779))
 - **[ワークスペース]** 設定 › マシン にメモリ逼迫のグラフ（測定のみ） ([#2516](https://github.com/k-k1/agent-fleet/issues/2516), [#2837](https://github.com/k-k1/agent-fleet/issues/2837))
 - **[ビューア]** PDF ペインの検索。Ctrl/Cmd+F で全ページを探す専用の検索バー ([#2822](https://github.com/k-k1/agent-fleet/issues/2822))
 - **[作業項目]** 権限の確認が通れば GitHub App でのサインインにも マージ ボタン ([#2753](https://github.com/k-k1/agent-fleet/issues/2753))
-- **[計画レビュー]** 「‹reviewer› で再レビュー」がどの端末でも出る ([#2496](https://github.com/k-k1/agent-fleet/issues/2496))
+- **[計画レビュー]** この版から始めたレビューの「‹reviewer› で再レビュー」がどの端末でも出る ([#2496](https://github.com/k-k1/agent-fleet/issues/2496))
 - **[ミラー]** Agent のバックアップから復元した Claude の会話にその旨を表示 ([#2740](https://github.com/k-k1/agent-fleet/issues/2740))
 - **[作業項目]** コメントの投稿は Console からメンバー本人のものだけを受け付け、監査ログに記録 ([#2752](https://github.com/k-k1/agent-fleet/issues/2752))
 
@@ -32,8 +32,8 @@
 
 - **[チャット]** 打ち間違えたスラッシュコマンドが claude でずっと送信待ちだった。警告を表示 ([#2830](https://github.com/k-k1/agent-fleet/issues/2830))
 - **[Jira]** 日本語の隣の Markdown が崩れ、`issue create -P` で親が付かなかった ([#2809](https://github.com/k-k1/agent-fleet/issues/2809), [#2812](https://github.com/k-k1/agent-fleet/issues/2812))
-- **[opencode]** opencode 2 でエージェント指示のプレビューが空、`/new` のセッションの最初のターンがペインに出なかった ([#2799](https://github.com/k-k1/agent-fleet/issues/2799), [#2827](https://github.com/k-k1/agent-fleet/issues/2827))
-- **[アシスタント]** Agent Fleet のメモリが有効でも claude 自身の自動メモリが有効だった。muse だけの会話を圧縮できなかった ([#2488](https://github.com/k-k1/agent-fleet/issues/2488), [#2790](https://github.com/k-k1/agent-fleet/issues/2790))
+- **[opencode]** opencode 2 でエージェント指示のプレビューが空、`/new` のセッションの最初のターンで状態が更新されなかった ([#2799](https://github.com/k-k1/agent-fleet/issues/2799), [#2827](https://github.com/k-k1/agent-fleet/issues/2827))
+- **[アシスタント]** Agent Fleet のメモリが有効でも claude 自身の自動メモリが有効だった ([#2488](https://github.com/k-k1/agent-fleet/issues/2488))
 - **[ミラー]** 添付付きのスラッシュコマンドのチップに内部向けの指示が出ていた ([#2823](https://github.com/k-k1/agent-fleet/issues/2823))
 - **[その他]** 通信の許可リストでの IPv6 の Control Plane URL、MCP の接続テストの時間切れ、設定の見出しの間隔 ([#2754](https://github.com/k-k1/agent-fleet/issues/2754), [#2820](https://github.com/k-k1/agent-fleet/issues/2820), [#2813](https://github.com/k-k1/agent-fleet/issues/2813))
 

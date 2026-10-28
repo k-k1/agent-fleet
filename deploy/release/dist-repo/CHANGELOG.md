@@ -5,8 +5,8 @@ to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGEL
 
 ## [0.36.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.36.0) — 2026-10-28
 
-Every agent's skills can now be browsed read-only, the assistant moves to another backend when one
-hits a usage or rate limit, and work items are marked when they have new activity.
+Agents' skills can now be browsed read-only, the assistant moves past a backend held up by a usage
+or rate limit, and work items are marked when they have new activity.
 
 ## [0.35.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.35.0) — 2026-10-26
 
