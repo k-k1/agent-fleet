@@ -33,6 +33,7 @@ import { documentAssetParams, loadPdfjs, type Pdfjs } from "./pdfjs.ts";
 import { clipboardText } from "./pdfText.ts";
 import { findMatches, firstMatchFrom, pageText, stepMatch, type FindMatch, type PageText } from "./pdfFind.ts";
 import { addFindHits, clearFindHits, setFindCurrent } from "./pdfFindHighlight.ts";
+import { OWN_FIND_ATTR, OWN_FIND_EVENT } from "../../lib/ownFind.ts";
 import {
   anchorOf,
   canvasPixelRatio,
@@ -160,6 +161,8 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
   // match leaves `active` unchanged and must still bring it back.
   const [reveal, setReveal] = useState(0);
   const findInputRef = useRef<HTMLInputElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const openFindRef = useRef(() => {});
 
   // --- Loading ---------------------------------------------------------------
   useEffect(() => {
@@ -598,6 +601,8 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
     });
   };
 
+  openFindRef.current = openFind;
+
   const closeFind = () => {
     setFindOpen(false);
     scrollRef.current?.focus();
@@ -608,6 +613,17 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
     setActive((i) => stepMatch(i, matches.length, dir));
     setReveal((n) => n + 1);
   };
+
+  // In the Console, the pane's generic find (PaneFind) catches Ctrl/Cmd+F first and hands it
+  // over through OWN_FIND_EVENT (lib/ownFind.ts), also when focus is outside the pane. The key
+  // handler below covers a PdfView mounted without that wrapper.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const onOwnFind = () => openFindRef.current();
+    el.addEventListener(OWN_FIND_EVENT, onOwnFind);
+    return () => el.removeEventListener(OWN_FIND_EVENT, onOwnFind);
+  }, [failure]);
 
   // Ctrl/Cmd+F anywhere in the pane, the find bar included, opens (or re-selects) the pane's
   // find instead of the browser's.
@@ -685,7 +701,7 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
 
   const pages = pageSizes.length;
   return (
-    <div className="pdfview" onKeyDown={onPaneKeyDown}>
+    <div className="pdfview" ref={rootRef} {...{ [OWN_FIND_ATTR]: "" }} onKeyDown={onPaneKeyDown}>
       {findOpen && (
         <div className="pdfview-find" role="search" onKeyDown={onBarKeyDown}>
           <input

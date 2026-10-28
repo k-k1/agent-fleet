@@ -496,6 +496,18 @@ try {
   );
   check(closed === "0 painted", "Escape on a find-bar button closes it and clears its highlights", closed);
 
+  // In the Console the pane's generic find (PaneFind) takes Ctrl+F first and hands it over with
+  // this event (lib/ownFind.ts); the PDF pane must answer it by opening its own bar.
+  const handed = await b.evaluate(`(() => {
+    const v = document.querySelector('.pdfview[data-own-find]');
+    if (!v) return 'unmarked';
+    v.dispatchEvent(new CustomEvent('af-own-find'));
+    return 'sent'; })()`);
+  const handedOpen = await until(b.evaluate, "document.activeElement?.closest('.pdfview-find') ? 'focused' : 'closed'", (v) => v === "focused", PDF_BEHAVIOR_TRIES);
+  check(handed === "sent" && handedOpen === "focused", "the hand-over from the pane's generic find opens the PDF find bar",
+    `${handed}, bar ${handedOpen}`);
+  await key("Escape", "Escape", 27);
+
   // 12. Swapping the document while its text layers are still being built. Page indices repeat
   // across documents, so a late job for the old one must not claim or tear down a page of the new
   // one: after a burst of swaps, every page of the final document still gets its text layer.
