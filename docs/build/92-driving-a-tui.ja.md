@@ -161,7 +161,8 @@ cursor の Terminal の 2 つのメニュー——コマンドの承認（「Run
   whitelist 方式（idle / working 以外を全部塞ぐ）。Enter がハイライト行を無音で確定する事故は、
   プランでも許可プロンプトでも同型だから。ゲートに見えるのは kind ごとに読むものだけ——claude
   はフックがモーダルを書き込む状態ストア、Terminal の経路を持つそれ以外の kind は、その kind
-  自身の生きた状態を読むのと同じ出どころ（`kindModalProbes`）。Terminal の経路を持つのにどちらも
+  自身の生きた状態を読むのと同じ出どころ（その kind の `agents.ModalProbe`。
+  `internal/agents/<kind>/capabilities.go` の `PromptModal`）。Terminal の経路を持つのにどちらも
   無い kind はテストで落ちる。誰も書かない状態ストアに落ちて素通しになるからで、codex・opencode・
   cursor がまさにそうだった（貼り付けた 1 行が先頭の選択肢を答え、コマンドを実行し、プランを
   ビルドした。#1227 で実測）。モーダルでない画面も打鍵を取るものは同じく塞ぐ: codex の更新メニュー
@@ -195,7 +196,7 @@ cursor の Terminal の 2 つのメニュー——コマンドの承認（「Run
   状態を導く。材料は状態ストア（`internal/status`。claude のフックが質問・プラン・許可の
   モーダルを書き込む）と、そうしたフックの無い kind の一部に向けた転写・イベントログ・pane の
   kind 別の読み取り（たとえば `opencode.LiveState` や `kiro.LiveState`）。ゲートの
-  `promptBlocker` は同じ kind 別の出どころを `kindModalProbes`（`session_io.go`）経由で読む。
+  `promptBlocker` は同じ kind 別の出どころを各 kind の `agents.ModalProbe` 経由で読む。
   codex・opencode・cursor ではそれぞれの `TerminalModal`（92.3 を参照）。`internal/agents/modal.go`
   の `PendingModal` は別の継ぎ目で、セッションが止まるときに保留のまま残ったモーダルを持ち越す
   （意図した停止の前か、セッション一覧が pane の消滅に初めて気づいたときに問う）——生きた

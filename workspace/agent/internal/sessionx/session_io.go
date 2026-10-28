@@ -17,13 +17,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
@@ -42,32 +37,22 @@ import (
 // "" = unknown (composer not drawn / stopped) → the Console shows no mode. Matching is
 // confined to the pane's tail (status line region) so conversation content can't spoof it.
 func PaneMode(kind, tn string) string {
+	r, ok := paneModeReader(kind)
+	if !ok {
+		return ""
+	}
 	s := tmuxx.CapturePane(tn)
 	if s == "" {
 		return ""
 	}
-	return paneModeSwitch(kind, s)
+	return r.PaneMode(s)
 }
 
-// paneModeSwitch is PaneMode's per-kind parser choice over a captured pane.
-func paneModeSwitch(kind, s string) string {
-	switch kind {
-	case session.KindClaude:
-		return claude.PaneMode(s)
-	case session.KindOpencode:
-		return opencode.PaneMode(s)
-	case session.KindAgy:
-		return agy.PaneMode(s)
-	case session.KindCopilot:
-		return copilot.PaneMode(s)
-	case session.KindCursor:
-		return cursor.PaneMode(s)
-	case session.KindKiro:
-		return kiro.PaneMode(s)
-	case session.KindCodex:
-		return codex.PaneMode(s)
-	}
-	return ""
+// paneModeReader is kind's agents.PaneModeReader, by exact registry key.
+func paneModeReader(kind string) (agents.PaneModeReader, bool) {
+	a, _ := RegisteredAgent(kind)
+	r, ok := a.(agents.PaneModeReader)
+	return r, ok
 }
 
 // Programmatic session I/O for the MCP drive tools (docs/decisions/0006, P3-6 E).
@@ -756,7 +741,7 @@ func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane
 	// copilot: same shape — even with trust pre-written, there is no composer until the tab
 	// UI is drawn, and text sent to the boot screen disappears silently. The footer is the
 	// readiness signal.
-	if meta, ok := session.ReadMeta(name); ok && sendWaitsForComposerSwitch(meta.Kind) {
+	if meta, ok := session.ReadMeta(name); ok && sendWaitsForComposer(meta.Kind) {
 		tn := session.TmuxName(name)
 		for i := 0; i < 30 && PaneMode(meta.Kind, tn) == ""; i++ {
 			time.Sleep(500 * time.Millisecond)
@@ -781,10 +766,11 @@ func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane
 	return workingRev, true
 }
 
-// sendWaitsForComposerSwitch names the kinds whose boot screen eats a Terminal send.
-func sendWaitsForComposerSwitch(kind string) bool {
-	return kind == session.KindAgy || kind == session.KindCopilot || kind == session.KindCursor ||
-		kind == session.KindKiro
+// sendWaitsForComposer reports that kind's boot screen eats a Terminal send
+// (agents.PaneModeReader.SendWaitsForComposer).
+func sendWaitsForComposer(kind string) bool {
+	r, ok := paneModeReader(kind)
+	return ok && r.SendWaitsForComposer()
 }
 
 // slashCmdRe matches a single-token slash command like "/plan" or "/model foo" (but not a
@@ -1127,8 +1113,12 @@ func promptBlocker(name string) string {
 	if !ok {
 		return ""
 	}
-	if probe, ok := kindModalProbes[meta.Kind]; ok {
-		return blockingState(probe(meta))
+	// A kind whose modals never reach the status store reads them where they live
+	// (agents.ModalProbe), by exact registry key.
+	if a, _ := RegisteredAgent(meta.Kind); a != nil {
+		if p, ok := a.(agents.ModalProbe); ok {
+			return blockingState(p.PromptModal(meta))
+		}
 	}
 	// claude: when the credentials have expired, refuse on that ground before any modal
 	// (docs/log/47 §4-8). The TUI accepts the characters and the Enter goes through, yet
@@ -1149,42 +1139,6 @@ func promptBlocker(name string) string {
 	// on screen (plan_pending, not permission_pending) and the operator is pointed at
 	// the surface that can actually decide it.
 	return blockingState(effectiveModal(sid, st.State))
-}
-
-// kindModalProbes reads, for every kind whose modals never reach the status store, the modal
-// it is showing now ("" when none) — from the same source its own live state is built on, so
-// the refusal and the Console's badge agree. Every kind with a Terminal route is here except
-// claude, whose hooks write its question / plan / permission into the status store, and
-// shell / ssm, which have no modal; a kind missing from both would fall through to a status
-// store nothing fills and never be refused (TestPromptBlockerCoversEveryTerminalKind).
-var kindModalProbes = map[string]func(session.Meta) string{
-	// The conversation DB's last step (pending.go). It reports ONLY the blocking states
-	// ("question" / "permission"), so an empty probe means "nothing pending".
-	session.KindAgy: func(m session.Meta) string { st, _ := agy.Probe(m); return st },
-	// An unfinished permission.requested in events.jsonl — the tui's permission menu and
-	// managed's Interaction in the same shape.
-	session.KindCopilot: copilot.LiveState,
-	// The approval panel's text in the pane ("shell requires approval"), reported as
-	// "question"; managed is also guarded by ErrQuestionPending.
-	session.KindKiro: kiro.LiveState,
-	// Their hooks and plugin report working/idle at most, so the question (codex's rollout,
-	// opencode's store) and cursor's approval and build menus (the pane) are read where they
-	// live. Terminal route only: their managed drivers refuse free text themselves
-	// (ErrQuestionPending).
-	session.KindCodex:    codexModal,
-	session.KindOpencode: opencode.TerminalModal,
-	session.KindCursor:   cursor.TerminalModal,
-}
-
-// codexModal adds to codex's question the screens its Terminal pane draws outside the
-// conversation — the update menu, the lock screen, the model-switch nudge — which take a typed
-// line's keys just the same (codex.PaneScreen). They stay out of codex.TerminalModal, which the
-// chat chip reads as "question".
-func codexModal(m session.Meta) string {
-	if q := codex.TerminalModal(m); q != "" {
-		return q
-	}
-	return codex.TerminalScreen(m)
 }
 
 // blockingState maps a live state to "" (free) or the state itself (blocking). An
