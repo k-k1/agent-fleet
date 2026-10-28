@@ -16,10 +16,10 @@ import {
   engineIsRemote,
   engineModes,
   engineTitle,
-  useEngineRows,
   type EngineOffer,
   type EngineRow,
 } from "./engineTypes.ts";
+import { useEngineRows } from "./useEngineRows.ts";
 
 // The self-hosted inference engines as MACHINES (ADR 0071): one row per engine, each with the
 // same off / on-demand / always-on control the VOICEVOX panel has, plus what that engine is
