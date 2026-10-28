@@ -2,8 +2,8 @@
 // separator, ordered by each view's first action: Agent memory leads with import, Memory snapshots
 // with export. "持ち出し" and the slash are not used for these tab labels.
 import { describe, it, expect } from "vitest";
-import { tools as en } from "./locales/en/tools.ts";
-import { tools as ja } from "./locales/ja/tools.ts";
+import { memory as en } from "./locales/en/memory.ts";
+import { memory as ja } from "./locales/ja/memory.ts";
 
 describe("memory import/export view labels", () => {
   it("name Agent memory's tab import-first and Memory snapshots' tab export-first, with one separator", () => {
