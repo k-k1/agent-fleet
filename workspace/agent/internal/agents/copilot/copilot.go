@@ -2,7 +2,7 @@
 // @github/copilot; docs/log/36 Track A). It keeps inside the kind both the read layer (the
 // Agent implementation, the transcript and state read from events.jsonl) and the managed
 // driver (--acp: Agent Client Protocol JSON-RPC over stdio, a per-session child -
-// driver.go/acp.go).
+// driver.go over the shared ../acp client).
 //
 // Session identity is a UUID minted by AF (`--session-id <uuid v4>`, shared by the TUI and by
 // ACP's session/load), so agy's "the resume UUID cannot be obtained" problem (docs/log/32

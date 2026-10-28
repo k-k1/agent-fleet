@@ -91,7 +91,7 @@ func TestLiveManagedSpawnPromptResume(t *testing.T) {
 	if sid == "" || sids.Read("livem-slot-1") != sid {
 		t.Fatalf("sid not captured: %q store=%q", sid, sids.Read("livem-slot-1"))
 	}
-	turns := h.buf.snapshot()
+	turns := h.buf.Snapshot()
 	found := false
 	for _, tn := range turns {
 		if tn.Role == "assistant" && strings.Contains(tn.Text, "LIVE-KIRO-OK") {
@@ -143,7 +143,7 @@ func TestLiveManagedSpawnPromptResume(t *testing.T) {
 	if h.sid != sid {
 		t.Fatalf("resume changed sid: %q -> %q", sid, h.sid)
 	}
-	replayed := h.buf.snapshot()
+	replayed := h.buf.Snapshot()
 	if len(replayed) == 0 {
 		t.Fatalf("transcript not rebuilt from session/load replay")
 	}
@@ -152,7 +152,7 @@ func TestLiveManagedSpawnPromptResume(t *testing.T) {
 	}
 	waitState(t, h, agents.TurnRunning)
 	waitCompleted(t, h)
-	turns = h.buf.snapshot()
+	turns = h.buf.Snapshot()
 	last := turns[len(turns)-1]
 	if last.Role != "assistant" || !strings.Contains(last.Text, "LIVE-KIRO-OK") {
 		t.Fatalf("resume lost context; last turn: %+v", last)

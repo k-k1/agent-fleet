@@ -132,7 +132,7 @@ func peerEnvelope(from, intent, reply, message string) string {
 // 6: it has no CLI config file to write) and so, wrongly, could never be a peer target either —
 // 403 peer_target_forbidden on a kind ADR 0041 never meant to exclude (found live 2026-09-21,
 // the lcpp kind's first end-to-end run). The axis that actually answers "can receive a peer
-// message" is agentRegistry (agent.go): every kind registered there gets an /input turn the same
+// message" is the kind registry (internal/agentreg): every kind registered there gets an /input turn the same
 // way, which is the whole delivery mechanism a peer send reuses (this file's own header comment)
 // — shell/ssm are excluded above because that turn is arbitrary command execution for them, not
 // because they are unregistered.
@@ -141,7 +141,7 @@ func peerTargetAllowed(kind string) bool {
 	case session.KindShell, session.KindSSM, "":
 		return false
 	}
-	_, ok := agentRegistry[kind]
+	_, ok := RegisteredAgent(kind)
 	return ok
 }
 

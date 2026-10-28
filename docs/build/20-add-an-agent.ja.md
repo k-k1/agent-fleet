@@ -47,7 +47,7 @@ source_of_truth: "既存の `internal/agents/<kind>` パッケージ（一番近
 
 | 面 | 置き場 | 注意 |
 |---|---|---|
-| kind 定数と登録 | `internal/session/session.go` の `Kind*`、`internal/sessionx/agent.go` の `agentRegistry`、マネージドなら `internal/sessionx/session_turn.go` の `managedDrivers` | **`agentRegistry` に無い kind は黙って claude になる**。`NormalizeKind` と `AgentOf` がそこへ落とす |
+| kind 定数と登録 | `internal/session/session.go` の `Kind*`、`internal/agentreg/agentreg.go` の `registry` と `internal/kinds/kinds.go` の同じ kind、マネージドなら `internal/sessionx/session_turn.go` の `managedDrivers` | **レジストリに無い kind は黙って claude になる**。`NormalizeKind` と `AgentOf` がそこへ落とす |
 | capability | 自パッケージの `Caps()`、自 `Driver` の `Capabilities()` | **利用者に見える capability は、通しで駆動するまで立てない**。`Capabilities()` は driver の実装を宣言する（§20.4）。`Caps()` は `GET /agents/kinds` がそのまま配る値でもある（§20.7）。`Tri` のフィールドを未設定のままにすると `unverified` と読まれ、`no` にはならない |
 | ターミナル起動 | 自パッケージの `BuildLaunch`（`agents.LaunchPlan` を返す）| 環境変数は `LaunchPlan.Env` に入れ、**コマンドに前置しない**（§20.3）。マネージド専用の種別は `ErrNoTerminalRoute` を返す |
 | マネージドの実行系 | 自 `Driver`。`Resume` が `ThreadHandle` を返す | 形はプロセスモデルに従う（[04 §4.3](04-agent.ja.md)）|
@@ -202,7 +202,7 @@ dispatch するなら `RED_KINDS` も）に種別を足し、`cli-drift.yml` の
 短くなります（[#1077](https://github.com/k-k1/agent-fleet/issues/1077)）。各行の詳細は §20.2 にあります。
 
 **kind カタログ。** Agent は `GET /agents/kinds`（`workspace/agent/agent_kinds.go`）を配ります。
-`agentRegistry` のキーごとに 1 件で、`Caps()`、実効の既定 driver、MCP サーバと指示を受け取るかを
+レジストリのキーごとに 1 件で、`Caps()`、実効の既定 driver、MCP サーバと指示を受け取るかを
 持ちます。capability の答えは `yes` / `no` / `unverified` の三値で、利用側は `unverified` を
 「未対応」ではなく「不明」として扱います。CP は、問い合わせる Workspace が無いままテナント定義を
 検証するので、そのスナップショット `control-plane/internal/agentkinds/catalog.json` を埋め込みます。
@@ -220,8 +220,9 @@ Agent のイメージを先に、または同時に配備し、その間は断�
 
 **必須 — どの種別でも:**
 
-- [ ] `internal/session/session.go` の `Kind*` 定数と `agentRegistry` の登録。キーは `Kind()` と
-      一致する（`TestRegisteredKindsSpellTheirOwnKind`）
+- [ ] `internal/session/session.go` の `Kind*` 定数、`internal/agentreg` の `registry` と
+      `internal/kinds` の一覧への登録。キーは `Kind()` と一致し（`TestRegisteredKindsSpellTheirOwnKind`）、
+      2 つの一覧は揃う（`TestRegistryMatchesTheKindsList`）
 - [ ] `Caps()` の全フィールドを決める。`MCPClient` も含む（`unverified` だと
       `TestMCPClientKindsMatchRegistry` が落ちる）。マネージドで始めたい種別は `ManagedDefault` も
       （CP とコンテナ内の呼び出し側が追従する。集合は `TestManagedDefaultKindFollowsTheRegistry` が固定）

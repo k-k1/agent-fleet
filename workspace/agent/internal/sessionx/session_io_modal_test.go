@@ -23,7 +23,8 @@ import (
 // opencode and cursor sat in (#1227).
 func TestPromptBlockerCoversEveryTerminalKind(t *testing.T) {
 	storeOrNone := map[string]bool{session.KindClaude: true, session.KindShell: true, session.KindSSM: true}
-	for kind, a := range agentRegistry {
+	for _, kind := range RegisteredKinds() {
+		a := AgentOf(kind)
 		if a.Caps().ManagedOnly {
 			if _, ok := kindModalProbes[kind]; ok {
 				t.Errorf("%s has no Terminal route, yet has a modal probe", kind)

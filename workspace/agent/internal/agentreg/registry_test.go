@@ -1,4 +1,4 @@
-package sessionx
+package agentreg
 
 import (
 	"errors"
@@ -29,15 +29,15 @@ func mcpKindAccepted(t *testing.T, kind string) bool {
 // The registry key is what every list and the wire spell; an agent answering a different
 // Kind() is the alternate-spelling drift a derived list inherits silently.
 func TestRegisteredKindsSpellTheirOwnKind(t *testing.T) {
-	kinds := RegisteredKinds()
-	if len(kinds) != len(agentRegistry) || !slices.IsSorted(kinds) {
-		t.Fatalf("RegisteredKinds() = %v, want all %d registry keys sorted", kinds, len(agentRegistry))
+	kinds := Kinds()
+	if len(kinds) != len(registry) || !slices.IsSorted(kinds) {
+		t.Fatalf("Kinds() = %v, want all %d registry keys sorted", kinds, len(registry))
 	}
 	for _, k := range kinds {
-		if got := agentRegistry[k].Kind(); got != k {
-			t.Errorf("agentRegistry[%q].Kind() = %q", k, got)
+		if got := registry[k].Kind(); got != k {
+			t.Errorf("registry[%q].Kind() = %q", k, got)
 		}
-		c := agentRegistry[k].Caps()
+		c := registry[k].Caps()
 		if c.ManagedOnly && c.ManagedDefault {
 			t.Errorf("%s: ManagedOnly and ManagedDefault both set; ManagedOnly already has no other driver", k)
 		}
@@ -48,8 +48,8 @@ func TestRegisteredKindsSpellTheirOwnKind(t *testing.T) {
 // a kind whose Caps say it runs an MCP client and that mcpreg refuses (or the reverse) is the
 // failure #1075 shipped, found only when an admin's definition was refused.
 func TestMCPClientKindsMatchRegistry(t *testing.T) {
-	for _, k := range RegisteredKinds() {
-		mc := agentRegistry[k].Caps().MCPClient
+	for _, k := range Kinds() {
+		mc := registry[k].Caps().MCPClient
 		if mc == agents.TriUnverified {
 			t.Errorf("%s: Caps().MCPClient is unverified; measure it and set yes or no", k)
 			continue
@@ -63,7 +63,7 @@ func TestMCPClientKindsMatchRegistry(t *testing.T) {
 		}
 	}
 	for _, k := range mcpreg.ServedKinds {
-		if _, ok := agentRegistry[k]; !ok {
+		if _, ok := registry[k]; !ok {
 			t.Errorf("mcpreg.ServedKinds has %q, which is not a registered kind", k)
 		}
 	}
@@ -85,13 +85,13 @@ func TestMCPKindAlternateSpellingsRefused(t *testing.T) {
 // without the other is either skipped by MaterializeAll for ever or never run. Walking the real
 // registry (not a copy of its names) is what catches a kind registered later.
 func TestMaterializedKindsMatchWritersForEveryRegisteredKind(t *testing.T) {
-	for _, k := range RegisteredKinds() {
+	for _, k := range Kinds() {
 		if has, listed := mcpreg.HasWriter(k), slices.Contains(mcpreg.MaterializedKinds, k); has != listed {
 			t.Errorf("%s: has an MCP config writer=%v, in mcpreg.MaterializedKinds=%v", k, has, listed)
 		}
 	}
 	for _, k := range mcpreg.MaterializedKinds {
-		if _, ok := agentRegistry[k]; !ok {
+		if _, ok := registry[k]; !ok {
 			t.Errorf("mcpreg.MaterializedKinds has %q, which is not a registered kind", k)
 		}
 	}

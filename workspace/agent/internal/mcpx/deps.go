@@ -76,7 +76,7 @@ type Deps struct {
 	AgentFleetShareDir func() string
 	InstallGrafanaMCP  func(ver string) (string, error)
 
-	// Writing an SSM session's config (session_ssm.go).
+	// Writing an SSM session's config (internal/agents/ssm/config.go).
 	WriteSSMConfig func(path string, s session.SSMMeta) error
 
 	// --- the three flags that decide the tool set ---

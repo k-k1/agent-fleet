@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -210,15 +211,7 @@ func (f fakeModalAgent) PendingModal(session.Meta) (agents.PendingModal, bool) {
 // withFakeAgent swaps one kind's registry entry for the duration of a test.
 func withFakeAgent(t *testing.T, kind string, a agents.Agent) {
 	t.Helper()
-	prev, had := agentRegistry[kind]
-	agentRegistry[kind] = a
-	t.Cleanup(func() {
-		if had {
-			agentRegistry[kind] = prev
-			return
-		}
-		delete(agentRegistry, kind)
-	})
+	t.Cleanup(agentreg.SwapForTest(kind, a))
 }
 
 // A non-claude kind with a question is carried together with its options, so it can be

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -43,9 +44,7 @@ func (fakeNoBgAgent) BackgroundWork() {} // shadows the method, so the interface
 func genericMessages(t *testing.T, a agents.Agent, alive bool, state string) map[string]any {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
-	prev := agentRegistry[session.KindMuse]
-	agentRegistry[session.KindMuse] = a
-	t.Cleanup(func() { agentRegistry[session.KindMuse] = prev })
+	t.Cleanup(agentreg.SwapForTest(session.KindMuse, a))
 
 	m := session.Meta{Name: "slot-bg-wire", Dir: t.TempDir(), Kind: session.KindMuse, Driver: session.DriverManaged}
 	session.WriteMeta(m)

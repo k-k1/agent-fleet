@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/acp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -31,7 +32,7 @@ type fakeACP struct {
 	gotResp   chan json.RawMessage
 }
 
-func newFakeACP(t *testing.T) (*acpClient, *fakeACP) {
+func newFakeACP(t *testing.T) (*acp.Client, *fakeACP) {
 	t.Helper()
 	cIn, sOut := io.Pipe()
 	sIn, cOut := io.Pipe()
@@ -132,13 +133,13 @@ func newTestHandle(t *testing.T) (*threadHandle, *fakeACP) {
 		events: make(chan agents.Event, 64),
 		q:      agents.NewTurnQueue("s1", ledger, agents.LedgerAtTake),
 	}
-	h.cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
+	h.cl.OnRequest = func(id json.RawMessage, method string, params json.RawMessage) {
 		h.onServerRequest(h.cl, id, method, params)
 	}
 	// t.Cleanup is LIFO, so this wait, pushed after the t.Setenv("HOME", …) above, runs before
 	// HOME is restored (pushed before it, it would run after the restore, which is too late).
 	t.Cleanup(func() { endTurnsBeforeHomeRestore(t, h) })
-	h.cl.onNotify = h.onNotify
+	h.cl.OnNotify = h.onNotify
 	return h, f
 }
 
@@ -184,7 +185,7 @@ func endTurnsBeforeHomeRestore(t *testing.T, h *threadHandle) {
 	cl := h.cl
 	h.mu.Unlock()
 	if cl != nil {
-		cl.markClosed()
+		cl.MarkClosed()
 	}
 	if !pumpIdleWithin(h, 10*time.Second) {
 		t.Error("a turn is still running after the test ended: restoring HOME now would write to the real ~/.config/agent-fleet")

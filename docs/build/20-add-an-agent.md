@@ -50,7 +50,7 @@ unless they name another tree.
 
 | Surface | Where | Notes |
 |---|---|---|
-| The kind constant and its registration | `Kind*` in `internal/session/session.go`; `agentRegistry` in `internal/sessionx/agent.go`; for Managed, `managedDrivers` in `internal/sessionx/session_turn.go` | **A kind missing from `agentRegistry` silently becomes claude**: `NormalizeKind` and `AgentOf` fall back to it |
+| The kind constant and its registration | `Kind*` in `internal/session/session.go`; `registry` in `internal/agentreg/agentreg.go` and the same kind in `internal/kinds/kinds.go`; for Managed, `managedDrivers` in `internal/sessionx/session_turn.go` | **A kind missing from the registry silently becomes claude**: `NormalizeKind` and `AgentOf` fall back to it |
 | Capabilities | `Caps()` in your package; `Capabilities()` on your `Driver` | **Do not set a capability the member sees until you have driven it end to end.** `Capabilities()` declares what the driver implements (§20.4). `Caps()` is also what `GET /agents/kinds` serves (§20.7); a `Tri` field left unset reads `unverified`, never `no` |
 | Terminal launch | your package's `BuildLaunch`, returning `agents.LaunchPlan` | Environment goes in `LaunchPlan.Env`, **never prefixed onto the command** (§20.3). A managed-only kind returns `ErrNoTerminalRoute` |
 | Managed runtime | your `Driver`: `Resume` returns a `ThreadHandle` | Its shape follows the process model ([04 §4.3](04-agent.md)) |
@@ -221,7 +221,7 @@ onto the catalog ([#1077](https://github.com/k-k1/agent-fleet/issues/1077)); §2
 the detail behind each line.
 
 **The kind catalog.** The agent serves `GET /agents/kinds` (`workspace/agent/agent_kinds.go`):
-one entry per `agentRegistry` key with its `Caps()`, the effective default driver, and
+one entry per registry key with its `Caps()`, the effective default driver, and
 whether it takes MCP servers and instructions. Capability answers are tri-state —
 `yes` / `no` / `unverified` — and a consumer treats `unverified` as unknown, not
 unsupported. The CP embeds a snapshot of it, `control-plane/internal/agentkinds/catalog.json`,
@@ -240,8 +240,10 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
 
 **Required — every kind:**
 
-- [ ] `Kind*` constant in `internal/session/session.go` and an `agentRegistry` entry; the
-      key equals `Kind()` (`TestRegisteredKindsSpellTheirOwnKind`)
+- [ ] `Kind*` constant in `internal/session/session.go`, an entry in `internal/agentreg`'s
+      `registry` and in `internal/kinds`' list; the key equals `Kind()`
+      (`TestRegisteredKindsSpellTheirOwnKind`) and the two lists agree
+      (`TestRegistryMatchesTheKindsList`)
 - [ ] `Caps()` with every field decided, `MCPClient` included (`TestMCPClientKindsMatchRegistry`
       fails on `unverified`) and `ManagedDefault` for a kind that should start Managed (the
       CP and in-container callers follow it; `TestManagedDefaultKindFollowsTheRegistry` pins
