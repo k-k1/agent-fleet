@@ -971,12 +971,6 @@ func (h *threadHandle) setState(st agents.TurnState) {
 	h.emit(agents.Event{Kind: "turn_state", TurnState: st})
 }
 
-func (h *threadHandle) currentState() agents.TurnState {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.state
-}
-
 // emit never blocks a state transition (drop on overflow) — the same convention every other
 // driver's event channel uses.
 func (h *threadHandle) emit(e agents.Event) {

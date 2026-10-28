@@ -83,7 +83,7 @@ const (
 type Record struct {
 	TS   string `json:"ts"`   // when the call finished (UTC, RFC3339)
 	Call string `json:"call"` // call id: binds the rows one call splits into across models
-	// Feature/Trigger/Ref/Verb come from the ctx usageTag (usage_tag.go).
+	// Feature/Trigger/Ref/Verb come from the ctx tag (WithTag).
 	Feature string `json:"feature"`
 	Trigger string `json:"trigger,omitempty"`
 	// Origin/OriginConv are the session's provenance (ADR0029 §6). Resolved from ref and

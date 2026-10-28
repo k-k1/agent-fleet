@@ -1,7 +1,6 @@
 package chatx
 
 import (
-	"context"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -71,21 +70,6 @@ func TestRecommendedCatalogModelRequiresExactEntitlement(t *testing.T) {
 	if got := recommendedCatalogModel([]string{"opencode/glm-5.2"}, target, "fallback"); got != "fallback" {
 		t.Fatalf("Zen twin must not prove Go entitlement: %q", got)
 	}
-}
-
-// modelChatProv is a stub provider that records a turn model the way a real provider
-// does (startTurn on entry, noteTurnModel only on success).
-type modelChatProv struct {
-	reply string
-	model string // "" = the CLI named no model and none was passed
-}
-
-func (p modelChatProv) Send(_ context.Context, c *ChatConversation, _ string) (string, error) {
-	c.StartTurn()
-	if p.model != "" {
-		c.NoteTurnModel(p.model)
-	}
-	return p.reply, nil
 }
 
 // TestChatModelOverride pins the per-call override (the auto-turn-only model): while it is

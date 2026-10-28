@@ -1108,14 +1108,9 @@ func handleDeleteGitConn(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": host})
 }
 
-// upsertGitCredential stores an HTTPS credential for host in the encrypted store
-// and ensures the cred helper is the active git credential source.
-func upsertGitCredential(host, user, token string) error {
-	return storeGitCredential(host, secrets.GitEntry{User: user, Token: token})
-}
-
-// storeGitCredential is upsertGitCredential for a prepared entry (one that carries the
-// renewal data of an expiring GitHub token).
+// storeGitCredential stores an HTTPS credential for host in the encrypted store and ensures
+// the cred helper is the active git credential source. The entry may carry the renewal data of
+// an expiring GitHub token.
 func storeGitCredential(host string, e secrets.GitEntry) error {
 	if err := secrets.Update(func(s *secrets.Data) error {
 		s.Git[host] = e

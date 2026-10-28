@@ -49,7 +49,6 @@ import (
 )
 
 const codexAppServerEnv = "AF_CODEX_APP_SERVER_ADDR"
-const defaultCodexAppServerAddr = "ws://127.0.0.1:7798"
 
 type codexAppServerMessage struct {
 	ID     json.RawMessage `json:"id,omitempty"`

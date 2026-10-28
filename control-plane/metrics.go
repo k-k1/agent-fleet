@@ -127,18 +127,12 @@ func (t *cpuTracker) pct(id string, usage uint64, now time.Time) (float64, bool)
 
 var cpuSamples = &cpuTracker{prev: map[string]cpuSample{}}
 
-// dockerContainerID returns the id of a RUNNING container, else "". docker inspect
-// resolves a stopped/exited container too, so we must gate on .State.Running —
-// otherwise containerStats reports a stopped workspace as running: a wrong "running" dot,
-// a hidden "stopped" notice, and an enabled force-stop button.
-func dockerContainerID(ctx context.Context, name string) string {
-	id, _ := dockerContainerRun(ctx, name)
-	return id
-}
-
-// dockerContainerRun is dockerContainerID plus a token naming this run of the container: the
-// id changes when the container is replaced and StartedAt when the same one is restarted, so
-// the token changes on either. Per-run state (the pressure sample) is keyed on it.
+// dockerContainerRun returns the id of a RUNNING container, else "", plus a token naming this
+// run of the container: the id changes when the container is replaced and StartedAt when the
+// same one is restarted, so the token changes on either. Per-run state (the pressure sample)
+// is keyed on it. docker inspect resolves a stopped/exited container too, so it must gate on
+// .State.Running — otherwise containerStatsRun reports a stopped workspace as running: a
+// wrong "running" dot, a hidden "stopped" notice, and an enabled force-stop button.
 func dockerContainerRun(ctx context.Context, name string) (id, run string) {
 	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Running}} {{.Id}} {{.State.StartedAt}}", name).Output()
 	if err != nil {
@@ -283,18 +277,12 @@ func containerCPUPct(id, scope string) (float64, bool) {
 // hostStatsHook lets a test stand in for the docker host (no docker in CI); nil in production.
 var hostStatsHook func(ctx context.Context, name string) (map[string]any, string)
 
-// containerStats reads a container's live mem/CPU from its cgroup v2 scope,
+// containerStatsRun reads a container's live mem/CPU from its cgroup v2 scope,
 // keyed by container name. Returns {running:false} when the container is gone,
 // {running:true} (no metrics) when the scope path is unreadable, or the full
-// {running, mem_used, mem_max?, cpu_pct?} otherwise. Shared by the own-workspace
-// chip and the admin per-member view.
-func containerStats(ctx context.Context, name string) map[string]any {
-	out, _ := containerStatsRun(ctx, name)
-	return out
-}
-
-// containerStatsRun is containerStats plus the run token of the container it read ("" when
-// there is none). The token is internal: it never enters the map, so it is not on the wire.
+// {running, mem_used, mem_max?, cpu_pct?} otherwise, and the run token of the container it
+// read ("" when there is none). The token is internal: it never enters the map, so it is not
+// on the wire.
 func containerStatsRun(ctx context.Context, name string) (map[string]any, string) {
 	if hostStatsHook != nil {
 		return hostStatsHook(ctx, name)
@@ -339,7 +327,7 @@ func containerStatsRun(ctx context.Context, name string) (map[string]any, string
 
 // --- The runtime-neutral view (docs/log/63 §63.9) ---
 //
-// containerStats above only works where the CP and the workspace share a host:
+// containerStatsRun above only works where the CP and the workspace share a host:
 // it shells out to `docker inspect` and reads the host's cgroup tree. On every ECS
 // profile (Fargate and ecs-ec2) neither exists in the CP task, so it answered
 // running:false with no gauges at all — three "–" tiles under a workspace that was

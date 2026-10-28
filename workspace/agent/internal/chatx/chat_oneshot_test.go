@@ -20,7 +20,6 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
@@ -145,14 +144,6 @@ func TestTitleSuggestLive(t *testing.T) {
 // usageCall it assembled, so a change in the CLI's output shape (modelUsage key names,
 // canonicalModel, total_cost_usd) is detectable only there.
 // Run with: AF_TITLE_LIVE=1 go test -run TestUsageLedgerLive -v .
-
-// oneShotLiveTurns is the minimal conversation log fed to the three features.
-func oneShotLiveTurns() []transcript.Turn {
-	return []transcript.Turn{
-		{Role: "user", Text: "使用量のグラフを作りたい", TS: "2026-07-25T09:00:00Z"},
-		{Role: "assistant", Text: "機能別トークン計測の台帳を設計します。まず補助呼び出しの実在箇所を洗い出しました。", TS: "2026-07-25T09:01:00Z"},
-	}
-}
 
 // TestBranchSuggestLive / TestReplySuggestLive (package main) cover the remaining two features
 // that share oneShotHeadless: that the persona's instructions (one kebab-case word / short

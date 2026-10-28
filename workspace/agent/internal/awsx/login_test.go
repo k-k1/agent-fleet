@@ -50,14 +50,8 @@ func putSSOCache(token string, expires time.Time) error {
 	return os.WriteFile(path, b, 0o600)
 }
 
-func waitForFile(t *testing.T, path string) {
-	t.Helper()
-	if !fileAppears(path) {
-		t.Fatalf("%s never appeared", path)
-	}
-}
-
-// fileAppears is waitForFile for a helper goroutine, which may not call t.Fatal.
+// fileAppears waits up to 5s for path; it reports instead of failing, so a helper goroutine,
+// which may not call t.Fatal, can use it.
 func fileAppears(path string) bool {
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
 		if _, err := os.Stat(path); err == nil {

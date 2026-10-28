@@ -452,7 +452,7 @@ func wireMapPayload(n ast.Node, env *wireMapEnv) (ast.Expr, bool) {
 // A false return means "not a map" (named type, slice, nil, …; not this file's business).
 // depth is a runaway guard, not a semantic limit: cut it short and key sets silently thin
 // out — measured, a limit of 3 stopped at the fourth level of
-// `workspaceStats → out := containerStats() → out := map{...}` and turned 8 keys into 3,
+// `workspaceStats → out, run := containerStatsRun() → out := map{...}` and turned 8 keys into 3,
 // while still looking green. Recursion is spent on function nesting, so cycles are stopped
 // by visited and the depth is left generous.
 func wireMapClassify(s *wireMapSite, e ast.Expr, env *wireMapEnv, funcs map[string]*ast.FuncDecl, visited map[*ast.FuncDecl]bool, depth int) bool {

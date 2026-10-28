@@ -304,13 +304,12 @@ func (a *egressArchiver) put(ctx context.Context, f *os.File, w *archiveWriter, 
 // archiveWriter streams one object: header, then rows, then the manifest on close. It keeps a
 // SHA-256 over the address lines, which names a supplement.
 type archiveWriter struct {
-	hdr   egressArchiveHeader
-	zw    *gzip.Writer
-	bw    *bufio.Writer
-	enc   *json.Encoder
-	hash  hash.Hash
-	m     egressArchiveManifest
-	first bool
+	hdr  egressArchiveHeader
+	zw   *gzip.Writer
+	bw   *bufio.Writer
+	enc  *json.Encoder
+	hash hash.Hash
+	m    egressArchiveManifest
 }
 
 func newArchiveWriter(f io.Writer, hdr egressArchiveHeader) *archiveWriter {

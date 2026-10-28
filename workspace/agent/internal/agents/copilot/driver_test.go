@@ -19,14 +19,9 @@ import (
 
 // fakeACP is a scriptable ACP peer on the other end of the client's pipes.
 type fakeACP struct {
-	writes   *gatedWriter   // the client's stdin, which a test can hold to keep a write in flight
-	toClient *io.PipeWriter // server → client stdout
-	mu       sync.Mutex
-	requests []struct {
-		ID     int64
-		Method string
-		Params json.RawMessage
-	}
+	writes    *gatedWriter   // the client's stdin, which a test can hold to keep a write in flight
+	toClient  *io.PipeWriter // server → client stdout
+	mu        sync.Mutex
 	prompts   []string             // text of each session/prompt, in arrival order
 	gotPrompt chan int64           // session/prompt request ids as they arrive
 	gotCancel chan struct{}        // session/cancel notifications

@@ -687,30 +687,6 @@ func BuildLoginProviders(c Deployment) ([]LoginProvider, error) {
 	return out, nil
 }
 
-// OIDCSpec is the part of an OIDC provider's configuration that can be named from
-// outside this package. It exists for the two callers that legitimately need to
-// construct one without going through the environment — the admin API's issuer
-// probe and the tests that hand a provider list to the admin endpoints — and it
-// deliberately does NOT expose the authorization fields (allowlists, trust,
-// linkClaim). Those decide who gets in, and a provider built out there with them
-// half-filled would be a door nobody meant to open.
-type OIDCSpec struct {
-	ID, LabelJA, LabelEN string
-	Issuer               string
-	ClientID             string
-	ClientSecret         string
-}
-
-// NewOIDCProvider builds a provider that can answer ID / Label / IssuerURL and run
-// discovery. It performs no authorization on its own: with no allowlist and no
-// deployAllowed/dbAllowed term, Allowed denies (fail closed).
-func NewOIDCProvider(s OIDCSpec) *OIDCProvider {
-	return &OIDCProvider{
-		ProviderID: s.ID, LabelJA: s.LabelJA, LabelEN: s.LabelEN,
-		Issuer: s.Issuer, ClientID: s.ClientID, ClientSecret: s.ClientSecret,
-	}
-}
-
 // IssuerUsesPairwiseSubjects runs OIDC discovery against issuer and reports whether
 // it declares `subject_types_supported: ["pairwise"]` — an issuer that gives each
 // app registration a different `sub` for the same person (docs/log/61 §61.17.4 (b)).

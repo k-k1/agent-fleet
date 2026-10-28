@@ -23,9 +23,6 @@ type fakeTTSECS struct {
 	// deregistered records the container instances taken out of the cluster, which is the first
 	// half of a departure (ADR 0077 decision 5).
 	deregistered []string
-	// live answers `draining` the way the EC2 side does: is an instance of this role still in
-	// existence behind a stopped service. nil = nothing to ask, i.e. Fargate.
-	live func(context.Context) bool
 	// registered is the registeredAt the box reports, i.e. when it joined the cluster. Zero
 	// leaves it unset, which is the shape of a cluster that has no box at all.
 	registered time.Time

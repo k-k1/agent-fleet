@@ -90,7 +90,7 @@ type SlotForceStop struct {
 //     a workspace may be running on it. An unreadable health signal refuses too, unless
 //     overridden: "when in doubt, do not stop it". A quarantined slot is refused
 //     (ErrSlotQuarantined): it is already out of service.
-//  2. End the occupant's Start with the runtime's own Stop (abortStarts under the claim
+//  2. End the occupant's Start with the runtime's own Stop (beginStart under the claim
 //     lock, desiredCount 0, the claim dropped). A member who is mid-Start on this slot is
 //     overtaken rather than finding the box gone, and sees `stopped`.
 //  3. Cancel the CP's own pending SSM commands (slotVolumeCommandComment). A queued umount

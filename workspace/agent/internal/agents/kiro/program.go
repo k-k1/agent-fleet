@@ -35,14 +35,6 @@ func bin() string { return envOr("AGENT_KIRO_BIN", "kiro-cli") }
 // Bin exposes the resolved kiro CLI binary for callers outside this package.
 func Bin() string { return bin() }
 
-// Installed reports whether the kiro CLI is present on PATH (baked or already
-// on-demand installed). Used by the connection card's install flow (docs/log/43 Track C)
-// to decide whether the ~855MB bundle still needs to land in ~/.local.
-func Installed() bool {
-	_, err := exec.LookPath(bin())
-	return err == nil
-}
-
 // Home is kiro's config/session root (~/.kiro): settings/cli.json, settings/mcp.json,
 // agents/, and sessions/cli/ (the v2 session store). Credentials live in a separate tree
 // (~/.local/share/kiro-cli/data.sqlite3); both are on fs.go's denylist.

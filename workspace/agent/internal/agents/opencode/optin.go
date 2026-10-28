@@ -176,12 +176,6 @@ func Binary() string { return CurrentLaunch().Bin }
 // v2ProcessEnv is the opt-in's own variables as of one reading; nil unless active.
 func v2ProcessEnv() []string { return CurrentLaunch().processEnv() }
 
-// ProcessEnv is the exported form, for the callers outside this package.
-func ProcessEnv() []string { return v2ProcessEnv() }
-
 // launchKey identifies which opencode a daemon was started as. A running daemon whose key is not
 // the current one was started under the other setting.
 func launchKey() string { return CurrentLaunch().Key }
-
-// shellBinary is Binary for a command line that a shell will parse.
-func shellBinary() string { return CurrentLaunch().shellBin() }

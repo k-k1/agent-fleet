@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -986,10 +985,4 @@ func (a workItemsAPI) deleteSession(w http.ResponseWriter, r *http.Request, _ st
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
-// sortQueriesByPosition keeps the rail order stable for callers that build their own
-// list (tests, and the rail's reorder path).
-func sortQueriesByPosition(rows []store.WorkItemQuery) {
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Position < rows[j].Position })
 }

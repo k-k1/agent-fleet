@@ -28,7 +28,6 @@ type purgeFixture struct {
 	pid       string
 	oldBlob   string
 	oldCommit string
-	bBlobs    []string
 }
 
 func purgeSetup(t *testing.T) purgeFixture {

@@ -72,14 +72,9 @@ func liveStateDetailFromFile(path string) (string, string) {
 	return classifyDetail(bufio.NewReader(f))
 }
 
-func classify(r io.Reader) string {
-	st, _ := classifyDetail(r)
-	return st
-}
-
-// classifyDetail is classify plus what an outstanding permission was asking for (for the
-// docs/log/75 P5 carry-over). detail is filled only while waiting on a permission, and stays
-// empty when it cannot be read.
+// classifyDetail classifies the state and adds what an outstanding permission was asking for
+// (for the docs/log/75 P5 carry-over). detail is filled only while waiting on a permission, and
+// stays empty when it cannot be read.
 func classifyDetail(r io.Reader) (string, string) {
 	open := false                 // after user.message / turn_start, before turn_end
 	perms := map[string]bool{}    // requestIds requested and not yet completed

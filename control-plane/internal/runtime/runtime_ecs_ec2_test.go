@@ -3719,7 +3719,7 @@ func (f *fakeEC2) countCalls(prefix string) int {
 var errNoCapacity = fmt.Errorf("api error InsufficientInstanceCapacity: We currently do not have sufficient m7i.large capacity in the Availability Zone you requested")
 
 // One AZ running out of the slot type used to stop every NEW user in the deployment:
-// anyAZ() is deterministic, so the one AZ the adapter ever picked was the one that had no
+// the first pool AZ was the only pick, so the one AZ the adapter ever picked was the one that had no
 // room, and nothing tried anywhere else. Everybody already placed kept working, so it did
 // not look like an outage.
 func TestECSEC2NewHomeMovesToAnAZWithRoom(t *testing.T) {

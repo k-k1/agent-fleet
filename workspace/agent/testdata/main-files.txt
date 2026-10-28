@@ -117,7 +117,6 @@ usage_price.go
 usage_rollup.go
 usage_series.go
 usage_spend.go
-usage_tag.go
 version_lookup.go
 workitems.go
 workitems_appperm.go

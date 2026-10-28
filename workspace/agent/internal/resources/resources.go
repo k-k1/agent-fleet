@@ -1,7 +1,7 @@
 // Package resources reads THIS workspace's own resource measurements (memory, CPU,
 // disk) from inside the container.
 //
-// Why on the Agent side. The CP's `containerStats` (control-plane/metrics.go) looks the
+// Why on the Agent side. The CP's `containerStatsRun` (control-plane/metrics.go) looks the
 // container id up with `docker inspect` and reads the host's
 // `/sys/fs/cgroup/system.slice/docker-<id>.scope` — a reading that only holds where CP
 // and the workspace sit on the same host. On ECS (Fargate and `ecs-ec2` alike) the CP

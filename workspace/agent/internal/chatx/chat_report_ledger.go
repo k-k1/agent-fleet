@@ -495,13 +495,6 @@ func cancelInstructions(name string) int {
 	return n
 }
 
-// instrPendingSessions lists the sessions with at least one open row — the reconciler's sweep
-// set. The steady-state cost is one readdir of the ledger directory plus small reads.
-func instrPendingSessions() []string {
-	open, _ := instrSweepSessions(time.Now())
-	return open
-}
-
 // instrSweepSessions splits the ledger directory into the reconciler's two work sets in ONE
 // readdir + read pass: sessions waiting for a completion (an open row) and sessions under watch
 // for a wrong "completion" (a reported row inside the grace window) (docs/log/51 §compensation).
