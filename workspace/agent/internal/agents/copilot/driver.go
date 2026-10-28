@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/acp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -129,7 +130,7 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	defer h.spawnMu.Unlock()
 
 	h.mu.Lock()
-	if h.alive && h.cl != nil && !h.cl.dead() {
+	if h.alive && h.cl != nil && !h.cl.Dead() {
 		h.mu.Unlock()
 		return h, nil
 	}
@@ -232,7 +233,7 @@ func DropHandle(name string) {
 	cmd, cl, sid, running := h.cmd, h.cl, h.sid, h.running
 	h.mu.Unlock()
 	if running && cl != nil && sid != "" {
-		_ = cl.notifyPeer("session/cancel", map[string]any{"sessionId": sid})
+		_ = cl.NotifyPeer("session/cancel", map[string]any{"sessionId": sid})
 	}
 	stopChild(cmd)
 }
@@ -356,7 +357,7 @@ type threadHandle struct {
 
 	mu      sync.Mutex
 	cmd     *exec.Cmd
-	cl      *acpClient
+	cl      *acp.Client
 	sid     string // copilot session UUID
 	alive   bool
 	state   agents.TurnState
@@ -446,12 +447,12 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	// Capture this cl in the closure: during the first spawn the readLoop can run while h.cl is
 	// still unassigned, so reading h.cl would panic on a nil dereference when replying to an
 	// unknown method.
-	cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
+	cl.OnRequest = func(id json.RawMessage, method string, params json.RawMessage) {
 		h.onServerRequest(cl, id, method, params)
 	}
 	go h.watch(cmd, tail, cl, exited)
 
-	if _, err := cl.call("initialize", map[string]any{
+	if _, err := cl.Call("initialize", map[string]any{
 		"protocolVersion": 1, "clientCapabilities": map[string]any{},
 	}, 30*time.Second); err != nil {
 		return fail(fmt.Errorf("copilot runtime の initialize に失敗しました: %w", err))
@@ -465,7 +466,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	if sid != "" {
 		// Cross-process resume (measured: history replay plus context retention). The replay is
 		// proportional to the conversation's length, so allow plenty of time.
-		res, err := cl.call("session/load", map[string]any{
+		res, err := cl.Call("session/load", map[string]any{
 			"sessionId": sid, "cwd": h.dir, "mcpServers": []any{},
 		}, 180*time.Second)
 		if err != nil {
@@ -484,7 +485,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		}
 	}
 	if sid == "" {
-		res, err := cl.call("session/new", map[string]any{
+		res, err := cl.Call("session/new", map[string]any{
 			"cwd": h.dir, "mcpServers": []any{},
 		}, 60*time.Second)
 		if err != nil {
@@ -515,7 +516,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	// fall back to the default after a resume (the same reasoning as codex's approvalPolicy
 	// re-assertion; best effort).
 	if wantMode != "" && wantMode != modeFromACP(mode) {
-		_, _ = cl.call("session/set_mode", map[string]any{
+		_, _ = cl.Call("session/set_mode", map[string]any{
 			"sessionId": sid, "modeId": acpModeID(wantMode),
 		}, 15*time.Second)
 	}
@@ -554,7 +555,7 @@ func awaitExitRecord(exited <-chan struct{}) {
 // per-session child the attribution is exact, unlike a daemon supervisor's). An exit from
 // SIGTERM (DropHandle/Shutdown) becomes "stopped" and the Console shows the ordinary stopped
 // state.
-func (h *threadHandle) watch(cmd *exec.Cmd, tail *agents.StderrTail, cl *acpClient, exited chan struct{}) {
+func (h *threadHandle) watch(cmd *exec.Cmd, tail *agents.StderrTail, cl *acp.Client, exited chan struct{}) {
 	defer close(exited) // releases a failed spawn's awaitExitRecord
 	err := cmd.Wait()
 	tail.Release()
@@ -582,7 +583,7 @@ func (h *threadHandle) watch(cmd *exec.Cmd, tail *agents.StderrTail, cl *acpClie
 		At:      time.Now().Format(time.RFC3339),
 		OOMBase: base,
 	})
-	cl.markClosed()
+	cl.MarkClosed()
 	h.mu.Lock()
 	stale := h.cl != cl // already replaced by a new child (an old watch after a respawn)
 	h.mu.Unlock()
@@ -699,7 +700,7 @@ func (h *threadHandle) pump() {
 		// this loop first, and the next input would be taken, recorded in the ledger and lost
 		// on a dead pipe. So the check comes before Take, and the input stays queued for
 		// resumePump after the respawn.
-		if !h.alive || h.cl == nil || h.cl.dead() {
+		if !h.alive || h.cl == nil || h.cl.Dead() {
 			h.pumping = false
 			h.mu.Unlock()
 			lease.Release()
@@ -795,7 +796,7 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 	h.mu.Unlock()
 	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
 	written := false
-	res, err := cl.callWritten("session/prompt", map[string]any{
+	res, err := cl.CallWritten("session/prompt", map[string]any{
 		"sessionId": sid,
 		"prompt":    []map[string]any{{"type": "text", "text": t.In.Prompt}},
 	}, 0, func() {
@@ -809,7 +810,7 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 	interrupted := h.stopping
 	h.inter, h.permID, h.permOpts = nil, nil, nil // the turn ended = nothing is waiting
 	h.mu.Unlock()
-	if err != nil && !written && cl.dead() {
+	if err != nil && !written && cl.Dead() {
 		// The child died before it got the prompt: put it back for resumePump after the
 		// respawn, unless a stop was aimed at it.
 		h.mu.Lock()
@@ -846,7 +847,7 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 // stdin. A stop that found t committed but not yet written left its delivery to here. Whether
 // a session/cancel written right after the prompt reaches the turn is unmeasured, so this stop
 // is best effort (ADR 0105 decision 3).
-func (h *threadHandle) received(t *agents.Taken, cl *acpClient, sid string) {
+func (h *threadHandle) received(t *agents.Taken, cl *acp.Client, sid string) {
 	h.mu.Lock()
 	stop := h.q.Received(t)
 	h.mu.Unlock()
@@ -898,16 +899,16 @@ func (h *threadHandle) stopLocked(head agents.HeadAction) error {
 // be answered cancelled once the turn is cancelled; a runtime that waits for that answer keeps
 // the turn interrupting and the card up. The stop is reachable under the card, so it cannot
 // rely on the card's own Cancel.
-func (h *threadHandle) deliverStop(cl *acpClient, sid string) error {
+func (h *threadHandle) deliverStop(cl *acp.Client, sid string) error {
 	h.mu.Lock()
 	permID := h.permID
 	if permID != nil {
 		h.inter, h.permID, h.permOpts = nil, nil, nil
 	}
 	h.mu.Unlock()
-	err := cl.notifyPeer("session/cancel", map[string]any{"sessionId": sid})
+	err := cl.NotifyPeer("session/cancel", map[string]any{"sessionId": sid})
 	if permID != nil {
-		_ = cl.respond(permID, map[string]any{"outcome": map[string]any{"outcome": "cancelled"}})
+		_ = cl.Respond(permID, map[string]any{"outcome": map[string]any{"outcome": "cancelled"}})
 	}
 	return err
 }
@@ -952,7 +953,7 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	if cl == nil {
 		return errors.New("runtime が停止しています")
 	}
-	if _, err := cl.call("session/set_mode", map[string]any{
+	if _, err := cl.Call("session/set_mode", map[string]any{
 		"sessionId": sid, "modeId": acpModeID(s.Mode),
 	}, 15*time.Second); err != nil {
 		return err
@@ -1004,7 +1005,7 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	default:
 		return fmt.Errorf("unsupported decision: %s", reply.Decision)
 	}
-	if err := cl.respond(permID, result); err != nil {
+	if err := cl.Respond(permID, result); err != nil {
 		return err
 	}
 	h.mu.Lock()
@@ -1046,15 +1047,12 @@ func (h *threadHandle) Snapshot() (agents.ThreadSnapshot, error) {
 
 // onServerRequest handles server-initiated requests on the readLoop goroutine —
 // MUST NOT block: record the Interaction and return; the answer goes back later
-// via Respond → cl.respond.
-func (h *threadHandle) onServerRequest(cl *acpClient, id json.RawMessage, method string, params json.RawMessage) {
+// via Respond → cl.Respond.
+func (h *threadHandle) onServerRequest(cl *acp.Client, id json.RawMessage, method string, params json.RawMessage) {
 	if method != "session/request_permission" {
 		// An unknown server-initiated request wedges the turn unless it is answered, so reply
 		// with an error.
-		_ = cl.write(map[string]any{
-			"jsonrpc": "2.0", "id": id,
-			"error": map[string]any{"code": -32601, "message": "unsupported request: " + method},
-		})
+		_ = cl.RespondError(id, -32601, "unsupported request: "+method)
 		return
 	}
 	var req struct {

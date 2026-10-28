@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/acp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/procx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -24,36 +25,20 @@ func (managedDriver) ManagedProgress(m session.Meta) (time.Time, bool) {
 // procTable reads the process table; a variable so tests can feed a synthetic one.
 var procTable = procx.Snapshot
 
-// progress is the newest sign of life. A child that cannot be located in the process table
-// (no process, an unreadable /proc) is "could not observe", not "no tool": the stale stamp then
-// gives no answer and the row keeps holding.
+// progress is the newest sign of life (acp.Progress).
 func (h *threadHandle) progress(now time.Time, table func() map[int]procx.Info) (time.Time, bool) {
-	return h.act.Progress(now, func() (alive, observed bool) {
+	return acp.Progress(&h.act, &h.calls, now, func() (int, bool) {
 		h.mu.Lock()
 		cmd := h.cmd
 		h.mu.Unlock()
 		if cmd == nil || cmd.Process == nil {
-			return false, false
+			return 0, false
 		}
-		tab := table()
-		if _, ok := tab[cmd.Process.Pid]; !ok {
-			return false, false
-		}
-		callsAlive, callsKnown := h.calls.State()
-		return callsAlive || procx.ToolProcessIn(cmd.Process.Pid, tab), callsKnown
-	})
+		return cmd.Process.Pid, true
+	}, table, procx.ToolProcessIn)
 }
 
-// noteToolCall keeps the set of open ACP tool calls. A tool that is not a local process (an MCP
-// server's, or work done inside a resident helper) leaves nothing in the process table, so the
-// protocol's own status is the only trace of it.
+// noteToolCall keeps the set of open ACP tool calls (acp.NoteToolCall).
 func (h *threadHandle) noteToolCall(sessionUpdate, id, status string) {
-	switch status {
-	case "completed", "failed", "cancelled":
-		h.calls.Done(id)
-	default:
-		if sessionUpdate == "tool_call" || status == "in_progress" {
-			h.calls.Add(id)
-		}
-	}
+	acp.NoteToolCall(&h.calls, sessionUpdate, id, status)
 }
