@@ -111,26 +111,19 @@ func lcppModels(ctx context.Context) []agents.ModelChoice {
 	return nil
 }
 
-func handleAgentModels(w http.ResponseWriter, r *http.Request) {
-	// The Console asks with its CURRENT settings (?hidden=… and, for opencode, ?catalog=…),
-	// which its debounced save may not have delivered here yet; the answer is computed for them,
-	// so it is exactly the answer for what that screen shows (#972 review, rounds 3–5). Without
-	// them — MCP list_models, an older Console — the saved ui-prefs apply, as before.
-	hiddenRaw, hiddenGiven := requestHiddenModels(r)
-	// claude's registered models travel the same way (?custom=): right after a member registers
-	// one, the fail-safe and the "fall back to a registered model" recommendation must count it.
-	// Either setting given makes the whole answer explicit, the other read from ui-prefs.
-	claudeCustom, customGiven := requestClaudeCustomModels(r)
-	if !customGiven {
-		claudeCustom = uiprefs.ClaudeCustomModels()
-	}
-	if customGiven && !hiddenGiven {
-		hiddenRaw, hiddenGiven = sessionx.HiddenModelsRaw(r.PathValue("kind")), true
-	}
-	catalogPref := uiprefs.OpencodeCatalog()
-	if r.URL.Query().Has("catalog") {
-		catalogPref = opencode.CatalogPref(r.URL.Query().Get("catalog"))
-	}
+// kindModelList is one kind's launch-time model menu before the handler narrows it: list, what
+// the CLI enumerated before the kind's own shaping (-1 when it does none), the unshaped opencode
+// ids and the billing route the menu was shaped by.
+type kindModelList struct {
+	list        []agents.ModelChoice
+	enumerated  int
+	opencodeIDs []string
+	route       string
+}
+
+// kindModels is the per-kind source of handleAgentModels' menu; ok=false for a kind with no
+// model catalog.
+func kindModels(ctx context.Context, kind string, claudeCustom []string, catalogPref string) (kindModelList, bool) {
 	var list []agents.ModelChoice
 	// route is the opencode billing route the list was actually shaped by — the selected one
 	// unless Catalog's empty-menu rescue had to ignore it. Empty for every other kind.
@@ -140,7 +133,7 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	// every other kind, which does no shaping of its own.
 	enumerated := -1
 	var opencodeIDs []string
-	switch r.PathValue("kind") {
+	switch kind {
 	case "claude":
 		list = claude.Models()
 		seen := make(map[string]bool, len(list))
@@ -196,11 +189,39 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		// runTurn resolves an engine token against (its fixed engineKey="llm"). Empty when
 		// the deployment has no engines, or none of them are chat-capable — same "nothing
 		// to offer" shape as every other kind.
-		list = lcppModels(r.Context())
+		list = lcppModels(ctx)
 	default:
+		return kindModelList{}, false
+	}
+	return kindModelList{list: list, enumerated: enumerated, opencodeIDs: opencodeIDs, route: route}, true
+}
+
+func handleAgentModels(w http.ResponseWriter, r *http.Request) {
+	// The Console asks with its CURRENT settings (?hidden=… and, for opencode, ?catalog=…),
+	// which its debounced save may not have delivered here yet; the answer is computed for them,
+	// so it is exactly the answer for what that screen shows (#972 review, rounds 3–5). Without
+	// them — MCP list_models, an older Console — the saved ui-prefs apply, as before.
+	hiddenRaw, hiddenGiven := requestHiddenModels(r)
+	// claude's registered models travel the same way (?custom=): right after a member registers
+	// one, the fail-safe and the "fall back to a registered model" recommendation must count it.
+	// Either setting given makes the whole answer explicit, the other read from ui-prefs.
+	claudeCustom, customGiven := requestClaudeCustomModels(r)
+	if !customGiven {
+		claudeCustom = uiprefs.ClaudeCustomModels()
+	}
+	if customGiven && !hiddenGiven {
+		hiddenRaw, hiddenGiven = sessionx.HiddenModelsRaw(r.PathValue("kind")), true
+	}
+	catalogPref := uiprefs.OpencodeCatalog()
+	if r.URL.Query().Has("catalog") {
+		catalogPref = opencode.CatalogPref(r.URL.Query().Get("catalog"))
+	}
+	km, ok := kindModels(r.Context(), r.PathValue("kind"), claudeCustom, catalogPref)
+	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "unknown_kind", "no model catalog for this kind")
 		return
 	}
+	list, enumerated, opencodeIDs, route := km.list, km.enumerated, km.opencodeIDs, km.route
 	// How many the kind itself offered, before this handler narrows it. An empty menu has
 	// several causes that look identical on screen, and the Console has never been able to
 	// tell them apart ("only the default model is available — check the connection and the
