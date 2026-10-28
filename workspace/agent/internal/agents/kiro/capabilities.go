@@ -24,3 +24,9 @@ func (agentImpl) SendWaitsForComposer() bool { return true }
 // approval"), reported as "question" (LiveState); managed is also guarded by
 // ErrQuestionPending.
 func (agentImpl) PromptModal(m session.Meta) string { return LiveState(m) }
+
+// SkillsLayout is agents.SkillsLayouter: no user-invocable mechanism confirmed yet (docs/log/50
+// §7), so the other conventions' SKILL.md trees are offered as foreign entries only.
+func (agentImpl) SkillsLayout() agents.SkillsLayout {
+	return agents.SkillsLayout{Native: agents.SkillsForeignOnly}
+}

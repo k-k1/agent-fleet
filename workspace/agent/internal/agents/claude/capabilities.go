@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -32,3 +33,23 @@ func (agentImpl) PaneMode(pane string) string { return PaneMode(pane) }
 // SendWaitsForComposer is agents.PaneModeReader: false, a Terminal send is typed without
 // waiting for the composer.
 func (agentImpl) SendWaitsForComposer() bool { return false }
+
+// SkillsLayout is agents.SkillsLayouter. claude reads <d>/.claude/skills and <d>/.claude/commands
+// for the CWD and every ancestor below $HOME, then the personal root (CLAUDE_CONFIG_DIR, where
+// AF redirects $HOME/.claude), skills before commands, invoked as "/name"; the CLI's bundled
+// skills come from its init frame (measured 2026-07-28 and 2026-09-12, docs/log/50 §7, §9, §10).
+func (agentImpl) SkillsLayout() agents.SkillsLayout {
+	return agents.SkillsLayout{
+		Native:      agents.SkillsScan,
+		Invoke:      "/",
+		Project:     []agents.SkillRoot{{Rel: ".claude/skills", Form: "skills"}, {Rel: ".claude/commands", Form: "commands"}},
+		ProjectDirs: agents.SkillDirsCWDToHome,
+		User: []agents.UserSkillRoot{
+			{Dir: func() string { return filepath.Join(ConfigDir(), "skills") }, Source: "user", Form: "skills"},
+			{Dir: func() string { return filepath.Join(ConfigDir(), "commands") }, Source: "user", Form: "commands"},
+		},
+		Bundled:     true,
+		NativeConvs: []string{".claude/skills"},
+		Shared:      &agents.SharedSkillRoot{Origin: ".claude", Dir: func() string { return filepath.Join(ConfigDir(), "skills") }},
+	}
+}

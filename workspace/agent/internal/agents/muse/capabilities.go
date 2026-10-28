@@ -10,3 +10,16 @@ import "github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 func (agentImpl) ListModels(agents.ModelQuery) agents.ModelListing {
 	return agents.ModelListing{Models: Models(), Enumerated: -1}
 }
+
+// SkillsLayout is agents.SkillsLayouter: the session's own host answers skill/list over MSP (ADR
+// 0095 P2-23) — bundled, the member's ~/.config/muse/skills, plugin skills and the working copy's
+// .agents/skills. The repository Skills view shows the one tree muse documents.
+func (agentImpl) SkillsLayout() agents.SkillsLayout {
+	return agents.SkillsLayout{
+		Native:      agents.SkillsHosted,
+		Invoke:      "/",
+		Project:     []agents.SkillRoot{{Rel: ".agents/skills", Form: "skills"}},
+		NativeConvs: []string{".agents/skills"},
+		Shared:      &agents.SharedSkillRoot{Origin: ".muse", Dir: SkillsDir},
+	}
+}

@@ -1,7 +1,10 @@
 package codex
 
 import (
+	"path/filepath"
+
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -29,4 +32,23 @@ func (agentImpl) PromptModal(m session.Meta) string {
 		return q
 	}
 	return TerminalScreen(m)
+}
+
+// SkillsLayout is agents.SkillsLayouter. codex resolves project skills from the CWD up to the
+// git root (.codex/skills and .agents/skills), then $CODEX_HOME/skills, with the bundled .system
+// as a root of its own marked "cli"; invocation is a "$name" mention (measured on 0.145 and
+// 0.154, docs/log/50 §7, §10).
+func (agentImpl) SkillsLayout() agents.SkillsLayout {
+	return agents.SkillsLayout{
+		Native:      agents.SkillsScan,
+		Invoke:      "$",
+		Project:     []agents.SkillRoot{{Rel: ".codex/skills", Form: "skills"}, {Rel: ".agents/skills", Form: "skills"}},
+		ProjectDirs: agents.SkillDirsCWDToGitRoot,
+		User: []agents.UserSkillRoot{
+			{Dir: func() string { return filepath.Join(paths.CodexHome(), "skills") }, Source: "user", Form: "skills"},
+			{Dir: func() string { return filepath.Join(paths.CodexHome(), "skills", ".system") }, Source: "cli", Form: "skills"},
+		},
+		NativeConvs: []string{".codex/skills", ".agents/skills"},
+		Shared:      &agents.SharedSkillRoot{Origin: ".codex", Dir: func() string { return filepath.Join(paths.CodexHome(), "skills") }},
+	}
 }

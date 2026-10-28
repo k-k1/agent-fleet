@@ -22,3 +22,10 @@ func (agentImpl) ListModels(q agents.ModelQuery) agents.ModelListing {
 	}
 	return agents.ModelListing{Models: list, Enumerated: -1}
 }
+
+// SkillsLayout is agents.SkillsLayouter: lcpp drives no CLI, so skills are foreign only (ADR 0093
+// decision 5), the same set harness.SystemPrompt's foreignSkillsPrompt reads. Its file tools
+// refuse any path outside the session's CWD (harness resolvePath), hence FenceToCWD.
+func (agentImpl) SkillsLayout() agents.SkillsLayout {
+	return agents.SkillsLayout{Native: agents.SkillsForeignOnly, FenceToCWD: true}
+}

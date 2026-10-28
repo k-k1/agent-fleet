@@ -310,12 +310,17 @@ var userSkillRoots = []userSkillRoot{
 // The fleet topic skills (fleetskills) are skipped: AF writes the same set into every root, and
 // the policy text already points every kind at the files they wrap.
 func appendUserForeignSkills(skills []sessionSkill, kind string, ownNative bool) []sessionSkill {
+	return appendUserForeignSkillsFrom(userSkillRoots, skills, kind, ownNative)
+}
+
+// appendUserForeignSkillsFrom is appendUserForeignSkills over the given roots.
+func appendUserForeignSkillsFrom(roots []userSkillRoot, skills []sessionSkill, kind string, ownNative bool) []sessionSkill {
 	seen := map[string]bool{}
 	for _, s := range skills {
 		seen[s.Name] = true
 	}
 	out := skills
-	for _, r := range userSkillRoots {
+	for _, r := range roots {
 		if r.kind == kind && ownNative {
 			continue
 		}
@@ -580,23 +585,28 @@ func opencodeSkills(dir string) []sessionSkill {
 // started, or just after an agent restart) fall back to the project's filesystem conventions.
 func cursorSkills(live, dir string) []sessionSkill {
 	if adv := agents.AdvertisedCommands(live); len(adv) > 0 {
-		out := make([]sessionSkill, 0, len(adv))
-		for _, c := range adv {
-			if c.Name == "" || len(out) >= maxSessionSkills {
-				continue
-			}
-			out = append(out, sessionSkill{
-				Name:        c.Name,
-				Description: c.Description,
-				Source:      "cli",
-				Type:        "command",
-				Invoke:      "/" + c.Name + " ",
-			})
-		}
-		sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-		return out
+		return advertisedEntries(adv, "/")
 	}
 	return scanSkillRoots(projectSkillRoots(session.KindCursor, dir, dir), "/")
+}
+
+// advertisedEntries turns a CLI's advertised commands into "cli" picker entries.
+func advertisedEntries(adv []agents.AdvertisedCommand, invoke string) []sessionSkill {
+	out := make([]sessionSkill, 0, len(adv))
+	for _, c := range adv {
+		if c.Name == "" || len(out) >= maxSessionSkills {
+			continue
+		}
+		out = append(out, sessionSkill{
+			Name:        c.Name,
+			Description: c.Description,
+			Source:      "cli",
+			Type:        "command",
+			Invoke:      invoke + c.Name + " ",
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 // readSkillEntries reads <root>/*/SKILL.md. The invocation name is the frontmatter name, or the
