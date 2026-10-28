@@ -1,7 +1,7 @@
 // Kind colours have one place (ADR 0124 Phase 3): styles/tokens.css maps each `.kind-<slug>` to
 // --kind, and the use sites paint with var(--kind) behind the `kind` marker that
 // kindColorClasses() writes. These checks keep it that way: the map covers exactly the
-// registry's slugs and no component spells the class itself.
+// registry's slugs, no other stylesheet names a kind, and no component spells the class itself.
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
@@ -24,6 +24,9 @@ function files(dir: string, re: RegExp, out: string[] = []): string[] {
 
 const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
 
+// `.kind-<slug>` as a selector, for every registered slug; `.kind-tag` and the like are not kinds.
+const KIND_SELECTOR = new RegExp(`\\.kind-(${SLUGS.join("|")})(?![\\w-])`, "g");
+
 describe("kind colour map", () => {
   it("maps exactly the registry's slugs in tokens.css, each to its own token", () => {
     const css = stripComments(readFileSync(TOKENS, "utf8"));
@@ -35,6 +38,23 @@ describe("kind colour map", () => {
     for (const s of SLUGS) {
       expect(css.match(new RegExp(`--kind-${s}:`, "g"))?.length ?? 0, `--kind-${s}`).toBeGreaterThanOrEqual(2);
     }
+  });
+
+  it("names no kind in any other stylesheet", () => {
+    const sheets = files(SRC, /\.css$/);
+    expect(sheets.length).toBeGreaterThan(10);
+    const found: string[] = [];
+    for (const f of sheets) {
+      if (f === TOKENS) continue;
+      for (const m of stripComments(readFileSync(f, "utf8")).matchAll(KIND_SELECTOR)) found.push(`${path.relative(SRC, f)}: ${m[0]}`);
+    }
+    expect(found).toEqual([]);
+  });
+
+  it("the selector scan catches a per-kind rule", () => {
+    expect(".sess-kic.kind-claude { color: red }".match(KIND_SELECTOR)).toEqual([".kind-claude"]);
+    expect(".kind-tag.kind { color: var(--kind) } /* .kind-codex */".match(KIND_SELECTOR)).toEqual([".kind-codex"]);
+    expect(stripComments(".kind-tag.kind { } /* .kind-codex */").match(KIND_SELECTOR)).toBeNull();
   });
 
   it("no component builds a kind colour class by hand", () => {

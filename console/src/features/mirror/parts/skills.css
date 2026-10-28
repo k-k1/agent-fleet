@@ -142,9 +142,7 @@
   font-size: 10px;
 }
 /* Source badge for a foreign skill: kind colour (--kind, set per kind in tokens.css). */
-.mirror-skill-src.kind-claude,
-.mirror-skill-src.kind-codex,
-.mirror-skill-src.kind-muse {
+.mirror-skill-src.kind {
   color: var(--kind);
   border-color: color-mix(in srgb, var(--kind) 55%, var(--border));
 }

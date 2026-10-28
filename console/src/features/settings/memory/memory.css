@@ -70,8 +70,7 @@
   font-weight: 600;
 }
 
-.mem-kind.kind-claude,
-.mem-kind.kind-codex {
+.mem-kind.kind {
   color: var(--kind);
 }
 
