@@ -7,9 +7,9 @@
 //  1. The same key must not exist in two domain files. Composition is a spread, so the later one
 //     silently wins: two sessions adding the same key in different files lose one wording and
 //     stay green.
-//  2. One key prefix ("chat" / "settings" …) belongs to exactly one file. Without that, "my
-//     domain's file" is undefined and everyone edits the same file again, which is the state the
-//     split removed.
+//  2. One key prefix ("chat" / "settings" …, or a sub-prefix in SUB_PREFIX_OWNERS) belongs to
+//     exactly one file. Without that, "my domain's file" is undefined and everyone edits the
+//     same file again, which is the state the split removed.
 //  3. Every domain present in the directory must also be in the composition. This failure only
 //     became possible with the split, and it slips through every gate (see below).
 //
@@ -33,6 +33,17 @@ function catalogsOf(mods: Record<string, { [k: string]: Catalog }>): Map<string,
   }
   return out;
 }
+
+// The only way one first segment spans two files: a key under a sub-prefix listed here belongs to
+// the named file, every other key of that segment to the segment's own file. The engine and
+// catalogue keys left the catch-all admin.ts this way because renaming them would rewrite every
+// t() call that names one (ADR 0124 Phase 1).
+const SUB_PREFIX_OWNERS: Record<string, string> = {
+  "admin.engines_": "engineadmin",
+  "admin.catalog_": "engineadmin",
+  "admin.fit_": "engineadmin",
+  "admin.repo_": "engineadmin",
+};
 
 const jaCatalogs = catalogsOf(jaModules);
 const enCatalogs = catalogsOf(enModules);
@@ -96,6 +107,11 @@ describe("i18n catalogue split", () => {
     const split: string[] = [];
     for (const [domain, cat] of jaCatalogs) {
       for (const key of Object.keys(cat)) {
+        const sub = Object.keys(SUB_PREFIX_OWNERS).find((p) => key.startsWith(p));
+        if (sub !== undefined) {
+          if (SUB_PREFIX_OWNERS[sub] !== domain) split.push(`${sub}: ${domain}, not ${SUB_PREFIX_OWNERS[sub]} (key ${key})`);
+          continue;
+        }
         const prefix = key.split(".")[0];
         const prev = owner.get(prefix);
         if (prev === undefined) owner.set(prefix, domain);
