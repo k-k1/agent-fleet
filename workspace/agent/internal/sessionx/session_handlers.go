@@ -49,7 +49,8 @@ var LcppLiveModels func(ctx context.Context) []agents.ModelChoice
 // exact: no NormalizeKind and no AgentOf claude fallback, so an unknown or alternate spelling has
 // no runtime and every question below answers false / does nothing.
 func managedRuntimeOf(kind string) (agents.ManagedRuntimeOps, bool) {
-	r, ok := agentRegistry[kind].(agents.ManagedRuntime)
+	a, _ := RegisteredAgent(kind)
+	r, ok := a.(agents.ManagedRuntime)
 	if !ok {
 		return agents.ManagedRuntimeOps{}, false
 	}

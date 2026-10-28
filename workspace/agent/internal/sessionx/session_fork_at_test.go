@@ -6,6 +6,7 @@ package sessionx
 // point still goes through as before (backward compatibility).
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"net/http"
 	"net/http/httptest"
@@ -135,9 +136,8 @@ func (switchingOpencode) ForkSource(session.Meta) (string, error) { return "ses_
 
 func TestForkAtRefusesWhenTheConversationChangedBetweenReads(t *testing.T) {
 	withTempHome(t)
-	old := agentRegistry[session.KindOpencode]
-	agentRegistry[session.KindOpencode] = switchingOpencode{old}
-	t.Cleanup(func() { agentRegistry[session.KindOpencode] = old })
+	old, _ := RegisteredAgent(session.KindOpencode)
+	t.Cleanup(agentreg.SwapForTest(session.KindOpencode, switchingOpencode{old}))
 	session.WriteMeta(session.Meta{Name: "oc-sw", Dir: t.TempDir(), Kind: session.KindOpencode, Driver: session.DriverManaged})
 	rec := forkReq(t, "oc-sw", `{"at":"msg_last","include":true}`)
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "fork_bad_anchor") {

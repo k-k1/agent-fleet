@@ -31,7 +31,7 @@ func TestPeerTargetAllowedExcludesShellAndSSM(t *testing.T) {
 		session.KindCursor, session.KindKiro, session.KindAgy, session.KindCopilot,
 		// lcpp and muse carry no CLI config (ADR 0093 decision 6 / ADR 0095) and so are absent
 		// from mcpreg.MaterializedKinds, but both hold an ordinary conversation reached the same
-		// way every other kind's peer delivery works (agentRegistry) — being un-materialized is
+		// way every other kind's peer delivery works (the kind registry) — being un-materialized is
 		// not the same question as being unreachable (session_peer.go's own doc comment on
 		// peerTargetAllowed). A regression here previously answered lcpp with peer_target_forbidden.
 		session.KindLcpp, session.KindMuse,

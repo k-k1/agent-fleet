@@ -281,7 +281,7 @@ func checkMoveRequest(src session.Meta, req moveRequest) error {
 		return &moveError{Status: http.StatusBadRequest, Code: "move_unsupported_source",
 			Message: "only a session with a readable conversation can be moved"}
 	}
-	if _, ok := agentRegistry[req.Kind]; !ok {
+	if _, ok := RegisteredAgent(req.Kind); !ok {
 		return &moveError{Status: http.StatusBadRequest, Code: "bad_kind", Message: "unknown target kind: " + req.Kind}
 	}
 	switch moveTargetReason(src.Kind, req.Kind) {

@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -153,12 +152,7 @@ func TestHandleListArchived_ResumableFollowsTheFolder(t *testing.T) {
 // TestStoppedResumableMatchesWireLive keeps the shelf's shortcut honest: for every registered
 // kind, with the folder present and gone, it must equal what that kind's WireLive says.
 func TestStoppedResumableMatchesWireLive(t *testing.T) {
-	var kinds []string
-	for k := range agentRegistry {
-		kinds = append(kinds, k)
-	}
-	sort.Strings(kinds)
-	for _, k := range kinds {
+	for _, k := range RegisteredKinds() {
 		for _, exists := range []bool{true, false} {
 			dir := t.TempDir()
 			if !exists {

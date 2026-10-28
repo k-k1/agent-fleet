@@ -977,7 +977,8 @@ func typeLineAndSubmit(name, pane, text string) error {
 // (agents.PromptPaste). The lookup is exact: an unregistered kind or an alternate spelling gets
 // literal keys.
 func pasteNeeded(kind, text string) bool {
-	p, ok := agentRegistry[kind].(agents.PromptPaste)
+	a, _ := RegisteredAgent(kind)
+	p, ok := a.(agents.PromptPaste)
 	return ok && p.PasteNeeded(text)
 }
 
