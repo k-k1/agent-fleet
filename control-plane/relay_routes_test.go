@@ -5,13 +5,14 @@
 // Agent renames or drops the route behind it, or when a new POST relay is registered without
 // an auditActionTarget case: both fail only in front of a member.
 //
-// Relays are found by behaviour, not by reading routes.go: every /api route of the assembled
-// mux whose handler resolves a workspace is driven once against a recording fake Agent, and a
-// route whose request arrives there with the same method and the path minus /api is a relay
-// (proxy.go rest). A relay registered through any wrapper is seen that way. The weak spot is
-// a relay whose CP-side checks refuse the probe's dummy request before it is forwarded: it
-// would look CP-owned and drop out silently. cpOwnedResolvedRoutes closes that — every
-// workspace-resolving /api route must either relay or be listed there.
+// Relays are found by behaviour, not by reading routes.go or handler names: every /api route
+// of the assembled mux is driven once against a recording fake Agent, and a route whose
+// request arrives there with the same method and the path minus /api is a relay (proxy.go
+// rest). A relay registered through any wrapper is seen that way. The weak spot is a relay
+// whose CP-side checks refuse the probe's dummy request before it is forwarded: it would look
+// CP-owned and drop out silently. cpOwnedResolvedRoutes closes that — a route that resolved
+// a workspace (the runtime cache is emptied before each route, so resolving one builds a
+// runtime through the factory) must either relay or be listed there.
 //
 // The Agent's table is read from workspace/agent/testdata/routes.golden by path; the two Go
 // modules stay separate.
@@ -24,14 +25,15 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"regexp"
-	"runtime"
+	goruntime "runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -63,6 +65,20 @@ func routeReasons(groups ...routeGroup) map[string]string {
 	return out
 }
 
+// wrappedRelays are relays registered through something other than a plain rest handler, one
+// per wrapper shape. The probe must find each: it is the positive control for the enumeration,
+// which a filter on handler names would silently narrow (it loses jsonSameOriginOnly(rest)).
+var wrappedRelays = []string{
+	"POST /api/sessions/{name}/plan-reviewer",                     // jsonSameOriginOnly(rest)
+	"PUT /api/connections/git/{host}",                             // bbReset closure around rest
+	"POST /api/chat/conversations/{id}/stream",                    // stream
+	"PUT /api/fs/file",                                            // fsFilePut, body checked before the relay
+	"POST /api/agents/memory/import",                              // hashed multipart upload
+	"POST /api/gcp-login/profiles/{name}/attempts/{attempt}/code", // gcpLoginCode
+	"POST /api/browser/pages",                                     // browserAPI.rest
+	"POST /api/sessions/{name}/fork",                              // CP-owned handler that forwards unchanged
+}
+
 // agentHit is one request the fake Agent received.
 type agentHit struct{ method, path string }
 
@@ -72,6 +88,7 @@ type relayProbe struct {
 	method   string
 	pattern  string // the CP pattern without the method
 	concrete string // the CP path actually requested
+	resolved bool   // a workspace runtime was built while the route ran
 	hits     []agentHit
 	audits   []string // audit actions written while the route ran
 }
@@ -157,14 +174,33 @@ func relayProbeRequest(t *testing.T, ctx context.Context, base, method, pattern,
 	return req
 }
 
-// handlerResolvesWorkspace reports whether a route's handler is a withResolved closure: a
-// relay needs the workspace's runtime, so no other route can be one.
-func handlerResolvesWorkspace(h http.Handler) bool {
-	return strings.Contains(runtime.FuncForPC(reflect.ValueOf(h).Pointer()).Name(), ".withResolved")
+// countingRuntimeFactory builds stub runtimes pointing at the fake Agent and counts the builds
+// made while serving a request. A build from a goroutine a handler left behind (the engine
+// admin's catalog notice) is not counted: it can land in the next route's window, and would
+// make that route look workspace-resolving at random.
+type countingRuntimeFactory struct {
+	endpoint string
+	built    *atomic.Int64
 }
 
-// probeRelays drives every workspace-resolving /api route of the full route table once, with
-// a resolved workspace whose runtime points at a recording fake Agent that answers 200 {}.
+func (f countingRuntimeFactory) New(runtime.Workspace, runtime.SecretKeys, []string) runtime.Runtime {
+	buf := make([]byte, 64<<10)
+	if bytes.Contains(buf[:goruntime.Stack(buf, false)], []byte("net/http.(*conn).serve")) {
+		f.built.Add(1)
+	}
+	return stubRuntime{endpoint: f.endpoint, token: "tok"}
+}
+
+// agentProbeAnswers is what the fake Agent answers for a route instead of 200 {}, where the CP
+// audits only an answer that reports a change.
+var agentProbeAnswers = map[string]string{
+	// oauth_mcp_client.go audits the disconnect only when the Agent says a grant was dropped.
+	"DELETE /mcp-servers/x1/oauth": `{"serverId":"x1","issuer":"https://issuer.invalid","hadGrant":true,"revoked":true}`,
+}
+
+// probeRelays drives every /api route of the full route table once. A workspace resolves to a
+// runtime that points at a recording fake Agent, which answers 200 {} unless
+// agentProbeAnswers says otherwise.
 func probeRelays(t *testing.T) []relayProbe {
 	t.Helper()
 	cfg, mux := smokeEnvWith(t, allRouteSwitches(t)...)
@@ -176,8 +212,12 @@ func probeRelays(t *testing.T) []relayProbe {
 		mu.Lock()
 		hits = append(hits, agentHit{r.Method, r.URL.Path})
 		mu.Unlock()
+		answer, ok := agentProbeAnswers[r.Method+" "+r.URL.Path]
+		if !ok {
+			answer = `{}`
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{}`))
+		_, _ = w.Write([]byte(answer))
 	}))
 	t.Cleanup(agent.Close)
 
@@ -193,6 +233,8 @@ func probeRelays(t *testing.T) []relayProbe {
 	if err := mgr.store.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
+	var built atomic.Int64
+	mgr.rtFactory = countingRuntimeFactory{endpoint: agent.URL, built: &built}
 	auditRows := func() map[string]string {
 		rows, err := mgr.store.ListAuditByTenant(ctx, mv.TenantID, 100000)
 		if err != nil {
@@ -217,14 +259,11 @@ func probeRelays(t *testing.T) []relayProbe {
 			continue
 		}
 		p := relayProbe{route: line, method: method, pattern: pattern, concrete: concretePath(pattern)}
-		if h, _ := mux.Handler(httptest.NewRequest(method, p.concrete, nil)); !handlerResolvesWorkspace(h) {
-			continue
-		}
-		// Re-seeded per route: a CP-owned handler may evict the runtime cache, and a miss would
-		// reach for a container factory the smoke manager has none of.
+		// Emptied per route, so a route that resolves the workspace has to build its runtime.
 		mgr.mu.Lock()
-		mgr.rts[mv.MembershipID] = cachedRT{rt: stubRuntime{endpoint: agent.URL, token: "tok"}, ws: ws}
+		delete(mgr.rts, mv.MembershipID)
 		mgr.mu.Unlock()
+		built.Store(0)
 		mu.Lock()
 		hits = nil
 		mu.Unlock()
@@ -241,6 +280,7 @@ func probeRelays(t *testing.T) []relayProbe {
 		mu.Lock()
 		p.hits = append([]agentHit(nil), hits...)
 		mu.Unlock()
+		p.resolved = built.Load() > 0
 		for id, action := range auditRows() {
 			if _, seen := before[id]; !seen {
 				p.audits = append(p.audits, action)
@@ -309,12 +349,33 @@ func TestCPRelaysExistOnAgentAndMutationsAreAudited(t *testing.T) {
 		t.Fatalf("the probe found %d relays, fewer than the floor of %d: the probe broke, or relays"+
 			" were removed on purpose (then lower minRelays)", len(relays), minRelays)
 	}
-	t.Logf("%d workspace-resolving /api routes probed, %d relays", len(probes), len(relays))
+	resolving := 0
+	for _, p := range probes {
+		if p.resolved {
+			resolving++
+		}
+	}
+	t.Logf("%d /api routes probed, %d resolved a workspace, %d relays", len(probes), resolving, len(relays))
+
+	t.Run("wrapped relays are found", func(t *testing.T) {
+		relayed := map[string]bool{}
+		for _, p := range relays {
+			relayed[p.route] = true
+		}
+		for _, r := range wrappedRelays {
+			if !relayed[r] {
+				t.Errorf("the probe did not find the relay %s", r)
+			}
+		}
+	})
 
 	t.Run("classified", func(t *testing.T) {
-		probed := map[string]bool{}
+		resolved := map[string]bool{}
 		for _, p := range probes {
-			probed[p.route] = true
+			if !p.resolved {
+				continue
+			}
+			resolved[p.route] = true
 			_, listed := cpOwnedResolvedRoutes[p.route]
 			switch {
 			case p.relayed() && listed:
@@ -326,7 +387,7 @@ func TestCPRelaysExistOnAgentAndMutationsAreAudited(t *testing.T) {
 			}
 		}
 		for r := range cpOwnedResolvedRoutes {
-			if !probed[r] {
+			if !resolved[r] {
 				t.Errorf("cpOwnedResolvedRoutes lists %s, which is not a workspace-resolving /api route", r)
 			}
 		}
