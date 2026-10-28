@@ -4,7 +4,6 @@ import (
 	"path/filepath"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/kinds"
 )
 
@@ -52,11 +51,7 @@ func layoutNativeSkills(l agents.SkillsLayout, dir, cwd, live string) (skills []
 	skills = []sessionSkill{}
 	switch l.Native {
 	case agents.SkillsScan:
-		roots := layoutProjectRoots(l, cwd, dir)
-		for _, u := range l.User {
-			roots = append(roots, skillRoot{u.Dir(), u.Source, u.Form})
-		}
-		skills = scanSkillRoots(roots, l.Invoke)
+		skills = scanLayout(l, cwd, dir)
 		if l.Bundled {
 			skills = appendBundledSkills(skills, claudeBundledSkills())
 		}
@@ -76,30 +71,20 @@ func layoutNativeSkills(l agents.SkillsLayout, dir, cwd, live string) (skills []
 	return skills, nativeConvs
 }
 
-// layoutEnumerateSkills is enumerateSkills over the kind's agents.SkillsLayout.
-func layoutEnumerateSkills(kind, dir, cwd, live string) []sessionSkill {
-	l, ok := skillsLayoutOf(kind)
-	if !ok {
-		return []sessionSkill{}
+// scanLayout reads a layout's project roots and then its user roots: user ranks below project,
+// and within one directory the layout's order (a skill before a command) decides a name.
+func scanLayout(l agents.SkillsLayout, cwd, dir string) []sessionSkill {
+	roots := layoutProjectRoots(l, cwd, dir)
+	for _, u := range l.User {
+		roots = append(roots, skillRoot{u.Dir(), u.Source, u.Form})
 	}
-	skills, nativeConvs := layoutNativeSkills(l, dir, cwd, live)
-	ownNative := len(skills) > 0 // a scanned root, or the live list when there is one
-	// A kind fenced to its CWD would be offered a tree above a Subdir CWD, a SKILL.md symlinked
-	// out of it or a user root, and then fail to open it. Every other kind reads through its CLI,
-	// which has no such fence.
-	var readable func(string) bool
-	if l.FenceToCWD {
-		readable = func(p string) bool { return harness.Readable(cwd, p) }
-	}
-	skills = appendForeignSkills(skills, chainUp(cwd, dir), cwd, nativeConvs, readable)
-	if !l.FenceToCWD {
-		skills = appendUserForeignSkillsFrom(sharedSkillRoots(), skills, kind, ownNative)
-	}
-	return skills
+	return scanSkillRoots(roots, l.Invoke)
 }
 
 // sharedSkillRoots are the member's own skills of the kinds whose layout shares a user root
 // holding claude-compatible SKILL.md trees (docs/log/50 §7.6), in registration order.
+// opencode's root is not among them: it holds nothing but the fleet skills, and opencode itself
+// already reads ~/.claude/skills.
 func sharedSkillRoots() []userSkillRoot {
 	var out []userSkillRoot
 	for _, k := range kinds.All() {

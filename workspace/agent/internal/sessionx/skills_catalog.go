@@ -24,8 +24,8 @@ import (
 // this session"; this one answers "what have I set up, and where", so it keeps what the picker
 // drops: the root, the shadowed duplicates, `user-invocable: false` and the fleet skills.
 //
-// The roots are the user-level halves of the picker's own tables (claudeSkills, codexSkills,
-// opencodeSkills, userSkillRoots) plus opencode's skills root, where fleetskills writes. A kind
+// The roots are the user-level halves of the picker's own layouts (agents.SkillsLayout's User
+// and Shared roots) plus opencode's skills root, where fleetskills writes. A kind
 // with no user root of its own (cursor, agy, kiro, copilot, lcpp) is not listed. The
 // repository's roots are the same shapes answered on ?repo= (skills_repo_catalog.go).
 //
