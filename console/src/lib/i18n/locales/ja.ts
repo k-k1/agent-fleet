@@ -15,6 +15,7 @@ import { aiassist } from "./ja/aiassist.ts";
 import { assistant } from "./ja/assistant.ts";
 import { chat } from "./ja/chat.ts";
 import { common } from "./ja/common.ts";
+import { engineadmin } from "./ja/engineadmin.ts";
 import { engines } from "./ja/engines.ts";
 import { errors } from "./ja/errors.ts";
 import { fleetgraph } from "./ja/fleetgraph.ts";
@@ -23,6 +24,7 @@ import { imggen } from "./ja/imggen.ts";
 import { limits } from "./ja/limits.ts";
 import { inbox } from "./ja/inbox.ts";
 import { memo } from "./ja/memo.ts";
+import { memory } from "./ja/memory.ts";
 import { mirror } from "./ja/mirror.ts";
 import { notifications } from "./ja/notifications.ts";
 import { ops } from "./ja/ops.ts";
@@ -41,6 +43,7 @@ export const ja = {
   ...errors,
   ...settings,
   ...tools,
+  ...memory,
   ...assistant,
   ...aiassist,
   ...sessions,
@@ -49,6 +52,7 @@ export const ja = {
   ...repos,
   ...viewer,
   ...admin,
+  ...engineadmin,
   ...ops,
   ...usage,
   ...notifications,
