@@ -46,6 +46,11 @@ func PaneMode(kind, tn string) string {
 	if s == "" {
 		return ""
 	}
+	return paneModeSwitch(kind, s)
+}
+
+// paneModeSwitch is PaneMode's per-kind parser choice over a captured pane.
+func paneModeSwitch(kind, s string) string {
 	switch kind {
 	case session.KindClaude:
 		return claude.PaneMode(s)
@@ -751,9 +756,7 @@ func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane
 	// copilot: same shape — even with trust pre-written, there is no composer until the tab
 	// UI is drawn, and text sent to the boot screen disappears silently. The footer is the
 	// readiness signal.
-	if meta, ok := session.ReadMeta(name); ok &&
-		(meta.Kind == session.KindAgy || meta.Kind == session.KindCopilot || meta.Kind == session.KindCursor ||
-			meta.Kind == session.KindKiro) {
+	if meta, ok := session.ReadMeta(name); ok && sendWaitsForComposerSwitch(meta.Kind) {
 		tn := session.TmuxName(name)
 		for i := 0; i < 30 && PaneMode(meta.Kind, tn) == ""; i++ {
 			time.Sleep(500 * time.Millisecond)
@@ -776,6 +779,12 @@ func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane
 		cancelStopArmOnNewPrompt(name)
 	}
 	return workingRev, true
+}
+
+// sendWaitsForComposerSwitch names the kinds whose boot screen eats a Terminal send.
+func sendWaitsForComposerSwitch(kind string) bool {
+	return kind == session.KindAgy || kind == session.KindCopilot || kind == session.KindCursor ||
+		kind == session.KindKiro
 }
 
 // slashCmdRe matches a single-token slash command like "/plan" or "/model foo" (but not a

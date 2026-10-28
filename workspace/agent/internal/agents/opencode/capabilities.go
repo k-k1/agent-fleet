@@ -1,6 +1,9 @@
 package opencode
 
-import "github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+)
 
 // Optional agents capabilities of the opencode kind, each delegating to this package's own
 // functions.
@@ -16,3 +19,15 @@ func (agentImpl) ListModels(q agents.ModelQuery) agents.ModelListing {
 	list, route := CatalogWithRoute(ids, q.CatalogPref)
 	return agents.ModelListing{Models: list, Enumerated: len(ids), Listed: ids, Route: route}
 }
+
+// PaneMode is agents.PaneModeReader: this package's PaneMode.
+func (agentImpl) PaneMode(pane string) string { return PaneMode(pane) }
+
+// SendWaitsForComposer is agents.PaneModeReader: false, a Terminal send is typed without
+// waiting for the composer.
+func (agentImpl) SendWaitsForComposer() bool { return false }
+
+// PromptModal is agents.ModalProbe: the question in opencode's store (TerminalModal); its plugin
+// reports working/idle at most. Terminal route only: the managed driver refuses free text itself
+// (ErrQuestionPending).
+func (agentImpl) PromptModal(m session.Meta) string { return TerminalModal(m) }

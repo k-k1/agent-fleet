@@ -1,6 +1,9 @@
 package cursor
 
-import "github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+)
 
 // Optional agents capabilities of the cursor kind, each delegating to this package's own function.
 
@@ -9,3 +12,15 @@ import "github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 func (agentImpl) ListModels(agents.ModelQuery) agents.ModelListing {
 	return agents.ModelListing{Models: Models(), Enumerated: -1}
 }
+
+// PaneMode is agents.PaneModeReader: this package's PaneMode.
+func (agentImpl) PaneMode(pane string) string { return PaneMode(pane) }
+
+// SendWaitsForComposer is agents.PaneModeReader: right after boot there is no composer yet,
+// and text typed into the empty pane is lost.
+func (agentImpl) SendWaitsForComposer() bool { return true }
+
+// PromptModal is agents.ModalProbe: the approval and build menus read off the pane
+// (TerminalModal). Terminal route only: the managed driver refuses free text itself
+// (ErrQuestionPending).
+func (agentImpl) PromptModal(m session.Meta) string { return TerminalModal(m) }

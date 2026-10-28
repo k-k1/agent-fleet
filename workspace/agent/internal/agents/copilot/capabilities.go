@@ -1,6 +1,9 @@
 package copilot
 
-import "github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+)
 
 // Optional agents capabilities of the copilot kind, each delegating to this package's own function.
 
@@ -10,3 +13,14 @@ import "github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 func (agentImpl) ListModels(agents.ModelQuery) agents.ModelListing {
 	return agents.ModelListing{Models: Models(), Enumerated: -1}
 }
+
+// PaneMode is agents.PaneModeReader: this package's PaneMode.
+func (agentImpl) PaneMode(pane string) string { return PaneMode(pane) }
+
+// SendWaitsForComposer is agents.PaneModeReader: even with trust pre-written there is no
+// composer until the tab UI is drawn, and text sent to the boot screen disappears silently.
+func (agentImpl) SendWaitsForComposer() bool { return true }
+
+// PromptModal is agents.ModalProbe: an unfinished permission.requested in events.jsonl
+// (LiveState) — the Terminal permission menu and managed's Interaction in the same shape.
+func (agentImpl) PromptModal(m session.Meta) string { return LiveState(m) }
