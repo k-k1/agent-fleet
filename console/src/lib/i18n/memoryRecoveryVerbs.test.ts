@@ -6,8 +6,8 @@
 // A string that borrowed a verb from another place (Unforget's secret hint once told the member to
 // "Restore it from the Changes view") sends them looking for a button that does not exist.
 import { describe, it, expect } from "vitest";
-import { tools as en } from "./locales/en/tools.ts";
-import { tools as ja } from "./locales/ja/tools.ts";
+import { memory as en } from "./locales/en/memory.ts";
+import { memory as ja } from "./locales/ja/memory.ts";
 import { errors as enErr } from "./locales/en/errors.ts";
 import { errors as jaErr } from "./locales/ja/errors.ts";
 
