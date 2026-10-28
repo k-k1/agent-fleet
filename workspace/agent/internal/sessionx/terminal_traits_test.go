@@ -18,11 +18,11 @@ func funcPtr(f any) uintptr {
 	return reflect.ValueOf(f).Pointer()
 }
 
-// The claude and codex specials in session_io.go and DriveState move onto
-// agents.TerminalTraits (#2870). Until the kind conditions go, each trait must be present for
-// exactly the kinds the old condition (copied verbatim below) selected, and call the same
-// function it called.
-func TestTerminalTraitsEqualTheKindConditions(t *testing.T) {
+// The claude and codex specials of session_io.go and DriveState are agents.TerminalTraits
+// (#2870). Each trait must belong to exactly the kinds the kind condition it replaced selected
+// (kept verbatim below, NormalizeKind's claude fallback included), and call the very function
+// that condition's site called; a trait that drifts to another kind or function goes red here.
+func TestTerminalTraitsBelongToTheirKinds(t *testing.T) {
 	type site struct {
 		name  string
 		old   func(kind string) bool

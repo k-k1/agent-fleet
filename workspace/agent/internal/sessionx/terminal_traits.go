@@ -3,6 +3,7 @@ package sessionx
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
@@ -43,4 +44,20 @@ func terminalScreen(kind, name string) string {
 		return ""
 	}
 	return t.TerminalScreen(string(out))
+}
+
+// callTrue calls a name probe trait, false when the kind has none.
+func callTrue(f func(name string) bool, name string) bool { return f != nil && f(name) }
+
+// callTrue0 calls a probe trait that takes nothing, false when the kind has none.
+func callTrue0(f func() bool) bool { return f != nil && f() }
+
+// healIdle clears a stale non-idle live state: the kind's own heal when it has one, else the
+// marker is just removed.
+func healIdle(t agents.TerminalTraits, sid string) {
+	if t.HealIdle != nil {
+		t.HealIdle(sid)
+		return
+	}
+	status.Remove(sid)
 }

@@ -164,22 +164,26 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	state := status.EffectiveModal(sid, status.LiveState(sid))
 	// codex: an Esc interrupt fires no Stop hook, so "working" outlives the turn. The badge
 	// (WireLive) reads the turn's end off the rollout; the chip reads the same.
-	if m.Kind == session.KindCodex && state == "working" && codex.MissedTurnEnd(m) {
+	exact := terminalTraits(m.Kind)
+	if exact.MissedTurnEnd != nil && state == "working" && exact.MissedTurnEnd(m) {
 		state = "idle"
 	}
 	// codex (Terminal): its hooks report only working/idle, so the request_user_input dialog
 	// leaves the turn "working". The badge (WireLive) and the free-text gate read the rollout
 	// for it; the chip reads the same, or it says "in progress" while sends are refused with
 	// question_pending.
-	if m.Kind == session.KindCodex && state == "working" && codex.TerminalModal(m) != "" {
+	if exact.TerminalQuestion != nil && state == "working" && exact.TerminalQuestion(m) != "" {
 		return "question"
 	}
-	isClaude := NormalizeKind(m.Kind) == session.KindClaude
+	// claude's traits (an empty kind reads as claude): the usage-limit menu, the expired login
+	// and the heal that reports a turn that died on an API error.
+	t := normalizedTerminalTraits(m.Kind)
+	usageLimits := t.UsageLimitMenu != nil
 	// The pane is read exactly once (tmuxx.ReadPane). heal=false (/output) still does not look
 	// at the pane, but claude's usage-limit modal has to be reported regardless of heal, so
 	// capture whenever either of those two needs it.
 	var pane tmuxx.PaneRead
-	if heal || isClaude {
+	if heal || usageLimits {
 		pane = readPane(m.Name)
 	}
 	// claude pins the pane on the usage-limit menu, waiting for a human (see the comment on
@@ -190,15 +194,15 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	// (ahead of the usage-limit menu), for the same reason — when the mirror/chat chip and the
 	// list badge disagree, the user cannot tell which one is true. For the reason behind the
 	// order see the comment in WireLive (report the one waiting will not fix first).
-	if isClaude && claude.AuthExpired() {
+	if callTrue0(t.AuthExpired) {
 		if heal && state != "idle" {
-			claude.HealIdle(sid)
+			healIdle(t, sid)
 		}
 		return agents.StateAuth
 	}
-	if isClaude && pane.RateLimitMenu {
+	if usageLimits && pane.RateLimitMenu {
 		if heal && state != "idle" {
-			claude.HealIdle(sid)
+			healIdle(t, sid)
 		}
 		return agents.StateBlocked
 	}
@@ -225,11 +229,7 @@ func DriveState(m session.Meta, alive, heal bool) string {
 		// (docs/log/47). The evidence is specific to claude's jsonl format, so every other kind
 		// only removes the marker. NormalizeKind: an old session with an empty kind is claude
 		// too, and a raw comparison would miss it.
-		if isClaude {
-			claude.HealIdle(sid)
-		} else {
-			status.Remove(sid)
-		}
+		healIdle(t, sid)
 	} else if heal && state == "idle" && pane.Busy && claude.ReopenFromPane(sid) {
 		// Reverse-heal: the hook state reads idle (its "working" file was never written,
 		// or the self-heal above removed it during a transient prompt frame) but the pane
@@ -244,7 +244,7 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	// so far reads idle. The same reinterpretation as the list (wireSession) is applied here —
 	// when the chip in the body disagrees with the list, the user cannot tell which one is true
 	// (docs/log/47 §4-9). Sending is not blocked (see the comment on agents.StateLimited).
-	if isClaude && alive && state == "idle" {
+	if usageLimits && alive && state == "idle" {
 		if limited, _, waiting := rateLimitWaiting(m, time.Now()); waiting {
 			return limited
 		}
