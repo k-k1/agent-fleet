@@ -16,11 +16,11 @@ import (
 // Agent does not accept is read as "not set", so it silently applies the deployment default
 // instead of the period the user picked.
 func TestDriftStoppedArchiveChoices(t *testing.T) {
-	src := consoleSettingsSource(t)
+	src := consoleSettingsSource(t, "options.ts")
 
 	m := regexp.MustCompile(`STOPPED_ARCHIVE_DAYS\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(src)
 	if m == nil {
-		t.Fatal("no STOPPED_ARCHIVE_DAYS array in console/src/lib/settings.ts (renamed? then update this test and session.StoppedArchiveDayChoices together)")
+		t.Fatal("no STOPPED_ARCHIVE_DAYS array in console/src/lib/settings/options.ts (renamed? then update this test and session.StoppedArchiveDayChoices together)")
 	}
 	var got []int
 	for _, f := range strings.Split(m[1], ",") {
@@ -39,7 +39,7 @@ func TestDriftStoppedArchiveChoices(t *testing.T) {
 
 	m = regexp.MustCompile(`STOPPED_ARCHIVE_NEVER\s*=\s*(-?\d+)`).FindStringSubmatch(src)
 	if m == nil {
-		t.Fatal("no STOPPED_ARCHIVE_NEVER in console/src/lib/settings.ts (renamed?)")
+		t.Fatal("no STOPPED_ARCHIVE_NEVER in console/src/lib/settings/options.ts (renamed?)")
 	}
 	if n, _ := strconv.Atoi(m[1]); n != session.StoppedArchiveNever {
 		t.Fatalf("Console STOPPED_ARCHIVE_NEVER = %d, session.StoppedArchiveNever = %d", n, session.StoppedArchiveNever)
@@ -47,9 +47,9 @@ func TestDriftStoppedArchiveChoices(t *testing.T) {
 
 	// The Console's stored default has to be the value the Agent reads as "not set", or a user
 	// who never opened the row overrides the deployment's AF_SESSION_STOPPED_TTL.
-	m = regexp.MustCompile(`sessionStoppedArchiveDays:\s*(-?\d+)`).FindStringSubmatch(src)
+	m = consoleDefaultRE("sessionStoppedArchiveDays").FindStringSubmatch(consoleSettingsSource(t, "prefs.ts"))
 	if m == nil {
-		t.Fatal("no sessionStoppedArchiveDays default in console/src/lib/settings.ts (renamed?)")
+		t.Fatal("no sessionStoppedArchiveDays default in console/src/lib/settings/prefs.ts (renamed?)")
 	}
 	if n, _ := strconv.Atoi(m[1]); session.NormalizeStoppedArchiveDays(n) != 0 {
 		t.Fatalf("Console default sessionStoppedArchiveDays = %d, which the Agent reads as a choice, not as unset", n)
