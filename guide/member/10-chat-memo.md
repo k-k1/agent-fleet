@@ -84,9 +84,10 @@ chat header (e.g. `Claude ▾`) and pick another one.
   part of the conversation it missed.
 - When a turn fails on a usage or rate limit before anything was shown, it is re-run once on the
   next usable CLI in the priority list and the chat shows a notice; the conversation's agent does
-  not change, and it goes back once the limit lifts. A limit about to lift is waited out instead, a
-  turn that had already started showing its answer is not re-run, and compaction never switches
-  (see chapter 20).
+  not change, and it goes back once the limit lifts. A limit about to lift does not switch (the turn
+  ends with its error), a turn that had already started showing its answer is not re-run, and a
+  compaction that hits a limit is not retried elsewhere; one started while the conversation's CLI is
+  known to be limited runs on the next CLI (see chapter 20).
 
 The chat's **reply language** is set with "Reply language" on ⚙Settings → the
 "Assistant" tab. "Match input" replies in the language of the text you hand over, while

@@ -20,7 +20,7 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 **New / Improved**
 
 - **[skills]** Read-only view of agents' skills: personal (Claude Code, Codex, OpenCode, Muse Code) under Settings › Skills, a repository's (Cursor too) under Skills… in its row's menu ([#2792](https://github.com/k-k1/agent-fleet/issues/2792), [#2795](https://github.com/k-k1/agent-fleet/issues/2795))
-- **[assistant]** A chat turn that fails on a usage or rate limit before any output is re-run on the next backend, with a notice; AI-assist one-offs skip it; compaction and memory review do not switch ([#2780](https://github.com/k-k1/agent-fleet/issues/2780))
+- **[assistant]** A chat turn that fails on a lasting usage or rate limit before any output is re-run on the next backend, with a notice; AI-assist one-offs skip it; a limit about to lift does not switch; a compaction or memory review that hits a limit is not retried elsewhere ([#2780](https://github.com/k-k1/agent-fleet/issues/2780))
 - **[work items]** Rows mark new activity; GitHub and Bitbucket rows show comment counts ([#2779](https://github.com/k-k1/agent-fleet/issues/2779))
 - **[workspace]** Settings › Machine charts memory pressure (measure only) ([#2516](https://github.com/k-k1/agent-fleet/issues/2516), [#2837](https://github.com/k-k1/agent-fleet/issues/2837))
 - **[viewer]** Find in the PDF pane: Ctrl/Cmd+F opens its own find bar over every page ([#2822](https://github.com/k-k1/agent-fleet/issues/2822))

@@ -19,7 +19,7 @@
 **New / Improved**
 
 - **[スキル]** エージェントのスキルを読み取り専用で表示。個人のもの（Claude Code・Codex・OpenCode・Muse Code）は 設定 › スキル、リポジトリのもの（Cursor も）は行のメニューの スキル… ([#2792](https://github.com/k-k1/agent-fleet/issues/2792), [#2795](https://github.com/k-k1/agent-fleet/issues/2795))
-- **[アシスタント]** 利用上限・レート制限で表示前に失敗したチャットのターンを次のバックエンドで実行し直し、お知らせを残す。AI 補助の単発の生成も避ける。圧縮とメモリのレビューは切り替えない ([#2780](https://github.com/k-k1/agent-fleet/issues/2780))
+- **[アシスタント]** 長引く利用上限・レート制限で表示前に失敗したチャットのターンを次のバックエンドで実行し直し、お知らせを残す。AI 補助の単発の生成も避ける。解除が近い制限では切り替えない。制限で失敗した圧縮とメモリのレビューは別のバックエンドで再試行しない ([#2780](https://github.com/k-k1/agent-fleet/issues/2780))
 - **[作業項目]** 行に新しい動きの印、GitHub と Bitbucket の行にはコメント数 ([#2779](https://github.com/k-k1/agent-fleet/issues/2779))
 - **[ワークスペース]** 設定 › マシン にメモリ逼迫のグラフ（測定のみ） ([#2516](https://github.com/k-k1/agent-fleet/issues/2516), [#2837](https://github.com/k-k1/agent-fleet/issues/2837))
 - **[ビューア]** PDF ペインの検索。Ctrl/Cmd+F で全ページを探す専用の検索バー ([#2822](https://github.com/k-k1/agent-fleet/issues/2822))
