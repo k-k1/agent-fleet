@@ -1,7 +1,10 @@
 package opencode
 
 import (
+	"path/filepath"
+
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -31,3 +34,20 @@ func (agentImpl) SendWaitsForComposer() bool { return false }
 // reports working/idle at most. Terminal route only: the managed driver refuses free text itself
 // (ErrQuestionPending).
 func (agentImpl) PromptModal(m session.Meta) string { return TerminalModal(m) }
+
+// SkillsLayout is agents.SkillsLayouter: command md files in the working copy's .opencode/command
+// and .opencode/commands (both spellings exist in the 1.18.8 binary), then the same two under the
+// config dir, invoked as "/name". The working copy root only: discovery under a Subdir has not
+// been measured (docs/log/50 §10). Its user root is not shared: it holds nothing but the fleet
+// skills, and opencode itself already reads ~/.claude/skills.
+func (agentImpl) SkillsLayout() agents.SkillsLayout {
+	return agents.SkillsLayout{
+		Native:  agents.SkillsScan,
+		Invoke:  "/",
+		Project: []agents.SkillRoot{{Rel: ".opencode/command", Form: "commands"}, {Rel: ".opencode/commands", Form: "commands"}},
+		User: []agents.UserSkillRoot{
+			{Dir: func() string { return filepath.Join(paths.OpencodeConfigDir(), "command") }, Source: "user", Form: "commands"},
+			{Dir: func() string { return filepath.Join(paths.OpencodeConfigDir(), "commands") }, Source: "user", Form: "commands"},
+		},
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -38,7 +39,7 @@ func TestClaudeSkills(t *testing.T) {
 	// within one root, a skill beats a command
 	writeFile(t, filepath.Join(project, "commands", "proofread.md"), "command twin")
 
-	got := claudeSkills(dir, dir)
+	got := scanLayout(layoutOf(t, session.KindClaude), dir, dir)
 	want := map[string][3]string{ // name → {source, type, description}
 		"proofread": {"project", "skill", "原稿の形式整備"},
 		"ledger":    {"project", "skill", ""},
@@ -105,7 +106,7 @@ func TestClaudeSkillsFollowsTheCWDChain(t *testing.T) {
 	skill(cwd, "dup", "近い方")
 
 	byName := map[string]sessionSkill{}
-	for _, sk := range claudeSkills(cwd, dir) {
+	for _, sk := range scanLayout(layoutOf(t, session.KindClaude), cwd, dir) {
 		byName[sk.Name] = sk
 	}
 	if _, ok := byName["personal"]; ok {
@@ -148,7 +149,7 @@ func TestCodexSkillsStopsAtTheGitRoot(t *testing.T) {
 			"---\nname: "+name+"\ndescription: "+name+"\n---\nbody")
 	}
 
-	got := codexSkills(cwd, dir)
+	got := scanLayout(layoutOf(t, session.KindCodex), cwd, dir)
 	if len(got) != 1 || got[0].Name != "nearest" {
 		t.Fatalf("without .git codex reads the CWD alone, got %#v", got)
 	}
@@ -156,7 +157,7 @@ func TestCodexSkillsStopsAtTheGitRoot(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	got = codexSkills(cwd, dir)
+	got = scanLayout(layoutOf(t, session.KindCodex), cwd, dir)
 	if len(got) != 2 {
 		t.Fatalf("with a git root both levels are in scope, got %#v", got)
 	}
@@ -256,7 +257,7 @@ func TestCodexSkills(t *testing.T) {
 	writeFile(t, filepath.Join(home, "skills", ".system", "imagegen", "SKILL.md"),
 		"---\nname: imagegen\ndescription: 同梱\n---\nbody")
 
-	got := codexSkills(dir, dir)
+	got := scanLayout(layoutOf(t, session.KindCodex), dir, dir)
 	byName := map[string]sessionSkill{}
 	for _, sk := range got {
 		byName[sk.Name] = sk
@@ -289,7 +290,7 @@ func TestOpencodeSkills(t *testing.T) {
 	writeFile(t, filepath.Join(home, ".config", "opencode", "command", "share.md"),
 		"---\ndescription: 共有\n---\nbody")
 
-	got := opencodeSkills(dir)
+	got := scanLayout(layoutOf(t, session.KindOpencode), dir, dir)
 	byName := map[string]sessionSkill{}
 	for _, sk := range got {
 		byName[sk.Name] = sk
@@ -318,7 +319,7 @@ func TestCursorSkills(t *testing.T) {
 		"---\nname: helper\ndescription: 補助\n---\nbody")
 
 	// advertised list has not arrived: fall back to the filesystem
-	got := cursorSkills(name, dir)
+	got := advertisedSkills(layoutOf(t, session.KindCursor), name, dir)
 	if len(got) != 2 || got[0].Name != "helper" || got[1].Name != "probe" {
 		t.Fatalf("fallback = %#v", got)
 	}
@@ -329,7 +330,7 @@ func TestCursorSkills(t *testing.T) {
 		{Name: "simplify", Description: "Find cleanups (global)"},
 		{Name: "probe", Description: "AF probe (project)"},
 	})
-	got = cursorSkills(name, dir)
+	got = advertisedSkills(layoutOf(t, session.KindCursor), name, dir)
 	if len(got) != 2 {
 		t.Fatalf("advertised = %#v", got)
 	}
@@ -798,4 +799,33 @@ func TestUserSkillsOfOtherKindsAreForeign(t *testing.T) {
 		t.Errorf("muse live: its own root came back as foreign too: %#v", s)
 	}
 	foreign("muse", mu, "issue-to-pr", ".claude", filepath.Join(claudeRoot, "skills"))
+}
+
+// layoutOf is kind's registered agents.SkillsLayout.
+func layoutOf(t *testing.T, kind string) agents.SkillsLayout {
+	t.Helper()
+	l, ok := skillsLayoutOf(kind)
+	if !ok {
+		t.Fatalf("%s has no SkillsLayout", kind)
+	}
+	return l
+}
+
+// Every agent kind declares where its skills come from; shell and ssm run no chat and declare
+// nothing. A kind registered without a layout would silently offer an empty picker.
+func TestSkillsLayoutCoversEveryAgentKind(t *testing.T) {
+	for _, k := range RegisteredKinds() {
+		_, ok := skillsLayoutOf(k)
+		if want := k != session.KindShell && k != session.KindSSM; ok != want {
+			t.Errorf("%s: has a SkillsLayout = %v, want %v", k, ok, want)
+		}
+	}
+	// The kinds whose user root other kinds are offered, in registration order.
+	var shared []string
+	for _, r := range sharedSkillRoots() {
+		shared = append(shared, r.kind+" "+r.origin)
+	}
+	if got, want := strings.Join(shared, ", "), "claude .claude, codex .codex, muse .muse"; got != want {
+		t.Errorf("shared skill roots = %s, want %s", got, want)
+	}
 }

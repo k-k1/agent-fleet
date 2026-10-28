@@ -24,3 +24,14 @@ func (agentImpl) SendWaitsForComposer() bool { return true }
 // (TerminalModal). Terminal route only: the managed driver refuses free text itself
 // (ErrQuestionPending).
 func (agentImpl) PromptModal(m session.Meta) string { return TerminalModal(m) }
+
+// SkillsLayout is agents.SkillsLayouter: the ACP advertised list is authoritative (builtin skills,
+// global and the project's, measured 2026-07-28); until it arrives, the working copy's
+// .cursor/commands and .cursor/skills, invoked as "/name".
+func (agentImpl) SkillsLayout() agents.SkillsLayout {
+	return agents.SkillsLayout{
+		Native:  agents.SkillsAdvertised,
+		Invoke:  "/",
+		Project: []agents.SkillRoot{{Rel: ".cursor/commands", Form: "commands"}, {Rel: ".cursor/skills", Form: "skills"}},
+	}
+}

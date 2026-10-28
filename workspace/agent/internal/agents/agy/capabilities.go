@@ -25,3 +25,9 @@ func (agentImpl) PromptModal(m session.Meta) string {
 	st, _ := Probe(m)
 	return st
 }
+
+// SkillsLayout is agents.SkillsLayouter: no user-invocable mechanism confirmed yet (docs/log/50
+// §7), so the other conventions' SKILL.md trees are offered as foreign entries only.
+func (agentImpl) SkillsLayout() agents.SkillsLayout {
+	return agents.SkillsLayout{Native: agents.SkillsForeignOnly}
+}
