@@ -32,6 +32,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/lcpp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
@@ -94,6 +95,8 @@ func init() {
 	// catalog through a func-var. lcppModels (agent_models.go) already has this exact
 	// signature.
 	sessionx.LcppLiveModels = lcppModels
+	// And once more for the lcpp kind's model menu (agents.ModelLister).
+	lcpp.EngineModels = lcppModels
 }
 
 // The API families the CP's catalogue reports. Chat engines become opencode providers; images
