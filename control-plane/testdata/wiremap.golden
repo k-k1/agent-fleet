@@ -9,7 +9,7 @@
 # count: 149
 admin_sessions.go adminAPI.allSessions x1 {sessions}
 admin_stats.go adminAPI.memberSessions x3 {sessions}
-admin_stats.go adminAPI.memberStats x1 {auto_stop,boot_failed,cpu_pct,disk_observed_at,disk_pending,disk_quota,disk_used,exit_code,home_own,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} cond{auto_stop,boot_failed,cpu_pct,disk_observed_at,disk_pending,disk_quota,disk_used,exit_code,home_own,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
+admin_stats.go adminAPI.memberStats x1 {auto_stop,boot_failed,cpu_pct,disk_observed_at,disk_pending,disk_quota,disk_used,exit_code,home_own,mem_max,mem_pressure,oom_kill_total,oom_killed,oom_recent,running,starting} cond{auto_stop,boot_failed,cpu_pct,disk_observed_at,disk_pending,disk_quota,disk_used,exit_code,home_own,mem_max,mem_pressure,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
 admin_stats.go adminAPI.memberStats x1 {running}
 audit.go adminAPI.audit x1 {audit}
 cloudcost.go adminAPI.cloudCost x1 {attributed_micro,from,members,meta,shared_groups,shared_micro,shared_roles,shared_services,to} cond{shared_groups,shared_micro,shared_roles,shared_services}
@@ -82,7 +82,7 @@ internal_git_browse.go gitServerAPI.commits x2 {commits,path,ref}
 internal_git_browse.go gitServerAPI.tree x2 {entries,path,ref}
 login_provider_api.go loginProviderAPI.list x1 {providers}
 memo.go memoAPI.flush x1 {ids,sent,sentAt}
-metrics.go workspaceAPI.stats x1 {cpu_pct,exit_code,home_own,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} cond{cpu_pct,exit_code,home_own,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
+metrics.go workspaceAPI.stats x1 {cpu_pct,exit_code,home_own,mem_max,mem_pressure,oom_kill_total,oom_killed,oom_recent,running,starting} cond{cpu_pct,exit_code,home_own,mem_max,mem_pressure,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
 notification.go notificationAPI.list x1 {items,maxSeq,sourceState,unseenCount}
 oauth_bitbucket.go config.handleBitbucketOAuthStart x1 {authorize_url}
 oauth_github_device.go config.handleGithubDevicePoll x1 {connected,install_url,not_installed,token_expires} cond{install_url,not_installed,token_expires}

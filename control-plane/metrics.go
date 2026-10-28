@@ -132,15 +132,23 @@ var cpuSamples = &cpuTracker{prev: map[string]cpuSample{}}
 // otherwise containerStats reports a stopped workspace as running: a wrong "running" dot,
 // a hidden "stopped" notice, and an enabled force-stop button.
 func dockerContainerID(ctx context.Context, name string) string {
-	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Running}} {{.Id}}", name).Output()
+	id, _ := dockerContainerRun(ctx, name)
+	return id
+}
+
+// dockerContainerRun is dockerContainerID plus a token naming this run of the container: the
+// id changes when the container is replaced and StartedAt when the same one is restarted, so
+// the token changes on either. Per-run state (the pressure sample) is keyed on it.
+func dockerContainerRun(ctx context.Context, name string) (id, run string) {
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Running}} {{.Id}} {{.State.StartedAt}}", name).Output()
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	f := strings.Fields(string(out))
 	if len(f) < 2 || f[0] != "true" {
-		return ""
+		return "", ""
 	}
-	return f[1]
+	return f[1], strings.Join(f[1:], " ")
 }
 
 // cgroupScope is the host cgroup v2 path for a docker container under the systemd
@@ -272,13 +280,26 @@ func containerCPUPct(id, scope string) (float64, bool) {
 	return cpuSamples.pct(id, usage, time.Now())
 }
 
+// hostStatsHook lets a test stand in for the docker host (no docker in CI); nil in production.
+var hostStatsHook func(ctx context.Context, name string) (map[string]any, string)
+
 // containerStats reads a container's live mem/CPU from its cgroup v2 scope,
 // keyed by container name. Returns {running:false} when the container is gone,
 // {running:true} (no metrics) when the scope path is unreadable, or the full
 // {running, mem_used, mem_max?, cpu_pct?} otherwise. Shared by the own-workspace
 // chip and the admin per-member view.
 func containerStats(ctx context.Context, name string) map[string]any {
-	id := dockerContainerID(ctx, name)
+	out, _ := containerStatsRun(ctx, name)
+	return out
+}
+
+// containerStatsRun is containerStats plus the run token of the container it read ("" when
+// there is none). The token is internal: it never enters the map, so it is not on the wire.
+func containerStatsRun(ctx context.Context, name string) (map[string]any, string) {
+	if hostStatsHook != nil {
+		return hostStatsHook(ctx, name)
+	}
+	id, run := dockerContainerRun(ctx, name)
 	if id == "" {
 		// Stopped: surface an OOM-kill of the container itself so the Console can say
 		// WHY it went down (crash / OOM) instead of guessing from the bare state.
@@ -289,14 +310,14 @@ func containerStats(ctx context.Context, name string) map[string]any {
 			}
 			out["exit_code"] = st.exitCode
 		}
-		return out
+		return out, ""
 	}
 	scope := cgroupScope(id)
 	memUsed, okMem := readCgroupUint(scope + "/memory.current")
 	if !okMem {
 		// Scope path absent (e.g. cgroupfs driver or a different layout): the
 		// container is up but we can't read it — degrade rather than 500.
-		return map[string]any{"running": true}
+		return map[string]any{"running": true}, run
 	}
 	out := map[string]any{"running": true, "mem_used": memUsed}
 	if memMax, ok := readCgroupUint(scope + "/memory.max"); ok {
@@ -313,7 +334,7 @@ func containerStats(ctx context.Context, name string) map[string]any {
 			out["oom_recent"] = true
 		}
 	}
-	return out
+	return out, run
 }
 
 // --- The runtime-neutral view (docs/log/63 §63.9) ---
@@ -339,7 +360,7 @@ func containerStats(ctx context.Context, name string) map[string]any {
 // pass a memoized one so it is paid at most once, and only when the local read
 // already failed.
 func workspaceStats(ctx context.Context, m *manager, rt runtime.Runtime, state func() string) map[string]any {
-	out := containerStats(ctx, rt.Name())
+	out, run := containerStatsRun(ctx, rt.Name())
 	if out["running"] != true {
 		// The Console disables force-stop on exactly this field, so a docker read that
 		// cannot see the container must not be the last word — on ECS it never can
@@ -354,7 +375,15 @@ func workspaceStats(ctx context.Context, m *manager, rt runtime.Runtime, state f
 	// mem_used is the marker for "the local read saw this workspace". Absent means
 	// the CP is not on the workspace's host; the Agent is then the only source.
 	// Asking a workspace that is not running would just burn a 5s timeout per tick.
-	if _, ok := out["mem_used"]; ok || out["running"] != true {
+	if _, ok := out["mem_used"]; ok {
+		// Local read won: only the pressure axis is the Agent's to add (metrics_pressure.go).
+		if mp := agentMemPressure(ctx, m, rt, run); mp != nil {
+			out["mem_pressure"] = mp
+		}
+		return out
+	}
+	if out["running"] != true {
+		memPressures.invalidate(rt.Name())
 		return out
 	}
 	s, err := m.agentStats(ctx, rt)
