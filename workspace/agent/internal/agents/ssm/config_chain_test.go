@@ -1,4 +1,4 @@
-package sessionx
+package ssm
 
 import (
 	"os"

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
@@ -138,9 +139,8 @@ func (f *fakeRuntimeAgent) ManagedRuntime() agents.ManagedRuntimeOps {
 func TestManagedRuntimeWrappersPassThrough(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	const kind = "rt-fake"
-	f := &fakeRuntimeAgent{Agent: agentRegistry[session.KindClaude], name: "rt-probe"}
-	agentRegistry[kind] = f
-	t.Cleanup(func() { delete(agentRegistry, kind) })
+	f := &fakeRuntimeAgent{Agent: AgentOf(session.KindClaude), name: "rt-probe"}
+	t.Cleanup(agentreg.SwapForTest(kind, f))
 	m := session.Meta{Name: f.name, Kind: kind, Driver: session.DriverManaged}
 	for _, tc := range []struct{ alive, busy, inFlight bool }{
 		{true, false, false}, {false, true, false}, {false, false, true}, {true, true, true}, {},
@@ -174,10 +174,10 @@ func TestManagedRuntimeFollowsCaps(t *testing.T) {
 		}
 	}
 	for _, kind := range RegisteredKinds() {
-		c := agentRegistry[kind].Caps()
+		c := AgentOf(kind).Caps()
 		_, driver := managedDrivers[kind]
 		canManaged := c.ManagedOnly || c.ManagedDefault || driver
-		rt, ok := agentRegistry[kind].(agents.ManagedRuntime)
+		rt, ok := AgentOf(kind).(agents.ManagedRuntime)
 		if ok != canManaged {
 			t.Errorf("%s: implements agents.ManagedRuntime = %v, but ManagedOnly=%v ManagedDefault=%v managed driver=%v",
 				kind, ok, c.ManagedOnly, c.ManagedDefault, driver)

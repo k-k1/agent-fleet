@@ -87,7 +87,7 @@ source_of_truth: "コード"
 | 関心事 | どこから探すか |
 |---|---|
 | セッション: ライフサイクル・tmux・driver 切替・ターン・IO・transcript・タイトル・spawn・peer | `internal/sessionx`。セッションのモデル（ワイヤ・メタデータ・`Kind*` 定数）は `internal/session`、生きた状態のストアは `internal/status` |
-| 1 つのエージェント種別 | `internal/agents/<kind>`（エージェント CLI ごとに 1 パッケージ。shell と ssm は `internal/sessionx/agent_shell_ssm.go`）。種別の登録は `agentRegistry`（`internal/sessionx/agent.go`）。共通のインタフェースは `internal/agents`。種別の追加は [20](20-add-an-agent.ja.md) と [04 §4.3](04-agent.ja.md#43-エージェント種別を統合する型) |
+| 1 つのエージェント種別 | `internal/agents/<kind>`（種別ごとに 1 パッケージ。shell と ssm も含む）。種別の登録は `internal/agentreg`（kind → Agent）で、capability を持たない種別の一覧が `internal/kinds`。こちらはエージェントのパッケージより下のパッケージ（bridge・mcpreg）からも import できる。共通のインタフェースは `internal/agents`。種別の追加は [20](20-add-an-agent.ja.md) と [04 §4.3](04-agent.ja.md#43-エージェント種別を統合する型) |
 | managed 専用の種別（`internal/agents` の `ManagedOnly`）| lcpp: `internal/harness` とその MCP クライアント `internal/mcpc`。muse: `internal/msp`（プロトコル）|
 | チャットとアシスタント | `internal/chatx`・`internal/assistants`。組み込みの知識（`knowledge/af-usage.md`）を embed するのは `assistants.go` |
 | チャットブリッジ | `internal/bridge`・`bridge_operator.go`・`connections_slack.go` |

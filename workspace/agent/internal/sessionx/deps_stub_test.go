@@ -23,6 +23,7 @@ import (
 
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/ssm"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
@@ -52,7 +53,7 @@ func mcpxStubDeps() mcpx.Deps {
 	d.ShellSendTarget = ShellSendTarget
 	d.SessionIsShell = SessionIsShell
 	d.EnsureClaudeSettingsWiring = EnsureClaudeSettingsWiring
-	d.WriteSSMConfig = WriteSSMConfig
+	d.WriteSSMConfig = ssm.WriteSSMConfig
 
 	// The real one, as in main (uiprefs is a pure lower-level package).
 	d.ReadUIPrefs = uiprefs.Read

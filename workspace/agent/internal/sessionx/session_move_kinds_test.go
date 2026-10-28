@@ -38,7 +38,7 @@ func TestEveryKindIsClassifiedForMove(t *testing.T) {
 		}
 	}
 	for k := range moveClassification {
-		if _, ok := agentRegistry[k]; !ok {
+		if _, ok := RegisteredAgent(k); !ok {
 			t.Errorf("moveClassification has %q, which is not a registered kind", k)
 		}
 	}

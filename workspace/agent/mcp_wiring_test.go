@@ -23,6 +23,7 @@ package main
 // without adding a check fails here.
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/ssm"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"reflect"
 	"runtime"
@@ -85,7 +86,7 @@ func TestMCPWiringIsLive(t *testing.T) {
 		"ReadBuildPins":              func(t *testing.T) { sameFunc(t, w.ReadBuildPins, readBuildPins) },
 		"AgentFleetShareDir":         func(t *testing.T) { sameFunc(t, w.AgentFleetShareDir, agentFleetShareDir) },
 		"InstallGrafanaMCP":          func(t *testing.T) { sameFunc(t, w.InstallGrafanaMCP, installGrafanaMCP) },
-		"WriteSSMConfig":             func(t *testing.T) { sameFunc(t, w.WriteSSMConfig, sessionx.WriteSSMConfig) },
+		"WriteSSMConfig":             func(t *testing.T) { sameFunc(t, w.WriteSSMConfig, ssm.WriteSSMConfig) },
 
 		// --- the four pairs that cannot be copied (checked round-trip) ---
 		"WriteEnabled":      func(t *testing.T) { roundTripBool(t, &mcpWriteEnabled, w.WriteEnabled, w.SetWriteEnabled) },

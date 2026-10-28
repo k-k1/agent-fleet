@@ -52,7 +52,7 @@ func TestPromptPasteMatchesLegacyChain(t *testing.T) {
 
 func TestPromptPasteClassifiesEveryRegisteredKind(t *testing.T) {
 	for _, kind := range RegisteredKinds() {
-		_, impl := agentRegistry[kind].(agents.PromptPaste)
+		_, impl := AgentOf(kind).(agents.PromptPaste)
 		paste, literal := slices.Contains(pasteKinds, kind), slices.Contains(literalKinds, kind)
 		if paste == literal {
 			t.Errorf("%s: must be in exactly one of pasteKinds / literalKinds (paste=%v literal=%v)", kind, paste, literal)
@@ -62,7 +62,7 @@ func TestPromptPasteClassifiesEveryRegisteredKind(t *testing.T) {
 		}
 	}
 	for _, kind := range append(slices.Clone(pasteKinds), literalKinds...) {
-		if _, ok := agentRegistry[kind]; !ok {
+		if _, ok := RegisteredAgent(kind); !ok {
 			t.Errorf("pasteKinds / literalKinds has %q, which is not a registered kind", kind)
 		}
 	}

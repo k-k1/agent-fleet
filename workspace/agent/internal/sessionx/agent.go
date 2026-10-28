@@ -1,11 +1,9 @@
 package sessionx
 
 import (
-	"fmt"
-	"sort"
-	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -13,7 +11,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/lcpp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -22,28 +19,10 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// The Agent interface and its input/output types live in internal/agents
-// (docs/log/23 remaining item 1 Wave C); the opencode implementation is in
-// internal/agents/opencode (Wave D), codex in internal/agents/codex (Wave E) and claude in
-// internal/agents/claude (Wave F). This file keeps the registry and the shared live-state
-// helpers.
-
-// agentRegistry is the kind → agents.Agent registry. AgentOf falls back to claude
-// for an unknown or empty kind, matching the historical default (a session with no
-// recognized kind launches claude).
-var agentRegistry = map[string]agents.Agent{
-	session.KindClaude:   claude.New(),
-	session.KindOpencode: opencode.New(),
-	session.KindCodex:    codex.New(),
-	session.KindCursor:   cursor.New(),
-	session.KindKiro:     kiro.New(),
-	session.KindAgy:      agy.New(),
-	session.KindCopilot:  copilot.New(),
-	session.KindShell:    shellAgent{},
-	session.KindSSM:      ssmAgent{},
-	session.KindLcpp:     lcpp.New(),
-	session.KindMuse:     muse.New(),
-}
+// The kind registry is internal/agentreg (kind → agents.Agent) over internal/kinds (the
+// capability-free list of the same kinds). The functions below are its names in sessionx, kept
+// so the callers here and in package main read as before. This file also keeps the shared
+// live-state helpers.
 
 // SessionTurns reads a session's transcript through its kind's agent, Terminal and Managed
 // alike: the mirror's source, and chatx's for a scheduled run's answer (#1560).
@@ -52,75 +31,23 @@ func SessionTurns(m session.Meta) ([]transcript.Turn, bool) {
 	return td.Turns, ok
 }
 
-func AgentOf(kind string) agents.Agent {
-	if a, ok := agentRegistry[kind]; ok {
-		return a
-	}
-	return agentRegistry[session.KindClaude]
-}
+// AgentOf is agentreg.Of: the kind's agent, or claude's for an unknown or empty kind.
+func AgentOf(kind string) agents.Agent { return agentreg.Of(kind) }
 
-// RegisteredAgent is AgentOf without the claude fallback: the agent registered under exactly
-// this key. Optional capabilities (agents.Instructions and the like) are resolved through it,
-// so an unknown or alternate spelling never answers with claude's.
-func RegisteredAgent(kind string) (agents.Agent, bool) {
-	a, ok := agentRegistry[kind]
-	return a, ok
-}
+// RegisteredAgent is agentreg.Lookup: AgentOf without the claude fallback.
+func RegisteredAgent(kind string) (agents.Agent, bool) { return agentreg.Lookup(kind) }
 
-// RegisteredKinds lists every kind in the registry, sorted. It is the source the kind
-// catalog (GET /agents/kinds) and the drift guards iterate: a hand-kept list of kinds is
-// exactly what drifted before. AgentOf's claude fallback is not a kind, so an unknown or
-// alternate spelling never appears here.
-func RegisteredKinds() []string {
-	kinds := make([]string, 0, len(agentRegistry))
-	for k := range agentRegistry {
-		kinds = append(kinds, k)
-	}
-	sort.Strings(kinds)
-	return kinds
-}
+// RegisteredKinds is agentreg.Kinds: every registered kind, sorted.
+func RegisteredKinds() []string { return agentreg.Kinds() }
 
-// NormalizeKind maps a create request's kind onto a registered one, defaulting the
-// unknown/empty/"claude" cases to claude (the historical create whitelist).
-func NormalizeKind(kind string) string {
-	if _, ok := agentRegistry[kind]; ok {
-		return kind
-	}
-	return session.KindClaude
-}
+// NormalizeKind is agentreg.Normalize, the read-side fallback to claude.
+func NormalizeKind(kind string) string { return agentreg.Normalize(kind) }
 
-// ValidateCreateKind is the create paths' gate: an empty kind means claude (the documented
-// default), a registered kind passes, and anything else is refused with the accepted list.
-// Matching is exact — "Codex", " codex" and "kiro-cli" are errors, never rewritten.
-//
-// It is separate from NormalizeKind on purpose. NormalizeKind is the READ-side fallback (a
-// stored session with an empty or legacy kind must keep rendering as claude), and folding an
-// unknown kind to claude at create time starts a different agent, model and billing route than
-// the caller asked for, reporting only "kind":"claude" afterwards.
-func ValidateCreateKind(kind string) error {
-	if kind == "" {
-		return nil
-	}
-	if _, ok := agentRegistry[kind]; ok {
-		return nil
-	}
-	return fmt.Errorf("unknown kind %q; accepted kinds: %s (empty means claude)", kind, strings.Join(RegisteredKinds(), ", "))
-}
+// ValidateCreateKind is agentreg.ValidateCreate, the create paths' exact-match gate.
+func ValidateCreateKind(kind string) error { return agentreg.ValidateCreate(kind) }
 
-// ManagedDefaultKind reports whether a caller that cannot drive a pane (MCP create_session,
-// the scheduler) should ask for the managed driver when it names none: the registry's
-// Caps().ManagedDefault, plus every ManagedOnly kind, which has nothing else. The match is
-// exact and never goes through NormalizeKind — an alternate spelling ("Codex", "kiro-cli")
-// is not a registered kind and gets no driver, exactly like the hand list this replaced.
-// It feeds the kind catalog's managedDefault and the in-container create_session.
-func ManagedDefaultKind(kind string) bool {
-	a, ok := agentRegistry[kind]
-	if !ok {
-		return false
-	}
-	c := a.Caps()
-	return c.ManagedOnly || c.ManagedDefault
-}
+// ManagedDefaultKind is agentreg.ManagedDefault.
+func ManagedDefaultKind(kind string) bool { return agentreg.ManagedDefault(kind) }
 
 // --- shared live-state helpers -------------------------------------------------
 

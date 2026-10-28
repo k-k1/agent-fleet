@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/ssm"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -42,12 +42,12 @@ func handleSSMInstances(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_profile", "SSM profile is required")
 		return
 	}
-	cfg := sessionx.SsmConfigPath("discovery-" + req.Profile)
+	cfg := ssm.SsmConfigPath("discovery-" + req.Profile)
 	meta := session.SSMMeta{Profile: req.Profile, Region: req.Region, StartURL: req.StartURL,
 		SSORegion: req.SSORegion, AccountID: req.AccountID, RoleName: req.RoleName,
 		RoleARN: req.RoleARN, SourceProfile: req.SourceProfile, ExternalID: req.ExternalID,
 		RoleSessionName: req.RoleSessionName, DurationSeconds: req.DurationSeconds}
-	if err := sessionx.WriteSSMConfig(cfg, meta); err != nil {
+	if err := ssm.WriteSSMConfig(cfg, meta); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "config_failed", err.Error())
 		return
 	}
@@ -57,7 +57,7 @@ func handleSSMInstances(w http.ResponseWriter, r *http.Request) {
 		"--filters", "Key=PingStatus,Values=Online", "--output", "json", "--no-cli-pager")
 	cmd.Env = append(os.Environ(), "AWS_CONFIG_FILE="+cfg, "AWS_PROFILE="+req.Profile)
 	if meta.RoleARN != "" {
-		cmd.Env = sessionx.ChainIsolatedEnv(os.Environ(), cfg, req.Profile)
+		cmd.Env = ssm.ChainIsolatedEnv(os.Environ(), cfg, req.Profile)
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {

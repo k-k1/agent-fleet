@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -744,9 +745,8 @@ func TestRenderHandoverDefaultsToTheAgentsLocale(t *testing.T) {
 // builder's input empty while its own tests stay green.
 func TestReadMoveSourceCarriesDiscards(t *testing.T) {
 	withTempHome(t)
-	prev := agentRegistry[session.KindLcpp]
-	agentRegistry[session.KindLcpp] = discardingAgent{Agent: prev}
-	t.Cleanup(func() { agentRegistry[session.KindLcpp] = prev })
+	prev, _ := RegisteredAgent(session.KindLcpp)
+	t.Cleanup(agentreg.SwapForTest(session.KindLcpp, discardingAgent{Agent: prev}))
 	in := readMoveSource(session.Meta{Name: "mvdisc", Kind: session.KindLcpp, Dir: t.TempDir()})
 	if len(in.Discards) != 3 || in.Discards[0].Items[0].Text != "DISCARDED-A\nsecond line" {
 		t.Fatalf("snapshot discards = %+v", in.Discards)

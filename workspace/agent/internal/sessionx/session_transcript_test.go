@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -506,9 +507,7 @@ func (fakeApprovalAgent) Transcript(session.Meta) (agents.TranscriptData, bool) 
 // that send keys into nothing.
 func TestGenericMessagesSurfacesAPendingApproval(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	prev := agentRegistry[session.KindMuse]
-	agentRegistry[session.KindMuse] = fakeApprovalAgent{}
-	t.Cleanup(func() { agentRegistry[session.KindMuse] = prev })
+	t.Cleanup(agentreg.SwapForTest(session.KindMuse, fakeApprovalAgent{}))
 
 	m := session.Meta{Name: "slot-approval-wire", Dir: t.TempDir(), Kind: session.KindMuse,
 		Driver: session.DriverManaged}
@@ -547,9 +546,7 @@ func TestGenericMessagesSurfacesAPendingApproval(t *testing.T) {
 // pendingQuestions already follows.
 func TestAStoppedSessionOffersNoApproval(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	prev := agentRegistry[session.KindMuse]
-	agentRegistry[session.KindMuse] = fakeApprovalAgent{}
-	t.Cleanup(func() { agentRegistry[session.KindMuse] = prev })
+	t.Cleanup(agentreg.SwapForTest(session.KindMuse, fakeApprovalAgent{}))
 
 	m := session.Meta{Name: "slot-approval-dead", Dir: t.TempDir(), Kind: session.KindMuse,
 		Driver: session.DriverManaged}
@@ -604,9 +601,7 @@ func (a fakeEditingAgent) Transcript(session.Meta) (agents.TranscriptData, bool)
 func TestGenericMessagesEmitsChangedFiles(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
-	prev := agentRegistry[session.KindMuse]
-	agentRegistry[session.KindMuse] = fakeEditingAgent{cwd: dir}
-	t.Cleanup(func() { agentRegistry[session.KindMuse] = prev })
+	t.Cleanup(agentreg.SwapForTest(session.KindMuse, fakeEditingAgent{cwd: dir}))
 
 	m := session.Meta{Name: "slot-changed-files", Dir: dir, Kind: session.KindMuse,
 		Driver: session.DriverManaged}

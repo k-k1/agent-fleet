@@ -97,7 +97,7 @@ package's files (and its `deps.go`, where it has one) say what it holds.
 | Concern | Where to start |
 |---|---|
 | Sessions: lifecycle, tmux, driver switching, turns, IO, transcript, titles, spawn, peers | `internal/sessionx`. The session model (wire, metadata, the `Kind*` constants) is `internal/session`, and the live state store is `internal/status` |
-| One agent kind | `internal/agents/<kind>`, one package per agent CLI; shell and ssm are in `internal/sessionx/agent_shell_ssm.go`. Kinds are registered in `agentRegistry` (`internal/sessionx/agent.go`). The shared interfaces are `internal/agents`. Adding a kind: [20](20-add-an-agent.md) and [04 §4.3](04-agent.md#43-the-pattern-for-integrating-a-kind) |
+| One agent kind | `internal/agents/<kind>`, one package per kind, shell and ssm included. Kinds are registered in `internal/agentreg` (kind → Agent) and listed, capability-free, in `internal/kinds`, which the packages below the agent packages (bridge, mcpreg) can import. The shared interfaces are `internal/agents`. Adding a kind: [20](20-add-an-agent.md) and [04 §4.3](04-agent.md#43-the-pattern-for-integrating-a-kind) |
 | The managed-only kinds (`ManagedOnly` in `internal/agents`) | lcpp: `internal/harness` and its MCP client `internal/mcpc`. muse: `internal/msp` (the protocol) |
 | Chat and assistants | `internal/chatx`, `internal/assistants`; `assistants.go` embeds the built-in knowledge (`knowledge/af-usage.md`) |
 | Chat bridge | `internal/bridge`, `bridge_operator.go`, `connections_slack.go` |
