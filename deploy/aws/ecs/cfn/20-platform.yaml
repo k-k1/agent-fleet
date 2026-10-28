@@ -280,7 +280,7 @@ Resources:
               # Two EFS tag writes, both on access points: CreateAccessPoint's Tags
               # (af-membership, af-role, Name, af-tenant), and the erase record a Clean home
               # keeps on the member's keep access point (af-home-erased-volumes,
-              # runtime_ecs_ec2.go writeEraseRecord). The key list is the fence: it is exactly
+              # runtime_ecs_ec2_release.go writeEraseRecord). The key list is the fence: it is exactly
               # what those two calls write, so the role can no longer put an arbitrary tag on
               # any EFS resource in the account. It does not tell this deployment's access
               # points from another's (they carry no af-pool). file-system/* is listed only

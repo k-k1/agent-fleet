@@ -211,16 +211,16 @@ INVENTORY = [
     # --- slots ---
     # The template's x86_64 AMI and the arm64 override, each by its exact ARN and as one of
     # Amazon's images. A replacement slot (#1473) is this same call.
-    ("internal/runtime/runtime_ecs_ec2.go", "runSlot", "RunInstances", 1,
+    ("internal/runtime/runtime_ecs_ec2_slots.go", "runSlot", "RunInstances", 1,
         every_reading(SLOT, [image(SLOT_AMI, c) for c in AMAZON_IMAGE + [UNREADABLE_IMAGE]])
         + every_reading(SLOT, [image(SLOT_AMI_ARM64, c) for c in AMAZON_IMAGE + [UNREADABLE_IMAGE]])
         + [pass_role(tf.SLOT_ROLE_ARN)]),
-    ("internal/runtime/runtime_ecs_ec2.go", "wakeSlot", "StartInstances", 1, [
+    ("internal/runtime/runtime_ecs_ec2_slots.go", "wakeSlot", "StartInstances", 1, [
         request("ec2:StartInstances", [ec2("instance", "i-slot", SLOT)])]),
-    ("internal/runtime/runtime_ecs_ec2.go", "quarantineSlot", "StopInstances", 1, [
+    ("internal/runtime/runtime_ecs_ec2_start.go", "quarantineSlot", "StopInstances", 1, [
         request("ec2:StopInstances", [ec2("instance", "i-slot", SLOT)]),
         request("ec2:StopInstances", [ec2("instance", "i-slot", QUARANTINED)])]),
-    ("internal/runtime/runtime_ecs_ec2.go", "quarantineSlot", "DetachVolume", 1, [
+    ("internal/runtime/runtime_ecs_ec2_start.go", "quarantineSlot", "DetachVolume", 1, [
         request("ec2:DetachVolume", [ec2("instance", "i-slot", SLOT), ec2("volume", "vol-home", HOME)])]),
     # ForceStopSlot stops a working slot (it refuses a quarantined one); forceStopAfterGrace
     # re-stops the same box with Force.
@@ -228,50 +228,50 @@ INVENTORY = [
         request("ec2:StopInstances", [ec2("instance", "i-slot", SLOT)])]),
     ("internal/runtime/runtime_ecs_ec2_force_stop.go", "forceStopAfterGrace", "StopInstances", 1, [
         request("ec2:StopInstances", [ec2("instance", "i-slot", SLOT)])]),
-    ("internal/runtime/runtime_ecs_ec2.go", "abandonLostSlot", "StopInstances", 1, [
+    ("internal/runtime/runtime_ecs_ec2_start.go", "abandonLostSlot", "StopInstances", 1, [
         request("ec2:StopInstances", [ec2("instance", "i-slot", SLOT)])]),
-    ("internal/runtime/runtime_ecs_ec2.go", "abandonLostSlot", "DetachVolume", 1, [
+    ("internal/runtime/runtime_ecs_ec2_start.go", "abandonLostSlot", "DetachVolume", 1, [
         request("ec2:DetachVolume", [ec2("instance", "i-slot", SLOT), ec2("volume", "vol-home", HOME)])]),
-    ("internal/runtime/runtime_ecs_ec2.go", "forceDetachHome", "DetachVolume", 1, [
+    ("internal/runtime/runtime_ecs_ec2_start.go", "forceDetachHome", "DetachVolume", 1, [
         request("ec2:DetachVolume", [ec2("instance", "i-slot", SLOT), ec2("volume", "vol-home", HOME)])]),
-    ("internal/runtime/runtime_ecs_ec2.go", "releaseSlotSince", "DetachVolume", 1, [
+    ("internal/runtime/runtime_ecs_ec2_release.go", "releaseSlotSince", "DetachVolume", 1, [
         request("ec2:DetachVolume", [ec2("instance", "i-slot", SLOT), ec2("volume", "vol-home", HOME)])]),
     ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "backOffReservedSlot", "DetachVolume", 1, [
         request("ec2:DetachVolume", [ec2("instance", "i-slot", SLOT), ec2("volume", "vol-home", HOME)])]),
-    ("internal/runtime/runtime_ecs_ec2.go", "attachHome", "AttachVolume", 1, [
+    ("internal/runtime/runtime_ecs_ec2_volumes.go", "attachHome", "AttachVolume", 1, [
         request("ec2:AttachVolume", [ec2("instance", "i-slot", SLOT), ec2("volume", "vol-home", HOME)])]),
-    ("internal/runtime/runtime_ecs_ec2.go", "sweepVolume", "StopInstances", 1, [
+    ("internal/runtime/runtime_ecs_ec2_sweeper.go", "sweepVolume", "StopInstances", 1, [
         request("ec2:StopInstances", [ec2("instance", "i-slot", SLOT)])]),
-    ("internal/runtime/runtime_ecs_ec2.go", "sweepFreeSlots", "StopInstances", 1, [
+    ("internal/runtime/runtime_ecs_ec2_sweeper.go", "sweepFreeSlots", "StopInstances", 1, [
         request("ec2:StopInstances", [ec2("instance", "i-slot", SLOT)])]),
-    ("internal/runtime/runtime_ecs_ec2.go", "terminateSlot", "TerminateInstances", 1, [
+    ("internal/runtime/runtime_ecs_ec2_sweeper.go", "terminateSlot", "TerminateInstances", 1, [
         request("ec2:TerminateInstances", [ec2("instance", "i-slot", SLOT)]),
         request("ec2:TerminateInstances", [ec2("instance", "i-slot", QUARANTINED)])]),
     # --- homes ---
-    ("internal/runtime/runtime_ecs_ec2.go", "createHomeVolume", "CreateVolume", 1, [
+    ("internal/runtime/runtime_ecs_ec2_volumes.go", "createHomeVolume", "CreateVolume", 1, [
         request("ec2:CreateVolume", [new("volume")], HOME),
         request("ec2:CreateVolume", [new("volume"), ec2("snapshot", "snap-hib", HIBERNATED)], HOME),
         request("ec2:CreateVolume", [new("volume"), ec2("snapshot", "snap-golden", GOLDEN)], HOME)]),
-    ("internal/runtime/runtime_ecs_ec2.go", "ResizeHome", "ModifyVolume", 1, [
+    ("internal/runtime/runtime_ecs_ec2_volumes.go", "ResizeHome", "ModifyVolume", 1, [
         request("ec2:ModifyVolume", [ec2("volume", "vol-home", HOME)])]),
-    ("internal/runtime/runtime_ecs_ec2.go", "deleteHomeVolume", "DeleteVolume", 1, [
+    ("internal/runtime/runtime_ecs_ec2_release.go", "deleteHomeVolume", "DeleteVolume", 1, [
         request("ec2:DeleteVolume", [ec2("volume", "vol-home", HOME)])]),
     # --- hibernation and backups ---
-    ("internal/runtime/runtime_ecs_ec2.go", "hibernate", "CreateSnapshot", 1, [
+    ("internal/runtime/runtime_ecs_ec2_release.go", "hibernate", "CreateSnapshot", 1, [
         request("ec2:CreateSnapshot", [ec2("volume", "vol-home", HOME), new("snapshot")],
                 dict(HIBERNATED, **{"af-home-wipe-repos": T}))]),
-    ("internal/runtime/runtime_ecs_ec2.go", "hibernate", "DeleteSnapshot", 2, [
+    ("internal/runtime/runtime_ecs_ec2_release.go", "hibernate", "DeleteSnapshot", 2, [
         request("ec2:DeleteSnapshot", [ec2("snapshot", "snap-hib", HIBERNATED)])]),
-    ("internal/runtime/runtime_ecs_ec2.go", "restoreSource", "DeleteSnapshot", 1, [
+    ("internal/runtime/runtime_ecs_ec2_release.go", "restoreSource", "DeleteSnapshot", 1, [
         request("ec2:DeleteSnapshot", [ec2("snapshot", "snap-hib", HIBERNATED)])]),
-    ("internal/runtime/runtime_ecs_ec2.go", "deleteHomeSnapshots", "DeleteSnapshot", 1, [
+    ("internal/runtime/runtime_ecs_ec2_release.go", "deleteHomeSnapshots", "DeleteSnapshot", 1, [
         request("ec2:DeleteSnapshot", [ec2("snapshot", "snap-hib", HIBERNATED)])]),
-    ("internal/runtime/runtime_ecs_ec2.go", "BackupHome", "CreateSnapshot", 1, [
+    ("internal/runtime/runtime_ecs_ec2_backups.go", "BackupHome", "CreateSnapshot", 1, [
         request("ec2:CreateSnapshot", [ec2("volume", "vol-home", HOME), new("snapshot")],
                 dict(BACKUP, **{"af-backup-at": T}))]),
-    ("internal/runtime/runtime_ecs_ec2.go", "pruneBackups", "DeleteSnapshot", 1, [
+    ("internal/runtime/runtime_ecs_ec2_backups.go", "pruneBackups", "DeleteSnapshot", 1, [
         request("ec2:DeleteSnapshot", [ec2("snapshot", "snap-bak", BACKUP)])]),
-    ("internal/runtime/runtime_ecs_ec2.go", "deleteBackups", "DeleteSnapshot", 1, [
+    ("internal/runtime/runtime_ecs_ec2_backups.go", "deleteBackups", "DeleteSnapshot", 1, [
         request("ec2:DeleteSnapshot", [ec2("snapshot", "snap-bak", BACKUP)])]),
     # --- golden bake ---
     ("internal/runtime/runtime_ecs_ec2_golden.go", "SnapshotHome", "CreateSnapshot", 1, [
@@ -312,10 +312,10 @@ INVENTORY = [
     ("internal/runtime/runtime_ecs.go", "ensureAccessPoint", "efs:CreateAccessPoint+Tags", 1, [
         efs_tag("access-point", HOME_AP_TAGS),
         efs_tag("file-system", HOME_AP_TAGS)]),
-    ("internal/runtime/runtime_ecs_ec2.go", "ensureAccessPoint", "efs:CreateAccessPoint+Tags", 1, [
+    ("internal/runtime/runtime_ecs_ec2_start.go", "ensureAccessPoint", "efs:CreateAccessPoint+Tags", 1, [
         efs_tag("access-point", HOME_AP_TAGS),
         efs_tag("file-system", HOME_AP_TAGS)]),
-    ("internal/runtime/runtime_ecs_ec2.go", "writeEraseRecord", "efs:TagResource", 1, [
+    ("internal/runtime/runtime_ecs_ec2_release.go", "writeEraseRecord", "efs:TagResource", 1, [
         efs_tag("access-point", {"af-home-erased-volumes": "vol-1"})]),
 ]
 

@@ -1016,7 +1016,7 @@ type ec2Harness struct {
 func newEC2Harness(t *testing.T) *ec2Harness {
 	t.Helper()
 	// lastTaskDef and startGen/startPhase are process-local scratch keyed by
-	// workspace name (runtime_ecs_ec2.go) — every test in this package reuses the
+	// workspace name (runtime_ecs_ec2_taskdef.go, runtime_ecs_ec2_pool.go) — every test in this package reuses the
 	// same "af-ws-acme-alice" name, so without a reset an earlier test's cache
 	// entry leaks into a later one and its Start silently skips
 	// RegisterTaskDefinition. Production never resets it (a real CP process only

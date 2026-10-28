@@ -841,7 +841,7 @@ if [ -n "$AF_STACK_POOL" ] && [ "$AF_DRY" != 1 ]; then
   # pool layer: deployments exist where it is passed straight to 30 (40's SlotAmiIdArm64
   # is empty while 30's Ec2SlotAmiArm64 holds an ami-…). Overwriting with an empty value
   # leaves a declared arm64 class with no arm64 AMI, and the CP refuses to start
-  # (runtime_ecs_ec2.go: "refuses to start when a declared arm64 class has no launch
+  # (runtime_ecs_ec2_pool.go: "refuses to start when a declared arm64 class has no launch
   # template to run on"). Keep the captured value instead.
   if [ -n "$ami" ]; then
     af_param_override Ec2SlotAmiArm64 "$ami"

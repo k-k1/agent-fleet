@@ -265,7 +265,7 @@ func (p *cloudCostPoller) fetch(ctx context.Context) ([]store.CloudCostRow, []st
 // Why the tag is not simply left off at creation instead: `af-membership` is not only a
 // cost allocation key, it is the matching key the runtime uses to find a membership's EFS
 // access point and home volume again (ensureAccessPoint and friends in
-// runtime_ecs_ec2.go).
+// runtime_ecs_ec2_start.go and runtime_ecs_ec2_release.go).
 // An empty value there would either fail to match or collide with the next untagged
 // resource. So the tag is written exactly as the product writes it, and the fold happens
 // here, at ingest.

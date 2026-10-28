@@ -20,7 +20,7 @@
 #
 # Stopping does not detach the home. Stop deliberately leaves the volume attached (affinity IS
 # "that person's slot"), and all the sweeper does 15 minutes later is stop the instance
-# (`(home stays attached)` in runtime_ecs_ec2.go). Only eviction / Destroy / drift repair /
+# (`(home stays attached)` in runtime_ecs_ec2_sweeper.go). Only eviction / Destroy / drift repair /
 # hibernation actually detach it, so "wait until it is detached" never starts at all. Taking
 # the snapshot while it is still attached to a stopped slot is the correct thing instead:
 # stopping an instance is an ordinary shutdown, which unmounts the filesystem on the way down
