@@ -198,27 +198,39 @@ func TestPickProbeModel(t *testing.T) {
 	}
 }
 
-type fakeResolver struct{ err error }
+type fakeResolver struct {
+	err error
+	// rejectFirst models every real resolver: the anchor of the first user turn leaves no
+	// exchange before it, so it is refused.
+	rejectFirst string
+}
 
-func (f fakeResolver) ResolveForkAt(session.Meta, agents.ForkPoint) (string, error) {
+func (f fakeResolver) ResolveForkAt(_ session.Meta, at agents.ForkPoint) (string, error) {
+	if f.rejectFirst != "" && at.Anchor == f.rejectFirst {
+		return "", errors.New("no exchange before this message")
+	}
 	return "x", f.err
 }
 
 func TestObserveForkAt(t *testing.T) {
-	anchored := []transcript.Turn{{Role: "user", AnchorID: "u1"}, {Role: "assistant"}}
-	bare := []transcript.Turn{{Role: "user"}, {Role: "assistant", AnchorID: "ignored"}}
+	two := []transcript.Turn{{Role: "user", AnchorID: "u1"}, {Role: "assistant"}, {Role: "user", AnchorID: "u2"}, {Role: "assistant"}}
+	one := []transcript.Turn{{Role: "user", AnchorID: "u1"}, {Role: "assistant"}}
+	bare := []transcript.Turn{{Role: "user", AnchorID: "u1"}, {Role: "user"}, {Role: "assistant", AnchorID: "ignored"}}
 	m := session.Meta{}
-	if o := observeForkAt(m, anchored, fakeResolver{}); !o.Worked {
-		t.Errorf("anchored+resolvable: %+v", o)
+	if o := observeForkAt(m, two, fakeResolver{rejectFirst: "u1"}); !o.Worked {
+		t.Errorf("the second anchor must be the one tried: %+v", o)
+	}
+	if o := observeForkAt(m, one, fakeResolver{}); o.Err == nil || o.Worked {
+		t.Errorf("a one-exchange conversation cannot say anything: %+v", o)
 	}
 	if o := observeForkAt(m, bare, fakeResolver{}); o.Worked {
 		t.Errorf("a user turn without anchor must not pass: %+v", o)
 	}
-	if o := observeForkAt(m, anchored, nil); o.Worked {
+	if o := observeForkAt(m, two, nil); o.Worked {
 		t.Errorf("no ForkAtResolver must not pass: %+v", o)
 	}
-	if o := observeForkAt(m, anchored, fakeResolver{err: errors.New("bad")}); o.Worked {
-		t.Errorf("rejecting resolver must not pass: %+v", o)
+	if o := observeForkAt(m, two, fakeResolver{err: errors.New("bad")}); o.Worked || o.Err != nil {
+		t.Errorf("a rejecting resolver is DRIFT, not a probe error: %+v", o)
 	}
 }
 

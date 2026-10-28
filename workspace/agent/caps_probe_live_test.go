@@ -10,7 +10,7 @@ package main
 //
 // Each probe starts its own session through the production BuildLaunch and observes through
 // the production reads (WireLive / Transcript), like the mirror contract. Costs per kind: one
-// long turn that is interrupted, and two one-line turns.
+// long turn that is interrupted, and three one-line turns.
 
 import (
 	"errors"
@@ -93,9 +93,15 @@ func (e *liveProbeEnv) Interrupt() probeObservation {
 	if !workingAtEscape {
 		return observeInterrupt(true, false, false, false)
 	}
-	// One Escape, the same keys the chat stop button sends (sessionx handleSessionTurn).
-	if out, err := tmuxx.Cmd("send-keys", "-t", tn, "Escape").CombinedOutput(); err != nil {
-		return probeObservation{Err: fmt.Errorf("send Escape: %v: %s", err, out)}
+	// The keys the chat stop button sends for this kind (copilot ignores a plain Escape).
+	keys, gap := sessionx.TUIInterruptKeys(e.spec.kind)
+	for i, k := range keys {
+		if out, err := tmuxx.Cmd("send-keys", "-t", tn, k).CombinedOutput(); err != nil {
+			return probeObservation{Err: fmt.Errorf("send %s: %v: %s", k, err, out)}
+		}
+		if i < len(keys)-1 {
+			time.Sleep(gap)
+		}
 	}
 	idle := false
 	for deadline := time.Now().Add(capsProbeInterruptWait); !idle && time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
@@ -105,27 +111,38 @@ func (e *liveProbeEnv) Interrupt() probeObservation {
 	return observeInterrupt(true, true, idle, mirrorHasTurn(td.Turns, "assistant", done))
 }
 
-// oneLineTurn starts a session (with model, when given), runs a one-line turn to completion
-// and returns its transcript.
-func (e *liveProbeEnv) oneLineTurn(suffix, model string) (agents.TranscriptData, session.Meta, error) {
+// oneLineTurns starts a session (with model, when given), runs n one-line turns to completion
+// one after another and returns the transcript of the last.
+func (e *liveProbeEnv) oneLineTurns(suffix, model string, n int) (agents.TranscriptData, session.Meta, error) {
 	t := e.t
 	t.Helper()
 	meta, tn, stop := startTUIContractSession(t, e.spec, suffix, model)
 	defer stop()
-	marker := e.marker("CAPS_PROBE_OK")
-	e.typeAndSubmit(tn, meta, "Reply with exactly: "+marker, marker)
-	for deadline := time.Now().Add(tuiContractTurnWait); time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
-		td, ok := e.spec.agent.Transcript(meta)
-		if ok && mirrorHasTurn(td.Turns, "user", marker) && mirrorHasTurn(td.Turns, "assistant", marker) &&
-			e.spec.agent.WireLive(meta, true).State == "idle" {
-			return td, meta, nil
+	var td agents.TranscriptData
+	for i := 1; i <= n; i++ {
+		marker := e.marker(fmt.Sprintf("CAPS_PROBE_OK_%d", i))
+		e.typeAndSubmit(tn, meta, "Reply with exactly: "+marker, marker)
+		done := false
+		for deadline := time.Now().Add(tuiContractTurnWait); !done && time.Now().Before(deadline); {
+			var ok bool
+			td, ok = e.spec.agent.Transcript(meta)
+			done = ok && mirrorHasTurn(td.Turns, "user", marker) && mirrorHasTurn(td.Turns, "assistant", marker) &&
+				e.spec.agent.WireLive(meta, true).State == "idle"
+			if !done {
+				time.Sleep(500 * time.Millisecond)
+			}
+		}
+		if !done {
+			return agents.TranscriptData{}, meta, fmt.Errorf("one-line turn %d/%d did not complete\npane:\n%s", i, n, tmuxx.CapturePane(tn))
 		}
 	}
-	return agents.TranscriptData{}, meta, errors.New("the one-line turn did not complete\npane:\n" + tmuxx.CapturePane(tn))
+	return td, meta, nil
 }
 
 func (e *liveProbeEnv) ForkAt() probeObservation {
-	td, meta, err := e.oneLineTurn("forkat", "")
+	// Two exchanges: a fork cuts before the anchored message, so the first message can
+	// never be the anchor (observeForkAt).
+	td, meta, err := e.oneLineTurns("forkat", "", 2)
 	if err != nil {
 		return probeObservation{Err: err}
 	}
@@ -137,7 +154,7 @@ func (e *liveProbeEnv) ModelOverride(model string) probeObservation {
 	if model == "" {
 		return probeObservation{Err: errors.New("no model id to start with")}
 	}
-	td, meta, err := e.oneLineTurn("model", model)
+	td, meta, err := e.oneLineTurns("model", model, 1)
 	if err != nil {
 		return probeObservation{Err: err}
 	}

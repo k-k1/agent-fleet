@@ -146,3 +146,18 @@ func TestHandleSessionTurnInterruptCoalesces(t *testing.T) {
 		t.Fatal("in-flight marker leaked")
 	}
 }
+
+// The caps probe presses the keys the stop button presses; a copy of its own went stale once
+// (plain Escape does not stop copilot) and made the interrupt probe report a false error.
+func TestTUIInterruptKeysMatchesStopButton(t *testing.T) {
+	for _, kind := range []string{session.KindClaude, session.KindOpencode, session.KindCopilot, session.KindCursor} {
+		want := tuiInterruptFor(kind, func() bool { return false })
+		keys, gap := TUIInterruptKeys(kind)
+		if strings.Join(keys, ",") != strings.Join(want.keys, ",") || gap != want.gap {
+			t.Errorf("%s: TUIInterruptKeys = %v/%v, want %v/%v", kind, keys, gap, want.keys, want.gap)
+		}
+	}
+	if keys, _ := TUIInterruptKeys(session.KindCopilot); strings.Join(keys, ",") != "C-c" {
+		t.Errorf("copilot stop = %v, want Ctrl+C", keys)
+	}
+}

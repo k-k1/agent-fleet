@@ -86,7 +86,7 @@ func capsDeclarationError(c agents.Caps) error {
 
 // expectedProbes derives the probes a kind owes from its Caps and its listed models.
 // interrupt has no Caps flag: every kind with a Terminal route is expected to stop a turn
-// on Escape, because the chat stop button is wired to it for all of them.
+// on the keys its chat stop button sends (Escape, Ctrl+C for copilot and cursor).
 func expectedProbes(c agents.Caps, models []agents.ModelChoice) []probeExpectation {
 	if c.ManagedOnly {
 		why := "ManagedOnly: no Terminal route to probe"
@@ -102,7 +102,7 @@ func expectedProbes(c agents.Caps, models []agents.ModelChoice) []probeExpectati
 			Why: fmt.Sprintf("the kind lists %d model(s), so a listed one must be accepted at launch", len(models))}
 	}
 	return []probeExpectation{
-		{ID: probeInterrupt, Applies: true, Want: true, Why: "every Terminal kind stops a turn on Escape (chat stop button)"},
+		{ID: probeInterrupt, Applies: true, Want: true, Why: "every Terminal kind stops a turn on its chat stop button keys"},
 		{ID: probeForkAt, Applies: true, Want: c.CanForkAt, Why: fmt.Sprintf("Caps.CanForkAt=%v", c.CanForkAt)},
 		modelExp,
 	}
@@ -215,19 +215,24 @@ func reportProbeResults(t probeReporter, results []probeResult) {
 	}
 }
 
-// observeForkAt reads the fork-at claim off a finished conversation: a user turn carries an
-// AnchorID and the kind's resolver accepts it. resolver is nil for a kind that does not
-// implement ForkAtResolver.
+// observeForkAt reads the fork-at claim off a finished conversation: the SECOND user turn
+// carries an AnchorID and the kind's resolver accepts it. The second, not the first: a fork
+// cuts just before the anchored message, and before the very first message there is no
+// exchange left to carry, so every kind rightly refuses that anchor (measured on copilot
+// 1.0.103 to 1.0.105). resolver is nil for a kind that does not implement ForkAtResolver.
 func observeForkAt(m session.Meta, turns []transcript.Turn, resolver agents.ForkAtResolver) probeObservation {
-	var anchor string
+	var users []transcript.Turn
 	for _, t := range turns {
 		if t.Role == "user" {
-			anchor = t.AnchorID
-			break
+			users = append(users, t)
 		}
 	}
+	if len(users) < 2 {
+		return probeObservation{Err: fmt.Errorf("the conversation has %d user turn(s); the probe needs two to fork before the second", len(users))}
+	}
+	anchor := users[1].AnchorID
 	if anchor == "" {
-		return probeObservation{Detail: "the first user turn has no AnchorID"}
+		return probeObservation{Detail: "the second user turn has no AnchorID"}
 	}
 	if resolver == nil {
 		return probeObservation{Detail: "the turn has an anchor but the agent implements no ForkAtResolver"}
@@ -235,7 +240,7 @@ func observeForkAt(m session.Meta, turns []transcript.Turn, resolver agents.Fork
 	if _, err := resolver.ResolveForkAt(m, agents.ForkPoint{Anchor: anchor}); err != nil {
 		return probeObservation{Detail: "ResolveForkAt rejected the anchor: " + err.Error()}
 	}
-	return probeObservation{Worked: true, Detail: "user turn anchored and resolvable"}
+	return probeObservation{Worked: true, Detail: "second user turn anchored and resolvable"}
 }
 
 // modelMatches reports whether the model a transcript names is the one asked for. Kinds
@@ -312,12 +317,12 @@ func observeInterrupt(startedWorking, workingAtEscape, idleAfter, reachedMarker 
 	case !startedWorking:
 		return probeObservation{Err: errors.New("the long turn never reached the working state")}
 	case !workingAtEscape:
-		return probeObservation{Err: errors.New("the turn was no longer working when Escape was sent; nothing to interrupt")}
+		return probeObservation{Err: errors.New("the turn was no longer working when the stop keys were sent; nothing to interrupt")}
 	case reachedMarker:
-		return probeObservation{Err: errors.New("the turn ran to its completion marker; Escape either did nothing or came too late")}
+		return probeObservation{Err: errors.New("the turn ran to its completion marker; the stop keys either did nothing or came too late")}
 	case idleAfter:
-		return probeObservation{Worked: true, Detail: "returned to idle after Escape without completing the turn"}
+		return probeObservation{Worked: true, Detail: "returned to idle after the stop keys without completing the turn"}
 	default:
-		return probeObservation{Detail: "still not idle after Escape"}
+		return probeObservation{Detail: "still not idle after the stop keys"}
 	}
 }

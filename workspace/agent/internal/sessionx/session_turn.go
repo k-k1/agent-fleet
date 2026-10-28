@@ -600,6 +600,14 @@ func stateOrUnknown(st string) string {
 // interrupt, one Esc does nothing). The gap is the time /turn holds the request.
 const opencodeDoubleEscGap = 600 * time.Millisecond
 
+// TUIInterruptKeys is the stop sequence the chat's stop button sends to a kind's Terminal
+// pane, and the pause between its keys. It exists so the caps drift probe presses the same
+// keys as production instead of its own guess (a plain Escape does not stop copilot).
+func TUIInterruptKeys(kind string) (keys []string, gap time.Duration) {
+	p := tuiInterruptFor(kind, func() bool { return false })
+	return p.keys, p.gap
+}
+
 // tuiInterruptFor picks the stop keys from docs/log/133 §1, per kind. Never add a sequence
 // without an observation there: a key the CLI ignores reads as "Stop did nothing".
 //   - claude, codex, kiro: Esc interrupts (and sends what was queued).
