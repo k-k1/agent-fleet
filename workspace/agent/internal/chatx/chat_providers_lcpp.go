@@ -16,7 +16,7 @@ package chatx
 // lives here instead: chatx's assistant-chat conversations are their own subsystem (chat.go's
 // header comment), never touch session.go's kind switch, and "lcpp" only has to be a value
 // ChatConversation.Agent can hold and this package's own maps/switches recognize — the same
-// way ChatProviderKind's own `default: return c.Agent` already tolerates an unregistered
+// way ChatProviderKind's own fallback to c.Agent already tolerates an unregistered
 // string. Registering it as a session kind is phase 2's job.
 
 import (
