@@ -54,6 +54,7 @@ func init() {
 
 		ManagedDefaultKind: sessionx.ManagedDefaultKind,
 		ValidateCreateKind: sessionx.ValidateCreateKind,
+		Kinds:              mcpKinds,
 
 		ReadUIPrefs:                uiprefs.Read,
 		EnsureClaudeSettingsWiring: sessionx.EnsureClaudeSettingsWiring,
@@ -76,4 +77,15 @@ func init() {
 		ConvID:    func() string { return mcpConvID },
 		SetConvID: func(id string) { mcpConvID = id },
 	})
+}
+
+// mcpKinds is the registry as mcpx enumerates it in its tool texts.
+func mcpKinds() []mcpx.KindInfo {
+	kinds := sessionx.RegisteredKinds()
+	out := make([]mcpx.KindInfo, 0, len(kinds))
+	for _, k := range kinds {
+		out = append(out, mcpx.KindInfo{Kind: k, Default: k == sessionx.NormalizeKind(""),
+			ManagedOnly: sessionx.AgentOf(k).Caps().ManagedOnly, ManagedDefault: sessionx.ManagedDefaultKind(k)})
+	}
+	return out
 }

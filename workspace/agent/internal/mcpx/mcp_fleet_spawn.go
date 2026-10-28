@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -94,7 +95,7 @@ func fleetSpawnTools() []toolSpec {
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"kind": map[string]any{"type": "string", "description": "claude / codex / opencode / agy / copilot / cursor / kiro / lcpp / muse"},
+							"kind": map[string]any{"type": "string", "description": joinKinds(modelKinds(), " / ", "")},
 						},
 						"required": []string{"kind"},
 					},
@@ -111,7 +112,7 @@ func fleetSpawnTools() []toolSpec {
 					"inputSchema": map[string]any{
 						"type": "object", "additionalProperties": false,
 						"properties": map[string]any{
-							"kind": map[string]any{"type": "string", "description": "claude | codex | opencode | agy | copilot | cursor | kiro | lcpp | muse"},
+							"kind": map[string]any{"type": "string", "description": joinKinds(modelKinds(), " | ", "")},
 						},
 						"required": []string{"kind"},
 					},
@@ -128,8 +129,8 @@ func fleetSpawnTools() []toolSpec {
 				return ""
 			},
 			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
-				if a.Kind != "claude" && a.Kind != "codex" && a.Kind != "opencode" && a.Kind != "agy" && a.Kind != "copilot" && a.Kind != "cursor" && a.Kind != "kiro" && a.Kind != "lcpp" && a.Kind != "muse" {
-					return mcpToolErr(req.ID, "kind には claude / codex / opencode / agy / copilot / cursor / kiro / lcpp / muse のいずれかを指定してください")
+				if !slices.Contains(kindNames(modelKinds()), a.Kind) {
+					return mcpToolErr(req.ID, "kind には "+joinKinds(modelKinds(), " / ", "")+" のいずれかを指定してください")
 				}
 				out, err := agentGET("/agents/" + url.PathEscape(a.Kind) + "/models")
 				if err != nil {
@@ -148,13 +149,13 @@ func fleetSpawnTools() []toolSpec {
 						"initial_prompt を渡すと、起動後に最初のタスクとして自動で送信される（別コールの send_to_session は不要）。" +
 						"用途例：あるセッションの内容を引き継いで別セッションで続ける（先に get_session_output で文脈を読み、要約を initial_prompt に入れる）／壁打ちで固めた作業を新規セッションで開始する。" +
 						"dir は list_my_sessions の dir（走っているセッションと同じ場所）か list_repos の path から選ぶ。新規セッションはリソースを消費するので、起こす前に利用者へ一言確認すること。" +
-						"codex／opencode／copilot／cursor／kiro は既定で managed で開始し（TUI は使わない）、lcpp と muse は常に managed で開始する。model を指定する前には必ず list_models で利用可能な id を確認し、その id を渡す。作成したセッションが入力待ちになる／異常終了すると、この会話に自動で報告が届くのでポーリングは不要。報告が届いたら内容（必要なら get_session_output）を確認して次の行動を決める。",
+						managedKindsSentence() + "model を指定する前には必ず list_models で利用可能な id を確認し、その id を渡す。作成したセッションが入力待ちになる／異常終了すると、この会話に自動で報告が届くのでポーリングは不要。報告が届いたら内容（必要なら get_session_output）を確認して次の行動を決める。",
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
 							"dir":            map[string]any{"type": "string", "description": "作業ディレクトリ（リポジトリの作業コピー等）。省略時はホーム。list_my_sessions の dir か list_repos の path を渡す。"},
 							"title":          map[string]any{"type": "string", "description": "セッションの表示名（任意）。何のタスクかが分かる短い名前。"},
-							"kind":           map[string]any{"type": "string", "description": "エージェント種別（任意）。claude（既定）| codex | opencode | agy | copilot | cursor | kiro | lcpp | muse | shell。agy は Antigravity CLI（接続済みのときのみ起動可）。copilot は GitHub Copilot CLI（GitHub 連携＋Copilot サブスクが前提）。cursor は Cursor CLI（接続済みのときのみ起動可）。kiro は Kiro CLI（接続済みのときのみ起動可・既定は managed ドライバ）。lcpp は自前の llama.cpp ハーネス（ログイン不要・常に managed・Terminal (CLI) 経路は無い）で、model は list_models(kind=\"lcpp\") が返す自前エンジンの目録から選ぶ。muse は Meta の Muse Code（オンデマンド導入＋ログイン済みのときのみ起動可・常に managed・Terminal (CLI) 経路は無い）。shell は生のシェルで initial_prompt/送信文字列がそのままコマンド実行される（エージェントのガードレール無し）ため、起動前に実行内容を利用者へ確認すること。"},
+							"kind":           map[string]any{"type": "string", "description": "エージェント種別（任意）。" + joinKinds(operatorCreateKinds(), " | ", "（既定）") + "。agy は Antigravity CLI（接続済みのときのみ起動可）。copilot は GitHub Copilot CLI（GitHub 連携＋Copilot サブスクが前提）。cursor は Cursor CLI（接続済みのときのみ起動可）。kiro は Kiro CLI（接続済みのときのみ起動可・既定は managed ドライバ）。lcpp は自前の llama.cpp ハーネス（ログイン不要・常に managed・Terminal (CLI) 経路は無い）で、model は list_models(kind=\"lcpp\") が返す自前エンジンの目録から選ぶ。muse は Meta の Muse Code（オンデマンド導入＋ログイン済みのときのみ起動可・常に managed・Terminal (CLI) 経路は無い）。shell は生のシェルで initial_prompt/送信文字列がそのままコマンド実行される（エージェントのガードレール無し）ため、起動前に実行内容を利用者へ確認すること。"},
 							"model":          map[string]any{"type": "string", "description": "モデル上書き（任意）。"},
 							"effort":         map[string]any{"type": "string", "description": "推論 effort（任意）。model と一緒に指定し、list_models が返すそのモデルの efforts から選ぶ（それ以外や model 省略は拒否される）。省略時はモデルの defaultEffort。opencode と kiro は一覧に efforts が無く、ここでは値を確かめない（誤った値は子の最初のターンで失敗する）。agy と cursor は effort がモデル id に含まれるので指定しない。"},
 							"initial_prompt": map[string]any{"type": "string", "description": "起動後に自動送信する最初のタスク/引き継ぎ文（任意）。"},
@@ -199,7 +200,7 @@ func fleetSpawnTools() []toolSpec {
 						"properties": map[string]any{
 							"dir":                       map[string]any{"type": "string", "description": "Working directory (a path from list_repos, or your own). Default: home"},
 							"title":                     map[string]any{"type": "string", "description": "Short display name saying what the task is (optional)"},
-							"kind":                      map[string]any{"type": "string", "description": "Agent kind: claude (default) | codex | opencode | agy | copilot | cursor | kiro | lcpp | muse. shell/ssm are refused"},
+							"kind":                      map[string]any{"type": "string", "description": "Agent kind: " + joinKinds(modelKinds(), " | ", " (default)") + ". shell/ssm are refused"},
 							"model":                     map[string]any{"type": "string", "description": "Model id from list_models for that kind (optional)"},
 							"effort":                    map[string]any{"type": "string", "description": "Reasoning effort (optional; default: the model's defaultEffort). Needs model: use one of that model's efforts from list_models; anything else, or an effort without model, is refused. opencode and kiro list none: their value is not checked here, and a wrong one fails the child's first turn. agy and cursor fold effort into the model id instead"},
 							"initial_prompt":            map[string]any{"type": "string", "description": "The task, delivered as the child's first instruction. Write it for someone with none of your context: what to do, where, what done looks like. If it has to wait for a message (from you or another session), tell it to end its turn while it waits: a message to a busy session can be held until its turn ends, and waiting inside a tool (a sleep loop, a blocking wait) keeps that turn from ending"},
@@ -430,4 +431,19 @@ func fleetSpawnTools() []toolSpec {
 			},
 		},
 	}
+}
+
+// operatorCreateKinds is every kind the operator's create_session offers: all of them but ssm,
+// which needs an ssm_target the tool has no parameter for.
+func operatorCreateKinds() []KindInfo {
+	return toolKinds(func(k KindInfo) bool { return k.Kind != session.KindSSM })
+}
+
+// managedKindsSentence tells the operator which kinds create_session starts on the managed
+// driver: the managed-default kinds that also have a Terminal route, then the managed-only ones.
+func managedKindsSentence() string {
+	byDefault := kindNames(toolKinds(func(k KindInfo) bool { return k.ManagedDefault && !k.ManagedOnly }))
+	only := kindNames(toolKinds(func(k KindInfo) bool { return k.ManagedOnly }))
+	return strings.Join(byDefault, "／") + " は既定で managed で開始し（TUI は使わない）、" +
+		strings.Join(only, " と ") + " は常に managed で開始する。"
 }

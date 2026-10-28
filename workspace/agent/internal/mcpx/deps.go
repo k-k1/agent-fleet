@@ -60,6 +60,10 @@ type Deps struct {
 	// (sessionx.ValidateCreateKind; empty is claude). mcpx cannot import sessionx.
 	ValidateCreateKind func(kind string) error
 
+	// Kinds is the kind registry (sessionx.RegisteredKinds and each kind's Caps), in its order.
+	// The kind enumerations in the tool schemas and descriptions are built from it.
+	Kinds func() []KindInfo
+
 	// UI preferences (ui_prefs.go) and claude's settings wiring (session_status.go).
 	ReadUIPrefs                func() map[string]any
 	EnsureClaudeSettingsWiring func(kind string)

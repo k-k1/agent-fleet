@@ -149,13 +149,13 @@
 ## read list_memos unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_memos","type":"text"}],"isError":true,"resultType":"complete"}}
 ## read list_models absent 
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## read list_models unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_models","type":"text"}],"isError":true,"resultType":"complete"}}
 ## read list_models full {"kind":"v"}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## read list_models kind= {"kind":""}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## read list_models kind=claude {"kind":"claude"}
 -> AGENT ["GET","/agents/claude/models",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
@@ -184,13 +184,13 @@
 -> AGENT ["GET","/agents/muse/models",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## read list_models kind=shell {"kind":"shell"}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## read list_models kind=ssm {"kind":"ssm"}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## read list_models kind=Codex {"kind":"Codex"}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## read list_models kind=nope {"kind":"nope"}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## read list_my_sessions absent 
 -> AGENT ["GET","/sessions",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
@@ -482,13 +482,13 @@
 ## write list_memos unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_memos","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write list_models absent 
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write list_models unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_models","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write list_models full {"kind":"v"}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write list_models kind= {"kind":""}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write list_models kind=claude {"kind":"claude"}
 -> AGENT ["GET","/agents/claude/models",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
@@ -517,13 +517,13 @@
 -> AGENT ["GET","/agents/muse/models",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write list_models kind=shell {"kind":"shell"}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write list_models kind=ssm {"kind":"ssm"}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write list_models kind=Codex {"kind":"Codex"}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write list_models kind=nope {"kind":"nope"}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write list_my_sessions absent 
 -> AGENT ["GET","/sessions",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
@@ -831,13 +831,13 @@
 ## admin:dangerous list_memos unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_memos","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous list_models absent 
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous list_models unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_models","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous list_models full {"kind":"v"}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous list_models kind= {"kind":""}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous list_models kind=claude {"kind":"claude"}
 -> AGENT ["GET","/agents/claude/models",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
@@ -866,13 +866,13 @@
 -> AGENT ["GET","/agents/muse/models",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous list_models kind=shell {"kind":"shell"}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous list_models kind=ssm {"kind":"ssm"}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous list_models kind=Codex {"kind":"Codex"}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous list_models kind=nope {"kind":"nope"}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse","type":"text"}],"isError":true,"resultType":"complete"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous list_my_sessions absent 
 -> AGENT ["GET","/sessions",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}

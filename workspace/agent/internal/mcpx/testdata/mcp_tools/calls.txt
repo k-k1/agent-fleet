@@ -1921,14 +1921,14 @@
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはモデル一覧の取得を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser session-spawn session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"kind には claude / codex / opencode / agy / copilot / cursor / kiro / lcpp / muse のいずれかを指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"kind には claude / agy / codex / copilot / cursor / kiro / lcpp / muse / opencode のいずれかを指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_models","type":"text"}],"isError":true,"resultType":"complete"}}
 ## list_models empty {}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはモデル一覧の取得を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser session-spawn session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"kind には claude / codex / opencode / agy / copilot / cursor / kiro / lcpp / muse のいずれかを指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"kind には claude / agy / codex / copilot / cursor / kiro / lcpp / muse / opencode のいずれかを指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_models","type":"text"}],"isError":true,"resultType":"complete"}}
 ## list_models unknown {"zz_unknown":1}
@@ -1952,14 +1952,14 @@
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはモデル一覧の取得を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser session-spawn session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"kind には claude / codex / opencode / agy / copilot / cursor / kiro / lcpp / muse のいずれかを指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"kind には claude / agy / codex / copilot / cursor / kiro / lcpp / muse / opencode のいずれかを指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_models","type":"text"}],"isError":true,"resultType":"complete"}}
 ## list_models kind= {"kind":""}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはモデル一覧の取得を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser session-spawn session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"kind には claude / codex / opencode / agy / copilot / cursor / kiro / lcpp / muse のいずれかを指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"kind には claude / agy / codex / copilot / cursor / kiro / lcpp / muse / opencode のいずれかを指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_models","type":"text"}],"isError":true,"resultType":"complete"}}
 ## list_models kind=claude {"kind":"claude"}
@@ -2038,28 +2038,28 @@
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはモデル一覧の取得を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser session-spawn session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"kind には claude / codex / opencode / agy / copilot / cursor / kiro / lcpp / muse のいずれかを指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"kind には claude / agy / codex / copilot / cursor / kiro / lcpp / muse / opencode のいずれかを指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_models","type":"text"}],"isError":true,"resultType":"complete"}}
 ## list_models kind=ssm {"kind":"ssm"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはモデル一覧の取得を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser session-spawn session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"kind には claude / codex / opencode / agy / copilot / cursor / kiro / lcpp / muse のいずれかを指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"kind には claude / agy / codex / copilot / cursor / kiro / lcpp / muse / opencode のいずれかを指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_models","type":"text"}],"isError":true,"resultType":"complete"}}
 ## list_models kind=Codex {"kind":"Codex"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはモデル一覧の取得を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser session-spawn session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"kind には claude / codex / opencode / agy / copilot / cursor / kiro / lcpp / muse のいずれかを指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"kind には claude / agy / codex / copilot / cursor / kiro / lcpp / muse / opencode のいずれかを指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_models","type":"text"}],"isError":true,"resultType":"complete"}}
 ## list_models kind=nope {"kind":"nope"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはモデル一覧の取得を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser session-spawn session-all session-all-write]
-  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"kind には claude / codex / opencode / agy / copilot / cursor / kiro / lcpp / muse のいずれかを指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"kind には claude / agy / codex / copilot / cursor / kiro / lcpp / muse / opencode のいずれかを指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_models","type":"text"}],"isError":true,"resultType":"complete"}}
 ## list_my_sessions absent 
