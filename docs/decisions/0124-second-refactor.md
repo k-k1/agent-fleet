@@ -22,6 +22,10 @@ directly under a module directory, the yardstick 0067 used. The commands are und
 | Agent package main | 64 / 15,373 | **129 / 37,322** |
 | Console `src/` (non-test TS/TSX) | 122,094 lines | **179,895** |
 
+🔴 **Correction (2026-10-28):** the Console figure is **180,004** lines. The command behind 179,895
+dropped every path containing `test`, which also removed the helper files under `console/src/test/`;
+"non-test" here means excluding `*.test.*` only. The command is added under "Measuring".
+
 3,898 non-merge commits landed in between. The regrowth is not one bad family. The engine family
 (ADR 0071–0099) is 44 files / 24.0k lines of the CP's main; the rest is a dozen features (OAuth,
 egress, the dev IdP, inbox, scheduler, …) that each landed in main because nothing asked them to go
@@ -47,6 +51,10 @@ Duplication has started to produce defects, not only extra work:
 - **copilot, cursor and kiro's `driver.go` are 83–90% the same** once the kind name is normalised;
   their `acp.go` differ in 12 of 207 lines. Cross-cutting fixes have had to land in all seven
   managed drivers at once (`c70e8cb0a`, `2a9b6bbaf`).
+  🔴 **Correction (2026-10-28):** "83–90%" and "12 of 207 lines" came from an unstated method and one
+  pair. With the three kind names normalised to one token and comments and blank lines dropped, the
+  code of `acp.go` is 95–100% shared between each pair, and `driver.go` shares 69–83% of the larger
+  file's lines (87–92% of the smaller's). The command is under "Measuring".
 - **The kind registry sits at the top of the agent's import graph** (`internal/sessionx/agent.go:34`),
   so the packages below it keep their own kind lists. Kind-literal branches: 219 in the agent
   outside `internal/agents`, 66 in the Console outside `agents/registry.ts`, 51 `.kind-<kind>`
@@ -103,6 +111,9 @@ CI is green on `main` and takes about six minutes, so the gates this plan leans 
 - CP tests: every relay exists in the agent's route table; every mutating relay has an audit action.
 - Ratchets: a package-main file allowlist in both Go modules; a ceiling on kind-literal branches in
   the agent and the Console that fails on an increase.
+  🔴 **Addendum (2026-10-28):** the ceiling's kind set comes from the kind catalog, or the test fails
+  when its list differs from the catalog. A hard-coded list never counts a new kind's branches, which
+  is exactly the growth the ratchet exists to stop.
 - Console: `css-dup` in CI as a ceiling at today's count; an import-boundary lint (`lib/` may not
   import `features/`, with today's exceptions listed); delete the two alias files.
 - Remove dead code in both Go modules (for example `dockerContainerID` in `metrics.go`,
@@ -185,6 +196,9 @@ CI is green on `main` and takes about six minutes, so the gates this plan leans 
 - **Generating TS types, or a shared Go module, now** (0012's condition for revisiting). 372 JSON
   write sites still return `map[string]any` (agent 223, CP 149), which a generator cannot type, and
   the agent image's build context is `workspace/agent/` alone.
+  🔴 **Correction (2026-10-28):** 372 is the number of grouped entries in the two `wiremap.golden`
+  files (agent 223, CP 149); each entry folds identical (file, function, shape) sites into one line
+  with an `xN` count. The write sites number **426** (agent 264, CP 162).
 - **A refactor freeze.** Around seventy commits a day land on `main`; a freeze stalls all of them to
   protect a handful of hot files. Decision 4 protects exactly those files for exactly as long as a
   split takes.
@@ -221,4 +235,30 @@ git grep -l -i -w muse -- ':!*_test.go' ':!*.test.ts' ':!*.test.tsx' ':!*.md' \
 
 # hand-mirrored relays
 grep -cE ', rest\)' control-plane/routes.go
+```
+
+Added 2026-10-28 with the corrections above:
+
+```sh
+# Console non-test TS/TSX lines (excludes *.test.* only)
+find console/src \( -name '*.ts' -o -name '*.tsx' \) ! -name '*.test.*' -exec cat {} + | wc -l
+
+# map[string]any write sites: grouped golden entries, then sites (the sum of xN)
+for f in control-plane/testdata/wiremap.golden workspace/agent/testdata/wiremap.golden; do
+  grep -vE '^(#|$)' "$f" | awk '{n=1; for (i=1;i<=NF;i++) if ($i ~ /^x[0-9]+$/) n=substr($i,2)+0; s+=n} END {print NR, s}'
+done
+
+# code shared by the ACP drivers: kind names to one token, comments and blank lines dropped
+python3 - <<'PY'
+import difflib, itertools, re
+def norm(p):
+    return [l for l in (re.sub(r'(?i)copilot|cursor|kiro', 'KIND', re.sub(r'//.*', '', x)).strip()
+                        for x in open(p)) if l]
+d = 'workspace/agent/internal/agents/'
+for f in ('acp.go', 'driver.go'):
+    for a, b in itertools.combinations(('copilot', 'cursor', 'kiro'), 2):
+        A, B = norm(f'{d}{a}/{f}'), norm(f'{d}{b}/{f}')
+        m = sum(x.size for x in difflib.SequenceMatcher(None, A, B, autojunk=False).get_matching_blocks())
+        print(f, a, b, f'{m / max(len(A), len(B)):.0%} of larger, {m / min(len(A), len(B)):.0%} of smaller')
+PY
 ```

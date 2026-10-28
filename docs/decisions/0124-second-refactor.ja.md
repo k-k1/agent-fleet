@@ -22,6 +22,10 @@
 | Agent の package main | 64 / 15,373 | **129 / 37,322** |
 | Console の `src/`（テスト以外の TS/TSX） | 122,094 行 | **179,895** |
 
+🔴 **訂正（2026-10-28）：** Console の値は **180,004** 行である。179,895 を出したコマンドは `test` を含む
+パスをすべて除いており、`console/src/test/` の補助ファイルまで落としていた。ここでの「テスト以外」は
+`*.test.*` だけを除く意味である。コマンドは「測り方」節に追加した。
+
 この間にマージ以外のコミットが 3,898 本入った。再膨張の原因は 1 つの家系ではない。エンジン家系
 （ADR 0071〜0099）が CP の main のうち 44 ファイル / 24.0k 行を占め、残りは十数個の機能（OAuth、
 egress、開発用 IdP、inbox、scheduler など）で、どれも「main 以外に置け」と言うものが何もなかったから
@@ -47,6 +51,10 @@ main に入った。**0067 は main を縮めたが、小さく保つ仕組み�
 - **copilot・cursor・kiro の `driver.go` は、種別名をそろえると 83〜90% が同じ**である。`acp.go` は
   207 行中 12 行しか違わない。横断的な修正は、managed ドライバー 7 本すべてに同時に入れる必要が
   あった（`c70e8cb0a`、`2a9b6bbaf`）。
+  🔴 **訂正（2026-10-28）：** 「83〜90%」と「207 行中 12 行」は、方法を示さずに 1 組だけを測った値だった。
+  3 つの種別名を 1 つのトークンにそろえ、コメントと空行を除くと、`acp.go` のコードはどの組でも
+  95〜100% が共通で、`driver.go` は大きいほうのファイルの行の 69〜83%（小さいほう基準では 87〜92%）が
+  共通である。コマンドは「測り方」節にある。
 - **種別のレジストリが Agent の import グラフの最上部にある**（`internal/sessionx/agent.go:34`）。その
   ため、それより下のパッケージは自前の種別リストを持ち続けている。種別リテラルによる分岐は、Agent の
   `internal/agents` の外に 219、Console の `agents/registry.ts` の外に 66、CSS の 6 ファイルに
@@ -101,6 +109,9 @@ CI は `main` で緑、所要は約 6 分なので、この計画が頼るゲー
   アクションがある。
 - ラチェット：両 Go モジュールに package main のファイル許可リスト。Agent と Console に、種別リテラル
   分岐の上限（増えたら落ちる）。
+  🔴 **追記（2026-10-28）：** 上限が数える種別の集合は種別カタログから取る。または、テストの持つ一覧が
+  カタログと食い違ったら落ちるようにする。一覧を固定で持つと新しい種別の分岐は決して数えられず、
+  それこそラチェットが止めるべき増え方である。
 - Console：CI に `css-dup` を今日の件数を上限として入れる。import 境界の lint（`lib/` は `features/` を
   import しない。今日の例外は列挙する）。別名ファイル 2 つを消す。
 - 両 Go モジュールの死んだコードを消す（たとえば `metrics.go` の `dockerContainerID`、`mem.go` の
@@ -179,6 +190,9 @@ CI は `main` で緑、所要は約 6 分なので、この計画が頼るゲー
 - **TS の型生成や共有 Go モジュールを今やる**（0012 の再検討条件）。JSON の書き出し箇所のうち 372 が
   まだ `map[string]any` を返しており（Agent 223、CP 149）、生成器では型にできない。また Agent イメージの
   ビルドコンテキストは `workspace/agent/` だけである。
+  🔴 **訂正（2026-10-28）：** 372 は 2 つの `wiremap.golden` の集約行の数である（Agent 223、CP 149）。
+  各行は同じ（ファイル・関数・形）の書き出し箇所を `xN` の個数付きで 1 行にまとめている。書き出し箇所
+  そのものは **426**（Agent 264、CP 162）である。
 - **リファクタのための凍結。** `main` には 1 日に約 70 コミットが入る。凍結は、一握りのホットなファイルを
   守るためにそのすべてを止める。決定 4 は、まさにそのファイルを、割るのにかかる時間だけ守る。
 
@@ -214,4 +228,30 @@ git grep -l -i -w muse -- ':!*_test.go' ':!*.test.ts' ':!*.test.tsx' ':!*.md' \
 
 # hand-mirrored relays
 grep -cE ', rest\)' control-plane/routes.go
+```
+
+2026-10-28、上の訂正とともに追加：
+
+```sh
+# Console non-test TS/TSX lines (excludes *.test.* only)
+find console/src \( -name '*.ts' -o -name '*.tsx' \) ! -name '*.test.*' -exec cat {} + | wc -l
+
+# map[string]any write sites: grouped golden entries, then sites (the sum of xN)
+for f in control-plane/testdata/wiremap.golden workspace/agent/testdata/wiremap.golden; do
+  grep -vE '^(#|$)' "$f" | awk '{n=1; for (i=1;i<=NF;i++) if ($i ~ /^x[0-9]+$/) n=substr($i,2)+0; s+=n} END {print NR, s}'
+done
+
+# code shared by the ACP drivers: kind names to one token, comments and blank lines dropped
+python3 - <<'PY'
+import difflib, itertools, re
+def norm(p):
+    return [l for l in (re.sub(r'(?i)copilot|cursor|kiro', 'KIND', re.sub(r'//.*', '', x)).strip()
+                        for x in open(p)) if l]
+d = 'workspace/agent/internal/agents/'
+for f in ('acp.go', 'driver.go'):
+    for a, b in itertools.combinations(('copilot', 'cursor', 'kiro'), 2):
+        A, B = norm(f'{d}{a}/{f}'), norm(f'{d}{b}/{f}')
+        m = sum(x.size for x in difflib.SequenceMatcher(None, A, B, autojunk=False).get_matching_blocks())
+        print(f, a, b, f'{m / max(len(A), len(B)):.0%} of larger, {m / min(len(A), len(B)):.0%} of smaller')
+PY
 ```
