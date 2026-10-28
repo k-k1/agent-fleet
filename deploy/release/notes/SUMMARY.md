@@ -13,6 +13,32 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
+## [0.36.0](0.36.0.md) — 2026-10-28
+
+**CLI pins** — Claude Code 2.1.312, Codex 0.165.0, Copilot 1.0.105, Antigravity 1.4.8, Kiro 2.35.1, OpenCode 2.2.0, Muse Code 1.4.14-R7309.1
+
+**New / Improved**
+
+- **[skills]** Read-only view of every agent kind's skills: personal under Settings › Skills, a repository's under Skills… in its row's menu ([#2792](https://github.com/k-k1/agent-fleet/issues/2792), [#2795](https://github.com/k-k1/agent-fleet/issues/2795))
+- **[assistant]** Chat turns and Agent Fleet's other LLM calls step past a backend that hit a usage or rate limit, with a notice; memory review waits ([#2780](https://github.com/k-k1/agent-fleet/issues/2780))
+- **[work items]** Rows mark new activity and show comment counts ([#2779](https://github.com/k-k1/agent-fleet/issues/2779))
+- **[workspace]** Settings › Machine charts memory pressure (measure only) ([#2516](https://github.com/k-k1/agent-fleet/issues/2516), [#2837](https://github.com/k-k1/agent-fleet/issues/2837))
+- **[viewer]** Find in the PDF pane: Ctrl/Cmd+F opens its own find bar over every page ([#2822](https://github.com/k-k1/agent-fleet/issues/2822))
+- **[work items]** The Merge button is offered to GitHub App sign-ins on a positive permission check ([#2753](https://github.com/k-k1/agent-fleet/issues/2753))
+- **[plan review]** "Review again in ‹reviewer›" is offered on every device ([#2496](https://github.com/k-k1/agent-fleet/issues/2496))
+- **[mirror]** A Claude conversation restored from the Agent's backup says so ([#2740](https://github.com/k-k1/agent-fleet/issues/2740))
+- **[work items]** Comments are accepted only from the Console by the workspace's member, and audited ([#2752](https://github.com/k-k1/agent-fleet/issues/2752))
+
+**Fixed**
+
+- **[chat]** A mistyped slash command stayed Pending forever on claude; the warning now shows ([#2830](https://github.com/k-k1/agent-fleet/issues/2830))
+- **[jira]** Markdown bodies were garbled next to Japanese text, and `issue create -P` dropped the parent ([#2809](https://github.com/k-k1/agent-fleet/issues/2809), [#2812](https://github.com/k-k1/agent-fleet/issues/2812))
+- **[opencode]** opencode 2: empty Agent instructions preview; a `/new` session's first turn missing from its pane ([#2799](https://github.com/k-k1/agent-fleet/issues/2799), [#2827](https://github.com/k-k1/agent-fleet/issues/2827))
+- **[assistant]** claude's own auto-memory stayed on with Agent Fleet memory; a muse-only conversation could not be compacted ([#2488](https://github.com/k-k1/agent-fleet/issues/2488), [#2790](https://github.com/k-k1/agent-fleet/issues/2790))
+- **[mirror]** A slash command with an attachment showed an internal instruction in its chip ([#2823](https://github.com/k-k1/agent-fleet/issues/2823))
+- **[misc]** IPv6 Control Plane URL in the egress allowlist, MCP connection-test timeouts, Settings heading spacing ([#2754](https://github.com/k-k1/agent-fleet/issues/2754), [#2820](https://github.com/k-k1/agent-fleet/issues/2820), [#2813](https://github.com/k-k1/agent-fleet/issues/2813))
+
+
 ## [0.35.0](0.35.0.md) — 2026-10-26
 
 **CLI pins** — Claude Code 2.1.310, Codex 0.164.0, Antigravity 1.4.7, OpenCode 2.1.4, Muse Code 1.4.13-R6996.1, rtk 1.1.0
