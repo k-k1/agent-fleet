@@ -18,8 +18,9 @@ const mcpToolSearchSessions = "search_sessions"
 // sessions that were launched while it was on, before their config is rewritten.
 var mcpSessionSearchEnabled bool
 
-func mcpStdioSessionSearchTools() []map[string]any {
-	return []map[string]any{{
+// searchSessionsSchema is search_sessions as a session is offered it.
+func searchSessionsSchema() map[string]any {
+	return map[string]any{
 		"name": mcpToolSearchSessions,
 		"description": "Agent Fleet: full-text search over what was said in this workspace's sessions - every agent kind, " +
 			"running, stopped and archived. Call it before re-deriving something that may have been solved " +
@@ -39,7 +40,7 @@ func mcpStdioSessionSearchTools() []map[string]any {
 				"limit":   map[string]any{"type": "integer", "minimum": 1, "maximum": 50, "description": "Hits to return (default 10)"},
 			},
 		},
-	}}
+	}
 }
 
 type searchSessionsArgs struct {
@@ -97,4 +98,19 @@ func mcpSearchSessions(id json.RawMessage, raw json.RawMessage) []byte {
 		return mcpToolErr(id, "past-session search returned an unreadable answer: "+err.Error())
 	}
 	return mcpStructuredResult(id, out)
+}
+
+// sessionSearchTools is search_sessions, under --session-search.
+func sessionSearchTools() []toolSpec {
+	return []toolSpec{{
+		name: mcpToolSearchSessions, session: searchSessionsSchema, ownArgs: true,
+		handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			return mcpSearchSessions(req.ID, p.Args)
+		},
+	}}
+}
+
+// mcpStdioSessionSearchTools is the session-search family's session list.
+func mcpStdioSessionSearchTools() []map[string]any {
+	return sessionTools(sessionSearchTools())
 }

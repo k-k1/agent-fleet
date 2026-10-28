@@ -383,3 +383,8 @@ func TestToolCallGolden(t *testing.T) {
 	}
 	checkGolden(t, "calls.txt", out.Bytes())
 }
+
+// operatorWriteTools is what --write adds to the assistant surface.
+func operatorWriteTools() []map[string]any {
+	return operatorTools(true)[len(operatorTools(false)):]
+}
