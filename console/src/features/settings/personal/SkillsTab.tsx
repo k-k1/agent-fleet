@@ -14,7 +14,7 @@ import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { Button } from "../../../ui/Button.tsx";
 import { EmptyState } from "../../../ui/EmptyState.tsx";
-import { agentOf } from "../../../agents/registry.ts";
+import { agentOf, skillsCatalogKinds } from "../../../agents/registry.ts";
 import { copyText } from "../../../lib/clipboard.ts";
 import { isExternalUrl } from "../../../lib/filemeta.ts";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -66,9 +66,8 @@ export const SKILLS_SECTION = "skills";
 // Display order of the scope groups: the member's own first, then what Agent Fleet and the CLI
 // bring along.
 const SCOPES = ["user", "fleet", "cli"] as const;
-// The kinds the Agent reports, fixed so the remembered tab can be restored before the list has
-// loaded. One the Agent does not report simply has no tab.
-const KINDS = ["claude", "codex", "opencode", "muse"];
+// The kinds with a skills tab (caps.skillsCatalog), known before the Agent's list has loaded so
+// the remembered tab can be restored. One the Agent does not report simply has no tab.
 
 const dirOf = (p: string) => p.slice(0, p.lastIndexOf("/"));
 
@@ -132,7 +131,7 @@ export function SkillsTab() {
   );
   useRetryLoad(load, [running]);
 
-  const [kind, setKind] = useSectionView(SKILLS_SECTION, KINDS, KINDS[0]);
+  const [kind, setKind] = useSectionView(SKILLS_SECTION, skillsCatalogKinds, skillsCatalogKinds[0]);
   const [selected, setSelected] = useState<CatalogSkill | null>(null);
   const current = kinds?.find((k) => k.kind === kind) ?? kinds?.[0];
 

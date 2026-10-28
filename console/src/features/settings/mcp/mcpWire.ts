@@ -5,23 +5,27 @@
 // pinned by unit tests instead of only by a running browser.
 
 import { tMaybe } from "../../../lib/i18n/index.ts";
-import { catalogKinds, kindFacts, useKindCatalogVersion } from "../../../agents/kindCatalog.ts";
+import { FALLBACK_KIND_FACTS, catalogKinds, kindFacts, useKindCatalogVersion } from "../../../agents/kindCatalog.ts";
+import { inListOrder } from "../../../agents/registry.ts";
+import { SESSION_KINDS, type SessionKind } from "../../../types/session.ts";
 
 // The agent kinds a definition may be scoped to when no kind catalog has been loaded: the
-// fallback for mcpKinds(), in display order. The kind catalog (GET /api/agents/kinds) is the
-// source once it arrives; kindCatalog.test.ts holds this list equal to the build-time snapshot,
-// and the Go test TestMcpKnownKindsMirrorConsole reads this line as text. The non-agent session
-// kinds (shell / ssm) run no MCP client, so they are not offered.
+// fallback facts' mcpClient "yes" kinds (kindCatalog.test.ts holds those equal to the build-time
+// snapshot, which the CP's mcpKnownKinds reads), in the registry's "mcp" display order. The
+// non-agent session kinds (shell / ssm) run no MCP client, so they are not offered.
 // How a kind RECEIVES its servers is not this list's business: every kind here but muse gets a
 // native config file written for it, and muse takes them on the wire at session start.
-export const MCP_KINDS = ["claude", "codex", "opencode", "cursor", "kiro", "copilot", "agy", "muse", "lcpp"] as const;
+export const MCP_KINDS: readonly SessionKind[] = inListOrder(
+  SESSION_KINDS.filter((k) => FALLBACK_KIND_FACTS[k].mcpClient === "yes"),
+  "mcp",
+);
 
 // The kinds a definition may be scoped to now: those the kind catalog says take MCP servers
-// ("unverified" counts as no — the Agent refuses a kind it has not verified). Kinds this list
-// already knows keep its order; a kind only the catalog knows follows, in the catalog's order.
+// ("unverified" counts as no — the Agent refuses a kind it has not verified), in the same order;
+// a kind only the catalog knows follows, in the catalog's order.
 export function mcpKinds(): string[] {
-  const seen = new Set<string>(MCP_KINDS);
-  const all = [...MCP_KINDS, ...catalogKinds().filter((k) => !seen.has(k))];
+  const known = new Set<string>(SESSION_KINDS);
+  const all = inListOrder([...SESSION_KINDS, ...catalogKinds().filter((k) => !known.has(k))], "mcp");
   return all.filter((k) => kindFacts(k)?.mcpClient === "yes");
 }
 

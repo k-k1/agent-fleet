@@ -13,6 +13,7 @@ import { api, getTenant, getUser, isTransientErr } from "../core/api/client.ts";
 import { CLAUDE_MODELS, getSettings, useSettings } from "./settings.ts";
 import { hiddenModelsFor, isModelHidden, modelMatchesHidden } from "./modelDeny.ts";
 import { t } from "./i18n/index.ts";
+import { agentOf } from "../agents/registry.ts";
 
 export type ModelOption = [string, string]; // [value sent as `model`, display label]
 export type EffortOption = [string, string];
@@ -28,7 +29,7 @@ interface ModelDescriptor {
   defaultEffort: string;
 }
 
-// requiresConcreteModel names the one dynamic kind (today: lcpp) whose catalog has no "let the
+// requiresConcreteModel is true for a dynamic kind (caps.concreteModel; today lcpp) whose catalog has no "let the
 // CLI pick" entry. This is NOT because llama-server itself demands a model name on every
 // request — measured live (docs/log/107's 2026-09-21 addendum), a single-model instance
 // ignores the request's own `model` field entirely (any string, or none, answers 200) — it is
@@ -41,22 +42,14 @@ interface ModelDescriptor {
 // entry point (LaunchModal, StartModal, quick launch, the Settings default row) so none of them
 // can send an empty model for this kind (docs/log/109).
 export function requiresConcreteModel(kind: string): boolean {
-  return kind === "lcpp";
+  return agentOf(kind).caps.concreteModel;
 }
 
 // Resolved lazily (not a module-level constant) so the "Default" label reflects the
 // current locale and updates on language switch. A kind with no CLI-picked default gets no
 // Default entry at all — offering one would be a choice that can never actually be launched.
 const defaultOnly = (kind: string): ModelOption[] => (requiresConcreteModel(kind) ? [] : [["", t("ui.default")]]);
-const isDynamic = (kind: string) =>
-  kind === "codex" ||
-  kind === "opencode" ||
-  kind === "agy" ||
-  kind === "copilot" ||
-  kind === "cursor" ||
-  kind === "kiro" ||
-  kind === "lcpp" ||
-  kind === "muse";
+const isDynamic = (kind: string) => agentOf(kind).caps.liveModels;
 // Per kind, the options last fetched and the identity they were fetched under (catalogIdent):
 // a hit counts only while that identity still holds.
 const cache = new Map<string, { ident: string; opts: ModelOption[] }>();

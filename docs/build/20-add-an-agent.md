@@ -65,9 +65,7 @@ unless they name another tree.
 | Version pin | an ARG in `workspace/Dockerfile`, the `versions.json` it writes, and a row in `deploy/local/cli-drift-check.sh` | [10 §10.2.1](10-development.md). A kind that runs no vendor CLI has nothing to pin |
 | A contract workflow | its own file under `.github/workflows/`, for a kind whose CLI or host the workspace image pins | **One file per agent**, registered with the release watcher. lcpp pins nothing in the image and has a manual check instead (§20.5) |
 
-The table is not a complete list of where kind names appear. Some lists are still kept
-by hand: for example `isDynamic` (the kinds with a live model catalogue) in `console/src/lib/agentModels.ts`.
-The Agent's measured-per-kind lists (`moveTargetKinds`, `oneShotKinds`,
+The table is not a complete list of where kind names appear. The Agent's measured-per-kind lists (`moveTargetKinds`, `oneShotKinds`,
 `usageMeasuredForKind`) are hand-kept on purpose, since they record a measurement and not a
 capability; each has a test that fails until a newly registered kind is classified (§20.7).
 Grep `workspace/agent`, `control-plane` and `console/src` for an existing kind with the
@@ -258,10 +256,9 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
       `agent_instructions_kinds_test.go` only to pin a new shape)
 - [ ] MCP: `MaterializedKinds` (and a writer) or `ServedKinds`, matching `Caps().MCPClient`;
       the CP follows through the snapshot
-- [ ] the Console's fallbacks, used until `GET /api/agents/kinds` answers:
-      `FALLBACK_KIND_FACTS` (`console/src/agents/kindCatalog.ts`) and, for an MCP client,
-      `MCP_KINDS` (`console/src/features/settings/mcp/mcpWire.ts`). `kindCatalog.test.ts`
-      holds both, and `SESSION_KINDS`, equal to the catalog snapshot
+- [ ] the Console's fallback, used until `GET /api/agents/kinds` answers:
+      `FALLBACK_KIND_FACTS` (`console/src/agents/kindCatalog.ts`; `MCP_KINDS` is derived from
+      it). `kindCatalog.test.ts` holds it, and `SESSION_KINDS`, equal to the catalog snapshot
 - [ ] the measured-per-kind lists, each held by a test that names the kind it is missing:
       `usageMeasuredForKind` (`usage_fold.go`; `usageMeasuredByKind` in `kind_lists_test.go`),
       move target (`moveTargetKinds` / `moveUnmeasuredTargets`; `moveClassification` in
@@ -287,4 +284,7 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
       `console/src/agents/registry.ts` (`caps`). A kind with no descriptor still renders, with a
       generic icon, but is not launchable from the Console
 - [ ] colour, icon and wording; the i18n strings in both languages
-- [ ] dynamic model catalogue: `isDynamic` in `console/src/lib/agentModels.ts`
+- [ ] the descriptor's list facts: `caps.liveModels` / `caps.concreteModel` (model picker),
+      `caps.skillsCatalog` (Settings > Skills), `caps.memberDefault` (equal to the CP's
+      `memberDefaultAgents`; `derivedKindLists.test.ts`), and a `listOrder` rank in each list the
+      kind joins (`listOrder.assistant` is required with `caps.headlessChat`)

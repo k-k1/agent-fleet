@@ -25,7 +25,9 @@ const tenantMemberDefaultsMaxBody = 4 << 10
 
 // memberDefaultAgents are the kinds a tenant may name: the ones a member connects with their own
 // account. shell and ssm need no connection, lcpp is governed by engine access, and agy is
-// experimental. The Console's MEMBER_DEFAULT_AGENTS (console/src/agents/registry.ts) must match.
+// experimental. This is CP policy, not a catalog fact: the Console derives its
+// MEMBER_DEFAULT_AGENTS from the registry's memberDefault cap, and
+// console/src/agents/derivedKindLists.test.ts reads this line and holds the two equal, in order.
 var memberDefaultAgents = []string{"claude", "codex", "opencode", "cursor", "copilot", "kiro", "muse"}
 
 // tenantMemberDefaultsWire is the stored document, the admin PUT body and, for members, the
