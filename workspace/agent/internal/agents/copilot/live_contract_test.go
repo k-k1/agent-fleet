@@ -41,12 +41,8 @@ func TestLiveSpawnPromptResume(t *testing.T) {
 	t.Setenv("COPILOT_HOME", home)
 	t.Setenv("COPILOT_GITHUB_TOKEN", tok)
 
-	h := &threadHandle{
-		name: "live1", dir: work, slotSid: "live-slot-1",
-		events: make(chan agents.Event, 64),
-		q:      agents.NewTurnQueue("live1", ledger, agents.LedgerAtTake),
-	}
-	if err := h.spawn(agents.ThreadSettings{}); err != nil {
+	h := newThreadHandle("live1", work, "live-slot-1")
+	if err := h.Spawn(agents.ThreadSettings{}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 	t.Cleanup(func() { DropHandle("live1"); Shutdown() })
@@ -59,13 +55,13 @@ func TestLiveSpawnPromptResume(t *testing.T) {
 	}
 	waitState(t, h, agents.TurnRunning)
 	deadline := time.Now().Add(120 * time.Second)
-	for time.Now().Before(deadline) && h.currentState() != agents.TurnCompleted {
+	for time.Now().Before(deadline) && h.TurnState() != agents.TurnCompleted {
 		time.Sleep(500 * time.Millisecond)
 	}
-	if st := h.currentState(); st != agents.TurnCompleted {
+	if st := h.TurnState(); st != agents.TurnCompleted {
 		t.Fatalf("turn did not complete: %s", st)
 	}
-	sid := h.sid
+	sid := h.SidForTest()
 	if sid == "" || sids.Read("live-slot-1") != sid {
 		t.Fatalf("sid not captured: %q store=%q", sid, sids.Read("live-slot-1"))
 	}
@@ -86,23 +82,19 @@ func TestLiveSpawnPromptResume(t *testing.T) {
 
 	// Resume in a separate process (session/load): kill the child, spawn again, and check
 	// with a real prompt that the context survived.
-	h.mu.Lock()
-	oldCmd := h.cmd
-	h.alive = false
-	h.mu.Unlock()
-	stopChild(oldCmd)
+	h.Down()() // mark the handle dead and stop its child
 	time.Sleep(1 * time.Second)
-	if err := h.spawn(agents.ThreadSettings{}); err != nil {
+	if err := h.Spawn(agents.ThreadSettings{}); err != nil {
 		t.Fatalf("respawn: %v", err)
 	}
-	if h.sid != sid {
-		t.Fatalf("resume changed sid: %q → %q", sid, h.sid)
+	if h.SidForTest() != sid {
+		t.Fatalf("resume changed sid: %q → %q", sid, h.SidForTest())
 	}
 	if err := h.Send(agents.TurnInput{Prompt: "What exact string did I ask you to reply with before? Answer with just that string.", ClientMessageID: "lm2"}); err != nil {
 		t.Fatalf("send2: %v", err)
 	}
 	deadline = time.Now().Add(120 * time.Second)
-	for time.Now().Before(deadline) && h.currentState() != agents.TurnCompleted {
+	for time.Now().Before(deadline) && h.TurnState() != agents.TurnCompleted {
 		time.Sleep(500 * time.Millisecond)
 	}
 	turns = parseEvents(EventsPath(sid))

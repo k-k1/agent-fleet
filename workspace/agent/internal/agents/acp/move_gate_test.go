@@ -1,4 +1,4 @@
-package cursor
+package acp
 
 // The pump's own lease on the session's lifecycle gate (ADR 0115 decision 11.1). The input path
 // that queued an entry let go of its lease at the accept, so the pump is what a move has to wait
@@ -17,16 +17,8 @@ import (
 
 func TestPumpCommitsBeforeAMoveOrLeavesTheEntryQueued(t *testing.T) {
 	h, f := newTestHandle(t)
-	h.name = "cursor-move-1"
+	h.name = "acp-move-1"
 	t.Cleanup(func() { lifegate.Reopen(h.name) }) // the gate's memory is process-wide
-	handlesMu.Lock()
-	handles[h.name] = h // where ManagedInFlight looks
-	handlesMu.Unlock()
-	t.Cleanup(func() {
-		handlesMu.Lock()
-		delete(handles, h.name)
-		handlesMu.Unlock()
-	})
 
 	taken, rel := holdAtCommit(h)
 	var once sync.Once
@@ -79,9 +71,9 @@ func TestPumpCommitsBeforeAMoveOrLeavesTheEntryQueued(t *testing.T) {
 	}
 	// The runtime has the input, but its own record (and so DriveState) may not show the turn
 	// yet: the move's state check has to see it in flight here, or it would start.
-	if !ManagedInFlight(h.name) {
+	if !h.HoldsEntry() {
 		x.Unlock()
-		t.Fatal("the writer was admitted with the entry out of the queue, but ManagedInFlight says nothing is in flight")
+		t.Fatal("the writer was admitted with the entry out of the queue, but HoldsEntry says nothing is in flight")
 	}
 	x.SetClosed("cursor-move-1-target", false)
 	x.Unlock()
@@ -102,10 +94,10 @@ func TestPumpCommitsBeforeAMoveOrLeavesTheEntryQueued(t *testing.T) {
 	second := expectPrompt(t, f, "two")
 	f.reply(second, map[string]any{"stopReason": "end_turn"})
 	waitPumpIdle(t, h)
-	if st := h.currentState(); st != agents.TurnCompleted {
+	if st := h.TurnState(); st != agents.TurnCompleted {
 		t.Errorf("state = %s, want completed", st)
 	}
-	if ManagedInFlight(h.name) {
-		t.Error("ManagedInFlight still reports an entry after the queue drained")
+	if h.HoldsEntry() {
+		t.Error("HoldsEntry still reports an entry after the queue drained")
 	}
 }
