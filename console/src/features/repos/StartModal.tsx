@@ -15,7 +15,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
 import { useKindCatalogVersion } from "../../agents/kindCatalog.ts";
 import { ClaudeExpiredHint } from "./ClaudeExpiredHint.tsx";
-import { kindDisplayName } from "../../lib/sessionkind.ts";
+import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
 import { resolveEffort, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings, setSetting } from "../../lib/settings.ts";
 import { requiresConcreteModel, useAutoConcreteModel } from "../../lib/agentModels.ts";
@@ -545,7 +545,7 @@ export function StartModal({ kinds, claudeExpired = false, onClose, onPickRepo }
                       key={k}
                       type="button"
                       title={tr(a.launchHintKey)}
-                      className={"seg-btn kind-" + a.cssClass + (kind === k ? " active" : "")}
+                      className={"seg-btn " + kindColorClasses(a.cssClass) + (kind === k ? " active" : "")}
                       onClick={() => {
                         const defaults = agentLaunchDefault(settings, k);
                         setKind(k);

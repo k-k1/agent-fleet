@@ -234,6 +234,8 @@ Agent のイメージを先に、または同時に配備し、その間は断�
       （`TestKindCatalogCoversRegistry`）
 - [ ] MCP: `MaterializedKinds`（と writer）か `ServedKinds` を `Caps().MCPClient` に合わせる。
       CP はスナップショット経由で追従する
+- [ ] モデル一覧: `internal/agents/<kind>/capabilities.go` の `ListModels`（`agents.ModelLister`）。
+      `GET /agents/{kind}/models` がこれを返す（`TestEveryAgentKindListsModels`）
 - [ ] Console のフォールバック（`GET /api/agents/kinds` が答えるまで使う）:
       `console/src/agents/kindCatalog.ts` の `FALLBACK_KIND_FACTS`（`MCP_KINDS` はここから作る）。
       `kindCatalog.test.ts` がそれと `SESSION_KINDS` をカタログのスナップショットと突き合わせる

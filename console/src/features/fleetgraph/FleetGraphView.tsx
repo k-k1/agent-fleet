@@ -26,7 +26,7 @@ import { useIsMobile } from "../../lib/device.ts";
 import { fmtDateTime, TIME_HM } from "../../lib/intl.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { exitLabel, stateInfo } from "../../lib/sessionview.ts";
-import { kindClass, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
+import { kindClass, kindColorClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
@@ -851,7 +851,7 @@ function LaneLabel({
       {missingParent && (
         <Icon name="warning" className="fgraph-parent-gap" title={tr("fgraph.parent_missing", { id: missingParent })} />
       )}
-      <span className={"sess-kic kind-" + cls}>
+      <span className={"sess-kic " + kindColorClasses(cls)}>
         <Icon name={kindIcon(lane.kind)} />
       </span>
       <span className="fgraph-label-text">{lane.label}</span>

@@ -19,7 +19,7 @@ import type { CSSProperties, KeyboardEvent, MouseEvent } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { usePaneHover } from "../../lib/panehover.tsx";
-import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.ts";
+import { kindClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { relTime } from "../../lib/intl.ts";
 import { displayName, stateInfo, exitLabel, remainingShort } from "../../lib/sessionview.ts";
@@ -180,7 +180,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
             <Icon name={fold?.hidden ? "chevron-right" : "chevron-down"} />
           </button>
         )}
-        <span className={"sess-kic kind-" + kindClass(s.kind)} title={kindLabel(s.kind)}>
+        <span className={"sess-kic " + kindClasses(s.kind)} title={kindLabel(s.kind)}>
           <Icon name={kindIcon(s.kind)} />
         </span>
         <span className="ovw-title">{displayName(s)}</span>

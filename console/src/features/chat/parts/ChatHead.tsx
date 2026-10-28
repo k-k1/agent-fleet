@@ -3,7 +3,7 @@ import type { ReactNode, RefObject } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { ViewHead } from "../../../ui/ViewHead.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
-import { kindClass } from "../../../lib/sessionkind.ts";
+import { kindClass, kindClasses } from "../../../lib/sessionkind.ts";
 import { agentOf, AGENTS } from "../../../agents/registry.ts";
 import { SESSION_KINDS } from "../../../types/session.ts";
 import type { Conversation } from "../../../types/chat.ts";
@@ -73,7 +73,7 @@ export function ChatHead({
             <button
               type="button"
               ref={agentTagRef}
-              className={"kind-tag kind-" + kindClass(agentKind!) + " chat-agent-pick"}
+              className={"kind-tag " + kindClasses(agentKind!) + " chat-agent-pick"}
               title={tr("chat.switch_agent_tip")}
               aria-haspopup="menu"
               aria-expanded={agentPickerOpen}
@@ -86,7 +86,7 @@ export function ChatHead({
             </button>
           )}
           {agent && !conversationId && (
-            <span className={"kind-tag kind-" + kindClass(agentKind!)}>
+            <span className={"kind-tag " + kindClasses(agentKind!)}>
               <Icon name={agent.icon} />
               {agent.assistantName}
             </span>

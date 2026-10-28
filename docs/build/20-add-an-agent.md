@@ -65,9 +65,9 @@ unless they name another tree.
 | Version pin | an ARG in `workspace/Dockerfile`, the `versions.json` it writes, and a row in `deploy/local/cli-drift-check.sh` | [10 §10.2.1](10-development.md). A kind that runs no vendor CLI has nothing to pin |
 | A contract workflow | its own file under `.github/workflows/`, for a kind whose CLI or host the workspace image pins | **One file per agent**, registered with the release watcher. lcpp pins nothing in the image and has a manual check instead (§20.5) |
 
-The table is not a complete list of where kind names appear. The Agent's measured-per-kind lists (`moveTargetKinds`, `oneShotKinds`,
-`usageMeasuredForKind`) are hand-kept on purpose, since they record a measurement and not a
-capability; each has a test that fails until a newly registered kind is classified (§20.7).
+The table is not a complete list of where kind names appear. The Agent's measured-per-kind
+lists (`moveTargetKinds`, `oneShotKinds`, `usageMeasuredForKind`) are hand-kept on purpose,
+since they record a measurement and not a capability; each has a test that fails until a newly registered kind is classified (§20.7).
 Grep `workspace/agent`, `control-plane` and `console/src` for an existing kind with the
 same drivers as yours, and decide each hit.
 
@@ -258,6 +258,8 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
       `agent_instructions_kinds_test.go` only to pin a new shape)
 - [ ] MCP: `MaterializedKinds` (and a writer) or `ServedKinds`, matching `Caps().MCPClient`;
       the CP follows through the snapshot
+- [ ] model menu: `ListModels` (`agents.ModelLister`) in `internal/agents/<kind>/capabilities.go`,
+      which `GET /agents/{kind}/models` serves (`TestEveryAgentKindListsModels`)
 - [ ] the Console's fallback, used until `GET /api/agents/kinds` answers:
       `FALLBACK_KIND_FACTS` (`console/src/agents/kindCatalog.ts`; `MCP_KINDS` is derived from
       it). `kindCatalog.test.ts` holds it, and `SESSION_KINDS`, equal to the catalog snapshot

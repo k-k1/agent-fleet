@@ -4,7 +4,7 @@ import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { useOpenSignal } from "../../core/store/uiOpen.ts";
-import { kindClass, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
+import { kindClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { pickNearCap } from "../usageNearCap.ts";
 import { agoText, resetChipText, untilText, UsageBreakdownLink, UsageRow, useUsage, whenText } from "./usageCommon.tsx";
@@ -84,7 +84,7 @@ export function AgyUsageChip({ tenant }: { tenant: string | null }) {
     host,
     <div className="ws-usage-wrap" ref={ref}>
       <Button
-        className={"kind-tag kind-" + kindClass("agy") + " ws-usage-btn"}
+        className={"kind-tag " + kindClasses("agy") + " ws-usage-btn"}
         title={chipTitle}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}

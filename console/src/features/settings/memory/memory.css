@@ -65,17 +65,13 @@
   opacity: 0.65;
 }
 
-/* Kind colors live only in tokens.css as --kind-*; a new kind is added there and nowhere else. */
+/* Kind colors live only in tokens.css (--kind); a new kind is added there and nowhere else. */
 .mem-kind {
   font-weight: 600;
 }
 
-.mem-kind.kind-claude {
-  color: var(--kind-claude);
-}
-
-.mem-kind.kind-codex {
-  color: var(--kind-codex);
+.mem-kind.kind {
+  color: var(--kind);
 }
 
 .mem-projects {

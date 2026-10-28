@@ -7,7 +7,7 @@ import { memo, useMemo } from "react";
 import { useLayoutStore } from "../../layout/store.ts";
 import { paneRows, ordClass, paneCount } from "../../layout/badges.ts";
 import { usePaneHover, hoverMatches } from "../../lib/panehover.tsx";
-import { kindShort, kindLabel, kindClass } from "../../lib/sessionkind.ts";
+import { kindClasses, kindLabel, kindShort } from "../../lib/sessionkind.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import type { Session } from "../../types/session.ts";
@@ -99,7 +99,7 @@ export const LayoutMap = memo(function LayoutMap() {
                   : shortKind
                     ? (p ? KIND_ABBR[p.content.kind] || "–" : "–")
                     : (p ? jaKind(p.content.kind) : tr("pane.empty"));
-              const kindCls = s ? " kc-" + kindClass(s.kind) : "";
+              const kindCls = s ? " " + kindClasses(s.kind) : "";
               const on = hoverMatches(hover, cell.id, p?.session || null);
               const label =
                 tr("pane.pane_n", { ord }) +

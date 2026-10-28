@@ -86,7 +86,7 @@ const ACTIONS = `<span class="tab-pane-actions">
     <button type="button" class="ui-btn ui-btn-ghost ui-iconbtn pane-close"><span class="codicon codicon-close"></span></button>
   </span>`;
 const TOGGLE = `<div class="ui-seg sm mirror-toggle"><button class="seg-btn">チャット</button><button class="seg-btn active">ターミナル</button></div>`;
-const SESSION_CHIP = `<span class="pane-session"><span class="kind-tag kind-claude"><span class="codicon codicon-hubot"></span>claude</span><span class="pane-session-name">wip-sy7itrh</span><span class="session-state on">待機中</span></span>`;
+const SESSION_CHIP = `<span class="pane-session"><span class="kind-tag kind kind-claude"><span class="codicon codicon-hubot"></span>claude</span><span class="pane-session-name">wip-sy7itrh</span><span class="session-state on">待機中</span></span>`;
 
 // Where the mirror/terminal head puts the cluster RELATIVE to the switch is a JSX
 // decision, not a CSS one, so read it out of the source instead of transcribing it —
