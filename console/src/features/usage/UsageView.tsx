@@ -43,6 +43,7 @@ import {
   toggleFoldedFilter,
 } from "./series.ts";
 import type { FilterTerm, UsageMetric } from "./series.ts";
+import { kindColorClasses } from "../../lib/sessionkind.ts";
 
 // Range presets (dataviz: the date range is the first filter a reader reaches for).
 const RANGES: { hours: number; key: MsgKey }[] = [
@@ -1151,7 +1152,7 @@ function CoverageBanner({
       <ul className="ucov-list">
         {notes.map((n) => (
           <li key={n.kind}>
-            <span className={"kind-tag kind-" + n.kind}>{n.kind}</span>
+            <span className={"kind-tag " + kindColorClasses(n.kind)}>{n.kind}</span>
             <span className="muted">
               {tMaybe("usage.cov_tokens_" + n.tokens) ?? n.tokens} /{" "}
               {tMaybe("usage.cov_model_" + n.model) ?? n.model}

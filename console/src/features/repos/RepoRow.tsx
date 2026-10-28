@@ -8,7 +8,7 @@
 import { createPortal } from "react-dom";
 import { Suspense, lazy, useLayoutEffect, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent } from "react";
-import { kindClass } from "../../lib/sessionkind.ts";
+import { kindClasses } from "../../lib/sessionkind.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import type { Session } from "../../types/session.ts";
 import { Icon } from "../../ui/Icon.tsx";
@@ -123,7 +123,7 @@ function RepoPeek({ s }: { s: Session }) {
   const st = stateInfo(s);
   return (
     <span className={"repo-peek" + (s.alive ? "" : " stopped")} title={displayName(s)}>
-      <span className={"sess-kic kind-" + kindClass(s.kind)} title={kindLabel(s.kind)}>
+      <span className={"sess-kic " + kindClasses(s.kind)} title={kindLabel(s.kind)}>
         <Icon name={kindIcon(s.kind)} />
       </span>
       <span className="repo-peek-title">{displayName(s)}</span>

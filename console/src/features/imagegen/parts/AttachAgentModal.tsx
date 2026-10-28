@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, getTenant, isTransientErr } from "../../../core/api/client.ts";
 import { agentOf } from "../../../agents/registry.ts";
 import { useT } from "../../../lib/i18n/index.ts";
-import { kindDisplayName } from "../../../lib/sessionkind.ts";
+import { kindColorClasses, kindDisplayName } from "../../../lib/sessionkind.ts";
 import { resolveEffort, resolveModel } from "../../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings } from "../../../lib/settings.ts";
 import { Button } from "../../../ui/Button.tsx";
@@ -321,7 +321,7 @@ export function AttachAgentModal({
                       disabled={!!c.blocked}
                       title={reason || tr(ag.launchHintKey)}
                       data-kind={c.kind}
-                      className={"seg-btn kind-" + ag.cssClass + (kind === c.kind ? " active" : "")}
+                      className={"seg-btn " + kindColorClasses(ag.cssClass) + (kind === c.kind ? " active" : "")}
                       onClick={() => setKind(c.kind)}
                     >
                       <Icon name={ag.icon} className="seg-ic" />

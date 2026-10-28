@@ -19,7 +19,7 @@ import { api, apiJSON, errText, type ApiError } from "../../../core/api/client.t
 import { Icon } from "../../../ui/Icon.tsx";
 import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
-import { kindLabel, kindClass, kindIcon } from "../../../lib/sessionkind.ts";
+import { kindClasses, kindIcon, kindLabel } from "../../../lib/sessionkind.ts";
 import { MemberCostPanel } from "../../cost/CloudCostView.tsx";
 import { MemberUptimePanel } from "../../usage/UptimeHeatmap.tsx";
 import { tCount, useT } from "../../../lib/i18n/index.ts";
@@ -765,7 +765,7 @@ export function MemberView({
               const st = stateInfo(s);
               return (
                 <div key={s.name} className="adm-session">
-                  <span className={"kind-tag kind-" + kindClass(s.kind)}>
+                  <span className={"kind-tag " + kindClasses(s.kind)}>
                     <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                   </span>
                   <span className="as-name mono" title={s.dir || ""}>{s.label ? stripLabelTag(s.label) : s.name}</span>

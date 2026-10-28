@@ -59,7 +59,7 @@ import type { PaneView } from "../../layout/types.ts";
 import { paneTitle } from "./paneTitle.ts";
 import { acceptsPaneDrag, setTabDragShield, tabOwnsDrop } from "./paneDnd.ts";
 import { stateInfo } from "../../lib/sessionview.ts";
-import { kindClass, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
+import { kindClass, kindColorClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { HomeView } from "../home/HomeView.tsx";
 import { openHome } from "../home/open.ts";
 
@@ -625,7 +625,7 @@ function PopulatedPane({
                     </span>
                   )}
                   {kic && (
-                    <span className={cx("pane-tab-kic sess-kic", "kind-" + kic.cls)} title={kic.label}>
+                    <span className={cx("pane-tab-kic sess-kic", kindColorClasses(kic.cls))} title={kic.label}>
                       <Icon name={kic.icon} />
                     </span>
                   )}

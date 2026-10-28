@@ -384,3 +384,23 @@
   --sel-bg: color-mix(in srgb, var(--sel-accent) var(--sel-bg-mix), var(--bg));
   --sel-fg: color-mix(in srgb, var(--sel-accent) var(--sel-fg-mix), var(--fg));
 }
+
+/* --kind: the hue of the kind an element shows, the one place a kind class maps to its colour.
+   The registry's kindColorClasses() (lib/sessionkind.ts) writes `kind kind-<slug>`; the use
+   sites (.kind-tag, .sess-kic, the launch seg icon, .mirror-skill-src, .mem-kind) select on the
+   `kind` marker and paint with var(--kind), so a new kind adds one line here and none there.
+   The marker keeps those rules at the specificity the per-kind rules had, and an element with
+   no registered kind (no marker) keeps its uncoloured base. --kind is declared on the element
+   itself, so --kind-<slug> resolves against the nearest theme there, as before.
+   kindCssMap.test.ts holds this list equal to the registry's cssClass slugs. */
+.kind-claude { --kind: var(--kind-claude); }
+.kind-codex { --kind: var(--kind-codex); }
+.kind-cursor { --kind: var(--kind-cursor); }
+.kind-copilot { --kind: var(--kind-copilot); }
+.kind-kiro { --kind: var(--kind-kiro); }
+.kind-agy { --kind: var(--kind-agy); }
+.kind-opencode { --kind: var(--kind-opencode); }
+.kind-lcpp { --kind: var(--kind-lcpp); }
+.kind-muse { --kind: var(--kind-muse); }
+.kind-shell { --kind: var(--kind-shell); }
+.kind-ssm { --kind: var(--kind-ssm); }

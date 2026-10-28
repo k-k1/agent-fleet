@@ -12,7 +12,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { api, raw } from "../../core/api/client.ts";
-import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.ts";
+import { kindClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { t, useLocale, useT } from "../../lib/i18n/index.ts";
 import { compareText } from "../../lib/intl.ts";
@@ -326,7 +326,7 @@ export function ArchivedModal({ onClose, onRestored, dir: scopeDir }: ArchivedMo
                           <div className="arch-info" title={"ID: " + s.name}>
                             <span className="arch-name">{displayName(s)}</span>
                             <span className="arch-sub">
-                              <span className={"kind-tag kind-" + kindClass(s.kind)}>
+                              <span className={"kind-tag " + kindClasses(s.kind)}>
                                 <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                               </span>
                               {s.started ? " · " + s.started : ""}

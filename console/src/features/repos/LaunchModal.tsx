@@ -22,7 +22,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
 import { useKindCatalogVersion } from "../../agents/kindCatalog.ts";
-import { kindDisplayName } from "../../lib/sessionkind.ts";
+import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
 import { parseCap } from "../sessions/spendBudget.ts";
@@ -616,7 +616,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
                   key={k}
                   type="button"
                   title={tr(a.launchHintKey)}
-                  className={"seg-btn kind-" + a.cssClass + (kind === k ? " active" : "")}
+                  className={"seg-btn " + kindColorClasses(a.cssClass) + (kind === k ? " active" : "")}
                   onClick={() => {
                     const defaults = agentLaunchDefault(settings, k);
                     setKind(k);

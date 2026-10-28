@@ -80,7 +80,7 @@ import type { MemoryListed, MemorySearchHit } from "../settings/memory/memoryTyp
 import { loadMemoryList, searchMemoryBodies, type MemoryList } from "./memoryPalette.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
-import { kindClass, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
+import { kindClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { sessionFolder, workingCopyLabel, worktreeTag } from "../../lib/project.ts";
 import type { Session } from "../../types/session.ts";
 import {
@@ -288,7 +288,7 @@ function talkItem(h: SessionSearchHit, running: boolean): Item {
 function TalkRowBody({ h }: { h: SessionSearchHit }) {
   return (
     <>
-      <span className={"sess-kic kind-" + kindClass(h.kind)} title={kindLabel(h.kind)}>
+      <span className={"sess-kic " + kindClasses(h.kind)} title={kindLabel(h.kind)}>
         <Icon name={kindIcon(h.kind)} />
       </span>
       <span className="cp-talk-main">
@@ -396,7 +396,7 @@ function SessionRowBody({ s, refHit, parentName }: { s: Session; refHit?: string
     <>
       {/* The rail's own kind square (sessions.css .sess-kic) — reused rather than
           restyled, so a new agent kind gets its colour here for free. */}
-      <span className={"sess-kic kind-" + kindClass(s.kind)} title={kindLabel(s.kind)}>
+      <span className={"sess-kic " + kindClasses(s.kind)} title={kindLabel(s.kind)}>
         <Icon name={kindIcon(s.kind)} />
       </span>
       <span className="cp-title">{displayName(s)}</span>

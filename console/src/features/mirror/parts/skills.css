@@ -141,19 +141,12 @@
 .mirror-skill-src .codicon {
   font-size: 10px;
 }
-/* Source badge for a foreign skill: kind colour (tokens.css --kind-* is the single source for
-   both the dark and the light theme). */
-.mirror-skill-src.kind-claude {
-  color: var(--kind-claude);
-  border-color: color-mix(in srgb, var(--kind-claude) 55%, var(--border));
-}
-.mirror-skill-src.kind-codex {
-  color: var(--kind-codex);
-  border-color: color-mix(in srgb, var(--kind-codex) 55%, var(--border));
-}
+/* Source badge for a foreign skill: kind colour (--kind, set per kind in tokens.css). */
+.mirror-skill-src.kind-claude,
+.mirror-skill-src.kind-codex,
 .mirror-skill-src.kind-muse {
-  color: var(--kind-muse);
-  border-color: color-mix(in srgb, var(--kind-muse) 55%, var(--border));
+  color: var(--kind);
+  border-color: color-mix(in srgb, var(--kind) 55%, var(--border));
 }
 /* "Show N more" row (docs/log/50 §9): the fold that keeps the CLI-bundled tier below the user's
    own entries. One line, muted, selectable like an item (sel-index), with the "//" shortcut at

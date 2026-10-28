@@ -11,7 +11,7 @@ import type { CSSProperties } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { usePaneHover } from "../../lib/panehover.tsx";
-import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.ts";
+import { kindClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { displayName, stateInfo, exitLabel, remainingShort } from "../../lib/sessionview.ts";
 import { agentOf } from "../../agents/registry.ts";
@@ -156,7 +156,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
             is narrow, and a leading dot would indent the unread rows alone and break the
             icon alignment down the list. */}
         <span className="sess-kic-wrap">
-          <span className={"sess-kic kind-" + kindClass(s.kind)} title={kindLabel(s.kind)}>
+          <span className={"sess-kic " + kindClasses(s.kind)} title={kindLabel(s.kind)}>
             <Icon name={kindIcon(s.kind)} />
           </span>
           {unread && <span className="unread-dot" role="img" aria-label={tr("noti.unread_session")} title={tr("noti.unread_session")} />}

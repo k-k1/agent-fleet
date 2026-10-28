@@ -39,6 +39,7 @@ import { TransferSection } from "./memoryTransfer.tsx";
 import { ViewNav, useSectionView, type ViewDef } from "./viewNav.tsx";
 import { useSettings } from "../../../lib/settings.ts";
 import { useSettingsUI, lastSnapshotsShowAf, rememberSnapshotsShowAf } from "../store.ts";
+import { kindColorClasses } from "../../../lib/sessionkind.ts";
 
 // Trigger label. The trailer value the Agent returns (auto/manual/pre-restore/restore/import/agent-memory)
 // is used as the key directly and an unknown value is printed raw, so adding a new trigger
@@ -340,7 +341,7 @@ export function MemorySnapshotsTab() {
               <ul className="mem-roots">
                 {data.roots.map((r) => (
                   <li key={r.kind} className="mem-root">
-                    <span className={"mem-kind kind-" + r.kind}>{r.label}</span>
+                    <span className={"mem-kind " + kindColorClasses(r.kind)}>{r.label}</span>
                     <span className="muted">
                       {tr("mem.root_stats", {
                         files: r.files,
@@ -362,7 +363,7 @@ export function MemorySnapshotsTab() {
                 ))}
                 {(data.inactive ?? []).map((r) => (
                   <li key={r.kind} className="mem-root mem-root-off">
-                    <span className={"mem-kind kind-" + r.kind}>{r.label}</span>
+                    <span className={"mem-kind " + kindColorClasses(r.kind)}>{r.label}</span>
                     <span className="muted">{reasonLabel(r.reason)}</span>
                     {r.toggleable && <OnOff value={!!r.enabled} onChange={(v) => void setCodexMemories(v)} />}
                   </li>
