@@ -80,10 +80,10 @@ func TestAdvertisedKindListsCoverTheRegistry(t *testing.T) {
 		// absent are the kinds the tool may leave out, each for the reason given.
 		absent map[string]string
 	}{
-		{"operator", mcpStdioWriteTools, "create_session", map[string]string{
+		{"operator", operatorWriteTools(), "create_session", map[string]string{
 			"ssm": "needs an ssm_target the tool has no parameter for",
 		}},
-		{"operator", mcpStdioWriteTools, "list_models", map[string]string{
+		{"operator", operatorWriteTools(), "list_models", map[string]string{
 			"shell": "runs no model", "ssm": "runs no model",
 		}},
 		{"session", mcpStdioFleetSpawnTools(), "create_session", map[string]string{
@@ -121,7 +121,7 @@ func TestAdvertisedKindListsCoverTheRegistry(t *testing.T) {
 func TestCreateSessionManagedSentenceNamesTheManagedDefaultKinds(t *testing.T) {
 	cat := readKindCatalog(t)
 	const marker = "managed で開始"
-	desc := findTool(t, mcpStdioWriteTools, "create_session")["description"].(string)
+	desc := findTool(t, operatorWriteTools(), "create_session")["description"].(string)
 	i := strings.Index(desc, marker)
 	if i < 0 {
 		t.Fatalf("operator create_session: no sentence containing %q", marker)

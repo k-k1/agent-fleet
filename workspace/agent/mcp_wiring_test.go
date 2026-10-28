@@ -56,15 +56,29 @@ func TestMCPWiringIsLive(t *testing.T) {
 		},
 
 		// --- functions (must be the real one) ---
-		"CleanTitle":                 func(t *testing.T) { sameFunc(t, w.CleanTitle, sessionx.CleanTitle) },
-		"PeerReachableSessions":      func(t *testing.T) { sameFunc(t, w.PeerReachableSessions, sessionx.PeerReachableSessions) },
-		"ApprovalGate":               func(t *testing.T) { sameFunc(t, w.ApprovalGate, sessionx.BridgeApprovalGate) },
-		"ApprovalLabel":              func(t *testing.T) { sameFunc(t, w.ApprovalLabel, sessionx.ApprovalLabel) },
-		"ShellCreateTarget":          func(t *testing.T) { sameFunc(t, w.ShellCreateTarget, sessionx.ShellCreateTarget) },
-		"ShellSendTarget":            func(t *testing.T) { sameFunc(t, w.ShellSendTarget, sessionx.ShellSendTarget) },
-		"SessionIsShell":             func(t *testing.T) { sameFunc(t, w.SessionIsShell, sessionx.SessionIsShell) },
-		"ManagedDefaultKind":         func(t *testing.T) { sameFunc(t, w.ManagedDefaultKind, sessionx.ManagedDefaultKind) },
-		"ValidateCreateKind":         func(t *testing.T) { sameFunc(t, w.ValidateCreateKind, sessionx.ValidateCreateKind) },
+		"CleanTitle":            func(t *testing.T) { sameFunc(t, w.CleanTitle, sessionx.CleanTitle) },
+		"PeerReachableSessions": func(t *testing.T) { sameFunc(t, w.PeerReachableSessions, sessionx.PeerReachableSessions) },
+		"ApprovalGate":          func(t *testing.T) { sameFunc(t, w.ApprovalGate, sessionx.BridgeApprovalGate) },
+		"ApprovalLabel":         func(t *testing.T) { sameFunc(t, w.ApprovalLabel, sessionx.ApprovalLabel) },
+		"ShellCreateTarget":     func(t *testing.T) { sameFunc(t, w.ShellCreateTarget, sessionx.ShellCreateTarget) },
+		"ShellSendTarget":       func(t *testing.T) { sameFunc(t, w.ShellSendTarget, sessionx.ShellSendTarget) },
+		"SessionIsShell":        func(t *testing.T) { sameFunc(t, w.SessionIsShell, sessionx.SessionIsShell) },
+		"ManagedDefaultKind":    func(t *testing.T) { sameFunc(t, w.ManagedDefaultKind, sessionx.ManagedDefaultKind) },
+		"ValidateCreateKind":    func(t *testing.T) { sameFunc(t, w.ValidateCreateKind, sessionx.ValidateCreateKind) },
+		"Kinds": func(t *testing.T) {
+			// The same facts the kind catalog is built from, kind for kind.
+			cat := buildKindCatalog(false).Kinds
+			got := w.Kinds()
+			if len(got) != len(cat) {
+				t.Fatalf("Kinds() has %d kinds, the catalog %d", len(got), len(cat))
+			}
+			for i, e := range cat {
+				want := mcpx.KindInfo{Kind: e.Kind, Default: e.Kind == "claude", ManagedOnly: e.ManagedOnly, ManagedDefault: e.ManagedDefault}
+				if got[i] != want {
+					t.Errorf("Kinds()[%d] = %+v, want %+v", i, got[i], want)
+				}
+			}
+		},
 		"ReadUIPrefs":                func(t *testing.T) { sameFunc(t, w.ReadUIPrefs, uiprefs.Read) },
 		"EnsureClaudeSettingsWiring": func(t *testing.T) { sameFunc(t, w.EnsureClaudeSettingsWiring, sessionx.EnsureClaudeSettingsWiring) },
 		"RepoAnyDirFromPath":         func(t *testing.T) { sameFunc(t, w.RepoAnyDirFromPath, gitx.RepoAnyDirFromPath) },

@@ -33,7 +33,7 @@ func memberTool(t *testing.T, name string) mcpTool {
 	return mcpTool{}
 }
 
-// The Agent's own list_models (mcpx/mcp_stdio.go) accepts these kinds; the CP copy
+// The Agent's own list_models (mcpx/mcp_fleet_spawn.go) accepts these kinds; the CP copy
 // must not refuse any of them (#1075: lcpp was rejected here only).
 func TestListModelsAcceptsEveryAgentKind(t *testing.T) {
 	tool := memberTool(t, "list_models")

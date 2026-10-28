@@ -101,7 +101,7 @@ type mcpImageGenLora struct {
 	// because the moment they are needed is while the prompt is being written: a LoRA applied
 	// without its trigger loads, costs the same generation, and changes nothing visible. A
 	// second tool would move that fact one round trip away and reintroduce the failure as
-	// "forgot to call it" — see the `loras` description in mcpStdioImageGenTools.
+	// "forgot to call it" — see the `loras` description in imageGenSchema.
 	TrainedWords []string `json:"trained_words,omitempty"`
 }
 
@@ -383,7 +383,7 @@ func mcpProgressToken(req mcpReq) json.RawMessage {
 // TestImageGenToolNameMatchesConstant holds the two spellings together.
 const mcpToolGenerateImage = "generate_image"
 
-// mcpStdioImageGenTools — the image generation tool, advertised only under
+// imageGenSchema is the image generation tool, advertised only under
 // `--self-report --image-gen` AND only to the sessions mcpImageGenAdvertise picks.
 //
 // The offer is asked for at list time rather than hard-coded: which providers this session may
@@ -394,7 +394,7 @@ const mcpToolGenerateImage = "generate_image"
 // is ~1.1 MB of base64 in a tool result that then rides in the session's context for the rest
 // of the conversation; the file is on a disk the session can read, so handing back the path
 // costs nothing and the model opens it only if it actually needs to look.
-func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
+func imageGenSchema(offer imageGenOffer) map[string]any {
 	// aspect_ratio is offered ONLY when a provider on this list has ratios of its own, because
 	// unlike size it is a parameter that really reaches the tool where it exists (measured: agy
 	// honours 16:9, codex's route exposes no such parameter at all). Advertising it everywhere
@@ -599,30 +599,28 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 				"A line's `triggers:` are the words that adapter was trained on: put one in `prompt` yourself, or it loads and changes nothing. " +
 				"Available: " + strings.Join(lines, " / ")}
 	}
-	return []map[string]any{
-		{
-			"name": "generate_image",
-			"description": "Agent Fleet: generate an image from a prompt and return the FILE PATH of what was produced. " +
-				imageGenRoutesNote(offer) +
-				"What comes back is the path, not the image, so open it with your own image-reading means only when " +
-				"you actually have to look at the picture (an image is several MB, and embedding it in the result " +
-				"crowds the context of every later turn). " +
-				"What is produced outlives the conversation and can also be opened from the Console's file viewer. " +
-				"**size / background / count are requests, not guarantees.** What actually happened is in the returned " +
-				"warnings (ask for 1024x1024 and 1254x1254 can come back). " +
-				"Do not ignore warnings and then explain as if the size matched. For the same reason there is no point " +
-				"regenerating because the dimensions differ (it will not change). " +
-				"**One call really costs money** - on an external service's route it spends the user's plan quota " +
-				"(images burn it several times faster than text), and on a fleet-hosted engine it wakes a GPU box. " +
-				"Do not fire off several to see, and do not hammer it for small adjustments. " +
-				"The prompt is sent to an image service outside this container (the destination is in the returned " +
-				"provider and destination; a fleet engine means the fleet's own box), so keep confidential " +
-				"information out of it.",
-			"inputSchema": map[string]any{
-				"type": "object", "additionalProperties": false,
-				"properties": props,
-				"required":   []string{"prompt"},
-			},
+	return map[string]any{
+		"name": "generate_image",
+		"description": "Agent Fleet: generate an image from a prompt and return the FILE PATH of what was produced. " +
+			imageGenRoutesNote(offer) +
+			"What comes back is the path, not the image, so open it with your own image-reading means only when " +
+			"you actually have to look at the picture (an image is several MB, and embedding it in the result " +
+			"crowds the context of every later turn). " +
+			"What is produced outlives the conversation and can also be opened from the Console's file viewer. " +
+			"**size / background / count are requests, not guarantees.** What actually happened is in the returned " +
+			"warnings (ask for 1024x1024 and 1254x1254 can come back). " +
+			"Do not ignore warnings and then explain as if the size matched. For the same reason there is no point " +
+			"regenerating because the dimensions differ (it will not change). " +
+			"**One call really costs money** - on an external service's route it spends the user's plan quota " +
+			"(images burn it several times faster than text), and on a fleet-hosted engine it wakes a GPU box. " +
+			"Do not fire off several to see, and do not hammer it for small adjustments. " +
+			"The prompt is sent to an image service outside this container (the destination is in the returned " +
+			"provider and destination; a fleet engine means the fleet's own box), so keep confidential " +
+			"information out of it.",
+		"inputSchema": map[string]any{
+			"type": "object", "additionalProperties": false,
+			"properties": props,
+			"required":   []string{"prompt"},
 		},
 	}
 }
@@ -848,4 +846,33 @@ func mcpImageGenAdvertise() (offer imageGenOffer, ok bool) {
 		return imageGenOffer{}, false
 	}
 	return offer, true
+}
+
+// imageGenTools is generate_image, its schema built from offer. The call side is refused without
+// --image-gen for the same reason as the peer tools: the advertised set is the scope boundary,
+// and a guessed name in tools/call must not reach a route that spends the user's plan quota.
+func imageGenTools(offer imageGenOffer) []toolSpec {
+	return []toolSpec{{
+		name:    mcpToolGenerateImage,
+		session: func() map[string]any { return imageGenSchema(offer) },
+		refuse: func() string {
+			if !mcpImageGenEnabled {
+				return "このセッションは画像生成を許可されていません（設定 > エージェント）"
+			}
+			return ""
+		},
+		handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			return mcpGenerateImage(req, imageGenArgs{
+				op: a.Op, provider: a.Provider, prompt: a.Prompt, size: a.Size,
+				aspectRatio: a.AspectRatio, background: a.Background, count: a.Count,
+				inputs: a.Inputs, mask: a.Mask, model: a.Model, loras: a.Loras, seed: a.Seed,
+				negativePrompt: a.NegativePrompt, strength: a.Strength, params: a.Params,
+			})
+		},
+	}}
+}
+
+// mcpStdioImageGenTools is the image generation family's session list for offer.
+func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
+	return sessionTools(imageGenTools(offer))
 }

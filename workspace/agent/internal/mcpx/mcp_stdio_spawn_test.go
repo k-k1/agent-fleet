@@ -899,7 +899,7 @@ func TestCreateSessionEffort(t *testing.T) {
 }
 
 func TestCreateSessionSchemasOfferEffort(t *testing.T) {
-	for name, tools := range map[string][]map[string]any{"session": mcpStdioFleetSpawnTools(), "operator": mcpStdioWriteTools} {
+	for name, tools := range map[string][]map[string]any{"session": mcpStdioFleetSpawnTools(), "operator": operatorWriteTools()} {
 		found := false
 		for _, tool := range tools {
 			if tool["name"] != "create_session" {

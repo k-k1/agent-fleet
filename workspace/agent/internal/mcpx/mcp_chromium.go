@@ -418,3 +418,207 @@ func chromiumUnavailableTextFor(msg string) string {
 		"--no-sandbox, and do not retry. Verify with tests, curl or the lightweight preview instead, " +
 		"and tell the user the browser pane is unavailable on this workspace."
 }
+
+// chromiumTools is the Chromium Attach View family (docs/log/53). A session under
+// --chromium-attach is offered the same entries as the operator, which is why they are English.
+// The mutating five are refused on the call side too: a read-only client that guesses a name
+// and issues tools/call must not reach the Agent REST.
+func chromiumTools() []toolSpec {
+	listTargets := func() map[string]any {
+		return map[string]any{
+			"name": "list_chromium_targets",
+			"description": "List the existing Page targets on a Chromium CDP port exposed on loopback only. " +
+				"Always call it before attach_chromium and pick the target Page from the returned target_id. " +
+				"Do not start Chromium on a fixed port: if another session already holds it, yours does not fail - " +
+				"it silently binds another loopback family, and what is listed here is somebody else's browser. " +
+				"Start with --remote-debugging-port=0 and pass the port from line 1 of " +
+				"<user-data-dir>/DevToolsActivePort. The returned browser_id must equal the GUID on line 2 of that " +
+				"file; if it does not, it is a different instance, so do not attach. " +
+				"Never put a CDP endpoint, cookie, password or token into an answer, a log or a commit. " +
+				"Where it answers code=browser_unavailable this workspace runtime has no browser features at all.",
+			"inputSchema": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"port": map[string]any{"type": "integer", "minimum": 1, "maximum": 65535, "description": "The Chromium remote-debugging port listening on 127.0.0.1 (start with --remote-debugging-port=0 and pass line 1 of DevToolsActivePort)"},
+				},
+				"required": []string{"port"},
+			},
+			"outputSchema": chromiumTargetsOutputSchema(),
+		}
+	}
+	getAttachment := func() map[string]any {
+		return map[string]any{
+			"name": "get_chromium_attachment",
+			"description": "Check a Chromium attachment's state, viewer connection, control mode, action result and expiry. " +
+				"Do not poll it on a short cycle; call it only when you need it, such as after the user has acted.",
+			"inputSchema":  chromiumAttachmentIDInputSchema(),
+			"outputSchema": chromiumAttachmentOutputSchema(),
+		}
+	}
+	attach := func() map[string]any {
+		return map[string]any{
+			"name": "attach_chromium",
+			"description": "Connect Agent Fleet's display and input route to an existing Page confirmed through list_chromium_targets. " +
+				"When connecting to a Chromium you started yourself, always pass the GUID from line 2 of " +
+				"DevToolsActivePort as expected_browser_id (it prevents connecting to another session's browser on a " +
+				"port collision). " +
+				"**The control mode right after attaching is view-only, and every scroll and key the user sends is " +
+				"rejected.** " +
+				"To let the user operate it, stop your own automation against that Page and move it to user-control " +
+				"with request_browser_action (or set_chromium_control_mode). " +
+				"Hand over the link without doing that and the user gets a pane that is visible but does nothing. " +
+				"Present the returned open_url unchanged, as a Markdown link reading \"open the browser and operate it\". " +
+				"The link opens as a pane in the Console, not a new tab. " +
+				"Do not click a final confirming action for the user, and do not restate a successful attach as a " +
+				"successful operation on the external site.",
+			"inputSchema": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"port":                map[string]any{"type": "integer", "minimum": 1, "maximum": 65535, "description": "The Chromium remote-debugging port you passed to list_chromium_targets"},
+					"target_id":           map[string]any{"type": "string", "minLength": 1, "description": "A target_id returned by list_chromium_targets"},
+					"expected_browser_id": map[string]any{"type": "string", "description": "The Chromium instance you expect to reach (line 2 of DevToolsActivePort, /devtools/browser/<GUID>, or that GUID). A mismatch refuses the attach"},
+					"label":               map[string]any{"type": "string", "description": "Any short label to show in the Console"},
+				},
+				"required": []string{"port", "target_id"},
+			},
+			"outputSchema": chromiumAttachOutputSchema(),
+		}
+	}
+	detach := func() map[string]any {
+		return map[string]any{
+			"name": "detach_chromium",
+			"description": "End only Agent Fleet's Chromium connection and screencast. It does not close the owner's Page, " +
+				"BrowserContext, profile or Chromium process. Call it after completion or cancellation is confirmed.",
+			"inputSchema": chromiumAttachmentIDInputSchema(),
+			"outputSchema": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"attachment_id": map[string]any{"type": "string"},
+					"detached":      map[string]any{"type": "boolean"},
+				},
+				"required": []string{"attachment_id", "detached"},
+			},
+		}
+	}
+	requestAction := func() map[string]any {
+		return map[string]any{
+			"name": "request_browser_action",
+			"description": "Create or update the instructions that hand a Chromium attachment over to the user. " +
+				"Stop the owner side's automation against that Page before moving to user-control. " +
+				"Do not perform the final confirming action on their behalf; completion and cancellation are the user's " +
+				"own report, not proof that the operation on the external site succeeded. " +
+				"When the user responds, the outcome arrives automatically as new input in this session's conversation " +
+				"(a stopped session is resumed), so this tool itself returns immediately without waiting. " +
+				"Once it arrives, check the structured result with get_browser_action_result.",
+			"inputSchema": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"attachment_id":    map[string]any{"type": "string", "minLength": 1},
+					"message":          map[string]any{"type": "string", "minLength": 1, "description": "The specific check or operation you are asking the user for"},
+					"completion_label": map[string]any{"type": "string", "description": "Any label for the completion button"},
+					"allow_cancel":     map[string]any{"type": "boolean", "description": "Whether to allow cancelling (false when omitted)"},
+					"control_mode":     chromiumControlModeSchema(),
+				},
+				"required": []string{"attachment_id", "message"},
+			},
+			"outputSchema": chromiumActionRequestOutputSchema(),
+		}
+	}
+	getActionResult := func() map[string]any {
+		return map[string]any{
+			"name": "get_browser_action_result",
+			"description": "Check the user's self-reported result (pending/completed/cancelled) for the browser action you asked for. " +
+				"Do not poll it on a short cycle, and do not treat the result as proof that the operation on the " +
+				"external site succeeded.",
+			"inputSchema": chromiumAttachmentIDInputSchema(),
+			"outputSchema": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"attachment_id": map[string]any{"type": "string"},
+					"result":        map[string]any{"type": "string", "enum": []string{"pending", "completed", "cancelled"}},
+				},
+				"required": []string{"attachment_id", "result"},
+			},
+		}
+	}
+	setControlMode := func() map[string]any {
+		return map[string]any{
+			"name": "set_chromium_control_mode",
+			"description": "Change whether a Chromium attachment accepts input: view-only / user-control / locked. " +
+				"Stop the owner side's automation against that Page before moving to user-control.",
+			"inputSchema": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"attachment_id": map[string]any{"type": "string", "minLength": 1},
+					"control_mode":  chromiumControlModeSchema(),
+				},
+				"required": []string{"attachment_id", "control_mode"},
+			},
+			"outputSchema": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"attachment_id": map[string]any{"type": "string"},
+					"control_mode":  chromiumControlModeSchema(),
+				},
+				"required": []string{"attachment_id", "control_mode"},
+			},
+		}
+	}
+	refuseWrite := func() string {
+		if !mcpChromiumWriteEnabled() {
+			return "このアシスタントはChromium attachmentの変更を許可されていません"
+		}
+		return ""
+	}
+	return []toolSpec{
+		{
+			name: "list_chromium_targets", operator: listTargets, session: listTargets,
+			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+				return mcpListChromiumTargets(req.ID, a.Port)
+			},
+		},
+		{
+			name: "get_chromium_attachment", operator: getAttachment, session: getAttachment,
+			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+				return mcpGetChromiumAttachment(req.ID, a.AttachmentID)
+			},
+		},
+		{
+			name: "attach_chromium", operator: attach, operatorWrite: true, session: attach, refuse: refuseWrite,
+			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+				return mcpAttachChromium(req.ID, a.Port, a.TargetID, a.ExpectedBrowserID, a.Label)
+			},
+		},
+		{
+			name: "detach_chromium", operator: detach, operatorWrite: true, session: detach, refuse: refuseWrite,
+			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+				return mcpDetachChromium(req.ID, a.AttachmentID)
+			},
+		},
+		{
+			name: "request_browser_action", operator: requestAction, operatorWrite: true, session: requestAction, refuse: refuseWrite,
+			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+				return mcpRequestBrowserAction(req.ID, a.AttachmentID, a.Message, a.CompletionLabel, a.AllowCancel, a.ControlMode)
+			},
+		},
+		{
+			name: "get_browser_action_result", operator: getActionResult, operatorWrite: true, session: getActionResult, refuse: refuseWrite,
+			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+				return mcpGetBrowserActionResult(req.ID, a.AttachmentID)
+			},
+		},
+		{
+			name: "set_chromium_control_mode", operator: setControlMode, operatorWrite: true, session: setControlMode, refuse: refuseWrite,
+			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+				return mcpSetChromiumControlMode(req.ID, a.AttachmentID, a.ControlMode)
+			},
+		},
+	}
+}
