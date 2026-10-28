@@ -68,7 +68,7 @@ as its context (the root `.dockerignore`).
 | Workspace lifecycle | `workspace_*.go`, `agent_client.go`, `agent_dial.go`. The runtime adapters (docker, native, ecs, ecs-ec2) are `internal/runtime` ([03 §3.3](03-control-plane.md#33-the-manager-and-the-runtime-abstraction)) |
 | Relaying to the agent | `proxy.go` (REST, the SSE stream, the terminal WebSocket), `preview*.go`, `browser.go`, `fs_file_proxy.go` |
 | The push channel to the Console | `events.go` |
-| Store | `internal/store`: `store.go` is the port, `store_sql.go` the shared SQL, `store_sqlite.go` and `store_postgres.go` the dialects, each embedding its own migration directory ([06 §6.1](06-data.md#61-store-layout)) |
+| Store | `internal/store`: `store.go` is the port (the `Store` union), each domain's row types, sub-interface and SQL sit together in `store_<domain>.go`, `store_sql.go` is the shared SQL, `store_sqlite.go` and `store_postgres.go` the dialects, each embedding its own migration directory ([06 §6.1](06-data.md#61-store-layout)) |
 | Keys | `custodian.go`, `dek.go` |
 | Internal git | `internal_git*.go`, `git_http.go`, `git_lfs*.go`, `git_gc.go` ([91](91-internal-git.md)) |
 | Egress | `egress*.go` ([03 §3.8](03-control-plane.md#38-the-cps-half-of-egress-control)) |
