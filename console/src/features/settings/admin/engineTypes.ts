@@ -731,7 +731,7 @@ export function engineModes(e: EngineRow): readonly string[] {
 }
 
 /** A search source in the model catalogue. `civitai-red` is Civitai's NSFW sister domain and is
- *  the only one a deployment can decline to offer — see `catalogSources` below. */
+ *  the only one a deployment can decline to offer — see `catalogSources` in useEngineRows.ts. */
 export type CatalogSource = "hf" | "civitai" | "civitai-red";
 
 /** What a deployment offers when the answer does not say. The safe half, for the same reason
