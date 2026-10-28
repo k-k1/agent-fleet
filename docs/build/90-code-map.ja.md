@@ -60,7 +60,7 @@ source_of_truth: "コード"
 | Workspace のライフサイクル | `workspace_*.go`・`agent_client.go`・`agent_dial.go`。Runtime アダプタ（docker・native・ecs・ecs-ec2）は `internal/runtime`（[03 §3.3](03-control-plane.ja.md#33-manager-と-runtime-抽象)）|
 | agent への中継 | `proxy.go`（REST・SSE ストリーム・端末の WebSocket）・`preview*.go`・`browser.go`・`fs_file_proxy.go` |
 | Console への push チャネル | `events.go` |
-| ストア | `internal/store`: `store.go` がポート、`store_sql.go` が共通 SQL、`store_sqlite.go` と `store_postgres.go` が方言で、それぞれ自分の migrations ディレクトリを embed する（[06 §6.1](06-data.ja.md#61-ストア構成)）|
+| ストア | `internal/store`: `store.go` がポート（`Store` の合併）、各ドメインの行型・サブインターフェース・SQL は `store_<domain>.go` にまとまり、`store_sql.go` が共通 SQL、`store_sqlite.go` と `store_postgres.go` が方言で、それぞれ自分の migrations ディレクトリを embed する（[06 §6.1](06-data.ja.md#61-ストア構成)）|
 | 鍵 | `custodian.go`・`dek.go` |
 | 内部 git | `internal_git*.go`・`git_http.go`・`git_lfs*.go`・`git_gc.go`（[91](91-internal-git.ja.md)）|
 | egress | `egress*.go`（[03 §3.8](03-control-plane.ja.md#38-egress-統制の-cp-側)）|
