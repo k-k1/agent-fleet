@@ -262,3 +262,14 @@ for f in ('acp.go', 'driver.go'):
         print(f, a, b, f'{m / max(len(A), len(B)):.0%} of larger, {m / min(len(A), len(B)):.0%} of smaller')
 PY
 ```
+
+
+## Notes
+
+- 2026-10-28: the Phase 0 ratchets are in place (#2854). `main_files_test.go` in each Go module holds
+  package main to `testdata/main-files.txt`. The kind-literal ceilings
+  (`workspace/agent/kind_literal_ceiling_test.go`, `console/src/test/kindLiteralCeiling.test.ts`) use the
+  expressions above but take the kinds from the registry (`sessionx.RegisteredKinds()`; the Console's
+  `SESSION_KINDS`, held equal to the catalog) minus the non-agent `shell` and `ssm`, and match Go
+  identifiers as `Kind<kind>` in any case, so a new kind is counted from the PR that registers it. The
+  `K`/`KC` lists above are today's expansion of that set; both give 219 and 66.

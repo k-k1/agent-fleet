@@ -255,3 +255,12 @@ for f in ('acp.go', 'driver.go'):
         print(f, a, b, f'{m / max(len(A), len(B)):.0%} of larger, {m / min(len(A), len(B)):.0%} of smaller')
 PY
 ```
+
+## 追記
+
+- 2026-10-28: Phase 0 のラチェットを入れた (#2854)。各 Go モジュールの `main_files_test.go` が package main を
+  `testdata/main-files.txt` に固定する。kind リテラル分岐の上限（`workspace/agent/kind_literal_ceiling_test.go`、
+  `console/src/test/kindLiteralCeiling.test.ts`）は上の式を使うが、kind はレジストリ（`sessionx.RegisteredKinds()`、
+  Console はカタログと一致を保たれた `SESSION_KINDS`）から非エージェントの `shell` と `ssm` を除いて取り、Go の識別子は
+  大文字小文字を問わず `Kind<kind>` で数える。新しい kind は登録した PR から数えられる。上の `K`/`KC` は今日時点の展開で、
+  どちらも 219 と 66 になる。
