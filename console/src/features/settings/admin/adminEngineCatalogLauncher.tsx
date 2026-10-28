@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useSettingsUI } from "../store.ts";
 import { EngineModelsAdminView } from "./adminEngineModels.tsx";
-import { useEngineRows } from "./engineTypes.ts";
+import { useEngineRows } from "./useEngineRows.ts";
 import { openEngineAdd } from "./openEngineAdd.ts";
 
 /** Compatibility door for the former settings page. Existing navigation still works, but the

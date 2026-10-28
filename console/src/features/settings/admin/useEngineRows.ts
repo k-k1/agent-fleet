@@ -1,3 +1,10 @@
+import { useCallback, useEffect, useState } from "react";
+import { api, errDetail } from "../../../core/api/client.ts";
+import { useT } from "../../../lib/i18n/index.ts";
+import { loadEngines, saveEngines } from "./catalogMemory.ts";
+import type { ComfyLanStatus } from "./adminEngineLan.tsx";
+import { CATALOG_SOURCES_DEFAULT, type CatalogSource, type EngineRow } from "./engineTypes.ts";
+
 function catalogSources(value: unknown): CatalogSource[] {
   if (!Array.isArray(value)) return [...CATALOG_SOURCES_DEFAULT];
   const known: CatalogSource[] = ["hf", "civitai", "civitai-red"];

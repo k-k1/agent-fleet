@@ -7,8 +7,9 @@
 // page: "is the GPU costing me money right now" and "which checkpoint should this run" are asked
 // by the same person at different times.
 //
-// They read the same answer and almost nothing else, which is what this file is: the types, the
-// loader, and four predicates. A helper only one screen uses belongs in that screen's own file.
+// They read the same answer and almost nothing else, which is what this file is: the types and
+// the predicates; the loader beside them is useEngineRows.ts. A helper only one screen uses
+// belongs in that screen's own file.
 
 export type EngineBox = {
   id?: string;

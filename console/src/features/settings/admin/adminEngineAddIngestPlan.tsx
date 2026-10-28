@@ -1,10 +1,23 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { apiJSON } from "../../../core/api/client.ts";
+import { tMaybe, useT } from "../../../lib/i18n/index.ts";
+import { Icon } from "../../../ui/Icon.tsx";
+import { Button } from "../../../ui/Button.tsx";
+import { Modal } from "../../../ui/Modal.tsx";
+import { type ModelKind } from "./adminEngineModels.tsx";
+import { kvPriceOf, modelFit, NO_KV, windowThatFits, windowWhenUnsized } from "./engineFit.ts";
+import { familyVramMeasurement } from "./engineFamilyVram.ts";
+import { FitTag } from "./adminEngineRepo.tsx";
+import { engineIsImage, type CatalogSource, type EngineApiError, type EngineParams, type EngineRow, type IngestCandidate, type IngestHit, type IngestJob, type IngestPlan, type IngestVersion, type ResolvedSource } from "./engineTypes.ts";
+import { CATALOG_HARD_RESTRICTIONS, EngineRefusal, formatBytes } from "./adminEngineAddShared.tsx";
+
 /** The plan card (ADR 0085 decision 4). One press, and the CP decided what that press does.
  *
  * 🔴 No role selector, no key field, no parts checkbox, no attach/replace: every one of those was
  * a question a person who does not know what a text encoder is cannot answer, and getting one
  * wrong produced a row that looked complete and would not generate. What is left is the version
  * and the file — which repository and which of its files — and the licence. */
-function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, onStarted }: {
+export function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, onStarted }: {
   row: EngineRow; kind: ModelKind; hit?: IngestHit;
   initialSource?: CatalogSource;
   /** Open the dialog as though this had been PASTED into the source box (ADR 0089) — a Hugging

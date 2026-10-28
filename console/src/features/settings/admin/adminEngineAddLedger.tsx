@@ -1,9 +1,15 @@
+import { fmtDateTime } from "../../../lib/intl.ts";
+import { useT } from "../../../lib/i18n/index.ts";
+import { Button } from "../../../ui/Button.tsx";
+import { type EngineObjectRow } from "./engineTypes.ts";
+import { formatBytes } from "./adminEngineAddShared.tsx";
+
 /** バケツ — the bucket, listed (ADR 0085 decision 2 and 7).
  *
  * 🔴 Orphans and misplaced objects sort first because they are the only rows here anybody has to
  * act on: everything else is provenance for a row that already works. A part gets no button of
  * its own — it is attached, and moved, by the 揃える of whichever checkpoint reads it. */
-function EngineLedger({ objects, role, image, failed, checkedAt, busy, readOnly, deletingKeys, onRegister, onDelete, onDismiss, onComplete }: {
+export function EngineLedger({ objects, role, image, failed, checkedAt, busy, readOnly, deletingKeys, onRegister, onDelete, onDismiss, onComplete }: {
   objects: EngineObjectRow[] | null;
   /** The engine's own key, which is the prefix every one of these objects sits under. Needed
    *  because what counts as a model's own weights is read off the key, and the two roles write
@@ -104,7 +110,7 @@ function ingesting(object: EngineObjectRow): boolean {
   return object.state === "uploading" || object.job?.state === "uploading";
 }
 
-function inFlight(object: EngineObjectRow): boolean {
+export function inFlight(object: EngineObjectRow): boolean {
   return ingesting(object) || object.job?.state === "deleting";
 }
 

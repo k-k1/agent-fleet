@@ -1,4 +1,13 @@
-function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
+import { useState } from "react";
+import { useT } from "../../../lib/i18n/index.ts";
+import { Button } from "../../../ui/Button.tsx";
+import { Modal } from "../../../ui/Modal.tsx";
+import { kvKnown, kvPriceOf, modelFit, NO_KV, windowThatFits } from "./engineFit.ts";
+import { familyVramMeasurement } from "./engineFamilyVram.ts";
+import { FitTag } from "./adminEngineRepo.tsx";
+import { engineIsImage, type EngineModel, type EngineParams, type EngineRow } from "./engineTypes.ts";
+
+export function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
   row: EngineRow;
   model: EngineModel;
   error: string;

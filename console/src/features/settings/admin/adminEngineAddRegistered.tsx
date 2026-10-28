@@ -1,3 +1,19 @@
+import { useCallback, useEffect, useState } from "react";
+import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
+import { useT } from "../../../lib/i18n/index.ts";
+import { Button, IconButton } from "../../../ui/Button.tsx";
+import { Modal } from "../../../ui/Modal.tsx";
+import { useScrollMemory } from "../../viewer/parts/useScrollMemory.ts";
+import { EngineDiscoverPanel, engineCanDiscover } from "./adminEngineDiscover.tsx";
+import { catalogKey, loadObjects as loadObjectsMemory, loadRegistered, saveObjects as saveObjectsMemory, saveRegistered } from "./catalogMemory.ts";
+import { groupIsRepo, groupRegistered, registeredNeedsMeta, registeredTitle } from "./registeredGroups.ts";
+import { CivitaiVersionLadder, RepoQuantLadder } from "./adminEngineRepo.tsx";
+import { engineIsImage, type CompleteAnswer, type EngineApiError, type EngineModel, type EngineObjectRow, type EngineRow } from "./engineTypes.ts";
+import { IngestPlanDialog } from "./adminEngineAddIngestPlan.tsx";
+import { EngineLedger, inFlight } from "./adminEngineAddLedger.tsx";
+import { RegisteredEditDialog } from "./adminEngineAddRegisteredEdit.tsx";
+import { type CatalogProps, EngineRefusal, formatBytes, objectsPath, otherOf } from "./adminEngineAddShared.tsx";
+
 /** Whether a `complete` answer has a question in it. Two things are worth a dialog and nothing
  * else is: a role the CP wants a pick for — which it asks even with ONE candidate, because
  * `--clip_l` / `--clip_g` / `--t5xxl` share a directory and the CP will not guess which of them a
@@ -6,7 +22,7 @@ function needsAsking(answer: CompleteAnswer): boolean {
   return answer.action === "choose" || (answer.bytes_to_download || 0) > 0;
 }
 
-function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly, onChanged }: CatalogProps & { isSuper: boolean }) {
+export function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly, onChanged }: CatalogProps & { isSuper: boolean }) {
   const tr = useT();
   const memoryKey = catalogKey(paneId, row.key, "registered", kind);
   const [remembered] = useState(() => loadRegistered(memoryKey));

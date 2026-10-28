@@ -1,10 +1,24 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
+import { fmtDateTime } from "../../../lib/intl.ts";
+import { tMaybe, useT } from "../../../lib/i18n/index.ts";
+import { Icon } from "../../../ui/Icon.tsx";
+import { Button } from "../../../ui/Button.tsx";
+import { Modal } from "../../../ui/Modal.tsx";
+import { useScrollMemory } from "../../viewer/parts/useScrollMemory.ts";
+import { type ModelKind } from "./adminEngineModels.tsx";
+import { catalogKey, loadObjects as loadObjectsMemory, loadSearch, saveObjects as saveObjectsMemory, saveSearch } from "./catalogMemory.ts";
+import { type CatalogSource, type EngineObjectRow, type IngestHit, type IngestSearchAnswer, type IngestSearchRequest } from "./engineTypes.ts";
+import { IngestPlanDialog } from "./adminEngineAddIngestPlan.tsx";
+import { type BrowseProps, CATALOG_HARD_RESTRICTIONS, compactCount, formatBytes, objectsPath, savedObjectsForHit, sourceObjectsForHit } from "./adminEngineAddShared.tsx";
+
 /** The question a page of hits answers. Two lists are the same list when this is equal — which is
  *  what decides both where the scroll position is filed and whether a search starts at the top. */
 function conditionOf(query: string, source: string, sort: string, family: string): string {
   return `${query}\u0000${source}\u0000${sort}\u0000${family}`;
 }
 
-function CatalogBrowser({ row, kind, onKind, paneId, sources, readOnly, onChanged, image }: BrowseProps & { image: boolean }) {
+export function CatalogBrowser({ row, kind, onKind, paneId, sources, readOnly, onChanged, image }: BrowseProps & { image: boolean }) {
   const tr = useT();
   // This face's memory. The component is keyed by engine and kind, so the key is fixed for its
   // whole life and the read below happens exactly once — at mount, which is the return.
@@ -356,7 +370,7 @@ function CatalogRestrictionTags({ value }: { value: Pick<IngestHit, "restriction
   </>;
 }
 
-function NoEngineCatalog({ sources }: { sources: CatalogSource[] }) {
+export function NoEngineCatalog({ sources }: { sources: CatalogSource[] }) {
   const tr = useT();
   const [role, setRole] = useState<"image" | "llm">("image");
   const [kind, setKind] = useState<ModelKind>("model");

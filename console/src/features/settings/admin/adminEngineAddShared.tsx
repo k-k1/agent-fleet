@@ -1,4 +1,10 @@
-type CatalogProps = {
+import { errDetail } from "../../../core/api/client.ts";
+import { useT } from "../../../lib/i18n/index.ts";
+import { Button } from "../../../ui/Button.tsx";
+import { type ModelKind } from "./adminEngineModels.tsx";
+import { type CatalogSource, type EngineApiError, type EngineModel, type EngineObjectRow, type EngineRow, type IngestHit } from "./engineTypes.ts";
+
+export type CatalogProps = {
   row: EngineRow;
   kind: ModelKind;
   onKind: (kind: ModelKind) => void;
@@ -10,11 +16,11 @@ type CatalogProps = {
 
 /** The search half of the pane also needs the search sources this DEPLOYMENT offers, as the
  *  engine list answered them. The registered half never searches, so it does not take them. */
-type BrowseProps = CatalogProps & { sources: CatalogSource[] };
+export type BrowseProps = CatalogProps & { sources: CatalogSource[] };
 
 /** The ledger route, shared by both tabs: the bucket is the only thing that knows what this
  * deployment holds, so "have I got this already" and "what is in there" read the same answer. */
-function objectsPath(engineKey: string): string {
+export function objectsPath(engineKey: string): string {
   return `api/admin/engines/${encodeURIComponent(engineKey)}/objects`;
 }
 
@@ -34,7 +40,7 @@ function objectsPath(engineKey: string): string {
  * trained against, not under a repository of sizes, and the ladder prices a KV cache it does not
  * have. A `url:` source and a row with none answer "" — there is no page behind either.
  */
-function otherOf(model: EngineModel, image: boolean): string {
+export function otherOf(model: EngineModel, image: boolean): string {
   const source = (model.source || "").trim();
   if (image) return source.startsWith("civitai:") ? source.slice("civitai:".length) : "";
   if (model.kind === "lora" || !source.startsWith("hf:")) return "";
@@ -42,11 +48,11 @@ function otherOf(model: EngineModel, image: boolean): string {
   return parts.length >= 3 && parts[0] && parts[1] ? `${parts[0]}/${parts[1]}` : "";
 }
 
-const CATALOG_HARD_RESTRICTIONS = new Set(["gated_auto", "gated_manual", "paid", "early_access", "private", "generate_only", "unscanned", "pickle"]);
+export const CATALOG_HARD_RESTRICTIONS = new Set(["gated_auto", "gated_manual", "paid", "early_access", "private", "generate_only", "unscanned", "pickle"]);
 
 /** A refusal, with who is holding the thing and the one button that clears it. Drawn even when
  * the CP sent neither — an error line without a next act is still the error line. */
-function EngineRefusal({ error, busy, onNext }: { error: EngineApiError | null; busy: boolean; onNext: () => void }) {
+export function EngineRefusal({ error, busy, onNext }: { error: EngineApiError | null; busy: boolean; onNext: () => void }) {
   const tr = useT();
   if (!error) return null;
   const holder = error.holder;
@@ -67,7 +73,7 @@ export function savedObjectsForHit(hit: IngestHit, objects: EngineObjectRow[]): 
   return sourceObjectsForHit(hit, objects).filter((object) => object.state === "present");
 }
 
-function sourceObjectsForHit(hit: IngestHit, objects: EngineObjectRow[]): EngineObjectRow[] {
+export function sourceObjectsForHit(hit: IngestHit, objects: EngineObjectRow[]): EngineObjectRow[] {
   const modelRef = hit.model_ref || (hit.source === "hf" ? hit.ref : "");
   if (!modelRef) return [];
   if (hit.source === "civitai") {
@@ -80,13 +86,13 @@ function sourceObjectsForHit(hit: IngestHit, objects: EngineObjectRow[]): Engine
   ));
 }
 
-function compactCount(value: number): string {
+export function compactCount(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
   if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
   return String(Math.round(value));
 }
 
-function formatBytes(value: number): string {
+export function formatBytes(value: number): string {
   if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} GB`;
   if (value >= 1_000_000) return `${Math.round(value / 1_000_000)} MB`;
   if (value >= 1_000) return `${Math.round(value / 1_000)} kB`;
