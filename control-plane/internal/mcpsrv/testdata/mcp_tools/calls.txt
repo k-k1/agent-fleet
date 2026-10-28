@@ -1,4 +1,4 @@
-## read add_memo absent 
+## read add_memo absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: add_memo"}}
 ## read add_memo unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: add_memo"}}
@@ -32,13 +32,13 @@
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: add_memo"}}
 ## read add_memo kind=nope {"kind":"nope"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: add_memo"}}
-## read archive_session absent 
+## read archive_session absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: archive_session"}}
 ## read archive_session unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: archive_session"}}
 ## read archive_session full {"name":"v"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: archive_session"}}
-## read create_session absent 
+## read create_session absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: create_session"}}
 ## read create_session unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: create_session"}}
@@ -72,44 +72,44 @@
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: create_session"}}
 ## read create_session kind=nope {"kind":"nope"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: create_session"}}
-## read delete_branch absent 
+## read delete_branch absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: delete_branch"}}
 ## read delete_branch unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: delete_branch"}}
 ## read delete_branch full {"branch":"v","repo":"v"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: delete_branch"}}
-## read delete_memo absent 
+## read delete_memo absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: delete_memo"}}
 ## read delete_memo unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: delete_memo"}}
 ## read delete_memo full {"id":"v"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: delete_memo"}}
-## read delete_session absent 
+## read delete_session absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: delete_session"}}
 ## read delete_session unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: delete_session"}}
 ## read delete_session full {"name":"v"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: delete_session"}}
-## read delete_worktree absent 
+## read delete_worktree absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: delete_worktree"}}
 ## read delete_worktree unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: delete_worktree"}}
 ## read delete_worktree full {"name":"v"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: delete_worktree"}}
-## read flush_memos absent 
+## read flush_memos absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: flush_memos"}}
 ## read flush_memos unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: flush_memos"}}
 ## read flush_memos full {"ids":[],"sessionName":"v"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: flush_memos"}}
-## read get_agent_usage absent 
+## read get_agent_usage absent
 -> AGENT ["GET","/claude/usage",""]
 -> AGENT ["GET","/codex/usage",""]
 -> AGENT ["GET","/connections/agy/usage",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"agy\":{\"ok\":true},\"claude\":{\"ok\":true},\"codex\":{\"ok\":true}}","type":"text"}],"resultType":"complete"}}
 ## read get_agent_usage unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for get_agent_usage","type":"text"}],"isError":true,"resultType":"complete"}}
-## read get_session_output absent 
+## read get_session_output absent
 -> AGENT ["GET","/sessions//output?tail=32768",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## read get_session_output unknown {"zz_unknown":1}
@@ -117,7 +117,7 @@
 ## read get_session_output full {"name":"v","since":"v"}
 -> AGENT ["GET","/sessions/v/output?tail=32768\u0026since=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## read get_session_status absent 
+## read get_session_status absent
 -> AGENT ["GET","/sessions//status",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## read get_session_status unknown {"zz_unknown":1}
@@ -125,7 +125,7 @@
 ## read get_session_status full {"name":"v"}
 -> AGENT ["GET","/sessions/v/status",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## read get_session_usage absent 
+## read get_session_usage absent
 -> AGENT ["GET","/sessions/usage",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## read get_session_usage unknown {"zz_unknown":1}
@@ -133,22 +133,22 @@
 ## read get_session_usage full {"name":"v"}
 -> AGENT ["GET","/sessions/usage?name=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## read list_cleanup_archives absent 
+## read list_cleanup_archives absent
 -> AGENT ["GET","/cleanup/archives",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## read list_cleanup_archives unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_cleanup_archives","type":"text"}],"isError":true,"resultType":"complete"}}
-## read list_cleanup_candidates absent 
+## read list_cleanup_candidates absent
 -> AGENT ["GET","/sessions/cleanup",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## read list_cleanup_candidates unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_cleanup_candidates","type":"text"}],"isError":true,"resultType":"complete"}}
-## read list_memos absent 
+## read list_memos absent
 -> MEMO-LIST null
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## read list_memos unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_memos","type":"text"}],"isError":true,"resultType":"complete"}}
-## read list_models absent 
+## read list_models absent
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## read list_models unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_models","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -191,23 +191,23 @@
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## read list_models kind=nope {"kind":"nope"}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
-## read list_my_sessions absent 
+## read list_my_sessions absent
 -> AGENT ["GET","/sessions",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## read list_my_sessions unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_my_sessions","type":"text"}],"isError":true,"resultType":"complete"}}
-## read list_repos absent 
+## read list_repos absent
 -> AGENT ["GET","/repos",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## read list_repos unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_repos","type":"text"}],"isError":true,"resultType":"complete"}}
-## read memory_forget absent 
+## read memory_forget absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: memory_forget"}}
 ## read memory_forget unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: memory_forget"}}
 ## read memory_forget full {"name":"v","project":"v","repository":"v","revision":2,"scope":"v"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: memory_forget"}}
-## read memory_index absent 
+## read memory_index absent
 -> AGENT ["GET","/agents/memory/external/entries?",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## read memory_index unknown {"zz_unknown":1}
@@ -215,12 +215,12 @@
 ## read memory_index full {"budget":2,"project":"v","repository":"v"}
 -> AGENT ["GET","/agents/memory/external/entries?budget=2\u0026project=v\u0026repository=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## read memory_projects absent 
+## read memory_projects absent
 -> AGENT ["GET","/agents/memory/external/projects",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## read memory_projects unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for memory_projects","type":"text"}],"isError":true,"resultType":"complete"}}
-## read memory_read absent 
+## read memory_read absent
 -> AGENT ["GET","/agents/memory/external/read?name=",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## read memory_read unknown {"zz_unknown":1}
@@ -228,13 +228,13 @@
 ## read memory_read full {"name":"v","project":"v","repository":"v","scope":"v"}
 -> AGENT ["GET","/agents/memory/external/read?name=v\u0026project=v\u0026repository=v\u0026scope=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## read memory_save absent 
+## read memory_save absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: memory_save"}}
 ## read memory_save unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: memory_save"}}
 ## read memory_save full {"body":"v","description":"v","kinds":[],"name":"v","project":"v","repository":"v","revision":2,"scope":"v","type":"v"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: memory_save"}}
-## read memory_search absent 
+## read memory_search absent
 -> AGENT ["GET","/agents/memory/external/search?q=",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## read memory_search unknown {"zz_unknown":1}
@@ -242,53 +242,53 @@
 ## read memory_search full {"limit":2,"project":"v","query":"v","repository":"v"}
 -> AGENT ["GET","/agents/memory/external/search?limit=2\u0026project=v\u0026q=v\u0026repository=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## read no_such_tool absent 
+## read no_such_tool absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: no_such_tool"}}
 ## read no_such_tool unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: no_such_tool"}}
-## read purge_cleanup_archive absent 
+## read purge_cleanup_archive absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: purge_cleanup_archive"}}
 ## read purge_cleanup_archive unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: purge_cleanup_archive"}}
 ## read purge_cleanup_archive full {"id":"v"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: purge_cleanup_archive"}}
-## read restore_cleanup_archive absent 
+## read restore_cleanup_archive absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: restore_cleanup_archive"}}
 ## read restore_cleanup_archive unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: restore_cleanup_archive"}}
 ## read restore_cleanup_archive full {"id":"v"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: restore_cleanup_archive"}}
-## read resume_session absent 
+## read resume_session absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: resume_session"}}
 ## read resume_session unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: resume_session"}}
 ## read resume_session full {"name":"v"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: resume_session"}}
-## read send_to_session absent 
+## read send_to_session absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: send_to_session"}}
 ## read send_to_session unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: send_to_session"}}
 ## read send_to_session full {"name":"v","prompt":"v"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: send_to_session"}}
-## read stop_session absent 
+## read stop_session absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: stop_session"}}
 ## read stop_session unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: stop_session"}}
 ## read stop_session full {"name":"v"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: stop_session"}}
-## read stop_session_after_turn absent 
+## read stop_session_after_turn absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: stop_session_after_turn"}}
 ## read stop_session_after_turn unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: stop_session_after_turn"}}
 ## read stop_session_after_turn full {"name":"v","on":true}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: stop_session_after_turn"}}
-## read update_memo absent 
+## read update_memo absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: update_memo"}}
 ## read update_memo unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: update_memo"}}
 ## read update_memo full {"body":"v","category":"v","id":"v","position":2,"refPath":"v","repo":"v"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: update_memo"}}
-## write add_memo absent 
+## write add_memo absent
 -> MEMO-CREATE ["","","","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo unknown {"zz_unknown":1}
@@ -338,7 +338,7 @@
 ## write add_memo kind=nope {"kind":"nope"}
 -> MEMO-CREATE ["","","nope","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write archive_session absent 
+## write archive_session absent
 -> AGENT ["POST","/sessions//archive",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write archive_session unknown {"zz_unknown":1}
@@ -346,7 +346,7 @@
 ## write archive_session full {"name":"v"}
 -> AGENT ["POST","/sessions/v/archive",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write create_session absent 
+## write create_session absent
 -> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"\",\"initial_prompt\":\"\",\"kind\":\"\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write create_session unknown {"zz_unknown":1}
@@ -393,7 +393,7 @@
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown kind \"Codex\"; accepted kinds: agy, claude, codex, copilot, cursor, kiro, lcpp, muse, opencode, shell, ssm (empty means claude)","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write create_session kind=nope {"kind":"nope"}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown kind \"nope\"; accepted kinds: agy, claude, codex, copilot, cursor, kiro, lcpp, muse, opencode, shell, ssm (empty means claude)","type":"text"}],"isError":true,"resultType":"complete"}}
-## write delete_branch absent 
+## write delete_branch absent
 -> AGENT ["DELETE","/repos//branch?branch=",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write delete_branch unknown {"zz_unknown":1}
@@ -401,13 +401,13 @@
 ## write delete_branch full {"branch":"v","repo":"v"}
 -> AGENT ["DELETE","/repos/v/branch?branch=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write delete_memo absent 
+## write delete_memo absent
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write delete_memo unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for delete_memo","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write delete_memo full {"id":"v"}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write delete_session absent 
+## write delete_session absent
 -> SCHEDULE-GUARD ["",""]
 -> AGENT ["DELETE","/sessions/?reclaim=1",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
@@ -417,7 +417,7 @@
 -> SCHEDULE-GUARD ["","v"]
 -> AGENT ["DELETE","/sessions/v?reclaim=1",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write delete_worktree absent 
+## write delete_worktree absent
 -> SCHEDULE-GUARD ["",""]
 -> AGENT ["DELETE","/repos/",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
@@ -427,7 +427,7 @@
 -> SCHEDULE-GUARD ["v",""]
 -> AGENT ["DELETE","/repos/v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write flush_memos absent 
+## write flush_memos absent
 -> MEMO-FLUSH ["",null]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write flush_memos unknown {"zz_unknown":1}
@@ -435,14 +435,14 @@
 ## write flush_memos full {"ids":[],"sessionName":"v"}
 -> MEMO-FLUSH ["v",[]]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write get_agent_usage absent 
+## write get_agent_usage absent
 -> AGENT ["GET","/claude/usage",""]
 -> AGENT ["GET","/codex/usage",""]
 -> AGENT ["GET","/connections/agy/usage",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"agy\":{\"ok\":true},\"claude\":{\"ok\":true},\"codex\":{\"ok\":true}}","type":"text"}],"resultType":"complete"}}
 ## write get_agent_usage unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for get_agent_usage","type":"text"}],"isError":true,"resultType":"complete"}}
-## write get_session_output absent 
+## write get_session_output absent
 -> AGENT ["GET","/sessions//output?tail=32768",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write get_session_output unknown {"zz_unknown":1}
@@ -450,7 +450,7 @@
 ## write get_session_output full {"name":"v","since":"v"}
 -> AGENT ["GET","/sessions/v/output?tail=32768\u0026since=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write get_session_status absent 
+## write get_session_status absent
 -> AGENT ["GET","/sessions//status",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write get_session_status unknown {"zz_unknown":1}
@@ -458,7 +458,7 @@
 ## write get_session_status full {"name":"v"}
 -> AGENT ["GET","/sessions/v/status",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write get_session_usage absent 
+## write get_session_usage absent
 -> AGENT ["GET","/sessions/usage",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write get_session_usage unknown {"zz_unknown":1}
@@ -466,22 +466,22 @@
 ## write get_session_usage full {"name":"v"}
 -> AGENT ["GET","/sessions/usage?name=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write list_cleanup_archives absent 
+## write list_cleanup_archives absent
 -> AGENT ["GET","/cleanup/archives",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write list_cleanup_archives unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_cleanup_archives","type":"text"}],"isError":true,"resultType":"complete"}}
-## write list_cleanup_candidates absent 
+## write list_cleanup_candidates absent
 -> AGENT ["GET","/sessions/cleanup",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write list_cleanup_candidates unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_cleanup_candidates","type":"text"}],"isError":true,"resultType":"complete"}}
-## write list_memos absent 
+## write list_memos absent
 -> MEMO-LIST null
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write list_memos unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_memos","type":"text"}],"isError":true,"resultType":"complete"}}
-## write list_models absent 
+## write list_models absent
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write list_models unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_models","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -524,17 +524,17 @@
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write list_models kind=nope {"kind":"nope"}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
-## write list_my_sessions absent 
+## write list_my_sessions absent
 -> AGENT ["GET","/sessions",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write list_my_sessions unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_my_sessions","type":"text"}],"isError":true,"resultType":"complete"}}
-## write list_repos absent 
+## write list_repos absent
 -> AGENT ["GET","/repos",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write list_repos unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_repos","type":"text"}],"isError":true,"resultType":"complete"}}
-## write memory_forget absent 
+## write memory_forget absent
 -> AGENT ["POST","/agents/memory/external/forget","{\"client\":\"\",\"name\":\"\",\"project\":\"\",\"repository\":\"\",\"revision\":0,\"scope\":\"\"}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write memory_forget unknown {"zz_unknown":1}
@@ -542,7 +542,7 @@
 ## write memory_forget full {"name":"v","project":"v","repository":"v","revision":2,"scope":"v"}
 -> AGENT ["POST","/agents/memory/external/forget","{\"client\":\"\",\"name\":\"v\",\"project\":\"v\",\"repository\":\"v\",\"revision\":2,\"scope\":\"v\"}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write memory_index absent 
+## write memory_index absent
 -> AGENT ["GET","/agents/memory/external/entries?",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write memory_index unknown {"zz_unknown":1}
@@ -550,12 +550,12 @@
 ## write memory_index full {"budget":2,"project":"v","repository":"v"}
 -> AGENT ["GET","/agents/memory/external/entries?budget=2\u0026project=v\u0026repository=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write memory_projects absent 
+## write memory_projects absent
 -> AGENT ["GET","/agents/memory/external/projects",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write memory_projects unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for memory_projects","type":"text"}],"isError":true,"resultType":"complete"}}
-## write memory_read absent 
+## write memory_read absent
 -> AGENT ["GET","/agents/memory/external/read?name=",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write memory_read unknown {"zz_unknown":1}
@@ -563,7 +563,7 @@
 ## write memory_read full {"name":"v","project":"v","repository":"v","scope":"v"}
 -> AGENT ["GET","/agents/memory/external/read?name=v\u0026project=v\u0026repository=v\u0026scope=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write memory_save absent 
+## write memory_save absent
 -> AGENT ["POST","/agents/memory/external/entries","{\"body\":\"\",\"client\":\"\",\"description\":\"\",\"kinds\":null,\"name\":\"\",\"project\":\"\",\"repository\":\"\",\"revision\":0,\"scope\":\"\",\"type\":\"\"}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write memory_save unknown {"zz_unknown":1}
@@ -571,7 +571,7 @@
 ## write memory_save full {"body":"v","description":"v","kinds":[],"name":"v","project":"v","repository":"v","revision":2,"scope":"v","type":"v"}
 -> AGENT ["POST","/agents/memory/external/entries","{\"body\":\"v\",\"client\":\"\",\"description\":\"v\",\"kinds\":[],\"name\":\"v\",\"project\":\"v\",\"repository\":\"v\",\"revision\":2,\"scope\":\"v\",\"type\":\"v\"}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write memory_search absent 
+## write memory_search absent
 -> AGENT ["GET","/agents/memory/external/search?q=",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write memory_search unknown {"zz_unknown":1}
@@ -579,11 +579,11 @@
 ## write memory_search full {"limit":2,"project":"v","query":"v","repository":"v"}
 -> AGENT ["GET","/agents/memory/external/search?limit=2\u0026project=v\u0026q=v\u0026repository=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write no_such_tool absent 
+## write no_such_tool absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: no_such_tool"}}
 ## write no_such_tool unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: no_such_tool"}}
-## write purge_cleanup_archive absent 
+## write purge_cleanup_archive absent
 -> AGENT ["DELETE","/cleanup/archives/",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write purge_cleanup_archive unknown {"zz_unknown":1}
@@ -591,7 +591,7 @@
 ## write purge_cleanup_archive full {"id":"v"}
 -> AGENT ["DELETE","/cleanup/archives/v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write restore_cleanup_archive absent 
+## write restore_cleanup_archive absent
 -> AGENT ["POST","/cleanup/archives//restore",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write restore_cleanup_archive unknown {"zz_unknown":1}
@@ -599,7 +599,7 @@
 ## write restore_cleanup_archive full {"id":"v"}
 -> AGENT ["POST","/cleanup/archives/v/restore",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write resume_session absent 
+## write resume_session absent
 -> AGENT ["POST","/sessions//start",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write resume_session unknown {"zz_unknown":1}
@@ -607,13 +607,13 @@
 ## write resume_session full {"name":"v"}
 -> AGENT ["POST","/sessions/v/start",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write send_to_session absent 
+## write send_to_session absent
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"send_to_session needs an authenticated connection","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write send_to_session unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for send_to_session","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write send_to_session full {"name":"v","prompt":"v"}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"send_to_session needs an authenticated connection","type":"text"}],"isError":true,"resultType":"complete"}}
-## write stop_session absent 
+## write stop_session absent
 -> AGENT ["POST","/sessions//halt",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write stop_session unknown {"zz_unknown":1}
@@ -621,7 +621,7 @@
 ## write stop_session full {"name":"v"}
 -> AGENT ["POST","/sessions/v/halt",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write stop_session_after_turn absent 
+## write stop_session_after_turn absent
 -> AGENT ["POST","/sessions//stop-after-turn","{\"on\":true}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write stop_session_after_turn unknown {"zz_unknown":1}
@@ -629,7 +629,7 @@
 ## write stop_session_after_turn full {"name":"v","on":true}
 -> AGENT ["POST","/sessions/v/stop-after-turn","{\"on\":true}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## write update_memo absent 
+## write update_memo absent
 -> MEMO-UPDATE ["",null,null,null,null,null]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write update_memo unknown {"zz_unknown":1}
@@ -637,7 +637,7 @@
 ## write update_memo full {"body":"v","category":"v","id":"v","position":2,"refPath":"v","repo":"v"}
 -> MEMO-UPDATE ["v","v","v","v","v",2]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous add_memo absent 
+## admin:dangerous add_memo absent
 -> MEMO-CREATE ["","","","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo unknown {"zz_unknown":1}
@@ -687,7 +687,7 @@
 ## admin:dangerous add_memo kind=nope {"kind":"nope"}
 -> MEMO-CREATE ["","","nope","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous archive_session absent 
+## admin:dangerous archive_session absent
 -> AGENT ["POST","/sessions//archive",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous archive_session unknown {"zz_unknown":1}
@@ -695,7 +695,7 @@
 ## admin:dangerous archive_session full {"name":"v"}
 -> AGENT ["POST","/sessions/v/archive",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous create_session absent 
+## admin:dangerous create_session absent
 -> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"\",\"initial_prompt\":\"\",\"kind\":\"\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous create_session unknown {"zz_unknown":1}
@@ -742,7 +742,7 @@
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown kind \"Codex\"; accepted kinds: agy, claude, codex, copilot, cursor, kiro, lcpp, muse, opencode, shell, ssm (empty means claude)","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous create_session kind=nope {"kind":"nope"}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown kind \"nope\"; accepted kinds: agy, claude, codex, copilot, cursor, kiro, lcpp, muse, opencode, shell, ssm (empty means claude)","type":"text"}],"isError":true,"resultType":"complete"}}
-## admin:dangerous delete_branch absent 
+## admin:dangerous delete_branch absent
 -> AGENT ["DELETE","/repos//branch?branch=",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous delete_branch unknown {"zz_unknown":1}
@@ -750,13 +750,13 @@
 ## admin:dangerous delete_branch full {"branch":"v","repo":"v"}
 -> AGENT ["DELETE","/repos/v/branch?branch=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous delete_memo absent 
+## admin:dangerous delete_memo absent
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous delete_memo unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for delete_memo","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous delete_memo full {"id":"v"}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous delete_session absent 
+## admin:dangerous delete_session absent
 -> SCHEDULE-GUARD ["",""]
 -> AGENT ["DELETE","/sessions/?reclaim=1",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
@@ -766,7 +766,7 @@
 -> SCHEDULE-GUARD ["","v"]
 -> AGENT ["DELETE","/sessions/v?reclaim=1",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous delete_worktree absent 
+## admin:dangerous delete_worktree absent
 -> SCHEDULE-GUARD ["",""]
 -> AGENT ["DELETE","/repos/",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
@@ -776,7 +776,7 @@
 -> SCHEDULE-GUARD ["v",""]
 -> AGENT ["DELETE","/repos/v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous flush_memos absent 
+## admin:dangerous flush_memos absent
 -> MEMO-FLUSH ["",null]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous flush_memos unknown {"zz_unknown":1}
@@ -784,14 +784,14 @@
 ## admin:dangerous flush_memos full {"ids":[],"sessionName":"v"}
 -> MEMO-FLUSH ["v",[]]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous get_agent_usage absent 
+## admin:dangerous get_agent_usage absent
 -> AGENT ["GET","/claude/usage",""]
 -> AGENT ["GET","/codex/usage",""]
 -> AGENT ["GET","/connections/agy/usage",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"agy\":{\"ok\":true},\"claude\":{\"ok\":true},\"codex\":{\"ok\":true}}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous get_agent_usage unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for get_agent_usage","type":"text"}],"isError":true,"resultType":"complete"}}
-## admin:dangerous get_session_output absent 
+## admin:dangerous get_session_output absent
 -> AGENT ["GET","/sessions//output?tail=32768",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous get_session_output unknown {"zz_unknown":1}
@@ -799,7 +799,7 @@
 ## admin:dangerous get_session_output full {"name":"v","since":"v"}
 -> AGENT ["GET","/sessions/v/output?tail=32768\u0026since=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous get_session_status absent 
+## admin:dangerous get_session_status absent
 -> AGENT ["GET","/sessions//status",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous get_session_status unknown {"zz_unknown":1}
@@ -807,7 +807,7 @@
 ## admin:dangerous get_session_status full {"name":"v"}
 -> AGENT ["GET","/sessions/v/status",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous get_session_usage absent 
+## admin:dangerous get_session_usage absent
 -> AGENT ["GET","/sessions/usage",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous get_session_usage unknown {"zz_unknown":1}
@@ -815,22 +815,22 @@
 ## admin:dangerous get_session_usage full {"name":"v"}
 -> AGENT ["GET","/sessions/usage?name=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous list_cleanup_archives absent 
+## admin:dangerous list_cleanup_archives absent
 -> AGENT ["GET","/cleanup/archives",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous list_cleanup_archives unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_cleanup_archives","type":"text"}],"isError":true,"resultType":"complete"}}
-## admin:dangerous list_cleanup_candidates absent 
+## admin:dangerous list_cleanup_candidates absent
 -> AGENT ["GET","/sessions/cleanup",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous list_cleanup_candidates unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_cleanup_candidates","type":"text"}],"isError":true,"resultType":"complete"}}
-## admin:dangerous list_memos absent 
+## admin:dangerous list_memos absent
 -> MEMO-LIST null
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous list_memos unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_memos","type":"text"}],"isError":true,"resultType":"complete"}}
-## admin:dangerous list_models absent 
+## admin:dangerous list_models absent
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous list_models unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_models","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -873,17 +873,17 @@
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous list_models kind=nope {"kind":"nope"}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"kind must be claude, agy, codex, copilot, cursor, kiro, lcpp, muse or opencode","type":"text"}],"isError":true,"resultType":"complete"}}
-## admin:dangerous list_my_sessions absent 
+## admin:dangerous list_my_sessions absent
 -> AGENT ["GET","/sessions",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous list_my_sessions unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_my_sessions","type":"text"}],"isError":true,"resultType":"complete"}}
-## admin:dangerous list_repos absent 
+## admin:dangerous list_repos absent
 -> AGENT ["GET","/repos",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous list_repos unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_repos","type":"text"}],"isError":true,"resultType":"complete"}}
-## admin:dangerous memory_forget absent 
+## admin:dangerous memory_forget absent
 -> AGENT ["POST","/agents/memory/external/forget","{\"client\":\"\",\"name\":\"\",\"project\":\"\",\"repository\":\"\",\"revision\":0,\"scope\":\"\"}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous memory_forget unknown {"zz_unknown":1}
@@ -891,7 +891,7 @@
 ## admin:dangerous memory_forget full {"name":"v","project":"v","repository":"v","revision":2,"scope":"v"}
 -> AGENT ["POST","/agents/memory/external/forget","{\"client\":\"\",\"name\":\"v\",\"project\":\"v\",\"repository\":\"v\",\"revision\":2,\"scope\":\"v\"}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous memory_index absent 
+## admin:dangerous memory_index absent
 -> AGENT ["GET","/agents/memory/external/entries?",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous memory_index unknown {"zz_unknown":1}
@@ -899,12 +899,12 @@
 ## admin:dangerous memory_index full {"budget":2,"project":"v","repository":"v"}
 -> AGENT ["GET","/agents/memory/external/entries?budget=2\u0026project=v\u0026repository=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous memory_projects absent 
+## admin:dangerous memory_projects absent
 -> AGENT ["GET","/agents/memory/external/projects",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous memory_projects unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for memory_projects","type":"text"}],"isError":true,"resultType":"complete"}}
-## admin:dangerous memory_read absent 
+## admin:dangerous memory_read absent
 -> AGENT ["GET","/agents/memory/external/read?name=",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous memory_read unknown {"zz_unknown":1}
@@ -912,7 +912,7 @@
 ## admin:dangerous memory_read full {"name":"v","project":"v","repository":"v","scope":"v"}
 -> AGENT ["GET","/agents/memory/external/read?name=v\u0026project=v\u0026repository=v\u0026scope=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous memory_save absent 
+## admin:dangerous memory_save absent
 -> AGENT ["POST","/agents/memory/external/entries","{\"body\":\"\",\"client\":\"\",\"description\":\"\",\"kinds\":null,\"name\":\"\",\"project\":\"\",\"repository\":\"\",\"revision\":0,\"scope\":\"\",\"type\":\"\"}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous memory_save unknown {"zz_unknown":1}
@@ -920,7 +920,7 @@
 ## admin:dangerous memory_save full {"body":"v","description":"v","kinds":[],"name":"v","project":"v","repository":"v","revision":2,"scope":"v","type":"v"}
 -> AGENT ["POST","/agents/memory/external/entries","{\"body\":\"v\",\"client\":\"\",\"description\":\"v\",\"kinds\":[],\"name\":\"v\",\"project\":\"v\",\"repository\":\"v\",\"revision\":2,\"scope\":\"v\",\"type\":\"v\"}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous memory_search absent 
+## admin:dangerous memory_search absent
 -> AGENT ["GET","/agents/memory/external/search?q=",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous memory_search unknown {"zz_unknown":1}
@@ -928,11 +928,11 @@
 ## admin:dangerous memory_search full {"limit":2,"project":"v","query":"v","repository":"v"}
 -> AGENT ["GET","/agents/memory/external/search?limit=2\u0026project=v\u0026q=v\u0026repository=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous no_such_tool absent 
+## admin:dangerous no_such_tool absent
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: no_such_tool"}}
 ## admin:dangerous no_such_tool unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: no_such_tool"}}
-## admin:dangerous purge_cleanup_archive absent 
+## admin:dangerous purge_cleanup_archive absent
 -> AGENT ["DELETE","/cleanup/archives/",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous purge_cleanup_archive unknown {"zz_unknown":1}
@@ -940,7 +940,7 @@
 ## admin:dangerous purge_cleanup_archive full {"id":"v"}
 -> AGENT ["DELETE","/cleanup/archives/v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous restore_cleanup_archive absent 
+## admin:dangerous restore_cleanup_archive absent
 -> AGENT ["POST","/cleanup/archives//restore",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous restore_cleanup_archive unknown {"zz_unknown":1}
@@ -948,7 +948,7 @@
 ## admin:dangerous restore_cleanup_archive full {"id":"v"}
 -> AGENT ["POST","/cleanup/archives/v/restore",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous resume_session absent 
+## admin:dangerous resume_session absent
 -> AGENT ["POST","/sessions//start",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous resume_session unknown {"zz_unknown":1}
@@ -956,13 +956,13 @@
 ## admin:dangerous resume_session full {"name":"v"}
 -> AGENT ["POST","/sessions/v/start",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous send_to_session absent 
+## admin:dangerous send_to_session absent
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"send_to_session needs an authenticated connection","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous send_to_session unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for send_to_session","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous send_to_session full {"name":"v","prompt":"v"}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"send_to_session needs an authenticated connection","type":"text"}],"isError":true,"resultType":"complete"}}
-## admin:dangerous stop_session absent 
+## admin:dangerous stop_session absent
 -> AGENT ["POST","/sessions//halt",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous stop_session unknown {"zz_unknown":1}
@@ -970,7 +970,7 @@
 ## admin:dangerous stop_session full {"name":"v"}
 -> AGENT ["POST","/sessions/v/halt",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous stop_session_after_turn absent 
+## admin:dangerous stop_session_after_turn absent
 -> AGENT ["POST","/sessions//stop-after-turn","{\"on\":true}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous stop_session_after_turn unknown {"zz_unknown":1}
@@ -978,7 +978,7 @@
 ## admin:dangerous stop_session_after_turn full {"name":"v","on":true}
 -> AGENT ["POST","/sessions/v/stop-after-turn","{\"on\":true}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
-## admin:dangerous update_memo absent 
+## admin:dangerous update_memo absent
 -> MEMO-UPDATE ["",null,null,null,null,null]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous update_memo unknown {"zz_unknown":1}

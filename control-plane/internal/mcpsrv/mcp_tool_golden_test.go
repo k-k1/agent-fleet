@@ -249,7 +249,8 @@ func TestToolCallGolden(t *testing.T) {
 				p.scope = scope
 				log = nil
 				resp := New(cp).mcpToolCall(ctx, &p, rpcRequest{ID: json.RawMessage(`1`), Params: raw})
-				fmt.Fprintf(&out, "## %s %s %s %s\n", scope, tool.name, set[0], set[1])
+				// Trimmed: an argument-less set would leave trailing whitespace git diff --check flags.
+				fmt.Fprintf(&out, "%s\n", strings.TrimRight(fmt.Sprintf("## %s %s %s %s", scope, tool.name, set[0], set[1]), " "))
 				for _, l := range log {
 					fmt.Fprintf(&out, "-> %s\n", l)
 				}

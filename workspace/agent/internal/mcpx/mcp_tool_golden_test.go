@@ -367,7 +367,8 @@ func TestToolCallGolden(t *testing.T) {
 	}
 	var out bytes.Buffer
 	for ci, c := range calls {
-		fmt.Fprintf(&out, "## %s %s %s\n", c.tool, c.set, c.args)
+		// Trimmed: an argument-less set would leave trailing whitespace git diff --check flags.
+		fmt.Fprintf(&out, "%s\n", strings.TrimRight(fmt.Sprintf("## %s %s %s", c.tool, c.set, c.args), " "))
 		var order []string
 		groups := map[string][]string{}
 		for ai, aud := range toolAudiences {

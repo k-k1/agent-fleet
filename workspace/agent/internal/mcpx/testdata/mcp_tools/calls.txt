@@ -1,4 +1,4 @@
-## add_image_knowledge absent 
+## add_image_knowledge absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このセッションは画像スタジオに結ばれていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-all session-all-write]
@@ -59,7 +59,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: add_image_knowledge","type":"text"}],"isError":true,"resultType":"complete"}}
 [session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このセッションと画像スタジオの結びが変わりました。スタジオのペインから結び直してください","type":"text"}],"isError":true,"resultType":"complete"}}
-## add_memo absent 
+## add_memo absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
@@ -177,7 +177,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの追加を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
-## af_report absent 
+## af_report absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"af_report はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
@@ -206,7 +206,7 @@
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   -> POST /chat/report {"kind":"self-report","name":"child01"}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"完了を申告しました（報告は Agent Fleet 側が状態を確認して配信します）。","type":"text"}],"resultType":"complete"}}
-## af_stop_after_turn absent 
+## af_stop_after_turn absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"af_stop_after_turn はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
@@ -238,7 +238,7 @@
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   -> POST /sessions/child01/stop-after-turn {"on":true}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"ターン終了後に停止するよう予約しました（この回答は最後まで出し切ってから停止します。再開はいつでもできます。新しい指示が届いた場合は予約が解除されます）。","type":"text"}],"resultType":"complete"}}
-## answer_session_question absent 
+## answer_session_question absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントは書き込みツールを許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -282,7 +282,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: answer_session_question","type":"text"}],"isError":true,"resultType":"complete"}}
-## archive_session absent 
+## archive_session absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはセッションのアーカイブを許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -321,7 +321,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: archive_session","type":"text"}],"isError":true,"resultType":"complete"}}
-## ask_assistant absent 
+## ask_assistant absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントは他アシスタントへの相談を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -365,7 +365,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: ask_assistant","type":"text"}],"isError":true,"resultType":"complete"}}
-## attach_chromium absent 
+## attach_chromium absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはChromium attachmentの変更を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write session-chromium session-all session-all-write]
@@ -455,7 +455,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: attach_chromium","type":"text"}],"isError":true,"resultType":"complete"}}
 [session-chromium-nobrowser]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"code=browser_unavailable: Browser features are not available on this workspace runtime (ecs): Chromium's sandbox needs user namespaces or a setuid helper, which this runtime's restricted workspace container does not allow. See ref/browser-pane.md in the user guide. Do not start Chromium here, with or without --no-sandbox, and do not retry. Verify with tests, curl or the lightweight preview instead, and tell the user the browser pane is unavailable on this workspace.","type":"text"}],"isError":true,"resultType":"complete"}}
-## branch_name absent 
+## branch_name absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"branch_name はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
@@ -574,7 +574,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"branch_name はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このセッションの作業フォルダ $HOME は ~/repos 直下の作業コピーではありません。repo を指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
-## create_schedule absent 
+## create_schedule absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの登録を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -733,7 +733,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"定時実行機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: create_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
-## create_session absent 
+## create_session absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはセッションの作成を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -988,7 +988,7 @@
 [session-spawn session-all session-all-write]
   -> POST /sessions {"branch":"","dir":"","driver":"","effort":"","idempotency_key":"cs_a8e88f16385bb292559fc128d6bea4a4168dccdc2216942485c3ae11d1af971d","initial_prompt":"","kind":"nope","model":"","new_branch":"","origin":"session","origin_conv":"","origin_session":"slot01","report_to":"","subdir":"","title":"","worktree":true}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{\"warning\":\"This child was started with no task (initial_prompt was empty), so it will sit idle until it is sent one. Send it its instructions now with send_to_peer_session.\"}","type":"text"}],"resultType":"complete"}}
-## delete_branch absent 
+## delete_branch absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはブランチの削除を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -1032,7 +1032,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: delete_branch","type":"text"}],"isError":true,"resultType":"complete"}}
-## delete_memo absent 
+## delete_memo absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの削除を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -1070,7 +1070,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: delete_memo","type":"text"}],"isError":true,"resultType":"complete"}}
-## delete_schedule absent 
+## delete_schedule absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの削除を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -1108,7 +1108,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"定時実行機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: delete_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
-## delete_session absent 
+## delete_session absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはセッションの削除を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -1147,7 +1147,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: delete_session","type":"text"}],"isError":true,"resultType":"complete"}}
-## delete_worktree absent 
+## delete_worktree absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントは worktree の削除を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -1186,7 +1186,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: delete_worktree","type":"text"}],"isError":true,"resultType":"complete"}}
-## detach_chromium absent 
+## detach_chromium absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはChromium attachmentの変更を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write session-chromium session-all session-all-write]
@@ -1249,7 +1249,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: detach_chromium","type":"text"}],"isError":true,"resultType":"complete"}}
 [session-chromium-nobrowser]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"code=browser_unavailable: Browser features are not available on this workspace runtime (ecs): Chromium's sandbox needs user namespaces or a setuid helper, which this runtime's restricted workspace container does not allow. See ref/browser-pane.md in the user guide. Do not start Chromium here, with or without --no-sandbox, and do not retry. Verify with tests, curl or the lightweight preview instead, and tell the user the browser pane is unavailable on this workspace.","type":"text"}],"isError":true,"resultType":"complete"}}
-## flush_memos absent 
+## flush_memos absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの一括送信を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -1296,7 +1296,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: flush_memos","type":"text"}],"isError":true,"resultType":"complete"}}
-## generate_image absent 
+## generate_image absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このセッションは画像生成を許可されていません（設定 \u003e エージェント）","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-studio]
@@ -1360,7 +1360,7 @@
 [session-imagegen session-all session-all-write]
   -> POST /imagegen/generate {"aspectRatio":"","background":"auto","count":2,"inputs":["$HOME/v"],"loras":null,"mask":"","model":"","negativePrompt":"","op":"generate","params":null,"prompt":"v","provider":"","seed":null,"session":"slot01","size":"v","strength":null}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"画像生成の結果を読み取れませんでした","type":"text"}],"isError":true,"resultType":"complete"}}
-## get_agent_usage absent 
+## get_agent_usage absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session-spawn session-all session-all-write]
   -> GET /claude/usage
   -> GET /codex/usage
@@ -1388,7 +1388,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for get_agent_usage: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: get_agent_usage","type":"text"}],"isError":true,"resultType":"complete"}}
-## get_browser_action_result absent 
+## get_browser_action_result absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはChromium attachmentの変更を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write session-chromium session-all session-all-write]
@@ -1451,7 +1451,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: get_browser_action_result","type":"text"}],"isError":true,"resultType":"complete"}}
 [session-chromium-nobrowser]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"code=browser_unavailable: Browser features are not available on this workspace runtime (ecs): Chromium's sandbox needs user namespaces or a setuid helper, which this runtime's restricted workspace container does not allow. See ref/browser-pane.md in the user guide. Do not start Chromium here, with or without --no-sandbox, and do not retry. Verify with tests, curl or the lightweight preview instead, and tell the user the browser pane is unavailable on this workspace.","type":"text"}],"isError":true,"resultType":"complete"}}
-## get_chat_plan absent 
+## get_chat_plan absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントは書き込みツールを許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -1479,7 +1479,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for get_chat_plan: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: get_chat_plan","type":"text"}],"isError":true,"resultType":"complete"}}
-## get_chromium_attachment absent 
+## get_chromium_attachment absent
 [assistant-read assistant-write assistant-session-flags session-chromium session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"attachment_idが必要です","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-read-nobrowser assistant-write-nobrowser]
@@ -1534,7 +1534,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: get_chromium_attachment","type":"text"}],"isError":true,"resultType":"complete"}}
 [session-chromium-nobrowser]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"code=browser_unavailable: Browser features are not available on this workspace runtime (ecs): Chromium's sandbox needs user namespaces or a setuid helper, which this runtime's restricted workspace container does not allow. See ref/browser-pane.md in the user guide. Do not start Chromium here, with or without --no-sandbox, and do not retry. Verify with tests, curl or the lightweight preview instead, and tell the user the browser pane is unavailable on this workspace.","type":"text"}],"isError":true,"resultType":"complete"}}
-## get_image_studio absent 
+## get_image_studio absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このセッションは画像スタジオに結ばれていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-all session-all-write]
@@ -1560,7 +1560,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for get_image_studio: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: get_image_studio","type":"text"}],"isError":true,"resultType":"complete"}}
-## get_memory_snapshot absent 
+## get_memory_snapshot absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"rev（snapshot id）か at（日時）のどちらかが必要です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
@@ -1602,7 +1602,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{\"diff\":{},\"tree\":{}}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: get_memory_snapshot","type":"text"}],"isError":true,"resultType":"complete"}}
-## get_schedule_runs absent 
+## get_schedule_runs absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"id（スケジュール id）が必要です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
@@ -1632,7 +1632,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"定時実行機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: get_schedule_runs","type":"text"}],"isError":true,"resultType":"complete"}}
-## get_session_output absent 
+## get_session_output absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session-spawn session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"name（セッション名）が必要です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
@@ -1668,7 +1668,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: get_session_output","type":"text"}],"isError":true,"resultType":"complete"}}
-## get_session_status absent 
+## get_session_status absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"name（セッション名）が必要です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
@@ -1696,7 +1696,7 @@
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   -> GET /sessions/child01/status
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{\"alive\":true,\"ready\":true,\"state\":\"idle\"}","type":"text"}],"resultType":"complete"}}
-## get_session_usage absent 
+## get_session_usage absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   -> GET /sessions/usage
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
@@ -1717,7 +1717,7 @@
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   -> GET /sessions/usage?name=child01
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
-## list_assistants absent 
+## list_assistants absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントは他アシスタントへの相談を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -1745,7 +1745,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for list_assistants: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_assistants","type":"text"}],"isError":true,"resultType":"complete"}}
-## list_child_sessions absent 
+## list_child_sessions absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このセッションはセッションの起動・操縦を許可されていません（設定 \u003e エージェント）","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
@@ -1773,7 +1773,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for list_child_sessions: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_child_sessions","type":"text"}],"isError":true,"resultType":"complete"}}
-## list_chromium_targets absent 
+## list_chromium_targets absent
 [assistant-read assistant-write assistant-session-flags session-chromium session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"portには1〜65535のChromium remote-debugging portが必要です","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-read-nobrowser assistant-write-nobrowser]
@@ -1828,7 +1828,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_chromium_targets","type":"text"}],"isError":true,"resultType":"complete"}}
 [session-chromium-nobrowser]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"code=browser_unavailable: Browser features are not available on this workspace runtime (ecs): Chromium's sandbox needs user namespaces or a setuid helper, which this runtime's restricted workspace container does not allow. See ref/browser-pane.md in the user guide. Do not start Chromium here, with or without --no-sandbox, and do not retry. Verify with tests, curl or the lightweight preview instead, and tell the user the browser pane is unavailable on this workspace.","type":"text"}],"isError":true,"resultType":"complete"}}
-## list_cleanup_archives absent 
+## list_cleanup_archives absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   -> GET /cleanup/archives
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
@@ -1850,7 +1850,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for list_cleanup_archives: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_cleanup_archives","type":"text"}],"isError":true,"resultType":"complete"}}
-## list_cleanup_candidates absent 
+## list_cleanup_candidates absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   -> GET /sessions/cleanup
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
@@ -1872,7 +1872,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for list_cleanup_candidates: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_cleanup_candidates","type":"text"}],"isError":true,"resultType":"complete"}}
-## list_memory_snapshots absent 
+## list_memory_snapshots absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   -> GET /agents/memory/snapshots?native=1&limit=20
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
@@ -1905,7 +1905,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_memory_snapshots","type":"text"}],"isError":true,"resultType":"complete"}}
-## list_memos absent 
+## list_memos absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
 ## list_memos empty {}
@@ -1917,7 +1917,7 @@
 ## list_memos not-object [1]
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for list_memos: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
-## list_models absent 
+## list_models absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはモデル一覧の取得を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser session-spawn session-all session-all-write]
@@ -2062,7 +2062,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"kind には claude / agy / codex / copilot / cursor / kiro / lcpp / muse / opencode のいずれかを指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_models","type":"text"}],"isError":true,"resultType":"complete"}}
-## list_my_sessions absent 
+## list_my_sessions absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   -> GET /sessions
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
@@ -2084,7 +2084,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for list_my_sessions: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_my_sessions","type":"text"}],"isError":true,"resultType":"complete"}}
-## list_peer_sessions absent 
+## list_peer_sessions absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このセッションはセッション間メッセージを許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-memory session-search session-spawn session-imagegen session-studio]
@@ -2110,7 +2110,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for list_peer_sessions: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-memory session-search session-spawn session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_peer_sessions","type":"text"}],"isError":true,"resultType":"complete"}}
-## list_repos absent 
+## list_repos absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session-spawn session-all session-all-write]
   -> GET /repos
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
@@ -2132,7 +2132,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for list_repos: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_repos","type":"text"}],"isError":true,"resultType":"complete"}}
-## list_schedules absent 
+## list_schedules absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"定時実行機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
@@ -2152,7 +2152,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for list_schedules: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_schedules","type":"text"}],"isError":true,"resultType":"complete"}}
-## memory_forget absent 
+## memory_forget absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_forget はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
@@ -2209,7 +2209,7 @@
 [session-memory session-all session-all-write]
   -> POST /agents/memory/entries/forget {"name":"child01","revision":2,"scope":"project","session":"slot01"}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
-## memory_index absent 
+## memory_index absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_index はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
@@ -2252,7 +2252,7 @@
 [session-memory session-all session-all-write]
   -> GET /agents/memory/entries?budget=2&session=slot01
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"Project: none (this session has no working copy under ~/repos; user scope only)\nNo memories yet. Save what a later session should know with memory_save.\n","type":"text"}],"resultType":"complete"}}
-## memory_read absent 
+## memory_read absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_read はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
@@ -2302,7 +2302,7 @@
 [session-memory session-all session-all-write]
   -> GET /agents/memory/entries/read?name=child01&scope=project&session=slot01
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"name: \nscope: \nrevision: 0\ndescription: \nauthor:  (session ), updated \n\n\n","type":"text"}],"resultType":"complete"}}
-## memory_save absent 
+## memory_save absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
@@ -2387,7 +2387,7 @@
 [session-memory session-all session-all-write]
   -> POST /agents/memory/entries {"body":"v","description":"v","kinds":["v"],"name":"child01","revision":2,"scope":"project","session":"slot01","type":"user"}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
-## memory_search absent 
+## memory_search absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_search はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
@@ -2437,7 +2437,7 @@
 [session-memory session-all session-all-write]
   -> GET /agents/memory/entries/search?limit=2&q=v&session=slot01
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"No memory matches.","type":"text"}],"resultType":"complete"}}
-## no_such_tool absent 
+## no_such_tool absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"error":{"code":-32602,"message":"unknown tool: no_such_tool"},"id":1,"jsonrpc":"2.0"}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
@@ -2457,7 +2457,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for no_such_tool: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: no_such_tool","type":"text"}],"isError":true,"resultType":"complete"}}
-## pause_schedule absent 
+## pause_schedule absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの操作を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -2495,7 +2495,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"定時実行機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: pause_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
-## peek_session_output absent 
+## peek_session_output absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このセッションはセッション間メッセージを許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-memory session-search session-spawn session-imagegen session-studio]
@@ -2544,7 +2544,7 @@
 [session-peer session-all session-all-write]
   -> GET /sessions/child01/output?lines=2&peek_from=slot01&since=2
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
-## propose_session_handoff absent 
+## propose_session_handoff absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"propose_session_handoff はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
@@ -2574,7 +2574,7 @@
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   -> POST /sessions/slot01/handoff-proposal {"prompt":"v","title":"v"}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"引き継ぎ案を利用者へ提示しました。利用者が内容、次のエージェント、モデルを確認してから新規セッションを起動します。","type":"text"}],"resultType":"complete"}}
-## purge_cleanup_archive absent 
+## purge_cleanup_archive absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはアーカイブの完全削除を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -2613,7 +2613,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: purge_cleanup_archive","type":"text"}],"isError":true,"resultType":"complete"}}
-## rename_child_session absent 
+## rename_child_session absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このセッションはセッションの起動・操縦を許可されていません（設定 \u003e エージェント）","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
@@ -2657,7 +2657,7 @@
 [session-spawn session-all session-all-write]
   -> POST /sessions/child01/title/set {"title":"v","title_set_by":"parent"}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
-## request_browser_action absent 
+## request_browser_action absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはChromium attachmentの変更を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write session-chromium session-all session-all-write]
@@ -2756,7 +2756,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: request_browser_action","type":"text"}],"isError":true,"resultType":"complete"}}
 [session-chromium-nobrowser]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"code=browser_unavailable: Browser features are not available on this workspace runtime (ecs): Chromium's sandbox needs user namespaces or a setuid helper, which this runtime's restricted workspace container does not allow. See ref/browser-pane.md in the user guide. Do not start Chromium here, with or without --no-sandbox, and do not retry. Verify with tests, curl or the lightweight preview instead, and tell the user the browser pane is unavailable on this workspace.","type":"text"}],"isError":true,"resultType":"complete"}}
-## respond_session_plan absent 
+## respond_session_plan absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントは書き込みツールを許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -2804,7 +2804,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"decision は approve か reject を指定してください","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: respond_session_plan","type":"text"}],"isError":true,"resultType":"complete"}}
-## restore_cleanup_archive absent 
+## restore_cleanup_archive absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはアーカイブの復元を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -2843,7 +2843,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: restore_cleanup_archive","type":"text"}],"isError":true,"resultType":"complete"}}
-## restore_memory_snapshot absent 
+## restore_memory_snapshot absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモリの復元を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -2902,7 +2902,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: restore_memory_snapshot","type":"text"}],"isError":true,"resultType":"complete"}}
-## resume_schedule absent 
+## resume_schedule absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの操作を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -2940,7 +2940,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"定時実行機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: resume_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
-## resume_session absent 
+## resume_session absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはセッションの再開を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser session-spawn session-all session-all-write]
@@ -2979,7 +2979,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: resume_session","type":"text"}],"isError":true,"resultType":"complete"}}
-## run_image_trial absent 
+## run_image_trial absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このセッションは画像スタジオに結ばれていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-all session-all-write]
@@ -3005,7 +3005,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for run_image_trial: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: run_image_trial","type":"text"}],"isError":true,"resultType":"complete"}}
-## run_schedule_now absent 
+## run_schedule_now absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの操作を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -3043,7 +3043,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"定時実行機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: run_schedule_now","type":"text"}],"isError":true,"resultType":"complete"}}
-## search_sessions absent 
+## search_sessions absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"past-session search is not enabled for this session (Settings \u003e Agents)","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-spawn session-imagegen session-studio]
@@ -3217,7 +3217,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: search_sessions","type":"text"}],"isError":true,"resultType":"complete"}}
 [session-search session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"pass query to search, or session and idx to read around a hit","type":"text"}],"isError":true,"resultType":"complete"}}
-## send_to_peer_session absent 
+## send_to_peer_session absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このセッションはセッション間メッセージを許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-memory session-search session-spawn session-imagegen session-studio]
@@ -3267,7 +3267,7 @@
   -> GET /sessions/child01/status
   -> POST /sessions/child01/input {"peer_from":"slot01","peer_intent":"request","prompt":"v"}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{\"agent_result\":{\"sent\":\"x\"},\"delivered\":true,\"from\":\"slot01\",\"resumed\":false,\"session\":\"child01\"}","type":"text"}],"resultType":"complete"}}
-## send_to_session absent 
+## send_to_session absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントは書き込みツールを許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -3312,7 +3312,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{\"agent_result\":{\"sent\":\"x\"},\"resumed\":false,\"sent\":true,\"session\":\"child01\"}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: send_to_session","type":"text"}],"isError":true,"resultType":"complete"}}
-## set_chat_plan absent 
+## set_chat_plan absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントは書き込みツールを許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -3351,7 +3351,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"作業計画を更新しました（以降の新しいセッションへ原文のまま引き継がれます）。","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: set_chat_plan","type":"text"}],"isError":true,"resultType":"complete"}}
-## set_chromium_control_mode absent 
+## set_chromium_control_mode absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはChromium attachmentの変更を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write session-chromium session-all session-all-write]
@@ -3423,7 +3423,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: set_chromium_control_mode","type":"text"}],"isError":true,"resultType":"complete"}}
 [session-chromium-nobrowser]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"code=browser_unavailable: Browser features are not available on this workspace runtime (ecs): Chromium's sandbox needs user namespaces or a setuid helper, which this runtime's restricted workspace container does not allow. See ref/browser-pane.md in the user guide. Do not start Chromium here, with or without --no-sandbox, and do not retry. Verify with tests, curl or the lightweight preview instead, and tell the user the browser pane is unavailable on this workspace.","type":"text"}],"isError":true,"resultType":"complete"}}
-## set_image_draft absent 
+## set_image_draft absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このセッションは画像スタジオに結ばれていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-all session-all-write]
@@ -3526,7 +3526,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: set_image_draft","type":"text"}],"isError":true,"resultType":"complete"}}
 [session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このセッションと画像スタジオの結びが変わりました。スタジオのペインから結び直してください","type":"text"}],"isError":true,"resultType":"complete"}}
-## stop_session absent 
+## stop_session absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはセッションの停止を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser session-spawn session-all session-all-write]
@@ -3568,7 +3568,7 @@
 [session-spawn session-all session-all-write]
   -> POST /sessions/child01/halt {"disarm_report":false}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
-## stop_session_after_turn absent 
+## stop_session_after_turn absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはセッションの停止を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser session-spawn session-all session-all-write]
@@ -3612,7 +3612,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: stop_session_after_turn","type":"text"}],"isError":true,"resultType":"complete"}}
-## update_memo absent 
+## update_memo absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
@@ -3669,7 +3669,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"unknown argument \"position\" for update_memo","type":"text"}],"isError":true,"resultType":"complete"}}
-## update_schedule absent 
+## update_schedule absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
