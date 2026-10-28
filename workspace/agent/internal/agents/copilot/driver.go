@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"sync"
@@ -31,6 +30,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/acp"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/managed"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -105,13 +105,8 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 		return nil, agents.DirGoneErr(m.Dir)
 	}
 	slotSid := session.UUID(m.Dir, m.Name) // identity: the working copy, never the subdir
-	handlesMu.Lock()
-	h := handles[m.Name]
-	if h == nil {
-		h = newThreadHandle(m.Name, m.CWD(), slotSid) // CWD: Dir, or the subdir chosen at launch
-		handles[m.Name] = h
-	}
-	handlesMu.Unlock()
+	// CWD: Dir, or the subdir chosen at launch.
+	h := managedKind.GetOrAdd(m.Name, func() *threadHandle { return newThreadHandle(m.Name, m.CWD(), slotSid) })
 
 	if err := h.Start(m); err != nil {
 		return nil, err
@@ -153,113 +148,73 @@ func (managedDriver) LiveHandle(m session.Meta) (agents.ThreadHandle, bool) {
 var handlesMu sync.Mutex
 var handles = map[string]*threadHandle{}
 
-func handleFor(name string) *threadHandle {
-	handlesMu.Lock()
-	defer handlesMu.Unlock()
-	return handles[name]
+// managedKind is the shared scaffold over this registry (managed.Lifecycle); its hooks are set in
+// init because they reach the registry themselves.
+var managedKind = &managed.Lifecycle[*threadHandle]{
+	Kind:    session.KindCopilot,
+	Name:    "copilot",
+	Mu:      &handlesMu,
+	Handles: &handles,
+	Ledger:  ledger,
 }
 
-func liveHandles() []*threadHandle {
-	handlesMu.Lock()
-	defer handlesMu.Unlock()
-	var out []*threadHandle
-	for _, h := range handles {
-		if h.Alive() {
-			out = append(out, h)
-		}
+// Shutdown stops a handle's child only through managed.Downer: a Down that drifts from it would be
+// skipped without a word.
+var _ managed.Downer = (*threadHandle)(nil)
+
+func init() {
+	managedKind.Resume = func(m session.Meta) error {
+		_, err := managedDriver{}.Resume(m)
+		return err
 	}
-	return out
 }
+
+func handleFor(name string) *threadHandle {
+	h, _ := managedKind.Get(name)
+	return h
+}
+
+func liveHandles() []*threadHandle { return managedKind.Live() }
 
 // DropHandle detaches a managed session from its runtime (stop/halt/archive):
 // interrupt any running turn, terminate the child, forget the handle. The
 // conversation stays in $COPILOT_HOME/session-state — a later Resume re-spawns
 // and session/load reattaches (measured: history replay plus context retention).
 func DropHandle(name string) {
-	handlesMu.Lock()
-	h := handles[name]
-	delete(handles, name)
-	handlesMu.Unlock()
-	if h == nil {
-		return
+	if h, ok := managedKind.Take(name); ok {
+		h.Detach()
 	}
-	h.Detach()
 }
 
 // RemoveLedger drops the ClientMessageID ledger. Only for /stop, which discards the slot's
 // identity along with it; halt/archive keep it because they can be resumed.
-func RemoveLedger(name string) { ledger.Remove(name) }
+func RemoveLedger(name string) { managedKind.RemoveLedger(name) }
 
 // ManagedAlive reports whether the session has a live runtime handle.
-func ManagedAlive(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	return h.Alive()
-}
+func ManagedAlive(name string) bool { return managedKind.Alive(name) }
 
 // ManagedBusy reports a turn is running or queued (the wait condition of a graceful shutdown).
-func ManagedBusy(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	return h.Busy()
-}
+func ManagedBusy(name string) bool { return managedKind.Busy(name) }
 
 // ManagedInFlight reports that the handle holds an entry it took from the queue and has not
 // settled. The pump gives its move-gate lease back once the runtime has the input, which can be
 // before the runtime's own record (and so DriveState) shows the turn; a move asks this, under the
 // exclusive gate, so it never starts in that window (ADR 0115 decision 11.2). Entries still
 // queued do not count: the move carries them.
-func ManagedInFlight(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	return h.HoldsEntry()
-}
+func ManagedInFlight(name string) bool { return managedKind.InFlight(name) }
 
 // AbortManaged interrupts every running managed turn (the equivalent of a graceful shutdown's
 // per-pane Ctrl-C).
-func AbortManaged() {
-	for _, h := range liveHandles() {
-		h.Abort()
-	}
-}
+func AbortManaged() { managedKind.Abort() }
 
 // Shutdown terminates every managed child, at agent exit. The conversation of record stays in
 // copilot's own store and the next boot's ReconcileManaged reconnects to it.
-func Shutdown() {
-	handlesMu.Lock()
-	var stops []func()
-	for _, h := range handles {
-		stops = append(stops, h.Down())
-	}
-	handlesMu.Unlock()
-	for _, stop := range stops {
-		stop()
-	}
-}
+func Shutdown() { managedKind.Shutdown() }
 
 // ReconcileManaged re-attaches managed copilot sessions after an Agent boot or
 // child death (§6). It covers every managed meta not counted as stopped. On failure the
 // session simply stays stopped, and the user's Resume click retries it.
-func ReconcileManaged(reason string) {
-	d := managedDriver{}
-	for _, m := range session.ListMetas() {
-		if m.Kind != session.KindCopilot || m.DriverKind() != session.DriverManaged || m.Archived {
-			continue
-		}
-		if m.StoppedAt != "" && handleFor(m.Name) == nil {
-			continue // deliberately stopped — resume only on user action
-		}
-		if _, err := d.Resume(m); err != nil {
-			log.Printf("copilot managed: reconcile %s (%s): %v", m.Name, reason, err)
-		}
-	}
-}
+func ReconcileManaged(reason string) { managedKind.Reconcile(reason) }
 
 // stopChild terminates a child process: SIGTERM (copilot gracefully records session.shutdown),
 // then SIGKILL after a grace period. Reaping is done by the watch goroutine started at spawn

@@ -37,7 +37,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -47,6 +46,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/acp"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/managed"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -118,13 +118,7 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	ensureSettings()                       // idempotent: autoupdate off, --trust-all danger dialog suppressed
 	slotSid := session.UUID(m.Dir, m.Name) // identity: the working copy, never the subdir
-	handlesMu.Lock()
-	h := handles[m.Name]
-	if h == nil {
-		h = newThreadHandle(m, slotSid)
-		handles[m.Name] = h
-	}
-	handlesMu.Unlock()
+	h := managedKind.GetOrAdd(m.Name, func() *threadHandle { return newThreadHandle(m, slotSid) })
 
 	if h.Connected() {
 		return h, nil
@@ -156,23 +150,33 @@ func (managedDriver) LiveHandle(m session.Meta) (agents.ThreadHandle, bool) {
 var handlesMu sync.Mutex
 var handles = map[string]*threadHandle{}
 
-func handleFor(name string) *threadHandle {
-	handlesMu.Lock()
-	defer handlesMu.Unlock()
-	return handles[name]
+// managedKind is the shared scaffold over this registry (managed.Lifecycle); its hooks are set in
+// init because they reach the registry themselves.
+var managedKind = &managed.Lifecycle[*threadHandle]{
+	Kind:    session.KindKiro,
+	Name:    "kiro",
+	Mu:      &handlesMu,
+	Handles: &handles,
+	Ledger:  ledger,
 }
 
-func liveHandles() []*threadHandle {
-	handlesMu.Lock()
-	defer handlesMu.Unlock()
-	var out []*threadHandle
-	for _, h := range handles {
-		if h.Alive() {
-			out = append(out, h)
-		}
+// Shutdown stops a handle's child only through managed.Downer: a Down that drifts from it would be
+// skipped without a word.
+var _ managed.Downer = (*threadHandle)(nil)
+
+func init() {
+	managedKind.Resume = func(m session.Meta) error {
+		_, err := managedDriver{}.Resume(m)
+		return err
 	}
-	return out
 }
+
+func handleFor(name string) *threadHandle {
+	h, _ := managedKind.Get(name)
+	return h
+}
+
+func liveHandles() []*threadHandle { return managedKind.Live() }
 
 // DropHandle detaches a managed session from its runtime (stop/halt/archive):
 // interrupt any running turn, gracefully terminate the child (stdin EOF → kiro exits
@@ -190,11 +194,8 @@ func DropHandle(name string) { dropHandle(name, 0) }
 func DropHandleWait(name string, wait time.Duration) { dropHandle(name, wait) }
 
 func dropHandle(name string, wait time.Duration) {
-	handlesMu.Lock()
-	h := handles[name]
-	delete(handles, name)
-	handlesMu.Unlock()
-	if h == nil {
+	h, ok := managedKind.Take(name)
+	if !ok {
 		return
 	}
 	exited := h.Detach()
@@ -208,16 +209,10 @@ func dropHandle(name string, wait time.Duration) {
 
 // RemoveLedger drops the ClientMessageID ledger (/stop — only when the slot's identity itself
 // is discarded; halt/archive keep it because they can be resumed).
-func RemoveLedger(name string) { ledger.Remove(name) }
+func RemoveLedger(name string) { managedKind.RemoveLedger(name) }
 
 // ManagedAlive reports whether the session has a live runtime handle.
-func ManagedAlive(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	return h.Alive()
-}
+func ManagedAlive(name string) bool { return managedKind.Alive(name) }
 
 // ManagedContext returns the live context fill for a managed kiro session (Track D —
 // docs/log/43 §10): the latest `_kiro.dev/metadata` contextUsagePercentage (0–100), the
@@ -247,68 +242,29 @@ func ManagedContext(name string) (pct float64, window int, credits float64, mode
 }
 
 // ManagedBusy reports a turn is running or queued (the wait condition for graceful shutdown).
-func ManagedBusy(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	return h.Busy()
-}
+func ManagedBusy(name string) bool { return managedKind.Busy(name) }
 
 // ManagedInFlight reports that the handle holds an entry it took from the queue and has not
 // settled. The pump gives its move-gate lease back once the runtime has the input, which can be
 // before the runtime's own record (and so DriveState) shows the turn; a move asks this, under the
 // exclusive gate, so it never starts in that window (ADR 0115 decision 11.2). Entries still
 // queued do not count: the move carries them.
-func ManagedInFlight(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	return h.HoldsEntry()
-}
+func ManagedInFlight(name string) bool { return managedKind.InFlight(name) }
 
 // AbortManaged interrupts every running managed turn (the equivalent of the per-pane Ctrl-C
 // in graceful shutdown).
-func AbortManaged() {
-	for _, h := range liveHandles() {
-		h.Abort()
-	}
-}
+func AbortManaged() { managedKind.Abort() }
 
 // Shutdown terminates every managed child (on agent exit). The conversation of record stays in
 // the v2 JSONL and the next boot's ReconcileManaged reattaches with session/load. The point is
 // to close stdin so the .lock is released cleanly, so the next boot's resume hits no lock
 // conflict.
-func Shutdown() {
-	handlesMu.Lock()
-	var stops []func()
-	for _, h := range handles {
-		stops = append(stops, h.Down())
-	}
-	handlesMu.Unlock()
-	for _, stop := range stops {
-		stop()
-	}
-}
+func Shutdown() { managedKind.Shutdown() }
 
 // ReconcileManaged re-attaches managed kiro sessions after an Agent boot or child
 // death. It covers every managed meta not already treated as stopped. On failure the session
 // stays stopped and the user's resume click retries it.
-func ReconcileManaged(reason string) {
-	d := managedDriver{}
-	for _, m := range session.ListMetas() {
-		if m.Kind != session.KindKiro || m.DriverKind() != session.DriverManaged || m.Archived {
-			continue
-		}
-		if m.StoppedAt != "" && handleFor(m.Name) == nil {
-			continue // deliberately stopped — resume only on user action
-		}
-		if _, err := d.Resume(m); err != nil {
-			log.Printf("kiro managed: reconcile %s (%s): %v", m.Name, reason, err)
-		}
-	}
-}
+func ReconcileManaged(reason string) { managedKind.Reconcile(reason) }
 
 // stopChild terminates a child gracefully-first: close stdin (EOF) so kiro-cli acp exits
 // 0 and removes its .lock (measured — this avoids "active in another process" on a later
