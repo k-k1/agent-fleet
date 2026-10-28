@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/managed"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -174,26 +175,76 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 var handlesMu sync.Mutex
 var handles = map[string]*threadHandle{}
 
-func handleFor(name string) *threadHandle {
-	handlesMu.Lock()
-	defer handlesMu.Unlock()
-	return handles[name]
+// managedKind is the shared scaffold over this registry (managed.Lifecycle); its hooks are set in
+// init because they reach the registry themselves.
+var managedKind = &managed.Lifecycle[*threadHandle]{
+	Kind:    session.KindMuse,
+	Name:    "muse",
+	Mu:      &handlesMu,
+	Handles: &handles,
+	Ledger:  ledger,
 }
 
-func liveHandles() []*threadHandle {
-	handlesMu.Lock()
-	defer handlesMu.Unlock()
-	var out []*threadHandle
-	for _, h := range handles {
-		h.mu.Lock()
-		alive := h.alive
-		h.mu.Unlock()
-		if alive {
-			out = append(out, h)
-		}
+// Shutdown stops a handle's child only through managed.Downer: a Down that drifts from it would be
+// skipped without a word.
+var _ managed.Downer = (*threadHandle)(nil)
+
+func init() {
+	managedKind.Resume = func(m session.Meta) error {
+		_, err := managedDriver{}.Resume(m)
+		return err
 	}
-	return out
+	// A live host needs no reattach (the stopped check comes first).
+	managedKind.SkipReconcile = func(m session.Meta) bool { return ManagedAlive(m.Name) }
+	managedKind.LogReconcile = func(m session.Meta, reason string, err error) {
+		log.Printf("muse: reconcile (%s) %s: %v", reason, m.Name, err)
+	}
 }
+
+// Alive, Busy, HoldsEntry, Abort and Down are what managed.Lifecycle asks of a handle. A turn
+// still starting (h.starting) counts as running.
+
+func (h *threadHandle) Alive() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.alive
+}
+
+func (h *threadHandle) Busy() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.running || h.starting != "" || h.tq().Head() != nil || h.tq().Len() > 0
+}
+
+func (h *threadHandle) HoldsEntry() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.running || h.starting != "" || h.tq().Head() != nil
+}
+
+func (h *threadHandle) Abort() {
+	h.mu.Lock()
+	running := h.running || h.starting != ""
+	h.mu.Unlock()
+	if running {
+		_ = h.interruptAll()
+	}
+}
+
+func (h *threadHandle) Down() (stop func()) {
+	h.mu.Lock()
+	h.alive = false
+	cmd, stdin := h.cmd, h.stdin
+	h.mu.Unlock()
+	return func() { stopChild(cmd, stdin) }
+}
+
+func handleFor(name string) *threadHandle {
+	h, _ := managedKind.Get(name)
+	return h
+}
+
+func liveHandles() []*threadHandle { return managedKind.Live() }
 
 // LiveHandle returns the session's handle without starting anything (agents.LiveHandles): the
 // /turn queue edits must not bring a runtime up only to find nothing queued. The handle stays
@@ -215,11 +266,8 @@ var _ agents.LiveHandles = managedDriver{}
 // the handle. The conversation stays in muse's own session.jsonl, and a later Resume reloads
 // it with session/resume.
 func DropHandle(name string) {
-	handlesMu.Lock()
-	h := handles[name]
-	delete(handles, name)
-	handlesMu.Unlock()
-	if h == nil {
+	h, ok := managedKind.Take(name)
+	if !ok {
 		return
 	}
 	h.mu.Lock()
@@ -235,101 +283,35 @@ func DropHandle(name string) {
 
 // RemoveLedger drops the ClientMessageID ledger (/stop only — halt and archive keep it
 // because they can be resumed).
-func RemoveLedger(name string) { ledger.Remove(name) }
+func RemoveLedger(name string) { managedKind.RemoveLedger(name) }
 
 // ManagedAlive reports whether the session has a live host.
-func ManagedAlive(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.alive
-}
+func ManagedAlive(name string) bool { return managedKind.Alive(name) }
 
 // ManagedBusy reports a turn running or queued — the refusal condition for an exclusive
 // driver switch, and the wait condition for graceful shutdown.
-func ManagedBusy(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.running || h.starting != "" || h.tq().Head() != nil || h.tq().Len() > 0
-}
+func ManagedBusy(name string) bool { return managedKind.Busy(name) }
 
 // ManagedInFlight reports that the handle holds an entry it took from the queue and has not
 // settled. The pump gives its move-gate lease back once the runtime has the input, which can be
 // before the runtime's own record (and so DriveState) shows the turn; a move asks this, under the
 // exclusive gate, so it never starts in that window (ADR 0115 decision 11.2). Entries still
 // queued do not count: the move carries them.
-func ManagedInFlight(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.running || h.starting != "" || h.tq().Head() != nil
-}
+func ManagedInFlight(name string) bool { return managedKind.InFlight(name) }
 
 // AbortManaged interrupts every running managed turn (the equivalent of the per-pane Ctrl-C
 // in graceful shutdown).
-func AbortManaged() {
-	for _, h := range liveHandles() {
-		h.mu.Lock()
-		running := h.running || h.starting != ""
-		h.mu.Unlock()
-		if running {
-			_ = h.interruptAll()
-		}
-	}
-}
+func AbortManaged() { managedKind.Abort() }
 
 // Shutdown terminates every host on agent exit. The conversation of record is muse's own
 // session.jsonl, so the next boot's ReconcileManaged reattaches with session/resume.
-func Shutdown() {
-	handlesMu.Lock()
-	type child struct {
-		cmd   *exec.Cmd
-		stdin io.Closer
-	}
-	var kids []child
-	for _, h := range handles {
-		h.mu.Lock()
-		h.alive = false
-		kids = append(kids, child{h.cmd, h.stdin})
-		h.mu.Unlock()
-	}
-	handlesMu.Unlock()
-	for _, c := range kids {
-		stopChild(c.cmd, c.stdin)
-	}
-}
+func Shutdown() { managedKind.Shutdown() }
 
 // ReconcileManaged re-attaches managed muse sessions after an Agent boot or a child death.
 // It is mandatory for a per-session-child kind: without it a restart leaves every session
 // showing as live with no host behind it. On failure the session stays stopped and the
 // member's resume click retries.
-func ReconcileManaged(reason string) {
-	d := managedDriver{}
-	for _, m := range session.ListMetas() {
-		if m.Kind != session.KindMuse || m.DriverKind() != session.DriverManaged || m.Archived {
-			continue
-		}
-		if m.StoppedAt != "" && handleFor(m.Name) == nil {
-			continue // deliberately stopped — resume only on user action
-		}
-		if ManagedAlive(m.Name) {
-			continue
-		}
-		if _, err := d.Resume(m); err != nil {
-			log.Printf("muse: reconcile (%s) %s: %v", reason, m.Name, err)
-		}
-	}
-}
+func ReconcileManaged(reason string) { managedKind.Reconcile(reason) }
 
 // stopChild closes stdin and waits briefly for the host to exit on its own before killing it.
 // The graceful path matters: muse holds a flock on its settings file while it writes, and a

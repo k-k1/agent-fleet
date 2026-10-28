@@ -45,6 +45,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/managed"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -426,10 +427,57 @@ var _ agents.LiveHandles = managedDriver{}
 var handlesMu sync.Mutex
 var handles = map[string]*threadHandle{}
 
+// managedKind is the shared scaffold over this registry (managed.Lifecycle); its hooks are set in
+// init because they reach the registry themselves.
+var managedKind = &managed.Lifecycle[*threadHandle]{
+	Kind:    session.KindCodex,
+	Name:    "codex",
+	Mu:      &handlesMu,
+	Handles: &handles,
+	Ledger:  ledger,
+}
+
+func init() {
+	managedKind.Resume = func(m session.Meta) error {
+		_, err := managedDriver{}.Resume(m)
+		return err
+	}
+	// ReconcileClaim is read at each call: sessionx fills the seam after init.
+	managedKind.Claim = func(name string) (func(), bool) { return ReconcileClaim(name) }
+}
+
+// Alive, Busy, HoldsEntry and Abort are what managed.Lifecycle asks of a handle.
+
+func (h *threadHandle) Alive() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.alive
+}
+
+func (h *threadHandle) Busy() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.running || h.turnID != "" || h.tq().Len() > 0
+}
+
+func (h *threadHandle) HoldsEntry() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.running || h.turnID != "" || h.tq().Head() != nil
+}
+
+func (h *threadHandle) Abort() {
+	h.mu.Lock()
+	running := h.running
+	h.mu.Unlock()
+	if running {
+		_ = h.interruptAll()
+	}
+}
+
 func handleFor(name string) *threadHandle {
-	handlesMu.Lock()
-	defer handlesMu.Unlock()
-	return handles[name]
+	h, _ := managedKind.Get(name)
+	return h
 }
 
 // handleByTid finds the live handle owning a codex thread id.
@@ -450,20 +498,7 @@ func handleByTid(tid string) *threadHandle {
 	return nil
 }
 
-func liveHandles() []*threadHandle {
-	handlesMu.Lock()
-	defer handlesMu.Unlock()
-	var out []*threadHandle
-	for _, h := range handles {
-		h.mu.Lock()
-		alive := h.alive
-		h.mu.Unlock()
-		if alive {
-			out = append(out, h)
-		}
-	}
-	return out
-}
+func liveHandles() []*threadHandle { return managedKind.Live() }
 
 // DropHandle detaches a managed session from its runtime handle (stop / halt /
 // archive / exclusive switch): interrupt any running turn, unsubscribe the writer
@@ -471,11 +506,8 @@ func liveHandles() []*threadHandle {
 // the handle. The conversation's source of truth (the rollout) stays, and a later Resume
 // (or the TUI's `codex resume`, once the server has unloaded the thread) reattaches.
 func DropHandle(name string) {
-	handlesMu.Lock()
-	h := handles[name]
-	delete(handles, name)
-	handlesMu.Unlock()
-	if h == nil {
+	h, ok := managedKind.Take(name)
+	if !ok {
 		return
 	}
 	h.mu.Lock()
@@ -517,83 +549,32 @@ func DropHandle(name string) {
 
 // RemoveLedger drops a session's ClientMessageID ledger (/stop only, where the slot's
 // identity is discarded with it; halt/archive keep it because the session can resume).
-func RemoveLedger(name string) { ledger.Remove(name) }
+func RemoveLedger(name string) { managedKind.RemoveLedger(name) }
 
 // ManagedAlive reports whether the session has a live runtime handle — the
 // managed counterpart of tmuxx.HasSession for the sessions list.
-func ManagedAlive(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.alive
-}
+func ManagedAlive(name string) bool { return managedKind.Alive(name) }
 
 // ManagedBusy reports a turn is running or queued (the wait/refuse condition for a
 // graceful shutdown and for the exclusive switch).
-func ManagedBusy(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.running || h.turnID != "" || h.tq().Len() > 0
-}
+func ManagedBusy(name string) bool { return managedKind.Busy(name) }
 
 // ManagedInFlight reports that the handle holds an entry it took from the queue and has not
 // settled. The pump gives its move-gate lease back once the runtime has the input, which can be
 // before the runtime's own record (and so DriveState) shows the turn; a move asks this, under the
 // exclusive gate, so it never starts in that window (ADR 0115 decision 11.2). Entries still
 // queued do not count: the move carries them.
-func ManagedInFlight(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.running || h.turnID != "" || h.tq().Head() != nil
-}
+func ManagedInFlight(name string) bool { return managedKind.InFlight(name) }
 
 // AbortManaged interrupts every running managed turn (the equivalent of graceful
 // shutdown's per-pane Ctrl-C, §10.2-8).
-func AbortManaged() {
-	for _, h := range liveHandles() {
-		h.mu.Lock()
-		running := h.running
-		h.mu.Unlock()
-		if running {
-			_ = h.interruptAll()
-		}
-	}
-}
+func AbortManaged() { managedKind.Abort() }
 
 // ReconcileManaged re-attaches managed codex sessions after an Agent boot,
 // daemon restart or writer loss (§6). It covers every managed meta that is not treated as
 // stopped. On failure the session stays stopped and is retried when the user clicks resume
 // (/start).
-func ReconcileManaged(reason string) {
-	d := managedDriver{}
-	for _, m := range session.ListMetas() {
-		if m.Kind != session.KindCodex || m.DriverKind() != session.DriverManaged || m.Archived {
-			continue
-		}
-		if m.StoppedAt != "" && handleFor(m.Name) == nil {
-			continue // deliberately stopped — resume only on user action
-		}
-		release, ok := ReconcileClaim(m.Name)
-		if !ok {
-			continue // switching to Terminal, or already there: m was read before the switch
-		}
-		if _, err := d.Resume(m); err != nil {
-			log.Printf("codex managed: reconcile %s (%s): %v", m.Name, reason, err)
-		}
-		release()
-	}
-}
+func ReconcileManaged(reason string) { managedKind.Reconcile(reason) }
 
 // ReconcileClaim is the seam package sessionx fills with its switch guard: ReconcileManaged
 // resumes from a meta it read before a switch to Terminal may have begun, so it takes the same

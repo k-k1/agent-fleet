@@ -51,6 +51,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/managed"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -267,38 +268,75 @@ func (managedDriver) RespondTerminal(m session.Meta, reply agents.InteractionRep
 var handlesMu sync.Mutex
 var handles = map[string]*threadHandle{}
 
+// managedKind is the shared scaffold over this registry (managed.Lifecycle); its hooks are set in
+// init because they reach the registry themselves.
+var managedKind = &managed.Lifecycle[*threadHandle]{
+	Kind:    session.KindOpencode,
+	Name:    "opencode",
+	Mu:      &handlesMu,
+	Handles: &handles,
+	Ledger:  ledger,
+}
+
+func init() {
+	managedKind.Resume = func(m session.Meta) error {
+		_, err := managedDriver{}.Resume(m)
+		return err
+	}
+	// Terminal panes that survived an Agent restart are attached to the daemon too: adopt it (or
+	// start a replacement and put their environments back) rather than wait for a Console poll,
+	// which never comes for a session that has no managed handle.
+	managedKind.AfterReconcile = func(reason string) {
+		if sharedTerminals() > 0 {
+			ensureForTerminals(reason)
+		}
+	}
+}
+
+// Alive, Busy, HoldsEntry and Abort are what managed.Lifecycle asks of a handle.
+
+func (h *threadHandle) Alive() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.alive
+}
+
+func (h *threadHandle) Busy() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.running || h.tq().Len() > 0
+}
+
+func (h *threadHandle) HoldsEntry() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.running || h.tq().Head() != nil
+}
+
+func (h *threadHandle) Abort() {
+	h.mu.Lock()
+	running := h.running
+	h.mu.Unlock()
+	if running {
+		_ = h.interruptAll()
+	}
+}
+
 // handleFor returns the live handle for a session name, or nil.
 func handleFor(name string) *threadHandle {
-	handlesMu.Lock()
-	defer handlesMu.Unlock()
-	return handles[name]
+	h, _ := managedKind.Get(name)
+	return h
 }
 
 // liveHandles snapshots the currently-alive handles.
-func liveHandles() []*threadHandle {
-	handlesMu.Lock()
-	defer handlesMu.Unlock()
-	var out []*threadHandle
-	for _, h := range handles {
-		h.mu.Lock()
-		alive := h.alive
-		h.mu.Unlock()
-		if alive {
-			out = append(out, h)
-		}
-	}
-	return out
-}
+func liveHandles() []*threadHandle { return managedKind.Live() }
 
 // DropHandle detaches a managed session from its runtime handle (stop/halt/
 // archive): abort any running turn, clear the queue, forget the handle. The
 // conversation stays in the SQLite store — a later Resume reattaches.
 func DropHandle(name string) {
-	handlesMu.Lock()
-	h := handles[name]
-	delete(handles, name)
-	handlesMu.Unlock()
-	if h == nil {
+	h, ok := managedKind.Take(name)
+	if !ok {
 		// A Terminal slot has no handle; its turn runs on the shared serve all the same, and
 		// closing the pane does not stop it.
 		if m, ok := session.ReadMeta(name); ok {
@@ -325,85 +363,33 @@ func DropHandle(name string) {
 
 // RemoveLedger drops a session's ClientMessageID ledger. Only for /stop, which discards
 // the slot's identity as well; halt/archive keep it because the session can resume.
-func RemoveLedger(name string) { ledger.Remove(name) }
+func RemoveLedger(name string) { managedKind.RemoveLedger(name) }
 
 // ManagedAlive reports whether the session has a live runtime handle — the
 // managed counterpart of tmuxx.HasSession for the sessions list.
-func ManagedAlive(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.alive
-}
+func ManagedAlive(name string) bool { return managedKind.Alive(name) }
 
 // ManagedBusy reports a turn is running or queued (graceful shutdown waits on this).
-func ManagedBusy(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.running || h.tq().Len() > 0
-}
+func ManagedBusy(name string) bool { return managedKind.Busy(name) }
 
 // ManagedInFlight reports that the handle holds an entry it took from the queue and has not
 // settled. The pump gives its move-gate lease back once the runtime has the input, which can be
 // before the runtime's own record (and so DriveState) shows the turn; a move asks this, under the
 // exclusive gate, so it never starts in that window (ADR 0115 decision 11.2). Entries still
 // queued do not count: the move carries them.
-func ManagedInFlight(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.running || h.tq().Head() != nil
-}
+func ManagedInFlight(name string) bool { return managedKind.InFlight(name) }
 
 // AbortManaged interrupts every running managed turn — the managed counterpart of
 // graceful shutdown's per-pane Ctrl-C (docs/log/27 §10.2-8). It takes the same path as
 // ThreadHandle.Interrupt, so once the abort lands the turn goroutine records cancelled
 // and the status store returns to idle, releasing anySessionWorking's wait.
-func AbortManaged() {
-	for _, h := range liveHandles() {
-		h.mu.Lock()
-		running := h.running
-		h.mu.Unlock()
-		if running {
-			_ = h.interruptAll()
-		}
-	}
-}
+func AbortManaged() { managedKind.Abort() }
 
 // ReconcileManaged re-attaches managed opencode sessions after an Agent boot,
 // daemon restart or daemon death (§6). It covers every managed meta not already treated
 // as stopped, so the experience matches tui's tmux surviving an Agent restart. On failure
 // the session stays stopped and the user's resume click (/start) retries it.
-func ReconcileManaged(reason string) {
-	d := managedDriver{}
-	for _, m := range session.ListMetas() {
-		if m.Kind != session.KindOpencode || m.DriverKind() != session.DriverManaged || m.Archived {
-			continue
-		}
-		if m.StoppedAt != "" && handleFor(m.Name) == nil {
-			continue // deliberately stopped — resume only on user action
-		}
-		if _, err := d.Resume(m); err != nil {
-			log.Printf("opencode managed: reconcile %s (%s): %v", m.Name, reason, err)
-		}
-	}
-	// Terminal panes that survived an Agent restart are attached to the daemon too: adopt it (or
-	// start a replacement and put their environments back) rather than wait for a Console poll,
-	// which never comes for a session that has no managed handle.
-	if sharedTerminals() > 0 {
-		ensureForTerminals(reason)
-	}
-}
+func ReconcileManaged(reason string) { managedKind.Reconcile(reason) }
 
 // terminalEnsureBackoff is the wait before each further attempt ensureForTerminals makes, and
 // ensureTerminalServe, when set, replaces the attempt; vars so tests need no daemon. (A function
