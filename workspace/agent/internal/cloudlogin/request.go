@@ -254,8 +254,11 @@ func RecentWaiters(ws []Waiter, n int) []WaiterWire {
 // ErrHeld means a cancel in the Console still holds new requests back.
 var ErrHeld = errors.New("the login request was cancelled in the Console")
 
-// FileCancel is File whose wait for the directory lock ends with cancel or deadline
-// (ErrLockInterrupted, ErrLockTimeout).
+// FileCancel files (or joins) the request of key for profile, recording snap: the state this
+// run saw before its failing check. A new request also writes the notification that carries
+// its id to the Console. The wait for the directory lock ends when cancel closes
+// (ErrLockInterrupted) or deadline passes (ErrLockTimeout); a nil cancel and a zero deadline
+// wait for as long as the lock takes.
 func (s *Store[S]) FileCancel(profile, key string, snap S, w Waiter, cancel <-chan struct{}, deadline time.Time) (Request[S], bool, error) {
 	unlock, err := s.lockCancel(cancel, deadline)
 	if err != nil {
