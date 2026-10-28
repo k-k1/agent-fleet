@@ -260,6 +260,8 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
       `agent_instructions_kinds_test.go` only to pin a new shape)
 - [ ] MCP: `MaterializedKinds` (and a writer) or `ServedKinds`, matching `Caps().MCPClient`;
       the CP follows through the snapshot
+- [ ] model menu: `ListModels` (`agents.ModelLister`) in `internal/agents/<kind>/capabilities.go`,
+      which `GET /agents/{kind}/models` serves (`TestEveryAgentKindListsModels`)
 - [ ] the Console's fallbacks, used until `GET /api/agents/kinds` answers:
       `FALLBACK_KIND_FACTS` (`console/src/agents/kindCatalog.ts`) and, for an MCP client,
       `MCP_KINDS` (`console/src/features/settings/mcp/mcpWire.ts`). `kindCatalog.test.ts`

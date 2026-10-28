@@ -8,13 +8,6 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -111,91 +104,6 @@ func lcppModels(ctx context.Context) []agents.ModelChoice {
 	return nil
 }
 
-// kindModelList is one kind's launch-time model menu before the handler narrows it: list, what
-// the CLI enumerated before the kind's own shaping (-1 when it does none), the unshaped opencode
-// ids and the billing route the menu was shaped by.
-type kindModelList struct {
-	list        []agents.ModelChoice
-	enumerated  int
-	opencodeIDs []string
-	route       string
-}
-
-// kindModels is the per-kind source of handleAgentModels' menu; ok=false for a kind with no
-// model catalog.
-func kindModels(ctx context.Context, kind string, claudeCustom []string, catalogPref string) (kindModelList, bool) {
-	var list []agents.ModelChoice
-	// route is the opencode billing route the list was actually shaped by — the selected one
-	// unless Catalog's empty-menu rescue had to ignore it. Empty for every other kind.
-	route := ""
-	// enumerated is what the CLI/daemon answered before opencode's billing-route shaping,
-	// so "the route hid everything" can be told from "there was nothing to hide". -1 for
-	// every other kind, which does no shaping of its own.
-	enumerated := -1
-	var opencodeIDs []string
-	switch kind {
-	case "claude":
-		list = claude.Models()
-		seen := make(map[string]bool, len(list))
-		for _, model := range list {
-			seen[strings.ToLower(model.ID)] = true
-		}
-		for _, id := range claudeCustom {
-			if key := strings.ToLower(id); !seen[key] {
-				list = append(list, agents.ModelChoice{ID: id, Label: id, Efforts: claude.EffortsFor(id)})
-				seen[key] = true
-			}
-		}
-	case "codex":
-		list = codex.Models()
-	case "cursor":
-		// Line-parsed from `cursor-agent models` (id - display name, tied to the
-		// account — docs/log/40).
-		list = cursor.Models()
-	case "kiro":
-		// `kiro-cli chat --list-models -f json` (fully machine-readable, tied to the
-		// account — docs/log/43).
-		list = kiro.Models()
-	case "opencode":
-		// Shaping of the list only (catalog.go): one key can open both the Zen
-		// (pay-as-you-go) and Go (subscription) providers, so the same model name
-		// appears under both. Whether Zen is shown follows the user setting (ui-prefs
-		// opencodeCatalog), and the order is normalized to Go first then id ascending
-		// (the upstream order differs between the daemon and the CLI path). An
-		// explicit model is never swallowed here: handleCreateSession validates it
-		// against the full, unshaped catalog.
-		//
-		// The shaping is reported alongside the list: when the selected route yields
-		// nothing the rescue quietly re-shapes with Zen, and the Console has to be able to
-		// say so rather than keep claiming the route the user chose (docs/log/103).
-		opencodeIDs = opencode.Models()
-		enumerated = len(opencodeIDs)
-		list, route = opencode.CatalogWithRoute(opencodeIDs, catalogPref)
-	case "agy":
-		list = agy.Models()
-	case "copilot":
-		// PTY scrape of the TUI /model picker (live, so it reflects the plan —
-		// docs/log/36 addendum; Free offers only Auto, i.e. an empty list).
-		// Unspecified means auto routing.
-		list = copilot.Models()
-	case "muse":
-		// `model/list` over the session protocol (ADR 0095 decision 10): muse has no `models`
-		// subcommand, so the catalog is a wire query against a host. Empty until the binary is
-		// installed AND a credential is stored — the catalog is the authenticated account's.
-		list = muse.Models()
-	case "lcpp":
-		// The engine catalog IS the model list (ADR 0093 decision 7): there is no vendor
-		// CLI account to ask, so this reads the same chat-role catalog row driver.go's
-		// runTurn resolves an engine token against (its fixed engineKey="llm"). Empty when
-		// the deployment has no engines, or none of them are chat-capable — same "nothing
-		// to offer" shape as every other kind.
-		list = lcppModels(ctx)
-	default:
-		return kindModelList{}, false
-	}
-	return kindModelList{list: list, enumerated: enumerated, opencodeIDs: opencodeIDs, route: route}, true
-}
-
 func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	// The Console asks with its CURRENT settings (?hidden=… and, for opencode, ?catalog=…),
 	// which its debounced save may not have delivered here yet; the answer is computed for them,
@@ -216,12 +124,19 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Has("catalog") {
 		catalogPref = opencode.CatalogPref(r.URL.Query().Get("catalog"))
 	}
-	km, ok := kindModels(r.Context(), r.PathValue("kind"), claudeCustom, catalogPref)
+	// The kind's own menu (agents.ModelLister), by exact registry key: a kind without the
+	// capability, or a spelling that is no kind, has no catalog.
+	a, _ := sessionx.RegisteredAgent(r.PathValue("kind"))
+	lister, ok := a.(agents.ModelLister)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "unknown_kind", "no model catalog for this kind")
 		return
 	}
-	list, enumerated, opencodeIDs, route := km.list, km.enumerated, km.opencodeIDs, km.route
+	ml := lister.ListModels(agents.ModelQuery{Ctx: r.Context(), CustomModels: claudeCustom, CatalogPref: catalogPref})
+	// enumerated is what the CLI/daemon answered before the kind's own shaping (opencode's
+	// billing route), -1 for a kind that does none; route is the route the menu was actually
+	// shaped by, "" for every other kind.
+	list, enumerated, route := ml.Models, ml.Enumerated, ml.Route
 	// How many the kind itself offered, before this handler narrows it. An empty menu has
 	// several causes that look identical on screen, and the Console has never been able to
 	// tell them apart ("only the default model is available — check the connection and the
@@ -229,13 +144,13 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	// enough to name which one emptied it; see `reason` below.
 	offered := len(list)
 	// What the live catalog listed, for telling a recommendation it supplied from one that is a
-	// built-in fallback (recommendedFromFallback below). opencode's unshaped ids count too: the
-	// billing route narrows the menu, not what the account can run.
-	listed := make(map[string]bool, len(list)+len(opencodeIDs))
+	// built-in fallback (recommendedFromFallback below). Ids the kind's shaping left out count
+	// too (ml.Listed): opencode's billing route narrows the menu, not what the account can run.
+	listed := make(map[string]bool, len(list)+len(ml.Listed))
 	for _, m := range list {
 		listed[m.ID] = true
 	}
-	for _, id := range opencodeIDs {
+	for _, id := range ml.Listed {
 		listed[id] = true
 	}
 	// Drop the models the user hides (ui-prefs hiddenModels) last. This is where the
