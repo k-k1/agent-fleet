@@ -70,86 +70,127 @@ func PaneMode(kind, tn string) string {
 	}
 	switch kind {
 	case session.KindClaude:
-		return claudeModeLabel(paneTail(s, 3))
+		return claudePaneMode(s)
 	case session.KindOpencode:
-		// The composer status line ("<Agent> auto · …") sits a few lines above the very
-		// bottom (above the border + token/commands footer). The agent name IS the mode.
-		if m := opencodeStatusAgentRe.FindStringSubmatch(paneTail(s, 8)); m != nil {
-			return titleFirst(m[1]) // "Plan" / "Build" / …
-		}
+		return opencodePaneMode(s)
 	case session.KindAgy:
-		// agy's composer footer (v1.1.4, measured): left "? for shortcuts" (idle) or
-		// "esc to cancel" (generating), right "<model>" — "plan · <model>" in plan
-		// mode. The footer only exists once the composer is drawn (the "Signing
-		// in..." boot screen has none, and text typed into it is eaten), so this
-		// doubles as the launch-seed readiness signal, like the other kinds.
-		for _, line := range strings.Split(paneTail(s, 3), "\n") {
-			if strings.Contains(line, "? for shortcuts") || strings.Contains(line, "esc to cancel") {
-				if strings.Contains(line, "plan · ") {
-					return "Plan"
-				}
-				return "Default"
-			}
-		}
+		return agyPaneMode(s)
 	case session.KindCopilot:
-		// copilot's composer footer (v1.0.73, measured): idle "/ commands · ? help · tab
-		// next tab", draft "@ files · # issues", working "◎ Working esc interrupt" —
-		// right edge shows the model ("Auto → gpt-5-mini"). The footer exists only
-		// once the composer is drawn (the trust dialog / boot screen has none), so
-		// this doubles as the launch-seed readiness signal. Mode has no footer
-		// marker; plan mode is fixed at launch (--mode plan), so meta is the truth —
-		// here we only distinguish drawn/not-drawn and report the non-plan label.
-		for _, line := range strings.Split(paneTail(s, 3), "\n") {
-			if strings.Contains(line, "/ commands") || strings.Contains(line, "@ files") ||
-				strings.Contains(line, "Working") {
-				return "Default"
-			}
-		}
+		return copilotPaneMode(s)
 	case session.KindCursor:
-		// cursor's composer footer (v2026.07.20, measured): idle placeholder "→ Add a
-		// follow-up" / "→ Plan, search, build anything", with the model name ("Auto")
-		// and the cwd below it; working is "Running … ctrl+c to stop". The footer only
-		// exists once the composer is drawn (--trust suppresses the trust dialog, but
-		// there is still nothing right after boot), so this doubles as the launch-seed
-		// readiness signal. Plan mode is fixed at launch (--plan), so meta is the truth —
-		// here we only distinguish drawn/not-drawn and report the non-plan label.
-		for _, line := range strings.Split(paneTail(s, 4), "\n") {
-			if strings.Contains(line, "Add a follow-up") ||
-				strings.Contains(line, "Plan, search, build anything") ||
-				strings.Contains(line, "ctrl+c to stop") || strings.Contains(line, "Running") {
-				return "Default"
-			}
-		}
+		return cursorPaneMode(s)
 	case session.KindKiro:
-		// kiro's composer footer (2.14.1, measured): idle placeholder "ask a question or
-		// describe a task ↵", with model/context on the line above it ("kiro_default ·
-		// auto · ◔ n%   <cwd>"); working is "Kiro is working · Type to steer · Ctrl+S to
-		// queue". The footer only exists once the composer is drawn (a pinned
-		// chat.disableTrustAllConfirmation suppresses the dangerous-mode confirmation
-		// dialog, but there is still nothing right after boot), so this doubles as the
-		// launch-seed readiness signal. Plan mode is fixed at launch (by omitting
-		// --trust-all-tools), so meta is the truth — here we only distinguish
-		// drawn/not-drawn and report the non-plan label.
-		for _, line := range strings.Split(paneTail(s, 4), "\n") {
-			if strings.Contains(line, "ask a question or describe a task") ||
-				strings.Contains(line, "Kiro is working") || strings.Contains(line, "requires approval") {
-				return "Default"
-			}
-		}
+		return kiroPaneMode(s)
 	case session.KindCodex:
-		// codex's composer footer is "<model> <effort> · <cwd>". Through 0.144 it
-		// appended "Plan mode [(shift+tab to cycle)]" in plan mode; 0.145 removed that
-		// textual marker. Keep accepting it for pinned/older versions, while the bare
-		// footer remains the composer-readiness signal and mirror-driven mode is persisted
-		// in meta (rememberCodexTUIMode). Never inspect history text here: a stale
-		// "… for Plan mode." line would spoof the current state.
-		for _, line := range strings.Split(paneTail(s, 3), "\n") {
-			if codexFooterEffortRe.MatchString(line) {
-				if strings.Contains(line, "Plan mode") {
-					return "Plan"
-				}
-				return "Default"
+		return codexPaneMode(s)
+	}
+	return ""
+}
+
+// claudePaneMode is PaneMode for claude: s is the whole captured pane.
+func claudePaneMode(s string) string {
+	return claudeModeLabel(paneTail(s, 3))
+}
+
+// opencodePaneMode is PaneMode for opencode: s is the whole captured pane.
+func opencodePaneMode(s string) string {
+	// The composer status line ("<Agent> auto · …") sits a few lines above the very
+	// bottom (above the border + token/commands footer). The agent name IS the mode.
+	if m := opencodeStatusAgentRe.FindStringSubmatch(paneTail(s, 8)); m != nil {
+		return titleFirst(m[1]) // "Plan" / "Build" / …
+	}
+	return ""
+}
+
+// agyPaneMode is PaneMode for agy: s is the whole captured pane.
+func agyPaneMode(s string) string {
+	// agy's composer footer (v1.1.4, measured): left "? for shortcuts" (idle) or
+	// "esc to cancel" (generating), right "<model>" — "plan · <model>" in plan
+	// mode. The footer only exists once the composer is drawn (the "Signing
+	// in..." boot screen has none, and text typed into it is eaten), so this
+	// doubles as the launch-seed readiness signal, like the other kinds.
+	for _, line := range strings.Split(paneTail(s, 3), "\n") {
+		if strings.Contains(line, "? for shortcuts") || strings.Contains(line, "esc to cancel") {
+			if strings.Contains(line, "plan · ") {
+				return "Plan"
 			}
+			return "Default"
+		}
+	}
+	return ""
+}
+
+// copilotPaneMode is PaneMode for copilot: s is the whole captured pane.
+func copilotPaneMode(s string) string {
+	// copilot's composer footer (v1.0.73, measured): idle "/ commands · ? help · tab
+	// next tab", draft "@ files · # issues", working "◎ Working esc interrupt" —
+	// right edge shows the model ("Auto → gpt-5-mini"). The footer exists only
+	// once the composer is drawn (the trust dialog / boot screen has none), so
+	// this doubles as the launch-seed readiness signal. Mode has no footer
+	// marker; plan mode is fixed at launch (--mode plan), so meta is the truth —
+	// here we only distinguish drawn/not-drawn and report the non-plan label.
+	for _, line := range strings.Split(paneTail(s, 3), "\n") {
+		if strings.Contains(line, "/ commands") || strings.Contains(line, "@ files") ||
+			strings.Contains(line, "Working") {
+			return "Default"
+		}
+	}
+	return ""
+}
+
+// cursorPaneMode is PaneMode for cursor: s is the whole captured pane.
+func cursorPaneMode(s string) string {
+	// cursor's composer footer (v2026.07.20, measured): idle placeholder "→ Add a
+	// follow-up" / "→ Plan, search, build anything", with the model name ("Auto")
+	// and the cwd below it; working is "Running … ctrl+c to stop". The footer only
+	// exists once the composer is drawn (--trust suppresses the trust dialog, but
+	// there is still nothing right after boot), so this doubles as the launch-seed
+	// readiness signal. Plan mode is fixed at launch (--plan), so meta is the truth —
+	// here we only distinguish drawn/not-drawn and report the non-plan label.
+	for _, line := range strings.Split(paneTail(s, 4), "\n") {
+		if strings.Contains(line, "Add a follow-up") ||
+			strings.Contains(line, "Plan, search, build anything") ||
+			strings.Contains(line, "ctrl+c to stop") || strings.Contains(line, "Running") {
+			return "Default"
+		}
+	}
+	return ""
+}
+
+// kiroPaneMode is PaneMode for kiro: s is the whole captured pane.
+func kiroPaneMode(s string) string {
+	// kiro's composer footer (2.14.1, measured): idle placeholder "ask a question or
+	// describe a task ↵", with model/context on the line above it ("kiro_default ·
+	// auto · ◔ n%   <cwd>"); working is "Kiro is working · Type to steer · Ctrl+S to
+	// queue". The footer only exists once the composer is drawn (a pinned
+	// chat.disableTrustAllConfirmation suppresses the dangerous-mode confirmation
+	// dialog, but there is still nothing right after boot), so this doubles as the
+	// launch-seed readiness signal. Plan mode is fixed at launch (by omitting
+	// --trust-all-tools), so meta is the truth — here we only distinguish
+	// drawn/not-drawn and report the non-plan label.
+	for _, line := range strings.Split(paneTail(s, 4), "\n") {
+		if strings.Contains(line, "ask a question or describe a task") ||
+			strings.Contains(line, "Kiro is working") || strings.Contains(line, "requires approval") {
+			return "Default"
+		}
+	}
+	return ""
+}
+
+// codexPaneMode is PaneMode for codex: s is the whole captured pane.
+func codexPaneMode(s string) string {
+	// codex's composer footer is "<model> <effort> · <cwd>". Through 0.144 it
+	// appended "Plan mode [(shift+tab to cycle)]" in plan mode; 0.145 removed that
+	// textual marker. Keep accepting it for pinned/older versions, while the bare
+	// footer remains the composer-readiness signal and mirror-driven mode is persisted
+	// in meta (rememberCodexTUIMode). Never inspect history text here: a stale
+	// "… for Plan mode." line would spoof the current state.
+	for _, line := range strings.Split(paneTail(s, 3), "\n") {
+		if codexFooterEffortRe.MatchString(line) {
+			if strings.Contains(line, "Plan mode") {
+				return "Plan"
+			}
+			return "Default"
 		}
 	}
 	return ""
