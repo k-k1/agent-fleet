@@ -1,6 +1,6 @@
 // Engine indicator — wire types and pure read/derive helpers (ADR 0084 decisions 1/3/4/5/6/11).
 //
-// The member row is the admin row (`engine_admin.go` row()) with everything a member cannot
+// The member row is the admin row (`engine_admin_row.go` row()) with everything a member cannot
 // act on cut away, the same way `engineTenantAdminRow` cuts a tenant_admin row down
 // (decision 3). Every field here is OMITTED — never null/0/false — when the CP has no honest
 // answer for it, so nothing on this side may invent a fallback (decision 4): an absent

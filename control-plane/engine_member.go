@@ -90,7 +90,7 @@ func (e *engineRuntimeState) memberSourceRow(ctx context.Context) (map[string]an
 	// Gated on warm here rather than trusting servedModel's own gate, because that one only
 	// knows about a controller: an external or borrowed row has none, so its last served model
 	// would otherwise outlive the box that held it and read as "cheap" about an engine that is
-	// down. Same omission, same reason as the admin row (engine_admin.go).
+	// down. Same omission, same reason as the admin row (engine_admin_row.go).
 	if warm {
 		if served, _ := e.servedModel(); served != "" {
 			row["warm_model"] = served
@@ -101,7 +101,7 @@ func (e *engineRuntimeState) memberSourceRow(ctx context.Context) (map[string]an
 	}
 	if e.def.notManagedHere() {
 		// Decision 4: a row this deployment does not manage carries no state, no idle window and
-		// no stop time — the same omission engine_admin.go's row() makes and for the same reason,
+		// no stop time — the same omission engine_admin_row.go's row() makes and for the same reason,
 		// nothing here started it, so nothing here may say when it will stop.
 		row["lifecycle"] = e.def.lifecycle()
 		return row, true
@@ -128,7 +128,7 @@ func (e *engineRuntimeState) memberSourceRow(ctx context.Context) (map[string]an
 //	queue: { count: number, counted_secs?: number }
 //
 // counted_secs rides ONLY while this process cannot yet vouch for the whole count — the same
-// honesty engine_admin.go's window_counted_secs carries for the demand window, so a CP
+// honesty engine_admin_row.go's window_counted_secs carries for the demand window, so a CP
 // mid-rolling-deployment does not draw a confident 0 while the OTHER process still holds half
 // the traffic. It disappears once that grace period has passed rather than settling on a large
 // steady number: a field that counted up forever would be exactly the self-ticking value
@@ -256,7 +256,7 @@ const engineInFlightGrace = 60 * time.Second
 // counted in the gateway's own memory (⚠️ decision 6): a CP replaced mid-rolling-deployment
 // starts this back at 0, which under-counts for as long as the old process still holds the other
 // half of the traffic. countedSecs is how a reader tells that window apart from "nobody is
-// waiting" — the same honesty engine_admin.go's window_counted_secs already carries for the
+// waiting" — the same honesty engine_admin_row.go's window_counted_secs already carries for the
 // demand window, but shaped to disappear (see engineInFlightGrace) rather than tick forever.
 type engineInFlight struct {
 	n     int64

@@ -42,6 +42,10 @@ egress_proxy.go
 egress_purge.go
 engine_access.go
 engine_admin.go
+engine_admin_ingest.go
+engine_admin_models.go
+engine_admin_routes.go
+engine_admin_row.go
 engine_catalog.go
 engine_civitai_red.go
 engine_civitai_token.go
