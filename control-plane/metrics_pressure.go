@@ -32,6 +32,7 @@ const (
 var pressureFetchTimeout = 2 * time.Second
 
 type pressureEntry struct {
+	gen      uint64       // identifies this entry; a response for another generation is discarded
 	mp       *memPressure // nil = unmeasured; never a zero-valued stand-in
 	okAt     time.Time    // when mp was fetched
 	tryAt    time.Time    // when the last fetch was started
@@ -39,21 +40,33 @@ type pressureEntry struct {
 	inflight bool
 }
 
+// pressureSweepEvery / pressureIdleAfter bound the map: entries of workspaces nobody has polled
+// for pressureIdleAfter (deleted or replaced members) are collected, never one with a fetch in flight.
+const (
+	pressureSweepEvery = time.Minute
+	pressureIdleAfter  = 10 * time.Minute
+)
+
 type pressureCache struct {
-	mu sync.Mutex
-	m  map[string]*pressureEntry
+	mu      sync.Mutex
+	m       map[string]*pressureEntry
+	nextGen uint64
+	sweptAt time.Time
 }
 
 var memPressures = &pressureCache{m: map[string]*pressureEntry{}}
 
 // lookup returns the sample to show and whether the caller must start a fetch (and has then
-// claimed the single in-flight slot). The returned pointer is shared and must not be mutated.
-func (c *pressureCache) lookup(key string, now time.Time) (mp *memPressure, fetch bool) {
+// claimed the single in-flight slot, identified by gen). The returned pointer is shared and
+// must not be mutated.
+func (c *pressureCache) lookup(key string, now time.Time) (mp *memPressure, gen uint64, fetch bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.sweepLocked(now)
 	e := c.m[key]
 	if e == nil {
-		e = &pressureEntry{}
+		c.nextGen++
+		e = &pressureEntry{gen: c.nextGen}
 		c.m[key] = e
 	}
 	if e.mp != nil && now.Sub(e.okAt) < pressureMaxAge {
@@ -68,20 +81,47 @@ func (c *pressureCache) lookup(key string, now time.Time) (mp *memPressure, fetc
 		e.tryAt = now
 		fetch = true
 	}
-	return mp, fetch
+	return mp, e.gen, fetch
 }
 
-func (c *pressureCache) finish(key string, mp *memPressure, now time.Time) {
+func (c *pressureCache) sweepLocked(now time.Time) {
+	if now.Sub(c.sweptAt) < pressureSweepEvery {
+		return
+	}
+	c.sweptAt = now
+	for k, e := range c.m {
+		last := e.tryAt
+		if e.okAt.After(last) {
+			last = e.okAt
+		}
+		if !e.inflight && now.Sub(last) > pressureIdleAfter {
+			delete(c.m, k)
+		}
+	}
+}
+
+// invalidate forgets a workspace's sample (it stopped, so the next run is a different machine)
+// and orphans any fetch in flight: finish rejects a response whose generation is gone.
+func (c *pressureCache) invalidate(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.m, key)
+}
+
+// finish records a fetch result. A failure drops the sample at once: a value kept through an
+// outage would read as a calm machine.
+func (c *pressureCache) finish(key string, gen uint64, mp *memPressure, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e := c.m[key]
-	if e == nil {
+	if e == nil || e.gen != gen {
 		return
 	}
 	e.inflight = false
 	e.failed = mp == nil
-	if mp != nil {
-		e.mp, e.okAt = mp, now
+	e.mp, e.okAt = mp, now
+	if mp == nil {
+		e.okAt = time.Time{}
 	}
 }
 
@@ -89,7 +129,7 @@ func (c *pressureCache) finish(key string, mp *memPressure, now time.Time) {
 // the background. nil means absent from the payload.
 func agentMemPressure(ctx context.Context, m *manager, rt runtime.Runtime) *memPressure {
 	key := rt.Name()
-	mp, fetch := memPressures.lookup(key, time.Now())
+	mp, gen, fetch := memPressures.lookup(key, time.Now())
 	if fetch {
 		// Detached from the tick's context: the tick returns before the fetch does.
 		bg := context.WithoutCancel(ctx)
@@ -100,7 +140,7 @@ func agentMemPressure(ctx context.Context, m *manager, rt runtime.Runtime) *memP
 			if s, err := m.agentStats(fctx, rt); err == nil {
 				got, _ = s["mem_pressure"].(*memPressure)
 			}
-			memPressures.finish(key, got, time.Now())
+			memPressures.finish(key, gen, got, time.Now())
 		}()
 	}
 	return mp

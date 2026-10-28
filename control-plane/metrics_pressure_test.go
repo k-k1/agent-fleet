@@ -150,3 +150,67 @@ func TestLocalStatsPressureDoesNotBreakPushSuppression(t *testing.T) {
 		t.Errorf("jitter changed the pushed payload:\n%s\n%s", first, second)
 	}
 }
+
+// A sample must not outlive the Agent's answers: success followed by a failure shows nothing.
+func TestLocalStatsPressureVanishesOnTheFirstFailureAfterASuccess(t *testing.T) {
+	localDockerStats(t)
+	var fail atomic.Bool
+	m, rt := pressureRT(t, func(w http.ResponseWriter, r *http.Request) {
+		if fail.Load() {
+			w.WriteHeader(500)
+			return
+		}
+		_, _ = w.Write([]byte(agentPressureBody))
+	})
+	waitPressure(t, m, rt, true)
+	fail.Store(true)
+	memPressures.mu.Lock()
+	memPressures.m[rt.Name()].tryAt = time.Now().Add(-time.Hour) // due for a refetch
+	memPressures.mu.Unlock()
+	waitPressure(t, m, rt, false)
+}
+
+// A stopped workspace forgets its sample, and a response that was in flight from the previous
+// run is rejected instead of landing on the new one.
+func TestLocalStatsPressureIsInvalidatedByStopAndRejectsOrphanedResponses(t *testing.T) {
+	c := &pressureCache{m: map[string]*pressureEntry{}}
+	now := time.Now()
+	_, oldGen, fetch := c.lookup("w", now)
+	if !fetch {
+		t.Fatal("first lookup must claim a fetch")
+	}
+	c.invalidate("w")
+	_, newGen, _ := c.lookup("w", now)
+	if newGen == oldGen {
+		t.Fatal("a recreated entry reused the generation")
+	}
+	c.finish("w", oldGen, &memPressure{Available: true}, now)
+	if mp, _, _ := c.lookup("w", now); mp != nil {
+		t.Error("a response from the previous run was accepted")
+	}
+	c.finish("w", newGen, &memPressure{Available: true}, now)
+	if mp, _, _ := c.lookup("w", now); mp == nil {
+		t.Error("the current run's response was rejected")
+	}
+	c.invalidate("w")
+	if mp, _, _ := c.lookup("w", now); mp != nil {
+		t.Error("sample survived invalidate")
+	}
+}
+
+func TestPressureCacheCollectsIdleEntriesButNotInflightOnes(t *testing.T) {
+	c := &pressureCache{m: map[string]*pressureEntry{}}
+	t0 := time.Now()
+	c.lookup("idle", t0)
+	_, g, _ := c.lookup("busy", t0) // claims a fetch, stays in flight
+	c.finish("idle", c.m["idle"].gen, &memPressure{Available: true}, t0)
+	later := t0.Add(pressureIdleAfter + 2*pressureSweepEvery)
+	c.lookup("other", later)
+	if _, ok := c.m["idle"]; ok {
+		t.Error("idle entry was not collected")
+	}
+	if _, ok := c.m["busy"]; !ok {
+		t.Error("an entry with a fetch in flight was collected")
+	}
+	c.finish("busy", g, nil, later) // must not panic or resurrect anything
+}

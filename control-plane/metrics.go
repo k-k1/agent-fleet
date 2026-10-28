@@ -368,6 +368,7 @@ func workspaceStats(ctx context.Context, m *manager, rt runtime.Runtime, state f
 		return out
 	}
 	if out["running"] != true {
+		memPressures.invalidate(rt.Name())
 		return out
 	}
 	s, err := m.agentStats(ctx, rt)
