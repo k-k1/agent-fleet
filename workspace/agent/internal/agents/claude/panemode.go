@@ -1,8 +1,16 @@
 package claude
 
-// claudePaneMode is PaneMode for claude: s is the whole captured pane.
-func claudePaneMode(s string) string {
-	return claudeModeLabel(paneTail(s, 3))
+import (
+	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
+)
+
+// PaneMode is the claude composer's mode label read off a captured pane, "" while the composer
+// is not drawn (see sessionx.PaneMode).
+func PaneMode(s string) string {
+	return claudeModeLabel(agents.PaneTail(s, 3))
 }
 
 // claudeModeLabel maps claude's status-line mode strip to the chip label.

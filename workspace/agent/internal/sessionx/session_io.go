@@ -34,9 +34,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-
-
-
 // PaneMode reads the session's CURRENT permission/collaboration mode straight from the
 // terminal (what the TUI displays), so it reflects toggles made in the terminal too — not
 // just via the chat. Returns the DISPLAY label the Console shows in the composer's mode
@@ -51,28 +48,22 @@ func PaneMode(kind, tn string) string {
 	}
 	switch kind {
 	case session.KindClaude:
-		return claudePaneMode(s)
+		return claude.PaneMode(s)
 	case session.KindOpencode:
-		return opencodePaneMode(s)
+		return opencode.PaneMode(s)
 	case session.KindAgy:
-		return agyPaneMode(s)
+		return agy.PaneMode(s)
 	case session.KindCopilot:
-		return copilotPaneMode(s)
+		return copilot.PaneMode(s)
 	case session.KindCursor:
-		return cursorPaneMode(s)
+		return cursor.PaneMode(s)
 	case session.KindKiro:
-		return kiroPaneMode(s)
+		return kiro.PaneMode(s)
 	case session.KindCodex:
-		return codexPaneMode(s)
+		return codex.PaneMode(s)
 	}
 	return ""
 }
-
-
-
-
-
-
 
 // Programmatic session I/O for the MCP drive tools (docs/decisions/0006, P3-6 E).
 // A user's own Claude (via the CP /mcp endpoint) drives the claude sessions in
