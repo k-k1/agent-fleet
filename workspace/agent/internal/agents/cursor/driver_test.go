@@ -258,6 +258,22 @@ func TestManagedTranscriptFromUpdates(t *testing.T) {
 	if !sawThought || !sawTool {
 		t.Fatalf("thought/tool part missing: %+v", a.Parts)
 	}
+
+	// The turn's end closes its assistant turn (runTurn's FlushAsst): an update for one of its
+	// tool calls that arrives after the session/prompt answer must not rewrite the finished turn.
+	f.update(map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "tc1", "status": "completed", "rawOutput": map[string]any{"exitCode": 0, "stdout": "late\n"}})
+	if _, err := h.ClientForTest().Call("test/sync", map[string]any{}, hangGuard); err != nil {
+		t.Fatalf("syncing with the fake: %v", err)
+	}
+	after := managedTranscript(session.Meta{Name: "s1"})
+	if len(after.Turns) != 2 {
+		t.Fatalf("a late tool update changed the turn count: %+v", after.Turns)
+	}
+	for _, p := range after.Turns[1].Parts {
+		if p.Kind == "tool" && strings.Contains(p.Output, "late") {
+			t.Fatalf("a late tool update rewrote the finished turn: %+v", after.Turns[1].Parts)
+		}
+	}
 }
 
 func jsonContains(raw json.RawMessage, s string) bool {
