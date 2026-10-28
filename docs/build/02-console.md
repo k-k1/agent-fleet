@@ -364,10 +364,17 @@ result).
   standing up jsdom costs about 1.3 s per test file; running everything under jsdom was
   measured at 10.8 s → 51.3 s. Workers are capped at two for the shared host's memory.
 - **Typecheck**: `npm run typecheck` (`scripts/typecheck.mjs`).
-- **Lint**: `npm run lint` is oxlint with one rule, `react/rules-of-hooks`
-  (`.oxlintrc.json`). A hook below an early return has taken the whole Console black.
+- **Lint**: `npm run lint` is oxlint (`.oxlintrc.json`) with two rules.
+  `react/rules-of-hooks`: a hook below an early return has taken the whole Console black.
+  `no-restricted-imports` on `src/lib/`: `lib/` is the lower layer and may not import
+  `features/`; the files that still do are listed as exceptions, and that list only shrinks
+  (ADR 0124).
+- **CSS duplicates**: `npm run css:dup` lists global class names defined in more than one
+  stylesheet. CI runs it with `--max-dups` / `--max-bare` ceilings at the current counts, so the
+  counts can fall but not grow. A fall never fails; the script then suggests lowering the
+  ceilings in `package.json` (`css:dup:ci`), which is optional and can wait for a clean-up PR.
 - **CI** (`.github/workflows/ci.yml`, job `console`) runs typecheck, lint, i18n lint,
-  vitest, two checks in real headless Chromium (`pdf:check`, `doc:check`) and the build.
+  the css-dup ceiling, vitest, two checks in real headless Chromium (`pdf:check`, `doc:check`) and the build.
 - The other scripts in `package.json` (screenshots, mirror and viewer scroll checks, the
   contrast check and more) drive a real headless browser too, but they are run by hand and
   are not in CI.

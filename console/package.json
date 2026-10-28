@@ -13,6 +13,7 @@
     "i18n:lint": "node scripts/i18n-lint.mjs",
     "models:lint": "node scripts/model-id-lint.mjs",
     "css:dup": "node scripts/css-dup.mjs",
+    "css:dup:ci": "node scripts/css-dup.mjs --max-dups=200 --max-bare=36",
     "lint": "oxlint -c .oxlintrc.json src",
     "shots": "node scripts/shots/capture.mjs",
     "panes:heads": "node scripts/pane-heads/check.mjs",

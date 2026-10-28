@@ -13,7 +13,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { errText } from "../../core/api/client.ts";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
-import { Field, Meta } from "../settings/mcpForm.tsx";
+import { Field, Meta } from "../settings/parts/mcpForm.tsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { openFileDiff } from "../scm/open.ts";
 import { applyProjectMcp, gateText, opErrorText, planProjectMcp, warningText } from "./projectMcpWire.ts";

@@ -262,3 +262,13 @@ for f in ('acp.go', 'driver.go'):
         print(f, a, b, f'{m / max(len(A), len(B)):.0%} of larger, {m / min(len(A), len(B)):.0%} of smaller')
 PY
 ```
+
+## Addendum (2026-10-28) — the css-dup ceiling counts what the script counts
+
+Context's "67 class names start rules in more than one file" is not a number `css-dup.mjs`
+prints, and it was not reproducible from it. The Phase 0 ceiling (#2855) therefore uses the
+script's own two counts on `main` at the time: 200 class names defined in two or more files, of
+which 36 are bare (`.name {}` alone) in two or more files. CI runs `npm run css:dup:ci`
+(`--max-dups=200 --max-bare=36`); either count growing fails. A count that falls does not: the
+script prints a hint and lowering the ceiling is a separate, optional edit, so a PR that clears a
+duplicate in passing never has to touch `package.json` (Decision 1).
