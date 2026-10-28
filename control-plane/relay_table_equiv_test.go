@@ -247,7 +247,7 @@ var frozenMemberOriginHashedRoutes = map[string]bool{
 // auditSweepWords are the path literals the frozen switch matched a suffix or a whole path on. A
 // wildcard filled with one of them is where reading the path and reading the pattern could part.
 var auditSweepWords = []string{
-	"x1", "a/b", "svn-update", "svn-cleanup", "svn-auth", "commit", "discard", "checkout", "fetch",
+	"x1", "svn-update", "svn-cleanup", "svn-auth", "commit", "discard", "checkout", "fetch",
 	"ff", "parent-ff", "fork", "move", "retry", "cancel", "reopen", "deliver", "preview", "stop",
 	"start", "logout", "code", "profiles", "sessions", "repos", "export",
 }
@@ -270,7 +270,7 @@ func goldenPattern(line string) string {
 	return line
 }
 
-// sweepPaths fills pattern's wildcards with x1 (a{...} wildcard with a/b), then once more per
+// sweepPaths fills pattern's wildcards with x1 (a {...} wildcard with a/b), then once more per
 // wildcard with each sweep word.
 func sweepPaths(pattern string) []string {
 	_, path, _ := strings.Cut(pattern, " ")
@@ -324,11 +324,16 @@ type classified struct {
 func TestRelayAuditMatchesFrozenSwitch(t *testing.T) {
 	type outcome struct{ got, want classified }
 	results := map[string]outcome{}
-	var key string
+	var key, sweeping string
 	mux := http.NewServeMux()
 	lines := readGoldenLines(t, routesGoldenPath)
 	for _, line := range lines {
 		mux.HandleFunc(goldenPattern(line), func(_ http.ResponseWriter, r *http.Request) {
+			// A filled path another pattern serves (the static catch-all, mostly) is not this
+			// route's request, and never reaches the relay through it.
+			if r.Pattern != sweeping {
+				return
+			}
 			for i, req := range []*http.Request{r, withoutPattern(r)} {
 				var o outcome
 				o.got.action, o.got.target, o.got.ok = auditActionTarget(req)
@@ -348,6 +353,7 @@ func TestRelayAuditMatchesFrozenSwitch(t *testing.T) {
 		case http.MethodGet:
 			methods = append(methods, http.MethodHead)
 		}
+		sweeping = goldenPattern(line)
 		for _, path := range sweepPaths(goldenPattern(line)) {
 			for _, m := range methods {
 				for _, q := range []string{"", "?" + auditSweepQuery} {
