@@ -9,6 +9,7 @@ English | [日本語](0087-efs-metadata-io.ja.md)
   deployed to the sandbox**. 🔴 **Production is not deployed yet** - "Measurement 1" and
   "Measurement 2" are **production running the unfixed code**, "Measurement 3" is **the sandbox
   running the fixed code**. Do not mix them up.
+- Follow-ups: #2850 (the 2026-10 production regression: the abort-resume watcher sweeps `projects/*` for every session meta without a transcript, archived ones included)
 - ⚠️ **Claims changed after the first draft**, overturned by measurement across two review
   passes. Each is marked in place ("the first draft said … and was wrong"). First pass: (1)
   `~/.config/agent-fleet` *does* contain the credential store; (2) a negative cache on the
