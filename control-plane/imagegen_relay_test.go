@@ -36,7 +36,7 @@ func TestImagegenRoutesRelayVerbatim(t *testing.T) {
 
 	env := newBrowserTestEnv(t, browserTestRuntime{endpoint: agent.URL, token: "agent-secret", state: "running"})
 	mux := http.NewServeMux()
-	registerImagegenRoutes(mux, config{mgr: env.mgr})
+	registerAgentRelays(mux, config{mgr: env.mgr})
 	cp := httptest.NewServer(mux)
 	t.Cleanup(cp.Close)
 

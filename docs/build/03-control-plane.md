@@ -36,8 +36,8 @@ security design is [07](07-security.md).
   behind the Runtime adapter (§3.3).
 - **Relaying to the agent** — five paths: REST, SSE, terminal WebSocket, browser
   REST + WebSocket, and preview ([05 §5.3](05-api.md)). **The REST relay is an
-  allowlist**: every relayed path is a route the CP registers (`routes.go` and the
-  `register*Routes` functions beside it), so an agent endpoint without a CP route is
+  allowlist**: every relayed path is a route the CP registers (a row in a relay table,
+  `relays_*.go`, or a wrapper in `routes.go`), so an agent endpoint without a CP route is
   unreachable from the browser. Preview also answers on per-workspace subdomains when
   `AF_PREVIEW_DOMAIN` is set ([decisions/0062](../decisions/0062-preview-subdomain.md)).
 - **The Console's push channel** — `GET /api/events` is the CP's own SSE stream. It

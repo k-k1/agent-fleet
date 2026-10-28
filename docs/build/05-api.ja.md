@@ -103,7 +103,8 @@ membership 検証（§5.4）。「中継」は CP が呼び出しをそのまま
   （[07 §7.5](07-security.ja.md)）。
 - **パス規約: CP は `/api` を剥がして残りをそのまま転送する**
   （`/api/sessions/x/halt` → `<agent>/sessions/x/halt`）。**CP のルート表は明示的な許可リスト**で、
-  `control-plane/routes.go` に行が無い Agent のルートには Console から届かない。`console/src` に
+  CP の中継表（`control-plane/relays_*.go`。包んで登録するものは `routes.go`）に行が無い Agent の
+  ルートには Console から届かない。`console/src` に
   書かれた `api/...` のパスを受けられる CP のルートが無ければ `TestConsoleAPIPathsHaveCPRoutes`
   （`control-plane/console_routes_test.go`）が落ちる。`${…}` の段はルートのパラメータに、
   パラメータが無い位置ではどのリテラルの段にも一致する。中継は `.`・`..`・途中の空セグメントを
@@ -198,7 +199,8 @@ membership を解決し直す。
 
 ## 5.5 監査の書き込み点
 
-REST 中継は**変更系**の操作を 2xx のときに記録する（`auditActionTarget`）。対象は URL のパスか
+REST 中継は**変更系**の操作を 2xx のときに記録する（中継表 `control-plane/relays_*.go` の行の `audit` を
+`auditActionTarget` が読む）。対象は URL のパスか
 クエリから取る。例外は `PUT /api/fs/file` で、CP が検証済みの JSON 本文の `path` を使う。
 ファイルの内容は監査に残さない:
 

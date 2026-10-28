@@ -3,7 +3,7 @@
 //
 // A relay is hand-mirrored from workspace/agent/routes.go, and nothing else notices when the
 // Agent renames or drops the route behind it, or when a new POST relay is registered without
-// an auditActionTarget case: both fail only in front of a member.
+// an audit on its relay row: both fail only in front of a member.
 //
 // Relays are found by behaviour, not by reading routes.go or handler names: every /api route
 // of the assembled mux is driven once against a recording fake Agent, and a route whose
@@ -39,9 +39,9 @@ import (
 
 const agentRoutesGoldenPath = "../workspace/agent/testdata/routes.golden"
 
-// minRelays is a floor under the number of relays the probe finds: the `, rest)` registrations
-// in routes.go alone were 334 when this was written. A probe that silently stops seeing relays
-// must not leave the two checks below passing over an empty list.
+// minRelays is a floor under the number of relays the probe finds: the relay table's 321 plain
+// rows (relays_*.go) and the 13 browser relays alone make 334. A probe that silently stops seeing
+// relays must not leave the checks below passing over an empty list.
 const minRelays = 334
 
 // routeGroup is a set of routes that share one reason.
@@ -369,6 +369,21 @@ func TestCPRelaysExistOnAgentAndMutationsAreAudited(t *testing.T) {
 		}
 	})
 
+	// The plain relays are registered from the table, so they have a row by construction; a
+	// wrapped row is a declaration only, and this is what keeps it from naming a route that does
+	// not relay (a typo, or a route that stopped relaying, keeps an audit rule nothing consults).
+	t.Run("every table row is a relay", func(t *testing.T) {
+		relayed := map[string]bool{}
+		for _, p := range relays {
+			relayed[p.route] = true
+		}
+		for route := range relayIndex {
+			if !relayed[route] {
+				t.Errorf("the relay table lists %s, which the probe did not see relayed", route)
+			}
+		}
+	})
+
 	t.Run("classified", func(t *testing.T) {
 		resolved := map[string]bool{}
 		for _, p := range probes {
@@ -422,7 +437,7 @@ func TestCPRelaysExistOnAgentAndMutationsAreAudited(t *testing.T) {
 			_, exempt := mutatingRelayAuditExempt[p.route]
 			switch {
 			case len(p.audits) == 0 && !exempt:
-				t.Errorf("%s is a mutating relay that writes no audit row: add an auditActionTarget case,"+
+				t.Errorf("%s is a mutating relay that writes no audit row: give its relays_*.go row an audit,"+
 					" or list it in mutatingRelayAuditExempt with the reason", p.route)
 			case len(p.audits) > 0 && exempt:
 				t.Errorf("%s is audited (%v) but listed in mutatingRelayAuditExempt: remove it", p.route, p.audits)

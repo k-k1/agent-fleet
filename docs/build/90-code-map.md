@@ -32,7 +32,9 @@ elsewhere in the module (for example `registerEngineRoutes` in the CP,
 `browserx.RegisterRoutes` in the agent). So grep the method and path across the whole
 module, `"GET /api/admin/engines"` say: the line that registers it names the handler,
 and the handler's name tells you the file or package (`sessionx.HandleCreateSession` is
-in `internal/sessionx`). `testdata/routes.golden` is the route table as
+in `internal/sessionx`). A CP route that only relays to the agent is a row in a
+`relays_*.go` table instead, served by `agentProxyAPI.rest` (`proxy.go`); the row also says
+whether it is audited and signed. `testdata/routes.golden` is the route table as
 `TestRouteTableGolden` builds it. In the CP it is taken with every env-conditional
 registration on (MCP, the native self-update, the engine gateway), so it lists every route
 a deployment can serve, including those only some deployments have. What each route is for
@@ -73,7 +75,7 @@ as its context (the root `.dockerignore`).
 | Internal git | `internal_git*.go`, `git_http.go`, `git_lfs*.go`, `git_gc.go` ([91](91-internal-git.md)) |
 | Egress | `egress*.go` ([03 §3.8](03-control-plane.md#38-the-cps-half-of-egress-control)) |
 | Endpoints the agent calls under `/internal/` | `*_bridge.go`, for example docs, memos, schedules and AWS profiles ([05 §5.2](05-api.md#52-the-internal-surface)) |
-| Audit, metrics, usage, cost | `audit.go` (the read side; the write side is `auditActionTarget` in `proxy.go`), `claude_audit.go`, `metrics.go`, `usage*.go`, `cloudcost.go`, `cost_*.go` |
+| Audit, metrics, usage, cost | `audit.go` (the read side; the write side is `auditActionTarget`, from each relay row's `audit` in `relays_*.go`), `claude_audit.go`, `metrics.go`, `usage*.go`, `cloudcost.go`, `cost_*.go` |
 | Memos, notifications, schedules | `memo*.go`, `notification.go`, `schedule*.go`, `scheduler*.go` ([03 §3.6](03-control-plane.md#36-the-memo-queue), [§3.7](03-control-plane.md#37-background-jobs)) |
 | MCP | `internal/mcpsrv` (the tool server at `/mcp` and the tenant's server distribution) and `mcp_wiring.go` ([03 §3.5](03-control-plane.md#35-the-mcp-server)) |
 | Self-hosted engines | `engines.go` and `engine_*.go`; the gateway a workspace calls is `engine_gateway.go` ([03 §3.9](03-control-plane.md#39-self-hosted-engines)) |

@@ -30,7 +30,8 @@ source_of_truth: "コード"
 （たとえば CP の `registerEngineRoutes`、agent の `browserx.RegisterRoutes`）。だからメソッドと
 パス（たとえば `"GET /api/admin/engines"`）をモジュール全体で grep する。登録している行がハンドラ名を
 示し、ハンドラ名がファイルかパッケージを教えてくれる（`sessionx.HandleCreateSession` なら
-`internal/sessionx`）。`testdata/routes.golden` は `TestRouteTableGolden` が組んだ
+`internal/sessionx`）。Agent へ中継するだけの CP のルートは `relays_*.go` の表の 1 行で、ハンドラは
+`agentProxyAPI.rest`（`proxy.go`）。監査と署名の有無もその行が持つ。`testdata/routes.golden` は `TestRouteTableGolden` が組んだ
 ルート表である。CP では環境変数で切り替わる登録（MCP・native の自己更新・エンジンゲートウェイ）を
 すべて有効にして採っているので、一部の配備にしか無いものも含めて、配備が提供しうる全ルートが載っている。各ルートの用途は [05](05-api.ja.md)。
 
@@ -65,7 +66,7 @@ source_of_truth: "コード"
 | 内部 git | `internal_git*.go`・`git_http.go`・`git_lfs*.go`・`git_gc.go`（[91](91-internal-git.ja.md)）|
 | egress | `egress*.go`（[03 §3.8](03-control-plane.ja.md#38-egress-統制の-cp-側)）|
 | agent が `/internal/` 配下で呼ぶ口 | `*_bridge.go`。たとえば docs・メモ・定時実行・AWS プロファイル（[05 §5.2](05-api.ja.md#52-内部面cp--agent)）|
-| 監査・メトリクス・使用量・費用 | `audit.go`（読む側。書く側は `proxy.go` の `auditActionTarget`）・`claude_audit.go`・`metrics.go`・`usage*.go`・`cloudcost.go`・`cost_*.go` |
+| 監査・メトリクス・使用量・費用 | `audit.go`（読む側。書く側は `auditActionTarget` で、分類は `relays_*.go` の各行の `audit`）・`claude_audit.go`・`metrics.go`・`usage*.go`・`cloudcost.go`・`cost_*.go` |
 | メモ・通知・定時実行 | `memo*.go`・`notification.go`・`schedule*.go`・`scheduler*.go`（[03 §3.6](03-control-plane.ja.md#36-memo-キュー)・[§3.7](03-control-plane.ja.md#37-バックグラウンドジョブ)）|
 | MCP | `internal/mcpsrv`（`/mcp` のツールサーバとテナントのサーバ配布）と `mcp_wiring.go`（[03 §3.5](03-control-plane.ja.md#35-mcp-サーバ)）|
 | 自前エンジン | `engines.go` と `engine_*.go`。Workspace が呼ぶゲートウェイは `engine_gateway.go`（[03 §3.9](03-control-plane.ja.md#39-自前エンジン)）|

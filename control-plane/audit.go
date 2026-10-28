@@ -27,8 +27,8 @@ func refuseIrreversible(w http.ResponseWriter, r *http.Request, in *store.AuditI
 	writeAPIErr(w, e)
 }
 
-// Audit log read side (docs/log/20 M1). The write side lives in proxy.go (auditActionTarget
-// + InsertAudit) and mcp.go/ssm.go. This exposes the ledger to operators; there is no
+// Audit log read side (docs/log/20 M1). The write side lives in proxy.go (InsertAudit, with the
+// relay rows' classification from auditActionTarget in relays.go) and mcp.go/ssm.go. This exposes the ledger to operators; there is no
 // read path anywhere else yet.
 
 // audit (GET /api/admin/audit?tenant=<slug>&limit=N) serves the most recent
