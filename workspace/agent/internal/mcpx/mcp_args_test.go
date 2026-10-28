@@ -173,7 +173,7 @@ func TestMCPArgsSchemaAndDecoderAgree(t *testing.T) {
 			}
 			for k := range keys {
 				declared[k] = true
-				if mcpOwnDecoderTools[name] {
+				if toolOwnsArgs(name) {
 					continue
 				}
 				if !tags[k] {

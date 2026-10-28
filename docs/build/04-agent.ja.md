@@ -198,7 +198,7 @@ managed driver は `managedDrivers`（`internal/sessionx/session_turn.go`）に�
   こちらは `managed` になる（`HandleCreateSession`）。
 - **利用者が見る「既定は Managed」は呼び出し側が決めている**。Console の起動 UI は、registry の項目が
   `managedDriver: true` の kind（`console/src/agents/registry.ts`）を managed で起動する。コンテナ内
-  MCP の `create_session` は codex・opencode・copilot・cursor・kiro に `managed` を送る（`mcpStdioCall`）。
+  MCP の `create_session` は codex・opencode・copilot・cursor・kiro に `managed` を送る（`mcp_fleet_spawn.go` の `create_session`）。
   CP 側の呼び出し元も同じで、CP の MCP の `create_session`（`control-plane/internal/mcpsrv/mcp.go`）と
   スケジューラの `injectDriver`（`control-plane/scheduler_wake.go`）がこれらに `managed` を送る。
   driver 無しの素の `POST /sessions` は `tui` になる。
@@ -396,8 +396,11 @@ tmux 3.5a で実測: 素の OSC も tmux のパススルー包み（`ESC P tmux;
   egress も要らず、身元は Workspace そのもの。
   - claude には `--mcp-config`、codex には `-c mcp_servers.af.*`、opencode には `OPENCODE_CONFIG`、
     agy にはサーバー一覧で渡す。cursor・lcpp・muse のチャットには付かない。
-  - **既定は読み取りだけ**（`mcpStdioTools`）。`--write` で書き込み系（`mcpStdioWriteTools`）が加わる。
+  - **既定は読み取りだけ**。`--write` で書き込み系が加わる。
     セッションの起動・操作・停止・削除、メモ、スケジュール、ブラウザ操作、掃除など。
+  - ツールは 1 つずつ、ファミリーのファイルに `toolSpec` として置く（`internal/mcpx/mcp_toolspec.go`）。
+    面ごとのスキーマ、呼び出し側のゲート、引数の読み方、ハンドラーをまとめて持ち、広告する一覧と
+    振り分けはそこから導く。
   - **ゲートは見えるツールの集合で、権限プロンプトではない。** CP の MCP エンドポイントとは、意図して
     実装もスコープも分けている。
 - **対話 CLI には、もっと狭い 2 本目のサーバーを置く**。`mcpreg` の組み込み `af` で、

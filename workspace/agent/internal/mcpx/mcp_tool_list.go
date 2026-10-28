@@ -10,13 +10,13 @@ import (
 
 // mcpStdioToolList is the advertised tool set. The assistant surface gets read-only
 // tools plus write tools under --write (docs/log/19 Q2); the session surface gets its
-// explicit narrow set (docs/log/51 + docs/log/53).
+// explicit narrow set (docs/log/51 + docs/log/53), family by family under each family's flag.
+// Every entry comes from a toolSpec (mcp_toolspec.go).
 func mcpStdioToolList() []map[string]any {
 	if selfReportOnly() {
-		tools := append([]map[string]any{}, mcpStdioSelfReportTools()...)
+		tools := mcpStdioSelfReportTools()
 		if sessionChromiumEnabled() && mcpBrowserUnavailable == "" {
-			tools = appendMatchingMCPTools(tools, mcpStdioTools, isChromiumReadTool)
-			tools = appendMatchingMCPTools(tools, mcpStdioWriteTools, isChromiumWriteTool)
+			tools = append(tools, sessionTools(chromiumTools())...)
 		}
 		if mcpPeerMessagingEnabled {
 			tools = append(tools, mcpStdioPeerTools()...)
@@ -40,10 +40,7 @@ func mcpStdioToolList() []map[string]any {
 		}
 		return tools
 	}
-	tools := mcpStdioTools
-	if writeEnabled() {
-		tools = append(append([]map[string]any{}, mcpStdioTools...), mcpStdioWriteTools...)
-	}
+	tools := operatorTools(writeEnabled())
 	if mcpBrowserUnavailable != "" {
 		return appendMatchingMCPTools(nil, tools, func(name string) bool {
 			return !isChromiumReadTool(name) && !isChromiumWriteTool(name)

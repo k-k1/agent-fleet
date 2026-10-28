@@ -113,10 +113,9 @@ func badRepoMsg(repo string) string {
 	return fmt.Sprintf("作業コピー %q は ~/repos 直下のフォルダ名として使えません", repo)
 }
 
-// mcpStdioBranchTools is part of every session's surface: it only reads the rules, and a
-// session that cannot ask is the one that falls back to a hard-coded style.
-func mcpStdioBranchTools() []map[string]any {
-	return []map[string]any{{
+// branchNameSchema is branch_name as every session is offered it.
+func branchNameSchema() map[string]any {
+	return map[string]any{
 		"name": "branch_name",
 		"description": "Agent Fleet: resolve the branch name and base your user's naming rules give, for a working copy. " +
 			"Call it before creating or renaming a branch instead of making a name up. " +
@@ -143,5 +142,21 @@ func mcpStdioBranchTools() []map[string]any {
 				"slug":    map[string]any{"type": "string", "description": "Short English slug (default: from the item's title)"},
 			},
 		},
+	}
+}
+
+// branchTools is part of every session's surface: it only reads the rules, and a session that
+// cannot ask is the one that falls back to a hard-coded style.
+func branchTools() []toolSpec {
+	return []toolSpec{{
+		name: mcpToolBranchName, session: branchNameSchema, ownArgs: true,
+		handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			return mcpBranchName(req.ID, p.Args)
+		},
 	}}
+}
+
+// mcpStdioBranchTools is the branch family's session list.
+func mcpStdioBranchTools() []map[string]any {
+	return sessionTools(branchTools())
 }

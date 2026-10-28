@@ -74,3 +74,12 @@ it is a query parameter of the Storage API, not a credential."""
 condition = "AND"
 paths = ['''control-plane/egress_archive_gcs_test\.go''']
 regexes = ['''ifGenerationMatch=0''']
+
+[[allowlists]]
+description = """The `"idempotency_key":"cs_<64 hex>"` values in the MCP tools/call golden: \
+CreateSessionKey's deterministic hash of the golden call's own fields, recorded so the golden \
+proves create_session's request body is unchanged. It is derived from the call, not a credential. \
+Only that key shape is excluded, not the file."""
+condition = "AND"
+paths = ['''workspace/agent/internal/mcpx/testdata/mcp_tools/calls\.txt''']
+regexes = ['''cs_[0-9a-f]{64}''']
