@@ -834,3 +834,23 @@ func TestBackgroundTerminalCompletionAndOverdueNoticeRender(t *testing.T) {
 		t.Errorf("overdueNotice = %+v", p[1])
 	}
 }
+
+// muse 1.4.14 serves the boundary checkpoint's transcript tail as one earlierHistory item in
+// place of the items it pruned; it has no label or fallbackText, so the count comes from the
+// typed member.
+func TestEarlierHistorySummaryCountsTheKeptMessages(t *testing.T) {
+	eh := item(msp.ItemKindEarlierHistory, "e-1", 1)
+	eh.Status = msp.ItemStatusCompleted
+	eh.EarlierHistory = &msp.EarlierHistory{Messages: []msp.EarlierHistoryMessage{
+		{Role: "user", Text: "hi"}, {Role: "assistant", Text: "hello"},
+	}}
+
+	turns := turnsFromItems([]msp.Item{eh})
+	if len(turns) != 1 || len(turns[0].Parts) != 1 {
+		t.Fatalf("item was dropped or split: %+v", turns)
+	}
+	p := turns[0].Parts[0]
+	if p.Tool != "earlierHistory" || p.Info != "earlier history: 2 messages kept from before the checkpoint" {
+		t.Errorf("earlierHistory = %+v", p)
+	}
+}

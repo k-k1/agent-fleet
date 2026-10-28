@@ -2905,3 +2905,19 @@ open enum `ItemKind` への値追加: `backgroundTerminalCompletion` と `overdu
 
 同じ代償: 1.4.12 のバンドルは `MUSE_VERSION` が動くまで 1.4.11 のバイナリに対して赤。
 実測: 1.4.12 緑・1.4.11 赤。ピンの更新は cli-pin-bump の仕事。
+
+### 注記 2026-10-28 — バンドルを 1.4.14-R7309.1 に更新（#2835）
+
+`internal/msp/schema` と `types_gen.go` は 1.4.14 の export（fingerprint `sha256:c94c3d1f…`、
+リリース manifest の `msp_schema_fingerprint` と一致）を持つ。契約は互換な追加の通知を 33 件
+出したが赤だった。破壊は 1 件だけで、通知に埋もれていた: クライアントが decode して分岐する
+open enum `ItemKind` への値 `earlierHistory` の追加。チェッカーは正しく、変更していない。
+
+- `earlierHistory` はチェックポイントの刈り込まれた前半に始まる item の代わりに、transcript の
+  末尾を型付きメンバーで運ぶ。汎用 item 経路で描画し、そのメンバーから 1 行の要約（件数）を作る。
+- その他の追加（`SessionStartParams.spawnedBy` / `previousSessionId`、
+  `SessionResumeParams.modelId`、`TurnError.requestDenied`、`ViewPageParams.maxBytes`、
+  runtime worktree 型、queued inputs、held item）は生成されるが未使用。
+
+同じ代償: 1.4.14 のバンドルは `MUSE_VERSION` が動くまで 1.4.13 のバイナリに対して赤。
+ピンの更新は cli-pin-bump の仕事で、この PR 自身のピン実行の `muse-contract.yml` も赤になる想定。
