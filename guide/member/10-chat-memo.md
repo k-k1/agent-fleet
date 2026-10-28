@@ -82,6 +82,9 @@ chat header (e.g. `Claude ▾`) and pick another one.
   they appear). You also can't switch while a reply is being generated; stop it first.
 - You can switch back. That agent resumes from where it last answered and only receives the
   part of the conversation it missed.
+- When the conversation's CLI hits a usage or rate limit, that one turn is answered by the next
+  usable CLI in the priority list and the chat shows a notice; the conversation's agent does not
+  change, and it goes back once the limit lifts (see chapter 20).
 
 The chat's **reply language** is set with "Reply language" on ⚙Settings → the
 "Assistant" tab. "Match input" replies in the language of the text you hand over, while

@@ -244,7 +244,7 @@ refused.
   secrets (**Turn on and import**). On the way out, **Turn off Agent Fleet memory?** says how many memories are
   written back, after a snapshot of Claude's memory and without overwriting anything (**Turn off and write back**).
   While the workspace is stopped there are no counts yet, and the import or write-back runs when it starts. **On**: Agent Fleet imports every Claude project it can match to a working copy under `~/repos`
-  in the background, and starts new Claude sessions with Claude Code's auto-memory switched off, so Claude
+  in the background, and starts new Claude sessions (and the assistant chat's claude) with Claude Code's auto-memory switched off, so Claude
   does not load its own `MEMORY.md` (about 25 KB at the start of every session) and uses the af tools like
   every other kind. The automatic import is stricter than **Import from Claude Code** (under Import & export): a Claude file
   newer than an Agent Fleet copy *you edited here* is reported as a conflict and left alone (the manual

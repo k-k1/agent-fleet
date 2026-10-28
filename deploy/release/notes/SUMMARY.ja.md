@@ -20,7 +20,7 @@
 
 - **[スキル]** エージェントの種類ごとのスキルを読み取り専用で表示。個人のものは 設定 › スキル、リポジトリのものは行のメニューの スキル… ([#2792](https://github.com/k-k1/agent-fleet/issues/2792), [#2795](https://github.com/k-k1/agent-fleet/issues/2795))
 - **[アシスタント]** チャットと Agent Fleet 自身の LLM 呼び出しが、利用上限・レート制限に達したバックエンドを避けて次で答え、お知らせを残す。メモリのレビューは待つ ([#2780](https://github.com/k-k1/agent-fleet/issues/2780))
-- **[作業項目]** 行に新しい動きの印とコメント数 ([#2779](https://github.com/k-k1/agent-fleet/issues/2779))
+- **[作業項目]** 行に新しい動きの印、GitHub と Bitbucket の行にはコメント数 ([#2779](https://github.com/k-k1/agent-fleet/issues/2779))
 - **[ワークスペース]** 設定 › マシン にメモリ逼迫のグラフ（測定のみ） ([#2516](https://github.com/k-k1/agent-fleet/issues/2516), [#2837](https://github.com/k-k1/agent-fleet/issues/2837))
 - **[ビューア]** PDF ペインの検索。Ctrl/Cmd+F で全ページを探す専用の検索バー ([#2822](https://github.com/k-k1/agent-fleet/issues/2822))
 - **[作業項目]** 権限の確認が通れば GitHub App でのサインインにも マージ ボタン ([#2753](https://github.com/k-k1/agent-fleet/issues/2753))

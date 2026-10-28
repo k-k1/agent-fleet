@@ -21,7 +21,7 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 
 - **[skills]** Read-only view of every agent kind's skills: personal under Settings › Skills, a repository's under Skills… in its row's menu ([#2792](https://github.com/k-k1/agent-fleet/issues/2792), [#2795](https://github.com/k-k1/agent-fleet/issues/2795))
 - **[assistant]** Chat turns and Agent Fleet's other LLM calls step past a backend that hit a usage or rate limit, with a notice; memory review waits ([#2780](https://github.com/k-k1/agent-fleet/issues/2780))
-- **[work items]** Rows mark new activity and show comment counts ([#2779](https://github.com/k-k1/agent-fleet/issues/2779))
+- **[work items]** Rows mark new activity; GitHub and Bitbucket rows show comment counts ([#2779](https://github.com/k-k1/agent-fleet/issues/2779))
 - **[workspace]** Settings › Machine charts memory pressure (measure only) ([#2516](https://github.com/k-k1/agent-fleet/issues/2516), [#2837](https://github.com/k-k1/agent-fleet/issues/2837))
 - **[viewer]** Find in the PDF pane: Ctrl/Cmd+F opens its own find bar over every page ([#2822](https://github.com/k-k1/agent-fleet/issues/2822))
 - **[work items]** The Merge button is offered to GitHub App sign-ins on a positive permission check ([#2753](https://github.com/k-k1/agent-fleet/issues/2753))
