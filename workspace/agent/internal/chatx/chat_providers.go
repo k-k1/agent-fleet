@@ -2258,160 +2258,214 @@ func oneShotRunOn(ctx context.Context, kind, feature string, tier OneShotTier, p
 	if selected == AssistantRecommendedModel {
 		selected, configured = recommendedOneShotModel(kind, tier), true
 	}
+	run := oneShotRun{kind: kind, selected: selected, configured: configured, autoRecommended: autoRecommended,
+		tier: tier, persona: persona, prompt: prompt, claudeModel: claudeModel}
 	switch kind {
 	case session.KindCodex:
-		call.Kind = session.KindCodex
-		defer func() { _, _ = chatCodexHome() }()
-		full := headlessPrompt(persona, nil, prompt)
-		selected, autoRecommended = codexOneShotModel(selected, configured, autoRecommended, tier)
-		args := codexOneShotArgsFor(selected)
-		reply, tok, modelReq, err := CodexOneShotWithRetry(ctx, args, autoRecommended, full, runCodexOneShot)
-		call.ModelReq, call.Totals, call.OK = modelReq, tok, err == nil
-		return reply, "", "", err
+		out, e := oneShotOnCodex(ctx, &call, run)
+		return out, "", "", e
 	case session.KindOpencode:
-		call.Kind = session.KindOpencode
-		args := opencodeRunArgs(chatWorkdir())
-		spec := opencode.CurrentLaunch()
-		env := spec.Env()
-		// read-only posture (docs/log/44 §1.3): unlike a chat, a one-shot runs in the bare
-		// chatWorkdir with no project config (opencode.json), so OPENCODE_CONFIG's deny is the
-		// one that takes effect (merge precedence measured on 1.18.7: project >
-		// OPENCODE_CONFIG > global — see opencodeChatDir). If it cannot be written the run
-		// goes bare as before, degrading on a broken home rather than breaking title/reply.
-		env = append(env, opencodeConfigEnv(OpencodeOneShotConfig())...)
-		// NOTE: deliberately NOT auto-picking a cheap model here (docs/log/46 §1-a-2). opencode's
-		// catalog is a LISTING, not an entitlement: `opencode/claude-haiku-4-5` is listed and
-		// selectable, yet running it returns "Unexpected server error" on an account without
-		// it, while the configured default answers fine (measured 2026-07-25). A hard failure of
-		// title/branch/reply suggestions is worse than their token cost, so opencode keeps the
-		// user's default unless AF_TITLE_MODEL_OPENCODE names something explicitly.
-		m := selected
-		if !configured {
-			m = recommendedOneShotModel(kind, tier) // AF_TITLE_MODEL_OPENCODE first, as for "recommended"
-		}
-		if m != "" {
-			args = append(args, "--model", m)
-			call.ModelReq = m
-		}
-		args = append(args, headlessPrompt(persona, nil, prompt))
-		if err := opencode.EnsureMigrated(spec); err != nil {
-			return "", "", "", err
-		}
-		cmd := exec.CommandContext(ctx, spec.Bin, args...)
-		cmd.Dir = chatWorkdir()
-		cmd.Env = envWith(env...)
-		out, err := cmd.Output()
-		reply, sesID, reportedModel, turnErr, usage := parseOpencodeRunEvents(out)
-		if err != nil {
-			if turnErr != "" {
-				return "", "", "", fmt.Errorf("opencode turn failed: %s", turnErr)
-			}
-			return "", "", "", fmt.Errorf("opencode execution failed: %s", cliErr(err))
-		}
-		call.Totals, call.OK = usage.LedgerTokens(), true
-		if reportedModel != "" {
-			call.Models = []usagex.ModelRow{{Model: reportedModel, ModelRaw: reportedModel, Tokens: call.Totals}}
-		}
-		// opencode has no ephemeral mode — delete the throwaway session so one-shots
-		// don't pile "New session…" rows into the shared store. Best-effort, detached
-		// from ctx (the reply is already in hand; cleanup shouldn't be cancelled).
-		if sesID != "" {
-			go func() {
-				delArgs := []string{"session", "delete", sesID}
-				if spec.Maj >= 2 {
-					delArgs = []string{"session", "delete", "--standalone", sesID} // not the background service
-				}
-				cl := exec.Command(spec.Bin, delArgs...)
-				cl.Dir = chatWorkdir()
-				cl.Env = envWith(spec.Env()...)
-				_ = cl.Run()
-			}()
-		}
-		return reply, "", "", nil
+		out, e := oneShotOnOpencode(ctx, &call, run)
+		return out, "", "", e
 	case session.KindCursor:
-		// cursor has no ephemeral mode; without --resume each one-shot mints a fresh
-		// chat, leaving a throwaway in ~/.cursor (same trade-off as agy/opencode
-		// one-shots). No tools/persona-native flag — persona rides the preamble.
-		call.Kind = session.KindCursor
-		args := cursorChatBaseArgs()
-		m := selected
-		if !configured {
-			m = os.Getenv("AF_TITLE_MODEL_CURSOR")
-			if m == "" {
-				m = recommendedOneShotModel(kind, tier)
-			}
-		}
-		if m != "" {
-			args = append(args, "--model", m)
-			call.ModelReq = m
-		}
-		cmd := exec.CommandContext(ctx, cursor.Bin(), args...)
-		cmd.Dir = chatWorkdir()
-		cmd.Env = cursor.EnvWithoutCI(os.Environ()) // do not pass CI through (cursor/ci_env.go)
-		cmd.Stdin = strings.NewReader(headlessPrompt(persona, nil, prompt))
-		out, err := cmd.Output()
-		if err != nil {
-			return "", "", "", fmt.Errorf("cursor execution failed: %s", cliErr(err))
-		}
-		r, perr := parseCursorResult(out)
-		if perr != nil {
-			return "", "", "", perr
-		}
-		call.SetTotals(r.Usage.InputTokens, r.Usage.OutputTokens, r.Usage.CacheReadTokens, r.Usage.CacheWriteTokens)
-		if r.IsError {
-			return "", "", "", errors.New(strings.TrimSpace(r.Result))
-		}
-		call.OK = true
-		return strings.TrimRight(strings.TrimSpace(r.Result), "\n"), "", "", nil
+		out, e := oneShotOnCursor(ctx, &call, run)
+		return out, "", "", e
 	case session.KindAgy:
-		// agy has no ephemeral mode, so each one-shot leaves a throwaway conversation
-		// behind — contained in the shared "oneshot" isolated home rather than the
-		// user's real agy state (which would also spawn their own global MCP servers
-		// on every title call). Runs on the cheap Flash default (quota-scarce free
-		// plan) unless overridden.
-		// agy outputs plain text, so no tokens can be read at all — measured=none, count only.
-		call.Kind, call.Measured = session.KindAgy, usagex.MeasuredNone
-		home, wdir, err := chatAgyHome(&ChatConversation{ID: "oneshot"})
-		if err != nil {
-			return "", "", "", fmt.Errorf("agy chat home: %v", err)
-		}
-		var args []string
-		m := selected
-		if !configured {
-			// The same answer "recommended" gives (RecommendedModels), so a member who never
-			// opened the setting runs what the screen calls the recommendation.
-			m = recommendedOneShotModel(kind, tier)
-		}
-		if m := agyChatModel(m, filterVisibleModels(session.KindAgy, agy.Models())); m != "" {
-			args = append(args, "--model", m)
-			call.ModelReq = m
-		}
-		args = append(args, "-p", headlessPrompt(persona, nil, prompt))
-		cmd := exec.CommandContext(ctx, "agy", args...)
-		cmd.Dir = wdir
-		cmd.Env = agy.Env(envWith("HOME=" + home))
-		defer reconcileChatCreds(agy.TokenPath(), filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"))
-		out, err := cmd.Output()
-		if err != nil {
-			return "", "", "", fmt.Errorf("agy execution failed: %s", cliErr(err))
-		}
-		return agyOneShotReply(&call, out), "", "", nil
+		out, e := oneShotOnAgy(ctx, &call, run)
+		return out, "", "", e
 	case session.KindMuse:
-		call.Kind, call.Measured = session.KindMuse, usagex.MeasuredNone
-		m := selected
-		if !configured {
-			m = recommendedOneShotModel(kind, tier)
-		}
-		reply, err := museOneShot(ctx, &call, persona, prompt, m)
-		return reply, "", "", err
+		out, e := oneShotOnMuse(ctx, &call, run)
+		return out, "", "", e
 	case session.KindClaude:
-		// runs below
+		out, e := oneShotOnClaude(ctx, &call, run)
+		return out, "", "", e
 	default:
 		// oneShotKind never returns a kind outside oneShotKinds; this is the backstop that keeps
 		// a new kind from silently running (and being billed) on claude.
 		call.Kind = kind
 		return "", "", "", fmt.Errorf("AI assist cannot run on %q", kind)
 	}
+}
+
+// oneShotRun is what one one-shot runs with, once oneShotRunOn has resolved the settings:
+// selected is the model the settings name ("recommended" already replaced), configured whether
+// they name one, autoRecommended whether the pick is ours to retry without.
+type oneShotRun struct {
+	kind, selected              string
+	configured, autoRecommended bool
+	tier                        OneShotTier
+	persona, prompt             string
+	claudeModel                 string
+}
+
+// oneShotOnCodex runs one one-shot on codex (oneShotRunOn).
+func oneShotOnCodex(ctx context.Context, call *usagex.Call, run oneShotRun) (string, error) {
+	selected, configured, autoRecommended, tier, persona, prompt := run.selected, run.configured, run.autoRecommended, run.tier, run.persona, run.prompt
+	call.Kind = session.KindCodex
+	defer func() { _, _ = chatCodexHome() }()
+	full := headlessPrompt(persona, nil, prompt)
+	selected, autoRecommended = codexOneShotModel(selected, configured, autoRecommended, tier)
+	args := codexOneShotArgsFor(selected)
+	reply, tok, modelReq, err := CodexOneShotWithRetry(ctx, args, autoRecommended, full, runCodexOneShot)
+	call.ModelReq, call.Totals, call.OK = modelReq, tok, err == nil
+	return reply, err
+}
+
+// oneShotOnOpencode runs one one-shot on opencode (oneShotRunOn).
+func oneShotOnOpencode(ctx context.Context, call *usagex.Call, run oneShotRun) (string, error) {
+	selected, configured, tier, persona, prompt, kind := run.selected, run.configured, run.tier, run.persona, run.prompt, run.kind
+	call.Kind = session.KindOpencode
+	args := opencodeRunArgs(chatWorkdir())
+	spec := opencode.CurrentLaunch()
+	env := spec.Env()
+	// read-only posture (docs/log/44 §1.3): unlike a chat, a one-shot runs in the bare
+	// chatWorkdir with no project config (opencode.json), so OPENCODE_CONFIG's deny is the
+	// one that takes effect (merge precedence measured on 1.18.7: project >
+	// OPENCODE_CONFIG > global — see opencodeChatDir). If it cannot be written the run
+	// goes bare as before, degrading on a broken home rather than breaking title/reply.
+	env = append(env, opencodeConfigEnv(OpencodeOneShotConfig())...)
+	// NOTE: deliberately NOT auto-picking a cheap model here (docs/log/46 §1-a-2). opencode's
+	// catalog is a LISTING, not an entitlement: `opencode/claude-haiku-4-5` is listed and
+	// selectable, yet running it returns "Unexpected server error" on an account without
+	// it, while the configured default answers fine (measured 2026-07-25). A hard failure of
+	// title/branch/reply suggestions is worse than their token cost, so opencode keeps the
+	// user's default unless AF_TITLE_MODEL_OPENCODE names something explicitly.
+	m := selected
+	if !configured {
+		m = recommendedOneShotModel(kind, tier) // AF_TITLE_MODEL_OPENCODE first, as for "recommended"
+	}
+	if m != "" {
+		args = append(args, "--model", m)
+		call.ModelReq = m
+	}
+	args = append(args, headlessPrompt(persona, nil, prompt))
+	if err := opencode.EnsureMigrated(spec); err != nil {
+		return "", err
+	}
+	cmd := exec.CommandContext(ctx, spec.Bin, args...)
+	cmd.Dir = chatWorkdir()
+	cmd.Env = envWith(env...)
+	out, err := cmd.Output()
+	reply, sesID, reportedModel, turnErr, usage := parseOpencodeRunEvents(out)
+	if err != nil {
+		if turnErr != "" {
+			return "", fmt.Errorf("opencode turn failed: %s", turnErr)
+		}
+		return "", fmt.Errorf("opencode execution failed: %s", cliErr(err))
+	}
+	call.Totals, call.OK = usage.LedgerTokens(), true
+	if reportedModel != "" {
+		call.Models = []usagex.ModelRow{{Model: reportedModel, ModelRaw: reportedModel, Tokens: call.Totals}}
+	}
+	// opencode has no ephemeral mode — delete the throwaway session so one-shots
+	// don't pile "New session…" rows into the shared store. Best-effort, detached
+	// from ctx (the reply is already in hand; cleanup shouldn't be cancelled).
+	if sesID != "" {
+		go func() {
+			delArgs := []string{"session", "delete", sesID}
+			if spec.Maj >= 2 {
+				delArgs = []string{"session", "delete", "--standalone", sesID} // not the background service
+			}
+			cl := exec.Command(spec.Bin, delArgs...)
+			cl.Dir = chatWorkdir()
+			cl.Env = envWith(spec.Env()...)
+			_ = cl.Run()
+		}()
+	}
+	return reply, nil
+}
+
+// oneShotOnCursor runs one one-shot on cursor (oneShotRunOn).
+func oneShotOnCursor(ctx context.Context, call *usagex.Call, run oneShotRun) (string, error) {
+	selected, configured, tier, persona, prompt, kind := run.selected, run.configured, run.tier, run.persona, run.prompt, run.kind
+	// cursor has no ephemeral mode; without --resume each one-shot mints a fresh
+	// chat, leaving a throwaway in ~/.cursor (same trade-off as agy/opencode
+	// one-shots). No tools/persona-native flag — persona rides the preamble.
+	call.Kind = session.KindCursor
+	args := cursorChatBaseArgs()
+	m := selected
+	if !configured {
+		m = os.Getenv("AF_TITLE_MODEL_CURSOR")
+		if m == "" {
+			m = recommendedOneShotModel(kind, tier)
+		}
+	}
+	if m != "" {
+		args = append(args, "--model", m)
+		call.ModelReq = m
+	}
+	cmd := exec.CommandContext(ctx, cursor.Bin(), args...)
+	cmd.Dir = chatWorkdir()
+	cmd.Env = cursor.EnvWithoutCI(os.Environ()) // do not pass CI through (cursor/ci_env.go)
+	cmd.Stdin = strings.NewReader(headlessPrompt(persona, nil, prompt))
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("cursor execution failed: %s", cliErr(err))
+	}
+	r, perr := parseCursorResult(out)
+	if perr != nil {
+		return "", perr
+	}
+	call.SetTotals(r.Usage.InputTokens, r.Usage.OutputTokens, r.Usage.CacheReadTokens, r.Usage.CacheWriteTokens)
+	if r.IsError {
+		return "", errors.New(strings.TrimSpace(r.Result))
+	}
+	call.OK = true
+	return strings.TrimRight(strings.TrimSpace(r.Result), "\n"), nil
+}
+
+// oneShotOnAgy runs one one-shot on agy (oneShotRunOn).
+func oneShotOnAgy(ctx context.Context, call *usagex.Call, run oneShotRun) (string, error) {
+	selected, configured, tier, persona, prompt, kind := run.selected, run.configured, run.tier, run.persona, run.prompt, run.kind
+	// agy has no ephemeral mode, so each one-shot leaves a throwaway conversation
+	// behind — contained in the shared "oneshot" isolated home rather than the
+	// user's real agy state (which would also spawn their own global MCP servers
+	// on every title call). Runs on the cheap Flash default (quota-scarce free
+	// plan) unless overridden.
+	// agy outputs plain text, so no tokens can be read at all — measured=none, count only.
+	call.Kind, call.Measured = session.KindAgy, usagex.MeasuredNone
+	home, wdir, err := chatAgyHome(&ChatConversation{ID: "oneshot"})
+	if err != nil {
+		return "", fmt.Errorf("agy chat home: %v", err)
+	}
+	var args []string
+	m := selected
+	if !configured {
+		// The same answer "recommended" gives (RecommendedModels), so a member who never
+		// opened the setting runs what the screen calls the recommendation.
+		m = recommendedOneShotModel(kind, tier)
+	}
+	if m := agyChatModel(m, filterVisibleModels(session.KindAgy, agy.Models())); m != "" {
+		args = append(args, "--model", m)
+		call.ModelReq = m
+	}
+	args = append(args, "-p", headlessPrompt(persona, nil, prompt))
+	cmd := exec.CommandContext(ctx, "agy", args...)
+	cmd.Dir = wdir
+	cmd.Env = agy.Env(envWith("HOME=" + home))
+	defer reconcileChatCreds(agy.TokenPath(), filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"))
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("agy execution failed: %s", cliErr(err))
+	}
+	return agyOneShotReply(call, out), nil
+}
+
+// oneShotOnMuse runs one one-shot on muse (oneShotRunOn).
+func oneShotOnMuse(ctx context.Context, call *usagex.Call, run oneShotRun) (string, error) {
+	selected, configured, tier, persona, prompt, kind := run.selected, run.configured, run.tier, run.persona, run.prompt, run.kind
+	call.Kind, call.Measured = session.KindMuse, usagex.MeasuredNone
+	m := selected
+	if !configured {
+		m = recommendedOneShotModel(kind, tier)
+	}
+	reply, err := museOneShot(ctx, call, persona, prompt, m)
+	return reply, err
+}
+
+// oneShotOnClaude runs one one-shot on claude (oneShotRunOn).
+func oneShotOnClaude(ctx context.Context, call *usagex.Call, run oneShotRun) (string, error) {
+	selected, configured, persona, prompt, claudeModel := run.selected, run.configured, run.persona, run.prompt, run.claudeModel
 	// claude: the historical path, kept native. --no-session-persistence is
 	// claude's --ephemeral analog (print-mode only, no transcript written, no resume):
 	// a one-shot never resumes, so don't pile per-call jsonl into Claude's projects tree.
@@ -2435,16 +2489,16 @@ func oneShotRunOn(ctx context.Context, kind, feature string, tier OneShotTier, p
 	// non-zero exit, so it is read before the exit error, which would hide it: the cooldown
 	// classifier needs that text.
 	if perr == nil && r.IsError && strings.TrimSpace(r.Result) != "" {
-		return "", "", "", fmt.Errorf("claude returned an error: %s", strings.TrimSpace(r.Result))
+		return "", fmt.Errorf("claude returned an error: %s", strings.TrimSpace(r.Result))
 	}
 	if err != nil {
-		return "", "", "", fmt.Errorf("claude execution failed: %s", cliErr(err))
+		return "", fmt.Errorf("claude execution failed: %s", cliErr(err))
 	}
 	if perr != nil || r.IsError {
-		return "", "", "", errors.New("claude returned an invalid response/error")
+		return "", errors.New("claude returned an invalid response/error")
 	}
 	call.OK = true
-	return strings.TrimRight(r.Result, "\n"), "", "", nil
+	return strings.TrimRight(r.Result, "\n"), nil
 }
 
 // agyOneShotReply trims agy's stdout and records the call. agy exits 0 with an empty stdout when
