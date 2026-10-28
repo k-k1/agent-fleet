@@ -719,7 +719,7 @@ export function engineIsExternal(e: EngineRow): boolean {
  *      (decision 7). Every write route answers 400 `engine_not_ours`, so the controls are not
  *      drawn at all — the same reason the reduced tenant_admin panel omits rather than disables.
  *
- * 🔴 DECLARED: `lifecycle` is the row's own field, which the CP emits verbatim (`engine_admin.go`
+ * 🔴 DECLARED: `lifecycle` is the row's own field, which the CP emits verbatim (`engine_admin_row.go`
  * `row()`). Never inferred from the URL's shape — a URL that happens to contain `/engine/` must
  * not silently change what a row means (ADR 0053). `managed === false` is required alongside it
  * for the same reason `engineIsExternal` reads the explicit flag: a row that claims to be

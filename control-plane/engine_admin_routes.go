@@ -4,15 +4,7 @@ package main
 // (engineAdminAPI) and what the mode toggle means are in engine_admin.go.
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"log"
 	"net/http"
-	"strconv"
-	"strings"
-	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )

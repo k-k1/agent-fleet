@@ -10,9 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -803,7 +801,6 @@ func engineKeptBecause(keys []string, keep map[string]string) string {
 	}
 	return strings.Join(out, ", ")
 }
-
 
 // healGeometry reads a row's GGUF header out of the bucket and stores it, when the row has none.
 //

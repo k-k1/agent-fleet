@@ -31,6 +31,10 @@ import (
 // engineRefusalScanFiles is decision 5's list: the files whose 409s a person acts on.
 var engineRefusalScanFiles = []string{
 	"engine_admin.go",
+	"engine_admin_ingest.go",
+	"engine_admin_models.go",
+	"engine_admin_routes.go",
+	"engine_admin_row.go",
 	"engine_plan.go",
 	"engine_file_move.go",
 	"engine_family_parts.go",

@@ -5,16 +5,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"log"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
-
-	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // get (GET /api/admin/engines) lists every engine with its mode and what ECS is doing — or, for
