@@ -1,0 +1,217 @@
+# 0124. 2 度目のリファクタ：先にラチェット、変更の登録先は 1 箇所に、エージェント種別はプラグインに
+
+[English](0124-second-refactor.md) | 日本語
+
+- 状態：**採用**（2026-10-28）。計画であり、まだ何も作っていない。いまの範囲はフェーズ 0〜3 で、
+  この順に進める。フェーズ 4〜6 は再発見されないように記録しておくもので、変更頻度に見合うときだけ
+  実施する。
+- Follow-ups：#2853, #2854, #2855, #2856, #2857, #2858, #2859, #2860, #2861, #2862, #2863, #2864,
+  #2865, #2866, #2867, #2868, #2869, #2870, #2871, #2872, #2873, #2874, #2875, #2876
+- 関連：[0067](0067-parallel-refactor.ja.md)（1 度目のウェーブ、その検証の作法と残したもの）/
+  [0012](0012-go-internal-refactor.ja.md)（層分け・2 つのバイナリ・共有モジュールは作らない）/
+  [0011](0011-console-rebuild.ja.md)（feature 単位に切った Console）
+
+## 背景
+
+`main` の `5bcfc0110`（2026-10-28）で測った。「package main」はモジュールのディレクトリ直下にある
+テスト以外の `.go` ファイルを指す（0067 と同じ物差し）。測り方のコマンドは「測り方」節にある。
+
+| | 0067 完了時（2026-09-04） | 現在 |
+|---|---|---|
+| CP の package main | 96 ファイル / 28,321 行 | **198 / 75,582** |
+| Agent の package main | 64 / 15,373 | **129 / 37,322** |
+| Console の `src/`（テスト以外の TS/TSX） | 122,094 行 | **179,895** |
+
+この間にマージ以外のコミットが 3,898 本入った。再膨張の原因は 1 つの家系ではない。エンジン家系
+（ADR 0071〜0099）が CP の main のうち 44 ファイル / 24.0k 行を占め、残りは十数個の機能（OAuth、
+egress、開発用 IdP、inbox、scheduler など）で、どれも「main 以外に置け」と言うものが何もなかったから
+main に入った。**0067 は main を縮めたが、小さく保つ仕組みは何も置かなかった**。その成果は 2 か月もたな
+かった。
+
+ただし、変更を遅くしているのは大きさではない。ホットなファイルと、1 つのものを何箇所にも登録する
+作りのほうである。
+
+| 足すもの | いま編集する場所 | 2026-09-04 以降の変更頻度 |
+|---|---|---|
+| CP が中継する Agent のルート | Agent 側のルートとその golden、さらに CP で最大 4 箇所：`routes.go`、`testdata/routes.golden`、監査の switch `auditActionTarget`（`proxy.go`）、`memberOriginRoutes`（`member_origin.go`） | `routes.go` 119 コミット、`routes.golden` 127。手で写した `, rest)` 行が 334 |
+| MCP ツール | `internal/mcpx/mcp_stdio.go`（5,001 行）の 5 箇所：スキーマ表、共有の引数 struct、`mcpCheckCallArgs`、広告側と呼び出し側の 2 つのゲート、switch の分岐。加えて `control-plane/internal/mcpsrv/mcp.go` にもう 1 つの定義 | 93 コミット |
+| Console の設定項目 | `lib/settings.ts` の約 1,800 行に散らばる 5 箇所 | 57 コミット |
+| エージェント種別 | muse は自身の 2 パッケージ以外で、テストでも Markdown でもないファイルを 139 個触っている | — |
+
+重複は、手間が増えるだけでなく欠陥を生み始めている。
+
+- **2 つの MCP ツール定義はすでにずれている。** Agent の operator 向け `create_session` の説明は、
+  muse 以外の全種別を列挙している（`mcp_stdio.go:2293`）。2 つの定義の言語が違うのは意図どおりで
+  （`mcp_stdio.go:722-735`：セッション向けの文はトークン節約のため英語、operator 向けは日本語のまま）、
+  そこは欠陥ではない。
+- **copilot・cursor・kiro の `driver.go` は、種別名をそろえると 83〜90% が同じ**である。`acp.go` は
+  207 行中 12 行しか違わない。横断的な修正は、managed ドライバー 7 本すべてに同時に入れる必要が
+  あった（`c70e8cb0a`、`2a9b6bbaf`）。
+- **種別のレジストリが Agent の import グラフの最上部にある**（`internal/sessionx/agent.go:34`）。その
+  ため、それより下のパッケージは自前の種別リストを持ち続けている。種別リテラルによる分岐は、Agent の
+  `internal/agents` の外に 219、Console の `agents/registry.ts` の外に 66、CSS の 6 ファイルに
+  `.kind-<種別>` セレクタが 51 ある。
+
+ついでに見つかった、欠けている検査：
+
+- CP の中継ルートがすべて Agent のルート表に実在するか、変更系の中継ルートすべてに監査アクションが
+  あるかを確かめるものが無い。
+- `console/scripts/css-dup.mjs` はあるが CI は一度も走らせていない。67 個のクラス名が複数のファイルで
+  ルールを始めている。`.repo-identity` は `scm/scm.css` と `settings/parts/common.css` で違う値が付いて
+  おり、読み込み順で勝ち負けが決まる。
+- 0067 の別名ファイルが Console に 2 つ残っている（`features/settings/mcpWire.ts`、`mcpForm.tsx`）。
+  0067 の「別名ゼロ」は Go だけを数えていた。
+
+CI は `main` で緑、所要は約 6 分なので、この計画が頼るゲートは信用できる。
+
+## 決定
+
+1. **移送より先にラチェット。** どのフェーズも、直したものが戻ってきたら落ちる検査を残す。ラチェット
+   自身がホットなファイルになってはならない。変わるのは、それが守っていることを誰かがしたとき
+   （main にファイルを足す、種別の分岐を足す）だけで、機能 PR のたびには変わらない。だから package main
+   には行数の予算ではなくファイルの許可リストを置く。
+2. **大きさではなく「変更頻度 × 触る箇所の数」で選ぶ。** 大きくてもまとまっていて滅多に変わらない
+   パッケージ（`imagegen` とその ComfyUI のコード）は待たせる。各候補に問うのは、次の機能が何箇所を
+   編集する必要があり、それがどれくらいの頻度で起きるか、である。
+3. **純粋な移送と変更は同じ PR に入れない**（0067 決定 9）。ファイル丸ごとの移送は `--find-renames` で
+   内容差がゼロになる。ファイルの分割は、トップレベル宣言の多重集合と文字列リテラルの多重集合
+   （go/ast の `BasicLit`、または TS の相当物）が前後で一致する。後者は、機械的な改名が MCP の説明文を
+   書き換えた件のあと、0067 の作業日誌が採用した検査である。
+4. **ホットなファイルは、それを編集している open PR が無いあいだにだけ割る。** git はファイル丸ごとの
+   改名なら機能ブランチの編集を運んでくれるが、1 ファイルを 10 個に割ると運べず、すべての hunk が
+   衝突になる。割る前にそのファイルに触れる open PR を列挙し、空いた隙に割って速やかにマージする。
+5. **移すファイルを誰が読んでいるかを、モジュールをまたいで探す。** Go のテストが Console のソースを
+   パスで読んでいる（`settings.ts` のドリフト検査、`lib/fleetgraph.states.json`、ロケールの
+   `errors.ts`）。`console_routes_test.go` は Console の API パスが文字列リテラルであることを前提にして
+   いる。Go のソースを読む Console のテストもある。移送は両側を同じ PR で更新する。
+6. **移さないもの**：CP の `manager`（36 ファイルにまたがる 159 メソッド）とその中核の workspace 家系、
+   ハンドラー struct、非公開の error、JSON の塊（0067 の「移さない」形）。どこからでも手が届く場所に
+   あるのが理由で、動かすとロックの範囲や配線が変わるのに、登録の手間は 1 つも減らない。
+7. **進め方。** 作業パッケージ 1 つにつき Issue 1 つ・PR 1 つ。実装は子セッションが行い、各 Issue に
+   その作業が所有するファイルを書く。マージ前に別モデルのレビュー役がすべての PR を読む。マージは
+   維持者が行う。フェーズ 1 の項目は所有ファイルが重ならないので並行して走らせる。登録の仕組みを
+   変える項目（フェーズ 2・3）は、ホットなファイルごとに 1 つずつ走らせる。
+8. **フェーズ 3 は実機一巡で閉じる。** 種別の変更はセッションの開始・再開・停止に触れるので、実配備で
+   全種別のセッションを 1 つずつ作成・会話・停止・再開する。0067 の実機一巡は 2 回とも、すべての
+   ゲートを通った欠陥を見つけた。
+
+### フェーズ 0：ラチェットと欠けている検査
+
+- CP のテスト：中継ルートがすべて Agent のルート表に実在する／変更系の中継ルートすべてに監査
+  アクションがある。
+- ラチェット：両 Go モジュールに package main のファイル許可リスト。Agent と Console に、種別リテラル
+  分岐の上限（増えたら落ちる）。
+- Console：CI に `css-dup` を今日の件数を上限として入れる。import 境界の lint（`lib/` は `features/` を
+  import しない。今日の例外は列挙する）。別名ファイル 2 つを消す。
+- 両 Go モジュールの死んだコードを消す（たとえば `metrics.go` の `dockerContainerID`、`mem.go` の
+  `memClampNote`、`workitems.go` の `sortQueriesByPosition` には呼び出し元が無い）。
+- operator 向け `create_session` の説明から muse が抜けているのを直す。
+
+### フェーズ 1：パッケージ内でのファイル分割（純粋な移送）
+
+- `internal/runtime/runtime_ecs_ec2.go`（7,066 行）を、既にある `// ---` の区切りに沿って。
+- `internal/store/store_sqlite.go` を `store_<領域>.go` に。新しい store のコードは既にこの形である。
+- `engine_admin.go` をルート・モデル・取り込みに。
+- `internal/mcpx/mcp_stdio.go` をツールの家族ごとのファイルと、Agent クライアント、呼び出し元の解決に。
+- Console：`app/WsBar.tsx` を `app/wsbar/` に。`adminEngineAdd.tsx` をその 5 つのコンポーネントに。
+  `engineTypes.ts` を型とフックに。
+- 何でも入れのロケールファイルを機能ごとのファイルに（`tools.ts` に `mem.*` キーが 476、`admin.ts` に
+  エンジンとカタログのキーが 426）。
+
+### フェーズ 2：登録先を 1 箇所に
+
+- **CP の中継ルートを宣言的な表にする。** 中継ルート 1 本につき 1 行 `{method, path, audit, signed}`、
+  領域ごとに 1 ファイル。登録・監査の分類・member-origin の署名はそこから導く。フェーズ 0 の 2 つの
+  テストと既存の `routes.golden` の上に作る。表を Agent のルートから生成するのは後の段で、今回ではない。
+- **MCP ツール 1 つにつき `toolSpec{schema, gate, args, handler}` を 1 つ**。フェーズ 1 の分割後、その
+  家族のファイルに置く。ツールのスキーマと説明にある種別の列挙は、CP 側も Agent 側も種別カタログ
+  （`agentkinds/catalog.json`）から作る。説明文は、2 種類の読み手向けの 2 つの文のままにする。
+- **Console の設定項目 1 つにつき記述子 1 つ**（キー・既定値・スコープ・正規化）。サーバー同期の
+  エンジン、テーマとフォントを画面に当てるコード、機能ごとの選択肢リストは `settings.ts` から出る。
+  `settings.ts` を読む Go のドリフト検査は同じ PR で直す。
+
+### フェーズ 3：エージェント種別をプラグインに
+
+- copilot・cursor・kiro 共通の ACP 基盤。まずほぼ同一の `acp.go`・`mirror.go`・`progress_managed.go`、
+  次に種別ごとのフック付きでドライバー本体。
+- managed ドライバー 7 本が繰り返している足場（`NewDriver`、`handleFor`、
+  `ManagedAlive`/`Busy`/`InFlight`、`DropHandle`、`RemoveLedger`、`ReconcileManaged`、
+  `AbortManaged`）を共通化する。
+- 種別のレジストリを `sessionx` より下に移し、どのパッケージからも参照できるようにする。ライフ
+  サイクル（reconcile・abort・shutdown）、接続状態、生存とモーダルの検出、スキルの配置、モデル一覧を
+  `Agent` の任意 interface にし、`main.go`・`shutdown.go`・`connections.go`・`session_io.go`・
+  `chat_providers.go` は種別で switch せずレジストリを回す。`internal/agents` は `bridge` を import して
+  いるので、import の循環に注意する。
+- CP（`mcpsrv/mcp.go`・`tenant_member_defaults.go`・`limit_board.go`）と Console（手で保守している
+  7 つの種別リスト、`lib/agentModels.ts` の `isDynamic`）は、カタログとレジストリの能力を読む。種別ごとの
+  CSS は種別ごとのカスタムプロパティ 1 つにする。
+- **目標：新しい種別が、自身のパッケージ以外で触るテストでも Markdown でもないファイルを 40 以下に**
+  （muse は 139）。フェーズ 3 は pi や rovo を作る前に終える。
+
+### フェーズ 4〜6：記録のみ。変更頻度に見合うときに実施
+
+- **4 — パッケージ。** CP のエンジン領域を、そのパッケージが定義する interface の向こう側の
+  `internal/engine` に移す。HTTP ハンドラーは main に残す。先に TTS のライフサイクル
+  （`engine_control.go`・`engine_ecs.go`）をエンジンのライフサイクルから切り離し、
+  `errcodes_catalog_test.go` が新しいパッケージを読むようにする。そうしないとエンジンのエラーコード
+  （約 50）が黙って検査から外れる。`manager`・`config`・認証ヘルパー・HTTP エラーヘルパーのどれも参照
+  していないエンジンのファイル約 15 個（約 6k 行）から先に移す。Agent では、main への逆依存が少ない家系
+  （fs、jira と workitems、usage、svn）。`createSession`（約 600 行）は、それ単独のロジック変更として
+  段に分ける。
+- **5 — Console のデータ層。** 機能ごとの型付き `api.ts` と、共通の読み込み・保存フック。settings から
+  始める（Console の明示的な `any` 223 個のうち 146 個）。利用者が 1 つだけの `lib/` モジュールはその
+  機能に戻す。CSS の重複はゼロにして `css-dup` で CI を落とす。badge・chip・card の部品を `ui.css` に。
+- **6 — CI とシェル。** CLI のマニフェストを 1 つに：バージョン自体は Dockerfile の `ARG` 1 箇所だが、
+  各 CLI は手で保守している 6〜7 個の表（`setup-agent-cli` アクション、`cli-drift-check.sh`、
+  `cli-pin-bump.sh`、`cli-release-watch.yml`、`install_*.go` のコード）にも載っている。8 本の
+  `*-contract.yml` を再利用ワークフロー 1 本に。boot-install を `entrypoint.sh` から `workspace-agent` へ、
+  CLI 1 つずつ、毎回実機の起動で確かめて移す。
+
+## 退けた案
+
+- **0067 の別名移送を司令塔セッションの下で行う。** フェーズ 1 の分割は 1 つのパッケージの中に閉じ、
+  フェーズ 2・3 は形を変えるのであって移すのではない。回収する別名は無く、Issue の一覧ができない調整を
+  ハブがする場面も無い。
+- **package main の行数予算。** main のファイルを大きくする機能がすべてそれを編集することになり、
+  ラチェット自身がホットなファイルになる。
+- **`manager` の分割。** 159 メソッドは CP の実行時状態とそのロックである。取り出すとロックの範囲が
+  変わり（振る舞いの変更）、登録の手間は 1 つも減らない。
+- **TS の型生成や共有 Go モジュールを今やる**（0012 の再検討条件）。JSON の書き出し箇所のうち 372 が
+  まだ `map[string]any` を返しており（Agent 223、CP 149）、生成器では型にできない。また Agent イメージの
+  ビルドコンテキストは `workspace/agent/` だけである。
+- **リファクタのための凍結。** `main` には 1 日に約 70 コミットが入る。凍結は、一握りのホットなファイルを
+  守るためにそのすべてを止める。決定 4 は、まさにそのファイルを、割るのにかかる時間だけ守る。
+
+## 帰結
+
+- フェーズ 0 が入るまでは、新しい main のファイルと種別の分岐が入り続ける。後のフェーズはすべて
+  フェーズ 0 を物差しにするので、フェーズ 0 を先にやる。
+- ラチェットは正当な変更を拒むこともある。そのときは、その PR で許可リストや上限を編集し、理由を PR の
+  説明に書く。
+- フェーズ 3 は全種別のセッションの開始・再開・停止に触れるので `needs-live-run` を付ける。
+
+## 測り方
+
+リポジトリのルートで実行する。
+
+```sh
+# package main: files / lines (run per module dir)
+find control-plane -maxdepth 1 -name '*.go' ! -name '*_test.go' | wc -l
+find control-plane -maxdepth 1 -name '*.go' ! -name '*_test.go' -exec cat {} + | wc -l
+
+# kind-literal branches, agent (outside internal/agents) and Console (outside agents/registry.ts)
+K='claude|codex|opencode|muse|cursor|kiro|copilot|agy|lcpp'
+KC='Claude|Codex|OpenCode|Opencode|Muse|Cursor|Kiro|Copilot|Agy|Lcpp|LCPP'
+find workspace/agent -name '*.go' ! -name '*_test.go' ! -path '*/internal/agents/*' ! -path '*/testdata/*' -print0 \
+  | xargs -0 grep -hE "(case .*(\"($K)\"|Kind($KC)\b))|((==|!=) *(\"($K)\"|session\.Kind($KC)\b|Kind($KC)\b))|((\"($K)\"|Kind($KC)\b) *(==|!=))" | wc -l
+find console/src \( -name '*.ts' -o -name '*.tsx' \) ! -name '*.test.*' ! -path '*/agents/registry.ts' -print0 \
+  | xargs -0 grep -hE "(===|!==) *[\"'](${K})[\"']|[\"'](${K})[\"'] *(===|!==)|case [\"'](${K})[\"']" | wc -l
+grep -rhoE "\.kind-($K)\b" console/src --include='*.css' | wc -l
+
+# files a kind touches outside its own packages (muse)
+git grep -l -i -w muse -- ':!*_test.go' ':!*.test.ts' ':!*.test.tsx' ':!*.md' \
+  ':!workspace/agent/internal/agents/muse' ':!workspace/agent/internal/msp' | wc -l
+
+# hand-mirrored relays
+grep -cE ', rest\)' control-plane/routes.go
+```
