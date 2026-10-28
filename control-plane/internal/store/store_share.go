@@ -8,6 +8,82 @@ import (
 	"time"
 )
 
+type SessionShare struct {
+	ID, TenantID, OwnerMembershipID, RecipientMembershipID string
+	ScopeType, ScopeKey, Permission, CreatedAt, UpdatedAt  string
+}
+
+type SharedSessionCatalog struct {
+	ID, WorkspaceID, OwnerMembershipID, Name, Kind, Dir, Repo string
+	WorkingCopyID, Title, Label, CreatedAt, State, LastSeen   string
+	Archived                                                  bool
+	// Worktree/Parent drive the recipient-side project/worktree tree (docs/log/59).
+	// Parent is set only for a worktree: the folder name of the parent (base) working copy.
+	Worktree bool
+	Parent   string
+	// ParentWorkingCopyID is the parent (base) working copy's workingCopyId, set only for
+	// a worktree. Repo sharing covers a whole project (the base plus its worktrees), so the
+	// ACL decision is made on this id and NOT on the folder name (Parent): a folder can be
+	// renamed, while workingCopyId is fixed to the generation of the working copy.
+	ParentWorkingCopyID string
+	// Branch is the branch the working copy currently has checked out (display only). A
+	// worktree's folder name is a random slug, so without this the recipient cannot tell
+	// which piece of work a row is.
+	Branch string
+	// Activity is the Agent's live state (working | idle | question | plan | permission |
+	// blocked | compacting). Held separately from State, which only says running/stopped
+	// (alive or not). Empty while stopped.
+	Activity string
+}
+
+type SessionShareProposal struct {
+	ID, TenantID, CatalogID, OwnerMembershipID, ProposerMembershipID string
+	Action, Ciphertext, KeyRef, Status                               string
+	CreatedAt, ExpiresAt, DecidedAt, DecidedBy                       string
+}
+
+type SessionShareStore interface {
+	PutSessionShare(ctx context.Context, row SessionShare) error
+	GetSessionShare(ctx context.Context, id string) (SessionShare, bool, error)
+	ListSessionSharesByOwner(ctx context.Context, membershipID string) ([]SessionShare, error)
+	ListSessionSharesByRecipient(ctx context.Context, membershipID string) ([]SessionShare, error)
+	DeleteSessionShare(ctx context.Context, id, ownerMembershipID string) error
+	DeleteSessionSharesByScope(ctx context.Context, ownerMembershipID, scopeType, scopeKey string) error
+	UpdateSessionSharePermission(ctx context.Context, id, ownerMembershipID, permission, updatedAt string) (bool, error)
+	ReplaceSharedSessionCatalog(ctx context.Context, workspaceID, ownerMembershipID string, rows []SharedSessionCatalog) error
+	ApplySharedSessionCatalogDelta(ctx context.Context, workspaceID, ownerMembershipID string, upserts []SharedSessionCatalog, deleted []string) error
+	GetSharedSessionCatalog(ctx context.Context, id string) (SharedSessionCatalog, bool, error)
+	ListSharedSessionCatalogByOwner(ctx context.Context, membershipID string) ([]SharedSessionCatalog, error)
+	CreateSessionShareProposal(ctx context.Context, row SessionShareProposal) error
+	CreateSessionShareProposalLimited(ctx context.Context, row SessionShareProposal, maxPending int) (bool, error)
+	GetSessionShareProposal(ctx context.Context, id string) (SessionShareProposal, bool, error)
+	ListSessionShareProposalsByOwner(ctx context.Context, membershipID string) ([]SessionShareProposal, error)
+	CountPendingSessionShareProposals(ctx context.Context, catalogID string) (int, error)
+	ExpireSessionShareProposals(ctx context.Context, ownerMembershipID, now string) error
+	TransitionSessionShareProposal(ctx context.Context, id, from, to, decidedBy, decidedAt string, clearBody bool) (bool, error)
+	ClaimSessionShareProposal(ctx context.Context, id, ownerMembershipID, decidedBy, now, leaseUntil string) (SessionShareProposal, SharedSessionCatalog, string, error)
+	FinalizeSessionShareProposal(ctx context.Context, id, ownerMembershipID, decidedBy, decidedAt string) (bool, error)
+	// Handing a session over to another member (docs/log/77). It derives from the share
+	// ACL, so it lives on the same sub-interface.
+	CreateSessionHandoffOffer(ctx context.Context, row SessionHandoffOffer) (bool, error)
+	GetSessionHandoffOffer(ctx context.Context, id string) (SessionHandoffOffer, bool, error)
+	ListSessionHandoffOffersByOwner(ctx context.Context, membershipID string) ([]SessionHandoffOffer, error)
+	ListSessionHandoffOffersByRecipient(ctx context.Context, membershipID string) ([]SessionHandoffOffer, error)
+	TransitionSessionHandoffOffer(ctx context.Context, id, from, to, decidedAt, acceptedSessionName string) (bool, error)
+	TakeSessionHandoffOffer(ctx context.Context, id, recipientMembershipID, token, now string) (bool, error)
+	ConfirmSessionHandoffTake(ctx context.Context, id, recipientMembershipID, token, now string) (bool, error)
+	ReleaseSessionHandoffOffer(ctx context.Context, id, recipientMembershipID, token string) (bool, error)
+	ReleaseUnconfirmedSessionHandoffTake(ctx context.Context, id, recipientMembershipID, token string) (bool, error)
+	ConfirmedSessionHandoffTake(ctx context.Context, id, recipientMembershipID string) (string, bool, error)
+	GiveBackUnknownSessionHandoffTake(ctx context.Context, id, recipientMembershipID, token string, now time.Time) (bool, error)
+	ListReceivedSessionHandoffOffers(ctx context.Context, membershipID string) ([]ReceivedHandoffOffer, error)
+	AcceptSessionHandoffOffer(ctx context.Context, id, recipientMembershipID, token, decidedAt, acceptedSessionName string) (bool, error)
+	ExpireSessionHandoffOffers(ctx context.Context, now string) ([]SessionHandoffOffer, error)
+	AcquireSessionShareOwnerLease(ctx context.Context, ownerMembershipID, operationID, now, leaseUntil string) (bool, error)
+	RenewSessionShareOwnerLease(ctx context.Context, ownerMembershipID, operationID, now, leaseUntil string) (bool, error)
+	ReleaseSessionShareOwnerLease(ctx context.Context, ownerMembershipID, operationID string) error
+}
+
 var ErrSessionShareOwnerBusy = errors.New("session share owner has an Agent operation in progress")
 
 func ownerLeaseNowTS() string {

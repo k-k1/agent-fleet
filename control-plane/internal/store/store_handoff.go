@@ -16,6 +16,32 @@ import (
 	"time"
 )
 
+// SessionHandoffOffer is an offer of "please carry this on" held out to a share
+// recipient (docs/log/77 / ADR 0057).
+//
+// It runs in the OPPOSITE direction to SessionShareProposal: that one goes recipient →
+// owner (the recipient proposes, the owner approves), this one goes owner → recipient
+// (the owner offers, the recipient accepts). The owner / recipient roles swap, which is
+// why the table and the type are kept separate.
+//
+// Ciphertext is the body (Title is the plaintext heading, the prompt is the content). It
+// is encrypted where a custodian exists, and cleared on decline, expiry and withdrawal.
+// RepoRemote / Branch / HeadSha are facts the Agent asked git for — the coordinates the
+// recipient needs to identify the matching working copy on their side.
+type SessionHandoffOffer struct {
+	ID, TenantID, CatalogID, OwnerMembershipID, RecipientMembershipID string
+	Title, Ciphertext, KeyRef                                         string
+	RepoRemote, Branch, HeadSha                                       string
+	SourceSessionName, SourceSessionKind                              string
+	Status, CreatedAt, ExpiresAt, DecidedAt, AcceptedSessionName      string
+	// TakenAt is set while the recipient holds the offer for a launch in progress
+	// (TakeSessionHandoffOffer), TakeConfirmedAt once that launch's create reached the Agent
+	// (ConfirmSessionHandoffTake). The take's token is read back only by
+	// ConfirmedSessionHandoffTake, for the CP to look its create up on the recipient's Agent;
+	// it never leaves the CP.
+	TakenAt, TakeConfirmedAt string
+}
+
 const handoffOfferCols = `id,tenant_id,catalog_id,owner_membership_id,recipient_membership_id,title,
 	ciphertext,key_ref,repo_remote,branch,head_sha,source_session_name,source_session_kind,
 	status,created_at,expires_at,decided_at,accepted_session_name,taken_at,take_confirmed_at`
