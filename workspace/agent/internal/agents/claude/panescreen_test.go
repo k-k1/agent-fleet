@@ -1,5 +1,7 @@
 package claude
 
+import "testing"
+
 func TestParseCompactProgress(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -45,7 +47,7 @@ func TestParseCompactProgress(t *testing.T) {
 	}
 }
 
-func TestClassifyClaudePane(t *testing.T) {
+func TestClassifyPane(t *testing.T) {
 	cases := []struct {
 		name      string
 		pane      string
@@ -93,7 +95,7 @@ func TestClassifyClaudePane(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, _ := classifyClaudePane(c.pane)
+			got, _ := ClassifyPane(c.pane)
 			if got != c.wantState {
 				t.Errorf("state = %q, want %q", got, c.wantState)
 			}

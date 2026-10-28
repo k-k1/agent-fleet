@@ -1,16 +1,11 @@
 package sessionx
 
 import (
-	"regexp"
-	"strconv"
-	"strings"
-
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
-
-
 
 // sessionTerminalState detects claude terminal-only states that the chat view can't
 // otherwise see — they aren't transcript events or AskUserQuestion tool calls — by
@@ -25,7 +20,7 @@ import (
 //
 // Best-effort: the wording is claude-CLI-specific, so a version bump may need the
 // match strings updated.
-func sessionTerminalState(name string) (string, *compactProgress) {
+func sessionTerminalState(name string) (string, *claude.CompactProgress) {
 	pane := tmuxx.SessionPaneID(session.TmuxName(name))
 	if pane == "" {
 		return "", nil
@@ -34,9 +29,8 @@ func sessionTerminalState(name string) (string, *compactProgress) {
 	if err != nil {
 		return "", nil
 	}
-	return classifyClaudePane(string(out))
+	return claude.ClassifyPane(string(out))
 }
-
 
 // codexTerminalState detects codex terminal-only states the chat can't otherwise see,
 // the codex counterpart of sessionTerminalState. Returns:
@@ -68,5 +62,3 @@ func codexTerminalState(name string) string {
 func isCodexUpdateMenu(s string) bool {
 	return codex.PaneScreen(s) == "update"
 }
-
-

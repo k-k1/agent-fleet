@@ -1,5 +1,11 @@
 package claude
 
+import (
+	"regexp"
+	"strconv"
+	"strings"
+)
+
 // compactPctRe / compactElapsedRe pull the percent and the elapsed timer out of the
 // captured pane text. The elapsed match is anchored to the parenthetical that follows
 // "Compacting …" so an unrelated "(3s)" elsewhere on screen can't be mistaken for it.
@@ -17,23 +23,23 @@ var (
 	resumeMenuRe = regexp.MustCompile(`\d+\.\s+Resume from summary`)
 )
 
-// compactProgress is the parsed state of a running auto-compaction: the CLI draws a
+// CompactProgress is the parsed state of a running auto-compaction: the CLI draws a
 // "Compacting conversation… (2m 3s) [====] 74%" line, and the chat surfaces the same
 // percent/elapsed as a progress bar instead of a blind spinner. Fields are best-effort
 // — either may be zero/empty if that CLI version renders the line differently.
-type compactProgress struct {
+type CompactProgress struct {
 	Pct     int    `json:"pct"`               // 0–100; -1 when no percent was on screen
 	Elapsed string `json:"elapsed,omitempty"` // e.g. "2m 3s" (verbatim from the pane)
 }
 
-// classifyClaudePane is the pure pane-text classifier behind sessionTerminalState,
+// ClassifyPane is the pure pane-text classifier behind sessionx's sessionTerminalState,
 // split out so it can be unit-tested without tmux. Both matches are deliberately
 // narrow so an agent editing text that merely contains the words is not mistaken for
 // a live menu: "Compacting conversation" is the full CLI phrase (not a bare
 // "Compacting", which an i18n value "state.compacting" contains), and the resume menu
 // is keyed on its numbered option-1 line (see resumeMenuRe) rather than a bare
 // "Resume full session" (which this repo's own Console/Go source quotes verbatim).
-func classifyClaudePane(s string) (string, *compactProgress) {
+func ClassifyPane(s string) (string, *CompactProgress) {
 	switch {
 	case resumeMenuRe.MatchString(s):
 		return "resume", nil
@@ -47,8 +53,8 @@ func classifyClaudePane(s string) (string, *compactProgress) {
 // parseCompactProgress reads the percent and elapsed timer off a pane already known to
 // be compacting. pct is -1 when the CLI hasn't drawn a percentage yet, so the chat can
 // keep the spinner until the first tick lands.
-func parseCompactProgress(s string) *compactProgress {
-	p := &compactProgress{Pct: -1}
+func parseCompactProgress(s string) *CompactProgress {
+	p := &CompactProgress{Pct: -1}
 	if m := compactPctRe.FindStringSubmatch(s); m != nil {
 		if n, err := strconv.Atoi(m[1]); err == nil && n >= 0 && n <= 100 {
 			p.Pct = n
