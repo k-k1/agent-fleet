@@ -70,26 +70,31 @@ func TestInModuleDepsSeesTheAgentPackages(t *testing.T) {
 
 func TestAllIsACopyInRegistrationOrder(t *testing.T) {
 	a := All()
-	if len(a) != len(registered) || !slices.Equal(a, registered[:]) {
-		t.Fatalf("All() = %v, want %v", a, registered)
+	if len(a) != len(registered) {
+		t.Fatalf("All() = %v, want %d kinds", a, len(registered))
+	}
+	for i, e := range registered {
+		if a[i] != e.kind {
+			t.Fatalf("All()[%d] = %q, want %q", i, a[i], e.kind)
+		}
 	}
 	a[0] = "changed"
 	if All()[0] == "changed" {
 		t.Fatal("All() returned the package's own array")
 	}
 	seen := map[string]bool{}
-	for _, k := range registered {
-		if seen[k] {
-			t.Errorf("%q is registered twice", k)
+	for _, e := range registered {
+		if seen[e.kind] {
+			t.Errorf("%q is registered twice", e.kind)
 		}
-		seen[k] = true
+		seen[e.kind] = true
 	}
 }
 
 func TestKnownIsExact(t *testing.T) {
-	for _, k := range registered {
-		if !Known(k) {
-			t.Errorf("Known(%q) = false", k)
+	for _, e := range registered {
+		if !Known(e.kind) {
+			t.Errorf("Known(%q) = false", e.kind)
 		}
 	}
 	for _, k := range []string{"", "Claude", " codex", "codex ", "kiro-cli", "llama.cpp", "pi"} {

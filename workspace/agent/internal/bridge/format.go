@@ -3,6 +3,8 @@ package bridge
 import (
 	"os"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/kinds"
 )
 
 // Text renders the chat message body — deliberately terse (the bot name already
@@ -152,4 +154,13 @@ func exitLabelEN(reason string) string {
 		return "killed"
 	}
 	return reason
+}
+
+// productLabel is kind's outward product name from the kind registry's capability-free list
+// (internal/kinds), or the kind itself when it has none.
+func productLabel(kind string) string {
+	if l := kinds.Label(kind); l != "" {
+		return l
+	}
+	return kind
 }
