@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/acp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -36,7 +37,7 @@ type fakeACP struct {
 	prompts  []string // text of each session/prompt, in arrival order
 }
 
-func newFakeACP(t *testing.T) (*acpClient, *fakeACP) {
+func newFakeACP(t *testing.T) (*acp.Client, *fakeACP) {
 	t.Helper()
 	cIn, sOut := io.Pipe()
 	sIn, cOut := io.Pipe()
@@ -156,13 +157,13 @@ func newTestHandle(t *testing.T) (*threadHandle, *fakeACP) {
 		events: make(chan agents.Event, 64),
 		q:      agents.NewTurnQueue("s1", ledger, agents.LedgerAtTake),
 	}
-	h.cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
+	h.cl.OnRequest = func(id json.RawMessage, method string, params json.RawMessage) {
 		h.onServerRequest(h.cl, id, method, params)
 	}
 	// t.Cleanup is LIFO, so this wait, pushed after the t.Setenv("HOME", ...) above, runs
 	// before HOME is restored. Pushed before it, it would run after — too late.
 	t.Cleanup(func() { endTurnsBeforeHomeRestore(t, h) })
-	h.cl.onNotify = h.onNotify
+	h.cl.OnNotify = h.onNotify
 	return h, f
 }
 
@@ -208,7 +209,7 @@ func endTurnsBeforeHomeRestore(t *testing.T, h *threadHandle) {
 	cl := h.cl
 	h.mu.Unlock()
 	if cl != nil {
-		cl.markClosed()
+		cl.MarkClosed()
 	}
 	if !pumpIdleWithin(h, 10*time.Second) {
 		t.Error("a turn is still running after the test finished: restoring HOME now writes to the real ~/.config/agent-fleet")
@@ -583,26 +584,26 @@ func TestModeMapping(t *testing.T) {
 }
 
 func TestIsLockBusy(t *testing.T) {
-	busy := &rpcError{Code: -32603, Message: "Internal error",
+	busy := &acp.RPCError{Code: -32603, Message: "Internal error",
 		Data: json.RawMessage(`"Failed to start session: Session is active in another process (PID 14561)"`)}
 	if !isLockBusy(busy) {
 		t.Fatalf("lock-busy error not detected: %v", busy)
 	}
-	// wrapped rpcError is still detected (errors.As unwraps).
+	// wrapped acp.RPCError is still detected (errors.As unwraps).
 	if !isLockBusy(fmt.Errorf("load failed: %w", busy)) {
 		t.Fatal("wrapped lock-busy error not detected")
 	}
 	// same message but a DIFFERENT code must NOT read as lock-busy (code is ANDed).
-	wrongCode := &rpcError{Code: -32000, Message: "x",
+	wrongCode := &acp.RPCError{Code: -32000, Message: "x",
 		Data: json.RawMessage(`"Session is active in another process (PID 1)"`)}
 	if isLockBusy(wrongCode) {
 		t.Fatal("wrong code must not read as lock-busy")
 	}
 	// -32603 but an unrelated message must NOT match.
-	if isLockBusy(&rpcError{Code: -32603, Message: "Internal error", Data: json.RawMessage(`"No session found with id"`)}) {
+	if isLockBusy(&acp.RPCError{Code: -32603, Message: "Internal error", Data: json.RawMessage(`"No session found with id"`)}) {
 		t.Fatal("unrelated -32603 must not read as lock-busy")
 	}
-	// a plain (non-rpcError) error is never lock-busy — the fail-safe default (A2-1).
+	// a plain (non-acp.RPCError) error is never lock-busy — the fail-safe default (A2-1).
 	if isLockBusy(errors.New("active in another process")) {
 		t.Fatal("plain error must not read as lock-busy (fail-safe)")
 	}

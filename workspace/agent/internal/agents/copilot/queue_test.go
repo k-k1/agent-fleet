@@ -169,7 +169,7 @@ func syncFake(t *testing.T, h *threadHandle) {
 	h.mu.Lock()
 	cl := h.cl
 	h.mu.Unlock()
-	if _, err := cl.call("test/sync", map[string]any{}, hangGuard); err != nil {
+	if _, err := cl.Call("test/sync", map[string]any{}, hangGuard); err != nil {
 		t.Fatalf("syncing with the fake: %v", err)
 	}
 }
@@ -533,7 +533,7 @@ func TestQueueSurvivesChildDeathAndStartsAfterRespawn(t *testing.T) {
 	h.mu.Lock()
 	h.cl, h.alive = cl2, true
 	h.mu.Unlock()
-	h.cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
+	h.cl.OnRequest = func(id json.RawMessage, method string, params json.RawMessage) {
 		h.onServerRequest(h.cl, id, method, params)
 	}
 	h.resumePump()
@@ -623,7 +623,7 @@ func TestPromptLostOnADeadChildIsRequeued(t *testing.T) {
 	h.mu.Lock()
 	cl := h.cl
 	h.mu.Unlock()
-	for !cl.dead() {
+	for !cl.Dead() {
 		time.Sleep(5 * time.Millisecond)
 	}
 	f.writes.releaseWith(io.ErrClosedPipe)
@@ -636,7 +636,7 @@ func TestPromptLostOnADeadChildIsRequeued(t *testing.T) {
 	h.mu.Lock()
 	h.cl, h.alive = cl2, true
 	h.mu.Unlock()
-	h.cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
+	h.cl.OnRequest = func(id json.RawMessage, method string, params json.RawMessage) {
 		h.onServerRequest(h.cl, id, method, params)
 	}
 	h.resumePump()

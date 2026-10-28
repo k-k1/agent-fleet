@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/acp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -131,7 +132,7 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	defer h.spawnMu.Unlock()
 
 	h.mu.Lock()
-	if h.alive && h.cl != nil && !h.cl.dead() {
+	if h.alive && h.cl != nil && !h.cl.Dead() {
 		h.mu.Unlock()
 		return h, nil
 	}
@@ -214,7 +215,7 @@ func DropHandle(name string) {
 	cmd, cl, sid, running := h.cmd, h.cl, h.sid, h.running
 	h.mu.Unlock()
 	if running && cl != nil && sid != "" {
-		_ = cl.notifyPeer("session/cancel", map[string]any{"sessionId": sid})
+		_ = cl.NotifyPeer("session/cancel", map[string]any{"sessionId": sid})
 	}
 	stopChild(cmd)
 }
@@ -350,7 +351,7 @@ type threadHandle struct {
 
 	mu      sync.Mutex
 	cmd     *exec.Cmd
-	cl      *acpClient
+	cl      *acp.Client
 	sid     string // cursor session UUID
 	model   string // ACP currentModelId (for the model badge; Auto comes back as default[])
 	alive   bool
@@ -370,7 +371,7 @@ type threadHandle struct {
 	permOpts     []string        // Interaction option index -> ACP optionId
 	events       chan agents.Event
 
-	buf transcriptBuf // transcript built from ACP session/update (guarded by its own lock)
+	buf acp.TranscriptBuf // transcript built from ACP session/update (guarded by its own lock)
 
 	// act stamps every message the child sends, for the busy-row progress bound (progress.go).
 	act agents.Activity
@@ -439,13 +440,13 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	// Capture this cl in the closure: during the first spawn readLoop can already run while
 	// h.cl is still unassigned, so going through h.cl would panic on a nil dereference when
 	// answering an unknown method.
-	cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
+	cl.OnRequest = func(id json.RawMessage, method string, params json.RawMessage) {
 		h.onServerRequest(cl, id, method, params)
 	}
-	cl.onNotify = h.onNotify
+	cl.OnNotify = h.onNotify
 	go h.watch(cmd, tail, cl, exited)
 
-	if _, err := cl.call("initialize", map[string]any{
+	if _, err := cl.Call("initialize", map[string]any{
 		"protocolVersion": 1, "clientCapabilities": map[string]any{},
 	}, 30*time.Second); err != nil {
 		return fail(fmt.Errorf("cursor runtime の initialize に失敗しました: %w", err))
@@ -461,19 +462,19 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		// Cross-process resume (measured: the session/update replay restores both history and
 		// context). The replay notifications rebuild buf, so empty it first or the content is
 		// counted twice.
-		h.buf.reset()
-		h.buf.setLoading(true)
-		res, err := cl.call("session/load", map[string]any{
+		h.buf.Reset()
+		h.buf.SetLoading(true)
+		res, err := cl.Call("session/load", map[string]any{
 			"sessionId": sid, "cwd": h.dir, "mcpServers": []any{},
 		}, 180*time.Second)
-		h.buf.setLoading(false) // flush the last assistant turn
+		h.buf.SetLoading(false) // flush the last assistant turn
 		if err != nil {
 			// Same reasoning as kiro A2-1: falling back to session/new on a transient failure
 			// (timeout, lock contention, ...) silently detaches a live conversation and
 			// overwrites the slot's sid with an empty new one. cursor has no local store, so
 			// "the conversation really is gone" cannot be decided here; return a retryable
 			// error and leave the session stopped instead.
-			h.buf.reset()
+			h.buf.Reset()
 			return fail(fmt.Errorf("cursor セッションを読み込めませんでした（時間をおいて再開してください）: %w", err))
 		} else {
 			mode = currentModeOf(res)
@@ -481,7 +482,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		}
 	}
 	if sid == "" {
-		res, err := cl.call("session/new", map[string]any{
+		res, err := cl.Call("session/new", map[string]any{
 			"cwd": h.dir, "mcpServers": []any{},
 		}, 60*time.Second)
 		if err != nil {
@@ -514,7 +515,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	// Re-assert the mode when meta's wanted mode differs from the runtime's current one,
 	// which guards against falling back to the default after a resume (best-effort).
 	if wantMode != "" && wantMode != modeFromACP(mode) {
-		_, _ = cl.call("session/set_mode", map[string]any{
+		_, _ = cl.Call("session/set_mode", map[string]any{
 			"sessionId": sid, "modeId": acpModeID(wantMode),
 		}, 15*time.Second)
 	}
@@ -565,7 +566,7 @@ func awaitExitRecord(exited <-chan struct{}) {
 // watch reaps the child and records its exit. With one child per session the exit can be
 // attributed exactly, unlike a daemon supervisor. An exit caused by SIGTERM
 // (DropHandle/Shutdown) becomes "stopped" and the Console shows the ordinary stopped state.
-func (h *threadHandle) watch(cmd *exec.Cmd, tail *agents.StderrTail, cl *acpClient, exited chan struct{}) {
+func (h *threadHandle) watch(cmd *exec.Cmd, tail *agents.StderrTail, cl *acp.Client, exited chan struct{}) {
 	defer close(exited) // releases a failed spawn's awaitExitRecord
 	_ = cmd.Wait()
 	tail.Release()
@@ -592,7 +593,7 @@ func (h *threadHandle) watch(cmd *exec.Cmd, tail *agents.StderrTail, cl *acpClie
 		At:      time.Now().Format(time.RFC3339),
 		OOMBase: base,
 	})
-	cl.markClosed()
+	cl.MarkClosed()
 	h.mu.Lock()
 	stale := h.cl != cl // already replaced by a newer child: this is an old watch after a respawn
 	h.mu.Unlock()
@@ -708,7 +709,7 @@ func (h *threadHandle) pump() {
 		// this loop first, and the next input would be taken, recorded in the ledger and lost
 		// on a dead pipe. So the check comes before Take, and the input stays queued for
 		// resumePump after the respawn.
-		if !h.alive || h.cl == nil || h.cl.dead() {
+		if !h.alive || h.cl == nil || h.cl.Dead() {
 			h.pumping = false
 			h.mu.Unlock()
 			lease.Release()
@@ -805,11 +806,11 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 	// ACP emits no user_message_chunk during a live turn (measured), so the user turn is
 	// committed to the transcript here — a separate path from the replay's
 	// user_message_chunk. Only after Commit: a cancelled entry never became a turn.
-	h.buf.addUserTurn(t.In.Prompt)
+	h.buf.AddUserTurn(t.In.Prompt)
 	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
 	written := false
 	h.calls.Reset() // a turn boundary on a live connection: nothing from before it is open
-	res, err := cl.callWritten("session/prompt", map[string]any{
+	res, err := cl.CallWritten("session/prompt", map[string]any{
 		"sessionId": sid,
 		"prompt":    []map[string]any{{"type": "text", "text": t.In.Prompt}},
 	}, 0, func() {
@@ -820,12 +821,12 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 		h.received(t, cl, sid)
 	}) // no timeout — a turn runs as long as it runs
 	h.calls.Reset()
-	h.buf.flushAsst() // close the open assistant turn: ACP has no turn_ended notification
+	h.buf.FlushAsst() // close the open assistant turn: ACP has no turn_ended notification
 	h.mu.Lock()
 	interrupted := h.stopping
 	h.inter, h.permID, h.permOpts = nil, nil, nil // the turn ended = nothing is waiting
 	h.mu.Unlock()
-	if err != nil && !written && cl.dead() {
+	if err != nil && !written && cl.Dead() {
 		// The child died before it got the prompt: put it back for resumePump after the
 		// respawn, unless a stop was aimed at it.
 		h.mu.Lock()
@@ -862,7 +863,7 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 // stdin. A stop that found t committed but not yet written left its delivery to here. Whether
 // a session/cancel written right after the prompt reaches the turn is unmeasured, so this stop
 // is best effort (ADR 0105 decision 3).
-func (h *threadHandle) received(t *agents.Taken, cl *acpClient, sid string) {
+func (h *threadHandle) received(t *agents.Taken, cl *acp.Client, sid string) {
 	h.mu.Lock()
 	stop := h.q.Received(t)
 	h.mu.Unlock()
@@ -914,16 +915,16 @@ func (h *threadHandle) stopLocked(head agents.HeadAction) error {
 // be answered cancelled once the turn is cancelled; a runtime that waits for that answer keeps
 // the turn interrupting and the card up. The stop is reachable under the card, so it cannot
 // rely on the card's own Cancel.
-func (h *threadHandle) deliverStop(cl *acpClient, sid string) error {
+func (h *threadHandle) deliverStop(cl *acp.Client, sid string) error {
 	h.mu.Lock()
 	permID := h.permID
 	if permID != nil {
 		h.inter, h.permID, h.permOpts = nil, nil, nil
 	}
 	h.mu.Unlock()
-	err := cl.notifyPeer("session/cancel", map[string]any{"sessionId": sid})
+	err := cl.NotifyPeer("session/cancel", map[string]any{"sessionId": sid})
 	if permID != nil {
-		_ = cl.respond(permID, map[string]any{"outcome": map[string]any{"outcome": "cancelled"}})
+		_ = cl.Respond(permID, map[string]any{"outcome": map[string]any{"outcome": "cancelled"}})
 	}
 	return err
 }
@@ -968,7 +969,7 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	if cl == nil {
 		return errors.New("runtime が停止しています")
 	}
-	if _, err := cl.call("session/set_mode", map[string]any{
+	if _, err := cl.Call("session/set_mode", map[string]any{
 		"sessionId": sid, "modeId": acpModeID(s.Mode),
 	}, 15*time.Second); err != nil {
 		return err
@@ -1020,7 +1021,7 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	default:
 		return fmt.Errorf("unsupported decision: %s", reply.Decision)
 	}
-	if err := cl.respond(permID, result); err != nil {
+	if err := cl.Respond(permID, result); err != nil {
 		return err
 	}
 	h.mu.Lock()
@@ -1116,11 +1117,11 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 		}
 		agents.PublishCommands(h.name, cmds)
 	case "user_message_chunk":
-		h.buf.userChunk(u.Content.Text)
+		h.buf.UserChunk(u.Content.Text)
 	case "agent_message_chunk":
-		h.buf.agentChunk(u.Content.Text)
+		h.buf.AgentChunk(u.Content.Text)
 	case "agent_thought_chunk":
-		h.buf.thoughtChunk(u.Content.Text)
+		h.buf.ThoughtChunk(u.Content.Text)
 	case "tool_call":
 		h.noteToolCall(u.SessionUpdate, u.ToolCallID, u.Status)
 		file, verb, edits := "", "", []transcript.Edit(nil)
@@ -1147,11 +1148,11 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 			}
 			edits = es
 		}
-		h.buf.toolCall(u.ToolCallID, u.Title, toolInfo(u.RawInput), file, verb, edits)
+		h.buf.ToolCall(u.ToolCallID, u.Title, toolInfo(u.RawInput), file, verb, edits)
 	case "tool_call_update":
 		h.noteToolCall(u.SessionUpdate, u.ToolCallID, u.Status)
 		if out := toolOutput(u.RawOutput); out != "" {
-			h.buf.toolOutput(u.ToolCallID, out)
+			h.buf.ToolOutput(u.ToolCallID, out)
 		}
 	case "current_mode_update":
 		if m := modeFromACP(u.CurrentModeID); m != "" {
@@ -1218,15 +1219,12 @@ func toolOutput(raw json.RawMessage) string {
 // onServerRequest handles server-initiated requests on the readLoop goroutine —
 // MUST NOT block: record the Interaction and return; the answer goes back later via
 // Respond -> cl.respond. It does not happen under --force, but plan mode can reach it.
-func (h *threadHandle) onServerRequest(cl *acpClient, id json.RawMessage, method string, params json.RawMessage) {
+func (h *threadHandle) onServerRequest(cl *acp.Client, id json.RawMessage, method string, params json.RawMessage) {
 	h.act.Touch()
 	if method != "session/request_permission" {
 		// An unknown server-initiated request wedges the turn if it goes unanswered, so
 		// return an error.
-		_ = cl.write(map[string]any{
-			"jsonrpc": "2.0", "id": id,
-			"error": map[string]any{"code": -32601, "message": "unsupported request: " + method},
-		})
+		_ = cl.RespondError(id, -32601, "unsupported request: "+method)
 		return
 	}
 	var req struct {
@@ -1333,7 +1331,7 @@ func managedTranscript(m session.Meta) agents.TranscriptData {
 	if h == nil {
 		return agents.TranscriptData{}
 	}
-	td := agents.TranscriptData{Turns: h.buf.snapshot()}
+	td := agents.TranscriptData{Turns: h.buf.Snapshot()}
 	h.mu.Lock()
 	inter := h.inter
 	modeSet := h.settings.Mode

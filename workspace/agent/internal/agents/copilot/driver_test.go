@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/acp"
 )
 
 // fakeACP is a scriptable ACP peer on the other end of the client's pipes.
@@ -28,7 +29,7 @@ type fakeACP struct {
 	gotResp   chan json.RawMessage // responses to server-initiated requests
 }
 
-func newFakeACP(t *testing.T) (*acpClient, *fakeACP) {
+func newFakeACP(t *testing.T) (*acp.Client, *fakeACP) {
 	t.Helper()
 	cIn, sOut := io.Pipe() // server writes → client reads
 	sIn, cOut := io.Pipe() // client writes → server reads
@@ -124,7 +125,7 @@ func newTestHandle(t *testing.T) (*threadHandle, *fakeACP) {
 		events: make(chan agents.Event, 64),
 		q:      agents.NewTurnQueue("s1", ledger, agents.LedgerAtTake),
 	}
-	h.cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
+	h.cl.OnRequest = func(id json.RawMessage, method string, params json.RawMessage) {
 		h.onServerRequest(h.cl, id, method, params)
 	}
 	// t.Cleanup is LIFO, so this wait — registered after the t.Setenv("HOME", …) above —
@@ -175,7 +176,7 @@ func endTurnsBeforeHomeRestore(t *testing.T, h *threadHandle) {
 	cl := h.cl
 	h.mu.Unlock()
 	if cl != nil {
-		cl.markClosed()
+		cl.MarkClosed()
 	}
 	if !pumpIdleWithin(h, 10*time.Second) {
 		t.Error("a turn is still running after the test: restoring HOME now would write into the real ~/.config/agent-fleet")

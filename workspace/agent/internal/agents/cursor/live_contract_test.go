@@ -89,7 +89,7 @@ func TestLiveSpawnPromptResume(t *testing.T) {
 		t.Fatalf("sid not captured: %q store=%q", sid, sids.Read("live-slot-1"))
 	}
 	// The transcript is built in memory (ACP writes no local file).
-	turns := h.buf.snapshot()
+	turns := h.buf.Snapshot()
 	found := false
 	for _, tn := range turns {
 		if tn.Role == "assistant" && strings.Contains(tn.Text, "LIVE-OK") {
@@ -115,7 +115,7 @@ func TestLiveSpawnPromptResume(t *testing.T) {
 		t.Fatalf("resume changed sid: %q → %q", sid, h.sid)
 	}
 	// The session/load replay rebuilt the transcript (the previous turn is still there).
-	replayed := h.buf.snapshot()
+	replayed := h.buf.Snapshot()
 	if len(replayed) == 0 {
 		t.Fatalf("transcript not rebuilt from session/load replay")
 	}
@@ -124,7 +124,7 @@ func TestLiveSpawnPromptResume(t *testing.T) {
 	}
 	waitState(t, h, agents.TurnRunning)
 	waitCompleted(t, h)
-	turns = h.buf.snapshot()
+	turns = h.buf.Snapshot()
 	last := turns[len(turns)-1]
 	if last.Role != "assistant" || !strings.Contains(last.Text, "LIVE-OK") {
 		t.Fatalf("resume lost context; last turn: %+v", last)

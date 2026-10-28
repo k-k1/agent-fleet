@@ -17,7 +17,7 @@ package kiro
 //     every turn to v2 JSONL (~/.kiro/sessions/cli/<sid>.jsonl, shared with the TUI), so when
 //     the session is stopped and there is no handle, transcript.go's fileTranscript reads that
 //     (managedTranscript's fallback). While a handle is live it is built in memory from
-//     session/update notifications (mirror.go transcriptBuf) and streamed live, as in cursor.
+//     session/update notifications (acp.TranscriptBuf) and streamed live, as in cursor.
 //
 // Why one child per session: pinning model/effort/agent-engine through the child's launch
 // flags is the reliable way (ACP has no per-session model setting). Permissions
@@ -46,6 +46,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/acp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -136,7 +137,7 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	handlesMu.Unlock()
 
 	h.mu.Lock()
-	alive := h.alive && h.cl != nil && !h.cl.dead()
+	alive := h.alive && h.cl != nil && !h.cl.Dead()
 	h.mu.Unlock()
 	if alive {
 		return h, nil
@@ -150,7 +151,7 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	h.spawnMu.Lock()
 	defer h.spawnMu.Unlock()
 	h.mu.Lock()
-	if h.alive && h.cl != nil && !h.cl.dead() {
+	if h.alive && h.cl != nil && !h.cl.Dead() {
 		h.mu.Unlock()
 		return h, nil
 	}
@@ -247,7 +248,7 @@ func dropHandle(name string, wait time.Duration) {
 	cmd, cl, stdin, sid, running, exited := h.cmd, h.cl, h.stdin, h.sid, h.running, h.exited
 	h.mu.Unlock()
 	if running && cl != nil && sid != "" {
-		_ = cl.notifyPeer("session/cancel", map[string]any{"sessionId": sid})
+		_ = cl.NotifyPeer("session/cancel", map[string]any{"sessionId": sid})
 	}
 	stopChild(cmd, stdin)
 	if wait > 0 && exited != nil {
@@ -434,7 +435,7 @@ type threadHandle struct {
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser // kept so stop can EOF-close it (graceful .lock release)
 	exited  chan struct{}  // closed by watch when the current child exits (bounded wait for the switch, A2-2)
-	cl      *acpClient
+	cl      *acp.Client
 	sid     string // kiro session UUID (assigned by the CLI)
 	model   string // ACP currentModelId (for the model badge; auto is "auto")
 	alive   bool
@@ -454,7 +455,7 @@ type threadHandle struct {
 	permOpts     []string        // Interaction option index → ACP optionId
 	events       chan agents.Event
 
-	buf transcriptBuf // transcript built from ACP session/update (guarded by its own lock)
+	buf acp.TranscriptBuf // transcript built from ACP session/update (guarded by its own lock)
 
 	// Live usage (Track D — docs/log/43 §10). Holds the contextUsagePercentage (latest value)
 	// and the meteringUsage (accumulated credits) carried by `_kiro.dev/metadata` notifications.
@@ -537,13 +538,13 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	// Capture this cl in the closure: during the first spawn readLoop can run while h.cl is
 	// still unassigned, so going through h.cl would nil-dereference and panic when responding
 	// to an unknown method.
-	cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
+	cl.OnRequest = func(id json.RawMessage, method string, params json.RawMessage) {
 		h.onServerRequest(cl, id, method, params)
 	}
-	cl.onNotify = h.onNotify
+	cl.OnNotify = h.onNotify
 	go h.watch(cmd, tail, cl, exited)
 
-	if _, err := cl.call("initialize", map[string]any{
+	if _, err := cl.Call("initialize", map[string]any{
 		"protocolVersion": 1, "clientCapabilities": map[string]any{},
 	}, 30*time.Second); err != nil {
 		return fail(fmt.Errorf("kiro runtime の initialize に失敗しました: %w", err))
@@ -587,11 +588,11 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 			if _, statErr := os.Stat(sessionJSONPath(sid)); statErr != nil {
 				log.Printf("kiro managed: session/load %s: store gone (%v) — restarting with a new session", h.name, lerr)
 				sid = ""
-				h.buf.reset()
+				h.buf.Reset()
 			} else {
 				// Do not leave a partial replay in buf — it would be shown in preference to the
 				// complete file transcript.
-				h.buf.reset()
+				h.buf.Reset()
 				return fail(fmt.Errorf("kiro セッションを読み込めませんでした（別プロセスが占有中の可能性・時間をおいて再開してください）: %w", lerr))
 			}
 		} else {
@@ -600,7 +601,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		}
 	}
 	if sid == "" {
-		res, err := cl.call("session/new", map[string]any{
+		res, err := cl.Call("session/new", map[string]any{
 			"cwd": h.dir, "mcpServers": []any{},
 		}, 60*time.Second)
 		if err != nil {
@@ -645,7 +646,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	// against falling back to the default after a resume; best-effort). A plan launch goes to
 	// kiro_planner.
 	if wantMode != "" && wantMode != modeFromACP(mode) {
-		_, _ = cl.call("session/set_mode", map[string]any{
+		_, _ = cl.Call("session/set_mode", map[string]any{
 			"sessionId": sid, "modeId": acpModeID(wantMode),
 		}, 15*time.Second)
 	}
@@ -666,15 +667,15 @@ var (
 // session's .lock ("active in another process"). Non-lock errors return immediately so
 // spawn can fall back to a fresh session/new. Each attempt resets the replay buffer so a
 // partial replay before an error isn't double-counted.
-func (h *threadHandle) loadWithLockRetry(cl *acpClient, sid string) (json.RawMessage, error) {
+func (h *threadHandle) loadWithLockRetry(cl *acp.Client, sid string) (json.RawMessage, error) {
 	var lastErr error
 	for attempt := 0; attempt < lockRetryAttempts; attempt++ {
-		h.buf.reset()
-		h.buf.setLoading(true)
-		res, err := cl.call("session/load", map[string]any{
+		h.buf.Reset()
+		h.buf.SetLoading(true)
+		res, err := cl.Call("session/load", map[string]any{
 			"sessionId": sid, "cwd": h.dir, "mcpServers": []any{},
 		}, 180*time.Second)
-		h.buf.setLoading(false) // flush the last assistant turn
+		h.buf.SetLoading(false) // flush the last assistant turn
 		if err == nil {
 			return res, nil
 		}
@@ -682,7 +683,7 @@ func (h *threadHandle) loadWithLockRetry(cl *acpClient, sid string) (json.RawMes
 		if !isLockBusy(err) {
 			return nil, err
 		}
-		h.buf.reset()
+		h.buf.Reset()
 		time.Sleep(lockRetryDelay) // wait for the previous owner to exit and release the .lock
 	}
 	return nil, lastErr
@@ -694,7 +695,7 @@ func (h *threadHandle) loadWithLockRetry(cl *acpClient, sid string) (json.RawMes
 // lock-busy. Only gates the RETRY decision — the session/new-vs-fail choice in spawn is made
 // from the on-disk store, not this string, so a message drift stays fail-safe (A2-1).
 func isLockBusy(err error) bool {
-	var re *rpcError
+	var re *acp.RPCError
 	if !errors.As(err, &re) {
 		return false
 	}
@@ -742,7 +743,7 @@ func awaitExitRecord(exited <-chan struct{}) {
 // supervisor, because there is one child per session). An exit caused by stdin EOF
 // (DropHandle/Shutdown) is exit 0, i.e. "stopped", so the Console shows the normal stopped
 // state.
-func (h *threadHandle) watch(cmd *exec.Cmd, tail *agents.StderrTail, cl *acpClient, exited chan struct{}) {
+func (h *threadHandle) watch(cmd *exec.Cmd, tail *agents.StderrTail, cl *acp.Client, exited chan struct{}) {
 	defer close(exited) // release the switch's DropHandleWait (a channel specific to this child)
 	_ = cmd.Wait()
 	tail.Release()
@@ -769,7 +770,7 @@ func (h *threadHandle) watch(cmd *exec.Cmd, tail *agents.StderrTail, cl *acpClie
 		At:      time.Now().Format(time.RFC3339),
 		OOMBase: base,
 	})
-	cl.markClosed()
+	cl.MarkClosed()
 	h.mu.Lock()
 	stale := h.cl != cl // already replaced by a newer child (an old watch after a respawn)
 	h.mu.Unlock()
@@ -885,7 +886,7 @@ func (h *threadHandle) pump() {
 		// this loop first, and the next input would be taken, recorded in the ledger and lost
 		// on a dead pipe. So the check comes before Take, and the input stays queued for
 		// resumePump after the respawn.
-		if !h.alive || h.cl == nil || h.cl.dead() {
+		if !h.alive || h.cl == nil || h.cl.Dead() {
 			h.pumping = false
 			h.mu.Unlock()
 			lease.Release()
@@ -982,11 +983,11 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 	// ACP emits no user_message_chunk during a live turn (measured), so the user turn is
 	// committed to the transcript here — a separate path from the replay's
 	// user_message_chunk. Only after Commit: a cancelled entry never became a turn.
-	h.buf.addUserTurn(t.In.Prompt)
+	h.buf.AddUserTurn(t.In.Prompt)
 	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
 	written := false
 	h.calls.Reset() // a turn boundary on a live connection: nothing from before it is open
-	res, err := cl.callWritten("session/prompt", map[string]any{
+	res, err := cl.CallWritten("session/prompt", map[string]any{
 		"sessionId": sid,
 		"prompt":    []map[string]any{{"type": "text", "text": t.In.Prompt}},
 	}, 0, func() {
@@ -997,12 +998,12 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 		h.received(t, cl, sid)
 	}) // no timeout — a turn runs as long as it runs
 	h.calls.Reset()
-	h.buf.flushAsst() // close the open assistant turn: ACP has no turn_ended notification
+	h.buf.FlushAsst() // close the open assistant turn: ACP has no turn_ended notification
 	h.mu.Lock()
 	interrupted := h.stopping
 	h.inter, h.permID, h.permOpts = nil, nil, nil // the turn ended = nothing is waiting
 	h.mu.Unlock()
-	if err != nil && !written && cl.dead() {
+	if err != nil && !written && cl.Dead() {
 		// The child died before it got the prompt: put it back for resumePump after the
 		// respawn, unless a stop was aimed at it.
 		h.mu.Lock()
@@ -1039,7 +1040,7 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 // stdin. A stop that found t committed but not yet written left its delivery to here. Whether
 // a session/cancel written right after the prompt reaches the turn is unmeasured, so this stop
 // is best effort (ADR 0105 decision 3).
-func (h *threadHandle) received(t *agents.Taken, cl *acpClient, sid string) {
+func (h *threadHandle) received(t *agents.Taken, cl *acp.Client, sid string) {
 	h.mu.Lock()
 	stop := h.q.Received(t)
 	h.mu.Unlock()
@@ -1091,16 +1092,16 @@ func (h *threadHandle) stopLocked(head agents.HeadAction) error {
 // be answered cancelled once the turn is cancelled; a runtime that waits for that answer keeps
 // the turn interrupting and the card up. The stop is reachable under the card, so it cannot
 // rely on the card's own Cancel.
-func (h *threadHandle) deliverStop(cl *acpClient, sid string) error {
+func (h *threadHandle) deliverStop(cl *acp.Client, sid string) error {
 	h.mu.Lock()
 	permID := h.permID
 	if permID != nil {
 		h.inter, h.permID, h.permOpts = nil, nil, nil
 	}
 	h.mu.Unlock()
-	err := cl.notifyPeer("session/cancel", map[string]any{"sessionId": sid})
+	err := cl.NotifyPeer("session/cancel", map[string]any{"sessionId": sid})
 	if permID != nil {
-		_ = cl.respond(permID, map[string]any{"outcome": map[string]any{"outcome": "cancelled"}})
+		_ = cl.Respond(permID, map[string]any{"outcome": map[string]any{"outcome": "cancelled"}})
 	}
 	return err
 }
@@ -1177,7 +1178,7 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	default:
 		return fmt.Errorf("unsupported decision: %s", reply.Decision)
 	}
-	if err := cl.respond(permID, result); err != nil {
+	if err := cl.Respond(permID, result); err != nil {
 		return err
 	}
 	h.mu.Lock()
@@ -1253,18 +1254,18 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 	u := p.Update
 	switch u.SessionUpdate {
 	case "user_message_chunk":
-		h.buf.userChunk(u.Content.Text)
+		h.buf.UserChunk(u.Content.Text)
 	case "agent_message_chunk":
-		h.buf.agentChunk(u.Content.Text)
+		h.buf.AgentChunk(u.Content.Text)
 	case "agent_thought_chunk":
-		h.buf.thoughtChunk(u.Content.Text)
+		h.buf.ThoughtChunk(u.Content.Text)
 	case "tool_call":
 		h.noteToolCall(u.SessionUpdate, u.ToolCallID, u.Status)
-		h.buf.toolCall(u.ToolCallID, u.Title, toolInfo(u.RawInput))
+		h.buf.ToolCall(u.ToolCallID, u.Title, toolInfo(u.RawInput), "", "", nil)
 	case "tool_call_update":
 		h.noteToolCall(u.SessionUpdate, u.ToolCallID, u.Status)
 		if out := toolOutput(u.RawOutput); out != "" {
-			h.buf.toolOutput(u.ToolCallID, out)
+			h.buf.ToolOutput(u.ToolCallID, out)
 		}
 	case "current_mode_update":
 		if m := modeFromACP(u.CurrentModeID); m != "" {
@@ -1369,14 +1370,11 @@ func toolOutput(raw json.RawMessage) string {
 // MUST NOT block: record the Interaction and return; the answer goes back later via
 // Respond → cl.respond. It does not happen under --trust-all-tools, but a plan launch can
 // reach it.
-func (h *threadHandle) onServerRequest(cl *acpClient, id json.RawMessage, method string, params json.RawMessage) {
+func (h *threadHandle) onServerRequest(cl *acp.Client, id json.RawMessage, method string, params json.RawMessage) {
 	h.act.Touch()
 	if method != "session/request_permission" {
 		// An unanswered server-initiated request wedges the turn, so reply with an error.
-		_ = cl.write(map[string]any{
-			"jsonrpc": "2.0", "id": id,
-			"error": map[string]any{"code": -32601, "message": "unsupported request: " + method},
-		})
+		_ = cl.RespondError(id, -32601, "unsupported request: "+method)
 		return
 	}
 	var req struct {
@@ -1481,10 +1479,10 @@ func (h *threadHandle) queueView() ([]agents.QueueItem, []agents.Discard) {
 // then.
 func managedTranscript(m session.Meta) agents.TranscriptData {
 	h := handleFor(m.Name)
-	if h == nil || h.buf.empty() {
+	if h == nil || h.buf.Empty() {
 		return fileTranscript(m)
 	}
-	td := agents.TranscriptData{Turns: h.buf.snapshot()}
+	td := agents.TranscriptData{Turns: h.buf.Snapshot()}
 	h.mu.Lock()
 	inter := h.inter
 	modeSet := h.settings.Mode

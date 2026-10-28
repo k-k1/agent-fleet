@@ -2,9 +2,9 @@
 // Q Developer CLI; docs/log/43 Track A). It keeps the read layer inside the kind: the Agent
 // implementation, the transcript over the v2 JSONL session store, and the state read from the
 // TUI string contract. The managed driver (`kiro-cli acp`, a per-session child speaking ACP
-// JSON-RPC over stdio) is implemented in driver.go/acp.go/mirror.go under Track A2 - the same
-// shape as cursor/copilot, with cross-process resume through session/load and context retention
-// measured.
+// JSON-RPC over stdio) is implemented in driver.go over the shared ../acp package under Track
+// A2 - the same shape as cursor/copilot, with cross-process resume through session/load and
+// context retention measured.
 //
 // Session identity, the biggest difference from cursor: kiro MINTS THE SESSION ID ITSELF.
 // Passing an unknown self-minted UUID to `--resume-id` is not honoured; the CLI cuts its own
