@@ -91,8 +91,8 @@ func approvalLine(s string) string {
 // footerWindow bounds classification to the composer footer region (the non-empty lines at the
 // bottom). Scanning the whole screen means that when the assistant quotes a contract phrase
 // such as "Kiro is working" in its prose, the working verdict persists after the return to
-// idle and MarkTurnEnd never fires (no completion report). paneMode (session_io.go) restricts
-// itself to paneTail for the same reason. The width is chosen to fit the footer plus the
+// idle and MarkTurnEnd never fires (no completion report). PaneMode (panemode.go) restricts
+// itself to agents.PaneTail for the same reason. The width is chosen to fit the footer plus the
 // approval panel (about 5 lines at most).
 const footerWindow = 8
 
@@ -119,7 +119,7 @@ func classifyPane(s string) string {
 	return ""
 }
 
-// tailLines returns the last n non-empty lines of s (the same shape as paneMode's paneTail).
+// tailLines returns the last n non-empty lines of s (the same shape as agents.PaneTail).
 func tailLines(s string, n int) string {
 	lines := strings.Split(s, "\n")
 	var out []string
