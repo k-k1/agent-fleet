@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/acp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/procx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -27,23 +26,10 @@ func (managedDriver) ManagedProgress(m session.Meta) (time.Time, bool) {
 // procTable reads the process table; a variable so tests can feed a synthetic one.
 var procTable = procx.Snapshot
 
-// progress is the newest sign of life (acp.Progress).
+// progress is the newest sign of life (acp.Handle.ToolProgress).
 func (h *threadHandle) progress(now time.Time, table func() map[int]procx.Info) (time.Time, bool) {
-	return acp.Progress(&h.act, &h.calls, now, func() (int, bool) {
-		h.mu.Lock()
-		cmd := h.cmd
-		h.mu.Unlock()
-		if cmd == nil || cmd.Process == nil {
-			return 0, false
-		}
-		return cmd.Process.Pid, true
-	}, table, kiroToolIn)
+	return h.ToolProgress(now, table, kiroToolIn)
 }
 
 // kiroToolIn finds a tool in the child's process group (ManagedProgress says why).
 func kiroToolIn(pid int, tab map[int]procx.Info) bool { return procx.GroupToolIn(pid, tab, "kiro-cli") }
-
-// noteToolCall keeps the set of open ACP tool calls (acp.NoteToolCall).
-func (h *threadHandle) noteToolCall(sessionUpdate, id, status string) {
-	acp.NoteToolCall(&h.calls, sessionUpdate, id, status)
-}

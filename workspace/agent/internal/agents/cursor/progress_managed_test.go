@@ -29,10 +29,12 @@ func cursorTable(withTool bool) map[int]procx.Info {
 // process table, so the test goes through ManagedProgress as production does.
 func registered(t *testing.T, name string, silent time.Duration, tab map[int]procx.Info) session.Meta {
 	t.Helper()
-	h := &threadHandle{name: name, cmd: &exec.Cmd{Process: &os.Process{Pid: 100}}}
-	h.calls.Reset() // the turn began on this connection
+	h := newThreadHandle(name, "", "")
+	h.SetChildForTest(&exec.Cmd{Process: &os.Process{Pid: 100}})
+	act, calls := h.ProgressForTest()
+	calls.Reset() // the turn began on this connection
 	if silent >= 0 {
-		h.act.TouchAt(time.Now().Add(-silent))
+		act.TouchAt(time.Now().Add(-silent))
 	}
 	handlesMu.Lock()
 	handles[name] = h
@@ -78,14 +80,15 @@ func TestOpenToolCallKeepsAStaleRowHoldingWithAnIdleProcessTable(t *testing.T) {
 		h.onNotify("session/update", []byte(`{"update":{"sessionUpdate":"tool_call","toolCallId":"remote_build","status":"in_progress"}}`))
 	})
 	// the notification stamped the handle; make it silent again
-	setCalls(m.Name, func(h *threadHandle) { h.act.TouchAt(time.Now().Add(-2 * time.Hour)) })
+	setCalls(m.Name, func(h *threadHandle) { act, _ := h.ProgressForTest(); act.TouchAt(time.Now().Add(-2 * time.Hour)) })
 	got, ok := (managedDriver{}).ManagedProgress(m)
 	if !ok || time.Since(got) > time.Minute {
 		t.Fatalf("open tool call, idle process table, silent 2 h: got %v, %v; want now", got, ok)
 	}
 	setCalls(m.Name, func(h *threadHandle) {
 		h.onNotify("session/update", []byte(`{"update":{"sessionUpdate":"tool_call_update","toolCallId":"remote_build","status":"completed"}}`))
-		h.act.TouchAt(time.Now().Add(-2 * time.Hour))
+		act, _ := h.ProgressForTest()
+		act.TouchAt(time.Now().Add(-2 * time.Hour))
 	})
 	got, ok = (managedDriver{}).ManagedProgress(m)
 	if !ok || time.Since(got) < time.Hour {
@@ -97,7 +100,7 @@ func TestOpenToolCallKeepsAStaleRowHoldingWithAnIdleProcessTable(t *testing.T) {
 // turn boundary.
 func TestUnknownCallSetKeepsAStaleRowHolding(t *testing.T) {
 	m := registered(t, "prog-replay", 2*time.Hour, cursorTable(false))
-	setCalls(m.Name, func(h *threadHandle) { h.calls.Unknown() })
+	setCalls(m.Name, func(h *threadHandle) { _, calls := h.ProgressForTest(); calls.Unknown() })
 	if got, ok := (managedDriver{}).ManagedProgress(m); ok {
 		t.Fatalf("answered %v although the open calls are unknown", got)
 	}
@@ -139,9 +142,10 @@ func TestManagedProgressNeedsALiveHandle(t *testing.T) {
 }
 
 func TestReadLoopMessagesStampTheHandle(t *testing.T) {
-	h := &threadHandle{name: "prog"}
+	h := newThreadHandle("prog", "", "")
 	h.onNotify("session/update", nil)
-	if _, ok := h.act.At(); !ok {
+	act, _ := h.ProgressForTest()
+	if _, ok := act.At(); !ok {
 		t.Fatal("a notification did not stamp the handle")
 	}
 }

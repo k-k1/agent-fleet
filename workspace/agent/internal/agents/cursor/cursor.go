@@ -117,7 +117,7 @@ func (agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
 	if h == nil {
 		return agents.PendingModal{}, false
 	}
-	detail := h.pendingPermission()
+	detail := h.PendingPermission()
 	if detail == "" {
 		return agents.PendingModal{}, false
 	}

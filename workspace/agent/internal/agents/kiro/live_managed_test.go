@@ -49,15 +49,15 @@ func waitCompleted(t *testing.T, h *threadHandle) {
 	t.Helper()
 	deadline := time.Now().Add(150 * time.Second)
 	for time.Now().Before(deadline) {
-		switch h.currentState() {
+		switch h.TurnState() {
 		case agents.TurnCompleted:
 			return
 		case agents.TurnFailed, agents.TurnUnknown, agents.TurnCancelled:
-			t.Fatalf("turn ended abnormally: %s", h.currentState())
+			t.Fatalf("turn ended abnormally: %s", h.TurnState())
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("turn did not complete (state %s)", h.currentState())
+	t.Fatalf("turn did not complete (state %s)", h.TurnState())
 }
 
 func TestLiveManagedSpawnPromptResume(t *testing.T) {
@@ -68,12 +68,8 @@ func TestLiveManagedSpawnPromptResume(t *testing.T) {
 	isolateHomeKeepKiroAuth(t)
 	work := t.TempDir()
 
-	h := &threadHandle{
-		name: "livem1", dir: work, slotSid: "livem-slot-1",
-		events: make(chan agents.Event, 64),
-		q:      agents.NewTurnQueue("livem1", ledger, agents.LedgerAtTake),
-	}
-	if err := h.spawn(agents.ThreadSettings{}); err != nil {
+	h := newThreadHandle(session.Meta{Name: "livem1", Dir: work}, "livem-slot-1")
+	if err := h.Spawn(agents.ThreadSettings{}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 	t.Cleanup(func() { DropHandle("livem1"); Shutdown() })
@@ -87,11 +83,11 @@ func TestLiveManagedSpawnPromptResume(t *testing.T) {
 	waitState(t, h, agents.TurnRunning) // wait for the turn to start, so spawn's initial Completed is not overtaken
 	waitCompleted(t, h)
 
-	sid := h.sid
+	sid := h.SidForTest()
 	if sid == "" || sids.Read("livem-slot-1") != sid {
 		t.Fatalf("sid not captured: %q store=%q", sid, sids.Read("livem-slot-1"))
 	}
-	turns := h.buf.Snapshot()
+	turns := h.Buf().Snapshot()
 	found := false
 	for _, tn := range turns {
 		if tn.Role == "assistant" && strings.Contains(tn.Text, "LIVE-KIRO-OK") {
@@ -131,19 +127,15 @@ func TestLiveManagedSpawnPromptResume(t *testing.T) {
 	// Resume from a separate process (session/load): end the child cleanly through stdin EOF
 	// so .lock is released, spawn again, and confirm with a real prompt that the context and
 	// the transcript survived.
-	h.mu.Lock()
-	oldCmd, oldStdin := h.cmd, h.stdin
-	h.alive = false
-	h.mu.Unlock()
-	stopChild(oldCmd, oldStdin)
+	h.Down()()                  // mark the handle dead and stop its child
 	time.Sleep(2 * time.Second) // wait for the graceful exit and the .lock release
-	if err := h.spawn(agents.ThreadSettings{}); err != nil {
+	if err := h.Spawn(agents.ThreadSettings{}); err != nil {
 		t.Fatalf("respawn: %v", err)
 	}
-	if h.sid != sid {
-		t.Fatalf("resume changed sid: %q -> %q", sid, h.sid)
+	if h.SidForTest() != sid {
+		t.Fatalf("resume changed sid: %q -> %q", sid, h.SidForTest())
 	}
-	replayed := h.buf.Snapshot()
+	replayed := h.Buf().Snapshot()
 	if len(replayed) == 0 {
 		t.Fatalf("transcript not rebuilt from session/load replay")
 	}
@@ -152,7 +144,7 @@ func TestLiveManagedSpawnPromptResume(t *testing.T) {
 	}
 	waitState(t, h, agents.TurnRunning)
 	waitCompleted(t, h)
-	turns = h.buf.Snapshot()
+	turns = h.Buf().Snapshot()
 	last := turns[len(turns)-1]
 	if last.Role != "assistant" || !strings.Contains(last.Text, "LIVE-KIRO-OK") {
 		t.Fatalf("resume lost context; last turn: %+v", last)

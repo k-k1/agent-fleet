@@ -1,4 +1,4 @@
-package kiro
+package acp
 
 // The two-stage stop on the ACP pump (ADR 0105, docs/log/128 §1.2). Every test drives the fake
 // runtime to the end of the turns it started and asserts the state after the answers were
@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // gatedWriter is the client's stdin in tests. hold() keeps every write from reaching the fake
@@ -72,14 +71,14 @@ func peer(id, text string) agents.TurnInput {
 	return agents.TurnInput{Prompt: text, ClientMessageID: id, Origin: agents.Origin{Kind: agents.OriginPeer, From: "s-peer"}}
 }
 
-func mustSend(t *testing.T, h *threadHandle, in agents.TurnInput) {
+func mustSend(t *testing.T, h *Handle, in agents.TurnInput) {
 	t.Helper()
 	if err := h.Send(in); err != nil {
 		t.Fatalf("Send %s: %v", in.ClientMessageID, err)
 	}
 }
 
-func mustInterrupt(t *testing.T, h *threadHandle, opts agents.InterruptOpts, want agents.StopKind) agents.InterruptResult {
+func mustInterrupt(t *testing.T, h *Handle, opts agents.InterruptOpts, want agents.StopKind) agents.InterruptResult {
 	t.Helper()
 	res, err := h.Interrupt(opts)
 	if err != nil {
@@ -114,7 +113,7 @@ func expectPrompt(t *testing.T, f *fakeACP, want string) int64 {
 // expectNoPrompt waits for the pump to go idle, answering any turn that starts, and then checks
 // that none did. A turn in flight keeps the pump busy until it is answered, so once the pump is
 // idle and the fake has caught up with the client, every prompt sent is in f.gotPrompt.
-func expectNoPrompt(t *testing.T, h *threadHandle, f *fakeACP) {
+func expectNoPrompt(t *testing.T, h *Handle, f *fakeACP) {
 	t.Helper()
 	deadline := time.Now().Add(hangGuard)
 	for {
@@ -152,7 +151,7 @@ func expectCancel(t *testing.T, f *fakeACP) {
 
 // expectNoCancel checks that no session/cancel was sent. Called with the pump idle: every
 // cancel is written by Interrupt or by the pump, so once the fake has caught up, it is here.
-func expectNoCancel(t *testing.T, h *threadHandle, f *fakeACP) {
+func expectNoCancel(t *testing.T, h *Handle, f *fakeACP) {
 	t.Helper()
 	syncFake(t, h)
 	select {
@@ -164,7 +163,7 @@ func expectNoCancel(t *testing.T, h *threadHandle, f *fakeACP) {
 
 // syncFake returns once the fake has handled every line the client wrote before it: the fake
 // reads and answers in order, so the answer to this request comes after all of them.
-func syncFake(t *testing.T, h *threadHandle) {
+func syncFake(t *testing.T, h *Handle) {
 	t.Helper()
 	h.mu.Lock()
 	cl := h.cl
@@ -174,14 +173,14 @@ func syncFake(t *testing.T, h *threadHandle) {
 	}
 }
 
-func pumpIdle(h *threadHandle) bool {
+func pumpIdle(h *Handle) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return !h.pumping && !h.running
 }
 
 // settled waits for the pump to finish and returns what the queue shows then.
-func settled(t *testing.T, h *threadHandle) ([]agents.QueueItem, []agents.Discard, bool) {
+func settled(t *testing.T, h *Handle) ([]agents.QueueItem, []agents.Discard, bool) {
 	t.Helper()
 	waitPumpIdle(t, h)
 	h.mu.Lock()
@@ -189,7 +188,7 @@ func settled(t *testing.T, h *threadHandle) ([]agents.QueueItem, []agents.Discar
 	return h.q.Items(), h.q.Discards(), h.q.Episode()
 }
 
-func episode(h *threadHandle) bool {
+func episode(h *Handle) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.q.Episode()
@@ -233,7 +232,7 @@ func TestFirstStopContinuesQueueInOrder(t *testing.T) {
 	if !episode(h) {
 		t.Error("a first stop that left input queued opened no stop episode")
 	}
-	if td := payload(t, h); !equal(ids(td.QueuedItems), []string{"m2", "m3"}) || !equal(td.Queued, []string{"two", "three"}) ||
+	if td := payload(h); !equal(ids(td.QueuedItems), []string{"m2", "m3"}) || !equal(td.Queued, []string{"two", "three"}) ||
 		td.QueuedItems[1].State != agents.EntryQueued || td.QueuedItems[1].Origin.Kind != agents.OriginPeer {
 		t.Errorf("messages payload while stopped: queued %q, items %+v", td.Queued, td.QueuedItems)
 	}
@@ -250,7 +249,7 @@ func TestFirstStopContinuesQueueInOrder(t *testing.T) {
 	if len(items) != 0 || len(discards) != 0 || ep {
 		t.Errorf("after the queue drained: items %v, discards %v, episode %v", items, discards, ep)
 	}
-	if st := h.currentState(); st != agents.TurnCompleted {
+	if st := h.TurnState(); st != agents.TurnCompleted {
 		t.Errorf("state = %s, want completed", st)
 	}
 }
@@ -289,10 +288,10 @@ func TestSecondStopDiscardsRestIncludingPeer(t *testing.T) {
 	if len(discards) != 1 || discards[0].ID != res.Discard.ID {
 		t.Fatalf("kept discards = %+v, want the one the stop returned", discards)
 	}
-	if st := h.currentState(); st != agents.TurnCancelled {
+	if st := h.TurnState(); st != agents.TurnCancelled {
 		t.Errorf("state = %s, want cancelled", st)
 	}
-	if td := payload(t, h); len(td.Discards) != 1 || td.Discards[0].ID != res.Discard.ID || len(td.QueuedItems) != 0 {
+	if td := payload(h); len(td.Discards) != 1 || td.Discards[0].ID != res.Discard.ID || len(td.QueuedItems) != 0 {
 		t.Errorf("messages payload: discards %+v, items %+v", td.Discards, td.QueuedItems)
 	}
 	if !h.DismissDiscard(res.Discard.ID) || h.DismissDiscard(res.Discard.ID) {
@@ -323,7 +322,7 @@ func TestDiscardQueueOutsideEpisode(t *testing.T) {
 	if len(items) != 0 || len(discards) != 1 || ep {
 		t.Errorf("after discard_queue: items %v, discards %v, episode %v", items, discards, ep)
 	}
-	if st := h.currentState(); st != agents.TurnCancelled {
+	if st := h.TurnState(); st != agents.TurnCancelled {
 		t.Errorf("state = %s, want cancelled", st)
 	}
 
@@ -336,7 +335,7 @@ func TestDiscardQueueOutsideEpisode(t *testing.T) {
 }
 
 // holdAtCommit parks the pump between Take and Commit and reports when it got there.
-func holdAtCommit(h *threadHandle) (taken <-chan struct{}, release func()) {
+func holdAtCommit(h *Handle) (taken <-chan struct{}, release func()) {
 	tk, rel := make(chan struct{}, 1), make(chan struct{})
 	h.beforeCommit = func() {
 		tk <- struct{}{}
@@ -363,7 +362,7 @@ func TestTakenBeforeCommitIsNeverSent(t *testing.T) {
 		if len(items) != 0 || len(discards) != 1 {
 			t.Errorf("items %v, discards %v", items, discards)
 		}
-		if st := h.currentState(); st != agents.TurnCancelled {
+		if st := h.TurnState(); st != agents.TurnCancelled {
 			t.Errorf("state = %s, want cancelled", st)
 		}
 		expectNoCancel(t, h, f)
@@ -382,7 +381,7 @@ func TestTakenBeforeCommitIsNeverSent(t *testing.T) {
 		if len(items) != 0 || len(discards) != 1 || ep {
 			t.Errorf("items %v, discards %v, episode %v", items, discards, ep)
 		}
-		if st := h.currentState(); st != agents.TurnCancelled {
+		if st := h.TurnState(); st != agents.TurnCancelled {
 			t.Errorf("state = %s, want cancelled", st)
 		}
 	})
@@ -423,7 +422,7 @@ func TestStopPendingIsDeliveredAfterTheWrite(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst)
-	if st := h.currentState(); st != agents.TurnInterrupting {
+	if st := h.TurnState(); st != agents.TurnInterrupting {
 		t.Errorf("state with the stop pending = %s, want interrupting", st)
 	}
 	f.writes.release()
@@ -433,7 +432,7 @@ func TestStopPendingIsDeliveredAfterTheWrite(t *testing.T) {
 	if items, _, _ := settled(t, h); len(items) != 0 {
 		t.Errorf("items %v", items)
 	}
-	if st := h.currentState(); st != agents.TurnCancelled {
+	if st := h.TurnState(); st != agents.TurnCancelled {
 		t.Errorf("state = %s, want cancelled", st)
 	}
 }
@@ -536,7 +535,6 @@ func TestQueueSurvivesChildDeathAndStartsAfterRespawn(t *testing.T) {
 	h.cl.OnRequest = func(id json.RawMessage, method string, params json.RawMessage) {
 		h.onServerRequest(h.cl, id, method, params)
 	}
-	h.cl.OnNotify = h.onNotify
 	h.resumePump()
 	f2.reply(expectPrompt(t, f2, "two"), map[string]any{"stopReason": "end_turn"})
 	f2.reply(expectPrompt(t, f2, "three"), map[string]any{"stopReason": "end_turn"})
@@ -547,14 +545,14 @@ func TestQueueSurvivesChildDeathAndStartsAfterRespawn(t *testing.T) {
 	if len(items) != 0 {
 		t.Errorf("items %v", items)
 	}
-	if st := h.currentState(); st != agents.TurnCompleted {
+	if st := h.TurnState(); st != agents.TurnCompleted {
 		t.Errorf("state = %s, want completed", st)
 	}
 }
 
 // waitingTexts is the prompts still waiting in the queue. The head the pump committed shows in
 // Items as committed until its write completes, which can land just after the fake has read it.
-func waitingTexts(h *threadHandle) []string {
+func waitingTexts(h *Handle) []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var out []string
@@ -566,10 +564,6 @@ func waitingTexts(h *threadHandle) []string {
 	return out
 }
 
-var _ agents.LiveHandles = managedDriver{}
-
-// Input accepted while nothing runs is the turn being started even before the pump takes it: a
-// first stop in that window stops it, and what was queued behind it continues.
 func TestFirstStopBeforeThePumpTakes(t *testing.T) {
 	h, f := newTestHandle(t)
 	h.mu.Lock()
@@ -578,7 +572,7 @@ func TestFirstStopBeforeThePumpTakes(t *testing.T) {
 	mustSend(t, h, member("m1", "one"))
 	mustSend(t, h, member("m2", "two"))
 	wantFirstStopDiscard(t, mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst), "m1")
-	if st := h.currentState(); st != agents.TurnCancelled {
+	if st := h.TurnState(); st != agents.TurnCancelled {
 		t.Errorf("state after stopping the starting input = %s, want cancelled", st)
 	}
 	if got := waitingTexts(h); !equal(got, []string{"two"}) || !episode(h) {
@@ -596,7 +590,7 @@ func TestFirstStopBeforeThePumpTakes(t *testing.T) {
 	if len(items) != 0 || len(discards) != 1 || ep {
 		t.Errorf("items %v, discards %v, episode %v", items, discards, ep)
 	}
-	if st := h.currentState(); st != agents.TurnCompleted {
+	if st := h.TurnState(); st != agents.TurnCompleted {
 		t.Errorf("state = %s, want completed", st)
 	}
 }
@@ -640,39 +634,16 @@ func TestPromptLostOnADeadChildIsRequeued(t *testing.T) {
 	h.cl.OnRequest = func(id json.RawMessage, method string, params json.RawMessage) {
 		h.onServerRequest(h.cl, id, method, params)
 	}
-	h.cl.OnNotify = h.onNotify
 	h.resumePump()
 	f2.reply(expectPrompt(t, f2, "one"), map[string]any{"stopReason": "end_turn"})
 	if items, _, _ := settled(t, h); len(items) != 0 {
 		t.Errorf("items %v", items)
 	}
-	if st := h.currentState(); st != agents.TurnCompleted {
+	if st := h.TurnState(); st != agents.TurnCompleted {
 		t.Errorf("state = %s, want completed", st)
 	}
 }
 
-// LiveHandle never starts anything: no handle, no answer.
-func TestLiveHandle(t *testing.T) {
-	h, _ := newTestHandle(t)
-	m := session.Meta{Name: h.name, Driver: session.DriverManaged}
-	if got, ok := (managedDriver{}).LiveHandle(m); ok || got != nil {
-		t.Fatalf("LiveHandle with no handle = %v, %v", got, ok)
-	}
-	handlesMu.Lock()
-	handles[h.name] = h
-	handlesMu.Unlock()
-	defer func() {
-		handlesMu.Lock()
-		delete(handles, h.name)
-		handlesMu.Unlock()
-	}()
-	if got, ok := (managedDriver{}).LiveHandle(m); !ok || got != agents.ThreadHandle(h) {
-		t.Fatalf("LiveHandle = %v, %v, want the registered handle", got, ok)
-	}
-}
-
-// A resend is answered as accepted and nothing else: not queued, no state change, no turn —
-// whether the session is idle or another turn is running.
 func TestResendLeavesStateAndPumpAlone(t *testing.T) {
 	h, f := newTestHandle(t)
 	mustSend(t, h, peer("m1", "one"))
@@ -762,12 +733,12 @@ func TestStopAnswersPendingPermission(t *testing.T) {
 	if snap, _ := h.Snapshot(); snap.Interaction != nil || snap.TurnState != agents.TurnInterrupting {
 		t.Errorf("after the stop: interaction %+v, state %s; want none, interrupting", snap.Interaction, snap.TurnState)
 	}
-	if td := payload(t, h); len(td.Pending) != 0 {
+	if td := payload(h); len(td.Pending) != 0 {
 		t.Errorf("the card is still shown: %+v", td.Pending)
 	}
 	f.reply(id, map[string]any{"stopReason": "cancelled"})
 	settled(t, h)
-	if st := h.currentState(); st != agents.TurnCancelled {
+	if st := h.TurnState(); st != agents.TurnCancelled {
 		t.Errorf("state = %s, want cancelled", st)
 	}
 }
@@ -785,14 +756,14 @@ func TestStopWithNothingTakenLeavesNoInterrupting(t *testing.T) {
 	if res := mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst); res.Discard != nil {
 		t.Errorf("a stop with nothing queued discarded %+v", res.Discard)
 	}
-	if st := h.currentState(); st == agents.TurnInterrupting {
+	if st := h.TurnState(); st == agents.TurnInterrupting {
 		t.Error("state is interrupting with no turn to stop")
 	}
 	release()
 	expectNoPrompt(t, h, f)
 	expectNoCancel(t, h, f)
 	settled(t, h)
-	if st := h.currentState(); st != agents.TurnCancelled {
+	if st := h.TurnState(); st != agents.TurnCancelled {
 		t.Errorf("state = %s, want cancelled", st)
 	}
 }
