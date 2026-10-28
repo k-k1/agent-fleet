@@ -17,13 +17,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
@@ -34,28 +29,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-// opencodeStatusAgentRe pulls the current agent from opencode's composer status line
-// ("Plan auto · <model> …" / "Build auto · …"), the ground-truth mode the TUI shows.
-var opencodeStatusAgentRe = regexp.MustCompile(`([A-Za-z][\w-]*) +auto +·`)
-
-// codexFooterEffortRe pulls the reasoning effort from codex's composer footer
-// "<model> <effort> · <cwd>" (the word right before " · " then the cwd path).
-var codexFooterEffortRe = regexp.MustCompile(`([a-z]+) +· +[~/]`)
-
-// paneTail returns the last n non-empty lines of s (the TUI's status/composer footer
-// region), so mode detection matches the STATUS LINE — not conversation text that merely
-// mentions "plan mode" (which false-positived claude's indicator).
-func paneTail(s string, n int) string {
-	lines := strings.Split(s, "\n")
-	var out []string
-	for i := len(lines) - 1; i >= 0 && len(out) < n; i-- {
-		if strings.TrimSpace(lines[i]) != "" {
-			out = append(out, lines[i])
-		}
-	}
-	return strings.Join(out, "\n")
-}
-
 // PaneMode reads the session's CURRENT permission/collaboration mode straight from the
 // terminal (what the TUI displays), so it reflects toggles made in the terminal too — not
 // just via the chat. Returns the DISPLAY label the Console shows in the composer's mode
@@ -64,145 +37,22 @@ func paneTail(s string, n int) string {
 // "" = unknown (composer not drawn / stopped) → the Console shows no mode. Matching is
 // confined to the pane's tail (status line region) so conversation content can't spoof it.
 func PaneMode(kind, tn string) string {
+	r, ok := paneModeReader(kind)
+	if !ok {
+		return ""
+	}
 	s := tmuxx.CapturePane(tn)
 	if s == "" {
 		return ""
 	}
-	switch kind {
-	case session.KindClaude:
-		return claudeModeLabel(paneTail(s, 3))
-	case session.KindOpencode:
-		// The composer status line ("<Agent> auto · …") sits a few lines above the very
-		// bottom (above the border + token/commands footer). The agent name IS the mode.
-		if m := opencodeStatusAgentRe.FindStringSubmatch(paneTail(s, 8)); m != nil {
-			return titleFirst(m[1]) // "Plan" / "Build" / …
-		}
-	case session.KindAgy:
-		// agy's composer footer (v1.1.4, measured): left "? for shortcuts" (idle) or
-		// "esc to cancel" (generating), right "<model>" — "plan · <model>" in plan
-		// mode. The footer only exists once the composer is drawn (the "Signing
-		// in..." boot screen has none, and text typed into it is eaten), so this
-		// doubles as the launch-seed readiness signal, like the other kinds.
-		for _, line := range strings.Split(paneTail(s, 3), "\n") {
-			if strings.Contains(line, "? for shortcuts") || strings.Contains(line, "esc to cancel") {
-				if strings.Contains(line, "plan · ") {
-					return "Plan"
-				}
-				return "Default"
-			}
-		}
-	case session.KindCopilot:
-		// copilot's composer footer (v1.0.73, measured): idle "/ commands · ? help · tab
-		// next tab", draft "@ files · # issues", working "◎ Working esc interrupt" —
-		// right edge shows the model ("Auto → gpt-5-mini"). The footer exists only
-		// once the composer is drawn (the trust dialog / boot screen has none), so
-		// this doubles as the launch-seed readiness signal. Mode has no footer
-		// marker; plan mode is fixed at launch (--mode plan), so meta is the truth —
-		// here we only distinguish drawn/not-drawn and report the non-plan label.
-		for _, line := range strings.Split(paneTail(s, 3), "\n") {
-			if strings.Contains(line, "/ commands") || strings.Contains(line, "@ files") ||
-				strings.Contains(line, "Working") {
-				return "Default"
-			}
-		}
-	case session.KindCursor:
-		// cursor's composer footer (v2026.07.20, measured): idle placeholder "→ Add a
-		// follow-up" / "→ Plan, search, build anything", with the model name ("Auto")
-		// and the cwd below it; working is "Running … ctrl+c to stop". The footer only
-		// exists once the composer is drawn (--trust suppresses the trust dialog, but
-		// there is still nothing right after boot), so this doubles as the launch-seed
-		// readiness signal. Plan mode is fixed at launch (--plan), so meta is the truth —
-		// here we only distinguish drawn/not-drawn and report the non-plan label.
-		for _, line := range strings.Split(paneTail(s, 4), "\n") {
-			if strings.Contains(line, "Add a follow-up") ||
-				strings.Contains(line, "Plan, search, build anything") ||
-				strings.Contains(line, "ctrl+c to stop") || strings.Contains(line, "Running") {
-				return "Default"
-			}
-		}
-	case session.KindKiro:
-		// kiro's composer footer (2.14.1, measured): idle placeholder "ask a question or
-		// describe a task ↵", with model/context on the line above it ("kiro_default ·
-		// auto · ◔ n%   <cwd>"); working is "Kiro is working · Type to steer · Ctrl+S to
-		// queue". The footer only exists once the composer is drawn (a pinned
-		// chat.disableTrustAllConfirmation suppresses the dangerous-mode confirmation
-		// dialog, but there is still nothing right after boot), so this doubles as the
-		// launch-seed readiness signal. Plan mode is fixed at launch (by omitting
-		// --trust-all-tools), so meta is the truth — here we only distinguish
-		// drawn/not-drawn and report the non-plan label.
-		for _, line := range strings.Split(paneTail(s, 4), "\n") {
-			if strings.Contains(line, "ask a question or describe a task") ||
-				strings.Contains(line, "Kiro is working") || strings.Contains(line, "requires approval") {
-				return "Default"
-			}
-		}
-	case session.KindCodex:
-		// codex's composer footer is "<model> <effort> · <cwd>". Through 0.144 it
-		// appended "Plan mode [(shift+tab to cycle)]" in plan mode; 0.145 removed that
-		// textual marker. Keep accepting it for pinned/older versions, while the bare
-		// footer remains the composer-readiness signal and mirror-driven mode is persisted
-		// in meta (rememberCodexTUIMode). Never inspect history text here: a stale
-		// "… for Plan mode." line would spoof the current state.
-		for _, line := range strings.Split(paneTail(s, 3), "\n") {
-			if codexFooterEffortRe.MatchString(line) {
-				if strings.Contains(line, "Plan mode") {
-					return "Plan"
-				}
-				return "Default"
-			}
-		}
-	}
-	return ""
+	return r.PaneMode(s)
 }
 
-// claudeModeLabel maps claude's status-line mode strip to the chip label.
-//
-// Measured (claude 2.1.241, 2026-08-24; the left column is the --permission-mode value):
-//
-//	(unset = default) / manual  "⏸ manual mode on · ← for agents"
-//	auto                        "⏵⏵ auto mode on (shift+tab to cycle) · ← for agents"
-//	acceptEdits                 "⏵⏵ accept edits on (shift+tab to cycle) · …"
-//	bypassPermissions           "⏵⏵ bypass permissions on (shift+tab to cycle) · …"
-//	dontAsk                     "⏵⏵ don't ask on (shift+tab to cycle) · …"
-//	plan                        "⏸ plan mode on (shift+tab to cycle) · …"
-//
-// Only manual omits "(shift+tab to cycle)" (tmuxx's modeFooterRe hit the same thing on
-// 2.1.212), and manual is exactly where a session launched WITH permission prompts lands
-// (docs/log/76) — so matching on "four names plus the shift+tab catchphrase" yields "".
-// An empty PaneMode means "composer not drawn", which makes the launch-seed readiness
-// gate (submitPromptTUI / initial prompt delivery) wait 30s before falling back to
-// best-effort.
-//
-// So the last resort is the footer strip itself (tmuxx.ClaudeModeFooter) rather than a
-// list of names: when a mode is added or renamed this degrades to "drawn, mode treated as
-// Default" and delivery keeps working.
-func claudeModeLabel(tail string) string {
-	switch {
-	case strings.Contains(tail, "plan mode on"):
-		return "Plan"
-	case strings.Contains(tail, "accept edits on"):
-		return "Accept Edits"
-	case strings.Contains(tail, "bypass permissions on"):
-		return "Bypass"
-	case strings.Contains(tail, "auto mode on"):
-		return "Auto"
-	case strings.Contains(tail, "manual mode on"):
-		return "Manual"
-	case strings.Contains(tail, "don't ask on"):
-		return "Don't ask"
-	case tmuxx.ClaudeModeFooter(tail), strings.Contains(tail, "shift+tab to cycle"):
-		// An unknown mode name, or an older build where only the catchphrase is left.
-		return "Default"
-	}
-	return ""
-}
-
-// titleFirst upper-cases the first rune ("plan" → "Plan", "build" → "Build").
-func titleFirst(s string) string {
-	if s == "" {
-		return s
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
+// paneModeReader is kind's agents.PaneModeReader, by exact registry key.
+func paneModeReader(kind string) (agents.PaneModeReader, bool) {
+	a, _ := RegisteredAgent(kind)
+	r, ok := a.(agents.PaneModeReader)
+	return r, ok
 }
 
 // Programmatic session I/O for the MCP drive tools (docs/decisions/0006, P3-6 E).
@@ -891,9 +741,7 @@ func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane
 	// copilot: same shape — even with trust pre-written, there is no composer until the tab
 	// UI is drawn, and text sent to the boot screen disappears silently. The footer is the
 	// readiness signal.
-	if meta, ok := session.ReadMeta(name); ok &&
-		(meta.Kind == session.KindAgy || meta.Kind == session.KindCopilot || meta.Kind == session.KindCursor ||
-			meta.Kind == session.KindKiro) {
+	if meta, ok := session.ReadMeta(name); ok && sendWaitsForComposer(meta.Kind) {
 		tn := session.TmuxName(name)
 		for i := 0; i < 30 && PaneMode(meta.Kind, tn) == ""; i++ {
 			time.Sleep(500 * time.Millisecond)
@@ -916,6 +764,13 @@ func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane
 		cancelStopArmOnNewPrompt(name)
 	}
 	return workingRev, true
+}
+
+// sendWaitsForComposer reports that kind's boot screen eats a Terminal send
+// (agents.PaneModeReader.SendWaitsForComposer).
+func sendWaitsForComposer(kind string) bool {
+	r, ok := paneModeReader(kind)
+	return ok && r.SendWaitsForComposer()
 }
 
 // slashCmdRe matches a single-token slash command like "/plan" or "/model foo" (but not a
@@ -1258,8 +1113,12 @@ func promptBlocker(name string) string {
 	if !ok {
 		return ""
 	}
-	if probe, ok := kindModalProbes[meta.Kind]; ok {
-		return blockingState(probe(meta))
+	// A kind whose modals never reach the status store reads them where they live
+	// (agents.ModalProbe), by exact registry key.
+	if a, _ := RegisteredAgent(meta.Kind); a != nil {
+		if p, ok := a.(agents.ModalProbe); ok {
+			return blockingState(p.PromptModal(meta))
+		}
 	}
 	// claude: when the credentials have expired, refuse on that ground before any modal
 	// (docs/log/47 §4-8). The TUI accepts the characters and the Enter goes through, yet
@@ -1280,42 +1139,6 @@ func promptBlocker(name string) string {
 	// on screen (plan_pending, not permission_pending) and the operator is pointed at
 	// the surface that can actually decide it.
 	return blockingState(effectiveModal(sid, st.State))
-}
-
-// kindModalProbes reads, for every kind whose modals never reach the status store, the modal
-// it is showing now ("" when none) — from the same source its own live state is built on, so
-// the refusal and the Console's badge agree. Every kind with a Terminal route is here except
-// claude, whose hooks write its question / plan / permission into the status store, and
-// shell / ssm, which have no modal; a kind missing from both would fall through to a status
-// store nothing fills and never be refused (TestPromptBlockerCoversEveryTerminalKind).
-var kindModalProbes = map[string]func(session.Meta) string{
-	// The conversation DB's last step (pending.go). It reports ONLY the blocking states
-	// ("question" / "permission"), so an empty probe means "nothing pending".
-	session.KindAgy: func(m session.Meta) string { st, _ := agy.Probe(m); return st },
-	// An unfinished permission.requested in events.jsonl — the tui's permission menu and
-	// managed's Interaction in the same shape.
-	session.KindCopilot: copilot.LiveState,
-	// The approval panel's text in the pane ("shell requires approval"), reported as
-	// "question"; managed is also guarded by ErrQuestionPending.
-	session.KindKiro: kiro.LiveState,
-	// Their hooks and plugin report working/idle at most, so the question (codex's rollout,
-	// opencode's store) and cursor's approval and build menus (the pane) are read where they
-	// live. Terminal route only: their managed drivers refuse free text themselves
-	// (ErrQuestionPending).
-	session.KindCodex:    codexModal,
-	session.KindOpencode: opencode.TerminalModal,
-	session.KindCursor:   cursor.TerminalModal,
-}
-
-// codexModal adds to codex's question the screens its Terminal pane draws outside the
-// conversation — the update menu, the lock screen, the model-switch nudge — which take a typed
-// line's keys just the same (codex.PaneScreen). They stay out of codex.TerminalModal, which the
-// chat chip reads as "question".
-func codexModal(m session.Meta) string {
-	if q := codex.TerminalModal(m); q != "" {
-		return q
-	}
-	return codex.TerminalScreen(m)
 }
 
 // blockingState maps a live state to "" (free) or the state itself (blocking). An

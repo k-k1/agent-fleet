@@ -23,7 +23,7 @@ import (
 // A PR that removes branches lowers it; nothing may raise it, because a new
 // kind branch belongs behind the kind registry in internal/agents
 // (ADR 0124 Phase 3).
-const kindLiteralCeiling = 201
+const kindLiteralCeiling = 192
 
 // nonAgentKinds are registered kinds that are not agents (a plain shell, an
 // SSM host); ADR 0124 does not count branches on them. Every other registered

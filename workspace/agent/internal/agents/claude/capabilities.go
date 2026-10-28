@@ -25,3 +25,10 @@ func (agentImpl) ListModels(q agents.ModelQuery) agents.ModelListing {
 	}
 	return agents.ModelListing{Models: list, Enumerated: -1}
 }
+
+// PaneMode is agents.PaneModeReader: this package's PaneMode.
+func (agentImpl) PaneMode(pane string) string { return PaneMode(pane) }
+
+// SendWaitsForComposer is agents.PaneModeReader: false, a Terminal send is typed without
+// waiting for the composer.
+func (agentImpl) SendWaitsForComposer() bool { return false }

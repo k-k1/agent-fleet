@@ -191,10 +191,10 @@ func spinnerActive(s string) bool {
 var modeFooterRe = regexp.MustCompile(`(?m)^\s*(?:\x{23F5}\x{23F5}|\x{23F8}) .*\bon\b`)
 
 // ClaudeModeFooter reports whether s carries claude's permission-mode footer strip,
-// regardless of WHICH mode is named. It is paneMode's (session_io.go) last line of defence
-// against reading an added or renamed mode name as "footer not drawn" — paneMode's empty
-// string is also the launch-seed readiness gate, so a misread costs the first prompt a
-// 30-second wait.
+// regardless of WHICH mode is named. It is the last line of defence of claude's PaneMode
+// (internal/agents/claude) against reading an added or renamed mode name as "footer not
+// drawn" — an empty PaneMode is also the launch-seed readiness gate, so a misread costs the
+// first prompt a 30-second wait.
 func ClaudeModeFooter(s string) bool { return modeFooterRe.MatchString(s) }
 
 // atPromptFooter reports whether the capture shows claude's input-box footer — the

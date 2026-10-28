@@ -1,4 +1,4 @@
-package sessionx
+package claude
 
 // claude's mode display (the chip label) and the readiness gate behind it.
 //

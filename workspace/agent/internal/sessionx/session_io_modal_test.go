@@ -25,13 +25,13 @@ func TestPromptBlockerCoversEveryTerminalKind(t *testing.T) {
 	storeOrNone := map[string]bool{session.KindClaude: true, session.KindShell: true, session.KindSSM: true}
 	for _, kind := range RegisteredKinds() {
 		a := AgentOf(kind)
+		_, probed := a.(agents.ModalProbe)
 		if a.Caps().ManagedOnly {
-			if _, ok := kindModalProbes[kind]; ok {
+			if probed {
 				t.Errorf("%s has no Terminal route, yet has a modal probe", kind)
 			}
 			continue
 		}
-		_, probed := kindModalProbes[kind]
 		if probed == storeOrNone[kind] {
 			t.Errorf("%s: modal probe = %v; every Terminal kind needs exactly one of a probe or the status store (claude) / no modal (shell, ssm)", kind, probed)
 		}
@@ -271,4 +271,22 @@ func agyConversation(t *testing.T, conv string) *sql.DB {
 	t.Cleanup(func() { db.Close() })
 	mustExec(t, db, `CREATE TABLE steps (idx INTEGER, step_type INTEGER, status INTEGER, step_payload BLOB)`)
 	return db
+}
+
+// Every agent kind with a Terminal route reads its composer off the pane: without a
+// PaneModeReader its mode chip stays blank and the launch-seed gate waits its full 30 seconds
+// on every first prompt. Exactly agy, copilot, cursor and kiro lose text typed before the
+// composer is drawn, and a send waits for them.
+func TestPaneModeReaderCoversEveryTerminalKind(t *testing.T) {
+	waiting := map[string]bool{session.KindAgy: true, session.KindCopilot: true, session.KindCursor: true, session.KindKiro: true}
+	for _, kind := range RegisteredKinds() {
+		a := AgentOf(kind)
+		r, ok := a.(agents.PaneModeReader)
+		if want := !a.Caps().ManagedOnly && kind != session.KindShell && kind != session.KindSSM; ok != want {
+			t.Errorf("%s: implements agents.PaneModeReader = %v, want %v", kind, ok, want)
+		}
+		if ok && r.SendWaitsForComposer() != waiting[kind] {
+			t.Errorf("%s: SendWaitsForComposer = %v, want %v", kind, r.SendWaitsForComposer(), waiting[kind])
+		}
+	}
 }

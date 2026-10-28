@@ -33,6 +33,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -221,7 +222,7 @@ func promptDraftVisible(captured, prompt string) bool {
 	}
 	draft, above, ok := claudeComposer(captured)
 	if !ok {
-		t := squashSpace(paneTail(captured, 6))
+		t := squashSpace(agents.PaneTail(captured, 6))
 		return strings.Contains(t, head) || strings.Contains(t, tail)
 	}
 	// claude 2.1.282 strips invisible characters from typed input and then HOLDS the draft

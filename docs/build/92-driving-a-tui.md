@@ -178,7 +178,8 @@ These are the shape of the fix, and worth preserving through any rewrite:
   highlighted row silently is the same accident in the plan and permission modals too.
   It only sees what it reads for each kind: the status store for claude, whose hooks
   write its modals there, and for every other kind with a Terminal route the source the
-  kind's own live state is read from (`kindModalProbes`). A kind with a Terminal route
+  kind's own live state is read from (its `agents.ModalProbe`, `PromptModal` in
+  `internal/agents/<kind>/capabilities.go`). A kind with a Terminal route
   and neither fails a test, because it would fall through to a status store nothing
   fills — as codex, opencode and cursor did, where a pasted line answered the first
   option, ran the command or built the plan (measured, #1227). Screens that are not modals
@@ -219,7 +220,7 @@ What to re-read when this playbook finds a change:
   with its question, plan and permission modals, and, for some kinds without such hooks,
   per-kind readers of a transcript, event log or pane (`opencode.LiveState` or
   `kiro.LiveState`, for example). The gate, `promptBlocker`, reads the same per-kind
-  sources through `kindModalProbes` (`session_io.go`); for codex, opencode and cursor
+  sources through each kind's `agents.ModalProbe`; for codex, opencode and cursor
   that is each kind's `TerminalModal` (see 92.3). `PendingModal` in
   `internal/agents/modal.go` is a different seam:
   it preserves a modal left pending when a session stops (asked before a deliberate halt,
