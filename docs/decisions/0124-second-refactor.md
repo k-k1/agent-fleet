@@ -1,0 +1,224 @@
+# 0124. Second refactor: ratchets first, one place to register a change, agent kinds as plug-ins
+
+English | [日本語](0124-second-refactor.ja.md)
+
+- Status: **accepted** (2026-10-28). A plan; nothing is built yet. Phases 0–3 are the current
+  scope, in that order. Phases 4–6 are recorded so they are not rediscovered, and run only when
+  their churn justifies them.
+- Follow-ups: #2853, #2854, #2855, #2856, #2857, #2858, #2859, #2860, #2861, #2862, #2863, #2864,
+  #2865, #2866, #2867, #2868, #2869, #2870, #2871, #2872, #2873, #2874, #2875, #2876
+- Related: [0067](0067-parallel-refactor.md) (the first wave, its verification practice and what it
+  left) / [0012](0012-go-internal-refactor.md) (the layering, the two binaries, no shared module) /
+  [0011](0011-console-rebuild.md) (the feature-sliced Console)
+
+## Context
+
+Measured on `main` at `5bcfc0110` (2026-10-28). "package main" means the non-test `.go` files
+directly under a module directory, the yardstick 0067 used. The commands are under "Measuring".
+
+| | End of 0067 (2026-09-04) | Now |
+|---|---|---|
+| CP package main | 96 files / 28,321 lines | **198 / 75,582** |
+| Agent package main | 64 / 15,373 | **129 / 37,322** |
+| Console `src/` (non-test TS/TSX) | 122,094 lines | **179,895** |
+
+3,898 non-merge commits landed in between. The regrowth is not one bad family. The engine family
+(ADR 0071–0099) is 44 files / 24.0k lines of the CP's main; the rest is a dozen features (OAuth,
+egress, the dev IdP, inbox, scheduler, …) that each landed in main because nothing asked them to go
+anywhere else. **0067 shrank main and installed nothing that keeps it small**, and the result held
+for under two months.
+
+Size is not what slows a change down, though. Hot files and registering one thing in several places
+are:
+
+| What you add | Places you edit today | Churn since 2026-09-04 |
+|---|---|---|
+| An Agent route the CP relays | the agent's route and its golden, then up to four in the CP: `routes.go`, `testdata/routes.golden`, the audit switch `auditActionTarget` (`proxy.go`), `memberOriginRoutes` (`member_origin.go`) | `routes.go` 119 commits, `routes.golden` 127; 334 hand-mirrored `, rest)` lines |
+| An MCP tool | five places in `internal/mcpx/mcp_stdio.go` (5,001 lines): the schema table, the shared argument struct, `mcpCheckCallArgs`, the advertise gate and the call gate, the switch arm — plus a second definition in `control-plane/internal/mcpsrv/mcp.go` | 93 commits |
+| A Console preference | five spots spread over ~1,800 lines of `lib/settings.ts` | 57 commits |
+| An agent kind | muse touches 139 non-test, non-Markdown files outside its own two packages | — |
+
+Duplication has started to produce defects, not only extra work:
+
+- **The two MCP tool definitions have drifted.** The agent's operator-side `create_session`
+  description lists every kind except muse (`mcp_stdio.go:2293`). The two copies are written in
+  different languages on purpose (`mcp_stdio.go:722-735`: session-facing text is English to save
+  tokens, the operator's stays Japanese); that part is not the defect.
+- **copilot, cursor and kiro's `driver.go` are 83–90% the same** once the kind name is normalised;
+  their `acp.go` differ in 12 of 207 lines. Cross-cutting fixes have had to land in all seven
+  managed drivers at once (`c70e8cb0a`, `2a9b6bbaf`).
+- **The kind registry sits at the top of the agent's import graph** (`internal/sessionx/agent.go:34`),
+  so the packages below it keep their own kind lists. Kind-literal branches: 219 in the agent
+  outside `internal/agents`, 66 in the Console outside `agents/registry.ts`, 51 `.kind-<kind>`
+  selectors in 6 CSS files.
+
+Missing checks, found in passing:
+
+- Nothing verifies that every CP relay exists in the agent's route table, or that every mutating
+  relay has an audit action.
+- `console/scripts/css-dup.mjs` exists but CI never runs it. 67 class names start rules in more than
+  one file; `.repo-identity` is styled with different values in `scm/scm.css` and
+  `settings/parts/common.css`, so load order decides.
+- Two 0067 alias files survive in the Console (`features/settings/mcpWire.ts`, `mcpForm.tsx`). 0067's
+  "zero aliases" counted Go only.
+
+CI is green on `main` and takes about six minutes, so the gates this plan leans on can be trusted.
+
+## Decision
+
+1. **Ratchets before moves.** Every phase leaves behind a check that fails when what it fixed comes
+   back. A ratchet must not become a hot file of its own: it changes when someone does the thing it
+   guards (adds a file to main, adds a kind branch), never on every feature PR. Hence a file
+   allowlist for package main, not a line budget.
+2. **Choose by churn × places touched, not by size.** A large cohesive package that rarely changes
+   (`imagegen` and its ComfyUI code) waits. The question for each candidate is how many places the
+   next feature has to edit, and how often that happens.
+3. **A pure move and a change are never the same PR** (0067 Decision 9). A whole-file move shows
+   zero content change under `--find-renames`. A file split keeps the multiset of top-level
+   declarations and the multiset of string literals (go/ast `BasicLit`, or the TS equivalent)
+   identical before and after — the check 0067's journal adopted after a mechanical rename
+   rewrote an MCP description.
+4. **Split a hot file only while no open PR edits it.** Git carries a feature branch's edits through
+   a whole-file rename; it does not carry them through one file split into ten, and every hunk
+   becomes a conflict. Before a split, list the open PRs that touch the file; split in the gap and
+   merge promptly.
+5. **Find what reads the files you move, across modules.** Go tests read Console sources by path
+   (the `settings.ts` drift tests, `lib/fleetgraph.states.json`, the locale `errors.ts`);
+   `console_routes_test.go` needs the Console's API paths as string literals; some Console tests read
+   Go sources. A move updates both sides in the same PR.
+6. **Do not move** the CP's `manager` (159 methods over 36 files) or the workspace family at its
+   core, handler structs, unexported errors, or JSON blobs (0067's do-not-move shapes). Everything
+   reaches them, and moving them changes lock scope or wiring without removing a single
+   registration step.
+7. **Operating model.** One issue per work package and one PR per issue, implemented by child
+   sessions, with the files each issue owns named in the issue. A reviewer on a different model
+   reads every PR before merge; the maintainer merges. Phase 1 items own disjoint files and run side
+   by side. Items that change a registration point (Phases 2 and 3) run one at a time per hot file.
+8. **A live pass closes Phase 3.** Kind changes touch session start, resume and shutdown: create,
+   chat, stop and resume one session of every kind on a real deployment. Both of 0067's live passes
+   found a defect that every gate had passed.
+
+### Phase 0: ratchets and missing checks
+
+- CP tests: every relay exists in the agent's route table; every mutating relay has an audit action.
+- Ratchets: a package-main file allowlist in both Go modules; a ceiling on kind-literal branches in
+  the agent and the Console that fails on an increase.
+- Console: `css-dup` in CI as a ceiling at today's count; an import-boundary lint (`lib/` may not
+  import `features/`, with today's exceptions listed); delete the two alias files.
+- Remove dead code in both Go modules (for example `dockerContainerID` in `metrics.go`,
+  `memClampNote` in `mem.go`, `sortQueriesByPosition` in `workitems.go` have no callers).
+- Fix the muse omission in the operator's `create_session` description.
+
+### Phase 1: in-package file splits (pure moves)
+
+- `internal/runtime/runtime_ecs_ec2.go` (7,066 lines) along its existing `// ---` sections.
+- `internal/store/store_sqlite.go` into `store_<domain>.go`, the shape newer store code already has.
+- `engine_admin.go` into routes, models and ingest.
+- `internal/mcpx/mcp_stdio.go` into one file per tool family, plus the Agent client and caller
+  resolution.
+- Console: `app/WsBar.tsx` into `app/wsbar/`; `adminEngineAdd.tsx` into its five components;
+  `engineTypes.ts` into types and hook.
+- The catch-all locale files into per-feature files (`tools.ts` holds 476 `mem.*` keys; `admin.ts`
+  holds 426 engine and catalogue keys).
+
+### Phase 2: one place to register
+
+- **CP relays become a declarative table**: one row `{method, path, audit, signed}` per relay, one
+  file per domain. Registration, the audit classification and member-origin signing are derived
+  from it, on top of Phase 0's two tests and the existing `routes.golden`. Generating the table from
+  the agent's routes is a later step, not this one.
+- **One `toolSpec{schema, gate, args, handler}` per MCP tool**, kept with its family after the Phase 1
+  split. The kind enumeration in tool schemas and descriptions, on both the CP and the agent side,
+  is built from the kind catalog (`agentkinds/catalog.json`). The descriptions remain two texts for
+  two audiences.
+- **One descriptor per Console preference** (key, default, scope, normaliser). The server-sync
+  engine, the code that applies theme and fonts, and per-feature option lists leave `settings.ts`.
+  The Go drift tests that read `settings.ts` change in the same PR.
+
+### Phase 3: agent kinds as plug-ins
+
+- A shared ACP base for copilot, cursor and kiro: first the near-identical `acp.go`, `mirror.go` and
+  `progress_managed.go`, then the driver body with per-kind hooks.
+- The scaffolding the seven managed drivers repeat (`NewDriver`, `handleFor`,
+  `ManagedAlive`/`Busy`/`InFlight`, `DropHandle`, `RemoveLedger`, `ReconcileManaged`,
+  `AbortManaged`) becomes shared.
+- The kind registry moves below `sessionx`, so every package can consult it. Lifecycle (reconcile,
+  abort, shutdown), connection status, live and modal probes, skills layout and model listing
+  become optional `Agent` interfaces, and `main.go`, `shutdown.go`, `connections.go`,
+  `session_io.go` and `chat_providers.go` loop over the registry instead of switching on the kind.
+  `internal/agents` imports `bridge`, so watch for import cycles.
+- The CP (`mcpsrv/mcp.go`, `tenant_member_defaults.go`, `limit_board.go`) and the Console (seven
+  hand-kept kind lists, `isDynamic` in `lib/agentModels.ts`) read the catalog and the registry's
+  capabilities; per-kind CSS becomes one custom property per kind.
+- **Target: a new kind touches at most 40 non-test, non-Markdown files outside its own packages**
+  (muse: 139). Phase 3 finishes before pi or rovo is built.
+
+### Phases 4–6: recorded, run when churn justifies them
+
+- **4 — packages.** The CP's engine domain moves into `internal/engine` behind an interface the
+  package defines; the HTTP handlers stay in main. First separate the TTS lifecycle
+  (`engine_control.go`, `engine_ecs.go`) from the engine lifecycle, and make
+  `errcodes_catalog_test.go` read the new package, or the engine's error codes (about fifty)
+  silently leave the check. About 15 engine files (~6k lines) reference none of `manager`,
+  `config`, the auth helpers or the HTTP error helpers, and go first. In the agent: the main
+  families with little reach-back (fs, jira with workitems, usage, svn); `createSession` (about 600
+  lines) broken into stages as a logic change of its own.
+- **5 — Console data layer.** A typed `api.ts` per feature and shared load and save hooks, starting
+  with settings (146 of the Console's 223 explicit `any`); single-consumer `lib/` modules back into
+  their features; CSS duplicates to zero with `css-dup` failing CI; badge, chip and card primitives
+  in `ui.css`.
+- **6 — CI and shell.** One CLI manifest: the version is a single Dockerfile `ARG`, but each CLI is
+  also listed in six or seven hand-kept tables (the `setup-agent-cli` action, `cli-drift-check.sh`,
+  `cli-pin-bump.sh`, `cli-release-watch.yml`, the `install_*.go` code). The eight
+  `*-contract.yml` as one reusable workflow. Boot-install out of `entrypoint.sh` into
+  `workspace-agent`, one CLI at a time, each verified by a live boot.
+
+## Rejected
+
+- **0067's alias transfer under a commander session.** Phase 1 splits stay inside one package and
+  Phases 2–3 change shapes rather than move them, so there are no aliases to collect, and nothing a
+  hub would coordinate that the issue list does not.
+- **A line budget for package main.** Every feature that grows a main file would edit it, which
+  makes the ratchet itself a hot file.
+- **Splitting `manager`.** Its 159 methods are the CP's runtime state and its locks. Extracting them
+  changes lock scope — a behaviour change — and removes no registration step.
+- **Generating TS types, or a shared Go module, now** (0012's condition for revisiting). 372 JSON
+  write sites still return `map[string]any` (agent 223, CP 149), which a generator cannot type, and
+  the agent image's build context is `workspace/agent/` alone.
+- **A refactor freeze.** Around seventy commits a day land on `main`; a freeze stalls all of them to
+  protect a handful of hot files. Decision 4 protects exactly those files for exactly as long as a
+  split takes.
+
+## Consequences
+
+- Until Phase 0 lands, new main files and kind branches keep arriving. Phase 0 goes first because
+  every later phase is measured against it.
+- The ratchets will refuse some legitimate changes. The allowlist or ceiling is then edited in that
+  PR, with the reason in its description.
+- Phase 3 touches session start, resume and shutdown for every kind and carries `needs-live-run`.
+
+## Measuring
+
+Run from the repository root.
+
+```sh
+# package main: files / lines (run per module dir)
+find control-plane -maxdepth 1 -name '*.go' ! -name '*_test.go' | wc -l
+find control-plane -maxdepth 1 -name '*.go' ! -name '*_test.go' -exec cat {} + | wc -l
+
+# kind-literal branches, agent (outside internal/agents) and Console (outside agents/registry.ts)
+K='claude|codex|opencode|muse|cursor|kiro|copilot|agy|lcpp'
+KC='Claude|Codex|OpenCode|Opencode|Muse|Cursor|Kiro|Copilot|Agy|Lcpp|LCPP'
+find workspace/agent -name '*.go' ! -name '*_test.go' ! -path '*/internal/agents/*' ! -path '*/testdata/*' -print0 \
+  | xargs -0 grep -hE "(case .*(\"($K)\"|Kind($KC)\b))|((==|!=) *(\"($K)\"|session\.Kind($KC)\b|Kind($KC)\b))|((\"($K)\"|Kind($KC)\b) *(==|!=))" | wc -l
+find console/src \( -name '*.ts' -o -name '*.tsx' \) ! -name '*.test.*' ! -path '*/agents/registry.ts' -print0 \
+  | xargs -0 grep -hE "(===|!==) *[\"'](${K})[\"']|[\"'](${K})[\"'] *(===|!==)|case [\"'](${K})[\"']" | wc -l
+grep -rhoE "\.kind-($K)\b" console/src --include='*.css' | wc -l
+
+# files a kind touches outside its own packages (muse)
+git grep -l -i -w muse -- ':!*_test.go' ':!*.test.ts' ':!*.test.tsx' ':!*.md' \
+  ':!workspace/agent/internal/agents/muse' ':!workspace/agent/internal/msp' | wc -l
+
+# hand-mirrored relays
+grep -cE ', rest\)' control-plane/routes.go
+```
