@@ -3195,3 +3195,22 @@ two breaks were new values in the open `ItemKind` enum: `backgroundTerminalCompl
 
 The same cost applies again: the 1.4.12 bundle is red against a 1.4.11 binary until
 `MUSE_VERSION` moves; measured: 1.4.12 green, 1.4.11 red. The pin bump is cli-pin-bump's.
+
+### Note 2026-10-28 — bundle bumped to 1.4.14-R7309.1 (#2835)
+
+`internal/msp/schema` and `types_gen.go` now carry the 1.4.14 export (fingerprint
+`sha256:c94c3d1f…`, equal to the release manifest's `msp_schema_fingerprint`). The contract
+printed 33 notices that all read as compatible additions and still went red: the one break was
+buried under them, a new value `earlierHistory` in the open `ItemKind` enum, which the client
+decodes and switches on. The checker was right and is unchanged.
+
+- `earlierHistory` stands in for the items that opened in a checkpoint's pruned prefix and carries
+  the transcript tail in a typed member. It takes the generic item path, and the mirror derives
+  a one-line summary (message count) from that member.
+- The other additions (`SessionStartParams.spawnedBy` / `previousSessionId`,
+  `SessionResumeParams.modelId`, `TurnError.requestDenied`, `ViewPageParams.maxBytes`, the
+  runtime worktree types, queued inputs, held items) are generated but unused.
+
+The same cost applies again: the 1.4.14 bundle is red against a 1.4.13 binary until
+`MUSE_VERSION` moves (the pin bump is cli-pin-bump's), so this PR's own pin-run of
+`muse-contract.yml` is expected to be red.

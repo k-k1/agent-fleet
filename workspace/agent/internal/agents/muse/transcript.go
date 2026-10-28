@@ -460,6 +460,12 @@ func kindSummary(it msp.Item) string {
 		if b := it.BackgroundTerminalCompletion; b != nil {
 			return fmt.Sprintf("background command %s: %s", b.TerminalStatus, b.Command)
 		}
+	case msp.ItemKindEarlierHistory:
+		// Stands in for every item that opened in a pruned prefix; the count says how much of
+		// the tail the host kept, so the gap before it is not mistaken for an empty session.
+		if e := it.EarlierHistory; e != nil {
+			return fmt.Sprintf("earlier history: %d messages kept from before the checkpoint", len(e.Messages))
+		}
 	}
 	return ""
 }
