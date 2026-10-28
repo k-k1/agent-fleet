@@ -426,3 +426,11 @@ keeps a capped per-minute series, and reports the `mem_pressure` Stats axis. The
 unchanged; nothing here warns, refuses or stops a session.
 
 Follow-ups: #2816.
+
+## Note (2026-10-28)
+
+On docker the Control Plane's local cgroup read answered the stats poll without asking the Agent, so
+`mem_pressure` never reached the Console. The local path now merges only that axis from the Agent,
+through a per-workspace cache refreshed in the background (short timeout, backoff after a failure,
+dropped after 30 s without an answer); the other gauges stay from the local read and an Agent error
+leaves the axis absent. The semantics stay the Agent's. Follow-ups: #2837.

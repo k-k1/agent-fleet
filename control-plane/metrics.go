@@ -272,12 +272,18 @@ func containerCPUPct(id, scope string) (float64, bool) {
 	return cpuSamples.pct(id, usage, time.Now())
 }
 
+// hostStatsHook lets a test stand in for the docker host (no docker in CI); nil in production.
+var hostStatsHook func(ctx context.Context, name string) map[string]any
+
 // containerStats reads a container's live mem/CPU from its cgroup v2 scope,
 // keyed by container name. Returns {running:false} when the container is gone,
 // {running:true} (no metrics) when the scope path is unreadable, or the full
 // {running, mem_used, mem_max?, cpu_pct?} otherwise. Shared by the own-workspace
 // chip and the admin per-member view.
 func containerStats(ctx context.Context, name string) map[string]any {
+	if hostStatsHook != nil {
+		return hostStatsHook(ctx, name)
+	}
 	id := dockerContainerID(ctx, name)
 	if id == "" {
 		// Stopped: surface an OOM-kill of the container itself so the Console can say
@@ -354,7 +360,14 @@ func workspaceStats(ctx context.Context, m *manager, rt runtime.Runtime, state f
 	// mem_used is the marker for "the local read saw this workspace". Absent means
 	// the CP is not on the workspace's host; the Agent is then the only source.
 	// Asking a workspace that is not running would just burn a 5s timeout per tick.
-	if _, ok := out["mem_used"]; ok || out["running"] != true {
+	if _, ok := out["mem_used"]; ok {
+		// Local read won: only the pressure axis is the Agent's to add (metrics_pressure.go).
+		if mp := agentMemPressure(ctx, m, rt); mp != nil {
+			out["mem_pressure"] = mp
+		}
+		return out
+	}
+	if out["running"] != true {
 		return out
 	}
 	s, err := m.agentStats(ctx, rt)
