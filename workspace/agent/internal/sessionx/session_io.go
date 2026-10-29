@@ -434,8 +434,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// that judgement and also handles the automatic resume at the reset time. This send
 	// just reports "it cannot land right now" back to its caller (mirror, operator,
 	// scheduled execution).
-	if m, ok := session.ReadMeta(name); ok && NormalizeKind(m.Kind) == session.KindClaude &&
-		tmuxx.AtRateLimitModal(name) {
+	if m, ok := session.ReadMeta(name); ok && callTrue(normalizedTerminalTraits(m.Kind).UsageLimitMenu, name) {
 		httpx.WriteErr(w, http.StatusConflict, "rate_limit_modal",
 			"session is parked on claude's usage-limit menu; typed text would become a menu "+
 				"selection instead of a prompt. Choose an option in the pane (wait for the reset, "+
@@ -452,9 +451,8 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	//
 	// Recover when we can (the recovery steps are measured). Only when recovery fails do we
 	// answer 409 — telling the caller it did not land beats misdelivering silently.
-	if m, ok := session.ReadMeta(name); ok && NormalizeKind(m.Kind) == session.KindClaude &&
-		tmuxx.AgentsViewActive(name) {
-		if !tmuxx.LeaveAgentsView(name) {
+	if m, ok := session.ReadMeta(name); ok && callTrue(normalizedTerminalTraits(m.Kind).AgentsViewActive, name) {
+		if !normalizedTerminalTraits(m.Kind).LeaveAgentsView(name) {
 			httpx.WriteErr(w, http.StatusConflict, "agents_view",
 				"session pane's input box is bound to a background agent / the agents screen, "+
 					"not the session's conversation; typing there does not reach the session "+
@@ -792,7 +790,7 @@ func rememberCodexTUIMode(name, prompt string, keys []string) {
 	// The toggle reads the mode it flips under the lock, and the write sets only Mode: a meta
 	// read before it and written back whole would roll back a lock set meanwhile (issue #950).
 	UpdateSessionMeta(name, func(meta *session.Meta) bool {
-		if meta.Kind != session.KindCodex || meta.DriverKind() == session.DriverManaged {
+		if !terminalTraits(meta.Kind).RemembersMode || meta.DriverKind() == session.DriverManaged {
 			return false
 		}
 		mode := "plan"
@@ -847,10 +845,11 @@ func typePromptText(name, pane, text string) error {
 	if meta, ok := session.ReadMeta(name); ok {
 		kind = meta.Kind
 	}
-	if kind == session.KindClaude {
+	t := terminalTraits(kind)
+	if t.ShapePrompt != nil {
 		// A long prompt reaches claude as one paste-sized chunk, and its paste handler
 		// would turn the attached image paths into [Image #N] and split the text.
-		text = claude.QuoteImagePaths(text)
+		text = t.ShapePrompt(text)
 	}
 	if !pasteNeeded(kind, text) {
 		if out, err := tmuxx.Cmd("send-keys", "-t", pane, "-l", "--", text).CombinedOutput(); err != nil {
@@ -859,7 +858,7 @@ func typePromptText(name, pane, text string) error {
 		return nil
 	}
 
-	if kind == session.KindClaude {
+	if t.PasteLF {
 		// tmux turns each LF of a paste into CR, so a CRLF arrives as CR CR and claude reads two
 		// line breaks (measured on a raw tty: "a\r\nb" → ESC[200~a\r\rb). Send one LF per break.
 		text = strings.ReplaceAll(text, "\r\n", "\n")
@@ -910,7 +909,13 @@ func typeInitialPrompt(name, prompt string) string {
 	// An expired claude login makes the TUI accept the characters and start no turn, so the
 	// task would be eaten and the member would learn why only from their next, refused send.
 	// Settling failed instead keeps the loss visible (the same refusal promptBlocker gives).
-	if m, ok := session.ReadMeta(name); (!ok || NormalizeKind(m.Kind) == session.KindClaude) && claude.AuthExpired() {
+	// An unreadable meta reads as claude, as an empty kind does (normalizedTerminalTraits); a
+	// meta that failed to decode may hold a partial kind, so it is not consulted.
+	authKind := ""
+	if m, ok := session.ReadMeta(name); ok {
+		authKind = m.Kind
+	}
+	if callTrue0(normalizedTerminalTraits(authKind).AuthExpired) {
 		log.Printf("initial prompt NOT typed for %s: the claude login has expired", name)
 		noteInitialPromptReason(name, session.InitialPromptReasonAuthExpired)
 		return session.InitialPromptFailed
@@ -1021,7 +1026,8 @@ func typeInitialPrompt(name, prompt string) string {
 // blocked or delayed by a failure here, and this only ever runs immediately
 // before that kill — never while the session might still be in active use.
 func disconnectRemoteControl(name string, m session.Meta) {
-	if m.Kind != session.KindClaude || claude.RemoteSessionURL(session.UUID(m.Dir, m.Name)) == "" {
+	rc := terminalTraits(m.Kind).RemoteControlURL
+	if rc == nil || rc(session.UUID(m.Dir, m.Name)) == "" {
 		return // not a claude session, or RC has never been used here
 	}
 	pane := tmuxx.SessionPaneID(session.TmuxName(name))
@@ -1044,8 +1050,10 @@ func disconnectRemoteControl(name string, m session.Meta) {
 // back so it gets a token pause. Tunable via AGENT_INPUT_SUBMIT_DELAY_MS.
 func inputSubmitDelay(name string) time.Duration {
 	ms := 200
-	if meta, ok := session.ReadMeta(name); ok && meta.Kind == session.KindClaude {
-		ms = 20
+	if meta, ok := session.ReadMeta(name); ok {
+		if d := terminalTraits(meta.Kind).SubmitDelay; d > 0 {
+			ms = int(d / time.Millisecond)
+		}
 	}
 	if v := os.Getenv("AGENT_INPUT_SUBMIT_DELAY_MS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 5000 {
@@ -1126,7 +1134,7 @@ func promptBlocker(name string) string {
 	// prompt stuck as pending (user report, 2026-08-14). Refusing is the only way to say
 	// "the login has expired". Key input ({keys}/{seq}) is NOT blocked: running /login in
 	// the pane is a legitimate recovery.
-	if NormalizeKind(meta.Kind) == session.KindClaude && claude.AuthExpired() {
+	if callTrue0(normalizedTerminalTraits(meta.Kind).AuthExpired) {
 		return agents.StateAuth
 	}
 	sid := session.UUID(meta.Dir, name)
@@ -1227,10 +1235,12 @@ func allowViewNavKeys(name string, keys []string) bool {
 	if !nav {
 		return true
 	}
-	if m, ok := session.ReadMeta(name); !ok || NormalizeKind(m.Kind) != session.KindClaude {
-		return true // ← means nothing to other kinds; this trap is specific to claude's TUI
+	m, ok := session.ReadMeta(name)
+	modal := normalizedTerminalTraits(m.Kind).ModalActive
+	if !ok || modal == nil {
+		return true // ← means nothing to a kind without the trap (claude's TUI has it)
 	}
-	return tmuxx.ModalActive(name) // with a dialog up, it is legitimate navigation
+	return modal(name) // with a dialog up, it is legitimate navigation
 }
 
 func writeViewNavErr(w http.ResponseWriter) {
@@ -1272,7 +1282,7 @@ func HandleSessionStatus(w http.ResponseWriter, r *http.Request) {
 	// A pending AskUserQuestion / ExitPlanMode plan rides along (claude: the
 	// hook-captured payloads) so the operator can relay them to the user and act via
 	// /answer-question // /plan-respond without scraping the terminal.
-	if meta.Kind == session.KindClaude {
+	if terminalTraits(meta.Kind).HookPending {
 		sid := session.UUID(meta.Dir, name)
 		if raw, ok := status.ReadPendingQuestion(sid); ok && len(raw) > 0 {
 			resp["questions"] = json.RawMessage(raw)
@@ -1309,13 +1319,8 @@ func sessionInputReady(meta session.Meta, alive bool) bool {
 		out, err := tmuxx.Cmd("capture-pane", "-p", "-S", "-", "-t", pane).Output()
 		return err == nil && strings.Contains(string(out), "Starting session with SessionId:")
 	}
-	if meta.Kind == session.KindClaude {
-		if state, _ := sessionTerminalState(meta.Name); state != "" {
-			return false
-		}
-	}
-	if meta.Kind == session.KindCodex && codexTerminalState(meta.Name) != "" {
-		return false
+	if terminalScreen(meta.Kind, meta.Name) != "" {
+		return false // a startup menu, compaction or an update prompt takes the keystrokes
 	}
 	return PaneMode(meta.Kind, session.TmuxName(meta.Name)) != ""
 }
@@ -1392,7 +1397,7 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 	// codex/opencode: their stores aren't claude's jsonl — build the flattened assistant
 	// output from the generic Transcript() turns instead (cursor = turn count), so the
 	// drive tools (MCP get_session_output) work for every transcript-capable kind.
-	if meta.Kind != session.KindClaude {
+	if !terminalTraits(meta.Kind).TranscriptLines {
 		td, _ := AgentOf(meta.Kind).Transcript(meta)
 		var gb strings.Builder
 		for i := since; i < len(td.Turns); i++ {
