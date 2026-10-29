@@ -38,9 +38,9 @@ func (agentImpl) ManagedLifecycle() agents.ManagedLifecycle {
 }
 
 // ConnStatus is the lcpp entry of GET /connections (package main's lcppStatus: the display
-// setting, the member's LAN connection and its last observed reachability). It reads state only
-// package main holds, so main sets it at startup, the same seam shape as EngineModels. nil
-// means no entry.
+// setting, whether the member's LAN connection is configured, never its API key, and its last
+// observed reachability, never a fresh dial). It reads state only package main holds, so main
+// sets it at startup, the same seam shape as EngineModels. nil means no entry.
 var ConnStatus func(s *secrets.Data) map[string]any
 
 // ConnectionStatus is agents.ConnectionStatuser over ConnStatus.

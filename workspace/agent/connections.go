@@ -14,14 +14,6 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/kinds"
@@ -55,28 +47,10 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 	jiraBackfillForStatus(s)
 	github := gitConnStatus(s, "github.com")
 	ghConnected, _ := github["connected"].(bool)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"claude":    claude.Status(),
-		"github":    github,
-		"bitbucket": bitbucketStatus(s),
-		"internal":  internalGitStatus(s),
-		"opencode":  opencode.Status(s),
-		"codex":     codex.Status(),
-		"cursor":    cursor.Status(),
-		"kiro":      kiro.Status(),
-		"agy":       agy.Status(),
-		// muse (ADR 0095): supported=false until the on-demand install lands the proprietary
-		// binary; connected reads ~/.config/muse/auth.json, so it needs no subprocess.
-		"muse": muse.Status(),
-		// lcpp (docs/log/105 §106.2 / docs/log/107): the user's own display setting
-		// (enabled) plus, since docs/log/107, whether a member LAN connection is
-		// configured (connected/url — never the API key), plus the last OBSERVED
-		// reachability (never a fresh dial — see lcppStatus's own doc comment).
-		// lcppStatus never returns the key: see connections.go's own doc comment on
-		// that function.
-		"lcpp": lcppStatus(s),
-		// copilot rides on the GitHub connection (docs/log/36 contract): no flow of its own.
-		"copilot":    copilot.Status(ghConnected),
+	out := map[string]any{
+		"github":     github,
+		"bitbucket":  bitbucketStatus(s),
+		"internal":   internalGitStatus(s),
 		"jira":       jiraStatus(s), // where work items are fetched from (docs/log/80 P1)
 		"pagerduty":  pagerdutyStatus(s),
 		"grafana":    grafanaStatus(s),
@@ -85,7 +59,13 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"discord":    discordStatus(s),
 		"slack":      slackStatus(s),
 		"svn":        svnConnStatus(s), // saved SVN servers (urlPrefix + username; docs/log/41)
-	})
+	}
+	// One entry per agent kind, under its kind name (agents.ConnectionStatuser). copilot rides on
+	// the GitHub connection (docs/log/36 contract): no flow of its own.
+	for k, st := range agentConnectionStatuses(agents.StatusInputs{Secrets: s, GithubConnected: ghConnected}) {
+		out[k] = st
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // agentConnectionStatuses is every registered kind's GET /connections entry, keyed by kind.

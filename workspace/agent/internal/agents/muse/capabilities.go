@@ -30,5 +30,7 @@ func (agentImpl) ManagedLifecycle() agents.ManagedLifecycle {
 	return agents.ManagedLifecycle{Reconcile: ReconcileManaged, Abort: AbortManaged, Shutdown: Shutdown}
 }
 
-// ConnectionStatus is agents.ConnectionStatuser: this package's Status().
+// ConnectionStatus is agents.ConnectionStatuser: this package's Status(). supported is false until
+// the on-demand install lands the proprietary binary (ADR 0095); connected reads
+// ~/.config/muse/auth.json, so it needs no subprocess.
 func (agentImpl) ConnectionStatus(agents.StatusInputs) map[string]any { return Status() }

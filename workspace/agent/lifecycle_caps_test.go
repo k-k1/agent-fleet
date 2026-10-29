@@ -5,7 +5,11 @@ package main
 // called, in the order it called it.
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
@@ -139,5 +143,29 @@ func TestConnectionStatusMatchesHandWiring(t *testing.T) {
 		if !moved[k] {
 			t.Errorf("no fixture changed %s's status: the inputs it reads are not exercised", k)
 		}
+	}
+}
+
+// TestHandleConnectionsGetKeySet pins GET /connections' top-level keys at runtime. The agent
+// kinds' entries come from a loop over the registry, which wiremap.golden's static scan cannot
+// open (it marks the site dyn), so this is what fails when a kind's entry is gained or lost.
+func TestHandleConnectionsGetKeySet(t *testing.T) {
+	w := httptest.NewRecorder()
+	handleConnectionsGet(w, httptest.NewRequest("GET", "/connections", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for k := range resp {
+		got = append(got, k)
+	}
+	sort.Strings(got)
+	want := []string{"agy", "aws", "bitbucket", "claude", "cloudwatch", "codex", "copilot", "cursor", "discord", "github", "grafana", "internal", "jira", "kiro", "lcpp", "muse", "opencode", "pagerduty", "slack", "svn"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("GET /connections keys:\n got  %v\n want %v", got, want)
 	}
 }
