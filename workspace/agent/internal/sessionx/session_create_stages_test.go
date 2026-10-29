@@ -266,6 +266,23 @@ func createRefusalCases() []createRefusalCase {
 		{name: "driver_unsupported", body: inRepo(map[string]any{"driver": "managed"}), code: "driver_unsupported"},
 		{name: "bad_driver", body: inRepo(map[string]any{"driver": "warp"}), code: "bad_driver"},
 
+		// The order between and inside stages 3 and 4: with two refusals due, the earlier one
+		// answers. A spawn refused in stage 4 has already reserved its slot, and the side-effect
+		// check sees it handed back.
+		{name: "order_start_before_spawn", setup: func(p *createProbe) { refuseKind(p.t, "codex") },
+			body: spawnInRepo("kid", map[string]any{"kind": "codex"}), code: "cli_install_no_space"},
+		{name: "order_spawn_depth_before_kind", body: spawnInRepo("kid", map[string]any{"kind": "shell"}), code: "spawn_depth"},
+		{name: "order_spawn_before_title", body: spawnInRepo("kid", map[string]any{"title": "a\x01b"}), code: "spawn_depth"},
+		{name: "order_title_before_mode", body: inRepo(map[string]any{"title": "a\x01b", "mode": "fast"}), code: "bad_title"},
+		{name: "order_mode_before_spend_cap", body: inRepo(map[string]any{"mode": "fast", "spend_cap_usd": -1}), code: "bad_mode"},
+		{name: "order_spend_cap_before_permission", body: inRepo(map[string]any{"kind": "shell", "spend_cap_usd": -1,
+			"skip_permissions": false}), code: "bad_spend_cap"},
+		{name: "order_permission_before_driver", body: inRepo(map[string]any{"kind": "shell", "skip_permissions": false,
+			"driver": "warp"}), code: "permission_choice_unsupported"},
+		{name: "order_driver_before_model", body: inRepo(map[string]any{"kind": "lcpp", "driver": "warp"}), code: "bad_driver"},
+		{name: "spawn_slot_released_on_bad_title", body: spawnInRepo("parent1", map[string]any{"title": "a\x01b"}), code: "bad_title"},
+		{name: "spawn_slot_released_on_bad_driver", body: spawnInRepo("parent1", map[string]any{"driver": "warp"}), code: "bad_driver"},
+
 		// Stage 5: model checks.
 		{name: "lcpp_disabled", setup: func(p *createProbe) { writeLcppEnabledPref(p.t, false) },
 			body: inRepo(map[string]any{"kind": "lcpp", "model": "m1"}), code: "lcpp_disabled"},

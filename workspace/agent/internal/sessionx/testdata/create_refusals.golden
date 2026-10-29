@@ -104,6 +104,46 @@ body "{\"error\":{\"code\":\"driver_unsupported\",\"message\":\"managed ドラ�
 status 400
 header Content-Type: application/json
 body "{\"error\":{\"code\":\"bad_driver\",\"message\":\"unknown driver: warp\"}}\n"
+== order_start_before_spawn
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"cli_install_no_space\",\"message\":\"codex could not be installed\"}}\n"
+== order_spawn_depth_before_kind
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"spawn_depth\",\"message\":\"このセッション自身が parent1 に起こされた子なので、さらに子は起こせません。作業を分けたいときは propose_session_handoff で利用者に引き継ぎを提案してください\"}}\n"
+== order_spawn_before_title
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"spawn_depth\",\"message\":\"このセッション自身が parent1 に起こされた子なので、さらに子は起こせません。作業を分けたいときは propose_session_handoff で利用者に引き継ぎを提案してください\"}}\n"
+== order_title_before_mode
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_title\",\"message\":\"title is too long (max 80) or contains control characters\"}}\n"
+== order_mode_before_spend_cap
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_mode\",\"message\":\"mode must be \\\"plan\\\" or \\\"normal\\\"\"}}\n"
+== order_spend_cap_before_permission
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_spend_cap\",\"message\":\"spend_cap_usd must be a number from 0 (no budget) to 100000\"}}\n"
+== order_permission_before_driver
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"permission_choice_unsupported\",\"message\":\"this agent kind cannot surface tool approvals to the Console; skip_permissions must stay true\"}}\n"
+== order_driver_before_model
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_driver\",\"message\":\"unknown driver: warp\"}}\n"
+== spawn_slot_released_on_bad_title
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_title\",\"message\":\"title is too long (max 80) or contains control characters\"}}\n"
+== spawn_slot_released_on_bad_driver
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_driver\",\"message\":\"unknown driver: warp\"}}\n"
 == lcpp_disabled
 status 403
 header Content-Type: application/json
