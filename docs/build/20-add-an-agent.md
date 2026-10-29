@@ -277,8 +277,13 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
       `prompt_paste_test.go` (measure it; `TestPromptPasteClassifiesEveryRegisteredKind` fails
       for a kind in neither list)
 - [ ] Managed: a `Driver`, `managedDrivers`, and `agents.ManagedRuntime` on the Agent
-      (`TestManagedRuntimeFollowsCaps` fails without it; add the kind's row to `wantRuntime`)
+      (`TestManagedRuntimeFollowsCaps` fails without it; add the kind's row to `wantRuntime`),
+      and `agents.ManagedLifecycler` in `capabilities.go`: the Agent reconciles the kind at boot
+      and aborts and shuts it down on a stop, in `internal/kinds` order (add the kind's row to
+      `handWiredLifecycle` in `lifecycle_caps_test.go`)
 - [ ] sign-in handlers and their CP relays; credentials hidden by `fsDeny`
+- [ ] a `GET /connections` entry: `ConnectionStatus` (`agents.ConnectionStatuser`) in
+      `capabilities.go`, and the kind in `TestHandleConnectionsGetKeySet`'s key list
 - [ ] a pinned CLI: the version pin, a contract workflow and the release-watcher
       registration (§20.5)
 

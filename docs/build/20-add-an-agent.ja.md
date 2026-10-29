@@ -244,8 +244,13 @@ Agent のイメージを先に、または同時に配備し、その間は断�
 
 - [ ] ターミナル: `BuildLaunch`、`internal/sessionx/session_io.go` の bracketed paste 一覧
 - [ ] マネージド: `Driver`、`managedDrivers`、Agent に `agents.ManagedRuntime`
-      （無いと `TestManagedRuntimeFollowsCaps` が落ちる。`wantRuntime` にその種別の行を足す）
+      （無いと `TestManagedRuntimeFollowsCaps` が落ちる。`wantRuntime` にその種別の行を足す）、
+      および `capabilities.go` に `agents.ManagedLifecycler`。Agent は起動時にその種別を再接続し、
+      停止時に中断・終了させる。順序は `internal/kinds` の順（`lifecycle_caps_test.go` の
+      `handWiredLifecycle` に行を足す）
 - [ ] サインインのハンドラと CP の中継。資格情報は `fsDeny` で隠す
+- [ ] `GET /connections` の項目: `capabilities.go` に `ConnectionStatus`（`agents.ConnectionStatuser`）、
+      `TestHandleConnectionsGetKeySet` のキー一覧にその種別
 - [ ] 利用量: `usageMeasuredForKind`（`usage_fold.go`）
 - [ ] CLI を固定する種別: バージョン固定、契約ワークフロー、リリース監視への登録（§20.5）
 
