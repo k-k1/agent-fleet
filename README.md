@@ -94,7 +94,7 @@ Which edition suits you is a twenty-minute decision, laid out in
 | **ecs / ecs-ec2** | AWS, when you want task-level isolation |
 | **ec2-single** | AWS, small team: compose on one VM |
 
-A Mac with Apple Silicon is experimental (checked with colima and with Lima): compose with
+A Mac with Apple Silicon is experimental (checked with colima, OrbStack and Docker Desktop, and natively in Lima and OrbStack VMs): compose with
 its [macOS overlay](deploy/compose/README.md#macos-experimental-unverified), or native inside a
 Linux VM ([#2961](https://github.com/k-k1/agent-fleet/issues/2961)).
 
