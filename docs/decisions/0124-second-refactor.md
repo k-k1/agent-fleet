@@ -336,3 +336,36 @@ move list (an unclassified kind reads `not_an_agent`, which is false for an agen
 kind-specific row of §20.7 adds files the stub does not exercise; most of them are the
 pinned-CLI registration in CI and `deploy/local` that Phase 6 already names. The edits a registry
 could absorb are #2933.
+
+## Addendum (2026-10-29) — the managed drivers' `threadHandle` methods stay per kind
+
+Phase 3's managed scaffold (#2869) shares the package-level functions only. The methods the
+handles repeat are **not extracted** (#2918).
+
+**Measured at `2012d2229`.** Copilot, cursor and kiro embed `acp.Handle`, so there are five
+implementations: acp, codex, opencode, muse, lcpp. Method bodies compared with comments and blank
+lines dropped and `h.tq()` read as `h.q`:
+
+| Identical in | Methods |
+|---|---|
+| 5 of 5 | `Events`, `RemoveQueued`, `DismissDiscard` |
+| 4 (all but muse) | `emit`, `Send`, `parkForMove`, `Abort` |
+| 4 (all but lcpp) | `Snapshot`, `Alive` |
+| 3 | `SendQueued` (acp, codex, lcpp); `Interrupt`, `interruptAll` (codex, opencode, muse); `Busy`, `HoldsEntry`, `Steer` (acp, opencode, lcpp) |
+| different in every kind that has it | `accept`, `pump`, `runTurn`, `Respond`, `UpdateSettings` |
+
+The nine methods identical in four or more come to about 60 lines per kind. The issue measured
+seven methods and about 45 lines at `29f1b6b57`, before #2869 moved `Alive` and `Abort` onto the
+handle.
+
+**Cost.** Every one of them reads the handle's lock, queue, state, events, alive or running
+fields, so sharing them needs an embedded core with those fields exported. That means rewriting
+683 `h.mu` sites, tests included (codex 150, opencode 181, muse 264, lcpp 88), plus the other field
+accesses, and redoing the interface-assertion proof for four more kinds. Under Decision 2, about
+60 lines per kind does not pay for that churn.
+
+```
+for k in codex opencode muse lcpp; do cat workspace/agent/internal/agents/$k/*.go | grep -o '\bh\.mu\b' | wc -l; done
+```
+
+**Reopen** only if a cross-kind fix has to land in these methods again.
