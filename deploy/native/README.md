@@ -78,7 +78,7 @@ install, start, workspace start and stop → start passed, after the AppArmor se
 (the Ubuntu VM restricts unprivileged user namespaces like any Ubuntu 23.10+), and the same
 with an OrbStack machine (`orb create ubuntu`), whose ports also reach the Mac's
 `localhost` (#2961). The Docker edition on a Mac is described in
-[deploy/compose/README.md](../compose/README.md#macos-experimental-unverified).
+[deploy/compose/README.md](../compose/README.md#macos-apple-silicon).
 
 ## Data locations
 

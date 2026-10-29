@@ -1,5 +1,5 @@
 # agent-fleet — overlay for a macOS host (Docker Desktop / OrbStack / colima).
-# EXPERIMENTAL: checked on Apple Silicon with colima, OrbStack and Docker Desktop (#2961).
+# Single user on Apple Silicon; checked with colima, OrbStack and Docker Desktop (#2961).
 #
 #   docker compose -f docker-compose.yml -f docker-compose.macos.yml up -d
 #

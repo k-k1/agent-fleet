@@ -34,8 +34,8 @@ OS="${AF_OS:-$(uname -s)}"
 case "$OS" in
   Linux) ;;
   # Checked with colima, OrbStack and Docker Desktop (#2961). It needs the overlay.
-  Darwin) echo "NOTE: macOS is experimental — follow \"macOS\" in the bundle's README.md" >&2 ;;
-  *) die "the Compose edition runs on a Linux Docker host (or, experimentally, macOS)" ;;
+  Darwin) echo "NOTE: on macOS, follow \"macOS\" in the bundle's README.md (single user, Apple Silicon)" >&2 ;;
+  *) die "the Compose edition runs on a Linux Docker host or a Mac with Apple Silicon" ;;
 esac
 command -v docker >/dev/null 2>&1 \
   || die "docker is not installed (need Docker Engine + the compose plugin)"
