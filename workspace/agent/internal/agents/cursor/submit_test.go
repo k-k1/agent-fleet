@@ -126,3 +126,29 @@ func TestComposerDraftKeepsTextThatStartsLikeThePlaceholder(t *testing.T) {
 		t.Error("a draft whose first row equals the placeholder was read as empty")
 	}
 }
+
+// PaneWorking is what tells a long turn from an idle composer: the JSONL stays empty until the
+// turn ends. pane-working-turn.txt / pane-interrupted.txt are 2026.10.22 captures of one prompt
+// before and after Ctrl+C (the prompt comes back into the composer as a draft).
+func TestPaneWorking(t *testing.T) {
+	for file, want := range map[string]bool{
+		"pane-working-turn.txt":    true,  // spinner row with a token count
+		"pane-submit-working.txt":  true,  // 2026.10.16: bare spinner row and the ctrl+c hint
+		"pane-interrupted.txt":     false, // back on the composer, prompt as a draft
+		"pane-submit-typed.txt":    false,
+		"pane-submit-answered.txt": false,
+		"pane-composer-narrow.txt": false,
+	} {
+		if got := PaneWorking(readPane(t, file)); got != want {
+			t.Errorf("%s: PaneWorking = %v, want %v", file, got, want)
+		}
+	}
+	// The hint alone (a version that drops the spinner row) still counts; prose that merely
+	// says "Working 5 tokens" without the braille cells does not.
+	if !PaneWorking("  → Add a follow-up      ctrl+c to stop\n\n  Auto\n") {
+		t.Error("composer hint not recognised")
+	}
+	if PaneWorking("  Working  5 tokens\n  → Add a follow-up\n") {
+		t.Error("plain prose read as a spinner row")
+	}
+}

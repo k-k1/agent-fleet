@@ -258,24 +258,25 @@ func TestStampModelAssistantOnly(t *testing.T) {
 }
 
 func TestFreeUsableModels(t *testing.T) {
-	// On Free the named models (gpt/claude/grok…) are hidden and only the composer family
-	// remains.
+	// On Free only the two fixed-settings Grok models launch (measured on 2026.10.22); composer
+	// and every other effort variant answer "Model unavailable on Free".
 	full := parseModels(`Available models
 
 auto - Auto (current, default)
 composer-2.5 - Composer 2.5
-composer-2.5-fast - Composer 2.5 Fast
+cursor-grok-4.6-medium - Grok 4.6 Medium
+cursor-grok-4.6-high - Grok 4.6
+grok-4.7-low - Grok 4.7  Low
+grok-4.7-medium - Grok 4.7  Medium
+grok-4.7-medium-fast - Grok 4.7  Medium Fast
 gpt-5.3-codex-high - Codex 5.3 High
-claude-opus-4-8-thinking-high - Opus 4.8 1M Thinking
 `)
-	free := freeUsableModels(full)
-	if len(free) != 2 {
-		t.Fatalf("want 2 composer models, got %+v", free)
+	var got []string
+	for _, m := range freeUsableModels(full) {
+		got = append(got, m.ID)
 	}
-	for _, m := range free {
-		if !strings.HasPrefix(m.ID, "composer") {
-			t.Errorf("non-composer leaked into Free catalog: %q", m.ID)
-		}
+	if want := "cursor-grok-4.6-medium,grok-4.7-medium"; strings.Join(got, ",") != want {
+		t.Fatalf("Free catalog = %v, want %s", got, want)
 	}
 }
 

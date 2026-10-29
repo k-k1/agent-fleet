@@ -81,7 +81,7 @@ func (e *liveProbeEnv) Interrupt() probeObservation {
 	started := e.typeAndSubmit(tn, meta,
 		"Count from 1 to 300, one number per line, adding a short sentence of commentary to each. Then finish with exactly: "+done, done)
 	for deadline := time.Now().Add(capsProbeWorkingWait); !started && time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
-		started = e.spec.agent.WireLive(meta, true).State == "working"
+		started = turnWorking(e.spec, meta, tn)
 	}
 	if !started {
 		return observeInterrupt(false, false, false, false)
@@ -89,7 +89,7 @@ func (e *liveProbeEnv) Interrupt() probeObservation {
 	time.Sleep(capsProbeStreamFor)
 	// Working right now, not merely at some point before: a turn that ended or errored on its
 	// own is idle without any help from Escape.
-	workingAtEscape := e.spec.agent.WireLive(meta, true).State == "working"
+	workingAtEscape := turnWorking(e.spec, meta, tn)
 	if !workingAtEscape {
 		return observeInterrupt(true, false, false, false)
 	}
