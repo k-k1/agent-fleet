@@ -26,7 +26,7 @@ Reasons to choose something else:
 | If | Then | Why |
 |---|---|---|
 | Docker cannot be installed on the machine | **native** | Containerless. **Single user only**: without container isolation it refuses to run in a shared mode |
-| The machine is a Mac (Apple Silicon) | **compose** with the macOS overlay, or **native** inside a Linux VM | **Experimental, unverified on a real Mac.** Single user on `127.0.0.1`; see "macOS" in the compose runbook |
+| The machine is a Mac (Apple Silicon) | **compose** with the macOS overlay, or **native** inside a Linux VM | **Experimental: checked with colima, OrbStack and Docker Desktop, and natively in Lima and OrbStack VMs.** Single user on `127.0.0.1`; see "macOS" in the compose runbook |
 | You want it on AWS, small team, cost matters | **ec2-single** | It *is* compose, on a VM. Not a separate runtime |
 | You need task-level isolation, per-user fault isolation, rolling image replacement | **ecs** | You are buying isolation, not saving money |
 | You need the above, plus fast starts and disk performance | **ecs-ec2** | A pool of instances with a persistent per-user disk |

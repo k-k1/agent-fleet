@@ -44,7 +44,8 @@ case "$1" in
     case "$*" in
       *"uname -m"*) echo "${STUB_ARCH:-aarch64}" ;;
       *"stat -c %u /home/dev"*) echo 1000 ;;
-      *"test -d /home/dev/.ssh"*) exit 0 ;;
+      *"test -d /home/dev/.ssh"*) [ "${STUB_NO_SSH:-0}" = 0 ] || [ -f "$S/ssh" ] ;;
+      *"mkdir -m 700 /home/dev/.ssh"*) touch "$S/ssh" ;;
       *"stat -c %a /home/dev/.ssh"*) echo 700 ;;
       *"chmod 600"*) touch "$S/home-file"; echo "${STUB_WRITE:-1000 600}" ;;
       *AF_CP_INTERNAL_URL*) echo "${STUB_CALLBACK:-401}" ;;
@@ -122,6 +123,30 @@ case "$1" in
     esac ;;
 esac
 FAKE
+# fake orb: an OrbStack machine is the same state file as the Lima VM.
+cat > "$STUB/orb" <<'FAKE'
+#!/usr/bin/env bash
+S="$STUB_STATE"
+echo "orb $*" >> "$STUB_LOG"
+case "$1" in
+  status) [ "${STUB_ORB_STOPPED:-0}" = 1 ] && echo Stopped || echo Running ;;
+  list) echo "NAME STATE DISTRO"; [ -f "$S/vm" ] && echo "af-accept running ubuntu" ;;
+  create) touch "$S/vm" ;;
+  start) exit "${STUB_VM_START_RC:-0}" ;;
+  delete) rm -f "$S/vm" ;;
+  -m)
+    shift 2
+    case "$*" in
+      *os-release*) echo "Ubuntu 26.04.1 LTS aarch64" ;;
+      *sysctl*) exit 0 ;;
+      *install.sh*) exit "${STUB_INSTALL_RC:-0}" ;;
+      *setsid*) exit 0 ;;
+      *"echo af >"*) touch "$S/home-file" ;;
+      *"test -f"*) [ -f "$S/home-file" ] ;;
+      *tail*) echo "af-cp: listening" ;;
+    esac ;;
+esac
+FAKE
 chmod +x "$STUB"/*
 
 bundle() { # bundle <dir> [with-overlay=1] -> a compose bundle with a macOS .env
@@ -131,6 +156,8 @@ bundle() { # bundle <dir> [with-overlay=1] -> a compose bundle with a macOS .env
   cat > "$1/.env" <<EOF
 AUTH=${ENV_AUTH:-dev}
 AF_PROVISION=auto
+AF_TRUSTED_PROXY_HOPS=0
+VERSION=${ENV_VERSION:-0.37.0}
 PUBLIC_BASE_URL=http://127.0.0.1:8099
 DATA_DIR=$WORK/home/af/data
 DOCKER_GID=0
@@ -150,7 +177,7 @@ mkdir -p "$WORK/home"
 echo "== case 1: docker, everything answers as on a working Mac =="
 bundle "$WORK/b1"
 run 0 docker "$WORK/b1"
-for id in env.auth env.provision env.base env.data env.docker_gid compose.up cp.health ws.start \
+for id in env.auth env.provision env.proxy_hops env.version env.base env.data env.docker_gid compose.up cp.health ws.start \
           ws.arch ws.home_owner ws.ssh_mode ws.write ws.callback ws.chromium ws.restart ws.persist; do
   row "$id" PASS
 done
@@ -166,15 +193,22 @@ grep -q "af-ws-other" "$LOG" && fail "touched another member's container"
 echo "ok"
 
 echo "== case 2: docker, the failures a Mac is likely to show are reported, and the run goes on =="
-ENV_AUTH=oauth bundle "$WORK/b2"
+ENV_AUTH=oauth ENV_VERSION=dev bundle "$WORK/b2"
 STUB_SOCK_GID=1 STUB_CALLBACK=000 STUB_WRITE="501 644" STUB_LOSE_HOME=1 run 1 docker "$WORK/b2"
 row env.auth FAIL
+row env.version FAIL
 row env.docker_gid FAIL
 row ws.write FAIL
 row ws.callback FAIL
 row ws.persist FAIL
 row ws.chromium PASS
-grep -q "Result: 5 FAIL." "$WORK/report.md" || fail "wrong FAIL count"
+grep -q "Result: 6 FAIL." "$WORK/report.md" || fail "wrong FAIL count"
+echo "ok"
+
+echo "== case 1a: docker, a home without ~/.ssh gets one and its mode is still checked =="
+bundle "$WORK/b1a"
+STUB_NO_SSH=1 run 0 docker "$WORK/b1a"
+grep -qF "| ws.ssh_mode | PASS | mode of ~/.ssh (created by this run) = 700 |" "$WORK/report.md" || fail "the .ssh dir was not created and checked"
 echo "ok"
 
 echo "== case 1b: docker, a start that answers \"starting\" is polled until running =="
@@ -272,6 +306,22 @@ STUB_VM_EXISTS=1 run 0 native
 row vm.reuse INFO
 grep -q "limactl delete" "$LOG" && fail "deleted a VM this run did not create"
 grep -q "limactl create" "$LOG" && fail "created a VM over an existing one"
+echo "ok"
+
+echo "== case 6c: native in an OrbStack machine, end to end =="
+run 0 native --vm orbstack
+for id in vm.create native.install native.health native.ws.start native.arch native.ws.restart native.persist; do
+  row "$id" PASS
+done
+grep -q "orb create ubuntu af-accept" "$LOG" || fail "machine not created"
+grep -q "orb delete -f af-accept" "$LOG" || fail "machine not deleted"
+grep -q "limactl" "$LOG" && fail "--vm orbstack still called limactl"
+echo "ok"
+
+echo "== case 6d: native in OrbStack refuses when OrbStack is not running, and never starts it =="
+STUB_ORB_STOPPED=1 run 2 native --vm orbstack
+grep -q "OrbStack is not running" "$WORK/err.txt" || fail "no OrbStack guidance"
+grep -q "orb start" "$LOG" && fail "tried to start OrbStack from the script"
 echo "ok"
 
 echo "== case 7: native, a failed install is reported and the VM is still deleted =="
