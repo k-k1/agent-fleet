@@ -75,3 +75,6 @@ func (agentImpl) TerminalTraits() agents.TerminalTraits {
 		HealIdle:         HealIdle,
 	}
 }
+
+// ConnectionStatus is agents.ConnectionStatuser: this package's Status().
+func (agentImpl) ConnectionStatus(agents.StatusInputs) map[string]any { return Status() }

@@ -385,6 +385,10 @@ func ManagedInFlight(name string) bool { return managedKind.InFlight(name) }
 // and the status store returns to idle, releasing anySessionWorking's wait.
 func AbortManaged() { managedKind.Abort() }
 
+// Shutdown stops the shared daemon through its supervisor (Serve). Call it only after
+// AbortManaged, so the daemon's drain has no turn left to wait for.
+func Shutdown() { Serve().Shutdown() }
+
 // ReconcileManaged re-attaches managed opencode sessions after an Agent boot,
 // daemon restart or daemon death (§6). It covers every managed meta not already treated
 // as stopped, so the experience matches tui's tmux surviving an Agent restart. On failure

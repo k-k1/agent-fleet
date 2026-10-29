@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // Optional agents capabilities of the lcpp kind.
@@ -28,4 +29,24 @@ func (agentImpl) ListModels(q agents.ModelQuery) agents.ModelListing {
 // refuse any path outside the session's CWD (harness resolvePath), hence FenceToCWD.
 func (agentImpl) SkillsLayout() agents.SkillsLayout {
 	return agents.SkillsLayout{Native: agents.SkillsForeignOnly, FenceToCWD: true}
+}
+
+// ManagedLifecycle is agents.ManagedLifecycler: this package's ReconcileManaged, AbortManaged
+// and Shutdown.
+func (agentImpl) ManagedLifecycle() agents.ManagedLifecycle {
+	return agents.ManagedLifecycle{Reconcile: ReconcileManaged, Abort: AbortManaged, Shutdown: Shutdown}
+}
+
+// ConnStatus is the lcpp entry of GET /connections (package main's lcppStatus: the display
+// setting, the member's LAN connection and its last observed reachability). It reads state only
+// package main holds, so main sets it at startup, the same seam shape as EngineModels. nil
+// means no entry.
+var ConnStatus func(s *secrets.Data) map[string]any
+
+// ConnectionStatus is agents.ConnectionStatuser over ConnStatus.
+func (agentImpl) ConnectionStatus(in agents.StatusInputs) map[string]any {
+	if ConnStatus == nil {
+		return nil
+	}
+	return ConnStatus(in.Secrets)
 }

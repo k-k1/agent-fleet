@@ -51,3 +51,12 @@ func (agentImpl) SkillsLayout() agents.SkillsLayout {
 		},
 	}
 }
+
+// ManagedLifecycle is agents.ManagedLifecycler: this package's ReconcileManaged, AbortManaged
+// and Shutdown.
+func (agentImpl) ManagedLifecycle() agents.ManagedLifecycle {
+	return agents.ManagedLifecycle{Reconcile: ReconcileManaged, Abort: AbortManaged, Shutdown: Shutdown}
+}
+
+// ConnectionStatus is agents.ConnectionStatuser: this package's Status(in.Secrets).
+func (agentImpl) ConnectionStatus(in agents.StatusInputs) map[string]any { return Status(in.Secrets) }

@@ -570,6 +570,10 @@ func ManagedInFlight(name string) bool { return managedKind.InFlight(name) }
 // shutdown's per-pane Ctrl-C, §10.2-8).
 func AbortManaged() { managedKind.Abort() }
 
+// Shutdown stops the shared daemon through its supervisor (Serve). Call it only after
+// AbortManaged, so the daemon's drain has no turn left to wait for.
+func Shutdown() { Serve().Shutdown() }
+
 // ReconcileManaged re-attaches managed codex sessions after an Agent boot,
 // daemon restart or writer loss (§6). It covers every managed meta that is not treated as
 // stopped. On failure the session stays stopped and is retried when the user clicks resume

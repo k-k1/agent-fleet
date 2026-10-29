@@ -97,6 +97,8 @@ func init() {
 	sessionx.LcppLiveModels = lcppModels
 	// And once more for the lcpp kind's model menu (agents.ModelLister).
 	lcpp.EngineModels = lcppModels
+	// And for its GET /connections entry (agents.ConnectionStatuser).
+	lcpp.ConnStatus = lcppStatus
 }
 
 // The API families the CP's catalogue reports. Chat engines become opencode providers; images

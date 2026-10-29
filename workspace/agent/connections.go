@@ -12,6 +12,8 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
@@ -22,6 +24,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/kinds"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
@@ -83,6 +86,24 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"slack":      slackStatus(s),
 		"svn":        svnConnStatus(s), // saved SVN servers (urlPrefix + username; docs/log/41)
 	})
+}
+
+// agentConnectionStatuses is every registered kind's GET /connections entry, keyed by kind.
+// A kind without agents.ConnectionStatuser, or whose status is nil, has no entry.
+func agentConnectionStatuses(in agents.StatusInputs) map[string]any {
+	out := map[string]any{}
+	for _, k := range kinds.All() {
+		a, ok := agentreg.Lookup(k)
+		if !ok {
+			continue
+		}
+		if c, ok := a.(agents.ConnectionStatuser); ok {
+			if st := c.ConnectionStatus(in); st != nil {
+				out[k] = st
+			}
+		}
+	}
+	return out
 }
 
 // discordStatus reports the chat-bridge Discord connection (docs/log/37 P1) — never

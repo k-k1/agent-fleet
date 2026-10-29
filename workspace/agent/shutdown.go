@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
@@ -17,6 +19,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/kinds"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -220,4 +223,21 @@ func anySessionWorking() bool {
 		}
 	}
 	return false
+}
+
+// managedLifecycles is every registered kind's ManagedLifecycle in internal/kinds order: the
+// order main starts the boot reconciles in, and the order gracefulShutdown aborts and then shuts
+// the kinds down in.
+func managedLifecycles() []agents.ManagedLifecycle {
+	var out []agents.ManagedLifecycle
+	for _, k := range kinds.All() {
+		a, ok := agentreg.Lookup(k)
+		if !ok {
+			continue
+		}
+		if c, ok := a.(agents.ManagedLifecycler); ok {
+			out = append(out, c.ManagedLifecycle())
+		}
+	}
+	return out
 }
