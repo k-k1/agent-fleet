@@ -1156,21 +1156,33 @@ func TestMintLockedEndsWithCancelWhileTheRootIsHeld(t *testing.T) {
 }
 
 // slowMintRun starts a terminal run's Console wait, makes a login land while gcloud is slow,
-// and returns after the run ended.
+// and returns after the run ended and the helper with it. afterSlow runs only once the slow
+// gcloud recorded its pid.
 func slowMintRun(t *testing.T, l *loginEnv, wait time.Duration, afterSlow func()) (time.Duration, error) {
 	t.Helper()
 	o := execOpts(l.env, prod())
 	o.Login, o.ConsoleLogin, o.ConsoleWait = "auto", true, wait
 	o.Interactive, o.TerminalConsole = true, true
 	o.Stderr = &syncBuf{}
-	helper := make(chan struct{})
-	go func() {
-		defer close(helper)
-		path := logins.RequestPath(ConfigName("prod"))
+	done, helper := make(chan struct{}), make(chan struct{})
+	// appears waits for path until the run has ended.
+	appears := func(path string) bool {
 		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
 			if _, err := os.Stat(path); err == nil {
-				break
+				return true
 			}
+			select {
+			case <-done:
+				return false
+			default:
+			}
+		}
+		return false
+	}
+	go func() {
+		defer close(helper)
+		if !appears(logins.RequestPath(ConfigName("prod"))) {
+			return
 		}
 		os.WriteFile(filepath.Join(l.fakeDir, "slow"), nil, 0o600)
 		addCredential(t, "dev@example.com", "authorized_user")
@@ -1185,21 +1197,23 @@ func slowMintRun(t *testing.T, l *loginEnv, wait time.Duration, afterSlow func()
 			t.Errorf("recordLogin: %v", err)
 			return
 		}
-		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
-			if _, err := os.Stat(filepath.Join(l.fakeDir, "slowpid")); err == nil {
-				break
-			}
-		}
-		if afterSlow != nil {
+		if appears(slowPid(l)) && afterSlow != nil {
 			afterSlow()
 		}
 	}()
-	t.Cleanup(func() { <-helper })
 	start := time.Now()
 	_, _, _, err := PlanExec(l.gcloud, hostile(t), o)
-	return time.Since(start), err
+	took := time.Since(start)
+	close(done)
+	<-helper
+	return took, err
 }
 
+// slowPid is the file the slow gcloud writes its pid to, whole, before it sleeps.
+func slowPid(l *loginEnv) string { return filepath.Join(l.fakeDir, "slowpid") }
+
+// pidGone looks once: the check's cmd.Run has reaped gcloud before PlanExec returns, so a
+// pid still alive then is a gcloud the run left behind, and polling would hide exactly that.
 func pidGone(path string) bool {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -1219,19 +1233,38 @@ func TestTerminalRunSIGTERMKillsASlowMint(t *testing.T) {
 	if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "stopped waiting") {
 		t.Fatalf("err = %v", err)
 	}
-	if took > 15*time.Second || !pidGone(filepath.Join(l.fakeDir, "slowpid")) {
-		t.Fatalf("took %s; gcloud gone = %v", took, pidGone(filepath.Join(l.fakeDir, "slowpid")))
+	if took > 15*time.Second || !pidGone(slowPid(l)) {
+		t.Fatalf("took %s; gcloud gone = %v", took, pidGone(slowPid(l)))
 	}
 }
 
 // The wait's budget ends a slow mint too, as exit 3.
+//
+// The budget has to outlast filing the request, the login landing and the check reaching
+// gcloud; on a loaded host 700ms does not (measured: the fake was never called), and a run
+// whose slow gcloud never started tests nothing. Such a run is repeated with twice the
+// budget; one that did start must pass as it stands.
 func TestTerminalRunBudgetKillsASlowMint(t *testing.T) {
-	l := setupLogin(t, prod())
-	took, err := slowMintRun(t, l, 700*time.Millisecond, nil)
-	if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "waiting for the member") {
-		t.Fatalf("err = %v", err)
+	for budget := 700 * time.Millisecond; budget <= 6*time.Second; budget *= 2 {
+		started := false
+		t.Run(budget.String(), func(t *testing.T) {
+			l := setupLogin(t, prod())
+			took, err := slowMintRun(t, l, budget, nil)
+			if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "waiting for the member") {
+				t.Fatalf("err = %v", err)
+			}
+			if _, err := os.Stat(slowPid(l)); err != nil {
+				t.Logf("the slow gcloud never started within the budget (took %s); trying a longer one", took)
+				return
+			}
+			started = true
+			if took > budget+10*time.Second || !pidGone(slowPid(l)) {
+				t.Fatalf("took %s; gcloud gone = %v", took, pidGone(slowPid(l)))
+			}
+		})
+		if started || t.Failed() {
+			return
+		}
 	}
-	if took > 15*time.Second || !pidGone(filepath.Join(l.fakeDir, "slowpid")) {
-		t.Fatalf("took %s; gcloud gone = %v", took, pidGone(filepath.Join(l.fakeDir, "slowpid")))
-	}
+	t.Fatal("the slow gcloud never started within any budget, so the kill was never tested")
 }
