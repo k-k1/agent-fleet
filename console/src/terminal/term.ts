@@ -20,6 +20,7 @@ import { t as tr } from "../lib/i18n/index.ts";
 import { zoom } from "../app/viewport.ts";
 import { toast } from "../ui/toast.ts";
 import { clipAction } from "./clipKeys.ts";
+import { rebuildGlyphAtlas } from "./atlas.ts";
 
 // One entry per pane. { term, fitAddon, ws, session, sessionListeners, ro }.
 // A placeholder (from an early onSession) may hold only session + sessionListeners,
@@ -325,7 +326,7 @@ function forceFit(it: Inst | null | undefined) {
     if (it.webgl || it.canvas) {
       const core = (it.term as any)._core;
       core?._renderService?.clear?.();
-      (it.term as any).clearTextureAtlas?.();
+      rebuildGlyphAtlas(it, insts.values()); // the atlas is shared with same-tint panes
     }
     /* eslint-enable @typescript-eslint/no-explicit-any */
     // Repaint every row from the buffer. On the DOM renderer (touch/mobile, or wherever WebGL
@@ -1211,16 +1212,13 @@ function startHeartbeat(paneId: string, ws: WebSocket) {
         // forceFit rebuild the renderer.
         if (it.webgl && webglLost(it)) forceFit(it);
         else {
-          // Glyph-atlas corruption survives a plain refresh: every cell is
-          // redrawn, but FROM poisoned textures, so the garble persists
-          // (confirmed live — click/forceFit incl. clearTextureAtlas healed
-          // what the refresh-only watchdog could not). Rebuild the atlas before
-          // repainting; unlike _renderService.clear() this never blanks the
-          // canvas, so the tick stays flicker-free. The DOM renderer has no
-          // atlas — refresh alone remains the whole repaint there (7aff545). The 2D
-          // canvas fallback keeps an atlas too, so it gets the same treatment.
-          /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-          if (it.webgl || it.canvas) (it.term as any).clearTextureAtlas?.();
+          // A plain refresh cannot fix a garbled WebGL pane: it skips every cell
+          // whose contents are unchanged, so stale texture coordinates survive.
+          // Rebuilding the atlas also rebuilds the model; rebuildGlyphAtlas does it
+          // for the same-tint panes sharing that atlas too, or this tick would
+          // garble them (#2983). The DOM renderer has no atlas — refresh alone
+          // remains the whole repaint there (7aff545).
+          if (it.webgl || it.canvas) rebuildGlyphAtlas(it, insts.values());
           it.term!.refresh(0, it.term!.rows - 1);
         }
       }
