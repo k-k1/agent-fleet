@@ -299,19 +299,19 @@ registers, launches `bash -l` on the Terminal route, and has no Managed driver, 
 target, sign-in or pinned CLI. It is never merged. The recipe is `scripts/stub-kind-count.sh`
 (`--verify` runs the suites), described in §20.8 of that chapter.
 
-**Measured at `aee59bfbe`: 14** (22 including tests and Markdown).
+**Measured at `aee59bfbe`: 16** (24 including tests and Markdown).
 
 | Category | Files | Which |
 |---|---|---|
 | Go | 5 | `session.go` (`Kind*`), `agentreg.go`, `kinds.go`, `agent_instructions.go` (`instrUnsupported`), `session_move.go` (`moveUnmeasuredTargets`) |
 | TS | 3 | `types/session.ts` (`SessionKind`, `SESSION_KINDS`, `ConnectionsStatus`), `agents/kindCatalog.ts` (`FALLBACK_KIND_FACTS`), `agents/registry.ts` (descriptor) |
 | CSS | 1 | `styles/tokens.css` (two theme tokens and the `.kind-` map line) |
-| Data | 5 | `agentkinds/catalog.json`, `mcpsrv/testdata/mcp_tools/{list.json,calls.txt}` (all three regenerated, not hand-edited), the `sessions.ts` locale in `en` and `ja` |
+| Data | 7 | `agentkinds/catalog.json` and the MCP tool goldens `testdata/mcp_tools/{list.json,calls.txt}` of the agent's `mcpx` and the CP's `mcpsrv` (all five regenerated, not hand-edited), the `sessions.ts` locale in `en` and `ja` |
 | CI and scripts | 0 | |
 | Tests (not counted) | 6 | `kinds_test.go`, `managed_runtime_test.go`, `prompt_paste_test.go`, `session_move_kinds_test.go`, `kind_lists_test.go`, `derivedKindLists.test.ts` |
 | Markdown (not counted) | 2 | `guide/ref/agents.md` and `.ja.md` |
 
-A guard or the compiler forced 11 of the 14. The other three follow the guide: the two locale
+A guard or the compiler forced 13 of the 16. The other three follow the guide: the two locale
 files (the launch hint has to be a message key, though an existing one would compile) and the
 move list (an unclassified kind reads `not_an_agent`, which is false for an agent). Each
 kind-specific row of §20.7 adds files the stub does not exercise; most of them are the

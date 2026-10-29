@@ -250,10 +250,13 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
       CP and in-container callers follow it; `TestManagedDefaultKindFollowsTheRegistry` pins
       the set)
 - [ ] the catalog snapshot regenerated (`TestKindCatalogSnapshot`), and
-      `testdata/wire.golden` if the catalog's shape changed; then the CP's MCP tool goldens,
-      whose tool descriptions enumerate the kinds:
-      `cd control-plane && go test ./internal/mcpsrv -run 'TestToolListGolden|TestToolCallGolden' -update-tool-golden`
-      (the package before the flag, or `go test` builds the module root and rejects the flag)
+      `testdata/wire.golden` if the catalog's shape changed; then the MCP tool goldens on both
+      sides, whose tool descriptions enumerate the kinds, the agent's through the snapshot:
+      `go test ./internal/mcpx -run 'TestToolListGolden|TestToolCallGolden' -update-tool-golden` in
+      `workspace/agent`, and the same with `./internal/mcpsrv` in `control-plane` (the package
+      before the flag, or `go test` builds the module root and rejects the flag). Run the agent's
+      tests with `-count=1` here: they read the CP's `catalog.json`, which the test cache does not
+      see change, and a cached `mcpx` passes with its golden out of date
 - [ ] the column in [ref/agents.md](../../guide/ref/agents.md) and in `ref/agents.ja.md` —
       `scripts/docs-check.py` holds the `CAPS_ROWS` rows, MCP included, to `Caps()`, and the
       Japanese table's marks to the English one's
@@ -324,7 +327,7 @@ name ([0124](../decisions/0124-second-refactor.md), addendum of 2026-10-29).
 `scripts/stub-kind-count.sh` applies the stub kind `zz` (`scripts/stub-kind/zz.patch`: a
 Terminal-only kind that registers and launches `bash -l`, with no MCP, instruction target, sign-in
 or pinned CLI) to a throwaway clone, inserts its column into `ref/agents`, regenerates the catalog
-snapshot and the MCP tool goldens, and lists the files changed outside
+snapshot and both modules' MCP tool goldens, and lists the files changed outside
 `internal/agents/zz` by category. The figure is the non-test, non-Markdown total.
 
 ```
@@ -340,6 +343,6 @@ the `ref/agents` tables, which the script makes itself:
 ```
 git -C <kept clone> add -A
 git -C <kept clone> diff --cached -- . ':!control-plane/internal/agentkinds/catalog.json' \
-  ':!control-plane/internal/mcpsrv/testdata' ':!guide/ref/agents.md' ':!guide/ref/agents.ja.md' \
-  > scripts/stub-kind/zz.patch
+  ':!control-plane/internal/mcpsrv/testdata' ':!workspace/agent/internal/mcpx/testdata' \
+  ':!guide/ref/agents.md' ':!guide/ref/agents.ja.md' > scripts/stub-kind/zz.patch
 ```

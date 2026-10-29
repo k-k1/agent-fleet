@@ -228,9 +228,13 @@ Agent のイメージを先に、または同時に配備し、その間は断�
       `TestMCPClientKindsMatchRegistry` が落ちる）。マネージドで始めたい種別は `ManagedDefault` も
       （CP とコンテナ内の呼び出し側が追従する。集合は `TestManagedDefaultKindFollowsTheRegistry` が固定）
 - [ ] カタログのスナップショットを作り直す（`TestKindCatalogSnapshot`）。カタログの形が変わったら
-      `testdata/wire.golden` も。続けて、ツールの説明に種別を列挙する CP の MCP ツールの golden も:
-      `cd control-plane && go test ./internal/mcpsrv -run 'TestToolListGolden|TestToolCallGolden' -update-tool-golden`
-      （パッケージをフラグより前に書く。逆だと `go test` はモジュールのルートをビルドしてフラグを拒む）
+      `testdata/wire.golden` も。続けて、ツールの説明に種別を列挙する両側の MCP ツールの golden も
+      （Agent 側はスナップショットから列挙する）。`workspace/agent` で
+      `go test ./internal/mcpx -run 'TestToolListGolden|TestToolCallGolden' -update-tool-golden`、
+      `control-plane` で同じものを `./internal/mcpsrv` に（パッケージをフラグより前に書く。逆だと
+      `go test` はモジュールのルートをビルドしてフラグを拒む）。ここでは Agent のテストを `-count=1` で
+      走らせる。CP の `catalog.json` を読むが、テストのキャッシュはその変化を見ないので、キャッシュされた
+      `mcpx` は golden が古いまま通る
 - [ ] [ref/agents.md](../../guide/ref/agents.ja.md) と `ref/agents.ja.md` の列。`scripts/docs-check.py` が
       `CAPS_ROWS` の行（MCP を含む）を `Caps()` と、日本語の表の印を英語の表と突き合わせる
 - [ ] 指示: `agents.Instructions` と `instrSupportedKinds`、または理由付きの `instrUnsupported`、
@@ -292,8 +296,8 @@ ADR 0124 の「新しい種別が触るファイル数」は、既存の種別�
 足して測ります（[0124](../decisions/0124-second-refactor.ja.md)、2026-10-29 の追記）。
 `scripts/stub-kind-count.sh` は、スタブの種別 `zz`（`scripts/stub-kind/zz.patch`。登録されて
 `bash -l` を起動するだけのターミナル専用の種別で、MCP・指示の宛先・サインイン・固定する CLI を
-持たない）を使い捨てのクローンに当て、`ref/agents` に列を足し、カタログのスナップショットと MCP
-ツールの golden を作り直し、`internal/agents/zz` の外で変わったファイルを分類して並べます。
+持たない）を使い捨てのクローンに当て、`ref/agents` に列を足し、カタログのスナップショットと両モジュールの
+MCP ツールの golden を作り直し、`internal/agents/zz` の外で変わったファイルを分類して並べます。
 数値は、テストと Markdown を除いた合計です。
 
 ```
@@ -309,6 +313,6 @@ scripts/stub-kind-count.sh --verify   # 両 Go モジュール、Console、docs-
 ```
 git -C <残したクローン> add -A
 git -C <残したクローン> diff --cached -- . ':!control-plane/internal/agentkinds/catalog.json' \
-  ':!control-plane/internal/mcpsrv/testdata' ':!guide/ref/agents.md' ':!guide/ref/agents.ja.md' \
-  > scripts/stub-kind/zz.patch
+  ':!control-plane/internal/mcpsrv/testdata' ':!workspace/agent/internal/mcpx/testdata' \
+  ':!guide/ref/agents.md' ':!guide/ref/agents.ja.md' > scripts/stub-kind/zz.patch
 ```

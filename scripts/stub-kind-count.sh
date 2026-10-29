@@ -64,15 +64,19 @@ for path, yes in zip(sys.argv[1::2], sys.argv[2::2]):
     open(path, "w", encoding="utf-8").write("".join(out))
 PY
 
-# Generated files, with the commands their own tests name.
-(cd "$dir/workspace/agent" && go test -run TestKindCatalogSnapshot -update-kind-catalog . >/dev/null)
-(cd "$dir/control-plane" && go test ./internal/mcpsrv -run 'TestToolListGolden|TestToolCallGolden' -update-tool-golden >/dev/null)
+# Generated files, with the commands their own tests name; the MCP goldens on both sides list
+# the kinds, the agent's through the catalog snapshot, so they follow it.
+(cd "$dir/workspace/agent" && go test -count=1 -run TestKindCatalogSnapshot -update-kind-catalog . >/dev/null)
+(cd "$dir/workspace/agent" && go test -count=1 ./internal/mcpx -run 'TestToolListGolden|TestToolCallGolden' -update-tool-golden >/dev/null)
+(cd "$dir/control-plane" && go test -count=1 ./internal/mcpsrv -run 'TestToolListGolden|TestToolCallGolden' -update-tool-golden >/dev/null)
 
 fails=0
 if [ "$verify" = 1 ]; then
   step() { echo "== $1" >&2; shift; if "$@" >"$dir.log" 2>&1; then :; else echo "FAILED; the last 40 lines:" >&2; tail -40 "$dir.log" >&2; fails=$((fails + 1)); fi; }
-  step "agent: go test" bash -c "cd '$dir/workspace/agent' && go test -p 2 -timeout 30m ./..."
-  step "cp: go test" bash -c "cd '$dir/control-plane' && go test -p 2 -timeout 30m ./..."
+  # -count=1: the agent's tests read the CP's catalog.json, outside their module, and the test
+  # cache does not see it change. Measured: a cached mcpx passed with its golden out of date.
+  step "agent: go test" bash -c "cd '$dir/workspace/agent' && go test -count=1 -p 2 -timeout 30m ./..."
+  step "cp: go test" bash -c "cd '$dir/control-plane' && go test -count=1 -p 2 -timeout 30m ./..."
   # Share this checkout's or the main clone's node_modules only on the same lockfile
   # (AGENTS.md); otherwise install a tree of the clone's own, which is not a link and so cannot
   # empty anyone else's.
