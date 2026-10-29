@@ -91,6 +91,7 @@ case "$method $url" in
     rm -f "$S/running"; [ "${STUB_LOSE_HOME:-0}" = 0 ] || rm -f "$S/home-file"; reply 200 '{"name":"af-ws-dev","state":"stopped"}' ;;
   "GET "*/api/workspace/machine) reply 200 '{"arch":"arm64"}' ;;
   "GET "*/api/workspace)
+    sleep "${STUB_POLL_DELAY:-0}"
     n=$(( $(cat "$S/polls" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$S/polls"
     if [ "$n" -le "${STUB_STARTING_POLLS:-0}" ]; then reply 200 '{"name":"af-ws-dev","state":"starting"}'
     else reply 200 '{"name":"af-ws-dev","state":"running"}'; fi ;;
@@ -188,6 +189,16 @@ bundle "$WORK/b1c"
 STUB_STARTING_POLLS=999 AF_ACCEPT_START_TIMEOUT=2 run 1 docker "$WORK/b1c"
 row ws.start FAIL
 grep -q "curl POST http://127.0.0.1:8099/api/workspace/stop" "$LOG" || fail "workspace not stopped after a start that never ran"
+echo "ok"
+
+echo "== case 1d: docker, slow state polls count against the start budget =="
+bundle "$WORK/b1d"
+t0="$(date +%s)"
+STUB_STARTING_POLLS=999 STUB_POLL_DELAY=2 AF_ACCEPT_START_TIMEOUT=3 run 1 docker "$WORK/b1d"
+row ws.start FAIL
+polls="$(grep -c "curl GET http://127.0.0.1:8099/api/workspace$" "$LOG" || true)"
+[ "$polls" -le 2 ] || fail "polled $polls times on a 3s budget with 2s answers"
+[ $(( $(date +%s) - t0 )) -lt 15 ] || fail "the start budget was overrun"
 echo "ok"
 
 echo "== case 2b: docker, a stop that fails is a FAIL, not a passing persistence check =="

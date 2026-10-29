@@ -90,8 +90,10 @@ wait_health() {
 # and those are never touched. WS_TRIED marks that a container may exist, so cleanup
 # stops it even when the start failed half way.
 ws_start() {
-  local code state waited=0 name
+  local code state name t0 now left
   WS_TRIED=1
+  # One wall-clock budget for the POST and the polling after it, HTTP time included.
+  t0="$(date +%s)"
   code="$(http POST /api/workspace/start "$START_TIMEOUT")"
   name="$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p' "$WORK/body" | head -1)"
   [ -z "$name" ] || WS_NAME="$name"
@@ -100,16 +102,20 @@ ws_start() {
     return 1
   fi
   while :; do
+    now="$(date +%s)"
     state="$(sed -n 's/.*"state":"\([^"]*\)".*/\1/p' "$WORK/body" | head -1)"
     [ "$state" != running ] || break
-    if [ "$state" != starting ] || [ "$waited" -ge "$START_TIMEOUT" ]; then
-      check "$1" FAIL "workspace state ${state:-?} after ${waited}s: $(body)"
+    left=$((t0 + START_TIMEOUT - now))
+    if [ "$state" != starting ] || [ "$left" -le 0 ]; then
+      check "$1" FAIL "workspace state ${state:-?} after $((now - t0))s: $(body)"
       return 1
     fi
-    sleep "$POLL"; waited=$((waited + POLL))
-    code="$(http GET /api/workspace)"
+    sleep "$POLL"
+    left=$((t0 + START_TIMEOUT - $(date +%s)))
+    [ "$left" -ge 1 ] || left=1
+    code="$(http GET /api/workspace "$left")"
   done
-  check "$1" PASS "workspace running after start (+${waited}s of starting): the CP reached the Agent"
+  check "$1" PASS "workspace running $((now - t0))s after start: the CP reached the Agent"
 }
 # ws_stop <id>: a stop that did not happen would make the persistence check pass on the
 # same container, so it is a check of its own.
