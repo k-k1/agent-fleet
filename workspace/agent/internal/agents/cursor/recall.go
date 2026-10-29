@@ -51,15 +51,26 @@ func recordedModelOf(st chatMeta) string {
 }
 
 func storedChatMeta(m session.Meta) (chatMeta, bool) {
-	chatID := sids.Read(session.UUID(m.Dir, m.Name))
+	return chatMetaFor(sids.Read(session.UUID(m.Dir, m.Name)))
+}
+
+func chatMetaFor(chatID string) (chatMeta, bool) {
+	st, _, ok := chatStore(chatID)
+	return st, ok
+}
+
+// chatStore reads the chat's store.db: exists is false while cursor has none for it (a chat
+// that has not started yet), ok is false when there is none or it could not be read.
+func chatStore(chatID string) (st chatMeta, exists, ok bool) {
 	if chatID == "" {
-		return chatMeta{}, false
+		return chatMeta{}, false, false
 	}
 	hits, _ := filepath.Glob(filepath.Join(Home(), "chats", "*", chatID, "store.db"))
 	if len(hits) == 0 {
-		return chatMeta{}, false
+		return chatMeta{}, false, false
 	}
-	return readChatMeta(hits[0])
+	st, ok = readChatMeta(hits[0])
+	return st, true, ok
 }
 
 // chatMeta is the part of store.db's meta row this reads. The row also holds the chat's

@@ -91,6 +91,23 @@ func bin() string { return envOr("AGENT_CURSOR_BIN", "cursor-agent") }
 // from the main package and must honor the same AGENT_CURSOR_BIN override.
 func Bin() string { return bin() }
 
+// launchModel is the --model value for a launch ("" = no flag). Without the flag cursor does
+// not run Auto: it runs the model it persisted as its own default (cli-config.json), and every
+// launch that passes --model rewrites that default (measured on 2026.10.22-27dcf5f, even for a
+// launch the plan refused, through both `-p` and `acp`). So after one session on an explicit
+// model, Default launches pin it, which a Free plan refuses (#2928). Default and "auto" therefore pass
+// `--model auto`, unless the chat keeps a model of its own (store.db recorded one): a resume
+// without the flag restores that one, and the flag would override it.
+func launchModel(model string, chatKeepsOwn bool) string {
+	if model != "" && model != "auto" {
+		return model
+	}
+	if chatKeepsOwn {
+		return ""
+	}
+	return "auto"
+}
+
 // buildProgram returns the tmux pane program for a cursor TUI session. Auth is ambient —
 // the CLI picks up ~/.config/cursor/auth.json itself (measured) — so no token is injected.
 // --resume covers creating a new chat and resuming one in the same shape.
@@ -112,9 +129,9 @@ func buildProgram(model, mode, chatID string, bypass bool) string {
 		flags = strings.TrimSpace(flags + " --plan")
 	}
 	// cursor model IDs already carry the effort (claude-opus-4-8-thinking-high) and there
-	// is no separate --effort flag (measured from help), so effort is never passed. "auto"
-	// is the default and means no flag at all.
-	if model != "" && model != "auto" {
+	// is no separate --effort flag (measured from help), so effort is never passed. "" means
+	// no flag; launchModel decides when that is safe.
+	if model != "" {
 		flags += " --model " + session.ShellQuote(model)
 	}
 	if chatID != "" {
