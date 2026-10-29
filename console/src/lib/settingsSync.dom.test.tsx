@@ -601,3 +601,57 @@ describe("ui-prefs: the owner of the local copy", () => {
     expect(localStorage.getItem(OWNER_KEY)).toBe("t1|u1");
   });
 });
+
+// The Agent stores the blob verbatim and reads a null value as an absent key, so a null the
+// server hands back has to mean "nothing stored" here too. Taken as a value it replaced local
+// maps with null, and agentLaunchDefaults' legacy-row branch dereferenced it and threw.
+describe("ui-prefs: a null server value is read as a missing key", () => {
+  const OWNER_KEY = "af-display-settings-owner";
+
+  async function hydrateWith(server: Record<string, unknown>, local: Record<string, unknown>, owner: string) {
+    localStorage.clear();
+    if (owner) localStorage.setItem(OWNER_KEY, owner);
+    const s = await freshSettings(local);
+    s.setPrefsOwnerSource(() => owner);
+    apiJSONMock.mockClear();
+    apiMock.mockResolvedValueOnce(structuredClone(server));
+    let ok: unknown;
+    try {
+      ok = await s.hydrateUIPrefs();
+    } catch (e) {
+      ok = { threw: String(e) };
+    }
+    await vi.advanceTimersByTimeAsync(1_000);
+    return {
+      ok,
+      state: s.getSettings(),
+      stored: localStorage.getItem(SETTINGS_KEY),
+      puts: apiJSONMock.mock.calls.map((c) => c[2]),
+    };
+  }
+
+  it("migrates from defaultModel when agentLaunchDefaults is null, keeping the other keys", async () => {
+    const r = await hydrateWith({ agentLaunchDefaults: null, defaultModel: "opus", chatSize: 17, quickReplies: learned }, {}, "");
+    expect(r.ok).toBe(true);
+    expect(r.state.agentLaunchDefaults.claude.model).toBe("opus");
+    expect(r.state.chatSize).toBe(17);
+    expect(r.state.quickReplies).toEqual(learned);
+  });
+
+  // Every key at once, against the same server with the keys left out: identical in result,
+  // stored copy and PUTs, for a fresh device and one holding its own values, owner known or not.
+  it("behaves for every key exactly as if the server did not hold it", async () => {
+    const s0 = await freshSettings({});
+    const keys = Object.keys(s0.settingsDefaults());
+    const nulls = Object.fromEntries(keys.map((k) => [k, null]));
+    const locals = [{}, { quickReplies: learned, iconSet: "seti", chatSize: 18, hiddenModels: { claude: ["opus"] } }];
+    for (const local of locals) {
+      for (const owner of ["t|u", ""]) {
+        const asNull = await hydrateWith(nulls, local, owner);
+        const asMissing = await hydrateWith({}, local, owner);
+        expect(asNull, `local ${JSON.stringify(local)}, owner "${owner}"`).toEqual(asMissing);
+        for (const k of keys) expect((asNull.state as any)[k], k).not.toBeNull();
+      }
+    }
+  });
+});

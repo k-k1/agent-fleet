@@ -109,7 +109,7 @@ function emptyFor(d: unknown): unknown {
   return d;
 }
 
-// A hydrate that throws is behaviour too (a server agentLaunchDefaults of null does today).
+// A hydrate that throws is behaviour too, so a throw is recorded rather than failing the run.
 async function hydrate(s: Mod): Promise<unknown> {
   try {
     return await s.hydrateUIPrefs();

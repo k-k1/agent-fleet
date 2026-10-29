@@ -303,6 +303,13 @@ export async function hydrateUIPrefs(): Promise<boolean> {
     scheduleHydrateRetry();
     return false;
   }
+  // A null value means the server holds nothing for that key: the Agent stores the blob verbatim
+  // and its accessors read a null as absent. Taken as a value, it replaced a local map every
+  // reader dereferences with null, and the agentLaunchDefaults merge below threw on it. Dropped
+  // before the migrations so they see the key as missing too.
+  for (const k of Object.keys(srv)) {
+    if (srv[k] === null) delete srv[k];
+  }
   // Users whose server copy still holds only the old boolean are migrated once to the three-way choice.
   if (!("ttsBackgroundPlayback" in srv) && typeof srv.ttsQuietWhenHidden === "boolean") {
     srv.ttsBackgroundPlayback = srv.ttsQuietWhenHidden ? "quiet" : "normal";
