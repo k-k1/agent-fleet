@@ -1285,3 +1285,23 @@ the state directory winning a tie. Reading never copies, moves or deletes, and a
 the state directory only, so a stale old record loses to any later write. This costs one extra
 stat of the old directory per read. The other kinds' `*-sid` stores are written only by the Agent
 and are unaffected.
+
+## Note 2026-10-29: the claude-talked marker cannot prove "no transcript" (#2954)
+
+Answering a transcript miss from the `claude-talked` marker plus the cwd-derived project
+directory (so the `projects/*` sweep is skipped) was considered and not built, because the
+launch path must never invent an absence (`jsonl_memo.go`) and nothing in the existing state proves one:
+
+- The marker is written only by the Stop hook, so a first turn still in flight, or one cut off
+  before Stop fired, has a transcript and no marker.
+- The cwd is a hint: a miss at the guessed project directory says nothing about the others
+  (cold hint in hook subprocesses, a Subdir that fell back to Dir, a resume from another cwd).
+- A slot without a marker may predate v0.31.0: the slot id is a hash of (dir, name) and the meta
+  has no created-at, so "created after the marker scheme" cannot be derived.
+- The marker is backfilled only when a slot is launched again, so old slots that never relaunched stay markerless.
+
+Only a durable "never launched" stamp (written before the pane starts, plus a one-time
+migration stamping existing slots) could prove it, and only for slots that never launched. After
+#2950 the remaining transcript-less sweeps are mostly live background-work lookups (#2953) and
+the one-off boot backfill, so that was judged not worth a new state directory and a migration.
+The sweep stays on every miss.
