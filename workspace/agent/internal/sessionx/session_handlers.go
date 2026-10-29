@@ -714,95 +714,17 @@ func createSession(w http.ResponseWriter, r *http.Request, req CreateReq) {
 		return
 	}
 	defer c.settleClaim()
+	if !c.refuseStart() {
+		return
+	}
+	// The failure net for a reserved slot: every path that ends without a meta. A no-op for a
+	// create that is not a spawn.
+	defer c.slot.release()
+	if !c.validateOptions() || !c.resolveDriver() {
+		return
+	}
 	w, spawnParent, writeCreated := c.w, c.spawnParent, c.writeCreated
-	// slot is this create's claim on one of the parent's child slots. Empty for every route
-	// that is not a spawn, and then every method is a plain meta write.
-	slot := &spawnSlot{}
-	// A kind whose CLI failed to install at start and is still absent cannot launch: say why
-	// (typically a full home) instead of the generic launch failure further down. After the
-	// idempotency claim, like the spawn refusals below and for the same reason: the answer
-	// depends on state that changes, so a retry of a create that already succeeded must replay
-	// its session (the ledger answered above), and a durable key must end as refused through
-	// the outcome writer and the deferred fail.
-	if ref := startRefusal(req.Kind); ref != nil {
-		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
-		return
-	}
-	// The spawn refusals (ADR 0073) run AFTER the idempotency claim and before any side effect
-	// (clone / worktree), so a refused spawn leaves nothing behind.
-	//
-	// After the claim, because they must not answer a RETRY. A client whose create timed out
-	// re-sends the same request, and by then the first child exists: run the budget first and
-	// the retry is refused as "you already have three" instead of being replayed the session it
-	// actually created. The same for a create still in flight — the ledger answers that with
-	// create_in_progress, which the calling tool reconciles into the eventual session.
-	//
-	// The working-copy check is not here: it needs the RESOLVED dir (below), not the raw one.
-	if spawnParent != "" {
-		if ref := SpawnCreateRefusal(spawnParent, req.Kind); ref != nil {
-			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
-			return
-		}
-		if err := reserveSpawnSlot(spawnParent); err != nil {
-			httpx.WriteErr(w, http.StatusConflict, "spawn_budget", err.Error())
-			return
-		}
-		// The slot is handed over to the child's meta as that meta is written (spawnSlot.publish
-		// — the two are one atomic step). The defer is the failure net: every path that ends
-		// without a meta.
-		slot = &spawnSlot{parent: spawnParent}
-		defer slot.release()
-	}
-	title, ok := CleanTitle(req.Title)
-	if !ok {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_title", "title is too long (max 80) or contains control characters")
-		return
-	}
-	if req.Mode != "" && req.Mode != "normal" && req.Mode != "plan" {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_mode", `mode must be "plan" or "normal"`)
-		return
-	}
-	if req.SpendCapUSD != nil {
-		if _, ok := session.NormalizeSpendCap(*req.SpendCapUSD); !ok {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_spend_cap", spendCapRangeMsg)
-			return
-		}
-	}
-	// "Ask for tool approval" is only accepted for kinds whose pending approvals can be
-	// answered from the Console (docs/log/76). Ignoring it silently would leave the caller
-	// believing the session runs with approvals on, so refusing is the honest answer.
-	// Skipping (true) is the historical default and stays allowed for every kind.
-	if req.SkipPermissions != nil && !*req.SkipPermissions && !AgentOf(NormalizeKind(req.Kind)).Caps().PermissionChoice {
-		httpx.WriteErr(w, http.StatusBadRequest, "permission_choice_unsupported",
-			"this agent kind cannot surface tool approvals to the Console; skip_permissions must stay true")
-		return
-	}
-	// Driver validation up-front, before any side effect (clone / worktree). The default
-	// tui is normalized to "" when persisted, keeping metas byte-identical to existing ones —
-	// except for a kind with no Terminal(CLI) route at all (ADR 0093 decision 2), where an
-	// unspecified driver has to default to managed instead: leaving it "" would silently try
-	// to launch a tui session with no pane program.
-	driver := strings.TrimSpace(req.Driver)
-	if driver == "" && AgentOf(NormalizeKind(req.Kind)).Caps().ManagedOnly {
-		driver = session.DriverManaged
-	}
-	switch driver {
-	case "", session.DriverTUI:
-		driver = ""
-	case session.DriverManaged:
-		// docs/log/27 P2/P3: only kinds registered in driverOf (opencode / codex); claude
-		// is out of scope (ADR 0015). A raw req.Kind can still turn into claude through
-		// NormalizeKind further down, so never decide on it — normalize here and keep
-		// using the normalized value.
-		if _, ok := managedDrivers[NormalizeKind(req.Kind)]; !ok {
-			httpx.WriteErr(w, http.StatusBadRequest, "driver_unsupported",
-				"managed ドライバはこの kind では利用できません")
-			return
-		}
-	default:
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_driver", "unknown driver: "+req.Driver)
-		return
-	}
+	slot, title, driver := c.slot, c.title, c.driver
 	// lcpp can be turned off by the user's own display setting (ui-prefs lcppEnabled,
 	// docs/log/105 §106.2). registry.ts's available() is only the signpost that hides it from
 	// the launch menus; this is the actual gate, reached the same way as the model-hidden

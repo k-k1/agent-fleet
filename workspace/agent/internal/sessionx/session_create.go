@@ -25,6 +25,13 @@ type createRun struct {
 	// committed says its answer has been recorded under it.
 	idemKey   string
 	committed bool
+
+	// slot is this create's claim on one of the parent's child slots. Empty for every route
+	// that is not a spawn, and then every method is a plain meta write.
+	slot *spawnSlot
+	// title is the cleaned request title, and driver the validated driver ("" = tui).
+	title  string
+	driver string
 }
 
 // validateKind is stage 1. It runs first of all, ahead of the idempotency claim: a refused kind
@@ -117,4 +124,106 @@ func (c *createRun) writeCreated(m session.Meta) {
 		}
 	}
 	httpx.WriteJSON(c.w, http.StatusCreated, body)
+}
+
+// refuseStart is stage 3: the refusals that answer from state that changes, so they run after
+// the claim and before any side effect.
+func (c *createRun) refuseStart() bool {
+	c.slot = &spawnSlot{}
+	// A kind whose CLI failed to install at start and is still absent cannot launch: say why
+	// (typically a full home) instead of the generic launch failure further down. After the
+	// idempotency claim, like the spawn refusals below and for the same reason: the answer
+	// depends on state that changes, so a retry of a create that already succeeded must replay
+	// its session (the ledger answered in claim), and a durable key must end as refused through
+	// the outcome writer and settleClaim.
+	if ref := startRefusal(c.req.Kind); ref != nil {
+		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
+		return false
+	}
+	// The spawn refusals (ADR 0073) run AFTER the idempotency claim and before any side effect
+	// (clone / worktree), so a refused spawn leaves nothing behind.
+	//
+	// After the claim, because they must not answer a RETRY. A client whose create timed out
+	// re-sends the same request, and by then the first child exists: run the budget first and
+	// the retry is refused as "you already have three" instead of being replayed the session it
+	// actually created. The same for a create still in flight — the ledger answers that with
+	// create_in_progress, which the calling tool reconciles into the eventual session.
+	//
+	// The working-copy check is not here: it needs the RESOLVED dir (stage 6), not the raw one.
+	if c.spawnParent == "" {
+		return true
+	}
+	if ref := SpawnCreateRefusal(c.spawnParent, c.req.Kind); ref != nil {
+		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
+		return false
+	}
+	if err := reserveSpawnSlot(c.spawnParent); err != nil {
+		httpx.WriteErr(c.w, http.StatusConflict, "spawn_budget", err.Error())
+		return false
+	}
+	// The slot is handed over to the child's meta as that meta is written (spawnSlot.publish
+	// — the two are one atomic step). The caller's deferred release is the failure net.
+	c.slot = &spawnSlot{parent: c.spawnParent}
+	return true
+}
+
+// validateOptions is stage 4's first half: the request fields that need no state at all.
+func (c *createRun) validateOptions() bool {
+	title, ok := CleanTitle(c.req.Title)
+	if !ok {
+		httpx.WriteErr(c.w, http.StatusBadRequest, "bad_title", "title is too long (max 80) or contains control characters")
+		return false
+	}
+	c.title = title
+	if c.req.Mode != "" && c.req.Mode != "normal" && c.req.Mode != "plan" {
+		httpx.WriteErr(c.w, http.StatusBadRequest, "bad_mode", `mode must be "plan" or "normal"`)
+		return false
+	}
+	if c.req.SpendCapUSD != nil {
+		if _, ok := session.NormalizeSpendCap(*c.req.SpendCapUSD); !ok {
+			httpx.WriteErr(c.w, http.StatusBadRequest, "bad_spend_cap", spendCapRangeMsg)
+			return false
+		}
+	}
+	// "Ask for tool approval" is only accepted for kinds whose pending approvals can be
+	// answered from the Console (docs/log/76). Ignoring it silently would leave the caller
+	// believing the session runs with approvals on, so refusing is the honest answer.
+	// Skipping (true) is the historical default and stays allowed for every kind.
+	if c.req.SkipPermissions != nil && !*c.req.SkipPermissions && !AgentOf(NormalizeKind(c.req.Kind)).Caps().PermissionChoice {
+		httpx.WriteErr(c.w, http.StatusBadRequest, "permission_choice_unsupported",
+			"this agent kind cannot surface tool approvals to the Console; skip_permissions must stay true")
+		return false
+	}
+	return true
+}
+
+// resolveDriver is stage 4's second half: driver validation up-front, before any side effect
+// (clone / worktree). The default tui is normalized to "" when persisted, keeping metas
+// byte-identical to existing ones — except for a kind with no Terminal(CLI) route at all
+// (ADR 0093 decision 2), where an unspecified driver has to default to managed instead: leaving
+// it "" would silently try to launch a tui session with no pane program.
+func (c *createRun) resolveDriver() bool {
+	driver := strings.TrimSpace(c.req.Driver)
+	if driver == "" && AgentOf(NormalizeKind(c.req.Kind)).Caps().ManagedOnly {
+		driver = session.DriverManaged
+	}
+	switch driver {
+	case "", session.DriverTUI:
+		driver = ""
+	case session.DriverManaged:
+		// docs/log/27 P2/P3: only kinds registered in driverOf (opencode / codex); claude
+		// is out of scope (ADR 0015). A raw req.Kind can still turn into claude through
+		// NormalizeKind further down, so never decide on it — normalize here and keep
+		// using the normalized value.
+		if _, ok := managedDrivers[NormalizeKind(c.req.Kind)]; !ok {
+			httpx.WriteErr(c.w, http.StatusBadRequest, "driver_unsupported",
+				"managed ドライバはこの kind では利用できません")
+			return false
+		}
+	default:
+		httpx.WriteErr(c.w, http.StatusBadRequest, "bad_driver", "unknown driver: "+c.req.Driver)
+		return false
+	}
+	c.driver = driver
+	return true
 }
