@@ -4,7 +4,8 @@
 # pasted into the issue as is.
 #
 #   deploy/macos/acceptance.sh docker <compose bundle dir>   # Docker Desktop / OrbStack / colima
-#   deploy/macos/acceptance.sh native [--version <v>]        # the linux-arm64 package in a Lima VM
+#   deploy/macos/acceptance.sh native [--version <v>] [--vm lima|orbstack]
+#                                                            # the linux-arm64 package in a Linux VM
 #   deploy/macos/acceptance.sh installer [--version <v>]     # install.sh / install-compose.sh on macOS
 #
 # Options: --report <file>  (default ./macos-acceptance-<mode>-<time>.md)
@@ -32,6 +33,7 @@ POLL="${AF_ACCEPT_POLL:-2}"
 VM="${AF_ACCEPT_VM:-af-accept}"
 DIST_RAW="${AF_ACCEPT_DIST_RAW:-https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main}"
 
+VM_KIND="${AF_ACCEPT_VM_KIND:-lima}"
 FAILS=0; KEEP=0; REPORT=""; VERSION=""; WS_NAME=""; WS_TRIED=0; VM_CREATED=0
 
 usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"; }
@@ -237,24 +239,64 @@ cleanup_docker() {
   fi
 }
 
-# ---- native (Lima) ----------------------------------------------------------------
-vm() { limactl shell "$VM" -- "$@"; }
+# ---- native (a Linux VM: Lima or an OrbStack machine) -----------------------------
+# One small adapter per VM tool; everything after the VM exists is the same.
+vm() {
+  case "$VM_KIND" in
+    lima) limactl shell "$VM" -- "$@" ;;
+    orbstack) orb -m "$VM" "$@" ;;
+  esac
+}
+vm_exists() {
+  case "$VM_KIND" in
+    lima) limactl list -q 2>/dev/null | grep -qx "$VM" ;;
+    orbstack) orb list 2>/dev/null | awk '{print $1}' | grep -qx "$VM" ;;
+  esac
+}
+vm_create() {
+  case "$VM_KIND" in
+    lima) limactl create --name "$VM" --tty=false template://ubuntu-lts ;;
+    orbstack) orb create ubuntu "$VM" ;;
+  esac
+}
+vm_start() {
+  case "$VM_KIND" in
+    lima) limactl start "$VM" ;;
+    orbstack) orb start "$VM" ;;
+  esac
+}
+vm_delete() {
+  case "$VM_KIND" in
+    lima) limactl stop "$VM" > /dev/null 2>&1 || true; limactl delete "$VM" ;;
+    orbstack) orb delete -f "$VM" ;;
+  esac
+}
 
 cmd_native() {
-  command -v limactl > /dev/null || die "limactl not found (brew install lima)"
-  header "native in a Lima VM"
+  case "$VM_KIND" in
+    lima) command -v limactl > /dev/null || die "limactl not found (brew install lima)" ;;
+    orbstack)
+      command -v orb > /dev/null || die "orb not found (brew install --cask orbstack)"
+      # Started from a shell that is not the logged-in session (SSM, SSH), OrbStack dies on
+      # a missing TCC permission even after it was granted (measured), so it is never
+      # started from here.
+      orb status 2>/dev/null | grep -q Running \
+        || die "OrbStack is not running: open the app in the logged-in session first (from SSH/SSM: sudo launchctl asuser \$(id -u) open -a OrbStack)" ;;
+    *) die "--vm is lima or orbstack" ;;
+  esac
+  header "native in a Linux VM ($VM_KIND)"
   # A VM of that name that was already there is used and left in place: it may hold
   # someone's work. Only a VM this run created is deleted afterwards, so creating and
   # starting are two steps: a start that fails still leaves a VM that is ours to delete.
-  if limactl list -q 2>/dev/null | grep -qx "$VM"; then
+  if vm_exists; then
     check vm.reuse INFO "VM $VM existed before this run; it is not deleted afterwards"
-  elif limactl create --name "$VM" --tty=false template://ubuntu-lts > "$WORK/vm.log" 2>&1; then
+  elif vm_create > "$WORK/vm.log" 2>&1; then
     VM_CREATED=1
   else
     check vm.create FAIL "$(tail -3 "$WORK/vm.log")"
     cleanup_native; finish
   fi
-  if ! limactl start "$VM" >> "$WORK/vm.log" 2>&1; then
+  if ! vm_start >> "$WORK/vm.log" 2>&1; then
     check vm.start FAIL "$(tail -3 "$WORK/vm.log")"
     cleanup_native; finish
   fi
@@ -276,7 +318,7 @@ cmd_native() {
   # setsid: af start runs in the foreground and must outlive this shell session.
   vm sh -c 'setsid -f "$HOME/.local/bin/af" start > "$HOME/af-start.log" 2>&1 < /dev/null' || true
   if wait_health; then
-    check native.health PASS "$CP/healthz from the Mac (Lima port forward)"
+    check native.health PASS "$CP/healthz from the Mac (the VM's port forward)"
   else
     check native.health FAIL "no ok from $CP/healthz within ${HEALTH_WAIT}s: $(vm tail -3 af-start.log 2>/dev/null || true)"
     cleanup_native; finish
@@ -305,9 +347,8 @@ cleanup_native() {
   [ "$KEEP" = 0 ] || { check cleanup INFO "--keep: VM $VM left running"; return 0; }
   [ "$WS_TRIED" = 0 ] || ws_stop cleanup.ws_stop || true
   [ "$VM_CREATED" = 1 ] || return 0
-  limactl stop "$VM" > /dev/null 2>&1 || true
-  if ! limactl delete "$VM" > "$WORK/delete.log" 2>&1; then
-    check cleanup FAIL "limactl delete $VM: $(tail -2 "$WORK/delete.log")"
+  if ! vm_delete > "$WORK/delete.log" 2>&1; then
+    check cleanup FAIL "deleting VM $VM: $(tail -2 "$WORK/delete.log")"
   fi
 }
 
@@ -349,6 +390,7 @@ while [ $# -gt 0 ]; do
     --report) REPORT="${2:?--report needs a file}"; shift 2 ;;
     --keep) KEEP=1; shift ;;
     --version) VERSION="${2:?--version needs a value}"; shift 2 ;;
+    --vm) VM_KIND="${2:?--vm needs lima or orbstack}"; shift 2 ;;
     -h | --help) usage; exit 0 ;;
     *) ARGS+=("$1"); shift ;;
   esac

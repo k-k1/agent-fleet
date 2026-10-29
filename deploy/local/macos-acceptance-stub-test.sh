@@ -123,6 +123,30 @@ case "$1" in
     esac ;;
 esac
 FAKE
+# fake orb: an OrbStack machine is the same state file as the Lima VM.
+cat > "$STUB/orb" <<'FAKE'
+#!/usr/bin/env bash
+S="$STUB_STATE"
+echo "orb $*" >> "$STUB_LOG"
+case "$1" in
+  status) [ "${STUB_ORB_STOPPED:-0}" = 1 ] && echo Stopped || echo Running ;;
+  list) echo "NAME STATE DISTRO"; [ -f "$S/vm" ] && echo "af-accept running ubuntu" ;;
+  create) touch "$S/vm" ;;
+  start) exit "${STUB_VM_START_RC:-0}" ;;
+  delete) rm -f "$S/vm" ;;
+  -m)
+    shift 2
+    case "$*" in
+      *os-release*) echo "Ubuntu 26.04.1 LTS aarch64" ;;
+      *sysctl*) exit 0 ;;
+      *install.sh*) exit "${STUB_INSTALL_RC:-0}" ;;
+      *setsid*) exit 0 ;;
+      *"echo af >"*) touch "$S/home-file" ;;
+      *"test -f"*) [ -f "$S/home-file" ] ;;
+      *tail*) echo "af-cp: listening" ;;
+    esac ;;
+esac
+FAKE
 chmod +x "$STUB"/*
 
 bundle() { # bundle <dir> [with-overlay=1] -> a compose bundle with a macOS .env
@@ -282,6 +306,22 @@ STUB_VM_EXISTS=1 run 0 native
 row vm.reuse INFO
 grep -q "limactl delete" "$LOG" && fail "deleted a VM this run did not create"
 grep -q "limactl create" "$LOG" && fail "created a VM over an existing one"
+echo "ok"
+
+echo "== case 6c: native in an OrbStack machine, end to end =="
+run 0 native --vm orbstack
+for id in vm.create native.install native.health native.ws.start native.arch native.ws.restart native.persist; do
+  row "$id" PASS
+done
+grep -q "orb create ubuntu af-accept" "$LOG" || fail "machine not created"
+grep -q "orb delete -f af-accept" "$LOG" || fail "machine not deleted"
+grep -q "limactl" "$LOG" && fail "--vm orbstack still called limactl"
+echo "ok"
+
+echo "== case 6d: native in OrbStack refuses when OrbStack is not running, and never starts it =="
+STUB_ORB_STOPPED=1 run 2 native --vm orbstack
+grep -q "OrbStack is not running" "$WORK/err.txt" || fail "no OrbStack guidance"
+grep -q "orb start" "$LOG" && fail "tried to start OrbStack from the script"
 echo "ok"
 
 echo "== case 7: native, a failed install is reported and the VM is still deleted =="

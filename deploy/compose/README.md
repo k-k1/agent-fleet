@@ -352,12 +352,13 @@ encodes them, but if you customize it, keep them:
 The images are published for `linux/arm64`, so an Apple Silicon Mac pulls the right ones.
 What does not carry over is the DooD wiring above, which assumes rootful Docker on Linux.
 
-**Checked so far: colima only.** On an M1 Mac mini with macOS 26.7, colima 0.10.3
-(`colima start --vm-type vz --mount-type virtiofs`) passed every check of
+**Checked with colima, OrbStack and Docker Desktop.** On an M1 Mac mini with macOS 26.7,
+colima 0.10.3 (`colima start --vm-type vz --mount-type virtiofs`), OrbStack (engine 29.8)
+and Docker Desktop 4.97 each passed every check of
 [deploy/macos/acceptance.sh](../macos/README.md): workspace start in both directions,
 `linux/arm64`, home ownership and modes on the shared directory, headless Chromium, and
-stop → start keeping the home. Docker Desktop and OrbStack are not checked yet: both need
-a logged-in screen for their first start, which the test machine did not have (#2961).
+stop → start keeping the home (#2961). OrbStack and Docker Desktop have to be started once
+from a logged-in screen; after that the commands below work from any terminal.
 
 Single user, reached at `http://127.0.0.1:8099` from the Mac; no Caddy, no public domain.
 In `.env`, besides the secrets from the Quick start:
@@ -371,7 +372,8 @@ VERSION=<version>                         # the template's `dev` is not a publis
 WS_IMAGE=ghcr.io/k-k1/agent-fleet/workspace:<version>
 # (B) a directory the engine shares with its VM — under your home works for all three
 DATA_DIR=/Users/<you>/agent-fleet/data
-# (C) the socket's group as the engine reports it, not a host `docker` group:
+# (C) the socket's group as the engine reports it, not a host `docker` group
+#     (measured: 991 on colima, 0 on OrbStack and Docker Desktop):
 #   docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine stat -c %g /var/run/docker.sock
 DOCKER_GID=<that number>
 ```

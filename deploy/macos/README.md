@@ -110,18 +110,42 @@ docker compose version                               # must answer before going 
 colima start --cpu 4 --memory 8 --vm-type vz --mount-type virtiofs   # engine 1
 deploy/macos/acceptance.sh docker ~/agent-fleet-<v>
 colima stop
-brew install --cask orbstack && open -a OrbStack     # engine 2
-deploy/macos/acceptance.sh docker ~/agent-fleet-<v>
-deploy/macos/acceptance.sh native --version <v>
+colima stop
+# engines 2 and 3 need the logged-in session once (below); then, from any terminal:
+docker context use orbstack        && deploy/macos/acceptance.sh docker ~/agent-fleet-<v>
+docker context use desktop-linux   && deploy/macos/acceptance.sh docker ~/agent-fleet-<v>
+deploy/macos/acceptance.sh native --version <v>                 # Lima
+deploy/macos/acceptance.sh native --version <v> --vm orbstack   # an OrbStack machine
 deploy/macos/acceptance.sh installer --version <v>
 ```
 
-**OrbStack does not start without a logged-in screen** (measured): over SSM, `orb start`
-dies with "missing TCC permission for data storage directory", a permission macOS grants
-only through a dialog. Docker Desktop's first start also asks for a screen; it was not
-tried. Untried as well: enabling Screen Sharing, logging in once over VNC (tunnelled through
-SSM or SSH) and approving the dialogs, which should let both start from the CLI afterwards.
-colima and Lima need no screen.
+Each engine reports a different socket group (991 on colima, 0 on OrbStack and Docker
+Desktop): re-measure `DOCKER_GID` for each, and give each its own `DATA_DIR` so they do
+not share a database.
+
+**OrbStack and Docker Desktop need the logged-in session** (measured). From SSM, `orb start`
+dies with "missing TCC permission for data storage directory" — even after the permission
+was granted, because macOS ties it to an app launched in that session. What worked:
+
+1. Give `ec2-user` a password (`sudo dscl . -passwd /Users/ec2-user <pw>`), enable Screen
+   Sharing (`sudo launchctl enable system/com.apple.screensharing` and
+   `sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist`),
+   forward port 5900 with `aws ssm start-session --document-name
+   AWS-StartPortForwardingSession`, and log in once over VNC.
+2. OrbStack: `brew install --cask orbstack`, then launch it **in that session** —
+   `sudo launchctl asuser $(id -u ec2-user) sudo -u ec2-user open -a OrbStack` — approve
+   Rosetta and the helper (the `ec2-user` password), pick Docker.
+3. Docker Desktop: from the mounted `Docker.dmg`,
+   `sudo /Volumes/Docker/Docker.app/Contents/MacOS/install --accept-license --user=ec2-user`,
+   launch it the same way, and skip the sign-in.
+
+After that `docker` (and `orb -m`) work from SSM; only starting the apps does not. colima
+and Lima need none of this. A VNC client that speaks Apple's authentication is needed
+(Python's `asyncvnc` worked).
+
+An instance launched without a key pair leaves `~/.ssh` owned by root; OrbStack's machine
+setup fails on it ("open /mnt/mac/Users/ec2-user/.ssh: permission denied") until
+`sudo chown ec2-user:staff ~/.ssh`.
 
 macOS has no `timeout` command, so a step that might hang needs its own watchdog.
 Switch engines with `docker context use <name>` and stop the previous one first: both
@@ -137,7 +161,7 @@ Paste each report into #2961 as a comment. A FAIL either becomes a fix (and this
 directory's script learns the case) or a documented limit in the compose / native
 README, which then says what was actually checked.
 
-Checked so far (M1 Mac mini, macOS 26.7, release 0.36.0 images): `docker` with colima
-0.10.3, `native` with Lima 2.2.1, and `installer` (including `install-compose.sh` with
-`sha256sum` removed from `PATH`; macOS 26 ships `sha256sum`) — no FAIL. Docker Desktop and
-OrbStack: not yet, for the reason above.
+Checked so far (M1 Mac mini, macOS 26.7, release 0.36.0 images), no FAIL: `docker` with
+colima 0.10.3, OrbStack and Docker Desktop 4.97; `native` with Lima 2.2.1 and with an
+OrbStack machine; `installer` (including `install-compose.sh` with `sha256sum` removed
+from `PATH`; macOS 26 ships `sha256sum`).

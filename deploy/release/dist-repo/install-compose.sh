@@ -33,7 +33,7 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 OS="${AF_OS:-$(uname -s)}"
 case "$OS" in
   Linux) ;;
-  # Checked with colima; Docker Desktop / OrbStack not yet (#2961). It needs the overlay.
+  # Checked with colima, OrbStack and Docker Desktop (#2961). It needs the overlay.
   Darwin) echo "NOTE: macOS is experimental — follow \"macOS\" in the bundle's README.md" >&2 ;;
   *) die "the Compose edition runs on a Linux Docker host (or, experimentally, macOS)" ;;
 esac
