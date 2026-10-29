@@ -27,6 +27,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -400,7 +401,45 @@ func createRefusalCases() []createRefusalCase {
 			}
 		}, body: inRepo(map[string]any{"worktree": true, "new_branch": "wt-sub", "subdir": "untracked"}),
 			code: "bad_subdir", leaves: true},
+
+		// Stages 7-9 again: the identity and studio refusals, their order, and the move target's
+		// meta write.
+		{name: "order_name_before_ssm", booked: "kid", body: inRepo(map[string]any{"kind": "ssm"}), code: "name_taken"},
+		{name: "order_ssm_before_studio", body: inRepo(map[string]any{"kind": "ssm", "studio": "a/b"}), code: "bad_ssm"},
+		{name: "order_studio_spawn_before_id", body: spawnInRepo("parent1", map[string]any{"studio": "a/b"}), code: "bad_studio"},
+		{name: "studio_kind_unsupported", body: inRepo(map[string]any{"kind": "opencode", "driver": "managed",
+			"studio": probeStudio}), code: "studio_kind_unsupported"},
+		{name: "studio_not_found", setup: func(p *createProbe) { stubStudio(p, imagegen.ErrStudioNotFound, nil) },
+			body: inRepo(map[string]any{"studio": probeStudio}), code: "no_studio"},
+		{name: "studio_bound_elsewhere", setup: func(p *createProbe) { stubStudio(p, imagegen.ErrStudioBound, nil) },
+			body: inRepo(map[string]any{"studio": probeStudio}), code: "studio_bound"},
+		{name: "studio_bind_failed", setup: func(p *createProbe) { stubStudio(p, errors.New("probe: disk"), nil) },
+			body: inRepo(map[string]any{"studio": probeStudio}), code: "studio_bind_failed"},
+		{name: "studio_launch_failed", setup: func(p *createProbe) { stubStudio(p, nil, nil) },
+			body: inRepo(map[string]any{"studio": probeStudio}), code: "tmux_failed"},
+		{name: "move_target_meta_write_failed", setup: func(p *createProbe) {
+			launchTmuxFn = func(session.Meta, bool) error { return nil }
+			prev := writeMoveTargetMeta
+			writeMoveTargetMeta = func(session.Meta) error { return errors.New("no space left on device") }
+			p.t.Cleanup(func() { writeMoveTargetMeta = prev })
+		}, booked: "mv1", body: inRepo(map[string]any{"initial_prompt": "hi"}), code: "meta_write_failed"},
 	}
+}
+
+// probeStudio is a well-formed studio id (paths.ValidIDSegment).
+const probeStudio = "0123abcd-0000-4000-8000-00000000abcd"
+
+// stubStudio stands in for the studio store: the bind answers err, and calls, when set,
+// records every call as "bind <studio> <session> <previous>".
+func stubStudio(p *createProbe, err error, calls *[]string) {
+	prev := imagegen.BindStudioSession
+	imagegen.BindStudioSession = func(studio, sess, previous string) (string, error) {
+		if calls != nil {
+			*calls = append(*calls, "bind "+studio+" "+sess+" "+previous)
+		}
+		return "", err
+	}
+	p.t.Cleanup(func() { imagegen.BindStudioSession = prev })
 }
 
 // plantCatalogs gives the live-catalog kinds a known catalog. opencode reports opencode/old-free

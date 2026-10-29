@@ -286,3 +286,39 @@ body "{\"error\":{\"code\":\"spawn_working_copy_busy\",\"message\":\"$HOME/repos
 status 400
 header Content-Type: application/json
 body "{\"error\":{\"code\":\"bad_subdir\",\"message\":\"subdir does not exist: $HOME/repos/app@wt-sub/untracked\"}}\n"
+== order_name_before_ssm
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"name_taken\",\"message\":\"a session named kid already exists\"}}\n"
+== order_ssm_before_studio
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_ssm\",\"message\":\"ssm_target (instance id) is required\"}}\n"
+== order_studio_spawn_before_id
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_studio\",\"message\":\"a session cannot start a session bound to an image studio\"}}\n"
+== studio_kind_unsupported
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"studio_kind_unsupported\",\"message\":\"an opencode Managed session shares its MCP server with the other sessions of its folder, so it cannot be bound to an image studio; use the Terminal execution method\"}}\n"
+== studio_not_found
+status 404
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"no_studio\",\"message\":\"no such image studio\"}}\n"
+== studio_bound_elsewhere
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"studio_bound\",\"message\":\"the image studio is bound to another session\"}}\n"
+== studio_bind_failed
+status 500
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"studio_bind_failed\",\"message\":\"probe: disk\"}}\n"
+== studio_launch_failed
+status 500
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"tmux_failed\",\"message\":\"probe: launch refused\"}}\n"
+== move_target_meta_write_failed
+status 500
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"meta_write_failed\",\"message\":\"the session started but its meta could not be written: no space left on device\"}}\n"

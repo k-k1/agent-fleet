@@ -3,14 +3,19 @@ package sessionx
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
@@ -40,6 +45,14 @@ type createRun struct {
 	driver string
 	// subdir is the cleaned subdir, checked to exist beneath the resolved working copy.
 	subdir string
+
+	// Stage 7's answers: who the session is.
+	name                              string
+	kind                              string
+	label                             string
+	ssm                               *session.SSMMeta
+	studio                            string
+	origin, originConv, originSession string
 }
 
 // validateKind is stage 1. It runs first of all, ahead of the idempotency claim: a refused kind
@@ -494,4 +507,190 @@ func (c *createRun) resolveWorkingCopy() bool {
 	}
 	c.subdir = subdir
 	return true
+}
+
+// identify is stage 7: the session's name, kind, title default, label, SSM target, studio and
+// origin.
+func (c *createRun) identify() bool {
+	req := c.req
+	// Identity is a freshly allocated random slug — NOT the client's name. It (and the
+	// sid it derives) can't collide with an archived/pruned session's jsonl, so a new
+	// session never accidentally --resumes a past conversation.
+	c.name = req.name
+	if c.name == "" {
+		c.name = allocSessionName(req.Dir)
+	} else if _, taken := session.ReadMeta(c.name); taken {
+		// A move's booked name is held against every allocation; a meta under it anyway is
+		// another session, which a create must never overwrite.
+		httpx.WriteErr(c.w, http.StatusConflict, "name_taken", "a session named "+c.name+" already exists")
+		return false
+	}
+
+	c.kind = NormalizeKind(req.Kind)
+	// An SSM session with no client title defaults to "{host alias} @MMDD-HHMM" — a
+	// human-meaningful "target + timestamp" name (vs the generic {home-basename} @… fallback).
+	if c.kind == session.KindSSM && c.title == "" {
+		c.title = ssmDefaultTitle(req.SSMAlias, req.SSMTarget, time.Now())
+	}
+	if AgentOf(c.kind).Caps().UsesLabel {
+		c.label = sessionLabelFor(req.Dir, c.title, c.name)
+	}
+	if c.kind == session.KindSSM {
+		if strings.TrimSpace(req.SSMTarget) == "" {
+			httpx.WriteErr(c.w, http.StatusBadRequest, "bad_ssm", "ssm_target (instance id) is required")
+			return false
+		}
+		c.ssm = &session.SSMMeta{
+			Profile: req.SSMProfile, Target: req.SSMTarget, Document: req.SSMDocument,
+			Region: req.SSMRegion, StartURL: req.SSOStartURL, SSORegion: req.SSORegion,
+			AccountID: req.SSOAccountID, RoleName: req.SSORoleName,
+			RoleARN: req.SSMRoleARN, SourceProfile: req.SSMSourceProfile, ExternalID: req.SSMExternalID,
+			RoleSessionName: req.SSMRoleSessionName, DurationSeconds: req.SSMDurationSeconds,
+		}
+		if c.ssm.Region == "" {
+			c.ssm.Region = c.ssm.SSORegion
+		}
+	}
+	c.studio = strings.TrimSpace(req.Studio)
+	if c.studio != "" {
+		// A studio is bound by a person pressing "attach an agent" in the studio pane. A session
+		// raising a child must not hand it someone's studio: the binding is what the studio's
+		// draft tools trust.
+		if c.spawnParent != "" {
+			httpx.WriteErr(c.w, http.StatusBadRequest, "bad_studio", "a session cannot start a session bound to an image studio")
+			return false
+		}
+		if !paths.ValidIDSegment(c.studio) {
+			httpx.WriteErr(c.w, http.StatusBadRequest, "bad_studio", "invalid studio id: "+c.studio)
+			return false
+		}
+	}
+	c.origin, c.originConv, c.originSession = CreateOrigin(req)
+	return true
+}
+
+// armMeta is stage 8: the meta as it will be published, and the launch task armed for it. The
+// studio is bound here, as the last step before the launch.
+func (c *createRun) armMeta() (session.Meta, bool) {
+	req := c.req
+	meta := session.Meta{
+		Name: c.name, Dir: req.Dir, Subdir: c.subdir, Model: req.Model, Effort: req.Effort, Mode: req.Mode, Kind: c.kind, Driver: c.driver, Title: c.title, Color: req.Color, Label: c.label,
+		SkipPermissions: req.SkipPermissions,
+		Repo:            filepath.Base(req.Dir), Branch: gitx.GitCurrentBranch(req.Dir),
+		CreatedAt: time.Now().Format(time.RFC3339), SSM: c.ssm,
+		Origin: c.origin, OriginConv: c.originConv, OriginSession: c.originSession,
+		Studio: c.studio, WorkItem: cleanWorkItemRef(req.WorkItem),
+
+		// From the member's setting only, never the request: a session can call create_session,
+		// and turning contributor mode on is the member's decision (ui_prefs.go's mark gate).
+		MuseContributorMode: c.kind == session.KindMuse && uiprefs.MuseContributorMode(),
+	}
+	// pending from the first write of the meta: the pane must not offer a resend while the
+	// delivery in launch may still be typing (ADR 0100 decision 2).
+	if strings.TrimSpace(req.InitialPrompt) != "" {
+		meta.InitialPromptState = session.InitialPromptPending
+	}
+	// Armed here, before either launch path delivers the initial prompt (docs/log/85): the
+	// arm's instant is also the lower bound its completion evidence is cut by, and the launch
+	// task is precisely the work it is waiting for the end of.
+	if req.StopAfterTurn {
+		meta.StopAfterTurnAt = meta.CreatedAt
+	}
+	meta.SpendCapUSD = session.DefaultSpendCap()
+	if req.SpendCapUSD != nil {
+		meta.SpendCapUSD, _ = session.NormalizeSpendCap(*req.SpendCapUSD) // validated in validateOptions
+	}
+	// docs/log/51 Phase 3, the self-report fast path: add one line to the launch task saying
+	// "call af_report when you are done" — only for an instruction that owes a report, i.e.
+	// one with report_to. Placed before the managed / tui split so both launch paths carry
+	// the same line.
+	if req.ReportTo != "" || req.delivery() != nil {
+		req.InitialPrompt = withSelfReportHint(req.InitialPrompt, meta)
+	}
+	// The studio's own `session` is written BEFORE the session is published or launched (ADR
+	// 0100 decision 2 ③): a Managed create sends the persona synchronously in launch, and its
+	// first get_image_studio is refused unless the studio already names this session back.
+	if c.studio != "" {
+		if ref := bindStudioOnCreate(c.studio, meta); ref != nil {
+			httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
+			return session.Meta{}, false
+		}
+	}
+	return meta, true
+}
+
+// publish writes the meta. A move's target is written checked: the move commits, and stops
+// its source, on the strength of that meta, and a target running without one is listed
+// nowhere. Its first prompt follows the write, so a failed write leaves a target that has
+// not been told to work.
+func (c *createRun) publish(m session.Meta) bool {
+	if c.req.name == "" {
+		c.slot.publish(m)
+		return true
+	}
+	if err := writeMoveTargetMeta(m); err != nil {
+		log.Printf("move target %s: writing its meta: %v", c.name, err)
+		httpx.WriteErr(c.w, http.StatusInternalServerError, errCodeMetaWriteFailed, "the session started but its meta could not be written: "+err.Error())
+		return false
+	}
+	return true
+}
+
+// launch is stage 9: start the session, publish its meta, record where its launch task came
+// from, deliver that task, and answer the create.
+func (c *createRun) launch(meta session.Meta) {
+	req, name := c.req, c.name
+	if meta.DriverKind() == session.DriverManaged {
+		// managed (docs/log/27 P2): no tmux pane — the driver opens a thread on the shared
+		// runtime. The first prompt needs no boot-screen scraping and can just be sent
+		// (§10.2-9 — idempotent through ClientMessageID).
+		d, _ := driverOf(meta)
+		h, err := mcpx.StartManagedSession(d, meta)
+		if err != nil {
+			unbindStudioAfterFailedLaunch(c.studio, name)
+			writeRuntimeErr(c.w, err)
+			return
+		}
+		if !c.publish(meta) {
+			return
+		}
+		recordFleetGraphBirth(meta)
+		req.managed = true
+		noteCreateOrigin(name, req, c.spawnParent, c.origin)
+		// The row stays either way: a failed launch task is reported as before.
+		defer chatx.MarkInstrSent(name, req.instr)
+		if p := strings.TrimSpace(req.InitialPrompt); p != "" {
+			if err := h.Send(agents.TurnInput{Prompt: p, Origin: createTurnOrigin(req, c.spawnParent),
+				Instr: req.instr, Schedule: scheduleRefOf(req.Source, req.ScheduleID, req.ScheduleSlot)}); err != nil {
+				log.Printf("managed initial prompt %s: %v", name, err)
+				meta.InitialPromptState = session.InitialPromptFailed
+			} else {
+				markSessionWorking(name)
+				meta.InitialPromptState = session.InitialPromptDelivered
+			}
+			settleInitialPrompt(name, meta.InitialPromptState)
+		}
+		c.writeCreated(meta)
+		return
+	}
+	if err := launchTmuxFn(meta, req.SSMForceLogin); err != nil {
+		unbindStudioAfterFailedLaunch(c.studio, name)
+		httpx.WriteErr(c.w, http.StatusInternalServerError, "tmux_failed", err.Error())
+		return
+	}
+	if !c.publish(meta) {
+		return
+	}
+	recordFleetGraphBirth(meta)
+
+	// BEFORE the delivery below, not after: the record is what the mirror matches the turn
+	// against, and the turn can appear first (see noteCreateOrigin).
+	noteCreateOrigin(name, req, c.spawnParent, c.origin)
+	// Optional launch task: deliver it once the CLI has booted (async — the create
+	// response returns the session immediately so the caller can start polling).
+	if strings.TrimSpace(req.InitialPrompt) != "" {
+		go deliverInitialPromptFn(name, req.InitialPrompt)
+	}
+
+	c.writeCreated(meta)
 }
