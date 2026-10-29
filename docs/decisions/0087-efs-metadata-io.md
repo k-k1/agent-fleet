@@ -1296,8 +1296,8 @@ launch path must never invent an absence (`jsonl_memo.go`) and nothing in the ex
   before Stop fired, has a transcript and no marker.
 - The cwd is a hint: a miss at the guessed project directory says nothing about the others
   (cold hint in hook subprocesses, a Subdir that fell back to Dir, a resume from another cwd).
-- A slot without a marker may predate v0.31.0: the slot id is a hash of (dir, name) and the meta
-  has no created-at, so "created after the marker scheme" cannot be derived.
+- A slot without a marker may predate v0.31.0. The meta's `createdAt` could date a slot, but
+  that only settles this point; it does nothing for the two above.
 - The marker is backfilled only when a slot is launched again, so old slots that never relaunched stay markerless.
 
 Only a durable "never launched" stamp (written before the pane starts, plus a one-time
