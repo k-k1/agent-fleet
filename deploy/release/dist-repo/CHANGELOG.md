@@ -3,6 +3,11 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.37.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.37.0) — 2026-10-29
+
+A Mac with Apple Silicon is supported for a single user, terminal panes side by side no longer
+garble each other's text, and a Cursor session on Default runs Auto, so a Free plan can use it.
+
 ## [0.36.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.36.0) — 2026-10-28
 
 Agents' skills can now be browsed read-only, the assistant moves past a backend held up by a usage

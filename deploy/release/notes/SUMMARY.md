@@ -13,6 +13,25 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
+## [0.37.0](0.37.0.md) — 2026-10-29
+
+**CLI pins** — Antigravity 1.4.10, OpenCode 2.2.1
+
+**New / Improved**
+
+- **[macOS]** Apple Silicon Macs supported for a single user: `docker-compose.macos.yml` for Docker Desktop, OrbStack or colima, or the `linux-arm64` native package in a Linux VM (Lima, OrbStack) ([#2960](https://github.com/k-k1/agent-fleet/issues/2960), [#2961](https://github.com/k-k1/agent-fleet/issues/2961))
+- **[installers]** `install.sh` explains the macOS routes, `install-compose.sh` runs on macOS with `shasum`, `af update` picks no Linux package on a non-Linux host ([#2960](https://github.com/k-k1/agent-fleet/issues/2960))
+- **[jira]** Markdown tables are sent as Jira tables ([#2943](https://github.com/k-k1/agent-fleet/issues/2943))
+- **[agent / efs]** The Agent stops rereading archived and stopped claude sessions' files in the background ([#2850](https://github.com/k-k1/agent-fleet/issues/2850))
+- **[internal]** Control Plane, Agent and Console code reorganised (ADR 0124); no behaviour change intended
+
+**Fixed**
+
+- **[terminal]** Panes side by side showed garbled characters until clicked ([#2983](https://github.com/k-k1/agent-fleet/issues/2983))
+- **[cursor]** Default ran the model the CLI last used, which a Free plan refuses; Default now runs Auto ([#2928](https://github.com/k-k1/agent-fleet/issues/2928))
+- **[UI prefs sync]** Synced settings failed to load when one stored value was empty ([#2904](https://github.com/k-k1/agent-fleet/issues/2904))
+- **[MCP]** A remote MCP client could lose its connection when it renewed its sign-in twice at once ([#2885](https://github.com/k-k1/agent-fleet/issues/2885))
+
 ## [0.36.0](0.36.0.md) — 2026-10-28
 
 **CLI pins** — Claude Code 2.1.312, Codex 0.165.0, Copilot 1.0.105, Antigravity 1.4.8, Kiro 2.35.1, OpenCode 2.2.0, Muse Code 1.4.14-R7309.1
