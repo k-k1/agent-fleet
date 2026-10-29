@@ -350,7 +350,7 @@ encodes them, but if you customize it, keep them:
 The images are published for `linux/arm64`, so Docker Desktop, OrbStack or colima on an
 Apple Silicon Mac pull the right ones. What does not carry over is the DooD wiring above,
 which assumes rootful Docker on Linux. **Nobody has run this on a Mac yet**; the
-acceptance run is #2961, and what it finds replaces this section.
+acceptance run is #2961 ([deploy/macos/README.md](../macos/README.md) and its script), and what it finds replaces this section.
 
 Single user, reached at `http://127.0.0.1:8099` from the Mac; no Caddy, no public domain.
 In `.env`, besides the secrets from the Quick start:
