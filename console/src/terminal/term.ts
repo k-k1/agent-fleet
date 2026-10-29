@@ -20,6 +20,7 @@ import { t as tr } from "../lib/i18n/index.ts";
 import { zoom } from "../app/viewport.ts";
 import { toast } from "../ui/toast.ts";
 import { clipAction } from "./clipKeys.ts";
+import { fontFamilies, rebuildAtlasesFor, resetGlyphModel } from "./atlas.ts";
 
 // One entry per pane. { term, fitAddon, ws, session, sessionListeners, ro }.
 // A placeholder (from an early onSession) may hold only session + sessionListeners,
@@ -208,6 +209,34 @@ function applyTermSettingsAll() {
   }
 }
 
+// wireFontArrivals rebuilds the glyph atlas of the panes using a font face that has just
+// finished loading. Glyphs drawn while it loaded are fallback-font bitmaps, and nothing else
+// replaces them now that routine repaints keep the atlas. A face can arrive long after a
+// pane opened: a bold weight on first bold output, a unicode-range subset on its first
+// character, a family picked in Settings. Arrivals within ARRIVAL_SETTLE_MS share one
+// rebuild, since a rebuild re-rasterizes every glyph the affected panes show.
+const ARRIVAL_SETTLE_MS = 100;
+let fontArrivalsWired = false;
+function wireFontArrivals() {
+  if (fontArrivalsWired || !document.fonts || typeof document.fonts.addEventListener !== "function") return;
+  fontArrivalsWired = true;
+  let arrived: Set<string> | null = new Set();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  document.fonts.addEventListener("loadingdone", (ev) => {
+    const faces = (ev as FontFaceSetLoadEvent).fontfaces;
+    // No face list to read: treat it as every family so no pane keeps fallback bitmaps.
+    if (!faces) arrived = null;
+    else if (arrived) for (const f of faces) for (const fam of fontFamilies(f.family)) arrived.add(fam);
+    if (timer) return;
+    timer = setTimeout(() => {
+      const fams = arrived;
+      arrived = new Set();
+      timer = null;
+      rebuildAtlasesFor([...insts.values()], fams);
+    }, ARRIVAL_SETTLE_MS);
+  });
+}
+
 // Refit every live terminal — the window/visualViewport resize path. Per-pane split
 // resizes don't fire window resize, so each pane also gets its own ResizeObserver.
 function fitAll() {
@@ -319,13 +348,16 @@ function forceFit(it: Inst | null | undefined) {
   try {
     /* eslint-disable @typescript-eslint/no-explicit-any */
     // Canvas-backed renderers ONLY (WebGL or the 2D canvas fallback): a stale/blank canvas
-    // or a corrupted glyph atlas must be cleared + the atlas rebuilt before the repaint
-    // below can show correct pixels. Both are gated off on touch devices (loadWebgl /
-    // loadCanvas), so this branch is desktop-only and never hits the DOM renderer.
+    // must be cleared before the repaint below can show correct pixels. Both are gated off
+    // on touch devices (loadWebgl / loadCanvas), so this branch is desktop-only and never
+    // hits the DOM renderer. On WebGL, clear() also rebuilds the model from the cached
+    // glyphs, which is all a stale model needs; clearing the WebGL atlas here would garble
+    // every same-tint pane sharing it and re-rasterize all their glyphs (#2983). The canvas
+    // fallback keeps its own atlas rebuild.
     if (it.webgl || it.canvas) {
       const core = (it.term as any)._core;
       core?._renderService?.clear?.();
-      (it.term as any).clearTextureAtlas?.();
+      if (it.canvas) (it.term as any).clearTextureAtlas?.();
     }
     /* eslint-enable @typescript-eslint/no-explicit-any */
     // Repaint every row from the buffer. On the DOM renderer (touch/mobile, or wherever WebGL
@@ -481,6 +513,7 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   }
   wireGlobalResize();
   wireGlobalReconnect();
+  wireFontArrivals();
   const fitAddon = new FitAddon();
   it.fitAddon = fitAddon;
   term.loadAddon(fitAddon);
@@ -592,7 +625,8 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   }
   // Crisp GPU rendering; fall back silently if WebGL2 is unavailable/lost.
   loadWebgl(it);
-  // The web font loads async — refit/redraw once ready so metrics are right.
+  // The web font loads async — refit/redraw once ready so metrics are right. Its glyph
+  // bitmaps are replaced by wireFontArrivals, not here.
   if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(() => forceFit(it));
   }
@@ -1211,16 +1245,17 @@ function startHeartbeat(paneId: string, ws: WebSocket) {
         // forceFit rebuild the renderer.
         if (it.webgl && webglLost(it)) forceFit(it);
         else {
-          // Glyph-atlas corruption survives a plain refresh: every cell is
-          // redrawn, but FROM poisoned textures, so the garble persists
-          // (confirmed live — click/forceFit incl. clearTextureAtlas healed
-          // what the refresh-only watchdog could not). Rebuild the atlas before
-          // repainting; unlike _renderService.clear() this never blanks the
-          // canvas, so the tick stays flicker-free. The DOM renderer has no
-          // atlas — refresh alone remains the whole repaint there (7aff545). The 2D
-          // canvas fallback keeps an atlas too, so it gets the same treatment.
+          // A plain refresh cannot fix a garbled WebGL pane: it skips every cell
+          // whose contents are unchanged, so stale texture coordinates survive.
+          // Reset the model instead (CPU-side, never blanks the canvas), not the
+          // atlas: that is shared with every same-tint pane, and clearing it each
+          // tick garbled them (#2983) and re-rasterized all their glyphs — seconds
+          // of main thread with a few CJK panes. The canvas fallback keeps its
+          // atlas rebuild. The DOM renderer has no atlas and must not be cleared
+          // (clear() blanks its rows), so refresh alone is its whole repaint.
+          if (it.webgl) resetGlyphModel(it);
           /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-          if (it.webgl || it.canvas) (it.term as any).clearTextureAtlas?.();
+          else if (it.canvas) (it.term as any).clearTextureAtlas?.();
           it.term!.refresh(0, it.term!.rows - 1);
         }
       }
