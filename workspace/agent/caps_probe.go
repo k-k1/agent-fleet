@@ -150,20 +150,66 @@ type probeEnv interface {
 	ModelOverride(model string) probeObservation
 }
 
-// pickProbeModel returns the model to start with: preferred when it is listed, otherwise
-// the first listed one. "" when nothing is listed.
-func pickProbeModel(models []agents.ModelChoice, preferred string) string {
+// maxModelProbeTries bounds how many listed models the override probe starts a session with
+// before it reports the override as not working.
+const maxModelProbeTries = 3
+
+// probeModelCandidates orders the listed models for the override probe: the preferred one
+// first when it is listed, then the list in its own order, at most maxModelProbeTries.
+func probeModelCandidates(models []agents.ModelChoice, preferred string) []string {
+	var out []string
+	add := func(id string) {
+		if id == "" || len(out) >= maxModelProbeTries {
+			return
+		}
+		for _, o := range out {
+			if o == id {
+				return
+			}
+		}
+		out = append(out, id)
+	}
 	for _, m := range models {
 		if preferred != "" && m.ID == preferred {
-			return m.ID
+			add(m.ID)
 		}
 	}
 	for _, m := range models {
-		if m.ID != "" {
-			return m.ID
-		}
+		add(m.ID)
+	}
+	return out
+}
+
+// pickProbeModel returns the first model the override probe starts with ("" when nothing is
+// listed).
+func pickProbeModel(models []agents.ModelChoice, preferred string) string {
+	if c := probeModelCandidates(models, preferred); len(c) > 0 {
+		return c[0]
 	}
 	return ""
+}
+
+// observeModelOverrideTries starts with each candidate in turn until one is accepted. A
+// listed id can be refused at launch for reasons that belong to the account, not to the CLI
+// (copilot prints "Model X from --model flag is not available. Using auto instead." for a
+// picker row the plan or an org policy does not enable), so one refusal is not evidence that
+// the override is broken. A probe error stops the loop; DRIFT needs every candidate refused.
+func observeModelOverrideTries(candidates []string, try func(model string) probeObservation) probeObservation {
+	if len(candidates) == 0 {
+		return probeObservation{Err: errors.New("no model id to start with")}
+	}
+	var refused []string
+	for _, m := range candidates {
+		obs := try(m)
+		if obs.Err != nil || obs.Worked {
+			if obs.Worked && len(refused) > 0 {
+				obs.Detail += " (after " + strings.Join(refused, "; ") + ")"
+			}
+			return obs
+		}
+		refused = append(refused, obs.Detail)
+	}
+	return probeObservation{Detail: strings.Join(refused, "; ")}
 }
 
 // runCapsProbes runs every probe the declaration obliges and classifies the outcomes.
@@ -178,7 +224,7 @@ func runCapsProbes(c agents.Caps, models []agents.ModelChoice, preferredModel st
 			case probeForkAt:
 				obs = env.ForkAt()
 			case probeModelOverride:
-				obs = env.ModelOverride(pickProbeModel(models, preferredModel))
+				obs = observeModelOverrideTries(probeModelCandidates(models, preferredModel), env.ModelOverride)
 			}
 		}
 		out = append(out, classifyProbe(exp, obs))

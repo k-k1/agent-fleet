@@ -97,6 +97,7 @@ type fakeProbeEnv struct {
 	interrupt, forkAt probeObservation
 	model             probeObservation
 	modelAsked        string
+	modelFn           func(string) probeObservation
 	called            []capProbeID
 }
 
@@ -111,6 +112,9 @@ func (f *fakeProbeEnv) ForkAt() probeObservation {
 func (f *fakeProbeEnv) ModelOverride(m string) probeObservation {
 	f.called = append(f.called, probeModelOverride)
 	f.modelAsked = m
+	if f.modelFn != nil {
+		return f.modelFn(m)
+	}
 	return f.model
 }
 
@@ -133,6 +137,20 @@ func TestRunCapsProbesEndToEndWithFakes(t *testing.T) {
 		}
 		if env.modelAsked != "m2" {
 			t.Errorf("model probe started with %q, want the preferred listed m2", env.modelAsked)
+		}
+	})
+
+	t.Run("first listed model refused, second accepted", func(t *testing.T) {
+		env := &fakeProbeEnv{interrupt: ok, forkAt: ok, modelFn: func(m string) probeObservation {
+			if m == "m1" {
+				return probeObservation{Detail: "refused"}
+			}
+			return probeObservation{Worked: true}
+		}}
+		rep := &recReporter{}
+		reportProbeResults(rep, runCapsProbes(agents.Caps{CanFork: true, CanForkAt: true}, models, "", env))
+		if len(rep.errs) != 0 {
+			t.Errorf("unexpected failures: %v", rep.errs)
 		}
 	})
 
@@ -184,6 +202,40 @@ func TestRunCapsProbesEndToEndWithFakes(t *testing.T) {
 			t.Errorf("errs = %v, want one PROBE-ERROR interrupt", rep.errs)
 		}
 	})
+}
+
+func TestModelOverrideTriesPastAnAccountRefusal(t *testing.T) {
+	refusedBy := func(refused ...string) func(string) probeObservation {
+		return func(m string) probeObservation {
+			for _, r := range refused {
+				if m == r {
+					return probeObservation{Detail: fmt.Sprintf("started with %q but the CLI recorded auto", m)}
+				}
+			}
+			return probeObservation{Worked: true, Detail: "the CLI recorded " + m}
+		}
+	}
+	ms := []agents.ModelChoice{{ID: "gated"}, {ID: "b"}, {ID: "c"}, {ID: "d"}}
+	cands := probeModelCandidates(ms, "")
+	if got := strings.Join(cands, ","); got != "gated,b,c" {
+		t.Fatalf("candidates = %s, want gated,b,c", got)
+	}
+	if obs := observeModelOverrideTries(cands, refusedBy("gated")); !obs.Worked || !strings.Contains(obs.Detail, "gated") {
+		t.Errorf("one refused model must not fail the probe, got %+v", obs)
+	}
+	// Still DRIFT when the override really does nothing: every candidate refused.
+	if obs := observeModelOverrideTries(cands, refusedBy("gated", "b", "c")); obs.Worked || obs.Err != nil || !strings.Contains(obs.Detail, `"c"`) {
+		t.Errorf("all candidates refused must stay DRIFT, got %+v", obs)
+	}
+	// A probe error is not retried past.
+	calls := 0
+	obs := observeModelOverrideTries(cands, func(string) probeObservation { calls++; return probeObservation{Err: errors.New("pane died")} })
+	if obs.Err == nil || calls != 1 {
+		t.Errorf("probe error: calls=%d obs=%+v", calls, obs)
+	}
+	if obs := observeModelOverrideTries(nil, refusedBy()); obs.Err == nil {
+		t.Errorf("no candidate must be a probe error, got %+v", obs)
+	}
 }
 
 func TestPickProbeModel(t *testing.T) {
