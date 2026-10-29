@@ -872,24 +872,71 @@ func TestTerminalRunFallsBackToTheTerminalWhenTheRequestCannotBeFiled(t *testing
 }
 
 // slowExport makes every `aws configure export-credentials` of the fake take long, and
-// records its pid, from now on.
+// records its pid, whole, from now on.
 func slowExport(t *testing.T, state string) {
 	t.Helper()
-	hook := "if [ -f \"" + filepath.Join(state, "slow") + "\" ]; then echo $$ > \"" + filepath.Join(state, "exportPid") + "\"; exec sleep 60; fi\n"
+	pid := filepath.Join(state, "exportPid")
+	hook := "if [ -f \"" + filepath.Join(state, "slow") + "\" ]; then echo $$ > \"" + pid + ".tmp\"; mv \"" + pid + ".tmp\" \"" + pid + "\"; exec sleep 60; fi\n"
 	if err := os.WriteFile(filepath.Join(state, "onExport"), []byte(hook), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// landLogin makes a check run during the wait: the login "lands" while export is slow.
-func landLogin(t *testing.T, state string) error {
-	if !fileAppears(logins.RequestPath("af-prod")) {
-		return errors.New("request never appeared")
+// slowCheckRun starts a terminal run's Console wait with budget wait, makes a login land
+// while export is slow, and returns after the run ended and the helper with it. afterSlow
+// runs once the slow export recorded its pid (or never did within 10s), and only while the
+// run lasts: a SIGTERM after the wait released its handler would kill the test binary.
+func slowCheckRun(t *testing.T, wait time.Duration, afterSlow func()) (pidFile string, took time.Duration, err error) {
+	t.Helper()
+	bin, state := fakeAWS(t, ssoProfile)
+	slowExport(t, state)
+	fastPoll(t)
+	pidFile = filepath.Join(state, "exportPid")
+	done, helper := make(chan struct{}), make(chan struct{})
+	ended := func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
 	}
-	os.WriteFile(filepath.Join(state, "slow"), nil, 0o600)
-	return putSSOCache("fresh", time.Now().Add(time.Hour))
+	// appears waits for path until the run has ended.
+	appears := func(path string) bool {
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline) && !ended(); time.Sleep(5 * time.Millisecond) {
+			if _, err := os.Stat(path); err == nil {
+				return true
+			}
+		}
+		return false
+	}
+	go func() {
+		defer close(helper)
+		if !appears(logins.RequestPath("af-prod")) {
+			return
+		}
+		os.WriteFile(filepath.Join(state, "slow"), nil, 0o600)
+		if err := putSSOCache("fresh", time.Now().Add(time.Hour)); err != nil {
+			t.Errorf("putSSOCache: %v", err)
+			return
+		}
+		appears(pidFile)
+		if afterSlow != nil && !ended() {
+			afterSlow()
+		}
+	}()
+	var stderr bytes.Buffer
+	start := time.Now()
+	_, _, _, err = PlanExec(bin, workloadEnv, terminalOpts(&stderr, wait))
+	took = time.Since(start)
+	close(done)
+	<-helper
+	return pidFile, took, err
 }
 
+// processGone looks once: the check's cmd.Run has reaped the slow `aws` (exec'd into sleep,
+// so it is the direct child) before PlanExec returns, so a pid still alive then is a child
+// the run left behind, and polling would hide exactly that.
 func processGone(pidFile string) bool {
 	b, err := os.ReadFile(pidFile)
 	if err != nil {
@@ -902,62 +949,52 @@ func processGone(pidFile string) bool {
 // SIGTERM to the parent while the check's `aws` is slow ends the wait with exit 3 at once,
 // the child is gone, and nothing runs afterwards.
 func TestTerminalRunSIGTERMKillsASlowCheck(t *testing.T) {
-	bin, state := fakeAWS(t, ssoProfile)
-	slowExport(t, state)
-	fastPoll(t)
-	helper := make(chan struct{})
-	go func() {
-		defer close(helper)
-		if err := landLogin(t, state); err != nil {
-			t.Errorf("%v", err)
-			return
-		}
-		// Only the slow export writes its pid: the check is running and blocked.
-		if !fileAppears(filepath.Join(state, "exportPid")) {
-			t.Errorf("the slow export never started")
-		}
-		syscall.Kill(os.Getpid(), syscall.SIGTERM)
-	}()
-	t.Cleanup(func() { <-helper })
-	var stderr bytes.Buffer
-	start := time.Now()
-	_, _, _, err := PlanExec(bin, workloadEnv, terminalOpts(&stderr, time.Minute))
+	pidFile, took, err := slowCheckRun(t, time.Minute, func() { syscall.Kill(os.Getpid(), syscall.SIGTERM) })
 	if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "stopped waiting") {
 		t.Fatalf("err = %v", err)
 	}
-	if time.Since(start) > 15*time.Second {
-		t.Fatalf("SIGTERM did not end the slow check (%s)", time.Since(start))
+	// Only the slow export writes its pid: the check was running and blocked.
+	if _, err := os.Stat(pidFile); err != nil {
+		t.Fatal("the slow export never started")
 	}
-	if !processGone(filepath.Join(state, "exportPid")) {
+	if took > 15*time.Second {
+		t.Fatalf("SIGTERM did not end the slow check (%s)", took)
+	}
+	if !processGone(pidFile) {
 		t.Fatal("the slow `aws` child outlived the wait")
 	}
 }
 
 // The wait's budget ends a slow check too, as exit 3 (not exit 1).
+//
+// The budget has to outlast filing the request, the login landing and the check reaching
+// `aws`, and a run whose slow export never started tests nothing. Such a run is repeated
+// with twice the budget; one that did start must pass as it stands.
 func TestTerminalRunBudgetKillsASlowCheck(t *testing.T) {
-	bin, state := fakeAWS(t, ssoProfile)
-	slowExport(t, state)
-	fastPoll(t)
-	helper := make(chan struct{})
-	go func() {
-		defer close(helper)
-		if err := landLogin(t, state); err != nil {
-			t.Errorf("%v", err)
+	for budget := 500 * time.Millisecond; budget <= 4*time.Second; budget *= 2 {
+		started := false
+		t.Run(budget.String(), func(t *testing.T) {
+			pidFile, took, err := slowCheckRun(t, budget, nil)
+			if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "waiting for the member to approve") {
+				t.Fatalf("err = %v", err)
+			}
+			if _, err := os.Stat(pidFile); err != nil {
+				t.Logf("the slow export never started within the budget (took %s); trying a longer one", took)
+				return
+			}
+			started = true
+			if took > budget+10*time.Second {
+				t.Fatalf("the budget did not end the slow check (%s)", took)
+			}
+			if !processGone(pidFile) {
+				t.Fatal("the slow `aws` child outlived the wait")
+			}
+		})
+		if started || t.Failed() {
+			return
 		}
-	}()
-	t.Cleanup(func() { <-helper })
-	var stderr bytes.Buffer
-	start := time.Now()
-	_, _, _, err := PlanExec(bin, workloadEnv, terminalOpts(&stderr, 500*time.Millisecond))
-	if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "waiting for the member to approve") {
-		t.Fatalf("err = %v", err)
 	}
-	if time.Since(start) > 15*time.Second {
-		t.Fatalf("the budget did not end the slow check (%s)", time.Since(start))
-	}
-	if !processGone(filepath.Join(state, "exportPid")) {
-		t.Fatal("the slow `aws` child outlived the wait")
-	}
+	t.Fatal("the slow export never started within any budget, so the kill was never tested")
 }
 
 // A logout holds the cached-login lock across its network call; a waiting run's check blocks
