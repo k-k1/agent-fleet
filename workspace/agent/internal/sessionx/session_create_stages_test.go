@@ -18,11 +18,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -44,6 +48,13 @@ func newCreateProbe(t *testing.T) *createProbe {
 	useCreateOutcomeDir(t)
 	prevLaunch, prevDeliver, prevAlive := launchTmuxFn, deliverInitialPromptFn, sessionAliveFn
 	prevStart, prevLcpp := KindStartRefusal, LcppLiveModels
+	prevCodex, prevCopilot, prevOpencode, prevRetired := codexModelsFn, copilotModelsFn, opencodeModelsFn, opencodeRetiredFn
+	// No CLI is asked for a catalog: an empty one passes any id through (resolveLiveModel), and a
+	// case that needs one plants it.
+	codexModelsFn = func() []agents.ModelChoice { return nil }
+	copilotModelsFn = func() []agents.ModelChoice { return nil }
+	opencodeModelsFn = func() []string { return nil }
+	opencodeRetiredFn = func(string) bool { return false }
 	launchTmuxFn = func(session.Meta, bool) error { return errors.New("probe: launch refused") }
 	deliverInitialPromptFn = func(string, string) {}
 	sessionAliveFn = func(session.Meta) bool { return false }
@@ -51,6 +62,7 @@ func newCreateProbe(t *testing.T) *createProbe {
 	t.Cleanup(func() {
 		launchTmuxFn, deliverInitialPromptFn, sessionAliveFn = prevLaunch, prevDeliver, prevAlive
 		KindStartRefusal, LcppLiveModels = prevStart, prevLcpp
+		codexModelsFn, copilotModelsFn, opencodeModelsFn, opencodeRetiredFn = prevCodex, prevCopilot, prevOpencode, prevRetired
 	})
 	p := &createProbe{t: t, home: homeDir()}
 	p.repo = filepath.Join(p.home, "repos", "app")
@@ -165,6 +177,9 @@ type createRefusalCase struct {
 	body   func(p *createProbe) map[string]any
 	booked string // CreateReq.name (a move's in-process create)
 	code   string // the error code the body must carry; "" for a replay
+	// leaves is set for the refusals that come after the create's own side effect (a fresh
+	// worktree), where "nothing changed" does not hold by design.
+	leaves bool
 }
 
 // spawn is a create raised by session parent (ADR 0073).
@@ -333,7 +348,82 @@ func createRefusalCases() []createRefusalCase {
 		}, body: inRepo(map[string]any{"kind": "codex", "driver": "managed", "initial_prompt": "hi"})},
 		{name: "launch_failed_durable", setup: func(p *createProbe) { reserveDurable(p, "k-lf") },
 			body: inRepo(map[string]any{"idempotency_key": "k-lf", "idempotency_durable": true}), code: "tmux_failed"},
+
+		// Stage 5 again: the live catalogs, through their seams, and the order inside the stage.
+		{name: "codex_model_not_in_catalog", setup: plantCatalogs,
+			body: inRepo(map[string]any{"kind": "codex", "model": "gpt-9"}), code: "bad_model"},
+		{name: "codex_hidden_model_dropped_from_catalog", setup: func(p *createProbe) {
+			plantCatalogs(p)
+			writeHiddenModelsPref(p.t, `{"codex":["gpt-5.6-sol"]}`)
+		}, body: inRepo(map[string]any{"kind": "codex", "model": "sol"}), code: "bad_model"},
+		{name: "copilot_model_not_in_catalog", setup: plantCatalogs,
+			body: inRepo(map[string]any{"kind": "copilot", "model": "gpt-9"}), code: "bad_model"},
+		{name: "opencode_model_not_in_catalog", setup: plantCatalogs,
+			body: inRepo(map[string]any{"kind": "opencode", "model": "opencode/zz"}), code: "bad_model"},
+		{name: "opencode_model_retired", setup: plantCatalogs,
+			body: inRepo(map[string]any{"kind": "opencode", "model": "opencode/old-free"}), code: "bad_model"},
+		{name: "order_lcpp_disabled_before_no_model", setup: func(p *createProbe) { writeLcppEnabledPref(p.t, false) },
+			body: inRepo(map[string]any{"kind": "lcpp"}), code: "lcpp_disabled"},
+		{name: "order_hidden_before_catalog", setup: func(p *createProbe) {
+			plantCatalogs(p)
+			writeHiddenModelsPref(p.t, `{"codex":["gpt-9"]}`)
+		}, body: inRepo(map[string]any{"kind": "codex", "model": "gpt-9"}), code: "model_hidden"},
+		{name: "order_model_before_dir", setup: plantCatalogs, body: func(p *createProbe) map[string]any {
+			return map[string]any{"kind": "codex", "model": "gpt-9", "dir": filepath.Join(p.home, "absent")}
+		}, code: "bad_model"},
+
+		// Stage 6 again: the rest of its refusals and the order inside the stage.
+		{name: "svn_no_worktree", setup: func(p *createProbe) {
+			if err := os.MkdirAll(filepath.Join(p.home, "repos", "svnwc", ".svn"), 0o755); err != nil {
+				p.t.Fatal(err)
+			}
+		}, body: func(p *createProbe) map[string]any {
+			return map[string]any{"kind": "claude", "dir": "repos/svnwc", "worktree": true}
+		}, code: "svn_no_worktree"},
+		{name: "worktree_branch_exists_remote", setup: plantRemoteBranch,
+			body: inRepo(map[string]any{"worktree": true, "new_branch": "remote-only"}), code: "branch_exists_remote"},
+		{name: "dir_missing_relative", body: func(p *createProbe) map[string]any {
+			return map[string]any{"kind": "claude", "dir": "nope"}
+		}, code: "bad_dir"},
+		{name: "order_dir_before_working_copy", body: func(p *createProbe) map[string]any {
+			return spawn("parent1", map[string]any{"dir": filepath.Join(p.home, "absent")})
+		}, code: "bad_dir"},
+		{name: "order_working_copy_before_subdir", setup: func(p *createProbe) {
+			p.meta(session.Meta{Name: "busy", Kind: session.KindShell, Dir: p.repo, Origin: session.OriginUser})
+			sessionAliveFn = func(m session.Meta) bool { return m.Name == "busy" }
+		}, body: spawnInRepo("parent1", map[string]any{"subdir": "../x"}), code: "spawn_working_copy_busy"},
+		// The subdir is checked inside the fresh worktree, where an untracked folder of the
+		// parent does not exist. The worktree is made first, by design.
+		{name: "subdir_checked_in_the_worktree", setup: func(p *createProbe) {
+			if err := os.MkdirAll(filepath.Join(p.repo, "untracked"), 0o755); err != nil {
+				p.t.Fatal(err)
+			}
+		}, body: inRepo(map[string]any{"worktree": true, "new_branch": "wt-sub", "subdir": "untracked"}),
+			code: "bad_subdir", leaves: true},
 	}
+}
+
+// plantCatalogs gives the live-catalog kinds a known catalog. opencode reports opencode/old-free
+// as retired, the way its daemon read does for a model that has gone.
+func plantCatalogs(p *createProbe) {
+	codexModelsFn = func() []agents.ModelChoice {
+		return []agents.ModelChoice{{ID: "gpt-5.6-sol", Label: "GPT-5.6 Sol"}, {ID: "gpt-5.5", Label: "GPT-5.5"}}
+	}
+	copilotModelsFn = func() []agents.ModelChoice {
+		return []agents.ModelChoice{{ID: "claude-sonnet-5", Label: "Claude Sonnet 5"}, {ID: "gpt-5.5", Label: "GPT-5.5"}}
+	}
+	opencodeModelsFn = func() []string { return []string{"opencode/big-pickle", "opencode/grok-code"} }
+	opencodeRetiredFn = func(id string) bool { return id == "opencode/old-free" }
+}
+
+// plantRemoteBranch gives the probe's repository an origin that has a branch the local
+// repository does not, already fetched.
+func plantRemoteBranch(p *createProbe) {
+	bare := filepath.Join(p.home, "origin.git")
+	runIntegrationGit(p.t, p.home, "init", "--bare", "-b", "main", bare)
+	runIntegrationGit(p.t, p.repo, "remote", "add", "origin", bare)
+	runIntegrationGit(p.t, p.repo, "push", "-q", "origin", "main", "main:remote-only")
+	runIntegrationGit(p.t, p.repo, "fetch", "-q", "origin")
 }
 
 // writeHiddenModelsPref writes ui-prefs hiddenModels; call it after isolateAgentState.
@@ -364,7 +454,7 @@ func TestCreateSessionEarlyReturnsAreByteIdentical(t *testing.T) {
 			if tc.code != "" && !strings.Contains(rec.Body.String(), `"`+tc.code+`"`) {
 				t.Errorf("= %d %s, want code %s", rec.Code, rec.Body, tc.code)
 			}
-			if d := before.diff(p.sideEffects()); d != "" {
+			if d := before.diff(p.sideEffects()); d != "" && !tc.leaves {
 				t.Errorf("a refused create left side effects: %s", d)
 			}
 			got.WriteString(p.render(tc.name, rec))
@@ -526,4 +616,72 @@ func TestSpawnWorkingCopyCheckUsesTheResolvedDir(t *testing.T) {
 			t.Errorf("dir %q = %d %s, want 409 spawn_working_copy_busy", dir, rec.Code, rec.Body)
 		}
 	}
+}
+
+// The live-catalog seams are the CLIs' own functions: the proof that routing the create through
+// them changed nothing in production.
+func TestCreateCatalogSeamsAreTheCLIs(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		seam, real any
+	}{
+		{"codex", codexModelsFn, codex.Models},
+		{"copilot", copilotModelsFn, copilot.Models},
+		{"opencode", opencodeModelsFn, opencode.Models},
+		{"opencode retired", opencodeRetiredFn, opencode.Retired},
+	} {
+		if reflect.ValueOf(tc.seam).Pointer() != reflect.ValueOf(tc.real).Pointer() {
+			t.Errorf("the %s seam is not the CLI's function", tc.name)
+		}
+	}
+}
+
+// A short model name is expanded against the live catalog before the launch, and a hidden model
+// is not a candidate for that expansion.
+func TestCreateResolvesLiveModelsBeforeTheLaunch(t *testing.T) {
+	for _, tc := range []struct {
+		kind, model, want string
+	}{
+		{"codex", "sol", "gpt-5.6-sol"},
+		{"copilot", "claude-sonnet", "claude-sonnet-5"},
+		{"opencode", "pickle", "opencode/big-pickle"},
+		{"lcpp", "qwen3", "qwen3-8b"},
+		{"claude", "opus", "opus"}, // no live catalog: passed through as sent
+	} {
+		p := newCreateProbe(t)
+		plantCatalogs(p)
+		LcppLiveModels = func(context.Context) []agents.ModelChoice { return []agents.ModelChoice{{ID: "qwen3-8b"}} }
+		var launched string
+		launchTmuxFn = func(m session.Meta, _ bool) error { launched = m.Model; return errors.New("probe") }
+		if tc.kind == "lcpp" { // managed only: the model reaches the driver instead
+			prev := managedDrivers[tc.kind]
+			managedDrivers[tc.kind] = modelProbeDriver{got: &launched}
+			t.Cleanup(func() { managedDrivers[tc.kind] = prev })
+		}
+		rec := p.post(map[string]any{"kind": tc.kind, "dir": p.repo, "model": tc.model}, "")
+		if got := launched; got != tc.want {
+			t.Errorf("%s %q launched with model %q (%d %s), want %q", tc.kind, tc.model, got, rec.Code, rec.Body, tc.want)
+		}
+	}
+}
+
+// A worktree that git cannot make is a 502 worktree_failed. Kept out of the golden: the message
+// is git's own and moves with its version.
+func TestCreateWorktreeFailureIsBadGateway(t *testing.T) {
+	p := newCreateProbe(t)
+	rec := p.post(map[string]any{"kind": "claude", "dir": p.repo, "worktree": true, "use_existing": true, "branch": "nope"}, "")
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), `"worktree_failed"`) {
+		t.Fatalf("= %d %s, want 502 worktree_failed", rec.Code, rec.Body)
+	}
+}
+
+// modelProbeDriver records the model a managed launch asked for, and fails the launch.
+type modelProbeDriver struct {
+	agents.Driver
+	got *string
+}
+
+func (d modelProbeDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
+	*d.got = m.Model
+	return nil, errors.New("probe")
 }

@@ -11,7 +11,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -44,6 +43,16 @@ import (
 // valid "nothing known yet" answer, matching resolveLiveModel's own handling of an empty
 // catalog (docs/log/109).
 var LcppLiveModels func(ctx context.Context) []agents.ModelChoice
+
+// The other kinds' live catalogs, read by the create's model check. Behind seams only so a test
+// can pin that check's answers: each one shells out to its CLI (copilot starts a whole TUI), which
+// a test binary can neither assume nor afford.
+var (
+	codexModelsFn     = codex.Models
+	copilotModelsFn   = copilot.Models
+	opencodeModelsFn  = opencode.Models
+	opencodeRetiredFn = opencode.Retired
+)
 
 // managedRuntimeOf resolves a kind's Managed runtime (agents.ManagedRuntime). The match is
 // exact: no NormalizeKind and no AgentOf claude fallback, so an unknown or alternate spelling has
@@ -720,257 +729,11 @@ func createSession(w http.ResponseWriter, r *http.Request, req CreateReq) {
 	// The failure net for a reserved slot: every path that ends without a meta. A no-op for a
 	// create that is not a spawn.
 	defer c.slot.release()
-	if !c.validateOptions() || !c.resolveDriver() {
+	if !c.validateOptions() || !c.resolveDriver() || !c.checkModel() || !c.resolveWorkingCopy() {
 		return
 	}
 	w, spawnParent, writeCreated := c.w, c.spawnParent, c.writeCreated
-	slot, title, driver := c.slot, c.title, c.driver
-	// lcpp can be turned off by the user's own display setting (ui-prefs lcppEnabled,
-	// docs/log/105 §106.2). registry.ts's available() is only the signpost that hides it from
-	// the launch menus; this is the actual gate, reached the same way as the model-hidden
-	// guard below (Console, the schedule, MCP create_session, or a direct POST /sessions all
-	// funnel through here) so turning lcpp off cannot be bypassed by any of them.
-	if kind := NormalizeKind(req.Kind); kind == session.KindLcpp && !uiprefs.LcppEnabled() {
-		httpx.WriteErr(w, http.StatusForbidden, "lcpp_disabled",
-			"llama.cpp は設定でオフになっています。設定 > エージェント > llama.cpp でオンにしてください。")
-		return
-	}
-	// lcpp has no CLI-picked "own default" the way codex/opencode do. This is not because
-	// llama-server itself demands a model name on every request — measured live
-	// (docs/log/107's 2026-09-21 addendum), a single-model instance ignores the request's own
-	// `model` field entirely (any string, or none, answers 200) — it is the Agent's own
-	// requirement: a router deployment (`--models-max`, ADR 0093 decision 7's own measured
-	// `role: "router"`) DOES dispatch on this field, the id pins the session to one entry of
-	// the model list the launch menu itself is built from (there is no vendor "tier alias" the
-	// way claude has), and it is the Console's only record of which model a conversation
-	// believes it is talking to (engines.go's lcppMemberReachable doc comment: a member
-	// swapping the LAN box under an unchanged URL is served by whatever loaded now, silently,
-	// unless something recorded the name it meant to use). So unlike every other kind,
-	// req.Model=="" is never a valid launch here, and letting it through used to reach worktree
-	// creation and the managed driver before failing, with the session left holding only the
-	// user's own first message (docs/log/109). Refused up front, before any side effect, the
-	// same place the disabled/hidden-model guards already sit.
-	if kind := NormalizeKind(req.Kind); kind == session.KindLcpp && strings.TrimSpace(req.Model) == "" {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_model",
-			"llama.cpp セッションにはモデルの指定が必須です（CLI 自身の既定は存在しません）")
-		return
-	}
-	// Models the user disabled (ui-prefs hiddenModels — model_deny.go) are refused for every
-	// kind, before any side effect (clone / worktree). This create is reached not only from
-	// the Console launch flow but from the schedule (CP scheduler) and MCP create_session,
-	// and narrowing the catalog alone lets an explicit id through, so this guard is the
-	// real one.
-	if kind := NormalizeKind(req.Kind); ModelHidden(kind, req.Model) {
-		httpx.WriteErr(w, http.StatusBadRequest, "model_hidden", hiddenModelError(strings.TrimSpace(req.Model)))
-		return
-	}
-	// For kinds with a live catalog, drop the hidden models from the candidate set too:
-	// resolveLiveModel expands an unambiguous short name into the full id, so without that
-	// a short name like "fab" would resolve to an excluded model.
-	if NormalizeKind(req.Kind) == session.KindCodex && strings.TrimSpace(req.Model) != "" {
-		model, err := resolveLiveModel(req.Model, FilterVisibleModels(session.KindCodex, codex.Models()))
-		if err != nil {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_model", err.Error())
-			return
-		}
-		req.Model = model
-	} else if NormalizeKind(req.Kind) == session.KindCopilot && strings.TrimSpace(req.Model) != "" {
-		model, err := resolveLiveModel(req.Model, FilterVisibleModels(session.KindCopilot, copilot.Models()))
-		if err != nil {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_model", err.Error())
-			return
-		}
-		req.Model = model
-	} else if NormalizeKind(req.Kind) == session.KindOpencode && strings.TrimSpace(req.Model) != "" {
-		ids := VisibleModelIDs(session.KindOpencode, opencode.Models())
-		choices := make([]agents.ModelChoice, 0, len(ids))
-		for _, id := range ids {
-			choices = append(choices, agents.ModelChoice{ID: id, Label: id})
-		}
-		model, err := resolveLiveModel(req.Model, choices)
-		if err != nil {
-			// A retired model needs its own wording: with the typo message the user never
-			// reaches the cause, since the id and the billing route are both right and
-			// only opencode.ai stopped offering it (models.go Retired).
-			if requested := strings.TrimSpace(req.Model); opencode.Retired(requested) {
-				httpx.WriteErr(w, http.StatusBadRequest, "bad_model", retiredModelError(requested, choices))
-				return
-			}
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_model", err.Error())
-			return
-		}
-		req.Model = model
-	} else if NormalizeKind(req.Kind) == session.KindLcpp && strings.TrimSpace(req.Model) != "" {
-		// Membership check only, for consistency with the other live-catalog kinds above —
-		// never a rejection of an explicit id just because the catalog could not be reached
-		// (LcppLiveModels nil, or the member/deployment engine not answering): resolveLiveModel
-		// itself passes an empty catalog straight through unchanged (docs/log/109), which is
-		// the right call here too — the create-time guard above already refused "no model at
-		// all"; this only catches a typo'd or since-retired id when the catalog IS known.
-		var choices []agents.ModelChoice
-		if LcppLiveModels != nil {
-			choices = FilterVisibleModels(session.KindLcpp, LcppLiveModels(r.Context()))
-		}
-		model, err := resolveLiveModel(req.Model, choices)
-		if err != nil {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_model", err.Error())
-			return
-		}
-		req.Model = model
-	}
-	// Worktree-then-start: spin a git worktree off an existing working copy (req.Dir =
-	// the parent) and use it as the CWD, so a decided task branches into its own dir +
-	// session without touching the parent's running sessions.
-	if req.Worktree {
-		parent := strings.TrimSpace(req.Dir)
-		if parent == "" {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_dir", "worktree requires dir (the parent working copy)")
-			return
-		}
-		if !filepath.IsAbs(parent) {
-			parent = filepath.Join(homeDir(), parent)
-		}
-		// SVN has no worktree analog (docs/log/41): isolate parallel work by checking out a
-		// different path into its own folder instead. Refuse a worktree launch here with a
-		// clear message rather than letting ensureWorktree fail on the missing .git.
-		if isSvnRepo(parent) {
-			httpx.WriteErr(w, http.StatusBadRequest, "svn_no_worktree",
-				"svn working copies have no worktree; check out a different path into its own folder instead")
-			return
-		}
-		var dir string
-		var err error
-		folderSeg := strings.TrimSpace(req.Folder) // "" => folder derives from the branch
-		if req.UseExisting {
-			// "Work on the existing branch": check out req.Branch (local or DWIM-tracked
-			// remote) into the worktree. Reached from the launch dialog's existing-branch mode
-			// and from the SCM branch actions, as well as from a name collision.
-			base := strings.TrimSpace(req.Branch)
-			// git holds a branch in one worktree at a time. Refuse BEFORE any directory or
-			// fetch side effect, naming the copy that has it — worktree add would fail
-			// halfway through otherwise, with a message that doesn't say what to do next.
-			if occ := gitx.WorktreeBranches(parent)[base]; occ != "" {
-				gitx.WriteBranchInUse(w, base, occ)
-				return
-			}
-			gitx.EnsureBranchRef(parent, base) // branch pushed since our last fetch => fetch once
-			dir, err = gitx.EnsureWorktree(parent, base, "", "")
-			if err == nil {
-				gitx.FastForwardWorktree(dir) // start at the branch's current tip, not a stale one
-			}
-		} else {
-			// Branch naming is deferred: unless the client sends an explicit name we
-			// start on a throwaway branch temp/<slug> in a wip-<slug> folder (same
-			// slug). The user (or the LLM suggestion) renames the branch later — the
-			// folder stays put, so the session id holds.
-			nb := strings.TrimSpace(req.NewBranch)
-			if nb == "" {
-				slug := randSlug() // random → skip the collision check
-				nb = "temp/" + slug
-				folderSeg = "wip-" + slug
-			} else if local, remote := gitx.BranchNameStatus(parent, nb); local {
-				// A same-named local branch: -b would fail anyway, but stop with a clear
-				// message rather than git's raw error, and let the user pick another name.
-				httpx.WriteErr(w, http.StatusConflict, "branch_exists",
-					fmt.Sprintf("branch %q already exists locally; choose another name", nb))
-				return
-			} else if remote {
-				// A same-named PAST remote branch: -b would silently create a divergent
-				// local branch that collides at push. Refuse and let the user rename or
-				// work on the existing one (use_existing).
-				httpx.WriteErr(w, http.StatusConflict, "branch_exists_remote",
-					fmt.Sprintf("a remote branch %q already exists; rename it or work on the existing branch", nb))
-				return
-			}
-			var start string
-			start, err = gitx.NewWorktreeStartPoint(parent, req.Branch) // base pushed since our last fetch => fetch once
-			if err == nil && strings.TrimSpace(req.NewBranch) != "" {
-				// The fetch above may have just brought in a same-named remote branch the
-				// check before it could not see; ask again (local refs only, no network).
-				if _, remote := gitx.BranchNameStatus(parent, nb); remote {
-					httpx.WriteErr(w, http.StatusConflict, "branch_exists_remote",
-						fmt.Sprintf("a remote branch %q already exists; rename it or work on the existing branch", nb))
-					return
-				}
-			}
-			if err == nil {
-				dir, err = gitx.EnsureWorktree(parent, start, nb, folderSeg)
-			}
-			if err == nil {
-				// Start at origin's tip, the same intent as fastForwardWorktree on the
-				// existing-branch path. An empty base means the parent's HEAD is the start
-				// point, so pull using the parent's current branch name.
-				base := strings.TrimSpace(req.Branch)
-				if base == "" {
-					// GitCurrentBranch answers "(detached)" when detached: there is
-					// nothing to pull from, so do nothing (passing that as a branch name
-					// only produces a confusing log line).
-					if b := gitx.GitCurrentBranch(parent); b != "(detached)" {
-						base = b
-					}
-				}
-				gitx.FastForwardNewWorktreeToOrigin(dir, base)
-			}
-		}
-		if err != nil {
-			httpx.WriteErr(w, http.StatusBadGateway, "worktree_failed", err.Error())
-			return
-		}
-		req.Dir = dir
-	} else if strings.TrimSpace(req.RemoteURL) != "" {
-		// Clone-then-start: ensure the repo exists and use it as the working dir.
-		dir, err := gitx.EnsureRepo(req.RemoteURL, req.Branch, req.NewBranch, req.RepoName)
-		if err != nil {
-			httpx.WriteErr(w, http.StatusBadGateway, "clone_failed", err.Error())
-			return
-		}
-		req.Dir = dir
-	}
-	if req.Dir == "" {
-		req.Dir = homeDir()
-	} else if !filepath.IsAbs(req.Dir) {
-		// A relative dir (e.g. "projects/x" from the New Session directory picker) is
-		// resolved against home, mirroring the fs/tree browser's home-relative paths.
-		req.Dir = filepath.Join(homeDir(), req.Dir)
-	}
-	if fi, err := os.Stat(req.Dir); err != nil || !fi.IsDir() {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_dir", "dir does not exist: "+req.Dir)
-		return
-	}
-	// Two agents in one working copy (ADR 0073 decision 7). Checked HERE, against the resolved
-	// req.Dir, because that is the directory the session will actually run in: an empty dir
-	// becomes home and a relative one is joined onto home a few lines above, so comparing the
-	// raw request would let `dir: ""` walk straight past a session already running in home.
-	// A worktree launch has replaced req.Dir with the fresh worktree by now and cannot collide,
-	// which is why the check is scoped to the non-worktree case rather than the raw flag.
-	if spawnParent != "" && !req.Worktree {
-		ref, sharedDir := spawnWorkingCopyCheck(req.Dir, spawnParent, req.AllowSharedWorkingCopy)
-		if ref != nil {
-			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
-			return
-		}
-		if sharedDir != "" {
-			// Launch through the canonical spelling so Meta.Dir matches what the delete and
-			// checkout guards compare, and tell the child it is not alone in the checkout. Taken
-			// from the check's own answer: a second liveness read could disagree.
-			req.Dir = sharedDir
-			req.InitialPrompt = SharedWorkingCopyWarning(spawnParent, req.InitialPrompt)
-		}
-	}
-	// Subdir (optional): the CWD narrows to a folder beneath the resolved working copy.
-	// Validated AFTER Dir so a worktree launch checks the path inside the fresh worktree
-	// — the parent may well have a folder the new branch doesn't (or vice versa).
-	subdir, subdirOK := session.CleanSubdir(req.Subdir)
-	if !subdirOK {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_subdir",
-			"subdir must be a relative path inside the working copy: "+req.Subdir)
-		return
-	}
-	if subdir != "" && !session.DirExists(filepath.Join(req.Dir, filepath.FromSlash(subdir))) {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_subdir",
-			"subdir does not exist: "+filepath.Join(req.Dir, filepath.FromSlash(subdir)))
-		return
-	}
+	slot, title, driver, subdir := c.slot, c.title, c.driver, c.subdir
 
 	// Identity is a freshly allocated random slug — NOT the client's name. It (and the
 	// sid it derives) can't collide with an archived/pruned session's jsonl, so a new
