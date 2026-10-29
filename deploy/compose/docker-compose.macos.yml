@@ -1,0 +1,43 @@
+# agent-fleet — overlay for a macOS host (Docker Desktop / OrbStack / colima).
+# EXPERIMENTAL and UNVERIFIED: nobody has run it on a Mac yet (#2961).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.macos.yml up -d
+#
+# Why it exists: constraint (A) in docker-compose.yml puts the CP on the host network
+# so it reaches each workspace on the 127.0.0.1:<port> the daemon publishes. On a Mac
+# the daemon lives in a Linux VM, so "host" is the VM, not the Mac. This overlay keeps
+# the CP on an ordinary bridge network and points it at host.docker.internal, which
+# each of these engines resolves to the Mac itself, where the workspace ports are
+# forwarded.
+#
+# The workspaces call the CP back the same way: PUBLIC_BASE_URL (127.0.0.1 on a Mac)
+# would be each container's own loopback, so the workspace listener on 8098 is
+# switched on and named through host.docker.internal; the CP then adds that name to
+# every workspace (README "Workspace listener").
+#
+# Not used on Linux: there host.docker.internal is the docker0 gateway, and the
+# workspace ports are published on 127.0.0.1 only, so the CP could not reach them.
+services:
+  cp:
+    network_mode: bridge
+    # The Console on the Mac's loopback only, as CP_ADDR keeps it on Linux.
+    ports:
+      - "127.0.0.1:8099:8099"
+      - "127.0.0.1:8098:8098"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # Inside its own network namespace the CP must listen on every interface for the
+      # published port to reach it; the publish above is what keeps it off the LAN.
+      CP_ADDR: 0.0.0.0:8099
+      WS_AGENT_HOST: host.docker.internal
+      # The CP warns that this binds every interface; here that is only the CP
+      # container's own, and the publish above keeps it on the Mac's loopback.
+      AF_CP_INTERNAL_LISTEN: 0.0.0.0:8098
+      AF_CP_INTERNAL_URL: http://host.docker.internal:8098
+
+  # Caddy's host-network proxy to 127.0.0.1:8099 does not apply here. A Mac is a
+  # single-user setup reached on http://127.0.0.1:8099; start Caddy only if you
+  # adapt the Caddyfile (`--profile caddy`).
+  caddy:
+    profiles: ["caddy"]
