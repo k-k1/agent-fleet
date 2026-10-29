@@ -283,3 +283,37 @@ expressions above but take the kinds from the registry (`sessionx.RegisteredKind
 identifiers as `Kind<kind>` in any case, so a new kind is counted from the PR that registers it. The
 `K`/`KC` lists above are today's expansion of that set; both give 219 and 66. As with css-dup, a count
 above the ceiling fails and one below it only logs a hint to lower it.
+
+## Addendum (2026-10-29) — "files a new kind touches" is measured by adding one
+
+The Phase 3 target's figure is redefined (#2927); the target itself, at most 40, is unchanged.
+The `git grep -l -i -w muse` command under "Measuring" counts every file that names muse —
+comments, workflows, goldens, UI strings — and not the files a new kind has to edit: it moved
+only from 152 to 145 across Phase 3, which removed 85 Go and 9 Console kind branches.
+
+**New definition.** The number of files that adding the stub kind `zz` changes outside its own
+package (`workspace/agent/internal/agents/zz`), excluding tests (`*_test.go`, `*.test.ts(x)`) and
+Markdown, once both Go modules' tests, the Console's typecheck and vitest, and docs-check pass.
+The stub is the smallest kind the checklist (`docs/build/20-add-an-agent.md` §20.7) allows: it
+registers, launches `bash -l` on the Terminal route, and has no Managed driver, MCP, instruction
+target, sign-in or pinned CLI. It is never merged. The recipe is `scripts/stub-kind-count.sh`
+(`--verify` runs the suites), described in §20.8 of that chapter.
+
+**Measured at `aee59bfbe`: 14** (22 including tests and Markdown).
+
+| Category | Files | Which |
+|---|---|---|
+| Go | 5 | `session.go` (`Kind*`), `agentreg.go`, `kinds.go`, `agent_instructions.go` (`instrUnsupported`), `session_move.go` (`moveUnmeasuredTargets`) |
+| TS | 3 | `types/session.ts` (`SessionKind`, `SESSION_KINDS`, `ConnectionsStatus`), `agents/kindCatalog.ts` (`FALLBACK_KIND_FACTS`), `agents/registry.ts` (descriptor) |
+| CSS | 1 | `styles/tokens.css` (two theme tokens and the `.kind-` map line) |
+| Data | 5 | `agentkinds/catalog.json`, `mcpsrv/testdata/mcp_tools/{list.json,calls.txt}` (all three regenerated, not hand-edited), the `sessions.ts` locale in `en` and `ja` |
+| CI and scripts | 0 | |
+| Tests (not counted) | 6 | `kinds_test.go`, `managed_runtime_test.go`, `prompt_paste_test.go`, `session_move_kinds_test.go`, `kind_lists_test.go`, `derivedKindLists.test.ts` |
+| Markdown (not counted) | 2 | `guide/ref/agents.md` and `.ja.md` |
+
+A guard or the compiler forced 11 of the 14. The other three follow the guide: the two locale
+files (the launch hint has to be a message key, though an existing one would compile) and the
+move list (an unclassified kind reads `not_an_agent`, which is false for an agent). Each
+kind-specific row of §20.7 adds files the stub does not exercise; most of them are the
+pinned-CLI registration in CI and `deploy/local` that Phase 6 already names. The edits a registry
+could absorb are #2933.

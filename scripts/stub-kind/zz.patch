@@ -1,0 +1,351 @@
+diff --git a/console/src/agents/derivedKindLists.test.ts b/console/src/agents/derivedKindLists.test.ts
+index d6c61239b..ca11a5384 100644
+--- a/console/src/agents/derivedKindLists.test.ts
++++ b/console/src/agents/derivedKindLists.test.ts
+@@ -14,7 +14,7 @@ vi.mock("../core/api/client.ts", () => ({ api: vi.fn(), apiJSON: vi.fn(), getTen
+ 
+ describe("derived kind lists equal the literals they replaced", () => {
+   it("repoLaunchKinds", () => {
+-    expect(repoLaunchKinds).toEqual(["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "shell"]);
++    expect(repoLaunchKinds).toEqual(["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "zz", "shell"]);
+   });
+ 
+   it("ASSISTANT_AGENT_KINDS, the default backend priority", () => {
+diff --git a/console/src/agents/kindCatalog.ts b/console/src/agents/kindCatalog.ts
+index 141da6a67..98a2d741b 100644
+--- a/console/src/agents/kindCatalog.ts
++++ b/console/src/agents/kindCatalog.ts
+@@ -38,6 +38,7 @@ export const FALLBACK_KIND_FACTS: Record<SessionKind, KindFacts> = {
+   opencode: f(false, true, "yes"),
+   lcpp: f(true, true, "yes"),
+   muse: f(true, true, "yes"),
++  zz: f(false, false, "no"),
+   shell: f(false, false, "no"),
+   ssm: f(false, false, "no"),
+ };
+diff --git a/console/src/agents/registry.ts b/console/src/agents/registry.ts
+index 5daf1de14..0e2c9ff98 100644
+--- a/console/src/agents/registry.ts
++++ b/console/src/agents/registry.ts
+@@ -703,6 +703,23 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
+     // the signpost that keeps the menu honest.
+     available: (c) => c.conns?.muse?.supported !== false && !!c.conns?.muse?.connected,
+   },
++  zz: {
++    id: "zz",
++    icon: "symbol-misc",
++    label: "ZZ",
++    assistantName: "ZZ",
++    short: "zz",
++    cssClass: "zz",
++    launchHintKey: "agent.launch_hint.zz",
++    launchSuffix: "-zz",
++    planCycleKey: "",
++    planEnterCmd: "",
++    defaultModeLabel: "",
++    skillTrigger: "",
++    tuiMemoryCost: "",
++    caps: caps({ runsInDir: true, launchableFromRepo: true }),
++    available: (c) => !!c.conns?.zz?.connected,
++  },
+   shell: {
+     id: "shell",
+     icon: "terminal",
+diff --git a/console/src/lib/i18n/locales/en/sessions.ts b/console/src/lib/i18n/locales/en/sessions.ts
+index 9fda98f0b..b4f39b57d 100644
+--- a/console/src/lib/i18n/locales/en/sessions.ts
++++ b/console/src/lib/i18n/locales/en/sessions.ts
+@@ -24,6 +24,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
+   // (registry.ts repoLaunchKinds), so this string renders nowhere today.
+   "agent.launch_hint.lcpp": "Launch llama.cpp",
+   "agent.launch_hint.muse": "Launch Muse Code",
++  "agent.launch_hint.zz": "Launch ZZ",
+   "agent.launch_hint.shell": "Plain shell (bash)",
+   "agent.launch_hint.ssm": "SSM login to an AWS EC2 host",
+ 
+diff --git a/console/src/lib/i18n/locales/ja/sessions.ts b/console/src/lib/i18n/locales/ja/sessions.ts
+index f08dac705..b4f496f3d 100644
+--- a/console/src/lib/i18n/locales/ja/sessions.ts
++++ b/console/src/lib/i18n/locales/ja/sessions.ts
+@@ -22,6 +22,7 @@ export const sessions = {
+   // (registry.ts repoLaunchKinds), so this string renders nowhere today.
+   "agent.launch_hint.lcpp": "llama.cpp を起動",
+   "agent.launch_hint.muse": "Muse Code を起動",
++  "agent.launch_hint.zz": "ZZ を起動",
+   "agent.launch_hint.shell": "通常のシェル（bash）",
+   "agent.launch_hint.ssm": "AWS EC2 に SSM ログイン",
+ 
+diff --git a/console/src/styles/tokens.css b/console/src/styles/tokens.css
+index 7a2495056..c25fe5335 100644
+--- a/console/src/styles/tokens.css
++++ b/console/src/styles/tokens.css
+@@ -172,6 +172,7 @@
+   --kind-muse: #dbabe6;
+   --kind-shell: #46c9d0;
+   --kind-ssm: #6d8bf5;
++  --kind-zz: #c9a646;
+   /* Spawn-lineage spines (ADR 0073) — the 2px rule the left rail draws down the side
+      of every working copy and session row of one family (lib/project.ts's
+      lineageColor picks the slot from the family root's name). NOT a third session
+@@ -333,6 +334,7 @@
+   --kind-muse: #6b2d7e;
+   --kind-shell: #0f676d;
+   --kind-ssm: #2c39a3;
++  --kind-zz: #6b5410;
+   /* Lineage spines, dark steps of the same six hues — a 2px rule on a near-white rail
+      has to go dark, not light (measured against --panel #f4f5f7: 4.6–5.4:1). */
+   --lineage-0: #4a6a95;
+@@ -404,3 +406,4 @@
+ .kind-muse { --kind: var(--kind-muse); }
+ .kind-shell { --kind: var(--kind-shell); }
+ .kind-ssm { --kind: var(--kind-ssm); }
++.kind-zz { --kind: var(--kind-zz); }
+diff --git a/console/src/types/session.ts b/console/src/types/session.ts
+index 40ebbc27c..0c0004ebf 100644
+--- a/console/src/types/session.ts
++++ b/console/src/types/session.ts
+@@ -6,13 +6,13 @@
+ // NOTE: this session `kind` is a DIFFERENT axis from a *pane's* kind (which VIEW
+ // renders — terminal/file/scm/doc/diff, see layout/types PaneContent). Keep distinct.
+ 
+-export type SessionKind = "claude" | "codex" | "cursor" | "copilot" | "kiro" | "opencode" | "agy" | "lcpp" | "muse" | "shell" | "ssm";
++export type SessionKind = "claude" | "codex" | "cursor" | "copilot" | "kiro" | "opencode" | "agy" | "lcpp" | "muse" | "zz" | "shell" | "ssm";
+ 
+ // The canonical session kinds in display order (New Session buttons, etc.). lcpp and muse sit
+ // just before shell/ssm: both are registered (ADR 0093 / ADR 0095) and launchable only once their
+ // own precondition is met — see each descriptor's available() in registry.ts, and
+ // guide/ref/agents.md's footnotes.
+-export const SESSION_KINDS: SessionKind[] = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "shell", "ssm"];
++export const SESSION_KINDS: SessionKind[] = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "zz", "shell", "ssm"];
+ 
+ // Live run state, reported by per-agent hooks/plugins. "" (empty) = idle. claude
+ // emits question/plan/permission; codex/opencode emit working/idle; agy emits
+@@ -303,6 +303,7 @@ export interface ConnectionsStatus {
+   // supported=false = an older image without the CLI baked in.
+   cursor?: ProviderConn;
+   opencode?: ProviderConn;
++  zz?: ProviderConn;
+   agy?: ProviderConn;
+   // copilot rides on the GitHub integration (docs/log/36): connected = a gh token exists;
+   // supported=false = an older image without the CLI baked in.
+diff --git a/workspace/agent/agent_instructions.go b/workspace/agent/agent_instructions.go
+index 4fadbd09e..88e9f9421 100644
+--- a/workspace/agent/agent_instructions.go
++++ b/workspace/agent/agent_instructions.go
+@@ -119,6 +119,7 @@ var instrUnsupported = []struct{ kind, reason string }{
+ 	// structural impossibility rather than missing wiring, so it is not shown as pending
+ 	// implementation.
+ 	{"cursor", "no_user_scope"},
++	{"zz", "no_user_scope"},
+ }
+ 
+ func instrOpencodeFile() string { return opencode.InstructionsFile() }
+diff --git a/workspace/agent/internal/agentreg/agentreg.go b/workspace/agent/internal/agentreg/agentreg.go
+index d855a48db..876acaead 100644
+--- a/workspace/agent/internal/agentreg/agentreg.go
++++ b/workspace/agent/internal/agentreg/agentreg.go
+@@ -24,6 +24,7 @@ import (
+ 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+ 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/shell"
+ 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/ssm"
++	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/zz"
+ 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+ )
+ 
+@@ -42,6 +43,7 @@ var registry = map[string]agents.Agent{
+ 	session.KindSSM:      ssm.New(),
+ 	session.KindLcpp:     lcpp.New(),
+ 	session.KindMuse:     muse.New(),
++	session.KindZz:       zz.New(),
+ }
+ 
+ // Of returns the Agent registered for kind, or claude's for an unknown or empty kind.
+diff --git a/workspace/agent/internal/agents/zz/testguard_main_test.go b/workspace/agent/internal/agents/zz/testguard_main_test.go
+new file mode 100644
+index 000000000..b54e7a88e
+--- /dev/null
++++ b/workspace/agent/internal/agents/zz/testguard_main_test.go
+@@ -0,0 +1,12 @@
++package zz
++
++import (
++	"os"
++	"testing"
++
++	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
++)
++
++// TestMain keeps every test of this package off the workspace's live tmux server, HOME and
++// Agent (testguard).
++func TestMain(m *testing.M) { os.Exit(testguard.Run(m, nil)) }
+diff --git a/workspace/agent/internal/agents/zz/zz.go b/workspace/agent/internal/agents/zz/zz.go
+new file mode 100644
+index 000000000..a290704cb
+--- /dev/null
++++ b/workspace/agent/internal/agents/zz/zz.go
+@@ -0,0 +1,49 @@
++// Package zz is a stub kind used only to measure how many files a new kind touches
++// (scripts/stub-kind-count.sh). It is never merged.
++package zz
++
++import (
++	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
++	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
++)
++
++type agentImpl struct{ agents.NoGenericTranscript }
++
++// New returns the zz kind's Agent.
++func New() agents.Agent { return agentImpl{} }
++
++func (agentImpl) Kind() string { return session.KindZz }
++
++func (agentImpl) Caps() agents.Caps { return agents.Caps{MCPClient: agents.TriNo} }
++
++func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
++	if !session.DirExists(m.Dir) {
++		return agents.LaunchPlan{}, agents.DirGoneErr(m.Dir)
++	}
++	return agents.LaunchPlan{Program: "bash -l", Cwd: m.CWD()}, nil
++}
++
++func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
++	return agents.LiveInfo{Resumable: alive || session.DirExists(m.Dir)}
++}
++
++func (agentImpl) ClearResume(string) {}
++
++// ListModels is agents.ModelLister: no model menu.
++func (agentImpl) ListModels(agents.ModelQuery) agents.ModelListing {
++	return agents.ModelListing{Enumerated: -1}
++}
++
++// PaneMode is agents.PaneModeReader: the stub draws no composer of its own.
++func (agentImpl) PaneMode(string) string { return "" }
++
++// SendWaitsForComposer is agents.PaneModeReader.
++func (agentImpl) SendWaitsForComposer() bool { return false }
++
++// PromptModal is agents.ModalProbe: the stub shows no modal.
++func (agentImpl) PromptModal(session.Meta) string { return "" }
++
++// SkillsLayout is agents.SkillsLayouter: foreign entries only.
++func (agentImpl) SkillsLayout() agents.SkillsLayout {
++	return agents.SkillsLayout{Native: agents.SkillsForeignOnly}
++}
+diff --git a/workspace/agent/internal/kinds/kinds.go b/workspace/agent/internal/kinds/kinds.go
+index 91415d0c3..0906377c7 100644
+--- a/workspace/agent/internal/kinds/kinds.go
++++ b/workspace/agent/internal/kinds/kinds.go
+@@ -26,6 +26,7 @@ var registered = [...]entry{
+ 	{session.KindAgy, "Antigravity"},
+ 	{session.KindLcpp, ""},
+ 	{session.KindMuse, "Muse Code"},
++	{session.KindZz, "ZZ Stub"},
+ 	{session.KindShell, ""},
+ 	{session.KindSSM, ""},
+ }
+diff --git a/workspace/agent/internal/kinds/kinds_test.go b/workspace/agent/internal/kinds/kinds_test.go
+index b381fe4d5..064d0049e 100644
+--- a/workspace/agent/internal/kinds/kinds_test.go
++++ b/workspace/agent/internal/kinds/kinds_test.go
+@@ -110,7 +110,7 @@ func TestLabels(t *testing.T) {
+ 	want := map[string]string{
+ 		"claude": "Claude Code", "opencode": "opencode", "codex": "Codex", "copilot": "GitHub Copilot",
+ 		"cursor": "Cursor", "kiro": "Kiro", "agy": "Antigravity", "muse": "Muse Code",
+-		"lcpp": "", "shell": "", "ssm": "",
++		"lcpp": "", "shell": "", "ssm": "", "zz": "ZZ Stub",
+ 	}
+ 	for _, k := range All() {
+ 		l, ok := want[k]
+diff --git a/workspace/agent/internal/session/session.go b/workspace/agent/internal/session/session.go
+index 471e82a05..734dab8d3 100644
+--- a/workspace/agent/internal/session/session.go
++++ b/workspace/agent/internal/session/session.go
+@@ -31,6 +31,7 @@ const (
+ 	KindSSM      = "ssm"
+ 	KindLcpp     = "lcpp"
+ 	KindMuse     = "muse"
++	KindZz       = "zz"
+ )
+ 
+ // Driver (docs/log/27 §2, §9.2, ADR 0015): a session's control route. tui is the traditional
+diff --git a/workspace/agent/internal/sessionx/managed_runtime_test.go b/workspace/agent/internal/sessionx/managed_runtime_test.go
+index 71a2030b7..0db2c58e9 100644
+--- a/workspace/agent/internal/sessionx/managed_runtime_test.go
++++ b/workspace/agent/internal/sessionx/managed_runtime_test.go
+@@ -35,6 +35,7 @@ var wantRuntime = map[string]*agents.ManagedRuntimeOps{
+ 	session.KindAgy:      nil,
+ 	session.KindShell:    nil,
+ 	session.KindSSM:      nil,
++	session.KindZz:       nil,
+ 	// Not kinds: no NormalizeKind, no AgentOf claude fallback.
+ 	"":         nil,
+ 	"Codex":    nil,
+diff --git a/workspace/agent/internal/sessionx/prompt_paste_test.go b/workspace/agent/internal/sessionx/prompt_paste_test.go
+index 3cc042292..f4c9cd72e 100644
+--- a/workspace/agent/internal/sessionx/prompt_paste_test.go
++++ b/workspace/agent/internal/sessionx/prompt_paste_test.go
+@@ -25,7 +25,7 @@ func legacyPasteNeeded(kind, text string) bool {
+ // Every registered kind is in exactly one of these two lists. A new kind must be placed on
+ // purpose: pasteKinds by implementing agents.PromptPaste, literalKinds after checking that its
+ // composer keeps an Enter that follows literal keys (copilot, cursor and kiro lose it).
+-var literalKinds = []string{session.KindAgy, session.KindMuse, session.KindLcpp, session.KindShell, session.KindSSM}
++var literalKinds = []string{session.KindAgy, session.KindMuse, session.KindLcpp, session.KindShell, session.KindSSM, session.KindZz}
+ 
+ var pasteKinds = []string{
+ 	session.KindClaude, session.KindCodex, session.KindOpencode, session.KindCopilot,
+diff --git a/workspace/agent/internal/sessionx/session_move.go b/workspace/agent/internal/sessionx/session_move.go
+index cdc21668b..9cf59b9dd 100644
+--- a/workspace/agent/internal/sessionx/session_move.go
++++ b/workspace/agent/internal/sessionx/session_move.go
+@@ -47,7 +47,7 @@ var moveTargetKinds = []string{
+ // moveUnmeasuredTargets stay off until the read has been measured through the real driver; the
+ // bare CLI's result does not cover the driver's trust handling and flags. Moving a kind into
+ // moveTargetKinds is the whole change once that measurement exists.
+-var moveUnmeasuredTargets = []string{session.KindCursor}
++var moveUnmeasuredTargets = []string{session.KindCursor, session.KindZz}
+ 
+ // Reasons a kind is not offered as a target, as the preview reports them.
+ const (
+diff --git a/workspace/agent/internal/sessionx/session_move_kinds_test.go b/workspace/agent/internal/sessionx/session_move_kinds_test.go
+index 173b85726..eab388313 100644
+--- a/workspace/agent/internal/sessionx/session_move_kinds_test.go
++++ b/workspace/agent/internal/sessionx/session_move_kinds_test.go
+@@ -24,6 +24,7 @@ var moveClassification = map[string]string{
+ 	session.KindLcpp:     moveTargetCannotRead,
+ 	session.KindShell:    moveTargetNotAnAgent,
+ 	session.KindSSM:      moveTargetNotAnAgent,
++	session.KindZz:       moveTargetNotMeasured,
+ }
+ 
+ func TestEveryKindIsClassifiedForMove(t *testing.T) {
+@@ -50,7 +51,7 @@ func TestMoveTargetListsAreUnchanged(t *testing.T) {
+ 	if !slices.Equal(moveTargetKinds, wantTargets) {
+ 		t.Errorf("moveTargetKinds = %v, want %v", moveTargetKinds, wantTargets)
+ 	}
+-	if !slices.Equal(moveUnmeasuredTargets, []string{"cursor"}) {
++	if !slices.Equal(moveUnmeasuredTargets, []string{"cursor", "zz"}) {
+ 		t.Errorf("moveUnmeasuredTargets = %v, want [cursor]", moveUnmeasuredTargets)
+ 	}
+ }
+diff --git a/workspace/agent/kind_lists_test.go b/workspace/agent/kind_lists_test.go
+index 713d3fd27..e5afb71b3 100644
+--- a/workspace/agent/kind_lists_test.go
++++ b/workspace/agent/kind_lists_test.go
+@@ -26,6 +26,7 @@ var usageMeasuredByKind = map[string]string{
+ 	session.KindAgy:      usagex.MeasuredNone,
+ 	session.KindShell:    usagex.MeasuredNone,
+ 	session.KindSSM:      usagex.MeasuredNone,
++	session.KindZz:       usagex.MeasuredNone,
+ }
+ 
+ func TestEveryKindDeclaresItsUsageAccuracy(t *testing.T) {
+@@ -63,6 +64,7 @@ func TestUsageMeasuredRefusesAlternateSpellings(t *testing.T) {
+ // noChatProvider are the registered kinds that run no headless chat/one-shot backend.
+ var noChatProvider = map[string]bool{
+ 	session.KindKiro: true, session.KindCopilot: true, session.KindShell: true, session.KindSSM: true,
++	session.KindZz: true,
+ }
+ 
+ // A registered kind either has a chat provider (and then chatx classifies it for one-shots and

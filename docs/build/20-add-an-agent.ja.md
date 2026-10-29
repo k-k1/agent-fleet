@@ -222,16 +222,20 @@ Agent のイメージを先に、または同時に配備し、その間は断�
 
 - [ ] `internal/session/session.go` の `Kind*` 定数、`internal/agentreg` の `registry` と
       `internal/kinds` の一覧への登録。キーは `Kind()` と一致し（`TestRegisteredKindsSpellTheirOwnKind`）、
-      2 つの一覧は揃う（`TestRegistryMatchesTheKindsList`）
+      2 つの一覧は揃う（`TestRegistryMatchesTheKindsList`）。`internal/kinds` の行は通知ブリッジが書く
+      製品名（無ければ `""`）を持ち、`kinds_test.go` の `TestLabels` が固定する
 - [ ] `Caps()` の全フィールドを決める。`MCPClient` も含む（`unverified` だと
       `TestMCPClientKindsMatchRegistry` が落ちる）。マネージドで始めたい種別は `ManagedDefault` も
       （CP とコンテナ内の呼び出し側が追従する。集合は `TestManagedDefaultKindFollowsTheRegistry` が固定）
 - [ ] カタログのスナップショットを作り直す（`TestKindCatalogSnapshot`）。カタログの形が変わったら
-      `testdata/wire.golden` も
-- [ ] [ref/agents.md](../../guide/ref/agents.ja.md) の列。`scripts/docs-check.py` が `CAPS_ROWS` の行
-      （MCP を含む）を `Caps()` と突き合わせる
-- [ ] 指示: `instrSupportedKinds` と `instrDeliveryOf` の case、または理由付きの `instrUnsupported`
-      （`TestKindCatalogCoversRegistry`）
+      `testdata/wire.golden` も。続けて、ツールの説明に種別を列挙する CP の MCP ツールの golden も:
+      `cd control-plane && go test ./internal/mcpsrv -run 'TestToolListGolden|TestToolCallGolden' -update-tool-golden`
+      （パッケージをフラグより前に書く。逆だと `go test` はモジュールのルートをビルドしてフラグを拒む）
+- [ ] [ref/agents.md](../../guide/ref/agents.ja.md) と `ref/agents.ja.md` の列。`scripts/docs-check.py` が
+      `CAPS_ROWS` の行（MCP を含む）を `Caps()` と、日本語の表の印を英語の表と突き合わせる
+- [ ] 指示: `agents.Instructions` と `instrSupportedKinds`、または理由付きの `instrUnsupported`、
+      CLI を動かさない種別なら `noInstructionTargets`（`TestInstructionsClassifyEveryRegisteredKind`。
+      `agent_instructions_kinds_test.go` の `legacyInstr` に行を足すのは新しい形を固定するときだけ）
 - [ ] MCP: `MaterializedKinds`（と writer）か `ServedKinds` を `Caps().MCPClient` に合わせる。
       CP はスナップショット経由で追従する
 - [ ] モデル一覧: `internal/agents/<kind>/capabilities.go` の `ListModels`（`agents.ModelLister`）。
@@ -239,27 +243,72 @@ Agent のイメージを先に、または同時に配備し、その間は断�
 - [ ] Console のフォールバック（`GET /api/agents/kinds` が答えるまで使う）:
       `console/src/agents/kindCatalog.ts` の `FALLBACK_KIND_FACTS`（`MCP_KINDS` はここから作る）。
       `kindCatalog.test.ts` がそれと `SESSION_KINDS` をカタログのスナップショットと突き合わせる
+- [ ] 種別ごとに実測した一覧。どれも、漏れた種別を名指しするテストが守る:
+      `usageMeasuredForKind`（`usage_fold.go`。`kind_lists_test.go` の `usageMeasuredByKind`）、
+      移動先（`moveTargetKinds` / `moveUnmeasuredTargets`。`session_move_kinds_test.go` の
+      `moveClassification`）、チャットプロバイダか `noChatProvider` への登録（`kind_lists_test.go`。
+      プロバイダがあれば `chatx` の `oneShotKinds` と `providerResumeHandles` がそれぞれのテストに従う）。
+      `providerResumeKinds` は `providerResumeHandles` から作る。`TestMoveTargetListsAreUnchanged` は
+      移動先の 2 つの一覧をリテラルで固定するので、どちらかに足した種別はこれも直す
+- [ ] `wantRuntime`（`internal/sessionx/managed_runtime_test.go`）にどの種別も 1 行。マネージドの
+      ランタイムを持たない種別は `nil`（`TestManagedRuntimeDispatchPinned`）
+- [ ] スキル: どのエージェント種別も `capabilities.go` に `agents.SkillsLayouter`。固有の仕組みが
+      確認できていなければ `SkillsForeignOnly`（`TestSkillsLayoutCoversEveryAgentKind`）
 
 **種別固有 — その機能を持つときだけ:**
 
-- [ ] ターミナル: `BuildLaunch`、`internal/sessionx/session_io.go` の bracketed paste 一覧
+- [ ] ターミナル: `BuildLaunch` と貼り付けの判断。リテラルのキーに続く Enter を入力欄が食うなら
+      `agents.PromptPaste`、そうでなければ `prompt_paste_test.go` の `literalKinds` に入れる（実測する。
+      どちらにも無い種別は `TestPromptPasteClassifiesEveryRegisteredKind` が落とす）。加えて
+      `capabilities.go` に `agents.PaneModeReader` と `agents.ModalProbe`
+      （`TestPaneModeReaderCoversEveryTerminalKind`、`TestPromptBlockerCoversEveryTerminalKind`）
 - [ ] マネージド: `Driver`、`managedDrivers`、Agent に `agents.ManagedRuntime`
-      （無いと `TestManagedRuntimeFollowsCaps` が落ちる。`wantRuntime` にその種別の行を足す）、
-      および `capabilities.go` に `agents.ManagedLifecycler`。Agent は起動時にその種別を再接続し、
-      停止時に中断・終了させる。順序は `internal/kinds` の順（`lifecycle_caps_test.go` の
+      （無いと `TestManagedRuntimeFollowsCaps` が落ちる。`wantRuntime` の行はそのパッケージの関数を
+      名指しする）、および `capabilities.go` に `agents.ManagedLifecycler`。Agent は起動時にその種別を
+      再接続し、停止時に中断・終了させる。順序は `internal/kinds` の順（`lifecycle_caps_test.go` の
       `handWiredLifecycle` に行を足す）
 - [ ] サインインのハンドラと CP の中継。資格情報は `fsDeny` で隠す
 - [ ] `GET /connections` の項目: `capabilities.go` に `ConnectionStatus`（`agents.ConnectionStatuser`）、
       `TestHandleConnectionsGetKeySet` のキー一覧にその種別
-- [ ] 利用量: `usageMeasuredForKind`（`usage_fold.go`）
 - [ ] CLI を固定する種別: バージョン固定、契約ワークフロー、リリース監視への登録（§20.5）
 
 **表示だけ — Console:**
 
 - [ ] `console/src/types/session.ts` の `SESSION_KINDS`（表示順）と `console/src/agents/registry.ts` の記述子
       （`caps`）。記述子が無い種別も汎用アイコンで表示はされるが、Console からは起動できない
-- [ ] 色・アイコン・文言。i18n の文字列を両言語で
+- [ ] 色・アイコン・文言。i18n の文字列を両言語で。色は `console/src/styles/tokens.css` の両テーマの
+      ブロックに置く `--kind-<slug>` と、同じファイルの対応表の `.kind-<slug>` 行（`kindCssMap.test.ts`）
+- [ ] `available()`: 接続の要らない種別は `availability.test.ts` の期待する一覧を変え、
+      `caps.launchableFromRepo` を持つ種別は `derivedKindLists.test.ts` の `repoLaunchKinds` の
+      リテラルを変える
 - [ ] 記述子の一覧向けの事実: `caps.liveModels` / `caps.concreteModel`（モデル選択）、
       `caps.skillsCatalog`（設定 > スキル）、`caps.memberDefault`（CP の `memberDefaultAgents` と
       一致させる。`derivedKindLists.test.ts`）、`caps.headlessChat` なら `assistantRank`
       （アシスタントの既定の優先順位）
+
+## 20.8 新しい種別が触るファイルを測る
+
+ADR 0124 の「新しい種別が触るファイル数」は、既存の種別の名前を grep するのではなく、種別を 1 つ
+足して測ります（[0124](../decisions/0124-second-refactor.ja.md)、2026-10-29 の追記）。
+`scripts/stub-kind-count.sh` は、スタブの種別 `zz`（`scripts/stub-kind/zz.patch`。登録されて
+`bash -l` を起動するだけのターミナル専用の種別で、MCP・指示の宛先・サインイン・固定する CLI を
+持たない）を使い捨てのクローンに当て、`ref/agents` に列を足し、カタログのスナップショットと MCP
+ツールの golden を作り直し、`internal/agents/zz` の外で変わったファイルを分類して並べます。
+数値は、テストと Markdown を除いた合計です。
+
+```
+scripts/stub-kind-count.sh            # HEAD で数える
+scripts/stub-kind-count.sh --verify   # 両 Go モジュール、Console、docs-check も走らせる
+```
+
+数値として使えるのは、`--verify` が通った実行だけです。パッチが当たらなくなったとき、または
+`--verify` で新しいガードが落ちたときはパッチを作り直します。`--keep` で実行し、残したクローンで
+`--verify` の各段が通るまで直してから、スクリプトが自分で作る生成物と `ref/agents` の表を除いた差分を
+書き戻します。
+
+```
+git -C <残したクローン> add -A
+git -C <残したクローン> diff --cached -- . ':!control-plane/internal/agentkinds/catalog.json' \
+  ':!control-plane/internal/mcpsrv/testdata' ':!guide/ref/agents.md' ':!guide/ref/agents.ja.md' \
+  > scripts/stub-kind/zz.patch
+```
