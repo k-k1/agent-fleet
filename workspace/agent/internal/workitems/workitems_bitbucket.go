@@ -1,4 +1,4 @@
-package main
+package workitems
 
 import (
 	"encoding/json"
@@ -35,9 +35,9 @@ import (
 // authenticated halves — the workspace endpoint, the `pullrequest` scope refusal — are
 // stubbed, and saying which is which is the point of that section.
 
-// bitbucketAPIBase is where the REST calls go. A var so the tests can point the whole
+// BitbucketAPIBase is where the REST calls go. A var so the tests can point the whole
 // adapter at a stub (same reason as jirax.CloudAPIBase).
-var bitbucketAPIBase = "https://api.bitbucket.org"
+var BitbucketAPIBase = "https://api.bitbucket.org"
 
 // bbMeToken is what a member writes instead of their own account UUID. Bitbucket's filter
 // language has no `currentUser()` (Jira) and no `@me` (GitHub), and the UUID it wants
@@ -117,7 +117,7 @@ func bitbucketSearchWorkItems(s *secrets.Data, queryID, query string) ([]workIte
 // workItemFetchQueries × workItemFetchPerQuery exists to bound (ADR 0061 decision 17).
 func bitbucketFetchPullRequests(auth string, q bitbucketWorkItemQuery, queryID string) ([]workItemOut, string, error) {
 	filter := q.Filter
-	endpoint := bitbucketAPIBase + "/2.0/repositories/" + url.PathEscape(q.Workspace) + "/" + url.PathEscape(q.Repo) + "/pullrequests"
+	endpoint := BitbucketAPIBase + "/2.0/repositories/" + url.PathEscape(q.Workspace) + "/" + url.PathEscape(q.Repo) + "/pullrequests"
 	if q.Repo == "" || strings.Contains(filter, bbMeToken) {
 		uuid, err := bitbucketSelfUUID(auth)
 		if err != nil {
@@ -125,7 +125,7 @@ func bitbucketFetchPullRequests(auth string, q bitbucketWorkItemQuery, queryID s
 		}
 		filter = strings.ReplaceAll(filter, bbMeToken, uuid)
 		if q.Repo == "" {
-			endpoint = bitbucketAPIBase + "/2.0/workspaces/" + url.PathEscape(q.Workspace) + "/pullrequests/" + url.PathEscape(uuid)
+			endpoint = BitbucketAPIBase + "/2.0/workspaces/" + url.PathEscape(q.Workspace) + "/pullrequests/" + url.PathEscape(uuid)
 		}
 	}
 	// fields= is not only a size cut. A pull request object carries its full
@@ -147,7 +147,7 @@ func bitbucketFetchPullRequests(auth string, q bitbucketWorkItemQuery, queryID s
 	}
 	body, status, hdr, err := gitx.BitbucketGetStatusHeader(workItemHTTPClient, auth, endpoint+"?"+params.Encode())
 	if err != nil {
-		return nil, "", fmt.Errorf("could not reach %s", bitbucketAPIBase)
+		return nil, "", fmt.Errorf("could not reach %s", BitbucketAPIBase)
 	}
 	if status != http.StatusOK {
 		return nil, "", bitbucketWorkItemError(status, body, q)
@@ -307,9 +307,9 @@ func bitbucketSelfUUID(auth string) (string, error) {
 	if bbSelfCache.auth == auth && bbSelfCache.uuid != "" {
 		return bbSelfCache.uuid, nil
 	}
-	body, status, err := gitx.BitbucketGetStatus(workItemHTTPClient, auth, bitbucketAPIBase+"/2.0/user")
+	body, status, err := gitx.BitbucketGetStatus(workItemHTTPClient, auth, BitbucketAPIBase+"/2.0/user")
 	if err != nil {
-		return "", fmt.Errorf("could not reach %s", bitbucketAPIBase)
+		return "", fmt.Errorf("could not reach %s", BitbucketAPIBase)
 	}
 	if status != http.StatusOK {
 		if status == http.StatusUnauthorized {
@@ -325,4 +325,15 @@ func bitbucketSelfUUID(auth string) (string, error) {
 	}
 	bbSelfCache.auth, bbSelfCache.uuid = auth, u.UUID
 	return u.UUID, nil
+}
+
+// firstNonEmpty is a copy of package main's helper of the same name (connections.go): the
+// rows take a person's display name and fall back to the nickname.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

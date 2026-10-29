@@ -7,6 +7,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/workitems"
 	"net/http"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
@@ -50,21 +51,21 @@ func buildMux() *http.ServeMux {
 	// Work items (docs/log/80): the CP posts the saved queries it owns and gets non-secret
 	// rows back. Called by the CP itself (like /notifications), never by the Console,
 	// so it needs no entry in the CP's agent-proxy allowlist.
-	mux.HandleFunc("POST /work-items/fetch", handleWorkItemsFetch)
+	mux.HandleFunc("POST /work-items/fetch", workitems.HandleWorkItemsFetch)
 	// The only write-back (docs/log/80 §80.10). It arrives via the CP only once a human has
 	// read the draft and pressed the button. There is no MCP tool, so an agent cannot reach it.
-	mux.Handle("POST /work-items/comment", memberorigin.Require(workItemCommentMaxRequest, http.HandlerFunc(handleWorkItemsComment)))
+	mux.Handle("POST /work-items/comment", memberorigin.Require(workitems.WorkItemCommentMaxRequest, http.HandlerFunc(workitems.HandleWorkItemsComment)))
 	// One pull request, read live because a member opened its panel (docs/log/80 §80.24).
 	// Relayed by the CP like the comment above, and like it, only ever on a human's action —
 	// the timer-driven job is /work-items/fetch.
-	mux.HandleFunc("POST /work-items/detail", handleWorkItemsDetail)
+	mux.HandleFunc("POST /work-items/detail", workitems.HandleWorkItemsDetail)
 	// The second write-back (ADR 0061, 2026-10-25 note on #2632): merge a GitHub pull request.
 	// AGENT_TOKEN is in every session's shell, so "no MCP tool" does not keep an agent out: the
 	// route takes only a request the CP marked as the workspace's own member's confirm press
 	// (ADR 0113), and refuses AGENT_TOKEN alone.
-	mux.Handle("POST /work-items/merge", memberorigin.Require(workItemMergeMaxRequest, http.HandlerFunc(handleWorkItemsMerge)))
+	mux.Handle("POST /work-items/merge", memberorigin.Require(workitems.WorkItemMergeMaxRequest, http.HandlerFunc(workitems.HandleWorkItemsMerge)))
 	// The Jira project keys the member can browse, for the mirror's ticket links (docs/log/80 §80.25).
-	mux.HandleFunc("POST /work-items/jira-projects", handleWorkItemsJiraProjects)
+	mux.HandleFunc("POST /work-items/jira-projects", workitems.HandleWorkItemsJiraProjects)
 	// The fleet's own inference engines (ADR 0071 decision 9): the CP is the only party
 	// that sees an engine's response, so it counts the tokens and posts the row here, where
 	// every other feature's consumption already lives. CP-called like the two above, so it

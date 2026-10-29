@@ -1,4 +1,4 @@
-package main
+package workitems
 
 import (
 	"encoding/json"
@@ -225,7 +225,7 @@ func TestWorkItemsDetailRejectsUnknownProviders(t *testing.T) {
 	} {
 		req := httptest.NewRequest("POST", "/work-items/detail", strings.NewReader(tc.body))
 		w := httptest.NewRecorder()
-		handleWorkItemsDetail(w, req)
+		HandleWorkItemsDetail(w, req)
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("%s → status %d, want 400", tc.body, w.Code)
 		}
@@ -328,7 +328,7 @@ func TestWorkItemsDetailRejectsUnknownKind(t *testing.T) {
 	hits := fakeGitHub(t, nil)
 	req := httptest.NewRequest("POST", "/work-items/detail", strings.NewReader(`{"provider":"github","key":"o/r#1","kind":"banana"}`))
 	w := httptest.NewRecorder()
-	handleWorkItemsDetail(w, req)
+	HandleWorkItemsDetail(w, req)
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "kind must be") {
 		t.Fatalf("got %d %s, want 400 about kind", w.Code, w.Body.String())
 	}
@@ -395,7 +395,7 @@ func TestWorkItemsDetailJiraNotConnected(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	req := httptest.NewRequest("POST", "/work-items/detail", strings.NewReader(`{"provider":"jira","key":"G3-1"}`))
 	w := httptest.NewRecorder()
-	handleWorkItemsDetail(w, req)
+	HandleWorkItemsDetail(w, req)
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "not_connected") {
 		t.Fatalf("got %d %s, want 400 not_connected", w.Code, w.Body.String())
 	}

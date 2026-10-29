@@ -613,7 +613,7 @@ func bitbucketConnectCheckAt(base, user, token string) (warn, scopes string, err
 //
 // Kept apart from bitbucketGet so callers can differ on what a status MEANS: a 403 is "that
 // repo is private" to the picker and "this connection has no pull request permission" to
-// the work item rail (workitems_bitbucket.go). Same split as jiraRequest / jiraGet.
+// the work item rail (internal/workitems/workitems_bitbucket.go). Same split as jirax.Request / jirax.Get.
 func BitbucketGetStatus(client *http.Client, auth, url string) ([]byte, int, error) {
 	body, status, _, err := BitbucketGetStatusHeader(client, auth, url)
 	return body, status, err

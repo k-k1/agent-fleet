@@ -40,7 +40,7 @@ const (
 )
 
 // workItemProviders is the set a saved query may name. The Agent holds the adapters
-// (workspace/agent/workitems*.go); this is only the gate that stops a query being stored
+// (workspace/agent/internal/workitems); this is only the gate that stops a query being stored
 // which nothing could ever resolve.
 var workItemProviders = map[string]bool{"github": true, "jira": true, "bitbucket": true}
 

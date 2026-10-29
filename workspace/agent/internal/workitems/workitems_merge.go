@@ -1,4 +1,4 @@
-package main
+package workitems
 
 import (
 	"bytes"
@@ -41,8 +41,8 @@ type githubMergeError struct {
 
 func (e *githubMergeError) Error() string { return e.msg }
 
-// workItemMergeMaxRequest bounds the body memberorigin.Require buffers: four short strings.
-const workItemMergeMaxRequest = 4 << 10
+// WorkItemMergeMaxRequest bounds the body memberorigin.Require buffers: four short strings.
+const WorkItemMergeMaxRequest = 4 << 10
 
 // workItemMergeOut is the success body. The Console counts only a literal merged:true as a merge.
 type workItemMergeOut struct {
@@ -50,8 +50,8 @@ type workItemMergeOut struct {
 	SHA    string `json:"sha"`
 }
 
-// handleWorkItemsMerge — POST /work-items/merge {provider, key, sha, method}.
-func handleWorkItemsMerge(w http.ResponseWriter, r *http.Request) {
+// HandleWorkItemsMerge — POST /work-items/merge {provider, key, sha, method}.
+func HandleWorkItemsMerge(w http.ResponseWriter, r *http.Request) {
 	// Registered behind memberorigin.Require; refusing here as well keeps a route that is ever
 	// registered without the wrapper closed rather than open.
 	if !memberorigin.RefuseUnverified(w, r) {

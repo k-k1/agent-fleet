@@ -1,4 +1,7 @@
-package main
+// Package workitems is the Agent's half of the work item inbox (docs/log/80, ADR 0061): the
+// provider adapters (GitHub, Jira, Bitbucket) behind the /work-items/* routes, which routes.go
+// in package main mounts.
+package workitems
 
 import (
 	"encoding/json"
@@ -131,12 +134,12 @@ type workItemErrOut struct {
 	Message string `json:"message"`
 }
 
-// handleWorkItemsFetch — POST /work-items/fetch {queries:[{id,provider,query}]}.
+// HandleWorkItemsFetch — POST /work-items/fetch {queries:[{id,provider,query}]}.
 //
 // Per-query failures come back in `errors`, not as an HTTP error: one broken query
 // (a typo, a revoked token) must not blank the whole rail, and the Console shows the
 // message on that query's row.
-func handleWorkItemsFetch(w http.ResponseWriter, r *http.Request) {
+func HandleWorkItemsFetch(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Queries []workItemQueryIn `json:"queries"`
 	}

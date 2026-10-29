@@ -1,4 +1,4 @@
-package main
+package workitems
 
 import (
 	"bytes"
@@ -32,13 +32,13 @@ import (
 // write back into the tracker closes a loop we do not want closed. A human reading the
 // draft is the gate.
 
-// workItemCommentMaxRequest bounds the body memberorigin.Require buffers. The CP reads at most
+// WorkItemCommentMaxRequest bounds the body memberorigin.Require buffers. The CP reads at most
 // 256 KiB from the Console and a JSON control character escapes to six bytes, so 1.5 MiB is the
 // worst case the CP can send; 2 MiB leaves room.
-const workItemCommentMaxRequest = 2 << 20
+const WorkItemCommentMaxRequest = 2 << 20
 
-// handleWorkItemsComment — POST /work-items/comment {provider, key, body}.
-func handleWorkItemsComment(w http.ResponseWriter, r *http.Request) {
+// HandleWorkItemsComment — POST /work-items/comment {provider, key, body}.
+func HandleWorkItemsComment(w http.ResponseWriter, r *http.Request) {
 	// Registered behind memberorigin.Require; refusing here as well keeps a route that is ever
 	// registered without the wrapper closed rather than open.
 	if !memberorigin.RefuseUnverified(w, r) {
@@ -184,7 +184,7 @@ func bitbucketPostPullRequestComment(s *secrets.Data, key, body string) (string,
 
 func bitbucketPostComment(auth, repo string, number int, key, body string) (string, error) {
 	payload, _ := json.Marshal(map[string]any{"content": map[string]string{"raw": body}})
-	u := fmt.Sprintf("%s/2.0/repositories/%s/pullrequests/%d/comments", bitbucketAPIBase, gitx.EscapeRepoPath(repo), number)
+	u := fmt.Sprintf("%s/2.0/repositories/%s/pullrequests/%d/comments", BitbucketAPIBase, gitx.EscapeRepoPath(repo), number)
 	req, err := http.NewRequest("POST", u, bytes.NewReader(payload))
 	if err != nil {
 		return "", err
@@ -194,7 +194,7 @@ func bitbucketPostComment(auth, repo string, number int, key, body string) (stri
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := workItemHTTPClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("could not reach %s", bitbucketAPIBase)
+		return "", fmt.Errorf("could not reach %s", BitbucketAPIBase)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))

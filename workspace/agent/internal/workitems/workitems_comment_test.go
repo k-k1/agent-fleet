@@ -1,4 +1,4 @@
-package main
+package workitems
 
 import (
 	"encoding/json"
@@ -199,7 +199,7 @@ func TestWorkItemsCommentHandlerRefusesWithoutAMark(t *testing.T) {
 	memberorigintest.Install(t)
 	calls := fakeGitHubMerge(t, 201, `{}`)
 	w := httptest.NewRecorder()
-	handleWorkItemsComment(w, commentReq(`{"provider":"github","key":"acme/web#12","body":"x"}`))
+	HandleWorkItemsComment(w, commentReq(`{"provider":"github","key":"acme/web#12","body":"x"}`))
 	if w.Code != http.StatusForbidden || len(*calls) != 0 {
 		t.Fatalf("%d %s (calls %d)", w.Code, w.Body.String(), len(*calls))
 	}
@@ -215,7 +215,7 @@ func TestWorkItemsCommentRequestSizeCap(t *testing.T) {
 	if w := postComment(t, s, escaped); w.Code != http.StatusOK || len(*calls) != 1 {
 		t.Fatalf("escaped 300 KB body: %d %.200s (calls %d)", w.Code, w.Body.String(), len(*calls))
 	}
-	huge := `{"provider":"github","key":"acme/web#12","body":"` + strings.Repeat("a", workItemCommentMaxRequest) + `"}`
+	huge := `{"provider":"github","key":"acme/web#12","body":"` + strings.Repeat("a", WorkItemCommentMaxRequest) + `"}`
 	if w := postComment(t, s, huge); w.Code != http.StatusRequestEntityTooLarge || len(*calls) != 1 {
 		t.Fatalf("oversize: %d (calls %d)", w.Code, len(*calls))
 	}

@@ -1,4 +1,4 @@
-package main
+package workitems
 
 import (
 	"encoding/json"
@@ -222,7 +222,7 @@ func TestWorkItemsFetchPerQueryErrors(t *testing.T) {
 	                     {"id":"q4","provider":"backlog","query":"x"}]}`
 	req := httptest.NewRequest("POST", "/work-items/fetch", strings.NewReader(body))
 	w := httptest.NewRecorder()
-	handleWorkItemsFetch(w, req)
+	HandleWorkItemsFetch(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (per-query failures are not request failures)", w.Code)
 	}
@@ -259,7 +259,7 @@ func TestWorkItemsFetchPerQueryErrors(t *testing.T) {
 func TestWorkItemsFetchEmptyRequest(t *testing.T) {
 	req := httptest.NewRequest("POST", "/work-items/fetch", strings.NewReader(`{"queries":[]}`))
 	w := httptest.NewRecorder()
-	handleWorkItemsFetch(w, req)
+	HandleWorkItemsFetch(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}
