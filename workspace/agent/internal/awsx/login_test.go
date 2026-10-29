@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -884,8 +885,7 @@ func slowExport(t *testing.T, state string) {
 
 // slowCheckRun starts a terminal run's Console wait with budget wait, makes a login land
 // while export is slow, and returns after the run ended and the helper with it. afterSlow
-// runs once the slow export recorded its pid (or never did within 10s), and only while the
-// run lasts: a SIGTERM after the wait released its handler would kill the test binary.
+// runs only once the slow export recorded its pid.
 func slowCheckRun(t *testing.T, wait time.Duration, afterSlow func()) (pidFile string, took time.Duration, err error) {
 	t.Helper()
 	bin, state := fakeAWS(t, ssoProfile)
@@ -920,11 +920,16 @@ func slowCheckRun(t *testing.T, wait time.Duration, afterSlow func()) (pidFile s
 			t.Errorf("putSSOCache: %v", err)
 			return
 		}
-		appears(pidFile)
-		if afterSlow != nil && !ended() {
+		if appears(pidFile) && afterSlow != nil {
 			afterSlow()
 		}
 	}()
+	// The run releases its own SIGTERM handler before PlanExec returns, so a helper that
+	// signals just as the run ends would kill the test binary; ended() cannot close that
+	// window. This handler stays until the test ends; the run's own still gets the signal.
+	guard := make(chan os.Signal, 1)
+	signal.Notify(guard, syscall.SIGTERM)
+	t.Cleanup(func() { signal.Stop(guard) })
 	var stderr bytes.Buffer
 	start := time.Now()
 	_, _, _, err = PlanExec(bin, workloadEnv, terminalOpts(&stderr, wait))
@@ -950,12 +955,12 @@ func processGone(pidFile string) bool {
 // the child is gone, and nothing runs afterwards.
 func TestTerminalRunSIGTERMKillsASlowCheck(t *testing.T) {
 	pidFile, took, err := slowCheckRun(t, time.Minute, func() { syscall.Kill(os.Getpid(), syscall.SIGTERM) })
+	// Only the slow export writes its pid, and only then is the signal sent.
+	if _, statErr := os.Stat(pidFile); statErr != nil {
+		t.Fatalf("the slow export never started (took %s, err = %v)", took, err)
+	}
 	if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "stopped waiting") {
 		t.Fatalf("err = %v", err)
-	}
-	// Only the slow export writes its pid: the check was running and blocked.
-	if _, err := os.Stat(pidFile); err != nil {
-		t.Fatal("the slow export never started")
 	}
 	if took > 15*time.Second {
 		t.Fatalf("SIGTERM did not end the slow check (%s)", took)
