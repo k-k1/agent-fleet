@@ -58,11 +58,19 @@ and replaces your home directory with `~`, but an error body from the Console is
 
 ## Renting an EC2 Mac (if you have no Mac)
 
-EC2 Mac instances are bare-metal Mac minis on a Dedicated Host, so Docker Desktop's and
-Lima's VM runs at the first level of virtualization; no nested virtualization is needed.
-That is inferred, not confirmed by AWS or Docker. **A host is billed for at least 24
-hours** (Apple's licence), so prepare everything above first. GitHub's macOS runners do
-not work for this: they are VMs, and M1/M2 cannot nest one.
+EC2 Mac instances are bare-metal Mac minis on a Dedicated Host, so colima's and Lima's VM
+runs at the first level of virtualization (measured: both start on `mac2.metal`). **A
+host is billed for at least 24 hours** (Apple's licence), so prepare everything above
+first. GitHub's macOS runners do not work for this: they are VMs, and M1/M2 cannot nest one.
+
+Before allocating, check two things that stop you outright:
+
+- **The quota.** "Running Dedicated mac2 Hosts" (and every other Mac host quota) starts at
+  0 in a new account; request 1 in Service Quotas and wait for the approval.
+- **The region.** Not every region offers Apple silicon to every account
+  (`aws ec2 describe-instance-type-offerings --location-type availability-zone
+  --filters Name=instance-type,Values=mac2.metal`); one measured account saw only Intel
+  `mac1.metal` in Tokyo and used Singapore.
 
 Run the AWS commands as you run any other in your account (in an Agent Fleet workspace:
 `af-aws-exec --profile <name> --account <id> -- <command>`):
@@ -73,11 +81,16 @@ aws ec2 allocate-hosts --instance-type mac2.metal --availability-zone <az> --qua
 # 2. the newest macOS AMI for arm64
 aws ec2 describe-images --owners amazon --filters 'Name=name,Values=amzn-ec2-macos-*' \
   'Name=architecture,Values=arm64_mac' --query 'sort_by(Images,&CreationDate)[-1].ImageId'
-# 3. the instance on that host (a key pair and a security group allowing SSH from you)
-aws ec2 run-instances --instance-type mac2.metal --image-id <ami> --key-name <key> \
-  --security-group-ids <sg> --placement 'HostId=<host id>' --subnet-id <subnet>
-ssh ec2-user@<address>
+# 3. the instance on that host, with an instance profile carrying only
+#    AmazonSSMManagedInstanceCore, so it is reachable through SSM with no key or port
+aws ec2 run-instances --instance-type mac2.metal --image-id <ami> --placement 'HostId=<host id>' \
+  --subnet-id <subnet with internet access> --iam-instance-profile Name=<profile> \
+  --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=200,VolumeType=gp3}'
+# 4. about 30 minutes later SSM reports it Online; run commands as ec2-user, not root
+#    (Homebrew refuses root): ssm send-command with `sudo -u ec2-user -i /bin/bash <script>`
 ```
+
+SSH (`--key-name`, a security group allowing port 22) works too, if you can reach it.
 
 On the Mac:
 
@@ -89,7 +102,7 @@ brew install colima docker docker-compose lima git
 mkdir -p ~/.docker
 [ -e ~/.docker/config.json ] || echo '{"cliPluginsExtraDirs": ["/opt/homebrew/lib/docker/cli-plugins"]}' > ~/.docker/config.json
 docker compose version                               # must answer before going on
-colima start --cpu 4 --memory 8 --vm-type vz         # engine 1
+colima start --cpu 4 --memory 8 --vm-type vz --mount-type virtiofs   # engine 1
 deploy/macos/acceptance.sh docker ~/agent-fleet-<v>
 colima stop
 brew install --cask orbstack && open -a OrbStack     # engine 2
@@ -98,8 +111,13 @@ deploy/macos/acceptance.sh native --version <v>
 deploy/macos/acceptance.sh installer --version <v>
 ```
 
-Docker Desktop needs the GUI for its first start, so it needs a screen-sharing session
-(enable Screen Sharing and tunnel VNC over SSH); skip it if that is not worth the time.
+**Docker Desktop and OrbStack need a logged-in screen for their first start.** Over SSM or
+SSH, `orb start` dies with "missing TCC permission for data storage directory" (measured):
+macOS grants that permission only through a dialog. Enable Screen Sharing, log in once
+over VNC (tunnelled through SSM or SSH), approve the dialogs, and the CLI works afterwards;
+skip them if that is not worth the time. colima and Lima need no screen.
+
+macOS has no `timeout` command, so a step that might hang needs its own watchdog.
 Switch engines with `docker context use <name>` and stop the previous one first: both
 would publish the same ports.
 
@@ -111,4 +129,9 @@ before). A host left allocated keeps billing.
 
 Paste each report into #2961 as a comment. A FAIL either becomes a fix (and this
 directory's script learns the case) or a documented limit in the compose / native
-README, which then drops "unverified" for what was actually checked.
+README, which then says what was actually checked.
+
+Checked so far (M1 Mac mini, macOS 26.7, release 0.36.0 images): `docker` with colima
+0.10.3, `native` with Lima 2.2.1, and `installer` (including `install-compose.sh` with
+`sha256sum` removed from `PATH`; macOS 26 ships `sha256sum`) — no FAIL. Docker Desktop and
+OrbStack: not yet, for the reason above.

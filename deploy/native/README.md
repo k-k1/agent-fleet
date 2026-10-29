@@ -73,7 +73,10 @@ Docker setup, `agent-fleet-<v>.tar.gz`, instead).
 there is no macOS package and `install.sh` refuses to run there. On an Apple Silicon Mac
 run the `linux-arm64` package inside a Linux VM (Lima, an OrbStack machine, ...): install
 and `af start` inside the VM, and open `http://localhost:8099` through the VM's port
-forward. This route is unverified (#2961). The Docker edition on a Mac is described in
+forward. Checked on an M1 Mac mini (macOS 26.7) with Lima 2.2.1 and its Ubuntu LTS template:
+install, start, workspace start and stop → start passed, after the AppArmor setting above
+(the Ubuntu VM restricts unprivileged user namespaces like any Ubuntu 23.10+). An OrbStack
+machine is not checked yet (#2961). The Docker edition on a Mac is described in
 [deploy/compose/README.md](../compose/README.md#macos-experimental-unverified).
 
 ## Data locations

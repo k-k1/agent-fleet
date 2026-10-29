@@ -33,7 +33,7 @@ no registry login. Point `REGISTRY` at your own mirror to pull from elsewhere.
 ## Prerequisites
 
 - A Linux host with **Docker** (Engine + `docker compose`). A Mac (Apple Silicon) is
-  experimental and unverified: see [macOS](#macos-experimental-unverified).
+  experimental: see [macOS](#macos-experimental-unverified).
 - A **public domain** with a DNS A/AAAA record pointing at this host (for TLS).
   Internal-only? Use the `tls internal` fallback in `Caddyfile`.
 - An **IdP client for login**: a Google OAuth 2.0 Web client, or an OIDC app
@@ -345,12 +345,19 @@ encodes them, but if you customize it, keep them:
   owned by uid 1000 (the workspace `dev` user), and the CP needs the host docker
   group to use the socket. A wrong `DOCKER_GID` = "permission denied" on the socket.
 
-## macOS (experimental, unverified)
+<a id="macos-experimental-unverified"></a>
 
-The images are published for `linux/arm64`, so Docker Desktop, OrbStack or colima on an
-Apple Silicon Mac pull the right ones. What does not carry over is the DooD wiring above,
-which assumes rootful Docker on Linux. **Nobody has run this on a Mac yet**; the
-acceptance run is #2961 ([deploy/macos/README.md](../macos/README.md) and its script), and what it finds replaces this section.
+## macOS (experimental)
+
+The images are published for `linux/arm64`, so an Apple Silicon Mac pulls the right ones.
+What does not carry over is the DooD wiring above, which assumes rootful Docker on Linux.
+
+**Checked so far: colima only.** On an M1 Mac mini with macOS 26.7, colima 0.10.3
+(`colima start --vm-type vz --mount-type virtiofs`) passed every check of
+[deploy/macos/acceptance.sh](../macos/README.md): workspace start in both directions,
+`linux/arm64`, home ownership and modes on the shared directory, headless Chromium, and
+stop → start keeping the home. Docker Desktop and OrbStack are not checked yet: both need
+a logged-in screen for their first start, which the test machine did not have (#2961).
 
 Single user, reached at `http://127.0.0.1:8099` from the Mac; no Caddy, no public domain.
 In `.env`, besides the secrets from the Quick start:
@@ -381,16 +388,16 @@ docker compose -f docker-compose.yml -f docker-compose.macos.yml up -d
   [workspace listener](#workspace-listener-optional-when-workspaces-cannot-reach-public_base_url)
   on the same name, because `127.0.0.1` inside a workspace is the workspace itself.
   Both ports are published on the Mac's loopback only.
-- **Alternative, also unverified:** Docker Desktop 4.34+ can enable host networking
+- **Alternative, unchecked:** Docker Desktop 4.34+ can enable host networking
   (Settings → Resources → Network) and OrbStack supports `network_mode: host`; with it the
   plain `docker-compose.yml` might work unchanged.
-- **(B) and (C)** are where Linux and a Mac differ most: files on a shared directory are
-  not owned by uid 1000 the way they are on Linux, and access to them is slower than a
-  Linux disk (heavy `node_modules` trees notice). Check `~/.ssh` permissions inside a
-  workspace before relying on it.
+- **(B) and (C)** are where Linux and a Mac can differ: the home lives on a directory the
+  engine shares with its VM. With colima and virtiofs, files kept uid 1000 and their modes
+  (`~/.ssh` 700, a new file 600), and writes were not slower than the container's own disk.
+  Another engine's file sharing may behave differently; the acceptance script checks it.
 - Apple's `container` tool is not a Docker daemon, so the CP cannot drive it.
-- Without Docker, the native package runs inside a Linux VM (Lima, an OrbStack machine):
-  see [deploy/native/README.md](../native/README.md).
+- Without Docker, the native package runs inside a Linux VM: checked with Lima, see
+  [deploy/native/README.md](../native/README.md).
 
 ## Workspace listener (optional): when workspaces cannot reach `PUBLIC_BASE_URL`
 
