@@ -33,6 +33,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -340,8 +341,9 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 	if err != nil {
 		return ProbeResult{Error: err.Error()}
 	}
-	var errBuf bytes.Buffer
+	var errBuf lockedBuffer
 	cmd.Stderr = &errBuf
+	cmd.WaitDelay = probeWaitDelay
 	if err := cmd.Start(); err != nil {
 		return withDetail(coded(codeStartFailed, fmt.Sprintf("failed to start: %v", err), "error", err.Error()), tail(errBuf.String()))
 	}
@@ -476,6 +478,11 @@ func writeRPC(w io.Writer, m rpcMsg) error {
 // EPIPE routinely arrives first; the grace only matters for a server that closed stdin
 // and keeps running.
 const writeExitGrace = 2 * time.Second
+
+// probeWaitDelay bounds the reap after the kill. A grandchild that inherited stderr (npx
+// spawning node) keeps the pipe open past the server's death, and Wait would otherwise
+// block on copying it until that grandchild exits.
+const probeWaitDelay = 2 * time.Second
 
 // classifyWriteErr names the cause of a failed write. A broken pipe means the server is
 // gone or going, so wait for the reader's exit error (or the budget) instead of
@@ -837,6 +844,26 @@ func okResult(info impl, toolsRaw json.RawMessage) ProbeResult {
 		res.Tools = append(res.Tools, t.Name)
 	}
 	return res
+}
+
+// lockedBuffer is the stderr sink of a stdio probe. os/exec copies a non-file Stderr in
+// its own goroutine until Wait returns, and the probe reads the tail on failures while the
+// server may still be running, so the stderr written so far is read under the same lock.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func tail(s string) string {
