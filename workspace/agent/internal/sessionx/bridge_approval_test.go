@@ -21,13 +21,23 @@ func setMcpConv(t *testing.T, conv string) {
 	t.Cleanup(func() { deps.MCPConvID = old })
 }
 
-// shrinkApprovalTunables makes the poll/timeout tiny so wait tests run fast, restoring
-// the production values afterward.
-func shrinkApprovalTunables(t *testing.T) {
+// Approval windows for the wait tests. A case that expects a decision gets the generous
+// one: it returns as soon as the decision is observed, so the size costs nothing when green,
+// while a short one fails the case whenever load starves the goroutine that writes the
+// decision (seen: a 500 ms window read as a timeout under package-parallel load). Only the
+// case that expects the timeout uses the short one, which keeps that path fast.
+const (
+	approvalDecidedWindow = 30 * time.Second
+	approvalTimeoutWindow = 500 * time.Millisecond
+)
+
+// shrinkApprovalTunables sets the wait window and a tiny poll so wait tests run fast,
+// restoring the production values afterward.
+func shrinkApprovalTunables(t *testing.T, timeout time.Duration) {
 	t.Helper()
 	to, poll, age := bridgeApprovalTimeout, bridgeApprovalPoll, bridgeApprovalMaxAge
 	t.Cleanup(func() { bridgeApprovalTimeout, bridgeApprovalPoll, bridgeApprovalMaxAge = to, poll, age })
-	bridgeApprovalTimeout = 500 * time.Millisecond
+	bridgeApprovalTimeout = timeout
 	bridgeApprovalPoll = 2 * time.Millisecond
 }
 
@@ -109,9 +119,9 @@ func TestBridgeApprovalGateFailClosed(t *testing.T) {
 // and every path removes the record.
 func TestWaitApprovalDecision(t *testing.T) {
 	withTempHome(t)
-	shrinkApprovalTunables(t)
 
 	t.Run("approve", func(t *testing.T) {
+		shrinkApprovalTunables(t, approvalDecidedWindow)
 		id := chatx.RandUUID()
 		_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: chatx.NowMs()})
 		go func() {
@@ -129,6 +139,7 @@ func TestWaitApprovalDecision(t *testing.T) {
 	})
 
 	t.Run("reject", func(t *testing.T) {
+		shrinkApprovalTunables(t, approvalDecidedWindow)
 		id := chatx.RandUUID()
 		_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: chatx.NowMs()})
 		go func() {
@@ -143,6 +154,7 @@ func TestWaitApprovalDecision(t *testing.T) {
 	})
 
 	t.Run("timeout", func(t *testing.T) {
+		shrinkApprovalTunables(t, approvalTimeoutWindow)
 		id := chatx.RandUUID()
 		_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: chatx.NowMs()})
 		if err := waitApprovalDecision(id); !errors.Is(err, errApprovalTimeout) {
@@ -186,7 +198,7 @@ func TestBridgeApprovalDecision(t *testing.T) {
 // the full two-process handshake over the shared record.
 func TestBridgeApprovalRoundTrip(t *testing.T) {
 	withTempHome(t)
-	shrinkApprovalTunables(t)
+	shrinkApprovalTunables(t, approvalDecidedWindow)
 
 	id := chatx.RandUUID()
 	_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: chatx.NowMs()})
@@ -197,13 +209,10 @@ func TestBridgeApprovalRoundTrip(t *testing.T) {
 	if _, err := bridgeApprovalDecision(id, "approve", false); err != nil { // the daemon side
 		t.Fatal(err)
 	}
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("round-trip approve → %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("subprocess never observed the decision")
+	// No wall-clock guard of its own: the waiter is bounded by the approval window, and a
+	// shorter guard here would reintroduce the flake.
+	if err := <-done; err != nil {
+		t.Fatalf("round-trip approve → %v", err)
 	}
 }
 
