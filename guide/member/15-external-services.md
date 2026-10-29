@@ -60,8 +60,9 @@ session. You can view, list, create, edit, comment on and transition issues:
   command, for example for another project's issue types, run it as printed.)
 - **Markdown in comments and descriptions**: `comment add`, and the description of `issue create`
   (`-b`, `-T`, or a pipe) and `issue edit -b`, are converted from Markdown to Jira's document format
-  by Agent Fleet, so `code` and **bold** right next to Japanese text, and a list straight after a
-  paragraph, show as written. When the issue is created but its description cannot be set, `jira`
+  by Agent Fleet, so `code` and **bold** right next to Japanese text, a list straight after a
+  paragraph, and a table (a `| a | b |` header row followed by a `|---|---|` delimiter row) show as
+  written; a table inside a list or a quote shows as a line per row, as Jira allows none there. When the issue is created but its description cannot be set, `jira`
   says so and exits with status 3: the issue exists, so do not create it again; set the
   description with `jira issue edit PROJ-1 --no-input -b "…"`. If the issue type requires a
   description when an issue is created, `create` sends it through the Jira CLI's own conversion and

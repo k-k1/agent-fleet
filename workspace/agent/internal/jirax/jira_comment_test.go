@@ -95,14 +95,52 @@ func TestJiraMarkdownADFConstructs(t *testing.T) {
 	}
 }
 
-func TestJiraMarkdownADFFallbacks(t *testing.T) {
-	// A table has no goldmark core node; it must come through as text, never panic or vanish.
-	raw, _ := json.Marshal(jiraMarkdownADF("| a | b |\n|---|---|\n| 1 | 2 |\n"))
-	if !strings.Contains(string(raw), "| a | b") || !strings.Contains(string(raw), "|---|---|") {
-		t.Errorf("table text lost: %s", raw)
+func TestJiraMarkdownADFTable(t *testing.T) {
+	md := "Before:\n\n| 処理 | **方針** |\n|:---|---:|\n| `a\\|b` |  |\n| 1 |\n"
+	got, _ := json.Marshal(jiraMarkdownADF(md)["content"])
+	cell := func(kind, inner string) string {
+		return `{"attrs":{},"content":[{"content":[` + inner + `],"type":"paragraph"}],"type":"` + kind + `"}`
 	}
+	text := func(s string) string { return `{"text":"` + s + `","type":"text"}` }
+	want := `[{"content":[` + text("Before:") + `],"type":"paragraph"},` +
+		`{"attrs":{"isNumberColumnEnabled":false,"layout":"default"},"content":[` +
+		`{"content":[` + cell("tableHeader", text("処理")) + `,` +
+		cell("tableHeader", `{"marks":[{"type":"strong"}],"text":"方針","type":"text"}`) + `],"type":"tableRow"},` +
+		`{"content":[` + cell("tableCell", `{"marks":[{"type":"code"}],"text":"a|b","type":"text"}`) + `,` +
+		cell("tableCell", text(" ")) + `],"type":"tableRow"},` +
+		// A short row is padded to the header's width: Jira renders ragged rows as a broken grid.
+		`{"content":[` + cell("tableCell", text("1")) + `,` + cell("tableCell", text(" ")) + `],"type":"tableRow"}` +
+		`],"type":"table"}]`
+	if string(got) != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+}
+
+// ADF admits no table inside a list item or a quote; there it degrades to a line per row.
+func TestJiraMarkdownADFNestedTable(t *testing.T) {
+	for _, md := range []string{"- item\n\n  | a | b |\n  |---|---|\n  | 1 | 2 |\n", "> | a | b |\n> |---|---|\n> | 1 | 2 |\n"} {
+		raw, _ := json.Marshal(jiraMarkdownADF(md))
+		s := string(raw)
+		if strings.Contains(s, `"type":"table"`) {
+			t.Errorf("table nested where ADF refuses it: %s", s)
+		}
+		for _, want := range []string{`"text":"a"`, `"text":" | "`, `"text":"2"`, `"type":"hardBreak"`} {
+			if !strings.Contains(s, want) {
+				t.Errorf("missing %s in %s", want, s)
+			}
+		}
+	}
+	// An empty header row keeps its line, so the body row stays second.
+	got, _ := json.Marshal(jiraMarkdownADF("> | |\n> |---|\n> | x |\n")["content"])
+	want := `[{"content":[{"content":[{"text":" ","type":"text"},{"type":"hardBreak"},{"text":"x","type":"text"}],"type":"paragraph"}],"type":"blockquote"}]`
+	if string(got) != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+}
+
+func TestJiraMarkdownADFFallbacks(t *testing.T) {
 	// Code mark next to strong: ADF refuses the pair, so only code stays.
-	raw, _ = json.Marshal(jiraMarkdownADF("**`x`**"))
+	raw, _ := json.Marshal(jiraMarkdownADF("**`x`**"))
 	if strings.Contains(string(raw), `"strong"`) {
 		t.Errorf("strong kept beside code: %s", raw)
 	}
