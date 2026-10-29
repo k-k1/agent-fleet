@@ -92,6 +92,11 @@ aws ec2 run-instances --instance-type mac2.metal --image-id <ami> --placement 'H
 
 SSH (`--key-name`, a security group allowing port 22) works too, if you can reach it.
 
+Check the disk with `df -h /` once it is up. The macOS 26.7 AMI grew its APFS container to
+the whole 200 GiB volume by itself (measured); if yours still shows the AMI's size, grow it
+with AWS's [increase the size of an EBS volume on your Mac instance](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/mac-instance-increase-volume.html)
+steps before pulling images.
+
 On the Mac:
 
 ```bash
@@ -111,11 +116,12 @@ deploy/macos/acceptance.sh native --version <v>
 deploy/macos/acceptance.sh installer --version <v>
 ```
 
-**Docker Desktop and OrbStack need a logged-in screen for their first start.** Over SSM or
-SSH, `orb start` dies with "missing TCC permission for data storage directory" (measured):
-macOS grants that permission only through a dialog. Enable Screen Sharing, log in once
-over VNC (tunnelled through SSM or SSH), approve the dialogs, and the CLI works afterwards;
-skip them if that is not worth the time. colima and Lima need no screen.
+**OrbStack does not start without a logged-in screen** (measured): over SSM, `orb start`
+dies with "missing TCC permission for data storage directory", a permission macOS grants
+only through a dialog. Docker Desktop's first start also asks for a screen; it was not
+tried. Untried as well: enabling Screen Sharing, logging in once over VNC (tunnelled through
+SSM or SSH) and approving the dialogs, which should let both start from the CLI afterwards.
+colima and Lima need no screen.
 
 macOS has no `timeout` command, so a step that might hang needs its own watchdog.
 Switch engines with `docker context use <name>` and stop the previous one first: both
