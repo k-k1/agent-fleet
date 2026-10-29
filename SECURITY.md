@@ -100,11 +100,22 @@ informed choice — not undisclosed bugs.
   to exfiltrate that user's connected credentials. See
   [07 §7.2](docs/build/07-security.md#72-isolation-controls).
 
-- **Workspace egress is not fenced.** An egress proxy exists, but no deployment
-  template routes a workspace's traffic through it, so a workload can send data
-  anywhere its network reaches
-  ([07 §7.8](docs/build/07-security.md#78-egress-control-),
-  [#1181](https://github.com/k-k1/agent-fleet/issues/1181)).
+- **Workspace egress is fenced only on AWS with the egress gateway.** On `docker`,
+  `native`, `kubernetes` and on AWS with the default `EgressRoute=nat-gateway`,
+  nothing forces a workspace's traffic through the egress proxy, so enforce does not
+  constrain it and a workload can send data anywhere its network reaches
+  ([#1181](https://github.com/k-k1/agent-fleet/issues/1181)). On AWS (`ecs` /
+  `ecs-ec2`) with `00-network`'s `EgressRoute=gateway`, the workspace route table
+  leads only to the egress gateway, so workspace HTTP(S) leaves through it and
+  enforce applies there. That route is a preview, verified on a test deployment
+  only, and has limits: the decision is by the TLS name (SNI) the client sends, so an
+  allowed name can carry traffic to any public address on port 443; DNS through the
+  VPC resolver is allowed and not recorded; non-HTTP egress such as git over SSH is
+  dropped; and workspaces get an egress address of their own, a second one to
+  allow-list next to the NAT gateway's
+  ([04 Operating egress control](guide/operate/04-secure.md#operating-egress-control),
+  [01 Choosing the egress route on AWS](guide/operate/01-choose.md#choosing-the-egress-route-on-aws),
+  [07 §7.8](docs/build/07-security.md#78-egress-control-)).
 
 ### `docker` and `native`
 
