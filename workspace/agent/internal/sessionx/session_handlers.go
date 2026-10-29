@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -28,11 +27,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/limitsnap"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // LcppLiveModels is lcpp's live-catalog seam: workspace/agent's main package (agent_models.go's
@@ -729,196 +726,19 @@ func createSession(w http.ResponseWriter, r *http.Request, req CreateReq) {
 	// The failure net for a reserved slot: every path that ends without a meta. A no-op for a
 	// create that is not a spawn.
 	defer c.slot.release()
-	if !c.validateOptions() || !c.resolveDriver() || !c.checkModel() || !c.resolveWorkingCopy() {
+	if !c.validateOptions() || !c.resolveDriver() || !c.checkModel() || !c.resolveWorkingCopy() || !c.identify() {
 		return
 	}
-	w, spawnParent, writeCreated := c.w, c.spawnParent, c.writeCreated
-	slot, title, driver, subdir := c.slot, c.title, c.driver, c.subdir
-
-	// Identity is a freshly allocated random slug — NOT the client's name. It (and the
-	// sid it derives) can't collide with an archived/pruned session's jsonl, so a new
-	// session never accidentally --resumes a past conversation.
-	name := req.name
-	if name == "" {
-		name = allocSessionName(req.Dir)
-	} else if _, taken := session.ReadMeta(name); taken {
-		// A move's booked name is held against every allocation; a meta under it anyway is
-		// another session, which a create must never overwrite.
-		httpx.WriteErr(w, http.StatusConflict, "name_taken", "a session named "+name+" already exists")
+	meta, ok := c.armMeta()
+	if !ok {
 		return
 	}
-	// publish writes the meta. A move's target is written checked: the move commits, and stops
-	// its source, on the strength of that meta, and a target running without one is listed
-	// nowhere. Its first prompt follows the write, so a failed write leaves a target that has
-	// not been told to work.
-	publish := func(m session.Meta) bool {
-		if req.name == "" {
-			slot.publish(m)
-			return true
-		}
-		if err := writeMoveTargetMeta(m); err != nil {
-			log.Printf("move target %s: writing its meta: %v", name, err)
-			httpx.WriteErr(w, http.StatusInternalServerError, errCodeMetaWriteFailed, "the session started but its meta could not be written: "+err.Error())
-			return false
-		}
-		return true
-	}
-
-	kind := NormalizeKind(req.Kind)
-	// An SSM session with no client title defaults to "{host alias} @MMDD-HHMM" — a
-	// human-meaningful "target + timestamp" name (vs the generic {home-basename} @… fallback).
-	if kind == session.KindSSM && title == "" {
-		title = ssmDefaultTitle(req.SSMAlias, req.SSMTarget, time.Now())
-	}
-	label := ""
-	if AgentOf(kind).Caps().UsesLabel {
-		label = sessionLabelFor(req.Dir, title, name)
-	}
-	var ssm *session.SSMMeta
-	if kind == session.KindSSM {
-		if strings.TrimSpace(req.SSMTarget) == "" {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_ssm", "ssm_target (instance id) is required")
-			return
-		}
-		ssm = &session.SSMMeta{
-			Profile: req.SSMProfile, Target: req.SSMTarget, Document: req.SSMDocument,
-			Region: req.SSMRegion, StartURL: req.SSOStartURL, SSORegion: req.SSORegion,
-			AccountID: req.SSOAccountID, RoleName: req.SSORoleName,
-			RoleARN: req.SSMRoleARN, SourceProfile: req.SSMSourceProfile, ExternalID: req.SSMExternalID,
-			RoleSessionName: req.SSMRoleSessionName, DurationSeconds: req.SSMDurationSeconds,
-		}
-		if ssm.Region == "" {
-			ssm.Region = ssm.SSORegion
-		}
-	}
-	studio := strings.TrimSpace(req.Studio)
-	if studio != "" {
-		// A studio is bound by a person pressing "attach an agent" in the studio pane. A session
-		// raising a child must not hand it someone's studio: the binding is what the studio's
-		// draft tools trust.
-		if spawnParent != "" {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_studio", "a session cannot start a session bound to an image studio")
-			return
-		}
-		if !paths.ValidIDSegment(studio) {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_studio", "invalid studio id: "+studio)
-			return
-		}
-	}
-	origin, originConv, originSession := CreateOrigin(&req)
-	meta := session.Meta{
-		Name: name, Dir: req.Dir, Subdir: subdir, Model: req.Model, Effort: req.Effort, Mode: req.Mode, Kind: kind, Driver: driver, Title: title, Color: req.Color, Label: label,
-		SkipPermissions: req.SkipPermissions,
-		Repo:            filepath.Base(req.Dir), Branch: gitx.GitCurrentBranch(req.Dir),
-		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
-		Origin: origin, OriginConv: originConv, OriginSession: originSession,
-		Studio: studio, WorkItem: cleanWorkItemRef(req.WorkItem),
-
-		// From the member's setting only, never the request: a session can call create_session,
-		// and turning contributor mode on is the member's decision (ui_prefs.go's mark gate).
-		MuseContributorMode: kind == session.KindMuse && uiprefs.MuseContributorMode(),
-	}
-	// pending from the first write of the meta: the pane must not offer a resend while the
-	// delivery below may still be typing (ADR 0100 decision 2).
-	if strings.TrimSpace(req.InitialPrompt) != "" {
-		meta.InitialPromptState = session.InitialPromptPending
-	}
-	// Armed here, before either launch path delivers the initial prompt (docs/log/85): the
-	// arm's instant is also the lower bound its completion evidence is cut by, and the launch
-	// task is precisely the work it is waiting for the end of.
-	if req.StopAfterTurn {
-		meta.StopAfterTurnAt = meta.CreatedAt
-	}
-	meta.SpendCapUSD = session.DefaultSpendCap()
-	if req.SpendCapUSD != nil {
-		meta.SpendCapUSD, _ = session.NormalizeSpendCap(*req.SpendCapUSD) // validated above
-	}
-	// docs/log/51 Phase 3, the self-report fast path: add one line to the launch task saying
-	// "call af_report when you are done" — only for an instruction that owes a report, i.e.
-	// one with report_to. Placed before the managed / tui split so both launch paths carry
-	// the same line.
-	if req.ReportTo != "" || req.delivery() != nil {
-		req.InitialPrompt = withSelfReportHint(req.InitialPrompt, meta)
-	}
-	// The studio's own `session` is written BEFORE the session is published or launched (ADR
-	// 0100 decision 2 ③): a Managed create sends the persona synchronously below, and its first
-	// get_image_studio is refused unless the studio already names this session back.
-	if studio != "" {
-		if ref := bindStudioOnCreate(studio, meta); ref != nil {
-			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
-			return
-		}
-	}
-	if meta.DriverKind() == session.DriverManaged {
-		// managed (docs/log/27 P2): no tmux pane — the driver opens a thread on the shared
-		// runtime. The first prompt needs no boot-screen scraping and can just be sent
-		// (§10.2-9 — idempotent through ClientMessageID).
-		d, _ := driverOf(meta)
-		h, err := mcpx.StartManagedSession(d, meta)
-		if err != nil {
-			unbindStudioAfterFailedLaunch(studio, name)
-			writeRuntimeErr(w, err)
-			return
-		}
-		if !publish(meta) {
-			return
-		}
-		recordFleetGraphBirth(meta)
-		req.managed = true
-		noteCreateOrigin(name, &req, spawnParent, origin)
-		// The row stays either way: a failed launch task is reported as before.
-		defer chatx.MarkInstrSent(name, req.instr)
-		if p := strings.TrimSpace(req.InitialPrompt); p != "" {
-			if err := h.Send(agents.TurnInput{Prompt: p, Origin: createTurnOrigin(&req, spawnParent),
-				Instr: req.instr, Schedule: scheduleRefOf(req.Source, req.ScheduleID, req.ScheduleSlot)}); err != nil {
-				log.Printf("managed initial prompt %s: %v", name, err)
-				meta.InitialPromptState = session.InitialPromptFailed
-			} else {
-				markSessionWorking(name)
-				meta.InitialPromptState = session.InitialPromptDelivered
-			}
-			settleInitialPrompt(name, meta.InitialPromptState)
-		}
-		writeCreated(meta)
-		return
-	}
-	if err := launchTmuxFn(meta, req.SSMForceLogin); err != nil {
-		unbindStudioAfterFailedLaunch(studio, name)
-		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
-		return
-	}
-	if !publish(meta) {
-		return
-	}
-	recordFleetGraphBirth(meta)
-
-	// BEFORE the delivery below, not after: the record is what the mirror matches the turn
-	// against, and the turn can appear first (see noteCreateOrigin).
-	noteCreateOrigin(name, &req, spawnParent, origin)
-	// Optional launch task: deliver it once the CLI has booted (async — the create
-	// response returns the session immediately so the caller can start polling).
-	if strings.TrimSpace(req.InitialPrompt) != "" {
-		go deliverInitialPromptFn(name, req.InitialPrompt)
-	}
-
-	writeCreated(meta)
+	c.launch(meta)
 }
 
-// noteCreateOrigin remembers who a new session's launch task came from, so the mirror can badge
-// its first user turn instead of rendering it as something the user typed.
-//
-// It must run BEFORE either launch path delivers the prompt. The record is matched to the turn
-// by text when the turn appears, and delivery is asynchronous on the tui path and immediate on
-// the managed one — recording afterwards is a race that loses the badge exactly when the turn
-// arrives quickly. (It used to sit after delivery on both paths; ADR 0073 decision 14 moved it,
-// which is also what badgeOriginOf's comment was written in anticipation of.)
-//
-// docs/log/51 Phase 2: the instruction ledger row is raised only for report_to — even with no
-// initial_prompt, because the operator may steer the session by hand afterwards. The other two
-// branches record provenance only; there is nowhere for them to report to.
-// deliverInitialPromptFn is deliverInitialPrompt behind a seam. The ordering above — record,
-// THEN deliver — is a requirement, not an incidental line order (ADR 0073 decision 14), and the
-// only way to observe it from a test is to be the delivery.
+// deliverInitialPromptFn is deliverInitialPrompt behind a seam. The ordering noteCreateOrigin
+// documents — record, THEN deliver — is a requirement, not an incidental line order (ADR 0073
+// decision 14), and the only way to observe it from a test is to be the delivery.
 var deliverInitialPromptFn = deliverInitialPrompt
 
 // createTurnOrigin is the TurnInput origin of create_session's initial prompt. It follows
@@ -946,6 +766,18 @@ func (req *CreateReq) delivery() *chatx.ScheduleDelivery {
 	return d
 }
 
+// noteCreateOrigin remembers who a new session's launch task came from, so the mirror can badge
+// its first user turn instead of rendering it as something the user typed.
+//
+// It must run BEFORE either launch path delivers the prompt. The record is matched to the turn
+// by text when the turn appears, and delivery is asynchronous on the tui path and immediate on
+// the managed one — recording afterwards is a race that loses the badge exactly when the turn
+// arrives quickly. (It used to sit after delivery on both paths; ADR 0073 decision 14 moved it,
+// which is also what badgeOriginOf's comment was written in anticipation of.)
+//
+// docs/log/51 Phase 2: the instruction ledger row is raised only for report_to — even with no
+// initial_prompt, because the operator may steer the session by hand afterwards. The other two
+// branches record provenance only; there is nowhere for them to report to.
 func noteCreateOrigin(name string, req *CreateReq, spawnParent, origin string) {
 	hasPrompt := strings.TrimSpace(req.InitialPrompt) != ""
 	switch {
