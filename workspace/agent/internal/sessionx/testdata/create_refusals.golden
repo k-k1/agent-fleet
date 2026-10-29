@@ -1,0 +1,192 @@
+== bad_kind
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_kind\",\"message\":\"unknown kind \\\"Codex\\\"; accepted kinds: agy, claude, codex, copilot, cursor, kiro, lcpp, muse, opencode, shell, ssm (empty means claude)\"}}\n"
+== bad_kind_under_done_key
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_kind\",\"message\":\"unknown kind \\\"Codex\\\"; accepted kinds: agy, claude, codex, copilot, cursor, kiro, lcpp, muse, opencode, shell, ssm (empty means claude)\"}}\n"
+== bad_kind_under_reserved_durable_key
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_kind\",\"message\":\"unknown kind \\\"Codex\\\"; accepted kinds: agy, claude, codex, copilot, cursor, kiro, lcpp, muse, opencode, shell, ssm (empty means claude)\"}}\n"
+== replay_done
+status 200
+header Content-Type: application/json
+header X-Af-Create-Key: k-done
+header X-Af-Create-Outcome: created
+body "{\"name\":\"already\"}"
+== in_progress
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"create_in_progress\",\"message\":\"同じ内容のセッションを作成中です。完了までお待ちください\"}}\n"
+== abandoned
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"create_abandoned\",\"message\":\"this create was abandoned by its caller\"}}\n"
+== refused_durable
+status 409
+header Content-Type: application/json
+header X-Af-Create-Key: k-ref
+header X-Af-Create-Outcome: refused
+body "{\"error\":{\"code\":\"create_refused\",\"message\":\"a create under this key was refused; start over under a new key\"}}\n"
+== outcome_unknown
+status 503
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"create_outcome_unknown\",\"message\":\"the outcome of an earlier create under this key is unknown\"}}\n"
+== in_progress_fingerprint
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"create_in_progress\",\"message\":\"同じ内容のセッションを作成中です。完了までお待ちください\"}}\n"
+== start_refused
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"cli_install_no_space\",\"message\":\"codex could not be installed\"}}\n"
+== start_refused_durable
+status 409
+header Content-Type: application/json
+header X-Af-Create-Key: k-sd
+header X-Af-Create-Outcome: refused
+body "{\"error\":{\"code\":\"cli_install_no_space\",\"message\":\"codex could not be installed\"}}\n"
+== start_refused_retry_of_done
+status 200
+header Content-Type: application/json
+header X-Af-Create-Key: k-done
+header X-Af-Create-Outcome: created
+body "{\"name\":\"already\"}"
+== spawn_depth
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"spawn_depth\",\"message\":\"このセッション自身が parent1 に起こされた子なので、さらに子は起こせません。作業を分けたいときは propose_session_handoff で利用者に引き継ぎを提案してください\"}}\n"
+== spawn_depth_retry_of_done
+status 200
+header Content-Type: application/json
+header X-Af-Create-Key: k-done
+header X-Af-Create-Outcome: created
+body "{\"name\":\"already\"}"
+== spawn_depth_retry_in_progress
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"create_in_progress\",\"message\":\"同じ内容のセッションを作成中です。完了までお待ちください\"}}\n"
+== spawn_unknown_parent
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"spawn_unknown_parent\",\"message\":\"起動元のセッション \\\"ghost\\\" が見つかりません\"}}\n"
+== spawn_kind_refused
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"spawn_kind_refused\",\"message\":\"セッションからは shell / ssm のセッションを起こせません（任意コマンド実行になるため）。利用者に Console から起動してもらってください\"}}\n"
+== spawn_budget
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"spawn_budget\",\"message\":\"このセッションは既に子セッションを 3 本持っています（上限 3）。list_child_sessions で状態を確かめ、不要な子は利用者に Console での削除・アーカイブを頼んでください（停止したままの子は停止から 7 日で自動的にアーカイブされ、上限の数から外れます。この期間は利用者が Console の 設定 \\u003e エージェント \\u003e セッション で変えられます）\"}}\n"
+== bad_title
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_title\",\"message\":\"title is too long (max 80) or contains control characters\"}}\n"
+== bad_mode
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_mode\",\"message\":\"mode must be \\\"plan\\\" or \\\"normal\\\"\"}}\n"
+== bad_spend_cap
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_spend_cap\",\"message\":\"spend_cap_usd must be a number from 0 (no budget) to 100000\"}}\n"
+== permission_choice_unsupported
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"permission_choice_unsupported\",\"message\":\"this agent kind cannot surface tool approvals to the Console; skip_permissions must stay true\"}}\n"
+== driver_unsupported
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"driver_unsupported\",\"message\":\"managed ドライバはこの kind では利用できません\"}}\n"
+== bad_driver
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_driver\",\"message\":\"unknown driver: warp\"}}\n"
+== lcpp_disabled
+status 403
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"lcpp_disabled\",\"message\":\"llama.cpp は設定でオフになっています。設定 \\u003e エージェント \\u003e llama.cpp でオンにしてください。\"}}\n"
+== lcpp_no_model
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_model\",\"message\":\"llama.cpp セッションにはモデルの指定が必須です（CLI 自身の既定は存在しません）\"}}\n"
+== model_hidden
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"model_hidden\",\"message\":\"モデル opus は設定「使わないモデル」で除外されています。別のモデルを指定するか、設定 \\u003e エージェント \\u003e 動作設定 で除外を解除してください。\"}}\n"
+== lcpp_model_not_in_catalog
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_model\",\"message\":\"モデル \\\"llama-zz\\\" は利用できません。近い候補: qwen3-8b。一覧は起動ダイアログのモデル選択（アシスタントは list_models）で確認してください。\"}}\n"
+== worktree_without_dir
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_dir\",\"message\":\"worktree requires dir (the parent working copy)\"}}\n"
+== worktree_branch_in_use
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"sessionx-stub:ErrCodeBranchInUse\",\"message\":\"branch \\\"feature\\\" is already checked out in working copy \\\"app@feature\\\"\",\"worktree\":\"app@feature\"}}\n"
+== worktree_branch_exists
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"branch_exists\",\"message\":\"branch \\\"feature\\\" already exists locally; choose another name\"}}\n"
+== clone_failed
+status 502
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"clone_failed\",\"message\":\"remote_url is required and must not start with '-'\"}}\n"
+== dir_missing
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_dir\",\"message\":\"dir does not exist: $HOME/absent\"}}\n"
+== spawn_working_copy_busy
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"spawn_working_copy_busy\",\"message\":\"$HOME/repos/app では既にセッション busy が動いています。worktree=true（既定）で起こすか、別の作業コピーを指定してください。自分自身の作業コピーを意図して共有するなら worktree=false と allow_shared_working_copy=true を併せて指定します（自分が symlink を含まない正規のパスで起動している場合に限ります。他セッションの作業コピーは共有できません）。フラグを付けても同じ拒否になるなら、このコピーは共有できないので、同じ呼び出しを繰り返さないでください\"}}\n"
+== spawn_working_copy_busy_home
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"spawn_working_copy_busy\",\"message\":\"$HOME では既にセッション athome が動いています。worktree=true（既定）で起こすか、別の作業コピーを指定してください。自分自身の作業コピーを意図して共有するなら worktree=false と allow_shared_working_copy=true を併せて指定します（自分が symlink を含まない正規のパスで起動している場合に限ります。他セッションの作業コピーは共有できません）。フラグを付けても同じ拒否になるなら、このコピーは共有できないので、同じ呼び出しを繰り返さないでください\"}}\n"
+== subdir_outside
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_subdir\",\"message\":\"subdir must be a relative path inside the working copy: ../x\"}}\n"
+== subdir_missing
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_subdir\",\"message\":\"subdir does not exist: $HOME/repos/app/nope\"}}\n"
+== name_taken
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"name_taken\",\"message\":\"a session named kid already exists\"}}\n"
+== ssm_without_target
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_ssm\",\"message\":\"ssm_target (instance id) is required\"}}\n"
+== studio_from_spawn
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_studio\",\"message\":\"a session cannot start a session bound to an image studio\"}}\n"
+== studio_bad_id
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_studio\",\"message\":\"invalid studio id: a/b\"}}\n"
+== launch_failed
+status 500
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"tmux_failed\",\"message\":\"probe: launch refused\"}}\n"
+== studio_unbindable
+status 501
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"studio_unavailable\",\"message\":\"this Agent has no image studio store, so a session cannot be bound to one\"}}\n"
+== managed_launch_failed
+status 502
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"runtime_failed\",\"message\":\"probe: runtime down\"}}\n"
+== launch_failed_durable
+status 500
+header Content-Type: application/json
+header X-Af-Create-Key: k-lf
+header X-Af-Create-Outcome: refused
+body "{\"error\":{\"code\":\"tmux_failed\",\"message\":\"probe: launch refused\"}}\n"
