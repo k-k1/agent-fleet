@@ -19,7 +19,7 @@ export interface UsageWindow {
   // derived: codex's flag for the same rolled window (ADR 0111 decision 6).
   derived?: boolean;
 }
-interface UsageReading {
+export interface UsageReading {
   ok?: boolean;
   authed?: boolean;
   ageSec?: number;
