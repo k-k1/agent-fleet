@@ -10,7 +10,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import { AUTO_INLINE, noteSessionKinds, planUsageChips, readKindStamps, type KindStamps } from "../usageChipPlan.ts";
 import { setSettings, useSettings } from "../../lib/settings.ts";
-import { USAGE_SOURCES } from "./usageSources.ts";
+import { REMAINING_SOURCES, USAGE_SOURCES } from "./usageSources.ts";
 
 // --- usage-chip folding ---------------------------------------------------------------
 // Five agents expose subscription limits and five chips is most of the bar's right half,
@@ -123,7 +123,7 @@ export function UsageChipPlace({ kind }: { kind: string }) {
 // The chips in bar order. Every agent that can ever show a limit chip is listed, whether or
 // not it has a reading — the ranking needs the full order to break ties, and each chip
 // reports its own visibility anyway.
-const USAGE_CHIP_ORDER: string[] = [...USAGE_SOURCES.map((s) => s.kind as string), "copilot", "agy"];
+const USAGE_CHIP_ORDER: string[] = [...USAGE_SOURCES, ...REMAINING_SOURCES].map((s) => s.kind);
 
 // UsageChipFold: the group that decides which chips keep a slot on the bar. It owns the
 // "+N" chip, the popover the folded chips portal into, and the ranking; the chips
