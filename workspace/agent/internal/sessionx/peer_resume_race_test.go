@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -308,14 +309,15 @@ func TestPeerBootHoldEndsAtItsCap(t *testing.T) {
 // The review of #2741, round 2: on Linux a launch's start comes from /proc and is recomputed
 // against the clock on every read, so two reads of one launch differ by milliseconds. A hold
 // remembered by that time never matched again, and every later send within the cap was held
-// for another settle window. The fake pane reports a real pid (this test process) so the
+// for another settle window. The fake pane reports a real pid (a child started here) so the
 // jittering /proc path is the one read; a hold that ended stays ended for that launch, and the
 // next launch is held again.
 func TestPeerBootHoldEndsOnceForALaunchWithARealPid(t *testing.T) {
+	pid := freshPid(t) // while PATH still finds sleep: the helpers below narrow it
 	pendingTestEnv(t)
 	b := fakeBootingClaudeTmux(t, "race_real_pid", "")
 	b.launchedNow(t)
-	t.Setenv("TMUX_TEST_PANE_PID", strconv.Itoa(os.Getpid()))
+	t.Setenv("TMUX_TEST_PANE_PID", strconv.Itoa(pid))
 	m, _ := session.ReadMeta(b.name)
 	settled := stubBootSettled(t)
 
@@ -342,4 +344,20 @@ func TestPeerBootHoldEndsOnceForALaunchWithARealPid(t *testing.T) {
 	if got := peerBootBlocker(m); got != peerBlockedStarting {
 		t.Fatalf("the next launch: %q, want %q", got, peerBlockedStarting)
 	}
+}
+
+// freshPid starts a process that lives for the rest of the test and returns its pid. Its /proc
+// start is now; the test process's own is the binary's start, which a long package run puts
+// past peerBootHoldMax, and a launch that old is never held.
+func freshPid(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command("sleep", "600")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	return cmd.Process.Pid
 }
