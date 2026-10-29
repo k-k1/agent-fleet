@@ -3,6 +3,11 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.37.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.37.0) — 2026-10-29
+
+Apple Silicon の Mac に単独利用で対応し、並べたターミナルのペインの文字が互いに崩れなくなり、Cursor の
+セッションは既定で Auto で動くので Free プランでも使えます。
+
 ## [0.36.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.36.0) — 2026-10-28
 
 エージェントのスキルを読み取り専用で一覧できるようになり、アシスタントは利用上限やレート制限で

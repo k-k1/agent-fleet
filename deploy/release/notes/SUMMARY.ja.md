@@ -12,6 +12,24 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.37.0](0.37.0.ja.md) — 2026-10-29
+
+**CLI ピン** — Antigravity 1.4.10 / OpenCode 2.2.1
+
+**New / Improved**
+
+- **[macOS]** Apple Silicon の Mac に単独利用で対応。Docker Desktop・OrbStack・colima 向けの `docker-compose.macos.yml`、または Linux VM（Lima・OrbStack）の中の `linux-arm64` native パッケージ ([#2960](https://github.com/k-k1/agent-fleet/issues/2960), [#2961](https://github.com/k-k1/agent-fleet/issues/2961))
+- **[インストーラ]** `install.sh` が macOS での方法を案内、`install-compose.sh` が macOS で動き `shasum` で検証、`af update` が Linux 以外のホストで Linux 用パッケージを選ばない ([#2960](https://github.com/k-k1/agent-fleet/issues/2960))
+- **[jira]** Markdown の表を Jira の表として送る ([#2943](https://github.com/k-k1/agent-fleet/issues/2943))
+- **[agent／efs]** Agent がアーカイブ済み・停止中の claude セッションのファイルを裏で読み続けない ([#2850](https://github.com/k-k1/agent-fleet/issues/2850))
+
+**Fixed**
+
+- **[ターミナル]** 並べたペインの文字が崩れ、クリックするまで直らなかった ([#2983](https://github.com/k-k1/agent-fleet/issues/2983))
+- **[cursor]** 既定（Default）が CLI の最後に使ったモデルで動き、Free プランで拒否された。既定は Auto に ([#2928](https://github.com/k-k1/agent-fleet/issues/2928))
+- **[UI 設定同期]** 保存された値のどれかが空だと、同期した設定が読み込まれなかった ([#2904](https://github.com/k-k1/agent-fleet/issues/2904))
+- **[MCP]** リモート MCP クライアントがサインインの更新を 2 回同時に行うと接続が切れることがあった ([#2885](https://github.com/k-k1/agent-fleet/issues/2885))
+
 ## [0.36.0](0.36.0.ja.md) — 2026-10-28
 
 **CLI ピン** — Claude Code 2.1.312 / Codex 0.165.0 / Copilot 1.0.105 / Antigravity 1.4.8 / Kiro 2.35.1 / OpenCode 2.2.0 / Muse Code 1.4.14-R7309.1
