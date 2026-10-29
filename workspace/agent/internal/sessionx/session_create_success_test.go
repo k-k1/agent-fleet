@@ -51,6 +51,11 @@ type createSuccessCase struct {
 	sendErr error  // the managed probe's Send answer
 }
 
+// stateSince is clocked on its own (markSessionWorking), so it equals createdAt only when both
+// fall in the same second. It gets its own stand-in, and its relation to createdAt is asserted
+// directly instead.
+var stateSinceValue = regexp.MustCompile(`(stateSince\\?":\\?")[^"\\]+`)
+
 // rfc3339Time is a timestamp. Each distinct one becomes $TIME1, $TIME2, … in order of first
 // appearance, never one shared stand-in: equal instants must stay equal and different ones
 // different, or a meta whose stop-after-turn arm drifted off its creation would still match.
@@ -126,6 +131,7 @@ func (p *createProbe) renderSuccess(name string, out string) string {
 		s = strings.ReplaceAll(s, meta.Name, "$NAME")
 	}
 	s = strings.ReplaceAll(s, p.home, "$HOME")
+	s = stateSinceValue.ReplaceAllString(s, "${1}$$STATE_SINCE")
 	seen := map[string]string{}
 	s = rfc3339Time.ReplaceAllStringFunc(s, func(t string) string {
 		if seen[t] == "" {
@@ -198,6 +204,18 @@ func TestCreateSessionSuccessIsByteIdentical(t *testing.T) {
 			}
 			for _, in := range sent {
 				fmt.Fprintf(&b, "sent %q origin=%+v instr=%q schedule=%+v\n", in.Prompt, in.Origin, in.Instr, in.Schedule)
+			}
+			var wire struct {
+				StateSince string `json:"stateSince"`
+			}
+			_ = json.Unmarshal(rec.Body.Bytes(), &wire)
+			if wire.StateSince != "" {
+				created, err1 := time.Parse(time.RFC3339, p.createdMeta().CreatedAt)
+				since, err2 := time.Parse(time.RFC3339Nano, wire.StateSince)
+				if err1 != nil || err2 != nil || since.Before(created) {
+					t.Errorf("stateSince %q for a session created at %q (%v, %v), want a time no earlier",
+						wire.StateSince, p.createdMeta().CreatedAt, err1, err2)
+				}
 			}
 			// The arm's instant is the lower bound its completion evidence is cut by (docs/log/85),
 			// so it is the creation instant itself, not merely a time of the same shape.

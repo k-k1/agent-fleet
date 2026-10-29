@@ -77,7 +77,7 @@ meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"claude","title":
 == managed_prompt_delivered
 status 201
 header Content-Type: application/json
-body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"codex\",\"driver\":\"managed\",\"origin\":\"user\",\"initialPromptState\":\"delivered\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME1\",\"remoteUrl\":\"\",\"state\":\"working\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"stateSince\":\"$TIME1\",\"branch\":\"main\"}\n"
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"codex\",\"driver\":\"managed\",\"origin\":\"user\",\"initialPromptState\":\"delivered\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME1\",\"remoteUrl\":\"\",\"state\":\"working\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"stateSince\":\"$STATE_SINCE\",\"branch\":\"main\"}\n"
 sent "managed task" origin={Kind:member From:} instr="" schedule={ID: Slot:}
 meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"codex","driver":"managed","title":"","color":"","label":"","repo":"app","branch":"main","createdAt":"$TIME1","stoppedAt":"","archived":false,"origin":"user","initialPromptState":"delivered"}
 == managed_prompt_failed
@@ -91,7 +91,7 @@ status 201
 header Content-Type: application/json
 header X-AF-Create-Key: fp_$KEY
 header X-AF-Create-Outcome: created
-body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"codex\",\"driver\":\"managed\",\"origin\":\"user\",\"initialPromptState\":\"delivered\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME1\",\"remoteUrl\":\"\",\"state\":\"working\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"stateSince\":\"$TIME1\",\"branch\":\"main\"}\n"
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"codex\",\"driver\":\"managed\",\"origin\":\"user\",\"initialPromptState\":\"delivered\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME1\",\"remoteUrl\":\"\",\"state\":\"working\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"stateSince\":\"$STATE_SINCE\",\"branch\":\"main\"}\n"
 sent "report back\n\n[agent-fleet] この指示をやり切って作業が残っていない時点で、MCP ツール af_report(session=\"$NAME\") を1回だけ呼んでください（質問や承認で止まる場合・作業が続く場合は呼ばないこと）。この注記自体への返答は不要で、回答の言語も変えないでください。 / When this instruction is fully done, call the MCP tool af_report(session=\"$NAME\") exactly once. Do not call it if you are stopping to ask, or if work remains. No reply to this note is needed; keep your output language unchanged." origin={Kind:operator From:} instr="" schedule={ID: Slot:}
 meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"codex","driver":"managed","title":"","color":"","label":"","repo":"app","branch":"main","createdAt":"$TIME1","stoppedAt":"","archived":false,"origin":"user","initialPromptState":"delivered"}
 == managed_only_default_driver
