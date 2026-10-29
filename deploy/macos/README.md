@@ -1,24 +1,44 @@
 # macOS acceptance run (Apple Silicon)
 
-macOS support is experimental until someone runs this on a real Mac (#2961). This page is
-the runbook for that day: what to prepare, how to rent a cloud Mac if you have none, and
-the one script that turns the checklist into a report.
+A Mac with Apple Silicon is supported for a single user (#2961). Nothing in CI can run on
+a Mac, so that claim rests on this page: when to check again, what to prepare, how to rent a
+cloud Mac if you have none, and the one script that turns the checklist into a report.
 
 What is being verified:
 
 - **Docker edition** with `deploy/compose/docker-compose.macos.yml`
-  ([compose README, "macOS"](../compose/README.md#macos-experimental-unverified)), on each
+  ([compose README, "macOS"](../compose/README.md#macos-apple-silicon)), on each
   engine you can get: Docker Desktop, OrbStack, colima.
-- **Native package** (`linux-arm64`) inside a Lima VM
+- **Native package** (`linux-arm64`) inside a Linux VM: Lima or an OrbStack machine
   ([native README](../native/README.md)).
 - **Installers** on macOS itself: `install.sh` refuses with guidance, `install-compose.sh`
   verifies with `shasum`.
+
+## When to check again
+
+Not every release. The last run covered 0.36.0's images on an M1 Mac mini with macOS 26.7
+(reports on #2961); a release whose build commit changes none of the paths below since then
+is covered too (0.37.0's main branch changed only pin bumps and the macOS work itself, which
+was checked). Run the script again when a release changes one of them:
+
+- `control-plane/internal/runtime/runtime_docker.go`, `runtime.go`, `runtime_health.go`
+  — how the CP starts a workspace and reaches its Agent
+- `control-plane/workspace_listener.go`, `control-plane/workspace_lifecycle.go` (the
+  workspace's environment) — the way back from a workspace to the CP
+- `deploy/compose/docker-compose.yml`, `deploy/compose/docker-compose.macos.yml`
+- `workspace/Dockerfile` beyond agent CLI and Chromium pin bumps, `workspace/entrypoint.sh`
+- `deploy/release/dist-repo/install.sh`, `install-compose.sh`, `deploy/native/af`
+
+`git diff --stat <last checked build commit> <release build commit> -- <those paths>`
+answers it; update the version above after a run. Everything else in a workspace is the
+same Linux arm64 image that the arm64 builds and gates already cover.
 
 ## The script
 
 ```bash
 deploy/macos/acceptance.sh docker ~/agent-fleet-<v>     # a compose bundle with .env filled in
 deploy/macos/acceptance.sh native --version <v>         # creates, uses and deletes a Lima VM
+deploy/macos/acceptance.sh native --version <v> --vm orbstack   # the same in an OrbStack machine
 deploy/macos/acceptance.sh installer --version <v>
 ```
 
@@ -46,6 +66,15 @@ the Console says it started, never another `af-ws-*` on the same Mac.
 Read the report before posting it to the issue. It carries versions and status codes,
 and replaces your home directory with `~`, but an error body from the Console is quoted
 (one line) and could name something of yours.
+
+## A Mac of your own
+
+Any Apple Silicon Mac will do, and a used M1 Mac mini is the cheapest way to stop renting.
+Measured on a 16 GB M1: colima's VM had 8 GB and the workspace its default 5 GB cap. On an
+8 GB Mac give the VM less and the workspace less to match (`colima start --memory 4`,
+`WS_MEMORY=3g` in `.env`), and run one engine at a time; enough for this script, tight for
+real agent work. A Mac of your own also avoids the screen-session steps below: OrbStack and
+Docker Desktop just need their first start from the desktop.
 
 ## Before you start (do this before renting anything)
 

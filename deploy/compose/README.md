@@ -33,7 +33,7 @@ no registry login. Point `REGISTRY` at your own mirror to pull from elsewhere.
 ## Prerequisites
 
 - A Linux host with **Docker** (Engine + `docker compose`). A Mac (Apple Silicon) is
-  experimental: see [macOS](#macos-experimental-unverified).
+  supported for a single user: see [macOS](#macos-apple-silicon).
 - A **public domain** with a DNS A/AAAA record pointing at this host (for TLS).
   Internal-only? Use the `tls internal` fallback in `Caddyfile`.
 - An **IdP client for login**: a Google OAuth 2.0 Web client, or an OIDC app
@@ -347,10 +347,13 @@ encodes them, but if you customize it, keep them:
 
 <a id="macos-experimental-unverified"></a>
 
-## macOS (experimental)
+## macOS (Apple Silicon)
 
-The images are published for `linux/arm64`, so an Apple Silicon Mac pulls the right ones.
-What does not carry over is the DooD wiring above, which assumes rootful Docker on Linux.
+Supported for **one user on an Apple Silicon Mac**. The images are published for
+`linux/arm64`, so the Mac pulls the right ones; what does not carry over is the DooD wiring
+above, which assumes rootful Docker on Linux, hence the overlay below. Not covered: Intel
+Macs (never run), a team or public deployment on a Mac (no Caddy, no IdP in this setup), and
+Apple's `container` tool.
 
 **Checked with colima, OrbStack and Docker Desktop.** On an M1 Mac mini with macOS 26.7,
 colima 0.10.3 (`colima start --vm-type vz --mount-type virtiofs`), OrbStack (engine 29.8)

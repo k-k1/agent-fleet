@@ -449,7 +449,7 @@ printf '#!/bin/sh\nexit 0\n' > "$MACBIN/docker"; chmod +x "$MACBIN/docker"
 PATH="$MACBIN" AF_OS=Darwin AF_SKIP_PULL=1 AF_VERSION=$V AF_DIST_URL_BASE="file://$WORK/compose-layout" \
   AF_DEST="$WORK/dest16" "$MACBIN/bash" "$ICOMPOSE" > "$WORK/out16.txt" 2> "$WORK/err16.txt" \
   || { cat "$WORK/err16.txt"; fail "install-compose.sh failed on Darwin"; }
-grep -q "macOS is experimental" "$WORK/err16.txt" || fail "no macOS note"
+grep -q "on macOS, follow" "$WORK/err16.txt" || fail "no macOS note"
 grep -qF "docker-compose.macos.yml" "$WORK/out16.txt" || fail "no macOS overlay hint in the next steps"
 [ -f "$WORK/dest16/agent-fleet-$V/docker-compose.yml" ] || fail "bundle not extracted"
 printf x >> "$CL/agent-fleet-$V.tar.gz"

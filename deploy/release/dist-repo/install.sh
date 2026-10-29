@@ -34,11 +34,11 @@ case "${AF_OS:-$(uname -s)}" in
   Darwin)
     # Read by someone who piped this from curl and has no checkout: commands and URLs only.
     die "the native package needs a Linux kernel, so there is none for macOS.
-  A Mac is supported experimentally, in one of two ways:
+  A Mac with Apple Silicon is supported for a single user, in one of two ways:
     - the Docker edition (Docker Desktop / OrbStack / colima):
         curl -fsSL https://raw.githubusercontent.com/$REPO/main/install-compose.sh | bash
       then follow \"macOS\" in the bundle's README.md
-      (https://github.com/k-k1/agent-fleet/blob/main/deploy/compose/README.md#macos-experimental-unverified)
+      (https://github.com/k-k1/agent-fleet/blob/main/deploy/compose/README.md#macos-apple-silicon)
     - inside a Linux VM (Lima, an OrbStack machine, ...): run this installer there,
       then open http://localhost:8099 through the VM's port forward." ;;
   *) die "Linux only (including WSL2); ${AF_OS:-$(uname -s)} is unsupported" ;;

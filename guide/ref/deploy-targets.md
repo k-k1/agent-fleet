@@ -34,6 +34,13 @@ deployment" is the most expensive kind of documentation error here.
 > (about two thirds if another cluster already uses it). That is an estimate from the measured prices,
 > not a bill; the figures and their assumptions are in `deploy/gcp/gke/README.md`, "Small profile".
 
+**On a Mac (Apple Silicon).** `docker` runs with Docker Desktop, OrbStack or colima through
+`deploy/compose/docker-compose.macos.yml`, and `native` runs inside a Linux VM (Lima or an
+OrbStack machine) with the `linux-arm64` package; neither runs on macOS itself. Single user
+only, reached on `127.0.0.1`. What was checked and when to check again:
+`deploy/macos/README.md`; the steps: "macOS" in
+[deploy/compose/README.md](../../deploy/compose/README.md#macos-apple-silicon).
+
 `docker` also answers to `local`, `ecs` to `aws`, `native` to `wsl`, and `kubernetes` to `k8s`. Anything else
 is rejected at boot rather than quietly defaulting. `ecs` and `ecs-ec2` are separate
 profiles on purpose, not a flag: the EC2 pool trades a proven two-resource workspace

@@ -24,7 +24,7 @@ source_of_truth: "各形態が何に対応しているかは ref/deploy-targets.
 | こういうとき | これ | 理由 |
 |---|---|---|
 | その機械に Docker を入れられない | **native** | コンテナ無し。**単独利用のみ**。コンテナ境界が無いので共有モードでは起動を拒否する |
-| 機械が Mac（Apple Silicon） | macOS 用 overlay を重ねた **compose**、または Linux VM の中の **native** | **試験的。colima・OrbStack・Docker Desktop、および Lima と OrbStack の VM での native で確認済み。** `127.0.0.1` で単独利用。手順は compose の runbook の「macOS」 |
+| 機械が Mac（Apple Silicon） | macOS 用 overlay を重ねた **compose**、または Linux VM の中の **native** | **単独利用のみ。** colima・OrbStack・Docker Desktop、および Lima と OrbStack の VM での native で確認済み。Intel の Mac は対象外。 `127.0.0.1` で単独利用。手順は compose の runbook の「macOS」 |
 | AWS に置きたい・少人数・費用が効く | **ec2-single** | 実体は **VM 上の compose**。別の runtime ではない |
 | タスク単位の隔離・ユーザー単位の障害分離・イメージの順次入替が要る | **ecs** | 得られるのは隔離であって、節約ではない |
 | 上に加えて、起動の速さとディスク性能が要る | **ecs-ec2** | インスタンスのプール ＋ ユーザー毎の永続ディスク |
