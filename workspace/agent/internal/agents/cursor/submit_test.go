@@ -143,12 +143,26 @@ func TestPaneWorking(t *testing.T) {
 			t.Errorf("%s: PaneWorking = %v, want %v", file, got, want)
 		}
 	}
-	// The hint alone (a version that drops the spinner row) still counts; prose that merely
-	// says "Working 5 tokens" without the braille cells does not.
-	if !PaneWorking("  → Add a follow-up      ctrl+c to stop\n\n  Auto\n") {
-		t.Error("composer hint not recognised")
+	// Each signal on its own, so removing either branch fails: a version without the hint, and
+	// one without the spinner row.
+	noHint := "  some output\n\n ⠠⠜ Working  286 tokens\n\n  → Add a follow-up\n\n  Auto\n"
+	bare := "  some output\n\n ⠀⠞ Working\n    Tip: Use /plan to plan.\n\n  → Add a follow-up\n\n  Auto\n"
+	hintOnly := "  → Add a follow-up      ctrl+c to stop\n\n  Auto\n"
+	for name, pane := range map[string]string{"spinner with tokens": noHint, "bare spinner + tip": bare, "hint only": hintOnly} {
+		if !PaneWorking(pane) {
+			t.Errorf("%s: not recognised as working", name)
+		}
 	}
-	if PaneWorking("  Working  5 tokens\n  → Add a follow-up\n") {
-		t.Error("plain prose read as a spinner row")
+	// Spinner-shaped text that is not status: plain prose, an answer that quotes a spinner row
+	// far above the composer, and an unsent draft that contains one.
+	spin := " ⠠⠜ Working  286 tokens\n"
+	for name, pane := range map[string]string{
+		"prose":         "  Working  5 tokens\n  → Add a follow-up\n",
+		"quoted answer": spin + "  first line of prose\n  second line of prose\n\n  → Add a follow-up\n\n  Auto\n",
+		"draft":         "  answer\n\n  → " + "fix this:\n" + spin + "\n  Auto\n",
+	} {
+		if PaneWorking(pane) {
+			t.Errorf("%s: read as working", name)
+		}
 	}
 }

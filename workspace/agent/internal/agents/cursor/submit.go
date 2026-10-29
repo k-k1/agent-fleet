@@ -44,15 +44,29 @@ var optionRow = regexp.MustCompile(`^\w+: (true|false)$`)
 
 // PaneWorking reports whether the pane shows a turn under way. The JSONL cannot say so: it is
 // written when a turn ends (see above), so a long turn reads as no state at all until it is over.
-// The spinner row is the signal (measured 2026.10.22); 2026.10.16 also printed "ctrl+c to stop"
-// at the right of the composer, which 2026.10.22 no longer does.
+// The signal is the spinner row among the two non-blank lines directly above the composer (the
+// spinner, and the tip 2026.10.16 printed under it), or the "ctrl+c to stop" hint on the
+// composer's first row; both are present in 2026.10.22 captures. Anywhere else a spinner-shaped
+// line is transcript prose or an unsent draft (below the composer's first row), not status.
 func PaneWorking(captured string) bool {
-	if spinnerRow.MatchString(captured) {
-		return true
-	}
 	lines := strings.Split(captured, "\n")
 	top := composerTop(lines)
-	return top >= 0 && strings.HasSuffix(strings.TrimSpace(lines[top]), keyHint)
+	if top < 0 {
+		return false
+	}
+	if strings.HasSuffix(strings.TrimSpace(lines[top]), keyHint) {
+		return true
+	}
+	for i, seen := top-1, 0; i >= 0 && seen < 2; i-- {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		if spinnerRow.MatchString(lines[i]) {
+			return true
+		}
+		seen++
+	}
+	return false
 }
 
 // ComposerHolds reports whether the pane's composer still holds the prompt as an unsubmitted
