@@ -351,7 +351,7 @@ lines dropped and `h.tq()` read as `h.q`:
 | 5 of 5 | `Events`, `RemoveQueued`, `DismissDiscard` |
 | 4 (all but muse) | `emit`, `Send`, `parkForMove`, `Abort` |
 | 4 (all but lcpp) | `Snapshot`, `Alive` |
-| 3 | `SendQueued` (acp, codex, lcpp); `Interrupt`, `interruptAll` (codex, opencode, muse); `Busy`, `HoldsEntry` (acp, opencode, lcpp) |
+| 3 | `SendQueued` (acp, codex, lcpp); `Interrupt`, `interruptAll` (codex, opencode, muse); `Busy`, `HoldsEntry`, `Steer` (acp, opencode, lcpp) |
 | different in every kind that has it | `accept`, `pump`, `runTurn`, `Respond`, `UpdateSettings` |
 
 The nine methods identical in four or more come to about 60 lines per kind. The issue measured

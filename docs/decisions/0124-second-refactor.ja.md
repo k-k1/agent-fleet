@@ -337,7 +337,7 @@ opencode、muse、lcpp の 5 つ。メソッド本体はコメントと空行を
 | 5 つすべて | `Events`、`RemoveQueued`、`DismissDiscard` |
 | 4（muse 以外） | `emit`、`Send`、`parkForMove`、`Abort` |
 | 4（lcpp 以外） | `Snapshot`、`Alive` |
-| 3 | `SendQueued`（acp、codex、lcpp）、`Interrupt` と `interruptAll`（codex、opencode、muse）、`Busy` と `HoldsEntry`（acp、opencode、lcpp） |
+| 3 | `SendQueued`（acp、codex、lcpp）、`Interrupt` と `interruptAll`（codex、opencode、muse）、`Busy`、`HoldsEntry`、`Steer`（acp、opencode、lcpp） |
 | 持つ種別ごとにすべて異なる | `accept`、`pump`、`runTurn`、`Respond`、`UpdateSettings` |
 
 4 つ以上で同一の 9 メソッドは、種別あたり約 60 行。Issue は `29f1b6b57` で 7 メソッド・約 45 行と
