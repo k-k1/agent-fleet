@@ -27,13 +27,16 @@ func TestBuildProgram(t *testing.T) {
 		!strings.Contains(got, "--trust") || !strings.Contains(got, "--disable-auto-update") {
 		t.Errorf("plan program wrong: %q", got)
 	}
-	// The model is passed through. "auto" means the same as unset (no flag).
+	// The model is passed through, "auto" included; only "" means no flag (launchModel).
 	got = buildProgram("claude-opus-4-8-thinking-high", "", id, true)
 	if !strings.Contains(got, "--model") || !strings.Contains(got, "claude-opus-4-8-thinking-high") {
 		t.Errorf("model program wrong: %q", got)
 	}
-	if got := buildProgram("auto", "", id, true); strings.Contains(got, "--model") {
-		t.Errorf("auto must not emit --model: %q", got)
+	if got := buildProgram("auto", "", id, true); !strings.Contains(got, "--model 'auto'") {
+		t.Errorf("auto must emit --model auto: %q", got)
+	}
+	if got := buildProgram("", "", id, true); strings.Contains(got, "--model") {
+		t.Errorf("no model must not emit --model: %q", got)
 	}
 	t.Setenv("AGENT_CURSOR_CMD", "echo override")
 	if got := buildProgram("", "", id, true); got != "echo override" {

@@ -67,7 +67,9 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if err := EnsureHooks(); err != nil {
 		log.Printf("cursor: stop hook not installed, usage stays unmeasured: %v", err)
 	}
-	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Mode, chatID, agents.BypassPermissions(m)), Cwd: m.CWD()}, nil
+	st, _ := chatMetaFor(chatID)
+	model := launchModel(m.Model, st.LastUsedModel)
+	return agents.LaunchPlan{Program: buildProgram(model, m.Mode, chatID, agents.BypassPermissions(m)), Cwd: m.CWD()}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {

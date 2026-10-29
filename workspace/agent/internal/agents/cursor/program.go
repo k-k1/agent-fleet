@@ -98,6 +98,23 @@ func Bin() string { return bin() }
 // or a plan start). Only --force is dropped; --trust (workspace trust) must always stay:
 // the trust prompt is not a permission prompt, and without it both ACP and TUI launches
 // hang (measured).
+// launchModel is the --model value for a launch ("" = no flag). Without the flag cursor does
+// not run Auto: it runs the model it persisted as its own default (cli-config.json), and every
+// launch that passes --model rewrites that default (measured on 2026.10.22-27dcf5f, even for a
+// launch the plan refused, through both `-p` and `acp`). So after one session on an explicit model, Default
+// launches pin it, which a Free plan refuses (#2928). Default and "auto" therefore pass
+// `--model auto`, unless the chat already recorded a model of its own (recorded, read from
+// store.db): a resume without the flag restores that one, and the flag would override it.
+func launchModel(model, recorded string) string {
+	if model != "" && model != "auto" {
+		return model
+	}
+	if recorded != "" {
+		return ""
+	}
+	return "auto"
+}
+
 func buildProgram(model, mode, chatID string, bypass bool) string {
 	if override := os.Getenv("AGENT_CURSOR_CMD"); override != "" {
 		return override
@@ -112,9 +129,9 @@ func buildProgram(model, mode, chatID string, bypass bool) string {
 		flags = strings.TrimSpace(flags + " --plan")
 	}
 	// cursor model IDs already carry the effort (claude-opus-4-8-thinking-high) and there
-	// is no separate --effort flag (measured from help), so effort is never passed. "auto"
-	// is the default and means no flag at all.
-	if model != "" && model != "auto" {
+	// is no separate --effort flag (measured from help), so effort is never passed. "" means
+	// no flag; launchModel decides when that is safe.
+	if model != "" {
 		flags += " --model " + session.ShellQuote(model)
 	}
 	if chatID != "" {

@@ -280,11 +280,15 @@ func command(h *acp.Handle, st agents.ThreadSettings) *exec.Cmd {
 	if h.BypassNow() && st.Mode != "plan" {
 		args = append(args, "--force") // the fleet default bypass ("unless explicitly denied")
 	}
-	if st.Model != "" && st.Model != "auto" {
-		// Pin the model for this per-session child: a launch flag, because ACP has no
-		// per-session way to select one.
-		args = append(args, "--model", st.Model)
+	// Pin the model for this per-session child: a launch flag, because ACP has no per-session
+	// way to select one. Default pins Auto too: without the flag `acp` runs cursor's persisted
+	// default, which any earlier explicit-model launch rewrote (launchModel). A respawn
+	// passes the meta's model, which is the one the child was first launched with.
+	model := st.Model
+	if model == "" {
+		model = "auto"
 	}
+	args = append(args, "--model", model)
 	cmd := exec.Command(bin(), args...)
 	// Own process group, so a left-over worker-server can be killed along with the group.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

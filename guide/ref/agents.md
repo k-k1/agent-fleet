@@ -412,7 +412,7 @@ point. A Terminal session on a private server, or on opencode 1.x, cannot.
 
 ²¹ copilot's plan mode is set at launch, and can also be switched from the managed settings.
 
-²² cursor's list is exactly the models available to the signed-in account (fetched live); kiro offers named models (Auto, Claude Sonnet / Haiku and others) even on the Free plan.
+²² cursor's list is exactly the models available to the signed-in account (fetched live), and its Default always runs Auto, which a Cursor Free plan allows; kiro offers named models (Auto, Claude Sonnet / Haiku and others) even on the Free plan.
 
 ²³ RTK rewrites the commands an agent runs so that their output costs fewer tokens. It is
 on or off per agent in ⚙Settings → "Agents", and does nothing when the workspace image has no

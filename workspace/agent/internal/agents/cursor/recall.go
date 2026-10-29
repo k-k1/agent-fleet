@@ -51,7 +51,10 @@ func recordedModelOf(st chatMeta) string {
 }
 
 func storedChatMeta(m session.Meta) (chatMeta, bool) {
-	chatID := sids.Read(session.UUID(m.Dir, m.Name))
+	return chatMetaFor(sids.Read(session.UUID(m.Dir, m.Name)))
+}
+
+func chatMetaFor(chatID string) (chatMeta, bool) {
 	if chatID == "" {
 		return chatMeta{}, false
 	}

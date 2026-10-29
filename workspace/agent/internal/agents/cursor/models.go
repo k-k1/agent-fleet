@@ -138,7 +138,7 @@ func parseModels(s string) []agents.ModelChoice {
 			continue
 		}
 		id := m[1]
-		if id == "auto" || seen[id] { // auto is the default (no flag), so it is not in the catalog
+		if id == "auto" || seen[id] { // auto is the picker's Default (launchModel pins it), so it is not in the catalog
 			continue
 		}
 		seen[id] = true
