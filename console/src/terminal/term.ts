@@ -20,7 +20,7 @@ import { t as tr } from "../lib/i18n/index.ts";
 import { zoom } from "../app/viewport.ts";
 import { toast } from "../ui/toast.ts";
 import { clipAction } from "./clipKeys.ts";
-import { fontLoaded, rebuildGlyphAtlas, resetGlyphModel } from "./atlas.ts";
+import { fontFamilies, rebuildAtlasesFor, resetGlyphModel } from "./atlas.ts";
 
 // One entry per pane. { term, fitAddon, ws, session, sessionListeners, ro }.
 // A placeholder (from an early onSession) may hold only session + sessionListeners,
@@ -207,6 +207,34 @@ function applyTermSettingsAll() {
       it.term.refresh(0, it.term.rows - 1);
     } catch {}
   }
+}
+
+// wireFontArrivals rebuilds the glyph atlas of the panes using a font face that has just
+// finished loading. Glyphs drawn while it loaded are fallback-font bitmaps, and nothing else
+// replaces them now that routine repaints keep the atlas. A face can arrive long after a
+// pane opened: a bold weight on first bold output, a unicode-range subset on its first
+// character, a family picked in Settings. Arrivals within ARRIVAL_SETTLE_MS share one
+// rebuild, since a rebuild re-rasterizes every glyph the affected panes show.
+const ARRIVAL_SETTLE_MS = 100;
+let fontArrivalsWired = false;
+function wireFontArrivals() {
+  if (fontArrivalsWired || !document.fonts || typeof document.fonts.addEventListener !== "function") return;
+  fontArrivalsWired = true;
+  let arrived: Set<string> | null = new Set();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  document.fonts.addEventListener("loadingdone", (ev) => {
+    const faces = (ev as FontFaceSetLoadEvent).fontfaces;
+    // No face list to read: treat it as every family so no pane keeps fallback bitmaps.
+    if (!faces) arrived = null;
+    else if (arrived) for (const f of faces) for (const fam of fontFamilies(f.family)) arrived.add(fam);
+    if (timer) return;
+    timer = setTimeout(() => {
+      const fams = arrived;
+      arrived = new Set();
+      timer = null;
+      rebuildAtlasesFor([...insts.values()], fams);
+    }, ARRIVAL_SETTLE_MS);
+  });
 }
 
 // Refit every live terminal — the window/visualViewport resize path. Per-pane split
@@ -485,6 +513,7 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   }
   wireGlobalResize();
   wireGlobalReconnect();
+  wireFontArrivals();
   const fitAddon = new FitAddon();
   it.fitAddon = fitAddon;
   term.loadAddon(fitAddon);
@@ -596,16 +625,10 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   }
   // Crisp GPU rendering; fall back silently if WebGL2 is unavailable/lost.
   loadWebgl(it);
-  // The web font loads async — refit/redraw once ready so metrics are right. Glyphs drawn
-  // before it arrived are fallback-font bitmaps in the shared atlas, so only then rebuild
-  // the atlas (for every pane drawing from it). When the font was already loaded, skip
-  // that: opening a pane would otherwise re-rasterize every same-tint pane's glyphs.
+  // The web font loads async — refit/redraw once ready so metrics are right. Its glyph
+  // bitmaps are replaced by wireFontArrivals, not here.
   if (document.fonts && document.fonts.ready) {
-    const fontPending = !fontLoaded(term);
-    document.fonts.ready.then(() => {
-      if (fontPending) rebuildGlyphAtlas(it, insts.values());
-      forceFit(it);
-    });
+    document.fonts.ready.then(() => forceFit(it));
   }
   // Keep terminal-relevant shortcuts inside the PTY rather than the browser while
   // the terminal is focused. We preventDefault the browser action and return true so

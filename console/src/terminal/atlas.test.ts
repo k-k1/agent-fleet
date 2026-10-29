@@ -1,13 +1,14 @@
-import { afterEach, describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { Terminal } from "@xterm/xterm";
-import { fontLoaded, rebuildGlyphAtlas, resetGlyphModel, type AtlasTerm } from "./atlas.ts";
+import { fontFamilies, rebuildAtlasesFor, rebuildGlyphAtlas, resetGlyphModel, type AtlasTerm } from "./atlas.ts";
 
 // fake builds a pane the way term.ts holds one: a terminal (with the private render
 // service rebuildGlyphAtlas reaches into) plus the renderer addon that is loaded.
-function fake(renderer: "webgl" | "canvas" | "dom", atlas?: object) {
+function fake(renderer: "webgl" | "canvas" | "dom", atlas?: object, fontFamily = '"JetBrains Mono", monospace') {
   const calls: string[] = [];
   const term = {
     rows: 24,
+    options: { fontFamily },
     clearTextureAtlas: vi.fn(() => calls.push("clearTextureAtlas")),
     refresh: vi.fn((s: number, e: number) => calls.push(`refresh ${s}-${e}`)),
     _core: { _renderService: { clear: vi.fn(() => calls.push("clear")) } },
@@ -117,29 +118,44 @@ describe("resetGlyphModel", () => {
   });
 });
 
-describe("fontLoaded", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
+describe("fontFamilies", () => {
+  it("strips quotes and spaces and lower-cases each family", () => {
+    expect(fontFamilies(`"JetBrains Mono", 'AF CJK Ambiguous', monospace`)).toEqual([
+      "jetbrains mono",
+      "af cjk ambiguous",
+      "monospace",
+    ]);
+    expect(fontFamilies("")).toEqual([]);
   });
-  const term = { options: { fontSize: 14, fontFamily: "Mono" } } as unknown as Terminal;
+});
 
-  it("asks the font set about the terminal's own font", () => {
-    const check = vi.fn(() => true);
-    vi.stubGlobal("document", { fonts: { check } });
-    expect(fontLoaded(term)).toBe(true);
-    expect(check).toHaveBeenCalledWith("14px Mono");
+describe("rebuildAtlasesFor", () => {
+  it("rebuilds a shared atlas once when its font arrives, siblings included", () => {
+    const shared = {};
+    const a = fake("webgl", shared);
+    const b = fake("webgl", shared);
+    rebuildAtlasesFor([a.t, b.t], new Set(["jetbrains mono"]));
+    expect(a.calls).toEqual(["clearTextureAtlas"]);
+    expect(b.calls).toEqual(["clear", "refresh 0-23"]);
   });
 
-  it("answers false when the font is still loading or the check throws", () => {
-    vi.stubGlobal("document", { fonts: { check: () => false } });
-    expect(fontLoaded(term)).toBe(false);
-    vi.stubGlobal("document", {
-      fonts: {
-        check: () => {
-          throw new Error("syntax");
-        },
-      },
-    });
-    expect(fontLoaded(term)).toBe(false);
+  it("leaves panes whose font list does not name the arrived family", () => {
+    const a = fake("webgl", {}, "monospace");
+    const c = fake("canvas", undefined, "monospace");
+    rebuildAtlasesFor([a.t, c.t], new Set(["jetbrains mono"]));
+    expect(a.calls).toEqual([]);
+    expect(c.calls).toEqual([]);
+  });
+
+  it("rebuilds every canvas-backed pane when the arrived families are unknown", () => {
+    const a = fake("webgl", {}, "monospace");
+    const b = fake("webgl", {}, "monospace");
+    const c = fake("canvas", undefined, "monospace");
+    const d = fake("dom", undefined, "monospace");
+    rebuildAtlasesFor([a.t, b.t, c.t, d.t], null);
+    expect(a.calls).toEqual(["clearTextureAtlas"]);
+    expect(b.calls).toEqual(["clearTextureAtlas"]);
+    expect(c.calls).toEqual(["clearTextureAtlas"]);
+    expect(d.calls).toEqual([]);
   });
 });

@@ -65,14 +65,28 @@ export function rebuildGlyphAtlas(it: AtlasTerm, all: Iterable<AtlasTerm>): void
   }
 }
 
-// fontLoaded reports whether the terminal's font is already available, i.e. glyphs drawn
-// now are not fallback-font bitmaps. When in doubt it answers false, which costs one
-// atlas rebuild when the font arrives.
-export function fontLoaded(term: Terminal): boolean {
-  try {
-    return document.fonts.check(`${term.options.fontSize}px ${term.options.fontFamily}`);
-  } catch {
-    return false;
+// fontFamilies splits a CSS font-family list into bare, lower-cased family names, the form
+// FontFace.family is compared in.
+export function fontFamilies(stack: string): string[] {
+  return stack
+    .split(",")
+    .map((f) => f.trim().replace(/^["']|["']$/g, "").toLowerCase())
+    .filter(Boolean);
+}
+
+// rebuildAtlasesFor rebuilds, once per shared atlas, the atlas of every pane whose font list
+// names one of the `arrived` families (lower-case; null = any). Glyphs drawn while that face
+// was still loading are fallback-font bitmaps, and nothing else replaces them: xterm does not
+// watch document.fonts, and routine repaints keep the atlas on purpose.
+export function rebuildAtlasesFor(all: AtlasTerm[], arrived: Set<string> | null): void {
+  const done = new Set<unknown>();
+  for (const t of all) {
+    if (!t.term || !(t.webgl || t.canvas)) continue;
+    if (arrived && !fontFamilies(String(t.term.options.fontFamily ?? "")).some((f) => arrived.has(f))) continue;
+    const atlas = t.webgl ? webglAtlas(t) : undefined;
+    if (atlas && done.has(atlas)) continue;
+    rebuildGlyphAtlas(t, all);
+    if (atlas) done.add(atlas);
   }
 }
 
