@@ -323,3 +323,34 @@ Console はカタログと一致を保たれた `SESSION_KINDS`）から非エ�
 （分類しない種別は `not_an_agent` になり、エージェントには誤り）。§20.7 の種別固有の行は、スタブが
 通らないファイルを足す。その大半は、フェーズ 6 がすでに挙げている CI と `deploy/local` での固定 CLI
 の登録。レジストリが吸収できる編集は #2933。
+
+## 追記（2026-10-29）— マネージド driver の `threadHandle` メソッドは種別ごとに残す
+
+フェーズ 3 のマネージドの足場（#2869）が共有したのはパッケージ水準の関数だけ。ハンドルが繰り返す
+メソッドは**切り出さない**（#2918）。
+
+**`2012d2229` で計測。** copilot、cursor、kiro は `acp.Handle` を埋め込むので、実装は acp、codex、
+opencode、muse、lcpp の 5 つ。メソッド本体はコメントと空行を落とし、`h.tq()` を `h.q` と読んで比べた。
+
+| 同一の数 | メソッド |
+|---|---|
+| 5 つすべて | `Events`、`RemoveQueued`、`DismissDiscard` |
+| 4（muse 以外） | `emit`、`Send`、`parkForMove`、`Abort` |
+| 4（lcpp 以外） | `Snapshot`、`Alive` |
+| 3 | `SendQueued`（acp、codex、lcpp）、`Interrupt` と `interruptAll`（codex、opencode、muse）、`Busy` と `HoldsEntry`（acp、opencode、lcpp） |
+| 持つ種別ごとにすべて異なる | `accept`、`pump`、`runTurn`、`Respond`、`UpdateSettings` |
+
+4 つ以上で同一の 9 メソッドは、種別あたり約 60 行。Issue は `29f1b6b57` で 7 メソッド・約 45 行と
+測ったが、それは #2869 が `Alive` と `Abort` をハンドルへ移す前。
+
+**費用。** どれもハンドルのロック、キュー、状態、イベント、alive、running のフィールドを読むので、
+共有するにはそれらを公開した埋め込みのコアが要る。テスト込みで `h.mu` 683 箇所（codex 150、
+opencode 181、muse 264、lcpp 88）とその他のフィールド参照の書き換え、さらに 4 種別ぶんの
+インターフェース適合の証明のやり直しになる。決定 2 に照らすと、種別あたり約 60 行ではその変更量に
+見合わない。
+
+```
+for k in codex opencode muse lcpp; do cat workspace/agent/internal/agents/$k/*.go | grep -o '\bh\.mu\b' | wc -l; done
+```
+
+**見直す**のは、種別をまたぐ修正がまたこれらのメソッドに入らなければならないときだけ。
