@@ -230,3 +230,59 @@ header Content-Type: application/json
 header X-Af-Create-Key: k-lf
 header X-Af-Create-Outcome: refused
 body "{\"error\":{\"code\":\"tmux_failed\",\"message\":\"probe: launch refused\"}}\n"
+== codex_model_not_in_catalog
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_model\",\"message\":\"モデル \\\"gpt-9\\\" は利用できません。近い候補: gpt-5.6-sol, gpt-5.5。一覧は起動ダイアログのモデル選択（アシスタントは list_models）で確認してください。\"}}\n"
+== codex_hidden_model_dropped_from_catalog
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_model\",\"message\":\"モデル \\\"sol\\\" は利用できません。近い候補: gpt-5.5。一覧は起動ダイアログのモデル選択（アシスタントは list_models）で確認してください。\"}}\n"
+== copilot_model_not_in_catalog
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_model\",\"message\":\"モデル \\\"gpt-9\\\" は利用できません。近い候補: gpt-5.5, claude-sonnet-5。一覧は起動ダイアログのモデル選択（アシスタントは list_models）で確認してください。\"}}\n"
+== opencode_model_not_in_catalog
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_model\",\"message\":\"モデル \\\"opencode/zz\\\" は利用できません。近い候補: opencode/big-pickle, opencode/grok-code。一覧は起動ダイアログのモデル選択（アシスタントは list_models）で確認してください。\"}}\n"
+== opencode_model_retired
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_model\",\"message\":\"モデル \\\"opencode/old-free\\\" は提供終了しています（opencode.ai 側で退役）。近い候補: opencode/big-pickle, opencode/grok-code。\"}}\n"
+== order_lcpp_disabled_before_no_model
+status 403
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"lcpp_disabled\",\"message\":\"llama.cpp は設定でオフになっています。設定 \\u003e エージェント \\u003e llama.cpp でオンにしてください。\"}}\n"
+== order_hidden_before_catalog
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"model_hidden\",\"message\":\"モデル gpt-9 は設定「使わないモデル」で除外されています。別のモデルを指定するか、設定 \\u003e エージェント \\u003e 動作設定 で除外を解除してください。\"}}\n"
+== order_model_before_dir
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_model\",\"message\":\"モデル \\\"gpt-9\\\" は利用できません。近い候補: gpt-5.6-sol, gpt-5.5。一覧は起動ダイアログのモデル選択（アシスタントは list_models）で確認してください。\"}}\n"
+== svn_no_worktree
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"svn_no_worktree\",\"message\":\"svn working copies have no worktree; check out a different path into its own folder instead\"}}\n"
+== worktree_branch_exists_remote
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"branch_exists_remote\",\"message\":\"a remote branch \\\"remote-only\\\" already exists; rename it or work on the existing branch\"}}\n"
+== dir_missing_relative
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_dir\",\"message\":\"dir does not exist: $HOME/nope\"}}\n"
+== order_dir_before_working_copy
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_dir\",\"message\":\"dir does not exist: $HOME/absent\"}}\n"
+== order_working_copy_before_subdir
+status 409
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"spawn_working_copy_busy\",\"message\":\"$HOME/repos/app では既にセッション busy が動いています。worktree=true（既定）で起こすか、別の作業コピーを指定してください。自分自身の作業コピーを意図して共有するなら worktree=false と allow_shared_working_copy=true を併せて指定します（自分が symlink を含まない正規のパスで起動している場合に限ります。他セッションの作業コピーは共有できません）。フラグを付けても同じ拒否になるなら、このコピーは共有できないので、同じ呼び出しを繰り返さないでください\"}}\n"
+== subdir_checked_in_the_worktree
+status 400
+header Content-Type: application/json
+body "{\"error\":{\"code\":\"bad_subdir\",\"message\":\"subdir does not exist: $HOME/repos/app@wt-sub/untracked\"}}\n"

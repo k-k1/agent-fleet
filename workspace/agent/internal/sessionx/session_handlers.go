@@ -45,6 +45,16 @@ import (
 // catalog (docs/log/109).
 var LcppLiveModels func(ctx context.Context) []agents.ModelChoice
 
+// The other kinds' live catalogs, read by the create's model check. Behind seams only so a test
+// can pin that check's answers: each one shells out to its CLI (copilot starts a whole TUI), which
+// a test binary can neither assume nor afford.
+var (
+	codexModelsFn     = codex.Models
+	copilotModelsFn   = copilot.Models
+	opencodeModelsFn  = opencode.Models
+	opencodeRetiredFn = opencode.Retired
+)
+
 // managedRuntimeOf resolves a kind's Managed runtime (agents.ManagedRuntime). The match is
 // exact: no NormalizeKind and no AgentOf claude fallback, so an unknown or alternate spelling has
 // no runtime and every question below answers false / does nothing.
@@ -768,21 +778,21 @@ func createSession(w http.ResponseWriter, r *http.Request, req CreateReq) {
 	// resolveLiveModel expands an unambiguous short name into the full id, so without that
 	// a short name like "fab" would resolve to an excluded model.
 	if NormalizeKind(req.Kind) == session.KindCodex && strings.TrimSpace(req.Model) != "" {
-		model, err := resolveLiveModel(req.Model, FilterVisibleModels(session.KindCodex, codex.Models()))
+		model, err := resolveLiveModel(req.Model, FilterVisibleModels(session.KindCodex, codexModelsFn()))
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadRequest, "bad_model", err.Error())
 			return
 		}
 		req.Model = model
 	} else if NormalizeKind(req.Kind) == session.KindCopilot && strings.TrimSpace(req.Model) != "" {
-		model, err := resolveLiveModel(req.Model, FilterVisibleModels(session.KindCopilot, copilot.Models()))
+		model, err := resolveLiveModel(req.Model, FilterVisibleModels(session.KindCopilot, copilotModelsFn()))
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadRequest, "bad_model", err.Error())
 			return
 		}
 		req.Model = model
 	} else if NormalizeKind(req.Kind) == session.KindOpencode && strings.TrimSpace(req.Model) != "" {
-		ids := VisibleModelIDs(session.KindOpencode, opencode.Models())
+		ids := VisibleModelIDs(session.KindOpencode, opencodeModelsFn())
 		choices := make([]agents.ModelChoice, 0, len(ids))
 		for _, id := range ids {
 			choices = append(choices, agents.ModelChoice{ID: id, Label: id})
@@ -792,7 +802,7 @@ func createSession(w http.ResponseWriter, r *http.Request, req CreateReq) {
 			// A retired model needs its own wording: with the typo message the user never
 			// reaches the cause, since the id and the billing route are both right and
 			// only opencode.ai stopped offering it (models.go Retired).
-			if requested := strings.TrimSpace(req.Model); opencode.Retired(requested) {
+			if requested := strings.TrimSpace(req.Model); opencodeRetiredFn(requested) {
 				httpx.WriteErr(w, http.StatusBadRequest, "bad_model", retiredModelError(requested, choices))
 				return
 			}
