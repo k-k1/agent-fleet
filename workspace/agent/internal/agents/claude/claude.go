@@ -153,12 +153,16 @@ var readPane = tmuxx.ReadPane
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	li := agents.LiveInfo{Resumable: true}
 	sid := session.UUID(m.Dir, m.Name)
-	li.RemoteURL = RemoteSessionURL(sid)
-	li.Context = latestContext(sid)
-	// Read for a stopped session too: on a card the last thing it said is the only clue to
-	// what it was doing, and that is most needed for the ones nobody has reopened. Both facts
-	// come out of one memoized read of the transcript's tail.
-	li.LastSay, li.TokenSpends = TailFacts(sid)
+	// All three are card facts and all three are empty without a transcript, so one possibly
+	// remembered miss stands in for three sweeps (display_miss.go).
+	if displayHasTranscript(sid, alive) {
+		li.RemoteURL = RemoteSessionURL(sid)
+		li.Context = latestContext(sid)
+		// Read for a stopped session too: on a card the last thing it said is the only clue
+		// to what it was doing, and that is most needed for the ones nobody has reopened.
+		// Both facts come out of one memoized read of the transcript's tail.
+		li.LastSay, li.TokenSpends = TailFacts(sid)
+	}
 	if alive {
 		// Default a live claude with no recorded event yet to idle (it sits at the
 		// prompt waiting for input). Hook events refine it.
