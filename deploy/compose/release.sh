@@ -192,7 +192,7 @@ if [ "$DO_BUILD" = 1 ]; then
 fi
 
 echo "==> assemble deploy surface -> $OUT"
-cp "$HERE/docker-compose.yml" "$HERE/Caddyfile" "$HERE/.env.example" \
+cp "$HERE/docker-compose.yml" "$HERE/docker-compose.macos.yml" "$HERE/Caddyfile" "$HERE/.env.example" \
    "$HERE/backup.sh" "$HERE/restore.sh" "$HERE/load-images.sh" \
    "$HERE/README.md" "$ROOT/LICENSE" "$ROOT/NOTICE" "$OUT/"
 # AWS deploy surface (docs/log/35 §35.2 A): ec2-single cfn + ecs cfn/ + runbooks.

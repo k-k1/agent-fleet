@@ -18,6 +18,7 @@
 #                     requires AF_VERSION)
 #   AF_SKIP_PULL=1    do not `docker compose pull` after extracting (images are
 #                     pulled by `docker compose up` anyway)
+#   AF_OS             uname -s value (default: this machine's; for testing)
 set -euo pipefail
 
 REPO="${AF_DIST_REPO:-k-k1/agent-fleet-dist}"
@@ -29,7 +30,13 @@ PULL_IMAGES="${AF_SKIP_PULL:+0}"; PULL_IMAGES="${PULL_IMAGES:-1}"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
-[ "$(uname -s)" = Linux ] || die "the Compose edition runs on a Linux Docker host"
+OS="${AF_OS:-$(uname -s)}"
+case "$OS" in
+  Linux) ;;
+  # Docker Desktop / OrbStack / colima: unverified (#2961), and it needs the overlay.
+  Darwin) echo "NOTE: macOS is experimental and unverified — follow \"macOS\" in the bundle's README.md" >&2 ;;
+  *) die "the Compose edition runs on a Linux Docker host (or, experimentally, macOS)" ;;
+esac
 command -v docker >/dev/null 2>&1 \
   || die "docker is not installed (need Docker Engine + the compose plugin)"
 docker compose version >/dev/null 2>&1 \
@@ -71,10 +78,18 @@ fetch "$BASE/v$VER/$BUNDLE" "$TMP/$BUNDLE"
 fetch "$BASE/v$VER/SHA256SUMS" "$TMP/SHA256SUMS"
 
 echo "==> verifying (sha256)"
-( cd "$TMP" && sha256sum -c --ignore-missing SHA256SUMS >/dev/null ) \
-  || die "sha256 mismatch (possibly a corrupted download — please retry)"
 grep -qE "  $BUNDLE\$" "$TMP/SHA256SUMS" \
   || die "SHA256SUMS has no entry for $BUNDLE"
+if command -v sha256sum >/dev/null 2>&1; then
+  ( cd "$TMP" && sha256sum -c --ignore-missing SHA256SUMS >/dev/null ) \
+    || die "sha256 mismatch (possibly a corrupted download — please retry)"
+else
+  # macOS ships shasum, not sha256sum; compare the one line this bundle owns.
+  want="$(awk -v f="$BUNDLE" '$2 == f { print $1 }' "$TMP/SHA256SUMS")"
+  got="$(shasum -a 256 "$TMP/$BUNDLE" | cut -d' ' -f1)"
+  [ -n "$want" ] && [ "$want" = "$got" ] \
+    || die "sha256 mismatch (possibly a corrupted download — please retry)"
+fi
 
 TARGET="$DEST/agent-fleet-$VER"
 if [ -e "$TARGET" ]; then
@@ -117,6 +132,8 @@ cat <<EOF
 Next steps (Compose needs manual config — cannot be fully automated):
   cd agent-fleet-$VER
   cp .env.example .env
+  # macOS: use the values in README.md "macOS" and start with
+  #   docker compose -f docker-compose.yml -f docker-compose.macos.yml up -d
   # fill in .env: AF_MASTER_KEY / AF_COOKIE_SECRET / DOCKER_GID /
   #   PUBLIC_DOMAIN / PUBLIC_BASE_URL / SUPER_ADMIN_EMAILS / DATA_DIR
   #   and the login IdP: GOOGLE_OAUTH_* and/or AF_OIDC_PROVIDERS + AF_OIDC_<ID>_*

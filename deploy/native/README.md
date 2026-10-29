@@ -69,6 +69,13 @@ echo 'kernel.apparmor_restrict_unprivileged_userns=0' | sudo tee /etc/sysctl.d/6
 On kernels with userns disabled entirely, the native package cannot run (use the
 Docker setup, `agent-fleet-<v>.tar.gz`, instead).
 
+**macOS** has neither bubblewrap nor Linux user namespaces, and the rootfs is Linux, so
+there is no macOS package and `install.sh` refuses to run there. On an Apple Silicon Mac
+run the `linux-arm64` package inside a Linux VM (Lima, an OrbStack machine, ...): install
+and `af start` inside the VM, and open `http://localhost:8099` through the VM's port
+forward. This route is unverified (#2961). The Docker edition on a Mac is described in
+[deploy/compose/README.md](../compose/README.md#macos-experimental-unverified).
+
 ## Data locations
 
 | Contents | Location |
