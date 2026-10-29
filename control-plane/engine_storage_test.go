@@ -291,25 +291,36 @@ func TestEngineStorageVerifyStopsWhenTheRequestEnds(t *testing.T) {
 }
 
 // Reuse writes the catalogue, so every verify must ask the bucket again: a present answer from a
-// moment ago says nothing about an object a delete or move task has since removed.
+// moment ago says nothing about an object a delete or move task has since removed. The plain case
+// calls nothing between the two reads, so a cache that only markDeleting clears still fails it.
 func TestEngineStorageVerifyAsksTheBucketEveryTime(t *testing.T) {
-	key := "image/models/a.safetensors"
-	head := &fakeEngineStorageHead{states: map[string]string{key: engineStoragePresent}, bytes: map[string]int64{key: 42}}
-	storage := newEngineStorage("models", head)
-	if got := storage.verify(t.Context(), key); got.State != engineStoragePresent || got.Bytes != 42 || got.CheckedAt == "" {
-		t.Fatalf("first verify = %+v", got)
-	}
-	storage.markDeleting(key)
-	head.mu.Lock()
-	head.states[key] = engineStorageMissing
-	head.mu.Unlock()
-	if got := storage.verify(t.Context(), key); got.State != engineStorageMissing {
-		t.Fatalf("verify after the object went = %+v, want missing", got)
-	}
-	head.mu.Lock()
-	defer head.mu.Unlock()
-	if head.calls[key] != 2 {
-		t.Fatalf("HeadObject calls = %d, want 2", head.calls[key])
+	for _, tc := range []struct {
+		name    string
+		between func(*engineStorage, string)
+	}{
+		{"back to back", func(*engineStorage, string) {}},
+		{"after markDeleting", func(s *engineStorage, key string) { s.markDeleting(key) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key := "image/models/a.safetensors"
+			head := &fakeEngineStorageHead{states: map[string]string{key: engineStoragePresent}, bytes: map[string]int64{key: 42}}
+			storage := newEngineStorage("models", head)
+			if got := storage.verify(t.Context(), key); got.State != engineStoragePresent || got.Bytes != 42 || got.CheckedAt == "" {
+				t.Fatalf("first verify = %+v", got)
+			}
+			tc.between(storage, key)
+			head.mu.Lock()
+			head.states[key] = engineStorageMissing
+			head.mu.Unlock()
+			if got := storage.verify(t.Context(), key); got.State != engineStorageMissing {
+				t.Fatalf("verify after the object went = %+v, want missing", got)
+			}
+			head.mu.Lock()
+			defer head.mu.Unlock()
+			if head.calls[key] != 2 {
+				t.Fatalf("HeadObject calls = %d, want 2", head.calls[key])
+			}
+		})
 	}
 }
 
