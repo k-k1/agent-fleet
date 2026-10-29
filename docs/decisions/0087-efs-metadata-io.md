@@ -1305,3 +1305,20 @@ migration stamping existing slots) could prove it, and only for slots that never
 #2950 the remaining transcript-less sweeps are mostly live background-work lookups (#2953) and
 the one-off boot backfill, so that was judged not worth a new state directory and a migration.
 The sweep stays on every miss.
+
+## Note 2026-10-29: no main transcript does not imply no subagents directory (#2953)
+
+A live, idle claude session with no transcript still sweeps `projects/*` through
+`BackgroundWork` (`BackgroundAgentsRunning`, `subagentAnchors`, the `subagentBases` Glob).
+Answering those from "no main transcript" was considered and not built:
+
+- The implication is already refuted in `bg.go` and by `TestSessionReportDeferredWhileSubagentBusy`:
+  a subagents directory under an unrelated project, with no located transcript, must still read as busy.
+- An empty `jsonlPaths` is itself the unproven absence of the note above (a first turn in flight,
+  a cold or wrong cwd hint), so it cannot anchor a second conclusion.
+- A false "no" travels `WireLive` → `BackgroundBusy` into the control plane's reaper and stops a
+  workspace that has a subagent running; a time-based cache is no safer.
+
+A display-only shortcut in `fleetGraphResolveConv` was rejected too: it would remove one of four
+sweeps and cost sessions with a transcript in an unguessed project directory their conversation
+id in the fleet graph. The sweeps stay.
