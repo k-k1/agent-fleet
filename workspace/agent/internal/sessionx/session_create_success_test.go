@@ -51,12 +51,17 @@ type createSuccessCase struct {
 	sendErr error  // the managed probe's Send answer
 }
 
-// The parts of a created session that move with the clock or the temp dir, and their stand-ins.
+// rfc3339Time is a timestamp. Each distinct one becomes $TIME1, $TIME2, … in order of first
+// appearance, never one shared stand-in: equal instants must stay equal and different ones
+// different, or a meta whose stop-after-turn arm drifted off its creation would still match.
+var rfc3339Time = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})`)
+
+// The other parts of a created session that move with the clock or the temp dir, and their
+// stand-ins.
 var successVolatile = []struct {
 	re   *regexp.Regexp
 	with string
 }{
-	{regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})`), "$$TIME"},
 	{regexp.MustCompile(` @\d{4}-\d{4}`), " @$$STAMP"},           // the default title's MMDD-HHMM
 	{regexp.MustCompile(`\d{2}/\d{2} \d{2}:\d{2}`), "$$STARTED"}, // startedLabel
 	{regexp.MustCompile(`wc_[0-9a-f]{32}`), "wc_$$ID"},           // hashes the dir
@@ -114,24 +119,35 @@ func createSuccessCases() []createSuccessCase {
 // renderSuccess is one successful create as the golden holds it. The session name is random and
 // the clock moves, so both are spelled out of the way; everything else is verbatim.
 func (p *createProbe) renderSuccess(name string, out string) string {
+	meta := p.createdMeta()
+	mb, _ := json.Marshal(meta)
+	s := fmt.Sprintf("%smeta %s\n", out, mb)
+	if meta.Name != "" {
+		s = strings.ReplaceAll(s, meta.Name, "$NAME")
+	}
+	s = strings.ReplaceAll(s, p.home, "$HOME")
+	seen := map[string]string{}
+	s = rfc3339Time.ReplaceAllStringFunc(s, func(t string) string {
+		if seen[t] == "" {
+			seen[t] = fmt.Sprintf("$TIME%d", len(seen)+1)
+		}
+		return seen[t]
+	})
+	for _, v := range successVolatile {
+		s = v.re.ReplaceAllString(s, v.with)
+	}
+	return "== " + name + "\n" + s
+}
+
+// createdMeta is the meta the create wrote: the one that is not a fixture.
+func (p *createProbe) createdMeta() session.Meta {
 	var meta session.Meta
 	for _, m := range session.ListMetas() {
 		if m.Name != "parent1" && m.Name != "kid" {
 			meta = m
 		}
 	}
-	norm := func(s string) string {
-		if meta.Name != "" {
-			s = strings.ReplaceAll(s, meta.Name, "$NAME")
-		}
-		s = strings.ReplaceAll(s, p.home, "$HOME")
-		for _, v := range successVolatile {
-			s = v.re.ReplaceAllString(s, v.with)
-		}
-		return s
-	}
-	mb, _ := json.Marshal(meta)
-	return fmt.Sprintf("== %s\n%smeta %s\n", name, norm(out), norm(string(mb)))
+	return meta
 }
 
 func TestCreateSessionSuccessIsByteIdentical(t *testing.T) {
@@ -182,6 +198,14 @@ func TestCreateSessionSuccessIsByteIdentical(t *testing.T) {
 			}
 			for _, in := range sent {
 				fmt.Fprintf(&b, "sent %q origin=%+v instr=%q schedule=%+v\n", in.Prompt, in.Origin, in.Instr, in.Schedule)
+			}
+			// The arm's instant is the lower bound its completion evidence is cut by (docs/log/85),
+			// so it is the creation instant itself, not merely a time of the same shape.
+			if m := p.createdMeta(); body["stop_after_turn"] == true {
+				if _, err := time.Parse(time.RFC3339, m.CreatedAt); err != nil || m.StopAfterTurnAt != m.CreatedAt {
+					t.Errorf("stop_after_turn armed at %q for a session created at %q (%v), want the same instant",
+						m.StopAfterTurnAt, m.CreatedAt, err)
+				}
 			}
 			if tc.managed == "" {
 				// The slot of a spawn is handed over to the meta, never left held.
