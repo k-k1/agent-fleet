@@ -8,7 +8,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { pickNearCap } from "../usageNearCap.ts";
 import { agoText, resetChipText, untilText, UsageBreakdownLink, UsageRow, useUsage, whenText } from "./usageCommon.tsx";
 import { placeChip, UsageChipPlace, useChipSlot } from "./usageFold.tsx";
-import type { RemainingSource } from "./usageSources.ts";
+import { AGY_USAGE, COPILOT_USAGE, type RemainingSource } from "./usageSources.ts";
 
 // RemainingUsageChip: the chip for an agent whose endpoint reports what is left of each quota
 // pool (REMAINING_SOURCES: Copilot, Antigravity). Shown as USED percent so the chip and dropdown
@@ -119,3 +119,7 @@ export function RemainingUsageChip({ src, tenant }: { src: RemainingSource; tena
     </div>,
   );
 }
+
+// One agent's chip by name, for a caller that mounts a single agent (WsBarUsageFold.dom.test).
+export const CopilotUsageChip = ({ tenant }: { tenant: string | null }) => <RemainingUsageChip src={COPILOT_USAGE} tenant={tenant} />;
+export const AgyUsageChip = ({ tenant }: { tenant: string | null }) => <RemainingUsageChip src={AGY_USAGE} tenant={tenant} />;

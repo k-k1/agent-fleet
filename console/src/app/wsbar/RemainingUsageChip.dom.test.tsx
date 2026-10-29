@@ -1,9 +1,10 @@
-// Equivalence proof for RemainingUsageChip (#2891): it replaced AgyUsageChip and
-// CopilotUsageChip, which were two copies of one chip. This drives every implementation through
-// the same matrix — each reading shape, bare and inside the fold group, bar and folded, the
-// dropdown opened by click and by keyboard, refresh, dismiss — and records the rendered HTML, the
-// layout reports the fold group hears and the endpoint calls after every step. The golden holds
-// what the old chips rendered, so the merged chip is held to them byte for byte.
+// Equivalence proof for RemainingUsageChip (#2891): it replaced two separate chips for Copilot and
+// Antigravity that were copies of one another. This drives the chip through one matrix — each
+// reading shape, bare and inside the fold group, bar and folded, the dropdown opened by click and
+// by keyboard, refresh, dismiss — and records the rendered HTML, the layout reports the fold group
+// hears and the endpoint calls after every step. The golden is what the two old chips rendered
+// over this matrix (measured side by side with the new one before they were deleted), so the
+// merged chip is held to them byte for byte.
 //
 // Regenerate (only when a visible change is intended, and say so in the commit):
 //   UPDATE_REMAINING_CHIP_GOLDEN=1 npx vitest run src/app/wsbar/RemainingUsageChip.dom.test.tsx
@@ -33,9 +34,7 @@ vi.mock("../../lib/intl.ts", async (importOriginal) => {
   };
 });
 
-import { AgyUsageChip } from "./AgyUsageChip.tsx";
-import { CopilotUsageChip } from "./CopilotUsageChip.tsx";
-import { RemainingUsageChip } from "./RemainingUsageChip.tsx";
+import { AgyUsageChip, CopilotUsageChip, RemainingUsageChip } from "./RemainingUsageChip.tsx";
 import { AGY_USAGE, COPILOT_USAGE, type RemainingSource } from "./usageSources.ts";
 import { UsageChipFold } from "./usageFold.tsx";
 import { useSessionsStore } from "../../features/sessions/store.ts";
@@ -143,8 +142,8 @@ const COPILOT_CASES: Record<string, Reply> = {
   "missing-resets": ok({ ok: true, authed: true, quotas: [{ id: "chat", remainingPct: 0 }, { id: "completions", remainingPct: 60 }], ageSec: 10 }),
 };
 
-// The implementations under comparison, per source. `kind` is what the fold settings and the
-// keyboard address the chip by.
+// The ways to mount each source's chip: by its source record (the bar) and by name (the fold
+// test); every one is held to the same golden.
 interface Impl {
   name: string;
   make: () => ReactElement;
@@ -154,16 +153,16 @@ const SOURCES: { src: RemainingSource; cases: Record<string, Reply>; impls: Impl
     src: COPILOT_USAGE,
     cases: COPILOT_CASES,
     impls: [
-      { name: "old", make: () => <CopilotUsageChip tenant="t" /> },
-      { name: "new", make: () => <RemainingUsageChip src={COPILOT_USAGE} tenant="t" /> },
+      { name: "by source", make: () => <RemainingUsageChip src={COPILOT_USAGE} tenant="t" /> },
+      { name: "by name", make: () => <CopilotUsageChip tenant="t" /> },
     ],
   },
   {
     src: AGY_USAGE,
     cases: AGY_CASES,
     impls: [
-      { name: "old", make: () => <AgyUsageChip tenant="t" /> },
-      { name: "new", make: () => <RemainingUsageChip src={AGY_USAGE} tenant="t" /> },
+      { name: "by source", make: () => <RemainingUsageChip src={AGY_USAGE} tenant="t" /> },
+      { name: "by name", make: () => <AgyUsageChip tenant="t" /> },
     ],
   },
 ];

@@ -35,14 +35,13 @@ import { useCurrentPreviewInfo, usePreviewStore } from "../../features/preview/p
 import { useBrowserUnavailable } from "../../features/browser/availability.ts";
 import { AwsProfilesChip } from "../../features/awslogin/AwsProfilesChip.tsx";
 import { GcpProfilesChip } from "../../features/gcplogin/GcpProfilesChip.tsx";
-import { AgyUsageChip } from "./AgyUsageChip.tsx";
-import { CopilotUsageChip } from "./CopilotUsageChip.tsx";
+import { RemainingUsageChip } from "./RemainingUsageChip.tsx";
 import { SlotMoveNotice } from "./SlotMoveNotice.tsx";
 import { UsageChip } from "./UsageChip.tsx";
 import { MachineDetailsLink, useWsMachine } from "./machine.tsx";
 import { useWsResourceChips } from "./resourceStats.ts";
 import { UsageChipFold } from "./usageFold.tsx";
-import { USAGE_SOURCES } from "./usageSources.ts";
+import { REMAINING_SOURCES, USAGE_SOURCES } from "./usageSources.ts";
 
 // A stable empty list: a selector returning a fresh [] each time re-renders forever.
 const NO_PORTS: number[] = [];
@@ -501,8 +500,9 @@ export function WsBar() {
       {USAGE_SOURCES.map((s) => (
         <UsageChip key={s.endpoint} src={s} tenant={tenant} />
       ))}
-      <CopilotUsageChip tenant={tenant} />
-      <AgyUsageChip tenant={tenant} />
+      {REMAINING_SOURCES.map((s) => (
+        <RemainingUsageChip key={s.endpoint} src={s} tenant={tenant} />
+      ))}
     </>
   );
 

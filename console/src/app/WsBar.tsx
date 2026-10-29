@@ -2,8 +2,7 @@
 // import path the App and the tests use.
 export { WsBar } from "./wsbar/Bar.tsx";
 export { SlotMoveNotice } from "./wsbar/SlotMoveNotice.tsx";
-export { USAGE_SOURCES } from "./wsbar/usageSources.ts";
+export { REMAINING_SOURCES, USAGE_SOURCES } from "./wsbar/usageSources.ts";
 export { UsageChip } from "./wsbar/UsageChip.tsx";
-export { AgyUsageChip } from "./wsbar/AgyUsageChip.tsx";
-export { CopilotUsageChip } from "./wsbar/CopilotUsageChip.tsx";
+export { AgyUsageChip, CopilotUsageChip, RemainingUsageChip } from "./wsbar/RemainingUsageChip.tsx";
 export { UsageChipFold } from "./wsbar/usageFold.tsx";
