@@ -39,6 +39,18 @@ type tuiMirrorContractSpec struct {
 	// models lists the launch-time models the capability probes may start with (the same
 	// call GET /agents/{kind}/models makes). nil = the kind has no listing.
 	models func() []agents.ModelChoice
+	// paneWorking reads "a turn is under way" off a captured pane, for a kind whose
+	// transcript is written only when the turn ends (cursor): WireLive then says nothing
+	// for the whole of a long turn. nil = WireLive alone decides.
+	paneWorking func(pane string) bool
+}
+
+// turnWorking is WireLive's "working", or the pane's when the kind supplies a reader.
+func turnWorking(spec tuiMirrorContractSpec, meta session.Meta, tn string) bool {
+	if spec.agent.WireLive(meta, true).State == "working" {
+		return true
+	}
+	return spec.paneWorking != nil && spec.paneWorking(tmuxx.CapturePane(tn))
 }
 
 func requireTUIContract(t *testing.T, ok bool, reason string) {
@@ -192,7 +204,7 @@ func submitPrompt(t *testing.T, spec tuiMirrorContractSpec, meta session.Meta, t
 		}
 		deadline := time.Now().Add(tuiContractSubmitWait)
 		for time.Now().Before(deadline) {
-			if spec.agent.WireLive(meta, true).State == "working" {
+			if turnWorking(spec, meta, tn) {
 				return true
 			}
 			if td, ok := spec.agent.Transcript(meta); ok && mirrorHasTurn(td.Turns, "user", marker) {

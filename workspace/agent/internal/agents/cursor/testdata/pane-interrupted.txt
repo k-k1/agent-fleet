@@ -1,0 +1,12 @@
+
+  Cursor Agent
+  v2026.10.22-27dcf5f
+  Tip: Use /plan to plan execution and reach the right outcome faster.
+
+  Count from 1 to 300, one number per line, adding a short sentence of commentary to each.
+
+  → Count from 1 to 300, one number per line, adding a short sentence of commentary to each.
+
+  Auto
+  ~/.af-work/sbklqiu/w
+

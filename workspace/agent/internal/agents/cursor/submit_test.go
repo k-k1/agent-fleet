@@ -126,3 +126,43 @@ func TestComposerDraftKeepsTextThatStartsLikeThePlaceholder(t *testing.T) {
 		t.Error("a draft whose first row equals the placeholder was read as empty")
 	}
 }
+
+// PaneWorking is what tells a long turn from an idle composer: the JSONL stays empty until the
+// turn ends. pane-working-turn.txt / pane-interrupted.txt are 2026.10.22 captures of one prompt
+// before and after Ctrl+C (the prompt comes back into the composer as a draft).
+func TestPaneWorking(t *testing.T) {
+	for file, want := range map[string]bool{
+		"pane-working-turn.txt":    true,  // spinner row with a token count
+		"pane-submit-working.txt":  true,  // 2026.10.16: bare spinner row and the ctrl+c hint
+		"pane-interrupted.txt":     false, // back on the composer, prompt as a draft
+		"pane-submit-typed.txt":    false,
+		"pane-submit-answered.txt": false,
+		"pane-composer-narrow.txt": false,
+	} {
+		if got := PaneWorking(readPane(t, file)); got != want {
+			t.Errorf("%s: PaneWorking = %v, want %v", file, got, want)
+		}
+	}
+	// Each signal on its own, so removing either branch fails: a version without the hint, and
+	// one without the spinner row.
+	noHint := "  some output\n\n ⠠⠜ Working  286 tokens\n\n  → Add a follow-up\n\n  Auto\n"
+	bare := "  some output\n\n ⠀⠞ Working\n    Tip: Use /plan to plan.\n\n  → Add a follow-up\n\n  Auto\n"
+	hintOnly := "  → Add a follow-up      ctrl+c to stop\n\n  Auto\n"
+	for name, pane := range map[string]string{"spinner with tokens": noHint, "bare spinner + tip": bare, "hint only": hintOnly} {
+		if !PaneWorking(pane) {
+			t.Errorf("%s: not recognised as working", name)
+		}
+	}
+	// Spinner-shaped text that is not status: plain prose, an answer that quotes a spinner row
+	// far above the composer, and an unsent draft that contains one.
+	spin := " ⠠⠜ Working  286 tokens\n"
+	for name, pane := range map[string]string{
+		"prose":         "  Working  5 tokens\n  → Add a follow-up\n",
+		"quoted answer": spin + "  first line of prose\n  second line of prose\n\n  → Add a follow-up\n\n  Auto\n",
+		"draft":         "  answer\n\n  → " + "fix this:\n" + spin + "\n  Auto\n",
+	} {
+		if PaneWorking(pane) {
+			t.Errorf("%s: read as working", name)
+		}
+	}
+}

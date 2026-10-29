@@ -35,8 +35,39 @@ const maxErrorChars = 300
 // keyHint is the working composer's hint at the right of its first row.
 const keyHint = "ctrl+c to stop"
 
+// spinnerRow is the spinner line a running turn draws above the composer: braille cells, a verb
+// (Working, Thinking, Reading, ...) and the running token count once there is one.
+var spinnerRow = regexp.MustCompile(`(?m)^\s*[\x{2800}-\x{28FF}]+\s+[A-Z][a-z]+(\s+[\d.]+k?\s+tokens)?\s*$`)
+
 // optionRow is a "key: value" line of the toast's options (hideIcon: true), not part of its text.
 var optionRow = regexp.MustCompile(`^\w+: (true|false)$`)
+
+// PaneWorking reports whether the pane shows a turn under way. The JSONL cannot say so: it is
+// written when a turn ends (see above), so a long turn reads as no state at all until it is over.
+// The signal is the spinner row among the two non-blank lines directly above the composer (the
+// spinner, and the tip 2026.10.16 printed under it), or the "ctrl+c to stop" hint on the
+// composer's first row; both are present in 2026.10.22 captures. Anywhere else a spinner-shaped
+// line is transcript prose or an unsent draft (below the composer's first row), not status.
+func PaneWorking(captured string) bool {
+	lines := strings.Split(captured, "\n")
+	top := composerTop(lines)
+	if top < 0 {
+		return false
+	}
+	if strings.HasSuffix(strings.TrimSpace(lines[top]), keyHint) {
+		return true
+	}
+	for i, seen := top-1, 0; i >= 0 && seen < 2; i-- {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		if spinnerRow.MatchString(lines[i]) {
+			return true
+		}
+		seen++
+	}
+	return false
+}
 
 // ComposerHolds reports whether the pane's composer still holds the prompt as an unsubmitted
 // draft, given the first and last runes of the prompt (head and tail, whitespace removed).
