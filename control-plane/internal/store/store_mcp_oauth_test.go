@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// Both dialects: a refresh token is spent by one conditional UPDATE and its RowsAffected is
+// Both dialects: a refresh token is spent by one conditional UPDATE and the row it returns is
 // the whole guarantee, so concurrent refreshes produce one winner.
 func TestMCPOAuthRefreshIsSpentExactlyOnce(t *testing.T) {
 	ctx := context.Background()
@@ -46,6 +46,42 @@ func TestMCPOAuthRefreshIsSpentExactlyOnce(t *testing.T) {
 		}
 		if _, state, _ := st.ConsumeMCPOAuthToken(ctx, "r1", MCPOAuthRefresh, 2000); state != MCPOAuthSpendUnknown {
 			t.Errorf("%s: an expired token was %v, want unknown", name, state)
+		}
+	}
+}
+
+// The winner of a spend keeps its win when a loser revokes the grant right after the spend:
+// the loser sees a replay and deletes the grant's tokens, and the winner must still come back
+// OK with its row rather than unknown, or every concurrent refresh of one token loses.
+func TestMCPOAuthSpendSurvivesRivalRevoke(t *testing.T) {
+	ctx := context.Background()
+	for name, st := range homeOpStores(t) {
+		if err := st.CreateMCPOAuthGrant(ctx, MCPOAuthGrant{ID: "g1", ClientID: "c", ClientName: "Claude", IdentityID: "i",
+			MembershipID: "m", Scope: "read", Resource: "https://x/mcp", CodeHash: "code1", CreatedAt: 100,
+			IdleExpiresAt: 5000, AbsExpiresAt: 9000}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.InsertMCPOAuthToken(ctx, MCPOAuthToken{Hash: "r1", Kind: MCPOAuthRefresh, GrantID: "g1",
+			ClientID: "c", IdentityID: "i", ExpiresAt: 2000}); err != nil {
+			t.Fatal(err)
+		}
+		var rival MCPOAuthSpend = -1
+		st.afterMCPOAuthSpend = func() {
+			st.afterMCPOAuthSpend = nil
+			var err error
+			if _, rival, err = st.ConsumeMCPOAuthToken(ctx, "r1", MCPOAuthRefresh, 1000); err != nil {
+				t.Errorf("%s: rival spend: %v", name, err)
+			}
+			if _, err := st.RevokeMCPOAuthGrant(ctx, "g1", "refresh token reused", 1000); err != nil {
+				t.Errorf("%s: rival revoke: %v", name, err)
+			}
+		}
+		got, state, err := st.ConsumeMCPOAuthToken(ctx, "r1", MCPOAuthRefresh, 1000)
+		if err != nil || state != MCPOAuthSpendOK || got.GrantID != "g1" || got.Hash != "r1" {
+			t.Errorf("%s: winner = %v %+v %v, want OK with its row", name, state, got, err)
+		}
+		if rival != MCPOAuthSpendReplayed {
+			t.Errorf("%s: rival = %v, want replayed", name, rival)
 		}
 	}
 }
