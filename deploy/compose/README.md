@@ -353,10 +353,11 @@ which assumes rootful Docker on Linux. **Nobody has run this on a Mac yet**; the
 acceptance run is #2961, and what it finds replaces this section.
 
 Single user, reached at `http://127.0.0.1:8099` from the Mac; no Caddy, no public domain.
-In `.env`:
+In `.env`, besides the secrets from the Quick start:
 
 ```bash
 AUTH=dev                                  # one fixed user, no IdP
+AF_PROVISION=auto                         # the template's `invite` leaves that user in no tenant
 PUBLIC_BASE_URL=http://127.0.0.1:8099
 WS_IMAGE=ghcr.io/k-k1/agent-fleet/workspace:<version>
 # (B) a directory the engine shares with its VM — under your home works for all three
