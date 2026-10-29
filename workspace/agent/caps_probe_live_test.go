@@ -10,7 +10,7 @@ package main
 //
 // Each probe starts its own session through the production BuildLaunch and observes through
 // the production reads (WireLive / Transcript), like the mirror contract. Costs per kind: one
-// long turn that is interrupted, and three one-line turns.
+// long turn that is interrupted, and three one-line turns (up to five when the model probe meets explicit refusals).
 
 import (
 	"errors"
