@@ -709,80 +709,12 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 // createSession is the create after its body is decoded, so a move can create its target
 // in-process with the name it booked (CreateReq.name).
 func createSession(w http.ResponseWriter, r *http.Request, req CreateReq) {
-	// First of all, ahead of the idempotency claim: a refused kind must leave no ledger entry,
-	// and every guard below goes through NormalizeKind, which would turn it into claude.
-	if err := ValidateCreateKind(req.Kind); err != nil {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_kind", err.Error())
+	c := &createRun{w: w, r: r, req: &req}
+	if !c.validateKind() || !c.claim() {
 		return
 	}
-	// A create raised by another SESSION (ADR 0073) carries the parent's name, and the whole
-	// spawn regime hangs off it. Resolved here; the refusals run further down.
-	spawnParent := ""
-	if origin, _, parent := CreateOrigin(&req); origin == session.OriginSession {
-		spawnParent = parent
-		// The child has to be able to tell this instruction from one its user typed
-		// (ADR 0073 decision 14). Applied before the idempotency key is derived, so the key
-		// covers what is actually delivered, and here rather than in the calling tool so it
-		// cannot be omitted or forged.
-		req.InitialPrompt = SpawnEnvelope(parent, req.InitialPrompt)
-	}
-	// Idempotency guard (session_idempotency.go): collapse a retried / concurrent create
-	// onto the first one so a client that timed out mid-launch can't spawn a duplicate.
-	idemKey := createIdempotencyKey(&req)
-	committed := false
-	if idemKey != "" {
-		durable := req.IdempotencyDurable && strings.TrimSpace(req.IdempotencyKey) != ""
-		if prev, dup := createLedger.begin(idemKey, durable); dup {
-			switch prev.state {
-			case createDone:
-				// The identical create already succeeded — replay that session verbatim.
-				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set(createKeyHeader, idemKey)
-				w.Header().Set(createOutcomeHeader, "created")
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write(prev.body)
-			case createAbandoned:
-				// The caller gave this key up (abandon) and may have started over.
-				httpx.WriteErr(w, http.StatusConflict, "create_abandoned", "this create was abandoned by its caller")
-			case createRefused:
-				// A refused durable key stays refused, so this answer is as true as the first.
-				w.Header().Set(createKeyHeader, idemKey)
-				w.Header().Set(createOutcomeHeader, "refused")
-				httpx.WriteErr(w, http.StatusConflict, "create_refused", "a create under this key was refused; start over under a new key")
-			case createUnknown:
-				httpx.WriteErr(w, http.StatusServiceUnavailable, "create_outcome_unknown", "the outcome of an earlier create under this key is unknown")
-			default:
-				// The first create is still launching (the timed-out client's retry, or a
-				// genuine double-fire). Refuse with a distinct code the MCP tool reconciles
-				// into the eventual session rather than surfacing as a retryable failure.
-				httpx.WriteErr(w, http.StatusConflict, "create_in_progress",
-					"同じ内容のセッションを作成中です。完了までお待ちください")
-			}
-			return
-		}
-		// This request owns the key, so its answer is the outcome under it: say so in headers
-		// a proxy in between would not write (createOutcomeWriter).
-		w = &createOutcomeWriter{ResponseWriter: w, key: idemKey}
-		// We own the inflight entry: clear it on any non-committed exit so a real failure
-		// doesn't wedge the key (a completed entry is kept for replay by ledger.fail).
-		defer func() {
-			if !committed {
-				createLedger.fail(idemKey)
-			}
-		}()
-	}
-	// writeCreated finalizes a successful launch: cache the session for idempotent replay,
-	// mark the key committed (so the defer above won't clear it), then write the response.
-	writeCreated := func(m session.Meta) {
-		body := wireSession(m, true)
-		if idemKey != "" {
-			if b, err := json.Marshal(body); err == nil {
-				createLedger.complete(idemKey, b)
-				committed = true
-			}
-		}
-		httpx.WriteJSON(w, http.StatusCreated, body)
-	}
+	defer c.settleClaim()
+	w, spawnParent, writeCreated := c.w, c.spawnParent, c.writeCreated
 	// slot is this create's claim on one of the parent's child slots. Empty for every route
 	// that is not a spawn, and then every method is a plain meta write.
 	slot := &spawnSlot{}
