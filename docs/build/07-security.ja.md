@@ -479,10 +479,12 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
 
 **柵があるのは AWS だけで、選択制である。** `00-network` の `EgressRoute=gateway`
 （[ADR 0122](../decisions/0122-egress-gateway.ja.md)）では、Workspace のルートテーブルの既定ルートが
-egress gateway（Squid と、Squid の見えない部分を受け持つ nftables）へ向くので、Workspace に他の出口は無く、
-**enforce が Workspace を縛る**。プレビューで、確認はテスト用のデプロイだけである。制約も設計のうち:
-enforce は SNI で判定するので、許可された名前なら 443 番のどの公開アドレスにも届く。VPC のリゾルバへの
-DNS は記録されずに通る。それ以外のポートは、SSH の git や他のリゾルバへの直接の DNS も含めて落とす。
+egress gateway（Squid と、Squid の見えない部分を受け持つ nftables）へ向く。インターネット宛の TCP 80 と
+443 は Squid を通るので、Workspace にインターネットへの他の出口は無く、**enforce が Workspace を縛る**。
+プレビューで、確認はテスト用のデプロイだけである。制約も設計のうち: enforce は HTTP の Host か TLS の
+SNI で判定するので、許可された名前なら 443 番のどの公開アドレスにも届く。VPC のリゾルバへの DNS は
+記録されずに通る。それ以外のインターネット宛の通信は、SSH の git や他のリゾルバへの直接の DNS も含めて
+落とす。VPC 内の通信（CP、2049 番の EFS）はセキュリティグループに従い、gateway を通らない。
 Workspace は NAT gateway ではなく gateway 自身のアドレスから出る
 （[deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) の「Egress gateway」）。
 

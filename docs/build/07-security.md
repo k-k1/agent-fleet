@@ -568,12 +568,14 @@ Implemented:
 **The fence exists on AWS only, behind an option.** With `00-network`'s
 `EgressRoute=gateway` ([ADR 0122](../decisions/0122-egress-gateway.md)), the workspace
 route table's default route leads to an egress gateway (Squid, with nftables for what
-Squid does not see), so a workspace has no other way out and **enforce constrains it**.
-It is a preview, verified on a test deployment only, and its limits are part of the
-design: enforce decides on the SNI, so an allowed name reaches any public address on
-443; DNS to the VPC resolver passes unrecorded; every other port, git over SSH and
-direct DNS elsewhere included, is dropped; and workspaces leave from the gateway's
-own address, not the NAT gateway's ("Egress gateway" in
+Squid does not see): internet-bound TCP 80 and 443 go through Squid, so a workspace
+has no other way to the internet and **enforce constrains it**. It is a preview,
+verified on a test deployment only, and its limits are part of the design: enforce
+decides on the HTTP Host or the TLS SNI, so an allowed name reaches any public
+address on 443; DNS to the VPC resolver passes unrecorded; other internet-bound
+traffic, git over SSH and direct DNS elsewhere included, is dropped; traffic inside
+the VPC (the CP, EFS on 2049) follows the security groups and never passes the
+gateway; and workspaces leave from the gateway's own address, not the NAT gateway's ("Egress gateway" in
 [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md)).
 
 Everywhere else the fence is missing: there is no internal-only network on `docker`,
