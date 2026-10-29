@@ -1063,7 +1063,7 @@ func TestMCPOAuthTokenEndpointRules(t *testing.T) {
 	wantErr("wrong resource", exch(c, v, func(f url.Values) { f.Set("resource", testBase+"/other") }), 400, "invalid_target")
 	wantErr("no resource", exch(c, v, func(f url.Values) { f.Del("resource") }), 400, "invalid_target")
 	// The failed attempts above did not spend the code.
-	wantErr("wrong verifier", exch(c, "x"+v[1:], nil), 400, "invalid_grant")
+	wantErr("wrong verifier", exch(c, differentVerifier(v), nil), 400, "invalid_grant")
 	c, v = code()
 	wantErr("other redirect", exch(c, v, func(f url.Values) { f.Set("redirect_uri", "http://127.0.0.1:1/callback") }), 400, "invalid_grant")
 	c, v = code()
