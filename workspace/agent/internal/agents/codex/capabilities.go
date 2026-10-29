@@ -70,3 +70,12 @@ func (agentImpl) TerminalTraits() agents.TerminalTraits {
 		TerminalQuestion: TerminalModal,
 	}
 }
+
+// ManagedLifecycle is agents.ManagedLifecycler: this package's ReconcileManaged, AbortManaged
+// and Shutdown.
+func (agentImpl) ManagedLifecycle() agents.ManagedLifecycle {
+	return agents.ManagedLifecycle{Reconcile: ReconcileManaged, Abort: AbortManaged, Shutdown: Shutdown}
+}
+
+// ConnectionStatus is agents.ConnectionStatuser: this package's Status().
+func (agentImpl) ConnectionStatus(agents.StatusInputs) map[string]any { return Status() }

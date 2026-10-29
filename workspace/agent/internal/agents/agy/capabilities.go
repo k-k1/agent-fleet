@@ -31,3 +31,6 @@ func (agentImpl) PromptModal(m session.Meta) string {
 func (agentImpl) SkillsLayout() agents.SkillsLayout {
 	return agents.SkillsLayout{Native: agents.SkillsForeignOnly}
 }
+
+// ConnectionStatus is agents.ConnectionStatuser: this package's Status().
+func (agentImpl) ConnectionStatus(agents.StatusInputs) map[string]any { return Status() }

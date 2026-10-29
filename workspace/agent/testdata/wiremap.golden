@@ -25,7 +25,7 @@ cleanup_ops.go handlePurgeCleanupArchive x1 {purged}
 cleanup_ops.go handlePurgeOldCleanupArchives x1 {bytes,kept,purged}
 cleanup_ops.go handleRestoreCleanupArchive x1 {restored}
 connections.go handleCheckLcppConn x1 {build_info,models,n_ctx,ok}
-connections.go handleConnectionsGet x1 {agy,aws,bitbucket,claude,cloudwatch,codex,copilot,cursor,discord,github,grafana,internal,jira,kiro,lcpp,muse,opencode,pagerduty,slack,svn}
+connections.go handleConnectionsGet x1 {aws,bitbucket,cloudwatch,discord,github,grafana,internal,jira,pagerduty,slack,svn} dyn
 connections.go handleDeleteAWSMCPConn x1 {disconnected}
 connections.go handleDeleteCloudWatchConn x1 {disconnected}
 connections.go handleDeleteDiscordConn x1 {disconnected}
