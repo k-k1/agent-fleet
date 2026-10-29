@@ -1,3 +1,35 @@
+diff --git a/console/src/agents/availability.test.ts b/console/src/agents/availability.test.ts
+index d312fb3d9..ea80ebcc9 100644
+--- a/console/src/agents/availability.test.ts
++++ b/console/src/agents/availability.test.ts
+@@ -27,14 +27,14 @@ describe("launch gate — unknown / failed connection state", () => {
+     // {} is a successful response that happens to list no authenticated agent — unlike
+     // null it is an answer, so credential-free shell and lcpp (no sign-in exists for this
+     // kind either — ADR 0093 決定 10) are correctly still offered.
+-    expect(gate({})).toEqual(["lcpp", "shell"]);
++    expect(gate({})).toEqual(["lcpp", "zz", "shell"]);
+   });
+ });
+ 
+ describe("launch gate — per-agent predicates", () => {
+   it("offers only the authenticated agents (plus the credential-free ones)", () => {
+     const conns = { claude: { connected: true }, codex: { connected: false }, agy: { connected: false } };
+-    expect(gate(conns)).toEqual(["claude", "lcpp", "shell"]);
++    expect(gate(conns)).toEqual(["claude", "lcpp", "zz", "shell"]);
+   });
+ 
+   it("keeps an unauthenticated agy out even though it is installed and supported", () => {
+@@ -121,8 +121,8 @@ describe("lcpp — on/off gate (docs/log/105 §106.2, the user's own display set
+   });
+ 
+   it("does not affect any other kind's availability", () => {
+-    expect(gate({ lcpp: { enabled: false } })).toEqual(["shell"]);
+-    expect(gate({ lcpp: { enabled: false }, claude: { connected: true } })).toEqual(["claude", "shell"]);
++    expect(gate({ lcpp: { enabled: false } })).toEqual(["zz", "shell"]);
++    expect(gate({ lcpp: { enabled: false }, claude: { connected: true } })).toEqual(["claude", "zz", "shell"]);
+   });
+ });
+ 
 diff --git a/console/src/agents/derivedKindLists.test.ts b/console/src/agents/derivedKindLists.test.ts
 index d6c61239b..ca11a5384 100644
 --- a/console/src/agents/derivedKindLists.test.ts
@@ -24,7 +56,7 @@ index 141da6a67..98a2d741b 100644
    ssm: f(false, false, "no"),
  };
 diff --git a/console/src/agents/registry.ts b/console/src/agents/registry.ts
-index 5daf1de14..0e2c9ff98 100644
+index 5daf1de14..32e890891 100644
 --- a/console/src/agents/registry.ts
 +++ b/console/src/agents/registry.ts
 @@ -703,6 +703,23 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
@@ -46,7 +78,7 @@ index 5daf1de14..0e2c9ff98 100644
 +    skillTrigger: "",
 +    tuiMemoryCost: "",
 +    caps: caps({ runsInDir: true, launchableFromRepo: true }),
-+    available: (c) => !!c.conns?.zz?.connected,
++    available: () => true,
 +  },
    shell: {
      id: "shell",
@@ -101,7 +133,7 @@ index 7a2495056..c25fe5335 100644
  .kind-ssm { --kind: var(--kind-ssm); }
 +.kind-zz { --kind: var(--kind-zz); }
 diff --git a/console/src/types/session.ts b/console/src/types/session.ts
-index 40ebbc27c..0c0004ebf 100644
+index 40ebbc27c..a1b987b7a 100644
 --- a/console/src/types/session.ts
 +++ b/console/src/types/session.ts
 @@ -6,13 +6,13 @@
@@ -120,14 +152,6 @@ index 40ebbc27c..0c0004ebf 100644
  
  // Live run state, reported by per-agent hooks/plugins. "" (empty) = idle. claude
  // emits question/plan/permission; codex/opencode emit working/idle; agy emits
-@@ -303,6 +303,7 @@ export interface ConnectionsStatus {
-   // supported=false = an older image without the CLI baked in.
-   cursor?: ProviderConn;
-   opencode?: ProviderConn;
-+  zz?: ProviderConn;
-   agy?: ProviderConn;
-   // copilot rides on the GitHub integration (docs/log/36): connected = a gh token exists;
-   // supported=false = an older image without the CLI baked in.
 diff --git a/workspace/agent/agent_instructions.go b/workspace/agent/agent_instructions.go
 index 4fadbd09e..88e9f9421 100644
 --- a/workspace/agent/agent_instructions.go

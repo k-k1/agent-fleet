@@ -72,7 +72,18 @@ PY
 
 fails=0
 if [ "$verify" = 1 ]; then
-  step() { echo "== $1" >&2; shift; if "$@" >"$dir.log" 2>&1; then :; else echo "FAILED; the last 40 lines:" >&2; tail -40 "$dir.log" >&2; fails=$((fails + 1)); fi; }
+  # A failing step's log is kept beside the clone: the next step would overwrite it, and a
+  # package's verdict line alone does not say which test failed.
+  step() {
+    echo "== $1" >&2
+    local name=$1; shift
+    if ! "$@" >"$dir.log" 2>&1; then
+      fails=$((fails + 1))
+      cp "$dir.log" "$dir.fail-$fails.log"
+      echo "FAILED: $name (log kept: $dir.fail-$fails.log)" >&2
+      grep -E -e '--- FAIL|_test\.go:[0-9]+:|^FAIL|×|AssertionError|ERROR' "$dir.log" | head -40 >&2 || tail -40 "$dir.log" >&2
+    fi
+  }
   # -count=1: the agent's tests read the CP's catalog.json, outside their module, and the test
   # cache does not see it change. Measured: a cached mcpx passed with its golden out of date.
   step "agent: go test" bash -c "cd '$dir/workspace/agent' && go test -count=1 -p 2 -timeout 30m ./..."

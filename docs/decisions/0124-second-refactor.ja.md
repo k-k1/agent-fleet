@@ -288,16 +288,16 @@ Console はカタログと一致を保たれた `SESSION_KINDS`）から非エ�
 マネージドの driver、MCP、指示の宛先、サインイン、固定する CLI を持たない。マージはしない。手順は
 `scripts/stub-kind-count.sh`（`--verify` でテスト群も走らせる）で、同じ章の §20.8 に書いた。
 
-**`aee59bfbe` での実測: 16**（テストと Markdown を含めると 24）。
+**`aee59bfbe` での実測: 16**（テストと Markdown を含めると 25）。
 
 | 分類 | 数 | ファイル |
 |---|---|---|
 | Go | 5 | `session.go`（`Kind*`）、`agentreg.go`、`kinds.go`、`agent_instructions.go`（`instrUnsupported`）、`session_move.go`（`moveUnmeasuredTargets`） |
-| TS | 3 | `types/session.ts`（`SessionKind`、`SESSION_KINDS`、`ConnectionsStatus`）、`agents/kindCatalog.ts`（`FALLBACK_KIND_FACTS`）、`agents/registry.ts`（記述子） |
+| TS | 3 | `types/session.ts`（`SessionKind`、`SESSION_KINDS`）、`agents/kindCatalog.ts`（`FALLBACK_KIND_FACTS`）、`agents/registry.ts`（記述子） |
 | CSS | 1 | `styles/tokens.css`（両テーマのトークンと `.kind-` の対応表の行） |
 | データ | 7 | `agentkinds/catalog.json` と、Agent の `mcpx` と CP の `mcpsrv` の MCP ツールの golden `testdata/mcp_tools/{list.json,calls.txt}`（5 つとも生成物で手では編集しない）、`en` と `ja` の `sessions.ts` ロケール |
 | CI とスクリプト | 0 | |
-| テスト（数えない） | 6 | `kinds_test.go`、`managed_runtime_test.go`、`prompt_paste_test.go`、`session_move_kinds_test.go`、`kind_lists_test.go`、`derivedKindLists.test.ts` |
+| テスト（数えない） | 7 | `kinds_test.go`、`managed_runtime_test.go`、`prompt_paste_test.go`、`session_move_kinds_test.go`、`kind_lists_test.go`、`derivedKindLists.test.ts`、`availability.test.ts`（スタブは接続が要らないので shell と並んで出る） |
 | Markdown（数えない） | 2 | `guide/ref/agents.md` と `.ja.md` |
 
 16 のうち 13 はガードかコンパイラが強いた。残る 3 つはガイドに従ったもので、2 つのロケール
