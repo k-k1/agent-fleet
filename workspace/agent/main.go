@@ -16,12 +16,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/lcpp"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/awsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
@@ -274,13 +268,10 @@ func serve() {
 	agents.SweepHeld()
 	// Peer messages waiting for a user's answer (#1031) get their delivery loops back.
 	sessionx.ResumePendingPeers()
-	go opencode.ReconcileManaged("agent boot")
-	go codex.ReconcileManaged("agent boot")
-	go copilot.ReconcileManaged("agent boot")
-	go cursor.ReconcileManaged("agent boot")
-	go kiro.ReconcileManaged("agent boot")
-	go lcpp.ReconcileManaged("agent boot")
-	go muse.ReconcileManaged("agent boot")
+	// Started in internal/kinds order (managedLifecycles).
+	for _, lc := range managedLifecycles() {
+		go lc.Reconcile("agent boot")
+	}
 	// Assistant-conversation slugs (docs/log/38 assistant triggering): stamp "a…" slugs onto
 	// conversations created before the field existed, so schedules/operator tools can
 	// address every conversation. One-time per store state; cheap when nothing to do.
