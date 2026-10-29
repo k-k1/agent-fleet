@@ -32,7 +32,7 @@ POLL="${AF_ACCEPT_POLL:-2}"
 VM="${AF_ACCEPT_VM:-af-accept}"
 DIST_RAW="${AF_ACCEPT_DIST_RAW:-https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main}"
 
-FAILS=0; KEEP=0; REPORT=""; VERSION=""
+FAILS=0; KEEP=0; REPORT=""; VERSION=""; WS_NAME=""; VM_CREATED=0
 
 usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"; }
 die() { echo "ERROR: $*" >&2; exit 2; }
@@ -84,18 +84,28 @@ wait_health() {
 }
 
 # ws_start <id>: start is synchronous until the Agent answers, so 200 + running also
-# proves the CP reached the Agent.
+# proves the CP reached the Agent. WS_NAME is the container the CP says it started: the
+# Mac may run other af-ws-* containers, and those are never touched.
 ws_start() {
   local code
   code="$(http POST /api/workspace/start "$START_TIMEOUT")"
   if [ "$code" = 200 ] && grep -qF '"state":"running"' "$WORK/body"; then
+    WS_NAME="$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p' "$WORK/body" | head -1)"
     check "$1" PASS "POST /api/workspace/start -> 200, running (the CP reached the Agent)"
     return 0
   fi
   check "$1" FAIL "POST /api/workspace/start -> $code: $(body)"
   return 1
 }
-ws_stop() { http POST /api/workspace/stop 120 > /dev/null; }
+# ws_stop <id>: a stop that did not happen would make the persistence check pass on the
+# same container, so it is a check of its own.
+ws_stop() {
+  local code
+  code="$(http POST /api/workspace/stop 120)"
+  [ "$code" = 200 ] && return 0
+  check "$1" FAIL "POST /api/workspace/stop -> $code: $(body)"
+  return 1
+}
 
 # ---- docker -----------------------------------------------------------------------
 envval() { sed -n "s/^$1=//p" "$DIR/.env" | tail -1; }
@@ -128,7 +138,7 @@ cmd_docker() {
     check compose.up PASS "up -d with docker-compose.macos.yml"
   else
     check compose.up FAIL "$(tail -3 "$WORK/up.log")"
-    finish
+    cleanup_docker; finish
   fi
   if wait_health; then
     check cp.health PASS "$CP/healthz from the Mac"
@@ -138,9 +148,8 @@ cmd_docker() {
   fi
   ws_start ws.start || { cleanup_docker; finish; }
 
-  local ws
-  ws="$(docker ps --filter name=af-ws- --format '{{.Names}}' 2>/dev/null | head -1 || true)"
-  [ -n "$ws" ] || { check ws.container FAIL "no af-ws-* container running"; cleanup_docker; finish; }
+  local ws="$WS_NAME"
+  [ -n "$ws" ] || { check ws.container FAIL "the start response names no container: $(body)"; cleanup_docker; finish; }
 
   expect ws.arch aarch64 "$(docker exec "$ws" uname -m 2>/dev/null || true)" "uname -m in the workspace"
   expect ws.home_owner 1000 "$(docker exec "$ws" stat -c %u /home/dev 2>/dev/null || true)" "owner of /home/dev"
@@ -168,9 +177,8 @@ cmd_docker() {
   check io.tmp INFO "$(docker exec -u dev "$ws" sh -c 'dd if=/dev/zero of=/tmp/.af-io bs=1M count=256 conv=fsync 2>&1 | tail -1; rm -f /tmp/.af-io' 2>/dev/null || echo failed)"
 
   # Stop -> start keeps the home (the file written above survives a new container).
-  ws_stop
-  if ws_start ws.restart; then
-    ws="$(docker ps --filter name=af-ws- --format '{{.Names}}' 2>/dev/null | head -1 || true)"
+  if ws_stop ws.stop && ws_start ws.restart; then
+    ws="$WS_NAME"
     if [ -n "$ws" ] && docker exec "$ws" test -f /home/dev/.af-accept 2>/dev/null; then
       check ws.persist PASS "~/.af-accept survived stop -> start"
     else
@@ -181,10 +189,13 @@ cmd_docker() {
   finish
 }
 
+# Cleanup failures are FAILs: a stack left running holds the ports the next engine needs.
 cleanup_docker() {
   [ "$KEEP" = 0 ] || { check cleanup INFO "--keep: left running"; return 0; }
-  ws_stop
-  docker compose --project-directory "$DIR" -f "$DIR/docker-compose.yml" -f "$DIR/docker-compose.macos.yml" down > /dev/null 2>&1 || true
+  [ -z "$WS_NAME" ] || ws_stop cleanup.ws_stop || true
+  if ! docker compose --project-directory "$DIR" -f "$DIR/docker-compose.yml" -f "$DIR/docker-compose.macos.yml" down > "$WORK/down.log" 2>&1; then
+    check cleanup FAIL "compose down: $(tail -2 "$WORK/down.log")"
+  fi
 }
 
 # ---- native (Lima) ----------------------------------------------------------------
@@ -193,11 +204,16 @@ vm() { limactl shell "$VM" -- "$@"; }
 cmd_native() {
   command -v limactl > /dev/null || die "limactl not found (brew install lima)"
   header "native in a Lima VM"
+  # A VM of that name that was already there is used and left in place: it may hold
+  # someone's work. Only a VM this run created is deleted afterwards.
   if limactl list -q 2>/dev/null | grep -qx "$VM"; then
+    check vm.reuse INFO "VM $VM existed before this run; it is not deleted afterwards"
     limactl start "$VM" > "$WORK/vm.log" 2>&1 || true
-  elif ! limactl start --name "$VM" --tty=false template://ubuntu-lts > "$WORK/vm.log" 2>&1; then
+  elif limactl start --name "$VM" --tty=false template://ubuntu-lts > "$WORK/vm.log" 2>&1; then
+    VM_CREATED=1
+  else
     check vm.create FAIL "$(tail -3 "$WORK/vm.log")"
-    finish
+    cleanup_native; finish
   fi
   check vm.create PASS "$(vm sh -c '. /etc/os-release; echo "$PRETTY_NAME $(uname -m)"' 2>/dev/null || echo ?)"
   # Ubuntu 23.10+ restricts unprivileged user namespaces; deploy/native/README.md has
@@ -231,8 +247,7 @@ cmd_native() {
     check native.arch FAIL "/api/workspace/machine -> $code: $(body)"
   fi
   vm sh -c 'echo af > "$HOME/.local/share/agent-fleet/dev/home/.af-accept"' 2>/dev/null || true
-  ws_stop
-  if ws_start native.ws.restart; then
+  if ws_stop native.ws.stop && ws_start native.ws.restart; then
     if vm sh -c 'test -f "$HOME/.local/share/agent-fleet/dev/home/.af-accept"' 2>/dev/null; then
       check native.persist PASS "the home kept a file across stop -> start"
     else
@@ -245,9 +260,12 @@ cmd_native() {
 
 cleanup_native() {
   [ "$KEEP" = 0 ] || { check cleanup INFO "--keep: VM $VM left running"; return 0; }
-  ws_stop
+  [ -z "$WS_NAME" ] || ws_stop cleanup.ws_stop || true
+  [ "$VM_CREATED" = 1 ] || return 0
   limactl stop "$VM" > /dev/null 2>&1 || true
-  limactl delete "$VM" > /dev/null 2>&1 || true
+  if ! limactl delete "$VM" > "$WORK/delete.log" 2>&1; then
+    check cleanup FAIL "limactl delete $VM: $(tail -2 "$WORK/delete.log")"
+  fi
 }
 
 # ---- installers on macOS itself -----------------------------------------------------

@@ -36,8 +36,9 @@ case "$1" in
   version) echo 27.0.0 ;;
   info) echo "Ubuntu 24.04 aarch64" ;;
   run) echo "${STUB_SOCK_GID:-0}" ;;
-  compose) case "$*" in *" up -d"*) exit "${STUB_UP_RC:-0}" ;; *" ps -q "*) echo cid ;; esac ;;
-  ps) [ -f "$S/running" ] && echo af-ws-dev ;;
+  compose) case "$*" in *" up -d"*) exit "${STUB_UP_RC:-0}" ;; *" down"*) exit "${STUB_DOWN_RC:-0}" ;; *" ps -q "*) echo cid ;; esac ;;
+  # Another member's container sorts first: the script must use the name the CP returned.
+  ps) echo af-ws-other; [ -f "$S/running" ] && echo af-ws-dev ;;
   logs) : ;;
   exec)
     case "$*" in
@@ -78,10 +79,11 @@ reply() { # reply <code> <body>
 case "$method $url" in
   "GET "*/healthz) reply 200 "${STUB_HEALTH:-ok}" ;;
   "POST "*/api/workspace/start)
-    if [ "${STUB_START_CODE:-200}" = 200 ]; then touch "$S/running"; reply 200 '{"state":"running"}'
+    if [ "${STUB_START_CODE:-200}" = 200 ]; then touch "$S/running"; reply 200 '{"name":"af-ws-dev","state":"running"}'
     else reply "$STUB_START_CODE" '{"error":"start failed"}'; fi ;;
   "POST "*/api/workspace/stop)
-    rm -f "$S/running"; [ "${STUB_LOSE_HOME:-0}" = 0 ] || rm -f "$S/home-file"; reply 200 '{}' ;;
+    if [ "${STUB_STOP_CODE:-200}" != 200 ]; then reply "$STUB_STOP_CODE" '{"error":"stop failed"}'; exit 0; fi
+    rm -f "$S/running"; [ "${STUB_LOSE_HOME:-0}" = 0 ] || rm -f "$S/home-file"; reply 200 '{"name":"af-ws-dev","state":"stopped"}' ;;
   "GET "*/api/workspace/machine) reply 200 '{"arch":"arm64"}' ;;
   *) reply 404 'not found' ;;
 esac
@@ -92,10 +94,10 @@ cat > "$STUB/limactl" <<'FAKE'
 S="$STUB_STATE"
 echo "limactl $*" >> "$STUB_LOG"
 case "$1" in
-  list) [ -f "$S/vm" ] && echo af-accept ;;
+  list) { [ -f "$S/vm" ] || [ "${STUB_VM_EXISTS:-0}" = 1 ]; } && echo af-accept ;;
   start) touch "$S/vm" ;;
   stop) : ;;
-  delete) rm -f "$S/vm" ;;
+  delete) [ "${STUB_DELETE_RC:-0}" = 0 ] || { echo "delete refused" >&2; exit 1; }; rm -f "$S/vm" ;;
   shell)
     case "$*" in
       *os-release*) echo "Ubuntu 24.04.1 LTS aarch64" ;;
@@ -147,6 +149,8 @@ grep -q "docker compose --project-directory $WORK/b1 -f $WORK/b1/docker-compose.
   || fail "compose was not brought up with the overlay"
 grep -q "docker-compose.macos.yml down" "$LOG" || fail "stack not taken down"
 grep -q "Result: no FAIL." "$WORK/report.md" || fail "no result line"
+grep -q "docker exec af-ws-dev uname -m" "$LOG" || fail "did not inspect the container the CP started"
+grep -q "af-ws-other" "$LOG" && fail "touched another member's container"
 echo "ok"
 
 echo "== case 2: docker, the failures a Mac is likely to show are reported, and the run goes on =="
@@ -161,12 +165,32 @@ row ws.chromium PASS
 grep -q "Result: 5 FAIL." "$WORK/report.md" || fail "wrong FAIL count"
 echo "ok"
 
+echo "== case 2b: docker, a stop that fails is a FAIL, not a passing persistence check =="
+bundle "$WORK/b2b"
+STUB_STOP_CODE=500 run 1 docker "$WORK/b2b"
+row ws.stop FAIL
+grep -qF "| ws.persist | PASS |" "$WORK/report.md" && fail "persistence passed without a stop"
+echo "ok"
+
 echo "== case 3: docker, a start that fails stops the run and still cleans up =="
 bundle "$WORK/b3"
 STUB_START_CODE=500 run 1 docker "$WORK/b3"
 row ws.start FAIL
 grep -qF "| ws.arch |" "$WORK/report.md" && fail "went on after a failed start"
 grep -q "docker-compose.macos.yml down" "$LOG" || fail "stack not taken down after a failed start"
+echo "ok"
+
+echo "== case 3b: docker, a compose up that fails half way is still taken down =="
+bundle "$WORK/b3b"
+STUB_UP_RC=1 run 1 docker "$WORK/b3b"
+row compose.up FAIL
+grep -q "docker-compose.macos.yml down" "$LOG" || fail "no compose down after a failed up"
+echo "ok"
+
+echo "== case 3c: docker, a compose down that fails is a FAIL =="
+bundle "$WORK/b3c"
+STUB_DOWN_RC=1 run 1 docker "$WORK/b3c"
+row cleanup FAIL
 echo "ok"
 
 echo "== case 4: --keep leaves the stack up =="
@@ -194,10 +218,22 @@ grep -q "limactl start --name af-accept --tty=false template://ubuntu-lts" "$LOG
 grep -q "limactl delete af-accept" "$LOG" || fail "VM not deleted"
 echo "ok"
 
+echo "== case 6b: native, a VM that was already there is used and not deleted =="
+STUB_VM_EXISTS=1 run 0 native
+row vm.reuse INFO
+grep -q "limactl delete" "$LOG" && fail "deleted a VM this run did not create"
+grep -q "limactl start --name" "$LOG" && fail "created a VM over an existing one"
+echo "ok"
+
 echo "== case 7: native, a failed install is reported and the VM is still deleted =="
 STUB_INSTALL_RC=1 run 1 native
 row native.install FAIL
 grep -q "limactl delete af-accept" "$LOG" || fail "VM left behind after a failed install"
+echo "ok"
+
+echo "== case 7b: native, a VM delete that fails is a FAIL =="
+STUB_DELETE_RC=1 run 1 native
+row cleanup FAIL
 echo "ok"
 
 echo "== case 8: installer, the real install.sh / install-compose.sh against a file:// release =="

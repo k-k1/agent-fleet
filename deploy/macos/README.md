@@ -24,8 +24,9 @@ deploy/macos/acceptance.sh installer --version <v>
 
 Each run writes `macos-acceptance-<mode>-<time>.md`: one row per check (PASS / FAIL /
 SKIP / INFO) and a result line. It stops early only when there is nothing left to check
-(the stack does not come up, the workspace does not start), and it takes the stack or VM
-down afterwards unless you pass `--keep`.
+(the stack does not come up, the workspace does not start), and it takes the stack, or a VM it
+created, down afterwards unless you pass `--keep`. It only inspects the workspace container
+the Console says it started, never another `af-ws-*` on the same Mac.
 
 | Check | What it proves |
 |---|---|
@@ -37,7 +38,8 @@ down afterwards unless you pass `--keep`.
 | `ws.callback` | the workspace reached the CP's workspace listener (401 without a token) |
 | `ws.chromium` | headless Chromium renders inside the workspace |
 | `io.home`, `io.tmp` | write throughput of the shared home against the container's disk (information) |
-| `ws.restart`, `ws.persist` | stop → start keeps the home |
+| `ws.stop`, `ws.restart`, `ws.persist` | stop → start keeps the home (a stop that fails is its own FAIL) |
+| `cleanup` | the stack or the VM this run created is gone again (a VM that already existed is left alone) |
 | `native.*` | the same, for the native package in the VM; the Console through Lima's port forward |
 | `install.refuse`, `install_compose` | the installers' macOS behaviour |
 
@@ -82,6 +84,11 @@ On the Mac:
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 brew install colima docker docker-compose lima git
+# Homebrew's compose is a CLI plugin docker does not find by itself (brew's caveat for
+# docker-compose); on a fresh Mac there is no config.json to merge into yet.
+mkdir -p ~/.docker
+[ -e ~/.docker/config.json ] || echo '{"cliPluginsExtraDirs": ["/opt/homebrew/lib/docker/cli-plugins"]}' > ~/.docker/config.json
+docker compose version                               # must answer before going on
 colima start --cpu 4 --memory 8 --vm-type vz         # engine 1
 deploy/macos/acceptance.sh docker ~/agent-fleet-<v>
 colima stop
