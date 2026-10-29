@@ -169,14 +169,19 @@ func adfTable(t *east.Table, src []byte) adfNode {
 func adfTableText(t *east.Table, src []byte) adfNode {
 	out := []any{}
 	for r := t.FirstChild(); r != nil; r = r.NextSibling() {
-		if len(out) > 0 {
+		if r != t.FirstChild() {
 			out = append(out, adfNode{"type": "hardBreak"})
 		}
 		for c := r.FirstChild(); c != nil; c = c.NextSibling() {
 			if c != r.FirstChild() {
 				out = append(out, adfNode{"type": "text", "text": " | "})
 			}
-			out = append(out, adfInlines(c, src, nil)...)
+			// An empty cell keeps its line: without text an all-empty row would vanish.
+			in := adfInlines(c, src, nil)
+			if len(in) == 0 {
+				in = []any{adfNode{"type": "text", "text": " "}}
+			}
+			out = append(out, in...)
 		}
 	}
 	if len(out) == 0 {

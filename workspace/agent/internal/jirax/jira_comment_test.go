@@ -130,6 +130,12 @@ func TestJiraMarkdownADFNestedTable(t *testing.T) {
 			}
 		}
 	}
+	// An empty header row keeps its line, so the body row stays second.
+	got, _ := json.Marshal(jiraMarkdownADF("> | |\n> |---|\n> | x |\n")["content"])
+	want := `[{"content":[{"content":[{"text":" ","type":"text"},{"type":"hardBreak"},{"text":"x","type":"text"}],"type":"paragraph"}],"type":"blockquote"}]`
+	if string(got) != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
 }
 
 func TestJiraMarkdownADFFallbacks(t *testing.T) {
