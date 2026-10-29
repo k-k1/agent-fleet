@@ -243,15 +243,23 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
 - [ ] `Kind*` constant in `internal/session/session.go`, an entry in `internal/agentreg`'s
       `registry` and in `internal/kinds`' list; the key equals `Kind()`
       (`TestRegisteredKindsSpellTheirOwnKind`) and the two lists agree
-      (`TestRegistryMatchesTheKindsList`)
+      (`TestRegistryMatchesTheKindsList`); the `internal/kinds` entry carries the product label
+      the notification bridge writes (`""` for none), pinned by `TestLabels` in `kinds_test.go`
 - [ ] `Caps()` with every field decided, `MCPClient` included (`TestMCPClientKindsMatchRegistry`
       fails on `unverified`) and `ManagedDefault` for a kind that should start Managed (the
       CP and in-container callers follow it; `TestManagedDefaultKindFollowsTheRegistry` pins
       the set)
 - [ ] the catalog snapshot regenerated (`TestKindCatalogSnapshot`), and
-      `testdata/wire.golden` if the catalog's shape changed
-- [ ] the column in [ref/agents.md](../../guide/ref/agents.md) — `scripts/docs-check.py`
-      holds the `CAPS_ROWS` rows, MCP included, to `Caps()`
+      `testdata/wire.golden` if the catalog's shape changed; then the MCP tool goldens on both
+      sides, whose tool descriptions enumerate the kinds, the agent's through the snapshot:
+      `go test ./internal/mcpx -run 'TestToolListGolden|TestToolCallGolden' -update-tool-golden` in
+      `workspace/agent`, and the same with `./internal/mcpsrv` in `control-plane` (the package
+      before the flag, or `go test` builds the module root and rejects the flag). Run the agent's
+      tests with `-count=1` here: they read the CP's `catalog.json`, which the test cache does not
+      see change, and a cached `mcpx` passes with its golden out of date
+- [ ] the column in [ref/agents.md](../../guide/ref/agents.md) and in `ref/agents.ja.md` —
+      `scripts/docs-check.py` holds the `CAPS_ROWS` rows, MCP included, to `Caps()`, and the
+      Japanese table's marks to the English one's
 - [ ] instructions: `agents.Instructions` plus `instrSupportedKinds`, or `instrUnsupported`
       with a reason, or `noInstructionTargets` for a kind that runs no CLI
       (`TestInstructionsClassifyEveryRegisteredKind`; add the row to `legacyInstr` in
@@ -268,17 +276,26 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
       move target (`moveTargetKinds` / `moveUnmeasuredTargets`; `moveClassification` in
       `session_move_kinds_test.go`), and a chat provider or its entry in `noChatProvider`
       (`kind_lists_test.go`; with one, `oneShotKinds` and `providerResumeHandles` in `chatx`
-      follow their own tests). `providerResumeKinds` is derived from `providerResumeHandles`
+      follow their own tests). `providerResumeKinds` is derived from `providerResumeHandles`.
+      `TestMoveTargetListsAreUnchanged` pins both move lists as literals, so a kind added to
+      either edits it too
+- [ ] a row in `wantRuntime` (`internal/sessionx/managed_runtime_test.go`) for every kind, `nil`
+      for one with no Managed runtime (`TestManagedRuntimeDispatchPinned`)
+- [ ] skills: `agents.SkillsLayouter` in `capabilities.go` for every agent kind,
+      `SkillsForeignOnly` when no native mechanism is confirmed
+      (`TestSkillsLayoutCoversEveryAgentKind`)
 
 **Kind-specific — only when the kind has the feature:**
 
 - [ ] Terminal: `BuildLaunch`, and the paste decision: `agents.PromptPaste` when the composer
       eats an Enter that follows literal keys, otherwise the kind goes in `literalKinds` in
       `prompt_paste_test.go` (measure it; `TestPromptPasteClassifiesEveryRegisteredKind` fails
-      for a kind in neither list)
+      for a kind in neither list); `agents.PaneModeReader` and `agents.ModalProbe` in
+      `capabilities.go` (`TestPaneModeReaderCoversEveryTerminalKind`,
+      `TestPromptBlockerCoversEveryTerminalKind`)
 - [ ] Managed: a `Driver`, `managedDrivers`, and `agents.ManagedRuntime` on the Agent
-      (`TestManagedRuntimeFollowsCaps` fails without it; add the kind's row to `wantRuntime`),
-      and `agents.ManagedLifecycler` in `capabilities.go`: the Agent reconciles the kind at boot
+      (`TestManagedRuntimeFollowsCaps` fails without it; its `wantRuntime` row names the package's
+      functions), and `agents.ManagedLifecycler` in `capabilities.go`: the Agent reconciles the kind at boot
       and aborts and shuts it down on a stop, in `internal/kinds` order (add the kind's row to
       `handWiredLifecycle` in `lifecycle_caps_test.go`)
 - [ ] sign-in handlers and their CP relays; credentials hidden by `fsDeny`
@@ -292,8 +309,40 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
 - [ ] `SESSION_KINDS` in `console/src/types/session.ts` (display order) and a descriptor in
       `console/src/agents/registry.ts` (`caps`). A kind with no descriptor still renders, with a
       generic icon, but is not launchable from the Console
-- [ ] colour, icon and wording; the i18n strings in both languages
+- [ ] colour, icon and wording; the i18n strings in both languages. The colour is a
+      `--kind-<slug>` token in both theme blocks of `console/src/styles/tokens.css` plus its
+      `.kind-<slug>` line in the map there (`kindCssMap.test.ts`)
+- [ ] `available()`: a kind that needs no connection changes the expected lists in
+      `availability.test.ts`, and one with `caps.launchableFromRepo` changes the `repoLaunchKinds`
+      literal in `derivedKindLists.test.ts`
 - [ ] the descriptor's list facts: `caps.liveModels` / `caps.concreteModel` (model picker),
       `caps.skillsCatalog` (Settings > Skills), `caps.memberDefault` (equal to the CP's
       `memberDefaultAgents`; `derivedKindLists.test.ts`), and `assistantRank` with
       `caps.headlessChat` (the default assistant backend priority)
+
+## 20.8 Measuring what a new kind touches
+
+ADR 0124's figure for a new kind is measured by adding one, not by grepping an existing kind's
+name ([0124](../decisions/0124-second-refactor.md), addendum of 2026-10-29).
+`scripts/stub-kind-count.sh` applies the stub kind `zz` (`scripts/stub-kind/zz.patch`: a
+Terminal-only kind that registers and launches `bash -l`, with no MCP, instruction target, sign-in
+or pinned CLI) to a throwaway clone, inserts its column into `ref/agents`, regenerates the catalog
+snapshot and both modules' MCP tool goldens, and lists the files changed outside
+`internal/agents/zz` by category. The figure is the non-test, non-Markdown total.
+
+```
+scripts/stub-kind-count.sh            # count at HEAD
+scripts/stub-kind-count.sh --verify   # also run both Go modules, the Console and docs-check
+```
+
+Only a `--verify` run that passes gives the figure. When the patch stops applying, or a new
+guard fails under `--verify`, refresh the patch: run with `--keep`, fix the kept clone until
+`--verify`'s steps pass there, then write the clone's diff back without the generated files and
+the `ref/agents` tables, which the script makes itself:
+
+```
+git -C <kept clone> add -A
+git -C <kept clone> diff --cached -- . ':!control-plane/internal/agentkinds/catalog.json' \
+  ':!control-plane/internal/mcpsrv/testdata' ':!workspace/agent/internal/mcpx/testdata' \
+  ':!guide/ref/agents.md' ':!guide/ref/agents.ja.md' > scripts/stub-kind/zz.patch
+```

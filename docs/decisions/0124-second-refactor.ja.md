@@ -291,3 +291,35 @@ Phase 0 のラチェットを入れた (#2854)。各 Go モジュールの `main
 Console はカタログと一致を保たれた `SESSION_KINDS`）から非エージェントの `shell` と `ssm` を除いて取り、Go の識別子は
 大文字小文字を問わず `Kind<kind>` で数える。新しい kind は登録した PR から数えられる。上の `K`/`KC` は今日時点の展開で、
 どちらも 219 と 66 になる。css-dup と同じく、上限を超えると落ち、下回ると下げるよう案内を出すだけ。
+
+## 追記（2026-10-29）— 「新しい種別が触るファイル」は種別を 1 つ足して測る
+
+フェーズ 3 の目標の数え方を定義し直す（#2927）。目標そのもの（40 以下）は変えない。「計測」の
+`git grep -l -i -w muse` は muse の名前が出るファイル（コメント、ワークフロー、golden、UI の文言）を
+すべて数え、新しい種別が編集しなければならないファイルを数えていない。フェーズ 3 で Go の種別分岐を
+85、Console のものを 9 消しても、152 から 145 にしか動かなかった。
+
+**新しい定義。** スタブの種別 `zz` を足したときに、そのパッケージ（`workspace/agent/internal/agents/zz`）の
+外で変わるファイルの数。テスト（`*_test.go`、`*.test.ts(x)`）と Markdown を除き、両 Go モジュールの
+テスト、Console の typecheck と vitest、docs-check が通った状態で数える。スタブはチェックリスト
+（`docs/build/20-add-an-agent.md` §20.7）が許す最小の種別で、登録されてターミナルで `bash -l` を起動し、
+マネージドの driver、MCP、指示の宛先、サインイン、固定する CLI を持たない。マージはしない。手順は
+`scripts/stub-kind-count.sh`（`--verify` でテスト群も走らせる）で、同じ章の §20.8 に書いた。
+
+**`aee59bfbe` での実測: 16**（テストと Markdown を含めると 25）。
+
+| 分類 | 数 | ファイル |
+|---|---|---|
+| Go | 5 | `session.go`（`Kind*`）、`agentreg.go`、`kinds.go`、`agent_instructions.go`（`instrUnsupported`）、`session_move.go`（`moveUnmeasuredTargets`） |
+| TS | 3 | `types/session.ts`（`SessionKind`、`SESSION_KINDS`）、`agents/kindCatalog.ts`（`FALLBACK_KIND_FACTS`）、`agents/registry.ts`（記述子） |
+| CSS | 1 | `styles/tokens.css`（両テーマのトークンと `.kind-` の対応表の行） |
+| データ | 7 | `agentkinds/catalog.json` と、Agent の `mcpx` と CP の `mcpsrv` の MCP ツールの golden `testdata/mcp_tools/{list.json,calls.txt}`（5 つとも生成物で手では編集しない）、`en` と `ja` の `sessions.ts` ロケール |
+| CI とスクリプト | 0 | |
+| テスト（数えない） | 7 | `kinds_test.go`、`managed_runtime_test.go`、`prompt_paste_test.go`、`session_move_kinds_test.go`、`kind_lists_test.go`、`derivedKindLists.test.ts`、`availability.test.ts`（スタブは接続が要らないので shell と並んで出る） |
+| Markdown（数えない） | 2 | `guide/ref/agents.md` と `.ja.md` |
+
+16 のうち 13 はガードかコンパイラが強いた。残る 3 つはガイドに従ったもので、2 つのロケール
+（起動のヒントはメッセージキーでなければならないが、既存のキーでもコンパイルは通る）と移動先の一覧
+（分類しない種別は `not_an_agent` になり、エージェントには誤り）。§20.7 の種別固有の行は、スタブが
+通らないファイルを足す。その大半は、フェーズ 6 がすでに挙げている CI と `deploy/local` での固定 CLI
+の登録。レジストリが吸収できる編集は #2933。
