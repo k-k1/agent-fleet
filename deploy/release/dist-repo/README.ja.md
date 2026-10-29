@@ -190,7 +190,7 @@ Kiro はアシスタントチャットとしては**利用できません**（he
 | 状況 | 版 | 必要なもの |
 |---|---|---|
 | WSL2 や単一ユーザー Linux で個人利用・Docker なし | **Native**（下記） | unprivileged user namespaces が使える x86_64 または arm64 の Linux/WSL2（素の WSL2 は可）、`curl` か `wget`、ディスク ~1.5 GB。arm64 は CI でビルド・起動を確認しています。実機での報告を歓迎します |
-| Apple Silicon の Mac — **試験的。Mac 実機では未確認** | macOS 用 overlay を重ねた **Docker Compose**、または Linux VM（Lima、OrbStack のマシン）の中の **Native** | Docker Desktop・OrbStack・colima のどれか。`127.0.0.1:8099` で単独利用。手順は [Compose README の「macOS」](https://github.com/k-k1/agent-fleet/blob/main/deploy/compose/README.md#macos-experimental-unverified)。macOS で `install.sh` を実行するとインストールせずにこの 2 つを案内します。Mac 実機での報告を歓迎します（[#2961](https://github.com/k-k1/agent-fleet/issues/2961)） |
+| Apple Silicon の Mac — **試験的**（colima と Lima で確認済み。Docker Desktop と OrbStack は未確認） | macOS 用 overlay を重ねた **Docker Compose**、または Linux VM（Lima、OrbStack のマシン）の中の **Native** | Docker Desktop・OrbStack・colima のどれか。`127.0.0.1:8099` で単独利用。手順は [Compose README の「macOS」](https://github.com/k-k1/agent-fleet/blob/main/deploy/compose/README.md#macos-experimental-unverified)。macOS で `install.sh` を実行するとインストールせずにこの 2 つを案内します。ほかのエンジンや Mac での報告を歓迎します（[#2961](https://github.com/k-k1/agent-fleet/issues/2961)） |
 | 自社の Linux サーバでチーム利用 | **Docker Compose**（下記） | Docker Engine + `docker compose`、ホストに向けた公開ドメイン（自動 TLS。内部 CA フォールバックあり）、ログイン用の IdP クライアント（Google OAuth 2.0 クライアントまたは OIDC アプリ） |
 
 全版共通: 各ワークスペースの初回起動時にエージェント CLI のピン版導入で一度だけ
