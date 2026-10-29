@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -360,14 +359,11 @@ func buildCP(t *testing.T, root string) string {
 	return cpBuild.bin
 }
 
+// freePort returns a 127.0.0.1 port that is free right now; see freePortRange for where it
+// is taken from.
 func freePort(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
+	return freePortRange(t, 1)
 }
 
 // waitFor polls cond until it is true, and on timeout fails with the last value observed.
