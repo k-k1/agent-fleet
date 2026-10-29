@@ -130,8 +130,14 @@ was granted, because macOS ties it to an app launched in that session. What work
 1. Give `ec2-user` a password (`sudo dscl . -passwd /Users/ec2-user <pw>`), enable Screen
    Sharing (`sudo launchctl enable system/com.apple.screensharing` and
    `sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist`),
-   forward port 5900 with `aws ssm start-session --document-name
-   AWS-StartPortForwardingSession`, and log in once over VNC.
+   forward the VNC port to your machine (needs the Session Manager plugin for the AWS CLI),
+   and log in once over VNC to `127.0.0.1:15900`:
+   ```bash
+   aws ssm start-session --target <instance id> --document-name AWS-StartPortForwardingSession \
+     --parameters '{"portNumber":["5900"],"localPortNumber":["15900"]}'
+   ```
+   The forward ended after the first VNC connection closed (measured), so keep one
+   connection open for the whole session rather than reconnecting per action.
 2. OrbStack: `brew install --cask orbstack`, then launch it **in that session** —
    `sudo launchctl asuser $(id -u ec2-user) sudo -u ec2-user open -a OrbStack` — approve
    Rosetta and the helper (the `ec2-user` password), pick Docker.
