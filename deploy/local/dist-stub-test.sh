@@ -327,6 +327,8 @@ AF_OS=Darwin AF_ARCH=arm64 AF_DIST_URL_BASE="file://$WORK/layout-b" AF_VERSION=$
   bash "$INSTALL" > /dev/null 2> "$WORK/err8e.txt" || rc=$?
 [ "$rc" = 1 ] || fail "expected exit 1 on Darwin, got $rc"
 grep -q "Docker edition" "$WORK/err8e.txt" || { cat "$WORK/err8e.txt"; fail "no macOS guidance"; }
+grep -qF "raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install-compose.sh | bash" "$WORK/err8e.txt" \
+  || { cat "$WORK/err8e.txt"; fail "macOS guidance lacks the install-compose one-liner"; }
 [ ! -e "$WORK/prefix8e" ] || fail "Darwin install left files under the prefix"
 # The real af, from a package dir as build.sh lays it out (dist.json beside it).
 AFPKG="$WORK/afpkg"; mkdir -p "$AFPKG"
