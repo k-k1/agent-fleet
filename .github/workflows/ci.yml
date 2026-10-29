@@ -434,6 +434,11 @@ jobs:
       # docker calls, refusals and re-run behaviour are pinned against a stateful fake docker.
       - name: LAN ComfyUI helper (real script, stub docker / nvidia-smi)
         run: ./deploy/local/comfyui-lan-stub-test.sh
+      # The macOS acceptance script only ever runs on a Mac, where no CI reaches; its checks,
+      # FAIL counting, report scrubbing and cleanup are pinned against stub docker / curl /
+      # limactl.
+      - name: macOS acceptance script (real script, stub docker / curl / limactl)
+        run: ./deploy/local/macos-acceptance-stub-test.sh
       # The Kiro CI credential is uploaded by hand from an operator's machine; a bad upload
       # only shows as a red kiro contract, so what lands in the secrets is pinned here.
       - name: Kiro CI credential upload (real script, stub gh, fixture DB)
