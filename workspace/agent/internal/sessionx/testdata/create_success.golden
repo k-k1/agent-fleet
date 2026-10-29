@@ -1,0 +1,101 @@
+== tui_plain
+status 201
+header Content-Type: application/json
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"claude\",\"origin\":\"user\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"[AF:$NAME] app @$STAMP\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME\",\"remoteUrl\":\"\",\"state\":\"idle\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"branch\":\"main\"}\n"
+meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"claude","title":"","color":"","label":"[AF:$NAME] app @$STAMP","repo":"app","branch":"main","createdAt":"$TIME","stoppedAt":"","archived":false,"origin":"user"}
+== tui_full_request
+status 201
+header Content-Type: application/json
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"claude\",\"origin\":\"user\",\"initialPromptState\":\"pending\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"My task\",\"planReviewers\":[],\"display\":\"My task\",\"color\":\"teal\",\"label\":\"[AF:$NAME] My task\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME\",\"remoteUrl\":\"\",\"state\":\"idle\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"branch\":\"main\"}\n"
+delivered "do the thing"
+meta {"name":"$NAME","dir":"$HOME/repos/app","model":"opus","effort":"high","mode":"plan","skipPermissions":true,"kind":"claude","title":"My task","color":"teal","label":"[AF:$NAME] My task","repo":"app","branch":"main","createdAt":"$TIME","stoppedAt":"","archived":false,"origin":"user","initialPromptState":"pending"}
+== tui_stop_after_turn_and_spend_cap
+status 201
+header Content-Type: application/json
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"claude\",\"origin\":\"user\",\"initialPromptState\":\"pending\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"[AF:$NAME] app @$STAMP\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME\",\"remoteUrl\":\"\",\"state\":\"idle\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"branch\":\"main\",\"stopAfterTurnAt\":\"$TIME\",\"spendCapUsd\":2.35}\n"
+delivered "go"
+meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"claude","title":"","color":"","label":"[AF:$NAME] app @$STAMP","repo":"app","branch":"main","createdAt":"$TIME","stoppedAt":"","archived":false,"stopAfterTurnAt":"$TIME","spendCapUsd":2.35,"origin":"user","initialPromptState":"pending"}
+== tui_report_to
+status 201
+header Content-Type: application/json
+header X-AF-Create-Key: fp_$KEY
+header X-AF-Create-Outcome: created
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"claude\",\"origin\":\"user\",\"initialPromptState\":\"pending\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"[AF:$NAME] app @$STAMP\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME\",\"remoteUrl\":\"\",\"state\":\"idle\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"branch\":\"main\"}\n"
+delivered "report back\n\n[agent-fleet] この指示をやり切って作業が残っていない時点で、MCP ツール af_report(session=\"$NAME\") を1回だけ呼んでください（質問や承認で止まる場合・作業が続く場合は呼ばないこと）。この注記自体への返答は不要で、回答の言語も変えないでください。 / When this instruction is fully done, call the MCP tool af_report(session=\"$NAME\") exactly once. Do not call it if you are stopping to ask, or if work remains. No reply to this note is needed; keep your output language unchanged."
+meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"claude","title":"","color":"","label":"[AF:$NAME] app @$STAMP","repo":"app","branch":"main","createdAt":"$TIME","stoppedAt":"","archived":false,"origin":"user","initialPromptState":"pending"}
+== tui_spawn
+status 201
+header Content-Type: application/json
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"claude\",\"origin\":\"session\",\"originSession\":\"parent1\",\"initialPromptState\":\"pending\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"[AF:$NAME] app @$STAMP\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME\",\"remoteUrl\":\"\",\"state\":\"idle\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"branch\":\"main\"}\n"
+delivered "[agent-fleet:spawn from=parent1] child task"
+meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"claude","title":"","color":"","label":"[AF:$NAME] app @$STAMP","repo":"app","branch":"main","createdAt":"$TIME","stoppedAt":"","archived":false,"origin":"session","originSession":"parent1","initialPromptState":"pending"}
+== tui_schedule
+status 201
+header Content-Type: application/json
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"claude\",\"origin\":\"schedule\",\"initialPromptState\":\"pending\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"[AF:$NAME] app @$STAMP\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME\",\"remoteUrl\":\"\",\"state\":\"idle\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"branch\":\"main\"}\n"
+delivered "nightly"
+meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"claude","title":"","color":"","label":"[AF:$NAME] app @$STAMP","repo":"app","branch":"main","createdAt":"$TIME","stoppedAt":"","archived":false,"origin":"schedule","initialPromptState":"pending"}
+== tui_ssm
+status 201
+header Content-Type: application/json
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME\",\"kind\":\"ssm\",\"origin\":\"user\",\"repo\":\"002\",\"title\":\"box\",\"planReviewers\":[],\"display\":\"box\",\"color\":\"\",\"label\":\"\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME\",\"remoteUrl\":\"\",\"state\":\"\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false}\n"
+meta {"name":"$NAME","dir":"$HOME","model":"","kind":"ssm","title":"box","color":"","label":"","repo":"002","createdAt":"$TIME","stoppedAt":"","archived":false,"origin":"user","ssm":{"profile":"dev","target":"i-0123","document":"","region":"ap-northeast-1","startUrl":"","ssoRegion":"ap-northeast-1","accountId":"","roleName":""}}
+== tui_shell_label
+status 201
+header Content-Type: application/json
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"shell\",\"origin\":\"user\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"build\",\"planReviewers\":[],\"display\":\"build\",\"color\":\"\",\"label\":\"\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME\",\"remoteUrl\":\"\",\"state\":\"\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"branch\":\"main\"}\n"
+meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"shell","title":"build","color":"","label":"","repo":"app","branch":"main","createdAt":"$TIME","stoppedAt":"","archived":false,"origin":"user"}
+== tui_subdir
+status 201
+header Content-Type: application/json
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"claude\",\"subdir\":\"sub\",\"origin\":\"user\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"[AF:$NAME] app @$STAMP\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME\",\"remoteUrl\":\"\",\"state\":\"idle\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"branch\":\"main\"}\n"
+meta {"name":"$NAME","dir":"$HOME/repos/app","subdir":"sub","model":"","kind":"claude","title":"","color":"","label":"[AF:$NAME] app @$STAMP","repo":"app","branch":"main","createdAt":"$TIME","stoppedAt":"","archived":false,"origin":"user"}
+== tui_worktree
+status 201
+header Content-Type: application/json
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app@wt-ok\",\"kind\":\"claude\",\"origin\":\"user\",\"initialPromptState\":\"pending\",\"repo\":\"app@wt-ok\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app@wt-ok @$STAMP\",\"color\":\"\",\"label\":\"[AF:$NAME] app@wt-ok @$STAMP\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME\",\"remoteUrl\":\"\",\"state\":\"idle\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"branch\":\"wt-ok\"}\n"
+delivered "in a tree"
+meta {"name":"$NAME","dir":"$HOME/repos/app@wt-ok","model":"","kind":"claude","title":"","color":"","label":"[AF:$NAME] app@wt-ok @$STAMP","repo":"app@wt-ok","branch":"wt-ok","createdAt":"$TIME","stoppedAt":"","archived":false,"origin":"user","initialPromptState":"pending"}
+== tui_studio
+status 201
+header Content-Type: application/json
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"claude\",\"origin\":\"user\",\"studio\":\"0123abcd-0000-4000-8000-00000000abcd\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"[AF:$NAME] app @$STAMP\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME\",\"remoteUrl\":\"\",\"state\":\"idle\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"branch\":\"main\"}\n"
+meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"claude","title":"","color":"","label":"[AF:$NAME] app @$STAMP","repo":"app","branch":"main","createdAt":"$TIME","stoppedAt":"","archived":false,"origin":"user","studio":"0123abcd-0000-4000-8000-00000000abcd"}
+== tui_durable_key
+status 201
+header Content-Type: application/json
+header X-AF-Create-Key: k-ok
+header X-AF-Create-Outcome: created
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"claude\",\"origin\":\"user\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"[AF:$NAME] app @$STAMP\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME\",\"remoteUrl\":\"\",\"state\":\"idle\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"branch\":\"main\"}\n"
+meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"claude","title":"","color":"","label":"[AF:$NAME] app @$STAMP","repo":"app","branch":"main","createdAt":"$TIME","stoppedAt":"","archived":false,"origin":"user"}
+== move_target
+status 201
+header Content-Type: application/json
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"claude\",\"origin\":\"user\",\"initialPromptState\":\"pending\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"[AF:$NAME] app @$STAMP\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME\",\"remoteUrl\":\"\",\"state\":\"idle\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"branch\":\"main\"}\n"
+delivered "moved"
+meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"claude","title":"","color":"","label":"[AF:$NAME] app @$STAMP","repo":"app","branch":"main","createdAt":"$TIME","stoppedAt":"","archived":false,"origin":"user","initialPromptState":"pending"}
+== managed_prompt_delivered
+status 201
+header Content-Type: application/json
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"codex\",\"driver\":\"managed\",\"origin\":\"user\",\"initialPromptState\":\"delivered\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME\",\"remoteUrl\":\"\",\"state\":\"working\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"stateSince\":\"$TIME\",\"branch\":\"main\"}\n"
+sent "managed task" origin={Kind:member From:} instr="" schedule={ID: Slot:}
+meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"codex","driver":"managed","title":"","color":"","label":"","repo":"app","branch":"main","createdAt":"$TIME","stoppedAt":"","archived":false,"origin":"user","initialPromptState":"delivered"}
+== managed_prompt_failed
+status 201
+header Content-Type: application/json
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"codex\",\"driver\":\"managed\",\"origin\":\"user\",\"initialPromptState\":\"failed\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME\",\"remoteUrl\":\"\",\"state\":\"idle\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"branch\":\"main\"}\n"
+sent "managed task" origin={Kind:member From:} instr="" schedule={ID: Slot:}
+meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"codex","driver":"managed","title":"","color":"","label":"","repo":"app","branch":"main","createdAt":"$TIME","stoppedAt":"","archived":false,"origin":"user","initialPromptState":"failed"}
+== managed_report_to
+status 201
+header Content-Type: application/json
+header X-AF-Create-Key: fp_$KEY
+header X-AF-Create-Outcome: created
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"codex\",\"driver\":\"managed\",\"origin\":\"user\",\"initialPromptState\":\"delivered\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME\",\"remoteUrl\":\"\",\"state\":\"working\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"stateSince\":\"$TIME\",\"branch\":\"main\"}\n"
+sent "report back\n\n[agent-fleet] この指示をやり切って作業が残っていない時点で、MCP ツール af_report(session=\"$NAME\") を1回だけ呼んでください（質問や承認で止まる場合・作業が続く場合は呼ばないこと）。この注記自体への返答は不要で、回答の言語も変えないでください。 / When this instruction is fully done, call the MCP tool af_report(session=\"$NAME\") exactly once. Do not call it if you are stopping to ask, or if work remains. No reply to this note is needed; keep your output language unchanged." origin={Kind:operator From:} instr="" schedule={ID: Slot:}
+meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"codex","driver":"managed","title":"","color":"","label":"","repo":"app","branch":"main","createdAt":"$TIME","stoppedAt":"","archived":false,"origin":"user","initialPromptState":"delivered"}
+== managed_only_default_driver
+status 201
+header Content-Type: application/json
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME/repos/app\",\"kind\":\"lcpp\",\"driver\":\"managed\",\"origin\":\"user\",\"repo\":\"app\",\"workingCopyId\":\"wc_$ID\",\"title\":\"\",\"planReviewers\":[],\"display\":\"app @$STAMP\",\"color\":\"\",\"label\":\"\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME\",\"remoteUrl\":\"\",\"state\":\"idle\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false,\"branch\":\"main\"}\n"
+meta {"name":"$NAME","dir":"$HOME/repos/app","model":"qwen3-8b","kind":"lcpp","driver":"managed","title":"","color":"","label":"","repo":"app","branch":"main","createdAt":"$TIME","stoppedAt":"","archived":false,"origin":"user"}
