@@ -79,3 +79,9 @@ func (agentImpl) ManagedLifecycle() agents.ManagedLifecycle {
 
 // ConnectionStatus is agents.ConnectionStatuser: this package's Status().
 func (agentImpl) ConnectionStatus(agents.StatusInputs) map[string]any { return Status() }
+
+// LiveStateTraits is agents.LiveStater: a Managed turn that failed with usageLimitExceeded
+// (IsRateLimited).
+func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
+	return agents.LiveStateTraits{RateLimited: IsRateLimited, RateLimitedManagedOnly: true}
+}

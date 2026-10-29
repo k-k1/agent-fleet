@@ -34,3 +34,9 @@ func (agentImpl) ManagedLifecycle() agents.ManagedLifecycle {
 // the on-demand install lands the proprietary binary (ADR 0095); connected reads
 // ~/.config/muse/auth.json, so it needs no subprocess.
 func (agentImpl) ConnectionStatus(agents.StatusInputs) map[string]any { return Status() }
+
+// LiveStateTraits is agents.LiveStater: the live handle's pending prompt (LiveState), since the
+// status file holds only turn start and end; and the handle's last turn error (IsRateLimited).
+func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
+	return agents.LiveStateTraits{State: LiveState, RateLimited: IsRateLimited}
+}

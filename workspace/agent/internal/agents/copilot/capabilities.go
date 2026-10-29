@@ -41,3 +41,9 @@ func (agentImpl) ManagedLifecycle() agents.ManagedLifecycle {
 func (agentImpl) ConnectionStatus(in agents.StatusInputs) map[string]any {
 	return Status(in.GithubConnected)
 }
+
+// LiveStateTraits is agents.LiveStater: the classification of events.jsonl (LiveState); no hooks,
+// so that poll is where a Terminal turn ends.
+func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
+	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true}
+}

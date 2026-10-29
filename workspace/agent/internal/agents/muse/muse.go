@@ -132,6 +132,9 @@ func PendingState(name string) string {
 	}
 }
 
+// LiveState is PendingState for m, in the shape agents.LiveStateTraits.State takes.
+func LiveState(m session.Meta) string { return PendingState(m.Name) }
+
 // BackgroundWork is the agents.BackgroundReporter read: a tool call an earlier turn left
 // running (background.go).
 func (agentImpl) BackgroundWork(m session.Meta) (bool, string) { return BackgroundWork(m.Name) }
