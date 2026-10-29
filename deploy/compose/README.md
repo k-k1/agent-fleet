@@ -359,6 +359,8 @@ In `.env`, besides the secrets from the Quick start:
 AUTH=dev                                  # one fixed user, no IdP
 AF_PROVISION=auto                         # the template's `invite` leaves that user in no tenant
 PUBLIC_BASE_URL=http://127.0.0.1:8099
+AF_TRUSTED_PROXY_HOPS=0                   # no Caddy in front; the template's 1 assumes one
+VERSION=<version>                         # the template's `dev` is not a published CP tag
 WS_IMAGE=ghcr.io/k-k1/agent-fleet/workspace:<version>
 # (B) a directory the engine shares with its VM — under your home works for all three
 DATA_DIR=/Users/<you>/agent-fleet/data

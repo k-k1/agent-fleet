@@ -42,8 +42,10 @@ trap 'rm -rf "$WORK"' EXIT
 
 # ---- report ---------------------------------------------------------------------
 scrub() {
-  local s="$1"
-  s="${s//"$HOME"/\~}"
+  # The ~ comes from a variable: bash 3.2 keeps the backslash of a literal \~ in the
+  # replacement (measured on macOS: "\~/af-data"), bash 5 drops it.
+  local s="$1" tilde='~'
+  s="${s//"$HOME"/$tilde}"
   printf '%s' "$s" | tr '\n|' '  ' | cut -c1-200
 }
 say() { printf '%s\n' "$*" | tee -a "$REPORT"; }
@@ -154,6 +156,10 @@ cmd_docker() {
   # .env as README "macOS" asks for it. A miss here explains most later failures.
   expect env.auth dev "$(envval AUTH)" AUTH
   expect env.provision auto "$(envval AF_PROVISION)" AF_PROVISION
+  expect env.proxy_hops 0 "$(envval AF_TRUSTED_PROXY_HOPS)" AF_TRUSTED_PROXY_HOPS
+  local ver
+  ver="$(envval VERSION)"
+  case "$ver" in "" | dev) check env.version FAIL "VERSION = ${ver:-<empty>}, want a published version" ;; *) check env.version PASS "VERSION = $ver" ;; esac
   local base data gid sock_gid
   base="$(envval PUBLIC_BASE_URL)"
   case "$base" in http://127.0.0.1:*) check env.base PASS "PUBLIC_BASE_URL = $base" ;; *) check env.base FAIL "PUBLIC_BASE_URL = ${base:-<empty>}, want http://127.0.0.1:8099" ;; esac
@@ -183,11 +189,14 @@ cmd_docker() {
 
   expect ws.arch aarch64 "$(docker exec "$ws" uname -m 2>/dev/null || true)" "uname -m in the workspace"
   expect ws.home_owner 1000 "$(docker exec "$ws" stat -c %u /home/dev 2>/dev/null || true)" "owner of /home/dev"
-  if docker exec "$ws" test -d /home/dev/.ssh 2>/dev/null; then
-    expect ws.ssh_mode 700 "$(docker exec "$ws" stat -c %a /home/dev/.ssh 2>/dev/null || true)" "mode of ~/.ssh"
-  else
-    check ws.ssh_mode SKIP "~/.ssh does not exist yet"
+  # A fresh home has no ~/.ssh, and a SKIP would prove nothing: create it the way ssh-keygen
+  # would, then read the mode back through the file share.
+  local ssh_note=existing
+  if ! docker exec "$ws" test -d /home/dev/.ssh 2>/dev/null; then
+    docker exec -u dev "$ws" mkdir -m 700 /home/dev/.ssh 2>/dev/null || true
+    ssh_note="created by this run"
   fi
+  expect ws.ssh_mode 700 "$(docker exec "$ws" stat -c %a /home/dev/.ssh 2>/dev/null || true)" "mode of ~/.ssh ($ssh_note)"
   # A file the dev user creates and chmods on the shared directory: ownership and mode
   # are what a VM file share is most likely to get wrong.
   expect ws.write "1000 600" "$(docker exec -u dev "$ws" sh -c 'echo af > "$HOME/.af-accept" && chmod 600 "$HOME/.af-accept" && stat -c "%u %a" "$HOME/.af-accept"' 2>/dev/null || true)" "owner and mode of a new file in ~"
