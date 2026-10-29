@@ -79,12 +79,21 @@ reply() { # reply <code> <body>
 case "$method $url" in
   "GET "*/healthz) reply 200 "${STUB_HEALTH:-ok}" ;;
   "POST "*/api/workspace/start)
-    if [ "${STUB_START_CODE:-200}" = 200 ]; then touch "$S/running"; reply 200 '{"name":"af-ws-dev","state":"running"}'
+    # STUB_STARTING_POLLS: how many GET /api/workspace still answer "starting", as when
+    # the Agent outlives the CP's health budget on a first boot.
+    if [ "${STUB_START_CODE:-200}" = 200 ]; then
+      touch "$S/running"
+      if [ "${STUB_STARTING_POLLS:-0}" = 0 ]; then reply 200 '{"name":"af-ws-dev","state":"running"}'
+      else echo 0 > "$S/polls"; reply 200 '{"name":"af-ws-dev","state":"starting"}'; fi
     else reply "$STUB_START_CODE" '{"error":"start failed"}'; fi ;;
   "POST "*/api/workspace/stop)
     if [ "${STUB_STOP_CODE:-200}" != 200 ]; then reply "$STUB_STOP_CODE" '{"error":"stop failed"}'; exit 0; fi
     rm -f "$S/running"; [ "${STUB_LOSE_HOME:-0}" = 0 ] || rm -f "$S/home-file"; reply 200 '{"name":"af-ws-dev","state":"stopped"}' ;;
   "GET "*/api/workspace/machine) reply 200 '{"arch":"arm64"}' ;;
+  "GET "*/api/workspace)
+    n=$(( $(cat "$S/polls" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$S/polls"
+    if [ "$n" -le "${STUB_STARTING_POLLS:-0}" ]; then reply 200 '{"name":"af-ws-dev","state":"starting"}'
+    else reply 200 '{"name":"af-ws-dev","state":"running"}'; fi ;;
   *) reply 404 'not found' ;;
 esac
 FAKE
@@ -95,7 +104,8 @@ S="$STUB_STATE"
 echo "limactl $*" >> "$STUB_LOG"
 case "$1" in
   list) { [ -f "$S/vm" ] || [ "${STUB_VM_EXISTS:-0}" = 1 ]; } && echo af-accept ;;
-  start) touch "$S/vm" ;;
+  create) touch "$S/vm" ;;
+  start) exit "${STUB_VM_START_RC:-0}" ;;
   stop) : ;;
   delete) [ "${STUB_DELETE_RC:-0}" = 0 ] || { echo "delete refused" >&2; exit 1; }; rm -f "$S/vm" ;;
   shell)
@@ -165,6 +175,21 @@ row ws.chromium PASS
 grep -q "Result: 5 FAIL." "$WORK/report.md" || fail "wrong FAIL count"
 echo "ok"
 
+echo "== case 1b: docker, a start that answers \"starting\" is polled until running =="
+bundle "$WORK/b1b"
+STUB_STARTING_POLLS=2 run 0 docker "$WORK/b1b"
+row ws.start PASS
+row ws.persist PASS
+grep -q "curl GET http://127.0.0.1:8099/api/workspace$" "$LOG" || fail "never polled the state"
+echo "ok"
+
+echo "== case 1c: docker, a start that stays \"starting\" fails and the workspace is still stopped =="
+bundle "$WORK/b1c"
+STUB_STARTING_POLLS=999 AF_ACCEPT_START_TIMEOUT=2 run 1 docker "$WORK/b1c"
+row ws.start FAIL
+grep -q "curl POST http://127.0.0.1:8099/api/workspace/stop" "$LOG" || fail "workspace not stopped after a start that never ran"
+echo "ok"
+
 echo "== case 2b: docker, a stop that fails is a FAIL, not a passing persistence check =="
 bundle "$WORK/b2b"
 STUB_STOP_CODE=500 run 1 docker "$WORK/b2b"
@@ -214,7 +239,7 @@ run 0 native
 for id in vm.create native.install native.health native.ws.start native.arch native.ws.restart native.persist; do
   row "$id" PASS
 done
-grep -q "limactl start --name af-accept --tty=false template://ubuntu-lts" "$LOG" || fail "VM not created"
+grep -q "limactl create --name af-accept --tty=false template://ubuntu-lts" "$LOG" || fail "VM not created"
 grep -q "limactl delete af-accept" "$LOG" || fail "VM not deleted"
 echo "ok"
 
@@ -222,13 +247,19 @@ echo "== case 6b: native, a VM that was already there is used and not deleted ==
 STUB_VM_EXISTS=1 run 0 native
 row vm.reuse INFO
 grep -q "limactl delete" "$LOG" && fail "deleted a VM this run did not create"
-grep -q "limactl start --name" "$LOG" && fail "created a VM over an existing one"
+grep -q "limactl create" "$LOG" && fail "created a VM over an existing one"
 echo "ok"
 
 echo "== case 7: native, a failed install is reported and the VM is still deleted =="
 STUB_INSTALL_RC=1 run 1 native
 row native.install FAIL
 grep -q "limactl delete af-accept" "$LOG" || fail "VM left behind after a failed install"
+echo "ok"
+
+echo "== case 7c: native, a VM that was created but did not start is still deleted =="
+STUB_VM_START_RC=1 run 1 native
+row vm.start FAIL
+grep -q "limactl delete af-accept" "$LOG" || fail "created VM left behind after a failed start"
 echo "ok"
 
 echo "== case 7b: native, a VM delete that fails is a FAIL =="

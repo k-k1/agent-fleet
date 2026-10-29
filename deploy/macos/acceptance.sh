@@ -32,7 +32,7 @@ POLL="${AF_ACCEPT_POLL:-2}"
 VM="${AF_ACCEPT_VM:-af-accept}"
 DIST_RAW="${AF_ACCEPT_DIST_RAW:-https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main}"
 
-FAILS=0; KEEP=0; REPORT=""; VERSION=""; WS_NAME=""; VM_CREATED=0
+FAILS=0; KEEP=0; REPORT=""; VERSION=""; WS_NAME=""; WS_TRIED=0; VM_CREATED=0
 
 usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"; }
 die() { echo "ERROR: $*" >&2; exit 2; }
@@ -83,19 +83,33 @@ wait_health() {
   return 1
 }
 
-# ws_start <id>: start is synchronous until the Agent answers, so 200 + running also
-# proves the CP reached the Agent. WS_NAME is the container the CP says it started: the
-# Mac may run other af-ws-* containers, and those are never touched.
+# ws_start <id>: running means the CP reached the Agent. A start whose Agent has not
+# answered within the CP's health budget is not an error: it returns 200 "starting" (a
+# first start boot-installs the CLIs), and the run then polls the state like the Console
+# does. WS_NAME is the container the CP named: the Mac may run other af-ws-* containers,
+# and those are never touched. WS_TRIED marks that a container may exist, so cleanup
+# stops it even when the start failed half way.
 ws_start() {
-  local code
+  local code state waited=0 name
+  WS_TRIED=1
   code="$(http POST /api/workspace/start "$START_TIMEOUT")"
-  if [ "$code" = 200 ] && grep -qF '"state":"running"' "$WORK/body"; then
-    WS_NAME="$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p' "$WORK/body" | head -1)"
-    check "$1" PASS "POST /api/workspace/start -> 200, running (the CP reached the Agent)"
-    return 0
+  name="$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p' "$WORK/body" | head -1)"
+  [ -z "$name" ] || WS_NAME="$name"
+  if [ "$code" != 200 ]; then
+    check "$1" FAIL "POST /api/workspace/start -> $code: $(body)"
+    return 1
   fi
-  check "$1" FAIL "POST /api/workspace/start -> $code: $(body)"
-  return 1
+  while :; do
+    state="$(sed -n 's/.*"state":"\([^"]*\)".*/\1/p' "$WORK/body" | head -1)"
+    [ "$state" != running ] || break
+    if [ "$state" != starting ] || [ "$waited" -ge "$START_TIMEOUT" ]; then
+      check "$1" FAIL "workspace state ${state:-?} after ${waited}s: $(body)"
+      return 1
+    fi
+    sleep "$POLL"; waited=$((waited + POLL))
+    code="$(http GET /api/workspace)"
+  done
+  check "$1" PASS "workspace running after start (+${waited}s of starting): the CP reached the Agent"
 }
 # ws_stop <id>: a stop that did not happen would make the persistence check pass on the
 # same container, so it is a check of its own.
@@ -192,7 +206,7 @@ cmd_docker() {
 # Cleanup failures are FAILs: a stack left running holds the ports the next engine needs.
 cleanup_docker() {
   [ "$KEEP" = 0 ] || { check cleanup INFO "--keep: left running"; return 0; }
-  [ -z "$WS_NAME" ] || ws_stop cleanup.ws_stop || true
+  [ "$WS_TRIED" = 0 ] || ws_stop cleanup.ws_stop || true
   if ! docker compose --project-directory "$DIR" -f "$DIR/docker-compose.yml" -f "$DIR/docker-compose.macos.yml" down > "$WORK/down.log" 2>&1; then
     check cleanup FAIL "compose down: $(tail -2 "$WORK/down.log")"
   fi
@@ -205,14 +219,18 @@ cmd_native() {
   command -v limactl > /dev/null || die "limactl not found (brew install lima)"
   header "native in a Lima VM"
   # A VM of that name that was already there is used and left in place: it may hold
-  # someone's work. Only a VM this run created is deleted afterwards.
+  # someone's work. Only a VM this run created is deleted afterwards, so creating and
+  # starting are two steps: a start that fails still leaves a VM that is ours to delete.
   if limactl list -q 2>/dev/null | grep -qx "$VM"; then
     check vm.reuse INFO "VM $VM existed before this run; it is not deleted afterwards"
-    limactl start "$VM" > "$WORK/vm.log" 2>&1 || true
-  elif limactl start --name "$VM" --tty=false template://ubuntu-lts > "$WORK/vm.log" 2>&1; then
+  elif limactl create --name "$VM" --tty=false template://ubuntu-lts > "$WORK/vm.log" 2>&1; then
     VM_CREATED=1
   else
     check vm.create FAIL "$(tail -3 "$WORK/vm.log")"
+    cleanup_native; finish
+  fi
+  if ! limactl start "$VM" >> "$WORK/vm.log" 2>&1; then
+    check vm.start FAIL "$(tail -3 "$WORK/vm.log")"
     cleanup_native; finish
   fi
   check vm.create PASS "$(vm sh -c '. /etc/os-release; echo "$PRETTY_NAME $(uname -m)"' 2>/dev/null || echo ?)"
@@ -260,7 +278,7 @@ cmd_native() {
 
 cleanup_native() {
   [ "$KEEP" = 0 ] || { check cleanup INFO "--keep: VM $VM left running"; return 0; }
-  [ -z "$WS_NAME" ] || ws_stop cleanup.ws_stop || true
+  [ "$WS_TRIED" = 0 ] || ws_stop cleanup.ws_stop || true
   [ "$VM_CREATED" = 1 ] || return 0
   limactl stop "$VM" > /dev/null 2>&1 || true
   if ! limactl delete "$VM" > "$WORK/delete.log" 2>&1; then

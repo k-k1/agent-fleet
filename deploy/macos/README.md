@@ -32,7 +32,7 @@ the Console says it started, never another `af-ws-*` on the same Mac.
 |---|---|
 | `env.*` | `.env` has the values the compose README asks for; `DOCKER_GID` matches the socket as a container sees it |
 | `compose.up`, `cp.health` | the overlay starts and the Console answers on the Mac's `127.0.0.1:8099` |
-| `ws.start` | the CP reached the Agent through `host.docker.internal` (start waits for it) |
+| `ws.start` | the CP reached the Agent through `host.docker.internal` (a start still `starting` after the CP's health budget is polled until running) |
 | `ws.arch` | the workspace runs the `linux/arm64` image |
 | `ws.home_owner`, `ws.ssh_mode`, `ws.write` | ownership and modes on the engine's file share |
 | `ws.callback` | the workspace reached the CP's workspace listener (401 without a token) |
