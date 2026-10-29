@@ -28,6 +28,9 @@ type SQL struct {
 	mfs        embed.FS                    // embedded numbered migrations
 	mdir       string                      // dir within mfs
 	legacyHook func(context.Context) error // sqlite-only post-migration data move; nil for pg
+	// afterMCPOAuthSpend, when set by a test, runs right after ConsumeMCPOAuthToken's spending
+	// statement, so a test can land a rival caller in that window. Nil in production.
+	afterMCPOAuthSpend func()
 }
 
 // OpenSQLite opens the DB with the server-app pragmas (WAL + busy_timeout +

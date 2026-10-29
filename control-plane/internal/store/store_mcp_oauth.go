@@ -77,7 +77,7 @@ type MCPOAuthStore interface {
 
 	InsertMCPOAuthToken(ctx context.Context, t MCPOAuthToken) error
 	// ConsumeMCPOAuthToken spends a row of the given kind exactly once, however many callers
-	// race for it: one conditional UPDATE decides, and its RowsAffected is the whole guarantee.
+	// race for it: one conditional UPDATE decides, and the row it returns is the whole guarantee.
 	ConsumeMCPOAuthToken(ctx context.Context, hash, kind string, now int64) (MCPOAuthToken, MCPOAuthSpend, error)
 	// MarkMCPOAuthCodeReplayed records on the code row that it was presented again, so a grant
 	// being minted from it at this moment can see that and take itself down (state = replayed).
@@ -179,26 +179,28 @@ func scanMCPOAuthToken(row interface{ Scan(...any) error }) (MCPOAuthToken, erro
 }
 
 func (s *SQL) ConsumeMCPOAuthToken(ctx context.Context, hash, kind string, now int64) (MCPOAuthToken, MCPOAuthSpend, error) {
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE mcp_oauth_token SET used_at=? WHERE hash=? AND kind=? AND used_at=0 AND expires_at>?`,
-		now, hash, kind, now)
-	if err != nil {
-		return MCPOAuthToken{}, MCPOAuthSpendUnknown, err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return MCPOAuthToken{}, MCPOAuthSpendUnknown, err
-	}
+	// The winner reads its row in the spending statement itself: a loser that sees the replay
+	// revokes the grant and deletes its tokens, so a second read could find nothing and turn
+	// the win into unknown.
 	t, err := scanMCPOAuthToken(s.db.QueryRowContext(ctx,
+		`UPDATE mcp_oauth_token SET used_at=? WHERE hash=? AND kind=? AND used_at=0 AND expires_at>?
+		 RETURNING `+mcpOAuthTokenCols, now, hash, kind, now))
+	if s.afterMCPOAuthSpend != nil {
+		s.afterMCPOAuthSpend()
+	}
+	if err == nil {
+		return t, MCPOAuthSpendOK, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return MCPOAuthToken{}, MCPOAuthSpendUnknown, err
+	}
+	t, err = scanMCPOAuthToken(s.db.QueryRowContext(ctx,
 		`SELECT `+mcpOAuthTokenCols+` FROM mcp_oauth_token WHERE hash=? AND kind=? AND expires_at>?`, hash, kind, now))
 	if errors.Is(err, sql.ErrNoRows) {
 		return MCPOAuthToken{}, MCPOAuthSpendUnknown, nil
 	}
 	if err != nil {
 		return MCPOAuthToken{}, MCPOAuthSpendUnknown, err
-	}
-	if n == 1 {
-		return t, MCPOAuthSpendOK, nil
 	}
 	return t, MCPOAuthSpendReplayed, nil
 }
