@@ -81,7 +81,7 @@ jobs:
       # same test as above in AF_CAPS_PROBES=only mode, so it reuses this kind's auth setup.
       # Placed after "remember successfully tested latest" on purpose: a capability that
       # drifted is a finding for the update issue, not a reason to call the mirror contract
-      # of this version untested. Costs one interrupted long turn and three one-line turns.
+      # of this version untested. Costs one interrupted long turn and three one-line turns (up to five when the model probe meets explicit refusals).
       #
       # ADVISORY until the repository variable CAPS_PROBES_BLOCKING is 'true' (the one switch,
       # shared by the cursor, copilot and kiro workflows; docs/build/10-development.md, "Promoting

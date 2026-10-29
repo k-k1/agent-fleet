@@ -10,7 +10,7 @@ package main
 //
 // Each probe starts its own session through the production BuildLaunch and observes through
 // the production reads (WireLive / Transcript), like the mirror contract. Costs per kind: one
-// long turn that is interrupted, and three one-line turns.
+// long turn that is interrupted, and three one-line turns (up to five when the model probe meets explicit refusals).
 
 import (
 	"errors"
@@ -170,5 +170,9 @@ func (e *liveProbeEnv) ModelOverride(model string) probeObservation {
 	} else if recaller, ok := e.spec.agent.(agents.SettingsRecaller); ok {
 		recorded, haveRecorder = recaller.RecallSettings(asked).Model, true
 	}
-	return observeModelOverride(td.Turns, recorded, haveRecorder, model)
+	refused := false
+	if r, ok := e.spec.agent.(interface{ ModelRefusedAtLaunch(session.Meta) bool }); ok {
+		refused = r.ModelRefusedAtLaunch(asked)
+	}
+	return observeModelOverride(td.Turns, recorded, haveRecorder, model, refused)
 }
