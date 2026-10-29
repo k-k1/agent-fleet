@@ -101,6 +101,7 @@ var managedAbortSignals = fstore.JSON[managedAbortSignal](paths.AgentStateDir, "
 var (
 	abortResumeInject      = injectSessionPrompt
 	abortResumeReadingPane = func(name string) tmuxx.PaneRead { return tmuxx.ReadPane(name) }
+	abortResumeAlive       = SessionAlive
 )
 
 // StartAbortResumeWatch runs the sweep in its own loop. It does not ride on the list polling,
@@ -123,8 +124,21 @@ func StartAbortResumeWatch() {
 // to a conversation or has a row in the instruction ledger is irrelevant, and a standalone
 // session launched from the Console is treated exactly the same — that is the point of this
 // feature.
+//
+// Only a live session's tail is read. The tail lives on the claude mount (EFS), and a session
+// with no transcript costs a sweep of every project directory per read (jsonl_memo.go never
+// remembers a miss). Measured: reading the tails of archived and stopped sessions every 30s was
+// the dominant EFS metadata load of a production workspace (ADR 0087). Nothing can be resumed in
+// a dead session, so its episodes are dropped from the local state dir instead — left behind, an
+// old episode would make the next cut-off after a restart read as stale at once.
 func abortResumeTick(now time.Time) {
 	for _, m := range session.ListMetas() {
+		// Archived first: the shelf keeps hundreds of them, and the liveness test below
+		// costs a tmux exec each.
+		if m.Archived || !abortResumeAlive(m) {
+			dropResumeEpisodes(m.Name)
+			continue
+		}
 		st, has := abortResumeStates.Read(m.Name)
 		a, ok := abortInfoFor(m)
 		// A turn killed by the login is blocked, not retryable, so everything below drops it.
@@ -141,14 +155,20 @@ func abortResumeTick(now time.Time) {
 			}
 			continue
 		}
-		if !SessionAlive(m) {
-			continue // a dead session belongs to record_exit.go (an abnormal exit, not a cut-off)
-		}
 		if !uiprefs.AbortAutoResume() {
 			continue // off: no episode is opened, so nothing is suppressed (the old report path)
 		}
 		abortResumeAttempt(m, st, a, now)
 	}
+}
+
+// dropResumeEpisodes forgets both resume episodes of a session nothing can be typed into. Both
+// stores are in AgentStateDir (local disk), so this costs no EFS round trip.
+func dropResumeEpisodes(name string) {
+	abortResumeStates.Remove(name)
+	authResumeMu.Lock()
+	defer authResumeMu.Unlock()
+	authResumeStates.Remove(name)
 }
 
 func abortInfoFor(m session.Meta) (claude.Abort, bool) {

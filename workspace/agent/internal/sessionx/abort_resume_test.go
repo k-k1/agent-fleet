@@ -44,7 +44,11 @@ func newAbortFixture(t *testing.T) *abortFixture {
 		return nil
 	}
 	abortResumeReadingPane = func(string) tmuxx.PaneRead { return f.pane }
-	t.Cleanup(func() { abortResumeInject, abortResumeReadingPane = origInject, origPane })
+	origAlive := abortResumeAlive
+	abortResumeAlive = func(session.Meta) bool { return true }
+	t.Cleanup(func() {
+		abortResumeInject, abortResumeReadingPane, abortResumeAlive = origInject, origPane, origAlive
+	})
 	return f
 }
 
@@ -285,6 +289,51 @@ func TestAbortResumeTickClosesEpisode(t *testing.T) {
 	abortResumeTick(time.Now())
 	if _, ok := abortResumeStates.Read(m.Name); ok {
 		t.Error("the cut-off is gone from the tail but the episode remains (no budget for the next cut-off)")
+	}
+}
+
+// TestAbortResumeTickSkipsDeadAndArchived: the sweep reads no tail for an archived or stopped
+// session. That read goes to the claude mount on EFS and, for a session with no transcript,
+// sweeps every project directory; doing it for every archived meta every 30s was the
+// regression of #2850. Their episodes are dropped locally instead, so an old one cannot make the
+// next cut-off after a restart read as stale.
+func TestAbortResumeTickSkipsDeadAndArchived(t *testing.T) {
+	newAbortFixture(t)
+	live := abMeta()
+	stopped := session.Meta{Name: "ab-stopped", Dir: "/tmp/ab-stopped", Kind: session.KindClaude}
+	// Archived sessions are not alive either; claiming one alive proves the archived flag
+	// alone keeps the sweep away from its tail.
+	archived := session.Meta{Name: "ab-archived", Dir: "/tmp/ab-archived", Kind: session.KindClaude, Archived: true}
+	at := time.Now().Format(time.RFC3339)
+	for _, m := range []session.Meta{live, stopped, archived} {
+		session.WriteMeta(m)
+		_ = abortResumeStates.Write(m.Name, abortResumeState{At: at, Attempts: 1})
+		_ = authResumeStates.Write(m.Name, authResumeState{At: at})
+	}
+	abortResumeAlive = func(m session.Meta) bool { return m.Name != stopped.Name }
+
+	var read []string
+	orig := claudeAbortInfo
+	claudeAbortInfo = func(sid string) (claude.Abort, bool) {
+		read = append(read, sid)
+		return retryableAbort(time.Now()), true
+	}
+	t.Cleanup(func() { claudeAbortInfo = orig })
+
+	abortResumeTick(time.Now())
+	if want := []string{session.UUID(live.Dir, live.Name)}; len(read) != 1 || read[0] != want[0] {
+		t.Errorf("tails read = %v, want only the live session's %v", read, want)
+	}
+	for _, m := range []session.Meta{stopped, archived} {
+		if _, ok := abortResumeStates.Read(m.Name); ok {
+			t.Errorf("%s: the abort episode of a session that cannot be resumed was kept", m.Name)
+		}
+		if _, ok := authResumeStates.Read(m.Name); ok {
+			t.Errorf("%s: the auth episode of a session that cannot be resumed was kept", m.Name)
+		}
+	}
+	if _, ok := abortResumeStates.Read(live.Name); !ok {
+		t.Error("the live session's open episode was dropped")
 	}
 }
 
