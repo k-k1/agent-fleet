@@ -81,9 +81,10 @@ case "$method $url" in
   "POST "*/api/workspace/start)
     # STUB_STARTING_POLLS: how many GET /api/workspace still answer "starting", as when
     # the Agent outlives the CP's health budget on a first boot.
+    sleep "${STUB_START_DELAY:-0}"
     if [ "${STUB_START_CODE:-200}" = 200 ]; then
       touch "$S/running"
-      if [ "${STUB_STARTING_POLLS:-0}" = 0 ]; then reply 200 '{"name":"af-ws-dev","state":"running"}'
+      if [ "${STUB_STARTING_POLLS:-0}" = 0 ] && [ "${STUB_START_STARTING:-0}" = 0 ]; then reply 200 '{"name":"af-ws-dev","state":"running"}'
       else echo 0 > "$S/polls"; reply 200 '{"name":"af-ws-dev","state":"starting"}'; fi
     else reply "$STUB_START_CODE" '{"error":"start failed"}'; fi ;;
   "POST "*/api/workspace/stop)
@@ -140,7 +141,7 @@ run() { # run <expected rc> <args...>; env is the caller's
   local want="$1" rc=0; shift
   rm -rf "$WORK/state"; mkdir -p "$WORK/state"; : > "$LOG"
   PATH="$STUB:$SYS" HOME="$WORK/home" AF_ACCEPT_OS="${AF_ACCEPT_OS:-Darwin}" \
-    STUB_STATE="$WORK/state" STUB_LOG="$LOG" AF_ACCEPT_POLL=1 AF_ACCEPT_HEALTH_WAIT=3 \
+    STUB_STATE="$WORK/state" STUB_LOG="$LOG" AF_ACCEPT_POLL="${AF_ACCEPT_POLL:-1}" AF_ACCEPT_HEALTH_WAIT=3 \
     "$SYS/bash" "$SCRIPT" "$@" --report "$WORK/report.md" > "$WORK/out.txt" 2> "$WORK/err.txt" || rc=$?
   [ "$rc" = "$want" ] || { cat "$WORK/err.txt"; fail "$* exited $rc, want $want"; }
 }
@@ -199,6 +200,18 @@ row ws.start FAIL
 polls="$(grep -c "curl GET http://127.0.0.1:8099/api/workspace$" "$LOG" || true)"
 [ "$polls" -le 2 ] || fail "polled $polls times on a 3s budget with 2s answers"
 [ $(( $(date +%s) - t0 )) -lt 15 ] || fail "the start budget was overrun"
+echo "ok"
+
+echo "== case 1e: docker, a running answer past the budget is not a PASS =="
+bundle "$WORK/b1e"
+# The poll interval outlasts the budget, and the first state poll would say running.
+STUB_START_STARTING=1 AF_ACCEPT_POLL=3 AF_ACCEPT_START_TIMEOUT=1 run 1 docker "$WORK/b1e"
+row ws.start FAIL
+grep -q "curl GET http://127.0.0.1:8099/api/workspace$" "$LOG" && fail "polled after the budget ran out"
+# A POST that alone outlasts the budget, answering running.
+bundle "$WORK/b1f"
+STUB_START_DELAY=2 AF_ACCEPT_START_TIMEOUT=1 run 1 docker "$WORK/b1f"
+row ws.start FAIL
 echo "ok"
 
 echo "== case 2b: docker, a stop that fails is a FAIL, not a passing persistence check =="

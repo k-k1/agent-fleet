@@ -90,10 +90,11 @@ wait_health() {
 # and those are never touched. WS_TRIED marks that a container may exist, so cleanup
 # stops it even when the start failed half way.
 ws_start() {
-  local code state name t0 now left
+  local code state name t0 deadline now left nap
   WS_TRIED=1
-  # One wall-clock budget for the POST and the polling after it, HTTP time included.
-  t0="$(date +%s)"
+  # One wall-clock deadline for the POST and the polling after it, HTTP time included. An
+  # answer that arrives after it is a FAIL even when it says running.
+  t0="$(date +%s)"; deadline=$((t0 + START_TIMEOUT))
   code="$(http POST /api/workspace/start "$START_TIMEOUT")"
   name="$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p' "$WORK/body" | head -1)"
   [ -z "$name" ] || WS_NAME="$name"
@@ -104,19 +105,28 @@ ws_start() {
   while :; do
     now="$(date +%s)"
     state="$(sed -n 's/.*"state":"\([^"]*\)".*/\1/p' "$WORK/body" | head -1)"
+    if [ "$now" -gt "$deadline" ]; then
+      check "$1" FAIL "workspace state ${state:-?} only after $((now - t0))s, past the ${START_TIMEOUT}s budget"
+      return 1
+    fi
     [ "$state" != running ] || break
-    left=$((t0 + START_TIMEOUT - now))
-    if [ "$state" != starting ] || [ "$left" -le 0 ]; then
+    if [ "$state" != starting ]; then
       check "$1" FAIL "workspace state ${state:-?} after $((now - t0))s: $(body)"
       return 1
     fi
-    sleep "$POLL"
-    left=$((t0 + START_TIMEOUT - $(date +%s)))
-    [ "$left" -ge 1 ] || left=1
+    left=$((deadline - now)); nap="$POLL"
+    [ "$nap" -le "$left" ] || nap="$left"
+    sleep "$nap"
+    left=$((deadline - $(date +%s)))
+    if [ "$left" -le 0 ]; then
+      check "$1" FAIL "workspace still starting after the ${START_TIMEOUT}s budget"
+      return 1
+    fi
     code="$(http GET /api/workspace "$left")"
   done
   check "$1" PASS "workspace running $((now - t0))s after start: the CP reached the Agent"
 }
+
 # ws_stop <id>: a stop that did not happen would make the persistence check pass on the
 # same container, so it is a check of its own.
 ws_stop() {
