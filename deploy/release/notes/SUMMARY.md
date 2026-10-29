@@ -23,6 +23,7 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 - **[installers]** `install.sh` explains the macOS routes, `install-compose.sh` runs on macOS with `shasum`, `af update` picks no Linux package on a non-Linux host ([#2960](https://github.com/k-k1/agent-fleet/issues/2960))
 - **[jira]** Markdown tables are sent as Jira tables ([#2943](https://github.com/k-k1/agent-fleet/issues/2943))
 - **[agent / efs]** The Agent stops rereading archived and stopped claude sessions' files in the background ([#2850](https://github.com/k-k1/agent-fleet/issues/2850))
+- **[internal]** Control Plane, Agent and Console code reorganised (ADR 0124); no behaviour change intended
 
 **Fixed**
 

@@ -22,6 +22,7 @@
 - **[インストーラ]** `install.sh` が macOS での方法を案内、`install-compose.sh` が macOS で動き `shasum` で検証、`af update` が Linux 以外のホストで Linux 用パッケージを選ばない ([#2960](https://github.com/k-k1/agent-fleet/issues/2960))
 - **[jira]** Markdown の表を Jira の表として送る ([#2943](https://github.com/k-k1/agent-fleet/issues/2943))
 - **[agent／efs]** Agent がアーカイブ済み・停止中の claude セッションのファイルを裏で読み続けない ([#2850](https://github.com/k-k1/agent-fleet/issues/2850))
+- **[内部]** Control Plane・Agent・Console のコードを整理（ADR 0124）。動作は変えていないつもり
 
 **Fixed**
 
