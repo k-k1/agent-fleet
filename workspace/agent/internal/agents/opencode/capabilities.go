@@ -60,3 +60,9 @@ func (agentImpl) ManagedLifecycle() agents.ManagedLifecycle {
 
 // ConnectionStatus is agents.ConnectionStatuser: this package's Status(in.Secrets).
 func (agentImpl) ConnectionStatus(in agents.StatusInputs) map[string]any { return Status(in.Secrets) }
+
+// LiveStateTraits is agents.LiveStater: opencode's own store (LiveState), since its status plugin
+// is unreliable.
+func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
+	return agents.LiveStateTraits{State: LiveState}
+}

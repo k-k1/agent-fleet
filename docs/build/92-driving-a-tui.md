@@ -219,7 +219,7 @@ What to re-read when this playbook finds a change:
   session's live state: the status store (`internal/status`), which claude's hooks fill
   with its question, plan and permission modals, and, for some kinds without such hooks,
   per-kind readers of a transcript, event log or pane (`opencode.LiveState` or
-  `kiro.LiveState`, for example). The gate, `promptBlocker`, reads the same per-kind
+  `kiro.LiveState`, for example), reached through each kind's `agents.LiveStater`. The gate, `promptBlocker`, reads the same per-kind
   sources through each kind's `agents.ModalProbe`; for codex, opencode and cursor
   that is each kind's `TerminalModal` (see 92.3). `PendingModal` in
   `internal/agents/modal.go` is a different seam:

@@ -284,6 +284,10 @@ func TestWireSessionMuseRateLimit(t *testing.T) {
 	orig := museRateLimited
 	museRateLimited = func(string) bool { return limited }
 	t.Cleanup(func() { museRateLimited = orig })
+	// DriveState reads the same verdict through muse's live-state traits.
+	editLiveStateTraits(t, session.KindMuse, func(tr *agents.LiveStateTraits) {
+		tr.RateLimited = func(string) bool { return limited }
+	})
 	now := time.Now()
 	resume := now.Add(30 * time.Minute).Format(time.RFC3339)
 	m := session.Meta{Name: "rlwiremuse1", Dir: t.TempDir(), Kind: session.KindMuse, Driver: session.DriverManaged}
