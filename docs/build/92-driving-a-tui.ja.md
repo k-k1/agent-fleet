@@ -195,7 +195,7 @@ cursor の Terminal の 2 つのメニュー——コマンドの承認（「Run
 - **何を保留とみなすか** — `DriveState`（`internal/sessionx/agent.go`）がセッションの生きた
   状態を導く。材料は状態ストア（`internal/status`。claude のフックが質問・プラン・許可の
   モーダルを書き込む）と、そうしたフックの無い kind の一部に向けた転写・イベントログ・pane の
-  kind 別の読み取り（たとえば `opencode.LiveState` や `kiro.LiveState`）。ゲートの
+  kind 別の読み取り（たとえば `opencode.LiveState` や `kiro.LiveState`。各 kind の `agents.LiveStater` 経由）。ゲートの
   `promptBlocker` は同じ kind 別の出どころを各 kind の `agents.ModalProbe` 経由で読む。
   codex・opencode・cursor ではそれぞれの `TerminalModal`（92.3 を参照）。`internal/agents/modal.go`
   の `PendingModal` は別の継ぎ目で、セッションが止まるときに保留のまま残ったモーダルを持ち越す

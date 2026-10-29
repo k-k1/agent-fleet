@@ -52,7 +52,7 @@ source_of_truth: "既存の `internal/agents/<kind>` パッケージ（一番近
 | ターミナル起動 | 自パッケージの `BuildLaunch`（`agents.LaunchPlan` を返す）| 環境変数は `LaunchPlan.Env` に入れ、**コマンドに前置しない**（§20.3）。マネージド専用の種別は `ErrNoTerminalRoute` を返す |
 | マネージドの実行系 | 自 `Driver`。`Resume` が `ThreadHandle` を返す | 形はプロセスモデルに従う（[04 §4.3](04-agent.ja.md)）|
 | 呼び出し側がどちらの driver を選ぶか | 手で足すものは無い。Agent は driver 未指定を `tui` にするので、**両対応でマネージドで始めたい種別は `Caps().ManagedDefault` を立てる**。コンテナ内の `create_session` はレジストリから、CP の `create_session` と `injectDriver` は kind カタログのスナップショット（`agentkinds.ManagedDefaultKinds`）から、Console は `GET /api/agents/kinds` から導出する（`console/src/agents/registry.ts` の `managedDriver` / `terminalDriver` はそのゲッターで、読み込み前は `console/src/agents/kindCatalog.ts` の `FALLBACK_KIND_FACTS` が答える） | マネージド専用は Agent が既定を決め、Console は `managedOnly` から `terminalDriver: false` を導出する |
-| live 状態 | フック / プラグイン / CLI のストアのポーリング / runtime イベント | 状態ストアへ正規化する。working / idle / question と、`plan`・`permission`（[04 §4.4](04-agent.ja.md)）|
+| live 状態 | フック / プラグイン / CLI のストアのポーリング / runtime イベント。状態ストアを超える kind 自身の判定は `capabilities.go` の `agents.LiveStater` | 状態ストアへ正規化する。working / idle / question と、`plan`・`permission`（[04 §4.4](04-agent.ja.md)）。**Stop フックの無い kind は `PolledTurnEnd` を立てる**。立てないと完了報告が届かない |
 | transcript | `Agent.Transcript` の裏のリーダー | **CLI が読めて安定した native store を持つなら、それを読む。会話を自前ストアへ複製しない**。パーサは統合しない。そういうストアが無い種別は自分で持つ。[04 §4.3](04-agent.ja.md) の 2 つの例外がそれ |
 | サインイン | Agent の `/connections/<kind>/…` ハンドラ、**および** CP で 1 本ずつ名指しで中継するルート（`control-plane/relays_connections.go` の行。ログインフローは `routes.go` の `restLogin`）| CP へのコールバックが要る種別は無い（[08 §8.6](08-integrations.ja.md)）。サインインする相手が無い種別にはフローも無い |
 | 資格の置き場と fs denylist | 自パッケージと `fsDeny`（`fs.go`）| CLI が資格情報や状態を書く場所は**ファイルブラウザから隠す** |
