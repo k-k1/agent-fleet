@@ -38,12 +38,11 @@ import (
 //   - A hit is re-searched after memoTTL anyway, so a transcript that genuinely moved is picked
 //     up without anyone having to invalidate by hand.
 //
-// ⚠️ bg.go has an absenceMemo that does the opposite — it remembers "this session has no
-// background agents" for 15 seconds. That is not a copy of this type with the invariant
-// dropped, and neither belongs on the other's path: the absence there is read by ONE caller,
-// which lights a badge, while the absence here would be read by the resume decision. The
-// argument for each is written at both ends on purpose, because the two look like duplicates
-// and the natural tidy-up is to unify them.
+// display_miss.go's missMemo does the opposite — it remembers "this session has no transcript"
+// for a while. That is not a copy of this type with the invariant dropped, and neither belongs
+// on the other's path: the absence there is read only by the session card, while an absence
+// here would be read by the resume decision. The argument for each is written at both ends on
+// purpose, because the two look like duplicates and the natural tidy-up is to unify them.
 type pathMemo struct {
 	mu   sync.Mutex
 	seen map[string]memoHit
