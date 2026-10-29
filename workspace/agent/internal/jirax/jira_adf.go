@@ -7,8 +7,8 @@ package jirax
 // repaired, so its body goes through goldmark and REST v3 instead, and the paragraph-then-list
 // case comes out as a paragraph followed by a bulletList.
 //
-// Anything without an ADF counterpart (a table, raw HTML, an image) degrades to its text rather
-// than failing: a comment with a rough edge beats no repair.
+// Anything without an ADF counterpart (raw HTML, an image, a table inside a list or quote) degrades
+// to its text rather than failing: a comment with a rough edge beats no repair.
 
 import (
 	"strings"
@@ -22,14 +22,14 @@ import (
 	"github.com/yuin/goldmark/util"
 )
 
-// jiraMarkdown parses what jira-cli's own converter accepted, tables aside: strikethrough and
-// bare URLs. A table degrades to text.
+// jiraMarkdown parses what jira-cli's own converter accepted: strikethrough, bare URLs and GFM
+// tables.
 //
 // Emphasis and strikethrough follow the CJK-friendly amendment to CommonMark's flanking rules:
 // under the plain rules `**「すべて」**です` is not bold, because a delimiter run that touches
 // punctuation inside and a letter outside cannot open or close, and Japanese has no spaces to put
 // there. ASCII text parses as before.
-var jiraMarkdown = goldmark.New(goldmark.WithExtensions(cjkfriendly.CJKFriendlyEmphasisAndStrikethrough, extension.Linkify))
+var jiraMarkdown = goldmark.New(goldmark.WithExtensions(cjkfriendly.CJKFriendlyEmphasisAndStrikethrough, extension.Linkify, extension.Table))
 
 // adfUnescape resolves what the source still holds raw (a backslash escape, a character
 // reference): goldmark's renderer does it, but this reads the segments directly.
@@ -44,24 +44,32 @@ type adfNode = map[string]any
 func jiraMarkdownADF(md string) adfNode {
 	src := []byte(strings.ReplaceAll(md, "\r\n", "\n"))
 	root := jiraMarkdown.Parser().Parse(text.NewReader(src))
-	content := adfBlocks(root, src)
+	content := adfBlocks(root, src, false)
 	if len(content) == 0 {
-		content = []any{adfNode{"type": "paragraph", "content": []any{adfNode{"type": "text", "text": " "}}}}
+		content = []any{adfBlankParagraph()}
 	}
 	return adfNode{"version": 1, "type": "doc", "content": content}
 }
 
-func adfBlocks(parent ast.Node, src []byte) []any {
+// adfBlankParagraph stands in for an empty block where ADF requires at least one: an empty
+// text node or an empty content array is a 400.
+func adfBlankParagraph() adfNode {
+	return adfNode{"type": "paragraph", "content": []any{adfNode{"type": "text", "text": " "}}}
+}
+
+// adfBlocks converts the block children of parent. nested is true inside a list item or a quote,
+// where ADF admits no table.
+func adfBlocks(parent ast.Node, src []byte, nested bool) []any {
 	out := []any{}
 	for c := parent.FirstChild(); c != nil; c = c.NextSibling() {
-		if b := adfBlock(c, src); b != nil {
+		if b := adfBlock(c, src, nested); b != nil {
 			out = append(out, b)
 		}
 	}
 	return out
 }
 
-func adfBlock(n ast.Node, src []byte) adfNode {
+func adfBlock(n ast.Node, src []byte, nested bool) adfNode {
 	switch v := n.(type) {
 	case *ast.Paragraph, *ast.TextBlock:
 		in := adfInlines(n, src, nil)
@@ -86,9 +94,9 @@ func adfBlock(n ast.Node, src []byte) adfNode {
 		}
 		items := []any{}
 		for c := v.FirstChild(); c != nil; c = c.NextSibling() {
-			blocks := adfBlocks(c, src)
+			blocks := adfBlocks(c, src, true)
 			if len(blocks) == 0 {
-				blocks = []any{adfNode{"type": "paragraph", "content": []any{adfNode{"type": "text", "text": " "}}}}
+				blocks = []any{adfBlankParagraph()}
 			}
 			items = append(items, adfNode{"type": "listItem", "content": blocks})
 		}
@@ -100,11 +108,16 @@ func adfBlock(n ast.Node, src []byte) adfNode {
 	case *ast.FencedCodeBlock, *ast.CodeBlock:
 		return adfCodeBlock(n, src)
 	case *ast.Blockquote:
-		blocks := adfBlocks(v, src)
+		blocks := adfBlocks(v, src, true)
 		if len(blocks) == 0 {
 			return nil
 		}
 		return adfNode{"type": "blockquote", "content": blocks}
+	case *east.Table:
+		if nested {
+			return adfTableText(v, src)
+		}
+		return adfTable(v, src)
 	case *ast.ThematicBreak:
 		return adfNode{"type": "rule"}
 	case *ast.HTMLBlock:
@@ -123,6 +136,53 @@ func adfBlock(n ast.Node, src []byte) adfNode {
 		return adfNode{"type": "paragraph", "content": in}
 	}
 	return nil
+}
+
+// adfTable converts a GFM table. Column alignment is dropped: ADF cells carry no alignment.
+func adfTable(t *east.Table, src []byte) adfNode {
+	rows := []any{}
+	for r := t.FirstChild(); r != nil; r = r.NextSibling() {
+		cellType := "tableCell"
+		if _, ok := r.(*east.TableHeader); ok {
+			cellType = "tableHeader"
+		}
+		cells := []any{}
+		for c := r.FirstChild(); c != nil; c = c.NextSibling() {
+			para := adfBlankParagraph()
+			if in := adfInlines(c, src, nil); len(in) > 0 {
+				para = adfNode{"type": "paragraph", "content": in}
+			}
+			cells = append(cells, adfNode{"type": cellType, "attrs": adfNode{}, "content": []any{para}})
+		}
+		if len(cells) > 0 {
+			rows = append(rows, adfNode{"type": "tableRow", "content": cells})
+		}
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	return adfNode{"type": "table", "attrs": adfNode{"isNumberColumnEnabled": false, "layout": "default"}, "content": rows}
+}
+
+// adfTableText is a table where ADF admits none: one paragraph, a line per row, cells joined by
+// " | " with their inline marks kept.
+func adfTableText(t *east.Table, src []byte) adfNode {
+	out := []any{}
+	for r := t.FirstChild(); r != nil; r = r.NextSibling() {
+		if len(out) > 0 {
+			out = append(out, adfNode{"type": "hardBreak"})
+		}
+		for c := r.FirstChild(); c != nil; c = c.NextSibling() {
+			if c != r.FirstChild() {
+				out = append(out, adfNode{"type": "text", "text": " | "})
+			}
+			out = append(out, adfInlines(c, src, nil)...)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return adfNode{"type": "paragraph", "content": out}
 }
 
 func adfCodeBlock(n ast.Node, src []byte) adfNode {
