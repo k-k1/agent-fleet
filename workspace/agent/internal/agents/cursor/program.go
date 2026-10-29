@@ -91,6 +91,23 @@ func bin() string { return envOr("AGENT_CURSOR_BIN", "cursor-agent") }
 // from the main package and must honor the same AGENT_CURSOR_BIN override.
 func Bin() string { return bin() }
 
+// launchModel is the --model value for a launch ("" = no flag). Without the flag cursor does
+// not run Auto: it runs the model it persisted as its own default (cli-config.json), and every
+// launch that passes --model rewrites that default (measured on 2026.10.22-27dcf5f, even for a
+// launch the plan refused, through both `-p` and `acp`). So after one session on an explicit
+// model, Default launches pin it, which a Free plan refuses (#2928). Default and "auto" therefore pass
+// `--model auto`, unless the chat keeps a model of its own (store.db recorded one): a resume
+// without the flag restores that one, and the flag would override it.
+func launchModel(model string, chatKeepsOwn bool) string {
+	if model != "" && model != "auto" {
+		return model
+	}
+	if chatKeepsOwn {
+		return ""
+	}
+	return "auto"
+}
+
 // buildProgram returns the tmux pane program for a cursor TUI session. Auth is ambient —
 // the CLI picks up ~/.config/cursor/auth.json itself (measured) — so no token is injected.
 // --resume covers creating a new chat and resuming one in the same shape.
@@ -98,23 +115,6 @@ func Bin() string { return bin() }
 // or a plan start). Only --force is dropped; --trust (workspace trust) must always stay:
 // the trust prompt is not a permission prompt, and without it both ACP and TUI launches
 // hang (measured).
-// launchModel is the --model value for a launch ("" = no flag). Without the flag cursor does
-// not run Auto: it runs the model it persisted as its own default (cli-config.json), and every
-// launch that passes --model rewrites that default (measured on 2026.10.22-27dcf5f, even for a
-// launch the plan refused, through both `-p` and `acp`). So after one session on an explicit model, Default
-// launches pin it, which a Free plan refuses (#2928). Default and "auto" therefore pass
-// `--model auto`, unless the chat already recorded a model of its own (recorded, read from
-// store.db): a resume without the flag restores that one, and the flag would override it.
-func launchModel(model, recorded string) string {
-	if model != "" && model != "auto" {
-		return model
-	}
-	if recorded != "" {
-		return ""
-	}
-	return "auto"
-}
-
 func buildProgram(model, mode, chatID string, bypass bool) string {
 	if override := os.Getenv("AGENT_CURSOR_CMD"); override != "" {
 		return override

@@ -67,8 +67,10 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if err := EnsureHooks(); err != nil {
 		log.Printf("cursor: stop hook not installed, usage stays unmeasured: %v", err)
 	}
-	st, _ := chatMetaFor(chatID)
-	model := launchModel(m.Model, st.LastUsedModel)
+	// A store that exists but cannot be read counts as a chat with a model of its own: guessing
+	// Auto there would override the model cursor restores by itself.
+	st, exists, ok := chatStore(chatID)
+	model := launchModel(m.Model, exists && (!ok || st.LastUsedModel != ""))
 	return agents.LaunchPlan{Program: buildProgram(model, m.Mode, chatID, agents.BypassPermissions(m)), Cwd: m.CWD()}, nil
 }
 
