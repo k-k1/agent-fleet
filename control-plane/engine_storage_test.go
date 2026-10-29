@@ -191,44 +191,28 @@ func TestEngineKnownArtifactsCarriesTheWholeGeometryOfTheMainFile(t *testing.T) 
 	}
 }
 
-func TestEngineStorageBoundsHeadConcurrency(t *testing.T) {
-	head := &fakeEngineStorageHead{states: map[string]string{}, bytes: map[string]int64{}, blockDelay: 10 * time.Millisecond}
+// The bound is on the storage value and not on one request: several verify callers at once
+// (reuse, plan, file move) must never become more simultaneous SDK calls on the shared CP task
+// than headSlots allows.
+func TestEngineStorageBoundsHeadConcurrencyAcrossRequests(t *testing.T) {
+	head := &fakeEngineStorageHead{states: map[string]string{}, blockDelay: 20 * time.Millisecond}
 	var keys []string
-	for i := range 12 {
+	for i := range 24 {
 		key := "image/models/" + string(rune('a'+i))
 		keys = append(keys, key)
 		head.states[key] = engineStoragePresent
 	}
-	got := newEngineStorage("models", head).checks(t.Context(), keys)
-	if len(got) != len(keys) {
-		t.Fatalf("checks = %d, want %d", len(got), len(keys))
-	}
-	head.mu.Lock()
-	defer head.mu.Unlock()
-	if head.maxActive > engineStorageConcurrency || head.maxActive < 2 {
-		t.Fatalf("maximum HeadObject concurrency = %d, want 2..%d", head.maxActive, engineStorageConcurrency)
-	}
-}
-
-func TestEngineStorageBoundsHeadConcurrencyAcrossRequests(t *testing.T) {
-	head := &fakeEngineStorageHead{states: map[string]string{}, blockDelay: 20 * time.Millisecond}
 	storage := newEngineStorage("models", head)
 	start := make(chan struct{})
 	var wg sync.WaitGroup
-	for request := range 3 {
+	for _, key := range keys {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			<-start
-			var keys []string
-			for i := range 8 {
-				key := "image/models/" + string(rune('a'+request*8+i))
-				keys = append(keys, key)
-				head.mu.Lock()
-				head.states[key] = engineStoragePresent
-				head.mu.Unlock()
+			if got := storage.verify(t.Context(), key); got.State != engineStoragePresent {
+				t.Errorf("verify(%s) = %+v", key, got)
 			}
-			storage.checks(t.Context(), keys)
 		}()
 	}
 	close(start)
@@ -240,32 +224,109 @@ func TestEngineStorageBoundsHeadConcurrencyAcrossRequests(t *testing.T) {
 	}
 }
 
-func TestEngineStorageStopsInventoryWhenTheRequestEnds(t *testing.T) {
-	head := &fakeEngineStorageHead{states: map[string]string{}, blockDelay: time.Second}
-	var keys []string
-	for i := range 20 {
+// A caller whose request ends gets "unknown" back promptly, both while its HeadObject is in
+// flight and while it is still queued behind the slots — never a verdict it did not read.
+func TestEngineStorageVerifyStopsWhenTheRequestEnds(t *testing.T) {
+	head := &fakeEngineStorageHead{states: map[string]string{}, blockDelay: 5 * time.Second}
+	var held []string
+	for i := range engineStorageConcurrency {
 		key := "image/models/" + string(rune('a'+i))
-		keys = append(keys, key)
+		held = append(held, key)
 		head.states[key] = engineStoragePresent
 	}
+	queued := "image/models/queued"
+	head.states[queued] = engineStoragePresent
+	storage := newEngineStorage("models", head)
+
+	inflight, cancelInflight := context.WithCancel(t.Context())
+	defer cancelInflight()
+	got := make([]engineStorageCheck, len(held))
+	var wg sync.WaitGroup
+	for i, key := range held {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got[i] = storage.verify(inflight, key)
+		}()
+	}
+	for deadline := time.Now().Add(2 * time.Second); ; {
+		head.mu.Lock()
+		active := head.active
+		head.mu.Unlock()
+		if active == engineStorageConcurrency {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d HeadObject calls started", active)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Millisecond)
 	defer cancel()
 	started := time.Now()
-	got := newEngineStorage("models", head).checks(ctx, keys)
-	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
-		t.Fatalf("cancelled inventory returned after %s", elapsed)
+	if check := storage.verify(ctx, queued); check.State != engineStorageUnknown {
+		t.Errorf("queued verify after its request ended = %+v", check)
 	}
-	for _, key := range keys {
-		if got[key].State != engineStorageUnknown {
-			t.Errorf("%s after cancellation = %+v", key, got[key])
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("queued verify returned after %s", elapsed)
+	}
+
+	started = time.Now()
+	cancelInflight()
+	wg.Wait()
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("in-flight verify returned %s after cancellation", elapsed)
+	}
+	for i, key := range held {
+		if got[i].State != engineStorageUnknown {
+			t.Errorf("%s after cancellation = %+v", key, got[i])
 		}
+	}
+	head.mu.Lock()
+	defer head.mu.Unlock()
+	if n := head.calls[queued]; n != 0 {
+		t.Errorf("the queued key reached HeadObject %d times, want 0", n)
+	}
+}
+
+// Reuse writes the catalogue, so every verify must ask the bucket again: a present answer from a
+// moment ago says nothing about an object a delete or move task has since removed. The plain case
+// calls nothing between the two reads, so a cache that only markDeleting clears still fails it.
+func TestEngineStorageVerifyAsksTheBucketEveryTime(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		between func(*engineStorage, string)
+	}{
+		{"back to back", func(*engineStorage, string) {}},
+		{"after markDeleting", func(s *engineStorage, key string) { s.markDeleting(key) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key := "image/models/a.safetensors"
+			head := &fakeEngineStorageHead{states: map[string]string{key: engineStoragePresent}, bytes: map[string]int64{key: 42}}
+			storage := newEngineStorage("models", head)
+			if got := storage.verify(t.Context(), key); got.State != engineStoragePresent || got.Bytes != 42 || got.CheckedAt == "" {
+				t.Fatalf("first verify = %+v", got)
+			}
+			tc.between(storage, key)
+			head.mu.Lock()
+			head.states[key] = engineStorageMissing
+			head.mu.Unlock()
+			if got := storage.verify(t.Context(), key); got.State != engineStorageMissing {
+				t.Fatalf("verify after the object went = %+v, want missing", got)
+			}
+			head.mu.Lock()
+			defer head.mu.Unlock()
+			if head.calls[key] != 2 {
+				t.Fatalf("HeadObject calls = %d, want 2", head.calls[key])
+			}
+		})
 	}
 }
 
 func TestEngineStorageWithoutConfigurationIsUnknown(t *testing.T) {
-	got := (*engineStorage)(nil).checks(t.Context(), []string{"image/models/a.safetensors"})
-	if got["image/models/a.safetensors"].State != engineStorageUnknown ||
-		got["image/models/a.safetensors"].CheckedAt != "" {
+	got := (*engineStorage)(nil).verify(t.Context(), "image/models/a.safetensors")
+	if got.State != engineStorageUnknown || got.CheckedAt != "" {
 		t.Fatalf("unconfigured storage check = %+v", got)
 	}
 }
