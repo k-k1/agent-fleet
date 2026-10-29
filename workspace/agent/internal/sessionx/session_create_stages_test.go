@@ -12,6 +12,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -135,21 +136,25 @@ func (s sideEffects) diff(o sideEffects) string {
 }
 
 // render is a response as the golden file holds it. The isolated home differs per run, so it
-// is spelled $HOME; everything else is verbatim.
+// is spelled $HOME; everything else is verbatim. Headers come from Result(), the snapshot taken
+// at WriteHeader: rec.Header() stays writable afterwards and would show a header set too late
+// to reach a real client.
 func (p *createProbe) render(name string, rec *httptest.ResponseRecorder) string {
+	res := rec.Result()
 	var b strings.Builder
-	fmt.Fprintf(&b, "== %s\nstatus %d\n", name, rec.Code)
-	keys := make([]string, 0, len(rec.Header()))
-	for k := range rec.Header() {
+	fmt.Fprintf(&b, "== %s\nstatus %d\n", name, res.StatusCode)
+	keys := make([]string, 0, len(res.Header))
+	for k := range res.Header {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		for _, v := range rec.Header()[k] {
+		for _, v := range res.Header[k] {
 			fmt.Fprintf(&b, "header %s: %s\n", k, strings.ReplaceAll(v, p.home, "$HOME"))
 		}
 	}
-	fmt.Fprintf(&b, "body %q\n", strings.ReplaceAll(rec.Body.String(), p.home, "$HOME"))
+	body, _ := io.ReadAll(res.Body)
+	fmt.Fprintf(&b, "body %q\n", strings.ReplaceAll(string(body), p.home, "$HOME"))
 	return b.String()
 }
 
@@ -392,16 +397,16 @@ func TestCreateRefusedKindLeavesNoLedgerEntry(t *testing.T) {
 	p := newCreateProbe(t)
 	reserveDurable(p, "k-dur")
 	durable := map[string]any{"kind": "Codex", "dir": p.repo, "idempotency_key": "k-dur", "idempotency_durable": true}
-	if rec := p.post(durable, ""); rec.Code != http.StatusBadRequest || rec.Header().Get(createOutcomeHeader) != "" {
-		t.Fatalf("refused kind = %d %v, want 400 with no outcome header", rec.Code, rec.Header())
+	if rec := p.post(durable, ""); rec.Code != http.StatusBadRequest || rec.Result().Header.Get(createOutcomeHeader) != "" {
+		t.Fatalf("refused kind = %d %v, want 400 with no outcome header", rec.Code, rec.Result().Header)
 	}
 	if e, ok := createLedger.lookup("k-dur"); !ok || e.state != createReserved {
 		t.Fatalf("the reserved key is %+v (found=%v) after a refused kind, want still reserved", e, ok)
 	}
 	// Control: a registered kind refused further down does claim the key, and the probe sees it.
 	durable["kind"], durable["dir"] = "claude", filepath.Join(p.home, "absent")
-	if rec := p.post(durable, ""); rec.Code != http.StatusBadRequest || rec.Header().Get(createOutcomeHeader) != "refused" {
-		t.Fatalf("control = %d %v, want 400 refused through the outcome writer", rec.Code, rec.Header())
+	if rec := p.post(durable, ""); rec.Code != http.StatusBadRequest || rec.Result().Header.Get(createOutcomeHeader) != "refused" {
+		t.Fatalf("control = %d %v, want 400 refused through the outcome writer", rec.Code, rec.Result().Header)
 	}
 	if e, _ := createLedger.lookup("k-dur"); e.state != createRefused {
 		t.Fatalf("control: the key is %+v, want refused", e)
