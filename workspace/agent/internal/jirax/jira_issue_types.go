@@ -1,4 +1,4 @@
-package main
+package jirax
 
 // `workspace-agent jira-issue-types KEY` — the project's issue types, as the config fragment
 // `jira issue create` reads, for the jira wrapper (workspace/jira-auth-wrapper.sh).
@@ -27,9 +27,9 @@ import (
 // user's argv and only has to be safe to put in a query string and a file name.
 var jiraArgProjectKeyRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
 
-// runJiraIssueTypes prints the fragment, or nothing and exit status 1 on any failure: the
+// RunIssueTypes prints the fragment, or nothing and exit status 1 on any failure: the
 // wrapper then runs jira as it would have without this.
-func runJiraIssueTypes(args []string) {
+func RunIssueTypes(args []string) {
 	if len(args) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: workspace-agent jira-issue-types PROJECT-KEY")
 		os.Exit(2)
@@ -47,14 +47,14 @@ func jiraIssueTypesGet(w io.Writer, key string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), jiraCredStoreWait)
 	defer cancel()
 	s, err := secrets.LoadContext(ctx)
-	if err != nil || !jiraConnected(s.Jira) {
+	if err != nil || !Connected(s.Jira) {
 		return fmt.Errorf("no Jira connection")
 	}
 	c := *s.Jira
 	if c.AuthKind == "oauth" && c.CloudID == "" {
 		return fmt.Errorf("no Jira site selected")
 	}
-	body, err := jiraGet(&c, jiraAPIBase(&c)+"/rest/api/2/issue/createmeta?projectKeys="+url.QueryEscape(key))
+	body, err := Get(&c, APIBase(&c)+"/rest/api/2/issue/createmeta?projectKeys="+url.QueryEscape(key))
 	if err != nil {
 		return err
 	}

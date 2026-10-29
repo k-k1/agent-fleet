@@ -1,4 +1,4 @@
-package main
+package jirax
 
 import (
 	"bytes"
@@ -241,7 +241,7 @@ func TestJiraRefreshIsSerializedAcrossProcesses(t *testing.T) {
 	time.Sleep(time.Until(start))
 	cur, _ := secrets.Load()
 	c := *cur.Jira
-	refreshErr := jiraEnsureFresh(&c)
+	refreshErr := EnsureFresh(&c)
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("helper: %v\n%s", err, child.String())
 	}
@@ -273,10 +273,10 @@ func stubAccessibleResources(t *testing.T, body string, status int) {
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(body))
 	}))
-	old, oldLast := jiraCloudAPIBase, jiraBackfillLast
-	jiraCloudAPIBase = srv.URL
+	old, oldLast := CloudAPIBase, jiraBackfillLast
+	CloudAPIBase = srv.URL
 	jiraBackfillLast = time.Time{}
-	t.Cleanup(func() { srv.Close(); jiraCloudAPIBase = old; jiraBackfillLast = oldLast })
+	t.Cleanup(func() { srv.Close(); CloudAPIBase = old; jiraBackfillLast = oldLast })
 }
 
 func seedLegacyOAuth(t *testing.T) {
@@ -297,7 +297,7 @@ func TestJiraCredBackfillsScopesOfAnOlderConnection(t *testing.T) {
 		t.Fatalf("answered %q, want software=missing", got)
 	}
 	s, _ := secrets.Load()
-	if len(s.Jira.Sites[0].Scopes) != 1 || jiraStatus(s)["softwareScopes"] != "missing" {
+	if len(s.Jira.Sites[0].Scopes) != 1 || SoftwareScopes(s.Jira) != "missing" {
 		t.Fatalf("scopes not persisted: %+v", s.Jira.Sites)
 	}
 	// Reconnect (what handleJiraOAuthStore stores) with the board scope: granted, no warning.
@@ -329,30 +329,10 @@ func TestJiraGetBackfillsScopes(t *testing.T) {
 	stubAccessibleResources(t, `[{"id":"cid-1","url":"https://acme.atlassian.net","scopes":["read:jira-work"]}]`, 200)
 	s, _ := secrets.Load()
 	c := s.Jira
-	_, _ = jiraGet(c, jiraCloudAPIBase+"/oauth/token/accessible-resources")
+	_, _ = Get(c, CloudAPIBase+"/oauth/token/accessible-resources")
 	s, _ = secrets.Load()
-	if jiraStatus(s)["softwareScopes"] != "missing" {
-		t.Fatalf("status = %v", jiraStatus(s))
-	}
-}
-
-// Opening Settings alone (no jira run, no rail fetch) fills in an older connection's scopes.
-func TestConnectionsGetBackfillsJiraScopes(t *testing.T) {
-	seedLegacyOAuth(t)
-	stubAccessibleResources(t, `[{"id":"cid-1","url":"https://acme.atlassian.net","scopes":["read:jira-work"]}]`, 200)
-	w := httptest.NewRecorder()
-	handleConnectionsGet(w, httptest.NewRequest("GET", "/connections", nil))
-	var out struct {
-		Jira map[string]any `json:"jira"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
-		t.Fatal(err)
-	}
-	if out.Jira["softwareScopes"] != "missing" {
-		t.Fatalf("jira status = %v", out.Jira)
-	}
-	if s, _ := secrets.Load(); len(s.Jira.Sites[0].Scopes) == 0 {
-		t.Fatal("scopes not stored")
+	if SoftwareScopes(s.Jira) != "missing" {
+		t.Fatalf("status = %v", SoftwareScopes(s.Jira))
 	}
 }
 

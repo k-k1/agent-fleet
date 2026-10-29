@@ -113,7 +113,7 @@ package's files (and its `deps.go`, where it has one) say what it holds.
 | Image generation | `internal/imagegen` |
 | Self-hosted engines | `engines.go` |
 | Fleet session graph | `internal/fleetgraph` |
-| Work items | `workitems*.go`, `connections_jira.go` |
+| Work items | `workitems*.go`, `connections_jira.go`, `internal/jirax` (the Jira REST client and the `jira` wrapper's `jira-*` subcommands) |
 | Secrets | `internal/secrets` ([04 §4.8](04-agent.md#48-secrets--the-agents-responsibility)) |
 | Terminal and preview | `terminal*.go`, `preview.go` |
 | Clean-up | `cleanup_*.go`, `leftovers.go`, `tool_caches.go`, `cli_version_prune.go` |

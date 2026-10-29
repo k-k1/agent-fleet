@@ -13,6 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/jirax"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
@@ -219,51 +220,51 @@ var subcommands = []subcommand{
 	},
 	{
 		// The Jira connection for the PATH wrapper at /usr/local/bin/jira, renewed when an
-		// OAuth token is about to expire. See jira_cred.go.
+		// OAuth token is about to expire. See internal/jirax/jira_cred.go.
 		name:    "jira-cred",
 		summary: "Jira site, login and token for the jira wrapper",
 		hidden:  true,
-		run:     runJiraCred,
+		run:     jirax.RunCred,
 	},
 	{
 		// The project's issue types for `jira issue create`, which reads them from the config
-		// only. See jira_issue_types.go.
+		// only. See internal/jirax/jira_issue_types.go.
 		name:    "jira-issue-types",
 		summary: "Jira project issue types as a jira config fragment",
 		hidden:  true,
-		run:     runJiraIssueTypes,
+		run:     jirax.RunIssueTypes,
 	},
 	{
 		// Candidate issues after a timed-out `jira issue create`, for the PATH wrapper at
-		// /usr/local/bin/jira. See jira_find_created.go.
+		// /usr/local/bin/jira. See internal/jirax/jira_find_created.go.
 		name:    "jira-find-created",
 		summary: "recently created Jira issues with an exact summary",
 		hidden:  true,
-		run:     runJiraFindCreated,
+		run:     jirax.RunFindCreated,
 	},
 	{
 		// `jira issue comment add|edit|delete` for the PATH wrapper at /usr/local/bin/jira:
-		// edit and delete are missing from jira-cli, add is sent as ADF. See jira_comment.go.
+		// edit and delete are missing from jira-cli, add is sent as ADF. See internal/jirax/jira_comment.go.
 		name:    "jira-comment",
 		summary: "Jira comment add / edit / delete for the jira wrapper",
 		hidden:  true,
-		run:     runJiraComment,
+		run:     jirax.RunComment,
 	},
 	{
 		// The description of `jira issue create|edit`, set as ADF for the PATH wrapper at
-		// /usr/local/bin/jira. See jira_description.go.
+		// /usr/local/bin/jira. See internal/jirax/jira_description.go.
 		name:    "jira-description",
 		summary: "Jira issue description for the jira wrapper",
 		hidden:  true,
-		run:     runJiraDescription,
+		run:     jirax.RunDescription,
 	},
 	{
 		// Whether a create must carry its description, asked before the wrapper creates an issue
-		// without one. See jira_description_required.go.
+		// without one. See internal/jirax/jira_description_required.go.
 		name:    "jira-description-required",
 		summary: "whether a Jira issue type requires a description at create",
 		hidden:  true,
-		run:     runJiraDescriptionRequired,
+		run:     jirax.RunDescriptionRequired,
 	},
 	{
 		// Transparent SVN auth: the PATH shim at /usr/local/bin/svn re-enters this binary,

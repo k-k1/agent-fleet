@@ -224,7 +224,7 @@ Jira は git でなく作業項目インボックス
 `/usr/local/bin/jira` は `workspace/jira-auth-wrapper.sh`。jira-cli はトークンを
 `JIRA_API_TOKEN` から読み、設定ファイルの値は環境変数（`JIRA_SERVER` / `JIRA_LOGIN` /
 `JIRA_AUTH_TYPE` / `JIRA_INSTALLATION`）がキーごとに上書きする。ラッパーは実行のたびに
-`workspace-agent jira-cred`（`workspace/agent/jira_cred.go`）に尋ね、実 jira を exec する
+`workspace-agent jira-cred`（`workspace/agent/internal/jirax/jira_cred.go`）に尋ね、実 jira を exec する
 1 回分だけそれらを埋める:
 
 - **API トークン接続**: `auth_type` は basic、サーバーはサイト、ログインは保存済みの email。
@@ -291,7 +291,7 @@ Jira は git でなく作業項目インボックス
   ラッパーは資格情報を取りに行く前に、自分の argv のまま `workspace-agent jira-comment` へ `exec`
   する。トークンがシェルを通ることはない。ヘルパーは `/rest/api/3/issue/KEY/comment/ID` に
   `PUT` / `DELETE` を送り（`write:jira-work`）、本文は Markdown を ADF に変換して送る
-  （`jira_adf.go`、goldmark）。jira-cli の wiki 変換は通さない（#2476）ので、編集で崩れたコメントを
+  （`internal/jirax/jira_adf.go`、goldmark）。jira-cli の wiki 変換は通さない（#2476）ので、編集で崩れたコメントを
   直せる。`--debug` の実行は断る。利用者自身の設定（次の項目）はそのまま `exec` し、jira が
   「そのコマンドはない」と答える。
 - **本文を ADF で送る（`comment add`、`issue create -b/-T`、`issue edit -b`）**（#2809）: jira-cli は

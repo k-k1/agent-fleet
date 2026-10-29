@@ -1,4 +1,4 @@
-package main
+package jirax
 
 // `workspace-agent jira-description-required PROJECT TYPE` — whether `jira issue create` in that
 // project and issue type must carry a description, for the jira wrapper.
@@ -25,7 +25,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-func runJiraDescriptionRequired(args []string) {
+func RunDescriptionRequired(args []string) {
 	if len(args) != 2 || !jiraArgProjectKeyRe.MatchString(args[0]) || strings.TrimSpace(args[1]) == "" {
 		fmt.Fprintln(os.Stderr, "usage: workspace-agent jira-description-required PROJECT-KEY ISSUE-TYPE")
 		os.Exit(2)
@@ -33,7 +33,7 @@ func runJiraDescriptionRequired(args []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), jiraCredStoreWait)
 	s, err := secrets.LoadContext(ctx)
 	cancel()
-	if err != nil || !jiraConnected(s.Jira) {
+	if err != nil || !Connected(s.Jira) {
 		fmt.Fprintln(os.Stderr, "jira-description-required: no Jira connection")
 		os.Exit(1)
 	}
@@ -57,7 +57,7 @@ func jiraDescriptionRequired(c *secrets.JiraCreds, project, issueType string) (b
 	if c.AuthKind == "oauth" && c.CloudID == "" {
 		return false, fmt.Errorf("no Jira site selected")
 	}
-	base := jiraAPIBase(c) + "/rest/api/2/issue/createmeta/" + url.PathEscape(project) + "/issuetypes"
+	base := APIBase(c) + "/rest/api/2/issue/createmeta/" + url.PathEscape(project) + "/issuetypes"
 	typeID := ""
 	err := jiraEachPage(c, base, func(raw json.RawMessage) bool {
 		var it struct {
@@ -108,7 +108,7 @@ func jiraEachPage(c *secrets.JiraCreds, u string, fn func(json.RawMessage) bool,
 		if strings.Contains(u, "?") {
 			sep = "&"
 		}
-		body, err := jiraGet(c, u+sep+"startAt="+strconv.Itoa(start)+"&maxResults=100")
+		body, err := Get(c, u+sep+"startAt="+strconv.Itoa(start)+"&maxResults=100")
 		if err != nil {
 			return err
 		}

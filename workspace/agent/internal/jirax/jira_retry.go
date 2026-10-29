@@ -1,4 +1,4 @@
-package main
+package jirax
 
 // Retrying Jira REST calls over a flaky path (TCP resets between the container and Atlassian).
 //

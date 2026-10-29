@@ -12,6 +12,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/jirax"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -75,7 +76,7 @@ func handleWorkItemsComment(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "jira":
-		if !jiraConnected(s.Jira) {
+		if !jirax.Connected(s.Jira) {
 			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", "Jira is not connected")
 			return
 		}
@@ -223,17 +224,17 @@ func bitbucketPostComment(auth, repo string, number int, key, body string) (stri
 
 func jiraPostIssueComment(c *secrets.JiraCreds, key, body string) (string, error) {
 	payload, _ := json.Marshal(map[string]any{"body": jiraADF(body)})
-	u := jiraAPIBase(c) + "/rest/api/3/issue/" + key + "/comment"
-	if err := jiraEnsureFresh(c); err != nil {
+	u := jirax.APIBase(c) + "/rest/api/3/issue/" + key + "/comment"
+	if err := jirax.EnsureFresh(c); err != nil {
 		return "", err
 	}
-	raw, status, err := jiraRequest(c, "POST", u, payload)
+	raw, status, err := jirax.Request(c, "POST", u, payload)
 	if err != nil {
 		return "", err
 	}
 	if status == http.StatusUnauthorized && c.AuthKind == "oauth" {
-		if rerr := jiraRefreshNow(c); rerr == nil {
-			raw, status, err = jiraRequest(c, "POST", u, payload)
+		if rerr := jirax.RefreshNow(c); rerr == nil {
+			raw, status, err = jirax.Request(c, "POST", u, payload)
 			if err != nil {
 				return "", err
 			}
@@ -248,7 +249,7 @@ func jiraPostIssueComment(c *secrets.JiraCreds, key, body string) (string, error
 		case http.StatusNotFound:
 			return "", fmt.Errorf("jira has no %s", key)
 		}
-		return "", fmt.Errorf("jira comment %d: %s", status, jiraErrText(raw))
+		return "", fmt.Errorf("jira comment %d: %s", status, jirax.ErrText(raw))
 	}
 	var out struct {
 		ID string `json:"id"`

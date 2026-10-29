@@ -184,6 +184,25 @@ CI is green on `main` and takes about six minutes, so the gates this plan leans 
   `*-contract.yml` as one reusable workflow. Boot-install out of `entrypoint.sh` into
   `workspace-agent`, one CLI at a time, each verified by a live boot.
 
+**Addendum (2026-10-29) — Phase 4 narrowed to "4a".** The maintainer narrowed Phase 4 to the two
+areas whose churn justifies it now (Decision 2: churn × places touched). Measured on `origin/main`,
+non-merge commits, 2026-10-29:
+
+| Area | Non-test files / lines | Commits 90d | Commits 30d |
+|---|---|---|---|
+| CP engine (`engine*.go`) | 44 / ~24k | 196 | 13 |
+| TTS (`tts*.go`, `engine_control.go`, `engine_ecs.go`) | 6 / ~2.7k | 27 | 0 |
+| agent fs | 11 / ~4.2k | 40 | 13 |
+| **agent jira + workitems** | 16 / ~4.1k | 60 | **42** |
+| agent usage | 8 / ~2.5k | 52 | 12 |
+| agent svn | 4 / ~1.8k | 13 | 3 |
+| **`createSession`** (`internal/sessionx/session_handlers.go:710-1287`) | 1 func, 577 lines | — | **21** |
+
+4a is the agent's jira and workitems families out of package main as pure moves (#2929; the jira
+family, with the Jira REST client it calls from `connections_jira.go`, goes to `internal/jirax`
+first because workitems depends on it) and `createSession` broken into stages (#2930). The CP
+engine and TTS, fs, usage and svn stay deferred until their churn justifies them.
+
 ## Rejected
 
 - **0067's alias transfer under a commander session.** Phase 1 splits stay inside one package and
