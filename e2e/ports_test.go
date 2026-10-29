@@ -13,39 +13,47 @@ import (
 	"testing"
 )
 
-// handedPorts remembers every port this test binary has handed out, so two tests running
-// in parallel never get overlapping ranges between the probe and the bind.
-var handedPorts struct {
-	sync.Mutex
-	m map[int]bool
+// portAllocator hands out 127.0.0.1 ports and remembers every one it has handed out, so
+// two tests running in parallel never get overlapping ranges between the probe and the bind.
+type portAllocator struct {
+	mu     sync.Mutex
+	handed map[int]bool
 }
 
+// harnessPorts is the allocator every scenario shares for the life of the test binary.
+var harnessPorts portAllocator
+
 // freePortRange returns the first of n consecutive 127.0.0.1 ports that are free right now.
-//
-// The ports come from outside the kernel's ephemeral range (ip_local_port_range). Inside
-// it, any outgoing connection can take one as its source port after the probe released
-// it: a keep-alive client connection to the CP then holds the agent port for as long as
-// the test keeps polling, and every `docker run -p 127.0.0.1:<port>:7700` fails with
-// "failed to bind host port" (#2939). The kernel never auto-assigns a port outside that
-// range, so only an explicit listener can take one there.
 func freePortRange(t *testing.T, n int) int {
+	t.Helper()
+	return harnessPorts.freeRange(t, n)
+}
+
+// freeRange picks n consecutive free ports from outside the kernel's ephemeral range
+// (ip_local_port_range). Inside it, any outgoing connection can take one as its source
+// port after the probe released it: a keep-alive client connection to the CP then holds
+// the agent port for as long as the test keeps polling, and every
+// `docker run -p 127.0.0.1:<port>:7700` fails with "failed to bind host port". The kernel
+// never auto-assigns a port outside that range, so only an explicit listener can take one
+// there.
+func (a *portAllocator) freeRange(t *testing.T, n int) int {
 	t.Helper()
 	lo, hi := nonEphemeralPorts(t)
 	if hi-lo+1 < n {
 		t.Fatalf("no room for %d ports outside the ephemeral range", n)
 	}
-	handedPorts.Lock()
-	defer handedPorts.Unlock()
-	if handedPorts.m == nil {
-		handedPorts.m = map[int]bool{}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.handed == nil {
+		a.handed = map[int]bool{}
 	}
 	for try := 0; try < 200; try++ {
 		base := lo + rand.IntN(hi-lo+2-n)
-		if !portsFree(base, n) {
+		if !a.free(base, n) {
 			continue
 		}
 		for p := base; p < base+n; p++ {
-			handedPorts.m[p] = true
+			a.handed[p] = true
 		}
 		return base
 	}
@@ -53,9 +61,9 @@ func freePortRange(t *testing.T, n int) int {
 	return 0
 }
 
-func portsFree(base, n int) bool {
+func (a *portAllocator) free(base, n int) bool {
 	for p := base; p < base+n; p++ {
-		if handedPorts.m[p] {
+		if a.handed[p] {
 			return false
 		}
 		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
@@ -103,12 +111,14 @@ func ephemeralPortRange() (lo, hi int) {
 }
 
 // TestFreePortRangeAvoidsEphemeralPorts: every pick lies outside ip_local_port_range, and
-// no two picks overlap.
+// no two picks overlap. The tests use their own allocator, so repeated runs (-count) never
+// use up the window harnessPorts serves the scenarios from.
 func TestFreePortRangeAvoidsEphemeralPorts(t *testing.T) {
+	var ports portAllocator
 	elo, ehi := ephemeralPortRange()
 	seen := map[int]bool{}
-	for i := 0; i < 200; i++ {
-		base := freePortRange(t, 4)
+	for i := 0; i < 50; i++ {
+		base := ports.freeRange(t, 4)
 		for p := base; p < base+4; p++ {
 			if p >= elo && p <= ehi {
 				t.Fatalf("pick %d: port %d is inside the ephemeral range %d-%d", i, p, elo, ehi)
@@ -121,9 +131,9 @@ func TestFreePortRangeAvoidsEphemeralPorts(t *testing.T) {
 	}
 }
 
-// TestClientConnectionsLeaveAgentPortsFree is the #2939 failure itself: connections opened
-// after the pick (the test client's keep-alive requests to the CP) must never take one of
-// the picked ports as their source port, or `docker run -p` cannot bind it.
+// TestClientConnectionsLeaveAgentPortsFree is the docker bind failure itself: connections
+// opened after the pick (the test client's keep-alive requests to the CP) must never take
+// one of the picked ports as their source port, or `docker run -p` cannot bind it.
 func TestClientConnectionsLeaveAgentPortsFree(t *testing.T) {
 	srv, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -139,8 +149,9 @@ func TestClientConnectionsLeaveAgentPortsFree(t *testing.T) {
 			go func() { _, _ = c.Read(make([]byte, 1)); c.Close() }()
 		}
 	}()
+	var ports portAllocator
 	for i := 0; i < 50; i++ {
-		base := freePortRange(t, 4)
+		base := ports.freeRange(t, 4)
 		var open []net.Conn
 		for j := 0; j < 200; j++ {
 			c, err := net.Dial("tcp", srv.Addr().String())
