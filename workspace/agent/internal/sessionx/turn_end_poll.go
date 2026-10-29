@@ -56,13 +56,11 @@ func recordPolledTurnEnd(m session.Meta, state string) {
 	if !status.TurnEndUnrecorded(sid) {
 		return
 	}
-	switch m.Kind {
-	case session.KindAgy, session.KindCopilot, session.KindCursor, session.KindKiro:
-		// WireLive already read the same source DriveState reads.
-	default:
-		// Every other kind has a hook (or a managed driver) that reports its own end of
-		// turn, so an idle here is not evidence that a turn ended — for claude it is
-		// exactly the "idle we cannot explain" the TurnEnd bit exists to keep out.
+	// Only a PolledTurnEnd kind: WireLive already read the same source DriveState reads. Every
+	// other kind has a hook (or a managed driver) that reports its own end of turn, so an idle
+	// here is not evidence that a turn ended — for claude it is exactly the "idle we cannot
+	// explain" the TurnEnd bit exists to keep out.
+	if !liveStateTraits(m.Kind).PolledTurnEnd {
 		return
 	}
 	if state != "idle" {

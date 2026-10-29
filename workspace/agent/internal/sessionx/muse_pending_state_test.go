@@ -3,6 +3,7 @@ package sessionx
 import (
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -16,14 +17,14 @@ func TestDriveStateMusePendingPrompt(t *testing.T) {
 	session.WriteMeta(m)
 	status.Persist(session.UUID(m.Dir, m.Name), "working")
 	pending := ""
-	prev := musePendingState
-	musePendingState = func(name string) string {
-		if name != m.Name {
-			return ""
+	editLiveStateTraits(t, session.KindMuse, func(tr *agents.LiveStateTraits) {
+		tr.State = func(got session.Meta) string {
+			if got.Name != m.Name {
+				return ""
+			}
+			return pending
 		}
-		return pending
-	}
-	t.Cleanup(func() { musePendingState = prev })
+	})
 
 	for _, c := range []struct{ pending, want string }{
 		{"", "working"}, {"question", "question"}, {"permission", "permission"}, {"", "working"},
