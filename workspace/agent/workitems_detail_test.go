@@ -401,7 +401,7 @@ func TestWorkItemsDetailJiraNotConnected(t *testing.T) {
 	}
 }
 
-// jiraGet words a 400 for a JQL failure and appends Jira's own errorMessages; a single-issue
+// jirax.Get words a 400 for a JQL failure and appends Jira's own errorMessages; a single-issue
 // read must neither say "JQL" nor pass the upstream text on.
 func TestJiraReferenceDetailErrorsCarryNoUpstreamText(t *testing.T) {
 	for _, code := range []int{400, 401, 403, 429, 500} {

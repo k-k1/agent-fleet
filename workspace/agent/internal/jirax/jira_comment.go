@@ -1,4 +1,4 @@
-package main
+package jirax
 
 // `workspace-agent jira-comment issue comment add|edit|delete KEY …` — the comment operations of
 // the jira wrapper (workspace/jira-auth-wrapper.sh), which hands over its own argv untouched.
@@ -159,8 +159,8 @@ func parseJiraCommentArgs(args []string) (jiraCommentArgs, error) {
 	return a, nil
 }
 
-// runJiraComment exits 0 on success, 1 on a failed call and 2 on a bad command line.
-func runJiraComment(args []string) {
+// RunComment exits 0 on success, 1 on a failed call and 2 on a bad command line.
+func RunComment(args []string) {
 	// Implicit stdin is a body only when it is not a terminal or another character device, as
 	// jira-cli reads it; an explicit `-T -` reads it whatever it is (a terminal until EOF).
 	var stdin io.Reader
@@ -173,7 +173,7 @@ func runJiraComment(args []string) {
 	s, err := secrets.LoadContext(ctx)
 	cancel()
 	var c *secrets.JiraCreds
-	if err == nil && jiraConnected(s.Jira) {
+	if err == nil && Connected(s.Jira) {
 		cc := *s.Jira
 		c = &cc
 	}
@@ -210,7 +210,7 @@ func jiraCommentRun(c *secrets.JiraCreds, args []string, stdin io.Reader, stdout
 	}
 	method := "DELETE"
 	var payload []byte
-	u := jiraAPIBase(c) + "/rest/api/3/issue/" + a.key + "/comment/" + a.id
+	u := APIBase(c) + "/rest/api/3/issue/" + a.key + "/comment/" + a.id
 	if a.verb == "edit" {
 		method = "PUT"
 		// Jira does not say what an omitted visibility does on update, so the comment's own
@@ -271,7 +271,7 @@ func jiraCommentAdd(c *secrets.JiraCreds, a jiraCommentArgs, md string, stdout, 
 		body["properties"] = []any{map[string]any{"key": "sd.public.comment", "value": map[string]any{"internal": true}}}
 	}
 	payload, _ := json.Marshal(body)
-	raw, status, _, err := jiraCommentCall(c, "POST", jiraAPIBase(c)+"/rest/api/3/issue/"+a.key+"/comment", payload)
+	raw, status, _, err := jiraCommentCall(c, "POST", APIBase(c)+"/rest/api/3/issue/"+a.key+"/comment", payload)
 	if err != nil {
 		fmt.Fprintf(stderr, "jira: %v; the comment may have been added - check %s before running it again\n", err, a.key)
 		return 1
@@ -324,12 +324,12 @@ func jiraCommentBody(a jiraCommentArgs, stdin io.Reader) (string, error) {
 // jiraCommentCall is one call with the same renewal rules as jiraPostIssueComment. The bool
 // says an attempt failed in transport on the way (see jiraCallResult.afterTransport).
 func jiraCommentCall(c *secrets.JiraCreds, method, u string, payload []byte) ([]byte, int, bool, error) {
-	if err := jiraEnsureFresh(c); err != nil {
+	if err := EnsureFresh(c); err != nil {
 		return nil, 0, false, err
 	}
 	r := jiraDo(c, method, u, payload)
 	if r.err == nil && r.status == http.StatusUnauthorized && c.AuthKind == "oauth" {
-		if rerr := jiraRefreshNow(c); rerr == nil {
+		if rerr := RefreshNow(c); rerr == nil {
 			after := r.afterTransport
 			r = jiraDo(c, method, u, payload)
 			r.afterTransport = r.afterTransport || after
@@ -358,5 +358,5 @@ func jiraCommentFailure(a jiraCommentArgs, status int, raw []byte) string {
 	case http.StatusNotFound:
 		return fmt.Sprintf("cannot %s (404): there is no comment %s on %s, or the issue is not visible to this account", what, a.id, a.key)
 	}
-	return fmt.Sprintf("cannot %s (%d): %s", what, status, jiraErrText(raw))
+	return fmt.Sprintf("cannot %s (%d): %s", what, status, ErrText(raw))
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/jirax"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -44,7 +45,7 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
-	jiraBackfillForStatus(s)
+	jirax.BackfillForStatus(s)
 	github := gitConnStatus(s, "github.com")
 	ghConnected, _ := github["connected"].(bool)
 	out := map[string]any{

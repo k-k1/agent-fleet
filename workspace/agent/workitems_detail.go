@@ -12,6 +12,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/jirax"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -261,7 +262,7 @@ func handleWorkItemsDetail(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "a Jira key is never a pull request")
 			return
 		}
-		if !jiraConnected(s.Jira) {
+		if !jirax.Connected(s.Jira) {
 			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", "Jira is not connected")
 			return
 		}
@@ -286,16 +287,16 @@ func handleWorkItemsDetail(w http.ResponseWriter, r *http.Request) {
 // else — a slash, a dot, a query — would let the caller steer the request elsewhere on the site.
 var jiraKeyRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*-[1-9][0-9]{0,9}$`)
 
-// jiraReferenceError words a jiraGet failure for the panel from its status code alone. The
+// jiraReferenceError words a jirax.Get failure for the panel from its status code alone. The
 // error's own text is never forwarded: a 400 carries Jira's errorMessages (worded for a JQL
-// failure), and the OAuth renewal path (jiraEnsureFresh) returns the refresh bridge's response
+// failure), and the OAuth renewal path (jirax.EnsureFresh) returns the refresh bridge's response
 // body or an internal URL as a plain error.
 func jiraReferenceError(err error, key string) error {
-	je, ok := err.(*jiraHTTPError)
+	je, ok := err.(*jirax.HTTPError)
 	if !ok {
 		return fmt.Errorf("could not reach Jira or renew its authorization (re-connect Jira if this persists)")
 	}
-	switch je.code {
+	switch je.Code {
 	case http.StatusNotFound, http.StatusGone:
 		return fmt.Errorf("jira has no %s visible to this connection", key)
 	case http.StatusUnauthorized, http.StatusForbidden:
@@ -303,7 +304,7 @@ func jiraReferenceError(err error, key string) error {
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("jira rate limit reached")
 	}
-	return fmt.Errorf("jira answered %d for %s", je.code, key)
+	return fmt.Errorf("jira answered %d for %s", je.Code, key)
 }
 
 // jiraReferenceDetail reads one Jira issue. The `fields=` list is the no-body promise written
@@ -312,7 +313,7 @@ func jiraReferenceDetail(c *secrets.JiraCreds, key string) (*workItemDetailOut, 
 	if !jiraKeyRe.MatchString(key) {
 		return nil, fmt.Errorf("cannot read %q (expected a Jira key such as PROJ-123)", key)
 	}
-	body, err := jiraGet(c, jiraAPIBase(c)+"/rest/api/3/issue/"+key+"?fields=summary,status,assignee,labels,issuetype,updated")
+	body, err := jirax.Get(c, jirax.APIBase(c)+"/rest/api/3/issue/"+key+"?fields=summary,status,assignee,labels,issuetype,updated")
 	if err != nil {
 		return nil, jiraReferenceError(err, key)
 	}

@@ -241,7 +241,7 @@ and transitioning issues, plus boards, sprints and epics. The real binary is
 `/usr/local/libexec/jira`, and `/usr/local/bin/jira` is `workspace/jira-auth-wrapper.sh`.
 jira-cli takes its token from `JIRA_API_TOKEN`, and the environment overrides its config
 file key by key (`JIRA_SERVER`, `JIRA_LOGIN`, `JIRA_AUTH_TYPE`, `JIRA_INSTALLATION`). On each
-run the wrapper asks `workspace-agent jira-cred` (`workspace/agent/jira_cred.go`) and fills
+run the wrapper asks `workspace-agent jira-cred` (`workspace/agent/internal/jirax/jira_cred.go`) and fills
 those variables in for one `exec`:
 
 - **API-token connection**: `auth_type` basic, the site as the server, and the stored email
@@ -312,7 +312,7 @@ those variables in for one `exec`:
   the wrapper `exec`s `workspace-agent jira-comment` with its own argv, before it asks for the
   credential, so the token never passes through the shell. The helper does `PUT` / `DELETE` on
   `/rest/api/3/issue/KEY/comment/ID` (`write:jira-work`), with the body as Markdown converted to
-  ADF (`jira_adf.go`, goldmark) rather than through jira-cli's wiki converter (#2476), so an edit
+  ADF (`internal/jirax/jira_adf.go`, goldmark) rather than through jira-cli's wiki converter (#2476), so an edit
   repairs a garbled comment. A `--debug` run is refused. The user's own setup (next bullet) is
   exec'd unchanged, where jira answers that it has no such command.
 - **Bodies as ADF (`comment add`, `issue create -b/-T`, `issue edit -b`)** (#2809): jira-cli sends

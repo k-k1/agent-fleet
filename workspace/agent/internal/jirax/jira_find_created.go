@@ -1,4 +1,4 @@
-package main
+package jirax
 
 // `workspace-agent jira-find-created KEY SUMMARY` — the issues the connection's user created in
 // project KEY in the last 15 minutes whose summary is exactly SUMMARY, for the jira wrapper
@@ -33,9 +33,9 @@ var jiraFindDeadline = 15 * time.Second
 // beyond the cap the exact-summary filter would silently miss, so the cap is generous.
 const jiraFindMax = 50
 
-// runJiraFindCreated exits 0 with zero or more candidate lines, 1 when the lookup failed
+// RunFindCreated exits 0 with zero or more candidate lines, 1 when the lookup failed
 // (reason on stderr), 2 on usage.
-func runJiraFindCreated(args []string) {
+func RunFindCreated(args []string) {
 	if len(args) != 2 {
 		fmt.Fprintln(os.Stderr, "usage: workspace-agent jira-find-created PROJECT-KEY SUMMARY")
 		os.Exit(2)
@@ -84,7 +84,7 @@ func jiraFindCreatedRun(w io.Writer, key, summary string) error {
 
 func jiraFindCreated(ctx context.Context, key, summary string) ([]string, error) {
 	s, err := secrets.LoadContext(ctx)
-	if err != nil || !jiraConnected(s.Jira) {
+	if err != nil || !Connected(s.Jira) {
 		return nil, fmt.Errorf("no Jira connection")
 	}
 	c := *s.Jira
@@ -100,7 +100,7 @@ func jiraFindCreated(ctx context.Context, key, summary string) ([]string, error)
 	// characters), lags behind a fresh issue and drops punctuation (`C++`, `v1.2.3`), so an
 	// answer of "none" proves nothing. The window and the creator already narrow the set, so ask
 	// once more without it and let the exact filter decide.
-	if je, ok := err.(*jiraHTTPError); (ok && je.code == 400) || (err == nil && len(lines) == 0) {
+	if je, ok := err.(*HTTPError); (ok && je.Code == 400) || (err == nil && len(lines) == 0) {
 		body, err = jiraFindSearch(&c, jiraFindJQL(key, summary, false))
 		if err == nil {
 			lines, err = jiraFindMatches(body, c.Site, summary)
@@ -127,10 +127,10 @@ func jiraJQLString(s string) string {
 // jiraFindSearch uses the same two endpoints as jiraSearchWorkItems and falls back on 404/410.
 func jiraFindSearch(c *secrets.JiraCreds, jql string) ([]byte, error) {
 	q := "?jql=" + url.QueryEscape(jql) + "&maxResults=" + fmt.Sprint(jiraFindMax) + "&fields=summary"
-	base := jiraAPIBase(c)
-	body, err := jiraGet(c, base+"/rest/api/3/search/jql"+q)
-	if isJiraNotFound(err) {
-		body, err = jiraGet(c, base+"/rest/api/3/search"+q)
+	base := APIBase(c)
+	body, err := Get(c, base+"/rest/api/3/search/jql"+q)
+	if IsNotFound(err) {
+		body, err = Get(c, base+"/rest/api/3/search"+q)
 	}
 	return body, err
 }

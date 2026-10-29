@@ -36,7 +36,7 @@ import (
 // stubbed, and saying which is which is the point of that section.
 
 // bitbucketAPIBase is where the REST calls go. A var so the tests can point the whole
-// adapter at a stub (same reason as jiraCloudAPIBase).
+// adapter at a stub (same reason as jirax.CloudAPIBase).
 var bitbucketAPIBase = "https://api.bitbucket.org"
 
 // bbMeToken is what a member writes instead of their own account UUID. Bitbucket's filter

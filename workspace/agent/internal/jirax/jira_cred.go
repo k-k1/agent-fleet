@@ -1,4 +1,4 @@
-package main
+package jirax
 
 // The Jira REST credential for the `jira` wrapper (workspace/jira-auth-wrapper.sh).
 //
@@ -28,8 +28,8 @@ var jiraCredStoreWait = 30 * time.Second
 // connection.
 const jiraCredFreshWindow = 5 * time.Minute
 
-// runJiraCred is `workspace-agent jira-cred`: no arguments, no stdin.
-func runJiraCred(_ []string) { jiraCredGet(os.Stdout, os.Stderr) }
+// RunCred is `workspace-agent jira-cred`: no arguments, no stdin.
+func RunCred(_ []string) { jiraCredGet(os.Stdout, os.Stderr) }
 
 // jiraCredGet writes the connection as `key=value` lines, or nothing at all (an unreadable
 // store, no connection, an OAuth token that is expired and cannot be renewed):
@@ -51,7 +51,7 @@ func jiraCredGet(w, errw io.Writer) {
 	ctx, cancel := context.WithTimeout(context.Background(), jiraCredStoreWait)
 	defer cancel()
 	s, err := secrets.LoadContext(ctx)
-	if err != nil || !jiraConnected(s.Jira) {
+	if err != nil || !Connected(s.Jira) {
 		return
 	}
 	unusable := func(why string) { fmt.Fprintf(errw, "unusable=%s\n", why) }
@@ -65,7 +65,7 @@ func jiraCredGet(w, errw io.Writer) {
 		if c.Expiry != 0 && time.Now().Add(jiraCredFreshWindow).Unix() >= c.Expiry {
 			// A failed renewal still serves a token that has not expired yet: the run may
 			// well finish in time, and refusing would fail it for certain.
-			if err := jiraRefreshNow(&c); err != nil && time.Now().Unix() >= c.Expiry {
+			if err := RefreshNow(&c); err != nil && time.Now().Unix() >= c.Expiry {
 				unusable(jiraRenewalReason(err))
 				return
 			}
@@ -79,11 +79,11 @@ func jiraCredGet(w, errw io.Writer) {
 		unusable("the stored connection is incomplete")
 		return
 	}
-	fmt.Fprintf(w, "site=%s\nserver=%s\nauth=%s\n", c.Site, jiraAPIBase(&c), auth)
+	fmt.Fprintf(w, "site=%s\nserver=%s\nauth=%s\n", c.Site, APIBase(&c), auth)
 	if login != "" {
 		fmt.Fprintf(w, "login=%s\n", login)
 	}
-	if jiraSoftwareScopes(&c) == "missing" {
+	if SoftwareScopes(&c) == "missing" {
 		fmt.Fprint(w, "software=missing\n")
 	}
 	fmt.Fprintf(w, "token=%s\n", token)

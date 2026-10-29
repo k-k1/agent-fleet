@@ -62,14 +62,6 @@ internal_git_rewrite.go
 jdk.go
 jdk_install_http.go
 jdk_latest_http.go
-jira_adf.go
-jira_comment.go
-jira_cred.go
-jira_description.go
-jira_description_required.go
-jira_find_created.go
-jira_issue_types.go
-jira_retry.go
 kiro_install_http.go
 leftovers.go
 main.go

@@ -7,6 +7,7 @@ import (
 	"regexp"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/jirax"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -45,15 +46,15 @@ func handleWorkItemsJiraProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := jiraProjectsOut{Keys: []string{}}
-	if jiraConnected(s.Jira) {
+	if jirax.Connected(s.Jira) {
 		out.Connected = true
 		out.Keys, out.Truncated, err = jiraProjectKeys(s.Jira)
 		if err != nil {
 			// Words from the status alone, like jiraReferenceError: the upstream text and the
 			// OAuth bridge's failure text stay out of the reply.
 			msg := "could not read the Jira projects"
-			if je, ok := err.(*jiraHTTPError); ok {
-				msg = fmt.Sprintf("jira answered %d for the project list", je.code)
+			if je, ok := err.(*jirax.HTTPError); ok {
+				msg = fmt.Sprintf("jira answered %d for the project list", je.Code)
 			}
 			httpx.WriteErr(w, http.StatusBadGateway, "provider_error", msg)
 			return
@@ -74,8 +75,8 @@ func jiraProjectKeys(c *secrets.JiraCreds) (keys []string, truncated bool, err e
 	start := 0
 	for read := 0; read < jiraProjectMaxReads; read++ {
 		u := fmt.Sprintf("%s/rest/api/3/project/search?orderBy=key&maxResults=%d&startAt=%d",
-			jiraAPIBase(c), jiraProjectPageSize, start)
-		body, gerr := jiraGet(c, u)
+			jirax.APIBase(c), jiraProjectPageSize, start)
+		body, gerr := jirax.Get(c, u)
 		if gerr != nil {
 			return nil, false, gerr
 		}

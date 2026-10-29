@@ -1,4 +1,4 @@
-package main
+package jirax
 
 import (
 	"context"
@@ -69,7 +69,7 @@ func flaky(t *testing.T, n int32, status int, reply string) (*secrets.JiraCreds,
 func TestJiraRequestRetriesResets(t *testing.T) {
 	for _, m := range []string{"GET", "PUT", "DELETE"} {
 		c, hits := flaky(t, 2, 200, `{"ok":true}`)
-		body, status, err := jiraRequest(c, m, c.Site+"/x", nil)
+		body, status, err := Request(c, m, c.Site+"/x", nil)
 		if err != nil || status != 200 || !strings.Contains(string(body), "ok") {
 			t.Fatalf("%s: body=%q status=%d err=%v", m, body, status, err)
 		}
@@ -91,7 +91,7 @@ func TestJiraRequestRetriesTruncatedBody(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &secrets.JiraCreds{Site: srv.URL, Token: "t"}
-	body, status, err := jiraRequest(c, "GET", srv.URL, nil)
+	body, status, err := Request(c, "GET", srv.URL, nil)
 	if err != nil || status != 200 || string(body) != `{"ok":true}` || hits.Load() != 2 {
 		t.Fatalf("body=%q status=%d err=%v hits=%d", body, status, err, hits.Load())
 	}
@@ -99,7 +99,7 @@ func TestJiraRequestRetriesTruncatedBody(t *testing.T) {
 
 func TestJiraRequestNeverRetriesPost(t *testing.T) {
 	c, hits := flaky(t, 5, 200, `{}`)
-	_, _, err := jiraRequest(c, "POST", c.Site+"/x", []byte(`{}`))
+	_, _, err := Request(c, "POST", c.Site+"/x", []byte(`{}`))
 	if err == nil || !strings.Contains(err.Error(), "connection reset") {
 		t.Fatalf("err = %v, want a named connection reset", err)
 	}
@@ -108,7 +108,7 @@ func TestJiraRequestNeverRetriesPost(t *testing.T) {
 	}
 	// A 503 on a POST is not re-sent either.
 	c, hits = flaky(t, 0, 503, `x`)
-	_, status, _ := jiraRequest(c, "POST", c.Site+"/x", []byte(`{}`))
+	_, status, _ := Request(c, "POST", c.Site+"/x", []byte(`{}`))
 	if status != 503 || hits.Load() != 1 {
 		t.Errorf("POST 503: status=%d hits=%d", status, hits.Load())
 	}
@@ -126,7 +126,7 @@ func TestJiraRequestRetriesServerErrorsAndRateLimit(t *testing.T) {
 			w.WriteHeader(200)
 		}))
 		c := &secrets.JiraCreds{Site: srv.URL, Token: "t"}
-		_, status, err := jiraRequest(c, "GET", srv.URL, nil)
+		_, status, err := Request(c, "GET", srv.URL, nil)
 		srv.Close()
 		if err != nil || status != 200 || hits.Load() != 2 {
 			t.Errorf("%d: status=%d err=%v hits=%d", st, status, err, hits.Load())
@@ -137,7 +137,7 @@ func TestJiraRequestRetriesServerErrorsAndRateLimit(t *testing.T) {
 func TestJiraRequestPermanentStatusNotRetried(t *testing.T) {
 	for _, st := range []int{400, 401, 403, 404} {
 		c, hits := flaky(t, 0, st, `{}`)
-		_, status, err := jiraRequest(c, "GET", c.Site, nil)
+		_, status, err := Request(c, "GET", c.Site, nil)
 		if err != nil || status != st || hits.Load() != 1 {
 			t.Errorf("%d: status=%d err=%v hits=%d", st, status, err, hits.Load())
 		}
@@ -151,7 +151,7 @@ func TestJiraRequestGivesUpWithinBudget(t *testing.T) {
 	jiraRetryBase = 30 * time.Millisecond
 	defer func() { jiraRetryBudget = oldB }()
 	start := time.Now()
-	_, _, err := jiraRequest(c, "GET", c.Site, nil)
+	_, _, err := Request(c, "GET", c.Site, nil)
 	if err == nil || !strings.Contains(err.Error(), "could not reach Jira (connection reset)") {
 		t.Fatalf("err = %v", err)
 	}
@@ -169,11 +169,11 @@ func TestJiraTransportClass(t *testing.T) {
 	addr := ln.Addr().String()
 	ln.Close()
 	c := &secrets.JiraCreds{Token: "t"}
-	_, _, err := jiraRequest(c, "POST", "http://"+addr, nil)
+	_, _, err := Request(c, "POST", "http://"+addr, nil)
 	if err == nil || !strings.Contains(err.Error(), "connection refused") {
 		t.Errorf("refused: %v", err)
 	}
-	_, _, err = jiraRequest(c, "POST", "http://no-such-host.invalid/", nil)
+	_, _, err = Request(c, "POST", "http://no-such-host.invalid/", nil)
 	if err == nil || !strings.Contains(err.Error(), "DNS") {
 		t.Errorf("dns: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestJiraTransportClass(t *testing.T) {
 	old := jiraHTTPClient
 	jiraHTTPClient = &http.Client{Timeout: 50 * time.Millisecond}
 	defer func() { jiraHTTPClient = old }()
-	_, _, err = jiraRequest(c, "POST", slow.URL, nil)
+	_, _, err = Request(c, "POST", slow.URL, nil)
 	if err == nil || !strings.Contains(err.Error(), "timeout") {
 		t.Errorf("timeout: %v", err)
 	}

@@ -178,6 +178,24 @@ CI は `main` で緑、所要は約 6 分なので、この計画が頼るゲー
   `*-contract.yml` を再利用ワークフロー 1 本に。boot-install を `entrypoint.sh` から `workspace-agent` へ、
   CLI 1 つずつ、毎回実機の起動で確かめて移す。
 
+**追記（2026-10-29）— フェーズ 4 を「4a」に絞る。** メンテナーは、いま変更頻度が見合う 2 領域にフェーズ 4
+を絞った（決定 2：変更頻度 × 触る箇所）。`origin/main` のマージ以外のコミットで 2026-10-29 に計測：
+
+| 領域 | テスト以外のファイル / 行 | 90 日のコミット | 30 日のコミット |
+|---|---|---|---|
+| CP エンジン（`engine*.go`） | 44 / 約 24k | 196 | 13 |
+| TTS（`tts*.go`・`engine_control.go`・`engine_ecs.go`） | 6 / 約 2.7k | 27 | 0 |
+| Agent の fs | 11 / 約 4.2k | 40 | 13 |
+| **Agent の jira + workitems** | 16 / 約 4.1k | 60 | **42** |
+| Agent の usage | 8 / 約 2.5k | 52 | 12 |
+| Agent の svn | 4 / 約 1.8k | 13 | 3 |
+| **`createSession`**（`internal/sessionx/session_handlers.go:710-1287`） | 1 関数・577 行 | — | **21** |
+
+4a は、Agent の jira と workitems の家系を純粋な移送で package main から出すこと（#2929。workitems が
+jira に依存するので、jira の家系を `connections_jira.go` から呼んでいる Jira REST クライアントごと先に
+`internal/jirax` へ移す）と、`createSession` を段に分けること（#2930）。CP エンジンと TTS、fs、usage、
+svn は変更頻度が見合うまで見送る。
+
 ## 退けた案
 
 - **0067 の別名移送を司令塔セッションの下で行う。** フェーズ 1 の分割は 1 つのパッケージの中に閉じ、

@@ -1,4 +1,4 @@
-package main
+package jirax
 
 import (
 	"encoding/json"
@@ -102,7 +102,7 @@ func TestJiraRefreshRetriesTransportFailure(t *testing.T) {
 				okGrant(w)
 			})
 			c := setupJiraRefresh(t, b)
-			if err := jiraRefreshNow(c); err != nil {
+			if err := RefreshNow(c); err != nil {
 				t.Fatalf("refresh: %v", err)
 			}
 			if got := b.tokens(); len(got) != 2 || got[0] != "rt0" || got[1] != "rt0" {
@@ -125,7 +125,7 @@ func TestJiraRefreshDoesNotRetryInvalidGrant(t *testing.T) {
 		http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
 	})
 	c := setupJiraRefresh(t, b)
-	if err := jiraRefreshNow(c); err == nil {
+	if err := RefreshNow(c); err == nil {
 		t.Fatal("invalid_grant was swallowed")
 	}
 	if got := b.tokens(); len(got) != 1 {
@@ -146,7 +146,7 @@ func TestJiraRefreshStaysInsideBudget(t *testing.T) {
 	jiraRefreshAttemptTimeout = time.Minute // only the budget can cut the call
 	jiraRefreshBudget = 400 * time.Millisecond
 	start := time.Now()
-	err := jiraRefreshNow(c)
+	err := RefreshNow(c)
 	if err == nil {
 		t.Fatal("hung bridge reported success")
 	}
@@ -168,7 +168,7 @@ func TestJiraRefreshDoesNotOverwriteNewerStoredPair(t *testing.T) {
 		okGrant(w)
 	})
 	c := setupJiraRefresh(t, b)
-	if err := jiraRefreshNow(c); err != nil {
+	if err := RefreshNow(c); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := secrets.Load()
@@ -184,7 +184,7 @@ func TestJiraRefreshAttemptsAreBounded(t *testing.T) {
 		http.Error(w, `{"error":"jira_unreachable"}`, http.StatusServiceUnavailable)
 	})
 	c := setupJiraRefresh(t, b)
-	if err := jiraRefreshNow(c); err == nil {
+	if err := RefreshNow(c); err == nil {
 		t.Fatal("persistent 503 reported success")
 	}
 	if got := b.tokens(); len(got) != jiraRefreshMaxAttempts {
@@ -205,7 +205,7 @@ func TestJiraRefreshRetriesMalformed200(t *testing.T) {
 				okGrant(w)
 			})
 			c := setupJiraRefresh(t, b)
-			if err := jiraRefreshNow(c); err != nil {
+			if err := RefreshNow(c); err != nil {
 				t.Fatal(err)
 			}
 			if got := b.tokens(); len(got) != 2 || got[1] != "rt0" {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/jirax"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -209,7 +210,7 @@ func fetchWorkItemQuery(s *secrets.Data, q workItemQueryIn) ([]workItemOut, int,
 		})
 		return rows, total, err
 	case "jira":
-		if !jiraConnected(s.Jira) {
+		if !jirax.Connected(s.Jira) {
 			return nil, 0, fmt.Errorf("Jira is not connected")
 		}
 		rows, err := jiraSearchWorkItems(s.Jira, q.ID, query)

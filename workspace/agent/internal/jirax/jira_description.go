@@ -1,4 +1,4 @@
-package main
+package jirax
 
 // `workspace-agent jira-description KEY [--skip-notify]` — sets an issue's description from the
 // Markdown on stdin, for the jira wrapper's `issue create -b/-T` and `issue edit -b`.
@@ -20,13 +20,13 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// runJiraDescription exits 0 on success, 1 on a failed call and 2 on a bad command line.
-func runJiraDescription(args []string) {
+// RunDescription exits 0 on success, 1 on a failed call and 2 on a bad command line.
+func RunDescription(args []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), jiraCredStoreWait)
 	s, err := secrets.LoadContext(ctx)
 	cancel()
 	var c *secrets.JiraCreds
-	if err == nil && jiraConnected(s.Jira) {
+	if err == nil && Connected(s.Jira) {
 		cc := *s.Jira
 		c = &cc
 	}
@@ -69,7 +69,7 @@ func jiraDescriptionRun(c *secrets.JiraCreds, args []string, stdin io.Reader, st
 		return 1
 	}
 	payload, _ := json.Marshal(map[string]any{"fields": map[string]any{"description": jiraMarkdownADF(string(b))}})
-	u := jiraAPIBase(c) + "/rest/api/3/issue/" + key
+	u := APIBase(c) + "/rest/api/3/issue/" + key
 	if !notify {
 		u += "?notifyUsers=false"
 	}
@@ -89,7 +89,7 @@ func jiraDescriptionRun(c *secrets.JiraCreds, args []string, stdin io.Reader, st
 	case http.StatusNotFound:
 		fmt.Fprintf(stderr, "jira: cannot set the description of %s (404): there is no such issue, or it is not visible to this account\n", key)
 	default:
-		fmt.Fprintf(stderr, "jira: cannot set the description of %s (%d): %s\n", key, status, jiraErrText(raw))
+		fmt.Fprintf(stderr, "jira: cannot set the description of %s (%d): %s\n", key, status, ErrText(raw))
 	}
 	return 1
 }

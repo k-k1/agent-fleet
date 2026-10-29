@@ -103,7 +103,7 @@ source_of_truth: "コード"
 | 画像生成 | `internal/imagegen` |
 | 自前エンジン | `engines.go` |
 | フリート俯瞰図 | `internal/fleetgraph` |
-| ワークアイテム | `workitems*.go`・`connections_jira.go` |
+| ワークアイテム | `workitems*.go`・`connections_jira.go`・`internal/jirax`（Jira の REST クライアントと `jira` ラッパー用の `jira-*` サブコマンド） |
 | 秘密情報 | `internal/secrets`（[04 §4.8](04-agent.ja.md#48-秘密情報agent-の責務)）|
 | 端末と preview | `terminal*.go`・`preview.go` |
 | 後片付け | `cleanup_*.go`・`leftovers.go`・`tool_caches.go`・`cli_version_prune.go` |

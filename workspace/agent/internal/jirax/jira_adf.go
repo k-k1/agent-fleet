@@ -1,4 +1,4 @@
-package main
+package jirax
 
 // Markdown to Atlassian Document Format, for `workspace-agent jira-comment edit`.
 //

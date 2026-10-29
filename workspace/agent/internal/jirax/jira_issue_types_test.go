@@ -1,4 +1,4 @@
-package main
+package jirax
 
 import (
 	"bytes"
@@ -50,9 +50,9 @@ func TestJiraIssueTypesGetCallsCreatemetaOnTheOAuthRoute(t *testing.T) {
 		_, _ = w.Write([]byte(createmetaBody))
 	}))
 	defer srv.Close()
-	old := jiraCloudAPIBase
-	jiraCloudAPIBase = srv.URL
-	defer func() { jiraCloudAPIBase = old }()
+	old := CloudAPIBase
+	CloudAPIBase = srv.URL
+	defer func() { CloudAPIBase = old }()
 	seedJiraStore(t, func(s *secrets.Data) {
 		s.Jira = &secrets.JiraCreds{AuthKind: "oauth", Site: "https://acme.atlassian.net", CloudID: "cid-1",
 			AccessToken: "fake-at", Expiry: time.Now().Add(time.Hour).Unix()}
