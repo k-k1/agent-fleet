@@ -131,7 +131,10 @@ async function makeSamplePdf() {
       `table{border-collapse:collapse}td,th{border:1px solid #333;padding:4px 10px}</style>${pages.join("")}`,
   );
   const out = path.join(www, "sample.pdf");
-  await run(CHROMIUM, ["--headless", "--disable-gpu", "--no-sandbox", `--print-to-pdf=${out}`, "file://" + src]);
+  // --no-pdf-header-footer: by default every page gets a header with the print time and a footer
+  // with the file URL (a random tmpdir), so the find checks' queries also matched those whenever
+  // the clock or the path happened to contain them (measured: started at 12:18, "18" found 1/7).
+  await run(CHROMIUM, ["--headless", "--disable-gpu", "--no-sandbox", "--no-pdf-header-footer", `--print-to-pdf=${out}`, "file://" + src]);
   // Corrupt PDF: a real signature with no body. pdf.js answers with InvalidPDFException.
   fs.writeFileSync(path.join(www, "broken.pdf"), Buffer.from("%PDF-1.7\n" + "0".repeat(512)));
   return out;
@@ -424,6 +427,10 @@ try {
     p.querySelector('.pdfview-canvas').width === 0 && p.querySelector('.textLayer span')).length`);
   check(headed === 6 && releasedWithText > 0, "every page keeps a findable text layer, released canvas included",
     `pages with a heading span=${headed}/6, released pages with text=${releasedWithText}`);
+  // The find checks below count matches, so the sample must hold only the text written into it.
+  const stamped = await b.evaluate(`[...document.querySelectorAll('.pdfview-page .textLayer')]
+    .filter((d) => /file:|\\d+\\/\\d+\\/\\d+/.test(d.textContent.replace(/\\s/g, ''))).length`);
+  check(stamped === 0, "the sample PDF carries no print header or footer", `pages with a date or file URL=${stamped}/6`);
   // Find paints an opaque box behind a match; the layer has to multiply onto the canvas or the
   // box hides the glyphs it found.
   const blend = await b.evaluate("getComputedStyle(document.querySelector('.pdfview-page .textLayer')).mixBlendMode");
@@ -469,7 +476,7 @@ try {
   const many = await until(b.evaluate, COUNT, (t) => /^\d+\/(\d+)$/.test(t ?? "") && Number(t.split("/")[1]) >= 4, PDF_BEHAVIOR_TRIES);
   const total = Number(String(many).split("/")[1]);
   await key("Enter", "Enter", 13, 0, "\r");
-  const stepped = await b.evaluate(COUNT);
+  const stepped = await until(b.evaluate, COUNT, (t) => t === `2/${total}`, PDF_BEHAVIOR_TRIES);
   await key("Enter", "Enter", 13, 8, "\r"); // Shift+Enter: back
   await key("Enter", "Enter", 13, 8, "\r"); // and once more wraps past the first to the last
   const wrapped = await until(b.evaluate, COUNT, (t) => t === `${total}/${total}`, PDF_BEHAVIOR_TRIES);
@@ -503,7 +510,7 @@ try {
     if (!v) return 'unmarked';
     v.dispatchEvent(new CustomEvent('af-own-find'));
     return 'sent'; })()`);
-  const handedOpen = await until(b.evaluate, "document.activeElement?.closest('.pdfview-find') ? 'focused' : 'closed'", (v) => v === "focused", PDF_BEHAVIOR_TRIES);
+  const handedOpen = await until(b.evaluate, "document.activeElement?.closest('.pdfview-find') ? 'focused' : document.querySelector('.pdfview-find') ? 'open, unfocused' : 'closed'", (v) => v === "focused", PDF_BEHAVIOR_TRIES);
   check(handed === "sent" && handedOpen === "focused", "the hand-over from the pane's generic find opens the PDF find bar",
     `${handed}, bar ${handedOpen}`);
   await key("Escape", "Escape", 27);
