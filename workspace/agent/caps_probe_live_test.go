@@ -170,5 +170,9 @@ func (e *liveProbeEnv) ModelOverride(model string) probeObservation {
 	} else if recaller, ok := e.spec.agent.(agents.SettingsRecaller); ok {
 		recorded, haveRecorder = recaller.RecallSettings(asked).Model, true
 	}
-	return observeModelOverride(td.Turns, recorded, haveRecorder, model)
+	refused := false
+	if r, ok := e.spec.agent.(interface{ ModelRefusedAtLaunch(session.Meta) bool }); ok {
+		refused = r.ModelRefusedAtLaunch(asked)
+	}
+	return observeModelOverride(td.Turns, recorded, haveRecorder, model, refused)
 }

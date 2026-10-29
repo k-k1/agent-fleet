@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -87,5 +88,45 @@ func setModel(r *agents.RecalledSettings, model string, effort *string) {
 		r.Effort, r.ClearEffort = *effort, false
 	} else {
 		r.Effort, r.ClearEffort = "", true
+	}
+}
+
+// ModelRefusedAtLaunch reports whether copilot itself recorded that it would not launch the
+// model asked for with --model ("Model \"X\" from --model flag is not available. Using
+// \"auto\" instead."). That is the only evidence that a fallback to auto was a refusal and
+// not a silently ignored flag.
+func (agentImpl) ModelRefusedAtLaunch(m session.Meta) bool {
+	sid := resolveSid(m)
+	if sid == "" {
+		return false
+	}
+	f, err := os.Open(EventsPath(sid))
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	return refusedFrom(f)
+}
+
+func refusedFrom(rd io.Reader) bool {
+	br := bufio.NewReader(rd)
+	for {
+		line, err := br.ReadBytes('\n')
+		if bytes.Contains(line, []byte(`"session.error"`)) {
+			var ev struct {
+				Type string `json:"type"`
+				Data struct {
+					Message   string `json:"message"`
+					ErrorType string `json:"errorType"`
+				} `json:"data"`
+			}
+			if json.Unmarshal(line, &ev) == nil && ev.Type == "session.error" && ev.Data.ErrorType == "model" &&
+				strings.Contains(ev.Data.Message, "from --model flag is not available") {
+				return true
+			}
+		}
+		if err != nil {
+			return false
+		}
 	}
 }

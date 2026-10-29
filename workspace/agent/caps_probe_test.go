@@ -143,7 +143,7 @@ func TestRunCapsProbesEndToEndWithFakes(t *testing.T) {
 	t.Run("first listed model refused, second accepted", func(t *testing.T) {
 		env := &fakeProbeEnv{interrupt: ok, forkAt: ok, modelFn: func(m string) probeObservation {
 			if m == "m1" {
-				return probeObservation{Detail: "refused"}
+				return probeObservation{Detail: "refused", Refused: true}
 			}
 			return probeObservation{Worked: true}
 		}}
@@ -205,12 +205,23 @@ func TestRunCapsProbesEndToEndWithFakes(t *testing.T) {
 }
 
 func TestModelOverrideTriesPastAnAccountRefusal(t *testing.T) {
-	refusedBy := func(refused ...string) func(string) probeObservation {
-		return func(m string) probeObservation {
-			for _, r := range refused {
-				if m == r {
-					return probeObservation{Detail: fmt.Sprintf("started with %q but the CLI recorded auto", m)}
+	// refusedBy: the CLI said it would not launch these. mismatchOn: recorded another model
+	// with no refusal on record.
+	fake := func(refused, mismatchOn []string) func(string) probeObservation {
+		in := func(l []string, m string) bool {
+			for _, x := range l {
+				if x == m {
+					return true
 				}
+			}
+			return false
+		}
+		return func(m string) probeObservation {
+			switch {
+			case in(refused, m):
+				return probeObservation{Detail: fmt.Sprintf("started with %q but the CLI recorded auto", m), Refused: true}
+			case in(mismatchOn, m):
+				return probeObservation{Detail: fmt.Sprintf("started with %q but the CLI recorded other", m)}
 			}
 			return probeObservation{Worked: true, Detail: "the CLI recorded " + m}
 		}
@@ -220,21 +231,38 @@ func TestModelOverrideTriesPastAnAccountRefusal(t *testing.T) {
 	if got := strings.Join(cands, ","); got != "gated,b,c" {
 		t.Fatalf("candidates = %s, want gated,b,c", got)
 	}
-	if obs := observeModelOverrideTries(cands, refusedBy("gated")); !obs.Worked || !strings.Contains(obs.Detail, "gated") {
-		t.Errorf("one refused model must not fail the probe, got %+v", obs)
+	if obs := observeModelOverrideTries(cands, fake([]string{"gated"}, nil)); !obs.Worked || !strings.Contains(obs.Detail, "gated") {
+		t.Errorf("an explicit refusal must move on to the next model, got %+v", obs)
 	}
-	// Still DRIFT when the override really does nothing: every candidate refused.
-	if obs := observeModelOverrideTries(cands, refusedBy("gated", "b", "c")); obs.Worked || obs.Err != nil || !strings.Contains(obs.Detail, `"c"`) {
+	// A silent substitution is DRIFT at once, even though the next candidate would match.
+	calls := 0
+	f := fake(nil, []string{"gated"})
+	obs := observeModelOverrideTries(cands, func(m string) probeObservation { calls++; return f(m) })
+	if obs.Worked || obs.Err != nil || calls != 1 {
+		t.Errorf("mismatch without a refusal must be DRIFT after one try: calls=%d obs=%+v", calls, obs)
+	}
+	// Every candidate refused stays DRIFT.
+	if obs := observeModelOverrideTries(cands, fake([]string{"gated", "b", "c"}, nil)); obs.Worked || obs.Err != nil || !strings.Contains(obs.Detail, `"c"`) {
 		t.Errorf("all candidates refused must stay DRIFT, got %+v", obs)
 	}
 	// A probe error is not retried past.
-	calls := 0
-	obs := observeModelOverrideTries(cands, func(string) probeObservation { calls++; return probeObservation{Err: errors.New("pane died")} })
+	calls = 0
+	obs = observeModelOverrideTries(cands, func(string) probeObservation { calls++; return probeObservation{Err: errors.New("pane died")} })
 	if obs.Err == nil || calls != 1 {
 		t.Errorf("probe error: calls=%d obs=%+v", calls, obs)
 	}
-	if obs := observeModelOverrideTries(nil, refusedBy()); obs.Err == nil {
+	if obs := observeModelOverrideTries(nil, fake(nil, nil)); obs.Err == nil {
 		t.Errorf("no candidate must be a probe error, got %+v", obs)
+	}
+}
+
+func TestObserveModelOverrideCarriesRefusal(t *testing.T) {
+	turns := []transcript.Turn{{Role: "assistant", Model: "x"}}
+	if o := observeModelOverride(turns, "auto", true, "x", true); o.Worked || !o.Refused {
+		t.Errorf("mismatch + CLI refusal = %+v, want Refused", o)
+	}
+	if o := observeModelOverride(turns, "auto", true, "x", false); o.Worked || o.Refused {
+		t.Errorf("bare mismatch = %+v, must not be Refused", o)
 	}
 }
 
@@ -310,7 +338,7 @@ func TestObserveModelOverride(t *testing.T) {
 		{"agent has no recorder", stamped, "", false, "want", false, true},
 		{"no assistant model at all", []transcript.Turn{{Role: "user", Model: "want"}, {Role: "assistant"}}, rec("want"), true, "want", false, true},
 	} {
-		o := observeModelOverride(c.turns, c.recalled, c.have, c.want)
+		o := observeModelOverride(c.turns, c.recalled, c.have, c.want, false)
 		if o.Worked != c.worked || (o.Err != nil) != c.inconcl {
 			t.Errorf("%s: Worked=%v Err=%v, want Worked=%v inconclusive=%v", c.name, o.Worked, o.Err, c.worked, c.inconcl)
 		}

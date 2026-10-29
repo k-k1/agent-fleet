@@ -64,6 +64,9 @@ type probeObservation struct {
 	Worked bool
 	Detail string
 	Err    error
+	// Refused: the CLI said in its own store that it would not launch the requested model.
+	// Only this is retryable with another model; a bare record mismatch is DRIFT at once.
+	Refused bool
 }
 
 type probeResult struct {
@@ -193,7 +196,9 @@ func pickProbeModel(models []agents.ModelChoice, preferred string) string {
 // listed id can be refused at launch for reasons that belong to the account, not to the CLI
 // (copilot prints "Model X from --model flag is not available. Using auto instead." for a
 // picker row the plan or an org policy does not enable), so one refusal is not evidence that
-// the override is broken. A probe error stops the loop; DRIFT needs every candidate refused.
+// the override is broken. Only an explicit refusal (probeObservation.Refused) moves on to the
+// next candidate: a plain mismatch between asked and recorded is DRIFT at once, so a silent
+// substitution cannot be masked by a later candidate that happens to match.
 func observeModelOverrideTries(candidates []string, try func(model string) probeObservation) probeObservation {
 	if len(candidates) == 0 {
 		return probeObservation{Err: errors.New("no model id to start with")}
@@ -201,7 +206,7 @@ func observeModelOverrideTries(candidates []string, try func(model string) probe
 	var refused []string
 	for _, m := range candidates {
 		obs := try(m)
-		if obs.Err != nil || obs.Worked {
+		if obs.Err != nil || obs.Worked || !obs.Refused {
 			if obs.Worked && len(refused) > 0 {
 				obs.Detail += " (after " + strings.Join(refused, "; ") + ")"
 			}
@@ -332,7 +337,7 @@ func recordedModelMatches(recorded, want string) bool {
 // The transcript is NOT evidence: cursor and kiro stamp meta.Model onto every assistant
 // turn, so the probe's own request would come back and match even when the CLI ignored the
 // flag. No independent record is PROBE-ERROR, never a pass.
-func observeModelOverride(turns []transcript.Turn, recorded string, haveRecorder bool, want string) probeObservation {
+func observeModelOverride(turns []transcript.Turn, recorded string, haveRecorder bool, want string, refused bool) probeObservation {
 	reported := false
 	for _, t := range turns {
 		if t.Role == "assistant" && t.Model != "" {
@@ -350,7 +355,7 @@ func observeModelOverride(turns []transcript.Turn, recorded string, haveRecorder
 	case recordedModelMatches(recorded, want):
 		return probeObservation{Worked: true, Detail: "the CLI recorded " + recorded}
 	default:
-		return probeObservation{Detail: fmt.Sprintf("started with %q but the CLI recorded %s", want, recorded)}
+		return probeObservation{Detail: fmt.Sprintf("started with %q but the CLI recorded %s", want, recorded), Refused: refused}
 	}
 }
 
