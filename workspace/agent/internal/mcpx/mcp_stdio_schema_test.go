@@ -23,11 +23,13 @@ func walkAdvertisedToolVariants(t *testing.T, visit func(t *testing.T, tools []m
 	oldChromium, oldPeer := sessionChromiumEnabled(), mcpPeerMessagingEnabled
 	oldImageGen, oldSource := mcpImageGenEnabled, mcpSourceSession
 	oldSpawn, oldMemory := mcpFleetSpawnEnabled, mcpAgentMemoryEnabled
+	oldSessionSearch := mcpSessionSearchEnabled
 	t.Cleanup(func() {
 		setFlags(oldWrite, oldSelfReport, oldChromium)
 		mcpPeerMessagingEnabled = oldPeer
 		mcpImageGenEnabled, mcpSourceSession = oldImageGen, oldSource
 		mcpFleetSpawnEnabled, mcpAgentMemoryEnabled = oldSpawn, oldMemory
+		mcpSessionSearchEnabled = oldSessionSearch
 	})
 	// generate_image's tool list is not static: the server asks the Agent for the session's
 	// kind and the effective provider on every tools/list (ADR 0069 decision 8), so the
@@ -56,6 +58,7 @@ func walkAdvertisedToolVariants(t *testing.T, visit func(t *testing.T, tools []m
 		fleetSpawn                  bool
 		studio                      bool
 		agentMemory                 bool
+		sessionSearch               bool
 	}{
 		{name: "assistant-read"},
 		{name: "assistant-write", write: true},
@@ -73,6 +76,8 @@ func walkAdvertisedToolVariants(t *testing.T, visit func(t *testing.T, tools []m
 		{name: "session-studio", selfReport: true, studio: true},
 		// The memory tools appear only under --agent-memory (ADR 0108, off by default).
 		{name: "session-agent-memory", selfReport: true, agentMemory: true},
+		// search_sessions appears only under --self-report --session-search (ADR 0110).
+		{name: "session-search", selfReport: true, sessionSearch: true},
 	}
 
 	for _, variant := range variants {
@@ -82,6 +87,7 @@ func walkAdvertisedToolVariants(t *testing.T, visit func(t *testing.T, tools []m
 			mcpImageGenEnabled = variant.imageGen
 			mcpFleetSpawnEnabled = variant.fleetSpawn
 			mcpAgentMemoryEnabled = variant.agentMemory
+			mcpSessionSearchEnabled = variant.sessionSearch
 			if variant.studio {
 				bindStudioForTest(t, "slot01", true)
 			}
@@ -95,7 +101,7 @@ func walkAdvertisedToolVariants(t *testing.T, visit func(t *testing.T, tools []m
 // hand-written approximation would have accepted enum:null, which Anthropic rejects
 // before starting the Claude turn.
 func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
-	const expectedAdvertisedToolCount = 68
+	const expectedAdvertisedToolCount = 69
 
 	advertised := make(map[string]struct{})
 	walkAdvertisedToolVariants(t, func(t *testing.T, tools []map[string]any) {
@@ -134,26 +140,55 @@ func declaredMCPToolNames() (map[string]struct{}, error) {
 		return nil, fmt.Errorf("no source files read: %v", err)
 	}
 	fset := token.NewFileSet()
-	names := make(map[string]struct{})
+	var parsed []*ast.File
 	for _, path := range files {
-		if strings.HasSuffix(path, "_test.go") || path == declaredToolsSkippedFile {
+		if strings.HasSuffix(path, "_test.go") {
 			continue
 		}
 		file, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
 		}
-		collectDeclaredMCPToolNames(file, names)
+		parsed = append(parsed, file)
+	}
+	consts := make(map[string]string)
+	for _, file := range parsed {
+		collectStringConsts(file, consts)
+	}
+	names := make(map[string]struct{})
+	for _, file := range parsed {
+		collectDeclaredMCPToolNames(file, consts, names)
 	}
 	return names, nil
 }
 
-// declaredToolsSkippedFile holds the session-search tools, whose gate (mcpSessionSearchEnabled)
-// no variant of walkAdvertisedToolVariants turns on; reading it would report them as declared
-// and never advertised.
-const declaredToolsSkippedFile = "mcp_session_search.go"
+// collectStringConsts records the package-level string constants, so that a tool literal
+// naming itself through one ("name": mcpToolSearchSessions) is still seen as declared.
+func collectStringConsts(file *ast.File, consts map[string]string) {
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			value := spec.(*ast.ValueSpec)
+			for i, ident := range value.Names {
+				if i >= len(value.Values) {
+					break
+				}
+				lit, ok := value.Values[i].(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					continue
+				}
+				if s, err := strconv.Unquote(lit.Value); err == nil {
+					consts[ident.Name] = s
+				}
+			}
+		}
+	}
+}
 
-func collectDeclaredMCPToolNames(file *ast.File, names map[string]struct{}) {
+func collectDeclaredMCPToolNames(file *ast.File, consts map[string]string, names map[string]struct{}) {
 	ast.Inspect(file, func(node ast.Node) bool {
 		literal, ok := node.(*ast.CompositeLit)
 		if !ok {
@@ -176,9 +211,13 @@ func collectDeclaredMCPToolNames(file *ast.File, names map[string]struct{}) {
 			}
 			switch keyValue {
 			case "name":
-				value, ok := pair.Value.(*ast.BasicLit)
-				if ok && value.Kind == token.STRING {
-					name, _ = strconv.Unquote(value.Value)
+				switch value := pair.Value.(type) {
+				case *ast.BasicLit:
+					if value.Kind == token.STRING {
+						name, _ = strconv.Unquote(value.Value)
+					}
+				case *ast.Ident:
+					name = consts[value.Name]
 				}
 			case "inputSchema":
 				hasInputSchema = true
