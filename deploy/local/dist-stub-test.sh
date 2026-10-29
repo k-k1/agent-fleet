@@ -302,7 +302,7 @@ AF_DIST_URL_BASE="file://$WORK/layout" AF_VERSION=$V AF_PREFIX="$WORK/prefix" \
 [ "$("$WORK/prefix/bin/af" again)" = "fake-af again" ] || fail "af does not run after re-run"
 echo "ok"
 
-echo "== case 8b: install.sh picks the arm64 tar on arm64, and says so when there is none =="
+echo "== case 8b: install.sh picks the arm64 tar on arm64, says so when there is none, and refuses macOS =="
 make_dist_both
 LAYOUT_B="$WORK/layout-b/v$V"
 mkdir -p "$LAYOUT_B"
@@ -321,6 +321,23 @@ AF_ARCH=riscv64 AF_DIST_URL_BASE="file://$WORK/layout" AF_VERSION=$V AF_PREFIX="
   bash "$INSTALL" > /dev/null 2> "$WORK/err8d.txt" || rc=$?
 [ "$rc" = 1 ] || fail "expected exit 1 for riscv64, got $rc"
 grep -q "riscv64 is unsupported" "$WORK/err8d.txt" || { cat "$WORK/err8d.txt"; fail "no unsupported-arch guidance"; }
+# A Mac reports arm64 too, which would otherwise select the linux-arm64 tar.
+rc=0
+AF_OS=Darwin AF_ARCH=arm64 AF_DIST_URL_BASE="file://$WORK/layout-b" AF_VERSION=$V AF_PREFIX="$WORK/prefix8e" \
+  bash "$INSTALL" > /dev/null 2> "$WORK/err8e.txt" || rc=$?
+[ "$rc" = 1 ] || fail "expected exit 1 on Darwin, got $rc"
+grep -q "Docker edition" "$WORK/err8e.txt" || { cat "$WORK/err8e.txt"; fail "no macOS guidance"; }
+[ ! -e "$WORK/prefix8e" ] || fail "Darwin install left files under the prefix"
+# The real af, from a package dir as build.sh lays it out (dist.json beside it).
+AFPKG="$WORK/afpkg"; mkdir -p "$AFPKG"
+cp "$ROOT/deploy/native/af" "$AFPKG/af"
+printf '{"repo": "k-k1/agent-fleet-dist"}\n' > "$AFPKG/dist.json"
+rc=0
+AF_OS=Darwin AF_VERSION=$V AF_DIST_URL_BASE="file://$WORK/layout-b" \
+  bash "$AFPKG/af" update --yes > "$WORK/out8f.txt" 2> "$WORK/err8f.txt" || rc=$?
+[ "$rc" = 1 ] || { cat "$WORK/err8f.txt"; fail "expected af update to exit 1 on Darwin, got $rc"; }
+grep -q "linux packages only" "$WORK/err8f.txt" || { cat "$WORK/err8f.txt"; fail "af update gave no OS guidance"; }
+! grep -q "downloading" "$WORK/out8f.txt" || fail "af update downloaded on Darwin"
 make_dist
 echo "ok"
 
@@ -413,6 +430,37 @@ echo "== case 12: seeded NOTICE keeps the primary-distribution URL =="
 grep -q "github.com/k-k1/agent-fleet-dist" "$ROOT/NOTICE" \
   || fail "NOTICE lost the primary distribution URL"
 grep -q "Apache License" "$ROOT/NOTICE" || fail "NOTICE lost the license statement"
+echo "ok"
+
+echo "== case 16: install-compose.sh on macOS: allowed with a note, verified without sha256sum =="
+ICOMPOSE="$ROOT/deploy/release/dist-repo/install-compose.sh"
+CL="$WORK/compose-layout/v$V"; mkdir -p "$CL" "$WORK/cb/agent-fleet-$V"
+echo "services: {}" > "$WORK/cb/agent-fleet-$V/docker-compose.yml"
+tar czf "$CL/agent-fleet-$V.tar.gz" -C "$WORK/cb" "agent-fleet-$V"
+( cd "$CL" && sha256sum "agent-fleet-$V.tar.gz" > SHA256SUMS )
+# A PATH holding only what the script uses, minus sha256sum: the shasum branch a Mac takes.
+MACBIN="$WORK/macbin"; mkdir -p "$MACBIN"
+for t in bash env uname curl mktemp rm mv mkdir tar gzip grep sed awk cut shasum perl cat dirname; do
+  ln -s "$(command -v "$t")" "$MACBIN/$t"
+done
+printf '#!/bin/sh\nexit 0\n' > "$MACBIN/docker"; chmod +x "$MACBIN/docker"
+PATH="$MACBIN" AF_OS=Darwin AF_SKIP_PULL=1 AF_VERSION=$V AF_DIST_URL_BASE="file://$WORK/compose-layout" \
+  AF_DEST="$WORK/dest16" "$MACBIN/bash" "$ICOMPOSE" > "$WORK/out16.txt" 2> "$WORK/err16.txt" \
+  || { cat "$WORK/err16.txt"; fail "install-compose.sh failed on Darwin"; }
+grep -q "macOS is experimental" "$WORK/err16.txt" || fail "no macOS note"
+grep -qF "docker-compose.macos.yml" "$WORK/out16.txt" || fail "no macOS overlay hint in the next steps"
+[ -f "$WORK/dest16/agent-fleet-$V/docker-compose.yml" ] || fail "bundle not extracted"
+printf x >> "$CL/agent-fleet-$V.tar.gz"
+rc=0
+PATH="$MACBIN" AF_OS=Darwin AF_SKIP_PULL=1 AF_VERSION=$V AF_DIST_URL_BASE="file://$WORK/compose-layout" \
+  AF_DEST="$WORK/dest16b" "$MACBIN/bash" "$ICOMPOSE" > /dev/null 2> "$WORK/err16b.txt" || rc=$?
+[ "$rc" = 1 ] || fail "expected exit 1 for a tampered bundle via shasum, got $rc"
+grep -q "sha256 mismatch" "$WORK/err16b.txt" || { cat "$WORK/err16b.txt"; fail "no mismatch message"; }
+[ ! -e "$WORK/dest16b" ] || fail "tampered bundle was extracted"
+rc=0
+PATH="$MACBIN" AF_OS=FreeBSD AF_SKIP_PULL=1 AF_VERSION=$V AF_DIST_URL_BASE="file://$WORK/compose-layout" \
+  "$MACBIN/bash" "$ICOMPOSE" > /dev/null 2>&1 || rc=$?
+[ "$rc" = 1 ] || fail "expected exit 1 on FreeBSD, got $rc"
 echo "ok"
 
 echo "== dist stub test OK =="
