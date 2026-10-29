@@ -611,7 +611,6 @@ func TestLedgerLookupNeedsBothProofs(t *testing.T) {
 		t.Error("a record with no object was read as bytes in the bucket")
 	}
 	head.states[key] = engineStoragePresent
-	held.storage.invalidate(key)
 	if at, _, ok := engineLedgerLookup(ctx, held, identity); !ok || at != key {
 		t.Errorf("lookup = %q %v, want the key", at, ok)
 	}

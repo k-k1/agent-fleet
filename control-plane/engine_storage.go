@@ -4,7 +4,7 @@ package main
 //
 // The bucket is not the catalogue: S3 says whether bytes exist, while the database says which
 // keys this deployment knows and which models use them (ADR 0072 decision 2). What is here is the
-// port and the cache — HeadObject for one key, ListObjectsV2 for one role's prefix, and a Range
+// port — HeadObject for one key, ListObjectsV2 for one role's prefix, and a Range
 // GetObject of one file's first bytes — plus `engineKnownArtifacts`, the database half every
 // reuse decision is made against. It takes no key from a caller: the ledger (engine_objects.go)
 // and the plan (engine_plan.go) decide which keys are asked about, each inside the grant its
@@ -27,7 +27,6 @@ const (
 	engineStorageMissing = "missing"
 	engineStorageUnknown = "unknown"
 
-	engineStorageCacheTTL    = 30 * time.Second
 	engineStorageHeadTimeout = 8 * time.Second
 	engineStorageListTimeout = 20 * time.Second
 	engineStorageConcurrency = 4
@@ -83,11 +82,6 @@ type engineStorageCheck struct {
 	CheckedAt      string
 }
 
-type engineStorageCacheEntry struct {
-	check   engineStorageCheck
-	expires time.Time
-}
-
 // engineStorage is deployment-neutral: the route and reuse logic depend on the narrow port,
 // while AWS wiring supplies an s3.Client only when the engine table declares its bucket.
 type engineStorage struct {
@@ -95,32 +89,21 @@ type engineStorage struct {
 	metadata  engineStorageMetadataPort
 	headSlots chan struct{}
 
-	mu    sync.Mutex
-	cache map[string]engineStorageCacheEntry
+	mu sync.Mutex
 	// deletes is the keys a MODE=delete task was started for and when, so the ledger can draw the
-	// press before the bucket answers differently (ADR 0085 decision 7). Guarded by the same
-	// mutex as the cache, because the two are always written together.
+	// press before the bucket answers differently (ADR 0085 decision 7).
 	deletes map[string]time.Time
 }
 
 func newEngineStorage(scope string, metadata engineStorageMetadataPort) *engineStorage {
 	return &engineStorage{
 		scope: strings.TrimSpace(scope), metadata: metadata,
-		headSlots: make(chan struct{}, engineStorageConcurrency), cache: map[string]engineStorageCacheEntry{},
+		headSlots: make(chan struct{}, engineStorageConcurrency),
 	}
 }
 
 func (s *engineStorage) configured() bool {
 	return s != nil && s.metadata != nil && strings.TrimSpace(s.scope) != ""
-}
-
-func (s *engineStorage) invalidate(key string) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	delete(s.cache, key)
-	s.mu.Unlock()
 }
 
 // engineStorageDeleteTTL is how long a key started deleting is still drawn as deleting.
@@ -147,7 +130,6 @@ func (s *engineStorage) markDeleting(keys ...string) {
 			s.deletes = map[string]time.Time{}
 		}
 		s.deletes[key] = now
-		delete(s.cache, key) // whatever HeadObject last said about it is about to stop being true
 	}
 }
 
@@ -170,75 +152,8 @@ func (s *engineStorage) deleting() map[string]time.Time {
 	return out
 }
 
-// checks uses a small fixed worker set. A panel can know hundreds of historical keys, but it
-// must never turn one request into hundreds of simultaneous SDK calls on the shared CP task.
-func (s *engineStorage) checks(ctx context.Context, keys []string) map[string]engineStorageCheck {
-	out := make(map[string]engineStorageCheck, len(keys))
-	if !s.configured() {
-		for _, key := range keys {
-			out[key] = engineStorageCheck{State: engineStorageUnknown}
-		}
-		return out
-	}
-	ctx, cancel := context.WithTimeout(ctx, engineStorageListTimeout)
-	defer cancel()
-	now := time.Now()
-	var pending []string
-	s.mu.Lock()
-	for _, key := range keys {
-		if c, ok := s.cache[key]; ok && now.Before(c.expires) {
-			out[key] = c.check
-			continue
-		}
-		pending = append(pending, key)
-	}
-	s.mu.Unlock()
-
-	jobs := make(chan string)
-	var wg sync.WaitGroup
-	workers := engineStorageConcurrency
-	if len(pending) < workers {
-		workers = len(pending)
-	}
-	var outMu sync.Mutex
-	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for key := range jobs {
-				check := s.head(ctx, key)
-				outMu.Lock()
-				out[key] = check
-				outMu.Unlock()
-				s.mu.Lock()
-				s.cache[key] = engineStorageCacheEntry{check: check, expires: time.Now().Add(engineStorageCacheTTL)}
-				s.mu.Unlock()
-			}
-		}()
-	}
-	for _, key := range pending {
-		select {
-		case jobs <- key:
-		case <-ctx.Done():
-			close(jobs)
-			wg.Wait()
-			for _, unresolved := range pending {
-				if _, ok := out[unresolved]; !ok {
-					out[unresolved] = engineStorageCheck{State: engineStorageUnknown}
-				}
-			}
-			return out
-		}
-	}
-	close(jobs)
-	wg.Wait()
-	return out
-}
-
 // list enumerates one prefix, and it is the only read here that does not start from a key the
-// server already wrote down. The result is NOT put in the display cache: that cache exists to
-// keep a panel refresh from re-heading a hundred known keys, while this answers "what is in the
-// bucket" — a question whose stale answer is an object an operator would delete twice.
+// server already wrote down.
 func (s *engineStorage) list(ctx context.Context, prefix string) ([]engineStorageObject, error) {
 	if !s.configured() {
 		return nil, errEngineStorageUnconfigured
@@ -280,17 +195,13 @@ func (s *engineStorage) prefix(ctx context.Context, key string, n int) ([]byte, 
 	return s.metadata.Prefix(ctx, key, n)
 }
 
-// verify deliberately bypasses the display cache. Reuse is a write to the catalogue and must
-// prove the object exists now; a thirty-second-old present result is only a display hint.
+// verify is uncached on purpose. Reuse is a write to the catalogue and must prove the object
+// exists now; an earlier present result is not that proof.
 func (s *engineStorage) verify(ctx context.Context, key string) engineStorageCheck {
 	if !s.configured() {
 		return engineStorageCheck{State: engineStorageUnknown}
 	}
-	check := s.head(ctx, key)
-	s.mu.Lock()
-	s.cache[key] = engineStorageCacheEntry{check: check, expires: time.Now().Add(engineStorageCacheTTL)}
-	s.mu.Unlock()
-	return check
+	return s.head(ctx, key)
 }
 
 func (s *engineStorage) head(ctx context.Context, key string) engineStorageCheck {
