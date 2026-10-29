@@ -1,4 +1,4 @@
-package main
+package workitems
 
 import (
 	"encoding/json"
@@ -33,9 +33,9 @@ func newBBCommentStub(t *testing.T, status int, body string) *bbCommentStub {
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(body))
 	}))
-	prev := bitbucketAPIBase
-	bitbucketAPIBase = st.srv.URL
-	t.Cleanup(func() { bitbucketAPIBase = prev; st.srv.Close() })
+	prev := BitbucketAPIBase
+	BitbucketAPIBase = st.srv.URL
+	t.Cleanup(func() { BitbucketAPIBase = prev; st.srv.Close() })
 	return st
 }
 
@@ -135,9 +135,9 @@ func newBBScopeStub(t *testing.T, scopes string) {
 		}
 		_, _ = w.Write([]byte(bbOnePR))
 	}))
-	prev := bitbucketAPIBase
-	bitbucketAPIBase = srv.URL
-	t.Cleanup(func() { bitbucketAPIBase = prev; srv.Close() })
+	prev := BitbucketAPIBase
+	BitbucketAPIBase = srv.URL
+	t.Cleanup(func() { BitbucketAPIBase = prev; srv.Close() })
 }
 
 func TestBitbucketRowsCanCommentFollowGrantedScope(t *testing.T) {
@@ -252,9 +252,9 @@ func TestBitbucketScopesNotLearnedAcrossAReconnect(t *testing.T) {
 				_, _ = w.Write([]byte(bbOnePR))
 			}))
 			defer srv.Close()
-			prev := bitbucketAPIBase
-			bitbucketAPIBase = srv.URL
-			defer func() { bitbucketAPIBase = prev }()
+			prev := BitbucketAPIBase
+			BitbucketAPIBase = srv.URL
+			defer func() { BitbucketAPIBase = prev }()
 
 			rows, err := bitbucketSearchWorkItems(a, "q", "acme/web")
 			if err != nil || len(rows) != 1 {

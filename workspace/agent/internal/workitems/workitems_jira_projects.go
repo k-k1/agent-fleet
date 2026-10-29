@@ -1,4 +1,4 @@
-package main
+package workitems
 
 import (
 	"encoding/json"
@@ -37,9 +37,9 @@ type jiraProjectsOut struct {
 	Truncated bool     `json:"truncated"`
 }
 
-// handleWorkItemsJiraProjects — POST /work-items/jira-projects. Relayed by the CP like
+// HandleWorkItemsJiraProjects — POST /work-items/jira-projects. Relayed by the CP like
 // /work-items/detail; the Agent reads only the member's own connection.
-func handleWorkItemsJiraProjects(w http.ResponseWriter, r *http.Request) {
+func HandleWorkItemsJiraProjects(w http.ResponseWriter, r *http.Request) {
 	s, err := secrets.Load()
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())

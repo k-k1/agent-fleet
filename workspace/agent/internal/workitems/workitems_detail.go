@@ -1,4 +1,4 @@
-package main
+package workitems
 
 import (
 	"encoding/json"
@@ -208,8 +208,8 @@ func githubScopesCanMerge(h http.Header, private bool) bool {
 	return false
 }
 
-// handleWorkItemsDetail — POST /work-items/detail {provider, key}.
-func handleWorkItemsDetail(w http.ResponseWriter, r *http.Request) {
+// HandleWorkItemsDetail — POST /work-items/detail {provider, key}.
+func HandleWorkItemsDetail(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Provider string `json:"provider"`
 		Key      string `json:"key"`
@@ -722,7 +722,7 @@ func bitbucketPullRequestDetail(s *secrets.Data, key string) (*workItemDetailOut
 func bitbucketFetchPRDetail(auth, repo string, number int, key string) (*workItemDetailOut, error) {
 	ws, name, _ := strings.Cut(repo, "/")
 	prBase := fmt.Sprintf("%s/2.0/repositories/%s/%s/pullrequests/%d",
-		bitbucketAPIBase, url.PathEscape(ws), url.PathEscape(name), number)
+		BitbucketAPIBase, url.PathEscape(ws), url.PathEscape(name), number)
 	// fields= keeps `description` out of the response, the same promise the list adapter makes.
 	params := url.Values{"fields": {"id,title,state,draft,updated_on,comment_count,task_count," +
 		"links.html.href,author.display_name,author.nickname," +
@@ -731,7 +731,7 @@ func bitbucketFetchPRDetail(auth, repo string, number int, key string) (*workIte
 		"participants.user.display_name,participants.user.nickname"}}
 	body, status, err := gitx.BitbucketGetStatus(workItemHTTPClient, auth, prBase+"?"+params.Encode())
 	if err != nil {
-		return nil, fmt.Errorf("could not reach %s", bitbucketAPIBase)
+		return nil, fmt.Errorf("could not reach %s", BitbucketAPIBase)
 	}
 	if status != http.StatusOK {
 		return nil, bitbucketDetailError(status, body, key)

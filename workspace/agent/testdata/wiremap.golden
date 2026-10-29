@@ -206,6 +206,8 @@ internal/sessionx/session_turn.go handleManagedTurn x1 {op,sent}
 internal/sessionx/session_turn.go handleQueueEdit x1 {dismissed,op,sent}
 internal/sessionx/session_turn.go handleQueueEdit x1 {op,removed,sent}
 internal/sessionx/session_usage.go HandleSessionsUsage x1 {sessions}
+internal/workitems/workitems.go HandleWorkItemsFetch x2 {errors,items,truncated}
+internal/workitems/workitems_comment.go HandleWorkItemsComment x1 {url}
 jdk_install_http.go handleJDKInstall x3 {error,java_available,java_installed,java_versions,major,state}
 kiro_install_http.go handleKiroInstall x1 {error,installed,pin,state,updateAvailable,version} cond{installed,pin,updateAvailable,version}
 kiro_install_http.go handleKiroInstall x3 {state}
@@ -228,5 +230,3 @@ svn_auth.go handlePutSvnConn x1 {trustCert,urlPrefix,username}
 svn_auth.go handleSvnAuth x1 {trustCert,urlPrefix,username}
 ui_prefs.go handleGetUIPrefs x1 {} dyn
 ui_prefs.go handlePutUIPrefs x1 {} dyn
-workitems.go handleWorkItemsFetch x2 {errors,items,truncated}
-workitems_comment.go handleWorkItemsComment x1 {url}

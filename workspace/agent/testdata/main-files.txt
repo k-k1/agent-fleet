@@ -110,14 +110,6 @@ usage_rollup.go
 usage_series.go
 usage_spend.go
 version_lookup.go
-workitems.go
-workitems_appperm.go
-workitems_bitbucket.go
-workitems_comment.go
-workitems_detail.go
-workitems_jira_projects.go
-workitems_merge.go
-workitems_prstatus.go
 workspace_machine.go
 workspace_stats.go
 worktree_recreate.go

@@ -1,4 +1,4 @@
-package main
+package workitems
 
 import (
 	"net/http"
@@ -161,10 +161,10 @@ func newBBStub(t *testing.T, status int, body string) *bbStub {
 		w.WriteHeader(st.status)
 		_, _ = w.Write([]byte(st.body))
 	}))
-	prev := bitbucketAPIBase
-	bitbucketAPIBase = st.srv.URL
+	prev := BitbucketAPIBase
+	BitbucketAPIBase = st.srv.URL
 	t.Cleanup(func() {
-		bitbucketAPIBase = prev
+		BitbucketAPIBase = prev
 		st.srv.Close()
 		bbSelfCache.auth, bbSelfCache.uuid = "", ""
 	})

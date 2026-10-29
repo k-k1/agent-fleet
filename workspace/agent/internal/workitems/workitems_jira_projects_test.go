@@ -1,4 +1,4 @@
-package main
+package workitems
 
 import (
 	"encoding/json"
@@ -73,7 +73,7 @@ func TestJiraProjectKeysDropsMalformedKeys(t *testing.T) {
 func TestHandleJiraProjectsNotConnectedAnswersEmpty(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	w := httptest.NewRecorder()
-	handleWorkItemsJiraProjects(w, httptest.NewRequest("POST", "/work-items/jira-projects", nil))
+	HandleWorkItemsJiraProjects(w, httptest.NewRequest("POST", "/work-items/jira-projects", nil))
 	if w.Code != 200 || strings.TrimSpace(w.Body.String()) != `{"connected":false,"keys":[],"truncated":false}` {
 		t.Fatalf("got %d %s", w.Code, w.Body.String())
 	}
@@ -92,7 +92,7 @@ func TestHandleJiraProjectsErrorCarriesNoUpstreamText(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	handleWorkItemsJiraProjects(w, httptest.NewRequest("POST", "/work-items/jira-projects", nil))
+	HandleWorkItemsJiraProjects(w, httptest.NewRequest("POST", "/work-items/jira-projects", nil))
 	if w.Code != http.StatusBadGateway || strings.Contains(w.Body.String(), "UPSTREAM_SENTINEL") {
 		t.Fatalf("got %d %s", w.Code, w.Body.String())
 	}

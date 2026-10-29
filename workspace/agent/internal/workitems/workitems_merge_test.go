@@ -1,4 +1,4 @@
-package main
+package workitems
 
 import (
 	"encoding/json"
@@ -250,7 +250,7 @@ func TestWorkItemsMergeHandlerRefusesWithoutAMark(t *testing.T) {
 	memberorigintest.Install(t)
 	calls := fakeGitHubMerge(t, 200, `{"merged":true}`)
 	w := httptest.NewRecorder()
-	handleWorkItemsMerge(w, mergeReq(`{"key":"acme/web#12","sha":"`+mergeSHA+`","method":"merge"}`))
+	HandleWorkItemsMerge(w, mergeReq(`{"key":"acme/web#12","sha":"`+mergeSHA+`","method":"merge"}`))
 	if w.Code != http.StatusForbidden || len(*calls) != 0 {
 		t.Fatalf("%d %s (calls %d)", w.Code, w.Body.String(), len(*calls))
 	}
