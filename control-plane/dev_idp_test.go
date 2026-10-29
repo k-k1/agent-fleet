@@ -82,6 +82,16 @@ func pkcePair() (verifier, challenge string) {
 	return verifier, base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
+// differentVerifier returns a verifier of the same length that differs from v in its first
+// character. A fixed replacement character is not enough: v is random base64url, so it
+// already starts with that character one time in 64 and the "wrong" verifier is the right one.
+func differentVerifier(v string) string {
+	if v[0] == 'x' {
+		return "y" + v[1:]
+	}
+	return "x" + v[1:]
+}
+
 // authorizeAs calls /dev-idp/authorize on the Console origin as userKey.
 func (d *devIdPTestEnv) authorizeAs(t *testing.T, userKey string, q url.Values) *httptest.ResponseRecorder {
 	t.Helper()
@@ -641,6 +651,15 @@ func TestDevIdPClientAuthentication(t *testing.T) {
 	}
 	if rec := d.tokenReq(url.Values{"grant_type": {"password"}}, d.clientID, d.secret); rec.Code != http.StatusBadRequest {
 		t.Errorf("password grant: %d", rec.Code)
+	}
+}
+
+func TestDifferentVerifier(t *testing.T) {
+	for _, v := range []string{"xAAA", "yAAA", "AAAA", "x", "-_x"} {
+		got := differentVerifier(v)
+		if got == v || len(got) != len(v) || got[1:] != v[1:] {
+			t.Errorf("differentVerifier(%q) = %q, want same length and tail, different value", v, got)
+		}
 	}
 }
 
