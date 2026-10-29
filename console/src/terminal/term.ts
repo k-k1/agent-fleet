@@ -20,7 +20,7 @@ import { t as tr } from "../lib/i18n/index.ts";
 import { zoom } from "../app/viewport.ts";
 import { toast } from "../ui/toast.ts";
 import { clipAction } from "./clipKeys.ts";
-import { rebuildGlyphAtlas } from "./atlas.ts";
+import { fontLoaded, rebuildGlyphAtlas, resetGlyphModel } from "./atlas.ts";
 
 // One entry per pane. { term, fitAddon, ws, session, sessionListeners, ro }.
 // A placeholder (from an early onSession) may hold only session + sessionListeners,
@@ -320,13 +320,16 @@ function forceFit(it: Inst | null | undefined) {
   try {
     /* eslint-disable @typescript-eslint/no-explicit-any */
     // Canvas-backed renderers ONLY (WebGL or the 2D canvas fallback): a stale/blank canvas
-    // or a corrupted glyph atlas must be cleared + the atlas rebuilt before the repaint
-    // below can show correct pixels. Both are gated off on touch devices (loadWebgl /
-    // loadCanvas), so this branch is desktop-only and never hits the DOM renderer.
+    // must be cleared before the repaint below can show correct pixels. Both are gated off
+    // on touch devices (loadWebgl / loadCanvas), so this branch is desktop-only and never
+    // hits the DOM renderer. On WebGL, clear() also rebuilds the model from the cached
+    // glyphs, which is all a stale model needs; clearing the WebGL atlas here would garble
+    // every same-tint pane sharing it and re-rasterize all their glyphs (#2983). The canvas
+    // fallback keeps its own atlas rebuild.
     if (it.webgl || it.canvas) {
       const core = (it.term as any)._core;
       core?._renderService?.clear?.();
-      rebuildGlyphAtlas(it, insts.values()); // the atlas is shared with same-tint panes
+      if (it.canvas) (it.term as any).clearTextureAtlas?.();
     }
     /* eslint-enable @typescript-eslint/no-explicit-any */
     // Repaint every row from the buffer. On the DOM renderer (touch/mobile, or wherever WebGL
@@ -593,9 +596,16 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   }
   // Crisp GPU rendering; fall back silently if WebGL2 is unavailable/lost.
   loadWebgl(it);
-  // The web font loads async — refit/redraw once ready so metrics are right.
+  // The web font loads async — refit/redraw once ready so metrics are right. Glyphs drawn
+  // before it arrived are fallback-font bitmaps in the shared atlas, so only then rebuild
+  // the atlas (for every pane drawing from it). When the font was already loaded, skip
+  // that: opening a pane would otherwise re-rasterize every same-tint pane's glyphs.
   if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(() => forceFit(it));
+    const fontPending = !fontLoaded(term);
+    document.fonts.ready.then(() => {
+      if (fontPending) rebuildGlyphAtlas(it, insts.values());
+      forceFit(it);
+    });
   }
   // Keep terminal-relevant shortcuts inside the PTY rather than the browser while
   // the terminal is focused. We preventDefault the browser action and return true so
@@ -1214,11 +1224,15 @@ function startHeartbeat(paneId: string, ws: WebSocket) {
         else {
           // A plain refresh cannot fix a garbled WebGL pane: it skips every cell
           // whose contents are unchanged, so stale texture coordinates survive.
-          // Rebuilding the atlas also rebuilds the model; rebuildGlyphAtlas does it
-          // for the same-tint panes sharing that atlas too, or this tick would
-          // garble them (#2983). The DOM renderer has no atlas — refresh alone
-          // remains the whole repaint there (7aff545).
-          if (it.webgl || it.canvas) rebuildGlyphAtlas(it, insts.values());
+          // Reset the model instead (CPU-side, never blanks the canvas), not the
+          // atlas: that is shared with every same-tint pane, and clearing it each
+          // tick garbled them (#2983) and re-rasterized all their glyphs — seconds
+          // of main thread with a few CJK panes. The canvas fallback keeps its
+          // atlas rebuild. The DOM renderer has no atlas and must not be cleared
+          // (clear() blanks its rows), so refresh alone is its whole repaint.
+          if (it.webgl) resetGlyphModel(it);
+          /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+          else if (it.canvas) (it.term as any).clearTextureAtlas?.();
           it.term!.refresh(0, it.term!.rows - 1);
         }
       }

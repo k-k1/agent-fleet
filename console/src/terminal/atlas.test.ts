@@ -1,6 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import type { Terminal } from "@xterm/xterm";
-import { rebuildGlyphAtlas, type AtlasTerm } from "./atlas.ts";
+import { fontLoaded, rebuildGlyphAtlas, resetGlyphModel, type AtlasTerm } from "./atlas.ts";
 
 // fake builds a pane the way term.ts holds one: a terminal (with the private render
 // service rebuildGlyphAtlas reaches into) plus the renderer addon that is loaded.
@@ -66,5 +66,80 @@ describe("rebuildGlyphAtlas", () => {
     rebuildGlyphAtlas(d.t, [d.t, w.t]);
     expect(d.calls).toEqual([]);
     expect(w.calls).toEqual([]);
+  });
+
+  it("skips placeholders without a terminal and keeps going past a sibling that throws", () => {
+    const shared = {};
+    const a = fake("webgl", shared);
+    const broken = fake("webgl", shared);
+    broken.term.refresh.mockImplementation(() => {
+      throw new Error("boom");
+    });
+    const c = fake("webgl", shared);
+    const placeholder: AtlasTerm = { webgl: {} };
+    rebuildGlyphAtlas(a.t, [a.t, placeholder, broken.t, c.t]);
+    expect(c.calls).toEqual(["clear", "refresh 0-23"]);
+  });
+
+  it("treats an atlas getter that throws as shared", () => {
+    const a = fake("webgl", {});
+    const b = fake("webgl");
+    Object.defineProperty(b.t.webgl as object, "_renderer", {
+      get() {
+        throw new Error("moved");
+      },
+    });
+    rebuildGlyphAtlas(a.t, [a.t, b.t]);
+    expect(b.calls).toEqual(["clear", "refresh 0-23"]);
+  });
+});
+
+describe("resetGlyphModel", () => {
+  it("clears a WebGL pane's model without touching its atlas or repainting", () => {
+    const w = fake("webgl", {});
+    resetGlyphModel(w.t);
+    expect(w.calls).toEqual(["clear"]);
+  });
+
+  it("never clears the DOM renderer or the canvas fallback", () => {
+    const d = fake("dom");
+    const c = fake("canvas");
+    resetGlyphModel(d.t);
+    resetGlyphModel(c.t);
+    expect(d.calls).toEqual([]);
+    expect(c.calls).toEqual([]);
+  });
+
+  it("survives a render service that is gone", () => {
+    const w = fake("webgl", {});
+    (w.term as { _core?: unknown })._core = undefined;
+    expect(() => resetGlyphModel(w.t)).not.toThrow();
+  });
+});
+
+describe("fontLoaded", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  const term = { options: { fontSize: 14, fontFamily: "Mono" } } as unknown as Terminal;
+
+  it("asks the font set about the terminal's own font", () => {
+    const check = vi.fn(() => true);
+    vi.stubGlobal("document", { fonts: { check } });
+    expect(fontLoaded(term)).toBe(true);
+    expect(check).toHaveBeenCalledWith("14px Mono");
+  });
+
+  it("answers false when the font is still loading or the check throws", () => {
+    vi.stubGlobal("document", { fonts: { check: () => false } });
+    expect(fontLoaded(term)).toBe(false);
+    vi.stubGlobal("document", {
+      fonts: {
+        check: () => {
+          throw new Error("syntax");
+        },
+      },
+    });
+    expect(fontLoaded(term)).toBe(false);
   });
 });
