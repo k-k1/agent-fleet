@@ -23,9 +23,10 @@ func setMcpConv(t *testing.T, conv string) {
 
 // Approval windows for the wait tests. A case that expects a decision gets the generous
 // one: it returns as soon as the decision is observed, so the size costs nothing when green,
-// while a short one fails the case whenever load starves the goroutine that writes the
-// decision (seen: a 500 ms window read as a timeout under package-parallel load). Only the
-// case that expects the timeout uses the short one, which keeps that path fast.
+// while under load a short one fails the case: the decision write can land late, or the
+// waiter can stall between its last pending read and the deadline check (seen: a 500 ms
+// window read as a timeout under package-parallel load). Only the case that expects the
+// timeout uses the short one, which keeps that path fast.
 const (
 	approvalDecidedWindow = 30 * time.Second
 	approvalTimeoutWindow = 500 * time.Millisecond
