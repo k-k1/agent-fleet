@@ -76,12 +76,24 @@ name equals the profile name of an ungrouped SSO profile of the same member.** A
 (a new sign-in, a renamed sign-in, a new or relabelled profile, a profile leaving a sign-in) is refused with
 `409 sign_in_name_taken`, naming the other side.
 
+A transaction alone does not keep it. Postgres runs at READ COMMITTED: a sign-in `x` and an ungrouped profile
+`x` created at the same moment each read "no other side" and commit to two tables. The same race exists between
+the last member leaving (which deletes the sign-in) and another profile joining it. **Every write to a
+member's profiles or sign-ins therefore first takes that membership's row lock**: `SELECT … FROM membership
+WHERE id = ? FOR UPDATE` on Postgres, and on SQLite a write transaction begun with `BEGIN IMMEDIATE`. Only then
+does it read and check. That serializes the namespace, join, leave and delete per member. Tests on both
+stores run concurrent pairs: sign-in versus profile of the same name, rename versus create, last leave versus
+join, and delete versus join. Each pair must end in one success and one `409`, or in two consistent
+successes, never in a broken invariant or an orphaned sign-in.
+
 A sign-in may take the name of one of **its own** members. Such a member renders `af-<name>` both before and
 after it joins. That is how an existing login survives grouping (decision 7).
 
-The Agent does not trust the invariant. If two exported entries end up with the same sso-session name and
-different start URLs or SSO regions (a stale cache, an older CP), it exports none of them and reports them
-under a new `SyncResult.SessionConflict`, in the same way as `Conflicts`.
+Neither the bridge nor the Agent trusts the invariant. Rows written by an older CP after a rollback can break
+it (decision 11). `awsProfilesWire` exports none of the profiles whose sso-session names collide and reports
+them as conflicts, the way it already treats two labels with one name. This holds **whatever their
+coordinates**: two equal portals under one name would share a login nobody asked to share. The Agent applies
+the same rule to what it receives (`SyncResult.SessionConflict`).
 
 ### 3. API: the profile names its sign-in; the sign-in's own edits have their own route
 
@@ -97,15 +109,18 @@ under a new `SyncResult.SessionConflict`, in the same way as `Conflicts`.
   profiles one `POST` at a time, with no new call order.
 - `GET /api/ssm/sign-ins` lists `{id, name, startUrl, ssoRegion, profiles: [profile ids]}`.
   `PUT /api/ssm/sign-ins/{id}` renames the sign-in or changes its portal, and rewrites the members' copies in
-  the same transaction. A rename moves the login to a new cache key, so the member signs in again; a portal
-  change leaves a token for the old portal under the old key. The Console says both before saving
-  (decision 9).
-- The bridge's `awsProfileWire` (`GET /internal/aws-profiles`) gains `signIn` (omitted when empty). The
-  SSM session rewrite (`rewriteSSMCreate`) adds `sso_session` to the body; the Agent's `SSMMeta` gains
-  `SSOSession`, checked against the same allowlist. When it is absent the Agent renders `af-<profile>`, so
-  an older CP keeps working.
-- `TestContractFamilies` gets the new field on `ssmProfileDTO` and a new family for `ssmSignInDTO`. The
-  Console types follow.
+  the same transaction. A rename moves the login to a new cache key, so the member signs in again. A portal
+  change makes the old token unusable (decision 10). The Console says both before saving.
+- The bridge's `awsProfileWire` (`GET /internal/aws-profiles`) gains `id` (the profile's stable id),
+  `signIn` and `signInId` (omitted when empty). The SSM session rewrite (`rewriteSSMCreate`) and the SSM
+  discovery request (`ssmInstancesReq`, the instance list of the start modal, which writes its own
+  `WriteSSMConfig`) both gain `sso_session` and the owner id. The Agent's `SSMMeta` gains `SSOSession`, checked
+  against the same allowlist. When it is absent the Agent renders `af-<profile>`, so an older CP keeps
+  working.
+- **Contracts, per PR.** PR 3 (CP) adds `signIn` to `ssmProfileDTO`, the `ssmSignInDTO` family and the bridge
+  fields to the CP's `TestContractFamilies`. PR 4 (Agent) adds `signIn`, `signIns`, the waiters' profiles and
+  the logout's `profiles` to the Agent's `contract_wire_test.go` families for `/aws-login*`. PR 5 binds the
+  Console's types to all of them.
 
 ### 4. Rendering
 
@@ -135,9 +150,9 @@ profiles stand behind it.
   replace each other. The device URL allowlist is built from the sign-in's start URL and SSO region, which
   every member shares.
 - **Status.** `GET /aws-login/profiles` gives each profile its `signIn` and the state of its sso-session, and
-  adds `signIns: [{name, state, expiresAt?, expiring?, profiles}]`. A cache whose `startUrl` or `region`
-  differs from Settings counts as `none`, so a portal change (decision 3) shows as "not signed in" instead
-  of as a working login. That rule applies to ungrouped profiles too.
+  adds `signIns: [{name, state, expiresAt?, expiring?, profiles}]`. A token that decision 10 makes unusable
+  counts as `none`. That covers another portal, another owner and a retired key, and it applies to
+  ungrouped profiles too.
 - **Expiry.** `warnExpiringSSO` warns once per sso-session and end, for an sso-session with at least one
   exported member (key `aws-sso-expiring:<sso-session>:<end>`). The payload keeps `profile` (the first
   exported member, so an older Console still opens a modal) and adds `signIn`.
@@ -148,9 +163,23 @@ profiles stand behind it.
   credentials cached for **every** member (`roleCachePaths` per member), not only the named one: a
   member's role credentials left behind would keep that profile working after a "log out". The answer adds
   `profiles`, the names signed out. The Console confirms with that list before it calls the route.
-- **Lock and gate.** Unchanged: `logins.LockKey` and `logins.Gate` take the sso-session.
-- **SSM forced re-login** (`ssmForgetLogin`) drops the shared token. That signs every member out. The
-  Console's "log in again" on an SSM host of a grouped profile says so.
+- **Lock and gate.** Both still take the sso-session, but the shared lock is no longer enough. Today a run
+  holds `LockKey` **shared** while it exports (`exportLocked`), so two members of one sign-in can refresh the
+  token at once. Each then writes the cache file, and one of them may hold a refresh token the other's
+  refresh has rotated away. The rule becomes:
+  - an export takes the lock **exclusive** when the cached access token is expired or inside botocore's
+    15-minute refresh window, and **shared** otherwise;
+  - a login landing (the attempt's write and decision 10's binding) and a logout take it exclusive, as the
+    logout does now;
+  - `logins.Gate` stays an in-Agent mutex around starting an attempt and a logout's delete.
+
+  This orders every writer that Agent Fleet starts. An `aws` process the agent or the member runs directly
+  takes no lock, and its refresh can still race; that is outside this guarantee.
+- **SSM forced re-login** (`ssmForgetLogin`) drops the shared token, which signs every member out. The
+  Console's "log in again" on an SSM host of a grouped profile says so. The shell snippet removes only the
+  pane profile's role credentials. With a shared token the other members' role credentials would keep
+  working, so the Agent deletes every member's role credentials (the logout's list) in Go, under the
+  exclusive lock, before it starts the pane.
 
 No CP route changes for the login: the Agent routes stay keyed by profile name, and the CP relays them as
 before.
@@ -184,9 +213,17 @@ before.
   sso-session name does not change, so its token is the group's. The Console proposes that name. With
   another name, the group starts signed out and needs one login.
 - **Leftover per-profile tokens.** A member that joins a sign-in under another name leaves its
-  `af-<member>` token on disk. Nothing uses it any more. It is not moved or copied (Rejected). Logging out
-  of the sign-in also revokes and deletes the leftover `af-<member>` tokens of its members. That is skipped
-  for a member whose `af-<member>` name the member's own files use (decision C).
+  `af-<member>` token on disk. It is not moved or copied (Rejected). Logging out of the sign-in also revokes
+  and deletes leftover tokens (decision C), but only a key that is **provably a leftover of that member**. All
+  of the following must hold, checked under the key's exclusive lock:
+  - no current Settings sign-in and no ungrouped profile renders that sso-session name. Decision 2 allows a
+    sign-in named `b` while a profile `b` sits in another sign-in, and that key is live;
+  - the member's own `~/.aws` files define no `[sso-session]` of that name;
+  - the key's binding (decision 10) names that member's profile id as its last owner.
+
+  A key with no binding, or whose binding names someone else, is left alone and not revoked: where it came
+  from cannot be shown. The same rule covers the leftover role credentials, which are keyed by account, role
+  and the old sso-session name.
 
 ### 8. Separate logins to one portal stay possible
 
@@ -200,6 +237,68 @@ the preview.
 `guide/member/16-cloud-accounts.md` (and `.ja.md`) explains sign-ins, the logout that covers every member,
 and what a rename or portal change does. `workspace/notes/aws.md` (the `af-aws` skill) says that a login
 request can name a sign-in rather than a single profile.
+
+### 10. A token key is bound to its owner and its portal
+
+Neither cache is checked against the config. botocore's token loader takes whatever sits under
+`sha1(sso-session name)`, and the SSO credential fetcher takes the role credentials under
+`sha1({accountId, roleName, sessionName})`. A key that changes hands is therefore used as it is. That
+happens when a sign-in is renamed, its portal changes, or a name is freed and taken by another sign-in or
+profile. A badge that says `none` does not stop `PlanExec` from exporting old credentials, so the rule has to
+sit on the paths that use the cache.
+
+- **Binding.** The Agent keeps one record per sso-session key, under `AgentStateDir/aws-sso-bindings/`, written
+  under the key's exclusive lock: the owner id (the sign-in id, or the profile id for an ungrouped profile),
+  the start URL and the SSO region. A Fleet login that lands writes it. So does the first sight of a token
+  that has no record yet, when the token's `startUrl` and `region` equal the current owner's: that adopts
+  every login that exists before this change.
+- **Use.** `PlanExec` (before `exportSSOCreds`), the resolution of a login request and of an attempt, the
+  status and the expiry warning all accept a key only when three things hold: the binding's owner id equals
+  the current owner's, its coordinates equal Settings', and the token file's `startUrl` and `region` do too.
+  Otherwise the key is **unusable**, and the run deletes the role credentials of every current member for
+  that key under the exclusive lock. The CLI would otherwise serve them without looking at the token. The run
+  then proceeds as "login required" (a request, ADR 0102). A new Fleet login rebinds the key to the current
+  owner.
+- **Attempts carry their target.** A login attempt records the owner id and the coordinates it started for.
+  When the Agent's Settings sync sees those change for a running attempt, it ends the attempt. When an attempt
+  ends successfully, it binds only if Settings still names the same owner and coordinates. Otherwise it
+  reports a failure ("Settings changed during the login") and the token it wrote stays unusable. Requests and
+  waiters record the same pair, and a request whose pair no longer matches Settings is dropped and refiled.
+- **Lock order.** The Agent's `Gate` comes first, then the key's file lock, then the binding write. That is
+  the order a logout already uses.
+- **What it does not cover.** A token for the same owner and the same portal is accepted, whoever approved it:
+  the member's own `aws sso login` in a terminal is a valid login. A key reused within one Settings sync by an
+  owner whose binding was never written (a token written outside Agent Fleet and never seen) can be adopted
+  by the new owner when the portal matches. The window is a few minutes, and only the member's own token is
+  involved.
+
+### 11. Older writers and older readers
+
+Decision A ships the change in three PRs, and a CP can be rolled back. Every combination keeps two properties:
+a profile is never quietly ungrouped, and a profile never shares a login it was not put into.
+
+- **Absent is not empty.** `PUT /api/ssm/profiles/{id}` treats a body **without** `signIn` as "leave the sign-in
+  as it is", and `"signIn": ""` as "leave the sign-in". A Console that predates this change, editing a grouped
+  profile, sends no `signIn` and keeps it grouped. Its body still carries the start URL and SSO region, and
+  those must equal the sign-in's or be empty. A different portal is refused with `409 sign_in_mismatch`,
+  telling the member to edit the sign-in instead.
+- **Rollback, then upgrade again.** An older CP writes `start_url`, `sso_region` and `kind` of a grouped
+  profile and leaves `sign_in_id` as it was. On its next start the newer CP reconciles, once, in one
+  transaction per member under the membership lock:
+  - a member that is no longer `kind = sso`, or whose portal copy differs from its sign-in, is taken out of
+    the sign-in and keeps its own values;
+  - a sign-in left without members is deleted;
+  - every change is written to the audit log as `ssm.sign_in.reconcile`.
+
+  Name collisions that rows written by the older CP leave behind are not repaired silently. The bridge
+  exports neither side (decision 2) until the member renames one.
+- **Older Agent, newer CP.** An Agent that predates this change ignores `signIn`. It renders each member with
+  its own `af-<profile>` and the copied portal: separate logins, as before, never a wrong one. No capability
+  check is needed for the sign-in. (ADR 0126 needs one for its gate.)
+- **Newer Agent, older CP.** No `signIn` arrives, so every profile renders as today.
+- **Per PR.** PR 3 alone stores sign-ins, and the Agent then in use renders them as separate logins. PR 4 groups
+  the rendering for whatever PR 3 stored. PR 5 lets the member make sign-ins in the UI; until then only the
+  API and the bundle import can.
 
 ## Rejected
 
@@ -227,14 +326,18 @@ request can name a sign-in rather than a single profile.
 - A member with N profiles on one laptop sign-in logs in once in the Console.
 - Logout, the SSM forced re-login and a sign-in rename affect every member, and the Console says so first.
 - The Agent builds the sso-session name in one helper instead of a dozen literal concatenations.
-- The SSO cache status reads `startUrl` and `region` from the cache file as well as the expiry.
+- The Agent keeps a binding per sso-session key and refuses a key whose owner or portal changed (decision 10).
+  That also closes the same hole for ungrouped profiles, which exists today when a profile's portal is edited
+  or its name is reused.
+- An export near the token's refresh takes the key's lock exclusively, so runs of one sign-in wait for each
+  other for the length of one refresh.
 
 ## Decisions taken (2026-10-30, by the user)
 
 - **A. Taken: the recommended option.** **Delivery.** Recommended: three PRs in order, after ADR 0126's two (0126 decision 7). CP (migration, store
   invariant, DTO, routes, bridge, contract); then Agent (render, shadowing, `ssoSessionOf`, requests, status,
-  expiry, logout); then Console (grouped list, form, grouping action, import default). Every new field is
-  omitted when empty, so each PR is safe on its own.
+  expiry, logout); then Console (grouped list, form, grouping action, import default). Decision 11 says what
+  each combination of versions does.
 - **B. Taken: the recommended option.** **Legacy laptop profiles on import** (`sso_start_url` on the profile, no `sso_session`; the laptop shares
   one login per start URL). Recommended: propose one sign-in per start URL and SSO region in the preview,
   named after the portal's host label (`d-1234567890`, editable, can be cleared). The alternative is to
