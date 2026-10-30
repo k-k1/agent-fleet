@@ -129,8 +129,10 @@ Console にサインインし、アプリが求める内容を確認して許可
    1. `git status` と現在のブランチを見せて。未コミットの変更があれば、何をコミットするか一覧で見せて私の OK を
       待つ。OK が出たら WIP コミットして今のブランチを push する。`.env`・鍵・トークンなど秘密を含むファイルは
       コミットしない。push 後の `git rev-parse HEAD` を控える。
-   2. agent-fleet の `list_repos` で、このリポジトリ（remote URL が一致するもの）の `path` を探す。
-      見つからなければ、そこで止まって教えて。
+   2. `git remote get-url origin` をホストと `owner/name` のパス（`.git` は除く）に分ける。agent-fleet の
+      `list_repos` を呼び、`remote` がそのホストで `remotePath` がそのパスのものを残す。worktree はクローンと同じ値を
+      持つので、`name` に `@` が付いていないものを優先する。1 つも残らなければ止まって教えて。複数残ったら一覧を
+      見せて私に選ばせて。その `path` を使う。
    3. 下のテンプレートで引き継ぎメモを書く（日本語、4000 字以内）。会話に出てきたトークン・パスワード・
       社外秘の値は書かない。
    4. agent-fleet の `create_session` を呼ぶ: `dir` = 手順 2 の path、`worktree` = true、

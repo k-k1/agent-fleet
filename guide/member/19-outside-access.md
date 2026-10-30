@@ -140,8 +140,10 @@ Before you start:
    1. Show `git status` and the current branch. If anything is uncommitted, list what you would commit and wait
       for my OK; then make a WIP commit and push the current branch. Never commit `.env` files, keys, tokens or
       other secrets. Note `git rev-parse HEAD` after the push.
-   2. Call agent-fleet `list_repos` and find the `path` of this repository (the one whose remote URL matches).
-      If there is none, stop and tell me.
+   2. Split `git remote get-url origin` into its host and its `owner/name` path (without `.git`). Call agent-fleet
+      `list_repos` and keep the entries whose `remote` is that host and whose `remotePath` is that path. Worktrees
+      share their clone's values; prefer the entry whose `name` has no `@`. If none is left, stop and tell me; if
+      more than one is, show them and let me choose. Use its `path`.
    3. Write the hand-off note from the template below (at most about 4000 characters). Leave out any token,
       password or confidential value that came up in the conversation.
    4. Call agent-fleet `create_session` with `dir` = the path from step 2, `worktree` = true,
