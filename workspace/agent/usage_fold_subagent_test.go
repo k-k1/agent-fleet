@@ -8,6 +8,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
@@ -137,5 +138,102 @@ func TestFoldSubagentTranscriptsOnceEach(t *testing.T) {
 		if idx.accept(r, rowEnd(r.TS)) {
 			t.Fatalf("a replayed row %q idx %d was counted again", r.Agent, r.Idx)
 		}
+	}
+}
+
+func agentTurn(id, ts string, in, out int) []transcript.Turn {
+	return []transcript.Turn{
+		{Role: "user", TS: ts, Sidechain: true},
+		{Role: "assistant", Model: "claude-opus-5", InTok: in, OutTok: out, TS: ts, Sidechain: true, AnchorID: id},
+	}
+}
+
+// foldAgent folds one synthetic agent transcript the way the production pass does.
+func foldAgent(t *testing.T, m session.Meta, stamp string, turns []transcript.Turn) int {
+	t.Helper()
+	usageFoldMu.Lock()
+	defer usageFoldMu.Unlock()
+	st := readUsageFoldState()
+	n, dirty, err := foldSubagentUsage(m, &st, []sessionx.SubagentSource{
+		{ID: "/subagents/agent-a.jsonl", Stamp: stamp, Turns: func() ([]transcript.Turn, error) { return turns, nil }},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dirty {
+		if err := writeUsageFoldState(st); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return n
+}
+
+func sidechainSums(m session.Meta) (rows, in, out int) {
+	for _, r := range usagex.ReadRows() {
+		if r.Ref == m.Name && r.Sidechain {
+			rows++
+			in += r.In
+			out += r.Out
+		}
+	}
+	return
+}
+
+// Nothing in an agent's file says it is finished, so its newest turn is folded as it stands.
+// When that turn grows later (a long tool run, an approval wait) only the difference is added:
+// the ledger ends at the same totals as one fold of the finished turn.
+func TestFoldSubagentTurnThatGrowsAfterItWasFolded(t *testing.T) {
+	useTempUsageDir(t)
+	m := session.Meta{Name: "grow3054", Kind: session.KindClaude, Model: "claude-opus-5"}
+	a := agentTurn("a", "2026-10-30T09:00:00Z", 2000, 20)
+	// The same logical turn, a second assistant event six minutes on: input is the newest
+	// context snapshot, output adds up.
+	b := transcript.Turn{Role: "assistant", Model: "claude-opus-5", InTok: 2600, OutTok: 30,
+		TS: "2026-10-30T09:06:00Z", Sidechain: true, AnchorID: "b"}
+	if n := foldAgent(t, m, "s1", a); n != 1 {
+		t.Fatalf("first fold = %d rows, want 1", n)
+	}
+	grown := append(append([]transcript.Turn{}, a...), b)
+	if n := foldAgent(t, m, "s2", grown); n != 1 {
+		t.Fatalf("fold after the turn grew = %d rows, want the 1 difference", n)
+	}
+	if n := foldAgent(t, m, "s2", grown); n != 0 {
+		t.Fatalf("unchanged file folded %d rows", n)
+	}
+	if n := foldAgent(t, m, "s3", grown); n != 0 { // restamped, no new content
+		t.Fatalf("restamped file folded %d rows", n)
+	}
+	if rows, in, out := sidechainSums(m); rows != 2 || in != 2600 || out != 50 {
+		t.Fatalf("ledger rows=%d in=%d out=%d, want 2 / 2600 / 50 (one fold of the whole turn)", rows, in, out)
+	}
+	// A new turn after it closes the grown one: no further change to it.
+	next := append(append([]transcript.Turn{}, grown...), agentTurn("c", "2026-10-30T09:10:00Z", 3000, 5)...)
+	if n := foldAgent(t, m, "s4", next); n != 1 {
+		t.Fatalf("fold with a new turn = %d rows, want 1", n)
+	}
+	if rows, in, out := sidechainSums(m); rows != 3 || in != 5600 || out != 55 {
+		t.Fatalf("ledger rows=%d in=%d out=%d, want 3 / 5600 / 55", rows, in, out)
+	}
+}
+
+// A copy of the agent found later can put an older turn in front of those already recorded; the
+// recorded ones keep their identity, the older one is folded once.
+func TestFoldSubagentOlderTurnFromALaterCopy(t *testing.T) {
+	useTempUsageDir(t)
+	m := session.Meta{Name: "copy3054", Kind: session.KindClaude, Model: "claude-opus-5"}
+	older := agentTurn("old", "2026-10-30T09:00:00Z", 1000, 10)
+	late := agentTurn("late", "2026-10-30T09:05:00Z", 2000, 20)
+	if n := foldAgent(t, m, "s1", late); n != 1 {
+		t.Fatalf("first fold = %d rows", n)
+	}
+	merged := append(append([]transcript.Turn{}, older...), late...)
+	if n := foldAgent(t, m, "s2", merged); n != 1 {
+		t.Fatalf("fold with the older copy = %d rows, want only the older turn", n)
+	}
+	if n := foldAgent(t, m, "s2", merged); n != 0 {
+		t.Fatalf("re-fold = %d rows", n)
+	}
+	if rows, in, out := sidechainSums(m); rows != 2 || in != 3000 || out != 30 {
+		t.Fatalf("ledger rows=%d in=%d out=%d, want 2 / 3000 / 30", rows, in, out)
 	}
 }

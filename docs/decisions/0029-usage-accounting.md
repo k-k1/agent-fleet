@@ -370,6 +370,12 @@ own row sequence instead (`foldSubagentUsage`): a watermark per agent in `state.
 numbering, and an `agent` field on the record (a hash of that path). The reader's dedup keys
 such a row by `(ref, agent)`, one entry per agent. `Ref` stays the session name and rows stay
 `sidechain`. An agent with no watermark is folded from its first turn, which is exact for a
-session that predates this change; the session's own watermark is not touched. An agent's last
-turn never closes on its own, so it is folded once the file has stood still for five minutes
-(or at settle-on-delete); a turn appended after that is a known small double count.
+session that predates this change; the session's own watermark is not touched.
+
+The agent watermark is by turn identity, not position. Nothing in an agent's file says it is
+finished, so its newest turn is folded as it stands and kept as `open` with the totals
+recorded; when it grows, only the difference is written (a delta row), and it joins `closed`
+once a later turn exists. Identity is the uuid of the turn's first event, so a later copy of
+the agent that puts an older turn first (the copies are merged by timestamp) shifts no
+recorded turn. A delta row adds a row to the turn count of the usage view; its token and cost
+sums are exact.
