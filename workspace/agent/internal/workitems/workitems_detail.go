@@ -414,7 +414,8 @@ func parseGitHubIssue(body []byte, key string) (out *workItemDetailOut, isPR boo
 // githubPullRequestDetail reads one PR: the pull request itself, its reviews, and the check
 // runs of its head commit.
 //
-// Three calls, and the last two are best effort. A token without the checks permission, or a
+// Three calls, and the last two are best effort (the CI line adds up to four more on an open
+// pull request, see githubFoldExtraChecks). A token without the checks permission, or a
 // head commit no check ever ran against, must still leave the panel with the PR — the review
 // and CI lines then simply do not appear, which is what "" on those fields means.
 func githubPullRequestDetail(token, key string) (*workItemDetailOut, error) {
@@ -454,6 +455,9 @@ func githubPullRequestDetail(token, key string) (*workItemDetailOut, error) {
 	if head != "" {
 		if cr, err := githubGetJSON(token, fmt.Sprintf("%s/commits/%s/check-runs?per_page=%d", base, url.PathEscape(head), workItemDetailChecks), key); err == nil {
 			out.Checks = parseGitHubCheckRuns(cr)
+			// Only on top of a readable check-run list: when that read failed the line stays empty
+			// as before, rather than a status alone speaking for the whole commit.
+			githubFoldExtraChecks(token, base, key, head, out, cr)
 		}
 	}
 	return out, nil
