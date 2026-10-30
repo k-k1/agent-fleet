@@ -160,6 +160,8 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
   // Bumped to scroll the active match into view; a counter, because stepping through a single
   // match leaves `active` unchanged and must still bring it back.
   const [reveal, setReveal] = useState(0);
+  // Bumped by openFind; the layout effect below focuses the input once the bar is committed.
+  const [focusFind, setFocusFind] = useState(0);
   const findInputRef = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const openFindRef = useRef(() => {});
@@ -594,12 +596,17 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
 
   const openFind = () => {
     setFindOpen(true);
-    // The bar mounts on this render; focus it once it is there.
-    requestAnimationFrame(() => {
-      findInputRef.current?.focus();
-      findInputRef.current?.select();
-    });
+    setFocusFind((n) => n + 1);
   };
+
+  // Focus after the commit that mounts the bar. A requestAnimationFrame in openFind can run
+  // before React renders a native-event update (the af-own-find hand-over), leaving the input
+  // unmounted and focus skipped. A counter, so re-opening an already open bar re-selects.
+  useLayoutEffect(() => {
+    if (focusFind === 0) return;
+    findInputRef.current?.focus();
+    findInputRef.current?.select();
+  }, [focusFind]);
 
   openFindRef.current = openFind;
 
